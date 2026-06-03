@@ -1,0 +1,92 @@
+import type { Cell } from '@contracts/index';
+
+export type InsightSeverity = 'critical' | 'warning' | 'info';
+export type InsightCategory =
+  | 'debt'
+  | 'lease'
+  | 'insurance'
+  | 'concentration'
+  | 'occupancy'
+  | 'cash';
+
+export interface InsightAction {
+  label: string;
+  kind: 'draft-renewal' | 'open-refi' | 'review' | 'open-record';
+}
+
+export interface Insight {
+  id: string;
+  severity: InsightSeverity;
+  category: InsightCategory;
+  title: string;
+  detail: string;
+  metric?: string;
+  entityType?: 'property' | 'lease' | 'loan' | 'insurance' | 'deal' | 'cashEntity';
+  entityId?: string;
+  action?: InsightAction;
+}
+
+export interface PortfolioKpis {
+  totalSf: Cell;
+  occupancy: Cell;
+  noi: Cell;
+  value: Cell;
+  ltv: Cell;
+  weightedCapRate: Cell;
+  equityInvested: Cell;
+  propertyCount: Cell;
+  tenantCount: Cell;
+  totalDebt: Cell;
+  totalCash: Cell;
+  walt: Cell;
+}
+
+export interface RolloverBucket {
+  period: string; // e.g. "2026 H2", "2027"
+  count: number;
+  expiringSf: number;
+  expiringRent: number;
+}
+
+export interface TenantShare {
+  company: string;
+  annualRent: number;
+  share: number; // 0..1
+  leases: number;
+  sf: number;
+}
+
+export interface MarketSlice {
+  market: string;
+  value: number;
+  pct: number;
+}
+
+export interface MaturityBucket {
+  period: string; // year or "Demand"
+  balance: number;
+  count: number;
+  hasBalloon: boolean;
+}
+
+export interface DebtSummary {
+  externalDebt: number;
+  internalOutstanding: number;
+  lenderDeployed: number;
+  annualDebtService: number;
+  weightedAvgRate: number | null;
+  ladder: MaturityBucket[];
+}
+
+export interface AnalyticsBundle {
+  kpis: PortfolioKpis;
+  leaseStatus: Record<string, number>;
+  rollover: RolloverBucket[];
+  revenueAtRisk: { within90dRent: number; expiredRent: number; pctOfRent: number };
+  topTenants: TenantShare[];
+  tenantHHI: number;
+  marketByNoi: MarketSlice[];
+  marketBySf: MarketSlice[];
+  debt: DebtSummary;
+  insights: Insight[];
+}

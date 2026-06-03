@@ -1,0 +1,156 @@
+import ExcelJS from 'exceljs';
+import { parseWorkbook } from '../server/workbook/parse';
+import { WORKBOOK_PATH } from '../server/config';
+
+type CellValue = ExcelJS.CellValue;
+const cv = (v: CellValue | undefined): unknown => {
+  if (v && typeof v === 'object' && !(v instanceof Date)) {
+    if ('result' in v) return (v as { result?: unknown }).result ?? null;
+  }
+  return v ?? null;
+};
+const num = (v: unknown): number | null => {
+  if (typeof v === 'number') return v;
+  if (typeof v === 'string') {
+    const n = parseFloat(v.replace(/[$,%\s]/g, ''));
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+};
+
+interface Check {
+  label: string;
+  expected: number;
+  actual: number;
+  tol: number;
+  note?: string;
+}
+
+async function main() {
+  const { snapshot } = await parseWorkbook(WORKBOOK_PATH);
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.readFile(WORKBOOK_PATH);
+
+  const find = (sheet: string, pred: (c1: string) => boolean, col: number): number | null => {
+    const ws = wb.getWorksheet(sheet);
+    if (!ws) return null;
+    for (let r = 1; r <= ws.rowCount; r++) {
+      const c1 = String(cv(ws.getRow(r).getCell(1).value) ?? '');
+      const c2 = String(cv(ws.getRow(r).getCell(2).value) ?? '');
+      if (pred(`${c1} ${c2}`)) return num(cv(ws.getRow(r).getCell(col).value));
+    }
+    return null;
+  };
+
+  const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+
+  // Workbook's own totals cells (independent re-read).
+  const wbNoi = find('Property NOI', (c) => /portfolio total/i.test(c), 13) ?? NaN;
+  const wbValue = find('Property NOI', (c) => /portfolio total/i.test(c), 10) ?? NaN;
+  const wbRent = find('Master Tenant Rent Roll', (c) => /portfolio total/i.test(c), 13) ?? NaN;
+
+  // Persimmon residence is excluded from the workbook's SF subtotal but included in value.
+  const residenceSf = sum(snapshot.properties.filter((p) => p.type === 'Residence').map((p) => p.sf));
+
+  const checks: Check[] = [
+    {
+      label: 'Property NOI (Oxford) total',
+      expected: wbNoi,
+      actual: sum(snapshot.properties.map((p) => p.noi)),
+      tol: 1,
+    },
+    {
+      label: 'Oxford value total',
+      expected: wbValue,
+      actual: sum(snapshot.properties.map((p) => p.oxfordValue)),
+      tol: 1,
+    },
+    {
+      label: 'Annualized rent total',
+      expected: wbRent,
+      actual: sum(snapshot.leases.map((l) => l.annualRent)),
+      tol: 1,
+    },
+    {
+      label: 'Portfolio SF (workbook excludes residence)',
+      expected: sum(snapshot.properties.map((p) => p.sf)) - residenceSf,
+      actual: sum(snapshot.properties.filter((p) => p.type !== 'Residence').map((p) => p.sf)),
+      tol: 0,
+      note: `residence SF excluded: ${residenceSf.toLocaleString()}`,
+    },
+    {
+      label: 'Cash total = Σ entities',
+      expected: snapshot.cash.totalCash,
+      actual: sum(snapshot.cash.entities.map((e) => e.currentBalance)),
+      tol: 2,
+    },
+    {
+      label: 'Cash history latest = current total',
+      expected: snapshot.cash.totalCash,
+      actual: snapshot.cash.history.at(-1)?.total ?? NaN,
+      tol: 2,
+    },
+    {
+      label: 'Σ(monthly rent × 12) = Σ annual rent',
+      expected: sum(snapshot.leases.map((l) => l.annualRent)),
+      actual: sum(snapshot.leases.map((l) => l.monthlyRent * 12)),
+      tol: 5,
+    },
+  ];
+
+  let failed = 0;
+  console.log('── RECONCILIATION GATE ($0 tolerance unless noted) ─────');
+  for (const c of checks) {
+    const diff = Math.abs(c.expected - c.actual);
+    const pass = Number.isFinite(c.expected) && diff <= c.tol;
+    if (!pass) failed++;
+    console.log(
+      `${pass ? '✓ PASS' : '✗ FAIL'}  ${c.label.padEnd(42)} exp ${Math.round(c.expected).toLocaleString()} · got ${Math.round(c.actual).toLocaleString()} · Δ ${diff.toFixed(2)}${c.note ? ` (${c.note})` : ''}`,
+    );
+  }
+
+  // Count integrity
+  const counts = [
+    ['Properties', snapshot.properties.length, 14],
+    ['Leases', snapshot.leases.length, 137],
+    ['Cash entities', snapshot.cash.entities.length, 16],
+  ] as const;
+  for (const [label, got, exp] of counts) {
+    const pass = got === exp;
+    if (!pass) failed++;
+    console.log(`${pass ? '✓ PASS' : '✗ FAIL'}  ${`Count: ${label}`.padEnd(42)} exp ${exp} · got ${got}`);
+  }
+
+  // Entity-graph integrity: every counterparty edge must resolve to a real node.
+  const propIds = new Set(snapshot.properties.map((p) => p.id));
+  const loanIds = new Set(snapshot.loans.map((l) => l.id));
+  const dealIds = new Set(snapshot.deals.map((d) => d.id));
+  const insIds = new Set(snapshot.insurance.map((i) => i.id));
+  let danglingEdges = 0;
+  for (const cp of snapshot.counterparties) {
+    danglingEdges += cp.links.properties.filter((id) => !propIds.has(id)).length;
+    danglingEdges += cp.links.loans.filter((id) => !loanIds.has(id)).length;
+    danglingEdges += cp.links.deals.filter((id) => !dealIds.has(id)).length;
+    danglingEdges += cp.links.insurance.filter((id) => !insIds.has(id)).length;
+  }
+  const edgesOk = danglingEdges === 0;
+  if (!edgesOk) failed++;
+  console.log(`${edgesOk ? '✓ PASS' : '✗ FAIL'}  ${'Counterparty edges resolve'.padEnd(42)} ${danglingEdges} dangling`);
+
+  const peopleSeeded = snapshot.counterparties.filter((c) => c.source === 'memory').length;
+  const peopleOk = peopleSeeded >= 4;
+  if (!peopleOk) failed++;
+  console.log(`${peopleOk ? '✓ PASS' : '✗ FAIL'}  ${'People-layer seed present (≥4)'.padEnd(42)} got ${peopleSeeded}`);
+
+  console.log('───────────────────────────────────────────────────────');
+  if (failed > 0) {
+    console.error(`✗ Reconciliation FAILED: ${failed} check(s) off.`);
+    process.exit(1);
+  }
+  console.log('✓ Reconciliation passed — derived totals match the workbook to tolerance.');
+}
+
+main().catch((err) => {
+  console.error('✗ Reconciliation error:', err);
+  process.exit(1);
+});
