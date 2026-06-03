@@ -10,6 +10,7 @@ import {
   LineChart,
   CheckSquare,
   Users,
+  Activity,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -24,6 +25,7 @@ const InsuranceModule = lazy(() => import('@/modules/insurance/InsuranceModule')
 const MarketModule = lazy(() => import('@/modules/market/MarketModule').then((m) => ({ default: m.MarketModule })));
 const TasksModule = lazy(() => import('@/modules/tasks/TasksModule').then((m) => ({ default: m.TasksModule })));
 const RelationshipsModule = lazy(() => import('@/modules/relationships/RelationshipsModule').then((m) => ({ default: m.RelationshipsModule })));
+const HealthModule = lazy(() => import('@/modules/health/HealthModule').then((m) => ({ default: m.HealthModule })));
 
 export type ModuleGroup = 'Command' | 'Assets' | 'Capital' | 'Market';
 
@@ -47,6 +49,7 @@ export const MODULES: ModuleDef[] = [
   { id: 'insurance', label: 'Insurance', icon: ShieldCheck, group: 'Capital', Component: InsuranceModule },
   { id: 'market', label: 'Market', icon: LineChart, group: 'Market', Component: MarketModule },
   { id: 'relationships', label: 'Relationships', icon: Users, group: 'Market', Component: RelationshipsModule },
+  { id: 'health', label: 'System Health', icon: Activity, group: 'Market', Component: HealthModule },
 ];
 
 export const MODULE_GROUPS: ModuleGroup[] = ['Command', 'Assets', 'Capital', 'Market'];

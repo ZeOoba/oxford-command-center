@@ -165,10 +165,17 @@ the current arrangement.
 
 `npm run gate` = `typecheck && lint && test && reconcile`. All four must pass:
 
-- **typecheck** — `tsc` strict, two project configs (app + node)
+- **typecheck** — `tsc` strict, three project configs (app + node + `functions/`)
 - **lint** — ESLint flat config, `--max-warnings 0`
-- **test** — Vitest: contract validation + the analytics engine (WALT, HHI, ladder, insights)
-- **reconcile** — derived totals vs the workbook's own cells, $0 tolerance
+- **test** — Vitest: contracts, analytics engine, freshness, routing, agent loop, draft, overlay, reconciliation
+- **reconcile** — derived totals vs the workbook's own cells, $0 tolerance (local-only — needs the workbook)
+
+**CI** (`.github/workflows/ci.yml`) runs `npm run gate:ci` on every push/PR =
+`typecheck && lint && test && build && check:bundle`. It omits `reconcile` (the canonical workbook is
+a local file, not available to GitHub runners). **`check:bundle`** (`scripts/check-bundle.ts`) enforces
+the size budget: entry chunk < 250 kB gzip, lazy route chunks < 60 kB gzip (vendors split via
+`manualChunks`; entry currently ~64 kB gzip). **System Health** (`/health`) shows per-source status —
+freshness, runtime reconciliation, data-quality flags, and AI availability — with no silent fallbacks.
 
 ---
 
@@ -218,11 +225,15 @@ shows the true mode + bake age ("Static · baked 6h ago") and an amber banner on
 mirror (the static build has no Brain Server). Configure the key once:
 
 ```bash
+# Local Brain Server: create .env (gitignored) — dev:server auto-loads it:
+#   ANTHROPIC_API_KEY=sk-ant-api...   (optional: ANTHROPIC_MODEL, ANTHROPIC_EFFORT)
+# Deployed mirror: set it as a Cloudflare secret:
 npx wrangler pages secret put ANTHROPIC_API_KEY --project-name=ora-command-center
-# optional: ANTHROPIC_MODEL (default claude-sonnet-4-6)
 ```
 
-With no key the panel says "AI offline — no key" rather than faking an answer.
+The Ask panel is a **streaming tool-using agent** (`server/ai/agent.ts`, shared by the server and the
+Pages Function) — model defaults to `claude-opus-4-8`. With no key it streams the deterministic
+responder and the **System Health** view shows "AI offline" — never a silent fake.
 
 **Scheduled freshness (local).** Because the canonical workbook is a local OneDrive file, the daily
 bake+deploy runs as a Windows scheduled task, not GitHub Actions:
