@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Task } from '../../src/contracts/index';
 import { mapGraphTask, loadM365Tasks } from '../../server/sources/m365-tasks';
+import { _resetGraphTokenCache } from '../../server/sources/graph-auth';
 
 describe('m365-tasks — Graph To-Do mapping', () => {
   it('maps an open task to a contract-valid Task', () => {
@@ -28,13 +29,15 @@ describe('m365-tasks — Graph To-Do mapping', () => {
     expect(mapGraphTask({ id: 'b', title: '   ' }, 'To Do')).toBeNull();
   });
 
-  it('returns [] (graceful) when GRAPH_TOKEN is unset', async () => {
-    const prev = process.env.GRAPH_TOKEN;
-    delete process.env.GRAPH_TOKEN;
+  it('returns [] (graceful) when Graph is unconfigured', async () => {
+    const keys = ['GRAPH_TOKEN', 'GRAPH_TENANT_ID', 'GRAPH_CLIENT_ID', 'GRAPH_CLIENT_SECRET'] as const;
+    const prev = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+    keys.forEach((k) => delete process.env[k]);
+    _resetGraphTokenCache();
     try {
       expect(await loadM365Tasks()).toEqual([]);
     } finally {
-      if (prev !== undefined) process.env.GRAPH_TOKEN = prev;
+      for (const k of keys) if (prev[k] !== undefined) process.env[k] = prev[k];
     }
   });
 });

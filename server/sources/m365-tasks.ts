@@ -1,17 +1,24 @@
 import type { Task, TaskStatus } from '../../src/contracts/index';
+import { getGraphToken } from './graph-auth';
 
 /**
  * Microsoft 365 To-Do → Tasks (Phase 6). Pulls open To-Do tasks via Microsoft Graph and prepends
  * them to the workbook checklist so they surface in the Tasks module.
  *
- * Behind the contract + graceful: with no GRAPH_TOKEN (or any error) it returns [] and the workbook
- * tasks are untouched. Server-only.
+ * Behind the contract + graceful: with Graph unconfigured (or any error) it returns [] and the
+ * workbook tasks are untouched. Server-only.
  *
- * AUTH NOTE: GRAPH_TOKEN is a Microsoft Graph bearer token. Delegated tokens are short-lived (~1h),
- * so for unattended use wire an app-registration client-credentials flow with refresh and set
- * GRAPH_TOKEN from it. Until configured, this stays inert (workbook tasks only).
+ * AUTH: see graph-auth.ts. A manual GRAPH_TOKEN uses /me; the unattended client-credentials path is
+ * app-only (no /me), so set GRAPH_USER to the target mailbox (UPN/email) and it queries
+ * /users/{GRAPH_USER}. Until Graph is configured, this stays inert (workbook tasks only).
  */
 const GRAPH = 'https://graph.microsoft.com/v1.0';
+
+/** Mailbox path root: app-only credentials must name a user; a delegated token defaults to /me. */
+function userBase(): string {
+  const user = process.env.GRAPH_USER;
+  return user ? `/users/${encodeURIComponent(user)}` : '/me';
+}
 
 interface GraphTask {
   id?: string;
@@ -52,15 +59,16 @@ async function graphGet<T>(path: string, token: string): Promise<T> {
 
 /** Open M365 To-Do tasks across the user's lists, mapped to Task[]. Empty without GRAPH_TOKEN. */
 export async function loadM365Tasks(): Promise<Task[]> {
-  const token = process.env.GRAPH_TOKEN;
+  const token = await getGraphToken();
   if (!token) return [];
   try {
-    const lists = await graphGet<{ value?: Array<{ id?: string; displayName?: string }> }>('/me/todo/lists?$top=10', token);
+    const base = userBase();
+    const lists = await graphGet<{ value?: Array<{ id?: string; displayName?: string }> }>(`${base}/todo/lists?$top=10`, token);
     const out: Task[] = [];
     for (const list of (lists.value ?? []).slice(0, 10)) {
       if (!list.id) continue;
       const tasks = await graphGet<{ value?: GraphTask[] }>(
-        `/me/todo/lists/${list.id}/tasks?$top=50&$filter=${encodeURIComponent("status ne 'completed'")}`,
+        `${base}/todo/lists/${list.id}/tasks?$top=50&$filter=${encodeURIComponent("status ne 'completed'")}`,
         token,
       );
       for (const t of tasks.value ?? []) {
