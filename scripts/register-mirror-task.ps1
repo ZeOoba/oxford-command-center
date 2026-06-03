@@ -19,8 +19,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $script = Join-Path $repo 'scripts\deploy-mirror.ps1'
-$pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue)?.Source
-if (-not $pwsh) { $pwsh = (Get-Command powershell).Source }
+# Prefer PowerShell 7 (pwsh) for the task action; fall back to Windows PowerShell.
+# (Avoid the PS7-only ?. operator so this script also parses under Windows PowerShell 5.1.)
+$pwshCmd = Get-Command pwsh -ErrorAction SilentlyContinue
+$pwsh = if ($pwshCmd) { $pwshCmd.Source } else { (Get-Command powershell).Source }
 
 $action  = New-ScheduledTaskAction -Execute $pwsh -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$script`"" -WorkingDirectory $repo
 $trigger = New-ScheduledTaskTrigger -Daily -At $At
