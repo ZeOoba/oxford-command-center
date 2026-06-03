@@ -3,8 +3,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import { brain } from './brain';
-import { respond } from './ai/respond';
-import { answerWithClaude } from './ai/claude';
+import { runAgent } from './ai/agent';
 import { getMacro } from './macro/getMacro';
 import { SERVER_PORT } from './config';
 
@@ -34,15 +33,40 @@ app.post('/api/refresh', async (c) => {
 /** Macro indicators — live FRED when FRED_API_KEY is set, real-seeded snapshot otherwise. */
 app.get('/api/macro', async (c) => c.json(await getMacro()));
 
-/** AI assistant — live Claude when ANTHROPIC_API_KEY is set, deterministic responder otherwise. */
-app.post('/api/ai', async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { question?: string };
-  const question = String(body.question ?? '');
-  const snapshot = brain.getSnapshot();
-  if (!snapshot) return c.json({ answer: 'Data is still loading — try again in a moment.', sources: [], model: 'stub' });
-  const live = await answerWithClaude(question, snapshot).catch(() => null);
-  return c.json(live ?? respond(question, snapshot));
-});
+/**
+ * AI assistant — a streaming, tool-using agent over the spine (server/ai/agent.ts).
+ * Streams SSE frames: event `tool` (step), `text` (token delta), `done`, `error`.
+ * Uses live Claude when ANTHROPIC_API_KEY is set; deterministic responder otherwise.
+ */
+app.post('/api/ai', (c) =>
+  streamSSE(c, async (stream) => {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      question?: string;
+      history?: Array<{ role: 'user' | 'assistant'; text: string }>;
+    };
+    const question = String(body.question ?? '');
+    const history = Array.isArray(body.history) ? body.history : [];
+    const snapshot = brain.getSnapshot();
+    if (!snapshot) {
+      await stream.writeSSE({ event: 'error', data: JSON.stringify({ type: 'error', message: 'Data is still loading — try again in a moment.' }) });
+      return;
+    }
+    const ac = new AbortController();
+    stream.onAbort(() => ac.abort());
+    await runAgent({
+      question,
+      history,
+      snapshot,
+      apiKey: process.env.ANTHROPIC_API_KEY,
+      model: process.env.ANTHROPIC_MODEL,
+      effort: process.env.ANTHROPIC_EFFORT as 'low' | 'medium' | 'high' | 'max' | undefined,
+      signal: ac.signal,
+      emit: async (e) => {
+        await stream.writeSSE({ event: e.type, data: JSON.stringify(e) });
+      },
+    });
+  }),
+);
 
 /** Live push: clients subscribe and refetch the snapshot when the workbook changes. */
 app.get('/sse', (c) =>

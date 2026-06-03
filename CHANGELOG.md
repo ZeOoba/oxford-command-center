@@ -1,5 +1,27 @@
 # Changelog
 
+## Phase 3 — Tool-using streaming agent (2026-06-03)
+
+- **Rebuilt `server/ai/` into a tool-using agent** (`agent.ts` + `tools.ts`), runtime-agnostic
+  (raw `fetch` + Web Streams) so ONE implementation runs in Node 24 and the Cloudflare Worker.
+- **11 spine tools** (no whole-JSON dumps): `get_portfolio_summary`, `get_property`, `get_leases`,
+  `get_loans`, `get_cash_position`, `get_deals`, `get_relationships`, `get_alerts`, `search_entities`,
+  `run_scenario`, and a `search_documents` Phase-7 stub. Each returns compact data + citation refs.
+- **Streaming over SSE** with visible tool steps ("→ querying the rent roll…"), bounded tool loop
+  (max 8 turns), conversation memory for follow-ups, and a correct thinking-block round-trip
+  (signatures preserved). Prompt caching on the system/tools prefix; adaptive thinking +
+  configurable `effort` (`ANTHROPIC_EFFORT`); model from `ANTHROPIC_MODEL` (default `claude-opus-4-8`).
+- **Clickable, grounded citations.** The model cites entities inline as `[[type:id|label]]`; the
+  Ask panel renders them as chips that open the deep-linked drawer (ties to Phase 2).
+- **Both surfaces share the agent.** Server `/api/ai` now streams SSE (Hono `streamSSE`); the Pages
+  Function streams the same agent via a `ReadableStream`. `respond.ts` remains the no-key fallback.
+  Removed the now-dead `server/ai/claude.ts` (SDK path superseded by the shared raw-fetch core).
+- New client: `askBrainStream` adapter + rewritten `AiPanel` (incremental render, tool-step status,
+  citation chips). Tests: `tests/unit/ai-agent.test.ts` (tool executors + a mocked-`fetch` two-turn
+  loop asserting tool_result round-trip and cited output). Gate: **53 tests**; `functions/` typechecked.
+- Verified end-to-end in-browser (no-key fallback streams a grounded answer; live tool-use/citations
+  activate once `ANTHROPIC_API_KEY` is set).
+
 ## Phase 2 — Real routing & deep links (2026-06-03)
 
 - **Adopted React Router v6.** Every view has a real path (`/overview`, `/portfolio`, `/debt`, …) and
