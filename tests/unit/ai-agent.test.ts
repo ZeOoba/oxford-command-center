@@ -44,9 +44,9 @@ describe('tool definitions + executors', () => {
     expect(r.refs[0]).toEqual({ type: 'property', id: 'p1', label: '29000 Information Lane, Easton MD' });
   });
 
-  it('search_documents is an honest Phase-7 stub', () => {
+  it('search_documents falls back honestly when no index is on this surface', () => {
     const r = runTool('search_documents', makeSnap(), { query: 'REDACTED-659 renewal' });
-    expect(JSON.stringify(r.data)).toMatch(/not built yet/i);
+    expect(JSON.stringify(r.data)).toMatch(/no documents are indexed/i);
   });
 
   it('an unknown tool returns an error, not a throw', () => {

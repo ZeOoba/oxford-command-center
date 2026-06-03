@@ -115,7 +115,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'search_documents',
-    description: 'Search indexed lease/PSA/OM documents for a passage. (Document index is not built yet — Phase 7.)',
+    description: 'Search indexed lease/PSA/OM documents and return cited passages (e.g. "renewal option in the REDACTED-659 lease"). Available on the local server when documents are indexed; returns none on the read-only mirror.',
     input_schema: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'], additionalProperties: false },
   },
 ] as const;
@@ -286,7 +286,9 @@ const EXECUTORS: Record<ToolName, Exec> = {
   },
 
   search_documents: (_s, input) => ({
-    data: { query: asStr(input.query), result: 'Document index is not built yet (Phase 7). No lease/PSA/OM passages are searchable.' },
+    // Fallback (no document index on this surface, e.g. the mirror). The live server injects a real
+    // searcher via the agent; see server/sources/documents.ts.
+    data: { query: asStr(input.query), result: 'No documents are indexed on this surface.' },
     refs: [],
   }),
 };
