@@ -1,5 +1,17 @@
 # Changelog
 
+## Live AI enabled + agent stream fix (2026-06-03)
+
+- **fix(agent):** the Messages request was missing `stream: true`, so the API returned a single JSON
+  body and the SSE parser emitted an empty answer — only visible with a live key (the mocked test
+  returned SSE regardless). Added Anthropic `error`-frame handling and raised `max_tokens` to 16000
+  (adaptive thinking counts toward the budget). Regression test asserts the body sets `stream: true`.
+- **Live AI ON.** `ANTHROPIC_API_KEY` set as a Cloudflare Pages secret; the mirror was redeployed so
+  the agent endpoint + the full Phase 1–6 build are now live behind Access. Verified locally end-to-end:
+  the agent calls spine tools, returns `claude-opus-4-8` answers, and emits clickable `[[type:id|label]]`
+  citations. Post-deploy Access gate re-verified — apex, hash URL, `/api/ai`, and the confidential
+  `/snapshot.json` all 302 → cloudflareaccess.com (E. Fulton bake not exposed). `main` merged + pushed.
+
 ## Phase 6 (slice 1) — CI, bundle budget, runtime reconciliation, System Health (2026-06-03)
 
 - **CI gate** — `.github/workflows/ci.yml` runs `npm run gate:ci` (typecheck · lint · test · build ·
