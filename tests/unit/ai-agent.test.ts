@@ -96,6 +96,9 @@ describe('runAgent — streaming tool loop', () => {
     vi.unstubAllGlobals();
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
+    // Regression: the request MUST set stream:true, else the API returns one JSON body and the
+    // SSE parser emits nothing (empty answer with a live key).
+    expect(bodies[0]).toContain('"stream":true');
     expect(events.some((e) => e.type === 'tool' && e.name === 'get_alerts')).toBe(true);
     const text = events.filter((e): e is Extract<AgentEvent, { type: 'text' }> => e.type === 'text').map((e) => e.delta).join('');
     expect(text).toContain('[[loan:l1|REDACTED-306]]');
