@@ -21,6 +21,7 @@ import {
 } from '../../src/contracts/index';
 import { SCENARIO_PRESETS } from '../../src/contracts/scenario';
 import { loadDeals } from '../sources/notion-deals';
+import { loadM365Tasks } from '../sources/m365-tasks';
 import { deriveCounterparties } from './counterparties';
 import { WORKBOOK_AS_OF } from '../config';
 
@@ -507,7 +508,9 @@ export async function parseWorkbook(path: string): Promise<ParseResult> {
   const loans = parseLoans(get('Loan Index'), flags);
   const cash = parseCash(get('Cash Balances'), flags);
   const insurance = parseInsurance(get('Insurance Renewals'), flags);
-  const tasks = parseTasks(get('Monthly Checklist'));
+  const checklistTasks = parseTasks(get('Monthly Checklist'));
+  const m365Tasks = await loadM365Tasks(); // live M365 To-Do prepended when GRAPH_TOKEN set, else []
+  const tasks = m365Tasks.length ? [...m365Tasks, ...checklistTasks] : checklistTasks;
   const assumptions = parseAssumptions(get('Assumptions'));
   const deals = await loadDeals(); // live Notion pipeline merged onto seed when configured, else seed
   const counterparties = deriveCounterparties({ properties, loans, insurance, deals });
