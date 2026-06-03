@@ -1,5 +1,24 @@
 # Changelog
 
+## Phase 6 (slice 1) — CI, bundle budget, runtime reconciliation, System Health (2026-06-03)
+
+- **CI gate** — `.github/workflows/ci.yml` runs `npm run gate:ci` (typecheck · lint · test · build ·
+  bundle budget) on every push/PR. `reconcile` stays local-only (needs the canonical workbook).
+- **Bundle budget** — `scripts/check-bundle.ts` enforces entry < 250 kB gzip + lazy routes < 60 kB
+  gzip and fails CI on breach. `vite.config.ts` `manualChunks` splits vendors (react/router/visx/
+  motion/aria) — the **entry chunk dropped from 188 kB → ~64 kB gzip**; all routes well under budget.
+- **Runtime reconciliation** — `server/reconcile-runtime.ts` `checkSnapshot()` runs on every
+  `brain.refresh()` and flags internal inconsistencies (cash total ≠ Σ entities, annual ≠ Σ monthly×12,
+  empty core sets, dangling relationship edges) as DataQualityFlags on the snapshot — degraded state
+  is visible, never silently served. Test: `tests/unit/reconcile-runtime.test.ts`.
+- **System Health** module (`/health`) — per-source status with no silent fallbacks: data freshness,
+  reconciliation result, data-quality flags, and AI availability (`/api/health` now reports
+  `ai.configured` + model without exposing the key). Verified in-browser.
+- Gate: **68 tests**; `gate:ci` green (entry 64 kB gzip).
+- **Deferred to a later Phase 6 slice / Phase 7** (need credentials or a vector store): multi-source
+  ingestion adapters (Notion/M365/QB), document RAG (`search_documents` remains a stub), dated
+  snapshot history.
+
 ## Phase 5 (slice 2) — Write-back actions via local overlay (2026-06-03)
 
 - **Local JSON overlay** (`server/overlay.ts`, gitignored `data/overlay.json`) — the master workbook

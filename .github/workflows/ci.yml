@@ -1,0 +1,21 @@
+name: CI
+
+# Quality gate on every push/PR. Note: the $0 reconcile check (`npm run reconcile`) reads the
+# canonical workbook (a local OneDrive file) and is LOCAL-ONLY — it cannot run in CI. CI runs
+# typecheck + lint + tests + a production build + the bundle-size budget.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run gate:ci

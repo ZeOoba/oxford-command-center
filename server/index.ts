@@ -16,7 +16,13 @@ app.use(
 );
 
 app.get('/api/health', (c) =>
-  c.json({ ok: true, service: 'oxford-brain-server', state: brain.getState() }),
+  c.json({
+    ok: true,
+    service: 'oxford-brain-server',
+    state: brain.getState(),
+    // Surface AI availability WITHOUT exposing the key (no silent fallbacks — System Health shows it).
+    ai: { configured: !!process.env.ANTHROPIC_API_KEY, model: process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8' },
+  }),
 );
 
 /** The single typed payload: snapshot + live meta. */

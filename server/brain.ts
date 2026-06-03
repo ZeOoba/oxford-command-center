@@ -5,6 +5,7 @@ import { watch } from 'chokidar';
 import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, type DealStage } from '../src/contracts/index';
 import { parseWorkbook } from './workbook/parse';
 import { applyOverlay, loadOverlay, saveOverlay, type Overlay } from './overlay';
+import { checkSnapshot } from './reconcile-runtime';
 import { SNAPSHOT_PATH, WORKBOOK_PATH } from './config';
 
 /**
@@ -43,16 +44,19 @@ class Brain extends EventEmitter {
     try {
       const { snapshot, flags } = await parseWorkbook(WORKBOOK_PATH);
       this.base = snapshot;
-      this.snapshot = applyOverlay(snapshot, this.overlay);
+      const merged = applyOverlay(snapshot, this.overlay);
+      // Runtime reconciliation: surface any internal inconsistency as data-quality flags.
+      const rtFlags = checkSnapshot(merged);
+      this.snapshot = rtFlags.length ? { ...merged, dataQuality: [...merged.dataQuality, ...rtFlags] } : merged;
       this.persist(this.snapshot);
       this.setState({
         status: 'fresh',
         source: 'workbook',
         lastUpdated: new Date().toISOString(),
         lastError: null,
-        flagCount: flags.length,
+        flagCount: this.snapshot.dataQuality.length,
       });
-      this.emit('snapshot', { reason, flags });
+      this.emit('snapshot', { reason, flags: [...flags, ...rtFlags] });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const recovered = this.loadFallback();
