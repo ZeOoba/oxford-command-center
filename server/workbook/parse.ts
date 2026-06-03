@@ -20,7 +20,7 @@ import {
   type ScenarioName,
 } from '../../src/contracts/index';
 import { SCENARIO_PRESETS } from '../../src/contracts/scenario';
-import { SEED_DEALS } from '../../src/data/seed-deals';
+import { loadDeals } from '../sources/notion-deals';
 import { deriveCounterparties } from './counterparties';
 import { WORKBOOK_AS_OF } from '../config';
 
@@ -509,7 +509,8 @@ export async function parseWorkbook(path: string): Promise<ParseResult> {
   const insurance = parseInsurance(get('Insurance Renewals'), flags);
   const tasks = parseTasks(get('Monthly Checklist'));
   const assumptions = parseAssumptions(get('Assumptions'));
-  const counterparties = deriveCounterparties({ properties, loans, insurance, deals: SEED_DEALS });
+  const deals = await loadDeals(); // live Notion pipeline merged onto seed when configured, else seed
+  const counterparties = deriveCounterparties({ properties, loans, insurance, deals });
 
   const snapshot = PortfolioSnapshot.parse({
     meta: {
@@ -525,7 +526,7 @@ export async function parseWorkbook(path: string): Promise<ParseResult> {
     loans,
     cash,
     insurance,
-    deals: SEED_DEALS,
+    deals,
     tasks,
     counterparties,
     dataQuality: flags,
