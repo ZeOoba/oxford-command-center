@@ -2,8 +2,9 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { watch } from 'chokidar';
-import { PortfolioSnapshot, type BrainState, type DataQualityFlag } from '../src/contracts/index';
+import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, type DealStage } from '../src/contracts/index';
 import { parseWorkbook } from './workbook/parse';
+import { applyOverlay, loadOverlay, saveOverlay, type Overlay } from './overlay';
 import { SNAPSHOT_PATH, WORKBOOK_PATH } from './config';
 
 /**
@@ -11,7 +12,10 @@ import { SNAPSHOT_PATH, WORKBOOK_PATH } from './config';
  * watches it for changes, and notifies subscribers (→ SSE → client refetch).
  */
 class Brain extends EventEmitter {
+  /** The freshly-parsed workbook (read-only canonical), before overlay merge. */
+  private base: PortfolioSnapshot | null = null;
   private snapshot: PortfolioSnapshot | null = null;
+  private overlay: Overlay = loadOverlay();
   private state: BrainState = {
     status: 'idle',
     source: 'none',
@@ -38,8 +42,9 @@ class Brain extends EventEmitter {
     this.setState({ status: 'refreshing' });
     try {
       const { snapshot, flags } = await parseWorkbook(WORKBOOK_PATH);
-      this.snapshot = snapshot;
-      this.persist(snapshot);
+      this.base = snapshot;
+      this.snapshot = applyOverlay(snapshot, this.overlay);
+      this.persist(this.snapshot);
       this.setState({
         status: 'fresh',
         source: 'workbook',
@@ -59,6 +64,30 @@ class Brain extends EventEmitter {
       this.emit('snapshot', { reason: `${reason}:fallback`, flags: [] as DataQualityFlag[] });
     }
     return this.state;
+  }
+
+  /** Re-derive the merged snapshot from the cached base + overlay (no workbook re-parse). */
+  private rederive(reason: string) {
+    if (!this.base) return;
+    this.snapshot = applyOverlay(this.base, this.overlay);
+    saveOverlay(this.overlay);
+    this.persist(this.snapshot);
+    this.setState({ lastUpdated: new Date().toISOString() });
+    this.emit('snapshot', { reason, flags: [] as DataQualityFlag[] });
+  }
+
+  /** Write-back: advance/override a deal's stage. Returns false if the deal is unknown. */
+  setDealStage(dealId: string, stage: DealStage): boolean {
+    if (!this.base?.deals.some((d) => d.id === dealId)) return false;
+    this.overlay = { ...this.overlay, dealStages: { ...this.overlay.dealStages, [dealId]: stage } };
+    this.rederive('action:deal-stage');
+    return true;
+  }
+
+  /** Write-back: append a user-created task. */
+  addTask(task: Task): void {
+    this.overlay = { ...this.overlay, tasks: [task, ...this.overlay.tasks] };
+    this.rederive('action:add-task');
   }
 
   private persist(snapshot: PortfolioSnapshot) {

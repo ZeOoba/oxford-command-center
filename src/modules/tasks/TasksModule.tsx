@@ -1,7 +1,14 @@
-import { useSnapshot } from '@/data/queries';
+import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { Plus } from 'lucide-react';
+import { useSnapshot, SNAPSHOT_KEY } from '@/data/queries';
+import { useBrain } from '@/data/brain-context';
+import { computeFreshness } from '@/lib/freshness';
+import { createTask } from '@/data/actions';
 import { fmtNum, fmtDate } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
+import { Button } from '@/primitives/Button';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import type { TaskStatus } from '@contracts/index';
 
@@ -16,6 +23,27 @@ const STATUS_META: Record<TaskStatus, { tone: BadgeTone; label: string }> = {
 
 export function TasksModule() {
   const { data } = useSnapshot();
+  const { state } = useBrain();
+  const qc = useQueryClient();
+  const [label, setLabel] = useState('');
+  const [busy, setBusy] = useState(false);
+  const canWrite = computeFreshness(state).kind === 'live';
+
+  const addTask = async () => {
+    const v = label.trim();
+    if (!v || busy) return;
+    setBusy(true);
+    try {
+      await createTask({ label: v });
+      await qc.invalidateQueries({ queryKey: SNAPSHOT_KEY });
+      setLabel('');
+    } catch {
+      /* leave the input for retry */
+    } finally {
+      setBusy(false);
+    }
+  };
+
   if (!data) return null;
   const tasks = data.snapshot.tasks;
   const done = tasks.filter((t) => t.status === 'done').length;
@@ -32,6 +60,22 @@ export function TasksModule() {
         <KpiStat label="Overdue" value={overdue} format={fmtNum} accentColor="var(--color-neg)" />
         <KpiStat label="Renewals Due" value={renewals} format={fmtNum} accentColor="var(--color-info)" sublabel={`as of ${fmtDate(data.snapshot.meta.asOf)}`} />
       </div>
+
+      {canWrite && (
+        <div className="flex items-center gap-2">
+          <input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void addTask(); }}
+            placeholder="Add a checklist task… (saved to the local overlay)"
+            className="flex-1 rounded-[var(--radius-sm)] px-3 py-2 text-xs outline-none"
+            style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
+          />
+          <Button size="sm" variant="primary" onPress={() => void addTask()}>
+            <Plus size={13} /> Add task
+          </Button>
+        </div>
+      )}
 
       {sections.map((sec) => {
         const items = tasks.filter((t) => t.section === sec);

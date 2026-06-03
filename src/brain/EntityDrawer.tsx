@@ -1,7 +1,8 @@
 import { useEffect, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { X, Mail } from 'lucide-react';
-import type { PortfolioSnapshot } from '@contracts/index';
+import { useQueryClient } from '@tanstack/react-query';
+import { X, Mail, ChevronRight } from 'lucide-react';
+import type { PortfolioSnapshot, DealStage } from '@contracts/index';
 import type { DraftRequest } from './draft';
 import {
   fmtUsd,
@@ -12,10 +13,19 @@ import {
   fmtMultiple,
   fmtMonths,
 } from '@analytics/index';
-import { useSnapshot } from '@/data/queries';
+import { useSnapshot, SNAPSHOT_KEY } from '@/data/queries';
+import { useBrain } from '@/data/brain-context';
+import { computeFreshness } from '@/lib/freshness';
+import { advanceDealStage } from '@/data/actions';
 import { useUi, type EntityRef } from './ui-context';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { Sparkline } from '@/charts/Sparkline';
+
+const STAGE_FLOW: DealStage[] = ['Sourcing', 'Candidate', 'LOI/PSA', 'Due Diligence', 'Closing', 'Closed'];
+const nextStage = (s: DealStage): DealStage | null => {
+  const i = STAGE_FLOW.indexOf(s);
+  return i >= 0 && i < STAGE_FLOW.length - 1 ? STAGE_FLOW[i + 1]! : null;
+};
 
 const KIND_LABEL: Record<string, string> = {
   lender: 'Lender',
@@ -55,17 +65,40 @@ interface Content {
   extra?: ReactNode;
   /** Draft-only CTAs (Phase 5). */
   actions?: Array<{ label: string; draft: DraftRequest }>;
+  /** Live-only write-back: advance a deal's stage (overlay). */
+  writeAction?: { dealId: string; nextStage: DealStage; label: string };
 }
 
 export function EntityDrawer() {
   const ui = useUi();
   const { data } = useSnapshot();
+  const { state } = useBrain();
+  const qc = useQueryClient();
   const open = !!ui.selected;
+  // Write-back is only offered against the live server, never the static mirror.
+  const canWrite = computeFreshness(state).kind === 'live';
+
+  const onAdvanceStage = async (dealId: string, stage: DealStage, label: string) => {
+    if (!window.confirm(`${label}? This updates the local overlay — the master workbook is unchanged.`)) return;
+    try {
+      await advanceDealStage(dealId, stage);
+      await qc.invalidateQueries({ queryKey: SNAPSHOT_KEY });
+    } catch {
+      /* surfaced by the snapshot not changing; kept silent here */
+    }
+  };
 
   return (
     <AnimatePresence>
       {open && data && ui.selected && (
-        <Panel content={resolve(ui.selected, data.snapshot)} onClose={ui.closeEntity} onOpen={ui.openEntity} onDraft={ui.openDraft} />
+        <Panel
+          content={resolve(ui.selected, data.snapshot)}
+          onClose={ui.closeEntity}
+          onOpen={ui.openEntity}
+          onDraft={ui.openDraft}
+          canWrite={canWrite}
+          onAdvanceStage={onAdvanceStage}
+        />
       )}
     </AnimatePresence>
   );
@@ -76,11 +109,15 @@ function Panel({
   onClose,
   onOpen,
   onDraft,
+  canWrite,
+  onAdvanceStage,
 }: {
   content: Content | null;
   onClose: () => void;
   onOpen: (ref: EntityRef) => void;
   onDraft: (req: DraftRequest) => void;
+  canWrite: boolean;
+  onAdvanceStage: (dealId: string, stage: DealStage, label: string) => void;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -138,9 +175,9 @@ function Panel({
             </header>
 
             <div className="flex-1 overflow-y-auto px-5 py-4">
-              {content.actions && content.actions.length > 0 && (
+              {((content.actions && content.actions.length > 0) || (content.writeAction && canWrite)) && (
                 <div className="mb-4 flex flex-wrap gap-2">
-                  {content.actions.map((a, i) => (
+                  {content.actions?.map((a, i) => (
                     <button
                       key={i}
                       onClick={() => onDraft(a.draft)}
@@ -150,6 +187,15 @@ function Panel({
                       <Mail size={13} /> {a.label}
                     </button>
                   ))}
+                  {content.writeAction && canWrite && (
+                    <button
+                      onClick={() => onAdvanceStage(content.writeAction!.dealId, content.writeAction!.nextStage, content.writeAction!.label)}
+                      className="flex items-center gap-1.5 rounded-[var(--radius-sm)] px-3 py-1.5 text-xs font-semibold"
+                      style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', color: 'var(--text-primary)' }}
+                    >
+                      {content.writeAction.label} <ChevronRight size={13} />
+                    </button>
+                  )}
                 </div>
               )}
               {content.extra && <div className="mb-4">{content.extra}</div>}
@@ -332,6 +378,11 @@ function resolve(sel: EntityRef, s: PortfolioSnapshot): Content | null {
           { label: 'Next Action', value: d.nextAction ?? '—' },
         ],
         chips: counterpartyChips(s, 'deal', d.id),
+        actions: [{ label: 'Draft LOI handoff', draft: { kind: 'loi', entity: { type: 'deal', id: d.id } } }],
+        writeAction: ((): Content['writeAction'] => {
+          const ns = nextStage(d.stage);
+          return ns ? { dealId: d.id, nextStage: ns, label: `Advance to ${ns}` } : undefined;
+        })(),
       };
     }
     case 'insurance': {
