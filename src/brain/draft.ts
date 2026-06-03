@@ -7,7 +7,7 @@ import type { EntityRef } from './ui-context';
  * spine data — NEVER sends. Every draft cc's the principals; the user reviews and sends it
  * themselves (Copy or Open in Outlook). Send automation is intentionally out of the browser app.
  */
-export type DraftKind = 'renewal' | 'refi' | 'insurance' | 'general';
+export type DraftKind = 'renewal' | 'refi' | 'insurance' | 'general' | 'loi';
 
 export interface DraftRequest {
   kind: DraftKind;
@@ -84,6 +84,32 @@ export function buildDraft(s: PortfolioSnapshot, req: DraftRequest): DraftResult
           `please confirm replacement coverage is bound and send the updated certificate.\n\n` +
           `Thank you for the quick turn.` +
           SIGN_OFF,
+      };
+    }
+    case 'loi': {
+      const d = s.deals.find((x) => x.id === req.entity.id);
+      if (!d) return null;
+      const line = (k: string, v: string | number | null | undefined) => (v === null || v === undefined || v === '' ? '' : `- ${k}: ${v}\n`);
+      return {
+        title: `LOI handoff — ${d.name}`,
+        to: '',
+        cc,
+        subject: `LOI handoff — ${d.name}`,
+        // A pre-filled brief to paste into the firm's loi-generation skill in Cowork, which
+        // produces the final ORA-letterhead DOCX. (The agent can refine via the Ask panel.)
+        body:
+          `LOI generation brief — paste into the loi-generation skill.\n\n` +
+          line('Property / deal', d.name) +
+          line('Location', d.location) +
+          line('Market', d.market) +
+          line('Square feet', d.sf) +
+          line('Buildings', d.buildings) +
+          line('Estimated price', d.estPrice !== null ? fmtUsd(d.estPrice) : null) +
+          line('Cap rate', d.capRate !== null ? `${(d.capRate * 100).toFixed(2)}%` : null) +
+          line('Stage', d.stage) +
+          line('Lender', d.lender) +
+          line('Next action', d.nextAction) +
+          `\nGenerate a non-binding LOI on ORA letterhead per the standard 16-section template.`,
       };
     }
     case 'general': {

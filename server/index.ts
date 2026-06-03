@@ -3,6 +3,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import { brain } from './brain';
+import { DealStage } from '../src/contracts/index';
 import { runAgent } from './ai/agent';
 import { getMacro } from './macro/getMacro';
 import { SERVER_PORT } from './config';
@@ -28,6 +29,38 @@ app.get('/api/snapshot', (c) => {
 app.post('/api/refresh', async (c) => {
   const state = await brain.refresh('api');
   return c.json({ state });
+});
+
+/**
+ * Write-back actions (Phase 5) — persist to the local overlay; the workbook stays read-only.
+ * Confirm-before-write happens in the UI. Available only on the live server (the mirror is read-only).
+ */
+app.post('/api/actions/deal-stage', async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { dealId?: string; stage?: string };
+  const stage = DealStage.safeParse(body.stage);
+  if (!body.dealId || !stage.success) return c.json({ ok: false, error: 'Invalid dealId or stage' }, 400);
+  const ok = brain.setDealStage(body.dealId, stage.data);
+  return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
+});
+
+app.post('/api/actions/task', async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    label?: string; section?: string; type?: string; dueDay?: string; notes?: string;
+  };
+  const label = String(body.label ?? '').trim();
+  if (!label) return c.json({ ok: false, error: 'label required' }, 400);
+  brain.addTask({
+    id: `usr-${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+    label,
+    section: String(body.section ?? 'Added in Command Center'),
+    role: null,
+    type: body.type ?? 'Manual',
+    dueDay: body.dueDay ?? null,
+    notes: body.notes ?? null,
+    status: 'pending',
+    monthlyPmt: null,
+  });
+  return c.json({ ok: true, state: brain.getState() });
 });
 
 /** Macro indicators — live FRED when FRED_API_KEY is set, real-seeded snapshot otherwise. */

@@ -1,5 +1,22 @@
 # Changelog
 
+## Phase 5 (slice 2) — Write-back actions via local overlay (2026-06-03)
+
+- **Local JSON overlay** (`server/overlay.ts`, gitignored `data/overlay.json`) — the master workbook
+  stays canonical and READ-ONLY; user mutations (deal-stage advances, created tasks) persist to the
+  overlay and merge onto each parsed snapshot (`applyOverlay`, pure). Brain caches the parsed `base`
+  and re-derives without re-parsing on each action; emits SSE so clients refetch. (Decision: local
+  overlay over Notion/workbook-write.)
+- **Endpoints** `POST /api/actions/deal-stage` (validated against the `DealStage` enum) and
+  `POST /api/actions/task`. Available only on the live server — the deployed mirror is read-only.
+- **UI (live-only, confirm-before-write):** deal drawer "Advance to {next} →" (with a confirm noting
+  the workbook is unchanged) and a "+ Add task" form in the Tasks module. Controls are hidden unless
+  freshness is `live`.
+- **LOI/refi doc:** deal drawer "Draft LOI handoff" produces a pre-filled brief to paste into the
+  firm's loi-generation skill (decision: agent draft + handoff brief); the agent can refine via Ask.
+- Tests `tests/unit/overlay.test.ts` (stage advance path, overlay merge, base-not-mutated). Verified
+  live (stage change + task add persisted and reflected; overlay confirmed gitignored). Gate: 63 tests.
+
 ## Phase 5 (slice 1) — Closed-loop draft-only email CTAs (2026-06-03)
 
 - `src/brain/draft.ts`: pure `buildDraft(snapshot, request)` — renewal / refi / insurance / general
