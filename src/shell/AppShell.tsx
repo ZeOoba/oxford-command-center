@@ -1,4 +1,5 @@
 import { Suspense, useState } from 'react';
+import { Navigate, useParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { MODULES } from './modules';
 import { Sidebar } from './Sidebar';
@@ -26,11 +27,17 @@ const TITLES: Record<string, string> = {
 
 export function AppShell() {
   const ui = useUi();
+  const { moduleId } = useParams();
   const [collapsed, setCollapsed] = useState(false);
-  const active = MODULES.find((m) => m.id === ui.activeModuleId) ?? MODULES[0]!;
-  const Active = active.Component;
   const snap = useSnapshot();
   const data = snap.data;
+  const active = MODULES.find((m) => m.id === ui.activeModuleId) ?? MODULES[0]!;
+  const Active = active.Component;
+
+  // Unknown module path → normalize the URL to the default view.
+  if (moduleId && !MODULES.some((m) => m.id === moduleId)) {
+    return <Navigate to="/overview" replace />;
+  }
 
   return (
     <div className="flex h-dvh overflow-hidden" style={{ background: 'var(--surface-base)' }}>
