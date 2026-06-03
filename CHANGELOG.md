@@ -1,5 +1,18 @@
 # Changelog
 
+## Phase 6 (slice 2) — Notion deals adapter + daily auto-deploy (2026-06-03)
+
+- **Daily auto-deploy registered.** `register-mirror-task.ps1` (now PS 5.1-compatible) registered the
+  "ORA Command Center - Mirror Deploy" Windows task (06:30 ET, runs under pwsh 7). Verified the payload
+  end-to-end: bake(confidential)+build+deploy + Access-gate 302 re-check all pass.
+- **Notion deals adapter** (`server/sources/notion-deals.ts`): fetches the verified "Acquisition
+  Pipeline Tracker" DB and merges live deals onto the seed. Behind the contract + graceful — no
+  `NOTION_TOKEN` (or any error) → seed pipeline unchanged. Confidentiality preserved: seed is the
+  flag source of truth (matched deals inherit it); secondary guard is env-configured
+  (`NOTION_CONFIDENTIAL_NAME_PATTERNS`) so no confidential identifier lives in source; bake redaction
+  remains the final guard. `parse.ts` awaits `loadDeals()`. Mapping + merge tested (73 tests total).
+  Activates + gets verified when the token is added; fails safe to seed until then.
+
 ## Live AI enabled + agent stream fix (2026-06-03)
 
 - **fix(agent):** the Messages request was missing `stream: true`, so the API returned a single JSON
