@@ -1,5 +1,19 @@
 # Changelog
 
+## Phase 5 (slice 1) — Closed-loop draft-only email CTAs (2026-06-03)
+
+- `src/brain/draft.ts`: pure `buildDraft(snapshot, request)` — renewal / refi / insurance / general
+  drafts in firm voice, **always cc ggoldberg@ + egoldberg@**, recipient auto-filled from the
+  relationship graph where known. `mailtoHref` opens an Outlook draft. **Never sends.**
+- `DraftPanel` modal: editable To/Subject/Body, Copy + Open-in-Outlook, and a standing
+  "Draft only — auto-send is disabled" banner. Draft state is ephemeral in `UiProvider` (not the URL).
+- `EntityDrawer` CTAs: lease → Draft renewal, loan → Draft refinance note, insurance → carrier note,
+  counterparty → Draft email.
+- `tests/unit/draft.test.ts` (cc principals, content grounding, carrier auto-fill from graph, mailto
+  encoding). Gate: **59 tests**. Verified in-browser.
+- **Deferred (need a persistence-layer decision):** create-task, advance-deal-stage, LOI/refi doc
+  generation, and write-back to the spine / Notion / QB / HubSpot.
+
 ## Phase 4 — Data-integrity polish (2026-06-03)
 
 - **#6 balloon precision (verified, then fixed).** Confirmed via the live Loan Index that it has **no
