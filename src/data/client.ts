@@ -23,10 +23,12 @@ export async function fetchSnapshot(): Promise<SnapshotResponse> {
   const res = await fetch('/snapshot.json');
   if (!res.ok) throw new Error('No snapshot available (Brain Server offline and no baked mirror).');
   const snapshot = PortfolioSnapshot.parse(await res.json());
+  // Honest freshness: this is a baked static snapshot, NOT a live feed. The client
+  // marks it `static`; StatusPill derives static-vs-stale from the bake age at render.
   return {
     snapshot,
     state: {
-      status: 'fresh',
+      status: 'static',
       source: 'snapshot-fallback',
       lastUpdated: snapshot.meta.generatedAt,
       lastError: null,

@@ -10,6 +10,7 @@ import { EntityDrawer } from '@/brain/EntityDrawer';
 import { AiPanel } from '@/brain/AiPanel';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ModuleLoading, ModuleError } from './ModuleFallback';
+import { StaleBanner } from './StaleBanner';
 
 const TITLES: Record<string, string> = {
   overview: 'Command Overview',
@@ -45,6 +46,7 @@ export function AppShell() {
           asOf={data?.snapshot.meta.asOf ?? ''}
           onOpenSearch={ui.openPalette}
         />
+        <StaleBanner />
         <main className="flex-1 overflow-y-auto px-5 py-5">
           <div className="mx-auto max-w-[1500px]">
             <AnimatePresence mode="wait">

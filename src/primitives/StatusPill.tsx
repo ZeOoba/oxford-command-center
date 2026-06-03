@@ -1,26 +1,29 @@
 import { motion } from 'framer-motion';
 import { useBrain } from '@/data/brain-context';
-import { relativeTime } from '@/lib/time';
 import { isStill } from '@/lib/stillMode';
-import type { BrainStatus } from '@contracts/index';
+import { computeFreshness, type Freshness } from '@/lib/freshness';
 
-const MAP: Record<BrainStatus, { label: string; color: string }> = {
-  fresh: { label: 'Live', color: 'var(--color-pos)' },
-  refreshing: { label: 'Refreshing', color: 'var(--color-warn)' },
-  error: { label: 'Offline', color: 'var(--color-neg)' },
-  idle: { label: 'Connecting', color: 'var(--text-tertiary)' },
+const COLOR: Record<Freshness['kind'], string> = {
+  live: 'var(--color-pos)',
+  static: 'var(--color-info)',
+  stale: 'var(--color-warn)',
+  refreshing: 'var(--color-warn)',
+  offline: 'var(--color-neg)',
+  connecting: 'var(--text-tertiary)',
 };
 
 export function StatusPill() {
   const { state } = useBrain();
-  const status = state?.status ?? 'idle';
-  const { label, color } = MAP[status];
-  const animate = (status === 'fresh' || status === 'refreshing') && !isStill();
+  const f = computeFreshness(state);
+  const color = COLOR[f.kind];
+  // Only a genuine live/refreshing feed pulses. A static bake never animates as "live".
+  const animate = (f.kind === 'live' || f.kind === 'refreshing') && !isStill();
 
   return (
     <div
       className="num inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-2xs"
       style={{ border: '1px solid var(--border-subtle)', background: 'var(--surface-overlay)' }}
+      title={f.detail ?? undefined}
     >
       <span className="relative flex h-1.5 w-1.5">
         {animate && (
@@ -34,11 +37,9 @@ export function StatusPill() {
         <span className="relative inline-flex h-1.5 w-1.5 rounded-full" style={{ background: color }} />
       </span>
       <span className="font-semibold uppercase" style={{ letterSpacing: '0.1em', color }}>
-        {label}
+        {f.label}
       </span>
-      {state?.lastUpdated && (
-        <span style={{ color: 'var(--text-tertiary)' }}>· {relativeTime(state.lastUpdated)}</span>
-      )}
+      {f.detail && <span style={{ color: 'var(--text-tertiary)' }}>· {f.detail}</span>}
     </div>
   );
 }

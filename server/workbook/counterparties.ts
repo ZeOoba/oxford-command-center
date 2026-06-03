@@ -107,15 +107,16 @@ export function deriveCounterparties(args: {
       if (firmMatch || nameMatch) pushUniq(person.links.deals, d.id);
     }
 
-    // Merge with a same-named derived firm: person inherits its links; firm gets the contact.
+    // Merge with a same-named derived firm: the person inherits the firm's links so the
+    // relationship graph stays connected. We do NOT copy the individual's contact identity
+    // onto the firm — a firm must show its OWN contact, never a person's email (Defect 4:
+    // the lender "REDACTED-672" was carrying the title coordinator's personal address).
     const firm = firmKey ? firms.get(firmKey) : undefined;
     if (firm) {
       firm.links.properties.forEach((id) => pushUniq(person.links.properties, id));
       firm.links.loans.forEach((id) => pushUniq(person.links.loans, id));
       firm.links.deals.forEach((id) => pushUniq(person.links.deals, id));
       firm.links.insurance.forEach((id) => pushUniq(person.links.insurance, id));
-      if (!firm.email) firm.email = person.email;
-      if (!firm.notes) firm.notes = `Primary contact: ${person.name}${person.role ? ` — ${person.role}` : ''}`;
     }
   }
 

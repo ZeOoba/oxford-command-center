@@ -49,10 +49,12 @@ export function InsightList({ insights }: { insights: Insight[] }) {
                 {i.detail}
               </p>
             </div>
-            {i.action && i.entityType && i.entityId && (
+            {i.entityType && i.entityId && (
+              // Honest label: this only opens the record. Real actions (draft renewal,
+              // open refi workspace) are wired in Phase 5; until then, don't overpromise.
               <div className="shrink-0 pt-0.5">
                 <Button size="sm" variant="ghost" onPress={() => ui.openEntity({ type: i.entityType!, id: i.entityId! })}>
-                  {i.action.label}
+                  View details
                   <ArrowRight size={12} />
                 </Button>
               </div>

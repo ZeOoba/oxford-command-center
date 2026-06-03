@@ -87,6 +87,7 @@ export interface AnalyticsBundle {
   tenantHHI: number;
   marketByNoi: MarketSlice[];
   marketBySf: MarketSlice[];
+  marketByValue: MarketSlice[];
   debt: DebtSummary;
   insights: Insight[];
 }

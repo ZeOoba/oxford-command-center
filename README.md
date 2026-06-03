@@ -210,6 +210,31 @@ npx wrangler pages deploy dist --project-name=ora-command-center --branch=main
 The client automatically falls back to the baked `snapshot.json` / `macro.json` when no Brain Server
 is present, so the mirror works standalone. Baked JSON is git-ignored (never commit confidential data).
 
+**Honest freshness.** The client marks a baked fallback as `static` (not a live feed); `StatusPill`
+shows the true mode + bake age ("Static · baked 6h ago") and an amber banner once a bake passes
+`STALENESS_HOURS` (24, in `src/lib/freshness.ts`). It never renders "LIVE" over a static bake.
+
+**Mirror AI.** `functions/api/ai.ts` is a Cloudflare Pages Function that answers the Ask panel on the
+mirror (the static build has no Brain Server). Configure the key once:
+
+```bash
+npx wrangler pages secret put ANTHROPIC_API_KEY --project-name=ora-command-center
+# optional: ANTHROPIC_MODEL (default claude-sonnet-4-6)
+```
+
+With no key the panel says "AI offline — no key" rather than faking an answer.
+
+**Scheduled freshness (local).** Because the canonical workbook is a local OneDrive file, the daily
+bake+deploy runs as a Windows scheduled task, not GitHub Actions:
+
+```powershell
+pwsh -File scripts/register-mirror-task.ps1 -At 06:30   # register once (after `wrangler login`)
+pwsh -File scripts/deploy-mirror.ps1                     # bake (confidential) → deploy → verify Access 302
+```
+
+`deploy-mirror.ps1` fails loudly if the post-deploy apex does not 302 to Access, so a confidential bake
+is never left publicly reachable.
+
 > Notes: the Brain Server default port is **8911** (8787/8788 are taken on this machine), and it
 > binds `127.0.0.1` only. Modules are code-split via `React.lazy` (17 chunks); large tables
 > (the 137-row rent roll) are virtualized. E2E + axe specs live in `tests/e2e` — run with

@@ -325,6 +325,7 @@ export function buildAnalytics(snapshot: PortfolioSnapshot, scenario: ScenarioNa
     tenantHHI: tenantHHI(s.leases),
     marketByNoi: marketAllocation(s.properties, 'noi'),
     marketBySf: marketAllocation(s.properties, 'sf'),
+    marketByValue: marketAllocation(s.properties, 'value'),
     debt: debtSummary(s.loans),
     insights: generateInsights(s),
   };
