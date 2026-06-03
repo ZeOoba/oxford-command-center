@@ -1,5 +1,18 @@
 # Changelog
 
+## Phase 6 (slice 3) — Document RAG (2026-06-03)
+
+- `server/sources/documents.ts`: indexes a configured `DOCUMENTS_DIR` (PDF via pdf-parse, plus
+  .txt/.md), chunks the text, and runs lexical search (fuse.js) returning **cited passages**.
+  Graceful — empty index without `DOCUMENTS_DIR`. Server-only (the mirror has no filesystem; never
+  bundled into the Worker).
+- The agent's `search_documents` tool is injected with the real searcher on the server (an honest
+  "no documents indexed" stub on the mirror). New `/api/documents` status endpoint + a Documents
+  module (status + indexed list; search via the Ask panel).
+- Verified end-to-end: indexed a sample lease, the agent answered the renewal-option question with
+  the cited clause (and honestly flagged what the snippet didn't cover). Tests: chunkText +
+  searchChunks (77 total). Activates by pointing `DOCUMENTS_DIR` at the lease/PSA/OM folder.
+
 ## Phase 6 (slice 2) — Notion deals adapter + daily auto-deploy (2026-06-03)
 
 - **Daily auto-deploy registered.** `register-mirror-task.ps1` (now PS 5.1-compatible) registered the
