@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isoOrNull, inferMarket, inferType, statusFromSymbol } from '../../server/workbook/parse';
+import { isoOrNull, inferMarket, inferType, statusFromSymbol, isTaskBannerRow } from '../../server/workbook/parse';
 import type { DataQualityFlag } from '@contracts/index';
 
 describe('isoOrNull — date guard (the bug that crashed extraction)', () => {
@@ -53,5 +53,23 @@ describe('statusFromSymbol — Monthly Checklist symbols', () => {
     expect(statusFromSymbol('☐')).toBe('pending');
     expect(statusFromSymbol('—')).toBe('na');
     expect(statusFromSymbol('')).toBe('unknown');
+  });
+});
+
+describe('isTaskBannerRow — reject Monthly Checklist banner rows (Defect 9 regression)', () => {
+  const ALERT = '⚠ BALLOON ALERT: Restoration Church Trust — $980,773 balloon due February 2027 (8 months) — Prepare refinance or payoff strategy';
+  it('rejects the smeared balloon-alert banner', () => {
+    // The real failure mode: the alert text bled across label, section AND type.
+    expect(isTaskBannerRow(ALERT, ALERT, ALERT)).toBe(true);
+  });
+  it('rejects an ALL-CAPS summary banner', () => {
+    const s = 'MONTHLY CASH FLOW SUMMARY  (Average per month, USD)';
+    expect(isTaskBannerRow(s, s, s)).toBe(true);
+  });
+  it('rejects any row whose label leads with an alert/status glyph', () => {
+    expect(isTaskBannerRow('⚠ something', 'Debt', 'Loan')).toBe(true);
+  });
+  it('keeps a genuine task row', () => {
+    expect(isTaskBannerRow('3540 E. 5th Ave — escrow review', 'Property Ops', 'Recurring')).toBe(false);
   });
 });

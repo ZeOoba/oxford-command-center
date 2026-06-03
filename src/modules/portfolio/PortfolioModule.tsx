@@ -68,7 +68,7 @@ export function PortfolioModule() {
           <CardHeader title="Value by Market" />
           <div className="p-3">
             <BarList
-              items={analytics.marketByNoi.map((m) => ({ label: m.market, value: m.value, display: fmtUsdCompact(m.value) }))}
+              items={analytics.marketByValue.map((m) => ({ label: m.market, value: m.value, display: fmtUsdCompact(m.value) }))}
             />
           </div>
         </Card>

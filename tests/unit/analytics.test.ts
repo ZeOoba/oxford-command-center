@@ -10,6 +10,7 @@ import {
   marketAllocation,
   generateInsights,
   applyScenario,
+  buildAnalytics,
 } from '@analytics/index';
 
 function prop(p: Partial<Property>): Property {
@@ -233,6 +234,24 @@ describe('marketAllocation', () => {
     );
     expect(m[0]!.market).toBe('Columbus OH');
     expect(m.reduce((a, b) => a + b.pct, 0)).toBeCloseTo(1, 6);
+  });
+});
+
+describe('buildAnalytics — Value by Market shows value, not NOI (Defect 3 regression)', () => {
+  // Markets are ordered differently by value vs NOI, so a mix-up is detectable.
+  const s = snap({
+    properties: [
+      prop({ id: 'a', market: 'Columbus OH', noi: 100, oxfordValue: 1000 }),
+      prop({ id: 'b', market: 'Mid-Atlantic', noi: 50, oxfordValue: 3000 }),
+    ],
+  });
+  const a = buildAnalytics(s);
+  it('exposes marketByValue summing to Σ Oxford value', () => {
+    expect(a.marketByValue.reduce((x, m) => x + m.value, 0)).toBe(4000);
+  });
+  it('marketByValue is a distinct series from marketByNoi (different leader)', () => {
+    expect(a.marketByValue[0]!.market).toBe('Mid-Atlantic'); // highest value
+    expect(a.marketByNoi[0]!.market).toBe('Columbus OH'); // highest NOI
   });
 });
 
