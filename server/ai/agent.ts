@@ -88,12 +88,22 @@ async function callAnthropicStream(
 
   const blocks: Block[] = [];
   let stopReason: string | null = null;
+  let apiError: string | null = null;
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = '';
 
-  const handle = async (data: { type?: string; index?: number; delta?: Record<string, unknown>; content_block?: Record<string, unknown> }) => {
+  const handle = async (data: {
+    type?: string;
+    index?: number;
+    delta?: Record<string, unknown>;
+    content_block?: Record<string, unknown>;
+    error?: { type?: string; message?: string };
+  }) => {
     switch (data.type) {
+      case 'error':
+        apiError = data.error?.message ?? data.error?.type ?? 'Anthropic stream error';
+        break;
       case 'content_block_start': {
         const cb = data.content_block ?? {};
         blocks[data.index!] = { type: String(cb.type), text: '', thinking: '', signature: '', id: cb.id as string, name: cb.name as string, _json: '', data: cb.data as string };
@@ -137,6 +147,7 @@ async function callAnthropicStream(
       try { await handle(JSON.parse(payload)); } catch { /* ignore malformed frame */ }
     }
   }
+  if (apiError) throw new Error(apiError);
   return { blocks, stopReason };
 }
 
@@ -179,7 +190,11 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
     for (let turn = 0; turn < maxTurns; turn++) {
       const body = {
         model,
-        max_tokens: 4096,
+        stream: true, // SSE — callAnthropicStream parses `data:` frames; without this the API
+                      // returns a single JSON body and the stream parser emits nothing.
+        // Generous ceiling: with adaptive thinking, thinking tokens count toward max_tokens —
+        // too low and the model spends the whole budget thinking, ending with no visible answer.
+        max_tokens: 16000,
         system: [
           { type: 'text', text: SYSTEM },
           { type: 'text', text: `Snapshot as-of ${snapshot.meta.asOf}, scenario ${snapshot.meta.scenario}.`, cache_control: { type: 'ephemeral' } },
