@@ -3,6 +3,7 @@ import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import type { ScenarioName } from '@contracts/index';
 import { MODULES } from '@/shell/modules';
 import { UiContext, type EntityRef } from './ui-context';
+import type { DraftRequest } from './draft';
 import { parseRoute, entityPath } from './routing';
 
 const MODULE_IDS = MODULES.map((m) => m.id);
@@ -55,6 +56,9 @@ export function UiProvider({ children }: { children: ReactNode }) {
   // Ephemeral, personal UI — never in the URL.
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
+  const [draft, setDraft] = useState<DraftRequest | null>(null);
+  const openDraft = useCallback((req: DraftRequest) => setDraft(req), []);
+  const closeDraft = useCallback(() => setDraft(null), []);
   const openPalette = useCallback(() => setPaletteOpen(true), []);
   const closePalette = useCallback(() => setPaletteOpen(false), []);
   const togglePalette = useCallback(() => setPaletteOpen((o) => !o), []);
@@ -96,8 +100,11 @@ export function UiProvider({ children }: { children: ReactNode }) {
       toggleAi,
       scenario,
       setScenario,
+      draft,
+      openDraft,
+      closeDraft,
     }),
-    [activeModuleId, setActiveModule, paletteOpen, openPalette, closePalette, togglePalette, selected, openEntity, closeEntity, aiOpen, openAi, closeAi, toggleAi, scenario, setScenario],
+    [activeModuleId, setActiveModule, paletteOpen, openPalette, closePalette, togglePalette, selected, openEntity, closeEntity, aiOpen, openAi, closeAi, toggleAi, scenario, setScenario, draft, openDraft, closeDraft],
   );
 
   return <UiContext.Provider value={value}>{children}</UiContext.Provider>;

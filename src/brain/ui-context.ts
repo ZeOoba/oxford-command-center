@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { ScenarioName } from '@contracts/index';
+import type { DraftRequest } from './draft';
 
 export type EntityType = 'property' | 'lease' | 'loan' | 'insurance' | 'deal' | 'cashEntity' | 'counterparty';
 
@@ -24,6 +25,10 @@ export interface UiState {
   toggleAi: () => void;
   scenario: ScenarioName;
   setScenario: (s: ScenarioName) => void;
+  /** Draft-only email composer (Phase 5). Ephemeral — never in the URL. */
+  draft: DraftRequest | null;
+  openDraft: (req: DraftRequest) => void;
+  closeDraft: () => void;
 }
 
 export const UiContext = createContext<UiState>({
@@ -42,6 +47,9 @@ export const UiContext = createContext<UiState>({
   toggleAi: () => {},
   scenario: 'Base',
   setScenario: () => {},
+  draft: null,
+  openDraft: () => {},
+  closeDraft: () => {},
 });
 
 export function useUi(): UiState {
