@@ -11,6 +11,7 @@ import {
   CheckSquare,
   Users,
   Activity,
+  FileSearch,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -26,6 +27,7 @@ const MarketModule = lazy(() => import('@/modules/market/MarketModule').then((m)
 const TasksModule = lazy(() => import('@/modules/tasks/TasksModule').then((m) => ({ default: m.TasksModule })));
 const RelationshipsModule = lazy(() => import('@/modules/relationships/RelationshipsModule').then((m) => ({ default: m.RelationshipsModule })));
 const HealthModule = lazy(() => import('@/modules/health/HealthModule').then((m) => ({ default: m.HealthModule })));
+const DocumentsModule = lazy(() => import('@/modules/documents/DocumentsModule').then((m) => ({ default: m.DocumentsModule })));
 
 export type ModuleGroup = 'Command' | 'Assets' | 'Capital' | 'Market';
 
@@ -49,6 +51,7 @@ export const MODULES: ModuleDef[] = [
   { id: 'insurance', label: 'Insurance', icon: ShieldCheck, group: 'Capital', Component: InsuranceModule },
   { id: 'market', label: 'Market', icon: LineChart, group: 'Market', Component: MarketModule },
   { id: 'relationships', label: 'Relationships', icon: Users, group: 'Market', Component: RelationshipsModule },
+  { id: 'documents', label: 'Documents', icon: FileSearch, group: 'Market', Component: DocumentsModule },
   { id: 'health', label: 'System Health', icon: Activity, group: 'Market', Component: HealthModule },
 ];
 

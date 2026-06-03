@@ -24,6 +24,7 @@ const TITLES: Record<string, string> = {
   insurance: 'Insurance Renewals',
   market: 'Market & Macro',
   tasks: 'Tasks & Checklist',
+  documents: 'Documents',
   health: 'System Health',
 };
 

@@ -30,6 +30,8 @@ export interface AgentOptions {
   emit: (e: AgentEvent) => void | Promise<void>;
   signal?: AbortSignal;
   maxTurns?: number;
+  /** Server-only document search (RAG). Absent on the mirror → search_documents stays a stub. */
+  docSearch?: (query: string, limit?: number) => Promise<Array<{ doc: string; snippet: string }>>;
 }
 
 const TOOL_LABELS: Record<string, string> = {
@@ -221,7 +223,15 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
       const toolResults: unknown[] = [];
       for (const b of blocks) {
         if (b && b.type === 'tool_use') {
-          const result = runTool(b.name ?? '', snapshot, (b.input as Record<string, unknown>) ?? {});
+          let result;
+          if (b.name === 'search_documents' && opts.docSearch) {
+            // RAG: real document search on the server (injected); the spine tools don't have it.
+            const q = String((b.input as { query?: unknown } | undefined)?.query ?? '');
+            const passages = await opts.docSearch(q, 5);
+            result = { data: { count: passages.length, passages }, refs: [] as EntityRefLite[] };
+          } else {
+            result = runTool(b.name ?? '', snapshot, (b.input as Record<string, unknown>) ?? {});
+          }
           allRefs.push(...result.refs);
           toolResults.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(result.data) });
         }

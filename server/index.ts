@@ -11,6 +11,7 @@ import { streamSSE } from 'hono/streaming';
 import { brain } from './brain';
 import { DealStage } from '../src/contracts/index';
 import { runAgent } from './ai/agent';
+import { searchDocuments, docStatus } from './sources/documents';
 import { getMacro } from './macro/getMacro';
 import { SERVER_PORT } from './config';
 
@@ -78,6 +79,9 @@ app.post('/api/actions/task', async (c) => {
 /** Macro indicators — live FRED when FRED_API_KEY is set, real-seeded snapshot otherwise. */
 app.get('/api/macro', async (c) => c.json(await getMacro()));
 
+/** Document RAG status — indexed lease/PSA/OM docs (server-only; empty until DOCUMENTS_DIR is set). */
+app.get('/api/documents', async (c) => c.json(await docStatus()));
+
 /**
  * AI assistant — a streaming, tool-using agent over the spine (server/ai/agent.ts).
  * Streams SSE frames: event `tool` (step), `text` (token delta), `done`, `error`.
@@ -106,6 +110,7 @@ app.post('/api/ai', (c) =>
       model: process.env.ANTHROPIC_MODEL,
       effort: process.env.ANTHROPIC_EFFORT as 'low' | 'medium' | 'high' | 'max' | undefined,
       signal: ac.signal,
+      docSearch: searchDocuments,
       emit: async (e) => {
         await stream.writeSSE({ event: e.type, data: JSON.stringify(e) });
       },
