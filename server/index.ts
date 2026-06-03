@@ -1,3 +1,9 @@
+import { loadEnvFile } from './load-env';
+
+// Load .env with override-on-empty BEFORE anything reads process.env (node's --env-file won't
+// override an already-present empty var — see load-env.ts).
+loadEnvFile();
+
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
