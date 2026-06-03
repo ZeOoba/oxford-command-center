@@ -1,5 +1,20 @@
 # Changelog
 
+## Phase 2 — Real routing & deep links (2026-06-03)
+
+- **Adopted React Router v6.** Every view has a real path (`/overview`, `/portfolio`, `/debt`, …) and
+  entities are deep-linkable (`/portfolio/:id`, `/debt/:id`, `/relationships/:id`, …) — Defect 2 fixed.
+- **URL is the source of truth** for navigable state: active module, the open entity drawer, and the
+  scenario (`?scenario=Upside`). `UiProvider` is now URL-backed but keeps the same `useUi()` API, so no
+  module/consumer changed. Personal prefs (theme/density/widget layout) stay in localStorage.
+- **Back/forward/refresh preserve view + scenario + open drawer** — verified live: a direct deep link
+  to `/debt/:id?scenario=Upside` restores the Debt view, Upside scenario, and the open drawer on
+  refresh; back/forward toggle the drawer. `entityType → home module` mapping makes any drawer
+  shareable from any view (`src/brain/routing.ts`).
+- **SPA fallback** (`public/_redirects`) so deep links/refresh work on the Cloudflare mirror; Functions
+  (`/api/*`) and real assets are matched first.
+- Regression test `tests/unit/routing.test.ts` (parse/build + type↔module inverse). Gate: 46 tests.
+
 ## Phase 1 — Honesty + mirror AI + quick integrity wins (2026-06-03)
 
 - **Honest freshness (Defect 5).** Removed the hard-coded `status:'fresh'` static fallback in

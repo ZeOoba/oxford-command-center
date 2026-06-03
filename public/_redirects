@@ -1,0 +1,5 @@
+# SPA history fallback for the Cloudflare Pages mirror: serve the app shell for any
+# client-side route (e.g. /debt/REDACTED-702) so deep links & refresh work.
+# Pages checks Functions (/api/*) and real static assets (/snapshot.json) FIRST, so this
+# only catches unmatched client routes.
+/*  /index.html  200
