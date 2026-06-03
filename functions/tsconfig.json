@@ -11,7 +11,15 @@
     "skipLibCheck": true,
     "noUncheckedIndexedAccess": true,
     "noUnusedLocals": true,
-    "noUnusedParameters": true
+    "noUnusedParameters": true,
+    "resolveJsonModule": true,
+    "baseUrl": "..",
+    "paths": {
+      "@/*": ["src/*"],
+      "@contracts/*": ["src/contracts/*"],
+      "@analytics/*": ["src/analytics/*"],
+      "@server/*": ["server/*"]
+    }
   },
   "include": ["."]
 }
