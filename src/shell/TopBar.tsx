@@ -1,0 +1,73 @@
+import { motion } from 'framer-motion';
+import { RefreshCw, Search, Sparkles } from 'lucide-react';
+import { fmtDate } from '@analytics/index';
+import { useBrain } from '@/data/brain-context';
+import { useUi } from '@/brain/ui-context';
+import { StatusPill } from '@/primitives/StatusPill';
+import { ScenarioSwitch } from './ScenarioSwitch';
+import { ThemeToggle } from './ThemeToggle';
+import { DensityToggle } from './DensityToggle';
+
+export function TopBar({ title, asOf, onOpenSearch }: { title: string; asOf: string; onOpenSearch?: () => void }) {
+  const { refresh, refreshing } = useBrain();
+  const ui = useUi();
+  return (
+    <header
+      className="flex h-14 shrink-0 items-center justify-between gap-4 px-5"
+      style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--surface-base)' }}
+    >
+      <div className="flex min-w-0 items-baseline gap-3">
+        <h1 className="display truncate text-lg leading-none" style={{ color: 'var(--text-primary)' }}>
+          {title}
+        </h1>
+        {asOf && (
+          <span className="num hidden text-2xs uppercase sm:inline" style={{ letterSpacing: '0.12em', color: 'var(--text-tertiary)' }}>
+            As of {fmtDate(asOf)}
+          </span>
+        )}
+      </div>
+
+      <div className="flex items-center gap-2.5">
+        <button
+          onClick={onOpenSearch}
+          className="hidden items-center gap-2 rounded-[var(--radius-sm)] px-2.5 py-1.5 text-2xs md:flex"
+          style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)', color: 'var(--text-tertiary)' }}
+        >
+          <Search size={13} />
+          <span>Search…</span>
+          <kbd className="num rounded px-1" style={{ background: 'var(--surface-base)', border: '1px solid var(--border-subtle)' }}>⌘K</kbd>
+        </button>
+
+        <button
+          onClick={ui.toggleAi}
+          className="flex items-center gap-1.5 rounded-[var(--radius-sm)] px-2.5 py-1.5 text-2xs font-semibold transition-colors"
+          style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--accent)' }}
+        >
+          <Sparkles size={13} />
+          <span className="hidden sm:inline">Ask</span>
+        </button>
+
+        <ScenarioSwitch />
+        <StatusPill />
+
+        <button
+          onClick={refresh}
+          aria-label="Refresh data"
+          className="grid h-8 w-8 place-items-center rounded-[var(--radius-sm)]"
+          style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+        >
+          <motion.span
+            animate={refreshing ? { rotate: 360 } : { rotate: 0 }}
+            transition={refreshing ? { duration: 0.9, repeat: Infinity, ease: 'linear' } : { duration: 0.2 }}
+            style={{ display: 'grid', placeItems: 'center' }}
+          >
+            <RefreshCw size={14} />
+          </motion.span>
+        </button>
+
+        <DensityToggle />
+        <ThemeToggle />
+      </div>
+    </header>
+  );
+}

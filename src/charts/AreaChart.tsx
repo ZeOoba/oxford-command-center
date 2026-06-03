@@ -1,0 +1,112 @@
+import { useId, useState } from 'react';
+import { motion } from 'framer-motion';
+import { Group } from '@visx/group';
+import { scaleLinear } from '@visx/scale';
+import { AxisBottom } from '@visx/axis';
+import { LinePath, AreaClosed } from '@visx/shape';
+import { LinearGradient } from '@visx/gradient';
+import { curveMonotoneX } from '@visx/curve';
+import { useMeasure } from '@/lib/useMeasure';
+import { AXIS_TICK, GRID_STROKE } from './theme';
+
+export interface TimePoint {
+  date: string;
+  value: number;
+}
+
+interface Props {
+  data: TimePoint[];
+  height?: number;
+  color?: string;
+  valueFormat?: (n: number) => string;
+}
+
+/** Time-series area chart with branded gradient, animated draw-in, and hover tooltip. */
+export function AreaChart({ data, height = 230, color = 'var(--color-pos)', valueFormat }: Props) {
+  const [ref, width] = useMeasure<HTMLDivElement>();
+  const [hover, setHover] = useState<number | null>(null);
+  const gid = useId().replace(/:/g, '');
+  const margin = { top: 16, right: 14, bottom: 28, left: 52 };
+  const iw = Math.max(0, width - margin.left - margin.right);
+  const ih = height - margin.top - margin.bottom;
+
+  const xs = data.map((_, i) => i);
+  const ys = data.map((d) => d.value);
+  const x = scaleLinear({ domain: [0, Math.max(1, data.length - 1)], range: [0, iw] });
+  const min = Math.min(...ys);
+  const max = Math.max(...ys);
+  const pad = (max - min) * 0.12 || 1;
+  const y = scaleLinear({ domain: [min - pad, max + pad], range: [ih, 0] });
+  const ticks = y.ticks(4);
+
+  const onMove = (e: React.MouseEvent<SVGRectElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const idx = Math.max(0, Math.min(data.length - 1, Math.round((mx / iw) * (data.length - 1))));
+    setHover(idx);
+  };
+
+  return (
+    <div ref={ref} style={{ width: '100%', position: 'relative' }}>
+      {width > 0 && data.length > 1 && (
+        <svg width={width} height={height} role="img">
+          <LinearGradient id={`area-${gid}`} from={color} to={color} fromOpacity={0.28} toOpacity={0} />
+          <Group left={margin.left} top={margin.top}>
+            {ticks.map((t) => (
+              <g key={t}>
+                <line x1={0} x2={iw} y1={y(t)} y2={y(t)} stroke={GRID_STROKE} />
+                <text x={-10} y={y(t)} dy="0.32em" textAnchor="end" style={AXIS_TICK}>
+                  {valueFormat ? valueFormat(t) : t}
+                </text>
+              </g>
+            ))}
+            <AreaClosed data={xs} x={(i) => x(i)} y={(i) => y(ys[i]!)} yScale={y} curve={curveMonotoneX} fill={`url(#area-${gid})`} />
+            <motion.g initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }}>
+              <LinePath data={xs} x={(i) => x(i)} y={(i) => y(ys[i]!)} stroke={color} strokeWidth={2} curve={curveMonotoneX} />
+            </motion.g>
+            {hover !== null && (
+              <g>
+                <line x1={x(hover)} x2={x(hover)} y1={0} y2={ih} stroke="var(--border-strong)" strokeDasharray="3 3" />
+                <circle cx={x(hover)} cy={y(ys[hover]!)} r={4} fill={color} stroke="var(--surface-raised)" strokeWidth={1.5} />
+              </g>
+            )}
+            <circle cx={x(data.length - 1)} cy={y(ys[ys.length - 1]!)} r={3} fill={color} />
+            <AxisBottom
+              top={ih}
+              scale={x}
+              numTicks={Math.min(data.length, 7)}
+              hideAxisLine
+              hideTicks
+              tickFormat={(v) => {
+                const d = data[Number(v)]?.date;
+                return d ? new Date(d).toLocaleDateString('en-US', { month: 'short' }) : '';
+              }}
+              tickLabelProps={() => ({ ...AXIS_TICK, textAnchor: 'middle', dy: '0.4em' })}
+            />
+            <rect width={iw} height={ih} fill="transparent" onMouseMove={onMove} onMouseLeave={() => setHover(null)} style={{ cursor: 'crosshair' }} />
+          </Group>
+        </svg>
+      )}
+      {hover !== null && (
+        <div
+          className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full rounded-[var(--radius-sm)] px-2 py-1 text-2xs"
+          style={{
+            left: margin.left + x(hover),
+            top: margin.top + y(ys[hover]!) - 10,
+            background: 'var(--surface-overlay)',
+            border: '1px solid var(--border-strong)',
+            boxShadow: '0 10px 24px -12px rgba(0,0,0,0.7)',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          <span style={{ color: 'var(--text-tertiary)' }}>
+            {new Date(data[hover]!.date).toLocaleDateString('en-US', { month: 'short', year: '2-digit' })}
+          </span>
+          <span className="num ml-2 font-semibold" style={{ color: 'var(--text-primary)' }}>
+            {valueFormat ? valueFormat(ys[hover]!) : ys[hover]}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}

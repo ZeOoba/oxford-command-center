@@ -1,0 +1,279 @@
+@import 'tailwindcss';
+
+/* Self-hosted variable fonts (Fontsource — no runtime CDN) */
+@import '@fontsource-variable/eb-garamond';
+@import '@fontsource-variable/dm-sans';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+@import '@fontsource/ibm-plex-mono/600.css';
+
+/*
+  THE OXFORD TERMINAL — design tokens
+  Institutional-terminal density with editorial calm.
+  Default theme = "command" (OLED-near black). Light = "parchment".
+  Tailwind v4 CSS-first: tokens exposed as utilities via @theme.
+*/
+@theme {
+  /* Brand spine */
+  --color-navy-950: #05070d;
+  --color-navy-900: #0a1322;
+  --color-navy-850: #0d1b2a;
+  --color-navy-800: #12233a;
+  --color-navy-700: #1b2a4a;
+  --color-navy-600: #243a5e;
+
+  --color-gold-300: #e6d3a3;
+  --color-gold-400: #d8bd7e;
+  --color-gold-500: #c9a96e;
+  --color-gold-600: #b7944f;
+
+  --color-parchment-50: #faf7f0;
+  --color-parchment-100: #f5f0e8;
+  --color-parchment-200: #e9e0d0;
+
+  /* Semantic */
+  --color-pos: #3fb27f;
+  --color-pos-soft: #163a2c;
+  --color-warn: #d9a441;
+  --color-warn-soft: #3a2e15;
+  --color-neg: #e0564f;
+  --color-neg-soft: #3a1a18;
+  --color-info: #5b8fd6;
+  --color-accent2: #9a7fd1;
+
+  /* Typography */
+  --font-display: 'EB Garamond Variable', Georgia, serif;
+  --font-ui: 'DM Sans Variable', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
+
+  /* Type scale (fluid-ish, terminal-tight) */
+  --text-2xs: 0.6875rem;
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.875rem;
+  --text-lg: 1.0625rem;
+  --text-xl: 1.375rem;
+  --text-2xl: 1.875rem;
+  --text-3xl: 2.5rem;
+  --text-4xl: 3.25rem;
+
+  /* Radius */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 9px;
+  --radius-lg: 13px;
+  --radius-xl: 18px;
+
+  /* Motion */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --dur-fast: 140ms;
+  --dur-mid: 220ms;
+  --dur-slow: 320ms;
+}
+
+/* ── COMMAND (dark) — default ── */
+[data-theme='command'] {
+  --surface-base: #05070d;
+  --surface-sunken: #04060b;
+  --surface-raised: #0b1424;
+  --surface-overlay: #0e1a2e;
+  --surface-rail: #070d18;
+  --border-subtle: color-mix(in oklab, #3a4a66 26%, transparent);
+  --border-strong: color-mix(in oklab, #54678a 40%, transparent);
+  --text-primary: #eef2f8;
+  --text-secondary: #9fb0c8;
+  --text-tertiary: #66788f;
+  --text-on-accent: #0a1322;
+  --accent: var(--color-gold-500);
+  --accent-quiet: color-mix(in oklab, var(--color-gold-500) 16%, transparent);
+  --grid-line: color-mix(in oklab, #3a4a66 22%, transparent);
+  --shadow-card: 0 1px 0 0 color-mix(in oklab, #ffffff 5%, transparent) inset,
+    0 12px 30px -16px rgba(0, 0, 0, 0.7);
+  --glow-accent: 0 0 0 1px color-mix(in oklab, var(--color-gold-500) 40%, transparent),
+    0 0 22px -6px color-mix(in oklab, var(--color-gold-500) 55%, transparent);
+  color-scheme: dark;
+}
+
+/* ── PARCHMENT (light) ── */
+[data-theme='parchment'] {
+  --surface-base: #f5f0e8;
+  --surface-sunken: #ece5d8;
+  --surface-raised: #ffffff;
+  --surface-overlay: #ffffff;
+  --surface-rail: #0d1b2a;
+  --border-subtle: color-mix(in oklab, #1b2a4a 14%, transparent);
+  --border-strong: color-mix(in oklab, #1b2a4a 28%, transparent);
+  --text-primary: #14213a;
+  --text-secondary: #4a5a76;
+  --text-tertiary: #8392a8;
+  --text-on-accent: #0a1322;
+  --accent: var(--color-gold-600);
+  --accent-quiet: color-mix(in oklab, var(--color-gold-600) 16%, transparent);
+  --grid-line: color-mix(in oklab, #1b2a4a 10%, transparent);
+  --shadow-card: 0 1px 2px rgba(20, 33, 58, 0.08), 0 10px 26px -18px rgba(20, 33, 58, 0.35);
+  --glow-accent: 0 0 0 1px color-mix(in oklab, var(--color-gold-600) 45%, transparent),
+    0 0 18px -8px color-mix(in oklab, var(--color-gold-600) 50%, transparent);
+  color-scheme: light;
+}
+
+@layer base {
+  * {
+    border-color: var(--border-subtle);
+  }
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    margin: 0;
+    background: var(--surface-base);
+    color: var(--text-primary);
+    font-family: var(--font-ui);
+    font-size: var(--text-base);
+    line-height: 1.5;
+    font-feature-settings: 'cv05' 1;
+  }
+  /* Every number is mono + tabular by default when tagged. */
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1, 'zero' 1;
+    letter-spacing: -0.01em;
+  }
+  .display {
+    font-family: var(--font-display);
+    letter-spacing: -0.01em;
+  }
+  ::selection {
+    background: var(--accent-quiet);
+  }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+}
+
+/* Provenance affordance: confirmed = solid underline, derived/estimated = dotted. */
+.prov-confirmed {
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--accent) 55%, transparent);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+.prov-estimated {
+  text-decoration: underline dotted;
+  text-decoration-color: color-mix(in oklab, var(--color-warn) 70%, transparent);
+  text-underline-offset: 3px;
+}
+
+/* ── Command palette (cmdk) ── */
+[cmdk-overlay] {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: color-mix(in oklab, #000 56%, transparent);
+  backdrop-filter: blur(5px);
+}
+[cmdk-dialog] {
+  position: fixed;
+  z-index: 61;
+  top: 13vh;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(640px, 92vw);
+}
+.ora-cmdk {
+  background: var(--surface-overlay);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 28px 70px -24px rgba(0, 0, 0, 0.75);
+  overflow: hidden;
+}
+.ora-cmdk [cmdk-input] {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  padding: 15px 18px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.ora-cmdk [cmdk-input]::placeholder {
+  color: var(--text-tertiary);
+}
+.ora-cmdk [cmdk-list] {
+  max-height: min(430px, 60vh);
+  overflow: auto;
+  padding: 6px;
+  scroll-padding-block: 8px;
+}
+.ora-cmdk [cmdk-group-heading] {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  padding: 10px 10px 5px;
+}
+.ora-cmdk [cmdk-item] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 13.5px;
+}
+.ora-cmdk [cmdk-item][data-selected='true'] {
+  background: var(--accent-quiet);
+  color: var(--text-primary);
+}
+.ora-cmdk [cmdk-item][data-selected='true'] .cmdk-sub {
+  color: var(--text-secondary);
+}
+.ora-cmdk [cmdk-empty] {
+  padding: 30px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+/* ── Data table ── */
+.ora-table {
+  font-size: 12.5px;
+}
+.ora-table tbody tr:hover {
+  background: var(--surface-overlay);
+}
+
+/* ── Density (comfortable | compact) ── */
+[data-density='compact'] .ora-table td {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+[data-density='compact'] .ora-table th {
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+[data-density='compact'] .ora-table {
+  font-size: 11.75px;
+}
+[data-density='compact'] .density-pad {
+  padding: 11px 13px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
