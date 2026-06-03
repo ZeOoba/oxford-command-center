@@ -1,5 +1,16 @@
 # Changelog
 
+## Phase 6 (slice 4) — M365 To-Do → Tasks (2026-06-03)
+
+- `server/sources/m365-tasks.ts`: pulls open Microsoft 365 To-Do tasks via Graph
+  (`/me/todo/lists` → `/tasks`), maps them to the Task contract (HTML stripped; due date →
+  overdue/pending; completed → done), and prepends them to the workbook checklist so they
+  surface in the Tasks module. Bounded (10 lists / 50 tasks each / 100 total).
+- Graceful — no `GRAPH_TOKEN` (or any Graph error) → `[]`, workbook tasks untouched. Server-only.
+- Activation needs a Graph bearer token; delegated tokens are short-lived, so unattended use
+  should set `GRAPH_TOKEN` from an app-registration client-credentials flow (noted in source).
+- Tests: mapping, overdue detection, completed→done, empty-title drop, graceful-empty (81 total).
+
 ## Phase 6 (slice 3) — Document RAG (2026-06-03)
 
 - `server/sources/documents.ts`: indexes a configured `DOCUMENTS_DIR` (PDF via pdf-parse, plus
