@@ -299,6 +299,10 @@ describe('generateInsights', () => {
     });
     const ins = generateInsights(s);
     expect(ins.some((i) => i.category === 'debt' && i.severity === 'critical')).toBe(true);
+    // Defect 6: balloon figure is full precision ($980,000), never compact ($980K), so it
+    // matches the loan drawer's Current Balance and never reads as two different numbers.
+    const balloon = ins.find((i) => i.category === 'debt');
+    expect(balloon?.metric).toBe('$980,000');
     expect(ins.some((i) => i.category === 'lease' && /expired/i.test(i.title))).toBe(true);
     expect(ins.some((i) => i.category === 'insurance' && i.severity === 'critical')).toBe(true);
     // critical sorts before info

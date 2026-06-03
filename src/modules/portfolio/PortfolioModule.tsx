@@ -53,6 +53,10 @@ export function PortfolioModule() {
         <KpiStat label="Weighted Cap Rate" value={k.weightedCapRate.value === null ? null : k.weightedCapRate.value * 100} format={(n) => (n === null ? '—' : `${n.toFixed(2)}%`)} prov={k.weightedCapRate.prov} accentColor="var(--color-accent2)" />
       </div>
 
+      <p className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+        {fmtNum(k.propertyCount.value)} investment assets · the Sepich Portfolio bundles 8 buildings as one row · SF and value are Oxford-share.
+      </p>
+
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_320px]">
         <Card>
           <CardHeader title="Property Detail — All Assets" trailing={<Badge tone="gold">{props.length} properties</Badge>} />

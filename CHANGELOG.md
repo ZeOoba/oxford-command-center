@@ -1,5 +1,18 @@
 # Changelog
 
+## Phase 4 — Data-integrity polish (2026-06-03)
+
+- **#6 balloon precision (verified, then fixed).** Confirmed via the live Loan Index that it has **no
+  balloon-payment column** — the `$973,606` payoff lives only in a Monthly-Checklist task note, so a
+  typed `balloonPayment` field would be fabricated and was NOT added. Instead standardized the
+  current-balance figure to full precision ($980,773) in the balloon insight and the Debt "Balloon
+  watch" so it matches the loan drawer and never reads as two different numbers ($981K vs $980,773).
+  Test asserts the balloon metric is full precision.
+- **#7 count unit label.** Added an explicit caption to the Portfolio view: "N investment assets · the
+  Sepich Portfolio bundles 8 buildings as one row · SF and value are Oxford-share."
+- **#8 drawer responsive.** Defensive fix: drawer detail values now wrap (`overflow-wrap: anywhere`,
+  `min-w-0`) and labels don't shrink, so long emails/notes can't clip at narrow widths.
+
 ## Phase 3 — Tool-using streaming agent (2026-06-03)
 
 - **Rebuilt `server/ai/` into a tool-using agent** (`agent.ts` + `tools.ts`), runtime-agnostic
