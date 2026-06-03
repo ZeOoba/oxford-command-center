@@ -1,7 +1,7 @@
 import { AlertCircle } from 'lucide-react';
 import { useSnapshot, useAnalytics } from '@/data/queries';
 import { useUi } from '@/brain/ui-context';
-import { fmtUsdCompact, fmtPct, fmtDate, fmtMonths } from '@analytics/index';
+import { fmtUsd, fmtUsdCompact, fmtPct, fmtDate, fmtMonths } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { DataTable, type Column } from '@/primitives/DataTable';
@@ -64,7 +64,7 @@ export function DebtModule() {
             <div>
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Balloon watch</div>
               <div className="text-xs" style={{ color: 'var(--text-tertiary)' }}>
-                {balloons.map((b) => `${b.name} — ${fmtUsdCompact(b.absBalance)} due ${fmtDate(b.maturity)}`).join(' · ')}
+                {balloons.map((b) => `${b.name} — ${fmtUsd(b.absBalance)} due ${fmtDate(b.maturity)}`).join(' · ')}
               </div>
             </div>
           </div>

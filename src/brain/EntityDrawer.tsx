@@ -141,10 +141,10 @@ function Panel({
                     className="flex items-center justify-between gap-4 py-2"
                     style={{ borderTop: i ? '1px solid var(--border-subtle)' : 'none' }}
                   >
-                    <dt className="num text-2xs uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>
+                    <dt className="num shrink-0 text-2xs uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>
                       {r.label}
                     </dt>
-                    <dd className="num text-right text-sm" style={{ color: 'var(--text-primary)' }}>
+                    <dd className="num text-right text-sm" style={{ color: 'var(--text-primary)', minWidth: 0, overflowWrap: 'anywhere' }}>
                       {r.value}
                     </dd>
                   </div>

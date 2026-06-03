@@ -8,7 +8,7 @@ import {
   type ScenarioName,
   type Confidence,
 } from '@contracts/index';
-import { fmtUsdCompact, fmtPct, fmtMonths, fmtDate } from './format';
+import { fmtUsd, fmtUsdCompact, fmtPct, fmtMonths, fmtDate } from './format';
 import type {
   AnalyticsBundle,
   DebtSummary,
@@ -214,8 +214,11 @@ export function generateInsights(s: PortfolioSnapshot): Insight[] {
         severity: l.monthsToMaturity <= 9 ? 'critical' : 'warning',
         category: 'debt',
         title: `Balloon due — ${l.name}`,
-        detail: `${fmtUsdCompact(l.absBalance)} balloon in ${fmtMonths(l.monthsToMaturity)} (${fmtDate(l.maturity)}). Prepare refinance or payoff.`,
-        metric: fmtUsdCompact(l.absBalance),
+        // Full precision (matches the loan drawer's Current Balance) so the same figure never
+        // reads as two different numbers ($981K vs $REDACTED-AMT). This is the current balance — the
+        // exact balloon-payoff-at-maturity is not a typed field in the Loan Index (Defect 6).
+        detail: `${fmtUsd(l.absBalance)} balance, balloon in ${fmtMonths(l.monthsToMaturity)} (${fmtDate(l.maturity)}). Prepare refinance or payoff.`,
+        metric: fmtUsd(l.absBalance),
         entityType: 'loan',
         entityId: l.id,
         action: { label: 'Open refi workspace', kind: 'open-refi' },
