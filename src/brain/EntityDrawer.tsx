@@ -1,7 +1,8 @@
 import { useEffect, type ReactNode } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { X } from 'lucide-react';
+import { X, Mail } from 'lucide-react';
 import type { PortfolioSnapshot } from '@contracts/index';
+import type { DraftRequest } from './draft';
 import {
   fmtUsd,
   fmtUsdCompact,
@@ -52,6 +53,8 @@ interface Content {
   rows: DetailRow[];
   chips: Chip[];
   extra?: ReactNode;
+  /** Draft-only CTAs (Phase 5). */
+  actions?: Array<{ label: string; draft: DraftRequest }>;
 }
 
 export function EntityDrawer() {
@@ -62,7 +65,7 @@ export function EntityDrawer() {
   return (
     <AnimatePresence>
       {open && data && ui.selected && (
-        <Panel content={resolve(ui.selected, data.snapshot)} onClose={ui.closeEntity} onOpen={ui.openEntity} />
+        <Panel content={resolve(ui.selected, data.snapshot)} onClose={ui.closeEntity} onOpen={ui.openEntity} onDraft={ui.openDraft} />
       )}
     </AnimatePresence>
   );
@@ -72,10 +75,12 @@ function Panel({
   content,
   onClose,
   onOpen,
+  onDraft,
 }: {
   content: Content | null;
   onClose: () => void;
   onOpen: (ref: EntityRef) => void;
+  onDraft: (req: DraftRequest) => void;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -133,6 +138,20 @@ function Panel({
             </header>
 
             <div className="flex-1 overflow-y-auto px-5 py-4">
+              {content.actions && content.actions.length > 0 && (
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {content.actions.map((a, i) => (
+                    <button
+                      key={i}
+                      onClick={() => onDraft(a.draft)}
+                      className="flex items-center gap-1.5 rounded-[var(--radius-sm)] px-3 py-1.5 text-xs font-semibold"
+                      style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--accent)' }}
+                    >
+                      <Mail size={13} /> {a.label}
+                    </button>
+                  ))}
+                </div>
+              )}
               {content.extra && <div className="mb-4">{content.extra}</div>}
               <dl className="flex flex-col">
                 {content.rows.map((r, i) => (
@@ -257,6 +276,7 @@ function resolve(sel: EntityRef, s: PortfolioSnapshot): Content | null {
           { label: 'Escalation Date', value: fmtDate(l.escalationDate) },
         ],
         chips: prop ? [{ ref: { type: 'property', id: prop.id }, label: prop.name }] : [],
+        actions: [{ label: 'Draft renewal', draft: { kind: 'renewal', entity: { type: 'lease', id: l.id } } }],
       };
     }
     case 'loan': {
@@ -285,6 +305,7 @@ function resolve(sel: EntityRef, s: PortfolioSnapshot): Content | null {
           ...(prop ? [{ ref: { type: 'property' as const, id: prop.id }, label: prop.name }] : []),
           ...counterpartyChips(s, 'loan', ln.id),
         ],
+        actions: [{ label: 'Draft refinance note', draft: { kind: 'refi', entity: { type: 'loan', id: ln.id } } }],
       };
     }
     case 'deal': {
@@ -334,6 +355,7 @@ function resolve(sel: EntityRef, s: PortfolioSnapshot): Content | null {
           { label: 'Notes', value: p.notes ?? '—' },
         ],
         chips: counterpartyChips(s, 'insurance', p.id),
+        actions: [{ label: 'Draft carrier note', draft: { kind: 'insurance', entity: { type: 'insurance', id: p.id } } }],
       };
     }
     case 'cashEntity': {
@@ -408,6 +430,7 @@ function resolve(sel: EntityRef, s: PortfolioSnapshot): Content | null {
           ...(cp.notes ? [{ label: 'Notes', value: cp.notes }] : []),
         ],
         chips,
+        actions: [{ label: 'Draft email', draft: { kind: 'general', entity: { type: 'counterparty', id: cp.id } } }],
       };
     }
     default:

@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "concurrently -k -n server,web -c magenta,cyan \"npm:dev:server\" \"npm:dev:web\"",
     "dev:web": "vite",
-    "dev:server": "tsx watch server/index.ts",
+    "dev:server": "tsx watch --env-file-if-exists=.env server/index.ts",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
     "preview": "vite preview",
     "extract": "tsx scripts/extract-workbook.ts",

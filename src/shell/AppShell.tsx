@@ -8,6 +8,7 @@ import { useSnapshot } from '@/data/queries';
 import { useUi } from '@/brain/ui-context';
 import { CommandPalette } from '@/brain/CommandPalette';
 import { EntityDrawer } from '@/brain/EntityDrawer';
+import { DraftPanel } from '@/brain/DraftPanel';
 import { AiPanel } from '@/brain/AiPanel';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ModuleLoading, ModuleError } from './ModuleFallback';
@@ -83,6 +84,7 @@ export function AppShell() {
 
       <CommandPalette />
       <EntityDrawer />
+      <DraftPanel />
       <AiPanel />
     </div>
   );
