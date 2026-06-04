@@ -7,8 +7,16 @@ import { relativeTime } from '@/lib/time';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 
+interface BriefHealth {
+  ranAt: string;
+  briefSent: boolean;
+  alertsSent: number;
+  failures: string[];
+}
+
 interface HealthResponse {
   ai?: { configured: boolean; model: string };
+  brief?: BriefHealth | null;
 }
 type Tone = 'ok' | 'warn' | 'error' | 'info';
 
@@ -112,6 +120,44 @@ export function HealthModule() {
             )}
           </ul>
         </Card>
+
+        {!healthErr && (
+          <Card>
+            {(() => {
+              const b = health?.brief;
+              const briefBadgeTone: 'green' | 'red' | 'neutral' =
+                b == null ? 'neutral' : b.failures.length > 0 ? 'red' : 'green';
+              const briefBadgeLabel = b == null ? 'Not yet run' : b.failures.length > 0 ? 'Failures' : 'OK';
+              return (
+                <>
+                  <CardHeader title="Daily Brief" trailing={<Badge tone={briefBadgeTone}>{briefBadgeLabel}</Badge>} />
+                  <ul className="flex flex-col">
+                    {b == null ? (
+                      <Row tone="info" label="Status" value="No run recorded yet" />
+                    ) : (
+                      <>
+                        <Row tone="info" label="Last run" value={relativeTime(b.ranAt)} />
+                        <Row
+                          tone={b.briefSent ? 'ok' : 'warn'}
+                          label="Brief sent"
+                          value={b.briefSent ? 'Yes' : 'No'}
+                        />
+                        <Row
+                          tone={b.alertsSent > 0 ? 'ok' : 'info'}
+                          label="Alerts sent"
+                          value={String(b.alertsSent)}
+                        />
+                        {b.failures.map((f, i) => (
+                          <Row key={i} tone="error" label={`Failure ${i + 1}`} value={f} />
+                        ))}
+                      </>
+                    )}
+                  </ul>
+                </>
+              );
+            })()}
+          </Card>
+        )}
       </div>
     </div>
   );
