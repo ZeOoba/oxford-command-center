@@ -8,6 +8,7 @@ vi.mock('../../src/shell/ViewToggle', () => ({ ViewToggle: () => <div data-testi
 vi.mock('../../src/shell/ThemeToggle', () => ({ ThemeToggle: () => <div data-testid="theme" /> }));
 vi.mock('../../src/shell/DensityToggle', () => ({ DensityToggle: () => <div data-testid="density" /> }));
 vi.mock('../../src/primitives/StatusPill', () => ({ StatusPill: () => <div data-testid="status" /> }));
+vi.mock('../../src/shell/AlertBell', () => ({ AlertBell: () => <div data-testid="alert-bell" /> }));
 
 import { TopBar } from '../../src/shell/TopBar';
 
