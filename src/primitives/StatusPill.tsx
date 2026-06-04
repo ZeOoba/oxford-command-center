@@ -2,6 +2,7 @@ import { motion } from 'framer-motion';
 import { useBrain } from '@/data/brain-context';
 import { isStill } from '@/lib/stillMode';
 import { computeFreshness, type Freshness } from '@/lib/freshness';
+import { useNow } from '@/lib/useNow';
 
 const COLOR: Record<Freshness['kind'], string> = {
   live: 'var(--color-pos)',
@@ -14,7 +15,7 @@ const COLOR: Record<Freshness['kind'], string> = {
 
 export function StatusPill() {
   const { state } = useBrain();
-  const f = computeFreshness(state);
+  const f = computeFreshness(state, useNow());
   const color = COLOR[f.kind];
   // Only a genuine live/refreshing feed pulses. A static bake never animates as "live".
   const animate = (f.kind === 'live' || f.kind === 'refreshing') && !isStill();
