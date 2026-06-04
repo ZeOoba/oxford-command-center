@@ -18,7 +18,9 @@ import { SEED_DEALS } from '../../src/data/seed-deals';
 
 // Verified via the Notion connection 2026-06-03: DB "Acquisition Pipeline Tracker".
 const DEALS_DB_ID = process.env.NOTION_DEALS_DB ?? '46c8a5c6-8b37-4c53-a10d-0f55c97613e5';
-const NOTION_VERSION = process.env.NOTION_VERSION ?? '2022-06-28';
+// 2025-09-03 introduced multi-data-source databases; the old /databases/{id}/query 400s on them.
+// We discover the DB's data source(s) and query /data_sources/{id}/query instead.
+const NOTION_VERSION = process.env.NOTION_VERSION ?? '2025-09-03';
 
 /**
  * Secondary safety net: a Notion-only deal whose name matches one of these (comma-separated,
@@ -146,26 +148,51 @@ export function mergeDeals(seed: Deal[], notion: Deal[]): Deal[] {
   return [...merged, ...extras];
 }
 
-/** Fetch the Notion deals DB (all pages). Throws on non-ok so callers can fall back. */
+const NOTION = 'https://api.notion.com/v1';
+const notionHeaders = (token: string) => ({
+  authorization: `Bearer ${token}`,
+  'notion-version': NOTION_VERSION,
+  'content-type': 'application/json',
+});
+
+/** Resolve the deals database's data source id(s). Env override skips the discovery call. */
+async function resolveDataSourceIds(token: string): Promise<string[]> {
+  const override = process.env.NOTION_DEALS_DATA_SOURCE;
+  if (override) return override.split(',').map((s) => s.trim()).filter(Boolean);
+  const res = await fetch(`${NOTION}/databases/${DEALS_DB_ID}`, { headers: notionHeaders(token) });
+  if (!res.ok) throw new Error(`Notion db ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+  const db = (await res.json()) as { data_sources?: Array<{ id?: string }> };
+  return (db.data_sources ?? []).map((d) => d.id).filter((x): x is string => !!x);
+}
+
+/**
+ * Fetch the Notion deals DB (all pages across its data sources). Throws on non-ok so callers can
+ * fall back. Non-deal rows (no "Deal Name" title) map to null and are skipped, so querying every
+ * data source is safe; results are de-duplicated by id.
+ */
 async function fetchNotionDeals(token: string): Promise<Deal[]> {
-  const out: Deal[] = [];
-  let cursor: string | undefined;
-  for (let i = 0; i < 5; i++) {
-    const res = await fetch(`https://api.notion.com/v1/databases/${DEALS_DB_ID}/query`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'notion-version': NOTION_VERSION, 'content-type': 'application/json' },
-      body: JSON.stringify(cursor ? { page_size: 100, start_cursor: cursor } : { page_size: 100 }),
-    });
-    if (!res.ok) throw new Error(`Notion ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
-    const data = (await res.json()) as { results?: NotionPage[]; has_more?: boolean; next_cursor?: string };
-    for (const page of data.results ?? []) {
-      const d = mapNotionPage(page);
-      if (d) out.push(d);
+  const dataSourceIds = await resolveDataSourceIds(token);
+  if (!dataSourceIds.length) throw new Error('Notion: no data sources on deals database');
+  const byId = new Map<string, Deal>();
+  for (const dsId of dataSourceIds) {
+    let cursor: string | undefined;
+    for (let i = 0; i < 5; i++) {
+      const res = await fetch(`${NOTION}/data_sources/${dsId}/query`, {
+        method: 'POST',
+        headers: notionHeaders(token),
+        body: JSON.stringify(cursor ? { page_size: 100, start_cursor: cursor } : { page_size: 100 }),
+      });
+      if (!res.ok) throw new Error(`Notion ds ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+      const data = (await res.json()) as { results?: NotionPage[]; has_more?: boolean; next_cursor?: string };
+      for (const page of data.results ?? []) {
+        const d = mapNotionPage(page);
+        if (d) byId.set(d.id, d);
+      }
+      if (!data.has_more || !data.next_cursor) break;
+      cursor = data.next_cursor;
     }
-    if (!data.has_more || !data.next_cursor) break;
-    cursor = data.next_cursor;
   }
-  return out;
+  return [...byId.values()];
 }
 
 /** The deals source: live Notion (merged onto seed) when configured, else the seed pipeline. */
