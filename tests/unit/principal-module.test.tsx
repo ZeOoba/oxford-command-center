@@ -9,13 +9,16 @@ function bundle(): { snapshot: PortfolioSnapshot; analytics: AnalyticsBundle } {
   return { snapshot, analytics };
 }
 
+// KpiStat renders format(value), so a KPI must carry a non-null value + a formatter (a null value
+// short-circuits KpiStat to "—"). We assert the formatted output the card will actually show.
 describe('principalKpis', () => {
-  it('formats the headline figures', () => {
+  it('carries value+format that produce the headline figures', () => {
     const { snapshot, analytics } = bundle();
     const k = principalKpis(snapshot, analytics);
-    expect(k.find((x) => x.label === 'NOI')?.display).toMatch(/\$3\.9/);
-    // fmtPct(0.94) returns '94.0%' (digits=1 default) — adjusted from spec's '94%'
-    expect(k.find((x) => x.label === 'Occupancy')?.display).toBe('94.0%');
-    expect(k.find((x) => x.label === 'Cash')?.display).toMatch(/\$7\.8/);
+    const get = (label: string) => { const x = k.find((y) => y.label === label)!; return x.format(x.value); };
+    expect(get('NOI')).toMatch(/\$3\.9/);
+    expect(get('Occupancy')).toBe('94.0%'); // 0.94 → ×100 → "94.0%"
+    expect(get('Cash')).toMatch(/\$7\.8/);
+    expect(k.every((x) => x.value !== null)).toBe(true); // none would render "—"
   });
 });
