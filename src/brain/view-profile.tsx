@@ -1,16 +1,47 @@
 /* eslint-disable react-refresh/only-export-components -- store helpers + context + Provider colocated by design */
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 
 export type ViewProfile = 'acquisitions' | 'principal';
 const KEY = 'ora-view';
 const PROFILES: ViewProfile[] = ['acquisitions', 'principal'];
 
-export function loadProfile(): ViewProfile {
+export function readStoredProfile(): ViewProfile | null {
   try {
     const v = localStorage.getItem(KEY);
     if (v && (PROFILES as string[]).includes(v)) return v as ViewProfile;
   } catch { /* localStorage unavailable */ }
-  return 'acquisitions';
+  return null;
+}
+
+export function loadProfile(): ViewProfile {
+  return readStoredProfile() ?? 'acquisitions';
+}
+
+const EMAIL_PROFILE: Record<string, ViewProfile> = {
+  'ggoldberg@oxfordra.net': 'acquisitions',
+  'egoldberg@oxfordra.net': 'principal',
+};
+
+export function profileForEmail(email: string | null | undefined): ViewProfile {
+  const e = (email ?? '').trim().toLowerCase();
+  return EMAIL_PROFILE[e] ?? 'acquisitions';
+}
+
+/**
+ * Fetch the Access-authenticated identity from the whoami Pages Function and map
+ * it to a profile. Returns null on any failure (404 on local dev, network error,
+ * unparseable body) — meaning "no detection signal, keep the current profile".
+ */
+export async function fetchIdentityProfile(): Promise<ViewProfile | null> {
+  try {
+    const res = await fetch('/api/whoami');
+    if (!res.ok) return null;
+    const data = (await res.json()) as { email?: unknown };
+    const email = typeof data.email === 'string' ? data.email : null;
+    return profileForEmail(email);
+  } catch {
+    return null;
+  }
 }
 
 export function saveProfile(p: ViewProfile): void {
@@ -23,6 +54,21 @@ const ViewProfileContext = createContext<Ctx | null>(null);
 export function ViewProfileProvider({ children }: { children: ReactNode }) {
   const [profile, setProfileState] = useState<ViewProfile>(() => loadProfile());
   const setProfile = (p: ViewProfile) => { setProfileState(p); saveProfile(p); };
+
+  useEffect(() => {
+    // An explicit stored choice always wins — never auto-detect over it.
+    if (readStoredProfile() !== null) return;
+    let cancelled = false;
+    void fetchIdentityProfile().then((detected) => {
+      if (cancelled) return;
+      // Re-check: the user may have toggled while the fetch was in flight.
+      if (readStoredProfile() !== null) return;
+      if (detected === null) return;
+      setProfileState(detected); // in-memory only — do NOT persist
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   return <ViewProfileContext.Provider value={{ profile, setProfile }}>{children}</ViewProfileContext.Provider>;
 }
 
