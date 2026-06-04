@@ -1,5 +1,21 @@
 # Changelog
 
+## Leases — operational rent roll + critical-dates engine (2026-06-03)
+
+- **Critical Dates engine** (`analytics/engine.ts → criticalDates`): derives the actionable lease
+  calendar — renewal/termination **notice deadlines** (assumed 90-day window, flagged estimated),
+  **expirations** (including overdue holdovers as negative days), and **escalation** effective dates
+  — over a 12-month horizon, sorted by urgency. Added to `AnalyticsBundle`; rendered as a new card on
+  `/leases` with per-event tone, overdue count, and click-through to the lease drawer.
+- **Operational rent roll** (`modules/leases/LeasesModule.tsx`): fuzzy search (fuse.js over
+  tenant/company/property/unit) + status / property / expiry-window filters + one-click **CSV export**
+  of the filtered set (`lib/export.downloadCsv`), with a live "_n_ of 137" count and filtered-rent total.
+- **Fix — rollover horizon no longer drops long-dated rent.** `rolloverSchedule` bucketed only
+  `baseYear … baseYear+4` and silently discarded anything later; beyond-horizon expirations now roll
+  into a `YYYY+` catch-all (e.g. the 2033 leases that were invisible now appear as `2030+`, $934K).
+- Tests: `criticalDates` (sort/horizon/overdue-holdover/past-escalation-drop) + rollover catch-all
+  (90 total). Verified live against the baked 137-lease snapshot (filter, export, drill-through).
+
 ## Phase 6 (slice 4) — M365 To-Do → Tasks (2026-06-03)
 
 - `server/sources/m365-tasks.ts`: pulls open Microsoft 365 To-Do tasks via Graph

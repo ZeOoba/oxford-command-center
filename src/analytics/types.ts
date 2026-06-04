@@ -42,10 +42,26 @@ export interface PortfolioKpis {
 }
 
 export interface RolloverBucket {
-  period: string; // e.g. "2026 H2", "2027"
+  period: string; // e.g. "2026 H2", "2027", "2030+" (beyond-horizon catch-all)
   count: number;
   expiringSf: number;
   expiringRent: number;
+}
+
+export type CriticalDateKind = 'Notice Deadline' | 'Expiration' | 'Escalation';
+
+export interface CriticalDate {
+  id: string;
+  leaseId: string;
+  tenant: string;
+  propertyKey: string;
+  unit: string | null;
+  kind: CriticalDateKind;
+  date: string; // ISO (YYYY-MM-DD)
+  daysToDate: number; // signed — negative is overdue (e.g. a holdover lease)
+  annualRent: number;
+  /** Present on Notice Deadline rows — the assumed window. Derived/estimated, not from source. */
+  noticeWindowDays?: number;
 }
 
 export interface TenantShare {
@@ -82,6 +98,7 @@ export interface AnalyticsBundle {
   kpis: PortfolioKpis;
   leaseStatus: Record<string, number>;
   rollover: RolloverBucket[];
+  criticalDates: CriticalDate[];
   revenueAtRisk: { within90dRent: number; expiredRent: number; pctOfRent: number };
   topTenants: TenantShare[];
   tenantHHI: number;

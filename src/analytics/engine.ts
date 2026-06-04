@@ -11,6 +11,7 @@ import {
 import { fmtUsd, fmtUsdCompact, fmtPct, fmtMonths, fmtDate } from './format';
 import type {
   AnalyticsBundle,
+  CriticalDate,
   DebtSummary,
   Insight,
   MarketSlice,
@@ -21,9 +22,18 @@ import type {
 } from './types';
 
 const DERIVED = 'Analytics engine (derived from Master Workbook)';
+const DAY_MS = 86_400_000;
 const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
 const yearsBetween = (isoEnd: string, isoFrom: string): number =>
-  (new Date(isoEnd).getTime() - new Date(isoFrom).getTime()) / (365.25 * 86_400_000);
+  (new Date(isoEnd).getTime() - new Date(isoFrom).getTime()) / (365.25 * DAY_MS);
+const daysBetween = (isoTarget: string, isoFrom: string): number =>
+  Math.round((new Date(isoTarget).getTime() - new Date(isoFrom).getTime()) / DAY_MS);
+
+/**
+ * Default renewal/termination notice window assumed when a lease has no explicit notice
+ * provision in the source. Critical-date rows derived from it are estimates, not confirmed.
+ */
+export const DEFAULT_NOTICE_WINDOW_DAYS = 90;
 
 /**
  * Apply a scenario's revenue / vacancy / exit-cap factors to the portfolio.
@@ -95,7 +105,9 @@ export function rolloverSchedule(leases: Lease[], asOf: string, horizonYears = 4
   const buckets = new Map<string, RolloverBucket>();
   const keyFor = (d: Date): string | null => {
     const y = d.getUTCFullYear();
-    if (y < baseYear || y > baseYear + horizonYears) return null;
+    if (y < baseYear) return null;
+    // Beyond the horizon: bucket into a catch-all instead of silently dropping the rent.
+    if (y > baseYear + horizonYears) return `${baseYear + horizonYears}+`;
     if (y === baseYear) return `${y} ${d.getUTCMonth() < 6 ? 'H1' : 'H2'}`;
     return `${y}`;
   };
@@ -120,6 +132,56 @@ export function revenueAtRisk(leases: Lease[]) {
   );
   const expiredRent = sum(leases.filter((l) => l.status === 'Expired').map((l) => l.annualRent));
   return { within90dRent, expiredRent, pctOfRent: totalRent ? within90dRent / totalRent : 0 };
+}
+
+/**
+ * The actionable date calendar for the lease book: renewal/termination notice deadlines,
+ * expirations (including overdue holdovers), and escalation effective dates — each as a row
+ * sorted by urgency (soonest/overdue first). Notice deadlines are derived from a default
+ * window when the source carries no explicit provision; escalations and notice deadlines that
+ * have already passed are omitted (no longer actionable), but overdue expirations are kept
+ * because a holdover tenancy is still an open item.
+ */
+export function criticalDates(
+  leases: Lease[],
+  asOf: string,
+  opts: { horizonDays?: number; noticeWindowDays?: number } = {},
+): CriticalDate[] {
+  const horizonDays = opts.horizonDays ?? 365;
+  const noticeWindowDays = opts.noticeWindowDays ?? DEFAULT_NOTICE_WINDOW_DAYS;
+  const within = (days: number) => days <= horizonDays;
+  const out: CriticalDate[] = [];
+
+  for (const l of leases) {
+    const tenant = l.company ?? l.tenantName;
+    const base = { leaseId: l.id, tenant, propertyKey: l.propertyKey, unit: l.unit, annualRent: l.annualRent };
+
+    if (l.leaseEnd) {
+      const expDays = daysBetween(l.leaseEnd, asOf);
+      // Expiration: upcoming within horizon, or overdue (holdover).
+      if (within(expDays)) {
+        out.push({ id: `exp-${l.id}`, kind: 'Expiration', date: l.leaseEnd, daysToDate: expDays, ...base });
+      }
+      // Notice deadline = expiration − notice window; only while still ahead of us.
+      const noticeDate = new Date(new Date(l.leaseEnd).getTime() - noticeWindowDays * DAY_MS)
+        .toISOString()
+        .slice(0, 10);
+      const noticeDays = daysBetween(noticeDate, asOf);
+      if (noticeDays >= 0 && within(noticeDays)) {
+        out.push({ id: `notice-${l.id}`, kind: 'Notice Deadline', date: noticeDate, daysToDate: noticeDays, noticeWindowDays, ...base });
+      }
+    }
+
+    // Escalation effective date — future only (a past escalation has already applied).
+    if (l.escalationDate) {
+      const escDays = daysBetween(l.escalationDate, asOf);
+      if (escDays >= 0 && within(escDays)) {
+        out.push({ id: `esc-${l.id}`, kind: 'Escalation', date: l.escalationDate, daysToDate: escDays, ...base });
+      }
+    }
+  }
+
+  return out.sort((a, b) => a.daysToDate - b.daysToDate);
 }
 
 // ── Concentration ─────────────────────────────────────────────────────────────
@@ -323,6 +385,7 @@ export function buildAnalytics(snapshot: PortfolioSnapshot, scenario: ScenarioNa
     kpis: portfolioKpis(s, scenario),
     leaseStatus: leaseStatusBreakdown(s.leases),
     rollover: rolloverSchedule(s.leases, s.meta.asOf),
+    criticalDates: criticalDates(s.leases, s.meta.asOf),
     revenueAtRisk: revenueAtRisk(s.leases),
     topTenants: topTenants(s.leases),
     tenantHHI: tenantHHI(s.leases),

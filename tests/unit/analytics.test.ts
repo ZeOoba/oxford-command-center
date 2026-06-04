@@ -6,6 +6,7 @@ import {
   tenantHHI,
   topTenants,
   rolloverSchedule,
+  criticalDates,
   debtSummary,
   marketAllocation,
   generateInsights,
@@ -207,6 +208,42 @@ describe('rolloverSchedule', () => {
     expect(periods).toContain('2026 H1');
     expect(periods).toContain('2026 H2');
     expect(periods).toContain('2027');
+  });
+  it('buckets leases beyond the horizon into a catch-all instead of dropping them', () => {
+    const r = rolloverSchedule([lease({ leaseEnd: '2035-01-01', sf: 50, annualRent: 500 })], '2026-01-01');
+    const tail = r.find((b) => b.period === '2030+');
+    expect(tail?.expiringRent).toBe(500);
+    // catch-all sorts last
+    expect(r[r.length - 1]!.period).toBe('2030+');
+  });
+});
+
+describe('criticalDates', () => {
+  it('emits notice deadline, expiration and escalation rows, sorted by urgency', () => {
+    const cds = criticalDates(
+      [lease({ id: 'l1', company: 'Acme', leaseEnd: '2026-06-01', escalationDate: '2026-03-01', annualRent: 100 })],
+      '2026-01-01',
+    );
+    const kinds = cds.map((c) => c.kind);
+    expect(kinds).toContain('Expiration');
+    expect(kinds).toContain('Notice Deadline');
+    expect(kinds).toContain('Escalation');
+    for (let i = 1; i < cds.length; i++) {
+      expect(cds[i]!.daysToDate).toBeGreaterThanOrEqual(cds[i - 1]!.daysToDate);
+    }
+    expect(cds.find((c) => c.kind === 'Notice Deadline')?.noticeWindowDays).toBe(90);
+  });
+  it('keeps overdue expirations (holdover) as negative days but drops past escalations/notice', () => {
+    const cds = criticalDates(
+      [lease({ id: 'l2', leaseEnd: '2025-11-01', escalationDate: '2025-01-01', annualRent: 50 })],
+      '2026-01-01',
+    );
+    expect(cds.some((c) => c.kind === 'Expiration' && c.daysToDate < 0)).toBe(true);
+    expect(cds.some((c) => c.kind === 'Escalation')).toBe(false);
+    expect(cds.some((c) => c.kind === 'Notice Deadline')).toBe(false);
+  });
+  it('excludes events beyond the horizon', () => {
+    expect(criticalDates([lease({ leaseEnd: '2030-01-01', annualRent: 10 })], '2026-01-01', { horizonDays: 365 })).toHaveLength(0);
   });
 });
 
