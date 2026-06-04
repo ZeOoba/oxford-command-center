@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import {
@@ -6,11 +6,38 @@ import {
   saveProfile,
   readStoredProfile,
   profileForEmail,
+  fetchIdentityProfile,
   ViewProfileProvider,
   useViewProfile,
 } from '../../src/brain/view-profile';
 
 beforeEach(() => localStorage.clear());
+afterEach(() => vi.unstubAllGlobals());
+
+describe('fetchIdentityProfile', () => {
+  it('returns the mapped profile from the whoami email', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ email: 'egoldberg@oxfordra.net' }),
+    }));
+    await expect(fetchIdentityProfile()).resolves.toBe('principal');
+  });
+  it('returns null when the response is not ok', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) }));
+    await expect(fetchIdentityProfile()).resolves.toBeNull();
+  });
+  it('returns null when fetch rejects', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network')));
+    await expect(fetchIdentityProfile()).resolves.toBeNull();
+  });
+  it('maps a null email (absent header) to the acquisitions fallback', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ email: null }),
+    }));
+    await expect(fetchIdentityProfile()).resolves.toBe('acquisitions');
+  });
+});
 
 describe('view-profile store', () => {
   it('defaults to acquisitions when nothing is stored', () => {
