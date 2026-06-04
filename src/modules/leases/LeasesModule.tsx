@@ -206,14 +206,14 @@ export function LeasesModule() {
         />
 
         <div className="flex flex-wrap items-center gap-2 px-4 py-2.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-          <div className="relative">
+          <div className="relative w-full sm:w-auto">
             <Search size={13} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2" style={{ color: 'var(--text-tertiary)' }} />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search tenant or property…"
               aria-label="Search leases"
-              className={`${fieldCls} w-56 pl-7`}
+              className={`${fieldCls} w-full pl-7 sm:w-56`}
               style={fieldStyle}
             />
           </div>
@@ -223,7 +223,7 @@ export function LeasesModule() {
             {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
           </select>
 
-          <select aria-label="Filter by property" value={property} onChange={(e) => setProperty(e.target.value)} className={`${fieldCls} max-w-44`} style={fieldStyle}>
+          <select aria-label="Filter by property" value={property} onChange={(e) => setProperty(e.target.value)} className={`${fieldCls} w-full sm:w-auto sm:max-w-44`} style={fieldStyle}>
             <option value="all">All properties</option>
             {properties.map((p) => <option key={p} value={p}>{p}</option>)}
           </select>
