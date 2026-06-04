@@ -10,7 +10,7 @@ import { ViewToggle } from './ViewToggle';
 import { ThemeToggle } from './ThemeToggle';
 import { DensityToggle } from './DensityToggle';
 
-export function TopBar({ title, asOf, onOpenSearch, onOpenNav }: { title: string; asOf: string; onOpenSearch?: () => void; onOpenNav?: () => void }) {
+export function TopBar({ title, asOf, onOpenSearch, onOpenNav, navOpen }: { title: string; asOf: string; onOpenSearch?: () => void; onOpenNav?: () => void; navOpen?: boolean }) {
   const { refresh, refreshing } = useBrain();
   const ui = useUi();
   const [moreOpen, setMoreOpen] = useState(false);
@@ -22,6 +22,7 @@ export function TopBar({ title, asOf, onOpenSearch, onOpenNav }: { title: string
       <button
         onClick={onOpenNav}
         aria-label="Open navigation"
+        aria-expanded={navOpen}
         className="grid h-8 w-8 shrink-0 place-items-center rounded-[var(--radius-sm)] lg:hidden"
         style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
       >

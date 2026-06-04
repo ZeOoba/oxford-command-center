@@ -18,7 +18,7 @@ export function Sidebar({ activeId, onSelect, collapsed, onToggle, mobileOpen, o
   const { profile } = useViewProfile();
   const ordered = orderedModules(profile);
   const groups = [...new Set(ordered.map((m) => m.group))];
-  const width = collapsed ? 60 : 212;
+  const width = mobileOpen ? 212 : collapsed ? 60 : 212;
   const handleSelect = (id: string) => {
     onSelect(id);
     onMobileClose();

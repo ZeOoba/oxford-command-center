@@ -60,6 +60,7 @@ export function AppShell() {
           asOf={data?.snapshot.meta.asOf ?? ''}
           onOpenSearch={ui.openPalette}
           onOpenNav={() => setMobileNavOpen(true)}
+          navOpen={mobileNavOpen}
         />
         <StaleBanner />
         <main className="flex-1 overflow-y-auto px-3 py-3 sm:px-4 lg:px-5 lg:py-5">
