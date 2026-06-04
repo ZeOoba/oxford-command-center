@@ -5,6 +5,7 @@ import { useBrain } from '@/data/brain-context';
 import { useUi } from '@/brain/ui-context';
 import { StatusPill } from '@/primitives/StatusPill';
 import { ScenarioSwitch } from './ScenarioSwitch';
+import { ViewToggle } from './ViewToggle';
 import { ThemeToggle } from './ThemeToggle';
 import { DensityToggle } from './DensityToggle';
 
@@ -47,6 +48,7 @@ export function TopBar({ title, asOf, onOpenSearch }: { title: string; asOf: str
           <span className="hidden sm:inline">Ask</span>
         </button>
 
+        <ViewToggle />
         <ScenarioSwitch />
         <StatusPill />
 
