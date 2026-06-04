@@ -53,7 +53,7 @@ export async function runBrief(
     const r = await send(
       renderBrief({
         asOf: snapshot.meta.asOf,
-        freshness: snapshot.dataQuality.length ? 'has data-quality flags' : 'clean',
+        freshness: snapshot.dataQuality.length ? `${snapshot.dataQuality.length} data-quality flag(s)` : 'no data-quality flags',
         insights,
         criticalDates,
         dealCounts,

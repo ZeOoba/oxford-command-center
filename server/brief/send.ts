@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
 import type { Email } from './render';
 
 const SEND_SCRIPT = process.env.BRIEF_SEND_SCRIPT ?? '_shared/send-via-outlook.ps1';
@@ -10,12 +12,25 @@ export interface SendResult { ok: boolean; via: 'com' | 'outbox'; error?: string
 interface SendDeps { send?: (email: Email, to: string[]) => Promise<boolean>; outboxDir?: string }
 
 /** Real Outlook COM send via PowerShell. Throws on non-zero exit.
- *  Uses -Body (not -HtmlBody) per send-via-outlook.ps1 param signature. */
+ *  Writes HTML to a temp file and passes -BodyFile to avoid the ~32 KB
+ *  Windows command-line length cap that would silently truncate large briefs. */
 async function runOutlookCom(email: Email, to: string[]): Promise<boolean> {
-  const args = ['-NoProfile', '-File', SEND_SCRIPT, '-To', to.join(';'), '-Subject', email.subject, '-Body', email.html];
-  const r = spawnSync('powershell', args, { encoding: 'utf8', timeout: 60_000 });
-  if (r.status !== 0) throw new Error(`Outlook COM exit ${r.status}: ${(r.stderr || '').slice(0, 200)}`);
-  return true;
+  const tmpPath = join(tmpdir(), `ora-brief-${randomUUID()}.html`);
+  try {
+    writeFileSync(tmpPath, email.html, 'utf8');
+    const args = [
+      '-NoProfile', '-File', SEND_SCRIPT,
+      '-To', to.join(';'),
+      '-Subject', email.subject,
+      '-BodyFile', tmpPath,
+      '-BodyFormat', 'html',
+    ];
+    const r = spawnSync('powershell', args, { encoding: 'utf8', timeout: 60_000 });
+    if (r.status !== 0) throw new Error(`Outlook COM exit ${r.status}: ${(r.stderr || '').slice(0, 200)}`);
+    return true;
+  } finally {
+    try { unlinkSync(tmpPath); } catch { /* non-fatal cleanup */ }
+  }
 }
 
 function toOutbox(email: Email, dir: string, kind: string): void {
