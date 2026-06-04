@@ -1,6 +1,8 @@
 import { motion } from 'framer-motion';
 import { PanelLeftClose, PanelLeft } from 'lucide-react';
-import { MODULES, MODULE_GROUPS, type ModuleDef } from './modules';
+import { type ModuleDef } from './modules';
+import { orderedModules } from './module-order';
+import { useViewProfile } from '@/brain/view-profile';
 import { cn } from '@/lib/cn';
 
 interface Props {
@@ -11,6 +13,9 @@ interface Props {
 }
 
 export function Sidebar({ activeId, onSelect, collapsed, onToggle }: Props) {
+  const { profile } = useViewProfile();
+  const ordered = orderedModules(profile);
+  const groups = [...new Set(ordered.map((m) => m.group))];
   const width = collapsed ? 60 : 212;
   return (
     <motion.aside
@@ -41,8 +46,8 @@ export function Sidebar({ activeId, onSelect, collapsed, onToggle }: Props) {
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-2 py-3">
-        {MODULE_GROUPS.map((group) => {
-          const items = MODULES.filter((m) => m.group === group);
+        {groups.map((group) => {
+          const items = ordered.filter((m) => m.group === group);
           if (!items.length) return null;
           return (
             <div key={group} className="mb-3">
