@@ -97,4 +97,15 @@ describe('buildAlertView', () => {
     expect(v.counts).toEqual({ critical: 0, warning: 0, info: 0, snoozed: 0 });
     expect(v.unread).toBe(0);
   });
+
+  it('fails open (shows the alert) when a snooze timestamp is malformed', () => {
+    const state: AlertInboxState = {
+      read: [],
+      snoozed: { a: { until: 'not-a-date', severityAtSnooze: 'warning' } },
+    };
+    const v = buildAlertView([ins('a', 'warning')], state, NOW);
+    expect(v.items).toHaveLength(1);
+    expect(v.items[0]!.snoozedUntil).toBeNull();
+    expect(v.counts.snoozed).toBe(0);
+  });
 });

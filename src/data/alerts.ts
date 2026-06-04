@@ -17,10 +17,21 @@ function readLocal(): AlertInboxState {
   return { ...EMPTY_INBOX_STATE };
 }
 
+/**
+ * True only for a genuine JSON API response. On the static mirror there is no
+ * `/api/alerts/*` Function, so requests fall through to the SPA catch-all and return
+ * the `index.html` shell with a 200 + `text/html` — `res.ok` is true but the body is
+ * not our state. Guarding on the JSON content-type makes the localStorage fallback
+ * intentional rather than relying on a downstream `JSON.parse` throw.
+ */
+function isJsonResponse(res: Response): boolean {
+  return res.ok && (res.headers.get('content-type') ?? '').includes('application/json');
+}
+
 async function fetchAlertState(): Promise<AlertInboxState> {
   try {
     const res = await fetch('/api/alerts/state');
-    if (res.ok) return AlertInboxState.parse(await res.json());
+    if (isJsonResponse(res)) return AlertInboxState.parse(await res.json());
   } catch {
     /* server offline — fall back to localStorage (mirror) */
   }
@@ -41,7 +52,7 @@ export function useAlertAction() {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(input),
         });
-        if (res.ok) {
+        if (isJsonResponse(res)) {
           const json = (await res.json()) as { state: unknown };
           return AlertInboxState.parse(json.state);
         }
