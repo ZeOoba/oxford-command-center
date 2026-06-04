@@ -4,6 +4,7 @@ import { loadEnvFile } from './load-env';
 // override an already-present empty var — see load-env.ts).
 loadEnvFile();
 
+import { existsSync, readFileSync } from 'node:fs';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -22,15 +23,24 @@ app.use(
   cors({ origin: (origin) => (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ? origin : null) }),
 );
 
-app.get('/api/health', (c) =>
-  c.json({
+app.get('/api/health', (c) => {
+  const briefHealth = existsSync('data/brief-health.json')
+    ? (JSON.parse(readFileSync('data/brief-health.json', 'utf8')) as {
+        ranAt: string;
+        briefSent: boolean;
+        alertsSent: number;
+        failures: string[];
+      })
+    : null;
+  return c.json({
     ok: true,
     service: 'oxford-brain-server',
     state: brain.getState(),
     // Surface AI availability WITHOUT exposing the key (no silent fallbacks — System Health shows it).
     ai: { configured: !!process.env.ANTHROPIC_API_KEY, model: process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8' },
-  }),
-);
+    brief: briefHealth,
+  });
+});
 
 /** The single typed payload: snapshot + live meta. */
 app.get('/api/snapshot', (c) => {
