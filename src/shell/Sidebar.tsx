@@ -10,20 +10,38 @@ interface Props {
   onSelect: (id: string) => void;
   collapsed: boolean;
   onToggle: () => void;
+  mobileOpen: boolean;
+  onMobileClose: () => void;
 }
 
-export function Sidebar({ activeId, onSelect, collapsed, onToggle }: Props) {
+export function Sidebar({ activeId, onSelect, collapsed, onToggle, mobileOpen, onMobileClose }: Props) {
   const { profile } = useViewProfile();
   const ordered = orderedModules(profile);
   const groups = [...new Set(ordered.map((m) => m.group))];
   const width = collapsed ? 60 : 212;
+  const handleSelect = (id: string) => {
+    onSelect(id);
+    onMobileClose();
+  };
   return (
-    <motion.aside
-      animate={{ width }}
-      transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-      className="relative z-20 flex h-dvh flex-col"
-      style={{ background: 'var(--surface-rail)', borderRight: '1px solid var(--border-subtle)' }}
-    >
+    <>
+      {mobileOpen && (
+        <button
+          aria-label="Close navigation"
+          onClick={onMobileClose}
+          className="fixed inset-0 z-30 bg-black/50 lg:hidden"
+        />
+      )}
+      <motion.aside
+        animate={{ width }}
+        transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+        className={cn(
+          'z-40 flex h-dvh flex-col lg:relative lg:z-20 lg:translate-x-0',
+          'fixed inset-y-0 left-0 transition-transform duration-200',
+          mobileOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0',
+        )}
+        style={{ background: 'var(--surface-rail)', borderRight: '1px solid var(--border-subtle)' }}
+      >
       {/* Brand */}
       <div className="flex h-14 items-center gap-2.5 px-3.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <div
@@ -58,7 +76,7 @@ export function Sidebar({ activeId, onSelect, collapsed, onToggle }: Props) {
               )}
               <ul className="flex flex-col gap-0.5">
                 {items.map((m) => (
-                  <NavItem key={m.id} module={m} active={m.id === activeId} collapsed={collapsed} onSelect={() => onSelect(m.id)} />
+                  <NavItem key={m.id} module={m} active={m.id === activeId} collapsed={collapsed} onSelect={() => handleSelect(m.id)} />
                 ))}
               </ul>
             </div>
@@ -70,13 +88,14 @@ export function Sidebar({ activeId, onSelect, collapsed, onToggle }: Props) {
       <button
         onClick={onToggle}
         aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        className="flex h-11 items-center gap-2.5 px-4 text-xs transition-colors"
+        className="hidden h-11 items-center gap-2.5 px-4 text-xs transition-colors lg:flex"
         style={{ borderTop: '1px solid var(--border-subtle)', color: 'var(--text-tertiary)' }}
       >
         {collapsed ? <PanelLeft size={16} /> : <PanelLeftClose size={16} />}
         {!collapsed && <span className="num text-2xs uppercase" style={{ letterSpacing: '0.1em' }}>Collapse</span>}
       </button>
-    </motion.aside>
+      </motion.aside>
+    </>
   );
 }
 

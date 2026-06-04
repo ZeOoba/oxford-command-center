@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion';
-import { RefreshCw, Search, Sparkles } from 'lucide-react';
+import { useState } from 'react';
+import { RefreshCw, Search, Sparkles, Menu, MoreHorizontal } from 'lucide-react';
 import { fmtDate } from '@analytics/index';
 import { useBrain } from '@/data/brain-context';
 import { useUi } from '@/brain/ui-context';
@@ -9,14 +10,23 @@ import { ViewToggle } from './ViewToggle';
 import { ThemeToggle } from './ThemeToggle';
 import { DensityToggle } from './DensityToggle';
 
-export function TopBar({ title, asOf, onOpenSearch }: { title: string; asOf: string; onOpenSearch?: () => void }) {
+export function TopBar({ title, asOf, onOpenSearch, onOpenNav }: { title: string; asOf: string; onOpenSearch?: () => void; onOpenNav?: () => void }) {
   const { refresh, refreshing } = useBrain();
   const ui = useUi();
+  const [moreOpen, setMoreOpen] = useState(false);
   return (
     <header
       className="flex h-14 shrink-0 items-center justify-between gap-4 px-5"
       style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--surface-base)' }}
     >
+      <button
+        onClick={onOpenNav}
+        aria-label="Open navigation"
+        className="grid h-8 w-8 shrink-0 place-items-center rounded-[var(--radius-sm)] lg:hidden"
+        style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+      >
+        <Menu size={16} />
+      </button>
       <div className="flex min-w-0 items-baseline gap-3">
         <h1 className="display truncate text-lg leading-none" style={{ color: 'var(--text-primary)' }}>
           {title}
@@ -49,7 +59,7 @@ export function TopBar({ title, asOf, onOpenSearch }: { title: string; asOf: str
         </button>
 
         <ViewToggle />
-        <ScenarioSwitch />
+        <div className="hidden lg:contents"><ScenarioSwitch /></div>
         <StatusPill />
 
         <button
@@ -67,8 +77,37 @@ export function TopBar({ title, asOf, onOpenSearch }: { title: string; asOf: str
           </motion.span>
         </button>
 
-        <DensityToggle />
-        <ThemeToggle />
+        <div className="hidden lg:contents">
+          <DensityToggle />
+          <ThemeToggle />
+        </div>
+
+        <div className="relative lg:hidden">
+          <button
+            onClick={() => setMoreOpen((o) => !o)}
+            aria-label="More controls"
+            aria-expanded={moreOpen}
+            className="grid h-8 w-8 place-items-center rounded-[var(--radius-sm)]"
+            style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+          >
+            <MoreHorizontal size={16} />
+          </button>
+          {moreOpen && (
+            <>
+              <button aria-hidden tabIndex={-1} className="fixed inset-0 z-30" onClick={() => setMoreOpen(false)} />
+              <div
+                className="absolute right-0 top-10 z-40 flex flex-col gap-2 rounded-[var(--radius-md)] p-3"
+                style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)', boxShadow: 'var(--shadow-card)' }}
+              >
+                <ScenarioSwitch />
+                <div className="flex items-center gap-2.5">
+                  <DensityToggle />
+                  <ThemeToggle />
+                </div>
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </header>
   );

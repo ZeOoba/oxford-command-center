@@ -33,6 +33,7 @@ export function AppShell() {
   const ui = useUi();
   const { moduleId } = useParams();
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const snap = useSnapshot();
   const data = snap.data;
   const active = MODULES.find((m) => m.id === ui.activeModuleId) ?? MODULES[0]!;
@@ -50,15 +51,18 @@ export function AppShell() {
         onSelect={ui.setActiveModule}
         collapsed={collapsed}
         onToggle={() => setCollapsed((c) => !c)}
+        mobileOpen={mobileNavOpen}
+        onMobileClose={() => setMobileNavOpen(false)}
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
           title={TITLES[active.id] ?? active.label}
           asOf={data?.snapshot.meta.asOf ?? ''}
           onOpenSearch={ui.openPalette}
+          onOpenNav={() => setMobileNavOpen(true)}
         />
         <StaleBanner />
-        <main className="flex-1 overflow-y-auto px-5 py-5">
+        <main className="flex-1 overflow-y-auto px-3 py-3 sm:px-4 lg:px-5 lg:py-5">
           <div className="mx-auto max-w-[1500px]">
             <AnimatePresence mode="wait">
               <motion.div
