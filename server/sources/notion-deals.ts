@@ -85,6 +85,10 @@ const select = (p: Record<string, unknown>, k: string): string | null => {
   const v = p[k] as { select?: { name?: string } | null } | undefined;
   return v?.select?.name ?? null;
 };
+const dateProp = (p: Record<string, unknown>, k: string): string | null => {
+  const v = p[k] as { date?: { start?: string | null } | null } | undefined;
+  return v?.date?.start ?? null;
+};
 
 export function mapNotionPage(page: NotionPage): Deal | null {
   const p = page.properties ?? {};
@@ -108,6 +112,7 @@ export function mapNotionPage(page: NotionPage): Deal | null {
     status: select(p, 'PSA Status'),
     nextAction: text(p, 'Next Action'),
     owner: text(p, 'Deal Owner'),
+    targetCloseDate: dateProp(p, 'Target Close Date'),
     confidential: isConfidentialByName(name),
     estimatedFields: [],
   };
@@ -161,6 +166,7 @@ export function mergeDeals(seed: Deal[], notion: Deal[], aliases: Map<string, st
       lender: pick(live.lender, s.lender),
       nextAction: pick(live.nextAction, s.nextAction),
       owner: pick(live.owner, s.owner),
+      targetCloseDate: pick(live.targetCloseDate, s.targetCloseDate),
       status: pick(live.status, s.status),
       // id, shortName, confidential, buildings, holdYrs preserved from the seed.
     };

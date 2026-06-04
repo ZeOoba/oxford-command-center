@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { Market } from './common';
+import { IsoDateNullable, Market } from './common';
 
 export const DealStage = z.enum([
   'Sourcing',
@@ -35,6 +35,7 @@ export const Deal = z.object({
   status: z.string().nullable(),
   nextAction: z.string().nullable(),
   owner: z.string().nullable(),
+  targetCloseDate: IsoDateNullable, // Notion "Target Close Date"; drives LOI/PSA-deadline alert
   confidential: z.boolean().default(false),
   /** Field names whose values are estimates (drives dotted provenance underline). */
   estimatedFields: z.array(z.string()).default([]),
