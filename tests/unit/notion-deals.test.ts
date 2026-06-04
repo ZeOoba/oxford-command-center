@@ -23,7 +23,8 @@ const page = (over: Record<string, unknown> = {}) => ({
 const deal = (o: Partial<Deal>): Deal => ({
   id: 'd', name: 'D', shortName: null, location: null, market: null, sf: null, buildings: null,
   stage: 'Candidate', estPrice: null, capRate: null, irr: null, equityMultiple: null, holdYrs: null,
-  lender: null, status: null, nextAction: null, owner: null, confidential: false, estimatedFields: [], ...o,
+  lender: null, status: null, nextAction: null, owner: null, targetCloseDate: null,
+  confidential: false, estimatedFields: [], ...o,
 });
 
 afterEach(() => {
@@ -50,6 +51,15 @@ describe('mapNotionPage', () => {
 
   it('returns null for a row with no Deal Name', () => {
     expect(mapNotionPage({ properties: { 'Deal Name': { type: 'title', title: [] } } })).toBeNull();
+  });
+
+  it('maps Target Close Date to targetCloseDate (ISO date)', () => {
+    const d = mapNotionPage(page({ 'Target Close Date': { type: 'date', date: { start: '2026-06-15' } } }))!;
+    expect(d.targetCloseDate).toBe('2026-06-15');
+  });
+
+  it('targetCloseDate is null when the Notion date is empty', () => {
+    expect(mapNotionPage(page())!.targetCloseDate).toBeNull();
   });
 });
 
