@@ -15,6 +15,8 @@ import { runAgent } from './ai/agent';
 import { searchDocuments, docStatus } from './sources/documents';
 import { getMacro } from './macro/getMacro';
 import { SERVER_PORT } from './config';
+import { loadInboxState, runAlertAction } from './alerts/store';
+import { AlertActionInput } from '../src/contracts/alerts';
 
 const app = new Hono();
 // Confidential data — only same-machine localhost origins may call the API.
@@ -84,6 +86,15 @@ app.post('/api/actions/task', async (c) => {
     monthlyPmt: null,
   });
   return c.json({ ok: true, state: brain.getState() });
+});
+
+app.get('/api/alerts/state', (c) => c.json(loadInboxState()));
+
+app.post('/api/actions/alert', async (c) => {
+  const parsed = AlertActionInput.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ ok: false, error: 'Invalid alert action' }, 400);
+  const state = runAlertAction(parsed.data);
+  return c.json({ ok: true, state });
 });
 
 /** Macro indicators — live FRED when FRED_API_KEY is set, real-seeded snapshot otherwise. */
