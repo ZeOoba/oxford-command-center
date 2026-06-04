@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import type { Deal } from '../../src/contracts/index';
-import { mapNotionPage, mergeDeals } from '../../server/sources/notion-deals';
+import { mapNotionPage, mergeDeals, parseNameAliases } from '../../server/sources/notion-deals';
 
 const page = (over: Record<string, unknown> = {}) => ({
   properties: {
@@ -76,5 +76,41 @@ describe('mergeDeals — seed is the confidential-flag source of truth', () => {
     expect(out.find((d) => d.name === 'Banwick Refi')).toBeDefined();
     expect(out.find((d) => d.name === 'New Columbus Flex')).toBeDefined();
     expect(out).toHaveLength(3);
+  });
+});
+
+describe('mergeDeals — name aliases (dedup a deal named differently in Notion)', () => {
+  const seed = [deal({ id: 'seed-cedar', name: 'Cedar Industrial Park', stage: 'Due Diligence', confidential: true, shortName: 'Cedar' })];
+  // Same real deal, different name in Notion → would NOT match by name.
+  const notion = [deal({ id: 'notion-cedar', name: 'Cedar Park Acquisition', stage: 'Closing', estPrice: 12_000_000 })];
+
+  it('double-lists without an alias (the cosmetic duplicate)', () => {
+    const out = mergeDeals(seed, notion, new Map());
+    expect(out).toHaveLength(2); // seed copy + Notion extra
+  });
+
+  it('merges into the single seed record when an alias maps the names', () => {
+    const aliases = parseNameAliases('Cedar Park Acquisition=>Cedar Industrial Park');
+    const out = mergeDeals(seed, notion, aliases);
+    expect(out).toHaveLength(1); // deduped
+    const d = out[0]!;
+    expect(d.id).toBe('seed-cedar'); // seed identity kept
+    expect(d.confidential).toBe(true); // flag preserved
+    expect(d.shortName).toBe('Cedar');
+    expect(d.stage).toBe('Closing'); // live field won
+    expect(d.estPrice).toBe(12_000_000);
+  });
+});
+
+describe('parseNameAliases', () => {
+  it('parses ;/newline-separated "from=>to" pairs, normalized and case-insensitive', () => {
+    const m = parseNameAliases('A Deal => Seed One;  Other=>Seed Two\nbad-line-no-arrow');
+    expect(m.get('a deal')).toBe('seed one');
+    expect(m.get('other')).toBe('seed two');
+    expect(m.size).toBe(2);
+  });
+
+  it('returns an empty map for blank/unset input', () => {
+    expect(parseNameAliases('').size).toBe(0);
   });
 });
