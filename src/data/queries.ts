@@ -23,7 +23,7 @@ export const queryClient = new QueryClient({
 });
 
 export function useSnapshot() {
-  return useQuery({ queryKey: SNAPSHOT_KEY, queryFn: fetchSnapshot, refetchInterval: SNAPSHOT_REFETCH_MS });
+  return useQuery({ queryKey: SNAPSHOT_KEY, queryFn: fetchSnapshot, refetchInterval: SNAPSHOT_REFETCH_MS, refetchOnReconnect: true });
 }
 
 /** Snapshot query + memoized derived analytics bundle. */

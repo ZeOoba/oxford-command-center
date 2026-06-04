@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { ReactNode } from 'react';
-import { renderHook } from '@testing-library/react';
+import { renderHook, act } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import * as client from '../../src/data/client';
 import { useSnapshot, SNAPSHOT_REFETCH_MS } from '../../src/data/queries';
@@ -23,9 +23,9 @@ describe('useSnapshot auto-refresh', () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     renderHook(() => useSnapshot(), { wrapper: wrap(qc) });
 
-    await vi.advanceTimersByTimeAsync(0); // initial fetch
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); }); // initial fetch
     expect(spy).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(SNAPSHOT_REFETCH_MS + 50); // one interval later
+    await act(async () => { await vi.advanceTimersByTimeAsync(SNAPSHOT_REFETCH_MS + 50); }); // one interval later
     expect(spy.mock.calls.length).toBeGreaterThanOrEqual(2);
   });
 });
