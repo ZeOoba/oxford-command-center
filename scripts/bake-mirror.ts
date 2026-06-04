@@ -32,6 +32,11 @@ async function main() {
   mkdirSync(pub, { recursive: true });
 
   const { snapshot: raw } = await parseWorkbook(WORKBOOK_PATH);
+  if (process.env.BRIEF_ENABLED === '1') {
+    const { runBrief } = await import('../server/brief/run');
+    const r = await runBrief(raw);
+    console.log(`  Brief: sent=${r.briefSent}, alerts=${r.alertsSent}`);
+  }
   const { snapshot, removed } = includeConfidential ? { snapshot: raw, removed: [] } : redactConfidential(raw);
 
   writeFileSync(join(pub, 'snapshot.json'), JSON.stringify(snapshot));
