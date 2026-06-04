@@ -7,7 +7,8 @@ export type InsightCategory =
   | 'insurance'
   | 'concentration'
   | 'occupancy'
-  | 'cash';
+  | 'cash'
+  | 'deal';
 
 export interface InsightAction {
   label: string;
