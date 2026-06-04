@@ -19,3 +19,4 @@ public/macro.json
 data/alert-state.json
 data/outbox/
 data/brief-health.json
+.superpowers/
