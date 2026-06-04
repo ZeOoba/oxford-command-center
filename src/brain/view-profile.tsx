@@ -27,6 +27,23 @@ export function profileForEmail(email: string | null | undefined): ViewProfile {
   return EMAIL_PROFILE[e] ?? 'acquisitions';
 }
 
+/**
+ * Fetch the Access-authenticated identity from the whoami Pages Function and map
+ * it to a profile. Returns null on any failure (404 on local dev, network error,
+ * unparseable body) — meaning "no detection signal, keep the current profile".
+ */
+export async function fetchIdentityProfile(): Promise<ViewProfile | null> {
+  try {
+    const res = await fetch('/api/whoami');
+    if (!res.ok) return null;
+    const data = (await res.json()) as { email?: unknown };
+    const email = typeof data.email === 'string' ? data.email : null;
+    return profileForEmail(email);
+  } catch {
+    return null;
+  }
+}
+
 export function saveProfile(p: ViewProfile): void {
   try { localStorage.setItem(KEY, p); } catch { /* ignore */ }
 }
