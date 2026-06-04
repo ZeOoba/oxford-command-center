@@ -30,7 +30,9 @@ $pwshCmd = Get-Command pwsh -ErrorAction SilentlyContinue
 $pwsh = if ($pwshCmd) { $pwshCmd.Source } else { (Get-Command powershell).Source }
 
 $action   = New-ScheduledTaskAction -Execute $pwsh -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$script`"" -WorkingDirectory $repo
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd -ExecutionTimeLimit (New-TimeSpan -Minutes 20)
+# Run regardless of power state — a laptop won't always be on AC at 06:45, and the default
+# DisallowStartIfOnBatteries/StopIfGoingOnBatteries would silently queue/kill the brief.
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
 
 # Hourly all day + a guaranteed 06:45 brief trigger. The lastBriefDate gate makes the brief fire once/day.
 $hourly  = New-ScheduledTaskTrigger -Once -At 12:00am -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 3650)
