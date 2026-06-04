@@ -54,7 +54,7 @@ export function AcquisitionsModule() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Badge tone="amber" dot>Seed pipeline — HubSpot / Notion sync pending</Badge>
         <span className="num text-2xs uppercase" style={{ letterSpacing: '0.12em', color: 'var(--text-tertiary)' }}>
           from firm memory
