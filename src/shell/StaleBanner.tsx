@@ -1,6 +1,7 @@
 import { AlertTriangle } from 'lucide-react';
 import { useBrain } from '@/data/brain-context';
 import { computeFreshness } from '@/lib/freshness';
+import { useNow } from '@/lib/useNow';
 
 /**
  * Amber banner shown only when the data is a stale static bake (older than
@@ -8,7 +9,7 @@ import { computeFreshness } from '@/lib/freshness';
  */
 export function StaleBanner() {
   const { state } = useBrain();
-  const f = computeFreshness(state);
+  const f = computeFreshness(state, useNow());
   if (!f.isStale) return null;
 
   return (
