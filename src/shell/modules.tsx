@@ -12,6 +12,7 @@ import {
   Users,
   Activity,
   FileSearch,
+  Briefcase,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -28,6 +29,7 @@ const TasksModule = lazy(() => import('@/modules/tasks/TasksModule').then((m) =>
 const RelationshipsModule = lazy(() => import('@/modules/relationships/RelationshipsModule').then((m) => ({ default: m.RelationshipsModule })));
 const HealthModule = lazy(() => import('@/modules/health/HealthModule').then((m) => ({ default: m.HealthModule })));
 const DocumentsModule = lazy(() => import('@/modules/documents/DocumentsModule').then((m) => ({ default: m.DocumentsModule })));
+const PrincipalModule = lazy(() => import('@/modules/principal/PrincipalModule').then((m) => ({ default: m.PrincipalModule })));
 
 export type ModuleGroup = 'Command' | 'Assets' | 'Capital' | 'Market';
 
@@ -42,6 +44,7 @@ export interface ModuleDef {
 /** The module registry — drop a new entry here and it appears in the rail. */
 export const MODULES: ModuleDef[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard, group: 'Command', Component: OverviewModule },
+  { id: 'principal', label: 'Principal Home', icon: Briefcase, group: 'Command', Component: PrincipalModule },
   { id: 'pipeline', label: 'Acquisitions', icon: Target, group: 'Command', Component: AcquisitionsModule },
   { id: 'tasks', label: 'Tasks', icon: CheckSquare, group: 'Command', Component: TasksModule },
   { id: 'portfolio', label: 'Portfolio', icon: Building2, group: 'Assets', Component: PortfolioModule },
