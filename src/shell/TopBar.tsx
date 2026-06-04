@@ -33,7 +33,7 @@ export function TopBar({ title, asOf, onOpenSearch, onOpenNav, navOpen }: { titl
           {title}
         </h1>
         {asOf && (
-          <span className="num hidden text-2xs uppercase sm:inline" style={{ letterSpacing: '0.12em', color: 'var(--text-tertiary)' }}>
+          <span className="num hidden whitespace-nowrap text-2xs uppercase lg:inline" style={{ letterSpacing: '0.12em', color: 'var(--text-tertiary)' }}>
             As of {fmtDate(asOf)}
           </span>
         )}
