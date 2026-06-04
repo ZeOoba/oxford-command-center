@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook, act, waitFor } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import {
   loadProfile,
@@ -92,5 +92,57 @@ describe('useViewProfile', () => {
     act(() => result.current.setProfile('principal'));
     expect(result.current.profile).toBe('principal');
     expect(localStorage.getItem('ora-view')).toBe('principal');
+  });
+});
+
+describe('ViewProfileProvider auto-detection', () => {
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <ViewProfileProvider>{children}</ViewProfileProvider>
+  );
+
+  it('auto-detects principal from whoami when nothing is stored (no persist)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ email: 'egoldberg@oxfordra.net' }),
+    }));
+    const { result } = renderHook(() => useViewProfile(), { wrapper });
+    await waitFor(() => expect(result.current.profile).toBe('principal'));
+    expect(localStorage.getItem('ora-view')).toBeNull();
+  });
+
+  it('does not auto-detect when an explicit choice is stored', async () => {
+    localStorage.setItem('ora-view', 'acquisitions');
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ email: 'egoldberg@oxfordra.net' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const { result } = renderHook(() => useViewProfile(), { wrapper });
+    await waitFor(() => expect(fetchMock).not.toHaveBeenCalled());
+    expect(result.current.profile).toBe('acquisitions');
+  });
+
+  it('stays on the acquisitions default when whoami fails', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network')));
+    const { result } = renderHook(() => useViewProfile(), { wrapper });
+    await waitFor(() => expect(result.current.profile).toBe('acquisitions'));
+  });
+
+  it('lets a manual toggle win over a late whoami resolve', async () => {
+    let resolveFetch!: (v: unknown) => void;
+    const pending = new Promise((r) => { resolveFetch = r; });
+    vi.stubGlobal('fetch', vi.fn().mockReturnValue(pending));
+    const { result } = renderHook(() => useViewProfile(), { wrapper });
+
+    // User toggles before whoami resolves — this persists.
+    act(() => result.current.setProfile('acquisitions'));
+    expect(localStorage.getItem('ora-view')).toBe('acquisitions');
+
+    // whoami now resolves with principal — the race guard must reject it.
+    await act(async () => {
+      resolveFetch({ ok: true, json: async () => ({ email: 'egoldberg@oxfordra.net' }) });
+      await pending;
+    });
+    expect(result.current.profile).toBe('acquisitions');
   });
 });

@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- store helpers + context + Provider colocated by design */
-import { createContext, useContext, useState, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 
 export type ViewProfile = 'acquisitions' | 'principal';
 const KEY = 'ora-view';
@@ -54,6 +54,21 @@ const ViewProfileContext = createContext<Ctx | null>(null);
 export function ViewProfileProvider({ children }: { children: ReactNode }) {
   const [profile, setProfileState] = useState<ViewProfile>(() => loadProfile());
   const setProfile = (p: ViewProfile) => { setProfileState(p); saveProfile(p); };
+
+  useEffect(() => {
+    // An explicit stored choice always wins — never auto-detect over it.
+    if (readStoredProfile() !== null) return;
+    let cancelled = false;
+    void fetchIdentityProfile().then((detected) => {
+      if (cancelled) return;
+      // Re-check: the user may have toggled while the fetch was in flight.
+      if (readStoredProfile() !== null) return;
+      if (detected === null) return;
+      setProfileState(detected); // in-memory only — do NOT persist
+    });
+    return () => { cancelled = true; };
+  }, []);
+
   return <ViewProfileContext.Provider value={{ profile, setProfile }}>{children}</ViewProfileContext.Provider>;
 }
 
