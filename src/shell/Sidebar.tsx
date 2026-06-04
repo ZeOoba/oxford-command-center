@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion';
+import { useEffect } from 'react';
 import { PanelLeftClose, PanelLeft } from 'lucide-react';
 import { type ModuleDef } from './modules';
 import { orderedModules } from './module-order';
@@ -23,6 +24,14 @@ export function Sidebar({ activeId, onSelect, collapsed, onToggle, mobileOpen, o
     onSelect(id);
     onMobileClose();
   };
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onMobileClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [mobileOpen, onMobileClose]);
   return (
     <>
       {mobileOpen && (

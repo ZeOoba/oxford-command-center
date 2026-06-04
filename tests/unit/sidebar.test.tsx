@@ -39,4 +39,10 @@ describe('Sidebar drawer mode', () => {
     expect(onSelect).toHaveBeenCalled();
     expect(onMobileClose).toHaveBeenCalled();
   });
+
+  it('closes the drawer when Escape is pressed', () => {
+    const { onMobileClose } = setup();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onMobileClose).toHaveBeenCalled();
+  });
 });

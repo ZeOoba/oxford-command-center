@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { RefreshCw, Search, Sparkles, Menu, MoreHorizontal } from 'lucide-react';
 import { fmtDate } from '@analytics/index';
 import { useBrain } from '@/data/brain-context';
@@ -14,12 +14,27 @@ export function TopBar({ title, asOf, onOpenSearch, onOpenNav, navOpen }: { titl
   const { refresh, refreshing } = useBrain();
   const ui = useUi();
   const [moreOpen, setMoreOpen] = useState(false);
+  const hamburgerRef = useRef<HTMLButtonElement>(null);
+  const prevNavOpen = useRef(navOpen);
+  useEffect(() => {
+    if (prevNavOpen.current && !navOpen) hamburgerRef.current?.focus();
+    prevNavOpen.current = navOpen;
+  }, [navOpen]);
+  useEffect(() => {
+    if (!moreOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMoreOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [moreOpen]);
   return (
     <header
       className="flex h-14 shrink-0 items-center justify-between gap-4 px-5"
       style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--surface-base)' }}
     >
       <button
+        ref={hamburgerRef}
         onClick={onOpenNav}
         aria-label="Open navigation"
         aria-expanded={navOpen}

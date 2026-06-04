@@ -25,4 +25,19 @@ describe('TopBar mobile controls', () => {
     render(<TopBar title="Overview" asOf="" onOpenNav={vi.fn()} />);
     expect(screen.getByLabelText(/more controls/i)).toBeTruthy();
   });
+
+  it('closes the More popover on Escape', () => {
+    render(<TopBar title="Overview" asOf="" onOpenNav={vi.fn()} />);
+    const more = screen.getByLabelText(/more controls/i);
+    fireEvent.click(more);
+    expect(more.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(more.getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('restores focus to the hamburger when the drawer closes', () => {
+    const { rerender } = render(<TopBar title="Overview" asOf="" onOpenNav={vi.fn()} navOpen />);
+    rerender(<TopBar title="Overview" asOf="" onOpenNav={vi.fn()} navOpen={false} />);
+    expect(document.activeElement).toBe(screen.getByLabelText(/open navigation/i));
+  });
 });
