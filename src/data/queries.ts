@@ -7,6 +7,11 @@ import { fetchMacro } from './macro';
 
 export const SNAPSHOT_KEY = ['snapshot'] as const;
 
+/** An open tab re-fetches the snapshot this often, so the static mirror reflects the latest
+ *  hourly bake without a manual reload. On the local Brain Server this is a backstop behind the
+ *  instant SSE push. */
+export const SNAPSHOT_REFETCH_MS = 5 * 60_000;
+
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -18,7 +23,7 @@ export const queryClient = new QueryClient({
 });
 
 export function useSnapshot() {
-  return useQuery({ queryKey: SNAPSHOT_KEY, queryFn: fetchSnapshot });
+  return useQuery({ queryKey: SNAPSHOT_KEY, queryFn: fetchSnapshot, refetchInterval: SNAPSHOT_REFETCH_MS });
 }
 
 /** Snapshot query + memoized derived analytics bundle. */
