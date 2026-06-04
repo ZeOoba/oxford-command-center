@@ -26,6 +26,16 @@ describe('connectBrainSSE bounded reconnect', () => {
     expect(es.closed).toBe(true);
   });
 
+  it('an open event resets the error streak (reconnect path)', () => {
+    vi.stubGlobal('EventSource', MockES as unknown as typeof EventSource);
+    connectBrainSSE({});
+    const es = MockES.instances.at(-1)!;
+    es.emit('error'); es.emit('error');
+    es.emit('open'); // reconnected → reset
+    es.emit('error'); es.emit('error');
+    expect(es.closed).toBe(false); // only 2 since reset
+  });
+
   it('a delivered event resets the error streak', () => {
     vi.stubGlobal('EventSource', MockES as unknown as typeof EventSource);
     connectBrainSSE({ onSnapshot: () => {} });
