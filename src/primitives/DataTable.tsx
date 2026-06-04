@@ -19,11 +19,13 @@ interface Props<T> {
   onRowClick?: (row: T) => void;
   initialSort?: { key: string; dir: 'asc' | 'desc' };
   maxHeight?: number;
+  /** Min table width (px) so dense tables scroll horizontally instead of crushing on small screens. */
+  minWidth?: number;
 }
 
 const VIRTUALIZE_THRESHOLD = 80;
 
-export function DataTable<T>({ columns, rows, getRowId, onRowClick, initialSort, maxHeight }: Props<T>) {
+export function DataTable<T>({ columns, rows, getRowId, onRowClick, initialSort, maxHeight, minWidth = 640 }: Props<T>) {
   const [sort, setSort] = useState<{ key: string; dir: 'asc' | 'desc' } | null>(initialSort ?? null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -73,7 +75,7 @@ export function DataTable<T>({ columns, rows, getRowId, onRowClick, initialSort,
       style={{ borderBottom: '1px solid var(--border-subtle)' }}
     >
       {columns.map((c) => (
-        <td key={c.key} className={cn('px-3 py-2 align-middle', c.align === 'right' ? 'num text-right' : 'text-left')} style={{ color: 'var(--text-primary)' }}>
+        <td key={c.key} className={cn('px-3 py-2 align-middle whitespace-nowrap', c.align === 'right' ? 'num text-right' : 'text-left')} style={{ color: 'var(--text-primary)' }}>
           {c.render(row)}
         </td>
       ))}
@@ -81,62 +83,69 @@ export function DataTable<T>({ columns, rows, getRowId, onRowClick, initialSort,
   );
 
   return (
-    <div ref={scrollRef} className="overflow-auto" style={{ maxHeight }}>
-      <table className="ora-table w-full border-collapse">
-        <thead className="sticky top-0 z-10" style={{ background: 'var(--surface-raised)' }}>
-          <tr>
-            {columns.map((c) => (
-              <th
-                key={c.key}
-                aria-sort={c.sortValue ? ariaSort(c.key) : undefined}
-                tabIndex={c.sortValue ? 0 : undefined}
-                onClick={() => toggle(c.key)}
-                onKeyDown={(e) => {
-                  if (c.sortValue && (e.key === 'Enter' || e.key === ' ')) {
-                    e.preventDefault();
-                    toggle(c.key);
-                  }
-                }}
-                className={cn(
-                  'num px-3 py-2.5 text-2xs font-semibold uppercase whitespace-nowrap select-none',
-                  c.sortValue && 'cursor-pointer',
-                  c.align === 'right' ? 'text-right' : 'text-left',
+    <div className="relative">
+      <div ref={scrollRef} className="overflow-auto" style={{ maxHeight }}>
+        <table className="ora-table w-full border-collapse" style={{ minWidth }}>
+          <thead className="sticky top-0 z-10" style={{ background: 'var(--surface-raised)' }}>
+            <tr>
+              {columns.map((c) => (
+                <th
+                  key={c.key}
+                  aria-sort={c.sortValue ? ariaSort(c.key) : undefined}
+                  tabIndex={c.sortValue ? 0 : undefined}
+                  onClick={() => toggle(c.key)}
+                  onKeyDown={(e) => {
+                    if (c.sortValue && (e.key === 'Enter' || e.key === ' ')) {
+                      e.preventDefault();
+                      toggle(c.key);
+                    }
+                  }}
+                  className={cn(
+                    'num px-3 py-2.5 text-2xs font-semibold uppercase whitespace-nowrap select-none',
+                    c.sortValue && 'cursor-pointer',
+                    c.align === 'right' ? 'text-right' : 'text-left',
+                  )}
+                  style={{ letterSpacing: '0.08em', color: 'var(--text-tertiary)', borderBottom: '1px solid var(--border-strong)', width: c.width }}
+                >
+                  <span className={cn('inline-flex items-center gap-1', c.align === 'right' && 'flex-row-reverse')}>
+                    {c.header}
+                    {sort?.key === c.key && (sort.dir === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />)}
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {virtualize ? (
+              <>
+                {padTop > 0 && (
+                  <tr aria-hidden>
+                    <td colSpan={columns.length} style={{ height: padTop, padding: 0, border: 'none' }} />
+                  </tr>
                 )}
-                style={{ letterSpacing: '0.08em', color: 'var(--text-tertiary)', borderBottom: '1px solid var(--border-strong)', width: c.width }}
-              >
-                <span className={cn('inline-flex items-center gap-1', c.align === 'right' && 'flex-row-reverse')}>
-                  {c.header}
-                  {sort?.key === c.key && (sort.dir === 'asc' ? <ChevronUp size={11} /> : <ChevronDown size={11} />)}
-                </span>
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {virtualize ? (
-            <>
-              {padTop > 0 && (
-                <tr aria-hidden>
-                  <td colSpan={columns.length} style={{ height: padTop, padding: 0, border: 'none' }} />
-                </tr>
-              )}
-              {vItems.map((vi) => renderRow(sorted[vi.index]!, vi.index))}
-              {padBottom > 0 && (
-                <tr aria-hidden>
-                  <td colSpan={columns.length} style={{ height: padBottom, padding: 0, border: 'none' }} />
-                </tr>
-              )}
-            </>
-          ) : (
-            sorted.map((row) => renderRow(row))
-          )}
-        </tbody>
-      </table>
-      {sorted.length === 0 && (
-        <div className="px-4 py-10 text-center text-sm" style={{ color: 'var(--text-tertiary)' }}>
-          No records.
-        </div>
-      )}
+                {vItems.map((vi) => renderRow(sorted[vi.index]!, vi.index))}
+                {padBottom > 0 && (
+                  <tr aria-hidden>
+                    <td colSpan={columns.length} style={{ height: padBottom, padding: 0, border: 'none' }} />
+                  </tr>
+                )}
+              </>
+            ) : (
+              sorted.map((row) => renderRow(row))
+            )}
+          </tbody>
+        </table>
+        {sorted.length === 0 && (
+          <div className="px-4 py-10 text-center text-sm" style={{ color: 'var(--text-tertiary)' }}>
+            No records.
+          </div>
+        )}
+      </div>
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-y-0 right-0 w-6 lg:hidden"
+        style={{ background: 'linear-gradient(to right, transparent, var(--surface-raised))' }}
+      />
     </div>
   );
 }
