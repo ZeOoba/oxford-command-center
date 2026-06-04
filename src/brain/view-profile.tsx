@@ -5,12 +5,26 @@ export type ViewProfile = 'acquisitions' | 'principal';
 const KEY = 'ora-view';
 const PROFILES: ViewProfile[] = ['acquisitions', 'principal'];
 
-export function loadProfile(): ViewProfile {
+export function readStoredProfile(): ViewProfile | null {
   try {
     const v = localStorage.getItem(KEY);
     if (v && (PROFILES as string[]).includes(v)) return v as ViewProfile;
   } catch { /* localStorage unavailable */ }
-  return 'acquisitions';
+  return null;
+}
+
+export function loadProfile(): ViewProfile {
+  return readStoredProfile() ?? 'acquisitions';
+}
+
+const EMAIL_PROFILE: Record<string, ViewProfile> = {
+  'ggoldberg@oxfordra.net': 'acquisitions',
+  'egoldberg@oxfordra.net': 'principal',
+};
+
+export function profileForEmail(email: string | null | undefined): ViewProfile {
+  const e = (email ?? '').trim().toLowerCase();
+  return EMAIL_PROFILE[e] ?? 'acquisitions';
 }
 
 export function saveProfile(p: ViewProfile): void {
