@@ -114,18 +114,39 @@ export function mapNotionPage(page: NotionPage): Deal | null {
 }
 
 /**
- * Merge live Notion deals onto the seed. The seed is the confidential-flag source of truth:
- * a Notion deal matched by name enriches the seed record (live fields win) but KEEPS the seed id,
- * confidential flag, and shortName. Unmatched Notion deals are added (confidential via keyword
- * guard). Seed deals absent from Notion are retained (their flags intact).
+ * Optional Notion→seed name aliases so a deal recorded under a different name in Notion still merges
+ * into its seed record instead of double-listing. Format: "Notion Name=>Seed Name" pairs separated
+ * by ';' or newlines. Configured via env so confidential deal names never live in the repo.
+ * Exported + injectable for tests.
  */
-export function mergeDeals(seed: Deal[], notion: Deal[]): Deal[] {
-  const notionByName = new Map(notion.map((d) => [normName(d.name), d]));
-  const used = new Set<string>();
+export function parseNameAliases(raw: string = process.env.NOTION_DEALS_NAME_ALIASES ?? ''): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const pair of raw.split(/[;\n]+/)) {
+    const idx = pair.indexOf('=>');
+    if (idx < 0) continue;
+    const from = normName(pair.slice(0, idx));
+    const to = normName(pair.slice(idx + 2));
+    if (from && to) m.set(from, to);
+  }
+  return m;
+}
+
+/**
+ * Merge live Notion deals onto the seed. The seed is the confidential-flag source of truth:
+ * a Notion deal matched by name (or via an alias) enriches the seed record (live fields win) but
+ * KEEPS the seed id, confidential flag, and shortName. Unmatched Notion deals are added (confidential
+ * via keyword guard). Seed deals absent from Notion are retained (their flags intact).
+ */
+export function mergeDeals(seed: Deal[], notion: Deal[], aliases: Map<string, string> = parseNameAliases()): Deal[] {
+  // A Notion deal's match key is its aliased seed name when an alias exists, else its own name.
+  const keyOf = (name: string): string => aliases.get(normName(name)) ?? normName(name);
+  const notionByKey = new Map(notion.map((d) => [keyOf(d.name), d]));
+  const usedKeys = new Set<string>();
   const merged = seed.map((s) => {
-    const live = notionByName.get(normName(s.name));
+    const k = normName(s.name);
+    const live = notionByKey.get(k);
     if (!live) return s;
-    used.add(normName(s.name));
+    usedKeys.add(k);
     const pick = <T>(a: T, b: T): T => (a !== null && a !== undefined ? a : b);
     return {
       ...s,
@@ -144,7 +165,7 @@ export function mergeDeals(seed: Deal[], notion: Deal[]): Deal[] {
       // id, shortName, confidential, buildings, holdYrs preserved from the seed.
     };
   });
-  const extras = notion.filter((d) => !used.has(normName(d.name)));
+  const extras = notion.filter((d) => !usedKeys.has(keyOf(d.name)));
   return [...merged, ...extras];
 }
 
