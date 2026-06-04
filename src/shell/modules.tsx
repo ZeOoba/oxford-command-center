@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   LineChart,
   CheckSquare,
+  Bell,
   Users,
   Activity,
   FileSearch,
@@ -26,6 +27,7 @@ const CashModule = lazy(() => import('@/modules/cash/CashModule').then((m) => ({
 const InsuranceModule = lazy(() => import('@/modules/insurance/InsuranceModule').then((m) => ({ default: m.InsuranceModule })));
 const MarketModule = lazy(() => import('@/modules/market/MarketModule').then((m) => ({ default: m.MarketModule })));
 const TasksModule = lazy(() => import('@/modules/tasks/TasksModule').then((m) => ({ default: m.TasksModule })));
+const AlertsModule = lazy(() => import('@/modules/alerts/AlertsModule').then((m) => ({ default: m.AlertsModule })));
 const RelationshipsModule = lazy(() => import('@/modules/relationships/RelationshipsModule').then((m) => ({ default: m.RelationshipsModule })));
 const HealthModule = lazy(() => import('@/modules/health/HealthModule').then((m) => ({ default: m.HealthModule })));
 const DocumentsModule = lazy(() => import('@/modules/documents/DocumentsModule').then((m) => ({ default: m.DocumentsModule })));
@@ -47,6 +49,7 @@ export const MODULES: ModuleDef[] = [
   { id: 'principal', label: 'Principal Home', icon: Briefcase, group: 'Command', Component: PrincipalModule },
   { id: 'pipeline', label: 'Acquisitions', icon: Target, group: 'Command', Component: AcquisitionsModule },
   { id: 'tasks', label: 'Tasks', icon: CheckSquare, group: 'Command', Component: TasksModule },
+  { id: 'alerts', label: 'Alerts', icon: Bell, group: 'Command', Component: AlertsModule },
   { id: 'portfolio', label: 'Portfolio', icon: Building2, group: 'Assets', Component: PortfolioModule },
   { id: 'leases', label: 'Leases', icon: FileText, group: 'Assets', Component: LeasesModule },
   { id: 'debt', label: 'Debt', icon: Landmark, group: 'Capital', Component: DebtModule },
