@@ -26,6 +26,7 @@ const TITLES: Record<string, string> = {
   tasks: 'Tasks & Checklist',
   documents: 'Documents',
   health: 'System Health',
+  principal: 'Principal Home',
 };
 
 export function AppShell() {
