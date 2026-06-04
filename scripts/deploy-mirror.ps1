@@ -32,6 +32,8 @@ Write-Host "[$stamp] Mirror deploy starting in $repo"
 
 # 1) Bake (confidential included — target is Access-gated) + build.
 $env:MIRROR_INCLUDE_CONFIDENTIAL = '1'
+$env:BRIEF_ENABLED               = '1'
+$env:BRIEF_SEND_SCRIPT           = 'C:\Users\Owner\.claude\scheduled-tasks\_shared\send-via-outlook.ps1'
 try {
   npm run build:mirror
   if ($LASTEXITCODE -ne 0) { throw "build:mirror failed ($LASTEXITCODE)" }
@@ -42,6 +44,8 @@ try {
 }
 finally {
   Remove-Item Env:\MIRROR_INCLUDE_CONFIDENTIAL -ErrorAction SilentlyContinue
+  Remove-Item Env:\BRIEF_ENABLED               -ErrorAction SilentlyContinue
+  Remove-Item Env:\BRIEF_SEND_SCRIPT           -ErrorAction SilentlyContinue
 }
 
 # 3) Verify Access is still enforcing — unauthenticated must 302 to the Access login host.
