@@ -17,6 +17,8 @@ data/overlay.json
 public/snapshot.json
 public/macro.json
 data/alert-state.json
+data/alert-inbox.json
+data/__test-alert-inbox.json
 data/outbox/
 data/brief-health.json
 .superpowers/
