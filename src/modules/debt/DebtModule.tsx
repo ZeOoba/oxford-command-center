@@ -71,7 +71,7 @@ export function DebtModule() {
         </Card>
       )}
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader title="Maturity Ladder" />
           <div className="px-3 pb-2 pt-3">

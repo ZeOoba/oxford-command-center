@@ -79,7 +79,7 @@ export function HealthModule() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader title="Data Source" trailing={<Badge tone={freshTone === 'ok' ? 'green' : freshTone === 'error' ? 'red' : 'neutral'}>{f.label}</Badge>} />
           <ul className="flex flex-col">

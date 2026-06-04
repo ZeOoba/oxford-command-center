@@ -44,7 +44,7 @@ export function OverviewModule() {
       <WorkspaceBar ws={ws} />
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         <SortableContext items={ws.visibleOrder} strategy={rectSortingStrategy}>
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             {ws.visibleOrder.map((id) => {
               const w = byId[id];
               if (!w) return null;
@@ -153,7 +153,7 @@ function OverviewSkeleton() {
           <Skeleton key={i} style={{ height: 96 }} />
         ))}
       </div>
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Skeleton style={{ height: 300 }} />
         <Skeleton style={{ height: 300 }} />
       </div>
