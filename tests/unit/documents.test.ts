@@ -18,6 +18,9 @@ import {
   buildIndex,
   loadDiskIndex,
   docIndexPath,
+  writeChunkPlan,
+  embedMissing,
+  indexCounts,
   queryIndex,
 } from '../../server/sources/documents';
 
@@ -279,6 +282,34 @@ describe('buildIndex on-disk — persist + reload + batched embedding (fake embe
       const { index } = loadDiskIndex(dbPath);
       const hits = await queryIndex(index, 'roof', fakeEmbedder, 3);
       expect(hits[0]!.doc).toBe('Roof Warranty.pdf');
+      index.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('plans all chunks then embeds them across resumable passes (crash-safe)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'resumable-'));
+    try {
+      const dbPath = join(root, 'doc-index.sqlite');
+      writeChunkPlan(dbPath, CHUNKS, 3); // fake embedder is 3-dim
+      expect(indexCounts(dbPath)).toEqual({ planned: 3, embedded: 0, remaining: 3 });
+
+      const p1 = await embedMissing(dbPath, fakeEmbedder, { batchSize: 1, limit: 2 });
+      expect(p1.embedded).toBe(2);
+      expect(p1.remaining).toBe(1);
+
+      const p2 = await embedMissing(dbPath, fakeEmbedder, { batchSize: 1, limit: 10 });
+      expect(p2.embedded).toBe(1);
+      expect(p2.remaining).toBe(0);
+
+      const p3 = await embedMissing(dbPath, fakeEmbedder, {}); // nothing left to do
+      expect(p3).toEqual({ embedded: 0, remaining: 0 });
+
+      const { index, docs } = loadDiskIndex(dbPath);
+      expect(docs.length).toBe(3);
+      const hits = await queryIndex(index, 'renewal', fakeEmbedder, 3);
+      expect(hits[0]!.doc).toBe('REDACTED-659 Lease.pdf');
       index.close();
     } finally {
       rmSync(root, { recursive: true, force: true });
