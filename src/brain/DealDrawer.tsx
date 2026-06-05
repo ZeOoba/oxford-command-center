@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { X, Mail, ChevronRight, RefreshCw, ExternalLink, Lock } from 'lucide-react';
 import type { PortfolioSnapshot, Deal, DealStage, CompSet } from '@contracts/index';
@@ -314,6 +314,3 @@ function SourceLink({ source }: { source: string }) {
     </a>
   );
 }
-
-// AnimatePresence re-exported so callers can wrap DealDrawer in it without importing framer directly
-export { AnimatePresence };
