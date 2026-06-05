@@ -19,17 +19,17 @@ describe('nextStage — pipeline advance path', () => {
 
 describe('applyOverlay — write-back merge (workbook stays canonical)', () => {
   it('overrides a deal stage from the overlay', () => {
-    const out = applyOverlay(base, { dealStages: { d1: 'LOI/PSA' }, tasks: [], renewalStages: {} });
+    const out = applyOverlay(base, { dealStages: { d1: 'LOI/PSA' }, tasks: [], renewalStages: {}, tenantNotes: {} });
     expect(out.deals[0]!.stage).toBe('LOI/PSA');
   });
 
   it('prepends overlay tasks ahead of workbook tasks', () => {
-    const out = applyOverlay(base, { dealStages: {}, tasks: [{ id: 'u1', label: 'User task', section: 'Added', role: null, type: null, dueDay: null, notes: null, status: 'pending', monthlyPmt: null }], renewalStages: {} });
+    const out = applyOverlay(base, { dealStages: {}, tasks: [{ id: 'u1', label: 'User task', section: 'Added', role: null, type: null, dueDay: null, notes: null, status: 'pending', monthlyPmt: null }], renewalStages: {}, tenantNotes: {} });
     expect(out.tasks.map((t) => t.id)).toEqual(['u1', 't-wb']);
   });
 
   it('never mutates the base snapshot (workbook is read-only)', () => {
-    applyOverlay(base, { dealStages: { d1: 'Closed' }, tasks: [], renewalStages: {} });
+    applyOverlay(base, { dealStages: { d1: 'Closed' }, tasks: [], renewalStages: {}, tenantNotes: {} });
     expect(base.deals[0]!.stage).toBe('Candidate'); // unchanged
   });
 });
@@ -53,5 +53,19 @@ describe('applyOverlay — renewalStages (Phase 2)', () => {
 
   it('EMPTY_OVERLAY carries the new keys', () => {
     expect(EMPTY_OVERLAY.renewalStages).toEqual({});
+  });
+});
+
+describe('applyOverlay — tenantNotes (Phase 2)', () => {
+  const baseT = { deals: [], tasks: [], leases: [] } as unknown as PortfolioSnapshot;
+
+  it('surfaces tenantNotes onto the snapshot', () => {
+    const out = applyOverlay(baseT, { ...EMPTY_OVERLAY, tenantNotes: { 'acme-llc': 'Eric to follow up' } });
+    expect(out.tenantNotes).toEqual({ 'acme-llc': 'Eric to follow up' });
+  });
+
+  it('defaults to an empty record and EMPTY_OVERLAY carries the key', () => {
+    expect(applyOverlay(baseT, EMPTY_OVERLAY).tenantNotes).toEqual({});
+    expect(EMPTY_OVERLAY.tenantNotes).toEqual({});
   });
 });

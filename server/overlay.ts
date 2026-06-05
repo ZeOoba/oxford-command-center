@@ -15,8 +15,10 @@ export interface Overlay {
   tasks: Task[];
   /** leaseId → renewal pipeline stage. */
   renewalStages: Record<string, RenewalStage>;
+  /** tenantId (slug) → free-text note. */
+  tenantNotes: Record<string, string>;
 }
-export const EMPTY_OVERLAY: Overlay = { dealStages: {}, tasks: [], renewalStages: {} };
+export const EMPTY_OVERLAY: Overlay = { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {} };
 
 const OVERLAY_PATH = process.env.OVERLAY_PATH ?? join(process.cwd(), 'data', 'overlay.json');
 
@@ -33,12 +35,12 @@ export function loadOverlay(): Overlay {
   try {
     if (existsSync(OVERLAY_PATH)) {
       const raw = JSON.parse(readFileSync(OVERLAY_PATH, 'utf8')) as Partial<Overlay>;
-      return { dealStages: raw.dealStages ?? {}, tasks: raw.tasks ?? [], renewalStages: raw.renewalStages ?? {} };
+      return { dealStages: raw.dealStages ?? {}, tasks: raw.tasks ?? [], renewalStages: raw.renewalStages ?? {}, tenantNotes: raw.tenantNotes ?? {} };
     }
   } catch {
     /* corrupt overlay → start clean */
   }
-  return { dealStages: {}, tasks: [], renewalStages: {} };
+  return { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {} };
 }
 
 export function saveOverlay(o: Overlay): void {
@@ -57,5 +59,5 @@ export function applyOverlay(s: PortfolioSnapshot, o: Overlay): PortfolioSnapsho
     return stage && stage !== d.stage ? { ...d, stage: stage as DealStage } : d;
   });
   const tasks = o.tasks.length ? [...o.tasks, ...s.tasks] : s.tasks;
-  return { ...s, deals, tasks, renewalStages: o.renewalStages };
+  return { ...s, deals, tasks, renewalStages: o.renewalStages, tenantNotes: o.tenantNotes };
 }
