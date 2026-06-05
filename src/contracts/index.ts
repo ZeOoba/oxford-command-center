@@ -10,6 +10,7 @@ import { Task } from './task';
 import { Counterparty } from './counterparty';
 import { Assumptions, ScenarioName } from './scenario';
 import { RenewalStage } from './renewal';
+import { CompSet } from './comps';
 
 export * from './common';
 export * from './brain';
@@ -24,6 +25,7 @@ export * from './counterparty';
 export * from './macro';
 export * from './scenario';
 export * from './renewal';
+export * from './comps';
 
 export const SnapshotMeta = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),
@@ -53,6 +55,8 @@ export const PortfolioSnapshot = z.object({
   renewalStages: z.record(z.string(), RenewalStage).default({}),
   /** Overlay-sourced free-text tenant notes (Phase 2), keyed by tenant slug. */
   tenantNotes: z.record(z.string(), z.string()).default({}),
+  /** Overlay-sourced, AI-researched market comps per deal (Phase 3). Workbook has none → empty. */
+  dealComps: z.record(z.string(), CompSet).default({}),
   dataQuality: z.array(DataQualityFlag),
 });
 export type PortfolioSnapshot = z.infer<typeof PortfolioSnapshot>;

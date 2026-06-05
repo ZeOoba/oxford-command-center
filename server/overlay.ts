@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { PortfolioSnapshot, Task, DealStage, RenewalStage } from '../src/contracts/index';
+import type { PortfolioSnapshot, Task, DealStage, RenewalStage, CompSet } from '../src/contracts/index';
 
 /**
  * Write-back overlay (Phase 5). The master workbook is canonical and READ-ONLY, so user
@@ -17,8 +17,10 @@ export interface Overlay {
   renewalStages: Record<string, RenewalStage>;
   /** tenantId (slug) → free-text note. */
   tenantNotes: Record<string, string>;
+  /** dealId → cached AI-sourced comp research. */
+  dealComps: Record<string, CompSet>;
 }
-export const EMPTY_OVERLAY: Overlay = { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {} };
+export const EMPTY_OVERLAY: Overlay = { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {} };
 
 const OVERLAY_PATH = process.env.OVERLAY_PATH ?? join(process.cwd(), 'data', 'overlay.json');
 
@@ -35,12 +37,12 @@ export function loadOverlay(): Overlay {
   try {
     if (existsSync(OVERLAY_PATH)) {
       const raw = JSON.parse(readFileSync(OVERLAY_PATH, 'utf8')) as Partial<Overlay>;
-      return { dealStages: raw.dealStages ?? {}, tasks: raw.tasks ?? [], renewalStages: raw.renewalStages ?? {}, tenantNotes: raw.tenantNotes ?? {} };
+      return { dealStages: raw.dealStages ?? {}, tasks: raw.tasks ?? [], renewalStages: raw.renewalStages ?? {}, tenantNotes: raw.tenantNotes ?? {}, dealComps: raw.dealComps ?? {} };
     }
   } catch {
     /* corrupt overlay → start clean */
   }
-  return { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {} };
+  return { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {} };
 }
 
 export function saveOverlay(o: Overlay): void {
@@ -59,5 +61,5 @@ export function applyOverlay(s: PortfolioSnapshot, o: Overlay): PortfolioSnapsho
     return stage && stage !== d.stage ? { ...d, stage: stage as DealStage } : d;
   });
   const tasks = o.tasks.length ? [...o.tasks, ...s.tasks] : s.tasks;
-  return { ...s, deals, tasks, renewalStages: o.renewalStages, tenantNotes: o.tenantNotes };
+  return { ...s, deals, tasks, renewalStages: o.renewalStages, tenantNotes: o.tenantNotes, dealComps: o.dealComps };
 }

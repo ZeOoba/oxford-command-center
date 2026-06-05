@@ -20,6 +20,7 @@ import { advanceDealStage } from '@/data/actions';
 import { useUi, type EntityRef } from './ui-context';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { Sparkline } from '@/charts/Sparkline';
+import { DealDrawer } from './DealDrawer';
 
 const STAGE_FLOW: DealStage[] = ['Sourcing', 'Candidate', 'LOI/PSA', 'Due Diligence', 'Closing', 'Closed'];
 const nextStage = (s: DealStage): DealStage | null => {
@@ -90,16 +91,26 @@ export function EntityDrawer() {
 
   return (
     <AnimatePresence>
-      {open && data && ui.selected && (
-        <Panel
-          content={resolve(ui.selected, data.snapshot)}
-          onClose={ui.closeEntity}
-          onOpen={ui.openEntity}
-          onDraft={ui.openDraft}
-          canWrite={canWrite}
-          onAdvanceStage={onAdvanceStage}
-        />
-      )}
+      {open && data && ui.selected &&
+        (ui.selected.type === 'deal' ? (
+          <DealDrawer
+            dealId={ui.selected.id}
+            snapshot={data.snapshot}
+            canWrite={canWrite}
+            onClose={ui.closeEntity}
+            onDraft={ui.openDraft}
+            onAdvanceStage={onAdvanceStage}
+          />
+        ) : (
+          <Panel
+            content={resolve(ui.selected, data.snapshot)}
+            onClose={ui.closeEntity}
+            onOpen={ui.openEntity}
+            onDraft={ui.openDraft}
+            canWrite={canWrite}
+            onAdvanceStage={onAdvanceStage}
+          />
+        ))}
     </AnimatePresence>
   );
 }

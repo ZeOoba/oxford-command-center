@@ -11,6 +11,8 @@ import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import { brain } from './brain';
 import { DealStage, RenewalStageInput } from '../src/contracts/index';
+import { DealCompsActionInput } from '../src/contracts/index';
+import { fetchDealComps } from './ai/comps';
 import { runAgent } from './ai/agent';
 import { searchDocuments, docStatus } from './sources/documents';
 import { getMacro } from './macro/getMacro';
@@ -110,6 +112,22 @@ app.post('/api/actions/tenant-note', async (c) => {
   if (!tenantId) return c.json({ ok: false, error: 'tenantId required' }, 400);
   const ok = brain.setTenantNote(tenantId, String(body.note ?? ''));
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
+});
+
+app.post('/api/actions/deal-comps', async (c) => {
+  const parsed = DealCompsActionInput.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ ok: false, error: 'Invalid dealId' }, 400);
+  const snapshot = brain.getSnapshot();
+  const deal = snapshot?.deals.find((d) => d.id === parsed.data.dealId);
+  if (!deal) return c.json({ ok: false, error: 'Unknown deal' }, 404);
+  const result = await fetchDealComps(deal, {
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    model: process.env.ANTHROPIC_MODEL,
+    now: new Date().toISOString(),
+  });
+  if (!result.ok) return c.json({ ok: false, error: result.error }, 502);
+  brain.setDealComps(deal.id, result.comps);
+  return c.json({ ok: true, comps: result.comps });
 });
 
 /** Macro indicators — live FRED when FRED_API_KEY is set, real-seeded snapshot otherwise. */
