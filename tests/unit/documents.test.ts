@@ -12,6 +12,7 @@ import {
   maxChunksPerDoc,
   maxDepth,
   pathIncludeRe,
+  includeDirs,
   buildDocIndex,
   collectDocChunks,
   docStatus,
@@ -261,6 +262,25 @@ describe('DOCUMENTS_INCLUDE_DIRS — fail-closed top-level allowlist', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe('includeDirs — delimiter robust to comma-containing folder names', () => {
+  const prev = process.env.DOCUMENTS_INCLUDE_DIRS;
+  afterEach(() => {
+    process.env.DOCUMENTS_INCLUDE_DIRS = prev;
+  });
+  it('splits on | so folder names with commas survive as single entries', () => {
+    process.env.DOCUMENTS_INCLUDE_DIRS = '3883 Livingston, LLC|9620 State 350, LLC|6300 Sherriff Road';
+    const dirs = includeDirs();
+    expect(dirs?.size).toBe(3);
+    expect(dirs?.has('3883 livingston, llc')).toBe(true);
+    expect(dirs?.has('9620 state 350, llc')).toBe(true);
+    expect(dirs?.has('6300 sherriff road')).toBe(true);
+  });
+  it('is null when unset', () => {
+    delete process.env.DOCUMENTS_INCLUDE_DIRS;
+    expect(includeDirs()).toBeNull();
   });
 });
 

@@ -447,12 +447,14 @@ export function pathIncludeRe(): RegExp | null {
   }
 }
 
-/** Top-level folder allowlist (env `DOCUMENTS_INCLUDE_DIRS`, comma-separated exact folder names
- * relative to DOCUMENTS_DIR, case-insensitive). When set, ONLY these top-level directories are
- * descended into — a FAIL-CLOSED scope so a broad DOCUMENTS_DIR (the whole OneDrive) never sweeps in
- * personal/unlisted folders. Unset → walk every top-level dir (legacy), still subject to excludes. */
+/** Top-level folder allowlist (env `DOCUMENTS_INCLUDE_DIRS`, PIPE-separated exact folder names
+ * relative to DOCUMENTS_DIR, case-insensitive). Pipe (not comma) because real property folder names
+ * contain commas (e.g. "3883 Livingston, LLC"); `|` is illegal in Windows paths so it can never
+ * collide. When set, ONLY these top-level directories are descended into — a FAIL-CLOSED scope so a
+ * broad DOCUMENTS_DIR (the whole OneDrive) never sweeps in personal/unlisted folders. Unset → walk
+ * every top-level dir (legacy), still subject to excludes. */
 export function includeDirs(): Set<string> | null {
-  const raw = (process.env.DOCUMENTS_INCLUDE_DIRS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const raw = (process.env.DOCUMENTS_INCLUDE_DIRS ?? '').split('|').map((s) => s.trim()).filter(Boolean);
   return raw.length ? new Set(raw.map((s) => s.toLowerCase())) : null;
 }
 
