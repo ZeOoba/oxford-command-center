@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { PortfolioSnapshot, Task, DealStage } from '../src/contracts/index';
+import type { PortfolioSnapshot, Task, DealStage, RenewalStage } from '../src/contracts/index';
 
 /**
  * Write-back overlay (Phase 5). The master workbook is canonical and READ-ONLY, so user
@@ -13,8 +13,10 @@ export interface Overlay {
   dealStages: Record<string, string>;
   /** User-created tasks (appended to the workbook's checklist). */
   tasks: Task[];
+  /** leaseId → renewal pipeline stage. */
+  renewalStages: Record<string, RenewalStage>;
 }
-export const EMPTY_OVERLAY: Overlay = { dealStages: {}, tasks: [] };
+export const EMPTY_OVERLAY: Overlay = { dealStages: {}, tasks: [], renewalStages: {} };
 
 const OVERLAY_PATH = process.env.OVERLAY_PATH ?? join(process.cwd(), 'data', 'overlay.json');
 
@@ -31,12 +33,12 @@ export function loadOverlay(): Overlay {
   try {
     if (existsSync(OVERLAY_PATH)) {
       const raw = JSON.parse(readFileSync(OVERLAY_PATH, 'utf8')) as Partial<Overlay>;
-      return { dealStages: raw.dealStages ?? {}, tasks: raw.tasks ?? [] };
+      return { dealStages: raw.dealStages ?? {}, tasks: raw.tasks ?? [], renewalStages: raw.renewalStages ?? {} };
     }
   } catch {
     /* corrupt overlay → start clean */
   }
-  return { dealStages: {}, tasks: [] };
+  return { dealStages: {}, tasks: [], renewalStages: {} };
 }
 
 export function saveOverlay(o: Overlay): void {
@@ -55,5 +57,5 @@ export function applyOverlay(s: PortfolioSnapshot, o: Overlay): PortfolioSnapsho
     return stage && stage !== d.stage ? { ...d, stage: stage as DealStage } : d;
   });
   const tasks = o.tasks.length ? [...o.tasks, ...s.tasks] : s.tasks;
-  return { ...s, deals, tasks };
+  return { ...s, deals, tasks, renewalStages: o.renewalStages };
 }
