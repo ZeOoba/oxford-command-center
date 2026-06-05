@@ -11,6 +11,7 @@ import { Counterparty } from './counterparty';
 import { Assumptions, ScenarioName } from './scenario';
 import { RenewalStage } from './renewal';
 import { CompSet } from './comps';
+import { QbActuals } from './quickbooks';
 
 export * from './common';
 export * from './brain';
@@ -26,6 +27,7 @@ export * from './macro';
 export * from './scenario';
 export * from './renewal';
 export * from './comps';
+export * from './quickbooks';
 
 export const SnapshotMeta = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),
@@ -57,6 +59,10 @@ export const PortfolioSnapshot = z.object({
   tenantNotes: z.record(z.string(), z.string()).default({}),
   /** Overlay-sourced, AI-researched market comps per deal (Phase 3). Workbook has none → empty. */
   dealComps: z.record(z.string(), CompSet).default({}),
+  /** Overlay-sourced per-property annual NOI budget targets (Phase 3 ②). */
+  noiBudgets: z.record(z.string(), z.number()).default({}),
+  /** Server-attached QuickBooks actuals (Phase 3 ②); null when no export configured. */
+  quickbooks: QbActuals.nullable().default(null),
   dataQuality: z.array(DataQualityFlag),
 });
 export type PortfolioSnapshot = z.infer<typeof PortfolioSnapshot>;

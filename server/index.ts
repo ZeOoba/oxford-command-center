@@ -10,7 +10,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import { brain } from './brain';
-import { DealStage, RenewalStageInput } from '../src/contracts/index';
+import { DealStage, RenewalStageInput, NoiBudgetInput } from '../src/contracts/index';
 import { DealCompsActionInput } from '../src/contracts/index';
 import { fetchDealComps } from './ai/comps';
 import { runAgent } from './ai/agent';
@@ -128,6 +128,13 @@ app.post('/api/actions/deal-comps', async (c) => {
   if (!result.ok) return c.json({ ok: false, error: result.error }, 502);
   brain.setDealComps(deal.id, result.comps);
   return c.json({ ok: true, comps: result.comps });
+});
+
+app.post('/api/actions/noi-budget', async (c) => {
+  const parsed = NoiBudgetInput.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ ok: false, error: 'Invalid propertyId or amount' }, 400);
+  const ok = brain.setNoiBudget(parsed.data.propertyId, parsed.data.amount);
+  return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
 
 /** Macro indicators — live FRED when FRED_API_KEY is set, real-seeded snapshot otherwise. */

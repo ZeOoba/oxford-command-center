@@ -19,17 +19,17 @@ describe('nextStage — pipeline advance path', () => {
 
 describe('applyOverlay — write-back merge (workbook stays canonical)', () => {
   it('overrides a deal stage from the overlay', () => {
-    const out = applyOverlay(base, { dealStages: { d1: 'LOI/PSA' }, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {} });
+    const out = applyOverlay(base, { dealStages: { d1: 'LOI/PSA' }, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {} });
     expect(out.deals[0]!.stage).toBe('LOI/PSA');
   });
 
   it('prepends overlay tasks ahead of workbook tasks', () => {
-    const out = applyOverlay(base, { dealStages: {}, tasks: [{ id: 'u1', label: 'User task', section: 'Added', role: null, type: null, dueDay: null, notes: null, status: 'pending', monthlyPmt: null }], renewalStages: {}, tenantNotes: {}, dealComps: {} });
+    const out = applyOverlay(base, { dealStages: {}, tasks: [{ id: 'u1', label: 'User task', section: 'Added', role: null, type: null, dueDay: null, notes: null, status: 'pending', monthlyPmt: null }], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {} });
     expect(out.tasks.map((t) => t.id)).toEqual(['u1', 't-wb']);
   });
 
   it('never mutates the base snapshot (workbook is read-only)', () => {
-    applyOverlay(base, { dealStages: { d1: 'Closed' }, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {} });
+    applyOverlay(base, { dealStages: { d1: 'Closed' }, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {} });
     expect(base.deals[0]!.stage).toBe('Candidate'); // unchanged
   });
 });
@@ -82,5 +82,17 @@ describe('applyOverlay — dealComps (Phase 3)', () => {
   it('defaults to an empty record and EMPTY_OVERLAY carries the key', () => {
     expect(applyOverlay(baseD, EMPTY_OVERLAY).dealComps).toEqual({});
     expect(EMPTY_OVERLAY.dealComps).toEqual({});
+  });
+});
+
+describe('applyOverlay — noiBudgets (Phase 3 ②)', () => {
+  const baseP = { deals: [], tasks: [], leases: [], properties: [{ id: 'p1' }] } as unknown as PortfolioSnapshot;
+  it('surfaces noiBudgets onto the snapshot', () => {
+    const out = applyOverlay(baseP, { ...EMPTY_OVERLAY, noiBudgets: { p1: 250000 } });
+    expect(out.noiBudgets).toEqual({ p1: 250000 });
+  });
+  it('defaults empty and EMPTY_OVERLAY carries the key', () => {
+    expect(applyOverlay(baseP, EMPTY_OVERLAY).noiBudgets).toEqual({});
+    expect(EMPTY_OVERLAY.noiBudgets).toEqual({});
   });
 });

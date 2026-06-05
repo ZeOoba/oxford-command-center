@@ -21,3 +21,6 @@ export const SERVER_PORT = Number(process.env.BRAIN_SERVER_PORT ?? 8911);
 
 /** The workbook's stated "As of" date for v1 (the file carries June 1, 2026). */
 export const WORKBOOK_AS_OF = process.env.WORKBOOK_AS_OF ?? '2026-06-01';
+
+/** QuickBooks Desktop → SharePoint CSV export (P&L by property). Unset → /close shows no actuals. */
+export const QUICKBOOKS_CSV = process.env.QUICKBOOKS_CSV ?? null;
