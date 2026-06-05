@@ -8,6 +8,7 @@ import { parseWorkbook } from './workbook/parse';
 import { applyOverlay, loadOverlay, saveOverlay, type Overlay } from './overlay';
 import { checkSnapshot } from './reconcile-runtime';
 import { SNAPSHOT_PATH, WORKBOOK_PATH } from './config';
+import { loadQuickbooks } from './sources/quickbooks';
 
 /**
  * The live brain: single source of in-memory truth. Parses the workbook on demand,
@@ -46,9 +47,11 @@ class Brain extends EventEmitter {
       const { snapshot, flags } = await parseWorkbook(WORKBOOK_PATH);
       this.base = snapshot;
       const merged = applyOverlay(snapshot, this.overlay);
+      // Attach QuickBooks actuals (read on every refresh; null if QUICKBOOKS_CSV not set/present).
+      const withQb = { ...merged, quickbooks: loadQuickbooks(merged.properties) };
       // Runtime reconciliation: surface any internal inconsistency as data-quality flags.
-      const rtFlags = checkSnapshot(merged);
-      this.snapshot = rtFlags.length ? { ...merged, dataQuality: [...merged.dataQuality, ...rtFlags] } : merged;
+      const rtFlags = checkSnapshot(withQb);
+      this.snapshot = rtFlags.length ? { ...withQb, dataQuality: [...withQb.dataQuality, ...rtFlags] } : withQb;
       this.persist(this.snapshot);
       this.setState({
         status: 'fresh',
@@ -74,7 +77,7 @@ class Brain extends EventEmitter {
   /** Re-derive the merged snapshot from the cached base + overlay (no workbook re-parse). */
   private rederive(reason: string) {
     if (!this.base) return;
-    this.snapshot = applyOverlay(this.base, this.overlay);
+    this.snapshot = { ...applyOverlay(this.base, this.overlay), quickbooks: loadQuickbooks(this.base.properties) };
     saveOverlay(this.overlay);
     this.persist(this.snapshot);
     this.setState({ lastUpdated: new Date().toISOString() });
@@ -116,6 +119,14 @@ class Brain extends EventEmitter {
     if (!this.base?.deals.some((d) => d.id === dealId)) return false;
     this.overlay = { ...this.overlay, dealComps: { ...this.overlay.dealComps, [dealId]: comps } };
     this.rederive('action:deal-comps');
+    return true;
+  }
+
+  /** Write-back: set the annual NOI budget for a property. Returns false if the property is unknown. */
+  setNoiBudget(propertyId: string, amount: number): boolean {
+    if (!this.base?.properties.some((p) => p.id === propertyId)) return false;
+    this.overlay = { ...this.overlay, noiBudgets: { ...this.overlay.noiBudgets, [propertyId]: amount } };
+    this.rederive('action:noi-budget');
     return true;
   }
 
