@@ -51,14 +51,16 @@ export function CalendarModule() {
   const { data } = useSnapshot();
   const ui = useUi();
   const [type, setType] = useState<TypeFilter>('all');
-  const [window, setWindow] = useState<WindowFilter>('12mo');
+  const [horizon, setHorizon] = useState<WindowFilter>('12mo');
 
-  const events = useMemo(
-    () => (data ? portfolioCriticalDates(data.snapshot, window === '90d' ? 3 : 12) : []),
-    [data, window],
-  );
-  const kpis = useMemo(() => criticalDateKpis(events), [events]);
-  const filtered = useMemo(() => (type === 'all' ? events : events.filter((e) => e.type === type)), [events, type]);
+  // The KPI strip always reflects the full 12-month horizon; the window filter only narrows the list.
+  const allEvents = useMemo(() => (data ? portfolioCriticalDates(data.snapshot, 12) : []), [data]);
+  const kpis = useMemo(() => criticalDateKpis(allEvents), [allEvents]);
+  const filtered = useMemo(() => {
+    let rows = horizon === '90d' ? allEvents.filter((e) => e.daysToDate <= 90) : allEvents;
+    if (type !== 'all') rows = rows.filter((e) => e.type === type);
+    return rows;
+  }, [allEvents, horizon, type]);
 
   const groups = useMemo(() => {
     const m = new Map<string, DatedEvent[]>();
@@ -97,7 +99,7 @@ export function CalendarModule() {
               <option key={t} value={t}>{TYPE_LABEL[t]}</option>
             ))}
           </select>
-          <select aria-label="Filter by window" value={window} onChange={(e) => setWindow(e.target.value as WindowFilter)} className={fieldCls} style={fieldStyle}>
+          <select aria-label="Filter by window" value={horizon} onChange={(e) => setHorizon(e.target.value as WindowFilter)} className={fieldCls} style={fieldStyle}>
             <option value="12mo">Next 12 months</option>
             <option value="90d">Next 90 days</option>
           </select>
