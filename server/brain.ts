@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { watch } from 'chokidar';
-import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, type DealStage } from '../src/contracts/index';
+import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, type DealStage, type RenewalStage } from '../src/contracts/index';
 import { parseWorkbook } from './workbook/parse';
 import { applyOverlay, loadOverlay, saveOverlay, type Overlay } from './overlay';
 import { checkSnapshot } from './reconcile-runtime';
@@ -85,6 +85,14 @@ class Brain extends EventEmitter {
     if (!this.base?.deals.some((d) => d.id === dealId)) return false;
     this.overlay = { ...this.overlay, dealStages: { ...this.overlay.dealStages, [dealId]: stage } };
     this.rederive('action:deal-stage');
+    return true;
+  }
+
+  /** Write-back: set a lease's renewal stage. Returns false if the lease is unknown. */
+  setRenewalStage(leaseId: string, stage: RenewalStage): boolean {
+    if (!this.base?.leases.some((l) => l.id === leaseId)) return false;
+    this.overlay = { ...this.overlay, renewalStages: { ...this.overlay.renewalStages, [leaseId]: stage } };
+    this.rederive('action:renewal-stage');
     return true;
   }
 
