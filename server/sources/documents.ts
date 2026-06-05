@@ -292,31 +292,42 @@ function listFiles(
 
 let cache: { index: VecIndex | null; docs: Array<{ name: string; chunks: number }>; builtAt: string } | null = null;
 
-export async function buildDocIndex(embed: Embedder = realEmbedder): Promise<void> {
-  const dir = process.env.DOCUMENTS_DIR;
+/**
+ * List → extract → chunk the configured corpus (DOCUMENTS_DIR + include/exclude filters), applying
+ * the per-document chunk cap. Pure of any embedding/DB work so the offline indexer can batch-embed
+ * the result. Returns empty when no (or a missing) DOCUMENTS_DIR.
+ */
+export async function collectDocChunks(
+  dir: string | undefined = process.env.DOCUMENTS_DIR,
+): Promise<{ chunks: DocChunk[]; docs: Array<{ name: string; chunks: number }>; truncated: boolean }> {
   if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) {
-    cache = { index: await buildIndex([], embed), docs: [], builtAt: new Date().toISOString() };
-    return;
+    return { chunks: [], docs: [], truncated: false };
   }
+  const cap = maxChunksPerDoc();
   const chunks: DocChunk[] = [];
   const docs: Array<{ name: string; chunks: number }> = [];
   const { files, truncated } = listFiles(dir); // exclusion + include filter applied here
   for (const file of files) {
     const docName = file.slice(dir.length).replace(/^[\\/]+/, '');
     const text = await extractFile(file);
-    const pieces = chunkText(text);
+    const pieces = chunkText(text).slice(0, cap);
     if (!pieces.length) continue;
     const docId = docName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     pieces.forEach((t, idx) => chunks.push({ docId, docName, idx, text: t }));
     docs.push({ name: docName, chunks: pieces.length });
   }
+  return { chunks, docs, truncated };
+}
+
+export async function buildDocIndex(embed: Embedder = realEmbedder): Promise<void> {
+  const { chunks, docs, truncated } = await collectDocChunks();
   if (truncated) {
     console.warn(
-      `[documents] file cap (${maxFiles()}) reached under ${dir} — some documents are NOT indexed; raise DOCUMENTS_MAX_FILES.`,
+      `[documents] file cap (${maxFiles()}) reached under ${process.env.DOCUMENTS_DIR} — some documents are NOT indexed; raise DOCUMENTS_MAX_FILES.`,
     );
   }
   const filterNote = process.env.DOCUMENTS_PATH_INCLUDE ? ` matching /${process.env.DOCUMENTS_PATH_INCLUDE}/i` : '';
-  console.log(`[documents] indexed ${docs.length} documents (${chunks.length} chunks)${filterNote} from ${dir}`);
+  console.log(`[documents] indexed ${docs.length} documents (${chunks.length} chunks)${filterNote}`);
   cache = { index: await buildIndex(chunks, embed), docs, builtAt: new Date().toISOString() };
 }
 

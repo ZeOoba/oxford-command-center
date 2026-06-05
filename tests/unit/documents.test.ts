@@ -162,6 +162,37 @@ describe('buildDocIndex — Leases-only include filter + exclusion pruning (temp
   });
 });
 
+describe('collectDocChunks — list+extract+chunk with per-doc cap', () => {
+  const prev = { dir: process.env.DOCUMENTS_DIR, inc: process.env.DOCUMENTS_PATH_INCLUDE, cap: process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC };
+  afterEach(() => {
+    process.env.DOCUMENTS_DIR = prev.dir;
+    process.env.DOCUMENTS_PATH_INCLUDE = prev.inc;
+    process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC = prev.cap;
+  });
+  it('caps chunks per document and skips non-lease + excluded files', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'collect-'));
+    try {
+      mkdirSync(join(root, 'PropA', 'Leases'), { recursive: true });
+      // Long lease text → many chunks before the cap.
+      const long = Array.from({ length: 80 }, (_, i) => `Section ${i}. ` + 'lorem ipsum dolor sit amet renew. '.repeat(4)).join('\n\n');
+      writeFileSync(join(root, 'PropA', 'Leases', 'big-lease.txt'), long);
+      writeFileSync(join(root, 'PropA', 'Leases', 'Rent Roll -- Dec 2020.txt'), 'rent roll table'); // non-lease → skipped
+
+      process.env.DOCUMENTS_DIR = root;
+      process.env.DOCUMENTS_PATH_INCLUDE = '(^|/)Leases(/)';
+      process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC = '3';
+
+      const { chunks, docs } = await collectDocChunks();
+      expect(docs.length).toBe(1); // rent roll skipped
+      expect(docs[0]!.chunks).toBe(3); // capped
+      expect(chunks.length).toBe(3);
+      expect(chunks.every((c) => c.docName.replace(/\\/g, '/') === 'PropA/Leases/big-lease.txt')).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 // Deterministic fake embedder: 3-dim vectors keyed on simple token presence — no model, fully hermetic.
 const fakeEmbedder: Embedder = async (texts) =>
   texts.map((t) => {
