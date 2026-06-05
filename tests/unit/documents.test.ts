@@ -2,6 +2,7 @@ import { afterEach, describe, it, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import ExcelJS from 'exceljs';
 import {
   chunkText,
   isExcludedPath,
@@ -22,6 +23,7 @@ import {
   embedMissing,
   indexCounts,
   queryIndex,
+  extractXlsxText,
 } from '../../server/sources/documents';
 
 describe('chunkText', () => {
@@ -60,11 +62,15 @@ describe('isExcludedPath — confidentiality / personal guard', () => {
 const LEASES_RE = /(^|\/)Leases(\/)/i;
 
 describe('matchesIndexFilters — extension + optional path-include filter', () => {
-  it('requires a supported extension (pdf/txt/md), skipping docx/doc', () => {
+  it('supports pdf/txt/md/docx/xlsx/csv/tsv, skipping legacy .doc and binary .pptx', () => {
     expect(matchesIndexFilters('PropA/Leases/x.pdf', null)).toBe(true);
     expect(matchesIndexFilters('PropA/Leases/x.txt', null)).toBe(true);
-    expect(matchesIndexFilters('PropA/Leases/x.docx', null)).toBe(false);
-    expect(matchesIndexFilters('PropA/Leases/x.doc', null)).toBe(false);
+    expect(matchesIndexFilters('PropA/Leases/x.docx', null)).toBe(true);
+    expect(matchesIndexFilters('PropA/Leases/x.xlsx', null)).toBe(true);
+    expect(matchesIndexFilters('PropA/Leases/x.csv', null)).toBe(true);
+    expect(matchesIndexFilters('PropA/Leases/x.tsv', null)).toBe(true);
+    expect(matchesIndexFilters('PropA/Leases/x.doc', null)).toBe(false); // legacy binary — unsupported
+    expect(matchesIndexFilters('PropA/Leases/x.pptx', null)).toBe(false); // not yet supported
   });
   it('honors a Leases-only include filter (path must contain a Leases directory segment)', () => {
     expect(matchesIndexFilters('9050 Red Branch Rd/Leases/lease.pdf', LEASES_RE)).toBe(true);
@@ -190,6 +196,26 @@ describe('collectDocChunks — list+extract+chunk with per-doc cap', () => {
       expect(docs[0]!.chunks).toBe(3); // capped
       expect(chunks.length).toBe(3);
       expect(chunks.every((c) => c.docName.replace(/\\/g, '/') === 'PropA/Leases/big-lease.txt')).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('extractXlsxText — flat cell-text dump for search', () => {
+  it('extracts sheet name + non-empty cell values', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'xlsx-'));
+    try {
+      const file = join(root, 'rent.xlsx');
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('RentRoll');
+      ws.addRow(['Tenant', 'Suite', 'Annual Rent']);
+      ws.addRow(['Eurosort', '100', 123450]);
+      await wb.xlsx.writeFile(file);
+      const text = await extractXlsxText(file);
+      expect(text).toContain('RentRoll');
+      expect(text).toContain('Eurosort');
+      expect(text).toContain('123450');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

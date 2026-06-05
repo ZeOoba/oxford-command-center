@@ -6,6 +6,8 @@ import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transform
 // pdf-parse ships no type declarations; the lib/ path avoids its debug-on-import index.
 // @ts-expect-error -- no types for pdf-parse
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
+import mammoth from 'mammoth';
+import ExcelJS from 'exceljs';
 
 /**
  * Document RAG (Phase 3 — semantic) — vector search over lease/PSA/OM text so the agent can
@@ -95,10 +97,13 @@ export function isLikelyNonLease(relPath: string, patterns: RegExp[] = nonLeaseP
   return patterns.some((re) => re.test(norm));
 }
 
-const SUPPORTED = new Set(['.pdf', '.txt', '.md']);
+const SUPPORTED = new Set(['.pdf', '.txt', '.md', '.docx', '.xlsx', '.csv', '.tsv']);
 const CHUNK = 1500;
 const OVERLAP = 120;
 const EMBED_DIM_DEFAULT = 384; // all-MiniLM-L6-v2
+/** Skip files larger than this (env `DOCUMENTS_MAX_FILE_MB`, default 25) — memory safety on the box,
+ * and a backstop against the giant master workbook ever slipping into the corpus. */
+const MAX_FILE_BYTES = (Number(process.env.DOCUMENTS_MAX_FILE_MB) || 25) * 1024 * 1024;
 
 /** Split text into overlapping chunks on paragraph boundaries where possible. Pure. */
 export function chunkText(text: string, size = CHUNK, overlap = OVERLAP): string[] {
@@ -375,12 +380,45 @@ export const realEmbedder: Embedder = async (texts) => {
 async function extractFile(path: string): Promise<string> {
   const ext = extname(path).toLowerCase();
   try {
+    if (statSync(path).size > MAX_FILE_BYTES) return ''; // oversized → skip (memory safety)
     if (ext === '.pdf') return (await pdfParse(readFileSync(path))).text;
-    if (ext === '.txt' || ext === '.md') return readFileSync(path, 'utf8');
+    if (ext === '.txt' || ext === '.md' || ext === '.csv' || ext === '.tsv') return readFileSync(path, 'utf8');
+    if (ext === '.docx') return (await mammoth.extractRawText({ path })).value;
+    if (ext === '.xlsx') return await extractXlsxText(path);
   } catch {
-    /* unreadable/corrupt file → skip */
+    /* unreadable/corrupt/locked file → skip */
   }
   return '';
+}
+
+/** Best-effort flat text of an .xlsx — sheet names + non-empty cell values — so a rent roll / NOI
+ * calc / tax-appeal workbook is findable by meaning. Exported for unit testing. */
+export async function extractXlsxText(path: string): Promise<string> {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.readFile(path);
+  const lines: string[] = [];
+  wb.eachSheet((ws) => {
+    lines.push(`# ${ws.name}`);
+    ws.eachRow({ includeEmpty: false }, (row) => {
+      const vals = (row.values as unknown[]).slice(1).map(cellText).filter(Boolean);
+      if (vals.length) lines.push(vals.join(' \t '));
+    });
+  });
+  return lines.join('\n');
+}
+
+/** Coerce one exceljs cell value (string | number | date | formula | richtext | hyperlink) to text. */
+function cellText(v: unknown): string {
+  if (v == null) return '';
+  if (typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    if (typeof o['text'] === 'string') return o['text'];
+    if ('result' in o && o['result'] != null) return String(o['result']);
+    if (Array.isArray(o['richText'])) return (o['richText'] as Array<{ text: string }>).map((r) => r.text).join('');
+    if (o['hyperlink'] != null) return String(o['text'] ?? o['hyperlink']);
+    return '';
+  }
+  return String(v);
 }
 
 /**
