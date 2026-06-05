@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
-import { applyOverlay, nextStage } from '../../server/overlay';
+import { applyOverlay, nextStage, EMPTY_OVERLAY } from '../../server/overlay';
 
 const base = {
   deals: [{ id: 'd1', name: 'FVC', stage: 'Candidate' }],
@@ -19,17 +19,39 @@ describe('nextStage — pipeline advance path', () => {
 
 describe('applyOverlay — write-back merge (workbook stays canonical)', () => {
   it('overrides a deal stage from the overlay', () => {
-    const out = applyOverlay(base, { dealStages: { d1: 'LOI/PSA' }, tasks: [] });
+    const out = applyOverlay(base, { dealStages: { d1: 'LOI/PSA' }, tasks: [], renewalStages: {} });
     expect(out.deals[0]!.stage).toBe('LOI/PSA');
   });
 
   it('prepends overlay tasks ahead of workbook tasks', () => {
-    const out = applyOverlay(base, { dealStages: {}, tasks: [{ id: 'u1', label: 'User task', section: 'Added', role: null, type: null, dueDay: null, notes: null, status: 'pending', monthlyPmt: null }] });
+    const out = applyOverlay(base, { dealStages: {}, tasks: [{ id: 'u1', label: 'User task', section: 'Added', role: null, type: null, dueDay: null, notes: null, status: 'pending', monthlyPmt: null }], renewalStages: {} });
     expect(out.tasks.map((t) => t.id)).toEqual(['u1', 't-wb']);
   });
 
   it('never mutates the base snapshot (workbook is read-only)', () => {
-    applyOverlay(base, { dealStages: { d1: 'Closed' }, tasks: [] });
+    applyOverlay(base, { dealStages: { d1: 'Closed' }, tasks: [], renewalStages: {} });
     expect(base.deals[0]!.stage).toBe('Candidate'); // unchanged
+  });
+});
+
+describe('applyOverlay — renewalStages (Phase 2)', () => {
+  const baseL = {
+    deals: [],
+    tasks: [],
+    leases: [{ id: 'L1' }, { id: 'L2' }],
+  } as unknown as PortfolioSnapshot;
+
+  it('surfaces renewalStages onto the snapshot', () => {
+    const out = applyOverlay(baseL, { ...EMPTY_OVERLAY, renewalStages: { L1: 'Outreach' } });
+    expect(out.renewalStages).toEqual({ L1: 'Outreach' });
+  });
+
+  it('defaults to an empty record when the overlay has none', () => {
+    const out = applyOverlay(baseL, EMPTY_OVERLAY);
+    expect(out.renewalStages).toEqual({});
+  });
+
+  it('EMPTY_OVERLAY carries the new keys', () => {
+    expect(EMPTY_OVERLAY.renewalStages).toEqual({});
   });
 });
