@@ -10,6 +10,7 @@ import {
   matchesIndexFilters,
   maxFiles,
   maxChunksPerDoc,
+  maxDepth,
   pathIncludeRe,
   buildDocIndex,
   collectDocChunks,
@@ -138,6 +139,16 @@ describe('env knobs — pathIncludeRe + maxFiles', () => {
     expect(maxFiles()).toBe(50);
     process.env.DOCUMENTS_MAX_FILES = 'nonsense';
     expect(maxFiles()).toBe(2000);
+  });
+  it('maxDepth defaults to 6 and honors a valid override; ignores nonsense', () => {
+    const p = process.env.DOCUMENTS_MAX_DEPTH;
+    delete process.env.DOCUMENTS_MAX_DEPTH;
+    expect(maxDepth()).toBe(6);
+    process.env.DOCUMENTS_MAX_DEPTH = '9';
+    expect(maxDepth()).toBe(9);
+    process.env.DOCUMENTS_MAX_DEPTH = 'nonsense';
+    expect(maxDepth()).toBe(6);
+    process.env.DOCUMENTS_MAX_DEPTH = p;
   });
 });
 

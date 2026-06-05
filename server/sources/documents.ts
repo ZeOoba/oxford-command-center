@@ -463,6 +463,13 @@ export function maxFiles(): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 2000;
 }
 
+/** Max directory recursion depth (env `DOCUMENTS_MAX_DEPTH`, default 6). Raise for deeply nested
+ * OneDrive trees. */
+export function maxDepth(): number {
+  const n = Number(process.env.DOCUMENTS_MAX_DEPTH);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 6;
+}
+
 /** Max chunks indexed per document (env `DOCUMENTS_MAX_CHUNKS_PER_DOC`, default 25). Bounds the
  * worst case from a long PDF that slipped past the non-lease filter. */
 export function maxChunksPerDoc(): number {
@@ -498,7 +505,7 @@ function listFiles(
   includeRe = pathIncludeRe(),
   excludes = excludePatterns(),
   allow = includeDirs(),
-  depthCap = 6,
+  depthCap = maxDepth(),
 ): { files: string[]; truncated: boolean } {
   const files: string[] = [];
   let truncated = false;
