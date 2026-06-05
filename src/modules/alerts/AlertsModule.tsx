@@ -1,5 +1,8 @@
+import { Mail, ArrowRight } from 'lucide-react';
 import { useAlertView, useAlertAction } from '../../data/alerts';
 import type { AlertViewItem } from '../../brain/alerts-view';
+import { useUi } from '../../brain/ui-context';
+import { insightToDraft } from '../../brain/draft';
 
 const SEV_COLOR: Record<string, string> = {
   critical: '#e05c5c',
@@ -10,6 +13,7 @@ const SEV_COLOR: Record<string, string> = {
 export function AlertsModule() {
   const view = useAlertView();
   const action = useAlertAction();
+  const ui = useUi();
 
   return (
     <div className="mx-auto max-w-4xl p-4">
@@ -34,6 +38,15 @@ export function AlertsModule() {
               onSnooze={(days) =>
                 action.mutate({ alertId: item.insight.id, action: 'snooze', days, severity: item.insight.severity })
               }
+              onOpen={
+                item.insight.entityType && item.insight.entityId
+                  ? () => ui.openEntity({ type: item.insight.entityType!, id: item.insight.entityId! })
+                  : null
+              }
+              onDraft={(() => {
+                const d = insightToDraft(item.insight);
+                return d ? () => ui.openDraft(d) : null;
+              })()}
             />
           ))}
         </ul>
@@ -51,7 +64,15 @@ function Stat({ label, value, color }: { label: string; value: number; color?: s
   );
 }
 
-function AlertRow({ item, onRead, onSnooze }: { item: AlertViewItem; onRead: () => void; onSnooze: (days: 7 | 30) => void }) {
+function AlertRow({
+  item, onRead, onSnooze, onOpen, onDraft,
+}: {
+  item: AlertViewItem;
+  onRead: () => void;
+  onSnooze: (days: 7 | 30) => void;
+  onOpen: (() => void) | null;
+  onDraft: (() => void) | null;
+}) {
   const c = SEV_COLOR[item.insight.severity] ?? '#5c9fe0';
   return (
     <li
@@ -67,7 +88,17 @@ function AlertRow({ item, onRead, onSnooze }: { item: AlertViewItem; onRead: () 
           <div className="text-sm font-semibold">{item.insight.title}</div>
           <div className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>{item.insight.detail}</div>
         </div>
-        <div className="flex shrink-0 gap-1.5">
+        <div className="flex shrink-0 items-center gap-1.5">
+          {onDraft && (
+            <button className="flex items-center gap-1 text-2xs" style={{ color: 'var(--accent)' }} onClick={onDraft} aria-label="Draft email">
+              <Mail size={11} /> Draft
+            </button>
+          )}
+          {onOpen && (
+            <button className="flex items-center gap-1 text-2xs" style={{ color: 'var(--text-secondary)' }} onClick={onOpen} aria-label="Open record">
+              View <ArrowRight size={11} />
+            </button>
+          )}
           <button className="text-2xs" style={{ color: 'var(--text-tertiary)' }} onClick={() => onSnooze(7)}>Snooze 7d</button>
           <button className="text-2xs" style={{ color: 'var(--text-tertiary)' }} onClick={() => onSnooze(30)}>30d</button>
           <button className="text-2xs" style={{ color: 'var(--accent)' }} onClick={onRead}>{item.read ? 'Unread' : 'Mark read'}</button>
