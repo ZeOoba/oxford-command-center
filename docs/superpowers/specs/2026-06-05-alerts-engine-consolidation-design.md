@@ -101,7 +101,7 @@ noted.
 | 10 | Insurance renewing soon | Warning | `< 30d` (`Renew Now`/daysToExpiry) | `InsurancePolicy` | `ins-${pol.id}` |
 | 11 | Cash concentration | Warning | `> 30%` portfolio cash | `cash.concentrationTopPct` | `cash-concentration` |
 | 12 | Entity below operating floor | — | **DEFERRED** | needs entity↔debt-service mapping not in QB export | (stub) |
-| 13 | Reconciliation failure | Critical | any invariant flag | `snapshot.dataQuality` (reconcile/invariant kind) | `reconcile-fail-${flag}` |
+| 13 | Reconciliation failure | Critical | any invariant flag | `snapshot.dataQuality` where `entity === 'reconciliation'` | `reconcile-fail` (one aggregated alert listing all breaches) |
 | 14 | Workbook stale | Info | `> 48h` since generate | `meta.generatedAt` vs `now` | `workbook-stale` |
 
 Preserved brief functionality, folded into the catalog:
