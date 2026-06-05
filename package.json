@@ -15,6 +15,7 @@
     "preview": "vite preview",
     "extract": "tsx scripts/extract-workbook.ts",
     "bake": "tsx scripts/bake-mirror.ts",
+    "index:docs": "tsx scripts/index-docs.ts",
     "build:mirror": "npm run bake && npm run build",
     "deploy:mirror": "npm run build:mirror && npx wrangler pages deploy dist --project-name=ora-command-center --branch=main",
     "reconcile": "tsx scripts/reconcile.ts",

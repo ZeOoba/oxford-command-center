@@ -1,6 +1,6 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, type Dirent } from 'node:fs';
 import { extname, join } from 'node:path';
-import Database, { type Database as BetterSQLite3Database } from 'better-sqlite3';
+import Database, { type Database as BetterSQLite3Database, type Statement } from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
 // pdf-parse ships no type declarations; the lib/ path avoids its debug-on-import index.
@@ -64,9 +64,40 @@ export function isExcludedPath(relPath: string, patterns: RegExp[] = excludePatt
   return patterns.some((re) => re.test(relPath));
 }
 
+/**
+ * Corpus-tightening filter (NOT a confidentiality gate — that is isExcludedPath). Drops obvious
+ * NON-lease documents that live inside the per-property `Leases/` folders (financial statements,
+ * rent rolls, P&Ls, agency disclosures) so the index holds actual lease text. Matches on the full
+ * relative path (so a `Financial Statements .../` subfolder is dropped wholesale). Extend via the
+ * gitignored `DOCUMENTS_NONLEASE_PATTERNS` env (comma-separated, case-insensitive). Keep this list
+ * conservative — exhibits, estoppels, addenda and commencement certificates are real lease parts.
+ */
+const DEFAULT_NONLEASE: RegExp[] = [
+  /financial statement/i,
+  /\brent[\s_-]*rolls?\b/i,
+  /\bp\s*&\s*l\b/i,
+  /profit and loss/i,
+  /\bdisclosure\b/i,
+];
+
+export function nonLeasePatterns(): RegExp[] {
+  const extra = (process.env.DOCUMENTS_NONLEASE_PATTERNS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => new RegExp(s, 'i'));
+  return [...DEFAULT_NONLEASE, ...extra];
+}
+
+/** True if a relative path looks like a non-lease doc and should be skipped. Separator-agnostic. */
+export function isLikelyNonLease(relPath: string, patterns: RegExp[] = nonLeasePatterns()): boolean {
+  const norm = relPath.replace(/\\/g, '/');
+  return patterns.some((re) => re.test(norm));
+}
+
 const SUPPORTED = new Set(['.pdf', '.txt', '.md']);
-const CHUNK = 900;
-const OVERLAP = 150;
+const CHUNK = 1500;
+const OVERLAP = 120;
 const EMBED_DIM_DEFAULT = 384; // all-MiniLM-L6-v2
 
 /** Split text into overlapping chunks on paragraph boundaries where possible. Pure. */
@@ -118,16 +149,188 @@ export interface VecIndex {
   close: () => void;
 }
 
-/** Build an in-memory sqlite-vec index from chunks + their embeddings. */
-export async function buildIndex(chunks: DocChunk[], embed: Embedder): Promise<VecIndex> {
-  const db = new Database(':memory:');
+/** Create the sqlite-vec table + metadata + info tables on a freshly opened DB. */
+function createIndexSchema(db: BetterSQLite3Database, dim: number): void {
+  db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(embedding float[${dim}]);`);
+  db.exec(
+    `CREATE TABLE IF NOT EXISTS chunk_meta (rowid INTEGER PRIMARY KEY, docId TEXT, docName TEXT, idx INTEGER, text TEXT, embedded INTEGER NOT NULL DEFAULT 0);`,
+  );
+  db.exec(`CREATE TABLE IF NOT EXISTS index_info (k TEXT PRIMARY KEY, v TEXT);`);
+}
+
+export interface BuildIndexOpts {
+  /** When set, build a file-backed DB at this path (persisted). Omit for an in-memory index. */
+  dbPath?: string;
+  /** Chunks embedded per batch (default = all at once; the offline indexer passes a small batch). */
+  batchSize?: number;
+  /** Progress callback: (chunksDone, total). */
+  onProgress?: (done: number, total: number) => void;
+}
+
+/**
+ * Build a sqlite-vec index from chunks + their embeddings. In-memory by default; pass `dbPath` to
+ * persist BOTH vectors (vec_chunks) and chunk metadata (chunk_meta) to disk so the server can reload
+ * it without re-embedding. Embedding is done in batches (each inserted then dropped) so peak memory
+ * stays flat — this is what lets the offline indexer build ~thousands of chunks without OOM.
+ */
+export async function buildIndex(
+  chunks: DocChunk[],
+  embed: Embedder,
+  opts: BuildIndexOpts = {},
+): Promise<VecIndex> {
+  const { dbPath, onProgress } = opts;
+  const batchSize = opts.batchSize && opts.batchSize > 0 ? Math.floor(opts.batchSize) : Math.max(1, chunks.length);
+  const db = new Database(dbPath ?? ':memory:');
   sqliteVec.load(db);
-  const vectors = chunks.length ? await embed(chunks.map((c) => c.text)) : [];
-  const dim = vectors[0]?.length ?? EMBED_DIM_DEFAULT;
-  db.exec(`CREATE VIRTUAL TABLE vec_chunks USING vec0(embedding float[${dim}]);`);
-  const ins = db.prepare('INSERT INTO vec_chunks(rowid, embedding) VALUES (?, ?)');
-  vectors.forEach((v, i) => ins.run(BigInt(i), v));
+
+  let dim = EMBED_DIM_DEFAULT;
+  let schemaReady = false;
+  if (chunks.length === 0) {
+    createIndexSchema(db, dim);
+    schemaReady = true;
+  }
+
+  let insVec: Statement<unknown[]> | null = null;
+  let insMeta: Statement<unknown[]> | null = null;
+  for (let start = 0; start < chunks.length; start += batchSize) {
+    const batch = chunks.slice(start, start + batchSize);
+    const vectors = await embed(batch.map((c) => c.text));
+    if (!schemaReady) {
+      dim = vectors[0]?.length ?? EMBED_DIM_DEFAULT;
+      createIndexSchema(db, dim);
+      insVec = db.prepare('INSERT INTO vec_chunks(rowid, embedding) VALUES (?, ?)');
+      insMeta = db.prepare('INSERT INTO chunk_meta(rowid, docId, docName, idx, text) VALUES (?, ?, ?, ?, ?)');
+      schemaReady = true;
+    }
+    const v = insVec!;
+    const m = insMeta!;
+    const tx = db.transaction(() => {
+      batch.forEach((c, j) => {
+        const rowid = start + j;
+        const vec = vectors[j];
+        if (!vec) return;
+        v.run(BigInt(rowid), vec);
+        m.run(rowid, c.docId, c.docName, c.idx, c.text);
+      });
+    });
+    tx();
+    onProgress?.(Math.min(start + batchSize, chunks.length), chunks.length);
+    await new Promise<void>((resolve) => setImmediate(resolve)); // yield between batches (memory relief)
+  }
+
+  const info = db.prepare('INSERT OR REPLACE INTO index_info(k, v) VALUES (?, ?)');
+  info.run('dim', String(dim));
+  info.run('builtAt', new Date().toISOString());
+
   return { db, chunks, dim, close: () => db.close() };
+}
+
+/** Reopen a persisted on-disk index → a queryable VecIndex (+ docs + builtAt for status). `chunks[i]`
+ * is ordered by rowid so it aligns with the vec_chunks rowids queryIndex looks up. */
+export function loadDiskIndex(dbPath: string): {
+  index: VecIndex;
+  docs: Array<{ name: string; chunks: number }>;
+  builtAt: string;
+} {
+  const db = new Database(dbPath);
+  sqliteVec.load(db);
+  const rows = db
+    .prepare('SELECT rowid, docId, docName, idx, text FROM chunk_meta ORDER BY rowid')
+    .all() as Array<{ rowid: number; docId: string; docName: string; idx: number; text: string }>;
+  const chunks: DocChunk[] = rows.map((r) => ({ docId: r.docId, docName: r.docName, idx: r.idx, text: r.text }));
+  const dimRow = db.prepare(`SELECT v FROM index_info WHERE k = 'dim'`).get() as { v: string } | undefined;
+  const builtRow = db.prepare(`SELECT v FROM index_info WHERE k = 'builtAt'`).get() as { v: string } | undefined;
+  const dim = Number(dimRow?.v ?? EMBED_DIM_DEFAULT);
+  const counts = new Map<string, number>();
+  for (const c of chunks) counts.set(c.docName, (counts.get(c.docName) ?? 0) + 1);
+  const docs = [...counts.entries()].map(([name, n]) => ({ name, chunks: n }));
+  return { index: { db, chunks, dim, close: () => db.close() }, docs, builtAt: builtRow?.v ?? '' };
+}
+
+// ── Resumable, crash-safe on-disk build (Phase A: plan · Phase B: embed missing) ────────────────
+// The single-shot buildIndex grows the embedder's native working set across thousands of chunks and
+// can OOM on a memory-limited box. The resumable path splits the work: writeChunkPlan persists all
+// chunk metadata once (cheap, text only); embedMissing then embeds only not-yet-embedded chunks in
+// bounded batches, committing each batch. Run embedMissing repeatedly — ideally in FRESH processes
+// (each `npm run index:docs` invocation) — so native memory is fully released between slices. A
+// crash loses at most the in-flight batch; the next run resumes from the DB.
+
+/** Phase A — persist every chunk's metadata (no vectors yet) to a fresh on-disk DB with the given
+ * embedding dim. Wipes any prior plan/vectors at this path. Low memory: holds text only. */
+export function writeChunkPlan(dbPath: string, chunks: DocChunk[], dim: number): void {
+  const db = new Database(dbPath);
+  try {
+    sqliteVec.load(db);
+    db.exec('DROP TABLE IF EXISTS vec_chunks;');
+    db.exec('DROP TABLE IF EXISTS chunk_meta;');
+    db.exec('DROP TABLE IF EXISTS index_info;');
+    createIndexSchema(db, dim);
+    const insMeta = db.prepare('INSERT INTO chunk_meta(rowid, docId, docName, idx, text, embedded) VALUES (?, ?, ?, ?, ?, 0)');
+    const tx = db.transaction(() => {
+      chunks.forEach((c, i) => insMeta.run(i, c.docId, c.docName, c.idx, c.text));
+    });
+    tx();
+    const info = db.prepare('INSERT OR REPLACE INTO index_info(k, v) VALUES (?, ?)');
+    info.run('dim', String(dim));
+    info.run('planned', String(chunks.length));
+    info.run('builtAt', new Date().toISOString());
+  } finally {
+    db.close();
+  }
+}
+
+/** planned / embedded / remaining counts for a planned on-disk DB. */
+export function indexCounts(dbPath: string): { planned: number; embedded: number; remaining: number } {
+  const db = new Database(dbPath);
+  try {
+    const planned = (db.prepare('SELECT COUNT(*) AS n FROM chunk_meta').get() as { n: number }).n;
+    const embedded = (db.prepare('SELECT COUNT(*) AS n FROM chunk_meta WHERE embedded = 1').get() as { n: number }).n;
+    return { planned, embedded, remaining: planned - embedded };
+  } finally {
+    db.close();
+  }
+}
+
+/** Phase B — embed up to `limit` not-yet-embedded chunks (batched, each batch committed), marking
+ * them done. Returns { embedded, remaining }. Safe to call repeatedly until remaining === 0. */
+export async function embedMissing(
+  dbPath: string,
+  embed: Embedder,
+  opts: { batchSize?: number; limit?: number; onProgress?: (done: number, total: number) => void } = {},
+): Promise<{ embedded: number; remaining: number }> {
+  const batchSize = opts.batchSize && opts.batchSize > 0 ? Math.floor(opts.batchSize) : 48;
+  const limit = opts.limit && opts.limit > 0 ? Math.floor(opts.limit) : -1; // -1 = all remaining
+  const db = new Database(dbPath);
+  try {
+    sqliteVec.load(db);
+    const total = (db.prepare('SELECT COUNT(*) AS n FROM chunk_meta').get() as { n: number }).n;
+    const todo = db
+      .prepare('SELECT rowid, text FROM chunk_meta WHERE embedded = 0 ORDER BY rowid LIMIT ?')
+      .all(limit) as Array<{ rowid: number; text: string }>;
+    const insVec = db.prepare('INSERT OR REPLACE INTO vec_chunks(rowid, embedding) VALUES (?, ?)');
+    const markDone = db.prepare('UPDATE chunk_meta SET embedded = 1 WHERE rowid = ?');
+    let embedded = (db.prepare('SELECT COUNT(*) AS n FROM chunk_meta WHERE embedded = 1').get() as { n: number }).n;
+    for (let s = 0; s < todo.length; s += batchSize) {
+      const batch = todo.slice(s, s + batchSize);
+      const vectors = await embed(batch.map((b) => b.text));
+      const tx = db.transaction(() => {
+        batch.forEach((b, j) => {
+          const vec = vectors[j];
+          if (!vec) return;
+          insVec.run(BigInt(b.rowid), vec);
+          markDone.run(b.rowid);
+        });
+      });
+      tx();
+      embedded += batch.length;
+      opts.onProgress?.(embedded, total);
+      await new Promise<void>((resolve) => setImmediate(resolve)); // yield (memory relief)
+    }
+    const remaining = (db.prepare('SELECT COUNT(*) AS n FROM chunk_meta WHERE embedded = 0').get() as { n: number }).n;
+    return { embedded: todo.length, remaining };
+  } finally {
+    db.close();
+  }
 }
 
 /** Nearest-neighbor query → cited, scored passages (closest first). */
@@ -180,44 +383,163 @@ async function extractFile(path: string): Promise<string> {
   return '';
 }
 
-function listFiles(dir: string, depth = 0): string[] {
-  if (depth > 4) return [];
-  const out: string[] = [];
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, e.name);
-    if (e.isDirectory()) out.push(...listFiles(full, depth + 1));
-    else if (SUPPORTED.has(extname(e.name).toLowerCase())) out.push(full);
-    if (out.length > 500) break;
+/**
+ * Optional path-include filter from `DOCUMENTS_PATH_INCLUDE` (regex, case-insensitive). When set,
+ * only files whose path (relative to DOCUMENTS_DIR) matches are indexed — e.g.
+ * `(^|[\\/])Leases([\\/])` to index ONLY the per-property `Leases` folders and nothing else under
+ * the root. Unset → index every supported file (original behavior). This keeps a broad DOCUMENTS_DIR
+ * (e.g. a whole drive) from sweeping in non-lease and confidential material.
+ */
+export function pathIncludeRe(): RegExp | null {
+  const raw = process.env.DOCUMENTS_PATH_INCLUDE?.trim();
+  if (!raw) return null;
+  try {
+    return new RegExp(raw, 'i');
+  } catch {
+    return null;
   }
-  return out;
+}
+
+/** Max files to index before stopping (env `DOCUMENTS_MAX_FILES`, default 2000). Truncation is
+ * reported (never silent) so a too-small cap is visible in the logs. */
+export function maxFiles(): number {
+  const n = Number(process.env.DOCUMENTS_MAX_FILES);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 2000;
+}
+
+/** Max chunks indexed per document (env `DOCUMENTS_MAX_CHUNKS_PER_DOC`, default 25). Bounds the
+ * worst case from a long PDF that slipped past the non-lease filter. */
+export function maxChunksPerDoc(): number {
+  const n = Number(process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 25;
+}
+
+/** On-disk index location (env `DOC_INDEX_PATH`, default `<cwd>/data/doc-index.sqlite`). Gitignored;
+ * built offline by `npm run index:docs`, loaded by the Brain Server on start. */
+export function docIndexPath(): string {
+  return process.env.DOC_INDEX_PATH ?? join(process.cwd(), 'data', 'doc-index.sqlite');
+}
+
+/** Pure: should a relative file path be indexed? Supported extension + (optional) include filter.
+ * Path separators are normalized to `/` before matching so the include pattern is OS-agnostic
+ * (write `(^|/)Leases(/)` regardless of Windows `\` vs POSIX `/`). */
+export function matchesIndexFilters(relPath: string, includeRe: RegExp | null): boolean {
+  if (!SUPPORTED.has(extname(relPath).toLowerCase())) return false;
+  const norm = relPath.replace(/\\/g, '/');
+  if (includeRe && !includeRe.test(norm)) return false;
+  if (isLikelyNonLease(norm)) return false;
+  return true;
+}
+
+/**
+ * Recursively collect indexable files under `root`, pruning excluded paths (directories AND files,
+ * so e.g. an estate/confidential folder is never descended into) and applying the optional include
+ * filter. Stops at `max` files and flags truncation (never silently drops).
+ */
+function listFiles(
+  root: string,
+  max = maxFiles(),
+  includeRe = pathIncludeRe(),
+  excludes = excludePatterns(),
+): { files: string[]; truncated: boolean } {
+  const files: string[] = [];
+  let truncated = false;
+  const walk = (dir: string, depth: number): void => {
+    if (depth > 6 || files.length >= max) return;
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return; // unreadable directory → skip
+    }
+    for (const e of entries) {
+      if (files.length >= max) {
+        truncated = true;
+        return;
+      }
+      const full = join(dir, e.name);
+      const rel = full.slice(root.length).replace(/^[\\/]+/, '');
+      if (isExcludedPath(rel, excludes)) continue; // prune excluded dirs + files (defense-in-depth)
+      if (e.isDirectory()) walk(full, depth + 1);
+      else if (matchesIndexFilters(rel, includeRe)) files.push(full);
+    }
+  };
+  walk(root, 0);
+  return { files, truncated };
 }
 
 let cache: { index: VecIndex | null; docs: Array<{ name: string; chunks: number }>; builtAt: string } | null = null;
 
-export async function buildDocIndex(embed: Embedder = realEmbedder): Promise<void> {
-  const dir = process.env.DOCUMENTS_DIR;
+/**
+ * List → extract → chunk the configured corpus (DOCUMENTS_DIR + include/exclude filters), applying
+ * the per-document chunk cap. Pure of any embedding/DB work so the offline indexer can batch-embed
+ * the result. Returns empty when no (or a missing) DOCUMENTS_DIR.
+ */
+export async function collectDocChunks(
+  dir: string | undefined = process.env.DOCUMENTS_DIR,
+): Promise<{ chunks: DocChunk[]; docs: Array<{ name: string; chunks: number }>; truncated: boolean }> {
   if (!dir || !existsSync(dir) || !statSync(dir).isDirectory()) {
-    cache = { index: await buildIndex([], embed), docs: [], builtAt: new Date().toISOString() };
-    return;
+    return { chunks: [], docs: [], truncated: false };
   }
+  const cap = maxChunksPerDoc();
   const chunks: DocChunk[] = [];
   const docs: Array<{ name: string; chunks: number }> = [];
-  for (const file of listFiles(dir)) {
+  const { files, truncated } = listFiles(dir); // exclusion + include filter applied here
+  for (const file of files) {
     const docName = file.slice(dir.length).replace(/^[\\/]+/, '');
-    if (isExcludedPath(docName)) continue; // confidentiality / personal guard
     const text = await extractFile(file);
-    const pieces = chunkText(text);
+    const pieces = chunkText(text).slice(0, cap);
     if (!pieces.length) continue;
     const docId = docName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     pieces.forEach((t, idx) => chunks.push({ docId, docName, idx, text: t }));
     docs.push({ name: docName, chunks: pieces.length });
   }
+  return { chunks, docs, truncated };
+}
+
+export async function buildDocIndex(embed: Embedder = realEmbedder): Promise<void> {
+  const { chunks, docs, truncated } = await collectDocChunks();
+  if (truncated) {
+    console.warn(
+      `[documents] file cap (${maxFiles()}) reached under ${process.env.DOCUMENTS_DIR} — some documents are NOT indexed; raise DOCUMENTS_MAX_FILES.`,
+    );
+  }
+  const filterNote = process.env.DOCUMENTS_PATH_INCLUDE ? ` matching /${process.env.DOCUMENTS_PATH_INCLUDE}/i` : '';
+  console.log(`[documents] indexed ${docs.length} documents (${chunks.length} chunks)${filterNote}`);
   cache = { index: await buildIndex(chunks, embed), docs, builtAt: new Date().toISOString() };
 }
 
 async function ensureIndex() {
-  if (!cache) await buildDocIndex();
+  if (cache) return cache;
+  const p = docIndexPath();
+  if (existsSync(p)) {
+    const { index, docs, builtAt } = loadDiskIndex(p);
+    cache = { index, docs, builtAt };
+    console.log(`[documents] loaded on-disk index — ${docs.length} documents, ${index.chunks.length} chunks (${p})`);
+  } else {
+    await buildDocIndex(); // in-memory fallback (empty when DOCUMENTS_DIR unset)
+  }
   return cache!;
+}
+
+/**
+ * Startup warm-up. Loads the persisted on-disk index if present (fast, no embedding). If it's absent
+ * but a corpus is configured, we deliberately do NOT build the full corpus in-process (that OOM-
+ * crashes the box) — we log guidance to run `npm run index:docs` and serve an empty index.
+ */
+export async function warmDocIndex(): Promise<void> {
+  const p = docIndexPath();
+  if (existsSync(p)) {
+    await ensureIndex();
+    return;
+  }
+  if (process.env.DOCUMENTS_DIR) {
+    console.warn(
+      `[documents] no on-disk index at ${p} — run \`npm run index:docs\` to build it. Serving an EMPTY document index until then.`,
+    );
+    cache = { index: await buildIndex([], realEmbedder), docs: [], builtAt: new Date().toISOString() };
+  }
+  // No DOCUMENTS_DIR → leave cache null; first request lazily builds an empty index (harmless).
 }
 
 /** The injectable doc searcher handed to the agent (server only). */

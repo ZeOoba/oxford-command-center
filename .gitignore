@@ -21,4 +21,8 @@ data/alert-inbox.json
 data/__test-alert-inbox.json
 data/outbox/
 data/brief-health.json
+# Persisted document RAG index — built offline by `npm run index:docs`, never committed
+data/doc-index.sqlite
+data/doc-index.sqlite-shm
+data/doc-index.sqlite-wal
 .superpowers/

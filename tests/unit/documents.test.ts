@@ -1,5 +1,28 @@
-import { describe, it, expect } from 'vitest';
-import { chunkText, isExcludedPath, type DocChunk, type Embedder, buildIndex, queryIndex } from '../../server/sources/documents';
+import { afterEach, describe, it, expect } from 'vitest';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  chunkText,
+  isExcludedPath,
+  isLikelyNonLease,
+  matchesIndexFilters,
+  maxFiles,
+  maxChunksPerDoc,
+  pathIncludeRe,
+  buildDocIndex,
+  collectDocChunks,
+  docStatus,
+  type DocChunk,
+  type Embedder,
+  buildIndex,
+  loadDiskIndex,
+  docIndexPath,
+  writeChunkPlan,
+  embedMissing,
+  indexCounts,
+  queryIndex,
+} from '../../server/sources/documents';
 
 describe('chunkText', () => {
   it('returns a single chunk for short text and none for empty', () => {
@@ -30,6 +53,146 @@ describe('isExcludedPath — confidentiality / personal guard', () => {
   it('allows ordinary property lease/PSA paths', () => {
     expect(isExcludedPath('1100 Rarig/Eurosort Lease.pdf')).toBe(false);
     expect(isExcludedPath('29000 Information Lane/Shore United PSA.pdf')).toBe(false);
+  });
+});
+
+// OS-agnostic Leases-folder pattern: matcher normalizes `\` → `/`, so only `/` is needed here.
+const LEASES_RE = /(^|\/)Leases(\/)/i;
+
+describe('matchesIndexFilters — extension + optional path-include filter', () => {
+  it('requires a supported extension (pdf/txt/md), skipping docx/doc', () => {
+    expect(matchesIndexFilters('PropA/Leases/x.pdf', null)).toBe(true);
+    expect(matchesIndexFilters('PropA/Leases/x.txt', null)).toBe(true);
+    expect(matchesIndexFilters('PropA/Leases/x.docx', null)).toBe(false);
+    expect(matchesIndexFilters('PropA/Leases/x.doc', null)).toBe(false);
+  });
+  it('honors a Leases-only include filter (path must contain a Leases directory segment)', () => {
+    expect(matchesIndexFilters('9050 Red Branch Rd/Leases/lease.pdf', LEASES_RE)).toBe(true);
+    expect(matchesIndexFilters('9050 Red Branch Rd/Other/note.pdf', LEASES_RE)).toBe(false);
+    expect(matchesIndexFilters('9050 Red Branch Rd/Leases.pdf', LEASES_RE)).toBe(false); // file, not a Leases folder
+  });
+  it('matches Windows backslash paths via separator normalization', () => {
+    expect(matchesIndexFilters('29000 Information Lane\\Leases\\Shore United.pdf', LEASES_RE)).toBe(true);
+    expect(matchesIndexFilters('29000 Information Lane\\Other\\x.pdf', LEASES_RE)).toBe(false);
+  });
+  it('drops non-lease docs even under a Leases folder', () => {
+    expect(matchesIndexFilters('Sepich Portfolio/Leases/2019 Sepich I- P&L.pdf', LEASES_RE)).toBe(false);
+    expect(matchesIndexFilters('Sepich Portfolio/Leases/Rent Roll -- Dec 2020.pdf', LEASES_RE)).toBe(false);
+    expect(matchesIndexFilters('1100 Rarig/Leases/Eurosort Lease.pdf', LEASES_RE)).toBe(true);
+  });
+});
+
+describe('isLikelyNonLease — corpus tightening (drops financials/rent-rolls/disclosures)', () => {
+  it('drops obvious non-lease docs by filename', () => {
+    expect(isLikelyNonLease('Sepich Portfolio/Leases/Financial Statements 2019/2019 Sepich I- P&L.pdf')).toBe(true);
+    expect(isLikelyNonLease('Leases All properties/Leases/Rent Roll -- Dec 2020.pdf')).toBe(true);
+    expect(isLikelyNonLease('Leases All properties/Leases/Current Rent Rolls 11.9.20.xlsb.pdf')).toBe(true);
+    expect(isLikelyNonLease('Sepich Portfolio/Leases/2012 Zettler Agency Disclosure.pdf')).toBe(true);
+  });
+  it('keeps real leases and legitimate lease components', () => {
+    expect(isLikelyNonLease('1100 Rarig/Leases/Eurosort Lease.pdf')).toBe(false);
+    expect(isLikelyNonLease('9050 Red Branch Rd/Leases/Exhibit Package -- Unit A Soccer Plant Lease 01-2025.pdf')).toBe(false);
+    expect(isLikelyNonLease('1900 North Broadway/Leases/Commencement Date Certificate -- Exhibit D Baltimore Dialysis Lease.pdf')).toBe(false);
+  });
+  it('matches via separator normalization (Windows backslash paths)', () => {
+    expect(isLikelyNonLease('Sepich Portfolio\\Leases\\Rent Roll -- Dec 2020.pdf')).toBe(true);
+  });
+});
+
+describe('env knobs — pathIncludeRe + maxFiles', () => {
+  const prev = { inc: process.env.DOCUMENTS_PATH_INCLUDE, max: process.env.DOCUMENTS_MAX_FILES };
+  afterEach(() => {
+    process.env.DOCUMENTS_PATH_INCLUDE = prev.inc;
+    process.env.DOCUMENTS_MAX_FILES = prev.max;
+  });
+  it('pathIncludeRe is null when unset and a regex when set', () => {
+    delete process.env.DOCUMENTS_PATH_INCLUDE;
+    expect(pathIncludeRe()).toBeNull();
+    process.env.DOCUMENTS_PATH_INCLUDE = '(^|/)Leases(/)';
+    expect(pathIncludeRe()?.test('A/Leases/x.pdf')).toBe(true);
+  });
+  it('maxFiles defaults to 2000 and honors a valid override', () => {
+    delete process.env.DOCUMENTS_MAX_FILES;
+    expect(maxFiles()).toBe(2000);
+    process.env.DOCUMENTS_MAX_FILES = '50';
+    expect(maxFiles()).toBe(50);
+    process.env.DOCUMENTS_MAX_FILES = 'nonsense';
+    expect(maxFiles()).toBe(2000);
+  });
+});
+
+describe('maxChunksPerDoc — per-document chunk cap', () => {
+  const prev = process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC;
+  afterEach(() => {
+    process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC = prev;
+  });
+  it('defaults to 25 and honors a valid override; ignores nonsense', () => {
+    delete process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC;
+    expect(maxChunksPerDoc()).toBe(25);
+    process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC = '8';
+    expect(maxChunksPerDoc()).toBe(8);
+    process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC = 'nonsense';
+    expect(maxChunksPerDoc()).toBe(25);
+  });
+});
+
+describe('buildDocIndex — Leases-only include filter + exclusion pruning (temp corpus)', () => {
+  const prev = { dir: process.env.DOCUMENTS_DIR, inc: process.env.DOCUMENTS_PATH_INCLUDE };
+  afterEach(() => {
+    process.env.DOCUMENTS_DIR = prev.dir;
+    process.env.DOCUMENTS_PATH_INCLUDE = prev.inc;
+  });
+  it('indexes ONLY files under Leases folders, skipping other + excluded (estate) dirs', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'docidx-'));
+    try {
+      mkdirSync(join(root, 'PropA', 'Leases'), { recursive: true });
+      mkdirSync(join(root, 'PropB', 'Other'), { recursive: true });
+      mkdirSync(join(root, 'Estate Planning', 'Leases'), { recursive: true });
+      writeFileSync(join(root, 'PropA', 'Leases', 'lease.txt'), 'Tenant has a right of first refusal to renew the premises.');
+      writeFileSync(join(root, 'PropB', 'Other', 'note.txt'), 'miscellaneous non-lease document');
+      writeFileSync(join(root, 'Estate Planning', 'Leases', 'trust.txt'), 'confidential estate document');
+
+      process.env.DOCUMENTS_DIR = root;
+      process.env.DOCUMENTS_PATH_INCLUDE = '(^|/)Leases(/)';
+      await buildDocIndex(fakeEmbedder);
+      const s = await docStatus();
+
+      expect(s.documents).toBe(1); // only PropA/Leases/lease.txt
+      expect(s.docs[0]!.name.replace(/\\/g, '/')).toBe('PropA/Leases/lease.txt');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('collectDocChunks — list+extract+chunk with per-doc cap', () => {
+  const prev = { dir: process.env.DOCUMENTS_DIR, inc: process.env.DOCUMENTS_PATH_INCLUDE, cap: process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC };
+  afterEach(() => {
+    process.env.DOCUMENTS_DIR = prev.dir;
+    process.env.DOCUMENTS_PATH_INCLUDE = prev.inc;
+    process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC = prev.cap;
+  });
+  it('caps chunks per document and skips non-lease + excluded files', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'collect-'));
+    try {
+      mkdirSync(join(root, 'PropA', 'Leases'), { recursive: true });
+      // Long lease text → many chunks before the cap.
+      const long = Array.from({ length: 80 }, (_, i) => `Section ${i}. ` + 'lorem ipsum dolor sit amet renew. '.repeat(4)).join('\n\n');
+      writeFileSync(join(root, 'PropA', 'Leases', 'big-lease.txt'), long);
+      writeFileSync(join(root, 'PropA', 'Leases', 'Rent Roll -- Dec 2020.txt'), 'rent roll table'); // non-lease → skipped
+
+      process.env.DOCUMENTS_DIR = root;
+      process.env.DOCUMENTS_PATH_INCLUDE = '(^|/)Leases(/)';
+      process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC = '3';
+
+      const { chunks, docs } = await collectDocChunks();
+      expect(docs.length).toBe(1); // rent roll skipped
+      expect(docs[0]!.chunks).toBe(3); // capped
+      expect(chunks.length).toBe(3);
+      expect(chunks.every((c) => c.docName.replace(/\\/g, '/') === 'PropA/Leases/big-lease.txt')).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -68,6 +231,101 @@ describe('buildIndex / queryIndex — sqlite-vec vector search (fake embedder)',
     const index = await buildIndex(CHUNKS, fakeEmbedder);
     expect(await queryIndex(index, '   ', fakeEmbedder, 3)).toEqual([]);
     index.close();
+  });
+});
+
+describe('buildIndex on-disk — persist + reload + batched embedding (fake embedder)', () => {
+  it('persists vectors + metadata to disk and reloads into a queryable index', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'diskidx-'));
+    try {
+      const dbPath = join(root, 'doc-index.sqlite');
+      const built = await buildIndex(CHUNKS, fakeEmbedder, { dbPath });
+      built.close(); // close the writer before reopening
+
+      const { index, docs, builtAt } = loadDiskIndex(dbPath);
+      expect(index.chunks.length).toBe(3);
+      expect(docs.length).toBe(3); // Eurosort, Roof, Rent
+      expect(builtAt).toMatch(/\d{4}-\d{2}-\d{2}T/); // ISO timestamp persisted
+
+      const hits = await queryIndex(index, 'renewal', fakeEmbedder, 3);
+      expect(hits[0]!.doc).toBe('Eurosort Lease.pdf');
+      expect(hits[0]!.docId).toBe('eurosort');
+      expect(hits[0]!.snippet.toLowerCase()).toContain('renew');
+      index.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('embeds in batches (never one pass) and still ranks correctly', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'batchidx-'));
+    try {
+      const dbPath = join(root, 'doc-index.sqlite');
+      const sizes: number[] = [];
+      const spy: Embedder = async (texts) => {
+        sizes.push(texts.length);
+        return fakeEmbedder(texts);
+      };
+      let lastDone = 0;
+      const built = await buildIndex(CHUNKS, spy, {
+        dbPath,
+        batchSize: 1,
+        onProgress: (done, total) => {
+          expect(total).toBe(3);
+          lastDone = done;
+        },
+      });
+      built.close();
+      expect(Math.max(...sizes)).toBeLessThanOrEqual(1); // no single-pass embed of all 3
+      expect(lastDone).toBe(3); // progress reached the end
+
+      const { index } = loadDiskIndex(dbPath);
+      const hits = await queryIndex(index, 'roof', fakeEmbedder, 3);
+      expect(hits[0]!.doc).toBe('Roof Warranty.pdf');
+      index.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('plans all chunks then embeds them across resumable passes (crash-safe)', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'resumable-'));
+    try {
+      const dbPath = join(root, 'doc-index.sqlite');
+      writeChunkPlan(dbPath, CHUNKS, 3); // fake embedder is 3-dim
+      expect(indexCounts(dbPath)).toEqual({ planned: 3, embedded: 0, remaining: 3 });
+
+      const p1 = await embedMissing(dbPath, fakeEmbedder, { batchSize: 1, limit: 2 });
+      expect(p1.embedded).toBe(2);
+      expect(p1.remaining).toBe(1);
+
+      const p2 = await embedMissing(dbPath, fakeEmbedder, { batchSize: 1, limit: 10 });
+      expect(p2.embedded).toBe(1);
+      expect(p2.remaining).toBe(0);
+
+      const p3 = await embedMissing(dbPath, fakeEmbedder, {}); // nothing left to do
+      expect(p3).toEqual({ embedded: 0, remaining: 0 });
+
+      const { index, docs } = loadDiskIndex(dbPath);
+      expect(docs.length).toBe(3);
+      const hits = await queryIndex(index, 'renewal', fakeEmbedder, 3);
+      expect(hits[0]!.doc).toBe('Eurosort Lease.pdf');
+      index.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('docIndexPath defaults under data/ and honors DOC_INDEX_PATH', () => {
+    const prev = process.env.DOC_INDEX_PATH;
+    try {
+      delete process.env.DOC_INDEX_PATH;
+      expect(docIndexPath().replace(/\\/g, '/')).toMatch(/\/data\/doc-index\.sqlite$/);
+      process.env.DOC_INDEX_PATH = '/tmp/custom-index.sqlite';
+      expect(docIndexPath()).toBe('/tmp/custom-index.sqlite');
+    } finally {
+      process.env.DOC_INDEX_PATH = prev;
+    }
   });
 });
 
