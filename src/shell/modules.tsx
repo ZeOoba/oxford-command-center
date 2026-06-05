@@ -10,6 +10,7 @@ import {
   LineChart,
   CheckSquare,
   Bell,
+  CalendarDays,
   Users,
   Activity,
   FileSearch,
@@ -28,6 +29,7 @@ const InsuranceModule = lazy(() => import('@/modules/insurance/InsuranceModule')
 const MarketModule = lazy(() => import('@/modules/market/MarketModule').then((m) => ({ default: m.MarketModule })));
 const TasksModule = lazy(() => import('@/modules/tasks/TasksModule').then((m) => ({ default: m.TasksModule })));
 const AlertsModule = lazy(() => import('@/modules/alerts/AlertsModule').then((m) => ({ default: m.AlertsModule })));
+const CalendarModule = lazy(() => import('@/modules/calendar/CalendarModule').then((m) => ({ default: m.CalendarModule })));
 const RelationshipsModule = lazy(() => import('@/modules/relationships/RelationshipsModule').then((m) => ({ default: m.RelationshipsModule })));
 const HealthModule = lazy(() => import('@/modules/health/HealthModule').then((m) => ({ default: m.HealthModule })));
 const DocumentsModule = lazy(() => import('@/modules/documents/DocumentsModule').then((m) => ({ default: m.DocumentsModule })));
@@ -50,6 +52,7 @@ export const MODULES: ModuleDef[] = [
   { id: 'pipeline', label: 'Acquisitions', icon: Target, group: 'Command', Component: AcquisitionsModule },
   { id: 'tasks', label: 'Tasks', icon: CheckSquare, group: 'Command', Component: TasksModule },
   { id: 'alerts', label: 'Alerts', icon: Bell, group: 'Command', Component: AlertsModule },
+  { id: 'calendar', label: 'Calendar', icon: CalendarDays, group: 'Command', Component: CalendarModule },
   { id: 'portfolio', label: 'Portfolio', icon: Building2, group: 'Assets', Component: PortfolioModule },
   { id: 'leases', label: 'Leases', icon: FileText, group: 'Assets', Component: LeasesModule },
   { id: 'debt', label: 'Debt', icon: Landmark, group: 'Capital', Component: DebtModule },
