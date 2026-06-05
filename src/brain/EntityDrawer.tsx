@@ -98,7 +98,6 @@ export function EntityDrawer() {
             snapshot={data.snapshot}
             canWrite={canWrite}
             onClose={ui.closeEntity}
-            onOpen={ui.openEntity}
             onDraft={ui.openDraft}
             onAdvanceStage={onAdvanceStage}
           />
