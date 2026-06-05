@@ -3,7 +3,7 @@ import { dirname } from 'node:path';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import { buildAnalytics } from '../../src/analytics/engine';
 import { fmtUsdCompact, fmtPct } from '../../src/analytics/format';
-import { extendedInsights } from './alerts';
+import { evaluateConditions } from '../../src/analytics/conditions';
 import { loadState, saveState, diffCriticalAlerts, shouldSendBrief, etNow, type AlertState } from './state';
 import { renderBrief, renderAlert, type Email } from './render';
 import { sendEmail, type SendResult } from './send';
@@ -27,7 +27,7 @@ export async function runBrief(
   const send = deps.send ?? ((e: Email, to: string[]) => sendEmail(e, to));
   const state: AlertState = loadState(deps.statePath);
 
-  const insights = extendedInsights(snapshot, state.dealStages);
+  const insights = evaluateConditions(snapshot, { priorStages: state.dealStages });
   const criticalIds = insights.filter((i) => i.severity === 'critical').map((i) => i.id);
   const { toAlert, nextAlerted } = diffCriticalAlerts(criticalIds, state);
 
