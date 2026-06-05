@@ -16,12 +16,16 @@ describe('chunkText', () => {
 });
 
 describe('isExcludedPath — confidentiality / personal guard', () => {
-  it('excludes the confidential codename and personal/estate paths (case-insensitive)', () => {
-    expect(isExcludedPath('E Fulton Street Due Dilligence Items/Phase II.pdf')).toBe(true);
-    expect(isExcludedPath('deals/E. FULTON/psa.pdf')).toBe(true);
+  it('excludes personal/estate folders by default (case-insensitive)', () => {
     expect(isExcludedPath('Estate Planning and Trust Documents/trust.pdf')).toBe(true);
     expect(isExcludedPath('Gabriel Documents/personal.pdf')).toBe(true);
     expect(isExcludedPath('GDG Properties EG Properties and personal info/x.pdf')).toBe(true);
+  });
+  it('excludes confidential-deal patterns supplied via DOCUMENTS_EXCLUDE (injected here, never hardcoded)', () => {
+    // The real codename lives only in the gitignored env var; the guard regex-matches it.
+    const patterns = [/secret-codename/i];
+    expect(isExcludedPath('deals/Secret-Codename/psa.pdf', patterns)).toBe(true);
+    expect(isExcludedPath('deals/Secret-Codename DD Items/phase-ii.pdf', patterns)).toBe(true);
   });
   it('allows ordinary property lease/PSA paths', () => {
     expect(isExcludedPath('1100 Rarig/Eurosort Lease.pdf')).toBe(false);
