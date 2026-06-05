@@ -1,4 +1,5 @@
 import type { PortfolioSnapshot } from '../contracts/index';
+import { ALERT_THRESHOLDS } from '@analytics/index';
 
 const DAY_MS = 86_400_000;
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
@@ -22,10 +23,10 @@ export interface DatedEvent {
   amount: number | null; // rent / balance / premium, for display
 }
 
-/** Critical < 60d (incl. overdue), Warning 60–180d, else normal. */
+/** Critical < leaseCriticalDays (incl. overdue), Warning < leaseWarningDays, else normal. Single-sourced. */
 function urgencyOf(daysToDate: number): CalendarUrgency {
-  if (daysToDate < 60) return 'critical';
-  if (daysToDate < 180) return 'warning';
+  if (daysToDate < ALERT_THRESHOLDS.leaseCriticalDays) return 'critical';
+  if (daysToDate < ALERT_THRESHOLDS.leaseWarningDays) return 'warning';
   return 'normal';
 }
 
@@ -105,8 +106,8 @@ export function criticalDateKpis(events: DatedEvent[]): CriticalDateKpis {
   let warning = 0;
   let thisQuarter = 0;
   for (const e of events) {
-    if (e.daysToDate < 60) critical += 1;
-    else if (e.daysToDate < 180) warning += 1;
+    if (e.daysToDate < ALERT_THRESHOLDS.leaseCriticalDays) critical += 1;
+    else if (e.daysToDate < ALERT_THRESHOLDS.leaseWarningDays) warning += 1;
     if (e.daysToDate < 90) thisQuarter += 1;
   }
   return { critical, warning, thisQuarter, next12mo: events.length };
