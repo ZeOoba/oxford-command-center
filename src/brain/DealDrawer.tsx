@@ -4,7 +4,6 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { X, Mail, ChevronRight, RefreshCw, ExternalLink, Lock } from 'lucide-react';
 import type { PortfolioSnapshot, Deal, DealStage, CompSet } from '@contracts/index';
 import type { DraftRequest } from './draft';
-import type { EntityRef } from './ui-context';
 import { fmtUsd, fmtUsdCompact, fmtPct, fmtSf, fmtNum, fmtMultiple, fmtDate } from '@analytics/index';
 import { SNAPSHOT_KEY } from '@/data/queries';
 import { refreshDealComps } from '@/data/actions';
@@ -24,7 +23,6 @@ export function DealDrawer({
   snapshot: PortfolioSnapshot;
   canWrite: boolean;
   onClose: () => void;
-  onOpen: (ref: EntityRef) => void;
   onDraft: (req: DraftRequest) => void;
   onAdvanceStage: (dealId: string, stage: DealStage, label: string) => void;
 }) {
