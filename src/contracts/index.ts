@@ -51,6 +51,8 @@ export const PortfolioSnapshot = z.object({
   counterparties: z.array(Counterparty).default([]),
   /** Overlay-sourced lease renewal pipeline stages (Phase 2). Workbook has none → defaults empty. */
   renewalStages: z.record(z.string(), RenewalStage).default({}),
+  /** Overlay-sourced free-text tenant notes (Phase 2), keyed by tenant slug. */
+  tenantNotes: z.record(z.string(), z.string()).default({}),
   dataQuality: z.array(DataQualityFlag),
 });
 export type PortfolioSnapshot = z.infer<typeof PortfolioSnapshot>;
