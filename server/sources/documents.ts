@@ -438,6 +438,15 @@ export function pathIncludeRe(): RegExp | null {
   }
 }
 
+/** Top-level folder allowlist (env `DOCUMENTS_INCLUDE_DIRS`, comma-separated exact folder names
+ * relative to DOCUMENTS_DIR, case-insensitive). When set, ONLY these top-level directories are
+ * descended into — a FAIL-CLOSED scope so a broad DOCUMENTS_DIR (the whole OneDrive) never sweeps in
+ * personal/unlisted folders. Unset → walk every top-level dir (legacy), still subject to excludes. */
+export function includeDirs(): Set<string> | null {
+  const raw = (process.env.DOCUMENTS_INCLUDE_DIRS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  return raw.length ? new Set(raw.map((s) => s.toLowerCase())) : null;
+}
+
 /** Max files to index before stopping (env `DOCUMENTS_MAX_FILES`, default 2000). Truncation is
  * reported (never silent) so a too-small cap is visible in the logs. */
 export function maxFiles(): number {
@@ -479,11 +488,13 @@ function listFiles(
   max = maxFiles(),
   includeRe = pathIncludeRe(),
   excludes = excludePatterns(),
+  allow = includeDirs(),
+  depthCap = 6,
 ): { files: string[]; truncated: boolean } {
   const files: string[] = [];
   let truncated = false;
   const walk = (dir: string, depth: number): void => {
-    if (depth > 6 || files.length >= max) return;
+    if (depth > depthCap || files.length >= max) return;
     let entries: Dirent[];
     try {
       entries = readdirSync(dir, { withFileTypes: true });
@@ -498,8 +509,10 @@ function listFiles(
       const full = join(dir, e.name);
       const rel = full.slice(root.length).replace(/^[\\/]+/, '');
       if (isExcludedPath(rel, excludes)) continue; // prune excluded dirs + files (defense-in-depth)
-      if (e.isDirectory()) walk(full, depth + 1);
-      else if (matchesIndexFilters(rel, includeRe)) files.push(full);
+      if (e.isDirectory()) {
+        if (depth === 0 && allow && !allow.has(e.name.toLowerCase())) continue; // fail-closed top-level scope
+        walk(full, depth + 1);
+      } else if (matchesIndexFilters(rel, includeRe)) files.push(full);
     }
   };
   walk(root, 0);

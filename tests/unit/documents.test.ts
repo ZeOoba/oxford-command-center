@@ -202,6 +202,43 @@ describe('collectDocChunks — list+extract+chunk with per-doc cap', () => {
   });
 });
 
+describe('DOCUMENTS_INCLUDE_DIRS — fail-closed top-level allowlist', () => {
+  const prev = {
+    dir: process.env.DOCUMENTS_DIR,
+    inc: process.env.DOCUMENTS_PATH_INCLUDE,
+    allow: process.env.DOCUMENTS_INCLUDE_DIRS,
+    drop: process.env.DOCUMENTS_DROP_NONLEASE,
+  };
+  afterEach(() => {
+    process.env.DOCUMENTS_DIR = prev.dir;
+    process.env.DOCUMENTS_PATH_INCLUDE = prev.inc;
+    process.env.DOCUMENTS_INCLUDE_DIRS = prev.allow;
+    process.env.DOCUMENTS_DROP_NONLEASE = prev.drop;
+  });
+  it('indexes ONLY allowlisted top-level folders, skipping unlisted + personal', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'allow-'));
+    try {
+      mkdirSync(join(root, '6300 Sherriff Road'), { recursive: true });
+      mkdirSync(join(root, 'Estate Planning and Trust Documents'), { recursive: true });
+      mkdirSync(join(root, 'Pictures'), { recursive: true });
+      writeFileSync(join(root, '6300 Sherriff Road', 'lease.txt'), 'Tenant renewal option clause text.');
+      writeFileSync(join(root, 'Estate Planning and Trust Documents', 'will.txt'), 'last will and testament');
+      writeFileSync(join(root, 'Pictures', 'note.txt'), 'family photo caption');
+
+      process.env.DOCUMENTS_DIR = root;
+      delete process.env.DOCUMENTS_PATH_INCLUDE;
+      process.env.DOCUMENTS_DROP_NONLEASE = '0';
+      process.env.DOCUMENTS_INCLUDE_DIRS = '6300 Sherriff Road';
+
+      const { docs } = await collectDocChunks();
+      expect(docs.length).toBe(1);
+      expect(docs[0]!.name.replace(/\\/g, '/')).toBe('6300 Sherriff Road/lease.txt');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('extractXlsxText — flat cell-text dump for search', () => {
   it('extracts sheet name + non-empty cell values', async () => {
     const root = mkdtempSync(join(tmpdir(), 'xlsx-'));
