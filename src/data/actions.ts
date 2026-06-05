@@ -17,6 +17,9 @@ export const advanceDealStage = (dealId: string, stage: DealStage): Promise<void
 export const advanceRenewalStage = (leaseId: string, stage: RenewalStage): Promise<void> =>
   postAction('/api/actions/renewal-stage', { leaseId, stage });
 
+export const saveTenantNote = (tenantId: string, note: string): Promise<void> =>
+  postAction('/api/actions/tenant-note', { tenantId, note });
+
 export interface NewTask {
   label: string;
   section?: string;
