@@ -136,6 +136,14 @@ app.get('/api/macro', async (c) => c.json(await getMacro()));
 /** Document RAG status — indexed lease/PSA/OM docs (server-only; empty until DOCUMENTS_DIR is set). */
 app.get('/api/documents', async (c) => c.json(await docStatus()));
 
+app.get('/api/documents/search', async (c) => {
+  const q = c.req.query('q') ?? '';
+  const limit = Math.min(20, Math.max(1, Number(c.req.query('limit') ?? 8) || 8));
+  if (!q.trim()) return c.json({ hits: [] });
+  const hits = await searchDocuments(q, limit);
+  return c.json({ hits });
+});
+
 /**
  * AI assistant — a streaming, tool-using agent over the spine (server/ai/agent.ts).
  * Streams SSE frames: event `tool` (step), `text` (token delta), `done`, `error`.
