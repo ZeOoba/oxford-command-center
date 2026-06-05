@@ -68,6 +68,10 @@ describe('evaluateConditions — debt', () => {
     const out = evaluateConditions(snap({ loans: [loan({ balloon: true, maturity: iso(365) })] }), opts);
     expect(out.find((i) => i.id === 'balloon-n1')?.severity).toBe('warning');
   });
+  it('balloon metric is full precision, not compact (Defect 6 regression guard)', () => {
+    const out = evaluateConditions(snap({ loans: [loan({ balloon: true, maturity: iso(120), absBalance: 980000 })] }), opts);
+    expect(out.find((i) => i.id === 'balloon-n1')?.metric).toBe('$980,000');
+  });
   it('DSCR < 1.10 is a critical floor breach', () => {
     const out = evaluateConditions(snap({ properties: [prop({ dscr: 1.09 })] }), opts);
     expect(out.find((i) => i.id === 'dscr-floor-p1')?.severity).toBe('critical');

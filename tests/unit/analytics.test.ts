@@ -9,7 +9,6 @@ import {
   criticalDates,
   debtSummary,
   marketAllocation,
-  generateInsights,
   applyScenario,
   buildAnalytics,
 } from '@analytics/index';
@@ -313,41 +312,5 @@ describe('applyScenario', () => {
     expect(down.properties[0]!.noi).toBeCloseTo(90, 6);
     expect(portfolioKpis(base, 'Downside').noi.prov.confidence).toBe('derived');
     expect(portfolioKpis(base, 'Base').noi.prov.confidence).toBe('confirmed');
-  });
-});
-
-describe('generateInsights', () => {
-  it('flags balloons in-window, expired leases, and cancelled insurance', () => {
-    const s = snap({
-      loans: [loan({ name: 'Restoration', balloon: true, monthsToMaturity: 8, absBalance: 980000, maturity: '2027-02-20' })],
-      leases: [lease({ company: 'HoldoverCo', status: 'Expired', annualRent: 10000 })],
-      insurance: [
-        {
-          id: 'x',
-          property: 'Solar',
-          entity: null,
-          coverage: 'Package',
-          effective: null,
-          expires: null,
-          policyNo: null,
-          carrier: null,
-          premium: 8776,
-          daysToExpiry: -22,
-          status: 'Cancelled',
-          notes: null,
-          flags: [],
-        },
-      ],
-    });
-    const ins = generateInsights(s);
-    expect(ins.some((i) => i.category === 'debt' && i.severity === 'critical')).toBe(true);
-    // Defect 6: balloon figure is full precision ($980,000), never compact ($980K), so it
-    // matches the loan drawer's Current Balance and never reads as two different numbers.
-    const balloon = ins.find((i) => i.category === 'debt');
-    expect(balloon?.metric).toBe('$980,000');
-    expect(ins.some((i) => i.category === 'lease' && /expired/i.test(i.title))).toBe(true);
-    expect(ins.some((i) => i.category === 'insurance' && i.severity === 'critical')).toBe(true);
-    // critical sorts before info
-    expect(ins[0]!.severity).toBe('critical');
   });
 });
