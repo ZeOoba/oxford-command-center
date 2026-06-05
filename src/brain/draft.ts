@@ -1,5 +1,6 @@
 import type { PortfolioSnapshot } from '@contracts/index';
 import { fmtUsd, fmtDate } from '@analytics/index';
+import type { Insight } from '@analytics/index';
 import type { EntityRef } from './ui-context';
 
 /**
@@ -135,4 +136,22 @@ export function mailtoHref(d: DraftResult): string {
   params.set('subject', d.subject);
   params.set('body', d.body);
   return `mailto:${encodeURIComponent(d.to)}?${params.toString()}`;
+}
+
+/**
+ * Map an alert's action to a draft request, or null when no draft applies.
+ * Only kinds that buildDraft can render are mapped (renewal/refi/insurance).
+ */
+export function insightToDraft(i: Insight): DraftRequest | null {
+  if (!i.action || !i.entityType || !i.entityId) return null;
+  switch (i.action.kind) {
+    case 'draft-renewal':
+      return i.entityType === 'lease' ? { kind: 'renewal', entity: { type: 'lease', id: i.entityId } } : null;
+    case 'open-refi':
+      return i.entityType === 'loan' ? { kind: 'refi', entity: { type: 'loan', id: i.entityId } } : null;
+    case 'review':
+      return i.entityType === 'insurance' ? { kind: 'insurance', entity: { type: 'insurance', id: i.entityId } } : null;
+    default:
+      return null;
+  }
 }

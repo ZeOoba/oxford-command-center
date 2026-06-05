@@ -60,3 +60,31 @@ describe('buildDraft — draft-only emails', () => {
     expect(href).toContain('subject=');
   });
 });
+
+import { insightToDraft } from '@/brain/draft';
+import type { Insight } from '@analytics/index';
+
+const ins = (over: Partial<Insight>): Insight => ({
+  id: 'x', severity: 'warning', category: 'lease', title: 't', detail: 'd', ...over,
+});
+
+describe('insightToDraft', () => {
+  it('maps a draft-renewal lease insight to a renewal draft', () => {
+    const r = insightToDraft(ins({ entityType: 'lease', entityId: 'l1', action: { label: 'Draft renewal', kind: 'draft-renewal' } }));
+    expect(r).toEqual({ kind: 'renewal', entity: { type: 'lease', id: 'l1' } });
+  });
+  it('maps an open-refi loan insight to a refi draft', () => {
+    const r = insightToDraft(ins({ category: 'debt', entityType: 'loan', entityId: 'n1', action: { label: 'Open refi workspace', kind: 'open-refi' } }));
+    expect(r).toEqual({ kind: 'refi', entity: { type: 'loan', id: 'n1' } });
+  });
+  it('maps a review insurance insight to an insurance draft', () => {
+    const r = insightToDraft(ins({ category: 'insurance', entityType: 'insurance', entityId: 'i1', action: { label: 'Review policy', kind: 'review' } }));
+    expect(r).toEqual({ kind: 'insurance', entity: { type: 'insurance', id: 'i1' } });
+  });
+  it('returns null when there is no action', () => {
+    expect(insightToDraft(ins({ entityType: 'lease', entityId: 'l1' }))).toBeNull();
+  });
+  it('returns null when the action kind has no draft (e.g. open-record)', () => {
+    expect(insightToDraft(ins({ entityType: 'property', entityId: 'p1', action: { label: 'View', kind: 'open-record' } }))).toBeNull();
+  });
+});
