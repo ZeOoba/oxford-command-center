@@ -42,14 +42,19 @@ describe('tenantScorecards', () => {
     expect(acme.properties.sort()).toEqual(['100 A', '300 C']);
   });
 
-  it('allocates % portfolio NOI pro-rata within each property, with rent-share fallback for unlinked leases', () => {
-    // portfolio NOI = 140k. Margin = 140k / 190k total rent ≈ 0.7368.
-    // Acme linked L1 = 100k * (70k/100k) = 70k. Acme unlinked L4 = 50k * 0.7368 = 36.84k. → 106.84k / 140k.
-    expect(acme.pctNoi).toBeCloseTo((70000 + 50000 * (140000 / 190000)) / 140000, 4);
-    // Beta linked = 100k * (30k/100k) = 30k → 30k/140k.
-    expect(beta.pctNoi).toBeCloseTo(30000 / 140000, 4);
-    // Gamma linked = 40k * (40k/40k) = 40k → 40k/140k.
-    expect(gamma.pctNoi).toBeCloseTo(40000 / 140000, 4);
+  it('allocates % portfolio NOI pro-rata within each property (rent-share fallback for unlinked), normalized to sum to 100%', () => {
+    // Allocated NOI: Acme L1 linked 100k*(70k/100k)=70k + L4 unlinked 50k*(140k/190k)=36.84k = 106.84k.
+    // Beta 100k*(30k/100k)=30k. Gamma 40k*(40k/40k)=40k. Normalize by total allocated = 176.84k.
+    const acmeAlloc = 70000 + 50000 * (140000 / 190000);
+    const totalAlloc = acmeAlloc + 30000 + 40000;
+    expect(acme.pctNoi).toBeCloseTo(acmeAlloc / totalAlloc, 4);
+    expect(beta.pctNoi).toBeCloseTo(30000 / totalAlloc, 4);
+    expect(gamma.pctNoi).toBeCloseTo(40000 / totalAlloc, 4);
+  });
+
+  it('normalizes % portfolio NOI so the column sums to 100% across tenants', () => {
+    const total = cards.reduce((acc, c) => acc + c.pctNoi, 0);
+    expect(total).toBeCloseTo(1, 6);
   });
 
   it('reports the soonest expiry and its days-to-expiry per tenant', () => {
