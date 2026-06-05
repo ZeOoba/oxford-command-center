@@ -1,0 +1,73 @@
+import type { Deal } from '../../src/contracts/index';
+import { CompSet, RECORD_COMPS_TOOL } from '../../src/contracts/index';
+
+export type FetchCompsResult = { ok: true; comps: CompSet } | { ok: false; error: string };
+
+export interface FetchCompsOptions {
+  apiKey?: string;
+  model?: string;
+  now: string; // ISO — injected for deterministic sourcedAt
+  fetchImpl?: typeof fetch;
+}
+
+interface AnthropicContentBlock {
+  type: string;
+  name?: string;
+  input?: unknown;
+}
+
+/**
+ * Research market comps for a deal via Anthropic's native web_search server tool, then read the
+ * model's structured record_comps call. Single non-streaming request: Anthropic runs the searches
+ * inside the request and the model ends by calling record_comps (a client tool we don't execute —
+ * we just read its input). Degrades to { ok:false, error } on missing key / HTTP error / no comps.
+ */
+export async function fetchDealComps(deal: Deal, opts: FetchCompsOptions): Promise<FetchCompsResult> {
+  if (!opts.apiKey) return { ok: false, error: 'Market comps need AI access — ANTHROPIC_API_KEY is not configured.' };
+  const f = opts.fetchImpl ?? fetch;
+  const where = [deal.location, deal.market].filter(Boolean).join(', ') || deal.name;
+
+  const prompt =
+    `Research current market comparables for this small-bay / flex INDUSTRIAL acquisition, then call ` +
+    `record_comps exactly once with your findings.\n\n` +
+    `Property: ${deal.name}\nLocation: ${where}\n` +
+    `${deal.sf ? `Size: ~${deal.sf.toLocaleString()} SF\n` : ''}` +
+    `${deal.estPrice ? `Asking / est. price: $${deal.estPrice.toLocaleString()}\n` : ''}` +
+    `\nFind, using web search across CoStar, LoopNet, CREXI, broker market reports, and local sources:\n` +
+    `1. SALE comps — comparable industrial sales nearby (address, price, $/SF, cap rate, date).\n` +
+    `2. RENT comps — asking/closed NNN $/SF for comparable space (address, $/SF, SF, date).\n` +
+    `3. SUBMARKET stats — vacancy, asking-rent trend, net absorption, new supply.\n` +
+    `Prefer the last 18 months and the same submarket. Include a source URL/publication for every item. ` +
+    `If solid data is thin, record what you can and note the gaps in summary. End by calling record_comps.`;
+
+  const body = {
+    model: opts.model || 'claude-opus-4-8',
+    max_tokens: 4096,
+    tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 }, RECORD_COMPS_TOOL],
+    messages: [{ role: 'user', content: prompt }],
+  };
+
+  let res: { ok: boolean; status: number; json: () => Promise<unknown>; text: () => Promise<string> };
+  try {
+    res = await f('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': opts.apiKey, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    return { ok: false, error: `Network error reaching Anthropic: ${e instanceof Error ? e.message : String(e)}` };
+  }
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    return { ok: false, error: `Anthropic ${res.status}: ${detail.slice(0, 200)}` };
+  }
+
+  const json = (await res.json()) as { content?: AnthropicContentBlock[] };
+  const block = (json.content ?? []).find((b) => b.type === 'tool_use' && b.name === 'record_comps');
+  if (!block || block.input === undefined) return { ok: false, error: 'The model returned no comps for this deal.' };
+
+  const parsed = CompSet.safeParse({ ...(block.input as Record<string, unknown>), sourcedAt: opts.now });
+  if (!parsed.success) return { ok: false, error: 'Comp data failed validation.' };
+  return { ok: true, comps: parsed.data };
+}
