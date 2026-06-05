@@ -8,12 +8,11 @@ import {
   type ScenarioName,
   type Confidence,
 } from '@contracts/index';
-import { fmtUsd, fmtUsdCompact, fmtPct, fmtMonths, fmtDate } from './format';
+import { evaluateConditions } from './conditions';
 import type {
   AnalyticsBundle,
   CriticalDate,
   DebtSummary,
-  Insight,
   MarketSlice,
   MaturityBucket,
   PortfolioKpis,
@@ -263,121 +262,6 @@ export function debtSummary(loans: Loan[]): DebtSummary {
   };
 }
 
-// ── Insights / alerts ─────────────────────────────────────────────────────────
-export function generateInsights(s: PortfolioSnapshot): Insight[] {
-  const out: Insight[] = [];
-  const { balloonAlertMonths, concentrationRed, concentrationYellow } = s.assumptions.thresholds;
-
-  // Balloons due within alert window
-  for (const l of s.loans) {
-    if (l.balloon && l.monthsToMaturity !== null && l.monthsToMaturity <= balloonAlertMonths) {
-      out.push({
-        id: `balloon-${l.id}`,
-        severity: l.monthsToMaturity <= 9 ? 'critical' : 'warning',
-        category: 'debt',
-        title: `Balloon due — ${l.name}`,
-        // Full precision (matches the loan drawer's Current Balance) so the same figure never
-        // reads as two different numbers ($981K vs $980,773). This is the current balance — the
-        // exact balloon-payoff-at-maturity is not a typed field in the Loan Index (Defect 6).
-        detail: `${fmtUsd(l.absBalance)} balance, balloon in ${fmtMonths(l.monthsToMaturity)} (${fmtDate(l.maturity)}). Prepare refinance or payoff.`,
-        metric: fmtUsd(l.absBalance),
-        entityType: 'loan',
-        entityId: l.id,
-        action: { label: 'Open refi workspace', kind: 'open-refi' },
-      });
-    }
-  }
-
-  // Leases expiring within 90 days / expired
-  for (const l of s.leases) {
-    if (l.status === 'Expired') {
-      out.push({
-        id: `expired-${l.id}`,
-        severity: 'warning',
-        category: 'lease',
-        title: `Lease expired — ${l.company ?? l.tenantName}`,
-        detail: `${l.propertyKey} ${l.unit ?? ''} · ${fmtUsdCompact(l.annualRent)}/yr holding over. Resolve renewal or vacate.`,
-        metric: fmtUsdCompact(l.annualRent),
-        entityType: 'lease',
-        entityId: l.id,
-        action: { label: 'Draft renewal', kind: 'draft-renewal' },
-      });
-    } else if (l.monthsToExpiry !== null && l.monthsToExpiry >= 0 && l.monthsToExpiry <= 3) {
-      out.push({
-        id: `expiring-${l.id}`,
-        severity: 'warning',
-        category: 'lease',
-        title: `Lease expiring — ${l.company ?? l.tenantName}`,
-        detail: `${l.propertyKey} ${l.unit ?? ''} expires ${fmtDate(l.leaseEnd)} (${fmtMonths(l.monthsToExpiry)}). ${fmtUsdCompact(l.annualRent)}/yr at risk.`,
-        metric: fmtMonths(l.monthsToExpiry),
-        entityType: 'lease',
-        entityId: l.id,
-        action: { label: 'Draft renewal', kind: 'draft-renewal' },
-      });
-    }
-  }
-
-  // Insurance lapses / imminent renewals
-  for (const p of s.insurance) {
-    if (p.status === 'Expired' || p.status === 'Cancelled') {
-      out.push({
-        id: `ins-${p.id}`,
-        severity: p.status === 'Cancelled' ? 'critical' : 'warning',
-        category: 'insurance',
-        title: `Policy ${p.status.toLowerCase()} — ${p.property}`,
-        detail: `${p.coverage ?? 'Coverage'} · ${p.carrier ?? ''}. Confirm replacement coverage is bound.`,
-        metric: fmtUsdCompact(p.premium),
-        entityType: 'insurance',
-        entityId: p.id,
-        action: { label: 'Review policy', kind: 'review' },
-      });
-    } else if (p.status === 'Renew Now') {
-      out.push({
-        id: `ins-${p.id}`,
-        severity: 'warning',
-        category: 'insurance',
-        title: `Renew now — ${p.property}`,
-        detail: `${p.coverage ?? 'Coverage'} renews ${fmtDate(p.expires)} (${fmtMonths((p.daysToExpiry ?? 0) / 30)}).`,
-        entityType: 'insurance',
-        entityId: p.id,
-        action: { label: 'Review policy', kind: 'review' },
-      });
-    }
-  }
-
-  // Cash concentration
-  if (s.cash.concentrationTopPct !== null && s.cash.concentrationTopPct >= concentrationYellow) {
-    out.push({
-      id: 'cash-concentration',
-      severity: s.cash.concentrationTopPct >= concentrationRed ? 'critical' : 'info',
-      category: 'concentration',
-      title: `Cash concentration — ${s.cash.largestEntity}`,
-      detail: `${fmtPct(s.cash.concentrationTopPct)} of total cash sits in one entity.`,
-      metric: fmtPct(s.cash.concentrationTopPct),
-      entityType: 'cashEntity',
-    });
-  }
-
-  // Low occupancy
-  for (const p of s.properties) {
-    if (p.occPct < 0.85 && p.sf > 0) {
-      out.push({
-        id: `occ-${p.id}`,
-        severity: 'info',
-        category: 'occupancy',
-        title: `Occupancy below 85% — ${p.name}`,
-        detail: `${fmtPct(p.occPct)} occupied. Review vacancy and leasing.`,
-        metric: fmtPct(p.occPct),
-        entityType: 'property',
-        entityId: p.id,
-      });
-    }
-  }
-
-  const rank: Record<Insight['severity'], number> = { critical: 0, warning: 1, info: 2 };
-  return out.sort((a, b) => rank[a.severity] - rank[b.severity]);
-}
-
 // ── Compose the full bundle ─────────────────────────────────────────────────────
 export function buildAnalytics(snapshot: PortfolioSnapshot, scenario: ScenarioName = 'Base'): AnalyticsBundle {
   const s = applyScenario(snapshot, scenario);
@@ -393,6 +277,6 @@ export function buildAnalytics(snapshot: PortfolioSnapshot, scenario: ScenarioNa
     marketBySf: marketAllocation(s.properties, 'sf'),
     marketByValue: marketAllocation(s.properties, 'value'),
     debt: debtSummary(s.loans),
-    insights: generateInsights(s),
+    insights: evaluateConditions(s),
   };
 }

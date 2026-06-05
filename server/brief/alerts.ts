@@ -1,6 +1,6 @@
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import type { Insight } from '../../src/analytics/types';
-import { generateInsights } from '../../src/analytics/engine';
+import { evaluateConditions } from '../../src/analytics/conditions';
 
 const DAY_MS = 86_400_000;
 function daysUntil(iso: string, asOf: string): number {
@@ -9,7 +9,7 @@ function daysUntil(iso: string, asOf: string): number {
 
 /** Base insights plus brief-only extensions. priorStages: dealId -> stage at last brief. */
 export function extendedInsights(s: PortfolioSnapshot, priorStages: Record<string, string>): Insight[] {
-  const out: Insight[] = [...generateInsights(s)];
+  const out: Insight[] = [...evaluateConditions(s)];
   const asOf = s.meta.asOf;
 
   // DSCR covenant watch — distress signal only (high LTV is often by design, excluded).
@@ -24,7 +24,7 @@ export function extendedInsights(s: PortfolioSnapshot, priorStages: Record<strin
     }
   }
 
-  // 91–180 day lease heads-up (info tier; the <=90d warning lives in generateInsights).
+  // 91–180 day lease heads-up (info tier; the <=90d warning lives in evaluateConditions).
   for (const l of s.leases) {
     if (l.monthsToExpiry !== null && l.monthsToExpiry > 3 && l.monthsToExpiry <= 6) {
       out.push({

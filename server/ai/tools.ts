@@ -5,8 +5,8 @@ import {
   marketAllocation,
   revenueAtRisk,
   debtSummary,
-  generateInsights,
 } from '../../src/analytics/engine';
+import { evaluateConditions } from '../../src/analytics/conditions';
 import { fmtUsdCompact, fmtPct } from '../../src/analytics/format';
 
 /**
@@ -238,7 +238,7 @@ const EXECUTORS: Record<ToolName, Exec> = {
   },
 
   get_alerts: (s) => {
-    const insights = generateInsights(s);
+    const insights = evaluateConditions(s);
     const r = revenueAtRisk(s.leases);
     const refs: EntityRefLite[] = insights
       .filter((i) => i.entityType && i.entityId && i.entityType !== 'cashEntity')
