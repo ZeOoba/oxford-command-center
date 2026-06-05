@@ -17,6 +17,7 @@ import {
   Activity,
   FileSearch,
   Briefcase,
+  Scale,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -38,6 +39,7 @@ const RelationshipsModule = lazy(() => import('@/modules/relationships/Relations
 const HealthModule = lazy(() => import('@/modules/health/HealthModule').then((m) => ({ default: m.HealthModule })));
 const DocumentsModule = lazy(() => import('@/modules/documents/DocumentsModule').then((m) => ({ default: m.DocumentsModule })));
 const PrincipalModule = lazy(() => import('@/modules/principal/PrincipalModule').then((m) => ({ default: m.PrincipalModule })));
+const CloseModule = lazy(() => import('@/modules/close/CloseModule').then((m) => ({ default: m.CloseModule })));
 
 export type ModuleGroup = 'Command' | 'Assets' | 'Capital' | 'Market';
 
@@ -63,6 +65,7 @@ export const MODULES: ModuleDef[] = [
   { id: 'tenants', label: 'Tenants', icon: Contact, group: 'Assets', Component: TenantsModule },
   { id: 'debt', label: 'Debt', icon: Landmark, group: 'Capital', Component: DebtModule },
   { id: 'cash', label: 'Cash', icon: Wallet, group: 'Capital', Component: CashModule },
+  { id: 'close', label: 'Monthly Close', icon: Scale, group: 'Capital', Component: CloseModule },
   { id: 'insurance', label: 'Insurance', icon: ShieldCheck, group: 'Capital', Component: InsuranceModule },
   { id: 'market', label: 'Market', icon: LineChart, group: 'Market', Component: MarketModule },
   { id: 'relationships', label: 'Relationships', icon: Users, group: 'Market', Component: RelationshipsModule },
