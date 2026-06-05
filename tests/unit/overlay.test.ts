@@ -19,17 +19,17 @@ describe('nextStage — pipeline advance path', () => {
 
 describe('applyOverlay — write-back merge (workbook stays canonical)', () => {
   it('overrides a deal stage from the overlay', () => {
-    const out = applyOverlay(base, { dealStages: { d1: 'LOI/PSA' }, tasks: [], renewalStages: {}, tenantNotes: {} });
+    const out = applyOverlay(base, { dealStages: { d1: 'LOI/PSA' }, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {} });
     expect(out.deals[0]!.stage).toBe('LOI/PSA');
   });
 
   it('prepends overlay tasks ahead of workbook tasks', () => {
-    const out = applyOverlay(base, { dealStages: {}, tasks: [{ id: 'u1', label: 'User task', section: 'Added', role: null, type: null, dueDay: null, notes: null, status: 'pending', monthlyPmt: null }], renewalStages: {}, tenantNotes: {} });
+    const out = applyOverlay(base, { dealStages: {}, tasks: [{ id: 'u1', label: 'User task', section: 'Added', role: null, type: null, dueDay: null, notes: null, status: 'pending', monthlyPmt: null }], renewalStages: {}, tenantNotes: {}, dealComps: {} });
     expect(out.tasks.map((t) => t.id)).toEqual(['u1', 't-wb']);
   });
 
   it('never mutates the base snapshot (workbook is read-only)', () => {
-    applyOverlay(base, { dealStages: { d1: 'Closed' }, tasks: [], renewalStages: {}, tenantNotes: {} });
+    applyOverlay(base, { dealStages: { d1: 'Closed' }, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {} });
     expect(base.deals[0]!.stage).toBe('Candidate'); // unchanged
   });
 });
@@ -67,5 +67,20 @@ describe('applyOverlay — tenantNotes (Phase 2)', () => {
   it('defaults to an empty record and EMPTY_OVERLAY carries the key', () => {
     expect(applyOverlay(baseT, EMPTY_OVERLAY).tenantNotes).toEqual({});
     expect(EMPTY_OVERLAY.tenantNotes).toEqual({});
+  });
+});
+
+describe('applyOverlay — dealComps (Phase 3)', () => {
+  const baseD = { deals: [{ id: 'd1' }], tasks: [], leases: [] } as unknown as PortfolioSnapshot;
+  const cs = { saleComps: [], rentComps: [], submarketStats: [], summary: null, sources: [], sourcedAt: '2026-06-05T00:00:00.000Z' };
+
+  it('surfaces dealComps onto the snapshot', () => {
+    const out = applyOverlay(baseD, { ...EMPTY_OVERLAY, dealComps: { d1: cs } });
+    expect(out.dealComps.d1).toEqual(cs);
+  });
+
+  it('defaults to an empty record and EMPTY_OVERLAY carries the key', () => {
+    expect(applyOverlay(baseD, EMPTY_OVERLAY).dealComps).toEqual({});
+    expect(EMPTY_OVERLAY.dealComps).toEqual({});
   });
 });
