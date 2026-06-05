@@ -17,8 +17,9 @@ import pdfParse from 'pdf-parse/lib/pdf-parse.js';
  * search_documents tool reports "no documents indexed". Index runs locally on the Brain Server only
  * (the static mirror has no filesystem); never bundled into the Pages Function.
  *
- * Hard confidentiality guard: the indexer NEVER ingests any path matching the confidential
- * portfolio codename or personal/estate folders — isExcludedPath is applied before extraction.
+ * Hard confidentiality guard: the indexer NEVER ingests any path matching personal/estate folders
+ * or the confidential-deal patterns from the gitignored DOCUMENTS_EXCLUDE env var — isExcludedPath
+ * is applied before extraction.
  */
 export interface DocChunk {
   docId: string;
@@ -36,19 +37,31 @@ export interface DocHit {
 
 /**
  * Confidentiality / personal exclusion guard (defense-in-depth). The indexer NEVER ingests any
- * path matching these — the confidential portfolio codename or personal/estate folders — regardless
- * of what DOCUMENTS_DIR points at. The AI agent searches + quotes this index, so this is a hard gate.
+ * path matching these — personal/estate folders plus any confidential-deal patterns supplied via
+ * the gitignored `DOCUMENTS_EXCLUDE` env var (comma-separated, case-insensitive) — regardless of
+ * what DOCUMENTS_DIR points at. Confidential deal codenames live ONLY in env, never in source.
+ * The AI agent searches + quotes this index, so this is a hard gate.
  */
-const EXCLUDE_PATTERNS: RegExp[] = [
-  /fulton/i,
+const DEFAULT_EXCLUDE: RegExp[] = [
   /estate planning/i,
   /trust documents/i,
   /gabriel documents/i,
   /gdg properties/i,
   /\bpersonal\b/i,
 ];
-export function isExcludedPath(relPath: string): boolean {
-  return EXCLUDE_PATTERNS.some((re) => re.test(relPath));
+
+/** Personal/estate defaults + any confidential patterns from `DOCUMENTS_EXCLUDE` (gitignored env). */
+export function excludePatterns(): RegExp[] {
+  const extra = (process.env.DOCUMENTS_EXCLUDE ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => new RegExp(s, 'i'));
+  return [...DEFAULT_EXCLUDE, ...extra];
+}
+
+export function isExcludedPath(relPath: string, patterns: RegExp[] = excludePatterns()): boolean {
+  return patterns.some((re) => re.test(relPath));
 }
 
 const SUPPORTED = new Set(['.pdf', '.txt', '.md']);
