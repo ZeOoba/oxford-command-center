@@ -153,7 +153,7 @@ export interface VecIndex {
 function createIndexSchema(db: BetterSQLite3Database, dim: number): void {
   db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS vec_chunks USING vec0(embedding float[${dim}]);`);
   db.exec(
-    `CREATE TABLE IF NOT EXISTS chunk_meta (rowid INTEGER PRIMARY KEY, docId TEXT, docName TEXT, idx INTEGER, text TEXT);`,
+    `CREATE TABLE IF NOT EXISTS chunk_meta (rowid INTEGER PRIMARY KEY, docId TEXT, docName TEXT, idx INTEGER, text TEXT, embedded INTEGER NOT NULL DEFAULT 0);`,
   );
   db.exec(`CREATE TABLE IF NOT EXISTS index_info (k TEXT PRIMARY KEY, v TEXT);`);
 }
@@ -245,6 +245,92 @@ export function loadDiskIndex(dbPath: string): {
   for (const c of chunks) counts.set(c.docName, (counts.get(c.docName) ?? 0) + 1);
   const docs = [...counts.entries()].map(([name, n]) => ({ name, chunks: n }));
   return { index: { db, chunks, dim, close: () => db.close() }, docs, builtAt: builtRow?.v ?? '' };
+}
+
+// ── Resumable, crash-safe on-disk build (Phase A: plan · Phase B: embed missing) ────────────────
+// The single-shot buildIndex grows the embedder's native working set across thousands of chunks and
+// can OOM on a memory-limited box. The resumable path splits the work: writeChunkPlan persists all
+// chunk metadata once (cheap, text only); embedMissing then embeds only not-yet-embedded chunks in
+// bounded batches, committing each batch. Run embedMissing repeatedly — ideally in FRESH processes
+// (each `npm run index:docs` invocation) — so native memory is fully released between slices. A
+// crash loses at most the in-flight batch; the next run resumes from the DB.
+
+/** Phase A — persist every chunk's metadata (no vectors yet) to a fresh on-disk DB with the given
+ * embedding dim. Wipes any prior plan/vectors at this path. Low memory: holds text only. */
+export function writeChunkPlan(dbPath: string, chunks: DocChunk[], dim: number): void {
+  const db = new Database(dbPath);
+  try {
+    sqliteVec.load(db);
+    db.exec('DROP TABLE IF EXISTS vec_chunks;');
+    db.exec('DROP TABLE IF EXISTS chunk_meta;');
+    db.exec('DROP TABLE IF EXISTS index_info;');
+    createIndexSchema(db, dim);
+    const insMeta = db.prepare('INSERT INTO chunk_meta(rowid, docId, docName, idx, text, embedded) VALUES (?, ?, ?, ?, ?, 0)');
+    const tx = db.transaction(() => {
+      chunks.forEach((c, i) => insMeta.run(i, c.docId, c.docName, c.idx, c.text));
+    });
+    tx();
+    const info = db.prepare('INSERT OR REPLACE INTO index_info(k, v) VALUES (?, ?)');
+    info.run('dim', String(dim));
+    info.run('planned', String(chunks.length));
+    info.run('builtAt', new Date().toISOString());
+  } finally {
+    db.close();
+  }
+}
+
+/** planned / embedded / remaining counts for a planned on-disk DB. */
+export function indexCounts(dbPath: string): { planned: number; embedded: number; remaining: number } {
+  const db = new Database(dbPath);
+  try {
+    const planned = (db.prepare('SELECT COUNT(*) AS n FROM chunk_meta').get() as { n: number }).n;
+    const embedded = (db.prepare('SELECT COUNT(*) AS n FROM chunk_meta WHERE embedded = 1').get() as { n: number }).n;
+    return { planned, embedded, remaining: planned - embedded };
+  } finally {
+    db.close();
+  }
+}
+
+/** Phase B — embed up to `limit` not-yet-embedded chunks (batched, each batch committed), marking
+ * them done. Returns { embedded, remaining }. Safe to call repeatedly until remaining === 0. */
+export async function embedMissing(
+  dbPath: string,
+  embed: Embedder,
+  opts: { batchSize?: number; limit?: number; onProgress?: (done: number, total: number) => void } = {},
+): Promise<{ embedded: number; remaining: number }> {
+  const batchSize = opts.batchSize && opts.batchSize > 0 ? Math.floor(opts.batchSize) : 48;
+  const limit = opts.limit && opts.limit > 0 ? Math.floor(opts.limit) : -1; // -1 = all remaining
+  const db = new Database(dbPath);
+  try {
+    sqliteVec.load(db);
+    const total = (db.prepare('SELECT COUNT(*) AS n FROM chunk_meta').get() as { n: number }).n;
+    const todo = db
+      .prepare('SELECT rowid, text FROM chunk_meta WHERE embedded = 0 ORDER BY rowid LIMIT ?')
+      .all(limit) as Array<{ rowid: number; text: string }>;
+    const insVec = db.prepare('INSERT OR REPLACE INTO vec_chunks(rowid, embedding) VALUES (?, ?)');
+    const markDone = db.prepare('UPDATE chunk_meta SET embedded = 1 WHERE rowid = ?');
+    let embedded = (db.prepare('SELECT COUNT(*) AS n FROM chunk_meta WHERE embedded = 1').get() as { n: number }).n;
+    for (let s = 0; s < todo.length; s += batchSize) {
+      const batch = todo.slice(s, s + batchSize);
+      const vectors = await embed(batch.map((b) => b.text));
+      const tx = db.transaction(() => {
+        batch.forEach((b, j) => {
+          const vec = vectors[j];
+          if (!vec) return;
+          insVec.run(BigInt(b.rowid), vec);
+          markDone.run(b.rowid);
+        });
+      });
+      tx();
+      embedded += batch.length;
+      opts.onProgress?.(embedded, total);
+      await new Promise<void>((resolve) => setImmediate(resolve)); // yield (memory relief)
+    }
+    const remaining = (db.prepare('SELECT COUNT(*) AS n FROM chunk_meta WHERE embedded = 0').get() as { n: number }).n;
+    return { embedded: todo.length, remaining };
+  } finally {
+    db.close();
+  }
 }
 
 /** Nearest-neighbor query → cited, scored passages (closest first). */
