@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { watch } from 'chokidar';
 import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, type DealStage, type RenewalStage } from '../src/contracts/index';
+import { tenantScorecards } from '../src/brain/tenants';
 import { parseWorkbook } from './workbook/parse';
 import { applyOverlay, loadOverlay, saveOverlay, type Overlay } from './overlay';
 import { checkSnapshot } from './reconcile-runtime';
@@ -93,6 +94,20 @@ class Brain extends EventEmitter {
     if (!this.base?.leases.some((l) => l.id === leaseId)) return false;
     this.overlay = { ...this.overlay, renewalStages: { ...this.overlay.renewalStages, [leaseId]: stage } };
     this.rederive('action:renewal-stage');
+    return true;
+  }
+
+  /** Write-back: set (or clear) a tenant's free-text note. Returns false if the tenant is unknown. */
+  setTenantNote(tenantId: string, note: string): boolean {
+    if (!this.base) return false;
+    const known = new Set(tenantScorecards(this.base).map((t) => t.id));
+    if (!known.has(tenantId)) return false;
+    const notes = { ...this.overlay.tenantNotes };
+    const trimmed = note.trim();
+    if (trimmed) notes[tenantId] = trimmed;
+    else delete notes[tenantId];
+    this.overlay = { ...this.overlay, tenantNotes: notes };
+    this.rederive('action:tenant-note');
     return true;
   }
 

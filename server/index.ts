@@ -104,6 +104,14 @@ app.post('/api/actions/renewal-stage', async (c) => {
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
 
+app.post('/api/actions/tenant-note', async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { tenantId?: string; note?: string };
+  const tenantId = String(body.tenantId ?? '').trim();
+  if (!tenantId) return c.json({ ok: false, error: 'tenantId required' }, 400);
+  const ok = brain.setTenantNote(tenantId, String(body.note ?? ''));
+  return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
+});
+
 /** Macro indicators — live FRED when FRED_API_KEY is set, real-seeded snapshot otherwise. */
 app.get('/api/macro', async (c) => c.json(await getMacro()));
 
