@@ -5,14 +5,19 @@ import { join } from 'node:path';
 import {
   chunkText,
   isExcludedPath,
+  isLikelyNonLease,
   matchesIndexFilters,
   maxFiles,
+  maxChunksPerDoc,
   pathIncludeRe,
   buildDocIndex,
+  collectDocChunks,
   docStatus,
   type DocChunk,
   type Embedder,
   buildIndex,
+  loadDiskIndex,
+  docIndexPath,
   queryIndex,
 } from '../../server/sources/documents';
 
@@ -66,6 +71,28 @@ describe('matchesIndexFilters — extension + optional path-include filter', () 
   it('matches Windows backslash paths via separator normalization', () => {
     expect(matchesIndexFilters('29000 Information Lane\\Leases\\Shore United.pdf', LEASES_RE)).toBe(true);
     expect(matchesIndexFilters('29000 Information Lane\\Other\\x.pdf', LEASES_RE)).toBe(false);
+  });
+  it('drops non-lease docs even under a Leases folder', () => {
+    expect(matchesIndexFilters('Sepich Portfolio/Leases/2019 Sepich I- P&L.pdf', LEASES_RE)).toBe(false);
+    expect(matchesIndexFilters('Sepich Portfolio/Leases/Rent Roll -- Dec 2020.pdf', LEASES_RE)).toBe(false);
+    expect(matchesIndexFilters('1100 Rarig/Leases/Eurosort Lease.pdf', LEASES_RE)).toBe(true);
+  });
+});
+
+describe('isLikelyNonLease — corpus tightening (drops financials/rent-rolls/disclosures)', () => {
+  it('drops obvious non-lease docs by filename', () => {
+    expect(isLikelyNonLease('Sepich Portfolio/Leases/Financial Statements 2019/2019 Sepich I- P&L.pdf')).toBe(true);
+    expect(isLikelyNonLease('Leases All properties/Leases/Rent Roll -- Dec 2020.pdf')).toBe(true);
+    expect(isLikelyNonLease('Leases All properties/Leases/Current Rent Rolls 11.9.20.xlsb.pdf')).toBe(true);
+    expect(isLikelyNonLease('Sepich Portfolio/Leases/2012 Zettler Agency Disclosure.pdf')).toBe(true);
+  });
+  it('keeps real leases and legitimate lease components', () => {
+    expect(isLikelyNonLease('1100 Rarig/Leases/Eurosort Lease.pdf')).toBe(false);
+    expect(isLikelyNonLease('9050 Red Branch Rd/Leases/Exhibit Package -- Unit A Soccer Plant Lease 01-2025.pdf')).toBe(false);
+    expect(isLikelyNonLease('1900 North Broadway/Leases/Commencement Date Certificate -- Exhibit D Baltimore Dialysis Lease.pdf')).toBe(false);
+  });
+  it('matches via separator normalization (Windows backslash paths)', () => {
+    expect(isLikelyNonLease('Sepich Portfolio\\Leases\\Rent Roll -- Dec 2020.pdf')).toBe(true);
   });
 });
 

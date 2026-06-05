@@ -64,6 +64,37 @@ export function isExcludedPath(relPath: string, patterns: RegExp[] = excludePatt
   return patterns.some((re) => re.test(relPath));
 }
 
+/**
+ * Corpus-tightening filter (NOT a confidentiality gate — that is isExcludedPath). Drops obvious
+ * NON-lease documents that live inside the per-property `Leases/` folders (financial statements,
+ * rent rolls, P&Ls, agency disclosures) so the index holds actual lease text. Matches on the full
+ * relative path (so a `Financial Statements .../` subfolder is dropped wholesale). Extend via the
+ * gitignored `DOCUMENTS_NONLEASE_PATTERNS` env (comma-separated, case-insensitive). Keep this list
+ * conservative — exhibits, estoppels, addenda and commencement certificates are real lease parts.
+ */
+const DEFAULT_NONLEASE: RegExp[] = [
+  /financial statement/i,
+  /\brent[\s_-]*rolls?\b/i,
+  /\bp\s*&\s*l\b/i,
+  /profit and loss/i,
+  /\bdisclosure\b/i,
+];
+
+export function nonLeasePatterns(): RegExp[] {
+  const extra = (process.env.DOCUMENTS_NONLEASE_PATTERNS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => new RegExp(s, 'i'));
+  return [...DEFAULT_NONLEASE, ...extra];
+}
+
+/** True if a relative path looks like a non-lease doc and should be skipped. Separator-agnostic. */
+export function isLikelyNonLease(relPath: string, patterns: RegExp[] = nonLeasePatterns()): boolean {
+  const norm = relPath.replace(/\\/g, '/');
+  return patterns.some((re) => re.test(norm));
+}
+
 const SUPPORTED = new Set(['.pdf', '.txt', '.md']);
 const CHUNK = 900;
 const OVERLAP = 150;
@@ -209,7 +240,9 @@ export function maxFiles(): number {
  * (write `(^|/)Leases(/)` regardless of Windows `\` vs POSIX `/`). */
 export function matchesIndexFilters(relPath: string, includeRe: RegExp | null): boolean {
   if (!SUPPORTED.has(extname(relPath).toLowerCase())) return false;
-  if (includeRe && !includeRe.test(relPath.replace(/\\/g, '/'))) return false;
+  const norm = relPath.replace(/\\/g, '/');
+  if (includeRe && !includeRe.test(norm)) return false;
+  if (isLikelyNonLease(norm)) return false;
   return true;
 }
 
