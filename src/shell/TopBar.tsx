@@ -9,6 +9,7 @@ import { ScenarioSwitch } from './ScenarioSwitch';
 import { ViewToggle } from './ViewToggle';
 import { ThemeToggle } from './ThemeToggle';
 import { DensityToggle } from './DensityToggle';
+import { AlertBell } from './AlertBell';
 
 export function TopBar({ title, asOf, onOpenSearch, onOpenNav, navOpen }: { title: string; asOf: string; onOpenSearch?: () => void; onOpenNav?: () => void; navOpen?: boolean }) {
   const { refresh, refreshing } = useBrain();
@@ -64,6 +65,8 @@ export function TopBar({ title, asOf, onOpenSearch, onOpenNav, navOpen }: { titl
           <span>Search…</span>
           <kbd className="num rounded px-1" style={{ background: 'var(--surface-base)', border: '1px solid var(--border-subtle)' }}>⌘K</kbd>
         </button>
+
+        <AlertBell />
 
         <button
           onClick={ui.toggleAi}
