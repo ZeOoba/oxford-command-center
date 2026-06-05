@@ -136,6 +136,8 @@ function snap(s: Partial<PortfolioSnapshot>): PortfolioSnapshot {
     renewalStages: {},
     tenantNotes: {},
     dealComps: {},
+    noiBudgets: {},
+    quickbooks: null,
     dataQuality: [],
     ...s,
   };
