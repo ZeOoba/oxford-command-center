@@ -1,5 +1,20 @@
-import { describe, it, expect } from 'vitest';
-import { chunkText, isExcludedPath, type DocChunk, type Embedder, buildIndex, queryIndex } from '../../server/sources/documents';
+import { afterEach, describe, it, expect } from 'vitest';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  chunkText,
+  isExcludedPath,
+  matchesIndexFilters,
+  maxFiles,
+  pathIncludeRe,
+  buildDocIndex,
+  docStatus,
+  type DocChunk,
+  type Embedder,
+  buildIndex,
+  queryIndex,
+} from '../../server/sources/documents';
 
 describe('chunkText', () => {
   it('returns a single chunk for short text and none for empty', () => {
@@ -30,6 +45,78 @@ describe('isExcludedPath — confidentiality / personal guard', () => {
   it('allows ordinary property lease/PSA paths', () => {
     expect(isExcludedPath('1100 Rarig/REDACTED-659 Lease.pdf')).toBe(false);
     expect(isExcludedPath('29000 Information Lane/Shore United PSA.pdf')).toBe(false);
+  });
+});
+
+// OS-agnostic Leases-folder pattern: matcher normalizes `\` → `/`, so only `/` is needed here.
+const LEASES_RE = /(^|\/)Leases(\/)/i;
+
+describe('matchesIndexFilters — extension + optional path-include filter', () => {
+  it('requires a supported extension (pdf/txt/md), skipping docx/doc', () => {
+    expect(matchesIndexFilters('PropA/Leases/x.pdf', null)).toBe(true);
+    expect(matchesIndexFilters('PropA/Leases/x.txt', null)).toBe(true);
+    expect(matchesIndexFilters('PropA/Leases/x.docx', null)).toBe(false);
+    expect(matchesIndexFilters('PropA/Leases/x.doc', null)).toBe(false);
+  });
+  it('honors a Leases-only include filter (path must contain a Leases directory segment)', () => {
+    expect(matchesIndexFilters('9050 Red Branch Rd/Leases/lease.pdf', LEASES_RE)).toBe(true);
+    expect(matchesIndexFilters('9050 Red Branch Rd/Other/note.pdf', LEASES_RE)).toBe(false);
+    expect(matchesIndexFilters('9050 Red Branch Rd/Leases.pdf', LEASES_RE)).toBe(false); // file, not a Leases folder
+  });
+  it('matches Windows backslash paths via separator normalization', () => {
+    expect(matchesIndexFilters('29000 Information Lane\\Leases\\Shore United.pdf', LEASES_RE)).toBe(true);
+    expect(matchesIndexFilters('29000 Information Lane\\Other\\x.pdf', LEASES_RE)).toBe(false);
+  });
+});
+
+describe('env knobs — pathIncludeRe + maxFiles', () => {
+  const prev = { inc: process.env.DOCUMENTS_PATH_INCLUDE, max: process.env.DOCUMENTS_MAX_FILES };
+  afterEach(() => {
+    process.env.DOCUMENTS_PATH_INCLUDE = prev.inc;
+    process.env.DOCUMENTS_MAX_FILES = prev.max;
+  });
+  it('pathIncludeRe is null when unset and a regex when set', () => {
+    delete process.env.DOCUMENTS_PATH_INCLUDE;
+    expect(pathIncludeRe()).toBeNull();
+    process.env.DOCUMENTS_PATH_INCLUDE = '(^|/)Leases(/)';
+    expect(pathIncludeRe()?.test('A/Leases/x.pdf')).toBe(true);
+  });
+  it('maxFiles defaults to 2000 and honors a valid override', () => {
+    delete process.env.DOCUMENTS_MAX_FILES;
+    expect(maxFiles()).toBe(2000);
+    process.env.DOCUMENTS_MAX_FILES = '50';
+    expect(maxFiles()).toBe(50);
+    process.env.DOCUMENTS_MAX_FILES = 'nonsense';
+    expect(maxFiles()).toBe(2000);
+  });
+});
+
+describe('buildDocIndex — Leases-only include filter + exclusion pruning (temp corpus)', () => {
+  const prev = { dir: process.env.DOCUMENTS_DIR, inc: process.env.DOCUMENTS_PATH_INCLUDE };
+  afterEach(() => {
+    process.env.DOCUMENTS_DIR = prev.dir;
+    process.env.DOCUMENTS_PATH_INCLUDE = prev.inc;
+  });
+  it('indexes ONLY files under Leases folders, skipping other + excluded (estate) dirs', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'docidx-'));
+    try {
+      mkdirSync(join(root, 'PropA', 'Leases'), { recursive: true });
+      mkdirSync(join(root, 'PropB', 'Other'), { recursive: true });
+      mkdirSync(join(root, 'Estate Planning', 'Leases'), { recursive: true });
+      writeFileSync(join(root, 'PropA', 'Leases', 'lease.txt'), 'Tenant has a right of first refusal to renew the premises.');
+      writeFileSync(join(root, 'PropB', 'Other', 'note.txt'), 'miscellaneous non-lease document');
+      writeFileSync(join(root, 'Estate Planning', 'Leases', 'trust.txt'), 'confidential estate document');
+
+      process.env.DOCUMENTS_DIR = root;
+      process.env.DOCUMENTS_PATH_INCLUDE = '(^|/)Leases(/)';
+      await buildDocIndex(fakeEmbedder);
+      const s = await docStatus();
+
+      expect(s.documents).toBe(1); // only PropA/Leases/lease.txt
+      expect(s.docs[0]!.name.replace(/\\/g, '/')).toBe('PropA/Leases/lease.txt');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 

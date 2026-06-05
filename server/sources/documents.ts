@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, type Dirent } from 'node:fs';
 import { extname, join } from 'node:path';
 import Database, { type Database as BetterSQLite3Database } from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
@@ -180,16 +180,74 @@ async function extractFile(path: string): Promise<string> {
   return '';
 }
 
-function listFiles(dir: string, depth = 0): string[] {
-  if (depth > 4) return [];
-  const out: string[] = [];
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, e.name);
-    if (e.isDirectory()) out.push(...listFiles(full, depth + 1));
-    else if (SUPPORTED.has(extname(e.name).toLowerCase())) out.push(full);
-    if (out.length > 500) break;
+/**
+ * Optional path-include filter from `DOCUMENTS_PATH_INCLUDE` (regex, case-insensitive). When set,
+ * only files whose path (relative to DOCUMENTS_DIR) matches are indexed — e.g.
+ * `(^|[\\/])Leases([\\/])` to index ONLY the per-property `Leases` folders and nothing else under
+ * the root. Unset → index every supported file (original behavior). This keeps a broad DOCUMENTS_DIR
+ * (e.g. a whole drive) from sweeping in non-lease and confidential material.
+ */
+export function pathIncludeRe(): RegExp | null {
+  const raw = process.env.DOCUMENTS_PATH_INCLUDE?.trim();
+  if (!raw) return null;
+  try {
+    return new RegExp(raw, 'i');
+  } catch {
+    return null;
   }
-  return out;
+}
+
+/** Max files to index before stopping (env `DOCUMENTS_MAX_FILES`, default 2000). Truncation is
+ * reported (never silent) so a too-small cap is visible in the logs. */
+export function maxFiles(): number {
+  const n = Number(process.env.DOCUMENTS_MAX_FILES);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 2000;
+}
+
+/** Pure: should a relative file path be indexed? Supported extension + (optional) include filter.
+ * Path separators are normalized to `/` before matching so the include pattern is OS-agnostic
+ * (write `(^|/)Leases(/)` regardless of Windows `\` vs POSIX `/`). */
+export function matchesIndexFilters(relPath: string, includeRe: RegExp | null): boolean {
+  if (!SUPPORTED.has(extname(relPath).toLowerCase())) return false;
+  if (includeRe && !includeRe.test(relPath.replace(/\\/g, '/'))) return false;
+  return true;
+}
+
+/**
+ * Recursively collect indexable files under `root`, pruning excluded paths (directories AND files,
+ * so e.g. an estate/confidential folder is never descended into) and applying the optional include
+ * filter. Stops at `max` files and flags truncation (never silently drops).
+ */
+function listFiles(
+  root: string,
+  max = maxFiles(),
+  includeRe = pathIncludeRe(),
+  excludes = excludePatterns(),
+): { files: string[]; truncated: boolean } {
+  const files: string[] = [];
+  let truncated = false;
+  const walk = (dir: string, depth: number): void => {
+    if (depth > 6 || files.length >= max) return;
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return; // unreadable directory → skip
+    }
+    for (const e of entries) {
+      if (files.length >= max) {
+        truncated = true;
+        return;
+      }
+      const full = join(dir, e.name);
+      const rel = full.slice(root.length).replace(/^[\\/]+/, '');
+      if (isExcludedPath(rel, excludes)) continue; // prune excluded dirs + files (defense-in-depth)
+      if (e.isDirectory()) walk(full, depth + 1);
+      else if (matchesIndexFilters(rel, includeRe)) files.push(full);
+    }
+  };
+  walk(root, 0);
+  return { files, truncated };
 }
 
 let cache: { index: VecIndex | null; docs: Array<{ name: string; chunks: number }>; builtAt: string } | null = null;
@@ -202,9 +260,9 @@ export async function buildDocIndex(embed: Embedder = realEmbedder): Promise<voi
   }
   const chunks: DocChunk[] = [];
   const docs: Array<{ name: string; chunks: number }> = [];
-  for (const file of listFiles(dir)) {
+  const { files, truncated } = listFiles(dir); // exclusion + include filter applied here
+  for (const file of files) {
     const docName = file.slice(dir.length).replace(/^[\\/]+/, '');
-    if (isExcludedPath(docName)) continue; // confidentiality / personal guard
     const text = await extractFile(file);
     const pieces = chunkText(text);
     if (!pieces.length) continue;
@@ -212,6 +270,13 @@ export async function buildDocIndex(embed: Embedder = realEmbedder): Promise<voi
     pieces.forEach((t, idx) => chunks.push({ docId, docName, idx, text: t }));
     docs.push({ name: docName, chunks: pieces.length });
   }
+  if (truncated) {
+    console.warn(
+      `[documents] file cap (${maxFiles()}) reached under ${dir} — some documents are NOT indexed; raise DOCUMENTS_MAX_FILES.`,
+    );
+  }
+  const filterNote = process.env.DOCUMENTS_PATH_INCLUDE ? ` matching /${process.env.DOCUMENTS_PATH_INCLUDE}/i` : '';
+  console.log(`[documents] indexed ${docs.length} documents (${chunks.length} chunks)${filterNote} from ${dir}`);
   cache = { index: await buildIndex(chunks, embed), docs, builtAt: new Date().toISOString() };
 }
 
