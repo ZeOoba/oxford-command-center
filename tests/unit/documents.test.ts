@@ -56,6 +56,15 @@ describe('isExcludedPath — confidentiality / personal guard', () => {
     expect(isExcludedPath('1100 Rarig/Eurosort Lease.pdf')).toBe(false);
     expect(isExcludedPath('29000 Information Lane/Shore United PSA.pdf')).toBe(false);
   });
+  it('excludes the GDG/CRG estate folder and the Pictures tree (hardened)', () => {
+    expect(isExcludedPath('GDG Estate 12-2022 and CRG Estate 03-2023/trust.pdf')).toBe(true);
+    expect(isExcludedPath('Pictures/Business Pics/6860 Distribution Drive.JPG')).toBe(true);
+    expect(isExcludedPath('Pictures/Lucy Camp 2003/photo.jpg')).toBe(true);
+  });
+  it('does NOT over-match legitimate "real estate" business paths', () => {
+    expect(isExcludedPath('6300 Sherriff Road/2009-2011 real estate tax appeal results.pdf')).toBe(false);
+    expect(isExcludedPath('Investment Candidates -- 2015/Eastside Plaza NOI CALC.xlsx')).toBe(false);
+  });
 });
 
 // OS-agnostic Leases-folder pattern: matcher normalizes `\` → `/`, so only `/` is needed here.

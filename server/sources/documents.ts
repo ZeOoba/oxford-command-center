@@ -46,9 +46,11 @@ export interface DocHit {
  */
 const DEFAULT_EXCLUDE: RegExp[] = [
   /estate planning/i,
+  /\b(?:gdg|crg) estate\b/i, // "GDG Estate 12-2022 and CRG Estate 03-2023" — precise, won't hit "real estate"
   /trust documents/i,
   /gabriel documents/i,
   /gdg properties/i,
+  /(^|[\\/])pictures([\\/]|$)/i, // personal photo tree (no searchable text anyway)
   /\bpersonal\b/i,
 ];
 
