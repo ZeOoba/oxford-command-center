@@ -1,0 +1,109 @@
+import type { PortfolioSnapshot, Lease } from '../contracts/index';
+import { RENEWAL_STAGES, type RenewalStage } from '../contracts/renewal';
+
+const DAY_MS = 86_400_000;
+const daysBetween = (isoTarget: string, isoFrom: string): number =>
+  Math.round((new Date(isoTarget).getTime() - new Date(isoFrom).getTime()) / DAY_MS);
+const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
+
+/** Stable slug id from a tenant display name (the workbook has no tenant id). */
+export function tenantSlug(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+export interface TenantScorecard {
+  id: string;
+  name: string;
+  properties: string[]; // distinct propertyKey
+  leaseCount: number;
+  sf: number;
+  annualRent: number;
+  pctNoi: number; // 0..1 — pro-rata NOI allocation (rent-share fallback for unlinked leases)
+  nextExpiry: string | null; // soonest leaseEnd ISO
+  daysToExpiry: number | null;
+  renewalStage: RenewalStage | null; // most-advanced stage across the tenant's leases
+  health: string | null; // null until QuickBooks lands (Phase 3)
+  notes: string;
+  leases: Lease[];
+}
+
+interface Accum {
+  id: string;
+  name: string;
+  properties: Set<string>;
+  sf: number;
+  annualRent: number;
+  allocNoi: number;
+  nextExpiry: string | null;
+  stageRank: number; // -1 = none
+  leases: Lease[];
+}
+
+/** Roll leases up per tenant with a pro-rata NOI allocation. */
+export function tenantScorecards(s: PortfolioSnapshot): TenantScorecard[] {
+  const portfolioNoi = sum(s.properties.map((p) => p.noi));
+  const totalRent = sum(s.leases.map((l) => l.annualRent));
+  const margin = totalRent > 0 ? portfolioNoi / totalRent : 0; // NOI per $ rent (fallback weight)
+
+  // Property NOI by id, and linked-rent per property (denominator for pro-rata allocation).
+  const propNoi = new Map<string, number>();
+  for (const p of s.properties) propNoi.set(p.id, p.noi);
+  const propLinkedRent = new Map<string, number>();
+  for (const l of s.leases) {
+    if (l.propertyId !== null && propNoi.has(l.propertyId)) {
+      propLinkedRent.set(l.propertyId, (propLinkedRent.get(l.propertyId) ?? 0) + l.annualRent);
+    }
+  }
+
+  const byTenant = new Map<string, Accum>();
+  for (const l of s.leases) {
+    const name = l.company ?? l.tenantName;
+    const id = tenantSlug(name);
+    const acc =
+      byTenant.get(id) ??
+      { id, name, properties: new Set<string>(), sf: 0, annualRent: 0, allocNoi: 0, nextExpiry: null, stageRank: -1, leases: [] };
+
+    // Pro-rata NOI allocation: each property's NOI split across its linked leases by rent share.
+    const pid = l.propertyId;
+    const pNoi = pid !== null ? propNoi.get(pid) : undefined;
+    const pRent = pid !== null ? propLinkedRent.get(pid) : undefined;
+    const alloc = pid !== null && pNoi !== undefined && pRent !== undefined && pRent > 0
+      ? pNoi * (l.annualRent / pRent)
+      : l.annualRent * margin; // unlinked → rent-share fallback in NOI units
+
+    acc.properties.add(l.propertyKey);
+    acc.sf += l.sf;
+    acc.annualRent += l.annualRent;
+    acc.allocNoi += alloc;
+    acc.leases.push(l);
+
+    if (l.leaseEnd && (acc.nextExpiry === null || l.leaseEnd < acc.nextExpiry)) acc.nextExpiry = l.leaseEnd;
+
+    // Look up renewal stage by tenant slug (stages are keyed by tenant slug in the overlay).
+    const stage = s.renewalStages[id];
+    if (stage !== undefined) acc.stageRank = Math.max(acc.stageRank, RENEWAL_STAGES.indexOf(stage));
+
+    byTenant.set(id, acc);
+  }
+
+  const cards: TenantScorecard[] = [...byTenant.values()].map((a) => ({
+    id: a.id,
+    name: a.name,
+    properties: [...a.properties],
+    leaseCount: a.leases.length,
+    sf: a.sf,
+    annualRent: a.annualRent,
+    pctNoi: portfolioNoi > 0 ? a.allocNoi / portfolioNoi : 0,
+    nextExpiry: a.nextExpiry,
+    daysToExpiry: a.nextExpiry ? daysBetween(a.nextExpiry, s.meta.asOf) : null,
+    renewalStage: a.stageRank >= 0 ? RENEWAL_STAGES[a.stageRank]! : null,
+    health: null,
+    notes: s.tenantNotes[a.id] ?? '',
+    leases: a.leases,
+  }));
+
+  return cards.sort((a, b) => b.annualRent - a.annualRent);
+}
