@@ -96,8 +96,8 @@ export function isLikelyNonLease(relPath: string, patterns: RegExp[] = nonLeaseP
 }
 
 const SUPPORTED = new Set(['.pdf', '.txt', '.md']);
-const CHUNK = 900;
-const OVERLAP = 150;
+const CHUNK = 1500;
+const OVERLAP = 120;
 const EMBED_DIM_DEFAULT = 384; // all-MiniLM-L6-v2
 
 /** Split text into overlapping chunks on paragraph boundaries where possible. Pure. */
@@ -233,6 +233,13 @@ export function pathIncludeRe(): RegExp | null {
 export function maxFiles(): number {
   const n = Number(process.env.DOCUMENTS_MAX_FILES);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 2000;
+}
+
+/** Max chunks indexed per document (env `DOCUMENTS_MAX_CHUNKS_PER_DOC`, default 25). Bounds the
+ * worst case from a long PDF that slipped past the non-lease filter. */
+export function maxChunksPerDoc(): number {
+  const n = Number(process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 25;
 }
 
 /** Pure: should a relative file path be indexed? Supported extension + (optional) include filter.

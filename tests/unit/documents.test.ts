@@ -118,6 +118,21 @@ describe('env knobs — pathIncludeRe + maxFiles', () => {
   });
 });
 
+describe('maxChunksPerDoc — per-document chunk cap', () => {
+  const prev = process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC;
+  afterEach(() => {
+    process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC = prev;
+  });
+  it('defaults to 25 and honors a valid override; ignores nonsense', () => {
+    delete process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC;
+    expect(maxChunksPerDoc()).toBe(25);
+    process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC = '8';
+    expect(maxChunksPerDoc()).toBe(8);
+    process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC = 'nonsense';
+    expect(maxChunksPerDoc()).toBe(25);
+  });
+});
+
 describe('buildDocIndex — Leases-only include filter + exclusion pruning (temp corpus)', () => {
   const prev = { dir: process.env.DOCUMENTS_DIR, inc: process.env.DOCUMENTS_PATH_INCLUDE };
   afterEach(() => {
