@@ -231,6 +231,73 @@ describe('buildIndex / queryIndex — sqlite-vec vector search (fake embedder)',
   });
 });
 
+describe('buildIndex on-disk — persist + reload + batched embedding (fake embedder)', () => {
+  it('persists vectors + metadata to disk and reloads into a queryable index', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'diskidx-'));
+    try {
+      const dbPath = join(root, 'doc-index.sqlite');
+      const built = await buildIndex(CHUNKS, fakeEmbedder, { dbPath });
+      built.close(); // close the writer before reopening
+
+      const { index, docs, builtAt } = loadDiskIndex(dbPath);
+      expect(index.chunks.length).toBe(3);
+      expect(docs.length).toBe(3); // Eurosort, Roof, Rent
+      expect(builtAt).toMatch(/\d{4}-\d{2}-\d{2}T/); // ISO timestamp persisted
+
+      const hits = await queryIndex(index, 'renewal', fakeEmbedder, 3);
+      expect(hits[0]!.doc).toBe('Eurosort Lease.pdf');
+      expect(hits[0]!.docId).toBe('eurosort');
+      expect(hits[0]!.snippet.toLowerCase()).toContain('renew');
+      index.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('embeds in batches (never one pass) and still ranks correctly', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'batchidx-'));
+    try {
+      const dbPath = join(root, 'doc-index.sqlite');
+      const sizes: number[] = [];
+      const spy: Embedder = async (texts) => {
+        sizes.push(texts.length);
+        return fakeEmbedder(texts);
+      };
+      let lastDone = 0;
+      const built = await buildIndex(CHUNKS, spy, {
+        dbPath,
+        batchSize: 1,
+        onProgress: (done, total) => {
+          expect(total).toBe(3);
+          lastDone = done;
+        },
+      });
+      built.close();
+      expect(Math.max(...sizes)).toBeLessThanOrEqual(1); // no single-pass embed of all 3
+      expect(lastDone).toBe(3); // progress reached the end
+
+      const { index } = loadDiskIndex(dbPath);
+      const hits = await queryIndex(index, 'roof', fakeEmbedder, 3);
+      expect(hits[0]!.doc).toBe('Roof Warranty.pdf');
+      index.close();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('docIndexPath defaults under data/ and honors DOC_INDEX_PATH', () => {
+    const prev = process.env.DOC_INDEX_PATH;
+    try {
+      delete process.env.DOC_INDEX_PATH;
+      expect(docIndexPath().replace(/\\/g, '/')).toMatch(/\/data\/doc-index\.sqlite$/);
+      process.env.DOC_INDEX_PATH = '/tmp/custom-index.sqlite';
+      expect(docIndexPath()).toBe('/tmp/custom-index.sqlite');
+    } finally {
+      process.env.DOC_INDEX_PATH = prev;
+    }
+  });
+});
+
 // NOTE: The real-model semantic proof (e.g. "ROFR" → "right of first refusal" with no shared
 // keywords) is verified against the LIVE Brain Server endpoint (GET /api/documents/search), not
 // here — transformers.js/onnxruntime hit a Float32Array realm mismatch under Vitest's test
