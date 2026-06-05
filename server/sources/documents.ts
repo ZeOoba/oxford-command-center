@@ -99,6 +99,13 @@ export function isLikelyNonLease(relPath: string, patterns: RegExp[] = nonLeaseP
   return patterns.some((re) => re.test(norm));
 }
 
+/** Whether to drop obvious non-lease docs (financials/rent-rolls/disclosures). ON by default so the
+ * lease corpus stays clean; set `DOCUMENTS_DROP_NONLEASE=0` for a GENERAL OneDrive corpus where those
+ * documents are exactly what you want findable. */
+export function dropNonLease(): boolean {
+  return (process.env.DOCUMENTS_DROP_NONLEASE ?? '1') !== '0';
+}
+
 const SUPPORTED = new Set(['.pdf', '.txt', '.md', '.docx', '.xlsx', '.csv', '.tsv']);
 const CHUNK = 1500;
 const OVERLAP = 120;
@@ -472,11 +479,11 @@ export function docIndexPath(): string {
 /** Pure: should a relative file path be indexed? Supported extension + (optional) include filter.
  * Path separators are normalized to `/` before matching so the include pattern is OS-agnostic
  * (write `(^|/)Leases(/)` regardless of Windows `\` vs POSIX `/`). */
-export function matchesIndexFilters(relPath: string, includeRe: RegExp | null): boolean {
+export function matchesIndexFilters(relPath: string, includeRe: RegExp | null, drop = dropNonLease()): boolean {
   if (!SUPPORTED.has(extname(relPath).toLowerCase())) return false;
   const norm = relPath.replace(/\\/g, '/');
   if (includeRe && !includeRe.test(norm)) return false;
-  if (isLikelyNonLease(norm)) return false;
+  if (drop && isLikelyNonLease(norm)) return false;
   return true;
 }
 

@@ -95,6 +95,11 @@ describe('matchesIndexFilters — extension + optional path-include filter', () 
     expect(matchesIndexFilters('Sepich Portfolio/Leases/Rent Roll -- Dec 2020.pdf', LEASES_RE)).toBe(false);
     expect(matchesIndexFilters('1100 Rarig/Leases/Eurosort Lease.pdf', LEASES_RE)).toBe(true);
   });
+  it('keeps financials/rent-rolls when the non-lease filter is OFF (general OneDrive mode)', () => {
+    const pnl = '6300 Sherriff Road/2018 6300 Sheriff Road LLC P&L.pdf';
+    expect(matchesIndexFilters(pnl, null, true)).toBe(false); // lease mode drops it
+    expect(matchesIndexFilters(pnl, null, false)).toBe(true); // general mode keeps it
+  });
 });
 
 describe('isLikelyNonLease — corpus tightening (drops financials/rent-rolls/disclosures)', () => {
