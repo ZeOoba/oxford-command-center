@@ -65,8 +65,9 @@ export function DocumentsModule() {
           <Hint>Checking the document index…</Hint>
         ) : !status.configured ? (
           <Hint>
-            No documents folder configured. Set <code className="num">DOCUMENTS_DIR</code> on the Brain Server (point it at the
-            lease/PSA/OM folder) and restart to index PDFs.
+            No documents folder configured. Set <code className="num">DOCUMENTS_DIR</code> on the Brain Server (point it at your
+            OneDrive folder), allowlist folders via <code className="num">DOCUMENTS_INCLUDE_DIRS</code>, then run{' '}
+            <code className="num">npm run index:docs</code>.
           </Hint>
         ) : status.documents === 0 ? (
           <Hint>Folder configured ({status.dir}) but no supported documents (.pdf/.txt/.md) found.</Hint>
@@ -102,37 +103,72 @@ function highlight(text: string, query: string): ReactNode {
   );
 }
 
+/** Top-level OneDrive folder (property/deal) a result path belongs to. */
+function folderOf(docPath: string): string {
+  const seg = docPath.replace(/\\/g, '/').split('/');
+  return seg.length > 1 ? seg[0]! : '(root)';
+}
+/** Uppercased file extension for a result chip (e.g. PDF, DOCX, XLSX). */
+function extOf(docPath: string): string {
+  const m = /\.([a-z0-9]+)$/i.exec(docPath);
+  return m ? m[1]!.toUpperCase() : '';
+}
+
 function DocSearch() {
   const [q, setQ] = useState('');
+  const [folder, setFolder] = useState<string | null>(null);
   const { data: hits, isFetching, isError } = useDocSearch(q);
+  const folders = [...new Set((hits ?? []).map((h) => folderOf(h.doc)))].sort();
+  const shown = folder ? (hits ?? []).filter((h) => folderOf(h.doc) === folder) : hits ?? [];
+  const chipStyle = (on: boolean) =>
+    on
+      ? { background: 'var(--accent-quiet)', color: 'var(--accent)', border: '1px solid color-mix(in oklab, var(--accent) 40%, transparent)' }
+      : { color: 'var(--text-tertiary)', border: '1px solid var(--border-subtle)' };
   return (
     <Card>
       <CardHeader title="Semantic Search" trailing={<Badge tone="gold">embeddings + sqlite-vec</Badge>} />
       <div className="px-4 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
         <input
           value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search clauses by meaning — e.g. ROFR, renewal option, environmental indemnity…"
+          onChange={(e) => {
+            setQ(e.target.value);
+            setFolder(null);
+          }}
+          placeholder="Search by meaning across your OneDrive — clauses, rent rolls, NOI, PSAs…"
           aria-label="Semantic document search"
           className="num h-9 w-full rounded-[var(--radius-sm)] px-3 text-sm outline-none"
           style={{ background: 'color-mix(in oklab, var(--surface-overlay) 60%, transparent)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
         />
       </div>
+      {hits && hits.length > 0 && folders.length > 1 && (
+        <div className="flex flex-wrap gap-1.5 px-4 py-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+          <button onClick={() => setFolder(null)} className="num rounded-full px-2.5 py-0.5 text-2xs" style={chipStyle(folder === null)}>
+            All ({hits.length})
+          </button>
+          {folders.map((f) => (
+            <button key={f} onClick={() => setFolder(f)} className="num rounded-full px-2.5 py-0.5 text-2xs" style={chipStyle(folder === f)}>
+              {f}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="flex flex-col">
         {isError ? (
           <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-tertiary)' }}>Search runs on the local Brain Server only.</div>
         ) : q.trim().length <= 2 ? (
-          <div className="px-4 py-6 text-2xs" style={{ color: 'var(--text-tertiary)' }}>Type a clause concept; results rank by meaning, not keywords.</div>
+          <div className="px-4 py-6 text-2xs" style={{ color: 'var(--text-tertiary)' }}>Type a concept; results rank by meaning, not keywords.</div>
         ) : isFetching ? (
           <div className="px-4 py-6 text-2xs" style={{ color: 'var(--text-tertiary)' }}>Searching…</div>
         ) : !hits || hits.length === 0 ? (
           <div className="px-4 py-6 text-2xs" style={{ color: 'var(--text-tertiary)' }}>No passages found (or no documents indexed).</div>
         ) : (
-          hits.map((h) => (
+          shown.map((h) => (
             <div key={`${h.docId}-${h.chunkIdx}`} className="px-4 py-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
               <div className="mb-1 flex items-center justify-between gap-2">
-                <span className="text-2xs font-semibold" style={{ color: 'var(--text-secondary)' }}>{h.doc}</span>
-                <span className="num text-[10px]" style={{ color: 'var(--text-tertiary)' }}>{(h.score * 100).toFixed(0)}% match</span>
+                <span className="truncate text-2xs font-semibold" style={{ color: 'var(--text-secondary)' }}>{h.doc}</span>
+                <span className="num shrink-0 text-[10px] tracking-wide" style={{ color: 'var(--text-tertiary)' }}>
+                  {extOf(h.doc)} · {(h.score * 100).toFixed(0)}%
+                </span>
               </div>
               <p className="text-xs leading-relaxed" style={{ color: 'var(--text-primary)' }}>{highlight(h.snippet, q)}</p>
             </div>
