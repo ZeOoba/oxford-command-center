@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import { portfolioCriticalDates, criticalDateKpis } from '../../src/brain/critical-dates';
+import { ALERT_THRESHOLDS } from '@analytics/index';
 
 const ASOF = '2026-06-04';
 
@@ -82,5 +83,12 @@ describe('criticalDateKpis', () => {
     // this-quarter (<90d incl overdue): L1, L2, INS1, INS2 = 4
     expect(k.thisQuarter).toBe(4);
     expect(k.next12mo).toBe(events.length);
+  });
+});
+
+describe('calendar urgency is single-sourced from ALERT_THRESHOLDS', () => {
+  it('uses the lease alert cutoffs (60 / 180)', () => {
+    expect(ALERT_THRESHOLDS.leaseCriticalDays).toBe(60);
+    expect(ALERT_THRESHOLDS.leaseWarningDays).toBe(180);
   });
 });
