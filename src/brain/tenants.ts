@@ -21,7 +21,7 @@ export interface TenantScorecard {
   leaseCount: number;
   sf: number;
   annualRent: number;
-  pctNoi: number; // 0..1 — pro-rata NOI allocation (rent-share fallback for unlinked leases; may sum >100% across tenants when leases are unlinked, until QB closes the gap in Phase 3)
+  pctNoi: number; // 0..1 — tenant share of portfolio NOI (pro-rata within each property; rent-share fallback for unlinked leases), normalized so the column sums to 100%
   nextExpiry: string | null; // soonest leaseEnd ISO
   daysToExpiry: number | null;
   renewalStage: RenewalStage | null; // most-advanced stage across the tenant's leases
@@ -89,14 +89,20 @@ export function tenantScorecards(s: PortfolioSnapshot): TenantScorecard[] {
     byTenant.set(id, acc);
   }
 
-  const cards: TenantScorecard[] = [...byTenant.values()].map((a) => ({
+  // Normalize by total allocated NOI (not raw portfolio NOI) so the column sums to exactly 100%.
+  // When every lease links to a property this equals portfolio NOI; the rent-share fallback for
+  // unlinked leases would otherwise inflate the total past portfolio NOI, so we divide by the
+  // realized total instead. Each tenant's share is therefore its slice of the firm's income.
+  const accums = [...byTenant.values()];
+  const totalAllocNoi = sum(accums.map((a) => a.allocNoi));
+  const cards: TenantScorecard[] = accums.map((a) => ({
     id: a.id,
     name: a.name,
     properties: [...a.properties],
     leaseCount: a.leases.length,
     sf: a.sf,
     annualRent: a.annualRent,
-    pctNoi: portfolioNoi > 0 ? a.allocNoi / portfolioNoi : 0,
+    pctNoi: totalAllocNoi > 0 ? a.allocNoi / totalAllocNoi : 0,
     nextExpiry: a.nextExpiry,
     daysToExpiry: a.nextExpiry ? daysBetween(a.nextExpiry, s.meta.asOf) : null,
     renewalStage: a.stageRank >= 0 ? RENEWAL_STAGES[a.stageRank]! : null,
