@@ -14,7 +14,7 @@ import { DealStage, RenewalStageInput, NoiBudgetInput } from '../src/contracts/i
 import { DealCompsActionInput } from '../src/contracts/index';
 import { fetchDealComps } from './ai/comps';
 import { runAgent } from './ai/agent';
-import { searchDocuments, docStatus } from './sources/documents';
+import { searchDocuments, docStatus, warmDocIndex } from './sources/documents';
 import { getMacro } from './macro/getMacro';
 import { SERVER_PORT } from './config';
 import { loadInboxState, runAlertAction } from './alerts/store';
@@ -221,6 +221,7 @@ app.get('/sse', (c) =>
 async function main() {
   await brain.refresh('startup');
   brain.startWatching();
+  await warmDocIndex();
   serve({ fetch: app.fetch, port: SERVER_PORT, hostname: '127.0.0.1' }, (info) => {
     console.log(`◆ Oxford Brain Server — http://127.0.0.1:${info.port} (localhost only)`);
     console.log(`  Watching: ${brain.getState().workbookPath}`);

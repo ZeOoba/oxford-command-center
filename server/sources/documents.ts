@@ -424,8 +424,36 @@ export async function buildDocIndex(embed: Embedder = realEmbedder): Promise<voi
 }
 
 async function ensureIndex() {
-  if (!cache) await buildDocIndex();
+  if (cache) return cache;
+  const p = docIndexPath();
+  if (existsSync(p)) {
+    const { index, docs, builtAt } = loadDiskIndex(p);
+    cache = { index, docs, builtAt };
+    console.log(`[documents] loaded on-disk index — ${docs.length} documents, ${index.chunks.length} chunks (${p})`);
+  } else {
+    await buildDocIndex(); // in-memory fallback (empty when DOCUMENTS_DIR unset)
+  }
   return cache!;
+}
+
+/**
+ * Startup warm-up. Loads the persisted on-disk index if present (fast, no embedding). If it's absent
+ * but a corpus is configured, we deliberately do NOT build the full corpus in-process (that OOM-
+ * crashes the box) — we log guidance to run `npm run index:docs` and serve an empty index.
+ */
+export async function warmDocIndex(): Promise<void> {
+  const p = docIndexPath();
+  if (existsSync(p)) {
+    await ensureIndex();
+    return;
+  }
+  if (process.env.DOCUMENTS_DIR) {
+    console.warn(
+      `[documents] no on-disk index at ${p} — run \`npm run index:docs\` to build it. Serving an EMPTY document index until then.`,
+    );
+    cache = { index: await buildIndex([], realEmbedder), docs: [], builtAt: new Date().toISOString() };
+  }
+  // No DOCUMENTS_DIR → leave cache null; first request lazily builds an empty index (harmless).
 }
 
 /** The injectable doc searcher handed to the agent (server only). */
