@@ -133,6 +133,8 @@ function snap(s: Partial<PortfolioSnapshot>): PortfolioSnapshot {
     deals: [],
     tasks: [],
     counterparties: [],
+    renewalStages: {},
+    tenantNotes: {},
     dataQuality: [],
     ...s,
   };

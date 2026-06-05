@@ -10,7 +10,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import { brain } from './brain';
-import { DealStage } from '../src/contracts/index';
+import { DealStage, RenewalStageInput } from '../src/contracts/index';
 import { runAgent } from './ai/agent';
 import { searchDocuments, docStatus } from './sources/documents';
 import { getMacro } from './macro/getMacro';
@@ -95,6 +95,21 @@ app.post('/api/actions/alert', async (c) => {
   if (!parsed.success) return c.json({ ok: false, error: 'Invalid alert action' }, 400);
   const state = runAlertAction(parsed.data);
   return c.json({ ok: true, state });
+});
+
+app.post('/api/actions/renewal-stage', async (c) => {
+  const parsed = RenewalStageInput.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ ok: false, error: 'Invalid leaseId or stage' }, 400);
+  const ok = brain.setRenewalStage(parsed.data.leaseId, parsed.data.stage);
+  return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
+});
+
+app.post('/api/actions/tenant-note', async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { tenantId?: string; note?: string };
+  const tenantId = String(body.tenantId ?? '').trim();
+  if (!tenantId) return c.json({ ok: false, error: 'tenantId required' }, 400);
+  const ok = brain.setTenantNote(tenantId, String(body.note ?? ''));
+  return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
 
 /** Macro indicators — live FRED when FRED_API_KEY is set, real-seeded snapshot otherwise. */
