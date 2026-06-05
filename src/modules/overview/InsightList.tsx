@@ -1,7 +1,8 @@
-import { AlertTriangle, AlertCircle, Info, ArrowRight } from 'lucide-react';
+import { AlertTriangle, AlertCircle, Info, ArrowRight, Mail } from 'lucide-react';
 import type { Insight, InsightSeverity } from '@analytics/index';
 import { Button } from '@/primitives/Button';
 import { useUi } from '@/brain/ui-context';
+import { insightToDraft } from '@/brain/draft';
 
 const SEV: Record<InsightSeverity, { color: string; Icon: typeof Info }> = {
   critical: { color: 'var(--color-neg)', Icon: AlertCircle },
@@ -50,11 +51,18 @@ export function InsightList({ insights }: { insights: Insight[] }) {
               </p>
             </div>
             {i.entityType && i.entityId && (
-              // Honest label: this only opens the record. Real actions (draft renewal,
-              // open refi workspace) are wired in Phase 5; until then, don't overpromise.
-              <div className="shrink-0 pt-0.5">
+              <div className="flex shrink-0 items-center gap-1 pt-0.5">
+                {(() => {
+                  const draft = insightToDraft(i);
+                  return draft ? (
+                    <Button size="sm" variant="ghost" onPress={() => ui.openDraft(draft)}>
+                      <Mail size={12} />
+                      Draft
+                    </Button>
+                  ) : null;
+                })()}
                 <Button size="sm" variant="ghost" onPress={() => ui.openEntity({ type: i.entityType!, id: i.entityId! })}>
-                  View details
+                  View
                   <ArrowRight size={12} />
                 </Button>
               </div>

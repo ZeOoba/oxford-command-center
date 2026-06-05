@@ -8,7 +8,8 @@ export type InsightCategory =
   | 'concentration'
   | 'occupancy'
   | 'cash'
-  | 'deal';
+  | 'deal'
+  | 'data';
 
 export interface InsightAction {
   label: string;

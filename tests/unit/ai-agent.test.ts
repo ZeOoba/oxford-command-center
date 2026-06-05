@@ -21,6 +21,11 @@ function makeSnap(): PortfolioSnapshot {
     deals: [],
     tasks: [],
     counterparties: [],
+    renewalStages: {},
+    tenantNotes: {},
+    dealComps: {},
+    noiBudgets: {},
+    quickbooks: null,
     dataQuality: [],
   };
   return snap as unknown as PortfolioSnapshot;
