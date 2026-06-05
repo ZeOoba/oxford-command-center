@@ -82,8 +82,8 @@ export function tenantScorecards(s: PortfolioSnapshot): TenantScorecard[] {
 
     if (l.leaseEnd && (acc.nextExpiry === null || l.leaseEnd < acc.nextExpiry)) acc.nextExpiry = l.leaseEnd;
 
-    // Look up renewal stage by tenant slug (stages are keyed by tenant slug in the overlay).
-    const stage = s.renewalStages[id];
+    // Look up renewal stage by lease id (overlay is keyed by leaseId, not tenant slug).
+    const stage = s.renewalStages[l.id];
     if (stage !== undefined) acc.stageRank = Math.max(acc.stageRank, RENEWAL_STAGES.indexOf(stage));
 
     byTenant.set(id, acc);
