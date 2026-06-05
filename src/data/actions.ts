@@ -1,4 +1,4 @@
-import type { DealStage } from '@contracts/index';
+import type { DealStage, RenewalStage } from '@contracts/index';
 
 /**
  * Write-back actions (Phase 5). These POST to the Brain Server, which persists to the local
@@ -13,6 +13,12 @@ async function postAction(url: string, body: unknown): Promise<void> {
 
 export const advanceDealStage = (dealId: string, stage: DealStage): Promise<void> =>
   postAction('/api/actions/deal-stage', { dealId, stage });
+
+export const advanceRenewalStage = (leaseId: string, stage: RenewalStage): Promise<void> =>
+  postAction('/api/actions/renewal-stage', { leaseId, stage });
+
+export const saveTenantNote = (tenantId: string, note: string): Promise<void> =>
+  postAction('/api/actions/tenant-note', { tenantId, note });
 
 export interface NewTask {
   label: string;
