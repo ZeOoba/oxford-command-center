@@ -21,7 +21,7 @@ export interface TenantScorecard {
   leaseCount: number;
   sf: number;
   annualRent: number;
-  pctNoi: number; // 0..1 — pro-rata NOI allocation (rent-share fallback for unlinked leases)
+  pctNoi: number; // 0..1 — pro-rata NOI allocation (rent-share fallback for unlinked leases; may sum >100% across tenants when leases are unlinked, until QB closes the gap in Phase 3)
   nextExpiry: string | null; // soonest leaseEnd ISO
   daysToExpiry: number | null;
   renewalStage: RenewalStage | null; // most-advanced stage across the tenant's leases
