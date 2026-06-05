@@ -36,7 +36,7 @@ export function noiVariance(s: PortfolioSnapshot): NoiVarianceSummary {
     const qb = qbByProp.get(p.id);
     const actual = qb ? qb.noi : null;
     const variance = budget !== null && actual !== null ? actual - budget : null;
-    const variancePct = variance !== null && budget ? variance / budget : null;
+    const variancePct = variance !== null && budget !== null && budget !== 0 ? variance / budget : null;
     return { propertyId: p.id, name: p.name, budget, actual, variance, variancePct, belowBudget: variance !== null && variance < 0 };
   });
 
