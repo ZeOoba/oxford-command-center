@@ -8,7 +8,7 @@ const ASOF = '2026-06-04';
 // Acme also has an UNLINKED lease (propertyId null) of 50k rent → fallback allocation.
 const snap = {
   meta: { asOf: ASOF },
-  renewalStages: { 'beta-inc': 'LOI' as const },
+  renewalStages: { L2: 'LOI' as const },
   tenantNotes: { 'acme-llc': 'Eric to follow up' },
   properties: [
     { id: 'P1', noi: 100000 },
