@@ -1880,7 +1880,7 @@ git status --porcelain
 
 - [ ] **Step 4: Confidentiality**
 
-Confirm no confidential identifier (the blocked "fulton" string, case-insensitive) appears in any new source, test, or this plan. The modules render whatever the snapshot carries; confidential deals are redacted by the existing bake on the public mirror — no new leak surface (Calendar/Renewals/Tenants read leases/loans/insurance/tenants, not deals).
+Confirm no confidential identifier (the blocked confidential-portfolio codename, case-insensitive) appears in any new source, test, or this plan. The modules render whatever the snapshot carries; confidential deals are redacted by the existing bake on the public mirror — no new leak surface (Calendar/Renewals/Tenants read leases/loans/insurance/tenants, not deals).
 
 - [ ] **Step 5: Final review** (per subagent-driven-development): run a spec-compliance + code-quality review across the three tracks against `docs/superpowers/specs/2026-06-04-command-center-expansion-design.md` Phase 2 section. Confirm: 12-month list (not a grid) ✓, urgency KPI strip ✓, 75-day renewal window ✓, kanban stages Expiring→Outreach→Negotiating→LOI→Executed ✓, overlay-persisted stage + note ✓, % portfolio NOI bar (pro-rata) ✓, Health "—" pre-QB ✓, industry classification skipped ✓, free-text notes ✓.
 
