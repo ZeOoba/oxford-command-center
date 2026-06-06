@@ -25,4 +25,5 @@ data/brief-health.json
 data/doc-index.sqlite
 data/doc-index.sqlite-shm
 data/doc-index.sqlite-wal
+data/reindex.log
 .superpowers/

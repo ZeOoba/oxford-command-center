@@ -2,6 +2,7 @@ import { afterEach, describe, it, expect } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import ExcelJS from 'exceljs';
 import {
   chunkText,
   isExcludedPath,
@@ -9,7 +10,10 @@ import {
   matchesIndexFilters,
   maxFiles,
   maxChunksPerDoc,
+  maxDepth,
   pathIncludeRe,
+  includeDirs,
+  reindexSafetyError,
   buildDocIndex,
   collectDocChunks,
   docStatus,
@@ -22,6 +26,7 @@ import {
   embedMissing,
   indexCounts,
   queryIndex,
+  extractXlsxText,
 } from '../../server/sources/documents';
 
 describe('chunkText', () => {
@@ -54,17 +59,52 @@ describe('isExcludedPath — confidentiality / personal guard', () => {
     expect(isExcludedPath('1100 Rarig/Eurosort Lease.pdf')).toBe(false);
     expect(isExcludedPath('29000 Information Lane/Shore United PSA.pdf')).toBe(false);
   });
+  it('excludes the GDG/CRG estate folder and the Pictures tree (hardened)', () => {
+    expect(isExcludedPath('GDG Estate 12-2022 and CRG Estate 03-2023/trust.pdf')).toBe(true);
+    expect(isExcludedPath('Pictures/Business Pics/6860 Distribution Drive.JPG')).toBe(true);
+    expect(isExcludedPath('Pictures/Lucy Camp 2003/photo.jpg')).toBe(true);
+  });
+  it('does NOT over-match legitimate "real estate" business paths', () => {
+    expect(isExcludedPath('6300 Sherriff Road/2009-2011 real estate tax appeal results.pdf')).toBe(false);
+    expect(isExcludedPath('Investment Candidates -- 2015/Eastside Plaza NOI CALC.xlsx')).toBe(false);
+  });
+  it('excludes personal/family estate docs filed inside business folders (2026-06-06 audit)', () => {
+    expect(isExcludedPath('Muirkirk/GDG Revocable Trust.pdf')).toBe(true);
+    expect(isExcludedPath('Loans External/Loan Symetra/Tax Return -- Eric Goldberg Family Irrevocable Trust 2024.pdf')).toBe(true);
+    expect(isExcludedPath('Corporate and Settlement and Legal Documents/ATRCI Sale Docs/Private Annuity Agreements between Trust LLCs.pdf')).toBe(true);
+    expect(isExcludedPath('Eulogy -- CRG.docx')).toBe(true);
+    expect(isExcludedPath('Muirkirk 2013 Refinancing/GDG 1031 Deposit w IPX 6-19-13.pdf')).toBe(true);
+    expect(isExcludedPath('Corporate and Settlement and Legal Documents/Goldberg Annuity, LLC Corp Documents/note.pdf')).toBe(true);
+  });
+  it('excludes raw parcel-screening lead dumps (enumerate confidential/denylisted parcels)', () => {
+    expect(isExcludedPath('Investment Candidates -- 2026/20260605_Columbus-Motivated-Leads_v01.xlsx')).toBe(true);
+    expect(isExcludedPath('Investment Candidates -- 2026/20260604_Columbus-Parcel-Screen_Pilot_v02.xlsx')).toBe(true);
+  });
+  it('excludes business instruments that name the family trust as a party (audit stragglers)', () => {
+    expect(isExcludedPath('330 140 Village Avenue/Promissory note FVC -- Goldberg Trust.pdf')).toBe(true);
+    expect(isExcludedPath('Promissory Notes/Promissory Note Assignment -- 5600 Sunnyside to EG & Lynn Abrams trust 10-2025.pdf')).toBe(true);
+    expect(isExcludedPath('Corporate and Settlement and Legal Documents/Eric Goldberg Family, LLC Corp Documents/Tax ID Number (E-I-N) -- Eric I Goldberg Fam Trust for Muirkirk ownership.pdf')).toBe(true);
+  });
+  it('does NOT exclude business look-alikes (commercial deed of trust, family LLC, tenant trust)', () => {
+    expect(isExcludedPath('2203-2207 Northwood/Deed of Trust 9.19.2024 Clean -- 2203 Northwood.docx')).toBe(false);
+    expect(isExcludedPath('Corporate and Settlement and Legal Documents/Eric Goldberg Family, LLC Corp Documents/Deed of Trust -- 55 New Plant.pdf')).toBe(false);
+    expect(isExcludedPath('Loans External/Loan 5600/Certificates of Insurance -- Restoration Trust Church 02-2025.pdf')).toBe(false);
+  });
 });
 
 // OS-agnostic Leases-folder pattern: matcher normalizes `\` → `/`, so only `/` is needed here.
 const LEASES_RE = /(^|\/)Leases(\/)/i;
 
 describe('matchesIndexFilters — extension + optional path-include filter', () => {
-  it('requires a supported extension (pdf/txt/md), skipping docx/doc', () => {
+  it('supports pdf/txt/md/docx/xlsx/csv/tsv, skipping legacy .doc and binary .pptx', () => {
     expect(matchesIndexFilters('PropA/Leases/x.pdf', null)).toBe(true);
     expect(matchesIndexFilters('PropA/Leases/x.txt', null)).toBe(true);
-    expect(matchesIndexFilters('PropA/Leases/x.docx', null)).toBe(false);
-    expect(matchesIndexFilters('PropA/Leases/x.doc', null)).toBe(false);
+    expect(matchesIndexFilters('PropA/Leases/x.docx', null)).toBe(true);
+    expect(matchesIndexFilters('PropA/Leases/x.xlsx', null)).toBe(true);
+    expect(matchesIndexFilters('PropA/Leases/x.csv', null)).toBe(true);
+    expect(matchesIndexFilters('PropA/Leases/x.tsv', null)).toBe(true);
+    expect(matchesIndexFilters('PropA/Leases/x.doc', null)).toBe(false); // legacy binary — unsupported
+    expect(matchesIndexFilters('PropA/Leases/x.pptx', null)).toBe(false); // not yet supported
   });
   it('honors a Leases-only include filter (path must contain a Leases directory segment)', () => {
     expect(matchesIndexFilters('9050 Red Branch Rd/Leases/lease.pdf', LEASES_RE)).toBe(true);
@@ -79,6 +119,11 @@ describe('matchesIndexFilters — extension + optional path-include filter', () 
     expect(matchesIndexFilters('Sepich Portfolio/Leases/2019 Sepich I- P&L.pdf', LEASES_RE)).toBe(false);
     expect(matchesIndexFilters('Sepich Portfolio/Leases/Rent Roll -- Dec 2020.pdf', LEASES_RE)).toBe(false);
     expect(matchesIndexFilters('1100 Rarig/Leases/Eurosort Lease.pdf', LEASES_RE)).toBe(true);
+  });
+  it('keeps financials/rent-rolls when the non-lease filter is OFF (general OneDrive mode)', () => {
+    const pnl = '6300 Sherriff Road/2018 6300 Sheriff Road LLC P&L.pdf';
+    expect(matchesIndexFilters(pnl, null, true)).toBe(false); // lease mode drops it
+    expect(matchesIndexFilters(pnl, null, false)).toBe(true); // general mode keeps it
   });
 });
 
@@ -118,6 +163,16 @@ describe('env knobs — pathIncludeRe + maxFiles', () => {
     expect(maxFiles()).toBe(50);
     process.env.DOCUMENTS_MAX_FILES = 'nonsense';
     expect(maxFiles()).toBe(2000);
+  });
+  it('maxDepth defaults to 6 and honors a valid override; ignores nonsense', () => {
+    const p = process.env.DOCUMENTS_MAX_DEPTH;
+    delete process.env.DOCUMENTS_MAX_DEPTH;
+    expect(maxDepth()).toBe(6);
+    process.env.DOCUMENTS_MAX_DEPTH = '9';
+    expect(maxDepth()).toBe(9);
+    process.env.DOCUMENTS_MAX_DEPTH = 'nonsense';
+    expect(maxDepth()).toBe(6);
+    process.env.DOCUMENTS_MAX_DEPTH = p;
   });
 });
 
@@ -190,6 +245,100 @@ describe('collectDocChunks — list+extract+chunk with per-doc cap', () => {
       expect(docs[0]!.chunks).toBe(3); // capped
       expect(chunks.length).toBe(3);
       expect(chunks.every((c) => c.docName.replace(/\\/g, '/') === 'PropA/Leases/big-lease.txt')).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('DOCUMENTS_INCLUDE_DIRS — fail-closed top-level allowlist', () => {
+  const prev = {
+    dir: process.env.DOCUMENTS_DIR,
+    inc: process.env.DOCUMENTS_PATH_INCLUDE,
+    allow: process.env.DOCUMENTS_INCLUDE_DIRS,
+    drop: process.env.DOCUMENTS_DROP_NONLEASE,
+  };
+  afterEach(() => {
+    process.env.DOCUMENTS_DIR = prev.dir;
+    process.env.DOCUMENTS_PATH_INCLUDE = prev.inc;
+    process.env.DOCUMENTS_INCLUDE_DIRS = prev.allow;
+    process.env.DOCUMENTS_DROP_NONLEASE = prev.drop;
+  });
+  it('indexes ONLY allowlisted top-level folders, skipping unlisted + personal', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'allow-'));
+    try {
+      mkdirSync(join(root, '6300 Sherriff Road'), { recursive: true });
+      mkdirSync(join(root, 'Estate Planning and Trust Documents'), { recursive: true });
+      mkdirSync(join(root, 'Pictures'), { recursive: true });
+      writeFileSync(join(root, '6300 Sherriff Road', 'lease.txt'), 'Tenant renewal option clause text.');
+      writeFileSync(join(root, 'Estate Planning and Trust Documents', 'will.txt'), 'last will and testament');
+      writeFileSync(join(root, 'Pictures', 'note.txt'), 'family photo caption');
+
+      process.env.DOCUMENTS_DIR = root;
+      delete process.env.DOCUMENTS_PATH_INCLUDE;
+      process.env.DOCUMENTS_DROP_NONLEASE = '0';
+      process.env.DOCUMENTS_INCLUDE_DIRS = '6300 Sherriff Road';
+
+      const { docs } = await collectDocChunks();
+      expect(docs.length).toBe(1);
+      expect(docs[0]!.name.replace(/\\/g, '/')).toBe('6300 Sherriff Road/lease.txt');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('includeDirs — delimiter robust to comma-containing folder names', () => {
+  const prev = process.env.DOCUMENTS_INCLUDE_DIRS;
+  afterEach(() => {
+    process.env.DOCUMENTS_INCLUDE_DIRS = prev;
+  });
+  it('splits on | so folder names with commas survive as single entries', () => {
+    process.env.DOCUMENTS_INCLUDE_DIRS = '3883 Livingston, LLC|9620 State 350, LLC|6300 Sherriff Road';
+    const dirs = includeDirs();
+    expect(dirs?.size).toBe(3);
+    expect(dirs?.has('3883 livingston, llc')).toBe(true);
+    expect(dirs?.has('9620 state 350, llc')).toBe(true);
+    expect(dirs?.has('6300 sherriff road')).toBe(true);
+  });
+  it('is null when unset', () => {
+    delete process.env.DOCUMENTS_INCLUDE_DIRS;
+    expect(includeDirs()).toBeNull();
+  });
+});
+
+describe('reindexSafetyError — fail-closed pre-reindex confidentiality guard', () => {
+  it('passes when DOCUMENTS_EXCLUDE and the DOCUMENTS_INCLUDE_DIRS allowlist are both set', () => {
+    expect(reindexSafetyError({ DOCUMENTS_EXCLUDE: 'zzdemo', DOCUMENTS_INCLUDE_DIRS: 'Master Lease Database' })).toBeNull();
+  });
+  it('passes with exclude + a DOCUMENTS_PATH_INCLUDE narrowing (legacy lease-only mode)', () => {
+    expect(reindexSafetyError({ DOCUMENTS_EXCLUDE: 'zzdemo', DOCUMENTS_PATH_INCLUDE: '(^|/)Leases(/)' })).toBeNull();
+  });
+  it('BLOCKS when DOCUMENTS_EXCLUDE is empty (the 2026-06-06 unscoped-sweep incident)', () => {
+    expect(reindexSafetyError({ DOCUMENTS_INCLUDE_DIRS: 'Master Lease Database' })).toMatch(/DOCUMENTS_EXCLUDE/);
+  });
+  it('BLOCKS when the corpus is unscoped (exclude set, but no allowlist and no path-include)', () => {
+    expect(reindexSafetyError({ DOCUMENTS_EXCLUDE: 'zzdemo' })).toMatch(/scoping|allowlist/i);
+  });
+  it('honors an explicit DOCUMENTS_ALLOW_UNSCOPED=1 override', () => {
+    expect(reindexSafetyError({ DOCUMENTS_ALLOW_UNSCOPED: '1' })).toBeNull();
+  });
+});
+
+describe('extractXlsxText — flat cell-text dump for search', () => {
+  it('extracts sheet name + non-empty cell values', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'xlsx-'));
+    try {
+      const file = join(root, 'rent.xlsx');
+      const wb = new ExcelJS.Workbook();
+      const ws = wb.addWorksheet('RentRoll');
+      ws.addRow(['Tenant', 'Suite', 'Annual Rent']);
+      ws.addRow(['Eurosort', '100', 123450]);
+      await wb.xlsx.writeFile(file);
+      const text = await extractXlsxText(file);
+      expect(text).toContain('RentRoll');
+      expect(text).toContain('Eurosort');
+      expect(text).toContain('123450');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

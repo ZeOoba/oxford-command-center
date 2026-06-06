@@ -6,6 +6,8 @@ import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transform
 // pdf-parse ships no type declarations; the lib/ path avoids its debug-on-import index.
 // @ts-expect-error -- no types for pdf-parse
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
+import mammoth from 'mammoth';
+import ExcelJS from 'exceljs';
 
 /**
  * Document RAG (Phase 3 — semantic) — vector search over lease/PSA/OM text so the agent can
@@ -44,10 +46,32 @@ export interface DocHit {
  */
 const DEFAULT_EXCLUDE: RegExp[] = [
   /estate planning/i,
+  /\b(?:gdg|crg) estate\b/i, // "GDG Estate 12-2022 and CRG Estate 03-2023" — precise, won't hit "real estate"
   /trust documents/i,
   /gabriel documents/i,
   /gdg properties/i,
+  /(^|[\\/])pictures([\\/]|$)/i, // personal photo tree (no searchable text anyway)
   /\bpersonal\b/i,
+  // Personal / family estate & financial material that lives inside otherwise-business folders (the
+  // folder allowlist can't separate it). Deliberately precise so business look-alikes STAY indexed:
+  // a commercial "Deed of Trust", "Real Estate" tax bills/forms, and the "Restoration Trust Church"
+  // tenant are NOT matched. (2026-06-06 corpus audit: these slipped in via Loans/Muirkirk/Corporate.)
+  /revocable trust/i, //         GDG Revocable Trust
+  /irrevocable trust/i, //       Eric Goldberg Family Irrevocable Trust
+  /private annuity/i,
+  /goldberg annuity/i,
+  /\beulogy\b/i,
+  /\bgdg\b/i, //                 a principal's initials — personal/estate docs (GDG 1031, GDG tax return)
+  /\bcrg\b/i,
+  /1031 (?:deposit|exchange)/i,
+  /tax return/i, //              personal/family-trust tax returns (errs toward privacy per Gabriel)
+  /goldberg trust/i, //          family-trust named as a party in business loan/EIN docs. Precise
+  /abrams trust/i, //            (adjacent words) so a commercial "Deed of Trust" or the property-
+  /\bfam trust\b/i, //           owning "Eric Goldberg Family, LLC" is NOT caught.
+  // Raw parcel-screening lead dumps enumerate many parcels incl. confidential/denylisted ones (e.g.
+  // the E. Fulton target by address+owner), so keep these spreadsheets out of the searchable corpus.
+  /motivated[\s_-]*leads/i,
+  /parcel[\s_-]*screen/i,
 ];
 
 /** Personal/estate defaults + any confidential patterns from `DOCUMENTS_EXCLUDE` (gitignored env). */
@@ -95,10 +119,20 @@ export function isLikelyNonLease(relPath: string, patterns: RegExp[] = nonLeaseP
   return patterns.some((re) => re.test(norm));
 }
 
-const SUPPORTED = new Set(['.pdf', '.txt', '.md']);
+/** Whether to drop obvious non-lease docs (financials/rent-rolls/disclosures). ON by default so the
+ * lease corpus stays clean; set `DOCUMENTS_DROP_NONLEASE=0` for a GENERAL OneDrive corpus where those
+ * documents are exactly what you want findable. */
+export function dropNonLease(): boolean {
+  return (process.env.DOCUMENTS_DROP_NONLEASE ?? '1') !== '0';
+}
+
+const SUPPORTED = new Set(['.pdf', '.txt', '.md', '.docx', '.xlsx', '.csv', '.tsv']);
 const CHUNK = 1500;
 const OVERLAP = 120;
 const EMBED_DIM_DEFAULT = 384; // all-MiniLM-L6-v2
+/** Skip files larger than this (env `DOCUMENTS_MAX_FILE_MB`, default 25) — memory safety on the box,
+ * and a backstop against the giant master workbook ever slipping into the corpus. */
+const MAX_FILE_BYTES = (Number(process.env.DOCUMENTS_MAX_FILE_MB) || 25) * 1024 * 1024;
 
 /** Split text into overlapping chunks on paragraph boundaries where possible. Pure. */
 export function chunkText(text: string, size = CHUNK, overlap = OVERLAP): string[] {
@@ -375,12 +409,45 @@ export const realEmbedder: Embedder = async (texts) => {
 async function extractFile(path: string): Promise<string> {
   const ext = extname(path).toLowerCase();
   try {
+    if (statSync(path).size > MAX_FILE_BYTES) return ''; // oversized → skip (memory safety)
     if (ext === '.pdf') return (await pdfParse(readFileSync(path))).text;
-    if (ext === '.txt' || ext === '.md') return readFileSync(path, 'utf8');
+    if (ext === '.txt' || ext === '.md' || ext === '.csv' || ext === '.tsv') return readFileSync(path, 'utf8');
+    if (ext === '.docx') return (await mammoth.extractRawText({ path })).value;
+    if (ext === '.xlsx') return await extractXlsxText(path);
   } catch {
-    /* unreadable/corrupt file → skip */
+    /* unreadable/corrupt/locked file → skip */
   }
   return '';
+}
+
+/** Best-effort flat text of an .xlsx — sheet names + non-empty cell values — so a rent roll / NOI
+ * calc / tax-appeal workbook is findable by meaning. Exported for unit testing. */
+export async function extractXlsxText(path: string): Promise<string> {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.readFile(path);
+  const lines: string[] = [];
+  wb.eachSheet((ws) => {
+    lines.push(`# ${ws.name}`);
+    ws.eachRow({ includeEmpty: false }, (row) => {
+      const vals = (row.values as unknown[]).slice(1).map(cellText).filter(Boolean);
+      if (vals.length) lines.push(vals.join(' \t '));
+    });
+  });
+  return lines.join('\n');
+}
+
+/** Coerce one exceljs cell value (string | number | date | formula | richtext | hyperlink) to text. */
+function cellText(v: unknown): string {
+  if (v == null) return '';
+  if (typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    if (typeof o['text'] === 'string') return o['text'];
+    if ('result' in o && o['result'] != null) return String(o['result']);
+    if (Array.isArray(o['richText'])) return (o['richText'] as Array<{ text: string }>).map((r) => r.text).join('');
+    if (o['hyperlink'] != null) return String(o['text'] ?? o['hyperlink']);
+    return '';
+  }
+  return String(v);
 }
 
 /**
@@ -400,11 +467,54 @@ export function pathIncludeRe(): RegExp | null {
   }
 }
 
+/** Top-level folder allowlist (env `DOCUMENTS_INCLUDE_DIRS`, PIPE-separated exact folder names
+ * relative to DOCUMENTS_DIR, case-insensitive). Pipe (not comma) because real property folder names
+ * contain commas (e.g. "3883 Livingston, LLC"); `|` is illegal in Windows paths so it can never
+ * collide. When set, ONLY these top-level directories are descended into — a FAIL-CLOSED scope so a
+ * broad DOCUMENTS_DIR (the whole OneDrive) never sweeps in personal/unlisted folders. Unset → walk
+ * every top-level dir (legacy), still subject to excludes. */
+export function includeDirs(): Set<string> | null {
+  const raw = (process.env.DOCUMENTS_INCLUDE_DIRS ?? '').split('|').map((s) => s.trim()).filter(Boolean);
+  return raw.length ? new Set(raw.map((s) => s.toLowerCase())) : null;
+}
+
+/**
+ * Fail-closed pre-reindex confidentiality guard. The offline indexer reads `DOCUMENTS_DIR`, which may
+ * point at the whole OneDrive — containing confidential deals and personal/estate
+ * material. To prevent an UNSCOPED sweep (the 2026-06-06 incident: the entire drive was indexed with
+ * neither the allowlist nor `DOCUMENTS_EXCLUDE` set, embedding ~99 confidential due-diligence docs), the indexer
+ * refuses to run unless the confidentiality controls are configured:
+ *   - `DOCUMENTS_EXCLUDE` (confidential-deal patterns) MUST be non-empty, AND
+ *   - the corpus MUST be scoped — either `DOCUMENTS_INCLUDE_DIRS` (allowlist) or `DOCUMENTS_PATH_INCLUDE`.
+ * Returns a human-readable reason to abort, or `null` when safe. Override with `DOCUMENTS_ALLOW_UNSCOPED=1`
+ * (the caller logs it — never silent) for a deliberately narrow / non-confidential corpus.
+ */
+export function reindexSafetyError(env: NodeJS.ProcessEnv = process.env): string | null {
+  if ((env.DOCUMENTS_ALLOW_UNSCOPED ?? '').trim() === '1') return null;
+  const hasExclude = (env.DOCUMENTS_EXCLUDE ?? '').split(',').map((s) => s.trim()).filter(Boolean).length > 0;
+  const hasAllow = (env.DOCUMENTS_INCLUDE_DIRS ?? '').split('|').map((s) => s.trim()).filter(Boolean).length > 0;
+  const hasPathNarrow = (env.DOCUMENTS_PATH_INCLUDE ?? '').trim().length > 0;
+  if (!hasExclude) {
+    return 'DOCUMENTS_EXCLUDE is empty — refusing to index. The corpus may contain confidential deals; set the exclude patterns (mirror ~/.claude/hooks/confidential-terms.json) or set DOCUMENTS_ALLOW_UNSCOPED=1 to override.';
+  }
+  if (!hasAllow && !hasPathNarrow) {
+    return 'No corpus scoping — set DOCUMENTS_INCLUDE_DIRS (top-level allowlist) or DOCUMENTS_PATH_INCLUDE, or DOCUMENTS_ALLOW_UNSCOPED=1 to override. Refusing a broad unscoped sweep.';
+  }
+  return null;
+}
+
 /** Max files to index before stopping (env `DOCUMENTS_MAX_FILES`, default 2000). Truncation is
  * reported (never silent) so a too-small cap is visible in the logs. */
 export function maxFiles(): number {
   const n = Number(process.env.DOCUMENTS_MAX_FILES);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 2000;
+}
+
+/** Max directory recursion depth (env `DOCUMENTS_MAX_DEPTH`, default 6). Raise for deeply nested
+ * OneDrive trees. */
+export function maxDepth(): number {
+  const n = Number(process.env.DOCUMENTS_MAX_DEPTH);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 6;
 }
 
 /** Max chunks indexed per document (env `DOCUMENTS_MAX_CHUNKS_PER_DOC`, default 25). Bounds the
@@ -423,11 +533,11 @@ export function docIndexPath(): string {
 /** Pure: should a relative file path be indexed? Supported extension + (optional) include filter.
  * Path separators are normalized to `/` before matching so the include pattern is OS-agnostic
  * (write `(^|/)Leases(/)` regardless of Windows `\` vs POSIX `/`). */
-export function matchesIndexFilters(relPath: string, includeRe: RegExp | null): boolean {
+export function matchesIndexFilters(relPath: string, includeRe: RegExp | null, drop = dropNonLease()): boolean {
   if (!SUPPORTED.has(extname(relPath).toLowerCase())) return false;
   const norm = relPath.replace(/\\/g, '/');
   if (includeRe && !includeRe.test(norm)) return false;
-  if (isLikelyNonLease(norm)) return false;
+  if (drop && isLikelyNonLease(norm)) return false;
   return true;
 }
 
@@ -441,11 +551,13 @@ function listFiles(
   max = maxFiles(),
   includeRe = pathIncludeRe(),
   excludes = excludePatterns(),
+  allow = includeDirs(),
+  depthCap = maxDepth(),
 ): { files: string[]; truncated: boolean } {
   const files: string[] = [];
   let truncated = false;
   const walk = (dir: string, depth: number): void => {
-    if (depth > 6 || files.length >= max) return;
+    if (depth > depthCap || files.length >= max) return;
     let entries: Dirent[];
     try {
       entries = readdirSync(dir, { withFileTypes: true });
@@ -460,8 +572,10 @@ function listFiles(
       const full = join(dir, e.name);
       const rel = full.slice(root.length).replace(/^[\\/]+/, '');
       if (isExcludedPath(rel, excludes)) continue; // prune excluded dirs + files (defense-in-depth)
-      if (e.isDirectory()) walk(full, depth + 1);
-      else if (matchesIndexFilters(rel, includeRe)) files.push(full);
+      if (e.isDirectory()) {
+        if (depth === 0 && allow && !allow.has(e.name.toLowerCase())) continue; // fail-closed top-level scope
+        walk(full, depth + 1);
+      } else if (matchesIndexFilters(rel, includeRe)) files.push(full);
     }
   };
   walk(root, 0);
