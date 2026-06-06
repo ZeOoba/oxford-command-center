@@ -10,6 +10,7 @@ import {
   indexCounts,
   realEmbedder,
   docIndexPath,
+  reindexSafetyError,
 } from '../server/sources/documents';
 
 /**
@@ -35,6 +36,15 @@ async function main(): Promise<void> {
   if (!dir) {
     console.error('✗ DOCUMENTS_DIR is not set (.env). Nothing to index.');
     process.exit(1);
+  }
+  // Fail-closed: never sweep a broad/confidential corpus without the allowlist + exclude configured.
+  const guardError = reindexSafetyError();
+  if (guardError) {
+    console.error(`✗ Reindex blocked (fail-closed confidentiality guard): ${guardError}`);
+    process.exit(2);
+  }
+  if (process.env.DOCUMENTS_ALLOW_UNSCOPED === '1') {
+    console.warn('⚠ DOCUMENTS_ALLOW_UNSCOPED=1 — confidentiality scoping guard explicitly overridden.');
   }
   const out = docIndexPath();
   mkdirSync(dirname(out), { recursive: true });
