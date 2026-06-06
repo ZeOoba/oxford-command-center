@@ -458,6 +458,31 @@ export function includeDirs(): Set<string> | null {
   return raw.length ? new Set(raw.map((s) => s.toLowerCase())) : null;
 }
 
+/**
+ * Fail-closed pre-reindex confidentiality guard. The offline indexer reads `DOCUMENTS_DIR`, which may
+ * point at the whole OneDrive — containing confidential deals and personal/estate
+ * material. To prevent an UNSCOPED sweep (the 2026-06-06 incident: the entire drive was indexed with
+ * neither the allowlist nor `DOCUMENTS_EXCLUDE` set, embedding ~99 confidential due-diligence docs), the indexer
+ * refuses to run unless the confidentiality controls are configured:
+ *   - `DOCUMENTS_EXCLUDE` (confidential-deal patterns) MUST be non-empty, AND
+ *   - the corpus MUST be scoped — either `DOCUMENTS_INCLUDE_DIRS` (allowlist) or `DOCUMENTS_PATH_INCLUDE`.
+ * Returns a human-readable reason to abort, or `null` when safe. Override with `DOCUMENTS_ALLOW_UNSCOPED=1`
+ * (the caller logs it — never silent) for a deliberately narrow / non-confidential corpus.
+ */
+export function reindexSafetyError(env: NodeJS.ProcessEnv = process.env): string | null {
+  if ((env.DOCUMENTS_ALLOW_UNSCOPED ?? '').trim() === '1') return null;
+  const hasExclude = (env.DOCUMENTS_EXCLUDE ?? '').split(',').map((s) => s.trim()).filter(Boolean).length > 0;
+  const hasAllow = (env.DOCUMENTS_INCLUDE_DIRS ?? '').split('|').map((s) => s.trim()).filter(Boolean).length > 0;
+  const hasPathNarrow = (env.DOCUMENTS_PATH_INCLUDE ?? '').trim().length > 0;
+  if (!hasExclude) {
+    return 'DOCUMENTS_EXCLUDE is empty — refusing to index. The corpus may contain confidential deals; set the exclude patterns (mirror ~/.claude/hooks/confidential-terms.json) or set DOCUMENTS_ALLOW_UNSCOPED=1 to override.';
+  }
+  if (!hasAllow && !hasPathNarrow) {
+    return 'No corpus scoping — set DOCUMENTS_INCLUDE_DIRS (top-level allowlist) or DOCUMENTS_PATH_INCLUDE, or DOCUMENTS_ALLOW_UNSCOPED=1 to override. Refusing a broad unscoped sweep.';
+  }
+  return null;
+}
+
 /** Max files to index before stopping (env `DOCUMENTS_MAX_FILES`, default 2000). Truncation is
  * reported (never silent) so a too-small cap is visible in the logs. */
 export function maxFiles(): number {

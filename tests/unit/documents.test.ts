@@ -13,6 +13,7 @@ import {
   maxDepth,
   pathIncludeRe,
   includeDirs,
+  reindexSafetyError,
   buildDocIndex,
   collectDocChunks,
   docStatus,
@@ -281,6 +282,24 @@ describe('includeDirs — delimiter robust to comma-containing folder names', ()
   it('is null when unset', () => {
     delete process.env.DOCUMENTS_INCLUDE_DIRS;
     expect(includeDirs()).toBeNull();
+  });
+});
+
+describe('reindexSafetyError — fail-closed pre-reindex confidentiality guard', () => {
+  it('passes when DOCUMENTS_EXCLUDE and the DOCUMENTS_INCLUDE_DIRS allowlist are both set', () => {
+    expect(reindexSafetyError({ DOCUMENTS_EXCLUDE: 'zzdemo', DOCUMENTS_INCLUDE_DIRS: 'Master Lease Database' })).toBeNull();
+  });
+  it('passes with exclude + a DOCUMENTS_PATH_INCLUDE narrowing (legacy lease-only mode)', () => {
+    expect(reindexSafetyError({ DOCUMENTS_EXCLUDE: 'zzdemo', DOCUMENTS_PATH_INCLUDE: '(^|/)Leases(/)' })).toBeNull();
+  });
+  it('BLOCKS when DOCUMENTS_EXCLUDE is empty (the 2026-06-06 unscoped-sweep incident)', () => {
+    expect(reindexSafetyError({ DOCUMENTS_INCLUDE_DIRS: 'Master Lease Database' })).toMatch(/DOCUMENTS_EXCLUDE/);
+  });
+  it('BLOCKS when the corpus is unscoped (exclude set, but no allowlist and no path-include)', () => {
+    expect(reindexSafetyError({ DOCUMENTS_EXCLUDE: 'zzdemo' })).toMatch(/scoping|allowlist/i);
+  });
+  it('honors an explicit DOCUMENTS_ALLOW_UNSCOPED=1 override', () => {
+    expect(reindexSafetyError({ DOCUMENTS_ALLOW_UNSCOPED: '1' })).toBeNull();
   });
 });
 
