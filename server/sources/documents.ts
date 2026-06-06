@@ -52,6 +52,26 @@ const DEFAULT_EXCLUDE: RegExp[] = [
   /gdg properties/i,
   /(^|[\\/])pictures([\\/]|$)/i, // personal photo tree (no searchable text anyway)
   /\bpersonal\b/i,
+  // Personal / family estate & financial material that lives inside otherwise-business folders (the
+  // folder allowlist can't separate it). Deliberately precise so business look-alikes STAY indexed:
+  // a commercial "Deed of Trust", "Real Estate" tax bills/forms, and the "Restoration Trust Church"
+  // tenant are NOT matched. (2026-06-06 corpus audit: these slipped in via Loans/Muirkirk/Corporate.)
+  /revocable trust/i, //         GDG Revocable Trust
+  /irrevocable trust/i, //       Eric Goldberg Family Irrevocable Trust
+  /private annuity/i,
+  /goldberg annuity/i,
+  /\beulogy\b/i,
+  /\bgdg\b/i, //                 a principal's initials — personal/estate docs (GDG 1031, GDG tax return)
+  /\bcrg\b/i,
+  /1031 (?:deposit|exchange)/i,
+  /tax return/i, //              personal/family-trust tax returns (errs toward privacy per Gabriel)
+  /goldberg trust/i, //          family-trust named as a party in business loan/EIN docs. Precise
+  /abrams trust/i, //            (adjacent words) so a commercial "Deed of Trust" or the property-
+  /\bfam trust\b/i, //           owning "Eric Goldberg Family, LLC" is NOT caught.
+  // Raw parcel-screening lead dumps enumerate many parcels incl. confidential/denylisted ones (e.g.
+  // the E. Fulton target by address+owner), so keep these spreadsheets out of the searchable corpus.
+  /motivated[\s_-]*leads/i,
+  /parcel[\s_-]*screen/i,
 ];
 
 /** Personal/estate defaults + any confidential patterns from `DOCUMENTS_EXCLUDE` (gitignored env). */

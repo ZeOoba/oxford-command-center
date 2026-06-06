@@ -68,6 +68,28 @@ describe('isExcludedPath — confidentiality / personal guard', () => {
     expect(isExcludedPath('6300 Sherriff Road/2009-2011 real estate tax appeal results.pdf')).toBe(false);
     expect(isExcludedPath('Investment Candidates -- 2015/Eastside Plaza NOI CALC.xlsx')).toBe(false);
   });
+  it('excludes personal/family estate docs filed inside business folders (2026-06-06 audit)', () => {
+    expect(isExcludedPath('Muirkirk/GDG Revocable Trust.pdf')).toBe(true);
+    expect(isExcludedPath('Loans External/Loan Symetra/Tax Return -- Eric Goldberg Family Irrevocable Trust 2024.pdf')).toBe(true);
+    expect(isExcludedPath('Corporate and Settlement and Legal Documents/ATRCI Sale Docs/Private Annuity Agreements between Trust LLCs.pdf')).toBe(true);
+    expect(isExcludedPath('Eulogy -- CRG.docx')).toBe(true);
+    expect(isExcludedPath('Muirkirk 2013 Refinancing/GDG 1031 Deposit w IPX 6-19-13.pdf')).toBe(true);
+    expect(isExcludedPath('Corporate and Settlement and Legal Documents/Goldberg Annuity, LLC Corp Documents/note.pdf')).toBe(true);
+  });
+  it('excludes raw parcel-screening lead dumps (enumerate confidential/denylisted parcels)', () => {
+    expect(isExcludedPath('Investment Candidates -- 2026/20260605_Columbus-Motivated-Leads_v01.xlsx')).toBe(true);
+    expect(isExcludedPath('Investment Candidates -- 2026/20260604_Columbus-Parcel-Screen_Pilot_v02.xlsx')).toBe(true);
+  });
+  it('excludes business instruments that name the family trust as a party (audit stragglers)', () => {
+    expect(isExcludedPath('330 140 Village Avenue/Promissory note FVC -- Goldberg Trust.pdf')).toBe(true);
+    expect(isExcludedPath('Promissory Notes/Promissory Note Assignment -- 5600 Sunnyside to EG & Lynn Abrams trust 10-2025.pdf')).toBe(true);
+    expect(isExcludedPath('Corporate and Settlement and Legal Documents/Eric Goldberg Family, LLC Corp Documents/Tax ID Number (E-I-N) -- Eric I Goldberg Fam Trust for Muirkirk ownership.pdf')).toBe(true);
+  });
+  it('does NOT exclude business look-alikes (commercial deed of trust, family LLC, tenant trust)', () => {
+    expect(isExcludedPath('2203-2207 Northwood/Deed of Trust 9.19.2024 Clean -- 2203 Northwood.docx')).toBe(false);
+    expect(isExcludedPath('Corporate and Settlement and Legal Documents/Eric Goldberg Family, LLC Corp Documents/Deed of Trust -- 55 New Plant.pdf')).toBe(false);
+    expect(isExcludedPath('Loans External/Loan 5600/Certificates of Insurance -- Restoration Trust Church 02-2025.pdf')).toBe(false);
+  });
 });
 
 // OS-agnostic Leases-folder pattern: matcher normalizes `\` → `/`, so only `/` is needed here.
