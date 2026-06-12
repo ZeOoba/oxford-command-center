@@ -19,6 +19,7 @@
     "build:mirror": "npm run bake && npm run build",
     "deploy:mirror": "npm run build:mirror && npx wrangler pages deploy dist --project-name=ora-command-center --branch=main",
     "reconcile": "tsx scripts/reconcile.ts",
+    "warehouse:backfill": "tsx scripts/warehouse-backfill.ts",
     "check:bundle": "tsx scripts/check-bundle.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p functions/tsconfig.json",
     "lint": "eslint . --max-warnings 0",
