@@ -82,6 +82,7 @@ export async function parseQbExcel(filePath: string): Promise<RawStatement> {
     for (const t of texts) {
       const trimmed = t.text.trim();
       if (SECTION_RE.test(trimmed)) {
+        if (rowNum !== null) return; // section word + amount on one row = a total-value row ("INCOME 216461.4"), not a header — skip without changing section
         section = trimmed.toUpperCase();
         parent = null; // a new section starts a new group context
         return;
@@ -95,6 +96,7 @@ export async function parseQbExcel(filePath: string): Promise<RawStatement> {
     const m = trimmed.match(/^(?<code>\d[\d.-]*)?\s*(?<name>.+)$/);
     if (!m?.groups) return;
     const name = m.groups['name']!.trim();
+    if (/^[\d.,()$\s-]*$/.test(name)) return; // numeric-only candidate ("105647.91" → code 105647.9 + name "1") = a report summary value, not an account
     if (/^Total\b/i.test(name) || /\bTotal\b/.test(name.split(/\s+/).slice(0, 2).join(' '))) {
       return; // subtotal row ("5002 Total RENTAL INCOME") — skipped even when it carries an amount
     }
