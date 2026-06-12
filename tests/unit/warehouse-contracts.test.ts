@@ -49,6 +49,18 @@ describe('warehouse contracts', () => {
     expect(ImportStatus.parse('pending-review')).toBe('pending-review');
   });
 
+  it('rejects non-finite amounts and invalid period months', () => {
+    const base = {
+      importId: 1, propertyId: 'p', period: '2025', rawAccount: 'Rent',
+      amount: 1, normalizedCategory: 'Rental Revenue', classification: 'revenue',
+    };
+    expect(() => LedgerEntrySchema.parse({ ...base, amount: Infinity })).toThrow();
+    expect(() => LedgerEntrySchema.parse({ ...base, amount: NaN })).toThrow();
+    expect(() => LedgerEntrySchema.parse({ ...base, period: '2025-13' })).toThrow();
+    expect(() => LedgerEntrySchema.parse({ ...base, period: '2025-00' })).toThrow();
+    expect(LedgerEntrySchema.parse({ ...base, period: '2025-12' }).period).toBe('2025-12');
+  });
+
   it('parses a raw statement from an adapter', () => {
     const s = RawStatementSchema.parse({
       propertyRaw: '1100 Rarig Ave',

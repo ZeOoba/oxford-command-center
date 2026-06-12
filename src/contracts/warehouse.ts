@@ -25,7 +25,7 @@ export const PropertyMasterRowSchema = z.object({
   pmContact: z.string().nullish(),
   pmPlatform: z.string().nullish(),
   financialMode: FinancialMode.default('pnl'),
-  rentableSf: z.number().nonnegative().nullish(),
+  rentableSf: z.number().nonnegative().finite().nullish(),
   acquisitionDate: z.string().nullish(),
   ownershipPct: z.number().gt(0).max(1).default(1),
   ownershipStatus: z.string().default('active'),
@@ -39,7 +39,7 @@ export const RawAccountLineSchema = z.object({
   name: z.string().min(1),
   section: z.string().min(1),
   parent: z.string().nullish(),
-  total: z.number().nullable(),
+  total: z.number().finite().nullable(),
 });
 export type RawAccountLine = z.infer<typeof RawAccountLineSchema>;
 
@@ -52,18 +52,18 @@ export const RawStatementSchema = z.object({
   basis: Basis,
   sourceSystem: SourceSystem,
   accounts: z.array(RawAccountLineSchema),
-  totalIncome: z.number().nullable(),
-  totalExpense: z.number().nullable(),
+  totalIncome: z.number().finite().nullable(),
+  totalExpense: z.number().finite().nullable(),
 });
 export type RawStatement = z.infer<typeof RawStatementSchema>;
 
 export const LedgerEntrySchema = z.object({
   importId: z.number().int(),
   propertyId: z.string().min(1),
-  period: z.string().regex(/^\d{4}(-\d{2})?$/),
+  period: z.string().regex(/^\d{4}(-(0[1-9]|1[0-2]))?$/),
   rawAccount: z.string().min(1),
   glCode: z.string().nullish(),
-  amount: z.number(),
+  amount: z.number().finite(),
   normalizedCategory: z.string().min(1),
   classification: Classification,
 });
