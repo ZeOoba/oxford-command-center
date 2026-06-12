@@ -2718,6 +2718,30 @@
       "classification": "recovery",
       "confidence": "medium",
       "note": "Tenant reimbursement of collection/eviction costs — offsets Collections & Eviction Expense"
+    },
+    {
+      "code": null,
+      "account": "Owner Draw",
+      "normalized_category": "Distributions",
+      "classification": "excluded",
+      "confidence": "high",
+      "note": "Live-backfill addition 2026-06-12: owner transfer, never NOI (ratified)."
+    },
+    {
+      "code": null,
+      "account": "Owner deposit",
+      "normalized_category": "Distributions",
+      "classification": "excluded",
+      "confidence": "high",
+      "note": "Live-backfill addition 2026-06-12: owner transfer, never NOI (ratified)."
+    },
+    {
+      "code": null,
+      "account": "Operating Cash",
+      "normalized_category": "Distributions",
+      "classification": "excluded",
+      "confidence": "high",
+      "note": "Live-backfill addition 2026-06-12: cash-position line in AppFolio Other Items, not an account."
     }
   ],
   "needs_gabriel_ruling": [],
