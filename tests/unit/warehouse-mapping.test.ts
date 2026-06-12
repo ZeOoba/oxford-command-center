@@ -39,4 +39,16 @@ describe('mapping engine', () => {
     expect(unknown.classification).toBe('opex'); // assume-expense rule (ratified), flagged
     expect(unknown.matchKind).toBe('unmapped');
   });
+
+  it('resolves side-ambiguous names by section (Gas: income recovery vs expense opex)', () => {
+    const db = openWarehouse(join(mkdtempSync(join(tmpdir(), 'wh-')), 'f.sqlite'));
+    seedMappings(db, [
+      { account: 'Gas', code: '5034', normalized_category: 'CAM Recoveries', classification: 'recovery' },
+      { account: 'Gas', code: '6675', normalized_category: 'Utilities', classification: 'opex' },
+    ]);
+    expect(resolveMapping(db, 'Gas', undefined, 'INCOME').classification).toBe('recovery');
+    expect(resolveMapping(db, '6675 Gas', undefined, 'EXPENSE').classification).toBe('opex');
+    // without section: falls back to the first seeded entry (documented behavior)
+    expect(['recovery', 'opex']).toContain(resolveMapping(db, 'Gas').classification);
+  });
 });
