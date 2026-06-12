@@ -58,6 +58,35 @@ async function buildFixture(path: string, tail: FixtureRow[] = FIXTURE_TOTAL_TAI
   await wb.xlsx.writeFile(path);
 }
 
+// Yardi "Cash Flow Statement" export layout (verified against the real
+// "P&L 2024 -- 1900 Broadway.xlsx", sheet Report1): A1 property name (no
+// "Property:" prefix), Period=/Book= metadata lines, a 5-column body where
+// B=Period-to-Date dollars, C=%, D=Year-to-Date dollars, E=%. The dollar
+// value MUST come from the YTD dollars column — never the % columns.
+type YardiRow = [string | null, number | string | null, number | string | null, number | string | null, number | string | null];
+
+const YARDI_FIXTURE: YardiRow[] = [
+  ['1900 North Broadway (eastgate)', null, null, null, null],
+  ['Cash Flow Statement', null, null, null, null],
+  ['Period = Jan 2024-Dec 2024', null, null, null, null],
+  ['Book = Cash ; Tree = 8807cole', null, null, null, null],
+  [null, ' Period to Date', '%', ' Year to Date', '%'],
+  [' REVENUE', null, null, null, null],
+  [' RENTAL REVENUE', null, null, null, null],
+  ['    Rental Revenue', 479096.4, 68.17, 479096.4, 68.17],
+  [' TOTAL RENTAL REVENUE', 480436.1, 68.36, 480436.1, 68.36],
+  [' EXPENSE', null, null, null, null],
+  ['    Insurance Expense', 12000, 1.71, 12000, 1.71],
+  ['NET OPERATING INCOME', 300000, 42.7, 300000, 42.7],
+];
+
+async function buildYardiFixture(path: string): Promise<void> {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Report1');
+  for (const r of YARDI_FIXTURE) ws.addRow(r);
+  await wb.xlsx.writeFile(path);
+}
+
 describe('qb-excel adapter', () => {
   it('extracts header, basis, leaf accounts (skipping subtotals), sections', async () => {
     const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'fixture.xlsx');
@@ -157,6 +186,82 @@ describe('qb-excel adapter', () => {
     await wb.xlsx.writeFile(file);
     const s = await parseQbExcel(file);
     expect(s.accounts.map((a) => a.name)).toEqual(['HVAC Repair']);
+  });
+
+  it('reads DOLLAR columns (not %) from Yardi cash-flow exports via header-driven value-column selection', async () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'yardi.xlsx');
+    await buildYardiFixture(file);
+    const s = await parseQbExcel(file);
+    expect(s.propertyRaw).toBe('1900 North Broadway (eastgate)');
+    expect(s.basis).toBe('cash');
+    expect(s.periodStart).toBe('2024-01-01');
+    expect(s.periodEnd).toBe('2024-12-31');
+    expect(s.grain).toBe('year');
+    expect(s.sourceSystem).toBe('yardi');
+    const names = s.accounts.map((a) => a.name);
+    expect(names).toEqual(['Rental Revenue', 'Insurance Expense']);
+    expect(names.some((n) => /total|net operating income/i.test(n))).toBe(false);
+    const rent = s.accounts[0]!;
+    expect(rent.section).toBe('REVENUE');
+    expect(rent.parent).toBe('RENTAL REVENUE');
+    expect(rent.total).toBeCloseTo(479096.4); // dollars — NOT the trailing % column (68.17)
+    const ins = s.accounts[1]!;
+    expect(ins.section).toBe('EXPENSE');
+    expect(ins.total).toBeCloseTo(12000); // dollars — NOT 1.71
+  });
+
+  it('does not mistake merged-cell QB rows (label repeated across columns) for a header row', async () => {
+    // Real QB exports repeat every label across its merged span — a subtotal row like
+    // "5002 Total RENTAL INCOME" occupies 9 cells, each matching /total/i. That must NOT
+    // trigger header-driven column selection (the repeated text is ONE logical cell).
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    const sub = '          5002 Total RENTAL INCOME';
+    const rows: Array<Array<string | number | null>> = [
+      ['Profit & Loss', 'Profit & Loss', 'Profit & Loss', null, null, null],
+      ['Property: 1100 Rarig Ave', 'Property: 1100 Rarig Ave', null, null, null, null],
+      ['01/01/24 - 12/31/24  (cash basis)', '01/01/24 - 12/31/24  (cash basis)', null, null, null, null],
+      [null, null, null, null, 'Amount', 'Amount'],
+      [null, 'INCOME', 'INCOME', 'INCOME', null, null],
+      [null, null, '     5002 RENTAL INCOME', '     5002 RENTAL INCOME', null, null],
+      [null, null, '          5064 Rent', '          5064 Rent', 214557.21, 214557.21],
+      [null, null, sub, sub, 214557.21, 214557.21],
+    ];
+    for (const r of rows) ws.addRow(r);
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'merged.xlsx');
+    await wb.xlsx.writeFile(file);
+    const s = await parseQbExcel(file);
+    expect(s.propertyRaw).toBe('1100 Rarig Ave');
+    expect(s.sourceSystem).toBe('quickbooks');
+    expect(s.accounts.map((a) => a.name)).toEqual(['Rent']);
+    expect(s.accounts[0]!.total).toBeCloseTo(214557.21);
+  });
+
+  it('does not treat data rows below the first section as header rows (QB cash-flow "% Income" format)', async () => {
+    // Real QB "Cash Flow" exports (9620 State 350) carry a "% Income" column of TEXT
+    // percents ("92.83 %"). A subtotal row then holds a "Total ..." label AND a "% "
+    // cell — two distinct header-vocabulary matches. Header rows precede data: the
+    // pre-pass must stop scanning at the first section row.
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    const rows: Array<Array<string | number | null>> = [
+      ['Cash Flow', null, null, null, null, null],
+      ['Property: 350 Highway Center', null, null, null, null, null],
+      ['01/01/25 - 12/31/25  (cash basis)', null, null, null, null, null],
+      [null, null, null, null, null, '% Income'],
+      [null, 'INCOME', null, null, null, null],
+      [null, null, '     4100 RENTAL PROPERTY INCOME', null, null, null],
+      [null, null, '          4110 Rental Income', null, 171801.26, '92.83 %'],
+      [null, null, '          4100 Total RENTAL PROPERTY INCOME', null, 171803.76, '92.83 %'],
+    ];
+    for (const r of rows) ws.addRow(r);
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'pct-income.xlsx');
+    await wb.xlsx.writeFile(file);
+    const s = await parseQbExcel(file);
+    expect(s.propertyRaw).toBe('350 Highway Center');
+    expect(s.sourceSystem).toBe('quickbooks');
+    expect(s.accounts.map((a) => a.name)).toEqual(['Rental Income']);
+    expect(s.accounts[0]!.total).toBeCloseTo(171801.26);
   });
 
   it('parses text-formatted parenthesized amounts as negative numbers', async () => {

@@ -35,6 +35,22 @@ function toIso(mdy: string): string {
 
 const SECTION_RE = /^(INCOME|EXPENSE|TOTAL|NON OPERATING EXPENSE|OPERATING EXPENSES?|REVENUE|OTHER ITEMS)$/i;
 
+// Column-header cells (Yardi/CRC-style charts put dollar AND percent columns side by
+// side; "rightmost numeric wins" would read the trailing % column — the Broadway bug).
+const HEADER_CELL_RE = /period to date|year to date|selected period|%|total|annual|ytd/i;
+const HEADER_PRIMARY_RE = /year to date|ytd|total|annual/i;
+const HEADER_SECONDARY_RE = /period to date|selected period/i;
+
+const MONTHS: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
+/** Last calendar day of a 1-based month (no Date.now — pure calendar math). */
+function lastDayOfMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
 // Derived-summary rows (CRC/Yardi-style charts): report-computed totals that carry a
 // value but are NOT accounts — ingesting them double-counts (same class as numeric-only
 // summary rows, fix ba230df).
@@ -51,22 +67,64 @@ export async function parseQbExcel(filePath: string): Promise<RawStatement> {
   let periodStart: string | null = null;
   let periodEnd: string | null = null;
   let basis: RawStatement['basis'] = 'unknown';
+  let yardiHeaders = false; // "Period =" / "Book =" metadata forms matched
+  let firstRowText: string | null = null; // A1-style property-name candidate
+  let nonEmptyRows = 0;
   let section = '';
   let parent: string | null = null;
   const accounts: RawAccountLine[] = [];
 
-  ws.eachRow({ includeEmpty: false }, (row) => {
+  // Pre-pass: find a column-header row (≥2 cells matching the header vocabulary) and
+  // pick the dollar value column — LAST "Year to Date"/YTD/Total/Annual column, else
+  // last "Period to Date"/"Selected Period". '%' columns are never eligible. Without a
+  // header row (QB-style exports), valueCol stays null → rightmost-numeric fallback.
+  // Column headers definitionally precede data: the scan STOPS at the first section row
+  // — data rows can pair a "Total ..." subtotal label with a "92.83 %" text cell and
+  // must never be mistaken for headers (the 9620 State 350 cash-flow format).
+  let valueCol: number | null = null;
+  let headerRowNumber: number | null = null;
+  let scanDone = false;
+  ws.eachRow({ includeEmpty: false }, (row, rn) => {
+    if (scanDone || valueCol !== null) return;
+    const cells: Array<{ col: number; text: string }> = [];
+    row.eachCell({ includeEmpty: false }, (cell, col) => {
+      const t = cellText(cell.value);
+      if (t && t.trim() !== '') cells.push({ col, text: t.trim() });
+    });
+    if (cells.some((c) => SECTION_RE.test(c.text))) { scanDone = true; return; }
+    const headerish = cells.filter((c) => HEADER_CELL_RE.test(c.text));
+    // ≥2 DISTINCT matching texts: QB exports repeat one label across its merged span
+    // ("5002 Total RENTAL INCOME" × 9 cells) — that is ONE logical cell, not a header row.
+    if (new Set(headerish.map((c) => c.text)).size < 2) return;
+    const eligible = headerish.filter((c) => c.text !== '%');
+    const primary = eligible.filter((c) => HEADER_PRIMARY_RE.test(c.text));
+    const secondary = eligible.filter((c) => HEADER_SECONDARY_RE.test(c.text));
+    const pick = primary[primary.length - 1] ?? secondary[secondary.length - 1];
+    if (pick) { valueCol = pick.col; headerRowNumber = rn; }
+  });
+
+  ws.eachRow({ includeEmpty: false }, (row, rn) => {
+    if (rn === headerRowNumber) return; // column-header row is metadata, not data
     // gather all non-empty cells in the row
     const texts: Array<{ col: number; text: string }> = [];
     let rowNum: number | null = null;
+    let anyNumeric = false;
     row.eachCell({ includeEmpty: false }, (cell, col) => {
       const t = cellText(cell.value);
       if (t && t.trim() !== '') texts.push({ col, text: t });
       const n = cellNum(cell.value);
-      if (n !== null) rowNum = n; // rightmost numeric wins
+      if (n !== null) {
+        anyNumeric = true;
+        // header-driven column when one exists; else rightmost numeric wins
+        if (valueCol === null || col === valueCol) rowNum = n;
+      }
     });
     if (texts.length === 0) return;
     const first = texts[0]!.text.trim();
+    if (nonEmptyRows === 0 && !/^(Property:|Period\s*=|Book\s*=)/i.test(first)) {
+      firstRowText = first; // Yardi puts the bare property name in A1
+    }
+    nonEmptyRows += 1;
 
     // header rows
     const propMatch = first.match(/^Property:\s*(.+)$/i);
@@ -80,6 +138,28 @@ export async function parseQbExcel(filePath: string): Promise<RawStatement> {
       if (b === 'cash' || b === 'accrual' || b === 'tax') basis = b;
       return;
     }
+    // Yardi metadata: "Period = Jan 2024-Dec 2024"
+    const yardiPeriod = first.match(/^Period\s*=\s*([A-Za-z]{3,9})\.?\s+(\d{4})\s*[-–]\s*([A-Za-z]{3,9})\.?\s+(\d{4})$/i);
+    if (yardiPeriod) {
+      const m1 = MONTHS[yardiPeriod[1]!.slice(0, 3).toLowerCase()];
+      const m2 = MONTHS[yardiPeriod[3]!.slice(0, 3).toLowerCase()];
+      if (m1 && m2) {
+        periodLabel = first;
+        const y1 = Number(yardiPeriod[2]!);
+        const y2 = Number(yardiPeriod[4]!);
+        periodStart = `${y1}-${String(m1).padStart(2, '0')}-01`;
+        periodEnd = `${y2}-${String(m2).padStart(2, '0')}-${String(lastDayOfMonth(y2, m2)).padStart(2, '0')}`;
+        yardiHeaders = true;
+        return;
+      }
+    }
+    // Yardi metadata: "Book = Cash ; Tree = 8807cole"
+    const bookMatch = first.match(/^Book\s*=\s*(Cash|Accrual)\b/i);
+    if (bookMatch) {
+      basis = bookMatch[1]!.toLowerCase() as RawStatement['basis'];
+      yardiHeaders = true;
+      return;
+    }
     // also accept "Jan - Dec 24" style period labels without dates
     if (!periodLabel && /^[A-Z][a-z]{2}\s*-\s*[A-Z][a-z]{2}\s+\d{2}$/.test(first)) { periodLabel = first; return; }
 
@@ -87,7 +167,7 @@ export async function parseQbExcel(filePath: string): Promise<RawStatement> {
     for (const t of texts) {
       const trimmed = t.text.trim();
       if (SECTION_RE.test(trimmed)) {
-        if (rowNum !== null) return; // section word + amount on one row = a total-value row ("INCOME 216461.4"), not a header — skip without changing section
+        if (anyNumeric) return; // section word + amount on one row = a total-value row ("INCOME 216461.4"), not a header — skip without changing section
         section = trimmed.toUpperCase();
         parent = null; // a new section starts a new group context
         return;
@@ -123,6 +203,11 @@ export async function parseQbExcel(filePath: string): Promise<RawStatement> {
     });
   });
 
+  // Yardi exports carry the bare property name in A1 (no "Property:" line). Applied
+  // only when Yardi metadata matched — QB files without a "Property:" line keep '',
+  // never a report title like "Profit & Loss".
+  if (!propertyRaw && yardiHeaders && firstRowText) propertyRaw = firstRowText;
+
   // YTD if the period ends mid-year; a full year ends on month-day 12-31.
   // (helper defeats TS narrowing — periodEnd is assigned inside the eachRow callback)
   const endsMidYear = (end: string | null): boolean => end !== null && end.slice(5) !== '12-31';
@@ -130,7 +215,7 @@ export async function parseQbExcel(filePath: string): Promise<RawStatement> {
 
   return RawStatementSchema.parse({
     propertyRaw, periodLabel, periodStart, periodEnd, grain,
-    basis, sourceSystem: 'quickbooks',
+    basis, sourceSystem: yardiHeaders ? 'yardi' : 'quickbooks',
     accounts, totalIncome: null, totalExpense: null,
   });
 }
