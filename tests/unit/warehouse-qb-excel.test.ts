@@ -111,6 +111,54 @@ describe('qb-excel adapter', () => {
     expect(s.accounts.some((a) => /Total/.test(a.name))).toBe(false);
   });
 
+  it('keeps digit-leading alpha account names intact (code only when digits + whitespace)', async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    const rows: FixtureRow[] = [
+      ['Property: 1100 Rarig Ave', null, null, null],
+      ['01/01/25 - 12/31/25  (cash basis)', null, null, null],
+      [null, 'INCOME', null, null],
+      [null, null, '     5002 RENTAL INCOME', null],
+      [null, null, '          5064 Rent', 214557.21],
+      [null, 'NON OPERATING EXPENSE', null, null],
+      [null, null, '          1st Mortgage Note Payable', 5000],
+      [null, null, '          1st Mortgage Interest', 1200],
+    ];
+    for (const r of rows) ws.addRow(r);
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'digit-name.xlsx');
+    await wb.xlsx.writeFile(file);
+    const s = await parseQbExcel(file);
+    const names = s.accounts.map((a) => a.name);
+    expect(names).toEqual(['Rent', '1st Mortgage Note Payable', '1st Mortgage Interest']);
+    const note = s.accounts.find((a) => a.name === '1st Mortgage Note Payable')!;
+    expect(note.code).toBeNull();
+    expect(note.total).toBeCloseTo(5000);
+    const interest = s.accounts.find((a) => a.name === '1st Mortgage Interest')!;
+    expect(interest.code).toBeNull();
+    expect(interest.total).toBeCloseTo(1200);
+    const rent = s.accounts.find((a) => a.name === 'Rent')!;
+    expect(rent.code).toBe('5064');
+  });
+
+  it('skips derived-summary rows with alpha names (NET OPERATING INCOME, CASH FLOW)', async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    const rows: FixtureRow[] = [
+      ['Property: 1100 Rarig Ave', null, null, null],
+      ['01/01/25 - 12/31/25  (cash basis)', null, null, null],
+      [null, 'EXPENSE', null, null],
+      [null, null, '     6160 REPAIR', null],
+      [null, null, '          6285 HVAC Repair', 630.95],
+      [null, null, '          NET OPERATING INCOME', 190830.45], // derived total — NOT an account
+      [null, null, '          CASH FLOW', 165830.45], // derived total — NOT an account
+    ];
+    for (const r of rows) ws.addRow(r);
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'derived.xlsx');
+    await wb.xlsx.writeFile(file);
+    const s = await parseQbExcel(file);
+    expect(s.accounts.map((a) => a.name)).toEqual(['HVAC Repair']);
+  });
+
   it('parses text-formatted parenthesized amounts as negative numbers', async () => {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Sheet1');

@@ -35,6 +35,11 @@ function toIso(mdy: string): string {
 
 const SECTION_RE = /^(INCOME|EXPENSE|TOTAL|NON OPERATING EXPENSE|OPERATING EXPENSES?|REVENUE|OTHER ITEMS)$/i;
 
+// Derived-summary rows (CRC/Yardi-style charts): report-computed totals that carry a
+// value but are NOT accounts — ingesting them double-counts (same class as numeric-only
+// summary rows, fix ba230df).
+const DERIVED_SUMMARY_RE = /^(net operating income|net income(\/loss)?|noi\b.*|income after owner activity|cash flow|net other items)$/i;
+
 export async function parseQbExcel(filePath: string): Promise<RawStatement> {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(filePath);
@@ -93,20 +98,24 @@ export async function parseQbExcel(filePath: string): Promise<RawStatement> {
     const acctCell = texts.find((t) => /^\s/.test(t.text) || /^\d/.test(t.text.trim()));
     if (!acctCell || !section || section === 'TOTAL') return;
     const trimmed = acctCell.text.trim();
-    const m = trimmed.match(/^(?<code>\d[\d.-]*)?\s*(?<name>.+)$/);
-    if (!m?.groups) return;
-    const name = m.groups['name']!.trim();
+    // A GL code must be digits FOLLOWED BY WHITESPACE — otherwise alpha names with a
+    // leading digit ("1st Mortgage Note Payable") lose their first character(s).
+    const m = trimmed.match(/^(?<code>\d[\d.-]*)\s+(?<name>.+)$/);
+    const code = m?.groups?.['code'] ?? null;
+    const name = (m?.groups?.['name'] ?? trimmed).trim();
     if (/^[\d.,()$\s-]*$/.test(name)) return; // numeric-only candidate ("105647.91" → code 105647.9 + name "1") = a report summary value, not an account
+    if (DERIVED_SUMMARY_RE.test(name.toLowerCase())) return; // derived totals ("NET OPERATING INCOME", "CASH FLOW") are not accounts
     if (/^Total\b/i.test(name) || /\bTotal\b/.test(name.split(/\s+/).slice(0, 2).join(' '))) {
       return; // subtotal row ("5002 Total RENTAL INCOME") — skipped even when it carries an amount
     }
     if (rowNum === null) {
-      // group header (no value) — becomes parent for subsequent leaves
-      parent = name.replace(/^\d[\d.-]*\s*/, '');
+      // group header (no value) — becomes parent for subsequent leaves.
+      // (code is already split off; re-stripping here would eat "1st …" names)
+      parent = name;
       return;
     }
     accounts.push({
-      code: m.groups['code'] ?? null,
+      code,
       name,
       section,
       parent,
