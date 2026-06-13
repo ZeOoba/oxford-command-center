@@ -4,6 +4,14 @@ import type { RawAccountLine, RawStatement } from '../../../src/contracts/wareho
 import { RawStatementSchema } from '../../../src/contracts/warehouse';
 import { sectionSide } from '../mapping';
 
+/**
+ * Version of the parse / derivation logic. BUMP this whenever parseQbExcel changes HOW it derives a
+ * statement's basis / period / sourceSystem / accounts, so a backfill re-derives already-imported
+ * (hash-identical) files in place instead of skipping them as duplicates (see ingest.ts restale path).
+ * v1 = QB Desktop print-header + AppFolio report-type accounting-basis recovery (the 8-file gap close).
+ */
+export const PARSER_VERSION = 1;
+
 function cellText(v: ExcelJS.CellValue): string | null {
   if (v == null) return null;
   if (typeof v === 'string') return v;

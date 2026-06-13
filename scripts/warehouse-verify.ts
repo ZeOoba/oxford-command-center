@@ -23,7 +23,7 @@ import type { WarehouseDb } from '../server/warehouse/db';
 import { ingestFile } from '../server/warehouse/ingest';
 import { classificationSide, resolveMapping, sectionSide, seedMappingsFromFile } from '../server/warehouse/mapping';
 import { basisCoverage } from '../server/warehouse/data-quality';
-import { parseQbExcel } from '../server/warehouse/parse/qb-excel';
+import { PARSER_VERSION, parseQbExcel } from '../server/warehouse/parse/qb-excel';
 import { propertyPeriodMetrics } from '../server/warehouse/metrics';
 import { seedPropertyMaster } from '../server/warehouse/property-master';
 import { NOI_INCOME_CLASSES } from '../src/contracts/warehouse';
@@ -200,6 +200,58 @@ async function main(): Promise<number> {
     if (dist.collapsed) {
       failures.push(`score-band distribution collapsed — ${dist.reason}`);
     }
+
+    // 8. Structural integrity invariants — catch the bug-states the parser-version re-ingest path
+    //    could otherwise leave: a committed import must have >= 1 ACTIVE ledger row (no silently
+    //    emptied period), every superseded_by must point to an existing row, and at most ONE
+    //    committed import may exist per (property, period) — the supersede invariant.
+    const emptyCommitted = db.prepare(`
+      SELECT b.file_name FROM import_batches b WHERE b.status = 'committed'
+        AND NOT EXISTS (SELECT 1 FROM ledger_entries l WHERE l.import_id = b.id AND l.is_active = 1)
+      ORDER BY b.file_name
+    `).all() as Array<{ file_name: string }>;
+    for (const e of emptyCommitted) failures.push(`committed import with 0 active ledger rows (emptied period): ${e.file_name}`);
+    const danglingRef = db.prepare(`
+      SELECT b.id, b.superseded_by AS target FROM import_batches b
+      WHERE b.superseded_by IS NOT NULL AND NOT EXISTS (SELECT 1 FROM import_batches t WHERE t.id = b.superseded_by)
+    `).all() as Array<{ id: number; target: number }>;
+    for (const d of danglingRef) failures.push(`import ${d.id} superseded_by points to non-existent row ${d.target}`);
+    const dupPeriod = db.prepare(`
+      SELECT property_id, period_start, period_end, COUNT(*) AS n FROM import_batches
+      WHERE status = 'committed' GROUP BY property_id, period_start, period_end HAVING n > 1
+    `).all() as Array<{ property_id: string; period_start: string; period_end: string; n: number }>;
+    for (const d of dupPeriod) failures.push(`${d.n} committed imports for the same period (${d.property_id} ${d.period_start}..${d.period_end}) — supersede invariant violated`);
+
+    // 9. Re-ingest smoke — exercise the parser-version RESTALE re-derive path, which verify otherwise
+    //    never hits (it builds a fresh DB). Stale every committed import's parser_version, re-ingest the
+    //    same files (→ in-place re-derive), then assert the re-derive is idempotent (same basis), empties
+    //    no period, and advances every committed row to the current parser version.
+    const basisBefore = new Map((db.prepare(
+      "SELECT file_name, basis FROM import_batches WHERE status = 'committed'",
+    ).all() as Array<{ file_name: string; basis: string }>).map((r) => [r.file_name, r.basis]));
+    const committedBefore = basisBefore.size;
+    db.prepare("UPDATE import_batches SET parser_version = 0 WHERE status = 'committed'").run();
+    for (const f of files) {
+      await ingestFile(db, join(FINANCIALS_DIR, f), {
+        rawDir: join(tmp, 'raw'), importedAt: new Date().toISOString(), importedBy: 'warehouse-verify-reingest',
+      });
+    }
+    const committedAfter = db.prepare(
+      "SELECT id, file_name, basis, parser_version FROM import_batches WHERE status = 'committed' ORDER BY file_name",
+    ).all() as Array<{ id: number; file_name: string; basis: string; parser_version: number }>;
+    if (committedAfter.length !== committedBefore) {
+      failures.push(`re-ingest smoke: committed count changed ${committedBefore} -> ${committedAfter.length} (restale re-derive lost/added an import)`);
+    }
+    for (const c of committedAfter) {
+      if (basisBefore.has(c.file_name) && basisBefore.get(c.file_name) !== c.basis) {
+        failures.push(`re-ingest smoke: basis drift on re-derive for ${c.file_name}: ${basisBefore.get(c.file_name)} -> ${c.basis}`);
+      }
+      const active = (db.prepare("SELECT COUNT(*) AS n FROM ledger_entries WHERE import_id = ? AND is_active = 1").get(c.id) as { n: number }).n;
+      if (active === 0) failures.push(`re-ingest smoke: committed import ${c.file_name} has 0 active ledger rows after re-derive (emptied period)`);
+      if (c.parser_version < PARSER_VERSION) failures.push(`re-ingest smoke: ${c.file_name} still below parser_version ${PARSER_VERSION} after re-ingest (${c.parser_version})`);
+    }
+    console.log(`re-ingest smoke: ${committedAfter.length} committed imports re-derived in place (v0 -> v${PARSER_VERSION}), 0 emptied, basis stable`);
+
     db.close();
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -213,7 +265,8 @@ async function main(): Promise<number> {
   console.log('\nwarehouse:verify PASSED: 0 empty-parse, 0 foot-mismatch, 0 unmapped on committed, ' +
     `committed >= ${MIN_COMMITTED}, income ties within $${INCOME_TIE_TOLERANCE}, ` +
     `unknown-basis <= ${MAX_UNKNOWN_BASIS}, ` +
-    `no score-band collapse (< ${Math.round(SINGLE_BAND_COLLAPSE_SHARE * 100)}% single-bucket)`);
+    `no score-band collapse (< ${Math.round(SINGLE_BAND_COLLAPSE_SHARE * 100)}% single-bucket), ` +
+    `integrity invariants hold, re-ingest re-derive idempotent`);
   return 0;
 }
 
