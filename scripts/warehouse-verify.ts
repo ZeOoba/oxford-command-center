@@ -3,6 +3,7 @@
 // Builds a FRESH warehouse in a temp dir (os.tmpdir — never data/warehouse), runs the
 // same seed + ingest pipeline over FINANCIALS_DIR, then asserts:
 //   1. zero 'empty-parse' data-quality issues (adapter/layout regressions)
+//   1b. zero 'foot-mismatch' data-quality issues (report-stated totals vs parsed sums)
 //   2. zero unmapped accounts on committed imports
 //   3. committed import count >= MIN_COMMITTED
 //   4. every committed import's active income-side ledger sum ties (±$1) to the income
@@ -88,6 +89,18 @@ async function main(): Promise<number> {
       failures.push(`${emptyParse.c} 'empty-parse' data-quality issue(s) — an adapter/layout regression parsed 0 accounts`);
     }
 
+    // 1b. zero foot-mismatch DQ issues anywhere in the backfill — a report's own stated
+    // totals disagreeing with the parsed side sums means a section drop or wrong value
+    // column; report each verbatim.
+    const footMismatches = db.prepare(`
+      SELECT b.file_name, d.detail FROM data_quality_issues d
+      JOIN import_batches b ON b.id = d.import_id
+      WHERE d.kind = 'foot-mismatch' ORDER BY b.file_name
+    `).all() as Array<{ file_name: string; detail: string }>;
+    for (const fm of footMismatches) {
+      failures.push(`foot-mismatch in ${fm.file_name}: ${fm.detail}`);
+    }
+
     // 2. zero unmapped accounts on committed imports
     const unmappedCommitted = db.prepare(`
       SELECT COUNT(*) AS c FROM data_quality_issues d
@@ -142,8 +155,8 @@ async function main(): Promise<number> {
     for (const f of failures) console.error(`  - ${f}`);
     return 1;
   }
-  console.log('\nwarehouse:verify PASSED: 0 empty-parse, 0 unmapped on committed, committed >= ' +
-    `${MIN_COMMITTED}, income ties within $${INCOME_TIE_TOLERANCE}`);
+  console.log('\nwarehouse:verify PASSED: 0 empty-parse, 0 foot-mismatch, 0 unmapped on committed, ' +
+    `committed >= ${MIN_COMMITTED}, income ties within $${INCOME_TIE_TOLERANCE}`);
   return 0;
 }
 

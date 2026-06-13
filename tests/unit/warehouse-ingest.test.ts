@@ -9,7 +9,7 @@ import { ingestFile } from '../../server/warehouse/ingest';
 import { seedMappings } from '../../server/warehouse/mapping';
 import { seedPropertyMaster } from '../../server/warehouse/property-master';
 
-async function writeFixture(path: string): Promise<void> {
+async function writeFixture(path: string, statedTotals?: { income: number; expense: number }): Promise<void> {
   const wb = new ExcelJS.Workbook();
   const ws = wb.addWorksheet('Sheet1');
   const rows: Array<[string | null, string | null, string | null, number | null]> = [
@@ -25,6 +25,13 @@ async function writeFixture(path: string): Promise<void> {
     [null, 'NON OPERATING EXPENSE', null, null],
     [null, null, '          7402 Distribution to Owner', 25000],
   ];
+  if (statedTotals) {
+    rows.push(
+      [null, 'TOTAL', null, null],
+      [null, null, 'INCOME', statedTotals.income],
+      [null, null, 'EXPENSE', statedTotals.expense],
+    );
+  }
   for (const r of rows) ws.addRow(r);
   await wb.xlsx.writeFile(path);
 }
@@ -110,6 +117,43 @@ describe('ingest pipeline', () => {
     const issues = db.prepare('SELECT kind, severity FROM data_quality_issues WHERE import_id = ?').all(r.importId) as Array<{ kind: string; severity: string }>;
     expect(issues.map((i) => i.kind)).toContain('empty-parse');
     expect(issues.find((i) => i.kind === 'empty-parse')!.severity).toBe('error');
+  });
+
+  it('foots report-stated totals against inserted side sums: matching totals → zero foot-mismatch rows', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wh-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    // stated totals match the leaves: income 100000; expense side = HVAC 5000 +
+    // Distribution 25000 (NON OPERATING EXPENSE is expense-side; ALL classifications
+    // count — stated totals include rows the engine later excludes from NOI)
+    await writeFixture(file, { income: 100000, expense: 30000 });
+
+    const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
+    expect(r.status).toBe('committed');
+    const issues = db.prepare("SELECT kind FROM data_quality_issues WHERE kind = 'foot-mismatch'").all();
+    expect(issues).toHaveLength(0);
+  });
+
+  it('stated total ≠ parsed side sum → foot-mismatch DQ warn row, commit status unchanged', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wh-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    // stated income total wildly off (simulates a dropped income leaf / wrong value column)
+    await writeFixture(file, { income: 999999, expense: 30000 });
+
+    const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
+    expect(r.status).toBe('committed'); // choke point reports — it does NOT block commit
+    const issues = db.prepare(
+      "SELECT kind, severity, detail FROM data_quality_issues WHERE import_id = ? AND kind = 'foot-mismatch'",
+    ).all(r.importId) as Array<{ kind: string; severity: string; detail: string }>;
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.severity).toBe('warn');
+    expect(issues[0]!.detail).toContain('999999');
+    expect(issues[0]!.detail).toContain('100000');
   });
 
   it('unmapped accounts flag data quality and downgrade to pending-review', async () => {

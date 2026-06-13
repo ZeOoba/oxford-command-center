@@ -165,6 +165,10 @@ describe('qb-excel adapter', () => {
     expect(rent.total).toBeCloseTo(214557.21);
     const dist = s.accounts[3]!;
     expect(dist.section).toBe('NON OPERATING EXPENSE');
+    // bare-TOTAL pattern: "TOTAL → INCOME 216461.4" row records the stated income total;
+    // the default tail has no EXPENSE word row, so totalExpense stays null
+    expect(s.totalIncome).toBeCloseTo(216461.4);
+    expect(s.totalExpense).toBeNull();
   });
 
   it('ignores summary rows: total-value rows, footer metrics, numeric-only labels', async () => {
@@ -177,6 +181,9 @@ describe('qb-excel adapter', () => {
     // the INCOME/EXPENSE total-value rows must not re-arm section state mid- or post-report
     expect(s.accounts.find((a) => a.name === 'HVAC Repair')!.section).toBe('EXPENSE');
     expect(s.accounts.find((a) => a.name === 'Distribution to Owner')!.section).toBe('NON OPERATING EXPENSE');
+    // the skipped TOTAL→INCOME / TOTAL→EXPENSE value rows ARE the report's stated totals
+    expect(s.totalIncome).toBeCloseTo(216461.4);
+    expect(s.totalExpense).toBeCloseTo(25630.95);
   });
 
   it('skips subtotal rows even when they carry a numeric amount', async () => {
@@ -268,6 +275,10 @@ describe('qb-excel adapter', () => {
     const ins = s.accounts[1]!;
     expect(ins.section).toBe('EXPENSE');
     expect(ins.total).toBeCloseTo(12000); // dollars — NOT 1.71
+    // only group subtotals exist ("TOTAL RENTAL REVENUE") — never a top-level stated
+    // total form, so both stated totals stay null (no false capture from sub-groups)
+    expect(s.totalIncome).toBeNull();
+    expect(s.totalExpense).toBeNull();
   });
 
   it('parses AppFolio Cash Flow exports: %-containing headers ineligible, Properties/Date Range headers, sections, derived rows skipped', async () => {
@@ -300,6 +311,10 @@ describe('qb-excel adapter', () => {
     expect(byName.get('Interest Expense')!.section).toBe('EXPENSE');
     expect(byName.get('Owner Draw')!.section).toBe('OTHER ITEMS');
     expect(byName.get('Owner Draw')!.total).toBeCloseTo(-232820.9);
+    // stated totals captured from the skipped "Total Operating Income" / "Total Operating
+    // Expense" rows (the later "Total Income"/"Total Expense" rows carry the same values)
+    expect(s.totalIncome).toBeCloseTo(515253.29);
+    expect(s.totalExpense).toBeCloseTo(371767.05);
   });
 
   it('parses AppFolio YTD Date Range form to grain ytd', async () => {
@@ -425,6 +440,10 @@ describe('qb-excel adapter', () => {
     expect(names.filter((n) => /^Total\b/i.test(n))).toEqual([]);
     expect(names).not.toContain('Net Income');
     expect(s.accounts).toHaveLength(13);
+    // stated totals from the skipped top-level "Total Income"/"Total Expense" rows —
+    // the sub-group "Total Tax" must NOT overwrite totalExpense
+    expect(s.totalIncome).toBeCloseTo(426950.49);
+    expect(s.totalExpense).toBeCloseTo(121745.44);
   });
 
   it('selects the first worksheet that yields accounts (skips "QuickBooks Desktop Export Tips")', async () => {

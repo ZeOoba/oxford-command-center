@@ -35,6 +35,13 @@ function toIso(mdy: string): string {
 
 const SECTION_RE = /^(INCOME|EXPENSE|TOTAL|NON OPERATING EXPENSE|OPERATING EXPENSES?|REVENUE|OTHER ITEMS)$/i;
 
+// Report-stated TOP-LEVEL totals (the ingest foot-mismatch choke point). Only these
+// exact forms — sub-group subtotals ("Total RENTAL INCOME", "Total Tax") must never
+// be captured. Last writer wins when a report states the same total twice (AppFolio
+// emits both "Total Operating Income" and "Total Income" with identical values).
+const STATED_TOTAL_INCOME_RE = /^total (income|revenue|operating income)$/i;
+const STATED_TOTAL_EXPENSE_RE = /^total (operating )?expenses?$/i;
+
 // Column-header cells (Yardi/CRC-style charts put dollar AND percent columns side by
 // side; "rightmost numeric wins" would read the trailing % column — the Broadway bug).
 const HEADER_CELL_RE = /period to date|year to date|selected period|%|total|annual|ytd/i;
@@ -96,6 +103,8 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
   let firstRowText: string | null = null; // A1-style property-name candidate
   let nonEmptyRows = 0;
   let section = '';
+  let totalIncome: number | null = null;
+  let totalExpense: number | null = null;
   let parent: string | null = null;
   // Column the current parent group sits in — set ONLY for column-indented layouts
   // (null = space-indented mode, where parent applies to every subsequent leaf).
@@ -225,7 +234,17 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
     for (const t of texts) {
       const trimmed = t.text.trim();
       if (SECTION_RE.test(trimmed)) {
-        if (anyNumeric) return; // section word + amount on one row = a total-value row ("INCOME 216461.4"), not a header — skip without changing section
+        if (anyNumeric) {
+          // section word + amount on one row = a total-value row ("INCOME 216461.4"),
+          // not a header — skip without changing section. Under the bare-TOTAL section
+          // (QB "TOTAL → INCOME 216461.4" footer) that row IS the report's stated
+          // top-level total: record it while skipping.
+          if (section === 'TOTAL' && rowNum !== null) {
+            if (/^INCOME$/i.test(trimmed)) totalIncome = rowNum;
+            else if (/^EXPENSE$/i.test(trimmed)) totalExpense = rowNum;
+          }
+          return;
+        }
         section = trimmed.toUpperCase();
         parent = null; // a new section starts a new group context
         parentCol = null;
@@ -261,7 +280,14 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
     if (/^[\d.,()$\s-]*$/.test(name)) return; // numeric-only candidate ("105647.91" → code 105647.9 + name "1") = a report summary value, not an account
     if (DERIVED_SUMMARY_RE.test(name.toLowerCase())) return; // derived totals ("NET OPERATING INCOME", "CASH FLOW") are not accounts
     if (/^Total\b/i.test(name) || /\bTotal\b/.test(name.split(/\s+/).slice(0, 2).join(' '))) {
-      return; // subtotal row ("5002 Total RENTAL INCOME") — skipped even when it carries an amount
+      // subtotal row ("5002 Total RENTAL INCOME") — skipped even when it carries an
+      // amount, but a TOP-LEVEL stated total ("Total Income" / "Total Operating
+      // Expense") is captured for the ingest foot-mismatch check on the way out.
+      if (rowNum !== null) {
+        if (STATED_TOTAL_INCOME_RE.test(name)) totalIncome = rowNum;
+        else if (STATED_TOTAL_EXPENSE_RE.test(name)) totalExpense = rowNum;
+      }
+      return;
     }
     if (rowNum === null) {
       // group header (no value) — becomes parent for subsequent leaves.
@@ -301,6 +327,6 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
   return RawStatementSchema.parse({
     propertyRaw, periodLabel, periodStart, periodEnd, grain,
     basis, sourceSystem: appfolioHeaders ? 'appfolio' : yardiHeaders ? 'yardi' : 'quickbooks',
-    accounts, totalIncome: null, totalExpense: null,
+    accounts, totalIncome, totalExpense,
   });
 }

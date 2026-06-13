@@ -2,7 +2,7 @@
 import { basename } from 'node:path';
 import { detectFromFilename } from './detect';
 import type { WarehouseDb } from './db';
-import { resolveMapping } from './mapping';
+import { resolveMapping, sectionSide } from './mapping';
 import { parseQbExcel } from './parse/qb-excel';
 import { registerImport } from './raw-store';
 
@@ -57,7 +57,9 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
   `);
 
   const threshold = opts.autoCommitThreshold ?? 0.85;
+  const FOOT_TOLERANCE = 1; // dollars
   let insertedRows = 0;
+  let incomeSum = 0;
   const tx = db.transaction(() => {
     for (const a of stmt.accounts) {
       if (a.total === null) continue;
@@ -68,6 +70,29 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
       }
       insLedger.run(reg.importId, det.propertyId ?? 'unknown', period, a.name, a.code ?? null, a.total, m.normalizedCategory, m.classification, m.mappingId);
       insertedRows += 1;
+      // side via the SOURCE section (not classification): report-stated totals include
+      // every row under the section — even ones the NOI engine later excludes.
+      if (sectionSide(a.section) === 'income') incomeSum += a.total;
+    }
+    // Foot the report's own stated INCOME total against what we inserted: a section drop
+    // or wrong value column commits silently without this choke point. Reports only —
+    // never blocks or downgrades the commit/pending decision.
+    //
+    // INCOME ONLY (measured 2026-06-12 across all 32 staged files: income foots exactly
+    // 32/32). The EXPENSE side deliberately does NOT foot here: every PM format's stated
+    // expense total covers a narrower scope than the section state machine attributes —
+    //  - QB/Rent-Manager charts display it NEGATIVE and exclude NON OPERATING EXPENSE
+    //    (Rarig 2024: stated -125,539.93 vs EXPENSE-section leaves +125,539.93 exact);
+    //  - Yardi "Total Operating Expenses" excludes the financing/capital rows that follow
+    //    in the same lingering section (29000 Info Lane 2025 carries the refinance flows:
+    //    section sum -5.79M vs stated 200,321.42) — the seed classifies those rows out of
+    //    NOI correctly, so the ledger is right even though a naive section foot is not;
+    //  - 1851 Solar's stated total covers Ordinary Expense only (delta = Other Expense).
+    // A meaningful expense foot needs section-boundary reform (reset section state at
+    // each top-level "Total X" row) — Phase B work, tracked in the architecture spec.
+    if (stmt.totalIncome !== null && Math.abs(stmt.totalIncome - incomeSum) > FOOT_TOLERANCE) {
+      insIssue.run(reg.importId, det.propertyId, 'foot-mismatch',
+        `income foot mismatch: report-stated total ${stmt.totalIncome} vs parsed income-side sum ${incomeSum} (delta ${(stmt.totalIncome - incomeSum).toFixed(2)})`, 'warn');
     }
     if (insertedRows === 0) {
       // empty parse = adapter/layout failure, never a valid statement — committing it
