@@ -21,6 +21,8 @@ data/alert-inbox.json
 data/__test-alert-inbox.json
 data/outbox/
 data/brief-health.json
+# Financial warehouse — immutable raw copies + sqlite ledger, rebuilt by `npm run warehouse:backfill`, never committed
+data/warehouse/
 # Persisted document RAG index — built offline by `npm run index:docs`, never committed
 data/doc-index.sqlite
 data/doc-index.sqlite-shm
