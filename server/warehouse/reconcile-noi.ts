@@ -42,7 +42,11 @@ export type NoiReconciliationStatus =
   | 'large-drift'
   | 'missing-from-workbook'
   | 'missing-from-warehouse'
-  | 'lease-run-skipped';
+  | 'lease-run-skipped'
+  // Both spines report null — e.g., a newly-acquired property pre-ingest. Not a defect; nothing
+  // is actually missing FROM either spine. Severity info so dashboards don't triage to the
+  // wrong spine (the prior 'missing-from-workbook' label confused readers).
+  | 'no-data';
 
 export type NoiReconciliationSeverity = 'info' | 'warn' | 'error';
 
@@ -127,9 +131,9 @@ export function classifyNoiReconciliation(
   if (input.workbookOxfordNoi === null && input.warehouseOxfordNoi === null) {
     return {
       ...baseRow,
-      status: 'missing-from-workbook',
-      severity: 'warn',
-      reason: 'Neither workbook nor warehouse reports an NOI value for this property.',
+      status: 'no-data',
+      severity: 'info',
+      reason: 'Neither spine reports an NOI value for this property — likely a newly-acquired property pre-ingest.',
     };
   }
 
@@ -141,6 +145,11 @@ export function classifyNoiReconciliation(
   const denom = Math.max(Math.abs(wb), Math.abs(wh));
   const deltaPct = denom === 0 ? 0 : absDelta / denom;
 
+  // Sign-parity guard: both non-zero with opposite signs = one spine shows profit, the other a loss.
+  // The absolute floor ($10k) was designed for same-sign small-NOI drift; it must not silently
+  // reconcile a profit-vs-loss disagreement between the spines.
+  const signsConflict = wb !== 0 && wh !== 0 && Math.sign(wb) !== Math.sign(wh);
+
   let status: NoiReconciliationStatus;
   let severity: NoiReconciliationSeverity;
   let reason: string;
@@ -149,20 +158,36 @@ export function classifyNoiReconciliation(
     status = 'match';
     severity = 'info';
     reason = 'Workbook NOI ties out exactly to warehouse oxfordNoi.';
-  } else if (deltaPct <= tolerance.pctBand || absDelta <= tolerance.absBandUsd) {
+  } else if (!signsConflict && (deltaPct <= tolerance.pctBand || absDelta <= tolerance.absBandUsd)) {
     status = 'in-tolerance';
     severity = 'info';
     reason =
       `Delta ${formatUsd(delta)} (${(deltaPct * 100).toFixed(2)}%) is within tolerance ` +
       `(±${(tolerance.pctBand * 100).toFixed(0)}% or ±${formatUsd(tolerance.absBandUsd)}).`;
   } else if (deltaPct < tolerance.largeDriftPct) {
+    const direction = wb > wh
+      ? 'Workbook NOI exceeds warehouse oxfordNoi'
+      : 'Warehouse oxfordNoi exceeds workbook NOI';
+    const signNote = signsConflict
+      ? ' Sign inversion: the spines disagree on profit vs loss.'
+      : '';
     status = 'drift';
     severity = 'warn';
-    reason = `Drift: ${(deltaPct * 100).toFixed(2)}% (${formatUsd(delta)}) — above tolerance but below large-drift threshold.`;
+    reason =
+      `Drift: ${direction} by ${(deltaPct * 100).toFixed(2)}% (${formatUsd(delta)}) — ` +
+      `above tolerance but below large-drift threshold.${signNote}`;
   } else {
+    const direction = wb > wh
+      ? 'Workbook NOI exceeds warehouse oxfordNoi'
+      : 'Warehouse oxfordNoi exceeds workbook NOI';
+    const signNote = signsConflict
+      ? ' Sign inversion: the spines disagree on profit vs loss.'
+      : '';
     status = 'large-drift';
     severity = 'error';
-    reason = `Large drift: ${(deltaPct * 100).toFixed(2)}% (${formatUsd(delta)}) — workbook and warehouse materially disagree on NOI.`;
+    reason =
+      `Large drift: ${direction} by ${(deltaPct * 100).toFixed(2)}% (${formatUsd(delta)}) — ` +
+      `workbook and warehouse materially disagree on NOI.${signNote}`;
   }
 
   // Basis-unknown downgrade (Phase 1a discipline): a 'match' on basis='unknown' is low-confidence

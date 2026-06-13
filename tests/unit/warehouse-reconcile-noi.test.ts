@@ -139,6 +139,78 @@ describe('classifyNoiReconciliation — pure A↔B classifier', () => {
   });
 });
 
+describe('sign-inversion guard (CORRECTNESS — adversarial fix, the absolute floor must not swallow profit-vs-loss disagreement)', () => {
+  it('a sign-inverted NOI (workbook + $3k vs warehouse −$3k, basis known) is NEVER in-tolerance, even though |delta| ≤ $10k', () => {
+    // Adversarial finding (CORRECTNESS/HIGH): the in-tolerance OR-clause (deltaPct ≤ band ||
+    // absDelta ≤ absBand) fired regardless of sign, classifying a property where the two spines
+    // disagree on profit vs loss as 'reconciled.' The absolute floor was designed to protect
+    // small-NOI properties from spurious large-drift — but only with SAME-SIGN drift in mind.
+    const r = classifyNoiReconciliation(
+      input({ workbookOxfordNoi: 3000, warehouseOxfordNoi: -3000, warehouseBasis: 'cash' }),
+      TOL,
+    );
+    expect(r.status).not.toBe('in-tolerance');
+    expect(r.status).not.toBe('match');
+    expect(r.severity).not.toBe('info'); // must rise to at least warn
+    expect(r.reason).toMatch(/sign|profit.*loss|inversion/i);
+  });
+
+  it('zero is treated as NEUTRAL — wb=0 vs wh=$3k still in-tolerance via the abs band (no sign parity violation)', () => {
+    // Zero NOI is unsigned (a property neither profits nor loses); the sign-parity guard must
+    // not punish a workbook-zero vs warehouse-small-positive case.
+    const r = classifyNoiReconciliation(
+      input({ workbookOxfordNoi: 0, warehouseOxfordNoi: 3000, warehouseBasis: 'cash' }),
+      TOL,
+    );
+    expect(r.status).toBe('in-tolerance');
+    expect(r.severity).toBe('info');
+  });
+
+  it('symmetric sign-inverted case (wb=−$3k, wh=+$3k) is also not in-tolerance', () => {
+    const r = classifyNoiReconciliation(
+      input({ workbookOxfordNoi: -3000, warehouseOxfordNoi: 3000, warehouseBasis: 'cash' }),
+      TOL,
+    );
+    expect(r.status).not.toBe('in-tolerance');
+    expect(r.status).not.toBe('match');
+  });
+});
+
+describe('both-null no-data status (COMPLETENESS — neither spine reports a value)', () => {
+  it('a property tracked in both spines that newly has no NOI on either side is "no-data" (info), not missing-from-workbook (warn)', () => {
+    // Adversarial finding (COMPLETENESS/MEDIUM): the prior both-null branch labeled the case
+    // 'missing-from-workbook' with warn severity, which mislabels a recently-acquired
+    // property (no warehouse ingest yet AND workbook NOI not yet populated) as if the workbook
+    // were at fault. Reroute these cases to 'no-data' / info so dashboards triage correctly.
+    const r = classifyNoiReconciliation(
+      input({ workbookOxfordNoi: null, warehouseOxfordNoi: null, warehousePeriod: null, warehouseBasis: null }),
+      TOL,
+    );
+    expect(r.status).toBe('no-data');
+    expect(r.severity).toBe('info');
+    expect(r.reason).toMatch(/no.*nai|neither spine|untracked|not yet/i);
+  });
+});
+
+describe('drift reason names the higher spine (COMPLETENESS — UX/triage attribution)', () => {
+  it('large-drift reason explicitly names workbook OR warehouse as the higher side, not just a signed delta', () => {
+    // Adversarial finding (COMPLETENESS/MEDIUM): the reason field showed '-$200,000' or '+$200,000'
+    // but the user reading a dashboard cannot tell at a glance which spine is higher without
+    // re-reading the doc comment. Surface plain-English direction.
+    const whHigher = classifyNoiReconciliation(
+      input({ workbookOxfordNoi: 200000, warehouseOxfordNoi: 250000 }),
+      TOL,
+    );
+    expect(whHigher.reason).toMatch(/warehouse.*exceeds.*workbook|warehouse oxfordNoi.*exceeds/i);
+
+    const wbHigher = classifyNoiReconciliation(
+      input({ workbookOxfordNoi: 250000, warehouseOxfordNoi: 200000 }),
+      TOL,
+    );
+    expect(wbHigher.reason).toMatch(/workbook.*exceeds.*warehouse|workbook NOI.*exceeds/i);
+  });
+});
+
 describe('reconcileNoiAB — assembler', () => {
   it('filters out residences and routes every other input through classify', () => {
     const rows = reconcileNoiAB(
