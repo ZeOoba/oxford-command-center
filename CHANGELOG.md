@@ -1,5 +1,31 @@
 # Changelog
 
+## PFI Phase B.2 — Property Financial Intelligence UI (2026-06-13)
+
+The intel module becomes an operating layer over the analytics engine — not another dashboard.
+
+- **Ownership Intelligence Center** (`src/modules/intel/OwnershipView.tsx`, the default tab): a
+  portfolio KPI band (count, NOI, Oxford-share NOI, # needing attention, # disposition candidates),
+  then **"What Ownership Should Do Next"** — a prioritized action list (`synthesis.buildActionList`)
+  leading with disposition candidates + critical anomalies; an attention matrix (red→green); improving
+  vs. deteriorating; capital-allocation buckets; largest risks; a PM snapshot. Answers the nine
+  ownership questions, action-first.
+- **Per-property Intelligence page** (`PropertyIntelView.tsx`): verdict header (health 0–100, band,
+  attention, capital action, rationale) → KPI row with sparklines, quartile sublabels, and the Oxford
+  ownership overlay (e.g. "Oxford 50%: $183K") → since-acquisition strip → annual trends + expense
+  breakdown → **ΔNOI driver waterfall** with a synthesized root-cause headline → anomalies. Null-safe
+  (null-SF and single-period properties degrade gracefully).
+- **Benchmarks** (`BenchmarksView.tsx`): FY-period + metric selectors (12 keys), avg/median/p25/p75
+  summary, quartile-badged rankings, ranking BarList (rows navigate to the property), and the
+  NOI-by-property matrix. **Decision-synthesis layer** (`synthesis.ts`) + period/metric helpers are
+  pure and golden-tested.
+- **Managers** (`ManagersView.tsx`): PM scorecards with the small-sample caveat.
+- **ΔNOI Waterfall chart** (`src/charts/Waterfall.tsx`): cumulative driver bridge; total bars stay
+  ordered when NOI crosses below zero.
+- **IA**: 7 tabs (Ownership · Property · Benchmarks · Managers │ Imports · Data Quality · Mappings),
+  intelligence/data-ops grouping; analytics cache invalidation extended so approve/override refreshes
+  scores. Intel module remains a lazy 15.7 kB-gzip chunk. Server engine untouched.
+
 ## PFI Phase B — Analytics & Intelligence Engine (2026-06-13)
 
 - **Single-source config** (`server/warehouse/intel-config.ts`): `INTEL_CONFIG` holds every threshold,
