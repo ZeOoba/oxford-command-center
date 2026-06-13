@@ -47,6 +47,7 @@ import {
   topRisks,
   improvingProperties,
   deterioratingProperties,
+  rankBySinceAcqGrowth,
   buildActionList,
   type Action,
   type ActionPriority,
@@ -151,6 +152,7 @@ export function OwnershipView({ onOpenProperty, period, periodLabel: bandLabel }
   const risks = useMemo(() => topRisks(anomalyData, 8), [anomalyData]);
   const improving = useMemo(() => improvingProperties(sinceAcq), [sinceAcq]);
   const deteriorating = useMemo(() => deterioratingProperties(sinceAcq), [sinceAcq]);
+  const leaderboard = useMemo(() => rankBySinceAcqGrowth(sinceAcq), [sinceAcq]);
   const totals = useMemo(() => portfolioTotals(metricData), [metricData]);
   const counts = useMemo(() => attentionCounts(scoreData), [scoreData]);
   const verdict = useMemo(() => portfolioVerdict(scoreData, totals), [scoreData, totals]);
@@ -245,6 +247,8 @@ export function OwnershipView({ onOpenProperty, period, periodLabel: bandLabel }
           onOpenProperty={onOpenProperty}
         />
       </div>
+
+      <SinceAcqLeaderboardCard leaderboard={leaderboard} nameById={nameById} onOpenProperty={onOpenProperty} />
 
       <CapitalAllocation capital={capital} onOpenProperty={onOpenProperty} />
 
@@ -663,6 +667,77 @@ function TrajectoryCard({
 function fmtSignedPct(v: number | null): string {
   if (v === null || !Number.isFinite(v)) return '—';
   return v >= 0 ? `+${fmtPct(v)}` : fmtPct(v);
+}
+
+// ---------------------------------------------------------------------------
+// 4b) Since-acquisition leaderboard — every comparable property ranked by NOI/SF growth since
+//     acquisition: "which assets are compounding since we bought them" (PFI Phase B.3 item 4).
+//     Properties without comparable history are excluded with an explicit note.
+// ---------------------------------------------------------------------------
+
+function SinceAcqLeaderboardCard({
+  leaderboard,
+  nameById,
+  onOpenProperty,
+}: {
+  leaderboard: ReturnType<typeof rankBySinceAcqGrowth>;
+  nameById: Map<string, string>;
+  onOpenProperty: (id: string) => void;
+}) {
+  const { ranked, insufficient } = leaderboard;
+  return (
+    <Card>
+      <CardHeader title="Compounding Since Acquisition" trailing={<Badge tone="neutral">NOI / SF growth</Badge>} />
+      {ranked.length === 0 ? (
+        <div className="px-4 py-6 text-center text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+          None with comparable since-acquisition history.
+        </div>
+      ) : (
+        <div className="flex flex-col">
+          {ranked.map((r, i) => {
+            const id = r.propertyId ?? '';
+            const v = r.noiPerSfGrowth;
+            return (
+              <button
+                key={id || i}
+                onClick={() => id && onOpenProperty(id)}
+                className="flex items-center justify-between gap-3 px-4 py-2.5 text-left transition-colors"
+                style={{
+                  borderTop: i === 0 ? undefined : '1px solid var(--border-subtle)',
+                  cursor: id ? 'pointer' : 'default',
+                }}
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="num w-5 shrink-0 text-2xs font-semibold" style={{ color: 'var(--text-tertiary)' }}>
+                    {i + 1}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm" style={{ color: 'var(--text-primary)' }}>
+                      {nameById.get(id) ?? id}
+                    </div>
+                    <div className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+                      NOI/SF since FY{r.anchorPeriod ?? '—'}
+                    </div>
+                  </div>
+                </div>
+                <span
+                  className="num shrink-0 text-base font-semibold"
+                  style={{ color: v !== null && v >= 0 ? 'var(--color-pos)' : 'var(--color-neg)' }}
+                >
+                  {fmtSignedPct(v)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {insufficient > 0 && (
+        <div className="px-4 pb-3 pt-1 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+          {insufficient} {insufficient === 1 ? 'property' : 'properties'} excluded — insufficient history.
+        </div>
+      )}
+    </Card>
+  );
 }
 
 // ---------------------------------------------------------------------------
