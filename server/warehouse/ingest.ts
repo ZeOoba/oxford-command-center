@@ -60,7 +60,31 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
   const FOOT_TOLERANCE = 1; // dollars
   let insertedRows = 0;
   let incomeSum = 0;
+  // Sign-convention normalization: some charts (9620 State 350 / Peak REP QB export)
+  // book expense-side rows as NEGATIVE outflows; the ledger stores costs as positive
+  // magnitudes (NOI = income − opex), so subtracting negative opex would ADD costs back
+  // (the defect that produced 9620 2025 NOI 342,516 instead of 27,614). Flip a side when
+  // a strict majority of its non-zero leaves are negative — contra rows (tax refunds)
+  // correctly invert with the side. Never silent: a 'sign-normalized' DQ info row is
+  // written whenever a flip is applied.
+  const flip: Record<'income' | 'expense', boolean> = { income: false, expense: false };
+  for (const sideKey of ['income', 'expense'] as const) {
+    let neg = 0;
+    let pos = 0;
+    for (const a of stmt.accounts) {
+      if (a.total === null || a.total === 0 || sectionSide(a.section) !== sideKey) continue;
+      if (a.total < 0) neg += 1;
+      else pos += 1;
+    }
+    flip[sideKey] = neg > pos;
+  }
   const tx = db.transaction(() => {
+    for (const sideKey of ['income', 'expense'] as const) {
+      if (flip[sideKey]) {
+        insIssue.run(reg.importId, det.propertyId, 'sign-normalized',
+          `${sideKey}-side leaves are majority-negative (outflow convention) — amounts flipped to positive-cost magnitudes on ingest`, 'info');
+      }
+    }
     for (const a of stmt.accounts) {
       if (a.total === null) continue;
       const m = resolveMapping(db, a.name, det.propertyId ?? undefined, a.section);
@@ -68,11 +92,13 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
         unmapped.push(a.name);
         insIssue.run(reg.importId, det.propertyId, 'unmapped-account', `${a.name} (section ${a.section}) defaulted to Unmapped/opex`, 'warn');
       }
-      insLedger.run(reg.importId, det.propertyId ?? 'unknown', period, a.name, a.code ?? null, a.total, m.normalizedCategory, m.classification, m.mappingId);
+      const side = sectionSide(a.section);
+      const amount = side && flip[side] ? -a.total : a.total;
+      insLedger.run(reg.importId, det.propertyId ?? 'unknown', period, a.name, a.code ?? null, amount, m.normalizedCategory, m.classification, m.mappingId);
       insertedRows += 1;
       // side via the SOURCE section (not classification): report-stated totals include
       // every row under the section — even ones the NOI engine later excludes.
-      if (sectionSide(a.section) === 'income') incomeSum += a.total;
+      if (side === 'income') incomeSum += amount;
     }
     // Foot the report's own stated INCOME total against what we inserted: a section drop
     // or wrong value column commits silently without this choke point. Reports only —

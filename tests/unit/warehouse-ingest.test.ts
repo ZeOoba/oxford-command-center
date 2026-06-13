@@ -169,3 +169,55 @@ describe('ingest pipeline', () => {
     expect(issues.map((i) => i.kind)).toContain('unmapped-account');
   });
 });
+
+  it('normalizes negative-expense sign convention (9620-style charts): costs stored positive, contra refunds negative, NOI subtracts costs', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wh-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, [
+      { account: 'Rental Income', code: null, normalized_category: 'Rental Revenue', classification: 'revenue' },
+      { account: 'INSURANCE EXPENSE', code: null, normalized_category: 'Insurance', classification: 'opex' },
+      { account: 'MANAGEMENT FEE EXPENSE', code: null, normalized_category: 'Management Fees', classification: 'opex' },
+      { account: 'Property Taxes', code: null, normalized_category: 'Taxes', classification: 'opex' },
+    ]);
+    // Peak REP / 9620-style QB export: expense rows booked as NEGATIVE outflows;
+    // a positive value on the expense side is a contra (tax refund).
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    const rows: Array<[string | null, string | null, string | null, number | null]> = [
+      ['Profit & Loss', null, null, null],
+      ['Property: 350 Highway Center', null, null, null],
+      ['01/01/25 - 12/31/25  (cash basis)', null, null, null],
+      [null, 'INCOME', null, null],
+      [null, null, '          Rental Income', 100000],
+      [null, 'EXPENSE', null, null],
+      [null, null, '          INSURANCE EXPENSE', -30000],
+      [null, null, '          MANAGEMENT FEE EXPENSE', -10000],
+      [null, null, '          Property Taxes', 5000],
+    ];
+    for (const r of rows) ws.addRow(r);
+    const file = join(dir, 'P&L 2025 -- 9620 State 350.xlsx');
+    await wb.xlsx.writeFile(file);
+
+    const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
+    expect(r.status).toBe('committed');
+
+    const byName = new Map(
+      (db.prepare("SELECT raw_account, amount FROM ledger_entries WHERE is_active=1").all() as Array<{ raw_account: string; amount: number }>)
+        .map((x) => [x.raw_account, x.amount]),
+    );
+    expect(byName.get('Rental Income')).toBe(100000); // income side untouched (positive majority)
+    expect(byName.get('INSURANCE EXPENSE')).toBe(30000); // flipped to positive cost
+    expect(byName.get('MANAGEMENT FEE EXPENSE')).toBe(10000);
+    expect(byName.get('Property Taxes')).toBe(-5000); // contra refund inverts with the side
+
+    const noi = db.prepare(`
+      SELECT SUM(CASE WHEN classification IN ('revenue','recovery','other-income') THEN amount
+                      WHEN classification = 'opex' THEN -amount ELSE 0 END) AS noi
+      FROM ledger_entries WHERE is_active = 1
+    `).get() as { noi: number };
+    expect(noi.noi).toBe(65000); // 100000 - (30000 + 10000 - 5000)
+
+    const dq = db.prepare("SELECT kind, severity FROM data_quality_issues WHERE kind='sign-normalized'").all();
+    expect(dq).toHaveLength(1); // normalization is recorded, never silent
+  });
