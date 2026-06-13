@@ -26,11 +26,17 @@ import {
 import { ImportsView } from './ImportsView';
 import { DataQualityView } from './DataQualityView';
 import { MappingsView } from './MappingsView';
+import { PropertyIntelView } from './PropertyIntelView';
 
-type Tab = 'overview' | 'imports' | 'quality' | 'mappings';
+// 'property' is the per-property intelligence page (PFI Phase B.2 — verdict → root cause).
+// It is added as the rightmost INTELLIGENCE tab; the full IA reorg (Ownership default,
+// data-ops grouped last) lands in a later phase. The selected property is lifted here so
+// the tab remembers the selection across tab switches.
+type Tab = 'overview' | 'property' | 'imports' | 'quality' | 'mappings';
 
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'overview', label: 'Overview' },
+  { id: 'property', label: 'Property' },
   { id: 'imports', label: 'Imports' },
   { id: 'quality', label: 'Data Quality' },
   { id: 'mappings', label: 'Mappings' },
@@ -38,6 +44,7 @@ const TABS: Array<{ id: Tab; label: string }> = [
 
 export function IntelModule() {
   const [tab, setTab] = useState<Tab>('overview');
+  const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
   const imports = useWarehouseImports();
   const issues = useWarehouseIssues();
   const noi = useNoiMatrix();
@@ -90,15 +97,19 @@ export function IntelModule() {
             </div>
           }
         />
-        <div className="px-4 py-3">
-          <KpiRow
-            committed={(imports.data ?? []).filter((i) => i.status === 'committed').length}
-            pending={(imports.data ?? []).filter((i) => i.status === 'pending-review').length}
-            openIssues={issues.data?.length ?? 0}
-            propertiesCovered={new Set((noi.data ?? []).map((c) => c.propertyId)).size}
-            latestPeriod={latestPeriod(noi.data ?? [])}
-          />
-        </div>
+        {/* Portfolio data-ops KPIs anchor the data-warehouse tabs; the Property page carries
+            its own per-property KPI row, so suppress this band there to avoid a double row. */}
+        {tab !== 'property' && (
+          <div className="px-4 py-3">
+            <KpiRow
+              committed={(imports.data ?? []).filter((i) => i.status === 'committed').length}
+              pending={(imports.data ?? []).filter((i) => i.status === 'pending-review').length}
+              openIssues={issues.data?.length ?? 0}
+              propertiesCovered={new Set((noi.data ?? []).map((c) => c.propertyId)).size}
+              latestPeriod={latestPeriod(noi.data ?? [])}
+            />
+          </div>
+        )}
       </Card>
 
       {loading ? (
@@ -107,6 +118,8 @@ export function IntelModule() {
         </div>
       ) : tab === 'overview' ? (
         <NoiMatrixTable matrix={noi.data ?? []} />
+      ) : tab === 'property' ? (
+        <PropertyIntelView propertyId={selectedPropertyId} onSelectProperty={setSelectedPropertyId} />
       ) : tab === 'imports' ? (
         <ImportsView imports={imports.data ?? []} />
       ) : tab === 'quality' ? (
