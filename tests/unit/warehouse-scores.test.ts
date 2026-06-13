@@ -91,6 +91,60 @@ async function buildWarehouseWithYtd(): Promise<{ db: WarehouseDb; metrics: Retu
   return { db, metrics };
 }
 
+// CRITICAL 1 fixture (spec §9 residual): STRONG (Rarig, 21000 SF) gets a TRAILING 2026 YTD;
+// the peer (Westerville, 18000 SF) is FULL-YEAR-ONLY. Engineered $/SF levels:
+//   STRONG 2025 full-year noiPerSf = 6.0  (noi 126000 = rent 130000 − repair 4000)
+//   STRONG 2026 YTD       noiPerSf = 3.0  (noi  63000 = rent  65000 − repair 2000)
+//   PEER   2025 full-year noiPerSf = 9.0  (noi 162000 = rent 172000 − repair 10000)
+// The bug: scoreProperties ranks STRONG at its OWN latest period (2026 YTD), a singleton 2026
+// cohort → quartile 1 / benchmarkPosition 100 even though its real full-year 6.0 trails the
+// peer's 9.0. Fixed behavior: STRONG's benchmark sub-score must rank its 2025 full-year value
+// against the peer's 2025 full-year value (same period cohort) → NOT quartile 1.
+async function buildWarehouseStrongYtdPeerFullYear(): Promise<{ db: WarehouseDb; metrics: ReturnType<typeof propertyPeriodMetrics> }> {
+  const dir = mkdtempSync(join(tmpdir(), 'whs-'));
+  const db = openWarehouse(join(dir, 'f.sqlite'));
+  seedPropertyMaster(db);
+  seedMappings(db, SEED);
+  const raw = join(dir, 'raw');
+  let t = 0;
+  const ingest = async (file: string, o: Parameters<typeof writeFixture>[1]): Promise<void> => {
+    await writeFixture(file, o);
+    const r = await ingestFile(db, file, { rawDir: raw, importedAt: `2026-06-12T00:00:${String(t++).padStart(2, '0')}Z` });
+    expect(r.status).toBe('committed');
+  };
+  // STRONG: 2024, 2025 full-year, 2026 YTD (noiPerSf 6.0 full-year, 3.0 YTD).
+  await ingest(join(dir, 'P&L 2024 -- 1100 Rarig.xlsx'), { propertyLine: 'Property: 1100 Rarig Ave', periodLine: '01/01/24 - 12/31/24  (cash basis)', rent: 110000, repair: 4000 });
+  await ingest(join(dir, 'P&L 2025 -- 1100 Rarig.xlsx'), { propertyLine: 'Property: 1100 Rarig Ave', periodLine: '01/01/25 - 12/31/25  (cash basis)', rent: 130000, repair: 4000 });
+  await ingest(join(dir, 'P&L 2026 YTD -- 1100 Rarig.xlsx'), { propertyLine: 'Property: 1100 Rarig Ave', periodLine: '01/01/26 - 06/30/26  (cash basis)', rent: 65000, repair: 2000 });
+  // PEER: 2024, 2025 full-year only (noiPerSf 9.0 in 2025). No YTD.
+  await ingest(join(dir, 'P&L 2024 -- 3034 Westerville.xlsx'), { propertyLine: 'Property: 3034 Westerville Rd', periodLine: '01/01/24 - 12/31/24  (cash basis)', rent: 150000, repair: 10000 });
+  await ingest(join(dir, 'P&L 2025 -- 3034 Westerville.xlsx'), { propertyLine: 'Property: 3034 Westerville Rd', periodLine: '01/01/25 - 12/31/25  (cash basis)', rent: 172000, repair: 10000 });
+  const metrics = propertyPeriodMetrics(db);
+  return { db, metrics };
+}
+
+// Same as above but WITHOUT STRONG's trailing 2026 YTD — used to prove the YTD row does not
+// change STRONG's benchmark sub-score (full-year cohort invariance).
+async function buildWarehouseStrongFullYearPeerFullYear(): Promise<{ db: WarehouseDb; metrics: ReturnType<typeof propertyPeriodMetrics> }> {
+  const dir = mkdtempSync(join(tmpdir(), 'whs-'));
+  const db = openWarehouse(join(dir, 'f.sqlite'));
+  seedPropertyMaster(db);
+  seedMappings(db, SEED);
+  const raw = join(dir, 'raw');
+  let t = 0;
+  const ingest = async (file: string, o: Parameters<typeof writeFixture>[1]): Promise<void> => {
+    await writeFixture(file, o);
+    const r = await ingestFile(db, file, { rawDir: raw, importedAt: `2026-06-12T00:00:${String(t++).padStart(2, '0')}Z` });
+    expect(r.status).toBe('committed');
+  };
+  await ingest(join(dir, 'P&L 2024 -- 1100 Rarig.xlsx'), { propertyLine: 'Property: 1100 Rarig Ave', periodLine: '01/01/24 - 12/31/24  (cash basis)', rent: 110000, repair: 4000 });
+  await ingest(join(dir, 'P&L 2025 -- 1100 Rarig.xlsx'), { propertyLine: 'Property: 1100 Rarig Ave', periodLine: '01/01/25 - 12/31/25  (cash basis)', rent: 130000, repair: 4000 });
+  await ingest(join(dir, 'P&L 2024 -- 3034 Westerville.xlsx'), { propertyLine: 'Property: 3034 Westerville Rd', periodLine: '01/01/24 - 12/31/24  (cash basis)', rent: 150000, repair: 10000 });
+  await ingest(join(dir, 'P&L 2025 -- 3034 Westerville.xlsx'), { propertyLine: 'Property: 3034 Westerville Rd', periodLine: '01/01/25 - 12/31/25  (cash basis)', rent: 172000, repair: 10000 });
+  const metrics = propertyPeriodMetrics(db);
+  return { db, metrics };
+}
+
 describe('scoreProperties', () => {
   it('scores deterministically and bands correctly', async () => {
     const { db, metrics } = await buildWarehouse();
@@ -147,5 +201,42 @@ describe('scoreProperties', () => {
 
     // determinism — same db + metrics ⇒ deep-equal result on re-run (with the YTD present).
     expect(scoreProperties(db, metrics)).toEqual(s);
+  });
+
+  it('benchmark sub-score ranks the property\'s FULL-YEAR value against same-period peers, not a YTD self-cohort (spec §9)', async () => {
+    const { db, metrics } = await buildWarehouseStrongYtdPeerFullYear();
+    const s = scoreProperties(db, metrics);
+
+    const strong = s.find((x) => x.propertyId === STRONG)!; // trailing 2026 YTD; full-year 6.0
+    const peer = s.find((x) => x.propertyId === WEAK)!;      // full-year only; 9.0
+    expect(strong).toBeDefined();
+    expect(peer).toBeDefined();
+
+    // The peer's higher FULL-YEAR NOI/SF (9.0) must rank top quartile.
+    expect(peer.noiPerSfQuartile).toBe(1);
+    // STRONG's lower FULL-YEAR NOI/SF (6.0) must NOT spuriously self-rank to quartile 1
+    // off a singleton 2026-YTD cohort. It trails the peer ⇒ a lower quartile.
+    expect(strong.noiPerSfQuartile).not.toBe(1);
+    expect(strong.noiPerSfQuartile).toBeGreaterThanOrEqual(2);
+    // benchmarkPosition sub-score must reflect the lower (non-top) quartile, not 100.
+    expect(strong.subScores.benchmarkPosition).toBeLessThan(100);
+  });
+
+  it('a trailing YTD row does not change a property\'s benchmark/efficiency sub-scores (full-year cohort invariance, spec §9)', async () => {
+    const withYtd = await buildWarehouseStrongYtdPeerFullYear();
+    const withoutYtd = await buildWarehouseStrongFullYearPeerFullYear();
+    const sWith = scoreProperties(withYtd.db, withYtd.metrics).find((x) => x.propertyId === STRONG)!;
+    const sWithout = scoreProperties(withoutYtd.db, withoutYtd.metrics).find((x) => x.propertyId === STRONG)!;
+    expect(sWith).toBeDefined();
+    expect(sWithout).toBeDefined();
+
+    // Benchmark + efficiency sub-scores and the NOI/SF quartile are computed on the property's
+    // latest FULL-YEAR period (2025) in both runs ⇒ identical regardless of the trailing YTD.
+    expect(sWith.noiPerSfQuartile).toBe(sWithout.noiPerSfQuartile);
+    expect(sWith.subScores.benchmarkPosition).toBe(sWithout.subScores.benchmarkPosition);
+    expect(sWith.subScores.expenseEfficiency).toBe(sWithout.subScores.expenseEfficiency);
+    expect(sWith.subScores.taxEfficiency).toBe(sWithout.subScores.taxEfficiency);
+    expect(sWith.subScores.insuranceEfficiency).toBe(sWithout.subScores.insuranceEfficiency);
+    expect(sWith.subScores.repairEfficiency).toBe(sWithout.subScores.repairEfficiency);
   });
 });

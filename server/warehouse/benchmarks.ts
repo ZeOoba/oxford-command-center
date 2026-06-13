@@ -5,6 +5,7 @@
 // empty / all-null inputs (no NaN/Infinity leaks into the score engine downstream).
 import type { WarehouseDb } from './db';
 import { growthSeries } from './growth';
+import { latestFullYearPeriod } from './metrics';
 import type { PeriodMetrics } from './metrics';
 
 // Numeric PeriodMetrics keys eligible for benchmarking (number | null fields).
@@ -28,14 +29,14 @@ export interface PropertyRank {
   propertyId: string;
   value: number;
   rank: number;      // 1 = highest value
-  quartile: 1 | 2 | 3 | 4; // 1 = top quartile
+  quartile: 1 | 2 | 3 | 4 | null; // 1 = top quartile; null = low-confidence singleton cohort (n<2)
 }
 
 export interface PmScorecard {
   propertyManager: string;
   propertyCount: number;
   smallSample: boolean;       // propertyCount < 3 — interpret cautiously
-  avgNoiPerSf: number | null; // latest-period averages across the PM's properties
+  avgNoiPerSf: number | null; // latest-full-year averages across the PM's properties (spec §9)
   avgNoiGrowth: number | null;
   avgExpenseGrowth: number | null;
 }
@@ -93,6 +94,10 @@ export function rankProperties(metrics: PeriodMetrics[], period: string, key: Nu
   // Descending by value; ties keep input order (stable) and tie-break on propertyId for determinism.
   rows.sort((a, b) => b.value - a.value || a.propertyId.localeCompare(b.propertyId));
   const values = rows.map((r) => r.value);
+  // Singleton-cohort guard (spec §9): a quartile drawn from <2 non-null values is meaningless — a
+  // lone property would self-rank to the top (quartile 1). Return quartile null (low-confidence)
+  // so downstream consumers fall back to a neutral position instead of a bogus top quartile.
+  const lowConfidence = values.length < 2;
   const p75 = quantile(values, 0.75);
   const median = quantile(values, 0.5);
   const p25 = quantile(values, 0.25);
@@ -100,7 +105,7 @@ export function rankProperties(metrics: PeriodMetrics[], period: string, key: Nu
     propertyId: r.propertyId,
     value: r.value,
     rank: i + 1,
-    quartile: quartileFor(r.value, p75, median, p25),
+    quartile: lowConfidence ? null : quartileFor(r.value, p75, median, p25),
   }));
 }
 
@@ -114,8 +119,9 @@ function quartileFor(value: number, p75: number | null, median: number | null, p
 
 interface PmRow { propertyId: string; propertyManager: string | null }
 
-/** PM scorecards: group properties by property_master.property_manager, aggregate latest-period
- *  avg NOI/SF + avg NOI growth + avg expense growth across each PM's properties with ledger data. */
+/** PM scorecards: group properties by property_master.property_manager, aggregate each property's
+ *  latest FULL-YEAR avg NOI/SF + latest comparable (same-grain) NOI/expense growth across the PM's
+ *  properties with ledger data — never a trailing YTD level or a cross-grain null growth (spec §9). */
 export function pmScorecards(db: WarehouseDb, metrics: PeriodMetrics[]): PmScorecard[] {
   const pmRows = db.prepare(
     `SELECT id AS propertyId, property_manager AS propertyManager FROM property_master`,
@@ -135,13 +141,22 @@ export function pmScorecards(db: WarehouseDb, metrics: PeriodMetrics[]): PmScore
   const latestByProperty = new Map<string, PropertyLatest>();
   for (const [propertyId, series] of byProperty) {
     const sorted = [...series].sort((a, b) => a.period.localeCompare(b.period));
-    const latest = sorted[sorted.length - 1]!;
+    // LEVEL (spec §9): use the property's latest FULL-YEAR period for avgNoiPerSf so a trailing
+    // YTD partial isn't blended with full-year peers. Fall back to the raw latest only when the
+    // property has no full-year period at all (YTD-only coverage).
+    const fyPeriod = latestFullYearPeriod(sorted);
+    const levelRow = fyPeriod !== null
+      ? sorted.find((m) => m.period === fyPeriod)!
+      : sorted[sorted.length - 1]!;
+    // GROWTH (spec §9): pick the latest COMPARABLE (same-grain, non-null) growth point — never the
+    // cross-grain year→YTD point whose growths are null by construction. growthSeries already nulls
+    // and flags those as comparable:false.
     const growth = growthSeries(sorted);
-    const latestGrowth = growth[growth.length - 1];
+    const latestComparable = [...growth].reverse().find((g) => g.comparable) ?? null;
     latestByProperty.set(propertyId, {
-      noiPerSf: latest.noiPerSf,
-      noiGrowth: latestGrowth?.noiGrowth ?? null,
-      expenseGrowth: latestGrowth?.expenseGrowth ?? null,
+      noiPerSf: levelRow.noiPerSf,
+      noiGrowth: latestComparable?.noiGrowth ?? null,
+      expenseGrowth: latestComparable?.expenseGrowth ?? null,
     });
   }
 

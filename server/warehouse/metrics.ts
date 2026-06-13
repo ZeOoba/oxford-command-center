@@ -27,6 +27,22 @@ interface Row { propertyId: string; propertyName: string | null; period: string;
   classification: string; normalizedCategory: string; amount: number;
   rentableSf: number | null; ownershipPct: number; grainHint: string | null; }
 
+/**
+ * The latest period for one property's metrics whose grain is a FULL YEAR (grainHint === 'year').
+ * Returns null when the property has no full-year period (e.g. YTD-only coverage). Used by the
+ * benchmark/ranking and PM-scorecard paths so level + percentile comparisons happen WITHIN a single
+ * (period, grain) cohort and a trailing YTD partial never leaks into a full-year peer comparison
+ * (spec §9). Caller passes only one property's PeriodMetrics[]; input is not mutated.
+ */
+export function latestFullYearPeriod(metricsForOneProperty: PeriodMetrics[]): string | null {
+  let latest: string | null = null;
+  for (const m of metricsForOneProperty) {
+    if (m.grainHint !== 'year') continue;
+    if (latest === null || m.period.localeCompare(latest) > 0) latest = m.period;
+  }
+  return latest;
+}
+
 export function propertyPeriodMetrics(db: WarehouseDb): PeriodMetrics[] {
   const rows = db.prepare(`
     SELECT l.property_id AS propertyId, p.name AS propertyName, l.period,

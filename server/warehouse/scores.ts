@@ -11,12 +11,13 @@ import { benchmarkMetric, rankProperties } from './benchmarks';
 import { growthSeries } from './growth';
 import { INTEL_CONFIG } from './intel-config';
 import type { AttentionBand, CapitalAction, HealthBand } from './intel-config';
+import { latestFullYearPeriod } from './metrics';
 import type { PeriodMetrics } from './metrics';
 
 export interface PropertyScore {
   propertyId: string;
   propertyName: string | null;
-  period: string;            // latest period scored
+  period: string;            // scoring period = latest FULL-YEAR period (raw latest only if YTD-only)
   health: number;            // 0..100
   healthBand: HealthBand;
   attentionBand: AttentionBand;
@@ -69,7 +70,8 @@ function population(metrics: PeriodMetrics[], period: string, pick: (m: PeriodMe
   return out;
 }
 
-/** Score every property on its latest period. Deterministic in (db, metrics). */
+/** Score every property on its latest FULL-YEAR period (level/benchmark) + latest same-grain
+ *  transition (growth/attention). Deterministic in (db, metrics). */
 export function scoreProperties(db: WarehouseDb, metrics: PeriodMetrics[]): PropertyScore[] {
   // Canonical property names from property_master (authoritative over the ledger join).
   const nameRows = db.prepare(`SELECT id, name FROM property_master`).all() as Array<{ id: string; name: string }>;
@@ -98,10 +100,15 @@ export function scoreProperties(db: WarehouseDb, metrics: PeriodMetrics[]): Prop
   const scores: PropertyScore[] = [];
   for (const [propertyId, series] of byProperty) {
     const sorted = [...series].sort((a, b) => a.period.localeCompare(b.period));
-    // LEVEL latest: the true latest period — a YTD partial is a fine *current snapshot* for
-    // $/SF, margin, and benchmark position (level metrics, not deltas).
-    const latest = sorted[sorted.length - 1]!;
-    const period = latest.period;
+    // LEVEL + BENCHMARK + EFFICIENCY period (spec §9 residual): score these against the property's
+    // latest FULL-YEAR period, NEVER a trailing YTD partial. A 5-month YTD $/SF must not be ranked
+    // against full-year peers (or, worse, a singleton 2026 self-cohort → spurious quartile 1). Fall
+    // back to the raw latest only when the property has no full-year period (YTD-only coverage).
+    const fyPeriod = latestFullYearPeriod(sorted);
+    const levelRow = fyPeriod !== null
+      ? sorted.find((m) => m.period === fyPeriod)!
+      : sorted[sorted.length - 1]!;
+    const period = levelRow.period;
 
     // GROWTH transition (spec §9): growth/attention/anomalies must use the latest SAME-GRAIN
     // pair (normally 2024→2025), NEVER the year→YTD pair — a 5-month-vs-12-month comparison
@@ -123,7 +130,8 @@ export function scoreProperties(db: WarehouseDb, metrics: PeriodMetrics[]): Prop
         ? (growthCur.revenuePerSf - growthPrev.revenuePerSf) / growthPrev.revenuePerSf
         : null;
 
-    // Efficiency populations (portfolio, same period) — lower ratio is better.
+    // Efficiency populations (portfolio, SAME full-year period) — lower ratio is better. Built at
+    // `period` (the full-year period above) so the percentile cohort is same-grain same-period.
     const expensePop = population(metrics, period, (m) => m.expenseRatio);
     const taxPop = population(metrics, period, (m) => m.taxesPerSf);
     const insPop = population(metrics, period, (m) => m.insurancePerSf);
@@ -133,7 +141,10 @@ export function scoreProperties(db: WarehouseDb, metrics: PeriodMetrics[]): Prop
     const margins = sorted.map((m) => m.noiMargin).filter((v): v is number => v !== null && Number.isFinite(v));
     const marginStability = 100 - clamp(stddev(margins) * 200, 0, 100); // scale 200: 0.50 stddev ⇒ 0
 
-    // Benchmark position from NOI/SF quartile this period.
+    // Benchmark position from NOI/SF quartile at the full-year `period` — ranks this property's
+    // full-year value against the cohort of OTHER properties' values AT THE SAME period (spec §9).
+    // rankProperties already excludes properties lacking that period and returns quartile:null for a
+    // low-confidence singleton cohort (n<2) — both map to the neutral benchmarkPosition (50).
     const ranking = rankProperties(metrics, period, 'noiPerSf');
     const myRank = ranking.find((r) => r.propertyId === propertyId);
     const quartile = myRank ? myRank.quartile : null;
@@ -144,10 +155,10 @@ export function scoreProperties(db: WarehouseDb, metrics: PeriodMetrics[]): Prop
       revenuePerSfGrowth: growthScore(revenuePerSfGrowth),
       noiGrowth: growthScore(noiGrowth),
       noiPerSfGrowth: growthScore(noiPerSfGrowth),
-      expenseEfficiency: efficiencyScore(latest.expenseRatio, expensePop),
-      taxEfficiency: efficiencyScore(latest.taxesPerSf, taxPop),
-      insuranceEfficiency: efficiencyScore(latest.insurancePerSf, insPop),
-      repairEfficiency: efficiencyScore(latest.repairsPerSf, repairPop),
+      expenseEfficiency: efficiencyScore(levelRow.expenseRatio, expensePop),
+      taxEfficiency: efficiencyScore(levelRow.taxesPerSf, taxPop),
+      insuranceEfficiency: efficiencyScore(levelRow.insurancePerSf, insPop),
+      repairEfficiency: efficiencyScore(levelRow.repairsPerSf, repairPop),
       marginStability,
       benchmarkPosition,
     };
@@ -208,7 +219,7 @@ export function scoreProperties(db: WarehouseDb, metrics: PeriodMetrics[]): Prop
 
     scores.push({
       propertyId,
-      propertyName: nameById.get(propertyId) ?? latest.propertyName,
+      propertyName: nameById.get(propertyId) ?? levelRow.propertyName,
       period,
       health: Math.round(health * 10) / 10,
       healthBand,
@@ -219,7 +230,7 @@ export function scoreProperties(db: WarehouseDb, metrics: PeriodMetrics[]): Prop
       reasons: buildReasons({
         healthBand, attentionBand, capitalAction, health,
         noiGrowth, quartile, flags, critical, high, moderate,
-        latest,
+        latest: levelRow,
       }),
     });
   }

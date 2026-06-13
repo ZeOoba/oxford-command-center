@@ -63,6 +63,34 @@ async function buildWarehouse(): Promise<{ db: WarehouseDb }> {
   return { db };
 }
 
+// CRITICAL 2 fixture (spec §9 residual): a KRG property (Rarig, 21000 SF) carries a TRAILING
+// 2026 YTD (≈half-year) on top of 2024 + 2025 full-year. Engineered so the YTD level and the
+// cross-grain growth point would corrupt the PM aggregate if used:
+//   2024 full-year noiPerSf = (rent 95000 − repair 5000)/21000 = 90000/21000 ≈ 4.286
+//   2025 full-year noiPerSf = (rent 131000 − repair 5000)/21000 = 126000/21000 = 6.0
+//   2026 YTD       noiPerSf = (rent 65500 − repair 2500)/21000  = 63000/21000  = 3.0  (half-year)
+// Real 2024→2025 NOI growth = (126000−90000)/90000 = +40%. The 2025→2026 point is cross-grain
+// (year→ytd) ⇒ noiGrowth null. Bug: pmScorecards uses sorted[last] (2026 YTD level 3.0) for
+// avgNoiPerSf and growth[last] (null) for avgNoiGrowth. Fixed: full-year level 6.0 + real +40%.
+async function buildWarehouseWithYtdPm(): Promise<{ db: WarehouseDb }> {
+  const dir = mkdtempSync(join(tmpdir(), 'whb-'));
+  const db = openWarehouse(join(dir, 'f.sqlite'));
+  seedPropertyMaster(db);
+  seedMappings(db, SEED);
+  const raw = join(dir, 'raw');
+  let t = 0;
+  const ingest = async (file: string, o: Parameters<typeof writeFixture>[1]): Promise<void> => {
+    await writeFixture(file, o);
+    const r = await ingestFile(db, file, { rawDir: raw, importedAt: `2026-06-12T00:00:${String(t++).padStart(2, '0')}Z` });
+    expect(r.status).toBe('committed');
+  };
+  // Rarig (KRG): 2024, 2025 full-year + 2026 YTD half-year.
+  await ingest(join(dir, 'P&L 2024 -- 1100 Rarig.xlsx'), { propertyLine: 'Property: 1100 Rarig Ave', periodLine: '01/01/24 - 12/31/24  (cash basis)', rent: 95000, repair: 5000 });
+  await ingest(join(dir, 'P&L 2025 -- 1100 Rarig.xlsx'), { propertyLine: 'Property: 1100 Rarig Ave', periodLine: '01/01/25 - 12/31/25  (cash basis)', rent: 131000, repair: 5000 });
+  await ingest(join(dir, 'P&L 2026 YTD -- 1100 Rarig.xlsx'), { propertyLine: 'Property: 1100 Rarig Ave', periodLine: '01/01/26 - 06/30/26  (cash basis)', rent: 65500, repair: 2500 });
+  return { db };
+}
+
 describe('benchmarks', () => {
   it('quantile (linear interpolation, sorted, null on empty)', () => {
     expect(quantile([1, 2, 3, 4], 0.5)).toBeCloseTo(2.5, 6);
@@ -141,5 +169,22 @@ describe('benchmarks', () => {
     expect(peak).toBeDefined();
     expect(peak.propertyCount).toBe(1);
     expect(peak.smallSample).toBe(true);
+  });
+
+  it('pmScorecards uses the FULL-YEAR level + real same-grain growth, not the trailing YTD (spec §9)', async () => {
+    const { db } = await buildWarehouseWithYtdPm();
+    const metrics = propertyPeriodMetrics(db);
+    const cards = pmScorecards(db, metrics);
+    const krg = cards.find((c) => c.propertyManager === 'Kohr Royer Griffith')!;
+    expect(krg).toBeDefined();
+    // Only Rarig has ledger data for KRG here ⇒ the PM average IS Rarig's value.
+    // avgNoiPerSf must be the 2025 FULL-YEAR level (6.0), NOT the 2026 YTD level (3.0).
+    expect(krg.avgNoiPerSf).toBeCloseTo(6.0, 6);
+    // avgNoiGrowth must be the real 2024→2025 growth (+40%), NOT the cross-grain null YTD point.
+    expect(krg.avgNoiGrowth).not.toBeNull();
+    expect(krg.avgNoiGrowth!).toBeCloseTo(0.40, 6);
+    // avgExpenseGrowth must also come from the same-grain transition (repairs flat ⇒ 0%).
+    expect(krg.avgExpenseGrowth).not.toBeNull();
+    expect(krg.avgExpenseGrowth!).toBeCloseTo(0, 6);
   });
 });
