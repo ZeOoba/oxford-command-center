@@ -103,4 +103,27 @@ describe('MarketModule — null DGS10 UI path', () => {
     expect(bodyText).toMatch(/4\.47/);
     expect(bodyText.toLowerCase()).not.toContain('null');
   });
+
+  it('treats the legacy 0-sentinel (stale baked macro.json from a pre-cure FRED outage) as missing — em-dash, no 0.00%, no 700-bps spread', () => {
+    // Defense-in-depth follow-up to the PFI Phase 1b root-cause cure. The cure made
+    // MacroIndicator.value nullable + finite at the contract layer, but the Cloudflare mirror
+    // can still serve a stale public/macro.json baked BEFORE the cure shipped, carrying DGS10
+    // = 0 with source='fred'. Without this MarketModule-side guard, the Acquisition Lens spread
+    // row would compute wtdCap * 100 - 0 ≈ +700 bps instead of the correct ~250 bps reading.
+    // Mirrors the agent-side `<= 0` belt-and-braces in summarizeMacro (server/ai/agent.ts).
+    const stale = macroWithNullDgs10();
+    stale.indicators = stale.indicators.map((i) => (i.id === 'DGS10' ? { ...i, value: 0 } : i));
+    const { container } = render(
+      <QueryClientProvider client={seededClient(stale)}>
+        <MarketModule />
+      </QueryClientProvider>,
+    );
+    const bodyText = container.textContent ?? '';
+    expect(bodyText).not.toMatch(/0\.00\s*%/); // no false 10Y reading
+    // The dashed 10Y short-circuits spread math (line 22 guard) — no '700' / '690' bps leak.
+    expect(bodyText).not.toMatch(/[67]\d{2}\s*bps/);
+    // Em-dash sentinel still present at the 10Y cell.
+    const dashNodes = screen.getAllByText(dashOnly);
+    expect(dashNodes.length).toBeGreaterThanOrEqual(2);
+  });
 });
