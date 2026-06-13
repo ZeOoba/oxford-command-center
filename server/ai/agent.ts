@@ -260,24 +260,38 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
   }
 }
 
-/** Compact macro payload for the agent: indicators (id + value + unit + change) and a 10Y trend
- *  digest (current / 12-month low / 12-month high) — not the raw history array. Numbers-first;
- *  mirrors the small-result convention every spine tool follows. */
-function summarizeMacro(m: MacroSnapshot): Record<string, unknown> {
+/** Compact macro payload for the agent. Exported for direct unit testing. Three correctness rules
+ *  earned from the get_macro adversarial pass:
+ *  (1) No orphan trend.current — the canonical current 10Y is `indicators.DGS10.value` at `asOf`.
+ *      Emitting a parallel undated 10Y from the history's tail let the model pick either, with no
+ *      tie-break, and Phase-2 refi-spread math went path-dependent.
+ *  (2) The 10Y trend window is DATE-driven: sort by date, take the last 12. Live FRED returns 13
+ *      monthly points at month boundaries; an array-position window mislabels low12mo/high12mo.
+ *  (3) When source='mock' (seeded fallback because FRED_API_KEY is unset) attach an explicit
+ *      `dataFreshness` instruction so the model surfaces the seeded caveat to the user — without
+ *      it the institutional 'numbers-first / no-hedging' register quotes seeded rates as current. */
+const TREND_WINDOW_MONTHS = 12;
+export function summarizeMacro(m: MacroSnapshot): Record<string, unknown> {
   const ind: Record<string, unknown> = {};
   for (const i of m.indicators) {
     ind[i.id] = { label: i.label, value: i.value, unit: i.unit, change: i.change };
   }
-  const trend: { current: number | null; low12mo: number | null; high12mo: number | null; n: number } = {
-    current: null, low12mo: null, high12mo: null, n: m.tenYearHistory.length,
+  // Window by date — never by array position. Sort ascending, take the last N, then reduce.
+  const sortedByDate = [...m.tenYearHistory].sort((a, b) => a.date.localeCompare(b.date));
+  const window = sortedByDate.slice(-TREND_WINDOW_MONTHS);
+  const values = window.map((h) => h.value).filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  const tenYearTrend: { windowMonths: number; n: number; endDate: string | null; low: number | null; high: number | null } = {
+    windowMonths: TREND_WINDOW_MONTHS,
+    n: window.length,
+    endDate: window.length ? window[window.length - 1]!.date : null,
+    low: values.length ? Math.min(...values) : null,
+    high: values.length ? Math.max(...values) : null,
   };
-  if (m.tenYearHistory.length) {
-    const values = m.tenYearHistory.map((h) => h.value).filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
-    if (values.length) {
-      trend.current = values[values.length - 1]!;
-      trend.low12mo = Math.min(...values);
-      trend.high12mo = Math.max(...values);
-    }
+  const payload: Record<string, unknown> = { asOf: m.asOf, source: m.source, indicators: ind, tenYearTrend };
+  if (m.source === 'mock') {
+    payload.dataFreshness =
+      `SEEDED — FRED_API_KEY not configured; values are a static snapshot as of ${m.asOf}. ` +
+      'Tell the user the live rate feed is offline before quoting any number.';
   }
-  return { asOf: m.asOf, source: m.source, indicators: ind, tenYearTrend: trend };
+  return payload;
 }

@@ -120,7 +120,7 @@ export const TOOL_DEFS = [
   },
   {
     name: 'get_macro',
-    description: 'Live macro rate environment from FRED — key US rates (10Y/2Y Treasury, SOFR, Fed Funds, CPI YoY) with current value + period change, plus a 12-month 10Y Treasury trend (low/high/current). Use for refi vs book-rate spread questions, cap-rate-vs-Treasury spread, and "what is the rate environment" framing. Returns the seeded snapshot when FRED_API_KEY is unset (source: mock) and "not available on this surface" on the static mirror.',
+    description: 'Live macro rate environment from FRED — key US rates (10Y/2Y Treasury, SOFR, Fed Funds, CPI YoY) with current value + period change, plus a 12-month 10Y Treasury trend (low/high, window-dated). Use for refi vs book-rate spread questions, cap-rate-vs-Treasury spread, and "what is the rate environment" framing. The CANONICAL current 10Y is `indicators.DGS10.value` at `asOf` — never quote `tenYearTrend.endDate`-windowed values as the current rate. If the result includes a `dataFreshness` field starting with "SEEDED" (FRED_API_KEY unset), you MUST tell the user the live rate feed is offline before quoting any number — the rates are a static snapshot, not current. Returns "not available on this surface" on the static mirror.',
     input_schema: { type: 'object', properties: {}, additionalProperties: false },
   },
 ] as const;

@@ -17,8 +17,23 @@ Unblocks the Phase-2 debt/refi narrative.
 - `server/index.ts` wires `macroProvider: getMacro` at the `runAgent` call (one-line addition).
   The Cloudflare Pages Function is intentionally NOT wired — the static mirror keeps the stub
   (no FRED secret on the mirror; safe-by-construction).
-- Tests: a TOOL_DEFS + stub assertion, and an end-to-end SSE mock that proves the injected
-  provider is called and its live snapshot is fed back to the model as the `tool_result`.
+- `summarizeMacro()` payload hardened from the adversarial pass (3 real defects fixed before
+  commit): (1) **no orphan `tenYearTrend.current`** — the canonical current 10Y is
+  `indicators.DGS10.value` at `asOf`, never a parallel undated value from the history's tail
+  (the prior shape had 4.47 vs 4.48 with no tie-break, and refi-spread math went path-dependent);
+  (2) the 10Y trend window is **date-driven** — sorted by date and sliced to the last 12, so a
+  live FRED return of 13 points (month-boundary publication) or an out-of-order history can't
+  mislabel `low12mo`/`high12mo`; the field is now `tenYearTrend = {windowMonths, n, endDate, low,
+  high}` with the window explicit; (3) when `source === 'mock'` the payload emits a top-level
+  `dataFreshness: 'SEEDED — …'` instruction, and the tool description tells the model it MUST
+  surface that caveat before quoting any number — without it the institutional "numbers-first /
+  no-hedging" register would quote a frozen seeded snapshot as the current rate (the exact
+  misread-as-live failure that would corrupt Phase-2 refi narrative).
+- Tests: a TOOL_DEFS + stub assertion; an end-to-end SSE mock that proves the injected provider
+  is called and its live snapshot is fed back to the model as the `tool_result`; and seven
+  focused unit tests over `summarizeMacro` pinning each of the three fixes (orphan-current
+  removed, date-windowed trend, off-by-13 prevention, out-of-order safety, SEEDED caveat,
+  5-indicator regression, null-safety).
 
 ## PFI Phase 1a.2 — surface the cross-basis benchmark warning in the UI (2026-06-13)
 

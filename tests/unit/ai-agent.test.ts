@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import { TOOL_DEFS, runTool } from '../../server/ai/tools';
-import { runAgent, type AgentEvent } from '../../server/ai/agent';
+import { runAgent, summarizeMacro, type AgentEvent } from '../../server/ai/agent';
+import type { MacroSnapshot } from '../../src/contracts/index';
 
 function makeSnap(): PortfolioSnapshot {
   const snap = {
@@ -75,6 +76,124 @@ describe('tool definitions + executors', () => {
 function sse(...frames: object[]): string {
   return frames.map((f) => `event: x\ndata: ${JSON.stringify(f)}\n\n`).join('');
 }
+
+describe('summarizeMacro (get_macro agent payload — Phase-2 refi narrative input)', () => {
+  // Production-shape snapshot — 5 indicators, 12-point history (matches getMacro.ts seeded()).
+  const seeded = (source: 'mock' | 'fred' = 'fred'): MacroSnapshot => ({
+    asOf: '2026-06-01',
+    source,
+    indicators: [
+      { id: 'DGS10', label: '10Y Treasury', value: 4.47, unit: '%', change: -0.01 },
+      { id: 'DGS2', label: '2Y Treasury', value: 4.05, unit: '%', change: null },
+      { id: 'SOFR', label: 'SOFR', value: 3.63, unit: '%', change: null },
+      { id: 'FEDFUNDS', label: 'Fed Funds (effective)', value: 3.63, unit: '%', change: null },
+      { id: 'CPIAUCSL', label: 'CPI (YoY)', value: 3.8, unit: '%', change: null },
+    ],
+    tenYearHistory: [
+      { date: '2025-06-01', value: 4.38 }, { date: '2025-07-01', value: 4.39 }, { date: '2025-08-01', value: 4.26 },
+      { date: '2025-09-01', value: 4.12 }, { date: '2025-10-01', value: 4.06 }, { date: '2025-11-01', value: 4.09 },
+      { date: '2025-12-01', value: 4.14 }, { date: '2026-01-01', value: 4.21 }, { date: '2026-02-01', value: 4.13 },
+      { date: '2026-03-01', value: 4.25 }, { date: '2026-04-01', value: 4.32 }, { date: '2026-05-01', value: 4.48 },
+    ],
+  });
+
+  it('removes the orphan tenYearTrend.current — the canonical current 10Y comes from indicators.DGS10 only (one dated current, never two)', () => {
+    // Adversarial finding (correctness/medium): the prior shape emitted trend.current (= 4.48 from
+    // May-2026 history) alongside indicators.DGS10.value (= 4.47 sampled at asOf 2026-06-01). The
+    // model received TWO 'current 10Y' figures, no rule to choose, and refi spread math went
+    // path-dependent (37 vs 38 bps over a 4.10% book rate). Fix: drop trend.current entirely.
+    const p = summarizeMacro(seeded()) as { tenYearTrend: Record<string, unknown> };
+    expect(p.tenYearTrend).not.toHaveProperty('current');
+  });
+
+  it('attaches an explicit windowMonths + endDate to the 10Y trend (window is data-driven, never an unlabelled magic constant)', () => {
+    const p = summarizeMacro(seeded()) as { tenYearTrend: { windowMonths: number; endDate: string; low: number; high: number; n: number } };
+    expect(p.tenYearTrend.windowMonths).toBe(12);
+    expect(p.tenYearTrend.endDate).toBe('2026-05-01');
+    expect(p.tenYearTrend.n).toBe(12);
+    expect(p.tenYearTrend.low).toBeCloseTo(4.06, 6);
+    expect(p.tenYearTrend.high).toBeCloseTo(4.48, 6);
+  });
+
+  it('slices to the last 12 by date when the provider returns 13 (live FRED at a month-boundary publication) — no off-by-one window mislabel', () => {
+    // Adversarial finding (correctness/low): server/macro/fred.ts requests limit=13. Once the
+    // 13th month publishes, naive Math.min/max over all returned values describes 13 months but
+    // the field name says 12. Fix: slice to last 12 by date.
+    const m = seeded();
+    // Prepend a 13th, earlier point. The window must EXCLUDE this and report exactly the last 12.
+    m.tenYearHistory = [{ date: '2025-05-01', value: 9.99 }, ...m.tenYearHistory];
+    const p = summarizeMacro(m) as { tenYearTrend: { n: number; low: number; high: number; endDate: string } };
+    expect(p.tenYearTrend.n).toBe(12);
+    expect(p.tenYearTrend.endDate).toBe('2026-05-01');
+    expect(p.tenYearTrend.high).toBeLessThan(9); // the 9.99 outlier must NOT pollute the window
+    expect(p.tenYearTrend.low).toBeCloseTo(4.06, 6);
+    expect(p.tenYearTrend.high).toBeCloseTo(4.48, 6);
+  });
+
+  it('picks the trend window by DATE (not array position) — an out-of-order history cannot mislabel the window endDate', () => {
+    // Latent footgun (correctness): values[length-1] assumed ascending input. The MacroSeriesPoint
+    // contract doesn't enforce ordering; a non-FRED provider could ship out-of-order points and
+    // silently corrupt endDate / current. Fix: sort by date before slicing.
+    const m = seeded();
+    m.tenYearHistory = [...m.tenYearHistory].reverse();
+    const p = summarizeMacro(m) as { tenYearTrend: { endDate: string; n: number } };
+    expect(p.tenYearTrend.endDate).toBe('2026-05-01');
+    expect(p.tenYearTrend.n).toBe(12);
+  });
+
+  it('adds a dataFreshness SEEDED caveat when source=mock so the model cannot misread the seeded snapshot as live (Phase-2 refi misread guard)', () => {
+    // Adversarial finding (dispatch/medium): without FRED_API_KEY, getMacro returns the hand-seeded
+    // snapshot. The model saw source:'mock' but no instruction forced disclosure — refi answers
+    // would quote a frozen May-2026 reading as 'current'. Fix: emit dataFreshness with explicit
+    // instruction text the model can echo to the user.
+    const mock = summarizeMacro(seeded('mock')) as { dataFreshness?: string };
+    expect(mock.dataFreshness).toBeDefined();
+    expect(mock.dataFreshness).toMatch(/SEEDED/);
+    expect(mock.dataFreshness).toMatch(/live.*offline|feed is offline/i);
+    const live = summarizeMacro(seeded('fred')) as { dataFreshness?: string };
+    expect(live.dataFreshness).toBeUndefined(); // live FRED carries no caveat
+  });
+
+  it('still preserves the full 5-indicator production shape (regression cover)', () => {
+    const p = summarizeMacro(seeded()) as { indicators: Record<string, { value: number }> };
+    expect(Object.keys(p.indicators).sort()).toEqual(['CPIAUCSL', 'DGS10', 'DGS2', 'FEDFUNDS', 'SOFR']);
+    expect(p.indicators.DGS10!.value).toBe(4.47);
+  });
+
+  it('guards the canonical 10Y when fred.ts coalesces a missing observation to 0 — flags dataQuality + fallback from the trend endpoint (rate-feed safety)', () => {
+    // Adversarial finding (fix-pass medium): fred.ts:49 `value ?? 0` silently coerces a missing
+    // FRED observation to 0. With trend.current removed, the model was left to confidently quote
+    // 'indicators.DGS10.value' = 0% as the canonical current 10Y. Defense-in-depth: when DGS10 is
+    // missing or non-positive (a 10Y rate cannot be ≤ 0), attach a dataQuality flag and a dated
+    // `currentTenYFallback` from the most recent finite trend point — the model has a labeled
+    // alternative and a clear instruction to caveat. Root cause (fred.ts + contract) tracked separately.
+    const m = seeded('fred');
+    m.indicators = m.indicators.map((i) => (i.id === 'DGS10' ? { ...i, value: 0 } : i)); // upstream coalesce
+    const p = summarizeMacro(m) as { dataQuality?: string; currentTenYFallback?: { value: number; date: string } };
+    expect(p.dataQuality).toBeDefined();
+    expect(p.dataQuality).toMatch(/DGS10/);
+    expect(p.dataQuality).toMatch(/degraded|missing|fallback/i);
+    expect(p.currentTenYFallback).toBeDefined();
+    expect(p.currentTenYFallback!.value).toBeCloseTo(4.48, 6); // most recent finite point in the window
+    expect(p.currentTenYFallback!.date).toBe('2026-05-01');
+  });
+
+  it('does NOT flag dataQuality when DGS10 reports a real positive rate (the common live case)', () => {
+    const p = summarizeMacro(seeded('fred')) as { dataQuality?: string; currentTenYFallback?: unknown };
+    expect(p.dataQuality).toBeUndefined();
+    expect(p.currentTenYFallback).toBeUndefined();
+  });
+
+  it('is null-safe on an empty history (no Infinity leak)', () => {
+    const m = seeded();
+    m.tenYearHistory = [];
+    const p = summarizeMacro(m) as { tenYearTrend: { n: number; low: number | null; high: number | null; endDate: string | null } };
+    expect(p.tenYearTrend.n).toBe(0);
+    expect(p.tenYearTrend.low).toBeNull();
+    expect(p.tenYearTrend.high).toBeNull();
+    expect(p.tenYearTrend.endDate).toBeNull();
+  });
+});
 
 describe('runAgent — streaming tool loop', () => {
   it('with no key, falls back to the deterministic responder and emits text + done', async () => {
