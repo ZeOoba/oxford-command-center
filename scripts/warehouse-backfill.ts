@@ -5,6 +5,7 @@ import { openWarehouse } from '../server/warehouse/db';
 import { ingestFile } from '../server/warehouse/ingest';
 import { seedMappingsFromFile } from '../server/warehouse/mapping';
 import { seedPropertyMaster } from '../server/warehouse/property-master';
+import { NOI_INCOME_CLASSES } from '../src/contracts/warehouse';
 
 const FINANCIALS_DIR = process.env.FINANCIALS_DIR
   ?? 'C:/Users/Owner/OneDrive - Oxford Capital Partners (1)/Property Financials';
@@ -36,13 +37,16 @@ async function main(): Promise<void> {
   }
   console.log('\nSummary:', JSON.stringify(counts));
 
+  // NOI matrix: income classes from the contract (NOI_INCOME_CLASSES); opex is the single fixed
+  // negative pivot. Bound as parameters so this list can never drift from queries.ts / NOI_CLASSES.
+  const incomePlaceholders = NOI_INCOME_CLASSES.map(() => '?').join(',');
   const noi = db.prepare(`
     SELECT property_id, period,
-      ROUND(SUM(CASE WHEN classification IN ('revenue','recovery','other-income') THEN amount
+      ROUND(SUM(CASE WHEN classification IN (${incomePlaceholders}) THEN amount
                      WHEN classification='opex' THEN -amount ELSE 0 END), 2) AS noi
     FROM ledger_entries WHERE is_active = 1
     GROUP BY property_id, period ORDER BY property_id, period
-  `).all();
+  `).all(...NOI_INCOME_CLASSES);
   console.table(noi);
   db.close();
 }

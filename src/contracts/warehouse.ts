@@ -10,6 +10,26 @@ export type Classification = z.infer<typeof Classification>;
 /** Classes whose active ledger rows participate in NOI: revenue + recovery + other-income − opex. */
 export const NOI_CLASSES = ['revenue', 'recovery', 'other-income', 'opex'] as const;
 
+/**
+ * Income classes — the positive NOI contributors (NOI_CLASSES minus opex). Derived from NOI_CLASSES
+ * so that adding/removing an income member there propagates to every PRODUCTION codepath (queries.ts
+ * noiMatrix, metrics.ts propertyPeriodMetrics, mapping.ts classificationSide, and the warehouse CLIs)
+ * WITHOUT re-listing string literals that silently drift. Single source of truth for "which classes
+ * are NOI income." (Test oracles in warehouse-ingest.test.ts deliberately keep the literal so they
+ * remain an INDEPENDENT check on this derivation — see the comments there.)
+ */
+export const NOI_INCOME_CLASSES = NOI_CLASSES.filter((c) => c !== 'opex');
+
+/** True when a ledger classification is an NOI income (positive) contributor. */
+export function isNoiIncomeClass(c: string): boolean {
+  return (NOI_INCOME_CLASSES as readonly string[]).includes(c);
+}
+
+/** True when a ledger classification is the NOI opex (negative) contributor. */
+export function isOpex(c: string): boolean {
+  return c === 'opex';
+}
+
 export const Basis = z.enum(['cash', 'accrual', 'tax', 'unknown']);
 export const SourceSystem = z.enum(['quickbooks', 'yardi', 'rent-manager', 'appfolio', 'unknown']);
 export const PeriodGrain = z.enum(['month', 'year', 'ytd']);

@@ -197,6 +197,7 @@ app.post('/api/ai', (c) =>
       effort: process.env.ANTHROPIC_EFFORT as 'low' | 'medium' | 'high' | 'max' | undefined,
       signal: ac.signal,
       docSearch: searchDocuments,
+      macroProvider: getMacro,
       emit: async (e) => {
         await stream.writeSSE({ event: e.type, data: JSON.stringify(e) });
       },

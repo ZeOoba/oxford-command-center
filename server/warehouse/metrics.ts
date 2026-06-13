@@ -1,4 +1,5 @@
 // server/warehouse/metrics.ts
+import { isNoiIncomeClass, isOpex } from '../../src/contracts/warehouse';
 import type { WarehouseDb } from './db';
 
 export interface PeriodMetrics {
@@ -6,6 +7,7 @@ export interface PeriodMetrics {
   propertyName: string | null;
   period: string;            // 'YYYY'
   grainHint: string | null;  // from the import (year|ytd) — for comparability
+  basis: string;             // accounting basis from the import (cash|accrual|tax|unknown) — comparisons must not mix bases
   rentableSf: number | null;
   ownershipPct: number;
   revenue: number;           // revenue + recovery + other-income (gross income, 100%-basis)
@@ -25,7 +27,43 @@ export interface PeriodMetrics {
 
 interface Row { propertyId: string; propertyName: string | null; period: string;
   classification: string; normalizedCategory: string; amount: number;
-  rentableSf: number | null; ownershipPct: number; grainHint: string | null; }
+  rentableSf: number | null; ownershipPct: number; grainHint: string | null; basis: string | null;
+  importId: number; periodEnd: string | null; }
+
+/**
+ * A (propertyId, period) group can contain rows from MORE THAN ONE active import when a full-year
+ * and a same-year YTD coexist (same ledger period 'YYYY', different period_end ⇒ neither supersedes
+ * the other). Summing both double-counts NOI and makes basis/grainHint an arbitrary-row pick. Resolve
+ * to ONE coherent batch deterministically: full-year beats YTD beats other; then latest period_end;
+ * then latest import. Single-batch groups (the common case) pass through unchanged.
+ */
+export function selectCoherentBatch(group: Row[]): Row[] {
+  const byImport = new Map<number, Row[]>();
+  for (const r of group) {
+    const arr = byImport.get(r.importId) ?? [];
+    arr.push(r);
+    byImport.set(r.importId, arr);
+  }
+  if (byImport.size <= 1) return group;
+  const grainRank = (g: string | null) => (g === 'year' ? 2 : g === 'ytd' ? 1 : 0);
+  // Resolve by a SINGLE TOTAL ORDER (transitive — a pairwise rule that switched between period_end
+  // and importId depending on null-ness was intransitive and made the winner depend on row order):
+  //   max by [grainRank, endKey, importId], all DESC.
+  // endKey: a null period_end = UNKNOWN scope (header-parse miss). It must not be demoted below a
+  // dated partial (that silently understated NOI), so null sorts as the MOST-RECENT end ('￿' >
+  // any ISO date) — a parse-miss restatement wins its grain; dated ends order by recency; ties on
+  // end break by latest import. full-year (higher grain) always beats a same-year YTD regardless.
+  const endKey = (e: string | null) => e ?? '￿';
+  const batches = [...byImport.values()];
+  batches.sort((x, y) => {
+    const a = x[0]!, b = y[0]!;
+    if (grainRank(a.grainHint) !== grainRank(b.grainHint)) return grainRank(b.grainHint) - grainRank(a.grainHint);
+    const ea = endKey(a.periodEnd), eb = endKey(b.periodEnd);
+    if (ea !== eb) return ea < eb ? 1 : -1;
+    return b.importId - a.importId;
+  });
+  return batches[0]!;
+}
 
 /**
  * The latest period for one property's metrics whose grain is a FULL YEAR (grainHint === 'year').
@@ -48,7 +86,10 @@ export function propertyPeriodMetrics(db: WarehouseDb): PeriodMetrics[] {
     SELECT l.property_id AS propertyId, p.name AS propertyName, l.period,
            l.classification, l.normalized_category AS normalizedCategory, l.amount,
            p.rentable_sf AS rentableSf, COALESCE(p.ownership_pct, 1) AS ownershipPct,
-           (SELECT b.period_grain FROM import_batches b WHERE b.id = l.import_id) AS grainHint
+           (SELECT b.period_grain FROM import_batches b WHERE b.id = l.import_id) AS grainHint,
+           (SELECT b.basis FROM import_batches b WHERE b.id = l.import_id) AS basis,
+           l.import_id AS importId,
+           (SELECT b.period_end FROM import_batches b WHERE b.id = l.import_id) AS periodEnd
     FROM ledger_entries l LEFT JOIN property_master p ON p.id = l.property_id
     WHERE l.is_active = 1
     ORDER BY l.property_id, l.period
@@ -61,29 +102,36 @@ export function propertyPeriodMetrics(db: WarehouseDb): PeriodMetrics[] {
   }
   const perSf = (v: number, sf: number | null) => (sf && sf > 0 ? v / sf : null);
   const out: PeriodMetrics[] = [];
-  for (const g of groups.values()) {
+  for (const groupRows of groups.values()) {
+    const g = selectCoherentBatch(groupRows);
     const head = g[0]!;
     let revenue = 0, opex = 0, capex = 0, ti = 0, leasing = 0;
     const categories: Record<string, number> = {};
     const revenueCategories: Record<string, number> = {};
     for (const r of g) {
-      switch (r.classification) {
-        case 'revenue': case 'recovery': case 'other-income':
-          revenue += r.amount;
-          revenueCategories[r.normalizedCategory] = (revenueCategories[r.normalizedCategory] ?? 0) + r.amount;
-          break;
-        case 'opex': opex += r.amount; categories[r.normalizedCategory] = (categories[r.normalizedCategory] ?? 0) + r.amount; break;
-        case 'capex': capex += r.amount; break;
-        case 'ti': ti += r.amount; break;
-        case 'leasing': leasing += r.amount; break;
-        default: break; // excluded / debt-service
+      // NOI membership (income vs opex) comes from the contract (isNoiIncomeClass / isOpex) so it can
+      // never drift from queries.ts / NOI_CLASSES. capex/ti/leasing are tracked but never in NOI.
+      const cls = r.classification;
+      if (isNoiIncomeClass(cls)) {
+        revenue += r.amount;
+        revenueCategories[r.normalizedCategory] = (revenueCategories[r.normalizedCategory] ?? 0) + r.amount;
+      } else if (isOpex(cls)) {
+        opex += r.amount;
+        categories[r.normalizedCategory] = (categories[r.normalizedCategory] ?? 0) + r.amount;
+      } else if (cls === 'capex') {
+        capex += r.amount;
+      } else if (cls === 'ti') {
+        ti += r.amount;
+      } else if (cls === 'leasing') {
+        leasing += r.amount;
       }
+      // else: excluded / debt-service — not in NOI, tracked nowhere here
     }
     const noi = revenue - opex;
     const sf = head.rentableSf;
     out.push({
       propertyId: head.propertyId, propertyName: head.propertyName, period: head.period,
-      grainHint: head.grainHint, rentableSf: sf, ownershipPct: head.ownershipPct,
+      grainHint: head.grainHint, basis: head.basis ?? 'unknown', rentableSf: sf, ownershipPct: head.ownershipPct,
       revenue, opex, noi,
       noiMargin: revenue !== 0 ? noi / revenue : null,
       expenseRatio: revenue !== 0 ? opex / revenue : null,
