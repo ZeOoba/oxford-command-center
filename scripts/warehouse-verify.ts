@@ -29,11 +29,20 @@ const FINANCIALS_DIR = process.env.FINANCIALS_DIR
 const SEED_PATH = join(process.cwd(), 'docs', 'superpowers', 'specs', '2026-06-12-pfi-account-mapping-seed.json');
 const MIN_COMMITTED = 32;
 const INCOME_TIE_TOLERANCE = 1; // dollars
-// Current known QB period-header basis parse-gap (8/32). An unknown-basis property is benchmarked
-// against NO same-basis peers by scores.ts G3 (it treats 'unknown' as non-comparable), so its NOI/SF
-// benchmark position falls to neutral. This ratchet fails the gate if the gap WORSENS; drive it toward
-// 0 by improving the period-header basis parser and lower this baseline as it does.
-const MAX_UNKNOWN_BASIS = 8;
+// Residual basis-parse gap (6/32). An unknown-basis property is benchmarked against NO same-basis
+// peers by scores.ts G3 (it treats 'unknown' as non-comparable), so its NOI/SF benchmark position
+// falls to neutral. This ratchet fails the gate if the gap WORSENS; lower the baseline as it shrinks.
+//
+// The remaining 6 are the label-less QB Desktop "Jan - Dec 24" stripped exports (1851 South Club Solar
+// ×3, 55 New Plant EGFLLC ×3): they carry NO accounting-basis token anywhere in the file — this absent
+// token is the sole load-bearing reason for all 6, so they are NOT safely cash-by-convention. (55 New
+// Plant 2024 also contains non-cash items, corroborating that file; the others have no such signal.)
+// — defaulting them to cash would mis-benchmark an accrual/tax-basis entity against the cash cohort and
+// corrupt the capital-allocation signal. Leaving them 'unknown' (a neutral G3 benchmark) is the correct
+// conservative call. Closing this further needs an out-of-file basis source (the firm's books / Master
+// Workbook), not a parser change. (The 2 AppFolio "Cash Flow" Northwood imports were recovered to cash:
+// AppFolio encodes basis in the report TYPE, now read by qb-excel.ts.)
+const MAX_UNKNOWN_BASIS = 6;
 
 interface CommittedImport {
   id: number;

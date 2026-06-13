@@ -391,6 +391,19 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
   // AppFolio exports carry the roster in "Properties:" (no "Property:" line).
   if (!propertyRaw && propertiesRaw) propertyRaw = propertiesRaw;
 
+  // AppFolio carries NO in-sheet "(cash basis)" token like QB does — the report TYPE is
+  // the basis signal. An AppFolio "Cash Flow" statement is a cash-basis operating report
+  // by definition (its lines are cash receipts/disbursements). Fill a still-unknown basis
+  // from that report type ONLY: an AppFolio "Income Statement" (accrual-capable) stays
+  // unknown, and Yardi already sets basis from "Book =". firstRowText holds row 1 — the
+  // report-type title ("Cash Flow", repeated across the merged metadata span). The helper
+  // arg widens firstRowText back to string|null (same callback-assignment CFA workaround
+  // as endsMidYear below).
+  const titleIsCashFlow = (t: string | null): boolean => t !== null && /^cash flow\s*$/i.test(t.trim());
+  if (basis === 'unknown' && appfolioHeaders && titleIsCashFlow(firstRowText)) {
+    basis = 'cash';
+  }
+
   // YTD if the period ends mid-year; a full year ends on month-day 12-31.
   // (helper defeats TS narrowing — periodEnd is assigned inside the eachRow callback)
   const endsMidYear = (end: string | null): boolean => end !== null && end.slice(5) !== '12-31';
