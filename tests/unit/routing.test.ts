@@ -1,18 +1,19 @@
 import { describe, it, expect } from 'vitest';
-import { parseRoute, entityPath, HOME_MODULE, MODULE_PRIMARY_TYPE } from '../../src/brain/routing';
+import { parseRoute, entityPath, intelPropertyPath, HOME_MODULE, MODULE_PRIMARY_TYPE } from '../../src/brain/routing';
 import type { EntityType } from '../../src/brain/ui-context';
 
 const MODS = ['overview', 'pipeline', 'tasks', 'portfolio', 'leases', 'debt', 'cash', 'insurance', 'market', 'relationships'];
+const MODS_INTEL = [...MODS, 'intel'];
 
 describe('parseRoute', () => {
   it('resolves a bare/unknown path to overview (known=false)', () => {
-    expect(parseRoute('/', MODS)).toEqual({ moduleId: 'overview', known: false, selected: null });
+    expect(parseRoute('/', MODS)).toEqual({ moduleId: 'overview', known: false, selected: null, intelPropertyId: null });
     expect(parseRoute('/nope', MODS).known).toBe(false);
     expect(parseRoute('/nope', MODS).moduleId).toBe('overview');
   });
 
   it('resolves a module path with no entity', () => {
-    expect(parseRoute('/debt', MODS)).toEqual({ moduleId: 'debt', known: true, selected: null });
+    expect(parseRoute('/debt', MODS)).toEqual({ moduleId: 'debt', known: true, selected: null, intelPropertyId: null });
   });
 
   it('resolves a deep-linked entity to a typed selection (drawer)', () => {
@@ -20,6 +21,7 @@ describe('parseRoute', () => {
       moduleId: 'portfolio',
       known: true,
       selected: { type: 'property', id: '9050-red-branch' },
+      intelPropertyId: null,
     });
     expect(parseRoute('/debt/borrower-restoration', MODS).selected).toEqual({ type: 'loan', id: 'borrower-restoration' });
     expect(parseRoute('/relationships/cp-tamara-lucas', MODS).selected).toEqual({ type: 'counterparty', id: 'cp-tamara-lucas' });
@@ -33,6 +35,35 @@ describe('parseRoute', () => {
   it('round-trips id encoding', () => {
     const r = parseRoute('/leases/3540%20e%205th', MODS);
     expect(r.selected).toEqual({ type: 'lease', id: '3540 e 5th' });
+  });
+});
+
+describe('parseRoute — intel deep-linking (additive, distinct from the global drawer)', () => {
+  it('reads /intel/:propertyId into intelPropertyId WITHOUT opening the drawer', () => {
+    const r = parseRoute('/intel/9050-red-branch', MODS_INTEL);
+    expect(r.moduleId).toBe('intel');
+    expect(r.known).toBe(true);
+    expect(r.selected).toBeNull(); // intel has no MODULE_PRIMARY_TYPE → the global EntityDrawer stays closed
+    expect(r.intelPropertyId).toBe('9050-red-branch');
+  });
+
+  it('has a null intelPropertyId for bare /intel and for non-intel modules', () => {
+    expect(parseRoute('/intel', MODS_INTEL).intelPropertyId).toBeNull();
+    // /portfolio/:id still opens the drawer and never sets intelPropertyId
+    const p = parseRoute('/portfolio/9050-red-branch', MODS_INTEL);
+    expect(p.intelPropertyId).toBeNull();
+    expect(p.selected).toEqual({ type: 'property', id: '9050-red-branch' });
+  });
+
+  it('round-trips id encoding for the intel deep link', () => {
+    expect(parseRoute('/intel/3540%20e%205th', MODS_INTEL).intelPropertyId).toBe('3540 e 5th');
+  });
+});
+
+describe('intelPropertyPath', () => {
+  it('builds an encoded, shareable intel path (distinct from entityPath/portfolio)', () => {
+    expect(intelPropertyPath('9050-red-branch')).toBe('/intel/9050-red-branch');
+    expect(intelPropertyPath('3540 e 5th')).toBe('/intel/3540%20e%205th');
   });
 });
 
