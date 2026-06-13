@@ -63,9 +63,22 @@ function stableStringify(v: unknown): string {
   const keys = Object.keys(v as Record<string, unknown>).sort();
   return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify((v as Record<string, unknown>)[k])}`).join(',')}}`;
 }
-export function computeInputsVersion(input: AcquisitionInput, ruleset: AcquisitionRuleset, rctVersion = 'rct-v0'): string {
+/** Canonicalize ddKnown's .partial() shape to the four booleans the engine actually reads (absent ≡ false). */
+function canonicalDd(dd: AcquisitionInput['ddKnown']): Record<string, boolean> {
+  return {
+    flood: dd.flood === true,
+    zoning: dd.zoning === true,
+    roof: dd.roof === true,
+    'deferred-maintenance-capex': dd['deferred-maintenance-capex'] === true,
+  };
+}
+export function computeInputsVersion(rawInput: AcquisitionInput, ruleset: AcquisitionRuleset, rctVersion = 'rct-v0'): string {
+  const input = AcquisitionInput.parse(rawInput); // apply defaults → canonical form
+  // ddKnown is .partial(): an ABSENT key and an explicit false are decision-identical (engine reads `!== true`),
+  // so canonicalize to the four booleans — otherwise logically-identical deals hash differently. (Refute fix.)
+  const canonicalInput = { ...input, ddKnown: canonicalDd(input.ddKnown) };
   const canonical = stableStringify({
-    input,
+    input: canonicalInput,
     rulesetVersion: ruleset.rulesetVersion,
     ratification: ruleset.ratification,
     rctVersion,
@@ -196,6 +209,19 @@ export function scoreAcquisition(
     gates.push({ id: 'other-use', passed, detail: bits.length ? bits.join('; ') : 'no disqualifying use' });
   }
   const gatesPassed = gates.every((g) => g.passed);
+  // A gate that "passed" only because a KILL-determining input was UNKNOWN is NOT a confirmed pass.
+  // Symmetric to floorIndeterminate (STAGE 1): missing hard-KILL knowledge must cap the verdict at T2 —
+  // an unverified multi-story / no-access / sub-12' / oversized deal must never reach PURSUE just because
+  // the disqualifying fact is unknown at screen time. (Adversarial refute finding, 2026-06-13.)
+  const accessConfirmedGood = input.hasDriveIn === true || input.hasDock === true;
+  const accessConfirmedKill = input.hasDriveIn === false && input.hasDock === false;
+  const gateIndeterminate =
+    input.productType === null ||
+    input.price === null || input.maxBuildingSf === null ||
+    input.clusterTier === null ||
+    input.clearHeightFt === null || input.multiStory === null ||
+    (!accessConfirmedGood && !accessConfirmedKill) ||
+    input.sfhaOnPad === null;
 
   // ── STAGE 1 — FLOORS ──
   const floors: FloorResult[] = [];
@@ -237,7 +263,7 @@ export function scoreAcquisition(
   if (s3.clearHeightBands === null) { incompleteRuleset = true; flag('clearHeightBands', 'SKILL.md:52-57 clear-height cutoffs pending — clear-height sub-score indeterminate'); }
   else if (input.clearHeightFt === null) { flag('clearHeightFt', 'clear height unknown'); }
   else {
-    const bands = [...s3.clearHeightBands].sort((a, b) => a.maxSf - b.maxSf);
+    const bands = [...s3.clearHeightBands].sort((a, b) => a.maxSf - b.maxSf || a.idealClearFt - b.idealClearFt);
     const sf = input.maxBuildingSf ?? 0;
     const band = bands.find((b) => sf <= b.maxSf) ?? bands[bands.length - 1];
     const ideal = band ? band.idealClearFt : ruleset.gates.physical.minClearHeightFt;
@@ -267,16 +293,21 @@ export function scoreAcquisition(
   const tierPts = tier === null ? 0 : tierBase(ruleset, tier);
   if (tier === null) flag('clusterTier', 'cluster tier unknown — market base 0');
   const fresh = isFresh(input.compSourcedAt, input.asAtUtc, ruleset.freshness.marketFundamentalsWindowDays);
-  let estimatedAdjPts = 0; // the portion of Cat4 that rides on ESTIMATED market data (Q3)
   let adjPts = 0;
+  let estimatedAdjRaw = 0; // raw estimated ± before Cat4 clamping
   if (input.marketFundamentalsAdj !== null && input.marketFundamentalsConfidence !== null) {
-    if (!fresh) flag('marketFundamentalsAdj', `market fundamentals stale (> ${ruleset.freshness.marketFundamentalsWindowDays}d) — ± defaulted to 0`);
+    if (!fresh) flag('marketFundamentalsAdj', `market fundamentals stale or freshness unverifiable (no asAtUtc / > ${ruleset.freshness.marketFundamentalsWindowDays}d) — ± defaulted to 0`);
     else {
       adjPts = input.marketFundamentalsAdj * ruleset.scoring.cat4.fundamentalsAdjustMax;
-      if (input.marketFundamentalsConfidence !== 'confirmed') estimatedAdjPts = adjPts;
+      if (input.marketFundamentalsConfidence !== 'confirmed') estimatedAdjRaw = adjPts;
     }
   }
   const cat4 = clamp(tierPts + adjPts, 0, cap('market-location'));
+  // Q3 must subtract only the REALIZED estimated contribution. When the tier is already at the Cat4 cap the
+  // estimated ± is clamped out and contributes 0 — subtracting its raw value would wrongly demote a deal
+  // carried entirely by confirmed adjacency. (Refute fix.)
+  const cat4NoEstimated = clamp(tierPts + (adjPts - estimatedAdjRaw), 0, cap('market-location'));
+  const estimatedAdjPts = round1(cat4 - cat4NoEstimated);
   // Cat 5 Seller / Motivation
   const cat5 = input.sellerMotivationScore === null ? 0 : clamp(input.sellerMotivationScore * cap('seller-motivation'), 0, cap('seller-motivation'));
   if (input.sellerMotivationScore === null) flag('sellerMotivationScore', 'seller motivation not scored — 0');
@@ -309,8 +340,10 @@ export function scoreAcquisition(
     mkSub('market', cat4, cap('market-location'), marketConfidence),
     mkSub('risk', cat5 + cat6, cap('seller-motivation') + cap('tenancy-lease'), riskInputsKnown ? 'confirmed' : 'estimated'),
   ];
-  const composite = clamp(round1(cat1 + cat2 + cat3 + cat4 + cat5 + cat6 + cat7), 0, 100);
-  const confirmedComposite = composite - estimatedAdjPts; // Q3: composite with the estimated market ± removed
+  // §2 identity: the composite IS the sum of the (rounded) sub-scores the UI displays — not a separately
+  // rounded sum of raw categories (which can differ by 0.1 and break reconciliation). (Refute fix.)
+  const composite = clamp(round1(subScores.reduce((s, x) => s + x.points, 0)), 0, 100);
+  const confirmedComposite = composite - estimatedAdjPts; // Q3: composite minus the REALIZED estimated market ±
 
   // ── STAGE 2.5 — DD-critical ──
   const known = input.ddKnown;
@@ -340,6 +373,7 @@ export function scoreAcquisition(
     if (ddCriticalUnresolved.length > 0) capReasons.push(`DD-critical unresolved: ${ddCriticalUnresolved.join(', ')}`);
     if (floorIndeterminate) capReasons.push('a floor is indeterminate (missing inputs)');
     if (incompleteRuleset) capReasons.push('ruleset incomplete (clear-height bands pending SKILL.md)');
+    if (gateIndeterminate) capReasons.push('a Stage-0 gate input is unconfirmed — cannot clear the kill screen');
     if (ruleset.guards.marketEstimatedCannotCarryT1 && composite >= ruleset.bands.t1PursueMin && confirmedComposite < ruleset.bands.t1PursueMin) {
       capReasons.push('PURSUE rests on estimated market upside — Basis/Asset do not carry it alone (Q3)');
     }
@@ -351,7 +385,9 @@ export function scoreAcquisition(
     }
   }
 
-  const confidence = weakest(subScores.map((s) => s.confidence));
+  // An unconfirmed Stage-0 gate degrades confidence — the screen cannot be called 'confirmed' on unknown kills.
+  const subConfs = subScores.map((s) => s.confidence);
+  const confidence = gateIndeterminate ? weakest(subConfs.concat('estimated')) : weakest(subConfs);
   const advisoryOnly = ruleset.ratification !== 'ratified';
   if (advisoryOnly) reasons.push(`ADVISORY ONLY — ruleset '${ruleset.ratification}', not ratified; not a capital-allocation verdict.`);
 
@@ -387,11 +423,13 @@ function mkSub(id: SubScore, points: number, maxPoints: number, confidence: Conf
   return { id, points: p, maxPoints, normalized: maxPoints > 0 ? round1((p / maxPoints) * 100) : 0, confidence };
 }
 
-/** Comp freshness vs the Q6 window. Unknown sourcedAt ⇒ stale (conservative). */
+// Comp freshness vs the Q6 window. PURE: the "as-at" clock is an INPUT field (asAtUtc). When it is absent
+// or unparseable, freshness cannot be established deterministically, so the comp is treated as STALE (± → 0)
+// rather than reading the wall clock — Date.now() must NEVER feed the composite/verdict. (Refute fix.)
 function isFresh(sourcedAt: string | null, asAt: string | null, windowDays: number): boolean {
-  if (sourcedAt === null) return false;
+  if (sourcedAt === null || asAt === null) return false;
   const src = Date.parse(sourcedAt);
-  if (Number.isNaN(src)) return false;
-  const now = asAt !== null && !Number.isNaN(Date.parse(asAt)) ? Date.parse(asAt) : Date.now();
+  const now = Date.parse(asAt);
+  if (Number.isNaN(src) || Number.isNaN(now)) return false;
   return (now - src) <= windowDays * 24 * 60 * 60 * 1000;
 }

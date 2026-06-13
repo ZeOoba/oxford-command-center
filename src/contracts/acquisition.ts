@@ -129,7 +129,9 @@ export const AcquisitionRuleset = z.object({
       siteFunctionPoints: z.number().nonnegative(),
       truckCourtIdealFt: z.number().positive(),
       truckCourtZeroFt: z.number().positive(),
-      clearHeightBands: z.array(ClearHeightBand).nullable(), // null = PENDING (SKILL.md:52–57)
+      clearHeightBands: z.array(ClearHeightBand)
+        .refine((b) => new Set(b.map((x) => x.maxSf)).size === b.length, 'clearHeightBands maxSf values must be unique (deterministic banding)')
+        .nullable(), // null = PENDING (SKILL.md:52–57)
     }),
     // Q1 — Cat 4 (Market & Location, 12)
     cat4: z.object({

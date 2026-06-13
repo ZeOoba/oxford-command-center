@@ -175,4 +175,64 @@ describe('STAGE 2.5 — DD-critical cap', () => {
   });
 });
 
+describe('adversarial refute fixes (2026-06-13)', () => {
+  const r = ratifiedComplete();
+
+  // edge-cases CRITICAL — STAGE 0 gates must fail-CLOSED on unknown kill-determining inputs
+  it('unknown physical kill-inputs cannot reach PURSUE and degrade confidence off "confirmed"', () => {
+    const s = scoreAcquisition(strongDeal({ clearHeightFt: null, multiStory: null, hasDock: null, hasDriveIn: null }), r, { now: NOW });
+    expect(s.verdict).not.toBe('PURSUE');
+    expect(s.tier).toBe('T2');
+    expect(s.cappedAtT2).toBe(true);
+    expect(s.confidence).not.toBe('confirmed');
+    expect(s.reasons.join(' ')).toMatch(/unconfirmed|kill screen/i);
+  });
+  it('unknown price AND SF cannot clear the size box as a confirmed PURSUE', () => {
+    const s = scoreAcquisition(strongDeal({ price: null, maxBuildingSf: null }), r, { now: NOW });
+    expect(s.verdict).not.toBe('PURSUE');
+    expect(s.cappedAtT2).toBe(true);
+  });
+  it('a fully-known strong deal still PURSUEs (no false cap from the new gate guard)', () => {
+    expect(scoreAcquisition(strongDeal(), r, { now: NOW }).verdict).toBe('PURSUE');
+  });
+
+  // determinism CRITICAL — freshness rides on the asAtUtc INPUT, never the wall clock
+  it('market ± lands only when asAtUtc establishes freshness; null asAtUtc → stale, no Date.now leak', () => {
+    const over = {
+      clusterTier: 'entry', marketFundamentalsAdj: 1, marketFundamentalsConfidence: 'confirmed',
+      compSourcedAt: '2026-06-01T00:00:00Z', sellerMotivationScore: 0, valueAddScore: 0,
+      inPlaceRentPsf: 6.0, marketRentPsf: 6.0, waltYears: 10,
+    };
+    const fresh = scoreAcquisition(strongDeal({ ...over, asAtUtc: '2026-06-13T00:00:00Z' }), r, { now: NOW }); // 12d ≤ 90d
+    const noClock = scoreAcquisition(strongDeal({ ...over, asAtUtc: null }), r, { now: NOW });                // cannot establish freshness ⇒ stale
+    expect(fresh.composite).toBeGreaterThan(noClock.composite);
+    expect(scoreAcquisition(strongDeal({ ...over, asAtUtc: null }), r, { now: NOW })).toEqual(noClock); // deterministic, no clock dependence
+  });
+
+  // determinism HIGH — inputsVersion stable for decision-identical ddKnown (absent ≡ explicit false)
+  it('inputsVersion treats an absent ddKnown key as explicit false', () => {
+    const a = computeInputsVersion(AcquisitionInput.parse({ dealId: 'd', ddKnown: { flood: true } }), r);
+    const b = computeInputsVersion(AcquisitionInput.parse({ dealId: 'd', ddKnown: { flood: true, roof: false, zoning: false, 'deferred-maintenance-capex': false } }), r);
+    expect(a).toBe(b);
+  });
+
+  // correctness HIGH — Q3 must NOT subtract a clamped-out estimated ± (owned-submarket tier at the Cat4 cap)
+  it('Q3 does not cap an owned-submarket PURSUE whose estimated ± is clamped out', () => {
+    const s = scoreAcquisition(strongDeal({
+      clusterTier: 'owned-submarket', marketFundamentalsAdj: 1, marketFundamentalsConfidence: 'estimated',
+      compSourcedAt: NOW, asAtUtc: NOW, sellerMotivationScore: 0, valueAddScore: 0,
+      inPlaceRentPsf: 6.0, marketRentPsf: 6.0, waltYears: 10,
+    }), r, { now: NOW });
+    expect(s.composite).toBeGreaterThanOrEqual(75);
+    expect(s.verdict).toBe('PURSUE');
+    expect(s.cappedAtT2).toBe(false);
+  });
+
+  // correctness MEDIUM — composite equals the sum of the displayed sub-scores (§2 identity)
+  it('composite equals the sum of the displayed sub-scores even with fractional inputs', () => {
+    const s = scoreAcquisition(strongDeal({ valueAddScore: 0.777 }), r, { now: NOW });
+    expect(s.composite).toBe(round(s.subScores.reduce((acc, x) => acc + x.points, 0)));
+  });
+});
+
 function round(n: number): number { return Math.round(n * 10) / 10; }
