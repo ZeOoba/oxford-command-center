@@ -27,14 +27,19 @@ import { ImportsView } from './ImportsView';
 import { DataQualityView } from './DataQualityView';
 import { MappingsView } from './MappingsView';
 import { PropertyIntelView } from './PropertyIntelView';
+import { OwnershipView } from './OwnershipView';
 
-// 'property' is the per-property intelligence page (PFI Phase B.2 — verdict → root cause).
-// It is added as the rightmost INTELLIGENCE tab; the full IA reorg (Ownership default,
-// data-ops grouped last) lands in a later phase. The selected property is lifted here so
-// the tab remembers the selection across tab switches.
-type Tab = 'overview' | 'property' | 'imports' | 'quality' | 'mappings';
+// 'ownership' is the Ownership Intelligence Center (PFI Phase B.2) — the DEFAULT home and
+// centerpiece: action list + attention matrix + capital allocation + risks + PM snapshot.
+// 'property' is the per-property intelligence page (verdict → root cause). The selected
+// property is lifted here so it persists across tab switches and so an Ownership action /
+// matrix-row click can switch to the Property tab focused on that id. The full IA reorg
+// (data-ops grouped last, Benchmarks/Managers tabs) lands in Phase 5; for now the new
+// intelligence tabs lead and the existing data-ops tabs are kept as-is.
+type Tab = 'ownership' | 'overview' | 'property' | 'imports' | 'quality' | 'mappings';
 
 const TABS: Array<{ id: Tab; label: string }> = [
+  { id: 'ownership', label: 'Ownership' },
   { id: 'overview', label: 'Overview' },
   { id: 'property', label: 'Property' },
   { id: 'imports', label: 'Imports' },
@@ -43,8 +48,13 @@ const TABS: Array<{ id: Tab; label: string }> = [
 ];
 
 export function IntelModule() {
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useState<Tab>('ownership');
   const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
+  // Ownership → Property navigation: focus the property, then switch to the Property tab.
+  const openProperty = (id: string) => {
+    setSelectedPropertyId(id);
+    setTab('property');
+  };
   const imports = useWarehouseImports();
   const issues = useWarehouseIssues();
   const noi = useNoiMatrix();
@@ -97,9 +107,9 @@ export function IntelModule() {
             </div>
           }
         />
-        {/* Portfolio data-ops KPIs anchor the data-warehouse tabs; the Property page carries
-            its own per-property KPI row, so suppress this band there to avoid a double row. */}
-        {tab !== 'property' && (
+        {/* Portfolio data-ops KPIs anchor the data-warehouse tabs; the Property page and the
+            Ownership Center each carry their own KPI band, so suppress this row on both. */}
+        {tab !== 'property' && tab !== 'ownership' && (
           <div className="px-4 py-3">
             <KpiRow
               committed={(imports.data ?? []).filter((i) => i.status === 'committed').length}
@@ -116,6 +126,8 @@ export function IntelModule() {
         <div className="grid grid-cols-1 gap-3">
           <Skeleton style={{ height: 220 }} />
         </div>
+      ) : tab === 'ownership' ? (
+        <OwnershipView onOpenProperty={openProperty} />
       ) : tab === 'overview' ? (
         <NoiMatrixTable matrix={noi.data ?? []} />
       ) : tab === 'property' ? (
