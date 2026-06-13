@@ -709,12 +709,38 @@ describe('qb-excel adapter', () => {
     expect(s.basis).toBe('cash');
   });
 
-  // The label-less QB Desktop "Jan - Dec 24" stripped export (real: 1851 Solar / 55 New
-  // Plant) carries NO accounting-basis token anywhere, and the body contains non-cash
-  // items (Depreciation / Amortization) — so it must NOT be defaulted to cash. It stays
-  // 'unknown'; scores.ts G3 treats that as non-comparable (neutral 50 benchmark), which
-  // is strictly safer than a WRONG same-basis percentile feeding capital allocation.
-  it("leaves basis 'unknown' for a label-less QB Desktop 'Jan - Dec 24' export with non-cash items", async () => {
+  // The QB Desktop "Jan - Dec 24" stripped export (real: 1851 Solar / 55 New Plant) states
+  // its accounting basis in the Excel PRINT HEADER ("...Accrual Basis...", font-code-wrapped),
+  // NOT in any cell — so eachRow never sees it. The parser reads ws.headerFooter to recover
+  // it. The body's non-cash items (Depreciation / Amortization) corroborate 'accrual'.
+  it("derives 'accrual' basis from the QB Desktop print-header token (no in-cell basis token)", async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    // mirrors the real header string ExcelJS reads from these files
+    ws.headerFooter.oddHeader = '&L&"Arial,Bold"&8 3:34 PM\n&"Arial,Bold"&8 06/12/26\n'
+      + '&"Arial,Bold"&8 Accrual Basis&C&"Arial,Bold"&12 Eric Goldberg Family LLC';
+    const rows: Array<Array<string | number | null>> = [
+      [null, null, null, null, 'Jan - Dec 24'],
+      [null, 'Income', null, null, null],
+      [null, null, 'Rents', null, 425450.49],
+      [null, 'Total Income', null, null, 425450.49],
+      [null, 'Expense', null, null, null],
+      [null, null, 'Depreciation', null, 14529], // non-cash item corroborates accrual
+      [null, null, 'Amortization Expense', null, 17601],
+      [null, 'Total Expense', null, null, 32130],
+    ];
+    for (const r of rows) ws.addRow(r);
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'qb-accrual-hdr.xlsx');
+    await wb.xlsx.writeFile(file);
+    const s = await parseQbExcel(file);
+    expect(s.sourceSystem).toBe('quickbooks');
+    expect(s.basis).toBe('accrual');
+  });
+
+  // Hallucination guard: when NEITHER an in-cell token NOR a print-header basis token
+  // exists, the parser must not invent a basis — it stays 'unknown' (scores.ts G3 then
+  // treats it as non-comparable, neutral 50 — safer than a wrong same-basis percentile).
+  it("leaves basis 'unknown' when neither an in-cell nor a print-header basis token exists", async () => {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Sheet1');
     const rows: Array<Array<string | number | null>> = [
@@ -722,13 +748,9 @@ describe('qb-excel adapter', () => {
       [null, 'Income', null, null, null],
       [null, null, 'Rents', null, 425450.49],
       [null, 'Total Income', null, null, 425450.49],
-      [null, 'Expense', null, null, null],
-      [null, null, 'Depreciation', null, 14529], // non-cash ⇒ entity is not safely cash-basis
-      [null, null, 'Amortization Expense', null, 17601],
-      [null, 'Total Expense', null, null, 32130],
     ];
     for (const r of rows) ws.addRow(r);
-    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'qb-nobasis.xlsx');
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'qb-notoken.xlsx');
     await wb.xlsx.writeFile(file);
     const s = await parseQbExcel(file);
     expect(s.sourceSystem).toBe('quickbooks');

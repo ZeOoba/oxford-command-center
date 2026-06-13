@@ -70,6 +70,24 @@ function lastDayOfMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
+/**
+ * QB Desktop states the accounting basis in the Excel PRINT HEADER, not in any cell —
+ * e.g. oddHeader `&L&"Arial,Bold"&8 Accrual Basis&C...1851 South Club Solar, LLC`. The
+ * row scan (eachRow) never sees it, so the file looks basis-less. Read every header/footer
+ * slot and extract the explicit "<Cash|Accrual|Tax> Basis" token. Strongest basis signal
+ * (an explicit statement), so it precedes the AppFolio report-type inference. Returns null
+ * when no such token exists (the caller leaves basis 'unknown' — never invents one).
+ */
+function headerBasis(ws: ExcelJS.Worksheet): RawStatement['basis'] | null {
+  const hf = ws.headerFooter;
+  if (!hf) return null;
+  const blob = [hf.oddHeader, hf.evenHeader, hf.firstHeader, hf.oddFooter, hf.evenFooter, hf.firstFooter]
+    .filter((s): s is string => typeof s === 'string')
+    .join(' ');
+  const b = blob.match(/\b(cash|accrual|tax)\s+basis\b/i)?.[1]?.toLowerCase();
+  return b === 'cash' || b === 'accrual' || b === 'tax' ? b : null;
+}
+
 // Derived-summary rows (CRC/Yardi-style charts AND QB Desktop nested layouts):
 // report-computed totals that carry a value but are NOT accounts — ingesting them
 // double-counts (same class as numeric-only summary rows, fix ba230df).
@@ -390,6 +408,14 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
   if (!propertyRaw && yardiHeaders && firstRowText) propertyRaw = firstRowText;
   // AppFolio exports carry the roster in "Properties:" (no "Property:" line).
   if (!propertyRaw && propertiesRaw) propertyRaw = propertiesRaw;
+
+  // QB Desktop "stripped" exports (1851 Solar / 55 New Plant) carry no in-cell basis token
+  // but DO state it in the print header ("...Accrual Basis..."). Recover it here — explicit
+  // header token is the strongest signal, so it resolves before the AppFolio title inference.
+  if (basis === 'unknown') {
+    const hb = headerBasis(ws);
+    if (hb) basis = hb;
+  }
 
   // AppFolio carries NO in-sheet "(cash basis)" token like QB does — the report TYPE is
   // the basis signal. An AppFolio "Cash Flow" statement is a cash-basis operating report
