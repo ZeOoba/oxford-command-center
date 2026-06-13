@@ -1,5 +1,39 @@
 # Changelog
 
+## PFI Phase 1c — A↔B NOI reconciliation (master plan Revision-1 keystone) (2026-06-13)
+
+Closes the single most-important integrity gap in the master plan: the two un-reconciled NOI
+representations — workbook `Property.noi` (Spine A, the current-state spine, Oxford-share at
+column 13) vs warehouse `oxfordNoi` (Spine B, the time dimension, `noi × ownershipPct` at the
+property's latest full-year period). Without this tie-out every downstream scoring engine,
+capital-allocation verdict, and refi recommendation inherits silent drift between the two
+spines and can launder ambiguity into false authority.
+
+- New `server/warehouse/reconcile-noi.ts` — a pure classifier (`classifyNoiReconciliation`)
+  + assembler (`reconcileNoiAB`) + DB wrapper (`reconcileNoiABFromDb` + `buildNoiReconcileInputs`).
+  100% deterministic, db-free at the classifier core.
+- **Apples-to-apples by design.** Both sides are Oxford-share: workbook reports Property.noi at
+  column 13 (verified via `parse.ts:147` and `reconcile.ts:57`'s "Property NOI (Oxford) total"
+  label); warehouse computes `oxfordNoi = noi × ownershipPct`. Comparing 100%-basis warehouse NOI
+  to Oxford-share workbook NOI on a 50%-owned property would manufacture a 50% phantom drift —
+  the exact bug the keystone exists to surface in the OTHER spine.
+- **Slug bridge is direct, no alias table.** `parse.ts:124` produces `id = slug(name)`;
+  `property_master.id` IS the same canonical slug (verified for all 14 units incl. the FVC /
+  Sepich Portfolio bundle — workbook snapshot reports `sepich-portfolio-columbus-oh-8-props`,
+  identical to property_master).
+- **Tolerance:** 5% relative OR $10k absolute (in-tolerance, info); 5–20% (drift, warn); ≥20%
+  (large-drift, error). The absolute floor protects small-NOI properties (Solar 25% / late
+  acquisitions) from spurious large-drift errors. Symmetric on sign.
+- **Statuses:** `match` · `in-tolerance` · `drift` · `large-drift` · `missing-from-workbook` ·
+  `missing-from-warehouse` · `lease-run-skipped`. Lease-run properties (Fishel / Sunburst —
+  ratified 2026-06-12 to run off master-lease estimates) and Residence-typed properties
+  (Persimmon) are skipped by design, not flagged as defects.
+- **Basis discipline (Phase 1a continuity).** A `match` or `in-tolerance` on basis=`unknown` is
+  downgraded to `warn` severity — the comparison isn't proven like-for-like even when the numbers
+  agree. The reason string surfaces the caveat.
+- 13 unit tests pin every status path + the assembler filter/sort + the boundary math
+  (signed delta, deltaPct denom, residence filter, deterministic ordering).
+
 ## PFI Phase 1b — `get_macro` agent tool: live rate environment for the AI (2026-06-13)
 
 Closes the audit-flagged AI/macro gap (the agent had ZERO access to FRED — refi-spread,

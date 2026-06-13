@@ -62,6 +62,23 @@ const stddev = (values: number[]): number => {
 
 const pctStr = (n: number | null): string => (n === null ? 'n/a' : `${(n * 100).toFixed(1)}%`);
 
+/** A comparable real-estate operating entity has positive rentable SF. A SF-less entity (e.g. 1851 S
+ *  Club — a 25% rooftop-solar PPA royalty: rentableSf null, no building owned) has no operating-expense
+ *  profile comparable to a building's, so it must not join the ratio-based efficiency cohort. Mirrors
+ *  the perSf() guard (sf && sf > 0) in metrics.ts that already drops it from every $/SF cohort. */
+function isOperatingRealEstate(m: PeriodMetrics): boolean {
+  return typeof m.rentableSf === 'number' && Number.isFinite(m.rentableSf) && m.rentableSf > 0;
+}
+
+/** expenseRatio (opex/revenue) as seen by efficiency scoring. Unlike the per-SF cost ratios it is
+ *  revenue-based, so it stays FINITE for a SF-less entity even though every $/SF metric is null —
+ *  the asymmetry that let a non-real-estate entity (e.g. the solar royalty) set, and be set by, a
+ *  real building's expense percentile. Null it for non-operating entities so the expense efficiency
+ *  cohort excludes them as both member and subject, exactly as the per-SF cohorts already do. */
+function efficiencyExpenseRatio(m: PeriodMetrics): number | null {
+  return isOperatingRealEstate(m) ? m.expenseRatio : null;
+}
+
 /** Non-null numeric population of a per-SF cost ratio for a period (for percentile rank). */
 function population(metrics: PeriodMetrics[], period: string, pick: (m: PeriodMetrics) => number | null): number[] {
   const out: number[] = [];
@@ -151,8 +168,12 @@ export function scoreProperties(db: WarehouseDb, metrics: PeriodMetrics[]): Prop
     const sameBasisPeerCount = sameBasis.filter((m) => m.period === period).length;
     const basisIsolated = sameBasisPeerCount < periodPeerCount; // cross-basis peers were excluded
 
-    // Efficiency populations (SAME basis, same full-year period) — lower ratio is better.
-    const expensePop = population(sameBasis, period, (m) => m.expenseRatio);
+    // Efficiency populations (SAME basis, same full-year period) — lower ratio is better. expenseRatio
+    // is revenue-based, so a SF-less non-real-estate entity (the solar royalty) stays finite here even
+    // though it is null in every $/SF cohort below — efficiencyExpenseRatio nulls it so the expense
+    // cohort excludes it identically (see helper). The per-SF picks need no guard: perSf() already
+    // returns null for SF-less entities, so they self-exclude from tax/insurance/repair cohorts.
+    const expensePop = population(sameBasis, period, efficiencyExpenseRatio);
     const taxPop = population(sameBasis, period, (m) => m.taxesPerSf);
     const insPop = population(sameBasis, period, (m) => m.insurancePerSf);
     const repairPop = population(sameBasis, period, (m) => m.repairsPerSf);
@@ -175,7 +196,7 @@ export function scoreProperties(db: WarehouseDb, metrics: PeriodMetrics[]): Prop
       revenuePerSfGrowth: growthScore(revenuePerSfGrowth),
       noiGrowth: growthScore(noiGrowth),
       noiPerSfGrowth: growthScore(noiPerSfGrowth),
-      expenseEfficiency: efficiencyScore(levelRow.expenseRatio, expensePop),
+      expenseEfficiency: efficiencyScore(efficiencyExpenseRatio(levelRow), expensePop),
       taxEfficiency: efficiencyScore(levelRow.taxesPerSf, taxPop),
       insuranceEfficiency: efficiencyScore(levelRow.insurancePerSf, insPop),
       repairEfficiency: efficiencyScore(levelRow.repairsPerSf, repairPop),
