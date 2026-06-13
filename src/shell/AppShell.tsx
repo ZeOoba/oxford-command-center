@@ -18,6 +18,7 @@ const TITLES: Record<string, string> = {
   overview: 'Command Overview',
   pipeline: 'Acquisitions Pipeline',
   portfolio: 'Portfolio Health',
+  intel: 'Property Financial Intelligence',
   leases: 'Leases & Renewals',
   debt: 'Debt & Maturities',
   cash: 'Cash & Treasury',

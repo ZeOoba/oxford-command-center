@@ -3,8 +3,8 @@ import type { ViewProfile } from '@/brain/view-profile';
 
 /** Rail order per profile (flat module-id lists). Capital ahead of Assets for the principal. */
 export const MODULE_ORDER: Record<ViewProfile, string[]> = {
-  acquisitions: ['overview', 'pipeline', 'tasks', 'principal', 'portfolio', 'leases', 'debt', 'cash', 'insurance', 'market', 'relationships', 'documents', 'health'],
-  principal: ['principal', 'overview', 'tasks', 'cash', 'debt', 'insurance', 'portfolio', 'leases', 'market', 'relationships', 'pipeline', 'documents', 'health'],
+  acquisitions: ['overview', 'pipeline', 'tasks', 'principal', 'portfolio', 'intel', 'leases', 'debt', 'cash', 'insurance', 'market', 'relationships', 'documents', 'health'],
+  principal: ['principal', 'overview', 'tasks', 'cash', 'debt', 'insurance', 'portfolio', 'intel', 'leases', 'market', 'relationships', 'pipeline', 'documents', 'health'],
 };
 
 /** Where each profile lands from `/`. */

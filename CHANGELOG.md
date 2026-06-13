@@ -1,5 +1,25 @@
 # Changelog
 
+## PFI Phase A.2 — Imports & Data-Quality UI (2026-06-13)
+
+- **Warehouse read queries** (`server/warehouse/queries.ts`): `listImports` (audit trail, joined to
+  property names), `getImportDetail` (ledger rows + DQ issues), `listIssues`, `noiMatrix` (byte-for-byte
+  the NOI formula the backfill/verify gate uses — UI NOI == gate NOI).
+- **Review-queue actions** (`server/warehouse/actions.ts`, all transactional, nothing deleted):
+  `approveImport` (re-resolves against current mappings at approve time, refuses while any row is
+  unmapped or the import is empty, supersedes prior committed versions), `rejectImport` (status flip,
+  rows preserved inactive), `resolveIssue`, `addMappingOverride` (manual override append + active-row
+  re-derivation, optionally property-scoped). Amounts never touched — ingest sign-normalization preserved.
+- **`/api/warehouse/*` routes** (`server/warehouse/api.ts`, mounted in `server/index.ts`): imports,
+  imports/:id, noi, issues; POST action (approve unmapped → 409 with the list), mappings, issues/:id/resolve.
+  Zod-validated bodies; integer :id guard; lazy warehouse singleton; 503 `{error:'warehouse unavailable'}`
+  on mirror/cold environments — never crashes the server.
+- **Property Financial Intelligence module** (`src/modules/intel/`, lazy-loaded, group Assets): Overview
+  (KPI tiles + NOI-by-property matrix), Imports (audit DataTable + inline detail panel with approve/reject
+  and an inline add-mapping → retry loop on 409), Data Quality (issue resolution), Mappings (manual override
+  surface). Graceful "requires the live brain server" state on the static mirror. Separate 6.2 kB-gzip chunk;
+  entry bundle unchanged.
+
 ## PFI Phase A — Financial Warehouse Foundation (2026-06-12)
 
 - **Warehouse schema** (`server/warehouse/db.ts`): SQLite (better-sqlite3, WAL, FK-enforced),
