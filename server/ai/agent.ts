@@ -293,5 +293,25 @@ export function summarizeMacro(m: MacroSnapshot): Record<string, unknown> {
       `SEEDED — FRED_API_KEY not configured; values are a static snapshot as of ${m.asOf}. ` +
       'Tell the user the live rate feed is offline before quoting any number.';
   }
+  // Defense-in-depth against fred.ts `value ?? 0` coalesce: a partial upstream failure on the
+  // DGS10 series alone produces indicators.DGS10.value = 0 with source='fred' (no dataFreshness
+  // caveat). The new tool description tells the model to quote indicators.DGS10.value as the
+  // canonical current 10Y — without this guard the model would confidently report '10Y at 0.00%'.
+  // A 10Y Treasury rate cannot realistically be ≤ 0, so non-positive (incl. the zero sentinel) is
+  // treated as missing data. We flag dataQuality and provide a labeled, dated fallback from the
+  // most recent finite trend point so the model has a usable alternative. Root cause (the `?? 0`
+  // in fred.ts and the corresponding non-nullable MacroIndicator.value contract) is tracked as a
+  // follow-up — this is the symptom guard, not the cure.
+  const dgs10 = m.indicators.find((i) => i.id === 'DGS10');
+  const dgs10Suspicious = !dgs10 || !Number.isFinite(dgs10.value) || dgs10.value <= 0;
+  if (dgs10Suspicious) {
+    const lastFinite = [...window].reverse().find((h) => typeof h.value === 'number' && Number.isFinite(h.value) && h.value > 0);
+    payload.dataQuality =
+      'DGS10 indicator missing/non-positive (likely a FRED partial outage on the 10Y series) — ' +
+      'fell back to the trend window endpoint. Tell the user the 10Y reading is degraded before quoting.';
+    if (lastFinite) {
+      payload.currentTenYFallback = { value: lastFinite.value, date: lastFinite.date };
+    }
+  }
   return payload;
 }

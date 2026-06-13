@@ -30,10 +30,18 @@ Unblocks the Phase-2 debt/refi narrative.
   no-hedging" register would quote a frozen seeded snapshot as the current rate (the exact
   misread-as-live failure that would corrupt Phase-2 refi narrative).
 - Tests: a TOOL_DEFS + stub assertion; an end-to-end SSE mock that proves the injected provider
-  is called and its live snapshot is fed back to the model as the `tool_result`; and seven
-  focused unit tests over `summarizeMacro` pinning each of the three fixes (orphan-current
-  removed, date-windowed trend, off-by-13 prevention, out-of-order safety, SEEDED caveat,
-  5-indicator regression, null-safety).
+  is called and its live snapshot is fed back to the model as the `tool_result`; and **nine**
+  focused unit tests over `summarizeMacro` pinning each fix (orphan-current removed, date-windowed
+  trend, off-by-13 prevention, out-of-order safety, SEEDED caveat, 5-indicator regression,
+  null-safety, **DGS10-suspicious guard fires on zero**, **doesn't fire on live positive**).
+- A SECOND adversarial round on the fix caught a real medium: by removing the orphan `trend.current`
+  the model now strictly trusts `indicators.DGS10.value` — but `server/macro/fred.ts:49` silently
+  coalesces a missing FRED observation to `0` via `?? 0`. A FRED partial outage on DGS10 alone
+  would feed the model `'10Y at 0.00%, refi spread −410 bps'` confidently. Defense-in-depth shipped:
+  when `DGS10` is missing or `<= 0` (a 10Y rate cannot realistically be ≤ 0), `summarizeMacro` now
+  attaches a `dataQuality` flag and a dated `currentTenYFallback` from the most recent finite
+  trend point. **Root-cause fix tracked** (make `MacroIndicator.value` nullable in the contract,
+  drop the `?? 0` in fred.ts, handle null in the Market UI) — a follow-up task.
 
 ## PFI Phase 1a.2 — surface the cross-basis benchmark warning in the UI (2026-06-13)
 
