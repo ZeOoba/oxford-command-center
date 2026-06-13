@@ -27,4 +27,26 @@ describe('waterfallBars', () => {
     expect(end.top).toBeCloseTo(106);
     expect(end.kind).toBe('total');
   });
+
+  it('keeps total bars ordered (base ≤ top) when NOI crosses below zero', () => {
+    // start +100, drivers sum to −120 → end −20 (a distressed asset). Totals must render
+    // as real bars from 0, never top<base (which collapsed the End bar to a 1px sliver).
+    const bars = waterfallBars(100, [
+      { category: 'Ins', delta: -50 },
+      { category: 'Taxes', delta: -40 },
+      { category: 'Vacancy', delta: -30 },
+    ], -20);
+    for (const b of bars) expect(b.base).toBeLessThanOrEqual(b.top);
+    const start = bars[0]!;
+    expect(start).toMatchObject({ label: 'Start', base: 0, top: 100, value: 100, kind: 'total' });
+    const end = bars[bars.length - 1]!;
+    expect(end).toMatchObject({ label: 'End', kind: 'total', value: -20 });
+    expect(end.base).toBeCloseTo(-20); // downward bar from 0
+    expect(end.top).toBeCloseTo(0);
+    // the last driver lands on the end total
+    const vac = bars.find((b) => b.label === 'Vacancy')!;
+    expect(vac.base).toBeCloseTo(-20);
+    expect(vac.top).toBeCloseTo(10);
+    expect(vac.kind).toBe('neg');
+  });
 });

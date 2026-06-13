@@ -38,7 +38,12 @@ export interface WaterfallDriver {
  *  so the last driver lands exactly on the End total. Pure; inputs are not mutated.
  */
 export function waterfallBars(startValue: number, drivers: WaterfallDriver[], endValue: number): WaterfallBar[] {
-  const bars: WaterfallBar[] = [{ label: 'Start', base: 0, top: startValue, value: startValue, kind: 'total' }];
+  // Totals are measured from 0 but kept ORDERED (base ≤ top) so a negative NOI renders a
+  // real downward bar from 0, not a top<base inversion that collapses to a 1px sliver.
+  const total = (label: string, v: number): WaterfallBar => ({
+    label, base: Math.min(0, v), top: Math.max(0, v), value: v, kind: 'total',
+  });
+  const bars: WaterfallBar[] = [total('Start', startValue)];
   let running = startValue;
   for (const d of drivers) {
     const next = running + d.delta;
@@ -51,7 +56,7 @@ export function waterfallBars(startValue: number, drivers: WaterfallDriver[], en
     });
     running = next;
   }
-  bars.push({ label: 'End', base: 0, top: endValue, value: endValue, kind: 'total' });
+  bars.push(total('End', endValue));
   return bars;
 }
 
