@@ -1,9 +1,28 @@
 # Hurdle-Rate / Cost-of-Capital Governor — PROPOSAL (pending Gabriel ratification)
 
-**Status:** PROPOSED — no value in this document is ratified. Governor-class constants require Gabriel's explicit in-turn sign-off (Hard Invariant 4). This spec establishes the *mechanism* and *proposes* the *values*; it does not set them.
+**Status:** Payout assumption RATIFIED (Gabriel, 2026-06-13); governor VALUES confirmed under that assumption as the working basis. They become hard governor-class constants when Phase 5 encodes `CAPITAL_CONFIG.ratified` — any change THEN requires explicit in-turn sign-off (Hard Invariant 4).
 **Prepared by:** CIO / Head of Acquisitions
 **For:** Command Center — Capital Allocation Engine (Phase 5)
 **Date:** 2026-06-13
+
+---
+
+## 0. RATIFIED — Gabriel, 2026-06-13
+
+- **Payout ratio = FULL REINVEST (0% distribution).** The single highest-leverage input (§3.39) is settled: no payout grossing-up. The equity base must compound at the **net CAGR floor itself, ~7.48%** (35yr, $60M→$750M midpoint) — the gross asset return requirement does NOT rise above it.
+- **Confirmed working governor set** (no upward adjustment needed under full reinvest; the proposed §4 numbers were sized for a 15–25% payout band and are therefore, if anything, conservative here):
+
+  | Governor | Ratified-basis value | Measured on |
+  |---|---|---|
+  | `HURDLE_UNLEVERED_HOLD` | **7.5%** | forward unlevered yield on current MV |
+  | `HURDLE_LEVERED_ACQ_IRR` | **12.0%** | levered equity IRR, full hold |
+  | `DISPOSITION_TRIGGER` | **6.5%** (hold − 100 bps) | forward unlevered on current MV |
+  | `REFINANCE_TRIGGER` | **+150 bps** IRR accretion | Δ levered equity IRR; DSCR ≥ 1.25 / LTV ≤ 40 hard side-constraints |
+  | `HURDLE_CAPEX_IRR` | **15.0%** | incremental unlevered IRR on the capex $ |
+
+  Ordering invariant (load-bearing, survives any future reprice): **DISPOSITION 6.5% < HOLD 7.5% < ACQ-IRR 12% < CAPEX-IRR 15%.**
+- **Anchor:** 35-year horizon, $60M→$750M (7.48% floor) — assumed as the canonical anchor unless Gabriel reprices at `CAPITAL_CONFIG` build time.
+- **Still pending (non-blocking, finalize at Phase-5 `CAPITAL_CONFIG` encoding):** the [SPECULATIVE] cost-of-debt / cap-rate-environment inputs (§3) refined against the live workbook + rent-comps; and the formal mint into `CAPITAL_CONFIG.ratified` with provenance. Until that code exists, no governor constant has been modified — this section records the decision, not a model edit.
 
 ---
 
