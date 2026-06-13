@@ -62,6 +62,11 @@ export function detectAnomalies(metrics: PeriodMetrics[]): AnomalyFlag[] {
       const propertyId = cur.propertyId;
       const period = cur.period;
 
+      // GRAIN DISCIPLINE (spec §9): never compare across grains. A full-year → YTD boundary
+      // mechanically halves revenue/NOI and "reveals" not-yet-booked categories — all of which
+      // are partial-period artifacts, not anomalies. Skip the pair entirely (incl. new-category).
+      if ((prev.grainHint ?? null) !== (cur.grainHint ?? null)) continue;
+
       // expense-growth: positive opex growth past +expenseGrowthPct
       const expG = pctChange(prev.opex, cur.opex);
       if (expG !== null && expG > cfg.expenseGrowthPct) {

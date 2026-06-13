@@ -98,20 +98,29 @@ export function scoreProperties(db: WarehouseDb, metrics: PeriodMetrics[]): Prop
   const scores: PropertyScore[] = [];
   for (const [propertyId, series] of byProperty) {
     const sorted = [...series].sort((a, b) => a.period.localeCompare(b.period));
+    // LEVEL latest: the true latest period — a YTD partial is a fine *current snapshot* for
+    // $/SF, margin, and benchmark position (level metrics, not deltas).
     const latest = sorted[sorted.length - 1]!;
     const period = latest.period;
 
-    // Growth: this property's series; take the latest point + the full margin series.
+    // GROWTH transition (spec §9): growth/attention/anomalies must use the latest SAME-GRAIN
+    // pair (normally 2024→2025), NEVER the year→YTD pair — a 5-month-vs-12-month comparison
+    // manufactures a spurious ≈−50% decline. growthSeries already nulls cross-grain growths and
+    // flags them `comparable:false`; pick the most recent comparable point as the growth verdict.
     const growth = growthSeries(sorted);
-    const latestGrowth = growth[growth.length - 1];
-    const noiGrowth = latestGrowth?.noiGrowth ?? null;
-    const revenueGrowth = latestGrowth?.revenueGrowth ?? null;
-    const noiPerSfGrowth = latestGrowth?.noiPerSfGrowth ?? null;
-    // revenue-per-SF growth (not on GrowthPoint) — derive from the metrics series directly.
-    const prev = sorted.length >= 2 ? sorted[sorted.length - 2]! : null;
+    const latestComparable = [...growth].reverse().find((g) => g.comparable) ?? null;
+    const noiGrowth = latestComparable?.noiGrowth ?? null;
+    const revenueGrowth = latestComparable?.revenueGrowth ?? null;
+    const noiPerSfGrowth = latestComparable?.noiPerSfGrowth ?? null;
+    // The two metric periods behind that comparable transition (for revenue-per-SF growth and
+    // the anomaly lookup). `growthCur` is the later (same-grain) period of the pair.
+    const growthCurIdx = latestComparable ? sorted.findIndex((m) => m.period === latestComparable.period) : -1;
+    const growthCur = growthCurIdx >= 0 ? sorted[growthCurIdx]! : null;
+    const growthPrev = growthCurIdx > 0 ? sorted[growthCurIdx - 1]! : null;
+    // revenue-per-SF growth (not on GrowthPoint) — derive from the same-grain transition.
     const revenuePerSfGrowth =
-      prev && prev.revenuePerSf !== null && prev.revenuePerSf > 0 && latest.revenuePerSf !== null
-        ? (latest.revenuePerSf - prev.revenuePerSf) / prev.revenuePerSf
+      growthPrev && growthCur && growthPrev.revenuePerSf !== null && growthPrev.revenuePerSf > 0 && growthCur.revenuePerSf !== null
+        ? (growthCur.revenuePerSf - growthPrev.revenuePerSf) / growthPrev.revenuePerSf
         : null;
 
     // Efficiency populations (portfolio, same period) — lower ratio is better.
@@ -155,7 +164,10 @@ export function scoreProperties(db: WarehouseDb, metrics: PeriodMetrics[]): Prop
       : health >= healthBands.watch ? 'watch'
       : 'concern';
 
-    const flags = anomaliesByKey.get(`${propertyId}|${period}`) ?? [];
+    // Anomaly inputs use the latest SAME-GRAIN transition (cross-grain pairs emit none anyway),
+    // so a trailing YTD partial doesn't blank out the real 2024→2025 anomaly signal.
+    const anomalyPeriod = growthCur?.period ?? period;
+    const flags = anomaliesByKey.get(`${propertyId}|${anomalyPeriod}`) ?? [];
     const critical = flags.filter((f) => f.severity === 'critical').length;
     const high = flags.filter((f) => f.severity === 'high').length;
     const moderate = flags.filter((f) => f.severity === 'moderate').length;

@@ -11,11 +11,13 @@ const mk = (
     noiPerSf: number | null;
     categories: Record<string, number>;
     propertyId?: string;
+    grainHint?: 'year' | 'ytd';
   },
 ): PeriodMetrics =>
   ({
     propertyId: opts.propertyId ?? 'p1',
     period,
+    grainHint: opts.grainHint ?? null,
     revenue: opts.revenue,
     opex: opts.opex,
     noi: opts.revenue - opts.opex,
@@ -64,6 +66,33 @@ describe('anomalies', () => {
     expect(spike.detail).toContain('Insurance');
     // p2 produced no flags
     expect(flags.some((f) => f.propertyId === 'p2')).toBe(false);
+  });
+
+  it('suppresses ALL flags across a full-year → YTD boundary (grain mismatch, spec §9)', () => {
+    // 2025 full year vs 2026 YTD (~half a year): revenue/NOI roughly halve and a category
+    // is "new" simply because the partial pull hasn't booked it. None of this is a signal.
+    const metrics: PeriodMetrics[] = [
+      mk('2025', { revenue: 200000, opex: 100000, noiPerSf: 5, categories: { Taxes: 100000 }, grainHint: 'year' }),
+      mk('2026', {
+        revenue: 100000, opex: 50000, noiPerSf: 2.5,
+        categories: { Taxes: 50000, Utilities: 3000 }, grainHint: 'ytd',
+      }),
+    ];
+    const flags = detectAnomalies(metrics);
+    // Zero flags for the 2026 transition — no decline, no expense-growth, no spike, no new-category.
+    expect(flags.filter((f) => f.period === '2026')).toHaveLength(0);
+  });
+
+  it('still flags within same-grain pairs even when a trailing YTD period exists', () => {
+    // 2024→2025 (both 'year') has a real NOI decline; the trailing 2026 YTD must not erase it.
+    const metrics: PeriodMetrics[] = [
+      mk('2024', { revenue: 200000, opex: 80000, noiPerSf: 6, categories: { Taxes: 30000 }, grainHint: 'year' }),
+      mk('2025', { revenue: 150000, opex: 90000, noiPerSf: 4, categories: { Taxes: 30000 }, grainHint: 'year' }),
+      mk('2026', { revenue: 75000, opex: 45000, noiPerSf: 2, categories: { Taxes: 15000 }, grainHint: 'ytd' }),
+    ];
+    const flags = detectAnomalies(metrics);
+    expect(flags.some((f) => f.kind === 'noi-decline' && f.period === '2025')).toBe(true);
+    expect(flags.filter((f) => f.period === '2026')).toHaveLength(0);
   });
 
   it('does not flag a clean improving series and uses critical severity for extreme expense growth', () => {

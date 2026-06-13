@@ -66,6 +66,31 @@ async function buildWarehouse(): Promise<{ db: WarehouseDb; metrics: ReturnType<
   return { db, metrics };
 }
 
+// Same two properties PLUS a trailing 2026 YTD (≈half-year) pull for each. The YTD level is
+// genuinely ~half the full-year figure; grain-awareness must keep growth/attention anchored on
+// the real 2024→2025 (year-vs-year) transition, so the YTD does NOT flip STRONG to concern.
+async function buildWarehouseWithYtd(): Promise<{ db: WarehouseDb; metrics: ReturnType<typeof propertyPeriodMetrics> }> {
+  const dir = mkdtempSync(join(tmpdir(), 'whs-'));
+  const db = openWarehouse(join(dir, 'f.sqlite'));
+  seedPropertyMaster(db);
+  seedMappings(db, SEED);
+  const raw = join(dir, 'raw');
+  let t = 0;
+  const ingest = async (file: string, o: Parameters<typeof writeFixture>[1]): Promise<void> => {
+    await writeFixture(file, o);
+    const r = await ingestFile(db, file, { rawDir: raw, importedAt: `2026-06-12T00:00:${String(t++).padStart(2, '0')}Z` });
+    expect(r.status).toBe('committed');
+  };
+  await ingest(join(dir, 'P&L 2024 -- 1100 Rarig.xlsx'), { propertyLine: 'Property: 1100 Rarig Ave', periodLine: '01/01/24 - 12/31/24  (cash basis)', rent: 100000, repair: 5000 });
+  await ingest(join(dir, 'P&L 2025 -- 1100 Rarig.xlsx'), { propertyLine: 'Property: 1100 Rarig Ave', periodLine: '01/01/25 - 12/31/25  (cash basis)', rent: 130000, repair: 5000 });
+  await ingest(join(dir, 'P&L 2026 YTD -- 1100 Rarig.xlsx'), { propertyLine: 'Property: 1100 Rarig Ave', periodLine: '01/01/26 - 06/30/26  (cash basis)', rent: 65000, repair: 2500 });
+  await ingest(join(dir, 'P&L 2024 -- 3034 Westerville.xlsx'), { propertyLine: 'Property: 3034 Westerville Rd', periodLine: '01/01/24 - 12/31/24  (cash basis)', rent: 80000, repair: 10000 });
+  await ingest(join(dir, 'P&L 2025 -- 3034 Westerville.xlsx'), { propertyLine: 'Property: 3034 Westerville Rd', periodLine: '01/01/25 - 12/31/25  (cash basis)', rent: 60000, repair: 30000 });
+  await ingest(join(dir, 'P&L 2026 YTD -- 3034 Westerville.xlsx'), { propertyLine: 'Property: 3034 Westerville Rd', periodLine: '01/01/26 - 06/30/26  (cash basis)', rent: 30000, repair: 15000 });
+  const metrics = propertyPeriodMetrics(db);
+  return { db, metrics };
+}
+
 describe('scoreProperties', () => {
   it('scores deterministically and bands correctly', async () => {
     const { db, metrics } = await buildWarehouse();
@@ -101,5 +126,26 @@ describe('scoreProperties', () => {
       expect(['green', 'yellow', 'orange', 'red']).toContain(row.attentionBand);
       expect(['invest', 'hold', 'monitor', 'disposition-candidate']).toContain(row.capitalAction);
     }
+  });
+
+  it('a trailing YTD period does NOT flip a strong property to concern (grain-aware, spec §9)', async () => {
+    const { db, metrics } = await buildWarehouseWithYtd();
+    const s = scoreProperties(db, metrics);
+
+    const strong = s.find((x) => x.propertyId === STRONG)!;
+    expect(strong).toBeDefined();
+    // Growth-driven verdict must reflect the real 2024→2025 trajectory, not the YTD partial.
+    expect(strong.healthBand).toBe('excellent');
+    expect(strong.attentionBand).toBe('green');
+    expect(strong.capitalAction).toBe('invest');
+    expect(strong.health).toBeGreaterThanOrEqual(80);
+
+    // WEAK was already declining 2024→2025 — that verdict stands (grain-awareness doesn't rescue it).
+    const weak = s.find((x) => x.propertyId === WEAK)!;
+    expect(weak.healthBand).toBe('concern');
+    expect(['orange', 'red']).toContain(weak.attentionBand);
+
+    // determinism — same db + metrics ⇒ deep-equal result on re-run (with the YTD present).
+    expect(scoreProperties(db, metrics)).toEqual(s);
   });
 });
