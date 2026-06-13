@@ -38,7 +38,14 @@ import {
   type AnomalySeverity,
 } from './analytics-hooks';
 import { rankByAttention } from './synthesis';
-import { buildAnnualSeries, fullYearPeriods, periodLabel, pickDriverPeriods } from './property-intel';
+import {
+  buildAnnualSeries,
+  fullYearPeriods,
+  periodLabel,
+  pickDriverPeriods,
+  recommendedAction,
+  rootCauseLine,
+} from './property-intel';
 
 // ---------------------------------------------------------------------------
 // Tone maps (engine band → Badge tone).
@@ -143,7 +150,14 @@ export function PropertyIntelView({ propertyId, onSelectProperty }: Props) {
     <div className="flex flex-col gap-4">
       <PropertySelector ranked={ranked} selectedId={selectedId} onSelect={onSelectProperty} />
 
-      {score && <VerdictHeader score={score} />}
+      {score && (
+        <VerdictHeader
+          score={score}
+          rootCause={rootCauseLine(drivers.data ?? null)}
+          driversLoading={drivers.isLoading}
+          hasTwoFy={driverPeriods !== null}
+        />
+      )}
 
       <KpiRow metrics={propMetrics} latestFy={latestFy} quartile={score?.noiPerSfQuartile ?? null} />
 
@@ -214,7 +228,27 @@ function PropertySelector({
 // Verdict header — gold-accent Card leading with the ownership verdict.
 // ---------------------------------------------------------------------------
 
-function VerdictHeader({ score }: { score: PropertyScore }) {
+function VerdictHeader({
+  score,
+  rootCause,
+  driversLoading,
+  hasTwoFy,
+}: {
+  score: PropertyScore;
+  /** Synthesized ΔNOI root-cause line, or null (single-period / no drivers). */
+  rootCause: string | null;
+  driversLoading: boolean;
+  /** Whether the property has the two full years a ΔNOI bridge needs. */
+  hasTwoFy: boolean;
+}) {
+  // WHY: lead with the synthesized root cause; degrade clearly when it can't be computed.
+  const why = !hasTwoFy
+    ? 'Needs two full years to bridge the NOI change.'
+    : driversLoading
+      ? 'Analyzing ΔNOI drivers…'
+      : (rootCause ?? 'ΔNOI drivers unavailable.');
+  // DO: the recommended action from the capital action + leading reason.
+  const recommended = recommendedAction(score);
   return (
     <Card accent>
       <div className="flex flex-col gap-4 px-5 py-4 lg:flex-row lg:items-start lg:justify-between">
@@ -256,6 +290,24 @@ function VerdictHeader({ score }: { score: PropertyScore }) {
             </ul>
           </div>
         )}
+      </div>
+      {/* WHY → DO: the answer-first synthesis (PFI Phase B.3 item 2). */}
+      <div
+        className="grid grid-cols-1 gap-x-6 gap-y-3 border-t px-5 py-3 sm:grid-cols-2"
+        style={{ borderColor: 'var(--border-subtle)' }}
+      >
+        <div>
+          <div className="num mb-1 text-2xs font-semibold uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>
+            Why
+          </div>
+          <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>{why}</div>
+        </div>
+        <div>
+          <div className="num mb-1 text-2xs font-semibold uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>
+            Recommended
+          </div>
+          <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{recommended}</div>
+        </div>
       </div>
     </Card>
   );
@@ -508,9 +560,9 @@ function RootCauseCard({
 
   // Ground the bridge in real NOI levels: start = FY{from} NOI, end = FY{to} NOI. The
   // engine guarantees Σdriver = totalDelta = toNoi − fromNoi, so the last driver lands
-  // exactly on the End total (the Waterfall component enforces base ≤ top per bar).
-  const headline = driverHeadline(from, to, totalDelta, drivers);
-
+  // exactly on the End total (the Waterfall component enforces base ≤ top per bar). The
+  // one-line root-cause synthesis now leads the verdict hero above (PFI Phase B.3 item 2),
+  // so this card is the detailed bridge only — no duplicated headline.
   return (
     <Card>
       <CardHeader
@@ -521,7 +573,6 @@ function RootCauseCard({
           </Badge>
         }
       />
-      <div className="px-4 pt-3 text-xs" style={{ color: 'var(--text-secondary)' }}>{headline}</div>
       <div className="overflow-x-auto px-2 py-2">
         <Waterfall
           startValue={fromNoi}
@@ -534,17 +585,6 @@ function RootCauseCard({
       </div>
     </Card>
   );
-}
-
-/** One-line synthesized root-cause headline naming the largest |contribution| driver. */
-function driverHeadline(from: string, to: string, totalDelta: number, drivers: WaterfallDriver[]): string {
-  const dir = totalDelta >= 0 ? '+' : '−';
-  const change = `NOI ${dir}${fmtUsd(Math.abs(totalDelta))} FY${from}→FY${to}`;
-  if (drivers.length === 0) return change;
-  const largest = drivers.reduce((a, b) => (Math.abs(b.delta) > Math.abs(a.delta) ? b : a));
-  const share = totalDelta === 0 ? null : largest.delta / totalDelta;
-  const shareText = share === null ? '' : ` ${fmtPct(share)}`;
-  return `${change}; largest driver ${largest.category}${shareText}`;
 }
 
 // ---------------------------------------------------------------------------
