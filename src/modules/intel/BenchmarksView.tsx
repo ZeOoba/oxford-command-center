@@ -31,6 +31,7 @@ import {
 import {
   availableFyPeriods,
   metricFormatter,
+  mixedBasisNote,
   METRIC_KEYS,
   METRIC_LABELS,
 } from './benchmarks-intel';
@@ -190,10 +191,13 @@ function SummaryStrip({
 }: {
   metric: NumericMetricKey;
   periodLabel: string | null;
-  summary: { avg: number | null; median: number | null; p25: number | null; p75: number | null; n: number } | null;
+  summary: { avg: number | null; median: number | null; p25: number | null; p75: number | null; n: number; mixedBasis?: boolean; bases?: string[] } | null;
   loading: boolean;
 }) {
   const fmt = metricFormatter(metric);
+  // Cross-basis warning (PFI Phase 1a): a cohort that mixes cash/accrual/tax (or unknown) basis is
+  // not a like-for-like comparison — surface it instead of presenting a clean "portfolio cohort".
+  const basisWarning = mixedBasisNote(summary);
   const items: Array<{ label: string; value: string }> = [
     { label: 'Average', value: fmt(summary?.avg ?? null) },
     { label: 'Median', value: fmt(summary?.median ?? null) },
@@ -205,7 +209,7 @@ function SummaryStrip({
     <Card>
       <CardHeader
         title={`${METRIC_LABELS[metric]} · ${periodLabel ?? '—'}`}
-        trailing={<Badge tone="gold">portfolio cohort</Badge>}
+        trailing={basisWarning ? <Badge tone="red">{basisWarning}</Badge> : <Badge tone="gold">portfolio cohort</Badge>}
       />
       {loading ? (
         <div className="p-4">

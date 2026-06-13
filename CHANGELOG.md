@@ -1,5 +1,16 @@
 # Changelog
 
+## PFI Phase 1a.2 — surface the cross-basis benchmark warning in the UI (2026-06-13)
+
+Completes the basis guard end-to-end (the consumer-side gap the Phase-1a adversarial review flagged:
+`mixedBasis` was computed and serialized by the API but the client type dropped it and no view read
+it — a dead guard). The client `MetricBenchmark` now carries `bases`/`mixedBasis`; `BenchmarksView`'s
+SummaryStrip renders a red "Mixed accounting basis (…) — not like-for-like" badge (in place of the
+"portfolio cohort" badge) whenever the selected cohort mixes cash / accrual / tax / unknown bases.
+Decision logic is a pure, unit-tested helper (`mixedBasisNote` in `benchmarks-intel.ts`); the view
+wiring follows the existing singleton-cohort badge pattern (browser-verified per the module convention).
+No server change — the engine already returned the fields.
+
 ## PFI Phase 1a — basis discipline + NOI integrity (2026-06-13)
 
 The integrity gate from the Intelligence Platform master plan (Revision 1: no scoring engine ships

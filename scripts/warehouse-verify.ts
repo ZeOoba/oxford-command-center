@@ -161,7 +161,7 @@ async function main(): Promise<number> {
     //    run; fails only on regression past the baseline (drive the baseline toward 0 as parsing improves).
     const bc = basisCoverage(db);
     console.log(`basis coverage: ${bc.unknown}/${bc.committed} committed imports have unknown accounting `
-      + `basis (period-header parse gap → neutral NOI/SF benchmark; scores.ts G3)`);
+      + `basis (period-header parse gap; 'unknown' is non-comparable in scores.ts G3 — benchmarked against no same-basis peers)`);
     if (bc.unknown > MAX_UNKNOWN_BASIS) {
       failures.push(`unknown-basis imports ${bc.unknown} exceed baseline ${MAX_UNKNOWN_BASIS} — QB `
         + `period-header basis parse regressed: ${bc.unknownFiles.join('; ')}`);

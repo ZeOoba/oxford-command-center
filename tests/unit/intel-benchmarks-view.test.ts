@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import {
   availableFyPeriods,
   metricFormatter,
+  mixedBasisNote,
   METRIC_KEYS,
   METRIC_LABELS,
 } from '../../src/modules/intel/benchmarks-intel';
@@ -89,6 +90,25 @@ describe('metricFormatter', () => {
       expect(metricFormatter(key)(null)).toBe('—');
       expect(metricFormatter(key)(Number.NaN)).toBe('—');
     }
+  });
+});
+
+describe('mixedBasisNote (G2 — surface the cross-basis benchmark warning to the user)', () => {
+  it('warns when the cohort mixes accounting bases, naming them', () => {
+    const note = mixedBasisNote({ mixedBasis: true, bases: ['accrual', 'cash'] });
+    expect(note).toMatch(/mixed accounting bas/i);
+    expect(note).toMatch(/not like-for-like/i);
+    expect(note).toMatch(/accrual/);
+    expect(note).toMatch(/cash/);
+  });
+
+  it('returns null for a single-basis cohort (no warning)', () => {
+    expect(mixedBasisNote({ mixedBasis: false, bases: ['cash'] })).toBeNull();
+  });
+
+  it('is null-safe (no summary / missing fields)', () => {
+    expect(mixedBasisNote(null)).toBeNull();
+    expect(mixedBasisNote({ mixedBasis: true })).toMatch(/mixed accounting bas/i); // bases omitted → generic
   });
 });
 

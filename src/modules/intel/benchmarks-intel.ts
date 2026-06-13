@@ -76,3 +76,17 @@ export function metricFormatter(metric: NumericMetricKey): (n: number | null) =>
   if (PER_SF_METRICS.has(metric)) return (n) => fmtUsd(n, true);
   return (n) => fmtUsd(n);
 }
+
+/** Cross-basis benchmark warning (G2). The engine flags a cohort that mixes accounting bases
+ *  (cash / accrual / tax) — comparing NOI or cost ratios across bases is not like-for-like. Returns
+ *  the warning text to surface (naming the bases when known) or null for a single-basis cohort.
+ *  Null-safe over a missing summary or omitted fields. */
+export function mixedBasisNote(
+  summary: { mixedBasis?: boolean; bases?: string[] } | null | undefined,
+): string | null {
+  if (!summary || !summary.mixedBasis) return null;
+  const bases = (summary.bases ?? []).filter((b) => typeof b === 'string' && b.length > 0);
+  return bases.length
+    ? `Mixed accounting basis (${bases.join(' + ')}) — not like-for-like`
+    : 'Mixed accounting basis — not like-for-like';
+}
