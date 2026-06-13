@@ -337,7 +337,11 @@ function RankingsCard({
       <CardHeader
         title="Rankings"
         trailing={
-          singletonCohort ? (
+          // Gate the singleton-cohort note on `!loading`: during a metric-change refetch the
+          // previous (healthy) cohort's data is still mounted, so deriving "insufficient
+          // peers" mid-flight made the badge flash on a perfectly good cohort. Only flag it
+          // once the refetch settles AND the cohort is genuinely singleton/empty.
+          !loading && singletonCohort ? (
             <Badge tone="neutral">insufficient peers for quartiles</Badge>
           ) : (
             <Badge tone="gold">{rows.length} properties</Badge>

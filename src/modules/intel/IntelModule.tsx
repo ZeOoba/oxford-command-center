@@ -1,15 +1,26 @@
 // src/modules/intel/IntelModule.tsx
 //
-// Property Financial Intelligence — the warehouse front door. Four internal tabs:
-//   Overview  · KpiStat row + NOI-by-property matrix (periods as columns)
-//   Imports   · audit trail + approve/reject review queue (ImportsView)
-//   Quality   · open data-quality issues + resolution (DataQualityView)
-//   Mappings  · manual override surface (MappingsView)
+// Property Financial Intelligence — the warehouse front door. Seven internal tabs in two
+// groups, the intelligence layer first, the data-ops layer (a subtle divider apart) last:
+//   INTELLIGENCE
+//     Ownership   · the DEFAULT home — Ownership Intelligence Center: action list +
+//                   attention matrix + capital allocation + risks + PM snapshot (OwnershipView)
+//     Property    · per-property verdict → root cause → recommendation (PropertyIntelView)
+//     Benchmarks  · period/metric cohort, rankings + quartiles + NOI-by-property matrix (BenchmarksView)
+//     Managers    · PM scorecards with the small-sample caveat (ManagersView)
+//   DATA-OPS
+//     Imports     · audit trail + approve/reject review queue (ImportsView)
+//     Data Quality· open data-quality issues + resolution (DataQualityView)
+//     Mappings    · manual override surface (MappingsView)
+// The selected property is lifted here so it persists across tab switches and so an
+// Ownership action / attention-matrix row / Benchmarks ranking row click can switch to the
+// Property tab focused on that id. The portfolio data-ops KpiRow band shows ONLY on the
+// data-ops tabs; each intelligence tab carries its own KPI band. The legacy standalone
+// 'overview' NOI matrix now lives inside Benchmarks.
 // On the static mirror the /api/warehouse routes are absent, so the hooks surface
 // `isUnavailable` and the whole module degrades to one informational Card.
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { Database } from 'lucide-react';
-import { fmtUsd } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
@@ -19,7 +30,6 @@ import {
   useWarehouseImports,
   useWarehouseIssues,
   useNoiMatrix,
-  groupNoiByProperty,
   isWarehouseUnavailable,
   type NoiMatrixCell,
 } from './hooks';
@@ -31,28 +41,24 @@ import { OwnershipView } from './OwnershipView';
 import { BenchmarksView } from './BenchmarksView';
 import { ManagersView } from './ManagersView';
 
-// 'ownership' is the Ownership Intelligence Center (PFI Phase B.2) — the DEFAULT home and
-// centerpiece: action list + attention matrix + capital allocation + risks + PM snapshot.
-// 'property' is the per-property intelligence page (verdict → root cause). The selected
-// property is lifted here so it persists across tab switches and so an Ownership action /
-// matrix-row click can switch to the Property tab focused on that id. The full IA reorg
-// (data-ops grouped last, the old standalone 'overview' tab removed) lands in Phase 5; for
-// now the new intelligence tabs — Ownership, Property, Benchmarks, Managers — lead and the
-// existing data-ops tabs (including 'overview') are kept additive. Benchmarks and Managers
-// both consume the lifted selectedPropertyId setter so a ranking-row click jumps to the
-// Property tab. The NOI matrix now also lives inside Benchmarks (it leaves 'overview' in P5).
-type Tab = 'ownership' | 'overview' | 'property' | 'benchmarks' | 'managers' | 'imports' | 'quality' | 'mappings';
+// Final IA (PFI Phase B.2): intelligence tabs first, then a subtle divider, then data-ops.
+// `group` drives the divider in the tab strip and the KpiRow gating below.
+type Tab = 'ownership' | 'property' | 'benchmarks' | 'managers' | 'imports' | 'quality' | 'mappings';
+type TabGroup = 'intelligence' | 'data-ops';
 
-const TABS: Array<{ id: Tab; label: string }> = [
-  { id: 'ownership', label: 'Ownership' },
-  { id: 'property', label: 'Property' },
-  { id: 'benchmarks', label: 'Benchmarks' },
-  { id: 'managers', label: 'Managers' },
-  { id: 'overview', label: 'Overview' },
-  { id: 'imports', label: 'Imports' },
-  { id: 'quality', label: 'Data Quality' },
-  { id: 'mappings', label: 'Mappings' },
+const TABS: Array<{ id: Tab; label: string; group: TabGroup }> = [
+  { id: 'ownership', label: 'Ownership', group: 'intelligence' },
+  { id: 'property', label: 'Property', group: 'intelligence' },
+  { id: 'benchmarks', label: 'Benchmarks', group: 'intelligence' },
+  { id: 'managers', label: 'Managers', group: 'intelligence' },
+  { id: 'imports', label: 'Imports', group: 'data-ops' },
+  { id: 'quality', label: 'Data Quality', group: 'data-ops' },
+  { id: 'mappings', label: 'Mappings', group: 'data-ops' },
 ];
+
+/** The data-ops tabs carry the portfolio data-ops KpiRow band; the intelligence tabs have
+ *  their own KPI bands and suppress it. */
+const DATA_OPS_TABS: ReadonlySet<Tab> = new Set<Tab>(['imports', 'quality', 'mappings']);
 
 export function IntelModule() {
   const [tab, setTab] = useState<Tab>('ownership');
@@ -94,30 +100,52 @@ export function IntelModule() {
           title="Property Financial Intelligence"
           trailing={
             <div className="flex items-center gap-1.5">
-              {TABS.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  className={cn(
-                    'num rounded-full px-2.5 py-0.5 text-2xs font-semibold uppercase transition-colors',
-                    tab === t.id ? 'cursor-default' : 'cursor-pointer',
-                  )}
-                  style={
-                    tab === t.id
-                      ? { background: 'color-mix(in oklab, var(--accent) 16%, transparent)', color: 'var(--accent)', border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)', letterSpacing: '0.06em' }
-                      : { background: 'transparent', color: 'var(--text-tertiary)', border: '1px solid transparent', letterSpacing: '0.06em' }
-                  }
-                >
-                  {t.label}
-                </button>
-              ))}
+              {TABS.map((t, i) => {
+                // A subtle divider before the first data-ops tab separates the intelligence
+                // layer from the data-warehouse layer (IA clarity; tokens only).
+                const prev = TABS[i - 1];
+                const startsDataOps = t.group === 'data-ops' && prev?.group === 'intelligence';
+                return (
+                  <span key={t.id} className="flex items-center gap-1.5">
+                    {startsDataOps && (
+                      <span
+                        aria-hidden
+                        className="mx-1 h-3.5 w-px"
+                        style={{ background: 'var(--border-strong)', opacity: 0.6 }}
+                      />
+                    )}
+                    <button
+                      onClick={() => setTab(t.id)}
+                      className={cn(
+                        'num rounded-full px-2.5 py-0.5 text-2xs font-semibold uppercase transition-colors',
+                        tab === t.id ? 'cursor-default' : 'cursor-pointer',
+                      )}
+                      style={
+                        tab === t.id
+                          ? { background: 'color-mix(in oklab, var(--accent) 16%, transparent)', color: 'var(--accent)', border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)', letterSpacing: '0.06em' }
+                          : {
+                              background: 'transparent',
+                              color: 'var(--text-tertiary)',
+                              border: '1px solid transparent',
+                              letterSpacing: '0.06em',
+                              // The data-ops tabs read one notch quieter than the intelligence
+                              // tabs so the intelligence layer leads visually.
+                              opacity: t.group === 'data-ops' ? 0.82 : 1,
+                            }
+                      }
+                    >
+                      {t.label}
+                    </button>
+                  </span>
+                );
+              })}
             </div>
           }
         />
-        {/* Portfolio data-ops KPIs anchor the data-warehouse tabs; the Property page, the
-            Ownership Center, Benchmarks, and Managers each carry their own header / band, so
-            suppress this row on all four intelligence tabs. */}
-        {tab !== 'property' && tab !== 'ownership' && tab !== 'benchmarks' && tab !== 'managers' && (
+        {/* The portfolio data-ops KPI band anchors the data-warehouse tabs only; each
+            intelligence tab (Ownership / Property / Benchmarks / Managers) carries its own
+            KPI band, so suppress this row there. */}
+        {DATA_OPS_TABS.has(tab) && (
           <div className="px-4 py-3">
             <KpiRow
               committed={(imports.data ?? []).filter((i) => i.status === 'committed').length}
@@ -136,8 +164,6 @@ export function IntelModule() {
         </div>
       ) : tab === 'ownership' ? (
         <OwnershipView onOpenProperty={openProperty} />
-      ) : tab === 'overview' ? (
-        <NoiMatrixTable matrix={noi.data ?? []} />
       ) : tab === 'property' ? (
         <PropertyIntelView propertyId={selectedPropertyId} onSelectProperty={setSelectedPropertyId} />
       ) : tab === 'benchmarks' ? (
@@ -169,49 +195,6 @@ function KpiRow({ committed, pending, openIssues, propertiesCovered, latestPerio
       <KpiStat label="Properties Covered" value={propertiesCovered} format={(n) => (n === null ? '—' : String(Math.round(n)))} accentColor="var(--color-info)" />
       <KpiStat label="Latest Period" value={latestPeriod ? 1 : null} format={() => latestPeriod ?? '—'} accentColor="var(--accent)" />
     </div>
-  );
-}
-
-function NoiMatrixTable({ matrix }: { matrix: NoiMatrixCell[] }) {
-  const { periods, rows } = useMemo(() => groupNoiByProperty(matrix), [matrix]);
-
-  return (
-    <Card>
-      <CardHeader title="NOI by Property" trailing={<Badge tone="gold">{rows.length} properties</Badge>} />
-      {rows.length === 0 ? (
-        <div className="px-4 py-10 text-center text-sm" style={{ color: 'var(--text-tertiary)' }}>
-          No committed financials yet. Run the warehouse backfill or approve a pending import.
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse" style={{ minWidth: 480 }}>
-            <thead>
-              <tr>
-                <th className="px-3 py-2 text-left text-2xs font-semibold uppercase" style={{ letterSpacing: '0.08em', color: 'var(--text-tertiary)', borderBottom: '1px solid var(--border-strong)' }}>Property</th>
-                {periods.map((p) => (
-                  <th key={p} className="num px-3 py-2 text-right text-2xs font-semibold uppercase" style={{ letterSpacing: '0.08em', color: 'var(--text-tertiary)', borderBottom: '1px solid var(--border-strong)' }}>{p}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r) => (
-                <tr key={r.propertyId} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                  <td className="px-3 py-2 text-sm" style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{r.propertyName}</td>
-                  {periods.map((p) => {
-                    const v = r.byPeriod[p];
-                    return (
-                      <td key={p} className="num px-3 py-2 text-right text-xs" style={{ color: v === undefined ? 'var(--text-tertiary)' : 'var(--text-primary)' }}>
-                        {v === undefined ? '—' : fmtUsd(v)}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Card>
   );
 }
 
