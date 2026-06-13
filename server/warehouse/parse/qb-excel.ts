@@ -41,6 +41,17 @@ const HEADER_CELL_RE = /period to date|year to date|selected period|%|total|annu
 const HEADER_PRIMARY_RE = /year to date|ytd|total|annual/i;
 const HEADER_SECONDARY_RE = /period to date|selected period/i;
 
+// Numeric-only text ("425450.49", "(98.81)", "1") is a VALUE cell, never an account label.
+function isNumericText(s: string): boolean {
+  return /^[\d.,()$\s-]*$/.test(s.trim());
+}
+
+// Strict account-candidate rule for space-indented QB/Yardi sheets: leading whitespace
+// ("     5002 RENTAL INCOME") or a digit-led GL code ("5064 Rent").
+function isSpaceOrDigitCandidate(t: string): boolean {
+  return !isNumericText(t) && (/^\s/.test(t) || /^\d/.test(t.trim()));
+}
+
 const MONTHS: Record<string, number> = {
   jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
   jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
@@ -51,17 +62,28 @@ function lastDayOfMonth(year: number, month: number): number {
   return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }
 
-// Derived-summary rows (CRC/Yardi-style charts): report-computed totals that carry a
-// value but are NOT accounts — ingesting them double-counts (same class as numeric-only
-// summary rows, fix ba230df).
-const DERIVED_SUMMARY_RE = /^(net operating income|net income(\/loss)?|noi\b.*|income after owner activity|cash flow|net other items)$/i;
+// Derived-summary rows (CRC/Yardi-style charts AND QB Desktop nested layouts):
+// report-computed totals that carry a value but are NOT accounts — ingesting them
+// double-counts (same class as numeric-only summary rows, fix ba230df).
+const DERIVED_SUMMARY_RE = /^(net operating income|net income(\/loss)?|noi\b.*|income after owner activity|cash flow|net other items|gross profit|net ordinary income|net other income)$/i;
 
 export async function parseQbExcel(filePath: string): Promise<RawStatement> {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(filePath);
-  const ws = wb.worksheets[0];
-  if (!ws) throw new Error(`no worksheet in ${filePath}`);
+  if (wb.worksheets.length === 0) throw new Error(`no worksheet in ${filePath}`);
+  // QB Desktop .xlsm exports put a "QuickBooks Desktop Export Tips" sheet FIRST; the
+  // statement lives on a later sheet. Take the first worksheet that yields accounts;
+  // if none do, return the first sheet's (empty) result.
+  let first: RawStatement | null = null;
+  for (const ws of wb.worksheets) {
+    const parsed = parseWorksheet(ws);
+    if (parsed.accounts.length > 0) return parsed;
+    first ??= parsed;
+  }
+  return first!;
+}
 
+function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
   let propertyRaw = '';
   let periodLabel = '';
   let periodStart: string | null = null;
@@ -72,6 +94,9 @@ export async function parseQbExcel(filePath: string): Promise<RawStatement> {
   let nonEmptyRows = 0;
   let section = '';
   let parent: string | null = null;
+  // Column the current parent group sits in — set ONLY for column-indented layouts
+  // (null = space-indented mode, where parent applies to every subsequent leaf).
+  let parentCol: number | null = null;
   const accounts: RawAccountLine[] = [];
 
   // Pre-pass: find a column-header row (≥2 cells matching the header vocabulary) and
@@ -81,6 +106,20 @@ export async function parseQbExcel(filePath: string): Promise<RawStatement> {
   // Column headers definitionally precede data: the scan STOPS at the first section row
   // — data rows can pair a "Total ..." subtotal label with a "92.83 %" text cell and
   // must never be mistaken for headers (the 9620 State 350 cash-flow format).
+  // Pre-pass: layout mode. Sheets with ANY space/digit-prefixed candidate are
+  // space-indented (classic QB/Yardi) and keep the strict rule — their unindented
+  // footer rows (cash balances, "Net cash provided by ...") stay invisible, as before.
+  // A sheet with NO such candidate is column-indented (QB Desktop 55 New Plant / 1851
+  // Solar layout): depth is encoded by COLUMN and the fallback candidate rule applies.
+  let columnMode = true;
+  ws.eachRow({ includeEmpty: false }, (row) => {
+    if (!columnMode) return;
+    row.eachCell({ includeEmpty: false }, (cell) => {
+      const t = cellText(cell.value);
+      if (t && t.trim() !== '' && isSpaceOrDigitCandidate(t)) columnMode = false;
+    });
+  });
+
   let valueCol: number | null = null;
   let headerRowNumber: number | null = null;
   let scanDone = false;
@@ -108,6 +147,7 @@ export async function parseQbExcel(filePath: string): Promise<RawStatement> {
     // gather all non-empty cells in the row
     const texts: Array<{ col: number; text: string }> = [];
     let rowNum: number | null = null;
+    let numCol: number | null = null;
     let anyNumeric = false;
     row.eachCell({ includeEmpty: false }, (cell, col) => {
       const t = cellText(cell.value);
@@ -116,7 +156,7 @@ export async function parseQbExcel(filePath: string): Promise<RawStatement> {
       if (n !== null) {
         anyNumeric = true;
         // header-driven column when one exists; else rightmost numeric wins
-        if (valueCol === null || col === valueCol) rowNum = n;
+        if (valueCol === null || col === valueCol) { rowNum = n; numCol = col; }
       }
     });
     if (texts.length === 0) return;
@@ -170,12 +210,29 @@ export async function parseQbExcel(filePath: string): Promise<RawStatement> {
         if (anyNumeric) return; // section word + amount on one row = a total-value row ("INCOME 216461.4"), not a header — skip without changing section
         section = trimmed.toUpperCase();
         parent = null; // a new section starts a new group context
+        parentCol = null;
         return;
       }
     }
 
     // account rows: "     5002 RENTAL INCOME" (group), "          5064 Rent" (leaf), "          5002 Total X" (subtotal)
-    const acctCell = texts.find((t) => /^\s/.test(t.text) || /^\d/.test(t.text.trim()));
+    let acctCell: { col: number; text: string } | undefined;
+    let columnIndented = false;
+    if (columnMode) {
+      // column-indented layout: take the RIGHTMOST text cell that is not a section
+      // label, not numeric text, and not the chosen value column.
+      const candidates = texts.filter((t) =>
+        !SECTION_RE.test(t.text.trim())
+        && !isNumericText(t.text)
+        && t.col !== (valueCol ?? numCol));
+      acctCell = candidates[candidates.length - 1];
+      columnIndented = acctCell !== undefined;
+    } else {
+      // space-indented sheets keep the original rule VERBATIM — including numeric-text
+      // matches (rejected below by the numeric-only name check), which mask junk cells
+      // to their right (" %" on QB cash-flow percent rows).
+      acctCell = texts.find((t) => /^\s/.test(t.text) || /^\d/.test(t.text.trim()));
+    }
     if (!acctCell || !section || section === 'TOTAL') return;
     const trimmed = acctCell.text.trim();
     // A GL code must be digits FOLLOWED BY WHITESPACE — otherwise alpha names with a
@@ -191,8 +248,16 @@ export async function parseQbExcel(filePath: string): Promise<RawStatement> {
     if (rowNum === null) {
       // group header (no value) — becomes parent for subsequent leaves.
       // (code is already split off; re-stripping here would eat "1st …" names)
+      // Column-indented mode tracks the group's column: a leaf in a DEEPER column gets
+      // this group as parent; a new group at the same/shallower column replaces it.
       parent = name;
+      parentCol = columnIndented ? acctCell.col : null;
       return;
+    }
+    if (parentCol !== null && acctCell.col <= parentCol) {
+      // column-indented leaf back at/above the group's column — the group has ended
+      parent = null;
+      parentCol = null;
     }
     accounts.push({
       code,

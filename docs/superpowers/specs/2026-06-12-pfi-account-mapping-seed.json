@@ -2742,6 +2742,14 @@
       "classification": "excluded",
       "confidence": "high",
       "note": "Live-backfill addition 2026-06-12: cash-position line in AppFolio Other Items, not an account."
+    },
+    {
+      "account": "Bad Debt Expense",
+      "code": null,
+      "normalized_category": "Bad Debt",
+      "classification": "other-income",
+      "confidence": "high",
+      "note": "Income-side contra-revenue entry: Yardi charts book bad debt in the REVENUE section as a negative amount (sign carries through, reducing NOI once). Expense-side charts resolve to the existing opex entry via side-aware mapping. Live-backfill addition 2026-06-12."
     }
   ],
   "needs_gabriel_ruling": [],

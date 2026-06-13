@@ -264,6 +264,134 @@ describe('qb-excel adapter', () => {
     expect(s.accounts[0]!.total).toBeCloseTo(171801.26);
   });
 
+  it('parses column-indented QB Desktop layouts (55 New Plant): no leading spaces, indentation by column', async () => {
+    // Verified against the real "P&L 2024 -- 55 New Plant (EGFLLC).xlsx": every label is
+    // an unindented cell; depth is encoded by COLUMN (B=section, C=leaf/group, D=sub-leaf,
+    // E=value). The space/digit candidate rule finds ZERO accounts in this layout.
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    const rows: Array<Array<string | number | null>> = [
+      [null, null, null, null, 'Jan - Dec 24'],
+      [null, 'Income', null, null, null],
+      [null, null, 'Rents', null, 425450.49],
+      [null, null, 'Tax Refund', null, 1500],
+      [null, 'Total Income', null, null, 426950.49],
+      [null, 'Expense', null, null, null],
+      [null, null, 'Amortization Expense', null, 17601],
+      [null, null, 'Asset Management Fees', null, 17342.6],
+      [null, null, 'Depreciation', null, 14529],
+      [null, null, 'Insurance', null, 0],
+      [null, null, 'Interest Expense', null, 58659.84],
+      [null, null, 'Professional Fees', null, 3520],
+      [null, null, 'REPAIR & MAINT--BLDG', null, 975],
+      [null, null, 'Tax', null, null], // group header — no value; parent for the col-D leaves
+      [null, null, null, 'Fed', 7000],
+      [null, null, null, 'Property', 309],
+      [null, null, null, 'State', 1500],
+      [null, null, null, 'Tax - Other', 309],
+      [null, null, 'Total Tax', null, 9118],
+      [null, 'Total Expense', null, null, 121745.44],
+      ['Net Income', null, null, null, 305205.05],
+    ];
+    for (const r of rows) ws.addRow(r);
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'col-indent.xlsx');
+    await wb.xlsx.writeFile(file);
+    const s = await parseQbExcel(file);
+    expect(s.periodLabel).toBe('Jan - Dec 24');
+    const byName = new Map(s.accounts.map((a) => [a.name, a]));
+    expect(byName.get('Rents')!.total).toBeCloseTo(425450.49);
+    expect(byName.get('Rents')!.section).toBe('INCOME');
+    expect(byName.get('Tax Refund')!.total).toBeCloseTo(1500);
+    expect(byName.get('Amortization Expense')!.total).toBeCloseTo(17601);
+    expect(byName.get('Asset Management Fees')!.total).toBeCloseTo(17342.6);
+    expect(byName.get('Depreciation')!.total).toBeCloseTo(14529);
+    expect(byName.get('Insurance')!.total).toBe(0); // real file carries a numeric 0
+    expect(byName.get('Interest Expense')!.total).toBeCloseTo(58659.84);
+    expect(byName.get('Professional Fees')!.total).toBeCloseTo(3520);
+    expect(byName.get('REPAIR & MAINT--BLDG')!.total).toBeCloseTo(975);
+    // Tax sub-leaves (column D) get the most recent shallower-column group as parent
+    for (const [name, total] of [['Fed', 7000], ['Property', 309], ['State', 1500], ['Tax - Other', 309]] as const) {
+      const a = byName.get(name)!;
+      expect(a.total).toBeCloseTo(total);
+      expect(a.parent).toBe('Tax');
+      expect(a.section).toBe('EXPENSE');
+    }
+    // expense leaves at the group's own column do NOT inherit a parent
+    expect(byName.get('Insurance')!.parent).toBeNull();
+    // subtotal / derived rows never become accounts
+    const names = s.accounts.map((a) => a.name);
+    expect(names.filter((n) => /^Total\b/i.test(n))).toEqual([]);
+    expect(names).not.toContain('Net Income');
+    expect(s.accounts).toHaveLength(13);
+  });
+
+  it('selects the first worksheet that yields accounts (skips "QuickBooks Desktop Export Tips")', async () => {
+    // Verified against the real "P&L 2024 -- 1851 South Club Solar.xlsm": sheet 0 is a
+    // QB-generated tips sheet, the statement lives on Sheet1 — worksheets[0] parses empty.
+    // Sheet1 replicates the real nested column-indented layout including the derived
+    // "Gross Profit" / "Net Ordinary Income" / "Net Other Income" rows.
+    const wb = new ExcelJS.Workbook();
+    const tips = wb.addWorksheet('QuickBooks Desktop Export Tips');
+    tips.addRow(['QuickBooks Desktop Export Tips']);
+    tips.addRow(['This worksheet contains tips for working with your exported report.']);
+    tips.addRow(['To update the data, run the report again in QuickBooks.']);
+    const ws = wb.addWorksheet('Sheet1');
+    const rows: Array<Array<string | number | null>> = [
+      [null, null, null, null, null, null, 'Jan - Dec 24'],
+      [null, 'Ordinary Income/Expense', null, null, null, null, null],
+      [null, null, null, 'Income', null, null, null],
+      [null, null, null, null, 'Electricity Income -- PS', null, 216214.47],
+      [null, null, null, null, 'SREC Income', null, 452584],
+      [null, null, null, 'Total Income', null, null, 668798.47],
+      [null, null, 'Gross Profit', null, null, null, 668798.47],
+      [null, null, null, 'Expense', null, null, null],
+      [null, null, null, null, 'Bank Service Charges', null, null],
+      [null, null, null, null, null, 'Wire Fee', 15],
+      [null, null, null, null, null, 'Bank Service Charges - Other', 30],
+      [null, null, null, null, 'Total Bank Service Charges', null, 45],
+      [null, null, null, null, 'Insurance Expense', null, 17556.92],
+      [null, null, null, null, 'Professional Fees', null, 3000],
+      [null, null, null, null, 'Repairs and Maintenance', null, 17062.37],
+      [null, null, null, null, 'Tax -- Personal Property', null, 309],
+      [null, null, null, 'Total Expense', null, null, 37973.29],
+      [null, 'Net Ordinary Income', null, null, null, null, 630825.18],
+      [null, 'Other Income/Expense', null, null, null, null, null],
+      [null, null, 'Other Expense', null, null, null, null],
+      [null, null, null, 'Tax -- Md State', null, null, 36013],
+      [null, null, 'Total Other Expense', null, null, null, 36013],
+      [null, 'Net Other Income', null, null, null, null, -36013],
+      ['Net Income', null, null, null, null, null, 594812.18],
+    ];
+    for (const r of rows) ws.addRow(r);
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'tips-first.xlsm');
+    await wb.xlsx.writeFile(file);
+    const s = await parseQbExcel(file);
+    expect(s.periodLabel).toBe('Jan - Dec 24');
+    expect(s.accounts.map((a) => a.name)).toEqual([
+      'Electricity Income -- PS', 'SREC Income',
+      'Wire Fee', 'Bank Service Charges - Other',
+      'Insurance Expense', 'Professional Fees', 'Repairs and Maintenance', 'Tax -- Personal Property',
+      'Tax -- Md State',
+    ]);
+    const byName = new Map(s.accounts.map((a) => [a.name, a]));
+    expect(byName.get('Electricity Income -- PS')!.section).toBe('INCOME');
+    expect(byName.get('Wire Fee')!.parent).toBe('Bank Service Charges');
+    expect(byName.get('Insurance Expense')!.parent).toBeNull();
+    expect(byName.get('Tax -- Md State')!.section).toBe('EXPENSE');
+    expect(byName.get('Tax -- Md State')!.total).toBeCloseTo(36013);
+  });
+
+  it('returns the first sheet\'s empty result when no worksheet yields accounts', async () => {
+    const wb = new ExcelJS.Workbook();
+    const tips = wb.addWorksheet('QuickBooks Desktop Export Tips');
+    tips.addRow(['QuickBooks Desktop Export Tips']);
+    tips.addRow(['No statement here.']);
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'tips-only.xlsx');
+    await wb.xlsx.writeFile(file);
+    const s = await parseQbExcel(file);
+    expect(s.accounts).toEqual([]);
+  });
+
   it('parses text-formatted parenthesized amounts as negative numbers', async () => {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Sheet1');

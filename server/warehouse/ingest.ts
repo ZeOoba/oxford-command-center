@@ -57,6 +57,7 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
   `);
 
   const threshold = opts.autoCommitThreshold ?? 0.85;
+  let insertedRows = 0;
   const tx = db.transaction(() => {
     for (const a of stmt.accounts) {
       if (a.total === null) continue;
@@ -66,8 +67,14 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
         insIssue.run(reg.importId, det.propertyId, 'unmapped-account', `${a.name} (section ${a.section}) defaulted to Unmapped/opex`, 'warn');
       }
       insLedger.run(reg.importId, det.propertyId ?? 'unknown', period, a.name, a.code ?? null, a.total, m.normalizedCategory, m.classification, m.mappingId);
+      insertedRows += 1;
     }
-    const commit = det.propertyId !== null && det.confidence >= threshold && unmapped.length === 0;
+    if (insertedRows === 0) {
+      // empty parse = adapter/layout failure, never a valid statement — committing it
+      // would silently record the period as ingested with zero ledger rows (data loss).
+      insIssue.run(reg.importId, det.propertyId, 'empty-parse', `parsed 0 valued accounts from ${fileName} (sourceSystem ${stmt.sourceSystem})`, 'error');
+    }
+    const commit = insertedRows > 0 && det.propertyId !== null && det.confidence >= threshold && unmapped.length === 0;
     if (commit) {
       // supersede prior committed versions for the same logical period
       const priors = db.prepare(`
@@ -92,6 +99,7 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
     status: committed ? 'committed' : 'pending-review',
     importId: reg.importId,
     version: reg.version,
+    reason: insertedRows === 0 ? 'empty-parse' : undefined,
     unmapped: unmapped.length ? unmapped : undefined,
   };
 }

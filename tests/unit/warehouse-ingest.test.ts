@@ -88,6 +88,30 @@ describe('ingest pipeline', () => {
     expect(v1.status).toBe('superseded');
   });
 
+  it('empty parse (zero valued accounts) is never auto-committed: pending-review + empty-parse DQ issue', async () => {
+    // Regression: six real files (tips-sheet-first .xlsm + column-indented layouts)
+    // parsed to ZERO accounts and were silently committed with no ledger rows.
+    const dir = mkdtempSync(join(tmpdir(), 'wh-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('QuickBooks Desktop Export Tips');
+    ws.addRow(['QuickBooks Desktop Export Tips']);
+    ws.addRow(['This worksheet contains tips for working with your exported report.']);
+    await wb.xlsx.writeFile(file);
+
+    const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
+    expect(r.status).toBe('pending-review');
+    const batch = db.prepare('SELECT status FROM import_batches WHERE id = ?').get(r.importId) as { status: string };
+    expect(batch.status).toBe('pending-review');
+    expect((db.prepare('SELECT COUNT(*) AS c FROM ledger_entries').get() as { c: number }).c).toBe(0);
+    const issues = db.prepare('SELECT kind, severity FROM data_quality_issues WHERE import_id = ?').all(r.importId) as Array<{ kind: string; severity: string }>;
+    expect(issues.map((i) => i.kind)).toContain('empty-parse');
+    expect(issues.find((i) => i.kind === 'empty-parse')!.severity).toBe('error');
+  });
+
   it('unmapped accounts flag data quality and downgrade to pending-review', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'wh-'));
     const db = openWarehouse(join(dir, 'f.sqlite'));
