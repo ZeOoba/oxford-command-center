@@ -44,9 +44,12 @@ function percentileRank(value: number, population: number[]): number {
   return below / population.length;
 }
 
-/** Efficiency sub-score: lower cost ratio ⇒ higher score → 100*(1 − percentileRank). */
+/** Efficiency sub-score: lower cost ratio ⇒ higher score → 100*(1 − percentileRank). Neutral (50)
+ *  when the property has no value OR the like-basis population has <2 members (a singleton self-
+ *  population would otherwise percentile-rank to a spurious 100). */
 function efficiencyScore(value: number | null, population: number[]): number {
   if (value === null) return 50;
+  if (population.length < 2) return 50;
   return 100 * (1 - percentileRank(value, population));
 }
 
@@ -130,22 +133,39 @@ export function scoreProperties(db: WarehouseDb, metrics: PeriodMetrics[]): Prop
         ? (growthCur.revenuePerSf - growthPrev.revenuePerSf) / growthPrev.revenuePerSf
         : null;
 
-    // Efficiency populations (portfolio, SAME full-year period) — lower ratio is better. Built at
-    // `period` (the full-year period above) so the percentile cohort is same-grain same-period.
-    const expensePop = population(metrics, period, (m) => m.expenseRatio);
-    const taxPop = population(metrics, period, (m) => m.taxesPerSf);
-    const insPop = population(metrics, period, (m) => m.insurancePerSf);
-    const repairPop = population(metrics, period, (m) => m.repairsPerSf);
+    // Cross-basis discipline (G3): a property is benchmarked ONLY against same-basis peers. Cash vs
+    // accrual vs tax materially shift NOI/$SF and the cost ratios, so a cross-basis percentile is not
+    // like-for-like. Partition the cohort by THIS property's basis; both the NOI/SF ranking and the
+    // efficiency populations below compare within basis. A property with <2 same-basis peers falls to
+    // neutral (rankProperties → quartile null; efficiencyScore → 50). This preserves the majority-basis
+    // ranking instead of a whole-cohort kill switch that one off-basis property would trip.
+    const myBasis = levelRow.basis;
+    // 'unknown' basis = the period header didn't parse; it is NOT a comparable basis (an 'unknown'
+    // could be cash, accrual, or tax under the hood), so an unknown-basis property is benchmarked
+    // against NOTHING — never pooled with other 'unknown' properties (which would itself be a
+    // cross-basis comparison). Known bases compare within themselves.
+    const sameBasis = myBasis === 'unknown'
+      ? metrics.filter((m) => m.propertyId === propertyId)
+      : metrics.filter((m) => m.basis === myBasis);
+    const periodPeerCount = metrics.filter((m) => m.period === period).length;
+    const sameBasisPeerCount = sameBasis.filter((m) => m.period === period).length;
+    const basisIsolated = sameBasisPeerCount < periodPeerCount; // cross-basis peers were excluded
+
+    // Efficiency populations (SAME basis, same full-year period) — lower ratio is better.
+    const expensePop = population(sameBasis, period, (m) => m.expenseRatio);
+    const taxPop = population(sameBasis, period, (m) => m.taxesPerSf);
+    const insPop = population(sameBasis, period, (m) => m.insurancePerSf);
+    const repairPop = population(sameBasis, period, (m) => m.repairsPerSf);
 
     // Margin stability over the property's own history.
     const margins = sorted.map((m) => m.noiMargin).filter((v): v is number => v !== null && Number.isFinite(v));
     const marginStability = 100 - clamp(stddev(margins) * 200, 0, 100); // scale 200: 0.50 stddev ⇒ 0
 
-    // Benchmark position from NOI/SF quartile at the full-year `period` — ranks this property's
-    // full-year value against the cohort of OTHER properties' values AT THE SAME period (spec §9).
-    // rankProperties already excludes properties lacking that period and returns quartile:null for a
-    // low-confidence singleton cohort (n<2) — both map to the neutral benchmarkPosition (50).
-    const ranking = rankProperties(metrics, period, 'noiPerSf');
+    // Benchmark position from NOI/SF quartile within the SAME-BASIS cohort at the full-year `period`
+    // (spec §9 + G3 basis discipline). rankProperties excludes properties lacking that period and
+    // returns quartile:null for a low-confidence singleton cohort (n<2) — both map to neutral (50). A
+    // basis-isolated property (no same-basis peers) thus gets quartile null, never a cross-basis rank.
+    const ranking = rankProperties(sameBasis, period, 'noiPerSf');
     const myRank = ranking.find((r) => r.propertyId === propertyId);
     const quartile = myRank ? myRank.quartile : null;
     const benchmarkPosition = quartile === null ? 50 : { 1: 100, 2: 75, 3: 50, 4: 25 }[quartile];
@@ -230,7 +250,8 @@ export function scoreProperties(db: WarehouseDb, metrics: PeriodMetrics[]): Prop
       reasons: buildReasons({
         healthBand, attentionBand, capitalAction, health,
         noiGrowth, quartile, flags, critical, high, moderate,
-        latest: levelRow,
+        latest: levelRow, basisIsolated, basis: myBasis,
+        sameBasisPeerCount, periodPeerCount,
       }),
     });
   }
@@ -251,6 +272,10 @@ interface ReasonCtx {
   high: number;
   moderate: number;
   latest: PeriodMetrics;
+  basisIsolated: boolean;
+  basis: string;
+  sameBasisPeerCount: number;
+  periodPeerCount: number;
 }
 
 /** Human-readable rationale strings, deterministic in the inputs. */
@@ -268,6 +293,19 @@ function buildReasons(ctx: ReasonCtx): string[] {
   if (ctx.quartile !== null) {
     const label = ctx.quartile === 1 ? 'top quartile' : ctx.quartile === 4 ? 'bottom quartile' : `quartile ${ctx.quartile}`;
     reasons.push(`NOI/SF ranks ${label} vs the portfolio.`);
+  }
+
+  if (ctx.basisIsolated) {
+    const excluded = ctx.periodPeerCount - ctx.sameBasisPeerCount;
+    if (ctx.basis === 'unknown') {
+      reasons.push(
+        `Accounting basis unknown (period-header parse miss) — not benchmarked against peers (${excluded} excluded); benchmark low-confidence.`,
+      );
+    } else {
+      reasons.push(
+        `Benchmarks computed only against ${ctx.sameBasisPeerCount} same-basis (${ctx.basis}) peer(s) — ${excluded} cross-basis peer(s) excluded (like-for-like).`,
+      );
+    }
   }
 
   if (ctx.critical > 0 || ctx.high > 0 || ctx.moderate > 0) {

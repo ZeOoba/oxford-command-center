@@ -23,6 +23,12 @@ export interface MetricBenchmark {
   p25: number | null;
   p75: number | null;
   n: number;
+  // Cross-basis discipline: the distinct accounting bases of the properties that contributed a
+  // value to this cohort, and whether they are mixed. A benchmark drawn across cash + accrual (or
+  // unknown) NOI is not a like-for-like comparison; consumers must surface mixedBasis, never compare
+  // silently. 'unknown' counts as its own basis (conservative).
+  bases: string[];
+  mixedBasis: boolean;
 }
 
 export interface PropertyRank {
@@ -69,9 +75,21 @@ function metricValues(metrics: PeriodMetrics[], period: string, key: NumericMetr
   return out;
 }
 
+/** Distinct accounting bases (sorted) of the properties that contribute a finite value to a cohort. */
+export function cohortBases(metrics: PeriodMetrics[], period: string, key: NumericMetricKey): string[] {
+  const set = new Set<string>();
+  for (const m of metrics) {
+    if (m.period !== period) continue;
+    const v = m[key];
+    if (typeof v === 'number' && Number.isFinite(v)) set.add(m.basis ?? 'unknown');
+  }
+  return [...set].sort();
+}
+
 /** Portfolio average / median / p25 / p75 / n for one metric in one period. */
 export function benchmarkMetric(metrics: PeriodMetrics[], period: string, key: NumericMetricKey): MetricBenchmark {
   const values = metricValues(metrics, period, key);
+  const bases = cohortBases(metrics, period, key);
   return {
     period,
     metric: key,
@@ -80,6 +98,8 @@ export function benchmarkMetric(metrics: PeriodMetrics[], period: string, key: N
     p25: quantile(values, 0.25),
     p75: quantile(values, 0.75),
     n: values.length,
+    bases,
+    mixedBasis: bases.length > 1,
   };
 }
 

@@ -58,7 +58,9 @@ describe('ingest pipeline', () => {
     ).all() as Array<{ raw_account: string; classification: string; amount: number }>;
     expect(ledger).toHaveLength(3);
 
-    // NOI from active NOI-class rows only: 100000 (revenue) - 5000 (opex) = 95000; distribution excluded
+    // NOI from active NOI-class rows only: 100000 (revenue) - 5000 (opex) = 95000; distribution excluded.
+    // The income literal here is INTENTIONALLY hardcoded (not NOI_INCOME_CLASSES) so this stays an
+    // independent oracle on the contract-derived production paths — importing it would make it tautological.
     const noi = db.prepare(`
       SELECT SUM(CASE WHEN classification IN ('revenue','recovery','other-income') THEN amount
                       WHEN classification = 'opex' THEN -amount ELSE 0 END) AS noi
@@ -257,6 +259,7 @@ describe('ingest pipeline', () => {
     expect(byName.get('MANAGEMENT FEE EXPENSE')).toBe(10000);
     expect(byName.get('Property Taxes')).toBe(-5000); // contra refund inverts with the side
 
+    // Income literal INTENTIONALLY hardcoded — independent oracle on the contract-derived paths (see above).
     const noi = db.prepare(`
       SELECT SUM(CASE WHEN classification IN ('revenue','recovery','other-income') THEN amount
                       WHEN classification = 'opex' THEN -amount ELSE 0 END) AS noi

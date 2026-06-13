@@ -1,5 +1,41 @@
 # Changelog
 
+## PFI Phase 1a — basis discipline + NOI integrity (2026-06-13)
+
+The integrity gate from the Intelligence Platform master plan (Revision 1: no scoring engine ships
+until NOI is basis-disciplined and the two NOI codepaths cannot drift). All changes are
+behavior-preserving on the current corpus (NOI matrix byte-identical; gate green) and correct on the
+multi-basis / multi-batch edges it does not yet exercise. TDD throughout; **three adversarial review
+rounds found and fixed five real defects before commit** (a year+YTD double-count, an arbitrary-row
+basis pick, an intransitive batch tie-break, an incomplete scoring guard, and unknown-basis pooling).
+
+- **Accounting basis is first-class.** `PeriodMetrics.basis` is surfaced from the import. Benchmark
+  cohorts expose `bases`/`mixedBasis` (`benchmarks.ts`). Scoring partitions every percentile-ranked
+  sub-score — the NOI/SF quartile **and** the four efficiency sub-scores — by the property's own
+  basis (`scores.ts`), so cash / accrual / tax NOI and cost ratios are never silently compared. A
+  basis-isolated property (no same-basis peers) falls to neutral, never a cross-basis rank; the
+  majority-basis cohort still ranks among itself. `unknown` basis is treated as **non-comparable**
+  (isolated, never pooled) — it means the period header didn't parse, not "a basis."
+- **One NOI definition, no drift.** `noiMatrix` (queries.ts) and `propertyPeriodMetrics` (metrics.ts)
+  both source the NOI income classes from the contract (`NOI_INCOME_CLASSES` / `isNoiIncomeClass` /
+  `isOpex`); `warehouse-verify` and a cross-path agreement test pin them equal.
+- **Deterministic, no-double-count grouping.** When a full-year and a same-year YTD coexist active
+  (same ledger period, different `period_end`), `selectCoherentBatch` resolves to ONE coherent batch
+  by a single **total-order** key `[grainRank, endKey, importId]` (transitive — null end = unknown
+  scope sorts as most-recent, never demoted below a dated partial). Eliminates the silent NOI
+  double-count, the arbitrary-row basis/grain pick, and the order-dependent (intransitive) winner.
+- Tests: `warehouse-coherent-batch` (tie-break incl. 3-batch permutation-invariance),
+  `warehouse-basis-guard` (benchmark cohort), `warehouse-scores-basis` (partition + over-suppression
+  + unknown-isolation regressions), plus metrics basis & coexistence + a `noiMatrix`↔`propertyPeriodMetrics` agreement test.
+
+**Calibration / governance (pending Gabriel, tracked):** the strict partition default neutralizes
+benchmark+efficiency signal for `unknown`-basis and basis-isolated properties — the durable fix is
+better period-header basis detection at ingest (data-quality), and the partition-vs-neutralize
+semantics are a ratifiable scoring-calibration item (see the hurdle-rate/governance + calibration-log
+specs). **Deferred next units:** surface `mixedBasis` in the Benchmarks UI (client type + badge); the
+A↔B workbook-vs-warehouse NOI reconciliation keystone; materialized metrics/scores/findings tables;
+occupancy time-series; FRED-into-engine; governance config; calibration-log scaffold.
+
 ## PFI Phase B.3 — intelligence UI design upgrades (2026-06-13)
 
 Five design/UX upgrades to the intel module — answer-first, time-aware, and deep-linkable —

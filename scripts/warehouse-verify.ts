@@ -19,14 +19,21 @@ import { openWarehouse } from '../server/warehouse/db';
 import type { WarehouseDb } from '../server/warehouse/db';
 import { ingestFile } from '../server/warehouse/ingest';
 import { classificationSide, resolveMapping, sectionSide, seedMappingsFromFile } from '../server/warehouse/mapping';
+import { basisCoverage } from '../server/warehouse/data-quality';
 import { parseQbExcel } from '../server/warehouse/parse/qb-excel';
 import { seedPropertyMaster } from '../server/warehouse/property-master';
+import { NOI_INCOME_CLASSES } from '../src/contracts/warehouse';
 
 const FINANCIALS_DIR = process.env.FINANCIALS_DIR
   ?? 'C:/Users/Owner/OneDrive - Oxford Capital Partners (1)/Property Financials';
 const SEED_PATH = join(process.cwd(), 'docs', 'superpowers', 'specs', '2026-06-12-pfi-account-mapping-seed.json');
 const MIN_COMMITTED = 32;
 const INCOME_TIE_TOLERANCE = 1; // dollars
+// Current known QB period-header basis parse-gap (8/32). An unknown-basis property is benchmarked
+// against NO same-basis peers by scores.ts G3 (it treats 'unknown' as non-comparable), so its NOI/SF
+// benchmark position falls to neutral. This ratchet fails the gate if the gap WORSENS; drive it toward
+// 0 by improving the period-header basis parser and lower this baseline as it does.
+const MAX_UNKNOWN_BASIS = 8;
 
 interface CommittedImport {
   id: number;
@@ -121,13 +128,16 @@ async function main(): Promise<number> {
     }
 
     // 4. income-side ledger tie per committed import (±$INCOME_TIE_TOLERANCE)
+    // Income classes come from the contract (NOI_INCOME_CLASSES) — bound as parameters so this list
+    // can never drift from queries.ts / NOI_CLASSES.
+    const incomePlaceholders = NOI_INCOME_CLASSES.map(() => '?').join(',');
     const ledgerIncome = db.prepare(`
       SELECT COALESCE(SUM(amount), 0) AS s FROM ledger_entries
       WHERE import_id = ? AND is_active = 1
-        AND classification IN ('revenue', 'recovery', 'other-income')
+        AND classification IN (${incomePlaceholders})
     `);
     for (const imp of committed) {
-      const ledger = (ledgerIncome.get(imp.id) as { s: number }).s;
+      const ledger = (ledgerIncome.get(imp.id, ...NOI_INCOME_CLASSES) as { s: number }).s;
       const expected = await expectedIncomeFor(db, imp);
       const delta = Math.abs(ledger - expected);
       if (delta > INCOME_TIE_TOLERANCE) {
@@ -136,15 +146,26 @@ async function main(): Promise<number> {
     }
     console.log(`income tie: ${committed.length} committed imports checked (tolerance $${INCOME_TIE_TOLERANCE})`);
 
-    // 5. NOI matrix
+    // 5. NOI matrix (income classes from the contract; opex is the single fixed negative pivot)
     const noi = db.prepare(`
       SELECT property_id, period,
-        ROUND(SUM(CASE WHEN classification IN ('revenue','recovery','other-income') THEN amount
+        ROUND(SUM(CASE WHEN classification IN (${incomePlaceholders}) THEN amount
                        WHEN classification = 'opex' THEN -amount ELSE 0 END), 2) AS noi
       FROM ledger_entries WHERE is_active = 1
       GROUP BY property_id, period ORDER BY property_id, period
-    `).all();
+    `).all(...NOI_INCOME_CLASSES);
     console.table(noi);
+
+    // 6. basis coverage — accounting-basis parse gap. scores.ts G3 benchmarks an unknown-basis property
+    //    against NO same-basis peers, so its NOI/SF benchmark position falls to neutral. Surfaced every
+    //    run; fails only on regression past the baseline (drive the baseline toward 0 as parsing improves).
+    const bc = basisCoverage(db);
+    console.log(`basis coverage: ${bc.unknown}/${bc.committed} committed imports have unknown accounting `
+      + `basis (period-header parse gap → neutral NOI/SF benchmark; scores.ts G3)`);
+    if (bc.unknown > MAX_UNKNOWN_BASIS) {
+      failures.push(`unknown-basis imports ${bc.unknown} exceed baseline ${MAX_UNKNOWN_BASIS} — QB `
+        + `period-header basis parse regressed: ${bc.unknownFiles.join('; ')}`);
+    }
     db.close();
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -156,7 +177,7 @@ async function main(): Promise<number> {
     return 1;
   }
   console.log('\nwarehouse:verify PASSED: 0 empty-parse, 0 foot-mismatch, 0 unmapped on committed, ' +
-    `committed >= ${MIN_COMMITTED}, income ties within $${INCOME_TIE_TOLERANCE}`);
+    `committed >= ${MIN_COMMITTED}, income ties within $${INCOME_TIE_TOLERANCE}, unknown-basis <= ${MAX_UNKNOWN_BASIS}`);
   return 0;
 }
 
