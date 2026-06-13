@@ -1,5 +1,35 @@
 # Changelog
 
+## PFI Phase A — Financial Warehouse Foundation (2026-06-12)
+
+- **Warehouse schema** (`server/warehouse/db.ts`): SQLite (better-sqlite3, WAL, FK-enforced),
+  idempotent migration — `property_master`, `import_batches`, `account_mappings`,
+  `ledger_entries`, `data_quality_issues`.
+- **14-unit ratified property master** (`server/warehouse/property-master.ts`): Gabriel-ratified
+  canon (2026-06-12) hardcoded as the seed — entity-level FVC unit, fractional ownership
+  (Red Branch/Broadway 50%, 1851 S Club Solar 25%), lease-run mode for Sunburst/Fishel,
+  residence excluded. Idempotent upsert.
+- **Mapping engine** (`server/warehouse/mapping.ts`): loads the 339-account verified seed
+  (`docs/superpowers/specs/2026-06-12-pfi-account-mapping-seed.json`); key normalization strips
+  GL codes/case/whitespace; section-aware resolution (income vs expense side); precedence
+  manual > seed; unmapped falls back to `Unmapped`/`opex` (NOI-conservative) with a data-quality flag.
+- **QB-Excel adapter** (`server/warehouse/parse/qb-excel.ts`): parses the verified QuickBooks
+  report shape — `Property:` header, period line with cash/accrual basis, section labels,
+  GL-coded leaf accounts (subtotal/summary rows skipped), rightmost-numeric values.
+- **Immutable raw store + versioning** (`server/warehouse/raw-store.ts`): sha256-named raw byte
+  copies (never overwritten), hash dedup, per-(property, period) version numbering.
+- **Transactional ingest** (`server/warehouse/ingest.ts`): detect → parse → map → classify →
+  ledger insert in one transaction; auto-commit at confidence ≥ 0.85 with zero unmapped accounts,
+  else `pending-review` (rows inactive until approved); corrected re-imports supersede prior
+  versions (deactivated, never deleted). NOI is re-derived from classifications — owner
+  transfers/distributions, debt service, capex, TI, and leasing never in NOI (ratified canon).
+- **Backfill CLI** (`scripts/warehouse-backfill.ts`, `npm run warehouse:backfill`): seeds master +
+  mappings, ingests the OneDrive `Property Financials` folder (read-only), prints per-file status
+  and a per-property/period NOI table. Live-verified against the real 33-file corpus:
+  21 committed, 10 pending-review (unmapped summary/CRC accounts), 2 Northwood PDFs
+  `needs-adapter`; second run 31/31 duplicate, ledger row count unchanged (811).
+  Warehouse data lives under `data/warehouse/` (gitignored).
+
 ## Leases — operational rent roll + critical-dates engine (2026-06-03)
 
 - **Critical Dates engine** (`analytics/engine.ts → criticalDates`): derives the actionable lease

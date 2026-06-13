@@ -19,6 +19,8 @@
     "build:mirror": "npm run bake && npm run build",
     "deploy:mirror": "npm run build:mirror && npx wrangler pages deploy dist --project-name=ora-command-center --branch=main",
     "reconcile": "tsx scripts/reconcile.ts",
+    "warehouse:backfill": "tsx scripts/warehouse-backfill.ts",
+    "warehouse:verify": "tsx scripts/warehouse-verify.ts",
     "check:bundle": "tsx scripts/check-bundle.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p functions/tsconfig.json",
     "lint": "eslint . --max-warnings 0",
@@ -26,7 +28,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
-    "gate": "npm run typecheck && npm run lint && npm run test && npm run reconcile",
+    "gate": "npm run typecheck && npm run lint && npm run test && npm run reconcile && npm run warehouse:verify",
     "gate:ci": "npm run typecheck && npm run lint && npm run test && npm run build && npm run check:bundle"
   },
   "dependencies": {
