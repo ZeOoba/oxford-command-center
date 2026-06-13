@@ -29,7 +29,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "pregate": "node scripts/ensure-deps.mjs",
-    "gate": "npm run typecheck && npm run lint && npm run test && npm run reconcile && npm run warehouse:verify",
+    "governance": "tsx scripts/governance-check.ts",
+    "gate": "npm run governance && npm run typecheck && npm run lint && npm run test && npm run reconcile && npm run warehouse:verify",
     "gate:ci": "npm run typecheck && npm run lint && npm run test && npm run build && npm run check:bundle"
   },
   "dependencies": {

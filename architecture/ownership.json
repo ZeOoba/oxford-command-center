@@ -1,0 +1,97 @@
+{
+  "_comment": "Canonical worktree ownership registry — the single source of truth for which agent/worktree owns which files. Version-controlled (NOT in .claude/, which is gitignored and holds the actual worktree checkouts). One entry per active worktree. Editing an Architect-owned file requires the claim protocol below.",
+  "_schema_version": "1.1",
+
+  "worktrees": {
+    "main": {
+      "path": "C:/Users/Owner/oxford-command-center",
+      "branch": "feat/pfi-phase-1-foundation",
+      "agent_role": "Lead Architect",
+      "owner": "Gabriel / Lead Architect",
+      "active_pr": null,
+      "modules_owned": ["ALL — this is the main checkout; parallel agents must not write production code here"],
+      "files_owned": ["*"],
+      "files_prohibited": [],
+      "status": "active",
+      "notes": "Gabriel's primary working surface and an ACTIVE multi-writer tree. RULE (not a list): before editing ANY file here, run `git status` — treat every uncommitted file you did not create as locked, regardless of what it is. Never enumerate the locked set in this file; an enumerated list goes stale the moment Gabriel commits (FM-9). Commit only with explicit paths; never `git add -A`. Leave main/PR integration to Gabriel."
+    },
+
+    "pfi-phase-b": {
+      "path": "C:/Users/Owner/oxford-command-center/.claude/worktrees/pfi-phase-b",
+      "branch": "worktree-pfi-phase-b",
+      "agent_role": "Analytics Agent",
+      "owner": "Analytics Agent",
+      "active_pr": 13,
+      "modules_owned": [
+        "server/warehouse/metrics.ts",
+        "server/warehouse/growth.ts",
+        "server/warehouse/drivers.ts",
+        "server/warehouse/anomalies.ts",
+        "server/warehouse/benchmarks.ts",
+        "server/warehouse/scores.ts",
+        "server/warehouse/intel-config.ts",
+        "server/warehouse/queries.ts",
+        "server/warehouse/data-quality.ts",
+        "server/warehouse/api.ts",
+        "server/warehouse/actions.ts"
+      ],
+      "files_prohibited": [
+        "server/warehouse/db.ts",
+        "server/warehouse/migrate.ts",
+        "server/warehouse/migrations/",
+        "server/warehouse/ingest.ts",
+        "server/warehouse/mapping.ts",
+        "src/contracts/",
+        "server/index.ts",
+        "package.json",
+        "tsconfig.json"
+      ],
+      "status": "awaiting_review",
+      "merge_order": 1,
+      "notes": "PR #13 — Phase B analytics engine. Must merge BEFORE pfi-phase-b2 (PR #14)."
+    },
+
+    "pfi-phase-b2": {
+      "path": "C:/Users/Owner/oxford-command-center/.claude/worktrees/pfi-phase-b2",
+      "branch": "worktree-pfi-phase-b2",
+      "agent_role": "UX Agent",
+      "owner": "UX Agent",
+      "active_pr": 14,
+      "base_pr": 13,
+      "modules_owned": [
+        "src/modules/intel/",
+        "src/charts/Waterfall.tsx"
+      ],
+      "files_prohibited": [
+        "server/warehouse/",
+        "src/contracts/",
+        "src/analytics/",
+        "src/data/",
+        "server/index.ts",
+        "package.json"
+      ],
+      "status": "awaiting_review",
+      "merge_order": 2,
+      "notes": "PR #14 — Phase B2 Intelligence UI. STACKED on PR #13. Do NOT merge before PR #13."
+    }
+  },
+
+  "architect_owned_files": [
+    "CLAUDE.md",
+    "architecture/",
+    "package.json",
+    "tsconfig.json",
+    "tsconfig.node.json",
+    "vite.config.ts",
+    "server/index.ts",
+    "src/contracts/index.ts",
+    "src/contracts/warehouse.ts",
+    "src/analytics/engine.ts",
+    "scripts/governance-check.ts",
+    "server/warehouse/db.ts",
+    "server/warehouse/migrate.ts",
+    "server/warehouse/migrations/"
+  ],
+
+  "claim_protocol": "To work on an architect-owned file: (1) add/update your worktree's entry in architecture/status.json with review_needed=true and a review_detail describing the change and why. (2) Commit that declaration on your branch and wait for architect acknowledgment. (3) Only then edit. This serializes edits to critical files so two agents cannot silently diverge."
+}

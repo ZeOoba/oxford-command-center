@@ -1,0 +1,25 @@
+# worktree-env.example — per-worktree environment overrides
+#
+# Copy to `.env` inside each worktree to prevent the parallel-worktree hazards
+# documented in architecture/system-overview.md and CLAUDE.md §5.
+#
+#   cp ../../worktree-env.example .env
+#
+# WHY THIS MATTERS (FM-7): the warehouse is a single SQLite file in WAL mode.
+# WAL permits many concurrent readers but only ONE writer. Two worktrees running
+# `warehouse:backfill` (or a live `npm run dev`) against the same finance.sqlite
+# will contend for the write lock — at best a busy-timeout error, at worst a
+# corrupted import. Each worktree MUST point WAREHOUSE_DB at its own file.
+
+# Per-worktree warehouse DB. Use a path INSIDE this worktree (gitignored data/).
+# Example for a worktree at .claude/worktrees/my-feature:
+WAREHOUSE_DB=./data/warehouse/finance.sqlite
+
+# Brain server port. If you run a dev server in more than one worktree at once,
+# give each a distinct port so they don't collide on 8911.
+# SERVER_PORT=8912
+
+# Live Claude + FRED keys are read from the machine environment / root .env.
+# Do NOT copy real secrets into a per-worktree .env that could be committed.
+# ANTHROPIC_API_KEY=
+# FRED_API_KEY=
