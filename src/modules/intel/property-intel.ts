@@ -69,7 +69,14 @@ export function pickPeriodMetrics(metrics: PeriodMetrics[], period: string | nul
  *  contribution by construction). Pure — uses the engine's `contributionPct`, not a re-derive. */
 export function rootCauseLine(decomp: NoiDecomposition | null): string | null {
   if (decomp === null || decomp.drivers.length === 0) return null;
-  const largest = decomp.drivers.reduce((a, b) => (Math.abs(b.delta) > Math.abs(a.delta) ? b : a));
+  // Name the largest driver moving IN the net direction — the line that EXPLAINS the change, not
+  // an even-larger opposing line (which would render a confusing negative "% of the change"). Fall
+  // back to the overall largest |Δ| only if nothing shares the net direction (degenerate).
+  const directional = decomp.drivers.filter((d) =>
+    decomp.totalDelta >= 0 ? d.delta > 0 : d.delta < 0,
+  );
+  const pool = directional.length > 0 ? directional : decomp.drivers;
+  const largest = pool.reduce((a, b) => (Math.abs(b.delta) > Math.abs(a.delta) ? b : a));
   if (largest.contributionPct === null) return `NOI essentially flat FY${decomp.from}→FY${decomp.to}.`;
   const sign = decomp.totalDelta >= 0 ? '+' : '−';
   return `Largest driver: ${largest.category}, ${fmtPct(largest.contributionPct)} of the ${sign}${fmtUsd(

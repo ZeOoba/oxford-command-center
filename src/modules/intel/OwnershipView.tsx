@@ -440,7 +440,7 @@ function ActionList({
   onOpenProperty: (id: string) => void;
 }) {
   return (
-    <Card accent>
+    <Card>
       <CardHeader
         title="What Ownership Should Do Next"
         trailing={

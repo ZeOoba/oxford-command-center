@@ -150,6 +150,23 @@ describe('rootCauseLine', () => {
     expect(line).toBe('Largest driver: Repairs & Maintenance, 83.3% of the −$30,000 change (FY2023→FY2024).');
   });
 
+  it('names the largest driver IN the net direction (not an opposing line) so the % stays coherent', () => {
+    // Repairs is the biggest single mover (−$50k) but it OPPOSES the +$10k net — naming it would
+    // read "-500.0% of the +$10,000 change". The headline should name the largest same-direction
+    // driver instead.
+    const line = rootCauseLine(
+      decomp({
+        totalDelta: 10000,
+        drivers: [
+          { category: 'Repairs & Maintenance', delta: -50000, contributionPct: -5.0 },
+          { category: 'Rental Revenue', delta: 35000, contributionPct: 3.5 },
+          { category: 'CAM Recoveries', delta: 25000, contributionPct: 2.5 },
+        ],
+      }),
+    );
+    expect(line).toBe('Largest driver: Rental Revenue, 350.0% of the +$10,000 change (FY2024→FY2025).');
+  });
+
   it('reports an essentially-flat year when ΔNOI ≈ 0 (null contribution)', () => {
     const line = rootCauseLine(decomp({ totalDelta: 0, drivers: [{ category: 'Taxes', delta: 0, contributionPct: null }] }));
     expect(line).toBe('NOI essentially flat FY2024→FY2025.');
