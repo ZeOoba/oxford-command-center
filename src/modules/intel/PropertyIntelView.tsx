@@ -43,6 +43,7 @@ import {
   fullYearPeriods,
   periodLabel,
   pickDriverPeriods,
+  pickPeriodMetrics,
   recommendedAction,
   rootCauseLine,
 } from './property-intel';
@@ -89,9 +90,14 @@ const CAPITAL_LABEL: Record<PropertyScore['capitalAction'], string> = {
 interface Props {
   propertyId: string | null;
   onSelectProperty: (id: string) => void;
+  /** Module-level selected period (PFI Phase B.3 item 3) — governs the KPI-row LEVELS only;
+   *  the verdict, trends, since-acquisition and ΔNOI bridge stay on the full-year basis. */
+  period: string | null;
+  /** Display label for the selected period ('FY2025' / '2026 YTD'); null → "latest FY". */
+  periodLabel: string | null;
 }
 
-export function PropertyIntelView({ propertyId, onSelectProperty }: Props) {
+export function PropertyIntelView({ propertyId, onSelectProperty, period, periodLabel: kpiPeriodLabel }: Props) {
   const scores = useScores();
   const metrics = useMetrics();
   const growth = useGrowth();
@@ -143,6 +149,9 @@ export function PropertyIntelView({ propertyId, onSelectProperty }: Props) {
   const score = ranked.find((s) => s.propertyId === selectedId) ?? null;
   const fyMetrics = fullYearPeriods(propMetrics);
   const latestFy = fyMetrics[fyMetrics.length - 1] ?? null;
+  // KPI-row levels follow the module-selected period (falls back to latest FY); trends, the
+  // since-acquisition strip and the ΔNOI bridge below stay on the full-year basis.
+  const displayMetrics = pickPeriodMetrics(propMetrics, period);
   const sinceAcq = (growth.data?.sinceAcquisition ?? []).find((s) => s.propertyId === selectedId) ?? null;
   const propAnomalies = (anomalies.data ?? []).filter((a) => a.propertyId === selectedId);
 
@@ -159,7 +168,12 @@ export function PropertyIntelView({ propertyId, onSelectProperty }: Props) {
         />
       )}
 
-      <KpiRow metrics={propMetrics} latestFy={latestFy} quartile={score?.noiPerSfQuartile ?? null} />
+      <KpiRow
+        metrics={propMetrics}
+        latestFy={displayMetrics}
+        quartile={score?.noiPerSfQuartile ?? null}
+        periodLabel={kpiPeriodLabel}
+      />
 
       <SinceAcquisitionStrip sinceAcq={sinceAcq} />
 
@@ -322,11 +336,14 @@ function KpiRow({
   metrics,
   latestFy,
   quartile,
+  periodLabel,
 }: {
   metrics: PeriodMetrics[];
   latestFy: PeriodMetrics | null;
   /** Portfolio NOI/SF quartile from the property's score (1=best … 4=worst), null if unranked. */
   quartile: number | null;
+  /** Label of the displayed period ('FY2025' / '2026 YTD'); null → "latest FY". */
+  periodLabel: string | null;
 }) {
   const noiSeries = buildAnnualSeries(metrics, (m) => m.noi);
   const marginSeries = buildAnnualSeries(metrics, (m) => m.noiMargin);
@@ -342,7 +359,7 @@ function KpiRow({
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
       <KpiStat
-        label="NOI (latest FY)"
+        label={`NOI (${periodLabel ?? 'latest FY'})`}
         value={latestFy ? latestFy.noi : null}
         format={(n) => (n === null ? '—' : fmtUsdCompact(n))}
         accentColor="var(--color-pos)"

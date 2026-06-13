@@ -19,7 +19,7 @@
 // 'overview' NOI matrix now lives inside Benchmarks.
 // On the static mirror the /api/warehouse routes are absent, so the hooks surface
 // `isUnavailable` and the whole module degrades to one informational Card.
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Database } from 'lucide-react';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
@@ -33,6 +33,8 @@ import {
   isWarehouseUnavailable,
   type NoiMatrixCell,
 } from './hooks';
+import { useMetrics } from './analytics-hooks';
+import { availablePeriods, defaultPeriod, isYtdPeriod } from './period-intel';
 import { ImportsView } from './ImportsView';
 import { DataQualityView } from './DataQualityView';
 import { MappingsView } from './MappingsView';
@@ -71,6 +73,20 @@ export function IntelModule() {
   const imports = useWarehouseImports();
   const issues = useWarehouseIssues();
   const noi = useNoiMatrix();
+  // Metrics also feed the module-level time control (PFI Phase B.3 item 3). The same query is
+  // shared (deduped) with the intelligence views, so this adds no extra fetch.
+  const metrics = useMetrics();
+
+  // Module-level period selection: the control governs which period's LEVELS/benchmarks the
+  // intelligence tabs show; scores stay on the latest full year regardless. Default = latest FY.
+  const [selectedPeriod, setSelectedPeriod] = useState<string | null>(null);
+  const periodOptions = useMemo(() => availablePeriods(metrics.data ?? []), [metrics.data]);
+  const effectivePeriod =
+    selectedPeriod && periodOptions.some((o) => o.period === selectedPeriod)
+      ? selectedPeriod
+      : defaultPeriod(periodOptions);
+  const periodLabel = periodOptions.find((o) => o.period === effectivePeriod)?.label ?? null;
+  const showYtdBanner = isYtdPeriod(periodOptions, effectivePeriod);
 
   // Any query reporting the unavailable sentinel means the warehouse routes are absent.
   const unavailable =
@@ -156,6 +172,39 @@ export function IntelModule() {
             />
           </div>
         )}
+        {/* Time as a first-class control (PFI Phase B.3 item 3): the intelligence tabs share one
+            period selector; a persistent banner keeps the YTD-partial caveat ambient. */}
+        {!DATA_OPS_TABS.has(tab) && periodOptions.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5">
+            <label className="flex items-center gap-2">
+              <span className="num text-2xs font-semibold uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>
+                Period
+              </span>
+              <select
+                value={effectivePeriod ?? ''}
+                onChange={(e) => setSelectedPeriod(e.target.value)}
+                className="num rounded-md px-2.5 py-1 text-xs"
+                style={{ background: 'var(--surface-raised)', color: 'var(--text-primary)', border: '1px solid var(--border-strong)' }}
+              >
+                {periodOptions.map((o) => (
+                  <option key={o.period} value={o.period}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {showYtdBanner && (
+              <span className="flex items-center gap-2">
+                <Badge tone="amber" dot>
+                  YTD (partial)
+                </Badge>
+                <span className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+                  Partial-year levels — scores remain on the latest full year.
+                </span>
+              </span>
+            )}
+          </div>
+        )}
       </Card>
 
       {loading ? (
@@ -163,11 +212,16 @@ export function IntelModule() {
           <Skeleton style={{ height: 220 }} />
         </div>
       ) : tab === 'ownership' ? (
-        <OwnershipView onOpenProperty={openProperty} />
+        <OwnershipView onOpenProperty={openProperty} period={effectivePeriod} periodLabel={periodLabel} />
       ) : tab === 'property' ? (
-        <PropertyIntelView propertyId={selectedPropertyId} onSelectProperty={setSelectedPropertyId} />
+        <PropertyIntelView
+          propertyId={selectedPropertyId}
+          onSelectProperty={setSelectedPropertyId}
+          period={effectivePeriod}
+          periodLabel={periodLabel}
+        />
       ) : tab === 'benchmarks' ? (
-        <BenchmarksView onOpenProperty={openProperty} />
+        <BenchmarksView onOpenProperty={openProperty} period={effectivePeriod} periodLabel={periodLabel} />
       ) : tab === 'managers' ? (
         <ManagersView />
       ) : tab === 'imports' ? (

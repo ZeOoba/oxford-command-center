@@ -51,7 +51,7 @@ import {
   type Action,
   type ActionPriority,
 } from './synthesis';
-import { portfolioTotals, attentionCounts, portfolioVerdict } from './ownership-intel';
+import { portfolioTotals, portfolioTotalsForPeriod, attentionCounts, portfolioVerdict } from './ownership-intel';
 import { periodLabel } from './property-intel';
 
 // ---------------------------------------------------------------------------
@@ -108,9 +108,14 @@ const CAPITAL_ORDER: CapitalAction[] = ['disposition-candidate', 'monitor', 'hol
 interface Props {
   /** Switch to the Property tab focused on this property (lifted selection in IntelModule). */
   onOpenProperty: (propertyId: string) => void;
+  /** Module-level selected period (PFI Phase B.3 item 3) — governs the portfolio band LEVELS.
+   *  Null falls back to the latest-full-year roll-up. */
+  period: string | null;
+  /** Display label for the selected period ('FY2025' / '2026 YTD'); null → "latest full year". */
+  periodLabel: string | null;
 }
 
-export function OwnershipView({ onOpenProperty }: Props) {
+export function OwnershipView({ onOpenProperty, period, periodLabel: bandLabel }: Props) {
   const scores = useScores();
   const metrics = useMetrics();
   const growth = useGrowth();
@@ -149,6 +154,12 @@ export function OwnershipView({ onOpenProperty }: Props) {
   const totals = useMemo(() => portfolioTotals(metricData), [metricData]);
   const counts = useMemo(() => attentionCounts(scoreData), [scoreData]);
   const verdict = useMemo(() => portfolioVerdict(scoreData, totals), [scoreData, totals]);
+  // The KPI band reflects the module-selected period's LEVELS (falls back to latest-FY totals);
+  // the verdict above stays on the latest full year (the scoring basis).
+  const bandTotals = useMemo(
+    () => (period ? portfolioTotalsForPeriod(metricData, period) : totals),
+    [period, metricData, totals],
+  );
 
   // Latest full-year metric per property — feeds the attention matrix NOI/SF + period.
   const latestFyByProperty = useMemo(() => latestFullYear(metricData), [metricData]);
@@ -208,7 +219,7 @@ export function OwnershipView({ onOpenProperty }: Props) {
         onOpenProperty={onOpenProperty}
       />
 
-      <PortfolioBand totals={totals} counts={counts} />
+      <PortfolioBand totals={bandTotals} counts={counts} periodLabel={bandLabel} />
 
       <ActionList actions={actions} onOpenProperty={onOpenProperty} />
 
@@ -366,10 +377,14 @@ function BriefingHero({
 function PortfolioBand({
   totals,
   counts,
+  periodLabel,
 }: {
   totals: ReturnType<typeof portfolioTotals>;
   counts: ReturnType<typeof attentionCounts>;
+  /** Period label for the NOI level sublabel ('FY2025' / '2026 YTD'); null → "latest full year". */
+  periodLabel: string | null;
 }) {
+  const levelLabel = periodLabel ?? 'latest full year';
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
       <KpiStat
@@ -383,7 +398,7 @@ function PortfolioBand({
         value={totals.portfolioNoi}
         format={(n) => (n === null ? '—' : fmtUsdCompact(n))}
         accentColor="var(--color-pos)"
-        sublabel="latest full year"
+        sublabel={levelLabel}
       />
       <KpiStat
         label="Oxford-Share NOI"
