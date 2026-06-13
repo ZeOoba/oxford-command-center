@@ -10,8 +10,11 @@ import {
   fullYearPeriods,
   periodLabel,
   pickDriverPeriods,
+  pickPeriodMetrics,
+  recommendedAction,
+  rootCauseLine,
 } from '../../src/modules/intel/property-intel';
-import type { PeriodMetrics } from '../../src/modules/intel/analytics-hooks';
+import type { NoiDecomposition, PeriodMetrics, PropertyScore } from '../../src/modules/intel/analytics-hooks';
 
 const pm = (period: string, grainHint: string | null, over: Partial<PeriodMetrics> = {}): PeriodMetrics => ({
   propertyId: 'p',
@@ -106,5 +109,123 @@ describe('buildAnnualSeries', () => {
 
   it('returns [] for an empty metric set', () => {
     expect(buildAnnualSeries([], (m) => m.noi)).toEqual([]);
+  });
+});
+
+const decomp = (over: Partial<NoiDecomposition>): NoiDecomposition => ({
+  propertyId: 'p',
+  from: '2024',
+  to: '2025',
+  totalDelta: 0,
+  drivers: [],
+  ...over,
+});
+
+describe('rootCauseLine', () => {
+  it('names the largest |Δ| driver, its contribution %, the signed ΔNOI and the FY bridge', () => {
+    const line = rootCauseLine(
+      decomp({
+        totalDelta: 50000,
+        drivers: [
+          { category: 'Rental Revenue', delta: 40000, contributionPct: 0.8 },
+          { category: 'Taxes', delta: 10000, contributionPct: 0.2 },
+        ],
+      }),
+    );
+    expect(line).toBe('Largest driver: Rental Revenue, 80.0% of the +$50,000 change (FY2024→FY2025).');
+  });
+
+  it('uses the minus glyph for a NOI decline and picks the largest by absolute delta', () => {
+    const line = rootCauseLine(
+      decomp({
+        from: '2023',
+        to: '2024',
+        totalDelta: -30000,
+        drivers: [
+          { category: 'Insurance', delta: -5000, contributionPct: 0.1667 },
+          { category: 'Repairs & Maintenance', delta: -25000, contributionPct: 0.8333 },
+        ],
+      }),
+    );
+    expect(line).toBe('Largest driver: Repairs & Maintenance, 83.3% of the −$30,000 change (FY2023→FY2024).');
+  });
+
+  it('names the largest driver IN the net direction (not an opposing line) so the % stays coherent', () => {
+    // Repairs is the biggest single mover (−$50k) but it OPPOSES the +$10k net — naming it would
+    // read "-500.0% of the +$10,000 change". The headline should name the largest same-direction
+    // driver instead.
+    const line = rootCauseLine(
+      decomp({
+        totalDelta: 10000,
+        drivers: [
+          { category: 'Repairs & Maintenance', delta: -50000, contributionPct: -5.0 },
+          { category: 'Rental Revenue', delta: 35000, contributionPct: 3.5 },
+          { category: 'CAM Recoveries', delta: 25000, contributionPct: 2.5 },
+        ],
+      }),
+    );
+    expect(line).toBe('Largest driver: Rental Revenue, 350.0% of the +$10,000 change (FY2024→FY2025).');
+  });
+
+  it('reports an essentially-flat year when ΔNOI ≈ 0 (null contribution)', () => {
+    const line = rootCauseLine(decomp({ totalDelta: 0, drivers: [{ category: 'Taxes', delta: 0, contributionPct: null }] }));
+    expect(line).toBe('NOI essentially flat FY2024→FY2025.');
+  });
+
+  it('returns null with no decomposition or no drivers (single-period property)', () => {
+    expect(rootCauseLine(null)).toBeNull();
+    expect(rootCauseLine(decomp({ totalDelta: 100, drivers: [] }))).toBeNull();
+  });
+});
+
+const score = (capitalAction: PropertyScore['capitalAction'], reasons: string[]): PropertyScore =>
+  ({
+    propertyId: 'p',
+    propertyName: 'P',
+    period: '2025',
+    health: 60,
+    healthBand: 'good',
+    attentionBand: 'green',
+    capitalAction,
+    subScores: {},
+    noiPerSfQuartile: 2,
+    reasons,
+  }) as unknown as PropertyScore;
+
+describe('recommendedAction', () => {
+  it('maps the capital action to a verb and appends the leading reason', () => {
+    expect(recommendedAction(score('disposition-candidate', ['bottom-quartile NOI/SF', 'NOI declined 12%']))).toBe(
+      'Evaluate for disposition — bottom-quartile NOI/SF.',
+    );
+    expect(recommendedAction(score('monitor', ['elevated expense ratio']))).toBe('Monitor closely — elevated expense ratio.');
+    expect(recommendedAction(score('hold', ['stable']))).toBe('Hold — stable.');
+  });
+
+  it('drops the reason clause when there are no reasons', () => {
+    expect(recommendedAction(score('invest', []))).toBe('Deploy capital.');
+  });
+});
+
+describe('pickPeriodMetrics', () => {
+  const series = [
+    pm('2023', 'year', { noi: 50 }),
+    pm('2024', 'year', { noi: 60 }),
+    pm('2025', 'year', { noi: 70 }),
+    pm('2026', 'ytd', { noi: 30 }),
+  ];
+
+  it('returns the row matching the requested period (FY or YTD)', () => {
+    expect(pickPeriodMetrics(series, '2024')?.noi).toBe(60);
+    expect(pickPeriodMetrics(series, '2026')?.noi).toBe(30);
+  });
+
+  it('falls back to the latest full year for an absent or null period', () => {
+    expect(pickPeriodMetrics(series, '2099')?.noi).toBe(70);
+    expect(pickPeriodMetrics(series, null)?.noi).toBe(70);
+  });
+
+  it('is empty/no-full-year safe', () => {
+    expect(pickPeriodMetrics([], '2024')).toBeNull();
+    expect(pickPeriodMetrics([pm('2026', 'ytd', { noi: 30 })], '2099')).toBeNull();
   });
 });

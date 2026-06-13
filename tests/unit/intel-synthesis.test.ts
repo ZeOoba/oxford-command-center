@@ -20,6 +20,7 @@ import {
   groupByCapitalAction,
   improvingProperties,
   rankByAttention,
+  rankBySinceAcqGrowth,
   topRisks,
 } from '../../src/modules/intel/synthesis';
 
@@ -105,6 +106,27 @@ describe('synthesis', () => {
     const series = [sa('a', -0.1, true), sa('b', 0.2, true), sa('c', null, false)];
     expect(deterioratingProperties(series).map((x) => x.propertyId)).toEqual(['a']);
     expect(improvingProperties(series).map((x) => x.propertyId)).toEqual(['b']); // null/incomparable excluded from both
+  });
+
+  it('rankBySinceAcqGrowth ranks comparable rows by NOI/SF growth desc and counts the rest', () => {
+    const saSf = (id: string, noiPerSfGrowth: number | null, comparable: boolean): SinceAcquisition => ({
+      ...sa(id, 0, comparable),
+      noiPerSfGrowth,
+    });
+    const series = [
+      saSf('a', 0.1, true),
+      saSf('b', 0.3, true),
+      saSf('c', -0.05, true),
+      saSf('d', 0.99, false), // incomparable → excluded
+      saSf('e', null, true), // null NOI/SF growth → excluded
+    ];
+    const { ranked, insufficient } = rankBySinceAcqGrowth(series);
+    expect(ranked.map((x) => x.propertyId)).toEqual(['b', 'a', 'c']);
+    expect(insufficient).toBe(2);
+  });
+
+  it('rankBySinceAcqGrowth is empty-safe', () => {
+    expect(rankBySinceAcqGrowth([])).toEqual({ ranked: [], insufficient: 0 });
   });
 
   it('buildActionList yields prioritized, deduped, human actions', () => {

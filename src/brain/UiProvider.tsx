@@ -4,7 +4,7 @@ import type { ScenarioName } from '@contracts/index';
 import { MODULES } from '@/shell/modules';
 import { UiContext, type EntityRef } from './ui-context';
 import type { DraftRequest } from './draft';
-import { parseRoute, entityPath } from './routing';
+import { parseRoute, entityPath, intelPropertyPath } from './routing';
 
 const MODULE_IDS = MODULES.map((m) => m.id);
 const SCENARIOS: ScenarioName[] = ['Base', 'Upside', 'Downside'];
@@ -19,8 +19,8 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Module + open drawer are derived from the path (stable identity per pathname).
-  const { moduleId: activeModuleId, selected } = useMemo(
+  // Module + open drawer + intel deep-link are derived from the path (stable per pathname).
+  const { moduleId: activeModuleId, selected, intelPropertyId } = useMemo(
     () => parseRoute(location.pathname, MODULE_IDS),
     [location.pathname],
   );
@@ -34,6 +34,12 @@ export function UiProvider({ children }: { children: ReactNode }) {
 
   const setActiveModule = useCallback((id: string) => navigate(`/${id}${search}`), [navigate, search]);
   const openEntity = useCallback((ref: EntityRef) => navigate(`${entityPath(ref)}${search}`), [navigate, search]);
+  // Intel deep link (PFI Phase B.3 item 5) — navigates to `/intel/:propertyId`, which focuses the
+  // intel Property tab WITHOUT opening the global EntityDrawer (intel has no MODULE_PRIMARY_TYPE).
+  const openIntelProperty = useCallback(
+    (propertyId: string) => navigate(`${intelPropertyPath(propertyId)}${search}`),
+    [navigate, search],
+  );
   const closeEntity = useCallback(
     () => navigate(`/${activeModuleId}${search}`),
     [navigate, activeModuleId, search],
@@ -94,6 +100,8 @@ export function UiProvider({ children }: { children: ReactNode }) {
       selected,
       openEntity,
       closeEntity,
+      intelPropertyId,
+      openIntelProperty,
       aiOpen,
       openAi,
       closeAi,
@@ -104,7 +112,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
       openDraft,
       closeDraft,
     }),
-    [activeModuleId, setActiveModule, paletteOpen, openPalette, closePalette, togglePalette, selected, openEntity, closeEntity, aiOpen, openAi, closeAi, toggleAi, scenario, setScenario, draft, openDraft, closeDraft],
+    [activeModuleId, setActiveModule, paletteOpen, openPalette, closePalette, togglePalette, selected, openEntity, closeEntity, intelPropertyId, openIntelProperty, aiOpen, openAi, closeAi, toggleAi, scenario, setScenario, draft, openDraft, closeDraft],
   );
 
   return <UiContext.Provider value={value}>{children}</UiContext.Provider>;

@@ -7,8 +7,13 @@
 // transforms (rankByAttention, buildActionList, …) are tested in intel-synthesis.test.ts
 // and are NOT retested here. Deterministic, null-safe.
 import { describe, expect, it } from 'vitest';
-import { attentionCounts, portfolioTotals } from '../../src/modules/intel/ownership-intel';
-import type { PeriodMetrics, PropertyScore } from '../../src/modules/intel/analytics-hooks';
+import {
+  attentionCounts,
+  portfolioTotals,
+  portfolioTotalsForPeriod,
+  portfolioVerdict,
+} from '../../src/modules/intel/ownership-intel';
+import type { HealthBand, PeriodMetrics, PropertyScore } from '../../src/modules/intel/analytics-hooks';
 
 const pm = (
   propertyId: string,
@@ -42,13 +47,18 @@ const pm = (
   ...over,
 });
 
-const score = (id: string, attentionBand: string, capitalAction: string): PropertyScore =>
+const score = (
+  id: string,
+  attentionBand: string,
+  capitalAction: string,
+  healthBand: HealthBand = 'good',
+): PropertyScore =>
   ({
     propertyId: id,
     propertyName: id,
     period: '2025',
     health: 60,
-    healthBand: 'good',
+    healthBand,
     attentionBand,
     capitalAction,
     subScores: {},
@@ -110,5 +120,76 @@ describe('attentionCounts', () => {
 
   it('is empty-safe', () => {
     expect(attentionCounts([])).toEqual({ needingAttention: 0, dispositionCandidates: 0 });
+  });
+});
+
+describe('portfolioTotalsForPeriod', () => {
+  it('sums only the rows for the chosen period and counts those properties', () => {
+    const metrics: PeriodMetrics[] = [
+      pm('a', '2023', 'year', { noi: 100, oxfordNoi: 100 }),
+      pm('a', '2024', 'year', { noi: 120, oxfordNoi: 120 }),
+      pm('b', '2024', 'year', { noi: 200, oxfordNoi: 100 }),
+      pm('a', '2026', 'ytd', { noi: 999, oxfordNoi: 999 }),
+    ];
+    expect(portfolioTotalsForPeriod(metrics, '2024')).toEqual({
+      propertyCount: 2,
+      portfolioNoi: 320,
+      oxfordNoi: 220,
+    });
+  });
+
+  it('selects a YTD period by its exact period string', () => {
+    const metrics: PeriodMetrics[] = [
+      pm('a', '2024', 'year', { noi: 120, oxfordNoi: 120 }),
+      pm('a', '2026', 'ytd', { noi: 999, oxfordNoi: 999 }),
+    ];
+    expect(portfolioTotalsForPeriod(metrics, '2026')).toEqual({
+      propertyCount: 1,
+      portfolioNoi: 999,
+      oxfordNoi: 999,
+    });
+  });
+
+  it('is empty/absent-period safe', () => {
+    expect(portfolioTotalsForPeriod([], '2024')).toEqual({ propertyCount: 0, portfolioNoi: 0, oxfordNoi: 0 });
+    expect(
+      portfolioTotalsForPeriod([pm('a', '2024', 'year', { noi: 1, oxfordNoi: 1 })], '2099'),
+    ).toEqual({ propertyCount: 0, portfolioNoi: 0, oxfordNoi: 0 });
+  });
+});
+
+describe('portfolioVerdict', () => {
+  it('states NOI, count, health posture, attention and disposition counts', () => {
+    const scores: PropertyScore[] = [
+      score('a', 'green', 'hold', 'excellent'),
+      score('b', 'green', 'hold', 'good'),
+      score('c', 'yellow', 'monitor', 'watch'),
+      score('d', 'orange', 'monitor', 'concern'),
+      score('e', 'red', 'disposition-candidate', 'concern'),
+    ];
+    const totals = { propertyCount: 5, portfolioNoi: 59_600_000, oxfordNoi: 50_000_000 };
+    expect(portfolioVerdict(scores, totals)).toBe(
+      '$59.6M portfolio NOI across 5 properties; 2 healthy, 1 on watch, 2 of concern. 2 need attention, 1 disposition candidate.',
+    );
+  });
+
+  it('uses singular grammar for a single property / single flag', () => {
+    const scores: PropertyScore[] = [score('a', 'red', 'monitor', 'concern')];
+    const totals = { propertyCount: 1, portfolioNoi: 1_000_000, oxfordNoi: 1_000_000 };
+    expect(portfolioVerdict(scores, totals)).toBe(
+      '$1.00M portfolio NOI across 1 property; 0 healthy, 0 on watch, 1 of concern. 1 needs attention.',
+    );
+  });
+
+  it('reads cleanly when nothing needs attention', () => {
+    const scores: PropertyScore[] = [score('a', 'green', 'hold', 'good'), score('b', 'green', 'invest', 'excellent')];
+    const totals = { propertyCount: 2, portfolioNoi: 5_000_000, oxfordNoi: 5_000_000 };
+    expect(portfolioVerdict(scores, totals)).toBe(
+      '$5.00M portfolio NOI across 2 properties; 2 healthy, 0 on watch, 0 of concern. No properties need attention.',
+    );
+  });
+
+  it('is empty-safe', () => {
+    expect(portfolioVerdict([], { propertyCount: 0, portfolioNoi: 0, oxfordNoi: 0 })).toBe('No scored properties yet.');
   });
 });

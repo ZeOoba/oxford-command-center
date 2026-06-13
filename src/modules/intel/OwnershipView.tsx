@@ -47,11 +47,12 @@ import {
   topRisks,
   improvingProperties,
   deterioratingProperties,
+  rankBySinceAcqGrowth,
   buildActionList,
   type Action,
   type ActionPriority,
 } from './synthesis';
-import { portfolioTotals, attentionCounts } from './ownership-intel';
+import { portfolioTotals, portfolioTotalsForPeriod, attentionCounts, portfolioVerdict } from './ownership-intel';
 import { periodLabel } from './property-intel';
 
 // ---------------------------------------------------------------------------
@@ -64,6 +65,15 @@ const ATTENTION_TONE: Record<AttentionBand, BadgeTone> = {
   yellow: 'gold',
   orange: 'amber',
   red: 'red',
+};
+
+// Attention band → a distinct heat hue for the briefing heat-strip tiles (4-step ramp:
+// green → gold → amber → red). Theme tokens only.
+const ATTENTION_HEAT: Record<AttentionBand, string> = {
+  green: 'var(--color-pos)',
+  yellow: 'var(--accent)',
+  orange: 'var(--color-warn)',
+  red: 'var(--color-neg)',
 };
 
 const SEVERITY_TONE: Record<AnomalySeverity, BadgeTone> = {
@@ -99,9 +109,14 @@ const CAPITAL_ORDER: CapitalAction[] = ['disposition-candidate', 'monitor', 'hol
 interface Props {
   /** Switch to the Property tab focused on this property (lifted selection in IntelModule). */
   onOpenProperty: (propertyId: string) => void;
+  /** Module-level selected period (PFI Phase B.3 item 3) — governs the portfolio band LEVELS.
+   *  Null falls back to the latest-full-year roll-up. */
+  period: string | null;
+  /** Display label for the selected period ('FY2025' / '2026 YTD'); null → "latest full year". */
+  periodLabel: string | null;
 }
 
-export function OwnershipView({ onOpenProperty }: Props) {
+export function OwnershipView({ onOpenProperty, period, periodLabel: bandLabel }: Props) {
   const scores = useScores();
   const metrics = useMetrics();
   const growth = useGrowth();
@@ -137,8 +152,16 @@ export function OwnershipView({ onOpenProperty }: Props) {
   const risks = useMemo(() => topRisks(anomalyData, 8), [anomalyData]);
   const improving = useMemo(() => improvingProperties(sinceAcq), [sinceAcq]);
   const deteriorating = useMemo(() => deterioratingProperties(sinceAcq), [sinceAcq]);
+  const leaderboard = useMemo(() => rankBySinceAcqGrowth(sinceAcq), [sinceAcq]);
   const totals = useMemo(() => portfolioTotals(metricData), [metricData]);
   const counts = useMemo(() => attentionCounts(scoreData), [scoreData]);
+  const verdict = useMemo(() => portfolioVerdict(scoreData, totals), [scoreData, totals]);
+  // The KPI band reflects the module-selected period's LEVELS (falls back to latest-FY totals);
+  // the verdict above stays on the latest full year (the scoring basis).
+  const bandTotals = useMemo(
+    () => (period ? portfolioTotalsForPeriod(metricData, period) : totals),
+    [period, metricData, totals],
+  );
 
   // Latest full-year metric per property — feeds the attention matrix NOI/SF + period.
   const latestFyByProperty = useMemo(() => latestFullYear(metricData), [metricData]);
@@ -189,7 +212,16 @@ export function OwnershipView({ onOpenProperty }: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      <PortfolioBand totals={totals} counts={counts} />
+      <BriefingHero
+        verdict={verdict}
+        actions={actions}
+        ranked={ranked}
+        latestFyByProperty={latestFyByProperty}
+        capital={capital}
+        onOpenProperty={onOpenProperty}
+      />
+
+      <PortfolioBand totals={bandTotals} counts={counts} periodLabel={bandLabel} />
 
       <ActionList actions={actions} onOpenProperty={onOpenProperty} />
 
@@ -216,6 +248,8 @@ export function OwnershipView({ onOpenProperty }: Props) {
         />
       </div>
 
+      <SinceAcqLeaderboardCard leaderboard={leaderboard} nameById={nameById} onOpenProperty={onOpenProperty} />
+
       <CapitalAllocation capital={capital} onOpenProperty={onOpenProperty} />
 
       <RisksCard risks={risks} nameById={nameById} onOpenProperty={onOpenProperty} />
@@ -226,16 +260,135 @@ export function OwnershipView({ onOpenProperty }: Props) {
 }
 
 // ---------------------------------------------------------------------------
+// 0) Morning-briefing hero — the above-the-fold answer (PFI Phase B.3 item 1): a one-sentence
+//    portfolio verdict, the top-3 actions, a 12-tile attention heat-strip (click → Property tab),
+//    and a compact capital-allocation summary. The detailed sections below restate these in full.
+//    NOI/SF here is the latest-full-year level (the scoring basis), independent of the module
+//    time control, so the briefing always reads as the FY posture.
+// ---------------------------------------------------------------------------
+
+function BriefingHero({
+  verdict,
+  actions,
+  ranked,
+  latestFyByProperty,
+  capital,
+  onOpenProperty,
+}: {
+  verdict: string;
+  actions: Action[];
+  ranked: PropertyScore[];
+  latestFyByProperty: Map<string, PeriodMetrics>;
+  capital: ReturnType<typeof groupByCapitalAction>;
+  onOpenProperty: (id: string) => void;
+}) {
+  const topActions = actions.slice(0, 3);
+  return (
+    <Card accent>
+      <CardHeader title="Morning Briefing" trailing={<Badge tone="neutral">scored on latest full year</Badge>} />
+      <div className="flex flex-col gap-4 px-4 py-3">
+        <p className="text-base leading-relaxed" style={{ color: 'var(--text-primary)' }}>
+          {verdict}
+        </p>
+
+        <div>
+          <div className="num mb-1.5 text-2xs font-semibold uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>
+            Top actions
+          </div>
+          {topActions.length === 0 ? (
+            <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+              No actions outstanding — steady on the latest full-year scoring.
+            </div>
+          ) : (
+            <ol className="flex flex-col gap-1.5">
+              {topActions.map((a) => (
+                <li key={a.text} className="flex items-start gap-2">
+                  <span className="mt-0.5 shrink-0">
+                    <Badge tone={PRIORITY_TONE[a.priority]}>{a.priority}</Badge>
+                  </span>
+                  <span className="min-w-0 flex-1 text-sm" style={{ color: 'var(--text-primary)' }}>
+                    {a.text}
+                    {a.propertyId !== undefined && (
+                      <button
+                        onClick={() => onOpenProperty(a.propertyId!)}
+                        className="num ml-2 text-2xs font-semibold underline-offset-2 hover:underline"
+                        style={{ color: 'var(--accent)', cursor: 'pointer' }}
+                      >
+                        open →
+                      </button>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
+
+        <div>
+          <div className="num mb-1.5 text-2xs font-semibold uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>
+            Attention heat-strip
+          </div>
+          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6">
+            {ranked.map((s) => {
+              const heat = ATTENTION_HEAT[s.attentionBand];
+              const noiPerSf = latestFyByProperty.get(s.propertyId)?.noiPerSf ?? null;
+              return (
+                <button
+                  key={s.propertyId}
+                  onClick={() => onOpenProperty(s.propertyId)}
+                  title={`${s.propertyName ?? s.propertyId} · ${s.attentionBand} attention`}
+                  className="flex flex-col gap-0.5 rounded-md px-2 py-1.5 text-left transition-colors"
+                  style={{
+                    background: `color-mix(in oklab, ${heat} 16%, transparent)`,
+                    border: `1px solid color-mix(in oklab, ${heat} 40%, transparent)`,
+                    cursor: 'pointer',
+                  }}
+                >
+                  <span className="truncate text-2xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    {s.propertyName ?? s.propertyId}
+                  </span>
+                  <span className="num text-2xs" style={{ color: 'var(--text-secondary)' }}>
+                    {noiPerSf === null ? '—' : `${fmtUsd(noiPerSf, true)}/SF`}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          <span className="num text-2xs font-semibold uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>
+            Capital
+          </span>
+          {CAPITAL_ORDER.map((action) => (
+            <span key={action} className="flex items-center gap-1.5">
+              <Badge tone={CAPITAL_TONE[action]}>{CAPITAL_LABEL[action]}</Badge>
+              <span className="num text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {capital[action].length}
+              </span>
+            </span>
+          ))}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // 1) Portfolio KPI band — the levels every other section reasons against.
 // ---------------------------------------------------------------------------
 
 function PortfolioBand({
   totals,
   counts,
+  periodLabel,
 }: {
   totals: ReturnType<typeof portfolioTotals>;
   counts: ReturnType<typeof attentionCounts>;
+  /** Period label for the NOI level sublabel ('FY2025' / '2026 YTD'); null → "latest full year". */
+  periodLabel: string | null;
 }) {
+  const levelLabel = periodLabel ?? 'latest full year';
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
       <KpiStat
@@ -249,7 +402,7 @@ function PortfolioBand({
         value={totals.portfolioNoi}
         format={(n) => (n === null ? '—' : fmtUsdCompact(n))}
         accentColor="var(--color-pos)"
-        sublabel="latest full year"
+        sublabel={levelLabel}
       />
       <KpiStat
         label="Oxford-Share NOI"
@@ -287,7 +440,7 @@ function ActionList({
   onOpenProperty: (id: string) => void;
 }) {
   return (
-    <Card accent>
+    <Card>
       <CardHeader
         title="What Ownership Should Do Next"
         trailing={
@@ -514,6 +667,77 @@ function TrajectoryCard({
 function fmtSignedPct(v: number | null): string {
   if (v === null || !Number.isFinite(v)) return '—';
   return v >= 0 ? `+${fmtPct(v)}` : fmtPct(v);
+}
+
+// ---------------------------------------------------------------------------
+// 4b) Since-acquisition leaderboard — every comparable property ranked by NOI/SF growth since
+//     acquisition: "which assets are compounding since we bought them" (PFI Phase B.3 item 4).
+//     Properties without comparable history are excluded with an explicit note.
+// ---------------------------------------------------------------------------
+
+function SinceAcqLeaderboardCard({
+  leaderboard,
+  nameById,
+  onOpenProperty,
+}: {
+  leaderboard: ReturnType<typeof rankBySinceAcqGrowth>;
+  nameById: Map<string, string>;
+  onOpenProperty: (id: string) => void;
+}) {
+  const { ranked, insufficient } = leaderboard;
+  return (
+    <Card>
+      <CardHeader title="Compounding Since Acquisition" trailing={<Badge tone="neutral">NOI / SF growth</Badge>} />
+      {ranked.length === 0 ? (
+        <div className="px-4 py-6 text-center text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+          None with comparable since-acquisition history.
+        </div>
+      ) : (
+        <div className="flex flex-col">
+          {ranked.map((r, i) => {
+            const id = r.propertyId ?? '';
+            const v = r.noiPerSfGrowth;
+            return (
+              <button
+                key={id || i}
+                onClick={() => id && onOpenProperty(id)}
+                className="flex items-center justify-between gap-3 px-4 py-2.5 text-left transition-colors"
+                style={{
+                  borderTop: i === 0 ? undefined : '1px solid var(--border-subtle)',
+                  cursor: id ? 'pointer' : 'default',
+                }}
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="num w-5 shrink-0 text-2xs font-semibold" style={{ color: 'var(--text-tertiary)' }}>
+                    {i + 1}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm" style={{ color: 'var(--text-primary)' }}>
+                      {nameById.get(id) ?? id}
+                    </div>
+                    <div className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+                      NOI/SF since FY{r.anchorPeriod ?? '—'}
+                    </div>
+                  </div>
+                </div>
+                <span
+                  className="num shrink-0 text-base font-semibold"
+                  style={{ color: v !== null && v >= 0 ? 'var(--color-pos)' : 'var(--color-neg)' }}
+                >
+                  {fmtSignedPct(v)}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {insufficient > 0 && (
+        <div className="px-4 pb-3 pt-1 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+          {insufficient} {insufficient === 1 ? 'property' : 'properties'} excluded — insufficient history.
+        </div>
+      )}
+    </Card>
+  );
 }
 
 // ---------------------------------------------------------------------------
