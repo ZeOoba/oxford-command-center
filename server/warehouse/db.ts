@@ -2,80 +2,24 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { runMigrations } from './migrate';
 
 export type WarehouseDb = Database.Database;
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS property_master (
-  id TEXT PRIMARY KEY, name TEXT NOT NULL, market TEXT, address TEXT,
-  property_manager TEXT, pm_contact TEXT, pm_platform TEXT,
-  financial_mode TEXT NOT NULL DEFAULT 'pnl',
-  rentable_sf REAL, acquisition_date TEXT,
-  ownership_pct REAL NOT NULL DEFAULT 1.0,
-  ownership_status TEXT NOT NULL DEFAULT 'active',
-  asset_class TEXT, notes TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE TABLE IF NOT EXISTS import_batches (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  file_name TEXT NOT NULL,
-  file_hash TEXT NOT NULL UNIQUE,
-  raw_path TEXT NOT NULL,
-  file_source TEXT NOT NULL DEFAULT 'folder',
-  imported_at TEXT NOT NULL,
-  imported_by TEXT,
-  property_id TEXT REFERENCES property_master(id),
-  period_start TEXT, period_end TEXT, period_grain TEXT,
-  basis TEXT NOT NULL DEFAULT 'unknown',
-  source_system TEXT NOT NULL DEFAULT 'unknown',
-  version INTEGER NOT NULL,
-  status TEXT NOT NULL,
-  superseded_by INTEGER REFERENCES import_batches(id),
-  confidence REAL, detect_notes TEXT
-);
-CREATE TABLE IF NOT EXISTS account_mappings (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  raw_account_key TEXT NOT NULL,
-  source_system TEXT,
-  normalized_category TEXT NOT NULL,
-  classification TEXT NOT NULL,
-  match_kind TEXT NOT NULL DEFAULT 'seed',
-  property_id TEXT,
-  note TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-CREATE INDEX IF NOT EXISTS idx_mappings_key ON account_mappings(raw_account_key);
-CREATE TABLE IF NOT EXISTS ledger_entries (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  import_id INTEGER NOT NULL REFERENCES import_batches(id),
-  property_id TEXT NOT NULL,
-  period TEXT NOT NULL,
-  raw_account TEXT NOT NULL,
-  gl_code TEXT,
-  amount REAL NOT NULL,
-  normalized_category TEXT NOT NULL,
-  classification TEXT NOT NULL,
-  mapping_id INTEGER,
-  is_active INTEGER NOT NULL DEFAULT 1
-);
-CREATE INDEX IF NOT EXISTS idx_ledger_prop_period ON ledger_entries(property_id, period, is_active);
-CREATE TABLE IF NOT EXISTS data_quality_issues (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  import_id INTEGER, property_id TEXT,
-  kind TEXT NOT NULL, detail TEXT NOT NULL,
-  severity TEXT NOT NULL DEFAULT 'warn',
-  status TEXT NOT NULL DEFAULT 'open',
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  resolved_at TEXT
-);
-`;
-
+// Schema is no longer defined inline. The single source of truth is
+// server/warehouse/migrations/*.sql, applied in order by runMigrations().
+// This removes the silent-drift hazard of `CREATE TABLE IF NOT EXISTS`:
+// a column added inline here would never reach an already-created DB, so two
+// agents could diverge undetected. Migrations make every schema change an
+// explicit, ordered, recorded step. See architecture/database-schema.md.
 export function openWarehouse(path: string): WarehouseDb {
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
-  db.exec(SCHEMA);
+  // Baseline adoption is safe on a pre-existing DB: 001_initial.sql is all
+  // `CREATE TABLE IF NOT EXISTS`, so it no-ops on existing tables and is then
+  // recorded in _migrations as applied.
+  runMigrations(db);
   return db;
 }

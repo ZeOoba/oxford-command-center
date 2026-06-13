@@ -1,0 +1,49 @@
+{
+  "_comment": "Inter-agent status declaration. Version-controlled. NOTE ON SEMANTICS: a git-tracked file is NOT a real-time IPC bus — a worktree's edits live on its own branch until merged. Treat this as a COMMITTED DECLARATION of intent: each agent commits its entry when starting/finishing work so the architect (reviewing PRs) and the next session see it. Read all entries before starting; if another agent declares in_progress/review_needed in your file-ownership area, coordinate before editing.",
+  "_schema": {
+    "agent_role": "string — from architecture/agent-assignments.md",
+    "phase": "string — current task description",
+    "status": "idle | in_progress | blocked | review_needed | merged",
+    "blocked_by": "null | string — worktree name or file name this agent is waiting on",
+    "review_needed": "boolean — true = this agent needs architect approval before proceeding",
+    "review_detail": "string | null — what architect approval is needed for",
+    "last_updated": "ISO 8601 timestamp"
+  },
+
+  "worktrees": {
+    "main": {
+      "agent_role": "Lead Architect",
+      "phase": "Governance hardening (FM-1 through FM-15) — landed",
+      "status": "idle",
+      "blocked_by": null,
+      "review_needed": false,
+      "review_detail": null,
+      "last_updated": "2026-06-13T20:00:00Z"
+    },
+
+    "pfi-phase-b": {
+      "agent_role": "Analytics Agent",
+      "phase": "Phase B analytics engine — PR #13",
+      "status": "review_needed",
+      "blocked_by": null,
+      "review_needed": true,
+      "review_detail": "INTEL_CONFIG weight calibration needed from Gabriel before merge",
+      "last_updated": "2026-06-13T00:00:00Z"
+    },
+
+    "pfi-phase-b2": {
+      "agent_role": "UX Agent",
+      "phase": "Phase B2 Intelligence UI — PR #14",
+      "status": "blocked",
+      "blocked_by": "pfi-phase-b",
+      "review_needed": false,
+      "review_detail": null,
+      "last_updated": "2026-06-13T00:00:00Z"
+    }
+  },
+
+  "usage": {
+    "how_to_update": "Edit your worktree's entry before starting and after completing work; commit it on your branch. Use ISO 8601 timestamps. Set review_needed=true and fill review_detail when you need architect sign-off on an architect-owned file.",
+    "how_to_read": "Before starting any task, check all other worktrees for status=in_progress or review_needed. If another agent works in your file-ownership area, coordinate before editing."
+  }
+}
