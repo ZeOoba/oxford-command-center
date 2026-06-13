@@ -8,6 +8,7 @@ import { openWarehouse } from '../../server/warehouse/db';
 import { ingestFile } from '../../server/warehouse/ingest';
 import { seedMappings } from '../../server/warehouse/mapping';
 import { seedPropertyMaster } from '../../server/warehouse/property-master';
+import { PARSER_VERSION } from '../../server/warehouse/parse/qb-excel';
 
 async function writeFixture(path: string, statedTotals?: { income: number; expense: number }): Promise<void> {
   const wb = new ExcelJS.Workbook();
@@ -274,3 +275,114 @@ describe('ingest pipeline', () => {
     const foot = db.prepare("SELECT detail FROM data_quality_issues WHERE kind='foot-mismatch'").all();
     expect(foot).toHaveLength(0);
   });
+
+describe('parser-version re-ingest (self-healing backfill)', () => {
+  it('re-derives a committed import IN PLACE when its parser_version is stale — no manual delete', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wh-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeFixture(file);
+
+    const r1 = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
+    expect(r1.status).toBe('committed');
+    const importId = r1.importId!;
+    // new imports are stamped with the current parser version
+    expect((db.prepare('SELECT parser_version FROM import_batches WHERE id = ?').get(importId) as { parser_version: number }).parser_version)
+      .toBe(PARSER_VERSION);
+
+    // Simulate this row was produced by an OLDER parser that left the basis stale.
+    db.prepare("UPDATE import_batches SET parser_version = 0, basis = 'unknown' WHERE id = ?").run(importId);
+    const ledgerIdsBefore = (db.prepare('SELECT id FROM ledger_entries WHERE import_id = ?').all(importId) as Array<{ id: number }>).map((x) => x.id);
+
+    // Re-ingest the byte-IDENTICAL file (hash matches): old behavior would skip as 'duplicate'.
+    const r2 = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T02:00:00Z' });
+
+    expect(r2.status).not.toBe('duplicate');     // re-derived, not skipped
+    expect(r2.importId).toBe(importId);           // SAME row — in-place (importId / history preserved)
+    const batch = db.prepare('SELECT basis, parser_version, status FROM import_batches WHERE id = ?').get(importId) as { basis: string; parser_version: number; status: string };
+    expect(batch.basis).toBe('cash');             // basis re-derived from the file (was staled to 'unknown')
+    expect(batch.parser_version).toBe(PARSER_VERSION); // stamped current
+    expect(batch.status).toBe('committed');
+    // ledger REPLACED (old rows gone, fresh rows), still exactly the 3 active rows; one import row for this hash
+    const ledgerIdsAfter = (db.prepare('SELECT id FROM ledger_entries WHERE import_id = ?').all(importId) as Array<{ id: number }>).map((x) => x.id);
+    expect(ledgerIdsAfter.some((id) => ledgerIdsBefore.includes(id))).toBe(false); // rows truly replaced, not appended
+    expect((db.prepare('SELECT COUNT(*) c FROM ledger_entries WHERE import_id = ? AND is_active = 1').get(importId) as { c: number }).c).toBe(3);
+    expect((db.prepare('SELECT COUNT(*) c FROM import_batches').get() as { c: number }).c).toBe(1);
+  });
+
+  it('keeps the fast duplicate path when parser_version is already current', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wh-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeFixture(file);
+    await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
+
+    // re-ingest the identical file WITHOUT staling the version → fast dedup, no re-derive
+    const r2 = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T02:00:00Z' });
+    expect(r2.status).toBe('duplicate');
+  });
+
+  it('a stale re-derive that no longer qualifies for commit PRESERVES the prior committed version (never empties a served period)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wh-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeFixture(file);
+    const r1 = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
+    expect(r1.status).toBe('committed');
+    const importId = r1.importId!;
+
+    // stale the committed row, then sabotage so the re-derive FAILS the commit gate (drop all
+    // mappings ⇒ every account unmapped ⇒ commit predicate false). The re-derive must NOT empty
+    // the served period — it must abort and keep the prior committed ledger active.
+    db.prepare('UPDATE import_batches SET parser_version = 0 WHERE id = ?').run(importId);
+    db.prepare('DELETE FROM account_mappings').run();
+
+    const r2 = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T02:00:00Z' });
+    // prior committed version is retained (NOT downgraded, NOT emptied)
+    expect(r2.status).toBe('committed');
+    const batch = db.prepare('SELECT status, parser_version FROM import_batches WHERE id = ?').get(importId) as { status: string; parser_version: number };
+    expect(batch.status).toBe('committed');
+    expect(batch.parser_version).toBe(0); // re-derive rolled back ⇒ version stays stale (consistent with retained data)
+    expect((db.prepare('SELECT COUNT(*) c FROM ledger_entries WHERE import_id = ? AND is_active = 1').get(importId) as { c: number }).c).toBe(3);
+    // the skip is surfaced (deduped) for attention
+    const skip = db.prepare("SELECT severity FROM data_quality_issues WHERE import_id = ? AND kind = 'restale-skipped'").all(importId) as Array<{ severity: string }>;
+    expect(skip).toHaveLength(1);
+    expect(skip[0]!.severity).toBe('warn');
+  });
+
+  it('does NOT resurrect a superseded row — a stale superseded import stays superseded (skipped)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wh-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const fileA = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeFixture(fileA);
+    const r1 = await ingestFile(db, fileA, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
+    const v1Id = r1.importId!;
+
+    // keep a byte-identical copy of v1's content BEFORE correcting fileA
+    const dirB = mkdtempSync(join(tmpdir(), 'wh-b-'));
+    const fileB = join(dirB, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeFixture(fileB); // same content as v1 ⇒ same hash
+
+    // corrected re-import supersedes v1
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(fileA);
+    wb.worksheets[0]!.getCell('D6').value = 110000;
+    await wb.xlsx.writeFile(fileA);
+    await ingestFile(db, fileA, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T01:00:00Z' });
+    expect((db.prepare('SELECT status FROM import_batches WHERE id = ?').get(v1Id) as { status: string }).status).toBe('superseded');
+
+    // stale the SUPERSEDED v1, then re-present its exact bytes (fileB) — guard must NOT re-derive it
+    db.prepare('UPDATE import_batches SET parser_version = 0 WHERE id = ?').run(v1Id);
+    const r3 = await ingestFile(db, fileB, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T03:00:00Z' });
+    expect(r3.status).toBe('duplicate'); // superseded rows are historical — never resurrected
+    expect((db.prepare('SELECT status FROM import_batches WHERE id = ?').get(v1Id) as { status: string }).status).toBe('superseded');
+  });
+});
