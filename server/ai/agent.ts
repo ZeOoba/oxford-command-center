@@ -293,17 +293,23 @@ export function summarizeMacro(m: MacroSnapshot): Record<string, unknown> {
       `SEEDED — FRED_API_KEY not configured; values are a static snapshot as of ${m.asOf}. ` +
       'Tell the user the live rate feed is offline before quoting any number.';
   }
-  // Defense-in-depth against fred.ts `value ?? 0` coalesce: a partial upstream failure on the
-  // DGS10 series alone produces indicators.DGS10.value = 0 with source='fred' (no dataFreshness
-  // caveat). The new tool description tells the model to quote indicators.DGS10.value as the
-  // canonical current 10Y — without this guard the model would confidently report '10Y at 0.00%'.
-  // A 10Y Treasury rate cannot realistically be ≤ 0, so non-positive (incl. the zero sentinel) is
-  // treated as missing data. We flag dataQuality and provide a labeled, dated fallback from the
-  // most recent finite trend point so the model has a usable alternative. Root cause (the `?? 0`
-  // in fred.ts and the corresponding non-nullable MacroIndicator.value contract) is tracked as a
-  // follow-up — this is the symptom guard, not the cure.
+  // Canonical-10Y guard. Trigger surface (broadened post-root-fix):
+  //   - dgs10 missing entirely;
+  //   - dgs10.value === null — the post-cure path: fred.ts emits null on a missing observation
+  //     and MacroIndicator.value is z.number().finite().nullable() (no more `?? 0` lie);
+  //   - !Number.isFinite(dgs10.value) — defense-in-depth against any direct (non-parsed) snapshot
+  //     construction that bypasses the schema's `.finite()` boundary (e.g. unit tests, future
+  //     non-FRED providers). The contract enforces this at parse time; the guard enforces it at
+  //     consumption time. Same invariant, two layers.
+  //   - dgs10.value <= 0 — kept as a belt-and-braces against any stale producer still emitting the
+  //     legacy 0 sentinel, and because a real 10Y Treasury rate cannot be ≤ 0.
+  // The new get_macro tool description tells the model to quote indicators.DGS10.value as the
+  // canonical current 10Y — this guard ensures the model never sees a misleading number on a
+  // partial FRED outage. dataQuality + a dated currentTenYFallback give it a usable alternative
+  // with explicit instruction text to caveat.
   const dgs10 = m.indicators.find((i) => i.id === 'DGS10');
-  const dgs10Suspicious = !dgs10 || !Number.isFinite(dgs10.value) || dgs10.value <= 0;
+  const dgs10Suspicious =
+    !dgs10 || dgs10.value === null || !Number.isFinite(dgs10.value) || dgs10.value <= 0;
   if (dgs10Suspicious) {
     const lastFinite = [...window].reverse().find((h) => typeof h.value === 'number' && Number.isFinite(h.value) && h.value > 0);
     payload.dataQuality =

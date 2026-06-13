@@ -4,6 +4,8 @@ import {
   Lease,
   Loan,
   InsurancePolicy,
+  MacroIndicator,
+  MacroSnapshot,
   PortfolioSnapshot,
   SCHEMA_VERSION,
 } from '@contracts/index';
@@ -120,5 +122,52 @@ describe('contracts accept real workbook records', () => {
   it('exposes a stable schema version', () => {
     expect(SCHEMA_VERSION).toBe('1.0.0');
     expect(PortfolioSnapshot).toBeDefined();
+  });
+
+  it('accepts a MacroIndicator with value=null (FRED single-series outage, e.g. DGS10 missing observation)', () => {
+    // Root-cause fix follow-up to PFI Phase 1b: fred.ts previously coalesced a missing observation
+    // to 0, lying to the non-nullable contract. The contract is now value: z.number().nullable(),
+    // so a real "we don't have a 10Y reading right now" can travel the full path (FRED parse → spine
+    // tools → ai/agent.ts summarizeMacro → MarketModule UI) without the 0 sentinel.
+    const r = MacroIndicator.parse({
+      id: 'DGS10',
+      label: '10Y Treasury',
+      value: null,
+      unit: '%',
+      change: null,
+    });
+    expect(r.value).toBeNull();
+  });
+
+  it('accepts a MacroSnapshot whose indicators carry null values (end-to-end transport boundary)', () => {
+    const s = MacroSnapshot.parse({
+      asOf: '2026-06-01',
+      source: 'fred',
+      indicators: [
+        { id: 'DGS10', label: '10Y Treasury', value: null, unit: '%', change: null },
+        { id: 'DGS2', label: '2Y Treasury', value: 4.05, unit: '%', change: null },
+      ],
+      tenYearHistory: [{ date: '2025-06-01', value: 4.38 }],
+    });
+    expect(s.indicators[0]!.value).toBeNull();
+    expect(s.indicators[1]!.value).toBe(4.05);
+  });
+
+  it('REJECTS a MacroIndicator whose value is NaN or ±Infinity (z.number().finite() enforces the producer-side filter at parse)', () => {
+    // Adversarial refute-pass finding (PFI Phase 1c-prelim): bare `z.number()` accepts NaN by
+    // default. With the value=null cure, dropping `!Number.isFinite()` from the agent guard would
+    // let a NaN/Infinity from a future direct-construction producer reach the model unguarded.
+    // `.finite()` at the contract boundary mirrors fred.ts:22's `Number.isFinite` filter — the
+    // invariant is enforced at the schema layer so downstream consumers don't have to defend
+    // against shapes the parser already rejected.
+    expect(() =>
+      MacroIndicator.parse({ id: 'DGS10', label: '10Y', value: NaN, unit: '%', change: null }),
+    ).toThrow();
+    expect(() =>
+      MacroIndicator.parse({ id: 'DGS10', label: '10Y', value: Infinity, unit: '%', change: null }),
+    ).toThrow();
+    expect(() =>
+      MacroIndicator.parse({ id: 'DGS10', label: '10Y', value: -Infinity, unit: '%', change: null }),
+    ).toThrow();
   });
 });

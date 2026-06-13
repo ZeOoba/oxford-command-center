@@ -6,7 +6,13 @@ export type MacroSeriesPoint = z.infer<typeof MacroSeriesPoint>;
 export const MacroIndicator = z.object({
   id: z.string(),
   label: z.string(),
-  value: z.number(),
+  // Finite-or-null. A single-series FRED outage (5xx or '.' missing observation on, e.g., DGS10
+  // alone) must travel as null end-to-end — never as a 0 sentinel that the AI agent's refi-spread
+  // narrative would quote as "10Y at 0.00%". `.finite()` rejects NaN / ±Infinity at the parse
+  // boundary, mirroring the producer-side `Number.isFinite` filter in server/macro/fred.ts:22 and
+  // closing the loophole that zod's bare `z.number()` would otherwise accept NaN. Consumers
+  // (server/ai/agent.ts summarizeMacro, src/modules/market/MarketModule.tsx) handle null explicitly.
+  value: z.number().finite().nullable(),
   unit: z.string(),
   change: z.number().nullable(), // change vs prior period
 });

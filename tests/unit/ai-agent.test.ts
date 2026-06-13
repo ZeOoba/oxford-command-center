@@ -166,7 +166,8 @@ describe('summarizeMacro (get_macro agent payload — Phase-2 refi narrative inp
     // 'indicators.DGS10.value' = 0% as the canonical current 10Y. Defense-in-depth: when DGS10 is
     // missing or non-positive (a 10Y rate cannot be ≤ 0), attach a dataQuality flag and a dated
     // `currentTenYFallback` from the most recent finite trend point — the model has a labeled
-    // alternative and a clear instruction to caveat. Root cause (fred.ts + contract) tracked separately.
+    // alternative and a clear instruction to caveat. Root cause (fred.ts + contract) — fixed; the
+    // value=0 path remains under guard as a belt-and-braces against stale producers.
     const m = seeded('fred');
     m.indicators = m.indicators.map((i) => (i.id === 'DGS10' ? { ...i, value: 0 } : i)); // upstream coalesce
     const p = summarizeMacro(m) as { dataQuality?: string; currentTenYFallback?: { value: number; date: string } };
@@ -175,6 +176,21 @@ describe('summarizeMacro (get_macro agent payload — Phase-2 refi narrative inp
     expect(p.dataQuality).toMatch(/degraded|missing|fallback/i);
     expect(p.currentTenYFallback).toBeDefined();
     expect(p.currentTenYFallback!.value).toBeCloseTo(4.48, 6); // most recent finite point in the window
+    expect(p.currentTenYFallback!.date).toBe('2026-05-01');
+  });
+
+  it('guards the canonical 10Y when value is null (the post-cure contract path — fred.ts now emits null on a missing observation)', () => {
+    // Root-cause cure: MacroIndicator.value is z.number().nullable() and fred.ts emits null on
+    // a missing observation (no more `?? 0` lie). The dataQuality guard MUST cover the null
+    // trigger surface, not just the legacy 0 sentinel — otherwise the model sees DGS10.value=null
+    // and either prints "null%" or hallucinates a number.
+    const m = seeded('fred');
+    m.indicators = m.indicators.map((i) => (i.id === 'DGS10' ? { ...i, value: null } : i));
+    const p = summarizeMacro(m) as { dataQuality?: string; currentTenYFallback?: { value: number; date: string } };
+    expect(p.dataQuality).toBeDefined();
+    expect(p.dataQuality).toMatch(/DGS10/);
+    expect(p.currentTenYFallback).toBeDefined();
+    expect(p.currentTenYFallback!.value).toBeCloseTo(4.48, 6);
     expect(p.currentTenYFallback!.date).toBe('2026-05-01');
   });
 
