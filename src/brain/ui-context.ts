@@ -19,6 +19,10 @@ export interface UiState {
   selected: EntityRef | null;
   openEntity: (ref: EntityRef) => void;
   closeEntity: () => void;
+  /** The intel module's deep-linked property (PFI Phase B.3 item 5), from `/intel/:propertyId`.
+   *  Distinct from `selected`/the global drawer — it focuses the intel Property tab only. */
+  intelPropertyId: string | null;
+  openIntelProperty: (propertyId: string) => void;
   aiOpen: boolean;
   openAi: () => void;
   closeAi: () => void;
@@ -41,6 +45,8 @@ export const UiContext = createContext<UiState>({
   selected: null,
   openEntity: () => {},
   closeEntity: () => {},
+  intelPropertyId: null,
+  openIntelProperty: () => {},
   aiOpen: false,
   openAi: () => {},
   closeAi: () => {},

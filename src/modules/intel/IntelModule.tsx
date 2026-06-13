@@ -19,13 +19,14 @@
 // 'overview' NOI matrix now lives inside Benchmarks.
 // On the static mirror the /api/warehouse routes are absent, so the hooks surface
 // `isUnavailable` and the whole module degrades to one informational Card.
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Database } from 'lucide-react';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
 import { cn } from '@/lib/cn';
+import { useUi } from '@/brain/ui-context';
 import {
   useWarehouseImports,
   useWarehouseIssues,
@@ -63,13 +64,20 @@ const TABS: Array<{ id: Tab; label: string; group: TabGroup }> = [
 const DATA_OPS_TABS: ReadonlySet<Tab> = new Set<Tab>(['imports', 'quality', 'mappings']);
 
 export function IntelModule() {
-  const [tab, setTab] = useState<Tab>('ownership');
-  const [selectedPropertyId, setSelectedPropertyId] = useState<string | null>(null);
-  // Ownership → Property navigation: focus the property, then switch to the Property tab.
+  // Selection is URL-driven (PFI Phase B.3 item 5): `/intel/:propertyId` focuses the Property
+  // tab and is a shareable deep link, distinct from the global `/portfolio/:id` drawer.
+  const ui = useUi();
+  const [tab, setTab] = useState<Tab>(ui.intelPropertyId ? 'property' : 'ownership');
+  // Ownership → Property navigation: push the property to the URL (shareable), which focuses the
+  // Property tab via the effect below.
   const openProperty = (id: string) => {
-    setSelectedPropertyId(id);
+    ui.openIntelProperty(id);
     setTab('property');
   };
+  // A deep link or any chip/tile/row click that changes the URL property lands on the Property tab.
+  useEffect(() => {
+    if (ui.intelPropertyId) setTab('property');
+  }, [ui.intelPropertyId]);
   const imports = useWarehouseImports();
   const issues = useWarehouseIssues();
   const noi = useNoiMatrix();
@@ -215,8 +223,8 @@ export function IntelModule() {
         <OwnershipView onOpenProperty={openProperty} period={effectivePeriod} periodLabel={periodLabel} />
       ) : tab === 'property' ? (
         <PropertyIntelView
-          propertyId={selectedPropertyId}
-          onSelectProperty={setSelectedPropertyId}
+          propertyId={ui.intelPropertyId}
+          onSelectProperty={ui.openIntelProperty}
           period={effectivePeriod}
           periodLabel={periodLabel}
         />
