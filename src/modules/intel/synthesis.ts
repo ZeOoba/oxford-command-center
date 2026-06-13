@@ -104,6 +104,24 @@ export function improvingProperties(sinceAcq: SinceAcquisition[]): SinceAcquisit
     .sort((a, b) => (b.noiGrowth ?? 0) - (a.noiGrowth ?? 0));
 }
 
+export interface SinceAcqLeaderboard {
+  /** Comparable properties ranked by NOI/SF growth since acquisition, best gain first. */
+  ranked: SinceAcquisition[];
+  /** Count excluded for insufficient history (incomparable or null NOI/SF growth). */
+  insufficient: number;
+}
+
+/** The since-acquisition NOI/SF growth leaderboard (PFI Phase B.3 item 4) — "which assets are
+ *  compounding since we bought them". Includes only comparable rows with a non-null
+ *  `noiPerSfGrowth`, sorted descending; everything excluded is tallied into `insufficient` for
+ *  the "insufficient history" note. Non-mutating, deterministic, empty-safe. */
+export function rankBySinceAcqGrowth(sinceAcq: SinceAcquisition[]): SinceAcqLeaderboard {
+  const ranked = sinceAcq
+    .filter((s) => s.comparable && s.noiPerSfGrowth !== null)
+    .sort((a, b) => (b.noiPerSfGrowth ?? 0) - (a.noiPerSfGrowth ?? 0));
+  return { ranked, insufficient: sinceAcq.length - ranked.length };
+}
+
 // ---------------------------------------------------------------------------
 // Action list — the operating-system core.
 // ---------------------------------------------------------------------------

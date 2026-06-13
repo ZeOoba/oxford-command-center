@@ -49,23 +49,23 @@ const QUARTILE_TONE: Record<1 | 2 | 3 | 4, BadgeTone> = {
 interface Props {
   /** Switch to the Property tab focused on this property (lifted selection in IntelModule). */
   onOpenProperty: (propertyId: string) => void;
+  /** Module-level selected period (PFI Phase B.3 item 3) — the cohort period for benchmarks.
+   *  The period selector is now the module-level control; this view keeps the metric selector. */
+  period: string | null;
+  /** Display label for the selected period ('FY2025' / '2026 YTD'). */
+  periodLabel: string | null;
 }
 
-export function BenchmarksView({ onOpenProperty }: Props) {
+export function BenchmarksView({ onOpenProperty, period: effectivePeriod, periodLabel }: Props) {
   const metrics = useMetrics();
   const noi = useNoiMatrix();
 
   const unavailable = isWarehouseUnavailable(metrics.error) || isWarehouseUnavailable(noi.error);
 
-  // The full-year periods present in metrics, latest first → the default selection is the
-  // latest FY (never a partial 2026-YTD).
+  // Full-year presence drives the empty state; the period itself comes from the module control.
   const periods = useMemo(() => availableFyPeriods(metrics.data ?? []), [metrics.data]);
 
   const [metric, setMetric] = useState<NumericMetricKey>('noiPerSf');
-  const [period, setPeriod] = useState<string | null>(null);
-  // Effective period: the picked one if still present, else the latest FY. Resolving this in
-  // render (not state) keeps the default in sync as metrics load, without an effect.
-  const effectivePeriod = period && periods.includes(period) ? period : (periods[0] ?? null);
 
   const benchmarks = useBenchmarks(effectivePeriod, metric);
 
@@ -122,15 +122,9 @@ export function BenchmarksView({ onOpenProperty }: Props) {
 
   return (
     <div className="flex flex-col gap-4">
-      <Selectors
-        periods={periods}
-        period={effectivePeriod}
-        onPeriod={setPeriod}
-        metric={metric}
-        onMetric={setMetric}
-      />
+      <Selectors metric={metric} onMetric={setMetric} />
 
-      <SummaryStrip metric={metric} period={effectivePeriod} summary={summary} loading={benchmarks.isLoading} />
+      <SummaryStrip metric={metric} periodLabel={periodLabel} summary={summary} loading={benchmarks.isLoading} />
 
       <RankingsCard
         rankings={rankings}
@@ -148,42 +142,20 @@ export function BenchmarksView({ onOpenProperty }: Props) {
 }
 
 // ---------------------------------------------------------------------------
-// Selectors — period (full-year only, latest first) + metric (the 12 enum keys).
+// Selectors — metric only (the 12 enum keys). The period is the module-level time control
+// (PFI Phase B.3 item 3), so it no longer lives here.
 // ---------------------------------------------------------------------------
 
 function Selectors({
-  periods,
-  period,
-  onPeriod,
   metric,
   onMetric,
 }: {
-  periods: string[];
-  period: string | null;
-  onPeriod: (p: string) => void;
   metric: NumericMetricKey;
   onMetric: (m: NumericMetricKey) => void;
 }) {
   return (
     <Card>
       <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:gap-6">
-        <label className="flex items-center gap-2">
-          <span className="num text-2xs font-semibold uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>
-            Period
-          </span>
-          <select
-            value={period ?? ''}
-            onChange={(e) => onPeriod(e.target.value)}
-            className="num rounded-md px-2.5 py-1 text-xs"
-            style={{ background: 'var(--surface-raised)', color: 'var(--text-primary)', border: '1px solid var(--border-strong)' }}
-          >
-            {periods.map((p) => (
-              <option key={p} value={p}>
-                FY{p}
-              </option>
-            ))}
-          </select>
-        </label>
         <label className="flex items-center gap-2">
           <span className="num text-2xs font-semibold uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>
             Metric
@@ -212,12 +184,12 @@ function Selectors({
 
 function SummaryStrip({
   metric,
-  period,
+  periodLabel,
   summary,
   loading,
 }: {
   metric: NumericMetricKey;
-  period: string | null;
+  periodLabel: string | null;
   summary: { avg: number | null; median: number | null; p25: number | null; p75: number | null; n: number } | null;
   loading: boolean;
 }) {
@@ -232,7 +204,7 @@ function SummaryStrip({
   return (
     <Card>
       <CardHeader
-        title={`${METRIC_LABELS[metric]} · FY${period ?? '—'}`}
+        title={`${METRIC_LABELS[metric]} · ${periodLabel ?? '—'}`}
         trailing={<Badge tone="gold">portfolio cohort</Badge>}
       />
       {loading ? (

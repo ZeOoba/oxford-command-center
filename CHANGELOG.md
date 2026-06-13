@@ -1,5 +1,46 @@
 # Changelog
 
+## PFI Phase B.3 — intelligence UI design upgrades (2026-06-13)
+
+Five design/UX upgrades to the intel module — answer-first, time-aware, and deep-linkable —
+reusing the existing design system with no new dependencies. All new logic is pure and
+golden-tested; the views render it.
+
+- **Morning-briefing hero** (`OwnershipView.tsx`, above the fold): a one-sentence portfolio
+  verdict (`ownership-intel.portfolioVerdict` — NOI, health posture, # needing attention, #
+  disposition candidates), the top-3 actions, a 12-tile attention heat-strip (click → Property
+  tab), and a compact capital-allocation summary. The full attention matrix, improving/
+  deteriorating, risks and PM snapshot remain below.
+- **Answer-first property verdict card** (`PropertyIntelView.tsx`): verdict → **WHY** (a
+  synthesized ΔNOI root-cause line naming the largest same-direction driver and its contribution,
+  `property-intel.rootCauseLine`) → **DO** (`recommendedAction`). KPI row, trends, expense
+  breakdown and the ΔNOI waterfall move below; the duplicated inline headline is removed.
+- **Time as a first-class control** (`IntelModule.tsx` + `period-intel.ts`): one module-level
+  FY/YTD period selector governs the intelligence tabs' LEVELS/benchmarks, with a persistent
+  "YTD (partial)" banner. Scores, the verdict, trends and the ΔNOI bridge stay on the latest
+  full year. Benchmarks' local period selector is folded into the shared control.
+- **Since-acquisition leaderboard** (`OwnershipView.tsx`, below the fold): properties ranked by
+  NOI/SF growth since acquisition (`synthesis.rankBySinceAcqGrowth`); incomparable assets are
+  excluded with an "insufficient history" note.
+- **Deep-linkable property pages** (`/intel/:propertyId`): an additive `intelPropertyId` route
+  field + `openIntelProperty` make a property reference a shareable link and route every intel
+  entry point (action chips, heat tiles, benchmark rows, selector) through one URL model.
+  Additive and **distinct** from the `/portfolio/:id` global drawer (intel has no
+  `MODULE_PRIMARY_TYPE`, so `selected` stays null for `/intel/:id`).
+
+Build hardening (surfaced during this build):
+- **Gate self-heal** (`scripts/ensure-deps.mjs`, run as `pregate`): restores `node_modules` from
+  the lockfile if it's wiped/partial before the gate runs (a disk-cleanup task removed the whole
+  tree mid-session). No-op when deps are present.
+- **Resilient brain-server startup** (`server/index.ts`): a failed startup workbook/snapshot load
+  no longer prevents the server from binding — it serves in a degraded mode (snapshot 503s
+  gracefully, warehouse opens lazily) so `/api/health`, `/api/warehouse/*` and the SPA shell stay
+  up. Happy path unchanged.
+- **Ownership render smoke test** (`tests/unit/intel-ownership-smoke.test.tsx`): seeds a local
+  QueryClient cache (no module mocking — safe under `isolate: false`) to prove the hero/heat-strip/
+  leaderboard mount on real-shaped data, including the null-$/SF property.
+- **Pattern doc** (`docs/superpowers/patterns/intel-pure-logic-then-view.md`).
+
 ## PFI Phase B.2 — Property Financial Intelligence UI (2026-06-13)
 
 The intel module becomes an operating layer over the analytics engine — not another dashboard.
