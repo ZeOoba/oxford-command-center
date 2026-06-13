@@ -1,4 +1,4 @@
-import type { PortfolioSnapshot } from '../../src/contracts/index';
+import type { MacroSnapshot, PortfolioSnapshot } from '../../src/contracts/index';
 import { TOOL_DEFS, runTool, type EntityRefLite } from './tools';
 import { respond } from './respond';
 
@@ -32,6 +32,9 @@ export interface AgentOptions {
   maxTurns?: number;
   /** Server-only document search (RAG). Absent on the mirror → search_documents stays a stub. */
   docSearch?: (query: string, limit?: number) => Promise<Array<{ doc: string; snippet: string }>>;
+  /** Live macro provider (FRED w/ key, seeded fallback otherwise). Absent on the mirror → get_macro
+   *  stays a stub. Mirrors the docSearch precedent — async; returns null only on a hard failure. */
+  macroProvider?: () => Promise<MacroSnapshot | null>;
 }
 
 const TOOL_LABELS: Record<string, string> = {
@@ -46,6 +49,7 @@ const TOOL_LABELS: Record<string, string> = {
   search_entities: 'searching entities',
   run_scenario: 'running scenario',
   search_documents: 'searching documents',
+  get_macro: 'reading the rate environment',
 };
 
 const SYSTEM = [
@@ -229,6 +233,15 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
             const q = String((b.input as { query?: unknown } | undefined)?.query ?? '');
             const passages = await opts.docSearch(q, 5);
             result = { data: { count: passages.length, passages }, refs: [] as EntityRefLite[] };
+          } else if (b.name === 'get_macro' && opts.macroProvider) {
+            // Live macro: real FRED snapshot (or seeded fallback) on the server (injected); the
+            // spine tools don't have it. Summarized to a SMALL, numbers-first payload (mirror tool
+            // convention) — the model gets indicators + a 10Y trend snapshot, not the raw history
+            // array. A hard failure (provider returns null) falls back to the stub message.
+            const macro = await opts.macroProvider().catch(() => null);
+            result = macro
+              ? { data: summarizeMacro(macro), refs: [] as EntityRefLite[] }
+              : runTool(b.name ?? '', snapshot, {});
           } else {
             result = runTool(b.name ?? '', snapshot, (b.input as Record<string, unknown>) ?? {});
           }
@@ -245,4 +258,26 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
     if ((e as Error)?.name === 'AbortError') return;
     await emit({ type: 'error', message: e instanceof Error ? e.message : String(e) });
   }
+}
+
+/** Compact macro payload for the agent: indicators (id + value + unit + change) and a 10Y trend
+ *  digest (current / 12-month low / 12-month high) — not the raw history array. Numbers-first;
+ *  mirrors the small-result convention every spine tool follows. */
+function summarizeMacro(m: MacroSnapshot): Record<string, unknown> {
+  const ind: Record<string, unknown> = {};
+  for (const i of m.indicators) {
+    ind[i.id] = { label: i.label, value: i.value, unit: i.unit, change: i.change };
+  }
+  const trend: { current: number | null; low12mo: number | null; high12mo: number | null; n: number } = {
+    current: null, low12mo: null, high12mo: null, n: m.tenYearHistory.length,
+  };
+  if (m.tenYearHistory.length) {
+    const values = m.tenYearHistory.map((h) => h.value).filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+    if (values.length) {
+      trend.current = values[values.length - 1]!;
+      trend.low12mo = Math.min(...values);
+      trend.high12mo = Math.max(...values);
+    }
+  }
+  return { asOf: m.asOf, source: m.source, indicators: ind, tenYearTrend: trend };
 }

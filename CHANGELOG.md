@@ -1,5 +1,25 @@
 # Changelog
 
+## PFI Phase 1b — `get_macro` agent tool: live rate environment for the AI (2026-06-13)
+
+Closes the audit-flagged AI/macro gap (the agent had ZERO access to FRED — refi-spread,
+cap-rate-vs-Treasury, and rate-environment questions could not be answered against live data).
+Unblocks the Phase-2 debt/refi narrative.
+
+- New `get_macro` tool in `TOOL_DEFS` (empty parameters; description scoped to refi-spread /
+  cap-rate-spread / rate-environment framing — not a general-purpose news query) with a STUB
+  executor mirroring `search_documents` ("Live macro is not available on this surface.").
+- New `opts.macroProvider: () => Promise<MacroSnapshot | null>` on `AgentOptions`, exact mirror
+  of `opts.docSearch`. The dispatch loop routes `get_macro` through it when injected; falls
+  back to the stub on null/hard failure. `summarizeMacro()` returns a small, numbers-first
+  payload — indicators (id → label/value/unit/change) + a 10Y trend digest (current / low12mo /
+  high12mo / n) — not the raw history array.
+- `server/index.ts` wires `macroProvider: getMacro` at the `runAgent` call (one-line addition).
+  The Cloudflare Pages Function is intentionally NOT wired — the static mirror keeps the stub
+  (no FRED secret on the mirror; safe-by-construction).
+- Tests: a TOOL_DEFS + stub assertion, and an end-to-end SSE mock that proves the injected
+  provider is called and its live snapshot is fed back to the model as the `tool_result`.
+
 ## PFI Phase 1a.2 — surface the cross-basis benchmark warning in the UI (2026-06-13)
 
 Completes the basis guard end-to-end (the consumer-side gap the Phase-1a adversarial review flagged:

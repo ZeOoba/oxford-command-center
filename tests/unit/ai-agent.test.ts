@@ -54,6 +54,17 @@ describe('tool definitions + executors', () => {
     expect(JSON.stringify(r.data)).toMatch(/no documents are indexed/i);
   });
 
+  it('get_macro is in TOOL_DEFS with an object input schema', () => {
+    const t = TOOL_DEFS.find((d) => d.name === 'get_macro');
+    expect(t).toBeDefined();
+    expect(t?.input_schema.type).toBe('object');
+  });
+
+  it('get_macro falls back honestly when no live provider is on this surface (no FRED on the mirror, etc.)', () => {
+    const r = runTool('get_macro', makeSnap(), {});
+    expect(JSON.stringify(r.data)).toMatch(/not available on this surface|no live macro/i);
+  });
+
   it('an unknown tool returns an error, not a throw', () => {
     const r = runTool('nope', makeSnap(), {});
     expect(JSON.stringify(r.data)).toMatch(/unknown tool/i);
@@ -111,5 +122,60 @@ describe('runAgent — streaming tool loop', () => {
     expect(bodies[1]).toContain('tool_result');
     expect(bodies[1]).toContain('toolu_1');
     expect(events.at(-1)).toMatchObject({ type: 'done' });
+  });
+
+  it('routes get_macro through the injected macroProvider (not the stub) and feeds the live snapshot back to the model', async () => {
+    const bodies: string[] = [];
+    const turn1 = sse(
+      { type: 'content_block_start', index: 0, content_block: { type: 'tool_use', id: 'toolu_m', name: 'get_macro' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: '{}' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'tool_use' } },
+      { type: 'message_stop' },
+    );
+    const turn2 = sse(
+      { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+      { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: '10Y at 4.47%.' } },
+      { type: 'content_block_stop', index: 0 },
+      { type: 'message_delta', delta: { stop_reason: 'end_turn' } },
+      { type: 'message_stop' },
+    );
+    const fetchMock = vi.fn(async (_url: string, init: { body: string }) => {
+      bodies.push(init.body);
+      return new Response(bodies.length === 1 ? turn1 : turn2, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const provider = vi.fn(async () => ({
+      asOf: '2026-06-01',
+      source: 'fred' as const,
+      indicators: [
+        { id: 'DGS10', label: '10Y Treasury', value: 4.47, unit: '%', change: -0.01 },
+        { id: 'SOFR', label: 'SOFR', value: 3.63, unit: '%', change: null },
+      ],
+      tenYearHistory: [{ date: '2025-06-01', value: 4.38 }, { date: '2026-05-01', value: 4.48 }],
+    }));
+
+    await runAgent({
+      question: 'what is the 10Y?',
+      snapshot: makeSnap(),
+      apiKey: 'test-key',
+      // macroProvider follows the search_documents injection pattern (opts.docSearch).
+      macroProvider: provider,
+      emit: () => undefined,
+    });
+    vi.unstubAllGlobals();
+
+    expect(provider).toHaveBeenCalledTimes(1);
+    // Second request echoes the tool_result — it MUST carry the LIVE snapshot (DGS10/SOFR), NEVER
+    // the stub fallback string. This is the financial-decision wiring under test (Phase-2 refi
+    // narrative reads the rate spread from this tool result).
+    expect(bodies[1]).toContain('DGS10');
+    expect(bodies[1]).toContain('4.47');
+    expect(bodies[1]).toContain('SOFR');
+    // The literal stub message in the tool_result content would mean the executor stub fired
+    // instead of the injected provider. (The same phrase appears in the tool DESCRIPTION sent to
+    // the model — match the stub's exact body shape, not the substring.)
+    expect(bodies[1]).not.toContain('Live macro is not available on this surface');
   });
 });
