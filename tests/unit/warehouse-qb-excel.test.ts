@@ -169,6 +169,15 @@ describe('qb-excel adapter', () => {
     // the default tail has no EXPENSE word row, so totalExpense stays null
     expect(s.totalIncome).toBeCloseTo(216461.4);
     expect(s.totalExpense).toBeNull();
+    // per-section foot scope: leaf sums accumulate per section; the bare-TOTAL INCOME
+    // value becomes a synthetic file-total section footed against the income-side
+    // sections captured at the row's pass time. No EXPENSE word row → no expense synthetic.
+    expect(s.sections).toEqual([
+      { name: 'INCOME', leafSum: expect.closeTo(216461.4), statedTotal: null },
+      { name: 'EXPENSE', leafSum: expect.closeTo(630.95), statedTotal: null },
+      { name: 'NON OPERATING EXPENSE', leafSum: 25000, statedTotal: null },
+      { name: 'INCOME (file total)', leafSum: expect.closeTo(216461.4), statedTotal: expect.closeTo(216461.4) },
+    ]);
   });
 
   it('ignores summary rows: total-value rows, footer metrics, numeric-only labels', async () => {
@@ -184,6 +193,16 @@ describe('qb-excel adapter', () => {
     // the skipped TOTAL→INCOME / TOTAL→EXPENSE value rows ARE the report's stated totals
     expect(s.totalIncome).toBeCloseTo(216461.4);
     expect(s.totalExpense).toBeCloseTo(25630.95);
+    // footer bare-TOTAL EXPENSE (25630.95) is a FILE-level total: its synthetic section
+    // snapshots the expense-side leaf sums at pass time — here AFTER both expense
+    // sections, so 630.95 + 25000 (= the report's own arithmetic) → foots clean.
+    expect(s.sections).toEqual([
+      { name: 'INCOME', leafSum: expect.closeTo(216461.4), statedTotal: null },
+      { name: 'EXPENSE', leafSum: expect.closeTo(630.95), statedTotal: null },
+      { name: 'NON OPERATING EXPENSE', leafSum: 25000, statedTotal: null },
+      { name: 'INCOME (file total)', leafSum: expect.closeTo(216461.4), statedTotal: expect.closeTo(216461.4) },
+      { name: 'EXPENSE (file total)', leafSum: expect.closeTo(25630.95), statedTotal: expect.closeTo(25630.95) },
+    ]);
   });
 
   it('skips subtotal rows even when they carry a numeric amount', async () => {
@@ -279,6 +298,130 @@ describe('qb-excel adapter', () => {
     // total form, so both stated totals stay null (no false capture from sub-groups)
     expect(s.totalIncome).toBeNull();
     expect(s.totalExpense).toBeNull();
+    // no top-level Total rows → sections never close, stated totals stay null
+    expect(s.sections).toEqual([
+      { name: 'REVENUE', leafSum: expect.closeTo(479096.4), statedTotal: null },
+      { name: 'EXPENSE', leafSum: 12000, statedTotal: null },
+    ]);
+  });
+
+  it('closes a Yardi section at its TOTAL row: trailing rows stay in the ledger but not in the section foot scope', async () => {
+    // 29000 Info Lane 2025 pattern: "TOTAL OPERATING EXPENSES" concludes the section,
+    // then financing/capital rows follow under the SAME lingering section header. The
+    // ledger keeps them (the seed classifies them out of NOI); the section's foot scope
+    // must NOT — its leafSum closes at the Total row that stated 12000.
+    const rows: YardiRow[] = [
+      ['1900 North Broadway (eastgate)', null, null, null, null],
+      ['Cash Flow Statement', null, null, null, null],
+      ['Period = Jan 2024-Dec 2024', null, null, null, null],
+      ['Book = Cash ; Tree = 8807cole', null, null, null, null],
+      [null, ' Period to Date', '%', ' Year to Date', '%'],
+      [' REVENUE', null, null, null, null],
+      ['    Rental Revenue', 479096.4, 68.17, 479096.4, 68.17],
+      [' OPERATING EXPENSES', null, null, null, null],
+      ['    Insurance Expense', 12000, 1.71, 12000, 1.71],
+      [' TOTAL OPERATING EXPENSES', 12000, 1.71, 12000, 1.71],
+      ['    Mortgage Interest', -50000, -7.12, -50000, -7.12],
+      ['NET OPERATING INCOME', 300000, 42.7, 300000, 42.7],
+    ];
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Report1');
+    for (const r of rows) ws.addRow(r);
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'yardi-close.xlsx');
+    await wb.xlsx.writeFile(file);
+    const s = await parseQbExcel(file);
+    // ledger behavior unchanged: the trailing row IS an account under the lingering section
+    const mortgage = s.accounts.find((a) => a.name === 'Mortgage Interest')!;
+    expect(mortgage.section).toBe('OPERATING EXPENSES');
+    expect(mortgage.total).toBeCloseTo(-50000);
+    // but the section closed at its TOTAL row: leafSum 12000 (Insurance only), stated 12000
+    expect(s.sections).toEqual([
+      { name: 'REVENUE', leafSum: expect.closeTo(479096.4), statedTotal: null },
+      { name: 'OPERATING EXPENSES', leafSum: 12000, statedTotal: 12000 },
+    ]);
+    expect(s.totalExpense).toBe(12000); // existing capture path untouched
+  });
+
+  it('captures Rent-Manager merged "TOTAL | EXPENSE | value" rows at pass time (section-scoped, first capture wins)', async () => {
+    // Real Rarig/FVC/Westerville/9620 layout: each section is followed by a TOTAL block
+    // whose value row carries BOTH the word TOTAL and the section word (merged cells);
+    // the TOTAL header row may carry a stray % numeric (9620) and never arm the TOTAL
+    // section state. The file then ends with a NET INCOME SUMMARY recap that restates
+    // the same magnitudes with display signs. The per-section foot must use the FIRST
+    // bare total per side with the side's leaf sums AT THAT ROW — Rarig's expense total
+    // lands BEFORE NON OPERATING EXPENSE opens and covers the EXPENSE section only.
+    const rows: Array<Array<string | number | null>> = [
+      ['Profit & Loss', null, null, null],
+      ['Property: 1100 Rarig Ave', null, null, null],
+      ['01/01/24 - 12/31/24  (cash basis)', null, null, null],
+      [null, 'INCOME', null, null],
+      [null, null, '          5064 Rent', 100000],
+      [null, 'TOTAL', null, 1], // stray % numeric on the TOTAL header — must NOT arm the TOTAL block
+      // merged per-section closer (section state still INCOME) with a TRAILING 100%
+      // numeric (9620's "% Income" column) — the stated value is the LEFTMOST numeric
+      [null, 'TOTAL', 'INCOME', 100000, 1],
+      [null, 'EXPENSE', null, null],
+      [null, null, '          INSURANCE EXPENSE', -30000],
+      [null, null, '          MANAGEMENT FEE EXPENSE', -10000],
+      [null, null, '          Property Taxes', 5000],
+      [null, 'TOTAL', null, null],
+      [null, 'TOTAL', 'EXPENSE', -35000], // EXPENSE-scoped: passes before NON OPERATING EXPENSE opens
+      [null, 'NON OPERATING EXPENSE', null, null],
+      [null, null, '          7402 Distribution to Owner', 25000],
+      [null, 'TOTAL', null, null],
+      [null, 'TOTAL', 'NON OPERATING EXPENSE', 25000], // never feeds file totals (word ≠ INCOME/EXPENSE)
+      [null, null, 'NET INCOME SUMMARY', null],
+      [null, null, 'Income', 100000], // recap rows: last writer for totalIncome/totalExpense,
+      [null, null, 'Expense', -35000], // but the file-total snapshot keeps the FIRST capture
+      [null, null, 'Non Operating Expense', -25000],
+      [null, null, 'NET INCOME', 40000],
+    ];
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    for (const r of rows) ws.addRow(r);
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'rent-manager.xlsx');
+    await wb.xlsx.writeFile(file);
+    const s = await parseQbExcel(file);
+    expect(s.accounts.map((a) => a.name)).toEqual(
+      ['Rent', 'INSURANCE EXPENSE', 'MANAGEMENT FEE EXPENSE', 'Property Taxes', 'Distribution to Owner']);
+    // totalIncome/totalExpense keep today's semantics: merged rows are skipped (first
+    // text is TOTAL); the single-word summary recap rows record, last writer wins
+    expect(s.totalIncome).toBe(100000);
+    expect(s.totalExpense).toBe(-35000);
+    expect(s.sections).toEqual([
+      { name: 'INCOME', leafSum: 100000, statedTotal: null },
+      { name: 'EXPENSE', leafSum: -35000, statedTotal: null },
+      { name: 'NON OPERATING EXPENSE', leafSum: 25000, statedTotal: null },
+      // income captured at the merged row (snapshot = INCOME section only)
+      { name: 'INCOME (file total)', leafSum: 100000, statedTotal: 100000 },
+      // expense captured at the merged row BEFORE NON OPERATING EXPENSE: scoped -35000,
+      // |stated| = |leaves| even though the recap shows it negative
+      { name: 'EXPENSE (file total)', leafSum: -35000, statedTotal: -35000 },
+    ]);
+  });
+
+  it('closes a 9620-style negative-leaf section at its stated total row (parse space, signs preserved)', async () => {
+    const rows: FixtureRow[] = [
+      ['Cash Flow', null, null, null],
+      ['Property: 350 Highway Center', null, null, null],
+      ['01/01/25 - 12/31/25  (cash basis)', null, null, null],
+      [null, 'EXPENSE', null, null],
+      [null, null, '          INSURANCE EXPENSE', -30000],
+      [null, null, '          MANAGEMENT FEE EXPENSE', -10000],
+      [null, null, '          Property Taxes', 5000],
+      [null, null, '          Total Expense', -35000],
+    ];
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    for (const r of rows) ws.addRow(r);
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'neg-leaf.xlsx');
+    await wb.xlsx.writeFile(file);
+    const s = await parseQbExcel(file);
+    expect(s.accounts.map((a) => a.total)).toEqual([-30000, -10000, 5000]);
+    // leafSum stays in PARSE space (raw signs): -30000 - 10000 + 5000 = -35000 = stated
+    expect(s.sections).toEqual([
+      { name: 'EXPENSE', leafSum: -35000, statedTotal: -35000 },
+    ]);
   });
 
   it('parses AppFolio Cash Flow exports: %-containing headers ineligible, Properties/Date Range headers, sections, derived rows skipped', async () => {
@@ -315,6 +458,16 @@ describe('qb-excel adapter', () => {
     // Expense" rows (the later "Total Income"/"Total Expense" rows carry the same values)
     expect(s.totalIncome).toBeCloseTo(515253.29);
     expect(s.totalExpense).toBeCloseTo(371767.05);
+    // sections close at their "Total Operating ..." rows; the later duplicate
+    // "Total Income"/"Total Expense" rows find them closed and re-attribute nothing.
+    // (This fixture is a trimmed subset of the real export, so leafSum ≠ statedTotal
+    // here — the parse layer RECORDS scope, the ingest layer judges mismatches.)
+    // Other Items never states a total → never footable.
+    expect(s.sections).toEqual([
+      { name: 'INCOME', leafSum: expect.closeTo(496265.63), statedTotal: expect.closeTo(515253.29) },
+      { name: 'EXPENSE', leafSum: expect.closeTo(223645.45), statedTotal: expect.closeTo(371767.05) },
+      { name: 'OTHER ITEMS', leafSum: expect.closeTo(-154123.2), statedTotal: null },
+    ]);
   });
 
   it('parses AppFolio YTD Date Range form to grain ytd', async () => {
@@ -444,6 +597,11 @@ describe('qb-excel adapter', () => {
     // the sub-group "Total Tax" must NOT overwrite totalExpense
     expect(s.totalIncome).toBeCloseTo(426950.49);
     expect(s.totalExpense).toBeCloseTo(121745.44);
+    // both sections close at their own Total rows and foot exactly; "Total Tax" closed nothing
+    expect(s.sections).toEqual([
+      { name: 'INCOME', leafSum: expect.closeTo(426950.49), statedTotal: expect.closeTo(426950.49) },
+      { name: 'EXPENSE', leafSum: expect.closeTo(121745.44), statedTotal: expect.closeTo(121745.44) },
+    ]);
   });
 
   it('selects the first worksheet that yields accounts (skips "QuickBooks Desktop Export Tips")', async () => {
@@ -500,6 +658,13 @@ describe('qb-excel adapter', () => {
     expect(byName.get('Insurance Expense')!.parent).toBeNull();
     expect(byName.get('Tax -- Md State')!.section).toBe('EXPENSE');
     expect(byName.get('Tax -- Md State')!.total).toBeCloseTo(36013);
+    // 1851 Solar pattern: the stated "Total Expense" covers Ordinary Expense only; the
+    // EXPENSE section closes there, so the trailing Other Expense leaf (Tax -- Md State,
+    // 36013) stays in the LEDGER but out of the closed section's foot scope.
+    expect(s.sections).toEqual([
+      { name: 'INCOME', leafSum: expect.closeTo(668798.47), statedTotal: expect.closeTo(668798.47) },
+      { name: 'EXPENSE', leafSum: expect.closeTo(37973.29), statedTotal: expect.closeTo(37973.29) },
+    ]);
   });
 
   it('returns the first sheet\'s empty result when no worksheet yields accounts', async () => {

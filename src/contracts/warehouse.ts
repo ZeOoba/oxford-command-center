@@ -54,6 +54,14 @@ export const RawStatementSchema = z.object({
   accounts: z.array(RawAccountLineSchema),
   totalIncome: z.number().finite().nullable(),
   totalExpense: z.number().finite().nullable(),
+  // Per-section foot scope: each statement section with the leaf total accumulated
+  // while the section was OPEN (accumulation closes at the section's top-level Total
+  // row) and the report-stated total captured from that row (null = never stated).
+  sections: z.array(z.object({
+    name: z.string().min(1),
+    leafSum: z.number().finite(),
+    statedTotal: z.number().finite().nullable(),
+  })).default([]),
 });
 export type RawStatement = z.infer<typeof RawStatementSchema>;
 

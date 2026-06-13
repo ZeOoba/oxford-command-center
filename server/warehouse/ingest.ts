@@ -104,9 +104,10 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
     // or wrong value column commits silently without this choke point. Reports only —
     // never blocks or downgrades the commit/pending decision.
     //
-    // INCOME ONLY (measured 2026-06-12 across all 32 staged files: income foots exactly
-    // 32/32). The EXPENSE side deliberately does NOT foot here: every PM format's stated
-    // expense total covers a narrower scope than the section state machine attributes —
+    // The income SIDE foot stays as measured 2026-06-12 (income foots exactly 32/32
+    // across all staged files). The EXPENSE side cannot foot per side: every PM
+    // format's stated expense total covers a narrower scope than the lingering section
+    // state attributes —
     //  - QB/Rent-Manager charts display it NEGATIVE and exclude NON OPERATING EXPENSE
     //    (Rarig 2024: stated -125,539.93 vs EXPENSE-section leaves +125,539.93 exact);
     //  - Yardi "Total Operating Expenses" excludes the financing/capital rows that follow
@@ -114,11 +115,26 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
     //    section sum -5.79M vs stated 200,321.42) — the seed classifies those rows out of
     //    NOI correctly, so the ledger is right even though a naive section foot is not;
     //  - 1851 Solar's stated total covers Ordinary Expense only (delta = Other Expense).
-    // A meaningful expense foot needs section-boundary reform (reset section state at
-    // each top-level "Total X" row) — Phase B work, tracked in the architecture spec.
+    // The expense side therefore foots per SECTION below: parse-side accumulation
+    // closes each section at its top-level Total row, so each stated total is compared
+    // at exactly the scope it covers.
     if (stmt.totalIncome !== null && Math.abs(stmt.totalIncome - incomeSum) > FOOT_TOLERANCE) {
       insIssue.run(reg.importId, det.propertyId, 'foot-mismatch',
         `income foot mismatch: report-stated total ${stmt.totalIncome} vs parsed income-side sum ${incomeSum} (delta ${(stmt.totalIncome - incomeSum).toFixed(2)})`, 'warn');
+    }
+    // Per-SECTION foot (both sides — the expense-side choke point): every section that
+    // carries a report-stated total must tie to ITS OWN leaf sum. Compared in PARSE
+    // space (RawStatement values, before the sign-normalization applied to ledger rows)
+    // with absolute values on BOTH sides: QB/Rent-Manager display expense totals
+    // negative against positive leaves (Rarig), 9620 books expense leaves negative
+    // against a negative stated total — abs neutralizes both display conventions.
+    // Sections that never state a total (no top-level Total row) are not footable.
+    for (const sec of stmt.sections) {
+      if (sec.statedTotal === null) continue;
+      if (Math.abs(Math.abs(sec.statedTotal) - Math.abs(sec.leafSum)) > FOOT_TOLERANCE) {
+        insIssue.run(reg.importId, det.propertyId, 'foot-mismatch',
+          `section foot mismatch [${sec.name}]: report-stated total ${sec.statedTotal} vs section-scoped leaf sum ${sec.leafSum} (|stated| ${Math.abs(sec.statedTotal).toFixed(2)} vs |leaves| ${Math.abs(sec.leafSum).toFixed(2)})`, 'warn');
+      }
     }
     if (insertedRows === 0) {
       // empty parse = adapter/layout failure, never a valid statement — committing it

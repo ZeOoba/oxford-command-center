@@ -125,9 +125,11 @@ describe('ingest pipeline', () => {
     seedPropertyMaster(db);
     seedMappings(db, SEED);
     const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
-    // stated totals match the leaves: income 100000; expense side = HVAC 5000 +
-    // Distribution 25000 (NON OPERATING EXPENSE is expense-side; ALL classifications
-    // count — stated totals include rows the engine later excludes from NOI)
+    // stated totals match the leaves: income 100000; the bare-TOTAL EXPENSE row (30000)
+    // is a FILE-level total stated AFTER both expense sections — its synthetic
+    // "EXPENSE (file total)" section foots against HVAC 5000 + Distribution 25000
+    // (NON OPERATING EXPENSE is expense-side; ALL classifications count — stated
+    // totals include rows the engine later excludes from NOI)
     await writeFixture(file, { income: 100000, expense: 30000 });
 
     const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
@@ -136,7 +138,7 @@ describe('ingest pipeline', () => {
     expect(issues).toHaveLength(0);
   });
 
-  it('stated total ≠ parsed side sum → foot-mismatch DQ warn row, commit status unchanged', async () => {
+  it('stated total ≠ parsed side sum → foot-mismatch DQ warn rows, commit status unchanged', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'wh-'));
     const db = openWarehouse(join(dir, 'f.sqlite'));
     seedPropertyMaster(db);
@@ -148,12 +150,52 @@ describe('ingest pipeline', () => {
     const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
     expect(r.status).toBe('committed'); // choke point reports — it does NOT block commit
     const issues = db.prepare(
-      "SELECT kind, severity, detail FROM data_quality_issues WHERE import_id = ? AND kind = 'foot-mismatch'",
+      "SELECT kind, severity, detail FROM data_quality_issues WHERE import_id = ? AND kind = 'foot-mismatch' ORDER BY id",
     ).all(r.importId) as Array<{ kind: string; severity: string; detail: string }>;
-    expect(issues).toHaveLength(1);
+    // both choke points fire: the income SIDE foot and the INCOME (file total) SECTION foot
+    expect(issues).toHaveLength(2);
+    for (const i of issues) {
+      expect(i.severity).toBe('warn');
+      expect(i.detail).toContain('999999');
+      expect(i.detail).toContain('100000');
+    }
+    expect(issues.some((i) => i.detail.includes('INCOME (file total)'))).toBe(true);
+  });
+
+  it('expense section foot: stated 999 vs scoped leaves 30000 → exactly one foot-mismatch naming the section', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wh-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeFixture(file, { income: 100000, expense: 999 });
+
+    const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
+    expect(r.status).toBe('committed');
+    const issues = db.prepare(
+      "SELECT severity, detail FROM data_quality_issues WHERE import_id = ? AND kind = 'foot-mismatch'",
+    ).all(r.importId) as Array<{ severity: string; detail: string }>;
+    expect(issues).toHaveLength(1); // income foots clean — only the expense section fires
     expect(issues[0]!.severity).toBe('warn');
-    expect(issues[0]!.detail).toContain('999999');
-    expect(issues[0]!.detail).toContain('100000');
+    expect(issues[0]!.detail).toContain('EXPENSE (file total)');
+    expect(issues[0]!.detail).toContain('999');
+    expect(issues[0]!.detail).toContain('30000');
+  });
+
+  it('absolute values neutralize display sign conventions: stated -30000 vs positive scoped leaves 30000 → no mismatch', async () => {
+    // QB/Rent-Manager summary blocks display expense totals NEGATIVE against positive
+    // leaves (Rarig 2024: stated -125,539.93 vs EXPENSE leaves +125,539.93 exact)
+    const dir = mkdtempSync(join(tmpdir(), 'wh-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeFixture(file, { income: 100000, expense: -30000 });
+
+    const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
+    expect(r.status).toBe('committed');
+    const issues = db.prepare("SELECT kind FROM data_quality_issues WHERE kind = 'foot-mismatch'").all();
+    expect(issues).toHaveLength(0);
   });
 
   it('unmapped accounts flag data quality and downgrade to pending-review', async () => {
@@ -194,6 +236,10 @@ describe('ingest pipeline', () => {
       [null, null, '          INSURANCE EXPENSE', -30000],
       [null, null, '          MANAGEMENT FEE EXPENSE', -10000],
       [null, null, '          Property Taxes', 5000],
+      // stated total row in the SAME negative display convention as the leaves:
+      // |-35000| vs |-30000 - 10000 + 5000| — the section foots in PARSE space,
+      // independent of the sign-normalization applied to ledger rows below
+      [null, null, '          Total Expense', -35000],
     ];
     for (const r of rows) ws.addRow(r);
     const file = join(dir, 'P&L 2025 -- 9620 State 350.xlsx');
@@ -220,4 +266,8 @@ describe('ingest pipeline', () => {
 
     const dq = db.prepare("SELECT kind, severity FROM data_quality_issues WHERE kind='sign-normalized'").all();
     expect(dq).toHaveLength(1); // normalization is recorded, never silent
+
+    // 9620-style negative-leaf foot: stated -35000 vs scoped leaf sum -35000 → clean
+    const foot = db.prepare("SELECT detail FROM data_quality_issues WHERE kind='foot-mismatch'").all();
+    expect(foot).toHaveLength(0);
   });

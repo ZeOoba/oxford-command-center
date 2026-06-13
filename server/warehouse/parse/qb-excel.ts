@@ -2,6 +2,7 @@
 import ExcelJS from 'exceljs';
 import type { RawAccountLine, RawStatement } from '../../../src/contracts/warehouse';
 import { RawStatementSchema } from '../../../src/contracts/warehouse';
+import { sectionSide } from '../mapping';
 
 function cellText(v: ExcelJS.CellValue): string | null {
   if (v == null) return null;
@@ -105,6 +106,21 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
   let section = '';
   let totalIncome: number | null = null;
   let totalExpense: number | null = null;
+  // Per-section foot scope (the expense-side choke point). A section accumulates its
+  // leaves while OPEN; it closes at its top-level Total row (which records statedTotal)
+  // or stops accumulating when the next section header / bare-TOTAL block supersedes it.
+  // Trailing rows under a lingering closed section still become ledger accounts exactly
+  // as before — they just stay out of the closed section's foot scope.
+  interface SectionAcc { name: string; leafSum: number; statedTotal: number | null; closed: boolean }
+  const sections: SectionAcc[] = [];
+  let current: SectionAcc | null = null;
+  // Bare-TOTAL block stated values ("TOTAL → INCOME 231187.84") are FILE-level totals:
+  // each is footed against the side's section-scoped leaf sums AS OF the row's pass
+  // time, via a synthetic "<SIDE> (file total)" section emitted at end of parse.
+  const fileTotals: Record<'income' | 'expense', { stated: number; scopedLeafSum: number } | null> =
+    { income: null, expense: null };
+  const sideLeafSum = (side: 'income' | 'expense'): number =>
+    sections.reduce((sum, s) => (sectionSide(s.name) === side ? sum + s.leafSum : sum), 0);
   let parent: string | null = null;
   // Column the current parent group sits in — set ONLY for column-indented layouts
   // (null = space-indented mode, where parent applies to every subsequent leaf).
@@ -163,6 +179,7 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
     const texts: Array<{ col: number; text: string }> = [];
     let rowNum: number | null = null;
     let numCol: number | null = null;
+    let leftNum: number | null = null;
     let anyNumeric = false;
     row.eachCell({ includeEmpty: false }, (cell, col) => {
       const t = cellText(cell.value);
@@ -170,6 +187,7 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
       const n = cellNum(cell.value);
       if (n !== null) {
         anyNumeric = true;
+        leftNum ??= n; // leftmost numeric (bare-TOTAL stated values on header-less sheets)
         // header-driven column when one exists; else rightmost numeric wins
         if (valueCol === null || col === valueCol) { rowNum = n; numCol = col; }
       }
@@ -230,6 +248,33 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
     // also accept "Jan - Dec 24" style period labels without dates
     if (!periodLabel && /^[A-Z][a-z]{2}\s*-\s*[A-Z][a-z]{2}\s+\d{2}$/.test(first)) { periodLabel = first; return; }
 
+    // Bare-TOTAL stated-value rows, two shapes: a lone section word under an armed
+    // TOTAL block ("INCOME 216461.4" / the NET INCOME SUMMARY recap), or the merged
+    // Rent-Manager "TOTAL | EXPENSE | 125539.93" row — whose preceding TOTAL header
+    // can carry a stray % numeric (9620) and never arm the TOTAL section state.
+    // FIRST capture per side wins, snapshotting that side's section leaf sums AT PASS
+    // TIME: the first bare total a report emits for a side is its section-scoped
+    // closer (Rarig's TOTAL → EXPENSE lands BEFORE NON OPERATING EXPENSE opens);
+    // later restatements (summary recap) repeat the magnitude under display signs.
+    // This feeds ONLY the per-section foot — totalIncome/totalExpense keep their
+    // original capture path below, unchanged.
+    //
+    // Value cell: header-driven column when one exists; otherwise the LEFTMOST numeric
+    // — NOT rightmost-wins. 9620's merged "TOTAL | INCOME | 185065.15 | 1" rows carry
+    // the "% Income" fraction as a trailing NUMERIC (leaf rows hold it as text
+    // "92.83 %", so leaves are unaffected); the dollar amount precedes it.
+    {
+      const stated = valueCol !== null ? rowNum : leftNum;
+      if (stated !== null) {
+        const words = texts.map((t) => t.text.trim());
+        const valueWord = words.find((w) => /^(INCOME|EXPENSE)$/i.test(w));
+        if (valueWord && (section === 'TOTAL' || words.some((w) => /^TOTAL$/i.test(w)))) {
+          const side = /^INCOME$/i.test(valueWord) ? ('income' as const) : ('expense' as const);
+          fileTotals[side] ??= { stated, scopedLeafSum: sideLeafSum(side) };
+        }
+      }
+    }
+
     // section labels (column B in real exports — any short all-caps cell that matches)
     for (const t of texts) {
       const trimmed = t.text.trim();
@@ -248,6 +293,12 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
         section = trimmed.toUpperCase();
         parent = null; // a new section starts a new group context
         parentCol = null;
+        if (section === 'TOTAL') {
+          current = null; // bare-TOTAL block: the previous section is done accumulating
+        } else {
+          current = { name: section, leafSum: 0, statedTotal: null, closed: false };
+          sections.push(current);
+        }
         return;
       }
     }
@@ -286,6 +337,23 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
       if (rowNum !== null) {
         if (STATED_TOTAL_INCOME_RE.test(name)) totalIncome = rowNum;
         else if (STATED_TOTAL_EXPENSE_RE.test(name)) totalExpense = rowNum;
+        // A top-level Total row CLOSES the open section it concludes, recording its
+        // stated total at that section's scope: the stated forms (gated on side
+        // agreement with the open section) plus the literal "Total <section name>".
+        // Sub-group subtotals ("Total Tax", "Total RENTAL INCOME") match neither and
+        // never close anything; a duplicate stated row after close re-attributes
+        // nothing (AppFolio repeats "Total Income" after "Total Operating Income").
+        if (current && !current.closed) {
+          const curSide = sectionSide(current.name);
+          const closes =
+            (STATED_TOTAL_INCOME_RE.test(name) && curSide === 'income')
+            || (STATED_TOTAL_EXPENSE_RE.test(name) && curSide === 'expense')
+            || name.toLowerCase() === `total ${current.name.toLowerCase()}`;
+          if (closes) {
+            current.statedTotal = rowNum;
+            current.closed = true;
+          }
+        }
       }
       return;
     }
@@ -310,6 +378,10 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
       parent,
       total: rowNum,
     });
+    // leaf accumulation: only while the section is OPEN — trailing leaves under a
+    // lingering closed section (Yardi financing rows, 1851 Other Expense) are ledger
+    // accounts but out of the closed section's foot scope
+    if (current && !current.closed) current.leafSum += rowNum;
   });
 
   // Yardi exports carry the bare property name in A1 (no "Property:" line). Applied
@@ -324,9 +396,22 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
   const endsMidYear = (end: string | null): boolean => end !== null && end.slice(5) !== '12-31';
   const grain: RawStatement['grain'] = endsMidYear(periodEnd) ? 'ytd' : 'year';
 
+  // Bare-TOTAL block stated values become synthetic "<SIDE> (file total)" sections,
+  // footed against the side leaf sums snapshotted at capture time — emitted ONLY when
+  // no literal INCOME/EXPENSE section captured an in-section stated total (avoids
+  // double-flagging one magnitude through two channels).
+  for (const side of ['income', 'expense'] as const) {
+    const ft = fileTotals[side];
+    if (!ft) continue;
+    const word = side === 'income' ? 'INCOME' : 'EXPENSE';
+    if (sections.some((s) => s.name === word && s.statedTotal !== null)) continue;
+    sections.push({ name: `${word} (file total)`, leafSum: ft.scopedLeafSum, statedTotal: ft.stated, closed: true });
+  }
+
   return RawStatementSchema.parse({
     propertyRaw, periodLabel, periodStart, periodEnd, grain,
     basis, sourceSystem: appfolioHeaders ? 'appfolio' : yardiHeaders ? 'yardi' : 'quickbooks',
     accounts, totalIncome, totalExpense,
+    sections: sections.map(({ name, leafSum, statedTotal }) => ({ name, leafSum, statedTotal })),
   });
 }
