@@ -23,9 +23,16 @@
   stable tie-break), `pmScorecards(db, metrics)` (group by `property_manager`, latest-period averages,
   `smallSample` flag at n<3). Null-safe over empty/all-null inputs.
 - **Scores + capital allocation** (`server/warehouse/scores.ts`): `scoreProperties(db, metrics)` — per-property
-  latest-period health 0–100 + band, attention band cascade, capital action (invest/hold/monitor/
+  health 0–100 + band, attention band cascade, capital action (invest/hold/monitor/
   disposition-candidate) with human reason strings. Computes growth/benchmarks/anomalies internally and is
   deterministic in (db snapshot, metrics).
+- **Grain-aware comparison discipline** (spec §9, enforced across growth/anomalies/benchmarks/scores):
+  the engine NEVER compares a YTD period against a full-year period (no silent 5-month-vs-12-month signal).
+  Growth/anomaly/attention use the latest same-grain transition; benchmarking, rankings, efficiency
+  sub-scores, and PM-scorecard levels all operate within a single full-year cohort (each property scored on
+  its latest `grainHint='year'` period, ranked only against same-period peers). A `<2`-property ranking
+  cohort returns `quartile: null` (neutral 50 sub-score) rather than self-ranking to quartile 1. Without
+  this, every property reads a spurious ≈−50% decline once a partial-year YTD pull lands.
 - **Analytics API** (`server/warehouse/api.ts`): GET `/api/warehouse/analytics/*` —
   `metrics`, `growth` (per-property growth series + since-acquisition), `drivers/:propertyId?from&to`
   (default earliest→latest, 404 on unknown property), `anomalies`, `benchmarks?period&metric` (defaults
