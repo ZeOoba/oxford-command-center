@@ -1,0 +1,215 @@
+// tests/unit/warehouse-actions.test.ts
+import ExcelJS from 'exceljs';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { addMappingOverride, approveImport, rejectImport, resolveIssue } from '../../server/warehouse/actions';
+import { openWarehouse } from '../../server/warehouse/db';
+import type { WarehouseDb } from '../../server/warehouse/db';
+import { ingestFile } from '../../server/warehouse/ingest';
+import { seedMappings } from '../../server/warehouse/mapping';
+import { seedPropertyMaster } from '../../server/warehouse/property-master';
+
+// Local copy of the ingest-test fixture writer (tests never import across test files).
+// propertyLine varies the bytes so two property files never collide on content hash.
+async function writeFixture(path: string, propertyLine = 'Property: 1100 Rarig Ave'): Promise<void> {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Sheet1');
+  const rows: Array<[string | null, string | null, string | null, number | null]> = [
+    ['Profit & Loss', null, null, null],
+    [propertyLine, null, null, null],
+    ['01/01/25 - 12/31/25  (cash basis)', null, null, null],
+    [null, 'INCOME', null, null],
+    [null, null, '     5002 RENTAL INCOME', null],
+    [null, null, '          5064 Rent', 100000],
+    [null, 'EXPENSE', null, null],
+    [null, null, '     6160 REPAIR', null],
+    [null, null, '          6285 HVAC Repair', 5000],
+    [null, 'NON OPERATING EXPENSE', null, null],
+    [null, null, '          7402 Distribution to Owner', 25000],
+  ];
+  for (const r of rows) ws.addRow(r);
+  await wb.xlsx.writeFile(path);
+}
+
+const SEED = [
+  { account: 'Rent', code: '5064', normalized_category: 'Rental Revenue', classification: 'revenue' },
+  { account: 'HVAC Repair', code: '6285', normalized_category: 'Repairs & Maintenance', classification: 'opex' },
+  { account: 'Distribution to Owner', code: '7402', normalized_category: 'Distributions', classification: 'excluded' },
+];
+
+/** Seed only 'Rent' → HVAC Repair + Distribution to Owner come back unmapped → pending-review, rows inactive. */
+async function pendingWarehouse(): Promise<{ db: WarehouseDb; dir: string; importId: number }> {
+  const dir = mkdtempSync(join(tmpdir(), 'wha-'));
+  const db = openWarehouse(join(dir, 'f.sqlite'));
+  seedPropertyMaster(db);
+  seedMappings(db, SEED.slice(0, 1));
+  const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+  await writeFixture(file);
+  const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
+  expect(r.status).toBe('pending-review');
+  return { db, dir, importId: r.importId! };
+}
+
+describe('warehouse actions', () => {
+  it('(a) approve refuses while unmapped rows remain: batch stays pending, rows stay inactive', async () => {
+    const { db, importId } = await pendingWarehouse();
+    const refusal = approveImport(db, importId);
+    expect(refusal.ok).toBe(false);
+    if (!refusal.ok) expect(refusal.unmapped).toEqual(expect.arrayContaining(['HVAC Repair', 'Distribution to Owner']));
+    expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(importId)).toMatchObject({ status: 'pending-review' });
+    expect((db.prepare('SELECT COUNT(*) AS c FROM ledger_entries WHERE is_active=1').get() as { c: number }).c).toBe(0);
+  });
+
+  it('(b) overrides resolve the gap and approve re-resolves, activates rows, commits the batch', async () => {
+    const { db, importId } = await pendingWarehouse();
+    addMappingOverride(db, { account: 'HVAC Repair', normalizedCategory: 'Repairs & Maintenance', classification: 'opex' });
+    addMappingOverride(db, { account: 'Distribution to Owner', normalizedCategory: 'Distributions', classification: 'excluded' });
+    const ok = approveImport(db, importId);
+    expect(ok.ok).toBe(true);
+
+    // rows re-resolved, activated, batch committed
+    const active = db.prepare(
+      'SELECT raw_account, normalized_category, classification FROM ledger_entries WHERE is_active=1 ORDER BY raw_account',
+    ).all() as Array<{ raw_account: string; normalized_category: string; classification: string }>;
+    expect(active).toHaveLength(3);
+    expect(active).toEqual([
+      { raw_account: 'Distribution to Owner', normalized_category: 'Distributions', classification: 'excluded' },
+      { raw_account: 'HVAC Repair', normalized_category: 'Repairs & Maintenance', classification: 'opex' },
+      { raw_account: 'Rent', normalized_category: 'Rental Revenue', classification: 'revenue' },
+    ]);
+    expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(importId)).toMatchObject({ status: 'committed' });
+  });
+
+  it('(c) approving supersedes a prior committed version for the same period: v1 superseded + inactive, v2 active', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wha-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeFixture(file);
+    const v1 = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
+    expect(v1.status).toBe('committed');
+
+    // corrected file (different bytes); high threshold forces it through the review queue
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.readFile(file);
+    wb.worksheets[0]!.getCell('D6').value = 110000; // Rent corrected
+    await wb.xlsx.writeFile(file);
+    const v2 = await ingestFile(db, file, {
+      rawDir: join(dir, 'raw'), importedAt: '2026-06-12T01:00:00Z', autoCommitThreshold: 0.99,
+    });
+    expect(v2.status).toBe('pending-review');
+    expect(v2.version).toBe(2);
+
+    const ok = approveImport(db, v2.importId!);
+    expect(ok.ok).toBe(true);
+    expect(db.prepare('SELECT status, superseded_by FROM import_batches WHERE id=?').get(v1.importId))
+      .toEqual({ status: 'superseded', superseded_by: v2.importId });
+    expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(v2.importId)).toMatchObject({ status: 'committed' });
+    const active = db.prepare('SELECT import_id, amount FROM ledger_entries WHERE is_active=1 ORDER BY raw_account')
+      .all() as Array<{ import_id: number; amount: number }>;
+    expect(active).toHaveLength(3);
+    expect(active.every((r) => r.import_id === v2.importId)).toBe(true);
+    expect(active.map((r) => r.amount)).toContain(110000);
+    // v1 rows preserved, deactivated — never deleted
+    expect((db.prepare('SELECT COUNT(*) AS c FROM ledger_entries WHERE is_active=0 AND import_id=?').get(v1.importId) as { c: number }).c).toBe(3);
+  });
+
+  it('(d) rejectImport: status rejected, rows stay inactive; approving a rejected import fails', async () => {
+    const { db, importId } = await pendingWarehouse();
+    const rej = rejectImport(db, importId);
+    expect(rej.ok).toBe(true);
+    expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(importId)).toMatchObject({ status: 'rejected' });
+    expect((db.prepare('SELECT COUNT(*) AS c FROM ledger_entries WHERE import_id=?').get(importId) as { c: number }).c).toBe(3);
+    expect((db.prepare('SELECT COUNT(*) AS c FROM ledger_entries WHERE import_id=? AND is_active=1').get(importId) as { c: number }).c).toBe(0);
+
+    const refusal = approveImport(db, importId);
+    expect(refusal.ok).toBe(false);
+    if (!refusal.ok) {
+      expect(refusal.unmapped).toEqual([]);
+      expect(refusal.error).toContain('rejected');
+    }
+    // rejecting twice also fails (no longer pending-review)
+    const rej2 = rejectImport(db, importId);
+    expect(rej2.ok).toBe(false);
+  });
+
+  it('(e) resolveIssue: open → resolved with resolved_at set; second resolve and unknown id fail', async () => {
+    const { db, importId } = await pendingWarehouse();
+    const issue = db.prepare(
+      "SELECT id FROM data_quality_issues WHERE import_id=? AND kind='unmapped-account' ORDER BY id LIMIT 1",
+    ).get(importId) as { id: number };
+
+    const ok = resolveIssue(db, issue.id);
+    expect(ok.ok).toBe(true);
+    const row = db.prepare('SELECT status, resolved_at FROM data_quality_issues WHERE id=?').get(issue.id) as
+      { status: string; resolved_at: string | null };
+    expect(row.status).toBe('resolved');
+    expect(row.resolved_at).not.toBeNull();
+
+    expect(resolveIssue(db, issue.id).ok).toBe(false); // already resolved
+    expect(resolveIssue(db, 999999).ok).toBe(false); // unknown id
+  });
+
+  it('(f) property-scoped override re-derives only matching ACTIVE rows of that property; others untouched', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wha-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const rarig = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeFixture(rarig);
+    const raytown = join(dir, 'P&L 2025 -- 9620 State 350.xlsx');
+    await writeFixture(raytown, 'Property: 9620 E State Route 350');
+    expect((await ingestFile(db, rarig, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' })).status).toBe('committed');
+    expect((await ingestFile(db, raytown, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:01:00Z' })).status).toBe('committed');
+
+    // '6285 hvac repair' exercises accountKey normalization (GL-code strip + lowercase)
+    const res = addMappingOverride(db, {
+      account: '6285 hvac repair',
+      normalizedCategory: 'HVAC Capital',
+      classification: 'capex',
+      propertyId: '1100-rarig-ave-columbus-oh',
+    });
+    expect(res.rederived).toBe(1);
+    expect(db.prepare('SELECT property_id, match_kind FROM account_mappings WHERE id=?').get(res.mappingId))
+      .toEqual({ property_id: '1100-rarig-ave-columbus-oh', match_kind: 'manual' });
+
+    const scoped = db.prepare(
+      "SELECT normalized_category, classification, mapping_id FROM ledger_entries WHERE is_active=1 AND property_id='1100-rarig-ave-columbus-oh' AND raw_account='HVAC Repair'",
+    ).get() as { normalized_category: string; classification: string; mapping_id: number };
+    expect(scoped).toEqual({ normalized_category: 'HVAC Capital', classification: 'capex', mapping_id: res.mappingId });
+
+    // the unrelated property's identical account is untouched
+    const other = db.prepare(
+      "SELECT normalized_category, classification FROM ledger_entries WHERE is_active=1 AND property_id='9620-e-state-route-350-raytown-mo' AND raw_account='HVAC Repair'",
+    ).get() as { normalized_category: string; classification: string };
+    expect(other).toEqual({ normalized_category: 'Repairs & Maintenance', classification: 'opex' });
+
+    // non-matching accounts on the scoped property are untouched too
+    const rent = db.prepare(
+      "SELECT classification FROM ledger_entries WHERE is_active=1 AND property_id='1100-rarig-ave-columbus-oh' AND raw_account='Rent'",
+    ).get() as { classification: string };
+    expect(rent.classification).toBe('revenue');
+  });
+
+  it('(g) approve refuses an empty (zero-row) import — never commits a period with no ledger rows', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wha-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('QuickBooks Desktop Export Tips');
+    ws.addRow(['QuickBooks Desktop Export Tips']);
+    await wb.xlsx.writeFile(file);
+    const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
+    expect(r.status).toBe('pending-review');
+
+    const refusal = approveImport(db, r.importId!);
+    expect(refusal.ok).toBe(false);
+    if (!refusal.ok) expect(refusal.error).toContain('no ledger rows');
+    expect(db.prepare('SELECT status FROM import_batches WHERE id=?').get(r.importId)).toMatchObject({ status: 'pending-review' });
+  });
+});

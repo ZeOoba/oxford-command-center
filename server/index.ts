@@ -5,6 +5,7 @@ import { loadEnvFile } from './load-env';
 loadEnvFile();
 
 import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -19,6 +20,9 @@ import { getMacro } from './macro/getMacro';
 import { SERVER_PORT } from './config';
 import { loadInboxState, runAlertAction } from './alerts/store';
 import { AlertActionInput } from '../src/contracts/alerts';
+import { openWarehouse } from './warehouse/db';
+import type { WarehouseDb } from './warehouse/db';
+import { warehouseRoutes } from './warehouse/api';
 
 const app = new Hono();
 // Confidential data — only same-machine localhost origins may call the API.
@@ -26,6 +30,19 @@ app.use(
   '/api/*',
   cors({ origin: (origin) => (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ? origin : null) }),
 );
+
+// Property Financial Intelligence warehouse — opened lazily as a process singleton on
+// first /api/warehouse/* request (not at boot: a cold/mirror env may lack the sqlite
+// file, and the warehouse must never block the rest of the server from serving). The
+// getter throws on an unopenable path; warehouseRoutes catches that and returns 503.
+let _warehouse: WarehouseDb | null = null;
+function getWarehouse(): WarehouseDb {
+  if (_warehouse) return _warehouse;
+  const path = process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
+  _warehouse = openWarehouse(path);
+  return _warehouse;
+}
+app.route('/api/warehouse', warehouseRoutes(getWarehouse));
 
 app.get('/api/health', (c) => {
   const briefHealth = existsSync('data/brief-health.json')
