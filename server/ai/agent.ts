@@ -1,4 +1,4 @@
-import type { PortfolioSnapshot } from '../../src/contracts/index';
+import type { MacroSnapshot, PortfolioSnapshot } from '../../src/contracts/index';
 import { TOOL_DEFS, runTool, type EntityRefLite } from './tools';
 import { respond } from './respond';
 
@@ -32,6 +32,9 @@ export interface AgentOptions {
   maxTurns?: number;
   /** Server-only document search (RAG). Absent on the mirror → search_documents stays a stub. */
   docSearch?: (query: string, limit?: number) => Promise<Array<{ doc: string; snippet: string }>>;
+  /** Live macro provider (FRED w/ key, seeded fallback otherwise). Absent on the mirror → get_macro
+   *  stays a stub. Mirrors the docSearch precedent — async; returns null only on a hard failure. */
+  macroProvider?: () => Promise<MacroSnapshot | null>;
 }
 
 const TOOL_LABELS: Record<string, string> = {
@@ -46,6 +49,7 @@ const TOOL_LABELS: Record<string, string> = {
   search_entities: 'searching entities',
   run_scenario: 'running scenario',
   search_documents: 'searching documents',
+  get_macro: 'reading the rate environment',
 };
 
 const SYSTEM = [
@@ -229,6 +233,15 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
             const q = String((b.input as { query?: unknown } | undefined)?.query ?? '');
             const passages = await opts.docSearch(q, 5);
             result = { data: { count: passages.length, passages }, refs: [] as EntityRefLite[] };
+          } else if (b.name === 'get_macro' && opts.macroProvider) {
+            // Live macro: real FRED snapshot (or seeded fallback) on the server (injected); the
+            // spine tools don't have it. Summarized to a SMALL, numbers-first payload (mirror tool
+            // convention) — the model gets indicators + a 10Y trend snapshot, not the raw history
+            // array. A hard failure (provider returns null) falls back to the stub message.
+            const macro = await opts.macroProvider().catch(() => null);
+            result = macro
+              ? { data: summarizeMacro(macro), refs: [] as EntityRefLite[] }
+              : runTool(b.name ?? '', snapshot, {});
           } else {
             result = runTool(b.name ?? '', snapshot, (b.input as Record<string, unknown>) ?? {});
           }
@@ -245,4 +258,66 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
     if ((e as Error)?.name === 'AbortError') return;
     await emit({ type: 'error', message: e instanceof Error ? e.message : String(e) });
   }
+}
+
+/** Compact macro payload for the agent. Exported for direct unit testing. Three correctness rules
+ *  earned from the get_macro adversarial pass:
+ *  (1) No orphan trend.current — the canonical current 10Y is `indicators.DGS10.value` at `asOf`.
+ *      Emitting a parallel undated 10Y from the history's tail let the model pick either, with no
+ *      tie-break, and Phase-2 refi-spread math went path-dependent.
+ *  (2) The 10Y trend window is DATE-driven: sort by date, take the last 12. Live FRED returns 13
+ *      monthly points at month boundaries; an array-position window mislabels low12mo/high12mo.
+ *  (3) When source='mock' (seeded fallback because FRED_API_KEY is unset) attach an explicit
+ *      `dataFreshness` instruction so the model surfaces the seeded caveat to the user — without
+ *      it the institutional 'numbers-first / no-hedging' register quotes seeded rates as current. */
+const TREND_WINDOW_MONTHS = 12;
+export function summarizeMacro(m: MacroSnapshot): Record<string, unknown> {
+  const ind: Record<string, unknown> = {};
+  for (const i of m.indicators) {
+    ind[i.id] = { label: i.label, value: i.value, unit: i.unit, change: i.change };
+  }
+  // Window by date — never by array position. Sort ascending, take the last N, then reduce.
+  const sortedByDate = [...m.tenYearHistory].sort((a, b) => a.date.localeCompare(b.date));
+  const window = sortedByDate.slice(-TREND_WINDOW_MONTHS);
+  const values = window.map((h) => h.value).filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+  const tenYearTrend: { windowMonths: number; n: number; endDate: string | null; low: number | null; high: number | null } = {
+    windowMonths: TREND_WINDOW_MONTHS,
+    n: window.length,
+    endDate: window.length ? window[window.length - 1]!.date : null,
+    low: values.length ? Math.min(...values) : null,
+    high: values.length ? Math.max(...values) : null,
+  };
+  const payload: Record<string, unknown> = { asOf: m.asOf, source: m.source, indicators: ind, tenYearTrend };
+  if (m.source === 'mock') {
+    payload.dataFreshness =
+      `SEEDED — FRED_API_KEY not configured; values are a static snapshot as of ${m.asOf}. ` +
+      'Tell the user the live rate feed is offline before quoting any number.';
+  }
+  // Canonical-10Y guard. Trigger surface (broadened post-root-fix):
+  //   - dgs10 missing entirely;
+  //   - dgs10.value === null — the post-cure path: fred.ts emits null on a missing observation
+  //     and MacroIndicator.value is z.number().finite().nullable() (no more `?? 0` lie);
+  //   - !Number.isFinite(dgs10.value) — defense-in-depth against any direct (non-parsed) snapshot
+  //     construction that bypasses the schema's `.finite()` boundary (e.g. unit tests, future
+  //     non-FRED providers). The contract enforces this at parse time; the guard enforces it at
+  //     consumption time. Same invariant, two layers.
+  //   - dgs10.value <= 0 — kept as a belt-and-braces against any stale producer still emitting the
+  //     legacy 0 sentinel, and because a real 10Y Treasury rate cannot be ≤ 0.
+  // The new get_macro tool description tells the model to quote indicators.DGS10.value as the
+  // canonical current 10Y — this guard ensures the model never sees a misleading number on a
+  // partial FRED outage. dataQuality + a dated currentTenYFallback give it a usable alternative
+  // with explicit instruction text to caveat.
+  const dgs10 = m.indicators.find((i) => i.id === 'DGS10');
+  const dgs10Suspicious =
+    !dgs10 || dgs10.value === null || !Number.isFinite(dgs10.value) || dgs10.value <= 0;
+  if (dgs10Suspicious) {
+    const lastFinite = [...window].reverse().find((h) => typeof h.value === 'number' && Number.isFinite(h.value) && h.value > 0);
+    payload.dataQuality =
+      'DGS10 indicator missing/non-positive (likely a FRED partial outage on the 10Y series) — ' +
+      'fell back to the trend window endpoint. Tell the user the 10Y reading is degraded before quoting.';
+    if (lastFinite) {
+      payload.currentTenYFallback = { value: lastFinite.value, date: lastFinite.date };
+    }
+  }
+  return payload;
 }

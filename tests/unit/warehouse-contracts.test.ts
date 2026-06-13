@@ -3,8 +3,11 @@ import { describe, expect, it } from 'vitest';
 import {
   Classification,
   ImportStatus,
+  isNoiIncomeClass,
+  isOpex,
   LedgerEntrySchema,
   NOI_CLASSES,
+  NOI_INCOME_CLASSES,
   PropertyMasterRowSchema,
   RawStatementSchema,
 } from '@contracts/warehouse';
@@ -32,6 +35,22 @@ describe('warehouse contracts', () => {
 
   it('NOI classes exclude capex, ti, leasing, debt-service, excluded', () => {
     expect(NOI_CLASSES).toEqual(['revenue', 'recovery', 'other-income', 'opex']);
+  });
+
+  it('derives NOI income classes and class predicates as the single source of truth', () => {
+    // NOI_INCOME_CLASSES = NOI_CLASSES minus opex, preserving order. The four production NOI
+    // codepaths (queries.noiMatrix, metrics.propertyPeriodMetrics, warehouse-verify, warehouse-backfill)
+    // all derive from these; a regression here is meant to fail loudly in one place.
+    expect(NOI_INCOME_CLASSES).toEqual(['revenue', 'recovery', 'other-income']);
+    expect(NOI_INCOME_CLASSES).not.toContain('opex');
+    // isNoiIncomeClass: true for exactly the income members, false for opex and all non-NOI classes.
+    for (const c of ['revenue', 'recovery', 'other-income']) expect(isNoiIncomeClass(c)).toBe(true);
+    for (const c of ['opex', 'capex', 'ti', 'leasing', 'debt-service', 'excluded', 'unknown']) {
+      expect(isNoiIncomeClass(c)).toBe(false);
+    }
+    // isOpex: the single negative pivot; mutually exclusive with isNoiIncomeClass.
+    expect(isOpex('opex')).toBe(true);
+    for (const c of ['revenue', 'recovery', 'other-income', 'capex', 'excluded']) expect(isOpex(c)).toBe(false);
   });
 
   it('parses a ledger entry and an import status', () => {

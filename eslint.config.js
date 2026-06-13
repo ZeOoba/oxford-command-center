@@ -5,7 +5,9 @@ import reactRefresh from 'eslint-plugin-react-refresh';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist', 'dist-server', 'dev-dist', 'coverage', 'playwright-report', 'node_modules'] },
+  // '.claude' holds Claude-system runtime scripts (e.g. Workflow scripts that legally use
+  // top-level return/await) — not app source; eslint must not parse them as ES modules.
+  { ignores: ['dist', 'dist-server', 'dev-dist', 'coverage', 'playwright-report', 'node_modules', '.claude'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['**/*.{ts,tsx}'],

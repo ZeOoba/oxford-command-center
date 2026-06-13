@@ -148,6 +148,11 @@ export interface MetricBenchmark {
   p25: number | null;
   p75: number | null;
   n: number;
+  // Cross-basis discipline (PFI Phase 1a): the distinct accounting bases of the cohort, and whether
+  // they are mixed. A benchmark drawn across cash + accrual (or unknown) is not like-for-like — the
+  // UI must surface mixedBasis, never present it as a clean comparison.
+  bases: string[];
+  mixedBasis: boolean;
 }
 
 /** Property's rank within a (period, metric) cohort (benchmarks.ts → PropertyRank). */

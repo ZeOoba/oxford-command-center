@@ -104,6 +104,8 @@ Canonical categories (seeded, extensible): Rental Revenue, CAM Recoveries, Insur
 
 Classifications: `revenue | recovery | other-income | opex | capex | ti | leasing | debt-service | excluded`. **NOI = revenue + recovery + other-income − opex.** CapEx/TI/LC are never mixed into opex. Zod schemas mirror every table in `src/contracts/warehouse.ts`.
 
+> **Canonical NOI-membership extension point.** `NOI_CLASSES` and its derived `NOI_INCOME_CLASSES` (= `NOI_CLASSES` minus `opex`) in `src/contracts/warehouse.ts` are the **single source of truth** for which classifications participate in NOI. To add or remove an income class, edit `NOI_CLASSES` **only** — every NOI codepath derives from it: `queries.noiMatrix`, `metrics.propertyPeriodMetrics` (via `isNoiIncomeClass`/`isOpex`), `mapping.classificationSide`, and the `warehouse-backfill`/`warehouse-verify` CLIs. Never re-list the income classes as SQL or TS string literals — they silently drift. Two guards enforce this: the contract-derivation unit test (`warehouse-contracts.test.ts`) and the cross-codepath NOI agreement test (`warehouse-metrics.test.ts`). The deliberate exception is the independent oracle in `warehouse-ingest.test.ts`, which hardcodes the literal on purpose to cross-check the derivation.
+
 ## 8. Data warehouse design (the five layers)
 
 | Layer | Store | Mutability | Refresh |

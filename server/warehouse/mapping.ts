@@ -1,7 +1,7 @@
 // server/warehouse/mapping.ts
 import { readFileSync } from 'node:fs';
 import type { AccountMapping } from '../../src/contracts/warehouse';
-import { AccountMappingSchema } from '../../src/contracts/warehouse';
+import { AccountMappingSchema, isNoiIncomeClass } from '../../src/contracts/warehouse';
 import type { WarehouseDb } from './db';
 
 export function accountKey(raw: string): string {
@@ -10,11 +10,11 @@ export function accountKey(raw: string): string {
 
 /** Which side of the income statement a classification lives on. */
 export function classificationSide(c: string): 'income' | 'expense' | 'either' {
+  // Income side is exactly the NOI income classes — sourced from the contract so this can't drift
+  // from NOI_INCOME_CLASSES if an income member is ever added/removed. The expense side carries
+  // non-NOI classes (capex/ti/leasing/debt-service) too, so it stays an explicit list.
+  if (isNoiIncomeClass(c)) return 'income';
   switch (c) {
-    case 'revenue':
-    case 'recovery':
-    case 'other-income':
-      return 'income';
     case 'opex':
     case 'capex':
     case 'ti':

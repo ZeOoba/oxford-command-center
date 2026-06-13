@@ -43,10 +43,15 @@ export async function fetchFredMacro(): Promise<MacroSnapshot | null> {
       obs('CPIAUCSL', '&units=pc1'),
       tenYearHistory(),
     ]);
+    // Pass null through end-to-end. The `?? 0` here was the root cause of the PFI Phase 1b
+    // adversarial finding: a missing-observation 5xx on DGS10 alone produced 'DGS10 = 0' with
+    // source='fred' (no caveat), and the AI agent's refi-spread narrative quoted "10Y at 0.00%".
+    // MacroIndicator.value is now z.number().nullable(); consumers (summarizeMacro, MarketModule)
+    // render the null path explicitly.
     const ind = (id: string, label: string, value: number | null): MacroIndicator => ({
       id,
       label,
-      value: value ?? 0,
+      value,
       unit: '%',
       change: null,
     });

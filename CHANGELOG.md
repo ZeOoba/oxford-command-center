@@ -1,5 +1,129 @@
 # Changelog
 
+## PFI Phase 1c — A↔B NOI reconciliation (master plan Revision-1 keystone) (2026-06-13)
+
+Closes the single most-important integrity gap in the master plan: the two un-reconciled NOI
+representations — workbook `Property.noi` (Spine A, the current-state spine, Oxford-share at
+column 13) vs warehouse `oxfordNoi` (Spine B, the time dimension, `noi × ownershipPct` at the
+property's latest full-year period). Without this tie-out every downstream scoring engine,
+capital-allocation verdict, and refi recommendation inherits silent drift between the two
+spines and can launder ambiguity into false authority.
+
+- New `server/warehouse/reconcile-noi.ts` — a pure classifier (`classifyNoiReconciliation`)
+  + assembler (`reconcileNoiAB`) + DB wrapper (`reconcileNoiABFromDb` + `buildNoiReconcileInputs`).
+  100% deterministic, db-free at the classifier core.
+- **Apples-to-apples by design.** Both sides are Oxford-share: workbook reports Property.noi at
+  column 13 (verified via `parse.ts:147` and `reconcile.ts:57`'s "Property NOI (Oxford) total"
+  label); warehouse computes `oxfordNoi = noi × ownershipPct`. Comparing 100%-basis warehouse NOI
+  to Oxford-share workbook NOI on a 50%-owned property would manufacture a 50% phantom drift —
+  the exact bug the keystone exists to surface in the OTHER spine.
+- **Slug bridge is direct, no alias table.** `parse.ts:124` produces `id = slug(name)`;
+  `property_master.id` IS the same canonical slug (verified for all 14 units incl. the FVC /
+  Sepich Portfolio bundle — workbook snapshot reports `sepich-portfolio-columbus-oh-8-props`,
+  identical to property_master).
+- **Tolerance:** 5% relative OR $10k absolute (in-tolerance, info); 5–20% (drift, warn); ≥20%
+  (large-drift, error). The absolute floor protects small-NOI properties (Solar 25% / late
+  acquisitions) from spurious large-drift errors. Symmetric on sign.
+- **Statuses:** `match` · `in-tolerance` · `drift` · `large-drift` · `missing-from-workbook` ·
+  `missing-from-warehouse` · `lease-run-skipped`. Lease-run properties (Fishel / Sunburst —
+  ratified 2026-06-12 to run off master-lease estimates) and Residence-typed properties
+  (Persimmon) are skipped by design, not flagged as defects.
+- **Basis discipline (Phase 1a continuity).** A `match` or `in-tolerance` on basis=`unknown` is
+  downgraded to `warn` severity — the comparison isn't proven like-for-like even when the numbers
+  agree. The reason string surfaces the caveat.
+- 13 unit tests pin every status path + the assembler filter/sort + the boundary math
+  (signed delta, deltaPct denom, residence filter, deterministic ordering).
+
+## PFI Phase 1b — `get_macro` agent tool: live rate environment for the AI (2026-06-13)
+
+Closes the audit-flagged AI/macro gap (the agent had ZERO access to FRED — refi-spread,
+cap-rate-vs-Treasury, and rate-environment questions could not be answered against live data).
+Unblocks the Phase-2 debt/refi narrative.
+
+- New `get_macro` tool in `TOOL_DEFS` (empty parameters; description scoped to refi-spread /
+  cap-rate-spread / rate-environment framing — not a general-purpose news query) with a STUB
+  executor mirroring `search_documents` ("Live macro is not available on this surface.").
+- New `opts.macroProvider: () => Promise<MacroSnapshot | null>` on `AgentOptions`, exact mirror
+  of `opts.docSearch`. The dispatch loop routes `get_macro` through it when injected; falls
+  back to the stub on null/hard failure. `summarizeMacro()` returns a small, numbers-first
+  payload — indicators (id → label/value/unit/change) + a 10Y trend digest (current / low12mo /
+  high12mo / n) — not the raw history array.
+- `server/index.ts` wires `macroProvider: getMacro` at the `runAgent` call (one-line addition).
+  The Cloudflare Pages Function is intentionally NOT wired — the static mirror keeps the stub
+  (no FRED secret on the mirror; safe-by-construction).
+- `summarizeMacro()` payload hardened from the adversarial pass (3 real defects fixed before
+  commit): (1) **no orphan `tenYearTrend.current`** — the canonical current 10Y is
+  `indicators.DGS10.value` at `asOf`, never a parallel undated value from the history's tail
+  (the prior shape had 4.47 vs 4.48 with no tie-break, and refi-spread math went path-dependent);
+  (2) the 10Y trend window is **date-driven** — sorted by date and sliced to the last 12, so a
+  live FRED return of 13 points (month-boundary publication) or an out-of-order history can't
+  mislabel `low12mo`/`high12mo`; the field is now `tenYearTrend = {windowMonths, n, endDate, low,
+  high}` with the window explicit; (3) when `source === 'mock'` the payload emits a top-level
+  `dataFreshness: 'SEEDED — …'` instruction, and the tool description tells the model it MUST
+  surface that caveat before quoting any number — without it the institutional "numbers-first /
+  no-hedging" register would quote a frozen seeded snapshot as the current rate (the exact
+  misread-as-live failure that would corrupt Phase-2 refi narrative).
+- Tests: a TOOL_DEFS + stub assertion; an end-to-end SSE mock that proves the injected provider
+  is called and its live snapshot is fed back to the model as the `tool_result`; and **nine**
+  focused unit tests over `summarizeMacro` pinning each fix (orphan-current removed, date-windowed
+  trend, off-by-13 prevention, out-of-order safety, SEEDED caveat, 5-indicator regression,
+  null-safety, **DGS10-suspicious guard fires on zero**, **doesn't fire on live positive**).
+- A SECOND adversarial round on the fix caught a real medium: by removing the orphan `trend.current`
+  the model now strictly trusts `indicators.DGS10.value` — but `server/macro/fred.ts:49` silently
+  coalesces a missing FRED observation to `0` via `?? 0`. A FRED partial outage on DGS10 alone
+  would feed the model `'10Y at 0.00%, refi spread −410 bps'` confidently. Defense-in-depth shipped:
+  when `DGS10` is missing or `<= 0` (a 10Y rate cannot realistically be ≤ 0), `summarizeMacro` now
+  attaches a `dataQuality` flag and a dated `currentTenYFallback` from the most recent finite
+  trend point. **Root-cause fix tracked** (make `MacroIndicator.value` nullable in the contract,
+  drop the `?? 0` in fred.ts, handle null in the Market UI) — a follow-up task.
+
+## PFI Phase 1a.2 — surface the cross-basis benchmark warning in the UI (2026-06-13)
+
+Completes the basis guard end-to-end (the consumer-side gap the Phase-1a adversarial review flagged:
+`mixedBasis` was computed and serialized by the API but the client type dropped it and no view read
+it — a dead guard). The client `MetricBenchmark` now carries `bases`/`mixedBasis`; `BenchmarksView`'s
+SummaryStrip renders a red "Mixed accounting basis (…) — not like-for-like" badge (in place of the
+"portfolio cohort" badge) whenever the selected cohort mixes cash / accrual / tax / unknown bases.
+Decision logic is a pure, unit-tested helper (`mixedBasisNote` in `benchmarks-intel.ts`); the view
+wiring follows the existing singleton-cohort badge pattern (browser-verified per the module convention).
+No server change — the engine already returned the fields.
+
+## PFI Phase 1a — basis discipline + NOI integrity (2026-06-13)
+
+The integrity gate from the Intelligence Platform master plan (Revision 1: no scoring engine ships
+until NOI is basis-disciplined and the two NOI codepaths cannot drift). All changes are
+behavior-preserving on the current corpus (NOI matrix byte-identical; gate green) and correct on the
+multi-basis / multi-batch edges it does not yet exercise. TDD throughout; **three adversarial review
+rounds found and fixed five real defects before commit** (a year+YTD double-count, an arbitrary-row
+basis pick, an intransitive batch tie-break, an incomplete scoring guard, and unknown-basis pooling).
+
+- **Accounting basis is first-class.** `PeriodMetrics.basis` is surfaced from the import. Benchmark
+  cohorts expose `bases`/`mixedBasis` (`benchmarks.ts`). Scoring partitions every percentile-ranked
+  sub-score — the NOI/SF quartile **and** the four efficiency sub-scores — by the property's own
+  basis (`scores.ts`), so cash / accrual / tax NOI and cost ratios are never silently compared. A
+  basis-isolated property (no same-basis peers) falls to neutral, never a cross-basis rank; the
+  majority-basis cohort still ranks among itself. `unknown` basis is treated as **non-comparable**
+  (isolated, never pooled) — it means the period header didn't parse, not "a basis."
+- **One NOI definition, no drift.** `noiMatrix` (queries.ts) and `propertyPeriodMetrics` (metrics.ts)
+  both source the NOI income classes from the contract (`NOI_INCOME_CLASSES` / `isNoiIncomeClass` /
+  `isOpex`); `warehouse-verify` and a cross-path agreement test pin them equal.
+- **Deterministic, no-double-count grouping.** When a full-year and a same-year YTD coexist active
+  (same ledger period, different `period_end`), `selectCoherentBatch` resolves to ONE coherent batch
+  by a single **total-order** key `[grainRank, endKey, importId]` (transitive — null end = unknown
+  scope sorts as most-recent, never demoted below a dated partial). Eliminates the silent NOI
+  double-count, the arbitrary-row basis/grain pick, and the order-dependent (intransitive) winner.
+- Tests: `warehouse-coherent-batch` (tie-break incl. 3-batch permutation-invariance),
+  `warehouse-basis-guard` (benchmark cohort), `warehouse-scores-basis` (partition + over-suppression
+  + unknown-isolation regressions), plus metrics basis & coexistence + a `noiMatrix`↔`propertyPeriodMetrics` agreement test.
+
+**Calibration / governance (pending Gabriel, tracked):** the strict partition default neutralizes
+benchmark+efficiency signal for `unknown`-basis and basis-isolated properties — the durable fix is
+better period-header basis detection at ingest (data-quality), and the partition-vs-neutralize
+semantics are a ratifiable scoring-calibration item (see the hurdle-rate/governance + calibration-log
+specs). **Deferred next units:** surface `mixedBasis` in the Benchmarks UI (client type + badge); the
+A↔B workbook-vs-warehouse NOI reconciliation keystone; materialized metrics/scores/findings tables;
+occupancy time-series; FRED-into-engine; governance config; calibration-log scaffold.
+
 ## PFI Phase B.3 — intelligence UI design upgrades (2026-06-13)
 
 Five design/UX upgrades to the intel module — answer-first, time-aware, and deep-linkable —

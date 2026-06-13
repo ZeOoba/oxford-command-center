@@ -694,4 +694,91 @@ describe('qb-excel adapter', () => {
     expect(hvac.name).toBe('HVAC Repair');
     expect(hvac.total).toBeCloseTo(-98.81);
   });
+
+  // ---- accounting-basis derivation (feeds the warehouse:verify basis-coverage gate,
+  //      check #6, and scores.ts G3 same-basis benchmarking) ----
+  // AppFolio exports carry NO in-sheet "(cash basis)" token like QB does — the report
+  // TYPE is the basis signal: an AppFolio "Cash Flow" statement is, by definition, a
+  // cash-basis operating report (its lines are cash receipts/disbursements; no
+  // depreciation). This recovers the 2 real Northwood imports that were 'unknown'.
+  it("derives 'cash' basis from an AppFolio Cash Flow report type (no in-sheet basis token)", async () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'af-basis.xlsx');
+    await buildAppfolioFixture(file, 'Date Range: 01/01/2025 to 12/31/2025 (Last Year)');
+    const s = await parseQbExcel(file);
+    expect(s.sourceSystem).toBe('appfolio');
+    expect(s.basis).toBe('cash');
+  });
+
+  // The QB Desktop "Jan - Dec 24" stripped export (real: 1851 Solar / 55 New Plant) states
+  // its accounting basis in the Excel PRINT HEADER ("...Accrual Basis...", font-code-wrapped),
+  // NOT in any cell — so eachRow never sees it. The parser reads ws.headerFooter to recover
+  // it. The body's non-cash items (Depreciation / Amortization) corroborate 'accrual'.
+  it("derives 'accrual' basis from the QB Desktop print-header token (no in-cell basis token)", async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    // mirrors the real header string ExcelJS reads from these files
+    ws.headerFooter.oddHeader = '&L&"Arial,Bold"&8 3:34 PM\n&"Arial,Bold"&8 06/12/26\n'
+      + '&"Arial,Bold"&8 Accrual Basis&C&"Arial,Bold"&12 Eric Goldberg Family LLC';
+    const rows: Array<Array<string | number | null>> = [
+      [null, null, null, null, 'Jan - Dec 24'],
+      [null, 'Income', null, null, null],
+      [null, null, 'Rents', null, REDACTED-AMT],
+      [null, 'Total Income', null, null, REDACTED-AMT],
+      [null, 'Expense', null, null, null],
+      [null, null, 'Depreciation', null, REDACTED-AMT], // non-cash item corroborates accrual
+      [null, null, 'Amortization Expense', null, REDACTED-AMT],
+      [null, 'Total Expense', null, null, 32130],
+    ];
+    for (const r of rows) ws.addRow(r);
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'qb-accrual-hdr.xlsx');
+    await wb.xlsx.writeFile(file);
+    const s = await parseQbExcel(file);
+    expect(s.sourceSystem).toBe('quickbooks');
+    expect(s.basis).toBe('accrual');
+  });
+
+  // Hallucination guard: when NEITHER an in-cell token NOR a print-header basis token
+  // exists, the parser must not invent a basis — it stays 'unknown' (scores.ts G3 then
+  // treats it as non-comparable, neutral 50 — safer than a wrong same-basis percentile).
+  it("leaves basis 'unknown' when neither an in-cell nor a print-header basis token exists", async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    const rows: Array<Array<string | number | null>> = [
+      [null, null, null, null, 'Jan - Dec 24'],
+      [null, 'Income', null, null, null],
+      [null, null, 'Rents', null, REDACTED-AMT],
+      [null, 'Total Income', null, null, REDACTED-AMT],
+    ];
+    for (const r of rows) ws.addRow(r);
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'qb-notoken.xlsx');
+    await wb.xlsx.writeFile(file);
+    const s = await parseQbExcel(file);
+    expect(s.sourceSystem).toBe('quickbooks');
+    expect(s.basis).toBe('unknown');
+  });
+
+  // Rule precision guard: the cash-flow inference is scoped to the "Cash Flow" report
+  // type ONLY. An AppFolio "Income Statement" (accrual-capable) with the same metadata
+  // block must stay 'unknown' — we never infer a basis the report type doesn't state.
+  it("does NOT auto-cash a non-'Cash Flow' AppFolio report (Income Statement stays unknown)", async () => {
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    const rep5 = (t: string): Array<string | number | null> => [t, t, t, t, t];
+    const rows: Array<Array<string | number | null>> = [
+      rep5('Income Statement'),
+      rep5('Exported On: 06/12/2026 04:51 PM'),
+      [null, null, null, null, null],
+      rep5(AF_PROPERTIES),
+      rep5('Date Range: 01/01/2025 to 12/31/2025 (Last Year)'),
+      ['Account Name', 'Selected Period', '% of Selected Period', 'Fiscal Year To Date', '% of Fiscal Year To Date'],
+      ['    Income', null, null, null, null],
+      ['        Rent', 100, 100, 100, 100],
+    ];
+    for (const r of rows) ws.addRow(r);
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'af-income-stmt.xlsx');
+    await wb.xlsx.writeFile(file);
+    const s = await parseQbExcel(file);
+    expect(s.sourceSystem).toBe('appfolio');
+    expect(s.basis).toBe('unknown');
+  });
 });
