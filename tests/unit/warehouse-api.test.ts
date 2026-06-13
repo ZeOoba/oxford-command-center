@@ -37,6 +37,30 @@ async function writeFixture(path: string, propertyLine = 'Property: 1100 Rarig A
   await wb.xlsx.writeFile(path);
 }
 
+/**
+ * A second, EARLIER period for the same property so growth/drivers/anomalies have a
+ * consecutive pair. 2024: Rent 90000, HVAC Repair 4000 → NOI 86000 (vs 2025 NOI 95000).
+ */
+async function writeFixture2024(path: string, propertyLine = 'Property: 1100 Rarig Ave'): Promise<void> {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Sheet1');
+  const rows: Array<[string | null, string | null, string | null, number | null]> = [
+    ['Profit & Loss', null, null, null],
+    [propertyLine, null, null, null],
+    ['01/01/24 - 12/31/24  (cash basis)', null, null, null],
+    [null, 'INCOME', null, null],
+    [null, null, '     5002 RENTAL INCOME', null],
+    [null, null, '          5064 Rent', 90000],
+    [null, 'EXPENSE', null, null],
+    [null, null, '     6160 REPAIR', null],
+    [null, null, '          6285 HVAC Repair', 4000],
+    [null, 'NON OPERATING EXPENSE', null, null],
+    [null, null, '          7402 Distribution to Owner', 25000],
+  ];
+  for (const r of rows) ws.addRow(r);
+  await wb.xlsx.writeFile(path);
+}
+
 const SEED = [
   { account: 'Rent', code: '5064', normalized_category: 'Rental Revenue', classification: 'revenue' },
   { account: 'HVAC Repair', code: '6285', normalized_category: 'Repairs & Maintenance', classification: 'opex' },
@@ -55,6 +79,26 @@ async function committedWarehouse(): Promise<{ db: WarehouseDb }> {
   await writeFixture(file);
   const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
   expect(r.status).toBe('committed');
+  return { db };
+}
+
+/** Two committed Rarig imports (2024 + 2025) so analytics have a consecutive period pair. */
+async function populatedWarehouse(): Promise<{ db: WarehouseDb }> {
+  const dir = mkdtempSync(join(tmpdir(), 'whapi-'));
+  const db = openWarehouse(join(dir, 'f.sqlite'));
+  seedPropertyMaster(db);
+  seedMappings(db, SEED);
+
+  const f2024 = join(dir, 'P&L 2024 -- 1100 Rarig.xlsx');
+  await writeFixture2024(f2024);
+  const r1 = await ingestFile(db, f2024, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
+  expect(r1.status).toBe('committed');
+
+  const f2025 = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+  await writeFixture(f2025);
+  const r2 = await ingestFile(db, f2025, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' });
+  expect(r2.status).toBe('committed');
+
   return { db };
 }
 
@@ -238,10 +282,145 @@ describe('warehouse api routes', () => {
       ['POST', '/imports/1/action', JSON.stringify({ action: 'approve' })],
       ['POST', '/mappings', JSON.stringify({ account: 'X', normalizedCategory: 'Y', classification: 'opex' })],
       ['POST', '/issues/1/resolve', undefined],
+      ['GET', '/analytics/metrics', undefined],
+      ['GET', '/analytics/growth', undefined],
+      ['GET', '/analytics/drivers/1100-rarig-ave-columbus-oh', undefined],
+      ['GET', '/analytics/anomalies', undefined],
+      ['GET', '/analytics/benchmarks', undefined],
+      ['GET', '/analytics/scores', undefined],
+      ['GET', '/analytics/pm', undefined],
     ] as const) {
       const res = await app.request(path, { method, headers: body ? JSON_HEADERS : undefined, body });
       expect(res.status).toBe(503);
       expect((await res.json()) as { error: string }).toEqual({ error: 'warehouse unavailable' });
     }
+  });
+});
+
+describe('warehouse analytics routes', () => {
+  const RARIG = '1100-rarig-ave-columbus-oh';
+
+  it('GET /analytics/metrics → 200 {metrics:[...]} with per-period metrics', async () => {
+    const { db } = await populatedWarehouse();
+    const app = warehouseRoutes(() => db);
+    const res = await app.request('/analytics/metrics');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      metrics: Array<{ propertyId: string; period: string; noi: number; noiPerSf: number | null }>;
+    };
+    expect(body.metrics.length).toBeGreaterThanOrEqual(2);
+    const m2025 = body.metrics.find((m) => m.propertyId === RARIG && m.period === '2025')!;
+    expect(m2025.noi).toBe(95000);
+    expect(m2025.noiPerSf).not.toBeNull();
+  });
+
+  it('GET /analytics/growth → 200 {growth, sinceAcquisition} grouped per-property', async () => {
+    const { db } = await populatedWarehouse();
+    const app = warehouseRoutes(() => db);
+    const res = await app.request('/analytics/growth');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      growth: Array<{ propertyId: string; period: string; noiGrowth: number | null }>;
+      sinceAcquisition: Array<{ propertyId: string | null; anchorPeriod: string | null; latestPeriod: string | null }>;
+    };
+    expect(Array.isArray(body.growth)).toBe(true);
+    const g2025 = body.growth.find((g) => g.propertyId === RARIG && g.period === '2025')!;
+    expect(g2025.noiGrowth).toBeCloseTo((95000 - 86000) / 86000, 6);
+    const sa = body.sinceAcquisition.find((s) => s.propertyId === RARIG)!;
+    expect(sa.anchorPeriod).toBe('2024');
+    expect(sa.latestPeriod).toBe('2025');
+  });
+
+  it('GET /analytics/drivers/:propertyId → 200 decomposition (default earliest→latest)', async () => {
+    const { db } = await populatedWarehouse();
+    const app = warehouseRoutes(() => db);
+    const res = await app.request(`/analytics/drivers/${RARIG}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      propertyId: string;
+      from: string;
+      to: string;
+      totalDelta: number;
+      drivers: Array<{ category: string; delta: number; contributionPct: number | null }>;
+    };
+    expect(body.propertyId).toBe(RARIG);
+    expect(body.from).toBe('2024');
+    expect(body.to).toBe('2025');
+    expect(body.totalDelta).toBeCloseTo(9000, 6); // NOI 86000 → 95000
+    expect(body.drivers.length).toBeGreaterThan(0);
+    expect(body.drivers.reduce((s, d) => s + d.delta, 0)).toBeCloseTo(body.totalDelta, 6);
+  });
+
+  it('GET /analytics/drivers/:unknown → 404', async () => {
+    const { db } = await populatedWarehouse();
+    const app = warehouseRoutes(() => db);
+    const res = await app.request('/analytics/drivers/no-such-property');
+    expect(res.status).toBe(404);
+    expect((await res.json()) as { error: string }).toHaveProperty('error');
+  });
+
+  it('GET /analytics/anomalies → 200 {anomalies:[...]}', async () => {
+    const { db } = await populatedWarehouse();
+    const app = warehouseRoutes(() => db);
+    const res = await app.request('/analytics/anomalies');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { anomalies: Array<{ propertyId: string; kind: string }> };
+    expect(Array.isArray(body.anomalies)).toBe(true);
+  });
+
+  it('GET /analytics/benchmarks → 200 {byMetric, rankings} (defaults latest/noiPerSf)', async () => {
+    const { db } = await populatedWarehouse();
+    const app = warehouseRoutes(() => db);
+    const res = await app.request('/analytics/benchmarks');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      byMetric: { period: string; metric: string; median: number | null; n: number };
+      rankings: Array<{ propertyId: string; value: number; rank: number; quartile: number }>;
+    };
+    expect(body.byMetric.metric).toBe('noiPerSf');
+    expect(body.byMetric.period).toBe('2025');
+    expect(Array.isArray(body.rankings)).toBe(true);
+  });
+
+  it('GET /analytics/benchmarks?period=2024&metric=noi → honors query params', async () => {
+    const { db } = await populatedWarehouse();
+    const app = warehouseRoutes(() => db);
+    const res = await app.request('/analytics/benchmarks?period=2024&metric=noi');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { byMetric: { period: string; metric: string } };
+    expect(body.byMetric.period).toBe('2024');
+    expect(body.byMetric.metric).toBe('noi');
+  });
+
+  it('GET /analytics/benchmarks?metric=bogus → 400 (Zod)', async () => {
+    const { db } = await populatedWarehouse();
+    const app = warehouseRoutes(() => db);
+    const res = await app.request('/analytics/benchmarks?metric=bogus');
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /analytics/scores → 200 {scores:[...]} with bands + capital action', async () => {
+    const { db } = await populatedWarehouse();
+    const app = warehouseRoutes(() => db);
+    const res = await app.request('/analytics/scores');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      scores: Array<{ propertyId: string; health: number; healthBand: string; capitalAction: string }>;
+    };
+    const rarig = body.scores.find((s) => s.propertyId === RARIG)!;
+    expect(typeof rarig.health).toBe('number');
+    expect(rarig.healthBand).toBeDefined();
+    expect(rarig.capitalAction).toBeDefined();
+  });
+
+  it('GET /analytics/pm → 200 {scorecards:[...]}', async () => {
+    const { db } = await populatedWarehouse();
+    const app = warehouseRoutes(() => db);
+    const res = await app.request('/analytics/pm');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      scorecards: Array<{ propertyManager: string; propertyCount: number; avgNoiPerSf: number | null }>;
+    };
+    expect(Array.isArray(body.scorecards)).toBe(true);
   });
 });
