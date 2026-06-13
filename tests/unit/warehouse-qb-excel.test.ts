@@ -87,6 +87,64 @@ async function buildYardiFixture(path: string): Promise<void> {
   await wb.xlsx.writeFile(path);
 }
 
+// AppFolio "Cash Flow" export layout (verified against the real
+// "P&L 2025 -- 2203 -2207 Northwood.xlsx", sheet Sheet1): header text repeats
+// across cols 1-5 (merged spans), r9 column headers include TWO "%" columns
+// whose header text CONTAINS '%' but is not exactly '%' ("% of Selected Period",
+// "% of Fiscal Year To Date"), sections are 4-space-indented words ("    Income"),
+// leaves 8-space. Dollar values MUST come from "Fiscal Year To Date" (col 4) —
+// never a %-containing column (col 5 would read Rent as 93).
+type AfRow = Array<string | number | null>;
+
+const AF_PROPERTIES = 'Properties: nbc-a - 2207 Nothwood Drive Bldg A Salisbury, MD 21801, nbc-b - 2205 Northwood Drive Bldg B Salisbury, MD 21801, nbc-c - 2203 Marvel Road Salisbury, MD 21801';
+
+function rep5(text: string): AfRow {
+  return [text, text, text, text, text];
+}
+
+function appfolioRows(dateRange: string): AfRow[] {
+  return [
+    rep5('Cash Flow'),
+    rep5('Exported On: 06/12/2026 04:51 PM'),
+    [null, null, null, null, null],
+    rep5(AF_PROPERTIES),
+    rep5('Display by Ownership %: No'),
+    rep5(dateRange),
+    rep5('Level of Detail: Detail View'),
+    [null, null, null, null, null],
+    ['Account Name', 'Selected Period', '% of Selected Period', 'Fiscal Year To Date', '% of Fiscal Year To Date'],
+    ['Operating Income & Expense', null, null, null, null],
+    ['    Income', null, null, null, null],
+    ['        Rent', 479208.59, 93, 479208.59, 93],
+    ['        CAM pass-thru', 17057.04, 3.31, 17057.04, 3.31],
+    ['    Total Operating Income', 515253.29, 100, 515253.29, 100],
+    ['    Expense', null, null, null, null],
+    ['        Owner Transfer', 61171.04, 11.87, 61171.04, 11.87],
+    ['        Interest Expense', 162474.41, 31.53, 162474.41, 31.53],
+    ['    Total Operating Expense', 371767.05, 72.15, 371767.05, 72.15],
+    ['    NOI - Net Operating Income', 143486.24, 27.85, 143486.24, 27.85],
+    ['    Total Income', 515253.29, 100, 515253.29, 100],
+    ['    Total Expense', 371767.05, 72.15, 371767.05, 72.15],
+    ['    Net Income', 143486.24, 27.85, 143486.24, 27.85],
+    ['    Other Items', null, null, null, null],
+    ['        Operating Cash', 17526.66, null, 17526.66, null],
+    ['        Owner deposit', 61171.04, null, 61171.04, null],
+    ['        Owner Draw', -232820.9, null, -232820.9, null],
+    ['    Net Other Items', -154123.2, null, -154123.2, null],
+    ['Cash Flow', -10636.96, null, -10636.96, null],
+    ['Beginning Cash', 21173.1, null, 21173.1, null],
+    ['Beginning Cash + Cash Flow', 10536.14, null, 10536.14, null],
+    ['Actual Ending Cash', 3646.44, null, 3646.44, null],
+  ];
+}
+
+async function buildAppfolioFixture(path: string, dateRange: string): Promise<void> {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Sheet1');
+  for (const r of appfolioRows(dateRange)) ws.addRow(r);
+  await wb.xlsx.writeFile(path);
+}
+
 describe('qb-excel adapter', () => {
   it('extracts header, basis, leaf accounts (skipping subtotals), sections', async () => {
     const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'fixture.xlsx');
@@ -180,6 +238,8 @@ describe('qb-excel adapter', () => {
       [null, null, '          6285 HVAC Repair', 630.95],
       [null, null, '          NET OPERATING INCOME', 190830.45], // derived total — NOT an account
       [null, null, '          CASH FLOW', 165830.45], // derived total — NOT an account
+      [null, null, '          Beginning Cash', 21173.1], // cash-position line — NOT a P&L account
+      [null, null, '          Actual Ending Cash', 3646.44], // cash-position line — NOT a P&L account
     ];
     for (const r of rows) ws.addRow(r);
     const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'derived.xlsx');
@@ -208,6 +268,48 @@ describe('qb-excel adapter', () => {
     const ins = s.accounts[1]!;
     expect(ins.section).toBe('EXPENSE');
     expect(ins.total).toBeCloseTo(12000); // dollars — NOT 1.71
+  });
+
+  it('parses AppFolio Cash Flow exports: %-containing headers ineligible, Properties/Date Range headers, sections, derived rows skipped', async () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'appfolio.xlsx');
+    await buildAppfolioFixture(file, 'Date Range: 01/01/2025 to 12/31/2025 (Last Year)');
+    const s = await parseQbExcel(file);
+    expect(s.sourceSystem).toBe('appfolio');
+    // propertyRaw comes from the "Properties:" line (no "Property:" line exists)
+    expect(s.propertyRaw).toBe(AF_PROPERTIES.replace(/^Properties:\s*/, ''));
+    expect(s.periodStart).toBe('2025-01-01');
+    expect(s.periodEnd).toBe('2025-12-31');
+    expect(s.grain).toBe('year');
+    const names = s.accounts.map((a) => a.name);
+    // derived totals / cash-position lines are never accounts
+    for (const absent of ['Total Operating Income', 'Total Operating Expense', 'NOI - Net Operating Income',
+      'Net Income', 'Net Other Items', 'Cash Flow', 'Beginning Cash', 'Beginning Cash + Cash Flow', 'Actual Ending Cash']) {
+      expect(names).not.toContain(absent);
+    }
+    const byName = new Map(s.accounts.map((a) => [a.name, a]));
+    // value column is "Fiscal Year To Date" (col 4) — NOT "% of Fiscal Year To Date" (col 5)
+    expect(byName.get('Rent')!.total).toBeCloseTo(479208.59); // not 93 (the % column)
+    expect(byName.get('Rent')!.section).toBe('INCOME');
+    expect(byName.get('CAM pass-thru')!.total).toBeCloseTo(17057.04);
+    expect(byName.get('CAM pass-thru')!.section).toBe('INCOME');
+    // Owner Transfer IS parsed as an EXPENSE-section account — its NOI exclusion
+    // happens via the seed mapping (classification 'excluded'), not the parser
+    expect(byName.get('Owner Transfer')!.total).toBeCloseTo(61171.04);
+    expect(byName.get('Owner Transfer')!.section).toBe('EXPENSE');
+    expect(byName.get('Interest Expense')!.total).toBeCloseTo(162474.41);
+    expect(byName.get('Interest Expense')!.section).toBe('EXPENSE');
+    expect(byName.get('Owner Draw')!.section).toBe('OTHER ITEMS');
+    expect(byName.get('Owner Draw')!.total).toBeCloseTo(-232820.9);
+  });
+
+  it('parses AppFolio YTD Date Range form to grain ytd', async () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'wh-')), 'appfolio-ytd.xlsx');
+    await buildAppfolioFixture(file, 'Date Range: 01/01/2026 to 06/12/2026 (This Year-to-date)');
+    const s = await parseQbExcel(file);
+    expect(s.sourceSystem).toBe('appfolio');
+    expect(s.periodStart).toBe('2026-01-01');
+    expect(s.periodEnd).toBe('2026-06-12');
+    expect(s.grain).toBe('ytd');
   });
 
   it('does not mistake merged-cell QB rows (label repeated across columns) for a header row', async () => {

@@ -43,7 +43,10 @@ export function detectFromFilename(fileName: string): FilenameDetection | null {
     const year = Number(m.groups['year']);
     const grain = m.groups['ytd'] ? 'ytd' as const : 'year' as const;
     const ext = m.groups['ext']!.toLowerCase() as FilenameDetection['format'];
-    const propertyId = PROPERTY_ALIASES[token.toLowerCase()] ?? null;
+    // Collapse spaces around hyphens before alias lookup: AppFolio-named files carry a
+    // stray space ("2203 -2207 Northwood") that must still hit "2203-2207 northwood".
+    const normalized = token.toLowerCase().replace(/\s*-\s*/g, '-');
+    const propertyId = PROPERTY_ALIASES[normalized] ?? null;
     return {
       propertyId, propertyToken: token, year, grain, format: ext,
       confidence: propertyId ? 0.95 : 0.4,

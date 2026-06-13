@@ -35,6 +35,17 @@ describe('filename detection', () => {
     for (const [file, id] of cases) expect(detectFromFilename(file)?.propertyId).toBe(id);
   });
 
+  it('normalizes stray spaces around hyphens in the token (AppFolio "2203 -2207 Northwood" naming)', () => {
+    const d = detectFromFilename('P&L 2025 -- 2203 -2207 Northwood.xlsx');
+    expect(d).toMatchObject({
+      propertyId: '2203-2207-northwood-dr-salisbury-md', year: 2025, grain: 'year', format: 'xlsx',
+    });
+    expect(d?.confidence).toBeGreaterThanOrEqual(0.85);
+    expect(detectFromFilename('P&L 2026 YTD -- 2203 -2207 Northwood.xlsx')).toMatchObject({
+      propertyId: '2203-2207-northwood-dr-salisbury-md', year: 2026, grain: 'ytd',
+    });
+  });
+
   it('returns null for non-financial files and unknown tokens', () => {
     expect(detectFromFilename('Lease Eurosort -- 55 New Plant Court 10-2022.pdf')).toBeNull();
     const unknown = detectFromFilename('P&L 2025 -- Mystery Building.xlsx');

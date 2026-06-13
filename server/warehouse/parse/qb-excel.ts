@@ -65,7 +65,8 @@ function lastDayOfMonth(year: number, month: number): number {
 // Derived-summary rows (CRC/Yardi-style charts AND QB Desktop nested layouts):
 // report-computed totals that carry a value but are NOT accounts — ingesting them
 // double-counts (same class as numeric-only summary rows, fix ba230df).
-const DERIVED_SUMMARY_RE = /^(net operating income|net income(\/loss)?|noi\b.*|income after owner activity|cash flow|net other items|gross profit|net ordinary income|net other income)$/i;
+// "beginning cash"/"(actual) ending cash" are AppFolio cash-position lines, not P&L.
+const DERIVED_SUMMARY_RE = /^(net operating income|net income(\/loss)?|noi\b.*|income after owner activity|cash flow|net other items|gross profit|net ordinary income|net other income|beginning cash|actual ending cash|ending cash)$/i;
 
 export async function parseQbExcel(filePath: string): Promise<RawStatement> {
   const wb = new ExcelJS.Workbook();
@@ -90,6 +91,8 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
   let periodEnd: string | null = null;
   let basis: RawStatement['basis'] = 'unknown';
   let yardiHeaders = false; // "Period =" / "Book =" metadata forms matched
+  let appfolioHeaders = false; // "Properties:" / "Exported On:" metadata forms matched
+  let propertiesRaw = ''; // AppFolio "Properties: ..." text — fallback when no "Property:" line
   let firstRowText: string | null = null; // A1-style property-name candidate
   let nonEmptyRows = 0;
   let section = '';
@@ -135,7 +138,10 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
     // ≥2 DISTINCT matching texts: QB exports repeat one label across its merged span
     // ("5002 Total RENTAL INCOME" × 9 cells) — that is ONE logical cell, not a header row.
     if (new Set(headerish.map((c) => c.text)).size < 2) return;
-    const eligible = headerish.filter((c) => c.text !== '%');
+    // ANY %-containing header is ineligible — AppFolio names its percent columns
+    // "% of Selected Period"/"% of Fiscal Year To Date", which also match the
+    // PRIMARY/SECONDARY vocabulary and would otherwise win as the rightmost match.
+    const eligible = headerish.filter((c) => !c.text.includes('%'));
     const primary = eligible.filter((c) => HEADER_PRIMARY_RE.test(c.text));
     const secondary = eligible.filter((c) => HEADER_SECONDARY_RE.test(c.text));
     const pick = primary[primary.length - 1] ?? secondary[secondary.length - 1];
@@ -169,6 +175,18 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
     // header rows
     const propMatch = first.match(/^Property:\s*(.+)$/i);
     if (propMatch) { propertyRaw = propMatch[1]!.trim(); return; }
+    // AppFolio Cash Flow metadata: "Exported On: ..." / "Properties: ..." /
+    // "Date Range: MM/DD/YYYY to MM/DD/YYYY (...)" (text repeats across merged cols)
+    if (/^Exported On:/i.test(first)) { appfolioHeaders = true; return; }
+    const propsMatch = first.match(/^Properties:\s*(.+)$/i);
+    if (propsMatch) { propertiesRaw = propsMatch[1]!.trim(); appfolioHeaders = true; return; }
+    const rangeMatch = first.match(/^Date Range:\s*(\d{1,2}\/\d{1,2}\/\d{4})\s+to\s+(\d{1,2}\/\d{1,2}\/\d{4})/i);
+    if (rangeMatch) {
+      periodLabel = first;
+      periodStart = toIso(rangeMatch[1]!);
+      periodEnd = toIso(rangeMatch[2]!);
+      return;
+    }
     const periodMatch = first.match(/^(\d{1,2}\/\d{1,2}\/\d{2,4})\s*-\s*(\d{1,2}\/\d{1,2}\/\d{2,4})\s*(\((\w+)\s+basis\))?/i);
     if (periodMatch) {
       periodLabel = first;
@@ -272,6 +290,8 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
   // only when Yardi metadata matched — QB files without a "Property:" line keep '',
   // never a report title like "Profit & Loss".
   if (!propertyRaw && yardiHeaders && firstRowText) propertyRaw = firstRowText;
+  // AppFolio exports carry the roster in "Properties:" (no "Property:" line).
+  if (!propertyRaw && propertiesRaw) propertyRaw = propertiesRaw;
 
   // YTD if the period ends mid-year; a full year ends on month-day 12-31.
   // (helper defeats TS narrowing — periodEnd is assigned inside the eachRow callback)
@@ -280,7 +300,7 @@ function parseWorksheet(ws: ExcelJS.Worksheet): RawStatement {
 
   return RawStatementSchema.parse({
     propertyRaw, periodLabel, periodStart, periodEnd, grain,
-    basis, sourceSystem: yardiHeaders ? 'yardi' : 'quickbooks',
+    basis, sourceSystem: appfolioHeaders ? 'appfolio' : yardiHeaders ? 'yardi' : 'quickbooks',
     accounts, totalIncome: null, totalExpense: null,
   });
 }
