@@ -109,7 +109,9 @@ async function readJson<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
-async function fetchJson<T>(path: string): Promise<T> {
+/** Shared GET → typed JSON. Exported so analytics-hooks.ts reuses the SAME unavailability
+ *  semantics (503 / non-JSON mirror) rather than duplicating the fetch path. */
+export async function fetchJson<T>(path: string): Promise<T> {
   let res: Response;
   try {
     res = await fetch(path);
@@ -153,7 +155,8 @@ export const WAREHOUSE_KEYS = {
   noi: ['warehouse', 'noi'] as const,
 };
 
-const QUERY_OPTS = { staleTime: 30_000, retry: 1 } as const;
+/** Shared query options (staleTime 30s, retry 1). Exported for analytics-hooks.ts reuse. */
+export const QUERY_OPTS = { staleTime: 30_000, retry: 1 } as const;
 
 // ---------------------------------------------------------------------------
 // Read hooks.
@@ -195,6 +198,9 @@ export function useNoiMatrix() {
 // ---------------------------------------------------------------------------
 // Mutations — invalidate imports + noi + issues on success (an approve/reject/mapping
 // change can move ledger rows in or out of the active NOI set and resolve issues).
+// Also drops the ['warehouse','analytics'] prefix so every analytics query (scores,
+// metrics, growth, anomalies, pm, benchmarks, drivers) refetches — an approve/override
+// re-derives the active ledger set the score engine reads from (pre-mortem #4).
 // ---------------------------------------------------------------------------
 
 function useWarehouseInvalidate() {
@@ -203,6 +209,7 @@ function useWarehouseInvalidate() {
     void qc.invalidateQueries({ queryKey: WAREHOUSE_KEYS.imports });
     void qc.invalidateQueries({ queryKey: WAREHOUSE_KEYS.noi });
     void qc.invalidateQueries({ queryKey: WAREHOUSE_KEYS.issues });
+    void qc.invalidateQueries({ queryKey: ['warehouse', 'analytics'] });
   };
 }
 
