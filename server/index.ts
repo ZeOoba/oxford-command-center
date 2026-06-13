@@ -236,9 +236,22 @@ app.get('/sse', (c) =>
 );
 
 async function main() {
-  await brain.refresh('startup');
-  brain.startWatching();
-  await warmDocIndex();
+  // Resilient startup: a failed workbook/snapshot load must NOT prevent the server from binding.
+  // The snapshot route already 503s gracefully on a null snapshot and the warehouse opens lazily,
+  // so serving in a degraded mode keeps /api/health, /api/warehouse/* and the SPA shell alive
+  // (and makes warehouse-backed UI verifiable) even when the workbook is briefly absent. The
+  // happy path (workbook present) is unchanged — refresh succeeds and watching starts as before.
+  try {
+    await brain.refresh('startup');
+    brain.startWatching();
+  } catch (err) {
+    console.error('⚠ Brain startup refresh failed — serving in degraded mode (snapshot 503 until the workbook loads):', err);
+  }
+  try {
+    await warmDocIndex();
+  } catch (err) {
+    console.error('⚠ Document index warm-up failed (non-fatal):', err);
+  }
   serve({ fetch: app.fetch, port: SERVER_PORT, hostname: '127.0.0.1' }, (info) => {
     console.log(`◆ Oxford Brain Server — http://127.0.0.1:${info.port} (localhost only)`);
     console.log(`  Watching: ${brain.getState().workbookPath}`);

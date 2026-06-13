@@ -28,6 +28,19 @@ golden-tested; the views render it.
   Additive and **distinct** from the `/portfolio/:id` global drawer (intel has no
   `MODULE_PRIMARY_TYPE`, so `selected` stays null for `/intel/:id`).
 
+Build hardening (surfaced during this build):
+- **Gate self-heal** (`scripts/ensure-deps.mjs`, run as `pregate`): restores `node_modules` from
+  the lockfile if it's wiped/partial before the gate runs (a disk-cleanup task removed the whole
+  tree mid-session). No-op when deps are present.
+- **Resilient brain-server startup** (`server/index.ts`): a failed startup workbook/snapshot load
+  no longer prevents the server from binding — it serves in a degraded mode (snapshot 503s
+  gracefully, warehouse opens lazily) so `/api/health`, `/api/warehouse/*` and the SPA shell stay
+  up. Happy path unchanged.
+- **Ownership render smoke test** (`tests/unit/intel-ownership-smoke.test.tsx`): seeds a local
+  QueryClient cache (no module mocking — safe under `isolate: false`) to prove the hero/heat-strip/
+  leaderboard mount on real-shaped data, including the null-$/SF property.
+- **Pattern doc** (`docs/superpowers/patterns/intel-pure-logic-then-view.md`).
+
 ## PFI Phase B.2 — Property Financial Intelligence UI (2026-06-13)
 
 The intel module becomes an operating layer over the analytics engine — not another dashboard.
