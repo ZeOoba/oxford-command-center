@@ -13,6 +13,14 @@ import { Classification } from '../../src/contracts/warehouse';
 import type { WarehouseDb } from './db';
 import { addMappingOverride, approveImport, rejectImport, resolveIssue } from './actions';
 import { getImportDetail, listImports, listIssues, noiMatrix } from './queries';
+import { detectAnomalies } from './anomalies';
+import { benchmarkMetric, pmScorecards, rankProperties } from './benchmarks';
+import type { NumericMetricKey } from './benchmarks';
+import { decomposeNoiChange, noiImpactByCategory } from './drivers';
+import { growthSeries, sinceAcquisition } from './growth';
+import { propertyPeriodMetrics } from './metrics';
+import type { PeriodMetrics } from './metrics';
+import { scoreProperties } from './scores';
 
 const ActionInput = z.object({ action: z.enum(['approve', 'reject']) });
 
@@ -22,6 +30,39 @@ const AddMappingInputSchema = z.object({
   classification: Classification,
   propertyId: z.string().min(1).optional(),
 });
+
+// Benchmarkable numeric metric keys (kept in lockstep with NumericMetricKey in benchmarks.ts).
+const NumericMetric = z.enum([
+  'revenue', 'opex', 'noi', 'oxfordNoi',
+  'noiMargin', 'expenseRatio',
+  'revenuePerSf', 'noiPerSf', 'expensePerSf',
+  'taxesPerSf', 'insurancePerSf', 'repairsPerSf',
+]);
+
+// A 4-digit year period token (e.g. '2025'); optional on the query string.
+const Year = z.string().regex(/^\d{4}$/);
+
+const BenchmarksQuery = z.object({
+  period: Year.optional(),
+  metric: NumericMetric.optional(),
+});
+
+const DriversQuery = z.object({
+  from: Year.optional(),
+  to: Year.optional(),
+});
+
+/** Group a flat metrics list by propertyId, each group sorted ascending by period. */
+function groupByProperty(metrics: PeriodMetrics[]): Map<string, PeriodMetrics[]> {
+  const groups = new Map<string, PeriodMetrics[]>();
+  for (const m of metrics) {
+    const arr = groups.get(m.propertyId) ?? [];
+    arr.push(m);
+    groups.set(m.propertyId, arr);
+  }
+  for (const arr of groups.values()) arr.sort((a, b) => a.period.localeCompare(b.period));
+  return groups;
+}
 
 /** Parse a path id param to a positive integer, or null when it is not a clean integer. */
 function parseId(raw: string): number | null {
@@ -100,6 +141,72 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       const r = resolveIssue(db, id);
       return c.json(r, r.ok ? 200 : 404);
     }),
+  );
+
+  // ── Analytics (read-only, behind the same 503 guard). Each calls a pure engine
+  //    function on the injected db; query params are Zod-validated. The deal-state /
+  //    confidentiality layer is upstream — these expose only 100%-basis financial metrics.
+
+  app.get('/analytics/metrics', (c) => withDb((db) => c.json({ metrics: propertyPeriodMetrics(db) })));
+
+  app.get('/analytics/growth', (c) =>
+    withDb((db) => {
+      const groups = groupByProperty(propertyPeriodMetrics(db));
+      const growth = [...groups.values()].flatMap((series) => growthSeries(series));
+      const since = [...groups.values()].map((series) => sinceAcquisition(series));
+      return c.json({ growth, sinceAcquisition: since });
+    }),
+  );
+
+  app.get('/analytics/drivers/:propertyId', (c) =>
+    withDb((db) => {
+      const parsed = DriversQuery.safeParse({ from: c.req.query('from'), to: c.req.query('to') });
+      if (!parsed.success) return c.json({ error: 'invalid query' }, 400);
+
+      const propertyId = c.req.param('propertyId');
+      const series = groupByProperty(propertyPeriodMetrics(db)).get(propertyId);
+      if (!series || series.length === 0) return c.json({ error: 'not found' }, 404);
+
+      // Default to the earliest/latest available periods for this property.
+      const from = parsed.data.from ?? series[0]!.period;
+      const to = parsed.data.to ?? series[series.length - 1]!.period;
+      const a = series.find((m) => m.period === from);
+      const b = series.find((m) => m.period === to);
+      if (!a || !b) return c.json({ error: 'period not found' }, 404);
+
+      const decomposition = decomposeNoiChange(noiImpactByCategory(a), noiImpactByCategory(b));
+      return c.json({ propertyId, from, to, ...decomposition });
+    }),
+  );
+
+  app.get('/analytics/anomalies', (c) =>
+    withDb((db) => c.json({ anomalies: detectAnomalies(propertyPeriodMetrics(db)) })),
+  );
+
+  app.get('/analytics/benchmarks', (c) =>
+    withDb((db) => {
+      const parsed = BenchmarksQuery.safeParse({ period: c.req.query('period'), metric: c.req.query('metric') });
+      if (!parsed.success) return c.json({ error: 'invalid query' }, 400);
+
+      const metrics = propertyPeriodMetrics(db);
+      // Sensible defaults: latest available period, noiPerSf.
+      const periods = [...new Set(metrics.map((m) => m.period))].sort((a, b) => a.localeCompare(b));
+      const period = parsed.data.period ?? periods[periods.length - 1] ?? '';
+      const metric: NumericMetricKey = parsed.data.metric ?? 'noiPerSf';
+
+      return c.json({
+        byMetric: benchmarkMetric(metrics, period, metric),
+        rankings: rankProperties(metrics, period, metric),
+      });
+    }),
+  );
+
+  app.get('/analytics/scores', (c) =>
+    withDb((db) => c.json({ scores: scoreProperties(db, propertyPeriodMetrics(db)) })),
+  );
+
+  app.get('/analytics/pm', (c) =>
+    withDb((db) => c.json({ scorecards: pmScorecards(db, propertyPeriodMetrics(db)) })),
   );
 
   return app;

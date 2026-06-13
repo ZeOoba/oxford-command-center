@@ -1,5 +1,45 @@
 # Changelog
 
+## PFI Phase B — Analytics & Intelligence Engine (2026-06-13)
+
+- **Single-source config** (`server/warehouse/intel-config.ts`): `INTEL_CONFIG` holds every threshold,
+  score weight, and band cutoff — anomaly thresholds are ratified (expense growth >15%, revenue/NOI/NOI-PSF
+  decline >5%); health/attention weights are PROPOSED defaults flagged tunable (not governors), pending
+  Gabriel's calibration. Mirrors `src/analytics/conditions.ts` ALERT_THRESHOLDS.
+- **Period metrics** (`server/warehouse/metrics.ts`): `propertyPeriodMetrics(db)` — one row per
+  (property, period) over ACTIVE ledger rows joined to `property_master`: revenue/opex/NOI, margin,
+  expense ratio, opex + revenue category subtotals, $/SF efficiency metrics (100%-basis, null-safe on
+  missing SF), and the ownership overlay (`oxfordNoi` = NOI × ownershipPct).
+- **Growth** (`server/warehouse/growth.ts`): `growthSeries`, `cagr`, `sinceAcquisition` — period-over-period
+  and since-acquisition growth, CAGR, all null off a zero/negative base (no fabricated % off zero).
+- **Driver decomposition** (`server/warehouse/drivers.ts`): `noiImpactByCategory` (NOI-signed: revenue
+  positive, opex negative) + `decomposeNoiChange(a, b)` — ΔNOI attributed by normalized category,
+  per-category deltas summing EXACTLY to ΔNOI, contribution% (null when ΔNOI ≈ 0), ranked by |delta|.
+- **Anomaly engine** (`server/warehouse/anomalies.ts`): `detectAnomalies` — per-property consecutive-period
+  flags (expense-growth, revenue/NOI/NOI-PSF decline, new-category, category-spike) with severity scaled by
+  multiples past threshold (INTEL_CONFIG `severityMultiples`).
+- **Benchmarks + PM scorecards** (`server/warehouse/benchmarks.ts`): `quantile` (linear interpolation),
+  `benchmarkMetric` (avg/median/p25/p75/n per period+metric), `rankProperties` (desc, quartile,
+  stable tie-break), `pmScorecards(db, metrics)` (group by `property_manager`, latest-period averages,
+  `smallSample` flag at n<3). Null-safe over empty/all-null inputs.
+- **Scores + capital allocation** (`server/warehouse/scores.ts`): `scoreProperties(db, metrics)` — per-property
+  health 0–100 + band, attention band cascade, capital action (invest/hold/monitor/
+  disposition-candidate) with human reason strings. Computes growth/benchmarks/anomalies internally and is
+  deterministic in (db snapshot, metrics).
+- **Grain-aware comparison discipline** (spec §9, enforced across growth/anomalies/benchmarks/scores):
+  the engine NEVER compares a YTD period against a full-year period (no silent 5-month-vs-12-month signal).
+  Growth/anomaly/attention use the latest same-grain transition; benchmarking, rankings, efficiency
+  sub-scores, and PM-scorecard levels all operate within a single full-year cohort (each property scored on
+  its latest `grainHint='year'` period, ranked only against same-period peers). A `<2`-property ranking
+  cohort returns `quartile: null` (neutral 50 sub-score) rather than self-ranking to quartile 1. Without
+  this, every property reads a spurious ≈−50% decline once a partial-year YTD pull lands.
+- **Analytics API** (`server/warehouse/api.ts`): GET `/api/warehouse/analytics/*` —
+  `metrics`, `growth` (per-property growth series + since-acquisition), `drivers/:propertyId?from&to`
+  (default earliest→latest, 404 on unknown property), `anomalies`, `benchmarks?period&metric` (defaults
+  latest period / noiPerSf, Zod-validated), `scores`, `pm`. Read-only behind the same 503
+  `{error:'warehouse unavailable'}` guard as the Phase A routes; pure-function calls on the injected db.
+  UI consumption is Phase B.2 (separate plan).
+
 ## PFI Phase A.2 — Imports & Data-Quality UI (2026-06-13)
 
 - **Warehouse read queries** (`server/warehouse/queries.ts`): `listImports` (audit trail, joined to
