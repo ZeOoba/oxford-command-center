@@ -359,3 +359,94 @@ export function benchmarkSnapshot(metrics: PeriodMetrics[], period: string): Ret
   const keys = ['noiPerSf', 'revenuePerSf', 'expenseRatio', 'noiMargin'] as const;
   return keys.map((k) => benchmarkMetric(metrics, period, k));
 }
+
+// ── Score-band distribution sanity ────────────────────────────────────────────────────────
+// A healthy portfolio SCATTERS across the attention/health bands. When EVERY scored property
+// collapses into a SINGLE band, that is not a portfolio signal — it is the fingerprint of a
+// systemic scoring bug.
+//   LESSON (PFI build, 2026-06-12): a cross-grain leak compared a partial-year YTD period
+//   against a full prior year, so every property's growth read as a ≈−50% cliff and the whole
+//   portfolio collapsed into one attention band (all red/concern). 414 green unit tests missed
+//   it — each property passed in isolation; only the CROSS-property distribution exposed it. A
+//   manual "live-backfill-then-diff" caught it. `warehouse:verify` now promotes that check into
+//   the standing gate so this bug class cannot ship again.
+// A >~90% share is the systemic-bug threshold, applied two ways: (a) a SINGLE band holding ≥90%
+// (total collapse — any band, including a spurious all-green); and (b) the worst TWO bands
+// combined holding ≥90% (a directional "distress smear" from a MILDER cross-grain leak that
+// scatters across orange+red / watch+concern without fully collapsing into one band). A
+// concentration in the BEST two bands is a healthy portfolio, not a bug, so the smear check is
+// distress-directional only. Real backfill (2026-06-13) peaks at ~42% single-band / ~58%
+// worst-two-bands — a comfortable margin below 0.90, so the gate has headroom on healthy data.
+export const SINGLE_BAND_COLLAPSE_SHARE = 0.9;
+// Below this many scored properties a single-band share is not yet meaningful (a 2-property
+// portfolio can legitimately be all-green). Guard so the check fires only on a real roster.
+export const MIN_PROPERTIES_FOR_COLLAPSE_CHECK = 5;
+
+export interface BandDistribution {
+  total: number;
+  attentionHist: Record<AttentionBand, number>;
+  healthHist: Record<HealthBand, number>;
+  quartileHist: Record<string, number>; // keys '1'..'4' plus 'null' (null $/SF) — null-safe
+  collapsed: boolean;
+  reason: string | null;
+}
+
+/** Largest bucket's share of the total (0..1) and which bucket, deterministic in iteration order. */
+function dominant(hist: Record<string, number>, total: number): { band: string; share: number } {
+  let band = '';
+  let max = 0;
+  for (const [k, v] of Object.entries(hist)) {
+    if (v > max) {
+      max = v;
+      band = k;
+    }
+  }
+  return { band, share: total === 0 ? 0 : max / total };
+}
+
+/**
+ * Tabulate attention/health/NOI-per-SF-quartile band histograms across scored properties and
+ * flag a COLLAPSE — ≥ SINGLE_BAND_COLLAPSE_SHARE of properties in one attention OR one health
+ * band (total collapse), OR in the worst TWO attention/health bands combined (a directional
+ * distress smear). Only evaluated once the roster is large enough to be meaningful. Pure and
+ * deterministic in its input; null-safe — a null noiPerSfQuartile is bucketed under 'null'.
+ */
+export function scoreBandDistribution(scores: PropertyScore[]): BandDistribution {
+  const attentionHist: Record<AttentionBand, number> = { green: 0, yellow: 0, orange: 0, red: 0 };
+  const healthHist: Record<HealthBand, number> = { excellent: 0, good: 0, watch: 0, concern: 0 };
+  const quartileHist: Record<string, number> = { '1': 0, '2': 0, '3': 0, '4': 0, null: 0 };
+  for (const s of scores) {
+    attentionHist[s.attentionBand] += 1;
+    healthHist[s.healthBand] += 1;
+    const qk = s.noiPerSfQuartile === null ? 'null' : String(s.noiPerSfQuartile);
+    quartileHist[qk] = (quartileHist[qk] ?? 0) + 1;
+  }
+  const total = scores.length;
+
+  let collapsed = false;
+  let reason: string | null = null;
+  if (total >= MIN_PROPERTIES_FOR_COLLAPSE_CHECK) {
+    const pct = Math.round(SINGLE_BAND_COLLAPSE_SHARE * 100);
+    const a = dominant(attentionHist, total);
+    const h = dominant(healthHist, total);
+    // Worst-two-band ("distress smear") shares — directional. A milder cross-grain leak shifts the
+    // whole portfolio distressward without fully collapsing into one band; a best-bands concentration
+    // is healthy and deliberately NOT flagged.
+    const attnSmear = (attentionHist.red + attentionHist.orange) / total;
+    const healthSmear = (healthHist.concern + healthHist.watch) / total;
+    if (a.share >= SINGLE_BAND_COLLAPSE_SHARE) {
+      collapsed = true;
+      reason = `attentionBand collapse: ${Math.round(a.share * 100)}% of ${total} scored properties in '${a.band}' (>= ${pct}%) — systemic scoring-bug signal (e.g. a cross-grain YTD-vs-full-year leak), not a portfolio signal`;
+    } else if (h.share >= SINGLE_BAND_COLLAPSE_SHARE) {
+      collapsed = true;
+      reason = `healthBand collapse: ${Math.round(h.share * 100)}% of ${total} scored properties in '${h.band}' (>= ${pct}%) — systemic scoring-bug signal, not a portfolio signal`;
+    } else if (attnSmear >= SINGLE_BAND_COLLAPSE_SHARE) {
+      collapsed = true;
+      reason = `attentionBand distress smear: ${Math.round(attnSmear * 100)}% of ${total} scored properties in the worst two bands (orange+red) (>= ${pct}%) — a milder cross-grain leak or a genuine portfolio-wide distress shift; investigate before overriding`;
+    } else if (healthSmear >= SINGLE_BAND_COLLAPSE_SHARE) {
+      collapsed = true;
+      reason = `healthBand distress smear: ${Math.round(healthSmear * 100)}% of ${total} scored properties in the worst two bands (watch+concern) (>= ${pct}%) — a milder cross-grain leak or a genuine portfolio-wide distress shift; investigate before overriding`;
+    }
+  }
+  return { total, attentionHist, healthHist, quartileHist, collapsed, reason };
+}

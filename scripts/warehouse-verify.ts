@@ -10,6 +10,9 @@
 //      leaves recomputed from the same RawStatement — an internal-consistency tie,
 //      structured so a future independent-totals source can replace expectedIncomeFor()
 //   5. prints the NOI matrix
+//   6. the scored attention/health band distribution does NOT collapse to a single band
+//      (a >~90% single-bucket share is the systemic cross-grain-scoring-bug signal that
+//      per-property unit tests miss — see scoreBandDistribution / PFI 2026-06-12 lesson)
 // Exits 1 with a clear message on any failure. Local-only gate (wired into `npm run gate`,
 // NOT gate:ci — CI runners have no FINANCIALS_DIR).
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
@@ -21,8 +24,10 @@ import { ingestFile } from '../server/warehouse/ingest';
 import { classificationSide, resolveMapping, sectionSide, seedMappingsFromFile } from '../server/warehouse/mapping';
 import { basisCoverage } from '../server/warehouse/data-quality';
 import { parseQbExcel } from '../server/warehouse/parse/qb-excel';
+import { propertyPeriodMetrics } from '../server/warehouse/metrics';
 import { seedPropertyMaster } from '../server/warehouse/property-master';
 import { NOI_INCOME_CLASSES } from '../src/contracts/warehouse';
+import { MIN_PROPERTIES_FOR_COLLAPSE_CHECK, SINGLE_BAND_COLLAPSE_SHARE, scoreBandDistribution, scoreProperties } from '../server/warehouse/scores';
 
 const FINANCIALS_DIR = process.env.FINANCIALS_DIR
   ?? 'C:/Users/Owner/OneDrive - Oxford Capital Partners (1)/Property Financials';
@@ -174,6 +179,27 @@ async function main(): Promise<number> {
       failures.push(`unknown-basis imports ${bc.unknown} exceed baseline ${MAX_UNKNOWN_BASIS} — QB `
         + `period-header basis parse regressed: ${bc.unknownFiles.join('; ')}`);
     }
+
+    // 7. score-band distribution sanity — promote the PFI 2026-06-12 "live-backfill-then-diff"
+    // check into the gate. Two cross-grain scoring bugs (partial-year YTD ranked against a full
+    // prior year) made EVERY property collapse into one attention band; 414 green unit tests
+    // missed it because each property passed in isolation — only the cross-property distribution
+    // exposed it. FAIL loudly if the scored distribution collapses to a single attention/health
+    // band on the real backfill. Print the histogram either way.
+    const scores = scoreProperties(db, propertyPeriodMetrics(db));
+    const dist = scoreBandDistribution(scores);
+    console.log(
+      `score bands (${dist.total} scored): attention=${JSON.stringify(dist.attentionHist)} ` +
+      `health=${JSON.stringify(dist.healthHist)} noiPerSfQuartile=${JSON.stringify(dist.quartileHist)}`,
+    );
+    // Guard against a VACUOUS pass: if the committed floor cleared but scoring produced too few
+    // rows to even run the collapse check, scores silently vanished — that is itself an anomaly.
+    if (committed.length >= MIN_COMMITTED && dist.total < MIN_PROPERTIES_FOR_COLLAPSE_CHECK) {
+      failures.push(`only ${dist.total} scored properties despite ${committed.length} committed imports (>= ${MIN_COMMITTED}) — scoring silently produced too few rows; the band-collapse check could not run`);
+    }
+    if (dist.collapsed) {
+      failures.push(`score-band distribution collapsed — ${dist.reason}`);
+    }
     db.close();
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -185,7 +211,9 @@ async function main(): Promise<number> {
     return 1;
   }
   console.log('\nwarehouse:verify PASSED: 0 empty-parse, 0 foot-mismatch, 0 unmapped on committed, ' +
-    `committed >= ${MIN_COMMITTED}, income ties within $${INCOME_TIE_TOLERANCE}, unknown-basis <= ${MAX_UNKNOWN_BASIS}`);
+    `committed >= ${MIN_COMMITTED}, income ties within $${INCOME_TIE_TOLERANCE}, ` +
+    `unknown-basis <= ${MAX_UNKNOWN_BASIS}, ` +
+    `no score-band collapse (< ${Math.round(SINGLE_BAND_COLLAPSE_SHARE * 100)}% single-bucket)`);
   return 0;
 }
 
