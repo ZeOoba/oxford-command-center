@@ -40,6 +40,7 @@ export function AcquisitionWorkbench({
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'err'>('idle');
   const reqId = useRef(0);
   const loadedFor = useRef<string | null>(deal?.id ?? null);
+  const [errIsEngineDown, setErrIsEngineDown] = useState(false);
 
   // Re-initialize the form only when the SELECTED DEAL changes (not on every snapshot refetch), so a
   // background refresh never clobbers in-progress edits. A saved deal reloads its persisted inputs.
@@ -55,11 +56,13 @@ export function AcquisitionWorkbench({
     setLoading(true);
     try {
       const s = await scoreFn(buildInput(f, dealId));
-      if (reqId.current === id) { setScore(s); setErr(null); }
+      if (reqId.current === id) { setScore(s); setErr(null); setErrIsEngineDown(false); }
     } catch (e) {
       if (reqId.current === id) {
+        const unavailable = isEngineUnavailable(e);
         setScore(null);
-        setErr(isEngineUnavailable(e) ? 'Acquisition engine unavailable — start the Brain server to score.' : e instanceof Error ? e.message : 'scoring failed');
+        setErr(unavailable ? 'Acquisition engine unavailable — start the Brain server to score.' : e instanceof Error ? e.message : 'scoring failed');
+        setErrIsEngineDown(unavailable);
       }
     } finally {
       if (reqId.current === id) setLoading(false);
@@ -70,6 +73,14 @@ export function AcquisitionWorkbench({
     const t = setTimeout(() => { void runScore(form); }, 300);
     return () => clearTimeout(t);
   }, [form, runScore]);
+
+  // When the engine is down, retry automatically every 5 s so recovery is seamless after the Brain
+  // server comes back up — no form touch or page reload needed.
+  useEffect(() => {
+    if (!errIsEngineDown) return;
+    const id = setInterval(() => { void runScore(form); }, 5000);
+    return () => clearInterval(id);
+  }, [errIsEngineDown, form, runScore]);
 
   const onSave = useCallback(async () => {
     if (!deal) return; // only a real pipeline deal can persist (the route 404s on a blank/unknown deal)
@@ -118,7 +129,20 @@ export function AcquisitionWorkbench({
       <Card>
         <CardHeader title="Oxford Acquisition Score" trailing={loading ? <Badge tone="neutral">scoring…</Badge> : undefined} />
         <div className="flex flex-col gap-3 p-3">
-          {err && <Banner tone="red">{err}</Banner>}
+          {err && (
+            <Banner tone="red">
+              {err}
+              {errIsEngineDown && (
+                <button
+                  type="button"
+                  onClick={() => void runScore(form)}
+                  style={{ marginLeft: '0.5rem', opacity: 0.75, textDecoration: 'underline', cursor: 'pointer', background: 'none', border: 'none', color: 'inherit', font: 'inherit', padding: 0 }}
+                >
+                  Retry now
+                </button>
+              )}
+            </Banner>
+          )}
           {!err && !score && <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>Enter inputs to score.</div>}
           {score && <ScorePanel score={score} />}
         </div>
