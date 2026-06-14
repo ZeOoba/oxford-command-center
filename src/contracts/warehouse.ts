@@ -400,3 +400,85 @@ export type ScoresResponse = z.infer<typeof ScoresResponseSchema>;
 
 export const PmScorecardsResponseSchema = z.object({ scorecards: z.array(PmScorecardSchema) });
 export type PmScorecardsResponse = z.infer<typeof PmScorecardsResponseSchema>;
+
+// ── Calibration read boundary (Phase 2) — the /calibration/* route envelopes ────────────────────
+// Read-only views over calibration_verdict (+ its blessed calibration_outcome) and the aggregated
+// report. Each /calibration/* route .parse()s its envelope before c.json (same H6 boundary as the
+// /analytics/* routes). Mirrors the AS-BUILT schema (calibration_verdict, not the spec draft's
+// calibration_log): verdictSubkind is a first-class field; outcome fields are nullable (a verdict is
+// unresolved until ≥1 horizon elapses — the normal Phase-2 state).
+
+/** One logged verdict + (optionally) its blessed resolution, as the /calibration/log route emits. */
+export const CalibrationLogRowSchema = z.object({
+  id: z.number().int(),
+  subjectKind: SubjectKind,
+  subjectId: z.string(),
+  verdictKind: VerdictKind,
+  verdictSubkind: z.string(),
+  verdictEngine: VerdictEngine,
+  predictedBand: z.string().nullable(),
+  predictedValue: z.number().nullable(),
+  predictedUnit: z.string().nullable(),
+  confidence: z.number().nullable(),
+  direction: z.string().nullable(),
+  asOfPeriod: z.string(),
+  horizonPeriods: z.number().int().nullable(),
+  inputsVersion: z.string(),
+  emittedBy: z.string(),
+  emittedAt: z.string(),
+  // Resolution (null until resolved — the normal pre-outcome-data state).
+  resolved: z.boolean(),
+  realizedBand: z.string().nullable(),
+  realizedValue: z.number().nullable(),
+  outcomePeriod: z.string().nullable(),
+  hit: z.union([z.literal(0), z.literal(1)]).nullable(),
+  resolvedBy: z.string().nullable(),
+});
+export type CalibrationLogRow = z.infer<typeof CalibrationLogRowSchema>;
+
+export const CalibrationLogResponseSchema = z.object({ log: z.array(CalibrationLogRowSchema) });
+export type CalibrationLogResponse = z.infer<typeof CalibrationLogResponseSchema>;
+
+export const CalibrationPendingResponseSchema = z.object({ pending: z.array(CalibrationLogRowSchema) });
+export type CalibrationPendingResponse = z.infer<typeof CalibrationPendingResponseSchema>;
+
+/** Per-band hit-rate within a verdict kind (§4.1). */
+export const CalibrationBandRateSchema = z.object({
+  band: z.string(),
+  scoreable: z.number().int(),
+  hits: z.number().int(),
+  hitRate: z.number().nullable(),
+});
+
+/** Per-verdict-kind calibration metrics (§4.1). */
+export const CalibrationKindReportSchema = z.object({
+  verdictKind: z.string(),
+  total: z.number().int(),
+  resolved: z.number().int(),
+  scoreable: z.number().int(),
+  hits: z.number().int(),
+  hitRate: z.number().nullable(),
+  wilsonLow: z.number().nullable(),
+  wilsonHigh: z.number().nullable(),
+  directionalScoreable: z.number().int(),
+  directionalHits: z.number().int(),
+  directionalAccuracy: z.number().nullable(),
+  meanSignedError: z.number().nullable(),
+  byBand: z.array(CalibrationBandRateSchema),
+});
+
+/** The full §4 calibration report — read-only aggregate over resolved outcomes. */
+export const CalibrationReportSchema = z.object({
+  from: z.string().nullable(),
+  to: z.string().nullable(),
+  kind: z.string().nullable(),
+  totalVerdicts: z.number().int(),
+  resolvedVerdicts: z.number().int(),
+  scoreableVerdicts: z.number().int(),
+  overallHitRate: z.number().nullable(),
+  treatmentAdjustedHitRate: z.number().nullable(),
+  treatmentAdjustedScoreable: z.number().int(),
+  byKind: z.array(CalibrationKindReportSchema),
+  dataMaturityNote: z.string(),
+});
+export type CalibrationReportResponse = z.infer<typeof CalibrationReportSchema>;
