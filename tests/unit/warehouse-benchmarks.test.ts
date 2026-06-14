@@ -145,10 +145,23 @@ describe('benchmarks', () => {
 
   it('rankProperties handles a literal series and ties (stable)', () => {
     const M = (propertyId: string, value: number): PeriodMetrics =>
-      ({ propertyId, period: '2025', noiPerSf: value } as unknown as PeriodMetrics);
+      ({ propertyId, period: '2025', noiPerSf: value, rentableSf: 10000 } as unknown as PeriodMetrics);
     const ranked = rankProperties([M('a', 5), M('b', 5), M('c', 1)], '2025', 'noiPerSf');
     expect(ranked.map((r) => r.propertyId)).toEqual(['a', 'b', 'c']);
     expect(ranked.map((r) => r.rank)).toEqual([1, 2, 3]);
+  });
+
+  it('rankProperties excludes SF-less non-operating entities for dollar keys (H7)', () => {
+    // A SF-less royalty (rentableSf null) carries a finite dollar value but is NOT comparable
+    // operating real estate. metricValues/cohortBases exclude it; rankProperties must too, or the
+    // /analytics/benchmarks API ranks it (top, on noi 999) and shifts every real property's rank
+    // while drawing quartiles from cutoffs benchmarkMetric computed WITHOUT it.
+    const M = (propertyId: string, noi: number, rentableSf: number | null): PeriodMetrics =>
+      ({ propertyId, period: '2025', noi, rentableSf } as unknown as PeriodMetrics);
+    const ranked = rankProperties([M('a', 100, 50000), M('b', 60, 30000), M('solar', 999, null)], '2025', 'noi');
+    expect(ranked.map((r) => r.propertyId)).toEqual(['a', 'b']); // solar excluded, not ranked top
+    expect(ranked.find((r) => r.propertyId === 'solar')).toBeUndefined();
+    expect(ranked.map((r) => r.rank)).toEqual([1, 2]); // ranks drawn from the operating cohort only
   });
 
   it('pmScorecards groups by manager with property counts + small-n flag', async () => {
