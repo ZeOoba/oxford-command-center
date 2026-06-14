@@ -193,3 +193,12 @@ Commit atomically — one logical change per commit. Always include test files i
 - SQLite file (`data/warehouse/finance.sqlite`) is gitignored.
 - CORS locked to localhost — never relax this.
 - Confidential deal terms MAY live in this private repo's source (e.g. `src/data/seed-deals.ts`) by owner decision (2026-06-14); the `confidential-terms.json` egress guard still bars them from the public site, the `/dist/` mirror, Notion, and email.
+
+### Pre-push confidentiality hook
+
+A native git `pre-push` hook (`scripts/prepush-confidential-scan.mjs`) scans the **added** lines of every push and blocks it if any active-deal confidential term appears. This closes audit finding H1 — the repo previously had no native pre-push confidentiality gate, which let an active deal's terms get committed.
+
+- **Fail-closed:** any matched term prints `file:line  ->  matched '<term>'` to stderr and exits non-zero, aborting the push.
+- **Term source:** the machine-local roster `~/.claude/hooks/confidential-terms.json` (git-ignored, off-repo), merged with a small generic built-in denylist. If the roster is absent or unparseable, the hook still scans the denylist and prints a WARN — it does **not** block all pushes just because the roster is missing.
+- **Install:** `npm run hooks:install`. It also runs automatically via the `prepare` script on `npm install`, so a fresh clone gets the hook with no extra step. Re-running is safe (idempotent).
+- The scanner exposes a pure, unit-tested `scanDiffForConfidential(addedLines, terms)` used by `tests/unit/prepush-confidential-scan.test.ts`.
