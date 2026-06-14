@@ -23,6 +23,11 @@ interface AnthropicContentBlock {
  * we just read its input). Degrades to { ok:false, error } on missing key / HTTP error / no comps.
  */
 export async function fetchDealComps(deal: Deal, opts: FetchCompsOptions): Promise<FetchCompsResult> {
+  // Confidentiality egress guard (audit rank-8): a confidential deal's name/location/price must
+  // never reach an external web search. Block before any network call, regardless of API-key state.
+  if (deal.confidential) {
+    return { ok: false, error: 'Market comps are disabled for confidential deals — running them would send the deal identity to external web search.' };
+  }
   if (!opts.apiKey) return { ok: false, error: 'Market comps need AI access — ANTHROPIC_API_KEY is not configured.' };
   const f = opts.fetchImpl ?? fetch;
   const where = [deal.location, deal.market].filter(Boolean).join(', ') || deal.name;

@@ -53,6 +53,19 @@ describe('fetchDealComps', () => {
     if (!r.ok) expect(r.error).toMatch(/not configured/i);
   });
 
+  it('refuses a CONFIDENTIAL deal without egressing its identity to web search (B2)', async () => {
+    let called = false;
+    const spyFetch = (async () => {
+      called = true;
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' };
+    }) as unknown as typeof fetch;
+    const confidentialDeal = { ...deal, confidential: true } as unknown as Deal;
+    const r = await fetchDealComps(confidentialDeal, { apiKey: 'sk-test', now: NOW, fetchImpl: spyFetch });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toMatch(/confidential/i);
+    expect(called).toBe(false); // must NOT have hit the network with the deal's name/location/price
+  });
+
   it('parses a record_comps tool_use block into a validated CompSet, stamping sourcedAt', async () => {
     const body = {
       content: [
