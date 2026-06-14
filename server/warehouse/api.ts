@@ -10,6 +10,8 @@
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { Classification } from '../../src/contracts/warehouse';
+import { AcquisitionInput } from '../../src/contracts/acquisition';
+import type { AcquisitionRuleset, ReplacementCostTable } from '../../src/contracts/acquisition';
 import type { WarehouseDb } from './db';
 import { addMappingOverride, approveImport, rejectImport, resolveIssue } from './actions';
 import { getImportDetail, listImports, listIssues, noiMatrix } from './queries';
@@ -21,6 +23,7 @@ import { growthSeries, sinceAcquisition } from './growth';
 import { propertyPeriodMetrics } from './metrics';
 import type { PeriodMetrics } from './metrics';
 import { scoreProperties } from './scores';
+import { loadRatifiedRct, loadRatifiedRuleset, scoreAcquisition } from './acquisition';
 
 const ActionInput = z.object({ action: z.enum(['approve', 'reject']) });
 
@@ -69,6 +72,20 @@ function parseId(raw: string): number | null {
   if (!/^\d+$/.test(raw)) return null;
   const n = Number(raw);
   return Number.isSafeInteger(n) ? n : null;
+}
+
+// Acquisition scoring config (ratified ruleset + RCT) — loaded once, FAIL-CLOSED. A missing or
+// non-ratified config surfaces as 503, never a crash and never a live verdict on un-ratified math.
+let acqConfigCache: { ok: true; ruleset: AcquisitionRuleset; rct: ReplacementCostTable } | { ok: false; error: string } | null = null;
+function acqConfig(): { ok: true; ruleset: AcquisitionRuleset; rct: ReplacementCostTable } | { ok: false; error: string } {
+  if (acqConfigCache === null) {
+    try {
+      acqConfigCache = { ok: true, ruleset: loadRatifiedRuleset(), rct: loadRatifiedRct() };
+    } catch (e) {
+      acqConfigCache = { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+  return acqConfigCache;
 }
 
 export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
@@ -208,6 +225,19 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
   app.get('/analytics/pm', (c) =>
     withDb((db) => c.json({ scorecards: pmScorecards(db, propertyPeriodMetrics(db)) })),
   );
+
+  // ── Acquisition Intelligence — score a fully-specified deal against the RATIFIED scorecard + RCT.
+  //    Pure compute (no warehouse DB). Fail-closed: a missing/non-ratified config ⇒ 503, never a live
+  //    verdict on un-ratified math. The Cowork acquisition-underwriting skill POSTs the inputs it already
+  //    produces and gets the platform's deterministic Oxford Acquisition Score back — one number, both
+  //    surfaces (the shared-contract goal). Confidential-deal handling stays upstream of this route.
+  app.post('/acquisition/score', async (c) => {
+    const cfg = acqConfig();
+    if (!cfg.ok) return c.json({ error: 'acquisition engine unavailable', detail: cfg.error }, 503);
+    const parsed = AcquisitionInput.safeParse(await c.req.json().catch(() => ({})));
+    if (!parsed.success) return c.json({ error: 'invalid acquisition input', issues: parsed.error.issues }, 400);
+    return c.json({ score: scoreAcquisition(parsed.data, cfg.ruleset, { rct: cfg.rct }) });
+  });
 
   return app;
 }
