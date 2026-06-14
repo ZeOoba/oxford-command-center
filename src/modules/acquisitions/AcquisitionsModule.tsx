@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Lock } from 'lucide-react';
 import { useSnapshot } from '@/data/queries';
 import { useUi } from '@/brain/ui-context';
@@ -8,6 +9,7 @@ import { DataTable, type Column } from '@/primitives/DataTable';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { BarList } from '@/charts/BarList';
 import type { Deal, DealStage } from '@contracts/index';
+import { AcquisitionWorkbench } from './AcquisitionWorkbench';
 
 const STAGE_ORDER: DealStage[] = ['Sourcing', 'Candidate', 'LOI/PSA', 'Due Diligence', 'Refinance', 'Closing', 'Closed', 'Dead'];
 const STAGE_TONE: Record<DealStage, BadgeTone> = {
@@ -24,8 +26,10 @@ const STAGE_TONE: Record<DealStage, BadgeTone> = {
 export function AcquisitionsModule() {
   const { data } = useSnapshot();
   const ui = useUi();
+  const [scoreDealId, setScoreDealId] = useState<string>('');
   if (!data) return null;
   const deals = data.snapshot.deals;
+  const scoreDeal = deals.find((d) => d.id === scoreDealId) ?? null;
   const active = deals.filter((d) => d.stage !== 'Closed' && d.stage !== 'Dead');
   const stageCounts = STAGE_ORDER.map((s) => ({ label: s, value: deals.filter((d) => d.stage === s).length })).filter((x) => x.value > 0);
   const bestCap = Math.max(0, ...deals.map((d) => d.capRate ?? 0));
@@ -78,6 +82,28 @@ export function AcquisitionsModule() {
           <DataTable columns={cols} rows={deals} getRowId={(d) => d.id} onRowClick={(d) => ui.openEntity({ type: 'deal', id: d.id })} initialSort={{ key: 'stage', dir: 'asc' }} />
         </Card>
       </div>
+
+      <Card>
+        <CardHeader title="Acquisition Workbench" trailing={<Badge tone="gold">Oxford Acquisition Score · live</Badge>} />
+        <div className="flex items-center gap-2 px-3 pt-3">
+          <span className="text-2xs uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>Prefill from</span>
+          <select
+            className="rounded-[var(--radius-sm)] px-2 py-1 text-xs num"
+            style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', color: 'var(--text-primary)' }}
+            value={scoreDealId}
+            onChange={(e) => setScoreDealId(e.target.value)}
+          >
+            <option value="">— blank deal —</option>
+            {deals.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          </select>
+        </div>
+        <div className="p-3">
+          <AcquisitionWorkbench
+            deal={scoreDeal}
+            savedInput={scoreDeal ? data.snapshot.acquisitionInputs[scoreDeal.id] ?? null : null}
+          />
+        </div>
+      </Card>
     </div>
   );
 }
