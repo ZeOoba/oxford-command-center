@@ -52,7 +52,7 @@ describe('mapping engine', () => {
     expect(['recovery', 'opex']).toContain(resolveMapping(db, 'Gas').classification);
   });
 
-  it('sideHint constrains the dual-side SEED tiebreak but a manual override wins regardless of side', () => {
+  it('sideHint side-constrains the dual-side SEED tiebreak AND a GLOBAL manual override, but a PROPERTY-SCOPED manual override wins cross-side', () => {
     const db = openWarehouse(join(mkdtempSync(join(tmpdir(), 'wh-')), 'f.sqlite'));
     seedMappings(db, [
       { account: 'Gas', code: '5034', normalized_category: 'CAM Recoveries', classification: 'recovery' },
@@ -63,19 +63,34 @@ describe('mapping engine', () => {
     expect(resolveMapping(db, 'Gas', undefined, undefined, 'expense').classification).toBe('opex');
     expect(resolveMapping(db, 'Gas', undefined, undefined, 'income').classification).toBe('recovery');
 
-    // (2) A manual override is an explicit human ruling — it must win over sideHint even when it
-    // sits on the OPPOSITE side from the hint. Here Gas gets a manual income/recovery mapping; a
-    // re-resolve carrying the row's stale expense sideHint must STILL return the manual mapping,
-    // not fall back to the same-side opex seed and silently drop the human's reclassification.
+    // (2) A GLOBAL manual override (property_id NULL) is a portfolio-wide default — side-constrained
+    // like a seed so it can NEVER silently flip a row to the opposite NOI side across the portfolio.
+    // A global manual income/recovery override re-resolved under the row's stale expense sideHint must
+    // NOT win; it falls back to the same-side opex SEED, keeping the row on its expense side.
     db.prepare(
-      `INSERT INTO account_mappings (raw_account_key, normalized_category, classification, match_kind)
-       VALUES ('gas', 'CAM Recoveries', 'recovery', 'manual')`,
+      `INSERT INTO account_mappings (raw_account_key, normalized_category, classification, match_kind, property_id)
+       VALUES ('gas', 'CAM Recoveries', 'recovery', 'manual', NULL)`,
     ).run();
-    const m = resolveMapping(db, 'Gas', undefined, undefined, 'expense');
-    expect(m.matchKind).toBe('manual');
-    expect(m.classification).toBe('recovery'); // manual cross-side ruling wins over sideHint='expense'
+    const g = resolveMapping(db, 'Gas', undefined, undefined, 'expense');
+    expect(g.matchKind).toBe('seed'); // the global manual did NOT win cross-side
+    expect(g.classification).toBe('opex'); // stayed on its expense side — NOI sign preserved
+    // the same global manual DOES win on the income side, where it agrees with the hint
+    expect(resolveMapping(db, 'Gas', undefined, undefined, 'income'))
+      .toMatchObject({ matchKind: 'manual', classification: 'recovery' });
 
-    // (3) The same-side manual case is unaffected: a manual expense override under expense sideHint wins.
+    // (3) A PROPERTY-SCOPED manual override is a targeted, deliberate human ruling for THAT property
+    // and WINS regardless of side — a reviewer who reclassifies a specific property's expense-ingested
+    // Gas as a tenant billback (income/recovery) is honored even under the row's stale expense hint.
+    db.prepare(
+      `INSERT INTO account_mappings (raw_account_key, normalized_category, classification, match_kind, property_id)
+       VALUES ('gas', 'CAM Recoveries', 'recovery', 'manual', 'prop-1')`,
+    ).run();
+    const s = resolveMapping(db, 'Gas', 'prop-1', undefined, 'expense');
+    expect(s.matchKind).toBe('manual');
+    expect(s.classification).toBe('recovery'); // scoped manual cross-side ruling wins over sideHint='expense'
+
+    // (4) The same-side manual case is unaffected: a global manual expense override under expense
+    // sideHint wins because it AGREES with the row's side.
     db.prepare(
       `INSERT INTO account_mappings (raw_account_key, normalized_category, classification, match_kind)
        VALUES ('hvac repair', 'HVAC Capital', 'capex', 'manual')`,

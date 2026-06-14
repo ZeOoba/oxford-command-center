@@ -4,6 +4,7 @@
 // nothing is ever deleted (reject = status flip; supersede = is_active=0). The proven
 // Phase A ingest pipeline (ingest.ts) is NOT modified — the supersede SQL below mirrors
 // it deliberately (kept in sync by hand to avoid touching the committed pipeline here).
+import { Classification } from '../../src/contracts/warehouse';
 import type { WarehouseDb } from './db';
 import { accountKey, classificationSide, resolveMapping } from './mapping';
 import { computeInputsVersion, logVerdicts, verdictsFromAnomalies, verdictsFromScores } from './calibration';
@@ -43,13 +44,15 @@ interface BatchRow {
  * to the income/recovery mapping — silently inverting its NOI sign contribution (income adds, opex
  * subtracts). Passing the existing side guards against that for single- and dual-side SEED rows.
  *
- * A MANUAL override is exempt from the side guard: it is an explicit human ruling, and approve's
- * contract is to apply it — INCLUDING a deliberate cross-side reclassification (e.g. a reviewer who
- * declares an expense-ingested Gas a tenant billback → income/recovery). resolveMapping lets a
- * manual mapping win regardless of sideHint, so the seed-tiebreak guard binds only seed/learned
- * rows. Without that exemption a cross-side manual override would be silently dropped — the row
- * either committing its stale classification (dual-side seed still present) or reported as a dead-end
- * 'unmapped' (no same-side seed) — defeating approve's stated purpose with no diagnostic.
+ * A PROPERTY-SCOPED manual override is exempt from the side guard: it is a targeted, deliberate human
+ * ruling for that property, and approve's contract is to apply it — INCLUDING a deliberate cross-side
+ * reclassification (e.g. a reviewer who declares a specific property's expense-ingested Gas a tenant
+ * billback → income/recovery). A GLOBAL manual override (no property_id) is a portfolio-wide default
+ * and is side-constrained like a seed — it can never silently flip a row to the opposite NOI side
+ * across the portfolio (finding 4; this keeps approve consistent with addMappingOverride's in-place
+ * re-derive). resolveMapping encodes exactly this: scoped-manual wins regardless of sideHint, global-
+ * manual and seed/learned rows bind to the side. A genuine cross-side reclassification must therefore
+ * be scoped to its property; a global override only re-resolves rows already on its own side.
  * Amounts are never touched (sign-normalization already applied at ingest stays intact).
  */
 export function approveImport(db: WarehouseDb, importId: number, opts: ApproveOptions = {}): ApproveResult {
@@ -68,11 +71,11 @@ export function approveImport(db: WarehouseDb, importId: number, opts: ApproveOp
 
   const resolved = rows.map((r) => ({
     id: r.id,
-    // Constrain re-resolution of SEED rows to the row's existing classification side so a dual-side
-    // account can only re-resolve within its original side (no NOI sign flip). A MANUAL override
-    // still wins regardless of side (resolveMapping exempts match_kind='manual' from the sideHint
-    // guard) — a reviewer's explicit cross-side reclassification is honored. 'either'-side classes
-    // (e.g. 'excluded'/unknown) pass no constraint — their resolution is unchanged.
+    // Constrain re-resolution of SEED and GLOBAL-manual rows to the row's existing classification
+    // side so a dual-side account can only re-resolve within its original side (no NOI sign flip). A
+    // PROPERTY-SCOPED manual override still wins regardless of side (resolveMapping exempts a scoped
+    // manual from the sideHint guard) — a reviewer's targeted cross-side reclassification is honored.
+    // 'either'-side classes (e.g. 'excluded'/unknown) pass no constraint — resolution unchanged.
     m: resolveMapping(
       db,
       r.raw_account,
@@ -177,9 +180,27 @@ export interface AddMappingResult {
  * Append a manual mapping override (match_kind='manual' — beats seed per resolveMapping
  * precedence) and re-derive ACTIVE ledger rows whose normalized account key matches, scoped
  * to a property when given. accountKey() can't run in SQL, so candidates are filtered in JS.
+ *
+ * A GLOBAL override's re-derive is CONSTRAINED to the override's income/expense side (classificationSide)
+ * — the same dual-side guard approveImport applies on re-resolution (H3 + finding 4). A dual-side account
+ * (the real PFI seed carries "Gas"/"Electric"/"Water" as BOTH a tenant-billback recovery on the income
+ * side AND a utility opex on the expense side) can have two ACTIVE rows under one account key — one income,
+ * one expense. A side-blind UPDATE would push the override's classification onto BOTH, flipping the
+ * income-side recovery row to opex and INVERTING its NOI sign contribution (income adds, opex subtracts).
+ * So a GLOBAL override re-derives a row only when its side is compatible with the row's EXISTING side: an
+ * 'either'-side override (e.g. 'excluded'/unknown) and an 'either'-side row carry NO constraint (mirrors
+ * classificationSide returning 'either' → no side filter in resolveMapping); otherwise the two sides must
+ * match. A PROPERTY-SCOPED override (propertyId given) is a targeted, deliberate ruling and re-derives
+ * EVERY matching row of that property regardless of side — exactly how resolveMapping resolves a scoped
+ * manual on approve, so the in-place and approve paths stay consistent.
  */
 export function addMappingOverride(db: WarehouseDb, input: AddMappingInput): AddMappingResult {
+  // Validate the class BEFORE deriving its side: an unrecognized classification would map to
+  // 'either' (classificationSide's default), silently disabling the side guard below and re-opening
+  // the dual-side NOI-sign flip. Fail closed on a typo — never write an out-of-enum classification.
+  Classification.parse(input.classification);
   const key = accountKey(input.account);
+  const overrideSide = classificationSide(input.classification);
   return db.transaction(() => {
     const ins = db
       .prepare(`
@@ -191,17 +212,26 @@ export function addMappingOverride(db: WarehouseDb, input: AddMappingInput): Add
 
     const candidates = (
       input.propertyId
-        ? db.prepare('SELECT id, raw_account FROM ledger_entries WHERE is_active=1 AND property_id=?').all(input.propertyId)
-        : db.prepare('SELECT id, raw_account FROM ledger_entries WHERE is_active=1').all()
-    ) as Array<{ id: number; raw_account: string }>;
+        ? db.prepare('SELECT id, raw_account, classification FROM ledger_entries WHERE is_active=1 AND property_id=?').all(input.propertyId)
+        : db.prepare('SELECT id, raw_account, classification FROM ledger_entries WHERE is_active=1').all()
+    ) as Array<{ id: number; raw_account: string; classification: string }>;
 
     const upd = db.prepare('UPDATE ledger_entries SET normalized_category=?, classification=?, mapping_id=? WHERE id=?');
     let rederived = 0;
     for (const c of candidates) {
-      if (accountKey(c.raw_account) === key) {
-        upd.run(input.normalizedCategory, input.classification, mappingId, c.id);
-        rederived += 1;
+      if (accountKey(c.raw_account) !== key) continue;
+      // Side guard for GLOBAL overrides ONLY: a portfolio-wide default must never re-derive a row on
+      // the OPPOSITE income-statement side (that would invert its NOI sign). 'either' on either side
+      // imposes no constraint; otherwise the sides must match. A PROPERTY-SCOPED override (input.propertyId
+      // set) is a targeted, deliberate human ruling and re-derives EVERY matching row of that property
+      // regardless of side — identical to how resolveMapping resolves the two override kinds on approve,
+      // so the in-place and approve paths stay consistent (no path-dependent NOI drift).
+      if (!input.propertyId) {
+        const rowSide = classificationSide(c.classification);
+        if (overrideSide !== 'either' && rowSide !== 'either' && overrideSide !== rowSide) continue;
       }
+      upd.run(input.normalizedCategory, input.classification, mappingId, c.id);
+      rederived += 1;
     }
     return { mappingId, rederived };
   })();
