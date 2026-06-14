@@ -28,6 +28,7 @@ export * from './scenario';
 export * from './renewal';
 export * from './comps';
 export * from './quickbooks';
+export * from './acquisition';
 
 export const SnapshotMeta = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),
