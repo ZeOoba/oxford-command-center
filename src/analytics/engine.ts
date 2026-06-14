@@ -45,7 +45,11 @@ export function applyScenario(s: PortfolioSnapshot, scenario: ScenarioName): Por
     const noi = p.noi * f.revenueFactor;
     const occPct = Math.max(0, Math.min(1, 1 - (1 - p.occPct) * f.vacancyFactor));
     const capRate = p.capRate !== null ? p.capRate * f.exitCapFactor : null;
-    const oxfordValue = capRate && capRate > 0 ? noi / capRate : p.oxfordValue * (f.revenueFactor / f.exitCapFactor);
+    // Scale the source-of-record workbook value by the scenario's revenue/exit-cap shock in BOTH
+    // the capped and uncapped branches. The prior capped-property re-derivation (noi/capRate)
+    // treated the going-in cap as the exit cap, producing a Base-boundary discontinuity and a
+    // Downside that could RAISE value / LOWER LTV (audit H4 `scenario-value-basis-mix`).
+    const oxfordValue = p.oxfordValue * (f.revenueFactor / f.exitCapFactor);
     return { ...p, noi, noiScenarioAdj: noi, occPct, capRate, oxfordValue };
   });
   return { ...s, properties, meta: { ...s.meta, scenario } };
