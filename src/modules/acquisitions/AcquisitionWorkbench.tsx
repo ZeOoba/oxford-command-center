@@ -6,13 +6,13 @@
 // un-RCT-backed or unratified result is never mistaken for a live verdict. `scoreFn` is injectable for
 // tests (no network). Inputs are client-state only in v1 (server-side persistence is a later increment).
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import type { AcquisitionScore } from '@contracts/acquisition';
+import type { AcquisitionInput, AcquisitionScore } from '@contracts/acquisition';
 import type { Deal } from '@contracts/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import {
   FIELD_GROUPS, type FieldSpec, type FormState,
-  buildInput, dealToForm, isEngineUnavailable, scoreDealRequest,
+  buildInput, dealToForm, inputToForm, isEngineUnavailable, saveDealInput, scoreDealRequest,
 } from './acquisition-score';
 
 const VERDICT_TONE: Record<string, BadgeTone> = { PURSUE: 'green', WATCH: 'amber', PASS: 'neutral', KILLED: 'red' };
@@ -23,19 +23,32 @@ const inputStyle = { background: 'var(--surface-overlay)', border: '1px solid va
 
 export function AcquisitionWorkbench({
   deal = null,
+  savedInput = null,
   scoreFn = scoreDealRequest,
+  saveFn = saveDealInput,
 }: {
   deal?: Deal | null;
+  savedInput?: AcquisitionInput | null;
   scoreFn?: (input: Record<string, unknown>) => Promise<AcquisitionScore>;
+  saveFn?: (input: Record<string, unknown>) => Promise<boolean>;
 }) {
   const dealId = deal?.id ?? 'workbench';
-  const [form, setForm] = useState<FormState>(() => (deal ? dealToForm(deal) : {}));
+  const [form, setForm] = useState<FormState>(() => (savedInput ? inputToForm(savedInput) : deal ? dealToForm(deal) : {}));
   const [score, setScore] = useState<AcquisitionScore | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'err'>('idle');
   const reqId = useRef(0);
+  const loadedFor = useRef<string | null>(deal?.id ?? null);
 
-  useEffect(() => { setForm(deal ? dealToForm(deal) : {}); }, [deal]);
+  // Re-initialize the form only when the SELECTED DEAL changes (not on every snapshot refetch), so a
+  // background refresh never clobbers in-progress edits. A saved deal reloads its persisted inputs.
+  useEffect(() => {
+    const id = deal?.id ?? null;
+    if (loadedFor.current === id) return;
+    loadedFor.current = id;
+    setForm(savedInput ? inputToForm(savedInput) : deal ? dealToForm(deal) : {});
+  }, [deal, savedInput]);
 
   const runScore = useCallback(async (f: FormState) => {
     const id = ++reqId.current;
@@ -58,12 +71,36 @@ export function AcquisitionWorkbench({
     return () => clearTimeout(t);
   }, [form, runScore]);
 
-  const set = (key: string, value: string) => setForm((f) => ({ ...f, [key]: value }));
+  const onSave = useCallback(async () => {
+    if (!deal) return; // only a real pipeline deal can persist (the route 404s on a blank/unknown deal)
+    setSaveState('saving');
+    setSaveState((await saveFn(buildInput(form, dealId))) ? 'ok' : 'err');
+  }, [deal, saveFn, form, dealId]);
+
+  const set = (key: string, value: string) => { setForm((f) => ({ ...f, [key]: value })); setSaveState('idle'); };
 
   return (
     <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_minmax(320px,420px)]">
       <Card>
-        <CardHeader title="Underwriting Inputs" trailing={<Badge tone="neutral">{deal ? deal.name : 'blank deal'}</Badge>} />
+        <CardHeader
+          title="Underwriting Inputs"
+          trailing={
+            <div className="flex items-center gap-2">
+              {deal && (
+                <button
+                  type="button"
+                  onClick={() => void onSave()}
+                  disabled={saveState === 'saving'}
+                  className="rounded-[var(--radius-sm)] px-2 py-1 text-2xs font-semibold"
+                  style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--accent)' }}
+                >
+                  {saveState === 'saving' ? 'Saving…' : saveState === 'ok' ? 'Saved ✓' : saveState === 'err' ? 'Save failed' : 'Save'}
+                </button>
+              )}
+              <Badge tone="neutral">{deal ? deal.name : 'blank deal'}</Badge>
+            </div>
+          }
+        />
         <div className="flex flex-col gap-4 p-3">
           {FIELD_GROUPS.map((group) => (
             <div key={group.title}>

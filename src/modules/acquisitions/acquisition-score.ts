@@ -4,7 +4,7 @@
 // /api/warehouse/acquisition/score and returns the deterministic AcquisitionScore. Pure helpers
 // (field model, prefill, input assembly) are unit-testable; the fetch mirrors hooks.ts's
 // unavailability semantics (503 / non-JSON mirror → typed AcquisitionEngineUnavailable).
-import type { AcquisitionScore } from '@contracts/acquisition';
+import type { AcquisitionInput, AcquisitionScore } from '@contracts/acquisition';
 import type { Deal } from '@contracts/index';
 
 export class AcquisitionEngineUnavailable extends Error {
@@ -157,4 +157,44 @@ export function buildInput(form: FormState, dealId: string): Record<string, unkn
   }
   if (Object.keys(ddKnown).length > 0) out.ddKnown = ddKnown;
   return out;
+}
+
+/** Persist a deal's underwriting inputs to the overlay (POST /api/actions/acquisition-input). Returns
+ *  ok; a 404 (unknown/blank deal) or an offline server resolves to false rather than throwing. */
+export async function saveDealInput(input: Record<string, unknown>): Promise<boolean> {
+  try {
+    const res = await fetch('/api/actions/acquisition-input', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input),
+    });
+    if (!res.ok) return false;
+    const body = (await res.json()) as { ok?: boolean };
+    return body.ok === true;
+  } catch {
+    return false;
+  }
+}
+
+/** Reverse of buildInput: a saved AcquisitionInput → editable form strings (so a persisted deal reloads). */
+export function inputToForm(input: AcquisitionInput): FormState {
+  const f: FormState = {};
+  const rec = input as unknown as Record<string, unknown>;
+  const dd = (input.ddKnown ?? {}) as Record<string, boolean | undefined>;
+  for (const group of FIELD_GROUPS) {
+    for (const spec of group.fields) {
+      if (spec.kind === 'ddbool') {
+        if (dd[spec.key.slice(3)] === true) f[spec.key] = 'true';
+        continue;
+      }
+      const v = rec[spec.key];
+      if (v === null || v === undefined) continue;
+      switch (spec.kind) {
+        case 'usd': case 'num': case 'numselect': case 'select': f[spec.key] = String(v); break;
+        case 'pct': f[spec.key] = String(+(Number(v) * 100).toFixed(4)); break;
+        case 'frac01': f[spec.key] = String(+(Number(v) * 100).toFixed(2)); break;
+        case 'date': f[spec.key] = String(v).slice(0, 10); break;
+        case 'tribool': f[spec.key] = v === true ? 'yes' : v === false ? 'no' : ''; break;
+      }
+    }
+  }
+  return f;
 }
