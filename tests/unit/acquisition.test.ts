@@ -235,3 +235,27 @@ describe('ratified recalibration — RCT, loading, provenance (Gabriel 2026-06-1
     expect(replacementCostTotal(42000, RCT)).toBe(42000 * 137.5);
   });
 });
+
+describe('confirmatory refute fixes — RCT fail-closed', () => {
+  it('ratified ruleset but NO RCT supplied cannot reach a live PURSUE (Basis indeterminate)', () => {
+    const s = scoreAcquisition(strongDeal(), ratified, { now: NOW }); // no opts.rct
+    expect(s.verdict).not.toBe('PURSUE');
+    expect(s.floors.find((f) => f.id === 'basis')?.actual).toBeNull();
+    expect(s.dataQuality.some((d) => d.field === 'replacementCost')).toBe(true);
+  });
+  it('an unratified (proposed) RCT cannot drive a live verdict — advisoryOnly + no PURSUE', () => {
+    const proposedRct = ReplacementCostTable.parse({ ...rctJson, ratification: 'proposed' });
+    const s = scoreAcquisition(strongDeal(), ratified, { now: NOW, rct: proposedRct });
+    expect(s.advisoryOnly).toBe(true);
+    expect(s.verdict).not.toBe('PURSUE');
+  });
+  it('non-positive all-in basis is indeterminate, not a free 100% discount', () => {
+    const s = score(strongDeal({ allInBasis: 0 }));
+    expect(s.floors.find((f) => f.id === 'basis')?.actual).toBeNull();
+    expect(s.verdict).not.toBe('PURSUE');
+  });
+  it('flags the reverse door contradiction (count > 0 but presence flag false)', () => {
+    const s = score(strongDeal({ dockCount: 5, driveInCount: 5, hasDock: false, hasDriveIn: false }));
+    expect(s.dataQuality.some((d) => d.field === 'doors')).toBe(true);
+  });
+});

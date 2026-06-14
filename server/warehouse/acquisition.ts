@@ -179,8 +179,9 @@ export function scoreAcquisition(
   // 0 but a presence flag says true. The gate + gateIndeterminate both consume this. (Refute fix.)
   const dc = input.dockCount;
   const dic = input.driveInCount;
-  if ((dc === 0 && input.hasDock === true) || (dic === 0 && input.hasDriveIn === true)) {
-    flag('doors', 'dock/drive-in counts contradict presence flags (count 0 but flag true)');
+  if ((dc === 0 && input.hasDock === true) || (dic === 0 && input.hasDriveIn === true) ||
+      (dc !== null && dc > 0 && input.hasDock === false) || (dic !== null && dic > 0 && input.hasDriveIn === false)) {
+    flag('doors', 'dock/drive-in counts contradict presence flags');
   }
   const accessConfirmedGood = (dc !== null && dic !== null) ? (dc > 0 || dic > 0) : (input.hasDock === true || input.hasDriveIn === true);
   const accessConfirmedKill = (dc !== null && dic !== null) ? (dc === 0 && dic === 0) : (input.hasDock === false && input.hasDriveIn === false);
@@ -281,32 +282,34 @@ export function scoreAcquisition(
     : input.yearBuilt >= ruleset.floors.basisVintageCutoffYear
       ? ruleset.floors.basisDiscountMinPostMillennium
       : ruleset.floors.basisDiscountMinPreMillennium;
-  // Replacement cost (the Basis divisor) is the ratified RCT × gross SF (Q5) when an RCT is supplied — NOT a
-  // free caller scalar. A caller replacementCostTotal is an APPRAISAL OVERRIDE that is reconciled: the
-  // RCT-derived figure governs and a >10% divergence is flagged. With no RCT (advisory/legacy) the caller
-  // scalar is used but flagged not-RCT-backed, so a 'ratified' verdict cannot rest on an unbacked number. (Refute fix.)
-  const rct = opts.rct ?? null;
+  // Replacement cost (the Basis divisor, Q5) is derived ONLY from a RATIFIED + SIGNED RCT × gross SF. A
+  // caller replacementCostTotal is an appraisal override used solely for reconciliation (>10% divergence is
+  // flagged) — it can NEVER be a standalone divisor. With no usable ratified RCT the Basis is indeterminate
+  // (floorIndeterminate ⇒ caps at T2): a live PURSUE can never rest on an unbacked or unratified replacement
+  // cost. (Confirmatory refute fix: close the no-RCT and unratified-RCT branches.)
+  const suppliedRct = opts.rct ?? null;
+  const rctUsable = suppliedRct !== null
+    && suppliedRct.ratification === 'ratified'
+    && suppliedRct.ratifiedBy !== null
+    && suppliedRct.ratifiedDate !== null;
+  const validRct = rctUsable ? suppliedRct : null;
   const grossSf = input.totalSf ?? input.maxBuildingSf;
   const rcBand = input.replacementCostBand ?? 'mid';
-  const rctDerived = rct !== null && grossSf !== null && grossSf > 0 ? grossSf * rct.psf[rcBand] : null;
-  let replacementCost: number | null;
-  if (rctDerived !== null) {
-    replacementCost = rctDerived;
-    if (input.replacementCostTotal !== null && input.replacementCostTotal > 0) {
-      const div = Math.abs(input.replacementCostTotal - rctDerived) / rctDerived;
-      if (div > 0.10) flag('replacementCostTotal', `caller replacement cost ${Math.round(input.replacementCostTotal)} diverges ${(div * 100).toFixed(0)}% from ratified RCT ${Math.round(rctDerived)} — using the ratified RCT`);
-    }
-  } else if (rct !== null) {
-    replacementCost = null;
+  const replacementCost = validRct !== null && grossSf !== null && grossSf > 0 ? grossSf * validRct.psf[rcBand] : null;
+  if (suppliedRct === null) {
+    flag('replacementCost', 'no ratified RCT supplied to the engine — Basis floor/score indeterminate');
+  } else if (!rctUsable) {
+    flag('replacementCost', `supplied RCT ${suppliedRct.rctVersion} is not ratified/signed — not used; Basis indeterminate`);
+  } else if (replacementCost === null) {
     flag('replacementCost', 'gross SF unknown — cannot derive replacement cost from the ratified RCT');
-  } else {
-    replacementCost = input.replacementCostTotal;
-    if (ruleset.ratification === 'ratified' && replacementCost !== null) flag('replacementCost', 'replacement cost not RCT-backed (no ratified RCT supplied to the engine)');
+  } else if (input.replacementCostTotal !== null && input.replacementCostTotal > 0) {
+    const div = Math.abs(input.replacementCostTotal - replacementCost) / replacementCost;
+    if (div > 0.10) flag('replacementCostTotal', `caller replacement cost ${Math.round(input.replacementCostTotal)} diverges ${(div * 100).toFixed(0)}% from ratified RCT ${Math.round(replacementCost)} — using the ratified RCT`);
   }
-  const discount = input.allInBasis !== null && replacementCost !== null && replacementCost > 0
+  const discount = input.allInBasis !== null && input.allInBasis > 0 && replacementCost !== null && replacementCost > 0
     ? 1 - input.allInBasis / replacementCost
     : null;
-  if (discount === null) { floorIndeterminate = true; flag('basis', 'all-in basis or replacement cost missing — basis floor indeterminate'); }
+  if (discount === null) { floorIndeterminate = true; flag('basis', 'basis indeterminate (all-in basis ≤ 0 / missing, or replacement cost not RCT-derivable)'); }
   floors.push({ id: 'basis', passed: discount !== null && discount >= vintageFloor, actual: discount, required: vintageFloor, detail: discount === null ? 'inputs missing' : `${(discount * 100).toFixed(1)}% vs ${(vintageFloor * 100).toFixed(0)}% required` });
   // yield floor — stabilized YoC
   if (input.stabilizedYoc === null) { floorIndeterminate = true; flag('stabilizedYoc', 'stabilized YoC missing — yield floor indeterminate'); }
@@ -474,8 +477,13 @@ export function scoreAcquisition(
   // An unconfirmed Stage-0 gate degrades confidence — the screen cannot be called 'confirmed' on unknown kills.
   const subConfs = subScores.map((s) => s.confidence);
   const confidence = gateIndeterminate ? weakest(subConfs.concat('estimated')) : weakest(subConfs);
-  const advisoryOnly = ruleset.ratification !== 'ratified';
-  if (advisoryOnly) reasons.push(`ADVISORY ONLY — ruleset '${ruleset.ratification}', not ratified; not a capital-allocation verdict.`);
+  // Advisory when the ruleset isn't ratified OR a supplied RCT is not ratified/signed — a non-ratified RCT
+  // must never drive a live capital-allocation verdict. (Confirmatory refute fix.)
+  const advisoryOnly = ruleset.ratification !== 'ratified' || (suppliedRct !== null && !rctUsable);
+  if (advisoryOnly) {
+    const why = ruleset.ratification !== 'ratified' ? `ruleset '${ruleset.ratification}'` : 'RCT not ratified/signed';
+    reasons.push(`ADVISORY ONLY — ${why}; not a capital-allocation verdict.`);
+  }
 
   const result: AcquisitionScore = {
     schemaVersion: '1.0.0',
