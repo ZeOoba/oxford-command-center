@@ -2,10 +2,11 @@
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { openWarehouse } from '../server/warehouse/db';
+import type { WarehouseDb } from '../server/warehouse/db';
 import { ingestFile } from '../server/warehouse/ingest';
 import { seedMappingsFromFile } from '../server/warehouse/mapping';
 import { seedPropertyMaster } from '../server/warehouse/property-master';
-import { NOI_INCOME_CLASSES } from '../src/contracts/warehouse';
+import { noiMatrix } from '../server/warehouse/queries';
 
 const FINANCIALS_DIR = process.env.FINANCIALS_DIR
   ?? 'C:/Users/Owner/OneDrive - Oxford Capital Partners (1)/Property Financials';
@@ -37,18 +38,28 @@ async function main(): Promise<void> {
   }
   console.log('\nSummary:', JSON.stringify(counts));
 
-  // NOI matrix: income classes from the contract (NOI_INCOME_CLASSES); opex is the single fixed
-  // negative pivot. Bound as parameters so this list can never drift from queries.ts / NOI_CLASSES.
-  const incomePlaceholders = NOI_INCOME_CLASSES.map(() => '?').join(',');
-  const noi = db.prepare(`
-    SELECT property_id, period,
-      ROUND(SUM(CASE WHEN classification IN (${incomePlaceholders}) THEN amount
-                     WHEN classification='opex' THEN -amount ELSE 0 END), 2) AS noi
-    FROM ledger_entries WHERE is_active = 1
-    GROUP BY property_id, period ORDER BY property_id, period
-  `).all(...NOI_INCOME_CLASSES);
-  console.table(noi);
+  console.table(noiPrintRows(db));
   db.close();
 }
 
-main().catch((e: unknown) => { console.error(e); process.exit(1); });
+/**
+ * NOI rows for the operator's `console.table`, derived from the COHERENT noiMatrix (queries.ts →
+ * propertyPeriodMetrics → selectCoherentBatch). When a full-year (period_end 12-31) and a same-year
+ * YTD (06-30) coexist they share ledger period 'YYYY' but differ on period_end, so neither supersedes
+ * the other and both stay is_active=1; a raw GROUP BY over all active rows SUMMED both batches (the
+ * ~2x double-count this CLI used to print). Going through noiMatrix resolves the group to ONE coherent
+ * batch — the full year — so this CLI now prints exactly the figure warehouse-verify.ts and the /noi
+ * API report (the doc comments in queries.ts / metrics.ts that say "the backfill CLI prints" are true).
+ * Shape stays { property_id, period, noi } so the printed table is byte-for-byte unchanged for the
+ * single-batch (non-coexisting) case the live ledger normally holds.
+ */
+export function noiPrintRows(db: WarehouseDb): Array<{ property_id: string; period: string; noi: number }> {
+  return noiMatrix(db).map((c) => ({ property_id: c.propertyId, period: c.period, noi: c.noi }));
+}
+
+// Run the live backfill ONLY when invoked as the entry script — never on import (a test importing
+// noiPrintRows must not trigger a real ingest into the live warehouse). Windows-path-safe match,
+// matching scripts/safe-worktree.ts.
+if (process.argv[1]?.replace(/\\/g, '/').endsWith('scripts/warehouse-backfill.ts')) {
+  main().catch((e: unknown) => { console.error(e); process.exit(1); });
+}

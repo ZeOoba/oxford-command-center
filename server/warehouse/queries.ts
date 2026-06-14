@@ -1,8 +1,8 @@
 // server/warehouse/queries.ts — pure read queries over the Phase A warehouse.
 // Parameterized SQL only; camel-case mapping by hand (`AS` aliases). No writes here —
 // mutations live in actions.ts.
-import { NOI_INCOME_CLASSES } from '../../src/contracts/warehouse';
 import type { WarehouseDb } from './db';
+import { propertyPeriodMetrics } from './metrics';
 
 // NOI income classes come from the contract (single source of truth — never re-list these as SQL
 // string literals, which silently drift from NOI_CLASSES). NOI = Σ income classes − opex.
@@ -111,19 +111,23 @@ export function listIssues(db: WarehouseDb, status = 'open'): WarehouseIssue[] {
 }
 
 /**
- * NOI by (property, period) over ACTIVE ledger rows only — the same NOI definition the
- * backfill CLI prints (revenue + recovery + other-income − opex; everything else excluded).
+ * NOI by (property, period) — the same 100%-basis NOI definition the backfill CLI prints
+ * (revenue + recovery + other-income − opex; everything else excluded).
+ *
+ * Derived from propertyPeriodMetrics so it inherits selectCoherentBatch: a (property, period)
+ * group that holds rows from MORE THAN ONE active import (a full-year period_end 12-31 and a
+ * same-year YTD 06-30 share ledger period 'YYYY' but differ on period_end ⇒ neither supersedes
+ * the other and both stay active) resolves to ONE coherent batch — the full year — instead of
+ * SUMMING both (the ~2x double-count this used to report from a raw GROUP BY over all active
+ * rows). NOI basis = PeriodMetrics.noi (100%-basis, revenue − opex), NOT oxfordNoi (ownership-
+ * adjusted), so the /noi API + UI consumers are unchanged. ROUND-to-2dp preserves the prior
+ * SQL output shape exactly. Ordering is already (propertyId, period) ascending from metrics.
  */
 export function noiMatrix(db: WarehouseDb): NoiCell[] {
-  const incomePlaceholders = NOI_INCOME_CLASSES.map(() => '?').join(',');
-  return db.prepare(`
-    SELECT l.property_id AS propertyId, p.name AS propertyName, l.period,
-           ROUND(SUM(CASE WHEN l.classification IN (${incomePlaceholders}) THEN l.amount
-                          WHEN l.classification = 'opex' THEN -l.amount ELSE 0 END), 2) AS noi
-    FROM ledger_entries l
-    LEFT JOIN property_master p ON p.id = l.property_id
-    WHERE l.is_active = 1
-    GROUP BY l.property_id, l.period
-    ORDER BY l.property_id, l.period
-  `).all(...NOI_INCOME_CLASSES) as NoiCell[];
+  return propertyPeriodMetrics(db).map((m) => ({
+    propertyId: m.propertyId,
+    propertyName: m.propertyName,
+    period: m.period,
+    noi: Math.round(m.noi * 100) / 100,
+  }));
 }
