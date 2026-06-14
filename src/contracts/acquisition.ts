@@ -306,6 +306,9 @@ export const AcquisitionScore = z.object({
   gatesPassed: z.boolean(),
   floors: z.array(FloorResult),
   floorsPassed: z.boolean(),
+  /** true when ANY hard floor input is null (basis / yield / IRR) so the floor could not be evaluated.
+   *  Surfaced independently of cappedAtT2, which only flips on a T1→T2 band demotion (audit B5). */
+  floorIndeterminate: z.boolean(),
   ddCriticalUnresolved: z.array(z.string()), // non-empty ⇒ cap at T2
 
   subScores: z.array(SubScoreResult),     // market / asset / basis / risk
