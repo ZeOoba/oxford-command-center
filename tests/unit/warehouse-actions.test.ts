@@ -39,6 +39,39 @@ const SEED = [
   { account: 'Distribution to Owner', code: '7402', normalized_category: 'Distributions', classification: 'excluded' },
 ];
 
+// Dual-side utility seed: the real PFI seed carries "Gas" on BOTH the income side
+// (tenant billback → CAM Recoveries/recovery) and the expense side (utility → Utilities/opex).
+// Both survive seeding (deduped per account-key+side). accountKey() strips the GL prefix, so
+// both seed under raw_account_key='gas'.
+const DUAL_SIDE_SEED = [
+  { account: 'Rent', code: '5064', normalized_category: 'Rental Revenue', classification: 'revenue' },
+  // income-side Gas (tenant billback recovery) — an NOI-income contributor
+  { account: 'Gas', code: '5034', normalized_category: 'CAM Recoveries', classification: 'recovery' },
+  // expense-side Gas (utility opex) — an NOI-opex (subtracted) contributor
+  { account: 'Gas', code: '6675', normalized_category: 'Utilities', classification: 'opex' },
+];
+
+// Fixture with an EXPENSE-section Gas row (utility opex). The income-side Gas mapping also
+// exists in the seed, so on approve (no section hint) the expense row could re-resolve to the
+// income/recovery mapping — flipping its NOI sign contribution. propertyLine varies the bytes.
+async function writeDualSideFixture(path: string, propertyLine = 'Property: 1100 Rarig Ave'): Promise<void> {
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Sheet1');
+  const rows: Array<[string | null, string | null, string | null, number | null]> = [
+    ['Profit & Loss', null, null, null],
+    [propertyLine, null, null, null],
+    ['01/01/25 - 12/31/25  (cash basis)', null, null, null],
+    [null, 'INCOME', null, null],
+    [null, null, '     5002 RENTAL INCOME', null],
+    [null, null, '          5064 Rent', 100000],
+    [null, 'EXPENSE', null, null],
+    [null, null, '     6600 UTILITIES', null],
+    [null, null, '          6675 Gas', 8000],
+  ];
+  for (const r of rows) ws.addRow(r);
+  await wb.xlsx.writeFile(path);
+}
+
 /** Seed only 'Rent' → HVAC Repair + Distribution to Owner come back unmapped → pending-review, rows inactive. */
 async function pendingWarehouse(): Promise<{ db: WarehouseDb; dir: string; importId: number }> {
   const dir = mkdtempSync(join(tmpdir(), 'wha-'));
@@ -192,6 +225,81 @@ describe('warehouse actions', () => {
       "SELECT classification FROM ledger_entries WHERE is_active=1 AND property_id='1100-rarig-ave-columbus-oh' AND raw_account='Rent'",
     ).get() as { classification: string };
     expect(rent.classification).toBe('revenue');
+  });
+
+  it('(h) approve preserves the NOI sign of a dual-side account: expense Gas stays opex, never flips to income/recovery', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wha-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, DUAL_SIDE_SEED); // both income-side (recovery) and expense-side (opex) Gas
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeDualSideFixture(file);
+
+    // high threshold forces the (fully-mapped) import into the review queue so approve runs
+    const r = await ingestFile(db, file, {
+      rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z', autoCommitThreshold: 0.99,
+    });
+    expect(r.status).toBe('pending-review');
+
+    // ingest resolved the expense Gas via its source section → expense-side opex
+    const beforeId = db.prepare("SELECT id FROM ledger_entries WHERE raw_account='Gas' AND import_id=?")
+      .get(r.importId!) as { id: number };
+    const before = db.prepare('SELECT classification, normalized_category, amount FROM ledger_entries WHERE id=?')
+      .get(beforeId.id) as { classification: string; normalized_category: string; amount: number };
+    expect(before).toMatchObject({ classification: 'opex', normalized_category: 'Utilities', amount: 8000 });
+
+    const ok = approveImport(db, r.importId!);
+    expect(ok.ok).toBe(true);
+
+    // After approve the expense Gas row MUST still be opex — its NOI contribution is still a
+    // subtraction, not an addition. A re-resolve to the income/recovery mapping would flip the
+    // sign (recovery is an NOI income class) and silently overstate NOI.
+    const after = db.prepare("SELECT classification, normalized_category FROM ledger_entries WHERE id=?")
+      .get(beforeId.id) as { classification: string; normalized_category: string };
+    expect(after.classification).toBe('opex'); // NOT 'recovery'
+    expect(after.normalized_category).toBe('Utilities'); // NOT 'CAM Recoveries'
+  });
+
+  it('(i) approve honors a CROSS-SIDE manual reviewer override: expense-ingested Gas re-resolves to the manual income/recovery mapping', async () => {
+    // Regression guard for the H3-fix side-effect: the sideHint constraint must bind only the
+    // dual-side SEED tiebreak, never a deliberate human ruling. A reviewer who reclassifies an
+    // expense-ingested Gas as a tenant billback (recovery, income side) via addMappingOverride
+    // is exercising approve's documented purpose ("manual overrides added since ingest take
+    // effect"). The override must WIN even though it sits on the opposite side from the row's
+    // ingest-time classification — dropping it silently committed the stale opex classification.
+    const dir = mkdtempSync(join(tmpdir(), 'wha-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, DUAL_SIDE_SEED); // both income-side (recovery) and expense-side (opex) Gas
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeDualSideFixture(file);
+
+    const r = await ingestFile(db, file, {
+      rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z', autoCommitThreshold: 0.99,
+    });
+    expect(r.status).toBe('pending-review');
+
+    const gasId = (db.prepare("SELECT id FROM ledger_entries WHERE raw_account='Gas' AND import_id=?")
+      .get(r.importId!) as { id: number }).id;
+    // ingest pinned it expense-side (opex/Utilities) via the source EXPENSE section
+    expect(db.prepare('SELECT classification, normalized_category FROM ledger_entries WHERE id=?').get(gasId))
+      .toMatchObject({ classification: 'opex', normalized_category: 'Utilities' });
+
+    // Reviewer reclassifies this Gas as an income-side tenant billback recovery — an explicit
+    // cross-side ruling. Pending rows are is_active=0 so addMappingOverride does NOT touch them;
+    // the override only takes effect through approve's re-resolution.
+    const ov = addMappingOverride(db, { account: 'Gas', normalizedCategory: 'CAM Recoveries', classification: 'recovery' });
+    expect(ov.rederived).toBe(0); // pending row is inactive — nothing re-derived in place
+
+    const ok = approveImport(db, r.importId!);
+    expect(ok.ok).toBe(true); // must commit — the account IS mapped (manually)
+
+    // The reviewer's intent is preserved: the row commits as the manual income/recovery mapping.
+    const after = db.prepare('SELECT classification, normalized_category, mapping_id FROM ledger_entries WHERE id=?')
+      .get(gasId) as { classification: string; normalized_category: string; mapping_id: number };
+    expect(after.classification).toBe('recovery'); // NOT the stale 'opex'
+    expect(after.normalized_category).toBe('CAM Recoveries'); // NOT 'Utilities'
+    expect(after.mapping_id).toBe(ov.mappingId); // bound to the manual override, not the seed
   });
 
   it('(g) approve refuses an empty (zero-row) import — never commits a period with no ledger rows', async () => {

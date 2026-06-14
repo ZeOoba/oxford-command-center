@@ -5,7 +5,7 @@
 // Phase A ingest pipeline (ingest.ts) is NOT modified — the supersede SQL below mirrors
 // it deliberately (kept in sync by hand to avoid touching the committed pipeline here).
 import type { WarehouseDb } from './db';
-import { accountKey, resolveMapping } from './mapping';
+import { accountKey, classificationSide, resolveMapping } from './mapping';
 import { computeInputsVersion, logVerdicts, verdictsFromAnomalies, verdictsFromScores } from './calibration';
 import { detectAnomalies } from './anomalies';
 import { propertyPeriodMetrics } from './metrics';
@@ -34,9 +34,23 @@ interface BatchRow {
  * still unmapped. On success the rows are activated, prior committed versions of the same
  * logical period are superseded, and the batch flips to 'committed'.
  *
- * Re-resolution runs WITHOUT a section hint — the ledger does not store the source section,
- * and manual overrides are side-agnostic rulings, so this is correct. Amounts are never
- * touched (sign-normalization already applied at ingest stays intact).
+ * Re-resolution of SEED/learned mappings is CONSTRAINED to each row's EXISTING classification side
+ * (derived via classificationSide). The ledger does not store the source section, but it DOES store
+ * the row's classification — and that pins which side of the statement the row belongs to. A
+ * dual-side account (the real PFI seed carries "Gas"/"Electric"/"Water" as BOTH a tenant-billback
+ * recovery on the income side AND a utility opex on the expense side) would otherwise re-resolve
+ * via an UNDEFINED tiebreak (rows[0] of two tied global seed rows) and could flip an expense row
+ * to the income/recovery mapping — silently inverting its NOI sign contribution (income adds, opex
+ * subtracts). Passing the existing side guards against that for single- and dual-side SEED rows.
+ *
+ * A MANUAL override is exempt from the side guard: it is an explicit human ruling, and approve's
+ * contract is to apply it — INCLUDING a deliberate cross-side reclassification (e.g. a reviewer who
+ * declares an expense-ingested Gas a tenant billback → income/recovery). resolveMapping lets a
+ * manual mapping win regardless of sideHint, so the seed-tiebreak guard binds only seed/learned
+ * rows. Without that exemption a cross-side manual override would be silently dropped — the row
+ * either committing its stale classification (dual-side seed still present) or reported as a dead-end
+ * 'unmapped' (no same-side seed) — defeating approve's stated purpose with no diagnostic.
+ * Amounts are never touched (sign-normalization already applied at ingest stays intact).
  */
 export function approveImport(db: WarehouseDb, importId: number, opts: ApproveOptions = {}): ApproveResult {
   const batch = db
@@ -48,13 +62,24 @@ export function approveImport(db: WarehouseDb, importId: number, opts: ApproveOp
   }
 
   const rows = db
-    .prepare('SELECT id, raw_account FROM ledger_entries WHERE import_id=?')
-    .all(importId) as Array<{ id: number; raw_account: string }>;
+    .prepare('SELECT id, raw_account, classification FROM ledger_entries WHERE import_id=?')
+    .all(importId) as Array<{ id: number; raw_account: string; classification: string }>;
   if (rows.length === 0) return { ok: false, unmapped: [], error: 'import has no ledger rows' };
 
   const resolved = rows.map((r) => ({
     id: r.id,
-    m: resolveMapping(db, r.raw_account, batch.property_id ?? undefined),
+    // Constrain re-resolution of SEED rows to the row's existing classification side so a dual-side
+    // account can only re-resolve within its original side (no NOI sign flip). A MANUAL override
+    // still wins regardless of side (resolveMapping exempts match_kind='manual' from the sideHint
+    // guard) — a reviewer's explicit cross-side reclassification is honored. 'either'-side classes
+    // (e.g. 'excluded'/unknown) pass no constraint — their resolution is unchanged.
+    m: resolveMapping(
+      db,
+      r.raw_account,
+      batch.property_id ?? undefined,
+      undefined,
+      classificationSide(r.classification),
+    ),
     rawAccount: r.raw_account,
   }));
   const unmapped = resolved.filter((r) => r.m.matchKind === 'unmapped').map((r) => r.rawAccount);
