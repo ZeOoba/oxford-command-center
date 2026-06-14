@@ -22,6 +22,7 @@
     "warehouse:backfill": "tsx scripts/warehouse-backfill.ts",
     "warehouse:verify": "tsx scripts/warehouse-verify.ts",
     "warehouse:drift": "tsx scripts/warehouse-live-drift-check.ts",
+    "worktree": "tsx scripts/safe-worktree.ts",
     "check:bundle": "tsx scripts/check-bundle.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p functions/tsconfig.json",
     "lint": "eslint . --max-warnings 0",
