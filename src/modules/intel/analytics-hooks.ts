@@ -22,6 +22,13 @@ import {
 import type {
   NumericMetricKey, GrowthResponse, BenchmarksResponse,
 } from '@contracts/warehouse';
+import { LeaseRunProjectionEnvelope, LeaseRunRollupResponse } from '@contracts/lease-run';
+
+// Lease-run contract types, re-exported for the LeaseRunView consumers.
+export type {
+  LeaseRunProjectionEnvelope, LeaseRunRollupResponse, LeaseRunPeriod, LeaseRunSummary,
+  LeaseRunAssumptions, MarkToMarket, RentStatus,
+} from '@contracts/lease-run';
 
 // Re-export the contract types under the names the intel module has always imported from here,
 // so no consumer import has to change. `NoiDecomposition` is the drivers ROUTE envelope (the engine
@@ -55,6 +62,8 @@ export const ANALYTICS_KEYS = {
     ['warehouse', 'analytics', 'benchmarks', period, metric] as const,
   drivers: (propertyId: string, from: string, to: string) =>
     ['warehouse', 'analytics', 'drivers', propertyId, from, to] as const,
+  leaseRun: (propertyId: string) => ['warehouse', 'analytics', 'lease-run', propertyId] as const,
+  leaseRunRollup: ['warehouse', 'analytics', 'lease-run'] as const,
 };
 
 // ---------------------------------------------------------------------------
@@ -132,6 +141,30 @@ export function useDrivers(propertyId: string | null, from: string | null, to: s
         DriversResponseSchema,
       ),
     enabled,
+    ...QUERY_OPTS,
+  });
+}
+
+/** Forward lease-run projection + mark-to-market for one property. Enabled only with a propertyId.
+ *  A property with no lease terms returns a typed EMPTY envelope (isEmpty=true) — never an error. */
+export function useLeaseRun(propertyId: string | null) {
+  return useQuery({
+    queryKey: ANALYTICS_KEYS.leaseRun(propertyId ?? ''),
+    queryFn: () =>
+      fetchParsed(
+        `/api/warehouse/analytics/lease-run/${encodeURIComponent(propertyId ?? '')}`,
+        LeaseRunProjectionEnvelope,
+      ),
+    enabled: propertyId !== null && propertyId !== '',
+    ...QUERY_OPTS,
+  });
+}
+
+/** Ownership-level lease-run rollup: every property with lease terms + portfolio forward totals. */
+export function useLeaseRunRollup() {
+  return useQuery({
+    queryKey: ANALYTICS_KEYS.leaseRunRollup,
+    queryFn: () => fetchParsed('/api/warehouse/analytics/lease-run', LeaseRunRollupResponse),
     ...QUERY_OPTS,
   });
 }
