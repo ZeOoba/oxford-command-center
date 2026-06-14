@@ -116,6 +116,11 @@ export function rankProperties(metrics: PeriodMetrics[], period: string, key: Nu
   const rows: Array<{ propertyId: string; value: number }> = [];
   for (const m of metrics) {
     if (m.period !== period) continue;
+    // Mirror metricValues/cohortBases: a SF-less non-operating entity (e.g. a solar PPA royalty) is
+    // not comparable real estate and must not be ranked on dollar/ratio keys — otherwise it appears
+    // as a row, draws a quartile from cutoffs benchmarkMetric computed WITHOUT it, and shifts every
+    // real property's rank (audit H7). Per-SF keys already self-exclude via a null value.
+    if (!isOperatingRealEstate(m)) continue;
     const v = m[key];
     if (typeof v === 'number' && Number.isFinite(v)) rows.push({ propertyId: m.propertyId, value: v });
   }
