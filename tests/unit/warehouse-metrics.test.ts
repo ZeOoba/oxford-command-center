@@ -218,4 +218,38 @@ describe('NOI codepath agreement (noiMatrix vs propertyPeriodMetrics)', () => {
       expect(c.noi).toBeCloseTo(m!.noi, 2);
     }
   });
+
+  it('noiMatrix returns the COHERENT (full-year) NOI when a same-year YTD coexists — not the doubled sum (H2)', async () => {
+    // Audit finding H2: noiMatrix() does a raw GROUP BY (property, period) over ALL active rows with
+    // NO selectCoherentBatch. A full-year (period_end 12-31) and a same-year YTD (06-30) share ledger
+    // period '2026' but differ on period_end ⇒ neither supersedes the other and BOTH stay active.
+    // The raw GROUP BY then SUMS both batches ⇒ ~2x NOI overstatement. propertyPeriodMetrics already
+    // resolves this via selectCoherentBatch (the full year wins); noiMatrix must agree, returning the
+    // SINGLE coherent full-year figure — never the sum.
+    const dir = mkdtempSync(join(tmpdir(), 'whagree-coexist-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const opts = { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' };
+
+    // Full-year 2026: rent 100k / repair 5k → NOI 95k.
+    const fy = join(dir, 'P&L 2026 -- 1100 Rarig.xlsx');
+    await writeFixture(fy, 'Property: 1100 Rarig Ave', '01/01/26 - 12/31/26  (cash basis)', 100000, 5000);
+    expect((await ingestFile(db, fy, opts)).status).toBe('committed');
+    // YTD 2026 (Jan–Jun): rent 40k / repair 2k → NOI 38k. Different period_end ⇒ both active.
+    const ytd = join(dir, 'P&L 2026 YTD -- 1100 Rarig.xlsx');
+    await writeFixture(ytd, 'Property: 1100 Rarig Ave', '01/01/26 - 06/30/26  (accrual basis)', 40000, 2000);
+    expect((await ingestFile(db, ytd, opts)).status).toBe('committed');
+
+    const id = '1100-rarig-ave-columbus-oh';
+    const cells2026 = noiMatrix(db).filter((c) => c.propertyId === id && c.period === '2026');
+    // EXACTLY ONE coherent cell for (rarig, 2026) — not two, not a merged sum.
+    expect(cells2026.length).toBe(1);
+    expect(cells2026[0]!.noi).toBe(95000); // full-year NOI — NOT 95000 + 38000 = 133000 (the double-count)
+
+    // And it must equal the coherent NOI propertyPeriodMetrics already reports (codepath agreement
+    // holds even on the coexistence case once noiMatrix is coherent-batch aware).
+    const m2026 = propertyPeriodMetrics(db).find((x) => x.propertyId === id && x.period === '2026')!;
+    expect(cells2026[0]!.noi).toBeCloseTo(m2026.noi, 2);
+  });
 });
