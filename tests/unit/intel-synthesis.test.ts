@@ -41,6 +41,7 @@ const score = (
   capitalAction,
   subScores: {},
   noiPerSfQuartile: q,
+  benchmarkCohortSize: 1,
   reasons: [`r-${id}`],
 });
 

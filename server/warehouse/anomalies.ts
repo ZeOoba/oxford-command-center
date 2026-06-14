@@ -6,25 +6,13 @@
 // move is: m = |move| / threshold; m ≥ critical-mult → critical, ≥ high → high,
 // ≥ moderate → moderate, else low. Thresholds/multiples live in INTEL_CONFIG, never here.
 import { INTEL_CONFIG, type AnomalySeverity } from './intel-config';
+import type { AnomalyFlag, AnomalyKind } from '../../src/contracts/warehouse';
 import type { PeriodMetrics } from './metrics';
 import { pctChange } from './growth';
 
-export type AnomalyKind =
-  | 'expense-growth'
-  | 'revenue-decline'
-  | 'noi-decline'
-  | 'noi-per-sf-decline'
-  | 'new-category'
-  | 'category-spike';
-
-export interface AnomalyFlag {
-  propertyId: string;
-  period: string; // the later period of the consecutive pair
-  kind: AnomalyKind;
-  severity: AnomalySeverity;
-  detail: string;
-  metricValue: number | null; // the signed move (growth %) or magnitude that triggered it
-}
+// AnomalyKind + AnomalyFlag are single-sourced in the contract (H6); re-export so existing
+// engine imports (`import type { AnomalyFlag, AnomalyKind } from './anomalies'`) keep working.
+export type { AnomalyFlag, AnomalyKind };
 
 // Categories watched for spikes (cost categories where a jump is materially diagnostic).
 const SPIKE_CATEGORIES = ['Taxes', 'Insurance', 'Repairs & Maintenance', 'Utilities'];

@@ -7,171 +7,37 @@
 // the consuming views degrade to the existing offline Card (pre-mortem #3). Patterns
 // mirror hooks.ts (staleTime 30s, retry 1).
 //
-// Response interfaces mirror the engine return types verified against source:
-//   scores.ts (PropertyScore), metrics.ts (PeriodMetrics), growth.ts (GrowthPoint,
-//   SinceAcquisition), drivers.ts (NoiDriver/NoiDecomposition), anomalies.ts (AnomalyFlag),
-//   benchmarks.ts (MetricBenchmark, PropertyRank, PmScorecard).
+// H6 read boundary: every response crosses a Zod schema in src/contracts/warehouse.ts
+// (the SAME schemas the server .parse()s before c.json). The engine-mirroring enums and
+// payload interfaces that used to be hand-redeclared here are GONE — the z.infer types are
+// imported from the contract and re-exported below under their historical names so the intel
+// views that import them (BenchmarksView, PropertyIntelView, synthesis, …) are unchanged.
 import { useQuery } from '@tanstack/react-query';
+import type { z } from 'zod';
 import { QUERY_OPTS, fetchJson } from './hooks';
-import type { CapitalAction } from '@contracts/warehouse'; // M4: single-sourced in contracts
+import {
+  MetricsResponseSchema, ScoresResponseSchema, GrowthResponseSchema, AnomaliesResponseSchema,
+  PmScorecardsResponseSchema, BenchmarksResponseSchema, DriversResponseSchema,
+} from '@contracts/warehouse';
+import type {
+  NumericMetricKey, GrowthResponse, BenchmarksResponse,
+} from '@contracts/warehouse';
 
-// ---------------------------------------------------------------------------
-// Engine-mirroring enums + response shapes (camelCase, as the routes serialize them).
-// ---------------------------------------------------------------------------
+// Re-export the contract types under the names the intel module has always imported from here,
+// so no consumer import has to change. `NoiDecomposition` is the drivers ROUTE envelope (the engine
+// decomposition wrapped with propertyId/from/to), which is what useDrivers returns.
+export type {
+  HealthBand, AttentionBand, AnomalySeverity, AnomalyKind, Quartile, NumericMetricKey, CapitalAction,
+  PropertyScore, PeriodMetrics, GrowthPoint, SinceAcquisition, NoiDriver, AnomalyFlag,
+  MetricBenchmark, PropertyRank, PmScorecard, GrowthResponse, BenchmarksResponse,
+} from '@contracts/warehouse';
+export type { DriversResponse as NoiDecomposition } from '@contracts/warehouse';
 
-export type HealthBand = 'excellent' | 'good' | 'watch' | 'concern';
-export type AttentionBand = 'green' | 'yellow' | 'orange' | 'red';
-export type { CapitalAction }; // M4: re-export the single-sourced type for the intel views
-export type AnomalySeverity = 'low' | 'moderate' | 'high' | 'critical';
-export type AnomalyKind =
-  | 'expense-growth'
-  | 'revenue-decline'
-  | 'noi-decline'
-  | 'noi-per-sf-decline'
-  | 'new-category'
-  | 'category-spike';
-export type Quartile = 1 | 2 | 3 | 4 | null;
-
-/** A benchmarkable numeric metric key (kept in lockstep with the route's enum). */
-export type NumericMetricKey =
-  | 'revenue'
-  | 'opex'
-  | 'noi'
-  | 'oxfordNoi'
-  | 'noiMargin'
-  | 'expenseRatio'
-  | 'revenuePerSf'
-  | 'noiPerSf'
-  | 'expensePerSf'
-  | 'taxesPerSf'
-  | 'insurancePerSf'
-  | 'repairsPerSf';
-
-/** Per-property health + attention score (scores.ts → PropertyScore). */
-export interface PropertyScore {
-  propertyId: string;
-  propertyName: string | null;
-  period: string; // scoring period = latest full-year period
-  health: number; // 0..100
-  healthBand: HealthBand;
-  attentionBand: AttentionBand;
-  capitalAction: CapitalAction;
-  subScores: Record<string, number>;
-  noiPerSfQuartile: Quartile;
-  reasons: string[];
-}
-
-/** Per (propertyId, period) financial metrics (metrics.ts → PeriodMetrics). */
-export interface PeriodMetrics {
-  propertyId: string;
-  propertyName: string | null;
-  period: string; // 'YYYY'
-  grainHint: string | null; // 'year' | 'ytd'
-  rentableSf: number | null;
-  ownershipPct: number;
-  revenue: number;
-  opex: number;
-  noi: number;
-  noiMargin: number | null;
-  expenseRatio: number | null;
-  capex: number;
-  ti: number;
-  leasing: number;
-  categories: Record<string, number>;
-  revenueCategories: Record<string, number>;
-  revenuePerSf: number | null;
-  noiPerSf: number | null;
-  expensePerSf: number | null;
-  taxesPerSf: number | null;
-  insurancePerSf: number | null;
-  repairsPerSf: number | null;
-  oxfordNoi: number;
-}
-
-/** Period-over-period growth point (growth.ts → GrowthPoint). */
-export interface GrowthPoint {
-  propertyId: string;
-  period: string;
-  comparable: boolean;
-  revenueGrowth: number | null;
-  expenseGrowth: number | null;
-  noiGrowth: number | null;
-  noiPerSfGrowth: number | null;
-}
-
-/** Anchor→latest same-grain spread (growth.ts → SinceAcquisition). */
-export interface SinceAcquisition {
-  propertyId: string | null;
-  anchorPeriod: string | null;
-  latestPeriod: string | null;
-  comparable: boolean;
-  revenueGrowth: number | null;
-  noiGrowth: number | null;
-  noiPerSfGrowth: number | null;
-  taxesGrowth: number | null;
-  insuranceGrowth: number | null;
-  revenuePerSfGrowth: number | null;
-  noiCagr: number | null;
-}
-
-/** Single ΔNOI driver (drivers.ts → NoiDriver). */
-export interface NoiDriver {
-  category: string;
-  delta: number;
-  contributionPct: number | null;
-}
-
-/** ΔNOI decomposition for a property between two periods (drivers route payload). */
-export interface NoiDecomposition {
-  propertyId: string;
-  from: string;
-  to: string;
-  totalDelta: number;
-  drivers: NoiDriver[];
-}
-
-/** A flagged anomaly between consecutive same-grain periods (anomalies.ts → AnomalyFlag). */
-export interface AnomalyFlag {
-  propertyId: string;
-  period: string;
-  kind: AnomalyKind;
-  severity: AnomalySeverity;
-  detail: string;
-  metricValue: number | null;
-}
-
-/** Portfolio benchmark summary for one (period, metric) (benchmarks.ts → MetricBenchmark). */
-export interface MetricBenchmark {
-  period: string;
-  metric: NumericMetricKey;
-  avg: number | null;
-  median: number | null;
-  p25: number | null;
-  p75: number | null;
-  n: number;
-  // Cross-basis discipline (PFI Phase 1a): the distinct accounting bases of the cohort, and whether
-  // they are mixed. A benchmark drawn across cash + accrual (or unknown) is not like-for-like — the
-  // UI must surface mixedBasis, never present it as a clean comparison.
-  bases: string[];
-  mixedBasis: boolean;
-}
-
-/** Property's rank within a (period, metric) cohort (benchmarks.ts → PropertyRank). */
-export interface PropertyRank {
-  propertyId: string;
-  value: number;
-  rank: number;
-  quartile: Quartile;
-}
-
-/** PM-level aggregate scorecard (benchmarks.ts → PmScorecard). */
-export interface PmScorecard {
-  propertyManager: string;
-  propertyCount: number;
-  smallSample: boolean;
-  avgNoiPerSf: number | null;
-  avgNoiGrowth: number | null;
-  avgExpenseGrowth: number | null;
+/** Fetch a route then .parse() its body through the contract schema — the client half of the H6
+ *  read boundary. fetchJson still throws WarehouseUnavailableError on a 503 / non-JSON mirror BEFORE
+ *  any parse runs, so the offline-degradation path is unchanged. */
+async function fetchParsed<S extends z.ZodTypeAny>(path: string, schema: S): Promise<z.infer<S>> {
+  return schema.parse(await fetchJson<unknown>(path));
 }
 
 // ---------------------------------------------------------------------------
@@ -192,14 +58,14 @@ export const ANALYTICS_KEYS = {
 };
 
 // ---------------------------------------------------------------------------
-// Read hooks. Each unwraps the route envelope to the bare payload; an unavailable
+// Read hooks. Each unwraps the parsed route envelope to the bare payload; an unavailable
 // warehouse surfaces via `error` (isWarehouseUnavailable) — the hooks never throw at call.
 // ---------------------------------------------------------------------------
 
 export function useScores() {
   return useQuery({
     queryKey: ANALYTICS_KEYS.scores,
-    queryFn: () => fetchJson<{ scores: PropertyScore[] }>('/api/warehouse/analytics/scores').then((r) => r.scores),
+    queryFn: () => fetchParsed('/api/warehouse/analytics/scores', ScoresResponseSchema).then((r) => r.scores),
     ...QUERY_OPTS,
   });
 }
@@ -207,20 +73,16 @@ export function useScores() {
 export function useMetrics() {
   return useQuery({
     queryKey: ANALYTICS_KEYS.metrics,
-    queryFn: () => fetchJson<{ metrics: PeriodMetrics[] }>('/api/warehouse/analytics/metrics').then((r) => r.metrics),
+    queryFn: () => fetchParsed('/api/warehouse/analytics/metrics', MetricsResponseSchema).then((r) => r.metrics),
     ...QUERY_OPTS,
   });
-}
-
-export interface GrowthResponse {
-  growth: GrowthPoint[];
-  sinceAcquisition: SinceAcquisition[];
 }
 
 export function useGrowth() {
   return useQuery({
     queryKey: ANALYTICS_KEYS.growth,
-    queryFn: () => fetchJson<GrowthResponse>('/api/warehouse/analytics/growth'),
+    queryFn: (): Promise<GrowthResponse> =>
+      fetchParsed('/api/warehouse/analytics/growth', GrowthResponseSchema),
     ...QUERY_OPTS,
   });
 }
@@ -229,7 +91,7 @@ export function useAnomalies() {
   return useQuery({
     queryKey: ANALYTICS_KEYS.anomalies,
     queryFn: () =>
-      fetchJson<{ anomalies: AnomalyFlag[] }>('/api/warehouse/analytics/anomalies').then((r) => r.anomalies),
+      fetchParsed('/api/warehouse/analytics/anomalies', AnomaliesResponseSchema).then((r) => r.anomalies),
     ...QUERY_OPTS,
   });
 }
@@ -237,14 +99,10 @@ export function useAnomalies() {
 export function usePmScorecards() {
   return useQuery({
     queryKey: ANALYTICS_KEYS.pm,
-    queryFn: () => fetchJson<{ scorecards: PmScorecard[] }>('/api/warehouse/analytics/pm').then((r) => r.scorecards),
+    queryFn: () =>
+      fetchParsed('/api/warehouse/analytics/pm', PmScorecardsResponseSchema).then((r) => r.scorecards),
     ...QUERY_OPTS,
   });
-}
-
-export interface BenchmarksResponse {
-  byMetric: MetricBenchmark;
-  rankings: PropertyRank[];
 }
 
 /** Benchmark summary + rankings for one (period, metric). Enabled only when a period is
@@ -252,9 +110,10 @@ export interface BenchmarksResponse {
 export function useBenchmarks(period: string | null, metric: NumericMetricKey) {
   return useQuery({
     queryKey: ANALYTICS_KEYS.benchmarks(period ?? '', metric),
-    queryFn: () =>
-      fetchJson<BenchmarksResponse>(
+    queryFn: (): Promise<BenchmarksResponse> =>
+      fetchParsed(
         `/api/warehouse/analytics/benchmarks?period=${encodeURIComponent(period ?? '')}&metric=${encodeURIComponent(metric)}`,
+        BenchmarksResponseSchema,
       ),
     enabled: period !== null && period !== '',
     ...QUERY_OPTS,
@@ -268,8 +127,9 @@ export function useDrivers(propertyId: string | null, from: string | null, to: s
   return useQuery({
     queryKey: ANALYTICS_KEYS.drivers(propertyId ?? '', from ?? '', to ?? ''),
     queryFn: () =>
-      fetchJson<NoiDecomposition>(
+      fetchParsed(
         `/api/warehouse/analytics/drivers/${encodeURIComponent(propertyId ?? '')}?from=${encodeURIComponent(from ?? '')}&to=${encodeURIComponent(to ?? '')}`,
+        DriversResponseSchema,
       ),
     enabled,
     ...QUERY_OPTS,

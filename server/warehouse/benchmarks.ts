@@ -7,45 +7,14 @@ import type { WarehouseDb } from './db';
 import { growthSeries } from './growth';
 import { isOperatingRealEstate, latestFullYearPeriod } from './metrics';
 import type { PeriodMetrics } from './metrics';
+// NumericMetricKey + the benchmark return shapes are single-sourced in the contract (H6) so the
+// client and server share one definition. Re-exported under their local names so existing engine
+// imports (`import type { NumericMetricKey, MetricBenchmark, ... } from './benchmarks'`) are unchanged.
+import type {
+  NumericMetricKey, MetricBenchmark, PropertyRank, PmScorecard,
+} from '../../src/contracts/warehouse';
 
-// Numeric PeriodMetrics keys eligible for benchmarking (number | null fields).
-export type NumericMetricKey =
-  | 'revenue' | 'opex' | 'noi' | 'oxfordNoi'
-  | 'noiMargin' | 'expenseRatio'
-  | 'revenuePerSf' | 'noiPerSf' | 'expensePerSf'
-  | 'taxesPerSf' | 'insurancePerSf' | 'repairsPerSf';
-
-export interface MetricBenchmark {
-  period: string;
-  metric: NumericMetricKey;
-  avg: number | null;
-  median: number | null;
-  p25: number | null;
-  p75: number | null;
-  n: number;
-  // Cross-basis discipline: the distinct accounting bases of the properties that contributed a
-  // value to this cohort, and whether they are mixed. A benchmark drawn across cash + accrual (or
-  // unknown) NOI is not a like-for-like comparison; consumers must surface mixedBasis, never compare
-  // silently. 'unknown' counts as its own basis (conservative).
-  bases: string[];
-  mixedBasis: boolean;
-}
-
-export interface PropertyRank {
-  propertyId: string;
-  value: number;
-  rank: number;      // 1 = highest value
-  quartile: 1 | 2 | 3 | 4 | null; // 1 = top quartile; null = low-confidence singleton cohort (n<2)
-}
-
-export interface PmScorecard {
-  propertyManager: string;
-  propertyCount: number;
-  smallSample: boolean;       // propertyCount < 3 — interpret cautiously
-  avgNoiPerSf: number | null; // latest-full-year averages across the PM's properties (spec §9)
-  avgNoiGrowth: number | null;
-  avgExpenseGrowth: number | null;
-}
+export type { NumericMetricKey, MetricBenchmark, PropertyRank, PmScorecard };
 
 /** Linear-interpolation quantile over a copy-sorted numeric array; null on empty. */
 export function quantile(values: number[], q: number): number | null {
