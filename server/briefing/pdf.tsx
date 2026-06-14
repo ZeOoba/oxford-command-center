@@ -51,21 +51,36 @@ const styles = StyleSheet.create({
   footerConf: { fontFamily: FONT.sans, fontSize: 6.5, fontWeight: 700, color: ORA.navy, letterSpacing: 0.5 },
 });
 
-// The brand woff latin subsets do NOT include a few symbols (notably Greek Δ and ≥) — a glyph
-// referenced but absent crashes fontkit mid-render (RangeError in TTFGlyph). For an outward-facing
-// financial artifact we NEVER risk that: every label is ASCII-or-known-covered, and this last-resort
-// sanitizer maps any stray non-covered symbol to a safe equivalent before it reaches a <Text>. (The
-// covered punctuation — em-dash —, middot ·, bullet •, en-dash –, × — passes through unchanged.)
+// The brand latin subsets do NOT cover every symbol the analytics engine might emit (Greek Δ, ≥, the
+// → in driver-bridge lines, and any future glyph). A referenced-but-absent glyph crashes fontkit
+// mid-render (RangeError in TTFGlyph). For an outward-facing financial artifact we NEVER risk that, so
+// safeText is defense-in-depth: (1) substitute the known symbols that have a clean ASCII equivalent,
+// then (2) RANGE-FILTER — strip anything outside the glyph ranges the brand faces actually cover, so a
+// brand-new un-mapped symbol degrades to nothing rather than crashing. The covered punctuation the
+// briefing uses (em-dash —, middot ·, bullet •, en-dash –, ×) is inside the kept range and passes through.
 const GLYPH_SUBSTITUTIONS: Record<string, string> = {
   'Δ': 'd', // Greek capital delta → 'd' (we avoid it in labels; this is the backstop)
   '≥': '>=',
   '≤': '<=',
-  '→': '->', // right arrow (appears in 'FY2023→FY2024' driver lines) is not in the latin subset
+  '→': '->', // right arrow (appears in 'FY2023->FY2024' driver-bridge lines) is not in the latin subset
 };
+/** Codepoints kept by the range filter: Basic Latin + Latin-1 Supplement (incl. ×, ·, en/em context),
+ *  plus the specific General-Punctuation glyphs the brand subsets carry (– — ' ' " " • …). Anything
+ *  else is dropped (after substitution) so an un-anticipated symbol can never reach fontkit and crash. */
+const KEEP_PUNCT = new Set(['–', '—', '‘', '’', '“', '”', '•', '…']);
+function isCovered(cp: number): boolean {
+  if (cp === 0x09 || cp === 0x0a || cp === 0x0d) return true; // tab/newlines (layout-only)
+  if (cp >= 0x20 && cp <= 0x7e) return true; // Basic Latin (printable ASCII)
+  if (cp >= 0xa0 && cp <= 0xff) return true; // Latin-1 Supplement (× ·, accented letters, etc.)
+  return KEEP_PUNCT.has(String.fromCodePoint(cp));
+}
 function safeText(s: string): string {
   let out = s;
   for (const [bad, good] of Object.entries(GLYPH_SUBSTITUTIONS)) out = out.split(bad).join(good);
-  return out;
+  // Drop any remaining codepoint the brand faces don't cover (fail-safe, never a render crash).
+  let filtered = '';
+  for (const ch of out) if (isCovered(ch.codePointAt(0)!)) filtered += ch;
+  return filtered;
 }
 
 const HEALTH_COLOR: Record<string, string> = { excellent: ORA.pos, good: ORA.pos, watch: ORA.gold, concern: ORA.neg };

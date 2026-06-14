@@ -388,22 +388,46 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
     });
   };
 
+  // The briefing handler body can throw where the analytics routes cannot: the compose layer runs the
+  // fail-loud confidential guard (assertNoConfidential), and renderBriefingPdf can reject on a render
+  // failure. withDb only guards getDb(); so wrap the whole handler and return a STRUCTURED 500 — never
+  // a raw stack trace, and never the matched confidential term (the guard's message names only the deal
+  // label, which we DON'T echo: a leak would otherwise re-surface the very thing we're protecting).
+  const safeBriefing = (
+    handler: (db: WarehouseDb) => Promise<Response>,
+  ): ((db: WarehouseDb) => Promise<Response>) => {
+    return async (db) => {
+      try {
+        return await handler(db);
+      } catch {
+        return new Response(JSON.stringify({ error: 'briefing generation failed' }), {
+          status: 500,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+    };
+  };
+
   app.get('/briefing/property/:slug', (c) =>
-    withDb(async (db) => {
-      const { id, wantsPdf } = splitPdf(c.req.param('slug'));
-      const model = composePropertyBriefing(db, id, { generatedDate: generatedDate() });
-      if (!model) return c.json({ error: 'not found' }, 404);
-      return wantsPdf ? streamPdf(model) : c.json(PropertyBriefingModel.parse(model));
-    }),
+    withDb(
+      safeBriefing(async (db) => {
+        const { id, wantsPdf } = splitPdf(c.req.param('slug'));
+        const model = composePropertyBriefing(db, id, { generatedDate: generatedDate() });
+        if (!model) return c.json({ error: 'not found' }, 404);
+        return wantsPdf ? streamPdf(model) : c.json(PropertyBriefingModel.parse(model));
+      }),
+    ),
   );
 
   app.get('/briefing/manager/:slug', (c) =>
-    withDb(async (db) => {
-      const { id, wantsPdf } = splitPdf(c.req.param('slug'));
-      const model = composeManagerBriefing(db, id, { generatedDate: generatedDate() });
-      if (!model) return c.json({ error: 'not found' }, 404);
-      return wantsPdf ? streamPdf(model) : c.json(ManagerBriefingModel.parse(model));
-    }),
+    withDb(
+      safeBriefing(async (db) => {
+        const { id, wantsPdf } = splitPdf(c.req.param('slug'));
+        const model = composeManagerBriefing(db, id, { generatedDate: generatedDate() });
+        if (!model) return c.json({ error: 'not found' }, 404);
+        return wantsPdf ? streamPdf(model) : c.json(ManagerBriefingModel.parse(model));
+      }),
+    ),
   );
 
   // ── Calibration (read-only, behind the same 503 guard). The 40-year feedback loop's read surface:

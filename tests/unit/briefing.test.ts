@@ -371,4 +371,18 @@ describe('routes — /api/warehouse/briefing/*', () => {
     expect((await app.request(`/briefing/property/${KRG_PROPS[0]}.pdf`)).status).toBe(503);
     expect((await app.request(`/briefing/manager/${KRG_SLUG}`)).status).toBe(503);
   });
+
+  it('ADVERSARIAL: a confidential-guard throw inside the route returns a STRUCTURED 500 (no raw stack, no leaked term)', async () => {
+    const db = seededDb();
+    // Poison a master name so compose's assertNoConfidential throws inside the handler.
+    db.prepare(`UPDATE property_master SET name = ? WHERE id = ?`).run('3520 E. Fulton Street', KRG_PROPS[0]);
+    const app = warehouseRoutes(() => db);
+    const res = await app.request(`/briefing/property/${KRG_PROPS[0]}.pdf`);
+    expect(res.status).toBe(500);
+    expect(res.headers.get('content-type')).toBe('application/json');
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('briefing generation failed');
+    // The matched confidential term must NOT appear in the response body.
+    expect(JSON.stringify(body).toLowerCase()).not.toContain('fulton');
+  });
 });

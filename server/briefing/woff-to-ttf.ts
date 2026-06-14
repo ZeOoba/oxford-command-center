@@ -41,7 +41,15 @@ export function woffToTtf(woff: Buffer): Buffer {
     const origLength = u32(p + 12);
     const checksum = u32(p + 16);
     const slice = woff.subarray(offset, offset + compLength);
-    // A table is stored uncompressed iff compLength === origLength; otherwise it is zlib-deflated.
+    // Per the WOFF spec compLength <= origLength always. A table is stored uncompressed iff
+    // compLength === origLength; if it is LESS it is zlib-deflated. compLength > origLength means a
+    // corrupt/truncated WOFF — THROW (caught upstream → loud Helvetica fallback) rather than silently
+    // copying compressed bytes as a table body and caching a broken TTF that crashes fontkit later.
+    if (compLength > origLength) {
+      throw new Error(
+        `woffToTtf: corrupt WOFF — table '${tag}' compLength ${compLength} > origLength ${origLength}`,
+      );
+    }
     const data = compLength < origLength ? Buffer.from(inflateSync(slice)) : Buffer.from(slice);
     tables.push({ tag, checksum, data, origLength });
     p += 20;

@@ -17,7 +17,8 @@ export function subjectToken(name: string): string {
 }
 
 export function briefingFilename(model: BriefingModel): string {
-  const subject = model.kind === 'property' ? model.subject.name : model.subject.name;
+  // Both kinds expose subject.name; kept as one read so a future third kind must opt in explicitly.
+  const subject = model.subject.name;
   const ymd = model.meta.generatedDate.replace(/-/g, ''); // YYYY-MM-DD → YYYYMMDD
   return `ORA_Briefing_${subjectToken(subject)}_${ymd}.pdf`;
 }
