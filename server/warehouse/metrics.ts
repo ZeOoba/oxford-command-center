@@ -81,6 +81,14 @@ export function latestFullYearPeriod(metricsForOneProperty: PeriodMetrics[]): st
   return latest;
 }
 
+/** A comparable real-estate operating entity has positive rentable SF. A SF-less entity (e.g. 1851 S
+ *  Club — a 25% rooftop-solar PPA royalty: rentableSf null, no building owned) has no comparable
+ *  operating-expense profile and must be excluded from all cohort/percentile/benchmark aggregations.
+ *  Single source of truth: imported by scores.ts (efficiency cohorts) and benchmarks.ts (display cohorts). */
+export function isOperatingRealEstate(m: PeriodMetrics): boolean {
+  return typeof m.rentableSf === 'number' && Number.isFinite(m.rentableSf) && m.rentableSf > 0;
+}
+
 export function propertyPeriodMetrics(db: WarehouseDb): PeriodMetrics[] {
   const rows = db.prepare(`
     SELECT l.property_id AS propertyId, p.name AS propertyName, l.period,

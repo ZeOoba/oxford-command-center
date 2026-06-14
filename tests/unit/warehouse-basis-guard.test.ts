@@ -4,7 +4,7 @@ import type { PeriodMetrics } from '../../server/warehouse/metrics';
 
 // Synthetic PeriodMetrics — only the fields benchmarkMetric reads matter (cast convention).
 const m = (propertyId: string, basis: string, noiPerSf: number) =>
-  ({ propertyId, period: '2025', basis, noiPerSf } as unknown as PeriodMetrics);
+  ({ propertyId, period: '2025', basis, noiPerSf, rentableSf: 20000 } as unknown as PeriodMetrics);
 
 describe('benchmark cross-basis discipline (integrity risk #2 — never silently compare bases)', () => {
   it('flags a cohort that mixes accounting bases (cash vs accrual)', () => {
