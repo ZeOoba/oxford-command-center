@@ -1,0 +1,31 @@
+name: Test order fragility (canary)
+
+# Periodic fuzzer for test-order fragility. Runs the unit suite with BOTH file and
+# test order randomized (`npm run test:shuffle`). This is deliberately SEPARATE from the
+# blocking PR gate (.github/workflows/ci.yml) — it is a canary, not a merge blocker:
+#   - `isolate: true` (vitest.config.ts) already prevents CROSS-file leakage on every PR.
+#   - This job additionally surfaces WITHIN-file ordering bugs (a test that depends on
+#     state another test in the same file set up) before they bite in a normal run.
+# On failure, the vitest log prints the RNG seed — reproduce locally with
+# `npm run test -- --sequence.shuffle.files=true --sequence.shuffle.tests=true --sequence.seed=<N>`.
+#
+# Known currently-flagged: tests/unit/documents.test.ts has a within-file order dependency
+# (tracked separately). Until that is fixed this canary will report red; that is the canary
+# doing its job. Once green, consider promoting test:shuffle into the blocking gate.
+
+on:
+  schedule:
+    - cron: '0 9 * * 1' # Mondays 09:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  shuffle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run test:shuffle

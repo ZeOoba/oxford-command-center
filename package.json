@@ -30,6 +30,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:shuffle": "vitest run --sequence.shuffle.files=true --sequence.shuffle.tests=true",
     "pregate": "node scripts/ensure-deps.mjs",
     "governance": "tsx scripts/governance-check.ts",
     "gate": "npm run governance && npm run typecheck && npm run lint && npm run test && npm run reconcile && npm run warehouse:verify && npm run warehouse:drift",
