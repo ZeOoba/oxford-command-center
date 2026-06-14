@@ -25,7 +25,7 @@ import { classificationSide, resolveMapping, sectionSide, seedMappingsFromFile }
 import { basisCoverage } from '../server/warehouse/data-quality';
 import { PARSER_VERSION, parseQbExcel } from '../server/warehouse/parse/qb-excel';
 import { propertyPeriodMetrics } from '../server/warehouse/metrics';
-import { seedPropertyMaster } from '../server/warehouse/property-master';
+import { CANON_PROPERTIES, seedPropertyMaster } from '../server/warehouse/property-master';
 import { NOI_INCOME_CLASSES } from '../src/contracts/warehouse';
 import { MIN_PROPERTIES_FOR_COLLAPSE_CHECK, SINGLE_BAND_COLLAPSE_SHARE, scoreBandDistribution, scoreProperties } from '../server/warehouse/scores';
 
@@ -252,6 +252,21 @@ async function main(): Promise<number> {
     }
     console.log(`re-ingest smoke: ${committedAfter.length} committed imports re-derived in place (v0 -> v${PARSER_VERSION}), 0 emptied, basis stable`);
 
+    // 10. SF-less entity efficiency cohort ratchet — any CANON_PROPERTIES entry with rentableSf null
+    // must score neutral expenseEfficiency (50). A violation means the entity joined the revenue-ratio
+    // expense percentile cohort despite having no comparable operating-expense profile (defect class:
+    // solar royalty joining the accrual building cohort after 8ca91a5 relabeled 6 QB Desktop imports).
+    // This ratchet turns a latent capital-allocation artifact into a gate failure automatically.
+    const sfLessIds = CANON_PROPERTIES.filter((p) => p.rentableSf == null).map((p) => p.id);
+    for (const id of sfLessIds) {
+      const s = scores.find((score) => score.propertyId === id);
+      if (s !== undefined && s.subScores.expenseEfficiency !== 50) {
+        failures.push(
+          `SF-less entity '${id}' scored expenseEfficiency ${s.subScores.expenseEfficiency} (expected 50) ` +
+          `— non-real-estate entity joined the expense-ratio percentile cohort (cohort-exclusion regression)`,
+        );
+      }
+    }
     db.close();
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -266,7 +281,8 @@ async function main(): Promise<number> {
     `committed >= ${MIN_COMMITTED}, income ties within $${INCOME_TIE_TOLERANCE}, ` +
     `unknown-basis <= ${MAX_UNKNOWN_BASIS}, ` +
     `no score-band collapse (< ${Math.round(SINGLE_BAND_COLLAPSE_SHARE * 100)}% single-bucket), ` +
-    `integrity invariants hold, re-ingest re-derive idempotent`);
+    `integrity invariants hold, re-ingest re-derive idempotent, ` +
+    `SF-less cohort exclusion verified (${CANON_PROPERTIES.filter((p) => p.rentableSf == null).length} non-operating entity/entities)`);
   return 0;
 }
 

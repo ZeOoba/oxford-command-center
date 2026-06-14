@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { openWarehouse } from '../../server/warehouse/db';
 import { scoreProperties } from '../../server/warehouse/scores';
-import { seedPropertyMaster } from '../../server/warehouse/property-master';
+import { CANON_PROPERTIES, seedPropertyMaster } from '../../server/warehouse/property-master';
 import type { PeriodMetrics } from '../../server/warehouse/metrics';
 
 // scoreProperties uses the db only for canonical names; the metrics drive every score. Synthetic
@@ -175,5 +175,50 @@ describe('efficiency cohorts exclude SF-less (non-real-estate) entities — late
     // Two real operating peers ⇒ a genuine percentile; the lower-expense-ratio building ranks best in
     // a 2-member cohort ⇒ 100, proving the SF-less guard did not collapse the real cohort to neutral.
     expect(better.subScores.expenseEfficiency).toBe(100);
+  });
+});
+
+describe('CANON_PROPERTIES invariant — any entity with rentableSf == null excluded from efficiency cohorts', () => {
+  // Regression net: if a future commit adds a new SF-less entry to CANON_PROPERTIES, or reverts the
+  // isOperatingRealEstate guard in scores.ts, this test catches it automatically without requiring a
+  // per-entity test. It also confirms the guard was not over-applied (real buildings still rank).
+  it('all SF-less canon entities score neutral expenseEfficiency when mixed into a same-basis cohort with a real building', () => {
+    const sfLessIds = CANON_PROPERTIES.filter((p) => p.rentableSf == null).map((p) => p.id);
+    // Sanity: the invariant is vacuous if no SF-less entity exists — fail loudly if the roster empties.
+    expect(sfLessIds.length).toBeGreaterThan(0);
+
+    const d = db();
+    const cohort = [
+      // SF-less entities with a very low expense ratio — they would score expenseEfficiency 100
+      // (best-in-cohort) if the isOperatingRealEstate guard were absent. Giving them the best
+      // ratio maximises the sensitivity of the test: if they appear in the cohort at all, the
+      // real building's score will be wrong AND the solar entity's own score will be wrong.
+      ...sfLessIds.map((id) =>
+        pm(id, 'accrual', 0, {
+          rentableSf: null,
+          noiPerSf: null,
+          revenuePerSf: null,
+          taxesPerSf: null,
+          insurancePerSf: null,
+          repairsPerSf: null,
+          expenseRatio: 0.10, // deliberately low — would dominate the cohort if included
+        }),
+      ),
+      // Real building: same accrual basis, higher expense ratio.
+      pm('55-new-plant-ct-owings-mills-md', 'accrual', 6, { rentableSf: 34534, expenseRatio: 0.55 }),
+    ];
+    const scores = scoreProperties(d, cohort);
+
+    for (const id of sfLessIds) {
+      const s = scores.find((x) => x.propertyId === id);
+      expect(s).toBeDefined();
+      // SF-less entity has no comparable operating-expense profile → must be cohort-neutral.
+      expect(s!.subScores.expenseEfficiency).toBe(50);
+    }
+
+    // Confirm the real building also stays neutral (only same-basis peer is SF-less → singleton → 50).
+    const building = scores.find((s) => s.propertyId === '55-new-plant-ct-owings-mills-md')!;
+    expect(building).toBeDefined();
+    expect(building.subScores.expenseEfficiency).toBe(50);
   });
 });

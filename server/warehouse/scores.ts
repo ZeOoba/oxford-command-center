@@ -11,7 +11,7 @@ import { benchmarkMetric, rankProperties } from './benchmarks';
 import { growthSeries } from './growth';
 import { INTEL_CONFIG } from './intel-config';
 import type { AttentionBand, CapitalAction, HealthBand } from './intel-config';
-import { latestFullYearPeriod } from './metrics';
+import { isOperatingRealEstate, latestFullYearPeriod } from './metrics';
 import type { PeriodMetrics } from './metrics';
 
 export interface PropertyScore {
@@ -61,14 +61,6 @@ const stddev = (values: number[]): number => {
 };
 
 const pctStr = (n: number | null): string => (n === null ? 'n/a' : `${(n * 100).toFixed(1)}%`);
-
-/** A comparable real-estate operating entity has positive rentable SF. A SF-less entity (e.g. 1851 S
- *  Club — a 25% rooftop-solar PPA royalty: rentableSf null, no building owned) has no operating-expense
- *  profile comparable to a building's, so it must not join the ratio-based efficiency cohort. Mirrors
- *  the perSf() guard (sf && sf > 0) in metrics.ts that already drops it from every $/SF cohort. */
-function isOperatingRealEstate(m: PeriodMetrics): boolean {
-  return typeof m.rentableSf === 'number' && Number.isFinite(m.rentableSf) && m.rentableSf > 0;
-}
 
 /** expenseRatio (opex/revenue) as seen by efficiency scoring. Unlike the per-SF cost ratios it is
  *  revenue-based, so it stays FINITE for a SF-less entity even though every $/SF metric is null —

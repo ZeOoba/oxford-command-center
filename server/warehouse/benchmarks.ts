@@ -5,7 +5,7 @@
 // empty / all-null inputs (no NaN/Infinity leaks into the score engine downstream).
 import type { WarehouseDb } from './db';
 import { growthSeries } from './growth';
-import { latestFullYearPeriod } from './metrics';
+import { isOperatingRealEstate, latestFullYearPeriod } from './metrics';
 import type { PeriodMetrics } from './metrics';
 
 // Numeric PeriodMetrics keys eligible for benchmarking (number | null fields).
@@ -64,22 +64,30 @@ export function quantile(values: number[], q: number): number | null {
 const mean = (values: number[]): number | null =>
   values.length === 0 ? null : values.reduce((a, b) => a + b, 0) / values.length;
 
-/** Non-null values of a numeric metric key for a given period. */
+/** Non-null values of a numeric metric key for a given period. SF-less non-real-estate entities
+ *  (e.g. a rooftop-solar PPA royalty: rentableSf null) are excluded from all cohort aggregations —
+ *  their revenue/expense profiles are not comparable to building operations. Per-SF keys already
+ *  self-exclude via the null perSf() value; this guard covers the revenue-ratio keys (expenseRatio,
+ *  noiMargin) that stay finite for SF-less entities and would otherwise skew portfolio benchmarks. */
 function metricValues(metrics: PeriodMetrics[], period: string, key: NumericMetricKey): number[] {
   const out: number[] = [];
   for (const m of metrics) {
     if (m.period !== period) continue;
+    if (!isOperatingRealEstate(m)) continue;
     const v = m[key];
     if (typeof v === 'number' && Number.isFinite(v)) out.push(v);
   }
   return out;
 }
 
-/** Distinct accounting bases (sorted) of the properties that contribute a finite value to a cohort. */
+/** Distinct accounting bases (sorted) of the properties that contribute a finite value to a cohort.
+ *  SF-less entities are excluded (mirrors the metricValues guard) so their basis does not register
+ *  as a cohort participant and cannot trigger a spurious mixedBasis flag. */
 export function cohortBases(metrics: PeriodMetrics[], period: string, key: NumericMetricKey): string[] {
   const set = new Set<string>();
   for (const m of metrics) {
     if (m.period !== period) continue;
+    if (!isOperatingRealEstate(m)) continue;
     const v = m[key];
     if (typeof v === 'number' && Number.isFinite(v)) set.add(m.basis ?? 'unknown');
   }
