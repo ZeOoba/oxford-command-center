@@ -43,15 +43,17 @@ import { PropertyIntelView } from './PropertyIntelView';
 import { OwnershipView } from './OwnershipView';
 import { BenchmarksView } from './BenchmarksView';
 import { ManagersView } from './ManagersView';
+import { LeaseRunView } from './LeaseRunView';
 
 // Final IA (PFI Phase B.2): intelligence tabs first, then a subtle divider, then data-ops.
 // `group` drives the divider in the tab strip and the KpiRow gating below.
-type Tab = 'ownership' | 'property' | 'benchmarks' | 'managers' | 'imports' | 'quality' | 'mappings';
+type Tab = 'ownership' | 'property' | 'lease-run' | 'benchmarks' | 'managers' | 'imports' | 'quality' | 'mappings';
 type TabGroup = 'intelligence' | 'data-ops';
 
 const TABS: Array<{ id: Tab; label: string; group: TabGroup }> = [
   { id: 'ownership', label: 'Ownership', group: 'intelligence' },
   { id: 'property', label: 'Property', group: 'intelligence' },
+  { id: 'lease-run', label: 'Lease Run', group: 'intelligence' },
   { id: 'benchmarks', label: 'Benchmarks', group: 'intelligence' },
   { id: 'managers', label: 'Managers', group: 'intelligence' },
   { id: 'imports', label: 'Imports', group: 'data-ops' },
@@ -228,6 +230,8 @@ export function IntelModule() {
           period={effectivePeriod}
           periodLabel={periodLabel}
         />
+      ) : tab === 'lease-run' ? (
+        <LeaseRunView propertyId={ui.intelPropertyId} />
       ) : tab === 'benchmarks' ? (
         <BenchmarksView onOpenProperty={openProperty} period={effectivePeriod} periodLabel={periodLabel} />
       ) : tab === 'managers' ? (

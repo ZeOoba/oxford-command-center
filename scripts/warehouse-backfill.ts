@@ -6,6 +6,7 @@ import type { WarehouseDb } from '../server/warehouse/db';
 import { ingestFile } from '../server/warehouse/ingest';
 import { seedMappingsFromFile } from '../server/warehouse/mapping';
 import { seedPropertyMaster } from '../server/warehouse/property-master';
+import { seedLeaseTerms } from '../server/warehouse/lease-terms';
 import { noiMatrix } from '../server/warehouse/queries';
 
 const FINANCIALS_DIR = process.env.FINANCIALS_DIR
@@ -17,8 +18,9 @@ const SEED_PATH = join(process.cwd(), 'docs', 'superpowers', 'specs', '2026-06-1
 async function main(): Promise<void> {
   const db = openWarehouse(DB_PATH);
   seedPropertyMaster(db);
+  const leaseTerms = seedLeaseTerms(db);
   const seeded = seedMappingsFromFile(db, SEED_PATH);
-  console.log(`property master seeded (14 units); ${seeded} new seed mappings loaded`);
+  console.log(`property master seeded (14 units); ${leaseTerms} lease-term rows seeded; ${seeded} new seed mappings loaded`);
 
   const files = readdirSync(FINANCIALS_DIR, { withFileTypes: true })
     .filter((e) => e.isFile())

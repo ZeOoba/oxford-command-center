@@ -24,6 +24,9 @@ import { openWarehouse } from './warehouse/db';
 import type { WarehouseDb } from './warehouse/db';
 import { warehouseRoutes } from './warehouse/api';
 import { captureOccupancy } from './warehouse/occupancy';
+import { listLeaseTermPropertyIds } from './warehouse/lease-terms';
+import { setLeaseRunAssumptions } from './overlay';
+import { LeaseRunAssumptionsInput } from '../src/contracts/lease-run';
 
 const app = new Hono();
 // Confidential data — only same-machine localhost origins may call the API.
@@ -176,6 +179,27 @@ app.post('/api/actions/acquisition-input', async (c) => {
   if (!parsed.success) return c.json({ ok: false, error: 'Invalid acquisition input' }, 400);
   const ok = brain.setAcquisitionInput(parsed.data.dealId, parsed.data);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
+});
+
+// Lease-run assumption override (confirm-before-write). Persists a per-property partial to the
+// overlay (data/overlay.json), merged onto the spec defaults by the engine. 404 when the property
+// has no lease terms; 503 when the warehouse is cold (so we can't validate the property). Purely
+// additive — touches no governor and no existing overlay behavior.
+app.post('/api/actions/lease-run-assumptions', async (c) => {
+  const parsed = LeaseRunAssumptionsInput.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ ok: false, error: 'Invalid lease-run assumptions' }, 400);
+  let known: string[];
+  try {
+    known = listLeaseTermPropertyIds(getWarehouse());
+  } catch {
+    return c.json({ ok: false, error: 'warehouse unavailable' }, 503);
+  }
+  if (!known.includes(parsed.data.propertyId)) {
+    return c.json({ ok: false, error: 'Unknown lease-run property' }, 404);
+  }
+  const { propertyId, ...patch } = parsed.data;
+  const assumptions = setLeaseRunAssumptions(propertyId, patch);
+  return c.json({ ok: true, propertyId, assumptions });
 });
 
 /** Macro indicators — live FRED when FRED_API_KEY is set, real-seeded snapshot otherwise. */
