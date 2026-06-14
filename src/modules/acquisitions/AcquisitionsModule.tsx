@@ -98,7 +98,10 @@ export function AcquisitionsModule() {
           </select>
         </div>
         <div className="p-3">
-          <AcquisitionWorkbench deal={scoreDeal} />
+          <AcquisitionWorkbench
+            deal={scoreDeal}
+            savedInput={scoreDeal ? data.snapshot.acquisitionInputs[scoreDeal.id] ?? null : null}
+          />
         </div>
       </Card>
     </div>

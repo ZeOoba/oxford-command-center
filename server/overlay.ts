@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { PortfolioSnapshot, Task, DealStage, RenewalStage, CompSet } from '../src/contracts/index';
+import type { PortfolioSnapshot, Task, DealStage, RenewalStage, CompSet, AcquisitionInput } from '../src/contracts/index';
 
 /**
  * Write-back overlay (Phase 5). The master workbook is canonical and READ-ONLY, so user
@@ -19,10 +19,12 @@ export interface Overlay {
   tenantNotes: Record<string, string>;
   /** dealId → cached AI-sourced comp research. */
   dealComps: Record<string, CompSet>;
+  /** dealId → Acquisition Workbench underwriting inputs. */
+  acquisitionInputs: Record<string, AcquisitionInput>;
   /** propertyId → annual NOI budget target (Phase 3 ②). */
   noiBudgets: Record<string, number>;
 }
-export const EMPTY_OVERLAY: Overlay = { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {} };
+export const EMPTY_OVERLAY: Overlay = { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, acquisitionInputs: {} };
 
 const OVERLAY_PATH = process.env.OVERLAY_PATH ?? join(process.cwd(), 'data', 'overlay.json');
 
@@ -39,12 +41,12 @@ export function loadOverlay(): Overlay {
   try {
     if (existsSync(OVERLAY_PATH)) {
       const raw = JSON.parse(readFileSync(OVERLAY_PATH, 'utf8')) as Partial<Overlay>;
-      return { dealStages: raw.dealStages ?? {}, tasks: raw.tasks ?? [], renewalStages: raw.renewalStages ?? {}, tenantNotes: raw.tenantNotes ?? {}, dealComps: raw.dealComps ?? {}, noiBudgets: raw.noiBudgets ?? {} };
+      return { dealStages: raw.dealStages ?? {}, tasks: raw.tasks ?? [], renewalStages: raw.renewalStages ?? {}, tenantNotes: raw.tenantNotes ?? {}, dealComps: raw.dealComps ?? {}, noiBudgets: raw.noiBudgets ?? {}, acquisitionInputs: raw.acquisitionInputs ?? {} };
     }
   } catch {
     /* corrupt overlay → start clean */
   }
-  return { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {} };
+  return { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, acquisitionInputs: {} };
 }
 
 export function saveOverlay(o: Overlay): void {
@@ -63,5 +65,5 @@ export function applyOverlay(s: PortfolioSnapshot, o: Overlay): PortfolioSnapsho
     return stage && stage !== d.stage ? { ...d, stage: stage as DealStage } : d;
   });
   const tasks = o.tasks.length ? [...o.tasks, ...s.tasks] : s.tasks;
-  return { ...s, deals, tasks, renewalStages: o.renewalStages, tenantNotes: o.tenantNotes, dealComps: o.dealComps, noiBudgets: o.noiBudgets };
+  return { ...s, deals, tasks, renewalStages: o.renewalStages, tenantNotes: o.tenantNotes, dealComps: o.dealComps, noiBudgets: o.noiBudgets, acquisitionInputs: o.acquisitionInputs };
 }

@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { watch } from 'chokidar';
-import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, type DealStage, type RenewalStage, type CompSet } from '../src/contracts/index';
+import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, type DealStage, type RenewalStage, type CompSet, type AcquisitionInput } from '../src/contracts/index';
 import { tenantScorecards } from '../src/brain/tenants';
 import { parseWorkbook } from './workbook/parse';
 import { applyOverlay, loadOverlay, saveOverlay, type Overlay } from './overlay';
@@ -119,6 +119,14 @@ class Brain extends EventEmitter {
     if (!this.base?.deals.some((d) => d.id === dealId)) return false;
     this.overlay = { ...this.overlay, dealComps: { ...this.overlay.dealComps, [dealId]: comps } };
     this.rederive('action:deal-comps');
+    return true;
+  }
+
+  /** Write-back: persist a deal's Acquisition Workbench underwriting inputs. Returns false if unknown. */
+  setAcquisitionInput(dealId: string, input: AcquisitionInput): boolean {
+    if (!this.base?.deals.some((d) => d.id === dealId)) return false;
+    this.overlay = { ...this.overlay, acquisitionInputs: { ...this.overlay.acquisitionInputs, [dealId]: input } };
+    this.rederive('action:acquisition-input');
     return true;
   }
 
