@@ -14,6 +14,7 @@ export const ALERT_THRESHOLDS = {
   balloonWarningDays: 365,
   dscrFloor: 1.1,
   dscrWatch: 1.25,
+  ltvGovernor: 0.40, // B3: the ratified LTV governor (capital-config.ts ltvCeiling) — info-level "above governor"
   ltvCeiling: 0.65,
   leaseCriticalDays: 60,
   leaseWarningDays: 180,
@@ -83,6 +84,15 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         id: `ltv-${p.id}`, severity: 'warning', category: 'debt',
         title: `LTV above 65% — ${p.name}`,
         detail: `Loan-to-value is ${fmtPct(p.ltv)} (above the ${fmtPct(T.ltvCeiling)} ceiling).`,
+        metric: fmtPct(p.ltv), entityType: 'property', entityId: p.id,
+      });
+    } else if (p.ltv !== null && p.ltv > T.ltvGovernor) {
+      // B3 Option B: above the ratified LTV governor (≤40%) but within the operational ceiling —
+      // an info-level signal so a governor deviation is visible without warning-noise on every levered property.
+      out.push({
+        id: `ltv-governor-${p.id}`, severity: 'info', category: 'debt',
+        title: `LTV above governor — ${p.name}`,
+        detail: `Loan-to-value is ${fmtPct(p.ltv)} — above the ${fmtPct(T.ltvGovernor)} portfolio governor (LTV ≤ 40%).`,
         metric: fmtPct(p.ltv), entityType: 'property', entityId: p.id,
       });
     }
