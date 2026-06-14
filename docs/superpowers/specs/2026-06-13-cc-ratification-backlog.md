@@ -35,6 +35,10 @@ These are real HIGH/MED correctness bugs, scheduled in the hardened plan's phase
 - **H6** warehouse read boundary bypasses the Zod contract layer (structural blocker for planned engines) — introduce a parsed read boundary. `src/modules/intel/analytics-hooks.ts` + `server/warehouse/api.ts`.
 - **H7** `/analytics/benchmarks` rankings inconsistent vs cohorts (missing SF-less exclusion). `server/warehouse/benchmarks.ts:115-121`.
 
+### B5 · `cappedAtT2` boolean misses floor-indeterminate when the same null input also zeroes a scorecard category (surfaced during TA-1 implementation)
+- **Where:** `server/warehouse/acquisition.ts` — `cappedAtT2` flips `true` only when a deal banded T1 is then demoted. When a missing floor input (e.g. `stabilizedYoc: null`, or `allInBasis`/`replacementCostTotal: null`) *also* zeroes its scorecard category, the composite falls below the 75 T1 bar on its own, so the deal lands T2 **by band** with `cappedAtT2 = false`; the indeterminacy then surfaces **only** in `reasons` / `floors[].actual === null`.
+- **Impact:** a downstream consumer keying off `cappedAtT2` alone (not scanning `reasons`/`floors`) would not see that a hard floor could not be evaluated. Observability gap, not a mis-score. **YELLOW** (financial-mechanism) — fix = set `cappedAtT2` (or a separate `floorIndeterminate` flag) whenever any floor input is null, independent of the band path; add a test. Now characterized in `tests/unit/acquisition.test.ts`.
+
 > **Implemented THIS run (not deferred):** H4 scenario-value basis-mix (TA-2) + additive governor-surface engine/reconcile tests (TA-1). See the PR.
 
 ## Data-flywheel (the "learn from my data" goal — DESIGN-ONLY this run)
