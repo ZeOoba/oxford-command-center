@@ -23,6 +23,7 @@ import { AlertActionInput } from '../src/contracts/alerts';
 import { openWarehouse } from './warehouse/db';
 import type { WarehouseDb } from './warehouse/db';
 import { warehouseRoutes } from './warehouse/api';
+import { captureOccupancy } from './warehouse/occupancy';
 
 const app = new Hono();
 // Confidential data — only same-machine localhost origins may call the API.
@@ -43,6 +44,22 @@ function getWarehouse(): WarehouseDb {
   return _warehouse;
 }
 app.route('/api/warehouse', warehouseRoutes(getWarehouse));
+
+// Occupancy time-series capture: on every workbook-sourced refresh (startup, file-change,
+// api/manual — NOT overlay edits or a failed-parse fallback), snapshot each property's occPct
+// into the warehouse so occupancy history accumulates automatically. Fully guarded: a missing/
+// unopenable warehouse must never break the brain refresh or the SSE push.
+brain.on('snapshot', (info: unknown) => {
+  const reason = (info as { reason?: string } | undefined)?.reason ?? '';
+  if (reason.startsWith('action:') || reason.endsWith(':fallback')) return;
+  try {
+    captureOccupancy(getWarehouse(), brain.getSnapshot());
+  } catch (err) {
+    // Warehouse unavailable (cold/mirror env) — capture is best-effort, but do not fail SILENTLY:
+    // a total capture failure must be observable in the server log, not invisible.
+    console.warn('⚠ Occupancy capture skipped:', err instanceof Error ? err.message : String(err));
+  }
+});
 
 app.get('/api/health', (c) => {
   const briefHealth = existsSync('data/brief-health.json')
