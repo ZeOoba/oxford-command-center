@@ -10,30 +10,11 @@
 // reads it as "no signal", not "flat" or "declining". Missing/null grains are treated as a
 // single comparable cohort (legacy/year), so pre-grain data keeps working.
 import type { PeriodMetrics } from './metrics';
+// GrowthPoint + SinceAcquisition are single-sourced in the contract (H6); re-export under their
+// local names so existing engine imports keep working. The schemas are the source of truth.
+import type { GrowthPoint, SinceAcquisition } from '../../src/contracts/warehouse';
 
-export interface GrowthPoint {
-  propertyId: string;
-  period: string;
-  comparable: boolean; // false ⇒ prior period was a different grain; growths are null by construction
-  revenueGrowth: number | null;
-  expenseGrowth: number | null;
-  noiGrowth: number | null;
-  noiPerSfGrowth: number | null;
-}
-
-export interface SinceAcquisition {
-  propertyId: string | null;
-  anchorPeriod: string | null;
-  latestPeriod: string | null;
-  comparable: boolean; // false ⇒ only a non-comparable (e.g. YTD-only) endpoint was available
-  revenueGrowth: number | null;
-  noiGrowth: number | null;
-  noiPerSfGrowth: number | null;
-  taxesGrowth: number | null;
-  insuranceGrowth: number | null;
-  revenuePerSfGrowth: number | null;
-  noiCagr: number | null;
-}
+export type { GrowthPoint, SinceAcquisition };
 
 /** Two periods share a grain when their grainHints match (null/undefined collapse to one cohort). */
 function sameGrain(a: PeriodMetrics, b: PeriodMetrics): boolean {

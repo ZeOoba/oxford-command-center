@@ -25,6 +25,7 @@ const pm = (
   propertyName: propertyId.toUpperCase(),
   period,
   grainHint,
+  basis: 'cash',
   rentableSf: 10000,
   ownershipPct: 1,
   revenue: 100,

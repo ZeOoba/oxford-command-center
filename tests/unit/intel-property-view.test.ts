@@ -21,6 +21,7 @@ const pm = (period: string, grainHint: string | null, over: Partial<PeriodMetric
   propertyName: 'P',
   period,
   grainHint,
+  basis: 'cash',
   rentableSf: 10000,
   ownershipPct: 1,
   revenue: 100,

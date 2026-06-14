@@ -1,29 +1,17 @@
 // server/warehouse/metrics.ts
 import { isNoiIncomeClass, isOpex } from '../../src/contracts/warehouse';
+import type { PeriodMetrics } from '../../src/contracts/warehouse';
 import type { WarehouseDb } from './db';
 
-export interface PeriodMetrics {
-  propertyId: string;
-  propertyName: string | null;
-  period: string;            // 'YYYY'
-  grainHint: string | null;  // from the import (year|ytd) — for comparability
-  basis: string;             // accounting basis from the import (cash|accrual|tax|unknown) — comparisons must not mix bases
-  rentableSf: number | null;
-  ownershipPct: number;
-  revenue: number;           // revenue + recovery + other-income (gross income, 100%-basis)
-  opex: number;              // operating expenses (positive magnitude)
-  noi: number;
-  noiMargin: number | null;  // noi / revenue
-  expenseRatio: number | null; // opex / revenue
-  capex: number; ti: number; leasing: number; // tracked, NOT in NOI
-  categories: Record<string, number>; // opex by normalized_category
-  revenueCategories: Record<string, number>; // revenue+recovery+other-income by normalized_category (positive)
-  // $/SF (100%-basis; null when rentableSf missing/0)
-  revenuePerSf: number | null; noiPerSf: number | null; expensePerSf: number | null;
-  taxesPerSf: number | null; insurancePerSf: number | null; repairsPerSf: number | null;
-  // ownership overlay
-  oxfordNoi: number;         // noi × ownershipPct
-}
+// PeriodMetrics is single-sourced in the contract (H6 — PeriodMetricsSchema). Re-export under the
+// local name so existing engine imports (`import type { PeriodMetrics } from './metrics'`) keep
+// working; the Zod schema is the source of truth for both the engine and the client.
+//   Field reference (see PeriodMetricsSchema): grainHint = import grain (year|ytd); basis =
+//   accounting basis (cash|accrual|tax|unknown), comparisons must not mix bases; revenue =
+//   revenue + recovery + other-income (100%-basis); opex = positive magnitude; capex/ti/leasing
+//   are tracked, NOT in NOI; categories = opex by category; revenueCategories = income by
+//   category; $/SF null when rentableSf missing/0; oxfordNoi = noi × ownershipPct.
+export type { PeriodMetrics };
 
 interface Row { propertyId: string; propertyName: string | null; period: string;
   classification: string; normalizedCategory: string; amount: number;
