@@ -13,6 +13,7 @@
 //   benchmarks.ts (MetricBenchmark, PropertyRank, PmScorecard).
 import { useQuery } from '@tanstack/react-query';
 import { QUERY_OPTS, fetchJson } from './hooks';
+import type { CapitalAction } from '@contracts/warehouse'; // M4: single-sourced in contracts
 
 // ---------------------------------------------------------------------------
 // Engine-mirroring enums + response shapes (camelCase, as the routes serialize them).
@@ -20,7 +21,7 @@ import { QUERY_OPTS, fetchJson } from './hooks';
 
 export type HealthBand = 'excellent' | 'good' | 'watch' | 'concern';
 export type AttentionBand = 'green' | 'yellow' | 'orange' | 'red';
-export type CapitalAction = 'invest' | 'hold' | 'monitor' | 'disposition-candidate';
+export type { CapitalAction }; // M4: re-export the single-sourced type for the intel views
 export type AnomalySeverity = 'low' | 'moderate' | 'high' | 'critical';
 export type AnomalyKind =
   | 'expense-growth'

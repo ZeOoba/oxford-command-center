@@ -7,6 +7,11 @@ export const Classification = z.enum([
 ]);
 export type Classification = z.infer<typeof Classification>;
 
+/** Capital-allocation recommendation for a property — the single source of truth shared by the server
+ *  scoring engine and the client intel views (M4: was duplicated in intel-config.ts + analytics-hooks.ts). */
+export const CapitalAction = z.enum(['invest', 'hold', 'monitor', 'disposition-candidate']);
+export type CapitalAction = z.infer<typeof CapitalAction>;
+
 /** Classes whose active ledger rows participate in NOI: revenue + recovery + other-income − opex. */
 export const NOI_CLASSES = ['revenue', 'recovery', 'other-income', 'opex'] as const;
 
