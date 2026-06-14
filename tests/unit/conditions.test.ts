@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { PortfolioSnapshot, Property, Lease, Loan, InsurancePolicy, Deal } from '@contracts/index';
 import { evaluateConditions, ALERT_THRESHOLDS } from '@analytics/index';
+import { CAPITAL_CONFIG } from '../../server/warehouse/capital-config';
 
 // ── Self-contained fixtures ─────────────────────────────────────────────────
 const ASOF = '2026-06-04';
@@ -89,9 +90,24 @@ describe('evaluateConditions — debt', () => {
     const out = evaluateConditions(snap({ properties: [prop({ ltv: 0.66 })] }), opts);
     expect(out.find((i) => i.id === 'ltv-p1')?.severity).toBe('warning');
   });
-  it('LTV at 65% does not fire', () => {
+  it('LTV at 65% does not fire the warning', () => {
     const out = evaluateConditions(snap({ properties: [prop({ ltv: 0.65 })] }), opts);
     expect(out.some((i) => i.id === 'ltv-p1')).toBe(false);
+  });
+  // B3 Option B — two-tier LTV: info above the 40% governor, warning above the 65% ceiling.
+  it('LTV above the governor (40%) but <= ceiling is an info "above governor" signal', () => {
+    const out = evaluateConditions(snap({ properties: [prop({ ltv: 0.5 })] }), opts);
+    expect(out.find((i) => i.id === 'ltv-governor-p1')?.severity).toBe('info');
+    expect(out.some((i) => i.id === 'ltv-p1')).toBe(false); // not the high-risk warning
+  });
+  it('LTV at/below the governor (40%) fires nothing', () => {
+    expect(evaluateConditions(snap({ properties: [prop({ ltv: 0.4 })] }), opts).some((i) => i.id.startsWith('ltv'))).toBe(false);
+    expect(evaluateConditions(snap({ properties: [prop({ ltv: 0.35 })] }), opts).some((i) => i.id.startsWith('ltv'))).toBe(false);
+  });
+  it('LTV above the ceiling (65%) is ONLY the warning, not also the info (tiered, no double-alert)', () => {
+    const out = evaluateConditions(snap({ properties: [prop({ ltv: 0.7 })] }), opts);
+    expect(out.find((i) => i.id === 'ltv-p1')?.severity).toBe('warning');
+    expect(out.some((i) => i.id === 'ltv-governor-p1')).toBe(false);
   });
 });
 
@@ -213,5 +229,17 @@ describe('ALERT_THRESHOLDS', () => {
     expect(ALERT_THRESHOLDS.leaseCriticalDays).toBe(60);
     expect(ALERT_THRESHOLDS.leaseWarningDays).toBe(180);
     expect(ALERT_THRESHOLDS.cashConcentrationWarn).toBe(0.3);
+  });
+  it('pins the ratified DSCR/LTV governor-derived thresholds', () => {
+    expect(ALERT_THRESHOLDS.dscrFloor).toBe(1.1);
+    expect(ALERT_THRESHOLDS.dscrWatch).toBe(1.25);
+    expect(ALERT_THRESHOLDS.ltvGovernor).toBe(0.4);
+    expect(ALERT_THRESHOLDS.ltvCeiling).toBe(0.65);
+  });
+  it('the alert thresholds track the ratified capital governor — cannot silently drift (B3)', () => {
+    // The "above governor" info tier MUST equal the ratified LTV governor; the DSCR watch MUST
+    // equal the ratified DSCR floor (CLAUDE.md §4, capital-config.ts).
+    expect(ALERT_THRESHOLDS.ltvGovernor).toBe(CAPITAL_CONFIG.ltvCeiling);
+    expect(ALERT_THRESHOLDS.dscrWatch).toBe(CAPITAL_CONFIG.dscrFloor);
   });
 });
