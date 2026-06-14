@@ -11,7 +11,7 @@
 export type AnomalySeverity = 'low' | 'moderate' | 'high' | 'critical';
 export type HealthBand = 'excellent' | 'good' | 'watch' | 'concern';
 export type AttentionBand = 'green' | 'yellow' | 'orange' | 'red';
-export type CapitalAction = 'invest' | 'hold' | 'monitor' | 'disposition-candidate';
+export type { CapitalAction } from '../../src/contracts/warehouse'; // M4: single-sourced in contracts
 
 export const INTEL_CONFIG = {
   anomaly: {
