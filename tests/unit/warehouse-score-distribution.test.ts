@@ -25,6 +25,7 @@ function mkScore(
     capitalAction: 'hold',
     subScores: {},
     noiPerSfQuartile: quartile,
+    benchmarkCohortSize: 0, // distribution check does not read it; deterministic placeholder
     reasons: [],
   };
 }
