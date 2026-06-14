@@ -40,8 +40,12 @@ export function noiVariance(s: PortfolioSnapshot): NoiVarianceSummary {
     return { propertyId: p.id, name: p.name, budget, actual, variance, variancePct, belowBudget: variance !== null && variance < 0 };
   });
 
-  const totalBudget = rows.reduce((n, r) => n + (r.budget ?? 0), 0);
-  const totalActual = rows.reduce((n, r) => n + (r.actual ?? 0), 0);
+  // Totals over PAIRED rows only (both budget AND actual present), matching the per-row variance
+  // guard above. Summing unpaired budgets/actuals manufactured a phantom shortfall during the
+  // realistic partial-QB-rollout state (audit H5). This also makes totalVariance == Σ(row.variance).
+  const paired = rows.filter((r) => r.budget !== null && r.actual !== null);
+  const totalBudget = paired.reduce((n, r) => n + (r.budget ?? 0), 0);
+  const totalActual = paired.reduce((n, r) => n + (r.actual ?? 0), 0);
   return {
     rows,
     totalBudget,

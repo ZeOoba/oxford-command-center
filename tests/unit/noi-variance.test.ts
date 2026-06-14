@@ -55,4 +55,27 @@ describe('noiVariance', () => {
     expect(r.totalActual).toBe(0);
     expect(r.rows.find((x) => x.propertyId === 'a')!.actual).toBeNull();
   });
+
+  it('totals exclude budgeted properties with no actual — no phantom shortfall (H5)', () => {
+    // Realistic partial-QB-rollout state: 'd' has a budget but QB has not posted its actual yet.
+    const partial = {
+      properties: [{ id: 'a', name: 'A' }, { id: 'd', name: 'D' }],
+      noiBudgets: { a: 100000, d: 200000 }, // d budgeted, no QB actual
+      quickbooks: {
+        sourceFile: null, parsedAt: '2026-06-05T00:00:00.000Z',
+        properties: [
+          { propertyKey: 'A', propertyId: 'a', annualIncome: 130000, annualExpense: 40000, annualNoi: 90000, monthly: [], glExpense: [] },
+        ],
+      },
+    } as unknown as PortfolioSnapshot;
+    const r = noiVariance(partial);
+    // Only the PAIRED property (a) contributes to the totals; d's unmatched 200k budget must NOT
+    // manufacture a -200k phantom shortfall.
+    expect(r.totalBudget).toBe(100000);
+    expect(r.totalActual).toBe(90000);
+    expect(r.totalVariance).toBe(-10000); // a's variance alone, not -210000
+    // Consistency: portfolio variance equals the sum of per-row (paired) variances.
+    const sumRowVar = r.rows.reduce((n, x) => n + (x.variance ?? 0), 0);
+    expect(r.totalVariance).toBe(sumRowVar);
+  });
 });
