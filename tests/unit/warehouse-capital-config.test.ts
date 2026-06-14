@@ -11,6 +11,7 @@ import {
   CAPITAL_CONFIG,
   appendCalibrationLog,
   loadCapitalConfig,
+  writeCapitalConfig,
 } from '../../server/warehouse/capital-config';
 
 function freshDb() {
@@ -127,5 +128,151 @@ describe('appendCalibrationLog — audit trail', () => {
     appendCalibrationLog(db, { configTable: 'capital_config', paramKey: 'payout_pct', oldValue: 0.05, newValue: 0.10 });
     const count = (db.prepare('SELECT COUNT(*) AS n FROM calibration_log').get() as { n: number }).n;
     expect(count).toBe(2);
+  });
+});
+
+describe('writeCapitalConfig — governed mutation (hard-invariant enforcement + audit trail)', () => {
+  it('writes a new version row merging the update over the current config', () => {
+    const db = freshDb(); // seeded version 1
+    const next = writeCapitalConfig(
+      db,
+      { payoutPct: 0.10, effectiveFrom: '2026-12-01', notes: 'Distribution approved' },
+      { rationale: '10% payout ratified', sessionId: 's1' },
+    );
+    expect(next.version).toBe(2);
+    expect(next.payoutPct).toBe(0.10);
+    // Unchanged params carry forward from version 1.
+    expect(next.dscrFloor).toBe(1.25);
+    expect(next.acqIrr).toBe(CAPITAL_CONFIG.acqIrr);
+    // loadCapitalConfig now returns the new version.
+    expect(loadCapitalConfig(db).version).toBe(2);
+  });
+
+  it('logs a calibration entry for EACH changed parameter, none for unchanged', () => {
+    const db = freshDb();
+    writeCapitalConfig(
+      db,
+      { payoutPct: 0.10, refiTriggerBps: 175, effectiveFrom: '2026-12-01' },
+      { rationale: 'two-param change', sessionId: 's1' },
+    );
+    const logs = db
+      .prepare('SELECT param_key, old_value, new_value FROM calibration_log ORDER BY param_key')
+      .all() as Array<{ param_key: string; old_value: string; new_value: string }>;
+    expect(logs.map((l) => l.param_key)).toEqual(['payoutPct', 'refiTriggerBps']);
+    const payout = logs.find((l) => l.param_key === 'payoutPct')!;
+    expect(JSON.parse(payout.old_value)).toBe(0.0);
+    expect(JSON.parse(payout.new_value)).toBe(0.10);
+  });
+
+  it('REFUSES (throws) to write a DSCR floor below the 1.25 hard invariant', () => {
+    const db = freshDb();
+    expect(() =>
+      writeCapitalConfig(db, { dscrFloor: 1.20, effectiveFrom: '2026-12-01' }, {}),
+    ).toThrow(/dscr|1\.25|invariant/i);
+    // No new version, no log entry written on rejection.
+    expect(loadCapitalConfig(db).version).toBe(1);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM calibration_log').get() as { n: number }).n).toBe(0);
+  });
+
+  it('REFUSES (throws) to write an LTV ceiling above the 0.40 hard invariant', () => {
+    const db = freshDb();
+    expect(() =>
+      writeCapitalConfig(db, { ltvCeiling: 0.45, effectiveFrom: '2026-12-01' }, {}),
+    ).toThrow(/ltv|0\.40|invariant/i);
+    expect(loadCapitalConfig(db).version).toBe(1);
+  });
+
+  it('ALLOWS tightening: DSCR floor 1.30 (higher than 1.25) and LTV 0.35 (lower than 0.40) are accepted', () => {
+    const db = freshDb();
+    const next = writeCapitalConfig(
+      db,
+      { dscrFloor: 1.30, ltvCeiling: 0.35, effectiveFrom: '2026-12-01' },
+      {},
+    );
+    expect(next.dscrFloor).toBe(1.30);
+    expect(next.ltvCeiling).toBe(0.35);
+  });
+
+  it('REFUSES a non-finite numeric value (NaN must not slip past the < / > guards)', () => {
+    const db = freshDb();
+    expect(() =>
+      writeCapitalConfig(db, { dscrFloor: NaN, effectiveFrom: '2026-12-01' }, {}),
+    ).toThrow();
+    expect(loadCapitalConfig(db).version).toBe(1);
+  });
+
+  it('REFUSES a governor set that violates the disposition<hold<acqIrr<capexIrr ordering', () => {
+    const db = freshDb();
+    // hold below disposition — inverted ordering.
+    expect(() =>
+      writeCapitalConfig(db, { holdCapRate: 0.05, effectiveFrom: '2026-12-01' }, {}),
+    ).toThrow(/order|disposition|hold|consistent/i);
+    expect(loadCapitalConfig(db).version).toBe(1);
+  });
+
+  it('REFUSES a no-op write (no parameters actually changed) — does not pollute version history', () => {
+    const db = freshDb();
+    expect(() =>
+      writeCapitalConfig(db, { payoutPct: 0.0, effectiveFrom: '2026-12-01' }, {}),
+    ).toThrow(/no change|unchanged|nothing/i);
+    expect(loadCapitalConfig(db).version).toBe(1);
+  });
+
+  it('REFUSES payoutPct outside [0,1]', () => {
+    const db = freshDb();
+    expect(() => writeCapitalConfig(db, { payoutPct: 1.5, effectiveFrom: '2026-12-01' }, {})).toThrow();
+    expect(() => writeCapitalConfig(db, { payoutPct: -0.1, effectiveFrom: '2026-12-01' }, {})).toThrow();
+  });
+
+  it('is atomic: a rejected write leaves neither a version row nor a partial calibration log', () => {
+    const db = freshDb();
+    // refiTriggerBps valid but dscrFloor invalid — the whole write must roll back.
+    expect(() =>
+      writeCapitalConfig(db, { refiTriggerBps: 200, dscrFloor: 1.0, effectiveFrom: '2026-12-01' }, {}),
+    ).toThrow();
+    expect(loadCapitalConfig(db).version).toBe(1);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM calibration_log').get() as { n: number }).n).toBe(0);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM capital_config').get() as { n: number }).n).toBe(1);
+  });
+
+  // Adversarial round-3 findings: effectiveFrom is the audit-trail anchor and must be a real,
+  // non-backdated ISO date; the governors need fat-finger sanity ceilings.
+  it('REFUSES an empty or non-ISO effectiveFrom (audit-trail anchor must be a real date)', () => {
+    const db = freshDb();
+    expect(() => writeCapitalConfig(db, { payoutPct: 0.1, effectiveFrom: '' }, {})).toThrow(/effectiveFrom|ISO date/i);
+    expect(() => writeCapitalConfig(db, { payoutPct: 0.1, effectiveFrom: 'not-a-date' }, {})).toThrow(/effectiveFrom|ISO date/i);
+    expect(loadCapitalConfig(db).version).toBe(1);
+  });
+
+  it('REFUSES a calendar-overflow effectiveFrom that the regex passes but no calendar has (2026-02-30)', () => {
+    const db = freshDb();
+    // JS Date silently rolls '2026-02-30' to Mar 2; the round-trip guard must reject it so a
+    // non-existent date never enters the governance audit trail. A real leap day is still accepted.
+    expect(() => writeCapitalConfig(db, { payoutPct: 0.1, effectiveFrom: '2026-02-30' }, {})).toThrow(/effectiveFrom|real ISO date/i);
+    expect(() => writeCapitalConfig(db, { payoutPct: 0.1, effectiveFrom: '2025-02-29' }, {})).toThrow(/effectiveFrom|real ISO date/i);
+    expect(loadCapitalConfig(db).version).toBe(1);
+    // Sanity: a genuine leap day (2028 is a leap year) is accepted.
+    const ok = writeCapitalConfig(db, { payoutPct: 0.1, effectiveFrom: '2028-02-29' }, {});
+    expect(ok.version).toBe(2);
+  });
+
+  it('REFUSES a backdated effectiveFrom earlier than the current live set (timeline integrity)', () => {
+    const db = freshDb(); // seed version 1 effectiveFrom '2026-06-13'
+    expect(() =>
+      writeCapitalConfig(db, { payoutPct: 0.1, effectiveFrom: '2026-01-01' }, {}),
+    ).toThrow(/backdat|before the current/i);
+    expect(loadCapitalConfig(db).version).toBe(1);
+  });
+
+  it('REFUSES a fat-finger DSCR floor above the sane ceiling (would lock out all acquisitions)', () => {
+    const db = freshDb();
+    expect(() => writeCapitalConfig(db, { dscrFloor: 999, effectiveFrom: '2026-12-01' }, {})).toThrow(/ceiling|fat-finger/i);
+    expect(loadCapitalConfig(db).version).toBe(1);
+  });
+
+  it('REFUSES a fat-finger refiTriggerBps above the sane ceiling', () => {
+    const db = freshDb();
+    expect(() => writeCapitalConfig(db, { refiTriggerBps: 1_000_000, effectiveFrom: '2026-12-01' }, {})).toThrow(/ceiling|fat-finger/i);
+    expect(loadCapitalConfig(db).version).toBe(1);
   });
 });
