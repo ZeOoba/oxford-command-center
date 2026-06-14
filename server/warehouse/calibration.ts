@@ -24,8 +24,10 @@ import type { PeriodMetrics } from './metrics';
 import {
   CalibrationVerdictSchema,
   CalibrationOutcomeSchema,
+  CalibrationResolveRequestSchema,
   type CalibrationVerdict,
   type CalibrationOutcome,
+  type CalibrationResolveRequest,
   type CalibrationLogRow,
   type InputsVersion,
 } from '../../src/contracts/warehouse';
@@ -699,6 +701,171 @@ function recordResolveFailure(db: WarehouseDb, detail: string): void {
     ).run(detail);
   } catch {
     /* swallow — calibration is observational; nothing it does may block the warehouse */
+  }
+}
+
+// ── §3.2 MANUAL resolution (the UI/ops write path) ───────────────────────────────────────────
+// An analyst records the realized outcome of a pending verdict, or blesses/overrides an existing
+// (auto or manual) resolution. This is the ONLY calibration WRITE the UI performs. Unlike the
+// observational, fail-OPEN auto-resolver and logger, a manual write is a deliberate user action, so
+// it FAILS CLOSED with a typed {ok:false,error} rather than silently swallowing — the UI must show the
+// user exactly why a save was rejected. It still touches calibration_outcome ONLY (append-only; the
+// verdict row is never mutated), never data/overlay.json, never a governor.
+
+export type ResolveManualResult =
+  | { ok: true; outcomeId: number; superseded: boolean; duplicate: boolean }
+  | { ok: false; error: string };
+
+/** True iff two period tokens share grain (both 'YYYY' full-year, or both 'YYYY-MM' month). The grain
+ *  discipline guard: a full-year verdict may only be resolved against a full-year outcome period — a
+ *  YTD-vs-full-year comparison manufactures the spurious ≈−50% move the whole warehouse guards against. */
+function sameGrain(a: string, b: string): boolean {
+  const yearA = /^\d{4}$/.test(a);
+  const yearB = /^\d{4}$/.test(b);
+  return yearA === yearB;
+}
+
+/** Strictly-later period comparison on the canonical 'YYYY' / 'YYYY-MM' tokens (lexicographic order
+ *  is chronological for these zero-padded tokens). */
+function isStrictlyLater(asOf: string, outcome: string): boolean {
+  return outcome.localeCompare(asOf) > 0;
+}
+
+/**
+ * Record a MANUAL resolution for one verdict (spec §3.2). Append-only + supersede + idempotent, all in
+ * ONE transaction so the partial unique index (`idx_outcome_resolution`, one is_resolution=1 per
+ * verdict) can never be violated and a concurrent reader never sees zero-or-two blessed rows:
+ *   1. Zod-validate the body (rejects a no-signal resolution → fail closed).
+ *   2. Verify the verdict exists (rejects an orphan → fail closed).
+ *   3. GRAIN GUARD: the outcome period must be the SAME GRAIN as, and STRICTLY LATER than, the verdict's
+ *      as_of period (rejects a YTD-vs-full-year or non-future outcome → fail closed).
+ *   4. IDEMPOTENT: if the current blessed (is_resolution=1) row is byte-identical to this submission,
+ *      it is a no-op (duplicate:true) — a double-submit never writes twice or supersedes itself.
+ *   5. SUPERSEDE: any differing blessed row flips is_resolution=0 (preserved — append-only), then the
+ *      new is_resolution=1 row is inserted.
+ * The verdict row itself is NEVER read-modified-written — only calibration_outcome is touched.
+ */
+export function resolveManualOutcome(db: WarehouseDb, body: unknown): ResolveManualResult {
+  const parsed = CalibrationResolveRequestSchema.safeParse(body);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues.map((i) => i.message).join('; ') };
+  }
+  const input: CalibrationResolveRequest = parsed.data;
+
+  try {
+    const verdict = db
+      .prepare('SELECT id, as_of_period FROM calibration_verdict WHERE id = ?')
+      .get(input.calibrationId) as { id: number; as_of_period: string } | undefined;
+    if (!verdict) {
+      return { ok: false, error: `verdict ${input.calibrationId} not found` };
+    }
+
+    // GRAIN + horizon guard (warehouse §9). Both checks are on canonical period tokens.
+    if (!sameGrain(verdict.as_of_period, input.outcomePeriod)) {
+      return {
+        ok: false,
+        error: `grain mismatch: a verdict at ${verdict.as_of_period} cannot be resolved against a different-grain outcome period ${input.outcomePeriod} (same-grain full-year/month only)`,
+      };
+    }
+    if (!isStrictlyLater(verdict.as_of_period, input.outcomePeriod)) {
+      return {
+        ok: false,
+        error: `outcome period ${input.outcomePeriod} must be strictly later than the verdict period ${verdict.as_of_period} (an outcome is a future realized state)`,
+      };
+    }
+
+    // Validate the persisted shape at the boundary (mirrors logVerdicts/resolveDueOutcomes). horizonActual
+    // is the elapsed gap; for full-year tokens that is the year delta, otherwise null (month grain — the
+    // resolver doesn't yet score month-grain horizons, but a manual hit/band is still recorded).
+    const asOfYear = parseFullYear(verdict.as_of_period);
+    const outcomeYear = parseFullYear(input.outcomePeriod);
+    const horizonActual = asOfYear !== null && outcomeYear !== null ? outcomeYear - asOfYear : null;
+    CalibrationOutcomeSchema.parse({
+      calibrationId: input.calibrationId,
+      realizedBand: input.realizedBand,
+      realizedValue: input.realizedValue,
+      realizedUnit: input.realizedUnit,
+      outcomePeriod: input.outcomePeriod,
+      horizonActual,
+      hit: input.hit,
+      absError: null,
+      brierComponent: null,
+      actionTaken: input.actionTaken,
+      actionDetail: input.actionDetail,
+      treatmentNote: input.treatmentNote,
+      resolvedBy: input.resolvedBy,
+      resolutionBasis: input.resolutionBasis,
+      isResolution: true,
+      inputsVersion: null,
+    });
+
+    const tx = db.transaction((): { outcomeId: number; superseded: boolean; duplicate: boolean } => {
+      const current = db
+        .prepare(
+          `SELECT id, realized_band, realized_value, realized_unit, outcome_period, hit,
+                  action_taken, action_detail, treatment_note, resolved_by, resolution_basis
+           FROM calibration_outcome WHERE calibration_id = ? AND is_resolution = 1`,
+        )
+        .get(input.calibrationId) as
+        | {
+            id: number;
+            realized_band: string | null;
+            realized_value: number | null;
+            realized_unit: string | null;
+            outcome_period: string;
+            hit: number | null;
+            action_taken: string;
+            action_detail: string | null;
+            treatment_note: string | null;
+            resolved_by: string;
+            resolution_basis: string;
+          }
+        | undefined;
+
+      // IDEMPOTENT: a byte-identical re-submit is a no-op (no duplicate row, no self-supersede).
+      if (
+        current
+        && current.realized_band === input.realizedBand
+        && current.realized_value === input.realizedValue
+        && current.realized_unit === input.realizedUnit
+        && current.outcome_period === input.outcomePeriod
+        && current.hit === input.hit
+        && current.action_taken === input.actionTaken
+        && current.action_detail === input.actionDetail
+        && current.treatment_note === input.treatmentNote
+        && current.resolved_by === input.resolvedBy
+        && current.resolution_basis === input.resolutionBasis
+      ) {
+        return { outcomeId: current.id, superseded: false, duplicate: true };
+      }
+
+      // SUPERSEDE: demote the prior blessed row (preserved — append-only) BEFORE inserting the new one,
+      // so the partial unique index never sees two is_resolution=1 rows at once.
+      const superseded = current !== undefined;
+      if (superseded) {
+        db.prepare('UPDATE calibration_outcome SET is_resolution = 0 WHERE id = ?').run(current!.id);
+      }
+      const info = db
+        .prepare(
+          `INSERT INTO calibration_outcome
+             (calibration_id, realized_band, realized_value, realized_unit, outcome_period, horizon_actual,
+              hit, abs_error, brier_component, action_taken, action_detail, treatment_note,
+              resolved_by, resolution_basis, is_resolution)
+           VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, 1)`,
+        )
+        .run(
+          input.calibrationId, input.realizedBand, input.realizedValue, input.realizedUnit,
+          input.outcomePeriod, horizonActual, input.hit, input.actionTaken, input.actionDetail,
+          input.treatmentNote, input.resolvedBy, input.resolutionBasis,
+        );
+      return { outcomeId: Number(info.lastInsertRowid), superseded, duplicate: false };
+    });
+
+    const r = tx();
+    return { ok: true, ...r };
+  } catch (e) {
+    // Manual writes FAIL CLOSED (unlike the observational auto path): surface the error to the UI.
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
 

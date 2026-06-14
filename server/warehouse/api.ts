@@ -14,6 +14,7 @@ import {
   MetricsResponseSchema, GrowthResponseSchema, DriversResponseSchema, AnomaliesResponseSchema,
   BenchmarksResponseSchema, ScoresResponseSchema, PmScorecardsResponseSchema,
   CalibrationLogResponseSchema, CalibrationPendingResponseSchema, CalibrationReportSchema,
+  CalibrationResolveRequestSchema, CalibrationResolveResponseSchema,
   VerdictKind,
 } from '../../src/contracts/warehouse';
 import { AcquisitionInput } from '../../src/contracts/acquisition';
@@ -23,7 +24,7 @@ import { addMappingOverride, approveImport, rejectImport, resolveIssue } from '.
 import { getImportDetail, listImports, listIssues, noiMatrix } from './queries';
 import { detectAnomalies } from './anomalies';
 import { benchmarkMetric, pmScorecards, rankProperties } from './benchmarks';
-import { calibrationLog, calibrationPending, calibrationReport } from './calibration';
+import { calibrationLog, calibrationPending, calibrationReport, resolveManualOutcome } from './calibration';
 import { decomposeNoiChange, noiImpactByCategory } from './drivers';
 import { growthSeries, sinceAcquisition } from './growth';
 import { propertyPeriodMetrics } from './metrics';
@@ -382,6 +383,33 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       });
       if (!parsed.success) return c.json({ error: 'invalid query' }, 400);
       return c.json(CalibrationReportSchema.parse(calibrationReport(db, parsed.data)));
+    }),
+  );
+
+  // POST /calibration/:id/resolve — the MANUAL resolution WRITE (spec §3.2). The only calibration
+  // mutation the UI performs: it records an analyst's realized outcome for a pending verdict, or
+  // blesses/overrides an auto-resolution. Append-only + idempotent + grain-guarded in
+  // resolveManualOutcome; writes calibration_outcome ONLY (never a verdict, never overlay, never a
+  // governor). Status mapping: 400 = malformed/no-signal body (Zod) · 404 = bad/nonexistent verdict
+  // id · 422 = a well-formed request that violates the grain/horizon domain rule · 200 = written
+  // (or an idempotent duplicate no-op). The body is Zod-validated inside resolveManualOutcome, but we
+  // also reject a non-integer path id and a non-object body up front for the right status code.
+  app.post('/calibration/:id/resolve', (c) =>
+    withDb(async (db) => {
+      const id = parseId(c.req.param('id'));
+      if (id === null) return c.json({ error: 'not found' }, 404);
+      const raw = await c.req.json().catch(() => null);
+      if (raw === null || typeof raw !== 'object') return c.json({ error: 'invalid resolution body' }, 400);
+      // Pre-validate the body shape (400) BEFORE the domain call, so a Zod failure is a 400 and a
+      // domain-rule failure (bad id / grain) gets its own status below.
+      const parsed = CalibrationResolveRequestSchema.safeParse({ ...(raw as object), calibrationId: id });
+      if (!parsed.success) return c.json({ error: 'invalid resolution', issues: parsed.error.issues }, 400);
+
+      const r = resolveManualOutcome(db, parsed.data);
+      if (r.ok) return c.json(CalibrationResolveResponseSchema.parse(r), 200);
+      // A missing verdict is a 404; every other domain refusal (grain / horizon) is a 422.
+      const status = /not found/i.test(r.error) ? 404 : 422;
+      return c.json({ error: r.error }, status);
     }),
   );
 
