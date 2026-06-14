@@ -41,6 +41,10 @@ import {
   type LeaseRunSummary,
   type MarkToMarket,
 } from '../../src/contracts/lease-run';
+import { PropertyBriefingModel, ManagerBriefingModel } from '../../src/contracts/briefing';
+import { composePropertyBriefing, composeManagerBriefing } from '../briefing/compose';
+import { renderBriefingPdf } from '../briefing/pdf';
+import { briefingFilename } from '../briefing/filename';
 
 const ActionInput = z.object({ action: z.enum(['approve', 'reject']) });
 
@@ -352,6 +356,53 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       const cohort = cohortRentBenchmark(propertyPeriodMetrics(db));
       const { projection, markToMarket } = buildLeaseRunEnvelope(db, propertyId, cohort);
       return c.json(LeaseRunProjectionEnvelope.parse({ ...projection, markToMarket }));
+    }),
+  );
+
+  // ── Briefings + PDF export (PFI Phase C). Read-only; behind the same 503 guard. The composer
+  //    maps EXISTING analytics → a BriefingModel (never recompute — the PDF can't disagree with the
+  //    screen). Each subject has a JSON sibling (the H6 read boundary, for preview + tests) and a
+  //    `.pdf` route streaming application/pdf with an ORA_Briefing_<Subject>_<YYYYMMDD>.pdf filename.
+  //    A briefing is ownership-FINANCIAL, never a deal artifact — the composer carries no confidential
+  //    deal term (asserted in compose + tested). The generated-date is injected at the route boundary
+  //    (wall-clock is allowed here); the renderer itself never calls Date.now() (determinism).
+  const generatedDate = (): string => new Date().toISOString().slice(0, 10);
+
+  // One route per subject. A `.pdf` suffix on the slug → stream the PDF; otherwise → the JSON model
+  // (the H6 preview sibling). Hono's matcher treats a dotted param name as literal, so we dispatch on
+  // the suffix in the handler rather than registering two ambiguous `:id` / `:id.pdf` routes. The slug
+  // itself never contains a dot, so stripping a trailing `.pdf` is unambiguous.
+  const splitPdf = (raw: string): { id: string; wantsPdf: boolean } =>
+    raw.endsWith('.pdf') ? { id: raw.slice(0, -4), wantsPdf: true } : { id: raw, wantsPdf: false };
+
+  const streamPdf = async (
+    model: PropertyBriefingModel | ManagerBriefingModel,
+  ): Promise<Response> => {
+    const bytes = await renderBriefingPdf(model);
+    return new Response(new Uint8Array(bytes), {
+      status: 200,
+      headers: {
+        'content-type': 'application/pdf',
+        'content-disposition': `attachment; filename="${briefingFilename(model)}"`,
+      },
+    });
+  };
+
+  app.get('/briefing/property/:slug', (c) =>
+    withDb(async (db) => {
+      const { id, wantsPdf } = splitPdf(c.req.param('slug'));
+      const model = composePropertyBriefing(db, id, { generatedDate: generatedDate() });
+      if (!model) return c.json({ error: 'not found' }, 404);
+      return wantsPdf ? streamPdf(model) : c.json(PropertyBriefingModel.parse(model));
+    }),
+  );
+
+  app.get('/briefing/manager/:slug', (c) =>
+    withDb(async (db) => {
+      const { id, wantsPdf } = splitPdf(c.req.param('slug'));
+      const model = composeManagerBriefing(db, id, { generatedDate: generatedDate() });
+      if (!model) return c.json({ error: 'not found' }, 404);
+      return wantsPdf ? streamPdf(model) : c.json(ManagerBriefingModel.parse(model));
     }),
   );
 
