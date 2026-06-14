@@ -9,7 +9,11 @@
 // router never throws at mount and never crashes the server.
 import { Hono } from 'hono';
 import { z } from 'zod';
-import { Classification } from '../../src/contracts/warehouse';
+import { Classification, NumericMetricKey } from '../../src/contracts/warehouse';
+import {
+  MetricsResponseSchema, GrowthResponseSchema, DriversResponseSchema, AnomaliesResponseSchema,
+  BenchmarksResponseSchema, ScoresResponseSchema, PmScorecardsResponseSchema,
+} from '../../src/contracts/warehouse';
 import { AcquisitionInput } from '../../src/contracts/acquisition';
 import type { AcquisitionRuleset, ReplacementCostTable } from '../../src/contracts/acquisition';
 import type { WarehouseDb } from './db';
@@ -17,7 +21,6 @@ import { addMappingOverride, approveImport, rejectImport, resolveIssue } from '.
 import { getImportDetail, listImports, listIssues, noiMatrix } from './queries';
 import { detectAnomalies } from './anomalies';
 import { benchmarkMetric, pmScorecards, rankProperties } from './benchmarks';
-import type { NumericMetricKey } from './benchmarks';
 import { decomposeNoiChange, noiImpactByCategory } from './drivers';
 import { growthSeries, sinceAcquisition } from './growth';
 import { propertyPeriodMetrics } from './metrics';
@@ -34,20 +37,13 @@ const AddMappingInputSchema = z.object({
   propertyId: z.string().min(1).optional(),
 });
 
-// Benchmarkable numeric metric keys (kept in lockstep with NumericMetricKey in benchmarks.ts).
-const NumericMetric = z.enum([
-  'revenue', 'opex', 'noi', 'oxfordNoi',
-  'noiMargin', 'expenseRatio',
-  'revenuePerSf', 'noiPerSf', 'expensePerSf',
-  'taxesPerSf', 'insurancePerSf', 'repairsPerSf',
-]);
-
 // A 4-digit year period token (e.g. '2025'); optional on the query string.
 const Year = z.string().regex(/^\d{4}$/);
 
+// Benchmarkable numeric metric keys are single-sourced in the contract (NumericMetricKey, H6).
 const BenchmarksQuery = z.object({
   period: Year.optional(),
-  metric: NumericMetric.optional(),
+  metric: NumericMetricKey.optional(),
 });
 
 const DriversQuery = z.object({
@@ -164,14 +160,19 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
   //    function on the injected db; query params are Zod-validated. The deal-state /
   //    confidentiality layer is upstream — these expose only 100%-basis financial metrics.
 
-  app.get('/analytics/metrics', (c) => withDb((db) => c.json({ metrics: propertyPeriodMetrics(db) })));
+  // Each analytics route .parse()s its payload through the contract envelope schema before
+  // c.json(...) — the server-side half of the H6 read boundary (mirrors acquisition.ts). The
+  // parsed value (structurally identical to the engine output) is what crosses to the client.
+  app.get('/analytics/metrics', (c) =>
+    withDb((db) => c.json(MetricsResponseSchema.parse({ metrics: propertyPeriodMetrics(db) }))),
+  );
 
   app.get('/analytics/growth', (c) =>
     withDb((db) => {
       const groups = groupByProperty(propertyPeriodMetrics(db));
       const growth = [...groups.values()].flatMap((series) => growthSeries(series));
       const since = [...groups.values()].map((series) => sinceAcquisition(series));
-      return c.json({ growth, sinceAcquisition: since });
+      return c.json(GrowthResponseSchema.parse({ growth, sinceAcquisition: since }));
     }),
   );
 
@@ -192,12 +193,12 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       if (!a || !b) return c.json({ error: 'period not found' }, 404);
 
       const decomposition = decomposeNoiChange(noiImpactByCategory(a), noiImpactByCategory(b));
-      return c.json({ propertyId, from, to, ...decomposition });
+      return c.json(DriversResponseSchema.parse({ propertyId, from, to, ...decomposition }));
     }),
   );
 
   app.get('/analytics/anomalies', (c) =>
-    withDb((db) => c.json({ anomalies: detectAnomalies(propertyPeriodMetrics(db)) })),
+    withDb((db) => c.json(AnomaliesResponseSchema.parse({ anomalies: detectAnomalies(propertyPeriodMetrics(db)) }))),
   );
 
   app.get('/analytics/benchmarks', (c) =>
@@ -211,19 +212,19 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       const period = parsed.data.period ?? periods[periods.length - 1] ?? '';
       const metric: NumericMetricKey = parsed.data.metric ?? 'noiPerSf';
 
-      return c.json({
+      return c.json(BenchmarksResponseSchema.parse({
         byMetric: benchmarkMetric(metrics, period, metric),
         rankings: rankProperties(metrics, period, metric),
-      });
+      }));
     }),
   );
 
   app.get('/analytics/scores', (c) =>
-    withDb((db) => c.json({ scores: scoreProperties(db, propertyPeriodMetrics(db)) })),
+    withDb((db) => c.json(ScoresResponseSchema.parse({ scores: scoreProperties(db, propertyPeriodMetrics(db)) }))),
   );
 
   app.get('/analytics/pm', (c) =>
-    withDb((db) => c.json({ scorecards: pmScorecards(db, propertyPeriodMetrics(db)) })),
+    withDb((db) => c.json(PmScorecardsResponseSchema.parse({ scorecards: pmScorecards(db, propertyPeriodMetrics(db)) }))),
   );
 
   // ── Acquisition Intelligence — score a fully-specified deal against the RATIFIED scorecard + RCT.
