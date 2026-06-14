@@ -1,6 +1,6 @@
 // tests/unit/warehouse-ingest.test.ts
 import ExcelJS from 'exceljs';
-import { mkdtempSync } from 'node:fs';
+import { copyFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -369,7 +369,10 @@ describe('parser-version re-ingest (self-healing backfill)', () => {
     // keep a byte-identical copy of v1's content BEFORE correcting fileA
     const dirB = mkdtempSync(join(tmpdir(), 'wh-b-'));
     const fileB = join(dirB, 'P&L 2025 -- 1100 Rarig.xlsx');
-    await writeFixture(fileB); // same content as v1 ⇒ same hash
+    // Byte-copy v1's exact bytes (fileA pre-mutation) rather than regenerating via writeFixture:
+    // ExcelJS embeds a created/modified timestamp, so two writes in different clock-seconds differ →
+    // a regenerated "identical" file occasionally hashes differently → flaky 'committed' vs 'duplicate'.
+    copyFileSync(fileA, fileB); // byte-identical to v1 ⇒ same content hash (deterministic)
 
     // corrected re-import supersedes v1
     const wb = new ExcelJS.Workbook();
