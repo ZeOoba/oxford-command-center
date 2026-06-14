@@ -39,6 +39,16 @@
       "review_needed": false,
       "review_detail": null,
       "last_updated": "2026-06-13T00:00:00Z"
+    },
+
+    "acquisition-scorecard": {
+      "agent_role": "Engineering (Claude Code) — authorized solo by Gabriel 2026-06-13",
+      "phase": "Acquisition Scorecard contract + PROPOSED ruleset + deterministic engine (answers to scorecard Q1–Q6)",
+      "status": "in_progress",
+      "blocked_by": null,
+      "review_needed": false,
+      "review_detail": "Touches Architect-owned src/contracts/ (new acquisition.ts + index.ts barrel), adds config/ + server/warehouse/acquisition.ts. Authorized by Gabriel via 'proceed solo' 2026-06-13. ALL artifacts ratification:'proposed'; engine fail-closed in production until Gabriel ratifies Q1–Q6. SKILL.md:52-57 clear-height bands left as a sentinel (null), NOT fabricated.",
+      "last_updated": "2026-06-13T21:35:00Z"
     }
   },
 
