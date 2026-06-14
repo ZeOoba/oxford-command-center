@@ -19,6 +19,18 @@ export const RULESET_VERSION = '1.0.0' as const;
 export const Ratification = z.enum(['ratified', 'proposed']);
 export type Ratification = z.infer<typeof Ratification>;
 
+/** Replacement-Cost Table (Q5) — versioned, ratified; the Basis floor + Basis score both divide by it. */
+export const RCT_VERSION = 'replacement-cost.v1' as const;
+export const ReplacementCostTable = z.object({
+  rctVersion: z.literal(RCT_VERSION),
+  ratification: Ratification,
+  ratifiedBy: z.string().nullable().default(null),
+  ratifiedDate: z.string().nullable().default(null),
+  basis: z.string(),
+  psf: z.object({ low: z.number().positive(), mid: z.number().positive(), high: z.number().positive() }),
+});
+export type ReplacementCostTable = z.infer<typeof ReplacementCostTable>;
+
 // ─── Identity enums ──────────────────────────────────────────────────────────────────────────
 export const GateId = z.enum(['product', 'size-price', 'market', 'physical', 'flood', 'other-use']); // SKILL.md:25–30
 export type GateId = z.infer<typeof GateId>;
@@ -77,6 +89,8 @@ export const AcquisitionRuleset = z.object({
   calibratedWith: z.string(),            // "Gabriel Goldberg 2026-06-09"
   skillVersion: z.string(),              // "acquisition-underwriting v3.0"
   sourceOfRecord: z.string(),            // SKILL.md path/citation
+  ratifiedBy: z.string().nullable().default(null),   // who signed the ratification (Invariant 4 provenance)
+  ratifiedDate: z.string().nullable().default(null), // ISO date of sign-off
 
   // STAGE 0 — gates (SKILL.md:23–30). Bounds, NOT governors.
   gates: z.object({
@@ -129,6 +143,10 @@ export const AcquisitionRuleset = z.object({
       siteFunctionPoints: z.number().nonnegative(),
       truckCourtIdealFt: z.number().positive(),
       truckCourtZeroFt: z.number().positive(),
+      loadingDoorsPer10kSf: z.object({                // ratified Q1 loading rule: ideally 1 dock + 1 drive-in / 10k SF
+        docks: z.number().nonnegative(),
+        driveIns: z.number().nonnegative(),
+      }),
       clearHeightBands: z.array(ClearHeightBand)
         .refine((b) => new Set(b.map((x) => x.maxSf)).size === b.length, 'clearHeightBands maxSf values must be unique (deterministic banding)')
         .nullable(), // null = PENDING (SKILL.md:52–57)
@@ -188,6 +206,8 @@ export const AcquisitionInput = z.object({
   clearHeightFt: z.number().nullable().default(null),
   hasDriveIn: z.boolean().nullable().default(null),
   hasDock: z.boolean().nullable().default(null),
+  dockCount: z.number().int().nonnegative().nullable().default(null),     // for the 1-dock-per-10k-SF loading rule
+  driveInCount: z.number().int().nonnegative().nullable().default(null),  // for the 1-drive-in-per-10k-SF loading rule
   multiStory: z.boolean().nullable().default(null),
   truckCourtFt: z.number().nullable().default(null),
   constructionType: ConstructionType.nullable().default(null),

@@ -6,25 +6,27 @@ import { AcquisitionInput, type AcquisitionRuleset } from '@contracts/acquisitio
 import {
   assertProductionRuleset,
   computeInputsVersion,
+  loadReplacementCostTable,
   parseRuleset,
+  replacementCostTotal,
   scoreAcquisition,
 } from '../../server/warehouse/acquisition';
 
-const proposedJson = JSON.parse(
-  readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.proposed.json'), 'utf8'),
+const ratifiedJson = JSON.parse(
+  readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8'),
 );
-const proposed = parseRuleset(proposedJson);
+const ratified = parseRuleset(ratifiedJson);
+/** The committed ratified ruleset (clear-height bands filled) — exercises full scoring + PURSUE paths. */
+function ratifiedComplete(): AcquisitionRuleset { return ratified; }
 
-/** A RATIFIED, COMPLETE ruleset (clear-height bands filled) to exercise full scoring + PURSUE paths. */
-function ratifiedComplete(): AcquisitionRuleset {
-  const j = structuredClone(proposedJson);
-  j.ratification = 'ratified';
-  j.scoring.cat3.clearHeightBands = [
-    { maxSf: 20000, idealClearFt: 18 },
-    { maxSf: 50000, idealClearFt: 24 },
-  ];
+/** A 'proposed', incomplete variant derived from the ratified config (clear-height bands nulled). */
+function proposedIncomplete(): AcquisitionRuleset {
+  const j = structuredClone(ratifiedJson);
+  j.ratification = 'proposed';
+  j.scoring.cat3.clearHeightBands = null;
   return parseRuleset(j);
 }
+const proposed = proposedIncomplete();
 
 const NOW = '2026-06-13T00:00:00Z';
 
@@ -52,7 +54,7 @@ describe('assertProductionRuleset (fail-closed)', () => {
     expect(() => assertProductionRuleset(proposed)).toThrow(/not 'ratified'/);
   });
   it('throws on a ratified-but-incomplete ruleset (clear-height bands null)', () => {
-    const j = structuredClone(proposedJson); j.ratification = 'ratified';
+    const j = structuredClone(ratifiedJson); j.ratification = 'ratified'; j.scoring.cat3.clearHeightBands = null;
     expect(() => assertProductionRuleset(parseRuleset(j))).toThrow(/clearHeightBands=null/);
   });
   it('passes a ratified + complete ruleset', () => {
@@ -232,6 +234,37 @@ describe('adversarial refute fixes (2026-06-13)', () => {
   it('composite equals the sum of the displayed sub-scores even with fractional inputs', () => {
     const s = scoreAcquisition(strongDeal({ valueAddScore: 0.777 }), r, { now: NOW });
     expect(s.composite).toBe(round(s.subScores.reduce((acc, x) => acc + x.points, 0)));
+  });
+});
+
+describe('ratified v1 ruleset (Gabriel 2026-06-14)', () => {
+  it('the committed ratified ruleset is production-safe (loads + asserts)', () => {
+    expect(ratified.ratification).toBe('ratified');
+    expect(ratified.scoring.cat3.clearHeightBands).not.toBeNull();
+    expect(() => assertProductionRuleset(ratified)).not.toThrow();
+  });
+  it('a strong deal on the ratified ruleset is LIVE (not advisory) and can PURSUE', () => {
+    const s = scoreAcquisition(strongDeal(), ratified, { now: NOW });
+    expect(s.advisoryOnly).toBe(false);
+    expect(s.incompleteRuleset).toBe(false);
+    expect(s.verdict).toBe('PURSUE');
+  });
+  it('clear-height: full at 14ft (<20k) / 16ft (>20k), partial below', () => {
+    const small14 = scoreAcquisition(strongDeal({ maxBuildingSf: 15000, totalSf: 15000, clearHeightFt: 14 }), ratified, { now: NOW });
+    const small13 = scoreAcquisition(strongDeal({ maxBuildingSf: 15000, totalSf: 15000, clearHeightFt: 13 }), ratified, { now: NOW });
+    const large14 = scoreAcquisition(strongDeal({ maxBuildingSf: 30000, totalSf: 30000, clearHeightFt: 14 }), ratified, { now: NOW });
+    const large16 = scoreAcquisition(strongDeal({ maxBuildingSf: 30000, totalSf: 30000, clearHeightFt: 16 }), ratified, { now: NOW });
+    expect(small14.composite).toBeGreaterThan(small13.composite);
+    expect(large16.composite).toBeGreaterThan(large14.composite);
+  });
+  it('loading: meeting 1 dock + 1 drive-in / 10k SF beats being under-doored', () => {
+    const well = scoreAcquisition(strongDeal({ totalSf: 20000, truckCourtFt: 100, dockCount: 4, driveInCount: 4 }), ratified, { now: NOW });
+    const under = scoreAcquisition(strongDeal({ totalSf: 20000, truckCourtFt: 100, dockCount: 1, driveInCount: 1 }), ratified, { now: NOW });
+    expect(well.composite).toBeGreaterThan(under.composite);
+  });
+  it('replacementCostTotal uses the ratified RCT mid ($137.50) by default', () => {
+    const rct = loadReplacementCostTable();
+    expect(replacementCostTotal(42000, rct)).toBe(42000 * 137.5);
   });
 });
 

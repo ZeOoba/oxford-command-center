@@ -18,6 +18,8 @@ import {
   AcquisitionInput,
   AcquisitionRuleset,
   AcquisitionScore,
+  RCT_VERSION,
+  ReplacementCostTable,
 } from '../../src/contracts/acquisition';
 import type {
   ClusterTier,
@@ -56,6 +58,24 @@ export function assertProductionRuleset(r: AcquisitionRuleset): void {
   }
 }
 
+/** Canonical homes of the ratified production config. */
+export const RATIFIED_RULESET_PATH = 'config/acquisition-ruleset.v1.json';
+export const REPLACEMENT_COST_TABLE_PATH = 'config/replacement-cost.v1.json';
+/** Load + assert the ratified production ruleset (fail-closed). */
+export function loadRatifiedRuleset(path: string = RATIFIED_RULESET_PATH): AcquisitionRuleset {
+  const r = loadRuleset(path);
+  assertProductionRuleset(r);
+  return r;
+}
+/** Load the ratified Replacement-Cost Table (Q5). */
+export function loadReplacementCostTable(path: string = REPLACEMENT_COST_TABLE_PATH): ReplacementCostTable {
+  return ReplacementCostTable.parse(JSON.parse(readFileSync(path, 'utf8')) as unknown);
+}
+/** Replacement-cost total for a building from the RCT — the Basis floor/score divisor (Q5). */
+export function replacementCostTotal(sf: number, rct: ReplacementCostTable, band: 'low' | 'mid' | 'high' = 'mid'): number {
+  return sf * rct.psf[band];
+}
+
 // ─── Deterministic inputs_version (Q5: pins rulesetVersion; rctVersion folds in once the RCT config lands) ──
 function stableStringify(v: unknown): string {
   if (v === null || typeof v !== 'object') return JSON.stringify(v);
@@ -72,7 +92,7 @@ function canonicalDd(dd: AcquisitionInput['ddKnown']): Record<string, boolean> {
     'deferred-maintenance-capex': dd['deferred-maintenance-capex'] === true,
   };
 }
-export function computeInputsVersion(rawInput: AcquisitionInput, ruleset: AcquisitionRuleset, rctVersion = 'rct-v0'): string {
+export function computeInputsVersion(rawInput: AcquisitionInput, ruleset: AcquisitionRuleset, rctVersion: string = RCT_VERSION): string {
   const input = AcquisitionInput.parse(rawInput); // apply defaults → canonical form
   // ddKnown is .partial(): an ABSENT key and an explicit false are decision-identical (engine reads `!== true`),
   // so canonicalize to the four booleans — otherwise logically-identical deals hash differently. (Refute fix.)
@@ -270,12 +290,23 @@ export function scoreAcquisition(
     const floorFt = ruleset.gates.physical.minClearHeightFt;
     clearPts = clamp((input.clearHeightFt - floorFt) / Math.max(1e-9, ideal - floorFt), 0, 1) * s3.clearHeightPoints;
   }
-  // loading + site share a truck-court adequacy + ground-level-access basis
+  // loading + site share a truck-court adequacy + door adequacy basis.
   const tcRaw = input.truckCourtFt;
   const tcScore = tcRaw === null ? 0.5 : clamp((tcRaw - s3.truckCourtZeroFt) / Math.max(1e-9, s3.truckCourtIdealFt - s3.truckCourtZeroFt), 0, 1);
-  const access = input.hasDock === true || input.hasDriveIn === true ? 1 : 0;
-  const loadingPts = s3.loadingPoints * clamp(0.5 * tcScore + 0.5 * access, 0, 1);
-  const sitePts = s3.siteFunctionPoints * clamp(0.5 * tcScore + 0.5 * access, 0, 1);
+  // Door adequacy (ratified Q1: ideally 1 dock + 1 drive-in per 10k SF). Uses counts when known; falls back
+  // to the binary presence (hasDock/hasDriveIn) so partial inputs still score. (Gabriel, 2026-06-14.)
+  const loadSf = input.totalSf ?? input.maxBuildingSf;
+  let doorAdequacy: number;
+  if (input.dockCount !== null && input.driveInCount !== null && loadSf !== null && loadSf > 0) {
+    const per10k = loadSf / 10000;
+    const dockAdeq = clamp(input.dockCount / Math.max(s3.loadingDoorsPer10kSf.docks * per10k, 1e-9), 0, 1);
+    const driveAdeq = clamp(input.driveInCount / Math.max(s3.loadingDoorsPer10kSf.driveIns * per10k, 1e-9), 0, 1);
+    doorAdequacy = (dockAdeq + driveAdeq) / 2;
+  } else {
+    doorAdequacy = input.hasDock === true || input.hasDriveIn === true ? 1 : 0;
+  }
+  const loadingPts = s3.loadingPoints * clamp(0.5 * tcScore + 0.5 * doorAdequacy, 0, 1);
+  const sitePts = s3.siteFunctionPoints * clamp(0.5 * tcScore + 0.5 * doorAdequacy, 0, 1);
   // product fit: full unless office-heavy; null product ⇒ 0
   let productFitPts = 0;
   if (input.productType === null) flag('productType', 'product type unknown — product-fit sub-score 0');
@@ -393,7 +424,7 @@ export function scoreAcquisition(
 
   const result: AcquisitionScore = {
     schemaVersion: '1.0.0',
-    inputsVersion: computeInputsVersion(input, ruleset, opts.rctVersion ?? 'rct-v0'),
+    inputsVersion: computeInputsVersion(input, ruleset, opts.rctVersion ?? RCT_VERSION),
     rulesetVersion: ruleset.rulesetVersion,
     ratification: ruleset.ratification,
     scoredAt: opts.now ?? new Date().toISOString(),
