@@ -1,0 +1,9 @@
+{
+  "_comment": "RATIFIED Replacement-Cost Table v1 (Q5). Ratified by Gabriel 2026-06-14: firm-wide $125–150/SF, building-class dependent; per-market refinement deferred. The Basis floor and Basis score divide by this; the engine pins rctVersion in inputsVersion so a Basis score is reproducible. Supersedes the unversioned src/brain/replacement-cost.ts placeholder ($85–120).",
+  "rctVersion": "replacement-cost.v1",
+  "ratification": "ratified",
+  "ratifiedBy": "Gabriel Goldberg",
+  "ratifiedDate": "2026-06-14",
+  "basis": "ORA firm-wide $125–150/SF (building-class dependent); per-market validated figures deferred",
+  "psf": { "low": 125, "mid": 137.5, "high": 150 }
+}

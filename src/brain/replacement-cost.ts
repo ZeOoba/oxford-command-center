@@ -1,10 +1,11 @@
 import type { Deal } from '../contracts/index';
 
 /**
- * ORA replacement-cost basis — firm range $85–$120/SF, building-class dependent (per markets.md;
- * per-market validated figures pending). Drives the deal-drawer Replacement Cost card.
+ * ORA replacement-cost basis — firm range $125–$150/SF, building-class dependent (ratified by Gabriel
+ * 2026-06-14; see config/replacement-cost.v1.json + memory/event_log.md). Per-market validated figures
+ * deferred. Drives the deal-drawer Replacement Cost card. Keep in lockstep with the ratified RCT config.
  */
-export const REPLACEMENT_COST_PSF = { low: 85, mid: 102.5, high: 120 } as const;
+export const REPLACEMENT_COST_PSF = { low: 125, mid: 137.5, high: 150 } as const;
 
 export type ReplacementVerdict = 'Discount to replacement' | 'Near replacement' | 'Premium to replacement';
 
