@@ -5,8 +5,9 @@
 // form mounts and the live score panel (verdict, sub-scores, gates, DD, cap banner) renders on a
 // real-shaped AcquisitionScore, and that an engine-unavailable error degrades without crashing.
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, waitFor } from '@testing-library/react';
-import type { AcquisitionScore } from '@contracts/acquisition';
+import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
+import { AcquisitionInput, type AcquisitionScore } from '@contracts/acquisition';
+import type { Deal } from '@contracts/index';
 import { AcquisitionWorkbench } from '../../src/modules/acquisitions/AcquisitionWorkbench';
 import { AcquisitionEngineUnavailable } from '../../src/modules/acquisitions/acquisition-score';
 
@@ -54,5 +55,25 @@ describe('AcquisitionWorkbench (render smoke)', () => {
     const scoreFn = vi.fn(async (): Promise<AcquisitionScore> => { throw new AcquisitionEngineUnavailable(); });
     render(<AcquisitionWorkbench scoreFn={scoreFn} />);
     await waitFor(() => expect(screen.getByText(/engine unavailable/i)).toBeTruthy());
+  });
+
+  it('reloads a saved deal (scored input reflects savedInput) and Save persists', async () => {
+    const scoreFn = vi.fn(async (_input: Record<string, unknown>): Promise<AcquisitionScore> => mockScore);
+    const saveFn = vi.fn(async (_input: Record<string, unknown>) => true);
+    const deal = { id: 'd1', name: 'Test Deal' } as unknown as Deal;
+    const savedInput = AcquisitionInput.parse({ dealId: 'd1', clusterTier: 'entry', stabilizedYoc: 0.09, sellerMotivationScore: 0.8, ddKnown: { roof: true } });
+
+    render(<AcquisitionWorkbench deal={deal} savedInput={savedInput} scoreFn={scoreFn} saveFn={saveFn} />);
+
+    await waitFor(() => expect(scoreFn).toHaveBeenCalled());
+    const scored = scoreFn.mock.calls[scoreFn.mock.calls.length - 1]?.[0] as Record<string, unknown>;
+    expect(scored.clusterTier).toBe('entry');            // reloaded select
+    expect(scored.stabilizedYoc).toBeCloseTo(0.09, 9);   // reloaded pct field
+
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
+    await waitFor(() => expect(saveFn).toHaveBeenCalled());
+    const savedArg = saveFn.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(savedArg.dealId).toBe('d1');
+    expect(savedArg.clusterTier).toBe('entry');
   });
 });

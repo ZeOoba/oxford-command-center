@@ -11,6 +11,7 @@ import { Counterparty } from './counterparty';
 import { Assumptions, ScenarioName } from './scenario';
 import { RenewalStage } from './renewal';
 import { CompSet } from './comps';
+import { AcquisitionInput } from './acquisition';
 import { QbActuals } from './quickbooks';
 
 export * from './common';
@@ -60,6 +61,8 @@ export const PortfolioSnapshot = z.object({
   tenantNotes: z.record(z.string(), z.string()).default({}),
   /** Overlay-sourced, AI-researched market comps per deal (Phase 3). Workbook has none → empty. */
   dealComps: z.record(z.string(), CompSet).default({}),
+  /** Overlay-sourced per-deal acquisition underwriting inputs (Acquisition Workbench). Workbook has none → empty. */
+  acquisitionInputs: z.record(z.string(), AcquisitionInput).default({}),
   /** Overlay-sourced per-property annual NOI budget targets (Phase 3 ②). */
   noiBudgets: z.record(z.string(), z.number()).default({}),
   /** Server-attached QuickBooks actuals (Phase 3 ②); null when no export configured. */
