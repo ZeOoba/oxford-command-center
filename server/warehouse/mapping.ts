@@ -78,19 +78,19 @@ export function resolveMapping(
   /** Explicit income/expense side to constrain re-resolution to (overrides `section`). Pass the
    *  side of a row's EXISTING classification on re-resolve so a dual-side SEED account (e.g. "Gas" as
    *  both billback recovery AND utility opex) can only re-resolve within its original side — never
-   *  flipping its NOI sign. 'either' is treated as no constraint. A match_kind='manual' override is
-   *  EXEMPT from this guard (a reviewer's explicit cross-side reclassification wins regardless of
-   *  the hint); the side filter binds only seed/learned rows. */
+   *  flipping its NOI sign. 'either' is treated as no constraint. A PROPERTY-SCOPED manual override
+   *  is EXEMPT from this guard (a reviewer's explicit, targeted cross-side reclassification wins
+   *  regardless of the hint); a GLOBAL manual override is side-constrained like a seed (see below). */
   sideHint?: 'income' | 'expense' | 'either',
 ): ResolvedMapping {
   const key = accountKey(rawAccount);
   const rows = db.prepare(`
-    SELECT id, normalized_category, classification, match_kind FROM account_mappings
+    SELECT id, normalized_category, classification, match_kind, property_id FROM account_mappings
     WHERE raw_account_key = ? AND (property_id IS NULL OR property_id = ?)
     ORDER BY CASE match_kind WHEN 'manual' THEN 0 WHEN 'learned' THEN 1 ELSE 2 END,
              property_id IS NULL
   `).all(key, propertyId ?? null) as
-    Array<{ id: number; normalized_category: string; classification: string; match_kind: string }>;
+    Array<{ id: number; normalized_category: string; classification: string; match_kind: string; property_id: string | null }>;
 
   // sideHint (the row's existing classification side, on re-resolve) takes precedence over a
   // section header; 'either' means no constraint. Falls back to section-derived side for ingest.
@@ -102,19 +102,19 @@ export function resolveMapping(
         : null;
   let row: (typeof rows)[number] | undefined = rows[0];
   if (side !== null) {
-    // A manual override is an explicit human ruling — a reviewer who reclassifies an account
-    // (e.g. an expense-ingested Gas declared a tenant billback) is making a DELIBERATE cross-side
-    // correction, and approve's contract is to honor it. So a manual mapping wins regardless of
-    // side; the side filter binds ONLY the seed/learned tiebreak (rows already sorted manual-first,
-    // so a manual row, if any, is rows[0]). This preserves the H3 dual-side seed guard (the
-    // Gas/Electric/Water/bad-debt seed rows carry no manual mapping → the side filter still pins
-    // an expense row to its expense seed and never flips it to the income/recovery seed) while
-    // restoring approve's documented ability to apply legitimate cross-side manual overrides.
-    if (rows[0]?.match_kind === 'manual') {
+    // A PROPERTY-SCOPED manual override (property_id matches the queried property) is a targeted,
+    // deliberate human ruling — a reviewer reclassifying THAT property's account (e.g. an expense-
+    // ingested Gas declared a tenant billback) — and approve's contract is to honor it cross-side.
+    // A GLOBAL manual override (property_id null) is a portfolio-wide DEFAULT: it is side-constrained
+    // like a seed so it can never silently flip a row to the opposite income/expense side across the
+    // whole portfolio (the dual-side NOI-sign guard — H3 + finding 4; keeps approve consistent with
+    // addMappingOverride's in-place re-derive). rows are sorted manual-first then scoped-before-global
+    // (property_id IS NULL ASC), so a scoped manual, if any, is rows[0].
+    if (rows[0]?.match_kind === 'manual' && rows[0].property_id !== null) {
       row = rows[0];
     } else {
       row = rows.find((r) => {
-        if (r.match_kind === 'manual') return true; // a manual row always qualifies
+        if (r.match_kind === 'manual' && r.property_id !== null) return true; // scoped manual always qualifies
         const s = classificationSide(r.classification);
         return s === side || s === 'either';
       });
