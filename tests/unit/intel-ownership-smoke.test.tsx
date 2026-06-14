@@ -31,6 +31,7 @@ const score = (over: Partial<PropertyScore>): PropertyScore => ({
   capitalAction: 'hold',
   subScores: {},
   noiPerSfQuartile: 2,
+  benchmarkCohortSize: 1,
   reasons: [],
   ...over,
 });
@@ -40,6 +41,7 @@ const pm = (over: Partial<PeriodMetrics>): PeriodMetrics => ({
   propertyName: 'P',
   period: '2025',
   grainHint: 'year',
+  basis: 'cash',
   rentableSf: 10000,
   ownershipPct: 1,
   revenue: 100,

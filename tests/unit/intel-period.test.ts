@@ -14,6 +14,7 @@ const pm = (propertyId: string, period: string, grainHint: string | null): Perio
   propertyName: propertyId,
   period,
   grainHint,
+  basis: 'cash',
   rentableSf: 10000,
   ownershipPct: 1,
   revenue: 100,
