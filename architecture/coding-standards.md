@@ -70,6 +70,11 @@ function makeTestDb() {
 }
 ```
 
+**Test isolation & order:**
+- **Per-file isolation is mandatory.** `vitest.config.ts` MUST keep `isolate: true` (guarded by `tests/unit/test-isolation.test.ts`). With `isolate: false` every file shares one module registry in the single worker, so module-level state AND unreset `vi.mock` registrations bleed across files in order-dependent ways — flakes that pass in isolation but fail intermittently in the full suite. The threads pool isolates without a `child_process` spawn, so isolation does not reintroduce the Node 24 + Windows forks spawn fault.
+- **Never import `vitest.config.ts` into a test.** Importing it pulls in Vite, which trips a `TextEncoder/Uint8Array` invariant under the jsdom environment. To assert on config, read the file as text and match the setting (see the regression guard).
+- **Detect order fragility with `npm run test:shuffle`.** It randomizes both file and test order (`--sequence.shuffle.files --sequence.shuffle.tests`). `isolate: true` covers *cross-file* leakage; shuffling also surfaces *within-file* ordering bugs (a test depending on state another test set up). On failure vitest prints the seed — re-run with `--sequence.seed=<N>` to reproduce deterministically.
+
 **Gate requirement:** `npm run gate` must stay green. Never commit with failing tests.
 
 ---
