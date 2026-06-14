@@ -5,17 +5,12 @@
 // sum EXACTLY to ΔNOI (totalDelta is the running sum of the same deltas, so the
 // invariant holds by construction, not by floating-point coincidence).
 import type { PeriodMetrics } from './metrics';
+// NoiDriver + NoiDecomposition are single-sourced in the contract (H6); re-export under their
+// local names so existing engine imports keep working. The /analytics/drivers route wraps the
+// NoiDecomposition with propertyId/from/to (DriversResponseSchema).
+import type { NoiDriver, NoiDecomposition } from '../../src/contracts/warehouse';
 
-export interface NoiDriver {
-  category: string;
-  delta: number; // (b impact) − (a impact), NOI-signed
-  contributionPct: number | null; // delta / totalDelta; null when ΔNOI ≈ 0
-}
-
-export interface NoiDecomposition {
-  totalDelta: number;
-  drivers: NoiDriver[];
-}
+export type { NoiDriver, NoiDecomposition };
 
 /**
  * Signed NOI-impact map for one period: revenueCategories as positive contributions,

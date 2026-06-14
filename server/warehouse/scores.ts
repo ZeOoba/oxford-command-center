@@ -13,24 +13,14 @@ import { INTEL_CONFIG } from './intel-config';
 import type { AttentionBand, CapitalAction, HealthBand } from './intel-config';
 import { isOperatingRealEstate, latestFullYearPeriod } from './metrics';
 import type { PeriodMetrics } from './metrics';
+// PropertyScore is single-sourced in the contract (H6 — PropertyScoreSchema). Re-export under the
+// local name so existing engine imports keep working; the Zod schema is the source of truth.
+//   noiPerSfQuartile: 1..4 or null. benchmarkCohortSize: same-basis NOI/SF cohort size at `period`
+//   (count of peers with a finite NOI/SF, INCLUDING this property) — a value-free observability
+//   field for the n<3 confidence cap (spec §2.3); it does NOT enter any score computation (D4).
+import type { PropertyScore } from '../../src/contracts/warehouse';
 
-export interface PropertyScore {
-  propertyId: string;
-  propertyName: string | null;
-  period: string;            // scoring period = latest FULL-YEAR period (raw latest only if YTD-only)
-  health: number;            // 0..100
-  healthBand: HealthBand;
-  attentionBand: AttentionBand;
-  capitalAction: CapitalAction;
-  subScores: Record<string, number>; // each 0..100, keyed by healthWeights key
-  noiPerSfQuartile: 1 | 2 | 3 | 4 | null;
-  // Same-basis NOI/SF benchmark cohort size at `period` (count of peers with a finite NOI/SF,
-  // INCLUDING this property). Mirrors benchmarks.ts `smallSample = propertyCount < 3`. Exposed so a
-  // verdict consumer can record a small-cohort confidence penalty at n<3 (spec §2.3) — a value-free
-  // observability field; it does NOT enter any score computation (D4).
-  benchmarkCohortSize: number;
-  reasons: string[];
-}
+export type { PropertyScore };
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 

@@ -8,10 +8,9 @@
 // Gabriel's sign-off, and a refute-financial-change pass — never a silent edit.
 // See docs/superpowers/specs/2026-06-14-intel-config-health-weight-calibration.md
 //     and memory/event_log.md.
-export type AnomalySeverity = 'low' | 'moderate' | 'high' | 'critical';
-export type HealthBand = 'excellent' | 'good' | 'watch' | 'concern';
-export type AttentionBand = 'green' | 'yellow' | 'orange' | 'red';
-export type { CapitalAction } from '../../src/contracts/warehouse'; // M4: single-sourced in contracts
+// Engine enums are single-sourced in the contract (H6) so the client and server share one shape;
+// re-exported here under their local names so existing engine imports keep working unchanged.
+export type { AnomalySeverity, HealthBand, AttentionBand, CapitalAction } from '../../src/contracts/warehouse';
 
 export const INTEL_CONFIG = {
   anomaly: {
