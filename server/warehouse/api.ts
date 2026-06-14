@@ -30,6 +30,17 @@ import { propertyPeriodMetrics } from './metrics';
 import type { PeriodMetrics } from './metrics';
 import { scoreProperties } from './scores';
 import { loadRatifiedRct, loadRatifiedRuleset, scoreAcquisition } from './acquisition';
+import { getLeaseTerms, listLeaseTermPropertyIds } from './lease-terms';
+import { projectLeaseRun, resolveAssumptions, computeMarkToMarket } from './lease-run';
+import type { CohortRentBenchmark } from './lease-run';
+import { loadOverlay } from '../overlay';
+import {
+  LeaseRunProjectionEnvelope,
+  LeaseRunRollupResponse,
+  type LeaseRunProjection,
+  type LeaseRunSummary,
+  type MarkToMarket,
+} from '../../src/contracts/lease-run';
 
 const ActionInput = z.object({ action: z.enum(['approve', 'reject']) });
 
@@ -76,6 +87,70 @@ function groupByProperty(metrics: PeriodMetrics[]): Map<string, PeriodMetrics[]>
   }
   for (const arr of groups.values()) arr.sort((a, b) => a.period.localeCompare(b.period));
   return groups;
+}
+
+// ── Lease-run helpers (PFI Lease-Run Pro Forma) ───────────────────────────────────────────
+// All read-only and additive. Assumptions come from the overlay (leaseRunAssumptions[propertyId]),
+// merged onto the spec defaults in the engine (resolveAssumptions). The mark-to-market cohort
+// reuses the benchmarks engine's revenue-per-SF distribution for the latest period.
+
+/** A typed EMPTY projection for a property with no lease terms — no crash (Behavior contract #4). */
+function emptyLeaseRunProjection(propertyId: string): LeaseRunProjection {
+  return {
+    propertyId,
+    tenant: null,
+    rentableSf: null,
+    structure: null,
+    currentExpiry: null,
+    assumptions: resolveAssumptions(undefined),
+    assumptionsAreDefault: true,
+    periods: [],
+    stabilizedNoi: null,
+    stabilizedYearLabel: null,
+    indicativeValue: null,
+    indicativeValuePsf: null,
+    diligenceNotes: [],
+    isEmpty: true,
+  };
+}
+
+/** Cohort revenue-per-SF benchmark for the latest available period (the mark-to-market base). */
+function cohortRentBenchmark(metrics: PeriodMetrics[]): CohortRentBenchmark {
+  const periods = [...new Set(metrics.map((m) => m.period))].sort((a, b) => a.localeCompare(b));
+  const latest = periods[periods.length - 1];
+  if (!latest) return { median: null, p25: null, n: 0 };
+  const b = benchmarkMetric(metrics, latest, 'revenuePerSf');
+  return { median: b.median, p25: b.p25, n: b.n };
+}
+
+/** Build the single-property projection + mark-to-market envelope. Pure given (db-derived) inputs. */
+function buildLeaseRunEnvelope(
+  db: WarehouseDb,
+  propertyId: string,
+  cohort: CohortRentBenchmark,
+): { projection: LeaseRunProjection; markToMarket: MarkToMarket | null } {
+  const terms = getLeaseTerms(db, propertyId);
+  if (terms.length === 0) {
+    return { projection: emptyLeaseRunProjection(propertyId), markToMarket: null };
+  }
+  const overlay = loadOverlay();
+  const partial = overlay.leaseRunAssumptions?.[propertyId];
+  const assumptions = resolveAssumptions(partial);
+  // Single-tenant today: project the first (only) lease. Multi-tenant aggregation is v-next.
+  const projection = projectLeaseRun(terms[0]!, assumptions);
+  const markToMarket = computeMarkToMarket(projection, cohort);
+  return { projection, markToMarket };
+}
+
+/** Rollover markers: lease-year labels where the rent STATUS changes (expiry / option boundary). */
+function rolloverLabels(projection: LeaseRunProjection): string[] {
+  const labels: string[] = [];
+  let prevStatus: string | null = null;
+  for (const p of projection.periods) {
+    if (prevStatus !== null && p.status !== prevStatus) labels.push(p.leaseYearLabel);
+    prevStatus = p.status;
+  }
+  return labels;
 }
 
 /** Parse a path id param to a positive integer, or null when it is not a clean integer. */
@@ -240,6 +315,44 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
 
   app.get('/analytics/pm', (c) =>
     withDb((db) => c.json(PmScorecardsResponseSchema.parse({ scorecards: pmScorecards(db, propertyPeriodMetrics(db)) }))),
+  );
+
+  // ── Lease-run pro forma (read-only; H6 read boundary). Forward contractual NOI per property
+  //    from lease_terms + overlay-overridable assumptions. The ownership rollup aggregates every
+  //    property with lease terms; the per-property route adds the mark-to-market chip. A property
+  //    with no lease terms → a typed EMPTY projection (200, never a crash). All math is in the pure
+  //    engine (lease-run.ts) reconciled to the dollar against the v1.0 Excel models.
+  app.get('/analytics/lease-run', (c) =>
+    withDb((db) => {
+      const cohort = cohortRentBenchmark(propertyPeriodMetrics(db));
+      const summaries: LeaseRunSummary[] = listLeaseTermPropertyIds(db).map((propertyId) => {
+        const { projection, markToMarket } = buildLeaseRunEnvelope(db, propertyId, cohort);
+        return {
+          propertyId,
+          tenant: projection.tenant,
+          rentableSf: projection.rentableSf,
+          stabilizedNoi: projection.stabilizedNoi,
+          indicativeValue: projection.indicativeValue,
+          currentExpiry: projection.currentExpiry,
+          belowMarket: markToMarket?.belowMarket ?? false,
+          rolloverLabels: rolloverLabels(projection),
+        };
+      });
+      const totalStabilizedNoi = summaries.reduce((s, r) => s + (r.stabilizedNoi ?? 0), 0);
+      const totalIndicativeValue = summaries.reduce((s, r) => s + (r.indicativeValue ?? 0), 0);
+      return c.json(
+        LeaseRunRollupResponse.parse({ summaries, totalStabilizedNoi, totalIndicativeValue }),
+      );
+    }),
+  );
+
+  app.get('/analytics/lease-run/:propertyId', (c) =>
+    withDb((db) => {
+      const propertyId = c.req.param('propertyId');
+      const cohort = cohortRentBenchmark(propertyPeriodMetrics(db));
+      const { projection, markToMarket } = buildLeaseRunEnvelope(db, propertyId, cohort);
+      return c.json(LeaseRunProjectionEnvelope.parse({ ...projection, markToMarket }));
+    }),
   );
 
   // ── Calibration (read-only, behind the same 503 guard). The 40-year feedback loop's read surface:

@@ -238,6 +238,32 @@ export function useResolveIssue() {
   });
 }
 
+/** Persist a lease-run assumption override (confirm-before-write). The body is a partial:
+ *  { propertyId, ...one-or-more assumption fields }. Invalidates the analytics prefix so the
+ *  lease-run projection refetches with the new assumption. */
+export interface LeaseRunAssumptionsResult {
+  ok: boolean;
+  propertyId?: string;
+  assumptions?: Record<string, number>;
+  error?: string;
+}
+export interface LeaseRunAssumptionsPatch {
+  propertyId: string;
+  managementFeePct?: number;
+  roofStructuralReservePsf?: number;
+  vacancyCreditLossPct?: number;
+  renewalMarketGrowthPct?: number;
+  indicativeCapRate?: number;
+}
+export function useSetLeaseRunAssumptions() {
+  const invalidate = useWarehouseInvalidate();
+  return useMutation({
+    mutationFn: (input: LeaseRunAssumptionsPatch) =>
+      postJson<LeaseRunAssumptionsResult>('/api/actions/lease-run-assumptions', input),
+    onSuccess: invalidate,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Pure response-shaping helpers (unit-tested).
 // ---------------------------------------------------------------------------
