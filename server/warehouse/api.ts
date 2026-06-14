@@ -13,6 +13,8 @@ import { Classification, NumericMetricKey } from '../../src/contracts/warehouse'
 import {
   MetricsResponseSchema, GrowthResponseSchema, DriversResponseSchema, AnomaliesResponseSchema,
   BenchmarksResponseSchema, ScoresResponseSchema, PmScorecardsResponseSchema,
+  CalibrationLogResponseSchema, CalibrationPendingResponseSchema, CalibrationReportSchema,
+  VerdictKind,
 } from '../../src/contracts/warehouse';
 import { AcquisitionInput } from '../../src/contracts/acquisition';
 import type { AcquisitionRuleset, ReplacementCostTable } from '../../src/contracts/acquisition';
@@ -21,6 +23,7 @@ import { addMappingOverride, approveImport, rejectImport, resolveIssue } from '.
 import { getImportDetail, listImports, listIssues, noiMatrix } from './queries';
 import { detectAnomalies } from './anomalies';
 import { benchmarkMetric, pmScorecards, rankProperties } from './benchmarks';
+import { calibrationLog, calibrationPending, calibrationReport } from './calibration';
 import { decomposeNoiChange, noiImpactByCategory } from './drivers';
 import { growthSeries, sinceAcquisition } from './growth';
 import { propertyPeriodMetrics } from './metrics';
@@ -49,6 +52,18 @@ const BenchmarksQuery = z.object({
 const DriversQuery = z.object({
   from: Year.optional(),
   to: Year.optional(),
+});
+
+// Calibration read-route query params (all optional; bad values 400 via safeParse).
+const CalibrationLogQuery = z.object({
+  subject: z.string().min(1).optional(),
+  kind: VerdictKind.optional(),
+  status: z.enum(['open', 'resolved']).optional(),
+});
+const CalibrationReportQuery = z.object({
+  from: Year.optional(),
+  to: Year.optional(),
+  kind: VerdictKind.optional(),
 });
 
 /** Group a flat metrics list by propertyId, each group sorted ascending by period. */
@@ -225,6 +240,36 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
 
   app.get('/analytics/pm', (c) =>
     withDb((db) => c.json(PmScorecardsResponseSchema.parse({ scorecards: pmScorecards(db, propertyPeriodMetrics(db)) }))),
+  );
+
+  // ── Calibration (read-only, behind the same 503 guard). The 40-year feedback loop's read surface:
+  //    the verdict log, the due-but-unresolved pending queue, and the aggregated §4 report. Each
+  //    .parse()s its envelope before c.json (the H6 read boundary). Resolution WRITES (/resolve) and
+  //    the manual-resolution UI are a later stacked PR — this PR is the read foundation only. On an
+  //    empty warehouse (no outcome data yet — the normal Phase-2 state) every route returns an empty/
+  //    zeroed payload, never an error.
+  app.get('/calibration/log', (c) =>
+    withDb((db) => {
+      const parsed = CalibrationLogQuery.safeParse({
+        subject: c.req.query('subject'), kind: c.req.query('kind'), status: c.req.query('status'),
+      });
+      if (!parsed.success) return c.json({ error: 'invalid query' }, 400);
+      return c.json(CalibrationLogResponseSchema.parse({ log: calibrationLog(db, parsed.data) }));
+    }),
+  );
+
+  app.get('/calibration/pending', (c) =>
+    withDb((db) => c.json(CalibrationPendingResponseSchema.parse({ pending: calibrationPending(db) }))),
+  );
+
+  app.get('/calibration/report', (c) =>
+    withDb((db) => {
+      const parsed = CalibrationReportQuery.safeParse({
+        from: c.req.query('from'), to: c.req.query('to'), kind: c.req.query('kind'),
+      });
+      if (!parsed.success) return c.json({ error: 'invalid query' }, 400);
+      return c.json(CalibrationReportSchema.parse(calibrationReport(db, parsed.data)));
+    }),
   );
 
   // ── Acquisition Intelligence — score a fully-specified deal against the RATIFIED scorecard + RCT.
