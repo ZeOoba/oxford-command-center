@@ -24,6 +24,7 @@ import { propertyPeriodMetrics } from '../../server/warehouse/metrics';
 import { scoreProperties } from '../../server/warehouse/scores';
 import { seedMappings } from '../../server/warehouse/mapping';
 import { seedPropertyMaster } from '../../server/warehouse/property-master';
+import { INTEL_CONFIG } from '../../server/warehouse/intel-config';
 import { CalibrationVerdictSchema } from '../../src/contracts/warehouse';
 
 const SEED = [
@@ -133,6 +134,23 @@ describe('calibration — inputs_version (§1.1)', () => {
     expect(perturbed.ledgerFingerprint).toBe(base.ledgerFingerprint);
     expect(perturbed.configHash).not.toBe(base.configHash);
     expect(perturbed.inputsVersion).not.toBe(base.inputsVersion);
+  });
+
+  it('FREEZES the live INTEL_CONFIG verbatim in config_json (reproducible weight provenance)', async () => {
+    const { db } = await populatedDb();
+    const iv = computeInputsVersion(db);
+    // config_json is the verbatim, stable-stringified live INTEL_CONFIG (calibration.ts): a future
+    // analyst reads the literal ratified weights straight from the row. Lock that the freeze actually
+    // captures the CURRENT weights/bands/knob — so the dated config_hash fork is genuinely
+    // reproducible, not merely hash-sensitive.
+    const frozen = JSON.parse(iv.configJson) as {
+      healthWeights: Record<string, number>;
+      healthBands: Record<string, number>;
+      growthScoreCapPct: number;
+    };
+    expect(frozen.healthWeights).toEqual(INTEL_CONFIG.healthWeights);
+    expect(frozen.healthBands).toEqual(INTEL_CONFIG.healthBands);
+    expect(frozen.growthScoreCapPct).toBe(INTEL_CONFIG.growthScoreCapPct);
   });
 });
 
