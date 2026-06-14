@@ -25,6 +25,7 @@ import { classificationSide, resolveMapping, sectionSide, seedMappingsFromFile }
 import { basisCoverage } from '../server/warehouse/data-quality';
 import { PARSER_VERSION, parseQbExcel } from '../server/warehouse/parse/qb-excel';
 import { propertyPeriodMetrics } from '../server/warehouse/metrics';
+import { noiMatrix } from '../server/warehouse/queries';
 import { CANON_PROPERTIES, seedPropertyMaster } from '../server/warehouse/property-master';
 import { NOI_INCOME_CLASSES } from '../src/contracts/warehouse';
 import { MIN_PROPERTIES_FOR_COLLAPSE_CHECK, SINGLE_BAND_COLLAPSE_SHARE, scoreBandDistribution, scoreProperties } from '../server/warehouse/scores';
@@ -159,14 +160,12 @@ async function main(): Promise<number> {
     }
     console.log(`income tie: ${committed.length} committed imports checked (tolerance $${INCOME_TIE_TOLERANCE})`);
 
-    // 5. NOI matrix (income classes from the contract; opex is the single fixed negative pivot)
-    const noi = db.prepare(`
-      SELECT property_id, period,
-        ROUND(SUM(CASE WHEN classification IN (${incomePlaceholders}) THEN amount
-                       WHEN classification = 'opex' THEN -amount ELSE 0 END), 2) AS noi
-      FROM ledger_entries WHERE is_active = 1
-      GROUP BY property_id, period ORDER BY property_id, period
-    `).all(...NOI_INCOME_CLASSES);
+    // 5. NOI matrix — print the COHERENT figure the /noi API serves. noiMatrix() derives from
+    //    propertyPeriodMetrics (selectCoherentBatch), so a coexisting full-year + same-year YTD
+    //    resolves to the full-year batch instead of summing both (the ~2x double-count a raw
+    //    GROUP BY over all active rows reports). Sharing the API codepath means the gate prints
+    //    exactly what the platform reports — it can no longer miss the double-count.
+    const noi = noiMatrix(db).map((c) => ({ property_id: c.propertyId, period: c.period, noi: c.noi }));
     console.table(noi);
 
     // 6. basis coverage — accounting-basis parse gap. scores.ts G3 benchmarks an unknown-basis property
