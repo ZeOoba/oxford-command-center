@@ -43,12 +43,12 @@
 
     "acquisition-scorecard": {
       "agent_role": "Engineering (Claude Code) — authorized solo by Gabriel 2026-06-13",
-      "phase": "Acquisition Scorecard contract + PROPOSED ruleset + deterministic engine (answers to scorecard Q1–Q6)",
+      "phase": "Acquisition Scorecard — Workbench UI + live scoring API (contract/engine merged #25; ratified v1 merged #27)",
       "status": "in_progress",
       "blocked_by": null,
       "review_needed": false,
-      "review_detail": "Touches Architect-owned src/contracts/ (new acquisition.ts + index.ts barrel), adds config/ + server/warehouse/acquisition.ts. Authorized by Gabriel via 'proceed solo' 2026-06-13. ALL artifacts ratification:'proposed'; engine fail-closed in production until Gabriel ratifies Q1–Q6. SKILL.md:52-57 clear-height bands left as a sentinel (null), NOT fabricated.",
-      "last_updated": "2026-06-13T21:35:00Z"
+      "review_detail": "Contract + engine (#25) and ratified v1 + RCT + /api/warehouse/acquisition/score (#27) are MERGED. This increment adds the Acquisition Workbench UI (src/modules/acquisitions/) — UX-owned, no Architect files. Also fixes a pre-existing flaky ingest fixture (ExcelJS timestamp nondeterminism). Deferred: property_characteristics input persistence, calibration-log acquisition-score hook.",
+      "last_updated": "2026-06-14T14:55:00Z"
     }
   },
 
