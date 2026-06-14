@@ -56,6 +56,11 @@ export function assertProductionRuleset(r: AcquisitionRuleset): void {
       `acquisition ruleset ${r.rulesetVersion} has clearHeightBands=null (SKILL.md:52-57 not transcribed) — incomplete; engine fail-closed`,
     );
   }
+  if (r.ratifiedBy === null || r.ratifiedDate === null) {
+    throw new Error(
+      `acquisition ruleset ${r.rulesetVersion} is 'ratified' but missing provenance (ratifiedBy/ratifiedDate) — fail-closed (Invariant 4)`,
+    );
+  }
 }
 
 /** Canonical homes of the ratified production config. */
@@ -67,9 +72,24 @@ export function loadRatifiedRuleset(path: string = RATIFIED_RULESET_PATH): Acqui
   assertProductionRuleset(r);
   return r;
 }
-/** Load the ratified Replacement-Cost Table (Q5). */
+/** Refuse a non-ratified or unsigned Replacement-Cost Table — symmetric to assertProductionRuleset. */
+export function assertProductionRct(rct: ReplacementCostTable): void {
+  if (rct.ratification !== 'ratified') {
+    throw new Error(`replacement-cost table ${rct.rctVersion} is '${rct.ratification}', not 'ratified' — engine fail-closed`);
+  }
+  if (rct.ratifiedBy === null || rct.ratifiedDate === null) {
+    throw new Error(`replacement-cost table ${rct.rctVersion} is 'ratified' but missing provenance (ratifiedBy/ratifiedDate) — fail-closed`);
+  }
+}
+/** Parse a Replacement-Cost Table (raw — no ratification assertion). */
 export function loadReplacementCostTable(path: string = REPLACEMENT_COST_TABLE_PATH): ReplacementCostTable {
   return ReplacementCostTable.parse(JSON.parse(readFileSync(path, 'utf8')) as unknown);
+}
+/** Load + assert the ratified Replacement-Cost Table (fail-closed; Q5). */
+export function loadRatifiedRct(path: string = REPLACEMENT_COST_TABLE_PATH): ReplacementCostTable {
+  const rct = loadReplacementCostTable(path);
+  assertProductionRct(rct);
+  return rct;
 }
 /** Replacement-cost total for a building from the RCT — the Basis floor/score divisor (Q5). */
 export function replacementCostTotal(sf: number, rct: ReplacementCostTable, band: 'low' | 'mid' | 'high' = 'mid'): number {
@@ -134,7 +154,7 @@ function constructionPts(r: AcquisitionRuleset, ct: ConstructionType): number | 
   }
 }
 
-interface ScoreOpts { now?: string; rctVersion?: string; }
+interface ScoreOpts { now?: string; rctVersion?: string; rct?: ReplacementCostTable; }
 
 /** Score one acquisition. Pure: deterministic in (input, ruleset) except the injectable scoredAt. */
 export function scoreAcquisition(
@@ -153,6 +173,17 @@ export function scoreAcquisition(
     capOf.set(c.id, vacant && c.vacantPoints !== null ? c.vacantPoints : c.points);
   }
   const cap = (id: ScorecardCategoryId): number => capOf.get(id) ?? 0;
+
+  // Ground-level access, resolved ONCE. Door counts are authoritative when both provided (0 docks AND 0
+  // drive-ins ⇒ no access); else fall back to the presence flags. Flag the contradiction when a count says
+  // 0 but a presence flag says true. The gate + gateIndeterminate both consume this. (Refute fix.)
+  const dc = input.dockCount;
+  const dic = input.driveInCount;
+  if ((dc === 0 && input.hasDock === true) || (dic === 0 && input.hasDriveIn === true)) {
+    flag('doors', 'dock/drive-in counts contradict presence flags (count 0 but flag true)');
+  }
+  const accessConfirmedGood = (dc !== null && dic !== null) ? (dc > 0 || dic > 0) : (input.hasDock === true || input.hasDriveIn === true);
+  const accessConfirmedKill = (dc !== null && dic !== null) ? (dc === 0 && dic === 0) : (input.hasDock === false && input.hasDriveIn === false);
 
   // ── STAGE 0 — GATES ──
   const gates: GateResult[] = [];
@@ -200,7 +231,7 @@ export function scoreAcquisition(
       if (input.clearHeightFt < ruleset.gates.physical.minClearHeightFt) { passed = false; bits.push(`clear ${input.clearHeightFt}' < ${ruleset.gates.physical.minClearHeightFt}'`); }
     } else { flag('clearHeightFt', 'clear height unknown — physical gate not confirmable'); }
     if (input.multiStory === true) { passed = false; bits.push('multi-story warehouse'); }
-    if (input.hasDriveIn === false && input.hasDock === false) { passed = false; bits.push('no ground-level access (0 docks AND 0 drive-ins)'); }
+    if (accessConfirmedKill) { passed = false; bits.push('no ground-level access (0 docks AND 0 drive-ins)'); }
     gates.push({ id: 'physical', passed, detail: bits.length ? bits.join('; ') : 'physical OK' });
   }
   // flood
@@ -233,8 +264,6 @@ export function scoreAcquisition(
   // Symmetric to floorIndeterminate (STAGE 1): missing hard-KILL knowledge must cap the verdict at T2 —
   // an unverified multi-story / no-access / sub-12' / oversized deal must never reach PURSUE just because
   // the disqualifying fact is unknown at screen time. (Adversarial refute finding, 2026-06-13.)
-  const accessConfirmedGood = input.hasDriveIn === true || input.hasDock === true;
-  const accessConfirmedKill = input.hasDriveIn === false && input.hasDock === false;
   const gateIndeterminate =
     input.productType === null ||
     input.price === null || input.maxBuildingSf === null ||
@@ -252,8 +281,30 @@ export function scoreAcquisition(
     : input.yearBuilt >= ruleset.floors.basisVintageCutoffYear
       ? ruleset.floors.basisDiscountMinPostMillennium
       : ruleset.floors.basisDiscountMinPreMillennium;
-  const discount = input.allInBasis !== null && input.replacementCostTotal !== null && input.replacementCostTotal > 0
-    ? 1 - input.allInBasis / input.replacementCostTotal
+  // Replacement cost (the Basis divisor) is the ratified RCT × gross SF (Q5) when an RCT is supplied — NOT a
+  // free caller scalar. A caller replacementCostTotal is an APPRAISAL OVERRIDE that is reconciled: the
+  // RCT-derived figure governs and a >10% divergence is flagged. With no RCT (advisory/legacy) the caller
+  // scalar is used but flagged not-RCT-backed, so a 'ratified' verdict cannot rest on an unbacked number. (Refute fix.)
+  const rct = opts.rct ?? null;
+  const grossSf = input.totalSf ?? input.maxBuildingSf;
+  const rcBand = input.replacementCostBand ?? 'mid';
+  const rctDerived = rct !== null && grossSf !== null && grossSf > 0 ? grossSf * rct.psf[rcBand] : null;
+  let replacementCost: number | null;
+  if (rctDerived !== null) {
+    replacementCost = rctDerived;
+    if (input.replacementCostTotal !== null && input.replacementCostTotal > 0) {
+      const div = Math.abs(input.replacementCostTotal - rctDerived) / rctDerived;
+      if (div > 0.10) flag('replacementCostTotal', `caller replacement cost ${Math.round(input.replacementCostTotal)} diverges ${(div * 100).toFixed(0)}% from ratified RCT ${Math.round(rctDerived)} — using the ratified RCT`);
+    }
+  } else if (rct !== null) {
+    replacementCost = null;
+    flag('replacementCost', 'gross SF unknown — cannot derive replacement cost from the ratified RCT');
+  } else {
+    replacementCost = input.replacementCostTotal;
+    if (ruleset.ratification === 'ratified' && replacementCost !== null) flag('replacementCost', 'replacement cost not RCT-backed (no ratified RCT supplied to the engine)');
+  }
+  const discount = input.allInBasis !== null && replacementCost !== null && replacementCost > 0
+    ? 1 - input.allInBasis / replacementCost
     : null;
   if (discount === null) { floorIndeterminate = true; flag('basis', 'all-in basis or replacement cost missing — basis floor indeterminate'); }
   floors.push({ id: 'basis', passed: discount !== null && discount >= vintageFloor, actual: discount, required: vintageFloor, detail: discount === null ? 'inputs missing' : `${(discount * 100).toFixed(1)}% vs ${(vintageFloor * 100).toFixed(0)}% required` });
@@ -301,9 +352,13 @@ export function scoreAcquisition(
     const per10k = loadSf / 10000;
     const dockAdeq = clamp(input.dockCount / Math.max(s3.loadingDoorsPer10kSf.docks * per10k, 1e-9), 0, 1);
     const driveAdeq = clamp(input.driveInCount / Math.max(s3.loadingDoorsPer10kSf.driveIns * per10k, 1e-9), 0, 1);
-    doorAdequacy = (dockAdeq + driveAdeq) / 2;
+    // CONJUNCTIVE ("1 dock AND 1 drive-in per 10k SF"): the weaker door type limits — a glut of one cannot
+    // buy back the absence of the other. min, not average. (Refute fix.)
+    doorAdequacy = Math.min(dockAdeq, driveAdeq);
   } else {
-    doorAdequacy = input.hasDock === true || input.hasDriveIn === true ? 1 : 0;
+    // Counts unknown ⇒ NEUTRAL (mirrors the truck-court-null 0.5) — never full credit for mere presence,
+    // else withholding door data would outscore reporting sparse doors. (Refute fix.)
+    doorAdequacy = 0.5;
   }
   const loadingPts = s3.loadingPoints * clamp(0.5 * tcScore + 0.5 * doorAdequacy, 0, 1);
   const sitePts = s3.siteFunctionPoints * clamp(0.5 * tcScore + 0.5 * doorAdequacy, 0, 1);
@@ -424,7 +479,7 @@ export function scoreAcquisition(
 
   const result: AcquisitionScore = {
     schemaVersion: '1.0.0',
-    inputsVersion: computeInputsVersion(input, ruleset, opts.rctVersion ?? RCT_VERSION),
+    inputsVersion: computeInputsVersion(input, ruleset, opts.rctVersion ?? opts.rct?.rctVersion ?? RCT_VERSION),
     rulesetVersion: ruleset.rulesetVersion,
     ratification: ruleset.ratification,
     scoredAt: opts.now ?? new Date().toISOString(),

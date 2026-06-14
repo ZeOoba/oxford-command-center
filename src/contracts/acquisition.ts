@@ -228,7 +228,8 @@ export const AcquisitionInput = z.object({
 
   // basis / yield / irr (floors + Cat 1 Basis, Cat 2 Yield)
   allInBasis: z.number().nullable().default(null),
-  replacementCostTotal: z.number().nullable().default(null), // from the RCT (Q5); consumer pins rctVersion in inputsVersion
+  replacementCostTotal: z.number().nullable().default(null), // appraisal OVERRIDE; reconciled vs the ratified RCT (Q5)
+  replacementCostBand: z.enum(['low', 'mid', 'high']).nullable().default(null), // building-class band into the RCT (default mid)
   stabilizedYoc: z.number().nullable().default(null),
   leveredIrr: z.number().nullable().default(null),
   underwriteHorizonYrs: z.union([z.literal(5), z.literal(10)]).nullable().default(null),
