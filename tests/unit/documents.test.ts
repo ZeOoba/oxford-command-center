@@ -29,6 +29,41 @@ import {
   extractXlsxText,
 } from '../../server/sources/documents';
 
+/**
+ * Restore a process.env key to a previously-captured snapshot value. Assigning `process.env.X =
+ * undefined` does NOT unset the var — Node coerces it to the literal STRING "undefined". When the var
+ * was originally unset, that pollutes it for every later test; under shuffled order a later consumer
+ * then reads the bogus value (e.g. includeDirs() treats "undefined" as a one-entry top-level allowlist
+ * and prunes the whole corpus → 0 documents). Delete on undefined so an unset var goes back to truly
+ * unset. Used at EVERY env-restore site below so no describe block can leak across test order.
+ */
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+}
+
+describe('restoreEnv — env snapshot/restore must never write the string "undefined"', () => {
+  const KEY = 'DOCUMENTS_RESTORE_PROBE';
+  afterEach(() => {
+    delete process.env[KEY];
+  });
+  it('deletes the key when restoring an originally-unset (undefined) snapshot', () => {
+    delete process.env[KEY];
+    const snapshot = process.env[KEY]; // a real, unset undefined
+    process.env[KEY] = 'temp-value';
+    restoreEnv(KEY, snapshot);
+    expect(KEY in process.env).toBe(false); // truly unset — NOT the string "undefined"
+    expect(process.env[KEY]).toBeUndefined();
+  });
+  it('restores a real prior string value verbatim', () => {
+    process.env[KEY] = 'original';
+    const snapshot = process.env[KEY];
+    process.env[KEY] = 'temp-value';
+    restoreEnv(KEY, snapshot);
+    expect(process.env[KEY]).toBe('original');
+  });
+});
+
 describe('chunkText', () => {
   it('returns a single chunk for short text and none for empty', () => {
     expect(chunkText('A short lease clause.')).toEqual(['A short lease clause.']);
@@ -147,8 +182,8 @@ describe('isLikelyNonLease — corpus tightening (drops financials/rent-rolls/di
 describe('env knobs — pathIncludeRe + maxFiles', () => {
   const prev = { inc: process.env.DOCUMENTS_PATH_INCLUDE, max: process.env.DOCUMENTS_MAX_FILES };
   afterEach(() => {
-    process.env.DOCUMENTS_PATH_INCLUDE = prev.inc;
-    process.env.DOCUMENTS_MAX_FILES = prev.max;
+    restoreEnv('DOCUMENTS_PATH_INCLUDE', prev.inc);
+    restoreEnv('DOCUMENTS_MAX_FILES', prev.max);
   });
   it('pathIncludeRe is null when unset and a regex when set', () => {
     delete process.env.DOCUMENTS_PATH_INCLUDE;
@@ -172,14 +207,14 @@ describe('env knobs — pathIncludeRe + maxFiles', () => {
     expect(maxDepth()).toBe(9);
     process.env.DOCUMENTS_MAX_DEPTH = 'nonsense';
     expect(maxDepth()).toBe(6);
-    process.env.DOCUMENTS_MAX_DEPTH = p;
+    restoreEnv('DOCUMENTS_MAX_DEPTH', p);
   });
 });
 
 describe('maxChunksPerDoc — per-document chunk cap', () => {
   const prev = process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC;
   afterEach(() => {
-    process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC = prev;
+    restoreEnv('DOCUMENTS_MAX_CHUNKS_PER_DOC', prev);
   });
   it('defaults to 25 and honors a valid override; ignores nonsense', () => {
     delete process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC;
@@ -192,23 +227,38 @@ describe('maxChunksPerDoc — per-document chunk cap', () => {
 });
 
 describe('buildDocIndex — Leases-only include filter + exclusion pruning (temp corpus)', () => {
-  const prev = { dir: process.env.DOCUMENTS_DIR, inc: process.env.DOCUMENTS_PATH_INCLUDE };
+  const prev = {
+    dir: process.env.DOCUMENTS_DIR,
+    inc: process.env.DOCUMENTS_PATH_INCLUDE,
+    allow: process.env.DOCUMENTS_INCLUDE_DIRS,
+  };
   afterEach(() => {
-    process.env.DOCUMENTS_DIR = prev.dir;
-    process.env.DOCUMENTS_PATH_INCLUDE = prev.inc;
+    restoreEnv('DOCUMENTS_DIR', prev.dir);
+    restoreEnv('DOCUMENTS_PATH_INCLUDE', prev.inc);
+    restoreEnv('DOCUMENTS_INCLUDE_DIRS', prev.allow);
   });
-  it('indexes ONLY files under Leases folders, skipping other + excluded (estate) dirs', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'docidx-'));
-    try {
-      mkdirSync(join(root, 'PropA', 'Leases'), { recursive: true });
-      mkdirSync(join(root, 'PropB', 'Other'), { recursive: true });
-      mkdirSync(join(root, 'Estate Planning', 'Leases'), { recursive: true });
-      writeFileSync(join(root, 'PropA', 'Leases', 'lease.txt'), 'Tenant has a right of first refusal to renew the premises.');
-      writeFileSync(join(root, 'PropB', 'Other', 'note.txt'), 'miscellaneous non-lease document');
-      writeFileSync(join(root, 'Estate Planning', 'Leases', 'trust.txt'), 'confidential estate document');
 
-      process.env.DOCUMENTS_DIR = root;
-      process.env.DOCUMENTS_PATH_INCLUDE = '(^|/)Leases(/)';
+  // Build the canonical 3-folder temp corpus (one indexable lease under PropA/Leases) and point the
+  // indexer at it under a Leases-only path filter. Establishes EVERY env precondition the assertions
+  // depend on — including clearing any top-level DOCUMENTS_INCLUDE_DIRS allowlist — so the test is
+  // self-contained under any (shuffled) test order. Returns the temp root for cleanup.
+  function setupLeasesCorpus(): string {
+    const root = mkdtempSync(join(tmpdir(), 'docidx-'));
+    mkdirSync(join(root, 'PropA', 'Leases'), { recursive: true });
+    mkdirSync(join(root, 'PropB', 'Other'), { recursive: true });
+    mkdirSync(join(root, 'Estate Planning', 'Leases'), { recursive: true });
+    writeFileSync(join(root, 'PropA', 'Leases', 'lease.txt'), 'Tenant has a right of first refusal to renew the premises.');
+    writeFileSync(join(root, 'PropB', 'Other', 'note.txt'), 'miscellaneous non-lease document');
+    writeFileSync(join(root, 'Estate Planning', 'Leases', 'trust.txt'), 'confidential estate document');
+    process.env.DOCUMENTS_DIR = root;
+    process.env.DOCUMENTS_PATH_INCLUDE = '(^|/)Leases(/)';
+    delete process.env.DOCUMENTS_INCLUDE_DIRS; // precondition: no top-level allowlist scoping
+    return root;
+  }
+
+  it('indexes ONLY files under Leases folders, skipping other + excluded (estate) dirs', async () => {
+    const root = setupLeasesCorpus();
+    try {
       await buildDocIndex(fakeEmbedder);
       const s = await docStatus();
 
@@ -218,14 +268,36 @@ describe('buildDocIndex — Leases-only include filter + exclusion pruning (temp
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('is order-independent: a leaked DOCUMENTS_INCLUDE_DIRS="undefined" does not blank the corpus', async () => {
+    // Reproduces the exact residue a prior block leaves via `process.env.X = undefined`. The
+    // self-contained setup must neutralize it; before the env-hygiene fix this indexed 0 documents.
+    process.env.DOCUMENTS_INCLUDE_DIRS = 'undefined';
+    const root = setupLeasesCorpus();
+    try {
+      await buildDocIndex(fakeEmbedder);
+      const s = await docStatus();
+      expect(s.documents).toBe(1);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('collectDocChunks — list+extract+chunk with per-doc cap', () => {
-  const prev = { dir: process.env.DOCUMENTS_DIR, inc: process.env.DOCUMENTS_PATH_INCLUDE, cap: process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC };
+  const prev = {
+    dir: process.env.DOCUMENTS_DIR,
+    inc: process.env.DOCUMENTS_PATH_INCLUDE,
+    cap: process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC,
+    allow: process.env.DOCUMENTS_INCLUDE_DIRS,
+    drop: process.env.DOCUMENTS_DROP_NONLEASE,
+  };
   afterEach(() => {
-    process.env.DOCUMENTS_DIR = prev.dir;
-    process.env.DOCUMENTS_PATH_INCLUDE = prev.inc;
-    process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC = prev.cap;
+    restoreEnv('DOCUMENTS_DIR', prev.dir);
+    restoreEnv('DOCUMENTS_PATH_INCLUDE', prev.inc);
+    restoreEnv('DOCUMENTS_MAX_CHUNKS_PER_DOC', prev.cap);
+    restoreEnv('DOCUMENTS_INCLUDE_DIRS', prev.allow);
+    restoreEnv('DOCUMENTS_DROP_NONLEASE', prev.drop);
   });
   it('caps chunks per document and skips non-lease + excluded files', async () => {
     const root = mkdtempSync(join(tmpdir(), 'collect-'));
@@ -239,6 +311,8 @@ describe('collectDocChunks — list+extract+chunk with per-doc cap', () => {
       process.env.DOCUMENTS_DIR = root;
       process.env.DOCUMENTS_PATH_INCLUDE = '(^|/)Leases(/)';
       process.env.DOCUMENTS_MAX_CHUNKS_PER_DOC = '3';
+      delete process.env.DOCUMENTS_INCLUDE_DIRS; // precondition: no top-level allowlist scoping
+      delete process.env.DOCUMENTS_DROP_NONLEASE; // precondition: drop-non-lease ON (default) → rent roll skipped
 
       const { chunks, docs } = await collectDocChunks();
       expect(docs.length).toBe(1); // rent roll skipped
@@ -259,10 +333,10 @@ describe('DOCUMENTS_INCLUDE_DIRS — fail-closed top-level allowlist', () => {
     drop: process.env.DOCUMENTS_DROP_NONLEASE,
   };
   afterEach(() => {
-    process.env.DOCUMENTS_DIR = prev.dir;
-    process.env.DOCUMENTS_PATH_INCLUDE = prev.inc;
-    process.env.DOCUMENTS_INCLUDE_DIRS = prev.allow;
-    process.env.DOCUMENTS_DROP_NONLEASE = prev.drop;
+    restoreEnv('DOCUMENTS_DIR', prev.dir);
+    restoreEnv('DOCUMENTS_PATH_INCLUDE', prev.inc);
+    restoreEnv('DOCUMENTS_INCLUDE_DIRS', prev.allow);
+    restoreEnv('DOCUMENTS_DROP_NONLEASE', prev.drop);
   });
   it('indexes ONLY allowlisted top-level folders, skipping unlisted + personal', async () => {
     const root = mkdtempSync(join(tmpdir(), 'allow-'));
@@ -291,7 +365,7 @@ describe('DOCUMENTS_INCLUDE_DIRS — fail-closed top-level allowlist', () => {
 describe('includeDirs — delimiter robust to comma-containing folder names', () => {
   const prev = process.env.DOCUMENTS_INCLUDE_DIRS;
   afterEach(() => {
-    process.env.DOCUMENTS_INCLUDE_DIRS = prev;
+    restoreEnv('DOCUMENTS_INCLUDE_DIRS', prev);
   });
   it('splits on | so folder names with commas survive as single entries', () => {
     process.env.DOCUMENTS_INCLUDE_DIRS = '3883 Livingston, LLC|9620 State 350, LLC|6300 Sherriff Road';
@@ -473,7 +547,7 @@ describe('buildIndex on-disk — persist + reload + batched embedding (fake embe
       process.env.DOC_INDEX_PATH = '/tmp/custom-index.sqlite';
       expect(docIndexPath()).toBe('/tmp/custom-index.sqlite');
     } finally {
-      process.env.DOC_INDEX_PATH = prev;
+      restoreEnv('DOC_INDEX_PATH', prev);
     }
   });
 });
