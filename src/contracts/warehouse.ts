@@ -106,3 +106,86 @@ export const AccountMappingSchema = z.object({
   note: z.string().nullish(),
 });
 export type AccountMapping = z.infer<typeof AccountMappingSchema>;
+
+// ── Calibration log (the 40-year feedback loop) ───────────────────────────
+// Records every warehouse verdict at the moment it is made, freezes the exact
+// ledger+config state that produced it (inputs_version), and later records the
+// realized outcome. Append-only / deterministic / fail-open by design — these
+// schemas are the validation boundary for the calibration emit path and the
+// (Phase 2) /calibration routes. Nothing here is a governor.
+export const SubjectKind = z.enum(['property', 'tenant', 'loan', 'deal', 'portfolio', 'pm']);
+export type SubjectKind = z.infer<typeof SubjectKind>;
+
+export const VerdictKind = z.enum([
+  'health-band', 'attention', 'capital-action', 'anomaly',
+  'refi-score', 'acquisition-score', 'forecast',
+]);
+export type VerdictKind = z.infer<typeof VerdictKind>;
+
+export const VerdictEngine = z.enum([
+  'scores', 'anomalies', 'benchmarks', 'growth', 'drivers', 'refi', 'acquisition', 'forecast',
+]);
+export type VerdictEngine = z.infer<typeof VerdictEngine>;
+
+export const PredictedUnit = z.enum(['score-0-100', 'pct-change', 'usd', 'usd-per-sf', 'band']);
+export type PredictedUnit = z.infer<typeof PredictedUnit>;
+
+export const ActionTaken = z.enum(['none', 'acted-aligned', 'acted-counter', 'unknown']);
+export type ActionTaken = z.infer<typeof ActionTaken>;
+
+/** A YYYY or YYYY-MM period token (same shape as LedgerEntrySchema.period). */
+const PeriodToken = z.string().regex(/^\d{4}(-(0[1-9]|1[0-2]))?$/);
+
+export const InputsVersionSchema = z.object({
+  inputsVersion: z.string().length(16),
+  ledgerFingerprint: z.string().min(1),
+  configHash: z.string().min(1),
+  codeVersion: z.string().min(1),
+  configJson: z.string().min(2), // serialized INTEL_CONFIG, stored verbatim
+  createdAt: z.string().optional(),
+});
+export type InputsVersion = z.infer<typeof InputsVersionSchema>;
+
+export const CalibrationVerdictSchema = z.object({
+  subjectKind: SubjectKind,
+  subjectId: z.string().min(1),
+  verdictKind: VerdictKind,
+  // Sub-identity WITHIN a verdict_kind. '' (default) for the singleton scores kinds; the anomaly
+  // `kind` for anomalies. Part of the dedup identity so several distinct anomalies for one
+  // (subject, period, inputs_version) do not collide to a single dedup_key (D3).
+  verdictSubkind: z.string().default(''),
+  verdictEngine: VerdictEngine,
+  predictedBand: z.string().nullable(),
+  predictedValue: z.number().finite().nullable(),
+  predictedUnit: PredictedUnit.nullable(),
+  confidence: z.number().min(0).max(1).nullable(),
+  direction: z.enum(['up', 'down', 'flat', 'n/a']).default('n/a'),
+  reasons: z.array(z.string()).default([]),
+  asOfPeriod: PeriodToken,
+  horizonPeriods: z.number().int().positive().nullable(),
+  inputsVersion: z.string().length(16),
+  emittedBy: z.string().min(1),
+}).refine((v) => v.predictedBand !== null || v.predictedValue !== null, {
+  message: 'a verdict must carry a band, a value, or both',
+});
+export type CalibrationVerdict = z.infer<typeof CalibrationVerdictSchema>;
+
+export const CalibrationOutcomeSchema = z.object({
+  calibrationId: z.number().int().positive(),
+  realizedBand: z.string().nullable(),
+  realizedValue: z.number().finite().nullable(),
+  realizedUnit: PredictedUnit.nullable(),
+  outcomePeriod: PeriodToken,
+  horizonActual: z.number().int().nonnegative().nullable(),
+  hit: z.union([z.literal(0), z.literal(1)]).nullable(),
+  absError: z.number().nonnegative().nullable(),
+  brierComponent: z.number().min(0).max(1).nullable(),
+  actionTaken: ActionTaken.default('unknown'),
+  actionDetail: z.string().nullable(),
+  treatmentNote: z.string().nullable(),
+  resolvedBy: z.string().min(1),
+  resolutionBasis: z.string().min(1),
+  isResolution: z.boolean().default(false),
+  inputsVersion: z.string().length(16).nullable(),
+});
+export type CalibrationOutcome = z.infer<typeof CalibrationOutcomeSchema>;

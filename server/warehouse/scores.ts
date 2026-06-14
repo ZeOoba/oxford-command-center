@@ -24,6 +24,11 @@ export interface PropertyScore {
   capitalAction: CapitalAction;
   subScores: Record<string, number>; // each 0..100, keyed by healthWeights key
   noiPerSfQuartile: 1 | 2 | 3 | 4 | null;
+  // Same-basis NOI/SF benchmark cohort size at `period` (count of peers with a finite NOI/SF,
+  // INCLUDING this property). Mirrors benchmarks.ts `smallSample = propertyCount < 3`. Exposed so a
+  // verdict consumer can record a small-cohort confidence penalty at n<3 (spec §2.3) — a value-free
+  // observability field; it does NOT enter any score computation (D4).
+  benchmarkCohortSize: number;
   reasons: string[];
 }
 
@@ -260,6 +265,10 @@ export function scoreProperties(db: WarehouseDb, metrics: PeriodMetrics[]): Prop
       capitalAction,
       subScores,
       noiPerSfQuartile: quartile,
+      // Same-basis NOI/SF cohort size = the ranked population at `period` (finite NOI/SF, same
+      // basis), which is exactly what produced `quartile`. Used downstream for the n<3 confidence
+      // cap (spec §2.3); does not affect any score value.
+      benchmarkCohortSize: ranking.length,
       reasons: buildReasons({
         healthBand, attentionBand, capitalAction, health,
         noiGrowth, quartile, flags, critical, high, moderate,

@@ -6,8 +6,18 @@
 // it deliberately (kept in sync by hand to avoid touching the committed pipeline here).
 import type { WarehouseDb } from './db';
 import { accountKey, resolveMapping } from './mapping';
+import { computeInputsVersion, logVerdicts, verdictsFromAnomalies, verdictsFromScores } from './calibration';
+import { detectAnomalies } from './anomalies';
+import { propertyPeriodMetrics } from './metrics';
+import { scoreProperties } from './scores';
 
 export type ApproveResult = { ok: true } | { ok: false; unmapped: string[]; error?: string };
+
+/** Options for approveImport. `forceCalibrationError` (tests only) poisons the post-commit emit
+ *  hook to prove the fail-open guarantee — the commit still returns {ok:true}. */
+export interface ApproveOptions {
+  forceCalibrationError?: string;
+}
 export type SimpleResult = { ok: true } | { ok: false; error?: string };
 
 interface BatchRow {
@@ -28,7 +38,7 @@ interface BatchRow {
  * and manual overrides are side-agnostic rulings, so this is correct. Amounts are never
  * touched (sign-normalization already applied at ingest stays intact).
  */
-export function approveImport(db: WarehouseDb, importId: number): ApproveResult {
+export function approveImport(db: WarehouseDb, importId: number, opts: ApproveOptions = {}): ApproveResult {
   const batch = db
     .prepare('SELECT id, property_id, period_start, period_end, status FROM import_batches WHERE id=?')
     .get(importId) as BatchRow | undefined;
@@ -72,6 +82,35 @@ export function approveImport(db: WarehouseDb, importId: number): ApproveResult 
     }
     db.prepare("UPDATE import_batches SET status='committed' WHERE id=?").run(importId);
   })();
+
+  // ── Calibration emit hook (spec §7 item 3) — AFTER the transaction commits ─────────────────
+  // A new statement just changed the ledger: the inputs_version is fresh and the verdict reflects
+  // the newest data. Re-score the warehouse and log the verdicts. STRICTLY fail-open: any failure
+  // here writes a data_quality_issues row (via logVerdicts) and MUST NOT change the {ok:true}
+  // return above. Calibration logging is observational; it never blocks a commit.
+  try {
+    const iv = computeInputsVersion(db);
+    const metrics = propertyPeriodMetrics(db);
+    logVerdicts(
+      db,
+      [
+        ...verdictsFromScores(scoreProperties(db, metrics), iv, `commit:${importId}`),
+        ...verdictsFromAnomalies(detectAnomalies(metrics), iv, `commit:${importId}`),
+      ],
+      { forceError: opts.forceCalibrationError },
+    );
+  } catch {
+    // logVerdicts is itself fail-open (it never throws), but computeInputsVersion / scoring could
+    // in principle throw on a malformed db — swallow here too so the commit result is never affected.
+    try {
+      db.prepare(
+        "INSERT INTO data_quality_issues (kind, detail, severity) VALUES ('calibration-emit-failed', 'emit hook threw before logVerdicts', 'warn')",
+      ).run();
+    } catch {
+      /* observational machinery must never block the warehouse */
+    }
+  }
+
   return { ok: true };
 }
 
