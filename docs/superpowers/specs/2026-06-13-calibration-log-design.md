@@ -300,7 +300,7 @@ Computed by a pure function `calibrationReport(db, {from, to, kind?})` over reso
 
 The report produces a **Proposed Weight Change Memo**, never a config edit. The pipeline:
 
-1. The annual report identifies a sub-score whose verdicts systematically miss — e.g. `benchmarkPosition` (weight 0.10) verdicts have a 40% directional hit-rate while `noiGrowth` (weight 0.18) hits 80%.
+1. The annual report identifies a sub-score whose verdicts systematically miss — e.g. `benchmarkPosition` (weight 0.10) verdicts have a 40% directional hit-rate while `noiGrowth` (weight 0.22) hits 80%.
 2. A deterministic, **offline** re-fit (a script, `scripts/calibration-refit.ts`, run on demand — not in the live path) proposes new `healthWeights` that would have maximized historical hit-rate, **subject to constraints**: weights sum to 1.0, no single weight moves more than ±0.05/year (anti-overfit governor on the *calibration* process itself), and the re-fit is reported with the in-sample/out-of-sample split it was validated on.
 3. The memo is presented to Gabriel: current weights, proposed weights, the evidence (which verdicts, what hit-rate delta, the N behind each), and the pre-mortem ("this re-fit is driven by 9 resolved disposition verdicts; 3 were treatment-contaminated").
 4. **Gabriel ratifies or rejects.** Only on ratification does `INTEL_CONFIG.healthWeights` change — a normal, reviewed, hook-gated code edit to `intel-config.ts`. That edit changes the `config_hash`, which changes every subsequent `inputs_version`, so the calibration log cleanly partitions "verdicts under weights v1" from "verdicts under weights v2." The system never grades v2 weights against v1 verdicts.

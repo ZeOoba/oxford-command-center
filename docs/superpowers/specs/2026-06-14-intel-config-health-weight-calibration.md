@@ -1,7 +1,7 @@
 # INTEL_CONFIG Health-Weight Calibration — Recommendations & Ratification List
 
 **Responds to:** the open item flagged since 2026-06-13 — `INTEL_CONFIG.healthWeights` are **PROPOSED, pending Gabriel's calibration** (`server/warehouse/intel-config.ts:4`, `:21`); the *live* per-property **capital-action verdicts** (invest/hold/monitor/disposition-candidate) run on these unratified weights (master plan Risk #7 / PFR-5).
-**Status:** DRAFT recommendations for Gabriel ratification — *no weights changed in code by this doc.* Same propose→ratify→encode discipline as the acquisition scorecard (#23→#27) and `CAPITAL_CONFIG` (#31).
+**Status:** ✅ RATIFIED — Gabriel 2026-06-14 ("All ok" to D1–D5; see §7 + `memory/event_log.md`). The recommended set (Option B + knobs) is now encoded in `intel-config.ts` in this PR; the `refute-financial-change` pass came back clean (no real defect). Same propose→ratify→encode discipline as the acquisition scorecard (#23→#27) and `CAPITAL_CONFIG` (#31).
 **Author:** Claude Code · **Date:** 2026-06-14 · **Branch:** `claude/busy-maxwell-4ilaxd`
 **Verified against:** `intel-config.ts`, `scores.ts` (how each weight is consumed), `capital-config.ts` (#31 ratify pattern), `2026-06-13-calibration-log-design.md` (#34 — the evidence loop that will refine these).
 
@@ -105,4 +105,10 @@ healthWeights: {
 3. Add a contract/test assertion that `Σ healthWeights === 1.0` (guards a future typo) and a note that any change re-runs the `refute-financial-change` pass (these feed capital-action).
 4. **No band/threshold or governor change** rides along — only the ratified weights.
 
-**Nothing here is live until you sign §5.** Reply with D1–D5 (e.g. *"B; 0.20 ok; 0.25 ok; bands ok; calibration-only"*) and I'll encode it.
+---
+
+## 7. Ratification — signed 2026-06-14 ✅
+
+**Gabriel: "All ok"** → **D1 = Option B** (NOI-centric reweight) · **D2 = 0.20** · **D3 = 0.25** · **D4 = 80 / 65 / 50** · **D5 = calibration-log-only** (annual, evidence-backed, ±0.05/yr, his sign-off each time).
+
+§6 executed in this PR: weights encoded in `server/warehouse/intel-config.ts` (PROPOSED→RATIFIED); sign-off in `memory/event_log.md`; the exact ratified values locked by `tests/unit/intel-config.test.ts`, and `config_json` reproducibility by `tests/unit/calibration.test.ts`. The `refute-financial-change` pass (numerical / capital-action / provenance lenses) returned **no real defect** — and surfaced two doc-drift fixes (a stale `0.18` in the #34 design doc; a misleading `intel-config.ts` header), both applied. No band/threshold or governor change rode along.
