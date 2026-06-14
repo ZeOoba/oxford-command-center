@@ -314,3 +314,27 @@ describe('applyScenario', () => {
     expect(portfolioKpis(base, 'Base').noi.prov.confidence).toBe('confirmed');
   });
 });
+
+// H4 regression (audit finding `scenario-value-basis-mix`): a scenario must scale the
+// source-of-record workbook value by revenueFactor/exitCapFactor in BOTH the capped and
+// uncapped branches. The previous capped-property re-derivation (noi/capRate) treated the
+// going-in cap as the exit cap, so a Downside scenario could RAISE value and LOWER LTV —
+// risk running backwards on the exact axis capital allocation uses.
+describe('applyScenario — value basis (H4 regression)', () => {
+  const base = snap({ properties: [prop({ id: 'a', noi: 100, occPct: 0.9, capRate: 0.07, oxfordValue: 1000 })] });
+  it('Downside lowers a capped property value (risk runs the correct direction)', () => {
+    const downVal = applyScenario(base, 'Downside').properties[0]!.oxfordValue;
+    expect(downVal).toBeLessThan(1000); // must fall below the Base/workbook value
+    expect(downVal).toBeCloseTo(1000 * (0.9 / 1.05), 4); // 857.14 — ratio-scaled, not noi/cap (1224)
+  });
+  it('Upside raises a capped property value via consistent ratio-scaling', () => {
+    const upVal = applyScenario(base, 'Upside').properties[0]!.oxfordValue;
+    expect(upVal).toBeCloseTo(1000 * (1.1 / 0.95), 4); // 1157.89 — not noi/cap (1654)
+  });
+  it('portfolio value falls under Downside (→ LTV rises, downside no longer understated)', () => {
+    // portfolioKpis only labels by scenario; the snapshot must be transformed via applyScenario first.
+    const baseVal = portfolioKpis(base, 'Base').value.value!;
+    const downVal = portfolioKpis(applyScenario(base, 'Downside'), 'Downside').value.value!;
+    expect(downVal).toBeLessThan(baseVal);
+  });
+});
