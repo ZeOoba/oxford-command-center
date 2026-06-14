@@ -51,4 +51,35 @@ describe('mapping engine', () => {
     // without section: falls back to the first seeded entry (documented behavior)
     expect(['recovery', 'opex']).toContain(resolveMapping(db, 'Gas').classification);
   });
+
+  it('sideHint constrains the dual-side SEED tiebreak but a manual override wins regardless of side', () => {
+    const db = openWarehouse(join(mkdtempSync(join(tmpdir(), 'wh-')), 'f.sqlite'));
+    seedMappings(db, [
+      { account: 'Gas', code: '5034', normalized_category: 'CAM Recoveries', classification: 'recovery' },
+      { account: 'Gas', code: '6675', normalized_category: 'Utilities', classification: 'opex' },
+    ]);
+    // (1) H3 protection: an expense-side row re-resolved with sideHint='expense' must land on the
+    // expense seed (opex), never flip to the income/recovery seed — even though both seeds exist.
+    expect(resolveMapping(db, 'Gas', undefined, undefined, 'expense').classification).toBe('opex');
+    expect(resolveMapping(db, 'Gas', undefined, undefined, 'income').classification).toBe('recovery');
+
+    // (2) A manual override is an explicit human ruling — it must win over sideHint even when it
+    // sits on the OPPOSITE side from the hint. Here Gas gets a manual income/recovery mapping; a
+    // re-resolve carrying the row's stale expense sideHint must STILL return the manual mapping,
+    // not fall back to the same-side opex seed and silently drop the human's reclassification.
+    db.prepare(
+      `INSERT INTO account_mappings (raw_account_key, normalized_category, classification, match_kind)
+       VALUES ('gas', 'CAM Recoveries', 'recovery', 'manual')`,
+    ).run();
+    const m = resolveMapping(db, 'Gas', undefined, undefined, 'expense');
+    expect(m.matchKind).toBe('manual');
+    expect(m.classification).toBe('recovery'); // manual cross-side ruling wins over sideHint='expense'
+
+    // (3) The same-side manual case is unaffected: a manual expense override under expense sideHint wins.
+    db.prepare(
+      `INSERT INTO account_mappings (raw_account_key, normalized_category, classification, match_kind)
+       VALUES ('hvac repair', 'HVAC Capital', 'capex', 'manual')`,
+    ).run();
+    expect(resolveMapping(db, 'HVAC Repair', undefined, undefined, 'expense').classification).toBe('capex');
+  });
 });

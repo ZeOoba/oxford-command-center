@@ -13,6 +13,9 @@
 //   6. the scored attention/health band distribution does NOT collapse to a single band
 //      (a >~90% single-bucket share is the systemic cross-grain-scoring-bug signal that
 //      per-property unit tests miss — see scoreBandDistribution / PFI 2026-06-12 lesson)
+//   11. the APPROVE re-resolution path (where H3 lives) preserves every dual-side account's
+//      ingest-time side over the REAL seed: forces each fully-mapped file to pending-review,
+//      approves it, and asserts each dual-side key's income/opex side-sums are unchanged
 // Exits 1 with a clear message on any failure. Local-only gate (wired into `npm run gate`,
 // NOT gate:ci — CI runners have no FINANCIALS_DIR).
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
@@ -20,8 +23,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openWarehouse } from '../server/warehouse/db';
 import type { WarehouseDb } from '../server/warehouse/db';
+import { approveImport } from '../server/warehouse/actions';
 import { ingestFile } from '../server/warehouse/ingest';
-import { classificationSide, resolveMapping, sectionSide, seedMappingsFromFile } from '../server/warehouse/mapping';
+import { accountKey, classificationSide, resolveMapping, sectionSide, seedMappingsFromFile } from '../server/warehouse/mapping';
 import { basisCoverage } from '../server/warehouse/data-quality';
 import { PARSER_VERSION, parseQbExcel } from '../server/warehouse/parse/qb-excel';
 import { propertyPeriodMetrics } from '../server/warehouse/metrics';
@@ -75,6 +79,47 @@ async function expectedIncomeFor(db: WarehouseDb, imp: CommittedImport): Promise
     sum += a.total;
   }
   return sum;
+}
+
+/**
+ * Account keys the seed maps on BOTH the income and expense side (gas/electric/water/
+ * bad-debt-expense in the real PFI seed). These are exactly the accounts whose approve-time
+ * re-resolution could flip an opex row to the income/recovery mapping (or vice versa) under an
+ * undefined dual-side seed tiebreak — the H3 class. Derived from the live mappings table so the
+ * check tracks the seed instead of hardcoding the four names.
+ */
+function dualSideAccountKeys(db: WarehouseDb): Set<string> {
+  const rows = db.prepare(
+    "SELECT DISTINCT raw_account_key, classification FROM account_mappings WHERE match_kind = 'seed'",
+  ).all() as Array<{ raw_account_key: string; classification: string }>;
+  const sidesByKey = new Map<string, Set<string>>();
+  for (const r of rows) {
+    const s = classificationSide(r.classification);
+    if (s === 'either') continue;
+    if (!sidesByKey.has(r.raw_account_key)) sidesByKey.set(r.raw_account_key, new Set());
+    sidesByKey.get(r.raw_account_key)!.add(s);
+  }
+  return new Set([...sidesByKey].filter(([, sides]) => sides.has('income') && sides.has('expense')).map(([k]) => k));
+}
+
+/** Per dual-side account key, the {income, opex} amount sums over a set of ledger rows. The H3
+ *  invariant: these two sums for each key must be IDENTICAL before vs after approve — approve
+ *  re-resolution must never move a dual-side row from one side to the other. */
+function dualSideSideSums(
+  rows: Array<{ raw_account: string; classification: string; amount: number }>,
+  keys: Set<string>,
+): Map<string, { income: number; opex: number }> {
+  const out = new Map<string, { income: number; opex: number }>();
+  for (const r of rows) {
+    const k = accountKey(r.raw_account);
+    if (!keys.has(k)) continue;
+    if (!out.has(k)) out.set(k, { income: 0, opex: 0 });
+    const bucket = out.get(k)!;
+    const side = classificationSide(r.classification);
+    if (side === 'income') bucket.income += r.amount;
+    else if (r.classification === 'opex') bucket.opex += r.amount;
+  }
+  return out;
 }
 
 async function main(): Promise<number> {
@@ -266,6 +311,66 @@ async function main(): Promise<number> {
         );
       }
     }
+
+    // 11. APPROVE-PATH acceptance over REAL data — the H3 (approve-only NOI sign-flip) class lives
+    //     in approveImport's re-resolution, which steps 1-10 never exercise (they only auto-commit at
+    //     ingest). Build a second isolated warehouse, force every fully-mapped file into pending-review
+    //     (autoCommitThreshold 0.99), then APPROVE each one — asserting that every dual-side account key
+    //     (gas/electric/water/bad-debt-expense in the PFI seed) preserves its ingest-time side: the
+    //     income-side and opex side-sums for each such key must be IDENTICAL pre vs post approve. A
+    //     future approve-path regression on ANY dual-side account — not just the one Gas unit fixture —
+    //     trips here against the real seed.
+    {
+      const adb = openWarehouse(join(tmp, 'approve-verify.sqlite'));
+      seedPropertyMaster(adb);
+      seedMappingsFromFile(adb, SEED_PATH);
+      const dualKeys = dualSideAccountKeys(adb);
+      let approved = 0;
+      let dualRowsChecked = 0;
+      for (const f of files) {
+        const r = await ingestFile(adb, join(FINANCIALS_DIR, f), {
+          rawDir: join(tmp, 'approve-raw'),
+          importedAt: new Date().toISOString(),
+          importedBy: 'warehouse-verify-approve',
+          autoCommitThreshold: 0.99, // force fully-mapped imports through the review queue
+        });
+        if (r.status !== 'pending-review' || r.importId == null) continue;
+
+        // Snapshot the dual-side side-sums from the ingest-time (inactive) rows for THIS import.
+        const before = adb.prepare(
+          'SELECT raw_account, classification, amount FROM ledger_entries WHERE import_id = ?',
+        ).all(r.importId) as Array<{ raw_account: string; classification: string; amount: number }>;
+        const beforeSums = dualSideSideSums(before, dualKeys);
+
+        const ok = approveImport(adb, r.importId);
+        if (!ok.ok) {
+          failures.push(`approve-path: approveImport refused a fully-mapped real import (${f}): unmapped=[${ok.unmapped.join('; ')}]${ok.error ? ` error=${ok.error}` : ''}`);
+          continue;
+        }
+        approved += 1;
+
+        // Re-read the now-ACTIVE rows and compare per-key side-sums. Any drift means approve moved a
+        // dual-side row across the income/expense divide — the exact NOI sign-flip H3 fixed.
+        const after = adb.prepare(
+          'SELECT raw_account, classification, amount FROM ledger_entries WHERE import_id = ? AND is_active = 1',
+        ).all(r.importId) as Array<{ raw_account: string; classification: string; amount: number }>;
+        const afterSums = dualSideSideSums(after, dualKeys);
+        for (const [k, b] of beforeSums) {
+          dualRowsChecked += 1;
+          const a = afterSums.get(k) ?? { income: 0, opex: 0 };
+          if (Math.abs(a.income - b.income) > INCOME_TIE_TOLERANCE || Math.abs(a.opex - b.opex) > INCOME_TIE_TOLERANCE) {
+            failures.push(
+              `approve-path NOI sign-flip on dual-side account '${k}' in ${f}: ` +
+              `income ${b.income.toFixed(2)} -> ${a.income.toFixed(2)}, opex ${b.opex.toFixed(2)} -> ${a.opex.toFixed(2)} ` +
+              `(approve re-resolution moved a row across the income/expense divide)`,
+            );
+          }
+        }
+      }
+      console.log(`approve-path: ${approved} forced-pending real imports approved; ${dualRowsChecked} dual-side account-key side-sums preserved across approve (keys: ${[...dualKeys].join(', ') || 'none'})`);
+      adb.close();
+    }
+
     db.close();
   } finally {
     rmSync(tmp, { recursive: true, force: true });
@@ -281,6 +386,7 @@ async function main(): Promise<number> {
     `unknown-basis <= ${MAX_UNKNOWN_BASIS}, ` +
     `no score-band collapse (< ${Math.round(SINGLE_BAND_COLLAPSE_SHARE * 100)}% single-bucket), ` +
     `integrity invariants hold, re-ingest re-derive idempotent, ` +
+    `approve-path dual-side sides preserved over the real seed, ` +
     `SF-less cohort exclusion verified (${CANON_PROPERTIES.filter((p) => p.rentableSf == null).length} non-operating entity/entities)`);
   return 0;
 }

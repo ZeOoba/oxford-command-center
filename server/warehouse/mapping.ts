@@ -70,7 +70,19 @@ export interface ResolvedMapping {
   mappingId: number | null;
 }
 
-export function resolveMapping(db: WarehouseDb, rawAccount: string, propertyId?: string, section?: string): ResolvedMapping {
+export function resolveMapping(
+  db: WarehouseDb,
+  rawAccount: string,
+  propertyId?: string,
+  section?: string,
+  /** Explicit income/expense side to constrain re-resolution to (overrides `section`). Pass the
+   *  side of a row's EXISTING classification on re-resolve so a dual-side SEED account (e.g. "Gas" as
+   *  both billback recovery AND utility opex) can only re-resolve within its original side — never
+   *  flipping its NOI sign. 'either' is treated as no constraint. A match_kind='manual' override is
+   *  EXEMPT from this guard (a reviewer's explicit cross-side reclassification wins regardless of
+   *  the hint); the side filter binds only seed/learned rows. */
+  sideHint?: 'income' | 'expense' | 'either',
+): ResolvedMapping {
   const key = accountKey(rawAccount);
   const rows = db.prepare(`
     SELECT id, normalized_category, classification, match_kind FROM account_mappings
@@ -80,13 +92,33 @@ export function resolveMapping(db: WarehouseDb, rawAccount: string, propertyId?:
   `).all(key, propertyId ?? null) as
     Array<{ id: number; normalized_category: string; classification: string; match_kind: string }>;
 
-  const side = section !== undefined ? sectionSide(section) : null;
+  // sideHint (the row's existing classification side, on re-resolve) takes precedence over a
+  // section header; 'either' means no constraint. Falls back to section-derived side for ingest.
+  const side =
+    sideHint !== undefined && sideHint !== 'either'
+      ? sideHint
+      : section !== undefined
+        ? sectionSide(section)
+        : null;
   let row: (typeof rows)[number] | undefined = rows[0];
   if (side !== null) {
-    row = rows.find((r) => {
-      const s = classificationSide(r.classification);
-      return s === side || s === 'either';
-    });
+    // A manual override is an explicit human ruling — a reviewer who reclassifies an account
+    // (e.g. an expense-ingested Gas declared a tenant billback) is making a DELIBERATE cross-side
+    // correction, and approve's contract is to honor it. So a manual mapping wins regardless of
+    // side; the side filter binds ONLY the seed/learned tiebreak (rows already sorted manual-first,
+    // so a manual row, if any, is rows[0]). This preserves the H3 dual-side seed guard (the
+    // Gas/Electric/Water/bad-debt seed rows carry no manual mapping → the side filter still pins
+    // an expense row to its expense seed and never flips it to the income/recovery seed) while
+    // restoring approve's documented ability to apply legitimate cross-side manual overrides.
+    if (rows[0]?.match_kind === 'manual') {
+      row = rows[0];
+    } else {
+      row = rows.find((r) => {
+        if (r.match_kind === 'manual') return true; // a manual row always qualifies
+        const s = classificationSide(r.classification);
+        return s === side || s === 'either';
+      });
+    }
     if (!row) {
       // Never let an income-side line resolve to an expense classification or vice versa.
       return side === 'expense'
