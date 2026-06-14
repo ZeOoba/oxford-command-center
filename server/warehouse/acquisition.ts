@@ -497,6 +497,7 @@ export function scoreAcquisition(
     gatesPassed,
     floors,
     floorsPassed,
+    floorIndeterminate,
     ddCriticalUnresolved,
     subScores,
     composite,

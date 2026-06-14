@@ -188,6 +188,16 @@ describe('caps: incomplete/advisory, DD, unknown gates', () => {
   it('unknown price AND SF cannot clear the size box as a confirmed PURSUE', () => {
     expect(score(strongDeal({ price: null, maxBuildingSf: null })).cappedAtT2).toBe(true);
   });
+
+  it('exposes floorIndeterminate=true when a floor input is null even if capped only by band (B5)', () => {
+    // A missing yield input zeroes the yield sub-score, dropping the composite into the T2 band on
+    // its own → demoted by BAND, so cappedAtT2 stays false. The indeterminacy must still be visible
+    // via a dedicated field, not only by scanning reasons/floors[].actual===null.
+    const s = score(strongDeal({ stabilizedYoc: null }));
+    expect(s.floorIndeterminate).toBe(true); // the new first-class observability field
+    expect(s.cappedAtT2).toBe(false); // demoted by band, not by cap — was the B5 blind spot
+    expect(s.floors.find((f) => f.id === 'yield')?.actual).toBeNull(); // consistent with the floor row
+  });
 });
 
 describe('ratified recalibration — RCT, loading, provenance (Gabriel 2026-06-14)', () => {

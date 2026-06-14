@@ -21,6 +21,7 @@ const mockScore: AcquisitionScore = {
   gatesPassed: true,
   floors: [{ id: 'basis', passed: true, actual: 0.56, required: 0.25, detail: '56.0% vs 25% required' }],
   floorsPassed: true,
+  floorIndeterminate: false,
   ddCriticalUnresolved: ['roof'],
   subScores: [
     { id: 'basis', points: 45, maxPoints: 45, normalized: 100, confidence: 'confirmed' },
