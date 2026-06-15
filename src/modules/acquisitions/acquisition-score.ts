@@ -205,6 +205,7 @@ export interface OmExtractResult {
   fields: Record<string, string>;
   fieldCount: number;
   rawText?: string;
+  savedPath?: string;
 }
 
 export class OmExtractError extends Error {
@@ -216,9 +217,10 @@ export class OmExtractError extends Error {
 
 /** POST a PDF file to the OM extraction endpoint. Returns extracted FormState-format fields.
  *  Throws OmExtractError on any failure (network, server, or extraction error). */
-export async function omExtractRequest(file: File): Promise<OmExtractResult> {
+export async function omExtractRequest(file: File, dealId?: string): Promise<OmExtractResult> {
   const body = new FormData();
   body.append('file', file);
+  if (dealId) body.append('dealId', dealId);
   let res: Response;
   try {
     res = await fetch('/api/actions/om-extract', { method: 'POST', body });
@@ -231,10 +233,11 @@ export async function omExtractRequest(file: File): Promise<OmExtractResult> {
     fields?: Record<string, string>;
     fieldCount?: number;
     rawText?: string;
+    savedPath?: string;
   };
   if (!res.ok || !data.ok) {
     throw new OmExtractError(data.error ?? `Extraction failed (${res.status})`);
   }
   if (!data.fields) throw new OmExtractError('Malformed extraction response.');
-  return { fields: data.fields, fieldCount: data.fieldCount ?? 0, rawText: data.rawText };
+  return { fields: data.fields, fieldCount: data.fieldCount ?? 0, rawText: data.rawText, savedPath: data.savedPath };
 }

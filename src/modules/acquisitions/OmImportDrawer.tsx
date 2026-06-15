@@ -5,7 +5,7 @@ import { FIELD_GROUPS, omExtractRequest, OmExtractError, type OmExtractResult } 
 type DrawerState =
   | { phase: 'idle' }
   | { phase: 'uploading'; filename: string }
-  | { phase: 'extracted'; filename: string; fields: Record<string, string>; fieldCount: number; rawText?: string }
+  | { phase: 'extracted'; filename: string; fields: Record<string, string>; fieldCount: number; rawText?: string; savedPath?: string }
   | { phase: 'error'; message: string };
 
 // key → human label from the shared field model
@@ -20,12 +20,14 @@ export function OmImportDrawer({
   open,
   onClose,
   onApply,
+  dealId,
   extractFn = omExtractRequest,
 }: {
   open: boolean;
   onClose: () => void;
   onApply: (fields: Record<string, string>) => void;
-  extractFn?: (file: File) => Promise<OmExtractResult>;
+  dealId?: string;
+  extractFn?: (file: File, dealId?: string) => Promise<OmExtractResult>;
 }) {
   const [state, setState] = useState<DrawerState>({ phase: 'idle' });
   const inputRef = useRef<HTMLInputElement>(null);
@@ -39,8 +41,8 @@ export function OmImportDrawer({
     }
     setState({ phase: 'uploading', filename: file.name });
     try {
-      const result = await extractFn(file);
-      setState({ phase: 'extracted', filename: file.name, fields: result.fields, fieldCount: result.fieldCount, rawText: result.rawText });
+      const result = await extractFn(file, dealId);
+      setState({ phase: 'extracted', filename: file.name, fields: result.fields, fieldCount: result.fieldCount, rawText: result.rawText, savedPath: result.savedPath });
     } catch (e) {
       setState({
         phase: 'error',
@@ -244,8 +246,9 @@ export function OmImportDrawer({
               <span
                 className="text-2xs"
                 style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--text-tertiary)' }}
+                title={state.savedPath ?? state.filename}
               >
-                {state.filename}
+                {state.savedPath ? `Saved to OneDrive ✓` : state.filename}
               </span>
               <button type="button" style={btnBase} onClick={handleDiscard}>
                 Discard

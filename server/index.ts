@@ -4,7 +4,7 @@ import { loadEnvFile } from './load-env';
 // override an already-present empty var — see load-env.ts).
 loadEnvFile();
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
@@ -203,7 +203,27 @@ app.post('/api/actions/om-extract', async (c) => {
     model: process.env.OM_EXTRACT_MODEL ?? 'claude-haiku-4-5-20251001', // separate from ANTHROPIC_MODEL (the assistant model)
   });
   if (!result.ok) return c.json({ ok: false, error: result.error }, 422);
-  return c.json({ ok: true, fields: result.fields, fieldCount: result.fieldCount, ...(result.rawText ? { rawText: result.rawText } : {}) });
+
+  // If a dealId is provided, save the PDF into the deal's Investment Candidates subfolder.
+  let savedPath: string | undefined;
+  const dealId = form.get('dealId');
+  if (typeof dealId === 'string' && dealId) {
+    const snapshot = brain.getSnapshot();
+    const deal = snapshot?.deals.find((d) => d.id === dealId);
+    if (deal && process.env.DOCUMENTS_DIR) {
+      const year = new Date().getFullYear();
+      const dealDir = join(process.env.DOCUMENTS_DIR, `Investment Candidates -- ${year}`, `${deal.name} — ${deal.location}`);
+      try {
+        mkdirSync(dealDir, { recursive: true });
+        writeFileSync(join(dealDir, file.name), buf);
+        savedPath = dealDir;
+      } catch {
+        // save is best-effort — extraction already succeeded
+      }
+    }
+  }
+
+  return c.json({ ok: true, fields: result.fields, fieldCount: result.fieldCount, ...(result.rawText ? { rawText: result.rawText } : {}), ...(savedPath ? { savedPath } : {}) });
 });
 
 /** Macro indicators — live FRED when FRED_API_KEY is set, real-seeded snapshot otherwise. */

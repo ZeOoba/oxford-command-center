@@ -127,6 +127,7 @@ export function AcquisitionWorkbench({
             <OmImportDrawer
               open={drawerOpen}
               onClose={() => setDrawerOpen(false)}
+              dealId={deal?.id}
               onApply={(fields) => {
                 setForm((f) => ({ ...f, ...fields }));
                 setSaveState('idle');
