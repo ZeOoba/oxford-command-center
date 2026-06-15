@@ -5,7 +5,7 @@ import { FIELD_GROUPS, omExtractRequest, OmExtractError, type OmExtractResult } 
 type DrawerState =
   | { phase: 'idle' }
   | { phase: 'uploading'; filename: string }
-  | { phase: 'extracted'; filename: string; fields: Record<string, string>; fieldCount: number }
+  | { phase: 'extracted'; filename: string; fields: Record<string, string>; fieldCount: number; rawText?: string }
   | { phase: 'error'; message: string };
 
 // key → human label from the shared field model
@@ -40,7 +40,7 @@ export function OmImportDrawer({
     setState({ phase: 'uploading', filename: file.name });
     try {
       const result = await extractFn(file);
-      setState({ phase: 'extracted', filename: file.name, fields: result.fields, fieldCount: result.fieldCount });
+      setState({ phase: 'extracted', filename: file.name, fields: result.fields, fieldCount: result.fieldCount, rawText: result.rawText });
     } catch (e) {
       setState({
         phase: 'error',
@@ -174,9 +174,20 @@ export function OmImportDrawer({
         {state.phase === 'extracted' && (
           <>
             {state.fieldCount === 0 ? (
-              <p className="text-2xs" style={{ color: 'var(--text-secondary)', marginBottom: '0.5rem' }}>
-                No fields extracted — the OM may lack structured data.
-              </p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                <p className="text-2xs" style={{ color: 'var(--text-secondary)', flex: 1, margin: 0 }}>
+                  No fields extracted — the OM may lack structured data.
+                </p>
+                {state.rawText && (
+                  <button
+                    type="button"
+                    style={btnBase}
+                    onClick={() => void navigator.clipboard.writeText(state.rawText!)}
+                  >
+                    Copy OM text
+                  </button>
+                )}
+              </div>
             ) : (
               <div style={{ maxHeight: '180px', overflowY: 'auto', marginBottom: '0.5rem' }}>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem' }}>

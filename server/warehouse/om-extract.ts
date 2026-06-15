@@ -2,9 +2,10 @@
 // pdf-parse ships no type declarations; the lib/ path avoids its debug-on-import index.
 // @ts-expect-error -- pdf-parse has no type declarations
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
+import fieldsConfig from './om-extract-fields.json';
 
 export type OmExtractResult =
-  | { ok: true; fields: Record<string, string>; fieldCount: number }
+  | { ok: true; fields: Record<string, string>; fieldCount: number; rawText?: string }
   | { ok: false; error: string };
 
 export interface OmExtractOptions {
@@ -15,24 +16,8 @@ export interface OmExtractOptions {
   pdfParseFn?: (buffer: Buffer) => Promise<{ text: string }>;
 }
 
-// Fields Claude can reliably extract from a standard OM. Key = FormState key (string format).
-const EXTRACTABLE_FIELDS = [
-  { key: 'price',           desc: 'Asking/offering price in dollars. Number only, no $ or commas. OM synonyms: asking price, list price, offering price.' },
-  { key: 'totalSf',         desc: 'Total gross building area in square feet. Number only. OM synonyms: GBA, gross building area, building size, total SF.' },
-  { key: 'maxBuildingSf',   desc: 'Largest single building SF. If single building use same value as totalSf. OM synonyms: largest building, max building SF.' },
-  { key: 'yearBuilt',       desc: 'Year the building was constructed (4-digit integer). OM synonyms: year built, constructed, vintage.' },
-  { key: 'clearHeightFt',   desc: 'Interior clear ceiling height in feet. Number only. OM synonyms: clear height, clear ceiling height.' },
-  { key: 'officePct',       desc: 'Office percentage of total building area, 0–100 (NOT decimal). OM synonyms: office percentage, office buildout, office ratio.' },
-  { key: 'constructionType',desc: 'Output exactly one of: block-tilt-brick (masonry/tilt-up/block/brick), mixed, pemb (all-metal/pre-engineered), unknown.' },
-  { key: 'hasDock',         desc: 'Whether the property has dock-high loading doors. Output: yes or no.' },
-  { key: 'dockCount',       desc: 'Number of dock doors (integer). OM synonyms: dock doors, loading docks.' },
-  { key: 'hasDriveIn',      desc: 'Whether the property has grade-level drive-in doors. Output: yes or no. OM synonyms: drive-in doors, grade-level doors.' },
-  { key: 'driveInCount',    desc: 'Number of drive-in doors (integer). OM synonyms: grade-level door count.' },
-  { key: 'truckCourtFt',    desc: 'Truck court depth in feet. Number only. OM synonyms: truck court depth, maneuvering depth.' },
-  { key: 'inPlaceRentPsf',  desc: 'Current in-place rent in $/SF/year (NNN). Number only. OM synonyms: current rent, in-place rent, contract rent.' },
-  { key: 'marketRentPsf',   desc: 'Market rent in $/SF/year (NNN). Number only. OM synonyms: market rent, asking rent.' },
-  { key: 'waltYears',       desc: 'Weighted average lease term remaining in years (decimal ok). OM synonyms: WALT, weighted average lease term, remaining lease term.' },
-] as const;
+// Fields loaded from om-extract-fields.json — edit that file to add/tune fields without touching this module.
+const EXTRACTABLE_FIELDS = fieldsConfig.fields;
 
 const VALID_KEYS = new Set<string>(EXTRACTABLE_FIELDS.map((f) => f.key));
 
@@ -132,5 +117,6 @@ export async function extractOmFields(
     }
   }
 
-  return { ok: true, fields, fieldCount: Object.keys(fields).length };
+  const fieldCount = Object.keys(fields).length;
+  return { ok: true, fields, fieldCount, ...(fieldCount === 0 ? { rawText: body } : {}) };
 }

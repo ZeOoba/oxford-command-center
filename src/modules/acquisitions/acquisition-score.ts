@@ -204,6 +204,7 @@ export function inputToForm(input: AcquisitionInput): FormState {
 export interface OmExtractResult {
   fields: Record<string, string>;
   fieldCount: number;
+  rawText?: string;
 }
 
 export class OmExtractError extends Error {
@@ -229,10 +230,11 @@ export async function omExtractRequest(file: File): Promise<OmExtractResult> {
     error?: string;
     fields?: Record<string, string>;
     fieldCount?: number;
+    rawText?: string;
   };
   if (!res.ok || !data.ok) {
     throw new OmExtractError(data.error ?? `Extraction failed (${res.status})`);
   }
   if (!data.fields) throw new OmExtractError('Malformed extraction response.');
-  return { fields: data.fields, fieldCount: data.fieldCount ?? 0 };
+  return { fields: data.fields, fieldCount: data.fieldCount ?? 0, rawText: data.rawText };
 }

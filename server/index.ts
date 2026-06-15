@@ -200,10 +200,10 @@ app.post('/api/actions/om-extract', async (c) => {
   const buf = Buffer.from(await file.arrayBuffer());
   const result = await extractOmFields(buf, {
     apiKey: process.env.ANTHROPIC_API_KEY,
-    model: process.env.ANTHROPIC_MODEL ?? 'claude-haiku-4-5-20251001',
+    model: process.env.OM_EXTRACT_MODEL ?? 'claude-haiku-4-5-20251001', // separate from ANTHROPIC_MODEL (the assistant model)
   });
   if (!result.ok) return c.json({ ok: false, error: result.error }, 422);
-  return c.json({ ok: true, fields: result.fields, fieldCount: result.fieldCount });
+  return c.json({ ok: true, fields: result.fields, fieldCount: result.fieldCount, ...(result.rawText ? { rawText: result.rawText } : {}) });
 });
 
 /** Macro indicators — live FRED when FRED_API_KEY is set, real-seeded snapshot otherwise. */
