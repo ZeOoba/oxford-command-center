@@ -4,8 +4,9 @@ import { loadEnvFile } from './load-env';
 // override an already-present empty var — see load-env.ts).
 loadEnvFile();
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { basename, join, resolve, sep } from 'node:path';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -215,10 +216,13 @@ app.post('/api/actions/om-extract', async (c) => {
     const deal = snapshot?.deals.find((d) => d.id === dealId);
     if (deal && process.env.DOCUMENTS_DIR) {
       const year = new Date().getFullYear();
+      const safeFileName = basename(file.name).replace(/[<>:"/\\|?* -]/g, '_');
       const dealDir = join(process.env.DOCUMENTS_DIR, `Investment Candidates -- ${year}`, `${deal.name} — ${deal.location}`);
       try {
-        mkdirSync(dealDir, { recursive: true });
-        writeFileSync(join(dealDir, file.name), buf);
+        await mkdir(dealDir, { recursive: true });
+        const outPath = resolve(join(dealDir, safeFileName));
+        if (!outPath.startsWith(resolve(dealDir) + sep)) throw new Error('path traversal');
+        await writeFile(outPath, buf);
         savedPath = dealDir;
       } catch {
         // save is best-effort — extraction already succeeded
