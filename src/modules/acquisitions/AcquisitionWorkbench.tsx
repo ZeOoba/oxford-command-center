@@ -14,6 +14,7 @@ import {
   FIELD_GROUPS, type FieldSpec, type FormState,
   buildInput, dealToForm, inputToForm, isEngineUnavailable, saveDealInput, scoreDealRequest,
 } from './acquisition-score';
+import { OmImportDrawer } from './OmImportDrawer';
 
 const VERDICT_TONE: Record<string, BadgeTone> = { PURSUE: 'green', WATCH: 'amber', PASS: 'neutral', KILLED: 'red' };
 const TRIBOOL = [{ value: '', label: '—' }, { value: 'yes', label: 'Yes' }, { value: 'no', label: 'No' }];
@@ -38,6 +39,7 @@ export function AcquisitionWorkbench({
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'err'>('idle');
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const reqId = useRef(0);
   const loadedFor = useRef<string | null>(deal?.id ?? null);
   const [errIsEngineDown, setErrIsEngineDown] = useState(false);
@@ -97,13 +99,21 @@ export function AcquisitionWorkbench({
           title="Underwriting Inputs"
           trailing={
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setDrawerOpen((v) => !v)}
+                className="rounded-[var(--radius-sm)] px-2 py-1 text-2xs font-semibold"
+                style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--accent)' }}
+              >
+                {drawerOpen ? 'Close OM Import' : 'Upload OM'}
+              </button>
               {deal && (
                 <button
                   type="button"
                   onClick={() => void onSave()}
                   disabled={saveState === 'saving'}
                   className="rounded-[var(--radius-sm)] px-2 py-1 text-2xs font-semibold"
-                  style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--accent)' }}
+                  style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', color: 'var(--text-primary)' }}
                 >
                   {saveState === 'saving' ? 'Saving…' : saveState === 'ok' ? 'Saved ✓' : saveState === 'err' ? 'Save failed' : 'Save'}
                 </button>
@@ -112,6 +122,19 @@ export function AcquisitionWorkbench({
             </div>
           }
         />
+        {drawerOpen && (
+          <div className="px-3 pt-3">
+            <OmImportDrawer
+              open={drawerOpen}
+              onClose={() => setDrawerOpen(false)}
+              onApply={(fields) => {
+                setForm((f) => ({ ...f, ...fields }));
+                setSaveState('idle');
+                setDrawerOpen(false);
+              }}
+            />
+          </div>
+        )}
         <div className="flex flex-col gap-4 p-3">
           {FIELD_GROUPS.map((group) => (
             <div key={group.title}>
