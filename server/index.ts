@@ -24,6 +24,7 @@ import { openWarehouse } from './warehouse/db';
 import type { WarehouseDb } from './warehouse/db';
 import { warehouseRoutes } from './warehouse/api';
 import { captureOccupancy } from './warehouse/occupancy';
+import { extractOmFields } from './warehouse/om-extract';
 
 const app = new Hono();
 // Confidential data — only same-machine localhost origins may call the API.
@@ -176,6 +177,33 @@ app.post('/api/actions/acquisition-input', async (c) => {
   if (!parsed.success) return c.json({ ok: false, error: 'Invalid acquisition input' }, 400);
   const ok = brain.setAcquisitionInput(parsed.data.dealId, parsed.data);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
+});
+
+app.post('/api/actions/om-extract', async (c) => {
+  const MAX_BYTES = 25 * 1024 * 1024; // 25 MB
+  let form: FormData;
+  try {
+    form = await c.req.formData();
+  } catch {
+    return c.json({ ok: false, error: 'Expected multipart/form-data with a PDF file.' }, 400);
+  }
+  const file = form.get('file');
+  if (!(file instanceof File)) {
+    return c.json({ ok: false, error: 'No file field in request.' }, 400);
+  }
+  if (!file.name.toLowerCase().endsWith('.pdf')) {
+    return c.json({ ok: false, error: 'Only PDF files are supported.' }, 400);
+  }
+  const buf = Buffer.from(await file.arrayBuffer());
+  if (buf.byteLength > MAX_BYTES) {
+    return c.json({ ok: false, error: 'File too large (max 25 MB).' }, 413);
+  }
+  const result = await extractOmFields(buf, {
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    model: process.env.ANTHROPIC_MODEL ?? 'claude-haiku-4-5-20251001',
+  });
+  if (!result.ok) return c.json({ ok: false, error: result.error }, 422);
+  return c.json({ ok: true, fields: result.fields, fieldCount: result.fieldCount });
 });
 
 /** Macro indicators — live FRED when FRED_API_KEY is set, real-seeded snapshot otherwise. */
