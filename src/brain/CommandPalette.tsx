@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { Command } from 'cmdk';
 import { RefreshCw, Moon, Sun, CornerDownLeft, Download } from 'lucide-react';
@@ -16,7 +16,7 @@ export function CommandPalette() {
   const ui = useUi();
   const { data } = useSnapshot();
   const { refresh } = useBrain();
-  const items = data ? buildEntityItems(data.snapshot) : [];
+  const items = useMemo(() => (data ? buildEntityItems(data.snapshot) : []), [data]);
 
   useEffect(() => {
     if (!ui.paletteOpen) return;

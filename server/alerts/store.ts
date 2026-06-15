@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { AlertInboxState, EMPTY_INBOX_STATE, type AlertActionInput } from '../../src/contracts/alerts';
 import { applyAlertAction } from '../../src/brain/alerts-view';
@@ -16,7 +16,9 @@ export function loadInboxState(path = DEFAULT_PATH): AlertInboxState {
 
 export function saveInboxState(state: AlertInboxState, path = DEFAULT_PATH): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(state, null, 2));
+  const tmp = `${path}.tmp`;
+  writeFileSync(tmp, JSON.stringify(state, null, 2));
+  renameSync(tmp, path);
 }
 
 /** Load → apply → save. Returns the new state. */

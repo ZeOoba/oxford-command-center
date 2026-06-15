@@ -221,13 +221,16 @@ const EXECUTORS: Record<ToolName, Exec> = {
     refs: s.cash.entities.map((e) => ({ type: 'cashEntity', id: e.id, label: e.entity })),
   }),
 
-  get_deals: (s) => ({
-    data: s.deals.map((d) => ({
-      name: d.name, stage: d.stage, market: d.market, sf: d.sf, estPrice: fmtUsdCompact(d.estPrice),
-      capRate: fmtPct(d.capRate, 2), irr: fmtPct(d.irr), nextAction: d.nextAction,
-    })),
-    refs: s.deals.map((d) => ({ type: 'deal', id: d.id, label: d.shortName ?? d.name })),
-  }),
+  get_deals: (s) => {
+    const visible = s.deals.filter((d) => !d.confidential);
+    return {
+      data: visible.map((d) => ({
+        name: d.name, stage: d.stage, market: d.market, sf: d.sf, estPrice: fmtUsdCompact(d.estPrice),
+        capRate: fmtPct(d.capRate, 2), irr: fmtPct(d.irr), nextAction: d.nextAction,
+      })),
+      refs: visible.map((d) => ({ type: 'deal', id: d.id, label: d.shortName ?? d.name })),
+    };
+  },
 
   get_relationships: (s, input) => {
     const kind = input.kind ? asStr(input.kind) : null;
@@ -267,7 +270,7 @@ const EXECUTORS: Record<ToolName, Exec> = {
     for (const p of s.properties) if (norm(p.name).includes(q)) refs.push({ type: 'property', id: p.id, label: p.name });
     for (const l of s.leases) if (norm(l.company ?? l.tenantName).includes(q)) refs.push({ type: 'lease', id: l.id, label: l.company ?? l.tenantName });
     for (const l of s.loans) if (norm(l.name).includes(q)) refs.push({ type: 'loan', id: l.id, label: l.name });
-    for (const d of s.deals) if (norm(d.name).includes(q)) refs.push({ type: 'deal', id: d.id, label: d.name });
+    for (const d of s.deals) if (!d.confidential && norm(d.name).includes(q)) refs.push({ type: 'deal', id: d.id, label: d.name });
     for (const c of s.counterparties) if (norm(c.name).includes(q)) refs.push({ type: 'counterparty', id: c.id, label: c.name });
     const top = refs.slice(0, 20);
     return { data: top.map((r) => ({ type: r.type, name: r.label })), refs: top };

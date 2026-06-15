@@ -27,3 +27,39 @@ describe('inbox store', () => {
     expect(loadInboxState(TMP)).toEqual({ read: [], snoozed: {} });
   });
 });
+
+// Atomic write fix (audit finding: saveInboxState used a direct writeFileSync which leaves a
+// torn / partially-written file visible to concurrent readers during the write. Fix: write to
+// a .tmp file then rename — rename is atomic on all major FS, so readers never see a half-write).
+describe('saveInboxState — atomic write (temp+rename)', () => {
+  afterEach(() => {
+    if (existsSync(TMP)) rmSync(TMP);
+    if (existsSync(`${TMP}.tmp`)) rmSync(`${TMP}.tmp`);
+  });
+
+  it('no stale .tmp file remains after a successful write', () => {
+    saveInboxState({ read: ['clean'], snoozed: {} }, TMP);
+    expect(existsSync(`${TMP}.tmp`)).toBe(false);
+    expect(loadInboxState(TMP).read).toEqual(['clean']);
+  });
+
+  it('overwrites a stale .tmp left by a previous crashed write', () => {
+    // Simulate a prior run that crashed after writeFileSync but before renameSync,
+    // leaving a corrupt .tmp on disk. The next write must still succeed and leave
+    // no .tmp behind (renameSync replaces any existing file atomically).
+    writeFileSync(`${TMP}.tmp`, '{ stale garbage }');
+    saveInboxState({ read: ['fresh'], snoozed: {} }, TMP);
+    expect(loadInboxState(TMP).read).toEqual(['fresh']);
+    expect(existsSync(`${TMP}.tmp`)).toBe(false);
+  });
+
+  it('overwrites an existing target file atomically', () => {
+    // Common case: update an already-existing inbox state file (e.g. user marks an alert read).
+    // The rename must replace the prior file; no .tmp must survive.
+    saveInboxState({ read: ['initial'], snoozed: {} }, TMP);
+    expect(loadInboxState(TMP).read).toEqual(['initial']);
+    saveInboxState({ read: ['updated'], snoozed: {} }, TMP);
+    expect(loadInboxState(TMP).read).toEqual(['updated']);
+    expect(existsSync(`${TMP}.tmp`)).toBe(false);
+  });
+});

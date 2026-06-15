@@ -11,9 +11,9 @@ export type ReplacementVerdict = 'Discount to replacement' | 'Near replacement' 
 
 export interface ReplacementCostAnalysis {
   sf: number;
-  low: number; // sf × $85
-  mid: number; // sf × $102.5
-  high: number; // sf × $120
+  low: number; // sf × REPLACEMENT_COST_PSF.low
+  mid: number; // sf × REPLACEMENT_COST_PSF.mid
+  high: number; // sf × REPLACEMENT_COST_PSF.high
   estPrice: number | null;
   priceToReplacementMid: number | null; // estPrice ÷ mid
   verdict: ReplacementVerdict | null;
@@ -37,5 +37,5 @@ export function replacementCostAnalysis(deal: Pick<Deal, 'sf' | 'estPrice'>): Re
         : priceToReplacementMid <= 1.1
           ? 'Near replacement'
           : 'Premium to replacement';
-  return { sf, low, mid, high, estPrice, priceToReplacementMid, verdict, basis: 'ORA $85–$120/SF (building-class dependent)' };
+  return { sf, low, mid, high, estPrice, priceToReplacementMid, verdict, basis: `ORA $${REPLACEMENT_COST_PSF.low}–$${REPLACEMENT_COST_PSF.high}/SF (building-class dependent)` };
 }

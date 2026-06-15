@@ -183,8 +183,10 @@ describe('GET /analytics/lease-run (ownership rollup)', () => {
 describe('overlay assumptions flow through to the engine via the route (adversarial #6)', () => {
   // OVERLAY_PATH is set to a fresh empty file per test by the top-level beforeEach.
   it('a persisted cap-rate override changes the indicative value (NOT the stale default)', async () => {
-    // Persist a 6% cap (vs the 8% default) for Fishel.
-    setLeaseRunAssumptions(FISHEL, { indicativeCapRate: 0.06 });
+    // Persist a 6% cap (vs the 8% default) for Fishel. setLeaseRunAssumptions is async
+    // (awaits the overlay write); without await the route's synchronous loadOverlay races
+    // the pending write and reads the empty overlay → stale 8% default (flaky pre-await).
+    await setLeaseRunAssumptions(FISHEL, { indicativeCapRate: 0.06 });
 
     const db = seededDb();
     const app = warehouseRoutes(() => db);
@@ -199,7 +201,7 @@ describe('overlay assumptions flow through to the engine via the route (adversar
   });
 
   it('a persisted vacancy override flows into per-period EGR', async () => {
-    setLeaseRunAssumptions(FISHEL, { vacancyCreditLossPct: 0.05 });
+    await setLeaseRunAssumptions(FISHEL, { vacancyCreditLossPct: 0.05 });
 
     const db = seededDb();
     const app = warehouseRoutes(() => db);

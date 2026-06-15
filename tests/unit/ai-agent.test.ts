@@ -72,6 +72,48 @@ describe('tool definitions + executors', () => {
   });
 });
 
+// Confidential deal egress guard (audit finding: get_deals / search_entities returned ALL deals
+// including confidential ones, allowing the AI assistant to name active confidential deal targets).
+describe('AI tool confidential deal filter', () => {
+  function snapWithDeals(): ReturnType<typeof makeSnap> {
+    const s = makeSnap();
+    (s as unknown as { deals: unknown[] }).deals = [
+      { id: 'pub', name: 'Public Warehouse', shortName: 'Pub WH', stage: 'Candidate',
+        market: 'Columbus OH', sf: 20000, estPrice: 2000000, capRate: 0.07,
+        irr: 0.12, equityMultiple: null, holdYrs: null, lender: null, status: null,
+        nextAction: 'LOI review', owner: null, targetCloseDate: null,
+        confidential: false, estimatedFields: [], location: null, buildings: null },
+      { id: 'sec', name: 'E. Fulton Street Portfolio', shortName: 'Fulton', stage: 'Due Diligence',
+        market: 'Columbus OH', sf: 45000, estPrice: 5800000, capRate: 0.065,
+        irr: 0.14, equityMultiple: null, holdYrs: null, lender: null, status: null,
+        nextAction: 'PSA review', owner: null, targetCloseDate: null,
+        confidential: true, estimatedFields: [], location: null, buildings: null },
+    ];
+    return s;
+  }
+
+  it('get_deals excludes confidential deals from data and refs', () => {
+    const r = runTool('get_deals', snapWithDeals(), {});
+    const names = (r.data as Array<{ name: string }>).map((d) => d.name);
+    expect(names).toContain('Public Warehouse');
+    expect(names).not.toContain('E. Fulton Street Portfolio'); // confidential — must not leak
+    const refIds = (r.refs as Array<{ id: string }>).map((x) => x.id);
+    expect(refIds).not.toContain('sec');
+  });
+
+  it('search_entities excludes confidential deals from search results', () => {
+    const r = runTool('search_entities', snapWithDeals(), { query: 'fulton' });
+    const refIds = (r.refs as Array<{ id: string }>).map((x) => x.id);
+    expect(refIds).not.toContain('sec'); // confidential deal must not surface via search
+  });
+
+  it('search_entities still returns non-confidential deal matches', () => {
+    const r = runTool('search_entities', snapWithDeals(), { query: 'public' });
+    const refIds = (r.refs as Array<{ id: string }>).map((x) => x.id);
+    expect(refIds).toContain('pub');
+  });
+});
+
 // Build an Anthropic-style SSE body from a list of {type,...} data objects.
 function sse(...frames: object[]): string {
   return frames.map((f) => `event: x\ndata: ${JSON.stringify(f)}\n\n`).join('');

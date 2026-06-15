@@ -38,4 +38,14 @@ describe('replacementCostAnalysis', () => {
     const mid = 50_000 * 137.5;
     expect(replacementCostAnalysis({ sf: 50_000, estPrice: mid * 1.25 })!.verdict).toBe('Premium to replacement');
   });
+
+  it('basis string derives from REPLACEMENT_COST_PSF constants (never a stale hardcoded range)', () => {
+    const r = replacementCostAnalysis({ sf: 10_000, estPrice: null })!;
+    // Basis must reflect the live low/high constants so a future constant update auto-updates the UI.
+    expect(r.basis).toContain(`${REPLACEMENT_COST_PSF.low}`);
+    expect(r.basis).toContain(`${REPLACEMENT_COST_PSF.high}`);
+    // Must NOT contain the old stale range.
+    expect(r.basis).not.toContain('$85');
+    expect(r.basis).not.toContain('$120/SF');
+  });
 });
