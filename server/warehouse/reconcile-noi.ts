@@ -141,6 +141,20 @@ export function classifyNoiReconciliation(
   // Both present — compute delta and classify by tolerance.
   const wb = input.workbookOxfordNoi!;
   const wh = input.warehouseOxfordNoi!;
+
+  // Warehouse-zero guard: a $0 warehouse NOI with a non-zero workbook value indicates the
+  // warehouse has no committed P&L entries for this period (all entries net to $0). The absolute
+  // band ($10k) was designed for genuine small-NOI near-matches, not for this structural gap —
+  // a 100%-relative-delta would pass as in-tolerance without this guard.
+  if (wh === 0 && wb !== 0) {
+    return {
+      ...baseRow,
+      status: 'missing-from-warehouse',
+      severity: 'warn',
+      reason:
+        'Warehouse oxfordNoi is $0 with a non-zero workbook NOI — warehouse may have no committed P&L for this period.',
+    };
+  }
   const delta = wb - wh;
   const absDelta = Math.abs(delta);
   const denom = Math.max(Math.abs(wb), Math.abs(wh));

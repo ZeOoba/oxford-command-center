@@ -97,6 +97,27 @@ describe('classifyNoiReconciliation — pure A↔B classifier', () => {
     expect(r.deltaPct).toBeCloseTo(9000 / 59000, 4);
   });
 
+  it('warehouse-zero vs non-zero workbook is missing-from-warehouse, not in-tolerance (L5 fix)', () => {
+    // L5 defect: wb=$9,000 / wh=$0. |delta|=$9k ≤ $10k abs band → was in-tolerance despite 100%
+    // relative delta. A warehouse-zero with a non-zero workbook NOI means the warehouse has no
+    // committed P&L for this period — not a genuine near-match. Must be missing-from-warehouse.
+    const r = classifyNoiReconciliation(
+      input({ workbookOxfordNoi: 9000, warehouseOxfordNoi: 0, warehouseBasis: 'cash' }),
+      TOL,
+    );
+    expect(r.status).toBe('missing-from-warehouse');
+    expect(r.severity).toBe('warn');
+  });
+
+  it('legitimately small symmetric delta (wb=$9,200 / wh=$9,000, ~2% drift) still passes in-tolerance', () => {
+    // Guard: the warehouse-zero fix must not fire when the warehouse genuinely has a non-zero NOI.
+    const r = classifyNoiReconciliation(
+      input({ workbookOxfordNoi: 9200, warehouseOxfordNoi: 9000, warehouseBasis: 'cash' }),
+      TOL,
+    );
+    expect(r.status).toBe('in-tolerance');
+  });
+
   it('returns drift when the delta is past tolerance but under the large-drift threshold', () => {
     // 10% drift on $200k = $20k delta — past both bands, under 20% large-drift.
     const r = classifyNoiReconciliation(
