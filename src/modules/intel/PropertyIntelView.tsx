@@ -98,6 +98,14 @@ interface Props {
   periodLabel: string | null;
 }
 
+/**
+ * Renders a property intelligence dashboard with ownership verdict, KPIs, growth metrics, and anomaly analysis.
+ *
+ * Selects the property to display based on `propertyId` or defaults to the property requiring the most attention. Displays property selector, ownership verdict, KPI tiles with sparklines, since-acquisition growth, annual trends, ΔNOI waterfall analysis, and anomalies.
+ *
+ * @param period - Controls the period for KPI tile levels only; other cards remain on a full-year basis
+ * @param periodLabel - Display label for the selected period (e.g., `'FY2025'`, `'2026 YTD'`), or `null` for latest full year
+ */
 export function PropertyIntelView({ propertyId, onSelectProperty, period, periodLabel: kpiPeriodLabel }: Props) {
   const scores = useScores();
   const metrics = useMetrics();

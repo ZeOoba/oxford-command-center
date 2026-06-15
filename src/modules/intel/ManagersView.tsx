@@ -23,6 +23,11 @@ import { sortScorecards } from './managers-intel';
 import { ExportBriefingButton } from './ExportBriefingButton';
 import { managerSlug } from '@contracts/briefing';
 
+/**
+ * Displays property manager scorecards with performance metrics in a sortable table.
+ *
+ * The table shows manager names, property counts, average NOI per square foot, NOI growth, and expense growth, sorted by NOI growth (best first). Handles loading, unavailable warehouse, and empty data states with appropriate messaging.
+ */
 export function ManagersView() {
   const pm = usePmScorecards();
 
