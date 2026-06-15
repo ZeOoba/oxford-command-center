@@ -250,3 +250,44 @@ is never left publicly reachable.
 > binds `127.0.0.1` only. Modules are code-split via `React.lazy` (17 chunks); large tables
 > (the 137-row rent roll) are virtualized. E2E + axe specs live in `tests/e2e` — run with
 > `npx playwright install chromium` then `npm run test:e2e` in a clean environment.
+
+### Remote access for a principal — `brain.oxfordra.net`
+
+**Current state (verified 2026-06-15):**
+- DNS for `oxfordra.net` is on **NS1** (`dns*.p04.nsone.net`, Netlify-managed) — **not** Cloudflare. Any
+  `brain` record change is made at NS1, not in a Cloudflare DNS zone.
+- `brain.oxfordra.net` is already a **CNAME to the `ora-brain` Cloudflare Tunnel** (`*.cfargotunnel.com`),
+  which routes to the **local** Brain Server (`scripts/cloudflared-config.yml` → `http://localhost:5273`).
+- Therefore `brain.oxfordra.net` is **live only while this machine is on AND both `cloudflared` and the
+  Brain Server are running.** When the tunnel/origin is down it returns no response (verified: no HTTP
+  response while the tunnel was offline).
+- The always-on alternative `ora-command-center.pages.dev` is live and **Access-enforced** (unauthenticated
+  → `302` to `…cloudflareaccess.com`).
+
+Pick one path for Eric:
+
+**Option A — Always-on (recommended): point `brain.oxfordra.net` at the Pages mirror.**
+Machine-independent; read-only snapshot (StatusPill shows "Static · baked _N_h ago").
+1. Cloudflare → Workers & Pages → `ora-command-center` → **Custom domains** → add `brain.oxfordra.net`;
+   Cloudflare prints the CNAME target.
+2. In **NS1 / Netlify DNS**, repoint the `brain` CNAME from the tunnel to that target (or to
+   `ora-command-center.pages.dev`). DNS lives at NS1 — make the change there.
+3. Zero Trust → Access → Applications: add `brain.oxfordra.net` (and the `*.pages.dev` wildcard) as a
+   destination on the existing `ora-command-center` app (Allow `ggoldberg@` + `egoldberg@oxfordra.net`,
+   default-deny).
+4. Verify gating: `curl -I https://brain.oxfordra.net` → **`302` → `…cloudflareaccess.com`** (not `200`).
+5. Confidential view: Eric's daily brief already links the **redacted** mirror. For the full operating
+   picture, deploy with `MIRROR_INCLUDE_CONFIDENTIAL=1` (see `deploy-mirror.ps1`) — **only after** step 4
+   confirms the `302`. This is the **invariant 3** gate; do not skip it.
+
+**Option B — Live, on-demand: keep the existing tunnel.**
+Live data + write-back, but only while this machine + `cloudflared` are running.
+1. Run the tunnel as a service so it survives reboots: `cloudflared service install` (as Administrator);
+   keep the Brain Server up (`npm run dev`, or serve a built app).
+2. Add `brain.oxfordra.net` to `server.allowedHosts` in `vite.config.ts` (Vite 6 rejects foreign `Host`
+   headers), or serve the built app instead of the dev server. (CORS is **not** a blocker here — the SPA
+   and API are same-origin through the tunnel.)
+3. **Mandatory (invariant 3):** confirm Cloudflare Access is enforcing on `brain.oxfordra.net` — Zero Trust
+   → Access → Applications, self-hosted app for `brain.oxfordra.net`, Allow `ggoldberg@` +
+   `egoldberg@oxfordra.net`, default-deny. Verify with `curl -I` → `302`. The tunnel serves **unredacted**
+   data, so it must never be reachable without Access.
