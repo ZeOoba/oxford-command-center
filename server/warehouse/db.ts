@@ -12,9 +12,23 @@ export type WarehouseDb = Database.Database;
 // a column added inline here would never reach an already-created DB, so two
 // agents could diverge undetected. Migrations make every schema change an
 // explicit, ordered, recorded step. See architecture/database-schema.md.
+// Multi-process write coordination. The dev server (server/index.ts) holds a read-write
+// connection for its whole lifetime and writes occupancy on every brain refresh, while
+// `npm run warehouse:backfill` opens the SAME WAL DB read-write and ingests every file.
+// Two writers on one WAL DB serialize, but with no explicit busy wait the loser of an
+// overlapping write throws `SQLITE_BUSY: database is locked` immediately — which is what
+// made a live dev server appear to "block" the backfill (better-sqlite3's own default is
+// only 5s). Wait out a peer's in-flight (sub-second) transaction instead of dying; every
+// connection opened via openWarehouse (server, backfill, tests, the read-only drift check)
+// inherits this. Tunable via WAREHOUSE_BUSY_TIMEOUT_MS for unusually long ingests.
+const BUSY_TIMEOUT_MS = Number(process.env.WAREHOUSE_BUSY_TIMEOUT_MS) || 15_000;
+
 export function openWarehouse(path: string): WarehouseDb {
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
+  // Set the busy timeout BEFORE the journal-mode switch so even that pragma waits if a peer
+  // momentarily holds the file lock.
+  db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
   // Baseline adoption is safe on a pre-existing DB: 001_initial.sql is all
