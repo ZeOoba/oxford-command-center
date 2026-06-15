@@ -38,13 +38,17 @@ which calls `resolveDueOutcomes(db)` BEFORE logging new verdicts (so an outcome 
 scored against the now-available same-grain period):
 
 ```bash
-npx tsx scripts/calibration-snapshot.ts --task ora-calibration-snapshot
+npx tsx scripts/calibration-snapshot.ts --task ora-calibration-snapshot --json
 ```
 
-(`scripts/calibration-snapshot.ts` is the Phase-1-tail snapshot writer — it resolves due outcomes, then
-logs the current verdicts with `emittedBy='snapshot:ora-calibration-snapshot'`. If a dedicated snapshot
-script is not present on the surface, call the same path the on-commit hook uses: `resolveDueOutcomes` →
-`scoreProperties`/`detectAnomalies` → `logVerdicts(..., 'snapshot:ora-calibration-snapshot')`.)
+`scripts/calibration-snapshot.ts` (shipped) is the snapshot writer: it `resolveDueOutcomes(db)` FIRST,
+then logs the current verdicts (`scoreProperties` + `detectAnomalies`) with
+`emittedBy='snapshot:ora-calibration-snapshot'`, idempotently (the `dedup_key` UNIQUE makes a
+no-new-information quarter a no-op). It is FAIL-OPEN — it never throws; failures are counted and written to
+`data_quality_issues`. `--json` prints the run summary (`resolved`, `verdictsWritten`, `verdictsSkipped`,
+`errors`, `inputsVersion`) for the completion log. It opens the canonical live DB
+(`WAREHOUSE_DB` env, else `<repo>/data/warehouse/finance.sqlite`) — the SAME warehouse the panel reads;
+pass `--db <path>` to override.
 
 GRAIN DISCIPLINE: the resolver only scores a verdict against a strictly-later, SAME-GRAIN (full-year)
 period — a YTD-vs-full-year comparison is never used (it would manufacture a spurious ≈−50% move). Verdicts
