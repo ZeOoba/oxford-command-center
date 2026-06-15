@@ -48,7 +48,10 @@ export function basisDrift(
       rows.push({ fileHash, fileName, live: l, fresh: f });
     }
   }
-  return rows.sort((a, b) => a.fileName.localeCompare(b.fileName));
+  // Secondary key on the unique fileHash: when two drifting files share a fileName (the very
+  // duplicate-name case L6 keys the map on file_hash to survive), fileName alone ties and row
+  // order would follow Set iteration order — fileHash makes the gate output deterministic.
+  return rows.sort((a, b) => a.fileName.localeCompare(b.fileName) || a.fileHash.localeCompare(b.fileHash));
 }
 
 /**

@@ -60,4 +60,20 @@ describe('basisDrift', () => {
     const rows = basisDrift(live, fresh);
     expect(rows.map((r) => r.fileName)).toEqual(['A.xlsx', 'Z.xlsx']); // M.xlsx agrees → omitted
   });
+
+  it('breaks fileName ties deterministically by fileHash (duplicate-name drift)', () => {
+    // Two distinct file_hashes share one file_name and BOTH drift — the case L6 keys the map on
+    // file_hash to survive. fileName alone ties, so the gate must fall back to fileHash for a
+    // stable order regardless of Set/SQL iteration order. Keys are inserted high-hash-first.
+    const live = new Map([
+      ['hash-9', entry('cash', 'Dup.xlsx')],
+      ['hash-1', entry('cash', 'Dup.xlsx')],
+    ]);
+    const fresh = new Map([
+      ['hash-9', entry('accrual', 'Dup.xlsx')],
+      ['hash-1', entry('accrual', 'Dup.xlsx')],
+    ]);
+    const rows = basisDrift(live, fresh);
+    expect(rows.map((r) => r.fileHash)).toEqual(['hash-1', 'hash-9']); // sorted by fileHash, not insertion order
+  });
 });
