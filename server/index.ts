@@ -5,7 +5,8 @@ import { loadEnvFile } from './load-env';
 loadEnvFile();
 
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { basename, join, resolve, sep } from 'node:path';
 import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
@@ -24,16 +25,15 @@ import { openWarehouse } from './warehouse/db';
 import type { WarehouseDb } from './warehouse/db';
 import { warehouseRoutes } from './warehouse/api';
 import { captureOccupancy } from './warehouse/occupancy';
+import { extractOmFields } from './warehouse/om-extract';
 import { listLeaseTermPropertyIds } from './warehouse/lease-terms';
 import { setLeaseRunAssumptions } from './overlay';
 import { LeaseRunAssumptionsInput } from '../src/contracts/lease-run';
+import { isAllowedOrigin } from './cors-policy';
 
 const app = new Hono();
-// Confidential data — only same-machine localhost origins may call the API.
-app.use(
-  '/api/*',
-  cors({ origin: (origin) => (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ? origin : null) }),
-);
+// Confidential data — only same-machine localhost origins may call the API (see cors-policy.ts).
+app.use('/api/*', cors({ origin: isAllowedOrigin }));
 
 // Property Financial Intelligence warehouse — opened lazily as a process singleton on
 // first /api/warehouse/* request (not at boot: a cold/mirror env may lack the sqlite
@@ -181,6 +181,56 @@ app.post('/api/actions/acquisition-input', async (c) => {
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
 
+app.post('/api/actions/om-extract', async (c) => {
+  const MAX_BYTES = 25 * 1024 * 1024; // 25 MB
+  let form: FormData;
+  try {
+    form = await c.req.formData();
+  } catch {
+    return c.json({ ok: false, error: 'Expected multipart/form-data with a PDF file.' }, 400);
+  }
+  const file = form.get('file');
+  if (!(file instanceof File)) {
+    return c.json({ ok: false, error: 'No file field in request.' }, 400);
+  }
+  if (!file.name.toLowerCase().endsWith('.pdf')) {
+    return c.json({ ok: false, error: 'Only PDF files are supported.' }, 400);
+  }
+  if (file.size > MAX_BYTES) {
+    return c.json({ ok: false, error: 'File too large (max 25 MB).' }, 413);
+  }
+  const buf = Buffer.from(await file.arrayBuffer());
+  const result = await extractOmFields(buf, {
+    apiKey: process.env.ANTHROPIC_API_KEY,
+    model: process.env.OM_EXTRACT_MODEL ?? 'claude-haiku-4-5-20251001', // separate from ANTHROPIC_MODEL (the assistant model)
+  });
+  if (!result.ok) return c.json({ ok: false, error: result.error }, result.status as 422 | 500 | 502 | 503);
+
+  // If a dealId is provided, save the PDF into the deal's Investment Candidates subfolder.
+  let savedPath: string | undefined;
+  const dealId = form.get('dealId');
+  if (typeof dealId === 'string' && dealId) {
+    const snapshot = brain.getSnapshot();
+    const deal = snapshot?.deals.find((d) => d.id === dealId);
+    if (deal && process.env.DOCUMENTS_DIR) {
+      const year = new Date().getFullYear();
+      const safeFileName = basename(file.name).replace(/[<>:"/\\|?* -]/g, '_');
+      const dealDir = join(process.env.DOCUMENTS_DIR, `Investment Candidates -- ${year}`, `${deal.name} — ${deal.location}`);
+      try {
+        await mkdir(dealDir, { recursive: true });
+        const outPath = resolve(join(dealDir, safeFileName));
+        if (!outPath.startsWith(resolve(dealDir) + sep)) throw new Error('path traversal');
+        await writeFile(outPath, buf);
+        savedPath = dealDir;
+      } catch {
+        // save is best-effort — extraction already succeeded
+      }
+    }
+  }
+
+  return c.json({ ok: true, fields: result.fields, fieldCount: result.fieldCount, ...(result.rawText ? { rawText: result.rawText } : {}), ...(savedPath ? { savedPath } : {}) });
+});
+
 // Lease-run assumption override (confirm-before-write). Persists a per-property partial to the
 // overlay (data/overlay.json), merged onto the spec defaults by the engine. 404 when the property
 // has no lease terms; 503 when the warehouse is cold (so we can't validate the property). Purely
@@ -198,8 +248,12 @@ app.post('/api/actions/lease-run-assumptions', async (c) => {
     return c.json({ ok: false, error: 'Unknown lease-run property' }, 404);
   }
   const { propertyId, ...patch } = parsed.data;
-  const assumptions = setLeaseRunAssumptions(propertyId, patch);
-  return c.json({ ok: true, propertyId, assumptions });
+  try {
+    const assumptions = await setLeaseRunAssumptions(propertyId, patch);
+    return c.json({ ok: true, propertyId, assumptions });
+  } catch {
+    return c.json({ ok: false, error: 'overlay persistence failed' }, 500);
+  }
 });
 
 /** Macro indicators — live FRED when FRED_API_KEY is set, real-seeded snapshot otherwise. */

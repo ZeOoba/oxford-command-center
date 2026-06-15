@@ -4,8 +4,9 @@
 // mocking (vitest.config isolate:false makes vi.mock bleed — injection is the safe pattern). Proves the
 // form mounts and the live score panel (verdict, sub-scores, gates, DD, cap banner) renders on a
 // real-shaped AcquisitionScore, and that an engine-unavailable error degrades without crashing.
-import { describe, it, expect, afterEach, vi } from 'vitest';
-import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react';
+// Also covers the retry behavior: Retry-now button, auto-retry interval, and error clearance on recovery.
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { render, screen, cleanup, waitFor, fireEvent, act } from '@testing-library/react';
 import { AcquisitionInput, type AcquisitionScore } from '@contracts/acquisition';
 import type { Deal } from '@contracts/index';
 import { AcquisitionWorkbench } from '../../src/modules/acquisitions/AcquisitionWorkbench';
@@ -76,5 +77,70 @@ describe('AcquisitionWorkbench (render smoke)', () => {
     const savedArg = saveFn.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(savedArg.dealId).toBe('d1');
     expect(savedArg.clusterTier).toBe('entry');
+  });
+});
+
+// Advance fake timers and flush all pending microtasks/promises in one await.
+const tick = (ms: number) => act(async () => { vi.advanceTimersByTime(ms); });
+
+describe('AcquisitionWorkbench — engine-unavailable retry (fake timers)', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  it('shows Retry now button on AcquisitionEngineUnavailable, not on generic errors', async () => {
+    const engineDown = vi.fn().mockRejectedValue(new AcquisitionEngineUnavailable());
+    const genericErr = vi.fn().mockRejectedValue(new Error('scoring failed'));
+
+    const { unmount } = render(<AcquisitionWorkbench scoreFn={engineDown} saveFn={async () => false} />);
+    await tick(400); // past 300 ms debounce
+    expect(screen.getByText(/Acquisition engine unavailable/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /retry now/i })).toBeTruthy();
+    unmount();
+
+    render(<AcquisitionWorkbench scoreFn={genericErr} saveFn={async () => false} />);
+    await tick(400);
+    expect(screen.getByText(/scoring failed/i)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /retry now/i })).toBeNull();
+  });
+
+  it('clicking Retry now calls scoreFn immediately', async () => {
+    const scoreFn = vi.fn().mockRejectedValue(new AcquisitionEngineUnavailable());
+    render(<AcquisitionWorkbench scoreFn={scoreFn} saveFn={async () => false} />);
+    await tick(400);
+
+    const callsBefore = scoreFn.mock.calls.length;
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /retry now/i })); });
+    expect(scoreFn.mock.calls.length).toBeGreaterThan(callsBefore);
+  });
+
+  it('auto-retries every 5 s while engine remains down', async () => {
+    const scoreFn = vi.fn().mockRejectedValue(new AcquisitionEngineUnavailable());
+    render(<AcquisitionWorkbench scoreFn={scoreFn} saveFn={async () => false} />);
+    await tick(400);
+    const callsAfterMount = scoreFn.mock.calls.length;
+
+    await tick(5000);
+    expect(scoreFn.mock.calls.length).toBeGreaterThan(callsAfterMount);
+
+    await tick(5000);
+    expect(scoreFn.mock.calls.length).toBeGreaterThan(callsAfterMount + 1);
+  });
+
+  it('clears error and stops retrying when auto-retry succeeds', async () => {
+    const scoreFn = vi.fn()
+      .mockRejectedValueOnce(new AcquisitionEngineUnavailable())
+      .mockResolvedValue(mockScore);
+    render(<AcquisitionWorkbench scoreFn={scoreFn} saveFn={async () => false} />);
+    await tick(400);
+    expect(screen.getByText(/Acquisition engine unavailable/i)).toBeTruthy();
+
+    await tick(5000); // auto-retry fires and succeeds
+    expect(screen.queryByText(/Acquisition engine unavailable/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /retry now/i })).toBeNull();
+
+    // Interval cleared — no further scoreFn calls from the retry loop
+    const callsAtRecovery = scoreFn.mock.calls.length;
+    await tick(5000);
+    expect(scoreFn.mock.calls.length).toBe(callsAtRecovery);
   });
 });

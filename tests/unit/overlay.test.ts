@@ -19,17 +19,17 @@ describe('nextStage — pipeline advance path', () => {
 
 describe('applyOverlay — write-back merge (workbook stays canonical)', () => {
   it('overrides a deal stage from the overlay', () => {
-    const out = applyOverlay(base, { dealStages: { d1: 'LOI/PSA' }, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, acquisitionInputs: {}, leaseRunAssumptions: {} });
+    const out = applyOverlay(base, { ...EMPTY_OVERLAY, dealStages: { d1: 'LOI/PSA' } });
     expect(out.deals[0]!.stage).toBe('LOI/PSA');
   });
 
   it('prepends overlay tasks ahead of workbook tasks', () => {
-    const out = applyOverlay(base, { dealStages: {}, tasks: [{ id: 'u1', label: 'User task', section: 'Added', role: null, type: null, dueDay: null, notes: null, status: 'pending', monthlyPmt: null }], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, acquisitionInputs: {}, leaseRunAssumptions: {} });
+    const out = applyOverlay(base, { ...EMPTY_OVERLAY, tasks: [{ id: 'u1', label: 'User task', section: 'Added', role: null, type: null, dueDay: null, notes: null, status: 'pending', monthlyPmt: null }] });
     expect(out.tasks.map((t) => t.id)).toEqual(['u1', 't-wb']);
   });
 
   it('never mutates the base snapshot (workbook is read-only)', () => {
-    applyOverlay(base, { dealStages: { d1: 'Closed' }, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, acquisitionInputs: {}, leaseRunAssumptions: {} });
+    applyOverlay(base, { ...EMPTY_OVERLAY, dealStages: { d1: 'Closed' } });
     expect(base.deals[0]!.stage).toBe('Candidate'); // unchanged
   });
 });
