@@ -10,7 +10,7 @@
 // compatibility_date >= 2025-09-01) — that needs a real `wrangler pages dev`/deploy check (Function header).
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { onRequestPost, resolveAcquisitionConfig } from '../../functions/api/warehouse/acquisition/score';
 import { AcquisitionInput, ReplacementCostTable } from '@contracts/acquisition';
 import { parseRuleset, scoreAcquisition } from '../../server/warehouse/acquisition';
@@ -23,7 +23,7 @@ const rctObj = JSON.parse(
   readFileSync(resolve(process.cwd(), 'config/replacement-cost.v1.json'), 'utf8'),
 ) as Json;
 
-// Build a tampered copy of the ratified ruleset for fail-closed tests (raw JSON, no `any`).
+/** Build a tampered copy of the ratified ruleset for fail-closed tests (raw JSON, no `any`). */
 function ruleVariant(mutate: (j: Json) => void): Json {
   const j = structuredClone(ratifiedRulesetObj);
   mutate(j);
@@ -46,6 +46,7 @@ const STRONG_BASE: Record<string, unknown> = {
   ddKnown: { flood: true, zoning: true, roof: true, 'deferred-maintenance-capex': true },
 };
 
+/** Build a Pages-Function context with a JSON POST body for the handler under test. */
 function postCtx(body: unknown): { request: Request } {
   return {
     request: new Request('https://mirror/api/warehouse/acquisition/score', {
@@ -55,6 +56,7 @@ function postCtx(body: unknown): { request: Request } {
     }),
   };
 }
+/** Strip scoredAt (the engine's only wall-clock field) so two independent score runs deep-equal. */
 const stripScoredAt = (s: Record<string, unknown>): Record<string, unknown> => ({ ...s, scoredAt: undefined });
 
 describe('acquisition edge Function — fail-closed gate (resolveAcquisitionConfig)', () => {
@@ -128,5 +130,27 @@ describe('acquisition edge Function — POST parity + input handling', () => {
       request: new Request('https://mirror/api/warehouse/acquisition/score', { method: 'POST' }),
     });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('acquisition edge Function — fail-closed 503 WIRING (config init failure)', () => {
+  // Locks in onRequestPost's module-init failure path (score.ts: cfgError -> 503), which the gate-logic
+  // and 200/400 tests don't reach. Force init failure by mocking the bundled ruleset JSON to a
+  // non-ratified config, then re-import the module fresh so its top-level resolveAcquisitionConfig throws.
+  it('onRequestPost returns 503 with no score when the bundled ruleset is non-ratified', async () => {
+    vi.resetModules();
+    const rulesetPath = resolve(process.cwd(), 'config/acquisition-ruleset.v1.json');
+    vi.doMock(rulesetPath, () => ({ default: { ...ratifiedRulesetObj, ratification: 'proposed' } }));
+    try {
+      const mod = await import('../../functions/api/warehouse/acquisition/score');
+      const res = await mod.onRequestPost(postCtx(STRONG_BASE));
+      expect(res.status).toBe(503);
+      const body = (await res.json()) as { error?: string; score?: unknown };
+      expect(body.error).toMatch(/unavailable/);
+      expect(body.score).toBeUndefined();
+    } finally {
+      vi.doUnmock(rulesetPath);
+      vi.resetModules();
+    }
   });
 });

@@ -69,6 +69,11 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
+/**
+ * POST /api/warehouse/acquisition/score — score one acquisition. Returns 503 if the bundled config failed
+ * the ratification gate at module init (fail-closed), 400 on invalid input, or 200 with `{ score }`
+ * (the same envelope as the Brain Server route).
+ */
 export async function onRequestPost(context: { request: Request }): Promise<Response> {
   if (cfgError !== null || CFG === null) {
     return json({ error: 'acquisition engine unavailable', detail: cfgError ?? 'config not loaded' }, 503);
