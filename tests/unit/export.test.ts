@@ -43,6 +43,7 @@ describe('toCsv', () => {
 
 describe('downloadCsv', () => {
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -55,7 +56,6 @@ describe('downloadCsv', () => {
 
     expect(createUrl).not.toHaveBeenCalled();
     expect(click).not.toHaveBeenCalled();
-    vi.unstubAllGlobals();
   });
 
   it('creates a blob URL and clicks a download anchor with the given filename', () => {
@@ -81,6 +81,5 @@ describe('downloadCsv', () => {
     // The temporary anchor is removed and the URL revoked after the click.
     expect(created[0]!.isConnected).toBe(false);
     expect(revokeUrl).toHaveBeenCalledWith('blob:abc');
-    vi.unstubAllGlobals();
   });
 });
