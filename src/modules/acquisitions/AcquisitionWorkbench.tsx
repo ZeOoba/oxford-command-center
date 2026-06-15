@@ -41,6 +41,7 @@ export function AcquisitionWorkbench({
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'ok' | 'err'>('idle');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const reqId = useRef(0);
+  const retryInFlight = useRef(false);
   const loadedFor = useRef<string | null>(deal?.id ?? null);
   const [errIsEngineDown, setErrIsEngineDown] = useState(false);
 
@@ -80,7 +81,11 @@ export function AcquisitionWorkbench({
   // server comes back up — no form touch or page reload needed.
   useEffect(() => {
     if (!errIsEngineDown) return;
-    const id = setInterval(() => { void runScore(form); }, 5000);
+    const id = setInterval(() => {
+      if (retryInFlight.current) return;
+      retryInFlight.current = true;
+      void runScore(form).finally(() => { retryInFlight.current = false; });
+    }, 5000);
     return () => clearInterval(id);
   }, [errIsEngineDown, form, runScore]);
 
@@ -159,7 +164,11 @@ export function AcquisitionWorkbench({
               {errIsEngineDown && (
                 <button
                   type="button"
-                  onClick={() => void runScore(form)}
+                  onClick={() => {
+                    if (retryInFlight.current) return;
+                    retryInFlight.current = true;
+                    void runScore(form).finally(() => { retryInFlight.current = false; });
+                  }}
                   style={{ marginLeft: '0.5rem', opacity: 0.75, textDecoration: 'underline', cursor: 'pointer', background: 'none', border: 'none', color: 'inherit', font: 'inherit', padding: 0 }}
                 >
                   Retry now

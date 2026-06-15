@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { PortfolioSnapshot, Task, DealStage, RenewalStage, CompSet, AcquisitionInput } from '../src/contracts/index';
+import type { LeaseRunAssumptions } from '../src/contracts/lease-run';
 
 /**
  * Write-back overlay (Phase 5). The master workbook is canonical and READ-ONLY, so user
@@ -23,10 +24,18 @@ export interface Overlay {
   acquisitionInputs: Record<string, AcquisitionInput>;
   /** propertyId → annual NOI budget target (Phase 3 ②). */
   noiBudgets: Record<string, number>;
+  /** propertyId → overridden lease-run assumptions (partial; merged onto the spec defaults). */
+  leaseRunAssumptions: Record<string, Partial<LeaseRunAssumptions>>;
 }
-export const EMPTY_OVERLAY: Overlay = { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, acquisitionInputs: {} };
+export const EMPTY_OVERLAY: Overlay = { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, acquisitionInputs: {}, leaseRunAssumptions: {} };
 
-const OVERLAY_PATH = process.env.OVERLAY_PATH ?? join(process.cwd(), 'data', 'overlay.json');
+// Resolved at CALL time (not module load) so a late process.env.OVERLAY_PATH — set by tests for
+// isolation, or by the harness after load-env runs — is honored. Production behavior is unchanged:
+// index.ts runs loadEnvFile() before importing this module, so the env value (or the default) is
+// identical to the previous module-const at every real call site.
+function overlayPath(): string {
+  return process.env.OVERLAY_PATH ?? join(process.cwd(), 'data', 'overlay.json');
+}
 
 /** Advance path through the pipeline (Refinance/Dead are off-path — set explicitly). */
 export const STAGE_FLOW: DealStage[] = ['Sourcing', 'Candidate', 'LOI/PSA', 'Due Diligence', 'Closing', 'Closed'];
@@ -39,23 +48,39 @@ export function nextStage(stage: DealStage): DealStage | null {
 
 export function loadOverlay(): Overlay {
   try {
-    if (existsSync(OVERLAY_PATH)) {
-      const raw = JSON.parse(readFileSync(OVERLAY_PATH, 'utf8')) as Partial<Overlay>;
-      return { dealStages: raw.dealStages ?? {}, tasks: raw.tasks ?? [], renewalStages: raw.renewalStages ?? {}, tenantNotes: raw.tenantNotes ?? {}, dealComps: raw.dealComps ?? {}, noiBudgets: raw.noiBudgets ?? {}, acquisitionInputs: raw.acquisitionInputs ?? {} };
+    if (existsSync(overlayPath())) {
+      const raw = JSON.parse(readFileSync(overlayPath(), 'utf8')) as Partial<Overlay>;
+      return { dealStages: raw.dealStages ?? {}, tasks: raw.tasks ?? [], renewalStages: raw.renewalStages ?? {}, tenantNotes: raw.tenantNotes ?? {}, dealComps: raw.dealComps ?? {}, noiBudgets: raw.noiBudgets ?? {}, acquisitionInputs: raw.acquisitionInputs ?? {}, leaseRunAssumptions: raw.leaseRunAssumptions ?? {} };
     }
   } catch {
     /* corrupt overlay → start clean */
   }
-  return { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, acquisitionInputs: {} };
+  return { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, acquisitionInputs: {}, leaseRunAssumptions: {} };
 }
 
 export function saveOverlay(o: Overlay): void {
   try {
-    mkdirSync(dirname(OVERLAY_PATH), { recursive: true });
-    writeFileSync(OVERLAY_PATH, JSON.stringify(o, null, 2));
+    mkdirSync(dirname(overlayPath()), { recursive: true });
+    writeFileSync(overlayPath(), JSON.stringify(o, null, 2));
   } catch {
     /* best-effort */
   }
+}
+
+/**
+ * Persist a property's lease-run assumption overrides (confirm-before-write). Merges the patch
+ * onto any existing override for the property (so a single field can be edited at a time) and
+ * writes the overlay. Returns the resulting partial. Pure of business logic — the engine merges
+ * this partial onto the spec defaults. The workbook and warehouse DB are never touched.
+ */
+export function setLeaseRunAssumptions(
+  propertyId: string,
+  patch: Partial<LeaseRunAssumptions>,
+): Partial<LeaseRunAssumptions> {
+  const o = loadOverlay();
+  const merged = { ...(o.leaseRunAssumptions[propertyId] ?? {}), ...patch };
+  saveOverlay({ ...o, leaseRunAssumptions: { ...o.leaseRunAssumptions, [propertyId]: merged } });
+  return merged;
 }
 
 /** Merge user mutations onto a freshly-parsed snapshot. Pure — no I/O. */

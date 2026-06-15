@@ -221,20 +221,26 @@ export async function omExtractRequest(file: File, dealId?: string): Promise<OmE
   const body = new FormData();
   body.append('file', file);
   if (dealId) body.append('dealId', dealId);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30_000);
   let res: Response;
   try {
-    res = await fetch('/api/actions/om-extract', { method: 'POST', body });
-  } catch {
+    res = await fetch('/api/actions/om-extract', { method: 'POST', body, signal: controller.signal });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new OmExtractError('Extraction timed out. Please try again.');
+    }
     throw new OmExtractError('Could not reach the Brain server.');
+  } finally {
+    clearTimeout(timeoutId);
   }
-  const data = (await res.json()) as {
-    ok?: boolean;
-    error?: string;
-    fields?: Record<string, string>;
-    fieldCount?: number;
-    rawText?: string;
-    savedPath?: string;
-  };
+  type OmExtractResponse = { ok?: boolean; error?: string; fields?: Record<string, string>; fieldCount?: number; rawText?: string; savedPath?: string };
+  let data: OmExtractResponse;
+  try {
+    data = (await res.json()) as OmExtractResponse;
+  } catch {
+    throw new OmExtractError(`Extraction failed (${res.status})`);
+  }
   if (!res.ok || !data.ok) {
     throw new OmExtractError(data.error ?? `Extraction failed (${res.status})`);
   }

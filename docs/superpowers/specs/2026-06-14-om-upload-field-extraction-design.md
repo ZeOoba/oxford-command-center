@@ -24,7 +24,7 @@ The Acquisition Workbench requires manually entering 36 fields. Offering Memoran
 Extraction logic. Responsibilities:
 - Accept raw PDF `Buffer`
 - Extract text via `pdf-parse` (already a project dependency)
-- Write and immediately delete a temp file (no persistence)
+- Parse the PDF `Buffer` directly in memory (no temp file written)
 - Build a field-manifest prompt listing all 36 extractable field names with their expected format and OM synonyms
 - Call Claude API, request JSON output in `Partial<FormState>` format (string-keyed, display values — same format the form uses internally, e.g. `"price": "1450000"`, `"officePct": "15"`)
 - Instruct Claude: omit fields not found with high confidence; never guess

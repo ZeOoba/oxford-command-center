@@ -6,7 +6,7 @@ import fieldsConfig from './om-extract-fields.json';
 
 export type OmExtractResult =
   | { ok: true; fields: Record<string, string>; fieldCount: number; rawText?: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; status: number };
 
 export interface OmExtractOptions {
   apiKey?: string;
@@ -39,7 +39,7 @@ export async function extractOmFields(
   opts: OmExtractOptions,
 ): Promise<OmExtractResult> {
   if (!opts.apiKey) {
-    return { ok: false, error: 'AI extraction requires ANTHROPIC_API_KEY — start the Brain server with a key configured.' };
+    return { ok: false, error: 'AI extraction requires ANTHROPIC_API_KEY — start the Brain server with a key configured.', status: 500 };
   }
 
   const parseFn = opts.pdfParseFn ?? ((buf: Buffer) => (pdfParse(buf) as Promise<{ text: string }>));
@@ -49,11 +49,11 @@ export async function extractOmFields(
     const parsed = await parseFn(pdfBuffer);
     text = parsed.text ?? '';
   } catch {
-    return { ok: false, error: 'Failed to parse the PDF — the file may be corrupted or password-protected.' };
+    return { ok: false, error: 'Failed to parse the PDF — the file may be corrupted or password-protected.', status: 422 };
   }
 
   if (!text.trim()) {
-    return { ok: false, error: 'No extractable text found — this may be a scanned/image-only PDF.' };
+    return { ok: false, error: 'No extractable text found — this may be a scanned/image-only PDF.', status: 422 };
   }
 
   // Truncate to ~30 K chars (OMs are rarely longer as structured text)
@@ -63,10 +63,13 @@ export async function extractOmFields(
   const userPrompt = `Extract these fields from the OM text:\n${fieldManifest}\n\nOM TEXT:\n${body}`;
 
   const f = opts.fetchImpl ?? fetch;
+  const ac = new AbortController();
+  const timeout = setTimeout(() => ac.abort(), 20_000);
   let res: { ok: boolean; status: number; json: () => Promise<unknown>; text: () => Promise<string> };
   try {
     res = await f('https://api.anthropic.com/v1/messages', {
       method: 'POST',
+      signal: ac.signal,
       headers: {
         'content-type': 'application/json',
         'x-api-key': opts.apiKey,
@@ -81,32 +84,37 @@ export async function extractOmFields(
       }),
     });
   } catch (e) {
-    return { ok: false, error: `Network error reaching AI service: ${e instanceof Error ? e.message : String(e)}` };
+    const msg = e instanceof Error && e.name === 'AbortError'
+      ? 'AI service request timed out — try again in a moment.'
+      : `Network error reaching AI service: ${e instanceof Error ? e.message : String(e)}`;
+    return { ok: false, error: msg, status: 503 };
+  } finally {
+    clearTimeout(timeout);
   }
 
   if (!res.ok) {
     if (res.status === 503 || res.status === 529) {
-      return { ok: false, error: 'AI service temporarily unavailable — try again in a moment.' };
+      return { ok: false, error: 'AI service temporarily unavailable — try again in a moment.', status: 503 };
     }
     const detail = await res.text().catch(() => '');
-    return { ok: false, error: `AI service error (${res.status}): ${detail.slice(0, 200)}` };
+    return { ok: false, error: `AI service error (${res.status}): ${detail.slice(0, 200)}`, status: 502 };
   }
 
   const json = (await res.json()) as { content?: Array<{ type: string; text?: string }> };
   const textBlock = (json.content ?? []).find((b) => b.type === 'text');
   if (!textBlock?.text) {
-    return { ok: false, error: 'AI service returned an empty extraction.' };
+    return { ok: false, error: 'AI service returned an empty extraction.', status: 422 };
   }
 
   let raw: unknown;
   try {
     raw = JSON.parse(textBlock.text);
   } catch {
-    return { ok: false, error: 'AI returned malformed JSON — try again.' };
+    return { ok: false, error: 'AI returned malformed JSON — try again.', status: 422 };
   }
 
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
-    return { ok: false, error: 'AI returned unexpected response format — try again.' };
+    return { ok: false, error: 'AI returned unexpected response format — try again.', status: 422 };
   }
 
   // Strip unknown keys and non-string values

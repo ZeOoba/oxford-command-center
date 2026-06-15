@@ -132,7 +132,7 @@ describe('extractOmFields', () => {
 
 - [ ] **Step 2: Run tests to confirm they fail**
 
-```
+```bash
 npx vitest run tests/unit/om-extract.test.ts
 ```
 
@@ -279,7 +279,7 @@ export async function extractOmFields(
 
 - [ ] **Step 4: Run tests — all should pass**
 
-```
+```bash
 npx vitest run tests/unit/om-extract.test.ts
 ```
 
@@ -342,7 +342,7 @@ app.post('/api/actions/om-extract', async (c) => {
 
 - [ ] **Step 3: Typecheck to confirm no errors**
 
-```
+```bash
 npx tsc --noEmit -p tsconfig.node.json
 ```
 
@@ -408,7 +408,7 @@ export async function omExtractRequest(file: File): Promise<OmExtractResult> {
 
 - [ ] **Step 2: Typecheck**
 
-```
+```bash
 npx tsc --noEmit -p tsconfig.json
 ```
 
@@ -525,7 +525,7 @@ describe('OmImportDrawer', () => {
 
 - [ ] **Step 2: Run tests to confirm they fail**
 
-```
+```bash
 npx vitest run tests/unit/OmImportDrawer.test.tsx
 ```
 
@@ -819,7 +819,7 @@ export function OmImportDrawer({
 
 - [ ] **Step 4: Run tests — all should pass**
 
-```
+```bash
 npx vitest run tests/unit/OmImportDrawer.test.tsx
 ```
 
@@ -938,7 +938,7 @@ Replace it with:
 
 - [ ] **Step 5: Typecheck and run the full test suite**
 
-```
+```bash
 npx tsc --noEmit -p tsconfig.json && npx vitest run
 ```
 
@@ -959,7 +959,7 @@ git commit -m "feat: wire OmImportDrawer into AcquisitionWorkbench — Upload OM
 
 - [ ] **Step 1: Run the full gate**
 
-```
+```bash
 npm run gate
 ```
 
@@ -967,7 +967,7 @@ Expected: governance ✓ · typecheck ✓ · lint ✓ · test ✓ · reconcile �
 
 - [ ] **Step 2: Start the dev server and do a manual smoke test**
 
-```
+```bash
 npm run dev
 ```
 

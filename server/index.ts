@@ -25,6 +25,9 @@ import type { WarehouseDb } from './warehouse/db';
 import { warehouseRoutes } from './warehouse/api';
 import { captureOccupancy } from './warehouse/occupancy';
 import { extractOmFields } from './warehouse/om-extract';
+import { listLeaseTermPropertyIds } from './warehouse/lease-terms';
+import { setLeaseRunAssumptions } from './overlay';
+import { LeaseRunAssumptionsInput } from '../src/contracts/lease-run';
 
 const app = new Hono();
 // Confidential data — only same-machine localhost origins may call the API.
@@ -202,7 +205,7 @@ app.post('/api/actions/om-extract', async (c) => {
     apiKey: process.env.ANTHROPIC_API_KEY,
     model: process.env.OM_EXTRACT_MODEL ?? 'claude-haiku-4-5-20251001', // separate from ANTHROPIC_MODEL (the assistant model)
   });
-  if (!result.ok) return c.json({ ok: false, error: result.error }, 422);
+  if (!result.ok) return c.json({ ok: false, error: result.error }, result.status as 422 | 500 | 502 | 503);
 
   // If a dealId is provided, save the PDF into the deal's Investment Candidates subfolder.
   let savedPath: string | undefined;
@@ -224,6 +227,27 @@ app.post('/api/actions/om-extract', async (c) => {
   }
 
   return c.json({ ok: true, fields: result.fields, fieldCount: result.fieldCount, ...(result.rawText ? { rawText: result.rawText } : {}), ...(savedPath ? { savedPath } : {}) });
+});
+
+// Lease-run assumption override (confirm-before-write). Persists a per-property partial to the
+// overlay (data/overlay.json), merged onto the spec defaults by the engine. 404 when the property
+// has no lease terms; 503 when the warehouse is cold (so we can't validate the property). Purely
+// additive — touches no governor and no existing overlay behavior.
+app.post('/api/actions/lease-run-assumptions', async (c) => {
+  const parsed = LeaseRunAssumptionsInput.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ ok: false, error: 'Invalid lease-run assumptions' }, 400);
+  let known: string[];
+  try {
+    known = listLeaseTermPropertyIds(getWarehouse());
+  } catch {
+    return c.json({ ok: false, error: 'warehouse unavailable' }, 503);
+  }
+  if (!known.includes(parsed.data.propertyId)) {
+    return c.json({ ok: false, error: 'Unknown lease-run property' }, 404);
+  }
+  const { propertyId, ...patch } = parsed.data;
+  const assumptions = setLeaseRunAssumptions(propertyId, patch);
+  return c.json({ ok: true, propertyId, assumptions });
 });
 
 /** Macro indicators — live FRED when FRED_API_KEY is set, real-seeded snapshot otherwise. */
