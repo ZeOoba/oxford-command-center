@@ -2,16 +2,21 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "web",
+      "name": "site",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["-y", "serve", "C:/Users/Owner/website-canonical"]
+    },
+    {
+      "name": "brain-web",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev:web"],
+      "runtimeArgs": ["--prefix", "C:/Users/Owner/oxford-command-center", "run", "dev:web"],
       "port": 5273
     },
     {
-      "name": "server",
+      "name": "brain-server",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev:server"],
-      "port": 8787
+      "runtimeArgs": ["--prefix", "C:/Users/Owner/oxford-command-center", "run", "dev:server"],
+      "port": 8911
     }
   ]
 }
