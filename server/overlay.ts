@@ -58,12 +58,13 @@ export function loadOverlay(): Overlay {
   return { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, acquisitionInputs: {}, leaseRunAssumptions: {} };
 }
 
-export function saveOverlay(o: Overlay): void {
+export function saveOverlay(o: Overlay): boolean {
   try {
     mkdirSync(dirname(overlayPath()), { recursive: true });
     writeFileSync(overlayPath(), JSON.stringify(o, null, 2));
+    return true;
   } catch {
-    /* best-effort */
+    return false;
   }
 }
 
@@ -79,7 +80,8 @@ export function setLeaseRunAssumptions(
 ): Partial<LeaseRunAssumptions> {
   const o = loadOverlay();
   const merged = { ...(o.leaseRunAssumptions[propertyId] ?? {}), ...patch };
-  saveOverlay({ ...o, leaseRunAssumptions: { ...o.leaseRunAssumptions, [propertyId]: merged } });
+  const ok = saveOverlay({ ...o, leaseRunAssumptions: { ...o.leaseRunAssumptions, [propertyId]: merged } });
+  if (!ok) throw new Error('Failed to persist overlay');
   return merged;
 }
 

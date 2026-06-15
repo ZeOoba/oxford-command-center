@@ -250,8 +250,12 @@ app.post('/api/actions/lease-run-assumptions', async (c) => {
     return c.json({ ok: false, error: 'Unknown lease-run property' }, 404);
   }
   const { propertyId, ...patch } = parsed.data;
-  const assumptions = setLeaseRunAssumptions(propertyId, patch);
-  return c.json({ ok: true, propertyId, assumptions });
+  try {
+    const assumptions = setLeaseRunAssumptions(propertyId, patch);
+    return c.json({ ok: true, propertyId, assumptions });
+  } catch {
+    return c.json({ ok: false, error: 'overlay persistence failed' }, 500);
+  }
 });
 
 /** Macro indicators — live FRED when FRED_API_KEY is set, real-seeded snapshot otherwise. */
