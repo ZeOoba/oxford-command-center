@@ -34,7 +34,7 @@ const EXTRACTABLE_FIELDS = [
   { key: 'waltYears',       desc: 'Weighted average lease term remaining in years (decimal ok). OM synonyms: WALT, weighted average lease term, remaining lease term.' },
 ] as const;
 
-const VALID_KEYS = new Set(EXTRACTABLE_FIELDS.map((f) => f.key));
+const VALID_KEYS = new Set<string>(EXTRACTABLE_FIELDS.map((f) => f.key));
 
 const SYSTEM =
   `You are a commercial real estate data extractor. Extract field values from the OM text.\n` +
@@ -88,6 +88,7 @@ export async function extractOmFields(
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
+        // Haiku: structured extraction from text — no reasoning required, haiku is sufficient and fast.
         model: opts.model ?? 'claude-haiku-4-5-20251001',
         max_tokens: 1024,
         system: SYSTEM,
