@@ -29,7 +29,20 @@ export default defineConfig({
     include: ['tests/unit/**/*.{test,spec}.{ts,tsx}', 'src/**/*.{test,spec}.{ts,tsx}'],
     coverage: {
       provider: 'v8',
-      include: ['src/analytics/**', 'src/contracts/**', 'src/lib/**'],
+      reporter: ['text', 'html'],
+      // Cover the business logic across BOTH spines and the client logic layer — not just the
+      // formatter/contract helpers. `.tsx` view components stay out of scope (their logic lives in
+      // the `.ts` hooks/helpers that ARE covered); entry/env/type-only files are excluded.
+      include: ['server/**/*.ts', 'src/**/*.ts'],
+      exclude: [
+        'server/index.ts',
+        'server/load-env.ts',
+        'src/main.tsx',
+        'src/**/*.d.ts',
+        'src/contracts/**',
+        '**/*.test.ts',
+        '**/*.test.tsx',
+      ],
     },
   },
 });

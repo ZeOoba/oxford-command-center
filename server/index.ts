@@ -29,13 +29,11 @@ import { extractOmFields } from './warehouse/om-extract';
 import { listLeaseTermPropertyIds } from './warehouse/lease-terms';
 import { setLeaseRunAssumptions } from './overlay';
 import { LeaseRunAssumptionsInput } from '../src/contracts/lease-run';
+import { isAllowedOrigin } from './cors-policy';
 
 const app = new Hono();
-// Confidential data — only same-machine localhost origins may call the API.
-app.use(
-  '/api/*',
-  cors({ origin: (origin) => (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ? origin : null) }),
-);
+// Confidential data — only same-machine localhost origins may call the API (see cors-policy.ts).
+app.use('/api/*', cors({ origin: isAllowedOrigin }));
 
 // Property Financial Intelligence warehouse — opened lazily as a process singleton on
 // first /api/warehouse/* request (not at boot: a cold/mirror env may lack the sqlite
