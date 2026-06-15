@@ -55,6 +55,12 @@ export default defineConfig({
   },
   server: {
     port: 5273,
+    // brain.oxfordra.net is served via a Cloudflare Tunnel into this dev server (Option B in
+    // the README "Remote access for a principal" runbook). Vite 6 rejects foreign Host headers
+    // unless allow-listed, and the tunnel forwards HTTP (TLS terminates at Cloudflare) so the
+    // check applies. The hostname sits behind Cloudflare Access. localhost/IPs are allowed by
+    // default and need no entry here.
+    allowedHosts: ['brain.oxfordra.net'],
     proxy: {
       '/api': { target: `http://localhost:${SERVER_PORT}`, changeOrigin: true },
       '/sse': { target: `http://localhost:${SERVER_PORT}`, changeOrigin: true, ws: false },
