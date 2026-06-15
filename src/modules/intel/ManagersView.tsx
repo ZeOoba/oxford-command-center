@@ -20,6 +20,8 @@ import { DataTable, type Column } from '@/primitives/DataTable';
 import { isWarehouseUnavailable } from './hooks';
 import { usePmScorecards, type PmScorecard } from './analytics-hooks';
 import { sortScorecards } from './managers-intel';
+import { ExportBriefingButton } from './ExportBriefingButton';
+import { managerSlug } from '@contracts/briefing';
 
 export function ManagersView() {
   const pm = usePmScorecards();
@@ -111,6 +113,12 @@ export function ManagersView() {
       // raw value (the cell color carries the favorable/unfavorable read).
       sortValue: (r) => r.avgExpenseGrowth ?? null,
       render: (r) => <SignedPct value={r.avgExpenseGrowth} invert />,
+    },
+    {
+      key: 'export',
+      header: '',
+      align: 'right',
+      render: (r) => <ExportBriefingButton kind="manager" id={managerSlug(r.propertyManager)} label="PDF" />,
     },
   ];
 

@@ -177,6 +177,49 @@ describe('reconcileNoiABFromDb — JOIN path (Spine A workbook ↔ Spine B wareh
     expect(rows.map((r) => r.propertyId)).toEqual(['1100-rarig-ave-columbus-oh']);
   });
 
+  it('lease-run: financialMode=lease-run in property_master → lease-run-skipped with no delta', async () => {
+    const { db } = await buildDb();
+    // Fishel is seeded with financialMode='lease-run' by seedPropertyMaster. No P&L
+    // needs to be ingested — the classifier exits before any warehouse lookup.
+    const rows = reconcileNoiABFromDb(
+      db,
+      snapshot([prop('7658-fishel-dr-n-dublin-oh', 50000)]),
+    );
+    expect(rows).toHaveLength(1);
+    const r = rows[0]!;
+    expect(r.status).toBe('lease-run-skipped');
+    expect(r.severity).toBe('info');
+    expect(r.delta).toBeNull();
+    expect(r.reason).toMatch(/master lease/i);
+  });
+
+  it('YTD-only: only YTD grain ingested → latestFullYearPeriod=null → missing-from-warehouse', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'whr-ytd-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+
+    // "YTD" in the filename → detectFromFilename produces grain='ytd'.
+    // latestFullYearPeriod skips ytd entries → returns null → warehouseOxfordNoi=null.
+    const rarigYtd = join(dir, 'P&L 2025 YTD -- 1100 Rarig.xlsx');
+    await writeFixture(rarigYtd, 'Property: 1100 Rarig Ave', 60000, 3000);
+    expect(
+      (await ingestFile(db, rarigYtd, { rawDir: join(dir, 'raw'), importedAt: '2026-06-13T00:00:00Z' })).status,
+    ).toBe('committed');
+
+    const rows = reconcileNoiABFromDb(
+      db,
+      snapshot([prop('1100-rarig-ave-columbus-oh', 95000)]),
+    );
+    expect(rows).toHaveLength(1);
+    const r = rows[0]!;
+    expect(r.status).toBe('missing-from-warehouse');
+    expect(r.severity).toBe('warn');
+    expect(r.warehouseOxfordNoi).toBeNull();
+    expect(r.period).toBeNull();
+    expect(r.reason).toMatch(/no full-year period/i);
+  });
+
   it('mixed portfolio: multiple properties classified in one pass, sorted by id', async () => {
     const { db } = await buildDb();
     const rows = reconcileNoiABFromDb(

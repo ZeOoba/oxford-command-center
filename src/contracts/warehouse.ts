@@ -482,3 +482,41 @@ export const CalibrationReportSchema = z.object({
   dataMaturityNote: z.string(),
 });
 export type CalibrationReportResponse = z.infer<typeof CalibrationReportSchema>;
+
+// ── Manual resolution write boundary (Phase 2 UI/ops) — POST /calibration/:id/resolve ──────────
+// The analyst (Gabriel / quarterly reviewer) records the REALIZED outcome of a pending verdict, or
+// blesses/overrides an auto-resolution. This is the ONLY calibration WRITE the UI performs and it
+// touches calibration_outcome ONLY — never a verdict row (append-only), never data/overlay.json,
+// never a governor. Discipline mirrors the backend resolver: Zod-validated at the route boundary,
+// append-only + supersede (the old blessed row flips is_resolution=0, a new is_resolution=1 row is
+// inserted in one transaction), idempotent on a byte-identical re-submit. `hit` is the analyst's
+// judgment of whether the verdict was right (1) / wrong (0) / not-scoreable (null). GRAIN RULE: the
+// resolver only accepts a same-grain outcome period (a full-year verdict needs a full-year outcome
+// period, strictly later) — enforced server-side so a YTD-vs-full-year comparison can never
+// manufacture a spurious resolution (warehouse §9 grain discipline).
+export const CalibrationResolveRequestSchema = z.object({
+  calibrationId: z.number().int().positive(),
+  realizedBand: z.string().min(1).nullable().default(null),
+  realizedValue: z.number().finite().nullable().default(null),
+  realizedUnit: PredictedUnit.nullable().default(null),
+  outcomePeriod: PeriodToken,
+  hit: z.union([z.literal(0), z.literal(1)]).nullable().default(null),
+  actionTaken: ActionTaken.default('unknown'),
+  actionDetail: z.string().min(1).nullable().default(null),
+  treatmentNote: z.string().min(1).nullable().default(null),
+  resolutionBasis: z.string().min(1).default('analyst-judgment'),
+  resolvedBy: z.string().min(1).default('manual:gabriel'),
+}).refine((v) => v.realizedBand !== null || v.realizedValue !== null || v.hit !== null, {
+  message: 'a manual resolution must carry a realized band, a realized value, or a hit/miss judgment',
+});
+export type CalibrationResolveRequest = z.infer<typeof CalibrationResolveRequestSchema>;
+
+/** The POST /calibration/:id/resolve result envelope: the new blessed outcome id, whether a prior
+ *  blessed resolution was superseded, and (idempotent re-submit) whether this was a no-op duplicate. */
+export const CalibrationResolveResponseSchema = z.object({
+  ok: z.literal(true),
+  outcomeId: z.number().int(),
+  superseded: z.boolean(),     // a prior is_resolution=1 row was flipped to 0
+  duplicate: z.boolean(),      // a byte-identical blessed resolution already existed → no write
+});
+export type CalibrationResolveResponse = z.infer<typeof CalibrationResolveResponseSchema>;

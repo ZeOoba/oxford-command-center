@@ -38,6 +38,7 @@ import {
   type AnomalySeverity,
 } from './analytics-hooks';
 import { rankByAttention } from './synthesis';
+import { ExportBriefingButton } from './ExportBriefingButton';
 import {
   buildAnnualSeries,
   fullYearPeriods,
@@ -157,7 +158,12 @@ export function PropertyIntelView({ propertyId, onSelectProperty, period, period
 
   return (
     <div className="flex flex-col gap-4">
-      <PropertySelector ranked={ranked} selectedId={selectedId} onSelect={onSelectProperty} />
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <PropertySelector ranked={ranked} selectedId={selectedId} onSelect={onSelectProperty} />
+        </div>
+        <ExportBriefingButton kind="property" id={selectedId} />
+      </div>
 
       {score && (
         <VerdictHeader
