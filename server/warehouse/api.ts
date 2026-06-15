@@ -179,6 +179,12 @@ function acqConfig(): { ok: true; ruleset: AcquisitionRuleset; rct: ReplacementC
   return acqConfigCache;
 }
 
+/**
+ * Creates a configured Hono router for the warehouse API.
+ *
+ * @param getDb - Function to obtain the warehouse database instance
+ * @returns A Hono app configured with warehouse routes
+ */
 export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
   const app = new Hono();
 

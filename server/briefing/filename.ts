@@ -6,7 +6,12 @@
 // Content-Disposition header is always valid.
 import type { BriefingModel } from '../../src/contracts/briefing';
 
-/** A header-safe subject token: alphanumerics collapsed, separators → underscores. */
+/**
+ * Converts a string into a filesystem and header-safe token.
+ *
+ * @param name - The subject string to normalize
+ * @returns A normalized token containing only alphanumerics and underscores, or 'Briefing' if normalization results in an empty string
+ */
 export function subjectToken(name: string): string {
   return (
     name
@@ -16,6 +21,11 @@ export function subjectToken(name: string): string {
   );
 }
 
+/**
+ * Constructs the filename for a streamed briefing PDF attachment.
+ *
+ * @returns The filename for the briefing PDF, formatted as `ORA_Briefing_<subject>_<YYYYMMDD>.pdf`
+ */
 export function briefingFilename(model: BriefingModel): string {
   // Both kinds expose subject.name; kept as one read so a future third kind must opt in explicitly.
   const subject = model.subject.name;

@@ -149,8 +149,11 @@ export const ManagerBriefingModel = z.object({
 export type ManagerBriefingModel = z.infer<typeof ManagerBriefingModel>;
 
 // ── Subject slug helpers (client + server share one implementation) ────────────────────────────
-/** A URL-safe slug for a property-manager name — the `:id` route param for a per-PM briefing. Pure,
- *  no deps, so both the server composer and the client export button derive the SAME slug. */
+/**
+ * Converts a manager name into a URL-safe slug suitable for use as a route parameter.
+ *
+ * @returns A URL-safe slug derived from the manager name.
+ */
 export function managerSlug(name: string): string {
   return name
     .toLowerCase()
