@@ -194,10 +194,10 @@ app.post('/api/actions/om-extract', async (c) => {
   if (!file.name.toLowerCase().endsWith('.pdf')) {
     return c.json({ ok: false, error: 'Only PDF files are supported.' }, 400);
   }
-  const buf = Buffer.from(await file.arrayBuffer());
-  if (buf.byteLength > MAX_BYTES) {
+  if (file.size > MAX_BYTES) {
     return c.json({ ok: false, error: 'File too large (max 25 MB).' }, 413);
   }
+  const buf = Buffer.from(await file.arrayBuffer());
   const result = await extractOmFields(buf, {
     apiKey: process.env.ANTHROPIC_API_KEY,
     model: process.env.ANTHROPIC_MODEL ?? 'claude-haiku-4-5-20251001',
