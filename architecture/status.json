@@ -49,6 +49,16 @@
       "review_needed": false,
       "review_detail": "Contract + engine (#25) and ratified v1 + RCT + /api/warehouse/acquisition/score (#27) are MERGED. This increment adds the Acquisition Workbench UI (src/modules/acquisitions/) — UX-owned, no Architect files. Also fixes a pre-existing flaky ingest fixture (ExcelJS timestamp nondeterminism). Deferred: property_characteristics input persistence, calibration-log acquisition-score hook.",
       "last_updated": "2026-06-14T14:55:00Z"
+    },
+
+    "test-coverage-analysis": {
+      "agent_role": "Engineering (Claude Code) — authorized by Gabriel 2026-06-15",
+      "phase": "Test coverage hardening — orchestration/CORS/AI-fallback + client-logic tests; coverage tooling restored",
+      "status": "review_needed",
+      "blocked_by": null,
+      "review_needed": true,
+      "review_detail": "Touches Architect-owned files: (1) package.json — add @vitest/coverage-v8 devDep + test:coverage script; (2) vitest.config.ts — broaden coverage.include to server/**+src/** with view/entry excludes; (3) server/index.ts — extract the localhost-only CORS origin rule into new server/cors-policy.ts (behavior identical) so it is unit-testable. New tests: brain (orchestration), server-cors, ai-respond, search-index, use-workspaces, export. No app behavior changed; gate must stay green.",
+      "last_updated": "2026-06-15T03:30:00Z"
     }
   },
 
