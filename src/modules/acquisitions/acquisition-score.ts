@@ -198,3 +198,52 @@ export function inputToForm(input: AcquisitionInput): FormState {
   }
   return f;
 }
+
+// ── OM field extraction client helper ────────────────────────────────────────
+
+export interface OmExtractResult {
+  fields: Record<string, string>;
+  fieldCount: number;
+  rawText?: string;
+  savedPath?: string;
+}
+
+export class OmExtractError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OmExtractError';
+  }
+}
+
+/** POST a PDF file to the OM extraction endpoint. Returns extracted FormState-format fields.
+ *  Throws OmExtractError on any failure (network, server, or extraction error). */
+export async function omExtractRequest(file: File, dealId?: string): Promise<OmExtractResult> {
+  const body = new FormData();
+  body.append('file', file);
+  if (dealId) body.append('dealId', dealId);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30_000);
+  let res: Response;
+  try {
+    res = await fetch('/api/actions/om-extract', { method: 'POST', body, signal: controller.signal });
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new OmExtractError('Extraction timed out. Please try again.');
+    }
+    throw new OmExtractError('Could not reach the Brain server.');
+  } finally {
+    clearTimeout(timeoutId);
+  }
+  type OmExtractResponse = { ok?: boolean; error?: string; fields?: Record<string, string>; fieldCount?: number; rawText?: string; savedPath?: string };
+  let data: OmExtractResponse;
+  try {
+    data = (await res.json()) as OmExtractResponse;
+  } catch {
+    throw new OmExtractError(`Extraction failed (${res.status})`);
+  }
+  if (!res.ok || !data.ok) {
+    throw new OmExtractError(data.error ?? `Extraction failed (${res.status})`);
+  }
+  if (!data.fields) throw new OmExtractError('Malformed extraction response.');
+  return { fields: data.fields, fieldCount: data.fieldCount ?? 0, rawText: data.rawText, savedPath: data.savedPath };
+}
