@@ -214,7 +214,8 @@ app.post('/api/actions/om-extract', async (c) => {
     const deal = snapshot?.deals.find((d) => d.id === dealId);
     if (deal && process.env.DOCUMENTS_DIR) {
       const year = new Date().getFullYear();
-      const safeFileName = basename(file.name).replace(/[<>:"/\\|?* -]/g, '_');
+      // eslint-disable-next-line no-control-regex -- intentional: strip Windows-reserved chars + ASCII control range (\x00-\x1f) from uploaded filenames
+      const safeFileName = basename(file.name).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
       const dealDir = join(process.env.DOCUMENTS_DIR, `Investment Candidates -- ${year}`, `${deal.name} — ${deal.location}`);
       try {
         await mkdir(dealDir, { recursive: true });
