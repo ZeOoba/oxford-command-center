@@ -82,11 +82,13 @@ export function propertyPeriodMetrics(db: WarehouseDb): PeriodMetrics[] {
     SELECT l.property_id AS propertyId, p.name AS propertyName, l.period,
            l.classification, l.normalized_category AS normalizedCategory, l.amount,
            p.rentable_sf AS rentableSf, COALESCE(p.ownership_pct, 1) AS ownershipPct,
-           (SELECT b.period_grain FROM import_batches b WHERE b.id = l.import_id) AS grainHint,
-           (SELECT b.basis FROM import_batches b WHERE b.id = l.import_id) AS basis,
+           b.period_grain AS grainHint,
+           b.basis AS basis,
            l.import_id AS importId,
-           (SELECT b.period_end FROM import_batches b WHERE b.id = l.import_id) AS periodEnd
-    FROM ledger_entries l LEFT JOIN property_master p ON p.id = l.property_id
+           b.period_end AS periodEnd
+    FROM ledger_entries l
+    LEFT JOIN property_master p ON p.id = l.property_id
+    LEFT JOIN import_batches b ON b.id = l.import_id
     WHERE l.is_active = 1
     ORDER BY l.property_id, l.period
   `).all() as Row[];

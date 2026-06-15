@@ -32,7 +32,7 @@ export function AcquisitionsModule() {
   const scoreDeal = deals.find((d) => d.id === scoreDealId) ?? null;
   const active = deals.filter((d) => d.stage !== 'Closed' && d.stage !== 'Dead');
   const stageCounts = STAGE_ORDER.map((s) => ({ label: s, value: deals.filter((d) => d.stage === s).length })).filter((x) => x.value > 0);
-  const bestCap = Math.max(0, ...deals.map((d) => d.capRate ?? 0));
+  const bestCap = Math.max(0, ...active.map((d) => d.capRate ?? 0));
   const pipelineSf = active.reduce((s, d) => s + (d.sf ?? 0), 0);
 
   const cols: Column<Deal>[] = [

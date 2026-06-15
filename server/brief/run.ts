@@ -9,7 +9,9 @@ import { renderBrief, renderAlert, type Email } from './render';
 import { sendEmail, type SendResult } from './send';
 
 const DAY_MS = 86_400_000;
-const RECIPIENTS = ['ggoldberg@oxfordra.net', 'egoldberg@oxfordra.net'];
+// Routing canon: all automated outputs → ggoldberg only; Daily Brief is the sole cc-Eric exception.
+const ALERT_RECIPIENTS = ['ggoldberg@oxfordra.net'];
+const BRIEF_RECIPIENTS = ['ggoldberg@oxfordra.net', 'egoldberg@oxfordra.net'];
 const DASHBOARD_URL = process.env.BRIEF_DASHBOARD_URL ?? 'https://ora-command-center.pages.dev';
 const HEALTH_PATH = process.env.BRIEF_HEALTH_PATH ?? 'data/brief-health.json';
 
@@ -35,7 +37,7 @@ export async function runBrief(
   const failures: string[] = [];
   for (const id of toAlert) {
     const ins = insights.find((i) => i.id === id)!;
-    const r = await send(renderAlert(ins), RECIPIENTS);
+    const r = await send(renderAlert(ins), ALERT_RECIPIENTS);
     if (r.ok) alertsSent++;
     else failures.push(`alert ${id}: ${r.error ?? r.via}`);
   }
@@ -70,7 +72,7 @@ export async function runBrief(
           .map((t) => ({ label: t.label, status: t.status })),
         dashboardUrl: DASHBOARD_URL,
       }),
-      RECIPIENTS,
+      BRIEF_RECIPIENTS,
     );
 
     if (r.ok) {

@@ -339,3 +339,41 @@ describe('applyScenario — value basis (H4 regression)', () => {
     expect(downVal).toBeLessThan(baseVal);
   });
 });
+
+// Scenario engine DSCR/LTV staleness fix (audit finding: applyScenario shocks noi/oxfordValue
+// but left dscr/ltv stale — governor alerts evaluated the Base case under Downside/Upside,
+// giving a false "safe" signal).
+describe('applyScenario — DSCR/LTV recomputed from shocked values', () => {
+  // Property: NOI 100, debt service 80, value 1000, loan 400 → base DSCR 1.25, LTV 0.40
+  const leveraged = snap({
+    properties: [prop({ id: 'b', noi: 100, debtService: 80, oxfordValue: 1000, loanBalance: 400, dscr: 1.25, ltv: 0.40 })],
+  });
+
+  it('Downside DSCR reflects shocked NOI (90) / debtService (80) = 1.125, not stale 1.25', () => {
+    const down = applyScenario(leveraged, 'Downside');
+    expect(down.properties[0]!.dscr).toBeCloseTo(90 / 80, 6); // 1.125
+    expect(down.properties[0]!.dscr).toBeLessThan(1.25); // worse than Base — risk runs correct direction
+  });
+
+  it('Downside LTV reflects shocked value (≈857.14) with loan (400) = ≈0.467, not stale 0.40', () => {
+    const down = applyScenario(leveraged, 'Downside');
+    const expectedLtv = 400 / (1000 * (0.9 / 1.05));
+    expect(down.properties[0]!.ltv).toBeCloseTo(expectedLtv, 4); // ≈0.467
+    expect(down.properties[0]!.ltv!).toBeGreaterThan(0.40); // worse than Base — LTV rises correctly
+  });
+
+  it('Upside DSCR reflects shocked NOI (110) / debtService (80) = 1.375, not stale 1.25', () => {
+    const up = applyScenario(leveraged, 'Upside');
+    expect(up.properties[0]!.dscr).toBeCloseTo(110 / 80, 6); // 1.375
+    expect(up.properties[0]!.dscr).toBeGreaterThan(1.25); // better than Base
+  });
+
+  it('property with zero debtService keeps dscr unchanged (no divide-by-zero)', () => {
+    const noDsBase = snap({
+      properties: [prop({ id: 'c', noi: 100, debtService: 0, oxfordValue: 1000, loanBalance: 0, dscr: null, ltv: null })],
+    });
+    const down = applyScenario(noDsBase, 'Downside');
+    expect(down.properties[0]!.dscr).toBeNull(); // falls through to p.dscr (null)
+    expect(down.properties[0]!.ltv).toBeNull();  // falls through to p.ltv (null) — value > 0 but loan 0
+  });
+});

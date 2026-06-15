@@ -50,7 +50,11 @@ export function applyScenario(s: PortfolioSnapshot, scenario: ScenarioName): Por
     // treated the going-in cap as the exit cap, producing a Base-boundary discontinuity and a
     // Downside that could RAISE value / LOWER LTV (audit H4 `scenario-value-basis-mix`).
     const oxfordValue = p.oxfordValue * (f.revenueFactor / f.exitCapFactor);
-    return { ...p, noi, noiScenarioAdj: noi, occPct, capRate, oxfordValue };
+    // Recompute DSCR and LTV from the shocked noi/oxfordValue so governor alerts reflect
+    // the scenario, not the stale Base-case values (audit: applyScenario stale governors).
+    const dscr = p.debtService > 0 ? noi / p.debtService : p.dscr;
+    const ltv = (p.loanBalance > 0 && oxfordValue > 0) ? p.loanBalance / oxfordValue : p.ltv;
+    return { ...p, noi, noiScenarioAdj: noi, occPct, capRate, oxfordValue, dscr, ltv };
   });
   return { ...s, properties, meta: { ...s.meta, scenario } };
 }
