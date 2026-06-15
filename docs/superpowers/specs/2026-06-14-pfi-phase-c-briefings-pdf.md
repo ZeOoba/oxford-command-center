@@ -59,7 +59,7 @@ no Print-to-PDF, version/date stamp, confidential marking).
    image/flattened regression.
 2. **Determinism:** same `BriefingModel` → byte-stable PDF (no embedded timestamps except the explicit
    generated-date field, which is injected, not `Date.now()` inside the renderer) so it's snapshot-testable.
-3. **Confidentiality:** the existing fulton/confidential-terms guard must pass; a briefing for a property
+3. **Confidentiality:** the existing confidential-terms guard must pass; a briefing for a property
    tied to an active confidential deal must NOT embed confidential deal terms (these briefings are
    ownership-financial, not deal artifacts — assert no confidential term leaks into the model).
 4. **Graceful degradation:** missing lease-run/benchmark/anomaly data renders an explicit "—"/"n/a"

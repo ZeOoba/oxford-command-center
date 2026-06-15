@@ -19,7 +19,7 @@
 //  • brand-face health: every brand TTF/woff resolved (no silent Helvetica swap — adversarial #3).
 //  • per-PM roll-up totals managed properties correctly (adversarial #6).
 //  • routes: .pdf streams application/pdf with the right filename; JSON sibling Zod-parses; 503 / 404.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -91,28 +91,38 @@ function seededDb(): WarehouseDb {
   return db;
 }
 
+// SYNTHETIC confidential terms — the test never hardcodes a REAL active-deal identifier (the git
+// pre-push hook scans history for those, and they must never land in the off-machine remote). These
+// placeholders exercise the exact scan semantics (always + context-with-anchor) the real guard uses.
+const SYNTH_TERMS = {
+  test_deal: {
+    label: 'Synthetic Test Deal',
+    active: true,
+    always: ['zephyr holdings', 'parcel-9001'],
+    context: ['groundwater plume'],
+    context_requires_any: ['zephyr', 'parcel-9001'],
+  },
+};
+
 describe('confidential scanner (the guard the composer leans on)', () => {
-  it('flags a known active-deal identifier (always-term)', () => {
-    expect(scanForConfidential('the 3520 E. Fulton Street deal')).not.toBeNull();
-    expect(scanForConfidential('SIJ Partnership terms')).not.toBeNull();
+  it('flags an always-term', () => {
+    expect(scanForConfidential('the Zephyr Holdings deal', SYNTH_TERMS)).not.toBeNull();
+    expect(scanForConfidential('re: parcel-9001 closing', SYNTH_TERMS)).not.toBeNull();
   });
   it('flags a context term only with an anchor present', () => {
-    expect(scanForConfidential('chlorinated solvent plume')).toBeNull(); // no anchor
-    expect(scanForConfidential('fulton: chlorinated solvent plume')).not.toBeNull(); // anchored
+    expect(scanForConfidential('groundwater plume study', SYNTH_TERMS)).toBeNull(); // no anchor
+    expect(scanForConfidential('zephyr: groundwater plume study', SYNTH_TERMS)).not.toBeNull(); // anchored
   });
   it('passes clean ownership-financial text', () => {
-    expect(scanForConfidential('1100 Rarig Ave NOI $104,000 health 72.3')).toBeNull();
+    expect(scanForConfidential('1100 Rarig Ave NOI $104,000 health 72.3', SYNTH_TERMS)).toBeNull();
     expect(() => assertNoConfidential({ name: '1100 Rarig Ave', noi: 104000 })).not.toThrow();
   });
-  it('assertNoConfidential throws on a leak, naming only the deal label (never the term)', () => {
-    let msg = '';
-    try {
-      assertNoConfidential({ note: 'columbus stamping co' });
-    } catch (e) {
-      msg = (e as Error).message;
-    }
-    expect(msg).toMatch(/confidential deal term/);
-    expect(msg.toLowerCase()).not.toContain('columbus stamping'); // never echoes the matched term
+  it('the assertion message names only the deal label, never the matched term', () => {
+    const hit = scanForConfidential({ note: 'zephyr holdings LLC' }, SYNTH_TERMS);
+    expect(hit).not.toBeNull();
+    expect(hit!.dealLabel).toBe('Synthetic Test Deal');
+    // The hit object carries the label, NOT the matched term — the caller's throw can't re-leak it.
+    expect(JSON.stringify(hit).toLowerCase()).not.toContain('zephyr');
   });
 });
 
@@ -253,20 +263,23 @@ describe('confidentiality (contract #3, adversarial #4)', () => {
       expect(scanForConfidential(model)).toBeNull();
     }
   });
-  it('the composer would THROW if a confidential term reached the model (fail-loud backstop)', () => {
-    // The guard runs inside compose; here we prove the assertion semantics directly on a poisoned model.
-    expect(() => assertNoConfidential({ kind: 'property', subject: { name: '3520 E. Fulton Street' } })).toThrow(/confidential/);
-  });
-
   it('ADVERSARIAL #4: a property whose master NAME carries a confidential term makes compose THROW (no silent leak)', () => {
-    const db = seededDb();
-    // Poison a master row's display name with a confidential always-term, then seed it ledger data.
-    db.prepare(`UPDATE property_master SET name = ? WHERE id = ?`).run(
-      '3520 E. Fulton Street Portfolio',
-      KRG_PROPS[0],
-    );
-    // compose runs assertNoConfidential on the finished model → it must REFUSE to produce the briefing.
-    expect(() => composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN })).toThrow(/confidential deal term/);
+    // Point the guard at a SYNTHETIC terms file (never the real one — no real identifier in git), then
+    // poison a master name with the synthetic always-term. compose runs assertNoConfidential on the
+    // finished model → it must REFUSE to produce the briefing rather than embed the term.
+    const dir = mkdtempSync(join(tmpdir(), 'conf-terms-'));
+    const termsFile = join(dir, 'terms.json');
+    writeFileSync(termsFile, JSON.stringify(SYNTH_TERMS));
+    const prior = process.env.CONFIDENTIAL_TERMS_PATH;
+    process.env.CONFIDENTIAL_TERMS_PATH = termsFile;
+    try {
+      const db = seededDb();
+      db.prepare(`UPDATE property_master SET name = ? WHERE id = ?`).run('Zephyr Holdings Portfolio', KRG_PROPS[0]);
+      expect(() => composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN })).toThrow(/confidential deal term/);
+    } finally {
+      if (prior === undefined) delete process.env.CONFIDENTIAL_TERMS_PATH;
+      else process.env.CONFIDENTIAL_TERMS_PATH = prior;
+    }
   });
 });
 
@@ -373,16 +386,26 @@ describe('routes — /api/warehouse/briefing/*', () => {
   });
 
   it('ADVERSARIAL: a confidential-guard throw inside the route returns a STRUCTURED 500 (no raw stack, no leaked term)', async () => {
-    const db = seededDb();
-    // Poison a master name so compose's assertNoConfidential throws inside the handler.
-    db.prepare(`UPDATE property_master SET name = ? WHERE id = ?`).run('3520 E. Fulton Street', KRG_PROPS[0]);
-    const app = warehouseRoutes(() => db);
-    const res = await app.request(`/briefing/property/${KRG_PROPS[0]}.pdf`);
-    expect(res.status).toBe(500);
-    expect(res.headers.get('content-type')).toBe('application/json');
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('briefing generation failed');
-    // The matched confidential term must NOT appear in the response body.
-    expect(JSON.stringify(body).toLowerCase()).not.toContain('fulton');
+    const dir = mkdtempSync(join(tmpdir(), 'conf-terms-'));
+    const termsFile = join(dir, 'terms.json');
+    writeFileSync(termsFile, JSON.stringify(SYNTH_TERMS));
+    const prior = process.env.CONFIDENTIAL_TERMS_PATH;
+    process.env.CONFIDENTIAL_TERMS_PATH = termsFile;
+    try {
+      const db = seededDb();
+      // Poison a master name (synthetic term) so compose's assertNoConfidential throws in the handler.
+      db.prepare(`UPDATE property_master SET name = ? WHERE id = ?`).run('Zephyr Holdings', KRG_PROPS[0]);
+      const app = warehouseRoutes(() => db);
+      const res = await app.request(`/briefing/property/${KRG_PROPS[0]}.pdf`);
+      expect(res.status).toBe(500);
+      expect(res.headers.get('content-type')).toBe('application/json');
+      const body = (await res.json()) as { error: string };
+      expect(body.error).toBe('briefing generation failed');
+      // The matched confidential term must NOT appear in the response body.
+      expect(JSON.stringify(body).toLowerCase()).not.toContain('zephyr');
+    } finally {
+      if (prior === undefined) delete process.env.CONFIDENTIAL_TERMS_PATH;
+      else process.env.CONFIDENTIAL_TERMS_PATH = prior;
+    }
   });
 });

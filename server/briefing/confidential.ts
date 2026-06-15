@@ -23,15 +23,18 @@ interface DealTerms {
   context_requires_any?: string[];
 }
 
-/** Built-in fallback seed so the scan is never a no-op on a box without the hooks file. These are the
- *  known active-confidential identifiers (a subset is sufficient — the test asserts NONE appear). */
+/** Built-in fallback so the scan is never a no-op on a box WITHOUT the live hooks file (CI). It carries
+ *  NO real deal identifier — those live ONLY in confidential-terms.json (gitignored, off-machine) and
+ *  must never land in a git-tracked file (the pre-push hook scans history for them). In production the
+ *  live file is always present and supersedes this; this placeholder only proves the scanner is wired.
+ *  The structural placeholder term is impossible to collide with real ownership-financial text. */
 const FALLBACK_TERMS: Record<string, DealTerms> = {
-  e_fulton: {
-    label: 'E. Fulton Street Portfolio',
+  placeholder: {
+    label: 'Confidential Deal',
     active: true,
-    always: ['fulton', 'e. fulton', 'sij partnership', 'columbus stamping', 'nutis', '3520'],
-    context: ['tce', 'chlorinated solvent', 'vinyl chloride'],
-    context_requires_any: ['fulton', '3520', 'sij', 'nutis', 'columbus stamping'],
+    always: ['__ora_confidential_placeholder__'],
+    context: [],
+    context_requires_any: [],
   },
 };
 
