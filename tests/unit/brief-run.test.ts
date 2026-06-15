@@ -29,6 +29,29 @@ describe('runBrief', () => {
     expect(res2.briefSent).toBe(false);
   });
 
+  it('routes alerts to ggoldberg only; brief cc-s egoldberg (routing canon)', async () => {
+    const statePath = join(dir(), 'state.json');
+    const snap = baseSnap();
+    // Inject a cancelled-insurance item so a CRITICAL alert fires immediately.
+    (snap.insurance as unknown[]) = [{ id: 'ins1', property: 'P', coverage: 'GL', carrier: 'C', expires: null, premium: 0, daysToExpiry: null, status: 'Cancelled', notes: null, flags: [] }];
+    const calls: { subject: string; to: string[] }[] = [];
+    await runBrief(snap, {
+      statePath,
+      now: new Date('2026-06-04T11:00:00Z'), // 07:00 ET — brief gate open
+      send: async (email, to) => { calls.push({ subject: email.subject, to }); return { ok: true, via: 'com' }; },
+    });
+    const alertCalls = calls.filter((c) => c.subject.includes('CRITICAL'));
+    const briefCalls = calls.filter((c) => c.subject.includes('Daily Brief'));
+    expect(alertCalls.length).toBeGreaterThan(0);
+    expect(briefCalls.length).toBe(1);
+    // Alerts must NOT include egoldberg — ggoldberg only.
+    expect(alertCalls.every((c) => !c.to.includes('egoldberg@oxfordra.net'))).toBe(true);
+    expect(alertCalls.every((c) => c.to.includes('ggoldberg@oxfordra.net'))).toBe(true);
+    // Brief cc's egoldberg (sole exception per routing canon).
+    expect(briefCalls[0]!.to).toContain('egoldberg@oxfordra.net');
+    expect(briefCalls[0]!.to).toContain('ggoldberg@oxfordra.net');
+  });
+
   it('emits a same-day alert only for a newly-appeared critical item', async () => {
     const statePath = join(dir(), 'state.json');
     const snap = baseSnap();

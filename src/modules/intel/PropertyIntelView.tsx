@@ -234,7 +234,7 @@ function PropertySelector({
                   : { background: 'transparent', color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)', cursor: 'pointer' }
               }
             >
-              <span className="h-1.5 w-1.5 rounded-full" style={{ background: `var(--color-${tone === 'gold' ? 'warn' : tone === 'amber' ? 'warn' : tone === 'red' ? 'neg' : 'pos'})` }} />
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: tone === 'gold' ? 'var(--accent)' : tone === 'amber' ? 'var(--color-warn)' : tone === 'red' ? 'var(--color-neg)' : 'var(--color-pos)' }} />
               {s.propertyName ?? s.propertyId}
             </button>
           );

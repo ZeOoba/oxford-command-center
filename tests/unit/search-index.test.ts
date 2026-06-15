@@ -89,4 +89,12 @@ describe('buildEntityItems', () => {
     } as unknown as PortfolioSnapshot;
     expect(buildEntityItems(empty)).toEqual([]);
   });
+
+  it('is referentially stable: same input produces identical output (useMemo invariant)', () => {
+    const snap = makeSnap();
+    const result1 = buildEntityItems(snap);
+    const result2 = buildEntityItems(snap);
+    expect(result1).toEqual(result2);
+    expect(result1[0]!.ref).toEqual(result2[0]!.ref);
+  });
 });
