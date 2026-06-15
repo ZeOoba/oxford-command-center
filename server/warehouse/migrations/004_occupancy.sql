@@ -1,4 +1,4 @@
--- 003_occupancy.sql
+-- 004_occupancy.sql
 -- PFI Phase 1 — Occupancy time-series.
 --
 -- Stores per-property occupancy snapshots sourced from the workbook PortfolioSnapshot

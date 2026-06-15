@@ -5,9 +5,9 @@ import { useUi } from '../../brain/ui-context';
 import { insightToDraft } from '../../brain/draft';
 
 const SEV_COLOR: Record<string, string> = {
-  critical: '#e05c5c',
-  warning: '#e0a85c',
-  info: '#5c9fe0',
+  critical: 'var(--color-neg)',
+  warning: 'var(--color-warn)',
+  info: 'var(--color-info)',
 };
 
 export function AlertsModule() {

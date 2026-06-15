@@ -82,6 +82,11 @@ describe('evaluateConditions — debt', () => {
     const out = evaluateConditions(snap({ properties: [prop({ dscr: 1.2 })] }), opts);
     expect(out.find((i) => i.id === 'dscr-p1')?.severity).toBe('warning');
   });
+  it('DSCR at exactly 1.10 is a covenant watch warning, not a floor breach (L16 boundary)', () => {
+    const out = evaluateConditions(snap({ properties: [prop({ dscr: 1.10 })] }), opts);
+    expect(out.find((i) => i.id === 'dscr-p1')?.severity).toBe('warning');
+    expect(out.some((i) => i.id === 'dscr-floor-p1')).toBe(false);
+  });
   it('DSCR >= 1.25 does not fire', () => {
     const out = evaluateConditions(snap({ properties: [prop({ dscr: 1.25 })] }), opts);
     expect(out.some((i) => i.id.startsWith('dscr'))).toBe(false);
