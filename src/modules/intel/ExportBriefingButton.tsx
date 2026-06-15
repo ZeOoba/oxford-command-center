@@ -20,6 +20,12 @@ interface Props {
   label?: string;
 }
 
+/**
+ * Renders a button that downloads a PDF briefing for a property or manager.
+ *
+ * @param kind - The briefing subject type: either 'property' or 'manager'.
+ * @param id - The identifier (slug) of the property or manager to generate the briefing for.
+ */
 export function ExportBriefingButton({ kind, id, size = 'sm', label = 'Export briefing (PDF)' }: Props) {
   const href = `/api/warehouse/briefing/${kind}/${encodeURIComponent(id)}.pdf`;
   const onPress = () => {

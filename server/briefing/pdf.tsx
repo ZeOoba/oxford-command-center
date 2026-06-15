@@ -68,12 +68,24 @@ const GLYPH_SUBSTITUTIONS: Record<string, string> = {
  *  plus the specific General-Punctuation glyphs the brand subsets carry (– — ' ' " " • …). Anything
  *  else is dropped (after substitution) so an un-anticipated symbol can never reach fontkit and crash. */
 const KEEP_PUNCT = new Set(['–', '—', '‘', '’', '“', '”', '•', '…']);
+/**
+ * Determines if a code point is safe to render in the document.
+ *
+ * @returns `true` if the code point is safe to render, `false` otherwise.
+ */
 function isCovered(cp: number): boolean {
   if (cp === 0x09 || cp === 0x0a || cp === 0x0d) return true; // tab/newlines (layout-only)
   if (cp >= 0x20 && cp <= 0x7e) return true; // Basic Latin (printable ASCII)
   if (cp >= 0xa0 && cp <= 0xff) return true; // Latin-1 Supplement (× ·, accented letters, etc.)
   return KEEP_PUNCT.has(String.fromCodePoint(cp));
 }
+/**
+ * Sanitizes text for safe PDF rendering.
+ *
+ * Substitutes known problematic glyphs with safe alternatives and removes any remaining characters not supported by the brand fonts.
+ *
+ * @returns The text with problematic glyphs substituted and unsupported characters removed.
+ */
 function safeText(s: string): string {
   let out = s;
   for (const [bad, good] of Object.entries(GLYPH_SUBSTITUTIONS)) out = out.split(bad).join(good);
@@ -87,7 +99,14 @@ const HEALTH_COLOR: Record<string, string> = { excellent: ORA.pos, good: ORA.pos
 const ATTENTION_COLOR: Record<string, string> = { green: ORA.pos, yellow: ORA.gold, orange: '#C2700A', red: ORA.neg };
 const SEVERITY_COLOR: Record<string, string> = { low: ORA.muted, moderate: ORA.gold, high: '#C2700A', critical: ORA.neg };
 
-/** A vector sparkline path over `series` within a w×h box, baseline-padded. Returns null for <2 pts. */
+/**
+ * Generates an SVG path string for a sparkline chart from a series of numeric values.
+ *
+ * @param series - The numeric values to visualize
+ * @param w - The width of the sparkline box
+ * @param h - The height of the sparkline box
+ * @returns An SVG polyline path string, or `null` if the series contains fewer than 2 values
+ */
 function sparkPath(series: number[], w: number, h: number): string | null {
   if (series.length < 2) return null;
   const min = Math.min(...series);
@@ -105,6 +124,11 @@ function sparkPath(series: number[], w: number, h: number): string | null {
     .join(' ');
 }
 
+/**
+ * Renders a sparkline chart from a series of numbers.
+ *
+ * @returns An SVG sparkline element, or `null` if the series contains fewer than two points.
+ */
 function Sparkline({ series, color = ORA.gold }: { series: number[]; color?: string }) {
   const d = sparkPath(series, 80, 20);
   if (!d) return null;
@@ -115,7 +139,14 @@ function Sparkline({ series, color = ORA.gold }: { series: number[]; color?: str
   );
 }
 
-/** Vertical bars for the NOI trend — labeled below by index position (FY order). */
+/**
+ * Renders a bar chart visualization of NOI trend values.
+ *
+ * Each bar's height represents a value in the series, colored navy for non-negative values and orange for negative values. A horizontal zero line is drawn as a reference. Returns an "n/a" message if the series is empty.
+ *
+ * @param series - Array of numeric values to visualize
+ * @returns A bar chart component or a text element if the series is empty
+ */
 function BarSpark({ series }: { series: number[] }) {
   if (series.length < 1) return <Text style={styles.footerText}>n/a — needs at least one full year</Text>;
   const w = 220;
@@ -139,14 +170,28 @@ function BarSpark({ series }: { series: number[] }) {
   );
 }
 
+/**
+ * Renders a colored chip containing an uppercase label.
+ */
 function Chip({ label, color }: { label: string; color: string }) {
   return <Text style={[styles.chip, { backgroundColor: color }]}>{label.toUpperCase()}</Text>;
 }
 
+/**
+ * Returns the display value of a figure.
+ *
+ * @param f - The figure object
+ * @returns The figure's display value
+ */
 function fig(f: Figure): string {
   return safeText(f.display);
 }
 
+/**
+ * Renders the document footer with metadata and timestamps.
+ *
+ * Displays the confidential marking, workbook currency date, generation date, and optional QB data freshness timestamp.
+ */
 function Footer({ meta }: { meta: BriefingMeta }) {
   const freshness = meta.dataFreshness ? `· QB data ${meta.dataFreshness}` : '';
   return (
@@ -159,6 +204,9 @@ function Footer({ meta }: { meta: BriefingMeta }) {
   );
 }
 
+/**
+ * Renders the ORA header with company branding, a gold divider, and provided title and subtitle.
+ */
 function Masthead({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <View>
@@ -170,7 +218,11 @@ function Masthead({ title, subtitle }: { title: string; subtitle: string }) {
   );
 }
 
-// ── Per-property page ──────────────────────────────────────────────────────────────────────────
+/**
+ * Renders a property briefing PDF document.
+ *
+ * @returns A React element representing the property briefing document.
+ */
 function PropertyBriefingDoc({ m }: { m: PropertyBriefingModel }) {
   const subtitleParts = [m.subject.market, m.subject.manager ? `Managed by ${m.subject.manager}` : null].filter(Boolean);
   return (
@@ -276,7 +328,11 @@ function PropertyBriefingDoc({ m }: { m: PropertyBriefingModel }) {
   );
 }
 
-// ── Per-PM page ───────────────────────────────────────────────────────────────────────────────
+/**
+ * Renders a manager briefing page containing portfolio scorecard, managed properties, attention items, and ranked actions.
+ *
+ * @returns A React element representing the manager briefing document
+ */
 function ManagerBriefingDoc({ m }: { m: ManagerBriefingModel }) {
   return (
     <Document title={`ORA Briefing — ${m.subject.name}`} author="Oxford Realty Advisors" creator="Oxford Command Center" producer="Oxford Command Center" creationDate={new Date(`${m.meta.generatedDate}T00:00:00Z`)} modificationDate={new Date(`${m.meta.generatedDate}T00:00:00Z`)}>
@@ -351,12 +407,18 @@ function ManagerBriefingDoc({ m }: { m: ManagerBriefingModel }) {
   );
 }
 
-/** The single entry point: a BriefingModel → a react-pdf Document element. */
+/**
+ * Renders a property or manager briefing document based on the model kind.
+ */
 export function BriefingDocument({ model }: { model: BriefingModel }): React.ReactElement {
   return model.kind === 'property' ? <PropertyBriefingDoc m={model} /> : <ManagerBriefingDoc m={model} />;
 }
 
-/** Render a BriefingModel to PDF bytes (Buffer). */
+/**
+ * Renders a briefing document to PDF format.
+ *
+ * @returns A buffer containing the PDF bytes.
+ */
 export async function renderBriefingPdf(model: BriefingModel): Promise<Buffer> {
   // Lazy import keeps renderToBuffer off the module top-level (it pulls the full pdfkit graph).
   const { renderToBuffer } = await import('@react-pdf/renderer');
