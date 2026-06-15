@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { PortfolioSnapshot, Task, DealStage, RenewalStage, CompSet, AcquisitionInput } from '../src/contracts/index';
 import type { LeaseRunAssumptions } from '../src/contracts/lease-run';
@@ -58,10 +59,10 @@ export function loadOverlay(): Overlay {
   return { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, acquisitionInputs: {}, leaseRunAssumptions: {} };
 }
 
-export function saveOverlay(o: Overlay): boolean {
+export async function saveOverlay(o: Overlay): Promise<boolean> {
   try {
-    mkdirSync(dirname(overlayPath()), { recursive: true });
-    writeFileSync(overlayPath(), JSON.stringify(o, null, 2));
+    await mkdir(dirname(overlayPath()), { recursive: true });
+    await writeFile(overlayPath(), JSON.stringify(o, null, 2));
     return true;
   } catch {
     return false;
@@ -74,14 +75,14 @@ export function saveOverlay(o: Overlay): boolean {
  * writes the overlay. Returns the resulting partial. Pure of business logic — the engine merges
  * this partial onto the spec defaults. The workbook and warehouse DB are never touched.
  */
-export function setLeaseRunAssumptions(
+export async function setLeaseRunAssumptions(
   propertyId: string,
   patch: Partial<LeaseRunAssumptions>,
-): Partial<LeaseRunAssumptions> {
+): Promise<Partial<LeaseRunAssumptions>> {
   const o = loadOverlay();
   const merged = { ...(o.leaseRunAssumptions[propertyId] ?? {}), ...patch };
-  const ok = saveOverlay({ ...o, leaseRunAssumptions: { ...o.leaseRunAssumptions, [propertyId]: merged } });
-  if (!ok) throw new Error('Failed to persist overlay');
+  const ok = await saveOverlay({ ...o, leaseRunAssumptions: { ...o.leaseRunAssumptions, [propertyId]: merged } });
+  if (!ok) throw new Error(`Failed to persist overlay for property ${propertyId}`);
   return merged;
 }
 

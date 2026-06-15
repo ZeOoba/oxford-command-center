@@ -251,7 +251,7 @@ app.post('/api/actions/lease-run-assumptions', async (c) => {
   }
   const { propertyId, ...patch } = parsed.data;
   try {
-    const assumptions = setLeaseRunAssumptions(propertyId, patch);
+    const assumptions = await setLeaseRunAssumptions(propertyId, patch);
     return c.json({ ok: true, propertyId, assumptions });
   } catch {
     return c.json({ ok: false, error: 'overlay persistence failed' }, 500);
