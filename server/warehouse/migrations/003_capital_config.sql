@@ -1,4 +1,4 @@
--- 002_capital_config.sql
+-- 003_capital_config.sql
 -- PFI Phase 1 — Capital governance encoding + calibration audit trail.
 --
 -- capital_config: append-only version history of the ratified financial governors.

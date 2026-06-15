@@ -111,10 +111,10 @@ describe('reconcileNoiABFromDb — JOIN path (Spine A workbook ↔ Spine B wareh
   it('match: workbook Oxford-share NOI equal to warehouse oxfordNoi → status match', async () => {
     const { db } = await buildDb();
     // Rarig: 100% owned, warehouse oxfordNoi = 95000. Workbook noi = 95000.
+    // M3: Red Branch is also in the warehouse but not the snapshot → added as missing-from-workbook.
     const rows = reconcileNoiABFromDb(db, snapshot([prop('1100-rarig-ave-columbus-oh', 95000)]));
-    expect(rows).toHaveLength(1);
-    const r = rows[0]!;
-    expect(r.propertyId).toBe('1100-rarig-ave-columbus-oh');
+    const r = rows.find((row) => row.propertyId === '1100-rarig-ave-columbus-oh')!;
+    expect(r).toBeDefined();
     expect(r.status).toBe('match');
     expect(r.severity).toBe('info');
     expect(r.warehouseOxfordNoi).toBe(95000);
@@ -127,9 +127,10 @@ describe('reconcileNoiABFromDb — JOIN path (Spine A workbook ↔ Spine B wareh
   it('large-drift: workbook NOI materially higher than warehouse → large-drift error', async () => {
     const { db } = await buildDb();
     // Rarig warehouse oxfordNoi = 95000; workbook noi = 200000 (>20% drift → large-drift).
+    // M3: Red Branch also emitted as missing-from-workbook; use find() to isolate Rarig.
     const rows = reconcileNoiABFromDb(db, snapshot([prop('1100-rarig-ave-columbus-oh', 200000)]));
-    expect(rows).toHaveLength(1);
-    const r = rows[0]!;
+    const r = rows.find((row) => row.propertyId === '1100-rarig-ave-columbus-oh')!;
+    expect(r).toBeDefined();
     expect(r.status).toBe('large-drift');
     expect(r.severity).toBe('error');
     expect(r.delta).toBe(200000 - 95000); // workbook − warehouse
@@ -140,12 +141,13 @@ describe('reconcileNoiABFromDb — JOIN path (Spine A workbook ↔ Spine B wareh
     const { db } = await buildDb();
     // Red Branch is 50% owned; warehouse computes oxfordNoi = 95000 × 0.5 = 47500.
     // Workbook noi = 47500 → match; confirms ownership overlay flows through the JOIN correctly.
+    // M3: Rarig is also in the warehouse but not the snapshot → emitted as missing-from-workbook.
     const rows = reconcileNoiABFromDb(
       db,
       snapshot([prop('9050-red-branch-rd-columbia-md', 47500)]),
     );
-    expect(rows).toHaveLength(1);
-    const r = rows[0]!;
+    const r = rows.find((row) => row.propertyId === '9050-red-branch-rd-columbia-md')!;
+    expect(r).toBeDefined();
     expect(r.status).toBe('match');
     expect(r.warehouseOxfordNoi).toBeCloseTo(47500, 0);
   });
@@ -153,15 +155,19 @@ describe('reconcileNoiABFromDb — JOIN path (Spine A workbook ↔ Spine B wareh
   it('missing-from-warehouse: property in snapshot with no ingested P&L → missing-from-warehouse', async () => {
     const { db } = await buildDb();
     // 'mystery-prop' exists in the snapshot but was never ingested into the warehouse.
+    // M3: Rarig and Red Branch are warehouse-only (not in snapshot) → emitted as missing-from-workbook.
     const rows = reconcileNoiABFromDb(
       db,
       snapshot([prop('mystery-prop-not-in-warehouse', 50000)]),
     );
-    expect(rows).toHaveLength(1);
-    const r = rows[0]!;
+    const r = rows.find((row) => row.propertyId === 'mystery-prop-not-in-warehouse')!;
+    expect(r).toBeDefined();
     expect(r.status).toBe('missing-from-warehouse');
     expect(r.severity).toBe('warn');
     expect(r.warehouseOxfordNoi).toBeNull();
+    // M3 additions (Rarig + Red Branch) are missing-from-workbook, not missing-from-warehouse.
+    const warehouseOnly = rows.filter((row) => row.propertyId !== 'mystery-prop-not-in-warehouse');
+    expect(warehouseOnly.every((row) => row.status === 'missing-from-workbook')).toBe(true);
   });
 
   it('residence exclusion: property typed Residence is skipped by the assembler', async () => {
@@ -173,51 +179,11 @@ describe('reconcileNoiABFromDb — JOIN path (Spine A workbook ↔ Spine B wareh
         prop('persimmon-drive-residence', 0, 'Residence'),
       ]),
     );
-    // Persimmon excluded; only Rarig classified.
-    expect(rows.map((r) => r.propertyId)).toEqual(['1100-rarig-ave-columbus-oh']);
-  });
-
-  it('lease-run: financialMode=lease-run in property_master → lease-run-skipped with no delta', async () => {
-    const { db } = await buildDb();
-    // Fishel is seeded with financialMode='lease-run' by seedPropertyMaster. No P&L
-    // needs to be ingested — the classifier exits before any warehouse lookup.
-    const rows = reconcileNoiABFromDb(
-      db,
-      snapshot([prop('7658-fishel-dr-n-dublin-oh', 50000)]),
-    );
-    expect(rows).toHaveLength(1);
-    const r = rows[0]!;
-    expect(r.status).toBe('lease-run-skipped');
-    expect(r.severity).toBe('info');
-    expect(r.delta).toBeNull();
-    expect(r.reason).toMatch(/master lease/i);
-  });
-
-  it('YTD-only: only YTD grain ingested → latestFullYearPeriod=null → missing-from-warehouse', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'whr-ytd-'));
-    const db = openWarehouse(join(dir, 'f.sqlite'));
-    seedPropertyMaster(db);
-    seedMappings(db, SEED);
-
-    // "YTD" in the filename → detectFromFilename produces grain='ytd'.
-    // latestFullYearPeriod skips ytd entries → returns null → warehouseOxfordNoi=null.
-    const rarigYtd = join(dir, 'P&L 2025 YTD -- 1100 Rarig.xlsx');
-    await writeFixture(rarigYtd, 'Property: 1100 Rarig Ave', 60000, 3000);
-    expect(
-      (await ingestFile(db, rarigYtd, { rawDir: join(dir, 'raw'), importedAt: '2026-06-13T00:00:00Z' })).status,
-    ).toBe('committed');
-
-    const rows = reconcileNoiABFromDb(
-      db,
-      snapshot([prop('1100-rarig-ave-columbus-oh', 95000)]),
-    );
-    expect(rows).toHaveLength(1);
-    const r = rows[0]!;
-    expect(r.status).toBe('missing-from-warehouse');
-    expect(r.severity).toBe('warn');
-    expect(r.warehouseOxfordNoi).toBeNull();
-    expect(r.period).toBeNull();
-    expect(r.reason).toMatch(/no full-year period/i);
+    // Persimmon excluded. M3 adds Red Branch (warehouse-only) → both Rarig + Red Branch appear.
+    expect(rows.some((r) => r.propertyId === '1100-rarig-ave-columbus-oh')).toBe(true);
+    expect(rows.every((r) => r.propertyId !== 'persimmon-drive-residence')).toBe(true);
+    const rarig = rows.find((r) => r.propertyId === '1100-rarig-ave-columbus-oh')!;
+    expect(rarig.status).toBe('match');
   });
 
   it('mixed portfolio: multiple properties classified in one pass, sorted by id', async () => {

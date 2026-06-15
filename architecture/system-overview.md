@@ -27,7 +27,7 @@ Master Workbook .xlsx (OneDrive/SharePoint)
   → reconcile (scripts/reconcile.ts)  $0-tolerance self-totals check
   → /api/snapshot + /sse              Push to client
   → src/analytics/engine.ts           buildAnalytics() → AnalyticsBundle
-  → 18 client modules                 UI rendering
+  → 20 client modules                 UI rendering
 
 Supplemental live sources (appended to Spine A):
   Notion deals → /api/ai (tool: list_pipeline)
@@ -96,7 +96,7 @@ src/
   data/               TanStack Query hooks + SSE listener + brain context
   brain/              App-wide UI state (drawer, AI panel, command palette)
   shell/              AppShell, Sidebar, TopBar, ScenarioSwitch
-  modules/            18 modules (one per view — see §5)
+  modules/            20 modules (one per view — see §5)
   primitives/         StatusPill + other presentation atoms
   charts/             visx chart components (Waterfall, etc.)
 ```
@@ -108,27 +108,33 @@ src/
 
 ---
 
-## 5. Module Map (18 modules)
+## 5. Module Map (20 modules)
+
+Rail modules registered in `src/shell/modules.tsx` — each occupies a `/:moduleId` route.
+Overlay components (AI Panel, Command Palette, Entity Drawer) live in `src/brain/` and are not rail modules.
 
 | Module | Path | Spine | Status |
 |--------|------|-------|--------|
 | Overview | `src/modules/overview/` | A | Shipped |
-| Portfolio | `src/modules/portfolio/` | A | Shipped |
-| Debt | `src/modules/debt/` | A | Shipped |
-| Leases | `src/modules/leases/` | A | Shipped |
-| Cash | `src/modules/cash/` | A | Shipped |
-| Insurance | `src/modules/insurance/` | A | Shipped |
+| Principal Home | `src/modules/principal/` | A | Shipped |
+| Acquisitions | `src/modules/acquisitions/` | A | Seeded kanban only |
+| Tasks | `src/modules/tasks/` | A | Shipped |
 | Alerts | `src/modules/alerts/` | A | Shipped |
 | Calendar | `src/modules/calendar/` | A | Shipped |
-| Tenants | `src/modules/tenants/` | A | Shipped |
-| Deal Comps | `src/modules/comps/` | A | Shipped |
-| Semantic Search | `src/modules/search/` | A | Shipped |
-| Market | `src/modules/market/` | A | Shipped |
-| Acquisitions | `src/modules/acquisitions/` | A | Seeded kanban only |
+| Renewals | `src/modules/renewals/` | A | Shipped |
+| Portfolio | `src/modules/portfolio/` | A | Shipped |
 | Intel | `src/modules/intel/` | B | Phase B2 (PR #14) |
-| AI Panel | `src/brain/AiPanel.tsx` | A+B | Shipped |
-| Command Palette | `src/brain/CommandPalette.tsx` | A | Shipped |
-| Entity Drawer | `src/brain/EntityDrawer.tsx` | A | Shipped |
+| Calibration | `src/modules/calibration/` | B | Shipped |
+| Leases | `src/modules/leases/` | A | Shipped |
+| Tenants | `src/modules/tenants/` | A | Shipped |
+| Debt | `src/modules/debt/` | A | Shipped |
+| Cash | `src/modules/cash/` | A | Shipped |
+| Monthly Close | `src/modules/close/` | A | Shipped |
+| Insurance | `src/modules/insurance/` | A | Shipped |
+| Market | `src/modules/market/` | A | Shipped |
+| Relationships | `src/modules/relationships/` | A | Shipped |
+| Documents | `src/modules/documents/` | A | Shipped |
+| System Health | `src/modules/health/` | A | Shipped |
 
 ---
 

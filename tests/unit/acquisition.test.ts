@@ -105,6 +105,13 @@ describe('STAGE 0 gates KILL', () => {
     expect(score(strongDeal({ productType: 'office-only' })).verdict).toBe('KILLED');
     expect(score(strongDeal({ clusterTier: 'satellite', driveMinutesToCluster: 45 })).verdict).toBe('KILLED');
   });
+  it('kills on retail-only product type (L14)', () => {
+    expect(score(strongDeal({ productType: 'retail-only' })).verdict).toBe('KILLED');
+  });
+  it('null SF deal cannot reach PURSUE (basis indeterminate, size box unconfirmed) (L15)', () => {
+    const s = score(strongDeal({ totalSf: null, maxBuildingSf: null }));
+    expect(s.verdict).not.toBe('PURSUE');
+  });
   it('kills when door COUNTS show no ground-level access (0 docks AND 0 drive-ins), counts authoritative', () => {
     const s = score(strongDeal({ dockCount: 0, driveInCount: 0 }));
     expect(s.verdict).toBe('KILLED');
@@ -267,5 +274,35 @@ describe('confirmatory refute fixes — RCT fail-closed', () => {
   it('flags the reverse door contradiction (count > 0 but presence flag false)', () => {
     const s = score(strongDeal({ dockCount: 5, driveInCount: 5, hasDock: false, hasDriveIn: false }));
     expect(s.dataQuality.some((d) => d.field === 'doors')).toBe(true);
+  });
+});
+
+describe('isFresh — comp staleness (H7)', () => {
+  const WITH_ADJ = { marketFundamentalsAdj: 1, marketFundamentalsConfidence: 'estimated' } as const;
+
+  it('null compSourcedAt zeroes marketFundamentalsAdj and fires the data-quality flag', () => {
+    const s = score(strongDeal({ ...WITH_ADJ, compSourcedAt: null }));
+    expect(s.dataQuality.some((d) => d.field === 'marketFundamentalsAdj')).toBe(true);
+  });
+
+  it('null asAtUtc zeroes marketFundamentalsAdj and fires the data-quality flag', () => {
+    const s = score(strongDeal({ ...WITH_ADJ, asAtUtc: null }));
+    expect(s.dataQuality.some((d) => d.field === 'marketFundamentalsAdj')).toBe(true);
+  });
+
+  it('stale comp (100 days > 90-day window) fires marketFundamentalsAdj flag', () => {
+    // NOW = '2026-06-13T00:00:00Z'; '2026-03-05T00:00:00Z' is 100 days prior → outside 90-day window
+    const s = score(strongDeal({ ...WITH_ADJ, compSourcedAt: '2026-03-05T00:00:00Z', asAtUtc: NOW }));
+    expect(s.dataQuality.some((d) => d.field === 'marketFundamentalsAdj')).toBe(true);
+  });
+});
+
+describe('WALT decay band (M8)', () => {
+  it('waltYears=3 (2 < w ≤ 4 decay band) scores strictly between sweet-spot (1.5yr) and beyond-decay (5yr)', () => {
+    const sweet = score(strongDeal({ waltYears: 1.5 })); // factor 1.0
+    const decay = score(strongDeal({ waltYears: 3.0 })); // factor 0.5 — mid-decay band
+    const beyond = score(strongDeal({ waltYears: 5.0 })); // factor 0.0 — past decay threshold
+    expect(decay.composite).toBeLessThan(sweet.composite);
+    expect(decay.composite).toBeGreaterThan(beyond.composite);
   });
 });
