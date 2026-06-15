@@ -256,13 +256,13 @@ is never left publicly reachable.
 **Current state (verified 2026-06-15):**
 - DNS for `oxfordra.net` is on **NS1** (`dns*.p04.nsone.net`, Netlify-managed) — **not** Cloudflare. Any
   `brain` record change is made at NS1, not in a Cloudflare DNS zone.
-- `brain.oxfordra.net` is already a **CNAME to the `ora-brain` Cloudflare Tunnel** (`*.cfargotunnel.com`),
-  which routes to the **local** Brain Server at `http://localhost:5273`. (The `cloudflared` tunnel config is
-  a local, untracked file on the operator's machine — it is not in this repo.)
-- Therefore `brain.oxfordra.net` is **live only while this machine is on AND both `cloudflared` and the
-  Brain Server are running.** When the tunnel/origin is down the request does not complete — the client gets
-  **no HTTP response** (a connection timeout, or a Cloudflare `53x` tunnel error if the edge is reached);
-  verified offline at check time.
+- `brain.oxfordra.net` is a Netlify/NS1 **CNAME to `<id>.cfargotunnel.com`** (the `ora-brain` tunnel). **This
+  does NOT work as a tunnel hostname:** it resolves only to a non-routable IPv6 ULA (`fd10:...::`, no A record),
+  and — because the hostname is on Netlify/NS1, not proxied through Cloudflare — it can be **neither routed to
+  the tunnel NOR Cloudflare-Access-gated**. A working tunnel hostname requires Cloudflare to manage the DNS
+  (the "oxfordra.net on CF DNS" prerequisite in `scripts/cloudflared-config.yml`), which is unmet. Verified via
+  `nslookup`/`curl` 2026-06-15. Net: it currently exposes nothing (safe), but Option B needs DNS rework first —
+  **use Option A.**
 - The always-on alternative `ora-command-center.pages.dev` is live and **Access-enforced** (unauthenticated
   → `302` to `…cloudflareaccess.com`).
 
@@ -287,8 +287,11 @@ Machine-independent; read-only snapshot (StatusPill shows "Static · baked _N_h 
    picture, deploy with `MIRROR_INCLUDE_CONFIDENTIAL=1` (see `deploy-mirror.ps1`) — **only after** step 4
    confirms the `302`. Do not skip the confidentiality gate (defined above).
 
-**Option B — Live, on-demand: keep the existing tunnel.**
-Live data + write-back, but only while this machine + `cloudflared` are running.
+**Option B — Live, on-demand: tunnel (requires DNS rework first).**
+Live data + write-back, but only while this machine + `cloudflared` are running — **and only after**
+`brain.oxfordra.net` is made Cloudflare-managed (delegate the subdomain to a Cloudflare zone, or move the
+zone). A plain Netlify CNAME to `<id>.cfargotunnel.com` does **not** route or gate (see Current state above),
+so with that unresolved, prefer Option A.
 1. Run the tunnel as a service so it survives reboots: `cloudflared service install` (as Administrator);
    keep the Brain Server up (`npm run dev`, or serve a built app).
 2. Add `brain.oxfordra.net` to `server.allowedHosts` in `vite.config.ts` (the option is **not** set today;
