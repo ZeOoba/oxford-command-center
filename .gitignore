@@ -29,3 +29,4 @@ data/doc-index.sqlite-shm
 data/doc-index.sqlite-wal
 data/reindex.log
 .superpowers/
+.worktrees

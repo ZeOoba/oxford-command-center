@@ -50,6 +50,14 @@ export const RentScheduleEntry = z.object({
   leaseYearLabel: z.string(), // e.g. "LY '27"
   annualBaseRent: z.number().nullable(),
   status: RentStatus,
+}).superRefine((entry, ctx) => {
+  const assumed = entry.status === 'option_assumed';
+  if (assumed && entry.annualBaseRent !== null) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'annualBaseRent must be null for option_assumed periods', path: ['annualBaseRent'] });
+  }
+  if (!assumed && entry.annualBaseRent === null) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'annualBaseRent is required for hard-data rent statuses', path: ['annualBaseRent'] });
+  }
 });
 export type RentScheduleEntry = z.infer<typeof RentScheduleEntry>;
 
@@ -122,6 +130,10 @@ export const LeaseRunPeriod = z.object({
   noi: z.number(),
   noiPsf: z.number(),
   noiGrowthYoY: z.number().nullable(), // null for the first period
+}).superRefine((period, ctx) => {
+  if (period.isAssumption !== isAssumptionStatus(period.status)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'isAssumption must match the value derived from status', path: ['isAssumption'] });
+  }
 });
 export type LeaseRunPeriod = z.infer<typeof LeaseRunPeriod>;
 

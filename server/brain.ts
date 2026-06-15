@@ -78,7 +78,7 @@ class Brain extends EventEmitter {
   private rederive(reason: string) {
     if (!this.base) return;
     this.snapshot = { ...applyOverlay(this.base, this.overlay), quickbooks: loadQuickbooks(this.base.properties) };
-    saveOverlay(this.overlay);
+    void saveOverlay(this.overlay);
     this.persist(this.snapshot);
     this.setState({ lastUpdated: new Date().toISOString() });
     this.emit('snapshot', { reason, flags: [] as DataQualityFlag[] });
