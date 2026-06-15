@@ -198,3 +198,41 @@ export function inputToForm(input: AcquisitionInput): FormState {
   }
   return f;
 }
+
+// ── OM field extraction client helper ────────────────────────────────────────
+
+export interface OmExtractResult {
+  fields: Record<string, string>;
+  fieldCount: number;
+}
+
+export class OmExtractError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'OmExtractError';
+  }
+}
+
+/** POST a PDF file to the OM extraction endpoint. Returns extracted FormState-format fields.
+ *  Throws OmExtractError on any failure (network, server, or extraction error). */
+export async function omExtractRequest(file: File): Promise<OmExtractResult> {
+  const body = new FormData();
+  body.append('file', file);
+  let res: Response;
+  try {
+    res = await fetch('/api/actions/om-extract', { method: 'POST', body });
+  } catch {
+    throw new OmExtractError('Could not reach the Brain server.');
+  }
+  const data = (await res.json()) as {
+    ok?: boolean;
+    error?: string;
+    fields?: Record<string, string>;
+    fieldCount?: number;
+  };
+  if (!res.ok || !data.ok) {
+    throw new OmExtractError(data.error ?? `Extraction failed (${res.status})`);
+  }
+  if (!data.fields) throw new OmExtractError('Malformed extraction response.');
+  return { fields: data.fields, fieldCount: data.fieldCount ?? 0 };
+}
