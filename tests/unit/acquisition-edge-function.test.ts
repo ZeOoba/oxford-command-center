@@ -1,16 +1,26 @@
 // tests/unit/acquisition-edge-function.test.ts
 //
-// Verifies the Cloudflare Pages Function (functions/api/warehouse/acquisition/score.ts) is a faithful
-// mirror of the Brain Server's acquisition-score route: same ratified config, same engine, same response
-// shape. Runs in Node (vitest) — node:crypto/fs + the bundled JSON import resolve here, so this proves
-// the LOGIC + config parity. It does NOT exercise the workerd edge runtime (nodejs_compat) — that needs a
-// real `wrangler pages dev`/deploy check, documented in the Function header.
+// Verifies the Cloudflare Pages Function (functions/api/warehouse/acquisition/score.ts) is a faithful,
+// FAIL-CLOSED mirror of the Brain Server's acquisition-score route: same ratified config, same engine,
+// same envelope — and that the ratification gate is real (the prior happy-path-only test could not
+// detect a removed gate; this one tests resolveAcquisitionConfig directly).
+//
+// Runs in Node (vitest) — node:crypto/fs + the bundled JSON import resolve here, so this proves the
+// LOGIC + config parity + gate. It does NOT exercise the workerd edge runtime (nodejs_compat /
+// compatibility_date >= 2025-09-01) — that needs a real `wrangler pages dev`/deploy check (Function header).
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { onRequestPost } from '../../functions/api/warehouse/acquisition/score';
+import { onRequestPost, resolveAcquisitionConfig } from '../../functions/api/warehouse/acquisition/score';
 import { AcquisitionInput, ReplacementCostTable } from '@contracts/acquisition';
 import { parseRuleset, scoreAcquisition } from '../../server/warehouse/acquisition';
+
+const ratifiedRulesetObj = JSON.parse(
+  readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8'),
+) as Record<string, any>;
+const rctObj = JSON.parse(
+  readFileSync(resolve(process.cwd(), 'config/replacement-cost.v1.json'), 'utf8'),
+) as Record<string, any>;
 
 // A strong, fully-known PURSUE-grade deal (copied from acquisition.test.ts STRONG_BASE).
 const STRONG_BASE: Record<string, unknown> = {
@@ -37,31 +47,57 @@ function postCtx(body: unknown): { request: Request } {
     }),
   };
 }
+const clone = (o: unknown): any => structuredClone(o);
+const stripScoredAt = (s: Record<string, unknown>): Record<string, unknown> => ({ ...s, scoredAt: undefined });
 
-// `scoredAt` is the engine's only wall-clock field — strip it before comparing two independent runs.
-function stripScoredAt(s: Record<string, unknown>): Record<string, unknown> {
-  return { ...s, scoredAt: undefined };
-}
+describe('acquisition edge Function — fail-closed gate (resolveAcquisitionConfig)', () => {
+  it('accepts the real ratified config', () => {
+    const cfg = resolveAcquisitionConfig(ratifiedRulesetObj, rctObj);
+    expect(cfg.ruleset.ratification).toBe('ratified');
+  });
+  it('THROWS on a non-ratified (proposed) ruleset', () => {
+    expect(() => resolveAcquisitionConfig({ ...ratifiedRulesetObj, ratification: 'proposed' }, rctObj)).toThrow(/not 'ratified'/);
+  });
+  it('THROWS on a ratified-but-incomplete ruleset (clearHeightBands null)', () => {
+    const j = clone(ratifiedRulesetObj); j.scoring.cat3.clearHeightBands = null;
+    expect(() => resolveAcquisitionConfig(j, rctObj)).toThrow(/clearHeightBands=null/);
+  });
+  it('THROWS on a ratified ruleset missing provenance (ratifiedBy null)', () => {
+    expect(() => resolveAcquisitionConfig({ ...ratifiedRulesetObj, ratifiedBy: null }, rctObj)).toThrow(/provenance/);
+  });
+  it('THROWS on a non-ratified RCT', () => {
+    expect(() => resolveAcquisitionConfig(ratifiedRulesetObj, { ...rctObj, ratification: 'proposed' })).toThrow(/not 'ratified'/);
+  });
+});
 
-describe('acquisition edge Function — POST /api/warehouse/acquisition/score', () => {
-  it('scores a valid deal identically to the server engine (same ratified config)', async () => {
+describe('acquisition edge Function — config identity (pins what BOTH server + edge use)', () => {
+  // Catches the config-divergence risk the happy-path parity test cannot: assert the SECURITY-relevant
+  // identity invariants of the bundled/on-disk ruleset (full bundle-vs-disk parity needs a deploy check).
+  it('the ratified config carries the gate-required provenance', () => {
+    expect(ratifiedRulesetObj.ratification).toBe('ratified');
+    expect(typeof ratifiedRulesetObj.rulesetVersion).toBe('string');
+    expect(ratifiedRulesetObj.rulesetVersion.length).toBeGreaterThan(0);
+    expect(ratifiedRulesetObj.ratifiedBy).not.toBeNull();
+    expect(ratifiedRulesetObj.ratifiedDate).not.toBeNull();
+    expect(rctObj.ratification).toBe('ratified');
+    expect(rctObj.ratifiedBy).not.toBeNull();
+  });
+});
+
+describe('acquisition edge Function — POST parity + input handling', () => {
+  it('scores a valid deal identically to the server engine (scoredAt stripped)', async () => {
     const res = await onRequestPost(postCtx(STRONG_BASE));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { score: Record<string, unknown> };
 
-    // Independent server-path expectation using the SAME on-disk config the Function bundles.
-    const ruleset = parseRuleset(
-      JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')),
-    );
-    const rct = ReplacementCostTable.parse(
-      JSON.parse(readFileSync(resolve(process.cwd(), 'config/replacement-cost.v1.json'), 'utf8')),
-    );
+    const ruleset = parseRuleset(ratifiedRulesetObj);
+    const rct = ReplacementCostTable.parse(rctObj);
     const expected = scoreAcquisition(AcquisitionInput.parse(STRONG_BASE), ruleset, { rct });
 
     expect(stripScoredAt(body.score)).toEqual(stripScoredAt(expected as unknown as Record<string, unknown>));
   });
 
-  it('returns the same {score} envelope as the server route (has verdict + tier)', async () => {
+  it('returns the same {score} envelope as the server route (verdict + tier)', async () => {
     const res = await onRequestPost(postCtx(STRONG_BASE));
     const body = (await res.json()) as { score: Record<string, unknown> };
     expect(body.score).toHaveProperty('verdict');
@@ -71,8 +107,9 @@ describe('acquisition edge Function — POST /api/warehouse/acquisition/score', 
   it('rejects invalid input with 400 (not a blessed verdict)', async () => {
     const res = await onRequestPost(postCtx({ not: 'a deal' }));
     expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string };
+    const body = (await res.json()) as { error: string; score?: unknown };
     expect(body.error).toMatch(/invalid acquisition input/);
+    expect(body.score).toBeUndefined();
   });
 
   it('handles an empty body without throwing (400, fail-closed)', async () => {
