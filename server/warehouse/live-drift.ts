@@ -10,7 +10,16 @@
 // surfaces every divergence so the gate can fail closed on it.
 import type { WarehouseDb } from './db';
 
+/** Value type for committedBasisMap: both the accounting basis and the human-readable file name. */
+export interface BasisEntry {
+  basis: string;
+  fileName: string;
+}
+
 export interface BasisDriftRow {
+  /** The unique file_hash key (SHA of file content). */
+  fileHash: string;
+  /** Human-readable file_name for display and triage. */
   fileName: string;
   /** accounting basis in the LIVE (served) warehouse; null = the file is absent from live. */
   live: string | null;
@@ -19,32 +28,41 @@ export interface BasisDriftRow {
 }
 
 /**
- * Pure comparator. Given the committed file_name→basis maps of the live warehouse and a fresh
+ * Pure comparator. Given the committed file_hash→BasisEntry maps of the live warehouse and a fresh
  * rebuild, return one row per file whose basis diverges (including presence mismatches in either
  * direction), sorted by file name. An empty array means the served warehouse matches current code.
  */
 export function basisDrift(
-  live: ReadonlyMap<string, string>,
-  fresh: ReadonlyMap<string, string>,
+  live: ReadonlyMap<string, BasisEntry>,
+  fresh: ReadonlyMap<string, BasisEntry>,
 ): BasisDriftRow[] {
   const rows: BasisDriftRow[] = [];
-  const files = new Set<string>([...live.keys(), ...fresh.keys()]);
-  for (const fileName of files) {
-    const l = live.get(fileName) ?? null;
-    const f = fresh.get(fileName) ?? null;
-    if (l !== f) rows.push({ fileName, live: l, fresh: f });
+  const hashes = new Set<string>([...live.keys(), ...fresh.keys()]);
+  for (const fileHash of hashes) {
+    const lEntry = live.get(fileHash);
+    const fEntry = fresh.get(fileHash);
+    const l = lEntry?.basis ?? null;
+    const f = fEntry?.basis ?? null;
+    if (l !== f) {
+      const fileName = (lEntry ?? fEntry)!.fileName;
+      rows.push({ fileHash, fileName, live: l, fresh: f });
+    }
   }
-  return rows.sort((a, b) => a.fileName.localeCompare(b.fileName));
+  // Secondary key on the unique fileHash: when two drifting files share a fileName (the very
+  // duplicate-name case L6 keys the map on file_hash to survive), fileName alone ties and row
+  // order would follow Set iteration order — fileHash makes the gate output deterministic.
+  return rows.sort((a, b) => a.fileName.localeCompare(b.fileName) || a.fileHash.localeCompare(b.fileHash));
 }
 
 /**
- * committed file_name→basis map for a warehouse DB. Empty/NULL basis is coalesced to 'unknown' to
- * match the engine (metrics.ts) and computeBasisCoverage — so a stored '' never reads as a phantom
- * drift against a fresh 'unknown'.
+ * Committed file_hash→BasisEntry map for a warehouse DB. Keyed on file_hash (unique per content,
+ * NOT file_name) so renamed files or duplicate file_name rows don't overwrite each other in the Map.
+ * fileName is carried alongside for human-readable error output. Empty/NULL basis is coalesced to
+ * 'unknown' to match the engine (metrics.ts) and computeBasisCoverage.
  */
-export function committedBasisMap(db: WarehouseDb): Map<string, string> {
+export function committedBasisMap(db: WarehouseDb): Map<string, BasisEntry> {
   const rows = db.prepare(
-    "SELECT file_name AS f, COALESCE(NULLIF(basis, ''), 'unknown') AS b FROM import_batches WHERE status = 'committed'",
-  ).all() as Array<{ f: string; b: string }>;
-  return new Map(rows.map((r) => [r.f, r.b]));
+    "SELECT file_hash AS fh, file_name AS fn, COALESCE(NULLIF(basis, ''), 'unknown') AS b FROM import_batches WHERE status = 'committed'",
+  ).all() as Array<{ fh: string; fn: string; b: string }>;
+  return new Map(rows.map((r) => [r.fh, { basis: r.b, fileName: r.fn }]));
 }

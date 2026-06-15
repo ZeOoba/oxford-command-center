@@ -58,37 +58,29 @@ describe('classifyNoiReconciliation — pure A↔B classifier', () => {
     expect(r.deltaPct).toBeCloseTo(0.0385, 4); // 4000/104000 = 3.85% on max abs
   });
 
-  it('returns in-tolerance when small-NOI properties drift past the % band but under the absolute band', () => {
-    // Solar/small property: warehouse 5k, workbook 14k. 180% pct drift but only $9k absolute.
-    // The absolute floor protects small-N properties from spurious large-drift errors.
+  it('absolute floor does NOT suppress large relative drift: wb=14k/wh=5k (64% > 20% largeDriftPct) → large-drift (M2 fix)', () => {
+    // Before M2 fix: absDelta=$9k ≤ $10k abs-band granted in-tolerance despite 64% relative drift.
+    // After fix: abs-band requires deltaPct < largeDriftPct; 64% fails → large-drift/error.
     const r = classifyNoiReconciliation(
       input({ workbookOxfordNoi: 14000, warehouseOxfordNoi: 5000 }),
       TOL,
     );
-    expect(r.status).toBe('in-tolerance');
-    expect(r.severity).toBe('info');
+    expect(r.status).toBe('large-drift');
+    expect(r.severity).toBe('error');
     expect(r.delta).toBe(9000);
   });
 
-  it('warehouse-zero vs non-zero workbook is missing-from-warehouse, not in-tolerance (L5 fix)', () => {
-    // L5 defect: wb=$9,000 / wh=$0. |delta|=$9k ≤ $10k abs band → was in-tolerance despite 100%
-    // relative delta. A warehouse-zero with a non-zero workbook NOI means the warehouse has no
-    // committed P&L for this period — not a genuine near-match. Must be missing-from-warehouse.
+  it('absolute floor still grants in-tolerance for small drift within the pct band (abs band + pct < largeDriftPct)', () => {
+    // wb=12k, wh=5k: absDelta=7k ≤ $10k AND deltaPct=7/12=58% ... still fails because 58% > 20%.
+    // Use a case where abs guards a pct-miss AND pct is also below largeDriftPct:
+    // wb=11k, wh=9k: delta=2k, deltaPct=2/11=18.2% (between pctBand 5% and largeDriftPct 20%).
+    // → absDelta=2k ≤ 10k AND deltaPct=18.2% < 20% → in-tolerance via abs band.
     const r = classifyNoiReconciliation(
-      input({ workbookOxfordNoi: 9000, warehouseOxfordNoi: 0, warehouseBasis: 'cash' }),
-      TOL,
-    );
-    expect(r.status).toBe('missing-from-warehouse');
-    expect(r.severity).toBe('warn');
-  });
-
-  it('legitimately small symmetric delta (wb=$9,200 / wh=$9,000, ~2% drift) still passes in-tolerance', () => {
-    // Guard: the warehouse-zero fix must not fire when the warehouse genuinely has a non-zero NOI.
-    const r = classifyNoiReconciliation(
-      input({ workbookOxfordNoi: 9200, warehouseOxfordNoi: 9000, warehouseBasis: 'cash' }),
+      input({ workbookOxfordNoi: 11000, warehouseOxfordNoi: 9000 }),
       TOL,
     );
     expect(r.status).toBe('in-tolerance');
+    expect(r.severity).toBe('info');
   });
 
   it('returns drift when the delta is past tolerance but under the large-drift threshold', () => {
@@ -189,15 +181,17 @@ describe('sign-inversion guard (CORRECTNESS — adversarial fix, the absolute fl
     expect(r.reason).toMatch(/sign|profit.*loss|inversion/i);
   });
 
-  it('zero is treated as NEUTRAL — wb=0 vs wh=$3k still in-tolerance via the abs band (no sign parity violation)', () => {
-    // Zero NOI is unsigned (a property neither profits nor loses); the sign-parity guard must
-    // not punish a workbook-zero vs warehouse-small-positive case.
+  it('zero is NEUTRAL for sign-parity (guard does not fire), but 100% relative drift → large-drift (M2)', () => {
+    // Math.sign(0)===0 so signsConflict guard (which requires both sides non-zero) never fires.
+    // However: deltaPct = 3000/max(0,3000) = 100% ≥ largeDriftPct(20%), so the abs band cannot
+    // grant in-tolerance under the M2 fix. A workbook reporting $0 vs a warehouse showing $3k IS
+    // a material discrepancy (100% relative drift) and should surface as large-drift.
     const r = classifyNoiReconciliation(
       input({ workbookOxfordNoi: 0, warehouseOxfordNoi: 3000, warehouseBasis: 'cash' }),
       TOL,
     );
-    expect(r.status).toBe('in-tolerance');
-    expect(r.severity).toBe('info');
+    expect(r.status).not.toBe('in-tolerance');
+    expect(r.status).toBe('large-drift');
   });
 
   it('symmetric sign-inverted case (wb=−$3k, wh=+$3k) is also not in-tolerance', () => {
@@ -207,6 +201,18 @@ describe('sign-inversion guard (CORRECTNESS — adversarial fix, the absolute fl
     );
     expect(r.status).not.toBe('in-tolerance');
     expect(r.status).not.toBe('match');
+  });
+
+  it('sign-inverted pair is always large-drift (deltaPct > 1.0 > 20% for any opposing signs) and carries the signNote (M9)', () => {
+    // Mathematical invariant: if wb>0 and wh<0, absDelta=wb+|wh|>max(wb,|wh|), so deltaPct>1.0.
+    // That always exceeds largeDriftPct (0.20), so the large-drift branch fires with the signNote.
+    const r = classifyNoiReconciliation(
+      input({ workbookOxfordNoi: 3000, warehouseOxfordNoi: -3000, warehouseBasis: 'cash' }),
+      TOL,
+    );
+    expect(r.status).toBe('large-drift');
+    expect(r.severity).toBe('error');
+    expect(r.reason).toMatch(/sign|inversion/i);
   });
 });
 
@@ -398,5 +404,36 @@ describe('reconcileNoiABFromDb / buildNoiReconcileInputs — DB join (live perio
     const row = reconcileNoiABFromDb(db, snap, TOL).find((r) => r.propertyId === PHANTOM)!;
     expect(row.status).toBe('missing-from-warehouse'); // never a false match against another property
     expect(row.delta).toBeNull();
+  });
+
+  it('(e) RECONCILE_SLUG_ALIASES resolves the FVC workbook slug to the canonical property_master.id (H4)', () => {
+    // The FVC workbook name slugs to 'fvc-fairground-village-center-sepich-portfolio-8-props' but
+    // property_master.id is 'sepich-portfolio-columbus-oh-8-props'. Without the alias, the warehouse
+    // series lookup would return [] and the row silently shows missing-from-warehouse.
+    const snap = snapshot([{
+      id: 'fvc-fairground-village-center-sepich-portfolio-8-props',
+      name: 'FVC — Fairground Village Center',
+      noi: 50000,
+    }]);
+    const inputs = buildNoiReconcileInputs(snap, [], []);
+    expect(inputs[0]!.propertyId).toBe('sepich-portfolio-columbus-oh-8-props');
+    expect(inputs[0]!.workbookOxfordNoi).toBe(50000);
+  });
+
+  it('(f) a warehouse-only property absent from the workbook spine emits a missing-from-workbook row (M3 escape fix)', async () => {
+    // Rarig has committed full-year data but is NOT in the snapshot.
+    // Before M3 fix: buildNoiReconcileInputs only iterated snapshot.properties → Rarig escaped.
+    // After fix: the warehouse-only sweep appends it with workbookOxfordNoi=null.
+    const snap = snapshot([]); // empty — Rarig is warehouse-only
+    const inputs = buildNoiReconcileInputs(snap, propertyPeriodMetrics(db), [{ id: RARIG, financialMode: 'pnl' }]);
+    const rarig = inputs.find((i) => i.propertyId === RARIG);
+    expect(rarig).toBeDefined();
+    expect(rarig!.workbookOxfordNoi).toBeNull();
+    expect(rarig!.warehouseOxfordNoi).not.toBeNull(); // FY 2025 oxfordNoi present
+
+    const rows = reconcileNoiABFromDb(db, snap, TOL);
+    const row = rows.find((r) => r.propertyId === RARIG);
+    expect(row).toBeDefined();
+    expect(row!.status).toBe('missing-from-workbook');
   });
 });

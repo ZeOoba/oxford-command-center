@@ -10,8 +10,9 @@
 // Oxford-share workbook NOI on a 50%-owned property would manufacture a 50% phantom drift —
 // the bug this reconciliation exists to catch in the OTHER spine.
 //
-// The slug bridge is direct: workbook parse.ts:124 produces `id = slug(name)`, and
-// property_master.id is the same canonical slug. No alias table needed (verified 2026-06-13).
+// The slug bridge is direct: workbook parse.ts:124 produces `id = slug(name)`. For most
+// properties the workbook name slugs to the same string as property_master.id; FVC and Solar
+// use longer descriptive names that slug differently — RECONCILE_SLUG_ALIASES handles these (H4).
 //
 // Pure classifier + assembler at the top of the file; thin DB wrapper at the bottom for the
 // gate / UI integration.
@@ -140,20 +141,6 @@ export function classifyNoiReconciliation(
   // Both present — compute delta and classify by tolerance.
   const wb = input.workbookOxfordNoi!;
   const wh = input.warehouseOxfordNoi!;
-
-  // Warehouse-zero guard: a $0 warehouse NOI with a non-zero workbook value indicates the
-  // warehouse has no committed P&L entries for this period (all entries net to $0). The absolute
-  // band ($10k) was designed for genuine small-NOI near-matches, not for this structural gap —
-  // a 100%-relative-delta would pass as in-tolerance without this guard.
-  if (wh === 0 && wb !== 0) {
-    return {
-      ...baseRow,
-      status: 'missing-from-warehouse',
-      severity: 'warn',
-      reason:
-        'Warehouse oxfordNoi is $0 with a non-zero workbook NOI — warehouse may have no committed P&L for this period.',
-    };
-  }
   const delta = wb - wh;
   const absDelta = Math.abs(delta);
   const denom = Math.max(Math.abs(wb), Math.abs(wh));
@@ -172,7 +159,7 @@ export function classifyNoiReconciliation(
     status = 'match';
     severity = 'info';
     reason = 'Workbook NOI ties out exactly to warehouse oxfordNoi.';
-  } else if (!signsConflict && (deltaPct <= tolerance.pctBand || absDelta <= tolerance.absBandUsd)) {
+  } else if (!signsConflict && (deltaPct <= tolerance.pctBand || (absDelta <= tolerance.absBandUsd && deltaPct < tolerance.largeDriftPct))) {
     status = 'in-tolerance';
     severity = 'info';
     reason =
@@ -231,8 +218,16 @@ export function reconcileNoiAB(
 //
 // The pure functions above don't touch the DB or workbook. This wrapper joins the workbook
 // snapshot (Spine A) and the warehouse period_metrics (Spine B) by property slug, then invokes
-// the assembler. Workbook id = slug(name) and property_master.id is the same canonical slug
-// (verified 2026-06-13), so no alias map is required.
+// the assembler. Workbook id = slug(name); RECONCILE_SLUG_ALIASES bridges the two properties
+// where the workbook name slug diverges from the canonical property_master.id (H4).
+
+// FVC's workbook name slugs to 'fvc-fairground-village-center-sepich-portfolio-8-props' but the
+// property_master.id is 'sepich-portfolio-columbus-oh-8-props'. Solar's workbook name adds the
+// '25-roof-project' suffix that the property_master.id omits. Bridge both (H4).
+const RECONCILE_SLUG_ALIASES: Record<string, string> = {
+  'fvc-fairground-village-center-sepich-portfolio-8-props': 'sepich-portfolio-columbus-oh-8-props',
+  '1851-s-club-solar-25-roof-project': '1851-s-club-solar',
+};
 
 /** Build reconciliation inputs from the live workbook snapshot + warehouse periodMetrics. */
 export function buildNoiReconcileInputs(
@@ -251,18 +246,41 @@ export function buildNoiReconcileInputs(
 
   const inputs: NoiReconcileInput[] = [];
   for (const wp of snapshot.properties) {
-    const series = metricsByProperty.get(wp.id) ?? [];
+    const canonicalId = RECONCILE_SLUG_ALIASES[wp.id] ?? wp.id;
+    const series = metricsByProperty.get(canonicalId) ?? [];
     const fyPeriod = latestFullYearPeriod(series);
     const fyRow = fyPeriod !== null ? series.find((m) => m.period === fyPeriod) ?? null : null;
     inputs.push({
-      propertyId: wp.id,
+      propertyId: canonicalId,
       propertyName: wp.name,
       workbookOxfordNoi: Number.isFinite(wp.noi) ? wp.noi : null,
       warehouseOxfordNoi: fyRow ? fyRow.oxfordNoi : null,
       warehousePeriod: fyPeriod,
       warehouseBasis: fyRow ? fyRow.basis : null,
-      isLeaseRun: financialModeById.get(wp.id) === 'lease-run',
+      isLeaseRun: financialModeById.get(canonicalId) === 'lease-run',
       isResidence: wp.type === 'Residence',
+    });
+  }
+
+  // M3: emit a missing-from-workbook row for every warehouse propertyId absent from the workbook
+  // spine — without this, warehouse-only properties escape reconciliation entirely.
+  const coveredIds = new Set(inputs.map((i) => i.propertyId));
+  for (const [pid, series] of metricsByProperty) {
+    if (coveredIds.has(pid)) continue;
+    const fyPeriod = latestFullYearPeriod(series);
+    const fyRow = fyPeriod !== null ? series.find((m) => m.period === fyPeriod) ?? null : null;
+    inputs.push({
+      propertyId: pid,
+      propertyName: series[0]?.propertyName ?? null,
+      workbookOxfordNoi: null,
+      warehouseOxfordNoi: fyRow ? fyRow.oxfordNoi : null,
+      warehousePeriod: fyPeriod,
+      warehouseBasis: fyRow ? fyRow.basis : null,
+      isLeaseRun: financialModeById.get(pid) === 'lease-run',
+      // Residential properties (e.g. Persimmon Drive) are never ingested into the warehouse —
+      // they have no P&L files — so this path cannot fire for a residence under current invariants.
+      // If property_master gains a `type` column (Pass 4), read it here instead.
+      isResidence: false,
     });
   }
   return inputs;
