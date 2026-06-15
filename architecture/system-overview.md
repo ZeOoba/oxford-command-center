@@ -83,7 +83,7 @@ server/index.ts         Hono 4 app, 127.0.0.1:8911, localhost-only CORS
 - Warehouse is opened lazily on first `/api/warehouse/*` request (not at boot — cold/mirror envs lack the SQLite file).
 - Warehouse path: `process.env.WAREHOUSE_DB ?? 'data/warehouse/finance.sqlite'`.
 - All `/api/*` routes enforce localhost-only CORS — never expose to external origin.
-- `npm run dev` holds the SQLite WAL write lock. Stop it before running `warehouse:backfill` or `gate`.
+- `npm run dev` holds a read-write warehouse connection and writes occupancy on each refresh. `openWarehouse` sets a 15s `busy_timeout` (tunable via `WAREHOUSE_BUSY_TIMEOUT_MS`), so a concurrent `warehouse:backfill` now WAITS out an overlapping write instead of dying on `SQLITE_BUSY` — a live dev server and a backfill coexist. (`gate` was never blocked regardless: `reconcile` reads only the workbook, `warehouse:verify` builds in a temp dir, and `warehouse:drift` opens the live DB read-only.)
 
 ---
 
