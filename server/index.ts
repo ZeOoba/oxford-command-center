@@ -351,14 +351,15 @@ async function main() {
   } catch (err) {
     console.error('⚠ Brain startup refresh failed — serving in degraded mode (snapshot 503 until the workbook loads):', err);
   }
-  try {
-    await warmDocIndex();
-  } catch (err) {
-    console.error('⚠ Document index warm-up failed (non-fatal):', err);
-  }
   serve({ fetch: app.fetch, port: SERVER_PORT, hostname: '127.0.0.1' }, (info) => {
     console.log(`◆ Oxford Brain Server — http://127.0.0.1:${info.port} (localhost only)`);
     console.log(`  Watching: ${brain.getState().workbookPath}`);
+  });
+  // Warm the document RAG index in the BACKGROUND — a slow/hanging embedding-model load must never
+  // block the server from binding the port. The warehouse + workbook-backed UI (incl. the three
+  // server-only modules: acquisition scoring, PFI, calibration) do not depend on the doc index.
+  warmDocIndex().catch((err) => {
+    console.error('⚠ Document index warm-up failed (non-fatal):', err);
   });
 }
 
