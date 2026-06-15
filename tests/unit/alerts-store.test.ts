@@ -52,4 +52,14 @@ describe('saveInboxState — atomic write (temp+rename)', () => {
     expect(loadInboxState(TMP).read).toEqual(['fresh']);
     expect(existsSync(`${TMP}.tmp`)).toBe(false);
   });
+
+  it('overwrites an existing target file atomically', () => {
+    // Common case: update an already-existing inbox state file (e.g. user marks an alert read).
+    // The rename must replace the prior file; no .tmp must survive.
+    saveInboxState({ read: ['initial'], snoozed: {} }, TMP);
+    expect(loadInboxState(TMP).read).toEqual(['initial']);
+    saveInboxState({ read: ['updated'], snoozed: {} }, TMP);
+    expect(loadInboxState(TMP).read).toEqual(['updated']);
+    expect(existsSync(`${TMP}.tmp`)).toBe(false);
+  });
 });

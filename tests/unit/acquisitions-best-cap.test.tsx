@@ -84,6 +84,9 @@ describe('AcquisitionsModule — Best Active Cap KPI (TA-1)', () => {
     );
 
     // With no active deals, bestCap = Math.max(0, ...[]) = 0 → renders '—', not '0.00%'.
-    expect(screen.queryByText('0.00%')).toBeNull();
+    const kpiLabel = screen.getByText('Best Active Cap');
+    const kpiCell = kpiLabel.closest('.min-w-0') as HTMLElement;
+    expect(within(kpiCell).getByText('—')).toBeTruthy();
+    expect(within(kpiCell).queryByText('0.00%')).toBeNull();
   });
 });
