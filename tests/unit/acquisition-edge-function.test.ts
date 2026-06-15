@@ -15,12 +15,20 @@ import { onRequestPost, resolveAcquisitionConfig } from '../../functions/api/war
 import { AcquisitionInput, ReplacementCostTable } from '@contracts/acquisition';
 import { parseRuleset, scoreAcquisition } from '../../server/warehouse/acquisition';
 
+type Json = Record<string, unknown>;
 const ratifiedRulesetObj = JSON.parse(
   readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8'),
-) as Record<string, any>;
+) as Json;
 const rctObj = JSON.parse(
   readFileSync(resolve(process.cwd(), 'config/replacement-cost.v1.json'), 'utf8'),
-) as Record<string, any>;
+) as Json;
+
+// Build a tampered copy of the ratified ruleset for fail-closed tests (raw JSON, no `any`).
+function ruleVariant(mutate: (j: Json) => void): Json {
+  const j = structuredClone(ratifiedRulesetObj);
+  mutate(j);
+  return j;
+}
 
 // A strong, fully-known PURSUE-grade deal (copied from acquisition.test.ts STRONG_BASE).
 const STRONG_BASE: Record<string, unknown> = {
@@ -47,7 +55,6 @@ function postCtx(body: unknown): { request: Request } {
     }),
   };
 }
-const clone = (o: unknown): any => structuredClone(o);
 const stripScoredAt = (s: Record<string, unknown>): Record<string, unknown> => ({ ...s, scoredAt: undefined });
 
 describe('acquisition edge Function — fail-closed gate (resolveAcquisitionConfig)', () => {
@@ -59,7 +66,11 @@ describe('acquisition edge Function — fail-closed gate (resolveAcquisitionConf
     expect(() => resolveAcquisitionConfig({ ...ratifiedRulesetObj, ratification: 'proposed' }, rctObj)).toThrow(/not 'ratified'/);
   });
   it('THROWS on a ratified-but-incomplete ruleset (clearHeightBands null)', () => {
-    const j = clone(ratifiedRulesetObj); j.scoring.cat3.clearHeightBands = null;
+    const j = ruleVariant((r) => {
+      const scoring = r.scoring as Json;
+      const cat3 = scoring.cat3 as Json;
+      cat3.clearHeightBands = null;
+    });
     expect(() => resolveAcquisitionConfig(j, rctObj)).toThrow(/clearHeightBands=null/);
   });
   it('THROWS on a ratified ruleset missing provenance (ratifiedBy null)', () => {
@@ -76,7 +87,7 @@ describe('acquisition edge Function — config identity (pins what BOTH server +
   it('the ratified config carries the gate-required provenance', () => {
     expect(ratifiedRulesetObj.ratification).toBe('ratified');
     expect(typeof ratifiedRulesetObj.rulesetVersion).toBe('string');
-    expect(ratifiedRulesetObj.rulesetVersion.length).toBeGreaterThan(0);
+    expect((ratifiedRulesetObj.rulesetVersion as string).length).toBeGreaterThan(0);
     expect(ratifiedRulesetObj.ratifiedBy).not.toBeNull();
     expect(ratifiedRulesetObj.ratifiedDate).not.toBeNull();
     expect(rctObj.ratification).toBe('ratified');
