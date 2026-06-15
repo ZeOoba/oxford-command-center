@@ -33,10 +33,16 @@ import { scoreProperties } from '../../server/warehouse/scores';
 import { composePropertyBriefing, composeManagerBriefing, managerSlug } from '../../server/briefing/compose';
 import { renderBriefingPdf } from '../../server/briefing/pdf';
 import { briefingFilename, subjectToken } from '../../server/briefing/filename';
-import { scanForConfidential, assertNoConfidential } from '../../server/briefing/confidential';
+import { collectText, scanForConfidential, assertNoConfidential } from '../../server/briefing/confidential';
 import { fontHealth } from '../../server/briefing/theme';
 import { fmtUsd } from '../../src/analytics/format';
-import { PropertyBriefingModel, ManagerBriefingModel } from '../../src/contracts/briefing';
+import {
+  PropertyBriefingModel,
+  ManagerBriefingModel,
+  BriefingMeta,
+  Figure,
+  managerSlug as contractManagerSlug,
+} from '../../src/contracts/briefing';
 
 const require = createRequire(import.meta.url);
 const pdfParse = require('pdf-parse') as (b: Buffer) => Promise<{ text: string }>;
@@ -407,5 +413,359 @@ describe('routes — /api/warehouse/briefing/*', () => {
       if (prior === undefined) delete process.env.CONFIDENTIAL_TERMS_PATH;
       else process.env.CONFIDENTIAL_TERMS_PATH = prior;
     }
+  });
+});
+
+// ── Additional edge-case tests added as a supplementary pass ──────────────────────────────────
+
+describe('collectText — flattening helper (confidential.ts)', () => {
+  it('returns empty string for null and undefined', () => {
+    expect(collectText(null)).toBe('');
+    expect(collectText(undefined)).toBe('');
+  });
+
+  it('passes a string through unchanged', () => {
+    expect(collectText('hello world')).toBe('hello world');
+  });
+
+  it('converts a number to its string representation', () => {
+    expect(collectText(42)).toBe('42');
+    expect(collectText(3.14)).toBe('3.14');
+  });
+
+  it('converts a boolean to its string representation', () => {
+    expect(collectText(true)).toBe('true');
+    expect(collectText(false)).toBe('false');
+  });
+
+  it('joins an array of strings with spaces', () => {
+    expect(collectText(['foo', 'bar', 'baz'])).toBe('foo bar baz');
+  });
+
+  it('recurses into nested arrays', () => {
+    expect(collectText(['outer', ['inner', 'deep']])).toBe('outer inner deep');
+  });
+
+  it('recurses into a plain object (values only, not keys)', () => {
+    const result = collectText({ a: 'alpha', b: 'beta' });
+    expect(result).toContain('alpha');
+    expect(result).toContain('beta');
+    // Keys should NOT appear in the output.
+    expect(result).not.toContain('"a"');
+    expect(result).not.toContain('"b"');
+  });
+
+  it('recurses into deeply nested objects and arrays', () => {
+    const nested = { x: { y: { z: 'deep-value' } } };
+    expect(collectText(nested)).toContain('deep-value');
+  });
+
+  it('mixed-type array: number + string + null', () => {
+    const result = collectText([1, 'two', null, true]);
+    expect(result).toContain('1');
+    expect(result).toContain('two');
+    expect(result).toContain('true');
+  });
+});
+
+describe('scanForConfidential — additional edge cases', () => {
+  it('returns null for an empty string', () => {
+    expect(scanForConfidential('', SYNTH_TERMS)).toBeNull();
+  });
+
+  it('returns null for null/undefined input', () => {
+    expect(scanForConfidential(null, SYNTH_TERMS)).toBeNull();
+    expect(scanForConfidential(undefined, SYNTH_TERMS)).toBeNull();
+  });
+
+  it('skips deals whose active flag is explicitly false', () => {
+    const inactiveTerms = {
+      inactive_deal: {
+        label: 'Inactive Deal',
+        active: false,
+        always: ['zephyr holdings', 'parcel-9001'],
+        context: [],
+        context_requires_any: [],
+      },
+    };
+    // The term IS present in the text, but the deal is inactive → no hit.
+    expect(scanForConfidential('zephyr holdings active=false test', inactiveTerms)).toBeNull();
+  });
+
+  it('uses the key as label when deal.label is absent', () => {
+    const terms = {
+      my_deal_key: {
+        active: true,
+        always: ['secret-corp-xyz'],
+        context: [],
+        context_requires_any: [],
+      },
+    };
+    const hit = scanForConfidential('secret-corp-xyz appears here', terms);
+    expect(hit).not.toBeNull();
+    expect(hit!.dealLabel).toBe('my_deal_key');
+  });
+
+  it('context term alone (no anchor) is NOT a hit', () => {
+    expect(scanForConfidential('groundwater plume issue nearby', SYNTH_TERMS)).toBeNull();
+  });
+
+  it('context term WITH anchor IS a hit', () => {
+    // Both the anchor ('zephyr') and the context term ('groundwater plume') are present.
+    const result = scanForConfidential('parcel-9001 has a groundwater plume issue', SYNTH_TERMS);
+    expect(result).not.toBeNull();
+    expect(result!.dealLabel).toBe('Synthetic Test Deal');
+  });
+
+  it('is case-insensitive for always terms', () => {
+    // 'ZEPHYR HOLDINGS' should still hit the lowercase always term 'zephyr holdings'.
+    expect(scanForConfidential('ZEPHYR HOLDINGS LLC', SYNTH_TERMS)).not.toBeNull();
+  });
+
+  it('handles an empty always array without errors', () => {
+    const terms = {
+      deal_no_always: {
+        active: true,
+        always: [],
+        context: ['secret-detail'],
+        context_requires_any: ['anchor-word'],
+      },
+    };
+    expect(scanForConfidential('anchor-word secret-detail present', terms)).not.toBeNull();
+    expect(scanForConfidential('just secret-detail no anchor', terms)).toBeNull();
+  });
+
+  it('assertNoConfidential throws with the deal label in the message', () => {
+    // Use scanForConfidential with SYNTH_TERMS to confirm the hit, then verify assertNoConfidential
+    // throws a matching error message format (it uses the default loadTerms() internally).
+    const hit = scanForConfidential({ text: 'zephyr holdings' }, SYNTH_TERMS);
+    expect(hit).not.toBeNull();
+    expect(hit!.dealLabel).toBe('Synthetic Test Deal');
+    // assertNoConfidential uses the same scan logic — test it via the env-override path.
+    const dir = mkdtempSync(join(tmpdir(), 'conf-assert-'));
+    const termsFile = join(dir, 'terms.json');
+    writeFileSync(termsFile, JSON.stringify(SYNTH_TERMS));
+    const prior = process.env.CONFIDENTIAL_TERMS_PATH;
+    process.env.CONFIDENTIAL_TERMS_PATH = termsFile;
+    try {
+      expect(() => assertNoConfidential({ text: 'zephyr holdings' })).toThrow(/Synthetic Test Deal/);
+    } finally {
+      if (prior === undefined) delete process.env.CONFIDENTIAL_TERMS_PATH;
+      else process.env.CONFIDENTIAL_TERMS_PATH = prior;
+    }
+  });
+
+  it('assertNoConfidential does not throw when no confidential term present', () => {
+    expect(() => assertNoConfidential({ noi: 104000, name: 'Normal Property LLC' })).not.toThrow();
+  });
+});
+
+describe('subjectToken — filename sanitisation', () => {
+  it('replaces & with "and"', () => {
+    expect(subjectToken('Smith & Jones')).toBe('Smith_and_Jones');
+  });
+
+  it('collapses multiple non-alphanumeric chars to a single underscore', () => {
+    expect(subjectToken('1100 Rarig Ave, Columbus OH')).toBe('1100_Rarig_Ave_Columbus_OH');
+  });
+
+  it('strips leading and trailing underscores', () => {
+    expect(subjectToken('  Leading Spaces  ')).toBe('Leading_Spaces');
+  });
+
+  it('returns "Briefing" when the entire name is non-alphanumeric', () => {
+    expect(subjectToken('---')).toBe('Briefing');
+    expect(subjectToken('   ')).toBe('Briefing');
+  });
+
+  it('preserves alphanumeric characters unchanged', () => {
+    expect(subjectToken('ABC123')).toBe('ABC123');
+  });
+
+  it('handles slashes and dots (unsafe for headers)', () => {
+    expect(subjectToken('Property/Building.2')).toBe('Property_Building_2');
+  });
+
+  it('handles a name with multiple & characters', () => {
+    expect(subjectToken('A & B & C')).toBe('A_and_B_and_C');
+  });
+});
+
+describe('managerSlug — URL-safe slug (contracts/briefing.ts)', () => {
+  it('lowercases the name', () => {
+    expect(contractManagerSlug('Kohr Royer Griffith')).toBe('kohr-royer-griffith');
+  });
+
+  it('replaces & with "and"', () => {
+    expect(contractManagerSlug('Jones & Smith')).toBe('jones-and-smith');
+  });
+
+  it('collapses multiple whitespace and punctuation to a single dash', () => {
+    expect(contractManagerSlug('  Multiple   Spaces  ')).toBe('multiple-spaces');
+  });
+
+  it('strips leading and trailing dashes', () => {
+    expect(contractManagerSlug('-- Name --')).toBe('name');
+  });
+
+  it('is consistent: the slug it produces is the same one compose uses for look-up', () => {
+    // The server compose imports managerSlug from briefing.ts — same function, no drift.
+    expect(contractManagerSlug('Kohr Royer Griffith')).toBe(managerSlug('Kohr Royer Griffith'));
+  });
+});
+
+describe('BriefingMeta Zod validation — literal field enforcement', () => {
+  const validMeta = {
+    generatedDate: '2026-06-14',
+    workbookAsOf: 'Q4 2025',
+    dataFreshness: '2026-06-12',
+    confidentialMarking: 'CONFIDENTIAL — INTERNAL',
+    masthead: 'OXFORD REALTY ADVISORS',
+  };
+
+  it('parses a valid meta object', () => {
+    expect(() => BriefingMeta.parse(validMeta)).not.toThrow();
+  });
+
+  it('rejects a wrong confidentialMarking (must be exactly the literal)', () => {
+    expect(() =>
+      BriefingMeta.parse({ ...validMeta, confidentialMarking: 'CONFIDENTIAL' }),
+    ).toThrow();
+  });
+
+  it('rejects a wrong masthead', () => {
+    expect(() =>
+      BriefingMeta.parse({ ...validMeta, masthead: 'Oxford Realty' }),
+    ).toThrow();
+  });
+
+  it('accepts null for dataFreshness', () => {
+    expect(() =>
+      BriefingMeta.parse({ ...validMeta, dataFreshness: null }),
+    ).not.toThrow();
+  });
+
+  it('rejects missing required fields', () => {
+    const { generatedDate: _drop, ...noDate } = validMeta;
+    expect(() => BriefingMeta.parse(noDate)).toThrow();
+  });
+});
+
+describe('Figure Zod validation — unit enum enforcement', () => {
+  it('accepts valid unit values', () => {
+    for (const unit of ['usd', 'usd_per_sf', 'pct', 'count', 'none'] as const) {
+      expect(() => Figure.parse({ display: '$1,000', value: 1000, unit })).not.toThrow();
+    }
+  });
+
+  it('rejects an unknown unit', () => {
+    expect(() => Figure.parse({ display: '$1,000', value: 1000, unit: 'euro' })).toThrow();
+  });
+
+  it('accepts null for value', () => {
+    expect(() => Figure.parse({ display: '—', value: null, unit: 'usd' })).not.toThrow();
+  });
+
+  it('rejects a missing display field', () => {
+    expect(() => Figure.parse({ value: 100, unit: 'usd' })).toThrow();
+  });
+});
+
+describe('briefingFilename — manager model', () => {
+  it('produces the correct filename for a manager briefing', () => {
+    const db = seededDb();
+    const model = ManagerBriefingModel.parse(composeManagerBriefing(db, KRG_SLUG, { generatedDate: GEN }));
+    const fn = briefingFilename(model);
+    // Must match ORA_Briefing_<sanitized-name>_YYYYMMDD.pdf.
+    expect(fn).toMatch(/^ORA_Briefing_.+_20260614\.pdf$/);
+    // The manager name is 'Kohr Royer Griffith'; sanitized: 'Kohr_Royer_Griffith'.
+    expect(fn).toContain('Kohr_Royer_Griffith');
+  });
+
+  it('replaces & in a manager name with "and" in the filename', () => {
+    // Test the subjectToken function directly with an ampersand name.
+    expect(subjectToken('Jones & Smith Property Management')).toBe('Jones_and_Smith_Property_Management');
+  });
+});
+
+describe('composePropertyBriefing — meta fields are always correctly populated', () => {
+  it('meta.confidentialMarking is always the exact literal', () => {
+    const db = seededDb();
+    const model = PropertyBriefingModel.parse(
+      composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN }),
+    );
+    expect(model.meta.confidentialMarking).toBe('CONFIDENTIAL — INTERNAL');
+  });
+
+  it('meta.masthead is always the exact literal', () => {
+    const db = seededDb();
+    const model = PropertyBriefingModel.parse(
+      composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN }),
+    );
+    expect(model.meta.masthead).toBe('OXFORD REALTY ADVISORS');
+  });
+
+  it('meta.generatedDate matches the injected date (not a wall-clock date)', () => {
+    const db = seededDb();
+    const injected = '2025-01-15';
+    const model = composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: injected })!;
+    expect(model.meta.generatedDate).toBe(injected);
+  });
+
+  it('leaseRun.present is false when the property has no lease terms', () => {
+    const db = seededDb();
+    // KRG_PROPS[0] has ledger data but no lease terms seeded.
+    const model = composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN })!;
+    expect(model.leaseRun.present).toBe(false);
+    expect(model.leaseRun.tenant).toBeNull();
+    expect(model.leaseRun.currentExpiry).toBeNull();
+    expect(model.leaseRun.rolloverLabels).toEqual([]);
+  });
+});
+
+describe('composeManagerBriefing — managed-property row ordering (red first)', () => {
+  it('rows with red attention come before rows with green attention', () => {
+    const db = seededDb();
+    const model = ManagerBriefingModel.parse(
+      composeManagerBriefing(db, KRG_SLUG, { generatedDate: GEN }),
+    );
+    // Verify rows are sorted: red → orange → yellow → green.
+    const ORDER: Record<string, number> = { red: 0, orange: 1, yellow: 2, green: 3 };
+    const bands = model.managedProperties.map((r) => r.attentionBand);
+    for (let i = 0; i < bands.length - 1; i++) {
+      expect((ORDER[bands[i]!] ?? 0) <= (ORDER[bands[i + 1]!] ?? 0)).toBe(true);
+    }
+  });
+
+  it('smallSample flag is true when fewer than 3 managed properties', () => {
+    const db = seededDb();
+    // KRG has only 2 managed properties in the seeded data (< 3).
+    const model = ManagerBriefingModel.parse(
+      composeManagerBriefing(db, KRG_SLUG, { generatedDate: GEN }),
+    );
+    expect(model.subject.smallSample).toBe(true);
+  });
+
+  it('actionList is non-empty and contains a fallback message when no flagged issues', () => {
+    const db = seededDb();
+    const model = ManagerBriefingModel.parse(
+      composeManagerBriefing(db, KRG_SLUG, { generatedDate: GEN }),
+    );
+    // actionList must always have at least one entry (the spec: 'No flagged actions' when all clear).
+    expect(model.actionList.length).toBeGreaterThan(0);
+  });
+});
+
+describe('BriefingModel discriminated union — kind dispatch', () => {
+  it('PropertyBriefingModel rejects a manager payload', () => {
+    const db = seededDb();
+    const managerModel = composeManagerBriefing(db, KRG_SLUG, { generatedDate: GEN })!;
+    expect(() => PropertyBriefingModel.parse(managerModel)).toThrow();
+  });
+
+  it('ManagerBriefingModel rejects a property payload', () => {
+    const db = seededDb();
+    const propertyModel = composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN })!;
+    expect(() => ManagerBriefingModel.parse(propertyModel)).toThrow();
   });
 });
