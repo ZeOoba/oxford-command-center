@@ -59,6 +59,16 @@
       "review_needed": true,
       "review_detail": "Touches Architect-owned files: (1) package.json — add @vitest/coverage-v8 devDep + test:coverage script; (2) vitest.config.ts — broaden coverage.include to server/**+src/** with view/entry excludes; (3) server/index.ts — extract the localhost-only CORS origin rule into new server/cors-policy.ts (behavior identical) so it is unit-testable. New tests: brain (orchestration), server-cors, ai-respond, search-index, use-workspaces, export. No app behavior changed; gate must stay green.",
       "last_updated": "2026-06-15T03:30:00Z"
+    },
+
+    "eric-live-phase1b-fat-mirror": {
+      "agent_role": "Engineering (Claude Code) — authorized solo by Gabriel 2026-06-16",
+      "phase": "Eric Live Phase 1b — Fat Mirror: PFI + Calibration-read on the Access-gated Pages mirror",
+      "status": "review_needed",
+      "blocked_by": null,
+      "review_needed": false,
+      "review_detail": "NO Architect-owned files touched. Edits: scripts/bake-warehouse.ts (new) + scripts/bake-mirror.ts (Integration-owned), src/lib/warehouse-mirror.ts (new) + src/lib/freshness.ts (Core), src/modules/intel/{hooks,analytics-hooks,IntelModule,LeaseRunView,DataQualityView,MappingsView} + src/modules/calibration/{hooks,CalibrationModule,PendingView} (UX-owned), .gitignore. Imports server/warehouse/api.ts + db.ts read-only (no signature/engine change). Bake emits public/warehouse.json (computed route payloads, gitignored); client falls back on 404. Financial-adjacent (scoring/analytics output) → ran the MANDATORY adversarial refute-financial-change review (opus). Full local unit suite green (1035/1035), tsc+lint clean. PR opened off origin/main; awaiting Gabriel review + deploy (invariant 2). Deferred (Gabriel/Phase 2): DNS migration, new-machine timing, remote calibration writes, freshness cadence.",
+      "last_updated": "2026-06-16T00:20:00Z"
     }
   },
 

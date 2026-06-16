@@ -10,7 +10,7 @@
 // fetchJson throws WarehouseUnavailableError → the panel degrades to the offline Card, never crashes.
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { z } from 'zod';
-import { fetchJson, QUERY_OPTS, WarehouseUnavailableError } from '../intel/hooks';
+import { fetchParsedOrMirror, QUERY_OPTS, WarehouseUnavailableError } from '../intel/hooks';
 import {
   CalibrationLogResponseSchema,
   CalibrationPendingResponseSchema,
@@ -28,9 +28,10 @@ import type {
 export type { CalibrationLogRow, CalibrationReportResponse, CalibrationResolveRequest } from '@contracts/warehouse';
 
 /** Fetch a route then .parse() its body through the contract schema (client half of the H6 boundary).
- *  fetchJson still throws WarehouseUnavailableError on a 503 / non-JSON mirror BEFORE any parse runs. */
+ *  Delegates to fetchParsedOrMirror: live-first, then the Fat-Mirror precomputed payload on a 503 /
+ *  non-JSON mirror (Phase 1b). Used for the pending + report reads (whole-payload keys). */
 async function fetchParsed<S extends z.ZodTypeAny>(path: string, schema: S): Promise<z.infer<S>> {
-  return schema.parse(await fetchJson<unknown>(path));
+  return fetchParsedOrMirror(path, schema);
 }
 
 export const CALIBRATION_KEYS = {
@@ -46,7 +47,16 @@ export interface CalibrationLogQuery {
   status?: 'open' | 'resolved' | null;
 }
 
-/** The verdict log, filterable by subject / kind / open|resolved. Empty [] on a no-verdict warehouse. */
+/**
+ * The verdict log, filterable by subject / kind / open|resolved. Empty [] on a no-verdict warehouse.
+ *
+ * EXACT-KEY mirror fallback (no client-side re-filtering): the UNFILTERED log — the only request the
+ * current UI issues — is baked and is faithful incl. the server's LIMIT 500. A subject/kind/status
+ * filter is NOT baked, so on the mirror it degrades to honest OFFLINE rather than wrong/truncated data:
+ * the server filters-THEN-caps at 500, so re-filtering a pre-capped baked slice would silently drop
+ * older matches (refute review). When a calibration filter UI lands, enumerate those keys at bake time
+ * the way benchmarks/drivers are enumerated.
+ */
 export function useCalibrationLog(query: CalibrationLogQuery = {}) {
   const { subject = null, kind = null, status = null } = query;
   const qs = new URLSearchParams();
@@ -57,7 +67,7 @@ export function useCalibrationLog(query: CalibrationLogQuery = {}) {
   return useQuery({
     queryKey: CALIBRATION_KEYS.log(subject, kind, status),
     queryFn: () =>
-      fetchParsed(`/api/warehouse/calibration/log${suffix}`, CalibrationLogResponseSchema).then((r) => r.log),
+      fetchParsedOrMirror(`/api/warehouse/calibration/log${suffix}`, CalibrationLogResponseSchema).then((r) => r.log),
     ...QUERY_OPTS,
   });
 }

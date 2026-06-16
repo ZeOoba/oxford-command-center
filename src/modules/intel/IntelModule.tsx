@@ -32,6 +32,8 @@ import {
   useWarehouseIssues,
   useNoiMatrix,
   isWarehouseUnavailable,
+  useWarehouseLive,
+  useWarehouseFreshness,
   type NoiMatrixCell,
 } from './hooks';
 import { useMetrics } from './analytics-hooks';
@@ -86,6 +88,10 @@ export function IntelModule() {
   // Metrics also feed the module-level time control (PFI Phase B.3 item 3). The same query is
   // shared (deduped) with the intelligence views, so this adds no extra fetch.
   const metrics = useMetrics();
+  // Live workstation vs. baked mirror — drives the honest freshness badge (never "Live") and the
+  // read-only write-hiding in the data-ops views (Phase 1b).
+  const live = useWarehouseLive();
+  const freshness = useWarehouseFreshness();
 
   // Module-level period selection: the control governs which period's LEVELS/benchmarks the
   // intelligence tabs show; scores stay on the latest full year regardless. Default = latest FY.
@@ -126,6 +132,11 @@ export function IntelModule() {
           title="Property Financial Intelligence"
           trailing={
             <div className="flex items-center gap-1.5">
+              {!live && (
+                <Badge tone="neutral">
+                  {`Computed from snapshot${freshness.detail ? ` · ${freshness.detail}` : ''}`}
+                </Badge>
+              )}
               {TABS.map((t, i) => {
                 // A subtle divider before the first data-ops tab separates the intelligence
                 // layer from the data-warehouse layer (IA clarity; tokens only).

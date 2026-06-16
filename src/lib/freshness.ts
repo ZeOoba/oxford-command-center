@@ -1,4 +1,5 @@
 import type { BrainState, FreshnessKind } from '@contracts/index';
+import type { WarehouseMirrorMeta } from './warehouse-mirror';
 
 /** A static bake older than this is considered stale. */
 export const STALENESS_HOURS = 24;
@@ -68,4 +69,31 @@ export function computeFreshness(state: BrainState | null, now = Date.now()): Fr
   }
 
   return { kind: 'offline', label: 'Offline', detail: null, bakeAgeMs: ageMs, isStale: false };
+}
+
+/**
+ * Per-spine freshness for the warehouse (PFI + Calibration) on the baked mirror. The warehouse data
+ * is COMPUTED at bake time from the snapshot, so it must NEVER read as "Live": the label is
+ * "Computed from snapshot" and the detail "baked Nh ago". A null meta (no mirror, or a schema-version
+ * mismatch the loader fail-closed to null) renders as Offline — never as silently-stale data.
+ */
+export function computeWarehouseFreshness(meta: WarehouseMirrorMeta | null, now = Date.now()): Freshness {
+  if (!meta) {
+    return { kind: 'offline', label: 'Offline', detail: null, bakeAgeMs: null, isStale: false };
+  }
+  const t = Date.parse(meta.bakedAt);
+  const ageMs = Number.isFinite(t) ? Math.max(0, now - t) : null;
+  // An unparseable bakedAt yields an unknowable age — fail-closed to Offline, never a non-stale
+  // snapshot (the loader's z.string().datetime() normally prevents this; this is defense-in-depth).
+  if (ageMs === null) {
+    return { kind: 'offline', label: 'Offline', detail: null, bakeAgeMs: null, isStale: false };
+  }
+  const stale = ageMs > STALENESS_HOURS * 3_600_000;
+  return {
+    kind: stale ? 'stale' : 'static',
+    label: 'Computed from snapshot',
+    detail: `baked ${formatAge(ageMs)}`,
+    bakeAgeMs: ageMs,
+    isStale: stale,
+  };
 }

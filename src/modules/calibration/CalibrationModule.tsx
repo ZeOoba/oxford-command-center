@@ -14,7 +14,7 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
 import { cn } from '@/lib/cn';
-import { isWarehouseUnavailable } from '../intel/hooks';
+import { isWarehouseUnavailable, useWarehouseLive, useWarehouseFreshness } from '../intel/hooks';
 import { useCalibrationLog, useCalibrationPending, useCalibrationReport, type CalibrationLogRow } from './hooks';
 import { ReportView } from './ReportView';
 import { PendingView } from './PendingView';
@@ -35,6 +35,10 @@ export function CalibrationModule() {
   const report = useCalibrationReport();
   const pending = useCalibrationPending();
   const log = useCalibrationLog();
+  // Live workstation vs. baked mirror. On the mirror the data is read-only and computed from a
+  // snapshot, so the resolve WRITE is hidden and an honest freshness badge replaces "Live".
+  const live = useWarehouseLive();
+  const freshness = useWarehouseFreshness();
 
   const unavailable =
     isWarehouseUnavailable(report.error) || isWarehouseUnavailable(pending.error) || isWarehouseUnavailable(log.error);
@@ -63,6 +67,11 @@ export function CalibrationModule() {
           title="Score-vs-Outcome Calibration"
           trailing={
             <div className="flex items-center gap-1.5">
+              {!live && (
+                <Badge tone="neutral">
+                  {`Computed from snapshot${freshness.detail ? ` · ${freshness.detail}` : ''}`}
+                </Badge>
+              )}
               {TABS.map((t) => (
                 <button
                   key={t.id}
@@ -86,14 +95,14 @@ export function CalibrationModule() {
         </div>
       </Card>
 
-      {resolving && <ResolveDialog row={resolving} onClose={() => setResolving(null)} />}
+      {live && resolving && <ResolveDialog row={resolving} onClose={() => setResolving(null)} />}
 
       {loading ? (
         <Skeleton style={{ height: 220 }} />
       ) : tab === 'report' ? (
         <ReportView report={report.data} />
       ) : tab === 'pending' ? (
-        <PendingView rows={pending.data ?? []} onResolve={setResolving} />
+        <PendingView rows={pending.data ?? []} onResolve={setResolving} canResolve={live} />
       ) : (
         <LogView rows={log.data ?? []} />
       )}

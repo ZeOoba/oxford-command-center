@@ -7,7 +7,10 @@
 // typed WarehouseUnavailableError and the module renders an informational empty state
 // instead of crashing. Patterns mirror src/data/queries.ts (staleTime 30s, retry 1).
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import type { z } from 'zod';
 import type { Classification } from '@contracts/warehouse';
+import { loadWarehouseMirror, getMirrorEndpoint } from '../../lib/warehouse-mirror';
+import { computeWarehouseFreshness, type Freshness } from '../../lib/freshness';
 
 // ---------------------------------------------------------------------------
 // Response shapes — mirror the hand-aliased camelCase rows from server/warehouse.
@@ -128,6 +131,76 @@ export async function fetchJson<T>(path: string): Promise<T> {
   return readJson<T>(res);
 }
 
+/**
+ * Like fetchJson but with the Fat-Mirror fallback for the UNschema'd list reads (noi/imports/issues):
+ * on a 503 / non-JSON mirror, return the payload baked into `/warehouse.json` for this exact path. A
+ * path that was NOT baked (e.g. an imports/:id detail drill-down) stays unavailable (honest offline).
+ * Without this the PFI module's `unavailable` gate (keyed on these reads) would trip on the mirror.
+ */
+export async function fetchJsonOrMirror<T>(path: string): Promise<T> {
+  try {
+    return await fetchJson<T>(path);
+  } catch (e) {
+    if (!isWarehouseUnavailable(e)) throw e;
+    const env = await loadWarehouseMirror();
+    if (!env) throw e;
+    const payload = getMirrorEndpoint(env, path);
+    if (payload === undefined) throw new WarehouseUnavailableError('endpoint not in baked mirror');
+    return payload as T;
+  }
+}
+
+/**
+ * Live-first read with the Fat-Mirror fallback (Eric Live Phase 1b): fetch + Zod-parse the live
+ * `/api/warehouse/*` route; if it is UNAVAILABLE (the static mirror serves the SPA / a 503), read
+ * the precomputed payload baked into `/warehouse.json` for this exact path. A real live parse
+ * failure (a malformed JSON body from a present route) is NOT swallowed — only WarehouseUnavailableError
+ * triggers the fallback. A missing baked endpoint, or no mirror at all, stays unavailable (fail-closed
+ * to the existing offline empty state). Shared by analytics-hooks.ts and calibration/hooks.ts so both
+ * spines fall back identically.
+ */
+export async function fetchParsedOrMirror<S extends z.ZodTypeAny>(path: string, schema: S): Promise<z.infer<S>> {
+  try {
+    return schema.parse(await fetchJson<unknown>(path));
+  } catch (e) {
+    if (!isWarehouseUnavailable(e)) throw e;
+    const env = await loadWarehouseMirror();
+    if (!env) throw e; // no baked mirror (or schema-version mismatch → null): stay unavailable
+    const payload = getMirrorEndpoint(env, path);
+    if (payload === undefined) throw new WarehouseUnavailableError('endpoint not in baked mirror');
+    return schema.parse(payload);
+  }
+}
+
+/**
+ * Is the LIVE warehouse reachable (the workstation Brain Server), as opposed to the baked mirror?
+ * Fail-safe: returns false while loading OR when unavailable, so write controls stay HIDDEN until the
+ * live server is proven up — the deployed mirror is read-only and its writes have no edge home (Phase 1b).
+ * The probe reuses the same query key across all callers, so React Query dedupes it to one request.
+ */
+export function useWarehouseLive(): boolean {
+  const q = useQuery({
+    queryKey: ['warehouse', 'live-probe'],
+    queryFn: async (): Promise<true> => {
+      await fetchJson('/api/warehouse/noi');
+      return true;
+    },
+    ...QUERY_OPTS,
+  });
+  return q.data === true;
+}
+
+/** Per-spine warehouse freshness for the PFI / Calibration badge: 'Computed from snapshot baked Nh
+ *  ago' on the mirror, Offline when no valid bake is present. Never reads as 'Live'. */
+export function useWarehouseFreshness(): Freshness {
+  const q = useQuery({
+    queryKey: ['warehouse', 'mirror-meta'],
+    queryFn: async () => (await loadWarehouseMirror()) ?? null,
+    ...QUERY_OPTS,
+  });
+  return computeWarehouseFreshness(q.data ?? null);
+}
+
 /** Read-then-act POST: returns the parsed JSON regardless of HTTP status (the caller
  *  inspects `ok`); a 409 approve refusal carries the unmapped list, not an Error. */
 async function postJson<T>(path: string, body?: unknown): Promise<T> {
@@ -165,7 +238,7 @@ export const QUERY_OPTS = { staleTime: 30_000, retry: 1 } as const;
 export function useWarehouseImports() {
   return useQuery({
     queryKey: WAREHOUSE_KEYS.imports,
-    queryFn: () => fetchJson<{ imports: ImportSummary[] }>('/api/warehouse/imports').then((r) => r.imports),
+    queryFn: () => fetchJsonOrMirror<{ imports: ImportSummary[] }>('/api/warehouse/imports').then((r) => r.imports),
     ...QUERY_OPTS,
   });
 }
@@ -182,7 +255,7 @@ export function useImportDetail(id: number | null) {
 export function useWarehouseIssues() {
   return useQuery({
     queryKey: WAREHOUSE_KEYS.issues,
-    queryFn: () => fetchJson<{ issues: WarehouseIssue[] }>('/api/warehouse/issues').then((r) => r.issues),
+    queryFn: () => fetchJsonOrMirror<{ issues: WarehouseIssue[] }>('/api/warehouse/issues').then((r) => r.issues),
     ...QUERY_OPTS,
   });
 }
@@ -190,7 +263,7 @@ export function useWarehouseIssues() {
 export function useNoiMatrix() {
   return useQuery({
     queryKey: WAREHOUSE_KEYS.noi,
-    queryFn: () => fetchJson<{ matrix: NoiMatrixCell[] }>('/api/warehouse/noi').then((r) => r.matrix),
+    queryFn: () => fetchJsonOrMirror<{ matrix: NoiMatrixCell[] }>('/api/warehouse/noi').then((r) => r.matrix),
     ...QUERY_OPTS,
   });
 }
