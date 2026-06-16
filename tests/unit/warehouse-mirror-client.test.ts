@@ -89,6 +89,7 @@ describe('fetchParsedOrMirror (client 404 fallback)', () => {
   });
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals(); // vi.stubGlobal('fetch', ...) is NOT undone by restoreAllMocks
   });
 
   it('returns the baked payload when the live warehouse route is unavailable', async () => {
@@ -141,7 +142,10 @@ describe('fetchParsedOrMirror (client 404 fallback)', () => {
 //    module's `unavailable` gate does NOT trip on the mirror (it would, leaving PFI offline). ──
 describe('fetchJsonOrMirror (unschema list reads fall back too)', () => {
   beforeEach(() => vi.resetModules());
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
 
   it('returns the baked matrix when /api/warehouse/noi is unavailable', async () => {
     const env = {

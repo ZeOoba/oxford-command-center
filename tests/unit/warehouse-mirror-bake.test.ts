@@ -148,6 +148,7 @@ describe('Fat Mirror bake — warehouse.json shape matches the server endpoints'
   it('does NOT bake a 503 or a non-200 payload (only successful route responses are stored)', () => {
     // Every stored value is a real JSON object/array, never the 503 {error} sentinel.
     for (const [k, v] of Object.entries(endpoints)) {
+      expect(v, `endpoint ${k} stored null`).not.toBeNull();
       expect(v, `endpoint ${k} stored a non-object`).toBeTypeOf('object');
       expect((v as { error?: string }).error, `endpoint ${k} stored an error payload`).toBeUndefined();
     }

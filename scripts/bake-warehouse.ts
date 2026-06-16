@@ -71,13 +71,18 @@ function orderedPairs(tokens: string[]): Array<[string, string]> {
  * The exact set of router paths the bake resolves. Keys are built with the SAME encodeURIComponent
  * the client hooks use, so a baked key matches the client's live request verbatim.
  */
+/** The non-parameterized routes every PFI/calibration-read view depends on. A non-200 from any of
+ *  these means a broken bake DB — the bake hard-FAILS rather than emit a partial mirror (a view would
+ *  otherwise silently read as offline with no signal the bake was incomplete). */
+const FIXED_ROUTES = [
+  '/noi', '/imports', '/issues',
+  '/analytics/metrics', '/analytics/scores', '/analytics/pm',
+  '/analytics/growth', '/analytics/anomalies', '/analytics/lease-run',
+  '/calibration/log', '/calibration/pending', '/calibration/report',
+] as const;
+
 export function warehouseEndpointPlan(metrics: MetricRow[], leaseRunIds: string[]): string[] {
-  const fixed = [
-    '/noi', '/imports', '/issues',
-    '/analytics/metrics', '/analytics/scores', '/analytics/pm',
-    '/analytics/growth', '/analytics/anomalies', '/analytics/lease-run',
-    '/calibration/log', '/calibration/pending', '/calibration/report',
-  ];
+  const fixed = [...FIXED_ROUTES];
 
   const byProperty = new Map<string, string[]>();
   for (const m of metrics) {
@@ -121,25 +126,36 @@ export async function buildWarehouseEnvelope(
   resolver: RouteResolver,
   opts: BuildOpts,
 ): Promise<WarehouseMirrorEnvelope> {
-  // Enumeration inputs come from the routes themselves (one source of truth).
+  // Enumeration inputs come from the routes themselves (one source of truth). Fail LOUD if a read the
+  // whole plan depends on did not return 200 JSON — never bake a partial/empty mirror silently.
   const metricsRes = await resolver('/analytics/metrics');
-  const metrics = ((metricsRes.json as { metrics?: MetricRow[] } | null)?.metrics ?? []).map((m) => ({
+  if (metricsRes.status !== 200 || !Array.isArray((metricsRes.json as { metrics?: unknown } | null)?.metrics)) {
+    throw new Error(`warehouse bake failed: /analytics/metrics returned ${metricsRes.status} (not 200 JSON metrics)`);
+  }
+  const metrics = (metricsRes.json as { metrics: MetricRow[] }).metrics.map((m) => ({
     propertyId: m.propertyId,
     period: m.period,
   }));
   const rollupRes = await resolver('/analytics/lease-run');
-  const rollupIds = (rollupRes.json as { summaries?: Array<{ propertyId: string }> } | null)?.summaries?.map(
-    (s) => s.propertyId,
-  ) ?? [];
+  if (rollupRes.status !== 200 || !Array.isArray((rollupRes.json as { summaries?: unknown } | null)?.summaries)) {
+    throw new Error(`warehouse bake failed: /analytics/lease-run returned ${rollupRes.status} (not 200 JSON summaries)`);
+  }
+  const rollupIds = (rollupRes.json as { summaries: Array<{ propertyId: string }> }).summaries.map((s) => s.propertyId);
   // lease-run/:id for every lease-term property AND every metrics property (superset; route returns a
   // typed EMPTY projection for a no-terms property — a 200, so it bakes).
   const leaseRunIds = [...new Set([...rollupIds, ...metrics.map((m) => m.propertyId)])];
 
   const plan = warehouseEndpointPlan(metrics, leaseRunIds);
+  const required = new Set<string>(FIXED_ROUTES);
   const endpoints: Record<string, unknown> = {};
   for (const routerPath of plan) {
     const { status, json } = await resolver(routerPath);
-    if (status === 200 && json !== null) endpoints[`/api/warehouse${routerPath}`] = json;
+    if (status === 200 && json !== null) {
+      endpoints[`/api/warehouse${routerPath}`] = json;
+    } else if (required.has(routerPath)) {
+      // A parameterized slice may legitimately 404 (skip it); a REQUIRED route must not — fail loud.
+      throw new Error(`warehouse bake failed: required endpoint ${routerPath} returned ${status}`);
+    }
   }
 
   return {
@@ -152,14 +168,15 @@ export async function buildWarehouseEnvelope(
 
 /** Probe a running Brain Server: warehouse routes present AND warm (a 200 JSON /noi). */
 async function brainServerUp(baseUrl: string): Promise<boolean> {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 1500);
   try {
-    const ctl = new AbortController();
-    const t = setTimeout(() => ctl.abort(), 1500);
     const res = await fetch(`${baseUrl}/api/warehouse/noi`, { signal: ctl.signal });
-    clearTimeout(t);
     return res.status === 200 && (res.headers.get('content-type') ?? '').includes('application/json');
   } catch {
     return false;
+  } finally {
+    clearTimeout(t); // clear on every exit path (success, non-200, throw/abort) so no timer dangles
   }
 }
 

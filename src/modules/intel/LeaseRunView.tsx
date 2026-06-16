@@ -237,6 +237,11 @@ function AssumptionsPanel({
   }
 
   function commit(key: string) {
+    // If the live server dropped while editing, never fire the write — close the editor read-only.
+    if (!live) {
+      setEditing(null);
+      return;
+    }
     const raw = Number(draft);
     if (!Number.isFinite(raw)) {
       setEditing(null);
@@ -265,7 +270,7 @@ function AssumptionsPanel({
         {rows.map((r) => (
           <div key={r.key} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm">
             <span style={{ color: 'var(--text-secondary)' }}>{r.label}</span>
-            {editing === r.key ? (
+            {editing === r.key && live ? (
               <span className="flex items-center gap-2">
                 <input
                   className="num w-20 rounded border px-2 py-1 text-right text-sm"
