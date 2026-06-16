@@ -110,31 +110,35 @@ src/
 
 ## 5. Module Map (20 modules)
 
-Rail modules registered in `src/shell/modules.tsx` — each occupies a `/:moduleId` route.
-Overlay components (AI Panel, Command Palette, Entity Drawer) live in `src/brain/` and are not rail modules.
+Rail modules are registered as entries in the `MODULES` array in `src/shell/modules.tsx`. Each
+entry owns a unique `id` string (`ModuleDef.id`) that the shell uses to track the active module
+in memory — there is no URL routing. The **ID** column is the `ModuleDef.id` field, which differs
+from the display label in a few cases (e.g. **Acquisitions** has `id: 'pipeline'`, **Monthly Close**
+has `id: 'close'`, **System Health** has `id: 'health'`). Overlay components (AI Panel, Command
+Palette, Entity Drawer) live in `src/brain/` and are not rail modules.
 
-| Module | Path | Spine | Status |
-|--------|------|-------|--------|
-| Overview | `src/modules/overview/` | A | Shipped |
-| Principal Home | `src/modules/principal/` | A | Shipped |
-| Acquisitions | `src/modules/acquisitions/` | A | Seeded kanban only |
-| Tasks | `src/modules/tasks/` | A | Shipped |
-| Alerts | `src/modules/alerts/` | A | Shipped |
-| Calendar | `src/modules/calendar/` | A | Shipped |
-| Renewals | `src/modules/renewals/` | A | Shipped |
-| Portfolio | `src/modules/portfolio/` | A | Shipped |
-| Intel | `src/modules/intel/` | B | Phase B2 (PR #14) |
-| Calibration | `src/modules/calibration/` | B | Shipped |
-| Leases | `src/modules/leases/` | A | Shipped |
-| Tenants | `src/modules/tenants/` | A | Shipped |
-| Debt | `src/modules/debt/` | A | Shipped |
-| Cash | `src/modules/cash/` | A | Shipped |
-| Monthly Close | `src/modules/close/` | A | Shipped |
-| Insurance | `src/modules/insurance/` | A | Shipped |
-| Market | `src/modules/market/` | A | Shipped |
-| Relationships | `src/modules/relationships/` | A | Shipped |
-| Documents | `src/modules/documents/` | A | Shipped |
-| System Health | `src/modules/health/` | A | Shipped |
+| Module | ID | Path | Spine | Status |
+|--------|----|------|-------|--------|
+| Overview | `overview` | `src/modules/overview/` | A | Shipped |
+| Principal Home | `principal` | `src/modules/principal/` | A | Shipped |
+| Acquisitions | `pipeline` | `src/modules/acquisitions/` | A | Seeded kanban only |
+| Tasks | `tasks` | `src/modules/tasks/` | A | Shipped |
+| Alerts | `alerts` | `src/modules/alerts/` | A | Shipped |
+| Calendar | `calendar` | `src/modules/calendar/` | A | Shipped |
+| Renewals | `renewals` | `src/modules/renewals/` | A | Shipped |
+| Portfolio | `portfolio` | `src/modules/portfolio/` | A | Shipped |
+| Intel | `intel` | `src/modules/intel/` | B | Phase B2 (PR #14) |
+| Calibration | `calibration` | `src/modules/calibration/` | B | Shipped |
+| Leases | `leases` | `src/modules/leases/` | A | Shipped |
+| Tenants | `tenants` | `src/modules/tenants/` | A | Shipped |
+| Debt | `debt` | `src/modules/debt/` | A | Shipped |
+| Cash | `cash` | `src/modules/cash/` | A | Shipped |
+| Monthly Close | `close` | `src/modules/close/` | A | Shipped |
+| Insurance | `insurance` | `src/modules/insurance/` | A | Shipped |
+| Market | `market` | `src/modules/market/` | A | Shipped |
+| Relationships | `relationships` | `src/modules/relationships/` | A | Shipped |
+| Documents | `documents` | `src/modules/documents/` | A | Shipped |
+| System Health | `health` | `src/modules/health/` | A | Shipped |
 
 ---
 

@@ -9,16 +9,19 @@
 // this suite only verifies the DB join plumbing — that the right warehouse periods,
 // NOIs, and financial_mode flags flow from the DB into the classifier correctly.
 import ExcelJS from 'exceljs';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import { openWarehouse } from '../../server/warehouse/db';
 import { ingestFile } from '../../server/warehouse/ingest';
 import { seedMappings } from '../../server/warehouse/mapping';
 import { seedPropertyMaster } from '../../server/warehouse/property-master';
 import { reconcileNoiABFromDb } from '../../server/warehouse/reconcile-noi';
+
+let cleanup: (() => void) | undefined;
+afterEach(() => { cleanup?.(); cleanup = undefined; });
 
 const SEED = [
   { account: 'Rent', code: '5064', normalized_category: 'Rental Revenue', classification: 'revenue' },
@@ -109,7 +112,8 @@ const snapshot = (properties: PortfolioSnapshot['properties']): PortfolioSnapsho
 
 describe('reconcileNoiABFromDb — JOIN path (Spine A workbook ↔ Spine B warehouse)', () => {
   it('match: workbook Oxford-share NOI equal to warehouse oxfordNoi → status match', async () => {
-    const { db } = await buildDb();
+    const { db, dir } = await buildDb();
+    cleanup = () => { db.close(); rmSync(dir, { recursive: true, force: true }); };
     // Rarig: 100% owned, warehouse oxfordNoi = 95000. Workbook noi = 95000.
     // M3: Red Branch is also in the warehouse but not the snapshot → added as missing-from-workbook.
     const rows = reconcileNoiABFromDb(db, snapshot([prop('1100-rarig-ave-columbus-oh', 95000)]));
@@ -125,7 +129,8 @@ describe('reconcileNoiABFromDb — JOIN path (Spine A workbook ↔ Spine B wareh
   });
 
   it('large-drift: workbook NOI materially higher than warehouse → large-drift error', async () => {
-    const { db } = await buildDb();
+    const { db, dir } = await buildDb();
+    cleanup = () => { db.close(); rmSync(dir, { recursive: true, force: true }); };
     // Rarig warehouse oxfordNoi = 95000; workbook noi = 200000 (>20% drift → large-drift).
     // M3: Red Branch also emitted as missing-from-workbook; use find() to isolate Rarig.
     const rows = reconcileNoiABFromDb(db, snapshot([prop('1100-rarig-ave-columbus-oh', 200000)]));
@@ -138,7 +143,8 @@ describe('reconcileNoiABFromDb — JOIN path (Spine A workbook ↔ Spine B wareh
   });
 
   it('ownership overlay: Red Branch (50%) — warehouseOxfordNoi is 47500, not 95000', async () => {
-    const { db } = await buildDb();
+    const { db, dir } = await buildDb();
+    cleanup = () => { db.close(); rmSync(dir, { recursive: true, force: true }); };
     // Red Branch is 50% owned; warehouse computes oxfordNoi = 95000 × 0.5 = 47500.
     // Workbook noi = 47500 → match; confirms ownership overlay flows through the JOIN correctly.
     // M3: Rarig is also in the warehouse but not the snapshot → emitted as missing-from-workbook.
@@ -153,7 +159,8 @@ describe('reconcileNoiABFromDb — JOIN path (Spine A workbook ↔ Spine B wareh
   });
 
   it('missing-from-warehouse: property in snapshot with no ingested P&L → missing-from-warehouse', async () => {
-    const { db } = await buildDb();
+    const { db, dir } = await buildDb();
+    cleanup = () => { db.close(); rmSync(dir, { recursive: true, force: true }); };
     // 'mystery-prop' exists in the snapshot but was never ingested into the warehouse.
     // M3: Rarig and Red Branch are warehouse-only (not in snapshot) → emitted as missing-from-workbook.
     const rows = reconcileNoiABFromDb(
@@ -167,11 +174,27 @@ describe('reconcileNoiABFromDb — JOIN path (Spine A workbook ↔ Spine B wareh
     expect(r.warehouseOxfordNoi).toBeNull();
     // M3 additions (Rarig + Red Branch) are missing-from-workbook, not missing-from-warehouse.
     const warehouseOnly = rows.filter((row) => row.propertyId !== 'mystery-prop-not-in-warehouse');
+    expect(warehouseOnly.length).toBe(2); // Rarig + Red Branch — guards the every() below against a vacuous pass
     expect(warehouseOnly.every((row) => row.status === 'missing-from-workbook')).toBe(true);
   });
 
+  it('lease-run: financial_mode flows from property_master through the JOIN → lease-run-skipped', async () => {
+    const { db, dir } = await buildDb();
+    cleanup = () => { db.close(); rmSync(dir, { recursive: true, force: true }); };
+    // Fishel (7658-fishel-dr-n-dublin-oh) is seeded with financial_mode='lease-run' — it has no
+    // ingested P&L by ratification. This verifies the DB plumbing: financialMode is read from
+    // property_master, mapped to isLeaseRun, and short-circuits the classifier to lease-run-skipped
+    // (info severity) rather than a spurious missing-from-warehouse warn.
+    const rows = reconcileNoiABFromDb(db, snapshot([prop('7658-fishel-dr-n-dublin-oh', 80000)]));
+    const fishel = rows.find((row) => row.propertyId === '7658-fishel-dr-n-dublin-oh')!;
+    expect(fishel).toBeDefined();
+    expect(fishel.status).toBe('lease-run-skipped');
+    expect(fishel.severity).toBe('info');
+  });
+
   it('residence exclusion: property typed Residence is skipped by the assembler', async () => {
-    const { db } = await buildDb();
+    const { db, dir } = await buildDb();
+    cleanup = () => { db.close(); rmSync(dir, { recursive: true, force: true }); };
     const rows = reconcileNoiABFromDb(
       db,
       snapshot([
@@ -187,7 +210,8 @@ describe('reconcileNoiABFromDb — JOIN path (Spine A workbook ↔ Spine B wareh
   });
 
   it('mixed portfolio: multiple properties classified in one pass, sorted by id', async () => {
-    const { db } = await buildDb();
+    const { db, dir } = await buildDb();
+    cleanup = () => { db.close(); rmSync(dir, { recursive: true, force: true }); };
     const rows = reconcileNoiABFromDb(
       db,
       snapshot([
