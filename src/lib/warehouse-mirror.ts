@@ -31,7 +31,9 @@ export interface WarehouseMirrorMeta {
 
 export const WarehouseMirrorEnvelopeSchema = z.object({
   schemaVersion: z.string(),
-  bakedAt: z.string(),
+  // ISO-validated so a corrupt/non-ISO timestamp FAIL-CLOSES the loader (→ Offline) rather than
+  // reaching the freshness badge with an unknowable age that would never read as stale.
+  bakedAt: z.string().datetime(),
   warehouseSource: WarehouseSource,
   // key = the exact client request path (incl. query string); value = that route's JSON payload.
   endpoints: z.record(z.unknown()),
@@ -53,31 +55,6 @@ export function parseWarehouseMirror(raw: unknown): WarehouseMirrorEnvelope | nu
 /** The precomputed payload for an exact request path, or undefined when it was not baked. */
 export function getMirrorEndpoint(env: WarehouseMirrorEnvelope, url: string): unknown {
   return env.endpoints[url];
-}
-
-export interface CalibrationLogFilterQuery {
-  subject?: string | null;
-  kind?: string | null;
-  status?: 'open' | 'resolved' | null;
-}
-
-/**
- * The mirror bakes the UNFILTERED calibration log; this re-applies the server's WHERE client-side
- * (pure row selection — NOT engine math). Mirrors server/warehouse/calibration.ts `calibrationLog`:
- *   subject → subject_id =, kind → verdict_kind =, status open → no resolution / resolved → resolved.
- */
-export function filterCalibrationLogRows<T extends { subjectId: string; verdictKind: string; resolved: boolean }>(
-  rows: T[],
-  query: CalibrationLogFilterQuery = {},
-): T[] {
-  const { subject = null, kind = null, status = null } = query;
-  return rows.filter((r) => {
-    if (subject && r.subjectId !== subject) return false;
-    if (kind && r.verdictKind !== kind) return false;
-    if (status === 'open' && r.resolved) return false;
-    if (status === 'resolved' && !r.resolved) return false;
-    return true;
-  });
 }
 
 // Memoized loader: the baked mirror never changes within a page load, so fetch `/warehouse.json`

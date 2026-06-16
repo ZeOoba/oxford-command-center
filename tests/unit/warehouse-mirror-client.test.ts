@@ -9,7 +9,6 @@ import {
   WAREHOUSE_MIRROR_SCHEMA_VERSION,
   parseWarehouseMirror,
   getMirrorEndpoint,
-  filterCalibrationLogRows,
 } from '../../src/lib/warehouse-mirror';
 import { computeWarehouseFreshness } from '../../src/lib/freshness';
 
@@ -37,22 +36,10 @@ describe('warehouse-mirror envelope (fail-closed)', () => {
     expect(parseWarehouseMirror(null)).toBeNull();
     expect(parseWarehouseMirror('not json')).toBeNull();
   });
-});
 
-describe('filterCalibrationLogRows (mirror serves the unfiltered log)', () => {
-  const rows = [
-    { subjectId: 'a', verdictKind: 'health-band', resolved: false },
-    { subjectId: 'a', verdictKind: 'anomaly', resolved: true },
-    { subjectId: 'b', verdictKind: 'health-band', resolved: true },
-  ];
-
-  it('filters by subject, kind and open/resolved status — matching the server WHERE', () => {
-    expect(filterCalibrationLogRows(rows, {}).length).toBe(3);
-    expect(filterCalibrationLogRows(rows, { subject: 'a' }).map((r) => r.subjectId)).toEqual(['a', 'a']);
-    expect(filterCalibrationLogRows(rows, { kind: 'health-band' }).length).toBe(2);
-    expect(filterCalibrationLogRows(rows, { status: 'open' })).toEqual([rows[0]]);
-    expect(filterCalibrationLogRows(rows, { status: 'resolved' }).map((r) => r.subjectId)).toEqual(['a', 'b']);
-    expect(filterCalibrationLogRows(rows, { subject: 'a', status: 'resolved' })).toEqual([rows[1]]);
+  it('fail-closes on a non-ISO bakedAt — a corrupt timestamp must not pass the loader (refute: low)', () => {
+    expect(parseWarehouseMirror({ ...goodEnvelope, bakedAt: 'unknown' })).toBeNull();
+    expect(parseWarehouseMirror({ ...goodEnvelope, bakedAt: '2026-06-15' })).toBeNull();
   });
 });
 
@@ -81,6 +68,15 @@ describe('computeWarehouseFreshness (honest — never "Live")', () => {
 
   it('fail-closes to offline when there is no mirror meta (schema mismatch upstream → null)', () => {
     const f = computeWarehouseFreshness(null, Date.parse('2026-06-15T06:00:00Z'));
+    expect(f.kind).toBe('offline');
+    expect(f.isStale).toBe(false);
+  });
+
+  it('fail-closes to offline on an unparseable bakedAt — an unknowable age never reads as fresh (refute: low)', () => {
+    const f = computeWarehouseFreshness(
+      { schemaVersion: 'wh-v1', bakedAt: 'not-a-date', warehouseSource: 'checkpoint-read' },
+      Date.parse('2026-06-15T06:00:00Z'),
+    );
     expect(f.kind).toBe('offline');
     expect(f.isStale).toBe(false);
   });

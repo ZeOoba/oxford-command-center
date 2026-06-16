@@ -83,11 +83,16 @@ export function computeWarehouseFreshness(meta: WarehouseMirrorMeta | null, now 
   }
   const t = Date.parse(meta.bakedAt);
   const ageMs = Number.isFinite(t) ? Math.max(0, now - t) : null;
-  const stale = ageMs !== null && ageMs > STALENESS_HOURS * 3_600_000;
+  // An unparseable bakedAt yields an unknowable age — fail-closed to Offline, never a non-stale
+  // snapshot (the loader's z.string().datetime() normally prevents this; this is defense-in-depth).
+  if (ageMs === null) {
+    return { kind: 'offline', label: 'Offline', detail: null, bakeAgeMs: null, isStale: false };
+  }
+  const stale = ageMs > STALENESS_HOURS * 3_600_000;
   return {
     kind: stale ? 'stale' : 'static',
     label: 'Computed from snapshot',
-    detail: ageMs !== null ? `baked ${formatAge(ageMs)}` : null,
+    detail: `baked ${formatAge(ageMs)}`,
     bakeAgeMs: ageMs,
     isStale: stale,
   };
