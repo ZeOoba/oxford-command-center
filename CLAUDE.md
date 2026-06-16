@@ -43,15 +43,15 @@ These two spines have one critical defect: `Property.noi` (Spine A) and `warehou
 
 ---
 
-## 2. Current Build State (2026-06-13)
+## 2. Current Build State (2026-06-16)
 
 | Item | State |
 |------|-------|
-| Branch | `feat/pfi-phase-1-foundation` (checked out as main worktree) |
-| Last merge to main | PR #12 (`d2c3ff3`) — Phase A.2 imports UI |
-| Open PRs (stacked) | #13 Phase B analytics engine · #14 Phase B2 intelligence UI |
+| Branch | `feat/governor-enforcement` (main worktree) — PR #71 open |
+| Last merge to main | PR #48 (`968218d`) — Calibration Phase 2 backend |
+| Open PRs | #71 governor enforcement + 5 financial-engine bug fixes |
 | Gate | typecheck + lint + test + reconcile + warehouse:verify + **governance** |
-| Tests | 450+ vitest unit tests |
+| Tests | 1035+ vitest unit tests |
 | Uncommitted changes | Gabriel actively co-develops this tree — varies constantly |
 
 **Off-limits rule (do NOT enumerate the locked set here — it goes stale the instant Gabriel commits; that staleness is itself a failure mode):**
@@ -68,16 +68,18 @@ This is the single discipline that prevents the collision class this repo has al
 
 | Phase | Description | Status |
 |-------|-------------|--------|
-| 1a | Basis discipline + NOI integrity gate | Shipped (pending PR to main) |
-| 1b | FRED macro agent tool | Shipped (same branch) |
-| B (PR #13) | Analytics engine (growth/drivers/anomalies/benchmarks/scores) | Awaiting review |
-| B2 (PR #14) | Intelligence UI | Awaiting review, stacked on #13 |
+| 1a | Basis discipline + NOI integrity gate | Shipped ✓ |
+| 1b | FRED macro agent tool | Shipped ✓ |
+| B (PR #13) | Analytics engine (growth/drivers/anomalies/benchmarks/scores) | **Merged ✓** — INTEL_CONFIG weights ratified 2026-06-14 |
+| B2 (PR #14) | Intelligence UI | **Merged ✓** |
+| C | Briefings + PDF export (per-property + per-PM) | In branch — `feat/pfi-phase-c-briefings-pdf` (not yet in main) |
+| Acq | Acquisition Workbench UI + scoring API | In branch — stacked work pending |
 | 2 | Debt/Refi scoring + AI narrative briefings | Not started |
 | 3 | Forecast + Leasing intelligence | Not started |
 | 4 | **Acquisition Intelligence Engine** (firm priority #1) | Not started |
 | 5 | Capital Allocation capstone + Market intelligence | Not started |
 
-**Next work after PRs #13 and #14 merge:** INTEL_CONFIG weight calibration with Gabriel, then Phase 2.
+**Pending merge queue (order matters — stacked):** Phase C → Calibration UI/ops → Calibration snapshot → Test coverage / CORS → Launch.json fix. Land in sequence; each is a stacked branch.
 
 ---
 

@@ -24,21 +24,21 @@
     "pfi-phase-b": {
       "agent_role": "Analytics Agent",
       "phase": "Phase B analytics engine — PR #13",
-      "status": "review_needed",
+      "status": "merged",
       "blocked_by": null,
-      "review_needed": true,
-      "review_detail": "INTEL_CONFIG weight calibration needed from Gabriel before merge",
-      "last_updated": "2026-06-13T00:00:00Z"
+      "review_needed": false,
+      "review_detail": "MERGED. INTEL_CONFIG weights ratified by Gabriel 2026-06-14 (Option B, NOI-centric). Worktree removed.",
+      "last_updated": "2026-06-16T00:00:00Z"
     },
 
     "pfi-phase-b2": {
       "agent_role": "UX Agent",
       "phase": "Phase B2 Intelligence UI — PR #14",
-      "status": "blocked",
-      "blocked_by": "pfi-phase-b",
+      "status": "merged",
+      "blocked_by": null,
       "review_needed": false,
-      "review_detail": null,
-      "last_updated": "2026-06-13T00:00:00Z"
+      "review_detail": "MERGED. Stacked on #13; both squash-merged. Worktree removed.",
+      "last_updated": "2026-06-16T00:00:00Z"
     },
 
     "acquisition-scorecard": {
