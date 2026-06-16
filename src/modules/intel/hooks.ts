@@ -7,7 +7,9 @@
 // typed WarehouseUnavailableError and the module renders an informational empty state
 // instead of crashing. Patterns mirror src/data/queries.ts (staleTime 30s, retry 1).
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import type { z } from 'zod';
 import type { Classification } from '@contracts/warehouse';
+import { loadWarehouseMirror, getMirrorEndpoint } from '../../lib/warehouse-mirror';
 
 // ---------------------------------------------------------------------------
 // Response shapes — mirror the hand-aliased camelCase rows from server/warehouse.
@@ -126,6 +128,28 @@ export async function fetchJson<T>(path: string): Promise<T> {
     throw new Error(body.error ?? `Request failed (${res.status})`);
   }
   return readJson<T>(res);
+}
+
+/**
+ * Live-first read with the Fat-Mirror fallback (Eric Live Phase 1b): fetch + Zod-parse the live
+ * `/api/warehouse/*` route; if it is UNAVAILABLE (the static mirror serves the SPA / a 503), read
+ * the precomputed payload baked into `/warehouse.json` for this exact path. A real live parse
+ * failure (a malformed JSON body from a present route) is NOT swallowed — only WarehouseUnavailableError
+ * triggers the fallback. A missing baked endpoint, or no mirror at all, stays unavailable (fail-closed
+ * to the existing offline empty state). Shared by analytics-hooks.ts and calibration/hooks.ts so both
+ * spines fall back identically.
+ */
+export async function fetchParsedOrMirror<S extends z.ZodTypeAny>(path: string, schema: S): Promise<z.infer<S>> {
+  try {
+    return schema.parse(await fetchJson<unknown>(path));
+  } catch (e) {
+    if (!isWarehouseUnavailable(e)) throw e;
+    const env = await loadWarehouseMirror();
+    if (!env) throw e; // no baked mirror (or schema-version mismatch → null): stay unavailable
+    const payload = getMirrorEndpoint(env, path);
+    if (payload === undefined) throw new WarehouseUnavailableError('endpoint not in baked mirror');
+    return schema.parse(payload);
+  }
 }
 
 /** Read-then-act POST: returns the parsed JSON regardless of HTTP status (the caller
