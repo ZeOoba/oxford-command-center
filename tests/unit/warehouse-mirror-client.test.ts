@@ -140,3 +140,50 @@ describe('fetchParsedOrMirror (client 404 fallback)', () => {
     );
   });
 });
+
+// ── fetchJsonOrMirror: the unschema'd list reads (noi/imports/issues) also fall back, so the PFI
+//    module's `unavailable` gate does NOT trip on the mirror (it would, leaving PFI offline). ──
+describe('fetchJsonOrMirror (unschema list reads fall back too)', () => {
+  beforeEach(() => vi.resetModules());
+  afterEach(() => vi.restoreAllMocks());
+
+  it('returns the baked matrix when /api/warehouse/noi is unavailable', async () => {
+    const env = {
+      schemaVersion: WAREHOUSE_MIRROR_SCHEMA_VERSION,
+      bakedAt: '2026-06-15T00:00:00.000Z',
+      warehouseSource: 'checkpoint-read',
+      endpoints: { '/api/warehouse/noi': { matrix: [{ propertyId: 'p', period: '2025', noi: 1 }] } },
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/warehouse/')) {
+        return new Response('<!doctype html>', { status: 200, headers: { 'content-type': 'text/html' } });
+      }
+      if (url.includes('/warehouse.json')) {
+        return new Response(JSON.stringify(env), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response('not found', { status: 404 });
+    }));
+    const { fetchJsonOrMirror } = await import('../../src/modules/intel/hooks');
+    const out = await fetchJsonOrMirror<{ matrix: unknown[] }>('/api/warehouse/noi');
+    expect(out).toEqual({ matrix: [{ propertyId: 'p', period: '2025', noi: 1 }] });
+  });
+
+  it('stays unavailable for an endpoint that was not baked (e.g. import detail)', async () => {
+    const env = {
+      schemaVersion: WAREHOUSE_MIRROR_SCHEMA_VERSION,
+      bakedAt: '2026-06-15T00:00:00.000Z',
+      warehouseSource: 'checkpoint-read',
+      endpoints: { '/api/warehouse/noi': { matrix: [] } },
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/warehouse.json')) {
+        return new Response(JSON.stringify(env), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      return new Response('<!doctype html>', { status: 200, headers: { 'content-type': 'text/html' } });
+    }));
+    const { fetchJsonOrMirror, isWarehouseUnavailable } = await import('../../src/modules/intel/hooks');
+    await expect(fetchJsonOrMirror('/api/warehouse/imports/7')).rejects.toSatisfy(isWarehouseUnavailable);
+  });
+});

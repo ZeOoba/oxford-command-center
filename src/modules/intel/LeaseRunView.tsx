@@ -20,7 +20,7 @@ import { Skeleton } from '@/primitives/Skeleton';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { AreaChart } from '@/charts/AreaChart';
 import { isWarehouseUnavailable } from './hooks';
-import { useSetLeaseRunAssumptions, type LeaseRunAssumptionsPatch } from './hooks';
+import { useSetLeaseRunAssumptions, useWarehouseLive, type LeaseRunAssumptionsPatch } from './hooks';
 import { useLeaseRun, type LeaseRunPeriod } from './analytics-hooks';
 import {
   assumptionRows,
@@ -223,6 +223,9 @@ function AssumptionsPanel({
 }) {
   const rows = assumptionRows(env);
   const mutation = useSetLeaseRunAssumptions();
+  // The assumption override is a server WRITE (overlay); on the baked mirror it has no edge home, so
+  // values render read-only (Phase 1b).
+  const live = useWarehouseLive();
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<string>('');
 
@@ -250,9 +253,12 @@ function AssumptionsPanel({
       <CardHeader
         title="Assumptions"
         trailing={
-          <Badge tone={env.assumptionsAreDefault ? 'neutral' : 'gold'}>
-            {env.assumptionsAreDefault ? 'spec defaults' : 'overridden'}
-          </Badge>
+          <div className="flex items-center gap-1.5">
+            {!live && <Badge tone="neutral">read-only</Badge>}
+            <Badge tone={env.assumptionsAreDefault ? 'neutral' : 'gold'}>
+              {env.assumptionsAreDefault ? 'spec defaults' : 'overridden'}
+            </Badge>
+          </div>
         }
       />
       <div className="flex flex-col divide-y" style={{ borderColor: 'var(--border-subtle)' }}>
@@ -279,7 +285,7 @@ function AssumptionsPanel({
                   Cancel
                 </button>
               </span>
-            ) : (
+            ) : live ? (
               <button
                 className="num font-semibold"
                 onClick={() => startEdit(r.key, r.value)}
@@ -287,6 +293,10 @@ function AssumptionsPanel({
               >
                 {r.format === 'usdPsf' ? fmtUsd(r.value, true) : fmtPct(r.value)}
               </button>
+            ) : (
+              <span className="num font-semibold" style={{ color: 'var(--text-primary)' }}>
+                {r.format === 'usdPsf' ? fmtUsd(r.value, true) : fmtPct(r.value)}
+              </span>
             )}
           </div>
         ))}
@@ -294,7 +304,7 @@ function AssumptionsPanel({
       <div className="px-4 py-2 text-2xs" style={{ color: 'var(--text-secondary)' }}>
         Management fee, reserve, vacancy, renewal growth, and cap rate are editable landlord-cost
         assumptions — not lease terms. Overrides persist to the local overlay; the workbook and
-        warehouse are never written.
+        warehouse are never written.{!live && ' Editing is a workstation-only action — this mirror is read-only.'}
       </div>
     </Card>
   );

@@ -8,7 +8,7 @@ import { useState } from 'react';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { Button } from '@/primitives/Button';
-import { useAddMapping, type ImportSummary } from './hooks';
+import { useAddMapping, useWarehouseLive, type ImportSummary } from './hooks';
 import { CategorySelect, ClassificationSelect, SectionLabel } from './ImportsView';
 import type { Classification } from '@contracts/warehouse';
 
@@ -23,6 +23,8 @@ function distinctProperties(imports: ImportSummary[]): Array<{ id: string; name:
 
 export function MappingsView({ imports }: { imports: ImportSummary[] }) {
   const addMapping = useAddMapping();
+  // Adding a mapping override is a server WRITE; on the baked mirror it has no edge home (Phase 1b).
+  const live = useWarehouseLive();
   const properties = distinctProperties(imports);
 
   const [account, setAccount] = useState('');
@@ -51,6 +53,20 @@ export function MappingsView({ imports }: { imports: ImportSummary[] }) {
       },
     );
   };
+
+  // The baked mirror is read-only: the entire mapping-override surface is a write, so replace it with
+  // an honest note rather than a form that cannot submit.
+  if (!live) {
+    return (
+      <Card>
+        <CardHeader title="Mapping Overrides" trailing={<Badge tone="neutral">read-only</Badge>} />
+        <div className="px-4 py-10 text-center text-sm" style={{ color: 'var(--text-tertiary)' }}>
+          Mapping overrides are a workstation-only action. This deployed mirror is read-only — open the
+          command center on the local machine to add or change a mapping.
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card>
