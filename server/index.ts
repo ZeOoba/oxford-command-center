@@ -340,21 +340,21 @@ app.get('/sse', (c) =>
 );
 
 async function main() {
-  // Resilient startup: a failed workbook/snapshot load must NOT prevent the server from binding.
-  // The snapshot route already 503s gracefully on a null snapshot and the warehouse opens lazily,
-  // so serving in a degraded mode keeps /api/health, /api/warehouse/* and the SPA shell alive
-  // (and makes warehouse-backed UI verifiable) even when the workbook is briefly absent. The
-  // happy path (workbook present) is unchanged — refresh succeeds and watching starts as before.
-  try {
-    await brain.refresh('startup');
-    brain.startWatching();
-  } catch (err) {
-    console.error('⚠ Brain startup refresh failed — serving in degraded mode (snapshot 503 until the workbook loads):', err);
-  }
+  // Bind the port FIRST — nothing should delay the server from accepting connections.
+  // A slow or hanging workbook load (brain.refresh) previously blocked serve() from being called
+  // for 5+ minutes on a cold start. All degraded-mode guards are already in place: /api/snapshot
+  // 503s on null snapshot, warehouse opens lazily, /api/health stays live throughout.
   serve({ fetch: app.fetch, port: SERVER_PORT, hostname: '127.0.0.1' }, (info) => {
     console.log(`◆ Oxford Brain Server — http://127.0.0.1:${info.port} (localhost only)`);
-    console.log(`  Watching: ${brain.getState().workbookPath}`);
+    console.log(`  Workbook: ${brain.getState().workbookPath}`);
   });
+  // Load the workbook and start watching in the background — a slow/hanging read must never
+  // block the port. /api/snapshot 503s gracefully until the refresh completes.
+  brain.refresh('startup')
+    .then(() => { brain.startWatching(); })
+    .catch((err) => {
+      console.error('⚠ Brain startup refresh failed — serving in degraded mode (snapshot 503 until workbook loads):', err);
+    });
   // Warm the document RAG index in the BACKGROUND — a slow/hanging embedding-model load must never
   // block the server from binding the port. The warehouse + workbook-backed UI (incl. the three
   // server-only modules: acquisition scoring, PFI, calibration) do not depend on the doc index.

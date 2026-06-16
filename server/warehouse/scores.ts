@@ -63,7 +63,8 @@ const pctStr = (n: number | null): string => (n === null ? 'n/a' : `${(n * 100).
  *  real building's expense percentile. Null it for non-operating entities so the expense efficiency
  *  cohort excludes them as both member and subject, exactly as the per-SF cohorts already do. */
 function efficiencyExpenseRatio(m: PeriodMetrics): number | null {
-  return isOperatingRealEstate(m) ? m.expenseRatio : null;
+  if (!isOperatingRealEstate(m) || m.revenue <= 0) return null;
+  return m.expenseRatio;
 }
 
 /** Non-null numeric population of a per-SF cost ratio for a period (for percentile rank). */

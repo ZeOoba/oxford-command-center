@@ -389,3 +389,62 @@ describe('parser-version re-ingest (self-healing backfill)', () => {
     expect((db.prepare('SELECT status FROM import_batches WHERE id = ?').get(v1Id) as { status: string }).status).toBe('superseded');
   });
 });
+
+const MIXED_SIGN_SEED = [
+  { account: 'Rent', code: null, normalized_category: 'Rental Revenue', classification: 'revenue' },
+  { account: 'HVAC Repair', code: null, normalized_category: 'Repairs & Maintenance', classification: 'opex' },
+  { account: 'Tax Accrual', code: null, normalized_category: 'Taxes', classification: 'opex' },
+  { account: 'Insurance Accrual', code: null, normalized_category: 'Insurance', classification: 'opex' },
+];
+
+describe('sign-flip uses signed magnitude, not row count (defect class: 9620-NOI-inflation via mixed-sign expense section)', () => {
+  it('flips the expense side when the signed leaf SUM is negative even if positive rows outnumber negative rows by count', async () => {
+    // Bug: flip[sideKey] = neg > pos (row count) — 1 negative vs 2 positive rows → no flip
+    // even though the signed sum is -5000+400+300 = -4300 (negative → SHOULD flip).
+    // Without flip: ledger stores HVAC=-5000, TaxAcr=+400, InsAcr=+300.
+    //   opex sum = -5000+400+300 = -4300 → NOI = 100000 - (-4300) = 104300 (inflated by 4300+4300=8600).
+    // With correct flip: amounts negated → HVAC=+5000, TaxAcr=-400, InsAcr=-300.
+    //   opex sum = 5000-400-300 = 4300 → NOI = 100000 - 4300 = 95700 (correct).
+    const dir = mkdtempSync(join(tmpdir(), 'wh-mixsign-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, MIXED_SIGN_SEED);
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    const rows: Array<[string | null, string | null, string | null, number | null]> = [
+      ['Profit & Loss', null, null, null],
+      ['Property: 1100 Rarig Ave', null, null, null],
+      ['01/01/25 - 12/31/25  (cash basis)', null, null, null],
+      [null, 'INCOME', null, null],
+      [null, null, '          Rent', 100000],
+      [null, 'EXPENSE', null, null],
+      [null, null, '          HVAC Repair', -5000],      // negative (outflow convention) — the 1 negative
+      [null, null, '          Tax Accrual', 400],         // positive contra/accrual — the 2 positives
+      [null, null, '          Insurance Accrual', 300],   // positive contra/accrual
+      // neg=1, pos=2 → count-based flip fires false; signed sum = -5000+400+300 = -4300 < 0 → should flip
+    ];
+    for (const r of rows) ws.addRow(r);
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await wb.xlsx.writeFile(file);
+
+    const result = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-13T00:00:00Z' });
+    expect(result.status).toBe('committed');
+
+    const byName = new Map(
+      (db.prepare('SELECT raw_account, amount FROM ledger_entries WHERE is_active=1').all() as Array<{ raw_account: string; amount: number }>)
+        .map((x) => [x.raw_account, x.amount]),
+    );
+    // After correct flip: HVAC stored positive (5000), contra rows negated (-400, -300)
+    expect(byName.get('HVAC Repair')).toBe(5000);
+    expect(byName.get('Tax Accrual')).toBe(-400);
+    expect(byName.get('Insurance Accrual')).toBe(-300);
+
+    const noi = (db.prepare(`
+      SELECT SUM(CASE WHEN classification IN ('revenue','recovery','other-income') THEN amount
+                      WHEN classification = 'opex' THEN -amount ELSE 0 END) AS noi
+      FROM ledger_entries WHERE is_active = 1
+    `).get() as { noi: number }).noi;
+    expect(noi).toBe(95700); // 100000 - (5000-400-300) = 100000 - 4300 = 95700
+  });
+});

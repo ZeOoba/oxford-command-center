@@ -127,7 +127,7 @@ Palette, Entity Drawer) live in `src/brain/` and are not rail modules.
 | Calendar | `calendar` | `src/modules/calendar/` | A | Shipped |
 | Renewals | `renewals` | `src/modules/renewals/` | A | Shipped |
 | Portfolio | `portfolio` | `src/modules/portfolio/` | A | Shipped |
-| Intel | `intel` | `src/modules/intel/` | B | Phase B2 (PR #14) |
+| Property Financials | `intel` | `src/modules/intel/` | B | Phase B2 (PR #14) |
 | Calibration | `calibration` | `src/modules/calibration/` | B | Shipped |
 | Leases | `leases` | `src/modules/leases/` | A | Shipped |
 | Tenants | `tenants` | `src/modules/tenants/` | A | Shipped |
