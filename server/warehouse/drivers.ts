@@ -32,7 +32,7 @@ export function noiImpactByCategory(metrics: PeriodMetrics): Record<string, numb
  * Decompose ΔNOI between two signed impact maps (a = earlier, b = later).
  * Union of keys; delta = (b[k] ?? 0) − (a[k] ?? 0). totalDelta is the running sum
  * of those same deltas so Σdelta === totalDelta exactly. contributionPct = delta /
- * totalDelta, null when |totalDelta| ≤ 0.005. Drivers ranked by |delta| desc.
+ * totalDelta, null when |totalDelta| / sumAbsDelta ≤ 0.05 (low-signal ratio). Drivers ranked by |delta| desc, then category name.
  */
 export function decomposeNoiChange(
   a: Record<string, number>,
