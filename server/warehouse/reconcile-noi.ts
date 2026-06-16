@@ -159,7 +159,7 @@ export function classifyNoiReconciliation(
     status = 'match';
     severity = 'info';
     reason = 'Workbook NOI ties out exactly to warehouse oxfordNoi.';
-  } else if (!signsConflict && (deltaPct <= tolerance.pctBand || (absDelta <= tolerance.absBandUsd && deltaPct < tolerance.largeDriftPct))) {
+  } else if (!signsConflict && (deltaPct <= tolerance.pctBand || (absDelta <= tolerance.absBandUsd && deltaPct < tolerance.largeDriftPct && Math.max(Math.abs(wb), Math.abs(wh)) <= tolerance.absBandUsd * 3))) {
     status = 'in-tolerance';
     severity = 'info';
     reason =

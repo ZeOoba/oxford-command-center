@@ -85,14 +85,12 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
   // written whenever a flip is applied.
   const flip: Record<'income' | 'expense', boolean> = { income: false, expense: false };
   for (const sideKey of ['income', 'expense'] as const) {
-    let neg = 0;
-    let pos = 0;
+    let sum = 0;
     for (const a of stmt.accounts) {
       if (a.total === null || a.total === 0 || sectionSide(a.section) !== sideKey) continue;
-      if (a.total < 0) neg += 1;
-      else pos += 1;
+      sum += a.total;
     }
-    flip[sideKey] = neg > pos;
+    flip[sideKey] = sum < 0;
   }
   const tx = db.transaction(() => {
     if (isReDerive) {

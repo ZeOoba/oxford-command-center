@@ -133,6 +133,20 @@ describe('propertyPeriodMetrics', () => {
     expect(row.grainHint).toBe('year'); // full year wins over the YTD
     expect(row.basis).toBe('cash');     // the full-year batch's basis, deterministically
   });
+
+  it('taxesPerSf is null — not 0 — when the Taxes category is absent from the ledger (missing category is no-data, not $0/SF)', async () => {
+    // The buildWarehouse fixture maps only Rent (revenue) and HVAC Repair (Repairs & Maintenance opex).
+    // There is no Taxes account in the SEED, so categories['Taxes'] is undefined for every property.
+    // Bug: perSf(categories['Taxes'] ?? 0, sf) = perSf(0, sf) = 0, which ranks the property as
+    // best-in-cohort for tax efficiency (efficiencyScore=100) — a phantom $0/SF score.
+    // Fix: emit null when the key is absent so the property self-excludes from the tax-efficiency cohort.
+    const { db } = await buildWarehouse();
+    const m = propertyPeriodMetrics(db);
+    const rarig = m.find((x) => x.propertyId === '1100-rarig-ave-columbus-oh' && x.period === '2025')!;
+    expect(rarig.taxesPerSf).toBeNull();          // absent category = no-data
+    expect(rarig.insurancePerSf).toBeNull();       // also absent
+    expect(rarig.repairsPerSf).not.toBeNull();     // Repairs & Maintenance IS present
+  });
 });
 
 // --- NOI codepath agreement: noiMatrix (raw GROUP BY) vs propertyPeriodMetrics (coherent-batch) ---
