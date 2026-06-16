@@ -10,7 +10,10 @@
 // fetchJson throws WarehouseUnavailableError → the panel degrades to the offline Card, never crashes.
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { z } from 'zod';
-import { fetchJson, QUERY_OPTS, WarehouseUnavailableError } from '../intel/hooks';
+import {
+  fetchJson, fetchParsedOrMirror, isWarehouseUnavailable, QUERY_OPTS, WarehouseUnavailableError,
+} from '../intel/hooks';
+import { loadWarehouseMirror, getMirrorEndpoint, filterCalibrationLogRows } from '../../lib/warehouse-mirror';
 import {
   CalibrationLogResponseSchema,
   CalibrationPendingResponseSchema,
@@ -19,6 +22,7 @@ import {
   CalibrationResolveResponseSchema,
 } from '@contracts/warehouse';
 import type {
+  CalibrationLogRow,
   CalibrationReportResponse,
   CalibrationResolveRequest,
   CalibrationResolveResponse,
@@ -28,9 +32,37 @@ import type {
 export type { CalibrationLogRow, CalibrationReportResponse, CalibrationResolveRequest } from '@contracts/warehouse';
 
 /** Fetch a route then .parse() its body through the contract schema (client half of the H6 boundary).
- *  fetchJson still throws WarehouseUnavailableError on a 503 / non-JSON mirror BEFORE any parse runs. */
+ *  Delegates to fetchParsedOrMirror: live-first, then the Fat-Mirror precomputed payload on a 503 /
+ *  non-JSON mirror (Phase 1b). Used for the pending + report reads (whole-payload keys). */
 async function fetchParsed<S extends z.ZodTypeAny>(path: string, schema: S): Promise<z.infer<S>> {
-  return schema.parse(await fetchJson<unknown>(path));
+  return fetchParsedOrMirror(path, schema);
+}
+
+/**
+ * Calibration LOG read with the Fat-Mirror fallback. The bake stores only the UNFILTERED log (filter
+ * combos are open-ended), so on the mirror we fetch that one baked payload and re-apply the filter
+ * client-side via filterCalibrationLogRows (pure row selection mirroring the server WHERE — NOT engine
+ * math). The live path keeps server-side filtering. A real live parse failure is NOT swallowed.
+ */
+async function fetchCalibrationLogOrMirror(query: CalibrationLogQuery): Promise<CalibrationLogRow[]> {
+  const { subject = null, kind = null, status = null } = query;
+  const qs = new URLSearchParams();
+  if (subject) qs.set('subject', subject);
+  if (kind) qs.set('kind', kind);
+  if (status) qs.set('status', status);
+  const suffix = qs.toString() ? `?${qs.toString()}` : '';
+  try {
+    return CalibrationLogResponseSchema.parse(
+      await fetchJson<unknown>(`/api/warehouse/calibration/log${suffix}`),
+    ).log;
+  } catch (e) {
+    if (!isWarehouseUnavailable(e)) throw e;
+    const env = await loadWarehouseMirror();
+    if (!env) throw e;
+    const payload = getMirrorEndpoint(env, '/api/warehouse/calibration/log');
+    if (payload === undefined) throw new WarehouseUnavailableError('calibration log not in baked mirror');
+    return filterCalibrationLogRows(CalibrationLogResponseSchema.parse(payload).log, { subject, kind, status });
+  }
 }
 
 export const CALIBRATION_KEYS = {
@@ -49,15 +81,9 @@ export interface CalibrationLogQuery {
 /** The verdict log, filterable by subject / kind / open|resolved. Empty [] on a no-verdict warehouse. */
 export function useCalibrationLog(query: CalibrationLogQuery = {}) {
   const { subject = null, kind = null, status = null } = query;
-  const qs = new URLSearchParams();
-  if (subject) qs.set('subject', subject);
-  if (kind) qs.set('kind', kind);
-  if (status) qs.set('status', status);
-  const suffix = qs.toString() ? `?${qs.toString()}` : '';
   return useQuery({
     queryKey: CALIBRATION_KEYS.log(subject, kind, status),
-    queryFn: () =>
-      fetchParsed(`/api/warehouse/calibration/log${suffix}`, CalibrationLogResponseSchema).then((r) => r.log),
+    queryFn: () => fetchCalibrationLogOrMirror({ subject, kind, status }),
     ...QUERY_OPTS,
   });
 }
