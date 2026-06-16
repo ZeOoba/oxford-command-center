@@ -16,6 +16,7 @@
 .NOTES
   Requires: node/npm, a Cloudflare auth token for wrangler (CLOUDFLARE_API_TOKEN or
   `wrangler login`). Run `npm run gate` should be green before deploying.
+  Gate check uses curl.exe (Windows 11 built-in) -- PS5.1-compatible.
 #>
 [CmdletBinding()]
 param(
@@ -30,7 +31,7 @@ Set-Location $repo
 $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
 Write-Host "[$stamp] Mirror deploy starting in $repo"
 
-# 1) Bake (confidential included — target is Access-gated) + build.
+# 1) Bake (confidential included -- target is Access-gated) + build.
 $env:MIRROR_INCLUDE_CONFIDENTIAL = '1'
 $env:BRIEF_ENABLED               = '1'
 $env:BRIEF_SEND_SCRIPT           = 'C:\Users\Owner\.claude\scheduled-tasks\_shared\send-via-outlook.ps1'
@@ -48,14 +49,18 @@ finally {
   Remove-Item Env:\BRIEF_SEND_SCRIPT           -ErrorAction SilentlyContinue
 }
 
-# 3) Verify Access is still enforcing — unauthenticated must 302 to the Access login host.
+# 3) Verify Access is still enforcing -- unauthenticated must 302 to the Access login host.
+#    Uses curl.exe (Windows 11 built-in) -- PS5.1-compatible; Invoke-WebRequest cannot capture
+#    302 response objects on PS5.1 (SkipHttpErrorCheck is PS7+ only).
 Start-Sleep -Seconds 5
-$resp = Invoke-WebRequest -Uri $VerifyUrl -MaximumRedirection 0 -SkipHttpErrorCheck -ErrorAction SilentlyContinue
-$code = [int]$resp.StatusCode
-$location = $resp.Headers['Location']
+$curlOut = & curl.exe -s -I --max-redirs 0 $VerifyUrl 2>&1
+$statusLine   = ($curlOut | Where-Object { $_ -match '^HTTP/' } | Select-Object -First 1) -as [string]
+$locationLine = ($curlOut | Where-Object { $_ -match '^[Ll]ocation:' } | Select-Object -First 1) -as [string]
+$code     = if ($statusLine   -match 'HTTP/\S+\s+(\d+)') { [int]$Matches[1] } else { 0 }
+$location = if ($locationLine -match '^[Ll]ocation:\s*(.+)') { $Matches[1].Trim() } else { '' }
 if ($code -ne 302 -or ($location -notmatch [regex]::Escape($AccessHost))) {
-  throw "GATE CHECK FAILED: $VerifyUrl returned $code (Location='$location'). Expected 302 -> *$AccessHost. Confidential bake may be exposed — investigate immediately."
+  throw "GATE CHECK FAILED: $VerifyUrl returned $code (Location='$location'). Expected 302 -> *$AccessHost. Confidential bake may be exposed - investigate immediately."
 }
 
 $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-Write-Host "[$stamp] OK — deployed and Access gate verified (302 -> $AccessHost)."
+Write-Host "[$stamp] OK - deployed and Access gate verified (302 -> $AccessHost). Location: $location"
