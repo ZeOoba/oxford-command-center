@@ -178,6 +178,50 @@ describe('efficiency cohorts exclude SF-less (non-real-estate) entities — late
   });
 });
 
+describe('negative-revenue guard — distressed property must not score as most-efficient (unguarded sibling of the growth null-on-non-positive guard)', () => {
+  // metrics.ts computes expenseRatio = opex/revenue, guarding only revenue!==0. When revenue<0
+  // (a large credit/refund nets out gross rent), expenseRatio is negative. Pre-fix:
+  // efficiencyExpenseRatio() returned m.expenseRatio for any operating RE entity without checking
+  // the sign; percentileRank(-8.0, peers) = 0 → efficiencyScore = 100 (best-in-cohort) even
+  // though the property is bleeding money. The growth path correctly nulls on prev<=0 — this is
+  // the analogous guard for the level-efficiency path.
+  it('a property with negative revenue scores expenseEfficiency neutral (50), not ~100', () => {
+    const distressed = pm('1100-rarig-ave-columbus-oh', 'cash', -0.1, {
+      revenue: -5000,
+      opex: 40000,
+      noi: -45000,
+      expenseRatio: -8.0, // opex / negative revenue → negative ratio
+    });
+    const peer = pm('9050-red-branch-rd-columbia-md', 'cash', 5, {
+      revenue: 100000,
+      opex: 40000,
+      expenseRatio: 0.4,
+    });
+    const scores = scoreProperties(db(), [distressed, peer]);
+    const d = scores.find((s) => s.propertyId === '1100-rarig-ave-columbus-oh')!;
+    // negative expenseRatio = no-data for the efficiency cohort → neutral 50, not best-in-cohort 100
+    expect(d.subScores.expenseEfficiency).toBe(50);
+  });
+
+  it('peer is not disadvantaged by the distressed property being excluded from the cohort (singleton → neutral 50)', () => {
+    const distressed = pm('1100-rarig-ave-columbus-oh', 'cash', -0.1, {
+      revenue: -5000,
+      opex: 40000,
+      noi: -45000,
+      expenseRatio: -8.0,
+    });
+    const peer = pm('9050-red-branch-rd-columbia-md', 'cash', 5, {
+      revenue: 100000,
+      opex: 40000,
+      expenseRatio: 0.4,
+    });
+    const scores = scoreProperties(db(), [distressed, peer]);
+    const p = scores.find((s) => s.propertyId === '9050-red-branch-rd-columbia-md')!;
+    // With the distressed property excluded, peer is a singleton → neutral 50 (not 100 from 1-member cohort).
+    expect(p.subScores.expenseEfficiency).toBe(50);
+  });
+});
+
 describe('CANON_PROPERTIES invariant — any entity with rentableSf == null excluded from efficiency cohorts', () => {
   // Regression net: if a future commit adds a new SF-less entry to CANON_PROPERTIES, or reverts the
   // isOperatingRealEstate guard in scores.ts, this test catches it automatically without requiring a

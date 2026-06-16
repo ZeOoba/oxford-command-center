@@ -13,32 +13,32 @@
   "worktrees": {
     "main": {
       "agent_role": "Lead Architect",
-      "phase": "Governance hardening (FM-1 through FM-15) — landed",
-      "status": "idle",
+      "phase": "feat/governor-enforcement — warehouse bug fixes + governor guards (in PR)",
+      "status": "in_progress",
       "blocked_by": null,
       "review_needed": false,
       "review_detail": null,
-      "last_updated": "2026-06-13T20:00:00Z"
+      "last_updated": "2026-06-16T00:00:00Z"
     },
 
     "pfi-phase-b": {
       "agent_role": "Analytics Agent",
       "phase": "Phase B analytics engine — PR #13",
-      "status": "review_needed",
+      "status": "merged",
       "blocked_by": null,
-      "review_needed": true,
-      "review_detail": "INTEL_CONFIG weight calibration needed from Gabriel before merge",
-      "last_updated": "2026-06-13T00:00:00Z"
+      "review_needed": false,
+      "review_detail": "MERGED. INTEL_CONFIG weights ratified by Gabriel 2026-06-14 (Option B, NOI-centric). Worktree removed.",
+      "last_updated": "2026-06-16T00:00:00Z"
     },
 
     "pfi-phase-b2": {
       "agent_role": "UX Agent",
       "phase": "Phase B2 Intelligence UI — PR #14",
-      "status": "blocked",
-      "blocked_by": "pfi-phase-b",
+      "status": "merged",
+      "blocked_by": null,
       "review_needed": false,
-      "review_detail": null,
-      "last_updated": "2026-06-13T00:00:00Z"
+      "review_detail": "MERGED. Stacked on #13; both squash-merged. Worktree removed.",
+      "last_updated": "2026-06-16T00:00:00Z"
     },
 
     "acquisition-scorecard": {
@@ -64,7 +64,7 @@
     "eric-live-phase1b-fat-mirror": {
       "agent_role": "Engineering (Claude Code) — authorized solo by Gabriel 2026-06-16",
       "phase": "Eric Live Phase 1b — Fat Mirror: PFI + Calibration-read on the Access-gated Pages mirror",
-      "status": "review_needed",
+      "status": "merged",
       "blocked_by": null,
       "review_needed": false,
       "review_detail": "NO Architect-owned files touched. Edits: scripts/bake-warehouse.ts (new) + scripts/bake-mirror.ts (Integration-owned), src/lib/warehouse-mirror.ts (new) + src/lib/freshness.ts (Core), src/modules/intel/{hooks,analytics-hooks,IntelModule,LeaseRunView,DataQualityView,MappingsView} + src/modules/calibration/{hooks,CalibrationModule,PendingView} (UX-owned), .gitignore. Imports server/warehouse/api.ts + db.ts read-only (no signature/engine change). Bake emits public/warehouse.json (computed route payloads, gitignored); client falls back on 404. Financial-adjacent (scoring/analytics output) → ran the MANDATORY adversarial refute-financial-change review (opus). Full local unit suite green (1035/1035), tsc+lint clean. PR opened off origin/main; awaiting Gabriel review + deploy (invariant 2). Deferred (Gabriel/Phase 2): DNS migration, new-machine timing, remote calibration writes, freshness cadence.",

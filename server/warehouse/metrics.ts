@@ -135,9 +135,9 @@ export function propertyPeriodMetrics(db: WarehouseDb): PeriodMetrics[] {
       expenseRatio: revenue !== 0 ? opex / revenue : null,
       capex, ti, leasing, categories, revenueCategories,
       revenuePerSf: perSf(revenue, sf), noiPerSf: perSf(noi, sf), expensePerSf: perSf(opex, sf),
-      taxesPerSf: perSf(categories['Taxes'] ?? 0, sf),
-      insurancePerSf: perSf(categories['Insurance'] ?? 0, sf),
-      repairsPerSf: perSf(categories['Repairs & Maintenance'] ?? 0, sf),
+      taxesPerSf: 'Taxes' in categories ? perSf(categories['Taxes']!, sf) : null,
+      insurancePerSf: 'Insurance' in categories ? perSf(categories['Insurance']!, sf) : null,
+      repairsPerSf: 'Repairs & Maintenance' in categories ? perSf(categories['Repairs & Maintenance']!, sf) : null,
       oxfordNoi: noi * head.ownershipPct,
     });
   }

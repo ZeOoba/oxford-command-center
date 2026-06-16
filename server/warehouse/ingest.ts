@@ -80,19 +80,17 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
   // book expense-side rows as NEGATIVE outflows; the ledger stores costs as positive
   // magnitudes (NOI = income − opex), so subtracting negative opex would ADD costs back
   // (the defect that produced 9620 2025 NOI 342,516 instead of 27,614). Flip a side when
-  // a strict majority of its non-zero leaves are negative — contra rows (tax refunds)
+  // its signed non-zero leaf SUM is negative — contra rows (tax refunds)
   // correctly invert with the side. Never silent: a 'sign-normalized' DQ info row is
   // written whenever a flip is applied.
   const flip: Record<'income' | 'expense', boolean> = { income: false, expense: false };
   for (const sideKey of ['income', 'expense'] as const) {
-    let neg = 0;
-    let pos = 0;
+    let sum = 0;
     for (const a of stmt.accounts) {
       if (a.total === null || a.total === 0 || sectionSide(a.section) !== sideKey) continue;
-      if (a.total < 0) neg += 1;
-      else pos += 1;
+      sum += a.total;
     }
-    flip[sideKey] = neg > pos;
+    flip[sideKey] = sum < 0;
   }
   const tx = db.transaction(() => {
     if (isReDerive) {
@@ -108,7 +106,7 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
     for (const sideKey of ['income', 'expense'] as const) {
       if (flip[sideKey]) {
         insIssue.run(importId, det.propertyId, 'sign-normalized',
-          `${sideKey}-side leaves are majority-negative (outflow convention) — amounts flipped to positive-cost magnitudes on ingest`, 'info');
+          `${sideKey}-side signed leaf sum is negative (outflow convention) — amounts flipped to positive-cost magnitudes on ingest`, 'info');
       }
     }
     for (const a of stmt.accounts) {

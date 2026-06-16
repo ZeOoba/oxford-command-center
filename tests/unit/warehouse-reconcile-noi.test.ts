@@ -70,17 +70,31 @@ describe('classifyNoiReconciliation — pure A↔B classifier', () => {
     expect(r.delta).toBe(9000);
   });
 
-  it('absolute floor still grants in-tolerance for small drift within the pct band (abs band + pct < largeDriftPct)', () => {
-    // wb=12k, wh=5k: absDelta=7k ≤ $10k AND deltaPct=7/12=58% ... still fails because 58% > 20%.
-    // Use a case where abs guards a pct-miss AND pct is also below largeDriftPct:
+  it('absolute floor still grants in-tolerance for small drift on a small-NOI property (abs band + pct < largeDriftPct, small max NOI)', () => {
     // wb=11k, wh=9k: delta=2k, deltaPct=2/11=18.2% (between pctBand 5% and largeDriftPct 20%).
-    // → absDelta=2k ≤ 10k AND deltaPct=18.2% < 20% → in-tolerance via abs band.
+    // max(|wb|,|wh|) = 11k — a genuinely small-NOI property — the $10k floor was designed for this.
+    // → absDelta=2k ≤ 10k AND deltaPct=18.2% < 20% AND max ≤ absBandUsd*3 → in-tolerance via abs band.
     const r = classifyNoiReconciliation(
       input({ workbookOxfordNoi: 11000, warehouseOxfordNoi: 9000 }),
       TOL,
     );
     expect(r.status).toBe('in-tolerance');
     expect(r.severity).toBe('info');
+  });
+
+  it('~15% NOI gap on a mid-NOI property ($9k delta, wb=50k/wh=59k) is drift/warn — absolute floor must not swallow it', () => {
+    // Bug: absDelta=9k ≤ absBandUsd=10k AND deltaPct=15.25% < largeDriftPct=20% → in-tolerance/info.
+    // The $10k absolute floor was designed for SMALL-NOI properties (e.g. $10k NOI with $800 noise).
+    // On a mid-NOI property ($50k+), a 15% disagreement is material and must not be silently reconciled.
+    // Fix: the absolute floor also requires max(|wb|,|wh|) ≤ absBandUsd*3 (i.e. ≤ $30k); at $59k max
+    // the floor does not apply, and the 15.25% gap correctly falls into drift/warn.
+    const r = classifyNoiReconciliation(
+      input({ workbookOxfordNoi: 50000, warehouseOxfordNoi: 59000 }),
+      TOL,
+    );
+    expect(r.status).toBe('drift');
+    expect(r.severity).toBe('warn');
+    expect(r.deltaPct).toBeCloseTo(9000 / 59000, 4);
   });
 
   it('returns drift when the delta is past tolerance but under the large-drift threshold', () => {

@@ -32,7 +32,7 @@ export function noiImpactByCategory(metrics: PeriodMetrics): Record<string, numb
  * Decompose ΔNOI between two signed impact maps (a = earlier, b = later).
  * Union of keys; delta = (b[k] ?? 0) − (a[k] ?? 0). totalDelta is the running sum
  * of those same deltas so Σdelta === totalDelta exactly. contributionPct = delta /
- * totalDelta, null when |totalDelta| ≤ 0.005. Drivers ranked by |delta| desc.
+ * totalDelta, null when |totalDelta| / sumAbsDelta ≤ 0.05 (low-signal ratio). Drivers ranked by |delta| desc, then category name.
  */
 export function decomposeNoiChange(
   a: Record<string, number>,
@@ -46,13 +46,14 @@ export function decomposeNoiChange(
     totalDelta += delta;
     raw.push({ category, delta });
   }
-  const meaningful = Math.abs(totalDelta) > 0.005;
+  const sumAbsDelta = raw.reduce((s, r) => s + Math.abs(r.delta), 0);
+  const meaningful = sumAbsDelta > 0 && Math.abs(totalDelta) / sumAbsDelta > 0.05;
   const drivers: NoiDriver[] = raw
     .map((r) => ({
       category: r.category,
       delta: r.delta,
       contributionPct: meaningful ? r.delta / totalDelta : null,
     }))
-    .sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta));
+    .sort((x, y) => Math.abs(y.delta) - Math.abs(x.delta) || x.category.localeCompare(y.category));
   return { totalDelta, drivers };
 }
