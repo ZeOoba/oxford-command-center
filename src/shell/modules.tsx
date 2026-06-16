@@ -13,7 +13,6 @@ import {
   CalendarDays,
   RefreshCw,
   Contact,
-  Users,
   Activity,
   FileSearch,
   Briefcase,
@@ -37,7 +36,6 @@ const AlertsModule = lazy(() => import('@/modules/alerts/AlertsModule').then((m)
 const CalendarModule = lazy(() => import('@/modules/calendar/CalendarModule').then((m) => ({ default: m.CalendarModule })));
 const RenewalsModule = lazy(() => import('@/modules/renewals/RenewalsModule').then((m) => ({ default: m.RenewalsModule })));
 const TenantsModule = lazy(() => import('@/modules/tenants/TenantsModule').then((m) => ({ default: m.TenantsModule })));
-const RelationshipsModule = lazy(() => import('@/modules/relationships/RelationshipsModule').then((m) => ({ default: m.RelationshipsModule })));
 const HealthModule = lazy(() => import('@/modules/health/HealthModule').then((m) => ({ default: m.HealthModule })));
 const DocumentsModule = lazy(() => import('@/modules/documents/DocumentsModule').then((m) => ({ default: m.DocumentsModule })));
 const PrincipalModule = lazy(() => import('@/modules/principal/PrincipalModule').then((m) => ({ default: m.PrincipalModule })));
@@ -74,7 +72,6 @@ export const MODULES: ModuleDef[] = [
   { id: 'close', label: 'Monthly Close', icon: Scale, group: 'Capital', Component: CloseModule },
   { id: 'insurance', label: 'Insurance', icon: ShieldCheck, group: 'Capital', Component: InsuranceModule },
   { id: 'market', label: 'Market', icon: LineChart, group: 'Market', Component: MarketModule },
-  { id: 'relationships', label: 'Relationships', icon: Users, group: 'Market', Component: RelationshipsModule },
   { id: 'documents', label: 'Documents', icon: FileSearch, group: 'Market', Component: DocumentsModule },
   { id: 'health', label: 'System Health', icon: Activity, group: 'Market', Component: HealthModule },
 ];

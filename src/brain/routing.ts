@@ -13,7 +13,6 @@ export const MODULE_PRIMARY_TYPE: Partial<Record<string, EntityType>> = {
   debt: 'loan',
   cash: 'cashEntity',
   insurance: 'insurance',
-  relationships: 'counterparty',
   pipeline: 'deal',
 };
 
@@ -24,7 +23,7 @@ export const HOME_MODULE: Record<EntityType, string> = {
   loan: 'debt',
   cashEntity: 'cash',
   insurance: 'insurance',
-  counterparty: 'relationships',
+  counterparty: 'overview',
   deal: 'pipeline',
 };
 

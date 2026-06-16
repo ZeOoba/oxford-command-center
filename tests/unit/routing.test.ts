@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { parseRoute, entityPath, intelPropertyPath, HOME_MODULE, MODULE_PRIMARY_TYPE } from '../../src/brain/routing';
 import type { EntityType } from '../../src/brain/ui-context';
 
-const MODS = ['overview', 'pipeline', 'tasks', 'portfolio', 'leases', 'debt', 'cash', 'insurance', 'market', 'relationships'];
+const MODS = ['overview', 'pipeline', 'tasks', 'portfolio', 'leases', 'debt', 'cash', 'insurance', 'market'];
 const MODS_INTEL = [...MODS, 'intel'];
 
 describe('parseRoute', () => {
@@ -24,7 +24,6 @@ describe('parseRoute', () => {
       intelPropertyId: null,
     });
     expect(parseRoute('/debt/borrower-restoration', MODS).selected).toEqual({ type: 'loan', id: 'borrower-restoration' });
-    expect(parseRoute('/relationships/cp-tamara-lucas', MODS).selected).toEqual({ type: 'counterparty', id: 'cp-tamara-lucas' });
   });
 
   it('ignores an entity segment for modules without a primary entity', () => {
@@ -71,11 +70,15 @@ describe('entityPath / HOME_MODULE', () => {
   it('builds the shareable path for each entity type', () => {
     expect(entityPath({ type: 'property', id: 'p1' })).toBe('/portfolio/p1');
     expect(entityPath({ type: 'loan', id: 'l1' })).toBe('/debt/l1');
-    expect(entityPath({ type: 'counterparty', id: 'cp-1' })).toBe('/relationships/cp-1');
+    expect(entityPath({ type: 'counterparty', id: 'cp-1' })).toBe('/overview/cp-1');
   });
 
-  it('HOME_MODULE and MODULE_PRIMARY_TYPE are consistent inverses', () => {
+  it('HOME_MODULE and MODULE_PRIMARY_TYPE are consistent inverses for routable entity types', () => {
+    // counterparty is excluded: its home module ('overview') has no primary entity type by design
+    // (RelationshipsModule was retired; counterparty keeps a fallback home so entityPath never throws)
+    const skip = new Set<EntityType>(['counterparty']);
     for (const [type, mod] of Object.entries(HOME_MODULE)) {
+      if (skip.has(type as EntityType)) continue;
       expect(MODULE_PRIMARY_TYPE[mod]).toBe(type as EntityType);
     }
   });
