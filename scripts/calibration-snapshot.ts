@@ -129,12 +129,19 @@ export function runSnapshot(db: WarehouseDb, opts: SnapshotOptions): SnapshotSum
 }
 
 // ── CLI ──────────────────────────────────────────────────────────────────────────────────────
-function parseArgs(argv: string[]): { task: string; db?: string; json: boolean } {
+export function parseArgs(argv: string[]): { task: string; db?: string; json: boolean } {
   const out: { task: string; db?: string; json: boolean } = { task: 'ora-calibration-snapshot', json: false };
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === '--task') out.task = argv[++i] ?? out.task;
-    else if (argv[i] === '--db') out.db = argv[++i];
-    else if (argv[i] === '--json') out.json = true;
+    const arg = argv[i];
+    if (arg === '--task' || arg === '--db') {
+      const next = argv[i + 1];
+      if (!next || next.startsWith('--')) {
+        throw new Error(`missing value for ${arg}`);
+      }
+      if (arg === '--task') out.task = next;
+      else out.db = next;
+      i += 1;
+    } else if (arg === '--json') out.json = true;
   }
   return out;
 }

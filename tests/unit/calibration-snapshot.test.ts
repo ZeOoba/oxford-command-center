@@ -16,7 +16,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { runSnapshot } from '../../scripts/calibration-snapshot';
+import { parseArgs, runSnapshot } from '../../scripts/calibration-snapshot';
 import { approveImport } from '../../server/warehouse/actions';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
@@ -130,6 +130,30 @@ describe('runSnapshot — resolve THEN log, with the snapshot tag', () => {
     expect(before).toBe(0);
     expect(after).toBeGreaterThan(0);
     expect(s.resolved).toBe(after - before);
+  });
+});
+
+describe('parseArgs — option values must not swallow the next flag', () => {
+  it('parses a well-formed argv', () => {
+    const a = parseArgs(['--task', 'my-task', '--db', '/tmp/f.sqlite', '--json']);
+    expect(a).toEqual({ task: 'my-task', db: '/tmp/f.sqlite', json: true });
+  });
+
+  it('--db followed by another flag throws instead of consuming the flag as a path', () => {
+    expect(() => parseArgs(['--db', '--json'])).toThrow(/missing value for --db/);
+  });
+
+  it('--task with no following value throws instead of swallowing a trailing flag', () => {
+    expect(() => parseArgs(['--json', '--task'])).toThrow(/missing value for --task/);
+  });
+
+  it('--json still registers when it precedes a valued option', () => {
+    const a = parseArgs(['--json', '--db', '/tmp/f.sqlite']);
+    expect(a).toEqual({ task: 'ora-calibration-snapshot', db: '/tmp/f.sqlite', json: true });
+  });
+
+  it('defaults task and leaves db undefined when no options are given', () => {
+    expect(parseArgs([])).toEqual({ task: 'ora-calibration-snapshot', json: false });
   });
 });
 
