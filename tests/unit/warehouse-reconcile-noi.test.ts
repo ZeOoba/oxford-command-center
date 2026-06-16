@@ -416,8 +416,10 @@ describe('reconcileNoiABFromDb / buildNoiReconcileInputs — DB join (live perio
       noi: 50000,
     }]);
     const inputs = buildNoiReconcileInputs(snap, [], []);
-    expect(inputs[0]!.propertyId).toBe('sepich-portfolio-columbus-oh-8-props');
-    expect(inputs[0]!.workbookOxfordNoi).toBe(50000);
+    // Assert by identity, not array position — decoupled from buildNoiReconcileInputs ordering.
+    const row = inputs.find((i) => i.propertyId === 'sepich-portfolio-columbus-oh-8-props');
+    expect(row).toBeDefined();
+    expect(row!.workbookOxfordNoi).toBe(50000);
   });
 
   it('(f) a warehouse-only property absent from the workbook spine emits a missing-from-workbook row (M3 escape fix)', async () => {

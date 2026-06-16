@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS capital_config (
   id                    INTEGER PRIMARY KEY AUTOINCREMENT,
   version               INTEGER NOT NULL UNIQUE,
   effective_from        TEXT    NOT NULL,   -- ISO date (YYYY-MM-DD) the set was ratified
-  dscr_floor            REAL    NOT NULL,   -- acquisition governor: DSCR must be ≥ this
-  ltv_ceiling           REAL    NOT NULL,   -- acquisition governor: LTV must be ≤ this
+  dscr_floor            REAL    NOT NULL CHECK (dscr_floor >= 1.25),   -- acquisition governor: DSCR must be ≥ this
+  ltv_ceiling           REAL    NOT NULL CHECK (ltv_ceiling <= 0.40),  -- acquisition governor: LTV must be ≤ this
   disposition_cap_rate  REAL    NOT NULL,   -- cap rate below which disposition signal fires
   hold_cap_rate         REAL    NOT NULL,   -- cap rate at or above which hold zone begins
   acq_irr               REAL    NOT NULL,   -- unlevered IRR target for new acquisitions
@@ -33,7 +33,8 @@ INSERT INTO capital_config
    refi_trigger_bps, payout_pct, notes)
 VALUES
   (1, '2026-06-13', 1.25, 0.40, 0.065, 0.075, 0.12, 0.15, 150, 0.0,
-   'Ratified 2026-06-13. Full-reinvest payout confirmed by Gabriel.');
+   'Ratified 2026-06-13. Full-reinvest payout confirmed by Gabriel.')
+ON CONFLICT(version) DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS calibration_log (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
