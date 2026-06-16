@@ -8,11 +8,13 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { Button } from '@/primitives/Button';
 import { DataTable, type Column } from '@/primitives/DataTable';
-import { useResolveIssue, type WarehouseIssue } from './hooks';
+import { useResolveIssue, useWarehouseLive, type WarehouseIssue } from './hooks';
 import { severityTone } from './constants';
 
 export function DataQualityView({ issues }: { issues: WarehouseIssue[] }) {
   const resolve = useResolveIssue();
+  // Resolving an issue is a server WRITE; on the baked mirror it has no edge home → read-only (Phase 1b).
+  const live = useWarehouseLive();
 
   const cols: Column<WarehouseIssue>[] = [
     { key: 'severity', header: 'Severity', render: (i) => <Badge tone={severityTone(i.severity)}>{i.severity}</Badge>, sortValue: (i) => i.severity },
@@ -21,29 +23,36 @@ export function DataQualityView({ issues }: { issues: WarehouseIssue[] }) {
     { key: 'fileName', header: 'File', render: (i) => i.fileName ?? '—', sortValue: (i) => i.fileName ?? '' },
     { key: 'detail', header: 'Detail', render: (i) => <span style={{ color: 'var(--text-secondary)' }}>{i.detail}</span>, sortValue: (i) => i.detail },
     { key: 'createdAt', header: 'Raised', align: 'right', render: (i) => fmtDate(i.createdAt), sortValue: (i) => i.createdAt },
-    {
-      key: 'resolve',
-      header: '',
-      align: 'right',
-      render: (i) => (
-        <Button
-          size="sm"
-          variant="subtle"
-          onPress={() => resolve.mutate(i.id)}
-          isDisabled={resolve.isPending}
-          aria-label={`Resolve issue ${i.id}`}
-        >
-          Resolve
-        </Button>
-      ),
-    },
+    ...(live
+      ? ([{
+          key: 'resolve',
+          header: '',
+          align: 'right',
+          render: (i) => (
+            <Button
+              size="sm"
+              variant="subtle"
+              onPress={() => resolve.mutate(i.id)}
+              isDisabled={resolve.isPending}
+              aria-label={`Resolve issue ${i.id}`}
+            >
+              Resolve
+            </Button>
+          ),
+        }] as Column<WarehouseIssue>[])
+      : []),
   ];
 
   return (
     <Card>
       <CardHeader
         title="Open Data-Quality Issues"
-        trailing={<Badge tone={issues.length === 0 ? 'green' : 'amber'}>{issues.length} open</Badge>}
+        trailing={
+          <div className="flex items-center gap-1.5">
+            {!live && <Badge tone="neutral">read-only</Badge>}
+            <Badge tone={issues.length === 0 ? 'green' : 'amber'}>{issues.length} open</Badge>
+          </div>
+        }
       />
       {issues.length === 0 ? (
         <div className="px-4 py-10 text-center text-sm" style={{ color: 'var(--text-tertiary)' }}>

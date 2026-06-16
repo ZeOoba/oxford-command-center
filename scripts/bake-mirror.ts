@@ -47,9 +47,21 @@ async function main() {
   console.log(`  Mode: ${mode}`);
   if (removed.length) console.log(`  Redacted ${removed.length} confidential deal(s): ${removed.join(', ')}`);
   if (includeConfidential) console.warn('  ⚠ CONFIDENTIAL DATA INCLUDED — deploy ONLY to a Cloudflare Access-gated target.');
+
+  // Fat Mirror (Phase 1b): the HEAVY warehouse bake is OPT-IN (--warehouse / BAKE_WAREHOUSE=1) so the
+  // light hourly snapshot bake never pays for it (cadence decoupling). Dynamic import keeps the
+  // warehouse deps (better-sqlite3, the api.ts router) out of the snapshot-only path entirely.
+  if (process.argv.includes('--warehouse') || process.env.BAKE_WAREHOUSE === '1') {
+    const { bakeWarehouseJson } = await import('./bake-warehouse');
+    const r = await bakeWarehouseJson();
+    console.log(`✓ Baked public/warehouse.json (${r.count} endpoints, source: ${r.warehouseSource})`);
+  }
 }
 
-main().catch((err) => {
-  console.error('✗ Bake failed:', err);
-  process.exit(1);
-});
+// Run only as the invoked entry point — importing this module (e.g. from a test) must NOT bake.
+if (process.argv[1]?.replace(/\\/g, '/').endsWith('scripts/bake-mirror.ts')) {
+  main().catch((err) => {
+    console.error('✗ Bake failed:', err);
+    process.exit(1);
+  });
+}

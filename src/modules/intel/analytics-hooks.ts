@@ -14,7 +14,7 @@
 // views that import them (BenchmarksView, PropertyIntelView, synthesis, …) are unchanged.
 import { useQuery } from '@tanstack/react-query';
 import type { z } from 'zod';
-import { QUERY_OPTS, fetchJson } from './hooks';
+import { QUERY_OPTS, fetchParsedOrMirror } from './hooks';
 import {
   MetricsResponseSchema, ScoresResponseSchema, GrowthResponseSchema, AnomaliesResponseSchema,
   PmScorecardsResponseSchema, BenchmarksResponseSchema, DriversResponseSchema,
@@ -41,10 +41,11 @@ export type {
 export type { DriversResponse as NoiDecomposition } from '@contracts/warehouse';
 
 /** Fetch a route then .parse() its body through the contract schema — the client half of the H6
- *  read boundary. fetchJson still throws WarehouseUnavailableError on a 503 / non-JSON mirror BEFORE
- *  any parse runs, so the offline-degradation path is unchanged. */
+ *  read boundary. Delegates to fetchParsedOrMirror: live-first, then the Fat-Mirror precomputed
+ *  payload on a 503 / non-JSON mirror (Phase 1b). The offline-degradation path is unchanged when no
+ *  baked mirror is present. */
 async function fetchParsed<S extends z.ZodTypeAny>(path: string, schema: S): Promise<z.infer<S>> {
-  return schema.parse(await fetchJson<unknown>(path));
+  return fetchParsedOrMirror(path, schema);
 }
 
 // ---------------------------------------------------------------------------
