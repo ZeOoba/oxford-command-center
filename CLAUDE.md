@@ -47,9 +47,9 @@ These two spines have one critical defect: `Property.noi` (Spine A) and `warehou
 
 | Item | State |
 |------|-------|
-| Branch | `feat/governor-enforcement` (main worktree) — PR #71 open |
-| Last merge to main | PR #48 (`968218d`) — Calibration Phase 2 backend |
-| Open PRs | #71 governor enforcement + 5 financial-engine bug fixes |
+| Branch | `main` (worktree tracking origin/main) |
+| Last merge to main | PR #76 (`fd9fcb8`) — calibration-snapshot parseArgs hardening |
+| Open PRs | #77 test coverage + CORS extraction |
 | Gate | typecheck + lint + test + reconcile + warehouse:verify + **governance** |
 | Tests | 1035+ vitest unit tests |
 | Uncommitted changes | Gabriel actively co-develops this tree — varies constantly |
