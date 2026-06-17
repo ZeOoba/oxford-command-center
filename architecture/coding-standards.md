@@ -89,8 +89,13 @@ shipped, among others: a collections rule that NaN-suppressed a real delinquency
 overlay record, an alert-id collision that let one anomaly silently mark another read, and an
 off-by-one aging-bucket tier — none of which any fixture caught. New `evaluateConditions` rules MUST
 also (a) coerce every overlay-sourced numeric defensively (overlay JSON bypasses Zod on the live
-path — see `server/overlay.ts`) and (b) emit a collision-free `Insight.id` (guarded by
-`tests/unit/insight-id-uniqueness.test.ts`).
+path — see `server/overlay.ts`; coerce via the shared `coerceNonNegMoney` in `src/lib/money.ts`) and
+(b) emit a collision-free `Insight.id` (guarded by `tests/unit/insight-id-uniqueness.test.ts`).
+
+This is enforced mechanically: `npm run check:refute` (CI job `refute-required`, PR-only) fails when a
+change to financial-decision source (`src/analytics/**`, `server/warehouse/**`, the anomaly bridge,
+`server/overlay.ts`) lands without a `Refute-Reviewed: wf_<runId>` (or justified `Refute-Skip:`)
+commit trailer. Make it a required check via branch protection to hard-block.
 
 ---
 
