@@ -73,12 +73,12 @@
 
     "cool-franklin-b98c9f": {
       "agent_role": "Engineering (Claude Code) — authorized solo by Gabriel 2026-06-16",
-      "phase": "Audit-batch hardening follow-up — refute fixes F1 (anomaly subkey id-disambiguator) + F2 (collections true-60+ bucket) + F3 (arrears NaN coercion) + overlay Zod re-parse + id-uniqueness invariant",
-      "status": "in_progress",
+      "phase": "Audit-batch hardening (PR #79) + systematization follow-ups (PR stacked on #79): shared money coercer, whole-overlay validation, delimiter-safe dedup keys, refute-required CI gate, dup-insight-id backstop",
+      "status": "merged",
       "blocked_by": null,
       "review_needed": false,
-      "review_detail": "Architect-owned files touched WITH Gabriel's in-conversation authorization (2026-06-16): src/contracts/warehouse.ts (add AnomalyFlag.subkey via z.string().default('') — backward-compatible; older baked mirror payloads still parse), architecture/coding-standards.md (mandate the refute-financial-change pass for new evaluateConditions rules), architecture/status.json (this entry). Non-architect (all MERGED/unowned per pfi-phase-b + intel owners): src/analytics/conditions.ts, src/brain/anomaly-insights.ts, server/warehouse/anomalies.ts, server/warehouse/calibration.ts (verdictSubkind folds in subkey — same D3 class), src/modules/intel/synthesis.ts (topRisks dedup folds in subkey), server/overlay.ts (per-bucket arrears salvage — never drop a record), + tests. Ran the MANDATORY refute-financial-change pass (opus, 3 lenses) + independent review; both found the overlay drop-on-negative regression, now fixed (salvage + num() negative-clamp). No conflict with active worktrees (acquisition-scorecard, test-coverage-analysis touch disjoint files). Gate green: 1100+ tests.",
-      "last_updated": "2026-06-16T21:30:00Z"
+      "review_detail": "MERGED via PR #79 (audit-batch hardening: F1 anomaly subkey + F2 true-60+ collections + F3 overlay salvage) and its stacked systematization PR (shared coerceNonNegMoney in src/lib/money.ts; loadOverlay validates every map; calibration/topRisks dedup keys percent-encode the delimiter; scripts/check-refute-required.ts + CI refute-required job; buildAlertView dup-id backstop). Architect-owned touches were Gabriel-authorized (2026-06-16/17): src/contracts/warehouse.ts (AnomalyFlag.subkey, backward-compatible), architecture/coding-standards.md, package.json (check:refute), .github/workflows/ci.yml, architecture/status.json. Four refute-financial-change passes + an independent review; final pass on the systematization refactors found NO real defect across 3 lenses. Gate green: 1121 tests. Worktree removed on merge.",
+      "last_updated": "2026-06-17T00:00:00Z"
     }
   },
 
