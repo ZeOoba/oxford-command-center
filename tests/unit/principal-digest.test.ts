@@ -42,4 +42,16 @@ describe('principalDigest', () => {
     const { snapshot, analytics } = fixture([], []);
     expect(principalDigest(snapshot, analytics)).toEqual([]);
   });
+
+  it('folds bridged anomaly insights into the digest (Fix #1) — critical/warning only', () => {
+    const { snapshot, analytics } = fixture([insight({ id: 'c', severity: 'critical' })], []);
+    const anomalyInsights: Insight[] = [
+      insight({ id: 'anomaly-p1-2025-noi-decline', severity: 'critical', category: 'anomaly', title: 'NOI decline — P1' }),
+      insight({ id: 'anomaly-p2-2025-new-category', severity: 'info', category: 'anomaly', title: 'New cat — P2' }),
+    ];
+    const ids = principalDigest(snapshot, analytics, anomalyInsights).map((x) => x.id);
+    expect(ids).toContain('c');
+    expect(ids).toContain('anomaly-p1-2025-noi-decline'); // critical anomaly surfaces
+    expect(ids).not.toContain('anomaly-p2-2025-new-category'); // info anomaly excluded
+  });
 });
