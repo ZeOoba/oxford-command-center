@@ -4,7 +4,7 @@ import { parseArAging, detectArFormat } from '../../server/ar/ar-aging';
 // Synthetic fixtures — they mirror the REAL column structure of each PM export but use fake tenant
 // names and numbers, so no real tenant delinquency data lives in the repo.
 
-// Rent Manager "Aging Detail": detail rows start with the property code + carry a date; the per-tenant
+// Yardi "Aging Detail": detail rows start with the property code + carry a date; the per-tenant
 // SUBTOTAL row is "<name> <Current> <0-30> <31-60> <61-90> <Over90> <Prepay> <Total>" (7 tokens).
 const RENT_MANAGER_AGING = `Aging Detail Page 1
 Property Customer Lease Status Tran# Charge Date Month Current 0-30 31-60 61-90 Over Pre- Total
@@ -44,16 +44,16 @@ Acme Co 12345 2000 Comm 4,000.00 Rent Charge 4/1/24 0.00`;
 
 describe('detectArFormat', () => {
   it('identifies each known format from the header', () => {
-    expect(detectArFormat(RENT_MANAGER_AGING)).toBe('rent-manager-aging');
+    expect(detectArFormat(RENT_MANAGER_AGING)).toBe('yardi-aging');
     expect(detectArFormat(APPFOLIO)).toBe('appfolio-aged-receivable');
     expect(detectArFormat(DELINQUENCY)).toBe('rent-manager-delinquency');
     expect(detectArFormat('some random text')).toBe('unknown');
   });
 });
 
-describe('parseArAging — Rent Manager Aging Detail', () => {
+describe('parseArAging — Yardi Aging Detail', () => {
   const { format, rows } = parseArAging(RENT_MANAGER_AGING);
-  it('detects the format', () => expect(format).toBe('rent-manager-aging'));
+  it('detects the format', () => expect(format).toBe('yardi-aging'));
 
   it('maps 0-30/31-60/61-90/Over90 → d30/d60/d90/d90plus (skips Current, Prepay, Total)', () => {
     const charlie = rows.find((r) => r.tenant === 'Charlie Inc');

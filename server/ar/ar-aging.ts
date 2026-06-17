@@ -36,7 +36,7 @@ export interface ArAgingRow {
   d90plus: number;
 }
 
-export type ArFormat = 'rent-manager-aging' | 'appfolio-aged-receivable' | 'rent-manager-delinquency' | 'unknown';
+export type ArFormat = 'yardi-aging' | 'appfolio-aged-receivable' | 'rent-manager-delinquency' | 'unknown';
 
 export interface ParseArResult {
   format: ArFormat;
@@ -62,18 +62,18 @@ const bucket = (n: number): number => (Number.isFinite(n) && n > 0 ? n : 0);
 export function detectArFormat(text: string): ArFormat {
   const head = text.slice(0, 600).toLowerCase();
   if (head.includes('aged receivable detail')) return 'appfolio-aged-receivable';
-  if (head.includes('aging detail')) return 'rent-manager-aging';
+  if (head.includes('aging detail')) return 'yardi-aging';
   if (head.includes('delinquency')) return 'rent-manager-delinquency';
   return 'unknown';
 }
 
 /**
- * Rent Manager "Aging Detail". Per-tenant SUBTOTAL rows read:
+ * Yardi "Aging Detail". Per-tenant SUBTOTAL rows read:
  *   <Tenant Name> <Current> <0-30> <31-60> <61-90> <Over90> <Prepay> <Total>   (7 money tokens)
  * Detail rows start with the property code and always carry a date; subtotal rows carry NO date.
  * Buckets = tokens [1..4] (skip Current at 0, Prepay at 5, Total at 6).
  */
-function parseRentManagerAging(text: string): ArAgingRow[] {
+function parseYardiAging(text: string): ArAgingRow[] {
   const rows: ArAgingRow[] = [];
   // Property / entity / customer codes appear parenthesized: "29000 Information Lane (29000inf)",
   // "Alchemy Works, Inc. (t0000738)". The PROPERTY-total row is printed as "<propcode> <7 tokens>"
@@ -141,8 +141,8 @@ function parseAppfolioAging(text: string): ArAgingRow[] {
 export function parseArAging(text: string, formatHint?: ArFormat): ParseArResult {
   const format = formatHint && formatHint !== 'unknown' ? formatHint : detectArFormat(text);
   switch (format) {
-    case 'rent-manager-aging':
-      return { format, rows: parseRentManagerAging(text) };
+    case 'yardi-aging':
+      return { format, rows: parseYardiAging(text) };
     case 'appfolio-aged-receivable':
       return { format, rows: parseAppfolioAging(text) };
     case 'rent-manager-delinquency':
