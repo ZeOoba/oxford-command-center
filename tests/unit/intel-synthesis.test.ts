@@ -117,6 +117,17 @@ describe('synthesis', () => {
     expect(new Set(risks.map((r) => r.subkey))).toEqual(new Set(['Taxes', 'Utilities']));
   });
 
+  it('dedup key is delimiter-safe: a subkey containing the `|` delimiter cannot alias a tuple (#3)', () => {
+    const risks = topRisks(
+      [
+        { ...flag('p1', 'category-spike', 'critical', 'd', 0.6), subkey: 'Taxes' },
+        { ...flag('p1', 'category-spike', 'high', 'd', 0.4), subkey: 'Taxes|Utilities' },
+      ],
+      5,
+    );
+    expect(risks).toHaveLength(2); // distinct subkeys stay distinct even with a delimiter char present
+  });
+
   it('deteriorating = negative since-acq NOI growth; improving = positive', () => {
     const series = [sa('a', -0.1, true), sa('b', 0.2, true), sa('c', null, false)];
     expect(deterioratingProperties(series).map((x) => x.propertyId)).toEqual(['a']);
