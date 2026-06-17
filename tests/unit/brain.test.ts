@@ -52,7 +52,7 @@ vi.mock('../../server/workbook/parse', () => ({
 vi.mock('../../server/overlay', () => ({
   loadOverlay: vi.fn(() => ({
     dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {},
-    dealComps: {}, noiBudgets: {}, acquisitionInputs: {}, leaseRunAssumptions: {},
+    dealComps: {}, noiBudgets: {}, tenantArrears: {}, acquisitionInputs: {}, leaseRunAssumptions: {},
   })),
   saveOverlay: vi.fn(),
   applyOverlay: vi.fn((s: Record<string, unknown>, o: Record<string, unknown>) => {
@@ -181,6 +181,16 @@ describe('Brain write-backs', () => {
     expect(brain.setNoiBudget('zzz', 250000)).toBe(false);
     expect(brain.setNoiBudget('p1', 250000)).toBe(true);
     expect((h.lastOverlay!.noiBudgets as Record<string, number>).p1).toBe(250000);
+  });
+
+  it('setTenantArrears guards on an unknown lease and persists for a known one', () => {
+    const ar = { d30: 0, d60: 4000, d90: 0, d90plus: 0 };
+    expect(brain.setTenantArrears('zzz', ar)).toBe(false);
+    const events: Array<{ reason: string }> = [];
+    brain.on('snapshot', (e) => events.push(e as { reason: string }));
+    expect(brain.setTenantArrears('l1', ar)).toBe(true);
+    expect(events.at(-1)!.reason).toBe('action:tenant-arrears');
+    expect((h.lastOverlay!.tenantArrears as Record<string, unknown>).l1).toEqual(ar);
   });
 
   it('setTenantNote sets, then clears, a note for a known tenant', () => {

@@ -12,7 +12,7 @@ import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import { brain } from './brain';
-import { DealStage, RenewalStageInput, NoiBudgetInput, AcquisitionInput } from '../src/contracts/index';
+import { DealStage, RenewalStageInput, NoiBudgetInput, AcquisitionInput, TenantArrearsInput } from '../src/contracts/index';
 import { DealCompsActionInput } from '../src/contracts/index';
 import { fetchDealComps } from './ai/comps';
 import { runAgent } from './ai/agent';
@@ -178,6 +178,13 @@ app.post('/api/actions/acquisition-input', async (c) => {
   const parsed = AcquisitionInput.safeParse(await c.req.json().catch(() => ({})));
   if (!parsed.success) return c.json({ ok: false, error: 'Invalid acquisition input' }, 400);
   const ok = brain.setAcquisitionInput(parsed.data.dealId, parsed.data);
+  return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
+});
+
+app.post('/api/actions/tenant-arrears', async (c) => {
+  const parsed = TenantArrearsInput.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ ok: false, error: 'Invalid leaseId or arrears' }, 400);
+  const ok = brain.setTenantArrears(parsed.data.leaseId, parsed.data.arrears);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
 });
 

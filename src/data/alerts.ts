@@ -2,7 +2,9 @@ import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertInboxState, EMPTY_INBOX_STATE, type AlertActionInput } from '../contracts/alerts';
 import { applyAlertAction, buildAlertView, type AlertView } from '../brain/alerts-view';
-import { useAnalytics } from './queries';
+import { anomaliesToInsights } from '../brain/anomaly-insights';
+import { useAnalytics, useSnapshot } from './queries';
+import { useAnomalies } from '../modules/intel/analytics-hooks';
 
 export const ALERT_STATE_KEY = ['alert-state'] as const;
 const LS_KEY = 'ora-alert-state';
@@ -72,13 +74,23 @@ export function useAlertAction() {
   });
 }
 
-/** Joins the client-computed insights with persisted read/snooze state. */
+/** Joins the client-computed insights — snapshot conditions PLUS bridged warehouse anomalies —
+ *  with persisted read/snooze state. The anomaly bridge (strategic-audit Fix #1) surfaces
+ *  warehouse-detected expense spikes / NOI declines in the Alerts inbox; on the static mirror or
+ *  offline the anomalies query errors and resolves to [] so the inbox degrades to conditions only. */
 export function useAlertView(): AlertView {
   const { analytics } = useAnalytics();
+  const snap = useSnapshot();
+  const anomaliesQ = useAnomalies();
   const stateQ = useAlertState();
   const state = stateQ.data ?? EMPTY_INBOX_STATE;
-  return useMemo(
-    () => buildAlertView(analytics?.insights ?? [], state, Date.now()),
-    [analytics, state],
-  );
+  return useMemo(() => {
+    const nameById = new Map<string, string>();
+    for (const p of snap.data?.snapshot.properties ?? []) nameById.set(p.id, p.name);
+    const insights = [
+      ...(analytics?.insights ?? []),
+      ...anomaliesToInsights(anomaliesQ.data ?? [], nameById),
+    ];
+    return buildAlertView(insights, state, Date.now());
+  }, [analytics, snap.data, anomaliesQ.data, state]);
 }

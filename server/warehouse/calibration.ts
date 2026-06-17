@@ -308,9 +308,12 @@ export function verdictsFromAnomalies(
         subjectKind: 'property',
         subjectId: f.propertyId,
         verdictKind: 'anomaly',
-        // Sub-identity = the anomaly kind, so several distinct anomalies for one (property, period,
-        // inputs_version) get distinct dedup_keys instead of colliding to one (D3).
-        verdictSubkind: f.kind,
+        // Sub-identity = the anomaly kind PLUS its subkey (the spiking/new category for
+        // category-spike/new-category), so several distinct anomalies for one (property, period,
+        // inputs_version) get distinct dedup_keys instead of colliding to one (D3). kind alone was
+        // insufficient: the engine emits one category-spike PER category, so Taxes and Utilities
+        // spikes share a kind — the same collision class as the alert-id fix (refute F1).
+        verdictSubkind: f.subkey ? `${f.kind}:${f.subkey}` : f.kind,
         verdictEngine: 'anomalies',
         predictedBand: `${f.severity}:${f.kind}`,
         predictedValue: f.metricValue,

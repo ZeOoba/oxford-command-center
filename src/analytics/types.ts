@@ -9,7 +9,9 @@ export type InsightCategory =
   | 'occupancy'
   | 'cash'
   | 'deal'
-  | 'data';
+  | 'data'
+  | 'anomaly'
+  | 'collections';
 
 export interface InsightAction {
   label: string;
