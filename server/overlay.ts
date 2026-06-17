@@ -49,11 +49,50 @@ export function nextStage(stage: DealStage): DealStage | null {
   return STAGE_FLOW[i + 1]!;
 }
 
+/** Coerce the on-disk tenantArrears map PER BUCKET so a partial / hand-edited / legacy / export
+ *  record yields a contract-valid {d30,d60,d90,d90plus} of non-negative numbers. overlay.json is the
+ *  documented QB-AR-export / manual-entry surface (CLAUDE.md §9) and is NOT re-parsed through
+ *  PortfolioSnapshot on the live path, so a real AR-aging row legitimately carries a negative current
+ *  bucket (an unapplied credit/prepayment) or a numeric-string amount from a CSV export. We SALVAGE,
+ *  never drop a balance: `TenantArrears.safeParse`-then-drop would discard such a row whole and
+ *  silently suppress a co-occurring real 60+ delinquency — the exact failure F3 set out to kill
+ *  (refute F3/edges). A real positive number (or numeric string) survives; a negative / non-finite /
+ *  non-numeric bucket zeroes; only a non-object record value is skipped entirely. The matching
+ *  defense-in-depth lives in conditions.ts `num()`. Other overlay maps keep tolerant passthrough. */
+function arrearsBucket(v: unknown): number {
+  // Strings arrive from a hand-edit or a pasted QB/Excel/CSV AR-aging export, which render money WITH
+  // a currency symbol, thousands separators, and accounting parens for a credit ('$12,500',
+  // '1,200.00', '(500)'). Normalize those BEFORE Number() so a real balance is salvaged, not silently
+  // zeroed — a bare Number('12,500') is NaN, which would re-introduce the F3 suppression for the
+  // commonest export format (refute edges). Parens → negative → clamped to 0 (a credit is not a
+  // past-due balance). Truly non-numeric junk ('n/a') still → 0.
+  let n: number;
+  if (typeof v === 'number') {
+    n = v;
+  } else if (typeof v === 'string') {
+    const s = v.replace(/[$,\s]/g, '').replace(/^\((.*)\)$/, '-$1');
+    n = s === '' ? NaN : Number(s);
+  } else {
+    n = NaN;
+  }
+  return Number.isFinite(n) && n > 0 ? n : 0; // negative / credit / NaN / non-numeric → 0; never negative
+}
+function parseArrears(raw: unknown): Record<string, TenantArrears> {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Record<string, TenantArrears> = {};
+  for (const [leaseId, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (!v || typeof v !== 'object') continue; // a non-object record value carries no buckets
+    const r = v as Record<string, unknown>;
+    out[leaseId] = { d30: arrearsBucket(r.d30), d60: arrearsBucket(r.d60), d90: arrearsBucket(r.d90), d90plus: arrearsBucket(r.d90plus) };
+  }
+  return out;
+}
+
 export function loadOverlay(): Overlay {
   try {
     if (existsSync(overlayPath())) {
       const raw = JSON.parse(readFileSync(overlayPath(), 'utf8')) as Partial<Overlay>;
-      return { dealStages: raw.dealStages ?? {}, tasks: raw.tasks ?? [], renewalStages: raw.renewalStages ?? {}, tenantNotes: raw.tenantNotes ?? {}, dealComps: raw.dealComps ?? {}, noiBudgets: raw.noiBudgets ?? {}, tenantArrears: raw.tenantArrears ?? {}, acquisitionInputs: raw.acquisitionInputs ?? {}, leaseRunAssumptions: raw.leaseRunAssumptions ?? {} };
+      return { dealStages: raw.dealStages ?? {}, tasks: raw.tasks ?? [], renewalStages: raw.renewalStages ?? {}, tenantNotes: raw.tenantNotes ?? {}, dealComps: raw.dealComps ?? {}, noiBudgets: raw.noiBudgets ?? {}, tenantArrears: parseArrears(raw.tenantArrears), acquisitionInputs: raw.acquisitionInputs ?? {}, leaseRunAssumptions: raw.leaseRunAssumptions ?? {} };
     }
   } catch {
     /* corrupt overlay → start clean */

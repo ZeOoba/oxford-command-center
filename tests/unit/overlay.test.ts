@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import { writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
-import { applyOverlay, nextStage, EMPTY_OVERLAY } from '../../server/overlay';
+import { applyOverlay, loadOverlay, nextStage, EMPTY_OVERLAY } from '../../server/overlay';
 
 const base = {
   deals: [{ id: 'd1', name: 'FVC', stage: 'Candidate' }],
@@ -107,5 +110,53 @@ describe('applyOverlay — tenantArrears (audit Fix #2)', () => {
   it('defaults empty and EMPTY_OVERLAY carries the key', () => {
     expect(applyOverlay(baseL, EMPTY_OVERLAY).tenantArrears).toEqual({});
     expect(EMPTY_OVERLAY.tenantArrears).toEqual({});
+  });
+});
+
+describe('loadOverlay — tenantArrears per-bucket salvage (refute F3 / edges)', () => {
+  // overlay.json is the user-/export-editable QB-AR path that bypasses Zod on the live path. The
+  // load must SALVAGE per bucket — never drop a record (and a co-occurring real 60+ balance) for one
+  // bad/negative/string bucket — coercing each to a non-negative number.
+  function loadArrears(tenantArrears: unknown) {
+    const dir = mkdtempSync(join(tmpdir(), 'ora-overlay-'));
+    const path = join(dir, 'overlay.json');
+    writeFileSync(path, JSON.stringify({ tenantArrears }), 'utf8');
+    const prev = process.env.OVERLAY_PATH;
+    process.env.OVERLAY_PATH = path;
+    try {
+      return loadOverlay().tenantArrears;
+    } finally {
+      if (prev === undefined) delete process.env.OVERLAY_PATH;
+      else process.env.OVERLAY_PATH = prev;
+    }
+  }
+
+  it('defaults missing buckets to 0 (partial record survives)', () => {
+    expect(loadArrears({ l1: { d90: 3000 } }).l1).toEqual({ d30: 0, d60: 0, d90: 3000, d90plus: 0 });
+  });
+  it('salvages a negative current-bucket credit alongside a real 60+ balance (does NOT drop the record)', () => {
+    // A QB AR aging export shows a negative current bucket for an unapplied credit/prepayment; the
+    // co-occurring $5,000 61–90-day delinquency must survive (the pre-fix safeParse dropped it).
+    expect(loadArrears({ l1: { d30: -100, d60: 0, d90: 5000, d90plus: 0 } }).l1)
+      .toEqual({ d30: 0, d60: 0, d90: 5000, d90plus: 0 });
+  });
+  it('coerces a numeric-string bucket from a CSV/QB export', () => {
+    expect(loadArrears({ l1: { d90: '4000' } }).l1).toEqual({ d30: 0, d60: 0, d90: 4000, d90plus: 0 });
+  });
+  it('salvages currency/comma/accounting-formatted strings (the real QB/Excel export format)', () => {
+    // The default format real AR-aging exports produce — must NOT silently zero a real balance.
+    expect(loadArrears({ l1: { d90plus: '12,500' } }).l1).toEqual({ d30: 0, d60: 0, d90: 0, d90plus: 12500 });
+    expect(loadArrears({ l2: { d90: '$4,000' } }).l2).toEqual({ d30: 0, d60: 0, d90: 4000, d90plus: 0 });
+    expect(loadArrears({ l3: { d30: '1,200.00' } }).l3).toEqual({ d30: 1200, d60: 0, d90: 0, d90plus: 0 });
+    // Accounting-parens credit → 0, while the co-occurring real 60+ balance survives.
+    expect(loadArrears({ l4: { d30: '(500)', d90: 8000 } }).l4).toEqual({ d30: 0, d60: 0, d90: 8000, d90plus: 0 });
+  });
+  it('zeroes a non-numeric bucket but keeps the real balance in the same record', () => {
+    expect(loadArrears({ l1: { d30: 'n/a', d90plus: 8000 } }).l1).toEqual({ d30: 0, d60: 0, d90: 0, d90plus: 8000 });
+  });
+  it('skips a non-object record value but keeps the valid siblings', () => {
+    const out = loadArrears({ l1: 5, l2: { d90: 1000 } });
+    expect(out.l1).toBeUndefined();
+    expect(out.l2).toEqual({ d30: 0, d60: 0, d90: 1000, d90plus: 0 });
   });
 });

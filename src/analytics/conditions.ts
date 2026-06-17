@@ -21,8 +21,9 @@ export const ALERT_THRESHOLDS = {
   insuranceRenewWarnDays: 30,
   cashConcentrationWarn: 0.3,
   tenantNoiConcentrationInfo: 0.15,
-  // Collections (audit Fix #2): any dollars 60+ days past due → critical; under 60 days but total
-  // past-due at/above this floor → warning. Small short-dated balances are normal and suppressed.
+  // Collections (audit Fix #2; refute F2): any dollars genuinely 60+ days past due (d90 + d90plus)
+  // → critical; otherwise a ≤60-day balance (d30 + d60) at/above this floor → warning. Small
+  // short-dated balances are normal and suppressed.
   arrearsMaterialUsd: 5000,
   workbookStaleHours: 48,
   loiDeadlineWarnDays: 14,
@@ -140,21 +141,40 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   // ── Collections / AR aging (audit Fix #2) ───────────────────────────────────
   // Overlay-sourced per-lease arrears (snapshot.tenantArrears, keyed by Lease.id). 60+ days past
   // due is a critical collection signal; a material balance under 60 days is a warning to monitor.
-  // Defensive on the record's presence so a fixture that bypasses Zod parse can't throw.
+  // Defensive on BOTH the record's presence AND each bucket's value: tenantArrears is overlay-
+  // sourced and is NOT re-parsed through Zod after the overlay merge (overlay.ts loads it with a
+  // bare cast; applyOverlay spreads it raw — the documented QB-export / manual-entry path), so a
+  // hand-edited or partial record can arrive with missing/non-numeric buckets. Trusting the field
+  // types would make `undefined + number` → NaN, and every tier guard (`<= 0`, `> 0`, `>= floor`)
+  // is false for NaN, silently SUPPRESSING a real delinquency — the worst direction for a
+  // collections monitor. num() enforces the .default(0) intent for any non-finite bucket.
   const arrears = s.tenantArrears ?? {};
+  // Non-negative NUMBER coercion: a non-finite bucket → 0 (no NaN-drop of a real balance), and a
+  // NEGATIVE bucket (an AR credit/prepayment) → 0 so it cannot net DOWN the displayed total or drive
+  // `total <= 0` and suppress a genuine over-60 critical (refute F3/edges). over60 is therefore
+  // always ≥ 0, so `total <= 0` skips only an all-zero record. This is a NUMBER-ONLY backstop: it
+  // agrees with overlay.ts arrearsBucket() on numeric inputs, but — unlike that load-boundary helper
+  // — it does NOT coerce currency/comma strings, because overlay strings are already normalized to
+  // numbers by parseArrears (and the API write path is Zod-validated) before any value reaches here.
+  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
   for (const l of s.leases) {
     const ar = arrears[l.id];
     if (!ar) continue;
-    const past60 = ar.d60 + ar.d90 + ar.d90plus;
-    const total = ar.d30 + past60;
+    // Aging buckets (src/contracts/quickbooks.ts): d30=1–30, d60=31–60, d90=61–90, d90plus=90+.
+    // CRITICAL fires ONLY on dollars genuinely 60+ days past due (d90 + d90plus). The d30/d60 dollars
+    // are ≤60 days late — routine collections follow-up — and fold into the under-60 material WARNING
+    // tier. (refute F2: do NOT escalate a 31–60-day-late tenant to the critical 60+ tier.)
+    const over60 = num(ar.d90) + num(ar.d90plus);
+    const under60 = num(ar.d30) + num(ar.d60);
+    const total = under60 + over60;
     if (total <= 0) continue;
     const who = l.company ?? l.tenantName;
     const where = `${l.propertyKey}${l.unit ? ` ${l.unit}` : ''}`;
-    if (past60 > 0) {
+    if (over60 > 0) {
       out.push({
         id: `arrears-${l.id}`, severity: 'critical', category: 'collections',
         title: `Tenant 60+ days past due — ${who}`,
-        detail: `${where} · ${fmtUsd(past60)} is 60+ days past due (${fmtUsd(total)} total outstanding). Pursue collection.`,
+        detail: `${where} · ${fmtUsd(over60)} is 60+ days past due (${fmtUsd(total)} total outstanding). Pursue collection.`,
         metric: fmtUsd(total), entityType: 'lease', entityId: l.id,
       });
     } else if (total >= T.arrearsMaterialUsd) {

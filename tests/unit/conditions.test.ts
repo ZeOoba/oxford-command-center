@@ -159,25 +159,54 @@ describe('evaluateConditions — leases', () => {
   });
 });
 
-describe('evaluateConditions — collections / AR aging (Fix #2)', () => {
-  it('60+ days past due is critical', () => {
+describe('evaluateConditions — collections / AR aging (Fix #2; refute F2 — true 60+ buckets)', () => {
+  // Bucket contract (src/contracts/quickbooks.ts): d30=1–30, d60=31–60, d90=61–90, d90plus=90+.
+  // CRITICAL fires ONLY on dollars genuinely 60+ days past due (d90 + d90plus). The d30/d60 dollars
+  // (≤60 days late) are routine and fold into the under-60 material-balance WARNING tier. d60 is NO
+  // longer escalated to critical (refute F2: the prior code lumped d60 into "60+", mislabeling a
+  // 31–60-day-late tenant as a critical 60+ delinquency).
+  it('61–90 days past due (d90) is critical', () => {
     const out = evaluateConditions(snap({
       leases: [lease({ id: 'l1' })],
-      tenantArrears: { l1: { d30: 0, d60: 3000, d90: 0, d90plus: 0 } },
+      tenantArrears: { l1: { d30: 0, d60: 0, d90: 3000, d90plus: 0 } },
     }), opts);
     const i = out.find((x) => x.id === 'arrears-l1');
     expect(i?.severity).toBe('critical');
     expect(i?.category).toBe('collections');
     expect(i?.entityType).toBe('lease');
+    expect(i?.detail).toContain('60+ days past due');
   });
-  it('90+ days past due is critical (deepest bucket counts as 60+)', () => {
+  it('90+ days past due (d90plus) is critical', () => {
     const out = evaluateConditions(snap({
       leases: [lease({ id: 'l1' })],
       tenantArrears: { l1: { d30: 0, d60: 0, d90: 0, d90plus: 1200 } },
     }), opts);
     expect(out.find((x) => x.id === 'arrears-l1')?.severity).toBe('critical');
   });
-  it('material balance entirely under 60 days is a warning', () => {
+  it('any 60+ dollars escalate the whole receivable to critical (mixed d60 + d90)', () => {
+    const out = evaluateConditions(snap({
+      leases: [lease({ id: 'l1' })],
+      tenantArrears: { l1: { d30: 0, d60: 1000, d90: 200, d90plus: 0 } },
+    }), opts);
+    expect(out.find((x) => x.id === 'arrears-l1')?.severity).toBe('critical');
+  });
+  it('d60 (31–60 days) is NOT critical — folds into the under-60 warning when material', () => {
+    const out = evaluateConditions(snap({
+      leases: [lease({ id: 'l1' })],
+      tenantArrears: { l1: { d30: 0, d60: 6000, d90: 0, d90plus: 0 } },
+    }), opts);
+    const i = out.find((x) => x.id === 'arrears-l1');
+    expect(i?.severity).toBe('warning');
+    expect(i?.detail).toContain('under 60 days');
+  });
+  it('a d60 balance below the material floor does not fire (no 60+ dollars)', () => {
+    const out = evaluateConditions(snap({
+      leases: [lease({ id: 'l1' })],
+      tenantArrears: { l1: { d30: 0, d60: 50, d90: 0, d90plus: 0 } },
+    }), opts);
+    expect(out.some((x) => x.id === 'arrears-l1')).toBe(false);
+  });
+  it('material balance entirely under 60 days (d30) is a warning', () => {
     const out = evaluateConditions(snap({
       leases: [lease({ id: 'l1' })],
       tenantArrears: { l1: { d30: 6000, d60: 0, d90: 0, d90plus: 0 } },
@@ -191,10 +220,10 @@ describe('evaluateConditions — collections / AR aging (Fix #2)', () => {
     }), opts);
     expect(out.some((x) => x.id === 'arrears-l1')).toBe(false);
   });
-  it('a tiny 60+ balance still fires critical even below the material floor', () => {
+  it('a tiny 60+ balance fires critical even below the material floor', () => {
     const out = evaluateConditions(snap({
       leases: [lease({ id: 'l1' })],
-      tenantArrears: { l1: { d30: 0, d60: 50, d90: 0, d90plus: 0 } },
+      tenantArrears: { l1: { d30: 0, d60: 0, d90: 50, d90plus: 0 } },
     }), opts);
     expect(out.find((x) => x.id === 'arrears-l1')?.severity).toBe('critical');
   });
@@ -208,6 +237,35 @@ describe('evaluateConditions — collections / AR aging (Fix #2)', () => {
       tenantArrears: { l1: { d30: 0, d60: 0, d90: 0, d90plus: 0 } },
     }), opts);
     expect(out.some((x) => x.id === 'arrears-l1')).toBe(false);
+  });
+  it('partial/Zod-bypassing overlay record still fires (no NaN drop of a real 60+ balance)', () => {
+    // tenantArrears is overlay-sourced; even after the loadOverlay Zod re-parse this stays as
+    // defense-in-depth for any path that reaches the rule unparsed. A partial record with omitted
+    // buckets must coerce to 0, never produce NaN and silently suppress a genuine delinquency.
+    // (refute F3: numeric-correctness — worst direction for a collections monitor)
+    const out = evaluateConditions(snap({
+      leases: [lease({ id: 'l1' })],
+      tenantArrears: { l1: { d90: 3000 } } as unknown as PortfolioSnapshot['tenantArrears'],
+    }), opts);
+    const i = out.find((x) => x.id === 'arrears-l1');
+    expect(i?.severity).toBe('critical');
+  });
+  it('a negative current-bucket credit does NOT suppress a real 60+ critical (refute edges)', () => {
+    // A large AR credit/prepayment in d30 must not net total <= 0 and short-circuit the over-60 gate.
+    const out = evaluateConditions(snap({
+      leases: [lease({ id: 'l1' })],
+      tenantArrears: { l1: { d30: -5000, d60: 0, d90: 3000, d90plus: 0 } } as unknown as PortfolioSnapshot['tenantArrears'],
+    }), opts);
+    expect(out.find((x) => x.id === 'arrears-l1')?.severity).toBe('critical');
+  });
+  it('a negative current-bucket credit does NOT net DOWN the displayed total', () => {
+    const out = evaluateConditions(snap({
+      leases: [lease({ id: 'l1' })],
+      tenantArrears: { l1: { d30: -4000, d60: 0, d90: 5000, d90plus: 0 } } as unknown as PortfolioSnapshot['tenantArrears'],
+    }), opts);
+    const i = out.find((x) => x.id === 'arrears-l1');
+    expect(i?.metric).toBe('$5,000');               // credit clamped to 0, not subtracted from total
+    expect(i?.detail).toContain('$5,000 is 60+ days past due');
   });
 });
 
@@ -298,5 +356,29 @@ describe('ALERT_THRESHOLDS', () => {
     // equal the ratified DSCR floor (CLAUDE.md §4, capital-config.ts).
     expect(ALERT_THRESHOLDS.ltvGovernor).toBe(CAPITAL_CONFIG.ltvCeiling);
     expect(ALERT_THRESHOLDS.dscrWatch).toBe(CAPITAL_CONFIG.dscrFloor);
+  });
+});
+
+describe('evaluateConditions — insight id uniqueness invariant (refute F1 class)', () => {
+  // Insight.id is the read/snooze + React key. Two insights sharing an id corrupt each other's
+  // state (the F1 collision). evaluateConditions ids must be unique across every condition it fires
+  // for a many-entity snapshot — a mechanical guard against any future rule reusing an id pattern.
+  it('emits no duplicate ids across a multi-lease, multi-condition snapshot', () => {
+    const out = evaluateConditions(snap({
+      properties: [prop({ id: 'p1', noi: 100000 })],
+      leases: [
+        lease({ id: 'l1', propertyId: 'p1', leaseEnd: iso(30) }),
+        lease({ id: 'l2', propertyId: 'p1', escalationDate: iso(-5) }),
+      ],
+      loans: [loan({ id: 'n1', balloon: true, maturity: iso(120) })],
+      insurance: [policy({ id: 'i1', expires: iso(10), daysToExpiry: 10 })],
+      tenantArrears: {
+        l1: { d30: 0, d60: 0, d90: 8000, d90plus: 0 },
+        l2: { d30: 0, d60: 0, d90: 0, d90plus: 9000 },
+      },
+    }), opts);
+    const ids = out.map((i) => i.id);
+    expect(ids.length).toBeGreaterThan(3);
+    expect(new Set(ids).size).toBe(ids.length);
   });
 });
