@@ -19,3 +19,22 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: npm run gate:ci
+
+  # Doctrine gate (architecture/coding-standards.md): a change to financial-decision source must
+  # carry a `Refute-Reviewed:`/`Refute-Skip:` commit trailer attesting the refute-financial-change
+  # adversarial pass ran. Separate job → shows as its own check; make it a REQUIRED check via branch
+  # protection to hard-enforce (non-required by default). PR-only — it needs a base ref to diff.
+  refute-required:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      - run: git fetch --no-tags origin "${{ github.base_ref }}"
+      - run: npm run check:refute -- --strict --base="origin/${{ github.base_ref }}"

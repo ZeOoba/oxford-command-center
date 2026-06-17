@@ -64,7 +64,11 @@ export function groupByCapitalAction(scores: PropertyScore[]): CapitalActionGrou
 
 const absMetric = (f: AnomalyFlag): number => (f.metricValue === null ? 0 : Math.abs(f.metricValue));
 
-/** Dedupe anomalies by `propertyId|kind|subkey` (keep the worst severity, tie-break larger |move|),
+/** Percent-encode the `|` key delimiter so a free-text field value containing one cannot alias a
+ *  different (propertyId, kind, subkey) tuple. No-op for values without `|` (byte-identical key). */
+const encKey = (s: string): string => s.replace(/%/g, '%25').replace(/\|/g, '%7C');
+
+/** Dedupe anomalies by (propertyId, kind, subkey) (keep the worst severity, tie-break larger |move|),
  *  then rank by severity (critical→low) then |metricValue| desc, then slice to `limit`. The subkey
  *  is in the key so two co-occurring distinct-category spikes (e.g. Taxes AND Utilities) each rank
  *  as the separate real risks they are, instead of one silently collapsing the other — the same
@@ -72,7 +76,7 @@ const absMetric = (f: AnomalyFlag): number => (f.metricValue === null ? 0 : Math
 export function topRisks(anomalies: AnomalyFlag[], limit: number): AnomalyFlag[] {
   const worstByKey = new Map<string, AnomalyFlag>();
   for (const f of anomalies) {
-    const key = `${f.propertyId}|${f.kind}|${f.subkey}`;
+    const key = `${encKey(f.propertyId)}|${f.kind}|${encKey(f.subkey)}`;
     const existing = worstByKey.get(key);
     if (
       !existing ||

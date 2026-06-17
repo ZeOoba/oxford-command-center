@@ -344,10 +344,18 @@ export interface LogVerdictsOptions {
   forceError?: string;
 }
 
+/** Percent-encode the `|` field delimiter (and `%` itself) so a field value containing one cannot
+ *  shift dedup_key field boundaries and alias a structurally-different verdict. A value with no `|`
+ *  is returned byte-identical, so existing persisted dedup_keys are unchanged (zero ledger churn).
+ *  Defensive: the enum/controlled fields never contain `|` today; this future-proofs the free-text
+ *  subjectId / verdictSubkind (a category name flows into the latter). */
+const encKey = (s: string): string => s.replace(/%/g, '%25').replace(/\|/g, '%7C');
 function dedupKey(v: CalibrationVerdict): string {
   // verdictSubkind discriminates several anomalies sharing verdictKind='anomaly' for one
   // (subject, period, inputs_version); it is '' for the singleton scores kinds (D3).
-  return `${v.subjectKind}|${v.subjectId}|${v.verdictKind}|${v.verdictSubkind}|${v.asOfPeriod}|${v.inputsVersion}`;
+  return [v.subjectKind, v.subjectId, v.verdictKind, v.verdictSubkind, v.asOfPeriod, v.inputsVersion]
+    .map(encKey)
+    .join('|');
 }
 
 /**
