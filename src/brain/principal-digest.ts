@@ -1,5 +1,6 @@
 import type { PortfolioSnapshot } from '@contracts/index';
 import type { AnalyticsBundle } from '@analytics/index';
+import type { Insight } from '@analytics/types';
 
 export interface DigestItem {
   id: string;
@@ -11,11 +12,18 @@ export interface DigestItem {
 
 const ATTENTION_STAGES = new Set(['LOI/PSA', 'Closing']);
 
-/** Items needing a principal's eye: critical/warning insights + deals in LOI/PSA or Closing. */
-export function principalDigest(snapshot: PortfolioSnapshot, analytics: AnalyticsBundle): DigestItem[] {
+/** Items needing a principal's eye: critical/warning insights + deals in LOI/PSA or Closing.
+ *  `anomalyInsights` (strategic-audit Fix #1) carries the bridged warehouse anomalies so a
+ *  warehouse-detected expense spike / NOI decline shows on the Principal Home, not just the Intel
+ *  module. Defaulted to [] so snapshot-only callers (and the pure-function tests) are unaffected. */
+export function principalDigest(
+  snapshot: PortfolioSnapshot,
+  analytics: AnalyticsBundle,
+  anomalyInsights: ReadonlyArray<Insight> = [],
+): DigestItem[] {
   const items: DigestItem[] = [];
 
-  for (const i of analytics.insights) {
+  for (const i of [...analytics.insights, ...anomalyInsights]) {
     if (i.severity === 'critical' || i.severity === 'warning') {
       items.push({ id: i.id, kind: 'insight', rank: i.severity === 'critical' ? 0 : 1, title: i.title, detail: i.detail });
     }

@@ -1,18 +1,29 @@
+import { useMemo } from 'react';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
 import { useSnapshot, useAnalytics } from '@/data/queries';
+import { useAnomalies } from '@/modules/intel/analytics-hooks';
 import { ModuleLoading } from '@/shell/ModuleFallback';
 import { principalDigest } from '@/brain/principal-digest';
+import { anomaliesToInsights } from '@/brain/anomaly-insights';
 import { principalKpis } from './principal-kpis';
 
 export function PrincipalModule() {
   const { data } = useSnapshot();
   const { analytics } = useAnalytics();
+  // Fix #1: bridge warehouse anomalies into the attention digest. The query errors to [] on the
+  // static mirror / offline, so the digest degrades to snapshot conditions there.
+  const anomalies = useAnomalies();
+  const anomalyInsights = useMemo(() => {
+    const nameById = new Map<string, string>();
+    for (const p of data?.snapshot.properties ?? []) nameById.set(p.id, p.name);
+    return anomaliesToInsights(anomalies.data ?? [], nameById);
+  }, [anomalies.data, data]);
   if (!data || !analytics) return <ModuleLoading />;
 
   const kpis = principalKpis(data.snapshot, analytics);
-  const digest = principalDigest(data.snapshot, analytics);
+  const digest = principalDigest(data.snapshot, analytics, anomalyInsights);
 
   return (
     <div className="flex flex-col gap-4">

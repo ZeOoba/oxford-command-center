@@ -64,12 +64,15 @@ export function groupByCapitalAction(scores: PropertyScore[]): CapitalActionGrou
 
 const absMetric = (f: AnomalyFlag): number => (f.metricValue === null ? 0 : Math.abs(f.metricValue));
 
-/** Dedupe anomalies by `propertyId|kind` (keep the worst severity, tie-break larger |move|),
- *  then rank by severity (critical→low) then |metricValue| desc, then slice to `limit`. */
+/** Dedupe anomalies by `propertyId|kind|subkey` (keep the worst severity, tie-break larger |move|),
+ *  then rank by severity (critical→low) then |metricValue| desc, then slice to `limit`. The subkey
+ *  is in the key so two co-occurring distinct-category spikes (e.g. Taxes AND Utilities) each rank
+ *  as the separate real risks they are, instead of one silently collapsing the other — the same
+ *  collision class the alert id and calibration verdictSubkind fixed (refute F1). */
 export function topRisks(anomalies: AnomalyFlag[], limit: number): AnomalyFlag[] {
   const worstByKey = new Map<string, AnomalyFlag>();
   for (const f of anomalies) {
-    const key = `${f.propertyId}|${f.kind}`;
+    const key = `${f.propertyId}|${f.kind}|${f.subkey}`;
     const existing = worstByKey.get(key);
     if (
       !existing ||
@@ -80,7 +83,13 @@ export function topRisks(anomalies: AnomalyFlag[], limit: number): AnomalyFlag[]
     }
   }
   return [...worstByKey.values()]
-    .sort((a, b) => severityIndex(a.severity) - severityIndex(b.severity) || absMetric(b) - absMetric(a))
+    .sort((a, b) =>
+      severityIndex(a.severity) - severityIndex(b.severity) ||
+      absMetric(b) - absMetric(a) ||
+      // Total-order tiebreak over the unique (propertyId, kind, subkey) identity, so the slice cutoff
+      // between two equally-severe, equally-large risks is deterministic regardless of the upstream
+      // anomaly-feed order (refute determinism hardening — future-proofs against a feed reorder).
+      a.propertyId.localeCompare(b.propertyId) || a.kind.localeCompare(b.kind) || a.subkey.localeCompare(b.subkey))
     .slice(0, limit);
 }
 

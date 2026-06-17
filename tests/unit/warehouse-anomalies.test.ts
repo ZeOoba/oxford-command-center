@@ -48,6 +48,23 @@ describe('anomalies', () => {
     const nc = flags.find((f) => f.kind === 'new-category' && f.period === '2025')!;
     expect(nc).toBeDefined();
     expect(nc.detail).toContain('Utilities');
+    expect(nc.subkey).toBe('Utilities'); // category is the sub-identity (refute F1)
+  });
+
+  it('tags category-driven flags with the category as subkey; property-level kinds carry subkey="" (refute F1)', () => {
+    // Insurance +60% AND Taxes +50% both spike in one property+period; opex +56% also trips
+    // expense-growth (a property-level kind). The two spikes must carry DISTINCT subkeys so their
+    // downstream alert ids do not collide; the property-level flag must carry subkey=''.
+    const metrics: PeriodMetrics[] = [
+      mk('2024', { revenue: 200000, opex: 80000, noiPerSf: 6, categories: { Insurance: 50000, Taxes: 30000 } }),
+      mk('2025', { revenue: 200000, opex: 125000, noiPerSf: 6, categories: { Insurance: 80000, Taxes: 45000 } }),
+    ];
+    const flags = detectAnomalies(metrics);
+    const spikes = flags.filter((f) => f.kind === 'category-spike' && f.period === '2025');
+    expect(new Set(spikes.map((f) => f.subkey))).toEqual(new Set(['Insurance', 'Taxes']));
+    expect(spikes.every((f) => f.detail.includes(f.subkey))).toBe(true);
+    const exp = flags.find((f) => f.kind === 'expense-growth' && f.period === '2025')!;
+    expect(exp.subkey).toBe('');
   });
 
   it('flags revenue decline and a category spike, scales severity, groups by property', () => {

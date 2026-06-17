@@ -2,7 +2,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { watch } from 'chokidar';
-import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, type DealStage, type RenewalStage, type CompSet, type AcquisitionInput } from '../src/contracts/index';
+import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, type DealStage, type RenewalStage, type CompSet, type AcquisitionInput, type TenantArrears } from '../src/contracts/index';
 import { tenantScorecards } from '../src/brain/tenants';
 import { parseWorkbook } from './workbook/parse';
 import { applyOverlay, loadOverlay, saveOverlay, type Overlay } from './overlay';
@@ -135,6 +135,14 @@ class Brain extends EventEmitter {
     if (!this.base?.properties.some((p) => p.id === propertyId)) return false;
     this.overlay = { ...this.overlay, noiBudgets: { ...this.overlay.noiBudgets, [propertyId]: amount } };
     this.rederive('action:noi-budget');
+    return true;
+  }
+
+  /** Write-back: set a lease's AR aging buckets (audit Fix #2). Returns false if the lease is unknown. */
+  setTenantArrears(leaseId: string, arrears: TenantArrears): boolean {
+    if (!this.base?.leases.some((l) => l.id === leaseId)) return false;
+    this.overlay = { ...this.overlay, tenantArrears: { ...this.overlay.tenantArrears, [leaseId]: arrears } };
+    this.rederive('action:tenant-arrears');
     return true;
   }
 

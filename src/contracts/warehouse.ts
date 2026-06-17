@@ -328,6 +328,13 @@ export const AnomalyFlagSchema = z.object({
   propertyId: z.string(),
   period: z.string(),
   kind: AnomalyKind,
+  // Sub-identity WITHIN a kind: the spiking/new expense category for 'category-spike'/'new-category'
+  // (the engine emits one such flag PER category for a property+period), '' for the property-level
+  // kinds. Part of the dedup identity so two distinct same-kind anomalies (e.g. Taxes AND Utilities
+  // both spiking) do not collapse to one synthesized alert id — the same "D3" collision the
+  // CalibrationVerdict.verdictSubkind field guards. Defaulted so older baked mirror payloads without
+  // the field still parse (audit Fix #1 / refute F1).
+  subkey: z.string().default(''),
   severity: AnomalySeverity,
   detail: z.string(),
   metricValue: z.number().nullable(),

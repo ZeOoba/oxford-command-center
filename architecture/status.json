@@ -69,6 +69,16 @@
       "review_needed": false,
       "review_detail": "NO Architect-owned files touched. Edits: scripts/bake-warehouse.ts (new) + scripts/bake-mirror.ts (Integration-owned), src/lib/warehouse-mirror.ts (new) + src/lib/freshness.ts (Core), src/modules/intel/{hooks,analytics-hooks,IntelModule,LeaseRunView,DataQualityView,MappingsView} + src/modules/calibration/{hooks,CalibrationModule,PendingView} (UX-owned), .gitignore. Imports server/warehouse/api.ts + db.ts read-only (no signature/engine change). Bake emits public/warehouse.json (computed route payloads, gitignored); client falls back on 404. Financial-adjacent (scoring/analytics output) → ran the MANDATORY adversarial refute-financial-change review (opus). Full local unit suite green (1035/1035), tsc+lint clean. PR opened off origin/main; awaiting Gabriel review + deploy (invariant 2). Deferred (Gabriel/Phase 2): DNS migration, new-machine timing, remote calibration writes, freshness cadence.",
       "last_updated": "2026-06-16T00:20:00Z"
+    },
+
+    "cool-franklin-b98c9f": {
+      "agent_role": "Engineering (Claude Code) — authorized solo by Gabriel 2026-06-16",
+      "phase": "Audit-batch hardening follow-up — refute fixes F1 (anomaly subkey id-disambiguator) + F2 (collections true-60+ bucket) + F3 (arrears NaN coercion) + overlay Zod re-parse + id-uniqueness invariant",
+      "status": "in_progress",
+      "blocked_by": null,
+      "review_needed": false,
+      "review_detail": "Architect-owned files touched WITH Gabriel's in-conversation authorization (2026-06-16): src/contracts/warehouse.ts (add AnomalyFlag.subkey via z.string().default('') — backward-compatible; older baked mirror payloads still parse), architecture/coding-standards.md (mandate the refute-financial-change pass for new evaluateConditions rules), architecture/status.json (this entry). Non-architect (all MERGED/unowned per pfi-phase-b + intel owners): src/analytics/conditions.ts, src/brain/anomaly-insights.ts, server/warehouse/anomalies.ts, server/warehouse/calibration.ts (verdictSubkind folds in subkey — same D3 class), src/modules/intel/synthesis.ts (topRisks dedup folds in subkey), server/overlay.ts (per-bucket arrears salvage — never drop a record), + tests. Ran the MANDATORY refute-financial-change pass (opus, 3 lenses) + independent review; both found the overlay drop-on-negative regression, now fixed (salvage + num() negative-clamp). No conflict with active worktrees (acquisition-scorecard, test-coverage-analysis touch disjoint files). Gate green: 1100+ tests.",
+      "last_updated": "2026-06-16T21:30:00Z"
     }
   },
 
