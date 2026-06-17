@@ -40,7 +40,26 @@ export interface AlertView {
   unread: number;
 }
 
+/** An Insight.id is the read/snooze key AND the React list key — two insights sharing one corrupt
+ *  each other's state (the F1 collision class). The producers are now collision-free and guarded by
+ *  tests/unit/insight-id-uniqueness.test.ts, but those test fixtures cannot anticipate every real
+ *  warehouse-data shape. This runtime check is the backstop: it fires ONLY when a duplicate actually
+ *  reaches the inbox, so it is silent in correct operation (no env gate needed) and loud the instant
+ *  a future producer regresses on real data. */
+function warnOnDuplicateIds(insights: Insight[]): void {
+  const seen = new Set<string>();
+  const dupes = new Set<string>();
+  for (const i of insights) {
+    if (seen.has(i.id)) dupes.add(i.id);
+    else seen.add(i.id);
+  }
+  if (dupes.size > 0) {
+    console.warn(`buildAlertView: duplicate insight id(s) — read/snooze state will collide: ${[...dupes].join(', ')}`);
+  }
+}
+
 export function buildAlertView(insights: Insight[], state: AlertInboxState, now: number): AlertView {
+  warnOnDuplicateIds(insights);
   const readSet = new Set(state.read);
   const visible: AlertViewItem[] = [];
   let snoozed = 0;

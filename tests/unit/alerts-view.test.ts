@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { AlertInboxState, EMPTY_INBOX_STATE } from '../../src/contracts/alerts';
 import { applyAlertAction, buildAlertView } from '../../src/brain/alerts-view';
 import { anomaliesToInsights } from '../../src/brain/anomaly-insights';
@@ -126,5 +126,18 @@ describe('buildAlertView', () => {
     const utilities = v.items.find((it) => it.insight.detail.includes('Utilities'))!;
     expect(utilities.read).toBe(false);
     expect(v.unread).toBe(1);
+  });
+
+  it('warns (loudly, once) when two insights share an id — duplicate-id backstop (#5)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    buildAlertView([ins('dup', 'critical'), ins('dup', 'warning')], { read: [], snoozed: {} }, NOW);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('dup'));
+    warn.mockRestore();
+  });
+  it('is silent when all insight ids are unique (no noise in correct operation)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    buildAlertView([ins('a', 'critical'), ins('b', 'warning')], { read: [], snoozed: {} }, NOW);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
