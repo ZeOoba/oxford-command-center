@@ -1,8 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { PortfolioSnapshot, Task, DealStage, RenewalStage, CompSet, AcquisitionInput, TenantArrears } from '../src/contracts/index';
+import type { z } from 'zod';
+import type { PortfolioSnapshot, DealStage, TenantArrears } from '../src/contracts/index';
+import { Task, RenewalStage, CompSet, AcquisitionInput } from '../src/contracts/index';
 import type { LeaseRunAssumptions } from '../src/contracts/lease-run';
+import { coerceNonNegMoney } from '../src/lib/money';
 
 /**
  * Write-back overlay (Phase 5). The master workbook is canonical and READ-ONLY, so user
@@ -49,41 +52,63 @@ export function nextStage(stage: DealStage): DealStage | null {
   return STAGE_FLOW[i + 1]!;
 }
 
-/** Coerce the on-disk tenantArrears map PER BUCKET so a partial / hand-edited / legacy / export
- *  record yields a contract-valid {d30,d60,d90,d90plus} of non-negative numbers. overlay.json is the
- *  documented QB-AR-export / manual-entry surface (CLAUDE.md §9) and is NOT re-parsed through
- *  PortfolioSnapshot on the live path, so a real AR-aging row legitimately carries a negative current
- *  bucket (an unapplied credit/prepayment) or a numeric-string amount from a CSV export. We SALVAGE,
- *  never drop a balance: `TenantArrears.safeParse`-then-drop would discard such a row whole and
- *  silently suppress a co-occurring real 60+ delinquency — the exact failure F3 set out to kill
- *  (refute F3/edges). A real positive number (or numeric string) survives; a negative / non-finite /
- *  non-numeric bucket zeroes; only a non-object record value is skipped entirely. The matching
- *  defense-in-depth lives in conditions.ts `num()`. Other overlay maps keep tolerant passthrough. */
-function arrearsBucket(v: unknown): number {
-  // Strings arrive from a hand-edit or a pasted QB/Excel/CSV AR-aging export, which render money WITH
-  // a currency symbol, thousands separators, and accounting parens for a credit ('$12,500',
-  // '1,200.00', '(500)'). Normalize those BEFORE Number() so a real balance is salvaged, not silently
-  // zeroed — a bare Number('12,500') is NaN, which would re-introduce the F3 suppression for the
-  // commonest export format (refute edges). Parens → negative → clamped to 0 (a credit is not a
-  // past-due balance). Truly non-numeric junk ('n/a') still → 0.
-  let n: number;
-  if (typeof v === 'number') {
-    n = v;
-  } else if (typeof v === 'string') {
-    const s = v.replace(/[$,\s]/g, '').replace(/^\((.*)\)$/, '-$1');
-    n = s === '' ? NaN : Number(s);
-  } else {
-    n = NaN;
-  }
-  return Number.isFinite(n) && n > 0 ? n : 0; // negative / credit / NaN / non-numeric → 0; never negative
-}
+/** Coerce the on-disk tenantArrears map PER BUCKET (via the shared coerceNonNegMoney) so a partial /
+ *  hand-edited / legacy / export record yields a contract-valid {d30,d60,d90,d90plus} of non-negative
+ *  numbers. overlay.json is the documented QB-AR-export / manual-entry surface (CLAUDE.md §9), NOT
+ *  re-parsed through PortfolioSnapshot on the live path, so an AR-aging row legitimately carries a
+ *  negative current bucket (a credit) or a currency-formatted string ('$12,500', '1,200.00'). We
+ *  SALVAGE per bucket, never drop a balance: dropping the whole record would silently suppress a
+ *  co-occurring real 60+ delinquency (refute F3/edges). A non-object record value carries no buckets
+ *  and is skipped. The SAME coerceNonNegMoney is the in-memory backstop in conditions.ts, so the
+ *  load path and the rule agree on exactly one coercion (no string/number asymmetry). */
 function parseArrears(raw: unknown): Record<string, TenantArrears> {
   if (!raw || typeof raw !== 'object') return {};
   const out: Record<string, TenantArrears> = {};
   for (const [leaseId, v] of Object.entries(raw as Record<string, unknown>)) {
     if (!v || typeof v !== 'object') continue; // a non-object record value carries no buckets
     const r = v as Record<string, unknown>;
-    out[leaseId] = { d30: arrearsBucket(r.d30), d60: arrearsBucket(r.d60), d90: arrearsBucket(r.d90), d90plus: arrearsBucket(r.d90plus) };
+    out[leaseId] = { d30: coerceNonNegMoney(r.d30), d60: coerceNonNegMoney(r.d60), d90: coerceNonNegMoney(r.d90), d90plus: coerceNonNegMoney(r.d90plus) };
+  }
+  return out;
+}
+
+/** Validate a Record overlay map per entry: KEEP entries that parse against `schema`, DROP (with a
+ *  visible warning — never silently) those that do not. overlay.json bypasses Zod on the live path,
+ *  so a hand-edited or schema-migrated entry could otherwise crash its consumer (scoring/comps);
+ *  failing safe (drop + surface) beats passing malformed data downstream. App-written entries are
+ *  valid by construction (the write routes Zod-validate), so this is a no-op for normal data. */
+function validRecord<S extends z.ZodTypeAny>(raw: unknown, schema: S, label: string): Record<string, z.infer<S>> {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Record<string, z.infer<S>> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    const r = schema.safeParse(v);
+    if (r.success) out[k] = r.data;
+    else console.warn(`overlay: dropping invalid ${label} entry "${k}" (failed its contract)`);
+  }
+  return out;
+}
+/** Keep only string-valued entries (free-text maps: dealStages, tenantNotes). */
+function stringRecord(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) if (typeof v === 'string') out[k] = v;
+  return out;
+}
+/** Coerce a propertyId→number budget map through the shared money coercer (negative/junk → 0). */
+function coerceBudgets(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) out[k] = coerceNonNegMoney(v);
+  return out;
+}
+/** Keep only entries that parse as a Task; drop+warn the rest. */
+function validTasks(raw: unknown): Task[] {
+  if (!Array.isArray(raw)) return [];
+  const out: Task[] = [];
+  for (const t of raw) {
+    const r = Task.safeParse(t);
+    if (r.success) out.push(r.data);
+    else console.warn('overlay: dropping invalid task entry (failed its contract)');
   }
   return out;
 }
@@ -92,7 +117,23 @@ export function loadOverlay(): Overlay {
   try {
     if (existsSync(overlayPath())) {
       const raw = JSON.parse(readFileSync(overlayPath(), 'utf8')) as Partial<Overlay>;
-      return { dealStages: raw.dealStages ?? {}, tasks: raw.tasks ?? [], renewalStages: raw.renewalStages ?? {}, tenantNotes: raw.tenantNotes ?? {}, dealComps: raw.dealComps ?? {}, noiBudgets: raw.noiBudgets ?? {}, tenantArrears: parseArrears(raw.tenantArrears), acquisitionInputs: raw.acquisitionInputs ?? {}, leaseRunAssumptions: raw.leaseRunAssumptions ?? {} };
+      // Every overlay map is now coerced/validated on load — overlay.json bypasses Zod on the live
+      // path, so this is the one place that closes the bypass class for the whole surface. Numeric
+      // money fields go through coerceNonNegMoney (never drop a balance); structured maps are
+      // per-entry Zod-validated (drop+warn an invalid entry rather than crash its consumer);
+      // free-text maps are string-filtered. leaseRunAssumptions is a partial merged onto spec
+      // defaults, so it is validated at the merge site, not here.
+      return {
+        dealStages: stringRecord(raw.dealStages),
+        tasks: validTasks(raw.tasks),
+        renewalStages: validRecord(raw.renewalStages, RenewalStage, 'renewalStages'),
+        tenantNotes: stringRecord(raw.tenantNotes),
+        dealComps: validRecord(raw.dealComps, CompSet, 'dealComps'),
+        noiBudgets: coerceBudgets(raw.noiBudgets),
+        tenantArrears: parseArrears(raw.tenantArrears),
+        acquisitionInputs: validRecord(raw.acquisitionInputs, AcquisitionInput, 'acquisitionInputs'),
+        leaseRunAssumptions: raw.leaseRunAssumptions ?? {},
+      };
     }
   } catch {
     /* corrupt overlay → start clean */

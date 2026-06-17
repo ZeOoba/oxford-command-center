@@ -2,6 +2,7 @@ import type { PortfolioSnapshot } from '@contracts/index';
 import { fmtUsd, fmtUsdCompact, fmtPct, fmtMonths, fmtDate } from './format';
 import type { Insight, InsightSeverity } from './types';
 import { tenantScorecards } from '@/brain/tenants';
+import { coerceNonNegMoney } from '@/lib/money';
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
@@ -149,14 +150,13 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   // is false for NaN, silently SUPPRESSING a real delinquency — the worst direction for a
   // collections monitor. num() enforces the .default(0) intent for any non-finite bucket.
   const arrears = s.tenantArrears ?? {};
-  // Non-negative NUMBER coercion: a non-finite bucket → 0 (no NaN-drop of a real balance), and a
-  // NEGATIVE bucket (an AR credit/prepayment) → 0 so it cannot net DOWN the displayed total or drive
-  // `total <= 0` and suppress a genuine over-60 critical (refute F3/edges). over60 is therefore
-  // always ≥ 0, so `total <= 0` skips only an all-zero record. This is a NUMBER-ONLY backstop: it
-  // agrees with overlay.ts arrearsBucket() on numeric inputs, but — unlike that load-boundary helper
-  // — it does NOT coerce currency/comma strings, because overlay strings are already normalized to
-  // numbers by parseArrears (and the API write path is Zod-validated) before any value reaches here.
-  const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : 0);
+  // Each bucket goes through the SHARED coerceNonNegMoney (src/lib/money) — the exact same coercer
+  // the overlay load boundary uses (parseArrears/coerceBudgets) — so the load path and this rule
+  // agree on one coercion, ending the prior string/number asymmetry. A non-finite/missing bucket → 0
+  // (no NaN-drop of a real balance), and a NEGATIVE bucket (an AR credit/prepayment) → 0 so it cannot
+  // net DOWN the displayed total or drive `total <= 0` and suppress a genuine over-60 critical
+  // (refute F3/edges). over60 is therefore always ≥ 0, so `total <= 0` skips only an all-zero record.
+  const num = coerceNonNegMoney;
   for (const l of s.leases) {
     const ar = arrears[l.id];
     if (!ar) continue;

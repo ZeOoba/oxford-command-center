@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -158,5 +158,45 @@ describe('loadOverlay — tenantArrears per-bucket salvage (refute F3 / edges)',
     const out = loadArrears({ l1: 5, l2: { d90: 1000 } });
     expect(out.l1).toBeUndefined();
     expect(out.l2).toEqual({ d30: 0, d60: 0, d90: 1000, d90plus: 0 });
+  });
+});
+
+describe('loadOverlay — structured-map validation (closes the whole-overlay bypass)', () => {
+  function loadFull(overlay: Record<string, unknown>) {
+    const dir = mkdtempSync(join(tmpdir(), 'ora-overlay-'));
+    const path = join(dir, 'overlay.json');
+    writeFileSync(path, JSON.stringify(overlay), 'utf8');
+    const prev = process.env.OVERLAY_PATH;
+    process.env.OVERLAY_PATH = path;
+    try {
+      return loadOverlay();
+    } finally {
+      if (prev === undefined) delete process.env.OVERLAY_PATH;
+      else process.env.OVERLAY_PATH = prev;
+    }
+  }
+  const validTask = { id: 'u1', label: 'User task', section: 'Added', role: null, type: null, dueDay: null, notes: null, status: 'pending', monthlyPmt: null };
+  const validComps = { saleComps: [], rentComps: [], submarketStats: [], summary: null, sources: [], sourcedAt: '2026-06-05T00:00:00.000Z' };
+
+  it('coerces noiBudgets through the shared money coercer (negative/string/junk → safe number)', () => {
+    expect(loadFull({ noiBudgets: { p1: -5, p2: '12,500', p3: 250000, p4: 'oops' } }).noiBudgets)
+      .toEqual({ p1: 0, p2: 12500, p3: 250000, p4: 0 });
+  });
+  it('keeps a valid task and drops+warns an invalid one (no silent drop)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const o = loadFull({ tasks: [validTask, { not: 'a task' }] });
+    expect(o.tasks.map((t) => t.id)).toEqual(['u1']);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+  it('keeps a valid dealComps entry and drops+warns an invalid one', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const o = loadFull({ dealComps: { d1: validComps, bad: { not: 'comps' } } });
+    expect(Object.keys(o.dealComps)).toEqual(['d1']);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+  it('string-filters a free-text map (a non-string dealStages value is dropped)', () => {
+    expect(loadFull({ dealStages: { d1: 'LOI/PSA', d2: 42 } }).dealStages).toEqual({ d1: 'LOI/PSA' });
   });
 });
