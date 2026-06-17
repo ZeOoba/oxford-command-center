@@ -6,6 +6,7 @@ const flag = (o: Partial<AnomalyFlag>): AnomalyFlag => ({
   propertyId: '1100-rarig-ave-columbus-oh',
   period: '2025',
   kind: 'category-spike',
+  subkey: 'Utilities',
   severity: 'high',
   detail: 'Utilities spiked 42.0% (>20.0% threshold)',
   metricValue: 0.42,
@@ -38,14 +39,29 @@ describe('anomaliesToInsights — warehouse anomaly → alert Insight bridge', (
     expect(out[0]!.entityId).toBe('1100-rarig-ave-columbus-oh');
   });
 
-  it('builds a stable, collision-free id from property+period+kind (dedup identity)', () => {
+  it('builds a stable id from property+period+kind; property-level kinds carry no subkey suffix', () => {
     const out = anomaliesToInsights([
-      flag({ kind: 'expense-growth' }),
-      flag({ kind: 'category-spike' }),
+      flag({ kind: 'expense-growth', subkey: '' }),
+      flag({ kind: 'category-spike', subkey: 'Utilities' }),
     ]);
     const ids = out.map((i) => i.id);
     expect(new Set(ids).size).toBe(2);
+    // subkey='' (property-level kind) → id is unchanged from the pre-subkey format (state-stable).
     expect(ids[0]).toBe('anomaly-1100-rarig-ave-columbus-oh-2025-expense-growth');
+  });
+
+  it('disambiguates same-kind flags by subkey so co-occurring category spikes get distinct ids (refute F1)', () => {
+    // The engine emits one category-spike flag PER spiking category for a property+period. Without
+    // the subkey in the id, Taxes and Utilities spikes collapsed to one id and shared read/snooze
+    // state. The subkey must make them distinct.
+    const out = anomaliesToInsights([
+      flag({ kind: 'category-spike', subkey: 'Taxes', severity: 'critical', detail: 'Taxes spiked 61.0%' }),
+      flag({ kind: 'category-spike', subkey: 'Utilities', severity: 'high', detail: 'Utilities spiked 42.0%' }),
+    ]);
+    const ids = out.map((i) => i.id);
+    expect(new Set(ids).size).toBe(2);
+    expect(ids).toContain('anomaly-1100-rarig-ave-columbus-oh-2025-category-spike-Taxes');
+    expect(ids).toContain('anomaly-1100-rarig-ave-columbus-oh-2025-category-spike-Utilities');
   });
 
   it('resolves a friendly property name when a nameById map is supplied', () => {

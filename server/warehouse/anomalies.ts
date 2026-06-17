@@ -59,7 +59,7 @@ export function detectAnomalies(metrics: PeriodMetrics[]): AnomalyFlag[] {
       const expG = pctChange(prev.opex, cur.opex);
       if (expG !== null && expG > cfg.expenseGrowthPct) {
         flags.push({
-          propertyId, period, kind: 'expense-growth',
+          propertyId, period, kind: 'expense-growth', subkey: '',
           severity: severityFor(expG, cfg.expenseGrowthPct),
           detail: `Operating expenses grew ${pct(expG)} (>${pct(cfg.expenseGrowthPct)} threshold)`,
           metricValue: expG,
@@ -70,7 +70,7 @@ export function detectAnomalies(metrics: PeriodMetrics[]): AnomalyFlag[] {
       const revG = pctChange(prev.revenue, cur.revenue);
       if (revG !== null && revG < -cfg.revenueDeclinePct) {
         flags.push({
-          propertyId, period, kind: 'revenue-decline',
+          propertyId, period, kind: 'revenue-decline', subkey: '',
           severity: severityFor(Math.abs(revG), cfg.revenueDeclinePct),
           detail: `Revenue declined ${pct(revG)} (past −${pct(cfg.revenueDeclinePct)} threshold)`,
           metricValue: revG,
@@ -81,7 +81,7 @@ export function detectAnomalies(metrics: PeriodMetrics[]): AnomalyFlag[] {
       const noiG = pctChange(prev.noi, cur.noi);
       if (noiG !== null && noiG < -cfg.noiDeclinePct) {
         flags.push({
-          propertyId, period, kind: 'noi-decline',
+          propertyId, period, kind: 'noi-decline', subkey: '',
           severity: severityFor(Math.abs(noiG), cfg.noiDeclinePct),
           detail: `NOI declined ${pct(noiG)} (past −${pct(cfg.noiDeclinePct)} threshold)`,
           metricValue: noiG,
@@ -92,7 +92,7 @@ export function detectAnomalies(metrics: PeriodMetrics[]): AnomalyFlag[] {
       const noiSfG = pctChange(prev.noiPerSf, cur.noiPerSf);
       if (noiSfG !== null && noiSfG < -cfg.noiPerSfDeclinePct) {
         flags.push({
-          propertyId, period, kind: 'noi-per-sf-decline',
+          propertyId, period, kind: 'noi-per-sf-decline', subkey: '',
           severity: severityFor(Math.abs(noiSfG), cfg.noiPerSfDeclinePct),
           detail: `NOI per SF declined ${pct(noiSfG)} (past −${pct(cfg.noiPerSfDeclinePct)} threshold)`,
           metricValue: noiSfG,
@@ -104,7 +104,7 @@ export function detectAnomalies(metrics: PeriodMetrics[]): AnomalyFlag[] {
         const wasPresent = Object.prototype.hasOwnProperty.call(prev.categories, cat);
         if (!wasPresent && (cur.categories[cat] ?? 0) !== 0) {
           flags.push({
-            propertyId, period, kind: 'new-category',
+            propertyId, period, kind: 'new-category', subkey: cat,
             severity: 'low',
             detail: `New expense category appeared: ${cat} (${cur.categories[cat]!.toFixed(0)})`,
             metricValue: cur.categories[cat] ?? null,
@@ -119,7 +119,7 @@ export function detectAnomalies(metrics: PeriodMetrics[]): AnomalyFlag[] {
         const catG = pctChange(before, after);
         if (catG !== null && catG > cfg.categorySpikePct) {
           flags.push({
-            propertyId, period, kind: 'category-spike',
+            propertyId, period, kind: 'category-spike', subkey: cat,
             severity: severityFor(catG, cfg.categorySpikePct),
             detail: `${cat} spiked ${pct(catG)} (>${pct(cfg.categorySpikePct)} threshold)`,
             metricValue: catG,

@@ -56,7 +56,12 @@ export function anomaliesToInsights(
     if (severity === undefined) continue; // low-severity → dropped
     const name = nameById?.get(a.propertyId) ?? humanizeSlug(a.propertyId);
     out.push({
-      id: `anomaly-${a.propertyId}-${a.period}-${a.kind}`,
+      // The subkey (spiking/new category for category-spike/new-category; '' otherwise) is part of
+      // the id so two co-occurring same-kind anomalies on one property+period get DISTINCT ids —
+      // otherwise they share read/snooze state and one silently buries the other (refute F1). The id
+      // is opaque (a state/React key, never parsed), so the raw category is safe and guarantees
+      // uniqueness; subkey='' keeps the property-level kinds' ids byte-for-byte state-stable.
+      id: `anomaly-${a.propertyId}-${a.period}-${a.kind}${a.subkey ? `-${a.subkey}` : ''}`,
       severity,
       category: 'anomaly',
       title: `${KIND_LABEL[a.kind]} — ${name}`,

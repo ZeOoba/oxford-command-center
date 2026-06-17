@@ -392,9 +392,9 @@ describe('calibration — D3: anomaly verdicts do not collide on dedup_key (§1.
     // Three distinct anomaly KINDS for ONE (property, period). They all carry verdictKind='anomaly'
     // and (with the pre-fix dedup tuple subject|kind|as_of|inputs_version) collapse to ONE dedup_key.
     const flags = [
-      { propertyId: property, period, kind: 'noi-decline' as const, severity: 'high' as const, detail: 'NOI declined 20%', metricValue: -0.2 },
-      { propertyId: property, period, kind: 'expense-growth' as const, severity: 'moderate' as const, detail: 'Opex grew 18%', metricValue: 0.18 },
-      { propertyId: property, period, kind: 'category-spike' as const, severity: 'high' as const, detail: 'Taxes spiked 40%', metricValue: 0.4 },
+      { propertyId: property, period, kind: 'noi-decline' as const, subkey: '', severity: 'high' as const, detail: 'NOI declined 20%', metricValue: -0.2 },
+      { propertyId: property, period, kind: 'expense-growth' as const, subkey: '', severity: 'moderate' as const, detail: 'Opex grew 18%', metricValue: 0.18 },
+      { propertyId: property, period, kind: 'category-spike' as const, subkey: 'Taxes', severity: 'high' as const, detail: 'Taxes spiked 40%', metricValue: 0.4 },
     ];
     const verdicts = verdictsFromAnomalies(flags, iv, 'commit:test');
     expect(verdicts).toHaveLength(3);
@@ -407,6 +407,30 @@ describe('calibration — D3: anomaly verdicts do not collide on dedup_key (§1.
       "SELECT COUNT(*) AS c FROM calibration_verdict WHERE subject_id=? AND verdict_kind='anomaly'",
     ).get(property) as { c: number }).c;
     expect(n).toBe(3);
+  });
+
+  it('WRITES distinct verdicts for two SAME-kind anomalies (subkey discriminates) — refute F1', async () => {
+    // The same-kind multiplicity the engine actually emits: two category-spikes for one
+    // property/period. With verdictSubkind = kind alone they collapsed to ONE dedup_key (the same
+    // D3 collision F1 fixed in the alert pipeline). The subkey must keep them distinct here too.
+    const dir = mkdtempSync(join(tmpdir(), 'cal-'));
+    dirs.push(dir);
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    clearCalibration(db);
+
+    const property = '1100-rarig-ave-columbus-oh';
+    const period = '2025';
+    const iv = computeInputsVersion(db);
+    const flags = [
+      { propertyId: property, period, kind: 'category-spike' as const, subkey: 'Taxes', severity: 'high' as const, detail: 'Taxes spiked 40%', metricValue: 0.4 },
+      { propertyId: property, period, kind: 'category-spike' as const, subkey: 'Utilities', severity: 'high' as const, detail: 'Utilities spiked 35%', metricValue: 0.35 },
+    ];
+    const res = logVerdicts(db, verdictsFromAnomalies(flags, iv, 'commit:test'));
+    expect(res.error).toBeUndefined();
+    expect(res.written).toBe(2); // pre-fix: 1 written, 1 skipped (collision)
+    expect(res.skipped).toBe(0);
   });
 });
 

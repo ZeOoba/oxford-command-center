@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { AlertInboxState, EMPTY_INBOX_STATE } from '../../src/contracts/alerts';
 import { applyAlertAction, buildAlertView } from '../../src/brain/alerts-view';
+import { anomaliesToInsights } from '../../src/brain/anomaly-insights';
+import type { AnomalyFlag } from '../../src/contracts/warehouse';
 import type { Insight } from '../../src/analytics/types';
 
 describe('AlertInboxState contract', () => {
@@ -107,5 +109,22 @@ describe('buildAlertView', () => {
     expect(v.items).toHaveLength(1);
     expect(v.items[0]!.snoozedUntil).toBeNull();
     expect(v.counts.snoozed).toBe(0);
+  });
+
+  it('two co-occurring same-kind anomalies keep independent read state (refute F1 regression)', () => {
+    // The exact bug class refute F1 fixed: before the subkey, both these category-spikes shared one
+    // id, so reading the Taxes alert silently marked the Utilities alert read too. With the subkey in
+    // the id they are distinct, and marking one read must leave the other unread.
+    const flags: AnomalyFlag[] = [
+      { propertyId: 'p1', period: '2025', kind: 'category-spike', subkey: 'Taxes', severity: 'critical', detail: 'Taxes spiked 61.0%', metricValue: 0.61 },
+      { propertyId: 'p1', period: '2025', kind: 'category-spike', subkey: 'Utilities', severity: 'high', detail: 'Utilities spiked 42.0%', metricValue: 0.42 },
+    ];
+    const insights = anomaliesToInsights(flags);
+    expect(new Set(insights.map((i) => i.id)).size).toBe(2);
+    const taxesId = insights.find((i) => i.detail.includes('Taxes'))!.id;
+    const v = buildAlertView(insights, { read: [taxesId], snoozed: {} }, NOW);
+    const utilities = v.items.find((it) => it.insight.detail.includes('Utilities'))!;
+    expect(utilities.read).toBe(false);
+    expect(v.unread).toBe(1);
   });
 });

@@ -51,7 +51,7 @@ const flag = (
   severity: AnomalySeverity,
   detail: string,
   metricValue: number | null,
-): AnomalyFlag => ({ propertyId, period: '2025', kind, severity, detail, metricValue });
+): AnomalyFlag => ({ propertyId, period: '2025', kind, subkey: '', severity, detail, metricValue });
 
 const sa = (propertyId: string, noiGrowth: number | null, comparable: boolean): SinceAcquisition => ({
   propertyId,
@@ -101,6 +101,20 @@ describe('synthesis', () => {
       5,
     );
     expect(risks[0]!.severity).toBe('critical');
+  });
+
+  it('keeps two co-occurring same-kind spikes distinct by subkey (refute F1)', () => {
+    // Taxes AND Utilities both spike at one property: dedup is propertyId|kind|subkey, so both rank
+    // as the distinct risks they are rather than one collapsing the other.
+    const risks = topRisks(
+      [
+        { ...flag('p1', 'category-spike', 'critical', 'Taxes spiked', 0.6), subkey: 'Taxes' },
+        { ...flag('p1', 'category-spike', 'high', 'Utilities spiked', 0.4), subkey: 'Utilities' },
+      ],
+      5,
+    );
+    expect(risks).toHaveLength(2);
+    expect(new Set(risks.map((r) => r.subkey))).toEqual(new Set(['Taxes', 'Utilities']));
   });
 
   it('deteriorating = negative since-acq NOI growth; improving = positive', () => {
