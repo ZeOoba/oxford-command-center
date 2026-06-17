@@ -159,6 +159,58 @@ describe('evaluateConditions — leases', () => {
   });
 });
 
+describe('evaluateConditions — collections / AR aging (Fix #2)', () => {
+  it('60+ days past due is critical', () => {
+    const out = evaluateConditions(snap({
+      leases: [lease({ id: 'l1' })],
+      tenantArrears: { l1: { d30: 0, d60: 3000, d90: 0, d90plus: 0 } },
+    }), opts);
+    const i = out.find((x) => x.id === 'arrears-l1');
+    expect(i?.severity).toBe('critical');
+    expect(i?.category).toBe('collections');
+    expect(i?.entityType).toBe('lease');
+  });
+  it('90+ days past due is critical (deepest bucket counts as 60+)', () => {
+    const out = evaluateConditions(snap({
+      leases: [lease({ id: 'l1' })],
+      tenantArrears: { l1: { d30: 0, d60: 0, d90: 0, d90plus: 1200 } },
+    }), opts);
+    expect(out.find((x) => x.id === 'arrears-l1')?.severity).toBe('critical');
+  });
+  it('material balance entirely under 60 days is a warning', () => {
+    const out = evaluateConditions(snap({
+      leases: [lease({ id: 'l1' })],
+      tenantArrears: { l1: { d30: 6000, d60: 0, d90: 0, d90plus: 0 } },
+    }), opts);
+    expect(out.find((x) => x.id === 'arrears-l1')?.severity).toBe('warning');
+  });
+  it('small short-dated balance under the material floor does not fire', () => {
+    const out = evaluateConditions(snap({
+      leases: [lease({ id: 'l1' })],
+      tenantArrears: { l1: { d30: 1000, d60: 0, d90: 0, d90plus: 0 } },
+    }), opts);
+    expect(out.some((x) => x.id === 'arrears-l1')).toBe(false);
+  });
+  it('a tiny 60+ balance still fires critical even below the material floor', () => {
+    const out = evaluateConditions(snap({
+      leases: [lease({ id: 'l1' })],
+      tenantArrears: { l1: { d30: 0, d60: 50, d90: 0, d90plus: 0 } },
+    }), opts);
+    expect(out.find((x) => x.id === 'arrears-l1')?.severity).toBe('critical');
+  });
+  it('no arrears record → no collections alert', () => {
+    const out = evaluateConditions(snap({ leases: [lease({ id: 'l1' })] }), opts);
+    expect(out.some((x) => x.id === 'arrears-l1')).toBe(false);
+  });
+  it('zero across all buckets does not fire', () => {
+    const out = evaluateConditions(snap({
+      leases: [lease({ id: 'l1' })],
+      tenantArrears: { l1: { d30: 0, d60: 0, d90: 0, d90plus: 0 } },
+    }), opts);
+    expect(out.some((x) => x.id === 'arrears-l1')).toBe(false);
+  });
+});
+
 describe('evaluateConditions — concentration, insurance, cash', () => {
   it('tenant > 15% of portfolio NOI is an info concentration alert', () => {
     const s = snap({

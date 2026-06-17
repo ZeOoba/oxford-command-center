@@ -21,6 +21,9 @@ export const ALERT_THRESHOLDS = {
   insuranceRenewWarnDays: 30,
   cashConcentrationWarn: 0.3,
   tenantNoiConcentrationInfo: 0.15,
+  // Collections (audit Fix #2): any dollars 60+ days past due → critical; under 60 days but total
+  // past-due at/above this floor → warning. Small short-dated balances are normal and suppressed.
+  arrearsMaterialUsd: 5000,
   workbookStaleHours: 48,
   loiDeadlineWarnDays: 14,
 } as const;
@@ -130,6 +133,36 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         title: `Escalation date passed — ${l.company ?? l.tenantName}`,
         detail: `${l.propertyKey} ${l.unit ?? ''} escalation was due ${fmtDate(l.escalationDate)}. Confirm the bump was applied.`,
         entityType: 'lease', entityId: l.id,
+      });
+    }
+  }
+
+  // ── Collections / AR aging (audit Fix #2) ───────────────────────────────────
+  // Overlay-sourced per-lease arrears (snapshot.tenantArrears, keyed by Lease.id). 60+ days past
+  // due is a critical collection signal; a material balance under 60 days is a warning to monitor.
+  // Defensive on the record's presence so a fixture that bypasses Zod parse can't throw.
+  const arrears = s.tenantArrears ?? {};
+  for (const l of s.leases) {
+    const ar = arrears[l.id];
+    if (!ar) continue;
+    const past60 = ar.d60 + ar.d90 + ar.d90plus;
+    const total = ar.d30 + past60;
+    if (total <= 0) continue;
+    const who = l.company ?? l.tenantName;
+    const where = `${l.propertyKey}${l.unit ? ` ${l.unit}` : ''}`;
+    if (past60 > 0) {
+      out.push({
+        id: `arrears-${l.id}`, severity: 'critical', category: 'collections',
+        title: `Tenant 60+ days past due — ${who}`,
+        detail: `${where} · ${fmtUsd(past60)} is 60+ days past due (${fmtUsd(total)} total outstanding). Pursue collection.`,
+        metric: fmtUsd(total), entityType: 'lease', entityId: l.id,
+      });
+    } else if (total >= T.arrearsMaterialUsd) {
+      out.push({
+        id: `arrears-${l.id}`, severity: 'warning', category: 'collections',
+        title: `Receivable outstanding — ${who}`,
+        detail: `${where} · ${fmtUsd(total)} past due (under 60 days). Monitor for payment.`,
+        metric: fmtUsd(total), entityType: 'lease', entityId: l.id,
       });
     }
   }

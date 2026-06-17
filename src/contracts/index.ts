@@ -12,7 +12,7 @@ import { Assumptions, ScenarioName } from './scenario';
 import { RenewalStage } from './renewal';
 import { CompSet } from './comps';
 import { AcquisitionInput } from './acquisition';
-import { QbActuals } from './quickbooks';
+import { QbActuals, TenantArrears } from './quickbooks';
 
 export * from './common';
 export * from './brain';
@@ -65,6 +65,8 @@ export const PortfolioSnapshot = z.object({
   acquisitionInputs: z.record(z.string(), AcquisitionInput).default({}),
   /** Overlay-sourced per-property annual NOI budget targets (Phase 3 ②). */
   noiBudgets: z.record(z.string(), z.number()).default({}),
+  /** Overlay-sourced per-lease AR aging (audit Fix #2 — collections), keyed by Lease.id. Workbook has none → empty. */
+  tenantArrears: z.record(z.string(), TenantArrears).default({}),
   /** Server-attached QuickBooks actuals (Phase 3 ②); null when no export configured. */
   quickbooks: QbActuals.nullable().default(null),
   dataQuality: z.array(DataQualityFlag),

@@ -96,3 +96,16 @@ describe('applyOverlay — noiBudgets (Phase 3 ②)', () => {
     expect(EMPTY_OVERLAY.noiBudgets).toEqual({});
   });
 });
+
+describe('applyOverlay — tenantArrears (audit Fix #2)', () => {
+  const baseL = { deals: [], tasks: [], leases: [{ id: 'l1' }] } as unknown as PortfolioSnapshot;
+  const ar = { d30: 1000, d60: 0, d90: 0, d90plus: 2000 };
+  it('surfaces tenantArrears onto the snapshot', () => {
+    const out = applyOverlay(baseL, { ...EMPTY_OVERLAY, tenantArrears: { l1: ar } });
+    expect(out.tenantArrears).toEqual({ l1: ar });
+  });
+  it('defaults empty and EMPTY_OVERLAY carries the key', () => {
+    expect(applyOverlay(baseL, EMPTY_OVERLAY).tenantArrears).toEqual({});
+    expect(EMPTY_OVERLAY.tenantArrears).toEqual({});
+  });
+});

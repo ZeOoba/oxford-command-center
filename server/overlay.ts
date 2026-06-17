@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import type { PortfolioSnapshot, Task, DealStage, RenewalStage, CompSet, AcquisitionInput } from '../src/contracts/index';
+import type { PortfolioSnapshot, Task, DealStage, RenewalStage, CompSet, AcquisitionInput, TenantArrears } from '../src/contracts/index';
 import type { LeaseRunAssumptions } from '../src/contracts/lease-run';
 
 /**
@@ -25,10 +25,12 @@ export interface Overlay {
   acquisitionInputs: Record<string, AcquisitionInput>;
   /** propertyId → annual NOI budget target (Phase 3 ②). */
   noiBudgets: Record<string, number>;
+  /** leaseId → AR aging buckets (audit Fix #2 — collections monitoring). */
+  tenantArrears: Record<string, TenantArrears>;
   /** propertyId → overridden lease-run assumptions (partial; merged onto the spec defaults). */
   leaseRunAssumptions: Record<string, Partial<LeaseRunAssumptions>>;
 }
-export const EMPTY_OVERLAY: Overlay = { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, acquisitionInputs: {}, leaseRunAssumptions: {} };
+export const EMPTY_OVERLAY: Overlay = { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, tenantArrears: {}, acquisitionInputs: {}, leaseRunAssumptions: {} };
 
 // Resolved at CALL time (not module load) so a late process.env.OVERLAY_PATH — set by tests for
 // isolation, or by the harness after load-env runs — is honored. Production behavior is unchanged:
@@ -51,12 +53,12 @@ export function loadOverlay(): Overlay {
   try {
     if (existsSync(overlayPath())) {
       const raw = JSON.parse(readFileSync(overlayPath(), 'utf8')) as Partial<Overlay>;
-      return { dealStages: raw.dealStages ?? {}, tasks: raw.tasks ?? [], renewalStages: raw.renewalStages ?? {}, tenantNotes: raw.tenantNotes ?? {}, dealComps: raw.dealComps ?? {}, noiBudgets: raw.noiBudgets ?? {}, acquisitionInputs: raw.acquisitionInputs ?? {}, leaseRunAssumptions: raw.leaseRunAssumptions ?? {} };
+      return { dealStages: raw.dealStages ?? {}, tasks: raw.tasks ?? [], renewalStages: raw.renewalStages ?? {}, tenantNotes: raw.tenantNotes ?? {}, dealComps: raw.dealComps ?? {}, noiBudgets: raw.noiBudgets ?? {}, tenantArrears: raw.tenantArrears ?? {}, acquisitionInputs: raw.acquisitionInputs ?? {}, leaseRunAssumptions: raw.leaseRunAssumptions ?? {} };
     }
   } catch {
     /* corrupt overlay → start clean */
   }
-  return { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, acquisitionInputs: {}, leaseRunAssumptions: {} };
+  return { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, tenantArrears: {}, acquisitionInputs: {}, leaseRunAssumptions: {} };
 }
 
 export async function saveOverlay(o: Overlay): Promise<boolean> {
@@ -93,5 +95,5 @@ export function applyOverlay(s: PortfolioSnapshot, o: Overlay): PortfolioSnapsho
     return stage && stage !== d.stage ? { ...d, stage: stage as DealStage } : d;
   });
   const tasks = o.tasks.length ? [...o.tasks, ...s.tasks] : s.tasks;
-  return { ...s, deals, tasks, renewalStages: o.renewalStages, tenantNotes: o.tenantNotes, dealComps: o.dealComps, noiBudgets: o.noiBudgets, acquisitionInputs: o.acquisitionInputs };
+  return { ...s, deals, tasks, renewalStages: o.renewalStages, tenantNotes: o.tenantNotes, dealComps: o.dealComps, noiBudgets: o.noiBudgets, tenantArrears: o.tenantArrears, acquisitionInputs: o.acquisitionInputs };
 }
