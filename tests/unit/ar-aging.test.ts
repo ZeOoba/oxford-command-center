@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseArAging, detectArFormat } from '../../server/ar/ar-aging';
+import { parseArAging, detectArFormat, isGarbageExtraction } from '../../server/ar/ar-aging';
 
 // Synthetic fixtures — they mirror the REAL column structure of each PM export but use fake tenant
 // names and numbers, so no real tenant delinquency data lives in the repo.
@@ -99,6 +99,21 @@ describe('parseArAging — AppFolio Aged Receivable', () => {
   it('excludes the grand Total row', () => {
     expect(rows).toHaveLength(3);
     expect(rows.some((r) => /total/i.test(r.tenant))).toBe(false);
+  });
+});
+
+describe('isGarbageExtraction — image-PDF detection', () => {
+  it('returns false for normal ASCII text', () => {
+    expect(isGarbageExtraction('Aging Detail Page 1\nTenant Name Current 0-30 31-60\nAcme Co 0.00 100.00 0.00')).toBe(false);
+  });
+  it('returns true when >30% of first 800 chars are non-ASCII (CID garbage)', () => {
+    // Real CID output from pdfplumber uses chars >127 (e.g. \x80–\xff, Unicode private-use).
+    // Control chars \x00-\x1f are ASCII (≤127) and do NOT trigger the guard.
+    const cid = '\x80\x90\xa0\xb0\xc0\xd0\xe0\xf0'.repeat(40) + 'abc'.repeat(10);
+    expect(isGarbageExtraction(cid)).toBe(true);
+  });
+  it('returns true when extracted text is nearly empty (image-only page)', () => {
+    expect(isGarbageExtraction('   \n  ')).toBe(true);
   });
 });
 

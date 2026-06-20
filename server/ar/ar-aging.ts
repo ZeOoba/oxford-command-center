@@ -58,6 +58,19 @@ function money(token: string): number {
 /** A past-due bucket is never negative: a credit/prepayment nets to 0 (matches overlay salvage). */
 const bucket = (n: number): number => (Number.isFinite(n) && n > 0 ? n : 0);
 
+/**
+ * Returns true when pdfplumber extraction produced CID-font garbage rather than real text —
+ * a signal the PDF has no text layer (image/scanned). Checks the first 800 chars: if >30%
+ * are non-ASCII the content is unusable. Exported so callers can surface a clear error
+ * before attempting to parse, rather than getting an 'unknown' format silently.
+ */
+export function isGarbageExtraction(text: string): boolean {
+  const sample = text.slice(0, 800);
+  if (sample.length < 20) return true;
+  const nonAscii = sample.split('').filter((c) => c.charCodeAt(0) > 127).length;
+  return nonAscii / sample.length > 0.3;
+}
+
 /** Detect the report format from its header text. */
 export function detectArFormat(text: string): ArFormat {
   const head = text.slice(0, 600).toLowerCase();
