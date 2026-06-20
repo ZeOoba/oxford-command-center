@@ -94,9 +94,11 @@ export async function persistAndLogScore(
   }
 
   // 5. Governor demotion: if either governor FAILS (false), hard-override verdict to 'PASS'.
-  // Composite is preserved so analysts can see the underlying score.
+  // Guard: never upgrade KILLED → PASS. KILLED is a hard gate/floor rejection; PASS is a soft
+  // "didn't score well". Demoting KILLED would misplace it in verdict-filtered ranked lists
+  // (analysts querying verdict=KILLED would miss it; verdict=PASS would surface a gate reject).
   let finalVerdict = score.verdict;
-  if (governorDscrCleared === false || governorLtvCleared === false) {
+  if ((governorDscrCleared === false || governorLtvCleared === false) && finalVerdict !== 'KILLED') {
     finalVerdict = 'PASS';
   }
 

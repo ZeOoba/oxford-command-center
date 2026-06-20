@@ -526,6 +526,12 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       const where: string[] = ['c.status = ?'];
       const params: Array<string | number> = [statusParam];
       if (marketParam) { where.push('c.market = ?'); params.push(marketParam); }
+      // Allowlist verdict values before binding to prevent junk params.
+      const VALID_VERDICTS = new Set(['PURSUE', 'WATCH', 'PASS', 'KILLED']);
+      if (verdictParam && VALID_VERDICTS.has(verdictParam)) {
+        where.push('s.verdict = ?');
+        params.push(verdictParam);
+      }
 
       // Fetch candidates + latest score per candidate in one query.
       const rows = db.prepare(`
@@ -543,7 +549,6 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
             SELECT MAX(s2.scored_at) FROM acq_scores s2 WHERE s2.candidate_id = c.id
           )
         WHERE ${where.join(' AND ')}
-        ${verdictParam ? `AND (s.verdict = '${verdictParam}' OR s.verdict IS NULL)` : ''}
         ORDER BY s.composite DESC NULLS LAST, c.created_at DESC
         LIMIT ?
       `).all(...params, limitParam) as Array<Record<string, unknown>>;

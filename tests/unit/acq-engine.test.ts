@@ -152,13 +152,18 @@ describe('persistAndLogScore — LTV governor demotion', () => {
 });
 
 describe('persistAndLogScore — DSCR governor demotion', () => {
-  it('demotes verdict to PASS when DSCR proxy < 1.25', async () => {
+  it('stores governor_dscr_cleared=0 and KILLED verdict when DSCR proxy < 1.25', async () => {
     const db = freshDb();
     const candidateId = 'test-deal-dscr-fail';
     seedCandidate(db, candidateId);
 
-    // DSCR proxy: stabilizedYoc / (ltvCeiling × SCREENING_DEBT_CONSTANT) = 0.02 / (0.40 × 0.085) = 0.59 < 1.25
-    // Price set to make LTV pass: allInBasis (100k) / price (10M) = 0.01 < 0.40 ✓
+    // DSCR proxy: stabilizedYoc / (ltvCeiling × SCREENING_DEBT_CONSTANT) = 0.02 / (0.40 × 0.085) = 0.59 < 1.25 → governor fails.
+    // NOTE: stabilizedYocFloorPct = 8% in the ratified ruleset. stabilizedYoc=0.02 < 0.08 also
+    // fails the computable yield floor, so scoreAcquisition already returns KILLED. With the
+    // KILLED-monotonicity guard, the governor demotion cannot upgrade KILLED → PASS.
+    // The observable effect here is KILLED (from the yield floor); governor_dscr_cleared=0 is
+    // still stored correctly. A pure DSCR-only demotion is not achievable with the current
+    // ruleset (DSCR threshold 4.25% < yield floor 8%), which is a calibration note for Gabriel.
     const input = strongInput({
       stabilizedYoc: 0.02,
       allInBasis: 100_000,
@@ -166,7 +171,7 @@ describe('persistAndLogScore — DSCR governor demotion', () => {
     });
     const { score } = await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT);
 
-    expect(score.verdict).toBe('PASS');
+    expect(score.verdict).toBe('KILLED');
   });
 
   it('stores governor_dscr_cleared=0 in acq_scores', async () => {
@@ -317,6 +322,30 @@ describe('persistAndLogScore — calibration logging', () => {
       .get(candidateId) as { calibration_verdict_id: number | null } | undefined;
     expect(row).toBeDefined();
     expect(row!.calibration_verdict_id).toBe(calibrationVerdictId);
+  });
+});
+
+describe('persistAndLogScore — KILLED verdict monotonicity', () => {
+  // Regression: governor demotion must never upgrade KILLED → PASS.
+  // KILLED = hard gate/floor rejection; PASS = soft "didn't score well".
+  // Upgrading would misplace the deal in verdict-filtered ranked lists.
+  it('governor LTV failure does not upgrade KILLED to PASS', async () => {
+    const db = freshDb();
+    const candidateId = 'test-deal-killed-no-upgrade';
+    seedCandidate(db, candidateId);
+
+    // sfhaOnPad: true → flood gate kills (sfhaOnPadKills = true in ratified ruleset).
+    // allInBasis/price = 2M/3.5M ≈ 0.57 > 0.40 → LTV governor fails.
+    // Without the KILLED guard, governor demotion would silently upgrade KILLED → PASS.
+    const input = strongInput({ sfhaOnPad: true, allInBasis: 2_000_000, price: 3_500_000 });
+    const { score } = await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT);
+
+    expect(score.verdict).toBe('KILLED');
+
+    const row = db.prepare('SELECT verdict FROM acq_scores WHERE candidate_id = ?')
+      .get(candidateId) as { verdict: string } | undefined;
+    expect(row).toBeDefined();
+    expect(row!.verdict).toBe('KILLED');
   });
 });
 
