@@ -178,10 +178,10 @@ function Chip({ label, color }: { label: string; color: string }) {
 }
 
 /**
- * Returns the display value of a figure.
+ * Returns the sanitized display value of a figure.
  *
  * @param f - The figure object
- * @returns The figure's display value
+ * @returns The figure's display value, sanitized for PDF rendering via safeText()
  */
 function fig(f: Figure): string {
   return safeText(f.display);
