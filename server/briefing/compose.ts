@@ -238,7 +238,7 @@ export function composePropertyBriefing(
   // Display name: master.name (authoritative) → any metric propertyName → propertyId.
   // Use || (not ??) so empty/whitespace names fall through to the next candidate.
   const name =
-    (master?.name?.trim() || series.find((m) => m.propertyName?.trim())?.propertyName) ?? propertyId;
+    (master?.name?.trim() || series.find((m) => m.propertyName?.trim())?.propertyName?.trim()) ?? propertyId;
 
   // KPI band — read the level metrics at the latest FULL-YEAR period (the screen's basis).
   const level = pickPeriodMetrics(series, null);
