@@ -154,3 +154,32 @@ describe('acquisition edge Function — fail-closed 503 WIRING (config init fail
     }
   });
 });
+
+describe('acquisition edge Function — shared governor proxy (consistency with the ranked path)', () => {
+  // The edge now applies the SAME shared governor proxy (acq-governor-proxy.ts) as the Brain Server
+  // route and the ranked persistence path, so a deal scores the same verdict on every surface.
+  it('does NOT over-demote a strong basis≥price deal, and exposes the governor flags', async () => {
+    // STRONG_BASE: allInBasis 3.6M / price 3.5M = 1.03 — the OLD `allInBasis/price ≤ 0.40` proxy
+    // would have demoted this to PASS. LTV is now indeterminate (null) → no demotion.
+    const res = await onRequestPost(postCtx(STRONG_BASE));
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      score: { verdict: string };
+      governorDscrCleared: unknown;
+      governorLtvCleared: unknown;
+    };
+    expect(['PURSUE', 'WATCH']).toContain(body.score.verdict);
+    expect(body.score.verdict).not.toBe('PASS');     // regression: bogus LTV over-demotion is gone
+    expect(body.governorDscrCleared).toBe(true);      // high stabilized yield clears the DSCR proxy
+    expect(body.governorLtvCleared).toBeNull();       // LTV indeterminate at screen time
+  });
+
+  it('the demoted verdict still equals the raw engine for a strong deal (demotion inert here)', async () => {
+    const res = await onRequestPost(postCtx(STRONG_BASE));
+    const body = (await res.json()) as { score: { verdict: string } };
+    const expected = scoreAcquisition(AcquisitionInput.parse(STRONG_BASE), parseRuleset(ratifiedRulesetObj), {
+      rct: ReplacementCostTable.parse(rctObj),
+    });
+    expect(body.score.verdict).toBe(expected.verdict);
+  });
+});

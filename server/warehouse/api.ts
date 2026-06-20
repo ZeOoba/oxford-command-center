@@ -21,6 +21,8 @@ import { AcquisitionInput, AcqCandidateRow, ParcelScreenImportRequest } from '..
 import { AcquisitionScore } from '../../src/contracts/acquisition';
 import type { AcquisitionRuleset, ReplacementCostTable } from '../../src/contracts/acquisition';
 import { persistAndLogScore, logAcqOutcome } from './acq-engine';
+import { applyGovernorProxy } from './acq-governor-proxy';
+import { GOVERNOR_DEFAULTS } from './governors';
 import { ingestParcelScreenBatch } from './acq-ingest';
 import { syncNotionPipeline } from './acq-notion-sync';
 import type { WarehouseDb } from './db';
@@ -508,7 +510,13 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
     if (!cfg.ok) return c.json({ error: 'acquisition engine unavailable', detail: cfg.error }, 503);
     const parsed = AcquisitionInput.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: 'invalid acquisition input', issues: parsed.error.issues }, 400);
-    return c.json({ score: scoreAcquisition(parsed.data, cfg.ruleset, { rct: cfg.rct }) });
+    // Apply the SHARED governor proxy (acq-governor-proxy.ts) so this ad-hoc score matches the ranked
+    // path AND the edge Function. Uses the ratified default governors (DB overrides — stricter-only —
+    // apply in the persistence path). LTV is indeterminate at screen time; see the module header.
+    const score = scoreAcquisition(parsed.data, cfg.ruleset, { rct: cfg.rct });
+    const { verdict, governorDscrCleared, governorLtvCleared } =
+      applyGovernorProxy(score, parsed.data, GOVERNOR_DEFAULTS);
+    return c.json({ score: { ...score, verdict }, governorDscrCleared, governorLtvCleared });
   });
 
   // ── Acquisition Intelligence Engine (Phase 4) ─────────────────────────────────────────────
