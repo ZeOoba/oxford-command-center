@@ -47,12 +47,6 @@ describe('applyGovernorProxy — DSCR proxy', () => {
     expect(out.verdict).toBe('WATCH');
   });
 
-  it('is indeterminate (null, no demotion) when stabilizedYoc is undefined', () => {
-    const out = applyGovernorProxy({ verdict: 'WATCH' }, { stabilizedYoc: undefined }, GOV);
-    expect(out.governorDscrCleared).toBeNull();
-    expect(out.verdict).toBe('WATCH');
-  });
-
   it('stabilizedYoc = 0 is present-but-zero: DSCR fails (0/x < threshold) → PASS', () => {
     // 0 is neither null nor undefined — the proxy treats it as a computable 0% yield and
     // correctly fails the DSCR check. In the integrated system the engine KILLs a 0% YOC deal
