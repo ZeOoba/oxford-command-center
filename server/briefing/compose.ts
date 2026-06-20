@@ -48,29 +48,65 @@ import type {
 
 export { managerSlug };
 
-// ── Figure builders (reuse the screen's formatters so the PDF == the page) ─────────────────────
+/**
+ * Formats a value as a USD currency figure.
+ *
+ * @param value - A numeric value or `null`
+ * @returns A Figure object with the value displayed as formatted USD
+ */
 function usdFig(value: number | null): Figure {
   return { display: fmtUsd(value), value: value ?? null, unit: 'usd' };
 }
+/**
+ * Formats a USD value as a compact Figure object.
+ *
+ * @returns A Figure with compactly formatted USD display and unit 'usd'
+ */
 function usdCompactFig(value: number | null): Figure {
   return { display: fmtUsdCompact(value), value: value ?? null, unit: 'usd' };
 }
+/**
+ * Formats a value as a USD-per-square-foot figure.
+ *
+ * @returns A Figure object with the value formatted as USD per square foot, or '—' if the value is null or non-finite.
+ */
 function usdPerSfFig(value: number | null): Figure {
   return { display: value === null || !Number.isFinite(value) ? '—' : `${fmtUsd(value, true)} /SF`, value: value ?? null, unit: 'usd_per_sf' };
 }
+/**
+ * Creates a percentage figure from a numeric value.
+ *
+ * @returns A `Figure` object with the value formatted as a percentage.
+ */
 function pctFig(value: number | null): Figure {
   return { display: fmtPct(value), value: value ?? null, unit: 'pct' };
 }
+/**
+ * Creates a Figure displaying a signed percentage.
+ *
+ * Non-negative values are prefixed with `+`. Null or non-finite values display as `—`.
+ *
+ * @returns A Figure with the percentage formatted for display, the original value, and unit `pct`
+ */
 function signedPctFig(value: number | null): Figure {
   const display = value === null || !Number.isFinite(value) ? '—' : value >= 0 ? `+${fmtPct(value)}` : fmtPct(value);
   return { display, value: value ?? null, unit: 'pct' };
 }
+/**
+ * Formats a numeric score for display, with a fallback placeholder for null or non-finite values.
+ *
+ * @returns A `Figure` object with the score formatted to one decimal place, or `'—'` if the value is missing or non-finite.
+ */
 function scoreFig(value: number | null): Figure {
   return { display: value === null || !Number.isFinite(value) ? '—' : value.toFixed(1), value: value ?? null, unit: 'count' };
 }
 
 // ── Provenance / freshness ─────────────────────────────────────────────────────────────────────
-/** The latest committed import date (the QB-data freshness stamp), or null on an empty warehouse. */
+/**
+ * Retrieves the latest committed warehouse import date.
+ *
+ * @returns A date string in YYYY-MM-DD format for the latest committed import, or `null` if unavailable.
+ */
 export function latestCommittedImportDate(db: WarehouseDb): string | null {
   try {
     const row = db
@@ -83,6 +119,11 @@ export function latestCommittedImportDate(db: WarehouseDb): string | null {
   }
 }
 
+/**
+ * Builds briefing metadata with generation date and data freshness.
+ *
+ * @returns `BriefingMeta` with generation date, latest committed import date, and branding information.
+ */
 function buildMeta(db: WarehouseDb, generatedDate: string): BriefingMeta {
   return {
     generatedDate,
@@ -102,6 +143,11 @@ interface MasterRow {
   pm_contact: string | null;
 }
 
+/**
+ * Fetches all property master records from the warehouse.
+ *
+ * @returns An array of property master rows. Returns an empty array if a database error occurs.
+ */
 function masterRows(db: WarehouseDb): MasterRow[] {
   try {
     return db
@@ -119,6 +165,11 @@ export interface ComposeOptions {
   generatedDate: string;
 }
 
+/**
+ * Constructs a lease-run summary block for a property, including tenant projections and rent-status transition markers.
+ *
+ * @returns A `LeaseRunSummaryBlock` with tenant and financial projections; `present` is `false` if no lease terms exist.
+ */
 function leaseRunBlock(db: WarehouseDb, propertyId: string, metrics: PeriodMetrics[]): LeaseRunSummaryBlock {
   const terms = getLeaseTerms(db, propertyId);
   if (terms.length === 0) {
@@ -163,6 +214,13 @@ function leaseRunBlock(db: WarehouseDb, propertyId: string, metrics: PeriodMetri
   };
 }
 
+/**
+ * Composes a briefing model for a property.
+ *
+ * Returns `null` if the property has no metrics and no master row.
+ *
+ * @returns A `PropertyBriefingModel`, or `null` if the property does not exist.
+ */
 export function composePropertyBriefing(
   db: WarehouseDb,
   propertyId: string,
@@ -272,7 +330,11 @@ export function composePropertyBriefing(
   return model;
 }
 
-// ── Per-PM briefing ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Generates a briefing for a property manager containing ranked properties, aggregate metrics, and recommended actions.
+ *
+ * @returns A `ManagerBriefingModel` with portfolio data, scorecard metrics, and attention items, or `null` if no managed properties are found.
+ */
 export function composeManagerBriefing(
   db: WarehouseDb,
   managerId: string,

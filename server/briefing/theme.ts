@@ -72,14 +72,24 @@ export interface FontHealth {
 
 let registered: FontHealth[] | null = null;
 
-/** Deterministic on-disk cache dir for the decoded TTFs (one per host tmpdir; idempotent). */
+/**
+ * Ensures the decoded fonts cache directory exists.
+ *
+ * This function is idempotent and can be called multiple times safely.
+ *
+ * @returns The absolute path to the cache directory.
+ */
 function cacheDir(): string {
   const dir = join(tmpdir(), 'ora-briefing-fonts');
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   return dir;
 }
 
-/** Decode a brand .woff to a TTF on disk (cached by content hash) and return the TTF path. */
+/**
+ * Converts a WOFF font file to TTF format.
+ *
+ * @returns The file path to the TTF file.
+ */
 function decodeToTtf(woffPath: string, family: string, weight: number): string {
   const woff = readFileSync(woffPath);
   const hash = createHash('sha1').update(woff).digest('hex').slice(0, 12);
@@ -88,7 +98,13 @@ function decodeToTtf(woffPath: string, family: string, weight: number): string {
   return out;
 }
 
-/** Register every brand face exactly once. Idempotent; returns the per-face health report. */
+/**
+ * Registers all brand font faces and disables PDF hyphenation.
+ *
+ * Idempotent; returns the same health report on subsequent calls. If a brand font cannot be resolved or decoded, logs an error and falls back to Helvetica for that face.
+ *
+ * @returns A report of per-face registration status, including whether each brand font loaded successfully.
+ */
 export function registerFonts(): FontHealth[] {
   if (registered) return registered;
   const health: FontHealth[] = [];
@@ -118,12 +134,20 @@ export function registerFonts(): FontHealth[] {
   return health;
 }
 
-/** True iff EVERY brand face resolved to a real file (no Helvetica substitution). A test asserts
- *  this so a silent brand-face drop fails the suite (adversarial #3). */
+/**
+ * Retrieves the health status of all registered brand font faces.
+ *
+ * @returns An array of health reports, one per configured brand face, indicating whether each face loaded successfully or fell back to Helvetica.
+ */
 export function fontHealth(): FontHealth[] {
   return registerFonts();
 }
 
+/**
+ * Determines whether all brand font faces were successfully loaded.
+ *
+ * @returns `true` if all brand font faces were successfully loaded, `false` otherwise.
+ */
 export function allBrandFacesLoaded(): boolean {
   return registerFonts().every((f) => f.brandFaceLoaded);
 }
