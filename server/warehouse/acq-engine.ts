@@ -266,9 +266,19 @@ export { RATIFIED_RULESET_PATH, REPLACEMENT_COST_TABLE_PATH };
  * blessed (is_resolution=1) calibration_outcome row. FAIL-OPEN: never throws to the caller.
  * If the candidate has no acquisition-score verdict (never scored), this is a no-op.
  *
- * Hit semantics (intent-outcome, NOT realized-NOI — distinguished by resolution_basis='deal-lifecycle-event'):
+ * Hit semantics (intent-outcome — decision-action alignment, NOT realized-NOI predictive accuracy):
  *   'acquired': closed → PURSUE/WATCH verdict vindicated (hit=1); PASS/KILLED = miss (hit=0).
  *   'passed':   walked → PASS/KILLED verdict vindicated (hit=1); PURSUE/WATCH = miss (hit=0).
+ *   WATCH is treated as a buy-signal verdict (same as PURSUE) — Gabriel G3 decision (2026-06-20).
+ *
+ * FENCE: intent-outcomes are isolated by verdict_kind='acquisition-score' (the distinct kind bucket
+ *   prevents cross-kind overallHitRate mixing). resolution_basis='deal-lifecycle-event' is metadata
+ *   for future partitioning — calibrationReport() does NOT yet read it (Lens-1.1 advisory).
+ *
+ * STATUS REVERSAL: if a candidate's status is corrected (acquired→passed), the first blessed
+ *   outcome row is NOT superseded (idempotency no-op). For corrections use resolveManualOutcome().
+ *   outcomePeriod may equal as_of_period (same-year deals) — deal-lifecycle events are exempt from
+ *   the resolveManualOutcome strictly-later guard; horizonActual=0 marks same-period resolutions.
  *
  * IDEMPOTENT: if a blessed resolution already exists for this verdict, does nothing.
  * FINANCIAL-DECISION CODE — any change to hit logic requires adversarial refute (CLAUDE.md §EOS).
@@ -305,17 +315,20 @@ export function logAcqOutcome(
 
     const outcomePeriod = new Date().getFullYear().toString();
 
+    // horizonActual=0 for same-period resolution (deal scored and resolved in the same year).
+    // actionTaken derived from verdict-alignment (not from outcome alone — see adversarial review 2026-06-20):
+    //   aligned = action agreed with the verdict's directional bet; counter = action opposed it.
     const row = CalibrationOutcomeSchema.parse({
       calibrationId: verdict.id,
       realizedBand: outcome,
       realizedValue: null,
       realizedUnit: 'band',
       outcomePeriod,
-      horizonActual: null,
+      horizonActual: 0,
       hit,
       absError: null,
       brierComponent: null,
-      actionTaken: outcome === 'acquired' ? 'acted-aligned' : 'acted-counter',
+      actionTaken: hit === 1 ? 'acted-aligned' : 'acted-counter',
       actionDetail: `deal lifecycle → ${outcome}`,
       treatmentNote: null,
       resolvedBy: 'auto:deal-lifecycle',
