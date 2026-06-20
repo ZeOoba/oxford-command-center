@@ -14,6 +14,7 @@ import {
   checkRequiredFiles,
   checkStaleFiles,
   checkRouteDuplication,
+  checkAcqGovernorCoupling,
 } from '../../scripts/governance-check';
 
 const ARCH_FILES = [
@@ -136,5 +137,57 @@ describe('checkRouteDuplication', () => {
     const result = checkRouteDuplication('/fake/root');
     expect(result.pass).toBe(false);
     expect(result.errors.some((e) => e.includes('/api/health'))).toBe(true);
+  });
+});
+
+describe('checkAcqGovernorCoupling', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('passes when acq-engine.ts does not exist (new repo or pre-Phase-4)', () => {
+    mockExistsSync.mockReturnValue(false);
+    const result = checkAcqGovernorCoupling('/fake/root');
+    expect(result.pass).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('passes when acq-engine.ts uses loadGovernors and has no capital-config import', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(
+      `import { loadGovernors } from './governors';\nexport function persistAndLogScore() {}`,
+    );
+    const result = checkAcqGovernorCoupling('/fake/root');
+    expect(result.pass).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('fails when acq-engine.ts imports directly from capital-config', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(
+      `import { DSCR_FLOOR } from '../capital-config';\nimport { loadGovernors } from './governors';`,
+    );
+    const result = checkAcqGovernorCoupling('/fake/root');
+    expect(result.pass).toBe(false);
+    expect(result.errors.some((e) => /capital.config|governors/i.test(e))).toBe(true);
+  });
+
+  it('fails when acq-engine.ts lacks loadGovernors reference', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(
+      `import { DSCR_FLOOR, LTV_CEILING } from './governors';\nexport function score() {}`,
+    );
+    const result = checkAcqGovernorCoupling('/fake/root');
+    expect(result.pass).toBe(false);
+    expect(result.errors.some((e) => /loadGovernors/i.test(e))).toBe(true);
+  });
+
+  it('strips comments before checking — commented-out capital-config does not fail', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReadFileSync.mockReturnValue(
+      `// import { X } from '../capital-config'; — removed\nimport { loadGovernors } from './governors';`,
+    );
+    const result = checkAcqGovernorCoupling('/fake/root');
+    expect(result.pass).toBe(true);
   });
 });

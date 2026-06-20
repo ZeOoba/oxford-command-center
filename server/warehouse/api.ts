@@ -20,8 +20,9 @@ import {
 import { AcquisitionInput, AcqCandidateRow, ParcelScreenImportRequest } from '../../src/contracts/acquisition';
 import { AcquisitionScore } from '../../src/contracts/acquisition';
 import type { AcquisitionRuleset, ReplacementCostTable } from '../../src/contracts/acquisition';
-import { persistAndLogScore } from './acq-engine';
+import { persistAndLogScore, logAcqOutcome } from './acq-engine';
 import { ingestParcelScreenBatch } from './acq-ingest';
+import { syncNotionPipeline } from './acq-notion-sync';
 import type { WarehouseDb } from './db';
 import { addMappingOverride, approveImport, rejectImport, resolveIssue } from './actions';
 import { getImportDetail, listImports, listIssues, noiMatrix } from './queries';
@@ -797,7 +798,30 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       `).run(parsed.data.status, candidateId);
 
       if (r.changes === 0) return c.json({ ok: false, error: 'candidate not found' }, 404);
+
+      // Phase-4 Step 8: log a calibration intent-outcome on lifecycle-resolving transitions.
+      // Fail-open inside logAcqOutcome — never affects the 200 response.
+      if (parsed.data.status === 'acquired' || parsed.data.status === 'passed') {
+        logAcqOutcome(db, candidateId, parsed.data.status);
+      }
+
       return c.json({ ok: true });
+    }),
+  );
+
+  // POST /acq/sync/notion — pull the Notion Acquisition Pipeline and upsert into acq_candidates.
+  // Requires NOTION_TOKEN env var (never committed). Returns { inserted, updated, errors[] }.
+  // Read-only from Notion; writes only Spine-C acq_candidates. First-page failure → 502.
+  app.post('/acq/sync/notion', (c) =>
+    withDb(async (db) => {
+      const token = process.env['NOTION_TOKEN'];
+      if (!token) return c.json({ error: 'NOTION_TOKEN not configured' }, 400);
+      try {
+        const result = await syncNotionPipeline(db, token);
+        return c.json(result, 200);
+      } catch (e) {
+        return c.json({ error: 'notion sync failed', detail: String(e) }, 502);
+      }
     }),
   );
 

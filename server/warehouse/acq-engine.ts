@@ -24,7 +24,7 @@ import type { WarehouseDb } from './db';
 import { loadGovernors } from './governors';
 import { scoreAcquisition, computeInputsVersion, RATIFIED_RULESET_PATH, REPLACEMENT_COST_TABLE_PATH } from './acquisition';
 import { logVerdicts } from './calibration';
-import { CalibrationVerdictSchema } from '../../src/contracts/warehouse';
+import { CalibrationVerdictSchema, CalibrationOutcomeSchema } from '../../src/contracts/warehouse';
 import type {
   AcquisitionInput,
   AcquisitionRuleset,
@@ -258,3 +258,89 @@ export async function persistAndLogScore(
 export { loadGovernors };
 // Export the paths so the API layer can load rulesets consistently.
 export { RATIFIED_RULESET_PATH, REPLACEMENT_COST_TABLE_PATH };
+
+/**
+ * Log a calibration OUTCOME for a candidate when its deal lifecycle resolves (acquired | passed).
+ *
+ * Links to the candidate's MOST RECENT acquisition-score calibration_verdict and writes ONE
+ * blessed (is_resolution=1) calibration_outcome row. FAIL-OPEN: never throws to the caller.
+ * If the candidate has no acquisition-score verdict (never scored), this is a no-op.
+ *
+ * Hit semantics (intent-outcome, NOT realized-NOI — distinguished by resolution_basis='deal-lifecycle-event'):
+ *   'acquired': closed → PURSUE/WATCH verdict vindicated (hit=1); PASS/KILLED = miss (hit=0).
+ *   'passed':   walked → PASS/KILLED verdict vindicated (hit=1); PURSUE/WATCH = miss (hit=0).
+ *
+ * IDEMPOTENT: if a blessed resolution already exists for this verdict, does nothing.
+ * FINANCIAL-DECISION CODE — any change to hit logic requires adversarial refute (CLAUDE.md §EOS).
+ */
+export function logAcqOutcome(
+  db: WarehouseDb,
+  candidateId: string,
+  outcome: 'acquired' | 'passed',
+): void {
+  try {
+    const verdict = db.prepare(`
+      SELECT id, predicted_band, as_of_period
+      FROM calibration_verdict
+      WHERE subject_kind = 'deal'
+        AND subject_id = ?
+        AND verdict_kind = 'acquisition-score'
+      ORDER BY id DESC
+      LIMIT 1
+    `).get(candidateId) as { id: number; predicted_band: string | null; as_of_period: string } | undefined;
+
+    if (!verdict) return; // never scored → no-op
+
+    const existing = db.prepare(
+      'SELECT id FROM calibration_outcome WHERE calibration_id = ? AND is_resolution = 1',
+    ).get(verdict.id) as { id: number } | undefined;
+    if (existing) return; // idempotent — one blessed resolution per verdict
+
+    const predicted = verdict.predicted_band;
+    const pursued = predicted === 'PURSUE' || predicted === 'WATCH';
+    const hit: 0 | 1 =
+      outcome === 'acquired'
+        ? (pursued ? 1 : 0)  // acquired a PURSUE/WATCH = vindicated; acquired despite PASS/KILLED = miss
+        : (pursued ? 0 : 1); // passed on a PURSUE/WATCH = miss; passed a PASS/KILLED = vindicated
+
+    const outcomePeriod = new Date().getFullYear().toString();
+
+    const row = CalibrationOutcomeSchema.parse({
+      calibrationId: verdict.id,
+      realizedBand: outcome,
+      realizedValue: null,
+      realizedUnit: 'band',
+      outcomePeriod,
+      horizonActual: null,
+      hit,
+      absError: null,
+      brierComponent: null,
+      actionTaken: outcome === 'acquired' ? 'acted-aligned' : 'acted-counter',
+      actionDetail: `deal lifecycle → ${outcome}`,
+      treatmentNote: null,
+      resolvedBy: 'auto:deal-lifecycle',
+      resolutionBasis: 'deal-lifecycle-event',
+      isResolution: true,
+      inputsVersion: null,
+    });
+
+    db.prepare(`
+      INSERT INTO calibration_outcome
+        (calibration_id, realized_band, realized_value, realized_unit, outcome_period, horizon_actual,
+         hit, abs_error, brier_component, action_taken, action_detail, treatment_note,
+         resolved_by, resolution_basis, is_resolution, inputs_version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+    `).run(
+      row.calibrationId, row.realizedBand, row.realizedValue, row.realizedUnit, row.outcomePeriod,
+      row.horizonActual, row.hit, row.absError, row.brierComponent, row.actionTaken, row.actionDetail,
+      row.treatmentNote, row.resolvedBy, row.resolutionBasis, row.inputsVersion,
+    );
+  } catch (e) {
+    // Fail-open — mirror logVerdicts. Never throw to the PATCH handler.
+    try {
+      db.prepare(
+        "INSERT INTO data_quality_issues (kind, detail, severity) VALUES ('acq-outcome-failed', ?, 'warn')",
+      ).run(e instanceof Error ? e.message : String(e));
+    } catch { /* swallow — observational machinery never blocks */ }
+  }
+}
