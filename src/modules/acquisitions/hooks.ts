@@ -70,7 +70,11 @@ export function useSetCandidateStatus() {
           body: JSON.stringify({ status: v.status }),
         },
       );
-      return (await res.json()) as { ok: boolean; error?: string };
+      const payload = (await res.json()) as { ok: boolean; error?: string };
+      if (!res.ok || !payload.ok) {
+        throw new Error(payload.error ?? `Failed to update candidate status (${res.status})`);
+      }
+      return payload;
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['warehouse', 'acq'] });

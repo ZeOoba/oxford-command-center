@@ -190,4 +190,15 @@ describe('checkAcqGovernorCoupling', () => {
     const result = checkAcqGovernorCoupling('/fake/root');
     expect(result.pass).toBe(true);
   });
+
+  it('fails when loadGovernors is imported from a module other than ./governors', () => {
+    mockExistsSync.mockReturnValue(true);
+    // loadGovernors exists but sourced from the wrong module — catches the exact coupling contract
+    mockReadFileSync.mockReturnValue(
+      `import { loadGovernors } from './capital-config-shim';\nexport function score() {}`,
+    );
+    const result = checkAcqGovernorCoupling('/fake/root');
+    expect(result.pass).toBe(false);
+    expect(result.errors.some((e) => /loadGovernors.*governors|governors.*loadGovernors/i.test(e))).toBe(true);
+  });
 });

@@ -137,9 +137,11 @@ export function checkAcqGovernorCoupling(root: string): GovernanceResult {
       'acq-engine.ts must import governors via ./governors — direct import from capital-config detected',
     );
   }
-  if (!/loadGovernors/.test(code)) {
+  const requiredLoadGovernorsImport =
+    /import\s*\{[^}]*\bloadGovernors\b[^}]*\}\s*from\s*['"]\.\/governors['"]/;
+  if (!requiredLoadGovernorsImport.test(code)) {
     errors.push(
-      'acq-engine.ts does not reference loadGovernors — governor coupling is broken',
+      "acq-engine.ts must import loadGovernors from './governors' — governor coupling is broken",
     );
   }
   return { pass: errors.length === 0, errors, warnings: [] };

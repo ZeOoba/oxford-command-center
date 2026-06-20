@@ -819,8 +819,8 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       try {
         const result = await syncNotionPipeline(db, token);
         return c.json(result, 200);
-      } catch (e) {
-        return c.json({ error: 'notion sync failed', detail: String(e) }, 502);
+      } catch {
+        return c.json({ error: 'notion sync failed' }, 502);
       }
     }),
   );

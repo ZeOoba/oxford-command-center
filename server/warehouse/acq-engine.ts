@@ -313,9 +313,11 @@ export function logAcqOutcome(
         ? (pursued ? 1 : 0)  // acquired a PURSUE/WATCH = vindicated; acquired despite PASS/KILLED = miss
         : (pursued ? 0 : 1); // passed on a PURSUE/WATCH = miss; passed a PASS/KILLED = vindicated
 
-    const outcomePeriod = new Date().getFullYear().toString();
+    const outcomeYear = new Date().getFullYear();
+    const asOfYear = Number.parseInt(verdict.as_of_period, 10);
+    const horizonActual = Number.isFinite(asOfYear) ? Math.max(0, outcomeYear - asOfYear) : 0;
+    const outcomePeriod = String(outcomeYear);
 
-    // horizonActual=0 for same-period resolution (deal scored and resolved in the same year).
     // actionTaken derived from verdict-alignment (not from outcome alone — see adversarial review 2026-06-20):
     //   aligned = action agreed with the verdict's directional bet; counter = action opposed it.
     const row = CalibrationOutcomeSchema.parse({
@@ -324,7 +326,7 @@ export function logAcqOutcome(
       realizedValue: null,
       realizedUnit: 'band',
       outcomePeriod,
-      horizonActual: 0,
+      horizonActual,
       hit,
       absError: null,
       brierComponent: null,

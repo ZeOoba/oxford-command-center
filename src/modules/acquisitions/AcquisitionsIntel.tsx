@@ -88,7 +88,11 @@ export function AcquisitionsIntel() {
         <p style={{ color: 'var(--text-tertiary)', fontSize: '0.875rem' }}>Warehouse offline — acquisition intel unavailable.</p>
       )}
 
-      {!isLoading && !isWarehouseUnavailable(error) && data && (
+      {!isLoading && error && !isWarehouseUnavailable(error) && !data && (
+        <p style={{ color: 'var(--text-tertiary)', fontSize: '0.875rem' }}>Unable to load acquisition intel right now.</p>
+      )}
+
+      {!isLoading && data && (
         <>
           <CalibrationSummaryPanel summary={data.calibrationSummary} />
           <RankedCandidateList

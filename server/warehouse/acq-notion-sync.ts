@@ -113,12 +113,16 @@ function mapStatus(raw: string | null): 'active' | 'archived' | 'acquired' | 'pa
   return 'active';
 }
 
+const NOTION_TIMEOUT_MS = 15_000;
+
 async function queryNotionPage(
   fetchImpl: FetchLike,
   token: string,
   dbId: string,
   cursor?: string,
 ): Promise<NotionQueryResponse> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), NOTION_TIMEOUT_MS);
   const res = await fetchImpl(`https://api.notion.com/v1/databases/${dbId}/query`, {
     method: 'POST',
     headers: {
@@ -127,7 +131,8 @@ async function queryNotionPage(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(cursor ? { start_cursor: cursor, page_size: 100 } : { page_size: 100 }),
-  });
+    signal: ctrl.signal,
+  }).finally(() => clearTimeout(timer));
   if (!res.ok) {
     throw new Error(`Notion API ${res.status}: ${await res.text().catch(() => '')}`);
   }

@@ -215,6 +215,31 @@ describe('logAcqOutcome — fail-open', () => {
   });
 });
 
+describe('logAcqOutcome — cross-year horizon_actual', () => {
+  it('horizon_actual > 0 when verdict as_of_period is a prior year', () => {
+    const db = freshDb();
+    const id = 'deal:cross-year';
+    seedCandidate(db, id);
+    scoreCandidate(db, id, STRONG_RAW);
+
+    // Simulate a deal scored in a prior year by back-dating the verdict's as_of_period.
+    const priorYear = String(new Date().getFullYear() - 1);
+    db.prepare(
+      "UPDATE calibration_verdict SET as_of_period = ? WHERE subject_id = ? AND verdict_kind = 'acquisition-score'",
+    ).run(priorYear, id);
+
+    logAcqOutcome(db, id, 'passed');
+
+    const verdictId = getVerdictId(db, id);
+    const outcome = db.prepare(
+      'SELECT horizon_actual FROM calibration_outcome WHERE calibration_id = ?',
+    ).get(verdictId) as { horizon_actual: number } | undefined;
+
+    expect(outcome).toBeDefined();
+    expect(outcome!.horizon_actual).toBe(1);
+  });
+});
+
 describe('logAcqOutcome — spine isolation', () => {
   it('CRITICAL: ledger_entries count is 0 after logging an outcome (Spine B untouched)', () => {
     const db = freshDb();
