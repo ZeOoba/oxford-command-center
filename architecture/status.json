@@ -92,6 +92,16 @@
     }
   },
 
+  "phase-4-steps-5-7-8-9": {
+      "agent_role": "Engineering (Claude Code) — authorized by Gabriel 2026-06-20 (proceed all recommendations)",
+      "phase": "Phase 4 — Steps 5 (Notion sync), 7 (Acq Intel UI), 8 (calibration outcome hook), 9 (governance rule)",
+      "status": "in_progress",
+      "blocked_by": null,
+      "review_needed": true,
+      "review_detail": "Touches architect-owned files: scripts/governance-check.ts (Step 9), server/warehouse/api.ts (Steps 5+8), server/warehouse/acq-engine.ts (Step 8). Gabriel authorized all steps with 'proceed with all recommendations' 2026-06-20.",
+      "last_updated": "2026-06-20T17:45:00Z"
+    },
+
   "usage": {
     "how_to_update": "Edit your worktree's entry before starting and after completing work; commit it on your branch. Use ISO 8601 timestamps. Set review_needed=true and fill review_detail when you need architect sign-off on an architect-owned file.",
     "how_to_read": "Before starting any task, check all other worktrees for status=in_progress or review_needed. If another agent works in your file-ownership area, coordinate before editing."
