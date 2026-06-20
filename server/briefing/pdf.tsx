@@ -346,10 +346,6 @@ function ManagerBriefingDoc({ m }: { m: ManagerBriefingModel }) {
             <Text style={styles.kpiValue}>{m.subject.propertyCount}</Text>
           </View>
           <View style={styles.kpiTile}>
-            <Text style={styles.kpiLabel}>Aggregate NOI</Text>
-            <Text style={styles.kpiValue}>{fig(m.scorecard.aggregateNoi)}</Text>
-          </View>
-          <View style={styles.kpiTile}>
             <Text style={styles.kpiLabel}>Avg NOI / SF</Text>
             <Text style={styles.kpiValue}>{fig(m.scorecard.avgNoiPerSf)}</Text>
           </View>

@@ -235,9 +235,10 @@ export function composePropertyBriefing(
   const scores = scoreProperties(db, allMetrics);
   const score = scores.find((s) => s.propertyId === propertyId) ?? null;
 
-  // Display name: master.name (authoritative) → any metric propertyName → '—'.
+  // Display name: master.name (authoritative) → any metric propertyName → propertyId.
+  // Use || (not ??) so empty/whitespace names fall through to the next candidate.
   const name =
-    master?.name ?? series.find((m) => m.propertyName)?.propertyName ?? propertyId;
+    (master?.name?.trim() || series.find((m) => m.propertyName?.trim())?.propertyName) ?? propertyId;
 
   // KPI band — read the level metrics at the latest FULL-YEAR period (the screen's basis).
   const level = pickPeriodMetrics(series, null);
@@ -375,20 +376,6 @@ export function composeManagerBriefing(
       return d !== 0 ? d : a.name.localeCompare(b.name);
     });
 
-  // Aggregate NOI = Σ latest-FY NOI across the managed properties (the roll-up total — adversarial #6).
-  let aggregateNoi = 0;
-  let anyNoi = false;
-  for (const m of managed) {
-    const level = pickPeriodMetrics(
-      allMetrics.filter((x) => x.propertyId === m.id).sort((a, b) => a.period.localeCompare(b.period)),
-      null,
-    );
-    if (level && Number.isFinite(level.noi)) {
-      aggregateNoi += level.noi;
-      anyNoi = true;
-    }
-  }
-
   // Aggregate attention items: distinct high/critical anomalies + orange/red property names.
   const anomalies = detectAnomalies(allMetrics);
   const managedIds = new Set(managed.map((m) => m.id));
@@ -426,7 +413,6 @@ export function composeManagerBriefing(
       avgNoiPerSf: usdPerSfFig(scorecard?.avgNoiPerSf ?? null),
       avgNoiGrowth: signedPctFig(scorecard?.avgNoiGrowth ?? null),
       avgExpenseGrowth: signedPctFig(scorecard?.avgExpenseGrowth ?? null),
-      aggregateNoi: usdFig(anyNoi ? aggregateNoi : null),
     },
     managedProperties: rows,
     attentionItems,

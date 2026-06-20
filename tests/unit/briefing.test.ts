@@ -184,27 +184,18 @@ describe('composePropertyBriefing — reads the same analytics the screen does (
   });
 });
 
-describe('composeManagerBriefing — per-PM roll-up (adversarial #6: totals must be correct)', () => {
-  it('builds a Zod-valid manager model whose aggregate NOI equals the sum of managed-property NOI', () => {
+describe('composeManagerBriefing — per-PM roll-up', () => {
+  it('builds a Zod-valid manager model with scorecard averages sourced from the engine', () => {
     const db = seededDb();
     const model = composeManagerBriefing(db, KRG_SLUG, { generatedDate: GEN });
     expect(model).not.toBeNull();
     const parsed = ManagerBriefingModel.parse(model);
     expect(managerSlug(parsed.subject.name)).toBe(KRG_SLUG);
     expect(parsed.managedProperties.length).toBeGreaterThan(0);
-
-    // Independently total the latest-FY NOI for the two seeded KRG properties and compare.
-    const allMetrics = propertyPeriodMetrics(db);
-    let expected = 0;
-    for (const id of KRG_PROPS) {
-      const latest = allMetrics
-        .filter((m) => m.propertyId === id && m.grainHint === 'year')
-        .sort((a, b) => a.period.localeCompare(b.period))
-        .slice(-1)[0];
-      if (latest) expected += latest.noi;
-    }
-    expect(parsed.scorecard.aggregateNoi.value).toBeCloseTo(expected, 2);
-    expect(parsed.scorecard.aggregateNoi.display).toBe(fmtUsd(expected));
+    // Scorecard exposes engine averages only (no invented aggregate sum).
+    expect(parsed.scorecard.avgNoiPerSf.unit).toBe('usd_per_sf');
+    expect(parsed.scorecard.avgNoiGrowth.unit).toBe('pct');
+    expect(parsed.scorecard.avgExpenseGrowth.unit).toBe('pct');
   });
 
   it('returns null for an unknown manager slug (caller → 404)', () => {
@@ -234,14 +225,14 @@ describe('PDF render — extractable text layer (contract #1, adversarial #2)', 
     expect(flat).toContain(GEN); // generated-date stamp
   });
 
-  it('renders a manager briefing whose name + aggregate NOI extract as text', { timeout: 30000 }, async () => {
+  it('renders a manager briefing whose name + scorecard averages extract as text', { timeout: 30000 }, async () => {
     const db = seededDb();
     const model = ManagerBriefingModel.parse(composeManagerBriefing(db, KRG_SLUG, { generatedDate: GEN }));
     const bytes = await renderBriefingPdf(model);
     const { text } = await pdfParse(bytes);
     const flat = text.replace(/\s+/g, ' ');
     expect(flat).toContain(model.subject.name);
-    expect(flat).toContain(model.scorecard.aggregateNoi.display);
+    expect(flat).toContain(model.scorecard.avgNoiPerSf.display);
   });
 });
 

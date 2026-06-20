@@ -87,7 +87,7 @@ export const PropertyBriefingModel = z.object({
   meta: BriefingMeta,
   subject: z.object({
     propertyId: z.string(),
-    name: z.string(), // display name; never blank ('—' when the master has none)
+    name: z.string().min(1), // display name; never blank ('—' when the master has none)
     market: z.string().nullable(),
     manager: z.string().nullable(),
     scoredPeriod: z.string().nullable(), // the FY period the score is based on ('—' label upstream)
@@ -140,7 +140,6 @@ export const ManagerBriefingModel = z.object({
     avgNoiPerSf: Figure,
     avgNoiGrowth: Figure,
     avgExpenseGrowth: Figure,
-    aggregateNoi: Figure, // Σ latest-FY NOI across managed properties (the roll-up total)
   }),
   managedProperties: z.array(ManagedPropertyRow), // may be empty → 'n/a' block
   attentionItems: z.array(z.string()), // aggregate attention/anomaly call-outs
