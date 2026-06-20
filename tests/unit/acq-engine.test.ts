@@ -106,47 +106,39 @@ describe('persistAndLogScore — advisory (proposed ruleset)', () => {
   });
 });
 
-describe('persistAndLogScore — LTV governor demotion', () => {
-  it('demotes verdict to PASS when LTV exceeds ceiling (allInBasis/price > 0.40)', async () => {
+describe('persistAndLogScore — LTV is indeterminate at screen time (ratified correction 2026-06-20)', () => {
+  // REGRESSION GUARD: the prior `allInBasis/price ≤ ltvCeiling` proxy demoted EVERY fully-specified
+  // deal to PASS (basis ≥ price ⇒ ratio ≈ 1.0 > 0.40). LTV is now indeterminate at screen time (no
+  // loan amount in the inputs) — null, never demotes; the ≤40% ceiling is a financing-stage governor.
+  it('does NOT demote a basis≥price deal on LTV; verdict matches the raw engine', async () => {
     const db = freshDb();
-    const candidateId = 'test-deal-ltv-fail';
+    const candidateId = 'test-deal-ltv-indeterminate';
     seedCandidate(db, candidateId);
 
-    // LTV: 3_600_000 / 3_500_000 = 1.03 > 0.40 → governor fails → PASS demotion
-    const input = strongInput({ allInBasis: 3_600_000, price: 3_500_000 });
+    // basis 3.6M / price 3.5M = 1.03 — the OLD proxy would have demoted this strong deal to PASS.
+    const input = strongInput({ allInBasis: 3_600_000, price: 3_500_000, stabilizedYoc: 0.12 });
     const { score } = await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT);
 
-    expect(score.verdict).toBe('PASS');
+    const rawScore = scoreAcquisition(input, RATIFIED_RULESET, { rct: RCT });
+    expect(score.verdict).toBe(rawScore.verdict);             // no governor demotion applied
+    expect(['PURSUE', 'WATCH']).toContain(rawScore.verdict);  // the deal is genuinely strong (would've been demoted)
   });
 
-  it('preserves the composite score even when LTV governor fails', async () => {
+  it('stores governor_ltv_cleared = null (indeterminate) and preserves the composite', async () => {
     const db = freshDb();
-    const candidateId = 'test-deal-ltv-composite';
+    const candidateId = 'test-deal-ltv-null';
     seedCandidate(db, candidateId);
 
-    const input = strongInput({ allInBasis: 3_600_000, price: 3_500_000 });
-    const { score } = await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT);
-
-    // Composite should be a positive number despite verdict demotion.
-    expect(score.composite).toBeGreaterThan(0);
-    expect(score.verdict).toBe('PASS');
-  });
-
-  it('stores governor_ltv_cleared=0 and PASS verdict in acq_scores', async () => {
-    const db = freshDb();
-    const candidateId = 'test-deal-ltv-store';
-    seedCandidate(db, candidateId);
-
-    const input = strongInput({ allInBasis: 3_600_000, price: 3_500_000 });
+    const input = strongInput({ allInBasis: 3_600_000, price: 3_500_000, stabilizedYoc: 0.12 });
     await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT);
 
     const row = db.prepare(
       'SELECT verdict, governor_ltv_cleared, composite FROM acq_scores WHERE candidate_id = ?',
-    ).get(candidateId) as { verdict: string; governor_ltv_cleared: number; composite: number } | undefined;
+    ).get(candidateId) as { verdict: string; governor_ltv_cleared: number | null; composite: number } | undefined;
 
     expect(row).toBeDefined();
-    expect(row!.verdict).toBe('PASS');
-    expect(row!.governor_ltv_cleared).toBe(0);
+    expect(row!.governor_ltv_cleared).toBeNull();
+    expect(row!.verdict).not.toBe('PASS');  // not demoted by the (removed) LTV proxy
     expect(row!.composite).toBeGreaterThan(0);
   });
 });
@@ -213,7 +205,7 @@ describe('persistAndLogScore — governors cleared (ratified ruleset)', () => {
     expect(score.composite).toBeCloseTo(rawScore.composite, 1);
   });
 
-  it('stores governor_dscr_cleared=1 and governor_ltv_cleared=1 when both pass', async () => {
+  it('stores governor_dscr_cleared=1 and governor_ltv_cleared=null (LTV indeterminate) when DSCR clears', async () => {
     const db = freshDb();
     const candidateId = 'test-deal-govs-cleared';
     seedCandidate(db, candidateId);
@@ -223,11 +215,11 @@ describe('persistAndLogScore — governors cleared (ratified ruleset)', () => {
 
     const row = db.prepare(
       'SELECT governor_dscr_cleared, governor_ltv_cleared FROM acq_scores WHERE candidate_id = ?',
-    ).get(candidateId) as { governor_dscr_cleared: number; governor_ltv_cleared: number } | undefined;
+    ).get(candidateId) as { governor_dscr_cleared: number; governor_ltv_cleared: number | null } | undefined;
 
     expect(row).toBeDefined();
     expect(row!.governor_dscr_cleared).toBe(1);
-    expect(row!.governor_ltv_cleared).toBe(1);
+    expect(row!.governor_ltv_cleared).toBeNull();  // indeterminate at screen time (ratified 2026-06-20)
   });
 });
 
