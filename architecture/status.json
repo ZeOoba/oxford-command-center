@@ -71,6 +71,16 @@
       "last_updated": "2026-06-16T00:20:00Z"
     },
 
+    "ar-aging-parser": {
+      "agent_role": "Engineering (Claude Code) — authorized solo by Gabriel 2026-06-20",
+      "phase": "AR-aging import pipeline — collections data feed (audit Fix #2) — PR #81",
+      "status": "merged",
+      "blocked_by": null,
+      "review_needed": false,
+      "review_detail": "MERGED PR #81. Parser (Yardi/AppFolio), fuzzy matcher, mapping cache, merge-buckets, CLI import script. Mandatory refute-financial-change pass ran; 6 defects found and fixed. 1152 tests green. Worktree removed.",
+      "last_updated": "2026-06-20T00:00:00Z"
+    },
+
     "cool-franklin-b98c9f": {
       "agent_role": "Engineering (Claude Code) — authorized solo by Gabriel 2026-06-16",
       "phase": "Audit-batch hardening (PR #79) + systematization follow-ups (PR stacked on #79): shared money coercer, whole-overlay validation, delimiter-safe dedup keys, refute-required CI gate, dup-insight-id backstop",
