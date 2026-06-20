@@ -71,6 +71,26 @@
       "last_updated": "2026-06-20T00:00:00Z"
     },
 
+    "acquisition-scorecard": {
+      "agent_role": "Engineering (Claude Code) — authorized solo by Gabriel 2026-06-13",
+      "phase": "Acquisition Scorecard — contract + engine merged (#25/#27). Phase 4 is the continuation.",
+      "status": "merged",
+      "blocked_by": null,
+      "review_needed": false,
+      "review_detail": "Contract + engine (#25) and ratified v1 + RCT + /api/warehouse/acquisition/score (#27) are MERGED. Phase 4 (phase-4-acq-intel worktree) is the active continuation implementing warehouse persistence, ingest, and API routes.",
+      "last_updated": "2026-06-20T00:00:00Z"
+    },
+
+    "phase-4-acq-intel": {
+      "agent_role": "Integration Agent + Analytics Agent",
+      "phase": "Phase 4 — Acquisition Intelligence Engine (Steps 1–4, 6, tests)",
+      "status": "in_progress",
+      "blocked_by": null,
+      "review_needed": true,
+      "review_detail": "acq-engine.ts contains persistAndLogScore() with DSCR/LTV governor enforcement — MANDATORY adversarial refute pass required before merge (financial-decision code). Gabriel must review.",
+      "last_updated": "2026-06-20T00:00:00Z"
+    },
+
     "cool-franklin-b98c9f": {
       "agent_role": "Engineering (Claude Code) — authorized solo by Gabriel 2026-06-16",
       "phase": "Audit-batch hardening (PR #79) + systematization follow-ups (PR stacked on #79): shared money coercer, whole-overlay validation, delimiter-safe dedup keys, refute-required CI gate, dup-insight-id backstop",
