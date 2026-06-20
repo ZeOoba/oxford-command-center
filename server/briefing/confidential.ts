@@ -65,7 +65,15 @@ function loadTerms(): Record<string, DealTerms> {
     }
     if (Object.keys(out).length > 0) return out;
   } catch {
-    // unreadable → fall through to the built-in seed (fail-closed: we still scan)
+    // unreadable → fall through to the built-in seed
+  }
+  // Warn loudly so operators know the guard is scanning the built-in placeholder only.
+  // Suppressed in unit tests to avoid noise.
+  if (process.env['NODE_ENV'] !== 'test') {
+    process.stderr.write(
+      '[briefing] WARNING: confidential-terms.json absent or unreadable — ' +
+        'confidentiality guard scanning built-in placeholder only; real deal identifiers will NOT be caught.\n',
+    );
   }
   return FALLBACK_TERMS;
 }
