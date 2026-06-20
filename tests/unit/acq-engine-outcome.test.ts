@@ -36,7 +36,7 @@ const ratifiedJson = JSON.parse(
 const RATIFIED_RULESET: AcquisitionRuleset = parseRuleset(ratifiedJson);
 const RCT: ReplacementCostTable = loadRatifiedRct();
 
-/** Strong input — high YOC, good LTV → expected PURSUE or WATCH verdict. */
+/** Strong input — high YOC → DSCR proxy clears, LTV indeterminate → expected PURSUE or WATCH verdict. */
 const STRONG_RAW: Record<string, unknown> = {
   dealId: 'outcome-strong',
   price: 3_500_000, maxBuildingSf: 42_000, totalSf: 60_000,
@@ -44,19 +44,30 @@ const STRONG_RAW: Record<string, unknown> = {
   clearHeightFt: 28, hasDriveIn: true, hasDock: true, dockCount: 6, driveInCount: 6,
   multiStory: false, truckCourtFt: 120,
   constructionType: 'block-tilt-brick', yearBuilt: 2005, sfhaOnPad: false,
-  allInBasis: 3_600_000,   // LTV: 3.6M / 3.5M ≈ 1.03 → governor FAILS → PASS verdict
-  stabilizedYoc: 0.12,     // DSCR proxy: OK
+  allInBasis: 3_600_000,
+  stabilizedYoc: 0.12,     // DSCR proxy: 0.12 / (0.40 × 0.085) = 3.53 ≥ 1.25 → clears; LTV indeterminate
   leveredIrr: 0.18, underwriteHorizonYrs: 5,
   clusterTier: 'owned-submarket', sellerMotivationScore: 0.8,
   isVacant: false, inPlaceRentPsf: 4.5, marketRentPsf: 6.0, waltYears: 1.5, valueAddScore: 0.5,
   ddKnown: { flood: true, zoning: true, roof: true, 'deferred-maintenance-capex': true },
 };
 
-/** LTV-passing input (allInBasis well below price × 0.40 ceiling): governor clears → non-PASS verdict. */
+/**
+ * DSCR-failing input: very low YOC → DSCR proxy fails → verdict demoted to PASS.
+ * 0.02 / (0.40 × 0.085) = 0.588 < 1.25 → governorDscrCleared = false → PASS.
+ * LTV is always indeterminate at screen time (ratified correction 2026-06-20).
+ */
+const DSCR_FAIL_RAW: Record<string, unknown> = {
+  ...STRONG_RAW,
+  dealId: 'outcome-dscr-fail',
+  stabilizedYoc: 0.02,   // 0.02 / (0.40 × 0.085) = 0.588 < 1.25 → DSCR proxy fails → PASS
+};
+
+/** High composite — DSCR proxy clears (same as STRONG_RAW); used for PURSUE/WATCH verdict tests. */
 const LTV_PASS_RAW: Record<string, unknown> = {
   ...STRONG_RAW,
   dealId: 'outcome-ltv-ok',
-  price: 10_000_000,         // allInBasis / price = 3.6M / 10M = 0.36 ≤ 0.40 → LTV governor clears
+  price: 10_000_000,     // higher price → lower allInBasis/price ratio (LTV indeterminate regardless)
 };
 
 function seedCandidate(db: WarehouseDb, id: string): void {
@@ -102,8 +113,8 @@ describe('logAcqOutcome — PASS verdict hit semantics', () => {
     const db = freshDb();
     const id = 'deal:pass-verdict-passed';
     seedCandidate(db, id);
-    const band = scoreCandidate(db, id, STRONG_RAW);
-    // LTV governor fails on STRONG_RAW → predicted_band should be PASS or KILLED
+    const band = scoreCandidate(db, id, DSCR_FAIL_RAW);
+    // DSCR proxy fails on DSCR_FAIL_RAW (stabilizedYoc=0.02 < threshold) → PASS or KILLED
     expect(band === 'PASS' || band === 'KILLED').toBe(true);
 
     logAcqOutcome(db, id, 'passed');
@@ -124,7 +135,7 @@ describe('logAcqOutcome — PASS verdict hit semantics', () => {
     const db = freshDb();
     const id = 'deal:pass-verdict-acquired';
     seedCandidate(db, id);
-    scoreCandidate(db, id, STRONG_RAW); // LTV fails → PASS
+    scoreCandidate(db, id, DSCR_FAIL_RAW); // DSCR proxy fails → PASS
 
     logAcqOutcome(db, id, 'acquired');
 

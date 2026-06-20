@@ -7,21 +7,23 @@
 // requires a MANDATORY adversarial refute pass before merge. See architecture/status.json
 // review_detail for the current pending-refute status.
 //
-// Governor enforcement (Invariant 4):
-//   DSCR proxy: stabilizedYoc / (ltvCeiling × SCREENING_DEBT_CONSTANT) ≥ dscrFloor
-//   LTV proxy:  allInBasis / price ≤ ltvCeiling
-//   Either governor FAILS (false) → verdict hard-demoted to 'PASS' regardless of composite.
-//   Governor constants loaded via loadGovernors() — NEVER hardcoded inline (except the
-//   screening proxy constant below, which is a screening heuristic, not a governor constant).
+// Governor enforcement (Invariant 4) — delegated to the SHARED, edge-portable proxy module
+// acq-governor-proxy.ts so the ranked path, the ad-hoc /acquisition/score route, and the edge
+// Pages Function apply IDENTICAL demotion:
+//   DSCR proxy: stabilizedYoc / (ltvCeiling × SCREENING_DEBT_CONSTANT) ≥ dscrFloor.
+//   LTV proxy:  INDETERMINATE at screen time (no loan amount in the inputs) → null, never demotes.
+//               The ≤40% LTV ceiling is a FINANCING-stage governor enforced at capital allocation
+//               (capital_config DB CHECK). Gabriel-ratified correction 2026-06-20 — replaces the
+//               prior `allInBasis/price ≤ ltvCeiling` formula, which demoted every fully-specified
+//               deal to PASS (basis ≥ price ⇒ ratio ≈ 1.0 > 0.40).
+//   A FAILED governor hard-demotes the verdict to 'PASS'; KILLED is never upgraded.
 //
-// SCREENING_DEBT_CONSTANT: 8.5% annual debt service constant (7.25% rate proxy on 30-yr
-// amortizing @ 40% LTV). Gabriel G3 decision — pending formal ratification of
-// `screeningDebtRate` in CAPITAL_CONFIG; NULL fallback applies until then.
-//
-// Imports governors exclusively via ./governors (never directly from capital-config) to
-// satisfy the governance-check `acquisition_scorecard_governor_coupling` rule (Step 9).
+// Governor VALUES loaded via loadGovernors() (never hardcoded) — satisfies the governance-check
+// `acquisition_scorecard_governor_coupling` rule (Step 9). The ratified SCREENING_DEBT_CONSTANT
+// lives in acq-governor-proxy.ts (a screening heuristic, not a capital_config governor constant).
 import type { WarehouseDb } from './db';
 import { loadGovernors } from './governors';
+import { applyGovernorProxy } from './acq-governor-proxy';
 import { scoreAcquisition, computeInputsVersion, RATIFIED_RULESET_PATH, REPLACEMENT_COST_TABLE_PATH } from './acquisition';
 import { logVerdicts } from './calibration';
 import { CalibrationVerdictSchema, CalibrationOutcomeSchema } from '../../src/contracts/warehouse';
@@ -31,12 +33,6 @@ import type {
   AcquisitionScore,
   ReplacementCostTable,
 } from '../../src/contracts/acquisition';
-
-// Gabriel G3 pending: screening heuristic for DSCR proxy at screen time. NOT a capital-config
-// governor constant — it is a screening heuristic stored here until Gabriel ratifies
-// `screeningDebtRate` in CAPITAL_CONFIG. A future governance rule (Step 9) will
-// assert this file loads governors via ./governors, not capital-config directly.
-const SCREENING_DEBT_CONSTANT = 0.085; // 8.5% — 7.25% rate proxy, 30-yr amortizing, LTV=40%
 
 export interface PersistAndLogScoreResult {
   score: AcquisitionScore;
@@ -49,10 +45,10 @@ export interface PersistAndLogScoreResult {
  *
  * Returns the AcquisitionScore (with verdict reflecting governor demotion) + calibration verdict id.
  *
- * GOVERNOR ENFORCEMENT (Invariant 4):
- *   - DSCR proxy: stabilizedYoc / (ltvCeiling * SCREENING_DEBT_CONSTANT). Inputs absent → NULL.
- *   - LTV proxy: allInBasis / price. Either input absent → NULL.
- *   - Either governor FAILS → verdict hard-demoted to 'PASS' regardless of composite.
+ * GOVERNOR ENFORCEMENT (Invariant 4) — via the shared applyGovernorProxy (acq-governor-proxy.ts):
+ *   - DSCR proxy: stabilizedYoc / (ltvCeiling * SCREENING_DEBT_CONSTANT). Absent → NULL (no demotion).
+ *   - LTV proxy: INDETERMINATE at screen time → NULL (enforced at financing; see module header).
+ *   - A FAILED governor hard-demotes verdict to 'PASS' (never upgrades KILLED).
  *   - Composite is preserved (analysts can see the underlying score).
  *
  * IDEMPOTENT: a second call on identical (candidateId, input, ruleset, rct) is a no-op
@@ -74,33 +70,13 @@ export async function persistAndLogScore(
   // 2. Compute the inputs_version dedup key.
   const inputsVersion = computeInputsVersion(input, ruleset, rct.rctVersion);
 
-  // 3. Load governors at query time (never hardcoded — Invariant 4).
+  // 3. Load governors at query time (never hardcoded — Invariant 4) and apply the SHARED governor
+  //    proxy — the SAME demotion the ad-hoc /acquisition/score route and the edge Pages Function
+  //    apply, so all three surfaces agree. LTV is indeterminate at screen time (null, never demotes);
+  //    DSCR proxy + KILLED-monotonicity unchanged. See acq-governor-proxy.ts header.
   const governors = loadGovernors(db);
-
-  // 4. Evaluate governor booleans.
-  // DSCR proxy: stabilizedYoc / (ltvCeiling * SCREENING_DEBT_CONSTANT) >= dscrFloor
-  let governorDscrCleared: boolean | null = null;
-  if (input.stabilizedYoc !== null && input.stabilizedYoc !== undefined) {
-    const dscrProxy = input.stabilizedYoc / (governors.ltvCeiling * SCREENING_DEBT_CONSTANT);
-    governorDscrCleared = dscrProxy >= governors.dscrFloor;
-  }
-  // LTV proxy: allInBasis / price <= ltvCeiling
-  let governorLtvCleared: boolean | null = null;
-  if (
-    input.allInBasis !== null && input.allInBasis !== undefined &&
-    input.price !== null && input.price !== undefined && input.price > 0
-  ) {
-    governorLtvCleared = (input.allInBasis / input.price) <= governors.ltvCeiling;
-  }
-
-  // 5. Governor demotion: if either governor FAILS (false), hard-override verdict to 'PASS'.
-  // Guard: never upgrade KILLED → PASS. KILLED is a hard gate/floor rejection; PASS is a soft
-  // "didn't score well". Demoting KILLED would misplace it in verdict-filtered ranked lists
-  // (analysts querying verdict=KILLED would miss it; verdict=PASS would surface a gate reject).
-  let finalVerdict = score.verdict;
-  if ((governorDscrCleared === false || governorLtvCleared === false) && finalVerdict !== 'KILLED') {
-    finalVerdict = 'PASS';
-  }
+  const { verdict: finalVerdict, governorDscrCleared, governorLtvCleared } =
+    applyGovernorProxy(score, input, governors);
 
   // 6. Advisory: use the engine's own advisoryOnly flag as the source of truth.
   // This guards against future engine conditions beyond ratification (e.g. RCT version).
