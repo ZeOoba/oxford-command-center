@@ -38,6 +38,11 @@ const FALLBACK_TERMS: Record<string, DealTerms> = {
   },
 };
 
+/**
+ * Resolves the path to the confidential terms configuration file.
+ *
+ * @returns The path to the confidential terms JSON file, using the `CONFIDENTIAL_TERMS_PATH` environment variable if set, otherwise a default location in the user's home directory.
+ */
 function termsPath(): string {
   return (
     process.env.CONFIDENTIAL_TERMS_PATH ??
@@ -45,7 +50,11 @@ function termsPath(): string {
   );
 }
 
-/** Load the active-deal terms, preferring the live file, falling back to the built-in seed. */
+/**
+ * Loads active confidential deal terms, preferring the live file and falling back to built-in defaults.
+ *
+ * @returns A record mapping deal identifiers to their term configurations.
+ */
 function loadTerms(): Record<string, DealTerms> {
   try {
     const raw = JSON.parse(readFileSync(termsPath(), 'utf8')) as Record<string, unknown>;
@@ -61,7 +70,11 @@ function loadTerms(): Record<string, DealTerms> {
   return FALLBACK_TERMS;
 }
 
-/** Flatten any JSON value (string/number/array/object) into one lowercase scannable string. */
+/**
+ * Converts any value into a single flattened string.
+ *
+ * @returns A flattened string representation of the input value, with nested array and object elements separated by spaces.
+ */
 export function collectText(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'string') return value;
@@ -75,9 +88,13 @@ export interface ConfidentialHit {
   dealLabel: string;
 }
 
-/** The first confidential-term hit in `value` (any nesting), or null. Mirrors the egress hook:
- *  any `always` term is a hit; a `context` term is a hit only when a `context_requires_any` anchor
- *  is also present in the same text. Pure lowercase substring match. */
+/**
+ * Scans a value for confidential deal terms.
+ *
+ * Checks `always` terms (which match unconditionally) and `context` terms (which match only when a `context_requires_any` anchor is present). Matching is case-insensitive and uses substring inclusion.
+ *
+ * @returns `{ dealLabel: string }` for the first confidential term detected, or `null` if none found.
+ */
 export function scanForConfidential(value: unknown, terms = loadTerms()): ConfidentialHit | null {
   const low = collectText(value).toLowerCase();
   if (!low) return null;
@@ -97,9 +114,13 @@ export function scanForConfidential(value: unknown, terms = loadTerms()): Confid
   return null;
 }
 
-/** Throw if `value` carries any confidential term. The composer calls this as a fail-loud assertion
- *  before returning a BriefingModel — a leak becomes a hard error, never a silent egress. The thrown
- *  message names only the deal label, never the matched term. */
+/**
+ * Throws an error if the value contains any confidential term.
+ *
+ * The error message includes only the deal label.
+ *
+ * @throws If a confidential term is detected.
+ */
 export function assertNoConfidential(value: unknown): void {
   const hit = scanForConfidential(value);
   if (hit) {

@@ -326,3 +326,69 @@ export const AcquisitionScore = z.object({
   dataQuality: z.array(DataQualityFlag),  // quarantined / missing inputs
 });
 export type AcquisitionScore = z.infer<typeof AcquisitionScore>;
+
+// ─── WAREHOUSE PERSISTENCE SHAPES (Phase 4 additions) ────────────────────────────────────
+
+/** Row shape written to / read from acq_candidates. */
+export const AcqCandidateRow = z.object({
+  id: z.string(),
+  source: z.enum(['parcel-screen', 'notion-pipeline', 'manual']),
+  sourceBatchId: z.string().nullable(),
+  address: z.string().nullable(),
+  county: z.string().nullable(),
+  state: z.string().nullable(),
+  market: ClusterTier.nullable(),
+  rentableSf: z.number().nullable(),
+  yearBuilt: z.number().int().nullable(),
+  ownerName: z.string().nullable(),
+  parcelScreenScore: z.number().int().min(0).max(100).nullable(),
+  status: z.enum(['active', 'archived', 'acquired', 'passed']),
+  notionDealId: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type AcqCandidateRow = z.infer<typeof AcqCandidateRow>;
+
+/** Scored candidate — candidate row + latest score + calibration signal. */
+export const RankedCandidate = z.object({
+  candidate: AcqCandidateRow,
+  latestScore: AcquisitionScore.nullable(),   // null = not yet scored
+  governorDscrCleared: z.boolean().nullable(),
+  governorLtvCleared: z.boolean().nullable(),
+  calibrationHitRate: z.number().nullable(),  // from calibration_report for this subject_id; null until outcomes
+  scoredAt: z.string().nullable(),
+});
+export type RankedCandidate = z.infer<typeof RankedCandidate>;
+
+/** API response for the ranked deal-flow list. */
+export const AcqIntelResponse = z.object({
+  rankedCandidates: z.array(RankedCandidate),
+  calibrationSummary: z.object({            // kind='acquisition-score' slice of calibrationReport
+    totalVerdicts: z.number(),
+    resolvedVerdicts: z.number(),
+    overallHitRate: z.number().nullable(),
+    wilsonLow: z.number().nullable(),
+    wilsonHigh: z.number().nullable(),
+  }),
+  advisoryOnly: z.boolean(),                // true until ruleset + RCT ratified
+  rulesetVersion: z.string(),
+  asOf: z.string(),                         // ISO
+});
+export type AcqIntelResponse = z.infer<typeof AcqIntelResponse>;
+
+/** Parcel-screen import batch request body. */
+export const ParcelScreenImportRequest = z.object({
+  batchLabel: z.string().trim().min(1),
+  county: z.string().trim().min(1),
+  state: z.string().trim().min(1),
+  candidates: z.array(z.object({
+    apn: z.string().trim().min(1),
+    address: z.string().nullable(),
+    market: ClusterTier.nullable(),
+    rentableSf: z.number().nullable(),
+    yearBuilt: z.number().int().nullable(),
+    ownerName: z.string().nullable(),
+    parcelScreenScore: z.number().int().min(0).max(100).nullable(),
+  })),
+});
+export type ParcelScreenImportRequest = z.infer<typeof ParcelScreenImportRequest>;

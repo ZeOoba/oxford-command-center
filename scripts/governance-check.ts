@@ -118,6 +118,35 @@ export function checkRouteDuplication(root: string): GovernanceResult {
   return { pass: errors.length === 0, errors, warnings: [] };
 }
 
+/** Step 9: Enforce that acq-engine.ts never imports directly from capital-config. */
+export function checkAcqGovernorCoupling(root: string): GovernanceResult {
+  const errors: string[] = [];
+  const target = join(root, 'server', 'warehouse', 'acq-engine.ts');
+  if (!existsSync(target)) return { pass: true, errors: [], warnings: [] };
+  let content = '';
+  try {
+    content = readFileSync(target, 'utf8');
+  } catch {
+    return { pass: true, errors: [], warnings: [] };
+  }
+  // Strip block and line comments before checking to avoid false positives on commented-out imports.
+  const code = content.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const forbidden = /(?:from\s*|import\s*\(\s*)['"][^'"]*capital[-_]config[^'"]*['"]/;
+  if (forbidden.test(code)) {
+    errors.push(
+      'acq-engine.ts must import governors via ./governors — direct import from capital-config detected',
+    );
+  }
+  const requiredLoadGovernorsImport =
+    /import\s*\{[^}]*\bloadGovernors\b[^}]*\}\s*from\s*['"]\.\/governors['"]/;
+  if (!requiredLoadGovernorsImport.test(code)) {
+    errors.push(
+      "acq-engine.ts must import loadGovernors from './governors' — governor coupling is broken",
+    );
+  }
+  return { pass: errors.length === 0, errors, warnings: [] };
+}
+
 /** Run all checks, print results, and exit with appropriate code. */
 function main(): void {
   const root = resolve(process.cwd());
@@ -128,6 +157,7 @@ function main(): void {
     checkRequiredFiles(root),
     checkStaleFiles(root, 14),
     checkRouteDuplication(root),
+    checkAcqGovernorCoupling(root),
   ];
 
   for (const result of checks) {
