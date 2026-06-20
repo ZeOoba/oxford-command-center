@@ -43,15 +43,15 @@ These two spines have one critical defect: `Property.noi` (Spine A) and `warehou
 
 ---
 
-## 2. Current Build State (2026-06-16)
+## 2. Current Build State (2026-06-17)
 
 | Item | State |
 |------|-------|
 | Branch | `main` (worktree tracking origin/main) |
-| Last merge to main | PR #76 (`fd9fcb8`) — calibration-snapshot parseArgs hardening |
-| Open PRs | #77 test coverage + CORS extraction |
+| Last merge to main | PR #79 (`0b6e86d`) — strategic-audit fix batch + F1/F2/F3 adversarial hardening |
+| Open PRs | none in flight (`feat/ar-aging-parser` is a WIP branch — collections AR-aging data feed, not yet a PR) |
 | Gate | typecheck + lint + test + reconcile + warehouse:verify + **governance** |
-| Tests | 1035+ vitest unit tests |
+| Tests | 1104+ vitest unit tests |
 | Uncommitted changes | Gabriel actively co-develops this tree — varies constantly |
 
 **Off-limits rule (do NOT enumerate the locked set here — it goes stale the instant Gabriel commits; that staleness is itself a failure mode):**
