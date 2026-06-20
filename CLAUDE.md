@@ -73,14 +73,14 @@ This is the single discipline that prevents the collision class this repo has al
 | B (PR #13) | Analytics engine (growth/drivers/anomalies/benchmarks/scores) | **Merged ✓** — INTEL_CONFIG weights ratified 2026-06-14 |
 | B2 (PR #14) | Intelligence UI | **Merged ✓** |
 | B3/B4/B5 (PRs #34/#48/#50/#52/#76) | Calibration stack (005_calibration.sql, calibration.ts, src/modules/calibration/*) | **Merged ✓** — all on main |
-| C | Briefings + PDF export (per-property + per-PM) | In branch — `feat/pfi-phase-c-briefings-pdf` — **architect-gated** (package.json + src/contracts/briefing.ts approved 2026-06-20; adversarial refute required before merge) |
+| C | Briefings + PDF export (per-property + per-PM) | **Merged ✓** — PR #86; adversarial refute (opus-4.8, 3-lens) complete 2026-06-20 |
 | Acq | Acquisition Workbench UI + scoring API | Contract + engine (PRs #25/#27) merged; Workbench UI in progress |
+| 4 | **Acquisition Intelligence Engine** (firm priority #1) | **Merged ✓** — PRs #84/#85 (Steps 1–9); Notion UUID wired post-merge |
 | 2 | Debt/Refi scoring + AI narrative briefings | Not started |
 | 3 | Forecast + Leasing intelligence | Not started |
-| 4 | **Acquisition Intelligence Engine** (firm priority #1) | Not started |
 | 5 | Capital Allocation capstone + Market intelligence | Not started |
 
-**Pending:** Phase C (architect-gated, see above).
+**Pending:** Phase 2 (next up).
 
 ---
 
