@@ -43,12 +43,12 @@
 
     "acquisition-scorecard": {
       "agent_role": "Engineering (Claude Code) — authorized solo by Gabriel 2026-06-13",
-      "phase": "Acquisition Scorecard — Workbench UI + live scoring API (contract/engine merged #25; ratified v1 merged #27)",
-      "status": "in_progress",
+      "phase": "Acquisition Scorecard — contract + engine merged (#25/#27). Phase 4 is the continuation.",
+      "status": "merged",
       "blocked_by": null,
       "review_needed": false,
-      "review_detail": "Contract + engine (#25) and ratified v1 + RCT + /api/warehouse/acquisition/score (#27) are MERGED. This increment adds the Acquisition Workbench UI (src/modules/acquisitions/) — UX-owned, no Architect files. Also fixes a pre-existing flaky ingest fixture (ExcelJS timestamp nondeterminism). Deferred: property_characteristics input persistence, calibration-log acquisition-score hook.",
-      "last_updated": "2026-06-14T14:55:00Z"
+      "review_detail": "Contract + engine (#25) and ratified v1 + RCT + /api/warehouse/acquisition/score (#27) are MERGED. Phase 4 (phase-4-acq-intel worktree) is the active continuation implementing warehouse persistence, ingest, and API routes.",
+      "last_updated": "2026-06-20T00:00:00Z"
     },
 
     "eric-live-phase1b-fat-mirror": {
@@ -68,6 +68,16 @@
       "blocked_by": null,
       "review_needed": false,
       "review_detail": "MERGED PR #81. Parser (Yardi/AppFolio), fuzzy matcher, mapping cache, merge-buckets, CLI import script. Mandatory refute-financial-change pass ran; 6 defects found and fixed. 1152 tests green. Worktree removed.",
+      "last_updated": "2026-06-20T00:00:00Z"
+    },
+
+    "phase-4-acq-intel": {
+      "agent_role": "Integration Agent + Analytics Agent",
+      "phase": "Phase 4 — Acquisition Intelligence Engine (Steps 1–4, 6, tests)",
+      "status": "in_progress",
+      "blocked_by": null,
+      "review_needed": true,
+      "review_detail": "acq-engine.ts contains persistAndLogScore() with DSCR/LTV governor enforcement — MANDATORY adversarial refute pass required before merge (financial-decision code). Gabriel must review.",
       "last_updated": "2026-06-20T00:00:00Z"
     },
 

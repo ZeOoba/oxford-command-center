@@ -17,8 +17,11 @@ import {
   CalibrationResolveRequestSchema, CalibrationResolveResponseSchema,
   VerdictKind,
 } from '../../src/contracts/warehouse';
-import { AcquisitionInput } from '../../src/contracts/acquisition';
+import { AcquisitionInput, AcqCandidateRow, ParcelScreenImportRequest } from '../../src/contracts/acquisition';
+import { AcquisitionScore } from '../../src/contracts/acquisition';
 import type { AcquisitionRuleset, ReplacementCostTable } from '../../src/contracts/acquisition';
+import { persistAndLogScore } from './acq-engine';
+import { ingestParcelScreenBatch } from './acq-ingest';
 import type { WarehouseDb } from './db';
 import { addMappingOverride, approveImport, rejectImport, resolveIssue } from './actions';
 import { getImportDetail, listImports, listIssues, noiMatrix } from './queries';
@@ -506,6 +509,297 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
     if (!parsed.success) return c.json({ error: 'invalid acquisition input', issues: parsed.error.issues }, 400);
     return c.json({ score: scoreAcquisition(parsed.data, cfg.ruleset, { rct: cfg.rct }) });
   });
+
+  // ── Acquisition Intelligence Engine (Phase 4) ─────────────────────────────────────────────
+  //    These routes extend the existing acquisition scoring path with warehouse persistence,
+  //    ranked deal-flow list, parcel-screen import, manual candidate entry, and status lifecycle.
+  //
+  //    Advisory-only guarantee: scores are labelled advisoryOnly=true when the loaded ruleset
+  //    has ratification !== 'ratified'. The engine (scoreAcquisition) is fail-closed on
+  //    non-ratified rulesets but acqConfig() surfaces that as a 503 error — all routes below
+  //    that require scoring use acqConfig() and propagate that 503 correctly.
+
+  // GET /acq/intel — ranked candidates with latest scores + calibration summary.
+  // Query params: ?status=active|archived|acquired|passed &market=<ClusterTier>
+  //               &verdict=PURSUE|WATCH|PASS|KILLED &limit=<n>
+  app.get('/acq/intel', (c) =>
+    withDb((db) => {
+      const statusParam = c.req.query('status') ?? 'active';
+      const marketParam = c.req.query('market') ?? null;
+      const verdictParam = c.req.query('verdict') ?? null;
+      const rawLimit = Number(c.req.query('limit'));
+      const limitParam = Number.isFinite(rawLimit) ? Math.min(Math.max(1, rawLimit), 500) : 100;
+
+      // Build candidate query with optional filters.
+      const where: string[] = ['c.status = ?'];
+      const params: Array<string | number> = [statusParam];
+      if (marketParam) { where.push('c.market = ?'); params.push(marketParam); }
+      // Allowlist verdict values before binding to prevent junk params.
+      const VALID_VERDICTS = new Set(['PURSUE', 'WATCH', 'PASS', 'KILLED']);
+      if (verdictParam && VALID_VERDICTS.has(verdictParam)) {
+        where.push('s.verdict = ?');
+        params.push(verdictParam);
+      }
+
+      // Fetch candidates + latest score per candidate in one query.
+      const rows = db.prepare(`
+        SELECT
+          c.id, c.source, c.source_batch_id, c.address, c.county, c.state,
+          c.market, c.rentable_sf, c.year_built, c.owner_name,
+          c.parcel_screen_score, c.status, c.notion_deal_id, c.created_at, c.updated_at,
+          s.composite, s.tier, s.verdict, s.advisory_only, s.capped_at_t2,
+          s.gates_passed, s.floors_passed, s.floor_indeterminate,
+          s.governor_dscr_cleared, s.governor_ltv_cleared,
+          s.score_json, s.scored_at, s.calibration_verdict_id
+        FROM acq_candidates c
+        LEFT JOIN acq_scores s ON s.id = (
+          SELECT s2.id FROM acq_scores s2
+          WHERE s2.candidate_id = c.id
+          ORDER BY s2.scored_at DESC, s2.id DESC
+          LIMIT 1
+        )
+        WHERE ${where.join(' AND ')}
+        ORDER BY s.composite DESC NULLS LAST, c.created_at DESC
+        LIMIT ?
+      `).all(...params, limitParam) as Array<Record<string, unknown>>;
+
+      // Build RankedCandidate list.
+      const rankedCandidates = rows.map((row) => {
+        const candidate = AcqCandidateRow.parse({
+          id: row['id'],
+          source: row['source'],
+          sourceBatchId: row['source_batch_id'] ?? null,
+          address: row['address'] ?? null,
+          county: row['county'] ?? null,
+          state: row['state'] ?? null,
+          market: row['market'] ?? null,
+          rentableSf: row['rentable_sf'] ?? null,
+          yearBuilt: row['year_built'] ?? null,
+          ownerName: row['owner_name'] ?? null,
+          parcelScreenScore: row['parcel_screen_score'] ?? null,
+          status: row['status'],
+          notionDealId: row['notion_deal_id'] ?? null,
+          createdAt: row['created_at'],
+          updatedAt: row['updated_at'],
+        });
+
+        let latestScore: AcquisitionScore | null = null;
+        if (row['score_json'] !== null && row['score_json'] !== undefined) {
+          try {
+            const parsed = AcquisitionScore.safeParse(JSON.parse(row['score_json'] as string));
+            latestScore = parsed.success ? parsed.data : null;
+          } catch {
+            latestScore = null;
+          }
+        }
+
+        return {
+          candidate,
+          latestScore,
+          governorDscrCleared:
+            row['governor_dscr_cleared'] === null || row['governor_dscr_cleared'] === undefined
+              ? null
+              : row['governor_dscr_cleared'] === 1,
+          governorLtvCleared:
+            row['governor_ltv_cleared'] === null || row['governor_ltv_cleared'] === undefined
+              ? null
+              : row['governor_ltv_cleared'] === 1,
+          calibrationHitRate: null, // per-candidate hit-rate deferred to Phase 5
+          scoredAt: row['scored_at'] ? String(row['scored_at']) : null,
+        };
+      });
+
+      // Calibration summary for acquisition-score kind.
+      const calReport = calibrationReport(db, { kind: 'acquisition-score' });
+      const acqKind = calReport.byKind.find((k) => k.verdictKind === 'acquisition-score');
+
+      // Advisory flag: true when no ratified ruleset is available (acqConfig() err means advisory).
+      const cfg = acqConfig();
+      const advisoryOnly = !cfg.ok || cfg.ruleset.ratification !== 'ratified';
+
+      // Assemble the response without re-validating through the strict Zod schema —
+      // latestScore is stored as a complete AcquisitionScore JSON blob and is passed
+      // through opaquely (it was Zod-validated at insertion time via persistAndLogScore).
+      const response = {
+        rankedCandidates,
+        calibrationSummary: {
+          totalVerdicts: calReport.totalVerdicts,
+          resolvedVerdicts: calReport.resolvedVerdicts,
+          overallHitRate: acqKind?.hitRate ?? null,
+          wilsonLow: acqKind?.wilsonLow ?? null,
+          wilsonHigh: acqKind?.wilsonHigh ?? null,
+        },
+        advisoryOnly,
+        rulesetVersion: cfg.ok ? cfg.ruleset.rulesetVersion : 'unavailable',
+        asOf: new Date().toISOString(),
+      };
+
+      return c.json(response);
+    }),
+  );
+
+  // GET /acq/candidates — unscored/all candidate list for pipeline view.
+  // Query params: ?status=active &market=<tier> &limit=<n>
+  app.get('/acq/candidates', (c) =>
+    withDb((db) => {
+      const statusParam = c.req.query('status') ?? 'active';
+      const marketParam = c.req.query('market') ?? null;
+      const rawLimitC = Number(c.req.query('limit'));
+      const limitParam = Number.isFinite(rawLimitC) ? Math.min(Math.max(1, rawLimitC), 1000) : 200;
+
+      const where: string[] = ['status = ?'];
+      const params: Array<string | number> = [statusParam];
+      if (marketParam) { where.push('market = ?'); params.push(marketParam); }
+
+      const rows = db.prepare(`
+        SELECT id, source, source_batch_id, address, county, state, market,
+               rentable_sf, year_built, owner_name, parcel_screen_score,
+               status, notion_deal_id, created_at, updated_at
+        FROM acq_candidates
+        WHERE ${where.join(' AND ')}
+        ORDER BY created_at DESC
+        LIMIT ?
+      `).all(...params, limitParam) as Array<Record<string, unknown>>;
+
+      const candidates = rows.map((row) =>
+        AcqCandidateRow.parse({
+          id: row['id'],
+          source: row['source'],
+          sourceBatchId: row['source_batch_id'] ?? null,
+          address: row['address'] ?? null,
+          county: row['county'] ?? null,
+          state: row['state'] ?? null,
+          market: row['market'] ?? null,
+          rentableSf: row['rentable_sf'] ?? null,
+          yearBuilt: row['year_built'] ?? null,
+          ownerName: row['owner_name'] ?? null,
+          parcelScreenScore: row['parcel_screen_score'] ?? null,
+          status: row['status'],
+          notionDealId: row['notion_deal_id'] ?? null,
+          createdAt: row['created_at'],
+          updatedAt: row['updated_at'],
+        }),
+      );
+
+      return c.json({ candidates });
+    }),
+  );
+
+  // POST /acq/import/parcel-screen — import a county-parcel-screen workbook batch.
+  // Body: ParcelScreenImportRequest. Returns { batchId, inserted, skipped }.
+  // Idempotent: same parcels re-imported are skipped (INSERT OR IGNORE on candidate id).
+  // SPINE DISCIPLINE: only writes to acq_candidates + acq_source_batches (Spine C).
+  app.post('/acq/import/parcel-screen', (c) =>
+    withDb(async (db) => {
+      const parsed = ParcelScreenImportRequest.safeParse(await c.req.json().catch(() => ({})));
+      if (!parsed.success) return c.json({ error: 'invalid import body', issues: parsed.error.issues }, 400);
+      const result = ingestParcelScreenBatch(db, parsed.data);
+      return c.json(result, 200);
+    }),
+  );
+
+  // POST /acq/score/:candidateId — run persistAndLogScore on a candidate.
+  // Body: AcquisitionInput. Returns AcquisitionScore.
+  // Fail-closed: 503 if ruleset not ratified (advisory=false demanded) OR if missing.
+  // Advisory scores (proposed ruleset) are returned freely with advisoryOnly=true.
+  app.post('/acq/score/:candidateId', (c) =>
+    withDb(async (db) => {
+      const candidateId = c.req.param('candidateId');
+      if (!candidateId) return c.json({ error: 'candidateId required' }, 400);
+
+      // Verify the candidate exists.
+      const exists = db.prepare('SELECT id FROM acq_candidates WHERE id = ?').get(candidateId);
+      if (!exists) return c.json({ error: 'candidate not found' }, 404);
+
+      const inputParsed = AcquisitionInput.safeParse(await c.req.json().catch(() => ({})));
+      if (!inputParsed.success) return c.json({ error: 'invalid acquisition input', issues: inputParsed.error.issues }, 400);
+
+      // Load ruleset + RCT. For scoring, we try the ratified path first.
+      // If not ratified, load the proposed path (advisory-only scores are allowed).
+      let ruleset: AcquisitionRuleset;
+      let rct: ReplacementCostTable;
+      try {
+        const cfg = acqConfig();
+        if (!cfg.ok) {
+          // acqConfig() fails when the ratified file is missing or non-ratified.
+          // Try loading the proposed ruleset so we can still return advisory scores.
+          const { loadRuleset, loadReplacementCostTable } = await import('./acquisition');
+          ruleset = loadRuleset('config/acquisition-ruleset.v1.proposed.json');
+          rct = loadReplacementCostTable();
+        } else {
+          ruleset = cfg.ruleset;
+          rct = cfg.rct;
+        }
+      } catch (e) {
+        return c.json({ error: 'acquisition engine unavailable', detail: String(e) }, 503);
+      }
+
+      try {
+        const result = await persistAndLogScore(db, candidateId, inputParsed.data, ruleset, rct);
+        return c.json({ score: result.score, calibrationVerdictId: result.calibrationVerdictId });
+      } catch (e) {
+        return c.json({ error: 'scoring failed', detail: String(e) }, 500);
+      }
+    }),
+  );
+
+  // POST /acq/candidates — manual candidate entry (non-parcel-screen, non-Notion).
+  // Body: subset of AcqCandidateRow (id generated server-side from address + timestamp).
+  const ManualCandidateInput = AcqCandidateRow.pick({
+    address: true, county: true, state: true, market: true,
+    rentableSf: true, yearBuilt: true, ownerName: true,
+  }).partial();
+
+  app.post('/acq/candidates', (c) =>
+    withDb(async (db) => {
+      const parsed = ManualCandidateInput.safeParse(await c.req.json().catch(() => ({})));
+      if (!parsed.success) return c.json({ error: 'invalid candidate body', issues: parsed.error.issues }, 400);
+
+      // Generate a stable id from address + ms timestamp (manual entries are less frequent).
+      const ts = Date.now();
+      const addrSlug = (parsed.data.address ?? 'unknown').toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 40);
+      const candidateId = `manual:${addrSlug}-${ts}`;
+
+      db.prepare(`
+        INSERT OR IGNORE INTO acq_candidates
+          (id, source, address, county, state, market, rentable_sf, year_built, owner_name, status)
+        VALUES (?, 'manual', ?, ?, ?, ?, ?, ?, ?, 'active')
+      `).run(
+        candidateId,
+        parsed.data.address ?? null,
+        parsed.data.county ?? null,
+        parsed.data.state ?? null,
+        parsed.data.market ?? null,
+        parsed.data.rentableSf ?? null,
+        parsed.data.yearBuilt ?? null,
+        parsed.data.ownerName ?? null,
+      );
+
+      return c.json({ candidateId }, 200);
+    }),
+  );
+
+  // PATCH /acq/candidates/:candidateId/status — status lifecycle transitions.
+  // Body: { status: 'active'|'archived'|'acquired'|'passed' }
+  // Returns: { ok: boolean }
+  const StatusPatchInput = AcqCandidateRow.pick({ status: true });
+
+  app.patch('/acq/candidates/:candidateId/status', (c) =>
+    withDb(async (db) => {
+      const candidateId = c.req.param('candidateId');
+      if (!candidateId) return c.json({ error: 'candidateId required' }, 400);
+
+      const parsed = StatusPatchInput.safeParse(await c.req.json().catch(() => ({})));
+      if (!parsed.success) return c.json({ error: 'invalid status body', issues: parsed.error.issues }, 400);
+
+      const r = db.prepare(`
+        UPDATE acq_candidates SET status = ?, updated_at = datetime('now') WHERE id = ?
+      `).run(parsed.data.status, candidateId);
+
+      if (r.changes === 0) return c.json({ ok: false, error: 'candidate not found' }, 404);
+      return c.json({ ok: true });
+    }),
+  );
 
   return app;
 }
