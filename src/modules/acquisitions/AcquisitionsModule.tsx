@@ -10,6 +10,7 @@ import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { BarList } from '@/charts/BarList';
 import type { Deal, DealStage } from '@contracts/index';
 import { AcquisitionWorkbench } from './AcquisitionWorkbench';
+import { AcquisitionsIntel } from './AcquisitionsIntel';
 
 const STAGE_ORDER: DealStage[] = ['Sourcing', 'Candidate', 'LOI/PSA', 'Due Diligence', 'Refinance', 'Closing', 'Closed', 'Dead'];
 const STAGE_TONE: Record<DealStage, BadgeTone> = {
@@ -104,6 +105,7 @@ export function AcquisitionsModule() {
           />
         </div>
       </Card>
+      <AcquisitionsIntel />
     </div>
   );
 }
