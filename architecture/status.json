@@ -43,12 +43,12 @@
 
     "acquisition-scorecard": {
       "agent_role": "Engineering (Claude Code) — authorized solo by Gabriel 2026-06-13",
-      "phase": "Acquisition Scorecard — Workbench UI + live scoring API (contract/engine merged #25; ratified v1 merged #27)",
-      "status": "in_progress",
+      "phase": "Acquisition Scorecard — contract + engine merged (#25/#27). Phase 4 is the continuation.",
+      "status": "merged",
       "blocked_by": null,
       "review_needed": false,
-      "review_detail": "Contract + engine (#25) and ratified v1 + RCT + /api/warehouse/acquisition/score (#27) are MERGED. This increment adds the Acquisition Workbench UI (src/modules/acquisitions/) — UX-owned, no Architect files. Also fixes a pre-existing flaky ingest fixture (ExcelJS timestamp nondeterminism). Deferred: property_characteristics input persistence, calibration-log acquisition-score hook.",
-      "last_updated": "2026-06-14T14:55:00Z"
+      "review_detail": "Contract + engine (#25) and ratified v1 + RCT + /api/warehouse/acquisition/score (#27) are MERGED. Phase 4 (Steps 1–4,5,6,7,8,9) merged as PR #84 + PR #85.",
+      "last_updated": "2026-06-20T18:00:00Z"
     },
 
     "eric-live-phase1b-fat-mirror": {
@@ -71,6 +71,16 @@
       "last_updated": "2026-06-20T00:00:00Z"
     },
 
+    "phase-4-acq-intel": {
+      "agent_role": "Integration Agent + Analytics Agent",
+      "phase": "Phase 4 — Acquisition Intelligence Engine (Steps 1–4, 6, tests)",
+      "status": "merged",
+      "blocked_by": null,
+      "review_needed": false,
+      "review_detail": "MERGED via PR #84. Adversarial refute pass complete (Opus 4.8, 3 lenses). Worktree removed.",
+      "last_updated": "2026-06-20T18:00:00Z"
+    },
+
     "cool-franklin-b98c9f": {
       "agent_role": "Engineering (Claude Code) — authorized solo by Gabriel 2026-06-16",
       "phase": "Audit-batch hardening (PR #79) + systematization follow-ups (PR stacked on #79): shared money coercer, whole-overlay validation, delimiter-safe dedup keys, refute-required CI gate, dup-insight-id backstop",
@@ -81,6 +91,16 @@
       "last_updated": "2026-06-17T00:00:00Z"
     }
   },
+
+  "phase-4-steps-5-7-8-9": {
+      "agent_role": "Engineering (Claude Code) — authorized by Gabriel 2026-06-20 (proceed all recommendations)",
+      "phase": "Phase 4 — Steps 5 (Notion sync), 7 (Acq Intel UI), 8 (calibration outcome hook), 9 (governance rule)",
+      "status": "merged",
+      "blocked_by": null,
+      "review_needed": false,
+      "review_detail": "MERGED via PR #85. Adversarial refute pass + 6 CodeRabbit fixes. ACQ_PIPELINE_DB_ID updated to live Notion UUID post-merge. Worktree removed.",
+      "last_updated": "2026-06-20T18:00:00Z"
+    },
 
   "usage": {
     "how_to_update": "Edit your worktree's entry before starting and after completing work; commit it on your branch. Use ISO 8601 timestamps. Set review_needed=true and fill review_detail when you need architect sign-off on an architect-owned file.",

@@ -72,14 +72,15 @@ This is the single discipline that prevents the collision class this repo has al
 | 1b | FRED macro agent tool | Shipped ✓ |
 | B (PR #13) | Analytics engine (growth/drivers/anomalies/benchmarks/scores) | **Merged ✓** — INTEL_CONFIG weights ratified 2026-06-14 |
 | B2 (PR #14) | Intelligence UI | **Merged ✓** |
-| C | Briefings + PDF export (per-property + per-PM) | In branch — `feat/pfi-phase-c-briefings-pdf` (not yet in main) |
-| Acq | Acquisition Workbench UI + scoring API | In branch — stacked work pending |
+| B3/B4/B5 (PRs #34/#48/#50/#52/#76) | Calibration stack (005_calibration.sql, calibration.ts, src/modules/calibration/*) | **Merged ✓** — all on main |
+| C | Briefings + PDF export (per-property + per-PM) | In branch — `feat/pfi-phase-c-briefings-pdf` — **architect-gated** (package.json + src/contracts/briefing.ts approved 2026-06-20; adversarial refute required before merge) |
+| Acq | Acquisition Workbench UI + scoring API | Contract + engine (PRs #25/#27) merged; Workbench UI in progress |
 | 2 | Debt/Refi scoring + AI narrative briefings | Not started |
 | 3 | Forecast + Leasing intelligence | Not started |
 | 4 | **Acquisition Intelligence Engine** (firm priority #1) | Not started |
 | 5 | Capital Allocation capstone + Market intelligence | Not started |
 
-**Pending merge queue (order matters — stacked):** Phase C → Calibration UI/ops → Calibration snapshot → Test coverage / CORS → Launch.json fix. Land in sequence; each is a stacked branch.
+**Pending:** Phase C (architect-gated, see above).
 
 ---
 

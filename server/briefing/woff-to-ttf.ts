@@ -20,7 +20,13 @@ interface WoffTable {
   origLength: number;
 }
 
-/** Decode a WOFF 1.0 buffer into a standard TTF (sfnt) buffer. Throws on a non-WOFF1 input. */
+/**
+ * Converts a WOFF 1.0 font buffer into a standard TTF (sfnt) buffer.
+ *
+ * @returns The resulting TTF buffer.
+ * @throws If the input does not have a valid WOFF 1.0 signature.
+ * @throws If any table declares a compressed length greater than its original length.
+ */
 export function woffToTtf(woff: Buffer): Buffer {
   if (woff.toString('latin1', 0, 4) !== WOFF_SIGNATURE) {
     throw new Error('woffToTtf: input is not a WOFF 1.0 file (bad signature)');
