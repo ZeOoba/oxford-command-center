@@ -13,12 +13,12 @@
   "worktrees": {
     "main": {
       "agent_role": "Lead Architect",
-      "phase": "feat/governor-enforcement — warehouse bug fixes + governor guards (in PR)",
-      "status": "in_progress",
+      "phase": "Lead Architect — synthesis/triage (no active branch work)",
+      "status": "idle",
       "blocked_by": null,
       "review_needed": false,
       "review_detail": null,
-      "last_updated": "2026-06-16T00:00:00Z"
+      "last_updated": "2026-06-20T00:00:00Z"
     },
 
     "pfi-phase-b": {
