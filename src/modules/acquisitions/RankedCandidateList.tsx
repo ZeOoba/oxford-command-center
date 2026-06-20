@@ -2,7 +2,9 @@
 //
 // Renders the ranked acquisition candidate list from GET /acq/intel (Phase 4, Step 7).
 // Tier badges: T1=Gold, T2=Navy, PASS=neutral, KILLED=red.
-// Governor breach indicator: ⚠ when DSCR or LTV governor failed.
+// Governor breach indicator: ⚠ when DSCR governor failed.
+// ltvCleared is always null at screen time (no loan amount in AcquisitionInput — indeterminate);
+// the ltvCleared === false branch below is reserved for the future financing-stage LTV gate.
 import type { RankedCandidate } from '@contracts/acquisition';
 import { useSetCandidateStatus } from './hooks';
 
