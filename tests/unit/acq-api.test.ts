@@ -174,6 +174,64 @@ describe('GET /acq/intel', () => {
     expect(body.rankedCandidates[0]!.candidate.id).toBe(cand1);
     expect(body.rankedCandidates[1]!.candidate.id).toBe(cand2);
   });
+
+  it('returns 200 with default limit when limit=bad (non-numeric)', async () => {
+    const db = freshDb();
+    const app = makeApp(db);
+
+    // Non-numeric limit must not produce NaN/500 — API must default gracefully.
+    const res = await app.request('/acq/intel?limit=bad');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { rankedCandidates: unknown[] };
+    expect(Array.isArray(body.rankedCandidates)).toBe(true);
+  });
+
+  it('tie-case: same scored_at, higher id wins (id DESC tiebreaker — SQL-level assertion)', () => {
+    // This test targets the SQL join fix directly. The API response does not expose `composite`
+    // as a top-level field, so we assert at the DB query level with the same subquery the API uses.
+    const db = freshDb();
+
+    // Seed a candidate so the FK is satisfied.
+    db.prepare(`INSERT INTO acq_candidates (id, source, status) VALUES (?, 'parcel-screen', 'active')`).run('parcel:oh:test:tie-apn');
+    const cand = 'parcel:oh:test:tie-apn';
+
+    db.prepare(`
+      INSERT INTO acq_score_inputs (candidate_id, inputs_version, input_json, ruleset_version, rct_version)
+      VALUES (?, 'aaaa0000aaaa0000', '{}', '1.0.0', 'replacement-cost.v1')
+    `).run(cand);
+    db.prepare(`
+      INSERT INTO acq_score_inputs (candidate_id, inputs_version, input_json, ruleset_version, rct_version)
+      VALUES (?, 'bbbb1111bbbb1111', '{}', '1.0.0', 'replacement-cost.v1')
+    `).run(cand);
+    const si1 = (db.prepare('SELECT id FROM acq_score_inputs WHERE inputs_version = ?').get('aaaa0000aaaa0000') as { id: number }).id;
+    const si2 = (db.prepare('SELECT id FROM acq_score_inputs WHERE inputs_version = ?').get('bbbb1111bbbb1111') as { id: number }).id;
+
+    // Two scores for the same candidate, identical scored_at, different composite.
+    const TIE_TS = '2026-06-20T10:00:00';
+    db.prepare(`
+      INSERT INTO acq_scores (candidate_id, score_input_id, inputs_version, composite, tier, verdict,
+        advisory_only, capped_at_t2, gates_passed, floors_passed, floor_indeterminate, score_json, scored_at)
+      VALUES (?, ?, 'aaaa0000aaaa0000', 40, 'T2', 'WATCH', 1, 0, 1, 1, 0, '{}', ?)
+    `).run(cand, si1, TIE_TS);
+    db.prepare(`
+      INSERT INTO acq_scores (candidate_id, score_input_id, inputs_version, composite, tier, verdict,
+        advisory_only, capped_at_t2, gates_passed, floors_passed, floor_indeterminate, score_json, scored_at)
+      VALUES (?, ?, 'bbbb1111bbbb1111', 85, 'T1', 'PURSUE', 1, 0, 1, 1, 0, '{}', ?)
+    `).run(cand, si2, TIE_TS);
+
+    // Replicate the exact subquery the API uses. The higher-id row (si2, composite=85) must win.
+    const row = db.prepare(`
+      SELECT s.composite FROM acq_scores s
+      WHERE s.id = (
+        SELECT s2.id FROM acq_scores s2
+        WHERE s2.candidate_id = ?
+        ORDER BY s2.scored_at DESC, s2.id DESC
+        LIMIT 1
+      )
+    `).get(cand) as { composite: number } | undefined;
+    expect(row).toBeDefined();
+    expect(row!.composite).toBe(85);
+  });
 });
 
 // ── GET /acq/candidates ────────────────────────────────────────────────────────────────────

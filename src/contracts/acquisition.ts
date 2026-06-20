@@ -378,11 +378,11 @@ export type AcqIntelResponse = z.infer<typeof AcqIntelResponse>;
 
 /** Parcel-screen import batch request body. */
 export const ParcelScreenImportRequest = z.object({
-  batchLabel: z.string(),
-  county: z.string(),
-  state: z.string(),
+  batchLabel: z.string().trim().min(1),
+  county: z.string().trim().min(1),
+  state: z.string().trim().min(1),
   candidates: z.array(z.object({
-    apn: z.string(),
+    apn: z.string().trim().min(1),
     address: z.string().nullable(),
     market: ClusterTier.nullable(),
     rentableSf: z.number().nullable(),

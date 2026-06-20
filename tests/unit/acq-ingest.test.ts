@@ -235,3 +235,23 @@ describe('parcelCandidateId helper', () => {
     expect(parcelCandidateId('OH', 'Hamilton', 'APN 001 002')).toBe('parcel:oh:hamilton:apn-001-002');
   });
 });
+
+describe('ingestParcelScreenBatch — cross-state batchId isolation', () => {
+  it('OH Franklin and PA Franklin produce distinct batchIds', () => {
+    const db = freshDb();
+
+    const paFranklin: ParcelScreenImportRequest = {
+      batchLabel: 'Franklin County PA — 2026-06-20',
+      county: 'Franklin',
+      state: 'PA',
+      candidates: [{ apn: 'PA-001', address: null, market: null, rentableSf: null, yearBuilt: null, ownerName: null, parcelScreenScore: null }],
+    };
+
+    const { batchId: ohBatchId } = ingestParcelScreenBatch(db, franklinBatch()); // OH
+    const { batchId: paBatchId } = ingestParcelScreenBatch(db, paFranklin);       // PA
+
+    expect(ohBatchId).not.toBe(paBatchId);
+    expect(ohBatchId).toMatch(/parcel-screen:oh:franklin:/);
+    expect(paBatchId).toMatch(/parcel-screen:pa:franklin:/);
+  });
+});

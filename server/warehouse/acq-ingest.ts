@@ -50,9 +50,11 @@ export function ingestParcelScreenBatch(
   db: WarehouseDb,
   req: ParcelScreenImportRequest,
 ): IngestParcelScreenResult {
-  // Build a deterministic batch id from county + state + current date.
+  // Build a deterministic batch id from state + county + current date.
+  // State is required: counties with identical names across states (e.g. Franklin OH/PA)
+  // must produce distinct batch IDs or provenance is corrupted.
   const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-  const batchId = `parcel-screen:${slug(req.county)}:${today}`;
+  const batchId = `parcel-screen:${slug(req.state)}:${slug(req.county)}:${today}`;
 
   // Upsert the source batch row (INSERT OR IGNORE — same county/date is idempotent).
   db.prepare(`

@@ -102,8 +102,9 @@ export async function persistAndLogScore(
     finalVerdict = 'PASS';
   }
 
-  // 6. Advisory: score is advisory-only when the ruleset is not ratified.
-  const advisoryOnly = ruleset.ratification !== 'ratified';
+  // 6. Advisory: use the engine's own advisoryOnly flag as the source of truth.
+  // This guards against future engine conditions beyond ratification (e.g. RCT version).
+  const advisoryOnly = score.advisoryOnly;
 
   // 7. INSERT OR IGNORE into acq_score_inputs (idempotent on UNIQUE(candidate_id, inputs_version)).
   db.prepare(`

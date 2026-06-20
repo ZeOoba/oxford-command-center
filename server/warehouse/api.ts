@@ -18,7 +18,8 @@ import {
   VerdictKind,
 } from '../../src/contracts/warehouse';
 import { AcquisitionInput, AcqCandidateRow, ParcelScreenImportRequest } from '../../src/contracts/acquisition';
-import type { AcquisitionRuleset, AcquisitionScore, ReplacementCostTable } from '../../src/contracts/acquisition';
+import { AcquisitionScore } from '../../src/contracts/acquisition';
+import type { AcquisitionRuleset, ReplacementCostTable } from '../../src/contracts/acquisition';
 import { persistAndLogScore } from './acq-engine';
 import { ingestParcelScreenBatch } from './acq-ingest';
 import type { WarehouseDb } from './db';
@@ -520,7 +521,8 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       const statusParam = c.req.query('status') ?? 'active';
       const marketParam = c.req.query('market') ?? null;
       const verdictParam = c.req.query('verdict') ?? null;
-      const limitParam = Math.min(Math.max(1, Number(c.req.query('limit') ?? 100)), 500);
+      const rawLimit = Number(c.req.query('limit'));
+      const limitParam = Number.isFinite(rawLimit) ? Math.min(Math.max(1, rawLimit), 500) : 100;
 
       // Build candidate query with optional filters.
       const where: string[] = ['c.status = ?'];
@@ -544,10 +546,12 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
           s.governor_dscr_cleared, s.governor_ltv_cleared,
           s.score_json, s.scored_at, s.calibration_verdict_id
         FROM acq_candidates c
-        LEFT JOIN acq_scores s ON s.candidate_id = c.id
-          AND s.scored_at = (
-            SELECT MAX(s2.scored_at) FROM acq_scores s2 WHERE s2.candidate_id = c.id
-          )
+        LEFT JOIN acq_scores s ON s.id = (
+          SELECT s2.id FROM acq_scores s2
+          WHERE s2.candidate_id = c.id
+          ORDER BY s2.scored_at DESC, s2.id DESC
+          LIMIT 1
+        )
         WHERE ${where.join(' AND ')}
         ORDER BY s.composite DESC NULLS LAST, c.created_at DESC
         LIMIT ?
@@ -576,7 +580,8 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
         let latestScore: AcquisitionScore | null = null;
         if (row['score_json'] !== null && row['score_json'] !== undefined) {
           try {
-            latestScore = JSON.parse(row['score_json'] as string) as AcquisitionScore;
+            const parsed = AcquisitionScore.safeParse(JSON.parse(row['score_json'] as string));
+            latestScore = parsed.success ? parsed.data : null;
           } catch {
             latestScore = null;
           }
@@ -633,7 +638,8 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
     withDb((db) => {
       const statusParam = c.req.query('status') ?? 'active';
       const marketParam = c.req.query('market') ?? null;
-      const limitParam = Math.min(Math.max(1, Number(c.req.query('limit') ?? 200)), 1000);
+      const rawLimitC = Number(c.req.query('limit'));
+      const limitParam = Number.isFinite(rawLimitC) ? Math.min(Math.max(1, rawLimitC), 1000) : 200;
 
       const where: string[] = ['status = ?'];
       const params: Array<string | number> = [statusParam];

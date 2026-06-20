@@ -7,7 +7,7 @@
 CREATE TABLE IF NOT EXISTS acq_candidates (
   id              TEXT    PRIMARY KEY,          -- stable slug: 'parcel:<state>:<county>:<apn>' OR 'deal:<notion-id>'
   source          TEXT    NOT NULL,             -- 'parcel-screen' | 'notion-pipeline' | 'manual'
-  source_batch_id TEXT,                         -- links to acq_source_batches.id
+  source_batch_id TEXT    REFERENCES acq_source_batches(id),  -- links to acq_source_batches.id
   address         TEXT,
   county          TEXT,
   state           TEXT,
@@ -28,7 +28,7 @@ CREATE INDEX IF NOT EXISTS idx_acqcand_notion   ON acq_candidates(notion_deal_id
 
 -- Tracks each import batch (parcel-screen workbook upload or Notion pull).
 CREATE TABLE IF NOT EXISTS acq_source_batches (
-  id              TEXT    PRIMARY KEY,          -- 'parcel-screen:<county>:<YYYY-MM-DD>' | 'notion:<YYYY-MM-DDTHH:mm:ssZ>'
+  id              TEXT    PRIMARY KEY,          -- 'parcel-screen:<state>:<county>:<YYYY-MM-DD>' | 'notion:<YYYY-MM-DDTHH:mm:ssZ>'
   source          TEXT    NOT NULL,
   label           TEXT,                         -- human-readable: "Franklin County OH — 2026-06-20"
   imported_at     TEXT    NOT NULL DEFAULT (datetime('now')),
@@ -72,7 +72,7 @@ CREATE TABLE IF NOT EXISTS acq_scores (
   governor_dscr_cleared INTEGER,               -- 1 = cleared / 0 = failed / NULL = not evaluated
   governor_ltv_cleared  INTEGER,               -- 1 = cleared / 0 = failed / NULL = not evaluated
   score_json      TEXT    NOT NULL,             -- full AcquisitionScore JSON (authoritative)
-  calibration_verdict_id INTEGER,              -- FK to calibration_verdict once logged
+  calibration_verdict_id INTEGER REFERENCES calibration_verdict(id),  -- FK to calibration_verdict once logged
   scored_at       TEXT    NOT NULL DEFAULT (datetime('now')),
   UNIQUE(score_input_id)                        -- one score row per input snapshot
 );
