@@ -11,7 +11,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { normalizeTokens } from './match-tenant';
 
 const DEFAULT_PATH = join(process.cwd(), 'data', 'ar-mapping-cache.json');
 
@@ -19,9 +18,12 @@ function cachePath(): string {
   return process.env.AR_MAPPING_CACHE ?? DEFAULT_PATH;
 }
 
-/** Stable cache key: same normalization as the matcher so cached results hit consistently. */
+/** Stable cache key: lowercased + punctuation-normalized but entity suffixes KEPT.
+ *  normalizeTokens() strips 'llc'/'inc' etc., which collapses 'Apex LLC' and 'Apex Inc' to the
+ *  same key — the cache-hit branch skips review entirely, so a collision silently mis-attributes
+ *  one tenant's delinquency to another's lease across import runs. */
 export function cacheKey(rawName: string): string {
-  return normalizeTokens(rawName).join(' ');
+  return rawName.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').trim().replace(/\s+/g, ' ');
 }
 
 export interface MappingCache {

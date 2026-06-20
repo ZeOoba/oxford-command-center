@@ -15,12 +15,18 @@ afterEach(() => {
 });
 
 describe('cacheKey', () => {
-  it('normalizes to the same key as the matcher (lowercased, entity-suffix-stripped)', () => {
-    expect(cacheKey('Acme Industrial, LLC')).toBe('acme industrial');
-    expect(cacheKey('FOXWELL, LOUIS W.')).toBe('louis w foxwell');
+  it('lowercases and normalizes punctuation but keeps entity suffixes', () => {
+    // Suffixes are NOT stripped — 'Apex LLC' and 'Apex Inc' must stay distinct.
+    expect(cacheKey('Acme Industrial, LLC')).toBe('acme industrial llc');
+    expect(cacheKey('FOXWELL, LOUIS W.')).toBe('foxwell louis w');
   });
   it('is stable across case/whitespace variations of the same name', () => {
     expect(cacheKey('Building Bridges Therapy')).toBe(cacheKey('building bridges therapy'));
+  });
+  it('gives distinct keys for entity-suffix-only-distinct names (no cross-run mis-attribution)', () => {
+    expect(cacheKey('Apex, LLC')).not.toBe(cacheKey('Apex Inc'));
+    expect(cacheKey('Apex, LLC')).not.toBe(cacheKey('Apex Co'));
+    expect(cacheKey('Apex Inc')).not.toBe(cacheKey('Apex Co'));
   });
 });
 

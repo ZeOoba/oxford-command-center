@@ -88,12 +88,18 @@ export function detectArFormat(text: string): ArFormat {
  */
 function parseYardiAging(text: string): ArAgingRow[] {
   const rows: ArAgingRow[] = [];
-  // Property / entity / customer codes appear parenthesized: "29000 Information Lane (29000inf)",
-  // "Alchemy Works, Inc. (t0000738)". The PROPERTY-total row is printed as "<propcode> <7 tokens>"
-  // (no date) and would otherwise look exactly like a tenant subtotal — so collect every code and
-  // exclude any subtotal whose name is one. A real tenant name never equals a code.
+  // Collect all parenthesized codes: property codes (29000inf) and tenant codes (t0000738).
+  // The PROPERTY-total row is printed as "<propcode> <7 tokens>" — exclude any subtotal whose name
+  // equals a collected code.
   const codes = new Set<string>();
   for (const m of text.matchAll(/\(([A-Za-z0-9]+)\)/g)) codes.add(m[1]!);
+  // Also collect property DISPLAY LABELS from header lines ("29000 Information Lane (29000inf)").
+  // Yardi sometimes prints property subtotals using the display label instead of the code, which
+  // wouldn't be caught by the codes Set alone — those phantom rows carry the whole building's arrears.
+  const propertyLabels = new Set<string>();
+  for (const m of text.matchAll(/^(.+?)\s+\(([A-Za-z0-9]+)\)\s*$/gm)) {
+    if (!/^t\d+$/i.test(m[2]!)) propertyLabels.add(m[1]!.trim()); // skip tenant-code headers
+  }
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line || DATE_RE.test(line)) continue; // detail rows carry a date; subtotals never do
@@ -102,9 +108,15 @@ function parseYardiAging(text: string): ArAgingRow[] {
     // Everything before the first money token is the tenant name.
     const firstIdx = line.indexOf(tokens[0]!);
     const name = line.slice(0, firstIdx).trim().replace(/[•·\-\s]+$/, '');
-    // Skip: blank, the "(t0000738)" header form, a property/entity code (property-total row), and the
-    // Grand-Total / Total rows — each of which carries the whole property's arrears, not a tenant's.
-    if (!name || codes.has(name) || /\(t\d+\)$/i.test(name) || /^(grand\s+total|grand|total)\b/i.test(name)) continue;
+    // Anchored /^(grand\s+total|total)$/i — NOT a prefix match — so real tenants named
+    // "Total Wine & More" or "Grand Rapids Storage" are kept (they don't match exactly).
+    if (
+      !name ||
+      codes.has(name) ||
+      propertyLabels.has(name) ||
+      /\(t\d+\)$/i.test(name) ||
+      /^(grand\s+total|total)$/i.test(name)
+    ) continue;
     const v = tokens.map(money);
     rows.push({ tenant: name, property: null, d30: bucket(v[1]!), d60: bucket(v[2]!), d90: bucket(v[3]!), d90plus: bucket(v[4]!) });
   }
@@ -116,33 +128,55 @@ function parseYardiAging(text: string): ArAgingRow[] {
  *   <propcode> - <address> - Unit <x> - <TENANT NAME>
  * followed by detail rows (payer name + GL text + 6 money tokens) and a SUBTOTAL row that is money
  * tokens ONLY (6 of them: Amount, TotalReceivable, 0-30, 31-60, 61-90, 91+). Buckets = last 4.
- * The grand "Total ..." line is skipped.
+ *
+ * The TRUE subtotal is always the LAST money-only line in a block: pdfplumber can wrap a long GL
+ * detail row so its amounts extract onto their own line (money-only but NOT the subtotal). Taking
+ * the first money-only line would capture a single-charge balance and discard the real total.
+ * pendingBuckets is overwritten on each money-only line and flushed when the block ends.
  */
 function parseAppfolioAging(text: string): ArAgingRow[] {
   const rows: ArAgingRow[] = [];
   let curTenant: string | null = null;
   let curProperty: string | null = null;
+  let pendingBuckets: number[] | null = null; // last money-only line seen in this block
+
+  const flush = (): void => {
+    if (curTenant && pendingBuckets) {
+      rows.push({
+        tenant: curTenant,
+        property: curProperty,
+        d30: bucket(pendingBuckets[0]!),
+        d60: bucket(pendingBuckets[1]!),
+        d90: bucket(pendingBuckets[2]!),
+        d90plus: bucket(pendingBuckets[3]!),
+      });
+    }
+    curTenant = null;
+    pendingBuckets = null;
+  };
+
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line) continue;
     const unitMatch = line.match(/^(.*?)\s-\sUnit\s.*?-\s(.+)$/i);
     if (unitMatch) {
+      flush();
       curProperty = unitMatch[1]!.trim();
       curTenant = unitMatch[2]!.trim();
       continue;
     }
-    if (/^total\b/i.test(line)) { curTenant = null; continue; } // grand total — not a tenant subtotal
-    // A subtotal row is money tokens only (no letters other than the sign/commas).
+    // Do NOT kill curTenant on a leading-word "Total" — tenant names like "Total Comfort HVAC"
+    // would have all their detail lines suppressed. The grand-total footer is handled structurally:
+    // it appears outside any open tenant block (!curTenant) or is rejected by stripped !== '' below.
     const tokens = line.match(MONEY);
-    if (!tokens || !curTenant) continue;
+    if (!tokens || !curTenant) continue; // no open block → skip (covers the grand-total footer)
     const stripped = line.replace(MONEY, '').replace(/[\s,]/g, '');
-    if (stripped !== '' ) continue; // still has non-numeric text → a detail/charge row, not a subtotal
+    if (stripped !== '') continue; // has non-numeric text → detail/charge row, not a subtotal
     if (tokens.length < 4) continue;
-    const v = tokens.map(money);
-    const last4 = v.slice(-4); // 0-30, 31-60, 61-90, 91+
-    rows.push({ tenant: curTenant, property: curProperty, d30: bucket(last4[0]!), d60: bucket(last4[1]!), d90: bucket(last4[2]!), d90plus: bucket(last4[3]!) });
-    curTenant = null; // one subtotal per tenant block
+    pendingBuckets = tokens.map(money).slice(-4); // overwrite — last money-only line in block wins
   }
+  flush(); // finalize last tenant block if any
+
   return rows;
 }
 

@@ -117,6 +117,99 @@ describe('isGarbageExtraction — image-PDF detection', () => {
   });
 });
 
+describe('parseArAging — Yardi name-filter edge cases (tenants named "Total…" or "Grand…")', () => {
+  // Yardi column order: Current  0-30  31-60  61-90  Over90  Prepay  Total
+  //                     [0]      [1]   [2]    [3]    [4]     [5]     [6]
+  // d30=tokens[1]  d60=tokens[2]  d90=tokens[3]  d90plus=tokens[4]
+  const YARDI_TOTAL_GRAND = `Aging Detail Page 1
+demoinf (demoinf)
+Total Wine & More (t0000099)
+demoinf Total Wine & More Current C-99 GPRENT 05/01/2024 05/2024 0.00 0.00 0.00 0.00 9000.00 0.00 9000.00
+Total Wine & More 0.00 0.00 0.00 0.00 9000.00 0.00 9000.00
+Grand Rapids Storage (t0000100)
+demoinf Grand Rapids Storage Current C-100 GPRENT 05/01/2024 05/2024 0.00 0.00 0.00 7000.00 0.00 0.00 7000.00
+Grand Rapids Storage 0.00 0.00 0.00 7000.00 0.00 0.00 7000.00
+demoinf 0.00 0.00 0.00 7000.00 9000.00 0.00 16000.00
+Grand Total 0.00 0.00 0.00 7000.00 9000.00 0.00 16000.00`;
+
+  it('emits "Total Wine & More" (starts with "Total") with d90plus=9000', () => {
+    const { rows } = parseArAging(YARDI_TOTAL_GRAND);
+    const row = rows.find((r) => r.tenant === 'Total Wine & More');
+    expect(row).toBeDefined();
+    expect(row).toMatchObject({ d30: 0, d60: 0, d90: 0, d90plus: 9000 });
+  });
+
+  it('emits "Grand Rapids Storage" (starts with "Grand") with d90=7000', () => {
+    const { rows } = parseArAging(YARDI_TOTAL_GRAND);
+    const row = rows.find((r) => r.tenant === 'Grand Rapids Storage');
+    expect(row).toBeDefined();
+    expect(row).toMatchObject({ d30: 0, d60: 0, d90: 7000, d90plus: 0 });
+  });
+
+  it('still suppresses the literal "Grand Total" summary row', () => {
+    const { rows } = parseArAging(YARDI_TOTAL_GRAND);
+    expect(rows.some((r) => /^grand total$/i.test(r.tenant))).toBe(false);
+    expect(rows).toHaveLength(2);
+  });
+
+  it('suppresses a property-display-name total (display label used in subtotal row instead of code)', () => {
+    const TEXT = `Aging Detail Page 1
+29000 Information Lane (29000inf)
+Acme Co (t0000001)
+29000inf Acme Co Current C-1 GPRENT 05/01/2024 05/2024 100.00 100.00 0.00 0.00 0.00 0.00 100.00
+Acme Co 100.00 100.00 0.00 0.00 0.00 0.00 100.00
+29000 Information Lane 500.00 9000.00 0.00 0.00 0.00 0.00 9500.00`;
+    const { rows } = parseArAging(TEXT);
+    expect(rows.some((r) => r.tenant === '29000 Information Lane')).toBe(false);
+    expect(rows).toHaveLength(1);
+  });
+});
+
+describe('parseArAging — AppFolio edge case (tenant name starts with "Total")', () => {
+  const TOTAL_TENANT = `Aged Receivable Detail
+Payer Name GL Account Name Total Amount 0-30 31-60 61-90 91+
+demo - 100 Main St - Unit A - Total Comfort HVAC
+Total Comfort HVAC 08/01/2024 08/01/2024 38100000 Rent 5000.00 5000.00 0.00 0.00 5000.00 0.00
+5000.00 5000.00 0.00 0.00 5000.00 0.00
+Total 5000.00 5000.00 0.00 0.00 5000.00 0.00`;
+
+  it('emits "Total Comfort HVAC" with d90=5000 (detail lines must not be killed by /^total/)', () => {
+    const { rows } = parseArAging(TOTAL_TENANT);
+    const row = rows.find((r) => r.tenant === 'Total Comfort HVAC');
+    expect(row).toBeDefined();
+    expect(row).toMatchObject({ d30: 0, d60: 0, d90: 5000, d90plus: 0 });
+  });
+
+  it('does not emit an extra row for the grand Total footer', () => {
+    const { rows } = parseArAging(TOTAL_TENANT);
+    expect(rows).toHaveLength(1);
+  });
+});
+
+describe('parseArAging — AppFolio multi-charge block (last money-only line is the true subtotal)', () => {
+  // pdfplumber can wrap a GL detail row so its amounts extract onto their own money-only line.
+  // The true subtotal is always LAST; taking the first gives wrong/understated arrears.
+  const MULTI_CHARGE = `Aged Receivable Detail
+Payer Name GL Account Name Total Amount 0-30 31-60 61-90 91+
+demo - 1 Main St - Unit A - Northstar Logistics
+6000.00 6000.00 6000.00 0.00 0.00 0.00
+Northstar Logistics 08/01/2024 38200000 CAM 1000.00 1000.00 1000.00 0.00 0.00 0.00
+7000.00 7000.00 7000.00 0.00 0.00 0.00
+Total 7000.00 7000.00 7000.00 0.00 0.00 0.00`;
+
+  it('reports d30=7000 (true subtotal), not d30=6000 (orphaned intermediate line)', () => {
+    const { rows } = parseArAging(MULTI_CHARGE);
+    const row = rows.find((r) => r.tenant === 'Northstar Logistics');
+    expect(row).toBeDefined();
+    expect(row).toMatchObject({ d30: 7000, d60: 0, d90: 0, d90plus: 0 });
+  });
+
+  it('emits exactly one row (no duplicate from the intermediate line)', () => {
+    const { rows } = parseArAging(MULTI_CHARGE);
+    expect(rows).toHaveLength(1);
+  });
+});
+
 describe('parseArAging — unsupported / unknown', () => {
   it('rejects the bucket-less Delinquency report with a reason, never a silent empty', () => {
     const res = parseArAging(DELINQUENCY);

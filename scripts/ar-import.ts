@@ -18,8 +18,9 @@ import { spawnSync } from 'node:child_process';
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { parseArAging, isGarbageExtraction } from '../server/ar/ar-aging';
-import { matchTenantToLease, type LeaseLite } from '../server/ar/match-tenant';
+import { matchTenantToLease, normalizeTokens, type LeaseLite } from '../server/ar/match-tenant';
 import { loadCache, saveCache, cacheKey } from '../server/ar/mapping-cache';
+import { mergeByLease } from '../server/ar/merge-buckets';
 import type { TenantArrears } from '../src/contracts/index';
 
 const SERVER = process.env.ORA_SERVER ?? 'http://localhost:3000';
@@ -139,6 +140,7 @@ async function main(): Promise<void> {
   const leases = await fetchLeases();
   console.log(`✓ ${leases.length} lease(s) loaded`);
   const cache = loadCache();
+  const leaseIdSet = new Set(leases.map((l) => l.id));
 
   // 4 — Match + review
   console.log('\n─── Review ────────────────────────────────────────────────────────────────────');
@@ -152,7 +154,7 @@ async function main(): Promise<void> {
     const { tenant, d30, d60, d90, d90plus } = row;
     const key = cacheKey(tenant);
 
-    // Cache hit
+    // Cache hit — non-lossy key means this is the exact same raw name (modulo punctuation/case)
     const cached = cache.entries[key];
     if (cached !== undefined) {
       if (cached === 'SKIP') {
@@ -164,9 +166,18 @@ async function main(): Promise<void> {
       continue;
     }
 
-    // Auto-accept: exact or high confidence, unambiguous
+    // Auto-accept: exact normalized-token match, OR high confidence with ≥2 report tokens.
+    // Single-token report names (e.g. "Summit") can be a subset of one wrong lease at score 1.0 —
+    // require ≥2 tokens so truncated single-word names always go to human review.
     const match = matchTenantToLease(tenant, leases);
-    if ((match.confidence === 'exact' || match.confidence === 'high') && !match.ambiguous && match.leaseId) {
+    const reportTokenCount = normalizeTokens(tenant).length;
+    const autoAccept =
+      (match.confidence === 'exact' ||
+        (match.confidence === 'high' && reportTokenCount >= 2)) &&
+      !match.ambiguous &&
+      match.leaseId !== null;
+
+    if (autoAccept && match.leaseId) {
       printRow(tenant, d30, d60, d90, d90plus, `✓ auto → ${match.leaseId}`);
       cache.entries[key] = match.leaseId;
       confirmed.push({ leaseId: match.leaseId, arrears: { d30, d60, d90, d90plus }, tenant });
@@ -187,12 +198,22 @@ async function main(): Promise<void> {
         confirmed.push({ leaseId: match.leaseId, arrears: { d30, d60, d90, d90plus }, tenant });
         resolved = true;
       } else if (ans === 'n' || ans === 'manual') {
-        const manual = (await rl.question(`    Enter leaseId: `)).trim();
-        if (manual) {
-          cache.entries[key] = manual;
-          confirmed.push({ leaseId: manual, arrears: { d30, d60, d90, d90plus }, tenant });
-          resolved = true;
+        // Validate the entered leaseId exists in the snapshot — a typo'd id would write
+        // delinquency to the wrong tenant with no further guard.
+        let manual = '';
+        while (!manual) {
+          const entered = (await rl.question(`    Enter leaseId (must exist in snapshot): `)).trim();
+          if (!entered) continue;
+          if (!leaseIdSet.has(entered)) {
+            const sample = [...leaseIdSet].slice(0, 3).join(', ');
+            console.log(`    ✗ '${entered}' not in snapshot. Sample IDs: ${sample}`);
+            continue;
+          }
+          manual = entered;
         }
+        cache.entries[key] = manual;
+        confirmed.push({ leaseId: manual, arrears: { d30, d60, d90, d90plus }, tenant });
+        resolved = true;
       } else if (ans === 'skip') {
         cache.entries[key] = 'SKIP';
         console.log(`    → Skipped (cached)`);
@@ -205,25 +226,36 @@ async function main(): Promise<void> {
 
   rl.close();
 
-  // 5 — Summary + confirm write
+  // 5 — Merge multi-unit rows by leaseId (sum buckets) before writing.
+  // The overlay write does a REPLACE — without merging, a tenant with two units would have
+  // the second write silently overwrite the first, losing one unit's delinquency balance.
+  const toWrite = mergeByLease(confirmed);
+  if (toWrite.some((r) => r.multiUnit)) {
+    console.log('\n  ℹ Multi-unit tenants detected — buckets summed per lease:');
+    for (const r of toWrite.filter((r) => r.multiUnit)) {
+      console.log(`    ${r.leaseId}: ${r.tenant}`);
+    }
+  }
+
+  // 6 — Summary + confirm write
   const skipped = rows.length - confirmed.length;
   console.log('\n─── Summary ───────────────────────────────────────────────────────────────────');
   console.log(`  ${'Tenant'.padEnd(34)}  ${'Lease ID'.padEnd(24)}  ${'1–30d'.padStart(11)}  ${'31–60d'.padStart(11)}  ${'61–90d'.padStart(11)}  ${'91+d'.padStart(11)}`);
   console.log('  ' + '─'.repeat(114));
-  for (const { tenant, leaseId, arrears } of confirmed) {
+  for (const { tenant, leaseId, arrears } of toWrite) {
     const name = tenant.length > 34 ? tenant.slice(0, 33) + '…' : tenant.padEnd(34);
     console.log(`  ${name}  ${leaseId.padEnd(24)}  ${fmtUsd(arrears.d30).padStart(11)}  ${fmtUsd(arrears.d60).padStart(11)}  ${fmtUsd(arrears.d90).padStart(11)}  ${fmtUsd(arrears.d90plus).padStart(11)}`);
   }
-  console.log(`\n  ${confirmed.length} to write · ${skipped} skipped`);
+  console.log(`\n  ${toWrite.length} to write · ${skipped} skipped`);
 
-  if (confirmed.length === 0) {
+  if (toWrite.length === 0) {
     console.log('\n  Nothing to write.');
     await saveCache(cache);
     process.exit(0);
   }
 
   const rl2 = readline.createInterface({ input, output });
-  const confirm = (await rl2.question(`\nWrite ${confirmed.length} arrears record(s) to overlay? (y/n): `)).trim().toLowerCase();
+  const confirm = (await rl2.question(`\nWrite ${toWrite.length} arrears record(s) to overlay? (y/n): `)).trim().toLowerCase();
   rl2.close();
 
   if (confirm !== 'y') {
@@ -231,10 +263,10 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // 6 — Write
+  // 7 — Write
   console.log('\n→ Writing…');
   let written = 0;
-  for (const { leaseId, arrears, tenant } of confirmed) {
+  for (const { leaseId, arrears, tenant } of toWrite) {
     const ok = await writeTenantArrears(leaseId, arrears);
     if (ok) {
       written++;
@@ -243,7 +275,7 @@ async function main(): Promise<void> {
   }
 
   await saveCache(cache);
-  console.log(`\n✓ Done — ${written}/${confirmed.length} written · ${skipped} skipped · mapping cache saved`);
+  console.log(`\n✓ Done — ${written}/${toWrite.length} written · ${skipped} skipped · mapping cache saved`);
 }
 
 main().catch((e: unknown) => {
