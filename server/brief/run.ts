@@ -1,5 +1,5 @@
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import { buildAnalytics } from '../../src/analytics/engine';
 import { fmtUsdCompact, fmtPct } from '../../src/analytics/format';
@@ -7,6 +7,8 @@ import { evaluateConditions } from '../../src/analytics/conditions';
 import { loadState, saveState, diffCriticalAlerts, shouldSendBrief, etNow, type AlertState } from './state';
 import { renderBrief, renderAlert, type Email } from './render';
 import { sendEmail, type SendResult } from './send';
+import { openWarehouse } from '../warehouse/db';
+import { insuranceConditions } from '../warehouse/insurance-conditions';
 
 const DAY_MS = 86_400_000;
 // Routing canon: all automated outputs → ggoldberg only; Daily Brief is the sole cc-Eric exception.
@@ -30,6 +32,30 @@ export async function runBrief(
   const state: AlertState = loadState(deps.statePath);
 
   const insights = evaluateConditions(snapshot, { priorStages: state.dealStages });
+
+  // ── Warehouse-backed insurance conditions (Phase 5) ───────────────────────
+  // Guarded: any warehouse-open or read failure silently skips insurance alerts
+  // so the brief never fails because the warehouse is absent on a mirror.
+  // existsSync guard prevents openWarehouse from creating an empty DB on fresh
+  // worktrees/mirrors (which would cause warehouse:drift to fail on a schema-only file).
+  // The DB is opened locally and closed in the finally block.
+  try {
+    const warehousePath =
+      process.env['WAREHOUSE_DB'] ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
+    if (existsSync(warehousePath)) {
+      const wdb = openWarehouse(warehousePath);
+      try {
+        const insInsights = insuranceConditions(wdb, snapshot);
+        // Merge BEFORE criticalIds filter so insurance-expiry criticals flow into alert path.
+        insights.push(...insInsights);
+      } finally {
+        wdb.close();
+      }
+    }
+  } catch {
+    // Fail-open: warehouse unavailable (mirror, fresh worktree, etc.) → skip.
+  }
+
   const criticalIds = insights.filter((i) => i.severity === 'critical').map((i) => i.id);
   const { toAlert, nextAlerted } = diffCriticalAlerts(criticalIds, state);
 
