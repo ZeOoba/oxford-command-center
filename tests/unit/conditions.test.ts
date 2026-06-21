@@ -35,7 +35,7 @@ const lease = (o: Partial<Lease>): Lease => ({
 const loan = (o: Partial<Loan>): Loan => ({
   id: 'n1', name: 'Loan One', counterparty: null, direction: 'borrower', originalPrincipal: null, currentBalance: -500000,
   absBalance: 500000, rate: null, monthlyPmt: null, annualInterest: null, annualPrincipal: null, loanType: null,
-  status: null, isDemand: false, maturity: null, monthsToMaturity: null, ltv: null, lender: null, balloon: false, flags: [], ...o,
+  status: null, isDemand: false, maturity: null, monthsToMaturity: null, ltv: null, lender: null, balloon: false, flags: [], collateralProperty: null, ...o,
 });
 const policy = (o: Partial<InsurancePolicy>): InsurancePolicy => ({
   id: 'i1', property: 'Prop One', entity: null, coverage: 'Package', effective: null, expires: null, policyNo: null,
