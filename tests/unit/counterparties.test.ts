@@ -25,6 +25,7 @@ function loan(l: Partial<Loan>): Loan {
     lender: 'Symetra',
     balloon: true,
     flags: [],
+    collateralProperty: null,
     ...l,
   };
 }
