@@ -3,7 +3,7 @@
 > **IF YOU ARE AN AGENT: READ THIS ENTIRE FILE BEFORE TOUCHING ANY FILE IN THIS REPO.**
 > This is not optional. This is not a formality. Skipping this file is the root cause of every architectural collision this project has experienced.
 
-**Maintained by:** Lead Architect · **Last verified:** 2026-06-13
+**Maintained by:** Lead Architect · **Last verified:** 2026-06-21
 
 ---
 
@@ -43,15 +43,15 @@ These two spines have one critical defect: `Property.noi` (Spine A) and `warehou
 
 ---
 
-## 2. Current Build State (2026-06-17)
+## 2. Current Build State (2026-06-21)
 
 | Item | State |
 |------|-------|
 | Branch | `main` (worktree tracking origin/main) |
-| Last merge to main | PR #79 (`0b6e86d`) — strategic-audit fix batch + F1/F2/F3 adversarial hardening |
-| Open PRs | none in flight (`feat/ar-aging-parser` is a WIP branch — collections AR-aging data feed, not yet a PR) |
+| Last merge to main | PR #104 (`936016e`) — CR follow-up: fenced block lang tag + status.json repair |
+| Open PRs | none in flight |
 | Gate | typecheck + lint + test + reconcile + warehouse:verify + **governance** |
-| Tests | 1104+ vitest unit tests |
+| Tests | 1408+ vitest unit tests |
 | Uncommitted changes | Gabriel actively co-develops this tree — varies constantly |
 
 **Off-limits rule (do NOT enumerate the locked set here — it goes stale the instant Gabriel commits; that staleness is itself a failure mode):**
@@ -76,11 +76,11 @@ This is the single discipline that prevents the collision class this repo has al
 | C | Briefings + PDF export (per-property + per-PM) | **Merged ✓** — PR #86; adversarial refute (opus-4.8, 3-lens) complete 2026-06-20 |
 | Acq | Acquisition Workbench UI + scoring API | Contract + engine (PRs #25/#27) merged; Workbench UI in progress |
 | 4 | **Acquisition Intelligence Engine** (firm priority #1) | **Merged ✓** — PRs #84/#85 (Steps 1–9); Notion UUID wired post-merge |
-| 2 | Debt/Refi scoring + AI narrative briefings | Not started |
-| 3 | Forecast + Leasing intelligence | Not started |
+| 2 | Debt/Refi scoring + AI narrative briefings | **Merged ✓** — PRs #95/#96/#97 (Steps 1–6: migrations + scoring engine + API + Debt Scorecard UI) · #99 (W1: loan→property binding) · #101 (W2: AI narrative briefings Steps 7–11) |
+| 3 | Forecast + Leasing intelligence | **Next up** — spec at `docs/superpowers/specs/2026-06-21-phase-3-forecast-leasing-intelligence.md` |
 | 5 | Capital Allocation capstone + Market intelligence | Not started |
 
-**Pending:** Phase 2 (next up).
+**Pending:** Phase 3 (next up).
 
 ---
 
