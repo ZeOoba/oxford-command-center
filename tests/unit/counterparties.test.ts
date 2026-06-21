@@ -25,6 +25,7 @@ function loan(l: Partial<Loan>): Loan {
     lender: 'REDACTED-672',
     balloon: true,
     flags: [],
+    collateralProperty: null,
     ...l,
   };
 }

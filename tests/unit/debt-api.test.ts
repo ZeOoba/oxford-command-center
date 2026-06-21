@@ -2,7 +2,7 @@
 //
 // tests/unit/debt-api.test.ts
 //
-// Phase 2 Step 5 — Debt API sub-router tests.
+// Phase 2 Step 5 + binding fixes — Debt API sub-router tests.
 // Spec: docs/superpowers/specs/2026-06-20-phase-2-debt-refi-scoring-ai-narrative-briefings.md
 //
 // Tests:
@@ -17,7 +17,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { debtApi } from '../../server/warehouse/debt-api';
+import { debtApi, type DebtApiSnapshotPayload } from '../../server/warehouse/debt-api';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { DebtScoreResponse, MaturityLadderResponse } from '@contracts/debt';
@@ -361,6 +361,214 @@ describe('GET /maturity bucket boundaries', () => {
     const entry = body.ladder.find((e) => e.loanId === 'loan-null');
     expect(entry?.bucket).toBe('37+');
     expect(entry?.isDemand).toBe(true);
+  });
+});
+
+// ── POST /snapshot — multi-property-lender defect regression ─────────────────────────────
+
+/**
+ * THE ORIGINAL DEFECT TEST:
+ * Two loans from ONE lender on TWO different properties → each maps to its OWN property_master id.
+ * Before this fix, the lender-counterparty cross-product misattributed debt (same property to both).
+ */
+describe('POST /snapshot — two loans from one lender on two properties', () => {
+  it('each loan maps to its own property_master id — not a cross-product (original defect fixed)', async () => {
+    const db = freshDb();
+    const app = makeApp(db);
+
+    // Seed TWO distinct property_master rows
+    seedProperty(db, '3540-e-5th-ave-columbus-oh', '3540 E. 5th Ave, Columbus OH');
+    seedProperty(db, '29000-information-lane-easton-md', '29000 Information Lane, Easton MD');
+
+    // Two borrower loans from the SAME lender, but on DIFFERENT collateral properties
+    const payload: DebtApiSnapshotPayload = {
+      snapshotDate: '2026-06-21',
+      loans: [
+        {
+          id: 'borrower-5th-ave',
+          name: '5th Ave Mortgage',
+          counterparty: 'Acme Lending LLC',
+          direction: 'borrower' as const,
+          originalPrincipal: 1_000_000,
+          currentBalance: 800_000,
+          absBalance: 800_000,
+          rate: 0.065,
+          monthlyPmt: 5_000,
+          annualInterest: 52_000,
+          annualPrincipal: 8_000,
+          loanType: 'Amortizing',
+          status: 'Active',
+          isDemand: false,
+          maturity: '2031-01-01',
+          monthsToMaturity: 54,
+          ltv: 0.35,
+          lender: 'Acme Lending LLC',
+          balloon: false,
+          flags: [],
+          collateralProperty: '3540 E. 5th Ave, Columbus OH',
+        },
+        {
+          id: 'borrower-easton-md',
+          name: 'Easton Mortgage',
+          counterparty: 'Acme Lending LLC', // SAME lender
+          direction: 'borrower' as const,
+          originalPrincipal: 2_000_000,
+          currentBalance: 1_700_000,
+          absBalance: 1_700_000,
+          rate: 0.06,
+          monthlyPmt: 9_000,
+          annualInterest: 102_000,
+          annualPrincipal: 6_000,
+          loanType: 'Amortizing',
+          status: 'Active',
+          isDemand: false,
+          maturity: '2030-06-01',
+          monthsToMaturity: 48,
+          ltv: 0.38,
+          lender: 'Acme Lending LLC', // SAME lender — the original defect point
+          balloon: false,
+          flags: [],
+          collateralProperty: '29000 Information Lane, Easton MD',
+        },
+      ],
+      properties: [
+        { id: '3540-e-5th-ave-columbus-oh', name: '3540 E. 5th Ave, Columbus OH' },
+        { id: '29000-information-lane-easton-md', name: '29000 Information Lane, Easton MD' },
+      ],
+    };
+
+    const res = await app.request('/snapshot', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean; written: number; unresolved: number; errors: string[] };
+    expect(body.ok).toBe(true);
+    expect(body.written).toBe(2);
+    expect(body.unresolved).toBe(0);
+    expect(body.errors).toHaveLength(0);
+
+    // CRITICAL: each loan must have its OWN distinct property_id in the DB
+    const rows = db
+      .prepare('SELECT id, property_id FROM debt_positions WHERE status = \'active\' ORDER BY id')
+      .all() as Array<{ id: string; property_id: string | null }>;
+
+    expect(rows).toHaveLength(2);
+    const fiveAveRow = rows.find((r) => r.id === 'borrower-5th-ave');
+    const eastonRow = rows.find((r) => r.id === 'borrower-easton-md');
+
+    expect(fiveAveRow?.property_id).toBe('3540-e-5th-ave-columbus-oh');
+    expect(eastonRow?.property_id).toBe('29000-information-lane-easton-md');
+
+    // The two properties MUST be different (the original defect would make them the same or cross-product)
+    expect(fiveAveRow?.property_id).not.toBe(eastonRow?.property_id);
+  });
+
+  it('unresolvable collateralProperty (null) → property_id null + unresolved count reported', async () => {
+    const db = freshDb();
+    const app = makeApp(db);
+
+    const payload: DebtApiSnapshotPayload = {
+      snapshotDate: '2026-06-21',
+      loans: [
+        {
+          id: 'loan-no-prop',
+          name: 'Unattributed Loan',
+          counterparty: 'Some Bank',
+          direction: 'borrower' as const,
+          originalPrincipal: null,
+          currentBalance: 500_000,
+          absBalance: 500_000,
+          rate: 0.07,
+          monthlyPmt: 3_000,
+          annualInterest: 35_000,
+          annualPrincipal: 1_000,
+          loanType: null,
+          status: 'Active',
+          isDemand: false,
+          maturity: null,
+          monthsToMaturity: null,
+          ltv: null,
+          lender: 'Some Bank',
+          balloon: false,
+          flags: [],
+          collateralProperty: null, // unattributed — column not filled yet
+        },
+      ],
+      properties: [],
+    };
+
+    const res = await app.request('/snapshot', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean; written: number; unresolved: number; errors: string[] };
+    expect(body.ok).toBe(true);
+    expect(body.written).toBe(1); // row written, not dropped
+    expect(body.unresolved).toBe(1); // unresolved count is reported
+  });
+
+  it('typo\'d non-blank collateralProperty not in property_master → unresolved count reported (not silently mapped)', async () => {
+    // Fix MEDIUM regression: a non-blank collateralProperty that resolves to a slug which is
+    // NOT in property_master must land in unresolved (not silently enter the map).
+    // This guards the 0.40 LTV governor — a typo'd collateral name can mask a governor breach
+    // if the loan is bound to the wrong (or no) property.
+    const db = freshDb();
+    const app = makeApp(db);
+
+    // Do NOT seed a property_master row for 'typo-property-id' — it doesn't exist.
+    // The loan's collateralProperty is non-blank but resolves to an id not in property_master.
+
+    const payload: DebtApiSnapshotPayload = {
+      snapshotDate: '2026-06-21',
+      loans: [
+        {
+          id: 'loan-typo-collateral',
+          name: 'Loan With Typo\'d Property',
+          counterparty: 'Some Bank',
+          direction: 'borrower' as const,
+          originalPrincipal: 2_000_000,
+          currentBalance: 800_000,
+          absBalance: 800_000,
+          rate: 0.065,
+          monthlyPmt: 5_000,
+          annualInterest: 52_000,
+          annualPrincipal: 8_000,
+          loanType: 'Amortizing',
+          status: 'Active',
+          isDemand: false,
+          maturity: '2031-01-01',
+          monthsToMaturity: 54,
+          ltv: 0.40,
+          lender: 'Some Bank',
+          balloon: false,
+          flags: [],
+          collateralProperty: 'Typo Property Name XYZ', // non-blank but not in property_master
+        },
+      ],
+      properties: [
+        // Properties list does NOT include any entry matching 'Typo Property Name XYZ'
+        { id: 'some-other-prop', name: 'Some Other Property' },
+      ],
+    };
+
+    const res = await app.request('/snapshot', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean; written: number; unresolved: number; errors: string[] };
+    expect(body.ok).toBe(true);
+    expect(body.written).toBe(1); // row still written (not dropped)
+    // CRITICAL: the typo'd name must be counted as unresolved — NOT silently mapped
+    expect(body.unresolved).toBe(1);
   });
 });
 

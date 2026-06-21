@@ -265,6 +265,9 @@ function parseLoans(ws: Worksheet, flags: DataQualityFlag[]): Loan[] {
       lender: section === 'borrower' ? str(row(ws, r, 3)) : null,
       balloon: /balloon/i.test(`${name} ${status ?? ''}`),
       flags: [],
+      // Col 11 = Property display name (Gabriel adds this column); borrower only.
+      // null for lender/internal rows — never misattributed.
+      collateralProperty: section === 'borrower' ? (str(row(ws, r, 11)) ?? null) : null,
     });
   }
   return out;
