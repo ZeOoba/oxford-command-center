@@ -266,6 +266,14 @@ async function main(): Promise<number> {
     `).all() as Array<{ property_id: string; period_start: string; period_end: string; n: number }>;
     for (const d of dupPeriod) failures.push(`${d.n} committed imports for the same period (${d.property_id} ${d.period_start}..${d.period_end}) — supersede invariant violated`);
 
+    // 8b. Migration 008 schema presence — property_insurance_policies must exist.
+    const insTable = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='property_insurance_policies'",
+    ).get() as { name: string } | undefined;
+    if (!insTable) {
+      failures.push('property_insurance_policies table missing — migration 008 did not apply');
+    }
+
     // 9. Re-ingest smoke — exercise the parser-version RESTALE re-derive path, which verify otherwise
     //    never hits (it builds a fresh DB). Stale every committed import's parser_version, re-ingest the
     //    same files (→ in-place re-derive), then assert the re-derive is idempotent (same basis), empties
@@ -387,7 +395,8 @@ async function main(): Promise<number> {
     `no score-band collapse (< ${Math.round(SINGLE_BAND_COLLAPSE_SHARE * 100)}% single-bucket), ` +
     `integrity invariants hold, re-ingest re-derive idempotent, ` +
     `approve-path dual-side sides preserved over the real seed, ` +
-    `SF-less cohort exclusion verified (${CANON_PROPERTIES.filter((p) => p.rentableSf == null).length} non-operating entity/entities)`);
+    `SF-less cohort exclusion verified (${CANON_PROPERTIES.filter((p) => p.rentableSf == null).length} non-operating entity/entities), ` +
+    `property_insurance_policies schema present (migration 008)`);
   return 0;
 }
 
