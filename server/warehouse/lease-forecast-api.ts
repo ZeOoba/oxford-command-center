@@ -32,8 +32,10 @@ import {
   RentForecastInput,
   LeaseForecastResponse,
   RentForecastResponse,
+  LeaseNarrativeResponse,
   type RentScenario,
 } from '../../src/contracts/lease-forecast';
+import { composeLeaseNarrative } from '../ai/narrative';
 
 // ── Snapshot access ────────────────────────────────────────────────────────────
 
@@ -188,6 +190,85 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
     } catch (err) {
       console.error('[lease-forecast-api] /rent-forecast error:', err instanceof Error ? err.message : String(err));
       return c.json({ error: 'rent forecast failed' }, 500);
+    }
+  });
+
+  // ── GET /narrative ─────────────────────────────────────────────────────────
+  //
+  // Returns an AI-generated leasing intelligence narrative block.
+  // Degrades gracefully (null narrative + degraded:true) when AI unavailable.
+  // Does NOT require warehouse (Spine A only) — no withDb wrapper needed.
+  //
+  // H6 read boundary: response parsed through LeaseNarrativeResponse before emitting.
+  app.get('/narrative', async (_c) => {
+    try {
+      const snapshot = await getCurrentSnapshot();
+      if (!snapshot) {
+        return new Response(JSON.stringify({ error: 'snapshot unavailable' }), {
+          status: 503,
+          headers: { 'content-type': 'application/json' },
+        });
+      }
+
+      const asOf = snapshot.meta.asOf;
+      const leases = snapshot.leases;
+      const marketRents = (snapshot as typeof snapshot & { marketRents?: Record<string, number> }).marketRents ?? {};
+      const arrears = snapshot.tenantArrears ?? {};
+
+      const signals = renewalSignals(leases, asOf, snapshot.renewalStages, arrears);
+      const marketGapsAll = marketRentGaps(leases, marketRents);
+
+      const likelyCt    = signals.filter((s) => s.likelihood === 'likely').length;
+      const uncertainCt = signals.filter((s) => s.likelihood === 'uncertain').length;
+      const atRiskCt    = signals.filter((s) => s.likelihood === 'at-risk').length;
+      const lapsingCt   = signals.filter((s) => s.likelihood === 'lapsing').length;
+
+      const nearTermRent = leases
+        .filter((l) => bucketExpiry(l.monthsToExpiry, l.leaseEnd, asOf) === '0-6m')
+        .reduce((s, l) => s + l.annualRent, 0);
+
+      // Anonymize propertyKey → ordinal label before sending to AI (invariant 7: no raw
+      // owned-asset identifiers egress to the external API; only aggregated/ordinal data).
+      const topGaps = marketGapsAll
+        .filter((g) => g.gapPsf !== null)
+        .sort((a, b) => Math.abs(b.gapPsf ?? 0) - Math.abs(a.gapPsf ?? 0))
+        .slice(0, 5)
+        .map((g, i) => ({ propertyKey: `gap-${i + 1}`, gapPsf: g.gapPsf!, underMarket: g.underMarket }));
+
+      const input = {
+        asOf,
+        propertyCount: snapshot.properties.length,
+        signalSummary: { likelyCt, uncertainCt, atRiskCt, lapsingCt, nearTermExpiryRent: nearTermRent },
+        topGaps,
+        // slowLeasingProperties: intentionally empty — wiring from warehouse velocity deferred
+        // (requires withDb); omit raw property names from AI egress (invariant 7).
+        slowLeasingProperties: [] as string[],
+      };
+
+      const { narrative, degraded } = await composeLeaseNarrative(input, {
+        apiKey: process.env.ANTHROPIC_API_KEY,
+      });
+
+      // Use safeParse so a malformed compose result degrades to { degraded:true } via the
+      // catch block rather than throwing and returning HTTP 500 (Defect D4 from refute pass).
+      const envelope = LeaseNarrativeResponse.safeParse({ asOf, narrative, degraded });
+      if (!envelope.success) {
+        return new Response(
+          JSON.stringify({ asOf, narrative: null, degraded: true }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }
+
+      return new Response(
+        JSON.stringify(envelope.data),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    } catch (err) {
+      console.error('[lease-forecast-api] /narrative error:', err instanceof Error ? err.message : String(err));
+      return new Response(JSON.stringify({ error: 'narrative generation failed' }), {
+        status: 500,
+        headers: { 'content-type': 'application/json' },
+      });
     }
   });
 

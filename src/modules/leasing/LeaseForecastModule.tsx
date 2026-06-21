@@ -21,8 +21,8 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { Button } from '@/primitives/Button';
 import { DataTable, type Column } from '@/primitives/DataTable';
-import type { RentScenario, RentForecastResult, LeasingVelocity } from '@contracts/lease-forecast';
-import { RentForecastResponse } from '@contracts/lease-forecast';
+import type { RentScenario, RentForecastResult, LeasingVelocity, LeaseNarrativeResponse as LeaseNarrative } from '@contracts/lease-forecast';
+import { RentForecastResponse, LeaseNarrativeResponse } from '@contracts/lease-forecast';
 
 // ── Expiry bucket display helpers ──────────────────────────────────────────────
 
@@ -241,6 +241,14 @@ function MarketRentEditor({ marketRents }: { marketRents: Record<string, number>
 
 // ── Main module ────────────────────────────────────────────────────────────────
 
+async function fetchLeaseNarrative(): Promise<LeaseNarrative> {
+  const res = await fetch('/api/warehouse/leasing/narrative');
+  if (!res.ok) throw new Error(`Narrative fetch failed (${res.status})`);
+  const parsed = LeaseNarrativeResponse.safeParse(await res.json().catch(() => null));
+  if (!parsed.success) throw new Error('Invalid narrative response payload');
+  return parsed.data;
+}
+
 export function LeaseForecastModule() {
   const { data, error } = useLeaseForecast();
   const { data: snapshotData } = useSnapshot();
@@ -250,6 +258,10 @@ export function LeaseForecastModule() {
 
   const rentMutation = useMutation({
     mutationFn: () => fetchRentForecast(scenario, vacancyPct),
+  });
+
+  const narrativeMutation = useMutation({
+    mutationFn: fetchLeaseNarrative,
   });
 
   // Graceful warehouse degradation (show market-rent editor even when warehouse is down)
@@ -449,6 +461,66 @@ export function LeaseForecastModule() {
 
       {/* Section D — Market-Rent Editor */}
       <MarketRentEditor marketRents={marketRents} />
+
+      {/* Section E — AI Leasing Narrative */}
+      <Card>
+        <CardHeader
+          title="AI Leasing Narrative"
+          trailing={
+            <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+              Haiku 4.5 · fail-open
+            </span>
+          }
+        />
+        <div className="flex flex-col gap-3 p-4">
+          <Button
+            size="sm"
+            variant="subtle"
+            onPress={() => narrativeMutation.mutate()}
+            isDisabled={narrativeMutation.isPending}
+            aria-label="Generate leasing narrative"
+          >
+            Generate Leasing Narrative <ArrowRight size={12} />
+          </Button>
+
+          {narrativeMutation.isError && (
+            <div className="text-2xs" style={{ color: 'var(--color-neg)' }}>
+              Narrative unavailable — brain server not reachable.
+            </div>
+          )}
+
+          {narrativeMutation.data && (
+            <>
+              {narrativeMutation.data.degraded ? (
+                <div className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+                  Narrative unavailable — AI key not configured.
+                </div>
+              ) : narrativeMutation.data.narrative ? (
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <Badge tone="amber">AI Generated</Badge>
+                  </div>
+                  <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>
+                    {narrativeMutation.data.narrative.headline}
+                  </p>
+                  <p className="text-2xs" style={{ color: 'var(--text-secondary)' }}>
+                    {narrativeMutation.data.narrative.summary}
+                  </p>
+                  {narrativeMutation.data.narrative.bullets.length > 0 && (
+                    <ul className="list-disc pl-5 space-y-1">
+                      {narrativeMutation.data.narrative.bullets.map((bullet, i) => (
+                        <li key={i} className="text-2xs" style={{ color: 'var(--text-secondary)' }}>
+                          {bullet}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              ) : null}
+            </>
+          )}
+        </div>
+      </Card>
     </div>
   );
 }
