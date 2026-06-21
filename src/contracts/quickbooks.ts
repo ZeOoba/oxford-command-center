@@ -45,6 +45,8 @@ export const TenantArrears = z.object({
   d60: z.number().nonnegative().default(0),     // 31–60 days past due
   d90: z.number().nonnegative().default(0),     // 61–90 days past due
   d90plus: z.number().nonnegative().default(0), // 90+ days past due
+  asOfDate: z.coerce.date().nullable().optional(),
+  sourceFile: z.string().nullable().optional(),
 });
 export type TenantArrears = z.infer<typeof TenantArrears>;
 

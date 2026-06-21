@@ -15,9 +15,10 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { basename } from 'node:path';
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { parseArAging, isGarbageExtraction } from '../server/ar/ar-aging';
+import { parseArAging, isGarbageExtraction, extractAsOfDateFromFilename } from '../server/ar/ar-aging';
 import { matchTenantToLease, normalizeTokens, type LeaseLite } from '../server/ar/match-tenant';
 import { loadCache, saveCache, cacheKey } from '../server/ar/mapping-cache';
 import { mergeByLease } from '../server/ar/merge-buckets';
@@ -103,6 +104,14 @@ async function main(): Promise<void> {
   if (!pdfPath) {
     console.error('Usage: npx tsx scripts/ar-import.ts <pdf-path>');
     process.exit(1);
+  }
+
+  const sourceFile = basename(pdfPath);
+  const asOfDate = extractAsOfDateFromFilename(pdfPath);
+  if (asOfDate) {
+    console.log(`  As-of date: ${asOfDate.toISOString().slice(0, 10)} (from filename)`);
+  } else {
+    console.log(`  As-of date: not derivable from filename — records will have asOfDate=null`);
   }
 
   // 1 — Extract text
@@ -267,7 +276,7 @@ async function main(): Promise<void> {
   console.log('\n→ Writing…');
   let written = 0;
   for (const { leaseId, arrears, tenant } of toWrite) {
-    const ok = await writeTenantArrears(leaseId, arrears);
+    const ok = await writeTenantArrears(leaseId, { ...arrears, asOfDate, sourceFile });
     if (ok) {
       written++;
       console.log(`  ✓ ${leaseId}  (${tenant})`);
