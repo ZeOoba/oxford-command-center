@@ -1,5 +1,6 @@
 import { AlertTriangle, AlertCircle, Info, ArrowRight, Mail } from 'lucide-react';
 import type { Insight, InsightSeverity } from '@analytics/index';
+import { fmtUsdCompact } from '@analytics/index';
 import { Button } from '@/primitives/Button';
 import { useUi } from '@/brain/ui-context';
 import { insightToDraft } from '@/brain/draft';
@@ -43,6 +44,11 @@ export function InsightList({ insights }: { insights: Insight[] }) {
                 {i.metric && (
                   <span className="num shrink-0 text-2xs font-semibold" style={{ color }}>
                     {i.metric}
+                  </span>
+                )}
+                {i.impactAnnualUsd !== null && Number.isFinite(i.impactAnnualUsd) && i.impactAnnualUsd > 0 && (
+                  <span className="num shrink-0 text-2xs font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                    {fmtUsdCompact(i.impactAnnualUsd)}/yr
                   </span>
                 )}
               </div>

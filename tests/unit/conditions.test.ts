@@ -464,3 +464,76 @@ describe('evaluateConditions — debt proximity + refi spread', () => {
     expect(out.some((i) => i.id.startsWith('refi-spread-'))).toBe(false);
   });
 });
+
+// ── Phase 1: dollar-ranked alert display ─────────────────────────────────────────────────────
+describe('evaluateConditions — dollar ranking', () => {
+  // Within a severity tier, insights sort by impactAnnualUsd DESC (nulls last).
+  // Severity ordering remains primary — a critical with null impact beats a warning with $1M impact.
+
+  it('within the same severity tier, higher impactAnnualUsd sorts first — even when low-dollar is inserted first', () => {
+    // Two expiring leases (same severity = warning), different annualRent.
+    // SmallTenant ($20K) is inserted FIRST so insertion order favours it,
+    // but dollar-rank must put BigTenant ($50K) first instead.
+    const out = evaluateConditions(snap({
+      leases: [
+        lease({ id: 'l1', company: 'SmallTenant', leaseEnd: iso(90), annualRent: 20000 }),
+        lease({ id: 'l2', company: 'BigTenant',   leaseEnd: iso(90), annualRent: 50000 }),
+      ],
+    }), opts);
+    const l1idx = out.findIndex((i) => i.id === 'expiring-l1'); // $20K — inserted first
+    const l2idx = out.findIndex((i) => i.id === 'expiring-l2'); // $50K — inserted second
+    expect(l1idx).toBeGreaterThanOrEqual(0);
+    expect(l2idx).toBeGreaterThanOrEqual(0);
+    // Dollar ranking must put l2 ($50K) before l1 ($20K), overriding insertion order.
+    expect(l2idx).toBeLessThan(l1idx);
+  });
+
+  it('within the same severity tier, a null-impact insight sorts after a numeric-impact insight — even when null is inserted first', () => {
+    // balloon (null impact, warning) is inserted before lease (warning, $20K) in the loop.
+    // Dollar ranking must put the lease (numeric) before the balloon (null).
+    const out = evaluateConditions(snap({
+      loans:  [loan({ id: 'n1', balloon: true, maturity: iso(200) })],
+      leases: [lease({ id: 'l1', company: 'Tenant', leaseEnd: iso(90), annualRent: 20000 })],
+    }), opts);
+    const balloonIdx = out.findIndex((i) => i.id === 'balloon-n1'); // null impact, warning — inserted first
+    const leaseIdx   = out.findIndex((i) => i.id === 'expiring-l1'); // $20K impact, warning — inserted second
+    expect(leaseIdx).toBeGreaterThanOrEqual(0);
+    expect(balloonIdx).toBeGreaterThanOrEqual(0);
+    expect(out[leaseIdx]!.severity).toBe('warning');
+    expect(out[balloonIdx]!.severity).toBe('warning');
+    expect(out[leaseIdx]!.impactAnnualUsd).toBeGreaterThan(0);
+    expect(out[balloonIdx]!.impactAnnualUsd).toBeNull();
+    // Dollar ranking must put lease (numeric) before balloon (null), overriding insertion order.
+    expect(leaseIdx).toBeLessThan(balloonIdx);
+  });
+
+  it('severity ordering is still primary — critical with null impact precedes warning with $1M impact', () => {
+    // critical: reconciliation failure (null impact) must come before any warning
+    // warning: large expiring lease ($1M/yr)
+    const out = evaluateConditions(snap({
+      leases: [lease({ id: 'l1', company: 'BigTenant', leaseEnd: iso(90), annualRent: 1_000_000 })],
+      dataQuality: [{ entity: 'reconciliation', field: 'NOI total', issue: 'mismatch', severity: 'error' }],
+    }), opts);
+    const critIdx = out.findIndex((i) => i.id === 'reconcile-fail');
+    const warnIdx = out.findIndex((i) => i.id === 'expiring-l1');
+    expect(critIdx).toBeGreaterThanOrEqual(0);
+    expect(warnIdx).toBeGreaterThanOrEqual(0);
+    expect(out[critIdx]!.severity).toBe('critical');
+    expect(out[warnIdx]!.severity).toBe('warning');
+    expect(out[critIdx]!.impactAnnualUsd).toBeNull();
+    expect(out[warnIdx]!.impactAnnualUsd).toBe(1_000_000);
+    expect(critIdx).toBeLessThan(warnIdx);
+  });
+
+  it('two null-impact insights of the same severity preserve stable relative order', () => {
+    // Two info-severity alerts both with null impact: ltv-governor and workbook-stale.
+    // Neither must error or crash the sort.
+    const stale = { ...snap({
+      properties: [prop({ id: 'p1', ltv: 0.5 })],
+    }), meta: { schemaVersion: '1.0.0', asOf: ASOF, generatedAt: new Date(NOW - 49 * 3_600_000).toISOString(), source: 't', scenario: 'Base' } } as unknown as PortfolioSnapshot;
+    const out = evaluateConditions(stale, opts);
+    const infoItems = out.filter((i) => i.severity === 'info');
+    expect(infoItems.length).toBeGreaterThanOrEqual(2);
+    infoItems.forEach((i) => expect(i.impactAnnualUsd).toBeNull());
+  });
+});
