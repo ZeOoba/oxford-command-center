@@ -112,9 +112,12 @@ export async function composeNarrative(
 
     const subset = buildSubset(model);
 
-    // Pre-send confidentiality guard — must fire BEFORE any HTTP call
+    // Pre-send confidentiality guard — must fire BEFORE any HTTP call. Scan the FULL model, not
+    // just the subset: the model's text is a superset of the subset's, so this also catches a term
+    // in a field the subset never forwards. Defense-in-depth — does not rely on the caller having
+    // already run compose's assertNoConfidential (compose.ts) on the model.
     try {
-      assertNoConfidential(subset);
+      assertNoConfidential(model);
     } catch {
       return DEGRADED;
     }
