@@ -148,8 +148,6 @@
     "review_needed": false,
     "review_detail": "MERGED via PR #94 (expiry-soon + coverage-gap alert conditions). Stale in_progress corrected 2026-06-21 by phase-2-narrative.",
     "last_updated": "2026-06-21T18:00:00Z"
-    "review_detail": "MERGED via PR #94.",
-    "last_updated": "2026-06-21T12:00:00Z"
   },
 
   "phase-2-debt-scoring": {
@@ -160,8 +158,6 @@
     "review_needed": false,
     "review_detail": "MERGED via PR #95 (migrations 009/010 + src/contracts/debt.ts + debt-snapshot writer). Stale in_progress corrected 2026-06-21 by phase-2-narrative.",
     "last_updated": "2026-06-21T18:00:00Z"
-    "review_detail": "MERGED via PR #95.",
-    "last_updated": "2026-06-21T12:00:00Z"
   },
 
   "phase-2-debt-api": {
@@ -172,12 +168,6 @@
     "review_needed": false,
     "review_detail": "MERGED via PR #97 (scoring engine + debt-api sub-router mounted at /api/warehouse/debt + Debt Scorecard UI). Stale in_progress/review_needed corrected 2026-06-21 by phase-2-narrative.",
     "last_updated": "2026-06-21T18:00:00Z"
-    "phase": "Phase 2 Step 5 — debt API sub-router (scores + maturity ladder)",
-    "status": "merged",
-    "blocked_by": null,
-    "review_needed": false,
-    "review_detail": "MERGED via PR #97 (Steps 4–6: scoring engine + API sub-router + Debt Scorecard UI).",
-    "last_updated": "2026-06-21T10:00:00Z"
   },
 
   "phase-2-wiring": {

@@ -144,23 +144,25 @@ function mockFetch(
   };
 }
 
-// Track env mutations so afterEach can restore
+// Track env mutations so afterEach only restores when a test actually mutated the var.
+// Without the flag, afterEach would unconditionally delete CONFIDENTIAL_TERMS_PATH even for
+// tests that never called installSyntheticTerms, causing cross-test env contamination.
 let priorTermsPath: string | undefined;
+let termsPathMutated = false;
 
 afterEach(() => {
-  // Restore CONFIDENTIAL_TERMS_PATH after each test that modifies it.
-  if (priorTermsPath === undefined) {
-    delete process.env.CONFIDENTIAL_TERMS_PATH;
-  } else {
-    process.env.CONFIDENTIAL_TERMS_PATH = priorTermsPath;
-    priorTermsPath = undefined;
-  }
+  if (!termsPathMutated) return;
+  if (priorTermsPath === undefined) delete process.env.CONFIDENTIAL_TERMS_PATH;
+  else process.env.CONFIDENTIAL_TERMS_PATH = priorTermsPath;
+  priorTermsPath = undefined;
+  termsPathMutated = false;
 });
 
 /** Write a synthetic confidential-terms file and point the env var at it.
  *  Returns the always-term that will trigger a scan hit. */
 function installSyntheticTerms(term: string): void {
   priorTermsPath = process.env.CONFIDENTIAL_TERMS_PATH;
+  termsPathMutated = true;
   const dir = mkdtempSync(join(tmpdir(), 'narrative-conf-'));
   const file = join(dir, 'terms.json');
   writeFileSync(
