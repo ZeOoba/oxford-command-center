@@ -16,10 +16,22 @@
 // the bottom-of-file guard runs main() only when executed directly (mirrors governance-check.ts).
 import { execFileSync } from 'node:child_process';
 
+// Pure route-plumbing / dispatch files in server/warehouse/ that contain no financial math —
+// subtracted from the broad prefix. Fail-CLOSED elsewhere: any warehouse file NOT listed here
+// still requires a refute trailer. See architecture/coding-standards.md.
+// NOTE: actions.ts dispatches recompute (scoreProperties/detectAnomalies) but holds no math;
+// re-evaluate this entry if it gains analytic logic.
+export const DELIVERY_ONLY_PATHS: ReadonlySet<string> = new Set([
+  'server/warehouse/api.ts',
+  'server/warehouse/debt-api.ts',
+  'server/warehouse/actions.ts',
+]);
+
 /** True when a changed path holds financial-decision SOURCE (not a test / doc / json fixture). */
 export function isFinancialSourcePath(p: string): boolean {
   const path = p.replace(/\\/g, '/');
   if (/\.(test|spec)\.(ts|tsx)$/.test(path) || path.endsWith('.md') || path.endsWith('.json')) return false;
+  if (DELIVERY_ONLY_PATHS.has(path)) return false;
   return (
     path.startsWith('src/analytics/') ||
     path.startsWith('server/warehouse/') ||
