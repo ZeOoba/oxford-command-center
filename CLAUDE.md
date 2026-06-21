@@ -48,10 +48,10 @@ These two spines have one critical defect: `Property.noi` (Spine A) and `warehou
 | Item | State |
 |------|-------|
 | Branch | `main` (worktree tracking origin/main) |
-| Last merge to main | PR #107 (`9e16326`) — Phase 3 W1: lease forecast analytics + L-1..L-5 alert conditions |
+| Last merge to main | PR #109 (`7cd2249`) — Phase 3 W2: Leasing Intelligence UI |
 | Open PRs | none in flight |
 | Gate | typecheck + lint + test + reconcile + warehouse:verify + **governance** |
-| Tests | 1590+ vitest unit tests |
+| Tests | 1603+ vitest unit tests |
 | Uncommitted changes | Gabriel actively co-develops this tree — varies constantly |
 
 **Off-limits rule (do NOT enumerate the locked set here — it goes stale the instant Gabriel commits; that staleness is itself a failure mode):**
@@ -77,10 +77,10 @@ This is the single discipline that prevents the collision class this repo has al
 | Acq | Acquisition Workbench UI + scoring API | Contract + engine (PRs #25/#27) merged; Workbench UI in progress |
 | 4 | **Acquisition Intelligence Engine** (firm priority #1) | **Merged ✓** — PRs #84/#85 (Steps 1–9); Notion UUID wired post-merge |
 | 2 | Debt/Refi scoring + AI narrative briefings | **Merged ✓** — PRs #95/#96/#97 (Steps 1–6: migrations + scoring engine + API + Debt Scorecard UI) · #99 (W1: loan→property binding) · #101 (W2: AI narrative briefings Steps 7–11) |
-| 3 | Forecast + Leasing intelligence | **W1 Merged ✓** — PR #107 (lease-forecast analytics + L-1..L-5 + leasingVelocity + migration 011); W2 (UI) next |
+| 3 | Forecast + Leasing intelligence | **W1+W2 Merged ✓** — PR #107 (W1: lease-forecast analytics + L-1..L-5 + leasingVelocity + migration 011) · PR #109 (W2: Leasing Intelligence UI); W3 (AI narrative) optional |
 | 5 | Capital Allocation capstone + Market intelligence | Not started |
 
-**Pending:** Phase 3 W2 — leasing UI modules (`src/modules/leasing/`).
+**Pending:** Phase 5 (Capital Allocation capstone) or Phase 3 W3 (AI narrative leasing briefing — optional).
 
 ---
 

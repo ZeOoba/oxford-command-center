@@ -213,11 +213,11 @@
   "phase-3-w2": {
     "agent_role": "UX Agent + Intelligence Agent — Claude Code Sonnet 4.6",
     "phase": "Phase 3 W2 — LeaseForecastModule + RenewalsModule likelihood badges + LeasesModule market-rent column + market-rent overlay action",
-    "status": "in_progress",
+    "status": "merged",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "Touches server/index.ts (architect-owned) to add POST /api/actions/market-rent overlay write route. Pre-authorized by Gabriel (architect) 2026-06-21.",
-    "last_updated": "2026-06-21T21:30:00Z"
+    "review_needed": false,
+    "review_detail": "MERGED via PR #109. LeaseForecastModule (expiry buckets + rent-forecast scenarios + velocity table + market-rent editor) + RenewalsModule likelihood badges + LeasesModule market-rent gap column + POST /api/actions/market-rent overlay write route. CR follow-up: key validation, MarketRentInput extracted to contracts, null sentinels, throw-on-error. 1603 tests. Worktree phase-3-w2 removed post-merge.",
+    "last_updated": "2026-06-21T22:00:00Z"
   },
 
   "usage": {
