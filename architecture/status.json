@@ -150,6 +150,16 @@
     "last_updated": "2026-06-21T08:30:00Z"
   },
 
+  "phase-2-debt-scoring": {
+    "agent_role": "Integration Agent — Claude Code sonnet",
+    "phase": "Phase 2 Steps 1–3 — debt migrations + Zod contract + snapshot writer",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "src/contracts/debt.ts is a NEW file (not modifying existing contracts). scripts/warehouse-verify.ts gets a new assertion block only (additive). No architect-owned files structurally modified.",
+    "last_updated": "2026-06-21T09:00:00Z"
+  },
+
   "usage": {
     "how_to_update": "Edit your worktree's entry before starting and after completing work; commit it on your branch. Use ISO 8601 timestamps. Set review_needed=true and fill review_detail when you need architect sign-off on an architect-owned file.",
     "how_to_read": "Before starting any task, check all other worktrees for status=in_progress or review_needed. If another agent works in your file-ownership area, coordinate before editing."
