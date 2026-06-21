@@ -224,9 +224,9 @@ export function scoreDebtPositions(
     // Min months to maturity (soonest maturity is binding).
     // F3: null months_to_maturity (demand notes) must NOT be treated as "far away" via ?? 999.
     // A demand note is callable immediately — treating it as distant is materially wrong.
-    // Only non-null maturity values participate; if any loan has null maturity, it means
-    // we do NOT know its maturity — so minMonthsToMaturity remains null, which causes the
-    // cash-out maturity gate (requires non-null) to fail, blocking cash-out on demand notes.
+    // F3 edge case (CodeRabbit): mixed portfolios (demand note + term loan) must also block
+    // cash-out. hasUnknownMaturity tracks whether ANY loan had null maturity; after the loop,
+    // if true, minMonthsToMaturity is forced to null so the cash-out gate fails.
     let minMonthsToMaturity: number | null = null;
     let hasUnknownMaturity = false;
     {
@@ -239,6 +239,7 @@ export function scoreDebtPositions(
           minMonthsToMaturity = loan.months_to_maturity;
         }
       }
+      if (hasUnknownMaturity) minMonthsToMaturity = null;
     }
 
     // === Signal logic (first match wins) ===
