@@ -282,6 +282,14 @@ async function main(): Promise<number> {
       failures.push('debt_positions table missing — migration 009 did not apply');
     }
 
+    // 8d. Migration 011 schema presence — lease_events must exist (Phase 3 leasing-velocity log).
+    const leaseEventsExists = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='lease_events'",
+    ).get() as { name: string } | undefined;
+    if (!leaseEventsExists) {
+      failures.push('lease_events table missing — migration 011 did not apply');
+    }
+
     // 9. Re-ingest smoke — exercise the parser-version RESTALE re-derive path, which verify otherwise
     //    never hits (it builds a fresh DB). Stale every committed import's parser_version, re-ingest the
     //    same files (→ in-place re-derive), then assert the re-derive is idempotent (same basis), empties
