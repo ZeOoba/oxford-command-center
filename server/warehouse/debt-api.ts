@@ -20,7 +20,7 @@ import { Hono } from 'hono';
 import type { WarehouseDb } from './db';
 import { scoreDebtPositions } from './debt-scoring';
 import { propertyPeriodMetrics } from './metrics';
-import { getMacro } from '../macro/getMacro';
+import { fetchFredMacro } from '../macro/fred';
 import {
   DebtScoreResponse,
   MaturityLadderResponse,
@@ -105,17 +105,18 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
       try {
         const metrics = propertyPeriodMetrics(db);
 
-        // Attempt FRED DGS5 fetch. Failure → null (non-fatal per spec).
+        // Attempt live FRED DGS5 fetch. fetchFredMacro() returns null when FRED_API_KEY is
+        // absent or the request fails — getMacro() is intentionally NOT used here because it
+        // falls back to seeded data, masking genuine FRED unavailability and causing the refi
+        // signal to fire based on stale rates. A null rate → scorer emits 'hold', never 'refi'.
         let marketRateFiveYearTreasury: number | null = null;
-        try {
-          const macro = await getMacro();
-          const dgs5 = macro.indicators.find((ind) => ind.id === 'DGS5');
+        const fredSnap = await fetchFredMacro().catch(() => null);
+        if (fredSnap !== null) {
+          const dgs5 = fredSnap.indicators.find((ind) => ind.id === 'DGS5');
           if (dgs5 !== undefined && dgs5.value !== null) {
             // FRED reports as a percentage (e.g. 4.18 = 4.18%); scoring engine expects decimal.
             marketRateFiveYearTreasury = dgs5.value / 100;
           }
-        } catch {
-          // FRED fetch failed — proceed with null market rate; scorer handles gracefully.
         }
 
         const scores = scoreDebtPositions(db, metrics, marketRateFiveYearTreasury);
