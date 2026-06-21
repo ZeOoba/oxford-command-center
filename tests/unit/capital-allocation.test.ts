@@ -7,8 +7,18 @@ import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 
 vi.mock('../../server/macro/getMacro', () => ({ getMacro: vi.fn() }));
+vi.mock('../../server/warehouse/scores', () => ({ scoreProperties: vi.fn() }));
+vi.mock('../../server/warehouse/debt-scoring', () => ({ scoreDebtPositions: vi.fn() }));
+
 import { getMacro } from '../../server/macro/getMacro';
+import { scoreProperties } from '../../server/warehouse/scores';
+import { scoreDebtPositions } from '../../server/warehouse/debt-scoring';
+import type { PropertyScore } from '../../src/contracts/warehouse';
+import type { DebtScore } from '../../src/contracts/debt';
+
 const mockGetMacro = vi.mocked(getMacro);
+const mockScoreProperties = vi.mocked(scoreProperties);
+const mockScoreDebt = vi.mocked(scoreDebtPositions);
 
 function freshDb(): WarehouseDb {
   const dir = mkdtempSync(join(tmpdir(), 'cap-alloc-test-'));
@@ -26,15 +36,47 @@ function makeMacro(dgs5: number | null) {
   };
 }
 
-function seedProperty(db: WarehouseDb, id: string, market = 'Columbus OH') {
-  db.prepare(
-    `INSERT OR IGNORE INTO property_master (id, name, market, rentable_sf, acquisition_date)
-     VALUES (?, ?, ?, 20000, '2020-01-01')`
-  ).run(id, `Property ${id}`, market);
+function makePropertyScore(overrides: Partial<PropertyScore> = {}): PropertyScore {
+  return {
+    propertyId: 'prop-test',
+    propertyName: 'Test Property',
+    period: '2025',
+    health: 70,
+    healthBand: 'good',
+    attentionBand: 'yellow',
+    capitalAction: 'hold',
+    subScores: { noi: 70, growth: 60, efficiency: 65 },
+    noiPerSfQuartile: 2,
+    benchmarkCohortSize: 5,
+    reasons: ['Test property'],
+    ...overrides,
+  };
 }
+
+function makeDebtScore(overrides: Partial<DebtScore> = {}): DebtScore {
+  return {
+    propertyId: 'prop-test',
+    propertyName: 'Test Property',
+    noiBasis: 'ledger',
+    dscr: 1.45,
+    dscrHeadroom: 0.20,
+    ltv: 0.30,
+    ltvHeadroom: 0.10,
+    debtYield: 0.10,
+    signal: 'hold',
+    signalReason: null,
+    score: 75,
+    scoreBand: 'strong',
+    capitalConfigVersion: 1,
+    ...overrides,
+  };
+}
+
 
 beforeEach(() => {
   mockGetMacro.mockResolvedValue(makeMacro(4.18) as never);
+  mockScoreProperties.mockReturnValue([]);
+  mockScoreDebt.mockReturnValue([]);
 });
 
 describe('buildPortfolioAllocation', () => {
@@ -50,38 +92,48 @@ describe('buildPortfolioAllocation', () => {
     expect(result.actionCounts).toMatchObject({ buy: 0, hold: 0, sell: 0, refinance: 0, improve: 0 });
   });
 
-  it('A-2: property with capitalAction="disposition-candidate" → action="sell"', async () => {
+  it('A-2: disposition-candidate → action=sell, riskBand=high', async () => {
     const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
     const db = freshDb();
-    seedProperty(db, 'prop-sell');
-    // Seed enough ledger data so scores.ts produces capitalAction='disposition-candidate'
-    // Note: scores are computed from PeriodMetrics; with no ledger data, scoreProperties returns []
-    // So instead we test via mock: inject a custom PropertyScore that has capitalAction='disposition-candidate'
-    // We do this by seeding actual ledger rows that drive the engine to 'disposition-candidate'.
-    // This is complex to seed — instead, verify the action mapping by testing the pure verdict-mapping function
-    // SKIP: Use A-3 through A-10 for behavior; A-2 verifies schema shape on empty result.
-    // Schema validation
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-sell', capitalAction: 'disposition-candidate', healthBand: 'concern' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-sell', signal: 'hold' }),
+    ]);
     const result = await buildPortfolioAllocation(db, '2026-06-21');
-    expect(Array.isArray(result.verdicts)).toBe(true);
-    expect(typeof result.hurdleRatePct).toBe('number');
-    expect(typeof result.advisoryOnly).toBe('boolean');
+    expect(result.verdicts).toHaveLength(1);
+    const v = result.verdicts[0]!;
+    expect(v.action).toBe('sell');
+    expect(v.riskBand).toBe('high');
+    expect(v.timelineMonths).toBe(12);
+    expect(v.inputs.capitalAction).toBe('disposition-candidate');
   });
 
-  it('A-3: advisoryOnly=true when hurdleRateRatification=proposed (cold DB default)', async () => {
+  it('A-3: healthy property (good+hold) → NOT sell (no false positive); cash-out signal → refinance', async () => {
     const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
     const db = freshDb();
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-healthy', capitalAction: 'hold', healthBand: 'good' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-healthy', signal: 'cash-out' }),
+    ]);
     const result = await buildPortfolioAllocation(db, '2026-06-21');
-    // Cold DB → compile-time fallback → hurdleRateRatification='proposed' → advisoryOnly=true
-    expect(result.advisoryOnly).toBe(true);
+    expect(result.verdicts).toHaveLength(1);
+    // capitalAction='hold' → cannot be 'sell' even with cash-out signal
+    expect(result.verdicts[0]!.action).not.toBe('sell');
+    // cash-out signal → refinance (not sell, not hold)
+    expect(result.verdicts[0]!.action).toBe('refinance');
   });
 
   it('A-4: forecastInputs absent → all verdicts have horizonPeriods=0 and confidence01 ≤ 0.65', async () => {
     const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
     const db = freshDb();
-    seedProperty(db, 'prop-horizon');
-    // Seed minimal ledger data to get at least one verdict
-    // For this test, we test the rule on an empty result (vacuously true)
+    mockScoreProperties.mockReturnValue([makePropertyScore()]);
+    mockScoreDebt.mockReturnValue([makeDebtScore()]);
     const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.verdicts.length).toBeGreaterThan(0);
     for (const v of result.verdicts) {
       expect(v.horizonPeriods).toBe(0);
       expect(v.confidence01).toBeLessThanOrEqual(0.65);
@@ -91,42 +143,49 @@ describe('buildPortfolioAllocation', () => {
   it('A-5: forecastInputs provided → horizonPeriods = forecastInputs.periods', async () => {
     const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
     const db = freshDb();
-    seedProperty(db, 'prop-forecast');
+    mockScoreProperties.mockReturnValue([makePropertyScore()]);
+    mockScoreDebt.mockReturnValue([makeDebtScore()]);
     const result = await buildPortfolioAllocation(db, '2026-06-21', { periods: 8 });
+    expect(result.verdicts.length).toBeGreaterThan(0);
     for (const v of result.verdicts) {
       expect(v.horizonPeriods).toBe(8);
     }
   });
 
   it('A-6: debtSignal=governor-block → action=hold (not refinance)', async () => {
-    // When governor-block signal is present, the property is already straining DSCR/LTV.
-    // Refinancing into worse terms would worsen compliance — must stay 'hold'.
-    // We test the priority order by verifying governor-block never produces 'refinance'.
     const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
     const db = freshDb();
-    seedProperty(db, 'prop-govblock');
-    // Seed a debt_positions row that will produce governor-block signal (LTV > 0.40)
-    db.prepare(`INSERT INTO debt_positions (id, property_id, loan_name, current_balance, ltv, monthly_pmt, status, snapshot_date)
-      VALUES ('loan-govblock', 'prop-govblock', 'High LTV Loan', 500000, 0.45, 3000, 'active', '2026-06-21')`).run();
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-govblock', capitalAction: 'hold', healthBand: 'watch' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-govblock', signal: 'governor-block', scoreBand: 'critical' }),
+    ]);
     const result = await buildPortfolioAllocation(db, '2026-06-21');
-    // Note: with no ledger data, no verdicts will be produced. This is acceptable —
-    // the test verifies the constraint when verdicts exist.
-    for (const v of result.verdicts) {
-      if (v.inputs.debtSignal === 'governor-block') {
-        expect(v.action).not.toBe('refinance');
-        expect(v.action).toBe('hold');
-      }
-    }
+    expect(result.verdicts).toHaveLength(1);
+    const v = result.verdicts[0]!;
+    expect(v.action).toBe('hold');
+    expect(v.action).not.toBe('refinance');
+    expect(v.inputs.debtSignal).toBe('governor-block');
   });
 
   it('A-7: actionCounts sums to verdicts.length (buy always 0)', async () => {
     const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
     const db = freshDb();
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'p1', capitalAction: 'hold' }),
+      makePropertyScore({ propertyId: 'p2', capitalAction: 'disposition-candidate', healthBand: 'concern' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'p1', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'p2', signal: 'hold' }),
+    ]);
     const result = await buildPortfolioAllocation(db, '2026-06-21');
     const total = Object.values(result.actionCounts).reduce((a, b) => a + b, 0);
     // buy is always 0 in actionCounts (buy verdicts are in pipeline[])
     expect(result.actionCounts.buy).toBe(0);
     expect(total).toBe(result.verdicts.length);
+    expect(result.verdicts.length).toBe(2);
   });
 
   it('A-8: pipeline shows active acq_candidates; status=archived excluded', async () => {
@@ -147,7 +206,10 @@ describe('buildPortfolioAllocation', () => {
   it('A-9: returnAboveHurdle is null when expectedReturnPct is null', async () => {
     const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
     const db = freshDb();
+    mockScoreProperties.mockReturnValue([makePropertyScore({ capitalAction: 'hold' })]);
+    mockScoreDebt.mockReturnValue([makeDebtScore({ signal: 'hold' })]);
     const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.verdicts.length).toBeGreaterThan(0);
     for (const v of result.verdicts) {
       if (v.expectedReturnPct === null) {
         expect(v.returnAboveHurdle).toBeNull();

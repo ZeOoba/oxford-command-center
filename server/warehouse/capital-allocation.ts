@@ -122,7 +122,7 @@ function buildVerdict(
   }
 
   const returnAboveHurdle =
-    expectedReturnPct !== null ? expectedReturnPct > hurdleRatePct : null;
+    expectedReturnPct !== null ? expectedReturnPct >= hurdleRatePct : null;
 
   // Deferred-state flags added to reasons for transparency
   if (!forecastInputs) {
