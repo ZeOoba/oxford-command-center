@@ -223,11 +223,11 @@
   "phase-3-w3": {
     "agent_role": "Intelligence Agent — Claude Code Sonnet 4.6",
     "phase": "Phase 3 W3 — AI narrative leasing briefing (composeLeaseNarrative + /narrative route + LeaseForecastModule narrative panel)",
-    "status": "in_progress",
+    "status": "review_needed",
     "blocked_by": null,
-    "review_needed": false,
-    "review_detail": null,
-    "last_updated": "2026-06-21T23:30:00Z"
+    "review_needed": true,
+    "review_detail": "PR #111 open. Gate green (1622 tests). Adversarial refute (Opus 4.8, 6 defects found + fixed). Awaiting Gabriel squash-merge.",
+    "last_updated": "2026-06-21T23:45:00Z"
   },
 
   "usage": {
