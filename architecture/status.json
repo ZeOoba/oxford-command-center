@@ -143,41 +143,41 @@
   "insurance-alerts": {
     "agent_role": "Integration/Intelligence Agent",
     "phase": "Phase 5 — insurance alert conditions (expiry-soon + coverage-gap)",
-    "status": "in_progress",
+    "status": "merged",
     "blocked_by": null,
     "review_needed": false,
-    "review_detail": null,
-    "last_updated": "2026-06-21T08:30:00Z"
+    "review_detail": "MERGED via PR #94.",
+    "last_updated": "2026-06-21T12:00:00Z"
   },
 
   "phase-2-debt-scoring": {
     "agent_role": "Integration Agent — Claude Code sonnet",
     "phase": "Phase 2 Steps 1–3 — debt migrations + Zod contract + snapshot writer",
-    "status": "in_progress",
+    "status": "merged",
     "blocked_by": null,
     "review_needed": false,
-    "review_detail": "src/contracts/debt.ts is a NEW file (not modifying existing contracts). scripts/warehouse-verify.ts gets a new assertion block only (additive). No architect-owned files structurally modified.",
-    "last_updated": "2026-06-21T09:00:00Z"
+    "review_detail": "MERGED via PR #95.",
+    "last_updated": "2026-06-21T12:00:00Z"
   },
 
   "phase-2-debt-api": {
     "agent_role": "Analytics Agent",
     "phase": "Phase 2 Step 5 — debt API sub-router (scores + maturity ladder)",
-    "status": "in_progress",
+    "status": "merged",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "server/index.ts (architect-owned): additive route registration only — import debtApi + app.route('/api/warehouse/debt', debtApi(getWarehouse)). No existing routes altered. Awaiting architect acknowledgment.",
+    "review_needed": false,
+    "review_detail": "MERGED via PR #97 (Steps 4–6: scoring engine + API sub-router + Debt Scorecard UI).",
     "last_updated": "2026-06-21T10:00:00Z"
   },
 
   "phase-2-wiring": {
     "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-21",
-    "phase": "Phase 2 W1 finish — POST /debt/snapshot + reload-event auto-write + GET /scores/:propertyId",
-    "status": "in_progress",
+    "phase": "Phase 2 W1 — loan→property binding via workbook collateral column + crosswalk",
+    "status": "merged",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "server/index.ts (Architect-owned) — Gabriel PRE-AUTHORIZED 2026-06-21: (a) import writeDebtSnapshot, (b) debtApi mount second arg, (c) debt try/catch appended inside the existing brain.on('snapshot') listener. CORS line + governor constants untouched.",
-    "last_updated": "2026-06-21T00:00:00Z"
+    "review_needed": false,
+    "review_detail": "MERGED via PR #99. Three adversarial refute passes (Opus 4.8). Workbook Loan Index col 11 populated. Worktree p2-binding removed post-merge.",
+    "last_updated": "2026-06-21T12:00:00Z"
   },
 
   "usage": {
