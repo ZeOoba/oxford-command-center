@@ -25,6 +25,7 @@ function seeded(): MacroSnapshot {
     source: 'mock',
     indicators: [
       { id: 'DGS10', label: '10Y Treasury', value: 4.47, unit: '%', change: -0.01 },
+      { id: 'DGS5', label: '5Y Treasury', value: 4.18, unit: '%', change: null },
       { id: 'DGS2', label: '2Y Treasury', value: 4.05, unit: '%', change: null },
       { id: 'SOFR', label: 'SOFR', value: 3.63, unit: '%', change: null },
       { id: 'FEDFUNDS', label: 'Fed Funds (effective)', value: 3.63, unit: '%', change: null },

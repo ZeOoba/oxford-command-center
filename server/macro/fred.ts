@@ -35,8 +35,9 @@ async function tenYearHistory(): Promise<MacroSeriesPoint[]> {
 export async function fetchFredMacro(): Promise<MacroSnapshot | null> {
   if (!key()) return null;
   try {
-    const [t10, t2, sofr, ff, cpi, hist] = await Promise.all([
+    const [t10, t5, t2, sofr, ff, cpi, hist] = await Promise.all([
       obs('DGS10'),
+      obs('DGS5'),
       obs('DGS2'),
       obs('SOFR'),
       obs('FEDFUNDS'),
@@ -60,6 +61,7 @@ export async function fetchFredMacro(): Promise<MacroSnapshot | null> {
       source: 'live-fred',
       indicators: [
         ind('DGS10', '10Y Treasury', t10),
+        ind('DGS5', '5Y Treasury', t5),
         ind('DGS2', '2Y Treasury', t2),
         ind('SOFR', 'SOFR', sofr),
         ind('FEDFUNDS', 'Fed Funds (effective)', ff),

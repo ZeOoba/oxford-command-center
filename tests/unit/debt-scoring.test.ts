@@ -497,6 +497,44 @@ describe('F3 regression — cash-out blocked on demand notes (null months_to_mat
     expect(s.signal).not.toBe('cash-out');
     expect(s.signal).toBe('hold');
   });
+
+  it('F3 edge case — mixed portfolio: demand note + 60-month term loan still blocks cash-out', () => {
+    const db = freshDb();
+    // Loan A: demand note (months_to_maturity=null) — callable immediately.
+    // Loan B: 60-month term loan with governors clear (good DSCR + LTV headroom).
+    // Prior bug: the loop skipped Loan A (continue), then set minMonthsToMaturity=60,
+    // causing the cash-out gate (>24mo) to pass — incorrectly recommending cash-out
+    // even though a demand note is in the portfolio.
+    // Fix: hasUnknownMaturity=true → minMonthsToMaturity forced to null → gate fails.
+    insertLoan(db, {
+      id: 'loan-demand',
+      property_id: 'prop-a',
+      rate: 0.055,
+      ltv: 0.20,
+      monthly_pmt: 1_000,
+      months_to_maturity: null,   // demand note — callable immediately
+      current_balance: 200_000,
+    });
+    insertLoan(db, {
+      id: 'loan-term',
+      property_id: 'prop-a',
+      rate: 0.055,
+      ltv: 0.20,
+      monthly_pmt: 1_000,
+      months_to_maturity: 60,     // 60-month term — would pass the >24mo gate alone
+      current_balance: 600_000,
+    });
+    // DSCR = 200_000 / (2_000 * 12) ≈ 8.33 → headroom >> 0.5 ✓
+    // LTV = 0.20 (highest-balance loan, loan-term) → headroom = 0.20 > 0.10 ✓
+    // Rate 5.5% < threshold 8% → no refi
+    // With the bug: minMonthsToMaturity=60, signal='cash-out' (WRONG)
+    // With the fix: hasUnknownMaturity=true → minMonthsToMaturity=null → gate fails → signal≠cash-out
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const results = scoreDebtPositions(db, metrics, MARKET_5Y);
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s).toBeDefined();
+    expect(s.signal).not.toBe('cash-out');
+  });
 });
 
 describe('F4 regression — annualDebtService=null when all payment fields are null (no crash)', () => {
