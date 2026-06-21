@@ -382,3 +382,85 @@ describe('evaluateConditions — insight id uniqueness invariant (refute F1 clas
     expect(new Set(ids).size).toBe(ids.length);
   });
 });
+
+// ── Phase 2 slice 1: balloon impactAnnualUsd enrichment + refi-spread signal ──────────────────
+describe('evaluateConditions — debt proximity + refi spread', () => {
+  // (a) Balloon with monthlyPmt=10000 → annualDS=120000. maturity iso(180) ≈ 6 months.
+  //     factor = min(180/30/12, 1) = min(0.5, 1) = 0.5 → impactAnnualUsd ≈ 60000.
+  //     Tolerance: days→months conversion is approximate (30-day month proxy), so we allow ±5%.
+  it('(a) balloon with monthlyPmt derives impactAnnualUsd ≈ annualDS * min(monthsRemaining/12, 1)', () => {
+    const l = loan({ balloon: true, maturity: iso(180), monthlyPmt: 10000, absBalance: 500000 });
+    const out = evaluateConditions(snap({ loans: [l] }), opts);
+    const insight = out.find((i) => i.id === 'balloon-n1');
+    expect(insight).toBeDefined();
+    expect(insight!.provenance).toBe('derived');
+    // annualDS = 120000; factor ≈ 0.5 → impact ≈ 60000. Allow ±5%.
+    expect(insight!.impactAnnualUsd).not.toBeNull();
+    expect(insight!.impactAnnualUsd!).toBeGreaterThan(57000);
+    expect(insight!.impactAnnualUsd!).toBeLessThan(63000);
+  });
+
+  // (b) All debt-service inputs null → impactAnnualUsd null, provenance 'absent' (unchanged behavior).
+  it('(b) balloon with all debt-service fields null leaves impactAnnualUsd null, provenance absent', () => {
+    const l = loan({
+      balloon: true, maturity: iso(120),
+      monthlyPmt: null, annualInterest: null, annualPrincipal: null, rate: null,
+    });
+    const out = evaluateConditions(snap({ loans: [l] }), opts);
+    const insight = out.find((i) => i.id === 'balloon-n1');
+    expect(insight).toBeDefined();
+    expect(insight!.impactAnnualUsd).toBeNull();
+    expect(insight!.provenance).toBe('absent');
+  });
+
+  // (c) monthsToMaturity=14 (>12) → factor min(14/12, 1) = 1 → impact == full annualDebtService.
+  //     maturity is iso(300) so the alert fires (within balloonWarningDays=365).
+  //     monthsToMaturity is explicitly set to 14 (overrides the days/30 proxy) to exercise the cap.
+  it('(c) balloon within warning window but monthsToMaturity>12 caps factor at 1 → impact == full annualDS', () => {
+    const annualDS = 96000; // monthlyPmt=8000
+    const l = loan({
+      balloon: true, maturity: iso(300), // within 365d warning window
+      monthlyPmt: 8000,
+      monthsToMaturity: 14, // >12 → factor = min(14/12, 1) = 1 → full impact
+    });
+    const out = evaluateConditions(snap({ loans: [l] }), opts);
+    const insight = out.find((i) => i.id === 'balloon-n1');
+    expect(insight).toBeDefined();
+    expect(insight!.impactAnnualUsd).not.toBeNull();
+    // factor = min(14/12, 1) = 1 → full annualDS
+    expect(insight!.impactAnnualUsd!).toBeCloseTo(annualDS, 0);
+  });
+
+  // (d) refi-spread fires for a borrower loan with rate > estimatedMarketRate + refiSpreadBps.
+  //     rate=0.075, estimatedMarketRate=0.065, refiSpreadBps=0.005 → spread = 0.075 - 0.065 = 0.01
+  //     impact = (0.075 - 0.065) * 1,000,000 = 10,000; severity info; provenance derived.
+  it('(d) refi-spread fires for borrower loan with rate above market + spread threshold', () => {
+    const l = loan({ id: 'r1', direction: 'borrower', rate: 0.075, absBalance: 1_000_000 });
+    const out = evaluateConditions(snap({ loans: [l] }), opts);
+    const insight = out.find((i) => i.id === 'refi-spread-r1');
+    expect(insight).toBeDefined();
+    expect(insight!.severity).toBe('info');
+    expect(insight!.category).toBe('debt');
+    expect(insight!.provenance).toBe('derived');
+    expect(insight!.spine).toBe('B');
+    // impact = (0.075 - 0.065) * 1,000,000 = 10,000
+    expect(insight!.impactAnnualUsd).not.toBeNull();
+    expect(insight!.impactAnnualUsd!).toBeCloseTo(10_000, 0);
+  });
+
+  // (e) refi-spread does NOT fire when rate = 0.068 (= estimatedMarketRate + refiSpreadBps = 0.070;
+  //     0.068 < 0.070, so threshold not exceeded).
+  it('(e) refi-spread does NOT fire when rate is at or below market + spread threshold', () => {
+    const l = loan({ id: 'r2', direction: 'borrower', rate: 0.068, absBalance: 1_000_000 });
+    const out = evaluateConditions(snap({ loans: [l] }), opts);
+    expect(out.some((i) => i.id.startsWith('refi-spread-'))).toBe(false);
+  });
+
+  // (f) refi-spread does NOT fire for a lender/internal loan even with a high rate.
+  it('(f) refi-spread does NOT fire for lender-direction loans (no ORA interest obligation)', () => {
+    const lLender = loan({ id: 'r3', direction: 'lender', rate: 0.09, absBalance: 500_000 });
+    const lInternal = loan({ id: 'r4', direction: 'internal', rate: 0.09, absBalance: 500_000 });
+    const out = evaluateConditions(snap({ loans: [lLender, lInternal] }), opts);
+    expect(out.some((i) => i.id.startsWith('refi-spread-'))).toBe(false);
+  });
+});

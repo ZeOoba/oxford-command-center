@@ -29,7 +29,64 @@ export const ALERT_THRESHOLDS = {
   arStalenessMaxDays: 35,
   workbookStaleHours: 48,
   loiDeadlineWarnDays: 14,
+  // Phase 2 slice 1 — refi-spread signal.
+  // estimatedMarketRate: hardcoded 6.5% proxy for 5-year fixed industrial.
+  // TODO(phase-2): source from FRED macro feed (server/macro/getMacro.ts DGS10 + spread)
+  //   instead of hardcoding once the FRED macro tool (Phase 1b) is wired into evaluateConditions.
+  estimatedMarketRate: 0.065,
+  // refiSpreadBps: minimum excess above estimatedMarketRate that triggers the refi-spread signal.
+  // 0.005 = 50 bps. A loan must exceed estimatedMarketRate + refiSpreadBps to fire.
+  refiSpreadBps: 0.005,
 } as const;
+
+/**
+ * Derive the annual debt service from the available Loan fields.
+ *
+ * Priority (first non-null, finite path wins):
+ *   1. monthlyPmt * 12       — most direct; represents actual cash outflow.
+ *   2. (annualInterest ?? 0) + (annualPrincipal ?? 0)
+ *                            — sum of interest + scheduled principal; used when monthlyPmt is
+ *                              absent but component fields are populated (e.g. IO loans that
+ *                              report annualInterest only with annualPrincipal = 0).
+ *   3. absBalance * rate     — rate-fallback for amortizing/balloon loans where payment fields
+ *                              are missing. Uses absBalance (magnitude), NEVER the signed
+ *                              currentBalance, to avoid producing a negative debt service for
+ *                              lender-side rows. Produces interest-only estimate; principal is
+ *                              ignored (conservative: understates service slightly for amortizing).
+ *   4. null                  — no derivation possible.
+ *
+ * Every numeric input is coerced through Number.isFinite — a NaN or Infinity from a partially-
+ * populated overlay record is treated as unavailable rather than silently propagating.
+ */
+function annualDebtService(l: {
+  monthlyPmt: number | null;
+  annualInterest: number | null;
+  annualPrincipal: number | null;
+  rate: number | null;
+  absBalance: number;
+}): number | null {
+  // Path 1: monthly payment
+  if (l.monthlyPmt !== null && Number.isFinite(l.monthlyPmt)) {
+    return l.monthlyPmt * 12;
+  }
+  // Path 2: annual interest + principal components
+  const hasInterest = l.annualInterest !== null && Number.isFinite(l.annualInterest);
+  const hasPrincipal = l.annualPrincipal !== null && Number.isFinite(l.annualPrincipal);
+  if (hasInterest || hasPrincipal) {
+    return (hasInterest ? (l.annualInterest as number) : 0) +
+           (hasPrincipal ? (l.annualPrincipal as number) : 0);
+  }
+  // Path 3: rate fallback — interest-only estimate using absBalance (magnitude)
+  if (
+    l.rate !== null &&
+    Number.isFinite(l.rate) &&
+    Number.isFinite(l.absBalance) &&
+    l.absBalance > 0
+  ) {
+    return l.absBalance * l.rate;
+  }
+  return null;
+}
 
 export interface EvaluateOpts {
   /** Wall-clock now (ms) for the workbook-stale check. Defaults to Date.now(); injected in tests. */
@@ -54,6 +111,30 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
     if (l.balloon && l.maturity) {
       const days = daysBetween(l.maturity, asOf);
       if (days <= T.balloonWarningDays) {
+        // Phase 2 slice 1 — balloon impactAnnualUsd derivation.
+        //
+        // impactAnnualUsd = annualDebtService(l) × min(monthsRemaining / 12, 1.0)
+        //
+        // monthsRemaining: prefer l.monthsToMaturity (snapshot-computed, more accurate) over
+        //   the days-based proxy (days / 30). Either way, clamp to ≥ 0 — a past-due/overdue
+        //   balloon has monthsRemaining = 0, producing a factor of 0. We never let a negative
+        //   factor reduce impact below zero, because a past-due balloon is strictly MORE urgent,
+        //   not less — the displayed impact would be misleading if negative. Factor is then
+        //   clamped at 1.0 (ceiling): a balloon 24+ months out carries a full-year service load.
+        //
+        // provenance:
+        //   'derived'  — impact was computed from Loan fields (not a directly-stored dollar).
+        //   'absent'   — annualDebtService returned null; no derivation possible.
+        const ds = annualDebtService(l);
+        let impactAnnualUsd: number | null = null;
+        let provenance: Insight['provenance'] = 'absent';
+        if (ds !== null) {
+          const monthsRemaining = Math.max(0, l.monthsToMaturity ?? days / 30);
+          const factor = Math.min(monthsRemaining / 12, 1.0);
+          impactAnnualUsd = ds * factor;
+          provenance = 'derived';
+        }
+
         out.push({
           id: `balloon-${l.id}`,
           severity: days < T.balloonCriticalDays ? 'critical' : 'warning',
@@ -64,11 +145,47 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
           entityType: 'loan',
           entityId: l.id,
           action: { label: 'Open refi workspace', kind: 'open-refi' },
-          impactAnnualUsd: null,
+          impactAnnualUsd,
           spine: 'B',
-          provenance: 'absent',
+          provenance,
         });
       }
+    }
+
+    // Phase 2 slice 1 — refi-spread-opportunity signal.
+    //
+    // Fires when a borrower-direction loan's in-place rate exceeds the hardcoded market-rate
+    // proxy by more than refiSpreadBps. Only 'borrower' loans qualify — Oxford pays interest on
+    // those; a 'lender' or 'internal' loan has no refinanceable obligation on our side.
+    //
+    // impactAnnualUsd = (l.rate - estimatedMarketRate) × l.absBalance
+    //   — the annualized interest savings if the loan were refinanced at the market proxy today.
+    //   Uses absBalance (magnitude), never the signed currentBalance.
+    //   Guard: absBalance must be > 0 (a zero-balance loan has no savings).
+    //
+    // provenance: 'derived' — computed from Loan.rate × Loan.absBalance; not a stored dollar.
+    if (
+      l.direction === 'borrower' &&
+      l.rate !== null &&
+      Number.isFinite(l.rate) &&
+      Number.isFinite(l.absBalance) &&
+      l.absBalance > 0 &&
+      l.rate > T.estimatedMarketRate + T.refiSpreadBps
+    ) {
+      const rateDelta = l.rate - T.estimatedMarketRate;
+      out.push({
+        id: `refi-spread-${l.id}`,
+        severity: 'info',
+        category: 'debt',
+        title: `Refi spread — ${l.name}`,
+        detail: `In-place rate ${(l.rate * 100).toFixed(2)}% vs estimated market ${(T.estimatedMarketRate * 100).toFixed(2)}% — ${(rateDelta * 100).toFixed(2)}% spread on ${fmtUsd(l.absBalance)} balance. Estimated annual savings: ${fmtUsd(rateDelta * l.absBalance)}.`,
+        entityType: 'loan',
+        entityId: l.id,
+        action: { label: 'Open refi workspace', kind: 'open-refi' },
+        impactAnnualUsd: rateDelta * l.absBalance,
+        spine: 'B',
+        provenance: 'derived',
+      });
     }
   }
 
