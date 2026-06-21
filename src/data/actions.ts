@@ -33,6 +33,9 @@ export const createTask = (task: NewTask): Promise<void> => postAction('/api/act
 export const saveNoiBudget = (propertyId: string, amount: number): Promise<void> =>
   postAction('/api/actions/noi-budget', { propertyId, amount });
 
+export const saveMarketRent = (key: string, rentPsf: number): Promise<void> =>
+  postAction('/api/actions/market-rent', { key, rentPsf });
+
 export const refreshDealComps = async (dealId: string): Promise<CompSet> => {
   const res = await fetch('/api/actions/deal-comps', {
     method: 'POST',

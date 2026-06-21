@@ -26,6 +26,7 @@ import type { WarehouseDb } from './warehouse/db';
 import { warehouseRoutes } from './warehouse/api';
 import { debtApi } from './warehouse/debt-api';
 import { leaseForecastApi } from './warehouse/lease-forecast-api';
+import { MarketRentInput } from '../src/contracts/lease-forecast';
 import { writeDebtSnapshot } from './warehouse/debt-snapshot';
 import { buildLoanPropertyMap } from './warehouse/property-crosswalk';
 import { captureOccupancy } from './warehouse/occupancy';
@@ -218,6 +219,13 @@ app.post('/api/actions/noi-budget', async (c) => {
   if (!parsed.success) return c.json({ ok: false, error: 'Invalid propertyId or amount' }, 400);
   const ok = brain.setNoiBudget(parsed.data.propertyId, parsed.data.amount);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
+});
+
+app.post('/api/actions/market-rent', async (c) => {
+  const parsed = MarketRentInput.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ ok: false, error: 'Invalid key or rentPsf' }, 400);
+  const ok = brain.setMarketRent(parsed.data.key, parsed.data.rentPsf);
+  return c.json({ ok }, ok ? 200 : 503);
 });
 
 app.post('/api/actions/acquisition-input', async (c) => {

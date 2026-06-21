@@ -19,6 +19,7 @@ import {
   Scale,
   Database,
   Gauge,
+  TrendingUp,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -42,6 +43,7 @@ const PrincipalModule = lazy(() => import('@/modules/principal/PrincipalModule')
 const CloseModule = lazy(() => import('@/modules/close/CloseModule').then((m) => ({ default: m.CloseModule })));
 const IntelModule = lazy(() => import('@/modules/intel/IntelModule').then((m) => ({ default: m.IntelModule })));
 const CalibrationModule = lazy(() => import('@/modules/calibration/CalibrationModule').then((m) => ({ default: m.CalibrationModule })));
+const LeaseForecastModule = lazy(() => import('@/modules/leasing/LeaseForecastModule').then((m) => ({ default: m.LeaseForecastModule })));
 
 export type ModuleGroup = 'Command' | 'Assets' | 'Capital' | 'Market';
 
@@ -66,6 +68,7 @@ export const MODULES: ModuleDef[] = [
   { id: 'intel', label: 'Property Financials', icon: Database, group: 'Assets', Component: IntelModule },
   { id: 'calibration', label: 'Calibration', icon: Gauge, group: 'Assets', Component: CalibrationModule },
   { id: 'leases', label: 'Leases', icon: FileText, group: 'Assets', Component: LeasesModule },
+  { id: 'leasing', label: 'Leasing', icon: TrendingUp, group: 'Assets', Component: LeaseForecastModule },
   { id: 'tenants', label: 'Tenants', icon: Contact, group: 'Assets', Component: TenantsModule },
   { id: 'debt', label: 'Debt', icon: Landmark, group: 'Capital', Component: DebtModule },
   { id: 'cash', label: 'Cash', icon: Wallet, group: 'Capital', Component: CashModule },
