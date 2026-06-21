@@ -146,6 +146,22 @@ class Brain extends EventEmitter {
     return true;
   }
 
+  /** Write-back: set a user-supplied market rent for a property key (Phase 3 leasing intelligence). */
+  setMarketRent(key: string, rentPsf: number): boolean {
+    if (!this.base) return false;
+    const knownKeys = new Set(this.base.leases.map((l) => l.propertyKey));
+    if (!knownKeys.has(key)) return false;
+    const marketRents = { ...this.overlay.marketRents };
+    if (rentPsf <= 0) {
+      delete marketRents[key];
+    } else {
+      marketRents[key] = rentPsf;
+    }
+    this.overlay = { ...this.overlay, marketRents };
+    this.rederive('action:market-rent');
+    return true;
+  }
+
   /** Write-back: append a user-created task. */
   addTask(task: Task): void {
     this.overlay = { ...this.overlay, tasks: [task, ...this.overlay.tasks] };

@@ -118,6 +118,10 @@ export const RentForecastResponse = z.object({
 });
 export type RentForecastResponse = z.infer<typeof RentForecastResponse>;
 
+// ── Overlay write input ───────────────────────────────────────────────────────
+export const MarketRentInput = z.object({ key: z.string().min(1), rentPsf: z.number().nonnegative() });
+export type MarketRentInput = z.infer<typeof MarketRentInput>;
+
 // ── Full summary (used by briefing/narrative pipeline) ───────────────────────
 export const LeaseForecastSummary = z.object({
   asOf: z.string(),
