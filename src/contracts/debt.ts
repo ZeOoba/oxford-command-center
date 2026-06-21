@@ -38,7 +38,7 @@ export const DebtScore = z.object({
   ltvHeadroom: z.number().nullable(),
   debtYield: z.number().nullable(),
   signal: DebtSignal,
-  signalReason: z.string(),
+  signalReason: z.string().nullable(),
   score: z.number().min(0).max(100),
   scoreBand: DebtScoreBand,
   capitalConfigVersion: z.number().int(),
