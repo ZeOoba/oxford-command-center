@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isFinancialSourcePath, hasRefuteApproval } from '../../scripts/check-refute-required';
+import { isFinancialSourcePath, hasRefuteApproval, DELIVERY_ONLY_PATHS } from '../../scripts/check-refute-required';
 
 describe('check-refute-required — financial-source classification', () => {
   it('flags financial-decision source (incl. Windows separators)', () => {
@@ -17,6 +17,28 @@ describe('check-refute-required — financial-source classification', () => {
     expect(isFinancialSourcePath('architecture/status.json')).toBe(false);
     expect(isFinancialSourcePath('src/modules/principal/PrincipalModule.tsx')).toBe(false);
     expect(isFinancialSourcePath('src/lib/cn.ts')).toBe(false);
+  });
+});
+
+describe('check-refute-required — delivery-only allowlist', () => {
+  it('treats delivery-only warehouse routing files as non-financial', () => {
+    expect(isFinancialSourcePath('server/warehouse/api.ts')).toBe(false);
+    expect(isFinancialSourcePath('server/warehouse/debt-api.ts')).toBe(false);
+    expect(isFinancialSourcePath('server/warehouse/actions.ts')).toBe(false);
+    // Windows separators normalize before set lookup
+    expect(isFinancialSourcePath('server\\warehouse\\api.ts')).toBe(false);
+  });
+  it('still flags non-allowlisted warehouse files', () => {
+    expect(isFinancialSourcePath('server/warehouse/scores.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/warehouse/debt-scoring.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/warehouse/acq-engine.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/warehouse/queries.ts')).toBe(true);
+  });
+  it('exposes the delivery-only allowlist with the expected membership', () => {
+    expect(DELIVERY_ONLY_PATHS.size).toBe(3);
+    expect(DELIVERY_ONLY_PATHS.has('server/warehouse/api.ts')).toBe(true);
+    expect(DELIVERY_ONLY_PATHS.has('server/warehouse/debt-api.ts')).toBe(true);
+    expect(DELIVERY_ONLY_PATHS.has('server/warehouse/actions.ts')).toBe(true);
   });
 });
 

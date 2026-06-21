@@ -180,6 +180,14 @@
     "last_updated": "2026-06-21T12:00:00Z"
   },
 
+  "compassionate-lichterman-53a8c0": {
+    "agent_role": "Engineering (Claude Code, Sonnet 4.6) — authorized by Gabriel 2026-06-21",
+    "phase": "Narrow check-refute-required gate — delivery-file allowlist (Option D)",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Editing architecture/coding-standards.md to document the delivery-only allowlist and Refute-Skip convention. Gabriel is architect and directed this change in-session — treating as pre-authorized.",
+    "last_updated": "2026-06-21T12:00:00Z"
   "phase-2-narrative": {
     "agent_role": "Engineering (Claude Code) — Opus plans/reviews, Sonnet implements — Gabriel-authorized 2026-06-21 (D4/D5 ratified)",
     "phase": "Phase 2 Workstream 2 — AI Narrative Briefings (Steps 7–11): NarrativeBlock contract + composeNarrative (Haiku 4.5) + narrative JSON routes + PDF embed + Export-with-narrative button. Worktree: compassionate-golick-b55abd.",

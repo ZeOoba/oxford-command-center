@@ -97,6 +97,27 @@ change to financial-decision source (`src/analytics/**`, `server/warehouse/**`, 
 `server/overlay.ts`) lands without a `Refute-Reviewed: wf_<runId>` (or justified `Refute-Skip:`)
 commit trailer. Make it a required check via branch protection to hard-block.
 
+**Delivery-only allowlist.** Three files in `server/warehouse/` are pure route-plumbing and are
+explicitly exempted from the trailer requirement (declared in `DELIVERY_ONLY_PATHS` in
+`scripts/check-refute-required.ts`): `api.ts`, `debt-api.ts`, `actions.ts`. The gate is
+fail-**closed** for everything else — any warehouse file not in the allowlist still requires a
+trailer. Adding to the allowlist requires architect sign-off (same as any `architecture/` change);
+a new file not yet listed just keeps requiring a trailer until it is explicitly approved and added.
+
+_Caveat on `actions.ts`:_ it dispatches recompute (`scoreProperties`, `detectAnomalies`) but
+contains no financial math of its own. It qualifies as delivery-only under the current definition;
+re-evaluate this entry if it gains analytic logic.
+
+**Escape hatch for unlisted route files.** If a PR touches a route file not yet in the allowlist
+and you are confident it contains no financial math, use:
+
+```
+Refute-Skip: route-only — <file(s)> contain no financial math
+```
+
+This trailer is acceptable for genuine plumbing PRs only. It is never acceptable for changes that
+touch engine math, scoring, NOI/reconciliation, alert conditions, or the financial overlay.
+
 ---
 
 ## Imports
