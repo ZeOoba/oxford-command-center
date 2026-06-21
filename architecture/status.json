@@ -122,6 +122,16 @@
     "last_updated": "2026-06-20T21:00:00Z"
   },
 
+  "debt-proximity": {
+    "agent_role": "Analytics Agent",
+    "phase": "Phase 2 slice 1 — balloon impactAnnualUsd derivation + refi-spread-opportunity insight",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "Touches src/analytics/conditions.ts (Analytics-Agent-owned) and tests/unit/conditions.test.ts only. No architect-owned files. No governor constants modified. Display-alert enrichment over existing Loan data.",
+    "last_updated": "2026-06-20T22:00:00Z"
+  },
+
   "usage": {
     "how_to_update": "Edit your worktree's entry before starting and after completing work; commit it on your branch. Use ISO 8601 timestamps. Set review_needed=true and fill review_detail when you need architect sign-off on an architect-owned file.",
     "how_to_read": "Before starting any task, check all other worktrees for status=in_progress or review_needed. If another agent works in your file-ownership area, coordinate before editing."
