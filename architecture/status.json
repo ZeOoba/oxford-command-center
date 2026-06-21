@@ -183,11 +183,11 @@
   "phase-2-narrative": {
     "agent_role": "Engineering (Claude Code) — Opus plans/reviews, Sonnet implements — Gabriel-authorized 2026-06-21 (D4/D5 ratified)",
     "phase": "Phase 2 Workstream 2 — AI Narrative Briefings (Steps 7–11): NarrativeBlock contract + composeNarrative (Haiku 4.5) + narrative JSON routes + PDF embed + Export-with-narrative button. Worktree: compassionate-golick-b55abd.",
-    "status": "in_progress",
+    "status": "review_needed",
     "blocked_by": null,
     "review_needed": true,
-    "review_detail": "Architect-owned touches (additive only, await acknowledgment): (1) src/contracts/briefing.ts — ADD NarrativeBlock + Narrative{Property,Manager}BriefingModel; base BriefingModel UNCHANGED. (2) server/warehouse/api.ts — ADD two narrative JSON routes (/briefing/{property,manager}/:slug/narrative) + a ?narrative=1 branch on the existing .pdf routes; no existing route altered. Decoupled from Tier 1 (reads composed BriefingModel, not the live snapshot — no getLoans dep). 'Three narrative routes' in the (missing) spec resolved to 2 JSON routes + PDF query-param: there are exactly two briefing subjects. Mandatory adversarial refute pass on narrative.ts + api.ts before done.",
-    "last_updated": "2026-06-21T18:00:00Z"
+    "review_detail": "COMPLETE — Steps 7-11 implemented, full local gate GREEN (governance+typecheck 0+lint 0+vitest+reconcile+warehouse:verify). Awaiting architect ack on additive architect-owned touches before merge: (1) src/contracts/briefing.ts — ADDED NarrativeBlock + Narrative{Property,Manager}BriefingModel; base BriefingModel UNCHANGED. (2) server/warehouse/api.ts — ADDED two narrative JSON routes (/briefing/{property,manager}/:slug/narrative, always-200) + a ?narrative=1 branch on existing .pdf routes; no existing route altered. Decoupled from Tier 1 (reads composed BriefingModel, not the live snapshot). 'Three narrative routes' resolved to 2 JSON routes + PDF query-param (exactly two briefing subjects). Adversarial refute pass: independent Opus 6-lens, verdict SURVIVES, one nit applied (pre-send guard scans full model); Refute-Reviewed trailer on commit 876d958. Model: claude-haiku-4-5 (D4), button in ExportBriefingButton (D5).",
+    "last_updated": "2026-06-21T18:40:00Z"
   },
 
   "usage": {
