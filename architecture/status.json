@@ -203,11 +203,11 @@
   "phase-3-w1": {
     "agent_role": "Analytics Agent — Claude Code Sonnet 4.6",
     "phase": "Phase 3 W1 — lease-forecast contract + analytics + L-1..L-5 alert conditions",
-    "status": "in_progress",
+    "status": "merged",
     "blocked_by": null,
     "review_needed": false,
-    "review_detail": "Pre-authorized by Gabriel (architect) 2026-06-21",
-    "last_updated": "2026-06-21T20:00:00Z"
+    "review_detail": "MERGED via PR #107. W1 shipped: lease-forecast Zod contracts + bucketExpiry/renewalSignals/marketRentGaps/rentForecast analytics + L-1..L-5 alert conditions + leasingVelocity Spine B + lease-forecast API routes + migration 011. 2091 insertions, adversarial refute pass (Opus 4.8, 3 lenses, wf_c45ec0c4-0b1). CR follow-up: asOf propagation to bucketExpiry in API + L-5, catch narrowing, test contract tightening. Worktree phase-3-w1 to be removed post-merge.",
+    "last_updated": "2026-06-21T21:00:00Z"
   },
 
   "usage": {
