@@ -15,6 +15,7 @@
 import { createHash } from 'node:crypto';
 import type { WarehouseDb } from './db';
 import type { AnomalyFlag } from './anomalies';
+import type { AllocationVerdict } from '../../src/contracts/capital';
 import { INTEL_CONFIG } from './intel-config';
 import type { AnomalySeverity, HealthBand } from './intel-config';
 import { scoreProperties } from './scores';
@@ -1200,4 +1201,44 @@ export function calibrationPending(db: WarehouseDb): CalibrationLogRow[] {
     if (covered) due.push(v);
   }
   return due;
+}
+
+// ── Phase 5: capital-allocation verdict mapping ──────────────────────────────────────────────
+
+function allocationDirection(action: AllocationVerdict['action']): 'up' | 'down' | 'flat' | 'n/a' {
+  if (action === 'sell') return 'down';
+  if (action === 'buy' || action === 'improve') return 'up';
+  if (action === 'refinance' || action === 'hold') return 'flat';
+  return 'n/a';
+}
+
+/**
+ * Map each AllocationVerdict → one CalibrationVerdict row (verdict_kind 'capital-action-v2').
+ * Deterministic in (verdicts, iv): no clock, no randomness.
+ * horizonPeriods: 0 (Phase 5 Phase-3-absent path) maps to null (unknown horizon per schema).
+ */
+export function verdictsFromAllocations(
+  verdicts: AllocationVerdict[],
+  iv: InputsVersion,
+  emittedBy: string,
+): CalibrationVerdict[] {
+  return verdicts.map(v =>
+    CalibrationVerdictSchema.parse({
+      subjectKind: 'property',
+      subjectId: v.propertyId,
+      verdictKind: 'capital-action-v2',
+      verdictSubkind: '',
+      verdictEngine: 'capital-allocation',
+      predictedBand: v.action,
+      predictedValue: v.expectedReturnPct,
+      predictedUnit: 'band',
+      confidence: v.confidence01,
+      direction: allocationDirection(v.action),
+      reasons: v.reasons,
+      asOfPeriod: v.period,
+      horizonPeriods: v.horizonPeriods > 0 ? v.horizonPeriods : null,
+      inputsVersion: iv.inputsVersion,
+      emittedBy,
+    }),
+  );
 }
