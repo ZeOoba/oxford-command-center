@@ -64,9 +64,13 @@ export function leasingVelocity(
                CASE event_kind WHEN 'vacate' THEN 0 ELSE 1 END ASC,
                id ASC
     `).all() as LeaseEventRow[];
-  } catch {
-    // Table may not exist in very old DBs without migration 011 — fail open
-    events = [];
+  } catch (err) {
+    // Fail open only when migration 011 table is absent; rethrow all other errors.
+    if (err instanceof Error && /no such table:\s*lease_events/i.test(err.message)) {
+      events = [];
+    } else {
+      throw err;
+    }
   }
 
   // Build property name map for display

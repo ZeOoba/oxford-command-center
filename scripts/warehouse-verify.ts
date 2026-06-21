@@ -413,7 +413,8 @@ async function main(): Promise<number> {
     `approve-path dual-side sides preserved over the real seed, ` +
     `SF-less cohort exclusion verified (${CANON_PROPERTIES.filter((p) => p.rentableSf == null).length} non-operating entity/entities), ` +
     `property_insurance_policies schema present (migration 008), ` +
-    `debt_positions schema present (migration 009)`);
+    `debt_positions schema present (migration 009), ` +
+    `lease_events schema present (migration 011)`);
   return 0;
 }
 

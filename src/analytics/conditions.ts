@@ -403,7 +403,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       for (const bucket of CONCENTRATION_BUCKETS) {
         // Sum annual rent for leases in this bucket using bucketExpiry
         const bucketRent = s.leases
-          .filter((l) => bucketExpiry(l.monthsToExpiry, l.leaseEnd) === bucket)
+          .filter((l) => bucketExpiry(l.monthsToExpiry, l.leaseEnd, asOf) === bucket)
           .reduce((sum, l) => sum + l.annualRent, 0);
         const bucketPct = bucketRent / totalAnnualRent;
         if (bucketPct >= T.tenantNoiConcentrationInfo) {

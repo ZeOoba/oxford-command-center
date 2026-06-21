@@ -102,7 +102,7 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
         const bucketMap = new Map<string, { count: number; expiringRent: number; expiringSf: number }>();
         for (const bucket of ALL_BUCKETS) bucketMap.set(bucket, { count: 0, expiringRent: 0, expiringSf: 0 });
         for (const l of leases) {
-          const bucket = bucketExpiry(l.monthsToExpiry, l.leaseEnd);
+          const bucket = bucketExpiry(l.monthsToExpiry, l.leaseEnd, asOf);
           const b = bucketMap.get(bucket)!;
           b.count++;
           b.expiringRent += l.annualRent;

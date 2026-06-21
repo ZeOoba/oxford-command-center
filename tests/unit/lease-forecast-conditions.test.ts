@@ -223,6 +223,15 @@ describe('C-6: L-5 — one bucket ≥15% of total annual rent → warning', () =
     const l5s = out.filter((i) => i.id === 'rollover-concentration-0-6m');
     expect(l5s).toHaveLength(1);
   });
+
+  it('same-month expired lease (leaseEnd < asOf, monthsToExpiry=0) excluded from L-5 buckets', () => {
+    // Regression: bucketExpiry(0, pastDate) without asOf → mis-bucketed as '0-6m', inflating concentration
+    // leaseEnd 5 days ago but monthsToExpiry=0 (calendar-month truncation) — 30K of 100K = 30% → would fire
+    const expired = mkLease({ id: 'l0', leaseEnd: iso(-5), monthsToExpiry: 0, annualRent: 30000, status: 'Active' });
+    const longDated = mkLease({ id: 'l1', leaseEnd: iso(730), monthsToExpiry: 24, annualRent: 70000 });
+    const out = evaluateConditions(snap({ leases: [expired, longDated] }), opts);
+    expect(out.some((i) => i.id.startsWith('rollover-concentration-'))).toBe(false);
+  });
 });
 
 // ── C-7: Golden — full fixture, all L-1..L-5 shapes valid ───────────────────

@@ -9,10 +9,11 @@ import {
   rentForecast,
 } from '@analytics/lease-forecast';
 import { RentForecastInput } from '@contracts/lease-forecast';
+import { ALERT_THRESHOLDS } from '@analytics/conditions';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 const ASOF = '2026-06-21';
-const ALERT_ARREARS_MATERIAL = 5000; // mirrors ALERT_THRESHOLDS.arrearsMaterialUsd
+const ALERT_ARREARS_MATERIAL = ALERT_THRESHOLDS.arrearsMaterialUsd;
 
 function mkLease(o: Partial<Lease> & { id: string }): Lease {
   return {
@@ -243,17 +244,13 @@ describe('L-A7: marketRentGaps — absent market rent', () => {
   it('no market rent for the lease/property → provenance absent, underMarket false, null gaps', () => {
     const lease = mkLease({ id: 'l1', sf: 10000, rentPerSf: 5.0 });
     const gaps = marketRentGaps([lease], {});
-    // When no market rent, skip or return absent
-    if (gaps.length > 0) {
-      const g = gaps[0]!;
-      expect(g.provenance).toBe('absent');
-      expect(g.underMarket).toBe(false);
-      expect(g.gapPsf).toBeNull();
-      expect(g.gapAnnualUsd).toBeNull();
-    } else {
-      // Skipped entirely is also acceptable
-      expect(gaps).toHaveLength(0);
-    }
+    // Contract: always emit an explicit provenance:'absent' row (never silently skip)
+    expect(gaps).toHaveLength(1);
+    const g = gaps[0]!;
+    expect(g.provenance).toBe('absent');
+    expect(g.underMarket).toBe(false);
+    expect(g.gapPsf).toBeNull();
+    expect(g.gapAnnualUsd).toBeNull();
   });
   it('does not throw when marketRents is empty', () => {
     const lease = mkLease({ id: 'l1' });

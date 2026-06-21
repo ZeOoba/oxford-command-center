@@ -74,10 +74,11 @@ export function renewalSignals(
   const asOfMs = new Date(asOf).getTime();
   const out: RenewalSignal[] = [];
 
+  const VALID_STAGES = new Set(['Expiring', 'Outreach', 'Negotiating', 'LOI', 'Executed']);
+
   for (const l of leases) {
     // ── Defensive coercion of overlay fields ──────────────────────────────────
     // renewalStage: validate against known stages, treat anything else as null
-    const VALID_STAGES = new Set(['Expiring', 'Outreach', 'Negotiating', 'LOI', 'Executed']);
     const rawStage = renewalStages[l.id];
     const stage: RenewalSignal['renewalStage'] =
       typeof rawStage === 'string' && VALID_STAGES.has(rawStage)
