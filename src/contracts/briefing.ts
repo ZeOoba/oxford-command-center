@@ -167,3 +167,34 @@ export const BriefingModel = z.discriminatedUnion('kind', [
   ManagerBriefingModel,
 ]);
 export type BriefingModel = z.infer<typeof BriefingModel>;
+
+// ── AI Narrative Briefings (Phase 2 · W2 · Step 7) ──────────────────────────────────────────────
+// These schemas EXTEND the base models — the base PropertyBriefingModel / ManagerBriefingModel are
+// NEVER modified. New schemas are additive-only. Spec: docs/superpowers/specs/
+// 2026-06-21-phase-2-w2-ai-narrative-briefings.md.
+
+/** The AI-generated narrative block injected into a briefing after the composeNarrative call.
+ *  `model` records which Anthropic model produced the text (for audit / cost attribution). */
+export const NarrativeBlock = z.object({
+  headline: z.string(),
+  summary: z.string(),
+  bullets: z.array(z.string()),
+  model: z.string(),
+});
+export type NarrativeBlock = z.infer<typeof NarrativeBlock>;
+
+/** The narrative envelope added to every briefing response from the narrative routes.
+ *  When `degraded` is true, `narrative` is null and the PDF/UI fall back gracefully. */
+export const NarrativeEnvelope = z.object({
+  narrative: NarrativeBlock.nullable(),
+  degraded: z.boolean(),
+});
+export type NarrativeEnvelope = z.infer<typeof NarrativeEnvelope>;
+
+/** PropertyBriefingModel extended with the narrative envelope (Step 9 route output). */
+export const NarrativePropertyBriefingModel = PropertyBriefingModel.merge(NarrativeEnvelope);
+export type NarrativePropertyBriefingModel = z.infer<typeof NarrativePropertyBriefingModel>;
+
+/** ManagerBriefingModel extended with the narrative envelope (Step 9 route output). */
+export const NarrativeManagerBriefingModel = ManagerBriefingModel.merge(NarrativeEnvelope);
+export type NarrativeManagerBriefingModel = z.infer<typeof NarrativeManagerBriefingModel>;

@@ -146,8 +146,8 @@
     "status": "merged",
     "blocked_by": null,
     "review_needed": false,
-    "review_detail": "MERGED via PR #94.",
-    "last_updated": "2026-06-21T12:00:00Z"
+    "review_detail": "MERGED via PR #94 (expiry-soon + coverage-gap alert conditions). Stale in_progress corrected 2026-06-21 by phase-2-narrative.",
+    "last_updated": "2026-06-21T18:00:00Z"
   },
 
   "phase-2-debt-scoring": {
@@ -156,18 +156,18 @@
     "status": "merged",
     "blocked_by": null,
     "review_needed": false,
-    "review_detail": "MERGED via PR #95.",
-    "last_updated": "2026-06-21T12:00:00Z"
+    "review_detail": "MERGED via PR #95 (migrations 009/010 + src/contracts/debt.ts + debt-snapshot writer). Stale in_progress corrected 2026-06-21 by phase-2-narrative.",
+    "last_updated": "2026-06-21T18:00:00Z"
   },
 
   "phase-2-debt-api": {
     "agent_role": "Analytics Agent",
-    "phase": "Phase 2 Step 5 — debt API sub-router (scores + maturity ladder)",
+    "phase": "Phase 2 Steps 4-6 — debt API sub-router (scores + maturity ladder) + Debt Scorecard UI",
     "status": "merged",
     "blocked_by": null,
     "review_needed": false,
-    "review_detail": "MERGED via PR #97 (Steps 4–6: scoring engine + API sub-router + Debt Scorecard UI).",
-    "last_updated": "2026-06-21T10:00:00Z"
+    "review_detail": "MERGED via PR #97 (scoring engine + debt-api sub-router mounted at /api/warehouse/debt + Debt Scorecard UI). Stale in_progress/review_needed corrected 2026-06-21 by phase-2-narrative.",
+    "last_updated": "2026-06-21T18:00:00Z"
   },
 
   "phase-2-wiring": {
@@ -178,6 +178,16 @@
     "review_needed": false,
     "review_detail": "MERGED via PR #99. Three adversarial refute passes (Opus 4.8). Workbook Loan Index col 11 populated. Worktree p2-binding removed post-merge.",
     "last_updated": "2026-06-21T12:00:00Z"
+  },
+
+  "phase-2-narrative": {
+    "agent_role": "Engineering (Claude Code) — Opus plans/reviews, Sonnet implements — Gabriel-authorized 2026-06-21 (D4/D5 ratified)",
+    "phase": "Phase 2 Workstream 2 — AI Narrative Briefings (Steps 7–11): NarrativeBlock contract + composeNarrative (Haiku 4.5) + narrative JSON routes + PDF embed + Export-with-narrative button. Worktree: compassionate-golick-b55abd.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "COMPLETE — Steps 7-11 implemented, full local gate GREEN (governance+typecheck 0+lint 0+vitest+reconcile+warehouse:verify). Awaiting architect ack on additive architect-owned touches before merge: (1) src/contracts/briefing.ts — ADDED NarrativeBlock + Narrative{Property,Manager}BriefingModel; base BriefingModel UNCHANGED. (2) server/warehouse/api.ts — ADDED two narrative JSON routes (/briefing/{property,manager}/:slug/narrative, always-200) + a ?narrative=1 branch on existing .pdf routes; no existing route altered. Decoupled from Tier 1 (reads composed BriefingModel, not the live snapshot). 'Three narrative routes' resolved to 2 JSON routes + PDF query-param (exactly two briefing subjects). Adversarial refute pass: independent Opus 6-lens, verdict SURVIVES, one nit applied (pre-send guard scans full model); Refute-Reviewed trailer on commit 876d958. Model: claude-haiku-4-5 (D4), button in ExportBriefingButton (D5).",
+    "last_updated": "2026-06-21T18:40:00Z"
   },
 
   "usage": {
