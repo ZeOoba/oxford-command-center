@@ -5,22 +5,27 @@
 // returns Insight[] for two conditions:
 //
 //   insurance-expiry-soon  — severity: critical
-//     Fires when a policy's expiration_date is 0..60 days away (inclusive on 60).
+//     Fires when ANY policy for a property has expiration_date 0..60 days away
+//     (inclusive on 60). One insight per PROPERTY (not per row): multiple policies
+//     for the same property are deduplicated — the soonest-expiring policy wins so
+//     the detail always describes the most urgent renewal. Insight id is stable:
+//     `ins-expiry-<propertyId>`.
 //     BOUNDARY: daysToExpiry <= 60 AND daysToExpiry >= 0.
-//     impactAnnualUsd = premium_annual (null when absent from the DB row).
+//     impactAnnualUsd = premium_annual of the soonest-expiring policy
+//                       (null when the winning row has no premium on file).
 //     provenance = 'real' — the expiry DATE is a hard fact from the warehouse;
 //     the premium being null does NOT demote date provenance.
 //     spine = 'B' (warehouse read).
 //
 //   insurance-gap          — severity: warning
 //     Fires for every Property in snapshot.properties with NO matching row in
-//     property_insurance_policies (i.e. we have no policy on file).
+//     property_insurance_policies (i.e. we have no policy on file at all).
 //     impactAnnualUsd = null (no policy → no known premium).
 //     provenance = 'absent' — the absence of data is the finding.
 //     spine = 'B'.
 //
 // PURE — no mutations of inputs. Throws nothing (callers guard with try/catch).
-// DETERMINISTIC — output is sorted by (property_id, kind) for stable ordering.
+// DETERMINISTIC — output is sorted by id (lexicographic) for stable ordering.
 //
 // NOT a financial-decision function. Read-only alert conditions surfacing
 // existing warehouse data. No engine math, scoring, NOI, or capital-allocation.
@@ -60,12 +65,21 @@ function coercePremium(raw: number | null | undefined): number | null {
 }
 
 /**
+ * Candidate for the soonest-expiring policy per property (within the alert window).
+ */
+interface ExpiryCandidate {
+  days: number;
+  expirationDate: string;
+  premium: number | null;
+}
+
+/**
  * Evaluate warehouse-sourced insurance alert conditions against a snapshot.
  *
  * @param db       Open WarehouseDb (caller owns lifecycle).
  * @param snapshot PortfolioSnapshot (Spine A) — only snapshot.properties[] and
  *                 snapshot.meta.asOf are consumed; no Spine-A insurance data used.
- * @returns        Insight[] sorted by property_id then kind ('expiry' < 'gap').
+ * @returns        Insight[] sorted by id (lexicographic) for deterministic output.
  */
 export function insuranceConditions(
   db: WarehouseDb,
@@ -83,9 +97,13 @@ export function insuranceConditions(
   // Set of property_ids that have at least one warehouse policy row (for gap check).
   const coveredIds = new Set<string>(rows.map((r) => r.property_id));
 
-  const out: Insight[] = [];
-
   // ── Condition 1: insurance-expiry-soon ──────────────────────────────────
+  // Deduplicate by property_id: one insight per property, soonest-expiring row wins.
+  // This prevents duplicate insight IDs when a property has multiple policy rows
+  // (the schema allows multiple rows per property_id via the UNIQUE on
+  // (property_id, policy_number, effective_date)).
+  const expiryMap = new Map<string, ExpiryCandidate>();
+
   for (const row of rows) {
     if (!row.expiration_date) continue; // no date → cannot compute days; skip
 
@@ -95,18 +113,30 @@ export function insuranceConditions(
     // days < 0 = already expired; not surfaced here (a different concern).
     if (days < 0 || days > EXPIRY_ALERT_DAYS) continue;
 
-    const premium = coercePremium(row.premium_annual);
+    const existing = expiryMap.get(row.property_id);
+    // Keep the soonest-expiring policy (smallest days) as the most urgent signal.
+    if (!existing || days < existing.days) {
+      expiryMap.set(row.property_id, {
+        days,
+        expirationDate: row.expiration_date,
+        premium: coercePremium(row.premium_annual),
+      });
+    }
+  }
 
+  const out: Insight[] = [];
+
+  for (const [propertyId, candidate] of expiryMap) {
     out.push({
-      id: `ins-expiry-${row.property_id}`,
+      id: `ins-expiry-${propertyId}`,
       severity: 'critical',
       category: 'insurance',
-      title: `Insurance expiring soon — ${row.property_id}`,
-      detail: `Policy expires in ${days} day${days === 1 ? '' : 's'} (${row.expiration_date}). Renew or replace immediately.`,
+      title: `Insurance expiring soon — ${propertyId}`,
+      detail: `Policy expires in ${candidate.days} day${candidate.days === 1 ? '' : 's'} (${candidate.expirationDate}). Renew or replace immediately.`,
       entityType: 'insurance',
-      entityId: row.property_id,
+      entityId: propertyId,
       action: { label: 'Review policy', kind: 'review' },
-      impactAnnualUsd: premium,
+      impactAnnualUsd: candidate.premium,
       spine: 'B',
       provenance: 'real',
     });
@@ -133,7 +163,7 @@ export function insuranceConditions(
 
   // Deterministic sort: expiry insights (id starts 'ins-expiry-') sort before
   // gap insights ('ins-gap-') because 'e' < 'g'. Within each kind, property_id
-  // ordering is lexicographic.
+  // ordering is lexicographic. Stable because ids are unique per-property.
   out.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
   return out;

@@ -3,10 +3,10 @@
 // TDD tests for server/warehouse/insurance-conditions.ts.
 // Uses an in-memory SQLite (opened via openWarehouse in a tmpdir) to mirror
 // the warehouse-db.test.ts pattern. No mocking — real schema, real reads.
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { insuranceConditions } from '../../server/warehouse/insurance-conditions';
@@ -14,9 +14,10 @@ import type { PortfolioSnapshot } from '../../src/contracts/index';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function tmpDb(): WarehouseDb {
+function tmpDb(): { db: WarehouseDb; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), 'ins-cond-'));
-  return openWarehouse(join(dir, 'finance.sqlite'));
+  const db = openWarehouse(join(dir, 'finance.sqlite'));
+  return { db, dir };
 }
 
 /** Add days to an ISO date string and return ISO date string. */
@@ -105,9 +106,17 @@ function insertPolicy(
 
 describe('insuranceConditions', () => {
   let db: WarehouseDb;
+  let dbDir: string;
 
   beforeEach(() => {
-    db = tmpDb();
+    const tmp = tmpDb();
+    db = tmp.db;
+    dbDir = tmp.dir;
+  });
+
+  afterEach(() => {
+    try { db.close(); } catch { /* already closed */ }
+    try { rmSync(dbDir, { recursive: true, force: true }); } catch { /* best-effort */ }
   });
 
   // ── (a) expiry-soon basic ────────────────────────────────────────────────
@@ -282,5 +291,37 @@ describe('insuranceConditions', () => {
     const insights = insuranceConditions(db, snap);
     const expiry = insights.filter((i) => i.id.startsWith('ins-expiry-'));
     expect(expiry[0]!.impactAnnualUsd).toBeNull();
+  });
+
+  // ── multi-policy deduplication (CR fix) ──────────────────────────────────
+
+  it('emits exactly ONE expiry insight per property even when multiple policy rows exist', () => {
+    // property_insurance_policies UNIQUE is on (property_id, policy_number, effective_date),
+    // so a property can have multiple rows. Without deduplication, each row would
+    // generate a duplicate id `ins-expiry-<propertyId>`, which violates the id-uniqueness
+    // invariant. The function must deduplicate to one insight per property_id.
+    const snap = makeSnap(['prop-multi']);
+    // Two policies for the same property, both within the alert window.
+    db.prepare(`
+      INSERT INTO property_insurance_policies
+        (property_id, insurer, policy_number, effective_date, expiration_date,
+         premium_annual, coverage_tiv, policy_type, source, source_date, ingested_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('prop-multi', 'Insurer A', 'POL-001', addDays(AS_OF, -365), addDays(AS_OF, 15), 4000, null, 'general-liability', 'test', AS_OF, 'test');
+    db.prepare(`
+      INSERT INTO property_insurance_policies
+        (property_id, insurer, policy_number, effective_date, expiration_date,
+         premium_annual, coverage_tiv, policy_type, source, source_date, ingested_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('prop-multi', 'Insurer B', 'POL-002', addDays(AS_OF, -180), addDays(AS_OF, 45), 8000, null, 'property', 'test', AS_OF, 'test');
+
+    const insights = insuranceConditions(db, snap);
+    const expiry = insights.filter((i) => i.id.startsWith('ins-expiry-'));
+    // Exactly one insight per property, not one per row.
+    expect(expiry).toHaveLength(1);
+    expect(expiry[0]!.id).toBe('ins-expiry-prop-multi');
+    // The soonest-expiring policy (15 days) wins.
+    expect(expiry[0]!.detail).toContain('15 day');
+    expect(expiry[0]!.impactAnnualUsd).toBe(4000);
   });
 });
