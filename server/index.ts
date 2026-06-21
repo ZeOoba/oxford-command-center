@@ -25,6 +25,7 @@ import { openWarehouse } from './warehouse/db';
 import type { WarehouseDb } from './warehouse/db';
 import { warehouseRoutes } from './warehouse/api';
 import { captureOccupancy } from './warehouse/occupancy';
+import { captureInsurance, snapshotPoliciesToWarehouse } from './warehouse/insurance';
 import { extractOmFields } from './warehouse/om-extract';
 import { listLeaseTermPropertyIds } from './warehouse/lease-terms';
 import { setLeaseRunAssumptions } from './overlay';
@@ -61,6 +62,17 @@ brain.on('snapshot', (info: unknown) => {
     // Warehouse unavailable (cold/mirror env) — capture is best-effort, but do not fail SILENTLY:
     // a total capture failure must be observable in the server log, not invisible.
     console.warn('⚠ Occupancy capture skipped:', err instanceof Error ? err.message : String(err));
+  }
+  try {
+    const snapshot = brain.getSnapshot();
+    if (snapshot) {
+      captureInsurance(
+        getWarehouse(),
+        snapshotPoliciesToWarehouse(snapshot.insurance, snapshot.meta.asOf),
+      );
+    }
+  } catch (err) {
+    console.warn('⚠ Insurance capture skipped:', err instanceof Error ? err.message : String(err));
   }
 });
 
