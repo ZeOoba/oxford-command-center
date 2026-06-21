@@ -40,3 +40,9 @@ export const INTEL_CONFIG = {
   // Growth that maps a factor to its 0..100 sub-score: linear clamp on [-cap, +cap].
   growthScoreCapPct: 0.20,    // ±20% growth ⇒ 0..100 (ratified 2026-06-14)
 } as const;
+
+export const HURDLE_RATE = {
+  proposedPct: 0.08,
+  ratification: 'proposed' as const,
+  basis: 'unlevered IRR — marginal cost of capital making buy/hold/sell/refi/improve comparable',
+} as const;
