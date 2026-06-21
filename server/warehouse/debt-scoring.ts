@@ -228,9 +228,13 @@ export function scoreDebtPositions(
     // we do NOT know its maturity — so minMonthsToMaturity remains null, which causes the
     // cash-out maturity gate (requires non-null) to fail, blocking cash-out on demand notes.
     let minMonthsToMaturity: number | null = null;
+    let hasUnknownMaturity = false;
     {
       for (const loan of loans) {
-        if (loan.months_to_maturity === null) continue; // demand/unknown — skip, stays null-aware
+        if (loan.months_to_maturity === null) {
+          hasUnknownMaturity = true; // demand/unknown — track it
+          continue;
+        }
         if (minMonthsToMaturity === null || loan.months_to_maturity < minMonthsToMaturity) {
           minMonthsToMaturity = loan.months_to_maturity;
         }
@@ -289,7 +293,9 @@ export function scoreDebtPositions(
       ltvHeadroom > 0.10 &&
       // F3: demand notes (null maturity) must NOT pass. null ?? 999 was wrong — demand notes
       // are callable immediately. Require an explicitly known maturity > 24 months.
+      // Also block if ANY loan has unknown maturity (mixed-loan cases with demand notes).
       minMonthsToMaturity !== null &&
+      !hasUnknownMaturity &&
       minMonthsToMaturity > 24
     ) {
       // governorsClear is true here (checked above)
