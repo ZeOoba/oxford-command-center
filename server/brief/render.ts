@@ -1,4 +1,5 @@
 import type { Insight } from '../../src/analytics/types';
+import { fmtUsdCompact } from '../../src/analytics/format';
 
 export interface BriefInput {
   asOf: string;
@@ -34,6 +35,17 @@ function dateRows(items: { date: string; label: string; days: number }[]): strin
     `<li>${esc(i.date)} — ${esc(i.label)} <span style="color:#999">(${i.days}d)</span></li>`).join('')}</ul>`;
 }
 
+function topExposureRow(insights: Insight[]): string {
+  const best = insights.reduce<Insight | null>((acc, i) => {
+    if (i.impactAnnualUsd === null || !Number.isFinite(i.impactAnnualUsd)) return acc;
+    if (acc === null || i.impactAnnualUsd > (acc.impactAnnualUsd ?? -Infinity)) return i;
+    return acc;
+  }, null);
+  if (best === null) return '';
+  const body = `<strong>${esc(best.title)}</strong> &nbsp;·&nbsp; <span style="font-family:IBM Plex Mono,monospace;color:${NAVY}">${esc(fmtUsdCompact(best.impactAnnualUsd))}/yr</span>`;
+  return section('Top exposure', body);
+}
+
 export function renderBrief(b: BriefInput): Email {
   const deals = b.dealCounts.map((d) => `${esc(d.stage)}: <strong>${d.count}</strong>`).join(' &nbsp;·&nbsp; ') || '—';
   const tasks = b.tasks.length ? b.tasks.map((t) => `<li>${esc(t.label)} <span style="color:#999">(${esc(t.status)})</span></li>`).join('') : '<li>None due</li>';
@@ -42,6 +54,7 @@ export function renderBrief(b: BriefInput): Email {
     `<table width="640" cellpadding="0" cellspacing="0" style="margin:0 auto;background:#fff;border:1px solid #e3ddcd">
       <tr><td style="background:${NAVY};padding:18px 24px;color:#fff;font:700 18px DM Sans,Arial,sans-serif">Oxford Command Center — Daily Brief
         <div style="font:400 12px DM Sans,Arial;color:${GOLD};margin-top:2px">As of ${esc(b.asOf)} · data ${esc(b.freshness)}</div></td></tr>
+      ${topExposureRow(b.insights)}
       ${section('Action items', alertRows(b.insights))}
       ${section('Critical dates — next 90 days', dateRows(b.criticalDates))}
       ${section('Deal pipeline', deals)}

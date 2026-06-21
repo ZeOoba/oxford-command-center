@@ -458,7 +458,17 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   }
 
   const rank: Record<InsightSeverity, number> = { critical: 0, warning: 1, info: 2 };
-  return out.sort((a, b) => rank[a.severity] - rank[b.severity]);
+  return out.sort((a, b) => {
+    const sevDiff = rank[a.severity] - rank[b.severity];
+    if (sevDiff !== 0) return sevDiff;
+    // Secondary key: impactAnnualUsd DESC, nulls last.
+    const aAmt = a.impactAnnualUsd;
+    const bAmt = b.impactAnnualUsd;
+    if (aAmt !== null && bAmt !== null) return bAmt - aAmt;
+    if (aAmt !== null) return -1; // a has dollar, b is null → a first
+    if (bAmt !== null) return 1;  // b has dollar, a is null → b first
+    return 0; // both null → preserve prior relative order (stable)
+  });
 }
 
 /**
