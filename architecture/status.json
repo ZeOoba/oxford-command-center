@@ -240,6 +240,16 @@
     "last_updated": "2026-06-21T23:45:00Z"
   },
 
+  "recursing-chatelet-f908d3": {
+    "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-21 (Phase 5 full implementation)",
+    "phase": "Phase 5 — Capital Allocation Engine + Market Intelligence (Tasks 1-11 per SDD plan)",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Branch complete. Rebasing onto origin/main + applying C-1/I-1/I-2 fixes. Architect-owned files touched: server/warehouse/migrations/ (012-015), src/contracts/capital.ts (new), src/contracts/index.ts (barrel append), server/index.ts (mount routes), scripts/check-refute-required.ts (DELIVERY_ONLY_PATHS). Gabriel-authorized in-session. Adversarial refute required for capital-allocation.ts before merge.",
+    "last_updated": "2026-06-21T23:50:00Z"
+  },
+
   "phase-5-tiebreaker-fix": {
     "agent_role": "Integration Agent — Claude Code Sonnet 4.6",
     "phase": "Phase 5 — parse-layer property-id disambiguation (propertyId tiebreaker / slug uniqueness)",

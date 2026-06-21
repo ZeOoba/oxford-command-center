@@ -298,6 +298,65 @@ async function main(): Promise<number> {
       failures.push('prospect_demand_events table missing — migration 012 did not apply');
     }
 
+    // 8f. Phase 5 schema assertions — market_series table exists (migration 013).
+    const marketSeriesExists = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='market_series'",
+    ).get() as { name: string } | undefined;
+    if (!marketSeriesExists) {
+      failures.push('market_series table missing — migration 013 did not apply');
+    }
+
+    // 8g. Phase 5 schema assertions — ix_market_series_cluster_asof index exists (migration 013).
+    const marketSeriesIndexExists = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name='ix_market_series_cluster_asof'",
+    ).get() as { name: string } | undefined;
+    if (!marketSeriesIndexExists) {
+      failures.push('ix_market_series_cluster_asof index missing — migration 013 did not apply');
+    }
+
+    // 8h. Phase 5 schema assertions — recommendations table exists (migration 014).
+    const recommendationsExists = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='recommendations'",
+    ).get() as { name: string } | undefined;
+    if (!recommendationsExists) {
+      failures.push('recommendations table missing — migration 014 did not apply');
+    }
+
+    // 8i. Phase 5 schema assertions — ix_recommendations_property index exists (migration 014).
+    const recommendationsIndexExists = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name='ix_recommendations_property'",
+    ).get() as { name: string } | undefined;
+    if (!recommendationsIndexExists) {
+      failures.push('ix_recommendations_property index missing — migration 014 did not apply');
+    }
+
+    // 8j. Phase 5 schema assertions — capital_config has hurdle_rate_pct column (migration 015).
+    const capitalConfigInfo = db.prepare(
+      "PRAGMA table_info(capital_config)",
+    ).all() as Array<{ name: string; type: string; dflt_value: string | null }>;
+    const hurdleRatePctCol = capitalConfigInfo.find((col) => col.name === 'hurdle_rate_pct');
+    if (!hurdleRatePctCol) {
+      failures.push('capital_config.hurdle_rate_pct column missing — migration 015 did not apply');
+    } else if (hurdleRatePctCol.dflt_value !== '0.08') {
+      failures.push(`capital_config.hurdle_rate_pct dflt_value is '${hurdleRatePctCol.dflt_value}' (expected '0.08') — migration 015 default incorrect`);
+    }
+
+    // 8k. Phase 5 schema assertions — capital_config has hurdle_rate_ratification column with default 'proposed' (migration 015).
+    const hurdleRatRatifCol = capitalConfigInfo.find((col) => col.name === 'hurdle_rate_ratification');
+    if (!hurdleRatRatifCol) {
+      failures.push('capital_config.hurdle_rate_ratification column missing — migration 015 did not apply');
+    } else if (hurdleRatRatifCol.dflt_value !== "'proposed'") {
+      failures.push(`capital_config.hurdle_rate_ratification dflt_value is '${hurdleRatRatifCol.dflt_value}' (expected "'proposed'") — migration 015 default incorrect`);
+    }
+
+    // 8l. Phase 5 schema assertions — property_onboarding table exists (migration 016).
+    const propertyOnboardingExists = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='property_onboarding'",
+    ).get() as { name: string } | undefined;
+    if (!propertyOnboardingExists) {
+      failures.push('property_onboarding table missing — migration 016 did not apply');
+    }
+
     // 9. Re-ingest smoke — exercise the parser-version RESTALE re-derive path, which verify otherwise
     //    never hits (it builds a fresh DB). Stale every committed import's parser_version, re-ingest the
     //    same files (→ in-place re-derive), then assert the re-derive is idempotent (same basis), empties
@@ -423,7 +482,8 @@ async function main(): Promise<number> {
     `property_insurance_policies schema present (migration 008), ` +
     `debt_positions schema present (migration 009), ` +
     `lease_events schema present (migration 011), ` +
-    `prospect_demand_events schema present (migration 012)`);
+    `prospect_demand_events schema present (migration 012), ` +
+    `Phase 5 tables present (migrations 013-016: market_series, recommendations, hurdle_rate columns, property_onboarding)`);
   return 0;
 }
 
