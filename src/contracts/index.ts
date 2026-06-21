@@ -31,6 +31,7 @@ export * from './comps';
 export * from './quickbooks';
 export * from './acquisition';
 export * from './debt';
+export * from './lease-forecast';
 
 export const SnapshotMeta = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),
@@ -70,6 +71,13 @@ export const PortfolioSnapshot = z.object({
   tenantArrears: z.record(z.string(), TenantArrears).default({}),
   /** Server-attached QuickBooks actuals (Phase 3 ②); null when no export configured. */
   quickbooks: QbActuals.nullable().default(null),
+  /**
+   * Phase 3 — user-supplied market rents ($/SF PSF, annual) from overlay.marketRents.
+   * Keyed by leaseId (precedence) or propertyKey. Empty when no market rents have been entered.
+   * Used by the under-market gap signal (L-4), rent-forecast renew_at_market, and the
+   * LeaseForecastModule UI. No external API — overlay-only.
+   */
+  marketRents: z.record(z.string(), z.number()).default({}),
   dataQuality: z.array(DataQualityFlag),
 });
 export type PortfolioSnapshot = z.infer<typeof PortfolioSnapshot>;
