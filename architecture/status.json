@@ -105,21 +105,21 @@
   "insurance-persistence": {
     "agent_role": "Integration Agent",
     "phase": "Track C — insurance policy persistence layer (migration 008, captureInsurance)",
-    "status": "review_needed",
+    "status": "merged",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "server/index.ts (architect-owned) modified: added captureInsurance + snapshotPoliciesToWarehouse import and snapshot listener block. Change is additive-only; no existing routes altered. Awaiting architect acknowledgment before commit.",
-    "last_updated": "2026-06-20T20:00:00Z"
+    "review_needed": false,
+    "review_detail": null,
+    "last_updated": "2026-06-21T00:00:00Z"
   },
 
   "phase-0-sort-key": {
     "agent_role": "Engineering (Claude Code) — authorized by Gabriel 2026-06-20",
     "phase": "Phase 0 — Insight sort-key: impactAnnualUsd / spine / provenance fields + fillImpact() + governance extension (Step 9 already shipped in PR #85)",
-    "status": "in_progress",
+    "status": "merged",
     "blocked_by": null,
     "review_needed": false,
     "review_detail": "scripts/governance-check.ts is architect-owned but checkAcqGovernorCoupling was already shipped in PR #85 (Step 9). This PR adds only analytics types + conditions + anomaly-insights + contracts/macro + test fixture updates — UX/Analytics-Agent-owned files. No architect gate required.",
-    "last_updated": "2026-06-20T21:00:00Z"
+    "last_updated": "2026-06-21T00:00:00Z"
   },
 
   "debt-proximity": {
@@ -168,6 +168,16 @@
     "review_needed": true,
     "review_detail": "server/index.ts (architect-owned): additive route registration only — import debtApi + app.route('/api/warehouse/debt', debtApi(getWarehouse)). No existing routes altered. Awaiting architect acknowledgment.",
     "last_updated": "2026-06-21T10:00:00Z"
+  },
+
+  "phase-2-wiring": {
+    "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-21",
+    "phase": "Phase 2 W1 finish — POST /debt/snapshot + reload-event auto-write + GET /scores/:propertyId",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "server/index.ts (Architect-owned) — Gabriel PRE-AUTHORIZED 2026-06-21: (a) import writeDebtSnapshot, (b) debtApi mount second arg, (c) debt try/catch appended inside the existing brain.on('snapshot') listener. CORS line + governor constants untouched.",
+    "last_updated": "2026-06-21T00:00:00Z"
   },
 
   "usage": {
