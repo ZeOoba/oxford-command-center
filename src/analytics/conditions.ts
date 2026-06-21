@@ -3,6 +3,7 @@ import { fmtUsd, fmtUsdCompact, fmtPct, fmtMonths, fmtDate } from './format';
 import type { Insight, InsightSeverity } from './types';
 import { tenantScorecards } from '@/brain/tenants';
 import { coerceNonNegMoney } from '@/lib/money';
+import { renewalSignals, marketRentGaps, bucketExpiry } from './lease-forecast';
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
@@ -37,6 +38,15 @@ export const ALERT_THRESHOLDS = {
   // refiSpreadBps: minimum excess above estimatedMarketRate that triggers the refi-spread signal.
   // 0.005 = 50 bps. A loan must exceed estimatedMarketRate + refiSpreadBps to fire.
   refiSpreadBps: 0.005,
+  // Phase 3 — Lease forecast signal thresholds.
+  // expiryNoSignalDays: ≤90d expiry with no renewal stage advance triggers L-1.
+  expiryNoSignalDays: 90,
+  // marketRentGapWarnPct: current ≥10% below market triggers L-4 under-market signal.
+  marketRentGapWarnPct: 0.10,
+  // lapsedHoldoverGraceDays: leaseEnd past with no Executed stage triggers L-2.
+  lapsedHoldoverGraceDays: 0,
+  // velocitySlowDays: median time-to-lease above this threshold → slowLeasing flag [RATIFIED 60].
+  velocitySlowDays: 60,
 } as const;
 
 /**
@@ -264,6 +274,152 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         entityType: 'lease', entityId: l.id,
         impactAnnualUsd: null, spine: 'A', provenance: 'absent',
       });
+    }
+  }
+
+  // ── Phase 3 Lease Forecast Signals (L-1..L-5) ─────────────────────────────
+  // These conditions extend the existing lease block. They consume renewalSignals() and
+  // marketRentGaps() from the lease-forecast analytics engine (pure functions; no re-implementation).
+  // All Insights: category:'lease', Spine A, provenance as noted.
+  //
+  // Dedup design:
+  //   L-1 and L-2 are mutually exclusive (L-1 = future ≤90d; L-2 = past without Executed).
+  //   L-3 co-fires with L-2 on the same holdover lease — they carry different messages (L-2=warning,
+  //   L-3=info) and distinct IDs.
+  //   L-4 fires only when a market rent is present in overlay (no fabrication).
+  //   L-5 fires once per triggering bucket (not per-lease).
+  {
+    const arrears = s.tenantArrears ?? {};
+    const marketRents = (s as PortfolioSnapshot & { marketRents?: Record<string, number> }).marketRents ?? {};
+    const signals = renewalSignals(s.leases, asOf, s.renewalStages, arrears);
+    const gaps = marketRentGaps(s.leases, marketRents);
+    const asOfMs = new Date(asOf).getTime();
+    const DAY_MS_L = 86_400_000;
+
+    // Build a total annual rent denominator for the L-5 concentration check
+    const totalAnnualRent = s.leases.reduce((sum, l) => sum + l.annualRent, 0);
+
+    for (const signal of signals) {
+      const leaseEndMs = signal.leaseEnd ? new Date(signal.leaseEnd).getTime() : null;
+      const leaseEndInPast = leaseEndMs !== null && leaseEndMs < asOfMs;
+      const daysToExpiry = leaseEndMs !== null && !leaseEndInPast
+        ? Math.round((leaseEndMs - asOfMs) / DAY_MS_L)
+        : null;
+
+      // L-1: Expiring ≤90d with no renewal signal (future expiry only)
+      // Trigger: 0 ≤ daysToExpiry ≤ expiryNoSignalDays AND renewalStage ∈ {null, 'Expiring'}
+      // Dedup: mutually exclusive with L-2 (L-2 = past expiry)
+      if (
+        daysToExpiry !== null &&
+        daysToExpiry >= 0 &&
+        daysToExpiry <= T.expiryNoSignalDays &&
+        (signal.renewalStage === null || signal.renewalStage === 'Expiring')
+      ) {
+        out.push({
+          id: `lease-expiry-${signal.leaseId}`,
+          severity: 'critical',
+          category: 'lease',
+          title: `Expiring, no renewal signal — ${signal.tenantName}`,
+          detail: `${signal.propertyKey}${signal.sf > 0 ? ` · ${signal.sf.toLocaleString()} SF` : ''} · expires in ${daysToExpiry}d · ${fmtUsdCompact(signal.annualRent)}/yr at risk. No renewal stage has advanced.`,
+          metric: `${daysToExpiry}d`,
+          entityType: 'lease',
+          entityId: signal.leaseId,
+          action: { label: 'Draft renewal', kind: 'draft-renewal' },
+          impactAnnualUsd: signal.annualRent,
+          spine: 'A',
+          provenance: 'real',
+        });
+      }
+
+      // L-2: Renewal lapsed / holdover (leaseEnd in past AND stage ≠ Executed)
+      // Trigger: leaseEnd in past AND renewalStage ≠ 'Executed'
+      if (leaseEndInPast && signal.renewalStage !== 'Executed') {
+        out.push({
+          id: `lease-lapsed-${signal.leaseId}`,
+          severity: 'warning',
+          category: 'lease',
+          title: `Renewal lapsed / holdover — ${signal.tenantName}`,
+          detail: `${signal.propertyKey} · lease end passed ${signal.leaseEnd ? fmtDate(signal.leaseEnd) : 'unknown'} with no executed renewal. ${fmtUsdCompact(signal.annualRent)}/yr on holdover.`,
+          entityType: 'lease',
+          entityId: signal.leaseId,
+          action: { label: 'Draft renewal', kind: 'draft-renewal' },
+          impactAnnualUsd: signal.annualRent,
+          spine: 'A',
+          provenance: 'real',
+        });
+      }
+
+      // L-3: Month-to-month exposure (holdover, no fixed end)
+      // Trigger: monthToMonth === true (leaseEnd in past AND status ≠ Expired — computed in renewalSignals)
+      if (signal.monthToMonth) {
+        out.push({
+          id: `lease-mtm-${signal.leaseId}`,
+          severity: 'info',
+          category: 'lease',
+          title: `Month-to-month exposure — ${signal.tenantName}`,
+          detail: `${signal.propertyKey} · operating on holdover/MTM, no fixed lease end. ${fmtUsdCompact(signal.annualRent)}/yr is unprotected revenue.`,
+          entityType: 'lease',
+          entityId: signal.leaseId,
+          impactAnnualUsd: signal.annualRent,
+          spine: 'A',
+          provenance: 'derived',
+        });
+      }
+    }
+
+    // L-4: Under-market lease (gap ≥ marketRentGapWarnPct AND market rent present)
+    for (const gap of gaps) {
+      if (
+        gap.underMarket &&
+        gap.gapPsf !== null &&
+        gap.marketRentPsf !== null &&
+        gap.gapAnnualUsd !== null &&
+        gap.provenance !== 'absent'
+      ) {
+        // gapPct = gapPsf / marketRentPsf (positive = market above in-place)
+        const gapPct = gap.gapPsf / gap.marketRentPsf;
+        if (gapPct >= T.marketRentGapWarnPct) {
+          out.push({
+            id: `lease-undermarket-${gap.leaseId}`,
+            severity: 'info',
+            category: 'lease',
+            title: `Under-market lease — ${gap.tenantName}`,
+            detail: `${gap.propertyKey} · in-place ${gap.currentRentPsf !== null ? `$${gap.currentRentPsf.toFixed(2)}` : 'N/A'}/SF vs market $${gap.marketRentPsf.toFixed(2)}/SF — ${fmtPct(gapPct)} below market. Upside: ${fmtUsdCompact(gap.gapAnnualUsd)}/yr.`,
+            entityType: 'lease',
+            entityId: gap.leaseId,
+            action: { label: 'Review', kind: 'review' },
+            impactAnnualUsd: gap.gapAnnualUsd, // positive = upside
+            spine: 'A',
+            provenance: 'derived',
+          });
+        }
+      }
+    }
+
+    // L-5: Concentrated rollover (one expiry bucket ≥ tenantNoiConcentrationInfo of total annual rent)
+    // Checked buckets: '0-6m' and '6-12m' only (per spec §4)
+    if (totalAnnualRent > 0) {
+      const CONCENTRATION_BUCKETS = ['0-6m', '6-12m'] as const;
+      for (const bucket of CONCENTRATION_BUCKETS) {
+        // Sum annual rent for leases in this bucket using bucketExpiry
+        const bucketRent = s.leases
+          .filter((l) => bucketExpiry(l.monthsToExpiry, l.leaseEnd, asOf) === bucket)
+          .reduce((sum, l) => sum + l.annualRent, 0);
+        const bucketPct = bucketRent / totalAnnualRent;
+        if (bucketPct >= T.tenantNoiConcentrationInfo) {
+          out.push({
+            id: `rollover-concentration-${bucket}`,
+            severity: 'warning',
+            category: 'lease',
+            title: `Concentrated rollover — ${bucket} bucket`,
+            detail: `${fmtPct(bucketPct)} of total annual rent (${fmtUsdCompact(bucketRent)}) expires in the ${bucket} window — above the ${fmtPct(T.tenantNoiConcentrationInfo)} concentration threshold.`,
+            action: { label: 'Review', kind: 'review' },
+            impactAnnualUsd: bucketRent,
+            spine: 'A',
+            provenance: 'derived',
+          });
+        }
+      }
     }
   }
 

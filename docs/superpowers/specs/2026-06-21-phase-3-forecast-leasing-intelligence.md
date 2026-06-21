@@ -165,8 +165,8 @@ export type RentForecastResponse = z.infer<typeof RentForecastResponse>;
 
 **Export from `src/contracts/index.ts`** (architect-owned barrel) — add `export * from './lease-forecast';`.
 
-**[RATIFY] — Renewal-likelihood band thresholds.** The mapping below is a *heuristic*, not a governor,
-but it drives a leasing-action signal Gabriel will act on. Default proposed mapping (implement, flag for ratification):
+**[RATIFIED] — Renewal-likelihood band thresholds.** The mapping below is a *heuristic*, not a governor,
+but it drives a leasing-action signal Gabriel will act on. Ratified 2026-06-21 by Gabriel:
 
 | Condition (first match wins) | `likelihood` |
 |---|---|
@@ -177,7 +177,7 @@ but it drives a leasing-action signal Gabriel will act on. Default proposed mapp
 | `monthsToExpiry ≤ 6` AND `renewalStage` ∈ {null,`Expiring`} | `at-risk` |
 | otherwise | `uncertain` |
 
-**[RATIFY] — Velocity slow threshold** `VELOCITY_SLOW_DAYS` (proposed `120` days median time-to-lease).
+**[RATIFIED] — Velocity slow threshold** `VELOCITY_SLOW_DAYS` = **60** days (proposed 120; Gabriel ratified 60 on 2026-06-21).
 
 ---
 
@@ -253,7 +253,7 @@ New thresholds:
 expiryNoSignalDays: 90,        // lease expires ≤90d with no renewal stage advance
 marketRentGapWarnPct: 0.10,    // current ≥10% below market → under-market flag
 lapsedHoldoverGraceDays: 0,    // leaseEnd past with no Executed stage → lapsed
-velocitySlowDays: 120,         // [RATIFY] mirror of VELOCITY_SLOW_DAYS
+velocitySlowDays: 60,          // [RATIFIED] mirror of VELOCITY_SLOW_DAYS (Gabriel ratified 60, not 120, 2026-06-21)
 ```
 
 | # | Alert | Trigger | severity | impactAnnualUsd | spine / provenance |
