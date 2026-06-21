@@ -143,31 +143,31 @@
   "insurance-alerts": {
     "agent_role": "Integration/Intelligence Agent",
     "phase": "Phase 5 — insurance alert conditions (expiry-soon + coverage-gap)",
-    "status": "in_progress",
+    "status": "merged",
     "blocked_by": null,
     "review_needed": false,
-    "review_detail": null,
-    "last_updated": "2026-06-21T08:30:00Z"
+    "review_detail": "MERGED via PR #94 (expiry-soon + coverage-gap alert conditions). Stale in_progress corrected 2026-06-21 by phase-2-narrative.",
+    "last_updated": "2026-06-21T18:00:00Z"
   },
 
   "phase-2-debt-scoring": {
     "agent_role": "Integration Agent — Claude Code sonnet",
     "phase": "Phase 2 Steps 1–3 — debt migrations + Zod contract + snapshot writer",
-    "status": "in_progress",
+    "status": "merged",
     "blocked_by": null,
     "review_needed": false,
-    "review_detail": "src/contracts/debt.ts is a NEW file (not modifying existing contracts). scripts/warehouse-verify.ts gets a new assertion block only (additive). No architect-owned files structurally modified.",
-    "last_updated": "2026-06-21T09:00:00Z"
+    "review_detail": "MERGED via PR #95 (migrations 009/010 + src/contracts/debt.ts + debt-snapshot writer). Stale in_progress corrected 2026-06-21 by phase-2-narrative.",
+    "last_updated": "2026-06-21T18:00:00Z"
   },
 
   "phase-2-debt-api": {
     "agent_role": "Analytics Agent",
-    "phase": "Phase 2 Step 5 — debt API sub-router (scores + maturity ladder)",
-    "status": "in_progress",
+    "phase": "Phase 2 Steps 4-6 — debt API sub-router (scores + maturity ladder) + Debt Scorecard UI",
+    "status": "merged",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "server/index.ts (architect-owned): additive route registration only — import debtApi + app.route('/api/warehouse/debt', debtApi(getWarehouse)). No existing routes altered. Awaiting architect acknowledgment.",
-    "last_updated": "2026-06-21T10:00:00Z"
+    "review_needed": false,
+    "review_detail": "MERGED via PR #97 (scoring engine + debt-api sub-router mounted at /api/warehouse/debt + Debt Scorecard UI). Stale in_progress/review_needed corrected 2026-06-21 by phase-2-narrative.",
+    "last_updated": "2026-06-21T18:00:00Z"
   },
 
   "phase-2-wiring": {
@@ -178,6 +178,16 @@
     "review_needed": true,
     "review_detail": "server/index.ts (Architect-owned) — Gabriel PRE-AUTHORIZED 2026-06-21: (a) import writeDebtSnapshot, (b) debtApi mount second arg, (c) debt try/catch appended inside the existing brain.on('snapshot') listener. CORS line + governor constants untouched.",
     "last_updated": "2026-06-21T00:00:00Z"
+  },
+
+  "phase-2-narrative": {
+    "agent_role": "Engineering (Claude Code) — Opus plans/reviews, Sonnet implements — Gabriel-authorized 2026-06-21 (D4/D5 ratified)",
+    "phase": "Phase 2 Workstream 2 — AI Narrative Briefings (Steps 7–11): NarrativeBlock contract + composeNarrative (Haiku 4.5) + narrative JSON routes + PDF embed + Export-with-narrative button. Worktree: compassionate-golick-b55abd.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Architect-owned touches (additive only, await acknowledgment): (1) src/contracts/briefing.ts — ADD NarrativeBlock + Narrative{Property,Manager}BriefingModel; base BriefingModel UNCHANGED. (2) server/warehouse/api.ts — ADD two narrative JSON routes (/briefing/{property,manager}/:slug/narrative) + a ?narrative=1 branch on the existing .pdf routes; no existing route altered. Decoupled from Tier 1 (reads composed BriefingModel, not the live snapshot — no getLoans dep). 'Three narrative routes' in the (missing) spec resolved to 2 JSON routes + PDF query-param: there are exactly two briefing subjects. Mandatory adversarial refute pass on narrative.ts + api.ts before done.",
+    "last_updated": "2026-06-21T18:00:00Z"
   },
 
   "usage": {
