@@ -111,7 +111,7 @@ re-evaluate this entry if it gains analytic logic.
 **Escape hatch for unlisted route files.** If a PR touches a route file not yet in the allowlist
 and you are confident it contains no financial math, use:
 
-```
+```text
 Refute-Skip: route-only — <file(s)> contain no financial math
 ```
 
