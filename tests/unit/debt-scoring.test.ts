@@ -426,3 +426,121 @@ describe('cash-out signal', () => {
     expect(s.signal).toBe('cash-out');
   });
 });
+
+// ============================================================================
+// Adversarial regression tests — F1–F5 from 2026-06-21 refute pass
+// ============================================================================
+
+describe('F1 regression — refi blocked when DSCR unknown (no warehouse NOI)', () => {
+  it('returns hold (NOT refi) when NOI is absent from PeriodMetrics', () => {
+    const db = freshDb();
+    // Loan rate 9% >> market threshold (4.5% + 2% + 1.5% = 8%); normally refi would fire.
+    // LTV = 0.30 (known and clear). But NO PeriodMetrics for prop-a → noi=null → dscr=null.
+    // F1 fix: governorsClear requires dscr !== null → hold, never refi.
+    insertLoan(db, {
+      rate: 0.09,
+      ltv: 0.30,
+      monthly_pmt: 3_000,
+      months_to_maturity: 42,
+    });
+    // Pass metrics for a DIFFERENT property — prop-a has no NOI data
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-b', noi: 200_000 })];
+    const results = scoreDebtPositions(db, metrics, 0.045);
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s).toBeDefined();
+    expect(s.signal).toBe('hold');
+    expect(s.signal).not.toBe('refi');
+    expect(s.dscr).toBeNull();
+    expect(s.signalReason).toMatch(/DSCR unknown/i);
+  });
+});
+
+describe('F2 regression — refi blocked when LTV unknown (null in debt_positions)', () => {
+  it('returns hold (NOT refi) when ltv is null on all active loan rows', () => {
+    const db = freshDb();
+    // Good NOI, high loan rate → refi would fire if governors were both clear.
+    // But ltv=null on the loan row → governorsClear=false → hold.
+    insertLoan(db, {
+      rate: 0.09,
+      ltv: null,           // LTV unknown at snapshot time
+      monthly_pmt: 3_000,
+      months_to_maturity: 42,
+    });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const results = scoreDebtPositions(db, metrics, 0.045);
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s).toBeDefined();
+    expect(s.signal).toBe('hold');
+    expect(s.signal).not.toBe('refi');
+    expect(s.ltv).toBeNull();
+    expect(s.signalReason).toMatch(/LTV unknown/i);
+  });
+});
+
+describe('F3 regression — cash-out blocked on demand notes (null months_to_maturity)', () => {
+  it('returns hold (NOT cash-out) when loan has null months_to_maturity', () => {
+    const db = freshDb();
+    // DSCR and LTV clear, DSCR headroom >> 0.5, LTV headroom >> 0.10.
+    // Rate 5.5% < market threshold 8% → no refi.
+    // BUT months_to_maturity=null (demand note) → cash-out maturity gate fails.
+    // F3 fix: null maturity is NOT treated as "far away" — cash-out must NOT fire.
+    insertLoan(db, {
+      rate: 0.055,
+      ltv: 0.20,
+      monthly_pmt: 2_000,
+      months_to_maturity: null,   // demand note — callable immediately
+    });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const results = scoreDebtPositions(db, metrics, MARKET_5Y);
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s).toBeDefined();
+    expect(s.signal).not.toBe('cash-out');
+    expect(s.signal).toBe('hold');
+  });
+});
+
+describe('F4 regression — annualDebtService=null when all payment fields are null (no crash)', () => {
+  it('produces hold signal and null DSCR without crashing when all payment fields are null', () => {
+    const db = freshDb();
+    // All payment fields null: monthly_pmt=null, annual_interest=null, annual_principal=null
+    // F4 fix: anyNonNull=false → annualDebtService=null → dscr=null → governorsClear=false → hold
+    insertLoan(db, {
+      monthly_pmt: null,
+      annual_interest: null,
+      annual_principal: null,
+      ltv: 0.30,
+      months_to_maturity: 42,
+    });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 120_000 })];
+    let results: ReturnType<typeof scoreDebtPositions>;
+    expect(() => {
+      results = scoreDebtPositions(db, metrics, MARKET_5Y);
+    }).not.toThrow();
+    const s = results!.find((r) => r.propertyId === 'prop-a')!;
+    expect(s).toBeDefined();
+    expect(s.dscr).toBeNull();
+    expect(s.signal).toBe('hold');
+    // Score must still be in-range (not NaN/Infinity)
+    expect(s.score).toBeGreaterThanOrEqual(0);
+    expect(s.score).toBeLessThanOrEqual(100);
+  });
+});
+
+describe('F5 regression — negative NOI correctly triggers governor-block (not a crash)', () => {
+  it('fires governor-block when NOI is negative (DSCR < dscrFloor)', () => {
+    const db = freshDb();
+    // NOI = -50_000, DS = 5_500 * 12 = 66_000 → DSCR = -0.76 < 1.25 → governor-block
+    insertLoan(db, { monthly_pmt: 5_500, ltv: 0.30 });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: -50_000 })];
+    const results = scoreDebtPositions(db, metrics, MARKET_5Y);
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s).toBeDefined();
+    expect(s.signal).toBe('governor-block');
+    expect(s.dscr).not.toBeNull();
+    expect(s.dscr!).toBeLessThan(0);
+    expect(s.signalReason).toContain('DSCR');
+    expect(s.signalReason).toContain('floor');
+    expect(s.score).toBeGreaterThanOrEqual(0);
+    expect(s.score).toBeLessThanOrEqual(100);
+  });
+});

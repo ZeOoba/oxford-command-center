@@ -111,12 +111,15 @@ export function scoreDebtPositions(
 
   const activePropertyIds = propertyRows.map((r) => r.property_id);
 
+  // F5: ORDER BY current_balance DESC, id ASC ensures deterministic LTV tie-break when two
+  // loans share the same current_balance. Without ORDER BY, SQLite row order is unspecified.
   const getLoansForProperty = db.prepare<[string]>(
     `SELECT id, property_id, loan_name, current_balance, rate,
             monthly_pmt, annual_interest, annual_principal,
             months_to_maturity, ltv, status
      FROM debt_positions
-     WHERE property_id = ? AND status = 'active'`,
+     WHERE property_id = ? AND status = 'active'
+     ORDER BY current_balance DESC, id ASC`,
   );
 
   const getPropertyName = db.prepare<[string]>(
@@ -168,7 +171,10 @@ export function scoreDebtPositions(
           anyNonNull = true;
         }
       }
-      annualDebtService = anyNonNull && sum > 0 ? sum : null;
+      // F4: separate "no payment data" (anyNonNull=false → null) from "fields present but sum to 0"
+      // (anyNonNull=true, sum=0 → 0). A legitimate zero means fully paid down; that is NOT the
+      // same as unknown. Division-by-zero is guarded at the DSCR calculation below.
+      annualDebtService = anyNonNull ? sum : null;
     }
 
     // === Get NOI from PeriodMetrics (Spine B) ===
@@ -215,28 +221,38 @@ export function scoreDebtPositions(
       avgLoanRate = totalWeight > 0 ? weightedSum / totalWeight : null;
     }
 
-    // Min months to maturity (soonest maturity is binding); null demand notes treated as 999
+    // Min months to maturity (soonest maturity is binding).
+    // F3: null months_to_maturity (demand notes) must NOT be treated as "far away" via ?? 999.
+    // A demand note is callable immediately — treating it as distant is materially wrong.
+    // Only non-null maturity values participate; if any loan has null maturity, it means
+    // we do NOT know its maturity — so minMonthsToMaturity remains null, which causes the
+    // cash-out maturity gate (requires non-null) to fail, blocking cash-out on demand notes.
     let minMonthsToMaturity: number | null = null;
     {
-      let min = Infinity;
-      let anyReal = false;
       for (const loan of loans) {
-        const m = loan.months_to_maturity ?? 999;
-        if (m < min) {
-          min = m;
-          anyReal = true;
+        if (loan.months_to_maturity === null) continue; // demand/unknown — skip, stays null-aware
+        if (minMonthsToMaturity === null || loan.months_to_maturity < minMonthsToMaturity) {
+          minMonthsToMaturity = loan.months_to_maturity;
         }
       }
-      minMonthsToMaturity = anyReal ? min : null;
     }
 
     // === Signal logic (first match wins) ===
     let signal: DebtSignal;
     let signalReason: string;
 
+    // Known breach on either governor → governor-block (fires even on partial knowledge)
     const isGovernorBlock =
       (dscr !== null && dscr < governors.dscrFloor) ||
       (ltv !== null && ltv > governors.ltvCeiling);
+
+    // F1 + F2: action signals (refi, cash-out) require AFFIRMATIVE governor clearance —
+    // both governors must be KNOWN and PASSING. Unknown governors are not cleared governors.
+    // Rationale: recommending refinancing or cash-out with zero DSCR/LTV knowledge is a
+    // capital-allocation error. Unknown → hold, not action.
+    const governorsClear =
+      dscr !== null && dscr >= governors.dscrFloor &&
+      ltv !== null && ltv <= governors.ltvCeiling;
 
     if (isGovernorBlock) {
       signal = 'governor-block';
@@ -245,11 +261,25 @@ export function scoreDebtPositions(
       } else {
         signalReason = `LTV ${((ltv ?? 0) * 100).toFixed(1)}% above ceiling ${(governors.ltvCeiling * 100).toFixed(1)}%`;
       }
+    } else if (!governorsClear) {
+      // Unknown governor — cannot recommend action signals; fall through to hold.
+      signal = 'hold';
+      if (dscr === null && ltv === null) {
+        signalReason =
+          'Governor check skipped — DSCR unknown (no warehouse NOI for this property); LTV unknown at snapshot time. Re-run after populating both.';
+      } else if (dscr === null) {
+        signalReason =
+          'Governor check skipped — DSCR unknown (no warehouse NOI for this property)';
+      } else {
+        signalReason =
+          'Governor check incomplete — LTV unknown at snapshot time; re-run snapshot after workbook LTV column is populated';
+      }
     } else if (
       marketRate !== null &&
       avgLoanRate !== null &&
       avgLoanRate > marketRate + governors.refiTriggerBps / 10_000
     ) {
+      // governorsClear is true here (checked above)
       signal = 'refi';
       signalReason = `In-place rate ${(avgLoanRate * 100).toFixed(2)}% exceeds market proxy ${(marketRate * 100).toFixed(2)}% by ${Math.round((avgLoanRate - marketRate) * 10_000)}bps`;
     } else if (
@@ -257,10 +287,14 @@ export function scoreDebtPositions(
       dscrHeadroom > 0.5 &&
       ltvHeadroom !== null &&
       ltvHeadroom > 0.10 &&
-      (minMonthsToMaturity ?? 999) > 24
+      // F3: demand notes (null maturity) must NOT pass. null ?? 999 was wrong — demand notes
+      // are callable immediately. Require an explicitly known maturity > 24 months.
+      minMonthsToMaturity !== null &&
+      minMonthsToMaturity > 24
     ) {
+      // governorsClear is true here (checked above)
       signal = 'cash-out';
-      signalReason = `Headroom: DSCR +${dscrHeadroom.toFixed(2)}x, LTV headroom ${(ltvHeadroom * 100).toFixed(1)}%, ${Math.round(minMonthsToMaturity ?? 999)}mo to maturity`;
+      signalReason = `Headroom: DSCR +${dscrHeadroom.toFixed(2)}x, LTV headroom ${(ltvHeadroom * 100).toFixed(1)}%, ${Math.round(minMonthsToMaturity)}mo to maturity`;
     } else {
       signal = 'hold';
       if (dscr !== null && ltv !== null) {
