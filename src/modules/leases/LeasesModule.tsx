@@ -3,6 +3,7 @@ import Fuse from 'fuse.js';
 import { Search, Download, CalendarClock } from 'lucide-react';
 import { useSnapshot, useAnalytics } from '@/data/queries';
 import { useUi } from '@/brain/ui-context';
+import { useLeaseForecast, gapChipLabel } from '../leasing/hooks';
 import { fmtUsd, fmtUsdCompact, fmtPct, fmtNum, fmtYears, fmtDate, fmtMonths } from '@analytics/index';
 import type { CriticalDate, CriticalDateKind } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
@@ -13,6 +14,7 @@ import { Button } from '@/primitives/Button';
 import { BarChart } from '@/charts/BarChart';
 import { downloadCsv } from '@/lib/export';
 import type { Lease, LeaseStatus } from '@contracts/index';
+import type { MarketRentGap } from '@contracts/lease-forecast';
 
 const statusTone = (s: LeaseStatus): BadgeTone =>
   s === 'Expired' ? 'red' : s === 'Expiring Soon' ? 'amber' : s === 'Active' ? 'green' : 'neutral';
@@ -47,6 +49,14 @@ export function LeasesModule() {
   const { data } = useSnapshot();
   const { analytics } = useAnalytics();
   const ui = useUi();
+
+  // Market rent gaps from leasing forecast (warehouse-dependent; degrades gracefully)
+  const { data: forecast } = useLeaseForecast();
+  const gapMap = useMemo(() => {
+    const m = new Map<string, MarketRentGap>();
+    for (const g of forecast?.marketGaps ?? []) m.set(g.leaseId, g);
+    return m;
+  }, [forecast]);
 
   const leases = useMemo(() => data?.snapshot.leases ?? [], [data]);
   const asOf = data?.snapshot.meta.asOf ?? '';
@@ -124,6 +134,20 @@ export function LeasesModule() {
     { key: 'mos', header: 'Mos', align: 'right', render: (l) => (l.monthsToExpiry !== null ? fmtMonths(l.monthsToExpiry) : '—'), sortValue: (l) => l.monthsToExpiry ?? 99999 },
     { key: 'esc', header: 'Esc', align: 'right', render: (l) => (l.escalationPct !== null ? fmtPct(l.escalationPct, 1) : '—'), sortValue: (l) => l.escalationPct ?? 0 },
     { key: 'status', header: 'Status', render: (l) => <Badge tone={statusTone(l.status)}>{l.status}</Badge>, sortValue: (l) => l.status },
+    {
+      key: 'market',
+      header: 'Mkt $/SF',
+      align: 'right',
+      render: (l) => {
+        const gap = gapMap.get(l.id);
+        if (!gap || gap.provenance === 'absent') return <span style={{ color: 'var(--text-tertiary)' }}>—</span>;
+        const label = gapChipLabel(gap);
+        if (label === '—') return <span style={{ color: 'var(--text-tertiary)' }}>—</span>;
+        if (gap.underMarket) return <Badge tone="amber">{label}</Badge>;
+        return <span className="num text-2xs" style={{ color: 'var(--color-pos)' }}>{label}</span>;
+      },
+      sortValue: (l) => gapMap.get(l.id)?.gapPsf ?? 0,
+    },
   ];
 
   const cdCols: Column<CriticalDate>[] = [

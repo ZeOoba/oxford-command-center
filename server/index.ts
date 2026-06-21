@@ -11,6 +11,7 @@ import { serve } from '@hono/node-server';
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
+import { z } from 'zod';
 import { brain } from './brain';
 import { DealStage, RenewalStageInput, NoiBudgetInput, AcquisitionInput, TenantArrearsInput } from '../src/contracts/index';
 import { DealCompsActionInput } from '../src/contracts/index';
@@ -218,6 +219,14 @@ app.post('/api/actions/noi-budget', async (c) => {
   if (!parsed.success) return c.json({ ok: false, error: 'Invalid propertyId or amount' }, 400);
   const ok = brain.setNoiBudget(parsed.data.propertyId, parsed.data.amount);
   return c.json({ ok, state: brain.getState() }, ok ? 200 : 404);
+});
+
+app.post('/api/actions/market-rent', async (c) => {
+  const MarketRentInput = z.object({ key: z.string().min(1), rentPsf: z.number().nonnegative() });
+  const parsed = MarketRentInput.safeParse(await c.req.json().catch(() => ({})));
+  if (!parsed.success) return c.json({ ok: false, error: 'Invalid key or rentPsf' }, 400);
+  brain.setMarketRent(parsed.data.key, parsed.data.rentPsf);
+  return c.json({ ok: true });
 });
 
 app.post('/api/actions/acquisition-input', async (c) => {
