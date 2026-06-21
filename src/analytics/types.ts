@@ -28,6 +28,9 @@ export interface Insight {
   entityType?: 'property' | 'lease' | 'loan' | 'insurance' | 'deal' | 'cashEntity';
   entityId?: string;
   action?: InsightAction;
+  impactAnnualUsd: number | null;
+  spine: 'A' | 'B';
+  provenance: 'real' | 'derived' | 'absent';
 }
 
 export interface PortfolioKpis {

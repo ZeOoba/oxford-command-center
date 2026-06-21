@@ -68,6 +68,9 @@ export function anomaliesToInsights(
       detail: `${a.detail} · ${a.period}`,
       entityType: 'property',
       entityId: a.propertyId,
+      impactAnnualUsd: null,
+      spine: 'B',
+      provenance: 'absent',
     });
   }
   return out;

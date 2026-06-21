@@ -65,7 +65,8 @@ import { insightToDraft } from '@/brain/draft';
 import type { Insight } from '@analytics/index';
 
 const ins = (over: Partial<Insight>): Insight => ({
-  id: 'x', severity: 'warning', category: 'lease', title: 't', detail: 'd', ...over,
+  id: 'x', severity: 'warning', category: 'lease', title: 't', detail: 'd',
+  impactAnnualUsd: null, spine: 'B', provenance: 'absent', ...over,
 });
 
 describe('insightToDraft', () => {

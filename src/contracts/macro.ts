@@ -21,7 +21,9 @@ export type MacroIndicator = z.infer<typeof MacroIndicator>;
 /** Macro snapshot. Source: FRED (when wired) — mock until then. */
 export const MacroSnapshot = z.object({
   asOf: z.string(),
-  source: z.enum(['mock', 'fred']),
+  // 'live-fred' = fetched live from FRED API; 'seed' = static seeded snapshot (no API key).
+  // 'mock' and 'fred' are legacy aliases kept for backward compat with persisted payloads.
+  source: z.enum(['mock', 'fred', 'live-fred', 'seed']),
   indicators: z.array(MacroIndicator),
   tenYearHistory: z.array(MacroSeriesPoint),
 });

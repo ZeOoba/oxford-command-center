@@ -57,7 +57,7 @@ export async function fetchFredMacro(): Promise<MacroSnapshot | null> {
     });
     return {
       asOf: WORKBOOK_AS_OF,
-      source: 'fred',
+      source: 'live-fred',
       indicators: [
         ind('DGS10', '10Y Treasury', t10),
         ind('DGS2', '2Y Treasury', t2),
