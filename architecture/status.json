@@ -134,11 +134,20 @@
   "phase-1-ranking": {
     "agent_role": "UX Agent + Analytics Agent — authorized by Gabriel 2026-06-20",
     "phase": "Phase 1 — dollar-ranked alert display: sort comparator + impact badge + brief top-exposure",
-    "status": "in_progress",
+    "status": "merged",
     "blocked_by": null,
     "review_needed": false,
     "review_detail": "No architect-owned files touched. Files: src/analytics/conditions.ts (sort comparator only), src/modules/overview/InsightList.tsx (dollar badge), server/brief/render.ts (topExposureRow function), tests/unit/conditions.test.ts + brief-render.test.ts. Display/ordering over existing PR #91 impactAnnualUsd; no financial-decision code. Refute-Skip trailer in commit.",
-    "last_updated": "2026-06-21T08:00:00Z"
+    "last_updated": "2026-06-21T08:30:00Z"
+  },
+  "insurance-alerts": {
+    "agent_role": "Integration/Intelligence Agent",
+    "phase": "Phase 5 — insurance alert conditions (expiry-soon + coverage-gap)",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": null,
+    "last_updated": "2026-06-21T08:30:00Z"
   },
 
   "usage": {
