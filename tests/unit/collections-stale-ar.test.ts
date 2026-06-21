@@ -26,7 +26,12 @@ const baseLease: Lease = {
 };
 
 function arrearsWithAsOf(asOfDate: Date | null | undefined): TenantArrears {
-  return { d30: 8000, d60: 0, d90: 0, d90plus: 0, asOfDate: asOfDate ?? null, sourceFile: null };
+  // undefined = field omitted entirely (legacy/pre-Track-B record, bypasses staleness gate).
+  // null or Date = field present (Track-B-stamped record, subject to staleness check).
+  if (asOfDate === undefined) {
+    return { d30: 8000, d60: 0, d90: 0, d90plus: 0, sourceFile: null };
+  }
+  return { d30: 8000, d60: 0, d90: 0, d90plus: 0, asOfDate, sourceFile: null };
 }
 
 describe('evaluateConditions — stale-ar degradation', () => {
@@ -93,6 +98,18 @@ describe('evaluateConditions — stale-ar degradation', () => {
   it('no tenantArrears records at all → no stale-ar insight (absence of data is not staleness)', () => {
     const out = evaluateConditions(snap({ leases: [baseLease] }), opts);
     expect(out.some((i) => i.id === 'ar-stale')).toBe(false);
+    expect(out.some((i) => i.id === 'arrears-l1')).toBe(false);
+  });
+
+  it('mixed stamped records (one fresh, one stale) still degrade to ar-stale', () => {
+    const fresh = new Date(NOW - 1 * 86_400_000);
+    const stale = new Date(NOW - 40 * 86_400_000);
+    const lease2: Lease = { ...baseLease, id: 'l2' };
+    const out = evaluateConditions(snap({
+      leases: [baseLease, lease2],
+      tenantArrears: { l1: arrearsWithAsOf(fresh), l2: arrearsWithAsOf(stale) },
+    }), opts);
+    expect(out.filter((i) => i.id === 'ar-stale')).toHaveLength(1);
     expect(out.some((i) => i.id === 'arrears-l1')).toBe(false);
   });
 

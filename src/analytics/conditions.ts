@@ -163,19 +163,24 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   // undefined = pre-Track-B record = no freshness metadata = skip gate, evaluate normally.
   // null = Track-B ran, couldn't derive a date = treat as stale.
   // Date = Track-B record; check age against arStalenessMaxDays.
-  const firstWithAsOf = arEntries.find((r) => 'asOfDate' in r);
+  // ALL stamped entries are evaluated — a single stale record in a mixed snapshot suppresses alerts.
+  const stampedEntries = arEntries.filter((r) => 'asOfDate' in r);
   let skipArEval = false;
-  if (firstWithAsOf !== undefined) {
+  if (stampedEntries.length > 0) {
     const DAY_MS_AR = 86_400_000;
-    const rawAsOf = firstWithAsOf.asOfDate;
-    const asOfMs = rawAsOf ? new Date(rawAsOf).getTime() : null;
-    const ageMs = asOfMs !== null && Number.isFinite(asOfMs) ? now - asOfMs : null;
-    const ageDays = ageMs !== null ? Math.floor(ageMs / DAY_MS_AR) : null;
-    if (asOfMs === null || !Number.isFinite(asOfMs) || (ageDays !== null && ageDays > T.arStalenessMaxDays)) {
+    const staleAges = stampedEntries.map((r) => {
+      const asOfMs = r.asOfDate ? new Date(r.asOfDate).getTime() : null;
+      if (asOfMs === null || !Number.isFinite(asOfMs)) return null;
+      return Math.floor((now - asOfMs) / DAY_MS_AR);
+    });
+    const hasStale = staleAges.some((age) => age === null || age > T.arStalenessMaxDays);
+    if (hasStale) {
       skipArEval = true;
-      const detail = asOfMs === null || !Number.isFinite(asOfMs)
+      const finiteDays = staleAges.filter((d): d is number => d !== null);
+      const worstAge = finiteDays.length > 0 ? Math.max(...finiteDays) : null;
+      const detail = staleAges.some((d) => d === null)
         ? 'AR data: no import on record — run the QB AR export and import to enable collections monitoring.'
-        : `AR data: last import was ${ageDays} days ago — refresh QB export to enable collections monitoring.`;
+        : `AR data: last import was ${worstAge} days ago — refresh QB export to enable collections monitoring.`;
       out.push({
         id: 'ar-stale', severity: 'info', category: 'data',
         title: 'AR data stale — collections monitoring inactive',

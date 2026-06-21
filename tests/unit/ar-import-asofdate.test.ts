@@ -26,4 +26,9 @@ describe('extractAsOfDateFromFilename', () => {
     const result = extractAsOfDateFromFilename('ExportedAR_2025-12-31.csv');
     expect(result).toEqual(new Date('2025-12-31'));
   });
+
+  it('returns null for impossible calendar dates (e.g. Feb 31)', () => {
+    expect(extractAsOfDateFromFilename('AR_Aging_2026-02-31.csv')).toBeNull();
+    expect(extractAsOfDateFromFilename('AR_Aging_2026-04-31.csv')).toBeNull();
+  });
 });
