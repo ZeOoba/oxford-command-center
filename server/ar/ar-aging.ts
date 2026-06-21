@@ -181,6 +181,19 @@ function parseAppfolioAging(text: string): ArAgingRow[] {
 }
 
 /**
+ * Extract the AR as-of date from a QB AR export filename.
+ * Matches the first YYYY-MM-DD pattern found anywhere in the basename.
+ * Returns null when no date is present (manual or renamed files).
+ */
+export function extractAsOfDateFromFilename(filePath: string): Date | null {
+  const base = filePath.replace(/.*[\\/]/, '');
+  const m = base.match(/(\d{4}-\d{2}-\d{2})/);
+  if (!m) return null;
+  const d = new Date(m[1]!);
+  return Number.isFinite(d.getTime()) ? d : null;
+}
+
+/**
  * Parse an A/R-aging report's extracted text into per-tenant arrears rows. Auto-detects the format.
  * A recognized-but-unsupported format (no buckets) returns an explicit unsupportedReason and no
  * rows — never a silent empty result that would read as "no delinquencies".
