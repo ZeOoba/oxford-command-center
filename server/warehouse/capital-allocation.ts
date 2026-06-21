@@ -115,6 +115,7 @@ function buildVerdict(
     reasons.push('improve deferred: capexIrr estimate requires Phase 4 v2 data');
   } else {
     // 4. hold (default — handles monitor, governor-block, no-debt)
+    // timelineMonths=0: Phase 5 defers a concrete hold timeline (Phase 5 v2 will set 12 months)
     action = 'hold';
     riskBand = healthBandToRisk(ps.healthBand);
     expectedReturnPct = null;
