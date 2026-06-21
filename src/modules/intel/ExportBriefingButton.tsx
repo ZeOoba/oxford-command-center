@@ -18,6 +18,10 @@ interface Props {
   id: string;
   size?: 'sm' | 'md';
   label?: string;
+  /** When true, appends ?narrative=1 to the PDF route and defaults the label to
+   *  "Export with narrative (PDF)". The server composes an AI narrative section before
+   *  rendering the PDF. Falls back gracefully if the AI call fails (server always 200s). */
+  narrative?: boolean;
 }
 
 /**
@@ -25,9 +29,21 @@ interface Props {
  *
  * @param kind - The briefing subject type: either 'property' or 'manager'.
  * @param id - The identifier (slug) of the property or manager to generate the briefing for.
+ * @param narrative - When true, requests the AI narrative variant (?narrative=1). Defaults the
+ *   label to "Export with narrative (PDF)". The server degrades gracefully on AI failure.
  */
-export function ExportBriefingButton({ kind, id, size = 'sm', label = 'Export briefing (PDF)' }: Props) {
-  const href = `/api/warehouse/briefing/${kind}/${encodeURIComponent(id)}.pdf`;
+export function ExportBriefingButton({
+  kind,
+  id,
+  size = 'sm',
+  label,
+  narrative = false,
+}: Props) {
+  const defaultLabel = narrative ? 'Export with narrative (PDF)' : 'Export briefing (PDF)';
+  const resolvedLabel = label ?? defaultLabel;
+  const href = narrative
+    ? `/api/warehouse/briefing/${kind}/${encodeURIComponent(id)}.pdf?narrative=1`
+    : `/api/warehouse/briefing/${kind}/${encodeURIComponent(id)}.pdf`;
   const onPress = () => {
     // Navigate via a transient anchor so the attachment download fires without leaving the SPA.
     const a = document.createElement('a');
@@ -38,9 +54,9 @@ export function ExportBriefingButton({ kind, id, size = 'sm', label = 'Export br
     a.remove();
   };
   return (
-    <Button variant="subtle" size={size} onPress={onPress} aria-label={label}>
+    <Button variant="subtle" size={size} onPress={onPress} aria-label={resolvedLabel}>
       <Download size={size === 'sm' ? 13 : 15} />
-      {label}
+      {resolvedLabel}
     </Button>
   );
 }
