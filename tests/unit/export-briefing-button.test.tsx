@@ -92,6 +92,69 @@ describe('ExportBriefingButton — href construction', () => {
   });
 });
 
+describe('ExportBriefingButton — narrative prop', () => {
+  function captureHrefNarrative(props: { kind: 'property' | 'manager'; id: string; narrative?: boolean; label?: string }): { href: string | null; ariaLabel: string | null } {
+    const anchors: HTMLAnchorElement[] = [];
+    const originalCreate = document.createElement.bind(document);
+    const spy = vi.spyOn(document, 'createElement').mockImplementation((tag: string) => {
+      const el = originalCreate(tag);
+      if (tag === 'a') anchors.push(el as HTMLAnchorElement);
+      return el;
+    });
+
+    render(<ExportBriefingButton {...props} />);
+    const btn = screen.getByRole('button');
+    const ariaLabel = btn.getAttribute('aria-label');
+    fireEvent.click(btn);
+
+    spy.mockRestore();
+    cleanup();
+    return { href: anchors[0]?.href ?? null, ariaLabel };
+  }
+
+  it('appends ?narrative=1 to the href when narrative=true', () => {
+    const { href } = captureHrefNarrative({ kind: 'property', id: 'some-slug', narrative: true });
+    expect(href).toContain('/api/warehouse/briefing/property/some-slug.pdf?narrative=1');
+  });
+
+  it('does NOT append ?narrative=1 when narrative is omitted', () => {
+    const { href } = captureHrefNarrative({ kind: 'property', id: 'some-slug' });
+    expect(href).not.toContain('narrative');
+    expect(href).toContain('/api/warehouse/briefing/property/some-slug.pdf');
+  });
+
+  it('does NOT append ?narrative=1 when narrative=false', () => {
+    const { href } = captureHrefNarrative({ kind: 'property', id: 'some-slug', narrative: false });
+    expect(href).not.toContain('narrative');
+  });
+
+  it('defaults label to "Export with narrative (PDF)" when narrative=true and no label given', () => {
+    const { ariaLabel } = captureHrefNarrative({ kind: 'property', id: 'some-slug', narrative: true });
+    expect(ariaLabel).toBe('Export with narrative (PDF)');
+  });
+
+  it('preserves original default label "Export briefing (PDF)" when narrative is omitted', () => {
+    const { ariaLabel } = captureHrefNarrative({ kind: 'property', id: 'some-slug' });
+    expect(ariaLabel).toBe('Export briefing (PDF)');
+  });
+
+  it('honours an explicit label override even when narrative=true', () => {
+    const { ariaLabel } = captureHrefNarrative({ kind: 'manager', id: 'mgr-slug', narrative: true, label: 'PDF+AI' });
+    expect(ariaLabel).toBe('PDF+AI');
+  });
+
+  it('appends ?narrative=1 for manager kind', () => {
+    const { href } = captureHrefNarrative({ kind: 'manager', id: 'kohr-royer-griffith', narrative: true });
+    expect(href).toContain('/api/warehouse/briefing/manager/kohr-royer-griffith.pdf?narrative=1');
+  });
+
+  it('percent-encodes id when narrative=true', () => {
+    const { href } = captureHrefNarrative({ kind: 'property', id: 'prop with spaces', narrative: true });
+    expect(href).toContain('prop%20with%20spaces');
+    expect(href).toContain('?narrative=1');
+  });
+});
+
 describe('ExportBriefingButton — download behavior (transient anchor pattern)', () => {
   it('creates a transient anchor, appends it to the body, clicks it, and removes it', () => {
     const appendSpy = vi.spyOn(document.body, 'appendChild');

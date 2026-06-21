@@ -170,7 +170,10 @@ export function PropertyIntelView({ propertyId, onSelectProperty, period, period
         <div className="min-w-0 flex-1">
           <PropertySelector ranked={ranked} selectedId={selectedId} onSelect={onSelectProperty} />
         </div>
-        <ExportBriefingButton kind="property" id={selectedId} />
+        <div className="flex shrink-0 items-center gap-2">
+          <ExportBriefingButton kind="property" id={selectedId} />
+          <ExportBriefingButton kind="property" id={selectedId} narrative />
+        </div>
       </div>
 
       {score && (
