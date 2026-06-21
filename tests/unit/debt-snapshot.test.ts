@@ -2,7 +2,7 @@
 //
 // tests/unit/debt-snapshot.test.ts
 //
-// Phase 2 Steps 1–3 — debt_positions snapshot writer.
+// Phase 2 Steps 1–3 + binding fixes — debt_positions snapshot writer.
 // Verifies writeDebtSnapshot() write path, upsert semantics, supersede path,
 // demand-note handling, and lender-column suppression in the DebtPosition Zod type.
 //
@@ -45,6 +45,7 @@ function makeBorrowerLoan(overrides: Partial<Loan> = {}): Loan {
     lender: 'First National Bank',
     balloon: false,
     flags: [],
+    collateralProperty: null,
     ...overrides,
   };
 }
@@ -131,6 +132,115 @@ describe('writeDebtSnapshot — demand notes', () => {
     const row = db.prepare("SELECT is_demand, maturity_date FROM debt_positions WHERE id = ?").get('loan-demand') as { is_demand: number; maturity_date: string | null };
     expect(row.is_demand).toBe(1);
     expect(row.maturity_date).toBeNull();
+  });
+});
+
+// ── F-stale: stale-row reconcile ─────────────────────────────────────────────────────────
+
+describe('writeDebtSnapshot — F-stale: stale-row reconcile (paid-off loan removed)', () => {
+  it('snapshot [A,B] then [A] → only A remains active; B is superseded', () => {
+    const db = freshDb();
+
+    const loanA = makeBorrowerLoan({ id: 'loan-A', name: 'Loan A' });
+    const loanB = makeBorrowerLoan({ id: 'loan-B', name: 'Loan B' });
+
+    // First snapshot: both A and B are active
+    writeDebtSnapshot(db, [loanA, loanB], '2026-05-01');
+
+    const afterFirst = db
+      .prepare("SELECT id, status FROM debt_positions WHERE status = 'active' ORDER BY id")
+      .all() as Array<{ id: string; status: string }>;
+    expect(afterFirst.map((r) => r.id)).toEqual(['loan-A', 'loan-B']);
+
+    // Second snapshot: B is removed (paid off) — only A is in the incoming set
+    writeDebtSnapshot(db, [loanA], '2026-06-01');
+
+    const activeAfter = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active' ORDER BY id")
+      .all() as Array<{ id: string }>;
+    expect(activeAfter.map((r) => r.id)).toEqual(['loan-A']);
+
+    // B must be superseded, not dropped
+    const bRow = db
+      .prepare("SELECT id, status FROM debt_positions WHERE id = 'loan-B'")
+      .get() as { id: string; status: string } | undefined;
+    expect(bRow).toBeDefined();
+    expect(bRow?.status).toBe('superseded');
+  });
+});
+
+// ── F-FK-safe: property_id validated before insert ───────────────────────────────────────
+
+describe('writeDebtSnapshot — F-FK-safe: invalid property_id → null + surfaced', () => {
+  it('map value not in property_master → row written with property_id=null, error surfaced, not dropped', () => {
+    const db = freshDb();
+
+    const loan = makeBorrowerLoan({ id: 'loan-bad-prop' });
+    // Map points to a property id that is NOT in property_master
+    const badMap = new Map([['loan-bad-prop', 'nonexistent-property-id']]);
+
+    const result = writeDebtSnapshot(db, [loan], '2026-06-01', badMap);
+
+    // Row must be written (not dropped)
+    expect(result.written).toBe(1);
+    // Error must be surfaced
+    expect(result.errors.length).toBeGreaterThan(0);
+    expect(result.errors[0]).toContain('loan-bad-prop');
+
+    // property_id must be null in the DB (not the invalid id)
+    const row = db
+      .prepare('SELECT property_id FROM debt_positions WHERE id = ?')
+      .get('loan-bad-prop') as { property_id: string | null } | undefined;
+    expect(row).toBeDefined();
+    expect(row?.property_id).toBeNull();
+  });
+
+  it('valid property_id in property_master → written with correct property_id', () => {
+    const db = freshDb();
+
+    // Seed a property_master row
+    db.prepare(
+      `INSERT INTO property_master (id, name, market, rentable_sf, acquisition_date)
+       VALUES ('prop-valid', 'Valid Property', 'Columbus', 20000, '2020-01-01')`,
+    ).run();
+
+    const loan = makeBorrowerLoan({ id: 'loan-good-prop' });
+    const goodMap = new Map([['loan-good-prop', 'prop-valid']]);
+
+    const result = writeDebtSnapshot(db, [loan], '2026-06-01', goodMap);
+
+    expect(result.written).toBe(1);
+    expect(result.errors).toHaveLength(0);
+
+    const row = db
+      .prepare('SELECT property_id FROM debt_positions WHERE id = ?')
+      .get('loan-good-prop') as { property_id: string | null } | undefined;
+    expect(row?.property_id).toBe('prop-valid');
+  });
+});
+
+// ── snapshot_date from generatedAt (not static asOf) ─────────────────────────────────────
+
+describe('writeDebtSnapshot — snapshot_date is the caller-supplied date (generatedAt, not static)', () => {
+  it('two refreshes on different dates → two rows (one active, one superseded)', () => {
+    const db = freshDb();
+    const loan = makeBorrowerLoan({ currentBalance: 800_000 });
+
+    // Simulate refresh on 2026-06-10 (generatedAt)
+    writeDebtSnapshot(db, [loan], '2026-06-10');
+    // Simulate refresh on 2026-06-21 (generatedAt — different date)
+    writeDebtSnapshot(db, [{ ...loan, currentBalance: 790_000 }], '2026-06-21');
+
+    const all = db
+      .prepare('SELECT snapshot_date, status, current_balance FROM debt_positions WHERE id = ? ORDER BY snapshot_date')
+      .all('loan-001') as Array<{ snapshot_date: string; status: string; current_balance: number }>;
+
+    expect(all).toHaveLength(2);
+    expect(all[0]?.snapshot_date).toBe('2026-06-10');
+    expect(all[0]?.status).toBe('superseded');
+    expect(all[1]?.snapshot_date).toBe('2026-06-21');
+    expect(all[1]?.status).toBe('active');
+    expect(all[1]?.current_balance).toBe(790_000);
   });
 });
 

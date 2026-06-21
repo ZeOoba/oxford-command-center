@@ -30,5 +30,9 @@ export const Loan = z.object({
   lender: z.string().nullable(),
   balloon: z.boolean(), // true when a balloon payment is due at maturity
   flags: z.array(DataQualityFlag).default([]),
+  /** Raw Properties-tab display name from workbook Loan Index col 11 (borrower loans only).
+   *  Null when the column is empty or the loan is not borrower-direction.
+   *  Never misattributed: blank = unattributed, never guessed. */
+  collateralProperty: z.string().nullable().default(null),
 });
 export type Loan = z.infer<typeof Loan>;

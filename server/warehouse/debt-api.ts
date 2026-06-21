@@ -1,10 +1,12 @@
 // server/warehouse/debt-api.ts
 //
-// Phase 2 Step 5 — Debt/Refi API sub-router.
+// Phase 2 Step 5 + binding — Debt/Refi API sub-router.
 //
 // Routes:
-//   GET /scores   — scoreDebtPositions() across all active loans; FRED DGS5 is non-fatal when null
-//   GET /maturity — maturity ladder: active loans bucketed into 4 time horizons
+//   GET  /scores   — scoreDebtPositions() across all active loans; FRED DGS5 is non-fatal when null
+//   GET  /maturity — maturity ladder: active loans bucketed into 4 time horizons
+//   POST /snapshot — write a debt snapshot from a portfolio snapshot payload
+//                    (loans + properties + snapshotDate → debt_positions via crosswalk)
 //
 // Registration: server/index.ts mounts this at /api/warehouse/debt (additive; see status.json).
 //
@@ -21,12 +23,28 @@ import type { WarehouseDb } from './db';
 import { scoreDebtPositions } from './debt-scoring';
 import { propertyPeriodMetrics } from './metrics';
 import { fetchFredMacro } from '../macro/fred';
+import { writeDebtSnapshot } from './debt-snapshot';
+import { buildLoanPropertyMap } from './property-crosswalk';
 import {
   DebtScoreResponse,
   MaturityLadderResponse,
   type MaturityLadderEntry,
   type DebtSignal,
 } from '../../src/contracts/debt';
+import type { Loan } from '../../src/contracts/loan';
+
+// ── POST /snapshot payload type ────────────────────────────────────────────────────────────
+
+/**
+ * Payload for POST /snapshot.
+ * Caller supplies the borrower loans, the properties list (for crosswalk name resolution),
+ * and the snapshot date (must be generatedAt, not the static workbook asOf).
+ */
+export interface DebtApiSnapshotPayload {
+  snapshotDate: string;
+  loans: Loan[];
+  properties: { id: string; name: string }[];
+}
 
 // ── Maturity ladder helpers ────────────────────────────────────────────────────────────────
 
@@ -168,6 +186,42 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
       } catch (err) {
         console.error('[debt-api] /maturity error:', err instanceof Error ? err.message : String(err));
         return c.json({ error: 'maturity ladder failed' }, 500);
+      }
+    }),
+  );
+
+  // ── POST /snapshot ─────────────────────────────────────────────────────────────────────
+  //
+  // Receives a portfolio snapshot payload, resolves each borrower loan's collateralProperty
+  // to a property_master id via the crosswalk, and writes the debt_positions snapshot.
+  //
+  // Returns: { ok, written, unresolved, errors }
+  //   unresolved = count of borrower loans whose collateralProperty could not be resolved
+  //   errors     = FK-validation failures (property_id not in property_master)
+  //
+  // This is the same logic as the reload trigger in server/index.ts — both use
+  // buildLoanPropertyMap() as the shared canonical path.
+  app.post('/snapshot', (c) =>
+    withDb(async (db) => {
+      let payload: DebtApiSnapshotPayload;
+      try {
+        payload = (await c.req.json()) as DebtApiSnapshotPayload;
+      } catch {
+        return c.json({ ok: false, error: 'Invalid JSON body' }, 400);
+      }
+      if (!payload.snapshotDate || !Array.isArray(payload.loans) || !Array.isArray(payload.properties)) {
+        return c.json({ ok: false, error: 'snapshotDate, loans, and properties are required' }, 400);
+      }
+      try {
+        const { map, unresolved } = buildLoanPropertyMap(payload.loans, payload.properties);
+        const result = writeDebtSnapshot(db, payload.loans, payload.snapshotDate, map);
+        if (unresolved.length > 0) {
+          console.warn(`[debt-api] POST /snapshot: ${unresolved.length} borrower loan(s) unattributed (collateralProperty null or blank): ${unresolved.join(', ')}`);
+        }
+        return c.json({ ok: true, written: result.written, unresolved: unresolved.length, errors: result.errors });
+      } catch (err) {
+        console.error('[debt-api] POST /snapshot error:', err instanceof Error ? err.message : String(err));
+        return c.json({ error: 'debt snapshot write failed' }, 500);
       }
     }),
   );

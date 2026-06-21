@@ -25,6 +25,8 @@ import { openWarehouse } from './warehouse/db';
 import type { WarehouseDb } from './warehouse/db';
 import { warehouseRoutes } from './warehouse/api';
 import { debtApi } from './warehouse/debt-api';
+import { writeDebtSnapshot } from './warehouse/debt-snapshot';
+import { buildLoanPropertyMap } from './warehouse/property-crosswalk';
 import { captureOccupancy } from './warehouse/occupancy';
 import { captureInsurance, snapshotPoliciesToWarehouse } from './warehouse/insurance';
 import { extractOmFields } from './warehouse/om-extract';
@@ -75,6 +77,25 @@ brain.on('snapshot', (info: unknown) => {
     }
   } catch (err) {
     console.warn('⚠ Insurance capture skipped:', err instanceof Error ? err.message : String(err));
+  }
+  // Debt snapshot: write borrower-side debt positions to the warehouse on every workbook refresh.
+  // Uses generatedAt (the per-refresh ISO timestamp) as the snapshot_date — NOT meta.asOf, which
+  // is the static WORKBOOK_AS_OF constant '2026-06-01' (see occupancy.ts:169-171 for this trap).
+  // Unresolved loans (collateralProperty null/blank) are warned, never silently dropped.
+  try {
+    const snapshot = brain.getSnapshot();
+    if (snapshot && snapshot.loans.length > 0) {
+      const { map, unresolved } = buildLoanPropertyMap(snapshot.loans, snapshot.properties);
+      const snapshotDate = snapshot.meta.generatedAt.slice(0, 10);
+      writeDebtSnapshot(getWarehouse(), snapshot.loans, snapshotDate, map);
+      if (unresolved.length > 0) {
+        console.warn(
+          `⚠ Debt snapshot: ${unresolved.length} borrower loan(s) unattributed (fill Loan Index col 11): ${unresolved.join(', ')}`,
+        );
+      }
+    }
+  } catch (err) {
+    console.warn('⚠ Debt snapshot skipped:', err instanceof Error ? err.message : String(err));
   }
 });
 
