@@ -190,7 +190,7 @@ Two analytics modules. **Both hold financial-decision math → both require a Re
 
 Pure functions over `PortfolioSnapshot` + overlay-derived inputs. No DB. Mirrors `engine.ts` style.
 
-```
+```ts
 export function bucketExpiry(monthsToExpiry: number | null, leaseEnd: string|null): ExpiryBucket
 export function renewalSignals(
   leases: Lease[], asOf: string,
@@ -222,7 +222,7 @@ export function rentForecast(
 
 ### 3b. `server/warehouse/lease-velocity.ts` (NEW — Spine B, DB-reading)
 
-```
+```ts
 export function leasingVelocity(db: WarehouseDb): LeasingVelocity[]
 ```
 
