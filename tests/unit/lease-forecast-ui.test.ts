@@ -169,6 +169,7 @@ describe('gapChipLabel', () => {
     const label = gapChipLabel(g);
     // at or above market — should show ↑ (not under)
     expect(label).not.toContain('↓');
+    expect(label).toContain('↑');
   });
 
   it('null gapPsf with non-absent provenance → em-dash (defensive)', () => {

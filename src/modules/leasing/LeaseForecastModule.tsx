@@ -60,9 +60,9 @@ async function fetchRentForecast(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ scenarios: [scenario], horizonMonths: 12, vacancyPct }),
   });
-  if (!res.ok) return null;
+  if (!res.ok) throw new Error(`Rent forecast failed (${res.status})`);
   const parsed = RentForecastResponse.safeParse(await res.json().catch(() => null));
-  if (!parsed.success) return null;
+  if (!parsed.success) throw new Error('Invalid rent forecast response payload');
   return parsed.data.results[0] ?? null;
 }
 
@@ -90,7 +90,7 @@ const velocityCols: Column<LeasingVelocity>[] = [
           {v.medianDaysToLease}
         </span>
       ),
-    sortValue: (v) => v.medianDaysToLease ?? 99999,
+    sortValue: (v) => v.medianDaysToLease,
   },
   {
     key: 'events',

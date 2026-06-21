@@ -8,8 +8,8 @@ import { fmtUsdCompact, fmtDate } from '@analytics/index';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { renewalBoard, type RenewalCard } from '@/brain/renewals';
 import { RENEWAL_STAGES, nextRenewalStage, type RenewalStage } from '@contracts/index';
-import { useLeaseForecast } from '../leasing/hooks';
-import type { RenewalSignal, RenewalLikelihood } from '@contracts/lease-forecast';
+import { useLeaseForecast, likelihoodTone, buildSignalMap } from '../leasing/hooks';
+import type { RenewalSignal } from '../leasing/hooks';
 
 const STAGE_TONE: Record<RenewalStage, BadgeTone> = {
   Expiring: 'red',
@@ -19,12 +19,6 @@ const STAGE_TONE: Record<RenewalStage, BadgeTone> = {
   Executed: 'green',
 };
 
-const LIKELIHOOD_TONE: Record<RenewalLikelihood, BadgeTone> = {
-  likely:    'green',
-  uncertain: 'neutral',
-  'at-risk': 'amber',
-  lapsing:   'red',
-};
 const dayLabel = (d: number | null) => (d === null ? '—' : d < 0 ? `${Math.abs(d)}d over` : `${d}d`);
 const dayTone = (d: number | null): BadgeTone => (d === null ? 'neutral' : d < 0 ? 'red' : d <= 30 ? 'amber' : 'neutral');
 
@@ -39,11 +33,7 @@ export function RenewalsModule() {
 
   // Leasing forecast: renewal signals for likelihood badges (degrades gracefully when warehouse unavailable)
   const { data: forecast } = useLeaseForecast();
-  const signalMap = useMemo(() => {
-    const m = new Map<string, RenewalSignal>();
-    for (const s of forecast?.signals ?? []) m.set(s.leaseId, s);
-    return m;
-  }, [forecast]);
+  const signalMap = useMemo(() => buildSignalMap(forecast?.signals ?? []), [forecast?.signals]);
 
   const board = useMemo(() => (data ? renewalBoard(data.snapshot) : null), [data]);
   if (!data || !board) return null;
@@ -117,7 +107,7 @@ function RenewalCardView({
       </div>
       {signal && (
         <div className="mt-1 flex items-center gap-1.5">
-          <Badge tone={LIKELIHOOD_TONE[signal.likelihood]}>{signal.likelihood}</Badge>
+          <Badge tone={likelihoodTone(signal.likelihood)}>{signal.likelihood}</Badge>
           {signal.tenureMonths !== null && (
             <span className="num text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
               {signal.tenureMonths} mo tenure
