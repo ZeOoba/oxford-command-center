@@ -123,7 +123,12 @@ export function ManagersView() {
       key: 'export',
       header: '',
       align: 'right',
-      render: (r) => <ExportBriefingButton kind="manager" id={managerSlug(r.propertyManager)} label="PDF" />,
+      render: (r) => (
+        <span className="flex items-center justify-end gap-1.5">
+          <ExportBriefingButton kind="manager" id={managerSlug(r.propertyManager)} label="PDF" />
+          <ExportBriefingButton kind="manager" id={managerSlug(r.propertyManager)} narrative label="PDF+AI" size="sm" />
+        </span>
+      ),
     },
   ];
 

@@ -48,10 +48,12 @@ import {
   type LeaseRunSummary,
   type MarkToMarket,
 } from '../../src/contracts/lease-run';
-import { PropertyBriefingModel, ManagerBriefingModel } from '../../src/contracts/briefing';
+import { PropertyBriefingModel, ManagerBriefingModel, NarrativePropertyBriefingModel, NarrativeManagerBriefingModel } from '../../src/contracts/briefing';
+import type { NarrativeBlock } from '../../src/contracts/briefing';
 import { composePropertyBriefing, composeManagerBriefing } from '../briefing/compose';
 import { renderBriefingPdf } from '../briefing/pdf';
 import { briefingFilename } from '../briefing/filename';
+import { composeNarrative } from '../ai/narrative';
 
 const ActionInput = z.object({ action: z.enum(['approve', 'reject']) });
 
@@ -390,8 +392,9 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
 
   const streamPdf = async (
     model: PropertyBriefingModel | ManagerBriefingModel,
+    narrative?: NarrativeBlock | null,
   ): Promise<Response> => {
-    const bytes = await renderBriefingPdf(model);
+    const bytes = await renderBriefingPdf(model, narrative);
     return new Response(new Uint8Array(bytes), {
       status: 200,
       headers: {
@@ -421,13 +424,61 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
     };
   };
 
+  // ── Narrative JSON routes (Phase 2 · W2 · Step 9). ADDITIVE — no existing route is altered.
+  //    These must be registered BEFORE the `:slug` wildcard routes so Hono's literal-path
+  //    matcher resolves `/briefing/property/some-slug/narrative` against the literal `/narrative`
+  //    suffix before falling through to the catch-all `:slug` handler. The `narrative` segment
+  //    is never a valid slug character sequence that `.pdf` could be appended to, so there is
+  //    no collision with the `.pdf` splitPdf dispatch below.
+  //
+  //    These routes ALWAYS 200 on compose/AI failure (the envelope returns narrative:null,
+  //    degraded:true). The only 404 path is when the subject does not exist in the warehouse.
+  //    API key is sourced identically to the om-extract route in server/index.ts.
+
+  app.get('/briefing/property/:slug/narrative', (c) =>
+    withDb(
+      safeBriefing(async (db) => {
+        const slug = c.req.param('slug');
+        const model = composePropertyBriefing(db, slug, { generatedDate: generatedDate() });
+        if (!model) return c.json({ error: 'not found' }, 404);
+        const { narrative, degraded } = await composeNarrative(model, {
+          apiKey: process.env.ANTHROPIC_API_KEY,
+        });
+        return c.json(NarrativePropertyBriefingModel.parse({ ...model, narrative, degraded }));
+      }),
+    ),
+  );
+
+  app.get('/briefing/manager/:slug/narrative', (c) =>
+    withDb(
+      safeBriefing(async (db) => {
+        const slug = c.req.param('slug');
+        const model = composeManagerBriefing(db, slug, { generatedDate: generatedDate() });
+        if (!model) return c.json({ error: 'not found' }, 404);
+        const { narrative, degraded } = await composeNarrative(model, {
+          apiKey: process.env.ANTHROPIC_API_KEY,
+        });
+        return c.json(NarrativeManagerBriefingModel.parse({ ...model, narrative, degraded }));
+      }),
+    ),
+  );
+
   app.get('/briefing/property/:slug', (c) =>
     withDb(
       safeBriefing(async (db) => {
         const { id, wantsPdf } = splitPdf(c.req.param('slug'));
         const model = composePropertyBriefing(db, id, { generatedDate: generatedDate() });
         if (!model) return c.json({ error: 'not found' }, 404);
-        return wantsPdf ? streamPdf(model) : c.json(PropertyBriefingModel.parse(model));
+        if (wantsPdf) {
+          // ?narrative=1 → compose narrative (degrades gracefully to null on no key / AI error)
+          // and thread it into the PDF. Absent param → byte-identical to the pre-narrative path.
+          const wantsNarrative = c.req.query('narrative') === '1';
+          const narrative = wantsNarrative
+            ? (await composeNarrative(model, { apiKey: process.env.ANTHROPIC_API_KEY })).narrative
+            : null;
+          return streamPdf(model, narrative);
+        }
+        return c.json(PropertyBriefingModel.parse(model));
       }),
     ),
   );
@@ -438,7 +489,14 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
         const { id, wantsPdf } = splitPdf(c.req.param('slug'));
         const model = composeManagerBriefing(db, id, { generatedDate: generatedDate() });
         if (!model) return c.json({ error: 'not found' }, 404);
-        return wantsPdf ? streamPdf(model) : c.json(ManagerBriefingModel.parse(model));
+        if (wantsPdf) {
+          const wantsNarrative = c.req.query('narrative') === '1';
+          const narrative = wantsNarrative
+            ? (await composeNarrative(model, { apiKey: process.env.ANTHROPIC_API_KEY })).narrative
+            : null;
+          return streamPdf(model, narrative);
+        }
+        return c.json(ManagerBriefingModel.parse(model));
       }),
     ),
   );
