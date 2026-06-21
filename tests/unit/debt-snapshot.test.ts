@@ -149,6 +149,7 @@ describe('DebtPosition Zod type — lender suppression invariant', () => {
       id: raw['id'],
       propertyId: raw['property_id'] ?? null,
       loanName: raw['loan_name'],
+      lender: raw['lender'],
       originalPrincipal: raw['original_principal'] ?? null,
       currentBalance: raw['current_balance'],
       rate: raw['rate'] ?? null,
