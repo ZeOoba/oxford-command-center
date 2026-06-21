@@ -466,7 +466,7 @@ describe('POST /snapshot — two loans from one lender on two properties', () =>
     expect(fiveAveRow?.property_id).not.toBe(eastonRow?.property_id);
   });
 
-  it('unresolvable collateralProperty → property_id null + unresolved count reported', async () => {
+  it('unresolvable collateralProperty (null) → property_id null + unresolved count reported', async () => {
     const db = freshDb();
     const app = makeApp(db);
 
@@ -511,6 +511,64 @@ describe('POST /snapshot — two loans from one lender on two properties', () =>
     expect(body.ok).toBe(true);
     expect(body.written).toBe(1); // row written, not dropped
     expect(body.unresolved).toBe(1); // unresolved count is reported
+  });
+
+  it('typo\'d non-blank collateralProperty not in property_master → unresolved count reported (not silently mapped)', async () => {
+    // Fix MEDIUM regression: a non-blank collateralProperty that resolves to a slug which is
+    // NOT in property_master must land in unresolved (not silently enter the map).
+    // This guards the 0.40 LTV governor — a typo'd collateral name can mask a governor breach
+    // if the loan is bound to the wrong (or no) property.
+    const db = freshDb();
+    const app = makeApp(db);
+
+    // Do NOT seed a property_master row for 'typo-property-id' — it doesn't exist.
+    // The loan's collateralProperty is non-blank but resolves to an id not in property_master.
+
+    const payload: DebtApiSnapshotPayload = {
+      snapshotDate: '2026-06-21',
+      loans: [
+        {
+          id: 'loan-typo-collateral',
+          name: 'Loan With Typo\'d Property',
+          counterparty: 'Some Bank',
+          direction: 'borrower' as const,
+          originalPrincipal: 2_000_000,
+          currentBalance: 800_000,
+          absBalance: 800_000,
+          rate: 0.065,
+          monthlyPmt: 5_000,
+          annualInterest: 52_000,
+          annualPrincipal: 8_000,
+          loanType: 'Amortizing',
+          status: 'Active',
+          isDemand: false,
+          maturity: '2031-01-01',
+          monthsToMaturity: 54,
+          ltv: 0.40,
+          lender: 'Some Bank',
+          balloon: false,
+          flags: [],
+          collateralProperty: 'Typo Property Name XYZ', // non-blank but not in property_master
+        },
+      ],
+      properties: [
+        // Properties list does NOT include any entry matching 'Typo Property Name XYZ'
+        { id: 'some-other-prop', name: 'Some Other Property' },
+      ],
+    };
+
+    const res = await app.request('/snapshot', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean; written: number; unresolved: number; errors: string[] };
+    expect(body.ok).toBe(true);
+    expect(body.written).toBe(1); // row still written (not dropped)
+    // CRITICAL: the typo'd name must be counted as unresolved — NOT silently mapped
+    expect(body.unresolved).toBe(1);
   });
 });
 

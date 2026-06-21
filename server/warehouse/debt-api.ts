@@ -213,10 +213,16 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
         return c.json({ ok: false, error: 'snapshotDate, loans, and properties are required' }, 400);
       }
       try {
-        const { map, unresolved } = buildLoanPropertyMap(payload.loans, payload.properties);
+        const validPropertyIds = new Set<string>(
+          (db.prepare('SELECT id FROM property_master').all() as { id: string }[]).map((r) => r.id),
+        );
+        const { map, unresolved } = buildLoanPropertyMap(payload.loans, payload.properties, validPropertyIds);
         const result = writeDebtSnapshot(db, payload.loans, payload.snapshotDate, map);
         if (unresolved.length > 0) {
-          console.warn(`[debt-api] POST /snapshot: ${unresolved.length} borrower loan(s) unattributed (collateralProperty null or blank): ${unresolved.join(', ')}`);
+          console.warn(`[debt-api] POST /snapshot: ${unresolved.length} borrower loan(s) unattributed (collateralProperty null, blank, or typo'd name not in property_master): ${unresolved.join(', ')}`);
+        }
+        if (result.errors.length > 0) {
+          console.warn(`[debt-api] POST /snapshot: ${result.errors.length} FK-validation error(s) during writeDebtSnapshot (belt-and-suspenders backstop): ${result.errors.join('; ')}`);
         }
         return c.json({ ok: true, written: result.written, unresolved: unresolved.length, errors: result.errors });
       } catch (err) {

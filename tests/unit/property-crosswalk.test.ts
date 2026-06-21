@@ -125,6 +125,11 @@ describe('PROPERTY_ALIASES map', () => {
   });
 });
 
+// ── buildLoanPropertyMap helpers ─────────────────────────────────────────────────────────
+
+// The valid id set for crosswalk tests mirrors the PROPS fixture above.
+const VALID_IDS = new Set(PROPS.map((p) => p.id));
+
 // ── buildLoanPropertyMap — the original defect ───────────────────────────────────────────
 
 describe('buildLoanPropertyMap — two loans from ONE lender on TWO different properties', () => {
@@ -142,7 +147,7 @@ describe('buildLoanPropertyMap — two loans from ONE lender on TWO different pr
       }),
     ];
 
-    const { map, unresolved } = buildLoanPropertyMap(loans, PROPS);
+    const { map, unresolved } = buildLoanPropertyMap(loans, PROPS, VALID_IDS);
 
     // Both loans have distinct collateral properties — no cross-product
     expect(map.get('borrower-loan-a')).toBe('3540-e-5th-ave-columbus-oh');
@@ -158,27 +163,29 @@ describe('buildLoanPropertyMap — unresolvable collateralProperty', () => {
     const loans: Loan[] = [
       makeLoan({ id: 'loan-flagged', collateralProperty: null }),
     ];
-    const { map, unresolved } = buildLoanPropertyMap(loans, PROPS);
+    const { map, unresolved } = buildLoanPropertyMap(loans, PROPS, VALID_IDS);
     expect(map.has('loan-flagged')).toBe(false);
     expect(unresolved).toContain('loan-flagged');
   });
 
-  it('loan with collateralProperty that does not match any property → slug in map (not dropped), caller sees it via FK validation', () => {
+  it('loan with non-blank collateralProperty that resolves to an id NOT in validPropertyIds → unresolved (not in map)', () => {
+    // This is the typo/unrecognised-name case: resolvePropertyMasterId returns a non-null slug,
+    // but that slug is not a real property_master id — must land in unresolved, not in the map.
     const loans: Loan[] = [
-      makeLoan({ id: 'loan-unknown-prop', collateralProperty: 'Mystery Park Building X' }),
+      makeLoan({ id: 'loan-typo-prop', collateralProperty: 'Mystery Park Building X' }),
     ];
-    const { map, unresolved } = buildLoanPropertyMap(loans, PROPS);
-    // slug fallback goes into map; FK validation in writeDebtSnapshot will null it + surface it
-    expect(map.has('loan-unknown-prop')).toBe(true);
-    expect(map.get('loan-unknown-prop')).toBe('mystery-park-building-x');
-    expect(unresolved).toHaveLength(0);
+    // Pass an EMPTY validPropertyIds set so the resolved slug fails the guard
+    const emptyValidIds = new Set<string>();
+    const { map, unresolved } = buildLoanPropertyMap(loans, PROPS, emptyValidIds);
+    expect(map.has('loan-typo-prop')).toBe(false);
+    expect(unresolved).toContain('loan-typo-prop');
   });
 
   it('lender-direction loans are excluded from the map', () => {
     const loans: Loan[] = [
       makeLoan({ id: 'lender-loan', direction: 'lender', collateralProperty: '3540 E. 5th Ave, Columbus OH' }),
     ];
-    const { map, unresolved } = buildLoanPropertyMap(loans, PROPS);
+    const { map, unresolved } = buildLoanPropertyMap(loans, PROPS, VALID_IDS);
     expect(map.has('lender-loan')).toBe(false);
     expect(unresolved).toHaveLength(0); // lender loans are not counted as unresolved
   });

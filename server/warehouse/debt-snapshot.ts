@@ -119,7 +119,7 @@ export function writeDebtSnapshot(
           loan_name: loan.name,
           lender: loan.lender ?? null,
           original_principal: loan.originalPrincipal ?? null,
-          current_balance: loan.currentBalance,
+          current_balance: loan.absBalance,  // Always positive magnitude; never signed currentBalance (see conditions.ts sign convention)
           rate: loan.rate ?? null,
           loan_type: loan.loanType ?? null,
           monthly_pmt: loan.monthlyPmt ?? null,

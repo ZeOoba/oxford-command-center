@@ -81,16 +81,25 @@ brain.on('snapshot', (info: unknown) => {
   // Debt snapshot: write borrower-side debt positions to the warehouse on every workbook refresh.
   // Uses generatedAt (the per-refresh ISO timestamp) as the snapshot_date — NOT meta.asOf, which
   // is the static WORKBOOK_AS_OF constant '2026-06-01' (see occupancy.ts:169-171 for this trap).
-  // Unresolved loans (collateralProperty null/blank) are warned, never silently dropped.
+  // Unresolved loans (collateralProperty null/blank/typo'd) are warned, never silently dropped.
   try {
     const snapshot = brain.getSnapshot();
     if (snapshot && snapshot.loans.length > 0) {
-      const { map, unresolved } = buildLoanPropertyMap(snapshot.loans, snapshot.properties);
+      const db = getWarehouse();
+      const validPropertyIds = new Set<string>(
+        (db.prepare('SELECT id FROM property_master').all() as { id: string }[]).map((r) => r.id),
+      );
+      const { map, unresolved } = buildLoanPropertyMap(snapshot.loans, snapshot.properties, validPropertyIds);
       const snapshotDate = snapshot.meta.generatedAt.slice(0, 10);
-      writeDebtSnapshot(getWarehouse(), snapshot.loans, snapshotDate, map);
+      const result = writeDebtSnapshot(db, snapshot.loans, snapshotDate, map);
       if (unresolved.length > 0) {
         console.warn(
           `⚠ Debt snapshot: ${unresolved.length} borrower loan(s) unattributed (fill Loan Index col 11): ${unresolved.join(', ')}`,
+        );
+      }
+      if (result.errors.length > 0) {
+        console.warn(
+          `⚠ Debt snapshot: ${result.errors.length} FK-validation error(s) (belt-and-suspenders backstop): ${result.errors.join('; ')}`,
         );
       }
     }

@@ -86,10 +86,11 @@ describe('writeDebtSnapshot — direction filter', () => {
 describe('writeDebtSnapshot — upsert semantics', () => {
   it('running twice with same snapshotDate updates the row; row count stays 1', () => {
     const db = freshDb();
-    const loan = makeBorrowerLoan({ currentBalance: 850_000 });
+    const loan = makeBorrowerLoan({ currentBalance: 850_000, absBalance: 850_000 });
 
     writeDebtSnapshot(db, [loan], '2026-06-21');
-    const loanV2 = { ...loan, currentBalance: 840_000 };
+    // absBalance must match so the stored positive magnitude reflects the updated balance
+    const loanV2 = { ...loan, currentBalance: 840_000, absBalance: 840_000 };
     writeDebtSnapshot(db, [loanV2], '2026-06-21');
 
     const rows = db.prepare("SELECT current_balance FROM debt_positions WHERE id = ? AND status = 'active'").all('loan-001') as Array<{ current_balance: number }>;
@@ -101,10 +102,10 @@ describe('writeDebtSnapshot — upsert semantics', () => {
 describe('writeDebtSnapshot — supersede on new snapshotDate', () => {
   it('old row is marked superseded and a new active row is inserted on a new snapshotDate', () => {
     const db = freshDb();
-    const loan = makeBorrowerLoan({ currentBalance: 850_000 });
+    const loan = makeBorrowerLoan({ currentBalance: 850_000, absBalance: 850_000 });
 
     writeDebtSnapshot(db, [loan], '2026-05-01');
-    writeDebtSnapshot(db, [{ ...loan, currentBalance: 840_000 }], '2026-06-01');
+    writeDebtSnapshot(db, [{ ...loan, currentBalance: 840_000, absBalance: 840_000 }], '2026-06-01');
 
     const superseded = db.prepare("SELECT id FROM debt_positions WHERE id = ? AND status = 'superseded'").all('loan-001') as Array<{ id: string }>;
     const active = db.prepare("SELECT current_balance, snapshot_date FROM debt_positions WHERE id = ? AND status = 'active'").all('loan-001') as Array<{ current_balance: number; snapshot_date: string }>;
@@ -224,12 +225,12 @@ describe('writeDebtSnapshot — F-FK-safe: invalid property_id → null + surfac
 describe('writeDebtSnapshot — snapshot_date is the caller-supplied date (generatedAt, not static)', () => {
   it('two refreshes on different dates → two rows (one active, one superseded)', () => {
     const db = freshDb();
-    const loan = makeBorrowerLoan({ currentBalance: 800_000 });
+    const loan = makeBorrowerLoan({ currentBalance: 800_000, absBalance: 800_000 });
 
     // Simulate refresh on 2026-06-10 (generatedAt)
     writeDebtSnapshot(db, [loan], '2026-06-10');
     // Simulate refresh on 2026-06-21 (generatedAt — different date)
-    writeDebtSnapshot(db, [{ ...loan, currentBalance: 790_000 }], '2026-06-21');
+    writeDebtSnapshot(db, [{ ...loan, currentBalance: 790_000, absBalance: 790_000 }], '2026-06-21');
 
     const all = db
       .prepare('SELECT snapshot_date, status, current_balance FROM debt_positions WHERE id = ? ORDER BY snapshot_date')
@@ -241,6 +242,33 @@ describe('writeDebtSnapshot — snapshot_date is the caller-supplied date (gener
     expect(all[1]?.snapshot_date).toBe('2026-06-21');
     expect(all[1]?.status).toBe('active');
     expect(all[1]?.current_balance).toBe(790_000);
+  });
+});
+
+// ── absBalance sign convention ────────────────────────────────────────────────────────────
+
+describe('writeDebtSnapshot — absBalance sign convention (Fix LOW)', () => {
+  it('a borrower loan with a negative currentBalance is stored with a POSITIVE current_balance (= absBalance)', () => {
+    // conditions.ts documents: use absBalance, NEVER signed currentBalance, to avoid negative debt service.
+    // For positive balances absBalance === currentBalance so existing tests are unaffected.
+    // This test verifies the negative-balance edge case is normalised at write time.
+    const db = freshDb();
+    const loan = makeBorrowerLoan({
+      id: 'loan-negative-balance',
+      currentBalance: -750_000, // signed negative (e.g. data entry error or escrow direction)
+      absBalance: 750_000,       // always positive magnitude
+    });
+    const result = writeDebtSnapshot(db, [loan], '2026-06-21');
+    expect(result.written).toBe(1);
+    expect(result.errors).toHaveLength(0);
+
+    const row = db
+      .prepare('SELECT current_balance FROM debt_positions WHERE id = ?')
+      .get('loan-negative-balance') as { current_balance: number } | undefined;
+    expect(row).toBeDefined();
+    // Must be stored as the positive magnitude (absBalance), NOT the signed value
+    expect(row?.current_balance).toBe(750_000);
+    expect(row?.current_balance).toBeGreaterThan(0);
   });
 });
 

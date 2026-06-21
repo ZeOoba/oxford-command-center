@@ -73,8 +73,15 @@ export function resolvePropertyMasterId(
 //
 // For each borrower-direction loan:
 //   - resolvePropertyMasterId(loan.collateralProperty, properties)
-//   - If non-null: map.set(loan.id, resolvedId)
-//   - If null:     push loan.id to unresolved
+//   - If non-null AND in validPropertyIds: map.set(loan.id, resolvedId)
+//   - Otherwise: push loan.id to unresolved
+//
+// The validPropertyIds guard catches typo'd collateral names that produce a
+// non-null slug which is not actually in property_master — without it, a typo
+// silently enters the map and the downstream FK-null-backstop in writeDebtSnapshot
+// (which fires *after* property_id is already trusted) would mask the issue.
+// Both null resolutions (blank/null name) AND typo'd-but-non-master names land
+// in `unresolved` so the "counted not hidden" caller warning is true for both.
 //
 // Lender and internal loans are excluded silently (they have no collateral property).
 // unresolved.length is reported by callers — never hidden.
@@ -87,6 +94,7 @@ export interface LoanPropertyMapResult {
 export function buildLoanPropertyMap(
   loans: Loan[],
   properties: { id: string; name: string }[],
+  validPropertyIds: ReadonlySet<string>,
 ): LoanPropertyMapResult {
   const map = new Map<string, string>();
   const unresolved: string[] = [];
@@ -96,7 +104,7 @@ export function buildLoanPropertyMap(
     if (loan.direction !== 'borrower') continue;
 
     const resolved = resolvePropertyMasterId(loan.collateralProperty, properties);
-    if (resolved !== null) {
+    if (resolved !== null && validPropertyIds.has(resolved)) {
       map.set(loan.id, resolved);
     } else {
       unresolved.push(loan.id);
