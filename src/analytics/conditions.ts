@@ -64,6 +64,9 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
           entityType: 'loan',
           entityId: l.id,
           action: { label: 'Open refi workspace', kind: 'open-refi' },
+          impactAnnualUsd: null,
+          spine: 'B',
+          provenance: 'absent',
         });
       }
     }
@@ -76,6 +79,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         title: `DSCR below floor — ${p.name}`,
         detail: `Debt-service coverage is ${p.dscr.toFixed(2)}x (below ${T.dscrFloor.toFixed(2)}x floor). Lender-remedy risk — act now.`,
         metric: `${p.dscr.toFixed(2)}x`, entityType: 'property', entityId: p.id,
+        impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
     } else if (p.dscr !== null && p.dscr < T.dscrWatch) {
       out.push({
@@ -83,6 +87,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         title: `DSCR below 1.25 — ${p.name}`,
         detail: `Debt-service coverage is ${p.dscr.toFixed(2)}x (covenant watch). Review the loan.`,
         metric: `${p.dscr.toFixed(2)}x`, entityType: 'property', entityId: p.id,
+        impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
     }
     if (p.ltv !== null && p.ltv > T.ltvCeiling) {
@@ -91,6 +96,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         title: `LTV above 65% — ${p.name}`,
         detail: `Loan-to-value is ${fmtPct(p.ltv)} (above the ${fmtPct(T.ltvCeiling)} ceiling).`,
         metric: fmtPct(p.ltv), entityType: 'property', entityId: p.id,
+        impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
     } else if (p.ltv !== null && p.ltv > T.ltvGovernor) {
       // B3 Option B: above the ratified LTV governor (≤40%) but within the operational ceiling —
@@ -100,6 +106,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         title: `LTV above governor — ${p.name}`,
         detail: `Loan-to-value is ${fmtPct(p.ltv)} — above the ${fmtPct(T.ltvGovernor)} portfolio governor (LTV ≤ 40%).`,
         metric: fmtPct(p.ltv), entityType: 'property', entityId: p.id,
+        impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
     }
   }
@@ -113,6 +120,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         detail: `${l.propertyKey} ${l.unit ?? ''} · ${fmtUsdCompact(l.annualRent)}/yr holding over. Resolve renewal or vacate.`,
         metric: fmtUsdCompact(l.annualRent), entityType: 'lease', entityId: l.id,
         action: { label: 'Draft renewal', kind: 'draft-renewal' },
+        impactAnnualUsd: l.annualRent, spine: 'A', provenance: 'real',
       });
     } else if (l.leaseEnd) {
       const days = daysBetween(l.leaseEnd, asOf);
@@ -127,6 +135,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
           detail: `${l.propertyKey} ${l.unit ?? ''} expires ${fmtDate(l.leaseEnd)} (${days}d). ${fmtUsdCompact(l.annualRent)}/yr at risk.`,
           metric: `${days}d`, entityType: 'lease', entityId: l.id,
           action: { label: 'Draft renewal', kind: 'draft-renewal' },
+          impactAnnualUsd: l.annualRent, spine: 'A', provenance: 'real',
         });
       }
     }
@@ -136,6 +145,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         title: `Escalation date passed — ${l.company ?? l.tenantName}`,
         detail: `${l.propertyKey} ${l.unit ?? ''} escalation was due ${fmtDate(l.escalationDate)}. Confirm the bump was applied.`,
         entityType: 'lease', entityId: l.id,
+        impactAnnualUsd: null, spine: 'A', provenance: 'absent',
       });
     }
   }
@@ -185,6 +195,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         id: 'ar-stale', severity: 'info', category: 'data',
         title: 'AR data stale — collections monitoring inactive',
         detail,
+        impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
     }
   }
@@ -215,6 +226,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
           title: `Tenant 60+ days past due — ${who}`,
           detail: `${where} · ${fmtUsd(over60)} is 60+ days past due (${fmtUsd(total)} total outstanding). Pursue collection.`,
           metric: fmtUsd(total), entityType: 'lease', entityId: l.id,
+          impactAnnualUsd: total, spine: 'A', provenance: 'real',
         });
       } else if (total >= T.arrearsMaterialUsd) {
         out.push({
@@ -222,6 +234,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
           title: `Receivable outstanding — ${who}`,
           detail: `${where} · ${fmtUsd(total)} past due (under 60 days). Monitor for payment.`,
           metric: fmtUsd(total), entityType: 'lease', entityId: l.id,
+          impactAnnualUsd: total, spine: 'A', provenance: 'real',
         });
       }
     }
@@ -235,6 +248,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         title: `Tenant concentration — ${t.name}`,
         detail: `${t.name} is ${fmtPct(t.pctNoi)} of portfolio NOI across ${t.properties.length} ${t.properties.length === 1 ? 'property' : 'properties'}.`,
         metric: fmtPct(t.pctNoi),
+        impactAnnualUsd: null, spine: 'A', provenance: 'absent',
       });
     }
   }
@@ -248,6 +262,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         detail: `${p.coverage ?? 'Coverage'} · ${p.carrier ?? ''}. Confirm replacement coverage is bound.`,
         metric: fmtUsdCompact(p.premium), entityType: 'insurance', entityId: p.id,
         action: { label: 'Review policy', kind: 'review' },
+        impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
     } else if (p.daysToExpiry !== null && p.daysToExpiry >= 0 && p.daysToExpiry < T.insuranceRenewWarnDays) {
       out.push({
@@ -256,6 +271,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         detail: `${p.coverage ?? 'Coverage'} renews ${fmtDate(p.expires)} (${p.daysToExpiry}d).`,
         entityType: 'insurance', entityId: p.id,
         action: { label: 'Review policy', kind: 'review' },
+        impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
     }
   }
@@ -267,6 +283,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       title: `Cash concentration — ${s.cash.largestEntity}`,
       detail: `${fmtPct(s.cash.concentrationTopPct)} of total cash sits in one entity (above the ${fmtPct(T.cashConcentrationWarn)} ceiling).`,
       metric: fmtPct(s.cash.concentrationTopPct), entityType: 'cashEntity',
+      impactAnnualUsd: null, spine: 'A', provenance: 'absent',
     });
   }
 
@@ -278,6 +295,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       title: 'Reconciliation failure',
       detail: `${reconFlags.length} invariant ${reconFlags.length === 1 ? 'breach' : 'breaches'} (${reconFlags.map((f) => f.field).join(', ')}). Derived totals do not match the workbook.`,
       metric: String(reconFlags.length),
+      impactAnnualUsd: null, spine: 'B', provenance: 'absent',
     });
   }
   const ageHrs = (now - new Date(s.meta.generatedAt).getTime()) / HOUR_MS;
@@ -287,6 +305,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       title: 'Workbook data is stale',
       detail: `Last parsed ${fmtDate(s.meta.generatedAt)} — ${Math.round(ageHrs)}h ago (over the ${T.workbookStaleHours}h limit). Refresh the source.`,
       metric: `${Math.round(ageHrs)}h`,
+      impactAnnualUsd: null, spine: 'B', provenance: 'absent',
     });
   }
 
@@ -300,6 +319,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
           title: `LOI/PSA deadline — ${d.shortName ?? d.name}`,
           detail: `Target close ${fmtDate(d.targetCloseDate)} (${days}d). ${d.nextAction ?? 'Confirm next step.'}`,
           metric: `${days}d`, entityType: 'deal', entityId: d.id,
+          impactAnnualUsd: null, spine: 'B', provenance: 'absent',
         });
       }
     }
@@ -314,6 +334,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
           title: `Deal advanced — ${d.shortName ?? d.name}`,
           detail: `${from} → ${d.stage}. ${d.nextAction ?? ''}`.trim(),
           entityType: 'deal', entityId: d.id,
+          impactAnnualUsd: null, spine: 'B', provenance: 'absent',
         });
       }
     }
@@ -321,4 +342,59 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
 
   const rank: Record<InsightSeverity, number> = { critical: 0, warning: 1, info: 2 };
   return out.sort((a, b) => rank[a.severity] - rank[b.severity]);
+}
+
+/**
+ * Additive metadata enrichment pass — fills `impactAnnualUsd`, `spine`, and `provenance`
+ * on an insight that was constructed with placeholder defaults. Pure: returns a new object,
+ * never mutates the input.
+ *
+ * Called at the consumption layer (useAlertView, brief pipeline) after evaluateConditions()
+ * so the core engine stays snapshot-pure.
+ *
+ * Spine assignment:
+ *   A (revenue-critical): lease, collections, occupancy, concentration
+ *   B (compliance/cost):  debt, insurance, deal, data, anomaly
+ *
+ * Impact:
+ *   collections → total outstanding arrears (real; from entityId → tenantArrears)
+ *   lease       → annualRent of the matched lease (real)
+ *   all others  → null / absent (no derivation attempted — avoids speculative dollar fabrication)
+ */
+export function fillImpact(insight: Insight, snapshot: PortfolioSnapshot): Insight {
+  const SPINE_A_CATEGORIES: ReadonlySet<Insight['category']> = new Set([
+    'lease', 'collections', 'occupancy', 'concentration',
+  ]);
+
+  const spine: Insight['spine'] = SPINE_A_CATEGORIES.has(insight.category) ? 'A' : 'B';
+
+  // For categories where we already have a real dollar amount on the insight, pass it through.
+  // For categories where we can look it up, do so. Otherwise null + absent.
+  let impactAnnualUsd: number | null = insight.impactAnnualUsd;
+  let provenance: Insight['provenance'] = insight.provenance;
+
+  if (impactAnnualUsd === null && insight.entityId) {
+    if (insight.category === 'collections') {
+      const ar = snapshot.tenantArrears?.[insight.entityId];
+      if (ar) {
+        const total =
+          coerceNonNegMoney(ar.d30) +
+          coerceNonNegMoney(ar.d60) +
+          coerceNonNegMoney(ar.d90) +
+          coerceNonNegMoney(ar.d90plus);
+        if (total > 0) {
+          impactAnnualUsd = total;
+          provenance = 'real';
+        }
+      }
+    } else if (insight.category === 'lease') {
+      const lease = snapshot.leases.find((l) => l.id === insight.entityId);
+      if (lease && lease.annualRent > 0) {
+        impactAnnualUsd = lease.annualRent;
+        provenance = 'real';
+      }
+    }
+  }
+
+  return { ...insight, spine, impactAnnualUsd, provenance };
 }

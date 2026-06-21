@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { Insight } from '../../src/analytics/types';
 import { renderBrief, renderAlert } from '../../server/brief/render';
 
-const insight = (o: Partial<Insight>): Insight => ({ id: 'x', severity: 'critical', category: 'debt', title: 'T', detail: 'D', ...o });
+const insight = (o: Partial<Insight>): Insight => ({ id: 'x', severity: 'critical', category: 'debt', title: 'T', detail: 'D', impactAnnualUsd: null, spine: 'B', provenance: 'absent', ...o });
 
 describe('renderBrief', () => {
   const out = renderBrief({

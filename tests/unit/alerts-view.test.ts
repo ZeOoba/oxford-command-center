@@ -27,6 +27,7 @@ describe('AlertInboxState contract', () => {
 
 const ins = (id: string, severity: Insight['severity']): Insight => ({
   id, severity, category: 'debt', title: id, detail: id,
+  impactAnnualUsd: null, spine: 'B', provenance: 'absent',
 });
 const NOW = Date.parse('2026-06-04T12:00:00.000Z');
 const DAY = 86_400_000;

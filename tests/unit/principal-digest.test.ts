@@ -4,7 +4,7 @@ import type { AnalyticsBundle } from '../../src/analytics/index';
 import type { Insight } from '../../src/analytics/types';
 import { principalDigest } from '../../src/brain/principal-digest';
 
-const insight = (o: Partial<Insight>): Insight => ({ id: 'i', severity: 'info', category: 'debt', title: 'T', detail: 'D', ...o });
+const insight = (o: Partial<Insight>): Insight => ({ id: 'i', severity: 'info', category: 'debt', title: 'T', detail: 'D', impactAnnualUsd: null, spine: 'B', provenance: 'absent', ...o });
 const deal = (o: Record<string, unknown>) => ({ id: 'd1', name: 'Cedar', shortName: null, location: null, market: null, sf: null, buildings: null, stage: 'Candidate', estPrice: null, capRate: null, irr: null, equityMultiple: null, holdYrs: null, lender: null, status: null, nextAction: 'Sign PSA', owner: null, targetCloseDate: null, confidential: false, estimatedFields: [], ...o });
 
 function fixture(insights: Insight[], deals: unknown[]) {
