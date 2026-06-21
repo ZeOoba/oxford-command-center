@@ -32,8 +32,15 @@ export interface Overlay {
   tenantArrears: Record<string, TenantArrears>;
   /** propertyId → overridden lease-run assumptions (partial; merged onto the spec defaults). */
   leaseRunAssumptions: Record<string, Partial<LeaseRunAssumptions>>;
+  /**
+   * Phase 3 — user-supplied market rents for the under-market gap signal (L-4) and rent-forecast
+   * renew_at_market scenario. Keyed by leaseId (precedence) or propertyKey. $/SF PSF annual.
+   * Overlay-only — no external API is used or planned. Coerced via coerceNonNegMoney on load
+   * (negative/junk → 0) to prevent a hand-edited value from fabricating a spurious market-rent.
+   */
+  marketRents: Record<string, number>;
 }
-export const EMPTY_OVERLAY: Overlay = { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, tenantArrears: {}, acquisitionInputs: {}, leaseRunAssumptions: {} };
+export const EMPTY_OVERLAY: Overlay = { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, tenantArrears: {}, acquisitionInputs: {}, leaseRunAssumptions: {}, marketRents: {} };
 
 // Resolved at CALL time (not module load) so a late process.env.OVERLAY_PATH — set by tests for
 // isolation, or by the harness after load-env runs — is honored. Production behavior is unchanged:
@@ -133,12 +140,15 @@ export function loadOverlay(): Overlay {
         tenantArrears: parseArrears(raw.tenantArrears),
         acquisitionInputs: validRecord(raw.acquisitionInputs, AcquisitionInput, 'acquisitionInputs'),
         leaseRunAssumptions: raw.leaseRunAssumptions ?? {},
+        // Phase 3: market rents — coerce per entry via coerceNonNegMoney (negative/junk → 0).
+        // A 0 is treated as "absent" by the consumer (marketRentGaps skips 0 market rents).
+        marketRents: coerceBudgets(raw.marketRents),
       };
     }
   } catch {
     /* corrupt overlay → start clean */
   }
-  return { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, tenantArrears: {}, acquisitionInputs: {}, leaseRunAssumptions: {} };
+  return { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, tenantArrears: {}, acquisitionInputs: {}, leaseRunAssumptions: {}, marketRents: {} };
 }
 
 export async function saveOverlay(o: Overlay): Promise<boolean> {
@@ -175,5 +185,5 @@ export function applyOverlay(s: PortfolioSnapshot, o: Overlay): PortfolioSnapsho
     return stage && stage !== d.stage ? { ...d, stage: stage as DealStage } : d;
   });
   const tasks = o.tasks.length ? [...o.tasks, ...s.tasks] : s.tasks;
-  return { ...s, deals, tasks, renewalStages: o.renewalStages, tenantNotes: o.tenantNotes, dealComps: o.dealComps, noiBudgets: o.noiBudgets, tenantArrears: o.tenantArrears, acquisitionInputs: o.acquisitionInputs };
+  return { ...s, deals, tasks, renewalStages: o.renewalStages, tenantNotes: o.tenantNotes, dealComps: o.dealComps, noiBudgets: o.noiBudgets, tenantArrears: o.tenantArrears, acquisitionInputs: o.acquisitionInputs, marketRents: o.marketRents };
 }

@@ -25,6 +25,9 @@ export const DELIVERY_ONLY_PATHS: ReadonlySet<string> = new Set([
   'server/warehouse/api.ts',
   'server/warehouse/debt-api.ts',
   'server/warehouse/actions.ts',
+  // Phase 3 W1: pure route-plumbing/dispatch; no financial math (math lives in
+  // src/analytics/lease-forecast.ts and server/warehouse/lease-velocity.ts).
+  'server/warehouse/lease-forecast-api.ts',
 ]);
 
 /** True when a changed path holds financial-decision SOURCE (not a test / doc / json fixture). */
