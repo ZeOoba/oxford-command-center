@@ -147,6 +147,65 @@ describe('propertyPeriodMetrics', () => {
     expect(rarig.insurancePerSf).toBeNull();       // also absent
     expect(rarig.repairsPerSf).not.toBeNull();     // Repairs & Maintenance IS present
   });
+
+  it('returns [] for an empty warehouse (no active ledger rows)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'whm-empty-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    // No ingest — empty ledger.
+    expect(propertyPeriodMetrics(db)).toEqual([]);
+  });
+
+  it('zero-revenue period → noiMargin and expenseRatio are null (division-by-zero guard)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'whm-zerorev-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await writeFixture(file, 'Property: 1100 Rarig Ave', '01/01/25 - 12/31/25  (cash basis)', 0, 5000);
+    expect((await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' })).status).toBe('committed');
+    const m = propertyPeriodMetrics(db);
+    const row = m.find((x) => x.propertyId === '1100-rarig-ave-columbus-oh' && x.period === '2025')!;
+    expect(row.revenue).toBe(0);
+    expect(row.noiMargin).toBeNull();    // revenue === 0 → guard triggers
+    expect(row.expenseRatio).toBeNull(); // revenue === 0 → guard triggers
+    expect(row.noi).toBe(-5000);         // opex still subtracted from zero revenue
+  });
+
+  it('capex and TI rows are tracked separately and excluded from NOI', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'whm-capex-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    const capexSeed = [
+      ...SEED,
+      { account: 'Roof Replacement', code: '9001', normalized_category: 'Capital Improvements', classification: 'capex' },
+      { account: 'Tenant Build-Out', code: '9002', normalized_category: 'Tenant Improvements', classification: 'ti' },
+    ];
+    seedMappings(db, capexSeed);
+    // Build a fixture that includes capex and TI rows alongside normal income/opex.
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    ws.addRow(['Profit & Loss', null, null, null]);
+    ws.addRow(['Property: 1100 Rarig Ave', null, null, null]);
+    ws.addRow(['01/01/25 - 12/31/25  (cash basis)', null, null, null]);
+    ws.addRow([null, 'INCOME', null, null]);
+    ws.addRow([null, null, '          5064 Rent', 100000]);
+    ws.addRow([null, 'EXPENSE', null, null]);
+    ws.addRow([null, null, '          6285 HVAC Repair', 5000]);
+    ws.addRow([null, 'NON OPERATING EXPENSE', null, null]);
+    ws.addRow([null, null, '          9001 Roof Replacement', 30000]);
+    ws.addRow([null, null, '          9002 Tenant Build-Out', 15000]);
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await wb.xlsx.writeFile(file);
+    expect((await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-06-12T00:00:00Z' })).status).toBe('committed');
+    const row = propertyPeriodMetrics(db).find((x) => x.propertyId === '1100-rarig-ave-columbus-oh' && x.period === '2025')!;
+    expect(row.noi).toBe(95000);     // 100k revenue − 5k opex; capex/TI excluded
+    expect(row.capex).toBe(30000);   // tracked separately
+    expect(row.ti).toBe(15000);      // tracked separately
+    expect(row.revenue).toBe(100000); // unchanged by capex/TI rows
+    expect(row.opex).toBe(5000);     // unchanged by capex/TI rows
+  });
 });
 
 // --- NOI codepath agreement: noiMatrix (raw GROUP BY) vs propertyPeriodMetrics (coherent-batch) ---
