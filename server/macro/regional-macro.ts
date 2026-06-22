@@ -53,13 +53,15 @@ async function latestObs(seriesId: string): Promise<{ rate: number; asOf: string
   const url = `${BASE}/series/observations?series_id=${seriesId}&api_key=${key()}&file_type=json&sort_order=desc&limit=1`;
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), FRED_TIMEOUT_MS);
-  let r: Response;
+  let r: Response | null;
   try {
     r = await fetch(url, { signal: controller.signal });
+  } catch {
+    return null;
   } finally {
     clearTimeout(t);
   }
-  if (!r.ok) return null;
+  if (!r || !r.ok) return null;
   const j = (await r.json()) as { observations?: { date?: string; value: string }[] };
   const o = j.observations?.[0];
   if (!o) return null;
