@@ -34,8 +34,7 @@ import type {
   Verdict,
 } from '../../src/contracts/acquisition';
 import type { Confidence, DataQualityFlag } from '../../src/contracts/common';
-
-const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
+import { clamp } from './clamp';
 const round1 = (v: number): number => Math.round(v * 10) / 10;
 
 // ─── Ruleset load + fail-closed production guard ───────────────────────────────────────────────
