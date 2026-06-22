@@ -398,12 +398,14 @@ export function CapitalAllocationModule() {
           format={(n) => String(n)}
           accentColor="var(--color-pos)"
           sublabel="expand capital"
+          prov={{ source: 'Capital Allocation Engine · warehouse', confidence: 'derived', asOf: data.asOf }}
         />
         <KpiStat
           label="Hold"
           value={data.holdCount}
           format={(n) => String(n)}
           sublabel="stable"
+          prov={{ source: 'Capital Allocation Engine · warehouse', confidence: 'derived', asOf: data.asOf }}
         />
         <KpiStat
           label="Monitor"
@@ -411,6 +413,7 @@ export function CapitalAllocationModule() {
           format={(n) => String(n)}
           accentColor="var(--color-warn)"
           sublabel="watch closely"
+          prov={{ source: 'Capital Allocation Engine · warehouse', confidence: 'derived', asOf: data.asOf }}
         />
         <KpiStat
           label="Disposition"
@@ -418,6 +421,7 @@ export function CapitalAllocationModule() {
           format={(n) => String(n)}
           accentColor="var(--color-neg)"
           sublabel="consider exit"
+          prov={{ source: 'Capital Allocation Engine · warehouse', confidence: 'derived', asOf: data.asOf }}
         />
       </div>
 
