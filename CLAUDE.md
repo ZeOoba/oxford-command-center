@@ -48,10 +48,10 @@ These two spines have one critical defect: `Property.noi` (Spine A) and `warehou
 | Item | State |
 |------|-------|
 | Branch | `main` (worktree tracking origin/main) |
-| Last merge to main | PR #109 (`7cd2249`) — Phase 3 W2: Leasing Intelligence UI |
+| Last merge to main | PR #114 (`fda06de`) — Phase 5 Track 3: Cap Rate Benchmarks |
 | Open PRs | none in flight |
 | Gate | typecheck + lint + test + reconcile + warehouse:verify + **governance** |
-| Tests | 1603+ vitest unit tests |
+| Tests | 1666+ vitest unit tests |
 | Uncommitted changes | Gabriel actively co-develops this tree — varies constantly |
 
 **Off-limits rule (do NOT enumerate the locked set here — it goes stale the instant Gabriel commits; that staleness is itself a failure mode):**
@@ -78,9 +78,11 @@ This is the single discipline that prevents the collision class this repo has al
 | 4 | **Acquisition Intelligence Engine** (firm priority #1) | **Merged ✓** — PRs #84/#85 (Steps 1–9); Notion UUID wired post-merge |
 | 2 | Debt/Refi scoring + AI narrative briefings | **Merged ✓** — PRs #95/#96/#97 (Steps 1–6: migrations + scoring engine + API + Debt Scorecard UI) · #99 (W1: loan→property binding) · #101 (W2: AI narrative briefings Steps 7–11) |
 | 3 | Forecast + Leasing intelligence | **W1+W2 Merged ✓** — PR #107 (W1: lease-forecast analytics + L-1..L-5 + leasingVelocity + migration 011) · PR #109 (W2: Leasing Intelligence UI); W3 (AI narrative) optional |
-| 5 | Capital Allocation capstone + Market intelligence | Not started |
+| 5 | Capital Allocation capstone + Market intelligence | **In progress** — capstone synthesis + tracks below |
+| 5 · Track 2 | Parse-layer slug uniqueness enforcement | **Merged ✓** — PR #113; disambiguates colliding property ids at parse time (+8 tests) |
+| 5 · Track 3 | Market intelligence — cap rate benchmarks | **Merged ✓** — PR #114; `CapRateBenchmark` contract + `getMacroMarketBenchmarks` + implied cap rate columns (impliedCapRate + capRateGap + capRatePercentile) in CapitalAllocationModule (+10 tests) |
 
-**Pending:** Phase 5 (Capital Allocation capstone) or Phase 3 W3 (AI narrative leasing briefing — optional).
+**Pending:** All major phases through Phase 5 Track 3 are shipped. Optional next: Scope B (regional market dynamics / FRED sub-metro extension).
 
 ---
 

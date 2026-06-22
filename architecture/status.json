@@ -13,11 +13,11 @@
   "phase-5-cap-alloc": {
     "agent_role": "Analytics Agent + UX Agent — Claude Code Sonnet 4.6",
     "phase": "Phase 5 — Capital Allocation capstone (synthesis engine + CapitalAllocationModule UI + FRED macro context)",
-    "status": "review_needed",
+    "status": "merged",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "Architect approval required: src/contracts/capital-allocation.ts is architect-owned; DSCR defect fixed per adversarial refute feedback (decoupled from balloon presence); refute gate requires Refute-Reviewed trailer.",
-    "last_updated": "2026-06-21T23:00:00Z"
+    "review_needed": false,
+    "review_detail": "MERGED via PR #112. Capital Allocation capstone (synthesis engine + CapitalAllocationModule UI + FRED macro context); architect-owned src/contracts/capital-allocation.ts approved; DSCR defect fixed per adversarial refute feedback (decoupled from balloon presence). Worktree removed post-merge.",
+    "last_updated": "2026-06-21T23:30:00Z"
   },
 
   "worktrees": {
@@ -193,11 +193,11 @@
   "compassionate-lichterman-53a8c0": {
     "agent_role": "Engineering (Claude Code, Sonnet 4.6) — authorized by Gabriel 2026-06-21",
     "phase": "Narrow check-refute-required gate — delivery-file allowlist (Option D)",
-    "status": "in_progress",
+    "status": "merged",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "Editing architecture/coding-standards.md to document the delivery-only allowlist and Refute-Skip convention. Gabriel is architect and directed this change in-session — treating as pre-authorized.",
-    "last_updated": "2026-06-21T12:00:00Z"
+    "review_needed": false,
+    "review_detail": "MERGED via PR #102. Narrowed check-refute-required to exempt delivery-only warehouse route files; documented the delivery-only allowlist and Refute-Skip convention in architecture/coding-standards.md (architect-directed, pre-authorized). Worktree removed post-merge.",
+    "last_updated": "2026-06-21T12:30:00Z"
   },
 
   "phase-2-narrative": {
@@ -233,11 +233,31 @@
   "phase-3-w3": {
     "agent_role": "Intelligence Agent — Claude Code Sonnet 4.6",
     "phase": "Phase 3 W3 — AI narrative leasing briefing (composeLeaseNarrative + /narrative route + LeaseForecastModule narrative panel)",
-    "status": "review_needed",
+    "status": "merged",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "PR #111 open. Gate green (1622 tests). Adversarial refute (Opus 4.8, 6 defects found + fixed). Awaiting Gabriel squash-merge.",
+    "review_needed": false,
+    "review_detail": "MERGED via PR #111. composeLeaseNarrative + /narrative route + LeaseForecastModule narrative panel. Gate green (1622 tests). Adversarial refute (Opus 4.8, 6 defects found + fixed). Worktree removed post-merge.",
     "last_updated": "2026-06-21T23:45:00Z"
+  },
+
+  "phase-5-tiebreaker-fix": {
+    "agent_role": "Integration Agent — Claude Code Sonnet 4.6",
+    "phase": "Phase 5 — parse-layer property-id disambiguation (propertyId tiebreaker / slug uniqueness)",
+    "status": "merged",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "MERGED via PR #113. Disambiguates colliding property ids at parse time (enforces slug uniqueness); +8 tests (1656 total). Worktree removed post-merge.",
+    "last_updated": "2026-06-21T23:55:00Z"
+  },
+
+  "phase-5-market-intel": {
+    "agent_role": "Analytics Agent + UX Agent — Claude Code Sonnet 4.6",
+    "phase": "Phase 5 Track 3 — market intelligence cap rate benchmarks (CapRateBenchmark contract + getMacroMarketBenchmarks + implied cap rate columns)",
+    "status": "merged",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "MERGED via PR #114. CapRateBenchmark contract + getMacroMarketBenchmarks + impliedCapRate/capRateGap/capRatePercentile columns in CapitalAllocationModule; +10 tests (1666 total). Worktree removed post-merge.",
+    "last_updated": "2026-06-22T00:05:00Z"
   },
 
   "usage": {
