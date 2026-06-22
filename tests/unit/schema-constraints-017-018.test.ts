@@ -1,15 +1,26 @@
 // @vitest-environment node
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 
+const cleanup: Array<{ db: WarehouseDb; dir: string }> = [];
+
 function freshDb(): WarehouseDb {
   const dir = mkdtempSync(join(tmpdir(), 'schema-017-018-'));
-  return openWarehouse(join(dir, 'test.sqlite'));
+  const db = openWarehouse(join(dir, 'test.sqlite'));
+  cleanup.push({ db, dir });
+  return db;
 }
+
+afterEach(() => {
+  for (const { db, dir } of cleanup.splice(0)) {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 // recommendations.property_id has a FK to property_master; tests insert synthetic
 // property ids, so disable FK enforcement on the connection under test.
@@ -136,5 +147,13 @@ describe('migration 018 — recommendations constraints', () => {
       .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='ux_recommendations_versioned'")
       .get() as { name: string } | undefined;
     expect(idx?.name).toBe('ux_recommendations_versioned');
+  });
+
+  it('enforces property_id FK when foreign_keys is ON', () => {
+    const db = freshDb();
+    // FK enforcement is ON by default in openWarehouse; no PRAGMA override here.
+    expect(() =>
+      insertRecommendation(db, { property_id: 'missing-prop', inputs_version: 'fk1' }),
+    ).toThrow();
   });
 });
