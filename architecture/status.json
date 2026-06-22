@@ -323,11 +323,41 @@
   "blissful-mendel-02834b": {
     "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-22",
     "phase": "Schema constraints 017/018 — market_series unique index + recommendations CHECK constraints",
-    "status": "review_needed",
+    "status": "merged",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "PR #126 open for review. Migrations 017/018, warehouse-verify.ts §8m, 10 unit tests (1749 total green), buildCapitalAllocationReport() restoration (pre-existing typecheck fix from PRs #117/#119/#121). Gate: governance ✔ typecheck ✔ lint ✔ 1749 tests ✔ warehouse:verify ✔.",
-    "last_updated": "2026-06-22T16:11:00Z"
+    "review_needed": false,
+    "review_detail": "MERGED via PR #126 (8848207). Migrations 017/018, warehouse-verify.ts §8m, 10 unit tests (1749 total green), buildCapitalAllocationReport() restoration (pre-existing typecheck fix from PRs #117/#119/#121). Worktree blissful-mendel-02834b removed post-merge.",
+    "last_updated": "2026-06-22T16:30:00Z"
+  },
+
+  "fix-reconcile-rent-col": {
+    "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-22",
+    "phase": "fix(reconcile): col 13→14 for Master Tenant Rent Roll rent total + fix(api): stub ic-memo 501 + drop withDb wrapper",
+    "status": "merged",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "MERGED via PR #123. scripts/reconcile.ts col 14 (workbook column shifted); server/warehouse/api.ts ic-memo stubbed 501 (buildCapitalAllocationReport deleted in #117, route from #121 still referenced it; 3 stale imports removed; withDb wrapper dropped per CodeRabbit). Worktree removed post-merge.",
+    "last_updated": "2026-06-22T15:30:00Z"
+  },
+
+  "docs-hurdle-memo": {
+    "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-22",
+    "phase": "docs(capital): hurdle rate ratification audit memo 2026-06-22",
+    "status": "merged",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "MERGED via PR #124. docs/capital/hurdle-rate-ratification-2026-06-22.md: formal governance record of 8.0% unlevered IRR hurdle rate ratification (Gabriel Goldberg, 2026-06-22, capital_config v1). Worktree removed post-merge.",
+    "last_updated": "2026-06-22T15:30:00Z"
+  },
+
+  "compassionate-kepler-cb363e": {
+    "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-22",
+    "phase": "fix(api): port /capital-allocation/ic-memo from 501 stub to live implementation",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "Port ic-memo route: imports buildIcMemoHtml + icMemoFilename from ic-memo.ts, assertNoConfidential from briefing/confidential; replaces 501 stub with real handler (withDb → buildCapitalAllocationReport → assertNoConfidential → buildIcMemoHtml → Response text/html + content-disposition). No architect-owned files touched.",
+    "last_updated": "2026-06-22T16:35:00Z"
   },
 
   "usage": {
