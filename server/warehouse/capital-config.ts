@@ -46,11 +46,11 @@ export const CAPITAL_CONFIG = {
   capexIrr: 0.15,
   refiTriggerBps: 150,
   payoutPct: 0.0,
-  // ── Phase 5 hurdle-rate governor (proposed — awaiting Gabriel ratification) ──
-  hurdleRatePct: HURDLE_RATE.proposedPct,
+  // ── Phase 5 hurdle-rate governor (ratified by Gabriel Goldberg 2026-06-22) ──
+  hurdleRatePct: HURDLE_RATE.pct,
   hurdleRateRatification: HURDLE_RATE.ratification,
-  hurdleRateRatifiedBy: null as string | null,
-  hurdleRateRatifiedDate: null as string | null,
+  hurdleRateRatifiedBy: HURDLE_RATE.ratifiedBy as string | null,
+  hurdleRateRatifiedDate: HURDLE_RATE.ratifiedDate as string | null,
 } as const;
 
 export type CapitalConfig = typeof CAPITAL_CONFIG;
