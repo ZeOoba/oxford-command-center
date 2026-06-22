@@ -2,6 +2,58 @@
 import type { PropertyMasterRow } from '../../src/contracts/warehouse';
 import type { WarehouseDb } from './db';
 
+export interface PropertyMasterRecord {
+  id: string;
+  name: string;
+  market: string | null;
+  rentableSf: number | null;
+  ownershipPct: number;
+  ownershipStatus: string;
+  assetClass: string | null;
+  source: 'db' | 'seed';
+}
+
+interface DbPropertyRow {
+  id: string;
+  name: string;
+  market: string | null;
+  rentable_sf: number | null;
+  ownership_pct: number;
+  ownership_status: string;
+  asset_class: string | null;
+}
+
+/** DB rows win on id conflict; seed entries fill in any id absent from the DB. */
+export function getPropertyMaster(db: WarehouseDb): PropertyMasterRecord[] {
+  const dbRows = db.prepare(
+    'SELECT id, name, market, rentable_sf, ownership_pct, ownership_status, asset_class FROM property_master',
+  ).all() as DbPropertyRow[];
+  const dbIds = new Set(dbRows.map((r) => r.id));
+  const dbRecords: PropertyMasterRecord[] = dbRows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    market: r.market,
+    rentableSf: r.rentable_sf,
+    ownershipPct: r.ownership_pct,
+    ownershipStatus: r.ownership_status,
+    assetClass: r.asset_class,
+    source: 'db' as const,
+  }));
+  const seedRecords: PropertyMasterRecord[] = CANON_PROPERTIES
+    .filter((s) => !dbIds.has(s.id))
+    .map((s) => ({
+      id: s.id,
+      name: s.name,
+      market: s.market ?? null,
+      rentableSf: s.rentableSf ?? null,
+      ownershipPct: s.ownershipPct,
+      ownershipStatus: s.ownershipStatus,
+      assetClass: s.assetClass ?? null,
+      source: 'seed' as const,
+    }));
+  return [...dbRecords, ...seedRecords];
+}
+
 const KRG = { propertyManager: 'Kohr Royer Griffith', pmContact: 'Paul Trautman' };
 
 /** Gabriel-ratified 2026-06-12 (memory/pfi-build-canon.md). Do not edit without a new ruling. */
