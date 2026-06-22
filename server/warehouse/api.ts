@@ -916,7 +916,7 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
         return c.json(CapitalAllocationReport.parse(report));
       } catch (err) {
         console.error('[warehouse-api] /capital-allocation error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'capital allocation failed', detail: String(err) }, 500);
+        return c.json({ error: 'capital allocation failed' }, 500);
       }
     }),
   );

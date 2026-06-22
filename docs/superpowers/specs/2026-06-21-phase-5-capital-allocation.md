@@ -35,7 +35,7 @@ No new SQLite tables. This is a **pure synthesis layer** — it reads from:
 
 ### `src/contracts/capital-allocation.ts` (new file)
 
-```
+```text
 CapitalAllocationEntry  — per-property synthesis row
 MacroContext            — FRED macro snapshot subset
 CapitalAllocationReport — top-level report envelope
@@ -62,7 +62,7 @@ Export via `src/contracts/index.ts`.
 
 **This is financial-decision code. Adversarial refute is MANDATORY before merge.**
 
-```
+```text
 priorityScore = clamp(
   (100 - healthScore) * 0.35
   + attentionScore * 0.30
@@ -84,7 +84,7 @@ Weight rationale:
 - 0.15 debt urgency: balloon + DSCR pressure (relevant for ~40% of portfolio with debt)
 
 **Attention score mapping** (from attentionBand in scores.ts):
-```
+```text
 green  → 0
 yellow → 33
 orange → 66
@@ -95,7 +95,7 @@ red    → 100
 
 ## API contracts
 
-```
+```text
 GET /api/warehouse/capital-allocation
 → CapitalAllocationReport (200)
 → { error: 'warehouse unavailable' } (503)

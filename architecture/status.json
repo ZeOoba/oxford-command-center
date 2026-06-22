@@ -13,11 +13,11 @@
   "phase-5-cap-alloc": {
     "agent_role": "Analytics Agent + UX Agent — Claude Code Sonnet 4.6",
     "phase": "Phase 5 — Capital Allocation capstone (synthesis engine + CapitalAllocationModule UI + FRED macro context)",
-    "status": "in_progress",
+    "status": "review_needed",
     "blocked_by": null,
-    "review_needed": false,
-    "review_detail": null,
-    "last_updated": "2026-06-21T22:30:00Z"
+    "review_needed": true,
+    "review_detail": "Architect approval required: src/contracts/capital-allocation.ts is architect-owned; DSCR defect fixed per adversarial refute feedback (decoupled from balloon presence); refute gate requires Refute-Reviewed trailer.",
+    "last_updated": "2026-06-21T23:00:00Z"
   },
 
   "worktrees": {

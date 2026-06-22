@@ -204,7 +204,7 @@ export function CapitalAllocationModule() {
             Capital allocation requires the live brain server.
           </div>
           <div className="text-2xs" style={{ color: 'var(--text-tertiary)', maxWidth: 420 }}>
-            Scores are computed from the warehouse ledger (Spine B) + Spine A snapshot.
+            Scores are computed from the workbook snapshot (Spine A — ownership layer).
             This deployed mirror does not include the live warehouse.
           </div>
         </div>

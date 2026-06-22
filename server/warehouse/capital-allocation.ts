@@ -114,7 +114,7 @@ export async function buildCapitalAllocationReport(
     macro = {
       tenYearRate: dgs10?.value ?? null,
       cpi: cpi?.value ?? null,
-      source: live.source as 'fred' | 'mock',
+      source: (live.source === 'fred' || live.source === 'mock') ? live.source : 'mock',
       asOf: live.asOf ?? null,
     };
   } catch {
@@ -209,15 +209,16 @@ export async function buildCapitalAllocationReport(
         ? Math.min(100, (nearTermExpiryRent / noi) * 100 + atRiskLikelihoodCount * 10)
         : Math.min(50, atRiskLikelihoodCount * 10);
 
-    const debtUrgency =
-      effectiveBalloonMonths === null
-        ? 0
-        : clamp(
-            Math.max(0, 100 - (effectiveBalloonMonths / 12) * 10) +
-              (dscr !== null && dscr < 1.25 ? 30 : 0),
-            0,
-            100,
-          );
+    // Decouple DSCR penalty from balloon presence: a term loan (balloon=0, schema default) with sub-governor
+    // DSCR should still flag as high-urgency capital. Gate on hasDebt, not on balloon row existence.
+    const debtUrgency = !hasDebt
+      ? 0
+      : clamp(
+          (effectiveBalloonMonths === null ? 0 : Math.max(0, 100 - (effectiveBalloonMonths / 12) * 10)) +
+            (dscr !== null && dscr < 1.25 ? 30 : 0),
+          0,
+          100,
+        );
 
     const raw = (100 - healthVal) * 0.35 + attentionScore * 0.30 + leasingRisk * 0.20 + debtUrgency * 0.15;
     const priorityScore = Math.max(0, Math.min(100, raw));

@@ -47,10 +47,17 @@ function computePriorityScore(opts: {
       ? Math.min(100, (nearTermExpiryRent / noi) * 100 + atRiskLikelihoodCount * 10)
       : Math.min(50, atRiskLikelihoodCount * 10);
 
-  const debtUrgency =
-    balloonMonths === null
-      ? 0
-      : clamp(Math.max(0, 100 - (balloonMonths / 12) * 10) + (dscr !== null && dscr < 1.25 ? 30 : 0), 0, 100);
+  // Infer hasDebt from presence of dscr (in tests, if dscr is set, the property has debt)
+  const hasDebt = dscr !== null;
+
+  const debtUrgency = !hasDebt
+    ? 0
+    : clamp(
+        (balloonMonths === null ? 0 : Math.max(0, 100 - (balloonMonths / 12) * 10)) +
+          (dscr !== null && dscr < 1.25 ? 30 : 0),
+        0,
+        100,
+      );
 
   const raw = (100 - healthVal) * 0.35 + attentionVal * 0.30 + leasingRisk * 0.20 + debtUrgency * 0.15;
   return Math.max(0, Math.min(100, raw));
@@ -177,6 +184,23 @@ describe('priorityScore formula', () => {
     });
     // (100-50)*0.35 + 0 + 0 + 100*0.15 = 17.5 + 15 = 32.5
     expect(score).toBeCloseTo(32.5, 1);
+  });
+
+  it('balloonMonths=null with dscr<1.25 applies the 30-point DSCR penalty (term loan, no balloon)', () => {
+    // CRITICAL: decoupled DSCR from balloon presence. A term loan (balloon=0, schema default)
+    // with sub-governor DSCR must still contribute the 30-point distress penalty.
+    // debtUrgency = clamp(0 + 30, 0, 100) = 30 (from the DSCR component alone)
+    const score = computePriorityScore({
+      healthScore: 60,
+      attentionBand: 'green',
+      nearTermExpiryRent: 0,
+      atRiskLikelihoodCount: 0,
+      noi: 100_000,
+      balloonMonths: null, // term/amortizing loan (no balloon row)
+      dscr: 1.05, // below 1.25 governor
+    });
+    // (100-60)*0.35 + 0 + 0 + 30*0.15 = 14 + 4.5 = 18.5
+    expect(score).toBeCloseTo(18.5, 1);
   });
 
   it('DSCR exactly at 1.25 does NOT add the 30-point penalty', () => {
