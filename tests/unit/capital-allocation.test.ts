@@ -88,7 +88,7 @@ describe('buildPortfolioAllocation', () => {
     expect(result.pipeline).toHaveLength(0);
     expect(result.asOf).toBe('2026-06-21');
     expect(result.hurdleRatePct).toBeCloseTo(0.08, 5);
-    expect(result.advisoryOnly).toBe(true);  // ratification='proposed' in cold DB
+    expect(result.advisoryOnly).toBe(false);  // ratification='ratified' in cold DB (ratified 2026-06-22)
     expect(result.actionCounts).toMatchObject({ buy: 0, hold: 0, sell: 0, refinance: 0, improve: 0 });
   });
 

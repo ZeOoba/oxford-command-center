@@ -42,7 +42,9 @@ export const INTEL_CONFIG = {
 } as const;
 
 export const HURDLE_RATE = {
-  proposedPct: 0.08,
-  ratification: 'proposed' as const,
+  pct: 0.08,                             // ratified by Gabriel Goldberg 2026-06-22
+  ratification: 'ratified' as const,
+  ratifiedBy: 'Gabriel Goldberg',
+  ratifiedDate: '2026-06-22',
   basis: 'unlevered IRR — marginal cost of capital making buy/hold/sell/refi/improve comparable',
 } as const;

@@ -77,8 +77,8 @@ This is the single discipline that prevents the collision class this repo has al
 | Acq | Acquisition Workbench UI + scoring API | Contract + engine (PRs #25/#27) merged; Workbench UI in progress |
 | 4 | **Acquisition Intelligence Engine** (firm priority #1) | **Merged ✓** — PRs #84/#85 (Steps 1–9); Notion UUID wired post-merge |
 | 2 | Debt/Refi scoring + AI narrative briefings | **Merged ✓** — PRs #95/#96/#97 (Steps 1–6: migrations + scoring engine + API + Debt Scorecard UI) · #99 (W1: loan→property binding) · #101 (W2: AI narrative briefings Steps 7–11) |
-| 3 | Forecast + Leasing intelligence | **W1+W2 Merged ✓** — PR #107 (W1: lease-forecast analytics + L-1..L-5 + leasingVelocity + migration 011) · PR #109 (W2: Leasing Intelligence UI); W3 (AI narrative) optional |
-| 5 | Capital Allocation capstone + Market intelligence | **Merged ✓** — PRs #112/#113/#114/#116 (foundational) · **PR #117** (final capstone: 5-way verdict buy/hold/sell/refi/improve + Market Intelligence UI + Property Onboarding; 1686 tests; hurdle rate ratification pending Gabriel) |
+| 3 | Forecast + Leasing intelligence | **Merged ✓** — PR #107 (W1) · PR #109 (W2) · PR #111 (W3: AI narrative leasing briefing) |
+| 5 | Capital Allocation capstone + Market intelligence | **Merged ✓** — PR #117; W1 (engines + migrations 012-015 + contracts + calibration) · W2 (Capital Allocation UI) · W3 (Market Intelligence UI) · W4 (Property Onboarding); 1686 tests green; hurdle rate ratified 2026-06-22 |
 | 5 · Track 2 | Parse-layer slug uniqueness enforcement | **Merged ✓** — PR #113; disambiguates colliding property ids at parse time (+8 tests) |
 | 5 · Track 3 | Market intelligence — cap rate benchmarks | **Merged ✓** — PR #114; `CapRateBenchmark` contract + `getMacroMarketBenchmarks` + implied cap rate columns (impliedCapRate + capRateGap + capRatePercentile) in CapitalAllocationModule (+10 tests) |
 | 5 · Scope B | Regional market dynamics — state unemployment via FRED | **Merged ✓** — PR #116; FRED state unemployment integration + regional dynamics enrichment |
@@ -86,7 +86,7 @@ This is the single discipline that prevents the collision class this repo has al
 | Direction 2 (PR #121) | IC Memo HTML export | **Merged ✓** — PR #121 |
 | Direction 3 (PR #120) | Prospect Demand Intelligence foundation | **Merged ✓** — PR #120; migration 012 (prospect_demand_events) + ProspectDemandEvent contract + getProspectDemandReport engine + GET/POST /api/warehouse/prospect-demand routes + ProspectDemandModule UI (Demand Signals panel) |
 
-**Pending:** All defined phases are shipped. Hurdle rate ratification (8% unlevered IRR governor) pending Gabriel sign-off to upgrade from `advisoryOnly`. Phase 6 / next initiative TBD.
+**Pending:** *(none)*
 
 ---
 
