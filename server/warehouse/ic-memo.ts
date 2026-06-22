@@ -2,50 +2,43 @@
 //
 // Direction 2 — Investment Committee (IC) Memo HTML export.
 //
-// buildIcMemoHtml(report) is a PURE function: CapitalAllocationReport -> a single,
+// buildIcMemoHtml(portfolio) is a PURE function: PortfolioAllocation -> a single,
 // self-contained HTML document in ORA house style. The browser's "Print to PDF" turns it
 // into an extractable-text PDF (no rasterization) — satisfying the firm rule that exported
 // PDFs carry a text layer (Microsoft Print to PDF is prohibited; this document is text +
 // vector CSS, so any text-aware PDF engine preserves the layer).
 //
-// Scope: PORTFOLIO-LEVEL (not deal-level). It synthesizes the existing capital-allocation
-// report — health/attention, debt, leasing, and FRED/regional macro — into an IC-ready memo:
-//   1. Cover            — firm + review title + as-of + portfolio size (SF / count / NOI)
-//   2. Executive Summary— health posture, top actions, macro context
-//   3. Priority Matrix  — all properties ranked by priorityScore
-//   4. Action Breakdown — Invest / Monitor / Disposition sections
-//   5. Market Context   — FRED macro + regional state unemployment
-//   6. Methodology      — priority formula, Spine-A basis, diagnostic-only fields
+// Scope: PORTFOLIO-LEVEL (not deal-level). It synthesizes the capital-allocation verdicts
+// into an IC-ready memo:
+//   1. Cover            — firm + review title + as-of + property count + hurdle rate
+//   2. Executive Summary— action posture, top verdict, advisory notice
+//   3. Verdict Table    — all verdicts ranked by confidence
+//   4. Action Breakdown — grouped by 5-way action
+//   5. Pipeline         — active acquisition pipeline candidates
+//   6. Methodology      — 5-way verdict system, IRR basis, advisory-only caveat
 //
-// Basis discipline: every NOI/SF figure here is Spine A (ownership layer). The memo never
-// mixes in Spine-B warehouse-ledger NOI — the report it consumes is already Spine-A-tagged at
-// the H6 boundary. The footnote states this explicitly for the IC audience.
-//
-// Confidentiality: a CapitalAllocationReport is an ownership-financial artifact and by
+// Confidentiality: a PortfolioAllocation is an ownership-financial artifact and by
 // construction carries NO deal terms. The route layer runs assertNoConfidential as
-// defense-in-depth before streaming; this builder stays pure (no IO) so it remains trivially
-// testable and re-usable.
-import type {
-  CapitalAllocationReport,
-  CapitalAllocationEntry,
-} from '../../src/contracts/capital-allocation';
+// defense-in-depth before streaming; this builder stays pure (no IO) so it remains
+// trivially testable and re-usable.
+import type { PortfolioAllocation, AllocationAction } from '../../src/contracts/capital';
 
-// ── ORA Style Guide tokens ─────────────────────────────────────────────────────────────────
+// ── ORA Style Guide tokens ──────────────────────────────────────────────────────────────────
 const NAVY = '#1B2A4A';
 const GOLD = '#C9A96E';
 const PARCHMENT = '#F5F3EF';
 const INK = '#2A2A2A';
 const MUTED = '#6B6B6B';
 const HAIRLINE = '#D9D4CC';
-// Font stacks mirror the ORA guide (EB Garamond / DM Sans / IBM Plex Mono) but fall back to
-// web-safe families so the document renders identically offline — no remote font fetch.
+// Font stacks mirror the ORA guide but fall back to web-safe families so the document
+// renders identically offline — no remote font fetch.
 const SERIF = "'EB Garamond', Garamond, Georgia, 'Times New Roman', serif";
 const SANS = "'DM Sans', 'Segoe UI', Helvetica, Arial, sans-serif";
 const MONO = "'IBM Plex Mono', 'Courier New', monospace";
 
-// ── Formatting helpers (all null/NaN-safe — never emit "null", "NaN", or a 0-lie) ───────────
+// ── Formatting helpers (all null/NaN-safe — never emit "null", "NaN", or a 0-lie) ──────────
 
-/** HTML-escape for any value that lands inside markup (property names, markets, rationale). */
+/** HTML-escape for any value that lands inside markup. */
 function esc(value: unknown): string {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -57,24 +50,14 @@ function esc(value: unknown): string {
 
 const DASH = '—';
 
-function num0(n: number | null | undefined): string {
-  if (n === null || n === undefined || !Number.isFinite(n)) return DASH;
-  return Math.round(n).toLocaleString('en-US');
-}
-
 function int(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return DASH;
   return Math.round(n).toString();
 }
 
-/** Compact USD for headline figures: $1.2M / $480K / $920. Zero renders as an em-dash. */
-function usdCompact(n: number | null | undefined): string {
-  if (n === null || n === undefined || !Number.isFinite(n) || n === 0) return DASH;
-  const abs = Math.abs(n);
-  const sign = n < 0 ? '-' : '';
-  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1)}M`;
-  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(0)}K`;
-  return `${sign}$${Math.round(abs)}`;
+function pct0(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return DASH;
+  return `${Math.round(n)}%`;
 }
 
 function pct1(n: number | null | undefined): string {
@@ -82,58 +65,36 @@ function pct1(n: number | null | undefined): string {
   return `${n.toFixed(1)}%`;
 }
 
-/** 2-decimal percent for macro rates (matches the UI's 10Y/CPI precision). */
-function pct2(n: number | null | undefined): string {
-  if (n === null || n === undefined || !Number.isFinite(n)) return DASH;
-  return `${n.toFixed(2)}%`;
-}
+// ── Action vocabulary (5-way) ────────────────────────────────────────────────────────────────
 
-/** Cap rate is stored as a decimal fraction (0.082 = 8.2%). */
-function capRate(n: number | null | undefined): string {
-  if (n === null || n === undefined || !Number.isFinite(n)) return DASH;
-  return `${(n * 100).toFixed(1)}%`;
-}
-
-// ── Action vocabulary ───────────────────────────────────────────────────────────────────────
-
-type Action = CapitalAllocationEntry['capitalAction'];
-
-function actionLabel(a: Action): string {
+function actionLabel(a: AllocationAction | string): string {
   switch (a) {
-    case 'invest':
-      return 'Invest';
-    case 'hold':
-      return 'Hold';
-    case 'monitor':
-      return 'Monitor';
-    case 'disposition-candidate':
-      return 'Disposition';
-    default:
-      return String(a);
+    case 'buy': return 'Buy';
+    case 'hold': return 'Hold';
+    case 'sell': return 'Sell';
+    case 'refinance': return 'Refinance';
+    case 'improve': return 'Improve';
+    default: return String(a);
   }
 }
 
-/** Inline badge color per action (Gold accent for Invest, neutral for Hold, amber/red otherwise). */
-function actionColor(a: Action): string {
+function actionColor(a: AllocationAction | string): string {
   switch (a) {
-    case 'invest':
-      return '#1E7A46'; // green
-    case 'monitor':
-      return '#9A6B00'; // amber
-    case 'disposition-candidate':
-      return '#9A1B1B'; // red
+    case 'buy': return '#1E7A46';
+    case 'improve': return '#2E8A56';
+    case 'sell': return '#9A1B1B';
+    case 'refinance': return '#9A6B00';
     case 'hold':
-    default:
-      return NAVY;
+    default: return NAVY;
   }
 }
 
 // ── Filename helper ─────────────────────────────────────────────────────────────────────────
 
 /** ORA_IC_Memo_<asOf>.html — asOf sanitized to a header/filesystem-safe token. */
-export function icMemoFilename(report: CapitalAllocationReport): string {
+export function icMemoFilename(portfolio: PortfolioAllocation): string {
   const token =
-    (report.asOf ?? '')
+    (portfolio.asOf ?? '')
       .trim()
       .replace(/[^A-Za-z0-9_-]+/g, '-')
       .replace(/^-+|-+$/g, '') || 'undated';
@@ -142,12 +103,9 @@ export function icMemoFilename(report: CapitalAllocationReport): string {
 
 // ── Section renderers ───────────────────────────────────────────────────────────────────────
 
-function totalSf(report: CapitalAllocationReport): number {
-  return report.entries.reduce((sum, e) => sum + (Number.isFinite(e.sf) ? e.sf : 0), 0);
-}
-
-function renderCover(report: CapitalAllocationReport): string {
-  const sf = totalSf(report);
+function renderCover(portfolio: PortfolioAllocation): string {
+  const count = portfolio.verdicts.length;
+  const hurdlePct = (portfolio.hurdleRatePct * 100).toFixed(1) + '%';
   return `
   <section class="ic-cover">
     <div class="ic-cover-rule"></div>
@@ -156,64 +114,51 @@ function renderCover(report: CapitalAllocationReport): string {
     <p class="ic-subtitle">Investment Committee Memorandum</p>
     <div class="ic-cover-rule"></div>
     <dl class="ic-cover-stats">
-      <div><dt>As of</dt><dd>${esc(report.asOf)}</dd></div>
-      <div><dt>Properties</dt><dd>${int(report.propertyCount)}</dd></div>
-      <div><dt>Portfolio SF</dt><dd>${num0(sf)}</dd></div>
-      <div><dt>Portfolio NOI (Spine A)</dt><dd>${usdCompact(report.portfolioNoi)}</dd></div>
+      <div><dt>As of</dt><dd>${esc(portfolio.asOf)}</dd></div>
+      <div><dt>Properties</dt><dd>${int(count)}</dd></div>
+      <div><dt>Hurdle Rate</dt><dd>${esc(hurdlePct)}</dd></div>
     </dl>
+    ${portfolio.advisoryOnly ? '<p class="ic-advisory-banner">Advisory Only — hurdle rate not yet ratified by the Investment Committee. Verdicts are directional only.</p>' : ''}
     <p class="ic-confidential">Confidential — for Investment Committee use only.</p>
   </section>`;
 }
 
-function renderExecSummary(report: CapitalAllocationReport): string {
-  const { investCount, holdCount, monitorCount, dispositionCount, macro, regionalMacro } = report;
-  const top = report.entries[0];
+function renderExecSummary(portfolio: PortfolioAllocation): string {
+  const { actionCounts, advisoryOnly, verdicts } = portfolio;
   const bullets: string[] = [];
 
+  const actionOrder: AllocationAction[] = ['buy', 'improve', 'hold', 'refinance', 'sell'];
+  const parts = actionOrder
+    .filter((a) => (actionCounts[a] ?? 0) > 0)
+    .map((a) => `<strong>${int(actionCounts[a])}</strong> ${actionLabel(a)}`);
+
   bullets.push(
-    `Portfolio posture: <strong>${int(investCount)}</strong> Invest, ` +
-      `<strong>${int(holdCount)}</strong> Hold, ` +
-      `<strong>${int(monitorCount)}</strong> Monitor, ` +
-      `<strong>${int(dispositionCount)}</strong> Disposition across ` +
-      `${int(report.propertyCount)} assets (${num0(totalSf(report))} SF).`,
+    parts.length > 0
+      ? `Portfolio posture: ${parts.join(', ')} across ${int(verdicts.length)} asset${verdicts.length !== 1 ? 's' : ''}.`
+      : `No verdicts computed. Refresh the snapshot after the workbook is updated.`,
   );
 
+  const top = verdicts.slice().sort((a, b) => b.confidence01 - a.confidence01)[0];
   if (top) {
     bullets.push(
-      `Highest-priority asset: <strong>${esc(top.propertyName ?? top.propertyId)}</strong>` +
-        `${top.market ? ` (${esc(top.market)})` : ''} — ` +
-        `priority ${int(top.priorityScore)}, action <strong>${actionLabel(top.capitalAction)}</strong>` +
-        `${top.rationale.length > 0 ? `: ${esc(top.rationale[0])}` : ''}.`,
+      `Highest-confidence verdict: <strong>${esc(top.propertyName ?? top.propertyId)}</strong> — ` +
+        `<strong>${actionLabel(top.action)}</strong>, confidence ${pct0(top.confidence01 * 100)}` +
+        `${top.reasons.length > 0 ? `: ${esc(top.reasons[0])}` : ''}.`,
     );
   }
 
-  if (dispositionCount > 0) {
+  const above = verdicts.filter((v) => v.returnAboveHurdle === true).length;
+  const below = verdicts.filter((v) => v.returnAboveHurdle === false).length;
+  if (above + below > 0) {
     bullets.push(
-      `<strong>${int(dispositionCount)}</strong> disposition candidate(s) flagged for exit review.`,
+      `${int(above)} of ${int(above + below)} scored assets clear the ${pct1(portfolio.hurdleRatePct * 100)} hurdle rate.`,
     );
   }
-  if (monitorCount > 0) {
-    bullets.push(`<strong>${int(monitorCount)}</strong> asset(s) on the Monitor watch list.`);
-  }
 
-  const macroParts: string[] = [];
-  if (macro.tenYearRate !== null) macroParts.push(`10Y Treasury ${pct2(macro.tenYearRate)}`);
-  if (macro.cpi !== null) macroParts.push(`CPI ${pct1(macro.cpi)}`);
-  if (macroParts.length > 0) {
-    const prov = macro.source === 'fred' ? 'FRED' : 'seeded fallback';
+  if (advisoryOnly) {
     bullets.push(
-      `Macro context: ${macroParts.join(', ')} (${prov}${macro.asOf ? `, as of ${esc(macro.asOf)}` : ''}).`,
+      'Advisory mode active — hurdle rate pending IC ratification. Verdicts are directional only and must not be cited as final recommendations.',
     );
-  }
-
-  if (regionalMacro && regionalMacro.states.length > 0) {
-    const tight = regionalMacro.states
-      .filter((s) => s.unemploymentRate !== null)
-      .map((s) => `${esc(s.stateCode)} ${pct1(s.unemploymentRate)}`)
-      .join(', ');
-    if (tight) {
-      bullets.push(`Regional labor (unemployment): ${tight}.`);
-    }
   }
 
   return `
@@ -225,69 +170,72 @@ function renderExecSummary(report: CapitalAllocationReport): string {
   </section>`;
 }
 
-function renderPriorityMatrix(report: CapitalAllocationReport): string {
-  if (report.entries.length === 0) {
+function renderVerdictTable(portfolio: PortfolioAllocation): string {
+  if (portfolio.verdicts.length === 0) {
     return `
   <section class="ic-section">
-    <h2>Priority Matrix</h2>
-    <p class="ic-empty">No properties scored. Refresh the snapshot after the workbook is updated
-    and the warehouse backfill has populated health/attention scores.</p>
+    <h2>Verdicts</h2>
+    <p class="ic-empty">No verdicts computed. Refresh the snapshot after the workbook is updated
+    and the warehouse backfill has populated scores.</p>
   </section>`;
   }
 
-  const rows = report.entries
-    .map((e) => {
-      const name = esc(e.propertyName ?? e.propertyId);
-      const rationale = e.rationale.length > 0 ? esc(e.rationale[0]) : DASH;
+  const rows = portfolio.verdicts
+    .slice()
+    .sort((a, b) => b.confidence01 - a.confidence01)
+    .map((v) => {
+      const name = esc(v.propertyName ?? v.propertyId);
+      const reason = v.reasons[0] ? esc(v.reasons[0]) : DASH;
+      const retPct = v.expectedReturnPct !== null ? pct1(v.expectedReturnPct * 100) : DASH;
+      const hurdle =
+        v.returnAboveHurdle === null ? DASH : v.returnAboveHurdle ? '&#10003;' : '&#10007;';
       return `        <tr class="ic-row">
           <td class="ic-name">${name}</td>
-          <td>${e.market ? esc(e.market) : DASH}</td>
-          <td class="ic-r">${num0(e.sf)}</td>
-          <td><span class="ic-badge" style="color:${actionColor(e.capitalAction)};border-color:${actionColor(e.capitalAction)}">${actionLabel(e.capitalAction)}</span></td>
-          <td class="ic-r ic-strong">${int(e.priorityScore)}</td>
-          <td class="ic-r">${int(e.healthScore)}</td>
-          <td class="ic-r">${e.nearTermExpiryRent > 0 ? usdCompact(e.nearTermExpiryRent) : DASH}</td>
-          <td class="ic-r">${int(e.debtScore)}</td>
-          <td class="ic-r">${capRate(e.impliedCapRate)}</td>
-          <td class="ic-rationale">${rationale}</td>
+          <td><span class="ic-badge" style="color:${actionColor(v.action)};border-color:${actionColor(v.action)}">${actionLabel(v.action)}</span></td>
+          <td>${esc(v.riskBand)}</td>
+          <td class="ic-r">${pct0(v.confidence01 * 100)}</td>
+          <td class="ic-r">${retPct}</td>
+          <td class="ic-r">${hurdle}</td>
+          <td class="ic-rationale">${reason}</td>
         </tr>`;
     })
     .join('\n');
 
   return `
   <section class="ic-section">
-    <h2>Priority Matrix</h2>
+    <h2>Verdicts</h2>
     <table class="ic-table">
       <thead>
         <tr>
-          <th>Property</th><th>Market</th><th class="ic-r">SF</th><th>Action</th>
-          <th class="ic-r">Priority</th><th class="ic-r">Health</th>
-          <th class="ic-r">Leasing Risk</th><th class="ic-r">Debt</th>
-          <th class="ic-r">Implied Cap</th><th>Rationale</th>
+          <th>Property</th><th>Action</th><th>Risk</th>
+          <th class="ic-r">Confidence</th><th class="ic-r">Expected Return</th>
+          <th class="ic-r">Hurdle</th><th>Reason</th>
         </tr>
       </thead>
       <tbody>
 ${rows}
       </tbody>
     </table>
-    <p class="ic-note">Ranked descending by priority score. Em-dash (${DASH}) = no value /
-    diagnostic unavailable (never zero-substituted).</p>
+    <p class="ic-note">Sorted descending by confidence. Em-dash (${DASH}) = value not available
+    (never zero-substituted). &#10003; = above hurdle; &#10007; = below hurdle.</p>
   </section>`;
 }
 
-function renderActionBreakdown(report: CapitalAllocationReport): string {
-  const order: Action[] = ['invest', 'hold', 'monitor', 'disposition-candidate'];
+function renderActionBreakdown(portfolio: PortfolioAllocation): string {
+  const order: AllocationAction[] = ['buy', 'improve', 'hold', 'refinance', 'sell'];
   const blocks = order
     .map((action) => {
-      const group = report.entries.filter((e) => e.capitalAction === action);
+      const group = portfolio.verdicts.filter((v) => v.action === action);
       if (group.length === 0) return '';
       const items = group
-        .map((e) => {
-          const detail =
-            e.rationale.length > 0 ? ` — ${esc(e.rationale.join('; '))}` : '';
-          return `        <li><strong>${esc(e.propertyName ?? e.propertyId)}</strong>` +
-            `${e.market ? ` (${esc(e.market)})` : ''}, ${num0(e.sf)} SF, ` +
-            `priority ${int(e.priorityScore)}${detail}.</li>`;
+        .map((v) => {
+          const detail = v.reasons.length > 0 ? ` — ${esc(v.reasons.join('; '))}` : '';
+          const ret =
+            v.expectedReturnPct !== null ? `, expected return ${pct1(v.expectedReturnPct * 100)}` : '';
+          return (
+            `        <li><strong>${esc(v.propertyName ?? v.propertyId)}</strong>` +
+            `, confidence ${pct0(v.confidence01 * 100)}${ret}${detail}.</li>`
+          );
         })
         .join('\n');
       return `
@@ -308,85 +256,76 @@ ${items}
   </section>`;
 }
 
-function renderMarketContext(report: CapitalAllocationReport): string {
-  const { macro, regionalMacro, marketBenchmarks } = report;
-  const macroRows: string[] = [];
-  if (macro.tenYearRate !== null)
-    macroRows.push(`<tr><td>10Y Treasury</td><td class="ic-r">${pct2(macro.tenYearRate)}</td></tr>`);
-  if (macro.cpi !== null)
-    macroRows.push(`<tr><td>CPI (YoY)</td><td class="ic-r">${pct1(macro.cpi)}</td></tr>`);
-  const macroProv = macro.source === 'fred' ? 'FRED (live)' : 'seeded fallback';
-
-  let regionalBlock = '';
-  if (regionalMacro && regionalMacro.states.length > 0) {
-    const stateRows = regionalMacro.states
-      .map(
-        (s) =>
-          `<tr><td>${esc(s.stateName)} (${esc(s.stateCode)})</td><td class="ic-r">${pct1(s.unemploymentRate)}</td></tr>`,
-      )
-      .join('\n          ');
-    const regionalProv = regionalMacro.source === 'fred' ? 'FRED (live)' : 'seeded fallback';
-    regionalBlock = `
-    <div class="ic-context-col">
-      <h3>Regional Labor — Unemployment</h3>
-      <table class="ic-mini-table">
-        <tbody>
-          ${stateRows}
-        </tbody>
-      </table>
-      <p class="ic-note">Seasonally adjusted, monthly${regionalMacro.asOf ? `, as of ${esc(regionalMacro.asOf)}` : ''}.
-      Source: ${regionalProv}. Diagnostic only — does not affect priority or action.</p>
-    </div>`;
+function renderPipeline(portfolio: PortfolioAllocation): string {
+  if (portfolio.pipeline.length === 0) {
+    return `
+  <section class="ic-section">
+    <h2>Acquisition Pipeline</h2>
+    <p class="ic-empty">No active pipeline candidates at this time.</p>
+  </section>`;
   }
 
-  const benchProv =
-    !marketBenchmarks.available || marketBenchmarks.source === 'unavailable'
-      ? 'unavailable'
-      : marketBenchmarks.source === 'fred'
-        ? 'FRED (live)'
-        : 'seeded snapshot';
+  const rows = portfolio.pipeline
+    .map((p) => {
+      const addr = p.address ? esc(p.address) : DASH;
+      const mkt = p.market ? esc(p.market) : DASH;
+      const comp = p.composite !== null ? pct0(p.composite) : DASH;
+      const tier = p.tier ? esc(p.tier) : DASH;
+      const irr = p.leveredIrr !== null ? pct1(p.leveredIrr * 100) : DASH;
+      const disc = p.basisDiscountPct !== null ? pct1(p.basisDiscountPct * 100) : DASH;
+      return `        <tr class="ic-row">
+          <td class="ic-name">${addr}</td>
+          <td>${mkt}</td>
+          <td class="ic-r">${tier}</td>
+          <td class="ic-r">${comp}</td>
+          <td class="ic-r">${irr}</td>
+          <td class="ic-r">${disc}</td>
+        </tr>`;
+    })
+    .join('\n');
 
   return `
   <section class="ic-section">
-    <h2>Market Context</h2>
-    <div class="ic-context-grid">
-      <div class="ic-context-col">
-        <h3>National Macro</h3>
-        <table class="ic-mini-table">
-          <tbody>
-            ${macroRows.join('\n            ') || `<tr><td>${DASH}</td><td class="ic-r">${DASH}</td></tr>`}
-          </tbody>
-        </table>
-        <p class="ic-note">Source: ${macroProv}${macro.asOf ? `, as of ${esc(macro.asOf)}` : ''}.
-        Cap-rate benchmarks: ${benchProv}.</p>
-      </div>
-      ${regionalBlock}
-    </div>
+    <h2>Acquisition Pipeline</h2>
+    <table class="ic-table">
+      <thead>
+        <tr>
+          <th>Address</th><th>Market</th><th class="ic-r">Tier</th>
+          <th class="ic-r">Composite</th><th class="ic-r">Levered IRR</th><th class="ic-r">Basis Discount</th>
+        </tr>
+      </thead>
+      <tbody>
+${rows}
+      </tbody>
+    </table>
   </section>`;
 }
 
-function renderMethodology(report: CapitalAllocationReport): string {
+function renderMethodology(portfolio: PortfolioAllocation): string {
+  const hurdlePct = (portfolio.hurdleRatePct * 100).toFixed(1) + '%';
   return `
   <section class="ic-section ic-methodology">
     <h2>Methodology</h2>
     <p>
-      Priority score = 0.35 &times; (100 &minus; health) + 0.30 &times; attention +
-      0.20 &times; leasing risk + 0.15 &times; debt urgency, clamped to [0, 100].
-      Higher priority = greater need for capital-committee attention, not desirability.
+      Each property receives a 5-way capital verdict: <strong>Buy</strong> (new acquisition),
+      <strong>Improve</strong> (value-add capex / leasing push), <strong>Hold</strong> (no action),
+      <strong>Refinance</strong> (debt restructure), or <strong>Sell</strong> (disposition).
+      Verdicts are driven by expected unlevered IRR vs the ${esc(hurdlePct)} hurdle rate
+      (${portfolio.advisoryOnly ? 'advisory only — pending IC ratification' : 'ratified by the Investment Committee'}),
+      alongside debt signal, health band, attention band, and leasing forecast inputs.
     </p>
     <p>
-      All NOI and SF figures are <strong>Spine A</strong> (ownership layer, from the master
-      workbook snapshot). They are <strong>not</strong> comparable with Spine-B warehouse-ledger
-      analytics and must never be aggregated against them without explicit basis-matching.
+      Confidence (0–100%) reflects data completeness: confirmed = live Spine-A/B signals;
+      estimated = partial data; derived = model extrapolation. Em-dash (${DASH}) denotes
+      an unavailable value — never zero-substituted.
     </p>
     <p>
-      Implied cap rate, cap-rate gap vs market, regional unemployment, and national macro are
-      <strong>diagnostic / display-only</strong>: they do not feed the priority score or the
-      capital action. Cap band is a discrete position (below / at / above market), not a
-      continuous percentile. Em-dash (${DASH}) denotes an unavailable value (never zero-substituted).
+      All NOI figures are <strong>Spine A</strong> (ownership layer, from the master workbook
+      snapshot). They are <strong>not</strong> comparable with Spine-B warehouse-ledger analytics
+      and must never be aggregated against them without explicit basis-matching.
     </p>
-    <p class="ic-note">Generated ${esc(report.asOf)} from the Capital Allocation report
-    (GET /api/warehouse/capital-allocation). Confidential — Investment Committee use only.</p>
+    <p class="ic-note">Generated ${esc(portfolio.asOf)} from the Capital Allocation engine
+    (GET /api/warehouse/capital/allocate). Confidential — Investment Committee use only.</p>
   </section>`;
 }
 
@@ -416,7 +355,7 @@ function styleBlock(): string {
     h1, h2, h3 { font-family: ${SERIF}; color: var(--navy); margin: 0 0 8px; }
     h2 { font-size: 18px; border-bottom: 2px solid var(--gold); padding-bottom: 6px; margin-top: 0; }
     h3 { font-size: 13px; margin-bottom: 6px; }
-    .num, .ic-r, .ic-strong, .ic-badge, .ic-table td.ic-r, .ic-mini-table td.ic-r { font-family: ${MONO}; }
+    .num, .ic-r, .ic-strong, .ic-badge, .ic-table td.ic-r { font-family: ${MONO}; }
 
     /* Cover */
     .ic-cover { text-align: center; padding: 56px 0 32px; }
@@ -431,6 +370,8 @@ function styleBlock(): string {
     .ic-cover-stats dt { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
     .ic-cover-stats dd { font-family: ${MONO}; font-size: 20px; color: var(--navy); margin: 4px 0 0; font-weight: 600; }
     .ic-confidential { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin-top: 28px; }
+    .ic-advisory-banner { background: #FFF8E1; border: 1px solid #C9A96E; border-radius: 4px;
+      padding: 8px 16px; font-size: 11px; color: #9A6B00; margin: 16px auto; max-width: 520px; }
 
     /* Sections */
     .ic-section { margin: 26px 0; }
@@ -459,12 +400,6 @@ function styleBlock(): string {
     .ic-action-list li { margin-bottom: 4px; }
     .ic-count { font-family: ${MONO}; font-size: 12px; color: var(--muted); }
 
-    /* Market context */
-    .ic-context-grid { display: flex; gap: 32px; flex-wrap: wrap; }
-    .ic-context-col { flex: 1; min-width: 240px; }
-    .ic-mini-table { width: 100%; border-collapse: collapse; font-size: 11px; }
-    .ic-mini-table td { padding: 4px 8px; border-bottom: 1px solid var(--hairline); }
-
     /* Methodology */
     .ic-methodology p { font-size: 11px; color: var(--ink); margin: 0 0 8px; }
 
@@ -473,7 +408,7 @@ function styleBlock(): string {
     @media print {
       body { background: #fff; }
       .ic-page { max-width: none; padding: 0; box-shadow: none; }
-      .ic-section, .ic-action-block, .ic-context-col { page-break-inside: avoid; break-inside: avoid; }
+      .ic-section, .ic-action-block { page-break-inside: avoid; break-inside: avoid; }
       .ic-table thead { display: table-header-group; }
       .ic-row { page-break-inside: avoid; break-inside: avoid; }
       .ic-cover { page-break-after: always; break-after: page; }
@@ -485,27 +420,27 @@ function styleBlock(): string {
 // ── Document builder ────────────────────────────────────────────────────────────────────────
 
 /**
- * Builds the complete, self-contained IC Memo HTML document from a CapitalAllocationReport.
+ * Builds the complete, self-contained IC Memo HTML document from a PortfolioAllocation.
  *
  * Pure — no IO, no DB. Output is a full HTML5 document (inline ORA styles, no remote
  * dependencies) suitable for browser "Print to PDF" into an extractable-text PDF.
  */
-export function buildIcMemoHtml(report: CapitalAllocationReport): string {
+export function buildIcMemoHtml(portfolio: PortfolioAllocation): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ORA Capital Allocation Review — ${esc(report.asOf)}</title>${styleBlock()}
+  <title>ORA Capital Allocation Review — ${esc(portfolio.asOf)}</title>${styleBlock()}
 </head>
 <body>
   <div class="ic-page">
-${renderCover(report)}
-${renderExecSummary(report)}
-${renderPriorityMatrix(report)}
-${renderActionBreakdown(report)}
-${renderMarketContext(report)}
-${renderMethodology(report)}
+${renderCover(portfolio)}
+${renderExecSummary(portfolio)}
+${renderVerdictTable(portfolio)}
+${renderActionBreakdown(portfolio)}
+${renderPipeline(portfolio)}
+${renderMethodology(portfolio)}
   </div>
 </body>
 </html>`;
