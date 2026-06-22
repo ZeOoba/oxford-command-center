@@ -265,12 +265,13 @@ function KpiRow({ committed, pending, openIssues, propertiesCovered, latestPerio
   propertiesCovered: number;
   latestPeriod: string | null;
 }) {
+  const warehouseProv = { source: 'Warehouse · committed imports', confidence: 'derived' as const, ...(latestPeriod ? { asOf: latestPeriod } : {}) };
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-      <KpiStat label="Committed Imports" value={committed} format={(n) => (n === null ? '—' : String(Math.round(n)))} accentColor="var(--color-pos)" sublabel={pending > 0 ? `${pending} pending review` : undefined} />
-      <KpiStat label="Open DQ Issues" value={openIssues} format={(n) => (n === null ? '—' : String(Math.round(n)))} accentColor={openIssues > 0 ? 'var(--color-warn)' : 'var(--color-pos)'} />
-      <KpiStat label="Properties Covered" value={propertiesCovered} format={(n) => (n === null ? '—' : String(Math.round(n)))} accentColor="var(--color-info)" />
-      <KpiStat label="Latest Period" value={latestPeriod ? 1 : null} format={() => latestPeriod ?? '—'} accentColor="var(--accent)" />
+      <KpiStat label="Committed Imports" value={committed} format={(n) => (n === null ? '—' : String(Math.round(n)))} accentColor="var(--color-pos)" sublabel={pending > 0 ? `${pending} pending review` : undefined} prov={warehouseProv} />
+      <KpiStat label="Open DQ Issues" value={openIssues} format={(n) => (n === null ? '—' : String(Math.round(n)))} accentColor={openIssues > 0 ? 'var(--color-warn)' : 'var(--color-pos)'} prov={warehouseProv} />
+      <KpiStat label="Properties Covered" value={propertiesCovered} format={(n) => (n === null ? '—' : String(Math.round(n)))} accentColor="var(--color-info)" prov={warehouseProv} />
+      <KpiStat label="Latest Period" value={latestPeriod ? 1 : null} format={() => latestPeriod ?? '—'} accentColor="var(--accent)" prov={warehouseProv} />
     </div>
   );
 }
