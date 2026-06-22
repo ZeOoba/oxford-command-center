@@ -234,4 +234,81 @@ describe('buildCapitalAllocationReport — real engine integration (no mocks)', 
     expect(report.dispositionCount).toBe(0);
     expect(report.portfolioNoi).toBe(0);
   });
+
+  // ── H2: nearTermExpiryRent must be Oxford-share basis (scaled by oxfordOwnPct) ──────────
+  //
+  // Bug: The accumulation loop summed lease.annualRent at 100%-basis. For fractional-ownership
+  // properties, this overstates the numerator relative to property.noi (Oxford-share), making
+  // leasingRisk = (nearTermExpiryRent / noi) inflated by 1/ownershipPct.
+  //
+  // Fix: scale lease.annualRent by the property's oxfordOwnPct before accumulating.
+  //
+  // Affected properties: Red Branch Rd Columbia MD (50%), N Broadway (50%), Solar (25%).
+  //
+  // This test must FAIL before the fix and PASS after.
+  it('I-6 (H2): nearTermExpiryRent is Oxford-share (scaled by oxfordOwnPct), not 100%-basis', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cap-int-h2-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SEED);
+
+    // 50%-owned property (e.g., Red Branch Rd Columbia MD). Oxford-share NOI = 95_000 (Spine A).
+    // A lease with 100%-basis annualRent = 100_000 expiring in 3 months (≤12m bucket).
+    // Expected Oxford-share nearTermExpiryRent = 100_000 * 0.50 = 50_000 (NOT 100_000).
+    const snapshot: ReturnType<typeof makeSnapshot> = {
+      ...makeSnapshot([
+        makeProperty({
+          id: '9050-red-branch-rd-columbia-md',
+          noi: 95_000,
+          sf: 25_000,
+          oxfordOwnPct: 0.50,   // 50% fractional ownership
+          oxfordValue: 1_900_000,
+        }),
+      ]),
+      leases: [
+        {
+          id: 'L-H2-1',
+          propertyId: '9050-red-branch-rd-columbia-md',
+          annualRent: 100_000,  // 100%-basis rent
+          monthlyRent: 100_000 / 12,
+          sf: 12_000,
+          monthsToExpiry: 3,    // ≤12m — '0-6m' bucket
+          leaseEnd: '2026-09-30',
+          leaseStart: '2022-09-30',
+          status: 'Active' as const,
+          company: 'Fractional Tenant LLC',
+          tenantName: 'Fractional Tenant LLC',
+          monthToMonth: false,
+          leaseType: 'NNN' as const,
+          escalation: null,
+          escalationPct: null,
+          escalationFlat: null,
+          options: [],
+          flags: [],
+        } as unknown as PortfolioSnapshot['leases'][number],
+      ],
+    };
+
+    const report = await buildCapitalAllocationReport(db, snapshot);
+
+    expect(report.entries).toHaveLength(1);
+    const entry = report.entries[0]!;
+
+    // Core assertion: nearTermExpiryRent must be Oxford-share (50_000), not 100%-basis (100_000).
+    // Before fix → 100_000 (FAIL). After fix → 50_000 (PASS).
+    expect(entry.nearTermExpiryRent).toBe(50_000);
+
+    // Secondary: with correct Oxford-share basis, leasingRisk = (50_000 / 95_000) * 100 ≈ 52.6.
+    // Buggy value: min(100, (100_000 / 95_000) * 100) = 100 (capped).
+    // The corrected leasingRisk contributes 0.20 * 52.6 ≈ 10.5 to priorityScore;
+    // the buggy leasingRisk contributes 0.20 * 100 = 20.
+    // We assert priorityScore is consistent with the corrected (lower) leasingRisk component.
+    // max leasingRisk-driven component at fix: 0.20 * 52.63 ≈ 10.53
+    // buggy leasingRisk-driven component: 0.20 * 100 = 20
+    // The difference is ≥9 priorityScore points — verify the bug would have raised it beyond 30:
+    // Health=null→50, attention=null→50: base = (100-50)*0.35 + 50*0.30 = 17.5+15 = 32.5
+    // buggy total: 32.5 + 20 = 52.5; correct total: 32.5 + 10.53 ≈ 43.0
+    // So after fix, priorityScore < 50 and after bug, priorityScore ≈ 52.5.
+    expect(entry.priorityScore).toBeLessThan(50);
+  });
 });

@@ -445,13 +445,21 @@ export async function buildCapitalAllocationReport(
     signalsByProperty.set(sig.propertyId, arr);
   }
 
+  // Build an Oxford-share scale factor per property. Lease.annualRent is 100%-basis; property.noi
+  // (Spine A) is Oxford-share. Without scaling, leasingRisk = nearTermExpiryRent / noi is inflated
+  // by 1/ownershipPct for fractional properties (e.g., 2× for Red Branch 50%, 4× for Solar 25%).
+  // Fallback to 1 when a lease's propertyId is not in the snapshot (unknown property = full basis).
+  const ownershipPctByProperty = new Map<string, number>(
+    snapshot.properties.map((p) => [p.id, p.oxfordOwnPct]),
+  );
   const nearTermExpiryRentByProperty = new Map<string, number>();
   for (const lease of snapshot.leases) {
     if (lease.propertyId === null) continue;
     const bucket = bucketExpiry(lease.monthsToExpiry, lease.leaseEnd, asOf);
     if (bucket === '0-6m' || bucket === '6-12m') {
       const existing = nearTermExpiryRentByProperty.get(lease.propertyId) ?? 0;
-      nearTermExpiryRentByProperty.set(lease.propertyId, existing + lease.annualRent);
+      const ownershipPct = ownershipPctByProperty.get(lease.propertyId) ?? 1;
+      nearTermExpiryRentByProperty.set(lease.propertyId, existing + lease.annualRent * ownershipPct);
     }
   }
 
