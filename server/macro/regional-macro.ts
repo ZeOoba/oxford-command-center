@@ -19,9 +19,9 @@ import {
   type StateEmploymentMetric,
   type RegionalMacroSnapshot,
 } from '../../src/contracts/index';
+import { fetchWithTimeout } from './fred';
 
 const BASE = 'https://api.stlouisfed.org/fred';
-const FRED_TIMEOUT_MS = 4_000;
 
 /** ORA market → FRED state unemployment series. The single source of truth for the 7 states. */
 export const ORA_STATE_SERIES: ReadonlyArray<{
@@ -51,16 +51,7 @@ function key(): string | undefined {
  */
 async function latestObs(seriesId: string): Promise<{ rate: number; asOf: string } | null> {
   const url = `${BASE}/series/observations?series_id=${seriesId}&api_key=${key()}&file_type=json&sort_order=desc&limit=1`;
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), FRED_TIMEOUT_MS);
-  let r: Response | null;
-  try {
-    r = await fetch(url, { signal: controller.signal });
-  } catch {
-    return null;
-  } finally {
-    clearTimeout(t);
-  }
+  const r = await fetchWithTimeout(url);
   if (!r || !r.ok) return null;
   const j = (await r.json()) as { observations?: { date?: string; value: string }[] };
   const o = j.observations?.[0];

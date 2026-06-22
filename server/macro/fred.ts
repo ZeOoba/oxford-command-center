@@ -16,7 +16,7 @@ function key(): string | undefined {
 // AbortError from a timed-out fetch propagates through try/finally and would fail the
 // entire Promise.all() in fetchFredMacro(), dropping every series instead of just the
 // slow one. Catch here so callers get null/[] per-series, not a cascade failure.
-async function fetchWithTimeout(url: string): Promise<Response | null> {
+export async function fetchWithTimeout(url: string): Promise<Response | null> {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), FRED_TIMEOUT_MS);
   try {
