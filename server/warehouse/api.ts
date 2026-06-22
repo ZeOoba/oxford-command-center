@@ -54,9 +54,9 @@ import { composePropertyBriefing, composeManagerBriefing } from '../briefing/com
 import { renderBriefingPdf } from '../briefing/pdf';
 import { briefingFilename } from '../briefing/filename';
 import { composeNarrative } from '../ai/narrative';
-import { buildCapitalAllocationReport } from './capital-allocation';
-import { buildIcMemoHtml, icMemoFilename } from './ic-memo';
+import { buildCapitalAllocationReport, buildPortfolioAllocation } from './capital-allocation';
 import { CapitalAllocationReport } from '../../src/contracts/capital-allocation';
+import { buildIcMemoHtml, icMemoFilename } from './ic-memo';
 import { assertNoConfidential } from '../briefing/confidential';
 import { syncCapitalActionsToNotion } from '../notion/capital-writeback';
 import { NotionSyncResult } from '../../src/contracts/notion-writeback';
@@ -964,27 +964,32 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
 
   // ── GET /capital-allocation/ic-memo (Direction 2 — IC Memo HTML export) ───────────────────
   //
-  // Streams the self-contained IC Memo HTML document for browser "Print to PDF".
-  // assertNoConfidential runs as a defense-in-depth backstop (CapitalAllocationReport is an
-  // ownership artifact that by construction carries no deal terms, but the guard is cheap).
-  app.get('/capital-allocation/ic-memo', (c) =>
+  // Returns the PortfolioAllocation rendered as a self-contained, ORA-styled HTML memo for
+  // Investment Committee review. The browser's "Print to PDF" turns it into an extractable-text
+  // PDF — per the firm rule that exported PDFs carry a text layer.
+  //
+  // assertNoConfidential is defense-in-depth: the portfolio is an ownership-financial artifact
+  // and by construction carries no deal terms, but we PROVE it before emitting.
+  app.get('/capital-allocation/ic-memo', () =>
     withDb(async (db) => {
       try {
-        const { brain } = await import('../brain');
-        const snapshot = await brain.getSnapshot();
-        if (!snapshot) return c.json({ error: 'snapshot unavailable' }, 503);
-        const report = await buildCapitalAllocationReport(db, snapshot);
-        assertNoConfidential(report);
-        const html = buildIcMemoHtml(report);
+        const asOf = new Date().toISOString().slice(0, 10);
+        const portfolio = await buildPortfolioAllocation(db, asOf);
+        assertNoConfidential(portfolio);
+        const html = buildIcMemoHtml(portfolio);
         return new Response(html, {
+          status: 200,
           headers: {
             'content-type': 'text/html; charset=utf-8',
-            'content-disposition': `attachment; filename="${icMemoFilename(report)}"`,
+            'content-disposition': `attachment; filename="${icMemoFilename(portfolio)}"`,
           },
         });
-      } catch (err) {
-        console.error('[warehouse-api] /capital-allocation/ic-memo error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'ic-memo generation failed' }, 500);
+      } catch {
+        console.error('[warehouse-api] /capital-allocation/ic-memo generation failed');
+        return new Response(JSON.stringify({ error: 'ic memo generation failed' }), {
+          status: 500,
+          headers: { 'content-type': 'application/json' },
+        });
       }
     }),
   );
