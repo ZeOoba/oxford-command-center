@@ -1,0 +1,125 @@
+import { z } from 'zod';
+import { Confidence, DataQualityFlag } from './common';
+import { AttentionBand, HealthBand } from './warehouse';
+import { ClusterTier, Ratification } from './acquisition';
+
+export const AllocationAction = z.enum(['buy', 'hold', 'sell', 'refinance', 'improve']);
+export type AllocationAction = z.infer<typeof AllocationAction>;
+
+export const RiskBand = z.enum(['low', 'moderate', 'elevated', 'high']);
+export type RiskBand = z.infer<typeof RiskBand>;
+
+export const HurdleRateConfig = z.object({
+  hurdleRatePct: z.number().min(0).max(1),
+  ratification: Ratification,
+  ratifiedBy: z.string().nullable().default(null),
+  ratifiedDate: z.string().nullable().default(null),
+  capitalConfigVersion: z.number().int(),
+}).superRefine((val, ctx) => {
+  if (val.ratification === 'ratified') {
+    if (val.ratifiedBy === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ratifiedBy'], message: 'ratifiedBy is required when ratification is "ratified"' });
+    }
+    if (val.ratifiedDate === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ratifiedDate'], message: 'ratifiedDate is required when ratification is "ratified"' });
+    }
+  } else if (val.ratification === 'proposed') {
+    if (val.ratifiedBy !== null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ratifiedBy'], message: 'ratifiedBy must be null when ratification is "proposed"' });
+    }
+    if (val.ratifiedDate !== null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ratifiedDate'], message: 'ratifiedDate must be null when ratification is "proposed"' });
+    }
+  }
+});
+export type HurdleRateConfig = z.infer<typeof HurdleRateConfig>;
+
+export const AllocationVerdict = z.object({
+  propertyId: z.string(),
+  propertyName: z.string().nullable(),
+  period: z.string(),
+  action: AllocationAction,
+  expectedReturnPct: z.number().nullable(),
+  returnAboveHurdle: z.boolean().nullable(),
+  riskBand: RiskBand,
+  timelineMonths: z.number().int().nonnegative(),
+  horizonPeriods: z.number().int().nonnegative(),
+  confidence01: z.number().min(0).max(1),
+  confidenceTier: Confidence,
+  advisoryOnly: z.boolean(),
+  reasons: z.array(z.string()),
+  inputs: z.object({
+    healthBand: HealthBand,
+    attentionBand: AttentionBand,
+    capitalAction: z.enum(['invest', 'hold', 'monitor', 'disposition-candidate']),
+    debtSignal: z.enum(['refi', 'cash-out', 'hold', 'governor-block', 'no-debt']),
+    debtScoreBand: z.enum(['strong', 'adequate', 'watch', 'critical']),
+    dscr: z.number().nullable(),
+    dscrHeadroom: z.number().nullable(),
+    ltv: z.number().nullable(),
+    noiPerSf: z.number().nullable(),
+    forecastPresent: z.boolean(),
+  }),
+  dataQuality: z.array(DataQualityFlag).default([]),
+});
+export type AllocationVerdict = z.infer<typeof AllocationVerdict>;
+
+export const PortfolioAllocation = z.object({
+  asOf: z.string(),
+  hurdleRatePct: z.number(),
+  advisoryOnly: z.boolean(),
+  verdicts: z.array(AllocationVerdict),
+  actionCounts: z.record(AllocationAction, z.number().int().nonnegative()),
+  pipeline: z.array(z.object({
+    candidateId: z.string(),
+    address: z.string().nullable(),
+    market: ClusterTier.nullable(),
+    composite: z.number().nullable(),
+    tier: z.enum(['T1', 'T2', 'PASS', 'KILLED']).nullable(),
+    leveredIrr: z.number().nullable(),
+    basisDiscountPct: z.number().nullable(),
+  })),
+});
+export type PortfolioAllocation = z.infer<typeof PortfolioAllocation>;
+
+export const MarketAction = z.enum(['enter', 'expand', 'maintain', 'exit']);
+export type MarketAction = z.infer<typeof MarketAction>;
+
+export const MarketSourceTag = z.enum(['fred', 'census-acs', 'comps-ai', 'composite']);
+export type MarketSourceTag = z.infer<typeof MarketSourceTag>;
+
+export const MarketSignal = z.object({
+  cluster: z.string(),
+  asOf: z.string(),
+  marketScore: z.number().min(0).max(100).nullable(),
+  action: MarketAction,
+  confidence01: z.number().min(0).max(1),
+  confidenceTier: Confidence,
+  advisoryOnly: z.literal(true),
+  oraPropertyCount: z.number().int().nonnegative(),
+  sources: z.array(z.object({
+    source: MarketSourceTag,
+    metric: z.string(),
+    value: z.number().nullable(),
+    confidence01: z.number().min(0).max(1),
+    asOf: z.string(),
+    stale: z.boolean(),
+  })),
+  reasons: z.array(z.string()),
+  dataQuality: z.array(DataQualityFlag).default([]),
+});
+export type MarketSignal = z.infer<typeof MarketSignal>;
+
+export const CapitalAllocationResponse = z.object({
+  asOf: z.string(),
+  hurdleRate: HurdleRateConfig,
+  advisoryOnly: z.boolean(),
+  portfolio: PortfolioAllocation,
+});
+export type CapitalAllocationResponse = z.infer<typeof CapitalAllocationResponse>;
+
+export const MarketIntelResponse = z.object({
+  asOf: z.string(),
+  signals: z.array(MarketSignal),
+});
+export type MarketIntelResponse = z.infer<typeof MarketIntelResponse>;

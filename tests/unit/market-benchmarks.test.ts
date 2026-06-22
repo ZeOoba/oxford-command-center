@@ -126,7 +126,7 @@ describe('getMacroMarketBenchmarks', () => {
 
   it('covers ORA target markets for both industrial-family types', async () => {
     const set = await getMacroMarketBenchmarks();
-    const keys = new Set(set.benchmarks.map((b) => benchmarkKey(b.market, b.propertyType)));
+    const keys = new Set(set.benchmarks.map((b: typeof CapRateBenchmark._type) => benchmarkKey(b.market, b.propertyType)));
     expect(keys.has('Columbus OH::Industrial')).toBe(true);
     expect(keys.has('Columbus OH::Flex')).toBe(true);
     expect(keys.has('Mid-Atlantic::Industrial')).toBe(true);

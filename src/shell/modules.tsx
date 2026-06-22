@@ -20,8 +20,8 @@ import {
   Database,
   Gauge,
   TrendingUp,
-  PieChart,
   Radar,
+  Coins,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -46,7 +46,7 @@ const CloseModule = lazy(() => import('@/modules/close/CloseModule').then((m) =>
 const IntelModule = lazy(() => import('@/modules/intel/IntelModule').then((m) => ({ default: m.IntelModule })));
 const CalibrationModule = lazy(() => import('@/modules/calibration/CalibrationModule').then((m) => ({ default: m.CalibrationModule })));
 const LeaseForecastModule = lazy(() => import('@/modules/leasing/LeaseForecastModule').then((m) => ({ default: m.LeaseForecastModule })));
-const CapitalAllocationModule = lazy(() => import('@/modules/capital/CapitalAllocationModule').then((m) => ({ default: m.CapitalAllocationModule })));
+const CapitalModule = lazy(() => import('@/modules/capital/CapitalModule').then((m) => ({ default: m.CapitalModule })));
 const ProspectDemandModule = lazy(() => import('@/modules/intel/ProspectDemandModule').then((m) => ({ default: m.ProspectDemandModule })));
 
 export type ModuleGroup = 'Command' | 'Assets' | 'Capital' | 'Market';
@@ -75,8 +75,8 @@ export const MODULES: ModuleDef[] = [
   { id: 'leasing', label: 'Leasing', icon: TrendingUp, group: 'Assets', Component: LeaseForecastModule },
   { id: 'prospect-demand', label: 'Demand Signals', icon: Radar, group: 'Assets', Component: ProspectDemandModule },
   { id: 'tenants', label: 'Tenants', icon: Contact, group: 'Assets', Component: TenantsModule },
+  { id: 'capital', label: 'Capital', icon: Coins, group: 'Capital', Component: CapitalModule },
   { id: 'debt', label: 'Debt', icon: Landmark, group: 'Capital', Component: DebtModule },
-  { id: 'capital-allocation', label: 'Capital Allocation', icon: PieChart, group: 'Capital', Component: CapitalAllocationModule },
   { id: 'cash', label: 'Cash', icon: Wallet, group: 'Capital', Component: CashModule },
   { id: 'close', label: 'Monthly Close', icon: Scale, group: 'Capital', Component: CloseModule },
   { id: 'insurance', label: 'Insurance', icon: ShieldCheck, group: 'Capital', Component: InsuranceModule },
