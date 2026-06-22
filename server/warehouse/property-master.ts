@@ -1,5 +1,5 @@
 // server/warehouse/property-master.ts
-import type { PropertyMasterRow } from '../../src/contracts/warehouse';
+import { PropertyMasterRowSchema, type PropertyMasterRow } from '../../src/contracts/warehouse';
 import type { WarehouseDb } from './db';
 
 export interface PropertyMasterRecord {
@@ -57,7 +57,7 @@ export function getPropertyMaster(db: WarehouseDb): PropertyMasterRecord[] {
 const KRG = { propertyManager: 'Kohr Royer Griffith', pmContact: 'Paul Trautman' };
 
 /** Gabriel-ratified 2026-06-12 (memory/pfi-build-canon.md). Do not edit without a new ruling. */
-export const CANON_PROPERTIES: PropertyMasterRow[] = [
+export const CANON_PROPERTIES: PropertyMasterRow[] = ([
   { id: '3540-e-5th-ave-columbus-oh', name: '3540 E. 5th Ave, Columbus OH', market: 'Columbus OH', financialMode: 'pnl', ownershipPct: 1, ownershipStatus: 'active', rentableSf: 35886, acquisitionDate: '2022-01-21', assetClass: 'Flex', ...KRG },
   { id: '3034-westerville-rd-columbus-oh', name: '3034 Westerville Rd, Columbus OH', market: 'Columbus OH', financialMode: 'pnl', ownershipPct: 1, ownershipStatus: 'active', rentableSf: 18000, acquisitionDate: '2024-09-22', assetClass: 'Flex', notes: 'Coverage starts 2025 (ratified).', ...KRG },
   { id: '3875-3883-e-livingston-ave-columbus-oh', name: '3875-3883 E Livingston Ave, Columbus OH', market: 'Columbus OH', financialMode: 'pnl', ownershipPct: 1, ownershipStatus: 'active', rentableSf: 10950, acquisitionDate: '2025-06-01', assetClass: 'Flex', ...KRG },
@@ -72,7 +72,7 @@ export const CANON_PROPERTIES: PropertyMasterRow[] = [
   { id: '55-new-plant-ct-owings-mills-md', name: '55 New Plant Ct, Owings Mills MD', market: 'Mid-Atlantic', financialMode: 'pnl', ownershipPct: 1, ownershipStatus: 'active', rentableSf: 34534, acquisitionDate: '2016-12-05', assetClass: 'Flex', notes: 'EGFLLC QuickBooks books; distributions-as-expenses defect — engine excludes.' },
   { id: '2203-2207-northwood-dr-salisbury-md', name: '2203-2207 Northwood Dr, Salisbury MD', market: 'Mid-Atlantic', financialMode: 'pnl', ownershipPct: 1, ownershipStatus: 'active', rentableSf: 53700, acquisitionDate: '2024-10-03', assetClass: 'Flex', propertyManager: 'SVN', pmContact: 'Brady Smith', pmPlatform: 'AppFolio', notes: 'Coverage starts 2025 (ratified). AppFolio Cash Flow reports — reclassify owner transfers/interest on ingest.' },
   { id: '1851-s-club-solar', name: '1851 S Club — Solar (25% roof project)', market: 'Columbus OH', financialMode: 'pnl', ownershipPct: 0.25, ownershipStatus: 'active', rentableSf: null, acquisitionDate: null, assetClass: 'Solar', notes: 'No real estate owned — 25% roof/solar project (Perfect Settings PPA). Building sold to RLIF East.' },
-];
+] as const).map((row) => PropertyMasterRowSchema.parse(row));
 
 export function seedPropertyMaster(db: WarehouseDb): void {
   const up = db.prepare(`
