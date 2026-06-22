@@ -338,6 +338,81 @@ export async function buildPortfolioAllocation(
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
+// ── Debt reason impacts (exported for unit testing — prefixed _ by convention) ──────────────
+//
+// Separating this logic into a pure function serves two purposes:
+//   1. Testability: tests can assert impact values directly without a full DB fixture.
+//   2. Single source of truth: both the reasons[] builder in buildCapitalAllocationReport
+//      and any future callers use the same attribution logic.
+//
+// ATTRIBUTION RULE (M5 fix):
+//   - Balloon reason  → impact uses balloonOnlyUrgency (EXCLUDES the DSCR 30-pt component)
+//   - DSCR reason     → impact = 30 * 0.15 (sole carrier of the DSCR contribution)
+//   - Composite score → unchanged: raw formula still uses full debtUrgency * 0.15
+//
+// This ensures the 30-pt DSCR penalty appears in exactly ONE reason when both fire.
+
+export interface DebtReasonImpactInput {
+  hasDebt: boolean;
+  effectiveBalloonMonths: number | null;
+  dscr: number | null;
+}
+
+export interface ReasonImpact {
+  text: string;
+  impact: number;
+}
+
+/**
+ * Build the debt-related reason/impact pairs for a single property.
+ *
+ * Balloon reason impact uses the balloon-timing-only component of debtUrgency,
+ * explicitly excluding the DSCR 30-pt sub-component.  The DSCR reason carries
+ * that contribution independently so it is counted exactly once.
+ *
+ * The composite `raw` score formula (debtUrgency * 0.15) is NOT changed here —
+ * this function is narrative-attribution only.
+ */
+export function _buildDebtReasonImpacts(input: DebtReasonImpactInput): ReasonImpact[] {
+  const { hasDebt, effectiveBalloonMonths, dscr } = input;
+  if (!hasDebt) return [];
+
+  const reasons: ReasonImpact[] = [];
+  const DSCR_FLOOR = 1.25;
+  const DEBT_WEIGHT = 0.15;
+  const dscrFires = dscr !== null && dscr < DSCR_FLOOR;
+
+  if (effectiveBalloonMonths !== null && effectiveBalloonMonths < 24) {
+    // Balloon-timing-only urgency: strip the DSCR 30-pt component from debtUrgency.
+    // debtUrgency = clamp(balloonComponent + (dscrFires ? 30 : 0), 0, 100)
+    // To recover balloonComponent after clamping we subtract the DSCR penalty from
+    // the unclamped sum, then re-clamp to [0, 100].  This is equivalent to computing
+    // balloonComponent directly and clamping independently.
+    const balloonComponent = Math.max(0, 100 - (effectiveBalloonMonths / 12) * 10);
+    const balloonOnlyUrgency = clamp(balloonComponent, 0, 100);
+    reasons.push({
+      text: `Balloon maturity in ${Math.round(effectiveBalloonMonths)} months`,
+      impact: balloonOnlyUrgency * DEBT_WEIGHT,
+    });
+  }
+
+  if (dscrFires) {
+    reasons.push({
+      text: `DSCR at ${dscr!.toFixed(2)} (below 1.25x governor)`,
+      impact: 30 * DEBT_WEIGHT,
+    });
+  }
+
+  // Note on overflow: when balloonComponent + 30 > 100, the composite debtUrgency
+  // clamps to 100 (score contribution = 15), but the sum of reason impacts equals
+  // (balloonOnlyUrgency + 30) * 0.15 > 15 (e.g. balloonMonths=18 → 85*0.15+4.5=17.25).
+  // This over-display is intentional: it correctly shows BOTH the timing and DSCR
+  // contributions without conflating them, even though the combined score caps at 100.
+  // The excess is cosmetic (rationale text only) — priorityScore is unaffected.
+
+  return reasons;
+}
+
 function attentionBandScore(band: string | null | undefined): number {
   if (band === 'red') return 100;
   if (band === 'orange') return 66;
@@ -515,20 +590,13 @@ export async function buildCapitalAllocationReport(
     const raw = (100 - healthVal) * 0.35 + attentionScore * 0.30 + leasingRisk * 0.20 + debtUrgency * 0.15;
     const priorityScore = Math.max(0, Math.min(100, raw));
 
-    const reasons: Array<{ text: string; impact: number }> = [];
+    // ── Rationale builder — debt reasons via single-attribution helper (M5) ──
+    // _buildDebtReasonImpacts ensures the 30-pt DSCR penalty appears in exactly
+    // one reason.  The composite raw score formula above is unchanged.
+    const reasons: Array<{ text: string; impact: number }> = [
+      ..._buildDebtReasonImpacts({ hasDebt, effectiveBalloonMonths, dscr }),
+    ];
 
-    if (effectiveBalloonMonths !== null && effectiveBalloonMonths < 24) {
-      reasons.push({
-        text: `Balloon maturity in ${Math.round(effectiveBalloonMonths)} months`,
-        impact: debtUrgency * 0.15,
-      });
-    }
-    if (dscr !== null && dscr < 1.25) {
-      reasons.push({
-        text: `DSCR at ${dscr.toFixed(2)} (below 1.25x governor)`,
-        impact: 30 * 0.15,
-      });
-    }
     if (nearTermExpiryRent > 0 && noi > 0 && nearTermExpiryRent / noi > 0.2) {
       reasons.push({
         text: `${Math.round((nearTermExpiryRent / noi) * 100)}% of NOI expiring ≤12 months`,
