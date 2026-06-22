@@ -185,9 +185,10 @@ export async function buildCapitalAllocationReport(
     const noiPerSf = sf > 0 && noi !== 0 ? noi / sf : null;
 
     // Health/attention from scores.ts (null when no warehouse data for this property)
+    // Per spec (Phase 5 docs line 76/133): null -> 50 neutral, never 0
     const healthScore = propScore?.health ?? null;
     const attentionBand = propScore?.attentionBand ?? null;
-    const attentionScore = attentionBandScore(attentionBand);
+    const attentionScore = attentionBand === null ? 50 : attentionBandScore(attentionBand);
     const capitalAction = propScore?.capitalAction ?? 'hold';
 
     // Leasing
@@ -285,8 +286,9 @@ export async function buildCapitalAllocationReport(
     });
   }
 
-  // Sort DESC by priorityScore (highest urgency first)
-  entries.sort((a, b) => b.priorityScore - a.priorityScore);
+  // Sort DESC by priorityScore (highest urgency first), with deterministic tiebreaker on propertyId
+  // to avoid order-dependence on workbook row order when scores tie (common case: all healthy -> 0, all distressed -> 100)
+  entries.sort((a, b) => b.priorityScore - a.priorityScore || a.propertyId.localeCompare(b.propertyId));
 
   // ── 8. Aggregate counts ──────────────────────────────────────────────────────────────
   const investCount = entries.filter((e) => e.capitalAction === 'invest').length;

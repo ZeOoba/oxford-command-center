@@ -40,7 +40,7 @@ function computePriorityScore(opts: {
 }): number {
   const { healthScore, attentionBand, nearTermExpiryRent, atRiskLikelihoodCount, noi, balloonMonths, dscr } = opts;
   const healthVal = healthScore ?? 50;
-  const attentionVal = attentionBandScore(attentionBand);
+  const attentionVal = attentionBand === null ? 50 : attentionBandScore(attentionBand);
 
   const leasingRisk =
     noi > 0
@@ -111,7 +111,9 @@ describe('priorityScore formula', () => {
     expect(scoreWithNull).toBeCloseTo(scoreWith50, 5);
   });
 
-  it('null attentionBand treated as 0 (green equivalent)', () => {
+  it('null attentionBand treated as 50 (neutral, per spec)', () => {
+    // Per spec (Phase 5 docs line 76/133): null -> 50 neutral, never 0
+    // null attentionBand should produce same score as attentionBand='green' + explicit attentionScore=50
     const scoreNull = computePriorityScore({
       healthScore: 50,
       attentionBand: null,
@@ -121,16 +123,8 @@ describe('priorityScore formula', () => {
       balloonMonths: null,
       dscr: null,
     });
-    const scoreGreen = computePriorityScore({
-      healthScore: 50,
-      attentionBand: 'green',
-      nearTermExpiryRent: 0,
-      atRiskLikelihoodCount: 0,
-      noi: 100_000,
-      balloonMonths: null,
-      dscr: null,
-    });
-    expect(scoreNull).toBeCloseTo(scoreGreen, 5);
+    // Manually compute expected: (100-50)*0.35 + 50*0.30 + 0*0.20 + 0*0.15 = 17.5 + 15 + 0 + 0 = 32.5
+    expect(scoreNull).toBeCloseTo(32.5, 5);
   });
 
   it('leasingRisk capped at 50 when noi=0', () => {
