@@ -7,7 +7,7 @@ import tseslint from 'typescript-eslint';
 export default tseslint.config(
   // '.claude' holds Claude-system runtime scripts (e.g. Workflow scripts that legally use
   // top-level return/await) — not app source; eslint must not parse them as ES modules.
-  { ignores: ['dist', 'dist-server', 'dev-dist', 'coverage', 'playwright-report', 'node_modules', '.claude', '.worktrees', '.wrangler'] },
+  { ignores: ['dist', 'dist-server', 'dev-dist', 'coverage', 'playwright-report', 'node_modules', '.claude', '.claire', '.worktrees', '.wrangler'] },
   {
     extends: [js.configs.recommended, ...tseslint.configs.recommended],
     files: ['**/*.{ts,tsx}'],
