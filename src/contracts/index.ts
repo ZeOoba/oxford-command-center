@@ -33,6 +33,7 @@ export * from './acquisition';
 export * from './debt';
 export * from './lease-forecast';
 export * from './capital-allocation';
+export * from './market-intelligence';
 
 export const SnapshotMeta = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),

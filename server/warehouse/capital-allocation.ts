@@ -33,6 +33,9 @@ import { scoreDebtPositions } from './debt-scoring';
 import { propertyPeriodMetrics } from './metrics';
 import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast';
 import { getMacro } from '../macro/getMacro';
+import { getMacroMarketBenchmarks } from '../macro/market-benchmarks';
+import { classifyCapRateBand, benchmarkKey } from '../../src/contracts/market-intelligence';
+import type { CapRateBenchmark, MarketBenchmarkSet } from '../../src/contracts/market-intelligence';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import type { CapitalAllocationReport, CapitalAllocationEntry, MacroContext } from '../../src/contracts/capital-allocation';
 
@@ -119,6 +122,21 @@ export async function buildCapitalAllocationReport(
     };
   } catch {
     macro = { tenYearRate: null, cpi: null, source: 'mock', asOf: null };
+  }
+
+  // ── 1b. Market cap-rate benchmarks (fail-open — diagnostic overlay only) ──────────────
+  // NEVER throws; on any error the provider itself returns the unavailable set. Belt-and-braces
+  // try/catch here keeps a provider regression from taking down the whole report.
+  let benchmarkSet: MarketBenchmarkSet;
+  try {
+    benchmarkSet = await getMacroMarketBenchmarks();
+  } catch {
+    benchmarkSet = { available: false, source: 'unavailable', asOf: null, benchmarks: [] };
+  }
+  // Index benchmarks by market::propertyType for O(1) per-property lookup.
+  const benchmarkByKey = new Map<string, CapRateBenchmark>();
+  for (const b of benchmarkSet.benchmarks) {
+    benchmarkByKey.set(benchmarkKey(b.market, b.propertyType), b);
   }
 
   // ── 2. Property scores (health/attention/capitalAction) ───────────────────────────────
@@ -266,6 +284,26 @@ export async function buildCapitalAllocationReport(
     reasons.sort((a, b) => b.impact - a.impact);
     const rationale = reasons.slice(0, 3).map((r) => r.text);
 
+    // ── Market cap-rate overlay (DIAGNOSTIC ONLY — does NOT feed priorityScore above) ────
+    // impliedCapRate uses Spine-A NOI / Spine-A workbook value (oxfordValue). Both are the
+    // Oxford-share economics, so the ratio is basis-consistent. Guard: value must be > 0 and
+    // finite, and the property's market+type must have a benchmark band — else all three null.
+    let impliedCapRate: number | null = null;
+    let capRateGap: number | null = null;
+    let capRatePercentile: CapitalAllocationEntry['capRatePercentile'] = null;
+    const propValue = property.oxfordValue;
+    if (Number.isFinite(propValue) && propValue > 0 && Number.isFinite(noi)) {
+      const implied = noi / propValue;
+      // A negative implied cap (NOI < 0) is a real signal but not a meaningful market position;
+      // surface the number but skip band classification (benchmarks are all positive).
+      impliedCapRate = implied;
+      const bench = benchmarkByKey.get(benchmarkKey(property.market, property.type));
+      if (bench && implied > 0) {
+        capRateGap = implied - bench.capRateP50;
+        capRatePercentile = classifyCapRateBand(implied, bench);
+      }
+    }
+
     entries.push({
       propertyId: property.id,
       propertyName: property.name ?? null,
@@ -284,6 +322,9 @@ export async function buildCapitalAllocationReport(
       noi,
       noiPerSf,
       noiBasis: 'spine-a',
+      impliedCapRate,
+      capRateGap,
+      capRatePercentile,
     });
   }
 
@@ -309,5 +350,10 @@ export async function buildCapitalAllocationReport(
     monitorCount,
     dispositionCount,
     macro,
+    marketBenchmarks: {
+      available: benchmarkSet.available,
+      source: benchmarkSet.source,
+      asOf: benchmarkSet.asOf,
+    },
   };
 }
