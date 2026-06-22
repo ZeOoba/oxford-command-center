@@ -60,8 +60,6 @@ import { syncCapitalActionsToNotion } from '../notion/capital-writeback';
 import { NotionSyncResult } from '../../src/contracts/notion-writeback';
 import { getProspectDemandReport, addProspectEvent } from './prospect-demand';
 import { ProspectDemandReport, ProspectDemandEventInput } from '../../src/contracts/prospect-demand';
-import { buildIcMemoHtml, icMemoFilename } from './ic-memo';
-import { assertNoConfidential } from '../briefing/confidential';
 
 const ActionInput = z.object({ action: z.enum(['approve', 'reject']) });
 
@@ -964,51 +962,14 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
 
   // ── GET /capital-allocation/ic-memo (Direction 2 — IC Memo HTML export) ───────────────────
   //
-  // Returns the SAME CapitalAllocationReport rendered as a self-contained, ORA-styled HTML memo
-  // for Investment Committee review. The browser's "Print to PDF" turns it into an
-  // extractable-text PDF (no rasterization) — per the firm rule that exported PDFs carry a text
-  // layer. Streamed as an attachment so a click downloads the file rather than navigating to it.
-  //
-  // assertNoConfidential is defense-in-depth: the report is an ownership-financial artifact and
-  // by construction carries no deal terms, but we PROVE it before emitting (mirrors the briefing
-  // pipeline). On a hit we refuse with a structured 500 — never echoing the matched term.
-  //
-  // Error policy mirrors /capital-allocation: 503 when warehouse/snapshot unavailable; 500 on
-  // unexpected engine/guard errors.
-  app.get('/capital-allocation/ic-memo', () =>
-    withDb(async (db) => {
-      try {
-        const { brain } = await import('../brain');
-        const snapshot = await brain.getSnapshot();
-        if (!snapshot) {
-          return new Response(JSON.stringify({ error: 'snapshot unavailable' }), {
-            status: 503,
-            headers: { 'content-type': 'application/json' },
-          });
-        }
-        const report = CapitalAllocationReport.parse(
-          await buildCapitalAllocationReport(db, snapshot),
-        );
-        assertNoConfidential(report);
-        const html = buildIcMemoHtml(report);
-        return new Response(html, {
-          status: 200,
-          headers: {
-            'content-type': 'text/html; charset=utf-8',
-            'content-disposition': `attachment; filename="${icMemoFilename(report)}"`,
-          },
-        });
-      } catch (err) {
-        console.error(
-          '[warehouse-api] /capital-allocation/ic-memo error:',
-          err instanceof Error ? err.message : String(err),
-        );
-        return new Response(JSON.stringify({ error: 'ic memo generation failed' }), {
-          status: 500,
-          headers: { 'content-type': 'application/json' },
-        });
-      }
-    }),
+  // TODO: Route needs porting from CapitalAllocationReport → PortfolioAllocation.
+  // buildCapitalAllocationReport was removed in PR #117 (capstone rewrite); ic-memo.ts still
+  // expects the old CapitalAllocationEntry schema. Returning 501 until the port is done.
+  app.get('/capital-allocation/ic-memo', (c) =>
+    c.json(
+      { error: 'ic-memo pending API migration (CapitalAllocationReport → PortfolioAllocation)' },
+      501,
+    ),
   );
 
   // ── Prospect Demand Intelligence (Direction 3) ────────────────────────────────────────────
