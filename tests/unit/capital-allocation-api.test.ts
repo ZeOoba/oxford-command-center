@@ -67,16 +67,16 @@ describe('capitalAllocationApi', () => {
     expect(res.status).toBe(503);
   });
 
-  it('R-4: proposed hurdle config → advisoryOnly=true', async () => {
+  it('R-4: ratified hurdle config → advisoryOnly=false', async () => {
     const { capitalAllocationApi } = await import('../../server/warehouse/capital-allocation-api');
     const db = freshDb();
-    // Default compile-time fallback has hurdleRateRatification='proposed'
+    // Default compile-time fallback has hurdleRateRatification='ratified' (ratified 2026-06-22)
     const router = capitalAllocationApi(() => db);
     const req = new Request('http://localhost/allocate');
     const res = await router.fetch(req);
     expect(res.status).toBe(200);
     const body = await res.json() as unknown;
     const obj = body as Record<string, unknown> | undefined;
-    expect(obj?.['advisoryOnly']).toBe(true);
+    expect(obj?.['advisoryOnly']).toBe(false);
   });
 });
