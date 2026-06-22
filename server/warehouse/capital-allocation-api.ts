@@ -13,6 +13,7 @@ import type { WarehouseDb } from './db';
 import { buildPortfolioAllocation } from './capital-allocation';
 import { buildMarketIntel } from './market-intel';
 import { loadCapitalConfig } from './capital-config';
+import { getMacro } from '../macro/getMacro';
 import {
   CapitalAllocationResponse,
   MarketIntelResponse,
@@ -23,13 +24,12 @@ import { verdictsFromAllocations, logVerdicts, computeInputsVersion } from './ca
 // ── Cluster enumeration ──────────────────────────────────────────────────────────────────────
 
 interface ClusterRow { cluster: string }
-interface MarketRow { market: string | null }
 
 /** All clusters known to the system: property_master markets ∪ market_series clusters. */
 function listClusters(db: WarehouseDb): string[] {
   const fromProperties = (db.prepare(
     `SELECT DISTINCT market AS cluster FROM property_master WHERE market IS NOT NULL`,
-  ).all() as MarketRow[]).map((r) => r.market as string);
+  ).all() as ClusterRow[]).map((r) => r.cluster);
 
   const fromSeries = (db.prepare(
     `SELECT DISTINCT cluster FROM market_series`,
@@ -95,7 +95,13 @@ export function capitalAllocationApi(getDb: () => WarehouseDb): Hono {
     try {
       const asOf = new Date().toISOString().slice(0, 10);
       const clusters = listClusters(db);
-      const signals = await Promise.all(clusters.map((cl) => buildMarketIntel(db, cl, asOf)));
+      const macro = await getMacro().catch(() => undefined);
+      const settled = await Promise.allSettled(
+        clusters.map((cl) => buildMarketIntel(db, cl, asOf, macro)),
+      );
+      const signals = settled
+        .filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof buildMarketIntel>>> => r.status === 'fulfilled')
+        .map((r) => r.value);
       return c.json(MarketIntelResponse.parse({ asOf, signals }));
     } catch (err) {
       console.error('[capital-api] /market error:', err instanceof Error ? err.message : String(err));
