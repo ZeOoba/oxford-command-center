@@ -1,6 +1,6 @@
 import type { WarehouseDb } from './db';
 import { getMacro } from '../macro/getMacro';
-import type { MacroIndicator } from '../../src/contracts/macro';
+import type { MacroIndicator, MacroSnapshot } from '../../src/contracts/macro';
 import type { MarketSignal, MarketAction, MarketSourceTag } from '../../src/contracts/capital';
 import type { Confidence } from '../../src/contracts/common';
 
@@ -60,8 +60,9 @@ export async function buildMarketIntel(
   db: WarehouseDb,
   cluster: string,
   asOf: string,
+  macroSnapshot?: MacroSnapshot,
 ): Promise<MarketSignal> {
-  const macro = await getMacro();
+  const macro = macroSnapshot ?? await getMacro();
 
   const seriesRows = db.prepare(
     'SELECT cluster, as_of, source, metric, value, confidence FROM market_series WHERE cluster = ? ORDER BY as_of DESC',

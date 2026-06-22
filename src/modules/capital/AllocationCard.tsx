@@ -87,6 +87,9 @@ export function AllocationCard({ verdict, hurdleRatePct }: Props) {
         {verdict.reasons.length > 0 && (
           <div>
             <button
+              type="button"
+              aria-expanded={open}
+              aria-controls={"allocation-reasons-" + verdict.propertyId}
               onClick={() => setOpen(o => !o)}
               style={{
                 fontSize: 11, color: 'var(--text-secondary)', background: 'none',
@@ -96,7 +99,7 @@ export function AllocationCard({ verdict, hurdleRatePct }: Props) {
               {open ? '▾' : '▸'} {verdict.reasons[0]}
             </button>
             {open && verdict.reasons.length > 1 && (
-              <ul style={{ margin: '4px 0 0 12px', padding: 0, listStyle: 'disc', fontSize: 11, color: 'var(--text-tertiary)' }}>
+              <ul id={"allocation-reasons-" + verdict.propertyId} style={{ margin: '4px 0 0 12px', padding: 0, listStyle: 'disc', fontSize: 11, color: 'var(--text-tertiary)' }}>
                 {verdict.reasons.slice(1).map((r, i) => <li key={i}>{r}</li>)}
               </ul>
             )}

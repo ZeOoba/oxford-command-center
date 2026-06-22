@@ -189,12 +189,22 @@ function loadPipelineCandidates(db: WarehouseDb): PortfolioAllocation['pipeline'
     `SELECT id, address, market, status FROM acq_candidates WHERE status = 'active'`,
   ).all() as AcqCandRow[];
 
+  // Hoist prepared statement outside the map loop (Fix A-2)
+  const latestScoreStmt = db.prepare(
+    `SELECT candidate_id, composite, tier, score_json
+     FROM acq_scores WHERE candidate_id = ? ORDER BY scored_at DESC, id DESC LIMIT 1`,
+  );
+
   return candidates.map((c) => {
     // Use acq_scores (Phase 4 table) — get latest score by scored_at DESC
-    const scoreRow = db.prepare(
-      `SELECT candidate_id, composite, tier, score_json
-       FROM acq_scores WHERE candidate_id = ? ORDER BY scored_at DESC, id DESC LIMIT 1`,
-    ).get(c.id) as AcqScoreRow | undefined;
+    const scoreRow = latestScoreStmt.get(c.id) as AcqScoreRow | undefined;
+
+    // Validate tier against known values before casting (Fix A-1)
+    const tierRaw = scoreRow?.tier ?? null;
+    const tier: 'T1' | 'T2' | 'PASS' | 'KILLED' | null =
+      tierRaw === 'T1' || tierRaw === 'T2' || tierRaw === 'PASS' || tierRaw === 'KILLED'
+        ? tierRaw
+        : null;
 
     // Extract leveredIrr and basisDiscountPct from score_json if present
     let leveredIrr: number | null = null;
@@ -218,7 +228,7 @@ function loadPipelineCandidates(db: WarehouseDb): PortfolioAllocation['pipeline'
         ? (c.market as PortfolioAllocation['pipeline'][number]['market'])
         : null,
       composite: scoreRow?.composite ?? null,
-      tier: (scoreRow?.tier as 'T1' | 'T2' | 'PASS' | 'KILLED' | null) ?? null,
+      tier,
       leveredIrr,
       basisDiscountPct,
     };

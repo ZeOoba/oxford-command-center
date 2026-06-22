@@ -34,13 +34,20 @@ export function AdminOnboardView() {
   async function submitForm() {
     setSubmitting(true);
     setResult(null);
+    const cleanId = id.trim();
+    const cleanName = name.trim();
+    if (!cleanId || !cleanName) {
+      setResult({ ok: false, error: 'ID and Name are required.' });
+      setSubmitting(false);
+      return;
+    }
     try {
       const res = await fetch('/api/warehouse/properties/onboard', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          id,
-          name,
+          id: cleanId,
+          name: cleanName,
           aliases: aliases.split(',').map(s => s.trim()).filter(Boolean),
           sfTotal: sfTotal ? Number(sfTotal) : null,
           pmSystem,

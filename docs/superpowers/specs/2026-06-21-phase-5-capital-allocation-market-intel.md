@@ -315,7 +315,7 @@ export function allocateCapital(
 
 For each `PropertyScore s` (joined by `propertyId` to its `DebtScore d` and latest `PeriodMetrics m`):
 
-```
+```ts
 const forecastPresent = !!forecastInputs && forecastInputs.horizonPeriods > 0;
 const horizonPeriods = forecastPresent ? forecastInputs.horizonPeriods : 0;
 
@@ -368,7 +368,7 @@ else action = 'hold';
 
 All actions are converted to an **annualized unlevered return fraction** so they sit on one axis vs. `hurdleRatePct`. Implement `expectedReturnFor(action, s, d, m, forecastInputs, pipeline)`:
 
-```
+```ts
 function expectedReturnFor(action, s, d, m, forecast, candidate?): number | null {
   switch (action) {
     case 'hold':
@@ -424,7 +424,7 @@ A `false` value is **CAUTION, not a hard block** — the verdict still emits; th
 
 ### 3.4 Verdict assembly (per asset)
 
-```
+```ts
 riskBand        = riskBandFrom(s.attentionBand, d.scoreBand)         // §2 matrix
 expectedReturnPct = expectedReturnFor(action, ...)
 timelineMonths  = TIMELINE[action]                                    // see table
@@ -440,7 +440,7 @@ horizonPeriods  = forecastPresent ? forecastInputs.horizonPeriods : 0
 
 After the per-asset loop:
 
-```
+```ts
 // BUY signal: portfolio recommends acquisition when pipeline has T1/T2 candidates clearing the bar.
 const BUY_COMPOSITE_FLOOR = 70;
 const BASIS_DISCOUNT_FLOOR = 0.05;   // [RATIFY] 5% all-in basis discount vs replacement cost
@@ -463,7 +463,7 @@ const buyable = pipeline.filter(c =>
 
 ### 3.6 Confidence computation
 
-```
+```ts
 function computeConfidence(s, forecastPresent, cohortSize): number {
   let c = 0.80;                                   // base when fully driven
   if (!forecastPresent) c = Math.min(c, 0.65);    // forecast absent cap
@@ -518,7 +518,7 @@ Three confidence-tagged sources, priority order. Each contributes a 0..100 sub-s
 | Census ACS (`market_series` rows, `source='census-acs'`, metric `pop_growth`) | **0.3** | population/employment growth → 0..100 | 400 days (annual data) |
 | Comps-AI (`market_series` rows `source='comps-ai'` OR `agentComps`) | **0.2** | rent trend + (100 − vacancy%) blended → 0..100 | 90 days |
 
-```
+```ts
 // 1. Gather available sources for `cluster` from market_series (most recent per source/metric).
 // 2. Mark each stale = (asOf - source.asOf) > window. Stale sources are EXCLUDED from the composite
 //    AND lower confidence (refute lens: stale comps must not inflate the score — test M-5).
@@ -535,7 +535,7 @@ Three confidence-tagged sources, priority order. Each contributes a 0..100 sub-s
 
 ### 4.3 Market action logic
 
-```
+```ts
 oraPropertyCount = countOraPropertiesInCluster(db, cluster);   // join property_master.market ↔ cluster
 if (marketScore === null) action = 'maintain';                 // safe default (M-6)
 else if (marketScore >= 75 && oraPropertyCount === 0) action = 'enter';   // (M-4)
@@ -806,7 +806,7 @@ export function onboardProperty(
 ```
 
 Logic:
-```
+```text
 1. Validate id: /^[a-z0-9][a-z0-9-]*$/ — else { ok:false, error:'invalid id (must be URL-safe kebab-case)' }.
 2. Reject duplicate: SELECT 1 FROM property_master WHERE id = ? → if exists,
    { ok:false, error:`property '${id}' already exists` }.

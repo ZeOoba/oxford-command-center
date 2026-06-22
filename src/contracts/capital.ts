@@ -15,6 +15,22 @@ export const HurdleRateConfig = z.object({
   ratifiedBy: z.string().nullable().default(null),
   ratifiedDate: z.string().nullable().default(null),
   capitalConfigVersion: z.number().int(),
+}).superRefine((val, ctx) => {
+  if (val.ratification === 'ratified') {
+    if (val.ratifiedBy === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ratifiedBy'], message: 'ratifiedBy is required when ratification is "ratified"' });
+    }
+    if (val.ratifiedDate === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ratifiedDate'], message: 'ratifiedDate is required when ratification is "ratified"' });
+    }
+  } else if (val.ratification === 'proposed') {
+    if (val.ratifiedBy !== null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ratifiedBy'], message: 'ratifiedBy must be null when ratification is "proposed"' });
+    }
+    if (val.ratifiedDate !== null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['ratifiedDate'], message: 'ratifiedDate must be null when ratification is "proposed"' });
+    }
+  }
 });
 export type HurdleRateConfig = z.infer<typeof HurdleRateConfig>;
 

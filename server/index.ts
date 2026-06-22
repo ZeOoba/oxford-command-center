@@ -65,12 +65,14 @@ app.post('/api/warehouse/properties/onboard', async (c) => {
   let db: WarehouseDb;
   try { db = getWarehouse(); }
   catch { return c.json({ ok: false, error: 'warehouse unavailable' }, 503); }
+  let body: PropertyOnboardingInput;
+  try { body = await c.req.json() as PropertyOnboardingInput; }
+  catch { return c.json({ ok: false, error: 'invalid request body' }, 400); }
   try {
-    const body = await c.req.json() as PropertyOnboardingInput;
     const result = onboardProperty(db, body);
     return c.json(result, result.ok ? 200 : 400);
   } catch {
-    return c.json({ ok: false, error: 'invalid request body' }, 400);
+    return c.json({ ok: false, error: 'onboarding failed' }, 500);
   }
 });
 

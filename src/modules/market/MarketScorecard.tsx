@@ -23,15 +23,20 @@ function ConfidenceBar({ value }: { value: number }) {
 }
 
 function SourceTag({ source, stale }: { source: string; stale: boolean }) {
+  const label = stale ? source + ' (stale)' : source;
   return (
-    <span style={{
-      fontSize: 10, padding: '1px 5px', borderRadius: 3,
-      background: 'var(--surface-alt, var(--surface))',
-      border: '1px solid var(--border)',
-      color: stale ? 'var(--text-tertiary)' : 'var(--text-secondary)',
-      textDecoration: stale ? 'line-through' : 'none',
-    }}>
-      {source}
+    <span
+      aria-label={label}
+      title={label}
+      style={{
+        fontSize: 10, padding: '1px 5px', borderRadius: 3,
+        background: 'var(--surface-alt, var(--surface))',
+        border: '1px solid var(--border)',
+        color: stale ? 'var(--text-tertiary)' : 'var(--text-secondary)',
+        textDecoration: stale ? 'line-through' : 'none',
+      }}
+    >
+      {label}
     </span>
   );
 }

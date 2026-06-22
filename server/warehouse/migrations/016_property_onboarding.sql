@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS property_onboarding (
-  property_id TEXT PRIMARY KEY REFERENCES property_master(id),
+  property_id TEXT PRIMARY KEY REFERENCES property_master(id) ON DELETE CASCADE,
   aliases_json TEXT NOT NULL DEFAULT '[]',
   pm_system TEXT NOT NULL CHECK (pm_system IN ('quickbooks','yardi','appfolio','rent-manager')),
   authoritative_source TEXT NOT NULL CHECK (authoritative_source IN ('pm-exports','internal-quickbooks','workbook-only')),

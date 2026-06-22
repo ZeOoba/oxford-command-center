@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS recommendations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  property_id TEXT NOT NULL,
+  property_id TEXT NOT NULL REFERENCES property_master(id) ON DELETE CASCADE,
   action TEXT NOT NULL CHECK (action IN ('buy','hold','sell','refinance','improve')),
   expected_return_pct REAL,
   risk_band TEXT NOT NULL CHECK (risk_band IN ('low','moderate','elevated','high')),

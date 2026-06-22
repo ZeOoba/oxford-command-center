@@ -225,6 +225,14 @@ describe('buildPortfolioAllocation', () => {
     const result = await buildPortfolioAllocation(db, '2026-06-21');
     expect(result).toBeDefined();
     expect(result.verdicts).toBeDefined();
+    expect(Array.isArray(result.verdicts)).toBe(true);
+    // When macro is unavailable (FRED down), dgs5 defaults to null; engine must not throw.
+    // All verdicts that exist must have valid action and numeric timelineMonths.
+    if (result.verdicts.length > 0) {
+      const firstVerdict = result.verdicts[0]!;
+      expect(typeof firstVerdict.timelineMonths).toBe('number');
+      expect(['hold', 'sell', 'refi', 'acquire']).toContain(firstVerdict.action);
+    }
   });
 
   it('A-2-neg: disposition-candidate but healthBand=good → NOT sell (C-1 independent guard)', async () => {

@@ -51,7 +51,7 @@ export function getPropertyMaster(db: WarehouseDb): PropertyMasterRecord[] {
       assetClass: s.assetClass ?? null,
       source: 'seed' as const,
     }));
-  return [...dbRecords, ...seedRecords];
+  return [...dbRecords, ...seedRecords].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 const KRG = { propertyManager: 'Kohr Royer Griffith', pmContact: 'Paul Trautman' };

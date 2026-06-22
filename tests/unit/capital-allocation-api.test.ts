@@ -47,7 +47,7 @@ describe('capitalAllocationApi', () => {
     expect(typeof hurdleRate!['hurdleRatePct']).toBe('number');
   });
 
-  it.skip('R-2: GET /market → 200 with valid MarketIntelResponse', async () => {
+  it('R-2: GET /market → 200 with valid MarketIntelResponse', async () => {
     const { capitalAllocationApi } = await import('../../server/warehouse/capital-allocation-api');
     const db = freshDb();
     const router = capitalAllocationApi(() => db);

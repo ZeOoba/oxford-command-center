@@ -1,19 +1,27 @@
 // @vitest-environment node
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { tmpdir } from 'node:os';
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { openWarehouse } from '../../server/warehouse/db';
+import type { WarehouseDb } from '../../server/warehouse/db';
 import { seedPropertyMaster } from '../../server/warehouse/property-master';
 import { onboardProperty } from '../../server/warehouse/property-onboarding';
 import { getPropertyMaster } from '../../server/warehouse/property-master';
 
-function freshDb() {
+const openedDbs: WarehouseDb[] = [];
+
+function freshDb(): WarehouseDb {
   const dir = mkdtempSync(join(tmpdir(), 'onboard-test-'));
   const db = openWarehouse(join(dir, 'test.sqlite'));
   seedPropertyMaster(db);
+  openedDbs.push(db);
   return db;
 }
+
+afterEach(() => {
+  for (const db of openedDbs.splice(0)) db.close();
+});
 
 describe('property onboarding', () => {
   it('O-1: valid new property → ok:true, row in property_master', () => {
@@ -31,6 +39,10 @@ describe('property onboarding', () => {
     const row = db.prepare('SELECT id, name FROM property_master WHERE id = ?').get('test-new-property') as { id: string; name: string } | undefined;
     expect(row).toBeDefined();
     expect(row?.name).toBe('Test New Property');
+    const onboardRow = db.prepare('SELECT property_id, aliases_json, pm_system, authoritative_source FROM property_onboarding WHERE property_id = ?').get('test-new-property') as { property_id: string; aliases_json: string; pm_system: string; authoritative_source: string } | undefined;
+    expect(onboardRow).toBeTruthy();
+    expect(onboardRow?.pm_system).toBe('quickbooks');
+    expect(onboardRow?.authoritative_source).toBe('internal-quickbooks');
   });
 
   it('O-2: duplicate id → ok:false with "already exists" error', () => {

@@ -2,7 +2,7 @@
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 
@@ -10,10 +10,18 @@ vi.mock('../../server/macro/getMacro', () => ({ getMacro: vi.fn() }));
 import { getMacro } from '../../server/macro/getMacro';
 const mockGetMacro = vi.mocked(getMacro);
 
+const openedDbs: WarehouseDb[] = [];
+
 function freshDb(): WarehouseDb {
   const dir = mkdtempSync(join(tmpdir(), 'market-intel-test-'));
-  return openWarehouse(join(dir, 'test.sqlite'));
+  const db = openWarehouse(join(dir, 'test.sqlite'));
+  openedDbs.push(db);
+  return db;
 }
+
+afterEach(() => {
+  for (const db of openedDbs.splice(0)) db.close();
+});
 
 function seedMarketSeries(
   db: WarehouseDb,

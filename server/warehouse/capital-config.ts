@@ -11,6 +11,7 @@
 //   DISPOSITION <6.5% | HOLD 6.5–7.5% | ACQ-IRR ≥12% | CAPEX-IRR ≥15%
 //   Refi trigger: +150 bps | Payout: 0% (full reinvest, Gabriel confirmed)
 import type { WarehouseDb } from './db';
+import { HURDLE_RATE } from './intel-config';
 
 export interface CapitalConfigRow {
   version: number;
@@ -46,8 +47,8 @@ export const CAPITAL_CONFIG = {
   refiTriggerBps: 150,
   payoutPct: 0.0,
   // ── Phase 5 hurdle-rate governor (proposed — awaiting Gabriel ratification) ──
-  hurdleRatePct: 0.08,
-  hurdleRateRatification: 'proposed' as const,
+  hurdleRatePct: HURDLE_RATE.proposedPct,
+  hurdleRateRatification: HURDLE_RATE.ratification,
   hurdleRateRatifiedBy: null as string | null,
   hurdleRateRatifiedDate: null as string | null,
 } as const;
