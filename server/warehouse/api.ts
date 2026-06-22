@@ -54,6 +54,8 @@ import { composePropertyBriefing, composeManagerBriefing } from '../briefing/com
 import { renderBriefingPdf } from '../briefing/pdf';
 import { briefingFilename } from '../briefing/filename';
 import { composeNarrative } from '../ai/narrative';
+import { buildPortfolioAllocation } from './capital-allocation';
+import type { AllocationVerdict } from '../../src/contracts/capital';
 import { syncCapitalActionsToNotion } from '../notion/capital-writeback';
 import { NotionSyncResult } from '../../src/contracts/notion-writeback';
 import { getProspectDemandReport, addProspectEvent } from './prospect-demand';
@@ -912,18 +914,23 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       const token = process.env['NOTION_TOKEN'];
       if (!token) return c.json({ error: 'NOTION_TOKEN not configured' }, 400);
       try {
-        const { brain } = await import('../brain');
-        const snapshot = await brain.getSnapshot();
-        if (!snapshot) return c.json({ error: 'snapshot unavailable' }, 503);
-        const report = await buildCapitalAllocationReport(db, snapshot);
+        const asOf = new Date().toISOString().slice(0, 10);
+        const portfolio = await buildPortfolioAllocation(db, asOf);
+        const ACTION_MAP: Record<AllocationVerdict['action'], 'invest' | 'hold' | 'monitor' | 'disposition-candidate'> = {
+          buy: 'invest',
+          hold: 'hold',
+          sell: 'disposition-candidate',
+          refinance: 'monitor',
+          improve: 'monitor',
+        };
         const result = await syncCapitalActionsToNotion(
-          report.entries.map((e) => ({
-            propertyName: e.propertyName,
-            capitalAction: e.capitalAction,
-            priorityScore: e.priorityScore,
+          portfolio.verdicts.map((v: AllocationVerdict) => ({
+            propertyName: v.propertyName,
+            capitalAction: ACTION_MAP[v.action],
+            priorityScore: Math.round(v.confidence01 * 100),
           })),
           token,
-          { asOf: report.asOf },
+          { asOf },
         );
         return c.json(NotionSyncResult.parse(result));
       } catch (err) {
