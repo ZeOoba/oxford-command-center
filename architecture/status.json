@@ -280,6 +280,56 @@
     "last_updated": "2026-06-22T00:30:00Z"
   },
 
+  "notion-writeback": {
+    "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-22",
+    "phase": "Direction 1 — Notion writeback for capital allocation decisions (syncCapitalActionsToNotion + POST /capital-allocation/sync-notion)",
+    "status": "merged",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "MERGED via PR #119. server/notion/capital-writeback.ts (syncCapitalActionsToNotion, fail-open, 10s timeout) + src/contracts/notion-writeback.ts (NotionSyncResult) + POST /capital-allocation/sync-notion route. Worktree removed post-merge.",
+    "last_updated": "2026-06-22T09:37:00Z"
+  },
+
+  "prospect-demand": {
+    "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-22",
+    "phase": "Direction 3 — Prospect Demand Intelligence foundation (migration 012 + contract + engine + routes + ProspectDemandModule UI)",
+    "status": "merged",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "MERGED via PR #120. Migration 012 (prospect_demand_events + idx) + ProspectDemandEvent/Summary/Report/EventInput contracts + getProspectDemandReport + addProspectEvent engine + GET/POST /api/warehouse/prospect-demand routes + ProspectDemandModule UI (Demand Signals, Assets group). 1701 tests. Worktree removed post-merge.",
+    "last_updated": "2026-06-22T09:49:00Z"
+  },
+
+  "ic-memo": {
+    "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-22",
+    "phase": "IC memo export (feat/ic-memo-export) — in progress or pending merge",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "Worktree at .claude/worktrees/ic-memo (branch feat/ic-memo-export). Status reflects worktree still present on disk; update to merged once PR lands.",
+    "last_updated": "2026-06-22T10:00:00Z"
+  },
+
+  "chore-post-w2-merge": {
+    "agent_role": "Lead Architect — Gabriel-directed cleanup",
+    "phase": "Post-merge cleanup: CLAUDE.md §2+§3 (PRs #119/#120), status.json new entries, stale worktree removal",
+    "status": "merged",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "CLAUDE.md §2 updated (last merge → PR #120, 1701 tests). §3 adds Direction 1 (PR #119 Notion writeback) + Direction 3 (PR #120 Prospect Demand). status.json adds notion-writeback, prospect-demand, ic-memo entries. Stale worktrees (post-merge-116, post-merge-t2-t3, practical-buck-7ef7bc, recursing-chatelet-f908d3) removed.",
+    "last_updated": "2026-06-22T10:00:00Z"
+  },
+
+  "recursing-chatelet-f908d3": {
+    "agent_role": "Analytics Agent + UX Agent — Claude Code Sonnet 4.6",
+    "phase": "Phase 5 — Capital Allocation capstone rebuild (5-way verdict + Market Intelligence + Property Onboarding)",
+    "status": "merged",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "MERGED via PR #117 (`6cd58ed`). Full Phase 5 capstone: migrations 013–016, AllocationVerdict/HurdleRateConfig/MarketSignal Zod contracts, capital-allocation engine (sell guard + DSCR/LTV/NOI scoring), market-intel engine (FRED/Census/Census-AI), CapitalModule UI, MarketScorecard UI, PropertyOnboarding. 17 CR cycles; all actionable items addressed. Worktree removed post-merge. Schema constraint follow-ups (ux_market_series_tuple, ux_recommendations_versioned, CHECK on expected_return_pct/timeline_months) not committed — require new migrations if desired.",
+    "last_updated": "2026-06-22T14:30:00Z"
+  },
+
   "usage": {
     "how_to_update": "Edit your worktree's entry before starting and after completing work; commit it on your branch. Use ISO 8601 timestamps. Set review_needed=true and fill review_detail when you need architect sign-off on an architect-owned file.",
     "how_to_read": "Before starting any task, check all other worktrees for status=in_progress or review_needed. If another agent works in your file-ownership area, coordinate before editing."
