@@ -34,7 +34,9 @@ async function main() {
   const { snapshot: raw } = await parseWorkbook(WORKBOOK_PATH);
   if (process.env.BRIEF_ENABLED === '1') {
     const { runBrief } = await import('../server/brief/run');
-    const r = await runBrief(raw);
+    // M3: thread getMacro as macroProvider so the brief's refi-spread signal uses the live
+    // DGS10 rate rather than the 0.065 fallback. Fail-open if getMacro throws.
+    const r = await runBrief(raw, { macroProvider: getMacro });
     console.log(`  Brief: sent=${r.briefSent}, alerts=${r.alertsSent}`);
   }
   const { snapshot, removed } = includeConfidential ? { snapshot: raw, removed: [] } : redactConfidential(raw);
