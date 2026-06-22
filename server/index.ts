@@ -26,6 +26,7 @@ import type { WarehouseDb } from './warehouse/db';
 import { warehouseRoutes } from './warehouse/api';
 import { debtApi } from './warehouse/debt-api';
 import { leaseForecastApi } from './warehouse/lease-forecast-api';
+import { capitalAllocationApi } from './warehouse/capital-allocation-api';
 import { MarketRentInput } from '../src/contracts/lease-forecast';
 import { writeDebtSnapshot } from './warehouse/debt-snapshot';
 import { buildLoanPropertyMap } from './warehouse/property-crosswalk';
@@ -55,6 +56,7 @@ function getWarehouse(): WarehouseDb {
 app.route('/api/warehouse', warehouseRoutes(getWarehouse));
 app.route('/api/warehouse/debt', debtApi(getWarehouse));
 app.route('/api/warehouse/leasing', leaseForecastApi(getWarehouse));
+app.route('/api/warehouse/capital', capitalAllocationApi(getWarehouse));
 
 // Occupancy time-series capture: on every workbook-sourced refresh (startup, file-change,
 // api/manual — NOT overlay edits or a failed-parse fallback), snapshot each property's occPct
