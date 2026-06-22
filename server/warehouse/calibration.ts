@@ -32,14 +32,8 @@ import {
   type CalibrationLogRow,
   type InputsVersion,
 } from '../../src/contracts/warehouse';
+import { stableStringify } from './stable-stringify';
 
-// ── canonical JSON + hash (mirrors server/warehouse/acquisition.ts) ───────────────────────
-function stableStringify(v: unknown): string {
-  if (v === null || typeof v !== 'object') return JSON.stringify(v);
-  if (Array.isArray(v)) return `[${v.map(stableStringify).join(',')}]`;
-  const keys = Object.keys(v as Record<string, unknown>).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify((v as Record<string, unknown>)[k])}`).join(',')}}`;
-}
 function sha16(s: string): string {
   return createHash('sha256').update(s).digest('hex').slice(0, 16);
 }

@@ -22,6 +22,7 @@ import { propertyPeriodMetrics } from './metrics';
 import { scoreProperties } from './scores';
 import { scoreDebtPositions } from './debt-scoring';
 import { loadCapitalConfig } from './capital-config';
+import { loadGovernors } from './governors';
 import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast';
 import { classifyCapRateBand, benchmarkKey } from '../../src/contracts/market-intelligence';
 import type { CapRateBenchmark, MarketBenchmarkSet } from '../../src/contracts/market-intelligence';
@@ -497,6 +498,11 @@ export async function buildCapitalAllocationReport(
   const regionalMacro: RegionalMacroSnapshot | null =
     regionalRes.status === 'fulfilled' ? regionalRes.value : null;
 
+  // Load ratified financial governors from DB (falls back to compile-time constants if DB is empty).
+  // Called ONCE here so every site in this function reads the same DB-sourced value.
+  const governors = loadGovernors(db);
+  const dscrFloor = governors.dscrFloor;
+
   const metrics = propertyPeriodMetrics(db);
   const scores = scoreProperties(db, metrics);
   const scoreByPropertyId = new Map(scores.map((s) => [s.propertyId, s]));
@@ -580,7 +586,7 @@ export async function buildCapitalAllocationReport(
       ? 0
       : clamp(
           (effectiveBalloonMonths === null ? 0 : Math.max(0, 100 - (effectiveBalloonMonths / 12) * 10)) +
-            (dscr !== null && dscr < 1.25 ? 30 : 0),
+            (dscr !== null && dscr < dscrFloor ? 30 : 0),
           0,
           100,
         );
@@ -595,6 +601,18 @@ export async function buildCapitalAllocationReport(
       ..._buildDebtReasonImpacts({ hasDebt, effectiveBalloonMonths, dscr }),
     ];
 
+    if (effectiveBalloonMonths !== null && effectiveBalloonMonths < 24) {
+      reasons.push({
+        text: `Balloon maturity in ${Math.round(effectiveBalloonMonths)} months`,
+        impact: debtUrgency * 0.15,
+      });
+    }
+    if (dscr !== null && dscr < dscrFloor) {
+      reasons.push({
+        text: `DSCR at ${dscr.toFixed(2)} (below ${dscrFloor.toFixed(2)}x governor)`,
+        impact: 30 * 0.15,
+      });
+    }
     if (nearTermExpiryRent > 0 && noi > 0 && nearTermExpiryRent / noi > 0.2) {
       reasons.push({
         text: `${Math.round((nearTermExpiryRent / noi) * 100)}% of NOI expiring ≤12 months`,
