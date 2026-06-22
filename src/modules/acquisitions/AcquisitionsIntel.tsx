@@ -49,20 +49,20 @@ export function AcquisitionsIntel() {
   const selectStyle = {
     fontSize: '0.75rem',
     padding: '0.25rem 0.5rem',
-    border: '1px solid var(--border)',
+    border: '1px solid var(--border-subtle)',
     borderRadius: '0.25rem',
-    background: 'var(--bg-secondary)',
+    background: 'var(--surface-raised)',
     color: 'var(--text-primary)',
   };
 
   return (
     <section style={{ marginTop: '1.5rem' }}>
-      <h2 style={{ fontFamily: 'var(--font-serif)', fontSize: '1.125rem', color: 'var(--text-primary)', marginBottom: '0.75rem' }}>
+      <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.125rem', color: 'var(--text-primary)', marginBottom: '0.75rem' }}>
         Acquisition Intelligence
       </h2>
 
       {data?.advisoryOnly && (
-        <div role="alert" style={{ background: 'var(--color-warn-bg, #fef3c7)', border: '1px solid var(--color-warn)', borderRadius: '0.375rem', padding: '0.625rem 0.875rem', marginBottom: '0.875rem', fontSize: '0.8125rem', color: 'var(--color-warn-text, #92400e)' }}>
+        <div role="alert" style={{ background: 'var(--color-warn-soft)', border: '1px solid var(--color-warn)', borderRadius: '0.375rem', padding: '0.625rem 0.875rem', marginBottom: '0.875rem', fontSize: '0.8125rem', color: 'var(--color-warn)' }}>
           <strong>Advisory only</strong> — ruleset not yet ratified. Scores are informational; do not act on them for capital deployment.
         </div>
       )}
