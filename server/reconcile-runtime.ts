@@ -31,6 +31,15 @@ export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
   if (s.properties.length === 0) flag('properties', 'no properties parsed');
   if (s.leases.length === 0) flag('leases', 'no leases parsed');
 
+  // Property.id is the join key for capital-allocation, debt-scoring, and the warehouse
+  // crosswalk — duplicates would silently shadow a property in any id-keyed Map/Set.
+  // parse.ts disambiguates at parse time; this is the always-on backstop.
+  const propIds = s.properties.map((p) => p.id);
+  if (new Set(propIds).size !== propIds.length) {
+    const dupes = [...new Set(propIds.filter((id, i) => propIds.indexOf(id) !== i))];
+    flag('properties.id', `duplicate property id(s): ${dupes.join(', ')}`);
+  }
+
   // Relationship-graph edges must resolve to real nodes.
   const ids = {
     property: new Set(s.properties.map((p) => p.id)),

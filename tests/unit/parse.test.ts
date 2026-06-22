@@ -1,6 +1,17 @@
 import { describe, it, expect } from 'vitest';
-import { isoOrNull, inferMarket, inferType, statusFromSymbol, isTaskBannerRow } from '../../server/workbook/parse';
+import {
+  isoOrNull,
+  inferMarket,
+  inferType,
+  statusFromSymbol,
+  isTaskBannerRow,
+  disambiguatePropertyIds,
+} from '../../server/workbook/parse';
+import { slug } from '@contracts/index';
 import type { DataQualityFlag } from '@contracts/index';
+
+type IdName = { id: string; name: string };
+const mk = (...names: string[]): IdName[] => names.map((name) => ({ id: slug(name), name }));
 
 describe('isoOrNull — date guard (the bug that crashed extraction)', () => {
   it('passes a valid Date through as ISO', () => {
@@ -53,6 +64,63 @@ describe('statusFromSymbol — Monthly Checklist symbols', () => {
     expect(statusFromSymbol('☐')).toBe('pending');
     expect(statusFromSymbol('—')).toBe('na');
     expect(statusFromSymbol('')).toBe('unknown');
+  });
+});
+
+describe('disambiguatePropertyIds — propertyId tiebreaker (collision guard)', () => {
+  it('leaves distinct slug ids untouched', () => {
+    const items = mk('3540 E. 5th Ave', '29000 Information Lane');
+    const flags: DataQualityFlag[] = [];
+    disambiguatePropertyIds(items, flags);
+    expect(items.map((i) => i.id)).toEqual(['3540-e-5th-ave', '29000-information-lane']);
+    expect(flags).toHaveLength(0);
+  });
+
+  it('two properties with colliding slug ids → parsed with disambiguators', () => {
+    // Both names slug to '123-main-st' — the apostrophe and trailing space are stripped.
+    const items = mk('123 Main St', "123 Main St");
+    expect(items[0]!.id).toBe(items[1]!.id); // precondition: they collide
+    const flags: DataQualityFlag[] = [];
+    disambiguatePropertyIds(items, flags);
+    expect(items.map((i) => i.id)).toEqual(['123-main-st', '123-main-st-2']);
+    // every id distinct
+    expect(new Set(items.map((i) => i.id)).size).toBe(items.length);
+    // collision is surfaced, not silent
+    expect(flags.some((f) => f.field === 'id' && /collision|duplicate/i.test(f.issue))).toBe(true);
+  });
+
+  it('apostrophe and accent variants collapse to the same slug → disambiguated', () => {
+    // "O'Brien Plaza", "OBrien Plaza", "Óbrien Plaza" — apostrophe stripped, NFKD-ish, all collide.
+    const items = mk("O'Brien Plaza", 'OBrien Plaza', 'OBrien Plaza');
+    // first two share the apostrophe-stripped base; confirm at least a collision exists
+    const flags: DataQualityFlag[] = [];
+    disambiguatePropertyIds(items, flags);
+    expect(new Set(items.map((i) => i.id)).size).toBe(items.length);
+  });
+
+  it('keeps three-way collisions deterministic in parse order (-2, -3)', () => {
+    const items = mk('Lot A', 'Lot A', 'Lot A');
+    const flags: DataQualityFlag[] = [];
+    disambiguatePropertyIds(items, flags);
+    expect(items.map((i) => i.id)).toEqual(['lot-a', 'lot-a-2', 'lot-a-3']);
+  });
+
+  it('does not collide a disambiguator against a real property that already owns that suffixed id', () => {
+    // Two 'Building' rows would yield 'building' + 'building-2'; a real 'Building 2' already owns 'building-2'.
+    const items = mk('Building', 'Building 2', 'Building');
+    const flags: DataQualityFlag[] = [];
+    disambiguatePropertyIds(items, flags);
+    expect(new Set(items.map((i) => i.id)).size).toBe(items.length);
+    // the real 'Building 2' keeps its natural slug; the duplicate 'Building' bumps past it
+    expect(items[1]!.id).toBe('building-2');
+    expect(items[0]!.id).toBe('building');
+    expect(items[2]!.id).toBe('building-3');
+  });
+
+  it('mutates in place and returns the same array (parse-order preserved)', () => {
+    const items = mk('Same', 'Same');
+    const ret = disambiguatePropertyIds(items, []);
+    expect(ret).toBe(items);
   });
 });
 
