@@ -2,6 +2,7 @@
 // All money is annual USD unless suffixed. All dates ISO YYYY-MM-DD.
 // Mirrors the Insight/MarkToMarket patterns.
 import { z } from 'zod';
+import { NarrativeBlock } from './briefing';
 
 // ── Expiration horizon bucket ─────────────────────────────────────────────────
 export const ExpiryBucket = z.enum(['0-6m', '6-12m', '12-24m', '24m+', 'expired', 'unknown']);
@@ -121,6 +122,16 @@ export type RentForecastResponse = z.infer<typeof RentForecastResponse>;
 // ── Overlay write input ───────────────────────────────────────────────────────
 export const MarketRentInput = z.object({ key: z.string().min(1), rentPsf: z.number().nonnegative() });
 export type MarketRentInput = z.infer<typeof MarketRentInput>;
+
+// ── AI Narrative Leasing Response (Phase 3 W3) ───────────────────────────────
+// Envelope returned by GET /api/warehouse/leasing/narrative.
+// When `degraded` is true, `narrative` is null and the UI degrades gracefully.
+export const LeaseNarrativeResponse = z.object({
+  asOf: z.string(),
+  narrative: NarrativeBlock.nullable(),
+  degraded: z.boolean(),
+});
+export type LeaseNarrativeResponse = z.infer<typeof LeaseNarrativeResponse>;
 
 // ── Full summary (used by briefing/narrative pipeline) ───────────────────────
 export const LeaseForecastSummary = z.object({
