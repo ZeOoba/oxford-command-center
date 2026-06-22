@@ -122,13 +122,14 @@ export const SubjectKind = z.enum(['property', 'tenant', 'loan', 'deal', 'portfo
 export type SubjectKind = z.infer<typeof SubjectKind>;
 
 export const VerdictKind = z.enum([
-  'health-band', 'attention', 'capital-action', 'anomaly',
+  'health-band', 'attention', 'capital-action', 'capital-action-v2', 'anomaly',
   'refi-score', 'acquisition-score', 'forecast',
 ]);
 export type VerdictKind = z.infer<typeof VerdictKind>;
 
 export const VerdictEngine = z.enum([
   'scores', 'anomalies', 'benchmarks', 'growth', 'drivers', 'refi', 'acquisition', 'forecast',
+  'capital-allocation',
 ]);
 export type VerdictEngine = z.infer<typeof VerdictEngine>;
 
