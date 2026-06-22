@@ -338,8 +338,6 @@ export async function buildPortfolioAllocation(
 // NOI basis: ALL NOI/SF figures are tagged noiBasis:'spine-a' (workbook ownership layer).
 // NEVER mix with Spine-B warehouse ledger NOI — they are independent computations.
 
-const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
-
 // ── Debt reason impacts (exported for unit testing — prefixed _ by convention) ──────────────
 //
 // Separating this logic into a pure function serves two purposes:
