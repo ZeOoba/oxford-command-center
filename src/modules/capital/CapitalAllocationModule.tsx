@@ -312,6 +312,7 @@ export function CapitalAllocationModule() {
   const benchUnavailable = !bench.available || bench.source === 'unavailable';
   const regional = data.regionalMacro;
   const isRegionalSeeded = regional?.source === 'mock';
+  const hasRegionalFallback = regional?.states.some((s) => s.source === 'mock') ?? false;
 
   return (
     <div className="flex flex-col gap-4">
@@ -391,8 +392,10 @@ export function CapitalAllocationModule() {
                 <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
                   Regional Markets
                 </span>
-                {isRegionalSeeded && (
-                  <Badge tone="amber">Seeded Fallback</Badge>
+                {hasRegionalFallback && (
+                  <Badge tone="amber">
+                    {isRegionalSeeded ? 'Seeded Fallback' : 'Partial Fallback'}
+                  </Badge>
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-x-4 gap-y-1 ml-2">
@@ -473,7 +476,11 @@ export function CapitalAllocationModule() {
         {regional && (
           <p className="num text-2xs" style={{ color: 'var(--text-tertiary)', marginTop: 4 }}>
             Regional Markets: State unemployment from FRED (monthly, seasonally adjusted)
-            {isRegionalSeeded ? ' — seeded snapshot; set FRED_API_KEY for live data.' : '.'}{' '}
+            {isRegionalSeeded
+              ? ' — seeded snapshot; set FRED_API_KEY for live data.'
+              : hasRegionalFallback
+              ? ' — partial fallback (some state series unavailable).'
+              : '.'}{' '}
             Diagnostic labor-market context only — does not affect the priority score or capital action.
           </p>
         )}

@@ -110,10 +110,16 @@ export async function buildCapitalAllocationReport(
 ): Promise<CapitalAllocationReport> {
   const asOf = snapshot.meta.asOf;
 
-  // ── 1. Macro context (fail-open) ──────────────────────────────────────────────────────
+  // ── 1. Macro context providers (all fail-open; run in parallel to avoid additive latency) ─
+  const [macroRes, benchRes, regionalRes] = await Promise.allSettled([
+    getMacro(),
+    getMacroMarketBenchmarks(),
+    getRegionalMacro(),
+  ]);
+
   let macro: MacroContext;
-  try {
-    const live = await getMacro();
+  if (macroRes.status === 'fulfilled') {
+    const live = macroRes.value;
     const dgs10 = live.indicators.find((ind) => ind.id === 'DGS10');
     const cpi = live.indicators.find((ind) => ind.id === 'CPIAUCSL');
     macro = {
@@ -122,19 +128,15 @@ export async function buildCapitalAllocationReport(
       source: (live.source === 'fred' || live.source === 'mock') ? live.source : 'mock',
       asOf: live.asOf ?? null,
     };
-  } catch {
+  } else {
     macro = { tenYearRate: null, cpi: null, source: 'mock', asOf: null };
   }
 
-  // ── 1b. Market cap-rate benchmarks (fail-open — diagnostic overlay only) ──────────────
-  // NEVER throws; on any error the provider itself returns the unavailable set. Belt-and-braces
-  // try/catch here keeps a provider regression from taking down the whole report.
-  let benchmarkSet: MarketBenchmarkSet;
-  try {
-    benchmarkSet = await getMacroMarketBenchmarks();
-  } catch {
-    benchmarkSet = { available: false, source: 'unavailable', asOf: null, benchmarks: [] };
-  }
+  // ── 1b. Market cap-rate benchmarks (diagnostic overlay — never feeds priorityScore) ──────
+  const benchmarkSet: MarketBenchmarkSet =
+    benchRes.status === 'fulfilled'
+      ? benchRes.value
+      : { available: false, source: 'unavailable', asOf: null, benchmarks: [] };
   // Index benchmarks by market::propertyType for O(1) per-property lookup.
   const benchmarkByKey = new Map<string, CapRateBenchmark>();
   for (const b of benchmarkSet.benchmarks) {
@@ -142,16 +144,10 @@ export async function buildCapitalAllocationReport(
   }
 
   // ── 1c. Regional market dynamics (Scope B) — DISPLAY-ONLY labor context ─────────────────
-  // State-level unemployment for ORA's 7 markets. The provider is fail-open by contract
-  // (never throws); the belt-and-braces try/catch here keeps a provider regression from
-  // taking down the whole report. null on error → the UI omits the regional row.
+  // State-level unemployment for ORA's 7 markets. null on error → the UI omits the regional row.
   // This signal does NOT feed priorityScore or capitalAction — diagnostic overlay only.
-  let regionalMacro: RegionalMacroSnapshot | null = null;
-  try {
-    regionalMacro = await getRegionalMacro();
-  } catch {
-    regionalMacro = null;
-  }
+  const regionalMacro: RegionalMacroSnapshot | null =
+    regionalRes.status === 'fulfilled' ? regionalRes.value : null;
 
   // ── 2. Property scores (health/attention/capitalAction) ───────────────────────────────
   const metrics = propertyPeriodMetrics(db);
