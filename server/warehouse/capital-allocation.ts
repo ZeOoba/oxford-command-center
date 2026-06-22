@@ -16,10 +16,15 @@
 // forecastInputs absent → horizonPeriods=0, confidence01 capped at 0.65.
 
 import { getMacro } from '../macro/getMacro';
+import { getMacroMarketBenchmarks } from '../macro/market-benchmarks';
+import { getRegionalMacro } from '../macro/regional-macro';
 import { propertyPeriodMetrics } from './metrics';
 import { scoreProperties } from './scores';
 import { scoreDebtPositions } from './debt-scoring';
 import { loadCapitalConfig } from './capital-config';
+import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast';
+import { classifyCapRateBand, benchmarkKey } from '../../src/contracts/market-intelligence';
+import type { CapRateBenchmark, MarketBenchmarkSet } from '../../src/contracts/market-intelligence';
 import type { WarehouseDb } from './db';
 import type { HealthBand } from '../../src/contracts/warehouse';
 import type { DebtScore } from '../../src/contracts/debt';
@@ -30,6 +35,13 @@ import type {
   AllocationAction,
 } from '../../src/contracts/capital';
 import type { Confidence } from '../../src/contracts/common';
+import type { PortfolioSnapshot } from '../../src/contracts/index';
+import type {
+  CapitalAllocationReport,
+  CapitalAllocationEntry,
+  MacroContext,
+} from '../../src/contracts/capital-allocation';
+import type { RegionalMacroSnapshot } from '../../src/contracts/regional-macro';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -293,5 +305,312 @@ export async function buildPortfolioAllocation(
     verdicts,
     actionCounts,
     pipeline,
+  };
+}
+
+// ── Capital Allocation Report synthesis (IC Memo + Capital Allocation UI) ────────────────
+//
+// buildCapitalAllocationReport(): pure synthesis — reads from existing engines/spines,
+// never duplicates their math, never writes to DB or overlay.
+//
+// Data sources (read-only):
+//   Spine A: PortfolioSnapshot (brain.getSnapshot()) → property NOI, SF, leases
+//   scores.ts: scoreProperties() → per-property health, attentionBand, capitalAction
+//   debt-scoring.ts: scoreDebtPositions() → per-property debtScore, DSCR
+//   DB (debt_positions): soonest balloon months_to_maturity per property (not on DebtScore)
+//   src/analytics/lease-forecast.ts: renewalSignals(), bucketExpiry() → leasing signals
+//   server/macro/getMacro.ts: FRED macro context (fail-open)
+//
+// Priority score formula (financial-decision code — adversarial refute ran on PR #121):
+//   priorityScore = clamp(
+//     (100 - healthScore) * 0.35
+//     + attentionScore    * 0.30
+//     + leasingRisk       * 0.20
+//     + debtUrgency       * 0.15,
+//     0, 100
+//   )
+//   Null health/attention → 50 (neutral, not 0 — avoids penalizing data-poor properties)
+//   leasingRisk capped at 50 when noi=0 (vacant property guard)
+//   debtUrgency=0 when no debt (balloonMonths === null)
+//
+// NOI basis: ALL NOI/SF figures are tagged noiBasis:'spine-a' (workbook ownership layer).
+// NEVER mix with Spine-B warehouse ledger NOI — they are independent computations.
+
+const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
+
+function attentionBandScore(band: string | null | undefined): number {
+  if (band === 'red') return 100;
+  if (band === 'orange') return 66;
+  if (band === 'yellow') return 33;
+  return 0;
+}
+
+interface BalloonRow {
+  property_id: string;
+  months_to_maturity: number | null;
+  dscr_override: number | null;
+}
+
+function getBalloonMonthsByProperty(db: WarehouseDb): Map<string, number | null> {
+  const rows = db
+    .prepare(
+      `SELECT property_id,
+              MIN(months_to_maturity) AS months_to_maturity
+       FROM debt_positions
+       WHERE status = 'active'
+         AND balloon = 1
+         AND property_id IS NOT NULL
+         AND months_to_maturity IS NOT NULL
+       GROUP BY property_id`,
+    )
+    .all() as BalloonRow[];
+
+  const result = new Map<string, number | null>();
+  for (const row of rows) {
+    if (row.property_id !== null) {
+      result.set(row.property_id, row.months_to_maturity);
+    }
+  }
+  return result;
+}
+
+/**
+ * Build the Capital Allocation Report by synthesizing all existing intelligence streams.
+ * Used by GET /capital-allocation, POST /capital-allocation/sync-notion, and
+ * GET /capital-allocation/ic-memo.
+ *
+ * Restored from PR #121 (f951b40) — squash-merge artifact left this missing from main.
+ *
+ * @param db - Warehouse DB connection (Spine B — used ONLY for scores + debt queries)
+ * @param snapshot - Current Spine A portfolio snapshot (source for NOI, SF, leases)
+ * @returns CapitalAllocationReport sorted DESC by priorityScore
+ */
+export async function buildCapitalAllocationReport(
+  db: WarehouseDb,
+  snapshot: PortfolioSnapshot,
+): Promise<CapitalAllocationReport> {
+  const asOf = snapshot.meta.asOf;
+
+  const [macroRes, benchRes, regionalRes] = await Promise.allSettled([
+    getMacro(),
+    getMacroMarketBenchmarks(),
+    getRegionalMacro(),
+  ]);
+
+  let macro: MacroContext;
+  if (macroRes.status === 'fulfilled') {
+    const live = macroRes.value;
+    const dgs10 = live.indicators.find((ind) => ind.id === 'DGS10');
+    const cpi = live.indicators.find((ind) => ind.id === 'CPIAUCSL');
+    macro = {
+      tenYearRate: dgs10?.value ?? null,
+      cpi: cpi?.value ?? null,
+      source: (live.source === 'fred' || live.source === 'mock') ? live.source : 'mock',
+      asOf: live.asOf ?? null,
+    };
+  } else {
+    macro = { tenYearRate: null, cpi: null, source: 'mock', asOf: null };
+  }
+
+  const benchmarkSet: MarketBenchmarkSet =
+    benchRes.status === 'fulfilled'
+      ? benchRes.value
+      : { available: false, source: 'unavailable', asOf: null, benchmarks: [] };
+  const benchmarkByKey = new Map<string, CapRateBenchmark>();
+  for (const b of benchmarkSet.benchmarks) {
+    benchmarkByKey.set(benchmarkKey(b.market, b.propertyType), b);
+  }
+
+  const regionalMacro: RegionalMacroSnapshot | null =
+    regionalRes.status === 'fulfilled' ? regionalRes.value : null;
+
+  const metrics = propertyPeriodMetrics(db);
+  const scores = scoreProperties(db, metrics);
+  const scoreByPropertyId = new Map(scores.map((s) => [s.propertyId, s]));
+
+  const debtScores = scoreDebtPositions(db, metrics, null);
+  const debtByPropertyId = new Map(debtScores.map((d) => [d.propertyId, d]));
+
+  const balloonMonthsByProperty = getBalloonMonthsByProperty(db);
+
+  const arrears = snapshot.tenantArrears ?? {};
+  const renewalStages = snapshot.renewalStages ?? {};
+  const signals = renewalSignals(snapshot.leases, asOf, renewalStages, arrears);
+
+  const signalsByProperty = new Map<string, typeof signals>();
+  for (const sig of signals) {
+    if (sig.propertyId === null) continue;
+    const arr = signalsByProperty.get(sig.propertyId) ?? [];
+    arr.push(sig);
+    signalsByProperty.set(sig.propertyId, arr);
+  }
+
+  const nearTermExpiryRentByProperty = new Map<string, number>();
+  for (const lease of snapshot.leases) {
+    if (lease.propertyId === null) continue;
+    const bucket = bucketExpiry(lease.monthsToExpiry, lease.leaseEnd, asOf);
+    if (bucket === '0-6m' || bucket === '6-12m') {
+      const existing = nearTermExpiryRentByProperty.get(lease.propertyId) ?? 0;
+      nearTermExpiryRentByProperty.set(lease.propertyId, existing + lease.annualRent);
+    }
+  }
+
+  const atRiskCountByProperty = new Map<string, number>();
+  for (const sig of signals) {
+    if (sig.propertyId === null) continue;
+    if (sig.likelihood === 'at-risk' || sig.likelihood === 'lapsing') {
+      const existing = atRiskCountByProperty.get(sig.propertyId) ?? 0;
+      atRiskCountByProperty.set(sig.propertyId, existing + 1);
+    }
+  }
+
+  const entries: CapitalAllocationEntry[] = [];
+
+  for (const property of snapshot.properties) {
+    const propScore = scoreByPropertyId.get(property.id);
+    const debtScore = debtByPropertyId.get(property.id);
+    const balloonMonths = balloonMonthsByProperty.get(property.id) ?? null;
+
+    const noi = property.noi;
+    const sf = property.sf;
+    const noiPerSf = sf > 0 && noi !== 0 ? noi / sf : null;
+
+    const healthScore = propScore?.health ?? null;
+    const attentionBand = propScore?.attentionBand ?? null;
+    const attentionScore = attentionBand === null ? 50 : attentionBandScore(attentionBand);
+    const capitalAction = propScore?.capitalAction ?? 'hold';
+
+    const nearTermExpiryRent = nearTermExpiryRentByProperty.get(property.id) ?? 0;
+    const atRiskLikelihoodCount = atRiskCountByProperty.get(property.id) ?? 0;
+
+    const hasDebt = debtScore !== undefined && debtScore.signal !== 'no-debt';
+    const debtScoreValue = hasDebt ? debtScore!.score : null;
+    const dscr = hasDebt ? debtScore!.dscr : null;
+    const effectiveBalloonMonths = hasDebt ? balloonMonths : null;
+
+    const healthVal = healthScore ?? 50;
+
+    const leasingRisk =
+      noi > 0
+        ? Math.min(100, (nearTermExpiryRent / noi) * 100 + atRiskLikelihoodCount * 10)
+        : Math.min(50, atRiskLikelihoodCount * 10);
+
+    const debtUrgency = !hasDebt
+      ? 0
+      : clamp(
+          (effectiveBalloonMonths === null ? 0 : Math.max(0, 100 - (effectiveBalloonMonths / 12) * 10)) +
+            (dscr !== null && dscr < 1.25 ? 30 : 0),
+          0,
+          100,
+        );
+
+    const raw = (100 - healthVal) * 0.35 + attentionScore * 0.30 + leasingRisk * 0.20 + debtUrgency * 0.15;
+    const priorityScore = Math.max(0, Math.min(100, raw));
+
+    const reasons: Array<{ text: string; impact: number }> = [];
+
+    if (effectiveBalloonMonths !== null && effectiveBalloonMonths < 24) {
+      reasons.push({
+        text: `Balloon maturity in ${Math.round(effectiveBalloonMonths)} months`,
+        impact: debtUrgency * 0.15,
+      });
+    }
+    if (dscr !== null && dscr < 1.25) {
+      reasons.push({
+        text: `DSCR at ${dscr.toFixed(2)} (below 1.25x governor)`,
+        impact: 30 * 0.15,
+      });
+    }
+    if (nearTermExpiryRent > 0 && noi > 0 && nearTermExpiryRent / noi > 0.2) {
+      reasons.push({
+        text: `${Math.round((nearTermExpiryRent / noi) * 100)}% of NOI expiring ≤12 months`,
+        impact: leasingRisk * 0.20,
+      });
+    }
+    if (atRiskLikelihoodCount > 0) {
+      reasons.push({
+        text: `${atRiskLikelihoodCount} at-risk/lapsing renewal signal${atRiskLikelihoodCount > 1 ? 's' : ''}`,
+        impact: atRiskLikelihoodCount * 10 * 0.20,
+      });
+    }
+    if (healthScore !== null && healthScore < 50) {
+      reasons.push({
+        text: `Health score ${Math.round(healthScore)}/100`,
+        impact: (100 - healthVal) * 0.35,
+      });
+    }
+    if (attentionBand !== null && (attentionBand === 'orange' || attentionBand === 'red')) {
+      reasons.push({
+        text: `Attention band: ${attentionBand}`,
+        impact: attentionScore * 0.30,
+      });
+    }
+
+    reasons.sort((a, b) => b.impact - a.impact);
+    const rationale = reasons.slice(0, 3).map((r) => r.text);
+
+    let impliedCapRate: number | null = null;
+    let capRateGap: number | null = null;
+    let capRatePercentile: CapitalAllocationEntry['capRatePercentile'] = null;
+    const propValue = property.oxfordValue;
+    if (Number.isFinite(propValue) && propValue > 0 && Number.isFinite(noi)) {
+      const implied = noi / propValue;
+      impliedCapRate = implied;
+      const bench = benchmarkByKey.get(benchmarkKey(property.market, property.type));
+      if (bench && implied > 0) {
+        capRateGap = implied - bench.capRateP50;
+        capRatePercentile = classifyCapRateBand(implied, bench);
+      }
+    }
+
+    entries.push({
+      propertyId: property.id,
+      propertyName: property.name ?? null,
+      market: property.market ?? null,
+      sf,
+      capitalAction,
+      priorityScore,
+      healthScore,
+      attentionScore: attentionBand !== null ? attentionScore : null,
+      nearTermExpiryRent,
+      atRiskLikelihoodCount,
+      debtScore: debtScoreValue,
+      balloonMonths: effectiveBalloonMonths,
+      dscr,
+      rationale,
+      noi,
+      noiPerSf,
+      noiBasis: 'spine-a',
+      impliedCapRate,
+      capRateGap,
+      capRatePercentile,
+    });
+  }
+
+  entries.sort((a, b) => b.priorityScore - a.priorityScore || a.propertyId.localeCompare(b.propertyId));
+
+  const investCount = entries.filter((e) => e.capitalAction === 'invest').length;
+  const holdCount = entries.filter((e) => e.capitalAction === 'hold').length;
+  const monitorCount = entries.filter((e) => e.capitalAction === 'monitor').length;
+  const dispositionCount = entries.filter((e) => e.capitalAction === 'disposition-candidate').length;
+  const portfolioNoi = snapshot.properties.reduce((sum, p) => sum + (p.noi ?? 0), 0);
+
+  return {
+    asOf,
+    propertyCount: snapshot.properties.length,
+    entries,
+    portfolioNoi,
+    portfolioNoBasis: 'spine-a',
+    investCount,
+    holdCount,
+    monitorCount,
+    dispositionCount,
+    macro,
+    marketBenchmarks: {
+      available: benchmarkSet.available,
+      source: benchmarkSet.source,
+      asOf: benchmarkSet.asOf,
+    },
+    regionalMacro,
   };
 }
