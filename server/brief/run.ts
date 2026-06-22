@@ -1,9 +1,9 @@
 import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { PortfolioSnapshot } from '../../src/contracts/index';
+import type { PortfolioSnapshot, MacroSnapshot } from '../../src/contracts/index';
 import { buildAnalytics } from '../../src/analytics/engine';
 import { fmtUsdCompact, fmtPct } from '../../src/analytics/format';
-import { evaluateConditions } from '../../src/analytics/conditions';
+import { evaluateConditions, extractDgs5MarketRate } from '../../src/analytics/conditions';
 import { loadState, saveState, diffCriticalAlerts, shouldSendBrief, etNow, type AlertState } from './state';
 import { renderBrief, renderAlert, type Email } from './render';
 import { sendEmail, type SendResult } from './send';
@@ -21,6 +21,13 @@ export interface RunDeps {
   statePath?: string;
   now?: Date;
   send?: (email: Email, to: string[]) => Promise<SendResult>;
+  /**
+   * Optional macro provider. When supplied, the brief pipeline extracts the live DGS10 rate
+   * and threads it into evaluateConditions as cachedMarketRate, making the refi-spread signal
+   * use the current rate rather than the 0.065 fallback. Fail-open: any error is swallowed
+   * and the fallback is used. (M3)
+   */
+  macroProvider?: () => Promise<MacroSnapshot | null>;
 }
 
 export async function runBrief(
@@ -31,7 +38,19 @@ export async function runBrief(
   const send = deps.send ?? ((e: Email, to: string[]) => sendEmail(e, to));
   const state: AlertState = loadState(deps.statePath);
 
-  const insights = evaluateConditions(snapshot, { priorStages: state.dealStages });
+  // M3: Resolve effective market rate from the macro snapshot (no live HTTP inside evaluateConditions).
+  // Fail-open: if macroProvider is absent or throws, cachedMarketRate is undefined → 0.065 fallback.
+  let cachedMarketRate: number | undefined;
+  if (deps.macroProvider) {
+    try {
+      const macro = await deps.macroProvider().catch(() => null);
+      if (macro) cachedMarketRate = extractDgs5MarketRate(macro) ?? undefined;
+    } catch {
+      // Fail-open: macro unavailable → use the 0.065 fallback rate in evaluateConditions.
+    }
+  }
+
+  const insights = evaluateConditions(snapshot, { priorStages: state.dealStages, cachedMarketRate });
 
   // ── Warehouse-backed insurance conditions (Phase 5) ───────────────────────
   // Guarded: any warehouse-open or read failure silently skips insurance alerts
