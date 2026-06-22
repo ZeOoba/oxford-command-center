@@ -310,6 +310,9 @@ export function CapitalAllocationModule() {
   const bench = data.marketBenchmarks;
   const benchSeeded = bench.source === 'seed';
   const benchUnavailable = !bench.available || bench.source === 'unavailable';
+  const regional = data.regionalMacro;
+  const isRegionalSeeded = regional?.source === 'mock';
+  const hasRegionalFallback = regional?.states.some((s) => s.source === 'mock') ?? false;
 
   return (
     <div className="flex flex-col gap-4">
@@ -346,38 +349,70 @@ export function CapitalAllocationModule() {
 
       {/* FRED macro banner */}
       <Card>
-        <div className="flex items-center gap-4 px-4 py-3">
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
-              Macro context
-            </span>
-            {isMacroSeeded && (
-              <Badge tone="amber">Seeded Fallback</Badge>
-            )}
-          </div>
-          <div className="flex items-center gap-4 ml-2">
-            {macro.tenYearRate !== null && (
-              <div className="flex items-center gap-1">
-                <span className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>10Y:</span>
-                <span className="num text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  {macro.tenYearRate.toFixed(2)}%
-                </span>
-              </div>
-            )}
-            {macro.cpi !== null && (
-              <div className="flex items-center gap-1">
-                <span className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>CPI:</span>
-                <span className="num text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
-                  {macro.cpi.toFixed(1)}%
-                </span>
-              </div>
-            )}
-            {macro.asOf && (
-              <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-                as of {macro.asOf}
+        <div className="flex flex-col gap-2 px-4 py-3">
+          {/* Row 1 — national macro (10Y / CPI) */}
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+                Macro context
               </span>
-            )}
+              {isMacroSeeded && (
+                <Badge tone="amber">Seeded Fallback</Badge>
+              )}
+            </div>
+            <div className="flex items-center gap-4 ml-2">
+              {macro.tenYearRate !== null && (
+                <div className="flex items-center gap-1">
+                  <span className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>10Y:</span>
+                  <span className="num text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    {macro.tenYearRate.toFixed(2)}%
+                  </span>
+                </div>
+              )}
+              {macro.cpi !== null && (
+                <div className="flex items-center gap-1">
+                  <span className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>CPI:</span>
+                  <span className="num text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                    {macro.cpi.toFixed(1)}%
+                  </span>
+                </div>
+              )}
+              {macro.asOf && (
+                <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+                  as of {macro.asOf}
+                </span>
+              )}
+            </div>
           </div>
+
+          {/* Row 2 — regional markets (state unemployment) */}
+          {regional && regional.states.length > 0 && (
+            <div className="flex items-center gap-4" style={{ borderTop: '1px solid var(--border-subtle, rgba(0,0,0,0.08))', paddingTop: 8 }}>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+                  Regional Markets
+                </span>
+                {hasRegionalFallback && (
+                  <Badge tone="amber">
+                    {isRegionalSeeded ? 'Seeded Fallback' : 'Partial Fallback'}
+                  </Badge>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 ml-2">
+                {regional.states.map((s) => (
+                  <div key={s.stateCode} className="flex items-center gap-1">
+                    <span className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>{s.stateCode}:</span>
+                    <span className="num text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      {s.unemploymentRate !== null ? `${s.unemploymentRate.toFixed(1)}%` : '—'}
+                    </span>
+                  </div>
+                ))}
+                <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+                  unemployment{regional.asOf ? ` · as of ${regional.asOf}` : ''}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       </Card>
 
@@ -438,6 +473,17 @@ export function CapitalAllocationModule() {
           Cap Band is a discrete position (below / at / above market), not a continuous percentile,
           and is diagnostic only — it does not affect the priority score or capital action.
         </p>
+        {regional && (
+          <p className="num text-2xs" style={{ color: 'var(--text-tertiary)', marginTop: 4 }}>
+            Regional Markets: State unemployment from FRED (monthly, seasonally adjusted)
+            {isRegionalSeeded
+              ? ' — seeded snapshot; set FRED_API_KEY for live data.'
+              : hasRegionalFallback
+              ? ' — partial fallback (some state series unavailable).'
+              : '.'}{' '}
+            Diagnostic labor-market context only — does not affect the priority score or capital action.
+          </p>
+        )}
       </div>
     </div>
   );

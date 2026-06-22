@@ -34,6 +34,7 @@ export * from './debt';
 export * from './lease-forecast';
 export * from './capital-allocation';
 export * from './market-intelligence';
+export * from './regional-macro';
 
 export const SnapshotMeta = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),

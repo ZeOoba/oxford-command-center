@@ -284,6 +284,7 @@ describe('CapitalAllocationReport contract', () => {
       dispositionCount: 0,
       macro: { tenYearRate: 4.47, cpi: 3.8, source: 'fred', asOf: '2026-06-21' },
       marketBenchmarks: { available: true, source: 'seed', asOf: '2026-06-21' },
+      regionalMacro: null,
     };
     const result = CapitalAllocationReport.safeParse(valid);
     expect(result.success).toBe(true);
@@ -397,6 +398,18 @@ describe('CapitalAllocationEntry contract', () => {
 
 vi.mock('../../server/macro/getMacro', () => ({
   getMacro: vi.fn(),
+}));
+
+// Scope B — regional macro is a display-only overlay; mock it deterministically so the
+// integration assertions don't depend on a live FRED key in the gate env.
+vi.mock('../../server/macro/regional-macro', () => ({
+  getRegionalMacro: vi.fn(async () => ({
+    asOf: '2026-06-21',
+    source: 'mock' as const,
+    states: [
+      { stateCode: 'OH', stateName: 'Ohio', unemploymentRate: 4.3, source: 'mock' as const, asOf: '2026-06-21' },
+    ],
+  })),
 }));
 
 vi.mock('../../server/warehouse/scores', () => ({
@@ -702,6 +715,11 @@ describe('buildCapitalAllocationReport integration', () => {
     const report = await buildCapitalAllocationReport(makeMockDb() as never, snap) as typeof CapitalAllocationReport._type;
     expect(report.marketBenchmarks.available).toBe(true);
     expect(report.marketBenchmarks.source).toBe('seed');
+
+    // Scope B — regional macro snapshot is wired into the report (display-only overlay).
+    expect(report.regionalMacro).not.toBeNull();
+    expect(report.regionalMacro!.source).toBe('mock');
+    expect(report.regionalMacro!.states[0]!.stateCode).toBe('OH');
 
     const entry = report.entries[0]!;
     expect(entry.impliedCapRate).toBeCloseTo(0.10, 5);
