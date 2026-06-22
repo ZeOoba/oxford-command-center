@@ -14,6 +14,7 @@
 // 'proposed' or incomplete ruleset (advisoryOnly / incompleteRuleset surface that to every consumer).
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { stableStringify } from './stable-stringify';
 import {
   AcquisitionInput,
   AcquisitionRuleset,
@@ -97,12 +98,6 @@ export function replacementCostTotal(sf: number, rct: ReplacementCostTable, band
 }
 
 // ─── Deterministic inputs_version (Q5: pins rulesetVersion; rctVersion folds in once the RCT config lands) ──
-function stableStringify(v: unknown): string {
-  if (v === null || typeof v !== 'object') return JSON.stringify(v);
-  if (Array.isArray(v)) return `[${v.map(stableStringify).join(',')}]`;
-  const keys = Object.keys(v as Record<string, unknown>).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify((v as Record<string, unknown>)[k])}`).join(',')}}`;
-}
 /** Canonicalize ddKnown's .partial() shape to the four booleans the engine actually reads (absent ≡ false). */
 function canonicalDd(dd: AcquisitionInput['ddKnown']): Record<string, boolean> {
   return {
