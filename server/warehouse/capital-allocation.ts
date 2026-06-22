@@ -473,7 +473,7 @@ export async function buildCapitalAllocationReport(
 
     const noi = property.noi;
     const sf = property.sf;
-    const noiPerSf = sf > 0 && noi !== 0 ? noi / sf : null;
+    const noiPerSf = sf > 0 && noi != null && noi !== 0 ? noi / sf : null;
 
     const healthScore = propScore?.health ?? null;
     const attentionBand = propScore?.attentionBand ?? null;
