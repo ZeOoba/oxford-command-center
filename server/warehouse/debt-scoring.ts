@@ -15,6 +15,7 @@ import type { WarehouseDb } from './db';
 import type { PeriodMetrics } from '../../src/contracts/warehouse';
 import { loadGovernors } from './governors';
 import type { DebtScore, DebtSignal, DebtScoreBand } from '../../src/contracts/debt';
+import { clamp } from './clamp';
 
 const DEBT_CONFIG = {
   fredSpreadBps: 200,          // D3: spread over 5-Year Treasury
@@ -27,11 +28,6 @@ const DEBT_CONFIG = {
     // score < 25 → 'critical'
   },
 } as const;
-
-/** Clamp a value to [lo, hi]. */
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.min(hi, Math.max(lo, v));
-}
 
 /** Map a numeric score to a DebtScoreBand. */
 function toBand(score: number): DebtScoreBand {
