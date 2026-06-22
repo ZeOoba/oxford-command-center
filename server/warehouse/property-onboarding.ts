@@ -5,16 +5,19 @@
 // authoritativeSource). The detect.ts PROPERTY_ALIASES const is compile-time-only;
 // this table is the runtime-writable companion. Wiring detect.ts to read aliases_json
 // is a deferred Integration-agent follow-up (spec §9.2).
+import { z } from 'zod';
 import type { WarehouseDb } from './db';
 
-export interface PropertyOnboardingInput {
-  id: string;
-  name: string;
-  aliases: string[];
-  sfTotal: number | null;
-  pmSystem: 'quickbooks' | 'yardi' | 'appfolio' | 'rent-manager';
-  authoritativeSource: 'pm-exports' | 'internal-quickbooks' | 'workbook-only';
-}
+export const PropertyOnboardingInputSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  aliases: z.array(z.string()),
+  sfTotal: z.number().nullable(),
+  pmSystem: z.enum(['quickbooks', 'yardi', 'appfolio', 'rent-manager']),
+  authoritativeSource: z.enum(['pm-exports', 'internal-quickbooks', 'workbook-only']),
+});
+
+export type PropertyOnboardingInput = z.infer<typeof PropertyOnboardingInputSchema>;
 
 export function onboardProperty(
   db: WarehouseDb,

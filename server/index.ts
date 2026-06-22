@@ -27,7 +27,7 @@ import { warehouseRoutes } from './warehouse/api';
 import { debtApi } from './warehouse/debt-api';
 import { leaseForecastApi } from './warehouse/lease-forecast-api';
 import { capitalAllocationApi } from './warehouse/capital-allocation-api';
-import { onboardProperty } from './warehouse/property-onboarding';
+import { onboardProperty, PropertyOnboardingInputSchema } from './warehouse/property-onboarding';
 import type { PropertyOnboardingInput } from './warehouse/property-onboarding';
 import { MarketRentInput } from '../src/contracts/lease-forecast';
 import { writeDebtSnapshot } from './warehouse/debt-snapshot';
@@ -66,8 +66,11 @@ app.post('/api/warehouse/properties/onboard', async (c) => {
   try { db = getWarehouse(); }
   catch { return c.json({ ok: false, error: 'warehouse unavailable' }, 503); }
   let body: PropertyOnboardingInput;
-  try { body = await c.req.json() as PropertyOnboardingInput; }
-  catch { return c.json({ ok: false, error: 'invalid request body' }, 400); }
+  try {
+    const parsed = PropertyOnboardingInputSchema.safeParse(await c.req.json());
+    if (!parsed.success) return c.json({ ok: false, error: 'invalid request body' }, 400);
+    body = parsed.data;
+  } catch { return c.json({ ok: false, error: 'invalid request body' }, 400); }
   try {
     const result = onboardProperty(db, body);
     return c.json(result, result.ok ? 200 : 400);
