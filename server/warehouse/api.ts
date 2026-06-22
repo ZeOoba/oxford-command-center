@@ -56,6 +56,8 @@ import { briefingFilename } from '../briefing/filename';
 import { composeNarrative } from '../ai/narrative';
 import { buildCapitalAllocationReport } from './capital-allocation';
 import { CapitalAllocationReport } from '../../src/contracts/capital-allocation';
+import { syncCapitalActionsToNotion } from '../notion/capital-writeback';
+import { NotionSyncResult } from '../../src/contracts/notion-writeback';
 
 const ActionInput = z.object({ action: z.enum(['approve', 'reject']) });
 
@@ -917,6 +919,41 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       } catch (err) {
         console.error('[warehouse-api] /capital-allocation error:', err instanceof Error ? err.message : String(err));
         return c.json({ error: 'capital allocation failed' }, 500);
+      }
+    }),
+  );
+
+  // ── POST /capital-allocation/sync-notion (Direction 1 — Notion Writeback) ─────────────────
+  //
+  // Recomputes the Capital Allocation Report, then writes each property's capitalAction +
+  // priorityScore back to the Notion 🏢 Property Register (the operational per-property DB).
+  // Requires NOTION_TOKEN (never committed). Localhost-only via the existing CORS guard.
+  //
+  // FAIL-OPEN: the writeback never throws on per-property mismatch or a single page failure —
+  //   it returns { synced, skipped, errors[], asOf }. Only a missing token (400) or an
+  //   unavailable snapshot (503) short-circuits. The H6 read boundary parses the result.
+  app.post('/capital-allocation/sync-notion', (c) =>
+    withDb(async (db) => {
+      const token = process.env['NOTION_TOKEN'];
+      if (!token) return c.json({ error: 'NOTION_TOKEN not configured' }, 400);
+      try {
+        const { brain } = await import('../brain');
+        const snapshot = await brain.getSnapshot();
+        if (!snapshot) return c.json({ error: 'snapshot unavailable' }, 503);
+        const report = await buildCapitalAllocationReport(db, snapshot);
+        const result = await syncCapitalActionsToNotion(
+          report.entries.map((e) => ({
+            propertyName: e.propertyName,
+            capitalAction: e.capitalAction,
+            priorityScore: e.priorityScore,
+          })),
+          token,
+          { asOf: report.asOf },
+        );
+        return c.json(NotionSyncResult.parse(result));
+      } catch (err) {
+        console.error('[warehouse-api] /capital-allocation/sync-notion error:', err instanceof Error ? err.message : String(err));
+        return c.json({ error: 'notion writeback failed' }, 500);
       }
     }),
   );
