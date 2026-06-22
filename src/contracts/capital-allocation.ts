@@ -6,6 +6,7 @@
 import { z } from 'zod';
 import { CapitalAction } from './warehouse';
 import { CapRatePercentile } from './market-intelligence';
+import { RegionalMacroSnapshot } from './regional-macro';
 
 /**
  * Per-property synthesis row.
@@ -88,5 +89,12 @@ export const CapitalAllocationReport = z.object({
     source: z.enum(['fred', 'seed', 'unavailable']),
     asOf: z.string().nullable(),
   }),
+  /**
+   * Regional market dynamics (Scope B) — state-level unemployment for ORA's 7 markets.
+   * DIAGNOSTIC / DISPLAY-ONLY: a labor-tightening/loosening context signal that does NOT
+   * feed priorityScore or capitalAction. null is the fail-open state (provider unreachable);
+   * the UI then omits the regional row. Per-state provenance lives inside the snapshot.
+   */
+  regionalMacro: RegionalMacroSnapshot.nullable(),
 });
 export type CapitalAllocationReport = z.infer<typeof CapitalAllocationReport>;

@@ -34,10 +34,12 @@ import { propertyPeriodMetrics } from './metrics';
 import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast';
 import { getMacro } from '../macro/getMacro';
 import { getMacroMarketBenchmarks } from '../macro/market-benchmarks';
+import { getRegionalMacro } from '../macro/regional-macro';
 import { classifyCapRateBand, benchmarkKey } from '../../src/contracts/market-intelligence';
 import type { CapRateBenchmark, MarketBenchmarkSet } from '../../src/contracts/market-intelligence';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import type { CapitalAllocationReport, CapitalAllocationEntry, MacroContext } from '../../src/contracts/capital-allocation';
+import type { RegionalMacroSnapshot } from '../../src/contracts/regional-macro';
 
 // ── Internal helpers ───────────────────────────────────────────────────────────────────────
 
@@ -137,6 +139,18 @@ export async function buildCapitalAllocationReport(
   const benchmarkByKey = new Map<string, CapRateBenchmark>();
   for (const b of benchmarkSet.benchmarks) {
     benchmarkByKey.set(benchmarkKey(b.market, b.propertyType), b);
+  }
+
+  // ── 1c. Regional market dynamics (Scope B) — DISPLAY-ONLY labor context ─────────────────
+  // State-level unemployment for ORA's 7 markets. The provider is fail-open by contract
+  // (never throws); the belt-and-braces try/catch here keeps a provider regression from
+  // taking down the whole report. null on error → the UI omits the regional row.
+  // This signal does NOT feed priorityScore or capitalAction — diagnostic overlay only.
+  let regionalMacro: RegionalMacroSnapshot | null = null;
+  try {
+    regionalMacro = await getRegionalMacro();
+  } catch {
+    regionalMacro = null;
   }
 
   // ── 2. Property scores (health/attention/capitalAction) ───────────────────────────────
@@ -355,5 +369,6 @@ export async function buildCapitalAllocationReport(
       source: benchmarkSet.source,
       asOf: benchmarkSet.asOf,
     },
+    regionalMacro,
   };
 }
