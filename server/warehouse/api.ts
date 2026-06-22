@@ -984,11 +984,8 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
             'content-disposition': `attachment; filename="${icMemoFilename(portfolio)}"`,
           },
         });
-      } catch (err) {
-        console.error(
-          '[warehouse-api] /capital-allocation/ic-memo error:',
-          err instanceof Error ? err.message : String(err),
-        );
+      } catch {
+        console.error('[warehouse-api] /capital-allocation/ic-memo generation failed');
         return new Response(JSON.stringify({ error: 'ic memo generation failed' }), {
           status: 500,
           headers: { 'content-type': 'application/json' },
