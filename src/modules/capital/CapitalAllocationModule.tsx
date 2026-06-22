@@ -75,6 +75,41 @@ function fmtSf(n: number): string {
   return `${n}`;
 }
 
+// ── Market cap-rate helpers ──────────────────────────────────────────────────────
+// All fail-open: null inputs render '—'. capRatePercentile is a discrete band
+// (bottom/median/top) — never interpolated.
+
+function fmtCapRate(n: number | null): string {
+  if (n === null || !Number.isFinite(n)) return '—';
+  return `${(n * 100).toFixed(1)}%`;
+}
+
+/** Signed gap in basis points vs market median. Positive = higher yield than market. */
+function fmtCapRateGap(n: number | null): string {
+  if (n === null || !Number.isFinite(n)) return '—';
+  const bps = Math.round(n * 10_000);
+  return `${bps >= 0 ? '+' : ''}${bps} bps`;
+}
+
+function capBandLabel(band: CapitalAllocationEntry['capRatePercentile']): string {
+  switch (band) {
+    case 'bottom': return 'Below mkt';
+    case 'median': return 'At mkt';
+    case 'top': return 'Above mkt';
+    default: return '—';
+  }
+}
+
+function capBandTone(band: CapitalAllocationEntry['capRatePercentile']): BadgeTone {
+  // Cap-rate level only — NOT a desirability judgment. 'top' = higher yield / cheaper basis.
+  switch (band) {
+    case 'top': return 'green';
+    case 'median': return 'neutral';
+    case 'bottom': return 'amber';
+    default: return 'neutral';
+  }
+}
+
 // ── Table columns ──────────────────────────────────────────────────────────────
 
 const COLS: Column<CapitalAllocationEntry>[] = [
@@ -166,6 +201,48 @@ const COLS: Column<CapitalAllocationEntry>[] = [
     sortValue: (e) => e.debtScore ?? 999,
   },
   {
+    key: 'impliedCap',
+    header: 'Implied Cap',
+    align: 'right',
+    render: (e) => (
+      <span className="num text-xs" style={{ color: 'var(--text-secondary)' }}>
+        {fmtCapRate(e.impliedCapRate)}
+      </span>
+    ),
+    sortValue: (e) => e.impliedCapRate ?? -1,
+  },
+  {
+    key: 'capGap',
+    header: 'vs Mkt',
+    align: 'right',
+    render: (e) => (
+      <span
+        className="num text-xs"
+        style={{
+          color: e.capRateGap === null
+            ? 'var(--text-tertiary)'
+            : e.capRateGap >= 0
+            ? 'var(--color-pos)'
+            : 'var(--color-warn)',
+        }}
+      >
+        {fmtCapRateGap(e.capRateGap)}
+      </span>
+    ),
+    sortValue: (e) => e.capRateGap ?? -999,
+  },
+  {
+    key: 'capBand',
+    header: 'Cap Band',
+    render: (e) =>
+      e.capRatePercentile === null ? (
+        <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>—</span>
+      ) : (
+        <Badge tone={capBandTone(e.capRatePercentile)}>{capBandLabel(e.capRatePercentile)}</Badge>
+      ),
+    sortValue: (e) => e.capRatePercentile ?? '',
+  },
+  {
     key: 'rationale',
     header: 'Rationale',
     render: (e) => (
@@ -230,6 +307,9 @@ export function CapitalAllocationModule() {
 
   const { entries, macro } = data;
   const isMacroSeeded = macro.source === 'mock';
+  const bench = data.marketBenchmarks;
+  const benchSeeded = bench.source === 'seed';
+  const benchUnavailable = !bench.available || bench.source === 'unavailable';
 
   return (
     <div className="flex flex-col gap-4">
@@ -309,6 +389,13 @@ export function CapitalAllocationModule() {
             <div className="flex items-center gap-1.5">
               <Badge tone="neutral">{entries.length} properties</Badge>
               {!isMacroSeeded && <Badge tone="green">FRED live</Badge>}
+              {benchUnavailable ? (
+                <Badge tone="neutral">Cap benchmarks offline</Badge>
+              ) : benchSeeded ? (
+                <Badge tone="amber">Cap benchmarks: seeded</Badge>
+              ) : (
+                <Badge tone="green">Cap benchmarks: live</Badge>
+              )}
             </div>
           }
         />
@@ -328,7 +415,7 @@ export function CapitalAllocationModule() {
             rows={entries}
             getRowId={(e) => e.propertyId}
             initialSort={{ key: 'priority', dir: 'desc' }}
-            minWidth={820}
+            minWidth={1040}
           />
         )}
       </Card>
@@ -339,6 +426,17 @@ export function CapitalAllocationModule() {
           NOI and SF from workbook snapshot (Spine A — ownership layer).
           Priority score = 0.35×(100−health) + 0.30×attention + 0.20×leasingRisk + 0.15×debtUrgency.
           Not comparable with warehouse-ledger analytics (Spine B).
+        </p>
+        <p className="num text-2xs" style={{ color: 'var(--text-tertiary)', marginTop: 4 }}>
+          Cap rate based on Spine A NOI + workbook value. Implied cap = NOI ÷ Oxford-share value;
+          “vs Mkt” and Cap Band compare against external market benchmarks
+          {benchUnavailable
+            ? ' (benchmarks unavailable — cap columns blank).'
+            : benchSeeded
+            ? ' (seeded snapshot — set a live feed for FRED-backed bands).'
+            : ' (live feed).'}{' '}
+          Cap Band is a discrete position (below / at / above market), not a continuous percentile,
+          and is diagnostic only — it does not affect the priority score or capital action.
         </p>
       </div>
     </div>
