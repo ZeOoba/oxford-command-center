@@ -383,11 +383,9 @@ export function _buildDebtReasonImpacts(input: DebtReasonImpactInput): ReasonImp
   const dscrFires = dscr !== null && dscr < DSCR_FLOOR;
 
   if (effectiveBalloonMonths !== null && effectiveBalloonMonths < 24) {
-    // Balloon-timing-only urgency: strip the DSCR 30-pt component from debtUrgency.
-    // debtUrgency = clamp(balloonComponent + (dscrFires ? 30 : 0), 0, 100)
-    // To recover balloonComponent after clamping we subtract the DSCR penalty from
-    // the unclamped sum, then re-clamp to [0, 100].  This is equivalent to computing
-    // balloonComponent directly and clamping independently.
+    // Balloon-timing-only urgency: compute based solely on months to maturity,
+    // excluding the DSCR 30-pt penalty component.  The formula balloonComponent = 100 - (months/12)*10
+    // is clamped independently to [0, 100].  The DSCR penalty fires separately below.
     const balloonComponent = Math.max(0, 100 - (effectiveBalloonMonths / 12) * 10);
     const balloonOnlyUrgency = clamp(balloonComponent, 0, 100);
     reasons.push({
