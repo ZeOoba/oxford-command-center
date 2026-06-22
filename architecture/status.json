@@ -260,6 +260,16 @@
     "last_updated": "2026-06-22T00:05:00Z"
   },
 
+  "scope-b-regional": {
+    "agent_role": "Analytics Agent — Claude Code Sonnet 4.6",
+    "phase": "Scope B — regional market dynamics (state unemployment via FRED)",
+    "status": "merged",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "MERGED via PR #116. State unemployment FRED integration + regional dynamics enrichment in market intelligence layer; 1686 tests. Worktree removed post-merge.",
+    "last_updated": "2026-06-22T00:30:00Z"
+  },
+
   "usage": {
     "how_to_update": "Edit your worktree's entry before starting and after completing work; commit it on your branch. Use ISO 8601 timestamps. Set review_needed=true and fill review_detail when you need architect sign-off on an architect-owned file.",
     "how_to_read": "Before starting any task, check all other worktrees for status=in_progress or review_needed. If another agent works in your file-ownership area, coordinate before editing."
