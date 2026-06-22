@@ -945,13 +945,11 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
   // TODO: Route needs porting from CapitalAllocationReport → PortfolioAllocation.
   // buildCapitalAllocationReport was removed in PR #117 (capstone rewrite); ic-memo.ts still
   // expects the old CapitalAllocationEntry schema. Returning 501 until the port is done.
-  app.get('/capital-allocation/ic-memo', () =>
-    withDb(async (_db) => {
-      return new Response(
-        JSON.stringify({ error: 'ic-memo pending API migration (CapitalAllocationReport → PortfolioAllocation)' }),
-        { status: 501, headers: { 'content-type': 'application/json' } },
-      );
-    }),
+  app.get('/capital-allocation/ic-memo', (c) =>
+    c.json(
+      { error: 'ic-memo pending API migration (CapitalAllocationReport → PortfolioAllocation)' },
+      501,
+    ),
   );
 
   // ── Prospect Demand Intelligence (Direction 3) ────────────────────────────────────────────
