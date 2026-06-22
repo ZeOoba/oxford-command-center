@@ -55,7 +55,9 @@ import { renderBriefingPdf } from '../briefing/pdf';
 import { briefingFilename } from '../briefing/filename';
 import { composeNarrative } from '../ai/narrative';
 import { buildCapitalAllocationReport } from './capital-allocation';
+import { buildIcMemoHtml, icMemoFilename } from './ic-memo';
 import { CapitalAllocationReport } from '../../src/contracts/capital-allocation';
+import { assertNoConfidential } from '../briefing/confidential';
 import { syncCapitalActionsToNotion } from '../notion/capital-writeback';
 import { NotionSyncResult } from '../../src/contracts/notion-writeback';
 import { getProspectDemandReport, addProspectEvent } from './prospect-demand';
@@ -962,14 +964,29 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
 
   // ── GET /capital-allocation/ic-memo (Direction 2 — IC Memo HTML export) ───────────────────
   //
-  // TODO: Route needs porting from CapitalAllocationReport → PortfolioAllocation.
-  // buildCapitalAllocationReport was removed in PR #117 (capstone rewrite); ic-memo.ts still
-  // expects the old CapitalAllocationEntry schema. Returning 501 until the port is done.
+  // Streams the self-contained IC Memo HTML document for browser "Print to PDF".
+  // assertNoConfidential runs as a defense-in-depth backstop (CapitalAllocationReport is an
+  // ownership artifact that by construction carries no deal terms, but the guard is cheap).
   app.get('/capital-allocation/ic-memo', (c) =>
-    c.json(
-      { error: 'ic-memo pending API migration (CapitalAllocationReport → PortfolioAllocation)' },
-      501,
-    ),
+    withDb(async (db) => {
+      try {
+        const { brain } = await import('../brain');
+        const snapshot = await brain.getSnapshot();
+        if (!snapshot) return c.json({ error: 'snapshot unavailable' }, 503);
+        const report = await buildCapitalAllocationReport(db, snapshot);
+        assertNoConfidential(report);
+        const html = buildIcMemoHtml(report);
+        return new Response(html, {
+          headers: {
+            'content-type': 'text/html; charset=utf-8',
+            'content-disposition': `attachment; filename="${icMemoFilename(report)}"`,
+          },
+        });
+      } catch (err) {
+        console.error('[warehouse-api] /capital-allocation/ic-memo error:', err instanceof Error ? err.message : String(err));
+        return c.json({ error: 'ic-memo generation failed' }, 500);
+      }
+    }),
   );
 
   // ── Prospect Demand Intelligence (Direction 3) ────────────────────────────────────────────
