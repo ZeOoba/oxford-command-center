@@ -290,6 +290,14 @@ async function main(): Promise<number> {
       failures.push('lease_events table missing — migration 011 did not apply');
     }
 
+    // 8e. Migration 012 schema presence — prospect_demand_events must exist (Prospect Demand foundation).
+    const prospectDemandExists = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='prospect_demand_events'",
+    ).get() as { name: string } | undefined;
+    if (!prospectDemandExists) {
+      failures.push('prospect_demand_events table missing — migration 012 did not apply');
+    }
+
     // 9. Re-ingest smoke — exercise the parser-version RESTALE re-derive path, which verify otherwise
     //    never hits (it builds a fresh DB). Stale every committed import's parser_version, re-ingest the
     //    same files (→ in-place re-derive), then assert the re-derive is idempotent (same basis), empties
@@ -414,7 +422,8 @@ async function main(): Promise<number> {
     `SF-less cohort exclusion verified (${CANON_PROPERTIES.filter((p) => p.rentableSf == null).length} non-operating entity/entities), ` +
     `property_insurance_policies schema present (migration 008), ` +
     `debt_positions schema present (migration 009), ` +
-    `lease_events schema present (migration 011)`);
+    `lease_events schema present (migration 011), ` +
+    `prospect_demand_events schema present (migration 012)`);
   return 0;
 }
 

@@ -58,6 +58,8 @@ import { buildCapitalAllocationReport } from './capital-allocation';
 import { CapitalAllocationReport } from '../../src/contracts/capital-allocation';
 import { syncCapitalActionsToNotion } from '../notion/capital-writeback';
 import { NotionSyncResult } from '../../src/contracts/notion-writeback';
+import { getProspectDemandReport, addProspectEvent } from './prospect-demand';
+import { ProspectDemandReport, ProspectDemandEventInput } from '../../src/contracts/prospect-demand';
 
 const ActionInput = z.object({ action: z.enum(['approve', 'reject']) });
 
@@ -955,6 +957,30 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
         console.error('[warehouse-api] /capital-allocation/sync-notion error:', err instanceof Error ? err.message : String(err));
         return c.json({ error: 'notion writeback failed' }, 500);
       }
+    }),
+  );
+
+  // ── Prospect Demand Intelligence (Direction 3) ────────────────────────────────────────────
+  //    External demand signals on portfolio properties (broker showings, inquiries, LOI, tours,
+  //    follow-ups). Read-only GET returns the per-property aggregate report (H6 read boundary:
+  //    .parse()d before c.json). POST manually logs one event (the analyst-entry path today;
+  //    the future Outlook ingest pipeline will write the same table with source='outlook').
+  //    Behind the same 503 guard; this is portfolio-FINANCIAL/ops data, never a confidential deal term.
+
+  // GET /api/warehouse/prospect-demand → ProspectDemandReport
+  app.get('/prospect-demand', (c) =>
+    withDb((db) => c.json(ProspectDemandReport.parse(getProspectDemandReport(db)))),
+  );
+
+  // POST /api/warehouse/prospect-demand → ProspectDemandEvent (201)
+  // Body: ProspectDemandEventInput (a ProspectDemandEvent minus server-generated id + created_at).
+  // 400 on a malformed/missing-required-field body (Zod). source defaults to 'manual'.
+  app.post('/prospect-demand', (c) =>
+    withDb(async (db) => {
+      const parsed = ProspectDemandEventInput.safeParse(await c.req.json().catch(() => ({})));
+      if (!parsed.success) return c.json({ error: 'invalid prospect demand event', issues: parsed.error.issues }, 400);
+      const event = addProspectEvent(db, parsed.data);
+      return c.json(event, 201);
     }),
   );
 

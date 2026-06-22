@@ -21,6 +21,7 @@ import {
   Gauge,
   TrendingUp,
   PieChart,
+  Radar,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -46,6 +47,7 @@ const IntelModule = lazy(() => import('@/modules/intel/IntelModule').then((m) =>
 const CalibrationModule = lazy(() => import('@/modules/calibration/CalibrationModule').then((m) => ({ default: m.CalibrationModule })));
 const LeaseForecastModule = lazy(() => import('@/modules/leasing/LeaseForecastModule').then((m) => ({ default: m.LeaseForecastModule })));
 const CapitalAllocationModule = lazy(() => import('@/modules/capital/CapitalAllocationModule').then((m) => ({ default: m.CapitalAllocationModule })));
+const ProspectDemandModule = lazy(() => import('@/modules/intel/ProspectDemandModule').then((m) => ({ default: m.ProspectDemandModule })));
 
 export type ModuleGroup = 'Command' | 'Assets' | 'Capital' | 'Market';
 
@@ -71,6 +73,7 @@ export const MODULES: ModuleDef[] = [
   { id: 'calibration', label: 'Calibration', icon: Gauge, group: 'Assets', Component: CalibrationModule },
   { id: 'leases', label: 'Leases', icon: FileText, group: 'Assets', Component: LeasesModule },
   { id: 'leasing', label: 'Leasing', icon: TrendingUp, group: 'Assets', Component: LeaseForecastModule },
+  { id: 'prospect-demand', label: 'Demand Signals', icon: Radar, group: 'Assets', Component: ProspectDemandModule },
   { id: 'tenants', label: 'Tenants', icon: Contact, group: 'Assets', Component: TenantsModule },
   { id: 'debt', label: 'Debt', icon: Landmark, group: 'Capital', Component: DebtModule },
   { id: 'capital-allocation', label: 'Capital Allocation', icon: PieChart, group: 'Capital', Component: CapitalAllocationModule },
