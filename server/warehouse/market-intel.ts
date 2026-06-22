@@ -3,6 +3,7 @@ import { getMacro } from '../macro/getMacro';
 import type { MacroIndicator, MacroSnapshot } from '../../src/contracts/macro';
 import type { MarketSignal, MarketAction, MarketSourceTag } from '../../src/contracts/capital';
 import type { Confidence } from '../../src/contracts/common';
+import { DAY_MS } from './time-constants';
 
 // ── Scoring ───────────────────────────────────────────────────────────────────
 
@@ -37,7 +38,7 @@ function compsScore(capRatePct: number | null): number | null {
 const STALE_DAYS: Record<string, number> = { 'census-acs': 400, 'comps-ai': 90 };
 
 function daysBetween(isoA: string, isoB: string): number {
-  return Math.abs(new Date(isoB).getTime() - new Date(isoA).getTime()) / 86400000;
+  return Math.abs(new Date(isoB).getTime() - new Date(isoA).getTime()) / DAY_MS;
 }
 
 // ── Action ────────────────────────────────────────────────────────────────────
