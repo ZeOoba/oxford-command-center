@@ -21,6 +21,7 @@ import { getRegionalMacro } from '../macro/regional-macro';
 import { propertyPeriodMetrics } from './metrics';
 import { scoreProperties } from './scores';
 import { scoreDebtPositions } from './debt-scoring';
+import { clamp } from './clamp';
 import { loadCapitalConfig } from './capital-config';
 import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast';
 import { classifyCapRateBand, benchmarkKey } from '../../src/contracts/market-intelligence';
@@ -335,8 +336,6 @@ export async function buildPortfolioAllocation(
 //
 // NOI basis: ALL NOI/SF figures are tagged noiBasis:'spine-a' (workbook ownership layer).
 // NEVER mix with Spine-B warehouse ledger NOI — they are independent computations.
-
-const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
 function attentionBandScore(band: string | null | undefined): number {
   if (band === 'red') return 100;

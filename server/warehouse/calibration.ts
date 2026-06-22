@@ -32,6 +32,7 @@ import {
   type CalibrationLogRow,
   type InputsVersion,
 } from '../../src/contracts/warehouse';
+import { clamp } from './clamp';
 
 // ── canonical JSON + hash (mirrors server/warehouse/acquisition.ts) ───────────────────────
 function stableStringify(v: unknown): string {
@@ -162,7 +163,6 @@ export function computeInputsVersion(db: WarehouseDb, configOverride?: Record<st
 }
 
 // ── confidence proxy (spec §2.3) ──────────────────────────────────────────────────────────
-const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
 /** Band confidence = normalized distance from the nearest health-band boundary, clamped to [0.5,0.95]. */
 function bandConfidence(health: number): number {
