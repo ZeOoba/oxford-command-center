@@ -14,6 +14,24 @@
 | # | File | Description |
 |---|------|-------------|
 | 001 | `001_initial.sql` | Full warehouse schema (all 5 tables + indexes) |
+| 002 | `002_parser_version.sql` | `import_batches`: adds `parser_version INTEGER DEFAULT 0` — enables re-derive on parser upgrade without re-ingest |
+| 003 | `003_capital_config.sql` | New tables: `capital_config` (governor version history, seed v1) + `calibration_log` (parameter-change audit trail) |
+| 004 | `004_occupancy.sql` | New table: `property_occupancy` — per-property occupancy time-series snapshots (workbook-sourced, separate from P&L spine) |
+| 005 | `005_calibration.sql` | New tables: `calibration_inputs_version`, `calibration_verdict`, `calibration_outcome` — 40-year score-vs-outcome feedback loop scaffold |
+| 006 | `006_lease_terms.sql` | New table: `lease_terms` — per-tenant lease data (rent schedule, renewal options, diligence notes) for forward cash-flow modeling |
+| 007 | `007_acq_candidates.sql` | New tables: `acq_candidates`, `acq_source_batches`, `acq_score_inputs`, `acq_scores` — Acquisition Intelligence Engine (Phase 4) |
+| 008 | `008_insurance_policies.sql` | New table: `property_insurance_policies` — insurance policy snapshots (Phase 5) |
+| 009 | `009_debt_positions.sql` | New table: `debt_positions` — borrower-side debt snapshots (lender-side excluded); raw terms never reach client |
+| 010 | `010_debt_scores.sql` | New table: `debt_scores` — persisted debt-score output (DSCR, LTV, signal, band) for trend tracking |
+| 011 | `011_lease_events.sql` | New table: `lease_events` — lease lifecycle events (vacate/commence) enabling days-vacant-to-leased velocity metric |
+| 012 | `012_prospect_demand.sql` | New table: `prospect_demand_events` — external demand signals (showings, inquiries, LOIs, tours); source='manual' today, 'outlook' future |
+| 013 | `013_market_series.sql` | New table: `market_series` — per-cluster market data time series (vacancy, rent growth, cap rates) |
+| 014 | `014_recommendations.sql` | New table: `recommendations` — capital-action recommendations (buy/hold/sell/refinance/improve) with confidence and reasons |
+| 015 | `015_hurdle_rate.sql` | `capital_config`: adds `hurdle_rate_pct`, `hurdle_rate_ratification`, `hurdle_rate_ratified_by`, `hurdle_rate_ratified_date` columns |
+| 016 | `016_property_onboarding.sql` | New table: `property_onboarding` — per-property PM system + authoritative source config (Phase 5 W4) |
+| 017a | `017_market_series_constraints.sql` | `market_series`: adds unique index `ux_market_series_tuple (cluster, as_of, source, metric)` — deferred from migration 013 |
+| 017b | `017_ratify_hurdle_rate.sql` | `capital_config`: stamps hurdle-rate ratification (`ratified` / Gabriel Goldberg / 2026-06-22) on latest config row |
+| 018 | `018_recommendations_constraints.sql` | `recommendations`: table-recreate to add `CHECK (expected_return_pct BETWEEN -1.0 AND 5.0)`, `CHECK (timeline_months > 0)`, and unique index `ux_recommendations_versioned (property_id, as_of, inputs_version)` |
 
 ---
 
@@ -85,7 +103,8 @@ CREATE TABLE IF NOT EXISTS import_batches (
   status          TEXT    NOT NULL,
   superseded_by   INTEGER REFERENCES import_batches(id),
   confidence      REAL,
-  detect_notes    TEXT
+  detect_notes    TEXT,
+  parser_version  INTEGER NOT NULL DEFAULT 0
 );
 ```
 
