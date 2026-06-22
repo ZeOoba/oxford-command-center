@@ -48,10 +48,10 @@ These two spines have one critical defect: `Property.noi` (Spine A) and `warehou
 | Item | State |
 |------|-------|
 | Branch | `main` (worktree tracking origin/main) |
-| Last merge to main | PR #117 (`6cd58ed`) — Phase 5 Capital Allocation capstone (5-way verdict + Market Intelligence + Property Onboarding) |
-| Open PRs | none in flight |
+| Last merge to main | PR #121 (`f951b40`) — IC Memo HTML export (Direction 2) |
+| Open PRs | #122 in flight (this chore) |
 | Gate | typecheck + lint + test + reconcile + warehouse:verify + **governance** |
-| Tests | 1686+ vitest unit tests |
+| Tests | 1713+ vitest unit tests |
 | Uncommitted changes | Gabriel actively co-develops this tree — varies constantly |
 
 **Off-limits rule (do NOT enumerate the locked set here — it goes stale the instant Gabriel commits; that staleness is itself a failure mode):**
