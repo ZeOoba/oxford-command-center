@@ -14,7 +14,7 @@
 | # | File | Description |
 |---|------|-------------|
 | 001 | `001_initial.sql` | Full warehouse schema (all 5 tables + indexes) |
-| 002 | `002_parser_version.sql` | `import_batches`: adds `parser_version INTEGER DEFAULT 0` — enables re-derive on parser upgrade without re-ingest |
+| 002 | `002_parser_version.sql` | `import_batches`: adds `parser_version INTEGER NOT NULL DEFAULT 0` — enables re-derive on parser upgrade without re-ingest |
 | 003 | `003_capital_config.sql` | New tables: `capital_config` (governor version history, seed v1) + `calibration_log` (parameter-change audit trail) |
 | 004 | `004_occupancy.sql` | New table: `property_occupancy` — per-property occupancy time-series snapshots (workbook-sourced, separate from P&L spine) |
 | 005 | `005_calibration.sql` | New tables: `calibration_inputs_version`, `calibration_verdict`, `calibration_outcome` — 40-year score-vs-outcome feedback loop scaffold |
