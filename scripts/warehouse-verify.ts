@@ -357,6 +357,20 @@ async function main(): Promise<number> {
       failures.push('property_onboarding table missing — migration 016 did not apply');
     }
 
+    // 8m. Migration 017/018 schema presence — constraint indexes must exist.
+    const marketSeriesTupleIdx = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name='ux_market_series_tuple'",
+    ).get() as { name: string } | undefined;
+    if (!marketSeriesTupleIdx) {
+      failures.push('ux_market_series_tuple index missing — migration 017 did not apply');
+    }
+    const recommendationsVersionedIdx = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='index' AND name='ux_recommendations_versioned'",
+    ).get() as { name: string } | undefined;
+    if (!recommendationsVersionedIdx) {
+      failures.push('ux_recommendations_versioned index missing — migration 018 did not apply');
+    }
+
     // 9. Re-ingest smoke — exercise the parser-version RESTALE re-derive path, which verify otherwise
     //    never hits (it builds a fresh DB). Stale every committed import's parser_version, re-ingest the
     //    same files (→ in-place re-derive), then assert the re-derive is idempotent (same basis), empties
@@ -483,7 +497,9 @@ async function main(): Promise<number> {
     `debt_positions schema present (migration 009), ` +
     `lease_events schema present (migration 011), ` +
     `prospect_demand_events schema present (migration 012), ` +
-    `Phase 5 tables present (migrations 013-016: market_series, recommendations, hurdle_rate columns, property_onboarding)`);
+    `Phase 5 tables present (migrations 013-016: market_series, recommendations, hurdle_rate columns, property_onboarding), ` +
+    `ux_market_series_tuple index present (migration 017), ` +
+    `ux_recommendations_versioned index present (migration 018)`);
   return 0;
 }
 
