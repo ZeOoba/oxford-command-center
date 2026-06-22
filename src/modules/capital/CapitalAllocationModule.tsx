@@ -14,16 +14,19 @@
 //
 // Error policy: degrades to an informational empty state when the warehouse is
 // offline (mirrors ScorecardView in debt module).
-import { useQuery } from '@tanstack/react-query';
-import { PieChart } from 'lucide-react';
+import { useMutation, useQuery } from '@tanstack/react-query';
+import { PieChart, UploadCloud } from 'lucide-react';
 import { fetchParsedOrMirror, isWarehouseUnavailable, QUERY_OPTS } from '../intel/hooks';
 import { CapitalAllocationReport } from '@contracts/capital-allocation';
 import type { CapitalAllocationEntry } from '@contracts/capital-allocation';
+import { NotionSyncResult } from '@contracts/notion-writeback';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
+import { Button } from '@/primitives/Button';
 import { Skeleton } from '@/primitives/Skeleton';
+import { useToast } from '@/primitives/toast-context';
 
 // ── Local hooks ────────────────────────────────────────────────────────────────
 
@@ -34,6 +37,22 @@ function useCapitalAllocation() {
       fetchParsedOrMirror('/api/warehouse/capital-allocation', CapitalAllocationReport),
     ...QUERY_OPTS,
   });
+}
+
+/**
+ * Mutation: write the current capital decisions back to the Notion Property Register.
+ * The route recomputes the report server-side, so no request body is needed. The response is
+ * Zod-validated against NotionSyncResult; a non-2xx (e.g. 400 NOTION_TOKEN not configured)
+ * surfaces a thrown Error the caller turns into an error toast.
+ */
+async function postNotionSync(): Promise<NotionSyncResult> {
+  const res = await fetch('/api/warehouse/capital-allocation/sync-notion', { method: 'POST' });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    const msg = json && typeof json === 'object' && 'error' in json ? String((json as { error: unknown }).error) : `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return NotionSyncResult.parse(json);
 }
 
 // ── Display helpers ────────────────────────────────────────────────────────────
@@ -258,6 +277,24 @@ const COLS: Column<CapitalAllocationEntry>[] = [
 
 export function CapitalAllocationModule() {
   const { data, isLoading, error } = useCapitalAllocation();
+  const { toast } = useToast();
+  const notionSync = useMutation({
+    mutationFn: postNotionSync,
+    onSuccess: (r) => {
+      const errCount = r.errors.length;
+      toast({
+        tone: errCount > 0 ? 'info' : 'success',
+        title: `Synced ${r.synced} to Notion`,
+        description: `${r.skipped} skipped${errCount > 0 ? ` · ${errCount} error${errCount > 1 ? 's' : ''}` : ''}`,
+      });
+    },
+    onError: (e) =>
+      toast({
+        tone: 'error',
+        title: 'Notion sync failed',
+        description: e instanceof Error ? e.message : String(e),
+      }),
+  });
 
   if (isLoading) {
     return (
@@ -431,6 +468,16 @@ export function CapitalAllocationModule() {
               ) : (
                 <Badge tone="green">Cap benchmarks: live</Badge>
               )}
+              <Button
+                variant="subtle"
+                size="sm"
+                onPress={() => notionSync.mutate()}
+                isDisabled={notionSync.isPending || entries.length === 0}
+                aria-label="Sync capital decisions to Notion"
+              >
+                <UploadCloud size={13} />
+                {notionSync.isPending ? 'Syncing…' : 'Sync to Notion'}
+              </Button>
             </div>
           }
         />
