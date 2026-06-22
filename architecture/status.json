@@ -10,6 +10,16 @@
     "last_updated": "ISO 8601 timestamp"
   },
 
+  "phase-5-cap-alloc": {
+    "agent_role": "Analytics Agent + UX Agent — Claude Code Sonnet 4.6",
+    "phase": "Phase 5 — Capital Allocation capstone (synthesis engine + CapitalAllocationModule UI + FRED macro context)",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": null,
+    "last_updated": "2026-06-21T22:30:00Z"
+  },
+
   "worktrees": {
     "main": {
       "agent_role": "Lead Architect",
