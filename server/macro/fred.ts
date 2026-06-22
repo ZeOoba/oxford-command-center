@@ -7,15 +7,31 @@ import { WORKBOOK_AS_OF } from '../config';
  * Series: DGS10, DGS2, SOFR, FEDFUNDS (levels) + CPIAUCSL (YoY %).
  */
 const BASE = 'https://api.stlouisfed.org/fred';
+const FRED_TIMEOUT_MS = 4_000;
 
 function key(): string | undefined {
   return process.env.FRED_API_KEY;
 }
 
+// AbortError from a timed-out fetch propagates through try/finally and would fail the
+// entire Promise.all() in fetchFredMacro(), dropping every series instead of just the
+// slow one. Catch here so callers get null/[] per-series, not a cascade failure.
+export async function fetchWithTimeout(url: string): Promise<Response | null> {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), FRED_TIMEOUT_MS);
+  try {
+    return await fetch(url, { signal: controller.signal });
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 async function obs(seriesId: string, extra = ''): Promise<number | null> {
   const url = `${BASE}/series/observations?series_id=${seriesId}&api_key=${key()}&file_type=json&sort_order=desc&limit=1${extra}`;
-  const r = await fetch(url);
-  if (!r.ok) return null;
+  const r = await fetchWithTimeout(url);
+  if (!r || !r.ok) return null;
   const j = (await r.json()) as { observations?: { value: string }[] };
   const v = j.observations?.[0]?.value;
   const n = v ? parseFloat(v) : NaN;
@@ -24,8 +40,8 @@ async function obs(seriesId: string, extra = ''): Promise<number | null> {
 
 async function tenYearHistory(): Promise<MacroSeriesPoint[]> {
   const url = `${BASE}/series/observations?series_id=DGS10&api_key=${key()}&file_type=json&frequency=m&observation_start=2025-06-01&sort_order=asc&limit=13`;
-  const r = await fetch(url);
-  if (!r.ok) return [];
+  const r = await fetchWithTimeout(url);
+  if (!r || !r.ok) return [];
   const j = (await r.json()) as { observations?: { date: string; value: string }[] };
   return (j.observations ?? [])
     .filter((o) => o.value !== '.' && Number.isFinite(parseFloat(o.value)))
