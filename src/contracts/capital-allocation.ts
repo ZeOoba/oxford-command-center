@@ -5,6 +5,7 @@
 // Spine-B warehouse ledger). This contract is the H6 read boundary for capital-allocation routes.
 import { z } from 'zod';
 import { CapitalAction } from './warehouse';
+import { CapRatePercentile } from './market-intelligence';
 
 /**
  * Per-property synthesis row.
@@ -32,6 +33,19 @@ export const CapitalAllocationEntry = z.object({
   noi: z.number(),
   noiPerSf: z.number().nullable(),
   noiBasis: z.literal('spine-a'),
+
+  // ── Market Intelligence overlay (Phase 5 Track 3) — DIAGNOSTIC ONLY ──────────────────────
+  // These three fields position the property's in-place economics against external market
+  // cap-rate benchmarks. They are display-layer diagnostics: they DO NOT feed priorityScore,
+  // capitalAction, or any ranking. All null when the benchmark provider is unavailable, the
+  // property has no positive value, or its market+type has no benchmark band (fail-open).
+  //
+  // impliedCapRate = Spine-A NOI / workbook value (decimal fraction). Same Spine-A NOI as `noi`
+  // above — see basis label. capRateGap = impliedCapRate − market p50 (positive = higher yield /
+  // cheaper than market median). capRatePercentile = discrete band vs market (bottom/median/top).
+  impliedCapRate: z.number().nullable(),
+  capRateGap: z.number().nullable(),
+  capRatePercentile: CapRatePercentile.nullable(),
 });
 export type CapitalAllocationEntry = z.infer<typeof CapitalAllocationEntry>;
 
@@ -63,5 +77,16 @@ export const CapitalAllocationReport = z.object({
   monitorCount: z.number(),
   dispositionCount: z.number(),
   macro: MacroContext,
+  /**
+   * Market cap-rate benchmark provenance (Phase 5 Track 3). source:'unavailable' + available:false
+   * is the fail-open state — the UI then renders all per-entry cap-rate columns as '—'.
+   * The full per-market bands are NOT echoed here (the UI only needs the source/asOf badge);
+   * each entry already carries its classified band in capRatePercentile.
+   */
+  marketBenchmarks: z.object({
+    available: z.boolean(),
+    source: z.enum(['fred', 'seed', 'unavailable']),
+    asOf: z.string().nullable(),
+  }),
 });
 export type CapitalAllocationReport = z.infer<typeof CapitalAllocationReport>;

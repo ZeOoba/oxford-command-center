@@ -283,6 +283,7 @@ describe('CapitalAllocationReport contract', () => {
       monitorCount: 0,
       dispositionCount: 0,
       macro: { tenYearRate: 4.47, cpi: 3.8, source: 'fred', asOf: '2026-06-21' },
+      marketBenchmarks: { available: true, source: 'seed', asOf: '2026-06-21' },
     };
     const result = CapitalAllocationReport.safeParse(valid);
     expect(result.success).toBe(true);
@@ -340,6 +341,9 @@ describe('CapitalAllocationEntry contract', () => {
     noi: 200_000,
     noiPerSf: 10,
     noiBasis: 'spine-a' as const,
+    impliedCapRate: 0.082,
+    capRateGap: 0.007,
+    capRatePercentile: 'median' as const,
   };
 
   it('accepts a valid entry', () => {
@@ -374,8 +378,16 @@ describe('CapitalAllocationEntry contract', () => {
       balloonMonths: null,
       dscr: null,
       noiPerSf: null,
+      impliedCapRate: null,
+      capRateGap: null,
+      capRatePercentile: null,
     };
     expect(CapitalAllocationEntry.safeParse(minimal).success).toBe(true);
+  });
+
+  it('rejects an unknown capRatePercentile band', () => {
+    const bad = { ...validEntry, capRatePercentile: 'p99' };
+    expect(CapitalAllocationEntry.safeParse(bad).success).toBe(false);
   });
 });
 
@@ -660,6 +672,72 @@ describe('buildCapitalAllocationReport integration', () => {
     expect(report.holdCount).toBe(1);
     expect(report.monitorCount).toBe(1);
     expect(report.dispositionCount).toBe(0);
+  });
+
+  it('includes marketBenchmarks provenance and classifies cap-rate band for a valued property', async () => {
+    getMacroMock.mockResolvedValue({
+      asOf: '2026-06-21', source: 'mock', indicators: [], tenYearHistory: [],
+    });
+    // Columbus Industrial benchmark seed: p25=0.0675, p50=0.075, p75=0.085.
+    // NOI 200_000 / value 2_000_000 = 0.10 implied cap → above p75 → 'top'.
+    scorePropertiesMock.mockReturnValue([{
+      propertyId: 'PROP-V', propertyName: 'Valued Asset', period: '2025',
+      health: 60, healthBand: 'watch', attentionBand: 'green', capitalAction: 'hold',
+      subScores: {}, noiPerSfQuartile: 2, benchmarkCohortSize: 5, reasons: [],
+    }]);
+    scoreDebtPositionsMock.mockReturnValue([]);
+    propertyPeriodMetricsMock.mockReturnValue([]);
+
+    const snap = {
+      ...makeSnapshot(),
+      properties: [
+        {
+          id: 'PROP-V', name: 'Valued Asset', market: 'Columbus OH', type: 'Industrial',
+          sf: 20_000, noi: 200_000, oxfordValue: 2_000_000,
+        },
+      ],
+      leases: [],
+    };
+
+    const report = await buildCapitalAllocationReport(makeMockDb() as never, snap) as typeof CapitalAllocationReport._type;
+    expect(report.marketBenchmarks.available).toBe(true);
+    expect(report.marketBenchmarks.source).toBe('seed');
+
+    const entry = report.entries[0]!;
+    expect(entry.impliedCapRate).toBeCloseTo(0.10, 5);
+    // gap vs p50 (0.075) = +0.025
+    expect(entry.capRateGap).toBeCloseTo(0.025, 5);
+    expect(entry.capRatePercentile).toBe('top');
+
+    // Whole report still parses through the contract (cap-rate fields included).
+    expect(CapitalAllocationReport.safeParse(report).success).toBe(true);
+  });
+
+  it('cap-rate fields are null when the property has no positive value', async () => {
+    getMacroMock.mockResolvedValue({
+      asOf: '2026-06-21', source: 'mock', indicators: [], tenYearHistory: [],
+    });
+    scorePropertiesMock.mockReturnValue([{
+      propertyId: 'PROP-NV', propertyName: 'No Value', period: '2025',
+      health: 60, healthBand: 'watch', attentionBand: 'green', capitalAction: 'hold',
+      subScores: {}, noiPerSfQuartile: 2, benchmarkCohortSize: 5, reasons: [],
+    }]);
+    scoreDebtPositionsMock.mockReturnValue([]);
+    propertyPeriodMetricsMock.mockReturnValue([]);
+
+    const snap = {
+      ...makeSnapshot(),
+      properties: [
+        { id: 'PROP-NV', name: 'No Value', market: 'Columbus OH', type: 'Industrial', sf: 10_000, noi: 80_000, oxfordValue: 0 },
+      ],
+      leases: [],
+    };
+
+    const report = await buildCapitalAllocationReport(makeMockDb() as never, snap) as typeof CapitalAllocationReport._type;
+    const entry = report.entries[0]!;
+    expect(entry.impliedCapRate).toBeNull();
+    expect(entry.capRateGap).toBeNull();
+    expect(entry.capRatePercentile).toBeNull();
   });
 
   it('portfolioNoi is sum of Spine A property NOI', async () => {
