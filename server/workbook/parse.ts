@@ -114,6 +114,47 @@ export function inferType(raw: string | null): PropertyType {
   return 'Other';
 }
 
+/**
+ * Property.id is `slug(name)` (parse.ts), and it is the join key for every downstream
+ * consumer — capital-allocation, debt-scoring, the warehouse crosswalk, overlay note keys.
+ * Two property rows whose names slug to the same string (apostrophe/accent/whitespace
+ * variants, or a genuine repeat address) would otherwise emit duplicate ids, silently
+ * shadowing one property in any Map/Set keyed by id. This disambiguates in parse order:
+ * the first occurrence keeps the base id; each later collision gets the next free
+ * `<base>-N` (N starts at 2), skipping any suffix a real property already legitimately owns.
+ * Mutates `items` in place (parse order preserved) and returns it. Each rename is surfaced
+ * as a DataQualityFlag rather than applied silently.
+ */
+export function disambiguatePropertyIds<T extends { id: string; name: string }>(
+  items: T[],
+  flags: DataQualityFlag[],
+): T[] {
+  const taken = new Set<string>();
+  for (const item of items) {
+    if (!taken.has(item.id)) {
+      taken.add(item.id);
+      continue;
+    }
+    const base = item.id;
+    let n = 2;
+    let candidate = `${base}-${n}`;
+    while (taken.has(candidate)) {
+      n += 1;
+      candidate = `${base}-${n}`;
+    }
+    flags.push({
+      entity: candidate,
+      field: 'id',
+      issue: `property id collision on "${base}" (name "${item.name}") — disambiguated to "${candidate}"`,
+      rawValue: base,
+      severity: 'warn',
+    });
+    item.id = candidate;
+    taken.add(candidate);
+  }
+  return items;
+}
+
 // ── properties (Property NOI) ─────────────────────────────────────────────────
 function parseProperties(ws: Worksheet, flags: DataQualityFlag[]): Property[] {
   const out: Property[] = [];
@@ -162,7 +203,8 @@ function parseProperties(ws: Worksheet, flags: DataQualityFlag[]): Property[] {
       flags: [],
     });
   }
-  return out;
+  // Guarantee distinct property ids before leases/counterparties resolve against them.
+  return disambiguatePropertyIds(out, flags);
 }
 
 function resolvePropertyId(key: string, properties: Property[]): string | null {

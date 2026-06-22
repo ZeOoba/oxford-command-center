@@ -39,4 +39,14 @@ describe('checkSnapshot — runtime reconciliation', () => {
     const flags = checkSnapshot(base({ properties: [] }));
     expect(flags.some((f) => f.field === 'properties' && f.severity === 'error')).toBe(true);
   });
+
+  it('flags duplicate property ids (error) — the join-key collision backstop', () => {
+    const flags = checkSnapshot(base({ properties: [{ id: 'dup' }, { id: 'dup' }, { id: 'ok' }] }));
+    expect(flags.some((f) => f.field === 'properties.id' && f.severity === 'error' && /dup/.test(f.issue))).toBe(true);
+  });
+
+  it('passes when all property ids are distinct', () => {
+    const flags = checkSnapshot(base({ properties: [{ id: 'a' }, { id: 'b' }] }));
+    expect(flags.some((f) => f.field === 'properties.id')).toBe(false);
+  });
 });
