@@ -54,8 +54,6 @@ import { composePropertyBriefing, composeManagerBriefing } from '../briefing/com
 import { renderBriefingPdf } from '../briefing/pdf';
 import { briefingFilename } from '../briefing/filename';
 import { composeNarrative } from '../ai/narrative';
-import { buildCapitalAllocationReport } from './capital-allocation';
-import { CapitalAllocationReport } from '../../src/contracts/capital-allocation';
 import { syncCapitalActionsToNotion } from '../notion/capital-writeback';
 import { NotionSyncResult } from '../../src/contracts/notion-writeback';
 import { getProspectDemandReport, addProspectEvent } from './prospect-demand';
@@ -897,33 +895,8 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
     }),
   );
 
-  // ── GET /capital-allocation (Phase 5 — Capital Allocation Capstone) ───────────────────────
-  //
-  // Synthesizes all existing intelligence streams (Spine A NOI/SF, health/attention scores,
-  // Phase 2 debt scores, Phase 3 leasing signals, FRED macro) into a ranked Capital Allocation
-  // Report. Pure read layer — no writes to DB, overlay, or external services.
-  //
-  // H6 read boundary: response is parsed through CapitalAllocationReport before emitting.
-  // noiBasis:'spine-a' on every entry — this is the ownership capital-allocation layer,
-  // NOT the Spine-B warehouse ledger. Never compare these NOI figures with /analytics/scores.
-  //
-  // Error policy (mirrors lease-forecast-api):
-  //   503 when warehouse or snapshot unavailable.
-  //   500 on unexpected engine errors.
-  app.get('/capital-allocation', (c) =>
-    withDb(async (db) => {
-      try {
-        const { brain } = await import('../brain');
-        const snapshot = await brain.getSnapshot();
-        if (!snapshot) return c.json({ error: 'snapshot unavailable' }, 503);
-        const report = await buildCapitalAllocationReport(db, snapshot);
-        return c.json(CapitalAllocationReport.parse(report));
-      } catch (err) {
-        console.error('[warehouse-api] /capital-allocation error:', err instanceof Error ? err.message : String(err));
-        return c.json({ error: 'capital allocation failed' }, 500);
-      }
-    }),
-  );
+  // NOTE: Capital Allocation route (/capital and /allocate) is mounted via
+  // server/warehouse/capital-allocation-api.ts at /api/warehouse/capital (see server/index.ts).
 
   // ── POST /capital-allocation/sync-notion (Direction 1 — Notion Writeback) ─────────────────
   //

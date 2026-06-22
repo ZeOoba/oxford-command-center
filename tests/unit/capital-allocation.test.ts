@@ -106,7 +106,7 @@ describe('buildPortfolioAllocation', () => {
     const v = result.verdicts[0]!;
     expect(v.action).toBe('sell');
     expect(v.riskBand).toBe('high');
-    expect(v.timelineMonths).toBe(12);
+    expect(v.timelineMonths).toBe(9); // I-2: sell timeline aligned to spec TIMELINE table (was 12)
     expect(v.inputs.capitalAction).toBe('disposition-candidate');
   });
 
@@ -225,5 +225,63 @@ describe('buildPortfolioAllocation', () => {
     const result = await buildPortfolioAllocation(db, '2026-06-21');
     expect(result).toBeDefined();
     expect(result.verdicts).toBeDefined();
+  });
+
+  it('A-2-neg: disposition-candidate but healthBand=good → NOT sell (C-1 independent guard)', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    // capitalAction flags disposition, but health is NOT 'concern' → sell guard must NOT fire.
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-dispo-healthy', capitalAction: 'disposition-candidate', healthBand: 'good' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-dispo-healthy', signal: 'hold' }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.verdicts).toHaveLength(1);
+    const v = result.verdicts[0]!;
+    // C-1: sell requires capitalAction='disposition-candidate' AND healthBand='concern'.
+    expect(v.action).not.toBe('sell');
+    // Falls through to default hold (no refi/invest signal present).
+    expect(v.action).toBe('hold');
+    expect(v.inputs.capitalAction).toBe('disposition-candidate');
+    expect(v.inputs.healthBand).toBe('good');
+  });
+
+  it('A-3-neg: debtSignal=hold → NOT refinance (Phase 5 v1: refi gates on signal, not savings)', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    // Phase 5 v1: refinance fires ONLY on signal in ('refi','cash-out'). A plain 'hold'
+    // (or 'no-debt') signal must NOT produce refinance. Phase 5 v2 will add a
+    // refiCashSavingsPct() savings gate on top of the signal (C-2 deferral).
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-no-refi', capitalAction: 'hold', healthBand: 'good' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-no-refi', signal: 'hold' }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.verdicts).toHaveLength(1);
+    const v = result.verdicts[0]!;
+    expect(v.action).not.toBe('refinance');
+    expect(v.action).toBe('hold');
+    expect(v.inputs.debtSignal).toBe('hold');
+  });
+
+  it('A-4-neg: empty acq_candidates → zero buy verdicts (C-3: buy emission deferred to v2)', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    // No acq_candidates seeded. One ordinary hold property exists.
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-hold', capitalAction: 'hold' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-hold', signal: 'hold' }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    // Phase 5 v1 (C-3): no buy AllocationVerdict is ever emitted; buy count stays 0.
+    expect(result.pipeline).toHaveLength(0);
+    expect(result.actionCounts.buy).toBe(0);
+    expect(result.verdicts.every((v) => v.action !== 'buy')).toBe(true);
   });
 });
