@@ -11,7 +11,12 @@
 
 export function stableStringify(v: unknown): string {
   if (v === null || typeof v !== 'object') return JSON.stringify(v) as string;
-  if (Array.isArray(v)) return `[${v.map(stableStringify).join(',')}]`;
-  const keys = Object.keys(v as Record<string, unknown>).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify((v as Record<string, unknown>)[k])}`).join(',')}}`;
+  if (Array.isArray(v))
+    return `[${v.map((item) => stableStringify(item === undefined ? null : item)).join(',')}]`;
+  const obj = v as Record<string, unknown>;
+  const pairs = Object.keys(obj)
+    .sort()
+    .filter((k) => obj[k] !== undefined)
+    .map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`);
+  return `{${pairs.join(',')}}`;
 }

@@ -50,4 +50,16 @@ describe('stableStringify', () => {
     expect(stableStringify(true)).toBe('true');
     expect(stableStringify(false)).toBe('false');
   });
+
+  it('undefined array elements are serialized as null (JSON.stringify parity)', () => {
+    expect(stableStringify([1, undefined, 2])).toBe('[1,null,2]');
+  });
+
+  it('undefined object values are omitted (JSON.stringify parity)', () => {
+    expect(stableStringify({ a: 1, b: undefined })).toBe('{"a":1}');
+  });
+
+  it('nested undefined in array within object is null', () => {
+    expect(stableStringify({ a: [undefined] })).toBe('{"a":[null]}');
+  });
 });
