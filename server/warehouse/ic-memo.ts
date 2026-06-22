@@ -50,6 +50,8 @@ function esc(value: unknown): string {
 
 const DASH = '—';
 
+const ACTION_ORDER: AllocationAction[] = ['buy', 'improve', 'hold', 'refinance', 'sell'];
+
 function int(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return DASH;
   return Math.round(n).toString();
@@ -127,8 +129,7 @@ function renderExecSummary(portfolio: PortfolioAllocation): string {
   const { actionCounts, advisoryOnly, verdicts } = portfolio;
   const bullets: string[] = [];
 
-  const actionOrder: AllocationAction[] = ['buy', 'improve', 'hold', 'refinance', 'sell'];
-  const parts = actionOrder
+  const parts = ACTION_ORDER
     .filter((a) => (actionCounts[a] ?? 0) > 0)
     .map((a) => `<strong>${int(actionCounts[a])}</strong> ${actionLabel(a)}`);
 
@@ -222,8 +223,7 @@ ${rows}
 }
 
 function renderActionBreakdown(portfolio: PortfolioAllocation): string {
-  const order: AllocationAction[] = ['buy', 'improve', 'hold', 'refinance', 'sell'];
-  const blocks = order
+  const blocks = ACTION_ORDER
     .map((action) => {
       const group = portfolio.verdicts.filter((v) => v.action === action);
       if (group.length === 0) return '';
