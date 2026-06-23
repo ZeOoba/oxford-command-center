@@ -22,6 +22,7 @@
 // defense-in-depth before streaming; this builder stays pure (no IO) so it remains
 // trivially testable and re-usable.
 import type { PortfolioAllocation, AllocationAction } from '../../src/contracts/capital';
+import type { CapitalAllocationEntry } from '../../src/contracts/capital-allocation';
 
 // ── ORA Style Guide tokens ──────────────────────────────────────────────────────────────────
 const NAVY = '#1B2A4A';
@@ -171,7 +172,10 @@ function renderExecSummary(portfolio: PortfolioAllocation): string {
   </section>`;
 }
 
-function renderVerdictTable(portfolio: PortfolioAllocation): string {
+function renderVerdictTable(
+  portfolio: PortfolioAllocation,
+  entries?: CapitalAllocationEntry[],
+): string {
   if (portfolio.verdicts.length === 0) {
     return `
   <section class="ic-section">
@@ -190,6 +194,8 @@ function renderVerdictTable(portfolio: PortfolioAllocation): string {
       const retPct = v.expectedReturnPct !== null ? pct1(v.expectedReturnPct * 100) : DASH;
       const hurdle =
         v.returnAboveHurdle === null ? DASH : v.returnAboveHurdle ? '&#10003;' : '&#10007;';
+      const entry = entries?.find((e) => e.propertyId === v.propertyId);
+      const leasingRiskCell = pct0(entry?.leasingRisk);
       return `        <tr class="ic-row">
           <td class="ic-name">${name}</td>
           <td><span class="ic-badge" style="color:${actionColor(v.action)};border-color:${actionColor(v.action)}">${actionLabel(v.action)}</span></td>
@@ -197,6 +203,7 @@ function renderVerdictTable(portfolio: PortfolioAllocation): string {
           <td class="ic-r">${pct0(v.confidence01 * 100)}</td>
           <td class="ic-r">${retPct}</td>
           <td class="ic-r">${hurdle}</td>
+          <td class="ic-r">${leasingRiskCell}</td>
           <td class="ic-rationale">${reason}</td>
         </tr>`;
     })
@@ -210,7 +217,7 @@ function renderVerdictTable(portfolio: PortfolioAllocation): string {
         <tr>
           <th>Property</th><th>Action</th><th>Risk</th>
           <th class="ic-r">Confidence</th><th class="ic-r">Expected Return</th>
-          <th class="ic-r">Hurdle</th><th>Reason</th>
+          <th class="ic-r">Hurdle</th><th class="ic-r">Leasing Risk</th><th>Reason</th>
         </tr>
       </thead>
       <tbody>
@@ -424,8 +431,16 @@ function styleBlock(): string {
  *
  * Pure — no IO, no DB. Output is a full HTML5 document (inline ORA styles, no remote
  * dependencies) suitable for browser "Print to PDF" into an extractable-text PDF.
+ *
+ * @param portfolio - The PortfolioAllocation (verdicts + pipeline).
+ * @param entries   - Optional CapitalAllocationEntry array (D3: joined by propertyId to
+ *                    source leasingRisk for the verdict table). When omitted, the Leasing
+ *                    Risk column renders em-dash for all rows (fail-open, backward-compat).
  */
-export function buildIcMemoHtml(portfolio: PortfolioAllocation): string {
+export function buildIcMemoHtml(
+  portfolio: PortfolioAllocation,
+  entries?: CapitalAllocationEntry[],
+): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -437,7 +452,7 @@ export function buildIcMemoHtml(portfolio: PortfolioAllocation): string {
   <div class="ic-page">
 ${renderCover(portfolio)}
 ${renderExecSummary(portfolio)}
-${renderVerdictTable(portfolio)}
+${renderVerdictTable(portfolio, entries)}
 ${renderActionBreakdown(portfolio)}
 ${renderPipeline(portfolio)}
 ${renderMethodology(portfolio)}

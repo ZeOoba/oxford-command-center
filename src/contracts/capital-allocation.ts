@@ -35,6 +35,13 @@ export const CapitalAllocationEntry = z.object({
   noiPerSf: z.number().nullable(),
   noiBasis: z.literal('spine-a'),
 
+  // ── Leasing risk score (M6) — DIAGNOSTIC ONLY ───────────────────────────────────────────
+  // Composite 0–100 score: higher = more near-term leasing exposure.
+  // Formula: noi > 0 → min(100, (nearTermExpiryRent/noi)*100 + atRiskCount*10)
+  //          noi = 0 → min(50, atRiskCount*10)
+  // Feeds priorityScore * 0.20 weight (already in engine). Surfaced here for IC memo display.
+  leasingRisk: z.number().min(0).max(100),
+
   // ── Market Intelligence overlay (Phase 5 Track 3) — DIAGNOSTIC ONLY ──────────────────────
   // These three fields position the property's in-place economics against external market
   // cap-rate benchmarks. They are display-layer diagnostics: they DO NOT feed priorityScore,

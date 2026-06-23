@@ -663,6 +663,7 @@ export async function buildCapitalAllocationReport(
       noi,
       noiPerSf,
       noiBasis: 'spine-a',
+      leasingRisk,
       impliedCapRate,
       capRateGap,
       capRatePercentile,
