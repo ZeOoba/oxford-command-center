@@ -356,6 +356,7 @@ export interface DebtReasonImpactInput {
   hasDebt: boolean;
   effectiveBalloonMonths: number | null;
   dscr: number | null;
+  dscrFloor: number;
 }
 
 export interface ReasonImpact {
@@ -374,13 +375,12 @@ export interface ReasonImpact {
  * this function is narrative-attribution only.
  */
 export function _buildDebtReasonImpacts(input: DebtReasonImpactInput): ReasonImpact[] {
-  const { hasDebt, effectiveBalloonMonths, dscr } = input;
+  const { hasDebt, effectiveBalloonMonths, dscr, dscrFloor } = input;
   if (!hasDebt) return [];
 
   const reasons: ReasonImpact[] = [];
-  const DSCR_FLOOR = 1.25;
   const DEBT_WEIGHT = 0.15;
-  const dscrFires = dscr !== null && dscr < DSCR_FLOOR;
+  const dscrFires = dscr !== null && dscr < dscrFloor;
 
   if (effectiveBalloonMonths !== null && effectiveBalloonMonths < 24) {
     // Balloon-timing-only urgency: compute based solely on months to maturity,
@@ -396,7 +396,7 @@ export function _buildDebtReasonImpacts(input: DebtReasonImpactInput): ReasonImp
 
   if (dscrFires) {
     reasons.push({
-      text: `DSCR at ${dscr!.toFixed(2)} (below 1.25x governor)`,
+      text: `DSCR at ${dscr!.toFixed(2)} (below ${dscrFloor.toFixed(2)}x governor)`,
       impact: 30 * DEBT_WEIGHT,
     });
   }
@@ -593,25 +593,16 @@ export async function buildCapitalAllocationReport(
     const raw = (100 - healthVal) * 0.35 + attentionScore * 0.30 + leasingRisk * 0.20 + debtUrgency * 0.15;
     const priorityScore = Math.max(0, Math.min(100, raw));
 
-    // ── Rationale builder — debt reasons via single-attribution helper (M5) ──
-    // _buildDebtReasonImpacts ensures the 30-pt DSCR penalty appears in exactly
-    // one reason.  The composite raw score formula above is unchanged.
+    // ── Rationale builder — debt reasons via single-attribution helper (C1+I1) ──
+    // _buildDebtReasonImpacts is the SOLE source of balloon and DSCR reasons.
+    // It receives dscrFloor from loadGovernors() so reason text interpolates the
+    // live governor value rather than a hardcoded 1.25 literal (C1).
+    // The old inline balloon/DSCR blocks that lived here have been removed (I1) —
+    // they duplicated what _buildDebtReasonImpacts already emits.
     const reasons: Array<{ text: string; impact: number }> = [
-      ..._buildDebtReasonImpacts({ hasDebt, effectiveBalloonMonths, dscr }),
+      ..._buildDebtReasonImpacts({ hasDebt, effectiveBalloonMonths, dscr, dscrFloor }),
     ];
 
-    if (effectiveBalloonMonths !== null && effectiveBalloonMonths < 24) {
-      reasons.push({
-        text: `Balloon maturity in ${Math.round(effectiveBalloonMonths)} months`,
-        impact: debtUrgency * 0.15,
-      });
-    }
-    if (dscr !== null && dscr < dscrFloor) {
-      reasons.push({
-        text: `DSCR at ${dscr.toFixed(2)} (below ${dscrFloor.toFixed(2)}x governor)`,
-        impact: 30 * 0.15,
-      });
-    }
     if (nearTermExpiryRent > 0 && noi > 0 && nearTermExpiryRent / noi > 0.2) {
       reasons.push({
         text: `${Math.round((nearTermExpiryRent / noi) * 100)}% of NOI expiring ≤12 months`,

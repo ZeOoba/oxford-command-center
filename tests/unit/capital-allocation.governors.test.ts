@@ -237,3 +237,58 @@ describe('H1: buildCapitalAllocationReport reads dscrFloor from loadGovernors', 
     expect(hasDscrReason).toBe(false);
   });
 });
+
+// ── I1: single-emission guard — no duplicate debt reasons ─────────────────────────────────────
+//
+// Pre-fix: buildCapitalAllocationReport called _buildDebtReasonImpacts() AND ALSO had
+// old inline balloon/DSCR blocks that fired unconditionally after it. Each debt reason
+// was emitted TWICE into reasons[] before the sort/slice(0,3).
+//
+// Fix: the inline blocks were removed. _buildDebtReasonImpacts is now the SOLE source.
+//
+// These tests assert the "at most once" invariant at the full-engine level.
+// They rely on the same loadGovernors stub (dscrFloor=1.30) defined above.
+
+describe('I1: each debt reason appears exactly once in rationale (no double-emit)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (scoreProperties as ReturnType<typeof vi.fn>).mockReturnValue([]);
+  });
+
+  it('I1-dscr: exactly 1 DSCR reason when dscr < governor floor (no balloon)', async () => {
+    const db = freshDb();
+    const snapshot = makeSnapshot({ id: 'prop-i1-dscr', noi: 100_000, sf: 5_000 });
+
+    // dscr=1.10 — clearly below 1.30 stub floor → DSCR reason fires
+    (scoreDebtPositions as ReturnType<typeof vi.fn>).mockReturnValue([
+      makeDebtScore('prop-i1-dscr', 1.10),
+    ]);
+
+    const report = await buildCapitalAllocationReport(db, snapshot);
+    const entry = report.entries.find((e) => e.propertyId === 'prop-i1-dscr');
+
+    expect(entry).toBeDefined();
+    // Must appear exactly once — double-emit would give 2 copies in rationale
+    const dscrReasons = entry!.rationale.filter((r) => r.includes('DSCR'));
+    expect(dscrReasons).toHaveLength(1);
+  });
+
+  it('I1-dscr: reason text references governor floor, not a bare 1.25 literal', async () => {
+    // Companion to H1 test — confirms the single emission uses dscrFloor.toFixed(2)
+    const db = freshDb();
+    const snapshot = makeSnapshot({ id: 'prop-i1-floor', noi: 100_000, sf: 5_000 });
+
+    (scoreDebtPositions as ReturnType<typeof vi.fn>).mockReturnValue([
+      makeDebtScore('prop-i1-floor', 1.10),
+    ]);
+
+    const report = await buildCapitalAllocationReport(db, snapshot);
+    const entry = report.entries.find((e) => e.propertyId === 'prop-i1-floor');
+
+    expect(entry).toBeDefined();
+    const dscrReason = entry!.rationale.find((r) => r.includes('DSCR'));
+    expect(dscrReason).toBeDefined();
+    expect(dscrReason).toMatch(/1\.30/);
+    expect(dscrReason).not.toMatch(/1\.25/);
+  });
+});

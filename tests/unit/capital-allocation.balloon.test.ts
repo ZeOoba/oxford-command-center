@@ -73,6 +73,7 @@ describe('M5: balloon rationale — single-attribution of DSCR penalty', () => {
       hasDebt: true,
       effectiveBalloonMonths: balloonMonths,
       dscr,
+      dscrFloor: DSCR_FLOOR,
     });
 
     const totalImpact = reasons.reduce((sum, r) => sum + r.impact, 0);
@@ -91,6 +92,7 @@ describe('M5: balloon rationale — single-attribution of DSCR penalty', () => {
       hasDebt: true,
       effectiveBalloonMonths: balloonMonths,
       dscr,
+      dscrFloor: DSCR_FLOOR,
     });
 
     const balloonReason = reasons.find((r) => r.text.startsWith('Balloon maturity'));
@@ -107,6 +109,7 @@ describe('M5: balloon rationale — single-attribution of DSCR penalty', () => {
       hasDebt: true,
       effectiveBalloonMonths: balloonMonths,
       dscr,
+      dscrFloor: DSCR_FLOOR,
     });
 
     const dscrReason = reasons.find((r) => r.text.startsWith('DSCR at'));
@@ -129,6 +132,7 @@ describe('M5: balloon rationale — single-attribution of DSCR penalty', () => {
       hasDebt: true,
       effectiveBalloonMonths: null, // no balloon row → balloon reason suppressed
       dscr,
+      dscrFloor: DSCR_FLOOR,
     });
 
     expect(reasons.find((r) => r.text.startsWith('Balloon maturity'))).toBeUndefined();
@@ -145,6 +149,7 @@ describe('M5: balloon rationale — single-attribution of DSCR penalty', () => {
       hasDebt: true,
       effectiveBalloonMonths: balloonMonths,
       dscr: dscrAboveFloor,
+      dscrFloor: DSCR_FLOOR,
     });
 
     const balloonReason = reasons.find((r) => r.text.startsWith('Balloon maturity'));
@@ -158,6 +163,7 @@ describe('M5: balloon rationale — single-attribution of DSCR penalty', () => {
       hasDebt: false,
       effectiveBalloonMonths: null,
       dscr: null,
+      dscrFloor: DSCR_FLOOR,
     });
     expect(reasons).toHaveLength(0);
   });
