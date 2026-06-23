@@ -162,23 +162,31 @@ export function checkGovernorLiteralCoupling(root: string): GovernanceResult {
 
   const ALLOWLIST = new Set(['governors.ts', 'debt-api.ts']);
 
-  let files: string[] = [];
+  const files: string[] = [];
   try {
-    files = (readdirSync(warehouseDir) as unknown as string[])
-      .filter((f: string) => f.endsWith('.ts') && !ALLOWLIST.has(f))
-      .map((f: string) => join(warehouseDir, f));
+    // Stack-based recursive traversal — catches nested files (e.g. server/warehouse/parse/).
+    // server/insights/** is intentionally excluded (doesn't exist yet; UnitD adds its scope).
+    const stack = [warehouseDir];
+    while (stack.length > 0) {
+      const dir = stack.pop()!;
+      for (const entry of readdirSync(dir, { withFileTypes: true }) as unknown as Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          stack.push(full);
+        } else if (entry.isFile() && entry.name.endsWith('.ts') && !ALLOWLIST.has(entry.name)) {
+          files.push(full);
+        }
+      }
+    }
   } catch {
     return { pass: true, errors: [], warnings: [] };
   }
 
   // Matches a line containing BOTH a governor-named operand AND a governor literal
-  // in a comparison context (either order). Uses explicit comparison operators to
-  // avoid false-positives on assignments like `const dscr = 1.25`.
-  const CMP_OP = '(?:<=|>=|<|>|===|!==|==|!=)';
-  const GOVERNOR_LITERAL_IN_COMPARISON = new RegExp(
-    `\\b(?:dscr|ltv|loanToValue|ltvRatio|dscrRatio)\\b.*?${CMP_OP}\\s*(?:1\\.25|0\\.40?)\\b` +
-      `|(?:1\\.25|0\\.40?)\\s*${CMP_OP}.*?\\b(?:dscr|ltv|loanToValue|ltvRatio|dscrRatio)\\b`,
-  );
+  // in a comparison context (either order). Explicit comparison operators exclude
+  // bare `=` assignments like `const dscr = 1.25`.
+  const GOVERNOR_LITERAL_IN_COMPARISON =
+    /\b(?:dscr|ltv|loanToValue|ltvRatio|dscrRatio)\b.*?(?:<=|>=|<|>|===|!==|==|!=)\s*(?:1\.25|0\.40?)\b|(?:1\.25|0\.40?)\s*(?:<=|>=|<|>|===|!==|==|!=).*?\b(?:dscr|ltv|loanToValue|ltvRatio|dscrRatio)\b/;
 
   for (const filePath of files) {
     let content = '';

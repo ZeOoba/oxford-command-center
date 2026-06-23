@@ -204,6 +204,14 @@ describe('checkAcqGovernorCoupling', () => {
   });
 });
 
+// Helper to build Dirent-like mocks for the withFileTypes readdirSync calls
+function fileEntry(name: string) {
+  return { name, isDirectory: () => false, isFile: () => true };
+}
+function dirEntry(name: string) {
+  return { name, isDirectory: () => true, isFile: () => false };
+}
+
 describe('checkGovernorLiteralCoupling', () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -211,7 +219,7 @@ describe('checkGovernorLiteralCoupling', () => {
 
   it('flags dscr < 1.25 (DSCR comparison with floor literal)', () => {
     mockExistsSync.mockReturnValue(true);
-    mockReaddirSync.mockReturnValue(['acq-engine.ts'] as never);
+    mockReaddirSync.mockReturnValue([fileEntry('acq-engine.ts')] as never);
     mockReadFileSync.mockReturnValue('if (dscr < 1.25) { return false; }');
     const result = checkGovernorLiteralCoupling('/fake/root');
     expect(result.pass).toBe(false);
@@ -220,7 +228,7 @@ describe('checkGovernorLiteralCoupling', () => {
 
   it('passes when loadGovernors is used (no bare literal)', () => {
     mockExistsSync.mockReturnValue(true);
-    mockReaddirSync.mockReturnValue(['acq-engine.ts'] as never);
+    mockReaddirSync.mockReturnValue([fileEntry('acq-engine.ts')] as never);
     mockReadFileSync.mockReturnValue(
       "const { dscrFloor } = loadGovernors(db);\nif (dscr < dscrFloor) { return false; }",
     );
@@ -231,7 +239,7 @@ describe('checkGovernorLiteralCoupling', () => {
 
   it('does NOT flag width: 1.25 (non-governor context)', () => {
     mockExistsSync.mockReturnValue(true);
-    mockReaddirSync.mockReturnValue(['util.ts'] as never);
+    mockReaddirSync.mockReturnValue([fileEntry('util.ts')] as never);
     mockReadFileSync.mockReturnValue('const config = { width: 1.25, height: 2.5 };');
     const result = checkGovernorLiteralCoupling('/fake/root');
     expect(result.pass).toBe(true);
@@ -240,7 +248,7 @@ describe('checkGovernorLiteralCoupling', () => {
 
   it('does NOT flag when the literal is in a comment', () => {
     mockExistsSync.mockReturnValue(true);
-    mockReaddirSync.mockReturnValue(['acq-engine.ts'] as never);
+    mockReaddirSync.mockReturnValue([fileEntry('acq-engine.ts')] as never);
     mockReadFileSync.mockReturnValue(
       '// old: dscr < 1.25\nif (dscr < dscrFloor) {',
     );
@@ -251,7 +259,7 @@ describe('checkGovernorLiteralCoupling', () => {
 
   it('flags LTV literal form ltv > 0.40', () => {
     mockExistsSync.mockReturnValue(true);
-    mockReaddirSync.mockReturnValue(['scoring.ts'] as never);
+    mockReaddirSync.mockReturnValue([fileEntry('scoring.ts')] as never);
     mockReadFileSync.mockReturnValue('if (ltv > 0.40) { return false; }');
     const result = checkGovernorLiteralCoupling('/fake/root');
     expect(result.pass).toBe(false);
@@ -260,7 +268,7 @@ describe('checkGovernorLiteralCoupling', () => {
 
   it('does NOT flag files in governors.ts (allowlisted)', () => {
     mockExistsSync.mockReturnValue(true);
-    mockReaddirSync.mockReturnValue(['governors.ts'] as never);
+    mockReaddirSync.mockReturnValue([fileEntry('governors.ts')] as never);
     mockReadFileSync.mockReturnValue('export const dscrFloor = 1.25;');
     const result = checkGovernorLiteralCoupling('/fake/root');
     expect(result.pass).toBe(true);
@@ -269,10 +277,25 @@ describe('checkGovernorLiteralCoupling', () => {
 
   it('does NOT flag assignment (non-comparison) like const dscr = 1.25', () => {
     mockExistsSync.mockReturnValue(true);
-    mockReaddirSync.mockReturnValue(['acq-engine.ts'] as never);
+    mockReaddirSync.mockReturnValue([fileEntry('acq-engine.ts')] as never);
     mockReadFileSync.mockReturnValue('const dscr = 1.25;');
     const result = checkGovernorLiteralCoupling('/fake/root');
     expect(result.pass).toBe(true);
     expect(result.errors).toHaveLength(0);
+  });
+
+  it('flags violations in nested subdirectory files (recursive traversal)', () => {
+    mockExistsSync.mockReturnValue(true);
+    // First readdirSync call: warehouse root returns a subdir + a clean top-level file
+    // Second readdirSync call: subdir returns a file with a governor violation
+    mockReaddirSync
+      .mockReturnValueOnce([dirEntry('parse'), fileEntry('clean.ts')] as never)
+      .mockReturnValueOnce([fileEntry('qb-filters.ts')] as never);
+    mockReadFileSync
+      .mockReturnValueOnce('// clean top-level file')
+      .mockReturnValueOnce('if (dscr < 1.25) { throw new Error(); }');
+    const result = checkGovernorLiteralCoupling('/fake/root');
+    expect(result.pass).toBe(false);
+    expect(result.errors.some((e) => e.includes('1.25'))).toBe(true);
   });
 });
