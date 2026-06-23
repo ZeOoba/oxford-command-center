@@ -1,7 +1,6 @@
 import type { PortfolioSnapshot } from '../contracts/index';
 import { RENEWAL_STAGES, type RenewalStage } from '../contracts/renewal';
-
-const DAY_MS = 86_400_000;
+import { DAY_MS } from '../../server/warehouse/time-constants';
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
   Math.round((new Date(isoTarget).getTime() - new Date(isoFrom).getTime()) / DAY_MS);
 

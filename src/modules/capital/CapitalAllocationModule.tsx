@@ -15,7 +15,7 @@
 // Error policy: degrades to an informational empty state when the warehouse is
 // offline (mirrors ScorecardView in debt module).
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { PieChart, UploadCloud } from 'lucide-react';
+import { PieChart, UploadCloud, FileDown } from 'lucide-react';
 import { fetchParsedOrMirror, isWarehouseUnavailable, QUERY_OPTS } from '../intel/hooks';
 import { CapitalAllocationReport } from '@contracts/capital-allocation';
 import type { CapitalAllocationEntry } from '@contracts/capital-allocation';
@@ -273,6 +273,43 @@ const COLS: Column<CapitalAllocationEntry>[] = [
   },
 ];
 
+// ── Export IC Memo ───────────────────────────────────────────────────────────────
+// Opens the server-rendered IC Memo HTML (Content-Disposition: attachment) in a new tab.
+// The browser downloads the ORA-styled memo; the user prints it to a PDF (extractable text)
+// for Investment Committee circulation. No client-side rendering — the memo is built
+// server-side from the same CapitalAllocationReport this module displays.
+const IC_MEMO_URL = '/api/warehouse/capital-allocation/ic-memo';
+
+function ExportIcMemoButton({ disabled }: { disabled: boolean }) {
+  return (
+    <a
+      href={disabled ? undefined : IC_MEMO_URL}
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-disabled={disabled}
+      tabIndex={0}
+      title={
+        disabled
+          ? 'No scored properties to export'
+          : 'Download an ORA-styled IC memo (print to PDF for circulation)'
+      }
+      className="inline-flex items-center gap-1.5 rounded text-2xs font-medium"
+      style={{
+        padding: '4px 10px',
+        border: '1px solid var(--gold, #C9A96E)',
+        color: disabled ? 'var(--text-tertiary)' : 'var(--navy, #1B2A4A)',
+        background: 'transparent',
+        textDecoration: 'none',
+        pointerEvents: disabled ? 'none' : 'auto',
+        opacity: disabled ? 0.5 : 1,
+      }}
+    >
+      <FileDown size={13} />
+      Export IC Memo
+    </a>
+  );
+}
+
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export function CapitalAllocationModule() {
@@ -361,12 +398,14 @@ export function CapitalAllocationModule() {
           format={(n) => String(n)}
           accentColor="var(--color-pos)"
           sublabel="expand capital"
+          prov={{ source: 'Capital Allocation Engine · warehouse', confidence: 'derived', asOf: data.asOf }}
         />
         <KpiStat
           label="Hold"
           value={data.holdCount}
           format={(n) => String(n)}
           sublabel="stable"
+          prov={{ source: 'Capital Allocation Engine · warehouse', confidence: 'derived', asOf: data.asOf }}
         />
         <KpiStat
           label="Monitor"
@@ -374,6 +413,7 @@ export function CapitalAllocationModule() {
           format={(n) => String(n)}
           accentColor="var(--color-warn)"
           sublabel="watch closely"
+          prov={{ source: 'Capital Allocation Engine · warehouse', confidence: 'derived', asOf: data.asOf }}
         />
         <KpiStat
           label="Disposition"
@@ -381,6 +421,7 @@ export function CapitalAllocationModule() {
           format={(n) => String(n)}
           accentColor="var(--color-neg)"
           sublabel="consider exit"
+          prov={{ source: 'Capital Allocation Engine · warehouse', confidence: 'derived', asOf: data.asOf }}
         />
       </div>
 
@@ -459,6 +500,7 @@ export function CapitalAllocationModule() {
           title="Capital Allocation — Ranked Properties"
           trailing={
             <div className="flex items-center gap-1.5">
+              <ExportIcMemoButton disabled={entries.length === 0} />
               <Badge tone="neutral">{entries.length} properties</Badge>
               {!isMacroSeeded && <Badge tone="green">FRED live</Badge>}
               {benchUnavailable ? (

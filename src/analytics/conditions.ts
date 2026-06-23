@@ -1,11 +1,10 @@
-import type { PortfolioSnapshot } from '@contracts/index';
+import type { PortfolioSnapshot, MacroSnapshot } from '@contracts/index';
 import { fmtUsd, fmtUsdCompact, fmtPct, fmtMonths, fmtDate } from './format';
 import type { Insight, InsightSeverity } from './types';
 import { tenantScorecards } from '@/brain/tenants';
 import { coerceNonNegMoney } from '@/lib/money';
 import { renewalSignals, marketRentGaps, bucketExpiry } from './lease-forecast';
-
-const DAY_MS = 86_400_000;
+import { DAY_MS } from '../../server/warehouse/time-constants';
 const HOUR_MS = 3_600_000;
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
   Math.round((new Date(isoTarget).getTime() - new Date(isoFrom).getTime()) / DAY_MS);
@@ -30,11 +29,22 @@ export const ALERT_THRESHOLDS = {
   arStalenessMaxDays: 35,
   workbookStaleHours: 48,
   loiDeadlineWarnDays: 14,
-  // Phase 2 slice 1 — refi-spread signal.
-  // estimatedMarketRate: hardcoded 6.5% proxy for 5-year fixed industrial.
-  // TODO(phase-2): source from FRED macro feed (server/macro/getMacro.ts DGS10 + spread)
-  //   instead of hardcoding once the FRED macro tool (Phase 1b) is wired into evaluateConditions.
+  // Phase 2 slice 1 / M3 — refi-spread signal.
+  // estimatedMarketRate: fallback 6.5% proxy for 5-year fixed industrial used when the live
+  //   DGS5 snapshot is unavailable. The live path threads cachedMarketRate via EvaluateOpts
+  //   (server call sites extract DGS5 from getMacro() and add industrialLenderSpread).
+  //   The refi alert NEVER drops silently — this fallback is always active when no live rate is supplied.
   estimatedMarketRate: 0.065,
+  // industrialLenderSpread: credit spread above DGS5 (5-Year Treasury) for a 5-year fixed
+  //   industrial loan. 2.0% (200 bps) is the ORA canonical assumption — converts the raw DGS5
+  //   rate to an all-in effective borrowing rate. Used by extractDgs5MarketRate() in the server
+  //   macro layer.
+  //   Rationale: DGS5 ≈ 4.0–4.5% + 200 bps spread ≈ 6.0–6.5%, consistent with the
+  //   estimatedMarketRate fallback (6.5%). Distinct from CAPITAL_CONFIG.refiTriggerBps (150 bps),
+  //   which is the minimum excess-over-market that triggers a refi recommendation — not the spread.
+  //   This constant is subject to ORA market-assumption review, NOT the hard-invariant gate in
+  //   capital-config.ts (DSCR/LTV). Any change here requires a comment explaining the market basis.
+  industrialLenderSpread: 0.020,
   // refiSpreadBps: minimum excess above estimatedMarketRate that triggers the refi-spread signal.
   // 0.005 = 50 bps. A loan must exceed estimatedMarketRate + refiSpreadBps to fire.
   refiSpreadBps: 0.005,
@@ -48,6 +58,36 @@ export const ALERT_THRESHOLDS = {
   // velocitySlowDays: median time-to-lease above this threshold → slowLeasing flag [RATIFIED 60].
   velocitySlowDays: 60,
 } as const;
+
+/**
+ * Extract the effective market rate for the refi-spread signal from a MacroSnapshot.
+ *
+ * Base: DGS5 (5-Year Treasury) — the canonical benchmark for a 5-year fixed industrial loan.
+ * Formula: DGS5 (as decimal) + ALERT_THRESHOLDS.industrialLenderSpread (200 bps)
+ *   e.g. DGS5 = 4.18% → 0.0418 + 0.020 = 0.0618
+ *
+ * Benchmark rationale: the debt-api.ts refi-score path also uses DGS5 as its 5Y benchmark
+ * (server/warehouse/debt-api.ts); using the same benchmark here keeps the two refi signals
+ * coherent. The +200 bps lender spread converts the raw treasury rate to an all-in borrowing
+ * cost — the debt-api path intentionally omits this spread (it treats DGS5 as the threshold
+ * directly for scorecard purposes); the conditions.ts signal includes it to model the actual
+ * borrowing rate ORA would face.
+ *
+ * Returns null when the DGS5 indicator is absent, null, or non-finite — the caller falls
+ * back to ALERT_THRESHOLDS.estimatedMarketRate (0.065). Never throws.
+ *
+ * IMPORTANT: This function is a pure data extraction helper — it does NOT fetch anything.
+ * The macro snapshot must already be in memory (e.g., from getMacro() on the server).
+ * Call sites: server/brief/run.ts. NEVER import/call from client-side Spine-A code directly
+ * — the snapshot must be passed, not fetched. (M3)
+ */
+export function extractDgs5MarketRate(macro: MacroSnapshot): number | null {
+  const dgs5 = macro.indicators.find((ind) => ind.id === 'DGS5');
+  if (!dgs5 || dgs5.value === null || !Number.isFinite(dgs5.value)) return null;
+  // DGS5 value is in percent (e.g., 4.18 for 4.18%). Convert to decimal + add lender spread.
+  const rate = dgs5.value / 100 + ALERT_THRESHOLDS.industrialLenderSpread;
+  return Number.isFinite(rate) ? rate : null;
+}
 
 /**
  * Derive the annual debt service from the available Loan fields.
@@ -103,6 +143,19 @@ export interface EvaluateOpts {
   now?: number;
   /** dealId → stage at last brief. Supplied only by the email brief to emit stage-move alerts. */
   priorStages?: Record<string, string>;
+  /**
+   * Effective market rate to use for the refi-spread signal (DGS10 + lender spread, expressed as a
+   * decimal, e.g. 0.060 for 6.00%). Sourced from the server-side macro snapshot (getMacro()) and
+   * threaded in by the server call site — never fetched live from within evaluateConditions.
+   *
+   * When absent, non-finite, or null: falls back to ALERT_THRESHOLDS.estimatedMarketRate (0.065).
+   * The refi alert NEVER drops silently — the fallback is always used when the live rate is
+   * unavailable. Provenance is surfaced in the insight detail string.
+   *
+   * CONSTRAINT: evaluateConditions MUST NOT call fetchFredMacro() or perform any live HTTP.
+   * This field is the only acceptable mechanism for injecting a live rate. (M3)
+   */
+  cachedMarketRate?: number;
 }
 
 /**
@@ -115,6 +168,18 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   const asOf = s.meta.asOf;
   const now = opts.now ?? Date.now();
   const out: Insight[] = [];
+
+  // M3: Resolve the effective market rate for the refi-spread signal.
+  // Priority: cachedMarketRate (threaded from server macro layer, no live HTTP) → fallback 0.065.
+  // A non-finite or missing value from the snapshot falls back gracefully; the refi alert never
+  // drops silently. Provenance is surfaced in the detail string so the reader knows the source.
+  const effectiveMarketRate =
+    opts.cachedMarketRate !== undefined &&
+    opts.cachedMarketRate !== null &&
+    Number.isFinite(opts.cachedMarketRate)
+      ? opts.cachedMarketRate
+      : T.estimatedMarketRate;
+  const marketRateProvenance = effectiveMarketRate !== T.estimatedMarketRate ? 'live' : 'fallback';
 
   // ── Debt ──────────────────────────────────────────────────────────────────
   for (const l of s.loans) {
@@ -180,15 +245,19 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       Number.isFinite(l.rate) &&
       Number.isFinite(l.absBalance) &&
       l.absBalance > 0 &&
-      l.rate > T.estimatedMarketRate + T.refiSpreadBps
+      l.rate > effectiveMarketRate + T.refiSpreadBps
     ) {
-      const rateDelta = l.rate - T.estimatedMarketRate;
+      const rateDelta = l.rate - effectiveMarketRate;
+      const marketRatePct = (effectiveMarketRate * 100).toFixed(2) + '%';
+      const marketRateLabel = marketRateProvenance === 'live'
+        ? `market ${marketRatePct} (FRED)`
+        : `estimated market ${marketRatePct}`;
       out.push({
         id: `refi-spread-${l.id}`,
         severity: 'info',
         category: 'debt',
         title: `Refi spread — ${l.name}`,
-        detail: `In-place rate ${(l.rate * 100).toFixed(2)}% vs estimated market ${(T.estimatedMarketRate * 100).toFixed(2)}% — ${(rateDelta * 100).toFixed(2)}% spread on ${fmtUsd(l.absBalance)} balance. Estimated annual savings: ${fmtUsd(rateDelta * l.absBalance)}.`,
+        detail: `In-place rate ${(l.rate * 100).toFixed(2)}% vs ${marketRateLabel} — ${(rateDelta * 100).toFixed(2)}% spread on ${fmtUsd(l.absBalance)} balance. Estimated annual savings: ${fmtUsd(rateDelta * l.absBalance)}.`,
         entityType: 'loan',
         entityId: l.id,
         action: { label: 'Open refi workspace', kind: 'open-refi' },
@@ -294,7 +363,6 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
     const signals = renewalSignals(s.leases, asOf, s.renewalStages, arrears);
     const gaps = marketRentGaps(s.leases, marketRents);
     const asOfMs = new Date(asOf).getTime();
-    const DAY_MS_L = 86_400_000;
 
     // Build a total annual rent denominator for the L-5 concentration check
     const totalAnnualRent = s.leases.reduce((sum, l) => sum + l.annualRent, 0);
@@ -303,7 +371,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       const leaseEndMs = signal.leaseEnd ? new Date(signal.leaseEnd).getTime() : null;
       const leaseEndInPast = leaseEndMs !== null && leaseEndMs < asOfMs;
       const daysToExpiry = leaseEndMs !== null && !leaseEndInPast
-        ? Math.round((leaseEndMs - asOfMs) / DAY_MS_L)
+        ? Math.round((leaseEndMs - asOfMs) / DAY_MS)
         : null;
 
       // L-1: Expiring ≤90d with no renewal signal (future expiry only)
@@ -450,11 +518,10 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   const stampedEntries = arEntries.filter((r) => 'asOfDate' in r);
   let skipArEval = false;
   if (stampedEntries.length > 0) {
-    const DAY_MS_AR = 86_400_000;
     const staleAges = stampedEntries.map((r) => {
       const asOfMs = r.asOfDate ? new Date(r.asOfDate).getTime() : null;
       if (asOfMs === null || !Number.isFinite(asOfMs)) return null;
-      return Math.floor((now - asOfMs) / DAY_MS_AR);
+      return Math.floor((now - asOfMs) / DAY_MS);
     });
     const hasStale = staleAges.some((age) => age === null || age > T.arStalenessMaxDays);
     if (hasStale) {

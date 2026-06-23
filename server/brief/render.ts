@@ -13,7 +13,7 @@ export interface BriefInput {
 }
 export interface Email { subject: string; html: string }
 
-const NAVY = '#1B2A4A', GOLD = '#C9A96E', CREAM = '#F5F0E8', INK = '#222';
+const NAVY = '#1B2A4A', GOLD = '#C9A96E', CREAM = '#F5F3EF', INK = '#222';
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const sevColor = (s: Insight['severity']) => (s === 'critical' ? '#B3261E' : s === 'warning' ? GOLD : '#5A6B8C');
 

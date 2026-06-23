@@ -5,6 +5,8 @@ import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
 import { AreaChart } from '@/charts/AreaChart';
+import { useMarketIntel } from './hooks';
+import { MarketScorecard } from './MarketScorecard';
 
 export function MarketModule() {
   const { data: macro, isLoading } = useMacro();
@@ -80,6 +82,35 @@ export function MarketModule() {
             </p>
           </div>
         </Card>
+      </div>
+      {/* Phase 5 W3 — Market intelligence scorecard per cluster */}
+      <MarketIntelSection />
+    </div>
+  );
+}
+
+function MarketIntelSection() {
+  const { data: signals, isLoading, error } = useMarketIntel();
+
+  if (isLoading) return (
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+      {[1, 2, 3].map(i => <Skeleton key={i} style={{ height: 90, borderRadius: 8 }} />)}
+    </div>
+  );
+
+  if (error || !signals) return null;
+  if (signals.length === 0) return null;
+
+  return (
+    <div>
+      <Card>
+        <CardHeader
+          title="Market Intelligence"
+          trailing={<Badge tone="amber">Advisory</Badge>}
+        />
+      </Card>
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 mt-3">
+        {signals.map(s => <MarketScorecard key={s.cluster} signal={s} />)}
       </div>
     </div>
   );

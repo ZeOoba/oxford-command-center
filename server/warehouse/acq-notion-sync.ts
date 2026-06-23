@@ -15,7 +15,7 @@ import type { WarehouseDb } from './db';
 /** Full UUID for the Acquisition Pipeline Tracker Notion database (short id bcfe4a03). */
 export const ACQ_PIPELINE_DB_ID = 'bcfe4a03-7e61-4ac1-a0bb-c44174fa138b';
 
-export interface NotionSyncResult {
+export interface AcqSyncResult {
   inserted: number;
   updated: number;
   errors: string[];
@@ -144,12 +144,12 @@ export async function syncNotionPipeline(
   db: WarehouseDb,
   notionToken: string,
   opts?: { databaseId?: string; fetchImpl?: FetchLike },
-): Promise<NotionSyncResult> {
+): Promise<AcqSyncResult> {
   if (!notionToken) throw new Error('notionToken is required');
   const dbId = opts?.databaseId ?? ACQ_PIPELINE_DB_ID;
   const fetchImpl = opts?.fetchImpl ?? (globalThis.fetch as FetchLike);
 
-  const result: NotionSyncResult = { inserted: 0, updated: 0, errors: [] };
+  const result: AcqSyncResult = { inserted: 0, updated: 0, errors: [] };
 
   // Drain all Notion pages (pagination). First-page failure throws (callers → 502).
   let cursor: string | undefined;

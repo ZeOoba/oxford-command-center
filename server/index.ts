@@ -26,6 +26,9 @@ import type { WarehouseDb } from './warehouse/db';
 import { warehouseRoutes } from './warehouse/api';
 import { debtApi } from './warehouse/debt-api';
 import { leaseForecastApi } from './warehouse/lease-forecast-api';
+import { capitalAllocationApi } from './warehouse/capital-allocation-api';
+import { onboardProperty, PropertyOnboardingInputSchema } from './warehouse/property-onboarding';
+import type { PropertyOnboardingInput } from './warehouse/property-onboarding';
 import { MarketRentInput } from '../src/contracts/lease-forecast';
 import { writeDebtSnapshot } from './warehouse/debt-snapshot';
 import { buildLoanPropertyMap } from './warehouse/property-crosswalk';
@@ -55,6 +58,26 @@ function getWarehouse(): WarehouseDb {
 app.route('/api/warehouse', warehouseRoutes(getWarehouse));
 app.route('/api/warehouse/debt', debtApi(getWarehouse));
 app.route('/api/warehouse/leasing', leaseForecastApi(getWarehouse));
+app.route('/api/warehouse/capital', capitalAllocationApi(getWarehouse));
+
+// POST /api/warehouse/properties/onboard — data-driven property onboarding (Phase 5 W4)
+app.post('/api/warehouse/properties/onboard', async (c) => {
+  let db: WarehouseDb;
+  try { db = getWarehouse(); }
+  catch { return c.json({ ok: false, error: 'warehouse unavailable' }, 503); }
+  let body: PropertyOnboardingInput;
+  try {
+    const parsed = PropertyOnboardingInputSchema.safeParse(await c.req.json());
+    if (!parsed.success) return c.json({ ok: false, error: 'invalid request body' }, 400);
+    body = parsed.data;
+  } catch { return c.json({ ok: false, error: 'invalid request body' }, 400); }
+  try {
+    const result = onboardProperty(db, body);
+    return c.json(result, result.ok ? 200 : 400);
+  } catch {
+    return c.json({ ok: false, error: 'onboarding failed' }, 500);
+  }
+});
 
 // Occupancy time-series capture: on every workbook-sourced refresh (startup, file-change,
 // api/manual — NOT overlay edits or a failed-parse fallback), snapshot each property's occPct
