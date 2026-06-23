@@ -1,15 +1,16 @@
 /**
  * server/insights/generators/cf-hurdle-drag.ts
  *
- * Phase 3 UnitE — CF-1 sub-target-yield generator.
+ * Phase 3 UnitE — CF-1 premium-valuation / below-market-yield generator.
  *
- * Detects hold-rated properties whose in-place cap rate (impliedCapRate) trails
- * the market benchmark median, as signalled by a negative capRateGap.
+ * Detects hold-rated properties whose in-place cap rate (impliedCapRate) is
+ * BELOW the market benchmark median (capRateGap < 0), indicating the asset
+ * is priced richly relative to peers — a potential harvest or refi signal.
  *
  * Rate-basis correctness:
  *   impliedCapRate = Spine-A NOI / Oxford workbook value (unlevered current yield)
- *   capRateGap     = impliedCapRate − marketCapP50  (negative = trailing market)
- *   subTargetYieldGap = abs(capRateGap) when capRateGap < 0
+ *   capRateGap     = impliedCapRate − marketCapP50  (negative = below market = rich valuation)
+ *   belowMarketGap = abs(capRateGap) when capRateGap < 0
  *
  *   Both legs are cap rates — a valid apples-to-apples comparison.
  *   Never compared against any levered return measure (IRR, levered return %, etc.).
@@ -23,14 +24,15 @@
 import type { CapitalAllocationReport } from '@contracts/capital-allocation';
 import type { RankInput } from '../rank';
 
-// Novelty ceiling: 200 bps sub-target gap = full novelty 1.0
+// Novelty ceiling: 200 bps below-market gap = full novelty 1.0
 const NOVELTY_FULL_GAP = 0.02;
 
 /**
- * Generate CF-1 hurdle-drag insights from a CapitalAllocationReport.
+ * Generate CF-1 premium-valuation insights from a CapitalAllocationReport.
  *
- * For each 'hold' entry where the implied cap rate trails the market median
- * (capRateGap < 0), emits one RankInput describing the annual yield drag.
+ * For each 'hold' entry where the implied cap rate is below the market median
+ * (capRateGap < 0), emits one RankInput flagging the rich valuation and
+ * estimated repricing headroom — a potential harvest or refi signal.
  */
 export function generateCfHurdleDrag(report: CapitalAllocationReport): RankInput[] {
   const results: RankInput[] = [];
@@ -45,14 +47,15 @@ export function generateCfHurdleDrag(report: CapitalAllocationReport): RankInput
     const impliedCapRate = entry.impliedCapRate;
     const capRateGap = entry.capRateGap;
 
-    // subTargetYieldGap: how far below market median, as a positive fraction
-    const subTargetYieldGap = Math.abs(capRateGap);
+    // belowMarketGap: how far below market median, as a positive fraction
+    const belowMarketGap = Math.abs(capRateGap);
 
     // Back-compute Oxford asset value from Spine-A NOI and implied cap rate
     const oxfordValue = entry.noi / impliedCapRate;
 
-    // Annual run-rate dollar impact of the yield shortfall
-    const materialityUsd = subTargetYieldGap * oxfordValue;
+    // Estimated repricing headroom: the NOI increase required to match the
+    // market median yield at the current Oxford workbook value.
+    const materialityUsd = belowMarketGap * oxfordValue;
 
     // Market median cap rate = impliedCapRate - capRateGap
     const marketMedianCapRate = impliedCapRate - capRateGap;
@@ -70,7 +73,7 @@ export function generateCfHurdleDrag(report: CapitalAllocationReport): RankInput
         inputs: {
           impliedCapRate,
           capRateGap,
-          subTargetYieldGap,
+          belowMarketGap,
           oxfordValue,
           portfolioSize,
         },
@@ -82,12 +85,13 @@ export function generateCfHurdleDrag(report: CapitalAllocationReport): RankInput
 
       materialityUsd,
 
-      title: `${propertyLabel} yields ${(impliedCapRate * 100).toFixed(2)}% vs ${(marketMedianCapRate * 100).toFixed(2)}% market median`,
+      title: `Premium valuation: ${propertyLabel} yields ${(impliedCapRate * 100).toFixed(2)}% vs ${(marketMedianCapRate * 100).toFixed(2)}% market median`,
 
       discovery:
-        `In-place cap rate of ${(impliedCapRate * 100).toFixed(1)}% trails the market median of ` +
-        `${(marketMedianCapRate * 100).toFixed(1)}% by ${Math.round(subTargetYieldGap * 10_000)} bps, ` +
-        `implying $${materialityUsd.toFixed(0)} annual yield drag on a ~$${oxfordValue.toFixed(0)} asset.`,
+        `In-place cap rate of ${(impliedCapRate * 100).toFixed(2)}% is ` +
+        `${(belowMarketGap * 10_000).toFixed(0)} bps below the market median of ` +
+        `${(marketMedianCapRate * 100).toFixed(2)}%, indicating a rich valuation relative to peers. ` +
+        `Estimated repricing headroom: $${materialityUsd.toFixed(0)}.`,
 
       prov: {
         source: 'capital-allocation-report',
@@ -99,7 +103,7 @@ export function generateCfHurdleDrag(report: CapitalAllocationReport): RankInput
 
       // RankInput extensions
       n: portfolioSize,
-      novelty: Math.min(1, subTargetYieldGap / NOVELTY_FULL_GAP),
+      novelty: Math.min(1, belowMarketGap / NOVELTY_FULL_GAP),
     };
 
     results.push(insight);

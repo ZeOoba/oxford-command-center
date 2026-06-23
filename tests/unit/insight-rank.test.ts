@@ -42,9 +42,9 @@ function makeCandidate(overrides: Partial<RankInput> = {}): RankInput {
 // ---------------------------------------------------------------------------
 
 describe('rankCandidates — n-gate filter', () => {
-  it('removes candidate with n < MIN_PAIRS and keeps n >= MIN_PAIRS', () => {
-    const below = makeCandidate({ id: 'gen::below', n: MIN_PAIRS - 1, novelty: 0.8 });
-    const above = makeCandidate({ id: 'gen::above', n: MIN_PAIRS, novelty: 0.8 });
+  it('removes Spine B candidate with n < MIN_PAIRS and keeps n >= MIN_PAIRS', () => {
+    const below = makeCandidate({ id: 'gen::below', spine: 'B' as const, n: MIN_PAIRS - 1, novelty: 0.8 });
+    const above = makeCandidate({ id: 'gen::above', spine: 'B' as const, n: MIN_PAIRS, novelty: 0.8 });
 
     const result = rankCandidates([below, above]);
 
@@ -52,9 +52,9 @@ describe('rankCandidates — n-gate filter', () => {
     expect(result[0]!.id).toBe('gen::above');
   });
 
-  it('returns empty array when all inputs fail n-gate', () => {
-    const a = makeCandidate({ id: 'gen::a', n: 0 });
-    const b = makeCandidate({ id: 'gen::b', n: MIN_PAIRS - 1 });
+  it('returns empty array when all Spine B inputs fail n-gate', () => {
+    const a = makeCandidate({ id: 'gen::a', spine: 'B' as const, n: 0 });
+    const b = makeCandidate({ id: 'gen::b', spine: 'B' as const, n: MIN_PAIRS - 1 });
 
     const result = rankCandidates([a, b]);
     expect(result).toHaveLength(0);
@@ -125,9 +125,9 @@ describe('rankCandidates — determinism', () => {
 // ---------------------------------------------------------------------------
 
 describe('rankCandidates — sufficientData filtering', () => {
-  it('does NOT include n < MIN_PAIRS candidates in the returned array (not just ranked last)', () => {
-    const insufficient = makeCandidate({ id: 'gen::insufficient', n: MIN_PAIRS - 1, novelty: 1.0 });
-    const sufficient = makeCandidate({ id: 'gen::sufficient', n: MIN_PAIRS, novelty: 0.1 });
+  it('does NOT include Spine B n < MIN_PAIRS candidates in the returned array (not just ranked last)', () => {
+    const insufficient = makeCandidate({ id: 'gen::insufficient', spine: 'B' as const, n: MIN_PAIRS - 1, novelty: 1.0 });
+    const sufficient = makeCandidate({ id: 'gen::sufficient', spine: 'B' as const, n: MIN_PAIRS, novelty: 0.1 });
 
     const result = rankCandidates([insufficient, sufficient]);
 
@@ -201,5 +201,74 @@ describe('INSIGHT_CONFIG', () => {
   it('displayTopN is positive integer', () => {
     expect(INSIGHT_CONFIG.displayTopN).toBeGreaterThan(0);
     expect(Number.isInteger(INSIGHT_CONFIG.displayTopN)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 7. Spine A bypasses n-gate
+// ---------------------------------------------------------------------------
+
+describe('rankCandidates — Spine A n-gate bypass', () => {
+  it('passes a Spine A candidate with n=1 and filters out a Spine B candidate with n=1', () => {
+    const spineA = makeCandidate({
+      id: 'cf-hurdle-drag::prop-a',
+      spine: 'A' as const,
+      n: 1,
+      novelty: 0.5,
+    });
+    const spineB = makeCandidate({
+      id: 'gen::prop-b',
+      spine: 'B' as const,
+      n: 1,
+      novelty: 0.5,
+    });
+
+    const result = rankCandidates([spineA, spineB]);
+
+    const returnedIds = result.map((c) => c.id);
+    // Spine A with n=1 must pass (point-comparison, not correlation-backed)
+    expect(returnedIds).toContain('cf-hurdle-drag::prop-a');
+    // Spine B with n=1 must be filtered (requires MIN_PAIRS samples)
+    expect(returnedIds).not.toContain('gen::prop-b');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 8. id tie-break is deterministic
+// ---------------------------------------------------------------------------
+
+describe('rankCandidates — id tie-break determinism', () => {
+  it('produces stable ordering when two CF-1 insights have identical rankScore and materialityUsd', () => {
+    // Both have identical generatorId, materialityUsd, novelty, confidence — only id differs
+    const insightA = makeCandidate({
+      id: 'cf-hurdle-drag::aaa-prop',
+      generatorId: 'cf-hurdle-drag',
+      propertyId: 'aaa-prop',
+      spine: 'A' as const,
+      n: MIN_PAIRS,
+      novelty: 0.5,
+      confidence: 0.7,
+      materialityUsd: 76_923,
+    });
+    const insightB = makeCandidate({
+      id: 'cf-hurdle-drag::zzz-prop',
+      generatorId: 'cf-hurdle-drag',
+      propertyId: 'zzz-prop',
+      spine: 'A' as const,
+      n: MIN_PAIRS,
+      novelty: 0.5,
+      confidence: 0.7,
+      materialityUsd: 76_923,
+    });
+
+    const forwardOrder = rankCandidates([insightA, insightB]);
+    const reversedOrder = rankCandidates([insightB, insightA]);
+
+    // Both orderings must agree
+    expect(forwardOrder.map((c) => c.id)).toEqual(reversedOrder.map((c) => c.id));
+
+    // Lexicographically-smaller id ('aaa-prop') comes first
+    expect(forwardOrder[0]!.id).toBe('cf-hurdle-drag::aaa-prop');
+    expect(forwardOrder[1]!.id).toBe('cf-hurdle-drag::zzz-prop');
   });
 });

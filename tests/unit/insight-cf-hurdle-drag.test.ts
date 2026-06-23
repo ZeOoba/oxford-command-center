@@ -103,9 +103,19 @@ describe('generateCfHurdleDrag', () => {
     // family
     expect(insight.family).toBe('CF');
 
-    // materialityUsd: subTargetYieldGap * oxfordValue
+    // title: must contain "Premium" (not "drag" or "sub-target")
+    expect(insight.title).toMatch(/[Pp]remium/);
+    expect(insight.title).not.toMatch(/\bdrag\b/i);
+    expect(insight.title).not.toMatch(/sub-target/i);
+
+    // discovery: must contain "below" and "market median" or "repricing"
+    expect(insight.discovery).toMatch(/below/i);
+    expect(insight.discovery).toMatch(/market median|repricing/i);
+    expect(insight.discovery).not.toMatch(/annual yield drag/i);
+
+    // materialityUsd: belowMarketGap * oxfordValue
     // oxfordValue = noi / impliedCapRate = 500000 / 0.065 ≈ 7,692,307.69
-    // subTargetYieldGap = abs(-0.01) = 0.01
+    // belowMarketGap = abs(-0.01) = 0.01
     // materialityUsd ≈ 0.01 * 7,692,307.69 ≈ 76,923.08
     const expectedOxfordValue = 500_000 / 0.065;
     const expectedMaterialityUsd = 0.01 * expectedOxfordValue;
@@ -117,7 +127,7 @@ describe('generateCfHurdleDrag', () => {
     // confidence seed
     expect(insight.confidence).toBe(0.7);
 
-    // novelty: Math.min(1, subTargetYieldGap / 0.02) = Math.min(1, 0.01/0.02) = 0.5
+    // novelty: Math.min(1, belowMarketGap / 0.02) = Math.min(1, 0.01/0.02) = 0.5
     expect(insight.novelty).toBeCloseTo(0.5, 10);
   });
 
