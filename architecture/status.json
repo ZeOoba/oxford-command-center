@@ -368,6 +368,14 @@
     "review_needed": true,
     "detail": "Unit A: new src/contracts/insights.ts — architect-owned contract; awaiting Gabriel review before Phase 3 branches",
     "last_updated": "2026-06-22T00:00:00Z"
+  "l2-governor-gate": {
+    "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized via Wave 2 master plan",
+    "phase": "L2 — Add checkGovernorLiteralCoupling to governance gate (scripts/governance-check.ts)",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "L2: adding checkGovernorLiteralCoupling to architect-owned governance-check.ts — context-sensitive detection of bare governor literals (1.25 DSCR / 0.40 LTV) in comparison expressions; allowlists governors.ts + debt-api.ts; wired into main(). Gabriel pre-authorized via master plan.",
+    "last_updated": "2026-06-22T21:38:00Z"
   },
 
   "usage": {
