@@ -37,7 +37,7 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
   const stmt = await parseQbExcel(filePath);
   const periodStart = stmt.periodStart ?? `${det.year}-01-01`;
   const periodEnd = stmt.periodEnd ?? (det.grain === 'year' ? `${det.year}-12-31` : null);
-  const period = String(det.year);
+  const period = /^\d{4}/.test(periodStart) ? periodStart.slice(0, 4) : String(det.year);
 
   const detectNotes = `token=${det.propertyToken}; propertyRaw=${stmt.propertyRaw}`;
   const reg = registerImport(db, {

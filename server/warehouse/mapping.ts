@@ -73,9 +73,15 @@ export function seedMappings(db: WarehouseDb, mappings: unknown[]): number {
   tx(mappings.map((m) => {
     const base = AccountMappingSchema.parse(m);
     const extra = m as { property_id?: unknown; period?: unknown };
+    if (extra.property_id !== undefined && (typeof extra.property_id !== 'string' || extra.property_id.trim() === '')) {
+      throw new Error('seedMappings: property_id must be a non-empty string when provided');
+    }
+    if (extra.period !== undefined && (typeof extra.period !== 'string' || !/^\d{4}$/.test(extra.period))) {
+      throw new Error('seedMappings: period must be a 4-digit year string when provided');
+    }
     return {
       ...base,
-      property_id: typeof extra.property_id === 'string' ? extra.property_id : undefined,
+      property_id: typeof extra.property_id === 'string' ? extra.property_id.trim() : undefined,
       period: typeof extra.period === 'string' ? extra.period : undefined,
     } satisfies AccountMappingWithScope;
   }));
@@ -117,7 +123,12 @@ export function resolveMapping(
     WHERE raw_account_key = ?
       AND (property_id IS NULL OR property_id = ?)
       AND (period IS NULL OR period = ?)
-    ORDER BY CASE match_kind WHEN 'manual' THEN 0 WHEN 'learned' THEN 1 ELSE 2 END,
+    ORDER BY CASE match_kind
+               WHEN 'manual' THEN 0
+               WHEN 'seed' THEN 1
+               WHEN 'learned' THEN 2
+               ELSE 3
+             END,
              property_id IS NULL,
              period IS NULL
   `).all(key, propertyId ?? null, period ?? null) as
