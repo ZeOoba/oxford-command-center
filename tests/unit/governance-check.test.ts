@@ -285,7 +285,12 @@ describe('checkGovernorLiteralCoupling', () => {
   });
 
   it('flags violations in nested subdirectory files (recursive traversal)', () => {
-    mockExistsSync.mockReturnValue(true);
+    // warehouse exists with subdirs; insights dir does NOT exist — isolates warehouse traversal.
+    mockExistsSync.mockImplementation((p) => {
+      const s = String(p);
+      if (s.includes('server') && s.includes('insights')) return false;
+      return true;
+    });
     // First readdirSync call: warehouse root returns a subdir + a clean top-level file
     // Second readdirSync call: subdir returns a file with a governor violation
     mockReaddirSync
@@ -297,5 +302,22 @@ describe('checkGovernorLiteralCoupling', () => {
     const result = checkGovernorLiteralCoupling('/fake/root');
     expect(result.pass).toBe(false);
     expect(result.errors.some((e) => e.includes('1.25'))).toBe(true);
+  });
+
+  it('flags governor literal violations in server/insights/ files', () => {
+    // insightsDir exists; warehouseDir does NOT — violation comes exclusively from insights/.
+    // Before UnitD the insights dir is never scanned, so result.pass would be true (no warehouse
+    // files to scan). After UnitD the insights scan must pick up the violation and return false.
+    mockExistsSync.mockImplementation((p) => {
+      const s = String(p);
+      // insights dir exists; warehouse dir does NOT
+      if (s.includes('server') && s.includes('insights')) return true;
+      if (s.includes('server') && s.includes('warehouse')) return false;
+      return true; // other existsSync calls (root, etc.) pass
+    });
+    mockReaddirSync.mockReturnValueOnce([fileEntry('insight-stats.ts')] as never);
+    mockReadFileSync.mockReturnValueOnce('if (ltv <= 0.40) { /* violation */ }');
+    const result = checkGovernorLiteralCoupling('/fake/root');
+    expect(result.pass).toBe(false);
   });
 });
