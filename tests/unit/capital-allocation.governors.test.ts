@@ -292,3 +292,54 @@ describe('I1: each debt reason appears exactly once in rationale (no double-emit
     expect(dscrReason).not.toMatch(/1\.25/);
   });
 });
+
+// ── M6: leasingRisk surfaced in CapitalAllocationEntry ────────────────────────────────────────
+//
+// buildCapitalAllocationReport() already computes leasingRisk per property as:
+//   noi > 0: min(100, (nearTermExpiryRent / noi) * 100 + atRiskLikelihoodCount * 10)
+//   noi = 0: min(50, atRiskLikelihoodCount * 10)
+//
+// M6 wires this into the entries.push({...}) return so it appears on CapitalAllocationEntry.
+// These tests run RED before the wire-up and GREEN after.
+
+describe('M6: leasingRisk is present in CapitalAllocationEntry', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (scoreProperties as ReturnType<typeof vi.fn>).mockReturnValue([]);
+    (scoreDebtPositions as ReturnType<typeof vi.fn>).mockReturnValue([]);
+  });
+
+  it('M6-E1: leasingRisk is a finite number on each entry (no-leasing baseline → 0)', async () => {
+    const db = freshDb();
+    const snapshot = makeSnapshot({ id: 'prop-m6-base', noi: 100_000, sf: 5_000 });
+    const report = await buildCapitalAllocationReport(db, snapshot);
+    const entry = report.entries.find((e) => e.propertyId === 'prop-m6-base');
+    expect(entry).toBeDefined();
+    // With no leases and no at-risk signals: leasingRisk = 0
+    expect(entry!.leasingRisk).toBeDefined();
+    expect(typeof entry!.leasingRisk).toBe('number');
+    expect(Number.isFinite(entry!.leasingRisk)).toBe(true);
+    expect(entry!.leasingRisk).toBe(0);
+  });
+
+  it('M6-E2: leasingRisk is within 0–100 range (guard on formula cap)', async () => {
+    const db = freshDb();
+    const snapshot = makeSnapshot({ id: 'prop-m6-range', noi: 100_000, sf: 5_000 });
+    const report = await buildCapitalAllocationReport(db, snapshot);
+    const entry = report.entries.find((e) => e.propertyId === 'prop-m6-range');
+    expect(entry).toBeDefined();
+    expect(entry!.leasingRisk).toBeGreaterThanOrEqual(0);
+    expect(entry!.leasingRisk).toBeLessThanOrEqual(100);
+  });
+
+  it('M6-E3: vacant property (noi=0) gets leasingRisk capped at 50 (vacant guard)', async () => {
+    const db = freshDb();
+    const snapshot = makeSnapshot({ id: 'prop-m6-vacant', noi: 0, sf: 5_000 });
+    const report = await buildCapitalAllocationReport(db, snapshot);
+    const entry = report.entries.find((e) => e.propertyId === 'prop-m6-vacant');
+    expect(entry).toBeDefined();
+    // noi=0: leasingRisk = min(50, atRiskCount * 10) — 0 at-risk signals → 0
+    expect(entry!.leasingRisk).toBe(0);
+    expect(entry!.leasingRisk).toBeLessThanOrEqual(50);
+  });
+});

@@ -292,6 +292,12 @@
 
   "ic-memo": {
     "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-22",
+    "phase": "IC memo export (feat/ic-memo-export) — in progress or pending merge",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "Worktree at .claude/worktrees/ic-memo (branch feat/ic-memo-export). Status reflects worktree still present on disk; update to merged once PR lands.",
+    "last_updated": "2026-06-22T10:00:00Z"
     "phase": "Direction 2 — IC Memo HTML export (feat/ic-memo-export)",
     "status": "merged",
     "blocked_by": null,
@@ -306,6 +312,7 @@
     "status": "merged",
     "blocked_by": null,
     "review_needed": false,
+    "review_detail": "CLAUDE.md §2 updated (last merge → PR #120, 1701 tests). §3 adds Direction 1 (PR #119 Notion writeback) + Direction 3 (PR #120 Prospect Demand). status.json adds notion-writeback, prospect-demand, ic-memo entries. Stale worktrees (post-merge-116, post-merge-t2-t3, practical-buck-7ef7bc, recursing-chatelet-f908d3) removed.",
     "review_detail": "CLAUDE.md §2 updated: last merge = PR #121 (f951b40), 1713+ tests; §3 Directions 1+2+3 all Merged ✓. status.json: ic-memo → merged (PR #121). Stale worktrees (post-merge-116, post-merge-t2-t3, practical-buck-7ef7bc, recursing-chatelet-f908d3) removed.",
     "last_updated": "2026-06-22T10:00:00Z"
   },
@@ -377,6 +384,16 @@
     "review_needed": true,
     "review_detail": "L2: adding checkGovernorLiteralCoupling to architect-owned governance-check.ts — context-sensitive detection of bare governor literals (1.25 DSCR / 0.40 LTV) in comparison expressions; allowlists governors.ts + debt-api.ts; wired into main(). Gabriel pre-authorized via master plan.",
     "last_updated": "2026-06-22T21:38:00Z"
+  },
+
+  "m6-leasing-risk-ic-memo": {
+    "agent_role": "Analytics Agent",
+    "phase": "M6 — leasingRisk IC memo surface",
+    "status": "complete",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "Architect-approved in-turn 2026-06-23. Changes: (1) src/contracts/capital-allocation.ts — added leasingRisk: z.number().min(0).max(100) as required field on CapitalAllocationEntry; (2) server/warehouse/capital-allocation.ts — wired leasingRisk into entries.push (L661); (3) server/warehouse/ic-memo.ts — added optional entries param + per-verdict join by propertyId + Leasing Risk column (0-100% display, DASH when undefined); (4) server/warehouse/api.ts — wired entries from buildCapitalAllocationReport into buildIcMemoHtml call (fail-open: snapshot absent → entries undefined → all-DASH). AllocationVerdict.inputs path (src/contracts/capital.ts) was evaluated and ABANDONED — Zod strict rejects unknown keys, approach unsound. Gate green; adversarial refute passed (scale consistency, zero-guard, join correctness, fresh-ingest). PR pending.",
+    "last_updated": "2026-06-23T10:00:00Z"
   },
 
   "usage": {
