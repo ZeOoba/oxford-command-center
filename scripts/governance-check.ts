@@ -158,15 +158,23 @@ export function checkAcqGovernorCoupling(root: string): GovernanceResult {
 export function checkGovernorLiteralCoupling(root: string): GovernanceResult {
   const errors: string[] = [];
   const warehouseDir = join(root, 'server', 'warehouse');
-  if (!existsSync(warehouseDir)) return { pass: true, errors: [], warnings: [] };
+  const insightsDir = join(root, 'server', 'insights');
 
   const ALLOWLIST = new Set(['governors.ts', 'debt-api.ts']);
 
   const files: string[] = [];
+
+  // Stack-based recursive traversal — catches nested files (e.g. server/warehouse/parse/).
+  // Scans both server/warehouse/** and server/insights/**.
+  // Each root dir is skipped gracefully if it does not yet exist.
+  const scanRoots: string[] = [];
+  if (existsSync(warehouseDir)) scanRoots.push(warehouseDir);
+  if (existsSync(insightsDir)) scanRoots.push(insightsDir);
+
+  if (scanRoots.length === 0) return { pass: true, errors: [], warnings: [] };
+
   try {
-    // Stack-based recursive traversal — catches nested files (e.g. server/warehouse/parse/).
-    // server/insights/** is intentionally excluded (doesn't exist yet; UnitD adds its scope).
-    const stack = [warehouseDir];
+    const stack = [...scanRoots];
     while (stack.length > 0) {
       const dir = stack.pop()!;
       for (const entry of readdirSync(dir, { withFileTypes: true }) as unknown as Array<{ name: string; isDirectory(): boolean; isFile(): boolean }>) {
