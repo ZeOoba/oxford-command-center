@@ -231,13 +231,16 @@ describe('applyOverlay — acquisitionInputs (item-4: Workbench persistence)', (
 describe('saveOverlay + loadOverlay — acquisitionInputs round-trip (item-4)', () => {
   // Write a valid AcquisitionInput into an isolated overlay file, read it back, and confirm the
   // Zod-validated field survives intact — the same path POST /api/actions/acquisition-input takes.
-  function withTmpOverlay<T>(fn: (path: string) => T): T {
+  // Must await fn before restoring OVERLAY_PATH: a non-awaited async fn would let the finally
+  // reset the env var mid-flight, so saveOverlay's awaited writeFile would target the real
+  // data/overlay.json instead of the temp path (passes locally where data/ exists, fails in CI).
+  async function withTmpOverlay<T>(fn: (path: string) => T | Promise<T>): Promise<T> {
     const dir = mkdtempSync(join(tmpdir(), 'ora-acq-overlay-'));
     const path = join(dir, 'overlay.json');
     const prev = process.env.OVERLAY_PATH;
     process.env.OVERLAY_PATH = path;
     try {
-      return fn(path);
+      return await fn(path);
     } finally {
       if (prev === undefined) delete process.env.OVERLAY_PATH;
       else process.env.OVERLAY_PATH = prev;
@@ -269,9 +272,9 @@ describe('saveOverlay + loadOverlay — acquisitionInputs round-trip (item-4)', 
     });
   });
 
-  it('drops an invalid acquisitionInputs entry and warns (loadOverlay validRecord guard)', () => {
+  it('drops an invalid acquisitionInputs entry and warns (loadOverlay validRecord guard)', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    withTmpOverlay((path) => {
+    await withTmpOverlay((path) => {
       writeFileSync(path, JSON.stringify({
         acquisitionInputs: {
           'd-valid': AcquisitionInput.parse({ dealId: 'd-valid', clusterTier: 'entry' }),
