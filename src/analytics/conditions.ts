@@ -4,8 +4,7 @@ import type { Insight, InsightSeverity } from './types';
 import { tenantScorecards } from '@/brain/tenants';
 import { coerceNonNegMoney } from '@/lib/money';
 import { renewalSignals, marketRentGaps, bucketExpiry } from './lease-forecast';
-
-const DAY_MS = 86_400_000;
+import { DAY_MS } from '../../server/warehouse/time-constants';
 const HOUR_MS = 3_600_000;
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
   Math.round((new Date(isoTarget).getTime() - new Date(isoFrom).getTime()) / DAY_MS);
@@ -364,7 +363,6 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
     const signals = renewalSignals(s.leases, asOf, s.renewalStages, arrears);
     const gaps = marketRentGaps(s.leases, marketRents);
     const asOfMs = new Date(asOf).getTime();
-    const DAY_MS_L = 86_400_000;
 
     // Build a total annual rent denominator for the L-5 concentration check
     const totalAnnualRent = s.leases.reduce((sum, l) => sum + l.annualRent, 0);
@@ -373,7 +371,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       const leaseEndMs = signal.leaseEnd ? new Date(signal.leaseEnd).getTime() : null;
       const leaseEndInPast = leaseEndMs !== null && leaseEndMs < asOfMs;
       const daysToExpiry = leaseEndMs !== null && !leaseEndInPast
-        ? Math.round((leaseEndMs - asOfMs) / DAY_MS_L)
+        ? Math.round((leaseEndMs - asOfMs) / DAY_MS)
         : null;
 
       // L-1: Expiring ≤90d with no renewal signal (future expiry only)
@@ -520,11 +518,10 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   const stampedEntries = arEntries.filter((r) => 'asOfDate' in r);
   let skipArEval = false;
   if (stampedEntries.length > 0) {
-    const DAY_MS_AR = 86_400_000;
     const staleAges = stampedEntries.map((r) => {
       const asOfMs = r.asOfDate ? new Date(r.asOfDate).getTime() : null;
       if (asOfMs === null || !Number.isFinite(asOfMs)) return null;
-      return Math.floor((now - asOfMs) / DAY_MS_AR);
+      return Math.floor((now - asOfMs) / DAY_MS);
     });
     const hasStale = staleAges.some((age) => age === null || age > T.arStalenessMaxDays);
     if (hasStale) {

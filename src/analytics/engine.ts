@@ -19,9 +19,9 @@ import type {
   RolloverBucket,
   TenantShare,
 } from './types';
+import { DAY_MS } from '../../server/warehouse/time-constants';
 
 const DERIVED = 'Analytics engine (derived from Master Workbook)';
-const DAY_MS = 86_400_000;
 const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
 const yearsBetween = (isoEnd: string, isoFrom: string): number =>
   (new Date(isoEnd).getTime() - new Date(isoFrom).getTime()) / (365.25 * DAY_MS);

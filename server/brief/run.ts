@@ -9,8 +9,7 @@ import { renderBrief, renderAlert, type Email } from './render';
 import { sendEmail, type SendResult } from './send';
 import { openWarehouse } from '../warehouse/db';
 import { insuranceConditions } from '../warehouse/insurance-conditions';
-
-const DAY_MS = 86_400_000;
+import { DAY_MS } from '../warehouse/time-constants';
 // Routing canon: all automated outputs → ggoldberg only; Daily Brief is the sole cc-Eric exception.
 const ALERT_RECIPIENTS = ['ggoldberg@oxfordra.net'];
 const BRIEF_RECIPIENTS = ['ggoldberg@oxfordra.net', 'egoldberg@oxfordra.net'];
