@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useSnapshot } from '@/data/queries';
 import { useUi } from '@/brain/ui-context';
 import { fmtUsd, fmtUsdCompact, fmtDate, fmtNum } from '@analytics/index';
@@ -13,18 +14,8 @@ const tone = (s: InsuranceStatus): BadgeTone =>
 export function InsuranceModule() {
   const { data } = useSnapshot();
   const ui = useUi();
-  if (!data) return null;
-  const pol = data.snapshot.insurance;
-  const totalPremium = pol.reduce((s, p) => s + p.premium, 0);
-  const expired = pol.filter((p) => p.status === 'Expired' || p.status === 'Cancelled').length;
-  const active = pol.filter((p) => p.status !== 'Cancelled' && p.status !== 'Expired').length;
-  const renewingSoon = pol.filter((p) => p.status === 'Renewing Soon' || p.status === 'Renew Now').length;
-  const asOf = new Date(data.snapshot.meta.asOf).getTime();
-  const upcoming = pol
-    .filter((p) => p.expires && new Date(p.expires).getTime() >= asOf)
-    .sort((a, b) => new Date(a.expires!).getTime() - new Date(b.expires!).getTime())[0];
 
-  const cols: Column<InsurancePolicy>[] = [
+  const cols = useMemo((): Column<InsurancePolicy>[] => [
     {
       key: 'prop',
       header: 'Property',
@@ -41,7 +32,18 @@ export function InsuranceModule() {
     { key: 'expires', header: 'Expires', align: 'right', render: (p) => fmtDate(p.expires), sortValue: (p) => (p.expires ? new Date(p.expires).getTime() : 0) },
     { key: 'days', header: 'Days', align: 'right', render: (p) => (p.daysToExpiry ?? '—'), sortValue: (p) => p.daysToExpiry ?? 99999 },
     { key: 'status', header: 'Status', render: (p) => <Badge tone={tone(p.status)}>{p.status}</Badge>, sortValue: (p) => p.status },
-  ];
+  ], []);
+
+  if (!data) return null;
+  const pol = data.snapshot.insurance;
+  const totalPremium = pol.reduce((s, p) => s + p.premium, 0);
+  const expired = pol.filter((p) => p.status === 'Expired' || p.status === 'Cancelled').length;
+  const active = pol.filter((p) => p.status !== 'Cancelled' && p.status !== 'Expired').length;
+  const renewingSoon = pol.filter((p) => p.status === 'Renewing Soon' || p.status === 'Renew Now').length;
+  const asOf = new Date(data.snapshot.meta.asOf).getTime();
+  const upcoming = pol
+    .filter((p) => p.expires && new Date(p.expires).getTime() >= asOf)
+    .sort((a, b) => new Date(a.expires!).getTime() - new Date(b.expires!).getTime())[0];
 
   return (
     <div className="flex flex-col gap-4">

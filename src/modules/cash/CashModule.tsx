@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { useSnapshot } from '@/data/queries';
 import { useUi } from '@/brain/ui-context';
@@ -12,12 +13,8 @@ import type { CashEntity } from '@contracts/index';
 export function CashModule() {
   const { data } = useSnapshot();
   const ui = useUi();
-  if (!data) return null;
-  const cash = data.snapshot.cash;
-  const series = cash.history.map((h) => ({ date: h.date, value: h.total }));
-  const largest = cash.entities.reduce((m, e) => Math.max(m, e.currentBalance), 0);
 
-  const cols: Column<CashEntity>[] = [
+  const cols = useMemo((): Column<CashEntity>[] => [
     { key: 'entity', header: 'Entity', render: (c) => <span style={{ fontWeight: 600 }}>{c.entity}</span>, sortValue: (c) => c.entity },
     { key: 'bal', header: 'Current', align: 'right', render: (c) => fmtUsd(c.currentBalance), sortValue: (c) => c.currentBalance },
     { key: 'prior', header: 'Prior', align: 'right', render: (c) => fmtUsd(c.priorBalance), sortValue: (c) => c.priorBalance ?? 0 },
@@ -36,7 +33,12 @@ export function CashModule() {
       render: (c) =>
         c.trend === 'up' ? <TrendingUp size={14} style={{ color: 'var(--color-pos)' }} /> : c.trend === 'down' ? <TrendingDown size={14} style={{ color: 'var(--color-neg)' }} /> : <Minus size={14} style={{ color: 'var(--text-tertiary)' }} />,
     },
-  ];
+  ], []);
+
+  if (!data) return null;
+  const cash = data.snapshot.cash;
+  const series = cash.history.map((h) => ({ date: h.date, value: h.total }));
+  const largest = cash.entities.reduce((m, e) => Math.max(m, e.currentBalance), 0);
 
   return (
     <div className="flex flex-col gap-4">

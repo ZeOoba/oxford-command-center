@@ -8,7 +8,7 @@
 //
 // The tab state is local (not in the URL) — the Debt module is a sidebar entry with no sub-routing.
 // No changes to module registry (id: 'debt' already registered in shell/modules.tsx).
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { useSnapshot, useAnalytics } from '@/data/queries';
 import { useUi } from '@/brain/ui-context';
@@ -37,12 +37,8 @@ function PositionsView() {
   const { data } = useSnapshot();
   const { analytics } = useAnalytics();
   const ui = useUi();
-  if (!data || !analytics) return null;
-  const loans = data.snapshot.loans;
-  const d = analytics.debt;
-  const balloons = loans.filter((l) => l.balloon);
 
-  const cols: Column<Loan>[] = [
+  const cols = useMemo((): Column<Loan>[] => [
     {
       key: 'name',
       header: 'Loan',
@@ -110,7 +106,12 @@ function PositionsView() {
         ),
       sortValue: (l) => l.status ?? '',
     },
-  ];
+  ], []);
+
+  if (!data || !analytics) return null;
+  const loans = data.snapshot.loans;
+  const d = analytics.debt;
+  const balloons = loans.filter((l) => l.balloon);
 
   return (
     <div className="flex flex-col gap-4">
