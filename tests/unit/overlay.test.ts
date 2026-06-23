@@ -3,7 +3,8 @@ import { writeFileSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
-import { applyOverlay, loadOverlay, nextStage, EMPTY_OVERLAY } from '../../server/overlay';
+import { AcquisitionInput } from '../../src/contracts/acquisition';
+import { applyOverlay, loadOverlay, saveOverlay, nextStage, EMPTY_OVERLAY } from '../../server/overlay';
 
 const base = {
   deals: [{ id: 'd1', name: 'FVC', stage: 'Candidate' }],
@@ -198,5 +199,90 @@ describe('loadOverlay — structured-map validation (closes the whole-overlay by
   });
   it('string-filters a free-text map (a non-string dealStages value is dropped)', () => {
     expect(loadFull({ dealStages: { d1: 'LOI/PSA', d2: 42 } }).dealStages).toEqual({ d1: 'LOI/PSA' });
+  });
+});
+
+// ── acquisitionInputs persistence round-trip ──────────────────────────────────────────────────
+//
+// Validates the POST /api/actions/acquisition-input → saveOverlay → loadOverlay → applyOverlay
+// path that persists Acquisition Workbench inputs across page reloads (item-4 verification).
+//
+// Finding: the server route, brain write-back, overlay schema, loadOverlay parser, applyOverlay
+// merge, and AcquisitionsModule savedInput prop are all correctly wired. These tests document
+// and lock in that correctness.
+
+describe('applyOverlay — acquisitionInputs (item-4: Workbench persistence)', () => {
+  const baseAcq = { deals: [{ id: 'd1' }], tasks: [], leases: [] } as unknown as PortfolioSnapshot;
+  const input = AcquisitionInput.parse({ dealId: 'd1', clusterTier: 'entry', stabilizedYoc: 0.09 });
+
+  it('surfaces acquisitionInputs onto the snapshot', () => {
+    const out = applyOverlay(baseAcq, { ...EMPTY_OVERLAY, acquisitionInputs: { d1: input } });
+    expect(out.acquisitionInputs.d1).toMatchObject({ dealId: 'd1', clusterTier: 'entry' });
+    expect(out.acquisitionInputs.d1!.stabilizedYoc).toBeCloseTo(0.09, 9);
+  });
+
+  it('defaults to an empty record and EMPTY_OVERLAY carries the key', () => {
+    const out = applyOverlay(baseAcq, EMPTY_OVERLAY);
+    expect(out.acquisitionInputs).toEqual({});
+    expect(EMPTY_OVERLAY.acquisitionInputs).toEqual({});
+  });
+});
+
+describe('saveOverlay + loadOverlay — acquisitionInputs round-trip (item-4)', () => {
+  // Write a valid AcquisitionInput into an isolated overlay file, read it back, and confirm the
+  // Zod-validated field survives intact — the same path POST /api/actions/acquisition-input takes.
+  function withTmpOverlay<T>(fn: (path: string) => T): T {
+    const dir = mkdtempSync(join(tmpdir(), 'ora-acq-overlay-'));
+    const path = join(dir, 'overlay.json');
+    const prev = process.env.OVERLAY_PATH;
+    process.env.OVERLAY_PATH = path;
+    try {
+      return fn(path);
+    } finally {
+      if (prev === undefined) delete process.env.OVERLAY_PATH;
+      else process.env.OVERLAY_PATH = prev;
+    }
+  }
+
+  it('persists a valid AcquisitionInput and reloads it with all fields intact', async () => {
+    const input = AcquisitionInput.parse({
+      dealId: 'd-persist', clusterTier: 'owned-submarket', stabilizedYoc: 0.11,
+      price: 4_200_000, totalSf: 35_000,
+      ddKnown: { flood: true, zoning: true },
+    });
+
+    await withTmpOverlay(async (path) => {
+      // seed an empty overlay so saveOverlay has a file to merge into
+      writeFileSync(path, JSON.stringify({}));
+      const saved = await saveOverlay({ ...EMPTY_OVERLAY, acquisitionInputs: { 'd-persist': input } });
+      expect(saved).toBe(true);
+
+      const reloaded = loadOverlay();
+      const entry = reloaded.acquisitionInputs['d-persist'];
+      expect(entry).toBeDefined();
+      expect(entry!.dealId).toBe('d-persist');
+      expect(entry!.clusterTier).toBe('owned-submarket');
+      expect(entry!.stabilizedYoc).toBeCloseTo(0.11, 9);
+      expect(entry!.price).toBe(4_200_000);
+      expect(entry!.ddKnown.flood).toBe(true);
+      expect(entry!.ddKnown.zoning).toBe(true);
+    });
+  });
+
+  it('drops an invalid acquisitionInputs entry and warns (loadOverlay validRecord guard)', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    withTmpOverlay((path) => {
+      writeFileSync(path, JSON.stringify({
+        acquisitionInputs: {
+          'd-valid': AcquisitionInput.parse({ dealId: 'd-valid', clusterTier: 'entry' }),
+          'd-bad': { not: 'a valid input' },
+        },
+      }));
+      const o = loadOverlay();
+      expect(Object.keys(o.acquisitionInputs)).toEqual(['d-valid']);
+      expect(o.acquisitionInputs['d-valid']!.dealId).toBe('d-valid');
+      expect(warn).toHaveBeenCalled();
+    });
+    warn.mockRestore();
   });
 });
