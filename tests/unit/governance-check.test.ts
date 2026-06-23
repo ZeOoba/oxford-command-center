@@ -15,6 +15,7 @@ import {
   checkStaleFiles,
   checkRouteDuplication,
   checkAcqGovernorCoupling,
+  checkGovernorLiteralCoupling,
 } from '../../scripts/governance-check';
 
 const ARCH_FILES = [
@@ -200,5 +201,69 @@ describe('checkAcqGovernorCoupling', () => {
     const result = checkAcqGovernorCoupling('/fake/root');
     expect(result.pass).toBe(false);
     expect(result.errors.some((e) => /loadGovernors.*governors|governors.*loadGovernors/i.test(e))).toBe(true);
+  });
+});
+
+describe('checkGovernorLiteralCoupling', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('flags dscr < 1.25 (DSCR comparison with floor literal)', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue(['acq-engine.ts'] as never);
+    mockReadFileSync.mockReturnValue('if (dscr < 1.25) { return false; }');
+    const result = checkGovernorLiteralCoupling('/fake/root');
+    expect(result.pass).toBe(false);
+    expect(result.errors.some((e) => e.includes('1.25'))).toBe(true);
+  });
+
+  it('passes when loadGovernors is used (no bare literal)', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue(['acq-engine.ts'] as never);
+    mockReadFileSync.mockReturnValue(
+      "const { dscrFloor } = loadGovernors(db);\nif (dscr < dscrFloor) { return false; }",
+    );
+    const result = checkGovernorLiteralCoupling('/fake/root');
+    expect(result.pass).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('does NOT flag width: 1.25 (non-governor context)', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue(['util.ts'] as never);
+    mockReadFileSync.mockReturnValue('const config = { width: 1.25, height: 2.5 };');
+    const result = checkGovernorLiteralCoupling('/fake/root');
+    expect(result.pass).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('does NOT flag when the literal is in a comment', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue(['acq-engine.ts'] as never);
+    mockReadFileSync.mockReturnValue(
+      '// old: dscr < 1.25\nif (dscr < dscrFloor) {',
+    );
+    const result = checkGovernorLiteralCoupling('/fake/root');
+    expect(result.pass).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('flags LTV literal form ltv > 0.40', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue(['scoring.ts'] as never);
+    mockReadFileSync.mockReturnValue('if (ltv > 0.40) { return false; }');
+    const result = checkGovernorLiteralCoupling('/fake/root');
+    expect(result.pass).toBe(false);
+    expect(result.errors.some((e) => e.includes('0.40') || e.includes('0.4'))).toBe(true);
+  });
+
+  it('does NOT flag files in governors.ts (allowlisted)', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue(['governors.ts'] as never);
+    mockReadFileSync.mockReturnValue('export const dscrFloor = 1.25;');
+    const result = checkGovernorLiteralCoupling('/fake/root');
+    expect(result.pass).toBe(true);
+    expect(result.errors).toHaveLength(0);
   });
 });

@@ -147,6 +147,63 @@ export function checkAcqGovernorCoupling(root: string): GovernanceResult {
   return { pass: errors.length === 0, errors, warnings: [] };
 }
 
+/**
+ * Step 10: Detect bare governor-value literals in binary comparisons against
+ * governor-named variables in server/warehouse/*.ts.
+ *
+ * Flags: dscr < 1.25 | dscr > 1.25 | ltv > 0.40 | ltv > 0.4 etc.
+ * Pass:  dscr < dscrFloor (symbolic) | width: 1.25 (non-comparison) | // comment
+ * Allowlist: governors.ts, debt-api.ts, tests/**
+ */
+export function checkGovernorLiteralCoupling(root: string): GovernanceResult {
+  const errors: string[] = [];
+  const warehouseDir = join(root, 'server', 'warehouse');
+  if (!existsSync(warehouseDir)) return { pass: true, errors: [], warnings: [] };
+
+  const ALLOWLIST = new Set(['governors.ts', 'debt-api.ts']);
+
+  let files: string[] = [];
+  try {
+    files = (readdirSync(warehouseDir) as unknown as string[])
+      .filter((f: string) => f.endsWith('.ts') && !ALLOWLIST.has(f))
+      .map((f: string) => join(warehouseDir, f));
+  } catch {
+    return { pass: true, errors: [], warnings: [] };
+  }
+
+  // Matches a line containing BOTH a governor-named operand AND a governor literal
+  // in a comparison context (either order).
+  const GOVERNOR_LITERAL_IN_COMPARISON =
+    /\b(?:dscr|ltv|loanToValue|ltvRatio|dscrRatio)\b.*?[<>!=]=?\s*(?:1\.25|0\.40?)\b|(?:1\.25|0\.40?)\s*[<>!=]=?.*?\b(?:dscr|ltv|loanToValue|ltvRatio|dscrRatio)\b/;
+
+  for (const filePath of files) {
+    let content = '';
+    try {
+      content = readFileSync(filePath, 'utf8');
+    } catch {
+      continue;
+    }
+
+    // Strip block and line comments before checking — same pattern as checkAcqGovernorCoupling.
+    const code = content.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+    const lines = code.split('\n');
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (line === undefined) continue;
+      if (GOVERNOR_LITERAL_IN_COMPARISON.test(line)) {
+        const rel = filePath.replace(root + '/', '').replace(root + '\\', '');
+        errors.push(
+          `GOVERNOR_LITERAL: bare governor literal in comparison at ${rel}:${i + 1} — ` +
+            `"${line.trim()}" — use loadGovernors(db) instead`,
+        );
+      }
+    }
+  }
+
+  return { pass: errors.length === 0, errors, warnings: [] };
+}
+
 /** Run all checks, print results, and exit with appropriate code. */
 function main(): void {
   const root = resolve(process.cwd());
@@ -158,6 +215,7 @@ function main(): void {
     checkStaleFiles(root, 14),
     checkRouteDuplication(root),
     checkAcqGovernorCoupling(root),
+    checkGovernorLiteralCoupling(root),
   ];
 
   for (const result of checks) {
