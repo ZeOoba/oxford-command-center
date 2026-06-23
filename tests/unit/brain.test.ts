@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import type { DealStage, RenewalStage } from '../../src/contracts/index';
+import { AcquisitionInput } from '../../src/contracts/acquisition';
 import type { brain as BrainSingleton } from '../../server/brain';
 
 /**
@@ -201,6 +202,20 @@ describe('Brain write-backs', () => {
     // Empty note removes the key.
     expect(brain.setTenantNote('t1', '   ')).toBe(true);
     expect((h.lastOverlay!.tenantNotes as Record<string, string>).t1).toBeUndefined();
+  });
+
+  it('setAcquisitionInput rejects an unknown deal and persists for a known one', () => {
+    const input = AcquisitionInput.parse({ dealId: 'd1', clusterTier: 'entry', stabilizedYoc: 0.09 });
+    expect(brain.setAcquisitionInput('nope', input)).toBe(false);
+
+    const events: Array<{ reason: string }> = [];
+    brain.on('snapshot', (e) => events.push(e as { reason: string }));
+    expect(brain.setAcquisitionInput('d1', input)).toBe(true);
+    expect(events.at(-1)!.reason).toBe('action:acquisition-input');
+    const stored = (h.lastOverlay!.acquisitionInputs as Record<string, AcquisitionInput>).d1;
+    expect(stored).toBeDefined();
+    expect(stored!.clusterTier).toBe('entry');
+    expect(stored!.stabilizedYoc).toBeCloseTo(0.09, 9);
   });
 
   it('addTask prepends a user task and re-derives', () => {
