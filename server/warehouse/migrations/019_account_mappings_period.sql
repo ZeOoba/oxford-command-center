@@ -1,0 +1,12 @@
+-- 019_account_mappings_period.sql
+-- Adds an optional period scope column to account_mappings.
+--
+-- Nullable: NULL means "match any period" (all existing rows remain unscoped).
+-- A non-null period constrains a mapping row to a specific year (e.g. '2025'),
+-- enabling period-scoped one-time exclusions such as the FVC 2025 cell-tower
+-- easement sale ($500k) that must never pollute run-rate NOI in other periods.
+--
+-- Companion change: resolveMapping() in mapping.ts adds an optional `period`
+-- parameter and applies AND (period IS NULL OR period = ?) when provided.
+-- NEVER modify this file after it has been applied to production.
+ALTER TABLE account_mappings ADD COLUMN period TEXT;

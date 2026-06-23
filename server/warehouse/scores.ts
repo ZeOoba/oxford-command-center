@@ -13,6 +13,7 @@ import { INTEL_CONFIG } from './intel-config';
 import type { AttentionBand, CapitalAction, HealthBand } from './intel-config';
 import { isOperatingRealEstate, latestFullYearPeriod } from './metrics';
 import type { PeriodMetrics } from './metrics';
+import { clamp } from './clamp';
 // PropertyScore is single-sourced in the contract (H6 — PropertyScoreSchema). Re-export under the
 // local name so existing engine imports keep working; the Zod schema is the source of truth.
 //   noiPerSfQuartile: 1..4 or null. benchmarkCohortSize: same-basis NOI/SF cohort size at `period`
@@ -21,8 +22,6 @@ import type { PeriodMetrics } from './metrics';
 import type { PropertyScore } from '../../src/contracts/warehouse';
 
 export type { PropertyScore };
-
-const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
 /** Growth → 0..100 sub-score: linear clamp over ±cap; null growth → 50 (neutral). */
 function growthScore(pct: number | null): number {

@@ -47,7 +47,7 @@ async function main() {
   // Workbook's own totals cells (independent re-read).
   const wbNoi = find('Property NOI', (c) => /portfolio total/i.test(c), 13) ?? NaN;
   const wbValue = find('Property NOI', (c) => /portfolio total/i.test(c), 10) ?? NaN;
-  const wbRent = find('Master Tenant Rent Roll', (c) => /portfolio total/i.test(c), 13) ?? NaN;
+  const wbRent = find('Master Tenant Rent Roll', (c) => /portfolio total/i.test(c), 14) ?? NaN;
 
   // Persimmon residence is excluded from the workbook's SF subtotal but included in value.
   const residenceSf = sum(snapshot.properties.filter((p) => p.type === 'Residence').map((p) => p.sf));

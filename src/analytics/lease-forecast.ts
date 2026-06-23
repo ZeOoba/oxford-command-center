@@ -12,13 +12,11 @@ import type {
   RenewalLikelihood,
 } from '@contracts/lease-forecast';
 import { coerceNonNegMoney } from '@/lib/money';
+import { DAY_MS, MONTH_MS } from '../../server/warehouse/time-constants';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 /** Ratified 2026-06-21: VELOCITY_SLOW_DAYS = 60 days (updated from proposed 120). */
 export const VELOCITY_SLOW_DAYS = 60;
-
-const DAY_MS = 86_400_000;
-const MONTH_MS = DAY_MS * 30.4375; // average month in ms
 
 /** Compute signed months between two ISO date strings. Positive = target is later than from. */
 function monthsBetween(isoTarget: string, isoFrom: string): number {

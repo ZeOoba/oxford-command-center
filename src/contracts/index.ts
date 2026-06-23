@@ -33,6 +33,7 @@ export * from './acquisition';
 export * from './debt';
 export * from './lease-forecast';
 export * from './prospect-demand';
+export * from './capital';
 export * from './capital-allocation';
 export * from './market-intelligence';
 export * from './regional-macro';

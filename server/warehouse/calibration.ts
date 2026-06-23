@@ -15,6 +15,7 @@
 import { createHash } from 'node:crypto';
 import type { WarehouseDb } from './db';
 import type { AnomalyFlag } from './anomalies';
+import type { AllocationVerdict } from '../../src/contracts/capital';
 import { INTEL_CONFIG } from './intel-config';
 import type { AnomalySeverity, HealthBand } from './intel-config';
 import { scoreProperties } from './scores';
@@ -31,14 +32,9 @@ import {
   type CalibrationLogRow,
   type InputsVersion,
 } from '../../src/contracts/warehouse';
+import { clamp } from './clamp';
+import { stableStringify } from './stable-stringify';
 
-// ── canonical JSON + hash (mirrors server/warehouse/acquisition.ts) ───────────────────────
-function stableStringify(v: unknown): string {
-  if (v === null || typeof v !== 'object') return JSON.stringify(v);
-  if (Array.isArray(v)) return `[${v.map(stableStringify).join(',')}]`;
-  const keys = Object.keys(v as Record<string, unknown>).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify((v as Record<string, unknown>)[k])}`).join(',')}}`;
-}
 function sha16(s: string): string {
   return createHash('sha256').update(s).digest('hex').slice(0, 16);
 }
@@ -161,7 +157,6 @@ export function computeInputsVersion(db: WarehouseDb, configOverride?: Record<st
 }
 
 // ── confidence proxy (spec §2.3) ──────────────────────────────────────────────────────────
-const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
 /** Band confidence = normalized distance from the nearest health-band boundary, clamped to [0.5,0.95]. */
 function bandConfidence(health: number): number {
@@ -1200,4 +1195,44 @@ export function calibrationPending(db: WarehouseDb): CalibrationLogRow[] {
     if (covered) due.push(v);
   }
   return due;
+}
+
+// ── Phase 5: capital-allocation verdict mapping ──────────────────────────────────────────────
+
+function allocationDirection(action: AllocationVerdict['action']): 'up' | 'down' | 'flat' | 'n/a' {
+  if (action === 'sell') return 'down';
+  if (action === 'buy' || action === 'improve') return 'up';
+  if (action === 'refinance' || action === 'hold') return 'flat';
+  return 'n/a';
+}
+
+/**
+ * Map each AllocationVerdict → one CalibrationVerdict row (verdict_kind 'capital-action-v2').
+ * Deterministic in (verdicts, iv): no clock, no randomness.
+ * horizonPeriods: 0 (Phase 5 Phase-3-absent path) maps to null (unknown horizon per schema).
+ */
+export function verdictsFromAllocations(
+  verdicts: AllocationVerdict[],
+  iv: InputsVersion,
+  emittedBy: string,
+): CalibrationVerdict[] {
+  return verdicts.map(v =>
+    CalibrationVerdictSchema.parse({
+      subjectKind: 'property',
+      subjectId: v.propertyId,
+      verdictKind: 'capital-action-v2',
+      verdictSubkind: '',
+      verdictEngine: 'capital-allocation',
+      predictedBand: v.action,
+      predictedValue: v.expectedReturnPct,
+      predictedUnit: 'band',
+      confidence: v.confidence01,
+      direction: allocationDirection(v.action),
+      reasons: v.reasons,
+      asOfPeriod: v.period,
+      horizonPeriods: v.horizonPeriods > 0 ? v.horizonPeriods : null,
+      inputsVersion: iv.inputsVersion,
+      emittedBy,
+    }),
+  );
 }

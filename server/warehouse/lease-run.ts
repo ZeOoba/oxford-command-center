@@ -19,6 +19,7 @@ import {
   type LeaseTerm,
   type MarkToMarket,
 } from '../../src/contracts/lease-run';
+import { DAY_MS } from './time-constants';
 
 /** Spec defaults — overridable via the overlay. None of these is a governor. */
 export const DEFAULT_LEASE_RUN_ASSUMPTIONS: LeaseRunAssumptions = LeaseRunAssumptions.parse({
@@ -36,14 +37,12 @@ const NNN_STRUCTURES = new Set(['absolute_nnn', 'nnn']);
  *  must NOT be chosen for stabilization. 360 days is a safe floor (leap years, month boundaries). */
 const FULL_YEAR_MIN_DAYS = 360;
 
-const MS_PER_DAY = 86_400_000;
-
 /** Inclusive day-span of a [start, end] period (both ISO 'YYYY-MM-DD'); end-inclusive +1 day. */
 function periodDays(periodStart: string, periodEnd: string): number {
   const a = Date.parse(periodStart);
   const b = Date.parse(periodEnd);
   if (Number.isNaN(a) || Number.isNaN(b)) return 0;
-  return Math.round((b - a) / MS_PER_DAY) + 1;
+  return Math.round((b - a) / DAY_MS) + 1;
 }
 
 /**

@@ -20,6 +20,7 @@
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import type { WarehouseDb } from './db';
 import { latestFullYearPeriod, propertyPeriodMetrics, type PeriodMetrics } from './metrics';
+import { PROPERTY_ALIASES } from './property-crosswalk';
 
 export interface Tolerance {
   /** Relative band: |delta| / max(|wbNoi|, |whNoi|) ≤ pctBand ⇒ in-tolerance. */
@@ -235,13 +236,8 @@ export function reconcileNoiAB(
 // the assembler. Workbook id = slug(name); RECONCILE_SLUG_ALIASES bridges the two properties
 // where the workbook name slug diverges from the canonical property_master.id (H4).
 
-// FVC's workbook name slugs to 'fvc-fairground-village-center-sepich-portfolio-8-props' but the
-// property_master.id is 'sepich-portfolio-columbus-oh-8-props'. Solar's workbook name adds the
-// '25-roof-project' suffix that the property_master.id omits. Bridge both (H4).
-const RECONCILE_SLUG_ALIASES: Record<string, string> = {
-  'fvc-fairground-village-center-sepich-portfolio-8-props': 'sepich-portfolio-columbus-oh-8-props',
-  '1851-s-club-solar-25-roof-project': '1851-s-club-solar',
-};
+// FVC and Solar slug-alias bridge: PROPERTY_ALIASES (property-crosswalk.ts) is the single
+// source of truth for workbook-name → property_master.id slug corrections (H4).
 
 /** Build reconciliation inputs from the live workbook snapshot + warehouse periodMetrics. */
 export function buildNoiReconcileInputs(
@@ -260,7 +256,7 @@ export function buildNoiReconcileInputs(
 
   const inputs: NoiReconcileInput[] = [];
   for (const wp of snapshot.properties) {
-    const canonicalId = RECONCILE_SLUG_ALIASES[wp.id] ?? wp.id;
+    const canonicalId = PROPERTY_ALIASES[wp.id] ?? wp.id;
     const series = metricsByProperty.get(canonicalId) ?? [];
     const fyPeriod = latestFullYearPeriod(series);
     const fyRow = fyPeriod !== null ? series.find((m) => m.period === fyPeriod) ?? null : null;

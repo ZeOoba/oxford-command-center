@@ -22,9 +22,8 @@ import { WORKBOOK_AS_OF } from '../config';
 import {
   type CapRateBenchmark,
   type MarketBenchmarkSet,
-  type Market,
-  type PropertyType,
-} from '../../src/contracts/index';
+} from '../../src/contracts/market-intelligence';
+import type { Market, PropertyType } from '../../src/contracts/index';
 
 /**
  * Live FRED/commercial-feed adapter. STUB — returns null until a real CRE cap-rate feed is wired.
