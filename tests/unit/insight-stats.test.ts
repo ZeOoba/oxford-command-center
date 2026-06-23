@@ -52,6 +52,14 @@ describe('pearson', () => {
   it('returns null when denominator is 0 (constant arrays)', () => {
     expect(pearson([2, 2, 2, 2, 2], [1, 2, 3, 4, 5])).toBeNull();
   });
+
+  it('returns null when xs contains NaN', () => {
+    expect(pearson([NaN, 2, 3, 4, 5], [1, 2, 3, 4, 5])).toBeNull();
+  });
+
+  it('returns null when xs contains Infinity', () => {
+    expect(pearson([Infinity, 2, 3, 4, 5], [1, 2, 3, 4, 5])).toBeNull();
+  });
 });
 
 describe('spearman', () => {
@@ -128,5 +136,17 @@ describe('wilson', () => {
     const r = wilson(5, 5);
     expect(r.low).not.toBeNull();
     expect(r.high).toBe(1);
+  });
+
+  it('returns { low: null, high: null } when hits > n', () => {
+    expect(wilson(5, 3)).toEqual({ low: null, high: null });
+  });
+
+  it('returns { low: null, high: null } when hits is negative', () => {
+    expect(wilson(-1, 5)).toEqual({ low: null, high: null });
+  });
+
+  it('returns { low: null, high: null } when hits is NaN', () => {
+    expect(wilson(NaN, 10)).toEqual({ low: null, high: null });
   });
 });

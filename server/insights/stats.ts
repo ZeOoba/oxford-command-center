@@ -70,8 +70,11 @@ export function pearson(xs: number[], ys: number[]): number | null {
   let sumX = 0;
   let sumY = 0;
   for (let i = 0; i < n; i++) {
-    sumX += xs[i]!;
-    sumY += ys[i]!;
+    const x = xs[i]!;
+    const y = ys[i]!;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    sumX += x;
+    sumY += y;
   }
   const meanX = sumX / n;
   const meanY = sumY / n;
@@ -127,7 +130,15 @@ export function spearman(xs: number[], ys: number[]): number | null {
  * Returns { low: null, high: null } when n === 0.
  */
 export function wilson(hits: number, n: number): { low: number | null; high: number | null } {
-  if (n === 0) return { low: null, high: null };
+  if (
+    !Number.isFinite(hits) ||
+    !Number.isFinite(n) ||
+    n <= 0 ||
+    hits < 0 ||
+    hits > n
+  ) {
+    return { low: null, high: null };
+  }
   const z = 1.96;
   const phat = hits / n;
   const z2 = z * z;
