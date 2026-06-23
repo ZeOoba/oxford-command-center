@@ -276,7 +276,7 @@ function RankingsCard({
     [rows, fmt, onOpenProperty],
   );
 
-  const columns: Column<RankRow>[] = [
+  const columns = useMemo((): Column<RankRow>[] => [
     {
       key: 'rank',
       header: 'Rank',
@@ -306,7 +306,7 @@ function RankingsCard({
       sortValue: (r) => r.quartile ?? null,
       render: (r) => <QuartileBadge quartile={r.quartile} />,
     },
-  ];
+  ], [metric, fmt]);
 
   return (
     <Card>

@@ -509,7 +509,7 @@ function AttentionMatrix({
     [ranked, latestFyByProperty],
   );
 
-  const columns: Column<AttentionRow>[] = [
+  const columns = useMemo((): Column<AttentionRow>[] => [
     {
       key: 'property',
       header: 'Property',
@@ -579,7 +579,7 @@ function AttentionMatrix({
         </span>
       ),
     },
-  ];
+  ], []);
 
   return (
     <Card>

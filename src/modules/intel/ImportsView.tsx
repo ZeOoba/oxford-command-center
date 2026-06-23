@@ -5,7 +5,7 @@
 // (for a pending-review batch) Approve / Reject. Approve can come back 409 with the list
 // of still-unmapped accounts — we surface a per-account "Add mapping" inline form that
 // posts a manual override (useAddMapping) and then retries the approve automatically.
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { fmtUsd, fmtDate } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
@@ -26,7 +26,7 @@ import type { Classification } from '@contracts/warehouse';
 export function ImportsView({ imports }: { imports: ImportSummary[] }) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
 
-  const cols: Column<ImportSummary>[] = [
+  const cols = useMemo((): Column<ImportSummary>[] => [
     {
       key: 'fileName',
       header: 'File',
@@ -38,7 +38,7 @@ export function ImportsView({ imports }: { imports: ImportSummary[] }) {
     { key: 'version', header: 'Ver', align: 'right', render: (r) => `v${r.version}`, sortValue: (r) => r.version },
     { key: 'status', header: 'Status', render: (r) => <Badge tone={statusTone(r.status)}>{r.status}</Badge>, sortValue: (r) => r.status },
     { key: 'importedAt', header: 'Imported', align: 'right', render: (r) => fmtDate(r.importedAt), sortValue: (r) => r.importedAt },
-  ];
+  ], []);
 
   return (
     <div className="flex flex-col gap-4">
