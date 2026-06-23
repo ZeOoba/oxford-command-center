@@ -92,6 +92,8 @@ function minMaxNorm(values: number[]): number[] {
  *
  * Returns only `sufficientData: true` candidates sorted by rankScore DESC.
  * If all inputs fail the n-gate, returns [].
+ *
+ * Output is capped to `INSIGHT_CONFIG.displayTopN` (currently 20) entries.
  */
 export function rankCandidates(inputs: RankInput[]): RankedCandidate[] {
   // ── Step 1: n-gate (hard filter) ────────────────────────────────────────
@@ -113,14 +115,14 @@ export function rankCandidates(inputs: RankInput[]): RankedCandidate[] {
   });
 
   // Build pool of non-TR-null values for normalisation
-  const pool = absMateriality.filter((v): v is number => v !== 'tr-null') as number[];
-  const poolMax = pool.length > 0 ? Math.max(...pool) : 0;
+  const pool = absMateriality.filter((v): v is number => v !== 'tr-null');
+  const poolNorms = minMaxNorm(pool);
 
+  // Map poolNorms back, inserting 0.5 for TR-null slots
+  let poolIdx = 0;
   const materialityNorms = absMateriality.map((v): number => {
     if (v === 'tr-null') return 0.5;
-    // If all non-TR-null values are zero → 0.5 (degenerate)
-    if (poolMax === 0) return 0.5;
-    return v / poolMax;
+    return poolNorms[poolIdx++] ?? 0.5;
   });
 
   // ── Step 4: Compute rankScore ─────────────────────────────────────────────
