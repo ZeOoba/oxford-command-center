@@ -12,6 +12,7 @@
 import type { WarehouseDb } from './db';
 import type { LeasingVelocity } from '../../src/contracts/lease-forecast';
 import { VELOCITY_SLOW_DAYS } from '../../src/analytics/lease-forecast';
+import { DAY_MS } from './time-constants';
 
 // Re-export so tests can import from one place
 export { VELOCITY_SLOW_DAYS };
@@ -23,8 +24,6 @@ interface LeaseEventRow {
   event_kind: 'vacate' | 'commence';
   event_date: string; // ISO YYYY-MM-DD
 }
-
-const DAY_MS = 86_400_000;
 
 /** Median of a sorted numeric array. Returns null if empty. */
 function median(sorted: number[]): number | null {
