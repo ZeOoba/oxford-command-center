@@ -58,6 +58,10 @@ interface CommittedImport {
   file_name: string;
   raw_path: string;
   property_id: string;
+  /** Year string derived from period_start (e.g. '2025'). Passed to resolveMapping so
+   *  period-scoped seed rows (e.g. H4: FVC 2025 easement) fire correctly during the
+   *  expectedIncomeFor income-tie re-check. */
+  period: string;
 }
 
 /**
@@ -74,7 +78,7 @@ async function expectedIncomeFor(db: WarehouseDb, imp: CommittedImport): Promise
   for (const a of stmt.accounts) {
     if (a.total === null) continue;
     if (sectionSide(a.section) !== 'income') continue;
-    const m = resolveMapping(db, a.name, imp.property_id, a.section);
+    const m = resolveMapping(db, a.name, imp.property_id, a.section, undefined, imp.period);
     if (classificationSide(m.classification) !== 'income') continue; // e.g. 'excluded'
     sum += a.total;
   }
@@ -179,7 +183,9 @@ async function main(): Promise<number> {
 
     // 3. committed count floor
     const committed = db.prepare(`
-      SELECT id, file_name, raw_path, property_id FROM import_batches
+      SELECT id, file_name, raw_path, property_id,
+             substr(period_start, 1, 4) AS period
+      FROM import_batches
       WHERE status = 'committed' ORDER BY id
     `).all() as CommittedImport[];
     if (committed.length < MIN_COMMITTED) {

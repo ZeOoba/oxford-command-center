@@ -4,6 +4,16 @@ import type { AccountMapping } from '../../src/contracts/warehouse';
 import { AccountMappingSchema, isNoiIncomeClass } from '../../src/contracts/warehouse';
 import type { WarehouseDb } from './db';
 
+// ── Period-scoped seed entry (H4 extension) ───────────────────────────────
+// AccountMappingSchema (warehouse.ts) defines the base seed shape used for the
+// global mapping seed file. Period-scoped entries (e.g. the FVC 2025 easement)
+// additionally carry property_id + period. We extend locally here rather than
+// adding optional fields to the shared contract (keeping the base contract thin).
+interface AccountMappingWithScope extends AccountMapping {
+  property_id?: string;
+  period?: string;
+}
+
 export function accountKey(raw: string): string {
   return raw.trim().replace(/^\d[\d.-]*\s+/, '').replace(/\s+/g, ' ').toLowerCase();
 }
@@ -35,26 +45,40 @@ export function sectionSide(section: string): 'income' | 'expense' | null {
 
 export function seedMappings(db: WarehouseDb, mappings: unknown[]): number {
   const ins = db.prepare(`
-    INSERT INTO account_mappings (raw_account_key, normalized_category, classification, match_kind, note)
-    VALUES (?, ?, ?, 'seed', ?)
+    INSERT OR IGNORE INTO account_mappings
+      (raw_account_key, normalized_category, classification, match_kind, property_id, period, note)
+    VALUES (?, ?, ?, 'seed', ?, ?, ?)
   `);
-  // Dedup per (account key, statement side): real charts carry the same name on
-  // both sides (e.g. "Gas" as billback income AND utility expense) — both must survive.
+  // Dedup key: (account key, statement side, property_id, period) so that:
+  //   • the same account seeded as both income recovery AND expense opex survives (dual-side rule)
+  //   • a period-scoped exclusion (property+period not null) is distinct from the global seed row
+  //     for the same account key — both must be inserted independently
   const existing = new Set(
-    (db.prepare("SELECT raw_account_key, classification FROM account_mappings WHERE match_kind='seed'").all() as Array<{ raw_account_key: string; classification: string }>)
-      .map((r) => r.raw_account_key + '|' + classificationSide(r.classification)),
+    (db.prepare("SELECT raw_account_key, classification, property_id, period FROM account_mappings WHERE match_kind='seed'").all() as Array<{ raw_account_key: string; classification: string; property_id: string | null; period: string | null }>)
+      .map((r) => `${r.raw_account_key}|${classificationSide(r.classification)}|${r.property_id ?? ''}|${r.period ?? ''}`),
   );
   let count = 0;
-  const tx = db.transaction((rows: AccountMapping[]) => {
+  const tx = db.transaction((rows: AccountMappingWithScope[]) => {
     for (const m of rows) {
-      const dedupKey = accountKey(m.account) + '|' + classificationSide(m.classification);
+      const propId = m.property_id ?? null;
+      const period = m.period ?? null;
+      const dedupKey = `${accountKey(m.account)}|${classificationSide(m.classification)}|${propId ?? ''}|${period ?? ''}`;
       if (existing.has(dedupKey)) continue;
       existing.add(dedupKey);
-      ins.run(accountKey(m.account), m.normalized_category, m.classification, m.note ?? null);
+      ins.run(accountKey(m.account), m.normalized_category, m.classification, propId, period, m.note ?? null);
       count++;
     }
   });
-  tx(mappings.map((m) => AccountMappingSchema.parse(m)));
+  // Parse the base AccountMapping shape; property_id + period are optional extras — strip through
+  tx(mappings.map((m) => {
+    const base = AccountMappingSchema.parse(m);
+    const extra = m as { property_id?: unknown; period?: unknown };
+    return {
+      ...base,
+      property_id: typeof extra.property_id === 'string' ? extra.property_id : undefined,
+      period: typeof extra.period === 'string' ? extra.period : undefined,
+    } satisfies AccountMappingWithScope;
+  }));
   return count;
 }
 
@@ -82,15 +106,22 @@ export function resolveMapping(
    *  is EXEMPT from this guard (a reviewer's explicit, targeted cross-side reclassification wins
    *  regardless of the hint); a GLOBAL manual override is side-constrained like a seed (see below). */
   sideHint?: 'income' | 'expense' | 'either',
+  /** Period string (e.g. '2025'). When provided, rows with a non-null period column must match
+   *  exactly; rows with period IS NULL always match (they are unscoped). This enables period-scoped
+   *  one-time exclusions (H4: FVC 2025 cell-tower easement) without affecting any other period. */
+  period?: string,
 ): ResolvedMapping {
   const key = accountKey(rawAccount);
   const rows = db.prepare(`
-    SELECT id, normalized_category, classification, match_kind, property_id FROM account_mappings
-    WHERE raw_account_key = ? AND (property_id IS NULL OR property_id = ?)
+    SELECT id, normalized_category, classification, match_kind, property_id, period FROM account_mappings
+    WHERE raw_account_key = ?
+      AND (property_id IS NULL OR property_id = ?)
+      AND (period IS NULL OR period = ?)
     ORDER BY CASE match_kind WHEN 'manual' THEN 0 WHEN 'learned' THEN 1 ELSE 2 END,
-             property_id IS NULL
-  `).all(key, propertyId ?? null) as
-    Array<{ id: number; normalized_category: string; classification: string; match_kind: string; property_id: string | null }>;
+             property_id IS NULL,
+             period IS NULL
+  `).all(key, propertyId ?? null, period ?? null) as
+    Array<{ id: number; normalized_category: string; classification: string; match_kind: string; property_id: string | null; period: string | null }>;
 
   // sideHint (the row's existing classification side, on re-resolve) takes precedence over a
   // section header; 'either' means no constraint. Falls back to section-derived side for ingest.

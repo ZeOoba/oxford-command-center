@@ -111,7 +111,7 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
     }
     for (const a of stmt.accounts) {
       if (a.total === null) continue;
-      const m = resolveMapping(db, a.name, det.propertyId ?? undefined, a.section);
+      const m = resolveMapping(db, a.name, det.propertyId ?? undefined, a.section, undefined, period);
       if (m.matchKind === 'unmapped') {
         unmapped.push(a.name);
         insIssue.run(importId, det.propertyId, 'unmapped-account', `${a.name} (section ${a.section}) defaulted to Unmapped/opex`, 'warn');
