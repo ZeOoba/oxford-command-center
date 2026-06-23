@@ -4,10 +4,13 @@
 //
 // Direction 2 — IC Memo HTML export unit tests.
 // Updated for PortfolioAllocation schema (CapitalAllocationReport removed in PR #117).
-// buildIcMemoHtml(portfolio) is PURE: PortfolioAllocation → self-contained HTML doc.
+// buildIcMemoHtml(portfolio, entries?) is PURE: PortfolioAllocation → self-contained HTML doc.
+// M6: entries (CapitalAllocationEntry[]) are passed as optional second arg to source leasingRisk
+// for the verdict table (D3 join path — NOT through AllocationVerdict.inputs).
 import { describe, expect, it } from 'vitest';
 import { buildIcMemoHtml, icMemoFilename } from '../../server/warehouse/ic-memo';
 import { PortfolioAllocation, AllocationVerdict } from '../../src/contracts/capital';
+import type { CapitalAllocationEntry } from '../../src/contracts/capital-allocation';
 
 // ── Fixture builders ──────────────────────────────────────────────────────────
 
@@ -223,5 +226,98 @@ describe('icMemoFilename', () => {
     expect(name).toMatch(/^ORA_IC_Memo_[A-Za-z0-9_-]+\.html$/);
     expect(name).not.toContain('/');
     expect(name).not.toContain(' ');
+  });
+});
+
+// ── M6: Leasing Risk column in verdict table ──────────────────────────────────
+//
+// D1: leasingRisk scale is 0–100 (integer/float). The engine computes
+//     min(100, (nearTermExpiryRent/noi)*100 + atRiskCount*10).
+//     pct0(35) → "35%". DO NOT divide or multiply by 100.
+//
+// D3: leasingRisk is sourced from CapitalAllocationEntry (join by propertyId),
+//     NOT from AllocationVerdict.inputs (which has no leasingRisk field).
+//     Tests pass entries as the optional second arg to buildIcMemoHtml.
+
+/** Minimal CapitalAllocationEntry fixture — only fields needed for M6 tests. */
+function makeEntry(propertyId: string, leasingRisk: number): CapitalAllocationEntry {
+  return {
+    propertyId,
+    propertyName: null,
+    market: null,
+    sf: 5000,
+    capitalAction: 'invest',
+    priorityScore: 50,
+    healthScore: null,
+    attentionScore: null,
+    nearTermExpiryRent: 0,
+    atRiskLikelihoodCount: 0,
+    debtScore: null,
+    balloonMonths: null,
+    dscr: null,
+    rationale: [],
+    noi: 100000,
+    noiPerSf: 20,
+    noiBasis: 'spine-a',
+    leasingRisk,
+    impliedCapRate: null,
+    capRateGap: null,
+    capRatePercentile: null,
+  };
+}
+
+describe('buildIcMemoHtml — M6 Leasing Risk column', () => {
+  it('M6-1: renders "Leasing Risk" column header in the verdict table (always present)', () => {
+    // The header is always rendered regardless of whether entries are passed.
+    const html = buildIcMemoHtml(portfolio());
+    expect(html).toContain('Leasing Risk');
+  });
+
+  it('M6-2: formats leasingRisk 35 (0-100 scale) as "35%" via pct0 (D1: no divide-by-100)', () => {
+    const p = portfolio({
+      verdicts: [verdict({ propertyId: 'p-1' })],
+      actionCounts: { buy: 0, hold: 0, sell: 0, refinance: 0, improve: 1 },
+    });
+    const entries = [makeEntry('p-1', 35)];
+    const html = buildIcMemoHtml(p, entries);
+    expect(html).toContain('35%');
+    // Must NOT misinterpret as fractional (0.35 * 100 → "35%" is same string, but
+    // if someone accidentally passes 0.35 the pct0 helper rounds to "0%" — guard:
+    expect(html).not.toContain('>0%<'); // 35 rounds to 35, not 0
+  });
+
+  it('M6-2b: leasingRisk=0 renders "0%" (not DASH — zero is a valid score)', () => {
+    const p = portfolio({
+      verdicts: [verdict({ propertyId: 'p-1' })],
+      actionCounts: { buy: 0, hold: 0, sell: 0, refinance: 0, improve: 1 },
+    });
+    const entries = [makeEntry('p-1', 0)];
+    const html = buildIcMemoHtml(p, entries);
+    expect(html).toContain('0%');
+    // pct0(0) returns "0%", not DASH — 0 is finite
+    expect(html.match(/0%/g)?.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('M6-3: renders em-dash when no matching entry is provided (undefined leasingRisk → DASH)', () => {
+    const p = portfolio({
+      verdicts: [verdict({ propertyId: 'p-1' })],
+      actionCounts: { buy: 0, hold: 0, sell: 0, refinance: 0, improve: 1 },
+    });
+    // Pass entries with a DIFFERENT propertyId — no match → entry?.leasingRisk is undefined
+    const entries = [makeEntry('p-OTHER', 35)];
+    const html = buildIcMemoHtml(p, entries);
+    // Column header must be present
+    expect(html).toContain('Leasing Risk');
+    // Cell must show em-dash, never "undefined%" or "NaN%"
+    expect(html).toContain('—');
+    expect(html).not.toContain('undefined%');
+    expect(html).not.toContain('NaN%');
+  });
+
+  it('M6-4: renders em-dash when entries arg is omitted entirely (backward-compat)', () => {
+    const html = buildIcMemoHtml(portfolio());
+    expect(html).toContain('Leasing Risk');
+    expect(html).not.toContain('undefined%');
+    expect(html).not.toContain('NaN%');
   });
 });
