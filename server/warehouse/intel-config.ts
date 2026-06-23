@@ -40,3 +40,11 @@ export const INTEL_CONFIG = {
   // Growth that maps a factor to its 0..100 sub-score: linear clamp on [-cap, +cap].
   growthScoreCapPct: 0.20,    // ±20% growth ⇒ 0..100 (ratified 2026-06-14)
 } as const;
+
+export const HURDLE_RATE = {
+  pct: 0.08,                             // ratified by Gabriel Goldberg 2026-06-22
+  ratification: 'ratified' as const,
+  ratifiedBy: 'Gabriel Goldberg',
+  ratifiedDate: '2026-06-22',
+  basis: 'unlevered IRR — marginal cost of capital making buy/hold/sell/refi/improve comparable',
+} as const;

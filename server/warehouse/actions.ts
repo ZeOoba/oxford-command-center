@@ -69,6 +69,12 @@ export function approveImport(db: WarehouseDb, importId: number, opts: ApproveOp
     .all(importId) as Array<{ id: number; raw_account: string; classification: string }>;
   if (rows.length === 0) return { ok: false, unmapped: [], error: 'import has no ledger rows' };
 
+  // Derive the year period for this import so period-scoped mapping rows (e.g. the H4 FVC 2025
+  // easement exclusion) fire correctly during re-resolution. period_start is '2025-01-01' for an
+  // annual import; substr gives '2025'. Undefined when period_start is null (e.g. YTD without
+  // a detected year) — resolveMapping treats undefined as "no period constraint" (safe fallback).
+  const period: string | undefined = batch.period_start ? batch.period_start.substring(0, 4) : undefined;
+
   const resolved = rows.map((r) => ({
     id: r.id,
     // Constrain re-resolution of SEED and GLOBAL-manual rows to the row's existing classification
@@ -82,6 +88,7 @@ export function approveImport(db: WarehouseDb, importId: number, opts: ApproveOp
       batch.property_id ?? undefined,
       undefined,
       classificationSide(r.classification),
+      period,
     ),
     rawAccount: r.raw_account,
   }));

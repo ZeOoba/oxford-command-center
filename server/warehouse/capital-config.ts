@@ -11,6 +11,7 @@
 //   DISPOSITION <6.5% | HOLD 6.5–7.5% | ACQ-IRR ≥12% | CAPEX-IRR ≥15%
 //   Refi trigger: +150 bps | Payout: 0% (full reinvest, Gabriel confirmed)
 import type { WarehouseDb } from './db';
+import { HURDLE_RATE } from './intel-config';
 
 export interface CapitalConfigRow {
   version: number;
@@ -24,6 +25,11 @@ export interface CapitalConfigRow {
   refiTriggerBps: number;
   payoutPct: number;
   notes: string | null;
+  // ── Phase 5 hurdle-rate governor ──
+  hurdleRatePct: number;                 // default 0.08
+  hurdleRateRatification: 'ratified' | 'proposed';
+  hurdleRateRatifiedBy: string | null;
+  hurdleRateRatifiedDate: string | null;
 }
 
 /** Compile-time ratified constants — authoritative live view (version 1, 2026-06-13). */
@@ -40,6 +46,11 @@ export const CAPITAL_CONFIG = {
   capexIrr: 0.15,
   refiTriggerBps: 150,
   payoutPct: 0.0,
+  // ── Phase 5 hurdle-rate governor (ratified by Gabriel Goldberg 2026-06-22) ──
+  hurdleRatePct: HURDLE_RATE.pct,
+  hurdleRateRatification: HURDLE_RATE.ratification,
+  hurdleRateRatifiedBy: HURDLE_RATE.ratifiedBy as string | null,
+  hurdleRateRatifiedDate: HURDLE_RATE.ratifiedDate as string | null,
 } as const;
 
 export type CapitalConfig = typeof CAPITAL_CONFIG;
@@ -58,7 +69,11 @@ export function loadCapitalConfig(db: WarehouseDb): CapitalConfigRow {
               capex_irr             AS capexIrr,
               refi_trigger_bps      AS refiTriggerBps,
               payout_pct            AS payoutPct,
-              notes
+              notes,
+              hurdle_rate_pct           AS hurdleRatePct,
+              hurdle_rate_ratification  AS hurdleRateRatification,
+              hurdle_rate_ratified_by   AS hurdleRateRatifiedBy,
+              hurdle_rate_ratified_date AS hurdleRateRatifiedDate
        FROM capital_config
        ORDER BY version DESC
        LIMIT 1`,
@@ -67,6 +82,8 @@ export function loadCapitalConfig(db: WarehouseDb): CapitalConfigRow {
 
   if (!row) {
     // DB empty (cold environment before migration ran) — return compile-time fallback.
+    // CAPITAL_CONFIG already carries the hurdle-rate fields (proposed, 0.08); spread
+    // picks them up automatically so the cold-start path is always fail-closed.
     return { ...CAPITAL_CONFIG, notes: null };
   }
   return row;
@@ -159,6 +176,11 @@ export function writeCapitalConfig(
     refiTriggerBps: update.refiTriggerBps ?? current.refiTriggerBps,
     payoutPct: update.payoutPct ?? current.payoutPct,
     notes: update.notes ?? null,
+    // Hurdle rate fields carry through from current — governed separately via ratification path.
+    hurdleRatePct: current.hurdleRatePct,
+    hurdleRateRatification: current.hurdleRateRatification,
+    hurdleRateRatifiedBy: current.hurdleRateRatifiedBy,
+    hurdleRateRatifiedDate: current.hurdleRateRatifiedDate,
   };
 
   // (2) HARD INVARIANTS (CLAUDE.md §4) — never write a breaching set.
@@ -207,12 +229,16 @@ export function writeCapitalConfig(
       `INSERT INTO capital_config
          (version, effective_from, dscr_floor, ltv_ceiling,
           disposition_cap_rate, hold_cap_rate, acq_irr, capex_irr,
-          refi_trigger_bps, payout_pct, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          refi_trigger_bps, payout_pct, notes,
+          hurdle_rate_pct, hurdle_rate_ratification,
+          hurdle_rate_ratified_by, hurdle_rate_ratified_date)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       next.version, next.effectiveFrom, next.dscrFloor, next.ltvCeiling,
       next.dispositionCapRate, next.holdCapRate, next.acqIrr, next.capexIrr,
       next.refiTriggerBps, next.payoutPct, next.notes,
+      next.hurdleRatePct, next.hurdleRateRatification,
+      next.hurdleRateRatifiedBy, next.hurdleRateRatifiedDate,
     );
     for (const k of changed) {
       appendCalibrationLog(db, {

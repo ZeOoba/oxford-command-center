@@ -2750,6 +2750,16 @@
       "classification": "other-income",
       "confidence": "high",
       "note": "Income-side contra-revenue entry: Yardi charts book bad debt in the REVENUE section as a negative amount (sign carries through, reducing NOI once). Expense-side charts resolve to the existing opex entry via side-aware mapping. Live-backfill addition 2026-06-12."
+    },
+    {
+      "account": "Sale Cell Tower Easement",
+      "code": null,
+      "normalized_category": "One-Time Easement Sale",
+      "classification": "excluded",
+      "property_id": "sepich-portfolio-columbus-oh-8-props",
+      "period": "2025",
+      "confidence": "high",
+      "note": "H4 (2026-06-22): FVC 2025 ~$500k perpetual cell-tower easement sale (American Tower, was Zettler Rd parcel). One-time capital event funded the 401 Sunburst acquisition — must NEVER appear in run-rate NOI. Period-scoped to 2025 + property-scoped to the Sepich portfolio so future periods and other properties are unaffected. Companion: migration 019 adds period column to account_mappings."
     }
   ],
   "needs_gabriel_ruling": [],

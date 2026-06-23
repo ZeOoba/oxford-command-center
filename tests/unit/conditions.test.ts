@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { PortfolioSnapshot, Property, Lease, Loan, InsurancePolicy, Deal } from '@contracts/index';
-import { evaluateConditions, ALERT_THRESHOLDS } from '@analytics/index';
+import { evaluateConditions, ALERT_THRESHOLDS, extractDgs5MarketRate } from '@analytics/index';
+import type { MacroSnapshot } from '@contracts/index';
 import { CAPITAL_CONFIG } from '../../server/warehouse/capital-config';
 
 // ── Self-contained fixtures ─────────────────────────────────────────────────
@@ -535,5 +536,145 @@ describe('evaluateConditions — dollar ranking', () => {
     const infoItems = out.filter((i) => i.severity === 'info');
     expect(infoItems.length).toBeGreaterThanOrEqual(2);
     infoItems.forEach((i) => expect(i.impactAnnualUsd).toBeNull());
+  });
+});
+
+// ── M3: Cached DGS5 threading — no live HTTP from analytics path ──────────────────────────────
+describe('evaluateConditions — M3: cachedMarketRate threading (DGS5)', () => {
+  afterEach(() => { vi.restoreAllMocks(); });
+
+  // (M3-1) When a cachedMarketRate is provided, the refi-spread condition uses it instead of 0.065.
+  // e.g. DGS5 = 4.00% + 200 bps industrialLenderSpread → effectiveMarketRate = 0.060
+  // A loan at 0.070 with market at 0.060 + refiSpreadBps(0.005) → threshold 0.065:
+  //   0.070 > 0.065 → fires. impact = (0.070 - 0.060) * 1,000,000 = 10,000
+  it('(M3-1) cachedMarketRate supplied: refi-spread uses the live rate, not 0.065', () => {
+    const l = loan({ id: 'm3a', direction: 'borrower', rate: 0.070, absBalance: 1_000_000 });
+    const out = evaluateConditions(
+      snap({ loans: [l] }),
+      { ...opts, cachedMarketRate: 0.060 },
+    );
+    const insight = out.find((i) => i.id === 'refi-spread-m3a');
+    expect(insight).toBeDefined();
+    // impact = (0.070 - 0.060) * 1,000,000 = 10,000
+    expect(insight!.impactAnnualUsd).toBeCloseTo(10_000, 0);
+    // detail must reference the live rate (0.060 = 6.00%), not the fallback 0.065
+    expect(insight!.detail).toContain('6.00%');
+    expect(insight!.detail).not.toContain('6.50%');
+  });
+
+  // (M3-2) When cachedMarketRate is null/undefined, fall back to 0.065 and the refi alert still fires.
+  // A loan at 0.075: 0.075 > 0.065 + 0.005 = 0.070 → fires with impact = (0.075 - 0.065) * 500,000 = 5,000
+  it('(M3-2) null cachedMarketRate: falls back to 0.065 — refi alert does NOT drop silently', () => {
+    const l = loan({ id: 'm3b', direction: 'borrower', rate: 0.075, absBalance: 500_000 });
+    // No cachedMarketRate — must fall back to 0.065
+    const out = evaluateConditions(snap({ loans: [l] }), opts);
+    const insight = out.find((i) => i.id === 'refi-spread-m3b');
+    expect(insight).toBeDefined();
+    expect(insight!.impactAnnualUsd).toBeCloseTo(5_000, 0);
+    // detail must reference the 0.065 fallback rate
+    expect(insight!.detail).toContain('6.50%');
+  });
+
+  // (M3-2b) Explicit null cachedMarketRate still falls back to 0.065 — same assertion.
+  it('(M3-2b) explicit cachedMarketRate: undefined → fallback 0.065, alert fires', () => {
+    const l = loan({ id: 'm3c', direction: 'borrower', rate: 0.075, absBalance: 500_000 });
+    const out = evaluateConditions(snap({ loans: [l] }), { ...opts, cachedMarketRate: undefined });
+    const insight = out.find((i) => i.id === 'refi-spread-m3c');
+    expect(insight).toBeDefined();
+    expect(insight!.detail).toContain('6.50%');
+  });
+
+  // (M3-3) CRITICAL: No live HTTP — fetch and fetchFredMacro must never be called
+  //         during evaluateConditions execution, regardless of opts.
+  it('(M3-3) evaluateConditions NEVER calls fetch or fetchFredMacro — no live HTTP on the analytics path', () => {
+    const fetchSpy = vi.spyOn(global, 'fetch');
+    const l = loan({ id: 'm3d', direction: 'borrower', rate: 0.075, absBalance: 1_000_000 });
+    // Run both with and without cachedMarketRate
+    evaluateConditions(snap({ loans: [l] }), opts);
+    evaluateConditions(snap({ loans: [l] }), { ...opts, cachedMarketRate: 0.050 });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  // (M3-4) cachedMarketRate changes the threshold — a loan that would NOT fire at 0.065
+  //         DOES fire when the live rate is lower (market is cheaper now).
+  // cachedMarketRate = 0.045. threshold = 0.045 + 0.005 = 0.050.
+  // loan rate = 0.055 → 0.055 > 0.050 → fires. At 0.065 fallback: 0.055 < 0.070 → would NOT fire.
+  it('(M3-4) a lower live rate lowers the threshold — loan that would miss at 0.065 fires at 0.045', () => {
+    const l = loan({ id: 'm3e', direction: 'borrower', rate: 0.055, absBalance: 2_000_000 });
+    // Without cachedMarketRate: 0.055 < 0.065+0.005=0.070 → does NOT fire
+    const outFallback = evaluateConditions(snap({ loans: [l] }), opts);
+    expect(outFallback.some((i) => i.id === 'refi-spread-m3e')).toBe(false);
+    // With cachedMarketRate=0.045: 0.055 > 0.045+0.005=0.050 → DOES fire
+    const outLive = evaluateConditions(
+      snap({ loans: [l] }),
+      { ...opts, cachedMarketRate: 0.045 },
+    );
+    const insight = outLive.find((i) => i.id === 'refi-spread-m3e');
+    expect(insight).toBeDefined();
+    expect(insight!.impactAnnualUsd).toBeCloseTo((0.055 - 0.045) * 2_000_000, 0);
+  });
+});
+
+// ── M3: extractDgs5MarketRate — direct unit tests (refute finding: zero coverage on conversion) ─
+describe('extractDgs5MarketRate', () => {
+  // Helper to build a minimal MacroSnapshot with a single DGS5 indicator.
+  function macroWith(dgs5Value: number | null): MacroSnapshot {
+    return {
+      asOf: '2026-06-22',
+      source: 'mock',
+      indicators: [
+        { id: 'DGS5', label: '5Y Treasury', value: dgs5Value, unit: '%', change: null },
+        { id: 'DGS10', label: '10Y Treasury', value: 4.47, unit: '%', change: null },
+      ],
+      tenYearHistory: [],
+    };
+  }
+  function macroMissingDgs5(): MacroSnapshot {
+    return { asOf: '2026-06-22', source: 'mock', indicators: [], tenYearHistory: [] };
+  }
+
+  it('converts percent to decimal and adds industrialLenderSpread', () => {
+    // DGS5 = 4.18% → 0.0418 + 0.020 = 0.0618
+    const result = extractDgs5MarketRate(macroWith(4.18));
+    expect(result).not.toBeNull();
+    expect(result!).toBeCloseTo(0.0618, 4);
+  });
+
+  it('seeded DGS5 (4.18%) produces ≈ 6.18%, consistent with the 6.5% fallback', () => {
+    // This pins the calibration: seeded rate (6.18%) < fallback (6.5%) by ≈ 32 bps.
+    // A live seeded run should fire MORE refi alerts than the fallback, not fewer.
+    const result = extractDgs5MarketRate(macroWith(4.18));
+    expect(result!).toBeGreaterThan(0.059); // > 5.9%
+    expect(result!).toBeLessThan(0.065);    // < 6.5% (the fallback)
+  });
+
+  it('returns null when DGS5 indicator is absent from the snapshot', () => {
+    expect(extractDgs5MarketRate(macroMissingDgs5())).toBeNull();
+  });
+
+  it('returns null when DGS5 value is null (FRED outage / missing observation)', () => {
+    expect(extractDgs5MarketRate(macroWith(null))).toBeNull();
+  });
+
+  it('rate = 0 is finite and accepted: returns 0/100 + spread = spread-only rate', () => {
+    // A zero-rate DGS5 is unusual but valid (e.g., deflationary scenario).
+    // Must return spread-only (0.020), NOT null — we must not silently discard a genuine rate.
+    const result = extractDgs5MarketRate(macroWith(0));
+    expect(result).not.toBeNull();
+    expect(result!).toBeCloseTo(ALERT_THRESHOLDS.industrialLenderSpread, 6);
+  });
+
+  it('percent-to-decimal conversion: 1% DGS5 → 0.01 decimal → 0.01 + 0.020 = 0.030', () => {
+    // Direct assertion on the /100 arithmetic — guards a regression that drops the /100 divide
+    // (which would produce 1 + 0.020 = 1.020, a 102% rate that silences every refi alert).
+    const result = extractDgs5MarketRate(macroWith(1.0));
+    expect(result).not.toBeNull();
+    expect(result!).toBeCloseTo(0.030, 6); // 0.010 + 0.020
+  });
+
+  it('high DGS5 (7.0%) → decimal 0.07 + 0.020 = 0.090 (raises threshold — fewer alerts)', () => {
+    const result = extractDgs5MarketRate(macroWith(7.0));
+    expect(result).not.toBeNull();
+    expect(result!).toBeCloseTo(0.090, 6);
   });
 });
