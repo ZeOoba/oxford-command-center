@@ -84,33 +84,7 @@ export function LeasesModule() {
     return rows;
   }, [leases, fuse, query, status, property, expiry]);
 
-  if (!data || !analytics) return null;
-
-  const totalRent = leases.reduce((s, l) => s + l.annualRent, 0);
-  const filteredRent = filtered.reduce((s, l) => s + l.annualRent, 0);
-  const rar = analytics.revenueAtRisk;
-  const expSoon = leases.filter((l) => l.status === 'Expiring Soon').length;
-  const isFiltered = query.trim() !== '' || status !== 'all' || property !== 'all' || expiry !== 'all';
-  const cdOverdue = analytics.criticalDates.filter((c) => c.daysToDate < 0).length;
-
-  const exportRentRoll = () => {
-    const rows = filtered.map((l) => ({
-      Tenant: l.company ?? l.tenantName,
-      Property: l.propertyKey,
-      Unit: l.unit ?? '',
-      SF: l.sf,
-      'Annual Rent': l.annualRent,
-      '$/SF': l.rentPerSf ?? '',
-      'Lease Start': l.leaseStart ?? '',
-      'Lease End': l.leaseEnd ?? '',
-      'Months To Expiry': l.monthsToExpiry ?? '',
-      'Escalation %': l.escalationPct ?? '',
-      Status: l.status,
-    }));
-    downloadCsv(`ORA_RentRoll_${asOf || 'export'}.csv`, rows);
-  };
-
-  const cols: Column<Lease>[] = [
+  const cols = useMemo((): Column<Lease>[] => [
     {
       key: 'tenant',
       header: 'Tenant',
@@ -143,9 +117,9 @@ export function LeasesModule() {
       },
       sortValue: (l) => gapMap.get(l.id)?.gapPsf ?? null,
     },
-  ];
+  ], [gapMap]);
 
-  const cdCols: Column<CriticalDate>[] = [
+  const cdCols = useMemo((): Column<CriticalDate>[] => [
     { key: 'when', header: 'In', align: 'right', render: (c) => <Badge tone={urgencyTone(c.daysToDate)}>{urgencyLabel(c.daysToDate)}</Badge>, sortValue: (c) => c.daysToDate },
     { key: 'date', header: 'Date', align: 'right', render: (c) => fmtDate(c.date), sortValue: (c) => c.daysToDate },
     { key: 'kind', header: 'Event', render: (c) => <Badge tone={kindTone[c.kind]}>{c.kind}</Badge>, sortValue: (c) => c.kind },
@@ -161,7 +135,33 @@ export function LeasesModule() {
       sortValue: (c) => c.tenant,
     },
     { key: 'rent', header: 'Rent', align: 'right', render: (c) => fmtUsdCompact(c.annualRent), sortValue: (c) => c.annualRent },
-  ];
+  ], []);
+
+  if (!data || !analytics) return null;
+
+  const totalRent = leases.reduce((s, l) => s + l.annualRent, 0);
+  const filteredRent = filtered.reduce((s, l) => s + l.annualRent, 0);
+  const rar = analytics.revenueAtRisk;
+  const expSoon = leases.filter((l) => l.status === 'Expiring Soon').length;
+  const isFiltered = query.trim() !== '' || status !== 'all' || property !== 'all' || expiry !== 'all';
+  const cdOverdue = analytics.criticalDates.filter((c) => c.daysToDate < 0).length;
+
+  const exportRentRoll = () => {
+    const rows = filtered.map((l) => ({
+      Tenant: l.company ?? l.tenantName,
+      Property: l.propertyKey,
+      Unit: l.unit ?? '',
+      SF: l.sf,
+      'Annual Rent': l.annualRent,
+      '$/SF': l.rentPerSf ?? '',
+      'Lease Start': l.leaseStart ?? '',
+      'Lease End': l.leaseEnd ?? '',
+      'Months To Expiry': l.monthsToExpiry ?? '',
+      'Escalation %': l.escalationPct ?? '',
+      Status: l.status,
+    }));
+    downloadCsv(`ORA_RentRoll_${asOf || 'export'}.csv`, rows);
+  };
 
   return (
     <div className="flex flex-col gap-4">

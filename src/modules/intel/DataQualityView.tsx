@@ -3,6 +3,7 @@
 // Open data-quality issues across the warehouse (sign-normalized, foot-mismatch,
 // unmapped-account, …) with one-click resolution. Resolving flips the issue to
 // 'resolved' (never deleted) and invalidates the imports/noi/issues queries.
+import { useMemo } from 'react';
 import { fmtDate } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
@@ -16,7 +17,7 @@ export function DataQualityView({ issues }: { issues: WarehouseIssue[] }) {
   // Resolving an issue is a server WRITE; on the baked mirror it has no edge home → read-only (Phase 1b).
   const live = useWarehouseLive();
 
-  const cols: Column<WarehouseIssue>[] = [
+  const cols = useMemo((): Column<WarehouseIssue>[] => [
     { key: 'severity', header: 'Severity', render: (i) => <Badge tone={severityTone(i.severity)}>{i.severity}</Badge>, sortValue: (i) => i.severity },
     { key: 'kind', header: 'Kind', render: (i) => <span className="num text-2xs uppercase" style={{ letterSpacing: '0.06em', color: 'var(--text-secondary)' }}>{i.kind}</span>, sortValue: (i) => i.kind },
     { key: 'propertyName', header: 'Property', render: (i) => i.propertyName ?? '—', sortValue: (i) => i.propertyName ?? '' },
@@ -41,7 +42,7 @@ export function DataQualityView({ issues }: { issues: WarehouseIssue[] }) {
           ),
         }] as Column<WarehouseIssue>[])
       : []),
-  ];
+  ], [live, resolve]);
 
   return (
     <Card>

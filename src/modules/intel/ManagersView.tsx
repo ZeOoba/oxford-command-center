@@ -35,44 +35,7 @@ export function ManagersView() {
 
   const rows = useMemo(() => sortScorecards(pm.data ?? []), [pm.data]);
 
-  if (pm.isLoading) {
-    return (
-      <div className="flex flex-col gap-4">
-        <Skeleton style={{ height: 56 }} />
-        <Skeleton style={{ height: 240 }} />
-      </div>
-    );
-  }
-
-  if (unavailable) {
-    return (
-      <Card>
-        <CardHeader title="Property Managers" trailing={<Badge tone="neutral">offline</Badge>} />
-        <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
-          <Database size={28} style={{ color: 'var(--text-tertiary)' }} />
-          <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
-            PM scorecards require the live brain server.
-          </div>
-          <div className="text-2xs" style={{ color: 'var(--text-tertiary)', maxWidth: 420 }}>
-            The financial warehouse runs locally alongside the brain server. This deployed mirror is read-only.
-          </div>
-        </div>
-      </Card>
-    );
-  }
-
-  if (rows.length === 0) {
-    return (
-      <Card>
-        <CardHeader title="Property Managers" />
-        <div className="px-4 py-12 text-center text-sm" style={{ color: 'var(--text-secondary)' }}>
-          No manager scorecards yet — managers derive from committed financials with a mapped PM.
-        </div>
-      </Card>
-    );
-  }
-
-  const columns: Column<PmScorecard>[] = [
+  const columns = useMemo((): Column<PmScorecard>[] => [
     {
       key: 'manager',
       header: 'Manager',
@@ -130,7 +93,44 @@ export function ManagersView() {
         </span>
       ),
     },
-  ];
+  ], []);
+
+  if (pm.isLoading) {
+    return (
+      <div className="flex flex-col gap-4">
+        <Skeleton style={{ height: 56 }} />
+        <Skeleton style={{ height: 240 }} />
+      </div>
+    );
+  }
+
+  if (unavailable) {
+    return (
+      <Card>
+        <CardHeader title="Property Managers" trailing={<Badge tone="neutral">offline</Badge>} />
+        <div className="flex flex-col items-center gap-2 px-4 py-12 text-center">
+          <Database size={28} style={{ color: 'var(--text-tertiary)' }} />
+          <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+            PM scorecards require the live brain server.
+          </div>
+          <div className="text-2xs" style={{ color: 'var(--text-tertiary)', maxWidth: 420 }}>
+            The financial warehouse runs locally alongside the brain server. This deployed mirror is read-only.
+          </div>
+        </div>
+      </Card>
+    );
+  }
+
+  if (rows.length === 0) {
+    return (
+      <Card>
+        <CardHeader title="Property Managers" />
+        <div className="px-4 py-12 text-center text-sm" style={{ color: 'var(--text-secondary)' }}>
+          No manager scorecards yet — managers derive from committed financials with a mapped PM.
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <Card>

@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { useSnapshot, useAnalytics } from '@/data/queries';
 import { useUi } from '@/brain/ui-context';
 import { fmtUsdCompact, fmtPct, fmtSf, fmtMultiple, fmtNum } from '@analytics/index';
@@ -12,11 +13,8 @@ export function PortfolioModule() {
   const { data } = useSnapshot();
   const { analytics } = useAnalytics();
   const ui = useUi();
-  if (!data || !analytics) return null;
-  const props = data.snapshot.properties;
-  const k = analytics.kpis;
 
-  const cols: Column<Property>[] = [
+  const cols = useMemo((): Column<Property>[] => [
     {
       key: 'name',
       header: 'Property',
@@ -42,7 +40,11 @@ export function PortfolioModule() {
       render: (p) => p.lender ?? <span style={{ color: 'var(--text-tertiary)' }}>—</span>,
       sortValue: (p) => p.lender ?? '',
     },
-  ];
+  ], []);
+
+  if (!data || !analytics) return null;
+  const props = data.snapshot.properties;
+  const k = analytics.kpis;
 
   return (
     <div className="flex flex-col gap-4">
