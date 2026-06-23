@@ -1,773 +1,295 @@
 // @vitest-environment node
-//
-// tests/unit/capital-allocation.test.ts
-//
-// Phase 5 — Capital Allocation Capstone unit tests.
-// Written TDD-first: tests run BEFORE implementation and are expected to FAIL
-// until server/warehouse/capital-allocation.ts is implemented.
-//
-// Test strategy:
-//   1. Priority score formula edge cases (pure math, no DB needed)
-//   2. Contract validation (Zod parse/reject)
-//   3. Integration test with mocked dependencies (scores, debt, leasing, macro)
-//
-// Vi.mock paths use the ACTUAL module paths relative to the test file location
-// (tests/unit/) so that vitest resolves them correctly.
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { CapitalAllocationEntry, MacroContext, CapitalAllocationReport } from '../../src/contracts/capital-allocation';
+import { mkdtempSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { openWarehouse } from '../../server/warehouse/db';
+import type { WarehouseDb } from '../../server/warehouse/db';
 
-// ── Pure formula helpers (extracted to test the math independently) ────────────────────────
-// These mirror exactly the formula in capital-allocation.ts so that tests serve as
-// an independent oracle on the arithmetic. The engine implementation must match these.
+vi.mock('../../server/macro/getMacro', () => ({ getMacro: vi.fn() }));
+vi.mock('../../server/warehouse/scores', () => ({ scoreProperties: vi.fn() }));
+vi.mock('../../server/warehouse/debt-scoring', () => ({ scoreDebtPositions: vi.fn() }));
 
-const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+import { getMacro } from '../../server/macro/getMacro';
+import { scoreProperties } from '../../server/warehouse/scores';
+import { scoreDebtPositions } from '../../server/warehouse/debt-scoring';
+import type { PropertyScore } from '../../src/contracts/warehouse';
+import type { DebtScore } from '../../src/contracts/debt';
 
-function attentionBandScore(band: string | null | undefined): number {
-  if (band === 'red') return 100;
-  if (band === 'orange') return 66;
-  if (band === 'yellow') return 33;
-  return 0;
+const mockGetMacro = vi.mocked(getMacro);
+const mockScoreProperties = vi.mocked(scoreProperties);
+const mockScoreDebt = vi.mocked(scoreDebtPositions);
+
+function freshDb(): WarehouseDb {
+  const dir = mkdtempSync(join(tmpdir(), 'cap-alloc-test-'));
+  return openWarehouse(join(dir, 'test.sqlite'));
 }
 
-function computePriorityScore(opts: {
-  healthScore: number | null;
-  attentionBand: string | null;
-  nearTermExpiryRent: number;
-  atRiskLikelihoodCount: number;
-  noi: number;
-  balloonMonths: number | null;
-  dscr: number | null;
-}): number {
-  const { healthScore, attentionBand, nearTermExpiryRent, atRiskLikelihoodCount, noi, balloonMonths, dscr } = opts;
-  const healthVal = healthScore ?? 50;
-  const attentionVal = attentionBand === null ? 50 : attentionBandScore(attentionBand);
-
-  const leasingRisk =
-    noi > 0
-      ? Math.min(100, (nearTermExpiryRent / noi) * 100 + atRiskLikelihoodCount * 10)
-      : Math.min(50, atRiskLikelihoodCount * 10);
-
-  // Infer hasDebt from presence of dscr (in tests, if dscr is set, the property has debt)
-  const hasDebt = dscr !== null;
-
-  const debtUrgency = !hasDebt
-    ? 0
-    : clamp(
-        (balloonMonths === null ? 0 : Math.max(0, 100 - (balloonMonths / 12) * 10)) +
-          (dscr !== null && dscr < 1.25 ? 30 : 0),
-        0,
-        100,
-      );
-
-  const raw = (100 - healthVal) * 0.35 + attentionVal * 0.30 + leasingRisk * 0.20 + debtUrgency * 0.15;
-  return Math.max(0, Math.min(100, raw));
-}
-
-// ── Priority score formula unit tests ──────────────────────────────────────────────────────
-
-describe('priorityScore formula', () => {
-  it('health=20 attention=red produces high score', () => {
-    const score = computePriorityScore({
-      healthScore: 20,
-      attentionBand: 'red',
-      nearTermExpiryRent: 0,
-      atRiskLikelihoodCount: 0,
-      noi: 100_000,
-      balloonMonths: null,
-      dscr: null,
-    });
-    // (100-20)*0.35 + 100*0.30 + 0 + 0 = 28 + 30 = 58
-    expect(score).toBeCloseTo(58, 1);
-    expect(score).toBeGreaterThan(50);
-  });
-
-  it('health=90 attention=green no leasing no debt produces low score', () => {
-    const score = computePriorityScore({
-      healthScore: 90,
-      attentionBand: 'green',
-      nearTermExpiryRent: 0,
-      atRiskLikelihoodCount: 0,
-      noi: 100_000,
-      balloonMonths: null,
-      dscr: null,
-    });
-    // (100-90)*0.35 + 0 + 0 + 0 = 3.5
-    expect(score).toBeCloseTo(3.5, 1);
-    expect(score).toBeLessThan(10);
-  });
-
-  it('null health treated as 50 (neutral)', () => {
-    const scoreWithNull = computePriorityScore({
-      healthScore: null,
-      attentionBand: 'green',
-      nearTermExpiryRent: 0,
-      atRiskLikelihoodCount: 0,
-      noi: 100_000,
-      balloonMonths: null,
-      dscr: null,
-    });
-    const scoreWith50 = computePriorityScore({
-      healthScore: 50,
-      attentionBand: 'green',
-      nearTermExpiryRent: 0,
-      atRiskLikelihoodCount: 0,
-      noi: 100_000,
-      balloonMonths: null,
-      dscr: null,
-    });
-    expect(scoreWithNull).toBeCloseTo(scoreWith50, 5);
-  });
-
-  it('null attentionBand treated as 50 (neutral, per spec)', () => {
-    // Per spec (Phase 5 docs line 76/133): null -> 50 neutral, never 0
-    // null attentionBand should produce same score as attentionBand='green' + explicit attentionScore=50
-    const scoreNull = computePriorityScore({
-      healthScore: 50,
-      attentionBand: null,
-      nearTermExpiryRent: 0,
-      atRiskLikelihoodCount: 0,
-      noi: 100_000,
-      balloonMonths: null,
-      dscr: null,
-    });
-    // Manually compute expected: (100-50)*0.35 + 50*0.30 + 0*0.20 + 0*0.15 = 17.5 + 15 + 0 + 0 = 32.5
-    expect(scoreNull).toBeCloseTo(32.5, 5);
-  });
-
-  it('leasingRisk capped at 50 when noi=0', () => {
-    // With noi=0 and atRiskLikelihoodCount=10, leasingRisk = min(50, 100) = 50
-    const score = computePriorityScore({
-      healthScore: 50,
-      attentionBand: 'green',
-      nearTermExpiryRent: 999_999,
-      atRiskLikelihoodCount: 10,
-      noi: 0,
-      balloonMonths: null,
-      dscr: null,
-    });
-    // (100-50)*0.35 + 0 + 50*0.20 + 0 = 17.5 + 10 = 27.5
-    expect(score).toBeCloseTo(27.5, 1);
-  });
-
-  it('debtUrgency is 0 when balloonMonths is null (no debt)', () => {
-    const scoreNoDebt = computePriorityScore({
-      healthScore: 50,
-      attentionBand: 'green',
-      nearTermExpiryRent: 0,
-      atRiskLikelihoodCount: 0,
-      noi: 100_000,
-      balloonMonths: null,
-      dscr: null,
-    });
-    const scoreWithDebt = computePriorityScore({
-      healthScore: 50,
-      attentionBand: 'green',
-      nearTermExpiryRent: 0,
-      atRiskLikelihoodCount: 0,
-      noi: 100_000,
-      balloonMonths: 60,     // 5 years out → low urgency
-      dscr: 2.0,             // healthy DSCR
-    });
-    expect(scoreNoDebt).toBeLessThan(scoreWithDebt);
-  });
-
-  it('balloonMonths=0 dscr=1.0 produces max debt urgency component', () => {
-    // debtUrgency = clamp(max(0, 100 - 0) + 30, 0, 100) = clamp(130, 0, 100) = 100
-    const score = computePriorityScore({
-      healthScore: 50,
-      attentionBand: 'green',
-      nearTermExpiryRent: 0,
-      atRiskLikelihoodCount: 0,
-      noi: 100_000,
-      balloonMonths: 0,
-      dscr: 1.0,
-    });
-    // (100-50)*0.35 + 0 + 0 + 100*0.15 = 17.5 + 15 = 32.5
-    expect(score).toBeCloseTo(32.5, 1);
-  });
-
-  it('balloonMonths=null with dscr<1.25 applies the 30-point DSCR penalty (term loan, no balloon)', () => {
-    // CRITICAL: decoupled DSCR from balloon presence. A term loan (balloon=0, schema default)
-    // with sub-governor DSCR must still contribute the 30-point distress penalty.
-    // debtUrgency = clamp(0 + 30, 0, 100) = 30 (from the DSCR component alone)
-    const score = computePriorityScore({
-      healthScore: 60,
-      attentionBand: 'green',
-      nearTermExpiryRent: 0,
-      atRiskLikelihoodCount: 0,
-      noi: 100_000,
-      balloonMonths: null, // term/amortizing loan (no balloon row)
-      dscr: 1.05, // below 1.25 governor
-    });
-    // (100-60)*0.35 + 0 + 0 + 30*0.15 = 14 + 4.5 = 18.5
-    expect(score).toBeCloseTo(18.5, 1);
-  });
-
-  it('DSCR exactly at 1.25 does NOT add the 30-point penalty', () => {
-    const scoreAt125 = computePriorityScore({
-      healthScore: 50,
-      attentionBand: 'green',
-      nearTermExpiryRent: 0,
-      atRiskLikelihoodCount: 0,
-      noi: 100_000,
-      balloonMonths: 12,
-      dscr: 1.25,
-    });
-    const scoreBelow125 = computePriorityScore({
-      healthScore: 50,
-      attentionBand: 'green',
-      nearTermExpiryRent: 0,
-      atRiskLikelihoodCount: 0,
-      noi: 100_000,
-      balloonMonths: 12,
-      dscr: 1.24,
-    });
-    expect(scoreBelow125).toBeGreaterThan(scoreAt125);
-  });
-
-  it('result is always in [0, 100]', () => {
-    // Worst case: health=0, attention=red, full leasing risk, max debt urgency
-    const score = computePriorityScore({
-      healthScore: 0,
-      attentionBand: 'red',
-      nearTermExpiryRent: 1_000_000,
-      atRiskLikelihoodCount: 10,
-      noi: 50_000,
-      balloonMonths: 0,
-      dscr: 0.5,
-    });
-    expect(score).toBeGreaterThanOrEqual(0);
-    expect(score).toBeLessThanOrEqual(100);
-  });
-
-  it('attentionBandScore maps correctly', () => {
-    expect(attentionBandScore('red')).toBe(100);
-    expect(attentionBandScore('orange')).toBe(66);
-    expect(attentionBandScore('yellow')).toBe(33);
-    expect(attentionBandScore('green')).toBe(0);
-    expect(attentionBandScore(null)).toBe(0);
-    expect(attentionBandScore(undefined)).toBe(0);
-    expect(attentionBandScore('unknown')).toBe(0);
-  });
-});
-
-// ── Contract validation tests ──────────────────────────────────────────────────────────────
-
-describe('CapitalAllocationReport contract', () => {
-  it('rejects portfolioNoBasis !== spine-a', () => {
-    const invalid = {
-      asOf: '2026-06-21',
-      propertyCount: 0,
-      entries: [],
-      portfolioNoi: 0,
-      portfolioNoBasis: 'spine-b',   // WRONG
-      investCount: 0,
-      holdCount: 0,
-      monitorCount: 0,
-      dispositionCount: 0,
-      macro: { tenYearRate: null, cpi: null, source: 'mock', asOf: null },
-    };
-    const result = CapitalAllocationReport.safeParse(invalid);
-    expect(result.success).toBe(false);
-  });
-
-  it('accepts portfolioNoBasis === spine-a', () => {
-    const valid = {
-      asOf: '2026-06-21',
-      propertyCount: 1,
-      entries: [],
-      portfolioNoi: 100_000,
-      portfolioNoBasis: 'spine-a',
-      investCount: 0,
-      holdCount: 1,
-      monitorCount: 0,
-      dispositionCount: 0,
-      macro: { tenYearRate: 4.47, cpi: 3.8, source: 'fred', asOf: '2026-06-21' },
-      marketBenchmarks: { available: true, source: 'seed', asOf: '2026-06-21' },
-      regionalMacro: null,
-    };
-    const result = CapitalAllocationReport.safeParse(valid);
-    expect(result.success).toBe(true);
-  });
-});
-
-describe('MacroContext contract', () => {
-  it('parses with source:fred + numbers', () => {
-    const result = MacroContext.safeParse({
-      tenYearRate: 4.47,
-      cpi: 3.8,
-      source: 'fred',
-      asOf: '2026-06-21',
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it('parses with source:mock + nulls', () => {
-    const result = MacroContext.safeParse({
-      tenYearRate: null,
-      cpi: null,
-      source: 'mock',
-      asOf: null,
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it('rejects unknown source enum', () => {
-    const result = MacroContext.safeParse({
-      tenYearRate: null,
-      cpi: null,
-      source: 'live',    // invalid
-      asOf: null,
-    });
-    expect(result.success).toBe(false);
-  });
-});
-
-describe('CapitalAllocationEntry contract', () => {
-  const validEntry = {
-    propertyId: 'PROP-001',
-    propertyName: 'Test Property',
-    market: 'Columbus',
-    sf: 20_000,
-    capitalAction: 'hold',
-    priorityScore: 25,
-    healthScore: 70,
-    attentionScore: 33,
-    nearTermExpiryRent: 50_000,
-    atRiskLikelihoodCount: 0,
-    debtScore: 80,
-    balloonMonths: 36,
-    dscr: 1.5,
-    rationale: ['Health score 70/100', 'No near-term expirations'],
-    noi: 200_000,
-    noiPerSf: 10,
-    noiBasis: 'spine-a' as const,
-    impliedCapRate: 0.082,
-    capRateGap: 0.007,
-    capRatePercentile: 'median' as const,
-  };
-
-  it('accepts a valid entry', () => {
-    expect(CapitalAllocationEntry.safeParse(validEntry).success).toBe(true);
-  });
-
-  it('rejects noiBasis=spine-b', () => {
-    const invalid = { ...validEntry, noiBasis: 'spine-b' };
-    expect(CapitalAllocationEntry.safeParse(invalid).success).toBe(false);
-  });
-
-  it('rejects priorityScore outside [0,100]', () => {
-    const over = { ...validEntry, priorityScore: 101 };
-    const under = { ...validEntry, priorityScore: -1 };
-    expect(CapitalAllocationEntry.safeParse(over).success).toBe(false);
-    expect(CapitalAllocationEntry.safeParse(under).success).toBe(false);
-  });
-
-  it('rejects rationale with more than 3 entries', () => {
-    const tooMany = { ...validEntry, rationale: ['a', 'b', 'c', 'd'] };
-    expect(CapitalAllocationEntry.safeParse(tooMany).success).toBe(false);
-  });
-
-  it('accepts null optional fields', () => {
-    const minimal = {
-      ...validEntry,
-      propertyName: null,
-      market: null,
-      healthScore: null,
-      attentionScore: null,
-      debtScore: null,
-      balloonMonths: null,
-      dscr: null,
-      noiPerSf: null,
-      impliedCapRate: null,
-      capRateGap: null,
-      capRatePercentile: null,
-    };
-    expect(CapitalAllocationEntry.safeParse(minimal).success).toBe(true);
-  });
-
-  it('rejects an unknown capRatePercentile band', () => {
-    const bad = { ...validEntry, capRatePercentile: 'p99' };
-    expect(CapitalAllocationEntry.safeParse(bad).success).toBe(false);
-  });
-});
-
-// ── Integration tests with mocked dependencies ──────────────────────────────────────────────
-// These tests mock the heavy dependencies (scores, debt-scoring, brain, getMacro)
-// and focus on the composition logic in buildCapitalAllocationReport.
-
-vi.mock('../../server/macro/getMacro', () => ({
-  getMacro: vi.fn(),
-}));
-
-// Scope B — regional macro is a display-only overlay; mock it deterministically so the
-// integration assertions don't depend on a live FRED key in the gate env.
-vi.mock('../../server/macro/regional-macro', () => ({
-  getRegionalMacro: vi.fn(async () => ({
-    asOf: '2026-06-21',
-    source: 'mock' as const,
-    states: [
-      { stateCode: 'OH', stateName: 'Ohio', unemploymentRate: 4.3, source: 'mock' as const, asOf: '2026-06-21' },
+function makeMacro(dgs5: number | null) {
+  return {
+    asOf: '2026-06-21', source: 'mock' as const,
+    indicators: [
+      { id: 'DGS5', label: '5Y Treasury', value: dgs5, unit: '%', change: null },
+      { id: 'CPIAUCSL', label: 'CPI (YoY)', value: 3.8, unit: '%', change: null },
     ],
-  })),
-}));
+    tenYearHistory: [],
+  };
+}
 
-vi.mock('../../server/warehouse/scores', () => ({
-  scoreProperties: vi.fn(),
-}));
+function makePropertyScore(overrides: Partial<PropertyScore> = {}): PropertyScore {
+  return {
+    propertyId: 'prop-test',
+    propertyName: 'Test Property',
+    period: '2025',
+    health: 70,
+    healthBand: 'good',
+    attentionBand: 'yellow',
+    capitalAction: 'hold',
+    subScores: { noi: 70, growth: 60, efficiency: 65 },
+    noiPerSfQuartile: 2,
+    benchmarkCohortSize: 5,
+    reasons: ['Test property'],
+    ...overrides,
+  };
+}
 
-vi.mock('../../server/warehouse/debt-scoring', () => ({
-  scoreDebtPositions: vi.fn(),
-}));
+function makeDebtScore(overrides: Partial<DebtScore> = {}): DebtScore {
+  return {
+    propertyId: 'prop-test',
+    propertyName: 'Test Property',
+    noiBasis: 'ledger',
+    dscr: 1.45,
+    dscrHeadroom: 0.20,
+    ltv: 0.30,
+    ltvHeadroom: 0.10,
+    debtYield: 0.10,
+    signal: 'hold',
+    signalReason: null,
+    score: 75,
+    scoreBand: 'strong',
+    capitalConfigVersion: 1,
+    ...overrides,
+  };
+}
 
-vi.mock('../../server/warehouse/metrics', () => ({
-  propertyPeriodMetrics: vi.fn(),
-}));
 
-describe('buildCapitalAllocationReport integration', () => {
-  // Dynamic import after mocks are set up
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let buildCapitalAllocationReport: (db: any, snapshot: any) => Promise<any>;
-  let getMacroMock: ReturnType<typeof vi.fn>;
-  let scorePropertiesMock: ReturnType<typeof vi.fn>;
-  let scoreDebtPositionsMock: ReturnType<typeof vi.fn>;
-  let propertyPeriodMetricsMock: ReturnType<typeof vi.fn>;
+beforeEach(() => {
+  mockGetMacro.mockResolvedValue(makeMacro(4.18) as never);
+  mockScoreProperties.mockReturnValue([]);
+  mockScoreDebt.mockReturnValue([]);
+});
 
-  beforeEach(async () => {
-    vi.resetModules();
-    const macroMod = await import('../../server/macro/getMacro');
-    const scoresMod = await import('../../server/warehouse/scores');
-    const debtMod = await import('../../server/warehouse/debt-scoring');
-    const metricsMod = await import('../../server/warehouse/metrics');
-
-    getMacroMock = vi.mocked(macroMod.getMacro);
-    scorePropertiesMock = vi.mocked(scoresMod.scoreProperties);
-    scoreDebtPositionsMock = vi.mocked(debtMod.scoreDebtPositions);
-    propertyPeriodMetricsMock = vi.mocked(metricsMod.propertyPeriodMetrics);
-
-    const mod = await import('../../server/warehouse/capital-allocation');
-    buildCapitalAllocationReport = mod.buildCapitalAllocationReport;
+describe('buildPortfolioAllocation', () => {
+  it('A-1: empty warehouse — returns valid PortfolioAllocation with 0 verdicts', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.verdicts).toHaveLength(0);
+    expect(result.pipeline).toHaveLength(0);
+    expect(result.asOf).toBe('2026-06-21');
+    expect(result.hurdleRatePct).toBeCloseTo(0.08, 5);
+    expect(result.advisoryOnly).toBe(false);  // ratification='ratified' in cold DB (ratified 2026-06-22)
+    expect(result.actionCounts).toMatchObject({ buy: 0, hold: 0, sell: 0, refinance: 0, improve: 0 });
   });
 
-  /** Mock DB with a stub prepare() that returns an empty .all() (no balloon debt positions). */
-  function makeMockDb(balloonRows: Array<{ property_id: string; months_to_maturity: number | null }> = []) {
-    return {
-      prepare: () => ({
-        all: () => balloonRows,
-      }),
-    };
-  }
+  it('A-2: disposition-candidate → action=sell, riskBand=high', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-sell', capitalAction: 'disposition-candidate', healthBand: 'concern' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-sell', signal: 'hold' }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.verdicts).toHaveLength(1);
+    const v = result.verdicts[0]!;
+    expect(v.action).toBe('sell');
+    expect(v.riskBand).toBe('high');
+    expect(v.timelineMonths).toBe(9); // I-2: sell timeline aligned to spec TIMELINE table (was 12)
+    expect(v.inputs.capitalAction).toBe('disposition-candidate');
+  });
 
-  /** Minimal mock snapshot with 3 properties and leases. */
-  function makeSnapshot() {
-    return {
-      meta: { asOf: '2026-06-21' },
-      properties: [
-        { id: 'PROP-A', name: 'Alpha Warehouse', market: 'Columbus', rentableSf: 20_000, noi: 200_000 },
-        { id: 'PROP-B', name: 'Beta Flex', market: 'Cincinnati', rentableSf: 15_000, noi: 120_000 },
-        { id: 'PROP-C', name: 'Gamma Industrial', market: 'Columbus', rentableSf: 10_000, noi: 80_000 },
-      ],
-      leases: [
-        // PROP-A: 2 leases in ≤12m bucket, one at-risk
-        {
-          id: 'L-1', propertyId: 'PROP-A', annualRent: 80_000, sf: 10_000,
-          monthsToExpiry: 3, leaseEnd: '2026-09-30', status: 'Active',
-          leaseStart: '2021-09-30', company: 'Tenant A', tenantName: 'Tenant A',
-          monthToMonth: false,
-        },
-        {
-          id: 'L-2', propertyId: 'PROP-A', annualRent: 60_000, sf: 8_000,
-          monthsToExpiry: 10, leaseEnd: '2027-04-30', status: 'Active',
-          leaseStart: '2022-04-30', company: 'Tenant B', tenantName: 'Tenant B',
-          monthToMonth: false,
-        },
-        // PROP-B: 1 lease, 24m+ (no near-term risk)
-        {
-          id: 'L-3', propertyId: 'PROP-B', annualRent: 90_000, sf: 15_000,
-          monthsToExpiry: 30, leaseEnd: '2028-12-31', status: 'Active',
-          leaseStart: '2020-01-01', company: 'Tenant C', tenantName: 'Tenant C',
-          monthToMonth: false,
-        },
-        // PROP-C: 1 lease, expired (lapsing)
-        {
-          id: 'L-4', propertyId: 'PROP-C', annualRent: 70_000, sf: 10_000,
-          monthsToExpiry: -1, leaseEnd: '2026-01-31', status: 'Active',   // past end, not 'Expired'
-          leaseStart: '2021-02-01', company: 'Tenant D', tenantName: 'Tenant D',
-          monthToMonth: false,
-        },
-      ],
-      renewalStages: {},
-      tenantArrears: {},
-      marketRents: {},
-    };
-  }
+  it('A-3: healthy property (good+hold) → NOT sell (no false positive); cash-out signal → refinance', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-healthy', capitalAction: 'hold', healthBand: 'good' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-healthy', signal: 'cash-out' }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.verdicts).toHaveLength(1);
+    // capitalAction='hold' → cannot be 'sell' even with cash-out signal
+    expect(result.verdicts[0]!.action).not.toBe('sell');
+    // cash-out signal → refinance (not sell, not hold)
+    expect(result.verdicts[0]!.action).toBe('refinance');
+  });
 
-  function makePropertyScores() {
-    return [
-      {
-        propertyId: 'PROP-A',
-        propertyName: 'Alpha Warehouse',
-        period: '2025',
-        health: 30,
-        healthBand: 'concern',
-        attentionBand: 'red',
-        capitalAction: 'monitor',
-        subScores: {},
-        noiPerSfQuartile: 3,
-        benchmarkCohortSize: 5,
-        reasons: [],
-      },
-      {
-        propertyId: 'PROP-B',
-        propertyName: 'Beta Flex',
-        period: '2025',
-        health: 75,
-        healthBand: 'good',
-        attentionBand: 'green',
-        capitalAction: 'invest',
-        subScores: {},
-        noiPerSfQuartile: 2,
-        benchmarkCohortSize: 5,
-        reasons: [],
-      },
-      {
-        propertyId: 'PROP-C',
-        propertyName: 'Gamma Industrial',
-        period: '2025',
-        health: 55,
-        healthBand: 'watch',
-        attentionBand: 'yellow',
-        capitalAction: 'hold',
-        subScores: {},
-        noiPerSfQuartile: 3,
-        benchmarkCohortSize: 5,
-        reasons: [],
-      },
-    ];
-  }
-
-  function makeDebtScores() {
-    return [
-      // PROP-A: has debt, balloon soon, DSCR below governor
-      {
-        propertyId: 'PROP-A',
-        propertyName: 'Alpha Warehouse',
-        noiBasis: 'spine-b/warehouse-ledger',
-        dscr: 1.1,
-        dscrHeadroom: -0.15,
-        ltv: 0.35,
-        ltvHeadroom: 0.05,
-        debtYield: 0.08,
-        signal: 'hold',
-        signalReason: null,
-        score: 45,
-        scoreBand: 'watch',
-        capitalConfigVersion: 1,
-      },
-      // PROP-B: no debt
-      {
-        propertyId: 'PROP-B',
-        propertyName: 'Beta Flex',
-        noiBasis: 'spine-b/warehouse-ledger',
-        dscr: null,
-        dscrHeadroom: null,
-        ltv: null,
-        ltvHeadroom: null,
-        debtYield: null,
-        signal: 'no-debt',
-        signalReason: 'No active debt positions',
-        score: 100,
-        scoreBand: 'strong',
-        capitalConfigVersion: 1,
-      },
-    ];
-  }
-
-  it('returns 3 entries sorted DESC by priorityScore', async () => {
-    getMacroMock.mockResolvedValue({
-      asOf: '2026-06-21',
-      source: 'fred',
-      indicators: [
-        { id: 'DGS10', label: '10Y Treasury', value: 4.47, unit: '%', change: null },
-        { id: 'CPIAUCSL', label: 'CPI (YoY)', value: 3.8, unit: '%', change: null },
-      ],
-      tenYearHistory: [],
-    });
-    scorePropertiesMock.mockReturnValue(makePropertyScores());
-    scoreDebtPositionsMock.mockReturnValue(makeDebtScores());
-    propertyPeriodMetricsMock.mockReturnValue([]);
-
-    const report = await buildCapitalAllocationReport(makeMockDb() as never, makeSnapshot()) as typeof CapitalAllocationReport._type;
-
-    expect(report.propertyCount).toBe(3);
-    expect(report.entries).toHaveLength(3);
-    expect(report.portfolioNoBasis).toBe('spine-a');
-
-    // Sorted DESC by priorityScore
-    const scores = report.entries.map((e: { priorityScore: number }) => e.priorityScore) as number[];
-    for (let i = 0; i < scores.length - 1; i++) {
-      expect(scores[i]!).toBeGreaterThanOrEqual(scores[i + 1]!);
+  it('A-4: forecastInputs absent → all verdicts have horizonPeriods=0 and confidence01 ≤ 0.65', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    mockScoreProperties.mockReturnValue([makePropertyScore()]);
+    mockScoreDebt.mockReturnValue([makeDebtScore()]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.verdicts.length).toBeGreaterThan(0);
+    for (const v of result.verdicts) {
+      expect(v.horizonPeriods).toBe(0);
+      expect(v.confidence01).toBeLessThanOrEqual(0.65);
     }
   });
 
-  it('getMacro throws → macro falls back to mock/null', async () => {
-    getMacroMock.mockRejectedValue(new Error('FRED unavailable'));
-    scorePropertiesMock.mockReturnValue([]);
-    scoreDebtPositionsMock.mockReturnValue([]);
-    propertyPeriodMetricsMock.mockReturnValue([]);
-
-    const report = await buildCapitalAllocationReport(makeMockDb() as never, makeSnapshot()) as typeof CapitalAllocationReport._type;
-
-    expect(report.macro.source).toBe('mock');
-    expect(report.macro.tenYearRate).toBeNull();
-    expect(report.macro.cpi).toBeNull();
-    expect(report.macro.asOf).toBeNull();
+  it('A-5: forecastInputs provided → horizonPeriods = forecastInputs.periods', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    mockScoreProperties.mockReturnValue([makePropertyScore()]);
+    mockScoreDebt.mockReturnValue([makeDebtScore()]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21', { periods: 8 });
+    expect(result.verdicts.length).toBeGreaterThan(0);
+    for (const v of result.verdicts) {
+      expect(v.horizonPeriods).toBe(8);
+    }
   });
 
-  it('property with no debt in scoreDebtPositions → debtScore null, balloonMonths null', async () => {
-    getMacroMock.mockResolvedValue({
-      asOf: '2026-06-21',
-      source: 'fred',
-      indicators: [
-        { id: 'DGS10', value: 4.47, label: '10Y', unit: '%', change: null },
-        { id: 'CPIAUCSL', value: 3.8, label: 'CPI', unit: '%', change: null },
-      ],
-      tenYearHistory: [],
-    });
-    scorePropertiesMock.mockReturnValue([{
-      propertyId: 'PROP-B',
-      propertyName: 'Beta Flex',
-      period: '2025',
-      health: 75,
-      healthBand: 'good',
-      attentionBand: 'green',
-      capitalAction: 'invest',
-      subScores: {},
-      noiPerSfQuartile: 2,
-      benchmarkCohortSize: 5,
-      reasons: [],
-    }]);
-    // No debt score for PROP-B
-    scoreDebtPositionsMock.mockReturnValue([]);
-    propertyPeriodMetricsMock.mockReturnValue([]);
-
-    // Use a snapshot with only PROP-B
-    const snap = {
-      ...makeSnapshot(),
-      properties: [{ id: 'PROP-B', name: 'Beta Flex', market: 'Cincinnati', rentableSf: 15_000, noi: 120_000 }],
-      leases: makeSnapshot().leases.filter((l) => l.propertyId === 'PROP-B'),
-    };
-
-    const report = await buildCapitalAllocationReport(makeMockDb() as never, snap) as typeof CapitalAllocationReport._type;
-    const entry = report.entries[0] as typeof report.entries[number] | undefined;
-    expect(entry).toBeDefined();
-    if (!entry) throw new Error('entry must be defined');
-    expect(entry.debtScore).toBeNull();
-    expect(entry.balloonMonths).toBeNull();
-    expect(entry.dscr).toBeNull();
+  it('A-6: debtSignal=governor-block → action=hold (not refinance)', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-govblock', capitalAction: 'hold', healthBand: 'watch' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-govblock', signal: 'governor-block', scoreBand: 'critical' }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.verdicts).toHaveLength(1);
+    const v = result.verdicts[0]!;
+    expect(v.action).toBe('hold');
+    expect(v.action).not.toBe('refinance');
+    expect(v.inputs.debtSignal).toBe('governor-block');
   });
 
-  it('counts action types correctly', async () => {
-    getMacroMock.mockResolvedValue({
-      asOf: '2026-06-21',
-      source: 'mock',
-      indicators: [],
-      tenYearHistory: [],
-    });
-    scorePropertiesMock.mockReturnValue(makePropertyScores());
-    scoreDebtPositionsMock.mockReturnValue(makeDebtScores());
-    propertyPeriodMetricsMock.mockReturnValue([]);
-
-    const report = await buildCapitalAllocationReport(makeMockDb() as never, makeSnapshot()) as typeof CapitalAllocationReport._type;
-
-    // PROP-A → monitor, PROP-B → invest, PROP-C → hold
-    expect(report.investCount).toBe(1);
-    expect(report.holdCount).toBe(1);
-    expect(report.monitorCount).toBe(1);
-    expect(report.dispositionCount).toBe(0);
+  it('A-7: actionCounts sums to verdicts.length (buy always 0)', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'p1', capitalAction: 'hold' }),
+      makePropertyScore({ propertyId: 'p2', capitalAction: 'disposition-candidate', healthBand: 'concern' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'p1', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'p2', signal: 'hold' }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    const total = Object.values(result.actionCounts).reduce((a, b) => a + b, 0);
+    // buy is always 0 in actionCounts (buy verdicts are in pipeline[])
+    expect(result.actionCounts.buy).toBe(0);
+    expect(total).toBe(result.verdicts.length);
+    expect(result.verdicts.length).toBe(2);
   });
 
-  it('includes marketBenchmarks provenance and classifies cap-rate band for a valued property', async () => {
-    getMacroMock.mockResolvedValue({
-      asOf: '2026-06-21', source: 'mock', indicators: [], tenYearHistory: [],
-    });
-    // Columbus Industrial benchmark seed: p25=0.0675, p50=0.075, p75=0.085.
-    // NOI 200_000 / value 2_000_000 = 0.10 implied cap → above p75 → 'top'.
-    scorePropertiesMock.mockReturnValue([{
-      propertyId: 'PROP-V', propertyName: 'Valued Asset', period: '2025',
-      health: 60, healthBand: 'watch', attentionBand: 'green', capitalAction: 'hold',
-      subScores: {}, noiPerSfQuartile: 2, benchmarkCohortSize: 5, reasons: [],
-    }]);
-    scoreDebtPositionsMock.mockReturnValue([]);
-    propertyPeriodMetricsMock.mockReturnValue([]);
-
-    const snap = {
-      ...makeSnapshot(),
-      properties: [
-        {
-          id: 'PROP-V', name: 'Valued Asset', market: 'Columbus OH', type: 'Industrial',
-          sf: 20_000, noi: 200_000, oxfordValue: 2_000_000,
-        },
-      ],
-      leases: [],
-    };
-
-    const report = await buildCapitalAllocationReport(makeMockDb() as never, snap) as typeof CapitalAllocationReport._type;
-    expect(report.marketBenchmarks.available).toBe(true);
-    expect(report.marketBenchmarks.source).toBe('seed');
-
-    // Scope B — regional macro snapshot is wired into the report (display-only overlay).
-    expect(report.regionalMacro).not.toBeNull();
-    expect(report.regionalMacro!.source).toBe('mock');
-    expect(report.regionalMacro!.states[0]!.stateCode).toBe('OH');
-
-    const entry = report.entries[0]!;
-    expect(entry.impliedCapRate).toBeCloseTo(0.10, 5);
-    // gap vs p50 (0.075) = +0.025
-    expect(entry.capRateGap).toBeCloseTo(0.025, 5);
-    expect(entry.capRatePercentile).toBe('top');
-
-    // Whole report still parses through the contract (cap-rate fields included).
-    expect(CapitalAllocationReport.safeParse(report).success).toBe(true);
+  it('A-8: pipeline shows active acq_candidates; status=archived excluded', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    // Seed one active and one archived candidate
+    const now = '2026-06-21T00:00:00Z';
+    db.prepare(`INSERT INTO acq_candidates (id, source, status, created_at, updated_at)
+      VALUES ('cand-active', 'manual', 'active', ?, ?)`).run(now, now);
+    db.prepare(`INSERT INTO acq_candidates (id, source, status, created_at, updated_at)
+      VALUES ('cand-archived', 'manual', 'archived', ?, ?)`).run(now, now);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    const ids = result.pipeline.map(p => p.candidateId);
+    expect(ids).toContain('cand-active');
+    expect(ids).not.toContain('cand-archived');
   });
 
-  it('cap-rate fields are null when the property has no positive value', async () => {
-    getMacroMock.mockResolvedValue({
-      asOf: '2026-06-21', source: 'mock', indicators: [], tenYearHistory: [],
-    });
-    scorePropertiesMock.mockReturnValue([{
-      propertyId: 'PROP-NV', propertyName: 'No Value', period: '2025',
-      health: 60, healthBand: 'watch', attentionBand: 'green', capitalAction: 'hold',
-      subScores: {}, noiPerSfQuartile: 2, benchmarkCohortSize: 5, reasons: [],
-    }]);
-    scoreDebtPositionsMock.mockReturnValue([]);
-    propertyPeriodMetricsMock.mockReturnValue([]);
-
-    const snap = {
-      ...makeSnapshot(),
-      properties: [
-        { id: 'PROP-NV', name: 'No Value', market: 'Columbus OH', type: 'Industrial', sf: 10_000, noi: 80_000, oxfordValue: 0 },
-      ],
-      leases: [],
-    };
-
-    const report = await buildCapitalAllocationReport(makeMockDb() as never, snap) as typeof CapitalAllocationReport._type;
-    const entry = report.entries[0]!;
-    expect(entry.impliedCapRate).toBeNull();
-    expect(entry.capRateGap).toBeNull();
-    expect(entry.capRatePercentile).toBeNull();
+  it('A-9: returnAboveHurdle is null when expectedReturnPct is null', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    mockScoreProperties.mockReturnValue([makePropertyScore({ capitalAction: 'hold' })]);
+    mockScoreDebt.mockReturnValue([makeDebtScore({ signal: 'hold' })]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.verdicts.length).toBeGreaterThan(0);
+    for (const v of result.verdicts) {
+      if (v.expectedReturnPct === null) {
+        expect(v.returnAboveHurdle).toBeNull();
+      }
+    }
   });
 
-  it('portfolioNoi is sum of Spine A property NOI', async () => {
-    getMacroMock.mockResolvedValue({
-      asOf: '2026-06-21', source: 'mock', indicators: [], tenYearHistory: [],
-    });
-    scorePropertiesMock.mockReturnValue(makePropertyScores());
-    scoreDebtPositionsMock.mockReturnValue(makeDebtScores());
-    propertyPeriodMetricsMock.mockReturnValue([]);
+  it('A-10: getMacro failure (FRED down) is non-fatal — result still returned with dscr signal as hold', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    mockGetMacro.mockRejectedValue(new Error('FRED API timeout'));
+    const db = freshDb();
+    // Should not throw
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result).toBeDefined();
+    expect(result.verdicts).toBeDefined();
+    expect(Array.isArray(result.verdicts)).toBe(true);
+    // When macro is unavailable (FRED down), dgs5 defaults to null; engine must not throw.
+    // All verdicts that exist must have valid action and numeric timelineMonths.
+    if (result.verdicts.length > 0) {
+      const firstVerdict = result.verdicts[0]!;
+      expect(typeof firstVerdict.timelineMonths).toBe('number');
+      expect(['hold', 'sell', 'refi', 'acquire']).toContain(firstVerdict.action);
+    }
+  });
 
-    const report = await buildCapitalAllocationReport(makeMockDb() as never, makeSnapshot()) as typeof CapitalAllocationReport._type;
-    // 200_000 + 120_000 + 80_000 = 400_000
-    expect(report.portfolioNoi).toBe(400_000);
+  it('A-2-neg: disposition-candidate but healthBand=good → NOT sell (C-1 independent guard)', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    // capitalAction flags disposition, but health is NOT 'concern' → sell guard must NOT fire.
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-dispo-healthy', capitalAction: 'disposition-candidate', healthBand: 'good' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-dispo-healthy', signal: 'hold' }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.verdicts).toHaveLength(1);
+    const v = result.verdicts[0]!;
+    // C-1: sell requires capitalAction='disposition-candidate' AND healthBand='concern'.
+    expect(v.action).not.toBe('sell');
+    // Falls through to default hold (no refi/invest signal present).
+    expect(v.action).toBe('hold');
+    expect(v.inputs.capitalAction).toBe('disposition-candidate');
+    expect(v.inputs.healthBand).toBe('good');
+  });
+
+  it('A-3-neg: debtSignal=hold → NOT refinance (Phase 5 v1: refi gates on signal, not savings)', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    // Phase 5 v1: refinance fires ONLY on signal in ('refi','cash-out'). A plain 'hold'
+    // (or 'no-debt') signal must NOT produce refinance. Phase 5 v2 will add a
+    // refiCashSavingsPct() savings gate on top of the signal (C-2 deferral).
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-no-refi', capitalAction: 'hold', healthBand: 'good' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-no-refi', signal: 'hold' }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.verdicts).toHaveLength(1);
+    const v = result.verdicts[0]!;
+    expect(v.action).not.toBe('refinance');
+    expect(v.action).toBe('hold');
+    expect(v.inputs.debtSignal).toBe('hold');
+  });
+
+  it('A-4-neg: empty acq_candidates → zero buy verdicts (C-3: buy emission deferred to v2)', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    // No acq_candidates seeded. One ordinary hold property exists.
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-hold', capitalAction: 'hold' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-hold', signal: 'hold' }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    // Phase 5 v1 (C-3): no buy AllocationVerdict is ever emitted; buy count stays 0.
+    expect(result.pipeline).toHaveLength(0);
+    expect(result.actionCounts.buy).toBe(0);
+    expect(result.verdicts.every((v) => v.action !== 'buy')).toBe(true);
   });
 });

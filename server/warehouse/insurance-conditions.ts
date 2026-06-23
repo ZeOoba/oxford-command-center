@@ -32,8 +32,7 @@
 import type { WarehouseDb } from './db';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import type { Insight } from '../../src/analytics/types';
-
-const DAY_MS = 86_400_000;
+import { DAY_MS } from './time-constants';
 // BOUNDARY: policies expiring within this window (inclusive) → critical alert.
 const EXPIRY_ALERT_DAYS = 60;
 

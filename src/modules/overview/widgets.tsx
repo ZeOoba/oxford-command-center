@@ -1,5 +1,6 @@
 /* eslint-disable react-refresh/only-export-components -- colocated widget registry + components */
 import type { ComponentType } from 'react';
+import { useState } from 'react';
 import { useSnapshot, useAnalytics } from '@/data/queries';
 import { fmtUsdCompact, fmtSf, fmtPct, fmtYears, fmtNum } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
@@ -95,13 +96,28 @@ function LeaseRolloverWidget() {
   );
 }
 
+const INSIGHTS_INITIAL = 7;
+
 function InsightsWidget() {
   const { analytics } = useAnalytics();
+  const [showAll, setShowAll] = useState(false);
   if (!analytics) return null;
+  const all = analytics.insights;
+  const visible = showAll ? all : all.slice(0, INSIGHTS_INITIAL);
+  const hidden = all.length - INSIGHTS_INITIAL;
   return (
     <Card accent>
-      <CardHeader title="Insights & Alerts" trailing={<Badge tone={analytics.insights.some((i) => i.severity === 'critical') ? 'red' : 'amber'}>{analytics.insights.length} active</Badge>} />
-      <InsightList insights={analytics.insights.slice(0, 7)} />
+      <CardHeader title="Insights & Alerts" trailing={<Badge tone={all.some((i) => i.severity === 'critical') ? 'red' : 'amber'}>{all.length} active</Badge>} />
+      <InsightList insights={visible} />
+      {!showAll && hidden > 0 && (
+        <button
+          onClick={() => setShowAll(true)}
+          className="w-full py-2.5 text-xs font-medium"
+          style={{ borderTop: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'transparent', cursor: 'pointer' }}
+        >
+          Show {hidden} more
+        </button>
+      )}
     </Card>
   );
 }

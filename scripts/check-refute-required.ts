@@ -28,6 +28,13 @@ export const DELIVERY_ONLY_PATHS: ReadonlySet<string> = new Set([
   // Phase 3 W1: pure route-plumbing/dispatch; no financial math (math lives in
   // src/analytics/lease-forecast.ts and server/warehouse/lease-velocity.ts).
   'server/warehouse/lease-forecast-api.ts',
+  // Phase 5: pure route-plumbing; financial math lives in capital-allocation.ts + market-intel.ts.
+  'server/warehouse/capital-allocation-api.ts',
+  // Phase 5 W4: pure property-registration write; no financial math.
+  'server/warehouse/property-onboarding.ts',
+  // Direction 2: pure HTML IC-Memo renderer; all financial math lives in buildPortfolioAllocation
+  // (capital-allocation.ts). This file only formats PortfolioAllocation for print-to-PDF.
+  'server/warehouse/ic-memo.ts',
 ]);
 
 /** True when a changed path holds financial-decision SOURCE (not a test / doc / json fixture). */

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Lock } from 'lucide-react';
+import { Lock, RefreshCw } from 'lucide-react';
 import { useSnapshot } from '@/data/queries';
 import { useUi } from '@/brain/ui-context';
 import { fmtUsdCompact, fmtPct, fmtMultiple, fmtNum, fmtSf } from '@analytics/index';
@@ -11,6 +11,7 @@ import { BarList } from '@/charts/BarList';
 import type { Deal, DealStage } from '@contracts/index';
 import { AcquisitionWorkbench } from './AcquisitionWorkbench';
 import { AcquisitionsIntel } from './AcquisitionsIntel';
+import { useQueryClient } from '@tanstack/react-query';
 
 const STAGE_ORDER: DealStage[] = ['Sourcing', 'Candidate', 'LOI/PSA', 'Due Diligence', 'Refinance', 'Closing', 'Closed', 'Dead'];
 const STAGE_TONE: Record<DealStage, BadgeTone> = {
@@ -24,10 +25,42 @@ const STAGE_TONE: Record<DealStage, BadgeTone> = {
   Dead: 'neutral',
 };
 
+type SyncState =
+  | { phase: 'idle' }
+  | { phase: 'syncing' }
+  | { phase: 'done'; inserted: number; updated: number; errors: string[] }
+  | { phase: 'error'; message: string };
+
 export function AcquisitionsModule() {
   const { data } = useSnapshot();
   const ui = useUi();
+  const qc = useQueryClient();
   const [scoreDealId, setScoreDealId] = useState<string>('');
+  const [sync, setSync] = useState<SyncState>({ phase: 'idle' });
+
+  async function handleNotionSync() {
+    setSync({ phase: 'syncing' });
+    try {
+      const res = await fetch('/api/warehouse/acq/sync/notion', { method: 'POST' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+        const msg = typeof body['error'] === 'string' ? body['error'] : `Sync failed (${res.status})`;
+        setSync({ phase: 'error', message: msg });
+        return;
+      }
+      const body = await res.json() as { inserted?: number; updated?: number; errors?: string[] };
+      setSync({
+        phase: 'done',
+        inserted: body.inserted ?? 0,
+        updated: body.updated ?? 0,
+        errors: body.errors ?? [],
+      });
+      // Invalidate acq intel so the ranked list refreshes.
+      void qc.invalidateQueries({ queryKey: ['warehouse', 'acq'] });
+    } catch {
+      setSync({ phase: 'error', message: 'Sync failed — network error' });
+    }
+  }
   if (!data) return null;
   const deals = data.snapshot.deals;
   const scoreDeal = deals.find((d) => d.id === scoreDealId) ?? null;
@@ -60,10 +93,42 @@ export function AcquisitionsModule() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Badge tone="amber" dot>Seed pipeline — HubSpot / Notion sync pending</Badge>
-        <span className="num text-2xs uppercase" style={{ letterSpacing: '0.12em', color: 'var(--text-tertiary)' }}>
-          from firm memory
-        </span>
+        <button
+          type="button"
+          onClick={() => { void handleNotionSync(); }}
+          disabled={sync.phase === 'syncing'}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.375rem',
+            padding: '0.25rem 0.75rem',
+            fontSize: '0.75rem',
+            fontFamily: 'var(--font-mono)',
+            fontWeight: 600,
+            letterSpacing: '0.05em',
+            textTransform: 'uppercase',
+            borderRadius: 'var(--radius-sm)',
+            border: '1px solid var(--border-strong)',
+            background: 'var(--surface-overlay)',
+            color: 'var(--text-primary)',
+            cursor: sync.phase === 'syncing' ? 'not-allowed' : 'pointer',
+            opacity: sync.phase === 'syncing' ? 0.6 : 1,
+          }}
+        >
+          <RefreshCw size={11} style={sync.phase === 'syncing' ? { animation: 'spin 1s linear infinite' } : undefined} />
+          {sync.phase === 'syncing' ? 'Syncing…' : 'Sync from Notion'}
+        </button>
+        {sync.phase === 'done' && (
+          <span className="num text-2xs" style={{ color: 'var(--color-pos)', letterSpacing: '0.05em' }}>
+            Synced — {sync.inserted} inserted · {sync.updated} updated
+            {sync.errors.length > 0 && ` · ${sync.errors.length} error(s)`}
+          </span>
+        )}
+        {sync.phase === 'error' && (
+          <span className="num text-2xs" style={{ color: 'var(--color-neg)', letterSpacing: '0.05em' }}>
+            Sync failed — {sync.message}
+          </span>
+        )}
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiStat label="Active Deals" value={active.length} format={fmtNum} accentColor="var(--accent)" sublabel={`${deals.length} total`} />
