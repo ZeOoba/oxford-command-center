@@ -48,6 +48,7 @@ These two spines have one critical defect: `Property.noi` (Spine A) and `warehou
 | Item | State |
 |------|-------|
 | Branch | `main` (worktree tracking origin/main) |
+| Last merge to main | PR #155 (`a45ac30`) — feat(capital): surface leasingRisk in IC memo table — M6 (#155) |
 | Last merge to main | PR #117 (`6cd58ed`) — Phase 5 Capital Allocation capstone (5-way verdict + Market Intelligence + Property Onboarding) |
 | Open PRs | none in flight |
 | Last merge to main | PR #129 (`5b81321`) — fix(api): port /capital-allocation/ic-memo from 501 stub to live implementation |

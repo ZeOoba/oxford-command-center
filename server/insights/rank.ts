@@ -25,6 +25,7 @@
  *   1. rankScore DESC
  *   2. |materialityUsd| DESC  (null treated as 0)
  *   3. generatorId ASC        (stable lexicographic)
+ *   4. id ASC                 (unique per property+generator; ensures total order)
  *
  * No database access. No warehouse imports.
  */
@@ -97,7 +98,10 @@ function minMaxNorm(values: number[]): number[] {
  */
 export function rankCandidates(inputs: RankInput[]): RankedCandidate[] {
   // ── Step 1: n-gate (hard filter) ────────────────────────────────────────
-  const passing = inputs.filter((c) => c.n >= MIN_PAIRS);
+  // Spine A signals are point-comparisons (one property vs one benchmark) —
+  // MIN_PAIRS is a correlation sample-count gate designed for Spine B signals.
+  // Spine A data-presence is validated upstream in the generator; bypass here.
+  const passing = inputs.filter((c) => c.spine === 'A' || c.n >= MIN_PAIRS);
   if (passing.length === 0) return [];
 
   const { weights } = INSIGHT_CONFIG;
@@ -148,7 +152,9 @@ export function rankCandidates(inputs: RankInput[]): RankedCandidate[] {
     const bMat = Math.abs(b.materialityUsd ?? 0);
     if (bMat !== aMat) return bMat - aMat;
     // Tertiary: generatorId ASC
-    return a.generatorId < b.generatorId ? -1 : a.generatorId > b.generatorId ? 1 : 0;
+    if (a.generatorId !== b.generatorId) return a.generatorId < b.generatorId ? -1 : 1;
+    // Quaternary: id ASC (unique per property+generator — guarantees total order)
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
   });
 
   // ── Step 6: Apply displayTopN cap ────────────────────────────────────────
