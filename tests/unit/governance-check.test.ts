@@ -266,4 +266,13 @@ describe('checkGovernorLiteralCoupling', () => {
     expect(result.pass).toBe(true);
     expect(result.errors).toHaveLength(0);
   });
+
+  it('does NOT flag assignment (non-comparison) like const dscr = 1.25', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue(['acq-engine.ts'] as never);
+    mockReadFileSync.mockReturnValue('const dscr = 1.25;');
+    const result = checkGovernorLiteralCoupling('/fake/root');
+    expect(result.pass).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
 });

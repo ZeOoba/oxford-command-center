@@ -172,9 +172,13 @@ export function checkGovernorLiteralCoupling(root: string): GovernanceResult {
   }
 
   // Matches a line containing BOTH a governor-named operand AND a governor literal
-  // in a comparison context (either order).
-  const GOVERNOR_LITERAL_IN_COMPARISON =
-    /\b(?:dscr|ltv|loanToValue|ltvRatio|dscrRatio)\b.*?[<>!=]=?\s*(?:1\.25|0\.40?)\b|(?:1\.25|0\.40?)\s*[<>!=]=?.*?\b(?:dscr|ltv|loanToValue|ltvRatio|dscrRatio)\b/;
+  // in a comparison context (either order). Uses explicit comparison operators to
+  // avoid false-positives on assignments like `const dscr = 1.25`.
+  const CMP_OP = '(?:<=|>=|<|>|===|!==|==|!=)';
+  const GOVERNOR_LITERAL_IN_COMPARISON = new RegExp(
+    `\\b(?:dscr|ltv|loanToValue|ltvRatio|dscrRatio)\\b.*?${CMP_OP}\\s*(?:1\\.25|0\\.40?)\\b` +
+      `|(?:1\\.25|0\\.40?)\\s*${CMP_OP}.*?\\b(?:dscr|ltv|loanToValue|ltvRatio|dscrRatio)\\b`,
+  );
 
   for (const filePath of files) {
     let content = '';
@@ -184,8 +188,11 @@ export function checkGovernorLiteralCoupling(root: string): GovernanceResult {
       continue;
     }
 
-    // Strip block and line comments before checking — same pattern as checkAcqGovernorCoupling.
-    const code = content.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    // Strip block and line comments before checking. Preserve newlines within
+    // block comments so that line-number reporting in error messages stays accurate.
+    const code = content
+      .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ''))
+      .replace(/\/\/.*$/gm, '');
 
     const lines = code.split('\n');
     for (let i = 0; i < lines.length; i++) {
