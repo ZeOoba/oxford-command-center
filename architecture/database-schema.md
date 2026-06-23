@@ -32,6 +32,7 @@
 | 017a | `017_market_series_constraints.sql` | `market_series`: adds unique index `ux_market_series_tuple (cluster, as_of, source, metric)` — deferred from migration 013 |
 | 017b | `017_ratify_hurdle_rate.sql` | `capital_config`: stamps hurdle-rate ratification (`ratified` / Gabriel Goldberg / 2026-06-22) on latest config row |
 | 018 | `018_recommendations_constraints.sql` | `recommendations`: table-recreate to add `CHECK (expected_return_pct BETWEEN -1.0 AND 5.0)`, `CHECK (timeline_months > 0)`, and unique index `ux_recommendations_versioned (property_id, as_of, inputs_version)` |
+| 019 | `019_account_mappings_period.sql` | `account_mappings`: adds `period TEXT` (nullable). NULL = unscoped (all periods); non-null = scoped to a specific year string (e.g. `'2025'`). Enables period-scoped one-time exclusions (H4: FVC 2025 cell-tower easement). `resolveMapping()` applies `AND (period IS NULL OR period = ?)` when caller passes a period. |
 
 ---
 
@@ -127,6 +128,7 @@ CREATE TABLE IF NOT EXISTS account_mappings (
   classification      TEXT    NOT NULL,
   match_kind          TEXT    NOT NULL DEFAULT 'seed',
   property_id         TEXT,
+  period              TEXT,    -- added migration 019; NULL = all periods
   note                TEXT,
   created_at          TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -135,6 +137,7 @@ CREATE INDEX IF NOT EXISTS idx_mappings_key ON account_mappings(raw_account_key)
 
 **`classification`:** `'revenue'` | `'opex'` | `'recovery'` | `'other-income'` | `'below-line'` | `'unknown'`.
 **`match_kind`:** `'manual'` (highest precedence) | `'seed'` | `'learned'` (reserved).
+**`period`:** Optional year string (e.g. `'2025'`). NULL = unscoped (matches any period). Non-null = matches only the exact period. Used for one-time GL items that must be excluded from a specific year only (e.g. H4: FVC 2025 cell-tower easement sale). `resolveMapping()` applies `AND (period IS NULL OR period = ?)` when the caller passes a period.
 **Resolution order:** manual > property-scoped seed > global seed > learned > unmapped.
 **Side constraint:** An income-side raw account CANNOT be mapped to an opex classification. Enforced in `mapping.ts`.
 

@@ -37,7 +37,7 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
   const stmt = await parseQbExcel(filePath);
   const periodStart = stmt.periodStart ?? `${det.year}-01-01`;
   const periodEnd = stmt.periodEnd ?? (det.grain === 'year' ? `${det.year}-12-31` : null);
-  const period = String(det.year);
+  const period = /^\d{4}/.test(periodStart) ? periodStart.slice(0, 4) : String(det.year);
 
   const detectNotes = `token=${det.propertyToken}; propertyRaw=${stmt.propertyRaw}`;
   const reg = registerImport(db, {
@@ -111,7 +111,7 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
     }
     for (const a of stmt.accounts) {
       if (a.total === null) continue;
-      const m = resolveMapping(db, a.name, det.propertyId ?? undefined, a.section);
+      const m = resolveMapping(db, a.name, det.propertyId ?? undefined, a.section, undefined, period);
       if (m.matchKind === 'unmapped') {
         unmapped.push(a.name);
         insIssue.run(importId, det.propertyId, 'unmapped-account', `${a.name} (section ${a.section}) defaulted to Unmapped/opex`, 'warn');
