@@ -138,7 +138,7 @@ export const DataReadinessEntrySchema = z.object({
   generatorId: z.string(),
   status: z.enum(['live', 'dormant-low-n', 'dormant-no-outcomes']),
   /** Count of qualifying data points available. null when uncountable or unknown. */
-  sampleN: z.number().nullable(),
+  sampleN: z.number().int().nonnegative().nullable(),
 });
 
 export type DataReadinessEntry = z.infer<typeof DataReadinessEntrySchema>;
@@ -156,7 +156,7 @@ export const InsightReportSchema = z.object({
   candidates: z.array(InsightCandidateSchema),
   dataReadiness: z.array(DataReadinessEntrySchema),
   /** ISO 8601 timestamp of generation (wall-clock injected by the route, not the engine). */
-  generatedAt: z.string(),
+  generatedAt: z.string().datetime(),
   advisoryOnly: z.literal(true),
 });
 
