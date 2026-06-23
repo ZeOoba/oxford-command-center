@@ -1,16 +1,21 @@
 import type { PortfolioSnapshot, Lease } from '../contracts/index';
 import { RENEWAL_STAGES, type RenewalStage } from '../contracts/renewal';
+import { slug } from '../contracts/common';
 import { DAY_MS } from '../../server/warehouse/time-constants';
+
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
   Math.round((new Date(isoTarget).getTime() - new Date(isoFrom).getTime()) / DAY_MS);
 const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
 
-/** Stable slug id from a tenant display name (the workbook has no tenant id). */
+/**
+ * Stable slug id from a tenant display name (the workbook has no tenant id).
+ * Delegates to the canonical slug() so Unicode tenant names (e.g. "Müller GmbH")
+ * receive NFKD normalisation + diacritic stripping instead of being silently
+ * collapsed to bare hyphens, which would diverge from ids produced elsewhere
+ * in the codebase and break tenant-note lookups.
+ */
 export function tenantSlug(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+  return slug(name);
 }
 
 export interface TenantScorecard {
