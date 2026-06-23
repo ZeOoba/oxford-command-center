@@ -28,6 +28,7 @@ function makeEntry(
     impliedCapRate: number | null;
     capRateGap: number | null;
     noi: number;
+    leasingRisk: number;
   }> = {},
 ) {
   return {
@@ -48,6 +49,7 @@ function makeEntry(
     noi: 500_000,
     noiPerSf: 25,
     noiBasis: 'spine-a' as const,
+    leasingRisk: 0,
     impliedCapRate: 0.065,
     capRateGap: -0.01,
     capRatePercentile: null,
