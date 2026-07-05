@@ -25,7 +25,10 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: '24'
+          # Pinned (was '24'): the runner's floating Node 24 hit 24.17+/24.18, where pdf-parse
+          # (test-only, bundles pdf.js 1.10) can't read PDFs — briefing tests fail with
+          # 'bad XRef entry'. 24.16.0 = last proven-green. Unpin after pdf-parse is replaced.
+          node-version: '24.16.0'
           cache: 'npm'
       - run: npm ci
       - run: npm run test:shuffle
