@@ -17,7 +17,9 @@ WAREHOUSE_DB=./data/warehouse/finance.sqlite
 
 # Brain server port. If you run a dev server in more than one worktree at once,
 # give each a distinct port so they don't collide on 8911.
-# SERVER_PORT=8912
+# NOTE: server/config.ts (and vite.config.ts) read BRAIN_SERVER_PORT — a bare
+# SERVER_PORT is ignored by everything.
+# BRAIN_SERVER_PORT=8912
 
 # Live Claude + FRED keys are read from the machine environment / root .env.
 # Do NOT copy real secrets into a per-worktree .env that could be committed.

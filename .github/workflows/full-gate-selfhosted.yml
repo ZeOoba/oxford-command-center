@@ -1,0 +1,30 @@
+name: Full Gate (self-hosted)
+
+# Runs the FULL `npm run gate` (governance + typecheck + lint + test + reconcile +
+# warehouse:verify + warehouse:drift) on the self-hosted Linux runner that has the
+# confidential data corpus mounted. The GitHub-hosted ci.yml job runs gate:ci only,
+# because reconcile/warehouse:verify need the Master Workbook and the 32-file
+# Property Financials directory, which never leave Oxford machines.
+#
+# workflow_dispatch ONLY for now: add a `schedule:` trigger after the runner
+# burn-in period, per docs/SERVER-MIGRATION-RUNBOOK.md in ora-claude-config.
+on:
+  workflow_dispatch:
+
+jobs:
+  full-gate:
+    # Never run on forks — the runner and its data are private to this repo.
+    if: github.repository == 'ZeOoba/oxford-command-center'
+    runs-on: [self-hosted, linux, ora-data]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          cache: 'npm'
+      - run: npm ci
+      # WORKBOOK_PATH and FINANCIALS_DIR come from the runner environment
+      # (exported in the runner service env / ~/.config/ora/ora.env), pointing at
+      # $HOME/ora-data/eric-spreadsheets/... and $HOME/ora-data/property-financials.
+      # WAREHOUSE_DB is optional (warehouse:drift self-skips when absent).
+      - run: npm run gate

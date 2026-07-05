@@ -1,0 +1,18 @@
+{
+  "_source": "Machine-readable mirror of CLAUDE.md section 4 (Architect-only files) and architecture/agent-assignments.md. Consumed by .claude/hooks/file-guard.mjs. If CLAUDE.md section 4 changes, update this list in the same PR.",
+  "globs": [
+    "CLAUDE.md",
+    "architecture/**",
+    "package.json",
+    "tsconfig.json",
+    "tsconfig.node.json",
+    "vite.config.ts",
+    "server/index.ts",
+    "src/contracts/**",
+    "src/analytics/engine.ts",
+    "scripts/governance-check.ts",
+    "server/warehouse/db.ts",
+    "server/warehouse/migrate.ts",
+    "server/warehouse/migrations/**"
+  ]
+}
