@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en" data-screen-label="Insurance">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORA — Insurance</title>
+<script>try{var t=localStorage.getItem('ora-theme')||'dark';document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('ora-density')==='compact')document.documentElement.setAttribute('data-density','compact');}catch(e){}</script>
+<link rel="stylesheet" href="ora.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" data-active="insurance"></nav>
+
+  <div class="main">
+    <header class="top">
+      <div class="ttl"><span class="up">Oxford RA · Command</span><span class="pg">Insurance</span></div>
+      <div class="bar"></div>
+      <div class="clock" id="insClock">CONTINUOUS SCAN · 16 POLICIES</div>
+      <div class="grow"></div>
+      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>search policies · carriers<span class="k">⌘K</span></div>
+      <div class="stat"><span class="d"></span>SCANNING · 4m</div>
+      <button class="ibtn" id="themeBtn" title="Toggle theme"></button>
+      <button class="ibtn" id="densityBtn" title="Toggle density"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      <button class="ibtn" title="Alerts"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 004 0"/></svg><span class="dot"></span></button>
+    </header>
+
+    <div class="content">
+      <div class="pagehd">
+        <div><h1>Insurance Program</h1><div class="sub">premiums benchmarked &amp; scanned continuously for savings, right-sizing, retention &amp; re-bids</div></div>
+        <div class="grow"></div>
+        <span class="chip ai">◇ ENGINE</span>
+      </div>
+
+      <div class="kpis" style="grid-template-columns:repeat(4,1fr)">
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.6-3 7.7-7 9-4-1.3-7-4.4-7-9V6z"/></svg>ANNUAL PREMIUM</div><div class="v" id="kPrem">—</div><div class="dl r" id="kPremYoY">—</div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/></svg>RATE / $100 TIV</div><div class="v" id="kRate">—</div><div class="dl" id="kRateD"><span class="s">vs benchmark</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>IDENTIFIED SAVINGS</div><div class="v" id="kSave" style="color:var(--green)">—</div><div class="dl g"><span class="s">per year</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v5l3 2"/></svg>RENEWALS ≤90D</div><div class="v" id="kRenew">—</div><div class="dl" id="kRenewD"><span class="s">re-bid window</span></div></div>
+      </div>
+
+      <div class="tabs" data-scope="#inspanes">
+        <div class="tab on" data-pane="scan">Savings Board</div>
+        <div class="tab" data-pane="register">Policy Register</div>
+        <div class="tab" data-pane="retain">Self-Insure &amp; Bids</div>
+      </div>
+
+      <div id="inspanes">
+        <!-- SAVINGS BOARD -->
+        <div class="tabpane on" data-pane="scan">
+          <div class="results" id="insBanner"></div>
+          <div class="board-hd" style="display:flex;align-items:center;gap:9px;margin-bottom:12px">
+            <div><h3 style="font-size:12px;font-weight:600;letter-spacing:.04em">RANKED SAVINGS &amp; ACTIONS</h3><div class="sub" style="font-family:var(--font-mono);font-size:10.5px;color:var(--muted);margin-top:2px">grouped by lever · ranked by dollar impact within each</div></div>
+            <div class="grow"></div><span class="chip">RE-BID · OPTIMIZE · RETAIN</span>
+          </div>
+          <div class="tiers" id="insTiers"></div>
+        </div>
+
+        <!-- POLICY REGISTER -->
+        <div class="tabpane" data-pane="register">
+          <div class="grid-21">
+            <div class="panel">
+              <div class="ph"><div><h3>POLICY REGISTER</h3><div class="sub" id="regSub">—</div></div><div class="grow"></div><span class="linkish">⤓ Export</span></div>
+              <table class="tbl" data-enhance data-chips="Market">
+                <thead><tr><th>Property</th><th>Market</th><th>Carrier</th><th class="r">TIV</th><th class="r">Premium</th><th class="r">$/100 TIV</th><th class="r">Deduct.</th><th class="r">Renews</th></tr></thead>
+                <tbody id="regBody"></tbody>
+              </table>
+            </div>
+            <div class="colstack">
+              <div class="panel">
+                <div class="ph"><div><h3>RENEWAL CALENDAR</h3><div class="sub">next 6 months</div></div></div>
+                <div id="renewCal"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- SELF-INSURE & BIDS -->
+        <div class="tabpane" data-pane="retain">
+          <div class="grid-2a">
+            <div class="panel">
+              <div class="ph"><div><h3>SELF-INSURANCE ANALYSIS</h3><div class="sub">premium vs modeled expected loss</div></div><div class="grow"></div><span class="chip ai">◇ ENGINE</span></div>
+              <div class="readout"><div class="rl2">Net annual saving if retained</div><div class="rv2" id="siNet" style="color:var(--green)">—</div><div class="dl" id="siRec" style="font-size:11.5px"></div></div>
+              <div style="padding:4px 16px 6px"><div class="sbar" style="height:18px" id="siBar"></div></div>
+              <div class="legend">
+                <div class="lg"><span class="sw" style="background:var(--violet)"></span>Expected loss <b style="margin-left:auto" id="siEAL">—</b></div>
+                <div class="lg"><span class="sw" style="background:var(--amber)"></span>Risk load (cushion) <b style="margin-left:auto" id="siLoad">—</b></div>
+                <div class="lg"><span class="sw" style="background:var(--green)"></span>Premium margin retained <b style="margin-left:auto" id="siMargin">—</b></div>
+              </div>
+              <div class="insight a" style="border-top:1px solid var(--line-2)"><p id="siNote"></p></div>
+            </div>
+            <div class="panel">
+              <div class="ph"><div><h3>RE-BID PIPELINE</h3><div class="sub" id="bidSub">—</div></div><div class="grow"></div><span class="chip" style="color:var(--blue);border-color:var(--blue-bd)">COMPETITIVE</span></div>
+              <table class="tbl">
+                <thead><tr><th>Property</th><th>Incumbent</th><th class="r">Premium</th><th class="r">Best Quote</th><th class="r">Save</th><th>Status</th></tr></thead>
+                <tbody id="bidBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="ora.js"></script>
+<script src="data.js"></script>
+<script src="trends.js"></script>
+<script src="ins.js"></script>
+<script src="table.js"></script>
+<script>
+(function(){
+  document.addEventListener('DOMContentLoaded', function(){
+    var I = window.ORA_INS; if(!I) return; var p = I.plain;
+
+    // ---- KPIs ----
+    document.getElementById('kPrem').innerHTML = p(I.totals.premium).replace(/^(\$[\d.]+)([MK])$/,'$1<small>$2</small>');
+    document.getElementById('kPremYoY').innerHTML = '▲ '+(I.totals.premYoY||0).toFixed(0)+'% <span class="s">YoY · hard market</span>';
+    var rate100 = I.totals.rate*100, bench100 = I.BENCH_RATE*100;
+    document.getElementById('kRate').innerHTML = '$'+rate100.toFixed(2);
+    var over = (I.totals.rate-I.BENCH_RATE)/I.BENCH_RATE*100;
+    document.getElementById('kRateD').innerHTML = '<span class="'+(over>0?'':'')+'">'+(over>=0?'▲ ':'▼ ')+Math.abs(over).toFixed(0)+'% vs $'+bench100.toFixed(2)+' bench</span>';
+    var save = I.SCAN.reduce(function(t,s){return t+s.impact;},0);
+    document.getElementById('kSave').innerHTML = p(save).replace(/^(\$[\d.]+)([MK])$/,'$1<small>$2</small>');
+    document.getElementById('kRenew').innerHTML = I.totals.renew90+'<small> policies</small>';
+
+    // ---- banner ----
+    var rebid = I.SCAN.filter(function(s){return s.cat==='bid';}).reduce(function(t,s){return t+s.impact;},0);
+    var optimize = I.SCAN.filter(function(s){return s.cat==='save';}).reduce(function(t,s){return t+s.impact;},0);
+    document.getElementById('insBanner').innerHTML =
+      '<div class="rcell"><div class="rl">Total Identified Savings</div><div class="rv gain">'+p(save)+'/yr</div><div class="rs">scanned across '+I.POLICIES.length+' policies</div></div>'+
+      '<div class="rcell"><div class="rl">Re-bid Upside</div><div class="rv gain">'+p(rebid)+'/yr</div><div class="rs">priced over market rate</div></div>'+
+      '<div class="rcell"><div class="rl">Coverage Right-sizing</div><div class="rv gain">'+p(optimize)+'/yr</div><div class="rs">deductibles + over-insurance</div></div>';
+
+    // ---- tiered savings board ----
+    var GROUPS = [
+      {cat:'bid', nm:'Re-bid to Market', sub:'over-priced policies', cls:'t-acc', pill:'cat-bid'},
+      {cat:'save', nm:'Optimize Coverage', sub:'deductibles · limits', cls:'t-good', pill:'cat-save'},
+      {cat:'retain', nm:'Retain Risk', sub:'self-insure layer', cls:'t-vio', pill:'cat-retain'}
+    ];
+    function tcard(s,rank,pill){
+      var r=(rank<10?'0':'')+rank;
+      return '<a class="tcard" href="'+s.href+'">'+
+        '<div class="tc-top"><span class="tc-rank">'+r+'</span><span class="catpill '+pill+'">'+(I.CAT_LABEL[s.cat]||s.cat)+'</span><span class="tc-imp gain">'+p(s.impact)+'</span></div>'+
+        '<div class="tc-title">'+s.title+'</div>'+
+        '<div class="tc-detail">'+s.detail+'</div>'+
+        '<div class="tc-action">→ '+s.action+'</div></a>';
+    }
+    document.getElementById('insTiers').innerHTML = GROUPS.map(function(g){
+      var items = I.SCAN.filter(function(s){return s.cat===g.cat;}).sort(function(a,b){return b.impact-a.impact;});
+      var tot = items.reduce(function(t,s){return t+s.impact;},0);
+      var body = items.length ? items.map(function(s,i){return tcard(s,i+1,g.pill);}).join('') : '<div class="tier-empty">Nothing flagged</div>';
+      return '<div class="tier '+g.cls+'">'+
+        '<div class="tier-hd"><span class="dotb"></span><div><div class="tier-nm">'+g.nm+'</div><div class="tier-sub">'+g.sub+'</div></div><span class="tier-ct">'+items.length+'</span></div>'+
+        '<div class="tier-meta">'+(tot>0?'<b>'+p(tot)+'</b>/yr identified':'—')+'</div>'+
+        '<div class="tier-body">'+body+'</div></div>';
+    }).join('');
+
+    // ---- policy register ----
+    var byRate = I.POLICIES.slice().sort(function(a,b){return b.rateVsBench-a.rateVsBench;});
+    document.getElementById('regBody').innerHTML = byRate.map(function(x){
+      var rc = x.rateVsBench>0.08 ? 'style="color:var(--red)"' : x.rateVsBench<-0.05 ? 'style="color:var(--green)"' : 'class="muted"';
+      var dsoon = x.daysOut<=90 ? 'style="color:var(--amber)"' : 'class="muted"';
+      return '<tr class="click" onclick="location.href=\'Property.html?id='+x.id+'\'">'+
+        '<td><b>'+x.name+'</b><div class="mt-s">'+x.peril.toUpperCase()+' EXPOSURE</div></td>'+
+        '<td class="muted">'+x.market+'</td>'+
+        '<td class="muted">'+x.carrier+'</td>'+
+        '<td class="r num">'+p(x.tiv)+'</td>'+
+        '<td class="r num">'+p(x.premium)+'</td>'+
+        '<td class="r num" '+rc+'>$'+(x.rate*100).toFixed(2)+'</td>'+
+        '<td class="r num">$'+(x.deductible/1000)+'K</td>'+
+        '<td class="r num" '+dsoon+'>'+x.renLabel+'</td></tr>';
+    }).join('');
+    document.getElementById('regSub').textContent = I.POLICIES.length+' scheduled policies · '+p(I.totals.tiv)+' total insured value';
+
+    // ---- renewal calendar (next 6 mo, soonest first) ----
+    var soon = I.POLICIES.slice().sort(function(a,b){return a.daysOut-b.daysOut;}).slice(0,6);
+    var maxD = 200;
+    document.getElementById('renewCal').innerHTML = soon.map(function(x){
+      var cls = x.daysOut<=45?'now':x.daysOut<=90?'soon':'';
+      var w = Math.max(6, 100 - x.daysOut/maxD*100);
+      return '<div class="polrow"><div style="min-width:0"><div class="nm-s">'+x.name+'</div>'+
+        '<div class="renewbar '+cls+'" style="margin-top:6px"><span style="width:'+w+'%"></span></div></div>'+
+        '<div style="text-align:right"><div class="amt" style="font-size:13px">'+x.daysOut+'<small style="font-size:9px;color:var(--muted)">d</small></div>'+
+        '<div class="mt-s">'+x.renLabel+'</div></div></div>';
+    }).join('');
+
+    // ---- self-insurance ----
+    var si = I.selfInsure();
+    document.getElementById('siNet').innerHTML = p(si.netSaving);
+    document.getElementById('siRec').innerHTML = si.recommend
+      ? '<span style="color:var(--green)">▲ RECOMMENDED</span> · '+Math.round(si.lossRatio*100)+'% loss ratio · retain '+p(si.layer)+' primary layer'
+      : '<span class="muted">HOLD — transfer remains cheaper</span>';
+    var eal=si.expectedLoss, load=si.riskLoad-si.expectedLoss, margin=Math.max(0,si.premium-si.riskLoad);
+    var tot=eal+load+margin;
+    document.getElementById('siBar').innerHTML =
+      '<span style="width:'+(eal/tot*100)+'%;background:var(--violet)"></span>'+
+      '<span style="width:'+(load/tot*100)+'%;background:var(--amber)"></span>'+
+      '<span style="width:'+(margin/tot*100)+'%;background:var(--green)"></span>';
+    document.getElementById('siEAL').textContent = p(eal);
+    document.getElementById('siLoad').textContent = p(load);
+    document.getElementById('siMargin').textContent = p(margin);
+    document.getElementById('siNote').innerHTML = '<b>'+Math.round(si.lossRatio*100)+'% modeled loss ratio.</b> You pay '+p(si.premium)+' to transfer '+p(si.expectedLoss)+' of expected annual loss. Retaining a '+p(si.layer)+' primary layer (captive or higher SIR) keeps the margin in-house while reinsuring the catastrophic tail — net '+p(si.netSaving)+'/yr, subject to a '+p(si.riskLoad)+' capital cushion.';
+
+    // ---- re-bid pipeline ----
+    var bids = I.bids();
+    document.getElementById('bidBody').innerHTML = bids.map(function(b){
+      var st = b.status==='Quotes in'?'b-dd':b.status==='Out to market'?'b-loi':'b-neutral';
+      return '<tr><td><b>'+b.name+'</b></td><td class="muted">'+b.carrier+'</td>'+
+        '<td class="r num">'+p(b.premium)+'</td>'+
+        '<td class="r num">'+(b.status==='Queued'?'<span class="muted">—</span>':p(b.best))+'</td>'+
+        '<td class="r num pos">'+(b.status==='Queued'?'—':p(b.saving))+'</td>'+
+        '<td><span class="badge '+st+'">'+b.status.toUpperCase()+'</span></td></tr>';
+    }).join('');
+    document.getElementById('bidSub').textContent = bids.length+' candidates · soonest renewal first';
+
+    if (window.ORA_enhanceTables) ORA_enhanceTables(document);
+  });
+})();
+</script>
+</body>
+</html>

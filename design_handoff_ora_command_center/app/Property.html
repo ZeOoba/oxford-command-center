@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en" data-screen-label="Property Detail">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORA — Property</title>
+<script>try{var t=localStorage.getItem('ora-theme')||'dark';document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('ora-density')==='compact')document.documentElement.setAttribute('data-density','compact');}catch(e){}</script>
+<link rel="stylesheet" href="ora.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" data-active="portfolio"></nav>
+
+  <div class="main">
+    <header class="top">
+      <div class="ttl"><span class="up" id="topEyebrow">Oxford RA · Portfolio</span><span class="pg" id="topName">Property</span></div>
+      <div class="bar"></div>
+      <div class="clock" id="topMeta">—</div>
+      <div class="grow"></div>
+      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>jump to…<span class="k">⌘K</span></div>
+      <div class="stat"><span class="d"></span>LIVE · 2m</div>
+      <button class="ibtn" id="themeBtn" title="Toggle theme"></button>
+      <button class="ibtn" id="densityBtn" title="Toggle density"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      <button class="ibtn" title="Alerts"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 004 0"/></svg><span class="dot"></span></button>
+    </header>
+
+    <div class="content">
+      <a class="backlink" href="Portfolio.html"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>Portfolio</a>
+
+      <div class="hero">
+        <div class="photo">
+          <div class="ph-ic"><svg viewBox="0 0 24 24"><path d="M3 21h18M5 21V8l7-5 7 5v13M9 21v-6h6v6M9 11h.01M15 11h.01"/></svg></div>
+          <div class="ph-tag" id="heroTag">—</div>
+        </div>
+        <div class="meta">
+          <div class="eyebrow" id="heroEyebrow">—</div>
+          <h1 id="heroName">—</h1>
+          <div class="loc" id="heroLoc">—</div>
+          <div class="statgrid">
+            <div class="sg"><div class="l">Value</div><div class="v" id="sgValue">—</div></div>
+            <div class="sg"><div class="l">Occupancy</div><div class="v" id="sgOcc">—</div></div>
+            <div class="sg"><div class="l">NOI / yr</div><div class="v" id="sgNoi">—</div></div>
+            <div class="sg"><div class="l">Cap Rate</div><div class="v" id="sgCap">—</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tabs" data-scope="#ppanes">
+        <div class="tab on" data-pane="snap">Snapshot</div>
+        <div class="tab" data-pane="leases">Leases</div>
+        <div class="tab" data-pane="trend">Trends</div>
+        <div class="tab" data-pane="fin">Month-End Report</div>
+        <div class="tab" data-pane="maint">Maintenance</div>
+      </div>
+
+      <div id="ppanes">
+        <div class="tabpane on" data-pane="snap">
+          <div class="grid-21">
+            <div class="panel">
+              <div class="ph"><div><h3>NOI TREND</h3><div class="sub">trailing 12 months · $/mo · vs prior year</div></div><div class="grow"></div><a class="more" data-gototab="trend">FULL HISTORY ▸</a></div>
+              <div class="trdhead"><div class="big"><span id="noiMo">—</span><span class="unit">/mo</span></div><span class="dchip g" id="snapYoY">—</span></div>
+              <div id="snapNoi" style="padding:4px 12px 0"></div>
+              <div class="trdaxis" id="snapAxis"></div>
+            </div>
+            <div class="colstack">
+              <div class="panel">
+                <div class="ph"><div><h3 id="mixTitle">UNIT MIX</h3><div class="sub" id="mixSub">—</div></div></div>
+                <div class="hbars" id="mixBars"></div>
+              </div>
+              <div class="panel">
+                <div class="ph"><div><h3>KEY FACTS</h3></div></div>
+                <div class="lrow"><div style="flex:1"><div class="nm-s">Debt</div><div class="mt-s" id="factRate">—</div></div><div class="amt" id="factDebt">—</div></div>
+                <div class="lrow"><div style="flex:1"><div class="nm-s">LTV</div></div><div class="amt" id="factLtv">—</div></div>
+                <div class="lrow"><div style="flex:1"><div class="nm-s">Year Built · Renovated</div></div><div class="amt" id="factYear">—</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="tabpane" data-pane="leases">
+          <div class="panel">
+            <div class="ph"><div><h3>RENT ROLL</h3><div class="sub" id="leaseSub">—</div></div><div class="grow"></div><span class="linkish">⤓ Export</span></div>
+            <table class="tbl" data-enhance data-chips="Status">
+              <thead><tr><th>Unit</th><th>Tenant</th><th>Type</th><th class="r">Rent</th><th class="r">Expires</th><th>Status</th></tr></thead>
+              <tbody id="leaseBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="tabpane" data-pane="trend">
+          <div class="panel">
+            <div class="trdbar">
+              <div class="trdpills" id="trdMetrics"></div>
+              <div class="trdtoggle">
+                <span class="trdchk on" id="tgYoY">vs prior year</span>
+                <span class="trdchk" id="tgBud">vs budget</span>
+                <div class="seg" id="trdHorizon"><span data-h="1Y">1Y</span><span data-h="3Y" class="on">3Y</span><span data-h="max">Since acq.</span></div>
+              </div>
+            </div>
+            <div class="trdhead"><div class="big"><span id="trdVal">—</span><span class="unit" id="trdUnit"></span></div><span class="dchip g" id="trdYoYchip">—</span><span class="dchip" id="trdCagrChip" style="color:var(--ink-2)">—</span></div>
+            <div id="trdChart" style="padding:4px 16px 0"></div>
+            <div class="trdaxis" id="trdAxis"></div>
+            <div class="trdlg" style="padding:4px 16px 14px">
+              <div class="lg"><span class="ln"></span><span id="trdLgName">NOI</span></div>
+              <div class="lg" id="trdLgCmp"><span class="ln cmp"></span>prior year</div>
+              <div class="lg" id="trdLgBud" style="display:none"><span class="ln bud"></span>budget</div>
+              <div class="lg"><span class="dot"></span>flagged anomaly</div>
+            </div>
+          </div>
+          <div class="panel" style="margin-top:13px">
+            <div class="ph"><div><h3>ANOMALIES · THIS ASSET</h3><div class="sub" id="propAnomSub">—</div></div><div class="grow"></div><span class="chip ai">◇ ENGINE</span></div>
+            <div id="propAnoms"></div>
+          </div>
+        </div>
+
+        <div class="tabpane" data-pane="fin">
+          <div class="panel">
+            <div class="ph"><div><h3>MONTH-END REPORT</h3><div class="sub" id="finSub">May 2026 · actual vs budget · MoM · YoY · flagged variances</div></div><div class="grow"></div><span class="chip" id="finFlagCount">—</span><span class="linkish" style="margin-left:8px">⤓ Export</span></div>
+            <table class="fin">
+              <thead><tr><th>Account</th><th class="r">Actual</th><th class="r">Budget</th><th class="r">Var</th><th class="r">MoM</th><th class="r">YoY</th></tr></thead>
+              <tbody id="finBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="tabpane" data-pane="maint">
+          <div class="panel">
+            <div class="ph"><div><h3>OPEN WORK ORDERS</h3><div class="sub" id="woSub">—</div></div><div class="grow"></div><a class="more" href="Operations.html">ALL OPS ▸</a></div>
+            <div id="woBody"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="ora.js"></script>
+<script src="data.js"></script>
+<script src="trends.js"></script>
+<script src="table.js"></script>
+<script>
+(function () {
+  function seed(s){var h=0;for(var i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;return function(){h=(h*1103515245+12345)>>>0;return h/4294967296;};}
+  function money(n){return '$'+Math.round(n).toLocaleString();}
+  document.addEventListener('DOMContentLoaded', function () {
+    var p = ORA.find(ORA.PROPERTIES, ORA.qs('id'));
+    var rnd = seed(p.id);
+    var commercial = p.type !== 'Multifamily';
+    var unitWord = p.type === 'Industrial' ? 'bays' : (commercial ? 'suites' : 'units');
+
+    document.getElementById('topName').textContent = p.name;
+    document.getElementById('topEyebrow').textContent = 'Oxford RA · Portfolio';
+    document.getElementById('topMeta').textContent = p.region.toUpperCase() + ' · ' + p.type.toUpperCase();
+    document.getElementById('heroTag').textContent = p.name.toUpperCase() + ' · ' + (1400 + Math.floor(rnd()*900)) + ' ' + ['RIVER OAKS DR','HARBOR BLVD','MERIDIAN AVE','CEDAR ST'][Math.floor(rnd()*4)];
+    document.getElementById('heroEyebrow').textContent = p.status + ' · Acquired ' + p.acqYear + ' · ' + p.ownYears + ' yrs held';
+    document.getElementById('heroName').textContent = p.name;
+    document.getElementById('heroLoc').textContent = p.region + ' · ' + p.type + ' · ' + p.units + ' ' + unitWord + ' · ' + p.sf.toLocaleString() + ' SF';
+    document.getElementById('sgValue').textContent = ORA.fmtM(p.value);
+    document.getElementById('sgOcc').textContent = p.occ + '%';
+    document.getElementById('sgNoi').textContent = ORA.fmtM(p.noi);
+    document.getElementById('sgCap').textContent = p.cap.toFixed(1) + '%';
+    document.getElementById('noiMo').textContent = '$' + Math.round(p.noi/12*1000) + 'K';
+    document.getElementById('factRate').textContent = 'FIRST MERIDIAN · ' + p.rate.toFixed(1) + '% FIXED';
+    document.getElementById('factDebt').textContent = ORA.fmtM(p.debt);
+    document.getElementById('factLtv').textContent = p.ltv + '%';
+    document.getElementById('factYear').textContent = p.year + ' · ' + p.reno;
+
+    // ---- unit / space mix ----
+    var mix, colors = ['var(--accent)','var(--blue)','var(--amber)','var(--violet)'];
+    if (!commercial) {
+      document.getElementById('mixTitle').textContent = 'UNIT MIX';
+      document.getElementById('mixSub').textContent = p.units + ' units';
+      var s = Math.round(p.units*0.15), one = Math.round(p.units*0.4), two = p.units - s - one;
+      mix = [['1 BR', one+' · $1,950', 0.8],['2 BR', two+' · $2,650', 0.95],['Studio', s+' · $1,500', 0.32]];
+    } else {
+      document.getElementById('mixTitle').textContent = 'SPACE STATUS';
+      document.getElementById('mixSub').textContent = p.sf.toLocaleString() + ' SF';
+      var leased = Math.round(p.sf*p.occ/100), vac = p.sf-leased;
+      mix = [['Leased', leased.toLocaleString()+' SF', p.occ/100],['Vacant', vac.toLocaleString()+' SF', (100-p.occ)/100],['Expiring ≤12mo', Math.round(p.sf*0.18).toLocaleString()+' SF', 0.18]];
+    }
+    document.getElementById('mixBars').innerHTML = mix.map(function(m,i){
+      return '<div class="hbar"><div class="hb-top"><span>'+m[0]+'</span><span class="v">'+m[1]+'</span></div><div class="track"><span style="width:'+Math.round(m[2]*100)+'%;background:'+colors[i]+'"></span></div></div>';
+    }).join('');
+
+    // ---- rent roll ----
+    var resi = ['M. Castillo','J. Okafor','L. Park','R. Mehta','S. Nguyen','T. Boyd','A. Romano','K. Sato','D. Ellis','P. Haas'];
+    var biz = ['Apex Fabrication','Verde Distribution','Coastal Logistics','Lumen Devices','Summit Print','Vantage Logistics','Harbor Machine','Northline Tooling'];
+    var statuses = [['CURRENT','b-dd'],['CURRENT','b-dd'],['CURRENT','b-dd'],['LATE','b-rev'],['IN TURN','b-loi'],['CURRENT','b-dd']];
+    var mos = ['Aug','Sep','Oct','Nov','Feb','May'];
+    var n = Math.min(6, commercial ? Math.max(3,p.units) : 6);
+    var rows = '';
+    for (var i=0;i<n;i++){
+      var st = statuses[i%statuses.length];
+      var unit = commercial ? (p.type==='Industrial'?'Bay '+(i+1):'Ste '+(i+1)+'0'+i) : (10+i*4)+String.fromCharCode(65+i%4);
+      var tn = st[0]==='IN TURN' ? '—' : (commercial?biz[(i+p.name.length)%biz.length]:resi[(i+p.name.length)%resi.length]);
+      var typ = commercial ? p.type : ['1BR','2BR','Studio','2BR'][i%4];
+      var rent = commercial ? money(p.noi*1e6/12/n*(0.8+rnd()*0.5)) : money([1950,2650,1500,2700][i%4]);
+      var exp = st[0]==='IN TURN' ? '—' : mos[i%mos.length]+" '"+(26+(i%3>1?1:0));
+      rows += '<tr class="click"><td><b>'+unit+'</b></td><td class="muted">'+tn+'</td><td>'+typ+'</td><td class="r num'+(st[0]==='IN TURN'?' muted':'')+'">'+rent+'</td><td class="r num'+(exp==='—'?' muted':'')+'">'+exp+'</td><td><span class="badge '+st[1]+'">'+st[0]+'</span></td></tr>';
+    }
+    document.getElementById('leaseBody').innerHTML = rows;
+    document.getElementById('leaseSub').textContent = Math.round(p.units*p.occ/100)+' of '+p.units+' leased · '+(p.units-Math.round(p.units*p.occ/100))+' available';
+
+    // ---- operating history & month-end report are rendered in trends script below ----
+
+    // ---- work orders ----
+    var woPool = [['p1','No heat — Unit '+ (10+Math.floor(rnd()*30)) +'B','TENANT REPORTED · 2H AGO','DISPATCHED','b-loi'],
+      ['p2','Leaking faucet — common area','ROUTINE · 1D AGO','SCHEDULED','b-neutral'],
+      ['p3','Repaint hallway / turn','TURNS · '+(2+Math.floor(rnd()*9))+' DAYS','SCHEDULED','b-neutral'],
+      ['p2','HVAC filter service','RECURRING','IN PROGRESS','b-loi'],
+      ['p1','Elevator inspection','LIFE SAFETY · 1D AGO','TRIAGE','b-rev']];
+    var wc = 1 + Math.floor(rnd()*3);
+    var wo = '';
+    for (var j=0;j<wc;j++){var w=woPool[(j+p.name.length)%woPool.length];
+      wo += '<div class="wo"><span class="pri '+w[0]+'"></span><div style="flex:1"><div class="wt">'+w[1]+'</div><div class="wm">'+w[2]+'</div></div><span class="badge '+w[4]+'">'+w[3]+'</span></div>';}
+    document.getElementById('woBody').innerHTML = wo;
+    document.getElementById('woSub').textContent = wc+' open'+(wc>1?' · 1 urgent':'');
+
+    if (window.ORA_enhanceTables) ORA_enhanceTables(document);
+  });
+})();
+</script>
+<script>
+/* ---- multi-year operating history, anomalies & month-end report ---- */
+(function () {
+  document.addEventListener('DOMContentLoaded', function () {
+    if (!window.ORA_TRENDS) return;
+    var T = ORA_TRENDS, LAST = T.LAST, GM = T.GM;
+    var p = ORA.find(ORA.PROPERTIES, ORA.qs('id'));
+    if (!p || !p.S) return;
+    var S = p.S, B = S.budget, anoms = T.detect(p);
+
+    function m0(v) { return '$' + Math.round(v).toLocaleString(); }
+    function mK(v) { var a = Math.abs(v); return (v < 0 ? '\u2212' : '') + '$' + (a >= 1000 ? Math.round(a / 1000) + 'K' : Math.round(a)); }
+    function sgn(v, d) { return (v >= 0 ? '+' : '\u2212') + Math.abs(v).toFixed(d == null ? 1 : d); }
+
+    // metric registry — real series + display rules
+    var EXP = { tax: 1, ins: 1, rm: 1, util: 1, opex: 1 };
+    var METRICS = {
+      noi: { label: 'NOI', series: S.noi, budget: B.noi, kind: 'mo', good: 'up' },
+      rev: { label: 'Revenue', series: S.rev, budget: B.rev, kind: 'mo', good: 'up' },
+      tax: { label: 'Property tax', series: S.tax, budget: B.tax, kind: 'mo', good: 'down' },
+      ins: { label: 'Insurance', series: S.ins, budget: B.ins, kind: 'mo', good: 'down' },
+      rm: { label: 'Repairs & maint.', series: S.rm, budget: B.rm, kind: 'mo', good: 'down' },
+      util: { label: 'Utilities', series: S.util, budget: B.util, kind: 'mo', good: 'down' },
+      occ: { label: 'Occupancy', series: S.occ, kind: 'pct', good: 'up' },
+      margin: { label: 'NOI margin', series: S.noi.map(function (v, i) { return v == null ? null : v / S.rev[i] * 100; }), kind: 'pct', good: 'up' },
+      value: { label: 'Value', series: S.value, kind: 'M', good: 'up' },
+      cap: { label: 'Cap rate', series: S.cap, kind: 'pct', good: 'flat' }
+    };
+    var ORDER = ['noi', 'rev', 'tax', 'ins', 'rm', 'util', 'occ', 'margin', 'value', 'cap'];
+    function fmt(kind, v) { if (v == null) return '\u2014'; if (kind === 'pct') return v.toFixed(1) + '%'; if (kind === 'M') return '$' + v.toFixed(1) + 'M'; return m0(v); }
+    function fmtU(kind) { return kind === 'mo' ? '/mo' : ''; }
+
+    var state = { metric: 'noi', horizon: '3Y', yoy: true, bud: false };
+
+    // ---- pills ----
+    document.getElementById('trdMetrics').innerHTML = ORDER.map(function (k) {
+      return '<span class="trdpill' + (k === state.metric ? ' on' : '') + '" data-m="' + k + '">' + METRICS[k].label + '</span>';
+    }).join('');
+
+    function renderTrend() {
+      var M = METRICS[state.metric], s = M.series;
+      var from = T.startGi(state.horizon, [p]); if (from < p.acqIdx) from = p.acqIdx;
+      var canBud = !!M.budget, canCmp = true;
+      // markers: history MoM spikes for $ lines + flagged current-month anomalies
+      var markers = [];
+      if (M.series === S[state.metric] && S[state.metric]) {
+        T.spikeMarkers(p, state.metric, from).forEach(function (mk) {
+          markers.push({ gi: mk.gi, dir: (EXP[state.metric] ? (mk.mom > 0 ? 'risk' : 'gain') : (mk.mom > 0 ? 'gain' : 'risk')), title: GM[mk.gi].label + ' ' + sgn(mk.mom, 0) + '%' });
+        });
+      }
+      anoms.filter(function (a) { return a.metric === state.metric && a.gi >= from; }).forEach(function (a) {
+        if (!markers.some(function (x) { return x.gi === a.gi; })) markers.push({ gi: a.gi, dir: a.dir, title: a.title });
+      });
+      document.getElementById('trdChart').innerHTML = T.chart(s, from, {
+        budget: state.bud && canBud ? M.budget : null,
+        compareYoY: state.yoy, color: 'var(--accent)', markers: markers, height: 210
+      });
+      // axis
+      var labs = T.axisLabels(from, 7);
+      document.getElementById('trdAxis').innerHTML = labs.map(function (l) { return '<span>' + l.toUpperCase() + '</span>'; }).join('');
+      // head stats
+      document.getElementById('trdVal').textContent = fmt(M.kind, s[LAST]);
+      document.getElementById('trdUnit').textContent = fmtU(M.kind);
+      var yoy = T.yoyPct(s, LAST), cagr = T.cagr(s);
+      var yc = document.getElementById('trdYoYchip');
+      if (yoy == null) { yc.style.display = 'none'; } else {
+        yc.style.display = ''; var bad = (M.good === 'up' && yoy < 0) || (M.good === 'down' && yoy > 0);
+        yc.className = 'dchip ' + (M.good === 'flat' ? '' : bad ? 'r' : 'g');
+        yc.innerHTML = (yoy >= 0 ? '\u25b2 ' : '\u25bc ') + sgn(yoy) + '% <span class="s">YoY</span>';
+      }
+      var cc = document.getElementById('trdCagrChip');
+      cc.innerHTML = cagr == null ? '' : (sgn(cagr) + '%<span class="s">/yr since \'' + String(GM[T.startGi('max', [p])].y).slice(2) + '</span>');
+      document.getElementById('trdLgName').textContent = M.label;
+      document.getElementById('trdLgCmp').style.display = state.yoy ? '' : 'none';
+      document.getElementById('trdLgBud').style.display = (state.bud && canBud) ? '' : 'none';
+    }
+
+    // ---- snapshot 1Y NOI ----
+    (function () {
+      var from = LAST - 12;
+      document.getElementById('snapNoi').innerHTML = T.chart(S.noi, from, { compareYoY: true, color: 'var(--accent)', height: 150, markers: [] });
+      document.getElementById('snapAxis').innerHTML = T.axisLabels(from, 6).map(function (l) { return '<span>' + l.toUpperCase() + '</span>'; }).join('');
+      var yoy = T.yoyPct(S.noi, LAST), el = document.getElementById('snapYoY');
+      el.className = 'dchip ' + (yoy >= 0 ? 'g' : 'r');
+      el.innerHTML = (yoy >= 0 ? '\u25b2 ' : '\u25bc ') + sgn(yoy) + '% <span class="s">YoY</span>';
+    })();
+
+    // ---- month-end report ----
+    (function () {
+      var i = LAST;
+      var lines = [
+        { k: 'rev', label: 'Effective Gross Income', cls: 'tot' },
+        { k: 'tax', label: 'Property tax', cls: 'ind' }, { k: 'ins', label: 'Insurance', cls: 'ind' },
+        { k: 'rm', label: 'Repairs & maintenance', cls: 'ind' }, { k: 'util', label: 'Utilities', cls: 'ind' },
+        { k: 'mgmt', label: 'Management fee', cls: 'ind' }, { k: 'other', label: 'Other / admin', cls: 'ind' },
+        { k: 'opex', label: 'Total Operating Expenses', cls: 'tot' },
+        { k: 'noi', label: 'Net Operating Income', cls: 'grand' }
+      ];
+      var flagged = 0;
+      var html = lines.map(function (L) {
+        var a = S[L.k][i], bud = B[L.k] ? B[L.k][i] : null, isExp = !!{ tax: 1, ins: 1, rm: 1, util: 1, mgmt: 1, other: 1, opex: 1 }[L.k];
+        var vAbs = bud != null ? a - bud : null;
+        var mom = T.momPct(S[L.k], i), yoy = T.yoyPct(S[L.k], i);
+        var an = anoms.filter(function (x) { return x.metric === L.k; });
+        var hi = an.some(function (x) { return x.sev === 'high'; });
+        var rowFlag = an.length ? (hi ? 'flag' : 'flag warn') : '';
+        if (an.length) flagged++;
+        // var favorable? expense over budget = unfavorable(red)
+        var unfav = vAbs == null ? false : (isExp ? vAbs > 0 : vAbs < 0);
+        var varCell = vAbs == null ? '<span class="mut">\u2014</span>' : '<span class="' + (unfav ? 'vpos' : 'vneg') + '">' + mK(vAbs) + '</span>';
+        function delta(v) { if (v == null) return '<span class="mut">\u2014</span>'; var bad = isExp ? v > 0 : v < 0; return '<span class="' + (Math.abs(v) < 0.05 ? 'mut' : bad ? 'vpos' : 'vneg') + '">' + sgn(v) + '%</span>'; }
+        var mk = an.length ? '<span class="fmk' + (hi ? '' : ' warn') + '"></span>' : '';
+        return '<tr class="' + L.cls + ' ' + rowFlag + '"><td>' + mk + L.label + '</td>' +
+          '<td class="num r">' + m0(a) + '</td>' +
+          '<td class="num r mut">' + (bud != null ? m0(bud) : '\u2014') + '</td>' +
+          '<td class="num r">' + varCell + '</td>' +
+          '<td class="num r">' + delta(mom) + '</td>' +
+          '<td class="num r">' + delta(yoy) + '</td></tr>';
+      }).join('');
+      document.getElementById('finBody').innerHTML = html;
+      document.getElementById('finSub').textContent = GM[i].label + ' \u00b7 actual vs budget \u00b7 MoM \u00b7 YoY \u00b7 ' + flagged + ' flagged';
+      document.getElementById('finFlagCount').textContent = flagged + ' FLAGGED';
+    })();
+
+    // ---- anomalies feed (this asset) ----
+    (function () {
+      var box = document.getElementById('propAnoms');
+      var TYPE = { spike: 'MoM SPIKE', yoy: 'YoY', budget: 'VS BUDGET', margin: 'MARGIN', trend: 'TREND' };
+      if (!anoms.length) { box.innerHTML = '<div class="cmdk-empty" style="padding:20px;color:var(--muted)">No anomalies this period \u2014 operating within tolerance.</div>'; document.getElementById('propAnomSub').textContent = 'May 2026 \u00b7 0 flagged'; return; }
+      box.innerHTML = anoms.map(function (a) {
+        var dcls = a.dir === 'risk' ? 'r' : 'g';
+        var sub = a.impact ? T.money(a.dir === 'risk' ? -a.impact : a.impact).replace(/^[+\u2212]/, a.dir === 'risk' ? '\u2212' : '+') + '/yr' : TYPE[a.type];
+        return '<div class="anom" data-m="' + a.metric + '"><span class="sev ' + a.sev + '"></span>' +
+          '<div class="body"><div class="at">' + a.title + '</div><div class="ad">' + a.note + '</div>' +
+          '<div class="ameta"><span class="atype ' + a.type + '">' + TYPE[a.type] + '</span></div></div>' +
+          '<div><div class="delta ' + dcls + '">' + sgn(a.deltaPct, 0) + '%</div><div class="dsub">' + sub + '</div></div></div>';
+      }).join('');
+      document.getElementById('propAnomSub').textContent = GM[LAST].label + ' \u00b7 ' + anoms.length + ' flagged \u00b7 ranked by $ impact';
+      box.querySelectorAll('.anom[data-m]').forEach(function (el) {
+        el.onclick = function () { selectMetric(el.getAttribute('data-m')); };
+      });
+    })();
+
+    function selectMetric(k) {
+      if (!METRICS[k]) k = 'noi';
+      state.metric = k;
+      document.querySelectorAll('#trdMetrics .trdpill').forEach(function (x) { x.classList.toggle('on', x.getAttribute('data-m') === k); });
+      renderTrend();
+    }
+
+    // ---- interactions ----
+    document.getElementById('trdMetrics').addEventListener('click', function (e) { var el = e.target.closest('.trdpill'); if (el) selectMetric(el.getAttribute('data-m')); });
+    document.getElementById('trdHorizon').addEventListener('click', function (e) { var el = e.target.closest('span[data-h]'); if (!el) return; this.querySelectorAll('span').forEach(function (x) { x.classList.remove('on'); }); el.classList.add('on'); state.horizon = el.getAttribute('data-h'); renderTrend(); });
+    document.getElementById('tgYoY').addEventListener('click', function () { state.yoy = !state.yoy; this.classList.toggle('on', state.yoy); renderTrend(); });
+    document.getElementById('tgBud').addEventListener('click', function () { state.bud = !state.bud; this.classList.toggle('on', state.bud); renderTrend(); });
+    document.querySelectorAll('[data-gototab]').forEach(function (el) { el.style.cursor = 'pointer'; el.onclick = function () { var tab = document.querySelector('.tab[data-pane="' + el.getAttribute('data-gototab') + '"]'); if (tab) tab.click(); }; });
+
+    renderTrend();
+  });
+})();
+</script>
+</body>
+</html>

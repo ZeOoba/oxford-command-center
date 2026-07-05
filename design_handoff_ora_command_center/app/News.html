@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="en" data-screen-label="News">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORA — News & Markets</title>
+<script>try{var t=localStorage.getItem('ora-theme')||'dark';document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('ora-density')==='compact')document.documentElement.setAttribute('data-density','compact');}catch(e){}</script>
+<link rel="stylesheet" href="ora.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" data-active="news"></nav>
+
+  <div class="main">
+    <header class="top">
+      <div class="ttl"><span class="up">Oxford RA · Command</span><span class="pg">News &amp; Markets</span></div>
+      <div class="bar"></div>
+      <div class="clock" id="topClock">RATES LIVE · —</div>
+      <div class="grow"></div>
+      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>search news, rates, markets<span class="k">⌘K</span></div>
+      <div class="stat"><span class="d"></span>LIVE · 2m</div>
+      <button class="ibtn" id="themeBtn" title="Toggle theme"></button>
+      <button class="ibtn" id="densityBtn" title="Toggle density"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      <button class="ibtn" title="Alerts"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 004 0"/></svg><span class="dot"></span></button>
+    </header>
+
+    <div class="content">
+      <div class="pagehd newshd">
+        <div><h1>News &amp; Markets</h1><div class="sub">live rates · daily CRE briefing · target-market trends · regulation · research</div></div>
+        <div class="grow"></div>
+        <span class="asof"><span class="d"></span>AS OF <span id="asOf">—</span></span>
+        <div class="seg" id="layoutSeg" style="margin-left:10px"><span data-l="briefing" class="on">Briefing</span><span data-l="terminal">Terminal</span></div>
+      </div>
+
+      <div id="newsRoot" data-layout="briefing">
+
+        <!-- ======= BRIEFING LAYOUT ======= -->
+        <div id="layoutBriefing">
+          <div class="nticker" id="bRates"></div>
+
+          <div class="grid-21" style="margin-top:13px">
+            <div class="panel">
+              <div class="ph"><div><h3>DAILY BRIEFING</h3><div class="sub">curated for industrial / flex &amp; your markets · tied to your book</div></div><div class="grow"></div><span class="chip ai">◇ ENGINE</span></div>
+              <div id="bBrief"></div>
+            </div>
+            <div class="colstack">
+              <div class="panel">
+                <div class="ph"><div><h3>NATIONAL CRE TRENDS</h3><div class="sub">industrial · representative</div></div></div>
+                <div class="ncards" id="bNat"></div>
+              </div>
+              <div class="panel">
+                <div class="ph"><div><h3>TARGET-MARKET TRENDS</h3><div class="sub">your 5 markets</div></div></div>
+                <div id="bMkt"></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="grid-2a" style="margin-top:13px">
+            <div class="panel">
+              <div class="ph"><div><h3>REGULATION &amp; TAX LAW</h3><div class="sub">tracked changes · impact on your book</div></div></div>
+              <div id="bReg"></div>
+            </div>
+            <div class="panel">
+              <div class="ph"><div><h3>WHITE PAPERS &amp; CASE STUDIES</h3><div class="sub">industrial / flex</div></div><div class="grow"></div><span class="chip">LIBRARY</span></div>
+              <div id="bRes"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ======= TERMINAL LAYOUT ======= -->
+        <div id="layoutTerminal">
+          <div class="grid-12">
+            <div class="panel">
+              <div class="ph"><div><h3>RATES BOARD</h3><div class="sub">funding · treasuries · lending · click a rate to chart it</div></div></div>
+              <div class="rateboard" id="tBoard"></div>
+              <div class="rfeature" id="tFeature"></div>
+            </div>
+            <div class="panel">
+              <div class="ph"><div><h3>BRIEFING FEED</h3><div class="sub">latest</div></div><div class="grow"></div><span class="chip ai">◇</span></div>
+              <div id="tBrief" style="max-height:520px;overflow:auto"></div>
+            </div>
+          </div>
+
+          <div class="panel" style="margin-top:13px">
+            <div class="ph"><div><h3>TARGET-MARKET TRENDS</h3><div class="sub">your 5 markets · sorted by AUM</div></div></div>
+            <table class="tbl" id="tMkt"><thead><tr><th>Market</th><th class="r">Your AUM</th><th class="r">Assets</th><th class="r">Vacancy</th><th class="r">Rent Growth</th><th class="r">Cap</th><th class="r">Net Abs. (KSF)</th><th>Momentum</th></tr></thead><tbody></tbody></table>
+          </div>
+
+          <div class="panel" style="margin-top:13px">
+            <div class="ph"><div><h3>NATIONAL CRE TRENDS</h3><div class="sub">industrial · representative</div></div></div>
+            <div class="ncards" id="tNat"></div>
+          </div>
+
+          <div class="grid-2a" style="margin-top:13px">
+            <div class="panel">
+              <div class="ph"><div><h3>REGULATION &amp; TAX LAW</h3><div class="sub">tracked changes</div></div></div>
+              <div id="tReg"></div>
+            </div>
+            <div class="panel">
+              <div class="ph"><div><h3>WHITE PAPERS &amp; CASE STUDIES</h3><div class="sub">industrial / flex</div></div></div>
+              <div id="tRes"></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+<script src="ora.js"></script>
+<script src="data.js"></script>
+<script src="trends.js"></script>
+<script src="news.js"></script>
+<script>
+(function () {
+  document.addEventListener('DOMContentLoaded', function () {
+    var N = window.ORA_NEWS; if (!N) return;
+    document.getElementById('asOf').textContent = N.AS_OF;
+    document.getElementById('topClock').textContent = 'RATES LIVE · ' + N.AS_OF.toUpperCase();
+
+    function spark(series, o) {
+      o = o || {}; var W = o.w || 120, H = o.h || 24, color = o.color || 'var(--accent)';
+      var mn = Math.min.apply(null, series), mx = Math.max.apply(null, series), pad = (mx - mn) * 0.18 || 1; mn -= pad; mx += pad;
+      var n = series.length; function X(i) { return n <= 1 ? 0 : i / (n - 1) * W; } function Y(v) { return H - (v - mn) / (mx - mn) * H; }
+      var d = '', a = '';
+      series.forEach(function (v, i) { var x = X(i).toFixed(1), y = Y(v).toFixed(1); d += (i ? ' L' : 'M') + x + ',' + y; a += (i ? ' L' : 'M' + x + ',' + H + ' L') + x + ',' + y; });
+      a += ' L' + X(n - 1).toFixed(1) + ',' + H + ' Z';
+      var g = 'sp' + Math.random().toString(36).slice(2, 7);
+      return '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" style="width:100%;height:' + H + 'px;display:block"><defs><linearGradient id="' + g + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="' + color + '" stop-opacity=".22"/><stop offset="1" stop-color="' + color + '" stop-opacity="0"/></linearGradient></defs><path d="' + a + '" fill="url(#' + g + ')"/><path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.7" stroke-linejoin="round"/></svg>';
+    }
+    function dcls(d) { return d > 0.001 ? 'up-g' : d < -0.001 ? 'up-r' : 'up-n'; }
+    function darrow(d) { return d > 0.001 ? '\u25b2 +' + d.toFixed(2) : d < -0.001 ? '\u25bc ' + d.toFixed(2) : '\u2014 0.00'; }
+    // for rates, a falling funding/treasury rate is "good" (green); show neutral coloring by direction
+    function ratecolor(r) { return r.k === 'spread' ? 'var(--blue)' : (r.cat === 'Lending' ? 'var(--violet)' : r.cat === 'Treasury' ? 'var(--blue)' : 'var(--accent)'); }
+
+    // ---- rates ticker ----
+    document.getElementById('bRates').innerHTML = N.RATES.map(function (r) {
+      return '<div class="ntile"><div class="nl">' + r.label + (r.sub ? ' · ' + r.sub : '') + '</div>' +
+        '<div class="nv">' + r.v.toFixed(2) + '<span style="font-size:11px;color:var(--muted)">%</span></div>' +
+        '<div class="nd ' + dcls(r.d) + '">' + darrow(r.d) + '</div>' +
+        '<div class="sp">' + spark(r.series, { color: ratecolor(r), h: 22 }) + '</div></div>';
+    }).join('');
+
+    // ---- rate board + featured ----
+    function renderBoard(featKey) {
+      document.getElementById('tBoard').innerHTML = N.RATES.map(function (r) {
+        return '<div class="rcard' + (r.k === featKey ? ' on' : '') + '" data-k="' + r.k + '"><div class="rl"><b>' + r.label + '</b> · ' + r.sub + '</div>' +
+          '<div class="rrow"><div class="rv">' + r.v.toFixed(2) + '%</div><div class="rd ' + dcls(r.d) + '">' + darrow(r.d) + '</div></div>' +
+          '<div style="margin-top:6px;height:26px">' + spark(r.series, { color: ratecolor(r), h: 26 }) + '</div></div>';
+      }).join('');
+      document.querySelectorAll('#tBoard .rcard').forEach(function (c) { c.onclick = function () { renderFeature(c.getAttribute('data-k')); renderBoard(c.getAttribute('data-k')); }; });
+    }
+    function renderFeature(key) {
+      var r = N.RATES.filter(function (x) { return x.k === key; })[0] || N.RATES[6];
+      var s = r.series, mn = Math.min.apply(null, s), mx = Math.max.apply(null, s);
+      document.getElementById('tFeature').innerHTML =
+        '<div class="ttl"><div class="v">' + r.v.toFixed(2) + '%</div><div><div style="font-weight:600;font-size:13px">' + r.label + ' · ' + r.sub + '</div>' +
+        '<div class="sub" style="font-family:var(--font-mono);font-size:10px;color:var(--muted)">' + r.note + '</div></div>' +
+        '<div class="grow"></div><span class="dchip ' + (r.yoy <= 0 ? 'g' : 'r') + '">' + (r.yoy >= 0 ? '\u25b2 +' : '\u25bc ') + Math.abs(r.yoy).toFixed(2) + ' <span class="s">12-MO</span></span></div>' +
+        '<div style="margin-top:8px">' + spark(s, { color: ratecolor(r), h: 150 }) + '</div>' +
+        '<div class="trdaxis"><span>' + mn.toFixed(2) + '% LOW</span><span>24 MONTHS \u2192 ' + N.AS_OF.toUpperCase() + '</span><span>' + mx.toFixed(2) + '% HIGH</span></div>';
+    }
+    renderBoard('ust10'); renderFeature('ust10');
+
+    // ---- briefing ----
+    function briefHtml(dense) {
+      return N.BRIEFING.map(function (b) {
+        var tie = b.link && N.LINK[b.link] ? N.LINK[b.link]() : null;
+        return '<div class="brief' + (dense ? ' dense' : '') + '"><div class="when">' + b.time + '</div><div class="bd">' +
+          '<div class="bhead"><span class="ntag ' + b.tag + '">' + b.tag + '</span></div>' +
+          '<div class="bt">' + b.title + '</div><div class="bb">' + b.body + '</div>' +
+          (tie ? '<a class="btie" href="' + tie.href + '">\u25c7 ' + tie.txt + ' \u2192</a>' : '') +
+          '</div></div>';
+      }).join('');
+    }
+    document.getElementById('bBrief').innerHTML = briefHtml(false);
+    document.getElementById('tBrief').innerHTML = briefHtml(true);
+
+    // ---- national ----
+    var natHtml = N.NATIONAL.map(function (c) {
+      return '<div class="ncard"><div class="nl">' + c.label + '</div><div class="nv">' + c.v + '</div>' +
+        '<div class="nd ' + (c.dir === 'risk' ? 'up-r' : c.dir === 'gain' ? 'up-g' : 'up-n') + '">' + c.d + '</div>' +
+        '<div class="nn">' + c.note + '</div></div>';
+    }).join('');
+    document.getElementById('bNat').innerHTML = natHtml;
+    document.getElementById('tNat').innerHTML = natHtml;
+
+    // ---- markets ----
+    var mkts = N.marketTrends();
+    document.getElementById('tMkt').querySelector('tbody').innerHTML = mkts.map(function (m) {
+      return '<tr class="click" onclick="location.href=\'Portfolio.html\'"><td><b>' + m.market + '</b></td>' +
+        '<td class="r num">' + ORA.fmtM(m.aum) + '</td><td class="r num">' + m.assets + '</td>' +
+        '<td class="r num">' + m.vacancy.toFixed(1) + '%</td>' +
+        '<td class="r num ' + (m.rentGrowth >= 3 ? 'pos' : '') + '">+' + m.rentGrowth.toFixed(1) + '%</td>' +
+        '<td class="r num">' + m.cap.toFixed(1) + '%</td>' +
+        '<td class="r num ' + (m.absorption >= 0 ? 'pos' : 'neg') + '">' + (m.absorption >= 0 ? '+' : '') + m.absorption + '</td>' +
+        '<td><span class="mom ' + m.momentum + '">' + m.momentum + '</span></td></tr>';
+    }).join('');
+    document.getElementById('bMkt').innerHTML = mkts.map(function (m) {
+      return '<div style="display:flex;align-items:center;gap:10px;padding:11px 16px;border-top:1px solid var(--line-2)">' +
+        '<div style="flex:1"><div style="font-size:12.5px;font-weight:600">' + m.market + '</div>' +
+        '<div style="font-family:var(--font-mono);font-size:10px;color:var(--muted);margin-top:2px">' + ORA.fmtM(m.aum) + ' · ' + m.assets + ' assets · ' + m.vacancy.toFixed(1) + '% vac</div></div>' +
+        '<div style="text-align:right"><div class="num ' + (m.rentGrowth >= 3 ? 'pos' : '') + '" style="font-family:var(--font-mono);font-weight:600">+' + m.rentGrowth.toFixed(1) + '%</div>' +
+        '<div style="font-family:var(--font-mono);font-size:8.5px;color:var(--muted)">RENT GROWTH</div></div>' +
+        '<span class="mom ' + m.momentum + '" style="margin-left:4px">' + m.momentum + '</span></div>';
+    }).join('');
+
+    // ---- regulation ----
+    var regHtml = N.REGULATION.map(function (g) {
+      var tie = g.link && N.LINK[g.link] ? N.LINK[g.link]() : null;
+      return '<div class="reg"><span class="rmk ' + g.sev + '"></span><div class="rb">' +
+        '<div class="rt">' + g.title + '</div>' +
+        '<div class="rmeta"><span class="ntag ' + (g.tag.indexOf('Tax') > -1 ? 'Tax' : g.tag === 'Insurance' ? 'Insurance' : 'Policy') + '">' + g.tag + '</span><span>EFFECTIVE · ' + g.eff + '</span></div>' +
+        '<div class="rbody">' + g.body + '</div>' +
+        (tie ? '<a class="btie" href="' + tie.href + '" style="margin-top:7px">\u25c7 ' + tie.txt + ' \u2192</a>' : '') +
+        '</div></div>';
+    }).join('');
+    document.getElementById('bReg').innerHTML = regHtml;
+    document.getElementById('tReg').innerHTML = regHtml;
+
+    // ---- research ----
+    var resHtml = '<div class="rgrid">' + N.RESEARCH.map(function (p) {
+      var cs = p.type === 'Case Study';
+      return '<div class="rpaper"><div class="rty' + (cs ? ' cs' : '') + '">' + p.type + ' · ' + p.tag + '</div>' +
+        '<div class="rpt">' + p.title + '</div><div class="rpb">' + p.body + '</div>' +
+        '<div class="rpf"><span>' + p.author + '</span><span>' + p.mins + ' min read</span></div></div>';
+    }).join('') + '</div>';
+    document.getElementById('bRes').innerHTML = resHtml;
+    document.getElementById('tRes').innerHTML = resHtml;
+
+    // ---- layout toggle ----
+    var root = document.getElementById('newsRoot'), seg = document.getElementById('layoutSeg');
+    try { var saved = localStorage.getItem('ora-news-layout'); if (saved) { root.setAttribute('data-layout', saved); seg.querySelectorAll('span').forEach(function (s) { s.classList.toggle('on', s.getAttribute('data-l') === saved); }); } } catch (e) {}
+    seg.addEventListener('click', function (e) { var s = e.target.closest('span[data-l]'); if (!s) return; var l = s.getAttribute('data-l'); root.setAttribute('data-layout', l); seg.querySelectorAll('span').forEach(function (x) { x.classList.toggle('on', x === s); }); try { localStorage.setItem('ora-news-layout', l); } catch (e2) {} });
+  });
+})();
+</script>
+</body>
+</html>

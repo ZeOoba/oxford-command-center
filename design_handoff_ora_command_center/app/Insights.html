@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en" data-screen-label="Insights">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORA — Insights</title>
+<script>try{var t=localStorage.getItem('ora-theme')||'dark';document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('ora-density')==='compact')document.documentElement.setAttribute('data-density','compact');}catch(e){}</script>
+<link rel="stylesheet" href="ora.css">
+<style>
+  .filters{display:flex;gap:7px;flex-wrap:wrap;}
+  .fp{font-family:'IBM Plex Mono';font-size:11px;font-weight:500;border:1px solid var(--line);border-radius:7px;padding:6px 12px;color:var(--muted);cursor:pointer;transition:all .12s;}
+  .fp:hover:not(.on){color:var(--ink-2);}
+  .fp.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600;}
+  .ifeed{display:grid;grid-template-columns:repeat(2,1fr);gap:13px;}
+  @media(max-width:980px){.ifeed{grid-template-columns:1fr;}}
+  .icard{padding:16px 17px;display:flex;flex-direction:column;gap:11px;}
+  .icard .cap{display:flex;align-items:center;gap:8px;}
+  .icard .pin{width:7px;height:7px;border-radius:50%;flex:none;}
+  .icard.acq .pin{background:var(--accent);box-shadow:0 0 7px var(--accent);}
+  .icard.folio .pin{background:var(--blue);box-shadow:0 0 7px var(--blue);}
+  .icard.lease .pin{background:var(--amber);box-shadow:0 0 7px var(--amber);}
+  .icard.risk .pin{background:var(--red);box-shadow:0 0 7px var(--red);}
+  .icard.cap-i .pin{background:var(--violet);box-shadow:0 0 7px var(--violet);}
+  .icard .cat{font-family:'IBM Plex Mono';font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.1em;}
+  .icard .conf{margin-left:auto;font-family:'IBM Plex Mono';font-size:9px;border:1px solid var(--line);border-radius:5px;padding:2px 7px;color:var(--ink-2);}
+  .icard h3{font-size:15px;font-weight:600;line-height:1.3;letter-spacing:-.01em;}
+  .icard p{font-size:12.5px;line-height:1.5;color:var(--ink-2);}
+  .icard .stat-strip{display:flex;gap:14px;padding:11px 13px;background:var(--inset);border:1px solid var(--line);border-radius:9px;}
+  .icard .ss b{display:block;font-family:'IBM Plex Mono';font-size:17px;font-weight:600;}
+  .icard .ss span{font-family:'IBM Plex Mono';font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;}
+  .icard .foot{display:flex;align-items:center;gap:9px;margin-top:auto;}
+  .icard .ago{font-family:'IBM Plex Mono';font-size:10px;color:var(--muted);}
+  /* ranked priority tiers (board) */
+  .tiers{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:13px;align-items:start;}
+  @media(max-width:660px){.tiers{grid-template-columns:1fr;}}
+  .tier{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--panel-shadow);overflow:hidden;}
+  .tier-hd{display:flex;align-items:center;gap:9px;padding:13px 15px;border-bottom:1px solid var(--line-2);}
+  .tier-hd .dotb{width:9px;height:9px;border-radius:50%;flex:none;}
+  .t-high .dotb{background:var(--red);box-shadow:0 0 8px var(--red);}
+  .t-med .dotb{background:var(--amber);}
+  .t-low .dotb{background:var(--blue);}
+  .tier-nm{font-family:var(--font-mono);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;}
+  .tier-sub{font-family:var(--font-mono);font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;}
+  .tier-ct{margin-left:auto;font-family:var(--font-mono);font-size:12px;font-weight:700;background:var(--inset);border:1px solid var(--line);border-radius:6px;padding:2px 9px;}
+  .t-high .tier-ct{color:var(--red);border-color:var(--red-bd);}
+  .tier-meta{font-family:var(--font-mono);font-size:10px;color:var(--muted);padding:8px 15px;border-bottom:1px solid var(--line-2);background:var(--inset);}
+  .tier-meta b{color:var(--ink);}
+  .tier-body{display:flex;flex-direction:column;gap:9px;padding:12px;}
+  .tcard{display:flex;flex-direction:column;gap:7px;border:1px solid var(--line);border-radius:9px;padding:11px 12px;background:var(--inset);transition:border-color .12s,transform .12s;}
+  .tcard:hover{border-color:var(--accent-dim);transform:translateY(-1px);}
+  .tc-top{display:flex;align-items:center;gap:8px;}
+  .tc-rank{font-family:var(--font-mono);font-size:9px;font-weight:700;color:var(--muted);}
+  .tc-top .catpill{margin-top:0;display:inline-block;padding:3px 8px;}
+  .tc-imp{margin-left:auto;font-family:var(--font-mono);font-weight:700;font-size:13px;font-variant-numeric:tabular-nums;}
+  .tc-imp.gain{color:var(--green);} .tc-imp.risk{color:var(--red);} .tc-imp.info{color:var(--ink-2);}
+  .tc-title{font-size:12.5px;font-weight:600;line-height:1.32;}
+  .tc-action{font-size:10.5px;color:var(--accent);font-family:var(--font-mono);}
+  .tier-empty{font-family:var(--font-mono);font-size:10.5px;color:var(--muted);padding:16px;text-align:center;}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail" data-active="insights"></nav>
+
+  <div class="main">
+    <header class="top">
+      <div class="ttl"><span class="up">Oxford RA · Command</span><span class="pg">Insights</span></div>
+      <div class="bar"></div>
+      <div class="clock">9 ACTIVE · 3 NEW TODAY</div>
+      <div class="grow"></div>
+      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>ask anything<span class="k">⌘K</span></div>
+      <div class="stat"><span class="d"></span>LIVE · 2m</div>
+      <button class="ibtn" id="themeBtn" title="Toggle theme"></button>
+      <button class="ibtn" id="densityBtn" title="Toggle density"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      <button class="ibtn" title="Alerts"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 004 0"/></svg><span class="dot"></span></button>
+    </header>
+
+    <div class="content">
+      <div class="pagehd">
+        <div><h1>Uncovered Insights</h1><div class="sub">your data, read continuously · every signal computed &amp; ranked by dollar impact — the things you'd never have time to find</div></div>
+        <div class="grow"></div>
+        <div class="filters" id="insFilters">
+          <span class="fp on" data-cat="all">All</span>
+          <span class="fp" data-cat="noi">NOI</span>
+          <span class="fp" data-cat="risk">Risk</span>
+          <span class="fp" data-cat="acq">Acquire</span>
+          <span class="fp" data-cat="capital">Capital</span>
+          <span class="fp" data-cat="ops">Ops</span>
+        </div>
+      </div>
+
+      <div class="results" id="resultsBar"></div>
+
+      <div class="board-hd" style="display:flex;align-items:center;gap:9px;margin-bottom:12px">
+        <div><h3 style="font-size:12px;font-weight:600;letter-spacing:.04em">RANKED ACTIONS</h3><div class="sub" id="insSub" style="font-family:var(--font-mono);font-size:10.5px;color:var(--muted);margin-top:2px">computed from live portfolio data</div></div>
+        <div class="grow"></div><span class="chip ai">◇ ENGINE</span>
+      </div>
+      <div class="tiers" id="insightList"></div>
+    </div>
+  </div>
+</div>
+<script src="ora.js"></script>
+<script src="data.js"></script>
+<script src="trends.js"></script>
+<script src="filter.js"></script>
+<script src="engine.js"></script>
+<script src="table.js"></script>
+<script>
+(function(){
+  document.addEventListener("DOMContentLoaded", function(){
+    if(!window.ORA_ENGINE) return;
+    var E=ORA_ENGINE, cur="all";
+    var bar=document.getElementById("resultsBar");
+    var list=document.getElementById("insightList"), sub=document.getElementById("insSub");
+    function renderBanner(){
+      var s=E.summary(), m=E.money;
+      bar.innerHTML =
+        '<div class="rcell"><div class="rl">NOI Upside Identified</div><div class="rv gain">'+m(s.noiUpside)+'/yr</div><div class="rs">recapturable at ~$0 capital cost</div></div>'+
+        '<div class="rcell"><div class="rl">Exposure At Risk</div><div class="rv risk">'+m(s.atRisk).replace("+","")+'/yr</div><div class="rs">occupancy · PM · concentration</div></div>'+
+        '<div class="rcell"><div class="rl">Open Actions</div><div class="rv">'+s.count+'</div><div class="rs">computed &amp; ranked, continuously</div></div>';
+    }
+    function counts(){
+      document.querySelectorAll("#insFilters .fp").forEach(function(p){
+        var c=p.getAttribute("data-cat");
+        var n=c==="all"?E.SIGNALS.length:E.SIGNALS.filter(function(x){return x.cat===c;}).length;
+        var base=p.getAttribute("data-label")||p.textContent.split(" · ")[0];
+        p.setAttribute("data-label", base);
+        p.textContent=base+" · "+n;
+      });
+    }
+    var TIERS=[
+      {key:"high",nm:"Critical",sub:"act now",cls:"t-high"},
+      {key:"med",nm:"Priority",sub:"this week",cls:"t-med"},
+      {key:"low",nm:"Monitor",sub:"watch",cls:"t-low"}
+    ];
+    function tcard(s,rank){
+      var impCls=s.dir==="risk"?"risk":s.dir==="gain"?"gain":"info";
+      var val=(s.id==="cap-allocate"||s.impact<=1)?"\u2014":(s.dir==="info"?E.money(s.impact).replace(/^[+\u2212]/,""):E.money(s.impact));
+      var r=(rank<10?"0":"")+rank;
+      return '<a class="tcard" href="'+s.href+'">'+
+        '<div class="tc-top"><span class="tc-rank">'+r+'</span><span class="catpill cat-'+s.cat+'">'+E.CAT_LABEL[s.cat]+'</span><span class="tc-imp '+impCls+'">'+val+'</span></div>'+
+        '<div class="tc-title">'+s.title+'</div>'+
+        '<div class="tc-action">\u2192 '+s.action+'</div></a>';
+    }
+    function render(){
+      var rows=E.SIGNALS.filter(function(x){return cur==="all"||x.cat===cur;});
+      list.innerHTML=TIERS.map(function(t){
+        var items=rows.filter(function(s){return s.sev===t.key;}).sort(function(a,b){return b.impact-a.impact;});
+        var tot=items.reduce(function(x,s){return x+(s.impact>1?s.impact:0);},0);
+        var body=items.length?items.map(function(s,i){return tcard(s,i+1);}).join(""):'<div class="tier-empty">Nothing in this tier</div>';
+        return '<div class="tier '+t.cls+'">'+
+          '<div class="tier-hd"><span class="dotb"></span><div><div class="tier-nm">'+t.nm+'</div><div class="tier-sub">'+t.sub+'</div></div><span class="tier-ct">'+items.length+'</span></div>'+
+          '<div class="tier-meta">'+(tot>0?'<b>'+E.money(tot).replace(/^[+\u2212]/,"")+'</b> total $ impact':'\u2014')+'</div>'+
+          '<div class="tier-body">'+body+'</div></div>';
+      }).join("");
+      sub.textContent=rows.length+" action"+(rows.length===1?"":"s")+(cur==="all"?" \u00b7 all categories":" \u00b7 "+(E.CAT_LABEL[cur]||cur))+" \u00b7 grouped by priority";
+    }
+    function refresh(){ renderBanner(); counts(); render(); }
+    document.getElementById("insFilters").addEventListener("click", function(e){
+      var p=e.target.closest(".fp"); if(!p) return;
+      document.querySelectorAll("#insFilters .fp").forEach(function(x){x.classList.remove("on");});
+      p.classList.add("on"); cur=p.getAttribute("data-cat"); render();
+    });
+    refresh();
+    if(window.ORA_FILTER) ORA_FILTER.subscribe(refresh);
+  });
+})();
+</script>
+</body>
+</html>
