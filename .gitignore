@@ -32,3 +32,5 @@ data/doc-index.sqlite-wal
 data/reindex.log
 .superpowers/
 .worktrees
+# Personal desktop launcher config — machine-specific absolute paths (C:/Users/...); keep local, never committed
+.claude/launch.json
