@@ -3,9 +3,7 @@ import { extname, join } from 'node:path';
 import Database, { type Database as BetterSQLite3Database, type Statement } from 'better-sqlite3';
 import * as sqliteVec from 'sqlite-vec';
 import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transformers';
-// pdf-parse ships no type declarations; the lib/ path avoids its debug-on-import index.
-// @ts-expect-error -- no types for pdf-parse
-import pdfParse from 'pdf-parse/lib/pdf-parse.js';
+import { pdfToText } from '../lib/pdf-text';
 import mammoth from 'mammoth';
 import ExcelJS from 'exceljs';
 
@@ -410,7 +408,7 @@ async function extractFile(path: string): Promise<string> {
   const ext = extname(path).toLowerCase();
   try {
     if (statSync(path).size > MAX_FILE_BYTES) return ''; // oversized → skip (memory safety)
-    if (ext === '.pdf') return (await pdfParse(readFileSync(path))).text;
+    if (ext === '.pdf') return (await pdfToText(readFileSync(path))).text;
     if (ext === '.txt' || ext === '.md' || ext === '.csv' || ext === '.tsv') return readFileSync(path, 'utf8');
     if (ext === '.docx') return (await mammoth.extractRawText({ path })).value;
     if (ext === '.xlsx') return await extractXlsxText(path);
