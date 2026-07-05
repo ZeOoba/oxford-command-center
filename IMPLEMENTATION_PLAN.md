@@ -109,8 +109,14 @@ produced it. Before executing ANY phase:
 
 ### 2.1 The 18 design pages
 
-Legend: spine A = workbook snapshot, B = SQLite warehouse. "Design delta" abbreviations:
-MC = adopt Mission Control visuals (D1 option a), OT = keep Oxford Terminal tokens (option b/c).
+Legend: spine A = workbook snapshot, B = SQLite warehouse.
+
+**Design delta under D1, stated once for all 18 pages** (it is uniform): under options (b)/(c)
+every page's delta is *structural only* — build the listed sections/patterns in Oxford Terminal
+tokens; under option (a) every page additionally inherits the global retokenization cost
+(token remap in `theme.css`, chart `SERIES` palette, Sidebar/TopBar/PDF-briefing re-QA across all
+22 existing modules) — no page has a delta that diverges from this global statement, which is why
+D1 is a single decision rather than 18.
 
 | # | Design page | Status | Repo anchor (file refs) | Spine | Data readiness | Reuse mapping / notes |
 |---|---|---|---|---|---|---|
@@ -121,7 +127,7 @@ MC = adopt Mission Control visuals (D1 option a), OT = keep Oxford Terminal toke
 | 5 | Leases | **Exists** | `src/modules/leases/` + `leasing/LeaseForecastModule` (expiry buckets, market-rent gaps, velocity) + `renewals/` | A+B | Ready | Design page ≈ already covered; residual polish → P7. |
 | 6 | Financials | **Exists (different shape)** | Intel (statements, budget-vs-actual via Close), `cash/`, `close/`; AR via `tenantArrears` | A+B | Partial (no GL/AP) | **Cut/reconcile (C1)** — design duplicates Intel/Cash/Close; GL & AP have no data source. |
 | 7 | **Taxes** | **Missing** | Only expense analytics: `taxesPerSf` (`metrics.ts:138`), `taxEfficiency` (`scores.ts:164`), `taxesGrowth` (`growth.ts`) | B(new)+A | **Needs new data**: assessments, millage, bills, appeals (D2) | P6: migration 020 + assessor-data ingest + appeal-opportunity engine (real math on ledger `Taxes` category + assessments) + strategy tier board. Filed-returns tab & cost-seg deferred (C2, confidentiality + no basis source). |
-| 8 | **Insurance** | **Partial (register only)** | Contract `insurance.ts`; module (62-line table); warehouse 008; 2 alert conditions | A+B | **Needs TIV + loss runs** (D3): `coverage_tiv` column exists, never populated | P4: TIV ingest → rate/$100 TIV vs book-median benchmark → savings scanner (re-bid, deductible, over-insurance) tier board + renewal calendar. Self-insure analysis gated on loss-run data (P4b). |
+| 8 | **Insurance** | **Partial (register only)** | Contract `insurance.ts`; module (62-line table); warehouse 008; 2 alert conditions | A+B | **Needs TIV + loss runs** (D3): `coverage_tiv` column exists, never populated | P4: TIV ingest → rate/$100 TIV vs type-cohort book median → re-bid dispersion board + renewal calendar. Self-insure + deductible/limit optimization gated on loss runs + dec-page data (P4c). |
 | 9 | Studio | **Missing** | Intel has fixed analytics; no cross-filter explorer | — | Ready (data exists) | **Defer (C3)** — high effort, low decision value vs Intel; revisit post-parity. |
 | 10 | Operations | **Missing (no data)** | `tenants/` ledger partial (arrears); work orders/units nowhere | — | **No source** (PM-system exports needed) | **Defer (C4)** until AppFolio/Yardi WO export is available. |
 | 11 | Comps | **Partial** | `src/contracts/comps.ts` (SaleComp/RentComp/CompSet + `RECORD_COMPS_TOOL`), deal-comps overlay + drawer refresh; `market/` cap-rate benchmarks | A + macro | Partial (comps captured per-deal via AI tool) | P7: surface CompSet + `CapRateBenchmark` in a comps view; no new ingestion in v1. |
@@ -134,6 +140,9 @@ MC = adopt Mission Control visuals (D1 option a), OT = keep Oxford Terminal toke
 | 18 | Investor (detail) | **Missing (no data)** | No LP/investor entity anywhere (verified vs contracts + workbook tabs) | — | **No source** (capital accounts, NAV/DPI/TVPI, capital calls) | **Defer (C8)** pending D7 (does Gabriel want LP tracking? source: fund admin/Excel?). |
 
 ### 2.2 The 8 prototype engines
+
+(Spine + data readiness per engine are stated inline in the two columns; the D1 design delta is
+the global statement above.)
 
 | Engine | Status in repo | Binding target |
 |---|---|---|
@@ -152,12 +161,12 @@ MC = adopt Mission Control visuals (D1 option a), OT = keep Oxford Terminal toke
 
 | ID | Decision | Options | Recommendation |
 |---|---|---|---|
-| **D1** | **Design direction** (blocks P1) | **(a)** Adopt Mission Control (near-black/teal, IBM Plex Sans, 3 themes incl. warm) repo-wide: retokenize `src/tokens/theme.css`, remap chart `SERIES`, re-QA 22 modules + PDF briefings + Sidebar/TopBar. Est: **L** (token remap M + visual QA of every module + brand decision on PDFs). **(b)** Build the new capabilities inside Oxford Terminal tokens unchanged. Est: **S** (zero restyle). **(c)** Hybrid: keep Terminal tokens (navy/gold, EB Garamond/DM Sans/Plex Mono, command/parchment), adopt the handoff's *structural* patterns — tier board, severity→color mapping (via existing `--color-pos/warn/neg/info/accent2`), KPI strips, density — as new primitives; optionally add a third "warm" theme later as a separate S task. Est: **S/M**. | **(c) Hybrid.** The two token systems are structurally parallel (semantic surface/text/accent vars, mono numerals, density toggles, data-theme attribute) — the genuinely new assets are patterns, not palette. Terminal is purpose-built brand ("The Oxford Terminal") shared by PDF briefings; a palette swap buys no capability. Cost delta vs (a): saves ~1 phase of pure restyle + regression QA. **No restyling is planned as committed work unless Gabriel picks (a).** |
+| **D1** | **Design direction** (blocks P1) | **(a)** Adopt Mission Control (near-black/teal, IBM Plex Sans, 3 themes incl. warm) repo-wide: retokenize `src/tokens/theme.css`, remap chart `SERIES`, re-QA 22 modules + PDF briefings + Sidebar/TopBar. Est: **L** (token remap M + visual QA of every module + brand decision on PDFs). **(b)** Build the new capabilities inside Oxford Terminal tokens unchanged. Est: **S** (zero restyle). **(c)** Hybrid: keep Terminal tokens (navy/gold, EB Garamond/DM Sans/Plex Mono, command/parchment), adopt the handoff's *structural* patterns — tier board, severity→color mapping (via existing `--color-pos/warn/neg/info/accent2`), KPI strips, density — as new primitives; optionally add a third "warm" theme later as a separate S task. Est: **S/M**. | **(c) Hybrid.** The two token systems are structurally parallel (semantic surface/text/accent vars, mono numerals, density toggles, data-theme attribute) — the genuinely new assets are patterns, not palette. Terminal is purpose-built brand ("The Oxford Terminal") shared by PDF briefings; a palette swap buys no capability. Cost delta vs (a): saves ~1 phase of pure restyle + regression QA. **No restyling is planned as committed work unless Gabriel picks (a).** Contingency: every phase below and the verification protocol assume (c); if (a) is chosen, a dedicated retokenization phase must be planned and approved BEFORE P1 and all design-parity acceptance criteria re-baselined — this document does not contain that phase. |
 | **D2** | **Tax data source + v1 scope** (blocks P6) | Sources for assessed values/millage: (i) county assessor statements/portal exports per property (public data; OH/MD/IN/WI/MO/KS/TN counties), entered via a seed JSON + importer; (ii) tax bills from the PM/AP files (amounts already flow into Spine B ledger `Taxes` category — actuals are ALREADY real); (iii) tax consultant workbook if one exists. v1 scope: property-tax only (assessments, effective rate, appeal opportunities) vs also cost-seg/entity strategy/filed returns. | **(i)+(ii), property-tax-only v1.** Ledger already holds real tax expense; the only new data v1 needs is assessed value + jurisdiction ratio + millage + appeal status per property-year (one seed file, ~27 rows/yr). Cost-seg needs depreciable-basis/land-allocation sources and filed-returns collide with the confidentiality boundary (§1.2.8) — defer both (C2). |
-| **D3** | **Insurance benchmark + TIV source** (blocks P4) | Benchmark: (i) book-median rate/$100 TIV computed from own policies (prototype's approach — honest, self-contained, provenance `derived`); (ii) broker benchmark report (real market rate; needs a document + parsing); (iii) external index (none identified). TIV source: broker SOV / policy dec pages → new workbook column on `Insurance Renewals` tab (Gabriel data entry) or a seed JSON. | **(i) book-median for v1** with provenance clearly `derived`, upgrade to broker benchmark when a document exists. TIV via **workbook column** (keeps Insurance single-sourced in Spine A; `coverage_tiv` warehouse column already exists to receive it). Loss runs (for self-insure) = request from broker now; build P4b only when they arrive. |
+| **D3** | **Insurance benchmark + TIV source** (blocks P4) | Benchmark: (i) own-book median rate/$100 TIV **cohorted by policy type** (self-contained, provenance `derived` — NOTE: the prototype's version is rigged at median×0.9 (`ins.js:53-54`) precisely so half the book flags; an unrigged median still flags ~half by construction, so copy must say "vs own-book median", never "over market"); (ii) broker benchmark report (real market rate; needs a document + parsing); (iii) external index (none identified). TIV + deductible + limit source: broker SOV / policy dec pages → new workbook columns on `Insurance Renewals` tab (Gabriel data entry) or a seed JSON. | **(i) type-cohorted book median for v1** (property/package policies only; minimum cohort n≥5, below which the benchmark renders "insufficient cohort"), upgrade to broker benchmark when a document exists. TIV via **workbook column** (keeps Insurance single-sourced in Spine A; `coverage_tiv` warehouse column already exists to receive it). Request deductibles/limits in the same SOV ask — deductible-optimization analysis is **deferred to P4c** (needs both dec-page data AND loss runs; migration for the new columns comes with P4c). Loss runs = request from broker now. |
 | **D4** | **Brain: new module or extend Calibration?** (blocks P5) | (i) New thin `brain` module (Command group) composing calibration + insights + feedback; Calibration stays the audit-grade ledger UI. (ii) Extend CalibrationModule with 4 more tabs. | **(i) New module.** Calibration is an auditable instrument (append-only ledger, resolve dialog) — burying a consumer-grade meta surface inside it muddies both. The Brain module owns no math; it composes `calibrationReport`, insights ranking, and the new feedback store. Name it distinctly from `src/brain/` chrome (register id `command-brain`, dir `src/modules/command-brain/`) to avoid collision. |
 | **D5** | **CI unblock** (blocks EVERYTHING) | (i) Pin `node-version: '24.17.0'` in `.github/workflows/ci.yml` (both jobs); (ii) pin `'22'` (matches the dev container: 22.22.2); (iii) replace `pdf-parse@1.1.4` (unmaintained since 2018) with `pdf-parse@2.x` or `pdfjs-dist` (bigger, touches briefing tests). | **(i) now** (one line, restores the exact environment that was green on 2026-06-23), **(iii) as a scheduled P0-follow-up** since any future Node bump re-breaks. Evidence: bisected in-session — 24.17.0 → 50/50 pass, 24.18.0 → 8 fail, errors identical to CI. `ci.yml` changes have historically been architect-authorized (PR #79 lineage) → Gabriel applies or pre-authorizes. |
-| **D6** | **Orphaned `CapitalAllocationModule.tsx`** | (i) Fold its unique pieces (implied-cap-rate columns — already re-shipped in PR #114 per CLAUDE.md; IC-memo button; Notion-sync button) into `CapitalModule` and delete the orphan; (ii) mount it as a second capital view; (iii) leave as-is. | **(i) fold + delete** during P2 (it's dead weight that will confuse every future session; IC-memo/Notion-sync buttons belong on the mounted CapitalModule). |
+| **D6** | **Orphaned `CapitalAllocationModule.tsx`** | (i) Fold its unique pieces into `CapitalModule` and delete the orphan; (ii) mount it as a second capital view; (iii) leave as-is. **Verified 2026-07-05: the orphan is the ONLY renderer of `impliedCapRate`/`capRateGap`/`capRatePercentile` repo-wide** (PR #114 shipped those columns *into this file*; `CapitalModule.tsx` has none) — so option (i) must fold the implied-cap-rate columns TOO, not just the IC-memo/Notion-sync buttons, or the product loses its only implied-cap-rate surface. | **(i) fold + delete** during P2: implied-cap-rate columns + IC-memo button + Notion-sync button all move into the mounted `CapitalModule`; acceptance for 2b.2 asserts all three survive the fold. |
 | **D7** | **Investor/LP tracking wanted at all?** | (i) Defer indefinitely (not in any ratified roadmap); (ii) new phase: investor entities + capital accounts (needs fund-admin source). | **(i) defer** — no data source identified; nothing else depends on it. |
 | **D8** | *(minor)* Letter grades on Grader | (i) Display ratified outputs only (composite 0–100, T1/T2/PASS/KILLED, verdict strings); (ii) ratify a cosmetic letter-grade mapping. | **(i).** A letter scale implies bands nobody ratified; the scorecard's own bands are the truth. |
 
@@ -170,15 +179,16 @@ shipped) is pulled AHEAD of Insurance (blocked on TIV/loss-run sourcing, D3) —
 for insurance goes out at P0 so documents arrive by P4. Dependency graph:
 
 ```
-P0 (unblockers)
+P0 (unblockers, needs D5)
  └─ P1 (tier-board primitives, needs D1)
      ├─ P2 (Insights wiring + tier board; D6 fold)
      │    └─ P5 (Command Brain, needs D4; consumes P2 feed)
      ├─ P3 (Grader UX; independent of P2)
-     ├─ P4 (Insurance reasoning, needs D3 data)  [P4b self-insure when loss runs arrive]
-     └─ P6 (Taxes, needs D2 data + migration 020)
-          └─ P7 (parity sweep + cut-list reconciliation + global filter)
+     ├─ P4 (Insurance reasoning, needs D3 data)  [P4c self-insure/deductible when loss runs + dec pages arrive]
+     └─ P6 (Taxes, needs P1 + D2 data)
+P7 (parity sweep) ← P1–P6 complete (7.1 needs P2's feed; 7.3 needs nothing beyond P1)
 ```
+This graph is canonical; the §7 table's "Depends on" column mirrors it exactly.
 
 Each phase = one worktree = one PR (stacked only where noted), squash-merged, local gate green at
 every commit (`npm run gate`), CI green (post-D5). Estimates: S ≤ ½ day, M ≈ 1–2 days, L ≈ 3–5 days
@@ -194,10 +204,11 @@ Goal: make "gate green at every commit" true again and remove landmines. **No fe
 |---|---|---|---|---|
 | 0.1 | Pin CI Node per D5(i) | `.github/workflows/ci.yml` (**Architect-adjacent — Gabriel applies or pre-authorizes**; historically architect-authorized) | PR CI `gate` job green on a docs-only commit; briefing PDF tests pass on CI | S |
 | 0.2 | Repair `architecture/status.json` (invalid JSON: `ic-memo` duplicate keys + missing comma ~L300; `chore-post-w2-merge` dup `review_detail`; normalize `m6-leasing-risk-ic-memo` status `complete`→`merged`) | `architecture/status.json` (**Architect-owned** → review_needed=true first) | `node -e "JSON.parse(fs.readFileSync('architecture/status.json'))"` exits 0; no semantic history lost (keep the merged-state values) | S |
-| 0.3 | Refresh stale governance docs: CLAUDE.md §1 module count + "no URL routing" claim, §2 build state, §6 gate steps (+`warehouse:drift`); system-overview.md module list/test count/roadmap | `CLAUDE.md`, `architecture/system-overview.md` (**Architect-owned** → review_needed) | governance gate passes; counts match live tree (22 modules, 1905 tests) | S |
+| 0.3 | Refresh stale governance docs: CLAUDE.md §1 module count ("18 client modules", CLAUDE.md:33) + §2 build state + §6 gate steps (+`warehouse:drift`); system-overview.md module list (20→22)/test count ("450+")/roadmap ("not started" phases)/the "no URL-driven views" invariant (system-overview.md:105 — live code routes `moduleId` via react-router, `src/shell/AppShell.tsx:44-46`). NOTE: the "no URL routing" claim does NOT appear in CLAUDE.md — do not hunt for it there; it lives in system-overview.md and the handoff prompt. | `CLAUDE.md`, `architecture/system-overview.md` (**Architect-owned** → review_needed) | governance gate passes; counts match live tree (22 modules, 1905 tests) | S |
 | 0.4 | Remove stale `ownership.json` worktree entries (pfi-phase-b/-b2 merged) | `architecture/ownership.json` (**Architect-owned** → review_needed) | JSON valid; only live worktrees listed | S |
 | 0.5 | Send data requests (no code): broker → SOV/TIV per policy + 3-yr loss runs (D3); assessor data collection begun per D2 | — (Gabriel action item) | Documents received before P4/P6 start | — |
-| 0.6 | Document migration-numbering defect (two 017s) in `architecture/database-schema.md`; establish **next = 020** | `architecture/database-schema.md` (**Architect-owned** → review_needed) | Schema doc lists both 017s. NOTE (verified 2026-07-05): `migrate.ts:41-45` sorts by parsed number only — the two 017s tie and fall back to `readdirSync` order, which is filesystem-dependent. They touch different tables (`market_series` index vs `capital_config` UPDATE) so relative order is harmless today, but the doc must state this and forbid future duplicate numbers. Also note `017_ratify_hurdle_rate.sql` contains DML (UPDATE), contradicting the "pure DDL" standard — record as an accepted exception, do not retro-edit. | S |
+| 0.6 | Document migration-numbering defect (two 017s) in `architecture/database-schema.md`; establish **next = 020** | `architecture/database-schema.md` (**Architect-owned** → review_needed) | Schema doc lists both 017s. NOTE (verified 2026-07-05): `migrate.ts:41-45` sorts by parsed number only — the two 017s tie and fall back to `readdirSync` order, which is filesystem-dependent. They touch different tables (`market_series` index vs `capital_config` UPDATE) so relative order is harmless today, but the doc must state this and forbid future duplicate numbers. Also note `017_ratify_hurdle_rate.sql` contains DML (UPDATE), contradicting the "pure DDL" standard — record as an accepted exception, do not retro-edit. Propose (Architect decision) a `migrate.ts` guard that hard-fails on duplicate numeric prefixes so this class can't recur silently. | S |
+| 0.7 | Ownership-map extension (folds into the same review_needed claim as 0.2–0.4): assign owners in `agent-assignments.md` + `ownership.json` for files no role currently owns — `server/warehouse/api.ts` (propose: Analytics Agent for route additions; it is already refute-DELIVERY_ONLY), `server/insights/` (propose: Analytics Agent), the planned new engine files (`insurance-analysis.ts`, `tax-analysis.ts`, `brain-report.ts` → Analytics), `server/warehouse/insurance.ts` (Integration, matching its Track-C history); define or replace the undefined "Core" owner of `src/data/` (agent-assignments.md:106 references a role that exists nowhere). Record in the plan-approval note that **Gabriel's approval of this plan constitutes the Lead-Architect authorization for the specific new API routes and new registry modules named in P2–P6** (agent-assignments.md:15 gives the Architect final authority over both) — each phase's STATUS.json claim must still name its routes/modules explicitly. | `architecture/agent-assignments.md`, `architecture/ownership.json` (**Architect-owned** → review_needed) | every file touched by P1–P7 resolves to exactly one owner; no undefined roles remain | S |
 
 Failure-proofing: every file here is Architect-owned or -adjacent — this phase is **executed or
 explicitly acknowledged by Gabriel** (single review_needed claim covering 0.2–0.4/0.6). Risk: status.json
@@ -233,23 +244,25 @@ Goal: the design's Insights page on the real engines; fold the capital orphan (D
 | # | Task | Files (owner) | Data binding | Acceptance | Est |
 |---|---|---|---|---|---|
 | 2a.1 | `GET /api/warehouse/insights` route: build `CapitalAllocationReport` → run generators (`generateCfHurdleDrag`) → `rankCandidates` → `InsightReportSchema` envelope + `dataReadiness` | `server/warehouse/api.ts` (Analytics Agent; DELIVERY_ONLY allowlisted file) | `server/insights/{rank,stats,generators/*}`, contract `src/contracts/insights.ts` | route returns Zod-valid `InsightReport`; 503 pattern when warehouse absent; unit tests incl. empty-candidates | M |
-| 2a.2 | Wire acq + debt generators only if trivially composable in-session; else record as dormant `dataReadiness` entries (the contract supports `dormant-low-n`/`dormant-no-outcomes` honestly) | `server/insights/generators/` (**new engine math → Analytics Agent + refute**) | — | dataReadiness lists every family with real status | S–M |
+| 2a.2 | Register ALL non-CF families (DR/TE/TR/CR) as dormant `dataReadiness` entries with their real status (`dormant-low-n`/`dormant-no-outcomes`) — **no new generator math in P2** (each future generator is its own task with a spec'd formula, data source, and a mandatory refute pass; do not fold that lift into this phase) | `server/insights/` route composition only (Analytics Agent) | — | dataReadiness lists every family in the contract enum with an honest status; zero new generators shipped | S |
 
 **PR 2b (UI, stacked on 2a)**:
 
 | # | Task | Files (owner) | Design ref | Data binding | Acceptance | Est |
 |---|---|---|---|---|---|---|
-| 2b.1 | `InsightsModule` (register id `insights`, group Command): results banner (Σ gain-impacts, Σ risk-impacts, count) + category filter pills + **TierBoard** Critical/Priority/Monitor | `src/modules/insights/` + `src/shell/modules.tsx` (UX Agent) | `Insights.html:1-170` | merge: Spine-A `useAnalytics().insights` (severity + `impactAnnualUsd`) + `GET /api/warehouse/insights` candidates (confidence, materialityUsd, advisoryOnly chip) — tag each card with its spine + provenance | tier totals = Σ of member impacts (test); advisoryOnly always chipped; no invented numbers — cards without impact render "—"; parity walkthrough vs `Insights.html` | M |
-| 2b.2 | D6 fold: move IC-memo export + Notion-sync buttons onto `CapitalModule`; delete `CapitalAllocationModule.tsx` | `src/modules/capital/` (UX Agent) | — | `/capital-allocation/ic-memo` + `/sync-notion` reachable from mounted UI; orphan gone; grep confirms zero imports | S |
+| 2b.1 | `InsightsModule` (register id `insights`, group Command): results banner + category filter pills + **TierBoard** Critical/Priority/Monitor. Merge layer lives in `src/modules/insights/insights.logic.ts` (UX-owned, pure client merge of the two fetched payloads — NOT in `src/data/`). **Join spec** (Spine-A `Insight` has no propertyId/family): map `Insight.entityType/entityId` → propertyId via snapshot lookup (loan→property via `collateralProperty`; lease→property via `propertyId`), and use an explicit `category`↔`family` correspondence table defined in the logic file; dedup key = (resolvedPropertyId ?? entityId, family-or-category); precedence: **warehouse candidate wins** (richer provenance), Spine-A insight is dropped and counted in a "superseded" debug tally | `src/modules/insights/` + `src/shell/modules.tsx` (UX Agent) | `Insights.html:1-170` | tier-meta shows **per-spine subtotals** (Spine-A $ and Spine-B/cross $ never silently summed — mixed-basis rule); unit test asserts per-spine sums and the dedup precedence; advisoryOnly always chipped; ranking weights chipped **"proposed ranking weights (unratified)"** until Gabriel ratifies INSIGHT_CONFIG (see failure-proofing); cards without impact render "—"; parity walkthrough vs `Insights.html` | M |
+| 2b.2 | D6 fold: move **implied-cap-rate columns (impliedCapRate/capRateGap/capRatePercentile) + IC-memo export + Notion-sync buttons** onto `CapitalModule`; then delete `CapitalAllocationModule.tsx` (it is the ONLY renderer of those columns — verified) | `src/modules/capital/` (UX Agent) | — | all three capabilities reachable from mounted UI (columns render, `/capital-allocation/ic-memo` + `/sync-notion` fire); orphan gone; grep confirms zero imports and zero lost renderers | S/M |
 
-Failure-proofing: 2a.1 is delivery-only (`Refute-Skip` per allowlist) BUT 2a.2 (any new/changed
-generator math) **requires the adversarial refute workflow** (`Workflow({name:'refute-financial-change', …})`)
-+ `Refute-Reviewed:` trailer. Risks: (1) double-counting a signal that appears in both Spine-A
-insights and warehouse candidates → mitigation: dedup by (propertyId, family/kind) with an explicit
-precedence rule, unit-tested; (2) basis mixing — candidates carry `spine` and Spine-A NOI never
-aggregates with Spine-B NOI in a single figure (echo Phase-1a discipline; banner sums are
-per-spine or labeled). Rollback: revert 2b then 2a (stacked order). No migrations. No ratification
-(INSIGHT_CONFIG weights already in code; changing them = new ratification — out of scope).
+Failure-proofing: 2a.1/2a.2 are route/registration only (`Refute-Skip` per allowlist; NO new
+generator math is permitted in this phase — any generator is a separate task with its own
+mandatory refute pass). Risks: (1) double-counting a signal present on both sides → the 2b.1 join
+spec + precedence rule, unit-tested; (2) basis mixing — per-spine subtotals only, never a single
+unlabeled sum (Phase-1a discipline). Rollback: revert 2b then 2a (stacked order). No migrations.
+**Ratification note:** `server/insights/rank.ts:58-62` marks the 0.5/0.3/0.2 weights + top-20 cap
+as PROPOSED — "ratification of these values is a RED (human event)". Promoting the engine to a
+flagship surface is exactly when that event is due: either Gabriel ratifies the weights at P2
+review, or the board ships with the "proposed ranking weights (unratified)" chip until he does.
+Changing the weight VALUES remains out of scope for the implementing agent either way.
 
 ---
 
@@ -272,12 +285,16 @@ re-implements scoring for display → PROHIBITED; always render engine output; (
 ruleset tweak" → any gate/floor/weight/band change is a NEW ruleset version + Gabriel ratification
 + refute (ruleset JSON header, `config/acquisition-ruleset.v1.json:2`); (3) om-extract cost/latency
 → show progress, allow manual entry fallback. Rollback: revert PR (UI-only). Tests: component tests
-for gauge/checklists/tiers + fixture-based parity test; e2e (playwright) happy path: sample PDF →
-fields → score → scorecard visible. No migrations. No ratification.
+for gauge/checklists/tiers + fixture-based parity test; e2e (playwright) happy path: **mock the
+extraction — `page.route('/api/actions/om-extract', …)` fulfilled with a fixture response** (the
+real route calls a live LLM: nondeterministic, costs money, needs a key CI doesn't have; note
+`tests/e2e/` currently has no route-mocking precedent — this introduces it), then fields → score →
+scorecard visible; the live-extraction path is verified manually, not in CI. No migrations. No
+ratification.
 
 ---
 
-### Phase 4 — Insurance reasoning layer (est: L, PR: `feat/cc-p4-insurance` stacked 4a → 4b-UI; P4c later, needs D3 data)
+### Phase 4 — Insurance reasoning layer (est: L, PR: `feat/cc-p4-insurance` stacked 4a → 4b-UI; P4c later; needs P1 + D3 data)
 
 Goal: design `Insurance.html` on real policies: benchmark, savings scanner, renewal calendar.
 
@@ -286,22 +303,28 @@ Goal: design `Insurance.html` on real policies: benchmark, savings scanner, rene
 | # | Task | Files (owner) | Data binding | Acceptance | Est |
 |---|---|---|---|---|---|
 | 4a.1 | TIV ingestion per D3: Gabriel adds TIV column to workbook `Insurance Renewals` tab → parser reads it → `InsurancePolicy.tiv` (contract change, **Architect-owned `src/contracts/insurance.ts` → review_needed**) → `captureInsurance` writes existing `coverage_tiv` column | `server/workbook/parse.ts` (Integration), `src/contracts/insurance.ts` (**Architect**), `server/warehouse/insurance.ts` (Integration) | workbook col → Zod → warehouse | policies round-trip TIV; missing TIV → null + DQ flag (never invented); reconcile step still $0 | M |
-| 4a.2 | Insurance analysis engine (NEW, pure fn): per-policy `ratePer100Tiv = premium/tiv*100`; book-median benchmark (provenance `derived`, D3); savings scanner: (a) re-bid candidates (rate > benchmark by config threshold), (b) deductible/limit review flags where data exists, (c) renewal calendar 0/45/90-day buckets — every $ figure = real premium × documented factor with provenance, `advisoryOnly: true` | `server/warehouse/insurance-analysis.ts` (Analytics Agent, NEW file), config constants in-file (documented, advisory) | `property_insurance_policies` rows (real premiums + new TIV) | null-TIV policies excluded from rate math but listed; benchmark = documented median; unit tests: empty book, single policy, all-null TIV | M |
+| 4a.2 | Insurance analysis engine (NEW, pure fn): per-policy `ratePer100Tiv = premium/tiv*100`; **type-cohorted book-median benchmark** (property/package cohort only, min cohort n≥5 else "insufficient cohort"; provenance `derived`; copy says "vs own-book median", never "over market" — an own-book median flags ~half the book by construction and the UI must say so); scanner outputs: (a) re-bid candidates where `excessPremium = (policyRate − cohortMedianRate) × tiv > 0`, displayed as **"premium above book median" (dispersion, NOT a savings promise — no haircut factors, no invented capture rates; actual savings claims wait for real quotes in P4c)**, (b) renewal calendar 0/45/90-day buckets. Deductible/limit review is **deferred to P4c** (no deductible/limit data exists in contract or warehouse; D3's SOV ask requests it; new columns need a P4c migration) | `server/warehouse/insurance-analysis.ts` (Analytics Agent, NEW file — owner assigned in 0.7), config constants in-file (documented, advisory) | `property_insurance_policies` rows (real premiums + new TIV) | null-TIV policies excluded from rate math but listed; benchmark = documented type-cohort median; every $ = pure arithmetic on stored values (test: excessPremium reproducible by hand from the rows); unit tests: empty book, single policy, all-null TIV, sub-minimum cohort | M |
 | 4a.3 | Route `GET /api/warehouse/insurance/analysis` (Zod envelope — new contract file `src/contracts/insurance-analysis.ts`, **Architect → review_needed**) | `server/warehouse/api.ts` (Analytics, delivery-only) | engine output | Zod-valid; 503 pattern | S |
-| 4a.4 | Calibration hook: log advisory verdicts for re-bid recommendations (predicted savings band) so outcomes are resolvable later — reuse `logVerdicts` | `insurance-analysis.ts` (Analytics) | `calibration_verdict` (existing table) | verdict rows appear with kind `insurance-rebid`; fail-open | S |
+| 4a.4 | Calibration hook: log advisory verdicts for re-bid recommendations (predicted excess-premium band) so outcomes are resolvable later — reuse `logVerdicts`. **PREREQUISITE (verified): `VerdictKind`/`VerdictEngine` are CLOSED Zod enums (`src/contracts/warehouse.ts:124-134`) and `logVerdicts` re-validates fail-open (`calibration.ts:363-387`) — an unknown kind is silently dropped with `{written:0}`.** So this task REQUIRES extending both enums with `insurance-rebid` (contract = **Architect-owned → review_needed**, planned here explicitly, not discovered mid-phase). The auto-resolution switch (`calibration.ts:496`) gets NO arm for the new kind in v1 — these verdicts are **manually resolved** via the existing ResolveDialog; state that in the module. Touching `calibration.ts` = non-delivery warehouse file → refute trailer required | `src/contracts/warehouse.ts` (**Architect → review_needed**), `insurance-analysis.ts` (Analytics) | `calibration_verdict` (existing table) | verdict rows actually appear (test asserts written>0 against a seeded db, NOT just "no throw" — fail-open would mask a silent no-op); kind `insurance-rebid` parses | S/M |
 
-**PR 4b (UI, stacked):** Insurance module rebuild — 4 KPIs (annual premium real Σ, rate/$100 TIV vs
-benchmark, identified savings Σ, renewals ≤90d), tabs: **Savings Board** (TierBoard: Re-bid /
-Optimize / Watch), **Policy Register** (DataTable + renewal countdown bars `.renewbar` pattern),
-calendar panel. Files: `src/modules/insurance/` (UX). Acceptance: premium KPI ties to workbook Σ
-(±$0); each savings card shows its formula via Provenance; design-parity walkthrough vs
-`Insurance.html` tabs 1–2. Est: M.
+**PR 4b (UI, stacked):** Insurance module rebuild — 4 KPIs (annual premium real Σ, rate/$100 TIV
+vs type-cohort book median, **"premium above book median" Σ** (not "identified savings"), renewals
+≤90d), tabs: **Savings Board** (TierBoard: Re-bid candidates / Renewal watch — the Optimize tier
+arrives with P4c data), **Policy Register** (DataTable + renewal countdown bars `.renewbar`
+pattern), calendar panel. Files: `src/modules/insurance/` (UX). Acceptance: premium KPI ties to
+workbook Σ (±$0); each card shows its formula via Provenance; design-parity walkthrough vs
+`Insurance.html` tabs 1–2 (tab-3 parity deferred to P4c). Est: M.
 
-**P4c (self-insure + re-bid pipeline) — SEPARATE, gated on loss runs (D3):** expected-annual-loss
-from real loss runs (new migration **021_insurance_loss_events.sql** — Architect), self-insure
-split-bar analysis (`Insurance.html` tab 3), re-bid workflow state (defer state tracking; v1
-derive-only). DO NOT fake EAL from premium heuristics — the prototype's `1.6×EAL risk load / 62%
-transfer share` constants are placeholders and must not ship without a ratified basis.
+**P4c (self-insure + deductible optimization + re-bid pipeline) — SEPARATE, gated on loss runs +
+dec-page data (D3):** one migration (**NNN = next free number at execution time — verify with
+`ls server/warehouse/migrations/`; do NOT assume 021**) covering `insurance_loss_events`
+(property_id FK, policy ref, loss_date, cause, gross_incurred, paid, reserve, source,
+UNIQUE per occurrence) + deductible/limit columns for `property_insurance_policies`; contract
+extension (**Architect → review_needed**); EAL from real loss runs; deductible-vs-loss-ratio
+review; self-insure split-bar analysis (`Insurance.html` tab 3); re-bid workflow state (v1
+derive-only, state tracking only if Gabriel asks). DO NOT fake EAL from premium heuristics — the
+prototype's `1.6×EAL risk load / 62% transfer share` constants are placeholders and must not ship
+without a ratified basis.
 
 Failure-proofing: 4a.2/4a.4 are financial-decision code → **mandatory adversarial refute** +
 `Refute-Reviewed:` trailer. Ratification: savings thresholds ship as advisory-only config with the
@@ -324,13 +347,19 @@ confidence — every figure derives from calibration/insights/DQ data or is abse
 
 | # | Task | Files (owner) | Data binding | Acceptance | Est |
 |---|---|---|---|---|---|
-| 5a.1 | Migration **020_recommendation_feedback.sql** (or 021 if P6 lands first — take the next free number at execution time): `recommendation_feedback` (id, subject_kind insight/alert/allocation, subject_id, decision accept/dismiss, decided_at, note NULL) append-only | `server/warehouse/migrations/` (**Architect → review_needed**) | — | migration applies on `:memory:`; warehouse-verify §assertion added | S |
+| 5a.1 | Migration **`NNN_recommendation_feedback.sql` — NNN = next free number, verified with `ls server/warehouse/migrations/` at execution time (P4c/P5/P6 all take next-free; never assume a number)**: `recommendation_feedback` (id, subject_kind insight/alert/allocation, subject_id, decision accept/dismiss, decided_at, note NULL) append-only | `server/warehouse/migrations/` (**Architect → review_needed**) + `scripts/warehouse-verify.ts` (**Integration Agent** — the assertion edit crosses ownership; claim it) | — | migration applies on `:memory:`; warehouse-verify §assertion added | S |
 | 5a.2 | Feedback routes `POST /api/warehouse/brain/feedback`, `GET /api/warehouse/brain/report` — report composes: `calibrationReport()` (existing), accuracy-over-time series (bucket `calibration_outcome` by resolution month → rolling hit-rate), confidence-by-market/PM (sample-size-based from benchmarks/pm scorecards — label "coverage-based confidence", NOT predictive skill), uncertainties (open `data_quality_issues` + `dataReadiness` dormant generators + `floorIndeterminate` acq scores), version log (`calibration_log` + `calibration_inputs_version`) | `server/warehouse/brain-report.ts` (Analytics, NEW), route in `api.ts`; contract `src/contracts/brain-report.ts` (**Architect → review_needed**) | all-existing tables + P2 insights | rolling hit-rate matches hand-computed fixture; months with n<5 render as gaps not zeros (honesty gate, reuse `stats.ts` MIN_PAIRS ethos) | M |
 
 **PR 5b (UI, stacked):** `src/modules/command-brain/` (register `command-brain`, Command group):
 KPI row (flag accuracy = calibration overall hit-rate + CI; signals watched = live insight count;
-outcomes resolved; recalibrations = inputs_version count), accuracy sparkline, Track Record list
-(resolved verdicts w/ hit/miss/partial + realized values), **Feedback Loop** (top-5 ranked insights
+outcomes resolved; recalibrations = **`COUNT(DISTINCT config_hash) − 1` over
+`calibration_inputs_version`, or rows in the migration-003 `calibration_log` parameter audit —
+NOT the raw inputs_version count, which forks on every P&L import/code version and would be
+theatrical inflation**), accuracy sparkline, Track Record list (resolved verdicts w/
+**hit / miss / not-scoreable — `calibration_outcome.hit` is 1/0/null; there is NO "partial" state
+in the schema (that's the prototype's fabricated vocabulary); if a partial notion is wanted,
+define it as a documented derivation from `abs_error` bands, never a free-floating third value**
++ realized values), **Feedback Loop** (top-5 ranked insights
 from P2 with Accept/Dismiss → POST, persisted server-side — the design's localStorage becomes real),
 **Learned-memory TierBoard** (Settled/Forming/Hypotheses derived from per-kind calibration n + CI
 width; each card cites its data), confidence-by-market/manager bars, Open Questions, version log.
@@ -349,7 +378,7 @@ migration stays (empty table harmless). Ratification: none for v1.
 
 ---
 
-### Phase 6 — Taxes module (est: L, PR: `feat/cc-p6-taxes` stacked 6a → 6b, needs D2 data)
+### Phase 6 — Taxes module (est: L, PR: `feat/cc-p6-taxes` stacked 6a → 6b, needs P1 + D2 data)
 
 Goal: design `Taxes.html` v1 = property-tax intelligence on real data. Filed returns + cost-seg
 excluded (C2).
@@ -358,10 +387,10 @@ excluded (C2).
 
 | # | Task | Files (owner) | Data binding | Acceptance | Est |
 |---|---|---|---|---|---|
-| 6a.1 | Migration **020_property_tax.sql** (next free number at execution): `property_tax_assessments` (property_id FK, tax_year, jurisdiction, assessed_value, assessment_ratio NULL, millage_rate NULL, annual_tax_billed NULL, source, UNIQUE(property_id, tax_year)) + `tax_appeals` (id, property_id, tax_year, status CHECK draft/filed/hearing/won/lost/withdrawn, filed_date NULL, est_savings_annual NULL, realized_savings_annual NULL, notes NULL) | `server/warehouse/migrations/` (**Architect → review_needed**) | — | applies on `:memory:`; DDL-only; warehouse-verify assertion | S |
+| 6a.1 | Migration **`NNN_property_tax.sql` — NNN = next free number verified at execution (see 5a.1 note)**: `property_tax_assessments` (property_id FK, tax_year, jurisdiction, assessed_value, assessment_ratio NULL, millage_rate NULL, annual_tax_billed NULL, source, UNIQUE(property_id, tax_year)) + `tax_appeals` (id, property_id, tax_year, status CHECK draft/filed/hearing/won/lost/withdrawn, filed_date NULL, est_savings_annual NULL, realized_savings_annual NULL, notes NULL) | `server/warehouse/migrations/` (**Architect → review_needed**) + `scripts/warehouse-verify.ts` (**Integration Agent** — assertion edit, claim it) | — | applies on `:memory:`; DDL-only; warehouse-verify assertion | S |
 | 6a.2 | Assessment seed importer: `scripts/import-assessments.ts` reading a checked-in-per-run JSON/CSV (assessor data per D2; ~27 rows/yr) with per-row provenance; DQ issue on unknown property id | `scripts/` (Integration Agent) | assessor documents → table | idempotent (INSERT OR REPLACE on UNIQUE); rejects negative values; sample fixture test | M |
-| 6a.3 | Tax analysis engine (pure): effective rate = billed/assessed; assessed-implied value vs Spine-A `estValue100` (**basis note: assessments are full-asset — compare to full-asset value = `oxfordValue/oxfordOwnPct` or property `estValue100` documented as full-asset; NEVER mix Oxford-share and full-asset in one ratio**); appeal-opportunity flag when assessed value > indicated value by threshold AND `taxesPerSf` sits above cohort percentile (reuse `benchmarks.ts` cohort machinery); est. savings = excess assessment × millage (nulls → indeterminate, never guessed); strategy items ranked by $ with provenance + `advisoryOnly` | `server/warehouse/tax-analysis.ts` (Analytics, NEW) + contract `src/contracts/tax.ts` (**Architect → review_needed**) | new tables + ledger `Taxes` category + Spine-A values | fixture: hand-computed appeal savings match; missing millage → "indeterminate" not $0; cohort percentile matches benchmarks engine | L |
-| 6a.4 | Route `GET /api/warehouse/tax/analysis` + calibration verdicts for appeal recommendations (kind `tax-appeal`, resolvable when appeal outcome recorded) | `api.ts` (delivery) + engine (Analytics) | `calibration_verdict` | Zod-valid; verdict rows fail-open | S |
+| 6a.3 | Tax analysis engine (pure): effective rate = billed/assessed; assessed-implied value vs Spine-A `estValue100` (**basis note: assessments are full-asset — compare to full-asset value = `oxfordValue/oxfordOwnPct` or property `estValue100` documented as full-asset; NEVER mix Oxford-share and full-asset in one ratio**); appeal-opportunity flag when assessed value > indicated value by threshold AND `taxesPerSf` sits above cohort percentile (reuse `benchmarks.ts` cohort machinery); est. savings = excess assessment × millage (nulls → indeterminate, never guessed). **Ownership basis (verified): ledger `Taxes`, assessments, and millage are all FULL-ASSET (`metrics.ts:138-142` proves the ledger is 100%-basis) while Spine-A property economics are Oxford-share — so the engine emits BOTH `savingsFullAsset` and `savingsOxfordShare = savingsFullAsset × oxfordOwnPct`; every cross-module ranked surface (strategy board, P7.1 Overview actions) uses the Oxford-share figure; the full-asset figure appears only in the assessments table with an explicit basis label** | `server/warehouse/tax-analysis.ts` (Analytics, NEW — owner per 0.7) + contract `src/contracts/tax.ts` (**Architect → review_needed**) | new tables + ledger `Taxes` category + Spine-A values | fixture: hand-computed appeal savings match on a partially-owned property (both bases asserted); missing millage → "indeterminate" not $0; cohort percentile matches benchmarks engine | L |
+| 6a.4 | Route `GET /api/warehouse/tax/analysis` + calibration verdicts for appeal recommendations (kind `tax-appeal`, resolvable when appeal outcome recorded). **Same closed-enum prerequisite as 4a.4: extend `VerdictKind`/`VerdictEngine` in `src/contracts/warehouse.ts` (Architect → review_needed) or the fail-open `logVerdicts` silently writes nothing; new kind is manually resolved (no auto-resolution arm in v1)** | `src/contracts/warehouse.ts` (**Architect → review_needed**), `api.ts` (delivery) + engine (Analytics) | `calibration_verdict` | Zod-valid; test asserts written>0 on seeded db (not just "no throw") | S/M |
 | 6a.5 | Appeal status writes: `POST /api/warehouse/tax/appeals` (create/update status) | `api.ts` (delivery) | `tax_appeals` | status transitions validated by CHECK + Zod; append audit note | S |
 
 **PR 6b (UI, stacked):** `src/modules/taxes/` (register `taxes`, Capital group): 4 KPIs (annual
@@ -385,14 +414,14 @@ score → Taxes module cites the same `taxesPerSf` benchmarks rather than re-der
 
 ### Phase 7 — Remaining parity + reconciliation sweep (est: M, PR: `feat/cc-p7-parity`, needs P1–P6)
 
-| # | Task | Design ref | Notes | Est |
-|---|---|---|---|---|
-| 7.1 | Overview results banner + PRIORITY ACTIONS via TierBoard (reuses P2 feed) | `Overview.html` `#resultsBar`/`#priorityList` | per-spine sums labeled | S |
-| 7.2 | Global portfolio filter (market/type/PM/as-of) as a shell-level context for Assets-group modules — production analog of `filter.js` | `filter.js`, `.gfbar` | UX Agent; `src/shell/` + consuming modules; as-of only where a module has time-dimensioned data | M |
-| 7.3 | Comps surface: CompSet + `CapRateBenchmark` view (Market module tab) | `Comps.html` tab 3 | no new ingestion | S/M |
-| 7.4 | DealRoom enrichment: underwriting panel bound to `AcquisitionInput`/score; DD checklist (overlay write) if wanted | `DealRoom.html` | UX Agent (+ overlay route exists pattern) | M |
-| 7.5 | Design-parity audit: walk all shipped pages vs prototype (structure, not palette, per D1(c)); file follow-ups | README screens + app/*.html | produces the v2 backlog | S |
-| 7.6 | Cut-list reconciliation notes into `docs/` (why Financials/News/Inbox/etc. resolve to existing modules) | §6 below | prevents future duplication | S |
+| # | Task | Files (owner) | Design ref | Data binding | Acceptance | Est |
+|---|---|---|---|---|---|---|
+| 7.1 | Overview results banner + PRIORITY ACTIONS via TierBoard (reuses P2 feed) | `src/modules/overview/` (UX Agent) | `Overview.html` `#resultsBar`/`#priorityList` | P2 merged feed (per-spine subtotals, Oxford-share $ for tax items per 6a.3) | banner sums match Insights module for the same filter; per-spine labels present; existing widget tests pass | S |
+| 7.2 | Global portfolio filter (market/type/PM; as-of only where a module has time-dimensioned data) as a shell-level React context — production analog of `filter.js`. **Ownership caveat: agent-assignments.md:106 marks `src/data/` "read-only — belongs to Core" and no "Core" role exists — 0.7 must resolve this BEFORE 7.2 starts.** v1 filters client-side over already-fetched data (no query-key changes → `src/data/` untouched); if as-of slicing requires refetch plumbing, that sub-slice needs the resolved owner + a refute pass on any figure whose period basis changes | `src/shell/` + consuming modules (UX Agent); `src/data/` only per 0.7 resolution | `filter.js`, `.gfbar` | snapshot entities filtered by market/type/PM | filter state persists per session; each consuming module's KPIs recompute on slice; no module shows a mixed filtered/unfiltered figure (test per module) | M |
+| 7.3 | Comps surface: CompSet + `CapRateBenchmark` view (Market module tab) | `src/modules/market/` (UX Agent) | `Comps.html` tab 3 | `dealComps` overlay CompSets + `getMacroMarketBenchmarks` | renders every stored CompSet with source + date; benchmark table matches capital module figures | S/M |
+| 7.4 | DealRoom enrichment: underwriting panel bound to `AcquisitionInput`/score; DD checklist (overlay write) if wanted | `src/brain/DealDrawer.tsx` (UX Agent; file is UX-owned per agent-assignments) | `DealRoom.html` | `acquisitionInputs` overlay + latest `acq_scores` | panel figures identical to Workbench for the same deal; checklist round-trips via overlay | M |
+| 7.5 | Design-parity audit: walk all shipped pages vs prototype (structure, not palette, per D1(c)); file follow-ups | — (Validation Agent, report only) | README screens + app/*.html | — | written report per page: sections present/absent; becomes the v2 backlog | S |
+| 7.6 | Cut-list reconciliation notes into `docs/` (why Financials/News/Inbox/etc. resolve to existing modules) | `docs/` (any agent; not architect-gated) | §6 below | — | one doc, linked from README or CLAUDE.md §3 at Gabriel's discretion | S |
 
 Failure-proofing: display-only (`Refute-Skip`), except 7.2's as-of slicing if it changes any
 computed figure's period basis → refute that slice. No migrations.
@@ -404,7 +433,13 @@ computed figure's period basis → refute that slice. No migrations.
 1. **Worktree**: `git worktree add .claude/worktrees/<phase> -b <branch>`; copy
    `worktree-env.example` → `.env`; set worktree-local `WAREHOUSE_DB`.
 2. **Claim**: add/update the worktree's entry in `architecture/status.json` (in_progress, agent
-   role, phase text) and COMMIT it on the branch before coding. For any Architect-owned file
+   role, phase text) AND register the worktree in `architecture/ownership.json` (CLAUDE.md §5 —
+   ownership.json is "one entry per active worktree"; both files are `architecture/` so one
+   review_needed claim covers the pair), and COMMIT the declaration on the branch before coding.
+   Phases adding new API routes or new registry modules must NAME them in the claim —
+   Gabriel's approval of this plan is the standing Lead-Architect authorization for the specific
+   routes/modules listed in P2–P6 (per 0.7), but the claim makes each one auditable. For any
+   Architect-owned file
    (`CLAUDE.md`, `architecture/`, `package.json`, `tsconfig*`, `vite.config.ts`, `server/index.ts`,
    **all of `src/contracts/`**, `src/analytics/engine.ts`, `scripts/governance-check.ts`,
    `server/warehouse/{db,migrate}.ts`, `server/warehouse/migrations/`): set `review_needed: true`
@@ -422,10 +457,13 @@ computed figure's period basis → refute that slice. No migrations.
    number at execution time** (020 as of 2026-07-05; two files share 017 — leave them).
 7. **PRs**: `type(scope):` titles; body = files + tests + deferred; stacked PRs declare base and
    merge order; squash-merge; Validation-Agent review before merge; after merge update
-   STATUS.json → merged and remove the worktree.
+   STATUS.json → merged, REMOVE the worktree's `ownership.json` entry (CLAUDE.md §7 step 3),
+   and remove the worktree.
 8. **Ratification boundaries**: buy-box (any gate/floor/weight/band/anchor) = new ruleset version +
    Gabriel ratification + refute + archive of the old file; hurdle/governor values only via
-   `capital_config` migrations; new advisory thresholds (insurance savings, tax appeal) ship
+   `capital_config` migrations; INSIGHT_CONFIG ranking weights (0.5/0.3/0.2 + top-20 cap) are
+   PROPOSED per `rank.ts:58-62` — their ratification is due at P2 review, and the board is chipped
+   "unratified" until it happens; new advisory thresholds (insurance re-bid, tax appeal) ship
    `advisoryOnly` until Gabriel promotes them.
 9. **Confidentiality**: never surface `confidential-terms.json`; briefing/PDF paths keep
    `assertNoConfidential`; tax "filed returns" data stays out of the product (C2).
@@ -466,19 +504,20 @@ computed figure's period basis → refute that slice. No migrations.
 
 ## 7. Sequencing summary
 
-| Order | Phase | Depends on | Headline | Est |
-|---|---|---|---|---|
-| 0 | P0 unblockers | D5 | CI green again; status.json valid; docs true; data requests sent | S |
-| 1 | P1 tier-board primitives | D1 | TierBoard/GaugeRing + Alerts as first consumer | M |
-| 2 | P2 insights | P1, D6 | Wire dormant insight engine; flagship ranked board; fold capital orphan | M/L |
-| 3 | P3 grader UX | P1 | Design's Grader on ratified engine + real OM extraction | L |
-| 4 | P4 insurance | P1, D3 data | TIV + benchmark + savings board (4a engine → 4b UI); P4c gated | L |
-| 5 | P5 command brain | P2, D4 | Honest meta-surface + server-persisted feedback | L |
-| 6 | P6 taxes | D2 data | Migration 020 + assessments + appeal engine + strategy board | L |
-| 7 | P7 parity sweep | P1–P6 | Overview banner, global filter, comps, dealroom, audit, cut-list docs | M |
+| Order | Phase | Depends on (mirrors the §4 graph) | Headline | PRs | Est |
+|---|---|---|---|---|---|
+| 0 | P0 unblockers | D5 | CI green again; status.json valid; docs true; ownership map extended (0.7); data requests sent | 1 | S |
+| 1 | P1 tier-board primitives | P0, D1 | TierBoard/GaugeRing + Alerts as first consumer | 1 | M |
+| 2 | P2 insights | P1, D6 | Wire dormant insight engine; flagship ranked board; fold capital orphan | 2 (2a→2b stacked) | M/L |
+| 3 | P3 grader UX | P1 | Design's Grader on ratified engine + real OM extraction | 1 | L |
+| 4 | P4 insurance | P1, D3 data | TIV + type-cohort benchmark + savings board | 2 (4a→4b stacked) | L |
+| — | P4c self-insure/deductible | P4, loss runs + dec pages | EAL + deductible optimization + tab-3 parity | 1 (gated) | M |
+| 5 | P5 command brain | P2, D4 | Honest meta-surface + server-persisted feedback | 2 (5a→5b stacked) | L |
+| 6 | P6 taxes | P1, D2 data | Property-tax migration + assessments + appeal engine + strategy board | 2 (6a→6b stacked) | L |
+| 7 | P7 parity sweep | P1–P6 | Overview banner, global filter, comps, dealroom, audit, cut-list docs | 1 | M |
 
-**Total: ~8 worktree-phases, 10–11 PRs (three stacked pairs).** Each phase independently shippable
-and revertible; no phase blocks Gabriel's daily work on `main`.
+**Total: 8 worktree-phases + 1 gated follow-up = 12 PRs (13 with P4c), four stacked pairs.**
+Each phase independently shippable and revertible; no phase blocks Gabriel's daily work on `main`.
 
 ---
 
