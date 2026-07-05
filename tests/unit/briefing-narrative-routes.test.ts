@@ -19,8 +19,8 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createRequire } from 'node:module';
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
+import { pdfToText } from '../../server/lib/pdf-text';
 import { warehouseRoutes } from '../../server/warehouse/api';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
@@ -31,8 +31,7 @@ import {
   NarrativeManagerBriefingModel,
 } from '../../src/contracts/briefing';
 
-const require = createRequire(import.meta.url);
-const pdfParse = require('pdf-parse') as (b: Buffer) => Promise<{ text: string }>;
+const pdfParse = pdfToText;
 
 /** Run `fn` with ANTHROPIC_API_KEY guaranteed unset, then restore it — so the no-key
  *  (null-narrative) branch is exercised deterministically and no real API call is ever made. */

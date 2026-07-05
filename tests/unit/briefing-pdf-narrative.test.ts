@@ -23,8 +23,8 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
+import { pdfToText } from '../../server/lib/pdf-text';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { seedPropertyMaster } from '../../server/warehouse/property-master';
@@ -33,8 +33,7 @@ import { renderBriefingPdf } from '../../server/briefing/pdf';
 import { PropertyBriefingModel, ManagerBriefingModel } from '../../src/contracts/briefing';
 import type { NarrativeBlock } from '../../src/contracts/briefing';
 
-const require = createRequire(import.meta.url);
-const pdfParse = require('pdf-parse') as (b: Buffer) => Promise<{ text: string }>;
+const pdfParse = pdfToText;
 
 const GEN = '2026-06-21';
 const KRG_PROPS = [
