@@ -22,6 +22,9 @@ import {
   TrendingUp,
   Radar,
   Coins,
+  Lightbulb,
+  Receipt,
+  BrainCircuit,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -48,6 +51,9 @@ const CalibrationModule = lazy(() => import('@/modules/calibration/CalibrationMo
 const LeaseForecastModule = lazy(() => import('@/modules/leasing/LeaseForecastModule').then((m) => ({ default: m.LeaseForecastModule })));
 const CapitalModule = lazy(() => import('@/modules/capital/CapitalModule').then((m) => ({ default: m.CapitalModule })));
 const ProspectDemandModule = lazy(() => import('@/modules/intel/ProspectDemandModule').then((m) => ({ default: m.ProspectDemandModule })));
+const InsightsModule = lazy(() => import('@/modules/insights/InsightsModule').then((m) => ({ default: m.InsightsModule })));
+const TaxesModule = lazy(() => import('@/modules/taxes/TaxesModule').then((m) => ({ default: m.TaxesModule })));
+const CommandBrainModule = lazy(() => import('@/modules/command-brain/CommandBrainModule').then((m) => ({ default: m.CommandBrainModule })));
 
 export type ModuleGroup = 'Command' | 'Assets' | 'Capital' | 'Market';
 
@@ -68,6 +74,8 @@ export const MODULES: ModuleDef[] = [
   { id: 'alerts', label: 'Alerts', icon: Bell, group: 'Command', Component: AlertsModule },
   { id: 'calendar', label: 'Calendar', icon: CalendarDays, group: 'Command', Component: CalendarModule },
   { id: 'renewals', label: 'Renewals', icon: RefreshCw, group: 'Command', Component: RenewalsModule },
+  { id: 'insights', label: 'Insights', icon: Lightbulb, group: 'Command', Component: InsightsModule },
+  { id: 'command-brain', label: 'Command Brain', icon: BrainCircuit, group: 'Command', Component: CommandBrainModule },
   { id: 'portfolio', label: 'Portfolio', icon: Building2, group: 'Assets', Component: PortfolioModule },
   { id: 'intel', label: 'Property Financials', icon: Database, group: 'Assets', Component: IntelModule },
   { id: 'calibration', label: 'Calibration', icon: Gauge, group: 'Assets', Component: CalibrationModule },
@@ -80,6 +88,7 @@ export const MODULES: ModuleDef[] = [
   { id: 'cash', label: 'Cash', icon: Wallet, group: 'Capital', Component: CashModule },
   { id: 'close', label: 'Monthly Close', icon: Scale, group: 'Capital', Component: CloseModule },
   { id: 'insurance', label: 'Insurance', icon: ShieldCheck, group: 'Capital', Component: InsuranceModule },
+  { id: 'taxes', label: 'Taxes', icon: Receipt, group: 'Capital', Component: TaxesModule },
   { id: 'market', label: 'Market', icon: LineChart, group: 'Market', Component: MarketModule },
   { id: 'documents', label: 'Documents', icon: FileSearch, group: 'Market', Component: DocumentsModule },
   { id: 'health', label: 'System Health', icon: Activity, group: 'Market', Component: HealthModule },
