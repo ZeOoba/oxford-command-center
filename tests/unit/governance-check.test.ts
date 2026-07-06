@@ -16,6 +16,7 @@ import {
   checkRouteDuplication,
   checkAcqGovernorCoupling,
   checkGovernorLiteralCoupling,
+  checkStatusJson,
 } from '../../scripts/governance-check';
 
 const ARCH_FILES = [
@@ -319,5 +320,195 @@ describe('checkGovernorLiteralCoupling', () => {
     mockReadFileSync.mockReturnValueOnce('if (ltv <= 0.40) { /* violation */ }');
     const result = checkGovernorLiteralCoupling('/fake/root');
     expect(result.pass).toBe(false);
+  });
+});
+
+// Helper to serve a raw status.json body through the fs mocks
+function mockStatusJson(raw: string) {
+  mockExistsSync.mockReturnValue(true);
+  mockReadFileSync.mockReturnValue(raw);
+}
+
+function validEntry(overrides: Record<string, unknown> = {}) {
+  return {
+    agent_role: 'Analytics Agent',
+    phase: 'Phase X - test fixture',
+    status: 'merged',
+    blocked_by: null,
+    review_needed: false,
+    review_detail: null,
+    last_updated: '2026-06-22T10:00:00Z',
+    ...overrides,
+  };
+}
+
+describe('checkStatusJson', () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
+  it('passes on a valid file (top-level entries + nested worktrees + underscore/usage keys)', () => {
+    mockStatusJson(
+      JSON.stringify({
+        _comment: 'test',
+        _schema: { status: 'idle | in_progress | blocked | review_needed | merged' },
+        'phase-5-cap-alloc': validEntry(),
+        worktrees: { main: validEntry({ status: 'idle' }) },
+        usage: { how_to_update: 'edit your entry' },
+      }),
+    );
+    const result = checkStatusJson('/fake/root');
+    expect(result.pass).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('fails when the file is missing', () => {
+    mockExistsSync.mockReturnValue(false);
+    const result = checkStatusJson('/fake/root');
+    expect(result.pass).toBe(false);
+    expect(result.errors.some((e) => e.startsWith('MISSING'))).toBe(true);
+  });
+
+  it('fails with INVALID_JSON on a missing comma', () => {
+    // the exact defect class shipped in the ic-memo entry: value followed by a key, no comma
+    mockStatusJson('{\n  "a": {\n    "agent_role": "x"\n    "phase": "y"\n  }\n}');
+    const result = checkStatusJson('/fake/root');
+    expect(result.pass).toBe(false);
+    expect(result.errors.some((e) => e.startsWith('INVALID_JSON:'))).toBe(true);
+  });
+
+  it('fails with DUPLICATE_KEY naming the entry when a key appears twice', () => {
+    // two "status" keys inside one entry object - JSON.parse alone would silently keep the last
+    mockStatusJson(
+      '{\n' +
+        '  "ic-memo": {\n' +
+        '    "agent_role": "x",\n' +
+        '    "phase": "y",\n' +
+        '    "status": "in_progress",\n' +
+        '    "status": "merged",\n' +
+        '    "last_updated": "2026-06-22T10:00:00Z"\n' +
+        '  }\n' +
+        '}',
+    );
+    const result = checkStatusJson('/fake/root');
+    expect(result.pass).toBe(false);
+    expect(
+      result.errors.some((e) => e.startsWith('DUPLICATE_KEY:') && e.includes('"status"') && e.includes('"ic-memo"')),
+    ).toBe(true);
+  });
+
+  it('duplicate-key scanner is not confused by strings containing braces and colons', () => {
+    mockStatusJson(
+      JSON.stringify({
+        entry: validEntry({
+          review_detail: 'weird: { "status": "fake" } } { and a \\" quote and more: {{',
+        }),
+      }),
+    );
+    const result = checkStatusJson('/fake/root');
+    expect(result.pass).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('fails on a status value outside the enum (e.g. "complete")', () => {
+    mockStatusJson(JSON.stringify({ m6: validEntry({ status: 'complete' }) }));
+    const result = checkStatusJson('/fake/root');
+    expect(result.pass).toBe(false);
+    expect(
+      result.errors.some((e) => e.startsWith('STATUS_SCHEMA:') && e.includes('"complete"') && e.includes('"m6"')),
+    ).toBe(true);
+  });
+
+  it('fails on a non-boolean review_needed', () => {
+    mockStatusJson(JSON.stringify({ e1: validEntry({ review_needed: 'yes' }) }));
+    const result = checkStatusJson('/fake/root');
+    expect(result.pass).toBe(false);
+    expect(result.errors.some((e) => e.includes('review_needed') && e.includes('not boolean'))).toBe(true);
+  });
+
+  it('fails on a non-ISO-8601 last_updated', () => {
+    mockStatusJson(JSON.stringify({ e1: validEntry({ last_updated: 'June 22nd, 2026' }) }));
+    const result = checkStatusJson('/fake/root');
+    expect(result.pass).toBe(false);
+    expect(result.errors.some((e) => e.includes('last_updated') && e.includes('not ISO-8601'))).toBe(true);
+  });
+
+  it('fails when required keys are missing', () => {
+    mockStatusJson(JSON.stringify({ e1: { status: 'idle', last_updated: '2026-06-22T10:00:00Z' } }));
+    const result = checkStatusJson('/fake/root');
+    expect(result.pass).toBe(false);
+    expect(result.errors.some((e) => e.includes('missing required keys') && e.includes('agent_role'))).toBe(true);
+  });
+
+  it('warns (non-blocking) on a stale in_progress entry older than 14 days', () => {
+    const old = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString().replace(/\.\d+Z$/, 'Z');
+    mockStatusJson(JSON.stringify({ stale: validEntry({ status: 'in_progress', last_updated: old }) }));
+    const result = checkStatusJson('/fake/root');
+    expect(result.pass).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.warnings.some((w) => w.startsWith('STALE_STATUS:') && w.includes('"stale"'))).toBe(true);
+  });
+
+  it('does NOT warn on a fresh in_progress entry', () => {
+    const recent = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().replace(/\.\d+Z$/, 'Z');
+    mockStatusJson(JSON.stringify({ fresh: validEntry({ status: 'in_progress', last_updated: recent }) }));
+    const result = checkStatusJson('/fake/root');
+    expect(result.pass).toBe(true);
+    expect(result.warnings).toHaveLength(0);
+  });
+
+  it('warns on a stale review_needed=true entry even when status is not in_progress', () => {
+    const old = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().replace(/\.\d+Z$/, 'Z');
+    mockStatusJson(
+      JSON.stringify({ waiting: validEntry({ status: 'blocked', review_needed: true, last_updated: old }) }),
+    );
+    const result = checkStatusJson('/fake/root');
+    expect(result.pass).toBe(true);
+    expect(result.warnings.some((w) => w.startsWith('STALE_STATUS:') && w.includes('"waiting"'))).toBe(true);
+  });
+
+  it('validates entries nested under the legacy worktrees wrapper', () => {
+    mockStatusJson(
+      JSON.stringify({
+        worktrees: { 'bad-child': validEntry({ status: 'done' }) },
+      }),
+    );
+    const result = checkStatusJson('/fake/root');
+    expect(result.pass).toBe(false);
+    expect(
+      result.errors.some((e) => e.startsWith('STATUS_SCHEMA:') && e.includes('"bad-child"') && e.includes('"done"')),
+    ).toBe(true);
+  });
+
+  it('skips underscore-prefixed keys and the usage key (no schema errors for them)', () => {
+    mockStatusJson(
+      JSON.stringify({
+        _comment: 'no status here',
+        _schema: { anything: 'goes' },
+        usage: { how_to_read: 'not an entry' },
+      }),
+    );
+    const result = checkStatusJson('/fake/root');
+    expect(result.pass).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  it('detects duplicate keys nested inside the worktrees wrapper', () => {
+    mockStatusJson(
+      '{\n' +
+        '  "worktrees": {\n' +
+        '    "child": {\n' +
+        '      "agent_role": "x",\n' +
+        '      "phase": "a",\n' +
+        '      "phase": "b",\n' +
+        '      "status": "idle",\n' +
+        '      "last_updated": "2026-06-22T10:00:00Z"\n' +
+        '    }\n' +
+        '  }\n' +
+        '}',
+    );
+    const result = checkStatusJson('/fake/root');
+    expect(result.pass).toBe(false);
+    expect(result.errors.some((e) => e.startsWith('DUPLICATE_KEY:') && e.includes('"phase"') && e.includes('"child"'))).toBe(true);
   });
 });
