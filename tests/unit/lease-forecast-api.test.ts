@@ -1,0 +1,302 @@
+// @vitest-environment node
+//
+// tests/unit/lease-forecast-api.test.ts
+//
+// server/warehouse/lease-forecast-api.ts sub-router tests -- previously 0% coverage despite
+// 4 routes with real aggregation logic (expiry-bucket totals, rent-forecast scenarios,
+// narrative anonymization). Error policy mirrors debt-api.ts (see debt-api.test.ts).
+//
+// server/brain.ts is mocked wholesale (real fs/chokidar side effects at module scope), matching
+// the pattern in insights-api.test.ts / tax-analysis.test.ts -- this exercises the exact same
+// dynamic `await import('../brain')` acquisition pattern the route uses in production.
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { leaseForecastApi } from '../../server/warehouse/lease-forecast-api';
+import { openWarehouse } from '../../server/warehouse/db';
+import type { WarehouseDb } from '../../server/warehouse/db';
+import { LeaseForecastResponse, RentForecastResponse, LeaseNarrativeResponse } from '@contracts/lease-forecast';
+import type { PortfolioSnapshot, Property, Lease } from '@contracts/index';
+
+vi.mock('../../server/brain', () => ({
+  brain: { getSnapshot: vi.fn() },
+}));
+import { brain } from '../../server/brain';
+
+vi.mock('../../server/ai/narrative', () => ({
+  composeLeaseNarrative: vi.fn(),
+}));
+import { composeLeaseNarrative } from '../../server/ai/narrative';
+const mockComposeLeaseNarrative = vi.mocked(composeLeaseNarrative);
+const mockGetSnapshot = vi.mocked(brain.getSnapshot);
+
+// ── Fixtures ──────────────────────────────────────────────────────────────────────────────
+
+const ASOF = '2026-06-21';
+
+function snap(over: Partial<PortfolioSnapshot> = {}): PortfolioSnapshot {
+  const base = {
+    meta: { schemaVersion: '1.0.0', asOf: ASOF, generatedAt: '2026-06-21T00:00:00.000Z', source: 't', scenario: 'Base' },
+    assumptions: {
+      activeScenario: 'Base', revenueFactor: 1, vacancyFactor: 1, exitCapFactor: 1,
+      thresholds: { balloonAlertMonths: 18, concentrationYellow: 0.25, concentrationRed: 0.5 }, asOf: ASOF,
+    },
+    properties: [] as Property[], leases: [] as Lease[], loans: [], deals: [], insurance: [], tasks: [], counterparties: [],
+    renewalStages: {} as Record<string, string>, tenantNotes: {}, dealComps: {}, noiBudgets: {}, quickbooks: null, dataQuality: [],
+    tenantArrears: {},
+    marketRents: {} as Record<string, number>,
+    acquisitionInputs: {},
+    cash: { asOf: ASOF, totalCash: 0, activeEntities: 0, largestEntity: null, concentrationTopPct: null, cagr: null, entities: [], history: [] },
+  };
+  return { ...base, ...over } as unknown as PortfolioSnapshot;
+}
+
+function mkLease(o: Partial<Lease> & { id: string }): Lease {
+  return {
+    propertyKey: 'Fixture Property One',
+    propertyId: 'fixture-property-one',
+    tenantName: 'Fixture Tenant',
+    unit: null,
+    company: 'Fixture Co',
+    sf: 10000,
+    monthlyRent: 1000,
+    rentPerSf: 1.2,
+    leaseStart: '2022-06-21',
+    leaseEnd: '2027-06-21',
+    escalationDate: null,
+    escalationPct: null,
+    status: 'Active',
+    annualRent: 12000,
+    monthsToExpiry: 12,
+    flags: [],
+    ...o,
+  };
+}
+
+function freshDb(): WarehouseDb {
+  const dir = mkdtempSync(join(tmpdir(), 'lease-forecast-api-test-'));
+  return openWarehouse(join(dir, 'test.sqlite'));
+}
+
+function makeApp(db: WarehouseDb) {
+  return leaseForecastApi(() => db);
+}
+
+function makeAppUnavailableDb() {
+  return leaseForecastApi(() => {
+    throw new Error('warehouse unavailable in test');
+  });
+}
+
+afterEach(() => {
+  vi.clearAllMocks();
+  delete process.env.ANTHROPIC_API_KEY;
+});
+
+// ── GET /forecast ─────────────────────────────────────────────────────────────────────────
+
+describe('GET /forecast', () => {
+  it('503s when the warehouse is unavailable', async () => {
+    const app = makeAppUnavailableDb();
+    const res = await app.request('/forecast');
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'warehouse unavailable' });
+  });
+
+  it('503s when there is no parsed snapshot yet', async () => {
+    mockGetSnapshot.mockReturnValue(null);
+    const app = makeApp(freshDb());
+    const res = await app.request('/forecast');
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'snapshot unavailable' });
+  });
+
+  it('200s with signals/velocity/marketGaps/bucketTotals validating the response contract', async () => {
+    mockGetSnapshot.mockReturnValue(
+      snap({ leases: [mkLease({ id: 'l1' }), mkLease({ id: 'l2', leaseEnd: null, monthsToExpiry: null, status: 'Expired' })] }),
+    );
+    const app = makeApp(freshDb());
+    const res = await app.request('/forecast');
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const parsed = LeaseForecastResponse.safeParse(body);
+    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.signals).toHaveLength(2);
+      // Every declared bucket is present even when its count is zero.
+      const buckets = parsed.data.bucketTotals.map((b) => b.bucket);
+      expect(buckets).toEqual(['0-6m', '6-12m', '12-24m', '24m+', 'expired', 'unknown']);
+      const total = parsed.data.bucketTotals.reduce((s, b) => s + b.count, 0);
+      expect(total).toBe(2);
+    }
+  });
+
+  it('500s and reports a stable error shape when an unexpected error is thrown', async () => {
+    mockGetSnapshot.mockImplementation(() => {
+      throw new Error('boom');
+    });
+    const app = makeApp(freshDb());
+    const res = await app.request('/forecast');
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: 'lease forecast failed' });
+  });
+});
+
+// ── GET /velocity ─────────────────────────────────────────────────────────────────────────
+
+describe('GET /velocity', () => {
+  it('503s when the warehouse is unavailable', async () => {
+    const app = makeAppUnavailableDb();
+    const res = await app.request('/velocity');
+    expect(res.status).toBe(503);
+  });
+
+  it('tolerates a null snapshot (unlike /forecast) and returns an empty velocity array', async () => {
+    mockGetSnapshot.mockReturnValue(null);
+    const app = makeApp(freshDb());
+    const res = await app.request('/velocity');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ velocity: [] });
+  });
+
+  it('200s with a velocity entry per property, reading real lease_events rows', async () => {
+    const db = freshDb();
+    db.prepare(
+      `INSERT INTO lease_events (property_id, suite, event_kind, event_date) VALUES (?, ?, ?, ?)`,
+    ).run('fixture-property-one', 'Suite A', 'vacate', '2026-01-01');
+    db.prepare(
+      `INSERT INTO lease_events (property_id, suite, event_kind, event_date) VALUES (?, ?, ?, ?)`,
+    ).run('fixture-property-one', 'Suite A', 'commence', '2026-02-01');
+    mockGetSnapshot.mockReturnValue(
+      snap({ properties: [{ id: 'fixture-property-one', name: 'Fixture Property One' } as Property] }),
+    );
+    const app = makeApp(db);
+    const res = await app.request('/velocity');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { velocity: unknown[] };
+    expect(body.velocity).toHaveLength(1);
+  });
+});
+
+// ── POST /rent-forecast ───────────────────────────────────────────────────────────────────
+
+describe('POST /rent-forecast', () => {
+  it('503s when there is no parsed snapshot yet', async () => {
+    mockGetSnapshot.mockReturnValue(null);
+    const app = makeApp(freshDb());
+    const res = await app.request('/rent-forecast', { method: 'POST' });
+    expect(res.status).toBe(503);
+  });
+
+  it('defaults to all three scenarios when the body omits `scenarios`', async () => {
+    mockGetSnapshot.mockReturnValue(snap({ leases: [mkLease({ id: 'l1' })] }));
+    const app = makeApp(freshDb());
+    const res = await app.request('/rent-forecast', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(200);
+    const parsed = RentForecastResponse.safeParse(await res.json());
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.results.map((r) => r.scenario).sort()).toEqual(
+        ['renew_at_current', 'renew_at_market', 'vacancy_haircut'].sort(),
+      );
+    }
+  });
+
+  it('tolerates an unparseable JSON body by falling back to defaults (not a 400)', async () => {
+    mockGetSnapshot.mockReturnValue(snap({ leases: [mkLease({ id: 'l1' })] }));
+    const app = makeApp(freshDb());
+    const res = await app.request('/rent-forecast', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: 'not valid json {{{',
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('400s on an invalid scenario name (Zod parse failure), short-circuiting the request', async () => {
+    mockGetSnapshot.mockReturnValue(snap({ leases: [mkLease({ id: 'l1' })] }));
+    const app = makeApp(freshDb());
+    const res = await app.request('/rent-forecast', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ scenarios: ['not_a_real_scenario'] }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toMatch(/Invalid input/);
+  });
+
+  it('honors an explicit single-scenario request', async () => {
+    mockGetSnapshot.mockReturnValue(snap({ leases: [mkLease({ id: 'l1' })] }));
+    const app = makeApp(freshDb());
+    const res = await app.request('/rent-forecast', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ scenarios: ['renew_at_current'], horizonMonths: 24 }),
+    });
+    expect(res.status).toBe(200);
+    const parsed = RentForecastResponse.safeParse(await res.json());
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.results).toHaveLength(1);
+      expect(parsed.data.results[0]!.scenario).toBe('renew_at_current');
+      expect(parsed.data.results[0]!.horizonMonths).toBe(24);
+    }
+  });
+});
+
+// ── GET /narrative ────────────────────────────────────────────────────────────────────────
+
+describe('GET /narrative', () => {
+  it('503s when there is no parsed snapshot yet', async () => {
+    mockGetSnapshot.mockReturnValue(null);
+    const app = makeApp(freshDb());
+    const res = await app.request('/narrative');
+    expect(res.status).toBe(503);
+  });
+
+  it('200s with degraded:true and no narrative when ANTHROPIC_API_KEY is unset (no live AI call)', async () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    mockComposeLeaseNarrative.mockResolvedValue({ narrative: null, degraded: true });
+    mockGetSnapshot.mockReturnValue(snap({ leases: [mkLease({ id: 'l1' })] }));
+    const app = makeApp(freshDb());
+    const res = await app.request('/narrative');
+    expect(res.status).toBe(200);
+    const parsed = LeaseNarrativeResponse.safeParse(await res.json());
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.degraded).toBe(true);
+      expect(parsed.data.narrative).toBeNull();
+    }
+  });
+
+  it('anonymizes propertyKey to ordinal gap-N labels in the payload sent to the AI composer (invariant 7)', async () => {
+    // Inspects the ACTUAL object passed to composeLeaseNarrative -- not just the route's own
+    // response body -- since a response-body-only check cannot distinguish "anonymized before
+    // send" from "never sent at all" (both look identical from the outside when degraded).
+    process.env.ANTHROPIC_API_KEY = 'fixture-key-not-real';
+    mockComposeLeaseNarrative.mockResolvedValue({ narrative: null, degraded: true });
+    mockGetSnapshot.mockReturnValue(
+      snap({
+        leases: [mkLease({ id: 'l1', propertyKey: 'Real Sounding Property Name', rentPerSf: 10 })],
+        marketRents: { 'Real Sounding Property Name': 15 },
+      }),
+    );
+    const app = makeApp(freshDb());
+    const res = await app.request('/narrative');
+    expect(res.status).toBe(200);
+
+    expect(mockComposeLeaseNarrative).toHaveBeenCalledTimes(1);
+    const sentInput = mockComposeLeaseNarrative.mock.calls[0]![0] as { topGaps: { propertyKey: string }[] };
+    expect(sentInput.topGaps.length).toBeGreaterThan(0);
+    for (const gap of sentInput.topGaps) {
+      expect(gap.propertyKey).toMatch(/^gap-\d+$/);
+    }
+    expect(JSON.stringify(sentInput)).not.toContain('Real Sounding Property Name');
+  });
+});

@@ -8,9 +8,10 @@
 //
 // Lowercase substring match on each active deal's `always` terms, plus the `context` terms gated by a
 // `context_requires_any` anchor — identical semantics to the Python guard. The terms come from the live
-// confidential-terms.json when readable; when it is absent (a clean CI box without the brain hooks) the
-// scan still runs against a small built-in seed of the known active-deal identifiers so the guard never
-// silently no-ops. NEVER echo a matched term back out (don't widen the leak) — report only the deal label.
+// confidential-terms.json; this is a confidentiality gate, so it FAILS CLOSED (throws) if that file is
+// absent, unreadable, or empty. The only way to run with reduced (placeholder-only) coverage is the
+// explicit CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1 opt-out — never an automatic/silent fallback (see
+// loadTerms() below). NEVER echo a matched term back out (don't widen the leak) — report only the label.
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -23,11 +24,11 @@ interface DealTerms {
   context_requires_any?: string[];
 }
 
-/** Built-in fallback so the scan is never a no-op on a box WITHOUT the live hooks file (CI). It carries
- *  NO real deal identifier — those live ONLY in confidential-terms.json (gitignored, off-machine) and
- *  must never land in a git-tracked file (the pre-push hook scans history for them). In production the
- *  live file is always present and supersedes this; this placeholder only proves the scanner is wired.
- *  The structural placeholder term is impossible to collide with real ownership-financial text. */
+/** Used ONLY when an operator has explicitly set CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1 to
+ *  knowingly accept reduced-coverage scanning on a box without the live hooks file. It carries NO
+ *  real deal identifier — those live ONLY in confidential-terms.json (gitignored, off-machine) and
+ *  must never land in a git-tracked file (the pre-push hook scans history for them). The structural
+ *  placeholder term is impossible to collide with real ownership-financial text. */
 const FALLBACK_TERMS: Record<string, DealTerms> = {
   placeholder: {
     label: 'Confidential Deal',
@@ -51,13 +52,28 @@ function termsPath(): string {
 }
 
 /**
- * Loads active confidential deal terms, preferring the live file and falling back to built-in defaults.
+ * Loads active confidential deal terms from the live file.
+ *
+ * This is a confidentiality gate, not a productivity gate: it fails CLOSED. If
+ * `confidential-terms.json` is absent or unreadable, this throws by default — it does NOT
+ * silently degrade to scanning only the built-in placeholder, because that would let real
+ * deal identifiers sail through undetected with no operator-visible signal beyond an easily
+ * missed stderr line (see the 2026-07-06 audit finding this fixes).
+ *
+ * The ONLY way to run with reduced (placeholder-only) coverage is to explicitly set
+ * `CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1` — a deliberate, logged acknowledgment, never an
+ * automatic fallback. Do NOT key this off `NODE_ENV==='test'`: that is an automatic signal
+ * vitest sets by default, not a human decision, and is exactly the condition that let this
+ * guard silently no-op in CI for weeks. Tests get real matching coverage via a git-tracked
+ * synthetic fixture wired through `CONFIDENTIAL_TERMS_PATH` in tests/setup.ts instead.
  *
  * @returns A record mapping deal identifiers to their term configurations.
+ * @throws If the file is absent/unreadable/empty and CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER is not set.
  */
 function loadTerms(): Record<string, DealTerms> {
+  const path = termsPath();
   try {
-    const raw = JSON.parse(readFileSync(termsPath(), 'utf8')) as Record<string, unknown>;
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
     const out: Record<string, DealTerms> = {};
     for (const [key, val] of Object.entries(raw)) {
       if (key.startsWith('_') || typeof val !== 'object' || val === null) continue;
@@ -65,17 +81,26 @@ function loadTerms(): Record<string, DealTerms> {
     }
     if (Object.keys(out).length > 0) return out;
   } catch {
-    // unreadable → fall through to the built-in seed
+    // unreadable/invalid → fall through to the closed-by-default handling below
   }
-  // Warn loudly so operators know the guard is scanning the built-in placeholder only.
-  // Suppressed in unit tests to avoid noise.
-  if (process.env['NODE_ENV'] !== 'test') {
+  if (process.env['CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER'] === '1') {
+    // Deliberate, explicit opt-in to reduced coverage -- always warn, regardless of NODE_ENV,
+    // since choosing this mode should never be silent.
     process.stderr.write(
-      '[briefing] WARNING: confidential-terms.json absent or unreadable — ' +
-        'confidentiality guard scanning built-in placeholder only; real deal identifiers will NOT be caught.\n',
+      '[briefing] WARNING: confidential-terms.json absent or unreadable at ' +
+        path +
+        ' -- CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1 set, so the confidentiality guard is scanning ' +
+        'the built-in placeholder ONLY; real deal identifiers will NOT be caught.\n',
     );
+    return FALLBACK_TERMS;
   }
-  return FALLBACK_TERMS;
+  throw new Error(
+    `confidential-terms.json is absent, unreadable, or empty at ${path} -- refusing to render ` +
+      'with a disabled confidentiality guard. Fix: provide a readable terms file at that path ' +
+      '(or set CONFIDENTIAL_TERMS_PATH to point at one), or, ONLY for a deliberately reduced-' +
+      'coverage dev box, set CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1 to acknowledge and proceed ' +
+      'with placeholder-only scanning.',
+  );
 }
 
 /**

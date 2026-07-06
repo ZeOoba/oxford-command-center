@@ -1,0 +1,10 @@
+{
+  "_comment": "SYNTHETIC test fixture only -- no real deal data. Wired via CONFIDENTIAL_TERMS_PATH in tests/setup.ts so the whole suite exercises the REAL matching logic in server/briefing/confidential.ts instead of the single-string FALLBACK_TERMS placebo. The trigger strings below are deliberately distinctive nonsense so they can never collide with any other test's fixture data (property/tenant/company names elsewhere in the suite).",
+  "zzz-synthetic-fixture-deal": {
+    "label": "Synthetic Fixture Deal (test-only)",
+    "active": true,
+    "always": ["zzz-confidential-trigger-9f3a1c"],
+    "context": ["zzz-confidential-context-term-2b7e"],
+    "context_requires_any": ["zzz-confidential-anchor-4d1f"]
+  }
+}
