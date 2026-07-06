@@ -103,7 +103,7 @@ clean on all touched files, `governance-check` passed, `vite build` clean. Commi
 (one per lane) with `Refute-Skip` trailers — all Phase 7 work is presentation/docs-only over already-computed,
 already-refuted data; no new financial computation.
 
-IMPLEMENTATION_PLAN.md has no phases beyond 7. This closes the plan pending Gabriel's merge review.
+IMPLEMENTATION_PLAN.md has no phases beyond 7. PR #169 merged to `main` 2026-07-06, closing the plan. All of IMPLEMENTATION_PLAN.md (P0–P7) is now shipped; Phase 6+/next-initiative scoping is open pending Gabriel's direction.
 
 ## Failure-proofing
 - Sentinel re-touched before each architect-gated wave; every architect edit is in the status.json declaration and lands in ONE reviewable PR.
