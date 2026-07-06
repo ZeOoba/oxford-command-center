@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en" data-screen-label="Investor Profile">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORA — Investor</title>
+<script>try{var t=localStorage.getItem('ora-theme')||'dark';document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('ora-density')==='compact')document.documentElement.setAttribute('data-density','compact');}catch(e){}</script>
+<link rel="stylesheet" href="ora.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" data-active="acquisitions"></nav>
+
+  <div class="main">
+    <header class="top">
+      <div class="ttl"><span class="up">Oxford RA · Capital</span><span class="pg" id="topName">Investor</span></div>
+      <div class="bar"></div>
+      <div class="clock" id="topMeta">—</div>
+      <div class="grow"></div>
+      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>jump to…<span class="k">⌘K</span></div>
+      <div class="stat"><span class="d"></span>LIVE · 2m</div>
+      <button class="ibtn" id="themeBtn" title="Toggle theme"></button>
+      <button class="ibtn" id="densityBtn" title="Toggle density"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      <button class="ibtn" title="Alerts"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 004 0"/></svg><span class="dot"></span></button>
+    </header>
+
+    <div class="content">
+      <a class="backlink" href="DealRoom.html?id=eastgate-portfolio"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>Eastgate 3-Building Deal Room</a>
+
+      <div class="hero">
+        <div class="photo" style="width:200px">
+          <div class="ph-ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a6 6 0 016-6h4a6 6 0 016 6v2"/></svg></div>
+          <div class="ph-tag" id="heroTag">—</div>
+        </div>
+        <div class="meta">
+          <div class="eyebrow" id="heroEyebrow">—</div>
+          <h1 id="heroName">—</h1>
+          <div class="loc" id="heroLoc">—</div>
+          <div class="statgrid">
+            <div class="sg"><div class="l">Committed</div><div class="v" id="sgCommit">—</div></div>
+            <div class="sg"><div class="l">Contributed</div><div class="v" id="sgContrib">—</div></div>
+            <div class="sg"><div class="l">Distributed</div><div class="v" id="sgDist">—</div></div>
+            <div class="sg"><div class="l">Net IRR</div><div class="v" id="sgIrr">—</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-21">
+        <div class="colstack">
+          <div class="panel">
+            <div class="ph"><div><h3>CAPITAL ACCOUNT</h3><div class="sub">across all funds · as of May 31</div></div><div class="grow"></div><span class="chip" id="capChip">—</span></div>
+            <table class="fin">
+              <thead><tr><th>Activity</th><th>Amount</th><th>Cumulative</th></tr></thead>
+              <tbody id="capBody"></tbody>
+            </table>
+          </div>
+
+          <div class="panel">
+            <div class="ph"><div><h3>DISTRIBUTION HISTORY</h3><div class="sub">quarterly · last 8</div></div><div class="grow"></div><span class="chip" id="distChip">—</span></div>
+            <div class="bars" id="distBars" style="height:180px"></div>
+            <div class="axis" style="padding:0 16px 12px"><span id="distAvg">—</span><span>▲ growing</span></div>
+          </div>
+        </div>
+
+        <div class="colstack">
+          <div class="panel">
+            <div class="ph"><div><h3>HOLDINGS BY FUND</h3><div class="sub" id="holdSub">—</div></div></div>
+            <div id="holdBody"></div>
+          </div>
+
+          <div class="panel" id="callPanel">
+            <div class="ph"><div><h3>OPEN CAPITAL CALL</h3><div class="sub" id="callSub">—</div></div><div class="grow"></div><span class="chip" id="callChip" style="color:var(--amber);border-color:var(--amber-bd)">—</span></div>
+            <div class="metric"><div class="mlbl">Amount Due</div><div class="mv" id="callAmt">—</div><div class="dl" id="callDesc" style="font-size:11px;color:var(--ink-2)">—</div></div>
+            <div style="padding:0 16px 14px;display:flex;gap:8px"><span class="btn pri">Send reminder</span><span class="btn">Mark funded</span></div>
+          </div>
+
+          <div class="panel">
+            <div class="ph"><div><h3>DOCUMENTS</h3><div class="sub">tax &amp; legal</div></div></div>
+            <div class="lrow"><div style="flex:1"><div class="nm-s">2025 Schedule K-1</div><div class="mt-s">PDF · ISSUED MAR 14</div></div><span class="linkish">Open</span></div>
+            <div class="lrow"><div style="flex:1"><div class="nm-s">Fund III subscription agreement</div><div class="mt-s">PDF · 2022</div></div><span class="linkish">Open</span></div>
+            <div class="lrow"><div style="flex:1"><div class="nm-s">Q1 2026 investor report</div><div class="mt-s">PDF · APR 30</div></div><span class="linkish">Open</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="ora.js"></script>
+<script src="data.js"></script>
+<script>
+(function () {
+  function money(n){return '$'+Math.round(n*1e6).toLocaleString();}
+  document.addEventListener('DOMContentLoaded', function () {
+    var v = ORA.find(ORA.INVESTORS, ORA.qs('id'));
+    document.getElementById('topName').textContent = v.name;
+    document.getElementById('topMeta').textContent = (v.type==='General Partner'?'GP':'LP') + ' · INVESTOR SINCE ' + v.since;
+    document.getElementById('heroTag').textContent = v.initials + ' · ' + v.name.toUpperCase();
+    document.getElementById('heroEyebrow').textContent = v.type + ' · since ' + v.since + ' · contact: ' + v.contact;
+    document.getElementById('heroName').textContent = v.name;
+    document.getElementById('heroLoc').textContent = v.type + ' · ' + v.holdings.length + ' active funds · accredited · wire on file';
+    document.getElementById('sgCommit').textContent = ORA.fmtM(v.committed);
+    document.getElementById('sgContrib').textContent = ORA.fmtM(v.contributed);
+    document.getElementById('sgDist').textContent = ORA.fmtM(v.distributed);
+    document.getElementById('sgIrr').textContent = v.irr.toFixed(1) + '%';
+
+    document.getElementById('capChip').textContent = 'DPI ' + v.dpi.toFixed(2) + 'x · TVPI ' + v.tvpi.toFixed(2) + 'x';
+    var roc = +(v.distributed*0.54).toFixed(2), profit = +(v.distributed-roc).toFixed(2), unreal = +(v.nav - (v.contributed - v.distributed)).toFixed(2);
+    document.getElementById('capBody').innerHTML =
+      '<tr class="ind"><td>Total commitment</td><td class="num">'+money(v.committed)+'</td><td class="num muted">—</td></tr>'+
+      '<tr class="ind"><td>Capital contributed</td><td class="num">'+money(v.contributed)+'</td><td class="num">'+money(v.contributed)+'</td></tr>'+
+      '<tr class="ind"><td>Distributions — return of capital</td><td class="num neg">('+money(roc)+')</td><td class="num">'+money(v.contributed-roc)+'</td></tr>'+
+      '<tr class="ind"><td>Distributions — profit</td><td class="num neg">('+money(profit)+')</td><td class="num">—</td></tr>'+
+      '<tr class="ind"><td>Unrealized gain</td><td class="num pos">'+money(unreal)+'</td><td class="num">—</td></tr>'+
+      '<tr class="grand"><td>Net Asset Value</td><td class="num">'+money(v.nav)+'</td><td class="num">—</td></tr>';
+
+    // distributions — 8 quarters scaling to total
+    var heights=[60,72,68,90,84,104,96,118], labels=['Q3\'24','Q4','Q1\'25','Q2','Q3','Q4','Q1\'26','Q2'];
+    document.getElementById('distBars').innerHTML = heights.map(function(h,i){
+      return '<div class="bcol"><div class="bk" style="height:'+Math.round(h*(v.distributed/3.9))+'px"><i style="height:100%;background:var(--accent)"></i></div><div class="bl">'+labels[i]+'</div></div>';
+    }).join('');
+    document.getElementById('distChip').textContent = ORA.fmtM(v.distributed)+' TOTAL';
+    document.getElementById('distAvg').textContent = '$'+(v.distributed/8).toFixed(2)+'M / qtr avg';
+
+    // holdings
+    document.getElementById('holdSub').textContent = v.holdings.length + ' active';
+    document.getElementById('holdBody').innerHTML = v.holdings.map(function(h){
+      return '<a class="lrow click" href="DealRoom.html?id=maple-street"><div style="flex:1"><div class="nm-s">'+h[0]+'</div><div class="mt-s">'+h[1].toUpperCase()+'</div></div><div class="amt">'+ORA.fmtM(h[2])+'</div></a>';
+    }).join('');
+
+    // capital call
+    if (v.openCall) {
+      document.getElementById('callSub').textContent = v.openCall.fund;
+      document.getElementById('callChip').textContent = 'DUE ' + v.openCall.due.toUpperCase();
+      document.getElementById('callAmt').innerHTML = ORA.fmtMsmall(v.openCall.amount);
+      document.getElementById('callDesc').textContent = v.openCall.pct + '% of commitment · wire instructions sent';
+    } else {
+      document.getElementById('callPanel').style.display = 'none';
+    }
+  });
+})();
+</script>
+</body>
+</html>

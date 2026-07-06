@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en" data-screen-label="Studio">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORA — Analytics Studio</title>
+<script>try{var t=localStorage.getItem('ora-theme')||'dark';document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('ora-density')==='compact')document.documentElement.setAttribute('data-density','compact');}catch(e){}</script>
+<link rel="stylesheet" href="ora.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" data-active="studio"></nav>
+
+  <div class="main">
+    <header class="top">
+      <div class="ttl"><span class="up">Oxford RA · Command</span><span class="pg">Analytics Studio</span></div>
+      <div class="bar"></div>
+      <div class="clock" data-metric-txt="assets">{} ASSETS · LIVE MODEL</div>
+      <div class="grow"></div>
+      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>ask the data<span class="k">⌘K</span></div>
+      <div class="stat"><span class="d"></span>LIVE · 2m</div>
+      <button class="ibtn" id="themeBtn" title="Toggle theme"></button>
+      <button class="ibtn" id="densityBtn" title="Toggle density"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      <button class="ibtn" title="Alerts"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 004 0"/></svg><span class="dot"></span></button>
+    </header>
+
+    <div class="content">
+      <div class="pagehd">
+        <div><h1>Analytics Studio</h1><div class="sub">click any bar, slice or point to cross-filter every chart · click again to clear</div></div>
+        <div class="grow"></div>
+        <div class="seg"><span>NOI</span><span class="on">AUM</span><span>Cap Rate</span></div>
+        <span class="linkish" style="margin-left:10px">⤓ Export view</span>
+      </div>
+
+      <!-- cross-filter status bar -->
+      <div class="xfbar">
+        <span class="xfl">Filters</span>
+        <div id="xfchips" style="display:flex;gap:8px;flex-wrap:wrap;flex:1"></div>
+        <span class="linkish" id="xfclear" style="display:none">Clear all ✕</span>
+      </div>
+
+      <!-- live KPI strip (recomputes on filter) -->
+      <div class="kpis" id="kpis" style="grid-template-columns:repeat(4,1fr)"></div>
+
+      <div class="grid-2a" style="margin-bottom:13px">
+        <div class="panel">
+          <div class="ph"><div><h3>AUM BY MARKET</h3><div class="sub" id="subRegion">5 markets</div></div><div class="grow"></div><span class="chip">CLICK TO FILTER</span></div>
+          <div class="bars" id="chRegion"></div>
+          <div class="axis" style="padding:0 16px 12px"><span>0</span><span>$ millions</span></div>
+        </div>
+        <div class="panel">
+          <div class="ph"><div><h3>AUM BY SUBTYPE</h3><div class="sub" id="subType">industrial vs flex</div></div><div class="grow"></div><span class="chip">CLICK TO FILTER</span></div>
+          <div class="hbars" id="chType"></div>
+        </div>
+      </div>
+
+      <div class="grid-21">
+        <div class="panel">
+          <div class="ph"><div><h3>CAP RATE vs. OCCUPANCY</h3><div class="sub">bubble size = asset value · click a property</div></div><div class="grow"></div><span class="chip" id="scCount">23 assets</span></div>
+          <div class="scatter" id="chScatter">
+            <span class="ax-y" style="top:-4px;left:6px">8.5%</span>
+            <span class="ax-y" style="bottom:-4px;left:6px">6.5%</span>
+            <span class="ax-x" style="bottom:-16px;left:0">80%</span>
+            <span class="ax-x" style="bottom:-16px;right:0">100% occ</span>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="ph"><div><h3>MARKET × SUBTYPE</h3><div class="sub">AUM intensity</div></div></div>
+          <div class="heat" id="chHeat"></div>
+          <div class="legend" style="border-top:1px solid var(--line-2)"><div class="lg"><span class="sw" style="background:var(--accent-soft)"></span>Low</div><div class="lg"><span class="sw" style="background:var(--accent)"></span>High</div></div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:13px">
+        <div class="ph"><div><h3>RECOMMENDED ACTIONS</h3><div class="sub" id="saSub">for the current selection · ranked by $ impact</div></div><div class="grow"></div><a class="more" href="Insights.html">ALL ▸</a><span class="chip ai" style="margin-left:8px">◇ ENGINE</span></div>
+        <div id="studioActions"></div>
+      </div>
+
+      <div class="panel" style="margin-top:13px">
+        <div class="ph"><div><h3>FILTERED ASSETS</h3><div class="sub" id="subTable">all 23 assets</div></div><div class="grow"></div><span class="linkish">⤓ Export</span></div>
+        <table class="tbl" id="chTable">
+          <thead><tr><th>Property</th><th>Region</th><th>Type</th><th class="r">Value</th><th class="r">Occ.</th><th class="r">Cap</th><th class="r">NOI / yr</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="ora.js"></script>
+<script src="data.js"></script>
+<script src="engine.js"></script>
+<script src="studio.js"></script>
+</body>
+</html>

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en" data-screen-label="Deal Room">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORA — Deal Room</title>
+<script>try{var t=localStorage.getItem('ora-theme')||'dark';document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('ora-density')==='compact')document.documentElement.setAttribute('data-density','compact');}catch(e){}</script>
+<link rel="stylesheet" href="ora.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" data-active="acquisitions"></nav>
+
+  <div class="main">
+    <header class="top">
+      <div class="ttl"><span class="up">Oxford RA · Acquisitions</span><span class="pg" id="topName">Deal Room</span></div>
+      <div class="bar"></div>
+      <div class="clock" id="topMeta">—</div>
+      <div class="grow"></div>
+      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>jump to…<span class="k">⌘K</span></div>
+      <div class="stat"><span class="d"></span>LIVE · 2m</div>
+      <button class="ibtn" id="themeBtn" title="Toggle theme"></button>
+      <button class="ibtn" id="densityBtn" title="Toggle density"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      <button class="ibtn" title="Alerts"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 004 0"/></svg><span class="dot"></span></button>
+    </header>
+
+    <div class="content">
+      <a class="backlink" href="Acquisitions.html"><svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>Acquisition Pipeline</a>
+
+      <div class="hero">
+        <div class="photo">
+          <div class="ph-ic"><svg viewBox="0 0 24 24"><path d="M3 21h18M5 21V8l7-5 7 5v13M9 21v-6h6v6"/></svg></div>
+          <div class="ph-tag" id="heroTag">—</div>
+        </div>
+        <div class="meta">
+          <div class="eyebrow" id="heroEyebrow">—</div>
+          <h1 id="heroName">—</h1>
+          <div class="loc" id="heroLoc">—</div>
+          <div class="statgrid">
+            <div class="sg"><div class="l">Purchase Price</div><div class="v" id="sgPrice">—</div></div>
+            <div class="sg"><div class="l">Going-in Cap</div><div class="v" id="sgCap">—</div></div>
+            <div class="sg"><div class="l">Levered IRR</div><div class="v" id="sgIrr">—</div></div>
+            <div class="sg"><div class="l">Equity Multiple</div><div class="v" id="sgEm">—</div></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid-21">
+        <div class="colstack">
+          <div class="panel">
+            <div class="ph"><div><h3>DEAL STAGE</h3><div class="sub" id="stageSub">—</div></div><div class="grow"></div><span class="chip" id="stageChip">—</span></div>
+            <div class="tl" id="timeline"></div>
+          </div>
+
+          <div class="panel">
+            <div class="ph"><div><h3>DUE DILIGENCE CHECKLIST</h3><div class="sub" id="ddSub">—</div></div><div class="grow"></div><span class="chip" id="ddChip" style="color:var(--green);border-color:var(--green-bd)">—</span></div>
+            <div style="padding:0 16px 8px"><div class="meter" style="margin-top:14px"><span id="ddMeter" style="width:0%"></span></div></div>
+            <div id="ddBody"></div>
+          </div>
+        </div>
+
+        <div class="colstack">
+          <div class="panel">
+            <div class="ph"><div><h3>UNDERWRITING</h3><div class="sub">base case · 5-yr hold</div></div></div>
+            <div id="uwBody"></div>
+          </div>
+
+          <div class="panel">
+            <div class="ph"><div><h3>EQUITY PARTNERS</h3><div class="sub" id="eqSub">—</div></div><div class="grow"></div><a class="more" href="Investor.html">VIEW ▸</a></div>
+            <div id="eqBody"></div>
+          </div>
+
+          <div class="panel">
+            <div class="ph"><div><h3>DOCUMENTS</h3><div class="sub">deal room</div></div></div>
+            <div id="docBody"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="ora.js"></script>
+<script src="data.js"></script>
+<script>
+(function () {
+  function seed(s){var h=0;for(var i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))>>>0;return function(){h=(h*1103515245+12345)>>>0;return h/4294967296;};}
+  document.addEventListener('DOMContentLoaded', function () {
+    var d = ORA.find(ORA.DEALS, ORA.qs('id'));
+    var rnd = seed(d.id), si = d.stageIdx;
+    document.getElementById('topName').textContent = d.name;
+    document.getElementById('topMeta').textContent = d.stage.toUpperCase() + (si===3?' · DAY 14 / 45':'');
+    document.getElementById('heroTag').textContent = (d.units?d.units+' UNITS · ':'') + d.region.toUpperCase();
+    document.getElementById('heroEyebrow').textContent = d.stage + ' · Score ' + d.score.toFixed(1) + ' / 10';
+    document.getElementById('heroName').textContent = d.name;
+    document.getElementById('heroLoc').textContent = d.region + ' · ' + d.type + (d.units?' · '+d.units+' units':'') + ' · seller: ' + d.seller;
+    document.getElementById('sgPrice').textContent = ORA.fmtM(d.price);
+    document.getElementById('sgCap').textContent = d.capIn.toFixed(1) + '%';
+    document.getElementById('sgIrr').textContent = d.irr.toFixed(1) + '%';
+    document.getElementById('sgEm').textContent = d.em.toFixed(1) + 'x';
+
+    // ---- stage timeline ----
+    var steps = [['Sourced & screened','APR 18 · J. Tran'],['LOI executed','MAY 02 · '+ORA.fmtM(d.price)+', 45-day DD'],['PSA signed','MAY 28 · Watford & Co.'],['Due diligence underway','DAY 14 / 45'],['Financing commitment','First Meridian · term sheet'],['Close','TARGET AUG 12']];
+    document.getElementById('timeline').innerHTML = steps.map(function(s,i){
+      var cls = i<si?'done':(i===si?'':'pending');
+      var last = i===steps.length-1;
+      return '<div class="ti '+cls+'"><div class="dotcol"><span class="dt"></span>'+(last?'':'<span class="ln"></span>')+'</div><div class="tx"><div class="h">'+s[0]+'</div><div class="m">'+s[1]+'</div></div></div>';
+    }).join('');
+    document.getElementById('stageSub').textContent = d.stage.toLowerCase() + ' · targeting close Aug 12';
+    document.getElementById('stageChip').textContent = (si>=4?'CLEAR TO CLOSE':'31 DAYS TO CLOSE');
+
+    // ---- DD checklist (progress scales with stage) ----
+    var items = [['Title & survey review','CLEAR · NO EXCEPTIONS'],['Rent roll audit','VERIFIED · '+(d.units||'—')+' UNITS'],['Property condition assessment','2 ROOFS FLAGGED'],['Environmental Phase I','DUE JUN 24'],['Lender appraisal','SCHEDULED JUN 20'],['Financing commitment','TERM SHEET OUT']];
+    var done = Math.min(items.length, Math.max(1, si*1 + 1));
+    document.getElementById('ddBody').innerHTML = items.map(function(it,i){
+      var ok = i<done;
+      return '<div class="lrow"><div class="tk" style="color:var(--'+(ok?'green':'amber')+');border-color:var(--'+(ok?'green':'amber')+'-bd)">'+(ok?'✓':'●')+'</div><div style="flex:1"><div class="nm-s">'+it[0]+'</div><div class="mt-s">'+(ok?'COMPLETE':it[1])+'</div></div>'+(ok?'':'<span class="badge b-loi">OPEN</span>')+'</div>';
+    }).join('');
+    var pct = Math.round(done/items.length*100);
+    document.getElementById('ddSub').textContent = done+' of '+items.length+' complete';
+    document.getElementById('ddChip').textContent = pct+'%';
+    document.getElementById('ddMeter').style.width = pct+'%';
+
+    // ---- underwriting ----
+    document.getElementById('uwBody').innerHTML =
+      uw('Total Project Cost', ORA.fmtM(d.totalCost), 'PRICE + CAPEX') +
+      uw('Equity Required', ORA.fmtM(d.equity), '38% · '+ORA.fmtM(d.debt)+' DEBT') +
+      uw('Stabilized NOI', '$'+(d.stabNOI).toFixed(2)+'M', 'YR 3', 'var(--green)') +
+      uw('Exit Cap / Value', d.exitCap.toFixed(1)+'% · '+ORA.fmtM(d.exitVal), 'YR 5') +
+      uw('Levered IRR', d.irr.toFixed(1)+'%', '', 'var(--accent)');
+    function uw(l,v,s,c){return '<div class="lrow"><div style="flex:1"><div class="nm-s">'+l+'</div>'+(s?'<div class="mt-s">'+s+'</div>':'')+'</div><div class="amt"'+(c?' style="color:'+c+'"':'')+'>'+v+'</div></div>';}
+
+    // ---- equity partners ----
+    var ld = ORA.INVESTORS[0], lp2 = ORA.INVESTORS[1], gp = ORA.INVESTORS[2];
+    var lpA = +(d.equity*0.45).toFixed(1), lpB = +(d.equity*0.32).toFixed(1), gpC = +(d.equity-lpA-lpB).toFixed(1);
+    document.getElementById('eqSub').textContent = ORA.fmtM(d.equity)+' raised of '+ORA.fmtM(d.equity);
+    document.getElementById('eqBody').innerHTML =
+      eq(ld.id, ld.initials, ld.name, 'LP · COMMITTED', lpA, 'var(--blue)') +
+      eq(lp2.id, lp2.initials, lp2.name, 'LP · COMMITTED', lpB, 'var(--violet)') +
+      eq(gp.id, gp.initials, gp.name, 'GP · 23%', gpC, 'var(--green)');
+    function eq(id,ini,nm,role,amt,col){return '<a class="lrow click" href="Investor.html?id='+id+'"><div class="tk" style="color:'+col+'">'+ini+'</div><div style="flex:1"><div class="nm-s">'+nm+'</div><div class="mt-s">'+role+'</div></div><div class="amt">'+ORA.fmtM(amt)+'</div></a>';}
+
+    // ---- documents ----
+    var docs = [['Executed PSA','PDF · 2.4 MB · MAY 28'],['Underwriting model v4','XLSX · JUN 11'],['First Meridian term sheet','PDF · JUN 09']];
+    document.getElementById('docBody').innerHTML = docs.map(function(x){return '<div class="lrow"><div style="flex:1"><div class="nm-s">'+x[0]+'</div><div class="mt-s">'+x[1]+'</div></div><span class="linkish">Open</span></div>';}).join('');
+  });
+})();
+</script>
+</body>
+</html>

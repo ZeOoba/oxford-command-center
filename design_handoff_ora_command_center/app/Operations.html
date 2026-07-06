@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en" data-screen-label="Operations">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORA — Operations</title>
+<script>try{var t=localStorage.getItem('ora-theme')||'dark';document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('ora-density')==='compact')document.documentElement.setAttribute('data-density','compact');}catch(e){}</script>
+<link rel="stylesheet" href="ora.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" data-active="operations"></nav>
+
+  <div class="main">
+    <header class="top">
+      <div class="ttl"><span class="up">Oxford RA · Command</span><span class="pg">Operations</span></div>
+      <div class="bar"></div>
+      <div class="clock">14 OPEN WORK ORDERS · 3 URGENT</div>
+      <div class="grow"></div>
+      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>search unit · tenant<span class="k">⌘K</span></div>
+      <div class="stat"><span class="d"></span>LIVE · 2m</div>
+      <button class="ibtn" id="themeBtn" title="Toggle theme"></button>
+      <button class="ibtn" id="densityBtn" title="Toggle density"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      <button class="ibtn" title="Alerts"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 004 0"/></svg><span class="dot"></span></button>
+    </header>
+
+    <div class="content">
+      <div class="pagehd">
+        <div><h1>Operations</h1><div class="sub">work orders · unit turns · tenant ledgers · maintenance across 23 assets</div></div>
+        <div class="grow"></div>
+        <span class="linkish">+ New work order</span>
+      </div>
+
+      <div class="kpis">
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 00-5.4 5.4L3 18v3h3l6.7-6.7a4 4 0 005.4-5.4l-2.6 2.6-2.1-2.1z"/></svg>OPEN WORK ORDERS</div><div class="v">14</div><div class="dl r">● 3 <span class="s">URGENT</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v5l3 2"/></svg>AVG RESOLUTION</div><div class="v">2.8<small>d</small></div><div class="dl g">▼ 0.4d <span class="s">vs TTM</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M4 21V10l8-6 8 6v11M9 21v-6h6v6"/></svg>VACANT SF</div><div class="v">45<small>K/629K</small></div><div class="dl g">92.9% <span class="s">LEASED</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M3 3v18h18M7 14l3-3 3 2 5-6"/></svg>TURN COST MTD</div><div class="v">$41<small>K</small></div><div class="dl g">on budget <span class="s">8 TURNS</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9l-8 14A2 2 0 004 21h16a2 2 0 001.7-3.1l-8-14a2 2 0 00-3.4 0z"/></svg>DELINQUENT</div><div class="v">3<small> tenants</small></div><div class="dl r">$34K <span class="s">90+ DAYS</span></div></div>
+      </div>
+
+<div class="panel" style="margin-bottom:16px"><div class="ph"><div><h3>RECOMMENDED ACTIONS</h3><div class="sub">operational risk &amp; PM performance · ranked by $ impact</div></div><div class="grow"></div><a class="more" href="Insights.html">ALL ▸</a><span class="chip ai" style="margin-left:8px">◇ ENGINE</span></div><div id="modActions"></div></div>
+
+      <div class="tabs" data-scope="#oppanes">
+        <div class="tab on" data-pane="wo">Work Orders</div>
+        <div class="tab" data-pane="units">Units</div>
+        <div class="tab" data-pane="tenants">Tenants</div>
+      </div>
+
+      <div id="oppanes">
+        <!-- ===== WORK ORDERS ===== -->
+        <div class="tabpane on" data-pane="wo">
+          <div class="grid-21">
+            <div class="panel">
+              <div class="ph"><div><h3>OPEN WORK ORDERS</h3><div class="sub">sorted by priority</div></div><div class="grow"></div>
+                <div class="seg"><span class="on">All</span><span>Urgent</span><span>Mine</span></div></div>
+              <div class="wo"><span class="pri p1"></span><div style="flex:1"><div class="wt">Roof leak — Bay 3</div><div class="wm">LAKEWOOD INDUSTRIAL II · TENANT REPORTED · 2H AGO</div></div><div style="text-align:right"><span class="badge b-loi">DISPATCHED</span><div class="wm" style="margin-top:4px">Summit Roofing</div></div></div>
+              <div class="wo"><span class="pri p1"></span><div style="flex:1"><div class="wt">Dock door won't seal — Unit 6</div><div class="wm">TRI-COUNTY DISTRIBUTION · INSPECTION · 5H AGO</div></div><div style="text-align:right"><span class="badge b-rev">TRIAGE</span><div class="wm" style="margin-top:4px">Unassigned</div></div></div>
+              <div class="wo"><span class="pri p1"></span><div style="flex:1"><div class="wt">Fire panel fault</div><div class="wm">CARDINAL SERVICE CENTER · LIFE SAFETY · 1D AGO</div></div><div style="text-align:right"><span class="badge b-loi">IN PROGRESS</span><div class="wm" style="margin-top:4px">SafeGuard Fire</div></div></div>
+              <div class="wo"><span class="pri p2"></span><div style="flex:1"><div class="wt">RTU not cooling — Suite 12</div><div class="wm">SOUTHPORT BUSINESS PARK · 1D AGO</div></div><div style="text-align:right"><span class="badge b-loi">IN PROGRESS</span><div class="wm" style="margin-top:4px">Apex Mechanical</div></div></div>
+              <div class="wo"><span class="pri p2"></span><div style="flex:1"><div class="wt">Parking lot pothole</div><div class="wm">RIVERSIDE FLEX PARK · 2D AGO</div></div><div style="text-align:right"><span class="badge b-neutral">SCHEDULED</span><div class="wm" style="margin-top:4px">PaveCo</div></div></div>
+              <div class="wo"><span class="pri p3"></span><div style="flex:1"><div class="wt">Repaint demising wall — turn</div><div class="wm">NORTHLINE FLEX · TURNS · 3D AGO</div></div><div style="text-align:right"><span class="badge b-neutral">SCHEDULED</span><div class="wm" style="margin-top:4px">FreshCoat</div></div></div>
+              <div class="wo"><span class="pri p3"></span><div style="flex:1"><div class="wt">Landscaping — quarterly</div><div class="wm">EASTGATE COMMERCE · RECURRING</div></div><div style="text-align:right"><span class="badge b-neutral">SCHEDULED</span><div class="wm" style="margin-top:4px">GreenScape</div></div></div>
+            </div>
+            <div class="colstack">
+              <div class="panel">
+                <div class="ph"><div><h3>BY CATEGORY</h3><div class="sub">14 open</div></div></div>
+                <div class="hbars">
+                  <div class="hbar"><div class="hb-top"><span>Roof &amp; Dock Doors</span><span class="v">5</span></div><div class="track"><span style="width:100%;background:var(--red)"></span></div></div>
+                  <div class="hbar"><div class="hb-top"><span>HVAC / RTU</span><span class="v">3</span></div><div class="track"><span style="width:60%;background:var(--blue)"></span></div></div>
+                  <div class="hbar"><div class="hb-top"><span>Electrical</span><span class="v">3</span></div><div class="track"><span style="width:60%;background:var(--accent)"></span></div></div>
+                  <div class="hbar"><div class="hb-top"><span>Fire / Life Safety</span><span class="v">2</span></div><div class="track"><span style="width:40%;background:var(--amber)"></span></div></div>
+                  <div class="hbar"><div class="hb-top"><span>Grounds / Parking</span><span class="v">1</span></div><div class="track"><span style="width:20%;background:var(--violet)"></span></div></div>
+                </div>
+              </div>
+              <div class="panel">
+                <div class="ph"><div><h3>SLA STATUS</h3><div class="sub">response targets</div></div></div>
+                <div class="lrow"><div style="flex:1"><div class="nm-s">Within SLA</div><div class="mt-s">11 OF 14 ORDERS</div></div><div class="amt" style="color:var(--green)">79%</div></div>
+                <div class="lrow"><div style="flex:1"><div class="nm-s">Breached</div><div class="mt-s">FIRE PANEL · 1D OVER</div></div><div class="amt" style="color:var(--red)">1</div></div>
+              </div>
+              <div class="panel">
+                <div class="ph"><div><h3>INSIGHT</h3></div><div class="grow"></div><span class="chip ai">◇ AI</span></div>
+                <div class="insight b"><p><b>Roof &amp; dock work is 5 of 14 open orders</b> and the top R&amp;M overrun. Lakewood Industrial II has had 3 RTU/roof calls this quarter — a reserve-funded roof recoat would end the recurring spend.</p></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===== UNITS ===== -->
+        <div class="tabpane" data-pane="units">
+          <div class="panel">
+            <div class="ph"><div><h3>UNIT STATUS</h3><div class="sub">629K SF · 45K vacant · 12 suites in turn</div></div><div class="grow"></div>
+              <div class="seg"><span class="on">All</span><span>Vacant</span><span>In&nbsp;Turn</span><span>Notice</span></div></div>
+            <table class="tbl" data-enhance data-chips="Status">
+              <thead><tr><th>Unit</th><th>Property</th><th>Type</th><th class="r">SF</th><th class="r">Market Rent</th><th class="r">Days Vacant</th><th>Status</th></tr></thead>
+              <tbody>
+                <tr class="click" onclick="location.href='Property.html?id=eastgate-commerce'"><td><b>Suite 4</b></td><td class="muted">Eastgate Commerce</td><td>Flex</td><td class="r num">2,400</td><td class="r num">$2,500</td><td class="r num">—</td><td><span class="badge b-dd">OCCUPIED</span></td></tr>
+                <tr class="click" onclick="location.href='Property.html?id=riverside-flex-park'"><td><b>Suite 9</b></td><td class="muted">Riverside Flex Park</td><td>Flex</td><td class="r num">3,100</td><td class="r num">$3,000</td><td class="r num" style="color:var(--amber)">12</td><td><span class="badge b-loi">IN TURN</span></td></tr>
+                <tr class="click" onclick="location.href='Property.html?id=tricounty-distribution'"><td><b>Bay 6</b></td><td class="muted">Tri-County Distribution</td><td>Industrial</td><td class="r num">12,500</td><td class="r num">$9,200</td><td class="r num" style="color:var(--red)">28</td><td><span class="badge b-rev">VACANT</span></td></tr>
+                <tr class="click" onclick="location.href='Property.html?id=cardinal-service-center'"><td><b>Suite 2</b></td><td class="muted">Cardinal Service Center</td><td>Flex</td><td class="r num">2,800</td><td class="r num">$3,000</td><td class="r num" style="color:var(--red)">41</td><td><span class="badge b-rev">VACANT</span></td></tr>
+                <tr class="click" onclick="location.href='Property.html?id=lakewood-ind-2'"><td><b>Bay 1</b></td><td class="muted">Lakewood Industrial II</td><td>Industrial</td><td class="r num">9,000</td><td class="r num">$5,400</td><td class="r num">—</td><td><span class="badge b-dd">OCCUPIED</span></td></tr>
+                <tr class="click" onclick="location.href='Property.html?id=northline-flex'"><td><b>Suite 7</b></td><td class="muted">Northline Flex</td><td>Flex</td><td class="r num">2,200</td><td class="r num">$2,300</td><td class="r num" style="color:var(--amber)">9</td><td><span class="badge b-loi">IN TURN</span></td></tr>
+                <tr class="click" onclick="location.href='Property.html?id=southport-yard'"><td><b>Bay 3</b></td><td class="muted">Southport Yard</td><td>Industrial</td><td class="r num">10,000</td><td class="r num">$7,100</td><td class="r num">—</td><td><span class="badge b-neutral">60-DAY NOTICE</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ===== TENANTS ===== -->
+        <div class="tabpane" data-pane="tenants">
+          <div class="panel">
+            <div class="ph"><div><h3>TENANT LEDGER</h3><div class="sub">balances &amp; standing · click to view tenant</div></div><div class="grow"></div><span class="chip" style="color:var(--red);border-color:var(--red-bd)">3 DELINQUENT</span></div>
+            <table class="tbl" data-enhance data-chips="Standing">
+              <thead><tr><th>Tenant</th><th>Unit · Property</th><th class="r">Monthly</th><th class="r">Balance</th><th class="r">Last Payment</th><th>Standing</th></tr></thead>
+              <tbody>
+                <tr class="click"><td><b>Apex Fabrication</b></td><td class="muted">Suite 2 · Cardinal Service Ctr</td><td class="r num">$9,800</td><td class="r num neg">$20,000</td><td class="r num muted">Mar 12</td><td><span class="badge b-loi">90+ PAST DUE</span></td></tr>
+                <tr class="click"><td><b>Northline Tooling</b></td><td class="muted">Suite 7 · Northline Flex</td><td class="r num">$7,500</td><td class="r num neg">$14,000</td><td class="r num muted">Apr 28</td><td><span class="badge b-loi">PAST DUE</span></td></tr>
+                <tr class="click"><td><b>Summit Print</b></td><td class="muted">Suite 4 · Lakewood Flex</td><td class="r num">$8,000</td><td class="r num neg">$4,000</td><td class="r num muted">Apr 30</td><td><span class="badge b-rev">LATE</span></td></tr>
+                <tr class="click"><td><b>Vantage Logistics</b></td><td class="muted">Bay 6 · Tri-County Distribution</td><td class="r num">$14,000</td><td class="r num">$0</td><td class="r num">May 1</td><td><span class="badge b-dd">CURRENT</span></td></tr>
+                <tr class="click"><td><b>Coastal Supply Co.</b></td><td class="muted">Suite 3 · Southport Business Park</td><td class="r num">$11,000</td><td class="r num">$0</td><td class="r num">May 1</td><td><span class="badge b-dd">CURRENT</span></td></tr>
+                <tr class="click"><td><b>Riverside Freight</b></td><td class="muted">Suite 5 · Riverside Flex Park</td><td class="r num">$12,500</td><td class="r num">$0</td><td class="r num">May 1</td><td><span class="badge b-dd">CURRENT</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="ora.js"></script>
+<script src="data.js"></script>
+<script src="filter.js"></script>
+<script src="engine.js"></script>
+<script src="table.js"></script>
+<script>
+(function(){function r(){if(!window.ORA_ENGINE)return;var box=document.getElementById("modActions");if(!box)return;var cats=["risk","ops"];var rows=ORA_ENGINE.SIGNALS.filter(function(s){return cats.indexOf(s.cat)>-1;}).slice(0,3);box.innerHTML=rows.length?rows.map(ORA_ENGINE.rowHtml).join(""):'<div class="cmdk-empty" style="padding:18px">No actions in this slice.</div>';}document.addEventListener("DOMContentLoaded",function(){r();if(window.ORA_FILTER)ORA_FILTER.subscribe(r);});})();
+</script>
+</body>
+</html>
