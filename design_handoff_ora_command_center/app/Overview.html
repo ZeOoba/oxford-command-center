@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en" data-screen-label="Overview">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORA Command Center — Overview</title>
+<script>try{var t=localStorage.getItem('ora-theme')||'dark';document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('ora-density')==='compact')document.documentElement.setAttribute('data-density','compact');}catch(e){}</script>
+<link rel="stylesheet" href="ora.css">
+<style>
+  /* Focus Lens — emphasize/de-emphasize whole panels by goal */
+  [data-focus]{transition:opacity .28s ease, box-shadow .28s ease, filter .28s ease;}
+  .lens-focus{box-shadow:0 0 0 1.5px var(--accent), var(--panel-shadow), var(--glow);}
+  .lens-dim{opacity:.42;filter:saturate(.6);}
+  .ins-priority{box-shadow:0 0 0 1.5px var(--accent), var(--panel-shadow);}
+  /* lens banner */
+  .lensbar{display:flex;align-items:center;gap:11px;margin-bottom:14px;padding:10px 14px;
+    border:1px solid var(--accent-dim);background:var(--accent-soft);border-radius:var(--r);
+    font-size:12.5px;color:var(--ink-2);}
+  .lensbar b{color:var(--ink);font-weight:600;}
+  .lensbar .lx{font-family:var(--font-mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--accent);border:1px solid var(--accent-dim);border-radius:5px;padding:3px 8px;}
+  .lensbar .grow{flex:1;}
+  .lensbar .cnt{font-family:var(--font-mono);font-size:11px;color:var(--muted);}
+  /* Spacious density (page-local; complements ora.js compact) */
+  [data-density="spacious"] .content{padding:30px 34px;}
+  [data-density="spacious"] .kpis{gap:18px;margin-bottom:20px;}
+  [data-density="spacious"] .grid2,[data-density="spacious"] .lowrow,[data-density="spacious"] .colstack{gap:18px;}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- RAIL -->
+  <nav class="rail" data-active="overview"></nav>
+
+  <!-- MAIN -->
+  <div class="main">
+    <header class="top">
+      <div class="ttl"><span class="up">Oxford RA · Command</span><span class="pg">Operations Overview</span></div>
+      <div class="bar"></div>
+      <div class="clock" id="clock">SAT 14 JUN · 08:42 PT</div>
+      <div class="grow"></div>
+      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>search · deals · assets<span class="k">⌘K</span></div>
+      <div class="stat"><span class="d"></span>LIVE · 2m</div>
+      <button class="ibtn" id="themeBtn" title="Toggle theme"></button>
+      <button class="ibtn" id="densityBtn" title="Toggle density"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      <button class="ibtn" title="Alerts"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 004 0"/></svg><span class="dot"></span></button>
+    </header>
+
+    <div class="content">
+      <!-- ENGINE results banner (computed) -->
+      <div class="results" id="resultsBar"></div>
+
+      <!-- KPIs (each drills into a screen) -->
+      <div class="kpis">
+        <a class="kpi" href="Portfolio.html">
+          <span class="arrow"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+          <div class="lbl"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/></svg>PORTFOLIO AUM</div>
+          <div class="v" data-metric="aum">$248.3<small>M</small></div>
+          <div class="dl g">▲ 4.1% <span class="s">MoM</span></div>
+          <svg class="ridge" viewBox="0 0 200 30" preserveAspectRatio="none"><polyline points="0,24 25,20 50,22 75,13 100,16 125,9 150,12 175,5 200,2" fill="none" stroke="var(--accent)" stroke-width="1.6"/></svg>
+        </a>
+        <a class="kpi" href="Acquisitions.html">
+          <span class="arrow"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+          <div class="lbl"><svg viewBox="0 0 24 24"><path d="M5 12h13M14 7l5 5-5 5"/></svg>ACQ CANDIDATES</div>
+          <div class="v">9</div>
+          <div class="dl g">▲ 2 <span class="s">NEW / 7D</span></div>
+        </a>
+        <a class="kpi" href="Leases.html">
+          <span class="arrow"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+          <div class="lbl"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16"/></svg>LEASES ≤90D</div>
+          <div class="v">09</div>
+          <div class="dl r">● 3 <span class="s">URGENT ≤30D</span></div>
+        </a>
+        <a class="kpi" href="Inbox.html">
+          <span class="arrow"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+          <div class="lbl"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>NEEDS REPLY</div>
+          <div class="v">06</div>
+          <div class="dl r">● 2 <span class="s">OVERDUE</span></div>
+        </a>
+        <a class="kpi" href="Portfolio.html">
+          <span class="arrow"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17L17 7M9 7h8v8"/></svg></span>
+          <div class="lbl"><svg viewBox="0 0 24 24"><path d="M12 3v18M7 8h7a3 3 0 010 6H8a3 3 0 000 6h8"/></svg>CASH · RUNWAY</div>
+          <div class="v" data-metric="cash">$31.2<small>M</small></div>
+          <div class="dl g">22mo <span class="s">RUNWAY</span></div>
+        </a>
+      </div>
+
+      <div class="grid2">
+        <div class="colstack">
+          <div class="panel">
+            <div class="ph">
+              <div><h3>PORTFOLIO GROWTH</h3><div class="sub">AUM · net of dispositions</div></div>
+              <div class="grow"></div>
+              <div class="clock" style="font-size:11px">NOI $0.51M/mo · OCC 92.9%</div>
+              <div class="seg" style="margin-left:12px"><span>3M</span><span>6M</span><span class="on">1Y</span><span>3Y</span></div>
+              <a class="more" href="Portfolio.html">OPEN ▸</a>
+            </div>
+            <div class="statline">
+              <div class="big" data-metric="aum">$248.3M</div>
+              <div class="dl g" style="font-size:12px;">▲ $2.4M <span class="s">+3.0% MoM · +12% YoY</span></div>
+            </div>
+            <div style="padding:0 12px">
+              <svg viewBox="0 0 1000 230" preserveAspectRatio="none" style="width:100%;height:200px;display:block;">
+                <defs><linearGradient id="gd" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".22"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>
+                <line x1="0" y1="55" x2="1000" y2="55" stroke="var(--line-2)"/><line x1="0" y1="115" x2="1000" y2="115" stroke="var(--line-2)"/><line x1="0" y1="175" x2="1000" y2="175" stroke="var(--line-2)"/>
+                <path d="M0,190 L90,182 L180,186 L270,160 L360,156 L450,138 L540,144 L630,112 L720,102 L810,112 L900,68 L1000,46 L1000,230 L0,230 Z" fill="url(#gd)"/>
+                <polyline points="0,190 90,182 180,186 270,160 360,156 450,138 540,144 630,112 720,102 810,112 900,68 1000,46" fill="none" stroke="var(--accent)" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>
+                <circle cx="1000" cy="46" r="4.5" fill="var(--accent)"/>
+              </svg>
+              <div class="axis"><span>JUL</span><span>AUG</span><span>SEP</span><span>OCT</span><span>NOV</span><span>DEC</span><span>JAN</span><span>FEB</span><span>MAR</span><span>APR</span><span>MAY</span><span>JUN</span></div>
+            </div>
+          </div>
+
+          <div class="lowrow">
+            <div class="panel">
+              <div class="ph"><div><h3>ACQUISITION PIPELINE</h3><div class="sub">9 candidates · 5 stages</div></div><div class="grow"></div><a class="more" href="Acquisitions.html">ALL ▸</a></div>
+              <a class="lrow click" href="DealRoom.html?id=eastgate-portfolio"><div class="tk" style="color:var(--green)">EP</div><div style="flex:1;min-width:0"><div class="nm-s">Eastgate 3-Building Portfolio</div><div class="mt-s">EASTGATE · INDUSTRIAL · 8.4</div></div><div style="text-align:right"><div class="amt">$9.4M</div><div class="badge b-close" style="margin-top:4px">CLOSING</div></div></a>
+              <a class="lrow click" href="DealRoom.html?id=tricounty-flex-park"><div class="tk" style="color:var(--amber)">TF</div><div style="flex:1;min-width:0"><div class="nm-s">Tri-County Flex Park</div><div class="mt-s">TRI-COUNTY · FLEX · 7.9</div></div><div style="text-align:right"><div class="amt">$6.6M</div><div class="badge b-dd" style="margin-top:4px">DUE DILIGENCE</div></div></a>
+              <a class="lrow click" href="DealRoom.html?id=southport-distribution"><div class="tk" style="color:var(--blue)">SD</div><div style="flex:1;min-width:0"><div class="nm-s">Southport Distribution</div><div class="mt-s">SOUTHPORT · INDUSTRIAL · 8.2</div></div><div style="text-align:right"><div class="amt">$7.1M</div><div class="badge b-rev" style="margin-top:4px">REVIEW</div></div></a>
+            </div>
+            <div class="panel">
+              <div class="ph"><div><h3>LEASES EXPIRING</h3><div class="sub">next 90 days · 9 total</div></div><div class="grow"></div><a class="more" href="Leases.html">CAL ▸</a></div>
+              <a class="lrow click" href="Property.html?id=cardinal-service-center"><div class="days u"><b>11</b><small>days</small></div><div style="flex:1;min-width:0"><div class="nm-s">Apex Fabrication</div><div class="mt-s">CARDINAL SERVICE CTR · $9.8K/mo</div></div><div class="tail">-12% mkt</div></a>
+              <a class="lrow click" href="Property.html?id=northline-flex"><div class="days u"><b>26</b><small>days</small></div><div style="flex:1;min-width:0"><div class="nm-s">Northline Tooling</div><div class="mt-s">NORTHLINE FLEX · $7.5K/mo</div></div></a>
+              <a class="lrow click" href="Property.html?id=southport-business-park"><div class="days w"><b>48</b><small>days</small></div><div style="flex:1;min-width:0"><div class="nm-s">Coastal Supply Co.</div><div class="mt-s">SOUTHPORT BUSINESS PARK · $11K/mo</div></div></a>
+            </div>
+          </div>
+        </div>
+
+        <div class="colstack">
+          <div class="panel">
+            <div class="ph"><div><h3>NEEDS YOUR REPLY</h3><div class="sub">6 threads · 2 overdue</div></div><div class="grow"></div><a class="more" href="Inbox.html">INBOX ▸</a></div>
+            <div class="mailrow ov"><div class="mk"></div><div style="flex:1;min-width:0"><div style="display:flex"><span class="who">Daniel Reyes</span><span class="tm">2D</span></div><div class="subj">Re: Eastgate portfolio — seller wants response by Fri <span class="ovt">· OVERDUE</span></div></div></div>
+            <div class="mailrow"><div class="mk"></div><div style="flex:1;min-width:0"><div style="display:flex"><span class="who">First Meridian Bank</span><span class="tm">3H</span></div><div class="subj">Term sheet questions — Tri-County Flex financing</div></div></div>
+            <div class="mailrow"><div class="mk"></div><div style="flex:1;min-width:0"><div style="display:flex"><span class="who">Watford &amp; Co.</span><span class="tm">5H</span></div><div class="subj">Southport Distribution PSA — redlines for review</div></div></div>
+          </div>
+
+          <div class="panel" data-focus="insight">
+            <div class="ph"><div><h3>PRIORITY ACTIONS</h3><div class="sub" id="prioSub">ranked by $ impact</div></div><div class="grow"></div><a class="more" href="Insights.html">ALL ▸</a><span class="chip ai" style="margin-left:8px">◇ ENGINE</span></div>
+            <div id="priorityList"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="ora.js"></script>
+<script src="data.js"></script>
+<script src="trends.js"></script>
+<script src="filter.js"></script>
+<script src="engine.js"></script>
+<script src="table.js"></script>
+
+<div id="tweaks-root"></div>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel">
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "lens": "noi",
+  "accent": "#f4b740",
+  "density": "comfortable"
+}/*EDITMODE-END*/;
+
+// ---- lens definitions: which panels to spotlight vs. recede, per goal ----
+const LENS = {
+  balanced: { label: "Balanced", focus: [], dim: [], ins: null,
+    intent: "Everything weighted equally — the standard morning view." },
+  attention: { label: "Attention", focus: ["reply", "leases"], dim: ["growth", "acq"], ins: "risk",
+    intent: "What needs you now — overdue replies and leases about to roll, pulled forward." },
+  noi: { label: "NOI Growth", focus: ["acq", "insight"], dim: ["reply"], ins: "leases",
+    intent: "Where the next dollar of NOI is — below-market renewals and pipeline that clears your target." },
+  risk: { label: "Risk", focus: ["insight", "leases"], dim: ["acq", "growth"], ins: "risk",
+    intent: "What could hurt you — occupancy slips, concentration, and near-term rollover." }
+};
+
+const ACCENTS = {
+  "#39d3c0": "Teal", "#f4b740": "Amber", "#5aa7f0": "Blue", "#a98cf0": "Violet"
+};
+function hexRgb(h){ const n=parseInt(h.slice(1),16); return [n>>16&255,n>>8&255,n&255]; }
+
+function applyAccent(hex){
+  const [r,g,b]=hexRgb(hex), s=document.documentElement.style;
+  s.setProperty("--accent", hex);
+  s.setProperty("--accent-dim", `rgba(${r},${g},${b},.4)`);
+  s.setProperty("--accent-soft", `rgba(${r},${g},${b},.13)`);
+  s.setProperty("--accent-bd", `rgba(${r},${g},${b},.4)`);
+  s.setProperty("--glow", `0 6px 16px rgba(${r},${g},${b},.32)`);
+  s.setProperty("--logo-grad", `linear-gradient(150deg, ${hex}, ${hex})`);
+}
+function applyDensity(d){
+  const el=document.documentElement;
+  if(d==="compact"){ el.setAttribute("data-density","compact"); }
+  else if(d==="spacious"){ el.setAttribute("data-density","spacious"); }
+  else { el.removeAttribute("data-density"); }
+  try{ localStorage.setItem("ora-density", d==="compact"?"compact":"roomy"); }catch(e){}
+}
+
+let lensBannerEl = null;
+function tagPanels(){
+  document.querySelectorAll(".content h3").forEach(h=>{
+    const t=h.textContent.trim(), p=h.closest(".panel");
+    if(!p) return;
+    if(/PORTFOLIO GROWTH/.test(t)) p.dataset.focus="growth";
+    else if(/ACQUISITION PIPELINE/.test(t)) p.dataset.focus="acq";
+    else if(/LEASES EXPIRING/.test(t)) p.dataset.focus="leases";
+    else if(/NEEDS YOUR REPLY/.test(t)) p.dataset.focus="reply";
+    else if(/PRIORITY ACTIONS/.test(t)) p.dataset.focus="insight";
+  });
+}
+
+// ---- engine: results banner + ranked priority list (the real intel) ----
+function renderBanner(){
+  if(!window.ORA_ENGINE) return;
+  const s=ORA_ENGINE.summary(), m=ORA_ENGINE.money, bar=document.getElementById("resultsBar");
+  if(!bar) return;
+  bar.innerHTML =
+    '<div class="rcell"><div class="rl">NOI Upside Identified</div><div class="rv gain">'+m(s.noiUpside)+'/yr</div><div class="rs">recapturable at ~$0 capital cost</div></div>'+
+    '<div class="rcell"><div class="rl">Exposure At Risk</div><div class="rv risk">'+m(s.atRisk).replace("+","")+'/yr</div><div class="rs">occupancy · PM · concentration</div></div>'+
+    '<div class="rcell"><div class="rl">Open Actions</div><div class="rv">'+s.count+'</div><div class="rs">ranked by dollar impact</div></div>';
+}
+function renderPriority(lens){
+  if(!window.ORA_ENGINE) return;
+  const list=ORA_ENGINE.forLens(lens).slice(0,6), box=document.getElementById("priorityList");
+  if(!box) return;
+  box.innerHTML = list.map(ORA_ENGINE.rowHtml).join("");
+  const sub=document.getElementById("prioSub");
+  if(sub) sub.textContent = list.length+" actions · "+({balanced:"by $ impact",attention:"by urgency",noi:"NOI & growth",risk:"risk & ops"}[lens]||"by $ impact");
+}
+
+function applyLens(key){
+  window.__oraLens = key;
+  const def = LENS[key] || LENS.balanced;
+  document.querySelectorAll("[data-focus]").forEach(p=>{
+    p.classList.toggle("lens-focus", def.focus.includes(p.dataset.focus));
+    p.classList.toggle("lens-dim", def.dim.includes(p.dataset.focus));
+  });
+  renderPriority(key);
+  // lens banner
+  const content=document.querySelector(".content");
+  if(lensBannerEl){ lensBannerEl.remove(); lensBannerEl=null; }
+  if(key!=="balanced" && content){
+    lensBannerEl=document.createElement("div");
+    lensBannerEl.className="lensbar";
+    lensBannerEl.innerHTML='<span class="lx">'+def.label+' lens</span><span><b>'+def.label+'.</b> '+def.intent+'</span>';
+    content.insertBefore(lensBannerEl, content.firstChild);
+  }
+}
+
+function App(){
+  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+  React.useEffect(()=>{ tagPanels(); renderBanner();
+    if(window.ORA_FILTER) ORA_FILTER.subscribe(function(){ renderBanner(); renderPriority(window.__oraLens||'balanced'); });
+  }, []);
+  React.useEffect(()=>{ applyAccent(t.accent); }, [t.accent]);
+  React.useEffect(()=>{ applyDensity(t.density); }, [t.density]);
+  React.useEffect(()=>{ applyLens(t.lens); }, [t.lens]);
+
+  return (
+    <TweaksPanel title="Tweaks">
+      <TweakSection label="Focus" />
+      <TweakRadio label="Lens" value={t.lens}
+        options={["balanced","attention","noi","risk"]}
+        onChange={(v)=>setTweak("lens", v)} />
+      <div style={{font:"11px/1.5 var(--font-mono, monospace)", color:"var(--muted)", padding:"2px 2px 4px"}}>
+        {(LENS[t.lens]||LENS.balanced).intent}
+      </div>
+      <TweakSection label="Feel" />
+      <TweakColor label="Accent" value={t.accent}
+        options={Object.keys(ACCENTS)}
+        onChange={(v)=>setTweak("accent", v)} />
+      <TweakRadio label="Density" value={t.density}
+        options={["compact","comfortable","spacious"]}
+        onChange={(v)=>setTweak("density", v)} />
+    </TweaksPanel>
+  );
+}
+ReactDOM.createRoot(document.getElementById("tweaks-root")).render(<App/>);
+</script>
+</body>
+</html>

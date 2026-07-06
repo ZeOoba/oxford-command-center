@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en" data-screen-label="Command Brain">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORA — Command Brain</title>
+<script>try{var t=localStorage.getItem('ora-theme')||'dark';document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('ora-density')==='compact')document.documentElement.setAttribute('data-density','compact');}catch(e){}</script>
+<link rel="stylesheet" href="ora.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" data-active="brain"></nav>
+
+  <div class="main">
+    <header class="top">
+      <div class="ttl"><span class="up">Oxford RA · Command</span><span class="pg">Command Brain</span></div>
+      <div class="bar"></div>
+      <div class="clock" id="brClock">MODEL v2.4 · LEARNING</div>
+      <div class="grow"></div>
+      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>ask the brain…<span class="k">⌘K</span></div>
+      <div class="stat"><span class="d"></span>LEARNING · live</div>
+      <button class="ibtn" id="themeBtn" title="Toggle theme"></button>
+      <button class="ibtn" id="densityBtn" title="Toggle density"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      <button class="ibtn" title="Alerts"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 004 0"/></svg><span class="dot"></span></button>
+    </header>
+
+    <div class="content">
+      <div class="pagehd">
+        <div><h1>Command Brain</h1><div class="sub">the layer that learns your portfolio &amp; operations — and sharpens itself every time it's used</div></div>
+        <div class="grow"></div>
+        <span class="chip ai">◇ SELF-IMPROVING</span>
+      </div>
+
+      <div class="brainhd">
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>FLAG ACCURACY</div><div class="v" id="kAcc">—</div><div class="dl g" id="kAccD">—</div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3M12 8.5a3.5 3.5 0 100 7 3.5 3.5 0 000-7z"/></svg>SIGNALS WATCHED</div><div class="v" id="kSig">—</div><div class="dl"><span class="s" id="kAnom">— anomalies live</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M9 3v2M15 3v2M9 19v2M15 19v2M3 9h2M3 15h2M19 9h2M19 15h2"/></svg>LEARNED FROM</div><div class="v" id="kData">—</div><div class="dl"><span class="s">data points · 6 models</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v5l3 2"/></svg>RECALIBRATED</div><div class="v" id="kRecal">—</div><div class="dl g" id="kRecalD"><span class="s">your feedback applied</span></div></div>
+      </div>
+
+      <div class="grid-21">
+        <div class="colstack">
+          <div class="panel">
+            <div class="ph"><div><h3>HOW IT'S IMPROVING</h3><div class="sub">12-month precision of its risk flags</div></div><div class="grow"></div><span class="dchip g" id="accChip">—</span></div>
+            <div style="padding:8px 12px 0" id="accChart"></div>
+            <div class="trdaxis" id="accAxis"></div>
+          </div>
+          <div class="panel">
+            <div class="ph"><div><h3>PREDICTION TRACK RECORD</h3><div class="sub" id="trackSub">—</div></div><div class="grow"></div><span class="chip ai">◇ SCORED</span></div>
+            <div id="trackBody"></div>
+          </div>
+        </div>
+
+        <div class="colstack">
+          <div class="panel">
+            <div class="ph"><div><h3>FEEDBACK LOOP</h3><div class="sub" id="fbSub">accept or dismiss — it recalibrates</div></div><div class="grow"></div><span class="chip">TEACHES THE MODEL</span></div>
+            <div id="fbBody"></div>
+          </div>
+          <div class="panel">
+            <div class="ph"><div><h3>SELF-IMPROVEMENT LOG</h3><div class="sub">how the model has changed</div></div></div>
+            <div class="vlog" id="vlog"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- LEARNED KNOWLEDGE -->
+      <div class="board-hd" style="display:flex;align-items:center;gap:9px;margin:18px 0 12px">
+        <div><h3 style="font-size:12px;font-weight:600;letter-spacing:.04em">WHAT IT'S LEARNED ABOUT YOUR PORTFOLIO</h3><div class="sub" style="font-family:var(--font-mono);font-size:10.5px;color:var(--muted);margin-top:2px">a living memory · grouped by how settled each inference is</div></div>
+        <div class="grow"></div><span class="chip ai">◇ MEMORY</span>
+      </div>
+      <div class="tiers" id="memTiers"></div>
+
+      <!-- CONFIDENCE -->
+      <div class="grid-2a" style="margin-top:16px">
+        <div class="panel">
+          <div class="ph"><div><h3>CONFIDENCE BY MARKET</h3><div class="sub">grows with data accumulated</div></div></div>
+          <div id="confMkt"></div>
+        </div>
+        <div class="panel">
+          <div class="ph"><div><h3>CONFIDENCE BY MANAGER</h3><div class="sub">grows with track record</div></div></div>
+          <div id="confPm"></div>
+        </div>
+      </div>
+
+      <!-- UNCERTAINTIES -->
+      <div class="panel" style="margin-top:16px">
+        <div class="ph"><div><h3>OPEN QUESTIONS — WHAT WOULD SHARPEN IT</h3><div class="sub">where confidence is thin · the data that would close the gap</div></div><div class="grow"></div><span class="chip ai">◇ KNOWS WHAT IT DOESN'T</span></div>
+        <div id="uncertBody"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="ora.js"></script>
+<script src="data.js"></script>
+<script src="trends.js"></script>
+<script src="filter.js"></script>
+<script src="engine.js"></script>
+<script src="brain.js"></script>
+<script>
+(function(){
+  document.addEventListener('DOMContentLoaded', function(){
+    var B = window.ORA_BRAIN; if(!B) return;
+    var MONTHS = (window.ORA && ORA.MONTHS) ? ORA.MONTHS.map(function(m){return m.short;}) : [];
+
+    function pInt(n){ return n>=1e9?(n/1e9).toFixed(1)+'B':n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?Math.round(n/1e3)+'K':String(n); }
+
+    // ---- accuracy chart ----
+    function spark(series){
+      var W=1000,H=160,n=series.length;
+      var mn=Math.min.apply(null,series)-0.05, mx=Math.min(1,Math.max.apply(null,series)+0.03);
+      function X(i){return n<=1?0:i/(n-1)*W;} function Y(v){return H-(v-mn)/(mx-mn)*H;}
+      var d='',a='';
+      series.forEach(function(v,i){var x=X(i).toFixed(1),y=Y(v).toFixed(1); d+=(i?' L':'M')+x+','+y; if(!i)a='M'+x+','+H+' L'+x+','+y; else a+=' L'+x+','+y;});
+      a+=' L'+W+','+H+' Z';
+      var grid=''; for(var g=1;g<=3;g++){var gy=(H/4*g).toFixed(0);grid+='<line x1="0" y1="'+gy+'" x2="'+W+'" y2="'+gy+'" stroke="var(--line-2)"/>';}
+      var ex=X(n-1).toFixed(1),ey=Y(series[n-1]).toFixed(1);
+      return '<svg viewBox="0 0 '+W+' '+H+'" preserveAspectRatio="none" style="width:100%;height:160px;display:block;overflow:visible">'+
+        '<defs><linearGradient id="accg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".22"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>'+
+        grid+'<path d="'+a+'" fill="url(#accg)"/><path d="'+d+'" fill="none" stroke="var(--accent)" stroke-width="2.6" stroke-linejoin="round"/>'+
+        '<circle cx="'+ex+'" cy="'+ey+'" r="4.5" fill="var(--accent)"/></svg>';
+    }
+
+    // ---- track record ----
+    function renderTrack(){
+      var st=B.trackStats();
+      document.getElementById('trackSub').textContent = st.hit+' hit · '+st.partial+' partial · '+st.miss+' miss · '+Math.round(st.rate*100)+'% scored';
+      var OC={hit:['HIT','var(--green)'],partial:['PARTIAL','var(--amber)'],miss:['MISS','var(--red)']};
+      document.getElementById('trackBody').innerHTML = B.TRACK.map(function(t){
+        var o=OC[t.outcome];
+        return '<div class="feedrow"><span class="sev '+(t.outcome==='hit'?'low':t.outcome==='partial'?'med':'high')+'" style="width:8px;height:8px;border-radius:50%;margin-top:5px;flex:none;background:'+o[1]+(t.outcome==='hit'?';box-shadow:0 0 7px '+o[1]:'')+'"></span>'+
+          '<div class="fb"><div class="ft">'+t.flag+'</div><div class="fd">'+t.when+" · "+t.actual+'</div></div>'+
+          '<div style="text-align:right"><div class="cstat" style="color:'+o[1]+';font-family:var(--font-mono);font-size:11px;font-weight:700">'+o[0]+'</div>'+(t.impact?'<div class="dsub" style="font-family:var(--font-mono);font-size:8.5px;color:var(--muted);margin-top:3px">'+pInt(t.impact)+' AT STAKE</div>':'')+'</div></div>';
+      }).join('');
+    }
+
+    // ---- feedback loop (from live engine signals) ----
+    function renderFeedback(){
+      var S = window.ORA_ENGINE ? ORA_ENGINE.SIGNALS.filter(function(s){return s.dir==='risk'||s.cat==='noi';}).slice(0,5) : [];
+      var st = B.getState();
+      document.getElementById('fbBody').innerHTML = S.map(function(s){
+        var dec = st.decisions[s.id];
+        return '<div class="feedrow" data-id="'+s.id+'"><div class="fb"><div class="ft">'+s.title+'</div>'+
+          '<div class="fd">'+s.detail+'</div>'+
+          '<div class="facts">'+
+            '<span class="ab acc'+(dec==='acc'?' done acc':'')+'" data-act="acc">'+(dec==='acc'?'✓ Accepted':'Accept')+'</span>'+
+            '<span class="ab dis'+(dec==='dis'?' done dis':'')+'" data-act="dis">'+(dec==='dis'?'✕ Dismissed':'Dismiss')+'</span>'+
+          '</div></div></div>';
+      }).join('');
+    }
+
+    // ---- learned knowledge tiers ----
+    function renderMemory(){
+      var TIERS=[
+        {key:'high', nm:'Settled', sub:'high confidence', cls:'t-good'},
+        {key:'med', nm:'Forming', sub:'enough to act, watching', cls:'t-acc'},
+        {key:'low', nm:'Hypotheses', sub:'early signal', cls:'t-med'}
+      ];
+      document.getElementById('memTiers').innerHTML = TIERS.map(function(t){
+        var items = B.MEMORY.filter(function(m){return B.memTier(m.conf)===t.key;}).sort(function(a,b){return b.conf-a.conf;});
+        var body = items.length ? items.map(function(m){
+          return '<div class="memcard"><div class="mtop"><span class="mtag">'+m.tag+'</span><span class="mconf">'+Math.round(m.conf*100)+'%</span></div>'+
+            '<div class="mt">'+m.title+'</div><div class="md">'+m.detail+'</div>'+
+            '<div class="mfoot"><span>'+m.sources+' data points</span><span>·</span><span>updated '+m.updated+'</span></div></div>';
+        }).join('') : '<div class="tier-empty">Nothing here yet</div>';
+        return '<div class="tier '+t.cls+'">'+
+          '<div class="tier-hd"><span class="dotb"></span><div><div class="tier-nm">'+t.nm+'</div><div class="tier-sub">'+t.sub+'</div></div><span class="tier-ct">'+items.length+'</span></div>'+
+          '<div class="tier-body">'+body+'</div></div>';
+      }).join('');
+    }
+
+    // ---- confidence ----
+    function confRows(arr){
+      return arr.map(function(c){
+        return '<div class="confrow"><div><div class="cn">'+c.name+'</div><div class="ct2">'+c.sub+'</div></div>'+
+          '<div class="cbar"><span style="width:'+Math.round(c.conf*100)+'%"></span></div>'+
+          '<div class="cval">'+Math.round(c.conf*100)+'%</div></div>';
+      }).join('');
+    }
+
+    // ---- uncertainties ----
+    function renderUncert(){
+      document.getElementById('uncertBody').innerHTML = B.UNCERTAINTIES.map(function(u){
+        return '<div class="uncert"><span class="udot" style="'+(u.sev==='med'?'':'background:var(--blue)')+'"></span>'+
+          '<div style="flex:1;min-width:0"><div class="ut">'+u.title+'</div><div class="ud">'+u.detail+'</div>'+
+          '<div class="ufix">→ '+u.fix+'</div></div></div>';
+      }).join('');
+    }
+
+    // ---- self-improvement log ----
+    function renderLog(){
+      document.getElementById('vlog').innerHTML = B.improvements().map(function(v){
+        return '<div class="vi'+(v.old?' old':'')+'"><span class="vdot"></span><span class="vv">'+v.v+'</span><span class="vt">'+v.text+'</span></div>';
+      }).join('');
+    }
+
+    // ---- KPIs + chart (recomputed on feedback) ----
+    function renderHead(){
+      var c=B.counts();
+      var acc=B.accuracyNow();
+      document.getElementById('kAcc').innerHTML = Math.round(acc*100)+'<small>%</small>';
+      document.getElementById('kAccD').innerHTML = '▲ improving with use';
+      document.getElementById('kSig').textContent = c.signals;
+      document.getElementById('kAnom').textContent = c.anomalies+' anomalies live';
+      document.getElementById('kData').textContent = pInt(c.dataPoints);
+      var st=B.getState();
+      document.getElementById('kRecal').innerHTML = (st.accepted+st.dismissed)+'<small> signals</small>';
+      document.getElementById('kRecalD').innerHTML = '<span class="s">'+st.accepted+' accepted · '+st.dismissed+' dismissed</span>';
+      var series=B.accuracySeries();
+      document.getElementById('accChart').innerHTML = spark(series);
+      var first=series[0], last=series[series.length-1];
+      document.getElementById('accChip').innerHTML = '▲ +'+Math.round((last-first)*100)+'pts <span class="s">/ 12 mo</span>';
+      var labs=MONTHS.length===series.length?MONTHS:series.map(function(_,i){return 'M'+(i+1);});
+      document.getElementById('accAxis').innerHTML = labs.map(function(l){return '<span>'+l.toUpperCase()+'</span>';}).join('');
+    }
+
+    // ---- feedback interaction ----
+    document.getElementById('fbBody').addEventListener('click', function(e){
+      var btn=e.target.closest('.ab'); if(!btn) return;
+      var row=btn.closest('.feedrow'); var id=row.getAttribute('data-id');
+      var act=btn.getAttribute('data-act');
+      B.feedback(id, act);
+      renderFeedback();
+      renderHead();
+      // brief "model updated" pulse on the recalibrated KPI
+      var k=document.getElementById('kRecal'); k.style.transition='color .2s'; k.style.color='var(--accent)';
+      setTimeout(function(){k.style.color='';},500);
+    });
+
+    // initial render
+    renderHead(); renderTrack(); renderFeedback(); renderMemory(); renderLog(); renderUncert();
+    var conf=B.confidence();
+    document.getElementById('confMkt').innerHTML = confRows(conf.markets);
+    document.getElementById('confPm').innerHTML = confRows(conf.managers);
+  });
+})();
+</script>
+</body>
+</html>

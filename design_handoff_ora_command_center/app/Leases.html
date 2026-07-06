@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en" data-screen-label="Leases">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORA — Leases</title>
+<script>try{var t=localStorage.getItem('ora-theme')||'dark';document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('ora-density')==='compact')document.documentElement.setAttribute('data-density','compact');}catch(e){}</script>
+<link rel="stylesheet" href="ora.css">
+<style>
+  .tlc{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;}
+  .tlbar{width:60%;max-width:30px;border-radius:5px 5px 2px 2px;background:var(--accent);opacity:.85;}
+  .tlbar.tle{height:3px;background:var(--line);opacity:1;}
+  .tll{font-family:'IBM Plex Mono';font-size:9.5px;color:var(--muted);margin-top:8px;white-space:nowrap;}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail" data-active="leases"></nav>
+
+  <div class="main">
+    <header class="top">
+      <div class="ttl"><span class="up">Oxford RA · Command</span><span class="pg">Leases</span></div>
+      <div class="bar"></div>
+      <div class="clock">170 ACTIVE · 9 EXPIRING ≤90D</div>
+      <div class="grow"></div>
+      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>find tenant<span class="k">⌘K</span></div>
+      <div class="stat"><span class="d"></span>LIVE · 2m</div>
+      <button class="ibtn" id="themeBtn" title="Toggle theme"></button>
+      <button class="ibtn" id="densityBtn" title="Toggle density"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      <button class="ibtn" title="Alerts"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 004 0"/></svg><span class="dot"></span></button>
+    </header>
+
+    <div class="content">
+      <div class="pagehd">
+        <div><h1>Lease Expirations</h1><div class="sub">renewal pipeline · next 12 months · flagged where rent is below market</div></div>
+        <div class="grow"></div>
+        <div class="seg"><span class="on">90 days</span><span>6 mo</span><span>12 mo</span></div>
+      </div>
+
+      <div class="kpis" style="grid-template-columns:repeat(4,1fr)">
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16"/></svg>EXPIRING ≤90D</div><div class="v">09</div><div class="dl r">● 3 <span class="s">URGENT ≤30D</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01M10.3 3.9l-8 14A2 2 0 004 21h16a2 2 0 001.7-3.1l-8-14a2 2 0 00-3.4 0z"/></svg>BELOW MARKET</div><div class="v">4 <small>leases</small></div><div class="dl r">avg ▼11% <span class="s">UPSIDE</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M12 3v18M7 8h7a3 3 0 010 6H8a3 3 0 000 6h8"/></svg>ANNUAL RENT AT RISK</div><div class="v">$0.9<small>M</small></div><div class="dl r">15% <span class="s">OF GROSS</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>RENEWAL RATE</div><div class="v">82<small>%</small></div><div class="dl g">▲ 3 <span class="s">PTS TTM</span></div></div>
+      </div>
+
+<div class="panel" style="margin-bottom:13px"><div class="ph"><div><h3>RECOMMENDED ACTIONS</h3><div class="sub">below-market renewals &amp; lease-up risk · ranked by NOI impact</div></div><div class="grow"></div><a class="more" href="Insights.html">ALL ▸</a><span class="chip ai" style="margin-left:8px">◇ ENGINE</span></div><div id="modActions"></div></div>
+
+      <div class="panel" style="margin-bottom:13px">
+        <div class="ph"><div><h3>EXPIRY TIMELINE</h3><div class="sub">leases ending per month · bar height = count</div></div><div class="grow"></div><span class="chip">14 in next 12 mo</span></div>
+        <div style="display:flex;align-items:flex-end;gap:12px;padding:16px 16px 12px;height:118px;">
+          <div class="tlc"><div class="tlbar" style="height:56px;background:var(--red)"></div><div class="tll">JUN · 3</div></div>
+          <div class="tlc"><div class="tlbar" style="height:40px;background:var(--amber)"></div><div class="tll">JUL · 2</div></div>
+          <div class="tlc"><div class="tlbar" style="height:24px"></div><div class="tll">AUG · 1</div></div>
+          <div class="tlc"><div class="tlbar" style="height:40px"></div><div class="tll">SEP · 2</div></div>
+          <div class="tlc"><div class="tlbar" style="height:24px"></div><div class="tll">OCT · 1</div></div>
+          <div class="tlc"><div class="tlbar tle"></div><div class="tll">NOV · 0</div></div>
+          <div class="tlc"><div class="tlbar" style="height:24px"></div><div class="tll">DEC · 1</div></div>
+          <div class="tlc"><div class="tlbar" style="height:40px"></div><div class="tll">JAN · 2</div></div>
+          <div class="tlc"><div class="tlbar tle"></div><div class="tll">FEB · 0</div></div>
+          <div class="tlc"><div class="tlbar" style="height:24px"></div><div class="tll">MAR · 1</div></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="ph"><div><h3>EXPIRING LEASES</h3><div class="sub">sorted by days remaining</div></div><div class="grow"></div><span class="linkish">⤓ Export</span></div>
+        <table class="tbl" data-enhance data-chips="Status">
+          <thead><tr><th>Tenant</th><th>Property · Market</th><th class="r">Expires</th><th class="r">Current</th><th class="r">Market</th><th class="r">Δ</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr class="click"><td><b>Apex Fabrication</b></td><td class="muted">Cardinal Service Ctr · Eastgate</td><td class="r num" style="color:var(--red)">11d</td><td class="r num">$9.8K/mo</td><td class="r num">$11.1K/mo</td><td class="r num neg">▼12%</td><td><span class="badge b-loi">RENEW · BELOW MKT</span></td></tr>
+            <tr class="click"><td><b>Northline Tooling</b></td><td class="muted">Northline Flex · Tri-County</td><td class="r num" style="color:var(--red)">26d</td><td class="r num">$7.5K/mo</td><td class="r num">$8.4K/mo</td><td class="r num neg">▼11%</td><td><span class="badge b-dd">RENEWAL SENT</span></td></tr>
+            <tr class="click"><td><b>Coastal Supply Co.</b></td><td class="muted">Southport Business Park · Southport</td><td class="r num" style="color:var(--red)">33d</td><td class="r num">$11.0K/mo</td><td class="r num">$11.5K/mo</td><td class="r num neg">▼4%</td><td><span class="badge b-rev">IN NEGOTIATION</span></td></tr>
+            <tr class="click"><td><b>Riverside Freight</b></td><td class="muted">Riverside Flex Park · Riverside</td><td class="r num" style="color:var(--amber)">48d</td><td class="r num">$12.5K/mo</td><td class="r num">$14.0K/mo</td><td class="r num neg">▼11%</td><td><span class="badge b-loi">RENEW · BELOW MKT</span></td></tr>
+            <tr class="click"><td><b>Summit Print</b></td><td class="muted">Lakewood Flex · Lakewood</td><td class="r num" style="color:var(--amber)">71d</td><td class="r num">$8.0K/mo</td><td class="r num">$8.5K/mo</td><td class="r num neg">▼6%</td><td><span class="badge b-dd">RENEWAL SENT</span></td></tr>
+            <tr class="click"><td><b>Vantage Logistics</b></td><td class="muted">Tri-County Distribution · Tri-County</td><td class="r num" style="color:var(--amber)">84d</td><td class="r num">$14.0K/mo</td><td class="r num">$14.3K/mo</td><td class="r num muted">0%</td><td><span class="badge b-dd">RENEWAL SENT</span></td></tr>
+            <tr class="click"><td><b>Harbor Machine</b></td><td class="muted">Harbor Flex Suites · Lakewood</td><td class="r num muted">96d</td><td class="r num">$9.0K/mo</td><td class="r num">$10.0K/mo</td><td class="r num neg">▼10%</td><td><span class="badge b-neutral">UPCOMING</span></td></tr>
+            <tr class="click"><td><b>Eastgate Pallet Co.</b></td><td class="muted">Eastgate Commerce · Eastgate</td><td class="r num muted">118d</td><td class="r num">$6.5K/mo</td><td class="r num">$6.5K/mo</td><td class="r num muted">0%</td><td><span class="badge b-neutral">UPCOMING</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="ora.js"></script>
+<script src="data.js"></script>
+<script src="filter.js"></script>
+<script src="engine.js"></script>
+<script src="table.js"></script>
+<script>
+(function(){function r(){if(!window.ORA_ENGINE)return;var box=document.getElementById("modActions");if(!box)return;var cats=["noi","risk"];var rows=ORA_ENGINE.SIGNALS.filter(function(s){return cats.indexOf(s.cat)>-1;}).slice(0,3);box.innerHTML=rows.length?rows.map(ORA_ENGINE.rowHtml).join(""):'<div class="cmdk-empty" style="padding:18px">No actions in this slice.</div>';}document.addEventListener("DOMContentLoaded",function(){r();if(window.ORA_FILTER)ORA_FILTER.subscribe(r);});})();
+</script>
+</body>
+</html>
