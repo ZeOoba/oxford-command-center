@@ -15,7 +15,11 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: '24'
+          # Pinned (was '24'): Node >=24.18.0 raises Buffer.poolSize 8->64 KiB (nodejs/node#63597),
+          # which trips a latent bug in pdf-parse v1's bundled pdf.js 1.10 on pooled buffers -
+          # briefing tests fail with 'bad XRef entry'. 24.17.0 = security-only release WITHOUT the
+          # poolSize change (keeps its CVE fixes). Unpin after pdf-parse is upgraded to v2.
+          node-version: '24.17.0'
           cache: 'npm'
       - run: npm ci
       - run: npm run gate:ci
@@ -33,7 +37,11 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
-          node-version: '24'
+          # Pinned (was '24'): Node >=24.18.0 raises Buffer.poolSize 8->64 KiB (nodejs/node#63597),
+          # which trips a latent bug in pdf-parse v1's bundled pdf.js 1.10 on pooled buffers -
+          # briefing tests fail with 'bad XRef entry'. 24.17.0 = security-only release WITHOUT the
+          # poolSize change (keeps its CVE fixes). Unpin after pdf-parse is upgraded to v2.
+          node-version: '24.17.0'
           cache: 'npm'
       - run: npm ci
       - run: git fetch --no-tags origin "${{ github.base_ref }}"
