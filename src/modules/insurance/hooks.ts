@@ -1,0 +1,163 @@
+// src/modules/insurance/hooks.ts
+//
+// TanStack Query hook + pure display helpers for the Insurance Savings Board (Phase 4a.3 UI).
+//
+// Consumes:
+//   GET /api/warehouse/insurance/analysis → InsuranceAnalysisReport
+//
+// Error policy mirrors debt/hooks.ts: fetchParsedOrMirror degrades gracefully on a
+// 503/non-JSON mirror response (WarehouseUnavailableError → module renders an empty state);
+// a real API error (4xx/5xx with a JSON body) surfaces as a thrown Error.
+//
+// DOCTRINE (mirrors src/contracts/insurance-analysis.ts): the benchmark is an own-book median,
+// never a market rate, and excessPremiumVsMedian is dispersion, NOT a savings promise. Every
+// helper below that surfaces it labels it "premium above book median" — never "savings".
+import { useQuery } from '@tanstack/react-query';
+import { fetchParsedOrMirror, QUERY_OPTS } from '../intel/hooks';
+import { InsuranceAnalysisReport } from '@contracts/insurance-analysis';
+import type { PolicyEconomics, RenewalBucket, BookBenchmark } from '@contracts/insurance-analysis';
+import type { Tier, TierItem } from '@/primitives/TierBoard';
+
+export const INSURANCE_ANALYSIS_KEY = ['warehouse', 'insurance', 'analysis'] as const;
+
+/**
+ * Insurance re-bid analysis report — re-bid candidates, renewal calendar, and the own-book
+ * rate benchmark. Degrades gracefully on the static mirror (WarehouseUnavailableError → empty
+ * state), same as every other warehouse-backed module.
+ */
+export function useInsuranceAnalysis() {
+  return useQuery({
+    queryKey: INSURANCE_ANALYSIS_KEY,
+    queryFn: () => fetchParsedOrMirror('/api/warehouse/insurance/analysis', InsuranceAnalysisReport),
+    ...QUERY_OPTS,
+  });
+}
+
+// ── Pure display helpers (unit-testable; no React dependencies) ──────────────────────────
+
+const RENEWAL_WATCH_BUCKETS: readonly RenewalBucket[] = ['now-45', 'soon-90'];
+
+const RENEWAL_BUCKET_LABEL: Record<RenewalBucket, string> = {
+  'now-45': 'Due ≤45d',
+  'soon-90': 'Due ≤90d',
+  later: 'Later',
+  expired: 'Expired',
+  unknown: 'Unknown renewal',
+};
+
+/** premium per $100 of TIV, displayed as a small dollar figure (e.g. "$0.42"). */
+export function fmtRatePer100(n: number | null): string {
+  return n === null || !Number.isFinite(n) ? '—' : `$${n.toFixed(2)}`;
+}
+
+/** "n=12 policies" when the cohort is large enough to trust; the insufficient-cohort state
+ *  otherwise — the median itself is already null in that case (engine-enforced), so this is
+ *  the only place the insufficiency is spelled out for a reader. */
+export function benchmarkSublabel(benchmark: BookBenchmark): string {
+  return benchmark.sufficient
+    ? `n=${benchmark.cohortN} policies`
+    : `insufficient cohort — n=${benchmark.cohortN}`;
+}
+
+/** Sum of excessPremiumVsMedian across rebid candidates. Defensive Math.max(0, …) guard even
+ *  though the engine only ever populates rebidCandidates with positive excess — this is
+ *  dispersion vs a cohort median, never a savings figure. */
+export function sumPremiumAboveMedian(candidates: readonly PolicyEconomics[]): number {
+  return candidates.reduce((sum, p) => sum + Math.max(0, p.excessPremiumVsMedian ?? 0), 0);
+}
+
+/** Count of renewalCalendar entries due within 90 days ('now-45' or 'soon-90'). */
+export function countRenewalsWithin90(renewalCalendar: readonly PolicyEconomics[]): number {
+  return renewalCalendar.filter((p) => RENEWAL_WATCH_BUCKETS.includes(p.renewalBucket)).length;
+}
+
+export interface InsuranceKpis {
+  premiumAnnualTotal: number | null;
+  medianRatePer100Tiv: number | null;
+  benchmarkSublabel: string;
+  premiumAboveMedian: number | null;
+  renewalsWithin90: number | null;
+}
+
+/** Derives the 4 headline KPIs from the analysis report. Returns an all-null shape while the
+ *  report is loading/unavailable so KpiStat renders its own "—" state rather than the caller
+ *  branching on presence. */
+export function computeInsuranceKpis(report: InsuranceAnalysisReport | undefined): InsuranceKpis {
+  if (!report) {
+    return {
+      premiumAnnualTotal: null,
+      medianRatePer100Tiv: null,
+      benchmarkSublabel: '—',
+      premiumAboveMedian: null,
+      renewalsWithin90: null,
+    };
+  }
+  return {
+    premiumAnnualTotal: report.premiumAnnualTotal,
+    medianRatePer100Tiv: report.benchmark.medianRatePer100Tiv,
+    benchmarkSublabel: benchmarkSublabel(report.benchmark),
+    premiumAboveMedian: sumPremiumAboveMedian(report.rebidCandidates),
+    renewalsWithin90: countRenewalsWithin90(report.renewalCalendar),
+  };
+}
+
+function rebidTierItem(p: PolicyEconomics, rank: number): TierItem {
+  return {
+    id: p.policyId,
+    rank,
+    category: p.carrier ?? undefined,
+    impactUsd: p.excessPremiumVsMedian,
+    impactKind: 'risk',
+    title: p.property,
+    detail: 'premium above book median',
+    chips: RENEWAL_WATCH_BUCKETS.includes(p.renewalBucket) ? [RENEWAL_BUCKET_LABEL[p.renewalBucket]] : undefined,
+  };
+}
+
+function renewalWatchTierItem(p: PolicyEconomics, rank: number): TierItem {
+  return {
+    id: p.policyId,
+    rank,
+    category: p.carrier ?? undefined,
+    impactUsd: p.premium,
+    impactKind: 'info',
+    title: p.property,
+    detail:
+      p.daysToExpiry !== null
+        ? `annual premium · ${RENEWAL_BUCKET_LABEL[p.renewalBucket]} · ${p.daysToExpiry}d`
+        : `annual premium · ${RENEWAL_BUCKET_LABEL[p.renewalBucket]}`,
+  };
+}
+
+/**
+ * Builds the two Savings Board tiers. Only these two ever render — a future coverage/deductible
+ * optimization tier (P4c) has no data source yet, so it must never be fabricated here.
+ *
+ * "Re-bid — above book median": every rebidCandidates entry (server-sorted by
+ * excessPremiumVsMedian DESC — not re-sorted here).
+ * "Renewal watch": renewalCalendar entries due within 90 days that are NOT already a rebid
+ * candidate (deduped by policyId), preserving the server's ascending daysToExpiry order.
+ */
+export function buildSavingsTiers(report: InsuranceAnalysisReport): Tier[] {
+  const rebidIds = new Set(report.rebidCandidates.map((p) => p.policyId));
+  const renewalWatch = report.renewalCalendar.filter(
+    (p) => RENEWAL_WATCH_BUCKETS.includes(p.renewalBucket) && !rebidIds.has(p.policyId),
+  );
+
+  return [
+    {
+      key: 'rebid',
+      title: 'Re-bid — above book median',
+      subtitle: 'ranked by dollar impact vs the benchmark above',
+      tone: 'warn',
+      items: report.rebidCandidates.map((p, i) => rebidTierItem(p, i + 1)),
+    },
+    {
+      key: 'renewal-watch',
+      title: 'Renewal watch',
+      subtitle: 'due within 90 days',
+      tone: 'info',
+      items: renewalWatch.map((p, i) => renewalWatchTierItem(p, i + 1)),
+    },
+  ];
+}
