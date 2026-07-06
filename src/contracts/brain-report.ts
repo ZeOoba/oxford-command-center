@@ -6,7 +6,9 @@
 //
 // Rule (design goal): no invented accuracy, memory, or confidence — every figure derives
 // from calibration/insights/DQ data or is absent (null), never fabricated. Months with
-// resolvedN<5 render as gaps (AccuracyPoint.hitRate = null), never a theatrical zero.
+// scoreableN<5 render as gaps (AccuracyPoint.hitRate = null), never a theatrical zero —
+// gated on scoreableN (hit ∈ {0,1}), NOT resolvedN (which also counts hit=null
+// "not-scoreable" resolutions, e.g. every resolved 'hold' verdict).
 import { z } from 'zod';
 
 // ── Feedback (accept/dismiss loop over insights/alerts/allocations) ──────────
@@ -38,11 +40,20 @@ export const FeedbackInput = z.object({
 export type FeedbackInput = z.infer<typeof FeedbackInput>;
 
 // ── Accuracy-over-time series ─────────────────────────────────────────────────
-/** One month's rolling hit-rate bucket. `hitRate: null` when resolvedN < 5 — the honesty
- *  gate (mirrors stats.ts MIN_PAIRS ethos): a low-n month is a gap, not a misleading number. */
+/** One month's rolling hit-rate bucket. `hitRate` is hits/scoreableN (scoreableN excludes
+ *  hit=null "not-scoreable" resolutions, mirroring calibration.ts's own scoreable definition —
+ *  see calibration.ts:934,1014-1018,1069) and is `null` when scoreableN < 5 — the honesty gate
+ *  (mirrors stats.ts MIN_PAIRS ethos): a low-n month is a gap, not a misleading number. Gating on
+ *  resolvedN instead of scoreableN would let a month of mostly not-scoreable resolutions publish
+ *  a rate computed on a handful of usable data points — the exact failure mode this exists to
+ *  prevent. `resolvedN` (every is_resolution=1 row that month, scoreable or not) is kept as a
+ *  separate, purely informational display field. `scoreableN` is optional only so existing
+ *  hand-built literals in tests/consumers predating this field stay valid — every producer in
+ *  this codebase always populates it. */
 export const AccuracyPoint = z.object({
   month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
   resolvedN: z.number().int().nonnegative(),
+  scoreableN: z.number().int().nonnegative().optional(),
   hitRate: z.number().nullable(),
 });
 export type AccuracyPoint = z.infer<typeof AccuracyPoint>;

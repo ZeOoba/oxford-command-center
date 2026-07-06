@@ -4,9 +4,19 @@
 IMPLEMENTATION_PLAN.md's D1–D8 as recommended) + explicit sentinel authorization for
 architect-owned edits in this cloud session. Declared in `architecture/status.json` →
 `design-parity-impl`.
-**Branch:** `claude/analyze-plan-prompt-tadmpp` (restarted from merged main per harness protocol;
-one PR, per-wave commits — deviation from one-PR-per-phase is deliberate: single reviewer,
-expedite requested).
+**Branch:** `claude/analyze-plan-prompt-tadmpp` — one PR, per-wave commits (deviation from
+one-PR-per-phase is deliberate: single reviewer, expedite requested).
+**PR #166 merged 2026-07-06 mid-Wave-2** (squash-merge `2d2c147`, content-identical to this
+branch's tip at merge time — verified byte-for-byte via `git diff`): Wave 0 (governance), Wave 1
+(primitives/contracts/migrations), and Lane L2c (insights route) landed on `main`. **NO
+defective code merged** — L2a/L2b/L2d (insurance-analysis/tax-analysis/brain-report) were still
+uncommitted in the working tree at merge time (refute passes had found real defects in two of
+them, fixes were in flight). Per the merged-PR protocol, branch was restarted from `main`
+(`git checkout -B claude/analyze-plan-prompt-tadmpp origin/main`) with the uncommitted Wave-2
+work carried over via stash (clean pop, zero conflicts); the old (now-redundant, already-merged)
+branch tip was merged back in via a no-op merge commit rather than a force-push, to avoid
+rewriting already-pushed history. **Any fresh session: `main` now has Wave 0/1/L2c — start
+Wave-2 remainder from there, do not re-do it.**
 **Orchestration:** Fable 5 plans/reviews; Sonnet subagents implement in parallel,
 non-colliding by construction (disjoint file sets below). Refute-financial-change (opus) runs
 on every financial engine before its commit.
