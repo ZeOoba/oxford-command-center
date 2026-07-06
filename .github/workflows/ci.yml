@@ -18,6 +18,10 @@ jobs:
           # Pinned (was '24'): Node 24.18.0 breaks pdf-parse@1.1.4's bundled pdf.js —
           # briefing-PDF tests fail with corrupt-buffer errors. 24.17.0 verified green
           # (bisected 2026-07-05, PR #161). Unpin only after pdf-parse is replaced.
+          # Pinned (was '24'): Node >=24.18.0 raises Buffer.poolSize 8->64 KiB (nodejs/node#63597),
+          # which trips a latent bug in pdf-parse v1's bundled pdf.js 1.10 on pooled buffers -
+          # briefing tests fail with 'bad XRef entry'. 24.17.0 = security-only release WITHOUT the
+          # poolSize change (keeps its CVE fixes). Unpin after pdf-parse is upgraded to v2.
           node-version: '24.17.0'
           cache: 'npm'
       - run: npm ci
@@ -39,6 +43,10 @@ jobs:
           # Pinned (was '24'): Node 24.18.0 breaks pdf-parse@1.1.4's bundled pdf.js —
           # briefing-PDF tests fail with corrupt-buffer errors. 24.17.0 verified green
           # (bisected 2026-07-05, PR #161). Unpin only after pdf-parse is replaced.
+          # Pinned (was '24'): Node >=24.18.0 raises Buffer.poolSize 8->64 KiB (nodejs/node#63597),
+          # which trips a latent bug in pdf-parse v1's bundled pdf.js 1.10 on pooled buffers -
+          # briefing tests fail with 'bad XRef entry'. 24.17.0 = security-only release WITHOUT the
+          # poolSize change (keeps its CVE fixes). Unpin after pdf-parse is upgraded to v2.
           node-version: '24.17.0'
           cache: 'npm'
       - run: npm ci
