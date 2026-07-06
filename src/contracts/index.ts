@@ -38,6 +38,9 @@ export * from './capital-allocation';
 export * from './market-intelligence';
 export * from './regional-macro';
 export * from './notion-writeback';
+export * from './tax';
+export * from './insurance-analysis';
+export * from './brain-report';
 
 export const SnapshotMeta = z.object({
   schemaVersion: z.literal(SCHEMA_VERSION),

@@ -377,6 +377,152 @@ async function main(): Promise<number> {
       failures.push('ux_recommendations_versioned index missing — migration 018 did not apply');
     }
 
+    // 8n. Migration 020 schema presence — property_tax_assessments + tax_appeals tables with
+    // expected columns.
+    const propertyTaxAssessmentsExists = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='property_tax_assessments'",
+    ).get() as { name: string } | undefined;
+    if (!propertyTaxAssessmentsExists) {
+      failures.push('property_tax_assessments table missing — migration 020 did not apply');
+    } else {
+      const cols = (db.prepare('PRAGMA table_info(property_tax_assessments)').all() as Array<{ name: string }>).map((c) => c.name);
+      const expected = ['id', 'property_id', 'tax_year', 'jurisdiction', 'assessed_value', 'assessment_ratio', 'millage_rate', 'annual_tax_billed', 'source', 'as_of', 'created_at'];
+      for (const col of expected) {
+        if (!cols.includes(col)) failures.push(`property_tax_assessments.${col} column missing — migration 020 did not apply`);
+      }
+    }
+    const taxAppealsExists = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='tax_appeals'",
+    ).get() as { name: string } | undefined;
+    if (!taxAppealsExists) {
+      failures.push('tax_appeals table missing — migration 020 did not apply');
+    } else {
+      const cols = (db.prepare('PRAGMA table_info(tax_appeals)').all() as Array<{ name: string }>).map((c) => c.name);
+      const expected = ['id', 'property_id', 'tax_year', 'status', 'filed_date', 'est_savings_annual', 'realized_savings_annual', 'notes', 'created_at', 'updated_at'];
+      for (const col of expected) {
+        if (!cols.includes(col)) failures.push(`tax_appeals.${col} column missing — migration 020 did not apply`);
+      }
+    }
+
+    // 8o. Migration 020 constraint enforcement — UNIQUE(property_id, tax_year) and the
+    // assessment_ratio / tax_appeals.status CHECK constraints reject invalid rows. Each probe
+    // runs inside its own db.transaction() so a thrown constraint violation auto-rolls-back —
+    // no probe row should ever persist in the warehouse being verified.
+    {
+      const probeProperty = CANON_PROPERTIES[0]?.id;
+      if (probeProperty === undefined) {
+        failures.push('migration 020 constraint probe: CANON_PROPERTIES is empty — cannot pick a probe property id');
+      } else {
+        const rejects = (fn: () => void): boolean => {
+          try {
+            db.transaction(fn)();
+            return false; // did not throw — constraint failed to reject
+          } catch {
+            return true; // threw as expected — transaction auto-rolled back
+          }
+        };
+        if (!rejects(() => {
+          db.prepare(`INSERT INTO property_tax_assessments (property_id, tax_year, source) VALUES (?, 2026, 'verify-probe')`).run(probeProperty);
+          db.prepare(`INSERT INTO property_tax_assessments (property_id, tax_year, source) VALUES (?, 2026, 'verify-probe')`).run(probeProperty);
+        })) {
+          failures.push('property_tax_assessments UNIQUE(property_id, tax_year) did not reject a duplicate — migration 020 constraint regression');
+        }
+        if (!rejects(() => {
+          db.prepare(`INSERT INTO property_tax_assessments (property_id, tax_year, assessment_ratio, source) VALUES (?, 2099, 1.5, 'verify-probe')`).run(probeProperty);
+        })) {
+          failures.push('property_tax_assessments assessment_ratio CHECK did not reject 1.5 — migration 020 constraint regression');
+        }
+        if (!rejects(() => {
+          db.prepare(`INSERT INTO tax_appeals (id, property_id, tax_year, status) VALUES ('verify-probe-appeal', ?, 2026, 'bogus')`).run(probeProperty);
+        })) {
+          failures.push('tax_appeals status CHECK did not reject an unrecognized value — migration 020 constraint regression');
+        }
+        const residue = (db.prepare(`SELECT COUNT(*) AS c FROM property_tax_assessments WHERE source = 'verify-probe'`).get() as { c: number }).c;
+        if (residue > 0) {
+          failures.push(`migration 020 constraint probe left ${residue} residual row(s) — transaction rollback did not clean up`);
+        }
+      }
+    }
+
+    // 8p. Migration 021 schema presence — recommendation_feedback table with expected columns.
+    const recommendationFeedbackExists = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='recommendation_feedback'",
+    ).get() as { name: string } | undefined;
+    if (!recommendationFeedbackExists) {
+      failures.push('recommendation_feedback table missing — migration 021 did not apply');
+    } else {
+      const cols = (db.prepare('PRAGMA table_info(recommendation_feedback)').all() as Array<{ name: string }>).map((c) => c.name);
+      const expected = ['id', 'subject_kind', 'subject_id', 'decision', 'decided_at', 'note'];
+      for (const col of expected) {
+        if (!cols.includes(col)) failures.push(`recommendation_feedback.${col} column missing — migration 021 did not apply`);
+      }
+    }
+
+    // 8q. Migration 021 constraint enforcement — subject_kind CHECK rejects an unrecognized
+    // value (probe wrapped in a transaction; auto-rolled back on throw).
+    {
+      let badSubjectKindRejected = false;
+      try {
+        db.transaction(() => {
+          db.prepare(`INSERT INTO recommendation_feedback (id, subject_kind, subject_id, decision, decided_at) VALUES ('verify-probe-fb', 'bogus', 'x', 'accept', '2026-01-01')`).run();
+        })();
+      } catch {
+        badSubjectKindRejected = true;
+      }
+      if (!badSubjectKindRejected) {
+        failures.push('recommendation_feedback subject_kind CHECK did not reject an unrecognized value — migration 021 constraint regression');
+      }
+      const residue = (db.prepare(`SELECT COUNT(*) AS c FROM recommendation_feedback WHERE id = 'verify-probe-fb'`).get() as { c: number }).c;
+      if (residue > 0) failures.push('migration 021 constraint probe left a residual row — transaction rollback did not clean up');
+    }
+
+    // 8r. Migration 022 schema presence — insurance_loss_events table + property_insurance_policies
+    // deductible/coverage_limit columns.
+    const insuranceLossEventsExists = db.prepare(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name='insurance_loss_events'",
+    ).get() as { name: string } | undefined;
+    if (!insuranceLossEventsExists) {
+      failures.push('insurance_loss_events table missing — migration 022 did not apply');
+    } else {
+      const cols = (db.prepare('PRAGMA table_info(insurance_loss_events)').all() as Array<{ name: string }>).map((c) => c.name);
+      const expected = ['id', 'property_id', 'policy_ref', 'loss_date', 'cause', 'gross_incurred', 'paid', 'reserve', 'source', 'created_at'];
+      for (const col of expected) {
+        if (!cols.includes(col)) failures.push(`insurance_loss_events.${col} column missing — migration 022 did not apply`);
+      }
+    }
+    const policyCols = (db.prepare('PRAGMA table_info(property_insurance_policies)').all() as Array<{ name: string }>).map((c) => c.name);
+    if (!policyCols.includes('deductible')) {
+      failures.push('property_insurance_policies.deductible column missing — migration 022 did not apply');
+    }
+    if (!policyCols.includes('coverage_limit')) {
+      failures.push('property_insurance_policies.coverage_limit column missing — migration 022 did not apply');
+    }
+
+    // 8s. Migration 022 constraint enforcement — UNIQUE(property_id, loss_date, cause,
+    // gross_incurred) rejects a duplicate loss occurrence (probe wrapped in a transaction;
+    // auto-rolled back on throw).
+    {
+      const probeProperty2 = CANON_PROPERTIES[0]?.id;
+      if (probeProperty2 === undefined) {
+        failures.push('migration 022 constraint probe: CANON_PROPERTIES is empty — cannot pick a probe property id');
+      } else {
+        let dupRejected = false;
+        try {
+          db.transaction(() => {
+            db.prepare(`INSERT INTO insurance_loss_events (id, property_id, loss_date, cause, gross_incurred, source) VALUES ('verify-probe-loss-1', ?, '2026-01-01', 'fire', 1000, 'verify-probe')`).run(probeProperty2);
+            db.prepare(`INSERT INTO insurance_loss_events (id, property_id, loss_date, cause, gross_incurred, source) VALUES ('verify-probe-loss-2', ?, '2026-01-01', 'fire', 1000, 'verify-probe')`).run(probeProperty2);
+          })();
+        } catch {
+          dupRejected = true;
+        }
+        if (!dupRejected) {
+          failures.push('insurance_loss_events UNIQUE(property_id, loss_date, cause, gross_incurred) did not reject a duplicate — migration 022 constraint regression');
+        }
+        const residue = (db.prepare(`SELECT COUNT(*) AS c FROM insurance_loss_events WHERE source = 'verify-probe'`).get() as { c: number }).c;
+        if (residue > 0) failures.push(`migration 022 constraint probe left ${residue} residual row(s) — transaction rollback did not clean up`);
+      }
+    }
+
     // 9. Re-ingest smoke — exercise the parser-version RESTALE re-derive path, which verify otherwise
     //    never hits (it builds a fresh DB). Stale every committed import's parser_version, re-ingest the
     //    same files (→ in-place re-derive), then assert the re-derive is idempotent (same basis), empties
@@ -505,7 +651,10 @@ async function main(): Promise<number> {
     `prospect_demand_events schema present (migration 012), ` +
     `Phase 5 tables present (migrations 013-016: market_series, recommendations, hurdle_rate columns, property_onboarding), ` +
     `ux_market_series_tuple index present (migration 017), ` +
-    `ux_recommendations_versioned index present (migration 018)`);
+    `ux_recommendations_versioned index present (migration 018), ` +
+    `property_tax_assessments/tax_appeals schema + constraints present (migration 020), ` +
+    `recommendation_feedback schema + constraints present (migration 021), ` +
+    `insurance_loss_events schema + constraints present + property_insurance_policies deductible/coverage_limit columns present (migration 022)`);
   return 0;
 }
 

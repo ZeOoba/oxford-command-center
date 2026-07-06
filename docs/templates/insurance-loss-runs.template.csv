@@ -1,0 +1,6 @@
+# Insurance loss-run fill-in template. Request 3-year loss runs (by property, if the broker can
+# break them out) from each carrier/broker of record, then add ONE ROW PER OCCURRENCE below
+# (source='broker'). Ships empty — populates insurance_loss_events (migration 022) once the
+# broker loss runs arrive. property_id should match a property_master id; leave blank for a
+# portfolio-level or umbrella-policy loss that isn't attributable to a single property.
+property_id,policy_ref,loss_date,cause,gross_incurred,paid,reserve,source

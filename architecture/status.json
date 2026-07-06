@@ -296,7 +296,7 @@
     "status": "merged",
     "blocked_by": null,
     "review_needed": false,
-    "review_detail": "MERGED via PR #121 (f951b40). IC Memo HTML export — Direction 2. Worktree at .claude/worktrees/ic-memo (branch feat/ic-memo-export) was still on disk at close-out; remove after session cleanup. Duplicated record bodies (in_progress + merged) collapsed into this single merged record 2026-07-05 by server-setup-w4g4pb. [Two sessions repaired this entry independently on 2026-07-05; their texts were auto-merge-interleaved by PRs #162/#164 and re-reconciled 2026-07-06.]",
+    "review_detail": "MERGED via PR #121 (f951b40). IC Memo HTML export — Direction 2. Worktree at .claude/worktrees/ic-memo (branch feat/ic-memo-export) was still on disk at close-out; remove after session cleanup. [Repair lineage: two sessions repaired this entry independently 2026-07-05 (server-setup-w4g4pb collapse + missing-comma fix); auto-merges (PRs #162/#164/#165 + branch merge 6c5c692) re-interleaved them twice; final single-record collapse 2026-07-06 on the design-parity branch.]",
     "last_updated": "2026-06-22T10:00:00Z"
   },
 
@@ -306,7 +306,7 @@
     "status": "merged",
     "blocked_by": null,
     "review_needed": false,
-    "review_detail": "CLAUDE.md §2 updated: last merge = PR #121 (f951b40), 1713+ tests; §3 Directions 1+2+3 all Merged ✓. status.json: ic-memo → merged (PR #121). Stale worktrees (post-merge-116, post-merge-t2-t3, practical-buck-7ef7bc, recursing-chatelet-f908d3) removed. [Duplicate review_detail key removed 2026-07-05, kept newer; re-deduplicated 2026-07-06 after PR #162/#164 auto-merge re-interleaved it.]",
+    "review_detail": "CLAUDE.md §2 updated: last merge = PR #121 (f951b40), 1713+ tests; §3 Directions 1+2+3 all Merged ✓. status.json: ic-memo → merged (PR #121). Stale worktrees (post-merge-116, post-merge-t2-t3, practical-buck-7ef7bc, recursing-chatelet-f908d3) removed. [Duplicate review_detail deduped 2026-07-05 and again 2026-07-06 after PR #162/#164/#165 + branch-merge auto-interleaving; if this file conflicts again, collapse to ONE line per key and keep the fullest narrative.]",
     "last_updated": "2026-06-22T10:00:00Z"
   },
 
@@ -407,6 +407,16 @@
     "review_needed": false,
     "review_detail": "MERGED via PR #163 (67fd0d1) — after #160 was accidentally squash-merged into its stacked base branch instead of main, and a ci.yml conflict with PR #161 (parallel session, same Node-24.18 diagnosis) was resolved in favor of unpinned node '24'. Architect-owned package.json touch (pdf-parse ^1.1.4 → ^2.4.5) approved in-session by Gabriel 2026-07-05. New server/lib/pdf-text.ts adapter (PDFParse class API + fresh Uint8Array copy for pooled-buffer safety); migrated server/warehouse/om-extract.ts, server/sources/documents.ts, 3 briefing test files; CI node-version unpinned back to '24' (pin from PR #159 no longer needed). Validated: 99/99 affected tests green under BOTH Node 22.22.2 and Node 24.18.0 (the breaking version); full suite 1905/1905; build + bundle budget + governance + check:refute (no trailer needed) all green. Stacked on PR #159 (merge #159 first). Also repaired status.json corruption: ic-memo entry missing comma + duplicated fields, chore-post-w2-merge duplicate review_detail key.",
     "last_updated": "2026-07-06T01:10:00Z"
+  },
+
+  "design-parity-impl": {
+    "agent_role": "Engineering (Claude Code, Fable 5 orchestrating Sonnet subagents) — Gabriel-authorized in-session 2026-07-06 ('Proceed with all recommendations')",
+    "phase": "IMPLEMENTATION_PLAN.md execution P0-P6 (+P7 subset) on branch claude/analyze-plan-prompt-tadmpp: tier-board primitives, insights wiring + module, Grader UX, insurance analysis (TIV framework), command-brain module, taxes module (framework + assessor-data template), capital orphan fold",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Architect-owned edits in scope, all pre-authorized by Gabriel 2026-07-06 in-session ('Proceed with all recommendations'; sentinel authorized via explicit question): architecture/status.json (this declaration + defect repairs: ic-memo interleaved body missing comma, chore-post-w2-merge duplicate key — the 2026-07-05 repair had annotated but not removed them), src/contracts/{warehouse.ts (VerdictKind/VerdictEngine +insurance-rebid/tax-appeal), insurance.ts (+tiv/deductible/limit nullable), tax.ts (NEW), brain-report.ts (NEW), insurance-analysis.ts (NEW), index.ts (barrel)}, server/warehouse/migrations/{020_property_tax.sql, 021_recommendation_feedback.sql, 022_insurance_loss_events.sql — numbers verified free at execution}, architecture/database-schema.md + agent-assignments.md + ownership.json (per plan tasks 0.3/0.4/0.6/0.7). New routes under /api/warehouse/{insights, insurance/analysis, tax/*, brain/*} and new registry modules insights/taxes/command-brain per plan 0.7 blanket authorization. All financial engines get refute-financial-change passes + trailers.",
+    "last_updated": "2026-07-06T01:30:00Z"
   },
 
   "usage": {

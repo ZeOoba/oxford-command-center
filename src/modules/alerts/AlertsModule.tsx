@@ -1,56 +1,101 @@
-import { Mail, ArrowRight } from 'lucide-react';
 import { useAlertView, useAlertAction } from '../../data/alerts';
 import type { AlertViewItem } from '../../brain/alerts-view';
-import { useUi } from '../../brain/ui-context';
+import { useUi, type UiState } from '../../brain/ui-context';
 import { insightToDraft } from '../../brain/draft';
+import type { InsightSeverity } from '../../analytics/types';
+import { TierBoard, type Tier, type TierItem, type TierItemAction } from '../../primitives/TierBoard';
 
-const SEV_COLOR: Record<string, string> = {
+const SEV_COLOR: Record<InsightSeverity, string> = {
   critical: 'var(--color-neg)',
   warning: 'var(--color-warn)',
   info: 'var(--color-info)',
 };
 
+const TIER_TONE: Record<InsightSeverity, Tier['tone']> = {
+  critical: 'neg',
+  warning: 'warn',
+  info: 'info',
+};
+
+const TIER_TITLE: Record<InsightSeverity, string> = {
+  critical: 'Critical',
+  warning: 'Warning',
+  info: 'Info',
+};
+
+/** Insight impact is framed as "amount at stake"; critical/warning read as risk, info as neutral context. */
+const IMPACT_KIND: Record<InsightSeverity, TierItem['impactKind']> = {
+  critical: 'risk',
+  warning: 'risk',
+  info: 'info',
+};
+
+type AlertAction = ReturnType<typeof useAlertAction>;
+
+function toTierItem(item: AlertViewItem, rank: number, action: AlertAction, ui: UiState): TierItem {
+  const insight = item.insight;
+  const onRead = () => action.mutate({ alertId: insight.id, action: item.read ? 'unread' : 'read' });
+  const onSnooze = (days: 7 | 30) =>
+    action.mutate({ alertId: insight.id, action: 'snooze', days, severity: insight.severity });
+  const onOpen =
+    insight.entityType && insight.entityId
+      ? () => ui.openEntity({ type: insight.entityType!, id: insight.entityId! })
+      : null;
+  const draft = insightToDraft(insight);
+  const onDraft = draft ? () => ui.openDraft(draft) : null;
+
+  const actions: TierItemAction[] = [];
+  if (onDraft) actions.push({ label: 'Draft', onPress: onDraft });
+  if (onOpen) actions.push({ label: 'View', onPress: onOpen });
+  actions.push({ label: 'Snooze 7d', onPress: () => onSnooze(7) });
+  actions.push({ label: 'Snooze 30d', onPress: () => onSnooze(30) });
+  actions.push({ label: item.read ? 'Unread' : 'Mark read', onPress: onRead });
+
+  return {
+    id: insight.id,
+    rank,
+    category: insight.category,
+    impactUsd: insight.impactAnnualUsd,
+    impactKind: IMPACT_KIND[insight.severity],
+    title: insight.title,
+    detail: insight.detail,
+    actions,
+    chips: [insight.spine === 'A' ? 'Spine A' : 'Spine B'],
+    muted: item.read,
+  };
+}
+
+function buildTiers(items: AlertViewItem[], action: AlertAction, ui: UiState): Tier[] {
+  const severities: InsightSeverity[] = ['critical', 'warning', 'info'];
+  return severities.map((severity) => {
+    const bucket = items.filter((i) => i.insight.severity === severity);
+    return {
+      key: severity,
+      title: TIER_TITLE[severity],
+      tone: TIER_TONE[severity],
+      items: bucket.map((item, index) => toTierItem(item, index + 1, action, ui)),
+    };
+  });
+}
+
 export function AlertsModule() {
   const view = useAlertView();
   const action = useAlertAction();
   const ui = useUi();
+  const tiers = buildTiers(view.items, action, ui);
 
   return (
-    <div className="mx-auto max-w-4xl p-4">
-      <h2 className="mb-3 text-lg font-semibold">Alerts</h2>
+    <div className="flex flex-col gap-4 p-4">
+      <h2 className="text-lg font-semibold">Alerts</h2>
 
-      <div className="mb-4 grid grid-cols-4 gap-2">
-        <Stat label="Critical" value={view.counts.critical} color={SEV_COLOR['critical']} />
-        <Stat label="Warning" value={view.counts.warning} color={SEV_COLOR['warning']} />
-        <Stat label="Info" value={view.counts.info} color={SEV_COLOR['info']} />
+      <div className="grid grid-cols-4 gap-2">
+        <Stat label="Critical" value={view.counts.critical} color={SEV_COLOR.critical} />
+        <Stat label="Warning" value={view.counts.warning} color={SEV_COLOR.warning} />
+        <Stat label="Info" value={view.counts.info} color={SEV_COLOR.info} />
         <Stat label="Snoozed" value={view.counts.snoozed} />
       </div>
 
-      {view.items.length === 0 ? (
-        <p className="text-sm" style={{ color: 'var(--text-tertiary)' }}>No active alerts.</p>
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {view.items.map((item) => (
-            <AlertRow
-              key={item.insight.id}
-              item={item}
-              onRead={() => action.mutate({ alertId: item.insight.id, action: item.read ? 'unread' : 'read' })}
-              onSnooze={(days) =>
-                action.mutate({ alertId: item.insight.id, action: 'snooze', days, severity: item.insight.severity })
-              }
-              onOpen={
-                item.insight.entityType && item.insight.entityId
-                  ? () => ui.openEntity({ type: item.insight.entityType!, id: item.insight.entityId! })
-                  : null
-              }
-              onDraft={(() => {
-                const d = insightToDraft(item.insight);
-                return d ? () => ui.openDraft(d) : null;
-              })()}
-            />
-          ))}
-        </ul>
-      )}
+      <TierBoard tiers={tiers} columns={3} />
     </div>
   );
 }
@@ -61,49 +106,5 @@ function Stat({ label, value, color }: { label: string; value: number; color?: s
       <div className="text-lg font-bold" style={{ color: color ?? 'var(--text-primary)' }}>{value}</div>
       <div className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>{label}</div>
     </div>
-  );
-}
-
-function AlertRow({
-  item, onRead, onSnooze, onOpen, onDraft,
-}: {
-  item: AlertViewItem;
-  onRead: () => void;
-  onSnooze: (days: 7 | 30) => void;
-  onOpen: (() => void) | null;
-  onDraft: (() => void) | null;
-}) {
-  const c = SEV_COLOR[item.insight.severity] ?? '#5c9fe0';
-  return (
-    <li
-      className="rounded-md p-3"
-      style={{
-        background: 'var(--surface-overlay)',
-        borderLeft: `2px solid ${c}`,
-        opacity: item.read ? 0.55 : 1,
-      }}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <div className="text-sm font-semibold">{item.insight.title}</div>
-          <div className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>{item.insight.detail}</div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1.5">
-          {onDraft && (
-            <button className="flex items-center gap-1 text-2xs" style={{ color: 'var(--accent)' }} onClick={onDraft} aria-label="Draft email">
-              <Mail size={11} /> Draft
-            </button>
-          )}
-          {onOpen && (
-            <button className="flex items-center gap-1 text-2xs" style={{ color: 'var(--text-secondary)' }} onClick={onOpen} aria-label="Open record">
-              View <ArrowRight size={11} />
-            </button>
-          )}
-          <button className="text-2xs" style={{ color: 'var(--text-tertiary)' }} onClick={() => onSnooze(7)}>Snooze 7d</button>
-          <button className="text-2xs" style={{ color: 'var(--text-tertiary)' }} onClick={() => onSnooze(30)}>30d</button>
-          <button className="text-2xs" style={{ color: 'var(--accent)' }} onClick={onRead}>{item.read ? 'Unread' : 'Mark read'}</button>
-        </div>
-      </div>
-    </li>
   );
 }
