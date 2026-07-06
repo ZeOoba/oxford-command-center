@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en" data-screen-label="Taxes">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORA — Taxes</title>
+<script>try{var t=localStorage.getItem('ora-theme')||'dark';document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('ora-density')==='compact')document.documentElement.setAttribute('data-density','compact');}catch(e){}</script>
+<link rel="stylesheet" href="ora.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" data-active="taxes"></nav>
+
+  <div class="main">
+    <header class="top">
+      <div class="ttl"><span class="up">Oxford RA · Command</span><span class="pg">Taxes</span></div>
+      <div class="bar"></div>
+      <div class="clock" id="taxClock">CONTINUOUS REVIEW · TAX YR 2026</div>
+      <div class="grow"></div>
+      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>search assessments · returns<span class="k">⌘K</span></div>
+      <div class="stat"><span class="d"></span>SCANNING · 4m</div>
+      <button class="ibtn" id="themeBtn" title="Toggle theme"></button>
+      <button class="ibtn" id="densityBtn" title="Toggle density"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      <button class="ibtn" title="Alerts"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 004 0"/></svg><span class="dot"></span></button>
+    </header>
+
+    <div class="content">
+      <div class="pagehd">
+        <div><h1>Tax Strategy</h1><div class="sub">assessments · appeals · depreciation · entity &amp; pipeline structuring — reviewed continuously</div></div>
+        <div class="grow"></div>
+        <span class="chip ai">◇ ENGINE</span>
+      </div>
+
+      <div class="kpis" style="grid-template-columns:repeat(4,1fr)">
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z"/><path d="M9.5 15.5l5-7"/></svg>ANNUAL PROPERTY TAX</div><div class="v" id="kTax">—</div><div class="dl r" id="kTaxYoY">—</div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/></svg>EFFECTIVE RATE</div><div class="v" id="kRate">—</div><div class="dl"><span class="s" id="kRateSub">on assessed value</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6 4.4 2.3 7.2L12 16.6 5.7 21l2.3-7.2-6-4.4h7.6z"/></svg>IDENTIFIED OPPORTUNITY</div><div class="v" id="kOpp" style="color:var(--green)">—</div><div class="dl g"><span class="s">recurring + first-year</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>APPEALS TO FILE</div><div class="v" id="kAppeals">—</div><div class="dl g" id="kAppealsSub"><span class="s">recoverable / yr</span></div></div>
+      </div>
+
+      <div class="tabs" data-scope="#taxpanes">
+        <div class="tab on" data-pane="strat">Strategy Board</div>
+        <div class="tab" data-pane="assess">Assessments &amp; Appeals</div>
+        <div class="tab" data-pane="returns">Filed Returns</div>
+      </div>
+
+      <div id="taxpanes">
+        <!-- STRATEGY BOARD -->
+        <div class="tabpane on" data-pane="strat">
+          <div class="results" id="taxBanner"></div>
+          <div class="board-hd" style="display:flex;align-items:center;gap:9px;margin-bottom:12px">
+            <div><h3 style="font-size:12px;font-weight:600;letter-spacing:.04em">RANKED TAX STRATEGIES</h3><div class="sub" style="font-family:var(--font-mono);font-size:10.5px;color:var(--muted);margin-top:2px">grouped by lever · ranked by dollar impact within each</div></div>
+            <div class="grow"></div><span class="chip">ASSET · PORTFOLIO · PIPELINE</span>
+          </div>
+          <div class="tiers" id="taxTiers"></div>
+        </div>
+
+        <!-- ASSESSMENTS -->
+        <div class="tabpane" data-pane="assess">
+          <div class="grid-21">
+            <div class="panel">
+              <div class="ph"><div><h3>ASSESSMENTS vs MARKET</h3><div class="sub" id="assessSub">—</div></div><div class="grow"></div><span class="linkish">⤓ Export</span></div>
+              <table class="tbl" data-enhance data-chips="Market">
+                <thead><tr><th>Property</th><th>Market</th><th class="r">Assessed</th><th class="r">Market</th><th class="r">Eff. Rate</th><th class="r">Tax / yr</th><th class="r">Appeal</th></tr></thead>
+                <tbody id="assessBody"></tbody>
+              </table>
+            </div>
+            <div class="colstack">
+              <div class="panel">
+                <div class="ph"><div><h3>APPEAL OPPORTUNITY</h3><div class="sub">over-assessed assets</div></div></div>
+                <div class="readout"><div class="rl2">Recoverable / yr</div><div class="rv2" id="appealTot" style="color:var(--green)">—</div><div class="dl g" id="appealCnt" style="font-size:11px"></div></div>
+              </div>
+              <div class="panel">
+                <div class="ph"><div><h3>WHY IT FLAGS</h3></div><div class="grow"></div><span class="chip ai">◇ AI</span></div>
+                <div class="insight a"><p><b>Assessors lag the value cycle by ~18 months.</b> After the last re-rate, jurisdictions are catching assessed values up to market — appeals filed in this window carry the highest win rate. The engine flags any asset whose assessment overshoots a defensible income-approach value.</p></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- RETURNS -->
+        <div class="tabpane" data-pane="returns">
+          <div class="grid-21">
+            <div class="panel">
+              <div class="ph"><div><h3>FILED RETURN ARCHIVE</h3><div class="sub" id="retSub">—</div></div><div class="grow"></div><span class="chip ai">◇ AI REVIEW</span></div>
+              <table class="tbl">
+                <thead><tr><th>Tax Year</th><th class="r">EGI</th><th class="r">Depreciation</th><th class="r">Bonus / Cost-Seg</th><th class="r">Taxable Income</th><th>Status</th></tr></thead>
+                <tbody id="retBody"></tbody>
+              </table>
+            </div>
+            <div class="colstack">
+              <div class="panel">
+                <div class="ph"><div><h3>AI REVIEW NOTES</h3><div class="sub">per filed year</div></div></div>
+                <div id="retNotes"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="ora.js"></script>
+<script src="data.js"></script>
+<script src="trends.js"></script>
+<script src="tax.js"></script>
+<script src="table.js"></script>
+<script>
+(function(){
+  document.addEventListener('DOMContentLoaded', function(){
+    var X = window.ORA_TAX; if(!X) return;
+    var p = X.plain;
+
+    // ---- KPIs ----
+    document.getElementById('kTax').innerHTML = p(X.totals.annualTax).replace(/^(\$[\d.]+)([MK])$/,'$1<small>$2</small>');
+    document.getElementById('kTaxYoY').innerHTML = '▲ '+(X.totals.taxYoY||0).toFixed(0)+'% <span class="s">YoY</span>';
+    document.getElementById('kRate').innerHTML = (X.totals.effRate*100).toFixed(2)+'<small>%</small>';
+    document.getElementById('kRateSub').textContent = (X.totals.annualTax/X.totals.marketVal*100).toFixed(2)+'% of market value';
+    var opp = X.STRATEGIES.reduce(function(t,s){return t+s.impact;},0);
+    document.getElementById('kOpp').innerHTML = p(opp).replace(/^(\$[\d.]+)([MK])$/,'$1<small>$2</small>');
+    document.getElementById('kAppeals').innerHTML = X.totals.appeals+'<small> assets</small>';
+    document.getElementById('kAppealsSub').innerHTML = p(X.totals.appealSaving)+' <span class="s">recoverable / yr</span>';
+
+    // ---- banner ----
+    var recurring = X.STRATEGIES.filter(function(s){return s.cat==='appeal';}).reduce(function(t,s){return t+s.impact;},0);
+    var firstYr = X.STRATEGIES.filter(function(s){return s.cat==='1031';}).reduce(function(t,s){return t+s.impact;},0);
+    document.getElementById('taxBanner').innerHTML =
+      '<div class="rcell"><div class="rl">Total Identified Opportunity</div><div class="rv gain">'+p(opp)+'</div><div class="rs">across asset · portfolio · pipeline</div></div>'+
+      '<div class="rcell"><div class="rl">Recurring Appeal Savings</div><div class="rv gain">'+p(recurring)+'/yr</div><div class="rs">'+X.totals.appeals+' over-assessed assets</div></div>'+
+      '<div class="rcell"><div class="rl">First-Year Deferral</div><div class="rv">'+p(firstYr)+'</div><div class="rs">cost-seg + bonus depreciation</div></div>';
+
+    // ---- tiered strategy board ----
+    var GROUPS = [
+      {cat:'appeal', nm:'Assessment Appeals', sub:'recurring savings', cls:'t-med', pill:'cat-appeal'},
+      {cat:'1031', nm:'Depreciation & Cost-Seg', sub:'first-year deferral', cls:'t-acc', pill:'cat-1031'},
+      {cat:'struct', nm:'Structure & Pipeline', sub:'portfolio · new buys', cls:'t-vio', pill:'cat-struct'}
+    ];
+    function tcard(s,rank){
+      var r=(rank<10?'0':'')+rank;
+      return '<a class="tcard" href="'+s.href+'">'+
+        '<div class="tc-top"><span class="tc-rank">'+r+'</span><span class="catpill '+groupPill(s.cat)+'">'+(X.CAT_LABEL[s.cat]||s.cat)+'</span><span class="tc-imp gain">'+p(s.impact)+'</span></div>'+
+        '<div class="tc-title">'+s.title+'</div>'+
+        '<div class="tc-detail">'+s.detail+'</div>'+
+        '<div class="tc-action">→ '+s.action+'</div></a>';
+    }
+    function groupPill(cat){ for(var i=0;i<GROUPS.length;i++) if(GROUPS[i].cat===cat) return GROUPS[i].pill; return 'cat-tax'; }
+    document.getElementById('taxTiers').innerHTML = GROUPS.map(function(g){
+      var items = X.STRATEGIES.filter(function(s){return s.cat===g.cat;}).sort(function(a,b){return b.impact-a.impact;});
+      var tot = items.reduce(function(t,s){return t+s.impact;},0);
+      var body = items.length ? items.map(function(s,i){return tcard(s,i+1);}).join('') : '<div class="tier-empty">Nothing flagged</div>';
+      return '<div class="tier '+g.cls+'">'+
+        '<div class="tier-hd"><span class="dotb"></span><div><div class="tier-nm">'+g.nm+'</div><div class="tier-sub">'+g.sub+'</div></div><span class="tier-ct">'+items.length+'</span></div>'+
+        '<div class="tier-meta">'+(tot>0?'<b>'+p(tot)+'</b> identified':'—')+'</div>'+
+        '<div class="tier-body">'+body+'</div></div>';
+    }).join('');
+
+    // ---- assessments table ----
+    var byAppeal = X.ASSETS.slice().sort(function(a,b){return b.appealSaving-a.appealSaving;});
+    document.getElementById('assessBody').innerHTML = byAppeal.map(function(a){
+      var ap = a.appealSaving>1500 ? '<span class="num" style="color:var(--green)">'+p(a.appealSaving)+'</span>' : '<span class="num muted">—</span>';
+      return '<tr class="click" onclick="location.href=\'Property.html?id='+a.id+'\'">'+
+        '<td><b>'+a.name+'</b></td><td class="muted">'+a.market+'</td>'+
+        '<td class="r num">'+p(a.assessed)+'</td>'+
+        '<td class="r num muted">'+p(a.marketVal)+'</td>'+
+        '<td class="r num">'+(a.effRate*100).toFixed(2)+'%</td>'+
+        '<td class="r num">'+p(a.annualTax)+'</td>'+
+        '<td class="r">'+ap+'</td></tr>';
+    }).join('');
+    document.getElementById('assessSub').textContent = X.ASSETS.length+' assets · '+X.totals.appeals+' flagged for appeal';
+    document.getElementById('appealTot').innerHTML = p(X.totals.appealSaving);
+    document.getElementById('appealCnt').innerHTML = '▲ '+X.totals.appeals+' assets over defensible value';
+
+    // ---- returns ----
+    document.getElementById('retBody').innerHTML = X.RETURNS.map(function(r){
+      var ti = r.taxableIncome;
+      var tiCell = ti<0 ? '<span class="num pos">('+p(-ti)+')</span>' : '<span class="num">'+p(ti)+'</span>';
+      var stCls = r.status.indexOf('review')>-1 ? 'b-loi' : 'b-dd';
+      return '<tr><td><b>'+r.year+'</b><div class="mt-s">'+r.form+'</div></td>'+
+        '<td class="r num">'+p(r.egi)+'</td>'+
+        '<td class="r num muted">'+p(r.depreciation)+'</td>'+
+        '<td class="r num">'+(r.bonus>0?p(r.bonus):'—')+'</td>'+
+        '<td class="r">'+tiCell+'</td>'+
+        '<td><span class="badge '+stCls+'">'+(r.status.indexOf('review')>-1?'UNDER REVIEW':'ACCEPTED')+'</span></td></tr>';
+    }).join('');
+    document.getElementById('retSub').textContent = X.RETURNS.length+' filed years · '+X.RETURNS[0].entity;
+    document.getElementById('retNotes').innerHTML = X.RETURNS.map(function(r){
+      var cls = r.reviewSev==='med'?'b':'a';
+      return '<div class="insight '+cls+'"><div class="tagln"><span class="pin"></span><span class="cat">'+r.year+' · '+(r.shelter?'SHELTERED':'TAXABLE')+'</span></div><p>'+r.note+'</p></div>';
+    }).join('');
+
+    if (window.ORA_enhanceTables) ORA_enhanceTables(document);
+  });
+})();
+</script>
+</body>
+</html>

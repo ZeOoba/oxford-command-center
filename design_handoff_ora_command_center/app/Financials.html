@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en" data-screen-label="Financials">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORA — Financials</title>
+<script>try{var t=localStorage.getItem('ora-theme')||'dark';document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('ora-density')==='compact')document.documentElement.setAttribute('data-density','compact');}catch(e){}</script>
+<link rel="stylesheet" href="ora.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" data-active="financials"></nav>
+
+  <div class="main">
+    <header class="top">
+      <div class="ttl"><span class="up">Oxford RA · Command</span><span class="pg">Financials</span></div>
+      <div class="bar"></div>
+      <div class="clock">PERIOD · MAY 2026 · BOOKS OPEN</div>
+      <div class="grow"></div>
+      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>search ledger · vendor<span class="k">⌘K</span></div>
+      <div class="stat"><span class="d"></span>SYNCED · 6m</div>
+      <button class="ibtn" id="themeBtn" title="Toggle theme"></button>
+      <button class="ibtn" id="densityBtn" title="Toggle density"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      <button class="ibtn" title="Alerts"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 004 0"/></svg><span class="dot"></span></button>
+    </header>
+
+    <div class="content">
+      <div class="pagehd">
+        <div><h1>Financials</h1><div class="sub">general ledger · receivables · payables · rent roll · budget vs. actual</div></div>
+        <div class="grow"></div>
+        <div class="seg"><span>Apr</span><span class="on">May 26</span><span>YTD</span><span>TTM</span></div>
+        <span class="linkish" style="margin-left:10px">⤓ Export</span>
+        <span class="linkish" style="margin-left:6px">Close period ▸</span>
+      </div>
+
+      <!-- finance KPIs -->
+      <div class="kpis">
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M3 3v18h18M7 14l3-3 3 2 5-6"/></svg>TOTAL REVENUE</div><div class="v">$0.63<small>M</small></div><div class="dl g">▲ 2.4% <span class="s">MoM</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/></svg>NOI</div><div class="v" data-metric="noiMo">$1.84<small>M</small></div><div class="dl g">76.3% <span class="s">MARGIN</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16"/></svg>A/R OUTSTANDING</div><div class="v">$122<small>K</small></div><div class="dl r">● $34K <span class="s">90+ DAYS</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M12 3v18M7 8h7a3 3 0 010 6H8a3 3 0 000 6h8"/></svg>A/P DUE ≤30D</div><div class="v">$133<small>K</small></div><div class="dl r">● 2 <span class="s">OVERDUE</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>BUDGET VARIANCE</div><div class="v">+$9<small>K</small></div><div class="dl g">▲ 1.8% <span class="s">FAVORABLE</span></div></div>
+      </div>
+
+<div class="panel" style="margin-bottom:16px"><div class="ph"><div><h3>RECOMMENDED ACTIONS</h3><div class="sub">grow NOI · deploy capital · ranked by $ impact</div></div><div class="grow"></div><a class="more" href="Insights.html">ALL ▸</a><span class="chip ai" style="margin-left:8px">◇ ENGINE</span></div><div id="modActions"></div></div>
+
+      <div class="tabs" data-scope="#finpanes">
+        <div class="tab on" data-pane="stmt">Statements</div>
+        <div class="tab" data-pane="gl">General Ledger</div>
+        <div class="tab" data-pane="ar">Receivables</div>
+        <div class="tab" data-pane="ap">Payables</div>
+        <div class="tab" data-pane="rr">Rent Roll</div>
+        <div class="tab" data-pane="budget">Budget vs. Actual</div>
+      </div>
+
+      <div id="finpanes">
+        <!-- ============ STATEMENTS ============ -->
+        <div class="tabpane on" data-pane="stmt">
+          <div class="grid-21">
+            <div class="colstack">
+              <div class="panel">
+                <div class="ph"><div><h3>OPERATING STATEMENT</h3><div class="sub">consolidated · May 2026 · accrual basis</div></div><div class="grow"></div><span class="chip">vs BUDGET</span></div>
+                <table class="fin">
+                  <thead><tr><th>Account</th><th>Actual</th><th>Budget</th><th>Var</th><th>% NOI</th></tr></thead>
+                  <tbody>
+                    <tr class="sec"><td>Revenue</td><td></td><td></td><td></td><td></td></tr>
+                    <tr class="ind click"><td>Base rental income (NNN)</td><td class="num">$497,000</td><td class="num">$489,000</td><td class="num pos">+$8.0K</td><td class="num">—</td></tr>
+                    <tr class="ind click"><td>Expense recoveries</td><td class="num">$128,000</td><td class="num">$125,000</td><td class="num pos">+$3.0K</td><td class="num">—</td></tr>
+                    <tr class="ind click"><td>Other income</td><td class="num">$9,000</td><td class="num">$9,000</td><td class="num muted">$0</td><td class="num">—</td></tr>
+                    <tr class="ind click"><td>Vacancy & credit loss</td><td class="num neg">($6,000)</td><td class="num">($8,000)</td><td class="num pos">+$2.0K</td><td class="num">—</td></tr>
+                    <tr class="tot"><td>Effective Gross Income</td><td class="num">$628,000</td><td class="num">$615,000</td><td class="num pos">+$13.0K</td><td class="num">123%</td></tr>
+                    <tr class="sec"><td>Operating Expenses</td><td></td><td></td><td></td><td></td></tr>
+                    <tr class="ind click"><td>Property management</td><td class="num">$38,000</td><td class="num">$37,000</td><td class="num neg">−$1.0K</td><td class="num">—</td></tr>
+                    <tr class="ind click"><td>Repairs & maintenance</td><td class="num">$34,000</td><td class="num">$30,000</td><td class="num neg">−$4.0K</td><td class="num">—</td></tr>
+                    <tr class="ind click"><td>Utilities (common area)</td><td class="num">$14,000</td><td class="num">$15,000</td><td class="num pos">+$1.0K</td><td class="num">—</td></tr>
+                    <tr class="ind click"><td>Property taxes</td><td class="num">$22,000</td><td class="num">$22,000</td><td class="num muted">$0</td><td class="num">—</td></tr>
+                    <tr class="ind click"><td>Insurance</td><td class="num">$9,000</td><td class="num">$9,000</td><td class="num muted">$0</td><td class="num">—</td></tr>
+                    <tr class="tot"><td>Total OpEx</td><td class="num">$117,000</td><td class="num">$113,000</td><td class="num neg">−$4.0K</td><td class="num">23%</td></tr>
+                    <tr class="grand"><td>Net Operating Income</td><td class="num">$511,000</td><td class="num">$502,000</td><td class="num pos">+$9.0K</td><td class="num">100%</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="colstack">
+              <div class="panel">
+                <div class="ph"><div><h3>CASH POSITION</h3><div class="sub">across 6 operating accounts</div></div></div>
+                <div class="metric"><div class="mlbl">Total Cash on Hand</div><div class="mv">$31.2<small>M</small></div><div class="dl g" style="font-size:11px">22 mo runway · ▲ $0.7M MoM</div></div>
+                <div class="legend" style="border-top:1px solid var(--line-2)">
+                  <div class="lg"><span class="sw" style="background:var(--accent)"></span>Operating <b style="margin-left:auto">$8.4M</b></div>
+                  <div class="lg"><span class="sw" style="background:var(--blue)"></span>Reserves <b style="margin-left:auto">$14.1M</b></div>
+                  <div class="lg"><span class="sw" style="background:var(--amber)"></span>CapEx escrow <b style="margin-left:auto">$5.9M</b></div>
+                  <div class="lg"><span class="sw" style="background:var(--violet)"></span>Security deposits <b style="margin-left:auto">$2.8M</b></div>
+                </div>
+              </div>
+              <div class="panel">
+                <div class="ph"><div><h3>DEBT SUMMARY</h3><div class="sub">7 loans · 41% portfolio LTV</div></div></div>
+                <div class="lrow"><div style="flex:1;min-width:0"><div class="nm-s">Total Debt Outstanding</div><div class="mt-s">WTD AVG RATE 4.6% · DSCR 1.9x</div></div><div class="amt">$96.0M</div></div>
+                <div class="lrow"><div style="flex:1;min-width:0"><div class="nm-s">Annual Debt Service</div><div class="mt-s">PRINCIPAL + INTEREST</div></div><div class="amt">$5.3M</div></div>
+                <div class="lrow"><div style="flex:1;min-width:0"><div class="nm-s">Maturing ≤ 12 mo</div><div class="mt-s">LAKEWOOD MIXED-USE · Q3 2026</div></div><div class="amt" style="color:var(--amber)">$14.0M</div></div>
+              </div>
+              <div class="panel">
+                <div class="ph"><div><h3>INSIGHT</h3></div><div class="grow"></div><span class="chip ai">◇ AI</span></div>
+                <div class="insight a"><p><b>R&amp;M is tracking 6% over budget</b> for the second month — Riverside Flex Park HVAC accounts for 70% of the overage. Worth a capital reserve draw vs. expensing.</p></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- ============ GENERAL LEDGER ============ -->
+        <div class="tabpane" data-pane="gl">
+          <div class="panel">
+            <div class="ph">
+              <div><h3>GENERAL LEDGER</h3><div class="sub">all entries · May 2026 · 1,284 transactions</div></div>
+              <div class="grow"></div>
+              <span class="chip">DEBITS $1.18M</span>
+              <span class="chip" style="margin-left:6px">CREDITS $1.18M</span>
+              <span class="chip" style="margin-left:6px;color:var(--green);border-color:var(--green-bd)">⊜ BALANCED</span>
+              <span class="linkish" style="margin-left:10px">⤓ Export</span>
+            </div>
+            <table class="tbl" data-enhance data-chips="Property">
+              <thead><tr><th>Date</th><th>Entry</th><th>Account</th><th>Property</th><th class="r">Debit</th><th class="r">Credit</th><th>Memo</th></tr></thead>
+              <tbody>
+                <tr class="click"><td class="num muted">05/31</td><td class="num">JE-2061</td><td>4000 · Rental Income</td><td class="muted">Eastgate Commerce</td><td class="r num"></td><td class="r num pos">$50,400</td><td class="muted">May rent posting</td></tr>
+                <tr class="click"><td class="num muted">05/31</td><td class="num">JE-2060</td><td>1100 · A/R Tenants</td><td class="muted">Eastgate Commerce</td><td class="r num">$50,400</td><td class="r num"></td><td class="muted">May rent posting</td></tr>
+                <tr class="click"><td class="num muted">05/28</td><td class="num">JE-2054</td><td>6200 · Repairs &amp; Maint.</td><td class="muted">Riverside Flex Park</td><td class="r num">$8,400</td><td class="r num"></td><td class="muted">HVAC compressor — Apex</td></tr>
+                <tr class="click"><td class="num muted">05/27</td><td class="num">JE-2049</td><td>6400 · Property Taxes</td><td class="muted">Tri-County Distribution</td><td class="r num">$31,200</td><td class="r num"></td><td class="muted">Q2 installment</td></tr>
+                <tr class="click"><td class="num muted">05/25</td><td class="num">JE-2041</td><td>2000 · A/P Trade</td><td class="muted">Southport Business Park</td><td class="r num"></td><td class="r num">$14,600</td><td class="muted">Landscaping — GreenScape</td></tr>
+                <tr class="click"><td class="num muted">05/24</td><td class="num">JE-2038</td><td>4100 · CAM Recoveries</td><td class="muted">Lakewood Flex</td><td class="r num"></td><td class="r num pos">$18,900</td><td class="muted">CAM true-up</td></tr>
+                <tr class="click"><td class="num muted">05/22</td><td class="num">JE-2030</td><td>6100 · Utilities</td><td class="muted">Cardinal Service Center</td><td class="r num">$9,740</td><td class="r num"></td><td class="muted">Electric — May</td></tr>
+                <tr class="click"><td class="num muted">05/20</td><td class="num">JE-2024</td><td>1000 · Operating Cash</td><td class="muted">Consolidated</td><td class="r num">$497,000</td><td class="r num"></td><td class="muted">Tenant ACH batch</td></tr>
+                <tr class="click"><td class="num muted">05/18</td><td class="num">JE-2019</td><td>7000 · Interest Expense</td><td class="muted">Lakewood Industrial II</td><td class="r num">$9,800</td><td class="r num"></td><td class="muted">Monthly debt service</td></tr>
+                <tr class="click"><td class="num muted">05/15</td><td class="num">JE-2011</td><td>6300 · Insurance</td><td class="muted">Consolidated</td><td class="r num">$38,200</td><td class="r num"></td><td class="muted">Portfolio premium</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ============ RECEIVABLES ============ -->
+        <div class="tabpane" data-pane="ar">
+          <div class="grid-21">
+            <div class="panel">
+              <div class="ph"><div><h3>A/R AGING</h3><div class="sub">by tenant · 18 with open balances</div></div><div class="grow"></div><span class="linkish">Send statements ▸</span></div>
+              <table class="tbl" data-enhance>
+                <thead><tr><th>Tenant</th><th class="r">Current</th><th class="r">31–60</th><th class="r">61–90</th><th class="r">90+</th><th class="r">Total</th></tr></thead>
+                <tbody>
+                  <tr class="click"><td><b>Apex Fabrication</b><div class="mt-s">CARDINAL SERVICE CTR</div></td><td class="r num">$0</td><td class="r num">$14,000</td><td class="r num" style="color:var(--amber)">$14,000</td><td class="r num neg">$20,000</td><td class="r num">$48,000</td></tr>
+                  <tr class="click"><td><b>Northline Tooling</b><div class="mt-s">NORTHLINE FLEX</div></td><td class="r num">$9,000</td><td class="r num">$9,000</td><td class="r num">$0</td><td class="r num neg">$14,000</td><td class="r num">$32,000</td></tr>
+                  <tr class="click"><td><b>Riverside Freight</b><div class="mt-s">RIVERSIDE FLEX PARK</div></td><td class="r num">$16,000</td><td class="r num">$0</td><td class="r num">$0</td><td class="r num">$0</td><td class="r num">$16,000</td></tr>
+                  <tr class="click"><td><b>Coastal Supply Co.</b><div class="mt-s">SOUTHPORT BUSINESS PARK</div></td><td class="r num">$14,000</td><td class="r num">$0</td><td class="r num">$0</td><td class="r num">$0</td><td class="r num">$14,000</td></tr>
+                  <tr class="click"><td><b>Summit Print</b><div class="mt-s">LAKEWOOD FLEX</div></td><td class="r num">$12,000</td><td class="r num">$0</td><td class="r num">$0</td><td class="r num">$0</td><td class="r num">$12,000</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="colstack">
+              <div class="panel">
+                <div class="ph"><div><h3>AGING MIX</h3><div class="sub">$122K outstanding</div></div></div>
+                <div style="padding:14px 16px 4px">
+                  <div class="sbar"><span style="width:42%;background:var(--accent)"></span><span style="width:19%;background:var(--blue)"></span><span style="width:11%;background:var(--amber)"></span><span style="width:28%;background:var(--red)"></span></div>
+                </div>
+                <div class="legend">
+                  <div class="lg"><span class="sw" style="background:var(--accent)"></span>Current <b style="margin-left:auto">$51K</b></div>
+                  <div class="lg"><span class="sw" style="background:var(--blue)"></span>31–60 <b style="margin-left:auto">$23K</b></div>
+                  <div class="lg"><span class="sw" style="background:var(--amber)"></span>61–90 <b style="margin-left:auto">$14K</b></div>
+                  <div class="lg"><span class="sw" style="background:var(--red)"></span>90+ <b style="margin-left:auto">$34K</b></div>
+                </div>
+              </div>
+              <div class="panel">
+                <div class="ph"><div><h3>COLLECTIONS</h3><div class="sub">May performance</div></div></div>
+                <div class="lrow"><div style="flex:1"><div class="nm-s">Collection Rate</div><div class="mt-s">OF BILLED RENT</div></div><div class="amt" style="color:var(--green)">96.2%</div></div>
+                <div class="lrow"><div style="flex:1"><div class="nm-s">Avg Days to Pay</div><div class="mt-s">TRAILING 90D</div></div><div class="amt">7.4d</div></div>
+              </div>
+              <div class="panel">
+                <div class="ph"><div><h3>INSIGHT</h3></div><div class="grow"></div><span class="chip ai">◇ AI</span></div>
+                <div class="insight c"><p><b>Apex Fabrication is $20K past 90 days</b> at Cardinal Service Center. Recommend a payment plan tied to renewal before it ages further.</p></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ============ PAYABLES ============ -->
+        <div class="tabpane" data-pane="ap">
+          <div class="panel">
+            <div class="ph"><div><h3>ACCOUNTS PAYABLE</h3><div class="sub">open bills · sorted by due date</div></div><div class="grow"></div><span class="chip" style="color:var(--red);border-color:var(--red-bd)">4 OVERDUE</span><span class="linkish" style="margin-left:8px">Pay selected ▸</span></div>
+            <table class="tbl" data-enhance data-chips="Status">
+              <thead><tr><th>Vendor</th><th>Category</th><th>Property</th><th class="r">Amount</th><th class="r">Due</th><th>Status</th></tr></thead>
+              <tbody>
+                <tr class="click"><td><b>Apex Mechanical</b></td><td class="muted">HVAC repair</td><td class="muted">Riverside Flex Park</td><td class="r num">$22,850</td><td class="r num" style="color:var(--red)">−3d</td><td><span class="badge b-loi">OVERDUE</span></td></tr>
+                <tr class="click"><td><b>GreenScape Co.</b></td><td class="muted">Landscaping</td><td class="muted">Southport Business Park</td><td class="r num">$14,600</td><td class="r num" style="color:var(--red)">−1d</td><td><span class="badge b-loi">OVERDUE</span></td></tr>
+                <tr class="click"><td><b>First Meridian Bank</b></td><td class="muted">Debt service</td><td class="muted">Lakewood Industrial II</td><td class="r num">$9,800</td><td class="r num">4d</td><td><span class="badge b-neutral">SCHEDULED</span></td></tr>
+                <tr class="click"><td><b>Statewide Insurance</b></td><td class="muted">Premium</td><td class="muted">Consolidated</td><td class="r num">$38,200</td><td class="r num">9d</td><td><span class="badge b-neutral">SCHEDULED</span></td></tr>
+                <tr class="click"><td><b>Metro Utilities</b></td><td class="muted">Electric/water</td><td class="muted">Cardinal Service Center</td><td class="r num">$9,740</td><td class="r num">12d</td><td><span class="badge b-rev">PENDING APPROVAL</span></td></tr>
+                <tr class="click"><td><b>ClearView Janitorial</b></td><td class="muted">Cleaning</td><td class="muted">Riverside Flex Park</td><td class="r num">$6,300</td><td class="r num">15d</td><td><span class="badge b-rev">PENDING APPROVAL</span></td></tr>
+                <tr class="click"><td><b>County Assessor</b></td><td class="muted">Property tax</td><td class="muted">Tri-County Distribution</td><td class="r num">$31,200</td><td class="r num">22d</td><td><span class="badge b-neutral">SCHEDULED</span></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <!-- ============ RENT ROLL ============ -->
+        <div class="tabpane" data-pane="rr">
+          <div class="panel" style="margin-bottom:13px">
+            <div class="ph"><div><h3>RENT ROLL SUMMARY</h3><div class="sub">170 active leases · across 16 assets</div></div><div class="grow"></div><span class="chip">92.9% LEASED</span></div>
+            <div class="grid-3" style="padding:14px 16px;gap:0;border-top:1px solid var(--line-2)">
+              <div class="metric" style="border-right:1px solid var(--line-2)"><div class="mlbl">Annualized Base Rent</div><div class="mv">$6.0<small>M</small></div></div>
+              <div class="metric" style="border-right:1px solid var(--line-2)"><div class="mlbl">Avg Rent / SF (NNN)</div><div class="mv">$10.19</div></div>
+              <div class="metric"><div class="mlbl">WALT</div><div class="mv">3.8<small>yrs</small></div></div>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="ph"><div><h3>BY PROPERTY</h3><div class="sub">click a row to open the asset</div></div><div class="grow"></div><span class="linkish">⤓ Export rent roll</span></div>
+            <table class="tbl" data-enhance data-chips="Type">
+              <thead><tr><th>Property</th><th>Type</th><th class="r">Units</th><th class="r">Leased</th><th class="r">Occ.</th><th class="r">Annual Rent</th><th class="r">$/SF</th></tr></thead>
+              <tbody>
+                <tr class="click" onclick="location.href='Property.html?id=eastgate-commerce'"><td><b>Eastgate Commerce Center</b></td><td class="muted">Flex</td><td class="r num">20</td><td class="r num">19</td><td class="r num">93%</td><td class="r num">$0.6M</td><td class="r num">$12.50</td></tr>
+                <tr class="click" onclick="location.href='Property.html?id=riverside-flex-park'"><td><b>Riverside Flex Park</b></td><td class="muted">Flex</td><td class="r num">24</td><td class="r num">22</td><td class="r num">90%</td><td class="r num">$0.6M</td><td class="r num">$11.50</td></tr>
+                <tr class="click" onclick="location.href='Property.html?id=southport-business-park'"><td><b>Southport Business Park</b></td><td class="muted">Flex</td><td class="r num">22</td><td class="r num">20</td><td class="r num">91%</td><td class="r num">$0.6M</td><td class="r num">$12.20</td></tr>
+                <tr class="click" onclick="location.href='Property.html?id=tricounty-commerce'"><td><b>Tri-County Commerce</b></td><td class="muted">Flex</td><td class="r num">20</td><td class="r num">18</td><td class="r num neg">89%</td><td class="r num">$0.5M</td><td class="r num">$11.80</td></tr>
+                <tr class="click" onclick="location.href='Property.html?id=lakewood-flex'"><td><b>Lakewood Flex</b></td><td class="muted">Flex</td><td class="r num">12</td><td class="r num">11</td><td class="r num">92%</td><td class="r num">$0.4M</td><td class="r num">$12.00</td></tr>
+                <tr class="click" onclick="location.href='Property.html?id=tricounty-distribution'"><td><b>Tri-County Distribution</b></td><td class="muted">Industrial</td><td class="r num">4</td><td class="r num">4</td><td class="r num">97%</td><td class="r num">$0.4M</td><td class="r num">$8.80</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- ============ BUDGET VS ACTUAL ============ -->
+        <div class="tabpane" data-pane="budget">
+          <div class="grid-21">
+            <div class="panel">
+              <div class="ph"><div><h3>BUDGET vs. ACTUAL</h3><div class="sub">YTD through May · consolidated</div></div><div class="grow"></div><span class="chip" style="color:var(--green);border-color:var(--green-bd)">+$38K FAVORABLE</span></div>
+              <div class="hbars">
+                <div class="hbar"><div class="hb-top"><span>Rental Income</span><span class="v">$2.49M / $2.45M · <b style="color:var(--green)">+1.6%</b></span></div><div class="track"><span style="width:101%;background:var(--green)"></span></div></div>
+                <div class="hbar"><div class="hb-top"><span>Recoveries</span><span class="v">$0.64M / $0.63M · <b style="color:var(--green)">+1.6%</b></span></div><div class="track"><span style="width:102%;background:var(--green)"></span></div></div>
+                <div class="hbar"><div class="hb-top"><span>Repairs &amp; Maintenance</span><span class="v">$0.17M / $0.15M · <b style="color:var(--red)">−13%</b></span></div><div class="track"><span style="width:106%;background:var(--red)"></span></div></div>
+                <div class="hbar"><div class="hb-top"><span>Utilities</span><span class="v">$0.07M / $0.075M · <b style="color:var(--green)">+6.7%</b></span></div><div class="track"><span style="width:96%;background:var(--accent)"></span></div></div>
+                <div class="hbar"><div class="hb-top"><span>Property Taxes</span><span class="v">$0.11M / $0.11M · <b class="muted">0%</b></span></div><div class="track"><span style="width:99%;background:var(--accent)"></span></div></div>
+                <div class="hbar"><div class="hb-top"><span>Insurance</span><span class="v">$0.05M / $0.05M · <b class="muted">0%</b></span></div><div class="track"><span style="width:100%;background:var(--accent)"></span></div></div>
+                <div class="hbar"><div class="hb-top"><span>Management Fees</span><span class="v">$0.19M / $0.19M · <b class="muted">0%</b></span></div><div class="track"><span style="width:100%;background:var(--accent)"></span></div></div>
+              </div>
+            </div>
+            <div class="colstack">
+              <div class="panel">
+                <div class="ph"><div><h3>NOI VARIANCE</h3><div class="sub">YTD favorable</div></div></div>
+                <div class="metric"><div class="mlbl">Actual NOI YTD</div><div class="mv" style="color:var(--green)">$2.56<small>M</small></div><div class="dl g" style="font-size:11px">vs $2.51M budget · +1.8%</div></div>
+              </div>
+              <div class="panel">
+                <div class="ph"><div><h3>CAPEX BUDGET</h3><div class="sub">2026 plan · 41% spent</div></div></div>
+                <div class="prog">
+                  <div class="pl"><b>$0.62M</b>of $1.5M committed</div>
+                </div>
+                <div style="padding:0 16px 14px"><div class="meter"><span style="width:41%"></span></div></div>
+                <div class="lrow"><div style="flex:1"><div class="nm-s">Lakewood II roof recoat</div><div class="mt-s">IN PROGRESS</div></div><div class="amt">$0.9M</div></div>
+                <div class="lrow"><div style="flex:1"><div class="nm-s">Eastgate Commerce roof</div><div class="mt-s">COMPLETE</div></div><div class="amt">$0.6M</div></div>
+              </div>
+              <div class="panel">
+                <div class="ph"><div><h3>INSIGHT</h3></div><div class="grow"></div><span class="chip ai">◇ AI</span></div>
+                <div class="insight b"><p><b>Revenue is beating plan but R&amp;M overruns are eroding the gain.</b> Net NOI is still +1.8% favorable; reallocating $40K from the underspent CapEx reserve would keep OpEx on budget.</p></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <!-- other panes injected below -->
+      </div>
+    </div>
+  </div>
+</div>
+<script src="ora.js"></script>
+<script src="data.js"></script>
+<script src="filter.js"></script>
+<script src="engine.js"></script>
+<script src="table.js"></script>
+<script>
+(function(){function r(){if(!window.ORA_ENGINE)return;var box=document.getElementById("modActions");if(!box)return;var cats=["noi","capital"];var rows=ORA_ENGINE.SIGNALS.filter(function(s){return cats.indexOf(s.cat)>-1;}).slice(0,3);box.innerHTML=rows.length?rows.map(ORA_ENGINE.rowHtml).join(""):'<div class="cmdk-empty" style="padding:18px">No actions in this slice.</div>';}document.addEventListener("DOMContentLoaded",function(){r();if(window.ORA_FILTER)ORA_FILTER.subscribe(r);});})();
+</script>
+</body>
+</html>
