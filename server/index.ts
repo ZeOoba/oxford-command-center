@@ -27,6 +27,10 @@ import { warehouseRoutes } from './warehouse/api';
 import { debtApi } from './warehouse/debt-api';
 import { leaseForecastApi } from './warehouse/lease-forecast-api';
 import { capitalAllocationApi } from './warehouse/capital-allocation-api';
+import { insuranceAnalysisApi } from './warehouse/insurance-analysis-api';
+import { taxApi } from './warehouse/tax-api';
+import { brainApi } from './warehouse/brain-api';
+import { insightsApi } from './warehouse/insights-api';
 import { onboardProperty, PropertyOnboardingInputSchema } from './warehouse/property-onboarding';
 import type { PropertyOnboardingInput } from './warehouse/property-onboarding';
 import { MarketRentInput } from '../src/contracts/lease-forecast';
@@ -59,6 +63,11 @@ app.route('/api/warehouse', warehouseRoutes(getWarehouse));
 app.route('/api/warehouse/debt', debtApi(getWarehouse));
 app.route('/api/warehouse/leasing', leaseForecastApi(getWarehouse));
 app.route('/api/warehouse/capital', capitalAllocationApi(getWarehouse));
+// Design-parity engines (P2/P4/P5/P6): sub-routers per the debt-api pattern.
+app.route('/api/warehouse/insurance/analysis', insuranceAnalysisApi(getWarehouse));
+app.route('/api/warehouse/tax', taxApi(getWarehouse));
+app.route('/api/warehouse/brain', brainApi(getWarehouse));
+app.route('/api/warehouse/insights', insightsApi(getWarehouse));
 
 // POST /api/warehouse/properties/onboard — data-driven property onboarding (Phase 5 W4)
 app.post('/api/warehouse/properties/onboard', async (c) => {
