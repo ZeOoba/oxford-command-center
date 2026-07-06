@@ -363,11 +363,11 @@
   "insight-contract": {
     "agent_role": "Architect (Gabriel-authorized)",
     "phase": "Phase 2 Unit A — insight engine contract",
-    "status": "in_progress",
+    "status": "merged",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "Unit A: new src/contracts/insights.ts — architect-owned contract; awaiting Gabriel review before Phase 3 branches",
-    "last_updated": "2026-06-22T00:00:00Z"
+    "review_needed": false,
+    "review_detail": "Stale in_progress corrected 2026-07-06 by audit-fixes-2026-07-06: src/contracts/insights.ts exists on main and has been depended upon by every subsequent merged phase (phase-2-*, phase-3-w1/w2/w3, design-parity-impl) for two weeks — the 'awaiting Gabriel review before Phase 3 branches' gate this entry describes has self-evidently cleared in practice, since Phase 3 shipped. No independent record of a formal sign-off event was found; flag to Gabriel only if a retroactive formal review is still wanted.",
+    "last_updated": "2026-07-06T12:13:00Z"
   },
   "l2-governor-gate": {
     "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized via Wave 2 master plan",
@@ -392,11 +392,11 @@
   "server-setup-w4g4pb": {
     "agent_role": "Engineering (Claude Code, Fable) — Gabriel-authorized 2026-07-05",
     "phase": "Local-server setup: project guardrails + status.json validation + portable-config estate work",
-    "status": "in_progress",
+    "status": "merged",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "Touches architect-owned scripts/governance-check.ts (adds checkStatusJson: INVALID_JSON/DUPLICATE_KEY/STATUS_SCHEMA blocking checks + STALE_STATUS warning) and architecture/status.json (defect repairs: ic-memo duplicate body collapse, chore-post-w2-merge review_detail dedupe, m6/kepler/l2 close-outs). Extension of governance-check.ts was pre-authorized by Gabriel in-session 2026-07-05 and lands via this PR. Also adds .claude/settings.json + .claude/hooks guards (bash-guard.mjs, file-guard.mjs, architect-owned.json), .github/workflows/full-gate-selfhosted.yml, worktree-env.example BRAIN_SERVER_PORT fix.",
-    "last_updated": "2026-07-05T00:00:00Z"
+    "review_needed": false,
+    "review_detail": "Stale in_progress corrected 2026-07-06 by audit-fixes-2026-07-06: independently verified all listed deliverables are present on main — scripts/governance-check.ts has checkStatusJson (INVALID_JSON/DUPLICATE_KEY/STATUS_SCHEMA/STALE_STATUS), and .claude/hooks/{bash-guard.mjs,file-guard.mjs,architect-owned.json} + .github/workflows/full-gate-selfhosted.yml all exist. This entry's own close-out work on l2-governor-gate/m6-leasing-risk-ic-memo/compassionate-kepler-cb363e (dated 2026-07-05) was never followed by closing itself out.",
+    "last_updated": "2026-07-06T12:13:00Z"
   },
 
   "pdf-parse-v2": {
@@ -411,12 +411,22 @@
 
   "design-parity-impl": {
     "agent_role": "Engineering (Claude Code, Fable 5 orchestrating Sonnet subagents) — Gabriel-authorized in-session 2026-07-06 ('Proceed with all recommendations')",
-    "phase": "IMPLEMENTATION_PLAN.md execution P0-P6 (+P7 subset) on branch claude/analyze-plan-prompt-tadmpp: tier-board primitives, insights wiring + module, Grader UX, insurance analysis (TIV framework), command-brain module, taxes module (framework + assessor-data template), capital orphan fold",
+    "phase": "IMPLEMENTATION_PLAN.md execution P0-P6 (+P7 subset): tier-board primitives, insights wiring + module, Grader UX, insurance analysis engine + UI, command-brain module, taxes module + assessor-data template, capital orphan fold",
+    "status": "merged",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "MERGED via PR #161 (plan, 00:43) + PR #166 (Waves 0/1, 02:11) + PR #168 (Waves 2/3, 06:13). Independently re-verified 2026-07-06 by audit-fixes-2026-07-06 on the true post-merge main (not just the PR's self-reported numbers): typecheck/lint/governance/build all clean, full suite 2224/2224 (197 files) — matches PR #168's claim exactly, and the 3 new financial engines (insurance-analysis, tax-analysis, brain-report) carry real `Refute-Reviewed: wf_...` adversarial-review workflow trailers in git history, not just narrative claims. Deferred per PR #168's own cut list (Phase 7 optional parity sweep; P4c insurance self-insure/tax filed-returns gated on real broker/assessor data) — not blockers.",
+    "last_updated": "2026-07-06T12:13:00Z"
+  },
+
+  "audit-fixes-2026-07-06": {
+    "agent_role": "Engineering (Claude Code, Opus) — Gabriel-authorized in-session 2026-07-06 ('Investigate thoroughly and use the same plan before code system' — responding to a prior read-only audit's findings)",
+    "phase": "Fixing audit findings on branch claude/audit-fixes-2026-07-06 (forked fresh off origin/main post-#168): (1) server/briefing/confidential.ts fail-open -> fail-loud on missing confidential-terms.json, (2) npm audit fix for hono+form-data (prod, non-breaking), (3) real tests for parseWorkbook (server/workbook/parse.ts, currently mocked-away everywhere), (4) tests for server/warehouse/lease-forecast-api.ts (0% coverage), (5) this status.json cleanup (insight-contract/server-setup-w4g4pb/design-parity-impl close-outs) + CLAUDE.md/CHANGELOG.md/README.md doc-drift reconciliation. Explicitly NOT touching the capital-allocation.ts Phase-5-v2 deferrals (buy verdicts/refi-savings/improve-IRR math) -- flagged by the audit as intentional and not urgent, out of scope here.",
     "status": "in_progress",
     "blocked_by": null,
     "review_needed": true,
-    "review_detail": "Architect-owned edits in scope, all pre-authorized by Gabriel 2026-07-06 in-session ('Proceed with all recommendations'; sentinel authorized via explicit question): architecture/status.json (this declaration + defect repairs: ic-memo interleaved body missing comma, chore-post-w2-merge duplicate key — the 2026-07-05 repair had annotated but not removed them), src/contracts/{warehouse.ts (VerdictKind/VerdictEngine +insurance-rebid/tax-appeal), insurance.ts (+tiv/deductible/limit nullable), tax.ts (NEW), brain-report.ts (NEW), insurance-analysis.ts (NEW), index.ts (barrel)}, server/warehouse/migrations/{020_property_tax.sql, 021_recommendation_feedback.sql, 022_insurance_loss_events.sql — numbers verified free at execution}, architecture/database-schema.md + agent-assignments.md + ownership.json (per plan tasks 0.3/0.4/0.6/0.7). New routes under /api/warehouse/{insights, insurance/analysis, tax/*, brain/*} and new registry modules insights/taxes/command-brain per plan 0.7 blanket authorization. All financial engines get refute-financial-change passes + trailers.",
-    "last_updated": "2026-07-06T01:30:00Z"
+    "review_detail": "Touches package.json/package-lock.json (dependency bump) and server/briefing/confidential.ts (a compliance-relevant control, not listed as architect-owned in ownership.json but treated with the same rigor given hard-invariant #3 stakes). No governor constants, no financial-model math changed. Will open a PR (not auto-merge) for Gabriel's review given no explicit pre-authorization exists for this specific branch of work.",
+    "last_updated": "2026-07-06T12:13:00Z"
   },
 
   "usage": {
