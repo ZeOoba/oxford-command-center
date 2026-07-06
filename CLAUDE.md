@@ -61,6 +61,8 @@ These two spines have one critical defect: `Property.noi` (Spine A) and `warehou
 
 > Run `git status` before editing anything. Treat **every uncommitted file you did not create** as locked — it is another writer's in-progress work. Re-read any shared file immediately before editing it. Commit only with explicit paths (never `git add -A`). Leave `main`/PR integration to Gabriel.
 
+> **Shared-infra rule:** before touching a cross-cutting single-writer surface (`.github/workflows/*`, `.claude/settings.json`, `.gitignore`), check `architecture/status.json` for another session's in-progress claim and add your own entry first — two parallel sessions independently diagnosed the same CI breakage and collided on `ci.yml` (PRs #159/#161, 2026-07-05).
+
 This is the single discipline that prevents the collision class this repo has already suffered. The canonical machine-readable ownership map is `architecture/ownership.json`; current declared activity is `architecture/status.json`.
 
 ---
