@@ -87,8 +87,11 @@ export const TaxOpportunity = z.object({
   basisNote: z.string(),
   effectiveRate: z.number().nullable(),
   cohortPercentile: z.number().nullable(),
-  /** True when a required input (millage, assessed value, cohort data) was missing — the
-   *  opportunity is surfaced as a watch item, never a guessed dollar figure. */
+  /** True when a required valuation input (millage, assessed value, assessment ratio, or the
+   *  indicated full-asset value) was missing or degenerate — the opportunity is surfaced as a
+   *  watch item, never a guessed dollar figure. A merely uncomputable comparison cohort does
+   *  NOT set this flag; it falls through to the value-test-only path instead (a missing cohort
+   *  must never suppress a genuine overshoot). */
   indeterminate: z.boolean(),
   prov: Provenance,
   advisoryOnly: z.literal(true),
