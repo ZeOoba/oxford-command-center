@@ -410,13 +410,13 @@
   },
 
   "design-parity-impl": {
-    "agent_role": "Engineering (Claude Code, Fable 5 orchestrating Sonnet subagents) — Gabriel-authorized in-session 2026-07-06 ('Proceed with all recommendations')",
-    "phase": "IMPLEMENTATION_PLAN.md execution P0-P6 (+P7 subset) on branch claude/analyze-plan-prompt-tadmpp: tier-board primitives, insights wiring + module, Grader UX, insurance analysis (TIV framework), command-brain module, taxes module (framework + assessor-data template), capital orphan fold",
+    "agent_role": "Engineering (Claude Code, Fable 5 orchestrating Sonnet subagents) — Gabriel-authorized in-session 2026-07-06 ('Proceed with all recommendations'; overnight continuation 'I am going to bed, proceed with finishing the command center')",
+    "phase": "IMPLEMENTATION_PLAN.md P0-P7 all complete on branch claude/analyze-plan-prompt-tadmpp. P0-P6 merged (PR #166, #168). P7 (this commit range) complete: 7.1 Overview results banner + priority actions (reuses insights.logic.ts verbatim), 7.2 global portfolio filter (market/type/manager, client-side v1), 7.3 Comps + cap-rate benchmark surface in Market module, 7.4 DealDrawer underwriting + score panel enrichment, 7.5 design-parity audit doc, 7.6 cut-list reconciliation doc. IMPLEMENTATION_PLAN.md has no further phases defined — awaiting Gabriel review/merge and Phase 6+/next-initiative scoping.",
     "status": "in_progress",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "Architect-owned edits in scope, all pre-authorized by Gabriel 2026-07-06 in-session ('Proceed with all recommendations'; sentinel authorized via explicit question): architecture/status.json (this declaration + defect repairs: ic-memo interleaved body missing comma, chore-post-w2-merge duplicate key — the 2026-07-05 repair had annotated but not removed them), src/contracts/{warehouse.ts (VerdictKind/VerdictEngine +insurance-rebid/tax-appeal), insurance.ts (+tiv/deductible/limit nullable), tax.ts (NEW), brain-report.ts (NEW), insurance-analysis.ts (NEW), index.ts (barrel)}, server/warehouse/migrations/{020_property_tax.sql, 021_recommendation_feedback.sql, 022_insurance_loss_events.sql — numbers verified free at execution}, architecture/database-schema.md + agent-assignments.md + ownership.json (per plan tasks 0.3/0.4/0.6/0.7). New routes under /api/warehouse/{insights, insurance/analysis, tax/*, brain/*} and new registry modules insights/taxes/command-brain per plan 0.7 blanket authorization. All financial engines get refute-financial-change passes + trailers.",
-    "last_updated": "2026-07-06T01:30:00Z"
+    "review_needed": false,
+    "review_detail": "P7 touched NO architect-owned files — all six tasks were UX-Agent territory (src/modules/overview, src/shell, src/modules/market, src/brain/DealDrawer.tsx [UX-owned per agent-assignments.md], docs/). 7.2's src/data/ ownership caveat resolved by scoping v1 to client-side filtering over already-fetched snapshot data — src/data/ was never touched (verified via git diff). No new API routes, no schema changes, no ratification triggers, no financial computation (all 5 commits carry Refute-Skip trailers). Full barrier green pre-commit: tsc --noEmit (clean), vitest run (201 files / 2262 tests passed), eslint --max-warnings 0 (clean on all touched files), governance-check (passed), vite build (clean production bundle). review_needed=false because no architect sign-off is required for this phase; a fresh PR is being opened for Gabriel's ordinary merge review.",
+    "last_updated": "2026-07-06T06:45:00Z"
   },
 
   "usage": {
