@@ -30,6 +30,9 @@ data/doc-index.sqlite
 data/doc-index.sqlite-shm
 data/doc-index.sqlite-wal
 data/reindex.log
+# Brain Server autostart runtime state (scripts/start-brain-server.ps1) — machine-local
+logs/
+run/
 .superpowers/
 .worktrees
 # Architect-ack override sentinel for .claude/hooks/file-guard.mjs — machine-local, never committed
