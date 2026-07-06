@@ -422,11 +422,11 @@
   "audit-fixes-2026-07-06": {
     "agent_role": "Engineering (Claude Code, Opus) — Gabriel-authorized in-session 2026-07-06 ('Investigate thoroughly and use the same plan before code system' — responding to a prior read-only audit's findings)",
     "phase": "Fixing audit findings on branch claude/audit-fixes-2026-07-06 (forked fresh off origin/main post-#168): (1) server/briefing/confidential.ts fail-open -> fail-loud on missing confidential-terms.json, (2) npm audit fix for hono+form-data (prod, non-breaking), (3) real tests for parseWorkbook (server/workbook/parse.ts, currently mocked-away everywhere), (4) tests for server/warehouse/lease-forecast-api.ts (0% coverage), (5) this status.json cleanup (insight-contract/server-setup-w4g4pb/design-parity-impl close-outs) + CLAUDE.md/CHANGELOG.md/README.md doc-drift reconciliation. Explicitly NOT touching the capital-allocation.ts Phase-5-v2 deferrals (buy verdicts/refi-savings/improve-IRR math) -- flagged by the audit as intentional and not urgent, out of scope here.",
-    "status": "in_progress",
+    "status": "review_needed",
     "blocked_by": null,
     "review_needed": true,
-    "review_detail": "Touches package.json/package-lock.json (dependency bump) and server/briefing/confidential.ts (a compliance-relevant control, not listed as architect-owned in ownership.json but treated with the same rigor given hard-invariant #3 stakes). No governor constants, no financial-model math changed. Will open a PR (not auto-merge) for Gabriel's review given no explicit pre-authorization exists for this specific branch of work.",
-    "last_updated": "2026-07-06T12:13:00Z"
+    "review_detail": "Ready for Gabriel's review (PR opened, not auto-merged). All 5 items complete + adversarially reviewed (hostile-lens pass, Opus): confidential.ts now fails closed (~25+ dependent tests fixed via a synthetic fixture, not weakened); npm audit fix verified via clean npm ci + full gate; parseWorkbook and lease-forecast-api tests added with real (non-mocked) exercise of the target logic, both test-quality gaps the adversarial pass found (a tautological anonymization assertion, an under-specified skip-row test) were fixed and re-verified, including a mutation test proving the anonymization assertion has real teeth; doc drift reconciled (7-step gate description, contradictory Pending line, stale roadmap, test-count consistency). Final gate green: governance/typecheck/lint/build clean, 200 files / 2253 tests. Touches package.json/package-lock.json (dependency bump) and server/briefing/confidential.ts (compliance-relevant control, not listed as architect-owned in ownership.json but treated with the same rigor given hard-invariant #3 stakes). No governor constants, no financial-model math changed.",
+    "last_updated": "2026-07-06T12:52:00Z"
   },
 
   "usage": {
