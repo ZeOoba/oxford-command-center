@@ -1,5 +1,13 @@
 # Changelog
 
+> **Note (added 2026-07-06):** entries below stop at 2026-06-13. Substantial work has shipped since
+> then (Phase 2 debt/refi + AI narrative, Phase 3 forecast/leasing, Phase 5 capital allocation
+> capstone, Directions 1-3, and the 2026-07-06 design-parity initiative) without a matching
+> CHANGELOG entry. Rather than backfill ~15 entries in this file's detailed narrative style without
+> complete first-hand grounding in every technical decision, this note points to the two sources
+> that ARE current: `CLAUDE.md` §3 (Active Roadmap table, merge-PR-level detail) and `git log`
+> directly. If you're picking up CHANGELOG maintenance, start the next entry from PR #95 forward.
+
 ## PFI Phase 1c — A↔B NOI reconciliation (master plan Revision-1 keystone) (2026-06-13)
 
 Closes the single most-important integrity gap in the master plan: the two un-reconciled NOI

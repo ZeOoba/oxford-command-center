@@ -3,7 +3,7 @@
 > **IF YOU ARE AN AGENT: READ THIS ENTIRE FILE BEFORE TOUCHING ANY FILE IN THIS REPO.**
 > This is not optional. This is not a formality. Skipping this file is the root cause of every architectural collision this project has experienced.
 
-**Maintained by:** Lead Architect · **Last verified:** 2026-06-21
+**Maintained by:** Lead Architect · **Last verified:** 2026-06-21 (§2/§3 build-state rows and §6 gate step list refreshed 2026-07-06 to reflect the design-parity merge and the true 7-step gate; rest of file not re-audited)
 
 ---
 
@@ -43,18 +43,16 @@ These two spines have one critical defect: `Property.noi` (Spine A) and `warehou
 
 ---
 
-## 2. Current Build State (2026-06-22)
+## 2. Current Build State (2026-06-22; last-merge row refreshed 2026-07-06)
 
 | Item | State |
 |------|-------|
 | Branch | `main` (worktree tracking origin/main) |
-| Last merge to main | PR #155 (`a45ac30`) — feat(capital): surface leasingRisk in IC memo table — M6 (#155) |
-| Last merge to main | PR #117 (`6cd58ed`) — Phase 5 Capital Allocation capstone (5-way verdict + Market Intelligence + Property Onboarding) |
-| Open PRs | none in flight |
-| Last merge to main | PR #129 (`5b81321`) — fix(api): port /capital-allocation/ic-memo from 501 stub to live implementation |
+| Most recent merge to main | PR #168 (`3278a2c`) — design-parity Waves 2/3 (insurance/tax/brain engines + 6 UI modules) |
+| Recent merge history (newest first) | #168 → #155 (`a45ac30`, leasingRisk in IC memo — M6) → #129 (`5b81321`, ic-memo 501→live) → #117 (`6cd58ed`, Phase 5 Capital Allocation capstone) |
 | Open PRs | *(none)* |
-| Gate | typecheck + lint + test + reconcile + warehouse:verify + **governance** |
-| Tests | 1739+ vitest unit tests |
+| Gate | governance + typecheck + lint + test + reconcile + warehouse:verify + warehouse:drift (7 steps — see §6) |
+| Tests | 2253 vitest unit tests (independently re-verified 2026-07-06, after adding real coverage for parseWorkbook + lease-forecast-api + confidential.ts) |
 | Uncommitted changes | Gabriel actively co-develops this tree — varies constantly |
 
 **Off-limits rule (do NOT enumerate the locked set here — it goes stale the instant Gabriel commits; that staleness is itself a failure mode):**
@@ -93,8 +91,9 @@ This is the single discipline that prevents the collision class this repo has al
 | Direction 2 (PR #121) | IC Memo HTML export | **Merged ✓** — PR #121 |
 | Direction 3 (PR #120) | Prospect Demand Intelligence foundation | **Merged ✓** — PR #120; migration 012 (prospect_demand_events) + ProspectDemandEvent contract + getProspectDemandReport engine + GET/POST /api/warehouse/prospect-demand routes + ProspectDemandModule UI (Demand Signals panel) |
 
-**Pending:** All defined phases are shipped. Hurdle rate ratification (8% unlevered IRR governor) pending Gabriel sign-off to upgrade from `advisoryOnly`. Phase 6 / next initiative TBD.
-**Pending:** *(none)*
+| Design Parity (PRs #161/#166/#168) | Design-parity implementation: tier-board primitives, insights wiring + module, Grader UX, insurance analysis engine + UI, command-brain module, taxes module + assessor-data template, capital orphan fold (CapitalAllocationModule folded into CapitalModule) | **Merged ✓** — PR #161 (plan) → #166 (Waves 0/1) → #168 (Waves 2/3); independently re-verified 2026-07-06 on post-merge main (typecheck/lint/governance/build clean, full suite matched PR #168's claimed 2224/2224 exactly at that point — see §2 for the current total after subsequent audit-fix test additions) |
+
+**Pending:** Hurdle rate ratification (8% unlevered IRR governor) pending Gabriel sign-off to upgrade from `advisoryOnly`. Phase 7 (optional parity sweep: global filter, Overview banner reuse, Comps surface, DealRoom enrichment) and P4c (insurance self-insure/deductible optimization, tax filed-returns/cost-seg) deferred per PR #168's cut list, gated on real broker/assessor data. Next initiative TBD.
 
 ---
 
@@ -172,13 +171,17 @@ git worktree remove .claude/worktrees/<feature-name>
 **Every commit must leave `npm run gate` green.** The gate runs:
 
 ```
-governance  → validates CLAUDE.md + architecture files + OWNERSHIP.json
+governance  → validates CLAUDE.md + architecture files + OWNERSHIP.json + status.json
 typecheck   → tsc --noEmit (strict + noUncheckedIndexedAccess)
 lint        → eslint --max-warnings 0
 test        → vitest run (all unit tests)
 reconcile   → $0-tolerance workbook self-totals check
 warehouse:verify → fresh SQLite in tmpdir + 32 file ingest + assertions
+warehouse:drift  → compares the live warehouse against a fresh re-ingest, flags silent drift
 ```
+
+(This is the true 7-step `package.json` `gate` script — verify against it directly if this list
+and `package.json` ever disagree; this file is documentation, not the source of truth.)
 
 `warehouse:verify` uses `os.tmpdir()` — it never touches `data/warehouse/finance.sqlite`. Safe to run in any worktree.
 

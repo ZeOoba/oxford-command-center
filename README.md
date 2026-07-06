@@ -33,7 +33,7 @@ The workbook path defaults to
 | Script | What it does |
 |---|---|
 | `npm run dev` | Brain Server + web app (hot reload on both) |
-| `npm run gate` | The CI gate: `typecheck` → `lint` → `test` → `reconcile` |
+| `npm run gate` | The full local gate: `governance` → `typecheck` → `lint` → `test` → `reconcile` → `warehouse:verify` → `warehouse:drift` (see "Quality gates" below) |
 | `npm run extract` | Parse the workbook → `data/snapshots/portfolio.json` + a reconciliation summary |
 | `npm run reconcile` | Re-read the workbook's own totals and assert derived aggregates match (to the dollar) |
 | `npm run test` | Vitest (contracts + analytics) |
@@ -163,12 +163,16 @@ the current arrangement.
 
 ## Quality gates
 
-`npm run gate` = `typecheck && lint && test && reconcile`. All four must pass:
+`npm run gate` = `governance && typecheck && lint && test && reconcile && warehouse:verify && warehouse:drift`.
+All seven must pass:
 
+- **governance** — validates CLAUDE.md + architecture files + `ownership.json` + `status.json`
 - **typecheck** — `tsc` strict, three project configs (app + node + `functions/`)
 - **lint** — ESLint flat config, `--max-warnings 0`
 - **test** — Vitest: contracts, analytics engine, freshness, routing, agent loop, draft, overlay, reconciliation
 - **reconcile** — derived totals vs the workbook's own cells, $0 tolerance (local-only — needs the workbook)
+- **warehouse:verify** — fresh SQLite in a tmpdir + full file ingest + assertions (local-only — needs the workbook)
+- **warehouse:drift** — compares the live warehouse against a fresh re-ingest, flags silent drift (local-only)
 
 **CI** (`.github/workflows/ci.yml`) runs `npm run gate:ci` on every push/PR =
 `typecheck && lint && test && build && check:bundle`. It omits `reconcile` (the canonical workbook is
