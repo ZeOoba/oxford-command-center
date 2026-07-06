@@ -13,6 +13,8 @@ import { AiPanel } from '@/brain/AiPanel';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ModuleLoading, ModuleError } from './ModuleFallback';
 import { StaleBanner } from './StaleBanner';
+import { PortfolioFilterProvider } from './PortfolioFilterContext';
+import { PortfolioFilterBar } from './PortfolioFilterBar';
 
 const TITLES: Record<string, string> = {
   overview: 'Command Overview',
@@ -30,6 +32,12 @@ const TITLES: Record<string, string> = {
   principal: 'Principal Home',
 };
 
+// `Property` (Spine A / `PortfolioSnapshot.properties`) carries no per-property manager
+// attribution today — that lives only in the Spine B warehouse (see
+// src/shell/PortfolioFilterContext.tsx for the full note). Empty until a future module
+// supplies manager-enriched rows; the filter dimension is wired end-to-end regardless.
+const NO_MANAGERS: string[] = [];
+
 export function AppShell() {
   const ui = useUi();
   const { moduleId } = useParams();
@@ -46,55 +54,58 @@ export function AppShell() {
   }
 
   return (
-    <div className="flex h-dvh overflow-hidden" style={{ background: 'var(--surface-base)' }}>
-      <Sidebar
-        activeId={ui.activeModuleId}
-        onSelect={ui.setActiveModule}
-        collapsed={collapsed}
-        onToggle={() => setCollapsed((c) => !c)}
-        mobileOpen={mobileNavOpen}
-        onMobileClose={() => setMobileNavOpen(false)}
-      />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar
-          title={TITLES[active.id] ?? active.label}
-          asOf={data?.snapshot.meta.asOf ?? ''}
-          onOpenSearch={ui.openPalette}
-          onOpenNav={() => setMobileNavOpen(true)}
-          navOpen={mobileNavOpen}
+    <PortfolioFilterProvider>
+      <div className="flex h-dvh overflow-hidden" style={{ background: 'var(--surface-base)' }}>
+        <Sidebar
+          activeId={ui.activeModuleId}
+          onSelect={ui.setActiveModule}
+          collapsed={collapsed}
+          onToggle={() => setCollapsed((c) => !c)}
+          mobileOpen={mobileNavOpen}
+          onMobileClose={() => setMobileNavOpen(false)}
         />
-        <StaleBanner />
-        <main className="flex-1 overflow-y-auto px-3 py-3 sm:px-4 lg:px-5 lg:py-5">
-          <div className="mx-auto max-w-[1500px]">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={ui.activeModuleId}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -6 }}
-                transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-              >
-                <ErrorBoundary key={ui.activeModuleId}>
-                  {snap.isError ? (
-                    <ModuleError onRetry={() => void snap.refetch()} message={(snap.error as Error | null)?.message} />
-                  ) : snap.isLoading && !data ? (
-                    <ModuleLoading />
-                  ) : (
-                    <Suspense fallback={<ModuleLoading />}>
-                      <Active />
-                    </Suspense>
-                  )}
-                </ErrorBoundary>
-              </motion.div>
-            </AnimatePresence>
-          </div>
-        </main>
-      </div>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <TopBar
+            title={TITLES[active.id] ?? active.label}
+            asOf={data?.snapshot.meta.asOf ?? ''}
+            onOpenSearch={ui.openPalette}
+            onOpenNav={() => setMobileNavOpen(true)}
+            navOpen={mobileNavOpen}
+          />
+          <PortfolioFilterBar managers={NO_MANAGERS} />
+          <StaleBanner />
+          <main className="flex-1 overflow-y-auto px-3 py-3 sm:px-4 lg:px-5 lg:py-5">
+            <div className="mx-auto max-w-[1500px]">
+              <AnimatePresence mode="wait">
+                <motion.div
+                  key={ui.activeModuleId}
+                  initial={{ opacity: 0, y: 8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -6 }}
+                  transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+                >
+                  <ErrorBoundary key={ui.activeModuleId}>
+                    {snap.isError ? (
+                      <ModuleError onRetry={() => void snap.refetch()} message={(snap.error as Error | null)?.message} />
+                    ) : snap.isLoading && !data ? (
+                      <ModuleLoading />
+                    ) : (
+                      <Suspense fallback={<ModuleLoading />}>
+                        <Active />
+                      </Suspense>
+                    )}
+                  </ErrorBoundary>
+                </motion.div>
+              </AnimatePresence>
+            </div>
+          </main>
+        </div>
 
-      <CommandPalette />
-      <EntityDrawer />
-      <DraftPanel />
-      <AiPanel />
-    </div>
+        <CommandPalette />
+        <EntityDrawer />
+        <DraftPanel />
+        <AiPanel />
+      </div>
+    </PortfolioFilterProvider>
   );
 }
