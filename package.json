@@ -69,7 +69,7 @@
     "hono": "^4.6.14",
     "lucide-react": "^0.468.0",
     "mammoth": "^1.12.0",
-    "pdf-parse": "^1.1.4",
+    "pdf-parse": "^2.4.5",
     "react": "^19.0.0",
     "react-aria-components": "^1.5.0",
     "react-dom": "^19.0.0",
