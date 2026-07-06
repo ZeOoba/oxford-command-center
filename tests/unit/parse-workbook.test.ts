@@ -1,0 +1,158 @@
+// tests/unit/parse-workbook.test.ts
+//
+// Real ingestion-path coverage for parseWorkbook() (server/workbook/parse.ts) -- the core Excel
+// ingestion function that turns the firm's Master Workbook into properties/loans/leases/financials.
+// Before this file, the only coverage was tests/unit/parse.test.ts (small pure helpers only, never
+// calling parseWorkbook itself) and tests/unit/brain.test.ts (mocks parseWorkbook away entirely) --
+// a regression here would silently corrupt financial data ingestion undetected. All fixture data
+// below is deliberately, obviously synthetic (no real firm/tenant/deal/counterparty names).
+import ExcelJS from 'exceljs';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import { parseWorkbook } from '../../server/workbook/parse';
+import { slug } from '@contracts/index';
+
+const PROPERTY_NAME = 'Test Property Alpha (Fixture)';
+
+async function writeFixtureWorkbook(path: string): Promise<void> {
+  const wb = new ExcelJS.Workbook();
+
+  // col: idx, name, type, sf, tenantCount, occ, acqDate, estValue100, oxfordOwnPct, oxfordValue,
+  //      grossIncome, expenses, noi, noiScenarioAdj, debtService, netCashFlow, capRate, dscr,
+  //      lender, loanBalance, ltv, valuePerSf, rentPerSf, equityInvested, cashOnCash, holdYrs
+  const props = wb.addWorksheet('Property NOI');
+  props.addRow([
+    1, PROPERTY_NAME, 'Industrial', 50000, 3, 0.92, new Date('2020-01-01'),
+    5000000, 1, 5000000, 600000, 200000, 400000, 400000, 300000, 100000, 0.08, 1.3,
+    'Fixture Bank', 3000000, 0.6, 100, 12, 1500000, 0.08, 5,
+  ]);
+
+  // col: propertyKey, tenantName, unit, company, sf, monthlyRent, rentPerSf, leaseStart, leaseEnd,
+  //      escalationDate, escalationPct, status, annualRent
+  const rentRoll = wb.addWorksheet('Master Tenant Rent Roll');
+  rentRoll.addRow([
+    PROPERTY_NAME, 'Fixture Tenant Co', 'Suite 100', 'Fixture Tenant Co',
+    10000, 8000, 9.6, new Date('2022-01-01'), new Date('2027-01-01'),
+    null, null, 'Active', 96000,
+  ]);
+
+  const loans = wb.addWorksheet('Loan Index');
+  loans.addRow(['IS BORROWER']); // banner row -> section = 'borrower'
+  // col: idx, rawName, counterparty, balance, rate, monthlyPmt, maturity, monthsToMaturity, ltv,
+  //      status, collateralProperty
+  loans.addRow([
+    1, 'Fixture Loan A', 'Fixture Bank', 3000000, 0.06, 18000,
+    new Date('2030-01-01'), 42, 0.6, 'Current', PROPERTY_NAME,
+  ]);
+
+  // Sheets parseWorkbook requires to EXIST (by exact name) but tolerates empty:
+  wb.addWorksheet('Cash Balances');
+  wb.addWorksheet('Insurance Renewals');
+  wb.addWorksheet('Monthly Checklist');
+  wb.addWorksheet('Assumptions');
+
+  await wb.xlsx.writeFile(path);
+}
+
+describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', () => {
+  it('parses properties, leases, and loans with resolved cross-references', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
+    const file = join(dir, 'fixture.xlsx');
+    await writeFixtureWorkbook(file);
+
+    const { snapshot, flags } = await parseWorkbook(file);
+
+    // Properties
+    expect(snapshot.properties).toHaveLength(1);
+    const property = snapshot.properties[0]!;
+    expect(property.id).toBe(slug(PROPERTY_NAME));
+    expect(property.name).toBe(PROPERTY_NAME);
+    expect(property.type).toBe('Industrial');
+    expect(property.sf).toBe(50000);
+    expect(property.occPct).toBeCloseTo(0.92);
+    expect(property.noi).toBe(400000);
+    expect(property.loanBalance).toBe(3000000);
+    expect(property.encumbered).toBe(true); // loanBalance > 0
+
+    // Leases -- propertyId must resolve via the shared-token match against the property name
+    expect(snapshot.leases).toHaveLength(1);
+    const lease = snapshot.leases[0]!;
+    expect(lease.tenantName).toBe('Fixture Tenant Co');
+    expect(lease.propertyKey).toBe(PROPERTY_NAME);
+    expect(lease.propertyId).toBe(property.id);
+    expect(lease.monthlyRent).toBe(8000);
+    expect(lease.annualRent).toBe(96000);
+    expect(lease.status).toBe('Active');
+
+    // Loans -- section-aware banner parsing
+    expect(snapshot.loans).toHaveLength(1);
+    const loan = snapshot.loans[0]!;
+    expect(loan.direction).toBe('borrower');
+    expect(loan.name).toBe('Fixture Loan A');
+    expect(loan.currentBalance).toBe(3000000);
+    expect(loan.absBalance).toBe(3000000);
+    expect(loan.lender).toBe('Fixture Bank');
+    expect(loan.collateralProperty).toBe(PROPERTY_NAME);
+    expect(loan.isDemand).toBe(false);
+    expect(loan.maturity).toBe('2030-01-01');
+
+    // A clean, fully-populated fixture should raise no data-quality flags of its own.
+    // (loadDeals()/loadM365Tasks() run independently of the workbook and are asserted separately.)
+    const ownFlags = flags.filter((f) => f.entity === property.id || f.entity === loan.id);
+    expect(ownFlags).toEqual([]);
+  });
+
+  it('tolerates the four optional sheets being present but empty (Cash/Insurance/Checklist/Assumptions)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
+    const file = join(dir, 'fixture-empty-optional.xlsx');
+    await writeFixtureWorkbook(file);
+
+    const { snapshot } = await parseWorkbook(file);
+
+    expect(snapshot.insurance).toEqual([]);
+    expect(snapshot.tasks).toEqual([]);
+    expect(snapshot.cash.totalCash).toBe(0);
+    expect(snapshot.cash.entities).toEqual([]);
+    // Assumptions falls back to documented defaults when the sheet has no data rows.
+    expect(snapshot.assumptions.activeScenario).toBe('Base');
+    expect(snapshot.assumptions.thresholds.balloonAlertMonths).toBe(18);
+  });
+
+  it('throws a clear error when a required sheet is missing entirely', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
+    const file = join(dir, 'fixture-missing-sheet.xlsx');
+    const wb = new ExcelJS.Workbook();
+    wb.addWorksheet('Property NOI').addRow([1, PROPERTY_NAME, 'Industrial']);
+    // Deliberately omit every other required sheet.
+    await wb.xlsx.writeFile(file);
+
+    await expect(parseWorkbook(file)).rejects.toThrow(/Worksheet not found/);
+  });
+
+  it('skips Property NOI rows failing each of the three guard conditions independently', async () => {
+    // parse.ts:164 -- `if (idx === null || !name || /portfolio total/i.test(name)) continue;`
+    // Exercises all three OR-branches with a DISTINCT row per condition, then asserts the exact
+    // surviving name set -- not just a count -- so a row skipped for the WRONG reason (or not
+    // skipped at all) cannot pass by accidental cancellation.
+    const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
+    const file = join(dir, 'fixture-skip-rows.xlsx');
+    const wb = new ExcelJS.Workbook();
+    const props = wb.addWorksheet('Property NOI');
+    props.addRow([1, PROPERTY_NAME, 'Industrial', 50000, 3, 0.92]); // kept
+    props.addRow([null, 'No Index Row', 'Industrial', 1000]); // idx === null -> skipped
+    props.addRow([2, '', 'Industrial', 1000]); // !name (empty string) -> skipped
+    props.addRow([3, 'Portfolio Total', 'Industrial', 1000]); // portfolio-total regex -> skipped
+    wb.addWorksheet('Master Tenant Rent Roll');
+    wb.addWorksheet('Loan Index');
+    wb.addWorksheet('Cash Balances');
+    wb.addWorksheet('Insurance Renewals');
+    wb.addWorksheet('Monthly Checklist');
+    wb.addWorksheet('Assumptions');
+    await wb.xlsx.writeFile(file);
+
+    const { snapshot } = await parseWorkbook(file);
+    expect(snapshot.properties.map((p) => p.name)).toEqual([PROPERTY_NAME]);
+  });
+});
