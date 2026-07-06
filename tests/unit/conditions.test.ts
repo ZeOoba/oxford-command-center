@@ -40,7 +40,8 @@ const loan = (o: Partial<Loan>): Loan => ({
 });
 const policy = (o: Partial<InsurancePolicy>): InsurancePolicy => ({
   id: 'i1', property: 'Prop One', entity: null, coverage: 'Package', effective: null, expires: null, policyNo: null,
-  carrier: 'Carrier', premium: 5000, daysToExpiry: null, status: 'Current', notes: null, flags: [], ...o,
+  carrier: 'Carrier', premium: 5000, daysToExpiry: null, status: 'Current', notes: null,
+  tiv: null, deductible: null, coverageLimit: null, flags: [], ...o,
 });
 const deal = (o: Partial<Deal>): Deal => ({
   id: 'd1', name: 'Deal One', shortName: null, location: null, market: null, sf: null, buildings: null, stage: 'Sourcing',
