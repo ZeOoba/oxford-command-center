@@ -1,0 +1,22 @@
+# Property tax assessment fill-in template — one row per property_master entry, tax_year 2026.
+# Fill in jurisdiction / assessed_value / assessment_ratio / millage_rate / annual_tax_billed / as_of
+# from each county assessor's portal (source='county-portal'); leave a cell blank if the portal
+# does not report that field. For the Sepich Portfolio (sepich-portfolio-columbus-oh-8-props),
+# 2021 assessor PDFs already exist in OneDrive under "Sepich Portfolio/Tax Assessment -- *.pdf" —
+# use them as historical reference, not as a substitute for a current 2026 pull. Once filled in,
+# this file is the seed input for a future property_tax_assessments ingest (migration 020).
+property_id,property_name,market,tax_year,jurisdiction,assessed_value,assessment_ratio,millage_rate,annual_tax_billed,source,as_of
+3540-e-5th-ave-columbus-oh,"3540 E. 5th Ave, Columbus OH",Columbus OH,2026,,,,,,county-portal,
+3034-westerville-rd-columbus-oh,"3034 Westerville Rd, Columbus OH",Columbus OH,2026,,,,,,county-portal,
+3875-3883-e-livingston-ave-columbus-oh,"3875-3883 E Livingston Ave, Columbus OH",Columbus OH,2026,,,,,,county-portal,
+sepich-portfolio-columbus-oh-8-props,"FVC — Fairground Village Center / Sepich Portfolio (8 props)",Columbus OH,2026,,,,,,county-portal,
+1100-rarig-ave-columbus-oh,"1100 Rarig Ave, Columbus OH",Columbus OH,2026,,,,,,county-portal,
+29000-information-lane-easton-md,"29000 Information Lane, Easton MD",Mid-Atlantic,2026,,,,,,county-portal,
+9620-e-state-route-350-raytown-mo,"9620 E State Route 350, Raytown MO",Kansas City MO,2026,,,,,,county-portal,
+9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2026,,,,,,county-portal,
+1900-n-broadway-baltimore-md,"1900 N Broadway, Baltimore MD",Mid-Atlantic,2026,,,,,,county-portal,
+7658-fishel-dr-n-dublin-oh,"7658 Fishel Dr N, Dublin OH",Columbus OH,2026,,,,,,county-portal,
+401-sunburst-hwy-cambridge-md,"401 Sunburst Hwy, Cambridge MD",Mid-Atlantic,2026,,,,,,county-portal,
+55-new-plant-ct-owings-mills-md,"55 New Plant Ct, Owings Mills MD",Mid-Atlantic,2026,,,,,,county-portal,
+2203-2207-northwood-dr-salisbury-md,"2203-2207 Northwood Dr, Salisbury MD",Mid-Atlantic,2026,,,,,,county-portal,
+1851-s-club-solar,"1851 S Club — Solar (25% roof project)",Columbus OH,2026,,,,,,county-portal,
