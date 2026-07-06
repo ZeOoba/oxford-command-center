@@ -64,6 +64,47 @@ No blocking data questions → proceed per D2/D3 frameworks.
 ### Wave 4 — verify + ship
 - Full local suite + tsc + eslint + build + governance; screenshots per new surface (playwright, mocked om-extract route); commit per wave with trailers; push; PR with data-gap list (what Gabriel fills: workbook TIV/Ded/Limit cols, assessments CSV, loss-run CSV).
 
+### Phase 7 — parity sweep + reconciliation (complete)
+
+Ran after PR #168 merged Waves 2+3 to `main`. Branch restarted a third time
+(`git checkout -B claude/analyze-plan-prompt-tadmpp origin/main`) per the merged-PR
+protocol, then all six IMPLEMENTATION_PLAN.md §Phase 7 tasks dispatched as 5 parallel,
+non-colliding Sonnet lanes (disjoint file sets, `src/shell/modules.tsx` untouched —
+no new modules this phase):
+
+- **7.1 Overview banner + priority actions** — `src/modules/overview/widgets.tsx`: `ResultsBannerWidget` +
+  `PriorityActionsWidget`, both reusing `insights.logic.ts`'s `mergeInsightSources`/`buildSummary`/
+  `totalsBySpine` verbatim (parity with Insights module by construction, not recomputation).
+- **7.2 Global portfolio filter** — NEW `src/shell/PortfolioFilterContext.tsx` + `PortfolioFilterBar.tsx`,
+  mounted in `AppShell.tsx`. v1 scope: client-side market/type/manager filter over already-fetched
+  snapshot data, sessionStorage-persisted. `src/data/` untouched (verified). Manager filtering is
+  wired end-to-end but currently a no-op — `Property`/Spine A carries no manager attribution; that
+  lives only in the Spine B warehouse. `PortfolioModule` retrofit explicitly deferred (would require
+  either touching architect-owned `src/analytics/engine.ts` or violating the "no mixed filtered/
+  unfiltered figure" acceptance criterion).
+- **7.3 Comps + cap-rate benchmark surface** — NEW `src/modules/market/CompsView.tsx` + `comps-hooks.ts`,
+  new Macro/Comps tab in `MarketModule.tsx`. Found the brief's assumption false (no exported hook for
+  `CapRateBenchmark` data exists outside `CapitalModule.tsx`'s private one) — built an identical-queryKey
+  hook so TanStack Query dedupes the fetch across both modules; figures/formatting copied verbatim from
+  `CapitalModule.tsx`. Also found `CapRateBenchmark`'s full P25/P50/P75 array is never serialized to any
+  route (collapsed server-side into per-property fields first) — rendered the closest faithful equivalent
+  instead of the literal spec.
+- **7.4 DealDrawer enrichment** — `src/brain/DealDrawer.tsx`: read-only Underwriting section (AcquisitionInput
+  summary + GaugeRing/tier/reasons from the same `useAcqIntel()` hook Pipeline/Grader consume, linked via
+  `notionDealId`). DD checklist and a Grader-tab deep link explicitly skipped (schema/migration and
+  cross-module UI-state plumbing respectively — both out of a UX-only lane's scope).
+- **7.5+7.6 Design-parity audit + cut-list reconciliation** — `docs/design-parity-audit-2026-07-06.md` (structural,
+  code-level audit across all 18 pages/8 engines; one live gap found — Overview's flat `InsightList`, fixed
+  by the concurrent 7.1 lane in this same PR) and `docs/design-handoff-cut-list-reconciliation.md` (all 11
+  §6 cut-list items reconciled against what shipped instead).
+
+Barrier before commit: `tsc --noEmit` clean, `vitest run` 201 files / 2262 tests green, `eslint --max-warnings 0`
+clean on all touched files, `governance-check` passed, `vite build` clean. Committed as 5 separate commits
+(one per lane) with `Refute-Skip` trailers — all Phase 7 work is presentation/docs-only over already-computed,
+already-refuted data; no new financial computation.
+
+IMPLEMENTATION_PLAN.md has no phases beyond 7. This closes the plan pending Gabriel's merge review.
+
 ## Failure-proofing
 - Sentinel re-touched before each architect-gated wave; every architect edit is in the status.json declaration and lands in ONE reviewable PR.
 - Engines are pure functions over stored rows; every $ output carries provenance + advisoryOnly; nothing renders invented values — absent data renders absent (the framework mandate).
