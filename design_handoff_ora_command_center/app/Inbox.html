@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en" data-screen-label="Inbox">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORA — Inbox</title>
+<script>try{var t=localStorage.getItem('ora-theme')||'dark';document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('ora-density')==='compact')document.documentElement.setAttribute('data-density','compact');}catch(e){}</script>
+<link rel="stylesheet" href="ora.css">
+<style>
+  .filters{display:flex;gap:7px;flex-wrap:wrap;}
+  .fp{font-family:'IBM Plex Mono';font-size:11px;font-weight:500;border:1px solid var(--line);border-radius:7px;padding:6px 12px;color:var(--muted);cursor:pointer;transition:all .12s;}
+  .fp:hover:not(.on){color:var(--ink-2);}
+  .fp.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600;}
+  .thread{display:flex;gap:13px;padding:14px 18px;border-top:1px solid var(--line-2);align-items:flex-start;}
+  .thread:first-of-type{border-top:0;}
+  .thread .av{width:38px;height:38px;border-radius:10px;flex:none;display:grid;place-items:center;font-family:'IBM Plex Mono';font-weight:600;font-size:13px;color:#06120f;}
+  .thread .who{font-size:13.5px;font-weight:600;white-space:nowrap;flex:none;}
+  .thread .org{font-family:'IBM Plex Mono';font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+  .thread .hrow{display:flex;align-items:baseline;gap:8px;}
+  .thread .subj{font-size:13px;font-weight:600;margin-top:5px;}
+  .thread .snip{font-size:12px;color:var(--ink-2);margin-top:3px;line-height:1.45;}
+  .thread .meta{display:flex;align-items:center;gap:8px;margin-top:9px;}
+  .thread .tm{font-family:'IBM Plex Mono';font-size:10px;color:var(--muted);margin-left:auto;white-space:nowrap;}
+  .rel{font-family:'IBM Plex Mono';font-size:9.5px;color:var(--ink-2);border:1px solid var(--line);border-radius:5px;padding:2px 7px;}
+</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail" data-active="inbox"></nav>
+
+  <div class="main">
+    <header class="top">
+      <div class="ttl"><span class="up">Oxford RA · Command</span><span class="pg">Inbox</span></div>
+      <div class="bar"></div>
+      <div class="clock">6 NEED REPLY · 2 OVERDUE</div>
+      <div class="grow"></div>
+      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>search mail<span class="k">⌘K</span></div>
+      <div class="stat"><span class="d"></span>LIVE · 2m</div>
+      <button class="ibtn" id="themeBtn" title="Toggle theme"></button>
+      <button class="ibtn" id="densityBtn" title="Toggle density"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      <button class="ibtn" title="Alerts"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 004 0"/></svg><span class="dot"></span></button>
+    </header>
+
+    <div class="content">
+      <div class="pagehd">
+        <div><h1>Action Inbox</h1><div class="sub">threads waiting on you · linked to the deal or asset they touch</div></div>
+        <div class="grow"></div>
+        <div class="filters" data-filterset="#mailScope">
+          <span class="fp on" data-filter="all">All · 6</span>
+          <span class="fp" data-filter="overdue">Overdue · 2</span>
+          <span class="fp" data-filter="today">Today · 3</span>
+          <span class="fp" data-filter="deals">Deals</span>
+          <span class="fp" data-filter="leases">Leases</span>
+          <span class="fp" data-filter="capital">Capital</span>
+        </div>
+      </div>
+
+      <div class="panel" id="mailScope">
+        <div class="thread" data-dismissable data-tags="overdue deals">
+          <div class="av" style="background:var(--red)">DR</div>
+          <div style="flex:1;min-width:0">
+            <div class="hrow"><span class="who">Daniel Reyes</span><span class="org">REYES &amp; PARTNERS · BROKER</span><span class="tm">2d ago</span></div>
+            <div class="subj">Re: Eastgate 3-Building — seller wants a response by Friday <span class="ovt">· OVERDUE</span></div>
+            <div class="snip">"They've had two other tours this week. If we want to hold the LOI price we should confirm by EOD Friday. Happy to jump on a call…"</div>
+            <div class="meta"><span class="rel">◆ EASTGATE 3-BUILDING</span><span class="badge b-dd">DUE DILIGENCE</span><div class="qa" style="margin-left:auto"><button class="btn pri" data-act="reply">Reply</button><button class="btn" data-act="snooze">Snooze</button><button class="btn" data-act="done">Done</button></div></div>
+          </div>
+        </div>
+
+        <div class="thread" data-dismissable data-tags="overdue leases">
+          <div class="av" style="background:var(--red)">KL</div>
+          <div style="flex:1;min-width:0">
+            <div class="hrow"><span class="who">Apex Fabrication</span><span class="org">TENANT</span><span class="tm">1d ago</span></div>
+            <div class="subj">Lease renewal — Suite 2 <span class="ovt">· OVERDUE</span></div>
+            <div class="snip">"We'd like to renew but the proposed bump is steep for us. Can we discuss a middle ground before the 11th?"</div>
+            <div class="meta"><span class="rel">⬢ CARDINAL SVC CTR · EASTGATE</span><span class="badge b-loi">EXPIRES 11D</span><div class="qa" style="margin-left:auto"><button class="btn pri" data-act="reply">Reply</button><button class="btn" data-act="snooze">Snooze</button><button class="btn" data-act="done">Done</button></div></div>
+          </div>
+        </div>
+
+        <div class="thread" data-dismissable data-tags="today capital">
+          <div class="av" style="background:var(--accent)">FM</div>
+          <div style="flex:1;min-width:0">
+            <div class="hrow"><span class="who">First Meridian Bank</span><span class="org">LENDER</span><span class="tm">3h ago</span></div>
+            <div class="subj">Term sheet — Eastgate 3-Building financing</div>
+            <div class="snip">"Two items before we can issue: confirmation of the DSCR assumptions and the updated rent roll. Should be quick…"</div>
+            <div class="meta"><span class="rel">◆ EASTGATE 3-BUILDING</span><span class="badge b-neutral">$9.4M · 35% LTV</span><div class="qa" style="margin-left:auto"><button class="btn pri" data-act="reply">Reply</button><button class="btn" data-act="snooze">Snooze</button><button class="btn" data-act="done">Done</button></div></div>
+          </div>
+        </div>
+
+        <div class="thread" data-dismissable data-tags="today deals">
+          <div class="av" style="background:var(--blue)">WC</div>
+          <div style="flex:1;min-width:0">
+            <div class="hrow"><span class="who">Watford &amp; Co.</span><span class="org">COUNSEL</span><span class="tm">5h ago</span></div>
+            <div class="subj">Southport Distribution PSA — redlines for your review</div>
+            <div class="snip">"Marked up sections 4 and 9. The reps &amp; warranties are broadly acceptable; flagged one indemnity cap for your call…"</div>
+            <div class="meta"><span class="rel">◆ SOUTHPORT DISTRIBUTION</span><span class="badge b-rev">UNDER REVIEW</span><div class="qa" style="margin-left:auto"><button class="btn pri" data-act="reply">Reply</button><button class="btn" data-act="snooze">Snooze</button><button class="btn" data-act="done">Done</button></div></div>
+          </div>
+        </div>
+
+        <div class="thread" data-dismissable data-tags="today deals">
+          <div class="av" style="background:var(--amber)">JT</div>
+          <div style="flex:1;min-width:0">
+            <div class="hrow"><span class="who">Jordan Tran</span><span class="org">ORA · ANALYST</span><span class="tm">6h ago</span></div>
+            <div class="subj">Eastgate 3-Building — final IC memo ready</div>
+            <div class="snip">"Closing checklist is green except the survey. Memo attached for your sign-off — targeting close on the 27th."</div>
+            <div class="meta"><span class="rel">◆ EASTGATE 3-BUILDING</span><span class="badge b-close">CLOSING</span><div class="qa" style="margin-left:auto"><button class="btn pri" data-act="reply">Reply</button><button class="btn" data-act="snooze">Snooze</button><button class="btn" data-act="done">Done</button></div></div>
+          </div>
+        </div>
+
+        <div class="thread" data-dismissable data-tags="leases">
+          <div class="av" style="background:var(--violet)">AH</div>
+          <div style="flex:1;min-width:0">
+            <div class="hrow"><span class="who">Northline Tooling</span><span class="org">TENANT</span><span class="tm">1d ago</span></div>
+            <div class="subj">Considering a downsize at Northline Flex</div>
+            <div class="snip">"With our hybrid model we're looking at giving back roughly a floor. Wanted to flag early so we can plan the renewal…"</div>
+            <div class="meta"><span class="rel">⬢ NORTHLINE FLEX</span><span class="badge b-rev">AT RISK</span><div class="qa" style="margin-left:auto"><button class="btn pri" data-act="reply">Reply</button><button class="btn" data-act="snooze">Snooze</button><button class="btn" data-act="done">Done</button></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="ora.js"></script>
+<script src="data.js"></script>
+<script src="table.js"></script>
+</body>
+</html>

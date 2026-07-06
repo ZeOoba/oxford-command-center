@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en" data-screen-label="Portfolio">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORA — Portfolio</title>
+<script>try{var t=localStorage.getItem('ora-theme')||'dark';document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('ora-density')==='compact')document.documentElement.setAttribute('data-density','compact');}catch(e){}</script>
+<link rel="stylesheet" href="ora.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" data-active="portfolio"></nav>
+
+  <div class="main">
+    <header class="top">
+      <div class="ttl"><span class="up">Oxford RA · Command</span><span class="pg">Portfolio</span></div>
+      <div class="bar"></div>
+      <div class="clock" data-metric-txt="assets">{} ASSETS · 4 REGIONS</div>
+      <div class="grow"></div>
+      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>filter assets<span class="k">⌘K</span></div>
+      <div class="stat"><span class="d"></span>LIVE · 2m</div>
+      <button class="ibtn" id="themeBtn" title="Toggle theme"></button>
+      <button class="ibtn" id="densityBtn" title="Toggle density"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      <button class="ibtn" title="Alerts"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 004 0"/></svg><span class="dot"></span></button>
+    </header>
+
+    <div class="content">
+      <div class="pagehd">
+        <div><h1>Portfolio</h1><div class="sub">assets under management · net of dispositions · drill any row</div></div>
+        <div class="grow"></div>
+        <div class="seg"><span>3M</span><span>6M</span><span class="on">1Y</span><span>3Y</span><span>All</span></div>
+        <span class="linkish" style="margin-left:10px">⤓ Export</span>
+      </div>
+
+      <!-- portfolio KPIs -->
+      <div class="kpis">
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/></svg>AUM</div><div class="v" data-metric="aum">$248.3<small>M</small></div><div class="dl g">▲ 3.9% <span class="s">MoM</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M12 3v18M7 8h7a3 3 0 010 6H8a3 3 0 000 6h8"/></svg>NOI / MO</div><div class="v" data-metric="noiMo">$1.84<small>M</small></div><div class="dl g">▲ 2.2% <span class="s">MoM</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M4 21V10l8-6 8 6v11M9 21v-6h6v6"/></svg>OCCUPANCY</div><div class="v" data-metric="occ">94.2<small>%</small></div><div class="dl r">▼ 0.6 <span class="s">PTS</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v5l3 2"/></svg>AVG CAP RATE</div><div class="v" data-metric="cap">6.4<small>%</small></div><div class="dl g">▼ 12 <span class="s">BPS · GOOD</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M3 21h18M5 21V8l7-4 7 4v13M9 21v-5h6v5"/></svg>DEBT · LTV</div><div class="v" data-metric="debt">$96<small>M · 41%</small></div><div class="dl g">SAFE <span class="s">&lt; 55% COV</span></div></div>
+      </div>
+
+<div class="panel" style="margin-bottom:16px"><div class="ph"><div><h3>RECOMMENDED ACTIONS</h3><div class="sub">below-market upside &amp; portfolio risk · ranked by $ impact</div></div><div class="grow"></div><a class="more" href="Insights.html">ALL ▸</a><span class="chip ai" style="margin-left:8px">◇ ENGINE</span></div><div id="modActions"></div></div>
+
+      <!-- portfolio trends + anomalies -->
+      <div class="grid-21" style="margin-bottom:16px">
+        <div class="panel">
+          <div class="ph"><div><h3>PORTFOLIO TRENDS</h3><div class="sub" id="pTrdSub">revenue · NOI · expense lines · respects the portfolio filter</div></div></div>
+          <div class="trdbar">
+            <div class="trdpills" id="pTrdMetrics"></div>
+            <div class="trdtoggle">
+              <span class="trdchk on" id="pTgYoY">vs prior year</span>
+              <div class="seg" id="pTrdHorizon"><span data-h="1Y">1Y</span><span data-h="3Y" class="on">3Y</span><span data-h="5Y">5Y</span></div>
+            </div>
+          </div>
+          <div class="trdhead"><div class="big"><span id="pTrdVal">—</span><span class="unit" id="pTrdUnit"></span></div><span class="dchip g" id="pTrdYoY">—</span><span class="dchip" id="pTrdCagr" style="color:var(--ink-2)">—</span></div>
+          <div id="pTrdChart" style="padding:4px 16px 0"></div>
+          <div class="trdaxis" id="pTrdAxis"></div>
+          <div class="trdlg" style="padding:4px 16px 14px"><div class="lg"><span class="ln"></span><span id="pTrdLg">AUM</span></div><div class="lg" id="pTrdLgCmp"><span class="ln cmp"></span>prior year</div><div class="lg"><span class="dot"></span>flagged anomaly</div><div class="lg" style="margin-left:auto;color:var(--muted)">same-store · constant asset set</div></div>
+        </div>
+        <div class="panel">
+          <div class="ph"><div><h3>ANOMALIES</h3><div class="sub" id="pAnomSub">month-end · across the portfolio</div></div><div class="grow"></div><span class="chip ai">◇ ENGINE</span></div>
+          <div id="pAnoms" style="max-height:452px;overflow:auto"></div>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div class="colstack">
+          <div class="panel">
+            <div class="ph"><div><h3>EXPENSE PRESSURE</h3><div class="sub">property tax &amp; insurance · YoY</div></div><div class="grow"></div><span class="chip">TRAILING 12 MO</span></div>
+            <div id="expPressure" style="padding:8px 4px 12px"></div>
+          </div>
+
+          <div class="panel">
+            <div class="ph"><div><h3>BY MARKET</h3><div class="sub">5 markets · click to drill</div></div><div class="grow"></div><span class="chip">SORT: AUM</span></div>
+            <table class="tbl"><thead><tr><th>Market</th><th class="r">AUM</th><th class="r">MoM</th><th class="r">Assets</th><th style="width:130px">Occupancy</th><th class="r">NOI / yr</th></tr></thead><tbody id="regionBody"></tbody></table>
+          </div>
+        </div>
+
+        <div class="colstack">
+          <div class="panel">
+            <div class="ph"><div><h3>COMPOSITION</h3><div class="sub">by subtype</div></div></div>
+            <div id="compBody" style="padding:14px 16px;display:flex;flex-direction:column;gap:13px;"></div>
+          </div>
+
+          <div class="panel">
+            <div class="ph"><div><h3>RISK FLAGS</h3><div class="sub">3 active</div></div></div>
+            <div class="insight c"><div class="tagln"><span class="pin"></span><span class="cat">Concentration</span></div><p><b>Tri-County is 26% of AUM</b> — approaching your 30% single-market ceiling.</p></div>
+            <div class="insight b"><div class="tagln"><span class="pin"></span><span class="cat">Occupancy</span></div><p id="occFlag"><b>Cardinal Service Ctr at 86%</b> — 3 flex suites vacant 30+ days.</p></div>
+            <div class="insight b"><div class="tagln"><span class="pin"></span><span class="cat">Rollover</span></div><p><b>18 leases roll in the next 12 mo</b> — 4 sit >10% below market.</p></div>
+          </div>
+
+          <div class="panel">
+            <div class="ph"><div><h3>INSIGHT</h3></div><div class="grow"></div><span class="chip ai">◇ AI</span></div>
+            <div class="insight a"><p><b>Marking the 4 below-market flex leases to market adds ≈ $0.18M NOI/yr</b> — Cardinal Service Center and Northline Flex carry the largest gaps.</p></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:13px">
+        <div class="ph"><div><h3>ASSETS</h3><div class="sub" id="assetSub">properties · sorted by value</div></div><div class="grow"></div><span class="linkish">⤓ Export</span></div>
+        <table class="tbl" data-enhance data-chips="Market"><thead><tr><th>Property</th><th>Market</th><th>Type</th><th class="r">Value</th><th class="r">Occ.</th><th class="r">NOI / yr</th><th class="r">Cap</th><th>Status</th></tr></thead><tbody id="assetBody"></tbody></table>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="ora.js"></script>
+<script src="data.js"></script>
+<script src="trends.js"></script>
+<script src="filter.js"></script>
+<script src="engine.js"></script>
+<script src="table.js"></script>
+<script>
+(function(){
+  var P=ORA.PROPERTIES, regions=ORA.MARKETS;
+  var tc={Industrial:'var(--blue)',Flex:'var(--accent)'};
+  var sb={Stabilized:'b-dd',Watch:'b-loi','Lease-up':'b-rev'};
+  function fM(v){return ORA.fmtM(v);}
+
+  function renderAggregates(){
+    var F=window.ORA_FILTER, ps=F?F.properties():P;
+    var sliceAum=ps.reduce(function(s,p){return s+p.value;},0)||1;
+    // region table (only markets present in slice)
+    var mkts=regions.filter(function(rg){return ps.some(function(p){return p.region===rg;});});
+    document.getElementById('regionBody').innerHTML=mkts.map(function(rg){
+      var rs=ps.filter(function(p){return p.region===rg;});
+      var aum=rs.reduce(function(s,p){return s+p.value;},0);
+      var noi=rs.reduce(function(s,p){return s+p.noi;},0);
+      var occ=rs.reduce(function(s,p){return s+p.occ*p.value;},0)/aum;
+      return '<tr class="click" onclick="filterRegion(\''+rg+'\')"><td><b>'+rg+'</b></td><td class="r num">'+fM(aum)+'</td><td class="r num pos">\u25b2 '+(2+rs.length*0.5).toFixed(1)+'%</td><td class="r num">'+rs.length+'</td><td><div class="meter'+(occ<90?' warn':'')+'"><span style="width:'+occ.toFixed(0)+'%"></span></div></td><td class="r num">$'+noi.toFixed(1)+'M</td></tr>';
+    }).join('');
+    // composition (relative to slice)
+    document.getElementById('compBody').innerHTML=['Industrial','Flex'].map(function(t){
+      var v=ps.filter(function(p){return p.type===t;}).reduce(function(s,p){return s+p.value;},0);
+      var pct=v/sliceAum*100;
+      return '<div><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px"><span style="font-weight:600">'+t+'</span><span class="mono muted">'+fM(v)+' \u00b7 '+pct.toFixed(0)+'%</span></div><div class="meter"><span style="width:'+pct.toFixed(0)+'%;background:'+tc[t]+'"></span></div></div>';
+    }).join('');
+    // KPI strip recompute for slice
+    var noi=ps.reduce(function(s,p){return s+p.noi;},0);
+    var debt=ps.reduce(function(s,p){return s+p.debt;},0);
+    var occ=ps.reduce(function(s,p){return s+p.occ*p.value;},0)/sliceAum;
+    var cap=ps.reduce(function(s,p){return s+p.cap*p.value;},0)/sliceAum;
+    setKpi('aum', fM(sliceAum));
+    setKpi('noiMo', '$'+(noi/12).toFixed(2)+'M');
+    setKpi('occ', occ.toFixed(1)+'%');
+    setKpi('cap', cap.toFixed(1)+'%');
+    setKpi('debt', '$'+debt.toFixed(0)+'M · '+(debt/sliceAum*100).toFixed(0)+'%');
+  }
+  function setKpi(metric,val){
+    var el=document.querySelector('.kpis [data-metric="'+metric+'"]');
+    if(el) el.innerHTML=val.replace(/(\d)([A-Za-z%].*)$/,'$1<small>$2</small>');
+  }
+
+  document.addEventListener('DOMContentLoaded',function(){
+    // asset table: render ALL rows once, tagged for the external filter
+    document.getElementById('assetBody').innerHTML=P.slice().sort(function(a,b){return b.value-a.value;}).map(function(p){
+      return '<tr class="click" data-mkt="'+p.market+'" data-type="'+p.subtype+'" data-pm="'+p.pmId+'" onclick="location.href=\'Property.html?id='+p.id+'\'"><td><b>'+p.name+'</b></td><td class="muted">'+p.region+'</td><td>'+p.type+'</td><td class="r num">'+fM(p.value)+'</td><td class="r num'+(p.occ<90?' neg':'')+'">'+p.occ+'%</td><td class="r num">$'+p.noi.toFixed(1)+'M</td><td class="r num">'+p.cap.toFixed(1)+'%</td><td><span class="badge '+(sb[p.status]||'b-neutral')+'">'+p.status.toUpperCase()+'</span></td></tr>';
+    }).join('');
+    document.getElementById('assetSub').textContent=P.length+' properties \u00b7 sorted by value';
+    if(window.ORA_enhanceTables) ORA_enhanceTables(document);
+    renderAggregates();
+
+    if(window.ORA_FILTER){
+      ORA_FILTER.subscribe(function(){
+        renderAggregates();
+        var tbl=document.querySelector('#assetBody').closest('table');
+        if(window.ORA_tableExtFilter) ORA_tableExtFilter(tbl, ORA_FILTER.active()?ORA_FILTER.matchProp_row:null);
+        var shown=document.querySelectorAll('#assetBody tr:not([style*="none"])').length;
+        document.getElementById('assetSub').textContent=(ORA_FILTER.active()?shown+' of '+P.length:P.length+' properties')+' \u00b7 sorted by value';
+      });
+    }
+  });
+  window.filterRegion=function(rg){
+    var chip=document.querySelector('.tchips .fp[data-v="'+rg+'"]');
+    if(chip){chip.click();chip.scrollIntoView({block:'center'});}
+  };
+})();
+</script>
+<script>
+(function(){function r(){if(!window.ORA_ENGINE)return;var box=document.getElementById("modActions");if(box){var cats=["noi","risk"];var rows=ORA_ENGINE.SIGNALS.filter(function(s){return cats.indexOf(s.cat)>-1;}).slice(0,3);box.innerHTML=rows.length?rows.map(ORA_ENGINE.rowHtml).join(""):'<div class="cmdk-empty" style="padding:18px">No actions in this slice.</div>';}
+  /* real, history-derived occupancy flag (replaces the asserted copy) */
+  var occ=document.getElementById("occFlag");
+  if(occ){var dec=ORA_ENGINE.SIGNALS.filter(function(s){return s.id&&s.id.indexOf("occ-")===0;}).sort(function(a,b){return b.impact-a.impact;})[0];
+    if(dec){var t=dec.title.split(" \u2014 ");occ.innerHTML='<b>'+t[0]+'</b>'+(t[1]?' \u2014 '+t[1]:'')+'.';}}
+}document.addEventListener("DOMContentLoaded",function(){r();if(window.ORA_FILTER)ORA_FILTER.subscribe(r);});})();
+</script>
+<script>
+/* ---- portfolio trends, expense pressure & anomalies ---- */
+(function () {
+  document.addEventListener('DOMContentLoaded', function () {
+    if (!window.ORA_TRENDS) return;
+    var T = ORA_TRENDS, LAST = T.LAST, GM = ORA.GLOBAL_MONTHS;
+    function props() { return (window.ORA_FILTER && ORA_FILTER.active()) ? ORA_FILTER.properties() : ORA.PROPERTIES; }
+    var ORDER = ['aum', 'rev', 'noi', 'tax', 'ins', 'opex', 'occ', 'margin'];
+    var LBL = { aum: 'AUM', rev: 'Revenue', noi: 'NOI', tax: 'Property tax', ins: 'Insurance', opex: 'Operating exp.', occ: 'Occupancy', margin: 'NOI margin' };
+    function build(ps) {
+      var rev = T.portfolioSeries(ps, 'rev'), noi = T.portfolioSeries(ps, 'noi'), opex = T.portfolioSeries(ps, 'opex');
+      return {
+        aum: { label: LBL.aum, series: T.portfolioSeries(ps, 'value'), kind: 'M', good: 'up' },
+        rev: { label: LBL.rev, series: rev, kind: 'moM', good: 'up' },
+        noi: { label: LBL.noi, series: noi, kind: 'moM', good: 'up' },
+        tax: { label: LBL.tax, series: T.portfolioSeries(ps, 'tax'), kind: 'moM', good: 'down' },
+        ins: { label: LBL.ins, series: T.portfolioSeries(ps, 'ins'), kind: 'moM', good: 'down' },
+        opex: { label: LBL.opex, series: opex, kind: 'moM', good: 'down' },
+        occ: { label: LBL.occ, series: T.occSeries(ps), kind: 'pct', good: 'up' },
+        margin: { label: LBL.margin, series: noi.map(function (v, i) { return (v == null || !rev[i]) ? null : v / rev[i] * 100; }), kind: 'pct', good: 'up' }
+      };
+    }
+    function fmt(k, v) { if (v == null) return '\u2014'; if (k === 'pct') return v.toFixed(1) + '%'; if (k === 'M') return '$' + v.toFixed(1) + 'M'; if (k === 'moM') return Math.abs(v) >= 1e6 ? '$' + (v / 1e6).toFixed(2) + 'M' : '$' + Math.round(v / 1e3) + 'K'; return Math.round(v); }
+    function unit(k) { return k === 'moM' ? '/mo' : ''; }
+    function sgn(v, d) { return (v >= 0 ? '+' : '\u2212') + Math.abs(v).toFixed(d == null ? 1 : d); }
+    function seriesSpikes(s, from) { var ms = T.stats(T.momSeries(s)); var out = []; for (var i = Math.max(1, from); i <= LAST; i++) { var m = T.momPct(s, i); if (m == null) continue; var z = ms.sd ? (m - ms.mean) / ms.sd : 0; if (Math.abs(m) >= 8 && Math.abs(z) >= 1.9) out.push({ gi: i, mom: m }); } return out; }
+    var state = { metric: 'aum', horizon: '3Y', yoy: true };
+    function sameStore(from) { return props().filter(function (p) { return p.acqIdx <= from; }); }
+
+    document.getElementById('pTrdMetrics').innerHTML = ORDER.map(function (k) { return '<span class="trdpill' + (k === state.metric ? ' on' : '') + '" data-m="' + k + '">' + LBL[k] + '</span>'; }).join('');
+
+    function renderTrend() {
+      var from = T.startGi(state.horizon, props()), ps = sameStore(from); if (!ps.length) ps = props(); var M = build(ps), m = M[state.metric];
+      var markers = (state.metric !== 'occ' && state.metric !== 'margin') ? seriesSpikes(m.series, from).map(function (mk) { return { gi: mk.gi, dir: (m.good === 'down' ? (mk.mom > 0 ? 'risk' : 'gain') : (mk.mom > 0 ? 'gain' : 'risk')), title: GM[mk.gi].label + ' ' + sgn(mk.mom, 0) + '%' }; }) : [];
+      document.getElementById('pTrdChart').innerHTML = T.chart(m.series, from, { compareYoY: state.yoy, color: 'var(--accent)', markers: markers, height: 210 });
+      document.getElementById('pTrdAxis').innerHTML = T.axisLabels(from, 7).map(function (l) { return '<span>' + l.toUpperCase() + '</span>'; }).join('');
+      document.getElementById('pTrdVal').textContent = fmt(m.kind, m.series[LAST]);
+      document.getElementById('pTrdUnit').textContent = unit(m.kind);
+      var yoy = T.yoyPct(m.series, LAST), cagr = T.cagrWindow(m.series, from), yc = document.getElementById('pTrdYoY');
+      if (yoy == null) yc.style.display = 'none'; else { yc.style.display = ''; var bad = (m.good === 'up' && yoy < 0) || (m.good === 'down' && yoy > 0); yc.className = 'dchip ' + (m.good === 'flat' ? '' : bad ? 'r' : 'g'); yc.innerHTML = (yoy >= 0 ? '\u25b2 ' : '\u25bc ') + sgn(yoy) + '% <span class="s">YoY</span>'; }
+      document.getElementById('pTrdCagr').innerHTML = cagr == null ? '' : (sgn(cagr) + '%<span class="s">/yr</span>');
+      document.getElementById('pTrdLg').textContent = m.label;
+      document.getElementById('pTrdLgCmp').style.display = state.yoy ? '' : 'none';
+      document.querySelectorAll('#pTrdMetrics .trdpill').forEach(function (x) { x.classList.toggle('on', x.getAttribute('data-m') === state.metric); });
+    }
+
+    var TYPE = { spike: 'MoM SPIKE', yoy: 'YoY', budget: 'VS BUDGET', margin: 'MARGIN', trend: 'TREND' };
+    function renderAnoms() {
+      var ps = props(), list = T.detectAll(ps), box = document.getElementById('pAnoms');
+      if (!list.length) { box.innerHTML = '<div class="cmdk-empty" style="padding:20px;color:var(--muted)">No anomalies in this slice \u2014 operating within tolerance.</div>'; document.getElementById('pAnomSub').textContent = GM[LAST].label + ' \u00b7 0 flagged'; return; }
+      box.innerHTML = list.slice(0, 16).map(function (a) {
+        var dcls = a.dir === 'risk' ? 'r' : 'g';
+        var sub = a.impact ? T.money(a.dir === 'risk' ? -a.impact : a.impact).replace(/^[+\u2212]/, a.dir === 'risk' ? '\u2212' : '+') + '/yr' : TYPE[a.type];
+        return '<a class="anom" href="Property.html?id=' + a.pid + '"><span class="sev ' + a.sev + '"></span>' +
+          '<div class="body"><div class="at">' + a.title + '</div><div class="ad">' + a.pname + ' \u00b7 ' + a.note + '</div>' +
+          '<div class="ameta"><span class="atype ' + a.type + '">' + TYPE[a.type] + '</span></div></div>' +
+          '<div><div class="delta ' + dcls + '">' + sgn(a.deltaPct, 0) + '%</div><div class="dsub">' + sub + '</div></div></a>';
+      }).join('');
+      document.getElementById('pAnomSub').textContent = GM[LAST].label + ' \u00b7 ' + list.length + ' flagged \u00b7 ranked by $ impact';
+    }
+
+    function renderExp() {
+      var ps = props(), ssp = ps.filter(function (p) { return p.acqIdx <= LAST - 36; }); if (!ssp.length) ssp = ps;
+      var rows = [['tax', 'Property tax', 'var(--amber)'], ['ins', 'Insurance', 'var(--red)']];
+      document.getElementById('expPressure').innerHTML = rows.map(function (r) {
+        var s = T.portfolioSeries(ssp, r[0]), yoy = T.yoyPct(s, LAST), cagr = T.cagrWindow(s, LAST - 36), from = LAST - 12;
+        var ch = T.chart(s, from, { compareYoY: false, color: r[2], height: 46 });
+        return '<div style="display:flex;align-items:center;gap:12px;padding:11px 14px;border-top:1px solid var(--line-2)">' +
+          '<div style="flex:1"><div style="font-size:12.5px;font-weight:600">' + r[1] + '</div>' +
+          '<div class="dl ' + (yoy > 0 ? 'r' : 'g') + '" style="margin-top:4px">' + (yoy >= 0 ? '\u25b2 ' : '\u25bc ') + sgn(yoy) + '% <span class="s">YoY \u00b7 ' + sgn(cagr) + '%/yr 3Y</span></div></div>' +
+          '<div style="width:120px">' + ch + '</div>' +
+          '<div style="text-align:right;width:78px"><div style="font-family:var(--font-mono);font-weight:600;font-variant-numeric:tabular-nums">$' + (T.portfolioSeries(ps, r[0])[LAST] * 12 / 1e6).toFixed(2) + 'M</div><div style="font-family:var(--font-mono);font-size:8.5px;color:var(--muted);letter-spacing:.05em">PER YEAR</div></div></div>';
+      }).join('');
+    }
+
+    function renderAll() { renderTrend(); renderAnoms(); renderExp(); }
+    document.getElementById('pTrdMetrics').addEventListener('click', function (e) { var el = e.target.closest('.trdpill'); if (el) { state.metric = el.getAttribute('data-m'); renderTrend(); } });
+    document.getElementById('pTrdHorizon').addEventListener('click', function (e) { var el = e.target.closest('span[data-h]'); if (!el) return; this.querySelectorAll('span').forEach(function (x) { x.classList.remove('on'); }); el.classList.add('on'); state.horizon = el.getAttribute('data-h'); renderTrend(); });
+    document.getElementById('pTgYoY').addEventListener('click', function () { state.yoy = !state.yoy; this.classList.toggle('on', state.yoy); renderTrend(); });
+    if (window.ORA_FILTER) ORA_FILTER.subscribe(renderAll);
+    renderAll();
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en" data-screen-label="OM Grader">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORA — OM Grader</title>
+<script>try{var t=localStorage.getItem('ora-theme')||'dark';document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('ora-density')==='compact')document.documentElement.setAttribute('data-density','compact');}catch(e){}</script>
+<link rel="stylesheet" href="ora.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" data-active="grader"></nav>
+
+  <div class="main">
+    <header class="top">
+      <div class="ttl"><span class="up">Oxford RA · Acquisitions</span><span class="pg">OM Grader</span></div>
+      <div class="bar"></div>
+      <div class="clock">BUY BOX · v3 · SHALLOW-BAY IND / FLEX</div>
+      <div class="grow"></div>
+      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>jump to…<span class="k">⌘K</span></div>
+      <div class="stat"><span class="d"></span>LIVE · 2m</div>
+      <button class="ibtn" id="themeBtn" title="Toggle theme"></button>
+      <button class="ibtn" id="densityBtn" title="Toggle density"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      <button class="ibtn" title="Alerts"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 004 0"/></svg><span class="dot"></span></button>
+    </header>
+
+    <div class="content">
+      <div class="pagehd">
+        <div><h1>OM Grader</h1><div class="sub">drop an offering memorandum — the command center extracts the deal &amp; grades it against your buy box</div></div>
+        <div class="grow"></div>
+        <a class="linkish" href="Acquisitions.html">Pipeline ▸</a>
+      </div>
+
+      <div class="grid-21">
+        <div class="colstack">
+          <!-- UPLOAD + EXTRACTION + SCORECARD -->
+          <div class="panel" id="uploadPanel">
+            <div class="ph"><div><h3>GRADE AN OFFERING MEMORANDUM</h3><div class="sub" id="upSub">drop a file, pick a sample, or enter figures</div></div><div class="grow"></div><span class="chip ai">◇ ENGINE</span></div>
+            <div style="padding:16px">
+              <div class="drop" id="drop">
+                <div class="dic"><svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M5 16v3a1 1 0 001 1h12a1 1 0 001-1v-3"/></svg></div>
+                <div class="dt">Drop an OM PDF to grade</div>
+                <div class="ds">extraction is simulated in this prototype — try a sample:</div>
+                <div class="samples" id="samples"></div>
+                <div class="ds" style="margin-top:6px"><span class="linkish" id="manualToggle">or enter figures manually ▸</span></div>
+              </div>
+
+              <!-- manual form -->
+              <div id="manualForm" style="display:none;margin-top:14px"></div>
+
+              <!-- extraction -->
+              <div id="extractBox" style="display:none;margin-top:6px">
+                <div class="ph" style="padding:6px 0 11px;border:0"><div><h3 id="exTitle">EXTRACTING DEAL TERMS…</h3><div class="sub" id="exFile">—</div></div></div>
+                <div class="extract" id="extract"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SCORECARD -->
+          <div class="panel" id="scorePanel" style="display:none">
+            <div class="ph"><div><h3>BUY-BOX SCORECARD</h3><div class="sub" id="scName">—</div></div><div class="grow"></div><span class="linkish" id="regrade">↺ Grade another</span></div>
+            <div class="gradebox">
+              <div class="gauge" id="gauge"></div>
+              <div class="gradetext">
+                <div class="gverdict" id="verdict">—</div>
+                <div class="greason" id="reason">—</div>
+                <div class="gmeta" id="gmeta"></div>
+              </div>
+            </div>
+            <div class="ph" style="border-top:1px solid var(--line-2)"><div><h3>CRITERIA</h3><div class="sub">weighted against the buy box</div></div></div>
+            <div id="critList"></div>
+          </div>
+        </div>
+
+        <!-- BUY BOX REFERENCE -->
+        <div class="colstack">
+          <div class="panel">
+            <div class="ph"><div><h3>YOUR BUY BOX</h3><div class="sub">scoring mandate · v3</div></div><div class="grow"></div><span class="chip">EDITABLE</span></div>
+            <div class="insight a" style="border:0"><p id="bbSummary"></p></div>
+            <div id="bbList" style="border-top:1px solid var(--line-2)"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- PIPELINE, GRADED -->
+      <div class="board-hd" style="display:flex;align-items:center;gap:9px;margin:18px 0 12px">
+        <div><h3 style="font-size:12px;font-weight:600;letter-spacing:.04em">PIPELINE — GRADED</h3><div class="sub" style="font-family:var(--font-mono);font-size:10.5px;color:var(--muted);margin-top:2px">every live candidate scored against the buy box · grouped by grade</div></div>
+        <div class="grow"></div><span class="chip ai">◇ AUTO-GRADED</span>
+      </div>
+      <div class="tiers" id="pipeTiers"></div>
+    </div>
+  </div>
+</div>
+<script src="ora.js"></script>
+<script src="data.js"></script>
+<script src="grader.js"></script>
+<script>
+(function(){
+  document.addEventListener('DOMContentLoaded', function(){
+    var G = window.ORA_GRADER; if(!G) return;
+    var BB = G.BUYBOX;
+
+    // ---- buy box reference ----
+    document.getElementById('bbSummary').innerHTML = '<b>'+BB.summary+'</b>';
+    document.getElementById('bbList').innerHTML = BB.criteria.map(function(c){
+      return '<div class="lrow"><div style="flex:1;min-width:0"><div class="nm-s">'+c.label+'</div><div class="mt-s">'+c.target+'</div></div><div class="amt" style="font-size:12px;color:var(--muted)">'+c.weight+'<small style="font-size:9px"> wt</small></div></div>';
+    }).join('');
+
+    // ---- sample chips ----
+    document.getElementById('samples').innerHTML = G.SAMPLES.map(function(s){
+      return '<span class="samplechip" data-id="'+s.id+'">'+s.label+'</span>';
+    }).join('');
+
+    // ---- field labels for extraction ----
+    var FIELDS = [
+      ['name','Property'],['type','Asset type'],['market','Submarket'],['price','Asking price','$','M'],
+      ['capIn','Going-in cap','','%'],['irr','Projected IRR','','%'],['em','Equity multiple','','x'],
+      ['ltv','Proposed leverage','','% LTV'],['occ','Occupancy','','%'],['vintage','Year built'],['mtm','In-place vs market','','% below']
+    ];
+    function fval(f, input){ var v=input[f[0]]; if(v==null||v==='') return '—'; return (f[2]||'')+v+(f[3]||''); }
+
+    // ---- gauge ----
+    function gauge(score, grade, cls){
+      var R=64, C=2*Math.PI*R, off=C*(1-score/100);
+      var col = cls==='gr-A'?'var(--green)':cls==='gr-B'?'var(--accent)':cls==='gr-C'?'var(--amber)':'var(--red)';
+      return '<svg width="150" height="150" viewBox="0 0 150 150">'+
+        '<circle cx="75" cy="75" r="64" fill="none" stroke="var(--inset)" stroke-width="11"/>'+
+        '<circle cx="75" cy="75" r="64" fill="none" stroke="'+col+'" stroke-width="11" stroke-linecap="round" stroke-dasharray="'+C.toFixed(1)+'" stroke-dashoffset="'+off.toFixed(1)+'" transform="rotate(-90 75 75)" style="transition:stroke-dashoffset .9s cubic-bezier(.2,.8,.2,1)"/>'+
+        '</svg>'+
+        '<div class="gv"><div class="gl '+cls+'">'+grade+'</div><div class="gs">'+score+' / 100</div></div>';
+    }
+
+    // ---- render scorecard ----
+    function renderScore(input){
+      var g = G.grade(input);
+      document.getElementById('scorePanel').style.display='';
+      document.getElementById('scName').textContent = (input.name||'Uploaded OM')+' · '+(input.market||'')+' · '+(input.type||'');
+      var gau="0";
+      document.getElementById('gauge').innerHTML = gauge(0,'',g.cls);
+      // animate the ring to target
+      setTimeout(function(){ document.getElementById('gauge').innerHTML = gauge(g.score,g.grade,g.cls); }, 60);
+      document.getElementById('verdict').innerHTML = '<span class="'+g.cls+'">'+g.grade+'</span> · '+g.verdict;
+      document.getElementById('reason').textContent = g.reason;
+      document.getElementById('gmeta').innerHTML =
+        '<span class="dchip g">'+g.passes+' pass</span>'+
+        (g.fails?'<span class="dchip r">'+g.fails+' fail</span>':'')+
+        (g.breakers.length?'<span class="dchip r">'+g.breakers.length+' deal-breaker</span>':'')+
+        '<span class="dchip" style="color:var(--ink-2)">'+BB.criteria.length+' criteria</span>';
+      document.getElementById('critList').innerHTML = g.criteria.map(function(c){
+        var col = c.status==='pass'?'var(--green)':c.status==='warn'?'var(--amber)':'var(--red)';
+        var lbl = c.status==='pass'?'PASS':c.status==='warn'?'WATCH':'FAIL';
+        return '<div class="critrow"><div><div class="cl">'+c.label+'</div><div class="csub">'+c.value+' · target '+c.target+'</div></div>'+
+          '<div class="cbar"><span style="width:'+Math.round(c.score*100)+'%;background:'+col+'"></span></div>'+
+          '<div class="cstat '+c.status+'">'+lbl+' <span class="cweight">·'+c.weight+'w</span></div></div>';
+      }).join('');
+      document.getElementById('scorePanel').scrollIntoView ? null : null;
+    }
+
+    // ---- extraction animation then grade ----
+    function runExtract(input, file){
+      document.getElementById('drop').style.display='none';
+      document.getElementById('manualForm').style.display='none';
+      document.getElementById('scorePanel').style.display='none';
+      var box=document.getElementById('extractBox'); box.style.display='';
+      document.getElementById('exFile').textContent = file||'uploaded.pdf';
+      document.getElementById('exTitle').textContent='EXTRACTING DEAL TERMS…';
+      var ex=document.getElementById('extract'); ex.innerHTML='';
+      var rows = FIELDS.map(function(f){
+        return '<div class="exline"><span class="exk">'+f[1]+'</span><span class="exv">'+fval(f,input)+'</span><span class="exc">✓</span></div>';
+      });
+      ex.innerHTML = rows.join('');
+      var lines = ex.querySelectorAll('.exline');
+      lines.forEach(function(l,i){ setTimeout(function(){ l.classList.add('in'); }, 120+i*130); });
+      var done = 120+lines.length*130+260;
+      setTimeout(function(){ document.getElementById('exTitle').textContent='EXTRACTED · GRADING…'; }, done-200);
+      setTimeout(function(){
+        document.getElementById('upSub').textContent='graded — drop another or pick a sample';
+        document.getElementById('drop').style.display='';
+        box.style.display='none';
+        renderScore(input);
+      }, done+450);
+    }
+
+    // ---- sample clicks ----
+    document.getElementById('samples').addEventListener('click', function(e){
+      var c=e.target.closest('.samplechip'); if(!c) return;
+      var s = G.SAMPLES.filter(function(x){return x.id===c.getAttribute('data-id');})[0];
+      if(s) runExtract(s.input, s.file);
+    });
+
+    // ---- real file drop (simulated extraction with plausible figures) ----
+    var drop=document.getElementById('drop');
+    ['dragenter','dragover'].forEach(function(ev){ drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.add('drag');}); });
+    ['dragleave','drop'].forEach(function(ev){ drop.addEventListener(ev,function(e){e.preventDefault();drop.classList.remove('drag');}); });
+    function rnd(a,b){return a+Math.random()*(b-a);}
+    function genInput(name){
+      var types=['Shallow-bay industrial','Flex','Light industrial'];
+      var mkts=G.TARGET_MARKETS;
+      return { name:name||'Uploaded Asset', type:types[Math.floor(Math.random()*types.length)],
+        market:mkts[Math.floor(Math.random()*mkts.length)], price:+rnd(4,18).toFixed(1),
+        capIn:+rnd(6.8,8.4).toFixed(1), irr:+rnd(12,17).toFixed(1), em:+rnd(1.5,2.0).toFixed(2),
+        ltv:Math.round(rnd(48,62)), occ:Math.round(rnd(82,95)), vintage:Math.round(rnd(1990,2010)), mtm:Math.round(rnd(3,12)) };
+    }
+    drop.addEventListener('drop', function(e){
+      var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      var nm = f ? f.name.replace(/\.[^.]+$/,'').replace(/[_-]+/g,' ') : 'Uploaded OM';
+      runExtract(genInput(nm), f?f.name:'uploaded.pdf');
+    });
+    document.getElementById('regrade').addEventListener('click', function(){
+      document.getElementById('scorePanel').style.display='none';
+      document.getElementById('drop').scrollIntoView ? null : null;
+    });
+
+    // ---- manual form ----
+    var MF = [['type','Asset type','text','Shallow-bay industrial'],['market','Submarket','text','Riverside'],
+      ['price','Price ($M)','num','9.5'],['capIn','Going-in cap (%)','num','7.6'],['irr','IRR (%)','num','15'],
+      ['em','Equity multiple (x)','num','1.8'],['ltv','LTV (%)','num','52'],['occ','Occupancy (%)','num','88'],
+      ['vintage','Year built','num','2002'],['mtm','% below market','num','8']];
+    document.getElementById('manualForm').innerHTML =
+      '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:9px">'+
+      MF.map(function(f){return '<div><label style="font-family:var(--font-mono);font-size:9.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:4px">'+f[1]+'</label>'+
+        '<input data-k="'+f[0]+'" type="'+(f[2]==='num'?'number':'text')+'" placeholder="'+f[3]+'" style="width:100%;background:var(--inset);border:1px solid var(--line);border-radius:var(--r-sm);padding:8px 10px;color:var(--ink);font-family:var(--font-sans);font-size:12.5px;outline:none"></div>';}).join('')+
+      '</div>'+
+      '<div style="display:flex;gap:8px;margin-top:12px"><button class="btn pri" id="gradeBtn">Grade against buy box</button><button class="btn" id="cancelManual">Cancel</button></div>';
+
+    document.getElementById('manualToggle').addEventListener('click', function(e){
+      e.stopPropagation();
+      var f=document.getElementById('manualForm');
+      f.style.display = f.style.display==='none' ? '' : 'none';
+    });
+    document.getElementById('manualForm').addEventListener('click', function(e){
+      if(e.target.id==='cancelManual'){ this.style.display='none'; return; }
+      if(e.target.id==='gradeBtn'){
+        var input={name:'Manual entry'};
+        this.querySelectorAll('input[data-k]').forEach(function(inp){
+          var k=inp.getAttribute('data-k'), v=inp.value.trim()||inp.placeholder;
+          input[k] = (inp.type==='number') ? parseFloat(v) : v;
+        });
+        runExtract(input, 'manual-entry.pdf');
+      }
+    });
+
+    // ---- pipeline graded board ----
+    var graded = G.gradePipeline();
+    var TIERS=[
+      {nm:'Buy Box Fits', sub:'A range · advance', cls:'t-good', test:function(g){return g.score>=80;}},
+      {nm:'Tradeable', sub:'B range · sharpen', cls:'t-acc', test:function(g){return g.score>=66&&g.score<80;}},
+      {nm:'Below Mandate', sub:'C and under · pass / re-trade', cls:'t-high', test:function(g){return g.score<66;}}
+    ];
+    document.getElementById('pipeTiers').innerHTML = TIERS.map(function(t){
+      var items = graded.filter(t.test);
+      var body = items.length ? items.map(function(g){
+        return '<a class="tcard" href="DealRoom.html?id='+g.deal.id+'">'+
+          '<div class="tc-top"><span class="catpill '+g.cls+'" style="font-size:11px;padding:3px 9px;font-weight:700">'+g.grade+'</span><span class="tc-rank">'+g.deal.region.toUpperCase()+' · '+g.deal.type.toUpperCase()+'</span><span class="tc-imp" style="color:var(--ink)">'+g.score+'</span></div>'+
+          '<div class="tc-title">'+g.deal.name+'</div>'+
+          '<div class="tc-detail">'+ORA.fmtM(g.deal.price)+' · '+g.deal.capIn.toFixed(1)+'% cap · '+g.deal.irr.toFixed(1)+'% IRR · '+g.deal.stage+'</div>'+
+          '<div class="tc-action">→ '+g.verdict+'</div></a>';
+      }).join('') : '<div class="tier-empty">None in this band</div>';
+      return '<div class="tier '+t.cls+'">'+
+        '<div class="tier-hd"><span class="dotb"></span><div><div class="tier-nm">'+t.nm+'</div><div class="tier-sub">'+t.sub+'</div></div><span class="tier-ct">'+items.length+'</span></div>'+
+        '<div class="tier-body">'+body+'</div></div>';
+    }).join('');
+  });
+})();
+</script>
+</body>
+</html>

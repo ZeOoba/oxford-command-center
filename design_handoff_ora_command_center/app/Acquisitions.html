@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en" data-screen-label="Acquisitions">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORA — Acquisitions</title>
+<script>try{var t=localStorage.getItem('ora-theme')||'dark';document.documentElement.setAttribute('data-theme',t);if(localStorage.getItem('ora-density')==='compact')document.documentElement.setAttribute('data-density','compact');}catch(e){}</script>
+<link rel="stylesheet" href="ora.css">
+</head>
+<body>
+<div class="app">
+  <nav class="rail" data-active="acquisitions"></nav>
+
+  <div class="main">
+    <header class="top">
+      <div class="ttl"><span class="up">Oxford RA · Command</span><span class="pg">Acquisitions</span></div>
+      <div class="bar"></div>
+      <div class="clock" id="acqClock">17 CANDIDATES · 5 STAGES</div>
+      <div class="grow"></div>
+      <div class="search"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>filter deals<span class="k">⌘K</span></div>
+      <div class="stat"><span class="d"></span>LIVE · 2m</div>
+      <button class="ibtn" id="themeBtn" title="Toggle theme"></button>
+      <button class="ibtn" id="densityBtn" title="Toggle density"><svg viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></svg></button>
+      <button class="ibtn" title="Alerts"><svg viewBox="0 0 24 24"><path d="M6 9a6 6 0 1112 0c0 5 2 6 2 6H4s2-1 2-6M10 20a2 2 0 004 0"/></svg><span class="dot"></span></button>
+    </header>
+
+    <div class="content">
+      <div class="pagehd">
+        <div><h1>Acquisition Pipeline</h1><div class="sub" id="acqSub">17 candidates</div></div>
+        <div class="grow"></div>
+        <div class="seg"><span class="on">Board</span><span>Table</span><span>Map</span></div>
+        <a class="linkish" href="Grader.html" style="margin-left:10px">◇ Grade an OM ▸</a>
+        <span class="linkish" style="margin-left:6px">+ New candidate</span>
+      </div>
+
+      <div class="kpis" style="grid-template-columns:repeat(4,1fr)">
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M5 12h13M14 7l5 5-5 5"/></svg>PIPELINE VALUE</div><div class="v" id="pipeVal">$186<small>M</small></div><div class="dl g">▲ $31M <span class="s">/ 30D</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M12 2l2.4 7.4H22l-6 4.4 2.3 7.2L12 16.6 5.7 21l2.3-7.2-6-4.4h7.6z"/></svg>AVG SCORE</div><div class="v" id="avgScore">7.8<small>/10</small></div><div class="dl g">▲ 0.3 <span class="s">/ 30D</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M3 3v18h18M7 14l3-3 3 2 5-6"/></svg>WEIGHTED</div><div class="v">$52<small>M</small></div><div class="dl g">prob-adj <span class="s">CLOSE</span></div></div>
+        <div class="kpi"><div class="lbl"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 100 18 9 9 0 000-18zM12 7v5l3 2"/></svg>AVG DAYS IN STAGE</div><div class="v">23<small>d</small></div><div class="dl r">▲ 4 <span class="s">SLOWING</span></div></div>
+      </div>
+
+      <div class="kanban" id="kanban"></div>
+    </div>
+  </div>
+</div>
+<script src="ora.js"></script>
+<script src="data.js"></script>
+<script src="grader.js"></script>
+<script src="table.js"></script>
+<script>
+(function(){
+  var COL=[['Sourced','var(--violet)'],['Under Review','var(--blue)'],['LOI Sent','var(--amber)'],['Due Diligence','var(--green)'],['Closing','var(--accent)']];
+  document.addEventListener('DOMContentLoaded',function(){
+    var D=ORA.DEALS, k=document.getElementById('kanban'), html='';
+    var GR={}; if(window.ORA_GRADER){ ORA_GRADER.gradePipeline().forEach(function(g){GR[g.deal.id]=g;}); }
+    COL.forEach(function(c,ci){
+      var ds=D.filter(function(d){return d.stageIdx===ci;});
+      html+='<div class="kcol"><div class="kh"><span class="dot" style="background:'+c[1]+'"></span><h4>'+c[0]+'</h4><span class="ct">'+ds.length+'</span></div><div class="kb">';
+      ds.forEach(function(d){
+        var sc=d.score>=7.5?'hi':'mid';
+        var meta=d.region.toUpperCase()+' · '+d.type.toUpperCase()+(d.units?' · '+d.units+' UNITS':'');
+        var g=GR[d.id], gradePill=g?'<span class="score '+(g.score>=80?'hi':g.score>=66?'mid':'')+'" style="'+(g.score<66?'color:var(--red);border-color:var(--red-bd)':'')+'" title="Buy-box grade">'+g.grade+'</span>':'';
+        html+='<div class="kcard" onclick="location.href=\''+'DealRoom.html?id='+d.id+'\'"'+(ci>=3?' style="border-color:var(--accent-dim)"':'')+'><div class="kn">'+d.name+'</div><div class="kr">'+meta+'</div><div class="kf"><span class="kv">'+ORA.fmtM(d.price)+'</span><span style="display:flex;gap:5px;align-items:center">'+gradePill+'<span class="score '+sc+'">'+d.score.toFixed(1)+'</span></span></div></div>';
+      });
+      html+='</div></div>';
+    });
+    k.innerHTML=html;
+    var pipe=D.reduce(function(s,d){return s+d.price;},0), avg=D.reduce(function(s,d){return s+d.score;},0)/D.length;
+    document.getElementById('pipeVal').innerHTML=ORA.fmtMsmall(pipe);
+    document.getElementById('avgScore').innerHTML=avg.toFixed(1)+'<small>/10</small>';
+    document.getElementById('acqClock').textContent=D.length+' CANDIDATES · 5 STAGES';
+    document.getElementById('acqSub').textContent=D.length+' candidates · drag-style stages · click a card to open the deal room';
+  });
+})();
+</script>
+</body>
+</html>

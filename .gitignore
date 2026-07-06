@@ -36,3 +36,5 @@ data/reindex.log
 .claude/overrides/
 # Personal per-machine Claude Code overrides (note: *.local above does NOT match settings.local.json)
 .claude/settings.local.json
+# Personal desktop launcher config — machine-specific absolute paths (C:/Users/...); keep local, never committed
+.claude/launch.json
