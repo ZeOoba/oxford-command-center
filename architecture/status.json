@@ -409,16 +409,6 @@
     "last_updated": "2026-07-06T01:10:00Z"
   },
 
-  "design-parity-impl": {
-    "agent_role": "Engineering (Claude Code, Fable 5 orchestrating Sonnet subagents) — Gabriel-authorized in-session 2026-07-06 ('Proceed with all recommendations')",
-    "phase": "IMPLEMENTATION_PLAN.md execution P0-P6 (+P7 subset): tier-board primitives, insights wiring + module, Grader UX, insurance analysis engine + UI, command-brain module, taxes module + assessor-data template, capital orphan fold",
-    "status": "merged",
-    "blocked_by": null,
-    "review_needed": false,
-    "review_detail": "MERGED via PR #161 (plan, 00:43) + PR #166 (Waves 0/1, 02:11) + PR #168 (Waves 2/3, 06:13). Independently re-verified 2026-07-06 by audit-fixes-2026-07-06 on the true post-merge main (not just the PR's self-reported numbers): typecheck/lint/governance/build all clean, full suite 2224/2224 (197 files) — matches PR #168's claim exactly, and the 3 new financial engines (insurance-analysis, tax-analysis, brain-report) carry real `Refute-Reviewed: wf_...` adversarial-review workflow trailers in git history, not just narrative claims. Deferred per PR #168's own cut list (Phase 7 optional parity sweep; P4c insurance self-insure/tax filed-returns gated on real broker/assessor data) — not blockers.",
-    "last_updated": "2026-07-06T12:13:00Z"
-  },
-
   "audit-fixes-2026-07-06": {
     "agent_role": "Engineering (Claude Code, Opus) — Gabriel-authorized in-session 2026-07-06 ('Investigate thoroughly and use the same plan before code system' — responding to a prior read-only audit's findings)",
     "phase": "Fixing audit findings on branch claude/audit-fixes-2026-07-06 (forked fresh off origin/main post-#168): (1) server/briefing/confidential.ts fail-open -> fail-loud on missing confidential-terms.json, (2) npm audit fix for hono+form-data (prod, non-breaking), (3) real tests for parseWorkbook (server/workbook/parse.ts, currently mocked-away everywhere), (4) tests for server/warehouse/lease-forecast-api.ts (0% coverage), (5) this status.json cleanup (insight-contract/server-setup-w4g4pb/design-parity-impl close-outs) + CLAUDE.md/CHANGELOG.md/README.md doc-drift reconciliation. Explicitly NOT touching the capital-allocation.ts Phase-5-v2 deferrals (buy verdicts/refi-savings/improve-IRR math) -- flagged by the audit as intentional and not urgent, out of scope here.",
@@ -427,13 +417,16 @@
     "review_needed": true,
     "review_detail": "Ready for Gabriel's review (PR opened, not auto-merged). All 5 items complete + adversarially reviewed (hostile-lens pass, Opus): confidential.ts now fails closed (~25+ dependent tests fixed via a synthetic fixture, not weakened); npm audit fix verified via clean npm ci + full gate; parseWorkbook and lease-forecast-api tests added with real (non-mocked) exercise of the target logic, both test-quality gaps the adversarial pass found (a tautological anonymization assertion, an under-specified skip-row test) were fixed and re-verified, including a mutation test proving the anonymization assertion has real teeth; doc drift reconciled (7-step gate description, contradictory Pending line, stale roadmap, test-count consistency). Final gate green: governance/typecheck/lint/build clean, 200 files / 2253 tests. Touches package.json/package-lock.json (dependency bump) and server/briefing/confidential.ts (compliance-relevant control, not listed as architect-owned in ownership.json but treated with the same rigor given hard-invariant #3 stakes). No governor constants, no financial-model math changed.",
     "last_updated": "2026-07-06T12:52:00Z"
+  },
+
+  "design-parity-impl": {
     "agent_role": "Engineering (Claude Code, Fable 5 orchestrating Sonnet subagents) — Gabriel-authorized in-session 2026-07-06 ('Proceed with all recommendations'; overnight continuation 'I am going to bed, proceed with finishing the command center')",
     "phase": "IMPLEMENTATION_PLAN.md P0-P7 all complete and MERGED. P0-P6 via PR #166/#168; P7 (7.1 Overview results banner + priority actions, 7.2 global portfolio filter, 7.3 Comps + cap-rate benchmark surface, 7.4 DealDrawer underwriting + score panel enrichment, 7.5 design-parity audit doc, 7.6 cut-list reconciliation doc) via PR #169 (merged 2026-07-06). IMPLEMENTATION_PLAN.md has no further phases defined. Phase 6+/next-initiative scoping is open pending Gabriel's direction.",
     "status": "merged",
     "blocked_by": null,
     "review_needed": false,
-    "review_detail": "MERGED via PR #169. P7 touched no architect-owned files (all six tasks UX-Agent territory: src/modules/overview, src/shell, src/modules/market, src/brain/DealDrawer.tsx, docs/). No new API routes, no schema changes, no ratification triggers, no financial computation (Refute-Skip trailers). Full barrier green pre-merge: 2262/2262 tests, tsc/eslint/governance-check/vite build all clean. Branch restarted from merged main per protocol for this housekeeping close-out commit.",
-    "last_updated": "2026-07-06T16:25:00Z"
+    "review_detail": "MERGED via PR #169. P7 touched no architect-owned files (all six tasks UX-Agent territory: src/modules/overview, src/shell, src/modules/market, src/brain/DealDrawer.tsx, docs/). No new API routes, no schema changes, no ratification triggers, no financial computation (Refute-Skip trailers). Full barrier green pre-merge: 2262/2262 tests, tsc/eslint/governance-check/vite build all clean. Branch restarted from merged main per protocol for this housekeeping close-out commit. NOTE 2026-07-06T17:xx: this entry was reconstructed after a merge between this branch and PR #170 (audit-fixes-2026-07-06) spliced two independent edits to this same key together without a separating brace/key, producing invalid JSON + duplicate fields (the same recurring status.json interleaving-on-merge failure mode as PRs #162/#164/#165/#159/#161). Repaired mechanically here: no information was lost, the stale pre-PR#169 copy of this entry (which PR #170's session had also touched) was superseded by this one since it already reflects the newer, correct state.",
+    "last_updated": "2026-07-06T17:00:00Z"
   },
 
   "usage": {
