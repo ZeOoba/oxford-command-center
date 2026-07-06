@@ -2,19 +2,44 @@ import { useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { X, Mail, ChevronRight, RefreshCw, ExternalLink, Lock } from 'lucide-react';
-import type { PortfolioSnapshot, Deal, DealStage, CompSet } from '@contracts/index';
+import type { PortfolioSnapshot, Deal, DealStage, CompSet, AcquisitionInput, AcquisitionScore, RankedCandidate } from '@contracts/index';
 import type { DraftRequest } from './draft';
 import { fmtUsd, fmtUsdCompact, fmtPct, fmtSf, fmtNum, fmtMultiple, fmtDate } from '@analytics/index';
 import { SNAPSHOT_KEY } from '@/data/queries';
 import { refreshDealComps } from '@/data/actions';
 import { replacementCostAnalysis } from './replacement-cost';
-import { Badge } from '@/primitives/Badge';
+import { Badge, type BadgeTone } from '@/primitives/Badge';
+import { GaugeRing } from '@/primitives/GaugeRing';
+import { useAcqIntel } from '@/modules/acquisitions/grader-hooks';
 
 const STAGE_FLOW: DealStage[] = ['Sourcing', 'Candidate', 'LOI/PSA', 'Due Diligence', 'Closing', 'Closed'];
 const nextStage = (s: DealStage): DealStage | null => {
   const i = STAGE_FLOW.indexOf(s);
   return i >= 0 && i < STAGE_FLOW.length - 1 ? STAGE_FLOW[i + 1]! : null;
 };
+
+// Tier/verdict → gauge + badge tone. Mirrors GraderView.tsx's gaugeTone / TIER_BADGE_TONE
+// (each acquisition-score consumer keeps its own small tone table — see also
+// RankedCandidateList.tsx's TIER_STYLES and AcquisitionWorkbench.tsx's VERDICT_TONE).
+const TIER_BADGE_TONE: Record<AcquisitionScore['tier'], BadgeTone> = {
+  T1: 'gold',
+  T2: 'blue',
+  PASS: 'neutral',
+  KILLED: 'red',
+};
+function gaugeTone(tier: AcquisitionScore['tier']): 'pos' | 'warn' | 'neg' {
+  if (tier === 'T1') return 'pos';
+  if (tier === 'T2') return 'warn';
+  return 'neg'; // PASS | KILLED
+}
+
+/** Find the ranked acquisition candidate synced to this deal (Deal.id === candidate.notionDealId —
+ *  the same linkage PipelineTierBoard.tsx uses to open a deal from a scored candidate). Returns the
+ *  SAME RankedCandidate/AcquisitionScore object useAcqIntel already resolved elsewhere in the app —
+ *  never recomputed or re-derived here, so the figures shown match the Grader/Pipeline board exactly. */
+function findRankedCandidateForDeal(candidates: RankedCandidate[], dealId: string): RankedCandidate | null {
+  return candidates.find((c) => c.candidate.notionDealId === dealId) ?? null;
+}
 
 export function DealDrawer({
   dealId, snapshot, canWrite, onClose, onDraft, onAdvanceStage,
@@ -29,6 +54,9 @@ export function DealDrawer({
   const qc = useQueryClient();
   const deal = snapshot.deals.find((d) => d.id === dealId) ?? null;
   const comps: CompSet | undefined = snapshot.dealComps[dealId];
+  const acqInput: AcquisitionInput | null = snapshot.acquisitionInputs[dealId] ?? null;
+  const { data: acqIntel } = useAcqIntel();
+  const rankedCandidate = findRankedCandidateForDeal(acqIntel?.rankedCandidates ?? [], dealId);
   const refresh = useMutation({
     mutationFn: () => refreshDealComps(dealId),
     onSuccess: () => qc.invalidateQueries({ queryKey: SNAPSHOT_KEY }),
@@ -142,6 +170,10 @@ export function DealDrawer({
                   <CardBox title="Risk Flags">
                     <RiskFlags deal={deal} />
                   </CardBox>
+
+                  <div className="lg:col-span-2">
+                    <UnderwritingSection input={acqInput} candidate={rankedCandidate} />
+                  </div>
                 </div>
               </div>
 
@@ -290,6 +322,65 @@ function RiskFlags({ deal }: { deal: Deal }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+/**
+ * Underwriting panel (IMPLEMENTATION_PLAN task 7.4): a compact read-only summary of the deal's saved
+ * AcquisitionInput (overlay-sourced, see `PortfolioSnapshot.acquisitionInputs`), plus — when the deal
+ * has been synced to a scored acquisition candidate — the persisted Oxford Acquisition Score gauge,
+ * tier/verdict badge, and top reasons. The score is rendered from the SAME RankedCandidate object
+ * useAcqIntel() resolves for RankedCandidateList/PipelineTierBoard — never recomputed here — so the
+ * figures are identical to what the Acquisitions module shows for this deal.
+ */
+function UnderwritingSection({ input, candidate }: { input: AcquisitionInput | null; candidate: RankedCandidate | null }) {
+  if (!input) {
+    return (
+      <CardBox title="Underwriting">
+        <div className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+          No underwriting input captured yet — grade this deal in the Acquisitions module&apos;s Grader tab.
+        </div>
+      </CardBox>
+    );
+  }
+
+  const score: AcquisitionScore | null = candidate?.latestScore ?? null;
+
+  return (
+    <CardBox title="Underwriting">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_auto]">
+        <div className="flex flex-col gap-0.5">
+          <Row label="Price" value={fmtUsdCompact(input.price)} />
+          <Row label="Total SF" value={input.totalSf !== null ? fmtSf(input.totalSf) : '—'} />
+          <Row label="Clear Height" value={input.clearHeightFt !== null ? `${fmtNum(input.clearHeightFt)} ft` : '—'} />
+          <Row label="Product Type" value={input.productType ?? '—'} />
+          <Row label="All-in Basis" value={fmtUsdCompact(input.allInBasis)} />
+          <Row label="Stabilized YoC" value={fmtPct(input.stabilizedYoc)} />
+          <Row label="Levered IRR" value={fmtPct(input.leveredIrr)} />
+          <Row label="Horizon" value={input.underwriteHorizonYrs !== null ? `${input.underwriteHorizonYrs} yr` : '—'} />
+        </div>
+
+        <div className="flex flex-col items-center gap-2 md:w-[190px]">
+          {score ? (
+            <>
+              <GaugeRing value={score.composite} tone={gaugeTone(score.tier)} label={`${score.tier} · ${score.verdict}`} size={92} />
+              <Badge tone={TIER_BADGE_TONE[score.tier]}>{score.tier}</Badge>
+              {score.reasons.length > 0 && (
+                <ul className="flex flex-col gap-0.5 text-2xs" style={{ color: 'var(--text-secondary)' }}>
+                  {score.reasons.slice(0, 3).map((r, i) => (
+                    <li key={i}>· {r}</li>
+                  ))}
+                </ul>
+              )}
+            </>
+          ) : (
+            <div className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+              Not yet scored — grade this input in the Acquisitions module&apos;s Grader tab to produce an Oxford Acquisition Score.
+            </div>
+          )}
+        </div>
+      </div>
+    </CardBox>
   );
 }
 
