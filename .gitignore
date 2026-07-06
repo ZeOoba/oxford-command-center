@@ -32,5 +32,9 @@ data/doc-index.sqlite-wal
 data/reindex.log
 .superpowers/
 .worktrees
+# Architect-ack override sentinel for .claude/hooks/file-guard.mjs — machine-local, never committed
+.claude/overrides/
+# Personal per-machine Claude Code overrides (note: *.local above does NOT match settings.local.json)
+.claude/settings.local.json
 # Personal desktop launcher config — machine-specific absolute paths (C:/Users/...); keep local, never committed
 .claude/launch.json

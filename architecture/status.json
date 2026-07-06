@@ -296,6 +296,8 @@
     "status": "merged",
     "blocked_by": null,
     "review_needed": false,
+    "review_detail": "MERGED via PR #121 (f951b40). IC Memo HTML export — Direction 2. Worktree at .claude/worktrees/ic-memo (branch feat/ic-memo-export) was still on disk at close-out; remove after session cleanup. Duplicated record bodies (in_progress + merged) collapsed into this single merged record 2026-07-05 by server-setup-w4g4pb.",
+    "last_updated": "2026-06-22T10:00:00Z"
     "review_detail": "MERGED via PR #121 (f951b40). IC Memo HTML export — Direction 2. Worktree at .claude/worktrees/ic-memo still on disk; remove after session cleanup. [Entry repaired 2026-07-05: two interleaved versions with a missing comma made this file unparseable JSON; kept the newer merged state — see PR for pdf-parse v2 migration.]",
     "last_updated": "2026-06-22T00:00:00Z"
   },
@@ -306,6 +308,7 @@
     "status": "merged",
     "blocked_by": null,
     "review_needed": false,
+    "review_detail": "CLAUDE.md §2 updated: last merge = PR #121 (f951b40), 1713+ tests; §3 Directions 1+2+3 all Merged ✓. status.json: ic-memo → merged (PR #121). Stale worktrees (post-merge-116, post-merge-t2-t3, practical-buck-7ef7bc, recursing-chatelet-f908d3) removed.",
     "review_detail": "CLAUDE.md §2 updated: last merge = PR #121 (f951b40), 1713+ tests; §3 Directions 1+2+3 all Merged ✓. status.json: ic-memo → merged (PR #121). Stale worktrees (post-merge-116, post-merge-t2-t3, practical-buck-7ef7bc, recursing-chatelet-f908d3) removed. [Duplicate review_detail key removed 2026-07-05, kept newer.]",
     "last_updated": "2026-06-22T10:00:00Z"
   },
@@ -353,11 +356,11 @@
   "compassionate-kepler-cb363e": {
     "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-22",
     "phase": "fix(api): port /capital-allocation/ic-memo from 501 stub to live implementation",
-    "status": "in_progress",
+    "status": "merged",
     "blocked_by": null,
     "review_needed": false,
-    "review_detail": "Port ic-memo route: imports buildIcMemoHtml + icMemoFilename from ic-memo.ts, assertNoConfidential from briefing/confidential; replaces 501 stub with real handler (withDb → buildCapitalAllocationReport → assertNoConfidential → buildIcMemoHtml → Response text/html + content-disposition). No architect-owned files touched.",
-    "last_updated": "2026-06-22T16:35:00Z"
+    "review_detail": "MERGED via PR #129 (5b81321) per CLAUDE.md §2. Ported ic-memo route: imports buildIcMemoHtml + icMemoFilename from ic-memo.ts, assertNoConfidential from briefing/confidential; replaced 501 stub with real handler (withDb → buildCapitalAllocationReport → assertNoConfidential → buildIcMemoHtml → Response text/html + content-disposition). No architect-owned files touched. Stale in_progress closed out 2026-07-05 by server-setup-w4g4pb.",
+    "last_updated": "2026-07-05T00:00:00Z"
   },
 
   "insight-contract": {
@@ -372,21 +375,31 @@
   "l2-governor-gate": {
     "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized via Wave 2 master plan",
     "phase": "L2 — Add checkGovernorLiteralCoupling to governance gate (scripts/governance-check.ts)",
-    "status": "in_progress",
+    "status": "merged",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "L2: adding checkGovernorLiteralCoupling to architect-owned governance-check.ts — context-sensitive detection of bare governor literals (1.25 DSCR / 0.40 LTV) in comparison expressions; allowlists governors.ts + debt-api.ts; wired into main(). Gabriel pre-authorized via master plan.",
-    "last_updated": "2026-06-22T21:38:00Z"
+    "review_needed": false,
+    "review_detail": "SHIPPED — checkGovernorLiteralCoupling is present in scripts/governance-check.ts on main (PR #145 / commit d24d682) and wired into main(); context-sensitive detection of bare governor literals (1.25 DSCR / 0.40 LTV) in comparison expressions; allowlists governors.ts + debt-api.ts. Gabriel pre-authorized via master plan. Stale in_progress/review_needed closed out 2026-07-05 by server-setup-w4g4pb.",
+    "last_updated": "2026-07-05T00:00:00Z"
   },
 
   "m6-leasing-risk-ic-memo": {
     "agent_role": "Analytics Agent",
     "phase": "M6 — leasingRisk IC memo surface",
-    "status": "complete",
+    "status": "merged",
     "blocked_by": null,
     "review_needed": false,
-    "review_detail": "Architect-approved in-turn 2026-06-23. Changes: (1) src/contracts/capital-allocation.ts — added leasingRisk: z.number().min(0).max(100) as required field on CapitalAllocationEntry; (2) server/warehouse/capital-allocation.ts — wired leasingRisk into entries.push (L661); (3) server/warehouse/ic-memo.ts — added optional entries param + per-verdict join by propertyId + Leasing Risk column (0-100% display, DASH when undefined); (4) server/warehouse/api.ts — wired entries from buildCapitalAllocationReport into buildIcMemoHtml call (fail-open: snapshot absent → entries undefined → all-DASH). AllocationVerdict.inputs path (src/contracts/capital.ts) was evaluated and ABANDONED — Zod strict rejects unknown keys, approach unsound. Gate green; adversarial refute passed (scale consistency, zero-guard, join correctness, fresh-ingest). PR pending.",
-    "last_updated": "2026-06-23T10:00:00Z"
+    "review_detail": "Architect-approved in-turn 2026-06-23. Changes: (1) src/contracts/capital-allocation.ts — added leasingRisk: z.number().min(0).max(100) as required field on CapitalAllocationEntry; (2) server/warehouse/capital-allocation.ts — wired leasingRisk into entries.push (L661); (3) server/warehouse/ic-memo.ts — added optional entries param + per-verdict join by propertyId + Leasing Risk column (0-100% display, DASH when undefined); (4) server/warehouse/api.ts — wired entries from buildCapitalAllocationReport into buildIcMemoHtml call (fail-open: snapshot absent → entries undefined → all-DASH). AllocationVerdict.inputs path (src/contracts/capital.ts) was evaluated and ABANDONED — Zod strict rejects unknown keys, approach unsound. Gate green; adversarial refute passed (scale consistency, zero-guard, join correctness, fresh-ingest). MERGED via PR #155 (a45ac30) per CLAUDE.md §2; non-schema status 'complete' corrected to 'merged' 2026-07-05 by server-setup-w4g4pb.",
+    "last_updated": "2026-07-05T00:00:00Z"
+  },
+
+  "server-setup-w4g4pb": {
+    "agent_role": "Engineering (Claude Code, Fable) — Gabriel-authorized 2026-07-05",
+    "phase": "Local-server setup: project guardrails + status.json validation + portable-config estate work",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Touches architect-owned scripts/governance-check.ts (adds checkStatusJson: INVALID_JSON/DUPLICATE_KEY/STATUS_SCHEMA blocking checks + STALE_STATUS warning) and architecture/status.json (defect repairs: ic-memo duplicate body collapse, chore-post-w2-merge review_detail dedupe, m6/kepler/l2 close-outs). Extension of governance-check.ts was pre-authorized by Gabriel in-session 2026-07-05 and lands via this PR. Also adds .claude/settings.json + .claude/hooks guards (bash-guard.mjs, file-guard.mjs, architect-owned.json), .github/workflows/full-gate-selfhosted.yml, worktree-env.example BRAIN_SERVER_PORT fix.",
+    "last_updated": "2026-07-05T00:00:00Z"
   },
 
   "pdf-parse-v2": {
