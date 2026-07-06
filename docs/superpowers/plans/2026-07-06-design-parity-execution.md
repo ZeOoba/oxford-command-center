@@ -13,8 +13,10 @@ defective code merged** — L2a/L2b/L2d (insurance-analysis/tax-analysis/brain-r
 uncommitted in the working tree at merge time (refute passes had found real defects in two of
 them, fixes were in flight). Per the merged-PR protocol, branch was restarted from `main`
 (`git checkout -B claude/analyze-plan-prompt-tadmpp origin/main`) with the uncommitted Wave-2
-work carried over via stash (clean pop, zero conflicts). **Any fresh session: `main` now has
-Wave 0/1/L2c — start Wave-2 remainder from there, do not re-do it.**
+work carried over via stash (clean pop, zero conflicts); the old (now-redundant, already-merged)
+branch tip was merged back in via a no-op merge commit rather than a force-push, to avoid
+rewriting already-pushed history. **Any fresh session: `main` now has Wave 0/1/L2c — start
+Wave-2 remainder from there, do not re-do it.**
 **Orchestration:** Fable 5 plans/reviews; Sonnet subagents implement in parallel,
 non-colliding by construction (disjoint file sets below). Refute-financial-change (opus) runs
 on every financial engine before its commit.
