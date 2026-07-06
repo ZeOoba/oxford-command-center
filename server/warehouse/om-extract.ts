@@ -1,7 +1,5 @@
 // server/warehouse/om-extract.ts
-// pdf-parse ships no type declarations; the lib/ path avoids its debug-on-import index.
-// @ts-expect-error -- pdf-parse has no type declarations
-import pdfParse from 'pdf-parse/lib/pdf-parse.js';
+import { pdfToText } from '../lib/pdf-text';
 import fieldsConfig from './om-extract-fields.json';
 
 export type OmExtractResult =
@@ -42,7 +40,7 @@ export async function extractOmFields(
     return { ok: false, error: 'AI extraction requires ANTHROPIC_API_KEY — start the Brain server with a key configured.', status: 500 };
   }
 
-  const parseFn = opts.pdfParseFn ?? ((buf: Buffer) => (pdfParse(buf) as Promise<{ text: string }>));
+  const parseFn = opts.pdfParseFn ?? pdfToText;
 
   let text: string;
   try {

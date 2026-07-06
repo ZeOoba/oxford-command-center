@@ -298,6 +298,8 @@
     "review_needed": false,
     "review_detail": "MERGED via PR #121 (f951b40). IC Memo HTML export — Direction 2. Worktree at .claude/worktrees/ic-memo (branch feat/ic-memo-export) was still on disk at close-out; remove after session cleanup. Duplicated record bodies (in_progress + merged) collapsed into this single merged record 2026-07-05 by server-setup-w4g4pb.",
     "last_updated": "2026-06-22T10:00:00Z"
+    "review_detail": "MERGED via PR #121 (f951b40). IC Memo HTML export — Direction 2. Worktree at .claude/worktrees/ic-memo still on disk; remove after session cleanup. [Entry repaired 2026-07-05: two interleaved versions with a missing comma made this file unparseable JSON; kept the newer merged state — see PR for pdf-parse v2 migration.]",
+    "last_updated": "2026-06-22T00:00:00Z"
   },
 
   "chore-post-w2-merge": {
@@ -307,6 +309,7 @@
     "blocked_by": null,
     "review_needed": false,
     "review_detail": "CLAUDE.md §2 updated: last merge = PR #121 (f951b40), 1713+ tests; §3 Directions 1+2+3 all Merged ✓. status.json: ic-memo → merged (PR #121). Stale worktrees (post-merge-116, post-merge-t2-t3, practical-buck-7ef7bc, recursing-chatelet-f908d3) removed.",
+    "review_detail": "CLAUDE.md §2 updated: last merge = PR #121 (f951b40), 1713+ tests; §3 Directions 1+2+3 all Merged ✓. status.json: ic-memo → merged (PR #121). Stale worktrees (post-merge-116, post-merge-t2-t3, practical-buck-7ef7bc, recursing-chatelet-f908d3) removed. [Duplicate review_detail key removed 2026-07-05, kept newer.]",
     "last_updated": "2026-06-22T10:00:00Z"
   },
 
@@ -397,6 +400,16 @@
     "review_needed": true,
     "review_detail": "Touches architect-owned scripts/governance-check.ts (adds checkStatusJson: INVALID_JSON/DUPLICATE_KEY/STATUS_SCHEMA blocking checks + STALE_STATUS warning) and architecture/status.json (defect repairs: ic-memo duplicate body collapse, chore-post-w2-merge review_detail dedupe, m6/kepler/l2 close-outs). Extension of governance-check.ts was pre-authorized by Gabriel in-session 2026-07-05 and lands via this PR. Also adds .claude/settings.json + .claude/hooks guards (bash-guard.mjs, file-guard.mjs, architect-owned.json), .github/workflows/full-gate-selfhosted.yml, worktree-env.example BRAIN_SERVER_PORT fix.",
     "last_updated": "2026-07-05T00:00:00Z"
+  },
+
+  "pdf-parse-v2": {
+    "agent_role": "Engineering (Claude Code, Opus 4.8) — Gabriel-authorized in-session 2026-07-05 ('Proceed with your recommendation')",
+    "phase": "pdf-parse v1→v2 migration — unblocks CI from Node >=24.18 Buffer.poolSize regression (nodejs/node#63597) and hardens production OM/document parsing",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "Architect-owned package.json touch (pdf-parse ^1.1.4 → ^2.4.5) approved in-session by Gabriel 2026-07-05. New server/lib/pdf-text.ts adapter (PDFParse class API + fresh Uint8Array copy for pooled-buffer safety); migrated server/warehouse/om-extract.ts, server/sources/documents.ts, 3 briefing test files; CI node-version unpinned back to '24' (pin from PR #159 no longer needed). Validated: 99/99 affected tests green under BOTH Node 22.22.2 and Node 24.18.0 (the breaking version); full suite 1905/1905; build + bundle budget + governance + check:refute (no trailer needed) all green. Stacked on PR #159 (merge #159 first). Also repaired status.json corruption: ic-memo entry missing comma + duplicated fields, chore-post-w2-merge duplicate review_detail key.",
+    "last_updated": "2026-07-05T22:00:00Z"
   },
 
   "usage": {
