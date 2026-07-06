@@ -396,7 +396,7 @@
     "blocked_by": null,
     "review_needed": false,
     "review_detail": "Architect-owned package.json touch (pdf-parse ^1.1.4 → ^2.4.5) approved in-session by Gabriel 2026-07-05. New server/lib/pdf-text.ts adapter (PDFParse class API + fresh Uint8Array copy for pooled-buffer safety); migrated server/warehouse/om-extract.ts, server/sources/documents.ts, 3 briefing test files; CI node-version unpinned back to '24' (pin from PR #159 no longer needed). Validated: 99/99 affected tests green under BOTH Node 22.22.2 and Node 24.18.0 (the breaking version); full suite 1905/1905; build + bundle budget + governance + check:refute (no trailer needed) all green. Stacked on PR #159 (merge #159 first). Also repaired status.json corruption: ic-memo entry missing comma + duplicated fields, chore-post-w2-merge duplicate review_detail key.",
-    "last_updated": "2026-07-05T22:00:00Z"
+    "last_updated": "2026-07-06T01:10:00Z"
   },
 
   "usage": {
