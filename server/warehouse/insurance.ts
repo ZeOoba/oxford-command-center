@@ -13,6 +13,8 @@ export interface WarehouseInsurancePolicy {
   expirationDate?: string | null;
   premiumAnnual?: number | null;
   coverageTiv?: number | null;
+  deductible?: number | null;
+  coverageLimit?: number | null;
   policyType: string;
   source: string;
   sourceDate: string;
@@ -22,8 +24,9 @@ export interface WarehouseInsurancePolicy {
 const INSERT_POLICY = `
   INSERT OR REPLACE INTO property_insurance_policies
     (property_id, insurer, policy_number, effective_date, expiration_date,
-     premium_annual, coverage_tiv, policy_type, source, source_date, ingested_by)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     premium_annual, coverage_tiv, deductible, coverage_limit, policy_type,
+     source, source_date, ingested_by)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `;
 
 const INSERT_DQ = `
@@ -46,7 +49,9 @@ export function snapshotPoliciesToWarehouse(
     effectiveDate: p.effective ?? null,
     expirationDate: p.expires ?? null,
     premiumAnnual: p.premium > 0 ? p.premium : null,
-    coverageTiv: null,
+    coverageTiv: p.tiv ?? null,
+    deductible: p.deductible ?? null,
+    coverageLimit: p.coverageLimit ?? null,
     policyType: p.coverage ?? 'other',
     source: 'brain-server',
     sourceDate,
@@ -67,6 +72,8 @@ export function captureInsurance(db: WarehouseDb, policies: WarehouseInsurancePo
         p.expirationDate ?? null,
         p.premiumAnnual ?? null,
         p.coverageTiv ?? null,
+        p.deductible ?? null,
+        p.coverageLimit ?? null,
         p.policyType,
         p.source,
         p.sourceDate,

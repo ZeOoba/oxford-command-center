@@ -442,6 +442,10 @@ function parseInsurance(ws: Worksheet, flags: DataQualityFlag[]): InsurancePolic
       daysToExpiry: num(row(ws, r, 10)),
       status,
       notes: str(row(ws, r, 13)),
+      // Optional economics columns (D3 framework): absent columns → null, never invented.
+      tiv: num(row(ws, r, 14)),
+      deductible: num(row(ws, r, 15)),
+      coverageLimit: num(row(ws, r, 16)),
       flags: [],
     });
   }

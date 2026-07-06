@@ -124,12 +124,18 @@ export type SubjectKind = z.infer<typeof SubjectKind>;
 export const VerdictKind = z.enum([
   'health-band', 'attention', 'capital-action', 'capital-action-v2', 'anomaly',
   'refi-score', 'acquisition-score', 'forecast',
+  // Phase 4/6 (insurance re-bid + tax appeal advisory verdicts) — additive, no auto-resolution
+  // arm in v1 (calibration.ts scoreVerdict's default case returns null; these are manually
+  // resolved via the existing ResolveDialog). See IMPLEMENTATION_PLAN.md 4a.4 / 6a.4.
+  'insurance-rebid', 'tax-appeal',
 ]);
 export type VerdictKind = z.infer<typeof VerdictKind>;
 
 export const VerdictEngine = z.enum([
   'scores', 'anomalies', 'benchmarks', 'growth', 'drivers', 'refi', 'acquisition', 'forecast',
   'capital-allocation',
+  // Phase 4/6 companions to the VerdictKind additions above.
+  'insurance-analysis', 'tax-analysis',
 ]);
 export type VerdictEngine = z.infer<typeof VerdictEngine>;
 
