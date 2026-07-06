@@ -296,8 +296,7 @@
     "status": "merged",
     "blocked_by": null,
     "review_needed": false,
-    "review_detail": "MERGED via PR #121 (f951b40). IC Memo HTML export — Direction 2. Worktree at .claude/worktrees/ic-memo (branch feat/ic-memo-export) was still on disk at close-out; remove after session cleanup. [Entry repaired 2026-07-06: the 2026-07-05 repair itself left two interleaved review_detail/last_updated pairs and a missing comma; collapsed to this single merged record.]",
-    "review_detail": "MERGED via PR #121 (f951b40). IC Memo HTML export — Direction 2. Worktree at .claude/worktrees/ic-memo (branch feat/ic-memo-export) was still on disk at close-out; remove after session cleanup. Duplicated record bodies (in_progress + merged) collapsed into this single merged record 2026-07-05 by server-setup-w4g4pb. [Two sessions repaired this entry independently on 2026-07-05; their texts were auto-merge-interleaved by PRs #162/#164 and re-reconciled 2026-07-06.]",
+    "review_detail": "MERGED via PR #121 (f951b40). IC Memo HTML export — Direction 2. Worktree at .claude/worktrees/ic-memo (branch feat/ic-memo-export) was still on disk at close-out; remove after session cleanup. [Repair lineage: two sessions repaired this entry independently 2026-07-05 (server-setup-w4g4pb collapse + missing-comma fix); auto-merges (PRs #162/#164/#165 + branch merge 6c5c692) re-interleaved them twice; final single-record collapse 2026-07-06 on the design-parity branch.]",
     "last_updated": "2026-06-22T10:00:00Z"
   },
 
@@ -307,8 +306,7 @@
     "status": "merged",
     "blocked_by": null,
     "review_needed": false,
-    "review_detail": "CLAUDE.md §2 updated: last merge = PR #121 (f951b40), 1713+ tests; §3 Directions 1+2+3 all Merged ✓. status.json: ic-memo → merged (PR #121). Stale worktrees (post-merge-116, post-merge-t2-t3, practical-buck-7ef7bc, recursing-chatelet-f908d3) removed. [Duplicate review_detail key actually removed 2026-07-06; the 2026-07-05 pass annotated the dedup but left both keys in place.]",
-    "review_detail": "CLAUDE.md §2 updated: last merge = PR #121 (f951b40), 1713+ tests; §3 Directions 1+2+3 all Merged ✓. status.json: ic-memo → merged (PR #121). Stale worktrees (post-merge-116, post-merge-t2-t3, practical-buck-7ef7bc, recursing-chatelet-f908d3) removed. [Duplicate review_detail key removed 2026-07-05, kept newer; re-deduplicated 2026-07-06 after PR #162/#164 auto-merge re-interleaved it.]",
+    "review_detail": "CLAUDE.md §2 updated: last merge = PR #121 (f951b40), 1713+ tests; §3 Directions 1+2+3 all Merged ✓. status.json: ic-memo → merged (PR #121). Stale worktrees (post-merge-116, post-merge-t2-t3, practical-buck-7ef7bc, recursing-chatelet-f908d3) removed. [Duplicate review_detail deduped 2026-07-05 and again 2026-07-06 after PR #162/#164/#165 + branch-merge auto-interleaving; if this file conflicts again, collapse to ONE line per key and keep the fullest narrative.]",
     "last_updated": "2026-06-22T10:00:00Z"
   },
 
