@@ -73,4 +73,25 @@ describe('verdictsFromAllocations', () => {
     const result = verdictsFromAllocations([], IV, 'test');
     expect(result).toHaveLength(0);
   });
+
+  it('CAL-4: C-3 buy verdict (synthetic pipeline: propertyId) is tagged subjectKind=deal, NOT property', () => {
+    // A buy verdict's propertyId is `pipeline:${candidateId}` — never a real property_master row.
+    // Tagging it subjectKind='property' would permanently pollute the calibration log with a
+    // subject_id resolveDueOutcomes can never match against propertyPeriodMetrics(), and it can
+    // never resolve. 'deal' is an existing reserved SubjectKind that resolveDueOutcomes already
+    // excludes (see calibration.ts's "Reserved subject kinds ... have no warehouse-derivable
+    // outcome yet" comment) — reuse it instead of fabricating a fake property.
+    const result = verdictsFromAllocations(
+      [makeVerdict({ action: 'buy', propertyId: 'pipeline:cand-1', expectedReturnPct: null })],
+      IV,
+      'test',
+    );
+    expect(result[0]!.subjectKind).toBe('deal');
+    expect(result[0]!.subjectId).toBe('pipeline:cand-1');
+  });
+
+  it('CAL-5: non-buy verdicts remain subjectKind=property (no regression)', () => {
+    const result = verdictsFromAllocations([makeVerdict({ action: 'hold' })], IV, 'test');
+    expect(result[0]!.subjectKind).toBe('property');
+  });
 });

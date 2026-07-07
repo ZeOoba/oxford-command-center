@@ -39,6 +39,41 @@ function freshDb(): WarehouseDb {
   return openWarehouse(join(dir, 'test.sqlite'));
 }
 
+/** Seed a full active acq_candidates + acq_score_inputs + acq_scores chain for C-3 pipeline tests. */
+function seedCandidate(
+  db: WarehouseDb,
+  opts: {
+    id: string;
+    market?: 'owned-submarket' | 'established' | 'entry' | 'satellite' | 'none';
+    composite: number;
+    tier: 'T1' | 'T2' | 'PASS' | 'KILLED';
+    leveredIrr?: number | null;
+    basisDiscountPct?: number | null;
+  },
+): void {
+  const now = '2026-06-21T00:00:00Z';
+  db.prepare(`INSERT INTO acq_candidates (id, source, market, status, created_at, updated_at)
+    VALUES (?, 'manual', ?, 'active', ?, ?)`).run(opts.id, opts.market ?? 'established', now, now);
+  const inputsVersion = `iv-${opts.id}`;
+  db.prepare(`
+    INSERT INTO acq_score_inputs (candidate_id, inputs_version, input_json, ruleset_version, rct_version)
+    VALUES (?, ?, '{}', '1.0.0', 'replacement-cost.v1')
+  `).run(opts.id, inputsVersion);
+  const scoreInputId = (
+    db.prepare('SELECT id FROM acq_score_inputs WHERE candidate_id = ? AND inputs_version = ?')
+      .get(opts.id, inputsVersion) as { id: number }
+  ).id;
+  const scoreJson = JSON.stringify({
+    leveredIrr: opts.leveredIrr ?? null,
+    basisDiscountPct: opts.basisDiscountPct ?? null,
+  });
+  db.prepare(`
+    INSERT INTO acq_scores (candidate_id, score_input_id, inputs_version, composite, tier, verdict,
+      advisory_only, capped_at_t2, gates_passed, floors_passed, floor_indeterminate, score_json)
+    VALUES (?, ?, ?, ?, ?, 'PURSUE', 1, 0, 1, 1, 0, ?)
+  `).run(opts.id, scoreInputId, inputsVersion, opts.composite, opts.tier, scoreJson);
+}
+
 function makeMacro(dgs5: number | null) {
   return {
     asOf: '2026-06-21', source: 'mock' as const,
@@ -284,7 +319,7 @@ describe('buildPortfolioAllocation', () => {
     expect(v.inputs.debtSignal).toBe('governor-block');
   });
 
-  it('A-7: actionCounts sums to verdicts.length (buy always 0)', async () => {
+  it('A-7: actionCounts sums to verdicts.length (no acq_candidates seeded here → buy stays 0)', async () => {
     const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
     const db = freshDb();
     mockScoreProperties.mockReturnValue([
@@ -297,7 +332,9 @@ describe('buildPortfolioAllocation', () => {
     ]);
     const result = await buildPortfolioAllocation(db, '2026-06-21');
     const total = Object.values(result.actionCounts).reduce((a, b) => a + b, 0);
-    // buy is always 0 in actionCounts (buy verdicts are in pipeline[])
+    // C-3: buy is gated on buyable.length > 0 (§3.5). This test seeds no acq_candidates at all,
+    // so the buyable list is empty and buy correctly stays 0 — see the C3-buy* tests for the
+    // populated-pipeline cases.
     expect(result.actionCounts.buy).toBe(0);
     expect(total).toBe(result.verdicts.length);
     expect(result.verdicts.length).toBe(2);
@@ -390,7 +427,7 @@ describe('buildPortfolioAllocation', () => {
     expect(v.inputs.debtSignal).toBe('hold');
   });
 
-  it('A-4-neg: empty acq_candidates → zero buy verdicts (C-3: buy emission deferred to v2)', async () => {
+  it('A-4-neg: empty acq_candidates → zero buy verdicts (empty pipeline ⇒ empty buyable list)', async () => {
     const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
     const db = freshDb();
     // No acq_candidates seeded. One ordinary hold property exists.
@@ -401,7 +438,7 @@ describe('buildPortfolioAllocation', () => {
       makeDebtScore({ propertyId: 'prop-hold', signal: 'hold' }),
     ]);
     const result = await buildPortfolioAllocation(db, '2026-06-21');
-    // Phase 5 v1 (C-3): no buy AllocationVerdict is ever emitted; buy count stays 0.
+    // C-3: buy is gated on buyable.length > 0 (§3.5) — an empty pipeline can never satisfy that.
     expect(result.pipeline).toHaveLength(0);
     expect(result.actionCounts.buy).toBe(0);
     expect(result.verdicts.every((v) => v.action !== 'buy')).toBe(true);
@@ -450,6 +487,114 @@ describe('buildPortfolioAllocation', () => {
     const result = await buildPortfolioAllocation(db, '2026-06-21');
     expect(result.verdicts).toHaveLength(1);
     expect(result.verdicts[0]!.action).not.toBe('refinance');
+  });
+
+  it('C3-buy: a single buyable T1 candidate (composite≥70, basis discount clears floor) emits a buy verdict', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    seedCandidate(db, { id: 'cand-buy-1', composite: 80, tier: 'T1', basisDiscountPct: 0.10 });
+    mockScoreProperties.mockReturnValue([]);
+    mockScoreDebt.mockReturnValue([]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.actionCounts.buy).toBe(1);
+    const buyVerdicts = result.verdicts.filter((v) => v.action === 'buy');
+    expect(buyVerdicts).toHaveLength(1);
+    expect(buyVerdicts[0]!.propertyId).toBe('pipeline:cand-buy-1');
+  });
+
+  it('C3-buy-basisdiscount-null-ok: null basisDiscountPct does not block a buy verdict', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    seedCandidate(db, { id: 'cand-buy-null-basis', composite: 75, tier: 'T2', basisDiscountPct: null });
+    mockScoreProperties.mockReturnValue([]);
+    mockScoreDebt.mockReturnValue([]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.actionCounts.buy).toBe(1);
+  });
+
+  it('C3-basisdiscount-null-flagged: null basisDiscountPct passing the gate is surfaced as a dataQuality warning', async () => {
+    // basisDiscountPct===null is indistinguishable between "genuinely N/A" and "score never
+    // computed it" (score_json may simply lack the key). Since null passes the buyable gate
+    // (per spec), that ambiguity must be visible downstream, not silently invisible.
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    seedCandidate(db, { id: 'cand-null-basis-flag', composite: 75, tier: 'T2', basisDiscountPct: null });
+    mockScoreProperties.mockReturnValue([]);
+    mockScoreDebt.mockReturnValue([]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    const buyVerdict = result.verdicts.find((v) => v.action === 'buy')!;
+    expect(buyVerdict.dataQuality.some((f) => f.field === 'basisDiscountPct' && f.severity === 'warn')).toBe(true);
+  });
+
+  it('C3-basisdiscount-known-not-flagged: a known basisDiscountPct raises no ambiguity warning', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    seedCandidate(db, { id: 'cand-known-basis', composite: 75, tier: 'T2', basisDiscountPct: 0.10 });
+    mockScoreProperties.mockReturnValue([]);
+    mockScoreDebt.mockReturnValue([]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    const buyVerdict = result.verdicts.find((v) => v.action === 'buy')!;
+    expect(buyVerdict.dataQuality.some((f) => f.field === 'basisDiscountPct')).toBe(false);
+  });
+
+  it('C3-buy-topranked: buy verdict references the highest-composite buyable candidate', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    seedCandidate(db, { id: 'cand-lower', composite: 75, tier: 'T1', basisDiscountPct: 0.10 });
+    seedCandidate(db, { id: 'cand-higher', composite: 90, tier: 'T2', basisDiscountPct: 0.10 });
+    mockScoreProperties.mockReturnValue([]);
+    mockScoreDebt.mockReturnValue([]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.actionCounts.buy).toBe(1);
+    const buyVerdict = result.verdicts.find((v) => v.action === 'buy')!;
+    expect(buyVerdict.propertyId).toBe('pipeline:cand-higher');
+  });
+
+  it('C3-floor-neg: composite below 70 → NOT buyable, no buy verdict', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    seedCandidate(db, { id: 'cand-low-composite', composite: 65, tier: 'T1', basisDiscountPct: 0.10 });
+    mockScoreProperties.mockReturnValue([]);
+    mockScoreDebt.mockReturnValue([]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.actionCounts.buy).toBe(0);
+    expect(result.verdicts.every((v) => v.action !== 'buy')).toBe(true);
+  });
+
+  it('C3-basisdiscount-neg: basis discount below the 5% floor → NOT buyable, no buy verdict', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    seedCandidate(db, { id: 'cand-thin-basis', composite: 85, tier: 'T1', basisDiscountPct: 0.02 });
+    mockScoreProperties.mockReturnValue([]);
+    mockScoreDebt.mockReturnValue([]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.actionCounts.buy).toBe(0);
+  });
+
+  it('C3-tier-neg: PASS/KILLED tier never buyable regardless of composite', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    seedCandidate(db, { id: 'cand-passed', composite: 95, tier: 'PASS', basisDiscountPct: 0.10 });
+    seedCandidate(db, { id: 'cand-killed', composite: 95, tier: 'KILLED', basisDiscountPct: 0.10 });
+    mockScoreProperties.mockReturnValue([]);
+    mockScoreDebt.mockReturnValue([]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.actionCounts.buy).toBe(0);
+  });
+
+  it('C3-inputs-placeholder: buy verdict.inputs uses documented neutral placeholders, not fabricated real data', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    seedCandidate(db, { id: 'cand-inputs-check', composite: 80, tier: 'T1', basisDiscountPct: 0.10 });
+    mockScoreProperties.mockReturnValue([]);
+    mockScoreDebt.mockReturnValue([]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    const buyVerdict = result.verdicts.find((v) => v.action === 'buy')!;
+    expect(buyVerdict.inputs.dscr).toBeNull();
+    expect(buyVerdict.inputs.ltv).toBeNull();
+    expect(buyVerdict.inputs.noiPerSf).toBeNull();
+    expect(buyVerdict.expectedReturnPct).toBeNull(); // C-4 deferred
+    expect(buyVerdict.reasons.some((r) => /not applicable/i.test(r))).toBe(true);
   });
 });
 
