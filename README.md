@@ -208,6 +208,21 @@ Disable-ScheduledTask -TaskName 'ORA Command Center - Brain Server'          # s
 Unregister-ScheduledTask -TaskName 'ORA Command Center - Brain Server' -Confirm:$false  # remove entirely
 ```
 
+**Run Claude Code locally too, for anything that needs your actual machine.** A Claude Code
+Remote / web session (like the one that likely wrote this paragraph) runs in an isolated cloud
+container — it has this git repo, but no access to your filesystem, terminal, or processes.
+There is no way to register a personal Windows machine as a target for those remote sessions;
+the only way to have Claude directly drive things here (start/stop the Brain Server, read
+`logs/brain-server.log`, check `Get-ScheduledTask`, etc.) is to run Claude Code natively on the
+machine itself:
+
+```powershell
+irm https://claude.ai/install.ps1 | iex   # PowerShell, not as Administrator; reopen the terminal after
+claude                                     # first run opens a browser to log in; then just `claude` again
+```
+
+Then `cd` into this repo and run `claude` — that session has real local terminal access.
+
 The **mirror** is a static, read-only build for phone/away access, **live at
 https://ora-command-center.pages.dev behind Cloudflare Access** (Self-hosted app "ora-command-center.pages.dev",
 policy "ORA principals" → Allow ggoldberg@ + egoldberg@oxfordra.net, default-deny). It carries the firm's
