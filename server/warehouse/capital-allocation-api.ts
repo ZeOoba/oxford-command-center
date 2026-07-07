@@ -60,7 +60,11 @@ export function capitalAllocationApi(getDb: () => WarehouseDb): Hono {
   app.get('/allocate', (c) => withDb(async (db) => {
     try {
       const asOf = new Date().toISOString().slice(0, 10);
-      const portfolio = await buildPortfolioAllocation(db, asOf);
+      // Spine A snapshot is optional here (fail-open): a missing snapshot just means
+      // expectedReturnPct stays null for every verdict, same as pre-v2 behavior.
+      const { brain } = await import('../brain');
+      const snapshot = await brain.getSnapshot();
+      const portfolio = await buildPortfolioAllocation(db, asOf, undefined, snapshot ?? undefined);
       const cfg = loadCapitalConfig(db);
       const hurdleRate = HurdleRateConfig.parse({
         hurdleRatePct: cfg.hurdleRatePct,
