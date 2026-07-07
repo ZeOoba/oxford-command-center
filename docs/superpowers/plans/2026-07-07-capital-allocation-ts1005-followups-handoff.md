@@ -1,5 +1,10 @@
 # Handoff — Follow-ups Discovered Fixing PR #176 TS1005 — 2026-07-07
 
+**Update 2026-07-07 (same day, follow-up session):** Items B and C below are **RESOLVED** — see
+their individual "Resolved" notes. Items A and D are still open and still need Gabriel's call /
+live-data verification respectively. Read the resolutions before re-investigating either closed
+item from scratch.
+
 **Origin:** Gabriel asked for a targeted fix — `server/warehouse/capital-allocation.ts` had a
 missing `}` closing `buildBuyVerdict`, failing `tsc` in PR #176's CI gate. Fix landed, merged
 `2026-07-07T15:29:50Z` (commit `9b604e9` on `fix/c3-buy-verdicts`). This doc is **not** that
@@ -56,7 +61,7 @@ near-empty).
 
 ---
 
-## Item B — Contaminated shared main checkout (`C:\Users\Owner\oxford-command-center`) — higher priority, needs a human decision
+## Item B — Contaminated shared main checkout (`C:\Users\Owner\oxford-command-center`) — RESOLVED 2026-07-07
 
 **Finding (re-verified immediately before writing this doc, 2026-07-07):** the **main
 checkout** (not a worktree) is sitting on branch `chore/post-w2-merge`, whose upstream is
@@ -88,9 +93,25 @@ discard. It needs a human call (Gabriel) or an investigating session with author
    on the main checkout (stash, don't discard) after confirming no *other* live session has that
    checkout open, then the main checkout can be returned to a clean `main` for the next writer.
 
+**Resolved 2026-07-07 (same-day follow-up):** investigated before touching anything — the
+uncommitted `architecture/status.json` diff turned out to be a stale status-hygiene pass (marking
+`ic-memo` merged via #121 and adding a `blissful-mendel-02834b` entry for #126), and the two
+untracked docs were "paste into a fresh session" handoff prompts for Phase 2/4 work that finished
+weeks ago (repo was already at PR #179 by the time this was checked). Confirmed via
+`git show HEAD:architecture/status.json` that the *committed* file still says `ic-memo:
+"in_progress"` — i.e. this diff was never applied anywhere, not superseded-and-redundant, just
+abandoned. Nothing here was active/at-risk work. Quarantined (not discarded) via
+`git stash push -u -m "quarantine-2026-07-07-chore-post-w2-merge-stale-status-json-and-handoff-docs"`
+— recoverable with `git stash list` / `git stash show -p stash@{0}` if anyone needs it later —
+then `git checkout main && git pull --ff-only`. **Main checkout is now clean, on `main`, current
+with origin.** Separately worth noting: `status.json`'s `ic-memo` entry is still stale (says
+`in_progress`, PR #121 merged 2026-06-22) — a real but minor accuracy gap; a fresh audit pass
+would be better than resurrecting the abandoned diff (too much has changed since 2026-06-22 for
+a straight reapply to be trustworthy).
+
 ---
 
-## Item C — Stale worktree sprawl under `.claude/worktrees/` — mechanical, low risk
+## Item C — Stale worktree sprawl under `.claude/worktrees/` — PARTIALLY RESOLVED 2026-07-07
 
 **Finding:** `git worktree list` (re-run 2026-07-07, post PR #176/#178 merge) still shows 20+
 worktrees. Cross-referencing against `gh pr list --state merged --limit 30` confirms these
@@ -127,6 +148,17 @@ branch is confirmed merged AND not locked. `git worktree remove <path>` is safe/
 (the branch and its commits stay in the repo either way) but confirm no session has that
 worktree open first.
 
+**Resolved 2026-07-07 (same-day follow-up), partial:** removed the 9 confirmed-merged worktrees
+listed in the table above (`insight-rank`, `insight-scope-gate`, `insight-stats`, `insight-cf1`,
+`item3-acq-live-pipeline`, `item4-acq-input-persist`, `m6-leasing-risk-ic-memo`,
+`m11-usememo-cols`, `m12-tenant-slug`) via `git worktree remove`. Branches/commits untouched
+(worktree removal doesn't delete either). **Still open — not yet checked, don't assume safe:**
+`h4-easement-impl`, `insight-contract`, `item1-anomaly-bridge`, `item8-capex-irr`,
+`wave1-analytics`, `wave1-hygiene`, `wave1-m1-integration`, `wave1-ux-acq`, `wave1-ux-capital`,
+`wave2-h2-leasing-basis`, and the locked `agent-a4db3bf5d0d691ecc` (leave locked ones alone).
+The "what auto-prunes merged worktrees and why did it miss a 2-week-old batch" question is also
+still open — not investigated.
+
 ---
 
 ## Item D — Pre-existing JV/fractional-ownership basis-mismatch flag (context, not newly discovered — carry forward)
@@ -155,14 +187,13 @@ fraction.
 
 ## Priority read (my judgment, not a decision — Gabriel arbitrates)
 
-1. **Item B** (contaminated main checkout) — blocks safe future use of the shared checkout;
-   needs a human look, not code.
-2. **Item D** (ownership-fraction mismatch) — real financial-math risk, but "unconfirmed on live
-   data" per its own flag; a data-verification task, not urgent unless a JV asset is about to be
-   scored.
-3. **Item C** (worktree sprawl) — pure hygiene, zero risk, do whenever convenient.
-4. **Item A** (prettier drift) — cosmetic; bundle with Item C's next "housekeeping session" or
-   skip indefinitely, Gabriel's call.
+1. ~~**Item B** (contaminated main checkout)~~ — **RESOLVED 2026-07-07.**
+2. **Item D** (ownership-fraction mismatch) — still open. Real financial-math risk, but
+   "unconfirmed on live data" per its own flag; a data-verification task, not urgent unless a
+   JV asset is about to be scored.
+3. **Item C** (worktree sprawl) — **partially resolved 2026-07-07** (9 pruned); 10 remain
+   unchecked, zero risk to check whenever convenient.
+4. **Item A** (prettier drift) — still open, cosmetic; Gabriel's call whether to act.
 
 ## Where this doc lives
 
