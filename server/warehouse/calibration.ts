@@ -1218,7 +1218,12 @@ export function verdictsFromAllocations(
 ): CalibrationVerdict[] {
   return verdicts.map(v =>
     CalibrationVerdictSchema.parse({
-      subjectKind: 'property',
+      // C-3: a `buy` verdict's propertyId is a synthetic `pipeline:${candidateId}` token, never
+      // a real property_master row — tagging it 'property' would permanently pollute the
+      // calibration log with a subject_id resolveDueOutcomes can never resolve (it only
+      // resolves subject_kind='property' rows against propertyPeriodMetrics()). 'deal' is an
+      // existing reserved SubjectKind resolveDueOutcomes already excludes from resolution.
+      subjectKind: v.action === 'buy' ? 'deal' : 'property',
       subjectId: v.propertyId,
       verdictKind: 'capital-action-v2',
       verdictSubkind: '',
