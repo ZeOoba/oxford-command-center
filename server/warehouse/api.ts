@@ -974,10 +974,10 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
     withDb(async (db) => {
       try {
         const asOf = new Date().toISOString().slice(0, 10);
-        const portfolio = await buildPortfolioAllocation(db, asOf);
-        assertNoConfidential(portfolio);
         const { brain } = await import('../brain');
         const snapshot = await brain.getSnapshot();
+        const portfolio = await buildPortfolioAllocation(db, asOf, undefined, snapshot ?? undefined);
+        assertNoConfidential(portfolio);
         const entries = snapshot ? (await buildCapitalAllocationReport(db, snapshot)).entries : undefined;
         const html = buildIcMemoHtml(portfolio, entries);
         return new Response(html, {
