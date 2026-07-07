@@ -155,6 +155,7 @@ describe('TC1 — no-debt signal: property with no debt_positions rows → signa
     expect(s.scoreBand).toBe('strong');
     expect(s.dscr).toBeNull();
     expect(s.ltv).toBeNull();
+    expect(s.refiCashSavingsPct).toBeNull();
   });
 });
 
@@ -205,6 +206,50 @@ describe('TC4 — refi signal: rate above market + spread + refiTriggerBps, gove
     const s = results.find((r) => r.propertyId === 'prop-a')!;
     expect(s.signal).toBe('refi');
     expect(s.signalReason).toContain('market proxy');
+  });
+});
+
+describe('C-2 TC4b — refiCashSavingsPct: post-refi annual cash savings as % of equity', () => {
+  it('computes a drivable value when rate, LTV, and balance are all known (refi signal)', () => {
+    const db = freshDb();
+    // Market proxy = 4.5% + 2.0% = 6.5%; loan rate = 9.0% > 8.0% threshold → refi
+    // currentAnnualInterest = 0.09 * 800_000 = 72_000
+    // refiAnnualInterest   = 0.065 * 800_000 = 52_000 → savings = 20_000
+    // value = balance / ltv = 800_000 / 0.30 = 2_666_666.67; equity = value - balance = 1_866_666.67
+    // refiCashSavingsPct = 20_000 / 1_866_666.67 ≈ 0.0107143
+    insertLoan(db, { rate: 0.09, ltv: 0.30, monthly_pmt: 3_000 });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const results = scoreDebtPositions(db, metrics, MARKET_5Y);
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s.signal).toBe('refi');
+    expect(s.refiCashSavingsPct).not.toBeNull();
+    expect(s.refiCashSavingsPct!).toBeCloseTo(0.0107143, 5);
+  });
+
+  it('returns null when the loan rate is unknown, even though cash-out signal fires', () => {
+    const db = freshDb();
+    // rate=null → avgLoanRate null → currentAnnualInterest undrivable → refiCashSavingsPct null,
+    // even though DSCR/LTV/maturity headroom all clear the cash-out signal thresholds.
+    insertLoan(db, { rate: null, ltv: 0.25, monthly_pmt: 2_000, months_to_maturity: 30 });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 120_000 })];
+    const results = scoreDebtPositions(db, metrics, MARKET_5Y);
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s.signal).toBe('cash-out');
+    expect(s.refiCashSavingsPct).toBeNull();
+  });
+
+  it('returns null for a multi-loan property (single-loan LTV cannot be blended against total balance)', () => {
+    const db = freshDb();
+    // Loan A is the highest-balance loan, so D1 reports ltv=0.30 (loan A's own ltv) — but that
+    // ltv describes loan A's basis alone, not the combined position. Applying it to totalBalance
+    // (both loans summed) would manufacture a value/equity figure with no real basis. refiCashSavingsPct
+    // must stay undrivable (null) for any property with more than one active loan.
+    insertLoan(db, { id: 'loan-a', rate: 0.09, ltv: 0.30, current_balance: 600_000, monthly_pmt: 3_000 });
+    insertLoan(db, { id: 'loan-b', rate: 0.09, ltv: 0.05, current_balance: 200_000, monthly_pmt: 1_000 });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const results = scoreDebtPositions(db, metrics, MARKET_5Y);
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s.refiCashSavingsPct).toBeNull();
   });
 });
 
