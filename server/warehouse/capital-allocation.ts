@@ -98,6 +98,15 @@ function buildVerdict(
   let timelineMonths = 0;
   const reasons: string[] = [...ps.reasons];
 
+  // C-2: refinance additionally requires a drivable post-refi cash-savings computation
+  // (spec §3.2 rule 2 — refiCashSavingsPct(d) !== null). Undrivable savings falls through
+  // to the next rule (improve/hold) rather than emitting refinance on signal alone.
+  const refiSignalPresent = debtSignal === 'refi' || debtSignal === 'cash-out';
+  const refiEligible = refiSignalPresent && ds?.refiCashSavingsPct !== null && ds?.refiCashSavingsPct !== undefined;
+  if (refiSignalPresent && !refiEligible) {
+    reasons.push('Refinance deferred: post-refi cash-savings undrivable (rate, LTV, or balance data insufficient)');
+  }
+
   if (ps.capitalAction === 'disposition-candidate' && ps.healthBand === 'concern') {
     // 1. sell — financial-safety: require BOTH the disposition-candidate capitalAction
     //    AND an independent healthBand==='concern' confirmation at the verdict layer.
@@ -108,7 +117,7 @@ function buildVerdict(
     expectedReturnPct = null;
     timelineMonths = 9; // see I-2 (spec TIMELINE)
     reasons.push('Capital action: disposition-candidate + healthBand: concern');
-  } else if (debtSignal === 'refi' || debtSignal === 'cash-out') {
+  } else if (refiEligible) {
     // 2. refinance (governor-block signal falls to hold per priority 4; it cannot match here)
     action = 'refinance';
     riskBand =
@@ -118,8 +127,8 @@ function buildVerdict(
     expectedReturnPct = null;
     timelineMonths = 4; // see I-2 (spec TIMELINE)
     reasons.push(`Debt signal: ${debtSignal}`);
-    // PHASE 5 v2 DEFERRAL (C-2): refi fires on debtSignal alone. refiCashSavingsPct()
-    // savings-gating is deferred — no cash-savings threshold is applied in v1.
+    // PHASE 5 v2 DEFERRAL (C-4): expectedReturnPct for refinance (= refiCashSavingsPct)
+    // is wired up separately — this rule only gates action selection.
   } else if (ps.capitalAction === 'invest') {
     // 3. improve → degrades to hold in Phase 5 (capexIrr estimate deferred to Phase 4 v2)
     action = 'hold';

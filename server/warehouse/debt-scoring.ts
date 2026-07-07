@@ -149,6 +149,7 @@ export function scoreDebtPositions(
         score: 100,
         scoreBand: 'strong',
         capitalConfigVersion: governors.version,
+        refiCashSavingsPct: null,
       });
       continue;
     }
@@ -334,6 +335,30 @@ export function scoreDebtPositions(
     const score = clamp(Math.round(rawScore), 0, 100);
     const scoreBand = toBand(score);
 
+    // C-2: post-refi annualized cash savings as % of equity. Undrivable (any input
+    // missing, a leveraged-to-zero/negative-equity property, or >1 active loan) → null,
+    // never a guess. value is derived from totalBalance / ltv — but D1's `ltv` is the
+    // HIGHEST-BALANCE loan's own LTV (a governor-check figure), not a blended combined-loan
+    // LTV. Applying it to totalBalance across multiple loans manufactures a value/equity
+    // figure with no real basis (refute-verified defect), so this is restricted to
+    // single-loan properties, where the single loan's balance/ltv/rate are mutually
+    // consistent by construction.
+    let refiCashSavingsPct: number | null = null;
+    if (loans.length === 1) {
+      const currentAnnualInterest = avgLoanRate !== null ? avgLoanRate * totalBalance : null;
+      const refiAnnualInterest = marketRate !== null ? marketRate * totalBalance : null;
+      const value = ltv !== null && ltv > 0 ? totalBalance / ltv : null;
+      const equity = value !== null ? value - totalBalance : null;
+      if (
+        currentAnnualInterest !== null &&
+        refiAnnualInterest !== null &&
+        equity !== null &&
+        equity > 0
+      ) {
+        refiCashSavingsPct = (currentAnnualInterest - refiAnnualInterest) / equity;
+      }
+    }
+
     scores.push({
       propertyId,
       propertyName,
@@ -348,6 +373,7 @@ export function scoreDebtPositions(
       score,
       scoreBand,
       capitalConfigVersion: governors.version,
+      refiCashSavingsPct,
     });
   }
 
@@ -377,5 +403,6 @@ export function noDebtScore(
     score: 100,
     scoreBand: 'strong',
     capitalConfigVersion,
+    refiCashSavingsPct: null,
   };
 }

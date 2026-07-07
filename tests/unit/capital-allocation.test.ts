@@ -68,6 +68,7 @@ function makeDebtScore(overrides: Partial<DebtScore> = {}): DebtScore {
     score: 75,
     scoreBand: 'strong',
     capitalConfigVersion: 1,
+    refiCashSavingsPct: 0.05,
     ...overrides,
   };
 }
@@ -256,12 +257,11 @@ describe('buildPortfolioAllocation', () => {
     expect(v.inputs.healthBand).toBe('good');
   });
 
-  it('A-3-neg: debtSignal=hold → NOT refinance (Phase 5 v1: refi gates on signal, not savings)', async () => {
+  it('A-3-neg: debtSignal=hold → NOT refinance (refi gates on signal + drivable savings)', async () => {
     const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
     const db = freshDb();
-    // Phase 5 v1: refinance fires ONLY on signal in ('refi','cash-out'). A plain 'hold'
-    // (or 'no-debt') signal must NOT produce refinance. Phase 5 v2 will add a
-    // refiCashSavingsPct() savings gate on top of the signal (C-2 deferral).
+    // Refinance fires only on signal in ('refi','cash-out') AND a drivable refiCashSavingsPct.
+    // A plain 'hold' (or 'no-debt') signal must NOT produce refinance regardless of savings.
     mockScoreProperties.mockReturnValue([
       makePropertyScore({ propertyId: 'prop-no-refi', capitalAction: 'hold', healthBand: 'good' }),
     ]);
@@ -291,5 +291,50 @@ describe('buildPortfolioAllocation', () => {
     expect(result.pipeline).toHaveLength(0);
     expect(result.actionCounts.buy).toBe(0);
     expect(result.verdicts.every((v) => v.action !== 'buy')).toBe(true);
+  });
+
+  it('C2-A3: signal=refi with a drivable refiCashSavingsPct → action=refinance', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-refi-ok', capitalAction: 'hold', healthBand: 'good' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-refi-ok', signal: 'refi', refiCashSavingsPct: 0.02 }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.verdicts).toHaveLength(1);
+    expect(result.verdicts[0]!.action).toBe('refinance');
+  });
+
+  it('C2-A3-neg: signal=refi but refiCashSavingsPct=null (undrivable) → NOT refinance, falls to hold', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-refi-undrivable', capitalAction: 'hold', healthBand: 'good' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-refi-undrivable', signal: 'refi', refiCashSavingsPct: null }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.verdicts).toHaveLength(1);
+    const v = result.verdicts[0]!;
+    expect(v.action).not.toBe('refinance');
+    expect(v.action).toBe('hold');
+    expect(v.reasons.some((r) => /savings undrivable/i.test(r))).toBe(true);
+  });
+
+  it('C2-cashout-neg: signal=cash-out but refiCashSavingsPct=null (undrivable) → NOT refinance', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-cashout-undrivable', capitalAction: 'hold', healthBand: 'good' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-cashout-undrivable', signal: 'cash-out', refiCashSavingsPct: null }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    expect(result.verdicts).toHaveLength(1);
+    expect(result.verdicts[0]!.action).not.toBe('refinance');
   });
 });
