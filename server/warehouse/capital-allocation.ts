@@ -3,14 +3,19 @@
 // Phase 5 — Capital Allocation Engine
 //
 // buildPortfolioAllocation(): pure async fn — loads PropertyScore + DebtScore for every
-// active property, maps each to an AllocationVerdict (hold/sell/refi/improve→hold),
-// loads acq pipeline candidates, and returns PortfolioAllocation.
+// active property, maps each to a per-asset AllocationVerdict (hold/sell/refi/improve→hold),
+// loads acq pipeline candidates, appends at most one portfolio-level buy verdict (C-3), and
+// returns PortfolioAllocation.
 //
-// Verdict priority (first match wins):
+// Per-asset verdict priority (first match wins):
 //   sell       → capitalAction === 'disposition-candidate'
-//   refinance  → debtSignal in ('refi' | 'cash-out') AND debtSignal !== 'governor-block'
+//   refinance  → debtSignal in ('refi' | 'cash-out') AND a drivable refiCashSavingsPct (C-2)
 //   improve→hold → capitalAction === 'invest'  (capexIrr estimate deferred to Phase 4 v2)
 //   hold       → default (monitor, governor-block, no-debt)
+//
+// buy (C-3): portfolio-level, not per-asset — emitted only when the acq pipeline has a
+// T1/T2 candidate clearing the composite + basis-discount floors (§3.5); never on an
+// empty buyable list.
 //
 // advisoryOnly = true until hurdle rate is ratified (Phase 5 default).
 // forecastInputs absent → horizonPeriods=0, confidence01 capped at 0.65.
@@ -81,6 +86,81 @@ function healthBandToRisk(band: HealthBand): RiskBand {
 
 function confidenceTierFrom(c01: number): Confidence {
   return c01 >= 0.8 ? 'confirmed' : c01 >= 0.5 ? 'estimated' : 'derived';
+}
+
+// ── C-3: portfolio-level buy verdict (spec §3.5) ─────────────────────────────
+//
+// A buy verdict is NOT tied to an owned property, so it cannot honestly populate
+// AllocationVerdict.inputs (healthBand/attentionBand/capitalAction/debtSignal/
+// debtScoreBand are all required enums designed for scored, owned properties).
+// Per Gabriel's decision (2026-07-07): use documented neutral placeholders rather
+// than extend the schema, with an explicit reasons[] note that these fields are
+// not applicable to a pipeline acquisition candidate.
+const BUY_COMPOSITE_FLOOR = 70;
+const BASIS_DISCOUNT_FLOOR = 0.05; // [RATIFY] 5% all-in basis discount vs replacement cost
+
+function buildBuyVerdict(
+  candidate: PortfolioAllocation['pipeline'][number],
+  asOf: string,
+  hurdleRatePct: number,
+  advisoryOnly: boolean,
+  forecastInputs: { periods: number } | undefined,
+): AllocationVerdict {
+  // PHASE 5 v2 DEFERRAL (C-4): expectedReturnFor('buy', ...) is not yet wired —
+  // stays null on this verdict, same convention as every other action in v1/v2.
+  const expectedReturnPct: number | null = null;
+  const returnAboveHurdle = expectedReturnPct !== null ? expectedReturnPct >= hurdleRatePct : null;
+
+  let confidence01 = 0.80;
+  if (forecastInputs === undefined) confidence01 = Math.min(confidence01, 0.65);
+  confidence01 = Math.max(0.10, confidence01);
+
+  // A null basisDiscountPct passes the buyable gate (spec §3.5), but null is indistinguishable
+  // between "genuinely not applicable" and "the acquisition score never computed it" — surface
+  // that ambiguity rather than letting it silently disappear once the gate has passed.
+  const dataQuality =
+    candidate.basisDiscountPct === null
+      ? [
+          {
+            entity: candidate.candidateId,
+            field: 'basisDiscountPct',
+            issue: 'basisDiscountPct is null for the top-ranked buyable candidate — the buyable gate treats null as passing, but null cannot distinguish "genuinely no discount data expected" from an acquisition score that never computed this field.',
+            severity: 'warn' as const,
+          },
+        ]
+      : [];
+
+  return {
+    propertyId: `pipeline:${candidate.candidateId}`,
+    propertyName: candidate.address,
+    period: asOf,
+    action: 'buy',
+    expectedReturnPct,
+    returnAboveHurdle,
+    riskBand: candidate.tier === 'T1' ? 'moderate' : 'elevated',
+    timelineMonths: 6, // spec TIMELINE table: buy = 6 (pipeline-dependent placeholder)
+    horizonPeriods: forecastInputs?.periods ?? 0,
+    confidence01,
+    confidenceTier: confidenceTierFrom(confidence01),
+    advisoryOnly,
+    reasons: [
+      `Portfolio buy signal: pipeline candidate ${candidate.candidateId} (tier ${candidate.tier ?? 'unknown'}, composite ${candidate.composite ?? 'unknown'})`,
+      'inputs fields (healthBand/attentionBand/capitalAction/debtSignal/debtScoreBand/dscr/ltv/noiPerSf) are not applicable to a pipeline acquisition candidate — neutral placeholder values, not measured data',
+    ],
+    inputs: {
+      healthBand: 'good',
+      attentionBand: 'green',
+      capitalAction: 'hold',
+      debtSignal: 'no-debt',
+      debtScoreBand: 'strong',
+      dscr: null,
+      dscrHeadroom: null,
+      ltv: null,
+      noiPerSf: null,
+      forecastPresent: forecastInputs !== undefined,
+    },
+    dataQuality,
+  };
 }
 
 // ── Unlevered return projection (Phase 5 v2, C-4) ────────────────────────────
@@ -450,16 +530,33 @@ export async function buildPortfolioAllocation(
     );
   });
 
-  // Action counts — buy=0 always (pipeline candidates are NOT in verdicts[])
-  // PHASE 5 v2 DEFERRAL (C-3): buy verdicts (§3.5) are NOT emitted in v1 — buy stays 0.
-  // Pipeline candidates live in pipeline[], not verdicts[]; no buy AllocationVerdict is produced.
+  // Pipeline candidates (active status only)
+  const pipeline = loadPipelineCandidates(db);
+
+  // C-3: portfolio-level buy verdict (spec §3.5) — emitted ONLY when a T1/T2 candidate
+  // clears the composite floor and the basis-discount floor (or basis discount is unknown).
+  // NEVER emit buy on an empty buyable list (refute lens #4, spec test A-4-neg).
+  const buyable = pipeline.filter(
+    (c) =>
+      (c.tier === 'T1' || c.tier === 'T2') &&
+      c.composite !== null &&
+      c.composite >= BUY_COMPOSITE_FLOOR &&
+      (c.basisDiscountPct === null || c.basisDiscountPct >= BASIS_DISCOUNT_FLOOR),
+  );
+  if (buyable.length > 0) {
+    // Top-ranked = highest composite; tie-break by candidateId for determinism.
+    const top = [...buyable].sort((a, b) => {
+      const diff = (b.composite ?? 0) - (a.composite ?? 0);
+      return diff !== 0 ? diff : a.candidateId.localeCompare(b.candidateId);
+    })[0]!;
+    verdicts.push(buildBuyVerdict(top, asOf, hurdleRatePct, advisoryOnly, forecastInputs));
+  }
+
+  // Action counts — tally across all emitted verdicts (buy included as of C-3).
   const actionCounts: Record<AllocationAction, number> = {
     buy: 0, hold: 0, sell: 0, refinance: 0, improve: 0,
   };
   for (const v of verdicts) actionCounts[v.action]++;
-
-  // Pipeline candidates (active status only)
-  const pipeline = loadPipelineCandidates(db);
 
   return {
     asOf,
