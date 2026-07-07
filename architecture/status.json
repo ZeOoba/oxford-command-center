@@ -292,12 +292,6 @@
 
   "ic-memo": {
     "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-22",
-    "phase": "IC memo export (feat/ic-memo-export) — in progress or pending merge",
-    "status": "in_progress",
-    "blocked_by": null,
-    "review_needed": false,
-    "review_detail": "Worktree at .claude/worktrees/ic-memo (branch feat/ic-memo-export). Status reflects worktree still present on disk; update to merged once PR lands.",
-    "last_updated": "2026-06-22T10:00:00Z"
     "phase": "Direction 2 — IC Memo HTML export (feat/ic-memo-export)",
     "status": "merged",
     "blocked_by": null,
@@ -394,6 +388,16 @@
     "review_needed": false,
     "review_detail": "Architect-approved in-turn 2026-06-23. Changes: (1) src/contracts/capital-allocation.ts — added leasingRisk: z.number().min(0).max(100) as required field on CapitalAllocationEntry; (2) server/warehouse/capital-allocation.ts — wired leasingRisk into entries.push (L661); (3) server/warehouse/ic-memo.ts — added optional entries param + per-verdict join by propertyId + Leasing Risk column (0-100% display, DASH when undefined); (4) server/warehouse/api.ts — wired entries from buildCapitalAllocationReport into buildIcMemoHtml call (fail-open: snapshot absent → entries undefined → all-DASH). AllocationVerdict.inputs path (src/contracts/capital.ts) was evaluated and ABANDONED — Zod strict rejects unknown keys, approach unsound. Gate green; adversarial refute passed (scale consistency, zero-guard, join correctness, fresh-ingest). PR pending.",
     "last_updated": "2026-06-23T10:00:00Z"
+  },
+
+  "fix-status-json-ic-memo-parse-error": {
+    "agent_role": "Engineering (Claude Code, Sonnet 5) — Gabriel-authorized 2026-07-06",
+    "phase": "Fix pre-existing JSON syntax error in architecture/status.json (ic-memo entry had two duplicate-key blocks merged without a comma, breaking JSON.parse at line 301)",
+    "status": "complete",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "Confirmed bug present on origin/main prior to any other in-flight work. Removed the stale in_progress duplicate block, kept the merged (PR #121) values since a merged PR cannot regress to in_progress. Validated with `node -e \"JSON.parse(require('fs').readFileSync('architecture/status.json','utf8'))\"`. Note: an unmerged branch fix/status-json-duplicate-key (origin, commit 3369e17) already contains this same correction bundled with unrelated cleanup (removing several other stale entries) — flagged to Gabriel, not merged here to keep this PR minimal.",
+    "last_updated": "2026-07-06T00:00:00Z"
   },
 
   "usage": {
