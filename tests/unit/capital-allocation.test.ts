@@ -616,3 +616,238 @@ describe('buildPortfolioAllocation — expectedReturnPct wiring (C-4)', () => {
     expect(v.expectedReturnPct).toBeNull();
   });
 });
+
+// ── Improve action + capexIrr proxy gate ─────────────────────────────────────────
+//
+// capexIrrEstimate is a PROXY, not a real capex-cost data source (deferred to a real
+// data source per the original Phase 5 v2 handoff): it assumes an ASSUMED_CAPEX_PSF
+// spend fully closes the gap between a property's noiPerSf and the portfolio median,
+// then checks whether the implied yield on that assumed spend clears the hurdle. It
+// gates ONLY the action selection (improve vs. degrade-to-hold) — per Gabriel's decision
+// (2026-07-07), the verdict's expectedReturnPct continues to reuse the same general
+// C-4 unlevered-return figure computed upstream, not a separate capex-specific number.
+describe('buildPortfolioAllocation — improve action / capexIrr proxy', () => {
+  it('C5-improve: capitalAction=invest, noiPerSf well below portfolio median, proxy clears hurdle → action=improve', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    // rentableSf=10_000 for all three → noiPerSf = 15, 10, 5. Median = 10.
+    // gap = 10 - 5 = 5; capexIrrEstimate = 5 / ASSUMED_CAPEX_PSF(10) = 0.5 (50%) >> hurdle (8%).
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-a', capitalAction: 'hold', healthBand: 'good' }),
+      makePropertyScore({ propertyId: 'prop-b', capitalAction: 'hold', healthBand: 'good' }),
+      makePropertyScore({ propertyId: 'prop-invest', capitalAction: 'invest', healthBand: 'watch' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-a', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-b', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-invest', signal: 'hold' }),
+    ]);
+    mockPropertyPeriodMetrics.mockReturnValue([
+      makePeriodMetrics({ propertyId: 'prop-a', rentableSf: 10_000, noi: 150_000, noiPerSf: 15 }),
+      makePeriodMetrics({ propertyId: 'prop-b', rentableSf: 10_000, noi: 100_000, noiPerSf: 10 }),
+      makePeriodMetrics({ propertyId: 'prop-invest', rentableSf: 10_000, noi: 50_000, noiPerSf: 5 }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    const v = result.verdicts.find((r) => r.propertyId === 'prop-invest')!;
+    expect(v.action).toBe('improve');
+    expect(v.timelineMonths).toBe(12); // spec TIMELINE table: improve = 12
+  });
+
+  it('C5-improve-neg-hurdle: proxy gap too small to clear hurdle → stays hold', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    // noiPerSf = 15, 10, 9.7 → median = 10. gap = 0.3; capexIrrEstimate = 0.03 (3%) < 8% hurdle.
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-a', capitalAction: 'hold' }),
+      makePropertyScore({ propertyId: 'prop-b', capitalAction: 'hold' }),
+      makePropertyScore({ propertyId: 'prop-invest', capitalAction: 'invest' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-a', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-b', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-invest', signal: 'hold' }),
+    ]);
+    mockPropertyPeriodMetrics.mockReturnValue([
+      makePeriodMetrics({ propertyId: 'prop-a', rentableSf: 10_000, noi: 150_000, noiPerSf: 15 }),
+      makePeriodMetrics({ propertyId: 'prop-b', rentableSf: 10_000, noi: 100_000, noiPerSf: 10 }),
+      makePeriodMetrics({ propertyId: 'prop-invest', rentableSf: 10_000, noi: 97_000, noiPerSf: 9.7 }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    const v = result.verdicts.find((r) => r.propertyId === 'prop-invest')!;
+    expect(v.action).not.toBe('improve');
+    expect(v.action).toBe('hold');
+  });
+
+  it('C5-improve-neg-thin-cohort: fewer than 3 properties have noiPerSf → median null → improve never fires', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    // Only 2 properties total — portfolioNoiPerSfMedian cannot be computed (spec: needs ≥3).
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-b', capitalAction: 'hold' }),
+      makePropertyScore({ propertyId: 'prop-invest', capitalAction: 'invest' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-b', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-invest', signal: 'hold' }),
+    ]);
+    mockPropertyPeriodMetrics.mockReturnValue([
+      makePeriodMetrics({ propertyId: 'prop-b', rentableSf: 10_000, noi: 100_000, noiPerSf: 10 }),
+      // Huge gap — would clear any hurdle if the median were computed, but must not fire.
+      makePeriodMetrics({ propertyId: 'prop-invest', rentableSf: 10_000, noi: 10_000, noiPerSf: 1 }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    const v = result.verdicts.find((r) => r.propertyId === 'prop-invest')!;
+    expect(v.action).not.toBe('improve');
+    expect(v.action).toBe('hold');
+  });
+
+  it('C5-improve-neg-no-metrics: invest property has no PeriodMetrics at all → noiPerSf undrivable → hold', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-a', capitalAction: 'hold' }),
+      makePropertyScore({ propertyId: 'prop-b', capitalAction: 'hold' }),
+      makePropertyScore({ propertyId: 'prop-invest', capitalAction: 'invest' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-a', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-b', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-invest', signal: 'hold' }),
+    ]);
+    mockPropertyPeriodMetrics.mockReturnValue([
+      makePeriodMetrics({ propertyId: 'prop-a', rentableSf: 10_000, noi: 150_000, noiPerSf: 15 }),
+      makePeriodMetrics({ propertyId: 'prop-b', rentableSf: 10_000, noi: 100_000, noiPerSf: 10 }),
+      // prop-invest deliberately absent — no ledger data for it at all.
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    const v = result.verdicts.find((r) => r.propertyId === 'prop-invest')!;
+    expect(v.action).not.toBe('improve');
+    expect(v.action).toBe('hold');
+  });
+
+  it('C5-improve-neg-above-median: capitalAction=invest but noiPerSf already at/above median → stays hold', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    // prop-invest's noiPerSf (15) is the TOP of the cohort, not below the median (10).
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-invest', capitalAction: 'invest' }),
+      makePropertyScore({ propertyId: 'prop-b', capitalAction: 'hold' }),
+      makePropertyScore({ propertyId: 'prop-c', capitalAction: 'hold' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-invest', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-b', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-c', signal: 'hold' }),
+    ]);
+    mockPropertyPeriodMetrics.mockReturnValue([
+      makePeriodMetrics({ propertyId: 'prop-invest', rentableSf: 10_000, noi: 150_000, noiPerSf: 15 }),
+      makePeriodMetrics({ propertyId: 'prop-b', rentableSf: 10_000, noi: 100_000, noiPerSf: 10 }),
+      makePeriodMetrics({ propertyId: 'prop-c', rentableSf: 10_000, noi: 50_000, noiPerSf: 5 }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    const v = result.verdicts.find((r) => r.propertyId === 'prop-invest')!;
+    expect(v.action).not.toBe('improve');
+    expect(v.action).toBe('hold');
+  });
+
+  it('C5-improve-reuses-c4-return: improve verdict expectedReturnPct is the same general unlevered-return figure, not a separate capex number', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-a', capitalAction: 'hold' }),
+      makePropertyScore({ propertyId: 'prop-b', capitalAction: 'hold' }),
+      makePropertyScore({ propertyId: 'prop-invest', capitalAction: 'invest' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-a', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-b', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-invest', signal: 'hold' }),
+    ]);
+    mockPropertyPeriodMetrics.mockReturnValue([
+      makePeriodMetrics({ propertyId: 'prop-a', rentableSf: 10_000, noi: 150_000, noiPerSf: 15, oxfordNoi: 150_000 }),
+      makePeriodMetrics({ propertyId: 'prop-b', rentableSf: 10_000, noi: 100_000, noiPerSf: 10, oxfordNoi: 100_000 }),
+      makePeriodMetrics({ propertyId: 'prop-invest', rentableSf: 10_000, noi: 50_000, noiPerSf: 5, oxfordNoi: 50_000 }),
+    ]);
+    const snapshot = makeSnapshot([makeProperty({ id: 'prop-invest', oxfordValue: 1_000_000 })]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21', undefined, snapshot);
+    const v = result.verdicts.find((r) => r.propertyId === 'prop-invest')!;
+    expect(v.action).toBe('improve');
+    // Same _projectUnleveredReturn(oxfordValue, oxfordNoi) figure C-4 computes for every action.
+    expect(v.expectedReturnPct).not.toBeNull();
+    expect(v.expectedReturnPct!).toBeCloseTo(_projectUnleveredReturn(1_000_000, 50_000)!, 6);
+  });
+
+  it('C5-improve-basis-discipline: a cash-basis outlier must NOT pollute the accrual-basis peer median (G3 cross-basis discipline)', async () => {
+    // Only 2 accrual-basis properties exist (prop-a, prop-invest) — same-basis peer count is
+    // below the 3-peer floor, so the median must be null and improve must NOT fire, even though
+    // a THIRD (cash-basis) property exists that would push the pooled count to 3 if basis were
+    // ignored. This is the exact G3 discipline scores.ts already enforces (rankProperties/
+    // population partition by basis) — the capexIrr proxy must not silently reintroduce a
+    // cross-basis comparison the rest of the engine was hardened against.
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-a', capitalAction: 'hold' }),
+      makePropertyScore({ propertyId: 'prop-invest', capitalAction: 'invest' }),
+      makePropertyScore({ propertyId: 'prop-cash-outlier', capitalAction: 'hold' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-a', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-invest', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-cash-outlier', signal: 'hold' }),
+    ]);
+    mockPropertyPeriodMetrics.mockReturnValue([
+      makePeriodMetrics({ propertyId: 'prop-a', basis: 'accrual', rentableSf: 10_000, noi: 150_000, noiPerSf: 15 }),
+      makePeriodMetrics({ propertyId: 'prop-invest', basis: 'accrual', rentableSf: 10_000, noi: 50_000, noiPerSf: 5 }),
+      // Extreme cash-basis outlier: if pooled cross-basis, this would push the pooled sample
+      // to 3 values and produce a spurious median (and a spurious 'improve' fire). Must be
+      // excluded from prop-invest's (accrual-basis) peer group entirely.
+      makePeriodMetrics({ propertyId: 'prop-cash-outlier', basis: 'cash', rentableSf: 10_000, noi: 10_000_000, noiPerSf: 1000 }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    const v = result.verdicts.find((r) => r.propertyId === 'prop-invest')!;
+    expect(v.action).not.toBe('improve');
+    expect(v.action).toBe('hold');
+  });
+
+  it('C5-improve-dataquality-flag: a drivable capexIrr (fired or not) gets a structured DataQualityFlag, matching the expectedReturnPct/basisDiscountPct precedent', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-a', capitalAction: 'hold' }),
+      makePropertyScore({ propertyId: 'prop-b', capitalAction: 'hold' }),
+      makePropertyScore({ propertyId: 'prop-invest', capitalAction: 'invest' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-a', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-b', signal: 'hold' }),
+      makeDebtScore({ propertyId: 'prop-invest', signal: 'hold' }),
+    ]);
+    mockPropertyPeriodMetrics.mockReturnValue([
+      makePeriodMetrics({ propertyId: 'prop-a', rentableSf: 10_000, noi: 150_000, noiPerSf: 15 }),
+      makePeriodMetrics({ propertyId: 'prop-b', rentableSf: 10_000, noi: 100_000, noiPerSf: 10 }),
+      makePeriodMetrics({ propertyId: 'prop-invest', rentableSf: 10_000, noi: 50_000, noiPerSf: 5 }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    const v = result.verdicts.find((r) => r.propertyId === 'prop-invest')!;
+    expect(v.action).toBe('improve');
+    expect(v.dataQuality.some((f) => f.field === 'capexIrr' && f.severity === 'info')).toBe(true);
+  });
+
+  it('C5-improve-dataquality-no-flag: no drivable capexIrr → no capexIrr DataQualityFlag (nothing to disclose)', async () => {
+    const { buildPortfolioAllocation } = await import('../../server/warehouse/capital-allocation');
+    const db = freshDb();
+    mockScoreProperties.mockReturnValue([
+      makePropertyScore({ propertyId: 'prop-hold', capitalAction: 'hold' }),
+    ]);
+    mockScoreDebt.mockReturnValue([
+      makeDebtScore({ propertyId: 'prop-hold', signal: 'hold' }),
+    ]);
+    mockPropertyPeriodMetrics.mockReturnValue([
+      makePeriodMetrics({ propertyId: 'prop-hold', rentableSf: 10_000, noi: 100_000, noiPerSf: 10 }),
+    ]);
+    const result = await buildPortfolioAllocation(db, '2026-06-21');
+    const v = result.verdicts.find((r) => r.propertyId === 'prop-hold')!;
+    expect(v.dataQuality.some((f) => f.field === 'capexIrr')).toBe(false);
+  });
+});

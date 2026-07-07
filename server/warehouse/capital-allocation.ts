@@ -3,14 +3,15 @@
 // Phase 5 — Capital Allocation Engine
 //
 // buildPortfolioAllocation(): pure async fn — loads PropertyScore + DebtScore for every
-// active property, maps each to an AllocationVerdict (hold/sell/refi/improve→hold),
+// active property, maps each to an AllocationVerdict (hold/sell/refi/improve/hold),
 // loads acq pipeline candidates, and returns PortfolioAllocation.
 //
 // Verdict priority (first match wins):
 //   sell       → capitalAction === 'disposition-candidate'
-//   refinance  → debtSignal in ('refi' | 'cash-out') AND debtSignal !== 'governor-block'
-//   improve→hold → capitalAction === 'invest'  (capexIrr estimate deferred to Phase 4 v2)
-//   hold       → default (monitor, governor-block, no-debt)
+//   refinance  → debtSignal in ('refi' | 'cash-out') AND a drivable refiCashSavingsPct (C-2)
+//   improve    → capitalAction === 'invest' AND capexIrr proxy clears hurdle (see
+//                capexIrrEstimate() below — a PROXY, no real capex-cost data source exists)
+//   hold       → default (monitor, governor-block, no-debt, or invest/improve gate not cleared)
 //
 // advisoryOnly = true until hurdle rate is ratified (Phase 5 default).
 // forecastInputs absent → horizonPeriods=0, confidence01 capped at 0.65.
@@ -183,6 +184,100 @@ function currentSpineBNoi(seriesForProperty: PeriodMetrics[] | undefined): numbe
   return levelRow ? levelRow.oxfordNoi : null;
 }
 
+/**
+ * Same latest-FULL-YEAR selection as currentSpineBNoi, but for noiPerSf — used by the
+ * improve/capexIrr proxy below. Never falls back to a sub-annual period (see
+ * currentSpineBNoi's comment for why: a YTD noiPerSf is not a real annual level).
+ */
+function currentNoiPerSf(seriesForProperty: PeriodMetrics[] | undefined): number | null {
+  if (!seriesForProperty || seriesForProperty.length === 0) return null;
+  const fyPeriod = latestFullYearPeriod(seriesForProperty);
+  if (fyPeriod === null) return null;
+  const levelRow = seriesForProperty.find((m) => m.period === fyPeriod);
+  return levelRow ? levelRow.noiPerSf : null;
+}
+
+/** Same latest-FULL-YEAR selection, returning that row's basis (cash/accrual/tax/unknown). */
+function currentBasis(seriesForProperty: PeriodMetrics[] | undefined): string | null {
+  if (!seriesForProperty || seriesForProperty.length === 0) return null;
+  const fyPeriod = latestFullYearPeriod(seriesForProperty);
+  if (fyPeriod === null) return null;
+  const levelRow = seriesForProperty.find((m) => m.period === fyPeriod);
+  return levelRow ? levelRow.basis : null;
+}
+
+// ── capexIrr proxy (improve action gate) ─────────────────────────────────────────
+//
+// A real capex-cost data source does not exist yet (deferred per the Phase 5 v2 handoff —
+// src/brain/replacement-cost.ts is scoped to ACQUISITION deals, wrong shape for capex on
+// an already-owned property). Per Gabriel's explicit decision (2026-07-07): use a proxy
+// rather than leave 'improve' permanently degraded to 'hold'.
+//
+// Proxy: assume ASSUMED_CAPEX_PSF of capex spend fully closes the gap between a property's
+// own noiPerSf and its same-basis peers' median noiPerSf, then check whether the IMPLIED
+// yield on that assumed spend clears the hurdle. This gates ONLY whether 'improve' fires —
+// the verdict's expectedReturnPct continues to reuse the general C-4 unlevered-return figure
+// (entry value / NOI stream), not a separate capex-specific return number (Gabriel's
+// decision, 2026-07-07: simpler and consistent with C-4's unified design).
+//
+// LOAD-BEARING MODELING ASSUMPTION (adversarial refute, 2026-07-07): treating gap/PSF as an
+// annual yield comparable to hurdleRatePct is only dimensionally meaningful if the assumed
+// spend closes the ENTIRE noiPerSf gap INSTANTLY and the resulting NOI increment recurs
+// UNCHANGED every year thereafter — i.e. no lease-up/stabilization ramp, no decay. This is a
+// materially more optimistic assumption than _projectUnleveredReturn's real multi-year IRR
+// bisection (which models a growth curve), and is not itself a measured or ratified figure.
+//
+// [RATIFY] $10/SF — a conservative light-industrial/flex value-add renovation assumption
+// (roof, parking, minor TI), well below the $125-150/SF full-replacement-cost basis already
+// ratified for acquisitions (REPLACEMENT_COST_PSF in src/brain/replacement-cost.ts). Not a
+// ratified capital_config governor — revisit if this needs formal governance like
+// dscrFloor/ltvCeiling.
+const ASSUMED_CAPEX_PSF = 10;
+
+/**
+ * Same-basis peer median of noiPerSf for ONE property, computed fresh per property (G3
+ * cross-basis discipline — mirrors scores.ts's rankProperties/population partitioning:
+ * cash vs. accrual vs. tax NOI/SF are not like-for-like, so pooling across basis would
+ * silently reintroduce the exact cross-basis comparison scores.ts was hardened against).
+ * 'unknown' basis (the period header didn't parse — could be cash/accrual/tax under the
+ * hood) is never pooled with anything, including other 'unknown' properties — it has no
+ * peer group and therefore no median. Null-safe: fewer than 3 same-basis peers with a
+ * drivable noiPerSf → null, and 'improve' can never fire for that property (spec's
+ * thin-cohort guard, now applied within the correct basis cohort).
+ */
+function computeSameBasisNoiPerSfMedian(
+  metricsByProperty: Map<string, PeriodMetrics[]>,
+  myPropertyId: string,
+  myBasis: string | null,
+): number | null {
+  const values: number[] = [];
+  for (const [propertyId, series] of metricsByProperty) {
+    if (myBasis === null || myBasis === 'unknown') {
+      if (propertyId !== myPropertyId) continue;
+    } else if (currentBasis(series) !== myBasis) {
+      continue;
+    }
+    const noiPerSf = currentNoiPerSf(series);
+    if (noiPerSf !== null) values.push(noiPerSf);
+  }
+  if (values.length < 3) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
+}
+
+/**
+ * capexIrrEstimate: null (undrivable) unless the property's own noiPerSf, its same-basis
+ * peer median, and a positive gap are all known. Never returns a guessed number when an
+ * input is missing — same "undrivable → null" convention as refiCashSavingsPct (C-2).
+ */
+function capexIrrEstimate(noiPerSf: number | null, sameBasisNoiPerSfMedian: number | null): number | null {
+  if (noiPerSf === null || sameBasisNoiPerSfMedian === null) return null;
+  if (noiPerSf >= sameBasisNoiPerSfMedian) return null;
+  const gap = sameBasisNoiPerSfMedian - noiPerSf;
+  return gap / ASSUMED_CAPEX_PSF;
+}
+
 // ── Verdict builder for one property ─────────────────────────────────────────
 
 import type { PropertyScore } from '../../src/contracts/warehouse';
@@ -194,6 +289,7 @@ function buildVerdict(
   advisoryOnly: boolean,
   forecastInputs: { periods: number } | undefined,
   expectedReturnPct: number | null,
+  capexIrr: number | null,
 ): AllocationVerdict {
   const debtSignal = ds?.signal ?? 'no-debt';
   const debtScoreBand = ds?.scoreBand ?? 'adequate';
@@ -251,12 +347,25 @@ function buildVerdict(
     reasons.push(`Debt signal: ${debtSignal}`);
     // PHASE 5 v2 DEFERRAL (C-4): expectedReturnPct for refinance (= refiCashSavingsPct)
     // is wired up separately — this rule only gates action selection.
+  } else if (ps.capitalAction === 'invest' && capexIrr !== null && capexIrr > hurdleRatePct) {
+    // 3. improve — capexIrrEstimate is a PROXY (see capexIrrEstimate() above), not a real
+    // capex-cost data source. Gates ONLY the action; expectedReturnPct still reuses the
+    // general C-4 unlevered-return figure passed in above (Gabriel's decision, 2026-07-07).
+    action = 'improve';
+    riskBand = healthBandToRisk(ps.healthBand);
+    timelineMonths = 12; // spec TIMELINE table: improve = 12 (mid of 6-18)
+    reasons.push(`Capital action: invest; capexIrr proxy ${(capexIrr * 100).toFixed(1)}% clears hurdle`);
   } else if (ps.capitalAction === 'invest') {
-    // 3. improve → degrades to hold in Phase 5 (capexIrr estimate deferred to Phase 4 v2)
+    // 3-neg. invest signal present but capexIrr proxy undrivable or doesn't clear hurdle →
+    // degrades to hold (matches Phase 5 v1's original fail-safe default).
     action = 'hold';
     riskBand = healthBandToRisk(ps.healthBand);
     timelineMonths = 0;
-    reasons.push('improve deferred: capexIrr estimate requires Phase 4 v2 data');
+    reasons.push(
+      capexIrr === null
+        ? 'improve deferred: capexIrr proxy undrivable (noiPerSf or portfolio median unavailable)'
+        : `improve deferred: capexIrr proxy ${(capexIrr * 100).toFixed(1)}% does not clear hurdle`,
+    );
   } else {
     // 4. hold (default — handles monitor, governor-block, no-debt)
     // timelineMonths=0: Phase 5 defers a concrete hold timeline (Phase 5 v2 will set 12 months)
@@ -279,16 +388,29 @@ function buildVerdict(
   // noiPerSf: not directly available from PropertyScore in this engine layer
   const noiPerSf: number | null = null;
 
-  const dataQuality: AllocationVerdict['dataQuality'] =
-    expectedReturnPct === null
-      ? [{
-          entity: ps.propertyId,
-          field: 'expectedReturnPct',
-          issue: 'Unlevered return projection unavailable — missing Spine A oxfordValue, ' +
-            'missing/non-positive Spine B NOI, or no PortfolioSnapshot was supplied to buildPortfolioAllocation.',
-          severity: 'info',
-        }]
-      : [];
+  const dataQuality: AllocationVerdict['dataQuality'] = [];
+  if (expectedReturnPct === null) {
+    dataQuality.push({
+      entity: ps.propertyId,
+      field: 'expectedReturnPct',
+      issue: 'Unlevered return projection unavailable — missing Spine A oxfordValue, ' +
+        'missing/non-positive Spine B NOI, or no PortfolioSnapshot was supplied to buildPortfolioAllocation.',
+      severity: 'info',
+    });
+  }
+  if (capexIrr !== null) {
+    // capexIrr is a PROXY (see capexIrrEstimate() above), not a real capex-cost data source —
+    // disclose it structurally whether or not it cleared the hurdle, matching the precedent
+    // set by expectedReturnPct (above) and C-3's basisDiscountPct DataQualityFlag.
+    dataQuality.push({
+      entity: ps.propertyId,
+      field: 'capexIrr',
+      issue: `capexIrr is a proxy assuming a $${ASSUMED_CAPEX_PSF}/SF capex spend instantly ` +
+        'and permanently closes the noiPerSf gap to same-basis peers — not a measured capex-cost ' +
+        'estimate. See capexIrrEstimate() in capital-allocation.ts for the load-bearing assumption.',
+      severity: 'info',
+    });
+  }
 
   return {
     propertyId: ps.propertyId,
@@ -439,6 +561,16 @@ export async function buildPortfolioAllocation(
       entryValue !== null && currentNoi !== null
         ? _projectUnleveredReturn(entryValue, currentNoi)
         : null;
+    // improve/capexIrr proxy gate: same-basis peer median (G3 discipline — see
+    // computeSameBasisNoiPerSfMedian), recomputed per property against its own basis cohort.
+    const propertySeries = metricsByProperty.get(ps.propertyId);
+    const noiPerSf = currentNoiPerSf(propertySeries);
+    const sameBasisMedian = computeSameBasisNoiPerSfMedian(
+      metricsByProperty,
+      ps.propertyId,
+      currentBasis(propertySeries),
+    );
+    const capexIrr = capexIrrEstimate(noiPerSf, sameBasisMedian);
 
     return buildVerdict(
       ps,
@@ -447,6 +579,7 @@ export async function buildPortfolioAllocation(
       advisoryOnly,
       forecastInputs,
       expectedReturnPct,
+      capexIrr,
     );
   });
 
