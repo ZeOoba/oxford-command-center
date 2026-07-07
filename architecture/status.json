@@ -439,6 +439,16 @@
     "last_updated": "2026-07-06T00:00:00Z"
   },
 
+  "fix-c2-refi-savings-gate": {
+    "agent_role": "Engineering (Claude Code, Sonnet 5) — Gabriel-authorized 2026-07-06",
+    "phase": "Phase 5 v2 — C-2: refi cash-savings gating (docs/superpowers/specs/2026-06-21-phase-5-capital-allocation-market-intel.md §3.2 rule 2)",
+    "status": "ready_for_review",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "Changes: (1) src/contracts/debt.ts — added refiCashSavingsPct: z.number().nullable() to DebtScore; (2) server/warehouse/debt-scoring.ts — computes it in scoreDebtPositions() from avgLoanRate/marketRate/totalBalance/ltv, restricted to single-loan properties (multi-loan basis-mismatch defect found and fixed during refute pass — D1's ltv is the highest-balance loan's own LTV, not a blended combined-loan LTV, so applying it to totalBalance across >1 loan manufactured a wrong equity figure; now null for loans.length!==1); no-debt branch + noDebtScore() set it null. (3) server/warehouse/capital-allocation.ts buildVerdict() — refinance action now additionally gated on refiCashSavingsPct!==null (kept existing signal in ('refi','cash-out') condition unchanged — did NOT add spec's literal dscrHeadroom<0.15 threshold, since the existing 'A-3' test locks cash-out-alone+dscrHeadroom=0.20→refinance, matching this repo's narrower ratified C-2 scope over the spec's more aggressive pseudocode); adds a reasons[] caveat when a refi/cash-out signal is undermined by undrivable savings. C-3 (buy verdicts) and C-4 (expectedReturnPct math, including wiring refiCashSavingsPct into refinance's expectedReturnPct) are separate, not-yet-started PRs per Gabriel's ship-separately decision. Gate: typecheck 0, lint 0, 1874/1882 tests green (8 pre-existing pdf-parse 'bad XRef entry' failures unrelated to this change, confirmed via git stash against unmodified origin/main). Refute-Reviewed: 3-lens adversarial pass (gating-correctness, undrivable-data-edge-cases, regression-and-contract-risk) — 2 CLEAN, 1 confirmed defect (multi-loan LTV/balance basis mismatch) found and fixed with a new regression test (TDD red→green verified). PR not yet opened — pending Gabriel's go-ahead to push.",
+    "last_updated": "2026-07-06T23:45:00Z"
+  },
+
   "usage": {
     "how_to_update": "Edit your worktree's entry before starting and after completing work; commit it on your branch. Use ISO 8601 timestamps. Set review_needed=true and fill review_detail when you need architect sign-off on an architect-owned file.",
     "how_to_read": "Before starting any task, check all other worktrees for status=in_progress or review_needed. If another agent works in your file-ownership area, coordinate before editing."

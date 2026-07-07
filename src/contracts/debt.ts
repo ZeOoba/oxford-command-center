@@ -42,6 +42,12 @@ export const DebtScore = z.object({
   score: z.number().min(0).max(100),
   scoreBand: DebtScoreBand,
   capitalConfigVersion: z.number().int(),
+  // Post-refi annualized cash savings as a % of equity: (currentAnnualInterest -
+  // refiAnnualInterest) / equity. Null when rate, LTV, or balance is undrivable, or when
+  // the property has more than one active loan (single-loan LTV cannot be blended against
+  // a multi-loan total balance) — never a guessed/zero value. See capital-allocation.ts
+  // C-2 refinance gate.
+  refiCashSavingsPct: z.number().nullable(),
 });
 export type DebtScore = z.infer<typeof DebtScore>;
 
