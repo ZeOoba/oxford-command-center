@@ -161,6 +161,8 @@ function buildBuyVerdict(
     },
     dataQuality,
   };
+}
+
 // ── Unlevered return projection (Phase 5 v2, C-4) ────────────────────────────
 //
 // Informal assumptions (Gabriel Goldberg, in-session 2026-07-07) — not a ratified
