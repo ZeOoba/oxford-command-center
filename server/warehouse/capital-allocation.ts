@@ -14,11 +14,33 @@
 //
 // advisoryOnly = true until hurdle rate is ratified (Phase 5 default).
 // forecastInputs absent → horizonPeriods=0, confidence01 capped at 0.65.
+//
+// ── expectedReturnPct (Phase 5 v2, C-4) ──────────────────────────────────────────
+// Unlevered 10-year hold IRR, assumptions directed by Gabriel Goldberg in-session
+// 2026-07-07 (informal — NOT a ratified capital_config governor; revisit if this
+// needs formal governance like dscrFloor/ltvCeiling):
+//   holdYears=10, noiGrowthPct=3%/yr, exitCapRate=7.5% (see PROJECTION_ASSUMPTIONS below).
+// Deliberate cross-source pairing, NOT a Spine A/B NOI comparison (CLAUDE.md's basis-
+// discipline rule bars aggregating/comparing NOI computed independently by both spines —
+// it says nothing about value, which Spine B never computes at all):
+//   entry value  → Spine A property.oxfordValue (the only value figure in the system)
+//   NOI stream   → Spine B oxfordNoi, latest full-year period (same selection scores.ts
+//                  uses, so this stays consistent with the property's own health score)
+// Missing snapshot/oxfordValue/Spine-B NOI → expectedReturnPct stays null (fail-open),
+// same as the rest of this engine's data-quality posture.
+//
+// Known follow-up (adversarial refute, 2026-07-07, low severity, unconfirmed on live data):
+// entryValue (oxfordValue) is scaled by the workbook's oxfordOwnPct; currentNoi (oxfordNoi)
+// is scaled by property_master.ownership_pct (metrics.ts). These are two independently
+// maintained ownership fractions for the same property — if they ever diverge for a JV/
+// fractional-ownership asset, the IRR's going-in yield would be computed on mismatched
+// bases. Not fixed here (would need to verify property_master seed fidelity against the
+// workbook, out of scope for this change) — flagging for anyone touching JV ownership data.
 
 import { getMacro } from '../macro/getMacro';
 import { getMacroMarketBenchmarks } from '../macro/market-benchmarks';
 import { getRegionalMacro } from '../macro/regional-macro';
-import { propertyPeriodMetrics } from './metrics';
+import { propertyPeriodMetrics, latestFullYearPeriod } from './metrics';
 import { scoreProperties } from './scores';
 import { scoreDebtPositions } from './debt-scoring';
 import { clamp } from './clamp';
@@ -28,7 +50,7 @@ import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast
 import { classifyCapRateBand, benchmarkKey } from '../../src/contracts/market-intelligence';
 import type { CapRateBenchmark, MarketBenchmarkSet } from '../../src/contracts/market-intelligence';
 import type { WarehouseDb } from './db';
-import type { HealthBand } from '../../src/contracts/warehouse';
+import type { HealthBand, PeriodMetrics } from '../../src/contracts/warehouse';
 import type { DebtScore } from '../../src/contracts/debt';
 import type {
   AllocationVerdict,
@@ -61,6 +83,106 @@ function confidenceTierFrom(c01: number): Confidence {
   return c01 >= 0.8 ? 'confirmed' : c01 >= 0.5 ? 'estimated' : 'derived';
 }
 
+// ── Unlevered return projection (Phase 5 v2, C-4) ────────────────────────────
+//
+// Informal assumptions (Gabriel Goldberg, in-session 2026-07-07) — not a ratified
+// capital_config governor. Revisit via the formal ratification path (like dscrFloor/
+// ltvCeiling) if this ever needs to be treated as a hard invariant.
+export const PROJECTION_ASSUMPTIONS = {
+  holdYears: 10,
+  noiGrowthPct: 0.03,
+  exitCapRate: 0.075,
+} as const;
+
+/**
+ * Solve for the internal rate of return of a cash-flow series via bisection.
+ * cashFlows[0] is the initial outflow (must be negative); cashFlows[t] for t>=1
+ * are inflows at year t. The projected series here has exactly one sign change
+ * (one negative outflow followed by strictly positive inflows), so NPV(r) is
+ * monotonically decreasing over r ∈ (-1, ∞) and bisection always finds the single
+ * root when one exists. Returns null (never throws) if no root is bracketed —
+ * financial code must fail-open, not crash the allocation route.
+ */
+function solveUnleveredIrr(cashFlows: number[]): number | null {
+  const npv = (r: number): number =>
+    cashFlows.reduce((sum, cf, t) => sum + cf / (1 + r) ** t, 0);
+
+  const lo = -0.999;
+  const hi = 10; // 1000% ceiling — far beyond any sane real-estate return
+  let fLo = npv(lo);
+  const fHi = npv(hi);
+  if (!Number.isFinite(fLo) || !Number.isFinite(fHi) || fLo * fHi > 0) return null;
+
+  let loBound = lo;
+  let hiBound = hi;
+  for (let i = 0; i < 100; i++) {
+    const mid = (loBound + hiBound) / 2;
+    const fMid = npv(mid);
+    if (!Number.isFinite(fMid)) return null;
+    if (fLo * fMid <= 0) {
+      hiBound = mid;
+    } else {
+      loBound = mid;
+      fLo = fMid;
+    }
+  }
+  return (loBound + hiBound) / 2;
+}
+
+/**
+ * Project the unlevered IRR of holding a property for PROJECTION_ASSUMPTIONS.holdYears,
+ * growing currentNoi at noiGrowthPct/yr, then selling at the end of the hold by
+ * capitalizing the FORWARD (year holdYears+1) NOI at exitCapRate — the income stream
+ * the next buyer is actually purchasing, per standard direct-cap terminal-value
+ * convention.
+ *
+ * entryValue and currentNoi must both be positive finite numbers (a non-positive or
+ * missing value makes the projection undefined) — returns null otherwise, never NaN.
+ * Exported (underscore convention) for direct unit testing of the cash-flow math.
+ */
+export function _projectUnleveredReturn(entryValue: number, currentNoi: number): number | null {
+  if (!Number.isFinite(entryValue) || entryValue <= 0) return null;
+  if (!Number.isFinite(currentNoi) || currentNoi <= 0) return null;
+
+  const { holdYears, noiGrowthPct, exitCapRate } = PROJECTION_ASSUMPTIONS;
+  const cashFlows: number[] = [-entryValue];
+  for (let year = 1; year <= holdYears; year++) {
+    const noiThisYear = currentNoi * (1 + noiGrowthPct) ** year;
+    if (year < holdYears) {
+      cashFlows.push(noiThisYear);
+    } else {
+      const forwardNoi = currentNoi * (1 + noiGrowthPct) ** (holdYears + 1);
+      const terminalValue = forwardNoi / exitCapRate;
+      cashFlows.push(noiThisYear + terminalValue);
+    }
+  }
+
+  const irr = solveUnleveredIrr(cashFlows);
+  return irr !== null && Number.isFinite(irr) ? irr : null;
+}
+
+/**
+ * Pick a genuine ANNUAL Spine-B NOI level for a property: the latest FULL-YEAR
+ * period, full stop. Unlike scores.ts's levelRow selection — which safely falls
+ * back to the latest raw (possibly sub-annual) period because it only ever
+ * consumes that value as a ratio/percentile within a same-grain cohort — this
+ * feeds an absolute-level unlevered IRR. A YTD or single-month oxfordNoi fed in
+ * unannualized would understate income by the periods-per-year factor (~12x for
+ * a single month) and fabricate a wrong, typically deeply negative return.
+ * Adversarial refute (2026-07-07) confirmed this exact defect in an earlier
+ * revision that fell back to sorted[sorted.length-1] here. Returns null — never
+ * a sub-annual fallback — when the property has no full-year period yet, so
+ * expectedReturnPct correctly stays null (+ dataQuality flag) instead of a
+ * fabricated number for newly onboarded, YTD-only properties.
+ */
+function currentSpineBNoi(seriesForProperty: PeriodMetrics[] | undefined): number | null {
+  if (!seriesForProperty || seriesForProperty.length === 0) return null;
+  const fyPeriod = latestFullYearPeriod(seriesForProperty);
+  if (fyPeriod === null) return null;
+  const levelRow = seriesForProperty.find((m) => m.period === fyPeriod);
+  return levelRow ? levelRow.oxfordNoi : null;
+}
+
 // ── Verdict builder for one property ─────────────────────────────────────────
 
 import type { PropertyScore } from '../../src/contracts/warehouse';
@@ -71,6 +193,7 @@ function buildVerdict(
   hurdleRatePct: number,
   advisoryOnly: boolean,
   forecastInputs: { periods: number } | undefined,
+  expectedReturnPct: number | null,
 ): AllocationVerdict {
   const debtSignal = ds?.signal ?? 'no-debt';
   const debtScoreBand = ds?.scoreBand ?? 'adequate';
@@ -92,9 +215,10 @@ function buildVerdict(
   // Action priority (first match wins)
   let action: AllocationAction;
   let riskBand: RiskBand;
-  // PHASE 5 v2 DEFERRAL (C-4): expectedReturnPct math is not implemented in v1 —
-  // it stays null on every branch, which forces returnAboveHurdle null (see below).
-  let expectedReturnPct: number | null = null;
+  // expectedReturnPct is computed once, upstream, from Spine A entry value + Spine B
+  // NOI (see PROJECTION_ASSUMPTIONS / _projectUnleveredReturn) — applies uniformly
+  // regardless of which action wins below; it is an input signal, not an action-
+  // specific quantity.
   let timelineMonths = 0;
   const reasons: string[] = [...ps.reasons];
 
@@ -105,7 +229,6 @@ function buildVerdict(
     //    on a non-distressed property (latent false-positive sell risk).
     action = 'sell';
     riskBand = 'high';
-    expectedReturnPct = null;
     timelineMonths = 9; // see I-2 (spec TIMELINE)
     reasons.push('Capital action: disposition-candidate + healthBand: concern');
   } else if (debtSignal === 'refi' || debtSignal === 'cash-out') {
@@ -115,7 +238,6 @@ function buildVerdict(
       debtScoreBand === 'strong' ? 'low' :
       debtScoreBand === 'adequate' ? 'moderate' :
       'elevated';
-    expectedReturnPct = null;
     timelineMonths = 4; // see I-2 (spec TIMELINE)
     reasons.push(`Debt signal: ${debtSignal}`);
     // PHASE 5 v2 DEFERRAL (C-2): refi fires on debtSignal alone. refiCashSavingsPct()
@@ -124,7 +246,6 @@ function buildVerdict(
     // 3. improve → degrades to hold in Phase 5 (capexIrr estimate deferred to Phase 4 v2)
     action = 'hold';
     riskBand = healthBandToRisk(ps.healthBand);
-    expectedReturnPct = null;
     timelineMonths = 0;
     reasons.push('improve deferred: capexIrr estimate requires Phase 4 v2 data');
   } else {
@@ -132,7 +253,6 @@ function buildVerdict(
     // timelineMonths=0: Phase 5 defers a concrete hold timeline (Phase 5 v2 will set 12 months)
     action = 'hold';
     riskBand = healthBandToRisk(ps.healthBand);
-    expectedReturnPct = null;
     timelineMonths = 0;
   }
 
@@ -149,6 +269,17 @@ function buildVerdict(
 
   // noiPerSf: not directly available from PropertyScore in this engine layer
   const noiPerSf: number | null = null;
+
+  const dataQuality: AllocationVerdict['dataQuality'] =
+    expectedReturnPct === null
+      ? [{
+          entity: ps.propertyId,
+          field: 'expectedReturnPct',
+          issue: 'Unlevered return projection unavailable — missing Spine A oxfordValue, ' +
+            'missing/non-positive Spine B NOI, or no PortfolioSnapshot was supplied to buildPortfolioAllocation.',
+          severity: 'info',
+        }]
+      : [];
 
   return {
     propertyId: ps.propertyId,
@@ -176,7 +307,7 @@ function buildVerdict(
       noiPerSf,
       forecastPresent: forecastInputs !== undefined,
     },
-    dataQuality: [],
+    dataQuality,
   };
 }
 
@@ -255,6 +386,7 @@ export async function buildPortfolioAllocation(
   db: WarehouseDb,
   asOf: string,
   forecastInputs?: { periods: number },
+  snapshot?: PortfolioSnapshot,
 ): Promise<PortfolioAllocation> {
   // Load capital config — fail-closed: cold DB → proposed → advisoryOnly=true
   const config = loadCapitalConfig(db);
@@ -278,16 +410,36 @@ export async function buildPortfolioAllocation(
     debtByProperty.set(ds.propertyId, ds);
   }
 
+  // expectedReturnPct inputs (C-4): Spine A entry value (only when a snapshot was
+  // supplied — callers without one keep the pre-v2 null behavior) + Spine B NOI series.
+  const oxfordValueByProperty = new Map<string, number>(
+    (snapshot?.properties ?? []).map((p) => [p.id, p.oxfordValue]),
+  );
+  const metricsByProperty = new Map<string, PeriodMetrics[]>();
+  for (const m of metrics) {
+    const arr = metricsByProperty.get(m.propertyId) ?? [];
+    arr.push(m);
+    metricsByProperty.set(m.propertyId, arr);
+  }
+
   // Build verdicts for all properties with a score
-  const verdicts: AllocationVerdict[] = propertyScores.map((ps) =>
-    buildVerdict(
+  const verdicts: AllocationVerdict[] = propertyScores.map((ps) => {
+    const entryValue = oxfordValueByProperty.get(ps.propertyId) ?? null;
+    const currentNoi = currentSpineBNoi(metricsByProperty.get(ps.propertyId));
+    const expectedReturnPct =
+      entryValue !== null && currentNoi !== null
+        ? _projectUnleveredReturn(entryValue, currentNoi)
+        : null;
+
+    return buildVerdict(
       ps,
       debtByProperty.get(ps.propertyId) ?? null,
       hurdleRatePct,
       advisoryOnly,
       forecastInputs,
-    ),
-  );
+      expectedReturnPct,
+    );
+  });
 
   // Action counts — buy=0 always (pipeline candidates are NOT in verdicts[])
   // PHASE 5 v2 DEFERRAL (C-3): buy verdicts (§3.5) are NOT emitted in v1 — buy stays 0.
