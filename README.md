@@ -187,6 +187,27 @@ freshness, runtime reconciliation, data-quality flags, and AI availability — w
 
 The **primary** surface runs locally (live, private, free): `npm run dev`, or install the PWA.
 
+**Always-on, no manual start (Windows).** Register a scheduled task once and the Brain Server
++ web app come up automatically at every logon, with auto-restart if either process crashes —
+no need to open a terminal and run `npm run dev` again:
+
+```powershell
+pwsh -File scripts/register-brain-server-task.ps1   # register once; also starts it immediately
+```
+
+This mirrors the existing mirror-deploy scheduled task below, but as a standing background
+service rather than a daily job: an **at-logon** trigger for your own Windows account (not
+"run whether user is logged on or not"), since the workbook path resolves against your own
+profile and needs your OneDrive session synced anyway. No admin rights, no UAC prompt, no
+stored password — it runs with the same rights as your normal desktop session, hidden (no
+console window), with combined output logged to `logs/brain-server.log` (gitignored).
+
+```powershell
+pwsh -File scripts/stop-brain-server.ps1                                    # stop it for now
+Disable-ScheduledTask -TaskName 'ORA Command Center - Brain Server'          # stop it for good
+Unregister-ScheduledTask -TaskName 'ORA Command Center - Brain Server' -Confirm:$false  # remove entirely
+```
+
 The **mirror** is a static, read-only build for phone/away access, **live at
 https://ora-command-center.pages.dev behind Cloudflare Access** (Self-hosted app "ora-command-center.pages.dev",
 policy "ORA principals" → Allow ggoldberg@ + egoldberg@oxfordra.net, default-deny). It carries the firm's
