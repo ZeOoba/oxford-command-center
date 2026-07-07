@@ -1,9 +1,9 @@
 # Handoff — Follow-ups Discovered Fixing PR #176 TS1005 — 2026-07-07
 
-**Update 2026-07-07 (same day, follow-up session):** Items B and C below are **RESOLVED** — see
-their individual "Resolved" notes. Items A and D are still open and still need Gabriel's call /
-live-data verification respectively. Read the resolutions before re-investigating either closed
-item from scratch.
+**Update 2026-07-07 (same day, follow-up session):** Items B, C, and D below are **RESOLVED** —
+see their individual "Resolved" notes. Only Item A remains open, and a new Item E was discovered
+during Item D's verification. Read the resolutions before re-investigating any closed item from
+scratch.
 
 **Origin:** Gabriel asked for a targeted fix — `server/warehouse/capital-allocation.ts` had a
 missing `}` closing `buildBuyVerdict`, failing `tsc` in PR #176's CI gate. Fix landed, merged
@@ -161,7 +161,7 @@ still open — not investigated.
 
 ---
 
-## Item D — Pre-existing JV/fractional-ownership basis-mismatch flag (context, not newly discovered — carry forward)
+## Item D — Pre-existing JV/fractional-ownership basis-mismatch flag — RESOLVED 2026-07-07
 
 **Location (re-verified at time of writing, will drift — `Grep` for "Known follow-up" to
 relocate):** `server/warehouse/capital-allocation.ts:42-47`, a comment already in the file
@@ -183,17 +183,78 @@ all current properties this is a non-issue in practice (just fragile); if any di
 IRR math in `buildBuyVerdict`'s sibling functions needs a single source of truth for ownership
 fraction.
 
+**Resolved 2026-07-07 (same-day follow-up):** scoped the check by grepping `property-master.ts`'s
+hardcoded seed array (lines ~61-74) for `ownershipPct` values below 1 — confirmed only three
+entries: `9050-red-branch-rd-columbia-md` (0.5), `1900-n-broadway-baltimore-md` (0.5), and
+`1851-s-club-solar` (0.25, structurally different — see below). Read the live workbook directly
+(xlsx skill, `openpyxl`, copied to scratchpad first rather than opening the live OneDrive file —
+the live file was transiently locked, likely mid-sync) at
+`C:\Users\Owner\OneDrive - Oxford Capital Partners\eric spreadsheets\Master Excel Template
+Company Wide -- Oxford.xlsx` (confirmed fresh: last modified same day, 15:41). Per
+`server/workbook/parse.ts:159-184`, `oxfordOwnPct` is read from the `Property NOI` sheet,
+column 9 (0-indexed), by row.
+
+**Result: no divergence for either real JV property.**
+- 1900 N Broadway, Baltimore MD (`Property NOI` row 8): workbook `oxfordOwnPct` = **0.5**, code
+  `ownership_pct` = **0.5**. Match.
+- 9050 Red Branch Rd, Columbia MD (`Property NOI` row 9): workbook `oxfordOwnPct` = **0.5**, code
+  `ownership_pct` = **0.5**. Match.
+- 1851 S Club Solar: **does not appear in the `Property NOI` sheet at all** — searched the entire
+  workbook; it's tracked only as a cash-reconciliation/AM-fee line item (`Cash Balances`,
+  `Cash Data`, `Insurance Renewals`, `Monthly Checklist`), always labeled "(25%)" in its name,
+  never as a structured `oxfordOwnPct` field. This confirms the code's own existing note ("No
+  real estate owned") is correct — it never flows through `buildBuyVerdict`'s `oxfordValue` ×
+  `oxfordOwnPct` IRR math regardless of what `property_master.ts` says, so the mismatch risk this
+  item warned about does not apply to it. No code change needed.
+
+**Bottom line: the risk this item flagged is not currently realized anywhere in the live
+portfolio.** Still worth keeping the underlying comment in `capital-allocation.ts` (two
+independently maintained ownership fractions is still fragile by construction — a future manual
+edit to either the workbook or the seed array could silently reintroduce drift with nothing to
+catch it), but there's nothing to fix today. Re-run this same check if either JV property's
+ownership structure ever changes, or before scoring either of them again for a disposition/refi
+decision.
+
+---
+
+## Item E — `WORKBOOK_PATH` / OneDrive dual-library mismatch on this machine — FLAGGED, not fixed (per Gabriel, 2026-07-07)
+
+**Finding (discovered while verifying Item D):** `server/config.ts`'s `WORKBOOK_PATH` default —
+and `.env`'s `DOCUMENTS_DIR` / `QUICKBOOKS_CSV` — all point at
+`C:\Users\Owner\OneDrive - Oxford Capital Partners (1)\...`. On this machine, that `(1)`-suffixed
+library exists but does **not** contain the master workbook at all (no `eric spreadsheets`
+subfolder, confirmed via a repo-wide glob for `Master Excel Template*.xlsx` under that tree — zero
+matches). The actual live workbook only exists under the **other**, no-suffix library —
+`C:\Users\Owner\OneDrive - Oxford Capital Partners\eric spreadsheets\...` — which happens to be
+this session's own primary working directory.
+
+**Practical effect:** running `npm run extract` or `npm run warehouse:backfill` on this machine,
+without an explicit `WORKBOOK_PATH` env override, would fail outright (file not found) rather
+than silently reading stale data — so this is not an active data-corruption risk, but it likely
+means those commands (and anything that depends on them, e.g. a scheduled ingest task) are
+currently non-functional on this specific machine.
+
+**Gabriel's answer when asked (2026-07-07): not aware of the split — flag it, don't fix now.**
+Not investigated further per that instruction — in particular, *why* two OneDrive libraries with
+near-identical names exist on this machine (a rename/re-sync conflict and a pending machine
+migration are both plausible, per other session-context notes, but unconfirmed) was left alone.
+**Before touching `WORKBOOK_PATH`, `.env`, or running any extract/backfill script on this
+machine:** re-confirm which library is current (`ls` both, check `LastWriteTime` on the actual
+files you need, don't assume this doc's snapshot still holds) and get Gabriel's read on which
+library is authoritative before changing any path config.
+
 ---
 
 ## Priority read (my judgment, not a decision — Gabriel arbitrates)
 
 1. ~~**Item B** (contaminated main checkout)~~ — **RESOLVED 2026-07-07.**
-2. **Item D** (ownership-fraction mismatch) — still open. Real financial-math risk, but
-   "unconfirmed on live data" per its own flag; a data-verification task, not urgent unless a
-   JV asset is about to be scored.
-3. **Item C** (worktree sprawl) — **partially resolved 2026-07-07** (9 pruned); 10 remain
+2. ~~**Item D** (ownership-fraction mismatch)~~ — **RESOLVED 2026-07-07.** Verified against the
+   live workbook — no divergence found.
+3. **Item E** (`WORKBOOK_PATH`/OneDrive mismatch) — new, flagged not fixed. Worth a look before
+   anyone runs `npm run extract` / `warehouse:backfill` on this machine.
+4. **Item C** (worktree sprawl) — **partially resolved 2026-07-07** (9 pruned); 10 remain
    unchecked, zero risk to check whenever convenient.
-4. **Item A** (prettier drift) — still open, cosmetic; Gabriel's call whether to act.
+5. **Item A** (prettier drift) — still open, cosmetic; Gabriel's call whether to act.
 
 ## Where this doc lives
 
