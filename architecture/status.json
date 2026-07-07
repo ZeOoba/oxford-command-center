@@ -432,7 +432,7 @@
   "fix-status-json-ic-memo-parse-error": {
     "agent_role": "Engineering (Claude Code, Sonnet 5) — Gabriel-authorized 2026-07-06",
     "phase": "Fix pre-existing JSON syntax error in architecture/status.json (ic-memo entry had two duplicate-key blocks merged without a comma, breaking JSON.parse at line 301)",
-    "status": "complete",
+    "status": "merged",
     "blocked_by": null,
     "review_needed": false,
     "review_detail": "Confirmed bug present on origin/main prior to any other in-flight work. Removed the stale in_progress duplicate block, kept the merged (PR #121) values since a merged PR cannot regress to in_progress. Validated with `node -e \"JSON.parse(require('fs').readFileSync('architecture/status.json','utf8'))\"`. Note: an unmerged branch fix/status-json-duplicate-key (origin, commit 3369e17) already contains this same correction bundled with unrelated cleanup (removing several other stale entries) — flagged to Gabriel, not merged here to keep this PR minimal.",
@@ -442,7 +442,7 @@
   "fix-c2-refi-savings-gate": {
     "agent_role": "Engineering (Claude Code, Sonnet 5) — Gabriel-authorized 2026-07-06",
     "phase": "Phase 5 v2 — C-2: refi cash-savings gating (docs/superpowers/specs/2026-06-21-phase-5-capital-allocation-market-intel.md §3.2 rule 2)",
-    "status": "ready_for_review",
+    "status": "review_needed",
     "blocked_by": null,
     "review_needed": false,
     "review_detail": "Changes: (1) src/contracts/debt.ts — added refiCashSavingsPct: z.number().nullable() to DebtScore; (2) server/warehouse/debt-scoring.ts — computes it in scoreDebtPositions() from avgLoanRate/marketRate/totalBalance/ltv, restricted to single-loan properties (multi-loan basis-mismatch defect found and fixed during refute pass — D1's ltv is the highest-balance loan's own LTV, not a blended combined-loan LTV, so applying it to totalBalance across >1 loan manufactured a wrong equity figure; now null for loans.length!==1); no-debt branch + noDebtScore() set it null. (3) server/warehouse/capital-allocation.ts buildVerdict() — refinance action now additionally gated on refiCashSavingsPct!==null (kept existing signal in ('refi','cash-out') condition unchanged — did NOT add spec's literal dscrHeadroom<0.15 threshold, since the existing 'A-3' test locks cash-out-alone+dscrHeadroom=0.20→refinance, matching this repo's narrower ratified C-2 scope over the spec's more aggressive pseudocode); adds a reasons[] caveat when a refi/cash-out signal is undermined by undrivable savings. C-3 (buy verdicts) and C-4 (expectedReturnPct math, including wiring refiCashSavingsPct into refinance's expectedReturnPct) are separate, not-yet-started PRs per Gabriel's ship-separately decision. Gate: typecheck 0, lint 0, 1874/1882 tests green (8 pre-existing pdf-parse 'bad XRef entry' failures unrelated to this change, confirmed via git stash against unmodified origin/main). Refute-Reviewed: 3-lens adversarial pass (gating-correctness, undrivable-data-edge-cases, regression-and-contract-risk) — 2 CLEAN, 1 confirmed defect (multi-loan LTV/balance basis mismatch) found and fixed with a new regression test (TDD red→green verified). PR not yet opened — pending Gabriel's go-ahead to push.",
