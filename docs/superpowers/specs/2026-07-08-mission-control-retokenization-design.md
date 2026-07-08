@@ -21,10 +21,10 @@ This spec proceeds on decision (2) as current. Given same-day volatility, a sess
 ## 2. Scope
 
 **In scope:**
-- Full token-layer swap: colors, fonts, radii, three themes (`command`, `parchment`, `warm`) — findings #1/#4 of the original review.
-- Component-level consumers of the new tokens: severity glow language, category color-coding, `KpiStat` anatomy + drill-down navigation, `PortfolioFilterBar` affordances — findings #5/#6.
-- Signature details: filter pills, sidebar active-state, badge shape, chart series — finding #7.
-- Full verification pass (gate, Playwright + axe, contrast, screenshot diff) and doc/changelog updates.
+- **[PR-A]** Full token-layer swap: colors, fonts, radii, three themes (`command`, `parchment`, `warm`) — findings #1/#4 of the original review.
+- **[PR-B]** Component-level consumers of the new tokens: severity glow language, category color-coding, `KpiStat` anatomy + drill-down navigation, `PortfolioFilterBar` affordances — findings #5/#6.
+- **[PR-B]** Signature details: filter pills, sidebar active-state, badge shape, chart series — finding #7.
+- **[PR-A + PR-B]** Full verification pass (gate, Playwright + axe, contrast, screenshot diff) and doc/changelog updates — each PR verifies its own scope; see §6.
 
 **Out of scope (already done):** PR #185's structural fixes (`InsightsWidget` tier-board reshape, `TierBoard` 1-column support).
 
@@ -32,11 +32,11 @@ This spec proceeds on decision (2) as current. Given same-day volatility, a sess
 
 ## 3. Corrected inputs (fact-check findings)
 
-The original review's Phase 1 token-value table was checked line-by-line against `design_handoff_ora_command_center/app/ora.css`. Three corrections apply:
+The original review's Phase 1 token-value table was checked line-by-line against `design_handoff_ora_command_center/app/ora.css`. Four corrections apply (the fourth found during formal review of this spec, not the original fact-check):
 
 1. **Radius scale.** ora.css defines only three radius values at its root: `--r-sm:7px; --r:11px; --r-lg:12px` (plus `--r-pill:6px`, a distinct pill-shaped-corner token, not a general scale step). The original review's claimed `--radius-xs:5px` has no source anywhere in ora.css, and its claimed `--radius-xl:18px` is not a root-theme value at all — it's ora.css's *warm-theme* `--r-lg` value, misattributed to the default theme. Resolution: `sm`/`md`/`lg` are copied exactly (7/11/12 default, 10/14/18 warm, confirmed real warm-theme values). `xs` and `xl` have no source value in either theme; they are set proportionally to preserve the existing 5-step scale's relative spacing (`xs = sm − 2`, `xl = lg + 6`) — default theme: xs 5px, xl 18px; warm theme: xs 8px, xl 24px. This is a judgment call, not a copied design-system value — Gabriel can override the specific pixels without changing anything else in this spec.
 
-2. **Fonts.** ora.css loads IBM Plex Mono/Sans, Bricolage Grotesque, and Public Sans via a Google Fonts CDN `@import url(...)`. This repo's own guardrail requires self-hosted fonts only (Fontsource, no CDN links) — copying ora.css's import line verbatim would violate that rule. Resolution: adopt the same four type families via the equivalent self-hosted Fontsource packages (`@fontsource/ibm-plex-sans` 400/500/600/700, `@fontsource-variable/bricolage-grotesque`, `@fontsource-variable/public-sans` 400–700; keep the existing `@fontsource/ibm-plex-mono`), never the CDN import.
+2. **Fonts.** ora.css loads IBM Plex Mono/Sans, Bricolage Grotesque, and Public Sans via a Google Fonts CDN `@import url(...)`. This repo has no codified no-CDN-fonts rule (no CSP `font-src`, no lint check), but it has an unbroken established convention — `src/tokens/theme.css` currently loads 100% of its fonts via Fontsource with zero CDN imports — plus `docs/design-handoff-cut-list-reconciliation.md` (cut-list C7) explicitly rejecting runtime CDN loading as "not a pattern this codebase uses anywhere." Copying ora.css's import line verbatim would break that precedent. Resolution: adopt the same four type families via the equivalent self-hosted Fontsource packages (`@fontsource/ibm-plex-sans` 400/500/600/700, `@fontsource-variable/bricolage-grotesque`, `@fontsource-variable/public-sans` 400–700; keep the existing `@fontsource/ibm-plex-mono`), never the CDN import.
 
 3. **Category taxonomy.** The original review proposed a `categoryTone()` mapping keyed on categories (NOI/lease-economics, acquisition/pipeline, risk/debt/expiry, ops/expense, capital/tax) that do not exist in this codebase. The real taxonomy, verified in `src/modules/insights/insights.logic.ts`'s `CATEGORY_TO_FAMILY`, is: `debt, deal, concentration, lease, occupancy, collections, insurance, cash, anomaly, data`. Resolution: `categoryTone()` is keyed on these ten real values, using `Badge.tsx`'s confirmed real `BadgeTone` union (`neutral | gold | green | amber | red | blue | purple`):
 
@@ -55,18 +55,50 @@ The original review's Phase 1 token-value table was checked line-by-line against
 
    `BadgeTone` also has a `'gold'` literal not used by this mapping — its fate (retire vs. remap) is a §4 sweep item, not a categoryTone concern.
 
+4. **Color/theme crosswalk** (found during formal review — the original review gave no color values at all, and one more value turns out fabricated the same way radius xs/xl were). ora.css's three theme blocks bind to this repo's theme names as: `:root` (unnamed, dark) → `command`; `[data-theme="light"]` → `parchment`; `[data-theme="warm"]` → `warm`. Full crosswalk, ora.css source var → repo token name → hex, verified by direct read of `design_handoff_ora_command_center/app/ora.css`:
+
+   | repo token | command (`:root`) | parchment (`light`) | warm |
+   |---|---|---|---|
+   | `--surface-base` ← `--bg` | `#0c0f14` | `#eef1f6` | `#f3ede1` |
+   | `--surface-sunken` ← `--inset` | `#0b1016` | `#eef2f7` | `#f4eee2` |
+   | `--surface-raised` ← `--panel` | `#141a22` | `#ffffff` | `#fffdf8` |
+   | `--surface-overlay` ← `--panel-2` | `#171f29` | `#f6f8fb` | `#fbf6ec` |
+   | `--surface-rail` ← `--bg-2` | `#0f141b` | `#ffffff` | `#f7f1e6` |
+   | `--border-subtle` ← `--line` | `#222c38` | `#e1e6ee` | `#e7ddca` |
+   | `--grid-line` ← `--line-2` | `#1b2531` | `#eef1f6` | `#efe7d6` |
+   | `--text-primary` ← `--ink` | `#e8edf3` | `#121a26` | `#2a2420` |
+   | `--text-secondary` ← `--ink-2` | `#aab6c4` | `#475568` | `#5c5247` |
+   | `--text-tertiary` ← `--muted` | `#6b7888` | `#8593a6` | `#9b9081` |
+   | `--accent` | `#39d3c0` | `#0e9e8e` | `#c2603c` |
+   | `--text-on-accent` ← `--accent-ink` | `#06120f` | `#ffffff` | `#fffdf8` |
+   | `--accent-quiet` ← `--accent-soft` | `rgba(57,211,192,.09)` | `rgba(14,158,142,.10)` | `rgba(194,96,60,.10)` |
+   | `--color-pos` ← `--green` | `#54d49a` | `#1c9c63` | `#3f8a5a` |
+   | `--color-warn` ← `--amber` | `#f4b740` | `#bd8311` | `#b8881f` |
+   | `--color-neg` ← `--red` | `#f06a4d` | `#d35338` | `#c2603c` (same as accent — ora.css's own choice, not an error) |
+   | `--color-info` ← `--blue` | `#5aa7f0` | `#2f7fd6` | `#2f6f6a` |
+   | `--color-accent2` ← `--violet` | `#a98cf0` | `#7a5ad0` | `#8a5a72` |
+   | `--shadow-card` ← `--panel-shadow` | `none` | `0 1px 2px rgba(35,50,75,.04), 0 10px 24px rgba(35,50,75,.05)` | `0 2px 4px rgba(90,70,40,.05), 0 14px 30px rgba(90,70,40,.07)` |
+   | `--glow-accent` ← `--glow` | `0 0 0 1px rgba(57,211,192,.25), 0 0 18px rgba(57,211,192,.12)` | `0 0 0 1px rgba(14,158,142,.25), 0 6px 16px rgba(14,158,142,.12)` | `0 6px 14px rgba(194,96,60,.26)` |
+   | `*-soft` pos/warn/neg (12% alpha) | derived via `color-mix(in oklab, var(--color-x) 12%, transparent)` per Phase 1's own note, matching ora.css's own soft variants at the same 12% alpha | | |
+
+   **`--border-strong` has no ora.css source at all** — confirmed by grepping the full file for the original review's claimed values (`#2e3a49`/`#c9d2df`/`#d6c9b0`): zero hits. ora.css doesn't use a two-tier border-strength system; every emphasized border in it reuses `var(--line)` or switches to `var(--accent-dim)`/`var(--accent)` for interactive states instead. Resolution, same treatment as the radius xs/xl gap in point 1: derive `--border-strong` via `color-mix(in oklab, var(--border-subtle-base-hex) 65%, transparent)` (roughly double `--border-subtle`'s current ~26-40% intensity pattern) rather than inventing a literal hex — flagged as a judgment call, override if you want a different intensity.
+
 ## 4. Architecture — two-phase delivery
 
 Because token *names* are unchanged (only their values move), landing the token layer alone re-colors and re-fonts the entire app immediately — every component already consumes `var(--accent)`, `var(--surface-base)`, etc. This means the two phases are not a "half-migrated, inconsistent-looking" sequence; PR-B is pure additive polish on top of an already-fully-retokenized app.
 
-- **PR-A — token layer.** Branch `design/mission-control-tokens` (this worktree). Files: `src/tokens/theme.css` (fonts, colors, radii, three themes, base-layer signatures), `package.json` (Fontsource dependency swap), `src/lib/theme.ts` (`Theme` type gains `'warm'`), `src/shell/ThemeToggle.tsx` (2-way → 3-way cycle), and the brand-leftover sweep: `src/charts/theme.ts:7`, `src/modules/intel/LeaseRunView.tsx:162,189,286`, `src/modules/intel/PropertyIntelView.tsx:259` (comment only), `src/modules/overview/widgets.tsx:41` — all confirmed via grep as the only `color-gold`/`color-navy`/`navy-`/`gold-` hits outside `theme.css` itself.
-- **PR-B — consumers + signature details.** New worktree, opened after PR-A merges to main (so PR-B's contrast/visual verification runs against real token values, not assumptions). Files: `src/primitives/TierBoard.tsx` (severity glow on tier-header dots and the private `TierCard`), `src/primitives/StatusPill.tsx` (glow on live/refreshing state), `src/modules/insights/insights.logic.ts` (new `categoryTone()` export, threaded through `TierBoard`'s `TierItem.categoryTone`), `src/primitives/KpiStat.tsx` (remove 3px left bar, add `onPress`/`href`, wire drill-down per KPI — Value/SF → `portfolio`, NOI → `intel`, Debt → `debt`, Cash → `cash`, WALT/Occupancy → `leases` — all five module ids confirmed real in `src/shell/modules.tsx`), `src/shell/PortfolioFilterBar.tsx` (new `slice` prop, filtered-state styling), `src/shell/Sidebar.tsx` (replace the existing filled-pill active indicator with a 3px left-edge bar — see §5), `src/primitives/Badge.tsx` (radius → square-ish except count bubbles; resolve the `'gold'` tone), `src/charts/theme.ts` (series reorder + replace the hardcoded `--color-gold-300` fallback with `--color-warn`).
+- **PR-A — token layer.** Branch `design/mission-control-tokens` (this worktree). Files: `src/tokens/theme.css` (fonts, colors, radii, three themes, base-layer signatures), `package.json` (Fontsource dependency swap), `src/lib/theme.ts` (`Theme` type gains `'warm'`), `src/shell/ThemeToggle.tsx` (2-way → 3-way cycle), and the brand-leftover sweep: `src/charts/theme.ts:7`, `src/modules/intel/LeaseRunView.tsx:162,189,286`, `src/modules/intel/PropertyIntelView.tsx:259` (comment only), `src/modules/overview/widgets.tsx:39` — all confirmed via grep as the only `color-gold`/`color-navy`/`navy-`/`gold-` hits outside `theme.css` itself.
+
+  **`package.json` is architect-owned** (`.claude/hooks/architect-owned.json`, `CLAUDE.md` §4 Architect-only files) and is hard-enforced by `.claude/hooks/file-guard.mjs`, which blocks any edit to it unless `architecture/status.json` declares `review_needed: true` with a filled `review_detail` AND an architect acknowledgment exists at `.claude/overrides/architect-edit-ok`. `theme.css`, `theme.ts`, `ThemeToggle.tsx`, and every brand-sweep file above are NOT architect-owned — `package.json`'s Fontsource dependency swap is the only architect-owned touch in either phase. This is declared in `architecture/status.json`'s `mission-control-retokenization` entry; the actual `package.json` edit in PR-A execution is blocked until Gabriel's ack lands.
+- **PR-B — consumers + signature details.** New worktree, opened after PR-A merges to main (so PR-B's contrast/visual verification runs against real token values, not assumptions). Files: `src/primitives/TierBoard.tsx` (severity glow on tier-header dots and the private `TierCard`), `src/primitives/StatusPill.tsx` (glow on live/refreshing state), `src/modules/insights/insights.logic.ts` (new `categoryTone()` export, threaded through a new `TierItem.categoryTone` field — not present on the interface today, added in this phase), `src/primitives/KpiStat.tsx` (remove 3px left bar, add `onPress`/`href`, wire drill-down per KPI — Value/SF → `portfolio`, NOI → `intel`, Debt → `debt`, Cash → `cash`, WALT/Occupancy → `leases` — all five module ids confirmed real in `src/shell/modules.tsx`), `src/shell/PortfolioFilterBar.tsx` (new `slice` prop, filtered-state styling), `src/shell/Sidebar.tsx` (replace the existing filled-pill active indicator with a 3px left-edge bar — see §5), `src/primitives/Badge.tsx` (radius → square-ish except count bubbles; resolve the `'gold'` tone), `src/charts/theme.ts` (series reorder + replace the hardcoded `--color-gold-300` fallback with `--color-warn`).
 
 Both branches follow the CLAUDE.md worktree protocol: claimed in `architecture/status.json` before work starts (this branch's claim is in this same commit), re-verified against `git status`/`status.json` immediately before creation given how much this checkout has moved today from concurrent sessions.
 
 ## 5. Open judgment calls (flagged, not silently decided)
 
 - **Radius xs/xl values** (§3.1) — proportional derivation chosen in the absence of a source value; specific pixels are overridable.
+- **`--border-strong` value** (§3.4) — no ora.css source exists at all; derived via `color-mix` at higher intensity than `--border-subtle` rather than a copied hex.
+- **Architect ack for `package.json`** (§4) — PR-A cannot land until Gabriel acknowledges the architect-owned dependency touch per the hook-enforced protocol. Not a design judgment call, but a hard process gate this spec cannot resolve on its own.
 - **Sidebar active-state indicator** — the design system calls for a 3px left-edge bar; the current implementation already has a different, working active-state affordance (a filled pill via `motion.span`, confirmed in code). This spec recommends *replacing* the pill with the bar rather than running both, to avoid two redundant active-state signals. If Gabriel wants both, PR-B keeps the pill and adds the bar as a secondary accent.
 - **`BadgeTone`'s `'gold'` literal** — not part of the categoryTone mapping; PR-B decides whether to retire it (if unreferenced after the sweep) or repoint it to a Mission-Control-coherent value.
 
