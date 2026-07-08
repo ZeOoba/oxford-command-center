@@ -2,8 +2,11 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
 import { getMacro } from '../server/macro/getMacro';
-import { WORKBOOK_PATH } from '../server/config';
+import { loadEnvFile } from '../server/load-env';
+import { workbookPath } from '../server/config';
 import type { PortfolioSnapshot } from '../src/contracts/index';
+
+loadEnvFile();
 
 /**
  * Bakes the current workbook + macro into static JSON the client reads with no server —
@@ -31,7 +34,7 @@ async function main() {
   const pub = join(process.cwd(), 'public');
   mkdirSync(pub, { recursive: true });
 
-  const { snapshot: raw } = await parseWorkbook(WORKBOOK_PATH);
+  const { snapshot: raw } = await parseWorkbook(workbookPath());
   if (process.env.BRIEF_ENABLED === '1') {
     const { runBrief } = await import('../server/brief/run');
     // M3: thread getMacro as macroProvider so the brief's refi-spread signal uses the live

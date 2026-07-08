@@ -1,6 +1,9 @@
 import ExcelJS from 'exceljs';
 import { parseWorkbook } from '../server/workbook/parse';
-import { WORKBOOK_PATH } from '../server/config';
+import { loadEnvFile } from '../server/load-env';
+import { workbookPath } from '../server/config';
+
+loadEnvFile();
 
 type CellValue = ExcelJS.CellValue;
 const cv = (v: CellValue | undefined): unknown => {
@@ -27,9 +30,9 @@ interface Check {
 }
 
 async function main() {
-  const { snapshot } = await parseWorkbook(WORKBOOK_PATH);
+  const { snapshot } = await parseWorkbook(workbookPath());
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(WORKBOOK_PATH);
+  await wb.xlsx.readFile(workbookPath());
 
   const find = (sheet: string, pred: (c1: string) => boolean, col: number): number | null => {
     const ws = wb.getWorksheet(sheet);

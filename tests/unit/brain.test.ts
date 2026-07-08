@@ -36,11 +36,10 @@ function makeBase(): Record<string, unknown> {
 }
 
 vi.mock('../../server/config', () => ({
-  WORKBOOK_PATH: '/nonexistent/oxford-test-workbook.xlsx',
+  workbookPath: () => '/nonexistent/oxford-test-workbook.xlsx',
   SNAPSHOT_PATH: h.snapshotPath,
   SERVER_PORT: 8911,
   WORKBOOK_AS_OF: '2026-06-01',
-  QUICKBOOKS_CSV: null,
 }));
 
 vi.mock('../../server/workbook/parse', () => ({
