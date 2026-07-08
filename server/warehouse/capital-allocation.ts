@@ -81,10 +81,10 @@ import type { RegionalMacroSnapshot } from '../../src/contracts/regional-macro';
 
 function healthBandToRisk(band: HealthBand): RiskBand {
   const map: Record<HealthBand, RiskBand> = {
-    'excellent': 'low',
-    'good': 'moderate',
-    'watch': 'elevated',
-    'concern': 'high',
+    excellent: 'low',
+    good: 'moderate',
+    watch: 'elevated',
+    concern: 'high',
   };
   return map[band];
 }
@@ -116,9 +116,9 @@ function buildBuyVerdict(
   const expectedReturnPct: number | null = null;
   const returnAboveHurdle = expectedReturnPct !== null ? expectedReturnPct >= hurdleRatePct : null;
 
-  let confidence01 = 0.80;
+  let confidence01 = 0.8;
   if (forecastInputs === undefined) confidence01 = Math.min(confidence01, 0.65);
-  confidence01 = Math.max(0.10, confidence01);
+  confidence01 = Math.max(0.1, confidence01);
 
   // A null basisDiscountPct passes the buyable gate (spec §3.5), but null is indistinguishable
   // between "genuinely not applicable" and "the acquisition score never computed it" — surface
@@ -129,7 +129,8 @@ function buildBuyVerdict(
           {
             entity: candidate.candidateId,
             field: 'basisDiscountPct',
-            issue: 'basisDiscountPct is null for the top-ranked buyable candidate — the buyable gate treats null as passing, but null cannot distinguish "genuinely no discount data expected" from an acquisition score that never computed this field.',
+            issue:
+              'basisDiscountPct is null for the top-ranked buyable candidate — the buyable gate treats null as passing, but null cannot distinguish "genuinely no discount data expected" from an acquisition score that never computed this field.',
             severity: 'warn' as const,
           },
         ]
@@ -189,8 +190,7 @@ export const PROJECTION_ASSUMPTIONS = {
  * financial code must fail-open, not crash the allocation route.
  */
 function solveUnleveredIrr(cashFlows: number[]): number | null {
-  const npv = (r: number): number =>
-    cashFlows.reduce((sum, cf, t) => sum + cf / (1 + r) ** t, 0);
+  const npv = (r: number): number => cashFlows.reduce((sum, cf, t) => sum + cf / (1 + r) ** t, 0);
 
   const lo = -0.999;
   const hi = 10; // 1000% ceiling — far beyond any sane real-estate return
@@ -355,7 +355,10 @@ function computeSameBasisNoiPerSfMedian(
  * peer median, and a positive gap are all known. Never returns a guessed number when an
  * input is missing — same "undrivable → null" convention as refiCashSavingsPct (C-2).
  */
-function capexIrrEstimate(noiPerSf: number | null, sameBasisNoiPerSfMedian: number | null): number | null {
+function capexIrrEstimate(
+  noiPerSf: number | null,
+  sameBasisNoiPerSfMedian: number | null,
+): number | null {
   if (noiPerSf === null || sameBasisNoiPerSfMedian === null) return null;
   if (noiPerSf >= sameBasisNoiPerSfMedian) return null;
   const gap = sameBasisNoiPerSfMedian - noiPerSf;
@@ -385,7 +388,7 @@ function buildVerdict(
   const horizonPeriods = forecastInputs?.periods ?? 0;
 
   // Confidence: base 0.6 when both PropertyScore + DebtScore present; boost capped at 0.65/0.85
-  const baseConf = (ds !== null) ? 0.6 : 0.45;
+  const baseConf = ds !== null ? 0.6 : 0.45;
   const subBoost = Math.min(0.05, Object.keys(ps.subScores).length * 0.01);
   const rawConf = baseConf + subBoost;
   const confCap = forecastInputs !== undefined ? 0.85 : 0.65;
@@ -406,9 +409,12 @@ function buildVerdict(
   // (spec §3.2 rule 2 — refiCashSavingsPct(d) !== null). Undrivable savings falls through
   // to the next rule (improve/hold) rather than emitting refinance on signal alone.
   const refiSignalPresent = debtSignal === 'refi' || debtSignal === 'cash-out';
-  const refiEligible = refiSignalPresent && ds?.refiCashSavingsPct !== null && ds?.refiCashSavingsPct !== undefined;
+  const refiEligible =
+    refiSignalPresent && ds?.refiCashSavingsPct !== null && ds?.refiCashSavingsPct !== undefined;
   if (refiSignalPresent && !refiEligible) {
-    reasons.push('Refinance deferred: post-refi cash-savings undrivable (rate, LTV, or balance data insufficient)');
+    reasons.push(
+      'Refinance deferred: post-refi cash-savings undrivable (rate, LTV, or balance data insufficient)',
+    );
   }
 
   if (ps.capitalAction === 'disposition-candidate' && ps.healthBand === 'concern') {
@@ -424,9 +430,7 @@ function buildVerdict(
     // 2. refinance (governor-block signal falls to hold per priority 4; it cannot match here)
     action = 'refinance';
     riskBand =
-      debtScoreBand === 'strong' ? 'low' :
-      debtScoreBand === 'adequate' ? 'moderate' :
-      'elevated';
+      debtScoreBand === 'strong' ? 'low' : debtScoreBand === 'adequate' ? 'moderate' : 'elevated';
     timelineMonths = 4; // see I-2 (spec TIMELINE)
     reasons.push(`Debt signal: ${debtSignal}`);
     // PHASE 5 v2 DEFERRAL (C-4): expectedReturnPct for refinance (= refiCashSavingsPct)
@@ -438,7 +442,9 @@ function buildVerdict(
     action = 'improve';
     riskBand = healthBandToRisk(ps.healthBand);
     timelineMonths = 12; // spec TIMELINE table: improve = 12 (mid of 6-18)
-    reasons.push(`Capital action: invest; capexIrr proxy ${(capexIrr * 100).toFixed(1)}% clears hurdle`);
+    reasons.push(
+      `Capital action: invest; capexIrr proxy ${(capexIrr * 100).toFixed(1)}% clears hurdle`,
+    );
   } else if (ps.capitalAction === 'invest') {
     // 3-neg. invest signal present but capexIrr proxy undrivable or doesn't clear hurdle →
     // degrades to hold (matches Phase 5 v1's original fail-safe default).
@@ -458,8 +464,7 @@ function buildVerdict(
     timelineMonths = 0;
   }
 
-  const returnAboveHurdle =
-    expectedReturnPct !== null ? expectedReturnPct >= hurdleRatePct : null;
+  const returnAboveHurdle = expectedReturnPct !== null ? expectedReturnPct >= hurdleRatePct : null;
 
   // Deferred-state flags added to reasons for transparency
   if (!forecastInputs) {
@@ -477,7 +482,8 @@ function buildVerdict(
     dataQuality.push({
       entity: ps.propertyId,
       field: 'expectedReturnPct',
-      issue: 'Unlevered return projection unavailable — missing Spine A oxfordValue, ' +
+      issue:
+        'Unlevered return projection unavailable — missing Spine A oxfordValue, ' +
         'missing/non-positive Spine B NOI, or no PortfolioSnapshot was supplied to buildPortfolioAllocation.',
       severity: 'info',
     });
@@ -489,7 +495,8 @@ function buildVerdict(
     dataQuality.push({
       entity: ps.propertyId,
       field: 'capexIrr',
-      issue: `capexIrr is a proxy assuming a $${ASSUMED_CAPEX_PSF}/SF capex spend instantly ` +
+      issue:
+        `capexIrr is a proxy assuming a $${ASSUMED_CAPEX_PSF}/SF capex spend instantly ` +
         'and permanently closes the noiPerSf gap to same-basis peers — not a measured capex-cost ' +
         'estimate. See capexIrrEstimate() in capital-allocation.ts for the load-bearing assumption.',
       severity: 'info',
@@ -545,9 +552,9 @@ interface AcqScoreRow {
 import { ClusterTier } from '../../src/contracts/acquisition';
 
 function loadPipelineCandidates(db: WarehouseDb): PortfolioAllocation['pipeline'] {
-  const candidates = db.prepare(
-    `SELECT id, address, market, status FROM acq_candidates WHERE status = 'active'`,
-  ).all() as AcqCandRow[];
+  const candidates = db
+    .prepare(`SELECT id, address, market, status FROM acq_candidates WHERE status = 'active'`)
+    .all() as AcqCandRow[];
 
   // Hoist prepared statement outside the map loop (Fix A-2)
   const latestScoreStmt = db.prepare(
@@ -573,7 +580,8 @@ function loadPipelineCandidates(db: WarehouseDb): PortfolioAllocation['pipeline'
       try {
         const parsed = JSON.parse(scoreRow.score_json) as Record<string, unknown>;
         if (typeof parsed['leveredIrr'] === 'number') leveredIrr = parsed['leveredIrr'];
-        if (typeof parsed['basisDiscountPct'] === 'number') basisDiscountPct = parsed['basisDiscountPct'];
+        if (typeof parsed['basisDiscountPct'] === 'number')
+          basisDiscountPct = parsed['basisDiscountPct'];
       } catch {
         // score_json malformed — silently skip (non-fatal)
       }
@@ -584,9 +592,10 @@ function loadPipelineCandidates(db: WarehouseDb): PortfolioAllocation['pipeline'
       address: c.address,
       // market: validate the raw DB string against ClusterTier — a non-conforming
       // value must NOT crash GET /allocate. safeParse → null on miss.
-      market: c.market !== null && ClusterTier.safeParse(c.market).success
-        ? (c.market as PortfolioAllocation['pipeline'][number]['market'])
-        : null,
+      market:
+        c.market !== null && ClusterTier.safeParse(c.market).success
+          ? (c.market as PortfolioAllocation['pipeline'][number]['market'])
+          : null,
       composite: scoreRow?.composite ?? null,
       tier,
       leveredIrr,
@@ -691,7 +700,11 @@ export async function buildPortfolioAllocation(
 
   // Action counts — tally across all emitted verdicts (buy included as of C-3).
   const actionCounts: Record<AllocationAction, number> = {
-    buy: 0, hold: 0, sell: 0, refinance: 0, improve: 0,
+    buy: 0,
+    hold: 0,
+    sell: 0,
+    refinance: 0,
+    improve: 0,
   };
   for (const v of verdicts) actionCounts[v.action]++;
 
@@ -873,7 +886,7 @@ export async function buildCapitalAllocationReport(
     macro = {
       tenYearRate: dgs10?.value ?? null,
       cpi: cpi?.value ?? null,
-      source: (live.source === 'fred' || live.source === 'mock') ? live.source : 'mock',
+      source: live.source === 'fred' || live.source === 'mock' ? live.source : 'mock',
       asOf: live.asOf ?? null,
     };
   } else {
@@ -932,7 +945,10 @@ export async function buildCapitalAllocationReport(
     if (bucket === '0-6m' || bucket === '6-12m') {
       const existing = nearTermExpiryRentByProperty.get(lease.propertyId) ?? 0;
       const ownershipPct = ownershipPctByProperty.get(lease.propertyId) ?? 1;
-      nearTermExpiryRentByProperty.set(lease.propertyId, existing + lease.annualRent * ownershipPct);
+      nearTermExpiryRentByProperty.set(
+        lease.propertyId,
+        existing + lease.annualRent * ownershipPct,
+      );
     }
   }
 
@@ -979,13 +995,16 @@ export async function buildCapitalAllocationReport(
     const debtUrgency = !hasDebt
       ? 0
       : clamp(
-          (effectiveBalloonMonths === null ? 0 : Math.max(0, 100 - (effectiveBalloonMonths / 12) * 10)) +
+          (effectiveBalloonMonths === null
+            ? 0
+            : Math.max(0, 100 - (effectiveBalloonMonths / 12) * 10)) +
             (dscr !== null && dscr < dscrFloor ? 30 : 0),
           0,
           100,
         );
 
-    const raw = (100 - healthVal) * 0.35 + attentionScore * 0.30 + leasingRisk * 0.20 + debtUrgency * 0.15;
+    const raw =
+      (100 - healthVal) * 0.35 + attentionScore * 0.3 + leasingRisk * 0.2 + debtUrgency * 0.15;
     const priorityScore = Math.max(0, Math.min(100, raw));
 
     // ── Rationale builder — debt reasons via single-attribution helper (C1+I1) ──
@@ -1001,13 +1020,13 @@ export async function buildCapitalAllocationReport(
     if (nearTermExpiryRent > 0 && noi > 0 && nearTermExpiryRent / noi > 0.2) {
       reasons.push({
         text: `${Math.round((nearTermExpiryRent / noi) * 100)}% of NOI expiring ≤12 months`,
-        impact: leasingRisk * 0.20,
+        impact: leasingRisk * 0.2,
       });
     }
     if (atRiskLikelihoodCount > 0) {
       reasons.push({
         text: `${atRiskLikelihoodCount} at-risk/lapsing renewal signal${atRiskLikelihoodCount > 1 ? 's' : ''}`,
-        impact: atRiskLikelihoodCount * 10 * 0.20,
+        impact: atRiskLikelihoodCount * 10 * 0.2,
       });
     }
     if (healthScore !== null && healthScore < 50) {
@@ -1019,7 +1038,7 @@ export async function buildCapitalAllocationReport(
     if (attentionBand !== null && (attentionBand === 'orange' || attentionBand === 'red')) {
       reasons.push({
         text: `Attention band: ${attentionBand}`,
-        impact: attentionScore * 0.30,
+        impact: attentionScore * 0.3,
       });
     }
 
@@ -1065,12 +1084,16 @@ export async function buildCapitalAllocationReport(
     });
   }
 
-  entries.sort((a, b) => b.priorityScore - a.priorityScore || a.propertyId.localeCompare(b.propertyId));
+  entries.sort(
+    (a, b) => b.priorityScore - a.priorityScore || a.propertyId.localeCompare(b.propertyId),
+  );
 
   const investCount = entries.filter((e) => e.capitalAction === 'invest').length;
   const holdCount = entries.filter((e) => e.capitalAction === 'hold').length;
   const monitorCount = entries.filter((e) => e.capitalAction === 'monitor').length;
-  const dispositionCount = entries.filter((e) => e.capitalAction === 'disposition-candidate').length;
+  const dispositionCount = entries.filter(
+    (e) => e.capitalAction === 'disposition-candidate',
+  ).length;
   const portfolioNoi = snapshot.properties.reduce((sum, p) => sum + (p.noi ?? 0), 0);
 
   return {
