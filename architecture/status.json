@@ -469,6 +469,16 @@
     "last_updated": "2026-07-07T04:00:00Z"
   },
 
+  "fix-design-parity-p2-p3": {
+    "agent_role": "UX Agent (Claude Code, Sonnet 5) — Gabriel-authorized in-session 2026-07-08",
+    "phase": "Design System Review 2026-07-08 follow-up — findings #2 (Overview InsightsWidget flat-list binding-rule violation) + #3 (TierBoard columns=1 layout defect). D1 explicitly reaffirmed by Gabriel this session: findings #1/#4-#7 (token/palette retokenization to the handoff's 'Mission Control' system) are DECLINED — Oxford Terminal (navy/gold, EB Garamond/DM Sans) stands per the existing ratified D1(c) hybrid decision (IMPLEMENTATION_PLAN.md §3) and the firm's ORA Style Guide v1.0. No token work planned or committed here.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "DONE, PR not yet opened pending this commit. Changes: (1) src/primitives/TierBoard.tsx — COLUMN_CLASS + columns prop extended to accept 1 (finding #3). (2) src/modules/overview/widgets.tsx — PriorityActionsWidget now uses columns={1} (no more half-empty card); InsightsWidget reshaped to reuse mergeInsightSources()/buildTiers() (same functions InsightsModule.tsx/ResultsBannerWidget/PriorityActionsWidget already share) and render <TierBoard columns={3}> instead of a flat paginated <ul> (finding #2, the same gap docs/design-parity-audit-2026-07-06.md's own v2-backlog item 1 already flagged). (3) src/modules/overview/InsightList.tsx deleted (no longer referenced anywhere in src/). (4) tests/unit/tier-board.test.tsx + tests/unit/overview-banner.test.tsx extended (TDD: watched red pre-fix, green post-fix) — 8 new/changed tests. (5) docs/design-parity-audit-2026-07-06.md — new 'Visual parity — 2026-07-08' section recording the D1(c) reaffirmation and both fixes. All UX-Agent-owned files; no architect-owned files touched; no financial computation, no governor constants — Refute-Skip. Gate: governance/typecheck/lint clean; full unit suite 2337/2337 green; reconcile clean vs live workbook. warehouse:verify hit a Windows EPERM on its own tmp-dir rmSync cleanup when run from this worktree (3/3 reproductions) but passed clean (0/1) from the main checkout at the identical commit — confirmed environment/concurrency artifact (a second session's dev server was concurrently active against this repo), not a real failure; the script touches none of the files this PR changes. warehouse:drift skipped cleanly (no live DB in this fresh worktree, expected).",
+    "last_updated": "2026-07-08T15:55:00Z"
+  },
+
   "usage": {
     "how_to_update": "Edit your worktree's entry before starting and after completing work; commit it on your branch. Use ISO 8601 timestamps. Set review_needed=true and fill review_detail when you need architect sign-off on an architect-owned file.",
     "how_to_read": "Before starting any task, check all other worktrees for status=in_progress or review_needed. If another agent works in your file-ownership area, coordinate before editing."
