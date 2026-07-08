@@ -7,7 +7,7 @@ import { tenantScorecards } from '../src/brain/tenants';
 import { parseWorkbook } from './workbook/parse';
 import { applyOverlay, loadOverlay, saveOverlay, type Overlay } from './overlay';
 import { checkSnapshot } from './reconcile-runtime';
-import { SNAPSHOT_PATH, WORKBOOK_PATH } from './config';
+import { SNAPSHOT_PATH, workbookPath } from './config';
 import { loadQuickbooks } from './sources/quickbooks';
 
 /**
@@ -24,7 +24,7 @@ class Brain extends EventEmitter {
     source: 'none',
     lastUpdated: null,
     lastError: null,
-    workbookPath: WORKBOOK_PATH,
+    workbookPath: workbookPath(),
     flagCount: 0,
   };
 
@@ -44,7 +44,7 @@ class Brain extends EventEmitter {
   async refresh(reason = 'manual'): Promise<BrainState> {
     this.setState({ status: 'refreshing' });
     try {
-      const { snapshot, flags } = await parseWorkbook(WORKBOOK_PATH);
+      const { snapshot, flags } = await parseWorkbook(workbookPath());
       this.base = snapshot;
       const merged = applyOverlay(snapshot, this.overlay);
       // Attach QuickBooks actuals (read on every refresh; null if QUICKBOOKS_CSV not set/present).
@@ -59,6 +59,7 @@ class Brain extends EventEmitter {
         lastUpdated: new Date().toISOString(),
         lastError: null,
         flagCount: this.snapshot.dataQuality.length,
+        workbookPath: workbookPath(),
       });
       this.emit('snapshot', { reason, flags: [...flags, ...rtFlags] });
     } catch (err) {
@@ -190,12 +191,12 @@ class Brain extends EventEmitter {
 
   /** Watch the workbook; debounce noisy save events into one refresh. */
   startWatching() {
-    if (!existsSync(WORKBOOK_PATH)) {
-      this.setState({ lastError: `Workbook not found at ${WORKBOOK_PATH}` });
+    if (!existsSync(workbookPath())) {
+      this.setState({ lastError: `Workbook not found at ${workbookPath()}` });
       return;
     }
     let timer: NodeJS.Timeout | null = null;
-    const watcher = watch(WORKBOOK_PATH, {
+    const watcher = watch(workbookPath(), {
       ignoreInitial: true,
       awaitWriteFinish: { stabilityThreshold: 1200, pollInterval: 200 },
     });
