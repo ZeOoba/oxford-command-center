@@ -901,7 +901,9 @@ Expected: exits 0, entry bundle stays under the 250 kB gzip budget. Font swap ch
 
 - [ ] **Step 4: Zero raw hex/old-brand leftovers check (Acceptance criterion from the original design review, still valid)**
 
-Run: `grep -rn "#0a1322\|#c9a96e\|Garamond\|DM Sans" src/`
+Run: `grep -rni "#0a1322\|#c9a96e\|#1b2a4a\|garamond\|dm sans" src/`
+
+(Case-insensitive — a case-sensitive version of this check has a real blind spot: Task 9 found `RankedCandidateList.tsx` carrying bare hex as `#C9A96E`/`#1B2A4A`, uppercase, which a case-sensitive lowercase pattern would silently miss. `#1b2a4a` added to the pattern for the same reason — it's the other bare-hex value Task 9 found.)
 Expected: zero matches.
 
 - [ ] **Step 5: Update `architecture/status.json`**
