@@ -1,6 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- colocated widget registry + components */
 import type { ComponentType } from 'react';
-import { useState } from 'react';
 import { useSnapshot, useAnalytics } from '@/data/queries';
 import { fmtUsdCompact, fmtSf, fmtPct, fmtYears, fmtNum } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
@@ -10,9 +9,8 @@ import { BarChart } from '@/charts/BarChart';
 import { BarList } from '@/charts/BarList';
 import { AreaChart } from '@/charts/AreaChart';
 import { TierBoard, type Tier, type TierItem, type TierTotal } from '@/primitives/TierBoard';
-import { InsightList } from './InsightList';
 import { useWarehouseInsights } from '../insights/hooks';
-import { mergeInsightSources, buildSummary, totalsBySpine, type MergedInsight } from '../insights/insights.logic';
+import { mergeInsightSources, buildSummary, buildTiers, totalsBySpine, type MergedInsight } from '../insights/insights.logic';
 
 export interface WidgetDef {
   id: string;
@@ -225,34 +223,33 @@ function PriorityActionsWidget() {
   const { merged } = mergeInsightSources(analytics.insights, candidates, data.snapshot);
   const tier = buildPriorityActionsTier(merged, PRIORITY_ACTIONS_LIMIT);
 
-  // A single ranked tier — full 3-column TierBoard doesn't suit a summary-surface widget card,
-  // so this passes just one Tier through the same primitive at its narrowest supported column
-  // count (2; TierBoard's COLUMN_CLASS map doesn't offer 1).
-  return <TierBoard tiers={[tier]} columns={2} />;
+  // A single ranked tier — full width, one column, so the card doesn't render half-empty.
+  return <TierBoard tiers={[tier]} columns={1} />;
 }
 
-const INSIGHTS_INITIAL = 7;
-
+// Reshaped to the same tier-board pattern as InsightsModule.tsx / ResultsBannerWidget /
+// PriorityActionsWidget above — reuses mergeInsightSources()/buildTiers() rather than rendering
+// analytics.insights as its own flat, independently-paginated list (design-parity finding #2:
+// the no-long-lists rule bans a ranked, $-quantified feed as a plain <ul>).
 function InsightsWidget() {
+  const { data } = useSnapshot();
   const { analytics } = useAnalytics();
-  const [showAll, setShowAll] = useState(false);
-  if (!analytics) return null;
-  const all = analytics.insights;
-  const visible = showAll ? all : all.slice(0, INSIGHTS_INITIAL);
-  const hidden = all.length - INSIGHTS_INITIAL;
+  const insightsQuery = useWarehouseInsights();
+  if (!data || !analytics) return null;
+
+  const candidates = insightsQuery.data?.candidates ?? [];
+  const { merged } = mergeInsightSources(analytics.insights, candidates, data.snapshot);
+  const tiers = buildTiers(merged);
+
   return (
     <Card accent>
-      <CardHeader title="Insights & Alerts" trailing={<Badge tone={all.some((i) => i.severity === 'critical') ? 'red' : 'amber'}>{all.length} active</Badge>} />
-      <InsightList insights={visible} />
-      {!showAll && hidden > 0 && (
-        <button
-          onClick={() => setShowAll(true)}
-          className="w-full py-2.5 text-xs font-medium"
-          style={{ borderTop: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', background: 'transparent', cursor: 'pointer' }}
-        >
-          Show {hidden} more
-        </button>
-      )}
+      <CardHeader
+        title="Insights & Alerts"
+        trailing={<Badge tone={merged.some((m) => m.severity === 'critical') ? 'red' : 'amber'}>{merged.length} active</Badge>}
+      />
+      <div className="p-3">
+        <TierBoard tiers={tiers} columns={3} />
+      </div>
     </Card>
   );
 }
