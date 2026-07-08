@@ -508,7 +508,7 @@ New:
   --surface-overlay: #171f29;
   --surface-rail: #0f141b;
   --border-subtle: #222c38;
-  --border-strong: color-mix(in oklab, #222c38 60%, #6b7888 40%);
+  --border-strong: color-mix(in oklab, var(--border-subtle) 60%, var(--text-tertiary) 40%);
   --grid-line: #1b2531;
   --text-primary: #e8edf3;
   --text-secondary: #aab6c4;
@@ -531,7 +531,7 @@ New:
 }
 ```
 
-(`--border-strong` has no ora.css source — derived here as `color-mix(in oklab, var(--border-subtle-hex) 60%, var(--text-tertiary-hex) 40%)`, written with literal hex operands since `color-mix` needs resolvable color values at this point in the cascade and both source hexes are already known constants in this same block — this keeps the formula identical and auditable across all three theme blocks in Tasks 5-7.)
+(`--border-strong` has no ora.css source — derived here as `color-mix(in oklab, var(--border-subtle) 60%, var(--text-tertiary) 40%)`, referencing the two custom properties already defined earlier in this same block rather than duplicating their literal hex values. CSS custom properties resolve lazily at used-value time regardless of declaration order within a rule, so this is safe and avoids the two values ever drifting out of sync. Identical formula, by reference, across all three theme blocks in Tasks 5-7.)
 
 - [ ] **Step 2: Grep-check no lingering `--color-gold`/`--color-navy` reference in this block**
 
@@ -593,7 +593,7 @@ New:
   --surface-overlay: #f6f8fb;
   --surface-rail: #ffffff;
   --border-subtle: #e1e6ee;
-  --border-strong: color-mix(in oklab, #e1e6ee 60%, #8593a6 40%);
+  --border-strong: color-mix(in oklab, var(--border-subtle) 60%, var(--text-tertiary) 40%);
   --grid-line: #eef1f6;
   --text-primary: #121a26;
   --text-secondary: #475568;
@@ -665,7 +665,7 @@ Insert immediately after the `[data-theme='parchment']` block's closing `}` (end
   --surface-overlay: #fbf6ec;
   --surface-rail: #f7f1e6;
   --border-subtle: #e7ddca;
-  --border-strong: color-mix(in oklab, #e7ddca 60%, #9b9081 40%);
+  --border-strong: color-mix(in oklab, var(--border-subtle) 60%, var(--text-tertiary) 40%);
   --grid-line: #efe7d6;
   --text-primary: #2a2420;
   --text-secondary: #5c5247;
