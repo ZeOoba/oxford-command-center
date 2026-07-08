@@ -479,6 +479,16 @@
     "last_updated": "2026-07-08T15:55:00Z"
   },
 
+  "mission-control-retokenization": {
+    "agent_role": "UX Agent (Claude Code, Sonnet 5 planning/orchestrating; execution dispatched to Opus 4.8 subagents per Gabriel's explicit request for the highest-intelligence model) — Gabriel-authorized in-session 2026-07-08",
+    "phase": "D1(c) REVERSED again, same day, hours after fix-design-parity-p2-p3 (above) recorded it declined. Gabriel now wants the ORA Mission-Control retokenization (that entry's findings #1/#4-#7) implemented for real. This entry supersedes fix-design-parity-p2-p3's 'declined' framing for findings #1/#4-#7 ONLY — that entry's findings #2/#3 (PR #185, merged) remain correctly closed and are not reopened. Two-phase delivery: PR-A = token/font/radius/theme layer (src/tokens/theme.css + font deps) on this branch; PR-B (separate worktree, opened after PR-A merges) = consumers + signature details (severity glow, categoryTone, KpiStat anatomy + drill-down, PortfolioFilterBar, Sidebar/Badge/chart details).",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "Design spec approved by Gabriel in-session; writing docs/superpowers/specs/2026-07-08-mission-control-retokenization-design.md in this worktree now, followed by an implementation plan (superpowers:writing-plans) before any code changes. Spec corrects 3 defects found when the underlying design-review prompt was fact-checked against the live repo: (1) design_handoff_ora_command_center/app/ora.css has no xs/xl radius token under any theme (the prompt fabricated/misattributed them from the warm theme's --r-lg) — resolved via documented proportional derivation from the real sm/md/lg values, flagged as a judgment call Gabriel can override; (2) ora.css's own font-loading uses a Google Fonts CDN import, which violates this repo's self-hosted-Fontsource-only rule — plan specifies Fontsource packages, not the CDN import; (3) the categoryTone mapping is rebuilt against the real CATEGORY_TO_FAMILY taxonomy (debt/deal/concentration/lease/occupancy/collections/insurance/cash/anomaly/data) verified in src/modules/insights/insights.logic.ts, not the prompt's invented category list. No architect-owned files touched. No code changes yet — this commit is docs + this claim only.",
+    "last_updated": "2026-07-08T21:01:09Z"
+  },
+
   "usage": {
     "how_to_update": "Edit your worktree's entry before starting and after completing work; commit it on your branch. Use ISO 8601 timestamps. Set review_needed=true and fill review_detail when you need architect sign-off on an architect-owned file.",
     "how_to_read": "Before starting any task, check all other worktrees for status=in_progress or review_needed. If another agent works in your file-ownership area, coordinate before editing."
