@@ -1,7 +1,7 @@
 // src/modules/acquisitions/RankedCandidateList.tsx
 //
 // Renders the ranked acquisition candidate list from GET /acq/intel (Phase 4, Step 7).
-// Tier badges: T1=Gold, T2=Navy, PASS=neutral, KILLED=red.
+// Tier badges: T1=accent, T2=info, PASS=neutral, KILLED=red.
 // Governor breach indicator: ⚠ when DSCR governor failed.
 // ltvCleared is always null at screen time (no loan amount in AcquisitionInput — indeterminate);
 // the ltvCleared === false branch below is reserved for the future financing-stage LTV gate.
@@ -10,8 +10,8 @@ import { DataTable, type Column } from '@/primitives/DataTable';
 import { useSetCandidateStatus } from './hooks';
 
 const TIER_STYLES: Record<string, { label: string; bg: string; color: string }> = {
-  T1:     { label: 'T1 · PURSUE', bg: '#C9A96E', color: '#1B2A4A' },
-  T2:     { label: 'T2 · WATCH',  bg: '#1B2A4A', color: '#F5F3EF' },
+  T1:     { label: 'T1 · PURSUE', bg: 'var(--accent)', color: 'var(--text-on-accent)' },
+  T2:     { label: 'T2 · WATCH',  bg: 'var(--color-info)', color: '#F5F3EF' },
   PASS:   { label: 'PASS',        bg: 'var(--surface-overlay)',   color: 'var(--text-tertiary)' },
   KILLED: { label: 'KILLED',      bg: 'var(--color-neg)',         color: '#fff' },
 };
