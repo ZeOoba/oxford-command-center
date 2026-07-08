@@ -21,6 +21,7 @@
 import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { loadEnvFile } from '../server/load-env';
 import { openWarehouse } from '../server/warehouse/db';
 import type { WarehouseDb } from '../server/warehouse/db';
 import { approveImport } from '../server/warehouse/actions';
@@ -33,6 +34,8 @@ import { noiMatrix } from '../server/warehouse/queries';
 import { CANON_PROPERTIES, seedPropertyMaster } from '../server/warehouse/property-master';
 import { NOI_INCOME_CLASSES } from '../src/contracts/warehouse';
 import { MIN_PROPERTIES_FOR_COLLAPSE_CHECK, SINGLE_BAND_COLLAPSE_SHARE, scoreBandDistribution, scoreProperties } from '../server/warehouse/scores';
+
+loadEnvFile();
 
 const FINANCIALS_DIR = process.env.FINANCIALS_DIR
   ?? 'C:/Users/Owner/OneDrive - Oxford Capital Partners (1)/Property Financials';

@@ -13,11 +13,14 @@ import Database from 'better-sqlite3';
 import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { loadEnvFile } from '../server/load-env';
 import { openWarehouse } from '../server/warehouse/db';
 import { ingestFile } from '../server/warehouse/ingest';
 import { seedMappingsFromFile } from '../server/warehouse/mapping';
 import { seedPropertyMaster } from '../server/warehouse/property-master';
 import { basisDrift, committedBasisMap } from '../server/warehouse/live-drift';
+
+loadEnvFile();
 
 const FINANCIALS_DIR = process.env.FINANCIALS_DIR
   ?? 'C:/Users/Owner/OneDrive - Oxford Capital Partners (1)/Property Financials';
