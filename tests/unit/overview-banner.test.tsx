@@ -146,11 +146,17 @@ beforeEach(() => {
   // Defensive stub matching the house pattern (insights-module.test.tsx) — absorbs any
   // background refetch attempt so an unexpected network call can't destabilize the test.
   vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+  // Pin wall-clock "now" a few hours after the fixture's generatedAt so evaluateConditions'
+  // workbook-stale check (ALERT_THRESHOLDS.workbookStaleHours = 48h, src/analytics/conditions.ts)
+  // never fires here as real time drifts past this fixture's fixed date — this test asserts an
+  // exact Open Actions count and must not depend on how long ago the fixture was written.
+  vi.spyOn(Date, 'now').mockReturnValue(new Date(`${ASOF}T06:00:00.000Z`).getTime());
 });
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 function renderWidget(id: string) {
