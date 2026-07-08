@@ -107,9 +107,15 @@ describe('CompsView — Sale & Rent Comps section', () => {
     expect(screen.getByText('Eastgate Trade Center')).toBeTruthy();
     expect(screen.queryByText('deal-1')).toBeNull();
 
-    // sourcedAt date is visible.
-    expect(screen.getByText(/Sourced/)).toBeTruthy();
-    expect(screen.getByText(/2026-06-15|06\/15\/2026|Jun/i)).toBeTruthy();
+    // sourcedAt date is visible. Query the "Sourced ..." element itself (uniquely matched by
+    // that prefix) rather than re-querying the whole document for the date — the page also
+    // renders an unrelated "as of {date}" benchmarks-section timestamp (CompsView.tsx's
+    // marketBenchmarks display) that can independently contain a colliding month/day fragment
+    // (e.g. both being in the same month), which previously made the broad date regex match
+    // two elements instead of one.
+    const sourcedEl = screen.getByText(/Sourced/);
+    expect(sourcedEl).toBeTruthy();
+    expect(sourcedEl.textContent).toMatch(/2026-06-15|06\/15\/2026|Jun/i);
 
     // Sale + rent comp rows render, each with their own per-row source.
     expect(screen.getByText('100 Commerce Way')).toBeTruthy();
