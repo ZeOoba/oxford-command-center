@@ -257,13 +257,11 @@ describe('PriorityActionsWidget', () => {
 
   it('renders as a single tier (one card, no dead half-column) — design-parity finding #3', () => {
     const { container } = renderWidget('priority-actions');
-    // The board itself always carries the 4-col class name (see TierBoard/column-count tests);
-    // what matters here is that a lone tier's own column wrapper doesn't force a 2-up grid that
-    // leaves half the row empty. TierBoard is given exactly one tier — assert the board's grid
-    // class is NOT grid-cols-2 (the pre-fix behavior that produced dead space beside a single
-    // card) and that exactly one tier column renders.
+    // TierBoard is given exactly one tier — assert the board's grid class is the exact
+    // grid-cols-1 token (not merely "not grid-cols-2", which would also pass for an accidental
+    // future columns={3}/{4} regression) and that exactly one tier column renders.
     const board = screen.getByRole('list', { name: 'Tier board' });
-    expect(board.className).not.toContain('grid-cols-2');
+    expect(board.className.split(' ')).toContain('grid-cols-1');
     expect(container.querySelectorAll('[role="listitem"]').length).toBe(1);
   });
 });
