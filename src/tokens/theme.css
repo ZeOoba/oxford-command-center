@@ -1,50 +1,29 @@
 @import 'tailwindcss';
 
-/* Self-hosted variable fonts (Fontsource — no runtime CDN) */
-@import '@fontsource-variable/eb-garamond';
-@import '@fontsource-variable/dm-sans';
+/* Self-hosted fonts (Fontsource — no runtime CDN) */
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-sans/700.css';
+@import '@fontsource-variable/bricolage-grotesque';
+@import '@fontsource-variable/public-sans';
 @import '@fontsource/ibm-plex-mono/400.css';
 @import '@fontsource/ibm-plex-mono/500.css';
 @import '@fontsource/ibm-plex-mono/600.css';
 
 /*
-  THE OXFORD TERMINAL — design tokens
+  ORA MISSION CONTROL — design tokens
   Institutional-terminal density with editorial calm.
-  Default theme = "command" (OLED-near black). Light = "parchment".
+  Default theme = "command" (dark). Light = "parchment". Editorial = "warm".
   Tailwind v4 CSS-first: tokens exposed as utilities via @theme.
 */
 @theme {
-  /* Brand spine */
-  --color-navy-950: #05070d;
-  --color-navy-900: #0a1322;
-  --color-navy-850: #0d1b2a;
-  --color-navy-800: #12233a;
-  --color-navy-700: #1b2a4a;
-  --color-navy-600: #243a5e;
-
-  --color-gold-300: #e6d3a3;
-  --color-gold-400: #d8bd7e;
-  --color-gold-500: #c9a96e;
-  --color-gold-600: #b7944f;
-
-  --color-parchment-50: #faf7f0;
-  --color-parchment-100: #f5f0e8;
-  --color-parchment-200: #e9e0d0;
-
-  /* Semantic */
-  --color-pos: #3fb27f;
-  --color-pos-soft: #163a2c;
-  --color-warn: #d9a441;
-  --color-warn-soft: #3a2e15;
-  --color-neg: #e0564f;
-  --color-neg-soft: #3a1a18;
-  --color-info: #5b8fd6;
-  --color-accent2: #9a7fd1;
-
-  /* Typography */
-  --font-display: 'EB Garamond Variable', Georgia, serif;
-  --font-ui: 'DM Sans Variable', system-ui, sans-serif;
+  /* Typography (defaults for command/parchment; warm overrides below) */
+  --font-ui: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-display: 'IBM Plex Sans', system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
+  --disp-weight: 600;
+  --disp-tracking: 0.04em;
 
   /* Type scale (fluid-ish, terminal-tight) */
   --text-2xs: 0.6875rem;
@@ -57,11 +36,11 @@
   --text-3xl: 2.5rem;
   --text-4xl: 3.25rem;
 
-  /* Radius */
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 9px;
-  --radius-lg: 13px;
+  /* Radius (defaults for command/parchment; warm overrides below) */
+  --radius-xs: 5px;
+  --radius-sm: 7px;
+  --radius-md: 11px;
+  --radius-lg: 12px;
   --radius-xl: 18px;
 
   /* Motion */
