@@ -633,7 +633,16 @@ async function main(): Promise<number> {
 
     db.close();
   } finally {
-    rmSync(tmp, { recursive: true, force: true });
+    // Windows AV/EDR real-time scanning can transiently hold a handle on the freshly-written
+    // better-sqlite3 file right after close(), racing this delete (EPERM/EBUSY). maxRetries lets
+    // Node's built-in linear-backoff retry (fs docs: recursive rm only) absorb that race; the
+    // outer catch makes a still-locked tmp dir non-fatal so a real PASS/FAILED result (from
+    // `failures` below) is never masked by a bare cleanup stack trace.
+    try {
+      rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch (e) {
+      console.warn(`warehouse:verify — temp dir cleanup failed, left behind (non-fatal): ${tmp}`, e);
+    }
   }
 
   if (failures.length > 0) {
