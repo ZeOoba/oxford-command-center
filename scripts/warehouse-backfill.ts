@@ -1,6 +1,7 @@
 // scripts/warehouse-backfill.ts
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { loadEnvFile } from '../server/load-env';
 import { openWarehouse } from '../server/warehouse/db';
 import type { WarehouseDb } from '../server/warehouse/db';
 import { ingestFile } from '../server/warehouse/ingest';
@@ -8,6 +9,8 @@ import { seedMappingsFromFile } from '../server/warehouse/mapping';
 import { seedPropertyMaster } from '../server/warehouse/property-master';
 import { seedLeaseTerms } from '../server/warehouse/lease-terms';
 import { noiMatrix } from '../server/warehouse/queries';
+
+loadEnvFile();
 
 const FINANCIALS_DIR = process.env.FINANCIALS_DIR
   ?? 'C:/Users/Owner/OneDrive - Oxford Capital Partners (1)/Property Financials';

@@ -1,11 +1,14 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
-import { WORKBOOK_PATH, SNAPSHOT_PATH } from '../server/config';
+import { loadEnvFile } from '../server/load-env';
+import { workbookPath, SNAPSHOT_PATH } from '../server/config';
+
+loadEnvFile();
 
 async function main() {
-  console.log(`→ Reading workbook: ${WORKBOOK_PATH}`);
-  const { snapshot, flags } = await parseWorkbook(WORKBOOK_PATH);
+  console.log(`→ Reading workbook: ${workbookPath()}`);
+  const { snapshot, flags } = await parseWorkbook(workbookPath());
 
   mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });
   writeFileSync(SNAPSHOT_PATH, JSON.stringify(snapshot, null, 2));

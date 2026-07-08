@@ -32,7 +32,7 @@ logged-in browser.
 ### 1.3 Layered structure
 ```
 server/                         Local-first Brain Server (Node/Hono, 127.0.0.1:8911, localhost-only CORS)
-  config.ts                     WORKBOOK_PATH (canonical), SERVER_PORT 8911, WORKBOOK_AS_OF '2026-06-01'
+  config.ts                     workbookPath() (canonical, call-time), SERVER_PORT 8911, WORKBOOK_AS_OF '2026-06-01'
   brain.ts                      ExcelJS read + chokidar watch → in-memory snapshot + EventEmitter
   workbook/parse.ts             Workbook → typed PortfolioSnapshot (the parser; sheet-by-sheet)
   workbook/counterparties.ts    Relationship graph (derived firms + people seed merge)
