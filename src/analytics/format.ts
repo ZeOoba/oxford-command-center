@@ -49,7 +49,11 @@ export function fmtDate(iso: string | null | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  // UTC, not local time: a bare YYYY-MM-DD string parses as UTC midnight, and every caller here
+  // is displaying a calendar date (lease/loan/insurance/deal dates, snapshot "as of" stamps) —
+  // never a moment where the viewer's local clock time matters. Without this, the date silently
+  // renders one day early on any UTC-negative machine.
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 }
 
 export function fmtMonths(n: number | null | undefined): string {
