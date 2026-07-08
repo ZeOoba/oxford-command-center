@@ -17,7 +17,7 @@ import type { PortfolioSnapshot } from '../../src/contracts/index';
 import type { InsightReport, InsightCandidate } from '../../src/contracts/insights';
 import { SNAPSHOT_KEY } from '../../src/data/queries';
 import { INSIGHTS_KEYS } from '../../src/modules/insights/hooks';
-import { mergeInsightSources, buildSummary } from '../../src/modules/insights/insights.logic';
+import { mergeInsightSources, buildSummary, buildTiers } from '../../src/modules/insights/insights.logic';
 import { OVERVIEW_WIDGETS } from '../../src/modules/overview/widgets';
 
 const ASOF = '2026-07-06';
@@ -169,9 +169,10 @@ function renderWidget(id: string) {
 }
 
 describe('Overview widget registry', () => {
-  it('registers results-banner and priority-actions widgets', () => {
+  it('registers results-banner, priority-actions and insights widgets', () => {
     expect(OVERVIEW_WIDGETS.map((w) => w.id)).toContain('results-banner');
     expect(OVERVIEW_WIDGETS.map((w) => w.id)).toContain('priority-actions');
+    expect(OVERVIEW_WIDGETS.map((w) => w.id)).toContain('insights');
   });
 });
 
@@ -252,5 +253,55 @@ describe('PriorityActionsWidget', () => {
     expect(screen.getByText('Tenant renewal risk — Prop Two')).toBeTruthy();
     expect(screen.getByText('Secondary premium valuation — Prop Three')).toBeTruthy();
     expect(screen.getByText('Portfolio-wide data quality note')).toBeTruthy();
+  });
+
+  it('renders as a single tier (one card, no dead half-column) — design-parity finding #3', () => {
+    const { container } = renderWidget('priority-actions');
+    // The board itself always carries the 4-col class name (see TierBoard/column-count tests);
+    // what matters here is that a lone tier's own column wrapper doesn't force a 2-up grid that
+    // leaves half the row empty. TierBoard is given exactly one tier — assert the board's grid
+    // class is NOT grid-cols-2 (the pre-fix behavior that produced dead space beside a single
+    // card) and that exactly one tier column renders.
+    const board = screen.getByRole('list', { name: 'Tier board' });
+    expect(board.className).not.toContain('grid-cols-2');
+    expect(container.querySelectorAll('[role="listitem"]').length).toBe(1);
+  });
+});
+
+// ── InsightsWidget — design-parity finding #2 ────────────────────────────────────────────────
+//
+// The Overview "Insights & Alerts" widget must reuse mergeInsightSources()/buildTiers() (the
+// exact same functions InsightsModule.tsx uses) and render a TierBoard — never a flat,
+// independently-paginated <ul>. This proves the reuse by construction, the same way the
+// ResultsBannerWidget test above does for buildSummary().
+describe('InsightsWidget', () => {
+  it('renders the same tiers buildTiers() computes independently for the same input — no flat list', () => {
+    const snapshot = emptySnapshot();
+    const { merged } = mergeInsightSources([], report().candidates, snapshot);
+    const expectedTiers = buildTiers(merged);
+
+    renderWidget('insights');
+
+    // Tier board titles present (Critical / Priority / Monitor), proving buildTiers() ran.
+    for (const tier of expectedTiers) {
+      if (tier.items.length > 0) {
+        expect(screen.getAllByText(tier.title).length).toBeGreaterThan(0);
+      }
+    }
+
+    // The old flat-list pagination affordance must be gone entirely.
+    expect(screen.queryByText(/Show \d+ more/)).toBeNull();
+
+    // Tier board renders as a role="list" (TierBoard's own semantics) rather than a bare <ul>
+    // of insight rows — the structural signature of the binding-rule violation fix.
+    expect(screen.getByRole('list', { name: 'Tier board' })).toBeTruthy();
+  });
+
+  it('shows an active-count badge reflecting the merged (not raw analytics-only) insight count', () => {
+    renderWidget('insights');
+    expect(screen.getByText('Insights & Alerts')).toBeTruthy();
+    const snapshot = emptySnapshot();
+    const { merged } = mergeInsightSources([], report().candidates, snapshot);
+    expect(screen.getByText(`${merged.length} active`)).toBeTruthy();
   });
 });

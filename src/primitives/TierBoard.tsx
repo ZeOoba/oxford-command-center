@@ -55,7 +55,8 @@ const IMPACT_COLOR: Record<NonNullable<TierItem['impactKind']>, string> = {
   info: 'var(--color-info)',
 };
 
-const COLUMN_CLASS: Record<2 | 3 | 4, string> = {
+const COLUMN_CLASS: Record<1 | 2 | 3 | 4, string> = {
+  1: 'grid-cols-1',
   2: 'grid-cols-2',
   3: 'grid-cols-3',
   4: 'grid-cols-4',
@@ -74,7 +75,7 @@ function allActions(item: TierItem): TierItemAction[] {
   return [...(item.action ? [item.action] : []), ...(item.actions ?? [])];
 }
 
-export function TierBoard({ tiers, columns = 3 }: { tiers: Tier[]; columns?: 2 | 3 | 4 }) {
+export function TierBoard({ tiers, columns = 3 }: { tiers: Tier[]; columns?: 1 | 2 | 3 | 4 }) {
   return (
     <div
       role="list"

@@ -163,3 +163,54 @@ Per `design_handoff_ora_command_center/README.md`, the binding design rule acros
 10. News — the design's click-a-rate-to-feature interactivity is not replicated (a single fixed 10Y chart instead); cosmetic.
 11. Insurance — the "Self-Insure & Bids" tab (P4c) once real loss-run/dec-page data arrives; this is fully data-gated, not a UI decision.
 12. Taxes — the Depreciation & Cost-Seg / Structure & Pipeline strategy tier once accountant depreciable-basis data exists; also fully data-gated.
+
+---
+
+## Visual parity — 2026-07-08
+
+A follow-up "Design System Review" (2026-07-08, audited against `main@411ed6d`) proposed a
+visual-parity pass on top of this audit's structural findings: 9 ranked findings, framing the
+repo's "Oxford Terminal" token layer (navy/gold, EB Garamond + DM Sans) as a "fork" of the design
+handoff's own `ora.css` ("Mission Control": near-black/teal, IBM Plex, no serif), with a companion
+`VISUAL_PARITY_PROMPT.md` ready to execute the retokenization.
+
+**Decision gate outcome: D1(c) reaffirmed, retokenization declined.** This repo's own decision
+record (`IMPLEMENTATION_PLAN.md` §3, D1) already evaluated and rejected exactly this option back
+on 2026-07-06/07 — "(c) Hybrid: keep Terminal tokens... a palette swap buys no capability" —
+specifically because Oxford Terminal is the firm's ratified brand (ORA Style Guide v1.0: Navy
+`#1B2A4A` / Gold `#C9A96E` / EB Garamond / DM Sans / IBM Plex Mono), shared with the Daily Brief
+and PDF briefing suite. The 2026-07-08 review's audit basis did not account for this ratified
+decision or the firm-wide style guide, treating the prototype's own inline CSS as the
+authoritative reference instead. Gabriel reaffirmed D1(c) in-session 2026-07-08: **findings #1
+(token fork) and #4–#7 (severity glow, category color, filter-bar affordances, KpiStat anatomy —
+all gated on tokens landing) are declined.** No token, font, or palette work is planned or
+committed as a result of this review.
+
+**Findings #2 and #3 are independent of the token question and were landed this session**
+(worktree `fix-design-parity-p2-p3`, branch `fix/design-parity-overview-tierboard`):
+
+- **#2 — Overview "Insights & Alerts" flat-list violation (the no-long-lists rule).** This is the
+  same gap the 2026-07-06 audit's own §"v2 Backlog" item 1 already flagged (`InsightsWidget` was
+  still rendering `analytics.insights` as a flat, independently-paginated `<ul>` via
+  `InsightList.tsx`, even though the identical merged feed is already tier-boarded on the
+  `insights` module). Reshaped to reuse `mergeInsightSources()`/`buildTiers()` from
+  `insights.logic.ts` and render `<TierBoard tiers={tiers} columns={3} />`, matching
+  `InsightsModule.tsx`'s pattern exactly. `InsightList.tsx` deleted (no longer referenced anywhere).
+- **#3 — `TierBoard` had no 1-column mode.** `PriorityActionsWidget` passed a single tier at
+  `columns={2}`, leaving half the card empty at desktop widths. Added `columns={1}` to
+  `TierBoard`'s `COLUMN_CLASS` map; `PriorityActionsWidget` now uses it.
+
+Findings #8 (sidebar active-edge language) and #9 (signature details — overlay wash, pill radius,
+`::selection`) were not addressed this pass — out of scope for this PR; both are portable onto
+existing Oxford Terminal token names (`--accent`, `--radius-sm`) without retokenization if picked
+up later.
+
+Verification: `npm run governance` / `typecheck` / `lint` clean; full unit suite 2337/2337 green
+(TDD — `tests/unit/tier-board.test.tsx` + `tests/unit/overview-banner.test.tsx` extended,
+watched red before the fix, green after); `reconcile` clean against the live Master Workbook.
+`warehouse:verify` hit a Windows-specific EPERM on its own tmp-dir cleanup (`rmSync` racing a
+lingering file handle) when run from this worktree — reproduced 3/3 times in-worktree but 0/1
+from the main checkout at the identical commit, confirming it is an environment/concurrency
+artifact (a second session's dev server was active against this repo concurrently) unrelated to
+this change; the script exercises none of the touched files. `warehouse:drift` skipped cleanly
+(no live DB in this fresh worktree, expected).

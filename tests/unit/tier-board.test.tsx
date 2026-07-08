@@ -105,6 +105,14 @@ describe('TierBoard / column count', () => {
     expect(board.className).toContain('grid-cols-3');
   });
 
+  it('renders a 1-column grid when columns=1 (single tier should not render half-empty)', () => {
+    render(<TierBoard tiers={[makeTier()]} columns={1} />);
+    const board = screen.getByRole('list', { name: 'Tier board' });
+    // Exact token match — the always-present 'max-[920px]:grid-cols-1' responsive class would
+    // otherwise make a plain .toContain('grid-cols-1') substring check pass vacuously.
+    expect(board.className.split(' ')).toContain('grid-cols-1');
+  });
+
   it('renders a 2-column grid when columns=2', () => {
     render(<TierBoard tiers={[makeTier()]} columns={2} />);
     const board = screen.getByRole('list', { name: 'Tier board' });
