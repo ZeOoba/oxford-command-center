@@ -1,11 +1,11 @@
-export type Theme = 'command' | 'parchment';
+export type Theme = 'command' | 'parchment' | 'warm';
 
 const KEY = 'ora-theme';
 
 export function getInitialTheme(): Theme {
   try {
     const t = localStorage.getItem(KEY);
-    if (t === 'command' || t === 'parchment') return t;
+    if (t === 'command' || t === 'parchment' || t === 'warm') return t;
   } catch {
     /* storage unavailable */
   }
