@@ -104,7 +104,7 @@ export function GraderView() {
               onClick={() => grade.mutate(buildInput(form, GRADER_DEAL_ID))}
               disabled={grade.isPending}
               className="rounded-[var(--radius-sm)] px-3 py-1.5 text-xs font-semibold"
-              style={{ background: 'var(--accent)', border: '1px solid var(--accent)', color: '#fff', opacity: grade.isPending ? 0.6 : 1 }}
+              style={{ background: 'var(--accent)', border: '1px solid var(--accent)', color: 'var(--text-on-accent)', opacity: grade.isPending ? 0.6 : 1 }}
             >
               {grade.isPending ? 'Grading…' : 'Grade'}
             </button>

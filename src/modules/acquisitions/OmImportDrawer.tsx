@@ -101,7 +101,7 @@ export function OmImportDrawer({
     ...btnBase,
     background: 'var(--accent)',
     borderColor: 'var(--accent)',
-    color: '#fff',
+    color: 'var(--text-on-accent)',
   };
 
   return (

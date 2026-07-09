@@ -13,8 +13,8 @@ export function HurdleRateBanner({ hurdleRate }: Props) {
     <div style={{
       padding: '10px 14px',
       borderRadius: 6,
-      background: 'color-mix(in oklab, var(--color-warn, #f59e0b) 12%, transparent)',
-      border: '1px solid color-mix(in oklab, var(--color-warn, #f59e0b) 35%, transparent)',
+      background: 'color-mix(in oklab, var(--color-warn) 12%, transparent)',
+      border: '1px solid color-mix(in oklab, var(--color-warn) 35%, transparent)',
       color: 'var(--text-primary)',
       fontSize: 13,
       display: 'flex',

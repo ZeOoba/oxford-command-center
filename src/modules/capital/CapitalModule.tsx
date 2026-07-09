@@ -351,7 +351,7 @@ export function CapitalModule() {
                   IRR {fmtPct(c.leveredIrr)}
                 </span>
                 {c.basisDiscountPct !== null && (
-                  <span style={{ fontSize: 12, color: 'var(--color-pos, #22c55e)' }}>
+                  <span style={{ fontSize: 12, color: 'var(--color-pos)' }}>
                     {fmtPct(c.basisDiscountPct)} disc.
                   </span>
                 )}
