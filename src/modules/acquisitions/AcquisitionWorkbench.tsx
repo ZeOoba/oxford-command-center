@@ -108,7 +108,7 @@ export function AcquisitionWorkbench({
                 type="button"
                 onClick={() => setDrawerOpen((v) => !v)}
                 className="rounded-[var(--radius-sm)] px-2 py-1 text-2xs font-semibold"
-                style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--accent)' }}
+                style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--text-accent)' }}
               >
                 {drawerOpen ? 'Close OM Import' : 'Upload OM'}
               </button>
