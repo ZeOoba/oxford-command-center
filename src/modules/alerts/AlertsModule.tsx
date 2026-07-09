@@ -6,9 +6,9 @@ import type { InsightSeverity } from '../../analytics/types';
 import { TierBoard, type Tier, type TierItem, type TierItemAction } from '../../primitives/TierBoard';
 
 const SEV_COLOR: Record<InsightSeverity, string> = {
-  critical: 'var(--color-neg)',
-  warning: 'var(--color-warn)',
-  info: 'var(--color-info)',
+  critical: 'var(--text-neg)',
+  warning: 'var(--text-warn)',
+  info: 'var(--text-info)',
 };
 
 const TIER_TONE: Record<InsightSeverity, Tier['tone']> = {

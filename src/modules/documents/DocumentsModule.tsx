@@ -86,7 +86,7 @@ export function DocumentsModule() {
       <button
         onClick={ui.openAi}
         className="flex items-center justify-center gap-2 rounded-[var(--radius-md)] px-4 py-3 text-sm font-semibold"
-        style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--accent)' }}
+        style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--text-accent)' }}
       >
         <Sparkles size={15} /> Ask a document question
       </button>
@@ -99,7 +99,7 @@ function highlight(text: string, query: string): ReactNode {
   if (!terms.length) return text;
   const re = new RegExp(`(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'ig');
   return text.split(re).map((part, i) =>
-    new RegExp(`(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'i').test(part) ? <mark key={i} style={{ background: 'var(--accent-quiet)', color: 'var(--accent)', padding: '0 2px', borderRadius: 2 }}>{part}</mark> : <span key={i}>{part}</span>,
+    new RegExp(`(${terms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'i').test(part) ? <mark key={i} style={{ background: 'var(--accent-quiet)', color: 'var(--text-accent)', padding: '0 2px', borderRadius: 2 }}>{part}</mark> : <span key={i}>{part}</span>,
   );
 }
 
@@ -122,7 +122,7 @@ function DocSearch() {
   const shown = folder ? (hits ?? []).filter((h) => folderOf(h.doc) === folder) : hits ?? [];
   const chipStyle = (on: boolean) =>
     on
-      ? { background: 'var(--accent-quiet)', color: 'var(--accent)', border: '1px solid color-mix(in oklab, var(--accent) 40%, transparent)' }
+      ? { background: 'var(--accent-quiet)', color: 'var(--text-accent)', border: '1px solid color-mix(in oklab, var(--accent) 40%, transparent)' }
       : { color: 'var(--text-tertiary)', border: '1px solid var(--border-subtle)' };
   return (
     <Card>

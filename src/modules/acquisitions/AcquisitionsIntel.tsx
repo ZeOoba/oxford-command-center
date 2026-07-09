@@ -62,7 +62,7 @@ export function AcquisitionsIntel() {
       </h2>
 
       {data?.advisoryOnly && (
-        <div role="alert" style={{ background: 'var(--color-warn-soft)', border: '1px solid var(--color-warn)', borderRadius: '0.375rem', padding: '0.625rem 0.875rem', marginBottom: '0.875rem', fontSize: '0.8125rem', color: 'var(--color-warn)' }}>
+        <div role="alert" style={{ background: 'var(--color-warn-soft)', border: '1px solid var(--color-warn)', borderRadius: '0.375rem', padding: '0.625rem 0.875rem', marginBottom: '0.875rem', fontSize: '0.8125rem', color: 'var(--text-warn)' }}>
           <strong>Advisory only</strong> — ruleset not yet ratified. Scores are informational; do not act on them for capital deployment.
         </div>
       )}

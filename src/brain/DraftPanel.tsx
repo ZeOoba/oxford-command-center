@@ -66,7 +66,7 @@ export function DraftPanel() {
               </button>
             </header>
 
-            <div className="flex items-center gap-2 px-5 py-2 text-2xs" style={{ background: 'color-mix(in oklab, var(--color-warn) 12%, transparent)', color: 'var(--color-warn)', borderBottom: '1px solid var(--border-subtle)' }}>
+            <div className="flex items-center gap-2 px-5 py-2 text-2xs" style={{ background: 'color-mix(in oklab, var(--color-warn) 12%, transparent)', color: 'var(--text-warn)', borderBottom: '1px solid var(--border-subtle)' }}>
               <ShieldAlert size={13} />
               <span style={{ fontWeight: 600 }}>Draft only — review and send it yourself. Auto-send is disabled.</span>
             </div>

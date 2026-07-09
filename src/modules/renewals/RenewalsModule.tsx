@@ -120,7 +120,7 @@ function RenewalCardView({
         <button
           onClick={onDraft}
           className="flex items-center gap-1 text-2xs"
-          style={{ color: 'var(--accent)' }}
+          style={{ color: 'var(--text-accent)' }}
           aria-label={`Draft renewal email for ${card.tenant}`}
         >
           <Mail size={11} /> Draft

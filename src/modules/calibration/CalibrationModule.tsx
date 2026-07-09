@@ -79,7 +79,7 @@ export function CalibrationModule() {
                   className={cn('num rounded-full px-2.5 py-0.5 text-2xs font-semibold uppercase transition-colors', tab === t.id ? 'cursor-default' : 'cursor-pointer')}
                   style={
                     tab === t.id
-                      ? { background: 'color-mix(in oklab, var(--accent) 16%, transparent)', color: 'var(--accent)', border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)', letterSpacing: '0.06em' }
+                      ? { background: 'color-mix(in oklab, var(--accent) 16%, transparent)', color: 'var(--text-accent)', border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)', letterSpacing: '0.06em' }
                       : { background: 'transparent', color: 'var(--text-tertiary)', border: '1px solid transparent', letterSpacing: '0.06em' }
                   }
                 >

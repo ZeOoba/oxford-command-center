@@ -5,12 +5,12 @@ export type BadgeTone = 'neutral' | 'gold' | 'green' | 'amber' | 'red' | 'blue' 
 
 const TONES: Record<BadgeTone, { bg: string; fg: string; bd: string }> = {
   neutral: { bg: 'color-mix(in oklab, var(--text-tertiary) 14%, transparent)', fg: 'var(--text-secondary)', bd: 'var(--border-strong)' },
-  gold: { bg: 'color-mix(in oklab, var(--accent) 16%, transparent)', fg: 'var(--accent)', bd: 'color-mix(in oklab, var(--accent) 45%, transparent)' },
-  green: { bg: 'var(--color-pos-soft)', fg: 'var(--color-pos)', bd: 'color-mix(in oklab, var(--color-pos) 40%, transparent)' },
-  amber: { bg: 'var(--color-warn-soft)', fg: 'var(--color-warn)', bd: 'color-mix(in oklab, var(--color-warn) 40%, transparent)' },
-  red: { bg: 'var(--color-neg-soft)', fg: 'var(--color-neg)', bd: 'color-mix(in oklab, var(--color-neg) 40%, transparent)' },
-  blue: { bg: 'color-mix(in oklab, var(--color-info) 16%, transparent)', fg: 'var(--color-info)', bd: 'color-mix(in oklab, var(--color-info) 40%, transparent)' },
-  purple: { bg: 'color-mix(in oklab, var(--color-accent2) 16%, transparent)', fg: 'var(--color-accent2)', bd: 'color-mix(in oklab, var(--color-accent2) 40%, transparent)' },
+  gold: { bg: 'color-mix(in oklab, var(--accent) 16%, transparent)', fg: 'var(--text-accent)', bd: 'color-mix(in oklab, var(--accent) 45%, transparent)' },
+  green: { bg: 'var(--color-pos-soft)', fg: 'var(--text-pos)', bd: 'color-mix(in oklab, var(--color-pos) 40%, transparent)' },
+  amber: { bg: 'var(--color-warn-soft)', fg: 'var(--text-warn)', bd: 'color-mix(in oklab, var(--color-warn) 40%, transparent)' },
+  red: { bg: 'var(--color-neg-soft)', fg: 'var(--text-neg)', bd: 'color-mix(in oklab, var(--color-neg) 40%, transparent)' },
+  blue: { bg: 'color-mix(in oklab, var(--color-info) 16%, transparent)', fg: 'var(--text-info)', bd: 'color-mix(in oklab, var(--color-info) 40%, transparent)' },
+  purple: { bg: 'color-mix(in oklab, var(--color-accent2) 16%, transparent)', fg: 'var(--text-accent2)', bd: 'color-mix(in oklab, var(--color-accent2) 40%, transparent)' },
 };
 
 export function Badge({

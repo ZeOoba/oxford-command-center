@@ -9,7 +9,6 @@
     "review_detail": "string | null — what architect approval is needed for",
     "last_updated": "ISO 8601 timestamp"
   },
-
   "phase-5-cap-alloc": {
     "agent_role": "Analytics Agent + UX Agent — Claude Code Sonnet 4.6",
     "phase": "Phase 5 — Capital Allocation capstone (synthesis engine + CapitalAllocationModule UI + FRED macro context)",
@@ -19,7 +18,6 @@
     "review_detail": "MERGED via PR #112. Capital Allocation capstone (synthesis engine + CapitalAllocationModule UI + FRED macro context); architect-owned src/contracts/capital-allocation.ts approved; DSCR defect fixed per adversarial refute feedback (decoupled from balloon presence). Worktree removed post-merge.",
     "last_updated": "2026-06-21T23:30:00Z"
   },
-
   "worktrees": {
     "main": {
       "agent_role": "Lead Architect",
@@ -30,7 +28,6 @@
       "review_detail": null,
       "last_updated": "2026-06-20T00:00:00Z"
     },
-
     "pfi-phase-b": {
       "agent_role": "Analytics Agent",
       "phase": "Phase B analytics engine — PR #13",
@@ -40,7 +37,6 @@
       "review_detail": "MERGED. INTEL_CONFIG weights ratified by Gabriel 2026-06-14 (Option B, NOI-centric). Worktree removed.",
       "last_updated": "2026-06-16T00:00:00Z"
     },
-
     "pfi-phase-b2": {
       "agent_role": "UX Agent",
       "phase": "Phase B2 Intelligence UI — PR #14",
@@ -50,7 +46,6 @@
       "review_detail": "MERGED. Stacked on #13; both squash-merged. Worktree removed.",
       "last_updated": "2026-06-16T00:00:00Z"
     },
-
     "acquisition-scorecard": {
       "agent_role": "Engineering (Claude Code) — authorized solo by Gabriel 2026-06-13",
       "phase": "Acquisition Scorecard — contract + engine merged (#25/#27). Phase 4 is the continuation.",
@@ -60,7 +55,6 @@
       "review_detail": "Contract + engine (#25) and ratified v1 + RCT + /api/warehouse/acquisition/score (#27) are MERGED. Phase 4 (Steps 1–4,5,6,7,8,9) merged as PR #84 + PR #85.",
       "last_updated": "2026-06-20T18:00:00Z"
     },
-
     "eric-live-phase1b-fat-mirror": {
       "agent_role": "Engineering (Claude Code) — authorized solo by Gabriel 2026-06-16",
       "phase": "Eric Live Phase 1b — Fat Mirror: PFI + Calibration-read on the Access-gated Pages mirror",
@@ -70,7 +64,6 @@
       "review_detail": "NO Architect-owned files touched. Edits: scripts/bake-warehouse.ts (new) + scripts/bake-mirror.ts (Integration-owned), src/lib/warehouse-mirror.ts (new) + src/lib/freshness.ts (Core), src/modules/intel/{hooks,analytics-hooks,IntelModule,LeaseRunView,DataQualityView,MappingsView} + src/modules/calibration/{hooks,CalibrationModule,PendingView} (UX-owned), .gitignore. Imports server/warehouse/api.ts + db.ts read-only (no signature/engine change). Bake emits public/warehouse.json (computed route payloads, gitignored); client falls back on 404. Financial-adjacent (scoring/analytics output) → ran the MANDATORY adversarial refute-financial-change review (opus). Full local unit suite green (1035/1035), tsc+lint clean. PR opened off origin/main; awaiting Gabriel review + deploy (invariant 2). Deferred (Gabriel/Phase 2): DNS migration, new-machine timing, remote calibration writes, freshness cadence.",
       "last_updated": "2026-06-16T00:20:00Z"
     },
-
     "ar-aging-parser": {
       "agent_role": "Engineering (Claude Code) — authorized solo by Gabriel 2026-06-20",
       "phase": "AR-aging import pipeline — collections data feed (audit Fix #2) — PR #81",
@@ -80,7 +73,6 @@
       "review_detail": "MERGED PR #81. Parser (Yardi/AppFolio), fuzzy matcher, mapping cache, merge-buckets, CLI import script. Mandatory refute-financial-change pass ran; 6 defects found and fixed. 1152 tests green. Worktree removed.",
       "last_updated": "2026-06-20T00:00:00Z"
     },
-
     "phase-4-acq-intel": {
       "agent_role": "Integration Agent + Analytics Agent",
       "phase": "Phase 4 — Acquisition Intelligence Engine (Steps 1–4, 6, tests)",
@@ -90,7 +82,6 @@
       "review_detail": "MERGED via PR #84. Adversarial refute pass complete (Opus 4.8, 3 lenses). Worktree removed.",
       "last_updated": "2026-06-20T18:00:00Z"
     },
-
     "cool-franklin-b98c9f": {
       "agent_role": "Engineering (Claude Code) — authorized solo by Gabriel 2026-06-16",
       "phase": "Audit-batch hardening (PR #79) + systematization follow-ups (PR stacked on #79): shared money coercer, whole-overlay validation, delimiter-safe dedup keys, refute-required CI gate, dup-insight-id backstop",
@@ -101,17 +92,15 @@
       "last_updated": "2026-06-17T00:00:00Z"
     }
   },
-
   "phase-4-steps-5-7-8-9": {
-      "agent_role": "Engineering (Claude Code) — authorized by Gabriel 2026-06-20 (proceed all recommendations)",
-      "phase": "Phase 4 — Steps 5 (Notion sync), 7 (Acq Intel UI), 8 (calibration outcome hook), 9 (governance rule)",
-      "status": "merged",
-      "blocked_by": null,
-      "review_needed": false,
-      "review_detail": "MERGED via PR #85. Adversarial refute pass + 6 CodeRabbit fixes. ACQ_PIPELINE_DB_ID updated to live Notion UUID post-merge. Worktree removed.",
-      "last_updated": "2026-06-20T18:00:00Z"
-    },
-
+    "agent_role": "Engineering (Claude Code) — authorized by Gabriel 2026-06-20 (proceed all recommendations)",
+    "phase": "Phase 4 — Steps 5 (Notion sync), 7 (Acq Intel UI), 8 (calibration outcome hook), 9 (governance rule)",
+    "status": "merged",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "MERGED via PR #85. Adversarial refute pass + 6 CodeRabbit fixes. ACQ_PIPELINE_DB_ID updated to live Notion UUID post-merge. Worktree removed.",
+    "last_updated": "2026-06-20T18:00:00Z"
+  },
   "insurance-persistence": {
     "agent_role": "Integration Agent",
     "phase": "Track C — insurance policy persistence layer (migration 008, captureInsurance)",
@@ -121,7 +110,6 @@
     "review_detail": null,
     "last_updated": "2026-06-21T00:00:00Z"
   },
-
   "phase-0-sort-key": {
     "agent_role": "Engineering (Claude Code) — authorized by Gabriel 2026-06-20",
     "phase": "Phase 0 — Insight sort-key: impactAnnualUsd / spine / provenance fields + fillImpact() + governance extension (Step 9 already shipped in PR #85)",
@@ -131,7 +119,6 @@
     "review_detail": "scripts/governance-check.ts is architect-owned but checkAcqGovernorCoupling was already shipped in PR #85 (Step 9). This PR adds only analytics types + conditions + anomaly-insights + contracts/macro + test fixture updates — UX/Analytics-Agent-owned files. No architect gate required.",
     "last_updated": "2026-06-21T00:00:00Z"
   },
-
   "debt-proximity": {
     "agent_role": "Analytics Agent",
     "phase": "Phase 2 slice 1 — balloon impactAnnualUsd derivation + refi-spread-opportunity insight",
@@ -159,7 +146,6 @@
     "review_detail": "MERGED via PR #94 (expiry-soon + coverage-gap alert conditions). Stale in_progress corrected 2026-06-21 by phase-2-narrative.",
     "last_updated": "2026-06-21T18:00:00Z"
   },
-
   "phase-2-debt-scoring": {
     "agent_role": "Integration Agent — Claude Code sonnet",
     "phase": "Phase 2 Steps 1–3 — debt migrations + Zod contract + snapshot writer",
@@ -169,7 +155,6 @@
     "review_detail": "MERGED via PR #95 (migrations 009/010 + src/contracts/debt.ts + debt-snapshot writer). Stale in_progress corrected 2026-06-21 by phase-2-narrative.",
     "last_updated": "2026-06-21T18:00:00Z"
   },
-
   "phase-2-debt-api": {
     "agent_role": "Analytics Agent",
     "phase": "Phase 2 Steps 4-6 — debt API sub-router (scores + maturity ladder) + Debt Scorecard UI",
@@ -179,7 +164,6 @@
     "review_detail": "MERGED via PR #97 (scoring engine + debt-api sub-router mounted at /api/warehouse/debt + Debt Scorecard UI). Stale in_progress/review_needed corrected 2026-06-21 by phase-2-narrative.",
     "last_updated": "2026-06-21T18:00:00Z"
   },
-
   "phase-2-wiring": {
     "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-21",
     "phase": "Phase 2 W1 — loan→property binding via workbook collateral column + crosswalk",
@@ -189,7 +173,6 @@
     "review_detail": "MERGED via PR #99. Three adversarial refute passes (Opus 4.8). Workbook Loan Index col 11 populated. Worktree p2-binding removed post-merge.",
     "last_updated": "2026-06-21T12:00:00Z"
   },
-
   "compassionate-lichterman-53a8c0": {
     "agent_role": "Engineering (Claude Code, Sonnet 4.6) — authorized by Gabriel 2026-06-21",
     "phase": "Narrow check-refute-required gate — delivery-file allowlist (Option D)",
@@ -199,7 +182,6 @@
     "review_detail": "MERGED via PR #102. Narrowed check-refute-required to exempt delivery-only warehouse route files; documented the delivery-only allowlist and Refute-Skip convention in architecture/coding-standards.md (architect-directed, pre-authorized). Worktree removed post-merge.",
     "last_updated": "2026-06-21T12:30:00Z"
   },
-
   "phase-2-narrative": {
     "agent_role": "Engineering (Claude Code) — Opus plans/reviews, Sonnet implements — Gabriel-authorized 2026-06-21 (D4/D5 ratified)",
     "phase": "Phase 2 Workstream 2 — AI Narrative Briefings (Steps 7–11): NarrativeBlock contract + composeNarrative (Haiku 4.5) + narrative JSON routes + PDF embed + Export-with-narrative button.",
@@ -209,7 +191,6 @@
     "review_detail": "MERGED via PR #101. Steps 7-11 shipped: NarrativeBlock contract (src/contracts/briefing.ts) + composeNarrative (server/ai/narrative.ts, Haiku 4.5, double confidentiality guard, fail-open) + narrative JSON routes + ?narrative=1 PDF branch (server/warehouse/api.ts) + PDF embed (server/briefing/pdf.tsx) + Export-with-narrative button (ExportBriefingButton). 84 tests. Adversarial refute pass (Opus 4.8, 6 lenses, SURVIVES). Worktree compassionate-golick-b55abd removed post-merge.",
     "last_updated": "2026-06-21T19:00:00Z"
   },
-
   "phase-3-w1": {
     "agent_role": "Analytics Agent — Claude Code Sonnet 4.6",
     "phase": "Phase 3 W1 — lease-forecast contract + analytics + L-1..L-5 alert conditions",
@@ -219,7 +200,6 @@
     "review_detail": "MERGED via PR #107. W1 shipped: lease-forecast Zod contracts + bucketExpiry/renewalSignals/marketRentGaps/rentForecast analytics + L-1..L-5 alert conditions + leasingVelocity Spine B + lease-forecast API routes + migration 011. 2091 insertions, adversarial refute pass (Opus 4.8, 3 lenses, wf_c45ec0c4-0b1). CR follow-up: asOf propagation to bucketExpiry in API + L-5, catch narrowing, test contract tightening. Worktree phase-3-w1 to be removed post-merge.",
     "last_updated": "2026-06-21T21:00:00Z"
   },
-
   "phase-3-w2": {
     "agent_role": "UX Agent + Intelligence Agent — Claude Code Sonnet 4.6",
     "phase": "Phase 3 W2 — LeaseForecastModule + RenewalsModule likelihood badges + LeasesModule market-rent column + market-rent overlay action",
@@ -229,7 +209,6 @@
     "review_detail": "MERGED via PR #109. LeaseForecastModule (expiry buckets + rent-forecast scenarios + velocity table + market-rent editor) + RenewalsModule likelihood badges + LeasesModule market-rent gap column + POST /api/actions/market-rent overlay write route. CR follow-up: key validation, MarketRentInput extracted to contracts, null sentinels, throw-on-error. 1603 tests. Worktree phase-3-w2 removed post-merge.",
     "last_updated": "2026-06-21T22:00:00Z"
   },
-
   "phase-3-w3": {
     "agent_role": "Intelligence Agent — Claude Code Sonnet 4.6",
     "phase": "Phase 3 W3 — AI narrative leasing briefing (composeLeaseNarrative + /narrative route + LeaseForecastModule narrative panel)",
@@ -239,7 +218,6 @@
     "review_detail": "MERGED via PR #111. composeLeaseNarrative + /narrative route + LeaseForecastModule narrative panel. Gate green (1622 tests). Adversarial refute (Opus 4.8, 6 defects found + fixed). Worktree removed post-merge.",
     "last_updated": "2026-06-21T23:45:00Z"
   },
-
   "phase-5-tiebreaker-fix": {
     "agent_role": "Integration Agent — Claude Code Sonnet 4.6",
     "phase": "Phase 5 — parse-layer property-id disambiguation (propertyId tiebreaker / slug uniqueness)",
@@ -249,7 +227,6 @@
     "review_detail": "MERGED via PR #113. Disambiguates colliding property ids at parse time (enforces slug uniqueness); +8 tests (1656 total). Worktree removed post-merge.",
     "last_updated": "2026-06-21T23:55:00Z"
   },
-
   "phase-5-market-intel": {
     "agent_role": "Analytics Agent + UX Agent — Claude Code Sonnet 4.6",
     "phase": "Phase 5 Track 3 — market intelligence cap rate benchmarks (CapRateBenchmark contract + getMacroMarketBenchmarks + implied cap rate columns)",
@@ -259,7 +236,6 @@
     "review_detail": "MERGED via PR #114. CapRateBenchmark contract + getMacroMarketBenchmarks + impliedCapRate/capRateGap/capRatePercentile columns in CapitalAllocationModule; +10 tests (1666 total). Worktree removed post-merge.",
     "last_updated": "2026-06-22T00:05:00Z"
   },
-
   "scope-b-regional": {
     "agent_role": "Analytics Agent — Claude Code Sonnet 4.6",
     "phase": "Scope B — regional market dynamics (state unemployment via FRED)",
@@ -269,7 +245,6 @@
     "review_detail": "MERGED via PR #116. State unemployment FRED integration + regional dynamics enrichment in market intelligence layer; 1686 tests. Worktree removed post-merge.",
     "last_updated": "2026-06-22T00:30:00Z"
   },
-
   "notion-writeback": {
     "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-22",
     "phase": "Direction 1 — Notion writeback for capital allocation decisions (syncCapitalActionsToNotion + POST /capital-allocation/sync-notion)",
@@ -279,7 +254,6 @@
     "review_detail": "MERGED via PR #119. server/notion/capital-writeback.ts (syncCapitalActionsToNotion, fail-open, 10s timeout) + src/contracts/notion-writeback.ts (NotionSyncResult) + POST /capital-allocation/sync-notion route. Worktree removed post-merge.",
     "last_updated": "2026-06-22T09:37:00Z"
   },
-
   "prospect-demand": {
     "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-22",
     "phase": "Direction 3 — Prospect Demand Intelligence foundation (migration 012 + contract + engine + routes + ProspectDemandModule UI)",
@@ -289,7 +263,6 @@
     "review_detail": "MERGED via PR #120. Migration 012 (prospect_demand_events + idx) + ProspectDemandEvent/Summary/Report/EventInput contracts + getProspectDemandReport + addProspectEvent engine + GET/POST /api/warehouse/prospect-demand routes + ProspectDemandModule UI (Demand Signals, Assets group). 1701 tests. Worktree removed post-merge.",
     "last_updated": "2026-06-22T09:49:00Z"
   },
-
   "ic-memo": {
     "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-22",
     "phase": "Direction 2 — IC Memo HTML export (feat/ic-memo-export)",
@@ -299,7 +272,6 @@
     "review_detail": "MERGED via PR #121 (f951b40). IC Memo HTML export — Direction 2. Worktree at .claude/worktrees/ic-memo (branch feat/ic-memo-export) was still on disk at close-out; remove after session cleanup. [Repair lineage: two sessions repaired this entry independently 2026-07-05 (server-setup-w4g4pb collapse + missing-comma fix); auto-merges (PRs #162/#164/#165 + branch merge 6c5c692) re-interleaved them twice; final single-record collapse 2026-07-06 on the design-parity branch.]",
     "last_updated": "2026-06-22T10:00:00Z"
   },
-
   "chore-post-w2-merge": {
     "agent_role": "Lead Architect — Gabriel-directed cleanup",
     "phase": "Post-merge cleanup: CLAUDE.md §2+§3 (PRs #119/#120), status.json new entries, stale worktree removal",
@@ -309,7 +281,6 @@
     "review_detail": "CLAUDE.md §2 updated: last merge = PR #121 (f951b40), 1713+ tests; §3 Directions 1+2+3 all Merged ✓. status.json: ic-memo → merged (PR #121). Stale worktrees (post-merge-116, post-merge-t2-t3, practical-buck-7ef7bc, recursing-chatelet-f908d3) removed. [Duplicate review_detail deduped 2026-07-05 and again 2026-07-06 after PR #162/#164/#165 + branch-merge auto-interleaving; if this file conflicts again, collapse to ONE line per key and keep the fullest narrative.]",
     "last_updated": "2026-06-22T10:00:00Z"
   },
-
   "recursing-chatelet-f908d3": {
     "agent_role": "Analytics Agent + UX Agent — Claude Code Sonnet 4.6",
     "phase": "Phase 5 — Capital Allocation capstone rebuild (5-way verdict + Market Intelligence + Property Onboarding)",
@@ -319,7 +290,6 @@
     "review_detail": "MERGED via PR #117 (`6cd58ed`). Full Phase 5 capstone: migrations 013–016, AllocationVerdict/HurdleRateConfig/MarketSignal Zod contracts, capital-allocation engine (sell guard + DSCR/LTV/NOI scoring), market-intel engine (FRED/Census/Census-AI), CapitalModule UI, MarketScorecard UI, PropertyOnboarding. 17 CR cycles; all actionable items addressed. Worktree removed post-merge. Schema constraint follow-ups (ux_market_series_tuple, ux_recommendations_versioned, CHECK on expected_return_pct/timeline_months) not committed — require new migrations if desired.",
     "last_updated": "2026-06-22T14:30:00Z"
   },
-
   "blissful-mendel-02834b": {
     "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-22",
     "phase": "Schema constraints 017/018 — market_series unique index + recommendations CHECK constraints",
@@ -329,7 +299,6 @@
     "review_detail": "MERGED via PR #126 (8848207). Migrations 017/018, warehouse-verify.ts §8m, 10 unit tests (1749 total green), buildCapitalAllocationReport() restoration (pre-existing typecheck fix from PRs #117/#119/#121). Worktree blissful-mendel-02834b removed post-merge.",
     "last_updated": "2026-06-22T16:30:00Z"
   },
-
   "fix-reconcile-rent-col": {
     "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-22",
     "phase": "fix(reconcile): col 13→14 for Master Tenant Rent Roll rent total + fix(api): stub ic-memo 501 + drop withDb wrapper",
@@ -339,7 +308,6 @@
     "review_detail": "MERGED via PR #123. scripts/reconcile.ts col 14 (workbook column shifted); server/warehouse/api.ts ic-memo stubbed 501 (buildCapitalAllocationReport deleted in #117, route from #121 still referenced it; 3 stale imports removed; withDb wrapper dropped per CodeRabbit). Worktree removed post-merge.",
     "last_updated": "2026-06-22T15:30:00Z"
   },
-
   "docs-hurdle-memo": {
     "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-22",
     "phase": "docs(capital): hurdle rate ratification audit memo 2026-06-22",
@@ -349,7 +317,6 @@
     "review_detail": "MERGED via PR #124. docs/capital/hurdle-rate-ratification-2026-06-22.md: formal governance record of 8.0% unlevered IRR hurdle rate ratification (Gabriel Goldberg, 2026-06-22, capital_config v1). Worktree removed post-merge.",
     "last_updated": "2026-06-22T15:30:00Z"
   },
-
   "compassionate-kepler-cb363e": {
     "agent_role": "Engineering (Claude Code, Sonnet 4.6) — Gabriel-authorized 2026-06-22",
     "phase": "fix(api): port /capital-allocation/ic-memo from 501 stub to live implementation",
@@ -359,7 +326,6 @@
     "review_detail": "MERGED via PR #129 (5b81321) per CLAUDE.md §2. Ported ic-memo route: imports buildIcMemoHtml + icMemoFilename from ic-memo.ts, assertNoConfidential from briefing/confidential; replaced 501 stub with real handler (withDb → buildCapitalAllocationReport → assertNoConfidential → buildIcMemoHtml → Response text/html + content-disposition). No architect-owned files touched. Stale in_progress closed out 2026-07-05 by server-setup-w4g4pb.",
     "last_updated": "2026-07-05T00:00:00Z"
   },
-
   "insight-contract": {
     "agent_role": "Architect (Gabriel-authorized)",
     "phase": "Phase 2 Unit A — insight engine contract",
@@ -378,7 +344,6 @@
     "review_detail": "SHIPPED — checkGovernorLiteralCoupling is present in scripts/governance-check.ts on main (PR #145 / commit d24d682) and wired into main(); context-sensitive detection of bare governor literals (1.25 DSCR / 0.40 LTV) in comparison expressions; allowlists governors.ts + debt-api.ts. Gabriel pre-authorized via master plan. Stale in_progress/review_needed closed out 2026-07-05 by server-setup-w4g4pb.",
     "last_updated": "2026-07-05T00:00:00Z"
   },
-
   "m6-leasing-risk-ic-memo": {
     "agent_role": "Analytics Agent",
     "phase": "M6 — leasingRisk IC memo surface",
@@ -388,7 +353,6 @@
     "review_detail": "Architect-approved in-turn 2026-06-23. Changes: (1) src/contracts/capital-allocation.ts — added leasingRisk: z.number().min(0).max(100) as required field on CapitalAllocationEntry; (2) server/warehouse/capital-allocation.ts — wired leasingRisk into entries.push (L661); (3) server/warehouse/ic-memo.ts — added optional entries param + per-verdict join by propertyId + Leasing Risk column (0-100% display, DASH when undefined); (4) server/warehouse/api.ts — wired entries from buildCapitalAllocationReport into buildIcMemoHtml call (fail-open: snapshot absent → entries undefined → all-DASH). AllocationVerdict.inputs path (src/contracts/capital.ts) was evaluated and ABANDONED — Zod strict rejects unknown keys, approach unsound. Gate green; adversarial refute passed (scale consistency, zero-guard, join correctness, fresh-ingest). MERGED via PR #155 (a45ac30) per CLAUDE.md §2; non-schema status 'complete' corrected to 'merged' 2026-07-05 by server-setup-w4g4pb.",
     "last_updated": "2026-07-05T00:00:00Z"
   },
-
   "server-setup-w4g4pb": {
     "agent_role": "Engineering (Claude Code, Fable) — Gabriel-authorized 2026-07-05",
     "phase": "Local-server setup: project guardrails + status.json validation + portable-config estate work",
@@ -398,7 +362,6 @@
     "review_detail": "Stale in_progress corrected 2026-07-06 by audit-fixes-2026-07-06: independently verified all listed deliverables are present on main — scripts/governance-check.ts has checkStatusJson (INVALID_JSON/DUPLICATE_KEY/STATUS_SCHEMA/STALE_STATUS), and .claude/hooks/{bash-guard.mjs,file-guard.mjs,architect-owned.json} + .github/workflows/full-gate-selfhosted.yml all exist. This entry's own close-out work on l2-governor-gate/m6-leasing-risk-ic-memo/compassionate-kepler-cb363e (dated 2026-07-05) was never followed by closing itself out.",
     "last_updated": "2026-07-06T12:13:00Z"
   },
-
   "pdf-parse-v2": {
     "agent_role": "Engineering (Claude Code, Opus 4.8) — Gabriel-authorized in-session 2026-07-05 ('Proceed with your recommendation')",
     "phase": "pdf-parse v1→v2 migration — unblocks CI from Node >=24.18 Buffer.poolSize regression (nodejs/node#63597) and hardens production OM/document parsing",
@@ -408,7 +371,6 @@
     "review_detail": "MERGED via PR #163 (67fd0d1) — after #160 was accidentally squash-merged into its stacked base branch instead of main, and a ci.yml conflict with PR #161 (parallel session, same Node-24.18 diagnosis) was resolved in favor of unpinned node '24'. Architect-owned package.json touch (pdf-parse ^1.1.4 → ^2.4.5) approved in-session by Gabriel 2026-07-05. New server/lib/pdf-text.ts adapter (PDFParse class API + fresh Uint8Array copy for pooled-buffer safety); migrated server/warehouse/om-extract.ts, server/sources/documents.ts, 3 briefing test files; CI node-version unpinned back to '24' (pin from PR #159 no longer needed). Validated: 99/99 affected tests green under BOTH Node 22.22.2 and Node 24.18.0 (the breaking version); full suite 1905/1905; build + bundle budget + governance + check:refute (no trailer needed) all green. Stacked on PR #159 (merge #159 first). Also repaired status.json corruption: ic-memo entry missing comma + duplicated fields, chore-post-w2-merge duplicate review_detail key.",
     "last_updated": "2026-07-06T01:10:00Z"
   },
-
   "audit-fixes-2026-07-06": {
     "agent_role": "Engineering (Claude Code, Opus) — Gabriel-authorized in-session 2026-07-06 ('Investigate thoroughly and use the same plan before code system' — responding to a prior read-only audit's findings)",
     "phase": "Fixing audit findings on branch claude/audit-fixes-2026-07-06 (forked fresh off origin/main post-#168): (1) server/briefing/confidential.ts fail-open -> fail-loud on missing confidential-terms.json, (2) npm audit fix for hono+form-data (prod, non-breaking), (3) real tests for parseWorkbook (server/workbook/parse.ts, currently mocked-away everywhere), (4) tests for server/warehouse/lease-forecast-api.ts (0% coverage), (5) this status.json cleanup (insight-contract/server-setup-w4g4pb/design-parity-impl close-outs) + CLAUDE.md/CHANGELOG.md/README.md doc-drift reconciliation. Explicitly NOT touching the capital-allocation.ts Phase-5-v2 deferrals (buy verdicts/refi-savings/improve-IRR math) -- flagged by the audit as intentional and not urgent, out of scope here.",
@@ -418,7 +380,6 @@
     "review_detail": "Ready for Gabriel's review (PR opened, not auto-merged). All 5 items complete + adversarially reviewed (hostile-lens pass, Opus): confidential.ts now fails closed (~25+ dependent tests fixed via a synthetic fixture, not weakened); npm audit fix verified via clean npm ci + full gate; parseWorkbook and lease-forecast-api tests added with real (non-mocked) exercise of the target logic, both test-quality gaps the adversarial pass found (a tautological anonymization assertion, an under-specified skip-row test) were fixed and re-verified, including a mutation test proving the anonymization assertion has real teeth; doc drift reconciled (7-step gate description, contradictory Pending line, stale roadmap, test-count consistency). Final gate green: governance/typecheck/lint/build clean, 200 files / 2253 tests. Touches package.json/package-lock.json (dependency bump) and server/briefing/confidential.ts (compliance-relevant control, not listed as architect-owned in ownership.json but treated with the same rigor given hard-invariant #3 stakes). No governor constants, no financial-model math changed.",
     "last_updated": "2026-07-06T12:52:00Z"
   },
-
   "design-parity-impl": {
     "agent_role": "Engineering (Claude Code, Fable 5 orchestrating Sonnet subagents) — Gabriel-authorized in-session 2026-07-06 ('Proceed with all recommendations'; overnight continuation 'I am going to bed, proceed with finishing the command center')",
     "phase": "IMPLEMENTATION_PLAN.md P0-P7 all complete and MERGED. P0-P6 via PR #166/#168; P7 (7.1 Overview results banner + priority actions, 7.2 global portfolio filter, 7.3 Comps + cap-rate benchmark surface, 7.4 DealDrawer underwriting + score panel enrichment, 7.5 design-parity audit doc, 7.6 cut-list reconciliation doc) via PR #169 (merged 2026-07-06). IMPLEMENTATION_PLAN.md has no further phases defined. Phase 6+/next-initiative scoping is open pending Gabriel's direction.",
@@ -428,7 +389,6 @@
     "review_detail": "MERGED via PR #169. P7 touched no architect-owned files (all six tasks UX-Agent territory: src/modules/overview, src/shell, src/modules/market, src/brain/DealDrawer.tsx, docs/). No new API routes, no schema changes, no ratification triggers, no financial computation (Refute-Skip trailers). Full barrier green pre-merge: 2262/2262 tests, tsc/eslint/governance-check/vite build all clean. Branch restarted from merged main per protocol for this housekeeping close-out commit. NOTE 2026-07-06T17:xx: this entry was reconstructed after a merge between this branch and PR #170 (audit-fixes-2026-07-06) spliced two independent edits to this same key together without a separating brace/key, producing invalid JSON + duplicate fields (the same recurring status.json interleaving-on-merge failure mode as PRs #162/#164/#165/#159/#161). Repaired mechanically here: no information was lost, the stale pre-PR#169 copy of this entry (which PR #170's session had also touched) was superseded by this one since it already reflects the newer, correct state.",
     "last_updated": "2026-07-06T17:00:00Z"
   },
-
   "fix-status-json-ic-memo-parse-error": {
     "agent_role": "Engineering (Claude Code, Sonnet 5) — Gabriel-authorized 2026-07-06",
     "phase": "Fix pre-existing JSON syntax error in architecture/status.json (ic-memo entry had two duplicate-key blocks merged without a comma, breaking JSON.parse at line 301)",
@@ -438,7 +398,6 @@
     "review_detail": "Confirmed bug present on origin/main prior to any other in-flight work. Removed the stale in_progress duplicate block, kept the merged (PR #121) values since a merged PR cannot regress to in_progress. Validated with `node -e \"JSON.parse(require('fs').readFileSync('architecture/status.json','utf8'))\"`. Note: an unmerged branch fix/status-json-duplicate-key (origin, commit 3369e17) already contains this same correction bundled with unrelated cleanup (removing several other stale entries) — flagged to Gabriel, not merged here to keep this PR minimal.",
     "last_updated": "2026-07-06T00:00:00Z"
   },
-
   "fix-c2-refi-savings-gate": {
     "agent_role": "Engineering (Claude Code, Sonnet 5) — Gabriel-authorized 2026-07-06",
     "phase": "Phase 5 v2 — C-2: refi cash-savings gating (docs/superpowers/specs/2026-06-21-phase-5-capital-allocation-market-intel.md §3.2 rule 2)",
@@ -448,7 +407,6 @@
     "review_detail": "Changes: (1) src/contracts/debt.ts — added refiCashSavingsPct: z.number().nullable() to DebtScore; (2) server/warehouse/debt-scoring.ts — computes it in scoreDebtPositions() from avgLoanRate/marketRate/totalBalance/ltv, restricted to single-loan properties (multi-loan basis-mismatch defect found and fixed during refute pass — D1's ltv is the highest-balance loan's own LTV, not a blended combined-loan LTV, so applying it to totalBalance across >1 loan manufactured a wrong equity figure; now null for loans.length!==1); no-debt branch + noDebtScore() set it null. (3) server/warehouse/capital-allocation.ts buildVerdict() — refinance action now additionally gated on refiCashSavingsPct!==null (kept existing signal in ('refi','cash-out') condition unchanged — did NOT add spec's literal dscrHeadroom<0.15 threshold, since the existing 'A-3' test locks cash-out-alone+dscrHeadroom=0.20→refinance, matching this repo's narrower ratified C-2 scope over the spec's more aggressive pseudocode); adds a reasons[] caveat when a refi/cash-out signal is undermined by undrivable savings. C-3 (buy verdicts) and C-4 (expectedReturnPct math, including wiring refiCashSavingsPct into refinance's expectedReturnPct) are separate, not-yet-started PRs per Gabriel's ship-separately decision. Gate: typecheck 0, lint 0, 1874/1882 tests green (8 pre-existing pdf-parse 'bad XRef entry' failures unrelated to this change, confirmed via git stash against unmodified origin/main). Refute-Reviewed: 3-lens adversarial pass (gating-correctness, undrivable-data-edge-cases, regression-and-contract-risk) — 2 CLEAN, 1 confirmed defect (multi-loan LTV/balance basis mismatch) found and fixed with a new regression test (TDD red→green verified). PR not yet opened — pending Gabriel's go-ahead to push.",
     "last_updated": "2026-07-06T23:45:00Z"
   },
-
   "fix-improve-capex-irr-proxy": {
     "agent_role": "Engineering (Claude Code, Sonnet 5) — Gabriel-authorized 2026-07-07",
     "phase": "Phase 5 v2 — improve action / capexIrr proxy (docs/superpowers/specs/2026-06-21-phase-5-capital-allocation-market-intel.md §3.2 rule 3, §15 deferral)",
@@ -458,7 +416,6 @@
     "review_detail": "The 'improve' action previously ALWAYS degraded to 'hold' (capitalAction==='invest' branch, v1 stub — no real capex-cost data source exists; src/brain/replacement-cost.ts is scoped to acquisition deals, wrong shape for owned-property capex). Per Gabriel's explicit decision (2026-07-07): build a proxy rather than leave it permanently deferred, and reuse C-4's already-computed general expectedReturnPct (entry value / NOI stream) as the verdict's return figure rather than a separate capex-specific number — a simplification consistent with C-4's own unified redesign (C-4/PR #175 replaced the spec's original per-action expectedReturnFor design with one uniform unlevered-IRR projection). Changes: (1) server/warehouse/capital-allocation.ts — new ASSUMED_CAPEX_PSF=$10/SF [RATIFY] constant (approved default, conservative light-industrial/flex value-add assumption vs. the $125-150/SF REPLACEMENT_COST_PSF ratified for acquisitions); capexIrrEstimate(noiPerSf, sameBasisNoiPerSfMedian) assumes the assumed spend instantly and permanently closes the noiPerSf gap to same-basis peers, checked against hurdleRatePct; gates ONLY action selection. (2) buildVerdict()'s invest branch now fires 'improve' when capexIrr clears hurdle, else degrades to hold with a distinguishing reasons[] message (undrivable vs. doesn't-clear-hurdle). Adversarial refute pass (3 lenses) found 3 real defects, all fixed with TDD regression tests: (a) the capexIrr formula's dimensional soundness as a yield rests on an undocumented load-bearing assumption (instant + perpetual gap closure, no ramp) — now explicitly documented next to [RATIFY], distinguishing it from _projectUnleveredReturn's real multi-year IRR bisection; (b) capexIrr had no structured DataQualityFlag (unlike the expectedReturnPct/basisDiscountPct precedent already established in this file) — added one whenever capexIrr!==null; (c) MOST IMPORTANT — the original median was pooled across ALL properties regardless of basis (cash/accrual/tax/unknown), violating this codebase's own established G3 cross-basis discipline (scores.ts's rankProperties/population partition by basis before comparing NOI/SF) — fixed by computing a same-basis peer median per property (mirroring scores.ts's sameBasis logic exactly, including the unknown-basis-never-pooled rule), recomputed per property rather than once globally. Gate: typecheck 0, lint 0, 2316/2317 tests green (1 pre-existing, unrelated frontend test — comps-view.test.tsx, a date-format assertion, zero diff vs origin/main). Refute-Reviewed: 3-lens adversarial pass (median-and-formula-correctness, gating-and-regression-risk, data-quality-and-transparency) — all 3 found real defects (listed above), all fixed and TDD-verified. PR not yet opened pending Gabriel's go-ahead.",
     "last_updated": "2026-07-07T10:40:00Z"
   },
-
   "fix-c3-buy-verdicts": {
     "agent_role": "Engineering (Claude Code, Sonnet 5) — Gabriel-authorized 2026-07-07",
     "phase": "Phase 5 v2 — C-3: portfolio-level buy verdicts (docs/superpowers/specs/2026-06-21-phase-5-capital-allocation-market-intel.md §3.5)",
@@ -468,7 +425,6 @@
     "review_detail": "Changes: (1) server/warehouse/capital-allocation.ts — buildBuyVerdict() + a buyable-candidate filter (tier T1/T2, composite>=70, basisDiscountPct null-or->=5% floor) in buildPortfolioAllocation(); emits at most one portfolio-level 'buy' AllocationVerdict for the top-ranked (highest composite, candidateId tie-break) buyable candidate, propertyId='pipeline:<candidateId>'. AllocationVerdict.inputs (healthBand/attentionBand/capitalAction/debtSignal/debtScoreBand/dscr/ltv/noiPerSf) uses documented neutral placeholders with an explicit reasons[] note — NOT extending the schema — per Gabriel's explicit decision (2026-07-07), since a buy verdict isn't tied to an owned property. expectedReturnPct stays null (C-4 deferred). (2) server/warehouse/calibration.ts verdictsFromAllocations() — buy verdicts now tagged subjectKind='deal' (not 'property'), fixing a real defect found in the adversarial refute pass: propertyId='pipeline:...' would otherwise permanently pollute the append-only calibration_verdict log with a subject that resolveDueOutcomes can never resolve. (3) buildBuyVerdict adds a warn-severity DataQualityFlag when the winning candidate's basisDiscountPct is null — found in refute pass: null passes the buyable gate per spec but is indistinguishable between 'genuinely N/A' and 'acquisition score never computed it', so the ambiguity is now surfaced rather than silently invisible. FLAGGED, NOT fixed (out of scope, spec-authored not implementer error): BUY_COMPOSITE_FLOOR=70 (verbatim from spec) diverges from the live acquisition-scoring ruleset's actual T1/T2 bands (config/acquisition-ruleset.v1.json: t1PursueMin=75, t2WatchMin=60) — a T2 candidate scoring 70-74 clears this buy floor despite being well within the T2 band, not near the T1 boundary. This is a ratification-level policy question, not a coding decision — recommend Gabriel either ratifies 70 explicitly as an independent buy-specific floor or has it derived from the live ruleset in a follow-up. Also deliberately NOT implemented (separate, unauthorized scope): spec §3.5's 'RANK all verdicts: attentionBand priority DESC, secondary expectedReturnPct DESC' — verdict ranking is unimplemented in this codebase entirely (not just for buy), pre-dates this PR, and wasn't one of the 3 named deferred items (C-2/C-3/C-4) this session was authorized to fix. Gate: typecheck 0, lint 0, 1879/1887 tests green (8 pre-existing pdf-parse 'bad XRef entry' failures, unrelated). Refute-Reviewed: 3-lens adversarial pass (buyable-filter-correctness, contract-and-downstream-impact, regression-and-scope) — 1 lens fully CLEAN aside from a stale comment (fixed), 2 lenses found real defects (both fixed above, TDD-verified). PR not yet opened pending rebase onto post-C-2 main.",
     "last_updated": "2026-07-07T04:00:00Z"
   },
-
   "fix-design-parity-p2-p3": {
     "agent_role": "UX Agent (Claude Code, Sonnet 5) — Gabriel-authorized in-session 2026-07-08",
     "phase": "Design System Review 2026-07-08 follow-up — findings #2 (Overview InsightsWidget flat-list binding-rule violation) + #3 (TierBoard columns=1 layout defect). D1 explicitly reaffirmed by Gabriel this session: findings #1/#4-#7 (token/palette retokenization to the handoff's 'Mission Control' system) are DECLINED — Oxford Terminal (navy/gold, EB Garamond/DM Sans) stands per the existing ratified D1(c) hybrid decision (IMPLEMENTATION_PLAN.md §3) and the firm's ORA Style Guide v1.0. No token work planned or committed here.",
@@ -478,7 +434,6 @@
     "review_detail": "DONE, PR not yet opened pending this commit. Changes: (1) src/primitives/TierBoard.tsx — COLUMN_CLASS + columns prop extended to accept 1 (finding #3). (2) src/modules/overview/widgets.tsx — PriorityActionsWidget now uses columns={1} (no more half-empty card); InsightsWidget reshaped to reuse mergeInsightSources()/buildTiers() (same functions InsightsModule.tsx/ResultsBannerWidget/PriorityActionsWidget already share) and render <TierBoard columns={3}> instead of a flat paginated <ul> (finding #2, the same gap docs/design-parity-audit-2026-07-06.md's own v2-backlog item 1 already flagged). (3) src/modules/overview/InsightList.tsx deleted (no longer referenced anywhere in src/). (4) tests/unit/tier-board.test.tsx + tests/unit/overview-banner.test.tsx extended (TDD: watched red pre-fix, green post-fix) — 8 new/changed tests. (5) docs/design-parity-audit-2026-07-06.md — new 'Visual parity — 2026-07-08' section recording the D1(c) reaffirmation and both fixes. All UX-Agent-owned files; no architect-owned files touched; no financial computation, no governor constants — Refute-Skip. Gate: governance/typecheck/lint clean; full unit suite 2337/2337 green; reconcile clean vs live workbook. warehouse:verify hit a Windows EPERM on its own tmp-dir rmSync cleanup when run from this worktree (3/3 reproductions) but passed clean (0/1) from the main checkout at the identical commit — confirmed environment/concurrency artifact (a second session's dev server was concurrently active against this repo), not a real failure; the script touches none of the files this PR changes. warehouse:drift skipped cleanly (no live DB in this fresh worktree, expected).",
     "last_updated": "2026-07-08T15:55:00Z"
   },
-
   "mission-control-retokenization": {
     "agent_role": "UX Agent (Claude Code, Sonnet 5 planning/orchestrating; execution dispatched to Opus 4.8 subagents per Gabriel's explicit request for the highest-intelligence model) — Gabriel-authorized in-session 2026-07-08",
     "phase": "D1(c) REVERSED again, same day, hours after fix-design-parity-p2-p3 (above) recorded it declined. Gabriel now wants the ORA Mission-Control retokenization (that entry's findings #1/#4-#7) implemented for real. This entry supersedes fix-design-parity-p2-p3's 'declined' framing for findings #1/#4-#7 ONLY — that entry's findings #2/#3 (PR #185, merged) remain correctly closed and are not reopened. Two-phase delivery: PR-A = token/font/radius/theme layer (src/tokens/theme.css + font deps) on this branch; PR-B (separate worktree, opened after PR-A merges) = consumers + signature details (severity glow, categoryTone, KpiStat anatomy + drill-down, PortfolioFilterBar, Sidebar/Badge/chart details).",
@@ -488,7 +443,6 @@
     "review_detail": "MERGED via PR #186 (commit 77b9ec3), 2026-07-09T01:09:50Z. Oxford Terminal → ORA Mission-Control retokenization (tokens/fonts/radii/3 themes) is now live on main. Post-merge CI caught one real gap the entire process missed: Task 1's font-package removal broke tests/unit/briefing*.test.ts (server/briefing/theme.ts require.resolve()s @fontsource/eb-garamond + dm-sans .woff files directly for institutional PDF-briefing brand fonts — a second, unrelated brand system under Gabriel's global style guide, never in scope here, missed because Task 1's grep was src/-scoped only). Root-caused via systematic-debugging (not guessed), fixed by restoring both packages (fix commit f1a560f on the merged branch, verified via the exact 7 previously-failing tests + 2 full gate runs), and the scope boundary recorded in the design spec (commit 1f8f4b5) so PR-B and any future dependency sweep on this repo grep the WHOLE repo, not just src/. Full history: docs/superpowers/specs/2026-07-08-mission-control-retokenization-design.md, docs/superpowers/plans/2026-07-08-mission-control-tokens-pr-a.md. Architect-ownership: package.json touch (Fontsource swap, twice — the original swap and the post-CI-failure restoration) Gabriel-acked in-session both times. Known open follow-up, not a merge blocker: --text-on-accent doesn't clear WCAG AA against saturated fills in parchment/warm themes (reaches Button.tsx's primary variant + global ::selection, not just the one tier-badge fix already shipped) — priority item for PR-B's contrast pass. PR-B (consumers + signature details: severity glow, categoryTone, KpiStat drill-down, PortfolioFilterBar, Sidebar/Badge/chart details, the contrast-pass follow-up) not yet started — separate worktree when Gabriel wants it. Worktree .claude/worktrees/mission-control-tokens removed post-merge per finishing-a-development-branch protocol.",
     "last_updated": "2026-07-09T01:11:24Z"
   },
-
   "mission-control-consumers": {
     "agent_role": "UX Agent (Claude Code, Sonnet 5 planning/orchestrating; execution dispatched to Opus 4.8 subagents per Gabriel's explicit request for the highest-intelligence model) — Gabriel-authorized in-session 2026-07-09, running fully autonomously overnight (Gabriel going to bed)",
     "phase": "PR-B of the two-phase Mission-Control retokenization (mission-control-retokenization entry above, merged as PR #186). Wires token-layer consumers: severity glow (TierBoard/StatusPill), categoryTone() color-coding (real 10-category taxonomy), KpiStat interactive drill-down, PortfolioFilterBar filtered-state + slice readout, Sidebar 3px active bar, Badge shape, InsightsModule FilterPill fixes, plus a flagged --text-on-accent WCAG AA fix proposal (parchment/warm) that PR-A's final review identified as a required follow-up.",
@@ -498,7 +452,6 @@
     "review_detail": "PR-B COMPLETE, FINAL-REVIEWED, ONE CRITICAL FOUND AND FIXED — all 11 tasks done, each individually Opus-reviewed clean, then a final whole-branch review (Opus) that found and this branch fixed 1 real Critical defect the per-task reviews couldn't see: T1's categoryTone() and T2's TierItem.categoryTone field were each individually correct but never wired together — buildTiers() never populated the field, so category color-coding was dead code (always rendered neutral) despite both tasks passing review. Fixed (commit a94e233, independently re-verified): buildTiers() now populates categoryTone for the 10 real categories via a CATEGORY_TO_FAMILY membership guard, safely leaving warehouse-candidate rows (family codes CF/DR/TE/TR/CR) at undefined/neutral as before. New end-to-end tests assert real tones through buildTiers() itself, not just the isolated categoryTone() mapping. Wires PR-A's Mission-Control token layer: T1 categoryTone(); T2 TierBoard severity glow + categoryTone (now actually wired); T3 StatusPill glow; T4 KpiStat interactive mode (TDD, required a real a11y fix mid-task — see FLAG 1); T5 KpiStripWidget drill-down wiring (7 KPIs -> portfolio/intel/debt/cash/leases); T6 Sidebar 3px active bar (replaces the prior filled pill — see FLAG 3); T7 Badge square radius; T8 PortfolioFilterBar filtered-state + slice readout; T9 InsightsModule FilterPill radius/active-fill fix; T10 --text-on-accent WCAG AA fix (SPLIT — see FLAG 2). Zero architect-owned files touched (re-verified vs .claude/hooks/architect-owned.json). ==VERIFICATION==: (1) npm run test — 211+ files, 2349+ tests PASS (exit 0 via --pool=forks; default pool's exit-139 is the documented flaky vitest teardown segfault, content always green). (2) gate — governance/typecheck/lint clean in-worktree; reconcile + warehouse:verify FAIL in-worktree only on the documented worktree-doesn't-inherit-.env gotcha, PASS clean from the main checkout at the identical (byte-unchanged) data-pipeline code — environment artifact, not a branch defect. (3) check:bundle PASS, entry ~90.9 kB < 250 kB budget. (4) e2e axe/contrast — attempted twice (Task 11's agent, then the coordinator directly copying .env into the worktree per the same fix that worked for PR-A's Task 8) — the app server (port 8911) still would not bind/serve /api/snapshot in this worktree even with .env present; a deeper worktree-specific gap not resolved tonight, given diminishing returns against an already-twice-independently-verified contrast computation (Task 10's math, re-checked by both its own task reviewer and the final whole-branch reviewer with real recomputed WCAG ratios). Recommend the definitive 3-theme axe pass run from a properly-provisioned environment (main checkout or Gabriel's own machine) as part of his review, not deferred indefinitely. ==THREE ITEMS NEED GABRIEL — this is NOT a clean, fully-resolved PR==: [FLAG 1 — Task 4] KpiStat's whole-card hover-lift/tint visually over-promises interactivity — an a11y fix was required mid-task (whole-card-clickable nested-interactive-conflicted with Provenance's own focusable tooltip span, invalid), so only a small corner arrow button is actually clickable, but the whole card still lifts/tints on hover. Product/design decision, deliberately not resolved in code. [FLAG 2 — Task 10] --text-on-accent AA fix SPLIT: parchment SHIPPED (commit 3068584, math independently re-verified twice, worst-case 4.82:1) — note this is a real, visible aesthetic change (near-black text on teal fills) that has been verified by arithmetic and DOM-property checks but NOT yet seen rendered by a human; WARM PROVEN mathematically unsolvable with any single text color (disjoint luminance requirements between --color-info and --accent/--color-neg, proven 3 ways) — left unfixed, needs Gabriel's design decision among 4 documented options (design spec commit c56b5b4). [FLAG 3 — Task 6, raised by the final whole-branch review, not originally on this list] Sidebar's active-nav-item indicator was fully REPLACED (filled accent-quiet pill -> 3px left-edge bar), not augmented — the design spec explicitly listed this as an open judgment call ('if Gabriel wants both, keep the pill and add the bar'), and the session proceeded on 'not objected to,' which is weaker than actual approval. A working, familiar nav affordance was removed on the session's own initiative. ==MINOR findings, non-blocking, full list in .superpowers/sdd/progress.md==: T2 no committed reduced-motion-glow test + unused 'group' class; T8 dropped a JSDoc invariant comment + no new render test for slice/filtered-state; reduced-motion treatment is inconsistent across T2/T3/T6 (StatusPill's new glow has no explicit reduced-motion gate, unlike TierBoard/Sidebar); accentColor is now a vestigial no-op on 6 of 8 KpiStat consumers (no spark, so nothing reads it) since the 3px bar was removed; prefersReducedMotion() is duplicated verbatim in TierBoard.tsx and Sidebar.tsx rather than shared. Branch pushed, commits backed up. PR OPENED: https://github.com/ZeOoba/oxford-command-center/pull/187 (an empty placeholder PR already existed at this number from earlier in the night — updated in place via REST API rather than opening a duplicate, since gh pr create/edit both hit a GraphQL token-scope error). Ready for Gabriel's morning review, NOT merged autonomously, matching PR-A's precedent exactly.",
     "last_updated": "2026-07-09T05:33:24Z"
   },
-
   "pr-b-flagged-followups": {
     "agent_role": "UX Agent (Claude Code, Sonnet 5 planning/orchestrating; execution dispatched to Opus subagents) — Gabriel-authorized in-session 2026-07-09, reviewing PR-B live",
     "phase": "Resolves 2 of PR-B's 3 explicitly flagged decisions (mission-control-retokenization entry's FLAG 1 and FLAG 2 above; FLAG 3 Sidebar bar-vs-pill was RATIFIED as-shipped, no code change needed) now that Gabriel gave explicit direction on each: (1) KpiStat hover-affordance mismatch -> shrink whole-card lift/border, make corner control ~35-40% visible at rest instead of hover-only; (2) warm-theme --text-on-accent AA gap -> per-consumer override, NOT a palette-wide change: new --text-on-info token (dark in command/parchment, matching existing --text-on-accent which already passes; light in warm, matching warm's own pre-fix --text-on-accent value which independently computes to ~5.83:1 against warm's --color-info alone) applied only to RankedCandidateList's T2.WATCH badge, the sole real consumer of info-as-filled-text-background found during investigation.",
@@ -508,7 +461,6 @@
     "review_detail": "COMPLETE, both fixes Opus-reviewed clean (one review round each, plus a self-caught comment-accuracy fix in the second). (1) KpiStat (commit 6254fbb, reviewed): whole-card hover:-translate-y-0.5 lift and the aria-hidden border-tint overlay removed entirely; corner control now opacity-40 at rest, hover:opacity-100/focus-visible:opacity-100 (reviewer specifically verified the group-hover->hover swap is real and not silently dead now that the group wrapper is gone -- that was the one way this fix could have failed invisibly). Provenance sibling-not-ancestor accessibility property from the original PR-B fix is untouched and re-verified. (2) --text-on-info (commits 5354662 + 0106bc7): new per-theme token added to theme.css, applied ONLY to RankedCandidateList's TIER_STYLES.T2 (the sole real consumer of --color-info as a filled text-bearing background) -- T1/KILLED correctly keep --text-on-accent unchanged, and --text-on-accent's existing values (including warm's known-failing one) are untouched in every theme. Contrast independently computed AND independently re-verified by the reviewer from the raw diff, not trusted: command 7.4653:1, parchment 4.8822:1, warm 5.7338:1 -- all clear AA, parchment tightest at 0.38 headroom. Reviewer caught one real Important finding -- the warm-theme code comment was self-contradictory (claimed --text-on-accent is 'dark-intended' and that the new token 'diverges' from it, when the two values are actually byte-identical and --text-on-accent is near-white, which is WHY it fails accent/neg) -- corrected (0106bc7) to accurately describe the two tokens as currently coinciding, kept separate only to insulate T2 from a future --text-on-accent darkening attempt. (3) FLAG 3 (Sidebar bar-vs-pill): RATIFIED as-shipped by Gabriel explicitly -- no code change, no further action. Verification: typecheck/lint clean both commits; full suite 2350/2352 (the 2 capital-allocation-api.test.ts failures are 5000ms timeouts under concurrent multi-session system load, confirmed unrelated -- reran that file alone, 4/4 pass in 1.1s). Full gate not re-run (workbook/reconcile steps need main-checkout .env, unrelated to a CSS-token + 2-component change; this branch touches zero data-pipeline files). One deliberately out-of-scope follow-up candidate the --text-on-info reviewer flagged: TierBoard.tsx ~L134's tier-dot background/text-primary pairing may be a SEPARATE, unrelated contrast question -- not investigated, not this PR's scope, worth a future look. PR OPENED: https://github.com/ZeOoba/oxford-command-center/pull/189. Not merged autonomously, matching PR-A/PR-B precedent.",
     "last_updated": "2026-07-09T14:03:14Z"
   },
-
   "mission-control-parity-sweep": {
     "agent_role": "UX Agent (Claude Code, Opus) — Gabriel-authorized in-session 2026-07-09",
     "phase": "PR-C of the Mission-Control retokenization — per-module parity re-QA. Closes the 're-QA of all modules against the new tokens' line item that PR-A (token layer, #186) and PR-B (shared primitives + Insights, design/mission-control-consumers) do not cover. Plan: docs/superpowers/plans/2026-07-09-mission-control-parity-sweep-pr-c.md (9 tasks); spec: docs/superpowers/specs/2026-07-09-mission-control-parity-sweep-design.md. Remediates live-grep token-bypasses in 4 module dirs (acquisitions navy/gold tier literals + #fff-on-accent; capital undefined --gold/--navy/--color-emerald; intel --success-*/--error-* remap; market dead-fallback hygiene) and visually confirms the 19 Class-D semantic-only modules that inherit PR-A+PR-B for free (incl. the newest builds Taxes/Insurance/Command-Brain/Debt-Scorecard, all verified semantic-only).",
@@ -518,7 +470,15 @@
     "review_detail": "PR-C COMPLETE, opened for review, NOT merged — final stage of the 3-PR Mission-Control retokenization (PR-A #186 tokens, PR-B #187 consumers, both merged; this closes the 're-QA of all modules' gap neither covered). Gabriel-authorized in-session 2026-07-09, executed fully autonomously (Tasks 1-4 dispatched to parallel Opus subagents on independent files, each implement+typecheck+test verified before I committed; one subagent connection-dropped mid-Task-2 after landing 2 of 4 files correctly, I finished the remaining 2 files directly and re-verified the full diff before committing — no partial/broken state shipped). PRE-EXECUTION RE-VERIFICATION (mandatory per this plan's own Preconditions, run fresh against the real merged PR-A+PR-B tree, not trusted from planning time): a full src/modules/** grep matched the plan's classification exactly — zero line drift, zero new findings, zero stale findings (PR-B never touched these 4 module dirs). REMEDIATED (4 files, real token-bypass): acquisitions GraderView.tsx/OmImportDrawer.tsx #fff-on-accent -> var(--text-on-accent); capital hooks.ts undefined --color-emerald -> var(--color-pos); intel AdminOnboardView.tsx undefined --success-*/--error-* -> var(--color-pos/neg)+-soft (confirmed real tokens before use). HYGIENE (4 files, dead hex fallback on already-correct tokens): market/MarketScorecard.tsx, capital/{AllocationCard,HurdleRateBanner,CapitalModule.tsx:354}. CONFIRMED CLEAN, no code (19 Class-D modules + overview): full-tree grep found zero raw hex / undefined tokens outside the 8 files above, including the 4 modules most feared hand-tuned to the old palette (Taxes/Insurance/Command-Brain/Debt-Scorecard). VERIFIED GREEN: governance, typecheck, lint, full unit suite (2352/2352, --pool=forks). NOT VERIFIED, pre-existing environment gaps (not PR-C regressions, documented in docs/design-parity-audit-2026-07-06.md's new section): (1) live 3-theme visual/screenshot pass -- dev server won't bind in this worktree, the identical gap PR-B's own record documents hitting twice including after copying .env in; (2) npm run build / check:bundle -- shared node_modules was never npm-installed after PR-A added @fontsource/ibm-plex-sans to package.json, confirmed via require.resolve from inside this worktree, pre-existing and would fail for anyone right now, root checkout has unrelated uncommitted changes so I did not attempt npm install on shared state; (3) reconcile/warehouse:verify/warehouse:drift -- need a live DB/workbook this fresh worktree doesn't have, same class of gap as fix-design-parity-p2-p3's prior entry; (4) the new multi-theme axe test (plan Task 9 Step 4a) -- needs the same blocked dev server, deferred per the plan's own Step 4d fallback, not silently dropped. Warm-theme --text-on-accent remains PR-B's proven-unsolvable structural gap, correctly NOT touched here (spec's own carve-out). No architect-owned files touched (re-verified against .claude/hooks/architect-owned.json). PR opened, not merged -- merge is Gabriel's, same as PR-A/PR-B.",
     "last_updated": "2026-07-09T08:35:00Z"
   },
-
+  "tone-text-aa-audit": {
+    "agent_role": "Engineering (Claude Code, Sonnet 5) — Gabriel-authorized 'Full repo-wide audit + fix' 2026-07-09",
+    "phase": "COMPLETE — PR opened, [oxford-command-center#191](https://github.com/ZeOoba/oxford-command-center/pull/191), NOT merged (Gabriel's call, per standing convention). All 18 tasks of docs/superpowers/plans/2026-07-09-tone-text-aa-fix.md done via sequential single-worktree subagent-driven-development (implementer + independent reviewer per task, several with fix-and-re-review cycles), plus a final whole-branch opus review that did a fresh repo-wide sweep and caught one more gap before sign-off. Prior entry below (UX Agent, Sonnet 5) preserved for the reasoning trail: it investigated the same PR-189 follow-up narrowly, discovered this broader effort already in flight, and stood down per Gabriel's direction — its DealDrawer.tsx carry-over was confirmed already covered by Task 6.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Awaiting Gabriel's merge decision on PR #191. Post-open: CI's `gate` check failed (real bug — `npm run gate:ci` runs a production `vite build` that this branch's local verification, `npm run gate` minus DB-dependent steps, never ran; `vite-plugin-pwa` choked on apostrophes inside 3 CSS comments in theme.css, one pre-existing from PR-189, two added by this branch — 'Unterminated string' parse failure). Fixed (commit ca2c26f, rephrased all 3 comments to avoid contractions), reproduced the original failure locally with `npm run build`, then verified the fix with a full local `npm run gate:ci` end-to-end (typecheck, lint, full suite, production build, bundle-budget check) before pushing. A merge conflict also arose from origin/main advancing (PR #190, 'status-json-and-server-port-fix') — both touched architecture/status.json's insertion point; resolved as a clean additive merge (commit d0ec636), both entries preserved, re-verified full suite green (2390/2390) post-merge. Lesson captured: memory/feedback_command_center_gate_vs_gate_ci_divergence.md. Full verification (pre-CI-catch) green: 212 test files / 2388 tests, typecheck 0, lint 0, governance passed (one transient Windows/node segfault mid-suite, resolved on rerun — documented pre-existing environment quirk, not a regression). Real defects found and fixed during implementation, all one underlying bug shape (a single JS value feeding both a text `color` property and a non-text fill/background/border property, so darkening it for AA silently darkened the fill too): (1) TierBoard's item-count badge border failed the 3:1 non-text floor for warm/warn specifically (2.96:1) — fixed using the text-safe token for both border and text (Task 3). (2) StatusPill's single COLOR map fed both the text label and the decorative pulsing dot's fill/glow — split into DOT_COLOR (original tone)/TEXT_COLOR (AA-safe) (Task 4). (3) Capital module's actionColor() fed a chip's background/border color-mix AND its text from the same call at 2 sites — split into actionFillColor() (original tone)/actionColor() (AA-safe), verified byte-identical fill/border restoration (Task 17). A Task-1 implementer's own regression test caught a plan transcription error (warm --text-info/--text-accent2 mistakenly left undarkened) — corrected. Two isolated inventory gaps found by review and fixed: AcquisitionWorkbench.tsx's 'Upload OM' button (Task 8), and the entire src/modules/close/ module — never covered by the original 3-agent directory split — CloseModule.tsx's variance cell (caught by the final whole-branch review, commit 922059b). Post-fix controller-run sweep across all of src/modules/ with a broadened grep (matching tokens anywhere on a color:-bearing line, including ternaries) found zero further genuine misses. A second Claude Code session (local_72fe1f51) independently reviewed commits throughout and caught 2 of the above bugs before their own report landed; declined an offer to co-implement in this worktree (coordination/rebase overhead outweighed wall-clock savings on this bounded backlog) and stayed in review-and-flag mode. New regression test tests/unit/theme-text-contrast.test.ts locks in the AA guarantee (36 assertions, 3 themes x 6 tones x every real background combination). Not run: live 3-theme visual/dev-server check (worktree dev server won't bind, the same documented pre-existing gap PR-B/PR-C hit).",
+    "last_updated": "2026-07-09T15:45:00Z"
+  },
   "status-json-and-server-port-fix": {
     "agent_role": "UX Agent (Claude Code, Sonnet 5) — Gabriel-authorized in-session 2026-07-09 (\"Fix #1-3 now\")",
     "phase": "Post-Mission-Control-arc housekeeping: 3 concrete follow-ups surfaced while investigating what's next after PR-A/B/189/C. (1) architecture/status.json was invalid JSON on merged main (pr-b-flagged-followups' closing brace/comma dropped before mission-control-parity-sweep, likely during PR-189's merge) — repaired. (2) server/config.ts's SERVER_PORT was a top-level const, same bug class already fixed for workbookPath() in this file (freezes process.env at import time, before .env loads) — converted to serverPort(), TDD, both consumers updated. (3) investigated as 'missing @fontsource/ibm-plex-sans in shared node_modules' — turned out to be a MISDIAGNOSIS from PR-C's own investigation: that package doesn't exist in package.json at all (the real fonts are EB Garamond/DM Sans/IBM Plex Mono, already correctly installed); npm install + a real tsc+vite build both succeeded cleanly with zero changes needed. Correcting the record here since mission-control-parity-sweep's own entry above states this claim — it was wrong.",
@@ -528,7 +488,6 @@
     "review_detail": "Both real fixes (1)+(2) complete, TDD, gate-verified. (1) status.json: one-line repair (missing `},`), validated via JSON.parse, re-confirmed by a clean `npm run governance` pass. (2) SERVER_PORT -> serverPort(): mirrors workbookPath()'s existing pattern exactly (see docs/superpowers/plans/2026-07-08-workbook-path-dual-library-and-env-loading-fix-plan.md, which explicitly deferred converting SERVER_PORT at the time — 'not exhibiting this bug in current usage' — a decision made before isolated worktrees got their own .env files; empirically reproduced the bug since then, documented in docs/design-parity-audit-2026-07-06.md). New tests/unit/config.test.ts coverage mirrors workbookPath()'s existing test shape exactly (TDD: watched red, then green). Updated consumers: server/index.ts, scripts/bake-warehouse.ts, and the brain.test.ts vi.mock shape. **ARCHITECT-OWNED FILE TOUCHED: server/index.ts** (one-line: import + call-site change only, `SERVER_PORT` -> `serverPort()`, zero behavior change beyond the fix itself) — flagging per governance capsule; covered by Gabriel's in-session 'Fix #1-3 now' directive, same standing as PR-A's package.json touches, but calling it out explicitly rather than silently proceeding. vite.config.ts's own independent BRAIN_SERVER_PORT read (also architect-owned) was deliberately NOT touched — different load-order story (Vite loads .env before evaluating its config file), not confirmed to share this bug, and touching it would need its own separate review. VERIFIED: npm run governance clean; npx tsc --noEmit clean (whole worktree); npx eslint --max-warnings 0 clean; full unit suite 2352/2354 (--pool=forks) -- the 2 capital-allocation-api.test.ts failures are the SAME pre-existing 5000ms-timeout-under-concurrent-load flake pr-b-flagged-followups' own entry already documented, re-confirmed unrelated by running that file alone (4/4 pass, 3.1s); npm run build + check:bundle both pass clean (entry 90.9 kB < 250 kB budget, unchanged). reconcile/warehouse:verify/warehouse:drift not run -- need a live DB/workbook this worktree doesn't have, same documented class of gap as prior entries. No design/visual judgment calls in this PR -- pure housekeeping. PR opened, not merged -- merge is Gabriel's.",
     "last_updated": "2026-07-09T10:30:00Z"
   },
-
   "usage": {
     "how_to_update": "Edit your worktree's entry before starting and after completing work; commit it on your branch. Use ISO 8601 timestamps. Set review_needed=true and fill review_detail when you need architect sign-off on an architect-owned file.",
     "how_to_read": "Before starting any task, check all other worktrees for status=in_progress or review_needed. If another agent works in your file-ownership area, coordinate before editing."

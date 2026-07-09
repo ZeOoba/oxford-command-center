@@ -45,7 +45,7 @@ function GovernorCell({ dscrCleared, ltvCleared }: GovernorCellProps) {
     return <span style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>–</span>;
   }
   if (!breach) {
-    return <span style={{ color: 'var(--color-pos)', fontSize: '0.75rem' }}>✓</span>;
+    return <span style={{ color: 'var(--text-pos)', fontSize: '0.75rem' }}>✓</span>;
   }
   const tip = [
     dscrCleared === false ? 'DSCR governor failed (proxy < 1.25x)' : '',
@@ -54,7 +54,7 @@ function GovernorCell({ dscrCleared, ltvCleared }: GovernorCellProps) {
   return (
     <span
       title={tip}
-      style={{ color: 'var(--color-neg)', fontSize: '0.75rem', cursor: 'default' }}
+      style={{ color: 'var(--text-neg)', fontSize: '0.75rem', cursor: 'default' }}
     >
       ⚠
     </span>
@@ -153,7 +153,7 @@ export function RankedCandidateList({ items, advisoryOnly, writesEnabled }: Prop
           key: 'advisory',
           header: '⚠',
           render: (_item: RankedCandidate) => (
-            <span style={{ color: 'var(--color-warn)', fontSize: '0.6875rem' }}>advisory</span>
+            <span style={{ color: 'var(--text-warn)', fontSize: '0.6875rem' }}>advisory</span>
           ),
         } satisfies Column<RankedCandidate>]
       : []),

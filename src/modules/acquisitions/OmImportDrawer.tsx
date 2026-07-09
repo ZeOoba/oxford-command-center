@@ -119,7 +119,7 @@ export function OmImportDrawer({
       <div style={headerStyle}>
         <span
           className="text-2xs font-semibold uppercase"
-          style={{ letterSpacing: '0.08em', color: 'var(--accent)' }}
+          style={{ letterSpacing: '0.08em', color: 'var(--text-accent)' }}
         >
           OM Import
         </span>
@@ -129,7 +129,7 @@ export function OmImportDrawer({
           </span>
         )}
         {state.phase === 'extracted' && (
-          <span className="text-2xs" style={{ color: 'var(--color-pos)' }}>
+          <span className="text-2xs" style={{ color: 'var(--text-pos)' }}>
             {state.fieldCount} field{state.fieldCount !== 1 ? 's' : ''} found
           </span>
         )}
@@ -228,14 +228,14 @@ export function OmImportDrawer({
                     {Object.entries(state.fields).map(([key, value]) => (
                       <tr key={key} style={{ borderTop: '1px solid var(--border-strong)' }}>
                         <td
-                          style={{ padding: '0.2rem 0.5rem 0.2rem 0', color: 'var(--color-info)' }}
+                          style={{ padding: '0.2rem 0.5rem 0.2rem 0', color: 'var(--text-info)' }}
                         >
                           {FIELD_LABELS[key] ?? key}
                         </td>
                         <td style={{ padding: '0.2rem 0.5rem 0.2rem 0', color: 'var(--text-primary)' }}>
                           {value}
                         </td>
-                        <td style={{ color: 'var(--color-pos)', textAlign: 'center' }}>✓</td>
+                        <td style={{ color: 'var(--text-pos)', textAlign: 'center' }}>✓</td>
                       </tr>
                     ))}
                   </tbody>
@@ -269,7 +269,7 @@ export function OmImportDrawer({
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
             <span
               className="text-2xs"
-              style={{ flex: 1, color: 'var(--color-neg)' }}
+              style={{ flex: 1, color: 'var(--text-neg)' }}
             >
               {state.message}
             </span>

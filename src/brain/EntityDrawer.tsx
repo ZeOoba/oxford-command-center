@@ -193,7 +193,7 @@ function Panel({
                       key={i}
                       onClick={() => onDraft(a.draft)}
                       className="flex items-center gap-1.5 rounded-[var(--radius-sm)] px-3 py-1.5 text-xs font-semibold"
-                      style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--accent)' }}
+                      style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--text-accent)' }}
                     >
                       <Mail size={13} /> {a.label}
                     </button>

@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { Card } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import type { AllocationVerdict } from './hooks';
-import { actionLabel, actionColor, riskBandTone } from './hooks';
+import { actionLabel, actionColor, actionFillColor, riskBandTone } from './hooks';
 
 function fmtPct(n: number | null): string {
   if (n === null) return '—';
@@ -44,9 +44,9 @@ export function AllocationCard({ verdict, hurdleRatePct }: Props) {
           <span style={{
             fontWeight: 700, fontSize: 13, letterSpacing: '0.03em',
             padding: '2px 8px', borderRadius: 4,
-            background: `color-mix(in oklab, ${actionColor(verdict.action)} 15%, transparent)`,
+            background: `color-mix(in oklab, ${actionFillColor(verdict.action)} 15%, transparent)`,
             color: actionColor(verdict.action),
-            border: `1px solid color-mix(in oklab, ${actionColor(verdict.action)} 40%, transparent)`,
+            border: `1px solid color-mix(in oklab, ${actionFillColor(verdict.action)} 40%, transparent)`,
           }}>
             {actionLabel(verdict.action)}
           </span>
@@ -63,14 +63,14 @@ export function AllocationCard({ verdict, hurdleRatePct }: Props) {
           <span>
             Return <strong style={{ color: 'var(--text-primary)' }}>{returnStr}</strong>
             {aboveHurdle !== null && (
-              <span style={{ marginLeft: 4, color: aboveHurdle ? 'var(--color-pos)' : 'var(--color-neg)' }}>
+              <span style={{ marginLeft: 4, color: aboveHurdle ? 'var(--text-pos)' : 'var(--text-neg)' }}>
                 {aboveHurdle ? '↑' : '↓'} vs {hurdleStr} hurdle
               </span>
             )}
           </span>
           <span>Timeline <strong style={{ color: 'var(--text-primary)' }}>{verdict.timelineMonths}mo</strong></span>
           {verdict.advisoryOnly && (
-            <span style={{ color: 'var(--color-warn)', fontStyle: 'italic' }}>advisory</span>
+            <span style={{ color: 'var(--text-warn)', fontStyle: 'italic' }}>advisory</span>
           )}
         </div>
 

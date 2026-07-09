@@ -57,7 +57,7 @@ const COLS: Column<DebtScore>[] = [
     header: 'DSCR',
     align: 'right',
     render: (row) => (
-      <span className="num text-xs" style={{ color: row.dscr !== null && row.dscr < 1.25 ? 'var(--color-neg)' : 'var(--text-primary)' }}>
+      <span className="num text-xs" style={{ color: row.dscr !== null && row.dscr < 1.25 ? 'var(--text-neg)' : 'var(--text-primary)' }}>
         {fmtDscr(row.dscr)}
       </span>
     ),
@@ -68,7 +68,7 @@ const COLS: Column<DebtScore>[] = [
     header: 'DSCR Room',
     align: 'right',
     render: (row) => (
-      <span className="num text-xs" style={{ color: row.dscrHeadroom !== null && row.dscrHeadroom < 0 ? 'var(--color-neg)' : 'var(--text-tertiary)' }}>
+      <span className="num text-xs" style={{ color: row.dscrHeadroom !== null && row.dscrHeadroom < 0 ? 'var(--text-neg)' : 'var(--text-tertiary)' }}>
         {row.dscrHeadroom !== null ? fmtDscr(row.dscrHeadroom) : '—'}
       </span>
     ),
@@ -115,7 +115,7 @@ export function ScorecardView() {
     return (
       <Card>
         <CardHeader title="Debt Scorecard" trailing={<Badge tone="red">error</Badge>} />
-        <div className="px-4 py-6 text-sm" style={{ color: 'var(--color-neg)' }}>
+        <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-neg)' }}>
           {error instanceof Error ? error.message : 'Failed to load debt scores.'}
         </div>
       </Card>

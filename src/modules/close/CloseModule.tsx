@@ -108,7 +108,7 @@ function BudgetRow({ row, hasQb, pending, onSave, onSelect }: { row: NoiVariance
         />
       </td>
       <td className="num px-3 py-2 text-right text-xs" style={{ color: 'var(--text-primary)' }}>{row.actual !== null ? fmtUsd(row.actual) : (hasQb ? '—' : '·')}</td>
-      <td className="num px-3 py-2 text-right text-xs" style={{ color: row.variance !== null ? (row.variance < 0 ? 'var(--color-neg)' : 'var(--color-pos)') : 'var(--text-tertiary)' }}>{row.variance !== null ? fmtUsd(row.variance) : '—'}</td>
+      <td className="num px-3 py-2 text-right text-xs" style={{ color: row.variance !== null ? (row.variance < 0 ? 'var(--text-neg)' : 'var(--text-pos)') : 'var(--text-tertiary)' }}>{row.variance !== null ? fmtUsd(row.variance) : '—'}</td>
       <td className="num px-3 py-2 text-right text-xs" style={{ color: 'var(--text-secondary)' }}>{row.variancePct !== null ? fmtPct(row.variancePct) : '—'}</td>
       <td className="px-3 py-2 text-right">{row.belowBudget && <Badge tone="red">under</Badge>}</td>
     </tr>

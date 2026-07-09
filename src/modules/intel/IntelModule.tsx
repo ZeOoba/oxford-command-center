@@ -159,7 +159,7 @@ export function IntelModule() {
                       )}
                       style={
                         tab === t.id
-                          ? { background: 'color-mix(in oklab, var(--accent) 16%, transparent)', color: 'var(--accent)', border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)', letterSpacing: '0.06em' }
+                          ? { background: 'color-mix(in oklab, var(--accent) 16%, transparent)', color: 'var(--text-accent)', border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)', letterSpacing: '0.06em' }
                           : {
                               background: 'transparent',
                               color: 'var(--text-tertiary)',

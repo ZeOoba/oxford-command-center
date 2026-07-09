@@ -24,7 +24,7 @@ import { Button } from '@/primitives/Button';
 import { Skeleton } from '@/primitives/Skeleton';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { useToast } from '@/primitives/toast-context';
-import { useCapitalAllocation, actionLabel, actionColor } from './hooks';
+import { useCapitalAllocation, actionLabel, actionColor, actionFillColor } from './hooks';
 import { AllocationCard } from './AllocationCard';
 import { HurdleRateBanner } from './HurdleRateBanner';
 
@@ -137,8 +137,8 @@ const CAP_RATE_COLS: Column<CapitalAllocationEntry>[] = [
           color: e.capRateGap === null
             ? 'var(--text-tertiary)'
             : e.capRateGap >= 0
-            ? 'var(--color-pos)'
-            : 'var(--color-warn)',
+            ? 'var(--text-pos)'
+            : 'var(--text-warn)',
         }}
       >
         {fmtCapRateGap(e.capRateGap)}
@@ -181,7 +181,7 @@ function ExportIcMemoButton({ disabled }: { disabled: boolean }) {
       style={{
         padding: '4px 10px',
         border: '1px solid var(--accent)',
-        color: disabled ? 'var(--text-tertiary)' : 'var(--accent)',
+        color: disabled ? 'var(--text-tertiary)' : 'var(--text-accent)',
         background: 'transparent',
         textDecoration: 'none',
         pointerEvents: disabled ? 'none' : 'auto',
@@ -249,9 +249,9 @@ export function CapitalModule() {
               {actionEntries.filter(([, n]) => n > 0).map(([action, count]) => (
                 <span key={action} style={{
                   fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
-                  background: `color-mix(in oklab, ${actionColor(action as AllocationAction)} 12%, transparent)`,
+                  background: `color-mix(in oklab, ${actionFillColor(action as AllocationAction)} 12%, transparent)`,
                   color: actionColor(action as AllocationAction),
-                  border: `1px solid color-mix(in oklab, ${actionColor(action as AllocationAction)} 35%, transparent)`,
+                  border: `1px solid color-mix(in oklab, ${actionFillColor(action as AllocationAction)} 35%, transparent)`,
                 }}>
                   {actionLabel(action as AllocationAction)} {count}
                 </span>
@@ -351,7 +351,7 @@ export function CapitalModule() {
                   IRR {fmtPct(c.leveredIrr)}
                 </span>
                 {c.basisDiscountPct !== null && (
-                  <span style={{ fontSize: 12, color: 'var(--color-pos)' }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-pos)' }}>
                     {fmtPct(c.basisDiscountPct)} disc.
                   </span>
                 )}

@@ -157,8 +157,8 @@ function ResultsBannerWidget() {
         trailing={<Badge tone={summary.count > 0 ? 'amber' : 'neutral'}>{summary.count} open</Badge>}
       />
       <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3">
-        <SpineSplitCell label="Risk Impact" totals={summary.riskImpactBySpine} accentColor="var(--color-neg)" />
-        <SpineSplitCell label="Monitor Impact" totals={summary.monitorImpactBySpine} accentColor="var(--color-info)" />
+        <SpineSplitCell label="Risk Impact" totals={summary.riskImpactBySpine} accentColor="var(--text-neg)" />
+        <SpineSplitCell label="Monitor Impact" totals={summary.monitorImpactBySpine} accentColor="var(--text-info)" />
         <div
           className="flex flex-col justify-center gap-1 rounded-[var(--radius-md)] p-3"
           style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)' }}

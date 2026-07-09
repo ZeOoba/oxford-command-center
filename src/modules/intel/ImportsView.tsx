@@ -154,7 +154,7 @@ function ImportDetailPanel({ id, onClose }: { id: number; onClose: () => void })
               <Button variant="subtle" size="sm" onPress={runReject} isDisabled={action.isPending}>Reject</Button>
               {action.isPending && <span className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>Working…</span>}
             </div>
-            {actionError && <span className="text-2xs" style={{ color: 'var(--color-neg)' }}>{actionError}</span>}
+            {actionError && <span className="text-2xs" style={{ color: 'var(--text-neg)' }}>{actionError}</span>}
             {unmapped && unmapped.length > 0 && (
               <UnmappedResolver
                 accounts={unmapped}
@@ -267,7 +267,7 @@ function AddMappingRow({ account, propertyId, done, onResolved }: { account: str
         </label>
       )}
       <Button size="sm" variant="subtle" onPress={submit} isDisabled={addMapping.isPending}>Add mapping</Button>
-      {addMapping.isError && <span className="text-2xs" style={{ color: 'var(--color-neg)' }}>failed</span>}
+      {addMapping.isError && <span className="text-2xs" style={{ color: 'var(--text-neg)' }}>failed</span>}
     </div>
   );
 }

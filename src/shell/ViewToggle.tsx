@@ -18,7 +18,7 @@ export function ViewToggle() {
             aria-pressed={active}
             className="num rounded-full px-2.5 py-1 text-2xs font-semibold transition-colors"
             style={active
-              ? { background: 'var(--accent-quiet)', color: 'var(--accent)' }
+              ? { background: 'var(--accent-quiet)', color: 'var(--text-accent)' }
               : { background: 'transparent', color: 'var(--text-tertiary)' }}
           >
             {o.label}

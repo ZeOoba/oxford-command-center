@@ -314,7 +314,7 @@ function VerdictHeader({
             <ul className="flex flex-col gap-1">
               {score.reasons.map((r, i) => (
                 <li key={i} className="flex items-start gap-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
-                  <span aria-hidden style={{ color: 'var(--accent)' }}>•</span>
+                  <span aria-hidden style={{ color: 'var(--text-accent)' }}>•</span>
                   <span>{r}</span>
                 </li>
               ))}
@@ -480,7 +480,7 @@ function SinceAcquisitionStrip({ sinceAcq }: { sinceAcq: SinceAcquisition | null
 
 function growthColor(v: number | null): string {
   if (v === null || !Number.isFinite(v)) return 'var(--text-tertiary)';
-  return v >= 0 ? 'var(--color-pos)' : 'var(--color-neg)';
+  return v >= 0 ? 'var(--text-pos)' : 'var(--text-neg)';
 }
 
 /** Signed percentage, '—' when null. Positive carries a leading '+' for legibility. */

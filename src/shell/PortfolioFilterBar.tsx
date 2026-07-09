@@ -12,7 +12,7 @@ const fieldStyle: CSSProperties = {
 const fieldStyleSet: CSSProperties = {
   ...fieldStyle,
   border: '1px solid var(--accent)',
-  color: 'var(--accent)',
+  color: 'var(--text-accent)',
 };
 
 export interface PortfolioFilterBarProps {

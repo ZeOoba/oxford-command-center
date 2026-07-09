@@ -19,7 +19,7 @@ export function StaleBanner() {
       style={{
         background: 'color-mix(in oklab, var(--color-warn) 14%, transparent)',
         borderBottom: '1px solid color-mix(in oklab, var(--color-warn) 40%, transparent)',
-        color: 'var(--color-warn)',
+        color: 'var(--text-warn)',
       }}
     >
       <AlertTriangle size={14} />

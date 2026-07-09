@@ -22,7 +22,7 @@ export function CashModule() {
       key: 'delta',
       header: 'Δ Period',
       align: 'right',
-      render: (c) => (c.deltaPct !== null ? <span style={{ color: c.deltaPct >= 0 ? 'var(--color-pos)' : 'var(--color-neg)' }}>{fmtPct(c.deltaPct)}</span> : '—'),
+      render: (c) => (c.deltaPct !== null ? <span style={{ color: c.deltaPct >= 0 ? 'var(--text-pos)' : 'var(--text-neg)' }}>{fmtPct(c.deltaPct)}</span> : '—'),
       sortValue: (c) => c.deltaPct ?? 0,
     },
     { key: 'pct', header: '% of Cash', align: 'right', render: (c) => fmtPct(c.pctOfPortfolio), sortValue: (c) => c.pctOfPortfolio ?? 0 },

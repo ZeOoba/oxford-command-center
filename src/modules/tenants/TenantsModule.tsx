@@ -124,7 +124,7 @@ function TenantDetail({
                   <div className="num text-2xs" style={{ fontWeight: 600 }}>{l.propertyKey} {l.unit ?? ''}</div>
                   <div className="num text-[10px]" style={{ color: 'var(--text-tertiary)' }}>exp {fmtDate(l.leaseEnd)} · {fmtUsdCompact(l.annualRent)}</div>
                 </button>
-                <button onClick={() => onDraft(l.id)} className="flex items-center gap-1 text-2xs" style={{ color: 'var(--accent)' }} aria-label={`Draft renewal for ${l.propertyKey}`}>
+                <button onClick={() => onDraft(l.id)} className="flex items-center gap-1 text-2xs" style={{ color: 'var(--text-accent)' }} aria-label={`Draft renewal for ${l.propertyKey}`}>
                   <Mail size={11} /> Draft
                 </button>
               </div>
