@@ -18,6 +18,7 @@
 import type { Insight, InsightSeverity } from '@analytics/types';
 import type { InsightCandidate, InsightFamily } from '@contracts/insights';
 import type { PortfolioSnapshot } from '@contracts/index';
+import type { BadgeTone } from '@/primitives/Badge';
 import type { Tier, TierItem, TierTotal } from '@/primitives/TierBoard';
 
 // ── Merged shape ──────────────────────────────────────────────────────────────────────────
@@ -93,6 +94,24 @@ export const CATEGORY_TO_FAMILY: Record<Insight['category'], InsightFamily> = {
   anomaly: 'DR',
   data: 'DR',
 };
+
+// ── Category -> badge tone (severity/status color-coding, threaded through TierBoard) ───────
+const CATEGORY_TONE: Record<Insight['category'], BadgeTone> = {
+  debt: 'red',
+  deal: 'blue',
+  concentration: 'amber',
+  lease: 'green',
+  occupancy: 'green',
+  collections: 'amber',
+  insurance: 'blue',
+  cash: 'green',
+  anomaly: 'red',
+  data: 'neutral',
+};
+
+export function categoryTone(category: Insight['category']): BadgeTone {
+  return CATEGORY_TONE[category];
+}
 
 // ── Join spec: resolve a Spine-A insight's entity reference to a propertyId ─────────────────
 
