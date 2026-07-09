@@ -17,7 +17,7 @@ export function ModuleLoading() {
 export function ModuleError({ onRetry, message }: { onRetry: () => void; message?: string }) {
   return (
     <div role="alert" className="grid place-items-center gap-3 py-24 text-center">
-      <div className="text-sm font-semibold" style={{ color: 'var(--color-neg)' }}>
+      <div className="text-sm font-semibold" style={{ color: 'var(--text-neg)' }}>
         Can't reach the Brain Server (:8911).
       </div>
       {message && (

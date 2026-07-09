@@ -71,7 +71,7 @@ export function TopBar({ title, asOf, onOpenSearch, onOpenNav, navOpen }: { titl
         <button
           onClick={ui.toggleAi}
           className="flex items-center gap-1.5 rounded-[var(--radius-sm)] px-2.5 py-1.5 text-2xs font-semibold transition-colors"
-          style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--accent)' }}
+          style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--text-accent)' }}
         >
           <Sparkles size={13} />
           <span className="hidden sm:inline">Ask</span>

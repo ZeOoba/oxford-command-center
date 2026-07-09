@@ -19,7 +19,7 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.error) {
       return (
         <div role="alert" className="grid place-items-center gap-2 py-24 text-center">
-          <div className="text-sm font-semibold" style={{ color: 'var(--color-neg)' }}>
+          <div className="text-sm font-semibold" style={{ color: 'var(--text-neg)' }}>
             Something went wrong rendering this module.
           </div>
           <div className="num max-w-lg text-2xs" style={{ color: 'var(--text-tertiary)' }}>
