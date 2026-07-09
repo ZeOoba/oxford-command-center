@@ -44,7 +44,7 @@ export function Provenance({ prov, children }: { prov: ProvenanceData; children:
           className="num mb-1 text-2xs font-semibold uppercase"
           style={{
             letterSpacing: '0.1em',
-            color: prov.confidence === 'confirmed' ? 'var(--color-pos)' : 'var(--color-warn)',
+            color: prov.confidence === 'confirmed' ? 'var(--text-pos)' : 'var(--text-warn)',
           }}
         >
           {LABEL[prov.confidence]}

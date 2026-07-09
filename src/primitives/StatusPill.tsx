@@ -5,11 +5,11 @@ import { computeFreshness, type Freshness } from '@/lib/freshness';
 import { useNow } from '@/lib/useNow';
 
 const COLOR: Record<Freshness['kind'], string> = {
-  live: 'var(--color-pos)',
-  static: 'var(--color-info)',
-  stale: 'var(--color-warn)',
-  refreshing: 'var(--color-warn)',
-  offline: 'var(--color-neg)',
+  live: 'var(--text-pos)',
+  static: 'var(--text-info)',
+  stale: 'var(--text-warn)',
+  refreshing: 'var(--text-warn)',
+  offline: 'var(--text-neg)',
   connecting: 'var(--text-tertiary)',
 };
 

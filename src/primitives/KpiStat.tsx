@@ -76,7 +76,7 @@ export function KpiStat({
             {delta != null && (
               <span
                 className="num inline-flex items-center gap-0.5 font-semibold"
-                style={{ color: deltaUp ? 'var(--color-pos)' : 'var(--color-neg)' }}
+                style={{ color: deltaUp ? 'var(--text-pos)' : 'var(--text-neg)' }}
               >
                 {deltaUp ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
                 {Math.abs(delta * 100).toFixed(1)}%
