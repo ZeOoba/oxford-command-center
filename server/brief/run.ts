@@ -10,9 +10,10 @@ import { sendEmail, type SendResult } from './send';
 import { openWarehouse } from '../warehouse/db';
 import { insuranceConditions } from '../warehouse/insurance-conditions';
 import { DAY_MS } from '../warehouse/time-constants';
-// Routing canon: all automated outputs → ggoldberg only; Daily Brief is the sole cc-Eric exception.
+// Routing canon: all automated outputs → ggoldberg only. The cc-Eric exception belongs to
+// the ora-am-brief ONLY and does not extend to this brief (Gabriel-ratified 2026-07-09).
 const ALERT_RECIPIENTS = ['ggoldberg@oxfordra.net'];
-const BRIEF_RECIPIENTS = ['ggoldberg@oxfordra.net', 'egoldberg@oxfordra.net'];
+const BRIEF_RECIPIENTS = ['ggoldberg@oxfordra.net'];
 const DASHBOARD_URL = process.env.BRIEF_DASHBOARD_URL ?? 'https://ora-command-center.pages.dev';
 const HEALTH_PATH = process.env.BRIEF_HEALTH_PATH ?? 'data/brief-health.json';
 
@@ -99,6 +100,7 @@ export async function runBrief(
     const r = await send(
       renderBrief({
         asOf: snapshot.meta.asOf,
+        briefDate: nowEt.date,
         freshness: snapshot.dataQuality.length ? `${snapshot.dataQuality.length} data-quality flag(s)` : 'no data-quality flags',
         insights,
         criticalDates,
