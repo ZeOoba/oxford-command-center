@@ -17,7 +17,7 @@ export function workbookPath(): string {
     process.env.WORKBOOK_PATH ??
     join(
       homedir(),
-      'OneDrive - Oxford Capital Partners (1)',
+      'OneDrive - Oxford Capital Partners',
       'eric spreadsheets',
       'Master Excel Template Company Wide -- Oxford.xlsx',
     )
