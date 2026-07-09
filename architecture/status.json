@@ -94,11 +94,11 @@
     "fix-mirror-deploy-pull": {
       "agent_role": "Engineering (Claude Code) -- Gabriel-directed root-cause fix + PR",
       "phase": "deploy-mirror.ps1 git-pull-before-bake fix -- PR #192",
-      "status": "review_needed",
+      "status": "merged",
       "blocked_by": null,
-      "review_needed": true,
-      "review_detail": "Root cause: hourly scheduled deploy task never ran git pull, so merged main PRs (Mission-Control retokenization, 7 commits) sat undeployed >1 day while the data-freshness badge alone looked current. Fix: git fetch + git pull --ff-only before the bake, throws loudly on diverge/conflicting uncommitted changes rather than silently deploying stale code. Verified this session by manually reproducing the fix path (stash -> pull -> npm install -> gate/reconcile/warehouse checks green -> deploy) and confirming the retokenized design live on brain.oxfordra.net via screenshot. PR #192 open, awaiting Gabriel review/merge; worktree to be removed post-merge.",
-      "last_updated": "2026-07-09T19:08:40Z"
+      "review_needed": false,
+      "review_detail": "MERGED via PR #192 (commit 0df092f). deploy-mirror.ps1 now git fetch + git pull --ff-only before every bake, throws loudly on diverge/conflicting uncommitted changes. Worktree removed, branch deleted (local + remote) post-merge.",
+      "last_updated": "2026-07-09T19:16:04Z"
     }
   },
   "phase-4-steps-5-7-8-9": {
