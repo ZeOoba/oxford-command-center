@@ -62,14 +62,15 @@
 
 ```css
   /* Text-safe variants — see the parchment block's comment for methodology.
-     --text-info and --text-accent2 are unchanged from --color-info/--color-accent2:
-     both already clear 4.5:1 against every real background in this theme. */
+     Every tone in this theme needs darkening, including --text-info and
+     --text-accent2 (unlike command/parchment, where those two already clear
+     4.5:1 unchanged) — this theme's near-white surfaces leave less headroom. */
   --text-neg: #94492e;
   --text-warn: #7c5b15;
-  --text-info: #2f6f6a;
+  --text-info: #2b6661;
   --text-pos: #306a45;
   --text-accent: #94492e;
-  --text-accent2: #8a5a72;
+  --text-accent2: #7b5066;
 ```
 
 - [ ] **Step 4: Write the contrast regression test**
@@ -123,7 +124,7 @@ const THEMES = {
     surfaceRaised: '#fffdf8',
     surfaceOverlay: '#fbf6ec',
     color: { neg: '#c2603c', warn: '#b8881f', info: '#2f6f6a', pos: '#3f8a5a', accent: '#c2603c', accent2: '#8a5a72' },
-    text: { neg: '#94492e', warn: '#7c5b15', info: '#2f6f6a', pos: '#306a45', accent: '#94492e', accent2: '#8a5a72' },
+    text: { neg: '#94492e', warn: '#7c5b15', info: '#2b6661', pos: '#306a45', accent: '#94492e', accent2: '#7b5066' },
   },
   command: {
     surfaceBase: '#0c0f14',

@@ -171,14 +171,15 @@
      T2·WATCH badge (the only --color-info fill) would regress. */
   --text-on-info: #fffdf8;
   /* Text-safe variants — see the parchment block's comment for methodology.
-     --text-info and --text-accent2 are unchanged from --color-info/--color-accent2:
-     both already clear 4.5:1 against every real background in this theme. */
+     Every tone in this theme needs darkening, including --text-info and
+     --text-accent2 (unlike command/parchment, where those two already clear
+     4.5:1 unchanged) — this theme's near-white surfaces leave less headroom. */
   --text-neg: #94492e;
   --text-warn: #7c5b15;
-  --text-info: #2f6f6a;
+  --text-info: #2b6661;
   --text-pos: #306a45;
   --text-accent: #94492e;
-  --text-accent2: #8a5a72;
+  --text-accent2: #7b5066;
   --accent: #c2603c;
   --accent-quiet: rgba(194, 96, 60, 0.1);
   --color-pos: #3f8a5a;

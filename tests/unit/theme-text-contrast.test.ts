@@ -54,7 +54,7 @@ const THEMES = {
     surfaceRaised: '#fffdf8',
     surfaceOverlay: '#fbf6ec',
     color: { neg: '#c2603c', warn: '#b8881f', info: '#2f6f6a', pos: '#3f8a5a', accent: '#c2603c', accent2: '#8a5a72' },
-    text: { neg: '#94492e', warn: '#7c5b15', info: '#2f6f6a', pos: '#306a45', accent: '#94492e', accent2: '#8a5a72' },
+    text: { neg: '#94492e', warn: '#7c5b15', info: '#2b6661', pos: '#306a45', accent: '#94492e', accent2: '#7b5066' },
   },
   command: {
     surfaceBase: '#0c0f14',
