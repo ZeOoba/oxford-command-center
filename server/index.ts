@@ -28,6 +28,7 @@ import { debtApi } from './warehouse/debt-api';
 import { leaseForecastApi } from './warehouse/lease-forecast-api';
 import { capitalAllocationApi } from './warehouse/capital-allocation-api';
 import { insuranceAnalysisApi } from './warehouse/insurance-analysis-api';
+import { insuranceLossApi } from './warehouse/insurance-loss-api';
 import { taxApi } from './warehouse/tax-api';
 import { brainApi } from './warehouse/brain-api';
 import { insightsApi } from './warehouse/insights-api';
@@ -65,6 +66,7 @@ app.route('/api/warehouse/leasing', leaseForecastApi(getWarehouse));
 app.route('/api/warehouse/capital', capitalAllocationApi(getWarehouse));
 // Design-parity engines (P2/P4/P5/P6): sub-routers per the debt-api pattern.
 app.route('/api/warehouse/insurance/analysis', insuranceAnalysisApi(getWarehouse));
+app.route('/api/warehouse/insurance/loss', insuranceLossApi(getWarehouse));
 app.route('/api/warehouse/tax', taxApi(getWarehouse));
 app.route('/api/warehouse/brain', brainApi(getWarehouse));
 app.route('/api/warehouse/insights', insightsApi(getWarehouse));
