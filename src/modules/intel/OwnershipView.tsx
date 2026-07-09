@@ -312,7 +312,7 @@ function BriefingHero({
                       <button
                         onClick={() => onOpenProperty(a.propertyId!)}
                         className="num ml-2 text-2xs font-semibold underline-offset-2 hover:underline"
-                        style={{ color: 'var(--accent)', cursor: 'pointer' }}
+                        style={{ color: 'var(--text-accent)', cursor: 'pointer' }}
                       >
                         open →
                       </button>
@@ -472,7 +472,7 @@ function ActionList({
                   <button
                     onClick={() => onOpenProperty(a.propertyId!)}
                     className="num ml-2 text-2xs font-semibold underline-offset-2 hover:underline"
-                    style={{ color: 'var(--accent)', cursor: 'pointer' }}
+                    style={{ color: 'var(--text-accent)', cursor: 'pointer' }}
                   >
                     open →
                   </button>
@@ -650,7 +650,7 @@ function TrajectoryCard({
                 </div>
                 <span
                   className="num shrink-0 text-base font-semibold"
-                  style={{ color: positive ? 'var(--color-pos)' : 'var(--color-neg)' }}
+                  style={{ color: positive ? 'var(--text-pos)' : 'var(--text-neg)' }}
                 >
                   {fmtSignedPct(v)}
                 </span>
@@ -722,7 +722,7 @@ function SinceAcqLeaderboardCard({
                 </div>
                 <span
                   className="num shrink-0 text-base font-semibold"
-                  style={{ color: v !== null && v >= 0 ? 'var(--color-pos)' : 'var(--color-neg)' }}
+                  style={{ color: v !== null && v >= 0 ? 'var(--text-pos)' : 'var(--text-neg)' }}
                 >
                   {fmtSignedPct(v)}
                 </span>
@@ -907,7 +907,7 @@ function PmCell({ label, card, positive }: { label: string; card: PmScorecard | 
           <div className="flex items-baseline gap-2">
             <span
               className="num text-base font-semibold"
-              style={{ color: positive ? 'var(--color-pos)' : 'var(--color-neg)' }}
+              style={{ color: positive ? 'var(--text-pos)' : 'var(--text-neg)' }}
             >
               {fmtSignedPct(card.avgNoiGrowth)}
             </span>
