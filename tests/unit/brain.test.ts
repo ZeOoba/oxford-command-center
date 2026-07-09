@@ -38,7 +38,7 @@ function makeBase(): Record<string, unknown> {
 vi.mock('../../server/config', () => ({
   workbookPath: () => '/nonexistent/oxford-test-workbook.xlsx',
   SNAPSHOT_PATH: h.snapshotPath,
-  SERVER_PORT: 8911,
+  serverPort: () => 8911,
   WORKBOOK_AS_OF: '2026-06-01',
 }));
 

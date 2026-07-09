@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { warehouseRoutes } from '../server/warehouse/api';
 import { openWarehouse } from '../server/warehouse/db';
 import type { WarehouseDb } from '../server/warehouse/db';
-import { SERVER_PORT } from '../server/config';
+import { serverPort } from '../server/config';
 import { NumericMetricKey } from '../src/contracts/warehouse';
 import {
   WAREHOUSE_MIRROR_SCHEMA_VERSION,
@@ -188,7 +188,7 @@ export interface BakeResult { path: string; warehouseSource: WarehouseSource; co
  */
 export async function bakeWarehouseJson(opts: { now?: number } = {}): Promise<BakeResult> {
   const now = opts.now ?? Date.now();
-  const baseUrl = process.env.BRAIN_BAKE_SOURCE_URL ?? `http://127.0.0.1:${SERVER_PORT}`;
+  const baseUrl = process.env.BRAIN_BAKE_SOURCE_URL ?? `http://127.0.0.1:${serverPort()}`;
 
   let resolver: RouteResolver;
   let warehouseSource: WarehouseSource;
