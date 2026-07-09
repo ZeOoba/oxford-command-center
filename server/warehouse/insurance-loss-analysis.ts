@@ -16,6 +16,12 @@
 // capture-rate constants anywhere here — this layer does not price risk or promise a saving. The
 // placeholder discriminators (`lossDataSource`, `decPageDataSource`) declare, per report, whether
 // the loss runs / dec-page terms came from the warehouse or from placeholder fixtures.
+//
+// SELF-INSURE ROLL-UP IS PROPERTY-LEVEL (review finding, Task 4): selfInsure counts each
+// property's events once via its primary property-package policy — review rows may overlap when a
+// property has multiple policies (events are matched by propertyId, so each of that property's
+// policies legitimately reviews the same events against its own terms; summing review rows would
+// count those dollars once per policy).
 import {
   InsuranceLossReport,
   type PropertyEal,
@@ -222,12 +228,27 @@ export function buildInsuranceLossReport(input: LossAnalysisInputs): InsuranceLo
   deductibleReviews.sort((a, b) => b.retainedUsd - a.retainedUsd || a.policyId.localeCompare(b.policyId));
   rebidPipeline.sort((a, b) => (b.excessPremiumVsMedian ?? 0) - (a.excessPremiumVsMedian ?? 0) || a.policyId.localeCompare(b.policyId));
 
-  // ── Self-insure roll-up ───────────────────────────────────────────────────────────────────
+  // ── Self-insure roll-up (PROPERTY level — no double-count) ──────────────────────────────────
+  // Events are matched by propertyId, so a property carrying 2+ property-package policies repeats
+  // its events in each of those review rows; summing review rows would count those dollars once
+  // per policy. Instead, count each property's events exactly once via its PRIMARY policy's review
+  // row — primary = first by policyId ascending (localeCompare), deterministic. A review row with
+  // a null propertyId matches no events (all-zero sums) and is excluded without numeric effect.
+  const primaryReviewByProperty = new Map<string, DeductibleReview>();
+  for (const r of deductibleReviews) {
+    if (r.propertyId === null) continue;
+    const current = primaryReviewByProperty.get(r.propertyId);
+    if (current === undefined || r.policyId.localeCompare(current.policyId) < 0) {
+      primaryReviewByProperty.set(r.propertyId, r);
+    }
+  }
+  const primaryReviews = [...primaryReviewByProperty.values()];
+
   const nonNullEals = eal.filter((e): e is PropertyEal & { ealAnnual: number } => e.ealAnnual !== null);
   const selfInsure: SelfInsureSplit = {
-    retainedUsd: deductibleReviews.reduce((s, r) => s + r.retainedUsd, 0),
-    transferredUsd: deductibleReviews.reduce((s, r) => s + r.transferredUsd, 0),
-    overLimitUsd: deductibleReviews.reduce((s, r) => s + r.overLimitUsd, 0),
+    retainedUsd: primaryReviews.reduce((s, r) => s + r.retainedUsd, 0),
+    transferredUsd: primaryReviews.reduce((s, r) => s + r.transferredUsd, 0),
+    overLimitUsd: primaryReviews.reduce((s, r) => s + r.overLimitUsd, 0),
     premiumAnnualTotal: policies.reduce((s, p) => s + p.premium, 0),
     portfolioEalAnnual: nonNullEals.length > 0 ? nonNullEals.reduce((s, e) => s + e.ealAnnual, 0) : null,
     observationYears,
@@ -236,7 +257,8 @@ export function buildInsuranceLossReport(input: LossAnalysisInputs): InsuranceLo
   const basisNote =
     `Dispersion only — expected annual loss and the retained-vs-transferred split are a mechanical ` +
     `roll-up of observed loss runs against stated dec-page terms, not a savings, capture, or ` +
-    `risk-priced claim; loss runs are ${lossEvents.source} and dec-page terms are ${decPageDataSource}.`;
+    `risk-priced claim; loss runs are ${lossEvents.source} and dec-page terms are ${decPageDataSource}. ` +
+    `Policies without deductible/limit data book losses as fully transferred — dec-page data refines this.`;
 
   return InsuranceLossReport.parse({
     asOf,

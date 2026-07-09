@@ -35,6 +35,12 @@ describe('resolveLossEvents cutover', () => {
     expect(r.rows.length).toBeGreaterThan(0);
     expect(r.rows.every((e) => ['3540-e-5th-ave-columbus-oh', '3034-westerville-rd-columbus-oh'].includes(e.propertyId))).toBe(true);
     expect(r.droppedRows).toBeGreaterThan(0); // fixture rows for unseeded properties dropped
+    // Post-condition of the negative-gross guard in parseLossEventFixtureRow: no resolved row
+    // carries a negative grossIncurred (a negative fixture row is skipped + counted in
+    // droppedRows). The drop itself isn't directly exercisable here — the fixture path is
+    // module-relative and the parse helper unexported; mocking node:fs to reach that one line
+    // would contort the design (the refute pass reads the guard directly).
+    expect(r.rows.every((e) => e.grossIncurred >= 0)).toBe(true);
   });
 
   it('one real row -> warehouse source, fixture ignored', () => {

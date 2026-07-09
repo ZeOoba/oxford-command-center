@@ -76,7 +76,9 @@ function parseLossEventFixtureRow(raw: unknown): LossEventRow | null {
   if (typeof id !== 'string') return null;
   if (typeof propertyId !== 'string') return null;
   if (typeof lossDate !== 'string') return null;
-  if (typeof grossIncurred !== 'number') return null;
+  // Negative gross is nonsensical loss data — skip the row (counted in droppedRows) rather than
+  // let it flow into downstream sums, where the loss engine's nonnegative contract would fail-loud.
+  if (typeof grossIncurred !== 'number' || grossIncurred < 0) return null;
   return {
     id,
     propertyId,

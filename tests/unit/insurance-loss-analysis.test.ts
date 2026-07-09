@@ -119,6 +119,38 @@ describe('buildInsuranceLossReport', () => {
     expect(report.selfInsure.overLimitUsd).toBe(0);
   });
 
+  it('(c2) selfInsure counts a multi-policy property ONCE via its primary policy — no double-count', () => {
+    // Property P1 carries TWO property-package policies; the single event (gross 42,000) matches
+    // both review rows (per-policy reviews legitimately overlap):
+    //   policy '1': d=25,000, L=2M → retained min(42,000,25,000)=25,000; transferred 42,000−25,000=17,000
+    //   policy '2': d=10,000, L=2M → retained min(42,000,10,000)=10,000; transferred 42,000−10,000=32,000
+    // Primary = first by policyId ascending localeCompare → '1'.
+    // selfInsure must equal the PRIMARY's single-count split: retained 25,000 / transferred 17,000
+    // — NOT the Σ-over-reviews double-count (35,000 / 49,000).
+    // premiumAnnualTotal = 10,000 + 8,000 = 18,000 (still Σ over ALL policies).
+    const report = buildInsuranceLossReport(inputs({
+      policies: [
+        mkPolicy({ policyId: '1', propertyId: 'P1', cohort: 'property-package', premium: 10000 }),
+        mkPolicy({ policyId: '2', propertyId: 'P1', cohort: 'property-package', premium: 8000 }),
+      ],
+      decPages: decPagesOf({
+        '1': { deductible: 25000, coverageLimit: 2_000_000, source: 'warehouse' },
+        '2': { deductible: 10000, coverageLimit: 2_000_000, source: 'warehouse' },
+      }),
+      lossEvents: lossEvents([mkEvent('e1', 'P1', '2024-01-01', 42000)]),
+    }));
+    // per-policy review rows are unchanged: both exist, each with its own split
+    expect(report.deductibleReviews).toHaveLength(2);
+    // sorted by retainedUsd desc → '1' (25,000) then '2' (10,000)
+    expect(report.deductibleReviews[0]).toMatchObject({ policyId: '1', retainedUsd: 25000, transferredUsd: 17000 });
+    expect(report.deductibleReviews[1]).toMatchObject({ policyId: '2', retainedUsd: 10000, transferredUsd: 32000 });
+    // portfolio sums are single-count via the primary policy
+    expect(report.selfInsure.retainedUsd).toBe(25000);
+    expect(report.selfInsure.transferredUsd).toBe(17000);
+    expect(report.selfInsure.overLimitUsd).toBe(0);
+    expect(report.selfInsure.premiumAnnualTotal).toBe(18000);
+  });
+
   it('(d) over-limit disclosure when gross > limit', () => {
     // d=25k, L=2M, gross=2.5M
     // retained    = min(2,500,000, 25,000)                       = 25,000
@@ -209,6 +241,8 @@ describe('buildInsuranceLossReport', () => {
     expect(report.eal[0]!.prov.source).toBe('loss-runs.placeholder.json');
     expect(report.deductibleReviews[0]!.prov.source).toBe('loss-runs.placeholder.json');
     expect(report.basisNote.length).toBeGreaterThan(0);
+    // MINOR-1 disclosure: absent dec terms (d=0, L=∞) book the full gross as transferred
+    expect(report.basisNote).toContain('fully transferred');
   });
 
   it('exports MIN_LOSS_YEARS = 3 and maps the warehouse prov source', () => {
