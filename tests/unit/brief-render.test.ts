@@ -6,7 +6,7 @@ const insight = (o: Partial<Insight>): Insight => ({ id: 'x', severity: 'critica
 
 describe('renderBrief', () => {
   const out = renderBrief({
-    asOf: '2026-06-04', freshness: 'live',
+    asOf: '2026-06-04', briefDate: '2026-07-09', freshness: 'live',
     insights: [insight({ id: 'a', severity: 'critical', title: 'Balloon due — X', detail: '$1M' })],
     criticalDates: [{ date: '2026-06-20', label: 'Expiration: Eurosort', days: 16 }],
     dealCounts: [{ stage: 'LOI/PSA', count: 2 }],
@@ -14,7 +14,8 @@ describe('renderBrief', () => {
     tasks: [{ label: 'Send estoppel', status: 'overdue' }],
     dashboardUrl: 'https://ora-command-center.pages.dev',
   });
-  it('includes a dated subject', () => expect(out.subject).toContain('2026-06-04'));
+  it('subject carries the brief (send) date, not the workbook asOf', () => { expect(out.subject).toContain('2026-07-09'); expect(out.subject).not.toContain('2026-06-04'); });
+  it('body header still shows the workbook asOf', () => expect(out.html).toContain('As of 2026-06-04'));
   it('renders the action-items section with the alert title', () => expect(out.html).toContain('Balloon due — X'));
   it('renders the critical-dates section', () => { expect(out.html).toContain('Critical dates'); expect(out.html).toContain('Expiration: Eurosort'); });
   it('renders the portfolio at-a-glance figures', () => { expect(out.html).toContain('$3.9M'); expect(out.html).toContain('94%'); });
@@ -32,7 +33,7 @@ describe('renderAlert', () => {
 describe('renderBrief — top-exposure line', () => {
   it('emits a Top exposure line above Action items when at least one insight has a numeric impact', () => {
     const out = renderBrief({
-      asOf: '2026-06-04', freshness: 'live',
+      asOf: '2026-06-04', briefDate: '2026-07-09', freshness: 'live',
       insights: [
         insight({ id: 'b', severity: 'warning', title: 'Lease expiring — SmallTenant', detail: '$20K/yr', impactAnnualUsd: 20000 }),
         insight({ id: 'a', severity: 'warning', title: 'Lease expiring — BigTenant', detail: '$80K/yr', impactAnnualUsd: 80000 }),
@@ -59,7 +60,7 @@ describe('renderBrief — top-exposure line', () => {
 
   it('renders nothing for top exposure when all insights have null impact', () => {
     const out = renderBrief({
-      asOf: '2026-06-04', freshness: 'live',
+      asOf: '2026-06-04', briefDate: '2026-07-09', freshness: 'live',
       insights: [
         insight({ id: 'a', severity: 'critical', title: 'Reconciliation failure', detail: 'mismatch', impactAnnualUsd: null }),
       ],
@@ -74,7 +75,7 @@ describe('renderBrief — top-exposure line', () => {
 
   it('renders nothing for top exposure when insights array is empty', () => {
     const out = renderBrief({
-      asOf: '2026-06-04', freshness: 'live',
+      asOf: '2026-06-04', briefDate: '2026-07-09', freshness: 'live',
       insights: [],
       criticalDates: [],
       dealCounts: [],
