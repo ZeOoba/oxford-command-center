@@ -82,14 +82,34 @@ try {
   # 4) Verify Access is still enforcing -- unauthenticated must 302 to the Access login host.
   #    Uses curl.exe (Windows 11 built-in) -- PS5.1-compatible; Invoke-WebRequest cannot capture
   #    302 response objects on PS5.1 (SkipHttpErrorCheck is PS7+ only).
+  #    Incident (2026-07-09 17:08): a single-shot probe missed transiently and fired the CRITICAL
+  #    "confidential bake may be exposed" alert even though the gate was fine. Retry up to 3x
+  #    (initial 5s settle, then 15s between attempts) before declaring failure, and split severity
+  #    on the last observed $code -- a 2xx apex means the bake really is exposed (CRITICAL); any
+  #    other result (0/timeout, 3xx-other, 4xx, 5xx) is an inconclusive probe/edge issue.
   Start-Sleep -Seconds 5
-  $curlOut = & curl.exe -s -I --max-redirs 0 $VerifyUrl 2>&1
-  $statusLine   = ($curlOut | Where-Object { $_ -match '^HTTP/' } | Select-Object -First 1) -as [string]
-  $locationLine = ($curlOut | Where-Object { $_ -match '^[Ll]ocation:' } | Select-Object -First 1) -as [string]
-  $code     = if ($statusLine   -match 'HTTP/\S+\s+(\d+)') { [int]$Matches[1] } else { 0 }
-  $location = if ($locationLine -match '^[Ll]ocation:\s*(.+)') { $Matches[1].Trim() } else { '' }
-  if ($code -ne 302 -or ($location -notmatch [regex]::Escape($AccessHost))) {
-    throw "GATE CHECK FAILED: $VerifyUrl returned $code (Location='$location'). Expected 302 -> *$AccessHost. Confidential bake may be exposed - investigate immediately."
+  $gateVerified = $false
+  $code     = 0
+  $location = ''
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    if ($attempt -gt 1) { Start-Sleep -Seconds 15 }
+    $curlOut = & curl.exe -s -I --max-redirs 0 $VerifyUrl 2>&1
+    $statusLine   = ($curlOut | Where-Object { $_ -match '^HTTP/' } | Select-Object -First 1) -as [string]
+    $locationLine = ($curlOut | Where-Object { $_ -match '^[Ll]ocation:' } | Select-Object -First 1) -as [string]
+    $code     = if ($statusLine   -match 'HTTP/\S+\s+(\d+)') { [int]$Matches[1] } else { 0 }
+    $location = if ($locationLine -match '^[Ll]ocation:\s*(.+)') { $Matches[1].Trim() } else { '' }
+    if ($code -eq 302 -and ($location -match [regex]::Escape($AccessHost))) {
+      $gateVerified = $true
+      break
+    }
+    Write-Host "[gate-check] attempt $attempt/3 not yet verified (code=$code, Location='$location')"
+  }
+  if (-not $gateVerified) {
+    if ($code -ge 200 -and $code -le 299) {
+      throw "GATE CHECK FAILED: $VerifyUrl returned $code (Location='$location') after 3 attempts. Expected 302 -> *$AccessHost. Confidential bake may be exposed - investigate immediately."
+    } else {
+      throw "GATE CHECK INCONCLUSIVE: $VerifyUrl returned $code (Location='$location') after 3 attempts. Probe/network issue or edge propagation - gate NOT verified open; verify manually."
+    }
   }
 
   $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
