@@ -180,8 +180,8 @@ function ExportIcMemoButton({ disabled }: { disabled: boolean }) {
       className="inline-flex items-center gap-1.5 rounded text-2xs font-medium"
       style={{
         padding: '4px 10px',
-        border: '1px solid var(--gold, #C9A96E)',
-        color: disabled ? 'var(--text-tertiary)' : 'var(--navy, #1B2A4A)',
+        border: '1px solid var(--accent)',
+        color: disabled ? 'var(--text-tertiary)' : 'var(--accent)',
         background: 'transparent',
         textDecoration: 'none',
         pointerEvents: disabled ? 'none' : 'auto',

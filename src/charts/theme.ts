@@ -4,7 +4,7 @@ export const SERIES = [
   'var(--color-info)',
   'var(--color-pos)',
   'var(--color-accent2)',
-  'var(--color-gold-300, #e6d3a3)',
+  'var(--color-warn)',
   'var(--text-tertiary)',
 ] as const;
 
