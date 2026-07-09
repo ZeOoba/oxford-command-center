@@ -27,7 +27,7 @@ export function Badge({
   const t = TONES[tone];
   return (
     <span
-      className={cn('num inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-2xs font-semibold whitespace-nowrap', className)}
+      className={cn('num inline-flex items-center gap-1.5 rounded-[var(--radius-xs)] px-2 py-0.5 text-2xs font-semibold whitespace-nowrap', className)}
       style={{ background: t.bg, color: t.fg, border: `1px solid ${t.bd}`, letterSpacing: '0.02em' }}
     >
       {dot && <span className="h-1.5 w-1.5 rounded-full" style={{ background: t.fg }} />}

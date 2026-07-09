@@ -108,15 +108,35 @@ export function Sidebar({ activeId, onSelect, collapsed, onToggle, mobileOpen, o
   );
 }
 
+/**
+ * Reduced-motion gate for the active-bar glow.
+ *
+ * The glow is a `boxShadow` set via inline `style`, and an inline style always
+ * outranks any class selector, so a `motion-reduce:shadow-none` CLASS can't
+ * suppress it (the repo's CSS `@media (prefers-reduced-motion)` block only zeroes
+ * animation/transition *duration*, not a static box-shadow). So the value itself
+ * must be gated in JS — mirroring `TierBoard`'s local `prefersReducedMotion()`.
+ * The bar's slide between items is a Framer layout animation, already disabled
+ * under reduced motion by `<MotionConfig reducedMotion="user">` in App.tsx.
+ */
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
+}
+
 function NavItem({ module, active, collapsed, onSelect }: { module: ModuleDef; active: boolean; collapsed: boolean; onSelect: () => void }) {
   const Icon = module.icon;
+  const barGlow = prefersReducedMotion() ? undefined : '0 0 10px var(--accent)';
   return (
     <li className="relative">
       {active && (
         <motion.span
           layoutId="nav-active"
-          className="absolute inset-0 rounded-[var(--radius-sm)]"
-          style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 30%, transparent)' }}
+          className="absolute inset-y-0.5 left-0 w-[3px] rounded-full"
+          style={{ background: 'var(--accent)', boxShadow: barGlow }}
           transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
         />
       )}
