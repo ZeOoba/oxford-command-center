@@ -86,10 +86,10 @@ function FilterPill({
       type="button"
       onClick={onSelect}
       aria-pressed={active}
-      className="num rounded-full px-3 py-1 text-2xs font-medium transition-colors"
+      className="num rounded-[var(--radius-sm)] px-3 py-1 text-2xs font-medium transition-colors"
       style={{
         background: active ? 'var(--accent)' : 'var(--surface-overlay)',
-        color: active ? 'var(--surface-base)' : 'var(--text-secondary)',
+        color: active ? 'var(--text-on-accent)' : 'var(--text-secondary)',
         border: '1px solid var(--border-subtle)',
       }}
     >
