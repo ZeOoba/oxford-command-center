@@ -4,7 +4,16 @@ import { isStill } from '@/lib/stillMode';
 import { computeFreshness, type Freshness } from '@/lib/freshness';
 import { useNow } from '@/lib/useNow';
 
-const COLOR: Record<Freshness['kind'], string> = {
+const DOT_COLOR: Record<Freshness['kind'], string> = {
+  live: 'var(--color-pos)',
+  static: 'var(--color-info)',
+  stale: 'var(--color-warn)',
+  refreshing: 'var(--color-warn)',
+  offline: 'var(--color-neg)',
+  connecting: 'var(--text-tertiary)',
+};
+
+const TEXT_COLOR: Record<Freshness['kind'], string> = {
   live: 'var(--text-pos)',
   static: 'var(--text-info)',
   stale: 'var(--text-warn)',
@@ -16,7 +25,8 @@ const COLOR: Record<Freshness['kind'], string> = {
 export function StatusPill() {
   const { state } = useBrain();
   const f = computeFreshness(state, useNow());
-  const color = COLOR[f.kind];
+  const dotColor = DOT_COLOR[f.kind];
+  const textColor = TEXT_COLOR[f.kind];
   // Only a genuine live/refreshing feed pulses. A static bake never animates as "live".
   const animate = (f.kind === 'live' || f.kind === 'refreshing') && !isStill();
 
@@ -30,17 +40,17 @@ export function StatusPill() {
         {animate && (
           <motion.span
             className="absolute inline-flex h-1.5 w-1.5 rounded-full"
-            style={{ background: color }}
+            style={{ background: dotColor }}
             animate={{ scale: [1, 2.6], opacity: [0.55, 0] }}
             transition={{ duration: 1.8, repeat: Infinity, ease: 'easeOut' }}
           />
         )}
         <span
           className="relative inline-flex h-1.5 w-1.5 rounded-full"
-          style={{ background: color, boxShadow: animate ? `0 0 8px ${color}` : undefined }}
+          style={{ background: dotColor, boxShadow: animate ? `0 0 8px ${dotColor}` : undefined }}
         />
       </span>
-      <span className="font-semibold uppercase" style={{ letterSpacing: '0.1em', color }}>
+      <span className="font-semibold uppercase" style={{ letterSpacing: '0.1em', color: textColor }}>
         {f.label}
       </span>
       {f.detail && <span style={{ color: 'var(--text-tertiary)' }}>· {f.detail}</span>}
