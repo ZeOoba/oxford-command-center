@@ -18,6 +18,7 @@
 import type { Insight, InsightSeverity } from '@analytics/types';
 import type { InsightCandidate, InsightFamily } from '@contracts/insights';
 import type { PortfolioSnapshot } from '@contracts/index';
+import type { BadgeTone } from '@/primitives/Badge';
 import type { Tier, TierItem, TierTotal } from '@/primitives/TierBoard';
 
 // ── Merged shape ──────────────────────────────────────────────────────────────────────────
@@ -93,6 +94,24 @@ export const CATEGORY_TO_FAMILY: Record<Insight['category'], InsightFamily> = {
   anomaly: 'DR',
   data: 'DR',
 };
+
+// ── Category -> badge tone (severity/status color-coding, threaded through TierBoard) ───────
+const CATEGORY_TONE: Record<Insight['category'], BadgeTone> = {
+  debt: 'red',
+  deal: 'blue',
+  concentration: 'amber',
+  lease: 'green',
+  occupancy: 'green',
+  collections: 'amber',
+  insurance: 'blue',
+  cash: 'green',
+  anomaly: 'red',
+  data: 'neutral',
+};
+
+export function categoryTone(category: Insight['category']): BadgeTone {
+  return CATEGORY_TONE[category];
+}
 
 // ── Join spec: resolve a Spine-A insight's entity reference to a propertyId ─────────────────
 
@@ -244,6 +263,13 @@ export function buildTiers(merged: MergedInsight[]): Tier[] {
       id: m.id,
       rank: index + 1,
       category: m.category,
+      // categoryTone drives the category badge's color in TierBoard. MergedInsight.category is a
+      // loose `string`: Spine-A-derived rows carry one of the 10 real Insight categories, but
+      // candidate-derived rows carry a warehouse FAMILY code (CF/DR/TE/TR/CR) that has no tone
+      // mapping. Guard on CATEGORY_TO_FAMILY (keyed by exactly the 10 real categories) so we only
+      // call categoryTone() for genuine categories; family-code rows stay undefined and TierBoard's
+      // existing `?? 'neutral'` fallback applies unchanged (no crash, no wrong tone).
+      categoryTone: m.category in CATEGORY_TO_FAMILY ? categoryTone(m.category as Insight['category']) : undefined,
       impactUsd: m.impactUsd,
       impactKind: severity === 'info' ? 'info' : 'risk',
       title: m.title,

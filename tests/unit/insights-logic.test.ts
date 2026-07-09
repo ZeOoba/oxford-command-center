@@ -384,6 +384,34 @@ describe('buildTiers', () => {
     const tiers = buildTiers([m({ id: 'a', severity: 'critical', category: 'CF' })]);
     expect(tiers[0]?.items[0]?.category).toBe('CF');
   });
+
+  // ── categoryTone population (end-to-end: proves buildTiers() actually CALLS categoryTone()
+  //    and sets it on the emitted TierItem — the isolated categoryTone() unit test in
+  //    insights-category-tone.test.ts only proves the mapping, not that it reaches the render path)
+  it('populates TierItem.categoryTone from a real Insight category (debt -> red)', () => {
+    const tiers = buildTiers([m({ id: 'a', severity: 'critical', category: 'debt' })]);
+    expect(tiers[0]?.items[0]?.categoryTone).toBe('red');
+  });
+
+  it('populates categoryTone for other real categories too (deal -> blue, concentration -> amber)', () => {
+    const tiers = buildTiers([
+      m({ id: 'd', severity: 'warning', category: 'deal' }),
+      m({ id: 'c', severity: 'warning', category: 'concentration' }),
+    ]);
+    const priority = tiers.find((t) => t.title === 'Priority');
+    const byId = Object.fromEntries((priority?.items ?? []).map((i) => [i.id, i.categoryTone]));
+    expect(byId['d']).toBe('blue');
+    expect(byId['c']).toBe('amber');
+  });
+
+  it('leaves categoryTone undefined for warehouse family-code categories (CF/DR/TE/TR/CR) — no crash, no wrong tone; TierBoard falls back to neutral', () => {
+    for (const family of ['CF', 'DR', 'TE', 'TR', 'CR']) {
+      const tiers = buildTiers([m({ id: `x-${family}`, severity: 'critical', category: family })]);
+      const item = tiers[0]?.items[0];
+      expect(item?.category).toBe(family); // family code still rendered as the badge label
+      expect(item?.categoryTone).toBeUndefined(); // no tone -> TierBoard applies `?? 'neutral'`
+    }
+  });
 });
 
 // ── buildCategoryCounts ────────────────────────────────────────────────────────────────────

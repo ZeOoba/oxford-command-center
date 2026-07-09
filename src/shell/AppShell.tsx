@@ -13,8 +13,9 @@ import { AiPanel } from '@/brain/AiPanel';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ModuleLoading, ModuleError } from './ModuleFallback';
 import { StaleBanner } from './StaleBanner';
-import { PortfolioFilterProvider } from './PortfolioFilterContext';
+import { PortfolioFilterProvider, filterProperties, usePortfolioFilter } from './PortfolioFilterContext';
 import { PortfolioFilterBar } from './PortfolioFilterBar';
+import type { Property } from '@contracts/index';
 
 const TITLES: Record<string, string> = {
   overview: 'Command Overview',
@@ -37,6 +38,26 @@ const TITLES: Record<string, string> = {
 // src/shell/PortfolioFilterContext.tsx for the full note). Empty until a future module
 // supplies manager-enriched rows; the filter dimension is wired end-to-end regardless.
 const NO_MANAGERS: string[] = [];
+
+/**
+ * Reads the active portfolio filter from context and derives the display-only slice
+ * readout ("N of M assets · $X.XM NOI") from already-fetched snapshot rows — no new fetch.
+ * Lives INSIDE PortfolioFilterProvider so it can consume the filter; AppShell renders the
+ * provider itself and therefore cannot read the filter directly. Filtering reuses the
+ * context's own `filterProperties` helper (`Property` satisfies `PortfolioRow`), so no
+ * predicate logic is duplicated. NOI-per-property is already present on each row (`noi`,
+ * Oxford share), so the summed figure needs no new analytics computation.
+ */
+function FilterBarWithSlice({ properties }: { properties: Property[] }) {
+  const { filter } = usePortfolioFilter();
+  const total = properties.length;
+  const matched = filterProperties(properties, filter);
+  const slice =
+    total > 0
+      ? { shown: matched.length, total, noiUsd: matched.reduce((sum, p) => sum + p.noi, 0) }
+      : undefined;
+  return <PortfolioFilterBar managers={NO_MANAGERS} slice={slice} />;
+}
 
 export function AppShell() {
   const ui = useUi();
@@ -72,7 +93,7 @@ export function AppShell() {
             onOpenNav={() => setMobileNavOpen(true)}
             navOpen={mobileNavOpen}
           />
-          <PortfolioFilterBar managers={NO_MANAGERS} />
+          <FilterBarWithSlice properties={data?.snapshot.properties ?? []} />
           <StaleBanner />
           <main className="flex-1 overflow-y-auto px-3 py-3 sm:px-4 lg:px-5 lg:py-5">
             <div className="mx-auto max-w-[1500px]">

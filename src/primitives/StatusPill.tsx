@@ -35,7 +35,10 @@ export function StatusPill() {
             transition={{ duration: 1.8, repeat: Infinity, ease: 'easeOut' }}
           />
         )}
-        <span className="relative inline-flex h-1.5 w-1.5 rounded-full" style={{ background: color }} />
+        <span
+          className="relative inline-flex h-1.5 w-1.5 rounded-full"
+          style={{ background: color, boxShadow: animate ? `0 0 8px ${color}` : undefined }}
+        />
       </span>
       <span className="font-semibold uppercase" style={{ letterSpacing: '0.1em', color }}>
         {f.label}
