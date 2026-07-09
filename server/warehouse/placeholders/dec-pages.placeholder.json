@@ -1,0 +1,5 @@
+{
+  "_note": "PLACEHOLDER blanket deductible/limit assumptions pending broker dec pages. Real per-policy values imported into property_insurance_policies.deductible/coverage_limit win automatically per policy.",
+  "blanketDeductible": 25000,
+  "blanketCoverageLimit": 2000000
+}

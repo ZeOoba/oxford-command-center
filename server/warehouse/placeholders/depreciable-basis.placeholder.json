@@ -1,0 +1,12 @@
+{
+  "_note": "PLACEHOLDER depreciable basis / land allocation — synthetic. Real accountant data gets its own migration + importer (see docs/placeholder-data.md); this file is the interim shape.",
+  "bonusPctByYear": { "2025": 0.4, "2026": 0.4 },
+  "scheduleNote": "PLACEHOLDER bonus-depreciation schedule — statutory rates shift; confirm with accountant before any reliance.",
+  "rows": [
+    { "propertyId": "3540-e-5th-ave-columbus-oh", "depreciableBasis": 1200000, "landAllocationPct": 0.2, "placedInServiceYear": 2024, "reclassifiablePct": 0.25 },
+    { "propertyId": "3034-westerville-rd-columbus-oh", "depreciableBasis": 900000, "landAllocationPct": 0.2, "placedInServiceYear": 2023, "reclassifiablePct": 0.25 },
+    { "propertyId": "29000-information-lane-easton-md", "depreciableBasis": 2000000, "landAllocationPct": 0.25, "placedInServiceYear": 2025, "reclassifiablePct": 0.3 },
+    { "propertyId": "9620-e-state-route-350-raytown-mo", "depreciableBasis": 800000, "landAllocationPct": 0.15, "placedInServiceYear": 2024, "reclassifiablePct": 0.2 },
+    { "propertyId": "9050-red-branch-rd-columbia-md", "depreciableBasis": 1500000, "landAllocationPct": 0.2, "placedInServiceYear": 2025, "reclassifiablePct": 0.25 }
+  ]
+}
