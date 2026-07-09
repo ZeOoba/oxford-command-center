@@ -9,26 +9,32 @@ const fieldStyle: CSSProperties = {
   color: 'var(--text-primary)',
   border: '1px solid var(--border-subtle)',
 };
+const fieldStyleSet: CSSProperties = {
+  ...fieldStyle,
+  border: '1px solid var(--accent)',
+  color: 'var(--accent)',
+};
 
 export interface PortfolioFilterBarProps {
   /** Distinct property-manager names, computed by the mounting component from its
    *  already-fetched data (see PortfolioFilterContext.tsx for why this may be empty). */
   managers: string[];
+  /** Display-only slice readout ("12 of 31 assets · $4.2M NOI"), computed by the
+   *  mounting component from already-fetched data — no new fetching here. */
+  slice?: { shown: number; total: number; noiUsd?: number };
 }
 
-/**
- * Compact, always-visible global filter — production analog of the design handoff's
- * `filter.js` bar. Market / Type / Manager selects + a Clear button, wired to
- * `usePortfolioFilter()`. Display/wiring only — no fetching, no analytics recompute.
- */
-export function PortfolioFilterBar({ managers }: PortfolioFilterBarProps) {
+export function PortfolioFilterBar({ managers, slice }: PortfolioFilterBarProps) {
   const { filter, setMarket, setType, setManager, clear } = usePortfolioFilter();
   const isFiltered = filter.market !== 'all' || filter.propertyType !== 'all' || filter.manager !== 'all';
 
   return (
     <div
       className="flex flex-wrap items-center gap-2 px-3 py-2 sm:px-4 lg:px-5"
-      style={{ borderBottom: '1px solid var(--border-subtle)', background: 'var(--surface-base)' }}
+      style={{
+        borderBottom: `1px solid ${isFiltered ? 'color-mix(in oklab, var(--accent) 35%, transparent)' : 'var(--border-subtle)'}`,
+        background: isFiltered ? 'var(--accent-quiet)' : 'var(--surface-base)',
+      }}
     >
       <span className="num text-2xs uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>
         Portfolio filter
@@ -39,7 +45,7 @@ export function PortfolioFilterBar({ managers }: PortfolioFilterBarProps) {
         value={filter.market}
         onChange={(e) => setMarket(e.target.value as Market | 'all')}
         className={fieldCls}
-        style={fieldStyle}
+        style={filter.market !== 'all' ? fieldStyleSet : fieldStyle}
       >
         <option value="all">All markets</option>
         {Market.options.map((m) => (
@@ -54,7 +60,7 @@ export function PortfolioFilterBar({ managers }: PortfolioFilterBarProps) {
         value={filter.propertyType}
         onChange={(e) => setType(e.target.value as PropertyType | 'all')}
         className={fieldCls}
-        style={fieldStyle}
+        style={filter.propertyType !== 'all' ? fieldStyleSet : fieldStyle}
       >
         <option value="all">All types</option>
         {PropertyType.options.map((t) => (
@@ -69,7 +75,7 @@ export function PortfolioFilterBar({ managers }: PortfolioFilterBarProps) {
         value={filter.manager}
         onChange={(e) => setManager(e.target.value)}
         className={fieldCls}
-        style={fieldStyle}
+        style={filter.manager !== 'all' ? fieldStyleSet : fieldStyle}
       >
         <option value="all">All managers</option>
         {managers.map((m) => (
@@ -78,6 +84,13 @@ export function PortfolioFilterBar({ managers }: PortfolioFilterBarProps) {
           </option>
         ))}
       </select>
+
+      {isFiltered && slice && (
+        <span className="num ml-auto text-2xs" style={{ color: 'var(--text-secondary)' }}>
+          {slice.shown} of {slice.total} assets
+          {slice.noiUsd != null && ` · ${(slice.noiUsd / 1_000_000).toFixed(1)}M NOI`}
+        </span>
+      )}
 
       {isFiltered && (
         <Button size="sm" variant="ghost" onPress={clear} aria-label="Clear portfolio filter">
