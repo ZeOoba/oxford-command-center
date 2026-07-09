@@ -70,6 +70,12 @@
      luminance, proven unresolvable palette-wide in PR-B. Used only by the T2·WATCH
      badge. In command it coincides with --text-on-accent (7.47:1 on --color-info). */
   --text-on-info: #06120f;
+  --text-neg: var(--color-neg);
+  --text-warn: var(--color-warn);
+  --text-info: var(--color-info);
+  --text-pos: var(--color-pos);
+  --text-accent: var(--accent);
+  --text-accent2: var(--color-accent2);
   --accent: #39d3c0;
   --accent-quiet: rgba(57, 211, 192, 0.09);
   --color-pos: #54d49a;
@@ -103,6 +109,19 @@
   /* Separate token (see command block / PR-B disjoint-luminance finding).
      Coincides with --text-on-accent here (4.88:1 on --color-info). */
   --text-on-info: #0a0806;
+  /* Text-safe variants of the tone palette — the raw --color-*/--accent tokens are
+     tuned for fills/borders/glows (3:1) and fail AA (4.5:1) as text against this
+     theme's near-white surfaces. Each value below is the minimum darkening (linear
+     sRGB toward black) that clears 4.5:1 against the worst real background found
+     across the app: every ambient surface AND every self-paired tint (Badge fills,
+     alert banners, tab-active pills) at every opacity in use (9-16%). See
+     tests/unit/theme-text-contrast.test.ts for the full verification matrix. */
+  --text-neg: #a3402b;
+  --text-warn: #835a0c;
+  --text-info: #2462a4;
+  --text-pos: #146f46;
+  --text-accent: #0a6e62;
+  --text-accent2: #684db2;
   --accent: #0e9e8e;
   --accent-quiet: rgba(14, 158, 142, 0.1);
   --color-pos: #1c9c63;
@@ -151,6 +170,15 @@
      darkened to fix that gap, --text-on-info must NOT change with it, or the
      T2·WATCH badge (the only --color-info fill) would regress. */
   --text-on-info: #fffdf8;
+  /* Text-safe variants — see the parchment block's comment for methodology.
+     --text-info and --text-accent2 are unchanged from --color-info/--color-accent2:
+     both already clear 4.5:1 against every real background in this theme. */
+  --text-neg: #94492e;
+  --text-warn: #7c5b15;
+  --text-info: #2f6f6a;
+  --text-pos: #306a45;
+  --text-accent: #94492e;
+  --text-accent2: #8a5a72;
   --accent: #c2603c;
   --accent-quiet: rgba(194, 96, 60, 0.1);
   --color-pos: #3f8a5a;
