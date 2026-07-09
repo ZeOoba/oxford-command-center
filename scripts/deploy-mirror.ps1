@@ -13,6 +13,12 @@
   is considered successful; if the apex does NOT 302 to Access, the script FAILS loudly so a
   confidential bake is never left publicly reachable.
 
+  Incident (2026-07-09): this script builds+deploys whatever is currently checked out on
+  disk. Since the hourly scheduled task never pulled, merged main PRs (a full retokenization,
+  7 commits) sat undeployed for over a day -- the "baked Nm ago" freshness badge only reflects
+  the data snapshot, not the code, so the mirror silently served stale UI. Step 1 below now
+  fast-forwards to origin/main first and fails loudly (never silently) if that isn't possible.
+
 .NOTES
   Requires: node/npm, a Cloudflare auth token for wrangler (CLOUDFLARE_API_TOKEN or
   `wrangler login`). Run `npm run gate` should be green before deploying.
@@ -31,7 +37,16 @@ Set-Location $repo
 $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
 Write-Host "[$stamp] Mirror deploy starting in $repo"
 
-# 1) Bake (confidential included -- target is Access-gated) + build.
+# 1) Fast-forward to origin/main first -- otherwise this deploys whatever old code happens to
+#    be on disk. Fails loudly (never silently) if the local checkout has diverged or has
+#    uncommitted changes that conflict with incoming commits; a stale-but-successful deploy is
+#    worse than a loud failure here.
+git fetch origin
+if ($LASTEXITCODE -ne 0) { throw "git fetch origin failed ($LASTEXITCODE)" }
+git pull --ff-only
+if ($LASTEXITCODE -ne 0) { throw "git pull --ff-only failed ($LASTEXITCODE) -- local main has diverged from origin/main or has conflicting uncommitted changes; resolve manually, then re-run this script" }
+
+# 2) Bake (confidential included -- target is Access-gated) + build.
 $env:MIRROR_INCLUDE_CONFIDENTIAL = '1'
 $env:BRIEF_ENABLED               = '1'
 $env:BRIEF_SEND_SCRIPT           = 'C:\Users\Owner\.claude\scheduled-tasks\_shared\send-via-outlook.ps1'
@@ -39,7 +54,7 @@ try {
   npm run build:mirror
   if ($LASTEXITCODE -ne 0) { throw "build:mirror failed ($LASTEXITCODE)" }
 
-  # 2) Deploy the static bake to the gated Pages project.
+  # 3) Deploy the static bake to the gated Pages project.
   npx wrangler pages deploy dist --project-name=$ProjectName --branch=main
   if ($LASTEXITCODE -ne 0) { throw "wrangler deploy failed ($LASTEXITCODE)" }
 }
@@ -49,7 +64,7 @@ finally {
   Remove-Item Env:\BRIEF_SEND_SCRIPT           -ErrorAction SilentlyContinue
 }
 
-# 3) Verify Access is still enforcing -- unauthenticated must 302 to the Access login host.
+# 4) Verify Access is still enforcing -- unauthenticated must 302 to the Access login host.
 #    Uses curl.exe (Windows 11 built-in) -- PS5.1-compatible; Invoke-WebRequest cannot capture
 #    302 response objects on PS5.1 (SkipHttpErrorCheck is PS7+ only).
 Start-Sleep -Seconds 5
