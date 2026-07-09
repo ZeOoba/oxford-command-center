@@ -112,7 +112,7 @@ function buildColumns(
       render: (a) => {
         const val = savingsDisplay(opportunities.get(a.propertyId));
         return (
-          <span style={{ color: val !== null ? 'var(--color-pos)' : 'var(--text-tertiary)' }}>
+          <span style={{ color: val !== null ? 'var(--text-pos)' : 'var(--text-tertiary)' }}>
             {val !== null ? fmtUsd(val) : '—'}
           </span>
         );
@@ -260,7 +260,7 @@ function AppealFormPanel({
         </Button>
       </div>
       {fileAppeal.isError && (
-        <div className="px-4 pb-3 text-2xs" style={{ color: 'var(--color-neg)' }}>
+        <div className="px-4 pb-3 text-2xs" style={{ color: 'var(--text-neg)' }}>
           {fileAppeal.error instanceof Error ? fileAppeal.error.message : 'Failed to file appeal.'}
         </div>
       )}

@@ -221,7 +221,7 @@ export function DebtModule() {
                     tab === t.id
                       ? {
                           background: 'color-mix(in oklab, var(--accent) 16%, transparent)',
-                          color: 'var(--accent)',
+                          color: 'var(--text-accent)',
                           border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)',
                           letterSpacing: '0.06em',
                         }

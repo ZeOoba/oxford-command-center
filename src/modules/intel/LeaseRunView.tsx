@@ -186,7 +186,7 @@ function ProjectionTable({
         <span
           style={{
             fontStyle: p.isAssumption ? 'italic' : 'normal',
-            color: rollovers.has(p.leaseYearLabel) ? 'var(--accent)' : undefined,
+            color: rollovers.has(p.leaseYearLabel) ? 'var(--text-accent)' : undefined,
           }}
         >
           {p.leaseYearLabel}
@@ -283,7 +283,7 @@ function AssumptionsPanel({
                     if (e.key === 'Escape') setEditing(null);
                   }}
                 />
-                <button className="text-xs font-semibold" style={{ color: 'var(--accent)' }} onClick={() => commit(r.key)}>
+                <button className="text-xs font-semibold" style={{ color: 'var(--text-accent)' }} onClick={() => commit(r.key)}>
                   Confirm
                 </button>
                 <button className="text-xs" style={{ color: 'var(--text-secondary)' }} onClick={() => setEditing(null)}>

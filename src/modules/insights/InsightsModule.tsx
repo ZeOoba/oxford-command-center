@@ -133,7 +133,7 @@ export function InsightsModule() {
     return (
       <Card>
         <CardHeader title="Insights" trailing={<Badge tone="red">error</Badge>} />
-        <div className="px-4 py-6 text-sm" style={{ color: 'var(--color-neg)' }}>
+        <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-neg)' }}>
           Failed to load the portfolio snapshot — Spine-A insights are unavailable.
         </div>
       </Card>
@@ -168,7 +168,7 @@ export function InsightsModule() {
           </div>
         )}
         {warehouseErrored && (
-          <div className="px-4 pb-3 text-2xs" style={{ color: 'var(--color-neg)' }}>
+          <div className="px-4 pb-3 text-2xs" style={{ color: 'var(--text-neg)' }}>
             {insightsQuery.error instanceof Error
               ? insightsQuery.error.message
               : 'Failed to load warehouse insight candidates.'}

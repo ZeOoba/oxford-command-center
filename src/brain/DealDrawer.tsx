@@ -88,7 +88,7 @@ export function DealDrawer({
                 <div className="mb-1.5 flex items-center gap-2">
                   <Badge tone={deal.confidential ? 'purple' : 'gold'}>Deal</Badge>
                   <Badge tone="neutral">{deal.stage}</Badge>
-                  {deal.confidential && <span className="flex items-center gap-1 text-2xs" style={{ color: 'var(--color-accent2)' }}><Lock size={11} /> Confidential</span>}
+                  {deal.confidential && <span className="flex items-center gap-1 text-2xs" style={{ color: 'var(--text-accent2)' }}><Lock size={11} /> Confidential</span>}
                 </div>
                 <h2 className="display text-xl leading-tight" style={{ color: 'var(--text-primary)' }}>{deal.name}</h2>
                 <p className="mt-0.5 text-xs" style={{ color: 'var(--text-tertiary)' }}>{deal.location ?? deal.market ?? '—'}</p>
@@ -102,7 +102,7 @@ export function DealDrawer({
               {/* LEFT — cards + stage track */}
               <div className="flex-1 overflow-y-auto px-6 py-4">
                 <div className="mb-4 flex flex-wrap gap-2">
-                  <button onClick={() => onDraft({ kind: 'loi', entity: { type: 'deal', id: deal.id } })} className="flex items-center gap-1.5 rounded-[var(--radius-sm)] px-3 py-1.5 text-xs font-semibold" style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--accent)' }}>
+                  <button onClick={() => onDraft({ kind: 'loi', entity: { type: 'deal', id: deal.id } })} className="flex items-center gap-1.5 rounded-[var(--radius-sm)] px-3 py-1.5 text-xs font-semibold" style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--text-accent)' }}>
                     <Mail size={13} /> Draft LOI handoff
                   </button>
                   {ns && canWrite && (
@@ -195,7 +195,7 @@ export function DealDrawer({
 
                 <div className="flex flex-col gap-4 px-4 py-3">
                   {refresh.isPending && <div className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>Researching comps via web search… this can take ~20s.</div>}
-                  {refresh.isError && <div className="text-2xs" style={{ color: 'var(--color-neg)' }}>{(refresh.error as Error)?.message ?? 'Comp research failed.'}</div>}
+                  {refresh.isError && <div className="text-2xs" style={{ color: 'var(--text-neg)' }}>{(refresh.error as Error)?.message ?? 'Comp research failed.'}</div>}
 
                   {!comps && !refresh.isPending ? (
                     <div className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>
@@ -313,12 +313,12 @@ function RiskFlags({ deal }: { deal: Deal }) {
   if (deal.estPrice === null) flags.push('Estimated price not set');
   if (deal.sf === null) flags.push('Square footage unknown');
   if (deal.estimatedFields.length > 0) flags.push(`Estimated figures: ${deal.estimatedFields.join(', ')}`);
-  if (flags.length === 0) return <div className="text-2xs" style={{ color: 'var(--color-pos)' }}>No flags.</div>;
+  if (flags.length === 0) return <div className="text-2xs" style={{ color: 'var(--text-pos)' }}>No flags.</div>;
   return (
     <ul className="flex flex-col gap-1">
       {flags.map((f, i) => (
         <li key={i} className="flex items-start gap-1.5 text-2xs" style={{ color: 'var(--text-secondary)' }}>
-          <span style={{ color: 'var(--color-warn)' }}>•</span> {f}
+          <span style={{ color: 'var(--text-warn)' }}>•</span> {f}
         </li>
       ))}
     </ul>
@@ -398,7 +398,7 @@ function SourceLink({ source }: { source: string }) {
   const isUrl = /^https?:\/\//.test(source);
   if (!isUrl) return <div className="text-[10px]" style={{ color: 'var(--text-tertiary)' }}>{source}</div>;
   return (
-    <a href={source} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--accent)' }}>
+    <a href={source} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-[10px]" style={{ color: 'var(--text-accent)' }}>
       <ExternalLink size={9} /> source
     </a>
   );

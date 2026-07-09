@@ -99,7 +99,7 @@ function LoanRow({ entry }: { entry: MaturityLadderEntry }) {
       {/* Maturity / demand */}
       <div className="num text-2xs shrink-0 text-right" style={{ color: 'var(--text-tertiary)', minWidth: 80 }}>
         {entry.isDemand ? (
-          <span style={{ color: 'var(--color-warn)' }}>Demand</span>
+          <span style={{ color: 'var(--text-warn)' }}>Demand</span>
         ) : (
           <>
             <div>{fmtDate(entry.maturityDate)}</div>
@@ -149,7 +149,7 @@ export function LadderView() {
     return (
       <Card>
         <CardHeader title="Maturity Ladder" trailing={<Badge tone="red">error</Badge>} />
-        <div className="px-4 py-6 text-sm" style={{ color: 'var(--color-neg)' }}>
+        <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-neg)' }}>
           {error instanceof Error ? error.message : 'Failed to load maturity ladder.'}
         </div>
       </Card>

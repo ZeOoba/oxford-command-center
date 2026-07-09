@@ -142,7 +142,7 @@ export function ResolveDialog({ row, onClose }: { row: CalibrationLogRow; onClos
 
         {err && (
           <div className="rounded-md px-3 py-2 text-2xs" role="alert"
-            style={{ background: 'color-mix(in oklab, var(--color-neg) 12%, transparent)', color: 'var(--color-neg)', border: '1px solid color-mix(in oklab, var(--color-neg) 35%, transparent)' }}>
+            style={{ background: 'color-mix(in oklab, var(--color-neg) 12%, transparent)', color: 'var(--text-neg)', border: '1px solid color-mix(in oklab, var(--color-neg) 35%, transparent)' }}>
             {err}
           </div>
         )}

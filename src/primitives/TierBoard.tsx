@@ -50,6 +50,15 @@ const TONE_COLOR: Record<Tier['tone'], string> = {
   accent2: 'var(--color-accent2)',
 };
 
+const TEXT_TONE_COLOR: Record<Tier['tone'], string> = {
+  neg: 'var(--text-neg)',
+  warn: 'var(--text-warn)',
+  info: 'var(--text-info)',
+  pos: 'var(--text-pos)',
+  accent: 'var(--text-accent)',
+  accent2: 'var(--text-accent2)',
+};
+
 // Severity glow — only the "hot" tones glow; cool/flat tones (warn/info/accent2) stay flat.
 const TONE_GLOW: Partial<Record<Tier['tone'], string>> = {
   neg: '0 0 8px var(--color-neg)',
@@ -78,9 +87,9 @@ function prefersReducedMotion(): boolean {
 }
 
 const IMPACT_COLOR: Record<NonNullable<TierItem['impactKind']>, string> = {
-  gain: 'var(--color-pos)',
-  risk: 'var(--color-neg)',
-  info: 'var(--color-info)',
+  gain: 'var(--text-pos)',
+  risk: 'var(--text-neg)',
+  info: 'var(--text-info)',
 };
 
 const COLUMN_CLASS: Record<1 | 2 | 3 | 4, string> = {
@@ -148,7 +157,11 @@ function TierColumn({ tier }: { tier: Tier }) {
         </div>
         <span
           className="num ml-auto shrink-0 rounded-full px-2 py-0.5 text-2xs font-semibold"
-          style={{ background: 'var(--surface-overlay)', border: `1px solid ${color}`, color }}
+          style={{
+            background: 'var(--surface-overlay)',
+            border: `1px solid ${TEXT_TONE_COLOR[tier.tone]}`,
+            color: TEXT_TONE_COLOR[tier.tone],
+          }}
         >
           {tier.items.length}
         </span>
@@ -236,7 +249,7 @@ function TierCard({ item }: { item: TierItem }) {
                 key={a.label}
                 href={a.href}
                 className="num text-2xs font-semibold"
-                style={{ color: 'var(--accent)' }}
+                style={{ color: 'var(--text-accent)' }}
               >
                 {a.label}
               </a>

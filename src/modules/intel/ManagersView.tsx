@@ -160,5 +160,5 @@ function SignedPct({ value, invert = false }: { value: number | null; invert?: b
   }
   const favorable = invert ? value <= 0 : value >= 0;
   const text = value >= 0 ? `+${fmtPct(value)}` : fmtPct(value);
-  return <span style={{ color: favorable ? 'var(--color-pos)' : 'var(--color-neg)' }}>{text}</span>;
+  return <span style={{ color: favorable ? 'var(--text-pos)' : 'var(--text-neg)' }}>{text}</span>;
 }
