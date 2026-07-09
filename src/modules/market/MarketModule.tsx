@@ -41,7 +41,7 @@ export function MarketModule() {
                     tab === t.id
                       ? {
                           background: 'color-mix(in oklab, var(--accent) 16%, transparent)',
-                          color: 'var(--accent)',
+                          color: 'var(--text-accent)',
                           border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)',
                           letterSpacing: '0.06em',
                         }
@@ -178,7 +178,7 @@ function Row({ label, value, accent }: { label: string; value: string; accent?: 
   return (
     <div className="flex items-center justify-between">
       <span className="num text-2xs uppercase" style={{ letterSpacing: '0.08em', color: 'var(--text-tertiary)' }}>{label}</span>
-      <span className="num text-sm font-semibold" style={{ color: accent ? 'var(--accent)' : 'var(--text-primary)' }}>{value}</span>
+      <span className="num text-sm font-semibold" style={{ color: accent ? 'var(--text-accent)' : 'var(--text-primary)' }}>{value}</span>
     </div>
   );
 }

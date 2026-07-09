@@ -49,7 +49,7 @@ export function MarketScorecard({ signal }: Props) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>{signal.cluster}</span>
           <Badge tone={marketActionTone(signal.action)}>{marketActionLabel(signal.action)}</Badge>
-          <span style={{ fontSize: 10, fontStyle: 'italic', color: 'var(--color-warn)' }}>
+          <span style={{ fontSize: 10, fontStyle: 'italic', color: 'var(--text-warn)' }}>
             Advisory only
           </span>
         </div>
