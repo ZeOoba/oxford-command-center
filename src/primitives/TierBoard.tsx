@@ -1,5 +1,5 @@
 import { cn } from '@/lib/cn';
-import { Badge } from './Badge';
+import { Badge, type BadgeTone } from './Badge';
 import { Button } from './Button';
 import { Card } from './Card';
 import { fmtUsdCompact } from '@analytics/index';
@@ -14,6 +14,7 @@ export interface TierItem {
   id: string;
   rank?: number;
   category?: string;
+  categoryTone?: BadgeTone;
   impactUsd?: number | null;
   impactKind?: 'gain' | 'risk' | 'info';
   title: string;
@@ -48,6 +49,33 @@ const TONE_COLOR: Record<Tier['tone'], string> = {
   accent: 'var(--accent)',
   accent2: 'var(--color-accent2)',
 };
+
+// Severity glow — only the "hot" tones glow; cool/flat tones (warn/info/accent2) stay flat.
+const TONE_GLOW: Partial<Record<Tier['tone'], string>> = {
+  neg: '0 0 8px var(--color-neg)',
+  pos: '0 0 8px var(--color-pos)',
+  accent: '0 0 8px var(--accent)',
+};
+
+/**
+ * Reduced-motion gate for the severity glow / hover lift.
+ *
+ * These effects are set via inline `style`, and an inline style always outranks
+ * any class selector (Tailwind v4 adds no `!important`), so a `motion-reduce:*`
+ * CLASS cannot suppress them. The repo's CSS `@media (prefers-reduced-motion)`
+ * block only zeroes animation/transition *duration*, not a static box-shadow or
+ * a transform *value*. So the value itself must be gated in JS — mirroring the
+ * codebase's existing pattern of gating an inline style on a JS-computed flag
+ * (StatusPill's `isStill()`, Button's `isHovered`). Read at render/interaction
+ * time (non-reactive), consistent with `isStill()`.
+ */
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
+}
 
 const IMPACT_COLOR: Record<NonNullable<TierItem['impactKind']>, string> = {
   gain: 'var(--color-pos)',
@@ -93,13 +121,18 @@ export function TierBoard({ tiers, columns = 3 }: { tiers: Tier[]; columns?: 1 |
 
 function TierColumn({ tier }: { tier: Tier }) {
   const color = TONE_COLOR[tier.tone];
+  const glow = prefersReducedMotion() ? undefined : TONE_GLOW[tier.tone];
   return (
     <Card as="section" className="overflow-hidden">
       <div
         className="flex items-center gap-2.5 px-4 pt-3.5 pb-3"
         style={{ borderBottom: '1px solid var(--border-subtle)' }}
       >
-        <span aria-hidden className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: color }} />
+        <span
+          aria-hidden
+          className="h-2.5 w-2.5 shrink-0 rounded-full"
+          style={{ background: color, boxShadow: glow }}
+        />
         <div className="min-w-0">
           <div
             className="num truncate text-2xs font-semibold uppercase"
@@ -152,11 +185,19 @@ function TierCard({ item }: { item: TierItem }) {
   const actions = allActions(item);
   return (
     <li
-      className="rounded-[var(--radius-md)] p-3"
+      className="group rounded-[var(--radius-md)] p-3 transition-[border-color,transform] duration-[120ms]"
       style={{
         background: 'var(--surface-overlay)',
         border: '1px solid var(--border-subtle)',
         opacity: item.muted ? 0.55 : 1,
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = 'color-mix(in oklab, var(--accent) 45%, transparent)';
+        if (!prefersReducedMotion()) e.currentTarget.style.transform = 'translateY(-1px)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = 'var(--border-subtle)';
+        e.currentTarget.style.transform = '';
       }}
     >
       <div className="flex items-center gap-2">
@@ -165,7 +206,7 @@ function TierCard({ item }: { item: TierItem }) {
             {`#${item.rank}`}
           </span>
         )}
-        {item.category && <Badge tone="neutral">{item.category}</Badge>}
+        {item.category && <Badge tone={item.categoryTone ?? 'neutral'}>{item.category}</Badge>}
         <span className="num ml-auto text-sm font-semibold" style={{ color: impactColor(item.impactKind) }}>
           {formatImpact(item)}
         </span>
