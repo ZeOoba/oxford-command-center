@@ -88,7 +88,7 @@ export function PortfolioFilterBar({ managers, slice }: PortfolioFilterBarProps)
       {isFiltered && slice && (
         <span className="num ml-auto text-2xs" style={{ color: 'var(--text-secondary)' }}>
           {slice.shown} of {slice.total} assets
-          {slice.noiUsd != null && ` · ${(slice.noiUsd / 1_000_000).toFixed(1)}M NOI`}
+          {slice.noiUsd != null && ` · $${(slice.noiUsd / 1_000_000).toFixed(1)}M NOI`}
         </span>
       )}
 
