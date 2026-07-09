@@ -28,7 +28,7 @@ export function OverviewModule() {
 
   if (isError)
     return (
-      <div className="grid place-items-center py-24 text-sm" style={{ color: 'var(--color-neg)' }}>
+      <div className="grid place-items-center py-24 text-sm" style={{ color: 'var(--text-neg)' }}>
         Unable to reach the Brain Server. Is it running on :8911?
       </div>
     );
@@ -73,7 +73,7 @@ function WorkspaceBar({ ws }: { ws: ReturnType<typeof useWorkspaces> }) {
             className="num rounded-full px-3 py-1 text-2xs font-semibold transition-colors"
             style={
               name === ws.active
-                ? { background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 40%, transparent)', color: 'var(--accent)' }
+                ? { background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 40%, transparent)', color: 'var(--text-accent)' }
                 : { background: 'transparent', border: '1px solid var(--border-subtle)', color: 'var(--text-tertiary)' }
             }
           >

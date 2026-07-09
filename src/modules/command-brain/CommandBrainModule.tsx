@@ -56,7 +56,7 @@ function OpenQuestionRow({ q }: { q: OpenQuestion }) {
     <div className="flex flex-col gap-1 px-4 py-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
       <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{q.title}</div>
       <div className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>{q.detail}</div>
-      <div className="text-2xs" style={{ color: 'var(--color-info)' }}>{`→ ${q.wouldClose}`}</div>
+      <div className="text-2xs" style={{ color: 'var(--text-info)' }}>{`→ ${q.wouldClose}`}</div>
     </div>
   );
 }
