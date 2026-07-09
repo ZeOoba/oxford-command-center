@@ -214,3 +214,83 @@ from the main checkout at the identical commit, confirming it is an environment/
 artifact (a second session's dev server was active against this repo concurrently) unrelated to
 this change; the script exercises none of the touched files. `warehouse:drift` skipped cleanly
 (no live DB in this fresh worktree, expected).
+
+## Module parity sweep — 2026-07-09 (PR-C)
+
+Third and final stage of the Mission-Control retokenization: PR-A (token layer, #186, merged) →
+PR-B (shared primitives + Insights consumers, #187, merged) → PR-C (this pass) closes the "re-QA
+of all modules against the new tokens" cost item both prior PRs deliberately left uncovered.
+Worktree `mission-control-parity-sweep`, branch `design/mission-control-parity-sweep`, plan
+`docs/superpowers/plans/2026-07-09-mission-control-parity-sweep-pr-c.md`, spec
+`docs/superpowers/specs/2026-07-09-mission-control-parity-sweep-design.md`.
+
+**Method:** a live-repo grep of every file under `src/modules/**` for raw color literals
+(`#hex`/`rgb()`/`hsl()`) and references to undefined CSS custom properties, run twice — once
+during planning (pre-PR-B), once for real post-merge (both PR-A and PR-B present) — plus an
+independent adversarial Opus review of the plan between the two passes. The second live-repo
+grep, run against the actual merged tree immediately before any code was touched, matched the
+first pass's classification exactly (zero line-number drift, zero new findings, zero stale
+findings) — PR-B never touched these four module directories.
+
+**Remediated (real token-bypass, 4 files):**
+- `src/modules/acquisitions/GraderView.tsx:107` and `OmImportDrawer.tsx:104` — hardcoded
+  `color:'#fff'` on a `var(--accent)` fill → `var(--text-on-accent)`, so both buttons now inherit
+  PR-B's per-theme AA-hardened value instead of a fixed white.
+- `src/modules/capital/hooks.ts:48` — `var(--color-emerald, #10b981)` (an undefined token, always
+  rendering generic emerald) for the 'buy' verdict color → `var(--color-pos)`.
+- `src/modules/intel/AdminOnboardView.tsx:111-112` — four undefined tokens
+  (`--success-bg/-fg`, `--error-bg/-fg`, always rendering generic Tailwind mint/pink) → remapped
+  onto the existing semantic system (`var(--color-pos-soft)`/`var(--color-pos)`,
+  `var(--color-neg-soft)`/`var(--color-neg)`), confirmed real in all three theme blocks before use.
+
+**Hygiene (dead fallback on a token that already renders correctly, 4 files):** stripped the
+`, #hex` fallback from `market/MarketScorecard.tsx:18,52`, `capital/AllocationCard.tsx:22,66,73`,
+`capital/HurdleRateBanner.tsx:16,17`, and `capital/CapitalModule.tsx:354` — zero rendered-color
+change, satisfies the "no raw color literals" rule.
+
+**Two findings from the original plan draft were corrected, not shipped** — an earlier version
+(authored from a worktree that predated PR-A) claimed `acquisitions/RankedCandidateList.tsx`'s
+tier-badge map and `capital/CapitalModule.tsx:183-184` were live navy/gold defects. Both were
+already fully tokenized on merged `main` before this pass began; the plan's adversarial review
+caught this before any code was touched, and both files were re-verified clean again in the final
+pre-execution grep. Recorded here so this class of drift (plan authored against a stale tree) has
+a paper trail, not just a silent non-event.
+
+**Confirmed clean, no code change (19 Class-D modules + Overview):** a full-tree grep across
+every `src/modules/**` file found zero raw color literals and zero undefined-token references
+outside the eight files above — principal, tasks, alerts, calendar, renewals, command-brain,
+portfolio, calibration, leases, leasing, tenants, prospect-demand, debt, cash, close, insurance,
+taxes, documents, health, and overview are 100% semantic-var-driven and inherit PR-A + PR-B's
+palette for free. This includes the four modules most likely to have been hand-tuned against the
+old navy/gold palette by eye (Taxes, Insurance, Command Brain, Debt Scorecard) — all confirmed to
+reference only real semantic tokens.
+
+**Not verified this pass — pre-existing environment gaps, not PR-C regressions:**
+- **Live visual/screenshot confirmation across the three themes** could not run: this worktree's
+  dev server does not bind (the identical `port 8911` / `/api/snapshot` gap PR-B's own record
+  documents hitting twice, including after copying `.env` in — the same fix that worked for
+  PR-A). Verification for this pass is grep + `tsc` + the full unit suite (2352/2352 green) only;
+  the density-doctrine check ("no long single-column list") and the eye-check for a token that is
+  *technically* correct but *visually* weak under teal (spec §"no-long-lists-rule"/Class-D
+  failure-proofing) are both deferred to a properly-provisioned environment.
+- **`npm run build` / `npm run check:bundle`** fail with `Can't resolve
+  '@fontsource/ibm-plex-sans/400.css'` — the shared `node_modules` was never `npm install`-ed
+  after PR-A added this dependency to `package.json`. Confirmed pre-existing and unrelated to any
+  PR-C file (the package is simply absent from `node_modules`, verified via
+  `require.resolve` from inside this worktree); would fail identically for any session attempting
+  a build right now, including one with zero PR-C changes applied. Not fixed here — the shared
+  `node_modules` sits outside PR-C's file scope and the main checkout currently carries unrelated
+  uncommitted changes, so an `npm install` was not attempted. Needs `npm install` from a session
+  with authority over the shared dependency tree.
+- **The new multi-theme axe/contrast test** (plan Task 9 Step 4a) that would automate the
+  ≥4.5:1 verification for every pairing this sweep touches was not written — it requires the same
+  dev server that will not bind. Deferred per the plan's own Step 4d fallback, not silently
+  dropped: the grep-based token-reality check (Step 4c's manual/token-existence method) is what
+  actually ran.
+- **Warm-theme `--text-on-accent`** remains the known, PR-B-proven-unsolvable structural gap
+  (disjoint luminance requirements between `--color-info` and `--accent`/`--color-neg`) — not a
+  PR-C target, pending Gabriel's decision among PR-A's spec §5's 4 documented options.
+
+Gate steps actually run and green: `governance`, `typecheck`, `lint`, `test` (2352/2352). Gate
+steps deferred to the main checkout (same class of gap as `fix-design-parity-p2-p3` above):
+`reconcile`, `warehouse:verify`, `warehouse:drift`, `build`, `check:bundle`.
