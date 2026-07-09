@@ -122,12 +122,12 @@ export function MappingsView({ imports }: { imports: ImportSummary[] }) {
             </div>
 
             {addMapping.isError && (
-              <span className="text-2xs" style={{ color: 'var(--color-neg)' }}>
+              <span className="text-2xs" style={{ color: 'var(--text-neg)' }}>
                 {addMapping.error instanceof Error ? addMapping.error.message : 'Add mapping failed'}
               </span>
             )}
             {lastResult && (
-              <span className="text-2xs" style={{ color: 'var(--color-pos)' }}>
+              <span className="text-2xs" style={{ color: 'var(--text-pos)' }}>
                 Override saved — {lastResult.rederived} active ledger row{lastResult.rederived === 1 ? '' : 's'} re-derived.
               </span>
             )}

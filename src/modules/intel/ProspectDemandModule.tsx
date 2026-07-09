@@ -271,7 +271,7 @@ function DemandEntryForm({ properties }: { properties: PropertyOption[] }) {
         </div>
 
         {mutation.isError && (
-          <div className="text-2xs" style={{ color: 'var(--color-neg)' }}>
+          <div className="text-2xs" style={{ color: 'var(--text-neg)' }}>
             Failed to log event — brain server not reachable.
           </div>
         )}
