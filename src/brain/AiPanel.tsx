@@ -28,7 +28,7 @@ function renderWithCitations(text: string, onOpen: (type: EntityType, id: string
           key={`c${key++}`}
           onClick={() => onOpen(type as EntityType, id)}
           className="num mx-0.5 inline rounded px-1 py-0.5 text-[11px]"
-          style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--accent)' }}
+          style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--text-accent)' }}
         >
           {label}
         </button>,
