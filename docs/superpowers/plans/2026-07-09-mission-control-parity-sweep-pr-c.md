@@ -12,13 +12,14 @@
 
 ## Preconditions — READ BEFORE ANY EXECUTION
 
-This plan was authored while **PR-B was still in-progress and unmerged**, and — a second, sharper caveat found during authoring — **this worktree does not yet contain PR-A either.** Ground truth verified 2026-07-09:
+**Status as of 2026-07-09 adversarial review:** this plan was authored twice — a first pass from a stale pre-PR-A worktree, then corrected after the worktree was rebased onto real `origin/main` (`c373c69`, carries PR-A #186) and an independent Opus review re-verified every finding against the live merged tree. Precondition 1 below is now **satisfied**. Preconditions 2-5 remain **live and unresolved** — PR-B has still not merged as of this writing.
 
-1. **This worktree (`mission-control-parity-sweep`) is branched from a commit that PREDATES PR-A's merge to `origin/main`.** Its `src/tokens/theme.css` still reads `THE OXFORD TERMINAL` and `--color-gold-500: #c9a96e`; its `architecture/status.json` has no `mission-control-retokenization` entry. The merge-base with `origin/main` is `3802074` (a warehouse-verify EPERM fix), whereas PR-A merged at `origin/main` tip `c373c69` ("mission-control-retokenization MERGED via PR #186"). The local `main` checkout is likewise stale (behind `origin/main`, no PR-A).
-2. **Therefore, before executing ANY task in this plan, re-create the working branch fresh from a `main` that actually contains BOTH PR-A (#186) AND merged PR-B.** Do not execute against this worktree's current tree — its token layer is pre-Mission-Control, so every "renders after PR-A as…" observation in the findings below would be untestable and every contrast check meaningless.
-3. **Re-verify every file-level assumption (paths AND line numbers) against the ACTUAL merged PR-A + PR-B diffs before editing.** Line numbers in this plan were read from the pre-PR-A tree and WILL drift once PR-A's sweep and PR-B's edits are present. PR-B's own plan is precedent for why this matters: its task list changed once during planning (its Global Constraints record that the FilterPill fix applied only to `InsightsModule.tsx`, not `OverviewModule.tsx` as its spec had assumed). Treat every line number here as "approximately here — re-grep to confirm," not "edit this line."
+1. ~~This worktree predates PR-A~~ **SATISFIED.** `src/tokens/theme.css` on this branch reads `ORA MISSION CONTROL` (merge-base with `origin/main` is `c373c69`). The re-verification this enabled already found and fixed two stale HIGH-severity findings from the first draft — see the correction notes in spec §4 Class A/C and §5. **This does not mean the plan is execution-ready** — PR-B (precondition 4 below) still hasn't merged, and this worktree still predates it.
+2. **Re-verify every file-level assumption (paths AND line numbers) against the ACTUAL merged PR-A + PR-B diffs before editing, EVEN THOUGH precondition 1 is now satisfied.** The 2026-07-09 review already caught line-number and severity drift from PR-A alone; PR-B will shift more (its own plan's task list changed once during its authoring — the FilterPill fix ended up applying only to `InsightsModule.tsx`, not `OverviewModule.tsx` as its spec assumed). Treat every line number in this plan as "approximately here — re-grep to confirm," not "edit this line." Re-run the Class A/B/C/D classification greps (§Ground-truth findings) fresh before trusting the task list below — do not assume the 2026-07-09 correction is the final word.
+3. **Before executing ANY task, re-create (or rebase) this worktree from a `main` that contains BOTH PR-A (#186, done) AND merged PR-B** (`design/mission-control-consumers`, not yet merged as of authoring). Executing against a tree with PR-A but not PR-B means the contrast pass runs against the *unhardened* `--text-on-accent` — false-negative risk on exactly the pairings PR-B's Task 10 exists to fix.
 4. **Do not open the PR until PR-B has actually merged to main.** This plan assumes PR-B's changes (shared-primitive polish + the `--text-on-accent` AA fix) as a baseline; PR-C's contrast pass is only valid against the hardened `--text-on-accent`. See Task 9.
-5. Confirm with Gabriel that the Mission-Control direction still holds and that PR-B merged as expected before starting (same-day-volatility caution inherited from PR-A spec §1).
+5. **Shared write surfaces with PR-B, both non-conflicting by sequencing, not by accident:** `architecture/status.json` (PR-B adds its own `mission-control-consumers` entry; PR-C adds a sibling `mission-control-parity-sweep` entry — different keys, no overwrite) and `CHANGELOG.md` (both append a section). Because PR-C only executes after rebasing onto a main that already contains PR-B's merged edits to both files, PR-C's edits land as append-after-PR-B, never a two-writer collision. Do not skip the rebase in precondition 3 and assume this holds anyway.
+6. Confirm with Gabriel that the Mission-Control direction still holds and that PR-B merged as expected before starting (same-day-volatility caution inherited from PR-A spec §1).
 
 ## Global Constraints
 
@@ -35,98 +36,87 @@ This plan was authored while **PR-B was still in-progress and unmerged**, and �
 Full classification and the module→directory map are in the companion spec §4. Summary:
 
 - **`rgb()/rgba()/hsl()`: zero hits** anywhere in `src/modules/**`. No local chart color arrays or hardcoded `fill=`/`stroke=` — chart color is centralized in `src/charts/theme.ts` (PR-A-owned), so no module-level chart risk.
-- **Class A (real bypass, remediate):** `acquisitions/RankedCandidateList.tsx:13-14,16`, `acquisitions/GraderView.tsx:107`, `acquisitions/OmImportDrawer.tsx:104`, `capital/CapitalModule.tsx:183-184`, `capital/hooks.ts:48`, `intel/AdminOnboardView.tsx:111-112`.
+- **Class A (real bypass, remediate):** `acquisitions/GraderView.tsx:107`, `acquisitions/OmImportDrawer.tsx:104`, `capital/hooks.ts:48`, `intel/AdminOnboardView.tsx:111-112`. **(Corrected 2026-07-09: `acquisitions/RankedCandidateList.tsx:13-14,16` and `capital/CapitalModule.tsx:183-184` were removed from this list — adversarial review found both already fully tokenized on merged main; see Class C.)**
 - **Class B (dead fallback on a real token, hygiene):** `market/MarketScorecard.tsx:18,52`, `capital/AllocationCard.tsx:22,66,73`, `capital/HurdleRateBanner.tsx:16,17`, `capital/CapitalModule.tsx:354`, `capital/hooks.ts:50,51,52`.
-- **Class C (PR-A-swept, re-verify only, do NOT re-fix):** `overview/widgets.tsx:39`, `intel/LeaseRunView.tsx:162,189,286`.
+- **Class C (PR-A-swept, re-verify only, do NOT re-fix):** `overview/widgets.tsx:39`, `intel/LeaseRunView.tsx:162,189,286`, `acquisitions/RankedCandidateList.tsx` (entire `TIER_STYLES` map — added 2026-07-09), `capital/CapitalModule.tsx:183-184` (added 2026-07-09).
 - **Class D (100% semantic, visual-confirmation only):** everything else — principal, tasks, alerts, calendar, renewals, command-brain, portfolio, calibration, leases, leasing, tenants, prospect-demand, debt, cash, close, insurance, taxes, documents, health. The feared "newest, eye-tuned-under-Oxford-Terminal" modules (Taxes, Insurance, Command Brain, Debt Scorecard) were each confirmed to use ONLY semantic tokens — they are Class D.
 
 ---
 
-### Task 1: `acquisitions/` (pipeline / Acquisitions) — retire navy/gold tier literals + `#fff`-on-accent
+### Task 1: `acquisitions/` (pipeline / Acquisitions) — retire `#fff`-on-accent; re-verify tier badges (do NOT re-edit)
 
 **Files:**
-- Modify: `src/modules/acquisitions/RankedCandidateList.tsx`
 - Modify: `src/modules/acquisitions/GraderView.tsx`
 - Modify: `src/modules/acquisitions/OmImportDrawer.tsx`
+- Verify only (no edit expected): `src/modules/acquisitions/RankedCandidateList.tsx`
 
 **Interfaces:** No signature change anywhere — every edit is a color-value substitution.
 
-**Context (pre-PR-A line numbers — re-grep):** `RankedCandidateList.tsx`'s `TIER_STYLES` map (≈line 12) hardcodes Oxford-Terminal literals: `T1 { bg:'#C9A96E', color:'#1B2A4A' }`, `T2 { bg:'#1B2A4A', color:'#F5F3EF' }`, `KILLED { bg:'var(--color-neg)', color:'#fff' }` (PASS already uses `var(--surface-overlay)`/`var(--text-tertiary)`). `GraderView.tsx:≈107` sets `color:'#fff'` on a `background:var(--accent)` button. `OmImportDrawer.tsx:≈104` sets `btnPrimary.color:'#fff'` on `background:var(--accent)`. This is the highest-severity real defect in the sweep: the acquisition tier badges render navy/gold under Mission Control.
+**CORRECTED 2026-07-09 (adversarial review):** the original version of this task also rewrote `RankedCandidateList.tsx`'s `TIER_STYLES` map, on the premise that T1/T2 were hardcoded `#C9A96E`/`#1B2A4A` navy/gold literals. **That premise is false on merged main** — direct read of `main` at `77b9ec3` (PR-A) shows the map already fully tokenized: `T1 bg:var(--accent)/color:var(--text-on-accent)`, `T2 bg:var(--color-info)/color:var(--text-on-accent)`, `PASS bg:var(--surface-overlay)/color:var(--text-tertiary)`, `KILLED bg:var(--color-neg)/color:var(--text-on-accent)`. **Do not edit this file.** The T1/T2 color mapping this task previously flagged as an open judgment call for Gabriel is already shipped and is not open (spec §5) — re-litigating it here would be a regression (the originally-recommended T2 value would have made T2 visually indistinguishable from PASS).
 
-- [ ] **Step 1: Re-grep to confirm the exact current lines**
+**Context (re-grep to confirm before editing):** `GraderView.tsx:≈107` sets `color:'#fff'` on a `background:var(--accent)` button. `OmImportDrawer.tsx:≈104` sets `btnPrimary.color:'#fff'` on `background:var(--accent)`. Both are real, live-verified bypasses (MED severity — not the "single largest defect" this task previously claimed; that framing relied on the now-removed RankedCandidateList finding).
 
-Run: `grep -nE "#C9A96E|#1B2A4A|#F5F3EF|'#fff'|\"#fff\"" src/modules/acquisitions/*.tsx`. Confirm each literal below still exists (line numbers will differ post-PR-A/PR-B). If any is already gone (e.g., PR-A/PR-B pre-fixed it), skip that sub-edit and note it.
+- [ ] **Step 1: Re-grep to confirm the exact current lines, and confirm RankedCandidateList is still clean**
 
-- [ ] **Step 2: `RankedCandidateList.tsx` — tokenize `TIER_STYLES`**
+Run: `grep -nE "'#fff'|\"#fff\"" src/modules/acquisitions/*.tsx`. Confirm the two literals below still exist in `GraderView.tsx`/`OmImportDrawer.tsx` (line numbers may differ post-PR-B). Also run `grep -nE "#C9A96E|#1B2A4A|#F5F3EF" src/modules/acquisitions/RankedCandidateList.tsx` — expected zero; if this ever shows a hit (e.g., someone reverted the token fix since this plan was written), that's a real regression to fix here after all, and note it explicitly in the PR body as a reopened finding.
 
-Per spec §5's flagged mapping (T1 = accent highlight, T2 = quiet neutral):
-```typescript
-  T1:     { label: 'T1 · PURSUE', bg: 'var(--accent)',          color: 'var(--text-on-accent)' },
-  T2:     { label: 'T2 · WATCH',  bg: 'var(--surface-overlay)', color: 'var(--text-secondary)' },
-  PASS:   { label: 'PASS',        bg: 'var(--surface-overlay)', color: 'var(--text-tertiary)' },
-  KILLED: { label: 'KILLED',      bg: 'var(--color-neg)',       color: 'var(--text-on-accent)' },
-```
-(T1/T2 mapping is a flagged judgment call — call it out in the PR body for Gabriel; the mapping above is the recommendation, not a ratified value. `KILLED`'s `#fff` → `var(--text-on-accent)` so it tracks the AA fix on the `--color-neg` fill.)
-
-- [ ] **Step 3: `GraderView.tsx` and `OmImportDrawer.tsx` — `#fff` → `var(--text-on-accent)`**
+- [ ] **Step 2: `GraderView.tsx` and `OmImportDrawer.tsx` — `#fff` → `var(--text-on-accent)`**
 
 Both are white text on a `var(--accent)` fill; both must use `var(--text-on-accent)` so PR-B Task 10's parchment/warm AA fix reaches them.
 
+- [ ] **Step 3: Verify**
+
+Run: `grep -rln "GraderView\|OmImportDrawer" tests/unit/` and run any matching tests (they assert behavior/labels, not colors, so should pass unchanged). Run `npx tsc --noEmit`. Then `npm run dev`, open Acquisitions, view the Grade + OM-import primary buttons in all three themes, AND separately view a T1/T2/PASS/KILLED badge as a **read-only confirmation** (no edit) — confirm T1 reads as the accent highlight, T2 (info-blue) is visually distinct from PASS (neutral), and KILLED is legible on `--color-neg` in parchment/warm specifically (this is the KILLED-badge contrast spot-check from spec §6 — measure it, don't eyeball it, if you have axe/contrast tooling available in this pass; otherwise flag for Task 9's pass). **Stop the dev server when done.**
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add src/modules/acquisitions/GraderView.tsx src/modules/acquisitions/OmImportDrawer.tsx
+git commit -m "fix(acquisitions): #fff-on-accent → var(--text-on-accent) in GraderView/OmImportDrawer (Mission-Control parity)"
+```
+
+**Failure-proofing:** The dominant risk in the ORIGINAL version of this task was executing a fabricated finding (rewriting already-correct code) — Step 1 now explicitly re-verifies RankedCandidateList is clean rather than assuming either "it needs fixing" or "it's fine," so a genuine regression since authoring is still caught. Second: confirm `--text-on-accent` actually exists and is AA-correct in merged main BEFORE relying on it (it is PR-B Task 10's deliverable) — if PR-B did not merge that fix, this task's `#fff` substitutions inherit the same latent contrast gap and Task 9's axe pass will catch it; do not proceed to open the PR in that state. Third: do not use this task as an opportunity to "improve" the T1/T2/KILLED colors — that ship has sailed (spec §5); a genuine measured AA failure on KILLED goes to Task 9 as a PR-A/PR-B token-layer follow-up, not a freehand fix here.
+
+---
+
+### Task 2: `capital/` — undefined `--color-emerald` + dead-fallback hygiene (NOT `--gold`/`--navy` — already fixed)
+
+**Files:**
+- Modify: `src/modules/capital/hooks.ts`
+- Modify: `src/modules/capital/AllocationCard.tsx`
+- Modify: `src/modules/capital/HurdleRateBanner.tsx`
+- Modify: `src/modules/capital/CapitalModule.tsx` (line 354 dead-fallback strip ONLY — see correction below)
+
+**Interfaces:** No signature change — color-value substitutions only.
+
+**CORRECTED 2026-07-09 (adversarial review):** the original version of this task's Step 2 rewrote `CapitalModule.tsx:183-184`, on the premise it used `var(--gold, #C9A96E)`/`var(--navy, #1B2A4A)`. **False on merged main** — direct read of `main` at `77b9ec3` (PR-A) shows this control already uses `border:1px solid var(--accent)` and `color: disabled ? 'var(--text-tertiary)' : 'var(--text-primary)'`. **Do not edit lines 183-184.** `CapitalModule.tsx` stays in this task's file list ONLY for the unrelated, still-real `line 354` dead-fallback strip (Class B).
+
+**Context (re-grep for exact lines):** One real bypass via an undefined token remains: `hooks.ts:≈48` uses `var(--color-emerald, #10b981)` for the 'buy' verdict color (`--color-emerald` never existed → always generic emerald). The rest are dead fallbacks on REAL tokens (render correctly today; strip the fallback for the semantic-vars-only rule): `AllocationCard.tsx:22,66,73`, `HurdleRateBanner.tsx:16,17`, `CapitalModule.tsx:354`, `hooks.ts:50,51,52`.
+
+- [ ] **Step 1: Re-grep, and confirm `CapitalModule.tsx:183-184` is still clean**
+
+Run: `grep -nE "var\(--(gold|navy|color-emerald)|, ?#[0-9a-fA-F]{3,8}\)" src/modules/capital/*.ts src/modules/capital/*.tsx`. Confirm `hooks.ts:48`'s real bypass and enumerate every dead fallback still present. Also confirm zero `--gold`/`--navy` hits anywhere in `capital/` — if one appears (regression since authoring), treat it as a reopened Class-A finding and fix it here, noting it explicitly in the PR body.
+
+- [ ] **Step 2: `hooks.ts` — fix `--color-emerald`, strip dead fallbacks**
+
+`case 'buy': return 'var(--color-emerald, #10b981)'` → `return 'var(--color-pos)'` ('buy' is the positive verdict; `--color-pos` is the theme's positive-green in all three themes, replacing the off-palette generic emerald). Strip the dead fallbacks on lines 50/51/52 (`var(--color-neg, #ef4444)` → `var(--color-neg)`, `var(--color-warn, #f59e0b)` → `var(--color-warn)`, `var(--color-info, #6366f1)` → `var(--color-info)`).
+
+- [ ] **Step 3: `AllocationCard.tsx`, `HurdleRateBanner.tsx`, `CapitalModule.tsx:354` — strip dead fallbacks**
+
+Every `var(--color-pos, #22c55e)` / `var(--color-warn, #f59e0b)` / `var(--color-neg, #ef4444)` → drop the `, #hex` fallback. Zero visual change (the real token already wins); this satisfies "no raw color literals." Do not touch `CapitalModule.tsx:183-184`.
+
 - [ ] **Step 4: Verify**
 
-Run: `grep -rln "RankedCandidateList\|GraderView\|OmImportDrawer" tests/unit/` and run any matching tests (they assert behavior/labels, not colors, so should pass unchanged). Run `npx tsc --noEmit`. Then `npm run dev`, open Acquisitions, view a T1/T2/PASS/KILLED badge and the Grade + OM-import primary buttons in all three themes; confirm T1 reads as an accent highlight, T2/PASS are distinct quiet neutrals, and no navy/gold survives. **Stop the dev server when done.**
+Run: `grep -rln "CapitalModule\|AllocationCard\|HurdleRate\|capital/hooks" tests/unit/` and run matching tests. Run `npx tsc --noEmit`. Then `npm run dev`, open Capital, view a buy/sell/refinance/improve verdict color, the hurdle banner, and an allocation card's health bar, in all three themes. Confirm the 'buy' verdict is now theme-green (not generic emerald). **Stop the dev server when done.**
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add src/modules/acquisitions/RankedCandidateList.tsx src/modules/acquisitions/GraderView.tsx src/modules/acquisitions/OmImportDrawer.tsx
-git commit -m "fix(acquisitions): retire navy/gold tier literals + #fff-on-accent → semantic tokens (Mission-Control parity)"
+git add src/modules/capital/hooks.ts src/modules/capital/AllocationCard.tsx src/modules/capital/HurdleRateBanner.tsx src/modules/capital/CapitalModule.tsx
+git commit -m "fix(capital): undefined --color-emerald token → var(--color-pos); strip dead hex fallbacks"
 ```
 
-**Failure-proofing:** The single largest regression risk here is editing a line by number that PR-A/PR-B moved — Step 1's re-grep is mandatory, not optional. Second risk: the T1/T2 mapping is a *visual* decision, not a mechanical swap — do not treat the recommended tokens as settled; if the badges look wrong or ambiguous in any theme during Step 4, stop and flag rather than iterating colors freehand (that would drift into un-ratified brand design). Third: confirm `--text-on-accent` actually exists and is AA-correct in merged main BEFORE relying on it (it is PR-B Task 10's deliverable) — if PR-B did not merge that fix, this task's `#fff` substitutions inherit the same latent contrast gap and Task 9's axe pass will catch it; do not proceed to open the PR in that state.
-
----
-
-### Task 2: `capital/` — undefined `--gold`/`--navy`/`--color-emerald` + dead-fallback hygiene
-
-**Files:**
-- Modify: `src/modules/capital/CapitalModule.tsx`
-- Modify: `src/modules/capital/hooks.ts`
-- Modify: `src/modules/capital/AllocationCard.tsx`
-- Modify: `src/modules/capital/HurdleRateBanner.tsx`
-
-**Interfaces:** No signature change — color-value substitutions only.
-
-**Context (re-grep for exact lines):** Two real bypasses via undefined tokens: `CapitalModule.tsx:≈183-184` uses `var(--gold, #C9A96E)` and `var(--navy, #1B2A4A)` (neither token exists → always old navy/gold); `hooks.ts:≈48` uses `var(--color-emerald, #10b981)` for the 'buy' verdict color (`--color-emerald` never existed → always generic emerald). The rest are dead fallbacks on REAL tokens (render correctly today; strip the fallback for the semantic-vars-only rule): `AllocationCard.tsx:22,66,73`, `HurdleRateBanner.tsx:16,17`, `CapitalModule.tsx:354`, `hooks.ts:50,51,52`.
-
-- [ ] **Step 1: Re-grep**
-
-Run: `grep -nE "var\(--(gold|navy|color-emerald)|, ?#[0-9a-fA-F]{3,8}\)" src/modules/capital/*.ts src/modules/capital/*.tsx`. Confirm the real bypasses and enumerate every dead fallback still present.
-
-- [ ] **Step 2: `CapitalModule.tsx` — fix the two undefined-token bypasses**
-
-`border: '1px solid var(--gold, #C9A96E)'` → `border: '1px solid var(--accent)'`. `color: disabled ? 'var(--text-tertiary)' : 'var(--navy, #1B2A4A)'` → `color: disabled ? 'var(--text-tertiary)' : 'var(--text-primary)'` (the `--navy` was serving as an emphasized-text color on a light surface; `--text-primary` is the theme-correct equivalent — confirm visually it's the intended emphasis, not an accent; if it was meant as an accent, use `var(--accent)` instead — decide by looking at the rendered control in Step 5).
-
-- [ ] **Step 3: `hooks.ts` — fix `--color-emerald`, strip dead fallbacks**
-
-`case 'buy': return 'var(--color-emerald, #10b981)'` → `return 'var(--color-pos)'` ('buy' is the positive verdict; `--color-pos` is the theme's positive-green in all three themes, replacing the off-palette generic emerald). Strip the dead fallbacks on lines 50/51/52 (`var(--color-neg, #ef4444)` → `var(--color-neg)`, `var(--color-warn, #f59e0b)` → `var(--color-warn)`, `var(--color-info, #6366f1)` → `var(--color-info)`).
-
-- [ ] **Step 4: `AllocationCard.tsx`, `HurdleRateBanner.tsx`, `CapitalModule.tsx:354` — strip dead fallbacks**
-
-Every `var(--color-pos, #22c55e)` / `var(--color-warn, #f59e0b)` / `var(--color-neg, #ef4444)` → drop the `, #hex` fallback. Zero visual change (the real token already wins); this satisfies "no raw color literals."
-
-- [ ] **Step 5: Verify**
-
-Run: `grep -rln "CapitalModule\|AllocationCard\|HurdleRate\|capital/hooks" tests/unit/` and run matching tests. Run `npx tsc --noEmit`. Then `npm run dev`, open Capital, view a buy/sell/refinance/improve verdict color, the hurdle banner, an allocation card's health bar, and the bordered control from Step 2, in all three themes. Confirm the 'buy' verdict is now theme-green (not generic emerald) and the border/emphasis reads correctly with no navy/gold. **Stop the dev server when done.**
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/modules/capital/CapitalModule.tsx src/modules/capital/hooks.ts src/modules/capital/AllocationCard.tsx src/modules/capital/HurdleRateBanner.tsx
-git commit -m "fix(capital): undefined --gold/--navy/--color-emerald tokens → semantic vars; strip dead hex fallbacks"
-```
-
-**Failure-proofing:** The `--navy`-as-text substitution in Step 2 is the one ambiguous call — `--navy` could have meant "emphasized dark text" (→ `--text-primary`) or "brand accent" (→ `--accent`); resolve it by observation in Step 5, not by guessing at edit time, and if genuinely unsure, flag it rather than pick. For the dead-fallback strips (Step 4), confirm each referenced token actually exists in all three theme blocks first (`grep -n '<token>' src/tokens/theme.css` on merged main) — a "dead fallback on a real token" is only safe to strip if the token is genuinely real; if a token turns out undefined, it belongs in Step 2/3's real-bypass bucket, not the hygiene bucket. Do not let the hygiene strips balloon into a repo-wide fallback purge (spec §5: hygiene only in files already opened for a real fix).
+**Failure-proofing:** The dominant risk in the ORIGINAL version of this task was editing already-correct code at `CapitalModule.tsx:183-184` — Step 1 now re-verifies that spot is still clean rather than assuming it needs a fix. For the dead-fallback strips (Step 3), confirm each referenced token actually exists in all three theme blocks first (`grep -n '<token>' src/tokens/theme.css` on merged main) — a "dead fallback on a real token" is only safe to strip if the token is genuinely real; if a token turns out undefined, it belongs in Step 2's real-bypass bucket, not the hygiene bucket. Do not let the hygiene strips balloon into a repo-wide fallback purge (spec §5: hygiene only in files already opened for a real fix).
 
 ---
 
@@ -288,7 +278,17 @@ Run: `grep -rnE "#[0-9a-fA-F]{3,8}\b|rgb\(|hsl\(|var\(--(gold|navy|color-emerald
 
 - [ ] **Step 3: Bundle budget** — `npm run check:bundle`. Exits 0, entry bundle under budget. PR-C adds no dependencies and no components — the number should not move.
 
-- [ ] **Step 4: Contrast/axe pass** — `npm run test:e2e` (Playwright + axe) over the module set. Confirm every text-on-fill pairing this sweep touched (Task 1's tier badges + Grade/OM buttons, Task 2's capital verdict colors, Task 3's admin banner) clears ≥4.5:1 in all three themes. This is the first end-to-end exercise of the module set's contrast after PR-B's `--text-on-accent` fix.
+- [ ] **Step 4: Contrast/axe pass — CORRECTED 2026-07-09 (adversarial review found the original claim overstated)**
+
+The original version of this step claimed `npm run test:e2e` already runs axe "over the module set" in all three themes. **False as of authoring:** `tests/e2e/a11y.spec.ts` is 6 tests with exactly one axe assertion, on `/?still=1` in the default `command` theme only — it never visits acquisitions/capital/intel/market and never switches `data-theme` to parchment/warm, so it never reaches any pairing this sweep or PR-B's Task 10 actually touches. Do the following instead:
+
+  4a. **Extend `tests/e2e/a11y.spec.ts`** with a parameterized loop: for each of `{command, parchment, warm}` × the routes touched by Tasks 1-4 (acquisitions/pipeline, capital, intel — the modules with real Class-A edits), set `data-theme` before `page.goto`/before `analyze()`, and assert `color-contrast` has zero `serious`/`critical` violations. This is new test surface, not present before this plan — write it TDD (watch it fail against a deliberately-reverted change first, per the repo's TDD convention, if practical; at minimum confirm it actually exercises the three themes by temporarily breaking one on purpose and watching it fail, then restoring).
+
+  4b. Run the extended suite. Confirm every text-on-fill pairing Task 1/2/3 touched (Grade/OM buttons' `--text-on-accent` on `--accent`; the capital verdict colors; the intel admin banner's `-soft` backgrounds) clears ≥4.5:1 in all three themes.
+
+  4c. **Separately, manually verify the KILLED-badge spot-check flagged in spec §6** (`--text-on-accent` on `--color-neg` in parchment/warm) — include it in the 4a loop if the badge is reachable from a route already in scope, otherwise a manual axe/contrast-checker measurement is acceptable, but record the actual measured ratio in the PR body, not an assumption.
+
+  4d. If 4a is judged too large to land in this PR (a real possibility — it's new test infrastructure, not a color fix), it is acceptable to defer 4a/4b as a named follow-up **only if** Step 4c's manual check and the `?still=1` screenshot passes (Tasks 1-8) are still done and attached — do not open the PR claiming automated contrast coverage that doesn't exist.
 
 - [ ] **Step 5: Repo-wide leftover gate** — per PR-A's post-merge CI lesson, grep the WHOLE repo (not `src/`-only) to find any stray leftover, but confirm zero remain in the module scope: `grep -rniE "color-gold|color-navy|#c9a96e|#1b2a4a|--gold\b|--navy\b|--color-emerald|--success-|--error-" src/modules/`. Expected: zero.
 
@@ -303,11 +303,13 @@ git push -u origin design/mission-control-parity-sweep
 gh pr create --base main --title "feat(theme): Mission-Control parity sweep — PR-C (per-module token re-QA)" --body "$(cat <<'EOF'
 ## Summary
 - Completes the "re-QA of all modules against the new tokens" line item that PR-A (token layer) and PR-B (shared primitives + Insights) did not cover.
-- Remediates real token-bypasses: acquisitions tier badges (navy/gold literals → semantic), capital undefined --gold/--navy/--color-emerald tokens, intel admin --success-*/--error-* remap, and #fff-on-accent → --text-on-accent across acquisitions. Strips dead hex fallbacks in capital/market for the semantic-vars-only rule.
+- Remediates real token-bypasses: #fff-on-accent → --text-on-accent in acquisitions' Grade/OM-import buttons, capital's undefined --color-emerald token, intel admin --success-*/--error-* remap. Strips dead hex fallbacks in capital/market for the semantic-vars-only rule.
 - Visually confirms the 19 Class-D modules that inherit PR-A + PR-B for free (incl. the newest builds — Taxes, Insurance, Command Brain, Debt Scorecard — all verified semantic-only).
+- Extends `tests/e2e/a11y.spec.ts` with real multi-theme contrast coverage over the touched routes (previously: one axe check, one theme, one route — see Task 9 Step 4).
 
-## One item needs your look
-- The T1/T2 acquisition tier-badge color mapping is a real visual choice with no 1:1 Mission-Control equivalent (spec §5). Recommended: T1 = accent highlight, T2 = quiet neutral — please confirm before merge.
+## Corrections made during planning (verified against the live repo, not assumed)
+- This plan's first draft was authored from a worktree that predated PR-A's merge and credited PR-A with a smaller diff than it actually shipped. Adversarial review (2026-07-09) found two of the original four "remediation" findings — the acquisitions tier-badge map (`RankedCandidateList.tsx`) and capital's `--gold`/`--navy` (`CapitalModule.tsx:183-184`) — were **already fixed by PR-A**. Both were removed from scope; see spec §4 for the corrected findings table. The T1/T2 tier-badge color mapping this PR previously planned to flag as an open decision for you is **already shipped and is not a question** — do not re-litigate it.
+- The original claim that `npm run test:e2e` already covers contrast across the touched modules × 3 themes was false (the existing suite covers one route, one theme, one axe check) — this PR adds the real coverage rather than relying on a check that didn't exist.
 
 ## Dependency
 - Built on PR-A (#186) + PR-B (design/mission-control-consumers). Do not merge before PR-B.
@@ -315,8 +317,9 @@ gh pr create --base main --title "feat(theme): Mission-Control parity sweep — 
 ## Test plan
 - [ ] npm run gate green (7 steps)
 - [ ] npm run check:bundle green
-- [ ] npm run test:e2e contrast/axe green (≥4.5:1 all touched pairings × 3 themes)
+- [ ] npm run test:e2e contrast/axe green, including the new multi-theme coverage added by this PR (≥4.5:1 all touched pairings × 3 themes)
 - [ ] ?still=1 screenshots × 3 themes attached for every module
+- [ ] KILLED-badge (--color-neg + --text-on-accent) contrast in parchment/warm measured and recorded — flag as a PR-A/PR-B follow-up if under 4.5:1, do not fix here
 EOF
 )"
 ```
@@ -329,10 +332,12 @@ EOF
 
 **Coverage:** All 25 registry modules are accounted for — `insights` (PR-B, excluded), 4 remediation modules (acquisitions, capital, intel, market → Tasks 1–4), `overview` (re-verify, Task 5), and the 19 Class-D confirmation modules (Tasks 6–8). Every module is either a remediation task, a re-verify task, or a named entry in a confirmation batch.
 
-**Findings provenance:** Every Class-A/B/C finding is a live grep hit with a file:line, not an assumption. Class D is the complement (grep found zero color literals / undefined tokens). `rgb/rgba/hsl`: zero across all modules. No local chart-color overrides. These were read from the pre-PR-A tree (this worktree); the Preconditions section makes the mandatory re-verify against merged PR-A + PR-B explicit, because (a) PR-A's 4-file sweep and PR-B's edits shift line numbers and (b) PR-B's own plan proves task lists drift during planning.
+**Findings provenance:** Every Class-A/B/C finding is a live grep hit with a file:line, not an assumption — **twice-verified**: once from the pre-PR-A worktree (first draft), once by an independent adversarial review after the worktree was rebased onto real `origin/main` (PR-A present). The second pass is what caught the two stale HIGH-severity findings (§Ground-truth findings, corrected). Class D is the complement (grep found zero color literals / undefined tokens across the FULL module tree in both passes, not a sample). `rgb/rgba/hsl`: zero across all modules. No local chart-color overrides. The Preconditions section still makes a THIRD re-verify (against merged PR-B, not yet available at either authoring pass) mandatory before execution — two rounds of correction is evidence this class of drift is real and recurring, not a one-time fluke.
 
 **Scope discipline:** No `theme.css`/primitive/shell/chart edits (PR-A/PR-B territory) — parity defects tracing to those are recorded as follow-ups, never patched into a module. Dead-fallback hygiene is bounded to files already opened for a real fix (spec §5), mirroring PR-B's refusal of zero-benefit churn. No new tokens introduced (AdminOnboardView remaps onto existing `--color-pos/neg` + `-soft`).
 
-**Judgment calls flagged, not decided:** T1/T2 tier-badge mapping (Task 1 / spec §5) and the `--navy`-as-text disambiguation (Task 2 Step 2) are both flagged for observation/Gabriel rather than silently chosen.
+**Judgment calls — one resolved-not-open correction, one still genuinely open:** the T1/T2 tier-badge mapping (Task 1 / spec §5) was flagged as an open Gabriel decision in the first draft; adversarial review found it is **already shipped** (merged main uses `--color-info` for T2) and is not open — do not re-present it as a decision. The `--navy`-as-text disambiguation this task also flagged is now moot (Task 2 no longer touches that line at all — see Task 2's correction note). **No open judgment calls remain in this plan as of the 2026-07-09 correction**, other than the standard "flag if it looks wrong during the visual pass" instruction repeated in every Class-D task.
 
-**Governance capsule:** Task 9 mirrors PR-B Task 11 — full suite → gate → bundle → axe/contrast → repo-wide grep gate → status.json declaration → push + `gh pr create --base main` — with the added hard block that it may not run until PR-B merges, stated both here and in the Preconditions section, not buried in the task.
+**Governance capsule:** Task 9 mirrors PR-B Task 11 — full suite → gate → bundle → axe/contrast (now including new multi-theme test coverage, not just an existing check — see Task 9 Step 4's correction) → repo-wide grep gate → status.json declaration → push + `gh pr create --base main` — with the added hard block that it may not run until PR-B merges, stated both here and in the Preconditions section, not buried in the task.
+
+**Adversarial review record (2026-07-09):** a fresh Opus agent, independent of the author, re-verified every file/line/token claim against the live repo, checked all 25 modules for governance/collision/completeness gaps, and found: 2 blocking fabrications (corrected above — both Class-A→Class-C reclassifications), 1 should-fix overstated test-coverage claim (corrected — Task 9 Step 4), 1 should-fix stale-precondition-text issue (corrected — Preconditions §1), 1 nice-to-have (KILLED-badge spot-check, added to Task 1/spec §6), 1 nice-to-have (shared-write-surface note, added to Preconditions §5). Zero issues found in: governance-gate correctness, module-registry completeness (25/25), Class-D classification (independently re-verified via fresh full-tree grep, not sampled), and PR-B collision risk. This record exists so a future reader can see the plan was adversarially checked, not just self-reviewed by its own author.
