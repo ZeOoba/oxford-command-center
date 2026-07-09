@@ -99,6 +99,15 @@
       "review_needed": false,
       "review_detail": "MERGED via PR #192 (commit 0df092f). deploy-mirror.ps1 now git fetch + git pull --ff-only before every bake, throws loudly on diverge/conflicting uncommitted changes. Worktree removed, branch deleted (local + remote) post-merge.",
       "last_updated": "2026-07-09T19:16:04Z"
+    },
+    "fix-workbook-path-env": {
+      "agent_role": "Engineering (Claude Code) -- Gabriel-directed root-cause fix + PR",
+      "phase": "load-env.ts cwd-independence fix (WORKBOOK_PATH resolving to stale (1)-suffixed OneDrive folder) -- PR #193",
+      "status": "review_needed",
+      "blocked_by": null,
+      "review_needed": true,
+      "review_detail": "Root cause: npm --prefix <dir> run <script> does not chdir the spawned script to <dir> (confirmed empirically), so loadEnvFile()'s cwd-relative default silently found no .env when launched cross-directory (e.g. via a launch.json/task runner), and WORKBOOK_PATH fell back to the hardcoded (1)-suffixed default. Fix: extracted defaultEnvPath(), anchored to load-env.ts's own on-disk location via import.meta.url instead of process.cwd(). TDD (test written and confirmed RED first), end-to-end repro confirmed fixed, gate:ci green (one capital-allocation-api.test.ts timeout was the documented pre-existing concurrent-load flake, reproduced clean on rerun). PR #193 open, awaiting Gabriel review/merge; worktree to be removed post-merge.",
+      "last_updated": "2026-07-09T19:57:20Z"
     }
   },
   "phase-4-steps-5-7-8-9": {
