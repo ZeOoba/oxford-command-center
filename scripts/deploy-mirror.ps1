@@ -46,59 +46,10 @@ Set-Location $repo
 $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
 Write-Host "[$stamp] Mirror deploy starting in $repo"
 
-# Sends a failure alert via the standard Outlook COM path, following the outer-retry
-# convention documented in ~/.claude/CLAUDE.md: exit 2 (COM failure) or 4 (timeout) get one
-# retry, then flag; exit 1 (usage error) or 3 (stuck Outlook wizard) flag immediately, no
-# retry. If the alert itself can't be sent, the failure is written to data/outbox/ (the same
-# gitignored fallback location server/brief/send.ts falls back to) so it's never silently lost.
-function Send-DeployFailureAlert {
-  param(
-    [Parameter(Mandatory=$true)][string]$Reason,
-    [switch]$Critical
-  )
-  $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz'
-  $subject = if ($Critical) { '[ORA Command Center] CRITICAL - Access gate check failed' } else { '[ORA Command Center] Mirror deploy FAILED' }
-
-  $bodyLines = @(
-    $subject,
-    '',
-    "Time:   $ts",
-    "Repo:   $repo",
-    "Reason: $Reason",
-    '',
-    "Next step: check git status / git log HEAD..origin/main --oneline on $repo.",
-    "If diverged or dirty, resolve manually -- never auto-force-pull or discard local changes",
-    "without Gabriel's OK. See reference_command_center_mirror_deploy_gap.md for the last",
-    "incident's resolution steps."
-  )
-  if ($Critical) {
-    $bodyLines += ''
-    $bodyLines += 'This was the post-deploy Access-gate check -- a confidential bake may currently be publicly reachable. Investigate immediately.'
-  }
-  $body = $bodyLines -join "`n"
-
-  $sendArgs = @('-NoProfile', '-File', $AlertSendScript, '-To', $AlertTo, '-Subject', $subject, '-Body', $body, '-BodyFormat', 'text')
-  & powershell @sendArgs
-  $sendExit = $LASTEXITCODE
-
-  if ($sendExit -eq 0) { return }
-
-  if ($sendExit -eq 2 -or $sendExit -eq 4) {
-    Start-Sleep -Seconds 5
-    & powershell @sendArgs
-    $sendExit = $LASTEXITCODE
-    if ($sendExit -eq 0) { return }
-  }
-
-  # Alert itself failed (usage error, stuck wizard, or retry exhausted) -- never lose the
-  # failure silently.
-  $outboxDir = Join-Path $repo 'data\outbox'
-  New-Item -ItemType Directory -Path $outboxDir -Force | Out-Null
-  $obStamp = (Get-Date).ToString('yyyy-MM-ddTHH-mm-ss')
-  $outboxPath = Join-Path $outboxDir "$obStamp-deploy-alert.txt"
-  "$body`n`n(alert send itself failed, exit=$sendExit)" | Out-File -FilePath $outboxPath -Encoding UTF8
-  Write-Host "[$ts] Alert send failed (exit=$sendExit) -- wrote fallback to $outboxPath"
-}
+# Send-DeployFailureAlert lives in lib/deploy-alert.ps1 (shared with
+# deploy-mirror.smoke-test.ps1) so the smoke test exercises the real function, not a
+# hand-copied duplicate that can drift out of sync.
+. (Join-Path $PSScriptRoot 'lib\deploy-alert.ps1')
 
 try {
   # 1) Fast-forward to origin/main first -- otherwise this deploys whatever old code happens to
