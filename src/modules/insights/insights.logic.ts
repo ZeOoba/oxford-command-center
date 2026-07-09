@@ -263,6 +263,13 @@ export function buildTiers(merged: MergedInsight[]): Tier[] {
       id: m.id,
       rank: index + 1,
       category: m.category,
+      // categoryTone drives the category badge's color in TierBoard. MergedInsight.category is a
+      // loose `string`: Spine-A-derived rows carry one of the 10 real Insight categories, but
+      // candidate-derived rows carry a warehouse FAMILY code (CF/DR/TE/TR/CR) that has no tone
+      // mapping. Guard on CATEGORY_TO_FAMILY (keyed by exactly the 10 real categories) so we only
+      // call categoryTone() for genuine categories; family-code rows stay undefined and TierBoard's
+      // existing `?? 'neutral'` fallback applies unchanged (no crash, no wrong tone).
+      categoryTone: m.category in CATEGORY_TO_FAMILY ? categoryTone(m.category as Insight['category']) : undefined,
       impactUsd: m.impactUsd,
       impactKind: severity === 'info' ? 'info' : 'risk',
       title: m.title,
