@@ -268,6 +268,7 @@ function ChipRow({ label, items }: { label: string; items: { text: string; tone:
 
 function Banner({ tone, children }: { tone: 'red' | 'amber'; children: ReactNode }) {
   const c = tone === 'red' ? 'var(--color-neg)' : 'var(--color-warn)';
+  const textC = tone === 'red' ? 'var(--text-neg)' : 'var(--text-warn)';
   const bg = tone === 'red' ? 'var(--color-neg-soft)' : 'var(--color-warn-soft)';
-  return <div className="rounded-[var(--radius-sm)] px-2 py-1.5 text-2xs" style={{ background: bg, color: c, border: `1px solid color-mix(in oklab, ${c} 40%, transparent)` }}>{children}</div>;
+  return <div className="rounded-[var(--radius-sm)] px-2 py-1.5 text-2xs" style={{ background: bg, color: textC, border: `1px solid color-mix(in oklab, ${c} 40%, transparent)` }}>{children}</div>;
 }

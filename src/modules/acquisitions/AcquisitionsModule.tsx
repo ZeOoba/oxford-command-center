@@ -120,7 +120,7 @@ export function AcquisitionsModule() {
                 acqTab === t.id
                   ? {
                       background: 'color-mix(in oklab, var(--accent) 16%, transparent)',
-                      color: 'var(--accent)',
+                      color: 'var(--text-accent)',
                       border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)',
                       letterSpacing: '0.06em',
                     }
@@ -162,13 +162,13 @@ export function AcquisitionsModule() {
           {sync.phase === 'syncing' ? 'Syncing…' : 'Sync from Notion'}
         </button>
         {sync.phase === 'done' && (
-          <span className="num text-2xs" style={{ color: 'var(--color-pos)', letterSpacing: '0.05em' }}>
+          <span className="num text-2xs" style={{ color: 'var(--text-pos)', letterSpacing: '0.05em' }}>
             Synced — {sync.inserted} inserted · {sync.updated} updated
             {sync.errors.length > 0 && ` · ${sync.errors.length} error(s)`}
           </span>
         )}
         {sync.phase === 'error' && (
-          <span className="num text-2xs" style={{ color: 'var(--color-neg)', letterSpacing: '0.05em' }}>
+          <span className="num text-2xs" style={{ color: 'var(--text-neg)', letterSpacing: '0.05em' }}>
             Sync failed — {sync.message}
           </span>
         )}
