@@ -499,6 +499,16 @@
     "last_updated": "2026-07-09T05:33:24Z"
   },
 
+  "pr-b-flagged-followups": {
+    "agent_role": "UX Agent (Claude Code, Sonnet 5 planning/orchestrating; execution dispatched to Opus subagents) — Gabriel-authorized in-session 2026-07-09, reviewing PR-B live",
+    "phase": "Resolves 2 of PR-B's 3 explicitly flagged decisions (mission-control-retokenization entry's FLAG 1 and FLAG 2 above; FLAG 3 Sidebar bar-vs-pill was RATIFIED as-shipped, no code change needed) now that Gabriel gave explicit direction on each: (1) KpiStat hover-affordance mismatch -> shrink whole-card lift/border, make corner control ~35-40% visible at rest instead of hover-only; (2) warm-theme --text-on-accent AA gap -> per-consumer override, NOT a palette-wide change: new --text-on-info token (dark in command/parchment, matching existing --text-on-accent which already passes; light in warm, matching warm's own pre-fix --text-on-accent value which independently computes to ~5.83:1 against warm's --color-info alone) applied only to RankedCandidateList's T2.WATCH badge, the sole real consumer of info-as-filled-text-background found during investigation.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "No architect-owned files in scope. New worktree off origin/main post-PR-B-merge (ac1cd37) since the old mission-control-consumers worktree/branch is merged and done. Verified zero file overlap with the concurrently-open PR-C (#188, module-parity-sweep, different session) before starting: PR-C touches GraderView/OmImportDrawer/capital/AdminOnboardView/MarketScorecard, this touches KpiStat.tsx/theme.css/RankedCandidateList.tsx only.",
+    "last_updated": "2026-07-09T12:41:32Z"
+  },
+
   "usage": {
     "how_to_update": "Edit your worktree's entry before starting and after completing work; commit it on your branch. Use ISO 8601 timestamps. Set review_needed=true and fill review_detail when you need architect sign-off on an architect-owned file.",
     "how_to_read": "Before starting any task, check all other worktrees for status=in_progress or review_needed. If another agent works in your file-ownership area, coordinate before editing."
