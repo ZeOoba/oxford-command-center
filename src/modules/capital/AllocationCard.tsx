@@ -19,7 +19,7 @@ function ConfidenceBar({ value }: { value: number }) {
       <div style={{
         height: '100%',
         width: `${Math.round(value * 100)}%`,
-        background: value >= 0.75 ? 'var(--color-pos, #22c55e)' : value >= 0.5 ? 'var(--color-warn, #f59e0b)' : 'var(--color-neg, #ef4444)',
+        background: value >= 0.75 ? 'var(--color-pos)' : value >= 0.5 ? 'var(--color-warn)' : 'var(--color-neg)',
         borderRadius: 2,
         transition: 'width 0.3s',
       }} />
@@ -63,14 +63,14 @@ export function AllocationCard({ verdict, hurdleRatePct }: Props) {
           <span>
             Return <strong style={{ color: 'var(--text-primary)' }}>{returnStr}</strong>
             {aboveHurdle !== null && (
-              <span style={{ marginLeft: 4, color: aboveHurdle ? 'var(--color-pos, #22c55e)' : 'var(--color-neg, #ef4444)' }}>
+              <span style={{ marginLeft: 4, color: aboveHurdle ? 'var(--color-pos)' : 'var(--color-neg)' }}>
                 {aboveHurdle ? '↑' : '↓'} vs {hurdleStr} hurdle
               </span>
             )}
           </span>
           <span>Timeline <strong style={{ color: 'var(--text-primary)' }}>{verdict.timelineMonths}mo</strong></span>
           {verdict.advisoryOnly && (
-            <span style={{ color: 'var(--color-warn, #f59e0b)', fontStyle: 'italic' }}>advisory</span>
+            <span style={{ color: 'var(--color-warn)', fontStyle: 'italic' }}>advisory</span>
           )}
         </div>
 
