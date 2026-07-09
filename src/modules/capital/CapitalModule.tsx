@@ -137,8 +137,8 @@ const CAP_RATE_COLS: Column<CapitalAllocationEntry>[] = [
           color: e.capRateGap === null
             ? 'var(--text-tertiary)'
             : e.capRateGap >= 0
-            ? 'var(--color-pos)'
-            : 'var(--color-warn)',
+            ? 'var(--text-pos)'
+            : 'var(--text-warn)',
         }}
       >
         {fmtCapRateGap(e.capRateGap)}
@@ -181,7 +181,7 @@ function ExportIcMemoButton({ disabled }: { disabled: boolean }) {
       style={{
         padding: '4px 10px',
         border: '1px solid var(--accent)',
-        color: disabled ? 'var(--text-tertiary)' : 'var(--accent)',
+        color: disabled ? 'var(--text-tertiary)' : 'var(--text-accent)',
         background: 'transparent',
         textDecoration: 'none',
         pointerEvents: disabled ? 'none' : 'auto',
@@ -351,7 +351,7 @@ export function CapitalModule() {
                   IRR {fmtPct(c.leveredIrr)}
                 </span>
                 {c.basisDiscountPct !== null && (
-                  <span style={{ fontSize: 12, color: 'var(--color-pos)' }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-pos)' }}>
                     {fmtPct(c.basisDiscountPct)} disc.
                   </span>
                 )}

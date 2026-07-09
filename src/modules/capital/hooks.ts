@@ -45,11 +45,11 @@ export function actionLabel(action: AllocationAction): string {
 
 export function actionColor(action: AllocationAction): string {
   switch (action) {
-    case 'buy':       return 'var(--color-pos)';
+    case 'buy':       return 'var(--text-pos)';
     case 'hold':      return 'var(--text-secondary)';
-    case 'sell':      return 'var(--color-neg)';
-    case 'refinance': return 'var(--color-warn)';
-    case 'improve':   return 'var(--color-info)';
+    case 'sell':      return 'var(--text-neg)';
+    case 'refinance': return 'var(--text-warn)';
+    case 'improve':   return 'var(--text-info)';
   }
 }
 

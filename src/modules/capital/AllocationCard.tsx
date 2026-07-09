@@ -63,14 +63,14 @@ export function AllocationCard({ verdict, hurdleRatePct }: Props) {
           <span>
             Return <strong style={{ color: 'var(--text-primary)' }}>{returnStr}</strong>
             {aboveHurdle !== null && (
-              <span style={{ marginLeft: 4, color: aboveHurdle ? 'var(--color-pos)' : 'var(--color-neg)' }}>
+              <span style={{ marginLeft: 4, color: aboveHurdle ? 'var(--text-pos)' : 'var(--text-neg)' }}>
                 {aboveHurdle ? '↑' : '↓'} vs {hurdleStr} hurdle
               </span>
             )}
           </span>
           <span>Timeline <strong style={{ color: 'var(--text-primary)' }}>{verdict.timelineMonths}mo</strong></span>
           {verdict.advisoryOnly && (
-            <span style={{ color: 'var(--color-warn)', fontStyle: 'italic' }}>advisory</span>
+            <span style={{ color: 'var(--text-warn)', fontStyle: 'italic' }}>advisory</span>
           )}
         </div>
 
