@@ -59,7 +59,7 @@ export function TaxesModule() {
     return (
       <Card>
         <CardHeader title="Taxes" trailing={<Badge tone="red">error</Badge>} />
-        <div className="px-4 py-6 text-sm" style={{ color: 'var(--color-neg)' }}>
+        <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-neg)' }}>
           {error instanceof Error ? error.message : 'Failed to load tax analysis.'}
         </div>
       </Card>
@@ -91,7 +91,7 @@ export function TaxesModule() {
                     tab === t.id
                       ? {
                           background: 'color-mix(in oklab, var(--accent) 16%, transparent)',
-                          color: 'var(--accent)',
+                          color: 'var(--text-accent)',
                           border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)',
                           letterSpacing: '0.06em',
                         }
