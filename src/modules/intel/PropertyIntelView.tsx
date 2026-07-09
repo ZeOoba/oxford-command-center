@@ -256,7 +256,7 @@ function PropertySelector({
 }
 
 // ---------------------------------------------------------------------------
-// Verdict header — gold-accent Card leading with the ownership verdict.
+// Verdict header — accent Card leading with the ownership verdict.
 // ---------------------------------------------------------------------------
 
 function VerdictHeader({

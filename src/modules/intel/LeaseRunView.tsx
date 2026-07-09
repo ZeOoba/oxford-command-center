@@ -159,7 +159,7 @@ export function LeaseRunView({ propertyId }: Props) {
           <ul className="flex flex-col gap-2 px-4 py-3">
             {env.diligenceNotes.map((note, i) => (
               <li key={i} className="flex gap-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
-                <FileWarning size={13} style={{ marginTop: 1, flexShrink: 0, color: 'var(--color-gold, #C9A96E)' }} />
+                <FileWarning size={13} style={{ marginTop: 1, flexShrink: 0, color: 'var(--accent)' }} />
                 <span>{note}</span>
               </li>
             ))}
@@ -186,7 +186,7 @@ function ProjectionTable({
         <span
           style={{
             fontStyle: p.isAssumption ? 'italic' : 'normal',
-            color: rollovers.has(p.leaseYearLabel) ? 'var(--color-gold, #C9A96E)' : undefined,
+            color: rollovers.has(p.leaseYearLabel) ? 'var(--accent)' : undefined,
           }}
         >
           {p.leaseYearLabel}
@@ -283,7 +283,7 @@ function AssumptionsPanel({
                     if (e.key === 'Escape') setEditing(null);
                   }}
                 />
-                <button className="text-xs font-semibold" style={{ color: 'var(--color-gold, #C9A96E)' }} onClick={() => commit(r.key)}>
+                <button className="text-xs font-semibold" style={{ color: 'var(--accent)' }} onClick={() => commit(r.key)}>
                   Confirm
                 </button>
                 <button className="text-xs" style={{ color: 'var(--text-secondary)' }} onClick={() => setEditing(null)}>

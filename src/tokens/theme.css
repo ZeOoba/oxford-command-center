@@ -1,50 +1,29 @@
 @import 'tailwindcss';
 
-/* Self-hosted variable fonts (Fontsource — no runtime CDN) */
-@import '@fontsource-variable/eb-garamond';
-@import '@fontsource-variable/dm-sans';
+/* Self-hosted fonts (Fontsource — no runtime CDN) */
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-sans/700.css';
+@import '@fontsource-variable/bricolage-grotesque';
+@import '@fontsource-variable/public-sans';
 @import '@fontsource/ibm-plex-mono/400.css';
 @import '@fontsource/ibm-plex-mono/500.css';
 @import '@fontsource/ibm-plex-mono/600.css';
 
 /*
-  THE OXFORD TERMINAL — design tokens
+  ORA MISSION CONTROL — design tokens
   Institutional-terminal density with editorial calm.
-  Default theme = "command" (OLED-near black). Light = "parchment".
+  Default theme = "command" (dark). Light = "parchment". Editorial = "warm".
   Tailwind v4 CSS-first: tokens exposed as utilities via @theme.
 */
 @theme {
-  /* Brand spine */
-  --color-navy-950: #05070d;
-  --color-navy-900: #0a1322;
-  --color-navy-850: #0d1b2a;
-  --color-navy-800: #12233a;
-  --color-navy-700: #1b2a4a;
-  --color-navy-600: #243a5e;
-
-  --color-gold-300: #e6d3a3;
-  --color-gold-400: #d8bd7e;
-  --color-gold-500: #c9a96e;
-  --color-gold-600: #b7944f;
-
-  --color-parchment-50: #faf7f0;
-  --color-parchment-100: #f5f0e8;
-  --color-parchment-200: #e9e0d0;
-
-  /* Semantic */
-  --color-pos: #3fb27f;
-  --color-pos-soft: #163a2c;
-  --color-warn: #d9a441;
-  --color-warn-soft: #3a2e15;
-  --color-neg: #e0564f;
-  --color-neg-soft: #3a1a18;
-  --color-info: #5b8fd6;
-  --color-accent2: #9a7fd1;
-
-  /* Typography */
-  --font-display: 'EB Garamond Variable', Georgia, serif;
-  --font-ui: 'DM Sans Variable', system-ui, sans-serif;
+  /* Typography (defaults for command/parchment; warm overrides below) */
+  --font-ui: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-display: 'IBM Plex Sans', system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
+  --disp-weight: 600;
+  --disp-tracking: 0.04em;
 
   /* Type scale (fluid-ish, terminal-tight) */
   --text-2xs: 0.6875rem;
@@ -57,11 +36,11 @@
   --text-3xl: 2.5rem;
   --text-4xl: 3.25rem;
 
-  /* Radius */
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius-md: 9px;
-  --radius-lg: 13px;
+  /* Radius (defaults for command/parchment; warm overrides below) */
+  --radius-xs: 5px;
+  --radius-sm: 7px;
+  --radius-md: 11px;
+  --radius-lg: 12px;
   --radius-xl: 18px;
 
   /* Motion */
@@ -74,46 +53,101 @@
 
 /* ── COMMAND (dark) — default ── */
 [data-theme='command'] {
-  --surface-base: #05070d;
-  --surface-sunken: #04060b;
-  --surface-raised: #0b1424;
-  --surface-overlay: #0e1a2e;
-  --surface-rail: #070d18;
-  --border-subtle: color-mix(in oklab, #3a4a66 26%, transparent);
-  --border-strong: color-mix(in oklab, #54678a 40%, transparent);
-  --text-primary: #eef2f8;
-  --text-secondary: #9fb0c8;
-  --text-tertiary: #66788f;
-  --text-on-accent: #0a1322;
-  --accent: var(--color-gold-500);
-  --accent-quiet: color-mix(in oklab, var(--color-gold-500) 16%, transparent);
-  --grid-line: color-mix(in oklab, #3a4a66 22%, transparent);
-  --shadow-card: 0 1px 0 0 color-mix(in oklab, #ffffff 5%, transparent) inset,
-    0 12px 30px -16px rgba(0, 0, 0, 0.7);
-  --glow-accent: 0 0 0 1px color-mix(in oklab, var(--color-gold-500) 40%, transparent),
-    0 0 22px -6px color-mix(in oklab, var(--color-gold-500) 55%, transparent);
+  --surface-base: #0c0f14;
+  --surface-sunken: #0b1016;
+  --surface-raised: #141a22;
+  --surface-overlay: #171f29;
+  --surface-rail: #0f141b;
+  --border-subtle: #222c38;
+  --border-strong: color-mix(in oklab, var(--border-subtle) 60%, var(--text-tertiary) 40%);
+  --grid-line: #1b2531;
+  --text-primary: #e8edf3;
+  --text-secondary: #aab6c4;
+  --text-tertiary: #6b7888;
+  --text-on-accent: #06120f;
+  --accent: #39d3c0;
+  --accent-quiet: rgba(57, 211, 192, 0.09);
+  --color-pos: #54d49a;
+  --color-pos-soft: rgba(84, 212, 154, 0.12);
+  --color-warn: #f4b740;
+  --color-warn-soft: rgba(244, 183, 64, 0.12);
+  --color-neg: #f06a4d;
+  --color-neg-soft: rgba(240, 106, 77, 0.12);
+  --color-info: #5aa7f0;
+  --color-accent2: #a98cf0;
+  --shadow-card: none;
+  --glow-accent: 0 0 0 1px rgba(57, 211, 192, 0.25), 0 0 18px rgba(57, 211, 192, 0.12);
+  --overlay-wash: radial-gradient(1100px 600px at 78% -12%, rgba(57, 211, 192, 0.06), transparent 60%);
   color-scheme: dark;
 }
 
 /* ── PARCHMENT (light) ── */
 [data-theme='parchment'] {
-  --surface-base: #f5f0e8;
-  --surface-sunken: #ece5d8;
+  --surface-base: #eef1f6;
+  --surface-sunken: #eef2f7;
   --surface-raised: #ffffff;
-  --surface-overlay: #ffffff;
-  --surface-rail: #0d1b2a;
-  --border-subtle: color-mix(in oklab, #1b2a4a 14%, transparent);
-  --border-strong: color-mix(in oklab, #1b2a4a 28%, transparent);
-  --text-primary: #14213a;
-  --text-secondary: #4a5a76;
-  --text-tertiary: #8392a8;
-  --text-on-accent: #0a1322;
-  --accent: var(--color-gold-600);
-  --accent-quiet: color-mix(in oklab, var(--color-gold-600) 16%, transparent);
-  --grid-line: color-mix(in oklab, #1b2a4a 10%, transparent);
-  --shadow-card: 0 1px 2px rgba(20, 33, 58, 0.08), 0 10px 26px -18px rgba(20, 33, 58, 0.35);
-  --glow-accent: 0 0 0 1px color-mix(in oklab, var(--color-gold-600) 45%, transparent),
-    0 0 18px -8px color-mix(in oklab, var(--color-gold-600) 50%, transparent);
+  --surface-overlay: #f6f8fb;
+  --surface-rail: #ffffff;
+  --border-subtle: #e1e6ee;
+  --border-strong: color-mix(in oklab, var(--border-subtle) 60%, var(--text-tertiary) 40%);
+  --grid-line: #eef1f6;
+  --text-primary: #121a26;
+  --text-secondary: #475568;
+  --text-tertiary: #8593a6;
+  --text-on-accent: #ffffff;
+  --accent: #0e9e8e;
+  --accent-quiet: rgba(14, 158, 142, 0.1);
+  --color-pos: #1c9c63;
+  --color-pos-soft: rgba(28, 156, 99, 0.12);
+  --color-warn: #bd8311;
+  --color-warn-soft: rgba(189, 131, 17, 0.12);
+  --color-neg: #d35338;
+  --color-neg-soft: rgba(211, 83, 56, 0.12);
+  --color-info: #2f7fd6;
+  --color-accent2: #7a5ad0;
+  --shadow-card: 0 1px 2px rgba(35, 50, 75, 0.04), 0 10px 24px rgba(35, 50, 75, 0.05);
+  --glow-accent: 0 0 0 1px rgba(14, 158, 142, 0.25), 0 6px 16px rgba(14, 158, 142, 0.12);
+  --overlay-wash: radial-gradient(1100px 600px at 78% -12%, rgba(14, 158, 142, 0.05), transparent 60%);
+  color-scheme: light;
+}
+
+/* ── WARM (editorial) ── */
+[data-theme='warm'] {
+  --font-ui: 'Public Sans Variable', sans-serif;
+  --font-mono: 'Public Sans Variable', sans-serif;
+  --font-display: 'Bricolage Grotesque Variable', sans-serif;
+  --disp-weight: 700;
+  --disp-tracking: -0.01em;
+  --radius-xs: 8px;
+  --radius-sm: 10px;
+  --radius-md: 14px;
+  --radius-lg: 18px;
+  --radius-xl: 24px;
+  --surface-base: #f3ede1;
+  --surface-sunken: #f4eee2;
+  --surface-raised: #fffdf8;
+  --surface-overlay: #fbf6ec;
+  --surface-rail: #f7f1e6;
+  --border-subtle: #e7ddca;
+  --border-strong: color-mix(in oklab, var(--border-subtle) 60%, var(--text-tertiary) 40%);
+  --grid-line: #efe7d6;
+  --text-primary: #2a2420;
+  --text-secondary: #5c5247;
+  --text-tertiary: #9b9081;
+  --text-on-accent: #fffdf8;
+  --accent: #c2603c;
+  --accent-quiet: rgba(194, 96, 60, 0.1);
+  --color-pos: #3f8a5a;
+  --color-pos-soft: rgba(63, 138, 90, 0.12);
+  --color-warn: #b8881f;
+  --color-warn-soft: rgba(184, 136, 31, 0.12);
+  --color-neg: #c2603c;
+  --color-neg-soft: rgba(194, 96, 60, 0.12);
+  --color-info: #2f6f6a;
+  --color-accent2: #8a5a72;
+  --shadow-card: 0 2px 4px rgba(90, 70, 40, 0.05), 0 14px 30px rgba(90, 70, 40, 0.07);
+  --glow-accent: 0 6px 14px rgba(194, 96, 60, 0.26);
+  --overlay-wash: radial-gradient(1100px 600px at 78% -12%, rgba(194, 96, 60, 0.05), transparent 60%);
   color-scheme: light;
 }
 
@@ -134,6 +168,14 @@
     line-height: 1.5;
     font-feature-settings: 'cv05' 1;
   }
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: var(--overlay-wash);
+    pointer-events: none;
+    z-index: 0;
+  }
   /* Every number is mono + tabular by default when tagged. */
   .num {
     font-family: var(--font-mono);
@@ -143,10 +185,12 @@
   }
   .display {
     font-family: var(--font-display);
-    letter-spacing: -0.01em;
+    font-weight: var(--disp-weight);
+    letter-spacing: var(--disp-tracking);
   }
   ::selection {
-    background: var(--accent-quiet);
+    background: var(--accent);
+    color: var(--text-on-accent);
   }
   :focus-visible {
     outline: 2px solid var(--accent);
@@ -276,4 +320,14 @@
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ── Thin scrollbars (Mission-Control signature) ── */
+::-webkit-scrollbar {
+  width: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 6px;
+  border: 2px solid var(--surface-base);
 }
