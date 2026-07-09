@@ -108,8 +108,8 @@ export function AdminOnboardView() {
         {result && (
           <div style={{
             padding: '8px 12px', borderRadius: 4, fontSize: 13,
-            background: result.ok ? 'var(--success-bg, #d1fae5)' : 'var(--error-bg, #fee2e2)',
-            color: result.ok ? 'var(--success-fg, #065f46)' : 'var(--error-fg, #991b1b)',
+            background: result.ok ? 'var(--color-pos-soft)' : 'var(--color-neg-soft)',
+            color: result.ok ? 'var(--color-pos)' : 'var(--color-neg)',
           }}>
             {result.ok ? `✓ Onboarded: ${result.propertyId ?? ''}` : `✗ ${result.error ?? 'Unknown error'}`}
           </div>

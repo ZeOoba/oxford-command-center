@@ -15,7 +15,7 @@ function ConfidenceBar({ value }: { value: number }) {
       <div style={{
         height: '100%',
         width: `${Math.round(value * 100)}%`,
-        background: value >= 0.75 ? 'var(--color-pos, #22c55e)' : value >= 0.5 ? 'var(--color-warn, #f59e0b)' : 'var(--color-neg, #ef4444)',
+        background: value >= 0.75 ? 'var(--color-pos)' : value >= 0.5 ? 'var(--color-warn)' : 'var(--color-neg)',
         borderRadius: 2,
       }} />
     </div>
@@ -49,7 +49,7 @@ export function MarketScorecard({ signal }: Props) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <span style={{ fontWeight: 700, fontSize: 13, flex: 1 }}>{signal.cluster}</span>
           <Badge tone={marketActionTone(signal.action)}>{marketActionLabel(signal.action)}</Badge>
-          <span style={{ fontSize: 10, fontStyle: 'italic', color: 'var(--color-warn, #f59e0b)' }}>
+          <span style={{ fontSize: 10, fontStyle: 'italic', color: 'var(--color-warn)' }}>
             Advisory only
           </span>
         </div>
