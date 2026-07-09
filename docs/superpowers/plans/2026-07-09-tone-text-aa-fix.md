@@ -287,7 +287,9 @@ const IMPACT_COLOR: Record<NonNullable<TierItem['impactKind']>, string> = {
 };
 ```
 
-- [ ] **Step 3: Update the item-count badge to use the text-safe color while keeping the border on the original fill color** (~L131-135 dot — unchanged; ~L149-154 item-count badge)
+- [ ] **Step 3: Update the item-count badge to use the text-safe color for BOTH text and border** (~L131-135 dot — unchanged; ~L149-154 item-count badge)
+
+**Amendment (caught by an independent cross-session check, verified against the codebase before this task was dispatched):** the raw `TONE_COLOR['warn']` value fails even the 3:1 non-text floor (SC 1.4.11) as a *border* against `--surface-overlay` in the warm theme specifically (2.96:1, computed from `--color-warn: #b8881f` vs `--surface-overlay: #fbf6ec`) — this is the one and only (tone, theme) combination out of all 18 where the raw tone fails as a border anywhere in the app (verified by checking all 6 tones × all 3 themes × `surface-raised`/`surface-overlay`). Rather than leaving the border on the original `TONE_COLOR` (which was this task's original plan and is fine for the other 17 combinations but not this one), use `TEXT_TONE_COLOR` for both `border` and `color` in this specific badge — `--text-warn` already clears 4.5:1, so it trivially clears 3:1 too, and a border matching its own text color is a normal, visually coherent pattern.
 
 Before:
 ```tsx
@@ -305,7 +307,7 @@ After:
           className="num ml-auto shrink-0 rounded-full px-2 py-0.5 text-2xs font-semibold"
           style={{
             background: 'var(--surface-overlay)',
-            border: `1px solid ${color}`,
+            border: `1px solid ${TEXT_TONE_COLOR[tier.tone]}`,
             color: TEXT_TONE_COLOR[tier.tone],
           }}
         >
@@ -313,7 +315,7 @@ After:
         </span>
 ```
 
-(`color` — the original `TONE_COLOR[tier.tone]` — stays on the `border`, which only needs 3:1 and is unaffected by this fix. Only `color:` the text property changes.)
+(Both `border` and `color` now use `TEXT_TONE_COLOR[tier.tone]` instead of the original `color` variable — this changes the badge's border from the original fill-tuned tone to the same darkened text-safe variant, closing the warm/warn 3:1 gap along with fixing text contrast everywhere else.)
 
 - [ ] **Step 4: Update the action link color** (~L239)
 
