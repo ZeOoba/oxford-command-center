@@ -18,7 +18,7 @@ import { fetchDealComps } from './ai/comps';
 import { runAgent } from './ai/agent';
 import { searchDocuments, docStatus, warmDocIndex } from './sources/documents';
 import { getMacro } from './macro/getMacro';
-import { SERVER_PORT } from './config';
+import { serverPort } from './config';
 import { loadInboxState, runAlertAction } from './alerts/store';
 import { AlertActionInput } from '../src/contracts/alerts';
 import { openWarehouse } from './warehouse/db';
@@ -437,7 +437,7 @@ async function main() {
   // A slow or hanging workbook load (brain.refresh) previously blocked serve() from being called
   // for 5+ minutes on a cold start. All degraded-mode guards are already in place: /api/snapshot
   // 503s on null snapshot, warehouse opens lazily, /api/health stays live throughout.
-  serve({ fetch: app.fetch, port: SERVER_PORT, hostname: '127.0.0.1' }, (info) => {
+  serve({ fetch: app.fetch, port: serverPort(), hostname: '127.0.0.1' }, (info) => {
     console.log(`◆ Oxford Brain Server — http://127.0.0.1:${info.port} (localhost only)`);
     console.log(`  Workbook: ${brain.getState().workbookPath}`);
   });
