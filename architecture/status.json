@@ -489,6 +489,16 @@
     "last_updated": "2026-07-09T01:11:24Z"
   },
 
+  "mission-control-consumers": {
+    "agent_role": "UX Agent (Claude Code, Sonnet 5 planning/orchestrating; execution dispatched to Opus 4.8 subagents per Gabriel's explicit request for the highest-intelligence model) — Gabriel-authorized in-session 2026-07-09, running fully autonomously overnight (Gabriel going to bed)",
+    "phase": "PR-B of the two-phase Mission-Control retokenization (mission-control-retokenization entry above, merged as PR #186). Wires token-layer consumers: severity glow (TierBoard/StatusPill), categoryTone() color-coding (real 10-category taxonomy), KpiStat interactive drill-down, PortfolioFilterBar filtered-state + slice readout, Sidebar 3px active bar, Badge shape, InsightsModule FilterPill fixes, plus a flagged --text-on-accent WCAG AA fix proposal (parchment/warm) that PR-A's final review identified as a required follow-up.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Plan committed (docs/superpowers/plans/2026-07-09-mission-control-consumers-pr-b.md, 11 tasks), execution starting. No architect-owned files in scope (verified against .claude/hooks/architect-owned.json — none of src/modules/**, src/shell/**, src/primitives/**, src/charts/** match). review_needed=true not for architect-ownership but because Task 10 (the --text-on-accent fix) is an explicitly flagged visual-design judgment call Gabriel has not seen — the PR will call this out specifically, do not let it merge silently bundled with the rest. Corrections found during planning: chart-series reorder already done by PR-A's Task 9; Badge's 'gold' tone used in 18 files (not unreferenced), left alone since it already resolves to the correct accent color; FilterPill fix only applies to InsightsModule.tsx, not OverviewModule.tsx as the spec assumed. Running fully autonomously — Gabriel is asleep; will not merge, only open the PR, per established PR-A pattern.",
+    "last_updated": "2026-07-09T01:43:52Z"
+  },
+
   "usage": {
     "how_to_update": "Edit your worktree's entry before starting and after completing work; commit it on your branch. Use ISO 8601 timestamps. Set review_needed=true and fill review_detail when you need architect sign-off on an architect-owned file.",
     "how_to_read": "Before starting any task, check all other worktrees for status=in_progress or review_needed. If another agent works in your file-ownership area, coordinate before editing."
