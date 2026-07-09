@@ -265,23 +265,49 @@ palette for free. This includes the four modules most likely to have been hand-t
 old navy/gold palette by eye (Taxes, Insurance, Command Brain, Debt Scorecard) — all confirmed to
 reference only real semantic tokens.
 
-**Not verified this pass — pre-existing environment gaps, not PR-C regressions:**
-- **Live visual/screenshot confirmation across the three themes** could not run: this worktree's
-  dev server does not bind (the identical `port 8911` / `/api/snapshot` gap PR-B's own record
-  documents hitting twice, including after copying `.env` in — the same fix that worked for
-  PR-A). Verification for this pass is grep + `tsc` + the full unit suite (2352/2352 green) only;
-  the density-doctrine check ("no long single-column list") and the eye-check for a token that is
-  *technically* correct but *visually* weak under teal (spec §"no-long-lists-rule"/Class-D
-  failure-proofing) are both deferred to a properly-provisioned environment.
+**Not verified this pass — pre-existing environment gaps, not PR-C regressions. ROOT-CAUSED 2026-07-09 (post-open, via systematic-debugging, not left as "known gap"):**
+- **Live visual/screenshot confirmation across the three themes** could not run — but this is
+  NOT the mysterious "worktree binding gap" PR-B's own record describes. Direct reproduction
+  (`npm run dev:server`, real stdout captured) found two distinct, fully-diagnosed causes: (1)
+  port 8911 was genuinely occupied by another live session's server (`netstat` showed an
+  **established** connection, not idle — a real, correct collision, not a bug); (2) the intended
+  workaround, setting `BRAIN_SERVER_PORT` in this worktree's `.env`, is silently ineffective
+  because `server/config.ts`'s `export const SERVER_PORT = Number(process.env.BRAIN_SERVER_PORT
+  ?? 8911)` is a **top-level const that freezes before `.env` loads** — ES module imports (incl.
+  `./config`) are hoisted and evaluated before `server/index.ts`'s own `loadEnvFile()` call runs,
+  exactly the bug class that file's own comment already documents and cites a prior fix for
+  (`workbookPath()`, converted to a function resolved at call time,
+  `docs/superpowers/plans/2026-07-08-workbook-path-dual-library-and-env-loading-fix-plan.md`) —
+  that fix was never applied to `SERVER_PORT`, its sibling constant in the same file. Confirmed
+  via minimal test: `BRAIN_SERVER_PORT=8930 npm run dev:server` (env var set at shell/process
+  level, bypassing the `.env`-timing bug entirely) bound cleanly and printed a normal startup
+  banner. **This is a real, fixable, one-call-site bug** (`server/index.ts:440`), not an
+  environment limitation — flagged as a follow-up (see below), not fixed here (out of PR-C's
+  `src/modules/**` scope, and `server/config.ts` warrants its own reviewed change, not a
+  drive-by inside a token-parity PR). Bonus, unrelated finding surfaced by the same
+  reproduction: the workbook-path fallback in the same file still points at the OneDrive
+  `(1)`-suffixed folder already flagged stale in memory (`reference_memory_scope_fragmentation.md`)
+  — visible directly in the server's own startup banner; not investigated further here, out of
+  scope. Verification for this pass therefore stayed at grep + `tsc` + the full unit suite
+  (2352/2352 green); the density-doctrine check and the eye-check for a token that is
+  *technically* correct but *visually* weak under teal remain deferred to whoever picks up the
+  `SERVER_PORT` fix.
 - **`npm run build` / `npm run check:bundle`** fail with `Can't resolve
-  '@fontsource/ibm-plex-sans/400.css'` — the shared `node_modules` was never `npm install`-ed
-  after PR-A added this dependency to `package.json`. Confirmed pre-existing and unrelated to any
-  PR-C file (the package is simply absent from `node_modules`, verified via
-  `require.resolve` from inside this worktree); would fail identically for any session attempting
-  a build right now, including one with zero PR-C changes applied. Not fixed here — the shared
-  `node_modules` sits outside PR-C's file scope and the main checkout currently carries unrelated
-  uncommitted changes, so an `npm install` was not attempted. Needs `npm install` from a session
-  with authority over the shared dependency tree.
+  '@fontsource/ibm-plex-sans/400.css'`. Root-caused, not just observed: `package-lock.json` has a
+  fully **resolved** entry for this package (version, registry URL, integrity hash) — `npm
+  install` genuinely succeeded somewhere — but the physical package is absent from the shared
+  root `node_modules` every worktree resolves against (`require.resolve` confirms; all 3 fonts
+  PR-A *added* are missing, the 2 pre-existing fonts are present, cleanly bisecting old vs new).
+  Best-supported explanation: PR-A's own development worktree (`.claude/worktrees/mission-control-
+  tokens`, since deleted post-merge per its own `status.json` record) had a local `node_modules`
+  where the install physically ran; deleting that worktree took its local install with it, and the
+  shared root copy was never refreshed against the now-updated lockfile. Confirmed pre-existing
+  and unrelated to any PR-C file; would fail identically for any session attempting a build right
+  now, including one with zero PR-C changes applied. Not fixed here — the shared `node_modules`
+  sits outside PR-C's file scope and the main checkout currently carries unrelated uncommitted
+  changes, so an `npm install` was not attempted. Needs `npm install` from a session with
+  authority over the shared dependency tree (a plain `npm install` from the main checkout should
+  resolve it — the lockfile is already correct, nothing needs re-resolving).
 - **The new multi-theme axe/contrast test** (plan Task 9 Step 4a) that would automate the
   ≥4.5:1 verification for every pairing this sweep touches was not written — it requires the same
   dev server that will not bind. Deferred per the plan's own Step 4d fallback, not silently
