@@ -73,6 +73,19 @@
       "status": "awaiting_review",
       "merge_order": 2,
       "notes": "PR #14 — Phase B2 Intelligence UI. STACKED on PR #13. Do NOT merge before PR #13."
+    },
+
+    "p4c-placeholders": {
+      "path": "C:/Users/Owner/oxford-command-center/.claude/worktrees/p4c-placeholders",
+      "branch": "feat/cc-p4c-c2-placeholders",
+      "agent_role": "Engineering (Claude Code, Fable 5)",
+      "owner": "Claude Code session 0532351c (Gabriel-authorized in-turn 2026-07-09)",
+      "active_pr": null,
+      "modules_owned": ["insurance", "taxes"],
+      "files_owned": ["server/warehouse/insurance-loss-analysis.ts", "server/warehouse/insurance-loss-api.ts", "server/warehouse/tax-strategy.ts", "server/warehouse/placeholder-data.ts", "server/warehouse/placeholders/**", "server/warehouse/tax-api.ts", "src/modules/insurance/**", "src/modules/taxes/**", "src/primitives/PlaceholderBanner.tsx", "scripts/import-insurance-data.ts", "docs/placeholder-data.md", "src/contracts/insurance-loss.ts", "src/contracts/tax-strategy.ts"],
+      "files_prohibited": ["server/warehouse/migrations/**", "src/analytics/engine.ts", "config/**"],
+      "status": "active",
+      "notes": "Architect-owned touches (contracts x2 new, server/index.ts one mount line, CLAUDE.md §3 line) Gabriel-authorized in-turn 2026-07-09; declared review_needed in status.json entry p4c-c2-placeholder-buildout. Spec: docs/superpowers/specs/2026-07-09-p4c-c2-placeholder-buildout-design.md"
     }
   },
 
