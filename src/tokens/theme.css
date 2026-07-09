@@ -65,6 +65,11 @@
   --text-secondary: #aab6c4;
   --text-tertiary: #6b7888;
   --text-on-accent: #06120f;
+  /* Per-consumer token, separate from --text-on-accent: warm's --text-on-accent
+     must be DARK for --accent/--color-neg yet LIGHT for --color-info — disjoint
+     luminance, proven unresolvable palette-wide in PR-B. Used only by the T2·WATCH
+     badge. In command it coincides with --text-on-accent (7.47:1 on --color-info). */
+  --text-on-info: #06120f;
   --accent: #39d3c0;
   --accent-quiet: rgba(57, 211, 192, 0.09);
   --color-pos: #54d49a;
@@ -95,6 +100,9 @@
   --text-secondary: #475568;
   --text-tertiary: #8593a6;
   --text-on-accent: #0a0806;
+  /* Separate token (see command block / PR-B disjoint-luminance finding).
+     Coincides with --text-on-accent here (4.88:1 on --color-info). */
+  --text-on-info: #0a0806;
   --accent: #0e9e8e;
   --accent-quiet: rgba(14, 158, 142, 0.1);
   --color-pos: #1c9c63;
@@ -135,6 +143,10 @@
   --text-secondary: #5c5247;
   --text-tertiary: #9b9081;
   --text-on-accent: #fffdf8;
+  /* Diverges from --text-on-accent by necessity (PR-B): warm's --text-on-accent
+     is DARK-intended for --accent/--color-neg, but --color-info (#2f6f6a) needs a
+     LIGHT on-text for AA. This near-white clears 5.73:1 on --color-info. T2·WATCH only. */
+  --text-on-info: #fffdf8;
   --accent: #c2603c;
   --accent-quiet: rgba(194, 96, 60, 0.1);
   --color-pos: #3f8a5a;

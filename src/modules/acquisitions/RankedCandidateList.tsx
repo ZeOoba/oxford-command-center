@@ -11,7 +11,7 @@ import { useSetCandidateStatus } from './hooks';
 
 const TIER_STYLES: Record<string, { label: string; bg: string; color: string }> = {
   T1:     { label: 'T1 · PURSUE', bg: 'var(--accent)', color: 'var(--text-on-accent)' },
-  T2:     { label: 'T2 · WATCH',  bg: 'var(--color-info)', color: 'var(--text-on-accent)' },
+  T2:     { label: 'T2 · WATCH',  bg: 'var(--color-info)', color: 'var(--text-on-info)' },
   PASS:   { label: 'PASS',        bg: 'var(--surface-overlay)',   color: 'var(--text-tertiary)' },
   KILLED: { label: 'KILLED',      bg: 'var(--color-neg)',         color: 'var(--text-on-accent)' },
 };
