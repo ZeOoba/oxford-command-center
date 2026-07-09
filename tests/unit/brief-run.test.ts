@@ -20,16 +20,20 @@ describe('runBrief', () => {
     const statePath = join(dir(), 'state.json');
     const sent: string[] = [];
     const res = await runBrief(baseSnap(), {
-      statePath, now: new Date('2026-06-04T11:00:00Z'), // 07:00 ET
+      statePath, now: new Date('2026-07-09T11:00:00Z'), // 07:00 ET
       send: async (email) => { sent.push(email.subject); return { ok: true, via: 'com' }; },
     });
     expect(res.briefSent).toBe(true);
-    expect(sent.some((s) => s.includes('Daily Brief'))).toBe(true);
-    const res2 = await runBrief(baseSnap(), { statePath, now: new Date('2026-06-04T15:00:00Z'), send: async () => ({ ok: true, via: 'com' }) });
+    const brief = sent.find((s) => s.includes('Daily Brief'));
+    // Subject carries the SEND date, not the workbook asOf (frozen-date incident 2026-07-09:
+    // briefs went out titled "— 2026-06-01" because the subject used snapshot.meta.asOf).
+    expect(brief).toContain('2026-07-09');
+    expect(brief).not.toContain('2026-06-04');
+    const res2 = await runBrief(baseSnap(), { statePath, now: new Date('2026-07-09T15:00:00Z'), send: async () => ({ ok: true, via: 'com' }) });
     expect(res2.briefSent).toBe(false);
   });
 
-  it('routes alerts to ggoldberg only; brief cc-s egoldberg (routing canon)', async () => {
+  it('routes alerts AND the brief to ggoldberg only (routing canon, ratified 2026-07-09)', async () => {
     const statePath = join(dir(), 'state.json');
     const snap = baseSnap();
     // Inject a cancelled-insurance item so a CRITICAL alert fires immediately.
@@ -47,9 +51,9 @@ describe('runBrief', () => {
     // Alerts must NOT include egoldberg — ggoldberg only.
     expect(alertCalls.every((c) => !c.to.includes('egoldberg@oxfordra.net'))).toBe(true);
     expect(alertCalls.every((c) => c.to.includes('ggoldberg@oxfordra.net'))).toBe(true);
-    // Brief cc's egoldberg (sole exception per routing canon).
-    expect(briefCalls[0]!.to).toContain('egoldberg@oxfordra.net');
-    expect(briefCalls[0]!.to).toContain('ggoldberg@oxfordra.net');
+    // The ora-am-brief is the routing canon's sole cc-Eric exception — it does NOT extend
+    // to this brief (Gabriel-ratified 2026-07-09, setup-audit remediation).
+    expect(briefCalls[0]!.to).toEqual(['ggoldberg@oxfordra.net']);
   });
 
   it('emits a same-day alert only for a newly-appeared critical item', async () => {

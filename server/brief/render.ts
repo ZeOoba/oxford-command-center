@@ -2,7 +2,12 @@ import type { Insight } from '../../src/analytics/types';
 import { fmtUsdCompact } from '../../src/analytics/format';
 
 export interface BriefInput {
+  /** Workbook data date — shown in the body header ("As of …"), never the subject. */
   asOf: string;
+  /** ET send date (YYYY-MM-DD) — the subject date. Subject must track the send date, not
+   *  the workbook asOf (frozen-date incident 2026-07-09: WORKBOOK_AS_OF pinned every
+   *  subject to 2026-06-01). */
+  briefDate: string;
   freshness: string;
   insights: Insight[];
   criticalDates: { date: string; label: string; days: number }[];
@@ -62,7 +67,7 @@ export function renderBrief(b: BriefInput): Email {
       ${section('Tasks', `<ul style="margin:4px 0;padding-left:18px">${tasks}</ul>`)}
       <tr><td style="padding:16px 24px;background:${CREAM};font:13px DM Sans,Arial"><a href="${esc(b.dashboardUrl)}" style="color:${NAVY};font-weight:600">Open the live dashboard →</a></td></tr>
     </table>`;
-  return { subject: `[ORA Command Center] Daily Brief — ${b.asOf}`, html };
+  return { subject: `[ORA Command Center] Daily Brief — ${b.briefDate}`, html };
 }
 
 export function renderAlert(i: Insight): Email {
