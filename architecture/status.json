@@ -499,6 +499,16 @@
     "last_updated": "2026-07-09T05:33:24Z"
   },
 
+  "mission-control-parity-sweep": {
+    "agent_role": "UX Agent (Claude Code, Opus) — Gabriel-authorized in-session 2026-07-09",
+    "phase": "PR-C of the Mission-Control retokenization — per-module parity re-QA. Closes the 're-QA of all modules against the new tokens' line item that PR-A (token layer, #186) and PR-B (shared primitives + Insights, design/mission-control-consumers) do not cover. Plan: docs/superpowers/plans/2026-07-09-mission-control-parity-sweep-pr-c.md (9 tasks); spec: docs/superpowers/specs/2026-07-09-mission-control-parity-sweep-design.md. Remediates live-grep token-bypasses in 4 module dirs (acquisitions navy/gold tier literals + #fff-on-accent; capital undefined --gold/--navy/--color-emerald; intel --success-*/--error-* remap; market dead-fallback hygiene) and visually confirms the 19 Class-D semantic-only modules that inherit PR-A+PR-B for free (incl. the newest builds Taxes/Insurance/Command-Brain/Debt-Scorecard, all verified semantic-only).",
+    "status": "blocked",
+    "blocked_by": "PR-B merge (design/mission-control-consumers) — do not execute until merged",
+    "review_needed": true,
+    "review_detail": "PLANNING-ONLY — no product code written; this is the PR-C spec + plan + this claim only. Pending (a) Gabriel's review and (b) PR-B merging to main. Two hard preconditions before ANY execution, both documented in the plan's Preconditions section: (1) this worktree is branched from a commit that PREDATES PR-A's merge to origin/main (its theme.css still reads 'THE OXFORD TERMINAL' / --color-gold-500; merge-base 3802074 is behind origin/main tip c373c69 which carries #186) — the branch MUST be re-created from a main containing BOTH PR-A and merged PR-B before executing, or every 'renders after PR-A as…' finding and every contrast check is invalid; (2) all file-level line numbers here were read from the pre-PR-A tree and WILL drift once PR-A's 4-file sweep + PR-B's edits are present — re-verify every path/line against the actual merged diffs (PR-B's own plan is precedent: its task list changed once during planning). One flagged visual judgment call needs Gabriel's explicit look before merge: the T1/T2 acquisition tier-badge color mapping (no 1:1 Mission-Control equivalent; recommended T1=accent highlight, T2=quiet neutral — not ratified). No architect-owned files in scope (src/modules/** matches none of architect-owned.json's globs); this status.json declaration is the sanctioned worktree exception. Agents open, never merge, the Mission-Control PRs — merge is Gabriel's.",
+    "last_updated": "2026-07-09T02:06:00Z"
+  },
+
   "usage": {
     "how_to_update": "Edit your worktree's entry before starting and after completing work; commit it on your branch. Use ISO 8601 timestamps. Set review_needed=true and fill review_detail when you need architect sign-off on an architect-owned file.",
     "how_to_read": "Before starting any task, check all other worktrees for status=in_progress or review_needed. If another agent works in your file-ownership area, coordinate before editing."
