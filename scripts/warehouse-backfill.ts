@@ -13,7 +13,7 @@ import { noiMatrix } from '../server/warehouse/queries';
 loadEnvFile();
 
 const FINANCIALS_DIR = process.env.FINANCIALS_DIR
-  ?? 'C:/Users/Owner/OneDrive - Oxford Capital Partners (1)/Property Financials';
+  ?? 'C:/Users/Owner/OneDrive - Oxford Capital Partners/Property Financials';
 const DB_PATH = process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
 const RAW_DIR = join(process.cwd(), 'data', 'warehouse', 'raw');
 const SEED_PATH = join(process.cwd(), 'docs', 'superpowers', 'specs', '2026-06-12-pfi-account-mapping-seed.json');

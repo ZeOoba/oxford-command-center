@@ -25,7 +25,7 @@ npm run dev          # starts the Brain Server (:8911) + the web app (:5273) tog
 - **Web app** (`src/`) — the React client; Vite proxies `/api` and `/sse` to the Brain Server.
 
 The workbook path defaults to
-`~/OneDrive - Oxford Capital Partners (1)/eric spreadsheets/Master Excel Template Company Wide -- Oxford.xlsx`
+`~/OneDrive - Oxford Capital Partners/eric spreadsheets/Master Excel Template Company Wide -- Oxford.xlsx`
 — override with the `WORKBOOK_PATH` env var.
 
 ### Scripts
