@@ -25,14 +25,16 @@ interface Props {
 // Small corner control used only in the interactive variant. It is a SEPARATE,
 // real interactive element (native <button>/<a>) and a SIBLING of — never an
 // ancestor of — the Provenance value span, so the card never nests interactive
-// content inside interactive content. It stays opacity-0 until the card is
-// hovered OR the control itself takes keyboard focus, so it is discoverable by
-// both mouse and keyboard. Deliberately NO `outline-none`: the global
-// `:focus-visible` rule in tokens/theme.css supplies the accent focus ring.
+// content inside interactive content. It sits at reduced opacity AT REST so it
+// is discoverable without a hover first, then goes to full opacity when the
+// control ITSELF is hovered OR takes keyboard focus (the card carries no hover
+// affordance of its own, so the visual signal matches the real click target).
+// Deliberately NO `outline-none`: the global `:focus-visible` rule in
+// tokens/theme.css supplies the accent focus ring.
 const ACTION_CLASS = cn(
   'absolute right-2 top-2 z-10 inline-flex h-7 w-7 items-center justify-center rounded-[var(--radius-md)]',
-  'opacity-0 transition-opacity duration-[140ms] motion-reduce:transition-none cursor-pointer',
-  'group-hover:opacity-100 focus-visible:opacity-100',
+  'opacity-40 transition-opacity duration-[140ms] motion-reduce:transition-none cursor-pointer',
+  'hover:opacity-100 focus-visible:opacity-100',
 );
 
 export function KpiStat({
@@ -103,9 +105,9 @@ export function KpiStat({
   // Interactive: the Card stays a plain, non-interactive <div> (no role, no
   // tabIndex, no onClick). Clickability lives ONLY in the small corner control,
   // which is a sibling of the Provenance value span — so there is no interactive
-  // content nested inside interactive content. The whole card still lifts and
-  // reveals an accent border tint on hover, but purely as a VISUAL affordance
-  // (aria-hidden overlay; nothing interactive is attached to the card itself).
+  // content nested inside interactive content. The card carries NO hover
+  // affordance (no lift, no border tint) — only the corner control signals and
+  // is clickable, so the visual affordance matches the real click target.
   const action = href ? (
     <a href={href} aria-label={`View ${label}`} className={ACTION_CLASS} style={{ color: 'var(--accent)' }}>
       <ArrowUpRight size={14} aria-hidden />
@@ -123,22 +125,7 @@ export function KpiStat({
   );
 
   return (
-    <Card
-      className={cn(
-        'group overflow-hidden transition-transform duration-[140ms] motion-reduce:transition-none',
-        'hover:-translate-y-0.5 motion-reduce:hover:translate-y-0',
-      )}
-    >
-      {/* Purely-visual accent border tint on hover. aria-hidden + pointer-events-none
-          so it contributes nothing interactive and never intercepts input. Its
-          border color is set inline (identical color-mix to the prior interactive
-          surface); only its opacity is toggled by group-hover, so it never fights an
-          inline style. */}
-      <span
-        aria-hidden
-        className="pointer-events-none absolute inset-0 rounded-[var(--radius-lg)] opacity-0 transition-opacity duration-[140ms] motion-reduce:transition-none group-hover:opacity-100"
-        style={{ border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)' }}
-      />
+    <Card className="overflow-hidden">
       {body}
       {action}
     </Card>
