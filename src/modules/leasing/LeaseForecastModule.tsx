@@ -85,7 +85,7 @@ const velocityCols: Column<LeasingVelocity>[] = [
       ) : (
         <span
           className="num"
-          style={{ color: v.slowLeasing ? 'var(--color-warn)' : 'var(--text-primary)' }}
+          style={{ color: v.slowLeasing ? 'var(--text-warn)' : 'var(--text-primary)' }}
         >
           {v.medianDaysToLease}
         </span>
@@ -175,7 +175,7 @@ function MarketRentEditor({ marketRents }: { marketRents: Record<string, number>
               <div key={k} className="flex items-center justify-between gap-3 rounded-[var(--radius-sm)] px-3 py-1.5" style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)' }}>
                 <span className="num text-2xs font-medium" style={{ color: 'var(--text-secondary)' }}>{k}</span>
                 <div className="flex items-center gap-2">
-                  <span className="num text-2xs" style={{ color: 'var(--color-pos)' }}>${v.toFixed(2)}/SF</span>
+                  <span className="num text-2xs" style={{ color: 'var(--text-pos)' }}>${v.toFixed(2)}/SF</span>
                   <button
                     onClick={() => handleClear(k)}
                     disabled={saveMutation.isPending}
@@ -230,7 +230,7 @@ function MarketRentEditor({ marketRents }: { marketRents: Record<string, number>
         </div>
 
         {saveMutation.isError && (
-          <div className="text-2xs" style={{ color: 'var(--color-neg)' }}>
+          <div className="text-2xs" style={{ color: 'var(--text-neg)' }}>
             Save failed — brain server not reachable.
           </div>
         )}
@@ -404,7 +404,7 @@ export function LeaseForecastModule() {
                   <div className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>NOI Impact</div>
                   <div
                     className="num text-lg font-semibold flex items-center gap-1"
-                    style={{ color: forecast.noiImpactAnnualUsd >= 0 ? 'var(--color-pos)' : 'var(--color-neg)' }}
+                    style={{ color: forecast.noiImpactAnnualUsd >= 0 ? 'var(--text-pos)' : 'var(--text-neg)' }}
                   >
                     {forecast.noiImpactAnnualUsd >= 0 ? (
                       <TrendingUp size={14} />
@@ -434,7 +434,7 @@ export function LeaseForecastModule() {
           )}
 
           {rentMutation.isError && (
-            <div className="text-2xs" style={{ color: 'var(--color-neg)' }}>
+            <div className="text-2xs" style={{ color: 'var(--text-neg)' }}>
               Forecast unavailable — warehouse not reachable.
             </div>
           )}
@@ -484,7 +484,7 @@ export function LeaseForecastModule() {
           </Button>
 
           {narrativeMutation.isError && (
-            <div className="text-2xs" style={{ color: 'var(--color-neg)' }}>
+            <div className="text-2xs" style={{ color: 'var(--text-neg)' }}>
               Narrative unavailable — brain server not reachable.
             </div>
           )}

@@ -113,7 +113,7 @@ export function LeasesModule() {
         const label = gapChipLabel(gap);
         if (label === '—') return <span style={{ color: 'var(--text-tertiary)' }}>—</span>;
         if (gap.underMarket) return <Badge tone="amber">{label}</Badge>;
-        return <span className="num text-2xs" style={{ color: 'var(--color-pos)' }}>{label}</span>;
+        return <span className="num text-2xs" style={{ color: 'var(--text-pos)' }}>{label}</span>;
       },
       sortValue: (l) => gapMap.get(l.id)?.gapPsf ?? null,
     },
