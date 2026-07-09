@@ -24,7 +24,7 @@ import { Button } from '@/primitives/Button';
 import { Skeleton } from '@/primitives/Skeleton';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { useToast } from '@/primitives/toast-context';
-import { useCapitalAllocation, actionLabel, actionColor } from './hooks';
+import { useCapitalAllocation, actionLabel, actionColor, actionFillColor } from './hooks';
 import { AllocationCard } from './AllocationCard';
 import { HurdleRateBanner } from './HurdleRateBanner';
 
@@ -249,9 +249,9 @@ export function CapitalModule() {
               {actionEntries.filter(([, n]) => n > 0).map(([action, count]) => (
                 <span key={action} style={{
                   fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
-                  background: `color-mix(in oklab, ${actionColor(action as AllocationAction)} 12%, transparent)`,
+                  background: `color-mix(in oklab, ${actionFillColor(action as AllocationAction)} 12%, transparent)`,
                   color: actionColor(action as AllocationAction),
-                  border: `1px solid color-mix(in oklab, ${actionColor(action as AllocationAction)} 35%, transparent)`,
+                  border: `1px solid color-mix(in oklab, ${actionFillColor(action as AllocationAction)} 35%, transparent)`,
                 }}>
                   {actionLabel(action as AllocationAction)} {count}
                 </span>

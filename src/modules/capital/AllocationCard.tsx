@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { Card } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import type { AllocationVerdict } from './hooks';
-import { actionLabel, actionColor, riskBandTone } from './hooks';
+import { actionLabel, actionColor, actionFillColor, riskBandTone } from './hooks';
 
 function fmtPct(n: number | null): string {
   if (n === null) return '—';
@@ -44,9 +44,9 @@ export function AllocationCard({ verdict, hurdleRatePct }: Props) {
           <span style={{
             fontWeight: 700, fontSize: 13, letterSpacing: '0.03em',
             padding: '2px 8px', borderRadius: 4,
-            background: `color-mix(in oklab, ${actionColor(verdict.action)} 15%, transparent)`,
+            background: `color-mix(in oklab, ${actionFillColor(verdict.action)} 15%, transparent)`,
             color: actionColor(verdict.action),
-            border: `1px solid color-mix(in oklab, ${actionColor(verdict.action)} 40%, transparent)`,
+            border: `1px solid color-mix(in oklab, ${actionFillColor(verdict.action)} 40%, transparent)`,
           }}>
             {actionLabel(verdict.action)}
           </span>

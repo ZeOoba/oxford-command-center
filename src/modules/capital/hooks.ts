@@ -53,6 +53,23 @@ export function actionColor(action: AllocationAction): string {
   }
 }
 
+/**
+ * Fill/border color for action chips — the vivid `--color-*` tone tokens.
+ * Kept separate from actionColor() (which returns AA-safe `--text-*` tokens for
+ * TEXT only) so chip background/border tints stay on the saturated tone, matching
+ * the Badge.tsx primitive's fill-vs-text split. `hold` was never a tone color, so
+ * it stays on `--text-secondary` in both.
+ */
+export function actionFillColor(action: AllocationAction): string {
+  switch (action) {
+    case 'buy':       return 'var(--color-pos)';
+    case 'hold':      return 'var(--text-secondary)';
+    case 'sell':      return 'var(--color-neg)';
+    case 'refinance': return 'var(--color-warn)';
+    case 'improve':   return 'var(--color-info)';
+  }
+}
+
 import type { RiskBand } from '@contracts/capital';
 
 export function riskBandTone(band: RiskBand): 'green' | 'amber' | 'red' | 'neutral' {
