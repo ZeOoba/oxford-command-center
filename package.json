@@ -22,6 +22,7 @@
     "warehouse:backfill": "tsx scripts/warehouse-backfill.ts",
     "warehouse:verify": "tsx scripts/warehouse-verify.ts",
     "warehouse:drift": "tsx scripts/warehouse-live-drift-check.ts",
+    "warehouse:import-loss-runs": "tsx scripts/import-insurance-data.ts",
     "worktree": "tsx scripts/safe-worktree.ts",
     "check:bundle": "tsx scripts/check-bundle.ts",
     "check:dev-css": "tsx scripts/check-dev-css.ts",

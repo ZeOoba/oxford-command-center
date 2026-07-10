@@ -1,8 +1,13 @@
 // server/warehouse/tax-api.ts
 //
 // Phase 6 — Property Tax Analysis + Appeals API sub-router (6a.4 / 6a.5).
+// Extended in P4c / C2 (Task 9) with the placeholder-driven tax STRATEGY route.
 // Routes:
 //   GET  /analysis — buildTaxAnalysis() against the latest Spine-A snapshot's indicated values.
+//   GET  /strategy — buildTaxStrategyReport() (Task 8): cost-seg / entity-strategy / filed-returns
+//                     metadata. Separate handler from /analysis — NEVER calls logVerdicts /
+//                     computeInputsVersion (placeholder-tainted inputs must never enter
+//                     calibration history; see the route's own comment below).
 //   POST /appeals  — TaxAppealInput.parse() → INSERT (id absent) or UPDATE (id present) tax_appeals.
 //
 // Registration: server/index.ts mounts this at /api/warehouse/tax (orchestrator's job — not
@@ -18,7 +23,9 @@ import { Hono } from 'hono';
 import type { WarehouseDb } from './db';
 import { buildTaxAnalysis, verdictsFromTaxOpportunities, type IndicatedPropertyValue } from './tax-analysis';
 import { logVerdicts, computeInputsVersion } from './calibration';
+import { buildTaxStrategyReport } from './tax-strategy';
 import { TaxAnalysisReport, TaxAppeal, TaxAppealInput } from '../../src/contracts/tax';
+import { TaxStrategyReport } from '../../src/contracts/tax-strategy';
 
 /**
  * Fail-open Spine-A indicated-value map. Mirrors the /capital-allocation route's snapshot fetch
@@ -101,6 +108,27 @@ export function taxApi(getDb: () => WarehouseDb): Hono {
       } catch (err) {
         console.error('[tax-api] /analysis error:', err instanceof Error ? err.message : String(err));
         return c.json({ error: 'tax analysis failed' }, 500);
+      }
+    }),
+  );
+
+  // ── GET /strategy ───────────────────────────────────────────────────────────────────────
+  // Task 9 (P4c / C2) — wires buildTaxStrategyReport(db, asOf) (Task 8) to HTTP. This is a
+  // completely separate handler from GET /analysis above: it deliberately calls NEITHER
+  // logVerdicts NOR computeInputsVersion, and never touches calibration_verdict. The
+  // tax-strategy engine's cost-seg / entity / filed-return figures are placeholder-tainted by
+  // design (server/warehouse/tax-strategy.ts module header) — a placeholder-tainted verdict
+  // must never enter calibration history, so no calibration wiring is added here, ever. This
+  // does not change or remove /analysis's existing (correct) logVerdicts call above.
+  app.get('/strategy', (c) =>
+    withDb(async (db) => {
+      try {
+        const asOf = new Date().toISOString().slice(0, 10);
+        const report = buildTaxStrategyReport(db, asOf);
+        return c.json(TaxStrategyReport.parse(report));
+      } catch (err) {
+        console.error('[tax-api] /strategy error:', err instanceof Error ? err.message : String(err));
+        return c.json({ error: 'tax strategy failed' }, 500);
       }
     }),
   );

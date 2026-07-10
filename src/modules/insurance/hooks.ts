@@ -16,9 +16,13 @@ import { useQuery } from '@tanstack/react-query';
 import { fetchParsedOrMirror, QUERY_OPTS } from '../intel/hooks';
 import { InsuranceAnalysisReport } from '@contracts/insurance-analysis';
 import type { PolicyEconomics, RenewalBucket, BookBenchmark } from '@contracts/insurance-analysis';
+import { InsuranceLossReport } from '@contracts/insurance-loss';
+import type { DeductibleReview } from '@contracts/insurance-loss';
+import { fmtUsdCompact } from '@analytics/index';
 import type { Tier, TierItem } from '@/primitives/TierBoard';
 
 export const INSURANCE_ANALYSIS_KEY = ['warehouse', 'insurance', 'analysis'] as const;
+export const INSURANCE_LOSS_KEY = ['warehouse', 'insurance', 'loss'] as const;
 
 /**
  * Insurance re-bid analysis report — re-bid candidates, renewal calendar, and the own-book
@@ -130,8 +134,9 @@ function renewalWatchTierItem(p: PolicyEconomics, rank: number): TierItem {
 }
 
 /**
- * Builds the two Savings Board tiers. Only these two ever render — a future coverage/deductible
- * optimization tier (P4c) has no data source yet, so it must never be fabricated here.
+ * Builds the two Savings Board tiers driven by the analysis report. A third, optional tier
+ * (Optimize Coverage — see `buildOptimizeTier` below) is built separately from the LOSS report
+ * (P4c) and appended by the caller only when that report has resolved — never fabricated here.
  *
  * "Re-bid — above book median": every rebidCandidates entry (server-sorted by
  * excessPremiumVsMedian DESC — not re-sorted here).
@@ -160,4 +165,75 @@ export function buildSavingsTiers(report: InsuranceAnalysisReport): Tier[] {
       items: renewalWatch.map((p, i) => renewalWatchTierItem(p, i + 1)),
     },
   ];
+}
+
+// ── Insurance LOSS reasoning (P4c) — GET /api/warehouse/insurance/loss ────────────────────
+//
+// Doctrine (contracts/insurance-loss.ts): dispersion/arithmetic only — EAL, the retained/
+// transferred split, and loss ratio are mechanical roll-ups of observed loss runs vs the stated
+// deductible/limit. No risk-load, no savings claim. `isAnyPlaceholder` gates the Self-Insure &
+// Bids tab's advisory banner and the Optimize Coverage tier's chips; `buildOptimizeTier` never
+// claims a $ savings figure (impactUsd is always null) — it is a retained-risk REVIEW QUEUE
+// ranked by dollars retained, not a coverage-optimization promise.
+
+/** Expected annual loss report — retained/transferred split, EAL, deductible reviews, and the
+ *  re-bid pipeline. Degrades gracefully on the static mirror (WarehouseUnavailableError → the
+ *  Self-Insure & Bids tab renders an informational empty state), same as every other
+ *  warehouse-backed module. */
+export function useInsuranceLoss() {
+  return useQuery({
+    queryKey: INSURANCE_LOSS_KEY,
+    queryFn: () => fetchParsedOrMirror('/api/warehouse/insurance/loss', InsuranceLossReport),
+    ...QUERY_OPTS,
+  });
+}
+
+/** True when either the loss runs or the dec-page terms fell back to placeholder fixtures. */
+export function isAnyPlaceholder(report: InsuranceLossReport): boolean {
+  return report.lossDataSource === 'placeholder' || report.decPageDataSource === 'placeholder';
+}
+
+const PLACEHOLDER_DETAIL_BASE =
+  'Synthetic loss runs and blanket deductible/limit assumptions pending broker loss runs + dec pages. ' +
+  'No figure on this tab is decision-grade.';
+
+/** Advisory banner detail for the Self-Insure & Bids tab. Appends a dropped-row count when the
+ *  fixture loader had to discard malformed rows, so a data-quality issue never disappears
+ *  silently behind the placeholder banner's fixed sentence. */
+export function placeholderDetailInsurance(report: InsuranceLossReport): string {
+  if (report.droppedFixtureRows > 0) {
+    const rows = report.droppedFixtureRows === 1 ? 'row' : 'rows';
+    return `${PLACEHOLDER_DETAIL_BASE} (${report.droppedFixtureRows} fixture ${rows} dropped.)`;
+  }
+  return PLACEHOLDER_DETAIL_BASE;
+}
+
+function optimizeTierItem(d: DeductibleReview, rank: number, placeholder: boolean): TierItem {
+  return {
+    id: d.policyId,
+    rank,
+    title: d.property,
+    detail: `retained ${fmtUsdCompact(d.retainedUsd)} of ${fmtUsdCompact(d.retainedUsd + d.transferredUsd)} · deductible ${fmtUsdCompact(d.deductible)}`,
+    impactUsd: null,
+    chips: placeholder ? ['PLACEHOLDER'] : undefined,
+  };
+}
+
+/**
+ * Builds the third, optional Savings Board tier from the LOSS report — a retained-risk REVIEW
+ * QUEUE, ranked by retainedUsd desc, never a savings claim (impactUsd is always null; this is a
+ * candidate list for a broker/coverage conversation, not a dollar figure). The caller (SavingsBoard)
+ * gates rendering on `useInsuranceLoss()` data being present — this function itself never
+ * fabricates data when the report hasn't resolved.
+ */
+export function buildOptimizeTier(report: InsuranceLossReport): Tier {
+  const placeholder = isAnyPlaceholder(report);
+  const ranked = [...report.deductibleReviews].sort((a, b) => b.retainedUsd - a.retainedUsd);
+  return {
+    key: 'optimize',
+    title: 'Optimize Coverage',
+    subtitle: 'retained-risk review queue — ranked by dollars retained',
+    tone: 'accent',
+    items: ranked.map((d, i) => optimizeTierItem(d, i + 1, placeholder)),
+  };
 }

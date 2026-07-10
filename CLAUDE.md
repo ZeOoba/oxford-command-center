@@ -93,7 +93,7 @@ This is the single discipline that prevents the collision class this repo has al
 
 | Design Parity (PRs #161/#166/#168) | Design-parity implementation: tier-board primitives, insights wiring + module, Grader UX, insurance analysis engine + UI, command-brain module, taxes module + assessor-data template, capital orphan fold (CapitalAllocationModule folded into CapitalModule) | **Merged ✓** — PR #161 (plan) → #166 (Waves 0/1) → #168 (Waves 2/3); independently re-verified 2026-07-06 on post-merge main (typecheck/lint/governance/build clean, full suite matched PR #168's claimed 2224/2224 exactly at that point — see §2 for the current total after subsequent audit-fix test additions) |
 
-**Pending:** Hurdle rate ratification (8% unlevered IRR governor) pending Gabriel sign-off to upgrade from `advisoryOnly`. Phase 7 (optional parity sweep: global filter, Overview banner reuse, Comps surface, DealRoom enrichment) and P4c (insurance self-insure/deductible optimization, tax filed-returns/cost-seg) deferred per PR #168's cut list, gated on real broker/assessor data. Next initiative TBD.
+**Pending:** Hurdle rate ratification (8% unlevered IRR governor) pending Gabriel sign-off to upgrade from `advisoryOnly`. Phase 7 parity sweep MERGED via PR #169 (2026-07-06 — the previous version of this line was stale). P4c (insurance self-insure/deductible) and C2 tax refinements (cost-seg/filed-returns metadata) are BUILT on clearly-marked placeholder fixtures (docs/placeholder-data.md) pending real broker/assessor data — swap via warehouse:import-loss-runs; basis data needs a future migration. Next initiative TBD.
 
 ---
 

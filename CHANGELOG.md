@@ -8,6 +8,47 @@
 > that ARE current: `CLAUDE.md` §3 (Active Roadmap table, merge-PR-level detail) and `git log`
 > directly. If you're picking up CHANGELOG maintenance, start the next entry from PR #95 forward.
 
+## P4c (Insurance) + C2 (Tax) Placeholder Buildout (2026-07-10)
+
+Builds both remaining items from PR #168's cut list — insurance self-insure/deductible
+optimization (P4c) and tax cost-seg/filed-returns refinements (C2) — on clearly-marked
+placeholder fixtures rather than deferring further, per Gabriel's in-turn order to build now and
+swap for real data later. Spec: `docs/superpowers/specs/2026-07-09-p4c-c2-placeholder-buildout-design.md`.
+Full doctrine + swap procedures: `docs/placeholder-data.md`.
+
+- **Fixture-fallback with automatic cutover.** Four new fixtures in
+  `server/warehouse/placeholders/*.placeholder.json` (loss runs, dec pages, depreciable basis,
+  filed-returns metadata) are read only when the corresponding warehouse source is empty —
+  `server/warehouse/placeholder-data.ts`'s resolvers (`resolveLossEvents`, `resolveDecPages`,
+  `resolveDepreciableBasis`, `resolveFiledReturns`) never write placeholder rows into a warehouse
+  table, and every report carries a `DataSource` discriminator (`'warehouse'` | `'placeholder'` |
+  `'absent'`) that gates the new `PlaceholderBanner` primitive.
+- **Insurance loss analytics (P4c).** New `src/contracts/insurance-loss.ts` +
+  `server/warehouse/insurance-loss-analysis.ts` engine (EAL, deductible/retention review, portfolio
+  self-insure split, re-bid pipeline) + `GET /api/warehouse/insurance/loss` + Insurance UI
+  Self-Insure & Bids tab and SavingsBoard Optimize Coverage tier.
+- **Tax strategy (C2).** New `src/contracts/tax-strategy.ts` + tax-strategy engine (cost-seg
+  first-year acceleration, entity strategies) + `GET /api/warehouse/tax/strategy` + Taxes UI
+  Filed Returns tab (metadata-only) and cost-seg tier.
+- **No calibration writes on placeholder inputs.** Both new reports are hard-gated
+  `advisoryOnly: z.literal(true)`, read-path only — nothing derived from a placeholder loss run,
+  dec page, or basis row is ever persisted back into the warehouse or used to calibrate a
+  benchmark.
+- **`savingsFullAsset`/`savingsOxfordShare` are HARD-NULL in v1** (schema-enforced `z.null()`) —
+  no marginal-rate assumption is made; the `firstYearAcceleration*` fields quantify deduction
+  timing, not tax dollars. Filed returns are metadata-only, **permanently** — the C2
+  confidentiality boundary that put this on the cut list in the first place; return contents
+  never enter this system, placeholder or real.
+- **Real-data swap.** `npm run warehouse:import-loss-runs -- <events.json>` (default mode) and the
+  `--dec-pages <policies.json>` mode of `scripts/import-insurance-data.ts` (Task 11) cut loss
+  events and dec pages over to the warehouse automatically and idempotently once real broker data
+  lands. Depreciable basis and filed-returns metadata have **no importer yet** — a future
+  migration + importer is needed when accountant data arrives; the fixture shape is the interim
+  contract.
+- **CLAUDE.md §3 doc-drift fix.** The "Pending" line wrongly still listed Phase 7 as deferred —
+  Phase 7 parity sweep actually MERGED via PR #169 on 2026-07-06. Corrected to reflect Phase 7 as
+  merged and P4c/C2 as built-on-placeholders (not deferred) pending real data.
+
 ## PFI Phase 1c — A↔B NOI reconciliation (master plan Revision-1 keystone) (2026-06-13)
 
 Closes the single most-important integrity gap in the master plan: the two un-reconciled NOI

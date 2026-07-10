@@ -4,11 +4,22 @@
 //   1. Pure KPI/aggregation helpers in src/modules/taxes/hooks.ts — especially that
 //      "Identified Opportunity" sums ONLY Oxford-share, ONLY determinate 'appeal' opportunities
 //      (never savingsFullAsset, never 'assessment-watch', never a null-savings appeal).
-//   2. StrategyBoard never renders a fabricated cost-seg/depreciation/entity-structuring tier —
-//      exactly two TierBoard tiers, plus the honest deferred-scope Card.
+//   2. StrategyBoard renders exactly two TierBoard tiers (Appeals + Assessment Watch) plus the
+//      honest deferred-scope Card WHEN no strategy report (or an 'absent'-sourced one) is passed
+//      — it never fabricates a cost-seg/depreciation/entity-structuring tier out of thin air.
+//      When a present (placeholder- or warehouse-sourced) strategyReport prop IS passed (P4c /
+//      C2, Task 10), a third "Depreciation & Cost-Seg" tier + a qualitative entity-strategies
+//      Card render INSTEAD of the deferred card — see the "cost-seg tier" describe block below.
 //   3. Indeterminate opportunities render "—" for impact, never a computed-looking $0.
 //   4. AssessmentsTable's File Appeal flow calls useFileAppeal's mutation with the correct
 //      TaxAppealInput-shaped payload.
+//   5. FiledReturnsTable (P4c / C2, Task 10) — metadata-only filed-return catalog. Shows a
+//      role=status PLACEHOLDER METADATA banner and repeats the C2 confidentiality-boundary
+//      sentence below the table; never a column for return contents (the contract has none).
+//   6. TaxesModule now threads a SECOND hook — useTaxStrategy() — down as props (RESOLVED
+//      data-flow: TaxesModule owns both queries, StrategyBoard/FiledReturnsTable stay prop-only,
+//      matching the existing useTaxAnalysis()-at-the-module-level pattern exactly). Renders
+//      THREE tab pills now, including "Filed Returns".
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -20,7 +31,10 @@ import {
   appealStatusTone,
   opportunityByProperty,
   appealsByProperty,
+  buildCostSegTier,
+  placeholderDetailTax,
   TAX_KEYS,
+  TAX_STRATEGY_KEY,
 } from '../../src/modules/taxes/hooks';
 import type {
   TaxOpportunity,
@@ -28,9 +42,14 @@ import type {
   TaxAppeal,
   TaxAppealStatus,
   TaxAnalysisReport,
+  TaxStrategyReport,
+  CostSegOpportunity,
+  EntityStrategyItem,
+  FiledReturnMeta,
 } from '../../src/modules/taxes/hooks';
 import { StrategyBoard } from '../../src/modules/taxes/StrategyBoard';
 import { AssessmentsTable } from '../../src/modules/taxes/AssessmentsTable';
+import { FiledReturnsTable } from '../../src/modules/taxes/FiledReturnsTable';
 import { TaxesModule } from '../../src/modules/taxes/TaxesModule';
 
 // ── Fixture builders ─────────────────────────────────────────────────────────────────────────
@@ -90,6 +109,73 @@ function makeReport(partial: Partial<TaxAnalysisReport> = {}): TaxAnalysisReport
     opportunities: [],
     assessments: [],
     appeals: [],
+    advisoryOnly: true,
+    ...partial,
+  };
+}
+
+// ── Tax STRATEGY fixture builders (P4c / C2 — Task 10) ──────────────────────────────────────
+
+function makeCostSegOpportunity(
+  partial: Partial<CostSegOpportunity> & Pick<CostSegOpportunity, 'propertyId'>,
+): CostSegOpportunity {
+  return {
+    propertyName: null,
+    depreciableBasis: 1_000_000,
+    landAllocationPct: 0.2,
+    reclassifiablePct: 0.3,
+    reclassifiableBasis: 240_000,
+    bonusYearPct: 0.6,
+    firstYearAccelerationUsd: 144_000,
+    firstYearAccelerationOxfordShare: 72_000,
+    savingsFullAsset: null,
+    savingsOxfordShare: null,
+    indeterminate: false,
+    basisNote: 'Deduction-timing basis note.',
+    prov: { source: 'test', confidence: 'estimated' },
+    ...partial,
+  };
+}
+
+function makeEntityStrategyItem(
+  partial: Partial<EntityStrategyItem> & Pick<EntityStrategyItem, 'id' | 'kind'>,
+): EntityStrategyItem {
+  return {
+    title: 'Strategy title',
+    detail: 'Strategy detail.',
+    applicabilityNote:
+      'Qualitative placeholder — review with accountant; no dollar impact is computed by design.',
+    ...partial,
+  };
+}
+
+function makeFiledReturnMeta(
+  partial: Partial<FiledReturnMeta> & Pick<FiledReturnMeta, 'id'>,
+): FiledReturnMeta {
+  return {
+    taxYear: 2025,
+    entity: 'PLACEHOLDER — Entity A LLC',
+    preparer: 'PLACEHOLDER CPA',
+    status: 'filed',
+    storageNote: 'Contents in SharePoint — metadata only by design',
+    ...partial,
+  };
+}
+
+function makeStrategyReport(partial: Partial<TaxStrategyReport> = {}): TaxStrategyReport {
+  return {
+    asOf: '2026-07-06',
+    basisDataSource: 'placeholder',
+    filedReturnsDataSource: 'placeholder',
+    droppedFixtureRows: 0,
+    scheduleNote: 'Placeholder bonus-depreciation schedule.',
+    costSeg: [makeCostSegOpportunity({ propertyId: 'p1', propertyName: 'Prop One' })],
+    entityStrategies: [
+      makeEntityStrategyItem({ id: 'es-entity-review', kind: 'entity-structure', title: 'Holding-entity structure review' }),
+      makeEntityStrategyItem({ id: 'es-sec469-grouping', kind: 'sec469', title: 'Section 469 passive-activity grouping election' }),
+      makeEntityStrategyItem({ id: 'es-pipeline-1031', kind: 'pipeline', title: 'Acquisition-pipeline 1031 planning' }),
+    ],
+    filedReturns: [makeFiledReturnMeta({ id: 'PLR-2024-A' })],
     advisoryOnly: true,
     ...partial,
   };
@@ -258,6 +344,185 @@ describe('StrategyBoard', () => {
     const card = screen.getByText('Indeterminate Watch Co').closest('li')!;
     expect(card.textContent).toContain('—');
     expect(card.textContent).not.toMatch(/\$0(\.00)?(?!\d)/);
+  });
+});
+
+// ── StrategyBoard — third "Depreciation & Cost-Seg" tier (P4c / C2, Task 10) ────────────────
+//
+// Driven by an OPTIONAL strategyReport prop (RESOLVED data-flow: TaxesModule calls both
+// useTaxAnalysis() and useTaxStrategy() and threads both reports down as props — StrategyBoard
+// itself calls no hook). Absent/undefined or an 'absent'-sourced report falls back to exactly the
+// pre-existing two-tier + deferred-card behavior proven above; a placeholder- or
+// warehouse-sourced report renders a third tier + a qualitative entity-strategies Card instead.
+
+describe('StrategyBoard — cost-seg tier (P4c / C2)', () => {
+  const opportunities: TaxOpportunity[] = [
+    makeOpportunity({ propertyId: 'appeal-det', kind: 'appeal', propertyName: 'Appeal Co', savingsOxfordShare: 5_000 }),
+  ];
+
+  it('renders the "Depreciation & Cost-Seg" third tier and NOT the deferred card when a placeholder-sourced strategy report is passed', () => {
+    render(<StrategyBoard opportunities={opportunities} strategyReport={makeStrategyReport()} />);
+    const board = screen.getByRole('list', { name: /tier board/i });
+    const tierColumns = board.querySelectorAll(':scope > [role="listitem"]');
+    expect(tierColumns).toHaveLength(3);
+    expect(board.className).toContain('grid-cols-3');
+    expect(screen.getByText('Depreciation & Cost-Seg')).toBeTruthy();
+    expect(screen.queryByText(/deferred pending that data source/i)).toBeNull();
+  });
+
+  it('renders the entity-strategies "Structure & Pipeline — qualitative" Card listing all three items alongside the third tier', () => {
+    render(<StrategyBoard opportunities={opportunities} strategyReport={makeStrategyReport()} />);
+    expect(screen.getByText('Structure & Pipeline — qualitative')).toBeTruthy();
+    expect(screen.getByText('Holding-entity structure review')).toBeTruthy();
+    expect(screen.getByText('Section 469 passive-activity grouping election')).toBeTruthy();
+    expect(screen.getByText('Acquisition-pipeline 1031 planning')).toBeTruthy();
+  });
+
+  it('renders the deferred card and no third tier when strategyReport is undefined (pre-existing behavior)', () => {
+    render(<StrategyBoard opportunities={opportunities} />);
+    const board = screen.getByRole('list', { name: /tier board/i });
+    const tierColumns = board.querySelectorAll(':scope > [role="listitem"]');
+    expect(tierColumns).toHaveLength(2);
+    expect(screen.queryByText('Depreciation & Cost-Seg')).toBeNull();
+    expect(screen.getByText(/deferred pending that data source/i)).toBeTruthy();
+  });
+
+  it('renders the deferred card and no third tier when strategyReport.basisDataSource is "absent"', () => {
+    render(
+      <StrategyBoard
+        opportunities={opportunities}
+        strategyReport={makeStrategyReport({ basisDataSource: 'absent', costSeg: [] })}
+      />,
+    );
+    const board = screen.getByRole('list', { name: /tier board/i });
+    const tierColumns = board.querySelectorAll(':scope > [role="listitem"]');
+    expect(tierColumns).toHaveLength(2);
+    expect(screen.queryByText('Depreciation & Cost-Seg')).toBeNull();
+    expect(screen.getByText(/deferred pending that data source/i)).toBeTruthy();
+  });
+
+  it('cost-seg tier item detail language is deduction-acceleration / not-tax-savings, never a bare dollar-savings claim', () => {
+    render(<StrategyBoard opportunities={opportunities} strategyReport={makeStrategyReport()} />);
+    const card = screen.getByText('Prop One').closest('li')!;
+    expect(card.textContent).toMatch(/not tax savings|deduction acceleration/i);
+    expect(card.textContent).not.toMatch(/\$[\d,.]+[KMB]?\s*(in\s+)?savings/i);
+  });
+});
+
+describe('tax strategy hooks — pure helpers (P4c / C2, Task 10)', () => {
+  it('buildCostSegTier returns key "costseg", title "Depreciation & Cost-Seg", tone "accent"', () => {
+    const tier = buildCostSegTier(makeStrategyReport());
+    expect(tier.key).toBe('costseg');
+    expect(tier.title).toBe('Depreciation & Cost-Seg');
+    expect(tier.tone).toBe('accent');
+  });
+
+  it('maps impactUsd to firstYearAccelerationOxfordShare, null-safe', () => {
+    const tier = buildCostSegTier(
+      makeStrategyReport({
+        costSeg: [
+          makeCostSegOpportunity({ propertyId: 'p1', firstYearAccelerationOxfordShare: 50_000 }),
+          makeCostSegOpportunity({
+            propertyId: 'p2',
+            firstYearAccelerationOxfordShare: null,
+            firstYearAccelerationUsd: null,
+            bonusYearPct: null,
+            indeterminate: true,
+          }),
+        ],
+      }),
+    );
+    expect(tier.items.find((i) => i.id === 'p1')?.impactUsd).toBe(50_000);
+    expect(tier.items.find((i) => i.id === 'p2')?.impactUsd).toBeNull();
+    expect(tier.items.every((i) => i.impactKind === 'info')).toBe(true);
+  });
+
+  it('chips include PLACEHOLDER only when basisDataSource is "placeholder"', () => {
+    const placeholderTier = buildCostSegTier(makeStrategyReport({ basisDataSource: 'placeholder' }));
+    expect(placeholderTier.items[0]?.chips).toContain('PLACEHOLDER');
+
+    const warehouseTier = buildCostSegTier(makeStrategyReport({ basisDataSource: 'warehouse' }));
+    expect(warehouseTier.items[0]?.chips).toBeUndefined();
+  });
+
+  it('every cost-seg tier item detail says "not tax savings" / "deduction acceleration"', () => {
+    const tier = buildCostSegTier(
+      makeStrategyReport({
+        costSeg: [
+          makeCostSegOpportunity({ propertyId: 'p1' }),
+          makeCostSegOpportunity({ propertyId: 'p2', propertyName: 'Prop Two' }),
+        ],
+      }),
+    );
+    for (const item of tier.items) {
+      expect(item.detail).toMatch(/not tax savings|deduction acceleration/i);
+    }
+  });
+
+  it('placeholderDetailTax always includes the fixed confidentiality-boundary sentence', () => {
+    expect(placeholderDetailTax(makeStrategyReport())).toContain(
+      'Return contents never enter this system',
+    );
+  });
+
+  it('placeholderDetailTax notes dropped fixture rows when present', () => {
+    const detail = placeholderDetailTax(makeStrategyReport({ droppedFixtureRows: 3 }));
+    expect(detail).toContain('3 fixture rows dropped');
+  });
+});
+
+// ── FiledReturnsTable (P4c / C2, Task 10) — metadata-only filed-return catalog ──────────────
+
+describe('FiledReturnsTable (P4c / C2)', () => {
+  it('shows a role=status PLACEHOLDER METADATA banner and a PLACEHOLDER entity row', () => {
+    render(<FiledReturnsTable report={makeStrategyReport()} />);
+    const banner = screen.getByRole('status');
+    expect(banner.textContent).toContain('PLACEHOLDER METADATA');
+    expect(screen.getByText('PLACEHOLDER — Entity A LLC')).toBeTruthy();
+  });
+
+  it('renders Tax Year / Entity / Preparer / Status / Storage columns with a status badge per lifecycle', () => {
+    render(
+      <FiledReturnsTable
+        report={makeStrategyReport({
+          filedReturns: [
+            makeFiledReturnMeta({ id: 'r1', taxYear: 2024, status: 'filed' }),
+            makeFiledReturnMeta({ id: 'r2', taxYear: 2025, status: 'extended' }),
+            makeFiledReturnMeta({ id: 'r3', taxYear: 2026, status: 'amended' }),
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText('filed')).toBeTruthy();
+    expect(screen.getByText('extended')).toBeTruthy();
+    expect(screen.getByText('amended')).toBeTruthy();
+    expect(screen.getAllByText('Contents in SharePoint — metadata only by design').length).toBe(3);
+  });
+
+  it('repeats the C2 confidentiality boundary sentence below the table', () => {
+    render(<FiledReturnsTable report={makeStrategyReport()} />);
+    expect(
+      screen.getAllByText(/metadata and SharePoint link-out only, by confidentiality design/i).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it('never renders a column for return contents (metadata-only, by contract)', () => {
+    const { container } = render(<FiledReturnsTable report={makeStrategyReport()} />);
+    expect((container.textContent ?? '').toLowerCase()).not.toContain('return contents:');
+  });
+
+  // Review fix (follow-up to 3f40a84, Finding 1 — Critical): the banner must be gated on the
+  // dataSource discriminator, per PlaceholderBanner's own doctrine (src/primitives/
+  // PlaceholderBanner.tsx header) and every other call site (e.g. insurance/SelfInsureView.tsx's
+  // `isAnyPlaceholder(report) &&`). Once Task 11's real-data import flips filedReturnsDataSource
+  // to 'warehouse', an unconditional "PLACEHOLDER METADATA" banner would falsely label real data.
+  it('does NOT render the PlaceholderBanner when filedReturnsDataSource is "warehouse", but the muted boundary paragraph still renders', () => {
+    render(<FiledReturnsTable report={makeStrategyReport({ filedReturnsDataSource: 'warehouse' })} />);
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByText('PLACEHOLDER METADATA')).toBeNull();
+    expect(
+      screen.getByText(/metadata and SharePoint link-out only, by confidentiality design/i),
+    ).toBeTruthy();
   });
 });
 
@@ -438,4 +703,120 @@ describe('TaxesModule KPIs', () => {
 
     expect(screen.getByText(/varies by property/i)).toBeTruthy();
   });
+});
+
+// ── TaxesModule tabs (P4c / C2, Task 10) — three pills, Filed Returns wired to useTaxStrategy ──
+
+describe('TaxesModule tabs (P4c / C2)', () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it('renders three tab pills including "Filed Returns"', () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+
+    const qc = seededClient();
+    qc.setQueryData(TAX_KEYS.analysis, makeReport());
+
+    render(
+      <QueryClientProvider client={qc}>
+        <TaxesModule />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText('Strategy Board')).toBeTruthy();
+    expect(screen.getByText('Assessments & Appeals')).toBeTruthy();
+    expect(screen.getByText('Filed Returns')).toBeTruthy();
+  });
+
+  it('renders FiledReturnsTable content when the Filed Returns tab is selected and useTaxStrategy resolves', () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+
+    const qc = seededClient();
+    qc.setQueryData(TAX_KEYS.analysis, makeReport());
+    qc.setQueryData(TAX_STRATEGY_KEY, makeStrategyReport());
+
+    render(
+      <QueryClientProvider client={qc}>
+        <TaxesModule />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByText('Filed Returns'));
+    expect(screen.getByText('PLACEHOLDER — Entity A LLC')).toBeTruthy();
+  });
+
+  it('renders the Depreciation & Cost-Seg tier on the Strategy Board tab once useTaxStrategy resolves', () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+
+    const qc = seededClient();
+    qc.setQueryData(TAX_KEYS.analysis, makeReport());
+    qc.setQueryData(TAX_STRATEGY_KEY, makeStrategyReport());
+
+    render(
+      <QueryClientProvider client={qc}>
+        <TaxesModule />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText('Depreciation & Cost-Seg')).toBeTruthy();
+  });
+
+  // Review fix (follow-up to 3f40a84, Finding 2 — Important): the Filed Returns tab's own
+  // loading/offline fallback (TaxesModule.tsx, gated on useTaxStrategy() — NOT the module's main
+  // useTaxAnalysis()-driven Skeleton/offline-Card, which is already exercised above by seeding
+  // TAX_KEYS.analysis) previously had no test coverage. TAX_STRATEGY_KEY is deliberately left
+  // unseeded in both tests below so useTaxStrategy() actually runs its queryFn against the
+  // stubbed fetch, mirroring insurance-module.test.tsx's offline-card pattern.
+  it('renders a loading Skeleton in the Filed Returns tab while useTaxStrategy is still loading', () => {
+    // A fetch that never resolves keeps useTaxStrategy() pending (isLoading true, data
+    // undefined) for the lifetime of the test — the Filed Returns tab must show its own Skeleton
+    // fallback (height: 200), not the resolved table or the offline card.
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+
+    const qc = seededClient();
+    qc.setQueryData(TAX_KEYS.analysis, makeReport());
+    // TAX_STRATEGY_KEY intentionally NOT seeded.
+
+    const { container } = render(
+      <QueryClientProvider client={qc}>
+        <TaxesModule />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByText('Filed Returns'));
+
+    expect(screen.queryByText('PLACEHOLDER — Entity A LLC')).toBeNull();
+    expect(screen.queryByText(/Filed-return metadata requires the live brain server/i)).toBeNull();
+    expect(container.querySelector('[style*="200px"]')).toBeTruthy();
+  });
+
+  it('renders the offline Card in the Filed Returns tab when useTaxStrategy errors with WarehouseUnavailableError', async () => {
+    // useTaxStrategy hard-codes retry: 1 via QUERY_OPTS (a per-query option, which always wins
+    // over the QueryClient's own defaultOptions) — the default ~1s retry backoff means the error
+    // state can take a little over 1s to settle, hence the extended waitFor timeout below
+    // (mirrors insurance-module.test.tsx's equivalent offline-card test).
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+
+    const qc = seededClient();
+    qc.setQueryData(TAX_KEYS.analysis, makeReport());
+    // TAX_STRATEGY_KEY intentionally NOT seeded.
+
+    render(
+      <QueryClientProvider client={qc}>
+        <TaxesModule />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByText('Filed Returns'));
+
+    await waitFor(
+      () => {
+        expect(screen.getByText('offline')).toBeTruthy();
+      },
+      { timeout: 3000 },
+    );
+    expect(screen.getByText(/Filed-return metadata requires the live brain server/i)).toBeTruthy();
+  }, 10_000);
 });

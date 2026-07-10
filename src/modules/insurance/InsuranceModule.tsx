@@ -10,6 +10,7 @@ import { cn } from '@/lib/cn';
 import type { InsurancePolicy, InsuranceStatus } from '@contracts/index';
 import { useInsuranceAnalysis, computeInsuranceKpis, fmtRatePer100 } from './hooks';
 import { SavingsBoard } from './SavingsBoard';
+import { SelfInsureView } from './SelfInsureView';
 
 const tone = (s: InsuranceStatus): BadgeTone =>
   s === 'Expired' || s === 'Cancelled' ? 'red' : s === 'Renew Now' || s === 'Renewing Soon' ? 'amber' : s === 'Current' ? 'green' : 'neutral';
@@ -22,10 +23,11 @@ const daysTone = (d: number | null): BadgeTone => {
   return 'neutral';
 };
 
-type Tab = 'savings' | 'register';
+type Tab = 'savings' | 'register' | 'selfinsure';
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'savings', label: 'Savings Board' },
   { id: 'register', label: 'Policy Register' },
+  { id: 'selfinsure', label: 'Self-Insure & Bids' },
 ];
 
 function PolicyRegisterView() {
@@ -125,7 +127,7 @@ export function InsuranceModule() {
         />
       </Card>
 
-      {tab === 'savings' ? <SavingsBoard /> : <PolicyRegisterView />}
+      {tab === 'savings' ? <SavingsBoard /> : tab === 'register' ? <PolicyRegisterView /> : <SelfInsureView />}
     </div>
   );
 }
