@@ -81,6 +81,38 @@ describe('writeDebtSnapshot — direction filter', () => {
     expect(ids).toContain('loan-active');
     expect(ids).toContain('loan-null');
   });
+
+  // Loan.status is free-form workbook text (src/contracts/loan.ts), not a fixed enum. The real
+  // Loan Index tab never uses the literal word "Active" for a live loan — it uses descriptive
+  // loan-type/maturity text instead. Confirmed empirically 2026-07-10 against the live workbook:
+  // all 5 real borrower loans carried statuses like these and were silently excluded by a prior
+  // allowlist-based filter, leaving debt_positions permanently empty.
+  it('includes real-world descriptive active statuses (Amortizing, Interest Only, Balloon Due <date>)', () => {
+    const db = freshDb();
+    const loans: Loan[] = [
+      makeBorrowerLoan({ id: 'loan-amortizing', status: 'Amortizing' }),
+      makeBorrowerLoan({ id: 'loan-io', status: 'Interest Only' }),
+      makeBorrowerLoan({ id: 'loan-balloon-due', status: 'Balloon Due Feb-27' }),
+    ];
+    const result = writeDebtSnapshot(db, loans, '2026-07-10');
+    expect(result.written).toBe(3);
+    const ids = (db.prepare("SELECT id FROM debt_positions WHERE status = 'active' ORDER BY id").all() as Array<{ id: string }>).map((r) => r.id);
+    expect(ids).toEqual(['loan-amortizing', 'loan-balloon-due', 'loan-io']);
+  });
+
+  it('excludes additional known-terminal status text (Closed, Inactive, Terminated, Discharged)', () => {
+    const db = freshDb();
+    const loans: Loan[] = [
+      makeBorrowerLoan({ id: 'loan-closed', status: 'Closed' }),
+      makeBorrowerLoan({ id: 'loan-inactive', status: 'Inactive' }),
+      makeBorrowerLoan({ id: 'loan-terminated', status: 'Terminated' }),
+      makeBorrowerLoan({ id: 'loan-discharged', status: 'Discharged' }),
+    ];
+    const result = writeDebtSnapshot(db, loans, '2026-07-10');
+    expect(result.written).toBe(0);
+    const rows = db.prepare("SELECT id FROM debt_positions WHERE status = 'active'").all() as Array<{ id: string }>;
+    expect(rows).toHaveLength(0);
+  });
 });
 
 describe('writeDebtSnapshot — upsert semantics', () => {

@@ -6,9 +6,18 @@ export interface DebtSnapshotResult {
   errors: string[];
 }
 
+// Loan.status (src/contracts/loan.ts) is free-form workbook text, not a fixed enum — the real
+// Loan Index tab uses descriptive values like "Amortizing", "Interest Only", "Balloon Due Feb-27",
+// never the literal string "Active". An allowlist requiring status === 'Active' therefore matches
+// nothing real and silently excludes every genuine active loan (confirmed empirically 2026-07-10:
+// 0 of 5 real borrower loans matched, leaving debt_positions permanently empty). Denylist known
+// terminal/inactive statuses instead so new descriptive text is active-by-default.
+const INACTIVE_STATUS_PATTERN = /paid off|retired|closed|inactive|terminated|discharged/i;
+
 /**
  * Writes a snapshot of ORA borrower-side debt positions to the warehouse.
- * Filters to direction === 'borrower' and active loans only (status null or 'Active').
+ * Filters to direction === 'borrower' and active loans only (null status, or any status text
+ * that doesn't match a known terminal/inactive signature — see INACTIVE_STATUS_PATTERN above).
  * On conflict (same id): updates the existing row (upsert).
  * Prior rows for the same loan id with a different snapshot_date are marked 'superseded'.
  *
@@ -35,9 +44,10 @@ export function writeDebtSnapshot(
   const errors: string[] = [];
   let written = 0;
 
-  // Filter: borrower-side only, active (null status or explicit 'Active')
+  // Filter: borrower-side only, active (null status, or status text not matching a known
+  // terminal/inactive signature — see INACTIVE_STATUS_PATTERN above).
   const borrowerLoans = loans.filter(
-    (l) => l.direction === 'borrower' && (l.status === null || l.status === 'Active'),
+    (l) => l.direction === 'borrower' && (l.status === null || !INACTIVE_STATUS_PATTERN.test(l.status)),
   );
 
   // F-FK-safe: load the valid property_master id set ONCE before the transaction.
