@@ -12,7 +12,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, afterEach } from 'vitest';
-import { composeLeaseNarrative } from '../../server/ai/narrative';
+import { composeLeaseNarrative, DEFAULT_MODEL } from '../../server/ai/narrative';
 import { LeaseNarrativeResponse } from '../../src/contracts/lease-forecast';
 
 // ── Minimal valid LeaseNarrativeInput fixture ─────────────────────────────────
@@ -141,10 +141,10 @@ describe('composeLeaseNarrative — happy path', () => {
   it('injects the model string into NarrativeBlock.model', async () => {
     const result = await composeLeaseNarrative(BASE_INPUT, {
       apiKey: 'test-api-key',
-      model: 'claude-haiku-4-5-20251001',
+      model: DEFAULT_MODEL,
       fetchImpl: mockFetch(VALID_AI_RESPONSE_TEXT),
     });
-    expect(result.narrative?.model).toBe('claude-haiku-4-5-20251001');
+    expect(result.narrative?.model).toBe(DEFAULT_MODEL);
   });
 
   it('sends temperature 0 in the request body', async () => {
@@ -309,7 +309,7 @@ describe('LeaseNarrativeResponse contract', () => {
         headline: 'Test',
         summary: 'Test summary.',
         bullets: ['bullet 1'],
-        model: 'claude-haiku-4-5-20251001',
+        model: DEFAULT_MODEL,
       },
       degraded: false,
     });

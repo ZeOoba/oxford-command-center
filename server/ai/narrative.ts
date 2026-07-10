@@ -12,7 +12,7 @@ import { NarrativeBlock } from '../../src/contracts/briefing';
 import type { BriefingModel } from '../../src/contracts/briefing';
 import { assertNoConfidential, scanForConfidential } from '../briefing/confidential';
 
-const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
+export const DEFAULT_MODEL = 'claude-haiku-4-5-20251001';
 
 const SYSTEM =
   `You are an institutional real estate investment analyst at Oxford Realty Advisors.\n` +

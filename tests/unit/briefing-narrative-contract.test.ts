@@ -19,6 +19,7 @@ import {
   PropertyBriefingModel,
   ManagerBriefingModel,
 } from '../../src/contracts/briefing';
+import { DEFAULT_MODEL } from '../../server/ai/narrative';
 
 // ── Shared minimal fixtures ────────────────────────────────────────────────────────────────────
 
@@ -114,7 +115,7 @@ const NARRATIVE_BLOCK = {
     'Expense ratio improved',
     'Benchmark: 2nd quartile in cohort of 10',
   ],
-  model: 'claude-haiku-4-5-20251001',
+  model: DEFAULT_MODEL,
 };
 
 /** A valid NarrativeEnvelope — with narrative populated. */
@@ -233,7 +234,7 @@ describe('NarrativeManagerBriefingModel', () => {
     const parsed = NarrativeManagerBriefingModel.parse(payload);
     expect(parsed.kind).toBe('manager');
     expect(parsed.narrative).not.toBeNull();
-    expect(parsed.narrative?.model).toBe('claude-haiku-4-5-20251001');
+    expect(parsed.narrative?.model).toBe(DEFAULT_MODEL);
     expect(parsed.degraded).toBe(false);
   });
 

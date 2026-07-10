@@ -12,7 +12,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, afterEach } from 'vitest';
-import { composeNarrative } from '../../server/ai/narrative';
+import { composeNarrative, DEFAULT_MODEL } from '../../server/ai/narrative';
 import type { BriefingModel } from '../../src/contracts/briefing';
 
 // ── Minimal valid BriefingModel fixtures ─────────────────────────────────────────────────────
@@ -219,13 +219,13 @@ describe('composeNarrative — happy path (property)', () => {
   it('injects the model string into NarrativeBlock.model', async () => {
     const result = await composeNarrative(PROPERTY_MODEL, {
       apiKey: 'test-api-key',
-      model: 'claude-haiku-4-5-20251001',
+      model: DEFAULT_MODEL,
       fetchImpl: mockFetch(VALID_AI_RESPONSE_TEXT),
     });
-    expect(result.narrative?.model).toBe('claude-haiku-4-5-20251001');
+    expect(result.narrative?.model).toBe(DEFAULT_MODEL);
   });
 
-  it('uses claude-haiku-4-5-20251001 as the default model', async () => {
+  it(`uses ${DEFAULT_MODEL} as the default model`, async () => {
     let capturedBody: unknown;
     const capturingFetch: typeof fetch = async (_url, init) => {
       capturedBody = JSON.parse((init as RequestInit).body as string);
@@ -235,8 +235,8 @@ describe('composeNarrative — happy path (property)', () => {
       apiKey: 'test-api-key',
       fetchImpl: capturingFetch,
     });
-    expect(result.narrative?.model).toBe('claude-haiku-4-5-20251001');
-    expect((capturedBody as { model?: string })?.model).toBe('claude-haiku-4-5-20251001');
+    expect(result.narrative?.model).toBe(DEFAULT_MODEL);
+    expect((capturedBody as { model?: string })?.model).toBe(DEFAULT_MODEL);
   });
 
   it('sends temperature 0 in the request body', async () => {

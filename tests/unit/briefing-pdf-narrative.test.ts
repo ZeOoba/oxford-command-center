@@ -32,6 +32,7 @@ import { composePropertyBriefing, composeManagerBriefing, managerSlug } from '..
 import { renderBriefingPdf } from '../../server/briefing/pdf';
 import { PropertyBriefingModel, ManagerBriefingModel } from '../../src/contracts/briefing';
 import type { NarrativeBlock } from '../../src/contracts/briefing';
+import { DEFAULT_MODEL } from '../../server/ai/narrative';
 
 const pdfParse = pdfToText;
 
@@ -85,7 +86,7 @@ const NARRATIVE: NarrativeBlock = {
   headline: 'Strong NOI Growth Trajectory',
   summary: 'Property delivered 10% NOI growth driven by revenue gains.',
   bullets: ['NOI grew $14,000 (+15.6%)', 'Expense ratio improved', '2nd quartile cohort'],
-  model: 'claude-haiku-4-5-20251001',
+  model: DEFAULT_MODEL,
 };
 
 // ── Content-identical non-regression — property ──────────────────────────────────────────────
