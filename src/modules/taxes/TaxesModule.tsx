@@ -1,14 +1,22 @@
 // src/modules/taxes/TaxesModule.tsx
 //
-// Phase 6 — Taxes module. 4 KPIs + a 2-tab layout (Strategy Board / Assessments & Appeals).
+// Phase 6 — Taxes module. 4 KPIs + a 3-tab layout (Strategy Board / Assessments & Appeals /
+// Filed Returns).
 //
 // Scope note: the design reference (design_handoff_ora_command_center/app/Taxes.html) shows a
-// third "Filed Returns" tab. That is explicitly OUT OF SCOPE for this repo's confidentiality
-// boundary — this module builds ONLY the Strategy Board and Assessments & Appeals tabs.
+// third "Filed Returns" tab. Phase 6 held that OUT OF SCOPE for this repo's confidentiality
+// boundary. P4c / C2 (Task 10) reopens it under an explicit placeholder-data regime — the tab
+// now ships, but METADATA-ONLY, PERMANENTLY (contracts/tax-strategy.ts header rule 1): return
+// CONTENTS never enter this system, not now and not once real accountant records replace the
+// placeholder fixture. The confidentiality BOUNDARY that put filed returns on the cut list is
+// unchanged; only the metadata surface above it reopens.
 //
 // Loading/empty/error states mirror debt/ScorecardView.tsx exactly: Skeleton while loading, an
 // informational offline card when the warehouse routes are unreachable (static mirror), a red
-// error card on a real failure.
+// error card on a real failure. The Filed Returns tab body has its own small loading/offline
+// fallback scoped to useTaxStrategy() (see below) since that hook's result gates ONLY that tab
+// and the Strategy Board's optional third tier — never the whole module the way useTaxAnalysis
+// does.
 import { useState } from 'react';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
@@ -19,22 +27,26 @@ import { cn } from '@/lib/cn';
 import { isWarehouseUnavailable } from '../intel/hooks';
 import {
   useTaxAnalysis,
+  useTaxStrategy,
   sumIdentifiedOpportunityUsd,
   computePortfolioEffectiveRate,
   countAppealsInFlight,
 } from './hooks';
 import { StrategyBoard } from './StrategyBoard';
 import { AssessmentsTable } from './AssessmentsTable';
+import { FiledReturnsTable } from './FiledReturnsTable';
 
-type Tab = 'strategy' | 'assessments';
+type Tab = 'strategy' | 'assessments' | 'returns';
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'strategy', label: 'Strategy Board' },
   { id: 'assessments', label: 'Assessments & Appeals' },
+  { id: 'returns', label: 'Filed Returns' },
 ];
 
 export function TaxesModule() {
   const [tab, setTab] = useState<Tab>('strategy');
   const { data: report, isLoading, error } = useTaxAnalysis();
+  const { data: strategyReport, isLoading: strategyLoading } = useTaxStrategy();
 
   if (isLoading) return <Skeleton style={{ height: 320 }} />;
 
@@ -145,9 +157,20 @@ export function TaxesModule() {
       </div>
 
       {tab === 'strategy' ? (
-        <StrategyBoard opportunities={report.opportunities} />
-      ) : (
+        <StrategyBoard opportunities={report.opportunities} strategyReport={strategyReport} />
+      ) : tab === 'assessments' ? (
         <AssessmentsTable report={report} />
+      ) : strategyReport ? (
+        <FiledReturnsTable report={strategyReport} />
+      ) : strategyLoading ? (
+        <Skeleton style={{ height: 200 }} />
+      ) : (
+        <Card>
+          <CardHeader title="Filed Returns" trailing={<Badge tone="neutral">offline</Badge>} />
+          <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-secondary)' }}>
+            Filed-return metadata requires the live brain server.
+          </div>
+        </Card>
       )}
     </div>
   );
