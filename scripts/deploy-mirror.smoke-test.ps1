@@ -16,6 +16,7 @@ $repo = Join-Path $env:TEMP "deploy-alert-smoke-repo-$([guid]::NewGuid())"
 New-Item -ItemType Directory -Path $repo -Force | Out-Null
 $AlertSendScript = Join-Path $PSScriptRoot 'lib\fake-mailer.smoke-test.ps1'
 $AlertTo = 'test@example.invalid'
+$stateFile = Join-Path $repo 'data\alert-state\offline-suppression.json'
 
 . (Join-Path $PSScriptRoot 'lib\deploy-alert.ps1')
 
@@ -26,6 +27,7 @@ function Assert-True {
   else { Write-Host "pass: $Message" }
 }
 function Reset-Log { if (Test-Path $callLog) { Remove-Item $callLog } }
+function Reset-State { if (Test-Path $stateFile) { Remove-Item $stateFile } }
 function Get-Calls {
   # @(...) forces array semantics -- without it, PowerShell collapses a single Where-Object
   # match to a bare string, and $calls[0] would then index a CHARACTER of that string instead
@@ -83,9 +85,121 @@ Send-DeployFailureAlert -Reason 'GATE CHECK FAILED: TEST scenario 5' -Critical
 $calls = @(Get-Calls)
 Assert-True ($calls.Count -eq 1 -and $calls[0].Contains('CRITICAL')) "scenario 5: -Critical must produce a CRITICAL subject"
 
+# Scenario 6: Test-OfflineSignature classification -- narrow on purpose (only the two
+# git fetch/pull throw messages deploy-mirror.ps1 raises); build/gate failures must not match.
+Assert-True (Test-OfflineSignature -Reason 'git fetch origin failed (128)') "scenario 6a: git fetch failure classified as offline signature"
+Assert-True (Test-OfflineSignature -Reason 'git pull --ff-only failed (1) -- local main has diverged from origin/main') "scenario 6b: git pull failure classified as offline signature"
+Assert-True (-not (Test-OfflineSignature -Reason 'build:mirror failed (1)')) "scenario 6c: build failure NOT classified as offline signature"
+Assert-True (-not (Test-OfflineSignature -Reason 'GATE CHECK FAILED: TEST')) "scenario 6d: gate check failure NOT classified as offline signature"
+
+# Scenario 7: suppressible failure, first occurrence in a new streak -- still alerts
+# immediately (a one-off blip must look exactly like today's behavior), and records state.
+Reset-Log
+Reset-State
+$env:FAKE_SEND_EXIT_CODE = '0'
+Send-DeployFailureAlert -Reason 'git fetch origin failed (128)' -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 1) "scenario 7 (suppressible, first occurrence): expected 1 call (immediate alert), got $($calls.Count)"
+$state = Get-Content $stateFile -Raw | ConvertFrom-Json
+Assert-True ($state.streakCount -eq 1) "scenario 7: state streakCount should be 1 after first occurrence"
+
+# Scenario 8: second suppressible failure in the same streak, below escalation threshold --
+# must be suppressed (0 calls), not a duplicate FAILED email.
+Reset-Log
+Send-DeployFailureAlert -Reason 'git fetch origin failed (128)' -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 0) "scenario 8 (suppressible, 2nd occurrence, below threshold): expected 0 calls (suppressed), got $($calls.Count)"
+$state = Get-Content $stateFile -Raw | ConvertFrom-Json
+Assert-True ($state.streakCount -eq 2) "scenario 8: streakCount should be 2"
+
+# Scenario 9: third occurrence hits the default EscalationThreshold (3) -- a prolonged outage
+# must not go completely silent, so this sends exactly one escalation alert.
+Reset-Log
+Send-DeployFailureAlert -Reason 'git fetch origin failed (128)' -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 1 -and $calls[0].Contains('escalated')) "scenario 9 (streak reaches threshold): expected 1 escalation call, got $($calls.Count)"
+$state = Get-Content $stateFile -Raw | ConvertFrom-Json
+Assert-True ($state.lastEscalatedAtStreak -eq 3) "scenario 9: lastEscalatedAtStreak should now be 3"
+
+# Scenario 10: fourth and fifth occurrences, past the threshold but not yet due for
+# RE-escalation (only 1 and 2 further occurrences since the streak-3 escalation) -- must stay
+# suppressed, not re-escalate on every single occurrence past the threshold.
+Reset-Log
+Send-DeployFailureAlert -Reason 'git fetch origin failed (128)' -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 0) "scenario 10a (streak 4, 1 past last escalation): expected 0 calls, got $($calls.Count)"
+Send-DeployFailureAlert -Reason 'git fetch origin failed (128)' -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 0) "scenario 10b (streak 5, 2 past last escalation): expected 0 calls, got $($calls.Count)"
+
+# Scenario 11: sixth occurrence -- exactly $EscalationThreshold further failures since the last
+# escalation (streak 3 -> 6) -- must RE-escalate. This is the fix for a non-self-healing
+# failure (e.g. a permanent git divergence, not just a transient network blip) that would
+# otherwise go completely silent forever after its one-time escalation alert.
+Reset-Log
+Send-DeployFailureAlert -Reason 'git fetch origin failed (128)' -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 1 -and $calls[0].Contains('escalated')) "scenario 11 (streak 6, re-escalation due): expected 1 escalation call, got $($calls.Count)"
+$state = Get-Content $stateFile -Raw | ConvertFrom-Json
+Assert-True ($state.lastEscalatedAtStreak -eq 6) "scenario 11: lastEscalatedAtStreak should now be 6"
+
+# Scenario 12: recovery digest after this longer, twice-escalated streak -- exactly one digest
+# email, and the state file is cleared so the next incident starts a fresh streak.
+Reset-Log
+Send-DeployRecoveryDigestIfSuppressed -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 1 -and $calls[0].Contains('recovered')) "scenario 12 (recovery digest after suppressed streak): expected 1 digest call, got $($calls.Count)"
+Assert-True (-not (Test-Path $stateFile)) "scenario 12: state file should be cleared after recovery digest"
+
+# Scenario 13: recovery digest called with no suppressed streak on record -- pure no-op.
+Reset-Log
+Send-DeployRecoveryDigestIfSuppressed -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 0) "scenario 13 (no suppressed streak on record): expected 0 calls (no-op), got $($calls.Count)"
+
+# Scenario 14: a LONE suppressible failure that self-recovers before ever repeating must not
+# gain a second email -- the original immediate alert already covered it. This is the
+# no-regression case for the common one-off blip.
+Reset-Log
+Reset-State
+Send-DeployFailureAlert -Reason 'git pull --ff-only failed (1) -- local main has diverged from origin/main' -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 1) "scenario 14a (lone suppressible failure): expected 1 call (immediate), got $($calls.Count)"
+Reset-Log
+Send-DeployRecoveryDigestIfSuppressed -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 0) "scenario 14b (recovery after a single non-repeating failure): expected 0 calls -- no added noise for a one-off blip"
+Assert-True (-not (Test-Path $stateFile)) "scenario 14b: state file should be cleared"
+
+# Scenario 15: -Critical must never be suppressed, even mid-streak and even if a caller
+# mistakenly passes -Suppressible alongside it -- a possible confidential-exposure alert must
+# always fire immediately.
+Reset-Log
+Reset-State
+Send-DeployFailureAlert -Reason 'git fetch origin failed (128)' -Suppressible -StateFile $stateFile
+Reset-Log
+Send-DeployFailureAlert -Reason 'GATE CHECK FAILED: TEST scenario 15' -Critical -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 1 -and $calls[0].Contains('CRITICAL')) "scenario 15: -Critical must always alert immediately even mid-streak and even with -Suppressible set"
+Reset-State
+
+# Scenario 16: the DEFAULT -StateFile parameter (the one path real hourly runs actually use --
+# deploy-mirror.ps1 never passes -StateFile explicitly) must resolve correctly from $repo in
+# the dot-sourcing scope, not just the explicit-override path every other scenario exercises.
+# $stateFile above was built with the identical expression the default uses, so a successful
+# write to that same path confirms the default parameter expression itself works.
+Reset-Log
+Reset-State
+Send-DeployFailureAlert -Reason 'git fetch origin failed (128)' -Suppressible
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 1) "scenario 16 (default -StateFile path): expected 1 call (immediate), got $($calls.Count)"
+Assert-True (Test-Path $stateFile) "scenario 16: default -StateFile expression should have created the state file at `$repo\data\alert-state\offline-suppression.json"
+Reset-State
+
 Remove-Item Env:\FAKE_SEND_CALL_LOG -ErrorAction SilentlyContinue
 Remove-Item Env:\FAKE_SEND_EXIT_CODE -ErrorAction SilentlyContinue
 Reset-Log
+Reset-State
 Remove-Item -Path $repo -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host ""

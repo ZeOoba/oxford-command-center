@@ -114,13 +114,22 @@ try {
 
   $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
   Write-Host "[$stamp] OK - deployed and Access gate verified (302 -> $AccessHost). Location: $location"
+
+  # Clears any suppressed offline-signature streak from prior runs and sends one recovery
+  # digest if suppression actually happened -- see lib/deploy-alert.ps1.
+  try {
+    Send-DeployRecoveryDigestIfSuppressed
+  } catch {
+    Write-Host "Send-DeployRecoveryDigestIfSuppressed itself failed: $($_.Exception.Message)"
+  }
 }
 catch {
   $original = $_
   try {
     $reason = $original.Exception.Message
     $isGateFailure = $reason -match '^GATE CHECK FAILED'
-    Send-DeployFailureAlert -Reason $reason -Critical:$isGateFailure
+    $isOfflineSignature = Test-OfflineSignature -Reason $reason
+    Send-DeployFailureAlert -Reason $reason -Critical:$isGateFailure -Suppressible:$isOfflineSignature
   } catch {
     Write-Host "Send-DeployFailureAlert itself failed: $($_.Exception.Message)"
   }
