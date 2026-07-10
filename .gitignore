@@ -41,3 +41,5 @@ run/
 .claude/settings.local.json
 # Personal desktop launcher config — machine-specific absolute paths (C:/Users/...); keep local, never committed
 .claude/launch.json
+# Cloudflare Wrangler build/dev cache — regenerated per build, never committed
+.wrangler/
