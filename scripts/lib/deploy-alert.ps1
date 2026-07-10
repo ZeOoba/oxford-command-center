@@ -27,6 +27,17 @@
   immediately, incident or not. Send-RawRetriedAlert always runs before
   Save-OfflineSuppressionState in every branch that sends -- a state-persistence hiccup must
   never be able to eat the alert it was tracking (caught in review, 2026-07-10).
+
+  Follow-up (2026-07-10, same day): the "git fetch origin failed (128)" recurrence this
+  afternoon was actually a git credential/auth failure (gh.exe's credential helper), NOT the
+  network blip Test-OfflineSignature was built for -- exit 128 is generic and shared by both.
+  deploy-mirror.ps1 now captures actual fetch/pull stderr (not just the exit code) and runs it
+  through Test-GitAuthFailureSignature below before deciding whether to classify a failure as
+  offline-suppressible at all: an auth-looking failure gets one self-heal retry via the
+  Credential Manager fallback; if that also fails, deploy-mirror.ps1 throws a distinctly-prefixed
+  "GIT AUTH FAILURE (128): ..." reason (never matched by Test-OfflineSignature above) so a
+  non-self-healing credential problem always alerts immediately instead of going quiet inside
+  the offline-suppression digest.
 #>
 
 function Test-OfflineSignature {
@@ -34,8 +45,33 @@ function Test-OfflineSignature {
   # Matches only the two throw messages deploy-mirror.ps1 raises for a failed fast-forward
   # (git fetch / git pull) -- the actual "machine was offline or network unreachable"
   # signature. Deliberately narrow: build/deploy/gate-check failures must never be classified
-  # as offline and must never be suppressed.
+  # as offline and must never be suppressed. Also deliberately does NOT match the distinct
+  # "GIT AUTH FAILURE (128): ..." prefix deploy-mirror.ps1 throws when Test-GitAuthFailureSignature
+  # (below) detects a non-self-healing credential problem -- that case must always alert
+  # immediately, never fold into this suppression path (see incident note at the top of this
+  # file, 2026-07-10 credential-vs-offline follow-up).
   return $Reason -match '^git (fetch|pull)\b'
+}
+
+function Test-GitAuthFailureSignature {
+  param([string]$Reason)
+  # Git exit code 128 is shared by BOTH a genuine network-down/offline condition AND a git
+  # credential/auth failure -- this machine's global ~/.gitconfig chains gh.exe's credential
+  # helper (`'C:\Program Files\GitHub CLI\gh.exe' auth git-credential`) before a Credential
+  # Manager fallback added 2026-07-07 for defense in depth. If gh.exe is missing or
+  # unauthenticated, plain `git fetch`/`git pull` to github.com can fail with an auth-looking
+  # error even though Windows Credential Manager independently holds a valid credential.
+  #
+  # This classifies on the CAPTURED git stderr/stdout text (not the exit code alone), so
+  # deploy-mirror.ps1 can tell a credential failure apart from a real outage and attempt a
+  # self-heal (bypass gh.exe, fall through to the `manager` helper) instead of silently folding
+  # a non-self-healing auth problem into Test-OfflineSignature's suppression path above.
+  #
+  # Deliberately narrow to known git/GitHub credential-failure wording. Genuinely
+  # network-looking text (e.g. "Could not resolve host", "Connection timed out", "Failed to
+  # connect", "Network is unreachable") must NOT match here -- those stay classified only by
+  # Test-OfflineSignature via deploy-mirror.ps1's unchanged fall-through throw.
+  return $Reason -match 'could not read Username|Authentication failed|Permission denied|terminal prompts disabled|remote: Repository not found|Invalid username or (password|token)|unable to access.*40[13]'
 }
 
 function Get-OfflineSuppressionState {

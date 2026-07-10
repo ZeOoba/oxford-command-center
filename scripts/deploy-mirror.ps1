@@ -56,9 +56,44 @@ try {
   #    be on disk. Fails loudly (never silently) if the local checkout has diverged or has
   #    uncommitted changes that conflict with incoming commits; a stale-but-successful deploy is
   #    worse than a loud failure here.
-  git fetch origin
-  if ($LASTEXITCODE -ne 0) { throw "git fetch origin failed ($LASTEXITCODE)" }
-  git pull --ff-only
+  #
+  #    Auth-vs-offline (2026-07-10 follow-up): git exit code 128 is generic and shared by BOTH a
+  #    genuine network-down condition AND a git credential/auth failure (gh.exe's credential
+  #    helper going missing/unauthenticated -- see reference_github_credential_path.md). Capture
+  #    actual stderr/stdout (not just the exit code) so Test-GitAuthFailureSignature can tell the
+  #    two apart. An auth-looking failure gets ONE self-heal retry that bypasses gh.exe in favor
+  #    of the Credential Manager fallback; if that also fails, this throws a distinctly-prefixed
+  #    "GIT AUTH FAILURE (128): ..." reason that Test-OfflineSignature will NOT match, so it
+  #    always alerts immediately instead of silently folding into the offline-suppression digest
+  #    meant only for transient network blips. A genuinely network-looking failure (or any
+  #    failure that isn't an auth signature) falls through to the original throw shape unchanged,
+  #    so Test-OfflineSignature still matches and today's suppression/escalation behavior is
+  #    unaffected for real outages.
+  $fetchOutput = (& git fetch origin 2>&1 | Out-String)
+  $fetchExit = $LASTEXITCODE
+  if ($fetchExit -ne 0) {
+    if (Test-GitAuthFailureSignature -Reason $fetchOutput) {
+      Write-Host "[git-auth] git fetch origin failed ($fetchExit) with an auth-looking error -- attempting self-heal via Credential Manager fallback"
+      $retryOutput = (& git -c credential.https://github.com.helper= -c credential.https://github.com.helper=manager fetch origin 2>&1 | Out-String)
+      $retryExit = $LASTEXITCODE
+      if ($retryExit -eq 0) {
+        Write-Host "[git-auth] self-heal succeeded via Credential Manager fallback"
+      } else {
+        throw "GIT AUTH FAILURE (128): git fetch origin failed with a credential/auth error, and the Credential Manager fallback retry also failed ($retryExit): $($retryOutput.Trim()). One-off unblock -- run manually: git -c credential.https://github.com.helper= -c credential.https://github.com.helper=manager fetch origin -- If gh.exe itself needs a real fix (not just this one-off bypass): reinstall via 'winget install GitHub.cli', then re-seed %APPDATA%\GitHub CLI\hosts.yml with a valid oauth_token (gh auth login --with-token rejects the GCM-stored token here -- missing org scope it doesn't actually need for this repo). See reference_github_credential_path.md for the full recipe."
+      }
+    } else {
+      throw "git fetch origin failed ($fetchExit): $($fetchOutput.Trim())"
+    }
+  }
+  # Note: still worded "git pull --ff-only failed" (not "git merge") below intentionally, even
+  # though the actual command is now `git merge --ff-only origin/main` -- this preserves
+  # Test-OfflineSignature's existing `^git (fetch|pull)\b` match and suppression behavior for
+  # this failure mode unchanged. Switched from `git pull --ff-only` to an explicit merge because
+  # origin/main was already fetched above (with auth self-heal already handled there); a plain
+  # `git pull` implicitly re-fetches over the network, which would re-expose this same
+  # credential-failure risk a second time for no benefit. `git merge --ff-only` is purely local
+  # (no network, no credentials) once the fetch above has succeeded.
+  git merge --ff-only origin/main
   if ($LASTEXITCODE -ne 0) { throw "git pull --ff-only failed ($LASTEXITCODE) -- local main has diverged from origin/main or has conflicting uncommitted changes; resolve manually, then re-run this script" }
 
   # 2) Bake (confidential included -- target is Access-gated) + build.
