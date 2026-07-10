@@ -17,7 +17,7 @@
 export const meta = {
   name: 'refute-financial-change',
   description: 'Adversarially refute a financial-decision code change (engine/scoring/NOI) across N lenses before commit',
-  phases: [{ title: 'Refute', detail: 'independent refuters, each told to break the change', model: 'opus' }],
+  phases: [{ title: 'Refute', detail: 'independent refuters, each told to break the change', model: 'fable' }],
 }
 
 const VERDICT = {
@@ -64,17 +64,35 @@ phase('Refute')
 const base =
   'You are a HOSTILE financial-systems reviewer for Oxford Realty Advisors (private family-office industrial real estate). BREAK the change below; do NOT bless it. This is NOI / capital-allocation / scoring code — a silent error mis-allocates real capital. Read the ACTUAL files at ' + repo + ' (use git diff for the uncommitted change). Set foundRealDefect=true ONLY for a CONCRETE, demonstrably-triggerable defect — not a style nit or a future wish; if you cannot construct a trigger, say so and lean false. ' + greenContext + '\n\nCHANGE SET:\n' + changeSet + '\n\nYOUR LENS: '
 
+// 2026-07-10: governor/financial-code invariant floor raised from opus to fable (CLAUDE.md
+// Dispatch line). Fable's fan-out concurrency is UNTESTED (only opus was canary-tested at the
+// ~2-3-concurrent rate-limit ceiling — reference_lean_ram_toolkit.md) and Fable has observed
+// availability gaps, so each lens falls back to opus on a null result (agent() returns null on
+// a terminal API failure) rather than silently dropping that lens. Concurrency held at 3
+// (unchanged) — do not widen this fan-out until Fable's own ceiling is verified.
 const verdicts = await parallel(
-  lenses.map((l) => () =>
-    agent(base + l.focus, { label: 'refute:' + l.label, phase: 'Refute', model: 'opus', schema: VERDICT })),
+  lenses.map((l) => async () => {
+    let v = await agent(base + l.focus, { label: 'refute:' + l.label, phase: 'Refute', model: 'fable', schema: VERDICT })
+    if (v === null) {
+      log(`Fable call failed for lens "${l.label}" — falling back to opus.`)
+      v = await agent(base + l.focus, { label: 'refute:' + l.label + ':opus-fallback', phase: 'Refute', model: 'opus', schema: VERDICT })
+    }
+    return v
+  }),
 )
 
-const real = verdicts.filter(Boolean).filter((v) => v.foundRealDefect)
+const succeeded = verdicts.filter(Boolean)
+const allFailed = succeeded.length === 0
+const real = succeeded.filter((v) => v.foundRealDefect)
 const order = { critical: 4, high: 3, medium: 2, low: 1, none: 0 }
-const worst = verdicts.filter(Boolean).reduce((m, v) => Math.max(m, order[v.maxSeverity] ?? 0), 0)
+const worst = succeeded.reduce((m, v) => Math.max(m, order[v.maxSeverity] ?? 0), 0)
 
-log(real.length
-  ? `${real.length}/${lenses.length} lenses found a real defect; worst severity rank ${worst}. Fix before commit.`
-  : `No real defect across ${lenses.length} lenses. Clear to commit (still confirm the gate).`)
+if (allFailed) {
+  log(`All ${lenses.length} lenses failed (Fable and opus fallback both unavailable) — this is a TOOLING FAILURE, not a clean result. Do not report CLEAN.`)
+} else {
+  log(real.length
+    ? `${real.length}/${succeeded.length} lenses found a real defect; worst severity rank ${worst}. Fix before commit.`
+    : `No real defect across ${succeeded.length}/${lenses.length} lenses. Clear to commit (still confirm the gate).`)
+}
 
-return { verdicts, anyRealDefect: real.length > 0, worstSeverityRank: worst }
+return { verdicts, anyRealDefect: real.length > 0, worstSeverityRank: worst, succeeded: succeeded.length, allFailed }
