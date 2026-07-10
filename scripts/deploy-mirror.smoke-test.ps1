@@ -92,6 +92,32 @@ Assert-True (Test-OfflineSignature -Reason 'git pull --ff-only failed (1) -- loc
 Assert-True (-not (Test-OfflineSignature -Reason 'build:mirror failed (1)')) "scenario 6c: build failure NOT classified as offline signature"
 Assert-True (-not (Test-OfflineSignature -Reason 'GATE CHECK FAILED: TEST')) "scenario 6d: gate check failure NOT classified as offline signature"
 
+# Scenario 6e-6k: Test-GitAuthFailureSignature classification -- real git/GitHub credential-
+# failure wording (2026-07-10 incident: gh.exe's credential helper going missing/unauthenticated
+# produces exit 128, the SAME generic code a real network outage produces). These strings are
+# drawn from the actual error text git/GitHub produce for each failure mode.
+Assert-True (Test-GitAuthFailureSignature -Reason "fatal: could not read Username for 'https://github.com': terminal prompts disabled") "scenario 6e: 'could not read Username' + 'terminal prompts disabled' classified as auth failure"
+Assert-True (Test-GitAuthFailureSignature -Reason "remote: Support for password authentication was removed`nfatal: Authentication failed for 'https://github.com/ZeOoba/oxford-command-center.git/'") "scenario 6f: 'Authentication failed' classified as auth failure"
+Assert-True (Test-GitAuthFailureSignature -Reason "Permission denied (publickey).`nfatal: Could not read from remote repository.") "scenario 6g: 'Permission denied' classified as auth failure"
+Assert-True (Test-GitAuthFailureSignature -Reason "remote: Repository not found.`nfatal: repository 'https://github.com/ZeOoba/oxford-command-center.git/' not found") "scenario 6h: 'remote: Repository not found' classified as auth failure"
+Assert-True (Test-GitAuthFailureSignature -Reason "remote: Invalid username or password.`nfatal: Authentication failed") "scenario 6i: 'Invalid username or password' classified as auth failure"
+Assert-True (Test-GitAuthFailureSignature -Reason "fatal: unable to access 'https://github.com/ZeOoba/oxford-command-center.git/': The requested URL returned error: 401") "scenario 6j: 'unable to access ... 401' classified as auth failure"
+Assert-True (Test-GitAuthFailureSignature -Reason "fatal: unable to access 'https://github.com/ZeOoba/oxford-command-center.git/': The requested URL returned error: 403") "scenario 6k: 'unable to access ... 403' classified as auth failure"
+
+# Scenario 6l-6o: genuinely network/offline-looking text must NOT be classified as an auth
+# failure -- these stay Test-OfflineSignature's territory via deploy-mirror.ps1's unchanged
+# fall-through throw for the real-outage case.
+Assert-True (-not (Test-GitAuthFailureSignature -Reason "fatal: unable to access 'https://github.com/ZeOoba/oxford-command-center.git/': Could not resolve host: github.com")) "scenario 6l: 'Could not resolve host' NOT classified as auth failure"
+Assert-True (-not (Test-GitAuthFailureSignature -Reason "fatal: unable to access 'https://github.com/ZeOoba/oxford-command-center.git/': Connection timed out after 10000 milliseconds")) "scenario 6m: 'Connection timed out' NOT classified as auth failure"
+Assert-True (-not (Test-GitAuthFailureSignature -Reason "fatal: unable to access 'https://github.com/ZeOoba/oxford-command-center.git/': Failed to connect to github.com port 443 after 75 ms: Couldn't connect to server")) "scenario 6n: 'Failed to connect' NOT classified as auth failure"
+Assert-True (-not (Test-GitAuthFailureSignature -Reason "fatal: unable to access 'https://github.com/ZeOoba/oxford-command-center.git/': Network is unreachable")) "scenario 6o: 'Network is unreachable' NOT classified as auth failure"
+
+# Scenario 6p: the distinctly-prefixed reason deploy-mirror.ps1 throws when an auth failure does
+# NOT self-heal must NEVER match Test-OfflineSignature -- this is the core regression guard for
+# the whole fix: a non-self-healing credential problem must always alert immediately, never fold
+# into the offline-suppression digest meant only for transient network blips.
+Assert-True (-not (Test-OfflineSignature -Reason "GIT AUTH FAILURE (128): git fetch origin failed with a credential/auth error, and the Credential Manager fallback retry also failed (128): fatal: could not read Username for 'https://github.com': terminal prompts disabled")) "scenario 6p: GIT AUTH FAILURE reason must NOT match Test-OfflineSignature (must always alert immediately, never suppressed)"
+
 # Scenario 7: suppressible failure, first occurrence in a new streak -- still alerts
 # immediately (a one-off blip must look exactly like today's behavior), and records state.
 Reset-Log
