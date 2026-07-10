@@ -113,6 +113,35 @@ describe('writeDebtSnapshot — direction filter', () => {
     const rows = db.prepare("SELECT id FROM debt_positions WHERE status = 'active'").all() as Array<{ id: string }>;
     expect(rows).toHaveLength(0);
   });
+
+  // Adversarial review (2026-07-10) caught: parseLoans (server/workbook/parse.ts) feeds the SAME
+  // raw cell into both Loan.loanType and Loan.status, so a bare "closed" denylist term collides
+  // with "Closed-End" / "Closed End" — a standard commercial-mortgage STRUCTURE term (vs.
+  // open-end/revolving), not a payoff signal. A genuinely active closed-end loan must not be
+  // silently excluded the same way the original bug excluded every real loan.
+  it('does NOT exclude "Closed-End" / "Closed End" loan-structure text (distinct from a payoff signal)', () => {
+    const db = freshDb();
+    const loans: Loan[] = [
+      makeBorrowerLoan({ id: 'loan-closed-end-hyphen', status: 'Closed-End' }),
+      makeBorrowerLoan({ id: 'loan-closed-end-space', status: 'Closed End Note' }),
+    ];
+    const result = writeDebtSnapshot(db, loans, '2026-07-10');
+    expect(result.written).toBe(2);
+    const ids = (db.prepare("SELECT id FROM debt_positions WHERE status = 'active' ORDER BY id").all() as Array<{ id: string }>).map((r) => r.id);
+    expect(ids).toEqual(['loan-closed-end-hyphen', 'loan-closed-end-space']);
+  });
+
+  // Adversarial review (2026-07-10) also caught: this codebase's own domain vocabulary
+  // (src/analytics/conditions.ts) uses the single word "Payoff" for the same concept as
+  // "Paid Off" — a two-word literal match alone would miss it and leave a dead loan active.
+  it('excludes the single-word "Payoff" alongside "Paid Off"', () => {
+    const db = freshDb();
+    const loans: Loan[] = [
+      makeBorrowerLoan({ id: 'loan-payoff', status: 'Payoff' }),
+    ];
+    const result = writeDebtSnapshot(db, loans, '2026-07-10');
+    expect(result.written).toBe(0);
+  });
 });
 
 describe('writeDebtSnapshot — upsert semantics', () => {

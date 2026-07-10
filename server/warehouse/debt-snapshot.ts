@@ -12,7 +12,18 @@ export interface DebtSnapshotResult {
 // nothing real and silently excludes every genuine active loan (confirmed empirically 2026-07-10:
 // 0 of 5 real borrower loans matched, leaving debt_positions permanently empty). Denylist known
 // terminal/inactive statuses instead so new descriptive text is active-by-default.
-const INACTIVE_STATUS_PATTERN = /paid off|retired|closed|inactive|terminated|discharged/i;
+//
+// Two collision hazards caught on adversarial review (2026-07-10), since parseLoans (server/
+// workbook/parse.ts) feeds the SAME raw cell into both Loan.loanType and Loan.status — this is a
+// mixed loan-type/note field, not a clean lifecycle flag:
+//   - "closed" alone would false-positive match "Closed-End" / "Closed End" — a standard
+//     commercial-mortgage STRUCTURE term (vs. open-end/revolving) for a genuinely active loan,
+//     not a payoff signal. Negative lookahead excludes that specific collision while still
+//     catching a genuine "Closed" / "Loan Closed" signal.
+//   - "paid off" (two words) would miss the single-word "Payoff" this codebase's own domain
+//     vocabulary otherwise uses (src/analytics/conditions.ts) for the same concept — added as an
+//     explicit alternative.
+const INACTIVE_STATUS_PATTERN = /paid off|payoff|retired|closed(?![\s-]?end)|inactive|terminated|discharged/i;
 
 /**
  * Writes a snapshot of ORA borrower-side debt positions to the warehouse.
