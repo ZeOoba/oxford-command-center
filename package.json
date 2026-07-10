@@ -7,10 +7,12 @@
   "engines": {
     "node": ">=20"
   },
+  "//devServerNote": "dev:server (tsx watch) intermittently hangs before ever binding its port on this machine (~2/5 trials, 2026-07-08) — reproduced via preview_start and raw shell alike; npm --prefix cwd resolution and preview_start's process model were both ruled out as the cause via direct A/B testing. Root cause undetermined, likely transient resource contention on a machine that runs many concurrent node processes. dev:server:once (tsx, no watch) was 5/5 reliable across the same trials and is the launch.json default — no hot-reload, so restart manually after backend edits. See event_log.md 2026-07-08 for the full investigation.",
   "scripts": {
     "dev": "concurrently -k -n server,web -c magenta,cyan \"npm:dev:server\" \"npm:dev:web\"",
     "dev:web": "vite",
-    "dev:server": "tsx watch server/index.ts",
+    "dev:server": "node --require ./scripts/dev-watchdog.cjs node_modules/tsx/dist/cli.mjs watch server/index.ts",
+    "dev:server:once": "tsx server/index.ts",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
     "preview": "vite preview",
     "extract": "tsx scripts/extract-workbook.ts",

@@ -15,7 +15,7 @@
     {
       "name": "brain-server",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "C:/Users/Owner/oxford-command-center", "run", "dev:server"],
+      "runtimeArgs": ["--prefix", "C:/Users/Owner/oxford-command-center", "run", "dev:server:once"],
       "port": 8911
     }
   ]
