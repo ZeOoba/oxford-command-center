@@ -85,9 +85,26 @@ Both run through `scripts/import-insurance-data.ts` (Task 11). Loss events use
 file is idempotent — a repeat run reports the rows as `ignored`, not duplicated. Dec pages
 `UPDATE property_insurance_policies SET deductible = ?, coverage_limit = ?` per policy id, so a
 policy id not found in the table is counted `missing`, never thrown. Both accept an optional
-`--db <path>` override (defaults to `WAREHOUSE_DB` env or `data/warehouse/finance.sqlite`). A
-propertyId not present in `property_master` is never inserted for loss events — it's recorded as
-a `data_quality_issues` row instead, mirroring `scripts/import-assessments.ts`'s precedent.
+`--db <path>` override (defaults to `WAREHOUSE_DB` env or `data/warehouse/finance.sqlite`).
+
+`propertyId` handling on loss events is three-way, not a single accept/reject rule. A **blank or
+missing** `propertyId` is valid, documented behavior — per
+`docs/templates/insurance-loss-runs.template.csv` ("leave blank for a portfolio-level or
+umbrella-policy loss that isn't attributable to a single property") — and is inserted with
+`property_id = NULL` (FK-exempt); it is **not** flagged as a data-quality issue. A `propertyId`
+that is **present, non-blank, but not found in `property_master`** is the only case that gets
+DQ-flagged: the row is never inserted and is instead recorded as a `data_quality_issues` row,
+mirroring `scripts/import-assessments.ts`'s unknown-property precedent. A `propertyId` that
+resolves to a known property is inserted normally.
+
+Both modes also reject certain rows outright at parse time — before any DB write, and before the
+propertyId handling above even applies — reporting them only in the printed summary, never
+persisting anything for that row: a loss event's `loss_date` must be strict ISO `YYYY-MM-DD`; a
+US `MM/DD/YYYY` date, an Excel serial number, or an ISO-datetime with a time component is
+rejected with a reason rather than silently reformatted (a non-ISO date would otherwise corrupt
+downstream EAL calculations with no error raised). A dec-pages row whose `deductible` exceeds its
+`coverageLimit` is likewise rejected outright, since it would otherwise silently break the loss
+engine's retained/transferred/overLimit partition.
 
 Once `insurance_loss_events` has any row, `resolveLossEvents()` stops reading the loss-runs
 fixture — no other code change is required. Once a given policy's `deductible`/`coverage_limit`

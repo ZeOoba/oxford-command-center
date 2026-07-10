@@ -2,7 +2,7 @@
 //
 // Phase 4c — Insurance LOSS reasoning layer contracts (P4c placeholder buildout).
 // Wire contract for GET /api/warehouse/insurance/loss, produced by
-// server/warehouse/insurance-loss.ts and consumed by the Insurance UI.
+// server/warehouse/insurance-loss-analysis.ts and consumed by the Insurance UI.
 //
 // Doctrine: DISPERSION / ARITHMETIC ONLY. Every figure here is a mechanical roll-up of
 // observed loss runs and dec-page terms — expected annual loss (grossIncurred / observationYears),
