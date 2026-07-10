@@ -16,7 +16,7 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { PlaceholderBanner } from '@/primitives/PlaceholderBanner';
-import { placeholderDetailTax } from './hooks';
+import { placeholderDetailTax, FILED_RETURNS_BOUNDARY_NOTE } from './hooks';
 import type { TaxStrategyReport, FiledReturnMeta } from './hooks';
 
 const STATUS_TONE: Record<FiledReturnMeta['status'], BadgeTone> = {
@@ -24,10 +24,6 @@ const STATUS_TONE: Record<FiledReturnMeta['status'], BadgeTone> = {
   extended: 'amber',
   amended: 'blue',
 };
-
-const BOUNDARY_SENTENCE =
-  'Return contents never enter this system — metadata and SharePoint link-out only, by ' +
-  'confidentiality design (cut-list C2).';
 
 const COLUMNS: Column<FiledReturnMeta>[] = [
   {
@@ -65,7 +61,14 @@ const COLUMNS: Column<FiledReturnMeta>[] = [
 export function FiledReturnsTable({ report }: { report: TaxStrategyReport }) {
   return (
     <div className="flex flex-col gap-4">
-      <PlaceholderBanner label="PLACEHOLDER METADATA" detail={placeholderDetailTax(report)} />
+      {/* Gated on the dataSource discriminator (PlaceholderBanner's own doctrine, see the
+          primitive's header comment) — once Task 11's real-data import flips
+          filedReturnsDataSource to 'warehouse', this banner must NOT relabel real data as
+          placeholder. The muted boundary paragraph below is the PERMANENT C2 notice and stays
+          unconditional. */}
+      {report.filedReturnsDataSource === 'placeholder' && (
+        <PlaceholderBanner label="PLACEHOLDER METADATA" detail={placeholderDetailTax(report)} />
+      )}
       <Card>
         <CardHeader
           title="Filed Returns"
@@ -79,7 +82,7 @@ export function FiledReturnsTable({ report }: { report: TaxStrategyReport }) {
         />
       </Card>
       <div className="px-1 text-2xs leading-relaxed" style={{ color: 'var(--text-tertiary)' }}>
-        {BOUNDARY_SENTENCE}
+        {FILED_RETURNS_BOUNDARY_NOTE}
       </div>
     </div>
   );

@@ -510,6 +510,20 @@ describe('FiledReturnsTable (P4c / C2)', () => {
     const { container } = render(<FiledReturnsTable report={makeStrategyReport()} />);
     expect((container.textContent ?? '').toLowerCase()).not.toContain('return contents:');
   });
+
+  // Review fix (follow-up to 3f40a84, Finding 1 — Critical): the banner must be gated on the
+  // dataSource discriminator, per PlaceholderBanner's own doctrine (src/primitives/
+  // PlaceholderBanner.tsx header) and every other call site (e.g. insurance/SelfInsureView.tsx's
+  // `isAnyPlaceholder(report) &&`). Once Task 11's real-data import flips filedReturnsDataSource
+  // to 'warehouse', an unconditional "PLACEHOLDER METADATA" banner would falsely label real data.
+  it('does NOT render the PlaceholderBanner when filedReturnsDataSource is "warehouse", but the muted boundary paragraph still renders', () => {
+    render(<FiledReturnsTable report={makeStrategyReport({ filedReturnsDataSource: 'warehouse' })} />);
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByText('PLACEHOLDER METADATA')).toBeNull();
+    expect(
+      screen.getByText(/metadata and SharePoint link-out only, by confidentiality design/i),
+    ).toBeTruthy();
+  });
 });
 
 // ── 4. AssessmentsTable — File Appeal flow ──────────────────────────────────────────────────
@@ -748,4 +762,61 @@ describe('TaxesModule tabs (P4c / C2)', () => {
 
     expect(screen.getByText('Depreciation & Cost-Seg')).toBeTruthy();
   });
+
+  // Review fix (follow-up to 3f40a84, Finding 2 — Important): the Filed Returns tab's own
+  // loading/offline fallback (TaxesModule.tsx, gated on useTaxStrategy() — NOT the module's main
+  // useTaxAnalysis()-driven Skeleton/offline-Card, which is already exercised above by seeding
+  // TAX_KEYS.analysis) previously had no test coverage. TAX_STRATEGY_KEY is deliberately left
+  // unseeded in both tests below so useTaxStrategy() actually runs its queryFn against the
+  // stubbed fetch, mirroring insurance-module.test.tsx's offline-card pattern.
+  it('renders a loading Skeleton in the Filed Returns tab while useTaxStrategy is still loading', () => {
+    // A fetch that never resolves keeps useTaxStrategy() pending (isLoading true, data
+    // undefined) for the lifetime of the test — the Filed Returns tab must show its own Skeleton
+    // fallback (height: 200), not the resolved table or the offline card.
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+
+    const qc = seededClient();
+    qc.setQueryData(TAX_KEYS.analysis, makeReport());
+    // TAX_STRATEGY_KEY intentionally NOT seeded.
+
+    const { container } = render(
+      <QueryClientProvider client={qc}>
+        <TaxesModule />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByText('Filed Returns'));
+
+    expect(screen.queryByText('PLACEHOLDER — Entity A LLC')).toBeNull();
+    expect(screen.queryByText(/Filed-return metadata requires the live brain server/i)).toBeNull();
+    expect(container.querySelector('[style*="200px"]')).toBeTruthy();
+  });
+
+  it('renders the offline Card in the Filed Returns tab when useTaxStrategy errors with WarehouseUnavailableError', async () => {
+    // useTaxStrategy hard-codes retry: 1 via QUERY_OPTS (a per-query option, which always wins
+    // over the QueryClient's own defaultOptions) — the default ~1s retry backoff means the error
+    // state can take a little over 1s to settle, hence the extended waitFor timeout below
+    // (mirrors insurance-module.test.tsx's equivalent offline-card test).
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+
+    const qc = seededClient();
+    qc.setQueryData(TAX_KEYS.analysis, makeReport());
+    // TAX_STRATEGY_KEY intentionally NOT seeded.
+
+    render(
+      <QueryClientProvider client={qc}>
+        <TaxesModule />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByText('Filed Returns'));
+
+    await waitFor(
+      () => {
+        expect(screen.getByText('offline')).toBeTruthy();
+      },
+      { timeout: 3000 },
+    );
+    expect(screen.getByText(/Filed-return metadata requires the live brain server/i)).toBeTruthy();
+  }, 10_000);
 });

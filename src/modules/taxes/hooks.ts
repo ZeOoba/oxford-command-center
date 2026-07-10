@@ -181,9 +181,16 @@ export function useTaxStrategy() {
   });
 }
 
+// Shared verbatim C2 confidentiality-boundary sentence — the ONE place this copy is authored.
+// FiledReturnsTable's permanent muted boundary paragraph (unconditional, not gated on
+// filedReturnsDataSource) and this hook's placeholder-banner detail both import this constant so
+// the two on-screen copies can never drift from each other (review fix, follow-up to 3f40a84).
+export const FILED_RETURNS_BOUNDARY_NOTE =
+  'Return contents never enter this system — metadata and SharePoint link-out only, by ' +
+  'confidentiality design (cut-list C2).';
+
 const PLACEHOLDER_DETAIL_TAX_BASE =
-  'Synthetic filing metadata pending accountant records. Return contents never enter this system — ' +
-  'metadata and SharePoint link-out only, by confidentiality design (cut-list C2).';
+  `Synthetic filing metadata pending accountant records. ${FILED_RETURNS_BOUNDARY_NOTE}`;
 
 /** Advisory banner detail for the Filed Returns tab. Appends a dropped-row count when the
  *  fixture loader had to discard malformed rows, so a data-quality issue never disappears
