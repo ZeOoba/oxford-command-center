@@ -106,6 +106,103 @@ describe('parseLossEventsPayload', () => {
   });
 });
 
+// ── P4c refute finding 1: loss_date MUST be strict ISO YYYY-MM-DD ──────────────────────────────
+// A non-ISO date (US MM/DD/YYYY, or an Excel serial miscoerced to text) silently corrupts EAL:
+// calendarYear() in insurance-loss-analysis.ts returns null for MM/DD/YYYY (→ observationYears 0 →
+// every EAL null while dollar totals still populate), and matches \d{4} on a serial like "45413"
+// (→ a fabricated "year" that inflates observationYears past MIN_LOSS_YEARS and understates EAL).
+// The boundary must reject these — a human fixes the source file (no auto-format-detection).
+describe('parseLossEventsPayload — loss_date ISO enforcement (P4c refute finding 1)', () => {
+  it('rejects a US MM/DD/YYYY lossDate, naming the bad format, keeping nothing', () => {
+    const { rows, rejected } = parseLossEventsPayload(
+      { events: [{ id: 'EVT-US', propertyId: 'prop-a', lossDate: '05/01/2024', grossIncurred: 100000 }] },
+      'events.json',
+    );
+    expect(rows).toHaveLength(0);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.id).toBe('EVT-US');
+    expect(rejected[0]!.reason).toMatch(/lossDate/);
+    expect(rejected[0]!.reason).toContain('05/01/2024');
+  });
+
+  it('rejects an Excel-serial lossDate like "45413" (matches \\d{4}, would fabricate a bogus year)', () => {
+    const { rows, rejected } = parseLossEventsPayload(
+      { events: [{ id: 'EVT-SERIAL', propertyId: 'prop-a', lossDate: '45413', grossIncurred: 100000 }] },
+      'events.json',
+    );
+    expect(rows).toHaveLength(0);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.reason).toContain('45413');
+  });
+
+  it('rejects a slash-separated single-digit date while keeping valid ISO rows in the same file', () => {
+    const { rows, rejected } = parseLossEventsPayload(
+      { events: [
+        { id: 'EVT-OK', propertyId: 'prop-a', lossDate: '2024-05-01', grossIncurred: 1000 },
+        { id: 'EVT-BAD', propertyId: 'prop-a', lossDate: '5/1/2024', grossIncurred: 2000 },
+      ] },
+      'events.json',
+    );
+    expect(rows.map((r) => r.id)).toEqual(['EVT-OK']);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.id).toBe('EVT-BAD');
+  });
+
+  it('rejects an ISO datetime with a time component (must be date-only YYYY-MM-DD)', () => {
+    const { rows, rejected } = parseLossEventsPayload(
+      { events: [{ id: 'EVT-DT', propertyId: 'prop-a', lossDate: '2024-05-01T00:00:00Z', grossIncurred: 1000 }] },
+      'events.json',
+    );
+    expect(rows).toHaveLength(0);
+    expect(rejected).toHaveLength(1);
+  });
+
+  it('still accepts a well-formed ISO YYYY-MM-DD date', () => {
+    const { rows, rejected } = parseLossEventsPayload(
+      { events: [{ id: 'EVT-OK', propertyId: 'prop-a', lossDate: '2024-05-01', grossIncurred: 1000 }] },
+      'events.json',
+    );
+    expect(rejected).toHaveLength(0);
+    expect(rows).toHaveLength(1);
+  });
+});
+
+// ── P4c refute finding 2: a blank/missing propertyId is a valid portfolio/umbrella loss ────────
+// docs/templates/insurance-loss-runs.template.csv documents blank property_id as "a portfolio-level
+// or umbrella-policy loss that isn't attributable to a single property". The engine already handles
+// these (insurance-loss-analysis.ts: `if (e.propertyId === '') continue;`). The importer must ACCEPT
+// them (mapping to ''), not reject them — only a PRESENT, non-blank, unknown property is rejected.
+describe('parseLossEventsPayload — blank/missing propertyId = portfolio loss (P4c refute finding 2)', () => {
+  it('accepts a MISSING propertyId, mapping it to "" (portfolio/umbrella loss)', () => {
+    const { rows, rejected } = parseLossEventsPayload(
+      { events: [{ id: 'EVT-PORT', lossDate: '2024-05-01', grossIncurred: 50000 }] },
+      'events.json',
+    );
+    expect(rejected).toHaveLength(0);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.propertyId).toBe('');
+  });
+
+  it('accepts an explicitly BLANK propertyId, mapping it to ""', () => {
+    const { rows, rejected } = parseLossEventsPayload(
+      { events: [{ id: 'EVT-PORT', propertyId: '', lossDate: '2024-05-01', grossIncurred: 50000 }] },
+      'events.json',
+    );
+    expect(rejected).toHaveLength(0);
+    expect(rows[0]!.propertyId).toBe('');
+  });
+
+  it('still rejects a PRESENT propertyId of the wrong type (a number, not a portfolio loss)', () => {
+    const { rows, rejected } = parseLossEventsPayload(
+      { events: [{ id: 'EVT-NUM', propertyId: 123, lossDate: '2024-05-01', grossIncurred: 50000 }] },
+      'events.json',
+    );
+    expect(rows).toHaveLength(0);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.reason).toMatch(/propertyId/);
+  });
+});
+
 // ── importLossEventRows / importLossRuns (DB) ────────────────────────────────────────────────
 
 describe('importLossEventRows / importLossRuns', () => {
@@ -212,6 +309,51 @@ describe('importLossEventRows / importLossRuns', () => {
     expect(resolved.rows).toHaveLength(2);
     expect(resolved.rows.map((r) => r.id).sort()).toEqual(['EVT-1', 'EVT-2']);
   });
+
+  // P4c refute finding 1 (DB path): a non-ISO loss_date row is rejected and never lands, while the
+  // valid ISO row in the same file still imports.
+  it('rejects a non-ISO loss_date row via importLossRuns; it never lands in insurance_loss_events', () => {
+    const db = freshDb();
+    insertProperty(db, 'prop-a');
+    const result = importLossRuns(db, {
+      events: [
+        { id: 'EVT-OK', propertyId: 'prop-a', lossDate: '2024-05-01', grossIncurred: 1000, source: 'test' },
+        { id: 'EVT-BAD', propertyId: 'prop-a', lossDate: '05/01/2024', grossIncurred: 100000, source: 'test' },
+      ],
+    }, 'events.json');
+    expect(result.inserted).toBe(1);
+    expect(result.rejected).toBe(1);
+
+    const landed = db.prepare('SELECT id FROM insurance_loss_events').all() as { id: string }[];
+    expect(landed.map((r) => r.id)).toEqual(['EVT-OK']);
+  });
+
+  // P4c refute finding 2 (DB path): a blank-propertyId portfolio loss lands with property_id NULL
+  // (FK-exempt), is NOT recorded as an unknown-property DQ, and resolveLossEvents coerces it back to
+  // '' for the engine's blank-check. A PRESENT-but-unknown propertyId is still DQ-rejected.
+  it('imports a blank-propertyId portfolio loss as NULL property_id (not an unknown-property DQ)', () => {
+    const db = freshDb();
+    insertProperty(db, 'prop-a');
+    const result = importLossRuns(db, {
+      events: [
+        { id: 'EVT-PROP', propertyId: 'prop-a', lossDate: '2024-01-01', grossIncurred: 1000, source: 'test' },
+        { id: 'EVT-PORT', propertyId: '', lossDate: '2024-02-01', grossIncurred: 500000, source: 'test' },
+      ],
+    }, 'events.json');
+    expect(result).toEqual({ inserted: 2, ignored: 0, rejected: 0 });
+
+    const portfolioRow = db.prepare('SELECT property_id FROM insurance_loss_events WHERE id = ?')
+      .get('EVT-PORT') as { property_id: string | null };
+    expect(portfolioRow.property_id).toBeNull();
+
+    const dq = db.prepare(`SELECT COUNT(*) AS n FROM data_quality_issues WHERE kind = 'insurance-loss-event-unknown-property'`)
+      .get() as { n: number };
+    expect(dq.n).toBe(0);
+
+    const resolved = resolveLossEvents(db);
+    const port = resolved.rows.find((r) => r.id === 'EVT-PORT')!;
+    expect(port.propertyId).toBe('');
+  });
 });
 
 // ── parseDecPagesPayload (pure) ───────────────────────────────────────────────────────────────
@@ -245,6 +387,42 @@ describe('parseDecPagesPayload', () => {
     expect(rows).toHaveLength(0);
     expect(rejected).toHaveLength(1);
     expect(rejected[0]!.reason).toMatch(/array/);
+  });
+});
+
+// ── P4c refute finding 3: deductible must not exceed coverageLimit ─────────────────────────────
+// The engine's per-event split (retained=Σmin(gross,d); transferred=Σmax(0,min(gross,limit)−d);
+// overLimit=Σmax(0,gross−limit)) only partitions gross when d ≤ limit. A transposed row with
+// deductible > coverageLimit double-counts the (limit, deductible) band into BOTH retained and
+// overLimit, so the three buckets no longer sum to gross — silently inflating self-insure exposure.
+// Reject at the source (do NOT band-fix in the engine — that masks bad data at the wrong layer).
+describe('parseDecPagesPayload — deductible must not exceed coverageLimit (P4c refute finding 3)', () => {
+  it('rejects a transposed row where deductible > coverageLimit, naming the fields', () => {
+    const { rows, rejected } = parseDecPagesPayload([
+      { policyId: 3, deductible: 5000000, coverageLimit: 25000 },
+    ]);
+    expect(rows).toHaveLength(0);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.id).toBe('3');
+    expect(rejected[0]!.reason).toMatch(/deductible/);
+  });
+
+  it('accepts deductible == coverageLimit (boundary; the partition still holds)', () => {
+    const { rows, rejected } = parseDecPagesPayload([
+      { policyId: 3, deductible: 25000, coverageLimit: 25000 },
+    ]);
+    expect(rejected).toHaveLength(0);
+    expect(rows).toHaveLength(1);
+  });
+
+  it('keeps a valid row while rejecting a transposed one in the same batch', () => {
+    const { rows, rejected } = parseDecPagesPayload([
+      { policyId: 3, deductible: 25000, coverageLimit: 5000000 },
+      { policyId: 4, deductible: 5000000, coverageLimit: 25000 },
+    ]);
+    expect(rows.map((r) => r.policyId)).toEqual([3]);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0]!.id).toBe('4');
   });
 });
 
@@ -287,6 +465,22 @@ describe('importDecPageRows / importDecPages', () => {
       { policyId: 424242, deductible: 5000, coverageLimit: 500000 },
     ]);
     expect({ updated, missing, rejected }).toEqual({ updated: 1, missing: 1, rejected: 0 });
+  });
+
+  // P4c refute finding 3 (combined path): a transposed deductible>coverageLimit row is rejected at
+  // parse and never written to property_insurance_policies (deductible/coverage_limit stay NULL).
+  it('rejects a transposed deductible>coverageLimit row via importDecPages; nothing is written', () => {
+    const db = freshDb();
+    insertProperty(db, 'prop-a');
+    const policyId = insertPolicy(db, 'prop-a');
+
+    const result = importDecPages(db, [{ policyId, deductible: 5000000, coverageLimit: 25000 }]);
+    expect(result).toEqual({ updated: 0, missing: 0, rejected: 1 });
+
+    const row = db.prepare('SELECT deductible, coverage_limit FROM property_insurance_policies WHERE id = ?')
+      .get(policyId) as { deductible: number | null; coverage_limit: number | null };
+    expect(row.deductible).toBeNull();
+    expect(row.coverage_limit).toBeNull();
   });
 });
 

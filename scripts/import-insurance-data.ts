@@ -27,13 +27,21 @@
 //      an existing policy id; a missing id is counted (`missing`), never thrown.
 //
 // Row handling (mirrors import-assessments.ts):
-//   - A row that fails FORMAT validation (missing required field, non-numeric/negative
-//     grossIncurred, malformed policyId, etc.) is rejected and reported in the printed summary —
-//     nothing is written for that row, and it is never persisted as a data_quality_issues row
-//     (matches import-assessments.ts: parse-time rejects are reported, not persisted).
-//   - A loss-event row whose propertyId is not present in property_master is never inserted (would
-//     violate the FK and silently misattribute a loss) — it is recorded as a data_quality_issues
-//     row instead, mirroring import-assessments.ts's unknown-property handling exactly.
+//   - A row that fails FORMAT validation is rejected and reported in the printed summary — nothing
+//     is written for that row, and it is never persisted as a data_quality_issues row (matches
+//     import-assessments.ts: parse-time rejects are reported, not persisted). FORMAT rejects
+//     include: missing required field; non-numeric/negative grossIncurred; malformed policyId; a
+//     loss_date that is not strict ISO YYYY-MM-DD (P4c refute finding 1 — a US MM/DD/YYYY or an
+//     Excel-serial date silently corrupts EAL downstream, so it is caught at the boundary, never
+//     auto-reformatted); and a dec-pages row with deductible > coverageLimit (P4c refute finding 3
+//     — a transposition that would break the engine's retained/transferred/overLimit partition).
+//   - A loss-event row with a MISSING or BLANK propertyId is a valid portfolio/umbrella-level loss
+//     (per docs/templates/insurance-loss-runs.template.csv), NOT an error: it is accepted and
+//     stored with property_id = NULL (FK-exempt; resolveLossEvents coerces it back to '' for the
+//     engine's blank-check). P4c refute finding 2.
+//   - A loss-event row whose propertyId is PRESENT and non-blank but not found in property_master is
+//     never inserted (would violate the FK and silently misattribute a loss) — it is recorded as a
+//     data_quality_issues row instead, mirroring import-assessments.ts's unknown-property handling.
 //   - Each attempted write is isolated: INSERT OR IGNORE cannot throw on a conflict (SQLite's
 //     IGNORE resolution silently skips the one violating row), and every UPDATE/INSERT is still
 //     wrapped in its own try/catch inside the enclosing db.transaction() as defense in depth, so an
@@ -100,12 +108,33 @@ export function parseLossEventsPayload(payload: unknown, defaultSource: string):
       rejected.push({ index, id: null, reason: 'missing or invalid "id"' });
       return;
     }
-    if (typeof propertyId !== 'string' || propertyId === '') {
-      rejected.push({ index, id, reason: 'missing or invalid "propertyId"' });
+    // P4c refute finding 2: a MISSING or BLANK propertyId is a valid portfolio/umbrella-level loss
+    // (per docs/templates/insurance-loss-runs.template.csv: "leave blank for a portfolio-level or
+    // umbrella-policy loss that isn't attributable to a single property"). Map it to '' — the
+    // engine's blank-check (insurance-loss-analysis.ts: `if (e.propertyId === '') continue;`) and
+    // resolveLossEvents' null→'' coercion (placeholder-data.ts) both already expect exactly this.
+    // Only a PRESENT propertyId of the wrong TYPE is malformed and rejected; a present, non-blank
+    // string flows through to importLossEventRows' unknown-property (property_master) check.
+    if (propertyId !== undefined && propertyId !== null && typeof propertyId !== 'string') {
+      rejected.push({ index, id, reason: `propertyId must be a string when present, got '${String(propertyId)}'` });
       return;
     }
+    const normalizedPropertyId = typeof propertyId === 'string' ? propertyId : '';
     if (typeof lossDate !== 'string' || lossDate === '') {
       rejected.push({ index, id, reason: 'missing or invalid "lossDate"' });
+      return;
+    }
+    // P4c refute finding 1: loss_date MUST be strict ISO YYYY-MM-DD — matching migration 022's TEXT
+    // column and every fixture/test row. calendarYear() in insurance-loss-analysis.ts extracts the
+    // year via /^\s*(\d{4})/ and silently returns null for any non-ISO string (a US MM/DD/YYYY
+    // broker loss-run export, the common case), which zeroes observationYears and nulls EVERY EAL
+    // while the same events' dollar totals still populate — a silent EAL corruption with no error.
+    // WORSE: an Excel serial like "45413" (a date miscoerced to text) matches \d{4} and fabricates a
+    // bogus "year", inflating observationYears past MIN_LOSS_YEARS and understating EAL. Reject the
+    // row here (like negative grossIncurred below) rather than auto-detect alternate formats — a
+    // human fixes the source file, exactly as import-assessments.ts rejects malformed rows.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(lossDate)) {
+      rejected.push({ index, id, reason: `lossDate must be ISO YYYY-MM-DD, got '${lossDate}'` });
       return;
     }
     // Matches placeholder-data.ts's parseLossEventFixtureRow precedent (Task 2): negative gross is
@@ -117,7 +146,7 @@ export function parseLossEventsPayload(payload: unknown, defaultSource: string):
 
     rows.push({
       id,
-      propertyId,
+      propertyId: normalizedPropertyId,
       policyRef: typeof policyRef === 'string' ? policyRef : null,
       lossDate,
       cause: typeof cause === 'string' ? cause : null,
@@ -138,9 +167,11 @@ export interface ImportLossEventsResult {
 }
 
 /**
- * Insert parsed+validated loss-event rows into insurance_loss_events. A propertyId not present in
- * property_master is never inserted — recorded as a data_quality_issues row instead (mirrors
- * import-assessments.ts's unknown-property handling). INSERT OR IGNORE on the table's PRIMARY
+ * Insert parsed+validated loss-event rows into insurance_loss_events. A PRESENT, non-blank
+ * propertyId not present in property_master is never inserted — recorded as a data_quality_issues
+ * row instead (mirrors import-assessments.ts's unknown-property handling). A BLANK propertyId ('')
+ * is a portfolio/umbrella loss and is stored with property_id = NULL (FK-exempt) — P4c refute
+ * finding 2. INSERT OR IGNORE on the table's PRIMARY
  * KEY(id) and UNIQUE(property_id, loss_date, cause, gross_incurred) (migration 022) makes a re-run
  * of the same rows idempotent: `changes === 0` means the row was already present (`ignored`), not
  * an error. Each row's insert is wrapped in its own try/catch INSIDE the enclosing transaction —
@@ -171,7 +202,13 @@ export function importLossEventRows(db: WarehouseDb, rows: ParsedLossEventRow[])
 
   const tx = db.transaction(() => {
     for (const r of rows) {
-      if (!knownProperties.has(r.propertyId)) {
+      // P4c refute finding 2: a blank propertyId ('') is a portfolio/umbrella loss, NOT an unknown
+      // property. Store it as NULL (property_id is a nullable FK REFERENCES property_master(id), and
+      // foreign_keys is ON — inserting '' would violate the FK, whereas NULL is FK-exempt).
+      // resolveLossEvents reads the NULL back as '' for the engine's blank-check. Only a PRESENT,
+      // non-blank propertyId missing from property_master is a genuine unknown-property DQ.
+      const isPortfolioLoss = r.propertyId === '';
+      if (!isPortfolioLoss && !knownProperties.has(r.propertyId)) {
         rejected += 1;
         insertDqUnknown.run(
           r.propertyId,
@@ -182,7 +219,7 @@ export function importLossEventRows(db: WarehouseDb, rows: ParsedLossEventRow[])
 
       try {
         const result = insert.run(
-          r.id, r.propertyId, r.policyRef, r.lossDate, r.cause, r.grossIncurred, r.paid, r.reserve, r.source,
+          r.id, isPortfolioLoss ? null : r.propertyId, r.policyRef, r.lossDate, r.cause, r.grossIncurred, r.paid, r.reserve, r.source,
         );
         if (result.changes > 0) inserted += 1;
         else ignored += 1; // idempotent re-run: PRIMARY KEY or UNIQUE conflict, silently skipped by IGNORE
@@ -256,6 +293,17 @@ export function parseDecPagesPayload(payload: unknown): ParseDecPagesOutcome {
     }
     if (typeof coverageLimit !== 'number' || !Number.isFinite(coverageLimit) || coverageLimit < 0) {
       rejected.push({ index, id: String(policyIdNum), reason: `coverageLimit must be a nonnegative number, got '${String(coverageLimit)}'` });
+      return;
+    }
+    // P4c refute finding 3: the loss engine's per-event split (insurance-loss-analysis.ts) is
+    // retained=Σmin(gross,d); transferred=Σmax(0,min(gross,limit)−d); overLimit=Σmax(0,gross−limit).
+    // That only partitions gross when d ≤ limit. A transposed dec-pages row with deductible >
+    // coverageLimit double-counts the (limit, deductible) band into BOTH retained and overLimit, so
+    // retained+transferred+overLimit no longer sums to gross — silently inflating self-insure
+    // exposure. Reject the row at the source (both values are guaranteed numbers by the checks
+    // above); do NOT band-fix the engine, which would mask bad input at the wrong layer.
+    if (deductible > coverageLimit) {
+      rejected.push({ index, id: String(policyIdNum), reason: `deductible (${deductible}) must not exceed coverageLimit (${coverageLimit})` });
       return;
     }
 
