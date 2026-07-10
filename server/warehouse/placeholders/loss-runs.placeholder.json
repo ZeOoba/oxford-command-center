@@ -1,0 +1,13 @@
+{
+  "_note": "PLACEHOLDER loss-run history — synthetic, obviously-round figures. Replace by importing real broker loss runs via `npm run warehouse:import-loss-runs -- <file>`; once insurance_loss_events has rows this file is ignored automatically.",
+  "events": [
+    { "id": "PLC-2023-001", "propertyId": "3540-e-5th-ave-columbus-oh", "policyRef": "PLACEHOLDER", "lossDate": "2023-04-12", "cause": "hail", "grossIncurred": 18000, "paid": 18000, "reserve": 0 },
+    { "id": "PLC-2023-002", "propertyId": "3034-westerville-rd-columbus-oh", "policyRef": "PLACEHOLDER", "lossDate": "2023-09-02", "cause": "water", "grossIncurred": 7500, "paid": 7500, "reserve": 0 },
+    { "id": "PLC-2024-001", "propertyId": "3540-e-5th-ave-columbus-oh", "policyRef": "PLACEHOLDER", "lossDate": "2024-02-20", "cause": "wind", "grossIncurred": 42000, "paid": 40000, "reserve": 2000 },
+    { "id": "PLC-2024-002", "propertyId": "29000-information-lane-easton-md", "policyRef": "PLACEHOLDER", "lossDate": "2024-07-15", "cause": "theft", "grossIncurred": 5000, "paid": 5000, "reserve": 0 },
+    { "id": "PLC-2024-003", "propertyId": "sepich-portfolio-columbus-oh-8-props", "policyRef": "PLACEHOLDER", "lossDate": "2024-11-30", "cause": "fire", "grossIncurred": 120000, "paid": 95000, "reserve": 25000 },
+    { "id": "PLC-2025-001", "propertyId": "9620-e-state-route-350-raytown-mo", "policyRef": "PLACEHOLDER", "lossDate": "2025-03-08", "cause": "water", "grossIncurred": 9000, "paid": 9000, "reserve": 0 },
+    { "id": "PLC-2025-002", "propertyId": "9050-red-branch-rd-columbia-md", "policyRef": "PLACEHOLDER", "lossDate": "2025-06-21", "cause": "wind", "grossIncurred": 15000, "paid": 12000, "reserve": 3000 },
+    { "id": "PLC-2025-003", "propertyId": "3034-westerville-rd-columbus-oh", "policyRef": "PLACEHOLDER", "lossDate": "2025-10-05", "cause": "liability", "grossIncurred": 30000, "paid": 10000, "reserve": 20000 }
+  ]
+}

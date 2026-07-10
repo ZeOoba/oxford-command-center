@@ -19,9 +19,13 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { fetchParsedOrMirror, QUERY_OPTS } from '../intel/hooks';
 import { TaxAnalysisReport, TaxAppeal } from '@contracts/tax';
 import type { TaxAppealInput, TaxAppealStatus, TaxOpportunity, TaxAssessment } from '@contracts/tax';
+import { TaxStrategyReport } from '@contracts/tax-strategy';
+import type { CostSegOpportunity, EntityStrategyItem, FiledReturnMeta, StrategyDataSource } from '@contracts/tax-strategy';
 import type { BadgeTone } from '@/primitives/Badge';
+import type { Tier, TierItem } from '@/primitives/TierBoard';
 
 export type { TaxAnalysisReport, TaxAppeal, TaxAppealInput, TaxAppealStatus, TaxOpportunity, TaxAssessment };
+export type { TaxStrategyReport, CostSegOpportunity, EntityStrategyItem, FiledReturnMeta, StrategyDataSource };
 
 // ── Query keys ───────────────────────────────────────────────────────────────────────────────
 
@@ -151,4 +155,88 @@ export function appealsByProperty(appeals: TaxAppeal[]): Map<string, TaxAppeal[]
     else map.set(a.propertyId, [a]);
   }
   return map;
+}
+
+// ── Tax STRATEGY (P4c / C2) — GET /api/warehouse/tax/strategy ──────────────────────────────
+//
+// Doctrine (contracts/tax-strategy.ts header): filed returns are METADATA-ONLY, PERMANENTLY
+// (rule 1); savingsFullAsset/savingsOxfordShare are hard-null, ALWAYS (rule 2) — this engine
+// never invents a tax-savings dollar; firstYearAcceleration* is DEDUCTION TIMING, not tax
+// dollars (rule 3). `buildCostSegTier` never claims a savings figure — impactUsd is the
+// acceleration figure itself, and every item's detail says so explicitly. RESOLVED data-flow
+// (mirrors useTaxAnalysis): TaxesModule calls useTaxStrategy() itself and threads the report
+// down as a prop to StrategyBoard and FiledReturnsTable — neither component calls this hook.
+
+export const TAX_STRATEGY_KEY = ['warehouse', 'tax', 'strategy'] as const;
+
+/** Tax STRATEGY report (cost-seg/depreciation acceleration, qualitative entity strategies,
+ *  filed-return metadata). Degrades gracefully on the static mirror (WarehouseUnavailableError
+ *  → the Strategy Board's third tier and the Filed Returns tab render an informational empty
+ *  state), same as every other warehouse-backed module. */
+export function useTaxStrategy() {
+  return useQuery({
+    queryKey: TAX_STRATEGY_KEY,
+    queryFn: () => fetchParsedOrMirror('/api/warehouse/tax/strategy', TaxStrategyReport),
+    ...QUERY_OPTS,
+  });
+}
+
+// Shared verbatim C2 confidentiality-boundary sentence — the ONE place this copy is authored.
+// FiledReturnsTable's permanent muted boundary paragraph (unconditional, not gated on
+// filedReturnsDataSource) and this hook's placeholder-banner detail both import this constant so
+// the two on-screen copies can never drift from each other (review fix, follow-up to 3f40a84).
+export const FILED_RETURNS_BOUNDARY_NOTE =
+  'Return contents never enter this system — metadata and SharePoint link-out only, by ' +
+  'confidentiality design (cut-list C2).';
+
+const PLACEHOLDER_DETAIL_TAX_BASE =
+  `Synthetic filing metadata pending accountant records. ${FILED_RETURNS_BOUNDARY_NOTE}`;
+
+/** Advisory banner detail for the Filed Returns tab. Appends a dropped-row count when the
+ *  fixture loader had to discard malformed rows, so a data-quality issue never disappears
+ *  silently behind the fixed confidentiality-boundary sentence (mirrors
+ *  insurance/hooks.ts's placeholderDetailInsurance). */
+export function placeholderDetailTax(report: TaxStrategyReport): string {
+  if (report.droppedFixtureRows > 0) {
+    const rows = report.droppedFixtureRows === 1 ? 'row' : 'rows';
+    return `${PLACEHOLDER_DETAIL_TAX_BASE} (${report.droppedFixtureRows} fixture ${rows} dropped.)`;
+  }
+  return PLACEHOLDER_DETAIL_TAX_BASE;
+}
+
+const COST_SEG_DETAIL =
+  'Deduction acceleration (placeholder basis), not tax savings — converting to a tax dollar ' +
+  'would require a marginal-rate assumption this system does not make.';
+
+function costSegTierItem(o: CostSegOpportunity, rank: number, placeholder: boolean): TierItem {
+  return {
+    id: o.propertyId,
+    rank,
+    title: o.propertyName ?? o.propertyId,
+    detail: COST_SEG_DETAIL,
+    impactUsd: o.firstYearAccelerationOxfordShare,
+    impactKind: 'info',
+    chips: placeholder ? ['PLACEHOLDER'] : undefined,
+  };
+}
+
+/**
+ * Builds the Strategy Board's third, optional tier from the STRATEGY report — ranked by
+ * firstYearAccelerationOxfordShare desc (nulls, i.e. indeterminate bonus-schedule years, sort
+ * last — never a guessed $0). `impactUsd` is the deduction-ACCELERATION figure itself, never a
+ * tax-savings dollar (contract rule 2/3) — every item's detail says so explicitly. The caller
+ * (StrategyBoard) gates rendering on the report being present and not 'absent'-sourced — this
+ * function itself never fabricates data when the report hasn't resolved.
+ */
+export function buildCostSegTier(report: TaxStrategyReport): Tier {
+  const placeholder = report.basisDataSource === 'placeholder';
+  const ranked = [...report.costSeg].sort(
+    (a, b) => (b.firstYearAccelerationOxfordShare ?? -1) - (a.firstYearAccelerationOxfordShare ?? -1),
+  );
+  return {
+    key: 'costseg',
+    title: 'Depreciation & Cost-Seg',
+    tone: 'accent',
+    items: ranked.map((o, i) => costSegTierItem(o, i + 1, placeholder)),
+  };
 }

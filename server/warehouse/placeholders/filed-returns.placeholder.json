@@ -1,0 +1,8 @@
+{
+  "_note": "PLACEHOLDER filed-return METADATA only. Return contents NEVER enter this system (cut-list C2 confidentiality boundary — permanent). Real future data = metadata + SharePoint link-out only.",
+  "rows": [
+    { "id": "PLR-2024-A", "taxYear": 2024, "entity": "PLACEHOLDER — Entity A LLC", "preparer": "PLACEHOLDER CPA", "status": "filed", "storageNote": "Contents in SharePoint — metadata only by design" },
+    { "id": "PLR-2024-B", "taxYear": 2024, "entity": "PLACEHOLDER — Entity B LLC", "preparer": "PLACEHOLDER CPA", "status": "extended", "storageNote": "Contents in SharePoint — metadata only by design" },
+    { "id": "PLR-2025-A", "taxYear": 2025, "entity": "PLACEHOLDER — Entity A LLC", "preparer": "PLACEHOLDER CPA", "status": "filed", "storageNote": "Contents in SharePoint — metadata only by design" }
+  ]
+}
