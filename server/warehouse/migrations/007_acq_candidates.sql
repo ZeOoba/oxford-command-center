@@ -6,7 +6,7 @@
 -- Source of a candidate: county-parcel-screen workbook batch OR Notion pipeline pull.
 CREATE TABLE IF NOT EXISTS acq_candidates (
   id              TEXT    PRIMARY KEY,          -- stable slug: 'parcel:<state>:<county>:<apn>' OR 'deal:<notion-id>'
-  source          TEXT    NOT NULL,             -- 'parcel-screen' | 'notion-pipeline' | 'manual'
+  source          TEXT    NOT NULL,             -- 'parcel-screen' | 'notion-pipeline' | 'hubspot-pipeline' | 'manual'
   source_batch_id TEXT    REFERENCES acq_source_batches(id),  -- links to acq_source_batches.id
   address         TEXT,
   county          TEXT,

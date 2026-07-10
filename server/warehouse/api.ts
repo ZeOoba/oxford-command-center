@@ -25,6 +25,7 @@ import { applyGovernorProxy } from './acq-governor-proxy';
 import { GOVERNOR_DEFAULTS } from './governors';
 import { ingestParcelScreenBatch } from './acq-ingest';
 import { syncNotionPipeline } from './acq-notion-sync';
+import { syncHubSpotPipeline } from './acq-hubspot-sync';
 import type { WarehouseDb } from './db';
 import { addMappingOverride, approveImport, rejectImport, resolveIssue } from './actions';
 import { getImportDetail, listImports, listIssues, noiMatrix } from './queries';
@@ -895,6 +896,24 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
         return c.json(result, 200);
       } catch {
         return c.json({ error: 'notion sync failed' }, 502);
+      }
+    }),
+  );
+
+  // POST /acq/sync/hubspot — pull the HubSpot "Acquisitions" pipeline (885606973) and upsert
+  // into acq_candidates. Requires HUBSPOT_TOKEN env var (never committed). Returns
+  // { inserted, updated, errors[] }. Read-only from HubSpot; writes only Spine-C acq_candidates.
+  // First-page failure → 502. Second, independent feed alongside /acq/sync/notion — the two
+  // never collide (namespaced ids: 'deal:hubspot:<id>' vs 'deal:<notionPageId>').
+  app.post('/acq/sync/hubspot', (c) =>
+    withDb(async (db) => {
+      const token = process.env['HUBSPOT_TOKEN'];
+      if (!token) return c.json({ error: 'HUBSPOT_TOKEN not configured' }, 400);
+      try {
+        const result = await syncHubSpotPipeline(db, token);
+        return c.json(result, 200);
+      } catch {
+        return c.json({ error: 'hubspot sync failed' }, 502);
       }
     }),
   );

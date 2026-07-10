@@ -25,3 +25,11 @@ WAREHOUSE_DB=./data/warehouse/finance.sqlite
 # Do NOT copy real secrets into a per-worktree .env that could be committed.
 # ANTHROPIC_API_KEY=
 # FRED_API_KEY=
+
+# Notion Acq Pipeline sync (server/warehouse/acq-notion-sync.ts, POST /acq/sync/notion).
+# Notion internal integration token with read access to the Acquisition Pipeline Tracker DB.
+# NOTION_TOKEN=
+
+# HubSpot Acquisitions pipeline sync (server/warehouse/acq-hubspot-sync.ts, POST /acq/sync/hubspot).
+# HubSpot Private App access token with the crm.objects.deals.read scope.
+# HUBSPOT_TOKEN=
