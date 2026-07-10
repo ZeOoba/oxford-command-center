@@ -24,7 +24,7 @@ Full doctrine + swap procedures: `docs/placeholder-data.md`.
   table, and every report carries a `DataSource` discriminator (`'warehouse'` | `'placeholder'` |
   `'absent'`) that gates the new `PlaceholderBanner` primitive.
 - **Insurance loss analytics (P4c).** New `src/contracts/insurance-loss.ts` +
-  `server/warehouse/insurance-loss.ts` engine (EAL, deductible/retention review, portfolio
+  `server/warehouse/insurance-loss-analysis.ts` engine (EAL, deductible/retention review, portfolio
   self-insure split, re-bid pipeline) + `GET /api/warehouse/insurance/loss` + Insurance UI
   Self-Insure & Bids tab and SavingsBoard Optimize Coverage tier.
 - **Tax strategy (C2).** New `src/contracts/tax-strategy.ts` + tax-strategy engine (cost-seg
