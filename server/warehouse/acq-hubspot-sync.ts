@@ -11,7 +11,13 @@
 //   First-page network/auth failure → throws (route returns 502).
 //   Per-deal extraction/write error → pushed to errors[], sync continues.
 // NO OUTER TRANSACTION: intentional — per-deal autocommit gives partial-success tolerance.
-// STATUS NO-CLOBBER: UPDATE never downgrades a locally-advanced `acquired` or `passed` back to `active`.
+// STATUS NO-CLOBBER: UPDATE never downgrades a locally-advanced `acquired` or `passed` back to
+//   `active`. This protects a human decision recorded via PATCH /acq/candidates/:id/status from
+//   being silently reverted by a resync -- accepted deliberately, same tradeoff as the Notion sync.
+//   Adversarial review (2026-07-10) flagged that this also means a genuine HubSpot-side correction
+//   (a fat-fingered "Closed Won" reopened back to active in HubSpot) can never flow through once
+//   synced -- if that scenario needs to be supported, it requires an explicit manual status PATCH
+//   in this app, not a silent auto-reconcile from either source feed.
 // NAMESPACE: id = 'deal:hubspot:<hubspotDealId>' — visibly distinct from Notion's 'deal:<notionPageId>'
 //   so the two external systems can never collide on primary key. Cross-system reconciliation
 //   (e.g. the same physical property listed in both Notion and HubSpot) is explicitly out of
@@ -69,9 +75,17 @@ const HUBSPOT_STAGE_STATUS: Record<string, 'active' | 'acquired' | 'passed'> = {
   '1331037323': 'passed',   // Closed Lost
 };
 
-function mapDealStage(stage: string | null | undefined): 'active' | 'acquired' | 'passed' {
-  if (!stage) return 'active';
-  return HUBSPOT_STAGE_STATUS[stage] ?? 'active';
+// Adversarial review (2026-07-10) finding: HubSpot pipelines are user-editable, so a NEW
+// terminal stage (e.g. a "lost-reason"/dead stage) gets a fresh numeric id this map has never
+// seen. Falling through to 'active' silently marked a dead deal as a live candidate forever, with
+// no observability -- a real regression vs. acq-notion-sync.ts's mapStatus(), which pattern-matches
+// human-readable label substrings and so stays resilient to a newly-named Notion stage. Returns
+// both the mapped status AND whether the code was recognized, so callers can surface an unmapped
+// code as an anomaly instead of silently trusting the safe-looking default.
+function mapDealStage(stage: string | null | undefined): { status: 'active' | 'acquired' | 'passed'; recognized: boolean } {
+  if (!stage) return { status: 'active', recognized: true };
+  const mapped = HUBSPOT_STAGE_STATUS[stage];
+  return mapped === undefined ? { status: 'active', recognized: false } : { status: mapped, recognized: true };
 }
 
 /** Test/preflight noise guard — simple prefix match, case-sensitive. */
@@ -94,6 +108,12 @@ async function searchHubSpotDeals(
   const body: Record<string, unknown> = {
     filterGroups: [{ filters: [{ propertyName: 'pipeline', operator: 'EQ', value: pipelineId }] }],
     properties: ['dealname', 'dealstage', 'pipeline', 'createdate', 'hs_lastmodifieddate'],
+    // Adversarial review (2026-07-10) finding: without a stable sort, HubSpot's `after`
+    // pagination is a plain numeric OFFSET (not a snapshot cursor like Notion's start_cursor),
+    // so a deal modified mid-drain can slide across a page boundary and be returned twice (or
+    // dropped) across a multi-page sync. Sorting on the immutable hs_object_id makes pagination
+    // stable regardless of concurrent edits.
+    sorts: [{ propertyName: 'hs_object_id', direction: 'ASCENDING' }],
     limit: 100,
   };
   if (after !== undefined) body['after'] = after;
@@ -127,12 +147,20 @@ export async function syncHubSpotPipeline(
 
   // Drain all HubSpot deal pages (pagination). First-page failure throws (callers → 502).
   let after: string | undefined;
-  const allDeals: HubSpotDeal[] = [];
+  const allDealsRaw: HubSpotDeal[] = [];
   do {
     const response = await searchHubSpotDeals(fetchImpl, hubspotToken, pipelineId, after);
-    allDeals.push(...response.results);
+    allDealsRaw.push(...response.results);
     after = response.paging?.next?.after;
   } while (after !== undefined);
+
+  // Adversarial review (2026-07-10) finding: even with a stable sort (above), dedupe defensively
+  // by id before upserting -- a deal appearing twice in one drain previously took BOTH the INSERT
+  // and UPDATE branch for the same physical deal, over-counting inserted+updated in the returned
+  // telemetry, and (worse) resolved status/address from whichever occurrence happened to land
+  // last -- a non-deterministic merge for the exact same input set, permuted. Map-dedup (last
+  // occurrence wins) makes each distinct deal id processed exactly once.
+  const allDeals = [...new Map(allDealsRaw.map((d) => [d.id, d])).values()];
 
   // Upsert each deal. Per-deal errors → errors[], continue (no outer transaction).
   for (const deal of allDeals) {
@@ -147,7 +175,12 @@ export async function syncHubSpotPipeline(
 
       const hubspotDealId = deal.id;
       const candidateId = `deal:hubspot:${hubspotDealId}`;
-      const status = mapDealStage(props.dealstage);
+      const { status, recognized } = mapDealStage(props.dealstage);
+      if (!recognized) {
+        result.errors.push(
+          `deal ${hubspotDealId}: unrecognized dealstage '${props.dealstage}' -- defaulted to 'active'; add it to HUBSPOT_STAGE_STATUS`,
+        );
+      }
 
       const existing = db.prepare(
         'SELECT id FROM acq_candidates WHERE id = ?',

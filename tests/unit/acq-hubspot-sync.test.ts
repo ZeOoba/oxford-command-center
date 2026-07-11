@@ -157,7 +157,7 @@ describe('syncHubSpotPipeline — dealstage → status mapping', () => {
     expect(row?.status).toBe('passed');
   });
 
-  it('missing/unknown dealstage defaults to active', async () => {
+  it('missing dealstage (null) defaults to active', async () => {
     const db = freshDb();
     await syncHubSpotPipeline(db, 'tok', {
       fetchImpl: mockFetch([makeDeal({ id: 'unknown-1', dealname: 'No Stage' })]),
@@ -165,6 +165,64 @@ describe('syncHubSpotPipeline — dealstage → status mapping', () => {
     const row = db.prepare('SELECT status FROM acq_candidates WHERE id = ?')
       .get('deal:hubspot:unknown-1') as { status: string } | undefined;
     expect(row?.status).toBe('active');
+  });
+
+  // Adversarial review (2026-07-10): the test above only exercised the null-dealstage branch,
+  // never the true "unrecognized non-null code" fallback -- a distinct code path (mapDealStage's
+  // `HUBSPOT_STAGE_STATUS[stage] ?? 'active'`) that a green suite previously gave false confidence
+  // was covered. HubSpot pipelines are user-editable; a newly-added terminal stage would silently
+  // default to 'active' with zero observability. Fixed to surface the gap in result.errors[].
+  it('unrecognized non-null dealstage code defaults to active AND is surfaced in errors[]', async () => {
+    const db = freshDb();
+    const result = await syncHubSpotPipeline(db, 'tok', {
+      fetchImpl: mockFetch([makeDeal({ id: 'future-1', dealname: 'New Stage Deal', dealstage: '9999999999' })]),
+    });
+    const row = db.prepare('SELECT status FROM acq_candidates WHERE id = ?')
+      .get('deal:hubspot:future-1') as { status: string } | undefined;
+    expect(row?.status).toBe('active');
+    expect(result.errors.some((e) => e.includes('future-1') && e.includes('9999999999'))).toBe(true);
+  });
+});
+
+describe('syncHubSpotPipeline — cross-page duplicate deal (order-independence)', () => {
+  // Adversarial review (2026-07-10): without a stable sort + dedup, HubSpot's offset-based
+  // pagination could return the same deal on two pages, and the old code processed it twice --
+  // INSERT then UPDATE -- resolving status (absorbing CASE, first-terminal-write-wins) and address
+  // (unconditional overwrite, last-write-wins) from DIFFERENT occurrences of the SAME duplicated
+  // deal. That made the persisted output depend on drain/page order for the identical input set.
+  // Fixed via Map-dedup (last occurrence wins) before the upsert loop.
+  it('a deal id returned twice across pages resolves consistently regardless of order (dedup, not order-dependent)', async () => {
+    const db1 = freshDb();
+    const wonThenLost = mockFetchPaginated(
+      [makeDeal({ id: 'dup-1', dealname: 'A', dealstage: '1331037322' })],  // page 1: Closed Won
+      [makeDeal({ id: 'dup-1', dealname: 'B', dealstage: '1331037323' })],  // page 2 (same id): Closed Lost
+    );
+    const r1 = await syncHubSpotPipeline(db1, 'tok', { fetchImpl: wonThenLost });
+    const row1 = db1.prepare('SELECT status, address FROM acq_candidates WHERE id = ?')
+      .get('deal:hubspot:dup-1') as { status: string; address: string } | undefined;
+
+    const db2 = freshDb();
+    const lostThenWon = mockFetchPaginated(
+      [makeDeal({ id: 'dup-1', dealname: 'B', dealstage: '1331037323' })],  // page 1: Closed Lost
+      [makeDeal({ id: 'dup-1', dealname: 'A', dealstage: '1331037322' })],  // page 2 (same id): Closed Won
+    );
+    const r2 = await syncHubSpotPipeline(db2, 'tok', { fetchImpl: lostThenWon });
+    const row2 = db2.prepare('SELECT status, address FROM acq_candidates WHERE id = ?')
+      .get('deal:hubspot:dup-1') as { status: string; address: string } | undefined;
+
+    // The bug being fixed was NOT "order must not matter" (dedup is legitimately last-occurrence-
+    // wins, which does depend on drain order -- HubSpot's own concurrent-edit semantics make that
+    // unavoidable) -- it was that status and address could resolve from TWO DIFFERENT occurrences
+    // of the same duplicated deal (status via the absorbing UPDATE...CASE, address via an
+    // unconditional overwrite), producing an incoherent, mismatched pair. Map-dedup fixes that by
+    // ensuring status and address always come from the SAME (last) occurrence -- a coherent pair
+    // -- in EVERY permutation, and each distinct deal is counted exactly once.
+    expect(row1?.status).toBe('passed'); // db1's last occurrence is the Closed-Lost(B) row
+    expect(row1?.address).toBe('B');     // address matches the SAME occurrence status came from
+    expect(row2?.status).toBe('acquired'); // db2's last occurrence is the Closed-Won(A) row
+    expect(row2?.address).toBe('A');       // address matches the SAME occurrence status came from
+    expect(r1.inserted + r1.updated).toBe(1); // exactly one distinct deal, never double-counted
+    expect(r2.inserted + r2.updated).toBe(1);
   });
 });
 
