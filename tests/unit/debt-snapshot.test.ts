@@ -98,14 +98,14 @@ describe('writeDebtSnapshot — direction filter', () => {
     expect(result.written).toBe(3);
     const ids = (db.prepare("SELECT id FROM debt_positions WHERE status = 'active' ORDER BY id").all() as Array<{ id: string }>).map((r) => r.id);
     expect(ids).toEqual(['loan-amortizing', 'loan-balloon-due', 'loan-io']);
+    expect(result.errors).toHaveLength(0);
   });
 
-  it('excludes additional known-terminal status text (Closed, Inactive, Terminated, Discharged)', () => {
+  it('excludes known-terminal status text confirmed safe (no active-vocabulary collision): Inactive, Retired, Discharged', () => {
     const db = freshDb();
     const loans: Loan[] = [
-      makeBorrowerLoan({ id: 'loan-closed', status: 'Closed' }),
       makeBorrowerLoan({ id: 'loan-inactive', status: 'Inactive' }),
-      makeBorrowerLoan({ id: 'loan-terminated', status: 'Terminated' }),
+      makeBorrowerLoan({ id: 'loan-retired', status: 'Retired' }),
       makeBorrowerLoan({ id: 'loan-discharged', status: 'Discharged' }),
     ];
     const result = writeDebtSnapshot(db, loans, '2026-07-10');
@@ -114,33 +114,164 @@ describe('writeDebtSnapshot — direction filter', () => {
     expect(rows).toHaveLength(0);
   });
 
-  // Adversarial review (2026-07-10) caught: parseLoans (server/workbook/parse.ts) feeds the SAME
-  // raw cell into both Loan.loanType and Loan.status, so a bare "closed" denylist term collides
-  // with "Closed-End" / "Closed End" — a standard commercial-mortgage STRUCTURE term (vs.
-  // open-end/revolving), not a payoff signal. A genuinely active closed-end loan must not be
-  // silently excluded the same way the original bug excluded every real loan.
-  it('does NOT exclude "Closed-End" / "Closed End" loan-structure text (distinct from a payoff signal)', () => {
+  // Adversarial review round 1 (2026-07-10) caught: a bare "closed" denylist term collides with
+  // "Closed-End" / "Closed End" — a standard commercial-mortgage STRUCTURE term (vs.
+  // open-end/revolving), not a payoff signal. Round 2 then caught that the round-1 fix
+  // (a negative lookahead tolerating only one ASCII hyphen/space) still missed ORA's own
+  // em-dash/en-dash/spaced-dash house style and double-spaced variants — all now handled by
+  // normalizing dash variants + whitespace to a single space BEFORE classification, and treating
+  // "closed end" as its own KNOWN_ACTIVE_PREFIX (checked before any terminal check ever runs).
+  it('does NOT exclude "Closed-End" loan-structure text in ANY separator form (hyphen, em-dash, en-dash, spaced, double-spaced)', () => {
     const db = freshDb();
     const loans: Loan[] = [
-      makeBorrowerLoan({ id: 'loan-closed-end-hyphen', status: 'Closed-End' }),
-      makeBorrowerLoan({ id: 'loan-closed-end-space', status: 'Closed End Note' }),
+      makeBorrowerLoan({ id: 'loan-hyphen', status: 'Closed-End' }),
+      makeBorrowerLoan({ id: 'loan-space-note', status: 'Closed End Note' }),
+      makeBorrowerLoan({ id: 'loan-emdash', status: 'Closed—End' }),
+      makeBorrowerLoan({ id: 'loan-endash-spaced', status: 'Closed – End' }),
+      makeBorrowerLoan({ id: 'loan-hyphen-spaced', status: 'Closed - End' }),
+      makeBorrowerLoan({ id: 'loan-double-space', status: 'Closed  End' }),
+    ];
+    const result = writeDebtSnapshot(db, loans, '2026-07-10');
+    expect(result.written).toBe(6);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  // Round 2 also caught a bare "closed" substring colliding with "Undisclosed" (mid-word) and
+  // "Closed to Prepayment" (a live prepayment-lockout period, not a payoff). Bare "closed" is
+  // deliberately NOT a terminal token at all now (only "closed end" is recognized, as an ACTIVE
+  // prefix) — an unqualified "Closed" falls to the unrecognized bucket (kept active + flagged)
+  // rather than being guessed either way.
+  it('does NOT exclude "Undisclosed" or "Closed to Prepayment" (both real active-loan collisions found on review)', () => {
+    const db = freshDb();
+    const loans: Loan[] = [
+      makeBorrowerLoan({ id: 'loan-undisclosed', status: 'Undisclosed' }),
+      makeBorrowerLoan({ id: 'loan-prepay-lockout', status: 'Closed to Prepayment' }),
     ];
     const result = writeDebtSnapshot(db, loans, '2026-07-10');
     expect(result.written).toBe(2);
-    const ids = (db.prepare("SELECT id FROM debt_positions WHERE status = 'active' ORDER BY id").all() as Array<{ id: string }>).map((r) => r.id);
-    expect(ids).toEqual(['loan-closed-end-hyphen', 'loan-closed-end-space']);
+    // Both are genuinely ambiguous/unrecognized text -- kept active, but flagged for a human to verify.
+    expect(result.errors.some((e) => e.includes('loan-undisclosed'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('loan-prepay-lockout'))).toBe(true);
   });
 
-  // Adversarial review (2026-07-10) also caught: this codebase's own domain vocabulary
-  // (src/analytics/conditions.ts) uses the single word "Payoff" for the same concept as
-  // "Paid Off" — a two-word literal match alone would miss it and leave a dead loan active.
-  it('excludes the single-word "Payoff" alongside "Paid Off"', () => {
+  // Round 1 added a bare "payoff" alternative reasoning from this codebase's OWN vocabulary
+  // (src/analytics/conditions.ts). Round 2 proved that reasoning backwards: conditions.ts:218
+  // uses "payoff" as a FORWARD-LOOKING action on a LIVE balloon ("Prepare refinance or payoff"),
+  // not a completed state, and "Payoff Pending/Scheduled/Requested" describe loans still
+  // outstanding. Bare "payoff" is deliberately DROPPED from the terminal vocabulary; only the
+  // unambiguous completed-state phrasings ("paid off", "paid in full", "pif") signal terminal.
+  it('does NOT exclude "Payoff" or in-process payoff notes (Payoff Pending/Scheduled) — these describe a STILL-OUTSTANDING loan', () => {
     const db = freshDb();
     const loans: Loan[] = [
-      makeBorrowerLoan({ id: 'loan-payoff', status: 'Payoff' }),
+      makeBorrowerLoan({ id: 'loan-payoff-bare', status: 'Payoff' }),
+      makeBorrowerLoan({ id: 'loan-payoff-pending', status: 'Payoff Pending' }),
+      makeBorrowerLoan({ id: 'loan-payoff-scheduled', status: 'Payoff Scheduled 8/1' }),
+      makeBorrowerLoan({ id: 'loan-io-payoff-note', status: 'Interest Only; payoff at balloon Feb-27' }),
+    ];
+    const result = writeDebtSnapshot(db, loans, '2026-07-10');
+    expect(result.written).toBe(4);
+  });
+
+  it('excludes unambiguous completed-payoff phrasings: "Paid Off", "Paid-Off", "Paid in Full", "PIF"', () => {
+    const db = freshDb();
+    const loans: Loan[] = [
+      makeBorrowerLoan({ id: 'loan-paid-off-space', status: 'Paid Off' }),
+      makeBorrowerLoan({ id: 'loan-paid-off-hyphen', status: 'Paid-Off' }),
+      makeBorrowerLoan({ id: 'loan-paid-in-full', status: 'Paid in Full' }),
+      makeBorrowerLoan({ id: 'loan-pif', status: 'PIF' }),
     ];
     const result = writeDebtSnapshot(db, loans, '2026-07-10');
     expect(result.written).toBe(0);
+  });
+
+  // Round 2's HIGH-severity finding: the round-1 denylist was missing standard commercial-mortgage
+  // terminal vocabulary entirely, so a real "Refinanced" old-loan row would stay active and
+  // DOUBLE-COUNT debt against its own replacement loan (both rows on the same property summed by
+  // debt-scoring.ts). Added the full confirmed-safe set (no known active-vocabulary collision).
+  it('excludes the expanded standard commercial-mortgage terminal vocabulary (Satisfied, Released, Refinanced, Repaid, Defeased, Extinguished, Cancelled/Canceled, Assumed)', () => {
+    const db = freshDb();
+    const loans: Loan[] = [
+      makeBorrowerLoan({ id: 'loan-satisfied', status: 'Satisfied' }),
+      makeBorrowerLoan({ id: 'loan-released', status: 'Released' }),
+      makeBorrowerLoan({ id: 'loan-refinanced', status: 'Refinanced' }),
+      makeBorrowerLoan({ id: 'loan-repaid', status: 'Repaid' }),
+      makeBorrowerLoan({ id: 'loan-defeased', status: 'Defeased' }),
+      makeBorrowerLoan({ id: 'loan-extinguished', status: 'Extinguished' }),
+      makeBorrowerLoan({ id: 'loan-cancelled', status: 'Cancelled' }),
+      makeBorrowerLoan({ id: 'loan-canceled', status: 'Canceled' }),
+      makeBorrowerLoan({ id: 'loan-assumed', status: 'Assumed' }),
+    ];
+    const result = writeDebtSnapshot(db, loans, '2026-07-10');
+    expect(result.written).toBe(0);
+  });
+
+  // Round 2 found "Swap Terminated"/"Rate Cap Terminated"/"Hedge Terminated" describe a hedge
+  // instrument ending on a still-fully-active loan, not the loan itself ending — bare "terminated"
+  // is deliberately NOT a terminal token (dropped from round 1); this text now falls to the
+  // unrecognized bucket (kept active + flagged), never silently excluded.
+  it('does NOT exclude hedge-related "Terminated" notes on an otherwise-active loan (Swap/Rate Cap/Hedge Terminated)', () => {
+    const db = freshDb();
+    const loans: Loan[] = [
+      makeBorrowerLoan({ id: 'loan-swap-term', status: 'Swap Terminated' }),
+      makeBorrowerLoan({ id: 'loan-cap-term', status: 'Rate Cap Terminated' }),
+      makeBorrowerLoan({ id: 'loan-hedge-term', status: 'Hedge Terminated' }),
+    ];
+    const result = writeDebtSnapshot(db, loans, '2026-07-10');
+    expect(result.written).toBe(3);
+    expect(result.errors.some((e) => e.includes('loan-swap-term'))).toBe(true);
+  });
+
+  // Any status matching neither bucket must be kept active AND surfaced — never a silent guess
+  // in either direction (the root design fix both rounds converged on recommending).
+  it('a genuinely unrecognized status is kept active and surfaced in errors[]', () => {
+    const db = freshDb();
+    const result = writeDebtSnapshot(db, [makeBorrowerLoan({ id: 'loan-novel', status: 'Some Brand New Note Text' })], '2026-07-10');
+    expect(result.written).toBe(1);
+    expect(result.errors.some((e) => e.includes('loan-novel') && e.includes('unrecognized status'))).toBe(true);
+  });
+});
+
+describe('writeDebtSnapshot — F-collision: colliding loan ids', () => {
+  // Adversarial review (2026-07-10, determinism lens): parseLoans has no id-disambiguation for
+  // loans (unlike properties). Two distinct loans whose names normalize to the same slug share an
+  // id; the upsert's ON CONFLICT(id, snapshot_date) is last-write-wins, so without this guard one
+  // real loan silently vanishes and the surviving row's balance/LTV/maturity depend on array order
+  // — empirically demonstrated to flip between two permutations of the identical input set.
+  it('a colliding loan id is excluded from the write entirely (neither loan written), and surfaced in errors[]', () => {
+    const db = freshDb();
+    const loanA = makeBorrowerLoan({ id: 'dup-id', name: '1100 Rarig Ave', currentBalance: 4_000_000, absBalance: 4_000_000, ltv: 0.40 });
+    const loanB = makeBorrowerLoan({ id: 'dup-id', name: '1100 Rarig Ave.', currentBalance: 1_200_000, absBalance: 1_200_000, ltv: 0.62 });
+
+    const resultOrderAB = writeDebtSnapshot(db, [loanA, loanB], '2026-07-10');
+    expect(resultOrderAB.written).toBe(0);
+    expect(resultOrderAB.errors.some((e) => e.includes('dup-id') && e.includes('collides'))).toBe(true);
+    const rows = db.prepare("SELECT id FROM debt_positions WHERE id = 'dup-id'").all();
+    expect(rows).toHaveLength(0);
+
+    // Permuting order must not change the outcome -- neither permutation writes a row for the
+    // colliding id (this is the property the original bug violated: order determined the winner).
+    const db2 = freshDb();
+    const resultOrderBA = writeDebtSnapshot(db2, [loanB, loanA], '2026-07-10');
+    expect(resultOrderBA.written).toBe(0);
+  });
+
+  it('a colliding id does not clobber a PRIOR real snapshot row for that id (preserved, not superseded)', () => {
+    const db = freshDb();
+    // First snapshot: a single, unambiguous loan writes cleanly.
+    const original = makeBorrowerLoan({ id: 'was-fine', name: 'Original Loan', currentBalance: 500_000, absBalance: 500_000 });
+    writeDebtSnapshot(db, [original], '2026-06-01');
+    const before = db.prepare("SELECT current_balance FROM debt_positions WHERE id = 'was-fine' AND status = 'active'").get() as { current_balance: number } | undefined;
+    expect(before?.current_balance).toBe(500_000);
+
+    // Second snapshot: a NEW loan happens to collide on the same id -- must not supersede the
+    // prior good row, since we can't safely tell which (if either) new loan corresponds to it.
+    const collideA = makeBorrowerLoan({ id: 'was-fine', name: 'Collider A', currentBalance: 900_000, absBalance: 900_000 });
+    const collideB = makeBorrowerLoan({ id: 'was-fine', name: 'Collider B', currentBalance: 100_000, absBalance: 100_000 });
+    writeDebtSnapshot(db, [collideA, collideB], '2026-07-10');
+
+    const after = db.prepare("SELECT current_balance, status FROM debt_positions WHERE id = 'was-fine' AND snapshot_date = '2026-06-01'").get() as { current_balance: number; status: string } | undefined;
+    expect(after?.status).toBe('active'); // NOT superseded
+    expect(after?.current_balance).toBe(500_000); // untouched
   });
 });
 
