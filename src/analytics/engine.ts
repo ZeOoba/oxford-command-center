@@ -271,13 +271,25 @@ export function debtSummary(loans: Loan[]): DebtSummary {
 }
 
 // ── Compose the full bundle ─────────────────────────────────────────────────────
-export function buildAnalytics(snapshot: PortfolioSnapshot, scenario: ScenarioName = 'Base'): AnalyticsBundle {
+/**
+ * @param referenceDate Optional day-count reference (YYYY-MM-DD) for the critical-dates
+ *   calendar and insight day-counts — the Daily Brief passes its RUN date so "Nd" counts
+ *   track today rather than the frozen workbook data date (frozen-dateline defect, 2026-07).
+ *   Defaults to `s.meta.asOf` (the workbook data date) for backward compatibility with
+ *   existing callers (UI, AI tools). walt/rollover intentionally remain on `meta.asOf` —
+ *   they are coarse (years / half-year buckets) and no consumer renders them as day counts.
+ */
+export function buildAnalytics(
+  snapshot: PortfolioSnapshot,
+  scenario: ScenarioName = 'Base',
+  referenceDate?: string,
+): AnalyticsBundle {
   const s = applyScenario(snapshot, scenario);
   return {
     kpis: portfolioKpis(s, scenario),
     leaseStatus: leaseStatusBreakdown(s.leases),
     rollover: rolloverSchedule(s.leases, s.meta.asOf),
-    criticalDates: criticalDates(s.leases, s.meta.asOf),
+    criticalDates: criticalDates(s.leases, referenceDate ?? s.meta.asOf),
     revenueAtRisk: revenueAtRisk(s.leases),
     topTenants: topTenants(s.leases),
     tenantHHI: tenantHHI(s.leases),
@@ -285,6 +297,9 @@ export function buildAnalytics(snapshot: PortfolioSnapshot, scenario: ScenarioNa
     marketBySf: marketAllocation(s.properties, 'sf'),
     marketByValue: marketAllocation(s.properties, 'value'),
     debt: debtSummary(s.loans),
-    insights: evaluateConditions(s),
+    // Thread the same reference date so the bundle is internally coherent: when a caller
+    // (the brief) injects a run date, insight day-counts and criticalDates agree. Undefined
+    // → evaluateConditions defaults to s.meta.asOf (unchanged for UI/tool callers).
+    insights: evaluateConditions(s, { referenceDate }),
   };
 }

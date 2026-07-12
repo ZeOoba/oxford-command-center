@@ -10,6 +10,7 @@ import { sendEmail, type SendResult } from './send';
 import { openWarehouse } from '../warehouse/db';
 import { insuranceConditions } from '../warehouse/insurance-conditions';
 import { DAY_MS } from '../warehouse/time-constants';
+import { referenceDate } from '../config';
 // Routing canon: all automated outputs → ggoldberg only. The cc-Eric exception belongs to
 // the ora-am-brief ONLY and does not extend to this brief (Gabriel-ratified 2026-07-09).
 const ALERT_RECIPIENTS = ['ggoldberg@oxfordra.net'];
@@ -37,6 +38,12 @@ export async function runBrief(
   const now = deps.now ?? new Date();
   const send = deps.send ?? ((e: Email, to: string[]) => sendEmail(e, to));
   const state: AlertState = loadState(deps.statePath);
+  const nowEt = etNow(now);
+  // Day-count / "As of" reference = the RUN date (ET send date; REPORT_DATE-pinnable), NOT
+  // snapshot.meta.asOf — the frozen workbook data date pinned the body dateline and every
+  // "expires/matures in Nd" at 2026-06-01 (frozen-dateline defect; the 2026-07-09 incident
+  // fixed the subject only). The workbook data date still governs data-month selection in parse.
+  const refDate = referenceDate(nowEt.date);
 
   // M3: Resolve effective market rate from the macro snapshot (no live HTTP inside evaluateConditions).
   // Fail-open: if macroProvider is absent or throws, cachedMarketRate is undefined → 0.065 fallback.
@@ -50,7 +57,11 @@ export async function runBrief(
     }
   }
 
-  const insights = evaluateConditions(snapshot, { priorStages: state.dealStages, cachedMarketRate });
+  const insights = evaluateConditions(snapshot, {
+    priorStages: state.dealStages,
+    cachedMarketRate,
+    referenceDate: refDate,
+  });
 
   // ── Warehouse-backed insurance conditions (Phase 5) ───────────────────────
   // Guarded: any warehouse-open or read failure silently skips insurance alerts
@@ -64,7 +75,7 @@ export async function runBrief(
     if (existsSync(warehousePath)) {
       const wdb = openWarehouse(warehousePath);
       try {
-        const insInsights = insuranceConditions(wdb, snapshot);
+        const insInsights = insuranceConditions(wdb, snapshot, refDate);
         // Merge BEFORE criticalIds filter so insurance-expiry criticals flow into alert path.
         insights.push(...insInsights);
       } finally {
@@ -87,19 +98,18 @@ export async function runBrief(
     else failures.push(`alert ${id}: ${r.error ?? r.via}`);
   }
 
-  const nowEt = etNow(now);
   let briefSent = false;
   if (shouldSendBrief(state, nowEt)) {
-    const a = buildAnalytics(snapshot, 'Base');
+    const a = buildAnalytics(snapshot, 'Base', refDate);
     const dscrs = snapshot.properties.map((p) => p.dscr).filter((d): d is number => d !== null);
     const dealCounts = countByStage(snapshot);
-    const criticalDates = upcomingDates(snapshot, a.criticalDates);
+    const criticalDates = upcomingDates(snapshot, a.criticalDates, refDate);
 
     // Cell type has { value: number | null, prov } — no .display field.
     // Use formatters directly on .value.
     const r = await send(
       renderBrief({
-        asOf: snapshot.meta.asOf,
+        asOf: refDate,
         briefDate: nowEt.date,
         freshness: snapshot.dataQuality.length ? `${snapshot.dataQuality.length} data-quality flag(s)` : 'no data-quality flags',
         insights,
@@ -142,10 +152,13 @@ function countByStage(s: PortfolioSnapshot): { stage: string; count: number }[] 
   return [...m.entries()].map(([stage, count]) => ({ stage, count }));
 }
 
-/** Forward calendar (<=90d): lease dates + loan maturities + deal target-close dates. */
+/** Forward calendar (<=90d): lease dates + loan maturities + deal target-close dates.
+ *  `refDate` is the run-date day-count reference; loan rows keep the workbook's own
+ *  monthsToMaturity column (workbook DATA, not recomputed here). */
 function upcomingDates(
   s: PortfolioSnapshot,
   leaseDates: { date: string; daysToDate: number; kind: string; tenant: string }[],
+  refDate: string,
 ): { date: string; label: string; days: number }[] {
   const fromLeases = leaseDates
     .filter((c) => c.daysToDate >= 0 && c.daysToDate <= 90)
@@ -165,7 +178,7 @@ function upcomingDates(
       date: d.targetCloseDate as string,
       label: `Target close: ${d.shortName ?? d.name}`,
       days: Math.round(
-        (new Date(d.targetCloseDate as string).getTime() - new Date(s.meta.asOf).getTime()) / DAY_MS,
+        (new Date(d.targetCloseDate as string).getTime() - new Date(refDate).getTime()) / DAY_MS,
       ),
     }))
     .filter((x) => x.days >= 0 && x.days <= 90);

@@ -2,7 +2,10 @@ import type { Insight } from '../../src/analytics/types';
 import { fmtUsdCompact } from '../../src/analytics/format';
 
 export interface BriefInput {
-  /** Workbook data date — shown in the body header ("As of …"), never the subject. */
+  /** Reference (run) date — shown in the body header ("As of …"). Tracks the send/run date,
+   *  NOT the frozen workbook data date (frozen-dateline defect: WORKBOOK_AS_OF pinned the
+   *  body to 2026-06-01 even as day-counts went stale; decoupled 2026-07-11 — the workbook
+   *  data date now lives only in data-month selection and data-freshness stamps). */
   asOf: string;
   /** ET send date (YYYY-MM-DD) — the subject date. Subject must track the send date, not
    *  the workbook asOf (frozen-date incident 2026-07-09: WORKBOOK_AS_OF pinned every

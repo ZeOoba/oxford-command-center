@@ -156,16 +156,23 @@ export interface EvaluateOpts {
    * This field is the only acceptable mechanism for injecting a live rate. (M3)
    */
   cachedMarketRate?: number;
+  /**
+   * Day-count reference date (YYYY-MM-DD) for every "expires/matures in Nd" computation.
+   * The email brief passes its RUN date so alert day-counts track today (frozen-dateline
+   * defect, 2026-07: meta.asOf pinned every count at the workbook data date). Defaults to
+   * `s.meta.asOf` for backward compatibility with UI/tool callers.
+   */
+  referenceDate?: string;
 }
 
 /**
  * The single canonical alert engine. Pure. Replaces generateInsights + extendedInsights.
- * Date math uses the snapshot's asOf (stable across a refresh); only the workbook-stale check
- * uses wall-clock now.
+ * Date math uses opts.referenceDate when supplied (the brief's run date), else the snapshot's
+ * asOf (stable across a refresh); only the workbook-stale check uses wall-clock now.
  */
 export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}): Insight[] {
   const T = ALERT_THRESHOLDS;
-  const asOf = s.meta.asOf;
+  const asOf = opts.referenceDate ?? s.meta.asOf;
   const now = opts.now ?? Date.now();
   const out: Insight[] = [];
 

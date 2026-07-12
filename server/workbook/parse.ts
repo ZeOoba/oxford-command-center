@@ -23,7 +23,7 @@ import { SCENARIO_PRESETS } from '../../src/contracts/scenario';
 import { loadDeals } from '../sources/notion-deals';
 import { loadM365Tasks } from '../sources/m365-tasks';
 import { deriveCounterparties } from './counterparties';
-import { WORKBOOK_AS_OF } from '../config';
+import { WORKBOOK_AS_OF, referenceDate } from '../config';
 
 type Worksheet = ExcelJS.Worksheet;
 type CellValue = ExcelJS.CellValue;
@@ -223,7 +223,11 @@ function resolvePropertyId(key: string, properties: Property[]): string | null {
 // ── leases (Master Tenant Rent Roll) ──────────────────────────────────────────
 function parseLeases(ws: Worksheet, properties: Property[], flags: DataQualityFlag[]): Lease[] {
   const out: Lease[] = [];
-  const asOf = parseISO(WORKBOOK_AS_OF);
+  // Day-count reference = the RUN date (REPORT_DATE-pinnable), NOT the workbook data date:
+  // a June-pinned WORKBOOK_AS_OF froze every monthsToExpiry while the calendar advanced
+  // (frozen-dateline defect, 2026-07). WORKBOOK_AS_OF still governs data-month selection
+  // (monthCol in parseTasks below) and data-snapshot labels — do not conflate the two.
+  const asOf = parseISO(referenceDate());
   for (let r = 1; r <= ws.rowCount; r++) {
     const propertyKey = str(row(ws, r, 1));
     const tenantName = str(row(ws, r, 2));
