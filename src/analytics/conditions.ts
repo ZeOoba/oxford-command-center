@@ -611,15 +611,23 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         action: { label: 'Review policy', kind: 'review' },
         impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
-    } else if (p.daysToExpiry !== null && p.daysToExpiry >= 0 && p.daysToExpiry < T.insuranceRenewWarnDays) {
-      out.push({
-        id: `ins-${p.id}`, severity: 'warning', category: 'insurance',
-        title: `Insurance renewing soon — ${p.property}`,
-        detail: `${p.coverage ?? 'Coverage'} renews ${fmtDate(p.expires)} (${p.daysToExpiry}d).`,
-        entityType: 'insurance', entityId: p.id,
-        action: { label: 'Review policy', kind: 'review' },
-        impactAnnualUsd: null, spine: 'B', provenance: 'absent',
-      });
+    } else if (p.expires !== null) {
+      // Day-count from the policy's OWN expiry against the reference date — NOT the workbook's
+      // raw daysToExpiry column (parse.ts:446), which is frozen at the workbook data date and
+      // would render a stale positive "Nd" for an already-expired policy (frozen-dateline defect,
+      // 2026-07: e.g. "renews Jun 20 (19d)" for a policy that lapsed 21 days ago) and could
+      // contradict the warehouse ins-expiry-* insight (refDate-based) in the same brief.
+      const days = daysBetween(p.expires, asOf);
+      if (days >= 0 && days < T.insuranceRenewWarnDays) {
+        out.push({
+          id: `ins-${p.id}`, severity: 'warning', category: 'insurance',
+          title: `Insurance renewing soon — ${p.property}`,
+          detail: `${p.coverage ?? 'Coverage'} renews ${fmtDate(p.expires)} (${days}d).`,
+          entityType: 'insurance', entityId: p.id,
+          action: { label: 'Review policy', kind: 'review' },
+          impactAnnualUsd: null, spine: 'B', provenance: 'absent',
+        });
+      }
     }
   }
 

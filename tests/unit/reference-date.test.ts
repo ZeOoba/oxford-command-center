@@ -16,10 +16,11 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, afterEach } from 'vitest';
-import type { PortfolioSnapshot, Lease } from '../../src/contracts/index';
+import type { PortfolioSnapshot, Lease, InsurancePolicy } from '../../src/contracts/index';
 import { WORKBOOK_AS_OF, referenceDate } from '../../server/config';
 import { parseWorkbook } from '../../server/workbook/parse';
 import { buildAnalytics } from '../../src/analytics/engine';
+import { evaluateConditions } from '../../src/analytics/conditions';
 import { runBrief } from '../../server/brief/run';
 
 // ── env hygiene: never leak REPORT_DATE / WAREHOUSE_DB into other tests ─────────────────────────
@@ -216,5 +217,88 @@ describe('runBrief — body "As of" and day-counts track the run date, not the w
     expect(brief.html).toContain('Expiration: Fixture Co');
     expect(brief.html).toContain('(10d)');
     expect(brief.html).not.toContain('(45d)');
+  });
+});
+
+// ── Finding A: Spine-A insurance-renewing insight day-count off referenceDate, not the
+//    frozen workbook daysToExpiry column ─────────────────────────────────────────────────────────
+function policy(p: Partial<InsurancePolicy>): InsurancePolicy {
+  return {
+    id: 'ins-fixture', property: 'Fixture Property', entity: null, coverage: 'Property',
+    effective: null, expires: null, policyNo: null, carrier: 'Fixture Carrier', premium: 0,
+    daysToExpiry: null, status: 'Renewing Soon', notes: null, flags: [],
+    tiv: null, deductible: null, coverageLimit: null, ...p,
+  };
+}
+
+describe('evaluateConditions — Spine-A insurance renewal day-count tracks referenceDate', () => {
+  it('does NOT emit a stale positive "Nd" for a policy that already expired before the reference date', () => {
+    // Bug repro: the workbook daysToExpiry column still reads +19 (frozen at the June data date),
+    // but the policy expired 2026-06-20 — 21 days BEFORE the 2026-07-11 reference date. The old
+    // code rendered "renews Jun 20, 2026 (19d)"; the fixed code computes daysBetween(expires, ref)
+    // = -21 → not >= 0 → no "renewing soon" insight at all.
+    const s = snap({ insurance: [policy({ id: 'ins-stale', expires: '2026-06-20', daysToExpiry: 19, status: 'Renewing Soon' })] });
+    const out = evaluateConditions(s, { referenceDate: '2026-07-11' });
+    const ins = out.find((i) => i.id === 'ins-ins-stale');
+    expect(ins).toBeUndefined();
+  });
+
+  it('renders the run-date-relative "Nd" for a future policy, not the frozen daysToExpiry column', () => {
+    // Policy expires 2026-07-21 = 10 days after the 2026-07-11 reference date. The frozen column
+    // says 50; the fixed insight must render (10d).
+    const s = snap({ insurance: [policy({ id: 'ins-future', expires: '2026-07-21', daysToExpiry: 50, status: 'Renewing Soon' })] });
+    const out = evaluateConditions(s, { referenceDate: '2026-07-11' });
+    const ins = out.find((i) => i.id === 'ins-ins-future');
+    expect(ins).toBeDefined();
+    expect(ins!.detail).toContain('(10d)');
+    expect(ins!.detail).not.toContain('(50d)');
+  });
+
+  it('an already-Expired policy still surfaces the lapsed-critical insight (unchanged path)', () => {
+    // Guard: the fix touches only the "renewing soon" branch. A status='Expired' policy must
+    // still produce its ins-lapsed critical regardless of the day-count.
+    const s = snap({ insurance: [policy({ id: 'ins-exp', expires: '2026-06-20', daysToExpiry: 19, status: 'Expired' })] });
+    const out = evaluateConditions(s, { referenceDate: '2026-07-11' });
+    expect(out.some((i) => i.id === 'ins-lapsed-ins-exp')).toBe(true);
+    expect(out.some((i) => i.id === 'ins-ins-exp')).toBe(false);
+  });
+});
+
+// ── Finding B: parseWorkbook accepts an explicit (ET) reference date for monthsToExpiry ──────────
+describe('parseWorkbook — explicit referenceDateIso drives monthsToExpiry (ET-consistency)', () => {
+  it('computes monthsToExpiry from the passed reference date, across a month boundary', async () => {
+    // Month-boundary evening case: at ~8pm ET on 2026-07-31 the process UTC date has already
+    // rolled to 2026-08-01. leaseEnd is 2027-01-01 (from writeFixtureWorkbook) and
+    // differenceInCalendarMonths ignores day-of-month, so the ET date (Jul) and the UTC date
+    // (Aug) yield DIFFERENT counts — the brief must use the ET date it supplies.
+    const dir = mkdtempSync(join(tmpdir(), 'refdate-parse-et-'));
+    const file = join(dir, 'fixture-et.xlsx');
+    // monthCol columns are irrelevant here; reuse the same builder with equal cols (no task assert).
+    await writeFixtureWorkbook(file, 12, 12);
+
+    delete process.env.REPORT_DATE; // prove the passed arg wins over the (unset-env) default path
+
+    const { snapshot: etSnap } = await parseWorkbook(file, '2026-07-31'); // ET evening
+    expect(etSnap.leases).toHaveLength(1);
+    expect(etSnap.leases[0]!.monthsToExpiry).toBe(6); // Jul 2026 → Jan 2027
+
+    const { snapshot: utcSnap } = await parseWorkbook(file, '2026-08-01'); // rolled UTC date
+    expect(utcSnap.leases[0]!.monthsToExpiry).toBe(5); // Aug 2026 → Jan 2027 — one fewer
+
+    // Contrast: pinning REPORT_DATE to yet another date must NOT change the count — proving the
+    // explicit arg, not the env, is what parseWorkbook used above.
+    process.env.REPORT_DATE = '2026-06-01';
+    const { snapshot: stillEt } = await parseWorkbook(file, '2026-07-31');
+    expect(stillEt.leases[0]!.monthsToExpiry).toBe(6); // explicit arg still wins over env
+  });
+
+  it('falls back to referenceDate() (REPORT_DATE / UTC) when no explicit date is passed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'refdate-parse-def-'));
+    const file = join(dir, 'fixture-def.xlsx');
+    await writeFixtureWorkbook(file, 12, 12);
+
+    process.env.REPORT_DATE = '2026-07-01'; // leaseEnd 2027-01-01 → 6 months
+    const { snapshot } = await parseWorkbook(file);
+    expect(snapshot.leases[0]!.monthsToExpiry).toBe(6);
   });
 });
