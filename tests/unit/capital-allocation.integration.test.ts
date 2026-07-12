@@ -20,11 +20,14 @@ import { seedPropertyMaster } from '../../server/warehouse/property-master';
 import { buildCapitalAllocationReport } from '../../server/warehouse/capital-allocation';
 
 // buildCapitalAllocationReport now derives lease-expiry buckets off the RUN date (referenceDate(),
-// portfolio-wide run-date basis, 2026-07-12). Pin it to this suite's fixture data date (2026-06-22)
-// so the near-term-expiry fixture (leaseEnd 2026-09-30) classifies deterministically regardless of
-// the wall-clock date the suite runs on — without this pin the I-6 assertion would flip once the
-// real date passes 2026-09-30. Production still uses the true run date.
-const PINNED_REPORT_DATE = '2026-06-22';
+// portfolio-wide run-date basis). Pin REPORT_DATE to a fixed date DELIBERATELY ≠ the fixture's
+// meta.asOf (2026-06-22) so these route-level tests LOCK the run-date wiring: with refDate ===
+// meta.asOf a silent revert of the cap-alloc refDate plumbing back to meta.asOf would still pass.
+// 2026-08-22 is two months after the data date, so the I-6 "expired-since-run-date" lease (leaseEnd
+// 2026-07-15) is excluded from nearTermExpiryRent under the run date but WOULD be counted under
+// meta.asOf — making the === 50_000 assertion fail on a revert. Fixed date → deterministic across
+// wall-clock dates; production still uses the true run date.
+const PINNED_REPORT_DATE = '2026-08-22';
 let priorReportDate: string | undefined;
 beforeAll(() => { priorReportDate = process.env.REPORT_DATE; process.env.REPORT_DATE = PINNED_REPORT_DATE; });
 afterAll(() => { if (priorReportDate === undefined) delete process.env.REPORT_DATE; else process.env.REPORT_DATE = priorReportDate; });
@@ -282,12 +285,39 @@ describe('buildCapitalAllocationReport — real engine integration (no mocks)', 
           annualRent: 100_000,  // 100%-basis rent
           monthlyRent: 100_000 / 12,
           sf: 12_000,
-          monthsToExpiry: 3,    // ≤12m — '0-6m' bucket
+          monthsToExpiry: 3,    // ≤12m — '0-6m' bucket (leaseEnd 2026-09-30 > run date 2026-08-22)
           leaseEnd: '2026-09-30',
           leaseStart: '2022-09-30',
           status: 'Active' as const,
           company: 'Fractional Tenant LLC',
           tenantName: 'Fractional Tenant LLC',
+          monthToMonth: false,
+          leaseType: 'NNN' as const,
+          escalation: null,
+          escalationPct: null,
+          escalationFlat: null,
+          options: [],
+          flags: [],
+        } as unknown as PortfolioSnapshot['leases'][number],
+        {
+          // RUN-DATE LOCK: this lease ENDED 2026-07-15 — after the fixture data date (meta.asOf
+          // 2026-06-22) but BEFORE the pinned run date (2026-08-22). Under the run-date basis it is
+          // 'expired' → EXCLUDED from nearTermExpiryRent, so the total stays 50_000. If the route's
+          // refDate plumbing were reverted to meta.asOf, this lease would classify '0-6m' and add
+          // 40_000 × 0.50 = 20_000 → nearTermExpiryRent 70_000, failing the assertion below.
+          // monthsToExpiry 0 is the workbook calendar-month-truncation value for a same-/past-month
+          // end; only the date comparison (leaseEnd < asOf) distinguishes run-date from meta.asOf.
+          id: 'L-H2-2-EXPIRED-SINCE-RUNDATE',
+          propertyId: '9050-red-branch-rd-columbia-md',
+          annualRent: 40_000,
+          monthlyRent: 40_000 / 12,
+          sf: 5_000,
+          monthsToExpiry: 0,
+          leaseEnd: '2026-07-15',
+          leaseStart: '2021-07-15',
+          status: 'Active' as const,
+          company: 'Lapsed Tenant LLC',
+          tenantName: 'Lapsed Tenant LLC',
           monthToMonth: false,
           leaseType: 'NNN' as const,
           escalation: null,
@@ -304,8 +334,10 @@ describe('buildCapitalAllocationReport — real engine integration (no mocks)', 
     expect(report.entries).toHaveLength(1);
     const entry = report.entries[0]!;
 
-    // Core assertion: nearTermExpiryRent must be Oxford-share (50_000), not 100%-basis (100_000).
-    // Before fix → 100_000 (FAIL). After fix → 50_000 (PASS).
+    // Core assertion (doubles as the RUN-DATE WIRING LOCK): nearTermExpiryRent must be Oxford-share
+    // 50_000 — the L-H2-1 lease (100_000 × 0.50), NOT 100%-basis (100_000), and NOT 70_000. Reaching
+    // exactly 50_000 REQUIRES the route to classify L-H2-2 (ended 2026-07-15) as expired against the
+    // RUN date (2026-08-22); a revert to meta.asOf (2026-06-22) would count it and yield 70_000.
     expect(entry.nearTermExpiryRent).toBe(50_000);
 
     // Secondary: with correct Oxford-share basis, leasingRisk = (50_000 / 95_000) * 100 ≈ 52.6.

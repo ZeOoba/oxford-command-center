@@ -36,11 +36,15 @@ const mockGetSnapshot = vi.mocked(brain.getSnapshot);
 const ASOF = '2026-06-21';
 
 // The routes now derive expiry buckets / renewal signals / rent-forecast horizons off the RUN
-// date (referenceDate(), portfolio-wide run-date basis). Pin it to the fixture data date so bucket
-// classification and horizon math stay deterministic across wall-clock dates. Production uses the
-// real run date; the response `asOf` label remains meta.asOf (data-snapshot date) either way.
+// date (referenceDate(), portfolio-wide run-date basis). Pin REPORT_DATE to a fixed date
+// DELIBERATELY ≠ the fixture's meta.asOf (ASOF, 2026-06-21) so these route-level tests LOCK the
+// run-date wiring: with refDate === meta.asOf a silent revert of the route's refDate plumbing back
+// to meta.asOf would still pass. 2026-08-21 is two months after the data date; the run-date lock
+// test below relies on that gap. Fixed date → deterministic; production uses the true run date, and
+// the response `asOf` label stays on meta.asOf (data-snapshot date) either way.
+const RUN_DATE = '2026-08-21';
 let priorReportDate: string | undefined;
-beforeAll(() => { priorReportDate = process.env.REPORT_DATE; process.env.REPORT_DATE = ASOF; });
+beforeAll(() => { priorReportDate = process.env.REPORT_DATE; process.env.REPORT_DATE = RUN_DATE; });
 afterAll(() => { if (priorReportDate === undefined) delete process.env.REPORT_DATE; else process.env.REPORT_DATE = priorReportDate; });
 
 function snap(over: Partial<PortfolioSnapshot> = {}): PortfolioSnapshot {
@@ -148,6 +152,37 @@ describe('GET /forecast', () => {
     const res = await app.request('/forecast');
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: 'lease forecast failed' });
+  });
+
+  it('RUN-DATE WIRING LOCK: buckets a lease that ended AFTER meta.asOf but BEFORE the run date as expired (run-date basis), while the response asOf label stays on meta.asOf', async () => {
+    // leaseEnd 2026-07-15 sits between meta.asOf (ASOF 2026-06-21) and the pinned run date
+    // (RUN_DATE 2026-08-21). monthsToExpiry 0 is the workbook calendar-truncation value; only the
+    // date comparison distinguishes the two bases:
+    //   • run-date basis (2026-08-21): leaseEnd < run date → 'expired'
+    //   • meta.asOf basis (2026-06-21): leaseEnd > asOf, mte 0 → '0-6m'
+    // So a revert of the route's refDate plumbing to meta.asOf would move this lease from
+    // 'expired' → '0-6m' and fail the assertions below.
+    mockGetSnapshot.mockReturnValue(
+      snap({ leases: [mkLease({ id: 'lapsed', leaseEnd: '2026-07-15', monthsToExpiry: 0, annualRent: 24_000, status: 'Active' })] }),
+    );
+    const app = makeApp(freshDb());
+    const res = await app.request('/forecast');
+    expect(res.status).toBe(200);
+    const parsed = LeaseForecastResponse.safeParse(await res.json());
+    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+    if (parsed.success) {
+      const byBucket = Object.fromEntries(parsed.data.bucketTotals.map((b) => [b.bucket, b]));
+      // Run-date classification: the lapsed lease lands in 'expired', NOT '0-6m'.
+      expect(byBucket.expired!.count).toBe(1);
+      expect(byBucket.expired!.expiringRent).toBe(24_000);
+      expect(byBucket['0-6m']!.count).toBe(0);
+      // The renewal signal agrees (run-date basis): lease end passed → lapsing, expiryBucket expired.
+      expect(parsed.data.signals[0]!.expiryBucket).toBe('expired');
+      expect(parsed.data.signals[0]!.likelihood).toBe('lapsing');
+      // Label/day-count SPLIT: the response asOf label remains the workbook data date (meta.asOf),
+      // even though the buckets above were classified against the run date.
+      expect(parsed.data.asOf).toBe(ASOF);
+    }
   });
 });
 
