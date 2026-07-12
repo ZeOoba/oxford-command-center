@@ -4,6 +4,9 @@ import { portfolioCriticalDates, criticalDateKpis } from '../../src/brain/critic
 import { ALERT_THRESHOLDS } from '@analytics/index';
 
 const ASOF = '2026-06-04';
+// portfolioCriticalDates anchors on `now`, not meta.asOf (see time-constants.ts todayEastern) —
+// pin `now` to noon ET on the same date the fixture's day-count comments assume.
+const NOW = new Date('2026-06-04T12:00:00-04:00').getTime();
 
 // Minimal snapshot — only the fields the aggregator reads. Cast through unknown.
 const snap = {
@@ -32,7 +35,7 @@ const snap = {
 
 describe('portfolioCriticalDates', () => {
   it('aggregates all four event types within a 12-month horizon, dropping far/past-only items', () => {
-    const events = portfolioCriticalDates(snap, 12);
+    const events = portfolioCriticalDates(snap, 12, NOW);
     const ids = events.map((e) => e.id);
     expect(ids).toContain('lease-expiry-L1');
     expect(ids).toContain('lease-expiry-L2'); // overdue holdover kept
@@ -45,7 +48,7 @@ describe('portfolioCriticalDates', () => {
   });
 
   it('sorts by date ascending and tags a YYYY-MM month key', () => {
-    const events = portfolioCriticalDates(snap, 12);
+    const events = portfolioCriticalDates(snap, 12, NOW);
     for (let i = 1; i < events.length; i++) {
       expect(events[i]!.daysToDate).toBeGreaterThanOrEqual(events[i - 1]!.daysToDate);
     }
@@ -57,7 +60,7 @@ describe('portfolioCriticalDates', () => {
   });
 
   it('honors a tighter horizon (90 days ≈ 3 months)', () => {
-    const events = portfolioCriticalDates(snap, 3);
+    const events = portfolioCriticalDates(snap, 3, NOW);
     const ids = events.map((e) => e.id);
     expect(ids).toContain('lease-expiry-L1'); // 50d in
     expect(ids).not.toContain('escalation-L3'); // ~100d out — beyond 3mo
@@ -65,7 +68,7 @@ describe('portfolioCriticalDates', () => {
   });
 
   it('computes urgency tiers from daysToDate', () => {
-    const events = portfolioCriticalDates(snap, 12);
+    const events = portfolioCriticalDates(snap, 12, NOW);
     expect(events.find((e) => e.id === 'lease-expiry-L1')!.urgency).toBe('critical'); // 50d < 60
     expect(events.find((e) => e.id === 'lease-expiry-L2')!.urgency).toBe('critical'); // overdue < 60
     expect(events.find((e) => e.id === 'escalation-L3')!.urgency).toBe('warning'); // ~100d in [60,180)
@@ -74,7 +77,7 @@ describe('portfolioCriticalDates', () => {
 
 describe('criticalDateKpis', () => {
   it('counts critical (<60d incl. overdue), warning (60–180d), this-quarter (<90d), and next-12mo total', () => {
-    const events = portfolioCriticalDates(snap, 12);
+    const events = portfolioCriticalDates(snap, 12, NOW);
     const k = criticalDateKpis(events);
     // critical: L1(50), L2(-30 overdue), INS1(40), INS2(-10 overdue) = 4
     expect(k.critical).toBe(4);

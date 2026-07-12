@@ -36,6 +36,7 @@ import {
   type RentScenario,
 } from '../../src/contracts/lease-forecast';
 import { composeLeaseNarrative } from '../ai/narrative';
+import { todayEastern } from './time-constants';
 
 // ── Snapshot access ────────────────────────────────────────────────────────────
 
@@ -90,7 +91,9 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
           });
         }
 
-        const asOf = snapshot.meta.asOf;
+        // NEVER snapshot.meta.asOf here — a frozen workbook-label constant that does not
+        // track the calendar (see server/config.ts WORKBOOK_AS_OF).
+        const asOf = todayEastern();
         const leases = snapshot.leases;
         const arrears = snapshot.tenantArrears ?? {};
         const marketRents = (snapshot as typeof snapshot & { marketRents?: Record<string, number> }).marketRents ?? {};
@@ -172,7 +175,9 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
       const scenarios = Array.isArray(body.scenarios) ? body.scenarios : ALL_SCENARIOS;
       const horizonMonths = body.horizonMonths ?? 12;
       const vacancyPct = body.vacancyPct ?? 0;
-      const asOf = snapshot.meta.asOf;
+      // NEVER snapshot.meta.asOf here — a frozen workbook-label constant that does not
+      // track the calendar (see server/config.ts WORKBOOK_AS_OF).
+      const asOf = todayEastern();
       const leases = snapshot.leases;
       const marketRents = (snapshot as typeof snapshot & { marketRents?: Record<string, number> }).marketRents ?? {};
 
@@ -210,7 +215,9 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
         });
       }
 
-      const asOf = snapshot.meta.asOf;
+      // NEVER snapshot.meta.asOf here — a frozen workbook-label constant that does not
+      // track the calendar (see server/config.ts WORKBOOK_AS_OF).
+      const asOf = todayEastern();
       const leases = snapshot.leases;
       const marketRents = (snapshot as typeof snapshot & { marketRents?: Record<string, number> }).marketRents ?? {};
       const arrears = snapshot.tenantArrears ?? {};

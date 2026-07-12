@@ -3,6 +3,9 @@ import type { PortfolioSnapshot } from '../../src/contracts/index';
 import { tenantSlug, tenantScorecards } from '../../src/brain/tenants';
 
 const ASOF = '2026-06-04';
+// tenantScorecards anchors on `now`, not meta.asOf (see time-constants.ts todayEastern) — pin
+// `now` to noon ET on the same date the fixture's day-count comments assume.
+const NOW = new Date('2026-06-04T12:00:00-04:00').getTime();
 // Property P1: NOI 100k, two tenants (Acme 70k rent linked, Beta 30k rent linked) → fully linked.
 // Property P2: NOI 40k, one tenant (Gamma 40k rent linked).
 // Acme also has an UNLINKED lease (propertyId null) of 50k rent → fallback allocation.
@@ -30,7 +33,7 @@ describe('tenantSlug', () => {
 });
 
 describe('tenantScorecards', () => {
-  const cards = tenantScorecards(snap);
+  const cards = tenantScorecards(snap, NOW);
   const acme = cards.find((c) => c.id === 'acme-llc')!;
   const beta = cards.find((c) => c.id === 'beta-inc')!;
   const gamma = cards.find((c) => c.id === 'gamma-co')!;

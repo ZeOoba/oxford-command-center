@@ -28,6 +28,9 @@ function addDays(isoDate: string, days: number): string {
 }
 
 const AS_OF = '2026-06-20';
+// insuranceConditions anchors on `now`, not meta.asOf (see time-constants.ts todayEastern) —
+// pin `now` to noon ET on AS_OF, the same date every fixture's addDays() offset assumes.
+const NOW = new Date(`${AS_OF}T12:00:00-04:00`).getTime();
 
 /** Minimal PortfolioSnapshot for insurance-conditions tests. */
 function makeSnap(propertyIds: string[]): PortfolioSnapshot {
@@ -129,7 +132,7 @@ describe('insuranceConditions', () => {
       premiumAnnual: 8000,
     });
 
-    const insights = insuranceConditions(db, snap);
+    const insights = insuranceConditions(db, snap, NOW);
 
     expect(insights).toHaveLength(1);
     const ins = insights[0]!;
@@ -153,7 +156,7 @@ describe('insuranceConditions', () => {
       premiumAnnual: 5000,
     });
 
-    const insights = insuranceConditions(db, snap);
+    const insights = insuranceConditions(db, snap, NOW);
     const expiry = insights.filter((i) => i.id.startsWith('ins-expiry-'));
     expect(expiry).toHaveLength(0);
   });
@@ -168,7 +171,7 @@ describe('insuranceConditions', () => {
       premiumAnnual: 12000,
     });
 
-    const insights = insuranceConditions(db, snap);
+    const insights = insuranceConditions(db, snap, NOW);
     const expiry = insights.filter((i) => i.id.startsWith('ins-expiry-'));
     expect(expiry).toHaveLength(1);
     expect(expiry[0]!.severity).toBe('critical');
@@ -188,7 +191,7 @@ describe('insuranceConditions', () => {
       premiumAnnual: null,
     });
 
-    const insights = insuranceConditions(db, snap);
+    const insights = insuranceConditions(db, snap, NOW);
     const expiry = insights.filter((i) => i.id.startsWith('ins-expiry-'));
     expect(expiry).toHaveLength(1);
     expect(expiry[0]!.impactAnnualUsd).toBeNull();
@@ -206,7 +209,7 @@ describe('insuranceConditions', () => {
     });
     // prop-no-policy has no row at all
 
-    const insights = insuranceConditions(db, snap);
+    const insights = insuranceConditions(db, snap, NOW);
 
     const gaps = insights.filter((i) => i.id.startsWith('ins-gap-'));
     expect(gaps).toHaveLength(1);
@@ -229,7 +232,7 @@ describe('insuranceConditions', () => {
       premiumAnnual: 3000,
     });
 
-    const insights = insuranceConditions(db, snap);
+    const insights = insuranceConditions(db, snap, NOW);
     const gaps = insights.filter((i) => i.id.startsWith('ins-gap-'));
     expect(gaps).toHaveLength(0);
   });
@@ -242,8 +245,8 @@ describe('insuranceConditions', () => {
     insertPolicy(db, { propertyId: 'prop-y', expirationDate: addDays(AS_OF, 120), premiumAnnual: 4000 });
     // prop-z has no policy → gap
 
-    const first = insuranceConditions(db, snap);
-    const second = insuranceConditions(db, snap);
+    const first = insuranceConditions(db, snap, NOW);
+    const second = insuranceConditions(db, snap, NOW);
     expect(first).toEqual(second);
   });
 
@@ -251,12 +254,12 @@ describe('insuranceConditions', () => {
 
   it('returns [] when the table is empty and snapshot has no properties', () => {
     const snap = makeSnap([]);
-    expect(insuranceConditions(db, snap)).toEqual([]);
+    expect(insuranceConditions(db, snap, NOW)).toEqual([]);
   });
 
   it('returns only gap insights when table is empty but snapshot has properties', () => {
     const snap = makeSnap(['p1', 'p2']);
-    const insights = insuranceConditions(db, snap);
+    const insights = insuranceConditions(db, snap, NOW);
     expect(insights.every((i) => i.id.startsWith('ins-gap-'))).toBe(true);
     expect(insights).toHaveLength(2);
   });
@@ -271,7 +274,7 @@ describe('insuranceConditions', () => {
       premiumAnnual: 6000,
     });
 
-    const insights = insuranceConditions(db, snap);
+    const insights = insuranceConditions(db, snap, NOW);
     // Should have a gap insight (the expired policy's property_id IS in the table,
     // so no gap) and no expiry insight.
     const expiry = insights.filter((i) => i.id.startsWith('ins-expiry-'));
@@ -288,7 +291,7 @@ describe('insuranceConditions', () => {
       premiumAnnual: null, // DB stores NULL
     });
 
-    const insights = insuranceConditions(db, snap);
+    const insights = insuranceConditions(db, snap, NOW);
     const expiry = insights.filter((i) => i.id.startsWith('ins-expiry-'));
     expect(expiry[0]!.impactAnnualUsd).toBeNull();
   });
@@ -315,7 +318,7 @@ describe('insuranceConditions', () => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run('prop-multi', 'Insurer B', 'POL-002', addDays(AS_OF, -180), addDays(AS_OF, 45), 8000, null, 'property', 'test', AS_OF, 'test');
 
-    const insights = insuranceConditions(db, snap);
+    const insights = insuranceConditions(db, snap, NOW);
     const expiry = insights.filter((i) => i.id.startsWith('ins-expiry-'));
     // Exactly one insight per property, not one per row.
     expect(expiry).toHaveLength(1);

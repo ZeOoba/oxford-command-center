@@ -27,6 +27,9 @@ describe('RenewalStage contract', () => {
 });
 
 const ASOF = '2026-06-04';
+// renewalBoard anchors on `now`, not meta.asOf (see time-constants.ts todayEastern) — pin
+// `now` to noon ET on the same date the fixture's day-count comments assume.
+const NOW = new Date('2026-06-04T12:00:00-04:00').getTime();
 const snap = {
   meta: { asOf: ASOF },
   renewalStages: { L4: 'Negotiating' as const },
@@ -50,7 +53,7 @@ describe('renewalBoard', () => {
   });
 
   it('selects in-window leases (incl. overdue holdovers) and any lease carrying a stage', () => {
-    const board = renewalBoard(snap);
+    const board = renewalBoard(snap, NOW);
     const all = Object.values(board).flat().map((c) => c.leaseId);
     expect(all).toContain('L1');
     expect(all).toContain('L2');
@@ -60,14 +63,14 @@ describe('renewalBoard', () => {
   });
 
   it('defaults unstaged in-window leases to the Expiring column and honors explicit stages', () => {
-    const board = renewalBoard(snap);
+    const board = renewalBoard(snap, NOW);
     expect(board.Expiring.map((c) => c.leaseId).sort()).toEqual(['L1', 'L2']);
     expect(board.Negotiating.map((c) => c.leaseId)).toEqual(['L4']);
     expect(board.Outreach).toEqual([]);
   });
 
   it('orders each column by urgency (soonest/overdue first) and carries daysToExpiry', () => {
-    const board = renewalBoard(snap);
+    const board = renewalBoard(snap, NOW);
     // L2 overdue (-20) sorts before L1 (60)
     expect(board.Expiring.map((c) => c.leaseId)).toEqual(['L2', 'L1']);
     expect(board.Expiring[0]!.daysToExpiry).toBeLessThan(0);

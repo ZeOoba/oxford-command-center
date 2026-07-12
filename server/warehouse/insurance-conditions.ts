@@ -32,7 +32,7 @@
 import type { WarehouseDb } from './db';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import type { Insight } from '../../src/analytics/types';
-import { DAY_MS } from './time-constants';
+import { DAY_MS, todayEastern } from './time-constants';
 // BOUNDARY: policies expiring within this window (inclusive) → critical alert.
 const EXPIRY_ALERT_DAYS = 60;
 
@@ -76,15 +76,19 @@ interface ExpiryCandidate {
  * Evaluate warehouse-sourced insurance alert conditions against a snapshot.
  *
  * @param db       Open WarehouseDb (caller owns lifecycle).
- * @param snapshot PortfolioSnapshot (Spine A) — only snapshot.properties[] and
- *                 snapshot.meta.asOf are consumed; no Spine-A insurance data used.
+ * @param snapshot PortfolioSnapshot (Spine A) — only snapshot.properties[] is consumed;
+ *                 no Spine-A insurance data used.
+ * @param now      ms epoch, defaults to Date.now(), injectable in tests. Anchors the
+ *                 expiry day-count — NEVER snapshot.meta.asOf, a frozen workbook-label
+ *                 constant that does not track the calendar (see server/config.ts).
  * @returns        Insight[] sorted by id (lexicographic) for deterministic output.
  */
 export function insuranceConditions(
   db: WarehouseDb,
   snapshot: PortfolioSnapshot,
+  now: number = Date.now(),
 ): Insight[] {
-  const asOf = snapshot.meta.asOf;
+  const asOf = todayEastern(now);
 
   // Read all policy rows (light: only three columns needed).
   const rows = db

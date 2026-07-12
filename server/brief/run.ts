@@ -9,7 +9,7 @@ import { renderBrief, renderAlert, type Email } from './render';
 import { sendEmail, type SendResult } from './send';
 import { openWarehouse } from '../warehouse/db';
 import { insuranceConditions } from '../warehouse/insurance-conditions';
-import { DAY_MS } from '../warehouse/time-constants';
+import { DAY_MS, todayEastern } from '../warehouse/time-constants';
 // Routing canon: all automated outputs → ggoldberg only. The cc-Eric exception belongs to
 // the ora-am-brief ONLY and does not extend to this brief (Gabriel-ratified 2026-07-09).
 const ALERT_RECIPIENTS = ['ggoldberg@oxfordra.net'];
@@ -50,7 +50,7 @@ export async function runBrief(
     }
   }
 
-  const insights = evaluateConditions(snapshot, { priorStages: state.dealStages, cachedMarketRate });
+  const insights = evaluateConditions(snapshot, { now: now.getTime(), priorStages: state.dealStages, cachedMarketRate });
 
   // ── Warehouse-backed insurance conditions (Phase 5) ───────────────────────
   // Guarded: any warehouse-open or read failure silently skips insurance alerts
@@ -64,7 +64,7 @@ export async function runBrief(
     if (existsSync(warehousePath)) {
       const wdb = openWarehouse(warehousePath);
       try {
-        const insInsights = insuranceConditions(wdb, snapshot);
+        const insInsights = insuranceConditions(wdb, snapshot, now.getTime());
         // Merge BEFORE criticalIds filter so insurance-expiry criticals flow into alert path.
         insights.push(...insInsights);
       } finally {
@@ -90,10 +90,10 @@ export async function runBrief(
   const nowEt = etNow(now);
   let briefSent = false;
   if (shouldSendBrief(state, nowEt)) {
-    const a = buildAnalytics(snapshot, 'Base');
+    const a = buildAnalytics(snapshot, 'Base', now.getTime());
     const dscrs = snapshot.properties.map((p) => p.dscr).filter((d): d is number => d !== null);
     const dealCounts = countByStage(snapshot);
-    const criticalDates = upcomingDates(snapshot, a.criticalDates);
+    const criticalDates = upcomingDates(snapshot, a.criticalDates, now.getTime());
 
     // Cell type has { value: number | null, prov } — no .display field.
     // Use formatters directly on .value.
@@ -142,11 +142,15 @@ function countByStage(s: PortfolioSnapshot): { stage: string; count: number }[] 
   return [...m.entries()].map(([stage, count]) => ({ stage, count }));
 }
 
-/** Forward calendar (<=90d): lease dates + loan maturities + deal target-close dates. */
+/** Forward calendar (<=90d): lease dates + loan maturities + deal target-close dates. `now`
+ * (ms epoch, defaults to Date.now()) anchors the deal-close day-count — NEVER s.meta.asOf, a
+ * frozen workbook-label constant that does not track the calendar. */
 function upcomingDates(
   s: PortfolioSnapshot,
   leaseDates: { date: string; daysToDate: number; kind: string; tenant: string }[],
+  now: number = Date.now(),
 ): { date: string; label: string; days: number }[] {
+  const asOf = todayEastern(now);
   const fromLeases = leaseDates
     .filter((c) => c.daysToDate >= 0 && c.daysToDate <= 90)
     .map((c) => ({ date: c.date, label: `${c.kind}: ${c.tenant}`, days: c.daysToDate }));
@@ -165,7 +169,7 @@ function upcomingDates(
       date: d.targetCloseDate as string,
       label: `Target close: ${d.shortName ?? d.name}`,
       days: Math.round(
-        (new Date(d.targetCloseDate as string).getTime() - new Date(s.meta.asOf).getTime()) / DAY_MS,
+        (new Date(d.targetCloseDate as string).getTime() - new Date(asOf).getTime()) / DAY_MS,
       ),
     }))
     .filter((x) => x.days >= 0 && x.days <= 90);

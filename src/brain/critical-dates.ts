@@ -1,6 +1,6 @@
 import type { PortfolioSnapshot } from '../contracts/index';
 import { ALERT_THRESHOLDS } from '@analytics/index';
-import { DAY_MS } from '../../server/warehouse/time-constants';
+import { DAY_MS, todayEastern } from '../../server/warehouse/time-constants';
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
   Math.round((new Date(isoTarget).getTime() - new Date(isoFrom).getTime()) / DAY_MS);
 
@@ -34,9 +34,12 @@ function urgencyOf(daysToDate: number): CalendarUrgency {
  * Folds lease expirations + escalations, loan maturities, and insurance renewals into one
  * date-sorted stream. Overdue items (expired leases/policies — i.e. open obligations) are kept;
  * future events beyond the horizon and past-only escalations are dropped.
+ *
+ * `now` (ms epoch, defaults to Date.now(), injectable in tests) anchors every day-count — NEVER
+ * s.meta.asOf, a frozen workbook-label constant that does not track the calendar.
  */
-export function portfolioCriticalDates(s: PortfolioSnapshot, horizonMonths = 12): DatedEvent[] {
-  const asOf = s.meta.asOf;
+export function portfolioCriticalDates(s: PortfolioSnapshot, horizonMonths = 12, now: number = Date.now()): DatedEvent[] {
+  const asOf = todayEastern(now);
   const horizonDays = Math.round(horizonMonths * 30.4375);
   const within = (days: number) => days <= horizonDays;
   const out: DatedEvent[] = [];

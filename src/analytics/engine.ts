@@ -9,6 +9,7 @@ import {
   type Confidence,
 } from '@contracts/index';
 import { evaluateConditions } from './conditions';
+import { todayEastern } from '../../server/warehouse/time-constants';
 import type {
   AnalyticsBundle,
   CriticalDate,
@@ -60,7 +61,13 @@ export function applyScenario(s: PortfolioSnapshot, scenario: ScenarioName): Por
 }
 
 // ── Portfolio KPIs ────────────────────────────────────────────────────────────
-export function portfolioKpis(s: PortfolioSnapshot, scenario: ScenarioName = 'Base'): PortfolioKpis {
+/** `asOf` (defaults to real today, injectable in tests) anchors WALT's remaining-term math —
+ * NEVER s.meta.asOf, a frozen workbook-label constant that does not track the calendar. */
+export function portfolioKpis(
+  s: PortfolioSnapshot,
+  scenario: ScenarioName = 'Base',
+  asOf: string = todayEastern(),
+): PortfolioKpis {
   const p = s.properties;
   // Under a non-Base scenario, workbook figures are modeled — mark them derived.
   const sourced: Confidence = scenario === 'Base' ? 'confirmed' : 'derived';
@@ -85,7 +92,7 @@ export function portfolioKpis(s: PortfolioSnapshot, scenario: ScenarioName = 'Ba
     tenantCount: cell(tenants, 'Property NOI · Σ tenants', 'confirmed'),
     totalDebt: cell(debt, 'Property NOI · Σ loan balance', 'confirmed'),
     totalCash: cell(s.cash.totalCash, 'Cash Balances · total', 'confirmed'),
-    walt: cell(walt(s.leases, s.meta.asOf), DERIVED, 'derived', {
+    walt: cell(walt(s.leases, asOf), DERIVED, 'derived', {
       formula: 'rent-weighted remaining term, active leases',
     }),
   };
@@ -271,13 +278,20 @@ export function debtSummary(loans: Loan[]): DebtSummary {
 }
 
 // ── Compose the full bundle ─────────────────────────────────────────────────────
-export function buildAnalytics(snapshot: PortfolioSnapshot, scenario: ScenarioName = 'Base'): AnalyticsBundle {
+/** `now` (ms epoch, defaults to Date.now(), injectable in tests) anchors every day-count below —
+ * NEVER snapshot.meta.asOf, a frozen workbook-label constant that does not track the calendar. */
+export function buildAnalytics(
+  snapshot: PortfolioSnapshot,
+  scenario: ScenarioName = 'Base',
+  now: number = Date.now(),
+): AnalyticsBundle {
   const s = applyScenario(snapshot, scenario);
+  const asOf = todayEastern(now);
   return {
-    kpis: portfolioKpis(s, scenario),
+    kpis: portfolioKpis(s, scenario, asOf),
     leaseStatus: leaseStatusBreakdown(s.leases),
-    rollover: rolloverSchedule(s.leases, s.meta.asOf),
-    criticalDates: criticalDates(s.leases, s.meta.asOf),
+    rollover: rolloverSchedule(s.leases, asOf),
+    criticalDates: criticalDates(s.leases, asOf),
     revenueAtRisk: revenueAtRisk(s.leases),
     topTenants: topTenants(s.leases),
     tenantHHI: tenantHHI(s.leases),
@@ -285,6 +299,6 @@ export function buildAnalytics(snapshot: PortfolioSnapshot, scenario: ScenarioNa
     marketBySf: marketAllocation(s.properties, 'sf'),
     marketByValue: marketAllocation(s.properties, 'value'),
     debt: debtSummary(s.loans),
-    insights: evaluateConditions(s),
+    insights: evaluateConditions(s, { now }),
   };
 }

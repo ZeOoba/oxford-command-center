@@ -1,6 +1,6 @@
 import type { PortfolioSnapshot } from '../contracts/index';
 import { RENEWAL_STAGES, type RenewalStage } from '../contracts/renewal';
-import { DAY_MS } from '../../server/warehouse/time-constants';
+import { DAY_MS, todayEastern } from '../../server/warehouse/time-constants';
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
   Math.round((new Date(isoTarget).getTime() - new Date(isoFrom).getTime()) / DAY_MS);
 
@@ -24,9 +24,12 @@ export type RenewalBoard = Record<RenewalStage, RenewalCard[]>;
  * Group the "needs action now" lease set into the renewal kanban. A lease appears when it is
  * expiring within RENEWAL_WINDOW_DAYS (including overdue holdovers — still an open item) or when
  * it already carries an explicit renewal stage in the overlay. Vacant units are excluded.
+ *
+ * `now` (ms epoch, defaults to Date.now(), injectable in tests) anchors every day-count — NEVER
+ * s.meta.asOf, a frozen workbook-label constant that does not track the calendar.
  */
-export function renewalBoard(s: PortfolioSnapshot): RenewalBoard {
-  const asOf = s.meta.asOf;
+export function renewalBoard(s: PortfolioSnapshot, now: number = Date.now()): RenewalBoard {
+  const asOf = todayEastern(now);
   const stages = s.renewalStages;
   const board: RenewalBoard = { Expiring: [], Outreach: [], Negotiating: [], LOI: [], Executed: [] };
 

@@ -56,6 +56,7 @@ import { scoreDebtPositions } from './debt-scoring';
 import { clamp } from './clamp';
 import { loadCapitalConfig } from './capital-config';
 import { loadGovernors } from './governors';
+import { todayEastern } from './time-constants';
 import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast';
 import { classifyCapRateBand, benchmarkKey } from '../../src/contracts/market-intelligence';
 import type { CapRateBenchmark, MarketBenchmarkSet } from '../../src/contracts/market-intelligence';
@@ -864,13 +865,17 @@ function getBalloonMonthsByProperty(db: WarehouseDb): Map<string, number | null>
  *
  * @param db - Warehouse DB connection (Spine B — used ONLY for scores + debt queries)
  * @param snapshot - Current Spine A portfolio snapshot (source for NOI, SF, leases)
+ * @param now - ms epoch, defaults to Date.now(), injectable in tests. Anchors renewalSignals'
+ *   and bucketExpiry's day-count math (which feeds leasingRisk → priorityScore) — NEVER
+ *   snapshot.meta.asOf, a frozen workbook-label constant that does not track the calendar.
  * @returns CapitalAllocationReport sorted DESC by priorityScore
  */
 export async function buildCapitalAllocationReport(
   db: WarehouseDb,
   snapshot: PortfolioSnapshot,
+  now: number = Date.now(),
 ): Promise<CapitalAllocationReport> {
-  const asOf = snapshot.meta.asOf;
+  const asOf = todayEastern(now);
 
   const [macroRes, benchRes, regionalRes] = await Promise.allSettled([
     getMacro(),

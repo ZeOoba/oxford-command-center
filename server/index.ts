@@ -107,9 +107,13 @@ brain.on('snapshot', (info: unknown) => {
   try {
     const snapshot = brain.getSnapshot();
     if (snapshot) {
+      // Uses generatedAt (the per-refresh ISO timestamp) as the source date — NOT meta.asOf,
+      // which is the static WORKBOOK_AS_OF constant (see occupancy.ts:169-171 for this trap).
+      // This sibling call was missed when the occupancy/debt-snapshot calls below were fixed —
+      // every refresh was overwriting the same '2026-06-01' row instead of accumulating history.
       captureInsurance(
         getWarehouse(),
-        snapshotPoliciesToWarehouse(snapshot.insurance, snapshot.meta.asOf),
+        snapshotPoliciesToWarehouse(snapshot.insurance, snapshot.meta.generatedAt.slice(0, 10)),
       );
     }
   } catch (err) {

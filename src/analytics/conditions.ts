@@ -4,7 +4,7 @@ import type { Insight, InsightSeverity } from './types';
 import { tenantScorecards } from '@/brain/tenants';
 import { coerceNonNegMoney } from '@/lib/money';
 import { renewalSignals, marketRentGaps, bucketExpiry } from './lease-forecast';
-import { DAY_MS } from '../../server/warehouse/time-constants';
+import { DAY_MS, todayEastern } from '../../server/warehouse/time-constants';
 const HOUR_MS = 3_600_000;
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
   Math.round((new Date(isoTarget).getTime() - new Date(isoFrom).getTime()) / DAY_MS);
@@ -159,14 +159,16 @@ export interface EvaluateOpts {
 }
 
 /**
- * The single canonical alert engine. Pure. Replaces generateInsights + extendedInsights.
- * Date math uses the snapshot's asOf (stable across a refresh); only the workbook-stale check
- * uses wall-clock now.
+ * The single canonical alert engine. Pure (given `opts.now`). Replaces generateInsights +
+ * extendedInsights. Date math uses `opts.now` (defaults to Date.now(), injectable in tests) —
+ * NEVER the snapshot's meta.asOf, which is a frozen workbook-label constant (WORKBOOK_AS_OF) that
+ * does not advance with the calendar (see server/config.ts). Using it for day-count math was a
+ * confirmed bug: every lease/balloon/deal countdown silently drifted from the actual current date.
  */
 export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}): Insight[] {
   const T = ALERT_THRESHOLDS;
-  const asOf = s.meta.asOf;
   const now = opts.now ?? Date.now();
+  const asOf = todayEastern(now);
   const out: Insight[] = [];
 
   // M3: Resolve the effective market rate for the refi-spread signal.
@@ -581,7 +583,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   }
 
   // ── Revenue concentration (tenant > 15% of portfolio NOI) ───────────────────
-  for (const t of tenantScorecards(s)) {
+  for (const t of tenantScorecards(s, now)) {
     if (t.pctNoi > T.tenantNoiConcentrationInfo) {
       out.push({
         id: `concentration-${t.id}`, severity: 'info', category: 'concentration',

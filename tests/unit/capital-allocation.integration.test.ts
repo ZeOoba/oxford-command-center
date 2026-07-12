@@ -289,7 +289,12 @@ describe('buildCapitalAllocationReport — real engine integration (no mocks)', 
       ],
     };
 
-    const report = await buildCapitalAllocationReport(db, snapshot);
+    // buildCapitalAllocationReport anchors on `now`, not meta.asOf (see time-constants.ts
+    // todayEastern) — pin `now` to noon ET on the fixture's asOf date. Without this, the lease's
+    // fixed leaseEnd (2026-09-30) would fall out of the '0-6m'/'6-12m' bucket and this assertion
+    // would flip once real-today passes 2026-09-30.
+    const now = new Date('2026-06-22T12:00:00-04:00').getTime();
+    const report = await buildCapitalAllocationReport(db, snapshot, now);
 
     expect(report.entries).toHaveLength(1);
     const entry = report.entries[0]!;

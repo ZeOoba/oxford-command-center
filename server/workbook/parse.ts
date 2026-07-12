@@ -223,7 +223,10 @@ function resolvePropertyId(key: string, properties: Property[]): string | null {
 // ── leases (Master Tenant Rent Roll) ──────────────────────────────────────────
 function parseLeases(ws: Worksheet, properties: Property[], flags: DataQualityFlag[]): Lease[] {
   const out: Lease[] = [];
-  const asOf = parseISO(WORKBOOK_AS_OF);
+  // monthsToExpiry anchors on the actual parse-time date, NOT WORKBOOK_AS_OF (a frozen
+  // workbook-label constant, see config.ts) — that would bake a permanently-stale month-count
+  // into every lease, exactly the trap documented in occupancy.ts.
+  const asOf = new Date();
   for (let r = 1; r <= ws.rowCount; r++) {
     const propertyKey = str(row(ws, r, 1));
     const tenantName = str(row(ws, r, 2));

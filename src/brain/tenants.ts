@@ -1,7 +1,7 @@
 import type { PortfolioSnapshot, Lease } from '../contracts/index';
 import { RENEWAL_STAGES, type RenewalStage } from '../contracts/renewal';
 import { slug } from '../contracts/common';
-import { DAY_MS } from '../../server/warehouse/time-constants';
+import { DAY_MS, todayEastern } from '../../server/warehouse/time-constants';
 
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
   Math.round((new Date(isoTarget).getTime() - new Date(isoFrom).getTime()) / DAY_MS);
@@ -46,8 +46,11 @@ interface Accum {
   leases: Lease[];
 }
 
-/** Roll leases up per tenant with a pro-rata NOI allocation. */
-export function tenantScorecards(s: PortfolioSnapshot): TenantScorecard[] {
+/** Roll leases up per tenant with a pro-rata NOI allocation. `now` (ms epoch, defaults to
+ * Date.now(), injectable in tests) anchors daysToExpiry — NEVER s.meta.asOf, a frozen
+ * workbook-label constant that does not track the calendar. */
+export function tenantScorecards(s: PortfolioSnapshot, now: number = Date.now()): TenantScorecard[] {
+  const asOf = todayEastern(now);
   const portfolioNoi = sum(s.properties.map((p) => p.noi));
   const totalRent = sum(s.leases.map((l) => l.annualRent));
   const margin = totalRent > 0 ? portfolioNoi / totalRent : 0; // NOI per $ rent (fallback weight)
@@ -108,7 +111,7 @@ export function tenantScorecards(s: PortfolioSnapshot): TenantScorecard[] {
     annualRent: a.annualRent,
     pctNoi: totalAllocNoi > 0 ? a.allocNoi / totalAllocNoi : 0,
     nextExpiry: a.nextExpiry,
-    daysToExpiry: a.nextExpiry ? daysBetween(a.nextExpiry, s.meta.asOf) : null,
+    daysToExpiry: a.nextExpiry ? daysBetween(a.nextExpiry, asOf) : null,
     renewalStage: a.stageRank >= 0 ? RENEWAL_STAGES[a.stageRank]! : null,
     health: null,
     notes: s.tenantNotes[a.id] ?? '',
