@@ -291,6 +291,19 @@ describe('evaluateConditions — concentration, insurance, cash', () => {
     const out = evaluateConditions(snap({ insurance: [policy({ daysToExpiry: 20, expires: iso(20) })] }), opts);
     expect(out.find((i) => i.id === 'ins-i1')?.severity).toBe('warning');
   });
+  // F6 (adversarial refute-financial-change finding, 2026-07-12) — expires and daysToExpiry are
+  // independently-parsed workbook columns (parse.ts col 6 vs col 10); a row can have a populated
+  // daysToExpiry with a blank/unparseable Expires cell. The F3 fix re-gated the whole renewing/
+  // lapsed tail behind `p.expires !== null`, silently dropping the warning this exact fixture used
+  // to fire pre-F3. Fall back to the workbook's own daysToExpiry column when there's no expires
+  // date to compute a live day-count from.
+  it('F6: policy renewing within 30d per the workbook daysToExpiry column still warns when expires is null', () => {
+    const out = evaluateConditions(snap({ insurance: [policy({ daysToExpiry: 20, expires: null })] }), opts);
+    const ins = out.find((i) => i.id === 'ins-i1');
+    expect(ins).toBeDefined();
+    expect(ins!.severity).toBe('warning');
+    expect(ins!.detail).toContain('20d');
+  });
   it('cash concentration > 30% is a warning', () => {
     const out = evaluateConditions(snap({ cash: { asOf: ASOF, totalCash: 100, activeEntities: 2, largestEntity: 'E1', concentrationTopPct: 0.31, cagr: null, entities: [], history: [] } }), opts);
     expect(out.find((i) => i.id === 'cash-concentration')?.severity).toBe('warning');

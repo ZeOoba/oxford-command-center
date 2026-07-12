@@ -647,6 +647,21 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
           impactAnnualUsd: null, spine: 'B', provenance: 'absent',
         });
       }
+    } else if (p.daysToExpiry !== null && p.daysToExpiry >= 0 && p.daysToExpiry < T.insuranceRenewWarnDays) {
+      // F6 (adversarial refute-financial-change finding): expires and daysToExpiry are
+      // independently-parsed workbook columns (parse.ts col 6 vs col 10) — a row can carry a
+      // populated daysToExpiry with a blank/unparseable Expires cell, which the `p.expires !==
+      // null` branch above cannot compute a live day-count from. Without this fallback, such a
+      // row silently produced NO alert at all, even though the pre-F3 code warned on it. No live
+      // date to check against, so this stays on the workbook's own (frozen) count — say so.
+      out.push({
+        id: `ins-${p.id}`, severity: 'warning', category: 'insurance',
+        title: `Insurance renewing soon — ${p.property}`,
+        detail: `${p.coverage ?? 'Coverage'} renews in ${p.daysToExpiry}d (workbook estimate — no expiry date on file).`,
+        entityType: 'insurance', entityId: p.id,
+        action: { label: 'Review policy', kind: 'review' },
+        impactAnnualUsd: null, spine: 'B', provenance: 'absent',
+      });
     }
   }
 
