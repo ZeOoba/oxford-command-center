@@ -245,6 +245,22 @@ describe('evaluateConditions — Spine-A insurance renewal day-count tracks refe
     expect(ins).toBeUndefined();
   });
 
+  it('F3: fires a critical lapsed-coverage insight when the run date shows a policy expired but the workbook status has not caught up', () => {
+    // Same repro as the prior test (policy lapsed 2026-06-20, workbook status still "Renewing
+    // Soon", reference date 2026-07-11 → 21 days past expiry) — but this asserts the POSITIVE
+    // side: silence is not correct here, a coverage lapse must surface SOMEWHERE. Before the F3
+    // fix this policy produced no insight at all (the "renewing soon" branch correctly declined
+    // per the test above, but nothing else picked it up — status-based ins-lapsed-* only fires
+    // for a workbook status of Expired/Cancelled, which a laggy workbook may not have caught up
+    // to yet).
+    const s = snap({ insurance: [policy({ id: 'ins-stale', expires: '2026-06-20', daysToExpiry: 19, status: 'Renewing Soon' })] });
+    const out = evaluateConditions(s, { referenceDate: '2026-07-11' });
+    const lapsed = out.find((i) => i.entityId === 'ins-stale' && i.severity === 'critical');
+    expect(lapsed).toBeDefined();
+    expect(lapsed!.detail).toContain('21d');
+    expect(lapsed!.detail).toContain('Renewing Soon'); // surfaces the stale workbook status, don't hide the discrepancy
+  });
+
   it('renders the run-date-relative "Nd" for a future policy, not the frozen daysToExpiry column', () => {
     // Policy expires 2026-07-21 = 10 days after the 2026-07-11 reference date. The frozen column
     // says 50; the fixed insight must render (10d).

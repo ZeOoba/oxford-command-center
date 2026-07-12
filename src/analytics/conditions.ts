@@ -622,7 +622,22 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       // 2026-07: e.g. "renews Jun 20 (19d)" for a policy that lapsed 21 days ago) and could
       // contradict the warehouse ins-expiry-* insight (refDate-based) in the same brief.
       const days = daysBetween(p.expires, asOf);
-      if (days >= 0 && days < T.insuranceRenewWarnDays) {
+      if (days < 0) {
+        // F3: the ONLY other lapsed path (above) requires the workbook's own status column to
+        // already read Expired/Cancelled — a manually-maintained field that can lag well behind
+        // the actual expiry date. Without this branch, a policy that lapsed between the workbook
+        // data date and the run date produced NO alert anywhere (the warehouse ins-expiry-*
+        // condition also deliberately excludes days < 0 — that's Spine-A's job). Surface the
+        // discrepancy explicitly rather than silently trusting the stale status text.
+        out.push({
+          id: `ins-lapsed-live-${p.id}`, severity: 'critical', category: 'insurance',
+          title: `Policy lapsed — ${p.property}`,
+          detail: `${p.coverage ?? 'Coverage'} expired ${fmtDate(p.expires)} (${-days}d ago) — workbook status still reads "${p.status}". Confirm replacement coverage is bound.`,
+          metric: fmtUsdCompact(p.premium), entityType: 'insurance', entityId: p.id,
+          action: { label: 'Review policy', kind: 'review' },
+          impactAnnualUsd: null, spine: 'B', provenance: 'derived',
+        });
+      } else if (days < T.insuranceRenewWarnDays) {
         out.push({
           id: `ins-${p.id}`, severity: 'warning', category: 'insurance',
           title: `Insurance renewing soon — ${p.property}`,
