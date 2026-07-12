@@ -20,6 +20,7 @@ import {
   HurdleRateConfig,
 } from '../../src/contracts/capital';
 import { verdictsFromAllocations, logVerdicts, computeInputsVersion } from './calibration';
+import { todayEastern } from './time-constants';
 
 // ── Cluster enumeration ──────────────────────────────────────────────────────────────────────
 
@@ -59,7 +60,10 @@ export function capitalAllocationApi(getDb: () => WarehouseDb): Hono {
   // GET /allocate
   app.get('/allocate', (c) => withDb(async (db) => {
     try {
-      const asOf = new Date().toISOString().slice(0, 10);
+      // todayEastern (NOT a UTC slice) — this asOf now anchors real date math inside
+      // buildPortfolioAllocation → scoreDebtPositions' fresh maturity recompute; a UTC date would
+      // silently diverge from the Eastern convention every other capital-allocation entry point uses.
+      const asOf = todayEastern();
       // Spine A snapshot is optional here (fail-open): a missing snapshot just means
       // expectedReturnPct stays null for every verdict, same as pre-v2 behavior.
       const { brain } = await import('../brain');

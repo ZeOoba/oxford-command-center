@@ -39,6 +39,7 @@ import { writeDebtSnapshot } from './warehouse/debt-snapshot';
 import { buildLoanPropertyMap } from './warehouse/property-crosswalk';
 import { captureOccupancy } from './warehouse/occupancy';
 import { captureInsurance, snapshotPoliciesToWarehouse } from './warehouse/insurance';
+import { todayEastern } from './warehouse/time-constants';
 import { extractOmFields } from './warehouse/om-extract';
 import { listLeaseTermPropertyIds } from './warehouse/lease-terms';
 import { setLeaseRunAssumptions } from './overlay';
@@ -107,13 +108,23 @@ brain.on('snapshot', (info: unknown) => {
   try {
     const snapshot = brain.getSnapshot();
     if (snapshot) {
-      // Uses generatedAt (the per-refresh ISO timestamp) as the source date — NOT meta.asOf,
-      // which is the static WORKBOOK_AS_OF constant (see occupancy.ts:169-171 for this trap).
-      // This sibling call was missed when the occupancy/debt-snapshot calls below were fixed —
-      // every refresh was overwriting the same '2026-06-01' row instead of accumulating history.
+      // Uses generatedAt (the per-refresh ISO timestamp, Eastern-normalized) as the source date —
+      // NOT meta.asOf, the static WORKBOOK_AS_OF constant (see occupancy.ts:169-171 for the trap).
+      // Note: property_insurance_policies is keyed UNIQUE(property_id, policy_number,
+      // effective_date) — migration 008 — so source_date does NOT gate row replacement (every
+      // refresh already replaces, never accumulates, the same row regardless of this value, both
+      // before and after this change — it does not add history). It IS consulted as the ordering
+      // key in insurance-analysis.ts's dedupeLatest for NULL-key-component policies (SQLite
+      // UNIQUE treats NULLs as distinct, so those rows physically accumulate) — steady-state this
+      // switch is monotone-improving (Eastern > the old frozen workbook date), but a policy
+      // refreshed between 20:00-24:00 ET on the day of this deploy can transiently sort behind a
+      // stale pre-deploy row until the next refresh crosses Eastern midnight; self-healing,
+      // bounded to ~one day. writeDebtSnapshot below intentionally still uses a UTC slice — its
+      // snapshot_date is part of debt_positions' PRIMARY KEY, so changing that convention is a
+      // separate, out-of-scope decision, not touched here.
       captureInsurance(
         getWarehouse(),
-        snapshotPoliciesToWarehouse(snapshot.insurance, snapshot.meta.generatedAt.slice(0, 10)),
+        snapshotPoliciesToWarehouse(snapshot.insurance, todayEastern(Date.parse(snapshot.meta.generatedAt))),
       );
     }
   } catch (err) {

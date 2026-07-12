@@ -291,6 +291,36 @@ describe('evaluateConditions — concentration, insurance, cash', () => {
     const out = evaluateConditions(snap({ insurance: [policy({ daysToExpiry: 20, expires: iso(20) })] }), opts);
     expect(out.find((i) => i.id === 'ins-i1')?.severity).toBe('warning');
   });
+  // Regression coverage for the round-2 fix: a policy lapsed by date (fresh expires < asOf) but
+  // whose workbook status hasn't caught up must still fire a critical alert — not silently drop
+  // out of both the status-confirmed and the >=0-day-window branches.
+  it('policy lapsed by date but status still reads active fires a critical "status unconfirmed" alert', () => {
+    const out = evaluateConditions(
+      snap({ insurance: [policy({ status: 'Current', expires: iso(-4), daysToExpiry: 7 })] }),
+      opts,
+    );
+    const ins = out.find((i) => i.id === 'ins-lapsed-i1');
+    expect(ins).toBeDefined();
+    expect(ins!.severity).toBe('critical');
+    expect(ins!.title).toMatch(/unconfirmed/i);
+  });
+  it('policy with a stale positive daysToExpiry cell is ignored once fresh expires shows a future renewal (no phantom alert)', () => {
+    // expires 45d out (outside the 30d warn window) but the stored cell says -3 (would wrongly
+    // suggest already-lapsed if consulted instead of the fresh expires-vs-asOf calc).
+    const out = evaluateConditions(snap({ insurance: [policy({ status: 'Current', expires: iso(45), daysToExpiry: -3 })] }), opts);
+    expect(out.some((i) => i.id === 'ins-i1' || i.id === 'ins-lapsed-i1')).toBe(false);
+  });
+  it('policy expiring exactly today (daysToExpiry===0) lands in the warning branch, not lapsed', () => {
+    const out = evaluateConditions(snap({ insurance: [policy({ status: 'Current', expires: iso(0), daysToExpiry: 0 })] }), opts);
+    expect(out.find((i) => i.id === 'ins-i1')?.severity).toBe('warning');
+    expect(out.some((i) => i.id === 'ins-lapsed-i1')).toBe(false);
+  });
+  it('policy with no expires date falls back to the stored daysToExpiry cell for the lapsed check', () => {
+    const out = evaluateConditions(snap({ insurance: [policy({ status: 'Current', expires: null, daysToExpiry: -5 })] }), opts);
+    const ins = out.find((i) => i.id === 'ins-lapsed-i1');
+    expect(ins).toBeDefined();
+    expect(ins!.severity).toBe('critical');
+  });
   it('cash concentration > 30% is a warning', () => {
     const out = evaluateConditions(snap({ cash: { asOf: ASOF, totalCash: 100, activeEntities: 2, largestEntity: 'E1', concentrationTopPct: 0.31, cagr: null, entities: [], history: [] } }), opts);
     expect(out.find((i) => i.id === 'cash-concentration')?.severity).toBe('warning');
@@ -415,21 +445,27 @@ describe('evaluateConditions — debt proximity + refi spread', () => {
     expect(insight!.provenance).toBe('absent');
   });
 
-  // (c) monthsToMaturity=14 (>12) → factor min(14/12, 1) = 1 → impact == full annualDebtService.
-  //     maturity is iso(300) so the alert fires (within balloonWarningDays=365).
-  //     monthsToMaturity is explicitly set to 14 (overrides the days/30 proxy) to exercise the cap.
-  it('(c) balloon within warning window but monthsToMaturity>12 caps factor at 1 → impact == full annualDS', () => {
+  // (c) maturity iso(363) → within balloonWarningDays (365, so the alert still fires) AND
+  //     >=360 days out (12mo) so monthsRemaining = 363/30 = 12.1 → factor = min(12.1/12, 1) = 1 →
+  //     impact == full annualDebtService. monthsToMaturity is deliberately set to a divergent,
+  //     much-shorter value (3) that must be IGNORED: monthsRemaining is derived solely from days
+  //     (daysBetween(maturity, asOf), fresh) — the workbook cell is a snapshot frozen at whenever
+  //     Excel last recalced/saved and would otherwise silently disagree with the days-based
+  //     severity computed for the same insight two lines above. If the stale field were still
+  //     consulted, factor would wrongly be min(3/12, 1) = 0.25 → impact ≈ 24000, not the full
+  //     96000 asserted here.
+  it('(c) balloon >12mo out (via maturity) caps factor at 1 → impact == full annualDS; stale monthsToMaturity ignored', () => {
     const annualDS = 96000; // monthlyPmt=8000
     const l = loan({
-      balloon: true, maturity: iso(300), // within 365d warning window
+      balloon: true, maturity: iso(363), // ~12.1 months out, still within the 365d warning window
       monthlyPmt: 8000,
-      monthsToMaturity: 14, // >12 → factor = min(14/12, 1) = 1 → full impact
+      monthsToMaturity: 3, // deliberately divergent/stale — must be ignored
     });
     const out = evaluateConditions(snap({ loans: [l] }), opts);
     const insight = out.find((i) => i.id === 'balloon-n1');
     expect(insight).toBeDefined();
     expect(insight!.impactAnnualUsd).not.toBeNull();
-    // factor = min(14/12, 1) = 1 → full annualDS
+    // factor = min((363/30)/12, 1) = 1 → full annualDS, NOT scaled down by monthsToMaturity=3
     expect(insight!.impactAnnualUsd!).toBeCloseTo(annualDS, 0);
   });
 

@@ -56,7 +56,7 @@ import { scoreDebtPositions } from './debt-scoring';
 import { clamp } from './clamp';
 import { loadCapitalConfig } from './capital-config';
 import { loadGovernors } from './governors';
-import { todayEastern } from './time-constants';
+import { todayEastern, MONTH_MS } from './time-constants';
 import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast';
 import { classifyCapRateBand, benchmarkKey } from '../../src/contracts/market-intelligence';
 import type { CapRateBenchmark, MarketBenchmarkSet } from '../../src/contracts/market-intelligence';
@@ -627,7 +627,7 @@ export async function buildPortfolioAllocation(
   // Spine B: period metrics → property scores + debt scores
   const metrics = propertyPeriodMetrics(db);
   const propertyScores = scoreProperties(db, metrics);
-  const debtScores = scoreDebtPositions(db, metrics, dgs5);
+  const debtScores = scoreDebtPositions(db, metrics, dgs5, asOf);
 
   // Index DebtScore by propertyId
   const debtByProperty = new Map<string, DebtScore>();
@@ -828,31 +828,56 @@ function attentionBandScore(band: string | null | undefined): number {
 }
 
 interface BalloonRow {
+  id: string;
   property_id: string;
+  maturity_date: string | null;
   months_to_maturity: number | null;
-  dscr_override: number | null;
 }
 
-function getBalloonMonthsByProperty(db: WarehouseDb): Map<string, number | null> {
+/**
+ * `asOf` anchors a fresh per-ROW recompute from maturity_date — NEVER the stored
+ * months_to_maturity, a workbook-cell snapshot frozen at whenever the workbook was last
+ * recalced/saved into the warehouse, which feeds debtUrgency (15% of priorityScore) and would
+ * otherwise silently drift from the workbook-save date exactly like the bug class this change
+ * eliminates elsewhere. Falls back to the stored value only for a row with no maturity_date.
+ *
+ * Fetches every qualifying row (no SQL aggregate) and computes each row's effective months in JS
+ * BEFORE taking the per-property minimum — an earlier version let SQL's MIN(months_to_maturity)
+ * pick the row first, on the stale column, and only then recomputed a fresh value from that row's
+ * maturity_date. That (a) chose the WRONG loan whenever the stale cells mis-ordered relative to
+ * true maturity dates, (b) was order-dependent on ties in the stale integer column, and (c) still
+ * excluded a maturity_date-only row via a months_to_maturity-gated WHERE clause. Ties in the fresh
+ * minimum break on the earliest maturity_date, then loan id, for a fully deterministic result.
+ */
+function getBalloonMonthsByProperty(db: WarehouseDb, asOf: string): Map<string, number | null> {
   const rows = db
     .prepare(
-      `SELECT property_id,
-              MIN(months_to_maturity) AS months_to_maturity
+      `SELECT id, property_id, maturity_date, months_to_maturity
        FROM debt_positions
        WHERE status = 'active'
          AND balloon = 1
          AND property_id IS NOT NULL
-         AND months_to_maturity IS NOT NULL
-       GROUP BY property_id`,
+         AND (months_to_maturity IS NOT NULL OR maturity_date IS NOT NULL)`,
     )
     .all() as BalloonRow[];
 
-  const result = new Map<string, number | null>();
+  const asOfMs = new Date(asOf).getTime();
+  const best = new Map<string, { months: number; tieKey: string }>();
+
   for (const row of rows) {
-    if (row.property_id !== null) {
-      result.set(row.property_id, row.months_to_maturity);
+    if (row.property_id === null) continue;
+    const maturityMs = row.maturity_date ? new Date(row.maturity_date).getTime() : NaN;
+    const months = Number.isFinite(maturityMs) ? (maturityMs - asOfMs) / MONTH_MS : row.months_to_maturity;
+    if (months === null || !Number.isFinite(months)) continue;
+    const tieKey = `${row.maturity_date ?? ''}|${row.id}`;
+    const existing = best.get(row.property_id);
+    if (!existing || months < existing.months || (months === existing.months && tieKey < existing.tieKey)) {
+      best.set(row.property_id, { months, tieKey });
     }
   }
+
+  const result = new Map<string, number | null>();
+  for (const [propertyId, b] of best) result.set(propertyId, b.months);
   return result;
 }
 
@@ -919,10 +944,10 @@ export async function buildCapitalAllocationReport(
   const scores = scoreProperties(db, metrics);
   const scoreByPropertyId = new Map(scores.map((s) => [s.propertyId, s]));
 
-  const debtScores = scoreDebtPositions(db, metrics, null);
+  const debtScores = scoreDebtPositions(db, metrics, null, asOf);
   const debtByPropertyId = new Map(debtScores.map((d) => [d.propertyId, d]));
 
-  const balloonMonthsByProperty = getBalloonMonthsByProperty(db);
+  const balloonMonthsByProperty = getBalloonMonthsByProperty(db, asOf);
 
   const arrears = snapshot.tenantArrears ?? {};
   const renewalStages = snapshot.renewalStages ?? {};

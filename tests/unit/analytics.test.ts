@@ -11,6 +11,7 @@ import {
   marketAllocation,
   applyScenario,
   buildAnalytics,
+  revenueAtRisk,
 } from '@analytics/index';
 
 function prop(p: Partial<Property>): Property {
@@ -176,6 +177,38 @@ describe('walt', () => {
       lease({ annualRent: 0, leaseEnd: '2020-01-01', status: 'Expired' }),
     ];
     expect(walt(leases, '2026-01-01')).toBeCloseTo(2.0, 1);
+  });
+});
+
+describe('revenueAtRisk', () => {
+  const ASOF = '2026-07-12';
+
+  it('within90dRent uses a fresh leaseEnd-based calc, ignoring a stale monthsToExpiry', () => {
+    // leaseEnd ~5 months out but a stale monthsToExpiry=2 (would wrongly include it if consulted).
+    const r = revenueAtRisk([lease({ annualRent: 1000, leaseEnd: '2026-12-12', monthsToExpiry: 2 })], ASOF);
+    expect(r.within90dRent).toBe(0);
+  });
+
+  it('falls back to the stored monthsToExpiry when leaseEnd is absent', () => {
+    const r = revenueAtRisk([lease({ annualRent: 1000, leaseEnd: null, monthsToExpiry: 2 })], ASOF);
+    expect(r.within90dRent).toBe(1000);
+  });
+
+  it('a holdover lease (leaseEnd in the past, status still Active) counts in expiredRent, not neither bucket', () => {
+    const r = revenueAtRisk([lease({ annualRent: 1000, leaseEnd: '2026-07-11', status: 'Active' })], ASOF);
+    expect(r.expiredRent).toBe(1000);
+    expect(r.within90dRent).toBe(0);
+  });
+
+  it('leaseEnd exactly today lands in within90dRent, not expiredRent', () => {
+    const r = revenueAtRisk([lease({ annualRent: 1000, leaseEnd: ASOF, status: 'Active' })], ASOF);
+    expect(r.within90dRent).toBe(1000);
+    expect(r.expiredRent).toBe(0);
+  });
+
+  it('status Expired with no leaseEnd still counts in expiredRent', () => {
+    const r = revenueAtRisk([lease({ annualRent: 1000, leaseEnd: null, status: 'Expired' })], ASOF);
+    expect(r.expiredRent).toBe(1000);
   });
 });
 

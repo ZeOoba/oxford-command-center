@@ -24,6 +24,7 @@ import { loadDeals } from '../sources/notion-deals';
 import { loadM365Tasks } from '../sources/m365-tasks';
 import { deriveCounterparties } from './counterparties';
 import { WORKBOOK_AS_OF } from '../config';
+import { todayEastern } from '../warehouse/time-constants';
 
 type Worksheet = ExcelJS.Worksheet;
 type CellValue = ExcelJS.CellValue;
@@ -221,12 +222,19 @@ function resolvePropertyId(key: string, properties: Property[]): string | null {
 }
 
 // ── leases (Master Tenant Rent Roll) ──────────────────────────────────────────
-function parseLeases(ws: Worksheet, properties: Property[], flags: DataQualityFlag[]): Lease[] {
+function parseLeases(
+  ws: Worksheet,
+  properties: Property[],
+  flags: DataQualityFlag[],
+  now: number = Date.now(),
+): Lease[] {
   const out: Lease[] = [];
-  // monthsToExpiry anchors on the actual parse-time date, NOT WORKBOOK_AS_OF (a frozen
-  // workbook-label constant, see config.ts) — that would bake a permanently-stale month-count
-  // into every lease, exactly the trap documented in occupancy.ts.
-  const asOf = new Date();
+  // monthsToExpiry anchors on the actual parse-time date (Eastern, injectable via `now`), NOT
+  // WORKBOOK_AS_OF (a frozen workbook-label constant, see config.ts) — that would bake a
+  // permanently-stale month-count into every lease, exactly the trap documented in occupancy.ts.
+  // A bare `new Date()` would be server-local and non-injectable — matches the rest of this
+  // change's Eastern-timezone, test-pinnable convention instead.
+  const asOf = parseISO(todayEastern(now));
   for (let r = 1; r <= ws.rowCount; r++) {
     const propertyKey = str(row(ws, r, 1));
     const tenantName = str(row(ws, r, 2));
@@ -544,7 +552,7 @@ export interface ParseResult {
   flags: DataQualityFlag[];
 }
 
-export async function parseWorkbook(path: string): Promise<ParseResult> {
+export async function parseWorkbook(path: string, now: number = Date.now()): Promise<ParseResult> {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(path);
   const flags: DataQualityFlag[] = [];
@@ -556,7 +564,7 @@ export async function parseWorkbook(path: string): Promise<ParseResult> {
   };
 
   const properties = parseProperties(get('Property NOI'), flags);
-  const leases = parseLeases(get('Master Tenant Rent Roll'), properties, flags);
+  const leases = parseLeases(get('Master Tenant Rent Roll'), properties, flags, now);
   const loans = parseLoans(get('Loan Index'), flags);
   const cash = parseCash(get('Cash Balances'), flags);
   const insurance = parseInsurance(get('Insurance Renewals'), flags);
@@ -571,7 +579,7 @@ export async function parseWorkbook(path: string): Promise<ParseResult> {
     meta: {
       schemaVersion: SCHEMA_VERSION,
       asOf: WORKBOOK_AS_OF,
-      generatedAt: new Date().toISOString(),
+      generatedAt: new Date(now).toISOString(),
       source: 'Master Excel Template Company Wide -- Oxford.xlsx',
       scenario: assumptions.activeScenario,
     },

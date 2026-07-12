@@ -139,12 +139,33 @@ export function rolloverSchedule(leases: Lease[], asOf: string, horizonYears = 4
   return [...buckets.values()].sort((a, b) => a.period.localeCompare(b.period));
 }
 
-export function revenueAtRisk(leases: Lease[]) {
+/** `asOf` (defaults to real today, injectable in tests) anchors the ≤3-month-out filter — prefers
+ * a fresh calc from leaseEnd over the workbook-parse-time-baked monthsToExpiry, which goes stale
+ * between re-parses and must never dominate a fresh asOf. */
+export function revenueAtRisk(leases: Lease[], asOf: string = todayEastern()) {
   const totalRent = sum(leases.map((l) => l.annualRent));
   const within90dRent = sum(
-    leases.filter((l) => l.monthsToExpiry !== null && l.monthsToExpiry >= 0 && l.monthsToExpiry <= 3).map((l) => l.annualRent),
+    leases
+      .filter((l) => {
+        const mte = l.leaseEnd
+          ? daysBetween(l.leaseEnd, asOf) / 30.4375
+          : l.monthsToExpiry !== null && Number.isFinite(l.monthsToExpiry)
+            ? l.monthsToExpiry
+            : null;
+        return mte !== null && mte >= 0 && mte <= 3;
+      })
+      .map((l) => l.annualRent),
   );
-  const expiredRent = sum(leases.filter((l) => l.status === 'Expired').map((l) => l.annualRent));
+  // "Holding over" (UI label) = workbook status says Expired, OR leaseEnd is verifiably in the
+  // past per the fresh asOf — a holdover tenant whose status cell hasn't caught up to a recent
+  // expiry must still count here (renewalSignals' monthToMonth predicate uses the same OR); the
+  // within90dRent filter above now excludes any mte<0 lease, so without this a holdover would
+  // silently vanish from both buckets the moment its lease actually expired.
+  const expiredRent = sum(
+    leases
+      .filter((l) => l.status === 'Expired' || (l.leaseEnd !== null && daysBetween(l.leaseEnd, asOf) < 0))
+      .map((l) => l.annualRent),
+  );
   return { within90dRent, expiredRent, pctOfRent: totalRent ? within90dRent / totalRent : 0 };
 }
 
@@ -292,7 +313,7 @@ export function buildAnalytics(
     leaseStatus: leaseStatusBreakdown(s.leases),
     rollover: rolloverSchedule(s.leases, asOf),
     criticalDates: criticalDates(s.leases, asOf),
-    revenueAtRisk: revenueAtRisk(s.leases),
+    revenueAtRisk: revenueAtRisk(s.leases, asOf),
     topTenants: topTenants(s.leases),
     tenantHHI: tenantHHI(s.leases),
     marketByNoi: marketAllocation(s.properties, 'noi'),

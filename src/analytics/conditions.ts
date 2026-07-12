@@ -192,12 +192,15 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         //
         // impactAnnualUsd = annualDebtService(l) × min(monthsRemaining / 12, 1.0)
         //
-        // monthsRemaining: prefer l.monthsToMaturity (snapshot-computed, more accurate) over
-        //   the days-based proxy (days / 30). Either way, clamp to ≥ 0 — a past-due/overdue
-        //   balloon has monthsRemaining = 0, producing a factor of 0. We never let a negative
-        //   factor reduce impact below zero, because a past-due balloon is strictly MORE urgent,
-        //   not less — the displayed impact would be misleading if negative. Factor is then
-        //   clamped at 1.0 (ceiling): a balloon 24+ months out carries a full-year service load.
+        // monthsRemaining: derived from `days` (daysBetween(l.maturity, asOf), fresh — asOf is
+        //   real-today, not the frozen workbook-label constant) — NEVER l.monthsToMaturity, a raw
+        //   Excel cell frozen at the workbook's last recalc/save that goes stale between saves and
+        //   would silently disagree with the days-based severity computed two lines above. Clamp
+        //   to ≥ 0 — a past-due/overdue balloon has monthsRemaining = 0, producing a factor of 0.
+        //   We never let a negative factor reduce impact below zero, because a past-due balloon is
+        //   strictly MORE urgent, not less — the displayed impact would be misleading if negative.
+        //   Factor is then clamped at 1.0 (ceiling): a balloon 24+ months out carries a full-year
+        //   service load.
         //
         // provenance:
         //   'derived'  — impact was computed from Loan fields (not a directly-stored dollar).
@@ -205,8 +208,8 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         const ds = annualDebtService(l);
         let impactAnnualUsd: number | null = null;
         let provenance: Insight['provenance'] = 'absent';
+        const monthsRemaining = Math.max(0, days / 30);
         if (ds !== null) {
-          const monthsRemaining = Math.max(0, l.monthsToMaturity ?? days / 30);
           const factor = Math.min(monthsRemaining / 12, 1.0);
           impactAnnualUsd = ds * factor;
           provenance = 'derived';
@@ -217,7 +220,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
           severity: days < T.balloonCriticalDays ? 'critical' : 'warning',
           category: 'debt',
           title: `Balloon due — ${l.name}`,
-          detail: `${fmtUsd(l.absBalance)} balance, balloon ${fmtDate(l.maturity)} (${fmtMonths(l.monthsToMaturity ?? days / 30)}). Prepare refinance or payoff.`,
+          detail: `${fmtUsd(l.absBalance)} balance, balloon ${fmtDate(l.maturity)} (${fmtMonths(monthsRemaining)}). Prepare refinance or payoff.`,
           metric: fmtUsd(l.absBalance),
           entityType: 'loan',
           entityId: l.id,
@@ -597,6 +600,11 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
 
   // ── Insurance ───────────────────────────────────────────────────────────────
   for (const p of s.insurance) {
+    // Prefer a fresh day-count from p.expires vs asOf — NEVER p.daysToExpiry, a raw Excel-formula
+    // cell frozen at whenever the workbook was last opened/recalculated, coexisting here with the
+    // warehouse insuranceConditions path (real-today) as a second, staler grain for the same kind
+    // of alert. Fall back to the workbook cell only when expires is absent.
+    const daysToExpiry = p.expires ? daysBetween(p.expires, asOf) : p.daysToExpiry;
     if (p.status === 'Expired' || p.status === 'Cancelled') {
       out.push({
         id: `ins-lapsed-${p.id}`, severity: 'critical', category: 'insurance',
@@ -606,11 +614,27 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         action: { label: 'Review policy', kind: 'review' },
         impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
-    } else if (p.daysToExpiry !== null && p.daysToExpiry >= 0 && p.daysToExpiry < T.insuranceRenewWarnDays) {
+    } else if (daysToExpiry !== null && daysToExpiry < 0) {
+      // Fresh day-count shows the policy already lapsed by date, but the workbook status field
+      // hasn't caught up yet (still reads e.g. 'Current'/'Renewing Soon'). A past-due policy is
+      // strictly MORE urgent, not less — silently dropping the alert here (as a naive fresh-only
+      // rewrite would, since it falls out of both the status check above and the >=0 window
+      // below) would leave an actually-uninsured property with no alert on any path. Same id as
+      // the status-confirmed branch so this reads as one continuous incident once the workbook
+      // next resaves and status catches up, rather than a new alert.
+      out.push({
+        id: `ins-lapsed-${p.id}`, severity: 'critical', category: 'insurance',
+        title: `Policy lapsed by date, status unconfirmed — ${p.property}`,
+        detail: `${p.coverage ?? 'Coverage'} expired ${fmtDate(p.expires)} (${Math.abs(daysToExpiry)}d ago); workbook status still reads "${p.status}". Confirm coverage status.`,
+        metric: fmtUsdCompact(p.premium), entityType: 'insurance', entityId: p.id,
+        action: { label: 'Review policy', kind: 'review' },
+        impactAnnualUsd: null, spine: 'B', provenance: 'absent',
+      });
+    } else if (daysToExpiry !== null && daysToExpiry >= 0 && daysToExpiry < T.insuranceRenewWarnDays) {
       out.push({
         id: `ins-${p.id}`, severity: 'warning', category: 'insurance',
         title: `Insurance renewing soon — ${p.property}`,
-        detail: `${p.coverage ?? 'Coverage'} renews ${fmtDate(p.expires)} (${p.daysToExpiry}d).`,
+        detail: `${p.coverage ?? 'Coverage'} renews ${fmtDate(p.expires)} (${daysToExpiry}d).`,
         entityType: 'insurance', entityId: p.id,
         action: { label: 'Review policy', kind: 'review' },
         impactAnnualUsd: null, spine: 'B', provenance: 'absent',

@@ -33,20 +33,21 @@ function monthsBetween(isoTarget: string, isoFrom: string): number {
  *   12..24     → '12-24m'
  *   > 24       → '24m+'
  *
- * Pass `asOf` to correctly classify leases that expired earlier in the current calendar month:
- * the workbook `monthsToExpiry` field uses differenceInCalendarMonths (integer) which returns 0
- * for both "expires this month in the future" and "expired this month in the past". When `asOf`
- * and `leaseEnd` are both provided, the date comparison takes priority over the truncated integer.
+ * When `leaseEnd` and `asOf` are both provided, the bucket is derived from a fresh, continuous
+ * day-accurate months-remaining calculation (matching rentForecast's established pattern) —
+ * NEVER from the passed-in `monthsToExpiry`, which for a Lease is a workbook-parse-time snapshot
+ * (differenceInCalendarMonths against whenever the workbook last re-parsed) that goes stale
+ * between re-parses and must never dominate a fresh `asOf`. The passed integer is used only as a
+ * fallback when `leaseEnd` or `asOf` is absent (nothing else to compute a fresh value from).
  */
 export function bucketExpiry(monthsToExpiry: number | null, leaseEnd: string | null, asOf?: string): ExpiryBucket {
-  if (monthsToExpiry === null || !Number.isFinite(monthsToExpiry)) return 'unknown';
-  // Date-accurate expiry check: if leaseEnd is strictly before asOf the lease has already expired,
-  // regardless of what the truncated calendar-month integer says.
-  if (asOf && leaseEnd && new Date(leaseEnd).getTime() < new Date(asOf).getTime()) return 'expired';
-  if (monthsToExpiry < 0) return 'expired';
-  if (monthsToExpiry < 6) return '0-6m';
-  if (monthsToExpiry < 12) return '6-12m';
-  if (monthsToExpiry <= 24) return '12-24m';
+  const effectiveMonths =
+    asOf && leaseEnd ? monthsBetween(leaseEnd, asOf) : monthsToExpiry;
+  if (effectiveMonths === null || !Number.isFinite(effectiveMonths)) return 'unknown';
+  if (effectiveMonths < 0) return 'expired';
+  if (effectiveMonths < 6) return '0-6m';
+  if (effectiveMonths < 12) return '6-12m';
+  if (effectiveMonths <= 24) return '12-24m';
   return '24m+';
 }
 
@@ -95,10 +96,13 @@ export function renewalSignals(
     const leaseEndInPast = leaseEndMs !== null && leaseEndMs < asOfMs;
     const monthToMonth = leaseEndInPast && l.status !== 'Expired';
 
-    // monthsToExpiry: use the workbook-computed field (most accurate), fallback to computation
+    // monthsToExpiry: prefer a fresh, date-accurate calc from leaseEnd+asOf (matches
+    // rentForecast's established pattern) — the workbook-computed field is a parse-time snapshot
+    // that goes stale between workbook re-parses and must never be preferred over a fresh asOf.
+    // Fall back to the baked field only when leaseEnd is absent (nothing else to compute from).
     const mte: number | null = (() => {
-      if (l.monthsToExpiry !== null && Number.isFinite(l.monthsToExpiry)) return l.monthsToExpiry;
       if (l.leaseEnd) return monthsBetween(l.leaseEnd, asOf);
+      if (l.monthsToExpiry !== null && Number.isFinite(l.monthsToExpiry)) return l.monthsToExpiry;
       return null;
     })();
 

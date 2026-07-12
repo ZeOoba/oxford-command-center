@@ -155,13 +155,17 @@ function upcomingDates(
     .filter((c) => c.daysToDate >= 0 && c.daysToDate <= 90)
     .map((c) => ({ date: c.date, label: `${c.kind}: ${c.tenant}`, days: c.daysToDate }));
 
+  // days from l.maturity vs the fresh asOf above — NEVER l.monthsToMaturity, a raw workbook cell
+  // frozen at whenever Excel last recalced/saved, which would silently drift from the deal/lease
+  // legs on either side of it (both already fresh).
   const fromLoans = s.loans
-    .filter((l) => l.maturity && l.monthsToMaturity !== null && l.monthsToMaturity >= 0 && l.monthsToMaturity <= 3)
+    .filter((l) => l.maturity)
     .map((l) => ({
       date: l.maturity as string,
       label: `Loan maturity: ${l.name}`,
-      days: Math.round((l.monthsToMaturity ?? 0) * 30),
-    }));
+      days: Math.round((new Date(l.maturity as string).getTime() - new Date(asOf).getTime()) / DAY_MS),
+    }))
+    .filter((x) => x.days >= 0 && x.days <= 90);
 
   const fromDeals = s.deals
     .filter((d) => d.targetCloseDate)

@@ -62,6 +62,7 @@ import { assertNoConfidential } from '../briefing/confidential';
 import { syncCapitalActionsToNotion } from '../notion/capital-writeback';
 import { NotionSyncResult } from '../../src/contracts/notion-writeback';
 import { getProspectDemandReport, addProspectEvent } from './prospect-demand';
+import { todayEastern } from './time-constants';
 import { ProspectDemandReport, ProspectDemandEventInput } from '../../src/contracts/prospect-demand';
 
 const ActionInput = z.object({ action: z.enum(['approve', 'reject']) });
@@ -992,7 +993,11 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
   app.get('/capital-allocation/ic-memo', () =>
     withDb(async (db) => {
       try {
-        const asOf = new Date().toISOString().slice(0, 10);
+        // todayEastern (NOT a UTC slice) — this asOf now anchors real date math inside
+        // buildPortfolioAllocation → scoreDebtPositions' fresh maturity recompute; a UTC date
+        // would silently diverge from buildCapitalAllocationReport's Eastern asOf two lines below,
+        // giving one IC memo two different as-of dates for its two halves.
+        const asOf = todayEastern();
         const { brain } = await import('../brain');
         const snapshot = await brain.getSnapshot();
         const portfolio = await buildPortfolioAllocation(db, asOf, undefined, snapshot ?? undefined);
