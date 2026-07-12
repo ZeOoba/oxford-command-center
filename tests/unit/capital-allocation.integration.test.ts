@@ -266,8 +266,9 @@ describe('buildCapitalAllocationReport — real engine integration (no mocks)', 
     seedMappings(db, SEED);
 
     // 50%-owned property (e.g., Red Branch Rd Columbia MD). Oxford-share NOI = 95_000 (Spine A).
-    // A lease with 100%-basis annualRent = 100_000 expiring in 3 months (≤12m bucket).
-    // Expected Oxford-share nearTermExpiryRent = 100_000 * 0.50 = 50_000 (NOT 100_000).
+    // Three leases below exercise: (L-H2-1) the H2 Oxford-share scaling fix on its own, (L-H2-2)
+    // a freshly-lapsed material tenant still counting toward nearTermExpiryRent, and (L-H2-3) a
+    // genuinely-stale-expired lease that must NOT count. See the assertions below for the totals.
     const snapshot: ReturnType<typeof makeSnapshot> = {
       ...makeSnapshot([
         makeProperty({
@@ -278,6 +279,12 @@ describe('buildCapitalAllocationReport — real engine integration (no mocks)', 
           oxfordValue: 1_900_000,
         }),
       ]),
+      // L-H2-3 gets an 'Executed' renewal stage purely to keep it out of renewalSignals'
+      // 'lapsing' band (which fires on ANY past leaseEnd with no stage recorded, regardless of
+      // lease status) — that classification is a separate, pre-existing mechanism this test isn't
+      // exercising; without it, L-H2-3 would also add +10 to atRiskLikelihoodCount and the
+      // priorityScore assertion below would need to account for two unrelated concerns at once.
+      renewalStages: { 'L-H2-3-STALE-EXPIRED': 'Executed' },
       leases: [
         {
           id: 'L-H2-1',
@@ -300,14 +307,13 @@ describe('buildCapitalAllocationReport — real engine integration (no mocks)', 
           flags: [],
         } as unknown as PortfolioSnapshot['leases'][number],
         {
-          // RUN-DATE LOCK: this lease ENDED 2026-07-15 — after the fixture data date (meta.asOf
-          // 2026-06-22) but BEFORE the pinned run date (2026-08-22). Under the run-date basis it is
-          // 'expired' → EXCLUDED from nearTermExpiryRent, so the total stays 50_000. If the route's
-          // refDate plumbing were reverted to meta.asOf, this lease would classify '0-6m' and add
-          // 40_000 × 0.50 = 20_000 → nearTermExpiryRent 70_000, failing the assertion below.
-          // monthsToExpiry 0 is the workbook calendar-month-truncation value for a same-/past-month
-          // end; only the date comparison (leaseEnd < asOf) distinguishes run-date from meta.asOf.
-          id: 'L-H2-2-EXPIRED-SINCE-RUNDATE',
+          // FRESHLY-LAPSED LOCK (Gabriel-ratified 2026-07-12): this lease ENDED 2026-07-15 — after
+          // the fixture data date (meta.asOf 2026-06-22) but BEFORE the pinned run date
+          // (2026-08-22). It buckets 'expired' against the run date, but because leaseEnd >= asOf
+          // (it was still current as of the workbook snapshot), it keeps contributing to
+          // nearTermExpiryRent — a freshly-lapsed material tenant must not silently drop out of the
+          // dollar-weighted leasingRisk term. Adds 40_000 × 0.50 = 20_000.
+          id: 'L-H2-2-FRESHLY-LAPSED',
           propertyId: '9050-red-branch-rd-columbia-md',
           annualRent: 40_000,
           monthlyRent: 40_000 / 12,
@@ -326,6 +332,35 @@ describe('buildCapitalAllocationReport — real engine integration (no mocks)', 
           options: [],
           flags: [],
         } as unknown as PortfolioSnapshot['leases'][number],
+        {
+          // GENUINELY-STALE EXCLUSION LOCK: this lease ended 2026-01-15 — BEFORE the fixture data
+          // date itself (meta.asOf 2026-06-22), not in the workbook-to-run-date gap. It is NOT a
+          // "freshly lapsed" tenant — it was already expired as of the workbook's own snapshot, so
+          // it stays excluded from nearTermExpiryRent exactly as it always has (this is not a case
+          // the frozen-dateline fix or this follow-up created). status:'Expired' + a long tenure
+          // also keeps it out of atRiskLikelihoodCount's 'lapsing' band so it can't perturb the
+          // leasingRisk assertion below either way — this lease should have ZERO effect on the
+          // report, proving the freshly-lapsed inclusion has a real boundary, not "any expired
+          // lease counts forever."
+          id: 'L-H2-3-STALE-EXPIRED',
+          propertyId: '9050-red-branch-rd-columbia-md',
+          annualRent: 30_000,
+          monthlyRent: 30_000 / 12,
+          sf: 4_000,
+          monthsToExpiry: -5,
+          leaseEnd: '2026-01-15',
+          leaseStart: '2015-01-01',
+          status: 'Expired' as const,
+          company: 'Stale Expired LLC',
+          tenantName: 'Stale Expired LLC',
+          monthToMonth: false,
+          leaseType: 'NNN' as const,
+          escalation: null,
+          escalationPct: null,
+          escalationFlat: null,
+          options: [],
+          flags: [],
+        } as unknown as PortfolioSnapshot['leases'][number],
       ],
     };
 
@@ -334,23 +369,22 @@ describe('buildCapitalAllocationReport — real engine integration (no mocks)', 
     expect(report.entries).toHaveLength(1);
     const entry = report.entries[0]!;
 
-    // Core assertion (doubles as the RUN-DATE WIRING LOCK): nearTermExpiryRent must be Oxford-share
-    // 50_000 — the L-H2-1 lease (100_000 × 0.50), NOT 100%-basis (100_000), and NOT 70_000. Reaching
-    // exactly 50_000 REQUIRES the route to classify L-H2-2 (ended 2026-07-15) as expired against the
-    // RUN date (2026-08-22); a revert to meta.asOf (2026-06-22) would count it and yield 70_000.
-    expect(entry.nearTermExpiryRent).toBe(50_000);
+    // Core assertion: nearTermExpiryRent = L-H2-1 (100_000 × 0.50 = 50_000, unaffected — still in
+    // the '0-6m' bucket relative to the run date) + L-H2-2 (40_000 × 0.50 = 20_000, freshly lapsed,
+    // now included) = 70_000. NOT 100%-basis (140_000), and NOT 85_000 — L-H2-3 (stale-expired,
+    // 30_000 × 0.50 = 15_000) must NOT be added; it was already expired as of the workbook's own
+    // data date, not a lapse created by the run-date basis.
+    expect(entry.nearTermExpiryRent).toBe(70_000);
 
-    // Secondary: with correct Oxford-share basis, leasingRisk = (50_000 / 95_000) * 100 ≈ 52.6.
-    // Buggy value: min(100, (100_000 / 95_000) * 100) = 100 (capped).
-    // The corrected leasingRisk contributes 0.20 * 52.6 ≈ 10.5 to priorityScore;
-    // the buggy leasingRisk contributes 0.20 * 100 = 20.
-    // We assert priorityScore is consistent with the corrected (lower) leasingRisk component.
-    // max leasingRisk-driven component at fix: 0.20 * 52.63 ≈ 10.53
-    // buggy leasingRisk-driven component: 0.20 * 100 = 20
-    // The difference is ≥9 priorityScore points — verify the bug would have raised it beyond 30:
-    // Health=null→50, attention=null→50: base = (100-50)*0.35 + 50*0.30 = 17.5+15 = 32.5
-    // buggy total: 32.5 + 20 = 52.5; correct total: 32.5 + 10.53 ≈ 43.0
-    // So after fix, priorityScore < 50 and after bug, priorityScore ≈ 52.5.
-    expect(entry.priorityScore).toBeLessThan(50);
+    // Secondary: leasingRisk = min(100, (nearTermExpiryRent/noi)*100 + atRiskLikelihoodCount*10)
+    //   = min(100, (70_000/95_000)*100 + 1*10) = min(100, 73.684 + 10) = 83.684
+    // (atRiskLikelihoodCount = 1: only L-H2-2 classifies 'lapsing' in renewalSignals — leaseEndInPast
+    // relative to the run date and status !== 'Expired'; L-H2-1 is far out and L-H2-3's
+    // status:'Expired' + long tenure keep it out of every at-risk/lapsing band.)
+    // priorityScore = (100-healthVal)*0.35 + attentionScore*0.30 + leasingRisk*0.20 + debtUrgency*0.15
+    //   healthVal/attentionScore default to 50 (unscored property), debtUrgency = 0 (no debt scored)
+    //   = (100-50)*0.35 + 50*0.30 + 83.684*0.20 + 0 = 17.5 + 15 + 16.7368 ≈ 49.2368
+    // Empirically confirmed via this exact fixture before writing this assertion.
+    expect(entry.priorityScore).toBeCloseTo(49.2368, 3);
   });
 });
