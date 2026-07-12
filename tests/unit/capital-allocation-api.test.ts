@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
 import { tmpdir } from 'node:os';
 import { mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
@@ -31,6 +31,26 @@ function freshDb() {
 }
 
 describe('capitalAllocationApi', () => {
+  // Root cause (2026-07-12, systematic-debugging): the /allocate route dynamically
+  // `import('../brain')`s on the hot path (server/warehouse/capital-allocation-api.ts).
+  // With per-file isolation (vitest.config.ts `isolate: true`), this file's module
+  // registry is fresh, so R-1 pays that dynamic import's full module-resolution/
+  // compile/eval cost INSIDE the timed test body on its first call -- measured at
+  // 1278ms standalone (plain node, no vitest overhead) and up to 5000ms+ under
+  // concurrent suite load, occasionally exceeding the 5s default test timeout.
+  // brain.ts pulls in chokidar + workbook parsing + quickbooks + contracts/index --
+  // a real module-load cost, not a bug in the route's own logic (confirmed: imports,
+  // openWarehouse migrations, and seedPropertyMaster together cost ~126ms; the dynamic
+  // import + snapshot lookup is the other ~1.1s+).
+  // Fix: pay that cost once here, in beforeAll (untimed setup), not inside a timed
+  // `it(...)`. This does not touch the route handler -- the dynamic-import pattern is
+  // used identically in 5 other files (api.ts x3, insights-api.ts, lease-forecast-api.ts,
+  // tax-api.ts) with no documented reason it must be dynamic rather than static, so
+  // changing the import style itself is a separate, wider decision than this test fix.
+  beforeAll(async () => {
+    await import('../../server/brain');
+  });
+
   afterEach(() => {
     for (const db of openedDbs) db.close();
     openedDbs.length = 0;
