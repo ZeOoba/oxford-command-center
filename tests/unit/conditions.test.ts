@@ -291,6 +291,19 @@ describe('evaluateConditions — concentration, insurance, cash', () => {
     const out = evaluateConditions(snap({ insurance: [policy({ daysToExpiry: 20, expires: iso(20) })] }), opts);
     expect(out.find((i) => i.id === 'ins-i1')?.severity).toBe('warning');
   });
+  // F6 (adversarial refute-financial-change finding, 2026-07-12) — expires and daysToExpiry are
+  // independently-parsed workbook columns (parse.ts col 6 vs col 10); a row can have a populated
+  // daysToExpiry with a blank/unparseable Expires cell. The F3 fix re-gated the whole renewing/
+  // lapsed tail behind `p.expires !== null`, silently dropping the warning this exact fixture used
+  // to fire pre-F3. Fall back to the workbook's own daysToExpiry column when there's no expires
+  // date to compute a live day-count from.
+  it('F6: policy renewing within 30d per the workbook daysToExpiry column still warns when expires is null', () => {
+    const out = evaluateConditions(snap({ insurance: [policy({ daysToExpiry: 20, expires: null })] }), opts);
+    const ins = out.find((i) => i.id === 'ins-i1');
+    expect(ins).toBeDefined();
+    expect(ins!.severity).toBe('warning');
+    expect(ins!.detail).toContain('20d');
+  });
   it('cash concentration > 30% is a warning', () => {
     const out = evaluateConditions(snap({ cash: { asOf: ASOF, totalCash: 100, activeEntities: 2, largestEntity: 'E1', concentrationTopPct: 0.31, cagr: null, entities: [], history: [] } }), opts);
     expect(out.find((i) => i.id === 'cash-concentration')?.severity).toBe('warning');
@@ -415,22 +428,44 @@ describe('evaluateConditions — debt proximity + refi spread', () => {
     expect(insight!.provenance).toBe('absent');
   });
 
-  // (c) monthsToMaturity=14 (>12) → factor min(14/12, 1) = 1 → impact == full annualDebtService.
-  //     maturity is iso(300) so the alert fires (within balloonWarningDays=365).
-  //     monthsToMaturity is explicitly set to 14 (overrides the days/30 proxy) to exercise the cap.
-  it('(c) balloon within warning window but monthsToMaturity>12 caps factor at 1 → impact == full annualDS', () => {
+  // (c) live days/30 > 12 (F2 fix: the days-based run-date proxy, NOT the workbook's own
+  //     monthsToMaturity column, drives the cap) → factor min(days/30/12, 1) = 1 → impact ==
+  //     full annualDebtService. maturity iso(363) → days=363, days/30≈12.1 (>12) while staying
+  //     within balloonWarningDays=365 so the alert still fires.
+  it('(c) balloon within warning window, live days/30 > 12 caps factor at 1 → impact == full annualDS', () => {
     const annualDS = 96000; // monthlyPmt=8000
     const l = loan({
-      balloon: true, maturity: iso(300), // within 365d warning window
+      balloon: true, maturity: iso(363), // within 365d warning window; days/30 ≈ 12.1 (>12)
       monthlyPmt: 8000,
-      monthsToMaturity: 14, // >12 → factor = min(14/12, 1) = 1 → full impact
     });
     const out = evaluateConditions(snap({ loans: [l] }), opts);
     const insight = out.find((i) => i.id === 'balloon-n1');
     expect(insight).toBeDefined();
     expect(insight!.impactAnnualUsd).not.toBeNull();
-    // factor = min(14/12, 1) = 1 → full annualDS
+    // factor = min(12.1/12, 1) = 1 → full annualDS
     expect(insight!.impactAnnualUsd!).toBeCloseTo(annualDS, 0);
+  });
+
+  // (c2) F2 regression guard — a stale/frozen monthsToMaturity column (baked from an old
+  //     workbook while the balloon insight's severity/day-count now runs off the live reference
+  //     date) must NOT distort impactAnnualUsd or the displayed month count. maturity iso(300) →
+  //     live days/30 = 10 months (factor 10/12, impact ≈ 80000); monthsToMaturity is deliberately
+  //     set to a stale 3 (which would give factor 3/12, impact 24000 if wrongly preferred) to
+  //     prove the live basis wins, not the frozen column.
+  it('(c2) a stale monthsToMaturity column does not distort impactAnnualUsd or the detail month count', () => {
+    const l = loan({
+      balloon: true, maturity: iso(300), // live days/30 = 10 months
+      monthlyPmt: 8000, // annualDS = 96000
+      monthsToMaturity: 3, // stale workbook column — must be ignored
+    });
+    const out = evaluateConditions(snap({ loans: [l] }), opts);
+    const insight = out.find((i) => i.id === 'balloon-n1');
+    expect(insight).toBeDefined();
+    // factor = min(10/12, 1) ≈ 0.833 → impact ≈ 80000, NOT the stale-column-derived 24000.
+    expect(insight!.impactAnnualUsd!).toBeGreaterThan(78000);
+    expect(insight!.impactAnnualUsd!).toBeLessThan(82000);
+    expect(insight!.detail).toContain('10 mo');
+    expect(insight!.detail).not.toContain('3 mo');
   });
 
   // (d) refi-spread fires for a borrower loan with rate > estimatedMarketRate + refiSpreadBps.

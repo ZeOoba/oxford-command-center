@@ -6,7 +6,7 @@ const insight = (o: Partial<Insight>): Insight => ({ id: 'x', severity: 'critica
 
 describe('renderBrief', () => {
   const out = renderBrief({
-    asOf: '2026-06-04', briefDate: '2026-07-09', freshness: 'live',
+    asOf: '2026-06-04', briefDate: '2026-07-09', dataMonth: 'Jun 2026', freshness: 'live',
     insights: [insight({ id: 'a', severity: 'critical', title: 'Balloon due — X', detail: '$1M' })],
     criticalDates: [{ date: '2026-06-20', label: 'Expiration: REDACTED-659', days: 16 }],
     dealCounts: [{ stage: 'LOI/PSA', count: 2 }],
@@ -33,7 +33,7 @@ describe('renderAlert', () => {
 describe('renderBrief — top-exposure line', () => {
   it('emits a Top exposure line above Action items when at least one insight has a numeric impact', () => {
     const out = renderBrief({
-      asOf: '2026-06-04', briefDate: '2026-07-09', freshness: 'live',
+      asOf: '2026-06-04', briefDate: '2026-07-09', dataMonth: 'Jun 2026', freshness: 'live',
       insights: [
         insight({ id: 'b', severity: 'warning', title: 'Lease expiring — SmallTenant', detail: '$20K/yr', impactAnnualUsd: 20000 }),
         insight({ id: 'a', severity: 'warning', title: 'Lease expiring — BigTenant', detail: '$80K/yr', impactAnnualUsd: 80000 }),
@@ -60,7 +60,7 @@ describe('renderBrief — top-exposure line', () => {
 
   it('renders nothing for top exposure when all insights have null impact', () => {
     const out = renderBrief({
-      asOf: '2026-06-04', briefDate: '2026-07-09', freshness: 'live',
+      asOf: '2026-06-04', briefDate: '2026-07-09', dataMonth: 'Jun 2026', freshness: 'live',
       insights: [
         insight({ id: 'a', severity: 'critical', title: 'Reconciliation failure', detail: 'mismatch', impactAnnualUsd: null }),
       ],
@@ -75,7 +75,7 @@ describe('renderBrief — top-exposure line', () => {
 
   it('renders nothing for top exposure when insights array is empty', () => {
     const out = renderBrief({
-      asOf: '2026-06-04', briefDate: '2026-07-09', freshness: 'live',
+      asOf: '2026-06-04', briefDate: '2026-07-09', dataMonth: 'Jun 2026', freshness: 'live',
       insights: [],
       criticalDates: [],
       dealCounts: [],

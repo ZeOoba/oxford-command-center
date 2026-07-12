@@ -23,7 +23,7 @@ import { SCENARIO_PRESETS } from '../../src/contracts/scenario';
 import { loadDeals } from '../sources/notion-deals';
 import { loadM365Tasks } from '../sources/m365-tasks';
 import { deriveCounterparties } from './counterparties';
-import { WORKBOOK_AS_OF } from '../config';
+import { WORKBOOK_AS_OF, referenceDate } from '../config';
 
 type Worksheet = ExcelJS.Worksheet;
 type CellValue = ExcelJS.CellValue;
@@ -221,9 +221,19 @@ function resolvePropertyId(key: string, properties: Property[]): string | null {
 }
 
 // ── leases (Master Tenant Rent Roll) ──────────────────────────────────────────
-function parseLeases(ws: Worksheet, properties: Property[], flags: DataQualityFlag[]): Lease[] {
+function parseLeases(
+  ws: Worksheet,
+  properties: Property[],
+  flags: DataQualityFlag[],
+  referenceDateIso: string,
+): Lease[] {
   const out: Lease[] = [];
-  const asOf = parseISO(WORKBOOK_AS_OF);
+  // Day-count reference = the RUN date, NOT the workbook data date: a June-pinned
+  // WORKBOOK_AS_OF froze every monthsToExpiry while the calendar advanced (frozen-dateline
+  // defect, 2026-07). WORKBOOK_AS_OF still governs data-month selection (monthCol in
+  // parseTasks below) and data-snapshot labels — do not conflate the two. The caller resolves
+  // the exact reference (the brief passes its ET send date; other callers pass the UTC default).
+  const asOf = parseISO(referenceDateIso);
   for (let r = 1; r <= ws.rowCount; r++) {
     const propertyKey = str(row(ws, r, 1));
     const tenantName = str(row(ws, r, 2));
@@ -541,10 +551,17 @@ export interface ParseResult {
   flags: DataQualityFlag[];
 }
 
-export async function parseWorkbook(path: string): Promise<ParseResult> {
+/**
+ * @param referenceDateIso Optional day-count reference (YYYY-MM-DD) for lease monthsToExpiry.
+ *   The brief pipeline passes its ET send date so day-counts track the firm's timezone
+ *   consistently; other callers (live server, reconcile, extract) default to referenceDate()
+ *   (the UTC run date). Never governs data-month selection (monthCol) or data-snapshot labels.
+ */
+export async function parseWorkbook(path: string, referenceDateIso?: string): Promise<ParseResult> {
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(path);
   const flags: DataQualityFlag[] = [];
+  const refIso = referenceDateIso ?? referenceDate();
 
   const get = (name: string): Worksheet => {
     const ws = wb.getWorksheet(name);
@@ -553,7 +570,7 @@ export async function parseWorkbook(path: string): Promise<ParseResult> {
   };
 
   const properties = parseProperties(get('Property NOI'), flags);
-  const leases = parseLeases(get('Master Tenant Rent Roll'), properties, flags);
+  const leases = parseLeases(get('Master Tenant Rent Roll'), properties, flags, refIso);
   const loans = parseLoans(get('Loan Index'), flags);
   const cash = parseCash(get('Cash Balances'), flags);
   const insurance = parseInsurance(get('Insurance Renewals'), flags);

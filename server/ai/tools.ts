@@ -8,6 +8,7 @@ import {
 } from '../../src/analytics/engine';
 import { evaluateConditions } from '../../src/analytics/conditions';
 import { fmtUsdCompact, fmtPct } from '../../src/analytics/format';
+import { referenceDate } from '../config';
 
 /**
  * The agent's tools over the company spine. Each runs against the in-memory
@@ -130,7 +131,9 @@ export type ToolName = (typeof TOOL_DEFS)[number]['name'];
 // ── executors ──────────────────────────────────────────────────────────────────
 const EXECUTORS: Record<ToolName, Exec> = {
   get_portfolio_summary: (s) => {
-    const k = portfolioKpis(s, s.meta.scenario);
+    // WALT is a "years from now" figure → run-date basis (referenceDate), not the frozen
+    // workbook data date. Other KPIs here are level metrics, unaffected by the reference.
+    const k = portfolioKpis(s, s.meta.scenario, referenceDate());
     return {
       data: {
         asOf: s.meta.asOf,
@@ -246,8 +249,10 @@ const EXECUTORS: Record<ToolName, Exec> = {
   },
 
   get_alerts: (s) => {
-    const insights = evaluateConditions(s);
-    const r = revenueAtRisk(s.leases);
+    // Alert day-counts and near-term exposure track the run date, not the workbook data date.
+    const ref = referenceDate();
+    const insights = evaluateConditions(s, { referenceDate: ref });
+    const r = revenueAtRisk(s.leases, ref);
     const refs: EntityRefLite[] = insights
       .filter((i) => i.entityType && i.entityId && i.entityType !== 'cashEntity')
       .map((i) => ({ type: i.entityType as EntityRefLite['type'], id: i.entityId!, label: i.title }));
@@ -278,7 +283,7 @@ const EXECUTORS: Record<ToolName, Exec> = {
 
   run_scenario: (s, input) => {
     const scenario = (asStr(input.scenario) || 'Base') as ScenarioName;
-    const a = buildAnalytics(s, scenario);
+    const a = buildAnalytics(s, scenario, referenceDate());
     const k = a.kpis;
     return {
       data: {

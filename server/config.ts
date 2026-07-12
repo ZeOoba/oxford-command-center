@@ -38,5 +38,27 @@ export function serverPort(): number {
   return Number(process.env.BRAIN_SERVER_PORT ?? 8911);
 }
 
-/** The workbook's stated "As of" date for v1 (the file carries June 1, 2026). */
+/**
+ * The workbook's stated DATA "As of" date for v1 (the file carries June 1, 2026).
+ * This is the WORKBOOK-DATA date only: it selects the workbook data-month column
+ * (parse.ts monthCol) and stamps data-snapshot/data-freshness labels (meta.asOf, cash.asOf,
+ * macro asOf). It is deliberately NOT the reference for day-count math or the Daily Brief
+ * body's "As of" label — those track referenceDate() below (frozen-dateline defect, 2026-07:
+ * this constant froze every "expires in Nd" and the brief dateline at June 1).
+ */
 export const WORKBOOK_AS_OF = process.env.WORKBOOK_AS_OF ?? '2026-06-01';
+
+/**
+ * The report reference date (YYYY-MM-DD): "today" for day-count / relative-date math
+ * (lease monthsToExpiry, critical-date "Nd" counts) and the Daily Brief body's "As of" label.
+ * Distinct from WORKBOOK_AS_OF (above) by design — the workbook data-month column must stay
+ * on the DATA date (early in a month the workbook may not carry the run month's column yet),
+ * while day-counts must track the RUN date.
+ *
+ * Resolved at CALL time (same rationale as workbookPath()/serverPort() above).
+ * Precedence: REPORT_DATE env (pin for deterministic tests) → caller-supplied fallback
+ * (e.g. the brief's ET send date) → the current UTC date.
+ */
+export function referenceDate(fallbackIso?: string): string {
+  return process.env.REPORT_DATE ?? fallbackIso ?? new Date().toISOString().slice(0, 10);
+}
