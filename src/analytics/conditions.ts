@@ -197,8 +197,12 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         //
         // impactAnnualUsd = annualDebtService(l) × min(monthsRemaining / 12, 1.0)
         //
-        // monthsRemaining: prefer l.monthsToMaturity (snapshot-computed, more accurate) over
-        //   the days-based proxy (days / 30). Either way, clamp to ≥ 0 — a past-due/overdue
+        // monthsRemaining: days / 30, days already computed above from `asOf` (the live reference
+        //   date, see conditions.ts module docstring) — NOT l.monthsToMaturity, a workbook column
+        //   frozen at the data-month date (frozen-dateline defect, 2026-07: severity here already
+        //   used `days`, but the impact dollar figure and detail string still preferred the stale
+        //   column, silently mixing bases and overstating/understating impact by however far the
+        //   run date has drifted from the workbook date). Clamp to ≥ 0 — a past-due/overdue
         //   balloon has monthsRemaining = 0, producing a factor of 0. We never let a negative
         //   factor reduce impact below zero, because a past-due balloon is strictly MORE urgent,
         //   not less — the displayed impact would be misleading if negative. Factor is then
@@ -210,8 +214,8 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         const ds = annualDebtService(l);
         let impactAnnualUsd: number | null = null;
         let provenance: Insight['provenance'] = 'absent';
+        const monthsRemaining = Math.max(0, days / 30);
         if (ds !== null) {
-          const monthsRemaining = Math.max(0, l.monthsToMaturity ?? days / 30);
           const factor = Math.min(monthsRemaining / 12, 1.0);
           impactAnnualUsd = ds * factor;
           provenance = 'derived';
@@ -222,7 +226,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
           severity: days < T.balloonCriticalDays ? 'critical' : 'warning',
           category: 'debt',
           title: `Balloon due — ${l.name}`,
-          detail: `${fmtUsd(l.absBalance)} balance, balloon ${fmtDate(l.maturity)} (${fmtMonths(l.monthsToMaturity ?? days / 30)}). Prepare refinance or payoff.`,
+          detail: `${fmtUsd(l.absBalance)} balance, balloon ${fmtDate(l.maturity)} (${fmtMonths(monthsRemaining)}). Prepare refinance or payoff.`,
           metric: fmtUsd(l.absBalance),
           entityType: 'loan',
           entityId: l.id,
