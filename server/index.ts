@@ -107,10 +107,13 @@ brain.on('snapshot', (info: unknown) => {
   try {
     const snapshot = brain.getSnapshot();
     if (snapshot) {
-      // Uses generatedAt (the per-refresh ISO timestamp) as the source date — NOT meta.asOf,
-      // which is the workbook data-month label (see config.ts referenceDate() docstring). This
-      // sibling call was missed when the occupancy/debt-snapshot calls below were fixed — every
-      // refresh was overwriting the same '2026-06-01' row instead of accumulating history.
+      // Uses generatedAt (the per-refresh ISO timestamp) as source_date — NOT meta.asOf, which
+      // is the workbook data-month label (see config.ts referenceDate() docstring). This sibling
+      // call was missed when the occupancy/debt-snapshot calls below were fixed. Note: unlike
+      // occupancy, property_insurance_policies is keyed on (property_id, policy_number,
+      // effective_date) with INSERT OR REPLACE, not a per-refresh-date history table — this fix
+      // doesn't create new accumulating rows, it corrects source_date provenance and fixes
+      // dedupeLatest's tie-break for NULL-keyed rows (see insurance-analysis.ts).
       captureInsurance(
         getWarehouse(),
         snapshotPoliciesToWarehouse(snapshot.insurance, snapshot.meta.generatedAt.slice(0, 10)),
