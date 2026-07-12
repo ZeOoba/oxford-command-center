@@ -946,7 +946,20 @@ export async function buildCapitalAllocationReport(
   for (const lease of snapshot.leases) {
     if (lease.propertyId === null) continue;
     const bucket = bucketExpiry(lease.monthsToExpiry, lease.leaseEnd, refDate);
-    if (bucket === '0-6m' || bucket === '6-12m') {
+    // Gabriel-ratified 2026-07-12 (adversarial-review follow-up to PR #206): a lease that lapsed
+    // IN THE GAP between the workbook's data date and the live run date — i.e. it was still
+    // current as of the workbook snapshot (leaseEnd >= asOf) but has since expired relative to
+    // today — keeps contributing to the dollar-weighted near-term-expiry term, same as
+    // '0-6m'/'6-12m'. Without this, a property whose material tenant JUST lapsed into holdover
+    // silently lost its dollar-weighted leasingRisk contribution and fell back to only the flat
+    // atRiskLikelihoodCount*10 signal, LOWERING priorityScore for exactly the property that
+    // arguably deserves more capital attention. A lease that was ALREADY expired as of the
+    // workbook's own data date (leaseEnd < asOf) is unaffected — that's genuinely stale data, not
+    // a lapse created by this PR's run-date basis, and stays excluded as it always has.
+    const freshlyLapsed =
+      bucket === 'expired' && lease.leaseEnd !== null &&
+      new Date(lease.leaseEnd).getTime() >= new Date(asOf).getTime();
+    if (bucket === '0-6m' || bucket === '6-12m' || freshlyLapsed) {
       const existing = nearTermExpiryRentByProperty.get(lease.propertyId) ?? 0;
       const ownershipPct = ownershipPctByProperty.get(lease.propertyId) ?? 1;
       nearTermExpiryRentByProperty.set(
