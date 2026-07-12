@@ -54,7 +54,12 @@ export function CalendarModule() {
   const [horizon, setHorizon] = useState<WindowFilter>('12mo');
 
   // The KPI strip always reflects the full 12-month horizon; the window filter only narrows the list.
-  const allEvents = useMemo(() => (data ? portfolioCriticalDates(data.snapshot, 12) : []), [data]);
+  // Day-counts are relative to the browser's current date (run-date basis, 2026-07-12), NOT the
+  // frozen workbook data date — so "in Nd" and overdue/holdover classification stay current.
+  const allEvents = useMemo(
+    () => (data ? portfolioCriticalDates(data.snapshot, 12, new Date().toISOString().slice(0, 10)) : []),
+    [data],
+  );
   const kpis = useMemo(() => criticalDateKpis(allEvents), [allEvents]);
   const filtered = useMemo(() => {
     let rows = horizon === '90d' ? allEvents.filter((e) => e.daysToDate <= 90) : allEvents;

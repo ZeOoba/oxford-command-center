@@ -156,16 +156,23 @@ export interface EvaluateOpts {
    * This field is the only acceptable mechanism for injecting a live rate. (M3)
    */
   cachedMarketRate?: number;
+  /**
+   * Day-count reference date (YYYY-MM-DD) for every "expires/matures in Nd" computation.
+   * The email brief passes its RUN date so alert day-counts track today (frozen-dateline
+   * defect, 2026-07: meta.asOf pinned every count at the workbook data date). Defaults to
+   * `s.meta.asOf` for backward compatibility with UI/tool callers.
+   */
+  referenceDate?: string;
 }
 
 /**
  * The single canonical alert engine. Pure. Replaces generateInsights + extendedInsights.
- * Date math uses the snapshot's asOf (stable across a refresh); only the workbook-stale check
- * uses wall-clock now.
+ * Date math uses opts.referenceDate when supplied (the brief's run date), else the snapshot's
+ * asOf (stable across a refresh); only the workbook-stale check uses wall-clock now.
  */
 export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}): Insight[] {
   const T = ALERT_THRESHOLDS;
-  const asOf = s.meta.asOf;
+  const asOf = opts.referenceDate ?? s.meta.asOf;
   const now = opts.now ?? Date.now();
   const out: Insight[] = [];
 
@@ -190,8 +197,12 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         //
         // impactAnnualUsd = annualDebtService(l) × min(monthsRemaining / 12, 1.0)
         //
-        // monthsRemaining: prefer l.monthsToMaturity (snapshot-computed, more accurate) over
-        //   the days-based proxy (days / 30). Either way, clamp to ≥ 0 — a past-due/overdue
+        // monthsRemaining: days / 30, days already computed above from `asOf` (the live reference
+        //   date, see conditions.ts module docstring) — NOT l.monthsToMaturity, a workbook column
+        //   frozen at the data-month date (frozen-dateline defect, 2026-07: severity here already
+        //   used `days`, but the impact dollar figure and detail string still preferred the stale
+        //   column, silently mixing bases and overstating/understating impact by however far the
+        //   run date has drifted from the workbook date). Clamp to ≥ 0 — a past-due/overdue
         //   balloon has monthsRemaining = 0, producing a factor of 0. We never let a negative
         //   factor reduce impact below zero, because a past-due balloon is strictly MORE urgent,
         //   not less — the displayed impact would be misleading if negative. Factor is then
@@ -203,8 +214,8 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         const ds = annualDebtService(l);
         let impactAnnualUsd: number | null = null;
         let provenance: Insight['provenance'] = 'absent';
+        const monthsRemaining = Math.max(0, days / 30);
         if (ds !== null) {
-          const monthsRemaining = Math.max(0, l.monthsToMaturity ?? days / 30);
           const factor = Math.min(monthsRemaining / 12, 1.0);
           impactAnnualUsd = ds * factor;
           provenance = 'derived';
@@ -215,7 +226,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
           severity: days < T.balloonCriticalDays ? 'critical' : 'warning',
           category: 'debt',
           title: `Balloon due — ${l.name}`,
-          detail: `${fmtUsd(l.absBalance)} balance, balloon ${fmtDate(l.maturity)} (${fmtMonths(l.monthsToMaturity ?? days / 30)}). Prepare refinance or payoff.`,
+          detail: `${fmtUsd(l.absBalance)} balance, balloon ${fmtDate(l.maturity)} (${fmtMonths(monthsRemaining)}). Prepare refinance or payoff.`,
           metric: fmtUsd(l.absBalance),
           entityType: 'loan',
           entityId: l.id,
@@ -604,11 +615,49 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         action: { label: 'Review policy', kind: 'review' },
         impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
+    } else if (p.expires !== null) {
+      // Day-count from the policy's OWN expiry against the reference date — NOT the workbook's
+      // raw daysToExpiry column (parse.ts:446), which is frozen at the workbook data date and
+      // would render a stale positive "Nd" for an already-expired policy (frozen-dateline defect,
+      // 2026-07: e.g. "renews Jun 20 (19d)" for a policy that lapsed 21 days ago) and could
+      // contradict the warehouse ins-expiry-* insight (refDate-based) in the same brief.
+      const days = daysBetween(p.expires, asOf);
+      if (days < 0) {
+        // F3: the ONLY other lapsed path (above) requires the workbook's own status column to
+        // already read Expired/Cancelled — a manually-maintained field that can lag well behind
+        // the actual expiry date. Without this branch, a policy that lapsed between the workbook
+        // data date and the run date produced NO alert anywhere (the warehouse ins-expiry-*
+        // condition also deliberately excludes days < 0 — that's Spine-A's job). Surface the
+        // discrepancy explicitly rather than silently trusting the stale status text.
+        out.push({
+          id: `ins-lapsed-live-${p.id}`, severity: 'critical', category: 'insurance',
+          title: `Policy lapsed — ${p.property}`,
+          detail: `${p.coverage ?? 'Coverage'} expired ${fmtDate(p.expires)} (${-days}d ago) — workbook status still reads "${p.status}". Confirm replacement coverage is bound.`,
+          metric: fmtUsdCompact(p.premium), entityType: 'insurance', entityId: p.id,
+          action: { label: 'Review policy', kind: 'review' },
+          impactAnnualUsd: null, spine: 'B', provenance: 'derived',
+        });
+      } else if (days < T.insuranceRenewWarnDays) {
+        out.push({
+          id: `ins-${p.id}`, severity: 'warning', category: 'insurance',
+          title: `Insurance renewing soon — ${p.property}`,
+          detail: `${p.coverage ?? 'Coverage'} renews ${fmtDate(p.expires)} (${days}d).`,
+          entityType: 'insurance', entityId: p.id,
+          action: { label: 'Review policy', kind: 'review' },
+          impactAnnualUsd: null, spine: 'B', provenance: 'absent',
+        });
+      }
     } else if (p.daysToExpiry !== null && p.daysToExpiry >= 0 && p.daysToExpiry < T.insuranceRenewWarnDays) {
+      // F6 (adversarial refute-financial-change finding): expires and daysToExpiry are
+      // independently-parsed workbook columns (parse.ts col 6 vs col 10) — a row can carry a
+      // populated daysToExpiry with a blank/unparseable Expires cell, which the `p.expires !==
+      // null` branch above cannot compute a live day-count from. Without this fallback, such a
+      // row silently produced NO alert at all, even though the pre-F3 code warned on it. No live
+      // date to check against, so this stays on the workbook's own (frozen) count — say so.
       out.push({
         id: `ins-${p.id}`, severity: 'warning', category: 'insurance',
         title: `Insurance renewing soon — ${p.property}`,
-        detail: `${p.coverage ?? 'Coverage'} renews ${fmtDate(p.expires)} (${p.daysToExpiry}d).`,
+        detail: `${p.coverage ?? 'Coverage'} renews in ${p.daysToExpiry}d (workbook estimate — no expiry date on file).`,
         entityType: 'insurance', entityId: p.id,
         action: { label: 'Review policy', kind: 'review' },
         impactAnnualUsd: null, spine: 'B', provenance: 'absent',

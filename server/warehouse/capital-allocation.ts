@@ -49,6 +49,7 @@
 
 import { getMacro } from '../macro/getMacro';
 import { getMacroMarketBenchmarks } from '../macro/market-benchmarks';
+import { referenceDate } from '../config';
 import { getRegionalMacro } from '../macro/regional-macro';
 import { propertyPeriodMetrics, latestFullYearPeriod } from './metrics';
 import { scoreProperties } from './scores';
@@ -870,7 +871,10 @@ export async function buildCapitalAllocationReport(
   db: WarehouseDb,
   snapshot: PortfolioSnapshot,
 ): Promise<CapitalAllocationReport> {
-  const asOf = snapshot.meta.asOf;
+  const asOf = snapshot.meta.asOf; // data-snapshot LABEL (report envelope, period stamps)
+  // Day-count / relative reference for lease-expiry surfaces (renewalSignals, bucketExpiry) =
+  // the RUN date, NOT the frozen workbook data date (portfolio-wide run-date basis, 2026-07-12).
+  const refDate = referenceDate();
 
   const [macroRes, benchRes, regionalRes] = await Promise.allSettled([
     getMacro(),
@@ -921,7 +925,7 @@ export async function buildCapitalAllocationReport(
 
   const arrears = snapshot.tenantArrears ?? {};
   const renewalStages = snapshot.renewalStages ?? {};
-  const signals = renewalSignals(snapshot.leases, asOf, renewalStages, arrears);
+  const signals = renewalSignals(snapshot.leases, refDate, renewalStages, arrears);
 
   const signalsByProperty = new Map<string, typeof signals>();
   for (const sig of signals) {
@@ -941,7 +945,7 @@ export async function buildCapitalAllocationReport(
   const nearTermExpiryRentByProperty = new Map<string, number>();
   for (const lease of snapshot.leases) {
     if (lease.propertyId === null) continue;
-    const bucket = bucketExpiry(lease.monthsToExpiry, lease.leaseEnd, asOf);
+    const bucket = bucketExpiry(lease.monthsToExpiry, lease.leaseEnd, refDate);
     if (bucket === '0-6m' || bucket === '6-12m') {
       const existing = nearTermExpiryRentByProperty.get(lease.propertyId) ?? 0;
       const ownershipPct = ownershipPctByProperty.get(lease.propertyId) ?? 1;

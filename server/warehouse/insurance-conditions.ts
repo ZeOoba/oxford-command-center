@@ -78,13 +78,17 @@ interface ExpiryCandidate {
  * @param db       Open WarehouseDb (caller owns lifecycle).
  * @param snapshot PortfolioSnapshot (Spine A) — only snapshot.properties[] and
  *                 snapshot.meta.asOf are consumed; no Spine-A insurance data used.
+ * @param referenceDateIso Optional day-count reference (YYYY-MM-DD); the brief passes its RUN
+ *                 date so "expires in Nd" tracks today (frozen-dateline defect, 2026-07).
+ *                 Defaults to snapshot.meta.asOf for backward compatibility.
  * @returns        Insight[] sorted by id (lexicographic) for deterministic output.
  */
 export function insuranceConditions(
   db: WarehouseDb,
   snapshot: PortfolioSnapshot,
+  referenceDateIso?: string,
 ): Insight[] {
-  const asOf = snapshot.meta.asOf;
+  const asOf = referenceDateIso ?? snapshot.meta.asOf;
 
   // Read all policy rows (light: only three columns needed).
   const rows = db

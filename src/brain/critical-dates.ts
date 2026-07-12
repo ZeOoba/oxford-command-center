@@ -34,9 +34,17 @@ function urgencyOf(daysToDate: number): CalendarUrgency {
  * Folds lease expirations + escalations, loan maturities, and insurance renewals into one
  * date-sorted stream. Overdue items (expired leases/policies — i.e. open obligations) are kept;
  * future events beyond the horizon and past-only escalations are dropped.
+ *
+ * @param referenceDate Optional day-count reference (YYYY-MM-DD). Every daysToDate here is a
+ *   "N from now" figure, so the Calendar surface passes the run date; defaults to `s.meta.asOf`
+ *   (the workbook data date) for backward compatibility.
  */
-export function portfolioCriticalDates(s: PortfolioSnapshot, horizonMonths = 12): DatedEvent[] {
-  const asOf = s.meta.asOf;
+export function portfolioCriticalDates(
+  s: PortfolioSnapshot,
+  horizonMonths = 12,
+  referenceDate?: string,
+): DatedEvent[] {
+  const asOf = referenceDate ?? s.meta.asOf;
   const horizonDays = Math.round(horizonMonths * 30.4375);
   const within = (days: number) => days <= horizonDays;
   const out: DatedEvent[] = [];

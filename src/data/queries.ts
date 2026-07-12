@@ -35,7 +35,11 @@ export function useAnalytics(): {
   const q = useSnapshot();
   const { scenario } = useUi();
   const analytics = useMemo(
-    () => (q.data ? buildAnalytics(q.data.snapshot, scenario) : null),
+    // Run-date basis for every day-count/relative surface (WALT, rollover, criticalDates,
+    // revenueAtRisk, alert day-counts): the browser's current date, NOT the frozen workbook
+    // data date (portfolio-wide run-date basis, 2026-07-12). The workbook data date lives on
+    // in data-freshness labels (snapshot.meta.asOf shown by the TopBar).
+    () => (q.data ? buildAnalytics(q.data.snapshot, scenario, new Date().toISOString().slice(0, 10)) : null),
     [q.data, scenario],
   );
   return { isLoading: q.isLoading, isError: q.isError, analytics };

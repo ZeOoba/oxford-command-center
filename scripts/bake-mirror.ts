@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
 import { getMacro } from '../server/macro/getMacro';
 import { loadEnvFile } from '../server/load-env';
-import { workbookPath } from '../server/config';
+import { workbookPath, referenceDate } from '../server/config';
+import { etNow } from '../server/brief/state';
 import type { PortfolioSnapshot } from '../src/contracts/index';
 
 loadEnvFile();
@@ -34,7 +35,11 @@ async function main() {
   const pub = join(process.cwd(), 'public');
   mkdirSync(pub, { recursive: true });
 
-  const { snapshot: raw } = await parseWorkbook(workbookPath());
+  // Parse day-counts (lease monthsToExpiry) off the ET run date so the brief — and the mirror
+  // this bake feeds — track the firm's timezone, not the process UTC date (a month-boundary
+  // evening would otherwise roll monthsToExpiry a day early). Precedence mirrors run.ts:
+  // REPORT_DATE pin → ET send date. Data-month selection is unaffected (still WORKBOOK_AS_OF).
+  const { snapshot: raw } = await parseWorkbook(workbookPath(), referenceDate(etNow().date));
   if (process.env.BRIEF_ENABLED === '1') {
     const { runBrief } = await import('../server/brief/run');
     // M3: thread getMacro as macroProvider so the brief's refi-spread signal uses the live
