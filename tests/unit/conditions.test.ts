@@ -573,6 +573,26 @@ describe('evaluateConditions — dollar ranking', () => {
     expect(infoItems.length).toBeGreaterThanOrEqual(2);
     infoItems.forEach((i) => expect(i.impactAnnualUsd).toBeNull());
   });
+
+  // Adversarial-review follow-up (refute-financial-change wf_b8410252-041, determinism lens):
+  // the F2 fix collapsed every past-due balloon's impactAnnualUsd to the same value (0 — the
+  // monthsRemaining clamp), so two equally-critical past-due balloons now tie on both severity
+  // AND impactAnnualUsd. Without a final tie-breaker their relative order depends on s.loans
+  // iteration order (still deterministic given a fixed array, but not stable against a future
+  // caller that reorders/merges loans differently). Lock in an id-based tie-breaker, matching
+  // the pattern already used in capital-allocation.ts and insurance-conditions.ts.
+  it('two tied (same severity, same impactAnnualUsd) insights sort by id, independent of insertion order', () => {
+    const l1 = loan({ id: 'z-loan', balloon: true, maturity: iso(-30), monthlyPmt: 5000 }); // past-due → critical, impact 0
+    const l2 = loan({ id: 'a-loan', balloon: true, maturity: iso(-30), monthlyPmt: 5000 }); // same — ties on severity + impact
+    const outAsc = evaluateConditions(snap({ loans: [l1, l2] }), opts); // z-loan inserted first
+    const outDesc = evaluateConditions(snap({ loans: [l2, l1] }), opts); // a-loan inserted first
+    const idsAsc = outAsc.filter((i) => i.id.startsWith('balloon-')).map((i) => i.id);
+    const idsDesc = outDesc.filter((i) => i.id.startsWith('balloon-')).map((i) => i.id);
+    expect(idsAsc).toEqual(['balloon-a-loan', 'balloon-z-loan']);
+    // Same output order regardless of which loan was inserted first — insertion order no
+    // longer decides the tie.
+    expect(idsDesc).toEqual(idsAsc);
+  });
 });
 
 // ── M3: Cached DGS5 threading — no live HTTP from analytics path ──────────────────────────────

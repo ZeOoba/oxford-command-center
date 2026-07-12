@@ -736,10 +736,23 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
     // Secondary key: impactAnnualUsd DESC, nulls last.
     const aAmt = a.impactAnnualUsd;
     const bAmt = b.impactAnnualUsd;
-    if (aAmt !== null && bAmt !== null) return bAmt - aAmt;
-    if (aAmt !== null) return -1; // a has dollar, b is null → a first
-    if (bAmt !== null) return 1;  // b has dollar, a is null → b first
-    return 0; // both null → preserve prior relative order (stable)
+    if (aAmt !== null && bAmt !== null) {
+      const amtDiff = bAmt - aAmt;
+      if (amtDiff !== 0) return amtDiff;
+      // fall through to the id tie-break below on an exact-amount tie (e.g. two past-due
+      // balloons, both clamped to impact 0) — do NOT `return amtDiff` (0) here, or the
+      // tie-break below never runs.
+    } else if (aAmt !== null) {
+      return -1; // a has dollar, b is null → a first
+    } else if (bAmt !== null) {
+      return 1;  // b has dollar, a is null → b first
+    }
+    // Tertiary key: id ASC. A tie on severity + impactAnnualUsd (e.g. two past-due balloons,
+    // both clamped to impact 0 by the F2 fix) otherwise falls back to s.loans/s.leases/etc.
+    // iteration order — deterministic given a fixed array, but not stable against a future
+    // caller that reorders/merges input differently. Matches the id-based tie-breaker already
+    // used in capital-allocation.ts and insurance-conditions.ts.
+    return a.id.localeCompare(b.id);
   });
 }
 
