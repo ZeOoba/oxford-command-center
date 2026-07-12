@@ -19,8 +19,10 @@ import { describe, it, expect, afterEach } from 'vitest';
 import type { PortfolioSnapshot, Lease, InsurancePolicy } from '../../src/contracts/index';
 import { WORKBOOK_AS_OF, referenceDate } from '../../server/config';
 import { parseWorkbook } from '../../server/workbook/parse';
-import { buildAnalytics } from '../../src/analytics/engine';
+import { buildAnalytics, rolloverSchedule } from '../../src/analytics/engine';
 import { evaluateConditions } from '../../src/analytics/conditions';
+import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast';
+import { portfolioCriticalDates } from '../../src/brain/critical-dates';
 import { runBrief } from '../../server/brief/run';
 
 // ── env hygiene: never leak REPORT_DATE / WAREHOUSE_DB into other tests ─────────────────────────
@@ -300,5 +302,171 @@ describe('parseWorkbook — explicit referenceDateIso drives monthsToExpiry (ET-
     process.env.REPORT_DATE = '2026-07-01'; // leaseEnd 2027-01-01 → 6 months
     const { snapshot } = await parseWorkbook(file);
     expect(snapshot.leases[0]!.monthsToExpiry).toBe(6);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// Finding C — portfolio-wide run-date basis (approved 2026-07-12, reversing brief-only scoping)
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+
+// (C-1) portfolioCriticalDates — optional referenceDate drives day-counts; default = meta.asOf
+describe('portfolioCriticalDates — optional referenceDate (Calendar surface)', () => {
+  const s = snap({
+    leases: [lease({ id: 'L1', leaseEnd: '2026-07-22', annualRent: 120000, propertyKey: '100 A' })],
+  });
+
+  it('computes daysToDate from the injected referenceDate', () => {
+    const events = portfolioCriticalDates(s, 12, '2026-07-12');
+    const e = events.find((x) => x.id === 'lease-expiry-L1')!;
+    expect(e).toBeDefined();
+    expect(e.daysToDate).toBe(10); // 2026-07-22 minus 2026-07-12
+  });
+
+  it('defaults to meta.asOf when no referenceDate is passed (backward compatibility)', () => {
+    const events = portfolioCriticalDates(s, 12); // meta.asOf = 2026-06-01
+    const e = events.find((x) => x.id === 'lease-expiry-L1')!;
+    expect(e.daysToDate).toBe(51); // 2026-07-22 minus 2026-06-01
+  });
+});
+
+// (C-2) buildAnalytics(referenceDate) shifts walt, rollover, revenueAtRisk, criticalDates together
+describe('buildAnalytics — injected referenceDate drives ALL day-count surfaces', () => {
+  it('walt and revenueAtRisk and criticalDates all track the run date; default path unchanged', () => {
+    const s = snap({
+      meta: { schemaVersion: '1.0.0', asOf: '2026-06-01', generatedAt: '2026-06-01T00:00:00Z', source: 't', scenario: 'Base' },
+      leases: [
+        // Expires 2026-10-01 = 81 days after the 2026-07-12 run date (within 90d), but 122 days
+        // after meta.asOf. Baked monthsToExpiry is deliberately STALE (18) to prove revenueAtRisk
+        // recomputes from leaseEnd against the run date rather than trusting the frozen column.
+        lease({ id: 'l1', leaseEnd: '2026-10-01', annualRent: 100000, monthsToExpiry: 18, status: 'Active' }),
+      ],
+    } as unknown as Partial<PortfolioSnapshot>);
+
+    const run = buildAnalytics(s, 'Base', '2026-07-12');
+    // walt: 2026-10-01 is ~0.22y from the run date; ~0.33y from meta.asOf.
+    const runWalt = run.kpis.walt.value!;
+    // revenueAtRisk: within 90d of the run date → full rent exposed.
+    expect(run.revenueAtRisk.within90dRent).toBe(100000);
+    // criticalDates expiration count off the run date.
+    expect(run.criticalDates.find((c) => c.kind === 'Expiration')!.daysToDate).toBe(81);
+
+    const def = buildAnalytics(s); // no referenceDate → meta.asOf basis, baked monthsToExpiry
+    const defWalt = def.kpis.walt.value!;
+    // Default revenueAtRisk uses the STALE baked monthsToExpiry (18) → NOT within 90d.
+    expect(def.revenueAtRisk.within90dRent).toBe(0);
+    expect(def.criticalDates.find((c) => c.kind === 'Expiration')!.daysToDate).toBe(122);
+    // walt shifts with the reference (run date is later → shorter remaining term).
+    expect(runWalt).toBeLessThan(defWalt);
+  });
+
+  it('rolloverSchedule buckets forward from the injected referenceDate', () => {
+    // A lease expiring 2026-08-15: from a July run date it is a current-year H2 bucket; the
+    // bucket base year is the reference year, so a 2025 reference would bucket it differently.
+    const s = snap({ leases: [lease({ id: 'l1', leaseEnd: '2026-08-15', sf: 1000, annualRent: 60000 })] });
+    const fromRun = rolloverSchedule(s.leases, '2026-07-12');
+    expect(fromRun.find((b) => b.period === '2026 H2')!.count).toBe(1);
+    // Pure-fn contrast proving the param drives the base year.
+    const fromPrior = rolloverSchedule(s.leases, '2025-01-01');
+    expect(fromPrior.find((b) => b.period === '2026')!.count).toBe(1); // future full-year bucket
+  });
+});
+
+// (C-3) THE mixed-basis edge is eliminated: a lease that ended between meta.asOf and the run date
+// is treated as expired/holdover COHERENTLY across every surface when the run date is the basis.
+describe('mixed-basis edge eliminated — lease ended between data date and run date', () => {
+  // leaseEnd 2026-07-05: AFTER meta.asOf (2026-06-01) but BEFORE the run date (2026-07-12).
+  // Baked monthsToExpiry = 0 (calendar-month truncation). status stays Active (holdover).
+  const l = lease({ id: 'l1', leaseEnd: '2026-07-05', annualRent: 50000, monthsToExpiry: 0, status: 'Active', leaseStart: '2021-07-05' });
+  const REF = '2026-07-12';
+
+  it('bucketExpiry, renewalSignals, and criticalDates all agree it has ended (run-date basis)', () => {
+    // bucketExpiry: leaseEnd < run date → expired.
+    expect(bucketExpiry(l.monthsToExpiry, l.leaseEnd, REF)).toBe('expired');
+    // renewalSignals: lease end passed → lapsing (holdover), not a future renewal.
+    const sig = renewalSignals([l], REF, {}, {})[0]!;
+    expect(sig.expiryBucket).toBe('expired');
+    expect(sig.likelihood).toBe('lapsing');
+    // criticalDates via buildAnalytics: overdue expiration (negative daysToDate), kept as holdover.
+    const s = snap({ leases: [l] });
+    const a = buildAnalytics(s, 'Base', REF);
+    const exp = a.criticalDates.find((c) => c.kind === 'Expiration' && c.leaseId === 'l1')!;
+    expect(exp).toBeDefined();
+    expect(exp.daysToDate).toBe(-7); // 2026-07-05 minus 2026-07-12
+  });
+
+  it('the OLD frozen (meta.asOf) basis mis-classified the SAME lease as still-future', () => {
+    // Demonstrates the defect the run-date basis fixes: on the June data date the lease looks
+    // like it has not yet ended.
+    expect(bucketExpiry(l.monthsToExpiry, l.leaseEnd, '2026-06-01')).toBe('0-6m');
+    const sig = renewalSignals([l], '2026-06-01', {}, {})[0]!;
+    expect(sig.likelihood).not.toBe('lapsing');
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+// Finding D — surface the workbook DATA month in the brief header
+// ═══════════════════════════════════════════════════════════════════════════════════════════════
+describe('runBrief — body header surfaces the workbook data month alongside the run-date "As of"', () => {
+  it('renders "As of <run date>" AND "data month <Mon YYYY>" from WORKBOOK_AS_OF', async () => {
+    delete process.env.REPORT_DATE;
+    const dir = mkdtempSync(join(tmpdir(), 'refdate-findingd-'));
+    process.env.WAREHOUSE_DB = join(dir, 'nonexistent.sqlite');
+    const statePath = join(dir, 'state.json');
+
+    const s = snap({
+      meta: { schemaVersion: '1.0.0', asOf: '2026-06-04', generatedAt: '2026-06-04T00:00:00Z', source: 't', scenario: 'Base' },
+    } as unknown as Partial<PortfolioSnapshot>);
+
+    const emails: { subject: string; html: string }[] = [];
+    await runBrief(s, {
+      statePath,
+      now: new Date('2026-07-12T15:00:00Z'), // 11:00 ET → run date 2026-07-12
+      send: async (email) => { emails.push(email); return { ok: true, via: 'com' }; },
+    });
+    const brief = emails.find((e) => e.subject.includes('Daily Brief'))!;
+    expect(brief).toBeDefined();
+    // Run-date "As of" (unchanged from Finding earlier).
+    expect(brief.html).toContain('As of 2026-07-12');
+    // WORKBOOK_AS_OF defaults to 2026-06-01 → data month "Jun 2026".
+    expect(brief.html).toContain('data month Jun 2026');
+  });
+});
+
+// (C-4) brief loan-maturity rows: countdown off the run date from the maturity DATE, not the
+// frozen workbook monthsToMaturity column.
+describe('runBrief — loan-maturity countdown is run-date-relative from the maturity date', () => {
+  it('renders the loan-maturity day-count from the date against the run date, ignoring a stale monthsToMaturity column', async () => {
+    delete process.env.REPORT_DATE;
+    const dir = mkdtempSync(join(tmpdir(), 'refdate-loan-'));
+    process.env.WAREHOUSE_DB = join(dir, 'nonexistent.sqlite');
+    const statePath = join(dir, 'state.json');
+
+    const s = snap({
+      meta: { schemaVersion: '1.0.0', asOf: '2026-06-04', generatedAt: '2026-06-04T00:00:00Z', source: 't', scenario: 'Base' },
+      loans: [
+        {
+          id: 'ln1', name: 'Fixture Note', counterparty: null, direction: 'borrower',
+          originalPrincipal: null, currentBalance: 1000000, absBalance: 1000000, rate: 0.06,
+          monthlyPmt: 6000, annualInterest: null, annualPrincipal: null, loanType: null, status: null,
+          isDemand: false,
+          // Matures 2026-08-23 = 42 days after the 2026-07-12 run date. The workbook column is
+          // STALE (0) — the frozen basis would have rendered "(0d)".
+          maturity: '2026-08-23', monthsToMaturity: 0, ltv: null, lender: null, balloon: false,
+          flags: [], collateralProperty: null,
+        },
+      ],
+    } as unknown as Partial<PortfolioSnapshot>);
+
+    const emails: { subject: string; html: string }[] = [];
+    await runBrief(s, {
+      statePath,
+      now: new Date('2026-07-12T15:00:00Z'), // 11:00 ET → run date 2026-07-12
+      send: async (email) => { emails.push(email); return { ok: true, via: 'com' }; },
+    });
+    const brief = emails.find((e) => e.subject.includes('Daily Brief'))!;
+    expect(brief).toBeDefined();
+    expect(brief.html).toContain('Loan maturity: Fixture Note');
+    expect(brief.html).toContain('(42d)'); // 2026-08-23 minus 2026-07-12
+    expect(brief.html).not.toContain('(0d)');
   });
 });

@@ -28,6 +28,7 @@ import {
   bucketExpiry,
 } from '../../src/analytics/lease-forecast';
 import { leasingVelocity } from './lease-velocity';
+import { referenceDate } from '../config';
 import {
   RentForecastInput,
   LeaseForecastResponse,
@@ -90,12 +91,14 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
           });
         }
 
-        const asOf = snapshot.meta.asOf;
+        const asOf = snapshot.meta.asOf; // data-snapshot LABEL (response envelope)
+        // Run-date reference for expiry day-count surfaces (portfolio-wide run-date basis).
+        const refDate = referenceDate();
         const leases = snapshot.leases;
         const arrears = snapshot.tenantArrears ?? {};
         const marketRents = (snapshot as typeof snapshot & { marketRents?: Record<string, number> }).marketRents ?? {};
 
-        const signals = renewalSignals(leases, asOf, snapshot.renewalStages, arrears);
+        const signals = renewalSignals(leases, refDate, snapshot.renewalStages, arrears);
         const velocity = leasingVelocity(db, snapshot.properties);
         const marketGapsAll = marketRentGaps(leases, marketRents);
 
@@ -104,7 +107,7 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
         const bucketMap = new Map<string, { count: number; expiringRent: number; expiringSf: number }>();
         for (const bucket of ALL_BUCKETS) bucketMap.set(bucket, { count: 0, expiringRent: 0, expiringSf: 0 });
         for (const l of leases) {
-          const bucket = bucketExpiry(l.monthsToExpiry, l.leaseEnd, asOf);
+          const bucket = bucketExpiry(l.monthsToExpiry, l.leaseEnd, refDate);
           const b = bucketMap.get(bucket)!;
           b.count++;
           b.expiringRent += l.annualRent;
@@ -172,7 +175,9 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
       const scenarios = Array.isArray(body.scenarios) ? body.scenarios : ALL_SCENARIOS;
       const horizonMonths = body.horizonMonths ?? 12;
       const vacancyPct = body.vacancyPct ?? 0;
-      const asOf = snapshot.meta.asOf;
+      const asOf = snapshot.meta.asOf; // data-snapshot LABEL (response envelope)
+      // Forecast origin ("N months from here") = the RUN date, not the workbook data date.
+      const refDate = referenceDate();
       const leases = snapshot.leases;
       const marketRents = (snapshot as typeof snapshot & { marketRents?: Record<string, number> }).marketRents ?? {};
 
@@ -182,7 +187,7 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
         if (!inputResult.success) {
           return c.json({ error: `Invalid input: ${inputResult.error.message}` }, 400);
         }
-        results.push(rentForecast(leases, asOf, inputResult.data, marketRents));
+        results.push(rentForecast(leases, refDate, inputResult.data, marketRents));
       }
 
       const response = RentForecastResponse.parse({ asOf, results });
@@ -210,12 +215,13 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
         });
       }
 
-      const asOf = snapshot.meta.asOf;
+      const asOf = snapshot.meta.asOf; // data-snapshot LABEL (response envelope + AI input)
+      const refDate = referenceDate(); // run-date reference for expiry day-count surfaces
       const leases = snapshot.leases;
       const marketRents = (snapshot as typeof snapshot & { marketRents?: Record<string, number> }).marketRents ?? {};
       const arrears = snapshot.tenantArrears ?? {};
 
-      const signals = renewalSignals(leases, asOf, snapshot.renewalStages, arrears);
+      const signals = renewalSignals(leases, refDate, snapshot.renewalStages, arrears);
       const marketGapsAll = marketRentGaps(leases, marketRents);
 
       const likelyCt    = signals.filter((s) => s.likelihood === 'likely').length;
@@ -224,7 +230,7 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
       const lapsingCt   = signals.filter((s) => s.likelihood === 'lapsing').length;
 
       const nearTermRent = leases
-        .filter((l) => bucketExpiry(l.monthsToExpiry, l.leaseEnd, asOf) === '0-6m')
+        .filter((l) => bucketExpiry(l.monthsToExpiry, l.leaseEnd, refDate) === '0-6m')
         .reduce((s, l) => s + l.annualRent, 0);
 
       // Anonymize propertyKey → ordinal label before sending to AI (invariant 7: no raw

@@ -2,6 +2,7 @@ import type { PortfolioSnapshot } from '../../src/contracts/index';
 import type { AiAskResponse } from '../../src/brain/ai/types';
 import { buildAnalytics } from '../../src/analytics/engine';
 import { fmtUsdCompact, fmtPct, fmtYears, fmtNum } from '../../src/analytics/format';
+import { referenceDate } from '../config';
 
 /**
  * ── AI SEAM ───────────────────────────────────────────────────────────────────
@@ -12,7 +13,8 @@ import { fmtUsdCompact, fmtPct, fmtYears, fmtNum } from '../../src/analytics/for
  */
 export function respond(question: string, s: PortfolioSnapshot): AiAskResponse {
   const q = question.toLowerCase().trim();
-  const a = buildAnalytics(s);
+  // Run-date basis for WALT, rollover, criticalDates, revenueAtRisk, and alert day-counts.
+  const a = buildAnalytics(s, 'Base', referenceDate());
   const k = a.kpis;
   const sources = new Set<string>();
   const out: string[] = [];

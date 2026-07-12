@@ -60,7 +60,16 @@ export function applyScenario(s: PortfolioSnapshot, scenario: ScenarioName): Por
 }
 
 // ── Portfolio KPIs ────────────────────────────────────────────────────────────
-export function portfolioKpis(s: PortfolioSnapshot, scenario: ScenarioName = 'Base'): PortfolioKpis {
+/**
+ * @param referenceDate Optional day-count reference (YYYY-MM-DD) for WALT (rent-weighted
+ *   remaining term — a "years from now" figure). Defaults to `s.meta.asOf` for backward
+ *   compatibility; callers with a run date (UI/AI/brief) pass it so WALT tracks today.
+ */
+export function portfolioKpis(
+  s: PortfolioSnapshot,
+  scenario: ScenarioName = 'Base',
+  referenceDate?: string,
+): PortfolioKpis {
   const p = s.properties;
   // Under a non-Base scenario, workbook figures are modeled — mark them derived.
   const sourced: Confidence = scenario === 'Base' ? 'confirmed' : 'derived';
@@ -85,7 +94,7 @@ export function portfolioKpis(s: PortfolioSnapshot, scenario: ScenarioName = 'Ba
     tenantCount: cell(tenants, 'Property NOI · Σ tenants', 'confirmed'),
     totalDebt: cell(debt, 'Property NOI · Σ loan balance', 'confirmed'),
     totalCash: cell(s.cash.totalCash, 'Cash Balances · total', 'confirmed'),
-    walt: cell(walt(s.leases, s.meta.asOf), DERIVED, 'derived', {
+    walt: cell(walt(s.leases, referenceDate ?? s.meta.asOf), DERIVED, 'derived', {
       formula: 'rent-weighted remaining term, active leases',
     }),
   };
@@ -132,11 +141,23 @@ export function rolloverSchedule(leases: Lease[], asOf: string, horizonYears = 4
   return [...buckets.values()].sort((a, b) => a.period.localeCompare(b.period));
 }
 
-export function revenueAtRisk(leases: Lease[]) {
+/**
+ * @param asOf Optional run-date reference (YYYY-MM-DD). When supplied, the "within 90 days"
+ *   test is computed day-accurately from `leaseEnd` against it (falling back to the baked
+ *   `monthsToExpiry` only when `leaseEnd` is null) — this keeps the exposure on the same
+ *   run-date basis as every other surface and is drift-free vs the parse-time column. When
+ *   omitted, the original baked-`monthsToExpiry` behavior is preserved for backward compatibility.
+ */
+export function revenueAtRisk(leases: Lease[], asOf?: string) {
   const totalRent = sum(leases.map((l) => l.annualRent));
-  const within90dRent = sum(
-    leases.filter((l) => l.monthsToExpiry !== null && l.monthsToExpiry >= 0 && l.monthsToExpiry <= 3).map((l) => l.annualRent),
-  );
+  const within90d = (l: Lease): boolean => {
+    if (asOf && l.leaseEnd) {
+      const days = daysBetween(l.leaseEnd, asOf);
+      return days >= 0 && days <= 90;
+    }
+    return l.monthsToExpiry !== null && l.monthsToExpiry >= 0 && l.monthsToExpiry <= 3;
+  };
+  const within90dRent = sum(leases.filter(within90d).map((l) => l.annualRent));
   const expiredRent = sum(leases.filter((l) => l.status === 'Expired').map((l) => l.annualRent));
   return { within90dRent, expiredRent, pctOfRent: totalRent ? within90dRent / totalRent : 0 };
 }
@@ -285,12 +306,18 @@ export function buildAnalytics(
   referenceDate?: string,
 ): AnalyticsBundle {
   const s = applyScenario(snapshot, scenario);
+  // ONE basis for every day-count/relative surface in the bundle. `ref` drives walt, rollover,
+  // and criticalDates (all "N from now" figures); when no run date is injected it falls back to
+  // the workbook data date, leaving legacy callers unchanged. revenueAtRisk gets the RAW
+  // `referenceDate` (undefined-preserving) so its default path keeps the baked-monthsToExpiry
+  // behavior; a provided run date switches it to day-accurate leaseEnd math.
+  const ref = referenceDate ?? s.meta.asOf;
   return {
-    kpis: portfolioKpis(s, scenario),
+    kpis: portfolioKpis(s, scenario, ref),
     leaseStatus: leaseStatusBreakdown(s.leases),
-    rollover: rolloverSchedule(s.leases, s.meta.asOf),
-    criticalDates: criticalDates(s.leases, referenceDate ?? s.meta.asOf),
-    revenueAtRisk: revenueAtRisk(s.leases),
+    rollover: rolloverSchedule(s.leases, ref),
+    criticalDates: criticalDates(s.leases, ref),
+    revenueAtRisk: revenueAtRisk(s.leases, referenceDate),
     topTenants: topTenants(s.leases),
     tenantHHI: tenantHHI(s.leases),
     marketByNoi: marketAllocation(s.properties, 'noi'),

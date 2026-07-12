@@ -10,7 +10,7 @@ import ExcelJS from 'exceljs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import type { Property, PortfolioSnapshot } from '../../src/contracts/index';
 import { CapitalAllocationReport } from '../../src/contracts/capital-allocation';
 import { openWarehouse } from '../../server/warehouse/db';
@@ -18,6 +18,16 @@ import { ingestFile } from '../../server/warehouse/ingest';
 import { seedMappings } from '../../server/warehouse/mapping';
 import { seedPropertyMaster } from '../../server/warehouse/property-master';
 import { buildCapitalAllocationReport } from '../../server/warehouse/capital-allocation';
+
+// buildCapitalAllocationReport now derives lease-expiry buckets off the RUN date (referenceDate(),
+// portfolio-wide run-date basis, 2026-07-12). Pin it to this suite's fixture data date (2026-06-22)
+// so the near-term-expiry fixture (leaseEnd 2026-09-30) classifies deterministically regardless of
+// the wall-clock date the suite runs on — without this pin the I-6 assertion would flip once the
+// real date passes 2026-09-30. Production still uses the true run date.
+const PINNED_REPORT_DATE = '2026-06-22';
+let priorReportDate: string | undefined;
+beforeAll(() => { priorReportDate = process.env.REPORT_DATE; process.env.REPORT_DATE = PINNED_REPORT_DATE; });
+afterAll(() => { if (priorReportDate === undefined) delete process.env.REPORT_DATE; else process.env.REPORT_DATE = priorReportDate; });
 
 const SEED = [
   { account: 'Rent', code: '5064', normalized_category: 'Rental Revenue', classification: 'revenue' },

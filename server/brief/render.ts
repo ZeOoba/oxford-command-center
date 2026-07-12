@@ -11,6 +11,10 @@ export interface BriefInput {
    *  the workbook asOf (frozen-date incident 2026-07-09: WORKBOOK_AS_OF pinned every
    *  subject to 2026-06-01). */
   briefDate: string;
+  /** Human-readable workbook DATA month (e.g. "Jun 2026"), sourced from WORKBOOK_AS_OF. Shown
+   *  in the header next to the run-date "As of" so June metrics can't be read as current-day
+   *  data (Finding D, 2026-07-12). This is a data-freshness LABEL — never the day-count basis. */
+  dataMonth: string;
   freshness: string;
   insights: Insight[];
   criticalDates: { date: string; label: string; days: number }[];
@@ -61,7 +65,7 @@ export function renderBrief(b: BriefInput): Email {
   const html =
     `<table width="640" cellpadding="0" cellspacing="0" style="margin:0 auto;background:#fff;border:1px solid #e3ddcd">
       <tr><td style="background:${NAVY};padding:18px 24px;color:#fff;font:700 18px DM Sans,Arial,sans-serif">Oxford Command Center — Daily Brief
-        <div style="font:400 12px DM Sans,Arial;color:${GOLD};margin-top:2px">As of ${esc(b.asOf)} · data ${esc(b.freshness)}</div></td></tr>
+        <div style="font:400 12px DM Sans,Arial;color:${GOLD};margin-top:2px">As of ${esc(b.asOf)} · data month ${esc(b.dataMonth)} · data ${esc(b.freshness)}</div></td></tr>
       ${topExposureRow(b.insights)}
       ${section('Action items', alertRows(b.insights))}
       ${section('Critical dates — next 90 days', dateRows(b.criticalDates))}

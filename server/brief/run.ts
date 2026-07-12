@@ -10,7 +10,13 @@ import { sendEmail, type SendResult } from './send';
 import { openWarehouse } from '../warehouse/db';
 import { insuranceConditions } from '../warehouse/insurance-conditions';
 import { DAY_MS } from '../warehouse/time-constants';
-import { referenceDate } from '../config';
+import { referenceDate, WORKBOOK_AS_OF } from '../config';
+
+/** Workbook DATA month as "Mon YYYY" (e.g. "Jun 2026"), for the brief header freshness label. */
+function workbookDataMonth(): string {
+  const d = new Date(WORKBOOK_AS_OF);
+  return `${d.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' })} ${d.getUTCFullYear()}`;
+}
 // Routing canon: all automated outputs → ggoldberg only. The cc-Eric exception belongs to
 // the ora-am-brief ONLY and does not extend to this brief (Gabriel-ratified 2026-07-09).
 const ALERT_RECIPIENTS = ['ggoldberg@oxfordra.net'];
@@ -111,6 +117,7 @@ export async function runBrief(
       renderBrief({
         asOf: refDate,
         briefDate: nowEt.date,
+        dataMonth: workbookDataMonth(),
         freshness: snapshot.dataQuality.length ? `${snapshot.dataQuality.length} data-quality flag(s)` : 'no data-quality flags',
         insights,
         criticalDates,
@@ -153,8 +160,8 @@ function countByStage(s: PortfolioSnapshot): { stage: string; count: number }[] 
 }
 
 /** Forward calendar (<=90d): lease dates + loan maturities + deal target-close dates.
- *  `refDate` is the run-date day-count reference; loan rows keep the workbook's own
- *  monthsToMaturity column (workbook DATA, not recomputed here). */
+ *  `refDate` is the run-date day-count reference for every row, including loan maturities
+ *  (computed from the maturity DATE, not the frozen workbook monthsToMaturity column). */
 function upcomingDates(
   s: PortfolioSnapshot,
   leaseDates: { date: string; daysToDate: number; kind: string; tenant: string }[],
@@ -164,13 +171,17 @@ function upcomingDates(
     .filter((c) => c.daysToDate >= 0 && c.daysToDate <= 90)
     .map((c) => ({ date: c.date, label: `${c.kind}: ${c.tenant}`, days: c.daysToDate }));
 
+  // Countdown off the run date from the maturity DATE (run-date-relative, consistent with lease
+  // expiry) — NOT the frozen workbook monthsToMaturity column, which pinned the "Nd" to the data
+  // date. Demand loans (no maturity date) are excluded.
   const fromLoans = s.loans
-    .filter((l) => l.maturity && l.monthsToMaturity !== null && l.monthsToMaturity >= 0 && l.monthsToMaturity <= 3)
+    .filter((l) => l.maturity && !l.isDemand)
     .map((l) => ({
       date: l.maturity as string,
       label: `Loan maturity: ${l.name}`,
-      days: Math.round((l.monthsToMaturity ?? 0) * 30),
-    }));
+      days: Math.round((new Date(l.maturity as string).getTime() - new Date(refDate).getTime()) / DAY_MS),
+    }))
+    .filter((x) => x.days >= 0 && x.days <= 90);
 
   const fromDeals = s.deals
     .filter((d) => d.targetCloseDate)

@@ -12,7 +12,7 @@
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeAll, afterAll } from 'vitest';
 import { leaseForecastApi } from '../../server/warehouse/lease-forecast-api';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
@@ -34,6 +34,14 @@ const mockGetSnapshot = vi.mocked(brain.getSnapshot);
 // ── Fixtures ──────────────────────────────────────────────────────────────────────────────
 
 const ASOF = '2026-06-21';
+
+// The routes now derive expiry buckets / renewal signals / rent-forecast horizons off the RUN
+// date (referenceDate(), portfolio-wide run-date basis). Pin it to the fixture data date so bucket
+// classification and horizon math stay deterministic across wall-clock dates. Production uses the
+// real run date; the response `asOf` label remains meta.asOf (data-snapshot date) either way.
+let priorReportDate: string | undefined;
+beforeAll(() => { priorReportDate = process.env.REPORT_DATE; process.env.REPORT_DATE = ASOF; });
+afterAll(() => { if (priorReportDate === undefined) delete process.env.REPORT_DATE; else process.env.REPORT_DATE = priorReportDate; });
 
 function snap(over: Partial<PortfolioSnapshot> = {}): PortfolioSnapshot {
   const base = {
