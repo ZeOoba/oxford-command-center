@@ -62,6 +62,7 @@ import { assertNoConfidential } from '../briefing/confidential';
 import { syncCapitalActionsToNotion } from '../notion/capital-writeback';
 import { NotionSyncResult } from '../../src/contracts/notion-writeback';
 import { getProspectDemandReport, addProspectEvent } from './prospect-demand';
+import { referenceDate } from '../config';
 import { ProspectDemandReport, ProspectDemandEventInput } from '../../src/contracts/prospect-demand';
 
 const ActionInput = z.object({ action: z.enum(['approve', 'reject']) });
@@ -992,12 +993,17 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
   app.get('/capital-allocation/ic-memo', () =>
     withDb(async (db) => {
       try {
-        const asOf = new Date().toISOString().slice(0, 10);
+        // referenceDate() (see server/config.ts) — NOT a raw UTC slice; this asOf now anchors
+        // real date math inside buildPortfolioAllocation -> scoreDebtPositions' fresh maturity
+        // recompute. Captured ONCE and passed explicitly into buildCapitalAllocationReport below
+        // so the IC memo's two halves share one as-of date rather than each independently calling
+        // referenceDate() and risking a UTC-midnight race between them.
+        const asOf = referenceDate();
         const { brain } = await import('../brain');
         const snapshot = await brain.getSnapshot();
         const portfolio = await buildPortfolioAllocation(db, asOf, undefined, snapshot ?? undefined);
         assertNoConfidential(portfolio);
-        const entries = snapshot ? (await buildCapitalAllocationReport(db, snapshot)).entries : undefined;
+        const entries = snapshot ? (await buildCapitalAllocationReport(db, snapshot, asOf)).entries : undefined;
         const html = buildIcMemoHtml(portfolio, entries);
         return new Response(html, {
           status: 200,

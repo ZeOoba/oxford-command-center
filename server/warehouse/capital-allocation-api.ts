@@ -20,6 +20,7 @@ import {
   HurdleRateConfig,
 } from '../../src/contracts/capital';
 import { verdictsFromAllocations, logVerdicts, computeInputsVersion } from './calibration';
+import { referenceDate } from '../config';
 
 // ── Cluster enumeration ──────────────────────────────────────────────────────────────────────
 
@@ -59,7 +60,10 @@ export function capitalAllocationApi(getDb: () => WarehouseDb): Hono {
   // GET /allocate
   app.get('/allocate', (c) => withDb(async (db) => {
     try {
-      const asOf = new Date().toISOString().slice(0, 10);
+      // referenceDate() (see server/config.ts) — NOT a raw UTC slice; this asOf anchors real
+      // date math inside buildPortfolioAllocation -> scoreDebtPositions' fresh maturity recompute,
+      // and REPORT_DATE-pins for deterministic tests like every other reference-date call site.
+      const asOf = referenceDate();
       // Spine A snapshot is optional here (fail-open): a missing snapshot just means
       // expectedReturnPct stays null for every verdict, same as pre-v2 behavior.
       const { brain } = await import('../brain');

@@ -36,7 +36,10 @@ export function TenantsModule() {
     onSuccess: () => qc.invalidateQueries({ queryKey: SNAPSHOT_KEY }),
   });
 
-  const cards = useMemo(() => (data ? tenantScorecards(data.snapshot) : []), [data]);
+  const cards = useMemo(
+    () => (data ? tenantScorecards(data.snapshot, new Date().toISOString().slice(0, 10)) : []),
+    [data],
+  );
   const maxPct = useMemo(() => Math.max(0, ...cards.map((c) => c.pctNoi)), [cards]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = cards.find((c) => c.id === selectedId) ?? null;

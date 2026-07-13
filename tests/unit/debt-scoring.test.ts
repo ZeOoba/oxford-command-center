@@ -48,6 +48,8 @@ function insertLoan(
     monthly_pmt?: number | null;
     annual_interest?: number | null;
     annual_principal?: number | null;
+    is_demand?: number;
+    maturity_date?: string | null;
     months_to_maturity?: number | null;
     ltv?: number | null;
     status?: string;
@@ -67,8 +69,13 @@ function insertLoan(
     monthly_pmt: overrides.monthly_pmt !== undefined ? overrides.monthly_pmt : 5_500,
     annual_interest: overrides.annual_interest !== undefined ? overrides.annual_interest : null,
     annual_principal: overrides.annual_principal !== undefined ? overrides.annual_principal : null,
-    is_demand: 0,
-    maturity_date: '2030-01-01',
+    is_demand: overrides.is_demand ?? 0,
+    // Defaults to null (not a fixed date) — scoreDebtPositions now prefers a fresh recompute from
+    // maturity_date over the stored months_to_maturity whenever maturity_date is present, so a
+    // fixture that wants to control months_to_maturity directly (nearly every test below) must
+    // leave maturity_date unset to exercise the fallback path. Tests exercising the fresh path
+    // explicitly pass maturity_date.
+    maturity_date: overrides.maturity_date !== undefined ? overrides.maturity_date : null,
     months_to_maturity: overrides.months_to_maturity !== undefined ? overrides.months_to_maturity : 42,
     ltv: overrides.ltv !== undefined ? overrides.ltv : 0.30,
     balloon: 0,
@@ -470,6 +477,30 @@ describe('cash-out signal', () => {
     const s = results.find((r) => r.propertyId === 'prop-a')!;
     expect(s.signal).toBe('cash-out');
   });
+
+  // Regression: the cash-out maturity gate must derive minMonthsToMaturity from a fresh
+  // maturity_date recompute, NEVER the stored months_to_maturity — a workbook-cell snapshot
+  // frozen at whenever the workbook was last recalced/saved, which only ever grows staler with
+  // time (true remaining term always shrinks). A stale-preferring implementation would let a
+  // cell that understates the term relative to the true maturity date wrongly BLOCK the gate.
+  it('derives the >24mo maturity gate from a fresh maturity_date, not a divergent stale months_to_maturity cell', () => {
+    const db = freshDb();
+    const asOf = '2026-07-12';
+    // Stale cell says 10 months (would FAIL the >24 gate if consulted directly) but the true
+    // maturity_date (~30 months out from asOf) clears it comfortably.
+    insertLoan(db, {
+      rate: 0.055, ltv: 0.20, monthly_pmt: 2_000,
+      months_to_maturity: 10,
+      maturity_date: '2029-01-12',
+    });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const results = scoreDebtPositions(db, metrics, MARKET_5Y, asOf);
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    // If the stale cell (10) had been consulted, minMonthsToMaturity would fail the >24mo gate
+    // and signal would be 'hold', not 'cash-out'.
+    expect(s.signal).toBe('cash-out');
+    expect(s.signalReason).toMatch(/\d+mo to maturity/);
+  });
 });
 
 // ============================================================================
@@ -579,6 +610,45 @@ describe('F3 regression — cash-out blocked on demand notes (null months_to_mat
     const s = results.find((r) => r.propertyId === 'prop-a')!;
     expect(s).toBeDefined();
     expect(s.signal).not.toBe('cash-out');
+  });
+
+  // Regression: a demand note is callable immediately regardless of any maturity_date it happens
+  // to carry — is_demand must be the authoritative signal, not "maturity_date is absent." The
+  // workbook parser always writes maturity=null for a demand note, but POST /api/warehouse/debt/
+  // snapshot performs no schema validation, so is_demand=1 with a populated maturity_date is a
+  // reachable malformed row. Before this fix, effectiveMonthsToMaturity would have computed a
+  // real fresh months value from that maturity_date and let it clear the >24mo cash-out gate —
+  // recommending refinancing against a note the lender can call tomorrow.
+  it('a demand note with a populated maturity_date still blocks cash-out (is_demand wins over maturity_date)', () => {
+    const db = freshDb();
+    insertLoan(db, {
+      rate: 0.055, ltv: 0.20, monthly_pmt: 2_000,
+      is_demand: 1,
+      maturity_date: '2030-01-01', // malformed/reachable-only-via-unvalidated-API row
+      months_to_maturity: null,
+    });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const results = scoreDebtPositions(db, metrics, MARKET_5Y, '2026-07-12');
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s).toBeDefined();
+    expect(s.signal).not.toBe('cash-out');
+  });
+});
+
+describe('regression — an unparseable reference date falls back to the stored value instead of poisoning the score with NaN', () => {
+  it('produces a finite in-range score when referenceDateIso cannot be parsed', () => {
+    const db = freshDb();
+    // referenceDate()/REPORT_DATE performs no validation, so an unparseable value is reachable.
+    // effectiveMonthsToMaturity must fall back to the stored months_to_maturity (42, this
+    // fixture's default) rather than letting (maturityMs - NaN)/MONTH_MS = NaN through.
+    insertLoan(db, { rate: 0.055, ltv: 0.20, monthly_pmt: 2_000, maturity_date: '2029-01-12' });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const results = scoreDebtPositions(db, metrics, MARKET_5Y, 'not-a-date');
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s).toBeDefined();
+    expect(Number.isFinite(s.score)).toBe(true);
+    expect(s.score).toBeGreaterThanOrEqual(0);
+    expect(s.score).toBeLessThanOrEqual(100);
   });
 });
 
