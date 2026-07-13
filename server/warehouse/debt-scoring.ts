@@ -16,6 +16,8 @@ import type { PeriodMetrics } from '../../src/contracts/warehouse';
 import { loadGovernors } from './governors';
 import type { DebtScore, DebtSignal, DebtScoreBand } from '../../src/contracts/debt';
 import { clamp } from './clamp';
+import { referenceDate } from '../config';
+import { MONTH_MS } from './time-constants';
 
 const DEBT_CONFIG = {
   fredSpreadBps: 200,          // D3: spread over 5-Year Treasury
@@ -46,9 +48,34 @@ interface DebtRow {
   monthly_pmt: number | null;
   annual_interest: number | null;
   annual_principal: number | null;
+  is_demand: number;
+  maturity_date: string | null;
   months_to_maturity: number | null;
   ltv: number | null;
   status: string;
+}
+
+/** Fresh months-to-maturity from maturity_date vs the reference date — NEVER the stored
+ * months_to_maturity, a workbook-cell snapshot frozen at whenever the workbook was last
+ * recalced/saved, which would otherwise drift from the calendar exactly like the bug class this
+ * module's callers now avoid elsewhere (see server/config.ts referenceDate). Falls back to the
+ * stored value when maturity_date is absent/unparseable, OR when the computed result itself is
+ * non-finite (e.g. an unparseable `asOf` — referenceDate()/REPORT_DATE performs no validation) —
+ * checking only the intermediate maturityMs would let a NaN asOf silently produce a NaN months
+ * value that then poisons minMonthsToMaturity/maturityComp/DebtScore.score.
+ *
+ * is_demand is checked FIRST and wins regardless of maturity_date: F3 (ratified) requires a
+ * demand note to never pass the >24mo cash-out gate because it is callable immediately. The
+ * workbook parser enforces maturity=null for every is_demand row, but debt-api.ts's POST
+ * /snapshot route performs zero schema validation on its JSON payload, so is_demand=1 with a
+ * populated maturity_date is a reachable (if malformed) row — treating "no date" as the sole
+ * demand-note signal would let such a row silently clear the cash-out gate. */
+function effectiveMonthsToMaturity(row: DebtRow, asOf: string): number | null {
+  if (row.is_demand) return null;
+  const maturityMs = row.maturity_date ? new Date(row.maturity_date).getTime() : NaN;
+  const asOfMs = new Date(asOf).getTime();
+  const fresh = (maturityMs - asOfMs) / MONTH_MS;
+  return Number.isFinite(fresh) ? fresh : row.months_to_maturity;
 }
 
 /**
@@ -58,11 +85,15 @@ interface DebtRow {
  * @param metrics - All PeriodMetrics (Spine B ledger basis) — used as the NOI source
  * @param marketRateFiveYearTreasury - FRED 5Y Treasury rate as a decimal (e.g. 0.045 = 4.5%);
  *   null when FRED is unavailable — refi signal is suppressed when null
+ * @param referenceDateIso - day-count reference (YYYY-MM-DD), defaults to referenceDate() (see
+ *   server/config.ts). Anchors the fresh months-to-maturity recompute that drives
+ *   minMonthsToMaturity / the cash-out gate / maturityComp.
  */
 export function scoreDebtPositions(
   db: WarehouseDb,
   metrics: PeriodMetrics[],
   marketRateFiveYearTreasury: number | null,
+  referenceDateIso: string = referenceDate(),
 ): DebtScore[] {
   const governors = loadGovernors(db);
 
@@ -112,7 +143,7 @@ export function scoreDebtPositions(
   const getLoansForProperty = db.prepare<[string]>(
     `SELECT id, property_id, loan_name, current_balance, rate,
             monthly_pmt, annual_interest, annual_principal,
-            months_to_maturity, ltv, status
+            is_demand, maturity_date, months_to_maturity, ltv, status
      FROM debt_positions
      WHERE property_id = ? AND status = 'active'
      ORDER BY current_balance DESC, id ASC`,
@@ -218,22 +249,25 @@ export function scoreDebtPositions(
       avgLoanRate = totalWeight > 0 ? weightedSum / totalWeight : null;
     }
 
-    // Min months to maturity (soonest maturity is binding).
-    // F3: null months_to_maturity (demand notes) must NOT be treated as "far away" via ?? 999.
-    // A demand note is callable immediately — treating it as distant is materially wrong.
+    // Min months to maturity (soonest maturity is binding), computed fresh per-loan from
+    // maturity_date vs the reference date (effectiveMonthsToMaturity) — NEVER the stale stored
+    // column directly.
+    // F3: a loan with NO known maturity (neither a fresh maturity_date nor a stored fallback —
+    // a true demand note) must NOT be treated as "far away" via ?? 999; it is callable immediately.
     // F3 edge case (CodeRabbit): mixed portfolios (demand note + term loan) must also block
-    // cash-out. hasUnknownMaturity tracks whether ANY loan had null maturity; after the loop,
-    // if true, minMonthsToMaturity is forced to null so the cash-out gate fails.
+    // cash-out. hasUnknownMaturity tracks whether ANY loan had no determinable maturity; after
+    // the loop, if true, minMonthsToMaturity is forced to null so the cash-out gate fails.
     let minMonthsToMaturity: number | null = null;
     let hasUnknownMaturity = false;
     {
       for (const loan of loans) {
-        if (loan.months_to_maturity === null) {
+        const months = effectiveMonthsToMaturity(loan, referenceDateIso);
+        if (months === null) {
           hasUnknownMaturity = true; // demand/unknown — track it
           continue;
         }
-        if (minMonthsToMaturity === null || loan.months_to_maturity < minMonthsToMaturity) {
-          minMonthsToMaturity = loan.months_to_maturity;
+        if (minMonthsToMaturity === null || months < minMonthsToMaturity) {
+          minMonthsToMaturity = months;
         }
       }
       if (hasUnknownMaturity) minMonthsToMaturity = null;

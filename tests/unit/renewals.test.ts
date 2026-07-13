@@ -72,4 +72,17 @@ describe('renewalBoard', () => {
     expect(board.Expiring.map((c) => c.leaseId)).toEqual(['L2', 'L1']);
     expect(board.Expiring[0]!.daysToExpiry).toBeLessThan(0);
   });
+
+  // Regression: renewalBoard must anchor day-counts on the passed referenceDate, NOT
+  // s.meta.asOf (a frozen workbook-label constant), when a caller supplies one — the frozen-
+  // dateline defect (2026-07). L3 (far-out at ASOF) moves in-window once referenceDate advances.
+  it('honors an explicit referenceDate, overriding meta.asOf for day-count math', () => {
+    const boardAtAsOf = renewalBoard(snap);
+    expect(boardAtAsOf.Expiring.map((c) => c.leaseId)).not.toContain('L3');
+
+    // L3 leaseEnd is 2027-04-01; from 2027-02-01 that's ~59 days — inside the 75-day window.
+    const boardAdvanced = renewalBoard(snap, '2027-02-01');
+    const all = Object.values(boardAdvanced).flat().map((c) => c.leaseId);
+    expect(all).toContain('L3');
+  });
 });

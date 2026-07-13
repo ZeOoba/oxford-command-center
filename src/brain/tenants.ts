@@ -46,8 +46,15 @@ interface Accum {
   leases: Lease[];
 }
 
-/** Roll leases up per tenant with a pro-rata NOI allocation. */
-export function tenantScorecards(s: PortfolioSnapshot): TenantScorecard[] {
+/**
+ * Roll leases up per tenant with a pro-rata NOI allocation.
+ *
+ * @param referenceDate Optional day-count reference (YYYY-MM-DD) for daysToExpiry. Defaults to
+ *   s.meta.asOf (the workbook data date) for backward compatibility — the workbook-frozen-date
+ *   defect means callers should pass the real run date (see portfolioCriticalDates for the
+ *   established convention).
+ */
+export function tenantScorecards(s: PortfolioSnapshot, referenceDate?: string): TenantScorecard[] {
   const portfolioNoi = sum(s.properties.map((p) => p.noi));
   const totalRent = sum(s.leases.map((l) => l.annualRent));
   const margin = totalRent > 0 ? portfolioNoi / totalRent : 0; // NOI per $ rent (fallback weight)
@@ -108,7 +115,7 @@ export function tenantScorecards(s: PortfolioSnapshot): TenantScorecard[] {
     annualRent: a.annualRent,
     pctNoi: totalAllocNoi > 0 ? a.allocNoi / totalAllocNoi : 0,
     nextExpiry: a.nextExpiry,
-    daysToExpiry: a.nextExpiry ? daysBetween(a.nextExpiry, s.meta.asOf) : null,
+    daysToExpiry: a.nextExpiry ? daysBetween(a.nextExpiry, referenceDate ?? s.meta.asOf) : null,
     renewalStage: a.stageRank >= 0 ? RENEWAL_STAGES[a.stageRank]! : null,
     health: null,
     notes: s.tenantNotes[a.id] ?? '',
