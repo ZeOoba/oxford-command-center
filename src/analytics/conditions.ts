@@ -592,7 +592,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   }
 
   // ── Revenue concentration (tenant > 15% of portfolio NOI) ───────────────────
-  for (const t of tenantScorecards(s)) {
+  for (const t of tenantScorecards(s, asOf)) {
     if (t.pctNoi > T.tenantNoiConcentrationInfo) {
       out.push({
         id: `concentration-${t.id}`, severity: 'info', category: 'concentration',

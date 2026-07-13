@@ -73,4 +73,16 @@ describe('tenantScorecards', () => {
   it('sorts tenants by annual rent descending', () => {
     expect(cards.map((c) => c.id)).toEqual(['acme-llc', 'gamma-co', 'beta-inc']);
   });
+
+  // Regression: tenantScorecards must anchor daysToExpiry on the passed referenceDate, NOT
+  // s.meta.asOf (a frozen workbook-label constant) — the frozen-dateline defect (2026-07).
+  it('honors an explicit referenceDate, overriding meta.asOf for daysToExpiry', () => {
+    const atAsOf = tenantScorecards(snap).find((c) => c.id === 'acme-llc')!;
+    // acme's nextExpiry is 2026-07-15; from ASOF (2026-06-04) that's ~41 days out.
+    expect(atAsOf.daysToExpiry).toBeCloseTo(41, 0);
+
+    const advanced = tenantScorecards(snap, '2026-07-10').find((c) => c.id === 'acme-llc')!;
+    // From 2026-07-10, the same 2026-07-15 expiry is only ~5 days out — not ~41.
+    expect(advanced.daysToExpiry).toBeCloseTo(5, 0);
+  });
 });

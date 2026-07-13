@@ -35,7 +35,10 @@ export function RenewalsModule() {
   const { data: forecast } = useLeaseForecast();
   const signalMap = useMemo(() => buildSignalMap(forecast?.signals ?? []), [forecast?.signals]);
 
-  const board = useMemo(() => (data ? renewalBoard(data.snapshot) : null), [data]);
+  const board = useMemo(
+    () => (data ? renewalBoard(data.snapshot, new Date().toISOString().slice(0, 10)) : null),
+    [data],
+  );
   if (!data || !board) return null;
   const total = RENEWAL_STAGES.reduce((n, s) => n + board[s].length, 0);
 

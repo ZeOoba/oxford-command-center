@@ -24,9 +24,14 @@ export type RenewalBoard = Record<RenewalStage, RenewalCard[]>;
  * Group the "needs action now" lease set into the renewal kanban. A lease appears when it is
  * expiring within RENEWAL_WINDOW_DAYS (including overdue holdovers — still an open item) or when
  * it already carries an explicit renewal stage in the overlay. Vacant units are excluded.
+ *
+ * @param referenceDate Optional day-count reference (YYYY-MM-DD). Defaults to s.meta.asOf (the
+ *   workbook data date) for backward compatibility — the workbook-frozen-date defect means
+ *   callers should pass the real run date (see portfolioCriticalDates for the established
+ *   convention).
  */
-export function renewalBoard(s: PortfolioSnapshot): RenewalBoard {
-  const asOf = s.meta.asOf;
+export function renewalBoard(s: PortfolioSnapshot, referenceDate?: string): RenewalBoard {
+  const asOf = referenceDate ?? s.meta.asOf;
   const stages = s.renewalStages;
   const board: RenewalBoard = { Expiring: [], Outreach: [], Negotiating: [], LOI: [], Executed: [] };
 

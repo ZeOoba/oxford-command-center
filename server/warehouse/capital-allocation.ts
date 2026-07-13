@@ -50,6 +50,7 @@
 import { getMacro } from '../macro/getMacro';
 import { getMacroMarketBenchmarks } from '../macro/market-benchmarks';
 import { referenceDate } from '../config';
+import { MONTH_MS } from './time-constants';
 import { getRegionalMacro } from '../macro/regional-macro';
 import { propertyPeriodMetrics, latestFullYearPeriod } from './metrics';
 import { scoreProperties } from './scores';
@@ -627,7 +628,7 @@ export async function buildPortfolioAllocation(
   // Spine B: period metrics → property scores + debt scores
   const metrics = propertyPeriodMetrics(db);
   const propertyScores = scoreProperties(db, metrics);
-  const debtScores = scoreDebtPositions(db, metrics, dgs5);
+  const debtScores = scoreDebtPositions(db, metrics, dgs5, asOf);
 
   // Index DebtScore by propertyId
   const debtByProperty = new Map<string, DebtScore>();
@@ -828,31 +829,79 @@ function attentionBandScore(band: string | null | undefined): number {
 }
 
 interface BalloonRow {
+  id: string;
   property_id: string;
+  maturity_date: string | null;
   months_to_maturity: number | null;
-  dscr_override: number | null;
+  is_demand: number;
 }
 
-function getBalloonMonthsByProperty(db: WarehouseDb): Map<string, number | null> {
+/**
+ * `asOf` anchors a fresh per-ROW recompute from maturity_date — NEVER the stored
+ * months_to_maturity, a workbook-cell snapshot frozen at whenever the workbook was last
+ * recalced/saved into the warehouse, which feeds debtUrgency (15% of priorityScore) and would
+ * otherwise silently drift from the workbook-save date exactly like the frozen-dateline bug class
+ * (#206/#207) eliminates elsewhere. Falls back to the stored value only for a row with no
+ * maturity_date.
+ *
+ * Fetches every qualifying row (no SQL aggregate) and computes each row's effective months in JS
+ * BEFORE taking the per-property minimum — a naive fix that only freshened the recomputed VALUE
+ * while still letting SQL's MIN(months_to_maturity) pick the row FIRST, on the stale column,
+ * would (a) choose the WRONG loan whenever the stale cells mis-ordered relative to true maturity
+ * dates, (b) be order-dependent on ties in the stale integer column, and (c) still exclude a
+ * maturity_date-only row via a months_to_maturity-gated WHERE clause. Ties in the fresh minimum
+ * break on the earliest maturity_date, then loan id, for a fully deterministic result.
+ *
+ * `balloon=1` does NOT imply `is_demand=0` — the workbook parser derives them from independent
+ * signals (an internal-note maturity string vs. a name/status regex), and the unvalidated
+ * POST /api/warehouse/debt/snapshot ingest writes both flags verbatim. A demand note treats
+ * `months=0` (callable now — maximum debt-urgency signal for a capital-attention score), matching
+ * scoreDebtPositions' own is_demand-first check but with the opposite polarity: that function
+ * needs "unknown maturity" to defensively BLOCK a cash-out gate, while this one needs "urgent"
+ * to correctly RAISE debtUrgency. Adversarial review (2026-07-12) demonstrated the un-guarded
+ * gap live: a reachable is_demand=1+balloon=1+maturity_date row got 41.7 months of phantom
+ * runway here while scoreDebtPositions correctly treated the same loan as unknown-maturity.
+ */
+function getBalloonMonthsByProperty(db: WarehouseDb, asOf: string = referenceDate()): Map<string, number | null> {
   const rows = db
     .prepare(
-      `SELECT property_id,
-              MIN(months_to_maturity) AS months_to_maturity
+      `SELECT id, property_id, maturity_date, months_to_maturity, is_demand
        FROM debt_positions
        WHERE status = 'active'
          AND balloon = 1
          AND property_id IS NOT NULL
-         AND months_to_maturity IS NOT NULL
-       GROUP BY property_id`,
+         AND (months_to_maturity IS NOT NULL OR maturity_date IS NOT NULL)`,
     )
     .all() as BalloonRow[];
 
-  const result = new Map<string, number | null>();
+  const asOfMs = new Date(asOf).getTime();
+  const best = new Map<string, { months: number; tieKey: string }>();
+
   for (const row of rows) {
-    if (row.property_id !== null) {
-      result.set(row.property_id, row.months_to_maturity);
+    if (row.property_id === null) continue;
+    let months: number | null;
+    if (row.is_demand) {
+      months = 0;
+    } else {
+      // Fall back to the stored value whenever the FRESH result itself is non-finite (a bad
+      // maturity_date, OR an unparseable `asOf` — referenceDate()/REPORT_DATE performs no
+      // validation) — checking only the intermediate maturityMs would silently DROP a real row
+      // (and its available stored value) whenever asOf alone was bad, even though the row's own
+      // data was perfectly usable.
+      const maturityMs = row.maturity_date ? new Date(row.maturity_date).getTime() : NaN;
+      const fresh = (maturityMs - asOfMs) / MONTH_MS;
+      months = Number.isFinite(fresh) ? fresh : row.months_to_maturity;
+    }
+    if (months === null || !Number.isFinite(months)) continue;
+    const tieKey = `${row.maturity_date ?? ''}|${row.id}`;
+    const existing = best.get(row.property_id);
+    if (!existing || months < existing.months || (months === existing.months && tieKey < existing.tieKey)) {
+      best.set(row.property_id, { months, tieKey });
     }
   }
+
+  const result = new Map<string, number | null>();
+  for (const [propertyId, b] of best) result.set(propertyId, b.months);
   return result;
 }
 
@@ -870,11 +919,16 @@ function getBalloonMonthsByProperty(db: WarehouseDb): Map<string, number | null>
 export async function buildCapitalAllocationReport(
   db: WarehouseDb,
   snapshot: PortfolioSnapshot,
+  referenceDateIso: string = referenceDate(),
 ): Promise<CapitalAllocationReport> {
   const asOf = snapshot.meta.asOf; // data-snapshot LABEL (report envelope, period stamps)
   // Day-count / relative reference for lease-expiry surfaces (renewalSignals, bucketExpiry) =
   // the RUN date, NOT the frozen workbook data date (portfolio-wide run-date basis, 2026-07-12).
-  const refDate = referenceDate();
+  // Callers composing a multi-part response (e.g. /ic-memo, which also calls
+  // buildPortfolioAllocation) should pass their own already-captured referenceDate() through
+  // here so both halves share one instant — otherwise a request straddling UTC midnight could
+  // see the two halves disagree by a day.
+  const refDate = referenceDateIso;
 
   const [macroRes, benchRes, regionalRes] = await Promise.allSettled([
     getMacro(),
@@ -918,10 +972,10 @@ export async function buildCapitalAllocationReport(
   const scores = scoreProperties(db, metrics);
   const scoreByPropertyId = new Map(scores.map((s) => [s.propertyId, s]));
 
-  const debtScores = scoreDebtPositions(db, metrics, null);
+  const debtScores = scoreDebtPositions(db, metrics, null, refDate);
   const debtByPropertyId = new Map(debtScores.map((d) => [d.propertyId, d]));
 
-  const balloonMonthsByProperty = getBalloonMonthsByProperty(db);
+  const balloonMonthsByProperty = getBalloonMonthsByProperty(db, refDate);
 
   const arrears = snapshot.tenantArrears ?? {};
   const renewalStages = snapshot.renewalStages ?? {};
