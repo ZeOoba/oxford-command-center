@@ -25,7 +25,7 @@
  * server-only acquisition-loaders.ts so the edge bundle never imports node:fs at all (drops the date req).
  */
 import rulesetJson from '../../../../config/acquisition-ruleset.v1.json';
-import rctJson from '../../../../config/replacement-cost.v1.json';
+import rctJson from '../../../../config/replacement-cost.v3.json';
 import {
   parseRuleset,
   assertProductionRuleset,

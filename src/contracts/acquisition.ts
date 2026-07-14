@@ -19,16 +19,52 @@ export const RULESET_VERSION = '1.0.0' as const;
 export const Ratification = z.enum(['ratified', 'proposed']);
 export type Ratification = z.infer<typeof Ratification>;
 
-/** Replacement-Cost Table (Q5) — versioned, ratified; the Basis floor + Basis score both divide by it. */
-export const RCT_VERSION = 'replacement-cost.v1' as const;
+/**
+ * Replacement-Cost Table — versioned, ratified; the Basis floor + Basis score both divide by it.
+ *
+ * RCT v03 (ratified by Gabriel 2026-07-14) — supersedes replacement-cost.v1, which was a FLAT
+ * firm-wide $125/$137.50/$150 with no per-market variation at all, sitting at roughly HALF true
+ * all-in shallow-bay replacement cost. An understated replacement cost makes computed discounts
+ * too small, so deals fail the floor: the old table made ORA TOO STRICT and passed on deals that
+ * clear doctrine.
+ *
+ * `markets` is the per-market table (the authoritative shape). `psf` is retained as the
+ * CONSERVATIVE FALLBACK used only when a deal's market is unknown or has no RCT row — it is set
+ * to the CHEAPEST market to build in, which yields the STRICTEST floor. We never hand a deal a
+ * looser floor because we failed to identify its market.
+ *
+ * The rctVersion is folded into inputsVersion, so bumping it correctly invalidates every score
+ * cached under the old denominator. That is intended: those scores are stale, not merely old.
+ */
+export const RCT_VERSION = 'replacement-cost.v3' as const;
+
+/** One market's all-in shallow-bay band. Basis floor and Basis score divide by `low`. */
+export const MarketRct = z.object({
+  low: z.number().positive(),
+  point: z.number().positive(),
+  high: z.number().positive(),
+  /** Sourced C&W hard cost this row was built from — retained for the coherence check. */
+  cwHardPsf: z.number().positive(),
+  /** Neighbouring-metro stand-in ⇒ always DENOMINATOR-SENSITIVE pre-LOI. */
+  proxy: z.boolean().default(false),
+});
+export type MarketRct = z.infer<typeof MarketRct>;
+
 export const ReplacementCostTable = z.object({
   rctVersion: z.literal(RCT_VERSION),
   ratification: Ratification,
   ratifiedBy: z.string().nullable().default(null),
   ratifiedDate: z.string().nullable().default(null),
   basis: z.string(),
+  /** CONSERVATIVE FALLBACK for unknown/uncovered markets — the cheapest-to-build row (strictest floor). */
   psf: z.object({ low: z.number().positive(), mid: z.number().positive(), high: z.number().positive() }),
-});
+  /** Per-market table, keyed by market name. Empty ⇒ every deal falls back to `psf`. */
+  markets: z.record(z.string(), MarketRct).default({}),
+})
+  .refine(
+    (t) => Object.values(t.markets).every((m) => m.point > m.cwHardPsf),
+    'RCT coherence: every all-in POINT must exceed its C&W hard cost — all-in CONTAINS hard cost. (RCT v02 failed this in 5 of 9 markets.)',
+  );
 export type ReplacementCostTable = z.infer<typeof ReplacementCostTable>;
 
 // ─── Identity enums ──────────────────────────────────────────────────────────────────────────
@@ -113,8 +149,17 @@ export const AcquisitionRuleset = z.object({
 
   // STAGE 1 — floors (SKILL.md:32–38). NO score overrides a floor.
   floors: z.object({
-    basisDiscountMinPostMillennium: z.number().min(0).max(1), // built ≥ cutoff
-    basisDiscountMinPreMillennium: z.number().min(0).max(1),  // built < cutoff
+    // VINTAGE RAMP (RCT v03, ratified 2026-07-14): the basis discount floor slides LINEARLY from
+    // `basisDiscountMinPreMillennium` at/below basisVintageRampStartYear to
+    // `basisDiscountMinPostMillennium` at/above basisVintageCutoffYear. Unknown vintage ⇒ the
+    // STRICTER (pre) floor. This replaced a CLIFF, which was both a step function and calibrated to
+    // the old understated denominator.
+    // ⚠️ THE FLOOR % AND THE DENOMINATOR ARE A MATCHED PAIR — never move one without re-solving the
+    // other. Against RCT v03 the legacy 25–30% floor would let a Columbus deal pay ~$160/SF and
+    // "clear": every candidate in the buy-box passes. A floor that passes everything is not a floor.
+    basisDiscountMinPostMillennium: z.number().min(0).max(1), // floor at/above cutoff (looser)
+    basisDiscountMinPreMillennium: z.number().min(0).max(1),  // floor at/below ramp start (stricter)
+    basisVintageRampStartYear: z.number().int().default(1995),
     basisVintageCutoffYear: z.number().int(),
     stabilizedYocFloorPct: z.number().min(0).max(1),
     leveredIrrFloor5yr: z.number().min(0).max(1),
@@ -229,7 +274,22 @@ export const AcquisitionInput = z.object({
   // basis / yield / irr (floors + Cat 1 Basis, Cat 2 Yield)
   allInBasis: z.number().nullable().default(null),
   replacementCostTotal: z.number().nullable().default(null), // appraisal OVERRIDE; reconciled vs the ratified RCT (Q5)
-  replacementCostBand: z.enum(['low', 'mid', 'high']).nullable().default(null), // building-class band into the RCT (default mid)
+  // DORMANT as of 2026-07-14 (refute-fix): the engine no longer reads this field. It predates RCT v03
+  // and was intended as a subject-BUILDING-CLASS selector into the RCT, distinct from RCT v03's own
+  // low/point/high CONFIDENCE band on each market row — the two concepts got conflated when RCT v03
+  // reused this enum, and nothing in this codebase ever actually set a non-null value. The Basis
+  // floor and Basis score now ALWAYS divide by the market's `low` (confidence-band) figure,
+  // unconditionally — see server/warehouse/acquisition.ts's `rcBand` comment. If building-class
+  // adjustment is wanted as a real feature, it needs its own field/design, not reuse of this one.
+  replacementCostBand: z.enum(['low', 'mid', 'high']).nullable().default(null),
+  /**
+   * Market name, keyed into ReplacementCostTable.markets to pick the per-market replacement cost.
+   * NULL or unrecognised ⇒ the engine falls back to the CONSERVATIVE firm-wide `psf` row (the
+   * cheapest market to build in ⇒ the STRICTEST floor). We never hand a deal a looser floor because
+   * we failed to identify its market. Added with RCT v03 (2026-07-14): before it, the engine had no
+   * market at all, which is precisely why its RCT was flat.
+   */
+  market: z.string().nullable().default(null),
   stabilizedYoc: z.number().nullable().default(null),
   leveredIrr: z.number().nullable().default(null),
   underwriteHorizonYrs: z.union([z.literal(5), z.literal(10)]).nullable().default(null),
