@@ -10,6 +10,7 @@ import {
   loadRatifiedRct,
   parseRuleset,
   replacementCostTotal,
+  basisVintageFloor,
   scoreAcquisition,
 } from '../../server/warehouse/acquisition';
 
@@ -17,7 +18,7 @@ const ratifiedJson = JSON.parse(
   readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8'),
 );
 const rctJson = JSON.parse(
-  readFileSync(resolve(process.cwd(), 'config/replacement-cost.v1.json'), 'utf8'),
+  readFileSync(resolve(process.cwd(), 'config/replacement-cost.v3.json'), 'utf8'),
 );
 const ratified = parseRuleset(ratifiedJson);
 const RCT = loadRatifiedRct();
@@ -248,8 +249,35 @@ describe('ratified recalibration — RCT, loading, provenance (Gabriel 2026-06-1
     expect(small14.composite).toBeGreaterThan(small13.composite);
     expect(large16.composite).toBeGreaterThan(large14.composite);
   });
-  it('replacementCostTotal helper uses the ratified RCT mid ($137.50) by default', () => {
-    expect(replacementCostTotal(42000, RCT)).toBe(42000 * 137.5);
+  it('replacementCostTotal falls back to the CONSERVATIVE firm-wide psf when no market is given', () => {
+    // RCT v03: the fallback is the CHEAPEST market to build in ⇒ the STRICTEST floor. We never hand a
+    // deal a looser floor because we failed to identify its market.
+    expect(replacementCostTotal(42000, RCT)).toBe(42000 * RCT.psf.mid);
+  });
+
+  it('replacementCostTotal uses the PER-MARKET row when the market is supplied', () => {
+    // The whole point of RCT v03 — the old table was flat firm-wide, with no market variation.
+    const columbus = replacementCostTotal(42000, RCT, 'mid', 'Columbus OH');
+    const indy = replacementCostTotal(42000, RCT, 'mid', 'Indianapolis IN');
+    expect(columbus).toBeCloseTo(42000 * RCT.markets['Columbus OH']!.point, 4);
+    expect(indy).toBeCloseTo(42000 * RCT.markets['Indianapolis IN']!.point, 4);
+    // Indianapolis is genuinely more expensive to build in than Columbus — RCT v02 had this backwards.
+    expect(indy).toBeGreaterThan(columbus);
+  });
+
+  it('an unrecognised market falls back conservatively rather than inventing a denominator', () => {
+    expect(replacementCostTotal(42000, RCT, 'mid', 'Atlantis')).toBe(42000 * RCT.psf.mid);
+  });
+
+  it('basisVintageFloor ramps linearly 65% @≤1995 → 60% @≥2005; unknown vintage gets the STRICTEST', () => {
+    expect(basisVintageFloor(1918, ratified)).toBeCloseTo(0.65, 4);
+    expect(basisVintageFloor(1995, ratified)).toBeCloseTo(0.65, 4);
+    expect(basisVintageFloor(2000, ratified)).toBeCloseTo(0.625, 4); // linear midpoint, not a cliff
+    expect(basisVintageFloor(2005, ratified)).toBeCloseTo(0.6, 4);
+    expect(basisVintageFloor(2020, ratified)).toBeCloseTo(0.6, 4);
+    // Unknown vintage must get the STRICT floor, never the loose one.
+    expect(basisVintageFloor(null, ratified)).toBeCloseTo(0.65, 4);
+    expect(basisVintageFloor(null, ratified)).toBeGreaterThan(basisVintageFloor(2005, ratified));
   });
 });
 

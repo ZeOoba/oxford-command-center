@@ -7,7 +7,6 @@
   "ratifiedDate": "2026-06-14",
   "skillVersion": "acquisition-underwriting v3.0",
   "sourceOfRecord": "Claude_Workspace/.claude/skills/acquisition-underwriting/SKILL.md:23-127; clear-height bands + loading door ratio supplied by Gabriel 2026-06-14",
-
   "gates": {
     "sizePrice": {
       "singleAssetPriceMin": 500000,
@@ -15,33 +14,99 @@
       "portfolioPriceMax": 15000000,
       "maxSfPerBuilding": 50000
     },
-    "physical": { "minClearHeightFt": 12 },
-    "flood": { "sfhaOnPadKills": true, "sfhaOnLandValuesAtZero": true },
-    "other": { "minGroundLeaseYearsRemaining": 30, "maxEnvRemediationPctOfPrice": 0.20 },
-    "establishedClusters": ["Columbus OH", "Cincinnati OH", "Kansas City", "Indianapolis IN", "Maryland/DC", "Madison WI"],
-    "entryClusters": ["Grand Rapids MI", "Richmond VA", "Des Moines IA"],
+    "physical": {
+      "minClearHeightFt": 12
+    },
+    "flood": {
+      "sfhaOnPadKills": true,
+      "sfhaOnLandValuesAtZero": true
+    },
+    "other": {
+      "minGroundLeaseYearsRemaining": 30,
+      "maxEnvRemediationPctOfPrice": 0.2
+    },
+    "establishedClusters": [
+      "Columbus OH",
+      "Cincinnati OH",
+      "Kansas City",
+      "Indianapolis IN",
+      "Maryland/DC",
+      "Madison WI"
+    ],
+    "entryClusters": [
+      "Grand Rapids MI",
+      "Richmond VA",
+      "Des Moines IA"
+    ],
     "satelliteMaxDriveMinutes": 30
   },
-
   "floors": {
-    "basisDiscountMinPostMillennium": 0.25,
-    "basisDiscountMinPreMillennium": 0.30,
-    "basisVintageCutoffYear": 2000,
+    "basisDiscountMinPostMillennium": 0.6,
+    "basisDiscountMinPreMillennium": 0.65,
+    "basisVintageCutoffYear": 2005,
     "stabilizedYocFloorPct": 0.08,
     "leveredIrrFloor5yr": 0.15,
-    "leveredIrrFloor10yr": 0.12
+    "leveredIrrFloor10yr": 0.12,
+    "basisVintageRampStartYear": 1995
   },
-
   "scorecard": [
-    { "id": "basis",             "label": "Basis",                "points": 25, "vacantPoints": null, "subScore": "basis",  "reallocatesToWhenVacant": null },
-    { "id": "yield",             "label": "Yield",                "points": 20, "vacantPoints": null, "subScore": "basis",  "reallocatesToWhenVacant": null },
-    { "id": "product-physical",  "label": "Product & Physical",   "points": 20, "vacantPoints": null, "subScore": "asset",  "reallocatesToWhenVacant": null },
-    { "id": "market-location",   "label": "Market & Location",    "points": 12, "vacantPoints": null, "subScore": "market", "reallocatesToWhenVacant": null },
-    { "id": "seller-motivation", "label": "Seller / Motivation",  "points": 10, "vacantPoints": null, "subScore": "risk",   "reallocatesToWhenVacant": null },
-    { "id": "tenancy-lease",     "label": "Tenancy & Lease",      "points": 7,  "vacantPoints": 0,    "subScore": "risk",   "reallocatesToWhenVacant": "value-add" },
-    { "id": "value-add",         "label": "Value-Add Optionality","points": 6,  "vacantPoints": 13,   "subScore": "asset",  "reallocatesToWhenVacant": null }
+    {
+      "id": "basis",
+      "label": "Basis",
+      "points": 25,
+      "vacantPoints": null,
+      "subScore": "basis",
+      "reallocatesToWhenVacant": null
+    },
+    {
+      "id": "yield",
+      "label": "Yield",
+      "points": 20,
+      "vacantPoints": null,
+      "subScore": "basis",
+      "reallocatesToWhenVacant": null
+    },
+    {
+      "id": "product-physical",
+      "label": "Product & Physical",
+      "points": 20,
+      "vacantPoints": null,
+      "subScore": "asset",
+      "reallocatesToWhenVacant": null
+    },
+    {
+      "id": "market-location",
+      "label": "Market & Location",
+      "points": 12,
+      "vacantPoints": null,
+      "subScore": "market",
+      "reallocatesToWhenVacant": null
+    },
+    {
+      "id": "seller-motivation",
+      "label": "Seller / Motivation",
+      "points": 10,
+      "vacantPoints": null,
+      "subScore": "risk",
+      "reallocatesToWhenVacant": null
+    },
+    {
+      "id": "tenancy-lease",
+      "label": "Tenancy & Lease",
+      "points": 7,
+      "vacantPoints": 0,
+      "subScore": "risk",
+      "reallocatesToWhenVacant": "value-add"
+    },
+    {
+      "id": "value-add",
+      "label": "Value-Add Optionality",
+      "points": 6,
+      "vacantPoints": 13,
+      "subScore": "asset",
+      "reallocatesToWhenVacant": null
+    }
   ],
-
   "scoring": {
     "basisFullCreditDiscount": 0.55,
     "yocZeroPct": 0.08,
@@ -50,31 +115,61 @@
       "clearHeightPoints": 5,
       "loadingPoints": 3,
       "productFitPoints": 5,
-      "constructionPoints": { "blockTiltBrick": 4, "mixed": 3, "pemb": 2 },
+      "constructionPoints": {
+        "blockTiltBrick": 4,
+        "mixed": 3,
+        "pemb": 2
+      },
       "siteFunctionPoints": 3,
       "truckCourtIdealFt": 100,
       "truckCourtZeroFt": 60,
-      "loadingDoorsPer10kSf": { "docks": 1, "driveIns": 1 },
+      "loadingDoorsPer10kSf": {
+        "docks": 1,
+        "driveIns": 1
+      },
       "clearHeightBands": [
-        { "maxSf": 20000, "idealClearFt": 14 },
-        { "maxSf": 50000, "idealClearFt": 16 }
+        {
+          "maxSf": 20000,
+          "idealClearFt": 14
+        },
+        {
+          "maxSf": 50000,
+          "idealClearFt": 16
+        }
       ]
     },
     "cat4": {
-      "tierPoints": { "ownedSubmarket": 12, "established": 9, "entry": 6, "satellite": 6 },
+      "tierPoints": {
+        "ownedSubmarket": 12,
+        "established": 9,
+        "entry": 6,
+        "satellite": 6
+      },
       "fundamentalsAdjustMax": 3
     },
     "cat6": {
-      "mtmFullDiscountPct": 0.30,
+      "mtmFullDiscountPct": 0.3,
       "mtmMaxPoints": 5,
       "waltSweetSpotYr": 2,
       "waltDecayYr": 4,
       "waltMaxPoints": 2
     }
   },
-
-  "guards": { "marketEstimatedCannotCarryT1": true },
-  "freshness": { "marketFundamentalsWindowDays": 90 },
-  "ddCritical": ["flood", "zoning", "roof", "deferred-maintenance-capex"],
-  "bands": { "t1PursueMin": 75, "t2WatchMin": 60 }
+  "guards": {
+    "marketEstimatedCannotCarryT1": true
+  },
+  "freshness": {
+    "marketFundamentalsWindowDays": 90
+  },
+  "ddCritical": [
+    "flood",
+    "zoning",
+    "roof",
+    "deferred-maintenance-capex"
+  ],
+  "bands": {
+    "t1PursueMin": 75,
+    "t2WatchMin": 60
+  },
+  "_floors_note_rct_v03": "VINTAGE RAMP recalibrated 2026-07-14 (Gabriel, governor-level) alongside RCT v03. Was a CLIFF at 0.25/0.30 with cutoff 2000 — both a step function AND calibrated to RCT v02's UNDERSTATED denominator. RCT v03 roughly DOUBLES that denominator, so the old 25-30% floor would have let a Columbus deal pay ~$160/SF and 'clear' — every candidate in the buy-box passes. A FLOOR THAT PASSES EVERYTHING IS NOT A FLOOR. THE FLOOR % AND THE DENOMINATOR ARE A MATCHED PAIR: never move one without re-solving the other. ORA buys at ~35-40% of TRUE all-in replacement cost (a ~64% discount); the legacy '25% discount' framing was an artifact of a wrong denominator, never the strategy."
 }

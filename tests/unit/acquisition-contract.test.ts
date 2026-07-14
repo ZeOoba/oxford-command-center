@@ -14,7 +14,7 @@ const ratifiedJson = JSON.parse(
   readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8'),
 );
 const rctJson = JSON.parse(
-  readFileSync(resolve(process.cwd(), 'config/replacement-cost.v1.json'), 'utf8'),
+  readFileSync(resolve(process.cwd(), 'config/replacement-cost.v3.json'), 'utf8'),
 );
 
 describe('acquisition ruleset contract (ratified v1)', () => {
@@ -66,11 +66,32 @@ describe('acquisition ruleset contract (ratified v1)', () => {
     expect(() => AcquisitionRuleset.parse(broken)).toThrow(/unique/);
   });
 
-  it('parses the ratified Replacement-Cost Table at $125–150/SF (Q5)', () => {
+  it('parses the ratified per-market Replacement-Cost Table (RCT v03)', () => {
     const rct = ReplacementCostTable.parse(rctJson);
     expect(rct.rctVersion).toBe(RCT_VERSION);
     expect(rct.ratification).toBe('ratified');
-    expect(rct.psf).toEqual({ low: 125, mid: 137.5, high: 150 });
+    // Per-market, not flat. The old flat $125/$137.50/$150 had no market variation at all and sat
+    // at roughly HALF true all-in shallow-bay replacement cost — which made ORA too STRICT.
+    expect(Object.keys(rct.markets).length).toBeGreaterThanOrEqual(9);
+    expect(rct.markets['Columbus OH']!.low).toBeCloseTo(229.65, 2);
+    expect(rct.markets['Indianapolis IN']!.low).toBeCloseTo(253.83, 2);
+  });
+
+  it('RCT coherence: every all-in POINT exceeds its C&W hard cost — the test RCT v02 failed', () => {
+    const rct = ReplacementCostTable.parse(rctJson);
+    for (const [name, m] of Object.entries(rct.markets)) {
+      // All-in CONTAINS hard cost, so it cannot be less. RCT v02 broke this in 5 of 9 markets.
+      expect(m.point, `${name}`).toBeGreaterThan(m.cwHardPsf);
+      expect(m.point / m.cwHardPsf, `${name}`).toBeGreaterThan(1.5);
+      expect(m.low).toBeCloseTo(m.point * 0.9, 1); // ±10% band
+    }
+  });
+
+  it('the psf fallback is the CHEAPEST market — an unknown market gets the STRICTEST floor', () => {
+    const rct = ReplacementCostTable.parse(rctJson);
+    const cheapestLow = Math.min(...Object.values(rct.markets).map((m) => m.low));
+    expect(rct.psf.low).toBeCloseTo(cheapestLow, 2);
+    for (const m of Object.values(rct.markets)) expect(rct.psf.low).toBeLessThanOrEqual(m.low + 1e-9);
   });
 
   it('accepts a representative AcquisitionInput incl. dock/drive-in counts', () => {

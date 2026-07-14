@@ -151,17 +151,31 @@ export function DealDrawer({
 
                   <CardBox title="Replacement Cost">
                     {rc ? (
-                      <>
-                        <Row label="Basis" value={rc.basis} />
-                        <Row label="Replacement (range)" value={`${fmtUsdCompact(rc.low)} – ${fmtUsdCompact(rc.high)}`} />
-                        <Row label="Replacement (mid)" value={fmtUsd(rc.mid)} />
-                        <Row label="Price vs. Replacement" value={rc.priceToReplacementMid !== null ? `${(rc.priceToReplacementMid * 100).toFixed(0)}% of mid` : '—'} />
-                        {rc.verdict && (
-                          <div className="pt-1">
-                            <Badge tone={rc.verdict === 'Discount to replacement' ? 'green' : rc.verdict === 'Premium to replacement' ? 'red' : 'amber'}>{rc.verdict}</Badge>
-                          </div>
-                        )}
-                      </>
+                      !rc.marketCovered ? (
+                        <div className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+                          {rc.basis} — no RCT v03 row for this market. Basis is not scored rather than guessed.
+                        </div>
+                      ) : (
+                        <>
+                          <Row label="Basis" value={rc.basis} />
+                          <Row label="Replacement (range)" value={`${fmtUsdCompact(rc.low)} – ${fmtUsdCompact(rc.high)}`} />
+                          <Row label="Replacement (point)" value={fmtUsd(rc.mid)} />
+                          <Row label="Deal basis" value={rc.basisPsf !== null ? `$${rc.basisPsf.toFixed(2)}/SF (incl. 2% closing)` : '—'} />
+                          <Row label="Basis floor" value={rc.floorPsf !== null ? `$${rc.floorPsf.toFixed(2)}/SF` : '—'} />
+                          <Row label="Walk price" value={rc.walkPrice !== null ? fmtUsd(rc.walkPrice) : '—'} />
+                          <Row label="Price vs. Replacement" value={rc.basisToPoint !== null ? `${(rc.basisToPoint * 100).toFixed(0)}% of replacement` : '—'} />
+                          {rc.verdict && (
+                            <div className="pt-1">
+                              <Badge tone={rc.verdict === 'Clears basis floor' ? 'green' : 'red'}>{rc.verdict}</Badge>
+                            </div>
+                          )}
+                          {rc.vintageAssumed && (
+                            <div className="text-2xs pt-1" style={{ color: 'var(--text-tertiary)' }}>
+                              Year built unknown — strictest floor (1995) assumed. Confirm the vintage.
+                            </div>
+                          )}
+                        </>
+                      )
                     ) : (
                       <div className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>SF unknown — cannot compute replacement cost.</div>
                     )}

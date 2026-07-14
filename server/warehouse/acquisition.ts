@@ -65,7 +65,7 @@ export function assertProductionRuleset(r: AcquisitionRuleset): void {
 
 /** Canonical homes of the ratified production config. */
 export const RATIFIED_RULESET_PATH = 'config/acquisition-ruleset.v1.json';
-export const REPLACEMENT_COST_TABLE_PATH = 'config/replacement-cost.v1.json';
+export const REPLACEMENT_COST_TABLE_PATH = 'config/replacement-cost.v3.json';
 /** Load + assert the ratified production ruleset (fail-closed). */
 export function loadRatifiedRuleset(path: string = RATIFIED_RULESET_PATH): AcquisitionRuleset {
   const r = loadRuleset(path);
@@ -91,9 +91,52 @@ export function loadRatifiedRct(path: string = REPLACEMENT_COST_TABLE_PATH): Rep
   assertProductionRct(rct);
   return rct;
 }
-/** Replacement-cost total for a building from the RCT — the Basis floor/score divisor (Q5). */
-export function replacementCostTotal(sf: number, rct: ReplacementCostTable, band: 'low' | 'mid' | 'high' = 'mid'): number {
-  return sf * rct.psf[band];
+/**
+ * Per-market replacement cost $/SF from the RCT — the Basis floor/score divisor.
+ *
+ * Uses the deal's market row when the RCT covers it. Falls back to the CONSERVATIVE firm-wide `psf`
+ * row (the cheapest market to build in ⇒ the STRICTEST floor) when the market is null or uncovered.
+ * We never hand a deal a looser floor because we failed to identify its market.
+ */
+export function replacementCostPsf(
+  rct: ReplacementCostTable,
+  band: 'low' | 'mid' | 'high' = 'mid',
+  market: string | null = null,
+): { psf: number; marketCovered: boolean; proxy: boolean } {
+  const row = market !== null ? rct.markets[market] : undefined;
+  if (row === undefined) return { psf: rct.psf[band], marketCovered: false, proxy: false };
+  const psf = band === 'low' ? row.low : band === 'high' ? row.high : row.point;
+  return { psf, marketCovered: true, proxy: row.proxy };
+}
+
+/** Replacement-cost total for a building from the RCT — the Basis floor/score divisor. */
+export function replacementCostTotal(
+  sf: number,
+  rct: ReplacementCostTable,
+  band: 'low' | 'mid' | 'high' = 'mid',
+  market: string | null = null,
+): number {
+  return sf * replacementCostPsf(rct, band, market).psf;
+}
+
+/**
+ * Basis discount floor for a vintage — LINEAR RAMP (RCT v03, ratified 2026-07-14).
+ *
+ * Slides from `basisDiscountMinPreMillennium` at/below `basisVintageRampStartYear` to
+ * `basisDiscountMinPostMillennium` at/above `basisVintageCutoffYear`. This replaced a CLIFF, which
+ * was a step function AND calibrated to the old, understated denominator.
+ *
+ * Unknown vintage ⇒ the STRICTEST (pre) floor. Never credit a building with a looser floor because
+ * we failed to look up its year.
+ */
+export function basisVintageFloor(yearBuilt: number | null, ruleset: AcquisitionRuleset): number {
+  const { basisDiscountMinPreMillennium: strict, basisDiscountMinPostMillennium: loose } = ruleset.floors;
+  const start = ruleset.floors.basisVintageRampStartYear;
+  const end = ruleset.floors.basisVintageCutoffYear;
+  if (yearBuilt === null) return strict;
+  if (end <= start) return yearBuilt >= end ? loose : strict; // degenerate config ⇒ behave as a cliff
+  const clamped = Math.min(end, Math.max(start, yearBuilt));
+  return strict + ((clamped - start) / (end - start)) * (loose - strict);
 }
 
 // ─── Deterministic inputs_version (Q5: pins rulesetVersion; rctVersion folds in once the RCT config lands) ──
@@ -270,12 +313,11 @@ export function scoreAcquisition(
   // ── STAGE 1 — FLOORS ──
   const floors: FloorResult[] = [];
   let floorIndeterminate = false;
-  // basis floor — discount to replacement, vintage-adjusted
-  const vintageFloor = input.yearBuilt === null
-    ? ruleset.floors.basisDiscountMinPreMillennium // unknown vintage ⇒ stricter (conservative)
-    : input.yearBuilt >= ruleset.floors.basisVintageCutoffYear
-      ? ruleset.floors.basisDiscountMinPostMillennium
-      : ruleset.floors.basisDiscountMinPreMillennium;
+  // basis floor — discount to replacement, vintage-adjusted via the LINEAR RAMP (RCT v03).
+  // Slides from the (stricter) pre floor at/below rampStart to the (looser) post floor at/above
+  // cutoff. Unknown vintage ⇒ the STRICTEST floor: never credit a building with a looser floor
+  // because we failed to look up its year.
+  const vintageFloor = basisVintageFloor(input.yearBuilt, ruleset);
   // Replacement cost (the Basis divisor, Q5) is derived ONLY from a RATIFIED + SIGNED RCT × gross SF. A
   // caller replacementCostTotal is an appraisal override used solely for reconciliation (>10% divergence is
   // flagged) — it can NEVER be a standalone divisor. With no usable ratified RCT the Basis is indeterminate
@@ -289,7 +331,15 @@ export function scoreAcquisition(
   const validRct = rctUsable ? suppliedRct : null;
   const grossSf = input.totalSf ?? input.maxBuildingSf;
   const rcBand = input.replacementCostBand ?? 'mid';
-  const replacementCost = validRct !== null && grossSf !== null && grossSf > 0 ? grossSf * validRct.psf[rcBand] : null;
+  // Per-market divisor (RCT v03). Unknown/uncovered market ⇒ conservative firm-wide fallback (the
+  // cheapest market to build in ⇒ the strictest floor), and we SAY SO rather than pass it silently.
+  const rcResolved = validRct !== null ? replacementCostPsf(validRct, rcBand, input.market) : null;
+  const replacementCost = rcResolved !== null && grossSf !== null && grossSf > 0 ? grossSf * rcResolved.psf : null;
+  if (rcResolved !== null && !rcResolved.marketCovered) {
+    flag('replacementCost', `market ${input.market === null ? 'not supplied' : `'${input.market}' not in ${validRct!.rctVersion}`} — using the conservative firm-wide fallback ($${validRct!.psf[rcBand]}/SF, the strictest floor). Supply a covered market for a per-market basis.`);
+  } else if (rcResolved !== null && rcResolved.proxy) {
+    flag('replacementCost', `RCT row for '${input.market}' is a [PROXY] from a neighbouring metro — DENOMINATOR-SENSITIVE: a local insurance comp or GC quote is required pre-LOI.`);
+  }
   if (suppliedRct === null) {
     flag('replacementCost', 'no ratified RCT supplied to the engine — Basis floor/score indeterminate');
   } else if (!rctUsable) {
