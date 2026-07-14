@@ -61,6 +61,19 @@ export function assertProductionRuleset(r: AcquisitionRuleset): void {
       `acquisition ruleset ${r.rulesetVersion} is 'ratified' but missing provenance (ratifiedBy/ratifiedDate) — fail-closed (Invariant 4)`,
     );
   }
+  // Refute-fix (2026-07-14, RCT v03 refute pass, sonnet lens x2): basisFullCreditDiscount and the
+  // vintage floors are a MATCHED PAIR — the Cat 1 Basis formula divides by (basisFull - vintageFloor).
+  // A prior edit bumped the floors (RCT v03 recalibration) without re-solving basisFullCreditDiscount,
+  // leaving it BELOW both floors — the divide-by-zero guard silently clamped the denominator to ~0,
+  // collapsing the graduated 25-pt Basis ramp into a step function (any deal that cleared the floor at
+  // all scored the full 25 points, identically). Fail closed on a repeat of this exact class of mistake
+  // rather than silently degrading score granularity.
+  const worstFloor = Math.max(r.floors.basisDiscountMinPreMillennium, r.floors.basisDiscountMinPostMillennium);
+  if (r.scoring.basisFullCreditDiscount <= worstFloor) {
+    throw new Error(
+      `acquisition ruleset ${r.rulesetVersion} has basisFullCreditDiscount (${r.scoring.basisFullCreditDiscount}) <= its strictest vintage floor (${worstFloor}) — the Basis scorecard ramp would collapse to a step function; engine fail-closed`,
+    );
+  }
 }
 
 /** Canonical homes of the ratified production config. */
@@ -330,7 +343,18 @@ export function scoreAcquisition(
     && suppliedRct.ratifiedDate !== null;
   const validRct = rctUsable ? suppliedRct : null;
   const grossSf = input.totalSf ?? input.maxBuildingSf;
-  const rcBand = input.replacementCostBand ?? 'mid';
+  // Refute-fix (2026-07-14, RCT v03 refute pass): the Basis floor AND Basis score ALWAYS divide by
+  // RCT LOW — this is stated as settled doctrine everywhere (acquisition-underwriting skill,
+  // target-markets.json, src/brain/replacement-cost.ts's own doc comment), but this line was
+  // resolving `input.replacementCostBand ?? 'mid'` — i.e. defaulting to POINT, not LOW — so the
+  // engine's actual PURSUE/WATCH/KILLED verdict silently used a different (looser) divisor than
+  // every doc comment claimed and than the new client-side DealDrawer badge computed, producing
+  // contradictory pass/fail readings for the same deal. `replacementCostBand` turns out to encode a
+  // DIFFERENT, pre-existing concept (subject building-class selection) that nothing in this codebase
+  // actually sets — reusing it for RCT-confidence-band selection was the conflation. Hardcoded to
+  // 'low' here rather than reusing that dormant field; if building-class-adjusted replacement cost is
+  // wanted as a distinct feature later, it needs its own design, not silent reuse of this enum.
+  const rcBand = 'low' as const;
   // Per-market divisor (RCT v03). Unknown/uncovered market ⇒ conservative firm-wide fallback (the
   // cheapest market to build in ⇒ the strictest floor), and we SAY SO rather than pass it silently.
   const rcResolved = validRct !== null ? replacementCostPsf(validRct, rcBand, input.market) : null;

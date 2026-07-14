@@ -274,7 +274,14 @@ export const AcquisitionInput = z.object({
   // basis / yield / irr (floors + Cat 1 Basis, Cat 2 Yield)
   allInBasis: z.number().nullable().default(null),
   replacementCostTotal: z.number().nullable().default(null), // appraisal OVERRIDE; reconciled vs the ratified RCT (Q5)
-  replacementCostBand: z.enum(['low', 'mid', 'high']).nullable().default(null), // building-class band into the RCT (default mid)
+  // DORMANT as of 2026-07-14 (refute-fix): the engine no longer reads this field. It predates RCT v03
+  // and was intended as a subject-BUILDING-CLASS selector into the RCT, distinct from RCT v03's own
+  // low/point/high CONFIDENCE band on each market row — the two concepts got conflated when RCT v03
+  // reused this enum, and nothing in this codebase ever actually set a non-null value. The Basis
+  // floor and Basis score now ALWAYS divide by the market's `low` (confidence-band) figure,
+  // unconditionally — see server/warehouse/acquisition.ts's `rcBand` comment. If building-class
+  // adjustment is wanted as a real feature, it needs its own field/design, not reuse of this one.
+  replacementCostBand: z.enum(['low', 'mid', 'high']).nullable().default(null),
   /**
    * Market name, keyed into ReplacementCostTable.markets to pick the per-market replacement cost.
    * NULL or unrecognised ⇒ the engine falls back to the CONSERVATIVE firm-wide `psf` row (the
