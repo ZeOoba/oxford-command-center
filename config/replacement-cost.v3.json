@@ -1,0 +1,79 @@
+{
+  "_comment": "RATIFIED Replacement-Cost Table v03 (RCT v03) — Gabriel, 2026-07-14, governor-level. Supersedes replacement-cost.v1.json, which was a FLAT firm-wide $125/$137.50/$150: no per-market variation at all, sitting at roughly HALF true all-in shallow-bay replacement cost. An understated replacement cost makes computed discounts too small, so deals fail the floor — the old table made ORA TOO STRICT and passed on deals that clear doctrine. The Basis floor and Basis score divide by this; rctVersion folds into inputsVersion, so bumping it correctly INVALIDATES every score cached under the old denominator (those scores are stale, not merely old). AUTHORITATIVE COPY: the acquisition-underwriting skill, 'Replacement Cost Table (RCT v03)'. If this file and that table disagree, THAT TABLE WINS and this file is the bug.",
+  "rctVersion": "replacement-cost.v3",
+  "ratification": "ratified",
+  "ratifiedBy": "Gabriel Goldberg",
+  "ratifiedDate": "2026-07-14",
+  "basis": "RCT v03 — all-in replacement for Class B/C shallow-bay/flex (hard + soft + developer profit + financing; land EXCLUDED, added separately in the basis test). POINT = C&W 2025 hard cost (small tier) [SOURCED] x shallow-bay size premium ~+43% at 40K SF, from C&W's OWN size curve [SOURCED] x soft/profit/financing 1.30 [EST — the one unsourced input; LOW end chosen so the floor is HARDER than truth] x escalation 1.0487 [SOURCED — Turner BCI, lowest of three indices]. Band +/-10% => LOW = 0.90 x POINT. Coherence passes: every all-in exceeds hard cost at ~1.95x.",
+  "_fallback_note": "`psf` is the CONSERVATIVE FALLBACK used ONLY when a deal's market is null or has no RCT row. It is the CHEAPEST market to build in (Kansas City MO), which yields the STRICTEST floor. We never hand a deal a looser floor because we failed to identify its market.",
+  "psf": {
+    "low": 227.9,
+    "mid": 253.22,
+    "high": 278.54
+  },
+  "markets": {
+    "Columbus OH": {
+      "low": 229.65,
+      "point": 255.16,
+      "high": 280.68,
+      "cwHardPsf": 130.51,
+      "proxy": false
+    },
+    "Cincinnati OH": {
+      "low": 251.46,
+      "point": 279.4,
+      "high": 307.34,
+      "cwHardPsf": 143.15,
+      "proxy": false
+    },
+    "Kansas City MO": {
+      "low": 227.9,
+      "point": 253.22,
+      "high": 278.54,
+      "cwHardPsf": 129.94,
+      "proxy": false
+    },
+    "Indianapolis IN": {
+      "low": 253.83,
+      "point": 282.03,
+      "high": 310.24,
+      "cwHardPsf": 143.46,
+      "proxy": false
+    },
+    "Mid-Atlantic": {
+      "low": 232.97,
+      "point": 258.85,
+      "high": 284.74,
+      "cwHardPsf": 133.7,
+      "proxy": false
+    },
+    "Madison WI": {
+      "low": 229.08,
+      "point": 254.53,
+      "high": 279.98,
+      "cwHardPsf": 130.05,
+      "proxy": true
+    },
+    "Grand Rapids MI": {
+      "low": 253.11,
+      "point": 281.23,
+      "high": 309.36,
+      "cwHardPsf": 143.64,
+      "proxy": true
+    },
+    "Richmond VA": {
+      "low": 232.97,
+      "point": 258.85,
+      "high": 284.74,
+      "cwHardPsf": 133.7,
+      "proxy": true
+    },
+    "Des Moines IA": {
+      "low": 231.66,
+      "point": 257.4,
+      "high": 283.14,
+      "cwHardPsf": 131.46,
+      "proxy": true
+    }
+  }
+}

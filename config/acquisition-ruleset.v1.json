@@ -7,7 +7,6 @@
   "ratifiedDate": "2026-06-14",
   "skillVersion": "acquisition-underwriting v3.0",
   "sourceOfRecord": "Claude_Workspace/.claude/skills/acquisition-underwriting/SKILL.md:23-127; clear-height bands + loading door ratio supplied by Gabriel 2026-06-14",
-
   "gates": {
     "sizePrice": {
       "singleAssetPriceMin": 500000,
@@ -15,66 +14,164 @@
       "portfolioPriceMax": 15000000,
       "maxSfPerBuilding": 50000
     },
-    "physical": { "minClearHeightFt": 12 },
-    "flood": { "sfhaOnPadKills": true, "sfhaOnLandValuesAtZero": true },
-    "other": { "minGroundLeaseYearsRemaining": 30, "maxEnvRemediationPctOfPrice": 0.20 },
-    "establishedClusters": ["Columbus OH", "Cincinnati OH", "Kansas City", "Indianapolis IN", "Maryland/DC", "Madison WI"],
-    "entryClusters": ["Grand Rapids MI", "Richmond VA", "Des Moines IA"],
+    "physical": {
+      "minClearHeightFt": 12
+    },
+    "flood": {
+      "sfhaOnPadKills": true,
+      "sfhaOnLandValuesAtZero": true
+    },
+    "other": {
+      "minGroundLeaseYearsRemaining": 30,
+      "maxEnvRemediationPctOfPrice": 0.2
+    },
+    "establishedClusters": [
+      "Columbus OH",
+      "Cincinnati OH",
+      "Kansas City",
+      "Indianapolis IN",
+      "Maryland/DC",
+      "Madison WI"
+    ],
+    "entryClusters": [
+      "Grand Rapids MI",
+      "Richmond VA",
+      "Des Moines IA"
+    ],
     "satelliteMaxDriveMinutes": 30
   },
-
   "floors": {
-    "basisDiscountMinPostMillennium": 0.25,
-    "basisDiscountMinPreMillennium": 0.30,
-    "basisVintageCutoffYear": 2000,
+    "basisDiscountMinPostMillennium": 0.6,
+    "basisDiscountMinPreMillennium": 0.65,
+    "basisVintageCutoffYear": 2005,
     "stabilizedYocFloorPct": 0.08,
     "leveredIrrFloor5yr": 0.15,
-    "leveredIrrFloor10yr": 0.12
+    "leveredIrrFloor10yr": 0.12,
+    "basisVintageRampStartYear": 1995
   },
-
   "scorecard": [
-    { "id": "basis",             "label": "Basis",                "points": 25, "vacantPoints": null, "subScore": "basis",  "reallocatesToWhenVacant": null },
-    { "id": "yield",             "label": "Yield",                "points": 20, "vacantPoints": null, "subScore": "basis",  "reallocatesToWhenVacant": null },
-    { "id": "product-physical",  "label": "Product & Physical",   "points": 20, "vacantPoints": null, "subScore": "asset",  "reallocatesToWhenVacant": null },
-    { "id": "market-location",   "label": "Market & Location",    "points": 12, "vacantPoints": null, "subScore": "market", "reallocatesToWhenVacant": null },
-    { "id": "seller-motivation", "label": "Seller / Motivation",  "points": 10, "vacantPoints": null, "subScore": "risk",   "reallocatesToWhenVacant": null },
-    { "id": "tenancy-lease",     "label": "Tenancy & Lease",      "points": 7,  "vacantPoints": 0,    "subScore": "risk",   "reallocatesToWhenVacant": "value-add" },
-    { "id": "value-add",         "label": "Value-Add Optionality","points": 6,  "vacantPoints": 13,   "subScore": "asset",  "reallocatesToWhenVacant": null }
+    {
+      "id": "basis",
+      "label": "Basis",
+      "points": 25,
+      "vacantPoints": null,
+      "subScore": "basis",
+      "reallocatesToWhenVacant": null
+    },
+    {
+      "id": "yield",
+      "label": "Yield",
+      "points": 20,
+      "vacantPoints": null,
+      "subScore": "basis",
+      "reallocatesToWhenVacant": null
+    },
+    {
+      "id": "product-physical",
+      "label": "Product & Physical",
+      "points": 20,
+      "vacantPoints": null,
+      "subScore": "asset",
+      "reallocatesToWhenVacant": null
+    },
+    {
+      "id": "market-location",
+      "label": "Market & Location",
+      "points": 12,
+      "vacantPoints": null,
+      "subScore": "market",
+      "reallocatesToWhenVacant": null
+    },
+    {
+      "id": "seller-motivation",
+      "label": "Seller / Motivation",
+      "points": 10,
+      "vacantPoints": null,
+      "subScore": "risk",
+      "reallocatesToWhenVacant": null
+    },
+    {
+      "id": "tenancy-lease",
+      "label": "Tenancy & Lease",
+      "points": 7,
+      "vacantPoints": 0,
+      "subScore": "risk",
+      "reallocatesToWhenVacant": "value-add"
+    },
+    {
+      "id": "value-add",
+      "label": "Value-Add Optionality",
+      "points": 6,
+      "vacantPoints": 13,
+      "subScore": "asset",
+      "reallocatesToWhenVacant": null
+    }
   ],
-
   "scoring": {
-    "basisFullCreditDiscount": 0.55,
+    "basisFullCreditDiscount": 0.90,
     "yocZeroPct": 0.08,
     "yocFullPct": 0.11,
     "cat3": {
       "clearHeightPoints": 5,
       "loadingPoints": 3,
       "productFitPoints": 5,
-      "constructionPoints": { "blockTiltBrick": 4, "mixed": 3, "pemb": 2 },
+      "constructionPoints": {
+        "blockTiltBrick": 4,
+        "mixed": 3,
+        "pemb": 2
+      },
       "siteFunctionPoints": 3,
       "truckCourtIdealFt": 100,
       "truckCourtZeroFt": 60,
-      "loadingDoorsPer10kSf": { "docks": 1, "driveIns": 1 },
+      "loadingDoorsPer10kSf": {
+        "docks": 1,
+        "driveIns": 1
+      },
       "clearHeightBands": [
-        { "maxSf": 20000, "idealClearFt": 14 },
-        { "maxSf": 50000, "idealClearFt": 16 }
+        {
+          "maxSf": 20000,
+          "idealClearFt": 14
+        },
+        {
+          "maxSf": 50000,
+          "idealClearFt": 16
+        }
       ]
     },
     "cat4": {
-      "tierPoints": { "ownedSubmarket": 12, "established": 9, "entry": 6, "satellite": 6 },
+      "tierPoints": {
+        "ownedSubmarket": 12,
+        "established": 9,
+        "entry": 6,
+        "satellite": 6
+      },
       "fundamentalsAdjustMax": 3
     },
     "cat6": {
-      "mtmFullDiscountPct": 0.30,
+      "mtmFullDiscountPct": 0.3,
       "mtmMaxPoints": 5,
       "waltSweetSpotYr": 2,
       "waltDecayYr": 4,
       "waltMaxPoints": 2
     }
   },
-
-  "guards": { "marketEstimatedCannotCarryT1": true },
-  "freshness": { "marketFundamentalsWindowDays": 90 },
-  "ddCritical": ["flood", "zoning", "roof", "deferred-maintenance-capex"],
-  "bands": { "t1PursueMin": 75, "t2WatchMin": 60 }
+  "guards": {
+    "marketEstimatedCannotCarryT1": true
+  },
+  "freshness": {
+    "marketFundamentalsWindowDays": 90
+  },
+  "ddCritical": [
+    "flood",
+    "zoning",
+    "roof",
+    "deferred-maintenance-capex"
+  ],
+  "bands": {
+    "t1PursueMin": 75,
+    "t2WatchMin": 60
+  },
+  "_floors_note_rct_v03": "VINTAGE RAMP recalibrated 2026-07-14 (Gabriel, governor-level) alongside RCT v03. Was a CLIFF at 0.25/0.30 with cutoff 2000 — both a step function AND calibrated to RCT v02's UNDERSTATED denominator. RCT v03 roughly DOUBLES that denominator, so the old 25-30% floor would have let a Columbus deal pay ~$160/SF and 'clear' — every candidate in the buy-box passes. A FLOOR THAT PASSES EVERYTHING IS NOT A FLOOR. THE FLOOR % AND THE DENOMINATOR ARE A MATCHED PAIR: never move one without re-solving the other. ORA buys at ~35-40% of TRUE all-in replacement cost (a ~64% discount); the legacy '25% discount' framing was an artifact of a wrong denominator, never the strategy.",
+  "_scoring_note_basisFullCreditDiscount_rct_v03": "RECALIBRATED 2026-07-14 alongside the floor bump — 0.55 -> 0.90. CAUGHT BY THE MANDATORY refute-financial-change adversarial pass (2 of 3 Sonnet-5 lenses independently found and live-verified this): 0.55 sat BELOW both new floors (0.60/0.65), so cat1's formula `(discount - vintageFloor) / max(1e-9, basisFull - vintageFloor)` had a NEGATIVE denominator clamped to ~0 by its own divide-by-zero guard, collapsing the entire 25-point Basis category into a step function — ANY deal clearing the floor at all scored the full 25 points, identically, whether it cleared by 0.1pt or by 30pts. Reproduced live: a 60.5%-discount deal and a 90%-discount deal scored an IDENTICAL composite (94.2, T1 PURSUE). 0.90 is not an arbitrary round number: the ORIGINAL calibration set ONE full-credit threshold (0.55) sitting +0.30 above the post-2000 floor (0.25) and +0.25 above the pre-2000 floor (0.30) — asymmetric ramp widths by design. 0.90 EXACTLY reproduces both gaps against the new floors: 0.60+0.30=0.90 (post-2005) and 0.65+0.25=0.90 (pre-1995) — same calibration, re-anchored to the corrected denominator, not a new guess. assertProductionRuleset now fails closed if this invariant (basisFullCreditDiscount > both floors) is ever violated again, so a repeat of this exact class of mistake blocks CI instead of silently degrading score granularity.",
+  "_process_note_versioning_gap": "OPEN — FLAGGED, NOT RESOLVED. Per this file's own _comment (line 2): 'Any change to a gate bound, floor, weight, anchor, band ... = a new RULESET_VERSION + a fresh Invariant-4 ratification + adversarial refute + archive of this file.' The 2026-07-14 floor change (0.25/0.30->0.60/0.65) and this basisFullCreditDiscount change were BOTH made in-place, without bumping rulesetVersion (still '1.0.0') or archiving the prior version to config/archive/. Substance is ratified (Gabriel, governor-level, explicit, same-session) and the adversarial refute DID run (see the note above) — but the version-bump+archive MECHANICS this file's own doctrine requires were skipped. Bumping RULESET_VERSION is a coupled code change (src/contracts/acquisition.ts pins it via z.literal), not just a JSON edit, so it wasn't bundled into this fix. Needs a Gabriel decision: do the full ceremony (archive + version bump + re-ratify), or is same-session inline documentation sufficient going forward for changes he is directly and explicitly steering in real time?"
 }

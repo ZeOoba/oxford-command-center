@@ -20,7 +20,7 @@ const ratifiedRulesetObj = JSON.parse(
   readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8'),
 ) as Json;
 const rctObj = JSON.parse(
-  readFileSync(resolve(process.cwd(), 'config/replacement-cost.v1.json'), 'utf8'),
+  readFileSync(resolve(process.cwd(), 'config/replacement-cost.v3.json'), 'utf8'),
 ) as Json;
 
 /** Build a tampered copy of the ratified ruleset for fail-closed tests (raw JSON, no `any`). */
