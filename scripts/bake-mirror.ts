@@ -18,16 +18,34 @@ loadEnvFile();
  * which must happen ONLY for a target verified to be gated behind Cloudflare Access. A public
  * *.pages.dev deploy must always run in the default (redacted) mode.
  */
-function redactConfidential(snapshot: PortfolioSnapshot): { snapshot: PortfolioSnapshot; removed: string[] } {
+export function redactConfidential(snapshot: PortfolioSnapshot): {
+  snapshot: PortfolioSnapshot; removed: string[]; removedCounterparties: string[];
+} {
   const confidential = snapshot.deals.filter((d) => d.confidential);
-  if (confidential.length === 0) return { snapshot, removed: [] };
+  if (confidential.length === 0) return { snapshot, removed: [], removedCounterparties: [] };
   const removedIds = new Set(confidential.map((d) => d.id));
   const deals = snapshot.deals.filter((d) => !d.confidential);
-  const counterparties = snapshot.counterparties.map((cp) => ({
-    ...cp,
-    links: { ...cp.links, deals: cp.links.deals.filter((id) => !removedIds.has(id)) },
-  }));
-  return { snapshot: { ...snapshot, deals, counterparties }, removed: confidential.map((d) => d.name) };
+  const counterparties: PortfolioSnapshot['counterparties'] = [];
+  const removedCounterparties: string[] = [];
+  for (const cp of snapshot.counterparties) {
+    const keptDeals = cp.links.deals.filter((id) => !removedIds.has(id));
+    const droppedAny = keptDeals.length !== cp.links.deals.length;
+    const linkless = keptDeals.length === 0 && cp.links.properties.length === 0
+      && cp.links.loans.length === 0 && cp.links.insurance.length === 0;
+    if (droppedAny && linkless) {
+      // Orphaned BY this redaction (I8): an orphaned lender name + market in the public bake
+      // identifies the confidential deal it financed. Nodes with surviving links are kept
+      // (deal link filtered); linkless memory-seeded nodes were never deal-linked and stay.
+      removedCounterparties.push(cp.name);
+      continue;
+    }
+    counterparties.push({ ...cp, links: { ...cp.links, deals: keptDeals } });
+  }
+  return {
+    snapshot: { ...snapshot, deals, counterparties },
+    removed: confidential.map((d) => d.name),
+    removedCounterparties,
+  };
 }
 
 async function main() {
@@ -47,7 +65,9 @@ async function main() {
     const r = await runBrief(raw, { macroProvider: getMacro });
     console.log(`  Brief: sent=${r.briefSent}, alerts=${r.alertsSent}`);
   }
-  const { snapshot, removed } = includeConfidential ? { snapshot: raw, removed: [] } : redactConfidential(raw);
+  const { snapshot, removed, removedCounterparties } = includeConfidential
+    ? { snapshot: raw, removed: [], removedCounterparties: [] }
+    : redactConfidential(raw);
 
   writeFileSync(join(pub, 'snapshot.json'), JSON.stringify(snapshot));
   writeFileSync(join(pub, 'macro.json'), JSON.stringify(await getMacro()));
@@ -55,7 +75,11 @@ async function main() {
   const mode = includeConfidential ? 'FULL (confidential included — Access-gated targets only)' : 'REDACTED (public-safe)';
   console.log(`✓ Baked public/snapshot.json (${snapshot.properties.length} props, ${snapshot.leases.length} leases, ${snapshot.deals.length} deals) + public/macro.json`);
   console.log(`  Mode: ${mode}`);
+  // Operator visibility (I9): enumerate every baked deal so an unexpectedly-public deal is
+  // visible in the bake log, not just discoverable after it ships.
+  console.log(`  Deals baked: ${snapshot.deals.length ? snapshot.deals.map((d) => d.name).join(' · ') : '(none)'}`);
   if (removed.length) console.log(`  Redacted ${removed.length} confidential deal(s): ${removed.join(', ')}`);
+  if (removedCounterparties.length) console.log(`  Dropped ${removedCounterparties.length} orphaned counterpart${removedCounterparties.length === 1 ? 'y' : 'ies'} (I8): ${removedCounterparties.join(', ')}`);
   if (includeConfidential) console.warn('  ⚠ CONFIDENTIAL DATA INCLUDED — deploy ONLY to a Cloudflare Access-gated target.');
 
   // Fat Mirror (Phase 1b): the HEAVY warehouse bake is OPT-IN (--warehouse / BAKE_WAREHOUSE=1) so the
