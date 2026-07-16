@@ -224,6 +224,32 @@ describe('persistAndLogScore — governors cleared (ratified ruleset)', () => {
 });
 
 describe('persistAndLogScore — idempotency', () => {
+  it('a governor change mints a new inputs_version and re-derives the persisted verdict (no stale no-op)', async () => {
+    // I1 (governor-excluded-from-score-dedup-key): before this fix, INSERT OR IGNORE silently
+    // no-opped after a capital_config governor edit, so the ranked pipeline kept the verdict made
+    // under the OLD governor regime while /acquisition/score returned fresh. The DB CHECKs only
+    // permit tightening (dscr_floor >= 1.25), so the test tightens DSCR to 1.30 as version 2.
+    const db = freshDb();
+    const candidateId = 'test-deal-governor-refresh';
+    seedCandidate(db, candidateId);
+    const input = strongInput();
+
+    await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT);
+    db.prepare(
+      `INSERT INTO capital_config
+         (version, effective_from, dscr_floor, ltv_ceiling, disposition_cap_rate, hold_cap_rate,
+          acq_irr, capex_irr, refi_trigger_bps, payout_pct, notes)
+       VALUES (2, '2026-07-16', 1.30, 0.40, 0.065, 0.075, 0.12, 0.15, 150, 0.0, 'test: tightened DSCR governor')`,
+    ).run();
+    await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT);
+
+    const rows = db.prepare(
+      'SELECT inputs_version FROM acq_scores WHERE candidate_id = ? ORDER BY id',
+    ).all(candidateId) as Array<{ inputs_version: string }>;
+    expect(rows.length).toBe(2); // NOT an INSERT-OR-IGNORE no-op
+    expect(rows[0].inputs_version).not.toBe(rows[1].inputs_version);
+  });
+
   it('second call on identical inputs is a no-op (INSERT OR IGNORE skips)', async () => {
     const db = freshDb();
     const candidateId = 'test-deal-idempotent';

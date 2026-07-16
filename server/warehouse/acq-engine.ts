@@ -23,7 +23,8 @@
 // lives in acq-governor-proxy.ts (a screening heuristic, not a capital_config governor constant).
 import type { WarehouseDb } from './db';
 import { loadGovernors } from './governors';
-import { applyGovernorProxy } from './acq-governor-proxy';
+import type { Governors } from './governors';
+import { applyGovernorProxy, SCREENING_DEBT_CONSTANT } from './acq-governor-proxy';
 import { scoreAcquisition, computeInputsVersion, RATIFIED_RULESET_PATH, REPLACEMENT_COST_TABLE_PATH } from './acquisition';
 import { logVerdicts } from './calibration';
 import { CalibrationVerdictSchema, CalibrationOutcomeSchema } from '../../src/contracts/warehouse';
@@ -37,6 +38,16 @@ import type {
 export interface PersistAndLogScoreResult {
   score: AcquisitionScore;
   calibrationVerdictId: number | null;
+}
+
+/**
+ * The governor-regime component of the persisted dedup key (I1): a DSCR/LTV governor edit must
+ * mint a NEW inputs_version so INSERT OR IGNORE re-derives the verdict instead of silently keeping
+ * one made under the old regime. SCREENING_DEBT_CONSTANT is part of the DSCR-proxy formula, so a
+ * (ratified) change to it re-keys too. Format pinned — changing it re-keys every candidate once.
+ */
+export function governorFingerprint(g: Governors): string {
+  return `${g.dscrFloor}:${g.ltvCeiling}:${SCREENING_DEBT_CONSTANT}`;
 }
 
 /**
@@ -67,14 +78,17 @@ export async function persistAndLogScore(
   // 1. Compute the score (pure — no side effects).
   const score = scoreAcquisition(input, ruleset, { rct });
 
-  // 2. Compute the inputs_version dedup key.
-  const inputsVersion = computeInputsVersion(input, ruleset, rct.rctVersion);
-
-  // 3. Load governors at query time (never hardcoded — Invariant 4) and apply the SHARED governor
-  //    proxy — the SAME demotion the ad-hoc /acquisition/score route and the edge Pages Function
-  //    apply, so all three surfaces agree. LTV is indeterminate at screen time (null, never demotes);
-  //    DSCR proxy + KILLED-monotonicity unchanged. See acq-governor-proxy.ts header.
+  // 2. Load governors at query time (never hardcoded — Invariant 4). Loaded BEFORE the dedup key
+  //    so the governor regime is part of the persisted score's identity (I1).
   const governors = loadGovernors(db);
+
+  // 3. Compute the inputs_version dedup key — governor-fingerprinted, so a capital_config edit
+  //    re-derives persisted verdicts instead of INSERT-OR-IGNORE keeping a stale one.
+  const inputsVersion = computeInputsVersion(input, ruleset, rct.rctVersion, governorFingerprint(governors));
+
+  // 3b. Apply the SHARED governor proxy — the SAME demotion the ad-hoc /acquisition/score route
+  //     and the edge Pages Function apply, so all three surfaces agree. LTV is indeterminate at
+  //     screen time (null, never demotes); DSCR proxy + KILLED-monotonicity unchanged.
   const { verdict: finalVerdict, governorDscrCleared, governorLtvCleared } =
     applyGovernorProxy(score, input, governors);
 
