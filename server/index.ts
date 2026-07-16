@@ -187,14 +187,14 @@ function liveGovernors(): GovernorSet {
     const dbPath = process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
     if (!existsSync(dbPath)) throw new Error(`warehouse absent at ${dbPath}`);
     const g = loadGovernors(getWarehouse());
-    return { dscrFloor: g.dscrFloor, ltvCeiling: g.ltvCeiling, version: g.version, effectiveFrom: g.effectiveFrom };
+    return { dscrFloor: g.dscrFloor, ltvCeiling: g.ltvCeiling, hurdleRatePct: g.hurdleRatePct, version: g.version, effectiveFrom: g.effectiveFrom };
   } catch (err) {
     if (!governorFallbackWarned) {
       governorFallbackWarned = true;
       console.warn(`[governors] warehouse unavailable — serving compile-time defaults (v${GOVERNOR_DEFAULTS.version}): ${err instanceof Error ? err.message : String(err)}`);
     }
     const d = GOVERNOR_DEFAULTS;
-    return { dscrFloor: d.dscrFloor, ltvCeiling: d.ltvCeiling, version: d.version, effectiveFrom: d.effectiveFrom };
+    return { dscrFloor: d.dscrFloor, ltvCeiling: d.ltvCeiling, hurdleRatePct: d.hurdleRatePct, version: d.version, effectiveFrom: d.effectiveFrom };
   }
 }
 

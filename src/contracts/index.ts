@@ -59,6 +59,10 @@ export type SnapshotMeta = z.infer<typeof SnapshotMeta>;
 export const GovernorSet = z.object({
   dscrFloor: z.number().finite().positive(),
   ltvCeiling: z.number().finite().positive(),
+  /** General unlevered-IRR hurdle (Phase 5 governor, DB-backed hurdle_rate_pct). The capex-IRR
+   *  calculator (item-8) compares against THIS, not the separate static CAPITAL_CONFIG.capexIrr
+   *  constant, so it never contradicts the live capital-allocation engine's own improve-gate. */
+  hurdleRatePct: z.number().finite().nonnegative(),
   version: z.number(),
   effectiveFrom: z.string(),
 });
@@ -73,6 +77,7 @@ export type GovernorSet = z.infer<typeof GovernorSet>;
 export const GOVERNOR_FALLBACK: GovernorSet = {
   dscrFloor: 1.25,
   ltvCeiling: 0.40,
+  hurdleRatePct: 0.08,
   version: 1,
   effectiveFrom: '2026-06-13',
 };

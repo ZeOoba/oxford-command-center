@@ -120,7 +120,7 @@ async function main() {
       const db = new Database(dbPath, { readonly: true, fileMustExist: true });
       try {
         const g = loadCapitalConfig(db as unknown as Parameters<typeof loadCapitalConfig>[0]);
-        governors = { dscrFloor: g.dscrFloor, ltvCeiling: g.ltvCeiling, version: g.version, effectiveFrom: g.effectiveFrom };
+        governors = { dscrFloor: g.dscrFloor, ltvCeiling: g.ltvCeiling, hurdleRatePct: g.hurdleRatePct, version: g.version, effectiveFrom: g.effectiveFrom };
         governorSource = `warehouse (v${g.version}, effective ${g.effectiveFrom})`;
       } finally {
         db.close();
@@ -132,6 +132,7 @@ async function main() {
   if (!governors) {
     governors = {
       dscrFloor: GOVERNOR_DEFAULTS.dscrFloor, ltvCeiling: GOVERNOR_DEFAULTS.ltvCeiling,
+      hurdleRatePct: GOVERNOR_DEFAULTS.hurdleRatePct,
       version: GOVERNOR_DEFAULTS.version, effectiveFrom: GOVERNOR_DEFAULTS.effectiveFrom,
     };
   }
