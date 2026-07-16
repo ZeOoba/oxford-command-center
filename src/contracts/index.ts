@@ -66,6 +66,11 @@ export const GovernorSet = z.object({
    *  must not fail the whole GovernorSet parse and silently lose dscrFloor/ltvCeiling too — a
    *  real deploy-skew risk a refute pass caught. Default matches GOVERNOR_FALLBACK below. */
   hurdleRatePct: z.number().finite().nonnegative().default(0.08),
+  /** Whether hurdleRatePct is Gabriel-ratified or still proposed — consumers (e.g. CapexIrrCalc,
+   *  item-8) must show advisory ("non-binding") treatment when 'proposed', matching
+   *  HurdleRateBanner.tsx's existing pattern. Defaults 'ratified' (today's true DB state) so a
+   *  skew-window payload missing this field doesn't spuriously flip to advisory. */
+  hurdleRateRatification: z.enum(['ratified', 'proposed']).default('ratified'),
   version: z.number(),
   effectiveFrom: z.string(),
 });
@@ -81,6 +86,7 @@ export const GOVERNOR_FALLBACK: GovernorSet = {
   dscrFloor: 1.25,
   ltvCeiling: 0.40,
   hurdleRatePct: 0.08,
+  hurdleRateRatification: 'ratified',
   version: 1,
   effectiveFrom: '2026-06-13',
 };

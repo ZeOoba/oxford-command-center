@@ -68,6 +68,7 @@ export function CapexIrrCalc({ capitalAction, propertyName }: Props) {
 function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
   const { data } = useSnapshot();
   const hurdle = data?.snapshot.governors?.hurdleRatePct ?? GOVERNOR_FALLBACK.hurdleRatePct;
+  const isProposed = (data?.snapshot.governors?.hurdleRateRatification ?? GOVERNOR_FALLBACK.hurdleRateRatification) === 'proposed';
 
   // Controlled inputs — generic starting figures, not this property's actual projected numbers.
   const [capex, setCapex] = useState<number>(DEFAULT_CAPEX);
@@ -133,6 +134,28 @@ function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
           </Badge>
         }
       />
+
+      {/* Advisory banner — mirrors HurdleRateBanner.tsx's existing treatment for a PROPOSED
+          (not yet ratified) hurdle: every other hurdleRatePct consumer (the capital-allocation
+          engine's advisoryOnly flag, that banner) treats a proposed rate as non-binding, and this
+          panel must not silently drive a "clears the hurdle" verdict off one with no disclosure
+          (Gabriel-directed fix). Latent today — the live rate is ratified. */}
+      {isProposed && (
+        <div
+          className="mx-4 mt-3 flex items-center gap-2 rounded-md px-3 py-2.5 text-sm"
+          style={{
+            background: 'color-mix(in oklab, var(--color-warn) 12%, transparent)',
+            border: '1px solid color-mix(in oklab, var(--color-warn) 35%, transparent)',
+            color: 'var(--text-primary)',
+          }}
+        >
+          <span style={{ fontSize: 16 }}>⚠</span>
+          <span>
+            <strong>Advisory only</strong> — hurdle rate {fmtPct(hurdle)} pending ratification.
+            Verdicts below are non-binding.
+          </span>
+        </div>
+      )}
 
       {/* Assumptions disclosure — the model is unlevered, single-point (no growth), and has no
           terminal/exit value; omitting a caption invites reading a bare "%"/"$" figure as if it

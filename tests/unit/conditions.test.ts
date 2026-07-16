@@ -381,6 +381,8 @@ describe('ALERT_THRESHOLDS', () => {
     // hurdleRatePct (item-8 capex-IRR calculator) drift-pinned the same way as dscrFloor/ltvCeiling.
     expect(GOVERNOR_FALLBACK.hurdleRatePct).toBe(CAPITAL_CONFIG.hurdleRatePct);
     expect(GOVERNOR_FALLBACK.hurdleRatePct).toBe(0.08);
+    expect(GOVERNOR_FALLBACK.hurdleRateRatification).toBe(CAPITAL_CONFIG.hurdleRateRatification);
+    expect(GOVERNOR_FALLBACK.hurdleRateRatification).toBe('ratified');
   });
 
   // -------------------------------------------------------------------------
@@ -403,7 +405,7 @@ describe('ALERT_THRESHOLDS', () => {
 
 describe('evaluateConditions — payload-sourced governors (I10)', () => {
   const gov = (o: Partial<{ dscrFloor: number; ltvCeiling: number }> = {}) =>
-    ({ dscrFloor: 1.25, ltvCeiling: 0.4, hurdleRatePct: 0.08, version: 2, effectiveFrom: '2026-07-16', ...o });
+    ({ dscrFloor: 1.25, ltvCeiling: 0.4, hurdleRatePct: 0.08, hurdleRateRatification: 'ratified' as const, version: 2, effectiveFrom: '2026-07-16', ...o });
 
   it('a tightened payload DSCR governor moves the watch boundary — no conditions.ts edit', () => {
     const s = snap({ properties: [prop({ dscr: 1.30 })], governors: gov({ dscrFloor: 1.35 }) });

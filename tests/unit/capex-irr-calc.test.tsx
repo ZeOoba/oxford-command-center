@@ -25,13 +25,13 @@ import { GOVERNOR_FALLBACK } from '@contracts/index';
 // full-shape fixture would be pure unused boilerplate here. Documented trade-off (a refute pass
 // flagged the cast): if this component ever reads another snapshot field, that field will read
 // as `undefined` against this fixture with no type error -- extend the cast then, not preemptively.
-function seededClient(hurdleRatePct?: number): QueryClient {
+function seededClient(hurdleRatePct?: number, hurdleRateRatification?: 'ratified' | 'proposed'): QueryClient {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } },
   });
   const response: SnapshotResponse = {
     snapshot: {
-      governors: hurdleRatePct === undefined ? null : { ...GOVERNOR_FALLBACK, hurdleRatePct },
+      governors: hurdleRatePct === undefined ? null : { ...GOVERNOR_FALLBACK, hurdleRatePct, hurdleRateRatification: hurdleRateRatification ?? 'ratified' },
     } as unknown as SnapshotResponse['snapshot'],
     state: { status: 'ready' } as unknown as SnapshotResponse['state'],
   };
@@ -43,9 +43,10 @@ function renderPanel(
   capitalAction: 'invest' | 'hold' | 'monitor' | 'disposition-candidate',
   propertyName: string | null = null,
   hurdleRatePct?: number,
+  hurdleRateRatification?: 'ratified' | 'proposed',
 ) {
   return render(
-    <QueryClientProvider client={seededClient(hurdleRatePct)}>
+    <QueryClientProvider client={seededClient(hurdleRatePct, hurdleRateRatification)}>
       <CapexIrrCalc capitalAction={capitalAction} propertyName={propertyName} />
     </QueryClientProvider>,
   );
@@ -162,6 +163,29 @@ describe('CapexIrrCalc — verdict branches, against the live (fallback 8%) hurd
     renderPanel('invest', null, 0.10); // simulated DB-governed re-ratification to 10%
     setInputs(100_000, 15_000, 10); // IRR ~8.14% -- clears 8% but misses a 10% hurdle
     expect(screen.getByText(/Does not clear the hurdle \(10(\.0)?%\)/i)).toBeTruthy();
+  });
+});
+
+describe('CapexIrrCalc — proposed-but-unratified hurdle gets advisory treatment (Gabriel-directed)', () => {
+  // Every other hurdleRatePct consumer on the platform (the capital-allocation engine's
+  // advisoryOnly flag + reason string, HurdleRateBanner.tsx's "Advisory only" banner) treats a
+  // PROPOSED rate as non-binding. This panel previously had no such treatment -- latent only
+  // because today's rate is ratified.
+  it('shows an advisory banner when the live hurdle is proposed, not yet ratified', () => {
+    renderPanel('invest', null, 0.10, 'proposed');
+    expect(screen.getByText(/Advisory only/i)).toBeTruthy();
+    expect(screen.getByText(/pending ratification/i)).toBeTruthy();
+    expect(screen.getByText(/non-binding/i)).toBeTruthy();
+  });
+
+  it('shows no advisory banner when the live hurdle is ratified (today\'s real state)', () => {
+    renderPanel('invest', null, 0.08, 'ratified');
+    expect(screen.queryByText(/Advisory only/i)).toBeNull();
+  });
+
+  it('shows no advisory banner on the fallback (no live payload) -- the fallback is compile-time ratified', () => {
+    renderPanel('invest');
+    expect(screen.queryByText(/Advisory only/i)).toBeNull();
   });
 });
 
