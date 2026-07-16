@@ -1,3 +1,13 @@
 # Normalize line endings repo-wide: git stores LF; Windows working tree gets CRLF via core.autocrlf.
 # Added 2026-07-12 to end perpetual phantom-modified flags from pre-existing CRLF blobs.
 * text=auto
+
+# .claude/hooks/session-start.sh is invoked as a bare path by settings.json (relies on the
+# shebang, not an explicit interpreter) and does real work in the remote/web Linux environment
+# this hook targets -- a CRLF-corrupted "#!/bin/bash\r" shebang there is a live "bad interpreter"
+# risk (harmless locally only because the script no-ops unless CLAUDE_CODE_REMOTE=true). Force LF
+# regardless of platform checkout, matching ora-skills' tools/hooks/* precedent. bash-guard.mjs and
+# file-guard.mjs are NOT included here -- both are invoked with an explicit `node` prefix in
+# settings.json, so their shebang (and therefore CRLF-vs-LF) is irrelevant; scoping this narrowly
+# to the one file with an actual exposure, not the whole hooks/ directory.
+.claude/hooks/session-start.sh text eol=lf
