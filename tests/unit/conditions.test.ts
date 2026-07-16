@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { PortfolioSnapshot, Property, Lease, Loan, InsurancePolicy, Deal } from '@contracts/index';
-import { GOVERNOR_FALLBACK } from '@contracts/index';
+import { GOVERNOR_FALLBACK, GovernorSet } from '@contracts/index';
 import { evaluateConditions, ALERT_THRESHOLDS, extractDgs5MarketRate } from '@analytics/index';
 import type { MacroSnapshot } from '@contracts/index';
 import { CAPITAL_CONFIG } from '../../server/warehouse/capital-config';
@@ -381,6 +381,23 @@ describe('ALERT_THRESHOLDS', () => {
     // hurdleRatePct (item-8 capex-IRR calculator) drift-pinned the same way as dscrFloor/ltvCeiling.
     expect(GOVERNOR_FALLBACK.hurdleRatePct).toBe(CAPITAL_CONFIG.hurdleRatePct);
     expect(GOVERNOR_FALLBACK.hurdleRatePct).toBe(0.08);
+  });
+
+  // -------------------------------------------------------------------------
+  // Refute-pass finding: hurdleRatePct was added as a REQUIRED zod field. Since the whole
+  // `governors` snapshot field is `.nullable().default(null).catch(null)`, a payload whose
+  // governors object is missing just this ONE new field (an un-restarted old server, or a
+  // baked mirror snapshot from before this field existed -- a real deploy-skew window) would fail
+  // the ENTIRE GovernorSet parse and lose dscrFloor/ltvCeiling too, silently degrading DSCR/LTV
+  // alerts to compile-time fallback. hurdleRatePct must default on its own so a skewed payload
+  // still keeps its other (older, already-relied-upon) governor fields.
+  // -------------------------------------------------------------------------
+  it('a governors payload missing ONLY hurdleRatePct (deploy-skew shape) still parses -- dscrFloor/ltvCeiling are not lost', () => {
+    const skewed = { dscrFloor: 1.30, ltvCeiling: 0.35, version: 2, effectiveFrom: '2026-08-01' };
+    const parsed = GovernorSet.parse(skewed);
+    expect(parsed.dscrFloor).toBe(1.30);
+    expect(parsed.ltvCeiling).toBe(0.35);
+    expect(parsed.hurdleRatePct).toBe(GOVERNOR_FALLBACK.hurdleRatePct); // defaults, doesn't reject
   });
 });
 

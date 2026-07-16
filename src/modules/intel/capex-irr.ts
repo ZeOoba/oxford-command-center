@@ -6,25 +6,26 @@
 //   NPV = -capex + Σ(t=1..n)[ annualNOIUplift / (1+r)^t ] = 0
 //
 // Assumes:
-//   - Uniform annual NOI uplift (no growth, no terminal value — conservative for capex ROI)
-//   - Single upfront capex outlay at t=0
+//   - Uniform annual NOI uplift (no growth, no terminal value, single t=0 outlay — conservative
+//     and deliberately simple for a quick capex ROI read, not a full underwriting model)
 //   - Whole years only — holdYears must be a positive integer, no partial years
 //
-// Numerical method: bisection (guaranteed convergence on a bounded monotonic function).
-//   Upper bound: r = 10 (1000%; NPV ≈ −capex for any finite positive cash flow)
-//   Lower bound: r = 0 UNLESS the undiscounted total (uplift*n) already fails to cover capex, in
-//     which case the true IRR is negative — the bracket widens to r = -0.99 so bisection finds
-//     the REAL negative rate instead of silently floor-clamping to a misleading ~0% (refute-pass
-//     finding: a capex=100k/uplift=10k/hold=5 project — true IRR ≈ -26% — previously displayed
-//     as "0.0%", i.e. "roughly break-even" for a project that destroys half the capital).
-//   Convergence: |hi−lo| < 1e-8 OR 100 iterations. NOT formally residual-checked (see caller —
-//     the near-r=-1 region can leave a small residual on pathological inputs); the root property
-//     is asserted directly in tests instead of promised unconditionally here.
+// Numerical method: bisection. For uplift > 0 and r > -1, NPV is strictly monotone decreasing in
+// r and NPV(r) -> +Infinity as r -> -1+, so a root always exists somewhere in (-1, 10) — the
+// bracket's lower bound starts at -0.99 and adaptively pushes closer to -1 (never reaching it)
+// until NPV(lo) > 0, so even a catastrophic-loss project converges to its REAL negative rate with
+// a near-zero residual, rather than clamping to an arbitrary floor (refute-pass finding: a fixed
+// -0.99 floor left a five-figure NPV residual — i.e. a wrong answer — for a severe enough loss).
+// Convergence: |hi-lo| < 1e-9 OR 200 iterations; the root property (NPV ~ 0 at the returned rate)
+// is asserted directly in tests for both the ordinary and catastrophic-loss regions.
 //
 // CAPITAL_CONFIG.capexIrr (15%) is a SEPARATE governed constant (capex-approval yield-on-cost
 // floor) from the general hurdleRatePct (8%) the live capital-allocation engine's own improve-gate
-// compares against — CapexIrrCalc.tsx reads hurdleRatePct so this tool never contradicts the
-// platform's own verdict for the same property. Neither is hardcoded here.
+// compares against — CapexIrrCalc.tsx reads hurdleRatePct and compares with the SAME strict `>`
+// the engine uses, so the two can never disagree on the SAME metric. They remain conceptually
+// different calculations (this is a full IRR on user-entered capex; the engine's capexIrr is a
+// portfolio-level proxy estimate), so this only guarantees comparison-logic parity, not that the
+// two numbers are ever literally equal.
 
 /**
  * Discount a uniform annual cash flow stream and subtract the initial capex.
@@ -78,19 +79,28 @@ export function computeCapexIrr(
   if (!(annualNOIUplift > 0) || !Number.isFinite(annualNOIUplift)) return -Infinity;
 
   // Bisection search: NPV is strictly monotone decreasing in r (for r > -1) with positive cash
-  // flows. At r=0: NPV = uplift*n − capex. A negative NPV(0) means the true IRR is below 0% —
-  // widen the lower bound so the root is actually bracketed instead of floor-clamped.
-  let lo = npvAtRate(capex, annualNOIUplift, holdYears, 0) <= 0 ? -0.99 : 0;
+  // flows, and NPV(r) -> +Infinity as r -> -1+ — so a root ALWAYS exists somewhere in (-1, 10).
+  // At r=0: NPV = uplift*n − capex. A negative NPV(0) means the true IRR is below 0% — widen the
+  // lower bound, adaptively pushing closer to -1 (never reaching it) until the root is actually
+  // bracketed, so even a catastrophic loss converges to its real rate instead of clamping to a
+  // fixed floor with a large residual.
+  let lo = 0;
+  if (npvAtRate(capex, annualNOIUplift, holdYears, 0) <= 0) {
+    lo = -0.99;
+    for (let guard = 0; guard < 30 && npvAtRate(capex, annualNOIUplift, holdYears, lo) <= 0; guard++) {
+      lo = -1 + (1 + lo) / 10; // shrinks the distance to -1 by 10x each attempt: -0.99, -0.999, ...
+    }
+  }
   let hi = 10;
 
-  for (let i = 0; i < 100; i++) {
+  for (let i = 0; i < 200; i++) {
     const mid = (lo + hi) / 2;
     if (npvAtRate(capex, annualNOIUplift, holdYears, mid) > 0) {
       lo = mid;
     } else {
       hi = mid;
     }
-    if (hi - lo < 1e-8) break;
+    if (hi - lo < 1e-9) break;
   }
 
   return (lo + hi) / 2;

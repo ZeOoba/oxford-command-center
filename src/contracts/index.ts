@@ -61,8 +61,11 @@ export const GovernorSet = z.object({
   ltvCeiling: z.number().finite().positive(),
   /** General unlevered-IRR hurdle (Phase 5 governor, DB-backed hurdle_rate_pct). The capex-IRR
    *  calculator (item-8) compares against THIS, not the separate static CAPITAL_CONFIG.capexIrr
-   *  constant, so it never contradicts the live capital-allocation engine's own improve-gate. */
-  hurdleRatePct: z.number().finite().nonnegative(),
+   *  constant, so its comparison logic can never contradict the live capital-allocation engine's
+   *  own improve-gate. Defaults rather than requires: a payload missing only this (newer) field
+   *  must not fail the whole GovernorSet parse and silently lose dscrFloor/ltvCeiling too — a
+   *  real deploy-skew risk a refute pass caught. Default matches GOVERNOR_FALLBACK below. */
+  hurdleRatePct: z.number().finite().nonnegative().default(0.08),
   version: z.number(),
   effectiveFrom: z.string(),
 });

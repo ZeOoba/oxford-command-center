@@ -100,18 +100,34 @@ describe('computeCapexIrr', () => {
   // Refute-pass finding: a true NEGATIVE IRR (undiscounted cash < capex) previously collapsed to
   // the bisection's r=0 lower bound (~0%), silently reporting "break-even" for a value-destroying
   // project. capex=100k, uplift=10k, hold=5: undiscounted total = 50k < 100k capex -> true IRR is
-  // meaningfully negative, not ~0%.
+  // meaningfully negative, not ~0%. Cross-checked independently via Newton-Raphson refinement:
+  // the root is -0.19401852 (a SECOND round of adversarial review caught an earlier version of
+  // this comment claiming an uncross-checked "~-26%" -- a wrong number in a test's own commentary
+  // is itself a defect in financial-decision code, however harmless the assertion below still is).
   // -------------------------------------------------------------------------
   it('reports a REAL negative IRR (not a ~0% floor) when undiscounted cash flow < capex', () => {
     const irr = computeCapexIrr(100_000, 10_000, 5);
-    expect(irr).toBeLessThan(-0.15); // meaningfully negative, cross-checked ~ -26%
-    expect(irr).toBeGreaterThan(-1); // within the widened bracket, not a blown-up value
+    expect(irr).toBeCloseTo(-0.19401852, 6); // verified root, not an approximate bound
   });
 
   it('the negative-IRR root property still holds: NPV at the reported (negative) IRR is ~0', () => {
     const irr = computeCapexIrr(100_000, 10_000, 5);
     const nv = npvAtRate(100_000, 10_000, 5, irr);
-    expect(Math.abs(nv)).toBeLessThan(1);
+    expect(Math.abs(nv)).toBeLessThan(0.01);
+  });
+
+  // -------------------------------------------------------------------------
+  // Second refute round: the widened bracket's fixed -0.99 floor still left a five-figure NPV
+  // residual for a CATASTROPHIC loss whose true IRR is below -99% (capex=100k, uplift=500,
+  // hold=1 -> true IRR ~ -99.5%, outside [-0.99, 10]). The bracket now adaptively pushes the
+  // lower bound closer to -1 (never reaching it) until the root is actually contained, so even
+  // this case converges to a near-zero residual instead of clamping to a wrong answer.
+  // -------------------------------------------------------------------------
+  it('converges to the real rate (near-zero residual), not a clamped -99.0%, for a catastrophic loss below -99%', () => {
+    const irr = computeCapexIrr(100_000, 500, 1);
+    expect(irr).toBeLessThan(-0.99); // genuinely beyond the old fixed floor
+    const nv = npvAtRate(100_000, 500, 1, irr);
+    expect(Math.abs(nv)).toBeLessThan(0.01); // real convergence, not a residual-laden clamp
   });
 
   it('still returns 0 (not spuriously negative) for the true break-even case (uplift*n === capex)', () => {
