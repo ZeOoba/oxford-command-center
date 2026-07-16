@@ -22,7 +22,7 @@ export function PrincipalModule() {
   }, [anomalies.data, data]);
   if (!data || !analytics) return <ModuleLoading />;
 
-  const kpis = principalKpis(data.snapshot, analytics);
+  const kpis = principalKpis(analytics);
   const digest = principalDigest(data.snapshot, analytics, anomalyInsights);
 
   return (

@@ -13,8 +13,8 @@ function bundle(): { snapshot: PortfolioSnapshot; analytics: AnalyticsBundle } {
 // short-circuits KpiStat to "—"). We assert the formatted output the card will actually show.
 describe('principalKpis', () => {
   it('carries value+format that produce the headline figures', () => {
-    const { snapshot, analytics } = bundle();
-    const k = principalKpis(snapshot, analytics);
+    const { analytics } = bundle();
+    const k = principalKpis(analytics);
     const get = (label: string) => { const x = k.find((y) => y.label === label)!; return x.format(x.value); };
     expect(get('NOI')).toMatch(/\$3\.9/);
     expect(get('Occupancy')).toBe('94.0%'); // 0.94 → ×100 → "94.0%"
