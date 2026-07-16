@@ -86,9 +86,10 @@ export const FIELD_GROUPS: readonly FieldGroup[] = [
   ] },
   { title: 'Basis · Yield · IRR', fields: [
     { key: 'allInBasis', label: 'All-in basis', kind: 'usd' },
-    { key: 'replacementCostBand', label: 'Replacement-cost band', kind: 'select', options: [
-      { value: 'low', label: 'Low ($125/SF)' }, { value: 'mid', label: 'Mid ($137.50/SF)' }, { value: 'high', label: 'High ($150/SF)' },
-    ] },
+    // No replacement-cost band selector: the field it set (`replacementCostBand`) is DORMANT — the
+    // engine's Basis floor/score divisor is HARDCODED to the per-market RCT v03 LOW (2026-07-14
+    // refute fix; see server/warehouse/acquisition.ts `rcBand`). Its option labels also asserted the
+    // retired flat $125/$137.50/$150 table, superseded by the per-market RCT v03 (ratified 2026-07-14).
     { key: 'stabilizedYoc', label: 'Stabilized YoC', kind: 'pct', hint: '≥ 8% floor' },
     { key: 'leveredIrr', label: 'Levered IRR', kind: 'pct', hint: '≥ 15% (5yr) / 12% (10yr)' },
     { key: 'underwriteHorizonYrs', label: 'UW horizon', kind: 'numselect', options: [{ value: '5', label: '5-year' }, { value: '10', label: '10-year' }] },

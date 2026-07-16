@@ -77,6 +77,39 @@ describe('acquisition ruleset contract (ratified v1)', () => {
     expect(rct.markets['Indianapolis IN']!.low).toBeCloseTo(253.83, 2);
   });
 
+  it('pins EVERY market row to the ratified RCT v03 table (acquisition-underwriting skill, 2026-07-14) — drift detector', () => {
+    // AUTHORITATIVE COPY: "Replacement Cost Table (RCT v03)" in the acquisition-underwriting skill.
+    // If this test fails, either the skill table was re-ratified (update these pins deliberately,
+    // with the new ratification) or this config drifted (the config is the bug — fix the config).
+    // The parse test above pins only two LOWs; this pins all 27 dollar values + proxy flags, so a
+    // partial edit of the Basis denominator can never slip through relational checks alone.
+    const rct = ReplacementCostTable.parse(rctJson);
+    expect(rct.ratifiedBy).toBe('Gabriel Goldberg');
+    expect(rct.ratifiedDate).toBe('2026-07-14');
+    const ratifiedTable: Record<string, { low: number; point: number; high: number; cwHardPsf: number; proxy: boolean }> = {
+      'Columbus OH':     { low: 229.65, point: 255.16, high: 280.68, cwHardPsf: 130.51, proxy: false },
+      'Cincinnati OH':   { low: 251.46, point: 279.40, high: 307.34, cwHardPsf: 143.15, proxy: false },
+      'Kansas City MO':  { low: 227.90, point: 253.22, high: 278.54, cwHardPsf: 129.94, proxy: false },
+      'Indianapolis IN': { low: 253.83, point: 282.03, high: 310.24, cwHardPsf: 143.46, proxy: false },
+      'Mid-Atlantic':    { low: 232.97, point: 258.85, high: 284.74, cwHardPsf: 133.70, proxy: false }, // skill: "Maryland / Baltimore–DC"
+      'Madison WI':      { low: 229.08, point: 254.53, high: 279.98, cwHardPsf: 130.05, proxy: true },  // PROXY: Milwaukee
+      'Grand Rapids MI': { low: 253.11, point: 281.23, high: 309.36, cwHardPsf: 143.64, proxy: true },  // PROXY: Detroit (weakest)
+      'Richmond VA':     { low: 232.97, point: 258.85, high: 284.74, cwHardPsf: 133.70, proxy: true },  // PROXY: Baltimore
+      'Des Moines IA':   { low: 231.66, point: 257.40, high: 283.14, cwHardPsf: 131.46, proxy: true },  // PROXY: Minneapolis
+    };
+    expect(Object.keys(rct.markets).sort()).toEqual(Object.keys(ratifiedTable).sort());
+    for (const [name, want] of Object.entries(ratifiedTable)) {
+      const got = rct.markets[name]!;
+      expect(got.low, `${name} LOW`).toBeCloseTo(want.low, 2);
+      expect(got.point, `${name} POINT`).toBeCloseTo(want.point, 2);
+      expect(got.high, `${name} HIGH`).toBeCloseTo(want.high, 2);
+      expect(got.cwHardPsf, `${name} C&W hard`).toBeCloseTo(want.cwHardPsf, 2);
+      expect(got.proxy, `${name} proxy flag`).toBe(want.proxy);
+    }
+    // Fallback must be exactly the Kansas City row — cheapest to build ⇒ strictest floor.
+    expect(rct.psf).toEqual({ low: 227.90, mid: 253.22, high: 278.54 });
+  });
+
   it('RCT coherence: every all-in POINT exceeds its C&W hard cost — the test RCT v02 failed', () => {
     const rct = ReplacementCostTable.parse(rctJson);
     for (const [name, m] of Object.entries(rct.markets)) {
