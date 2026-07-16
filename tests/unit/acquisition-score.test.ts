@@ -1,7 +1,7 @@
 // tests/unit/acquisition-score.test.ts
 import { describe, it, expect } from 'vitest';
 import { AcquisitionInput } from '@contracts/acquisition';
-import { buildInput, dealToForm, inputToForm } from '../../src/modules/acquisitions/acquisition-score';
+import { FIELD_GROUPS, buildInput, dealToForm, inputToForm } from '../../src/modules/acquisitions/acquisition-score';
 
 describe('acquisition Workbench form mapping', () => {
   it('inputToForm → buildInput round-trips the key fields (persistence reload)', () => {
@@ -42,5 +42,26 @@ describe('acquisition Workbench form mapping', () => {
     expect(f.totalSf).toBe('50000');
     expect(f.leveredIrr).toBe('16');          // decimal → percent
     expect(f.underwriteHorizonYrs).toBe('5');
+  });
+});
+
+describe('RCT v03 hygiene — the Workbench form must not present the retired flat table', () => {
+  const allSpecs = FIELD_GROUPS.flatMap((g) => g.fields);
+
+  it('does not render the DORMANT replacementCostBand selector (engine ignores it since the 2026-07-14 refute fix)', () => {
+    // The Basis floor/score divisor is HARDCODED to the per-market RCT LOW (see
+    // server/warehouse/acquisition.ts `rcBand`). A form control that appears to choose the divisor
+    // band — but is silently ignored — misrepresents how the deal is actually scored.
+    expect(allSpecs.some((s) => s.key === 'replacementCostBand')).toBe(false);
+  });
+
+  it('carries no label/option text asserting the retired flat $125/$137.50/$150 replacement cost', () => {
+    // Those figures were the superseded replacement-cost.v1 flat table — roughly HALF true all-in
+    // shallow-bay replacement cost. RCT v03 (ratified 2026-07-14) is per-market; the UI must never
+    // present the old constants as live.
+    const texts = allSpecs.flatMap((s) => [s.label, s.hint ?? '', ...(s.options ?? []).map((o) => o.label)]);
+    for (const t of texts) {
+      expect(t, `stale flat-RCT figure in form text: "${t}"`).not.toMatch(/\$1(25|37\.50?|50)\s*\/\s*SF/);
+    }
   });
 });
