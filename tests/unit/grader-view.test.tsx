@@ -28,7 +28,7 @@ function makeScore(overrides: Partial<AcquisitionScore> = {}): AcquisitionScore 
   return {
     schemaVersion: '1.0.0',
     inputsVersion: 'abc1234567890def',
-    rulesetVersion: '1.0.0',
+    rulesetVersion: '1.1.0',
     ratification: 'ratified',
     scoredAt: '2026-06-14T00:00:00Z',
     dealId: 'om-grader',
@@ -130,7 +130,7 @@ function makeIntelResponse(): AcqIntelResponse {
     ],
     calibrationSummary: { totalVerdicts: 4, resolvedVerdicts: 0, overallHitRate: null, wilsonLow: null, wilsonHigh: null },
     advisoryOnly: false,
-    rulesetVersion: '1.0.0',
+    rulesetVersion: '1.1.0',
     asOf: '2026-06-14T00:00:00Z',
   };
 }

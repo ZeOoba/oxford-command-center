@@ -238,7 +238,7 @@ function BuyBoxPanel() {
   return (
     <Card>
       <CardHeader
-        title="Buy Box — Ruleset v1.0"
+        title={`Buy Box — Ruleset ${versionLabel}`}
         trailing={<Badge tone="gold">{versionLabel} · ratified {ruleset.ratifiedDate}</Badge>}
       />
       <div className="flex flex-col gap-4 p-3 text-xs" style={{ color: 'var(--text-secondary)' }}>
