@@ -18,6 +18,6 @@ export function principalKpis(snapshot: PortfolioSnapshot, analytics: AnalyticsB
     { label: 'NOI', value: k.noi.value, format: fmtUsdCompact, prov: k.noi.prov },
     { label: 'Portfolio value', value: k.value.value, format: fmtUsdCompact, prov: k.value.prov },
     { label: 'Occupancy', value: k.occupancy.value === null ? null : k.occupancy.value * 100, format: pctFmt, prov: k.occupancy.prov },
-    { label: 'Cash', value: snapshot.cash.totalCash, format: fmtUsdCompact },
+    { label: 'Cash', value: k.totalCash.value, format: fmtUsdCompact, prov: k.totalCash.prov },
   ];
 }
