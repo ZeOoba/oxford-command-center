@@ -18,13 +18,14 @@ function setInputs(capex: number, uplift: number, hold: number): void {
 
 describe('CapexIrrCalc — capitalAction gating', () => {
   it('renders nothing for capitalAction: hold', () => {
+    // Native DOM check, not a jest-dom matcher — this repo doesn't wire jest-dom types into tsc.
     const { container } = render(<CapexIrrCalc capitalAction="hold" propertyName="Test Prop" />);
-    expect(container).toBeEmptyDOMElement();
+    expect(container.firstChild).toBeNull();
   });
 
   it('renders nothing for capitalAction: disposition-candidate', () => {
     const { container } = render(<CapexIrrCalc capitalAction="disposition-candidate" propertyName="Test Prop" />);
-    expect(container).toBeEmptyDOMElement();
+    expect(container.firstChild).toBeNull();
   });
 
   it('renders the panel for capitalAction: invest', () => {
