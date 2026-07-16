@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import type { Deal } from '../../src/contracts/index';
 import { mapNotionPage, mergeDeals, parseNameAliases } from '../../server/sources/notion-deals';
 
@@ -53,17 +53,13 @@ describe('mapNotionPage', () => {
     expect(mapNotionPage({ properties: { 'Deal Name': { type: 'title', title: [] } } })).toBeNull();
   });
 
-  it('an UNKNOWN Notion stage label flags the deal confidential (schema-drift fail-closed)', () => {
-    // A renamed/added select option maps to 'Candidate' for display — the one class the
-    // active-stage default ignores — so the mapper itself must fail closed on unmapped labels.
+  it('an UNKNOWN Notion stage label still maps to Candidate for display (schema-drift tolerated at this layer)', () => {
+    // A renamed/added select option maps to 'Candidate' for display; this layer no longer needs a
+    // confidential guard for it — mergeDeals defaults EVERY unmatched deal confidential regardless
+    // of stage (2026-07-16 policy widening), which subsumes the schema-drift case. See
+    // notion-deals.test.ts "fail-closed on unflagged unmatched Notion deals".
     const d = mapNotionPage(page({ Stage: { type: 'select', select: { name: 'PSA Executed' } } }))!;
-    expect(d.stage).toBe('Candidate'); // display mapping unchanged
-    expect(d.confidential).toBe(true); // but never bakes public on schema drift
-  });
-
-  it('a KNOWN stage label does not trigger the schema-drift flag', () => {
-    const d = mapNotionPage(page())!; // 'Under Contract' — mapped
-    expect(d.confidential).toBe(false);
+    expect(d.stage).toBe('Candidate');
   });
 
   it('maps Target Close Date to targetCloseDate (ISO date)', () => {
@@ -102,18 +98,16 @@ describe('mergeDeals — seed is the confidential-flag source of truth', () => {
   });
 });
 
-describe('mergeDeals — fail-closed on unflagged active-stage Notion-only deals (I9)', () => {
+describe('mergeDeals — fail-closed on unflagged unmatched Notion deals (I9, widened 2026-07-16)', () => {
   // Before I9 the ONLY confidential guard for a Notion-only deal was the optional
   // NOTION_CONFIDENTIAL_NAME_PATTERNS env regex (empty by default) — a new confidential deal
-  // entered in Notion but not the seed baked UNFLAGGED. Active-stage (LOI through Closing)
-  // unmatched deals now default confidential; to make one public, add it to seed-deals.ts
-  // with confidential: false (the seed stays the source of truth).
-  it('an unmatched active-stage Notion deal defaults confidential — no env pattern required', () => {
-    const out = mergeDeals([], [deal({ id: 'notion-q', name: 'Quiet Acquisition', stage: 'LOI/PSA', confidential: false })]);
-    expect(out[0]!.confidential).toBe(true);
-  });
-
-  it('covers Due Diligence and Closing; a pre-LOI Candidate keeps the keyword-guard result', () => {
+  // entered in Notion but not the seed baked UNFLAGGED. I9 initially defaulted only active-stage
+  // (LOI-Closing) unmatched deals confidential; Gabriel widened this 2026-07-16 (policy review)
+  // to EVERY unmatched deal regardless of stage — a pre-LOI Candidate is already identifying
+  // (address/price/lender) and an unmatched deal reaching 'Closed Won' must not auto-flip public
+  // (surviving NDA/price-confidentiality risk). To make an unmatched deal public, add it to
+  // seed-deals.ts with confidential: false (the seed stays the source of truth).
+  it('an unmatched Notion deal defaults confidential regardless of stage — no env pattern required', () => {
     const out = mergeDeals([], [
       deal({ id: 'n1', name: 'DD Deal', stage: 'Due Diligence', confidential: false }),
       deal({ id: 'n2', name: 'Closing Deal', stage: 'Closing', confidential: false }),
@@ -122,17 +116,50 @@ describe('mergeDeals — fail-closed on unflagged active-stage Notion-only deals
     ]);
     expect(out.find((d) => d.id === 'n1')!.confidential).toBe(true);
     expect(out.find((d) => d.id === 'n2')!.confidential).toBe(true);
-    expect(out.find((d) => d.id === 'n3')!.confidential).toBe(false); // pre-LOI: keyword guard only
-    expect(out.find((d) => d.id === 'n4')!.confidential).toBe(false); // closed: public per Invariant 3
+    expect(out.find((d) => d.id === 'n3')!.confidential).toBe(true); // widened: pre-LOI no longer public-by-default
+    expect(out.find((d) => d.id === 'n4')!.confidential).toBe(true); // widened: closing no longer auto-publishes
   });
 
-  it('a seed-matched active deal still takes the seed flag — public-by-seed stays possible', () => {
+  it('a seed-matched deal still takes the seed flag — public-by-seed escape hatch unchanged', () => {
     const out = mergeDeals(
       [deal({ id: 's1', name: 'Known Public Deal', stage: 'LOI/PSA', confidential: false })],
       [deal({ id: 'n1', name: 'Known Public Deal', stage: 'LOI/PSA', confidential: false })],
     );
     expect(out.find((d) => d.id === 's1')!.confidential).toBe(false);
     expect(out).toHaveLength(1);
+  });
+});
+
+describe('mergeDeals — seed staleness tripwire (policy item 3, 2026-07-16)', () => {
+  // A seed-matched deal keeps its seed confidential:false forever, even as the live stage
+  // advances into an active acquisition stage — intended (the escape hatch), but a one-way
+  // ratchet toward public with no visibility. Non-blocking: logs, never flips the flag or throws.
+  it('warns when a seed-matched public deal advances into an active stage', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const out = mergeDeals(
+      [deal({ id: 's1', name: 'Was Candidate', stage: 'Candidate', confidential: false })],
+      [deal({ id: 'n1', name: 'Was Candidate', stage: 'Due Diligence', confidential: false })],
+    );
+    expect(out.find((d) => d.id === 's1')!.confidential).toBe(false); // flag unchanged
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('s1'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Due Diligence'));
+    warn.mockRestore();
+  });
+
+  it('does not warn when the deal is already confidential, or stays at a non-active stage', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mergeDeals(
+      [
+        deal({ id: 's1', name: 'Already Confidential', stage: 'Candidate', confidential: true }),
+        deal({ id: 's2', name: 'Still Prospecting', stage: 'Candidate', confidential: false }),
+      ],
+      [
+        deal({ id: 'n1', name: 'Already Confidential', stage: 'Due Diligence', confidential: false }),
+        deal({ id: 'n2', name: 'Still Prospecting', stage: 'Candidate', confidential: false }),
+      ],
+    );
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 

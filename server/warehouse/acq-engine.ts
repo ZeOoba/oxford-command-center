@@ -45,9 +45,16 @@ export interface PersistAndLogScoreResult {
  * mint a NEW inputs_version so INSERT OR IGNORE re-derives the verdict instead of silently keeping
  * one made under the old regime. SCREENING_DEBT_CONSTANT is part of the DSCR-proxy formula, so a
  * (ratified) change to it re-keys too. Format pinned — changing it re-keys every candidate once.
+ *
+ * Leads with the monotonic capital_config `version` (refute fix): capital_config is append-only,
+ * so hashing only VALUES let a reversion (v1 dscrFloor 1.25 -> v2 1.30 -> v3 back to 1.25) collide
+ * back onto v1's key. INSERT OR IGNORE then no-opped, and every latest-by-scored_at reader
+ * (api.ts, capital-allocation.ts, brain-report.ts) permanently served the abandoned v2 verdict
+ * while this function kept returning the correct v3 one. Version-leading means EVERY regime —
+ * even a values-identical reversion — mints its own row and becomes the new latest.
  */
 export function governorFingerprint(g: Governors): string {
-  return `${g.dscrFloor}:${g.ltvCeiling}:${SCREENING_DEBT_CONSTANT}`;
+  return `${g.version}:${g.dscrFloor}:${g.ltvCeiling}:${SCREENING_DEBT_CONSTANT}`;
 }
 
 /**

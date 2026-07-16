@@ -94,12 +94,7 @@ export function mapNotionPage(page: NotionPage): Deal | null {
   const p = page.properties ?? {};
   const name = title(p, 'Deal Name');
   if (!name) return null;
-  // Fail-closed on stage-schema drift (refute finding C2): an UNKNOWN Notion stage label maps to
-  // 'Candidate' for display — the one class the active-stage confidential default ignores. A
-  // renamed/added select option must not silently reopen the pre-I9 leak, so an unmapped label
-  // flags the deal confidential at the source (the seed still overrides on a name match).
   const rawStage = select(p, 'Stage');
-  const stageUnknown = !!rawStage && !(rawStage in STAGE_MAP);
   return {
     id: `notion-${slug(name)}`,
     name,
@@ -119,7 +114,10 @@ export function mapNotionPage(page: NotionPage): Deal | null {
     nextAction: text(p, 'Next Action'),
     owner: text(p, 'Deal Owner'),
     targetCloseDate: dateProp(p, 'Target Close Date'),
-    confidential: isConfidentialByName(name) || stageUnknown,
+    // A stage-schema drift (unmapped Notion select option) no longer needs a special guard here:
+    // mergeDeals defaults EVERY unmatched deal confidential regardless of stage (2026-07-16 policy
+    // widening), which subsumes it — this mapper only needs the keyword-name guard.
+    confidential: isConfidentialByName(name),
     estimatedFields: [],
   };
 }
@@ -153,11 +151,18 @@ export function mergeDeals(seed: Deal[], notion: Deal[], aliases: Map<string, st
   const keyOf = (name: string): string => aliases.get(normName(name)) ?? normName(name);
   const notionByKey = new Map(notion.map((d) => [keyOf(d.name), d]));
   const usedKeys = new Set<string>();
+  // Staleness tripwire (policy item 3, 2026-07-16): a seed-matched deal keeps its seed
+  // confidential:false forever (the intended escape hatch) even as the live stage advances into
+  // an active acquisition stage — non-blocking, logs only, never flips the flag or throws.
+  const ACTIVE_STAGES: ReadonlySet<Deal['stage']> = new Set(['LOI/PSA', 'Due Diligence', 'Closing']);
   const merged = seed.map((s) => {
     const k = normName(s.name);
     const live = notionByKey.get(k);
     if (!live) return s;
     usedKeys.add(k);
+    if (!s.confidential && ACTIVE_STAGES.has(live.stage)) {
+      console.warn(`[notion-deals] seed staleness: ${s.id} is confidential:false but live stage is now '${live.stage}' — re-confirm the seed flag is still correct.`);
+    }
     const pick = <T>(a: T, b: T): T => (a !== null && a !== undefined ? a : b);
     return {
       ...s,
@@ -177,14 +182,16 @@ export function mergeDeals(seed: Deal[], notion: Deal[], aliases: Map<string, st
       // id, shortName, confidential, buildings, holdYrs preserved from the seed.
     };
   });
-  // Fail-closed (I9, Hard Invariant 3): an unmatched Notion deal at an ACTIVE acquisition stage
-  // (LOI through Closing) defaults confidential — redaction must not depend on the optional
-  // NOTION_CONFIDENTIAL_NAME_PATTERNS env being set. To make an active deal public, add it to
-  // seed-deals.ts with confidential: false (the seed stays the flag's source of truth).
-  const ACTIVE_STAGES: ReadonlySet<Deal['stage']> = new Set(['LOI/PSA', 'Due Diligence', 'Closing']);
+  // Fail-closed (I9, Hard Invariant 3 — widened 2026-07-16 policy review): EVERY unmatched
+  // Notion-only deal defaults confidential, regardless of stage. A pre-LOI Candidate already
+  // carries identifying data (address/price/lender) and an unmatched deal must not auto-publish
+  // the moment it reaches 'Closed Won' (surviving NDA/price-confidentiality risk) — redaction must
+  // not depend on the optional NOTION_CONFIDENTIAL_NAME_PATTERNS env being set. To make an
+  // unmatched deal public, add it to seed-deals.ts with confidential: false (the seed stays the
+  // flag's source of truth).
   const extras = notion
     .filter((d) => !usedKeys.has(keyOf(d.name)))
-    .map((d) => (ACTIVE_STAGES.has(d.stage) && !d.confidential ? { ...d, confidential: true } : d));
+    .map((d) => (d.confidential ? d : { ...d, confidential: true }));
   return [...merged, ...extras];
 }
 

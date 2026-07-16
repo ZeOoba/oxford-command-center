@@ -30,7 +30,7 @@ const snap = (
   counterparties: Counterparty[],
   extra: Record<string, unknown> = {},
 ): PortfolioSnapshot =>
-  ({ deals, counterparties, tasks: [], dealComps: {}, acquisitionInputs: {}, ...extra } as unknown as PortfolioSnapshot);
+  ({ deals, counterparties, tasks: [], dealComps: {}, acquisitionInputs: {}, tenantNotes: {}, ...extra } as unknown as PortfolioSnapshot);
 
 describe('redactConfidential — orphaned-counterparty residue (I8)', () => {
   it('drops a counterparty orphaned by deal redaction — no lender name/kind/market residue', () => {
@@ -92,6 +92,51 @@ describe('redactConfidential — orphaned-counterparty residue (I8)', () => {
     const { snapshot, removedTasks } = redactConfidential(s);
     expect(snapshot.tasks.map((t) => t.id)).toEqual(['t3']); // t1 by name, t2 by shortName (case-insensitive, in notes)
     expect(removedTasks).toBe(2);
+  });
+
+  it('scrubs a KEPT counterparty note that mentions a removed deal by name (refute finding)', () => {
+    const s = snap(
+      [deal({ id: 'deal-x', name: 'Quiet Deal', confidential: true }), deal({ id: 'deal-y', name: 'Public Deal' })],
+      [cp({
+        id: 'lender-3', name: 'Busy Bank', notes: 'Sent term sheet for Quiet Deal at 6.85% IO',
+        links: { properties: [], loans: [], deals: ['deal-x', 'deal-y'], insurance: [] },
+      })],
+    );
+    const { snapshot } = redactConfidential(s);
+    const kept = snapshot.counterparties.find((c) => c.id === 'lender-3')!;
+    expect(kept).toBeDefined();
+    expect(kept.notes).toBeNull();
+    expect(JSON.stringify(snapshot)).not.toContain('Quiet Deal');
+  });
+
+  it('scrubs a surviving public deal\'s nextAction/status text that mentions a removed deal by name', () => {
+    const s = snap(
+      [
+        deal({ id: 'deal-x', name: 'Quiet Deal', confidential: true }),
+        deal({ id: 'deal-y', name: 'Public Deal', nextAction: 'Hold until Quiet Deal closes', status: 'Waiting on Quiet Deal' }),
+      ],
+      [],
+    );
+    const { snapshot } = redactConfidential(s);
+    const kept = snapshot.deals.find((d) => d.id === 'deal-y')!;
+    expect(kept.nextAction).toBeNull();
+    expect(kept.status).toBeNull();
+    expect(JSON.stringify(snapshot)).not.toContain('Quiet Deal');
+  });
+
+  it('drops a tenantNotes entry whose VALUE mentions a removed deal by name (refute finding — key-only audit missed values)', () => {
+    // tenantNotes values are non-nullable strings (contract), so a mentioning entry is DROPPED
+    // (like a task) rather than nulled (like the nullable counterparty/deal fields above).
+    const s = snap([deal({ id: 'deal-x', name: 'Quiet Deal', confidential: true })], [], {
+      tenantNotes: {
+        'tenant-a': 'Tenant may relocate to Quiet Deal after closing',
+        'tenant-b': 'Standard renewal in progress',
+      },
+    });
+    const { snapshot } = redactConfidential(s);
+    expect(snapshot.tenantNotes['tenant-a']).toBeUndefined();
+    expect(snapshot.tenantNotes['tenant-b']).toBe('Standard renewal in progress');
+    expect(JSON.stringify(snapshot)).not.toContain('Quiet Deal');
   });
 
   it('strips deal-keyed overlay records (dealComps / acquisitionInputs) for removed deals', () => {

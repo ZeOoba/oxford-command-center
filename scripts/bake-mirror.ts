@@ -27,7 +27,19 @@ export function redactConfidential(snapshot: PortfolioSnapshot): {
   const confidential = snapshot.deals.filter((d) => d.confidential);
   if (confidential.length === 0) return { snapshot, removed: [], removedCounterparties: [], removedTasks: 0 };
   const removedIds = new Set(confidential.map((d) => d.id));
-  const deals = snapshot.deals.filter((d) => !d.confidential);
+  // Free-text residue sweep (refute finding, high): human-typed text can name a confidential deal
+  // anywhere free text exists, not just tasks. An exhaustive walk, not a bet on the producer —
+  // computed once, applied to every free-text field below.
+  const removedNames = confidential
+    .flatMap((d) => [d.name, d.shortName])
+    .filter((s): s is string => !!s)
+    .map((s) => s.toLowerCase());
+  const mentionsRemoved = (s: string | null): boolean => !!s && removedNames.some((n) => s.toLowerCase().includes(n));
+  const scrub = (s: string | null): string | null => (mentionsRemoved(s) ? null : s);
+
+  const deals = snapshot.deals
+    .filter((d) => !d.confidential)
+    .map((d) => ({ ...d, nextAction: scrub(d.nextAction), status: scrub(d.status) }));
   const counterparties: PortfolioSnapshot['counterparties'] = [];
   const removedCounterparties: string[] = [];
   for (const cp of snapshot.counterparties) {
@@ -42,35 +54,38 @@ export function redactConfidential(snapshot: PortfolioSnapshot): {
       removedCounterparties.push(cp.name);
       continue;
     }
-    counterparties.push({ ...cp, links: { ...cp.links, deals: keptDeals } });
+    counterparties.push({ ...cp, notes: scrub(cp.notes), links: { ...cp.links, deals: keptDeals } });
   }
   // Task-text residue (refute finding C1): snapshot.tasks carries live M365 To-Do titles + note
   // bodies and workbook checklist labels — a task like "Send PSA redline — <deal name>" leaks the
   // deal redaction just deleted. Drop any task whose text mentions a removed deal's name.
   // (Residual risk accepted + documented: a task referencing only the ADDRESS is not caught.)
-  const removedNames = confidential
-    .flatMap((d) => [d.name, d.shortName])
-    .filter((s): s is string => !!s)
-    .map((s) => s.toLowerCase());
-  const tasks = snapshot.tasks.filter((t) => {
-    const hay = `${t.label} ${t.notes ?? ''}`.toLowerCase();
-    return !removedNames.some((n) => hay.includes(n));
-  });
+  const tasks = snapshot.tasks.filter((t) => !mentionsRemoved(`${t.label} ${t.notes ?? ''}`));
   const removedTasks = snapshot.tasks.length - tasks.length;
   // Deal-keyed overlay records (refute finding C3): dealComps/acquisitionInputs are keyed by deal
   // id — and the id is a slug of the deal NAME, so the key alone identifies the deal. Empty on
   // today's bake path (parseWorkbook supplies neither) but redaction must be an exhaustive walk
-  // of the contract, not a bet on the current producer. Remaining fields audited 2026-07-16:
-  // renewalStages/tenantNotes/tenantArrears are lease/tenant-keyed, loans/insurance are
-  // workbook-only (a pipeline deal produces neither), dataQuality is parser-emitted.
+  // of the contract, not a bet on the current producer.
   const dealComps = Object.fromEntries(
     Object.entries(snapshot.dealComps).filter(([id]) => !removedIds.has(id)),
   );
   const acquisitionInputs = Object.fromEntries(
     Object.entries(snapshot.acquisitionInputs).filter(([id]) => !removedIds.has(id)),
   );
+  // tenantNotes is TENANT-keyed, not deal-keyed, so the key alone never identifies a deal — but
+  // its VALUE is free text (2nd refute pass: the initial "keyed fields are safe" audit reasoned
+  // about keys only and missed this). Drop (not scrub — values are non-nullable) any entry
+  // mentioning a removed deal's name. renewalStages/tenantArrears are structured, not free text;
+  // loans/insurance are workbook-only (a pipeline deal produces neither); dataQuality is
+  // parser-emitted. dealComps' own free-text fields (CompSet.summary, comp addresses) are NOT
+  // swept — accepted residual risk, same as today's zero-trigger status (bake never populates
+  // dealComps/acquisitionInputs; the day a caller merges overlay data into the bake, this must be
+  // revisited alongside them).
+  const tenantNotes = Object.fromEntries(
+    Object.entries(snapshot.tenantNotes).filter(([, note]) => !mentionsRemoved(note)),
+  );
   return {
-    snapshot: { ...snapshot, deals, counterparties, tasks, dealComps, acquisitionInputs },
+    snapshot: { ...snapshot, deals, counterparties, tasks, dealComps, acquisitionInputs, tenantNotes },
     removed: confidential.map((d) => d.name),
     removedCounterparties,
     removedTasks,
