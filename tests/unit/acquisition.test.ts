@@ -118,6 +118,31 @@ describe('STAGE 0 gates KILL', () => {
   it('kills on retail-only product type (L14)', () => {
     expect(score(strongDeal({ productType: 'retail-only' })).verdict).toBe('KILLED');
   });
+  it('kills a short ground lease (other-use gate, threshold from the ruleset)', () => {
+    const s = score(strongDeal({ groundLeaseYearsRemaining: ratified.gates.other.minGroundLeaseYearsRemaining - 1 }));
+    expect(s.verdict).toBe('KILLED');
+    expect(s.gates.find((g) => g.id === 'other-use')!.passed).toBe(false);
+  });
+  it('kills excessive environmental remediation (other-use gate, threshold from the ruleset)', () => {
+    const s = score(strongDeal({ envRemediationPctOfPrice: ratified.gates.other.maxEnvRemediationPctOfPrice + 0.01 }));
+    expect(s.verdict).toBe('KILLED');
+    expect(s.gates.find((g) => g.id === 'other-use')!.passed).toBe(false);
+  });
+  it('kills child-related use without safety review; the gate passes once reviewed', () => {
+    expect(score(strongDeal({ use: { automotive: false, childRelated: true, childSafetyReviewed: false } })).verdict).toBe('KILLED');
+    const reviewed = score(strongDeal({ use: { automotive: false, childRelated: true, childSafetyReviewed: true } }));
+    expect(reviewed.gates.find((g) => g.id === 'other-use')!.passed).toBe(true);
+    expect(reviewed.verdict).not.toBe('KILLED');
+  });
+  it('SFHA on excess land only (pad clear) passes the flood gate — value land at $0, proceed', () => {
+    // STRONG_BASE sets sfhaOnPad: false — the pad-KILL branch (line above) must not fire; the
+    // excess-land branch is only reachable when the pad is clear (engine flood gate is an if/else-if).
+    const s = score(strongDeal({ sfhaOnExcessLandOnly: true }));
+    const flood = s.gates.find((g) => g.id === 'flood')!;
+    expect(flood.passed).toBe(true);
+    expect(flood.detail).toBe('SFHA on excess land only — value land at $0, proceed');
+    expect(s.verdict).not.toBe('KILLED');
+  });
   it('null SF deal cannot reach PURSUE (basis indeterminate, size box unconfirmed) (L15)', () => {
     const s = score(strongDeal({ totalSf: null, maxBuildingSf: null }));
     expect(s.verdict).not.toBe('PURSUE');
@@ -204,6 +229,14 @@ describe('caps: incomplete/advisory, DD, unknown gates', () => {
   });
   it('unknown price AND SF cannot clear the size box as a confirmed PURSUE', () => {
     expect(score(strongDeal({ price: null, maxBuildingSf: null })).cappedAtT2).toBe(true);
+  });
+  it('unknown cluster tier demotes via gateIndeterminate (T2 cap), never a hard KILL', () => {
+    const s = score(strongDeal({ clusterTier: null }));
+    expect(s.verdict).not.toBe('KILLED');
+    expect(s.cappedAtT2).toBe(true);
+    const market = s.gates.find((g) => g.id === 'market')!;
+    expect(market.passed).toBe(true);
+    expect(market.detail).toBe('cluster tier unknown');
   });
 
   it('exposes floorIndeterminate=true when a floor input is null even if capped only by band (B5)', () => {
