@@ -48,6 +48,7 @@ import {
   recommendedAction,
   rootCauseLine,
 } from './property-intel';
+import { CapexIrrCalc } from './CapexIrrCalc';
 
 // ---------------------------------------------------------------------------
 // Tone maps (engine band → Badge tone).
@@ -182,6 +183,13 @@ export function PropertyIntelView({ propertyId, onSelectProperty, period, period
           rootCause={rootCauseLine(drivers.data ?? null)}
           driversLoading={drivers.isLoading}
           hasTwoFy={driverPeriods !== null}
+        />
+      )}
+
+      {score && (
+        <CapexIrrCalc
+          capitalAction={score.capitalAction}
+          propertyName={score.propertyName ?? null}
         />
       )}
 
