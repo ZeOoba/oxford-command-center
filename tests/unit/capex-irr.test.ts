@@ -95,6 +95,55 @@ describe('computeCapexIrr', () => {
     const irr = computeCapexIrr(100_000, 20_000, -1);
     expect(Number.isNaN(irr)).toBe(true);
   });
+
+  // -------------------------------------------------------------------------
+  // Refute-pass finding: a true NEGATIVE IRR (undiscounted cash < capex) previously collapsed to
+  // the bisection's r=0 lower bound (~0%), silently reporting "break-even" for a value-destroying
+  // project. capex=100k, uplift=10k, hold=5: undiscounted total = 50k < 100k capex -> true IRR is
+  // meaningfully negative, not ~0%.
+  // -------------------------------------------------------------------------
+  it('reports a REAL negative IRR (not a ~0% floor) when undiscounted cash flow < capex', () => {
+    const irr = computeCapexIrr(100_000, 10_000, 5);
+    expect(irr).toBeLessThan(-0.15); // meaningfully negative, cross-checked ~ -26%
+    expect(irr).toBeGreaterThan(-1); // within the widened bracket, not a blown-up value
+  });
+
+  it('the negative-IRR root property still holds: NPV at the reported (negative) IRR is ~0', () => {
+    const irr = computeCapexIrr(100_000, 10_000, 5);
+    const nv = npvAtRate(100_000, 10_000, 5, irr);
+    expect(Math.abs(nv)).toBeLessThan(1);
+  });
+
+  it('still returns 0 (not spuriously negative) for the true break-even case (uplift*n === capex)', () => {
+    const irr = computeCapexIrr(100_000, 20_000, 5); // 20k*5 = 100k exactly
+    expect(irr).toBeCloseTo(0, 3);
+  });
+
+  // -------------------------------------------------------------------------
+  // Refute-pass finding: computeCapexIrr's own guard only checked `uplift <= 0`, so
+  // `NaN <= 0` (false) and `Infinity > 0` (passes) both slipped through as "valid" inputs and
+  // produced finite-looking garbage, contradicting the function's own documented contract
+  // ("returns NaN / -Infinity on invalid inputs").
+  // -------------------------------------------------------------------------
+  it('returns -Infinity (not finite garbage) when annualNOIUplift is NaN', () => {
+    const irr = computeCapexIrr(100_000, NaN, 5);
+    expect(irr).toBe(-Infinity);
+  });
+
+  it('returns -Infinity (not finite garbage) when annualNOIUplift is +Infinity', () => {
+    const irr = computeCapexIrr(100_000, Infinity, 5);
+    expect(irr).toBe(-Infinity);
+  });
+
+  // -------------------------------------------------------------------------
+  // Refute-pass finding: the model's own doc comment states "No partial years" -- a fractional
+  // holdYears was previously silently floored by the `for (t=1; t<=holdYears; t++)` loop instead
+  // of being rejected, contradicting that stated assumption.
+  // -------------------------------------------------------------------------
+  it('returns NaN for a non-integer holdYears (model assumes whole years only)', () => {
+    const irr = computeCapexIrr(100_000, 20_000, 5.5);
+    expect(Number.isNaN(irr)).toBe(true);
+  });
 });
 
 describe('npvAtRate', () => {

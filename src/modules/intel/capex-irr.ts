@@ -8,15 +8,23 @@
 // Assumes:
 //   - Uniform annual NOI uplift (no growth, no terminal value — conservative for capex ROI)
 //   - Single upfront capex outlay at t=0
-//   - No partial years
+//   - Whole years only — holdYears must be a positive integer, no partial years
 //
 // Numerical method: bisection (guaranteed convergence on a bounded monotonic function).
-//   Lower bound: r = 0  (NPV = uplift*n − capex; positive when profitable at zero cost of capital)
 //   Upper bound: r = 10 (1000%; NPV ≈ −capex for any finite positive cash flow)
-//   Convergence: |hi−lo| < 1e-8 OR 100 iterations
-//   Residual: |NPV| < 0.01 at convergence
+//   Lower bound: r = 0 UNLESS the undiscounted total (uplift*n) already fails to cover capex, in
+//     which case the true IRR is negative — the bracket widens to r = -0.99 so bisection finds
+//     the REAL negative rate instead of silently floor-clamping to a misleading ~0% (refute-pass
+//     finding: a capex=100k/uplift=10k/hold=5 project — true IRR ≈ -26% — previously displayed
+//     as "0.0%", i.e. "roughly break-even" for a project that destroys half the capital).
+//   Convergence: |hi−lo| < 1e-8 OR 100 iterations. NOT formally residual-checked (see caller —
+//     the near-r=-1 region can leave a small residual on pathological inputs); the root property
+//     is asserted directly in tests instead of promised unconditionally here.
 //
-// CAPITAL_CONFIG.capexIrr (15%) is the governed hurdle rate — never hardcoded here.
+// CAPITAL_CONFIG.capexIrr (15%) is a SEPARATE governed constant (capex-approval yield-on-cost
+// floor) from the general hurdleRatePct (8%) the live capital-allocation engine's own improve-gate
+// compares against — CapexIrrCalc.tsx reads hurdleRatePct so this tool never contradicts the
+// platform's own verdict for the same property. Neither is hardcoded here.
 
 /**
  * Discount a uniform annual cash flow stream and subtract the initial capex.
@@ -42,20 +50,18 @@ export function npvAtRate(
  * Compute the unlevered IRR on a capex investment with uniform annual NOI uplift.
  *
  * Edge cases:
- *   capex ≤ 0   → NaN  (no investment to evaluate)
- *   uplift ≤ 0  → −Infinity  (no positive cash flow — destroy-value case)
- *   holdYears ≤ 0 → NaN  (no hold period)
+ *   capex ≤ 0 or non-finite            → NaN  (no investment to evaluate)
+ *   holdYears ≤ 0, non-finite, or non-integer → NaN  (whole-year hold periods only)
+ *   annualNOIUplift ≤ 0 or non-finite  → −Infinity  (no positive cash flow — destroy-value case)
  *
- * The bisection search is bounded [0, 10] (0% to 1000%). Any real-world capex
- * with a positive return will converge in this range. If NPV at r=0 is negative
- * (i.e. total undiscounted cash flows < capex), the true IRR is negative; the
- * function returns 0 as a floor (since the bisection lower bound is 0) — the
- * caller should treat any result below the hurdle as a "do not deploy" verdict
- * regardless of sign.
+ * The bisection search is bounded [0, 10] (0% to 1000%) for a normally-profitable project, or
+ * widened to [-0.99, 10] when the undiscounted total (uplift*holdYears) already fails to cover
+ * capex — the true IRR is negative in that case, and bisection reports the REAL rate rather than
+ * clamping to a misleading ~0%.
  *
  * @param capex            Initial capital outlay ($), must be > 0
  * @param annualNOIUplift  Projected annual incremental NOI ($), must be > 0
- * @param holdYears        Investment horizon (integer 1–10)
+ * @param holdYears        Investment horizon (positive integer, 1–10 in the UI)
  * @returns                IRR as a decimal (0.15 = 15%), or NaN / −Infinity on invalid inputs
  */
 export function computeCapexIrr(
@@ -65,15 +71,16 @@ export function computeCapexIrr(
 ): number {
   // Guard: invalid inputs
   if (capex <= 0 || !Number.isFinite(capex)) return NaN;
-  if (holdYears <= 0 || !Number.isFinite(holdYears)) return NaN;
+  if (holdYears <= 0 || !Number.isFinite(holdYears) || !Number.isInteger(holdYears)) return NaN;
 
-  // Guard: no positive return stream
-  if (annualNOIUplift <= 0) return -Infinity;
+  // Guard: no positive return stream (NaN/Infinity fail !(x > 0) too, closing the contract gap
+  // the plain `<= 0` check left open — NaN <= 0 is false, Infinity > 0 is true).
+  if (!(annualNOIUplift > 0) || !Number.isFinite(annualNOIUplift)) return -Infinity;
 
-  // Bisection search: NPV is strictly monotone decreasing in r for positive cash flows.
-  // At r=0: NPV = uplift*n − capex (may be positive or negative).
-  // At r=10 (1000%): NPV ≈ −capex (effectively -capex; all cash flows discounted away).
-  let lo = 0;
+  // Bisection search: NPV is strictly monotone decreasing in r (for r > -1) with positive cash
+  // flows. At r=0: NPV = uplift*n − capex. A negative NPV(0) means the true IRR is below 0% —
+  // widen the lower bound so the root is actually bracketed instead of floor-clamped.
+  let lo = npvAtRate(capex, annualNOIUplift, holdYears, 0) <= 0 ? -0.99 : 0;
   let hi = 10;
 
   for (let i = 0; i < 100; i++) {
