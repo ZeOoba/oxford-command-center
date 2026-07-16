@@ -20,6 +20,11 @@ import { SNAPSHOT_KEY } from '../../src/data/queries';
 import type { SnapshotResponse } from '../../src/data/client';
 import { GOVERNOR_FALLBACK } from '@contracts/index';
 
+// Deliberately a partial cast, not a full typed PortfolioSnapshot/BrainState fixture like
+// intel-ownership-smoke.test.tsx builds: CapexIrrCalc reads ONLY snapshot.governors, so a
+// full-shape fixture would be pure unused boilerplate here. Documented trade-off (a refute pass
+// flagged the cast): if this component ever reads another snapshot field, that field will read
+// as `undefined` against this fixture with no type error -- extend the cast then, not preemptively.
 function seededClient(hurdleRatePct?: number): QueryClient {
   const qc = new QueryClient({
     defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } },
@@ -101,41 +106,62 @@ describe('CapexIrrCalc — heading', () => {
 });
 
 describe('CapexIrrCalc — verdict branches, against the live (fallback 8%) hurdle', () => {
-  it('shows "Above hurdle" when the computed IRR clears the 8% fallback hurdle', () => {
+  // Verdict copy deliberately avoids "deploy capital"/"do not deploy": CAPITAL_VERB
+  // (property-intel.ts) reserves "Deploy capital" for capitalAction 'invest' specifically, and
+  // this panel also renders for 'hold'/'monitor' — reusing that phrasing would contradict a
+  // "Hold" verdict header directly above it (second refute-round finding).
+  it('shows "Clears the hurdle" when the computed IRR clears the 8% fallback hurdle', () => {
     renderPanel('invest');
     setInputs(100_000, 15_000, 10); // IRR ~8.14%, cross-checked in capex-irr.test.ts
-    expect(screen.getByText(/Above hurdle \(8(\.0)?%\) — deploy capital/i)).toBeTruthy();
+    expect(screen.getByText(/Clears the hurdle \(8(\.0)?%\)/i)).toBeTruthy();
   });
 
-  it('shows "Below hurdle" when the computed IRR misses the 8% fallback hurdle', () => {
+  it('shows "Does not clear the hurdle" when the computed IRR misses the 8% fallback hurdle', () => {
     renderPanel('invest');
     setInputs(100_000, 12_000, 10); // well under 8% at this capex/hold
-    expect(screen.getByText(/Below hurdle \(8(\.0)?%\) — do not deploy/i)).toBeTruthy();
+    expect(screen.getByText(/Does not clear the hurdle \(8(\.0)?%\)/i)).toBeTruthy();
   });
 
-  it('shows "No return" verdict and −∞ IRR when uplift is 0 (destroy-value case)', () => {
+  it('shows "No positive return" verdict and −∞ IRR when uplift is 0 (destroy-value case)', () => {
     renderPanel('invest');
     setInputs(100_000, 0, 10);
     expect(screen.getByText('−∞')).toBeTruthy();
-    expect(screen.getByText(/No return — do not deploy capital/i)).toBeTruthy();
+    expect(screen.getByText(/No positive return at these inputs/i)).toBeTruthy();
   });
 
-  it('shows a distinct "Invalid inputs" verdict (not "No return") when capex is 0 (NaN case)', () => {
+  it('shows a distinct "Invalid inputs" verdict (not "No positive return") when capex is 0 (NaN case)', () => {
     renderPanel('invest');
     fireEvent.change(screen.getByLabelText(/proposed capex/i), { target: { value: '0' } });
     expect(screen.getByText(/Invalid inputs/i)).toBeTruthy();
   });
 
-  it('rounding-boundary fix: a raw IRR of 0.079563 (below the 8% hurdle) that DISPLAYS as "8.0%" reads "Above hurdle", not a self-contradictory "Below hurdle (8.0%)" beside an "8.0%" IRR', () => {
-    // Verified via independent bisection: capex=100850, uplift=15000, hold=10 -> raw IRR
-    // 0.079563 (< 0.08) but fmtPct's 1-decimal rounding displays it as "8.0%" -- identical to the
-    // hurdle's own displayed "8.0%". Comparing the RAW (unrounded) irr>=hurdle previously showed
-    // "Below hurdle (8.0%)" next to an "8.0%" IRR figure -- numerically self-contradictory to a
-    // reader. The fix compares both values at fmtPct's own display precision before deciding.
+  // Second refute round: a rounding-based comparison here previously reintroduced the exact
+  // self-contradiction it was meant to fix (at non-exact hurdle values, roundToDisplay disagreed
+  // with fmtPct's own toFixed rounding), AND it made the NPV figure's sign independently
+  // inconsistent with the verdict (NPV computed raw, verdict computed rounded). The comparison is
+  // now RAW (matching the engine's own strict `>`), which makes the NPV sign and the verdict
+  // provably agree by construction (NPV(hurdle) > 0 iff irr > hurdle -- the same inequality).
+  it('the verdict and the NPV sign always agree (same raw inequality, not two independently-rounded ones)', () => {
     renderPanel('invest');
+    // capex=100850/uplift=15000/hold=10: raw IRR 0.079563 (just under the 8% hurdle) -- DISPLAYS
+    // as "8.0%" (same as the hurdle badge) due to 1-decimal rounding. The decision is correct and
+    // matches what the live engine would compute; the display collision at this razor-thin band is
+    // an accepted, documented precision limit (see the "pre-tax..." caption), not something papered
+    // over with a second, competing rounding scheme.
     setInputs(100_850, 15_000, 10);
-    expect(screen.getByText('8.0%')).toBeTruthy(); // the bare IRR figure
-    expect(screen.getByText(/Above hurdle \(8\.0%\) — deploy capital/i)).toBeTruthy();
+    expect(screen.getByText('8.0%')).toBeTruthy(); // the bare IRR figure, same text as the hurdle
+    expect(screen.getByText(/Does not clear the hurdle \(8\.0%\)/i)).toBeTruthy();
+    const npvValue = screen.getByText(/^-?\$[\d,]+$/); // the bare NPV figure (Intl.NumberFormat uses ASCII '-')
+    expect(npvValue.textContent?.startsWith('-')).toBe(true); // negative, agreeing with the verdict
+  });
+
+  it('the verdict reads against the LIVE payload hurdle, not just the badge (closes a split-brain test gap)', () => {
+    // A prior version of this suite only asserted the CardHeader badge text for a non-default
+    // hurdle, never the verdict itself -- a regression back to the static/fallback constant for
+    // the DECISION (while the badge kept reading the live value) would have stayed green.
+    renderPanel('invest', null, 0.10); // simulated DB-governed re-ratification to 10%
+    setInputs(100_000, 15_000, 10); // IRR ~8.14% -- clears 8% but misses a 10% hurdle
+    expect(screen.getByText(/Does not clear the hurdle \(10(\.0)?%\)/i)).toBeTruthy();
   });
 });
 
@@ -152,11 +178,16 @@ describe('CapexIrrCalc — disclosure captions', () => {
 });
 
 describe('CapexIrrCalc — state resets on property switch (refute-pass finding)', () => {
-  it('a key change on re-render resets the local capex/uplift/hold state (the PropertyIntelView fix pattern)', () => {
-    // PropertyIntelView never unmounts on property selection change, so CapexIrrCalc's internal
-    // useState previously carried property A's numbers under property B's heading. The fix adds
-    // key={selectedId} at the call site; this test proves changing the key actually remounts and
-    // resets state, using the same React mechanism directly on the component under test.
+  // KNOWN COVERAGE GAP, flagged by two independent refute-pass rounds, deliberately not closed
+  // here: this test proves the React key/remount MECHANISM resets state — it does NOT exercise
+  // PropertyIntelView.tsx's own key={selectedId} call site. Deleting that one prop would
+  // reintroduce the original bug (property A's numbers under property B's heading) with zero
+  // test failures anywhere in the suite. Closing this properly needs a PropertyIntelView render
+  // harness (useScores/useMetrics/useGrowth/useAnomalies/useDrivers all seeded, the last with a
+  // dynamic per-property query key) that does not exist in this repo yet for ANY intel view of
+  // this shape — building one was judged disproportionate scope for this fix pass and deferred
+  // as an explicit, surfaced decision rather than silently left uncovered.
+  it('a key change on re-render resets the local capex/uplift/hold state (mechanism only, not the PropertyIntelView call site)', () => {
     const client = seededClient(undefined);
     const { rerender } = render(
       <QueryClientProvider client={client}>

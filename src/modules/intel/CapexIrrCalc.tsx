@@ -23,15 +23,6 @@ import { GOVERNOR_FALLBACK } from '@contracts/index';
 import { computeCapexIrr, npvAtRate } from './capex-irr';
 import type { PropertyScore } from './analytics-hooks';
 
-/** Round to fmtPct's own 1-decimal display precision (3 decimal places on the raw fraction)
- *  before comparing IRR to the hurdle — otherwise a value that DISPLAYS as e.g. "8.0%" can read
- *  "Below hurdle (8.0%)" next to an "8.0%" IRR figure, a visible self-contradiction (refute-pass
- *  finding). Comparing at the same precision the reader actually sees keeps the verdict and the
- *  numbers in agreement. */
-function roundToDisplay(n: number): number {
-  return Math.round(n * 1000) / 1000;
-}
-
 // ---------------------------------------------------------------------------
 // Defaults — representative starting point, user overrides via inputs.
 // ---------------------------------------------------------------------------
@@ -44,11 +35,18 @@ const DEFAULT_HOLD = 5;
 // ---------------------------------------------------------------------------
 
 interface Props {
-  /** The property's current capital action — panel only shows for invest/monitor. */
+  /** The property's current capital action — panel shows for invest, monitor, and hold. */
   capitalAction: PropertyScore['capitalAction'];
   /** Property name for the panel heading. */
   propertyName: string | null;
 }
+
+/** Capital-action states this panel renders for — an explicit allow-list (not an exclude-list):
+ *  a future 5th capitalAction value must be deliberately added here, not silently render the
+ *  calculator by default (refute-pass finding on the original exclude-list form). */
+const CAPEX_CALC_VISIBLE_ACTIONS: ReadonlySet<PropertyScore['capitalAction']> = new Set([
+  'invest', 'monitor', 'hold',
+]);
 
 // ---------------------------------------------------------------------------
 // Component
@@ -62,9 +60,7 @@ interface Props {
  * DB-governed re-ratification of hurdleRatePct flows through with no code change here.
  */
 export function CapexIrrCalc({ capitalAction, propertyName }: Props) {
-  // Relevant whenever a capex/improvement decision is live: invest/monitor already have one on
-  // the table; hold is where routine maintenance/roof capex decisions actually get made.
-  if (capitalAction === 'disposition-candidate') return null;
+  if (!CAPEX_CALC_VISIBLE_ACTIONS.has(capitalAction)) return null;
 
   return <CapexIrrPanel propertyName={propertyName} />;
 }
@@ -78,13 +74,19 @@ function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
   const [uplift, setUplift] = useState<number>(DEFAULT_UPLIFT);
   const [hold, setHold] = useState<number>(DEFAULT_HOLD);
 
-  // Pure computation — no side effects
+  // Pure computation — no side effects. passesHurdle uses the RAW (unrounded) values with the
+  // SAME strict `>` the live capital-allocation engine's own improve-gate uses, so this tool's
+  // comparison logic can never disagree with the engine's for the same numbers. This also keeps
+  // the NPV sign and the verdict permanently in agreement for free: NPV(hurdle) > 0 iff
+  // hurdle < irr iff irr > hurdle — the SAME inequality, not two independently-rounded ones (a
+  // prior display-precision rounding scheme here reintroduced the exact self-contradiction it was
+  // meant to fix, per a second refute pass — removed rather than patched again).
   const result = useMemo(() => {
     const irr = computeCapexIrr(capex, uplift, hold);
     const npv = Number.isFinite(irr)
       ? npvAtRate(capex, uplift, hold, hurdle)
       : null;
-    const passesHurdle = Number.isFinite(irr) && roundToDisplay(irr) >= roundToDisplay(hurdle);
+    const passesHurdle = Number.isFinite(irr) && irr > hurdle;
     return { irr, npv, passesHurdle };
   }, [capex, uplift, hold, hurdle]);
 
@@ -102,13 +104,18 @@ function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
       ? fmtUsd(result.npv)
       : '—';
 
+  // Deliberately NOT "deploy capital" / "do not deploy": CAPITAL_VERB (property-intel.ts) reserves
+  // "Deploy capital" for capitalAction 'invest' specifically. Since this panel also renders for
+  // 'hold' and 'monitor', reusing that phrasing would put "deploy capital" directly under a "Hold"
+  // verdict header — a visible contradiction a refute pass flagged. This tool's own vocabulary
+  // ("clears the hurdle") stays independent of the platform's capital-action verbs.
   const verdict = Number.isNaN(result.irr)
     ? 'Invalid inputs — enter a positive capex and hold period'
     : result.irr === -Infinity
-      ? 'No return — do not deploy capital'
+      ? 'No positive return at these inputs'
       : result.passesHurdle
-        ? `Above hurdle (${fmtPct(hurdle)}) — deploy capital`
-        : `Below hurdle (${fmtPct(hurdle)}) — do not deploy`;
+        ? `Clears the hurdle (${fmtPct(hurdle)})`
+        : `Does not clear the hurdle (${fmtPct(hurdle)})`;
 
   const verdictTone = !Number.isFinite(result.irr)
     ? ('red' as const)
@@ -134,8 +141,8 @@ function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
         className="px-4 pt-3 text-2xs"
         style={{ color: 'var(--text-tertiary)' }}
       >
-        Unlevered IRR on a uniform annual NOI uplift — no growth, no terminal/exit value, whole
-        years only. Figures below are example starting values, not this property's projected
+        Unlevered, pre-tax IRR on a uniform annual NOI uplift — no growth, no terminal/exit value,
+        whole years only. Figures below are example starting values, not this property's projected
         capex — edit them to model your own scenario.
       </div>
 
@@ -220,7 +227,7 @@ function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
             className="num mt-1 text-2xs"
             style={{ color: 'var(--text-tertiary)' }}
           >
-            surplus above {fmtPct(hurdle)} cost of capital
+            surplus above the {fmtPct(hurdle)} hurdle rate
           </div>
         </div>
 
