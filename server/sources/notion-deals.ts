@@ -171,7 +171,14 @@ export function mergeDeals(seed: Deal[], notion: Deal[], aliases: Map<string, st
       // id, shortName, confidential, buildings, holdYrs preserved from the seed.
     };
   });
-  const extras = notion.filter((d) => !usedKeys.has(keyOf(d.name)));
+  // Fail-closed (I9, Hard Invariant 3): an unmatched Notion deal at an ACTIVE acquisition stage
+  // (LOI through Closing) defaults confidential — redaction must not depend on the optional
+  // NOTION_CONFIDENTIAL_NAME_PATTERNS env being set. To make an active deal public, add it to
+  // seed-deals.ts with confidential: false (the seed stays the flag's source of truth).
+  const ACTIVE_STAGES: ReadonlySet<Deal['stage']> = new Set(['LOI/PSA', 'Due Diligence', 'Closing']);
+  const extras = notion
+    .filter((d) => !usedKeys.has(keyOf(d.name)))
+    .map((d) => (ACTIVE_STAGES.has(d.stage) && !d.confidential ? { ...d, confidential: true } : d));
   return [...merged, ...extras];
 }
 

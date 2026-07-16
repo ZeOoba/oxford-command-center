@@ -89,6 +89,40 @@ describe('mergeDeals — seed is the confidential-flag source of truth', () => {
   });
 });
 
+describe('mergeDeals — fail-closed on unflagged active-stage Notion-only deals (I9)', () => {
+  // Before I9 the ONLY confidential guard for a Notion-only deal was the optional
+  // NOTION_CONFIDENTIAL_NAME_PATTERNS env regex (empty by default) — a new confidential deal
+  // entered in Notion but not the seed baked UNFLAGGED. Active-stage (LOI through Closing)
+  // unmatched deals now default confidential; to make one public, add it to seed-deals.ts
+  // with confidential: false (the seed stays the source of truth).
+  it('an unmatched active-stage Notion deal defaults confidential — no env pattern required', () => {
+    const out = mergeDeals([], [deal({ id: 'notion-q', name: 'Quiet Acquisition', stage: 'LOI/PSA', confidential: false })]);
+    expect(out[0].confidential).toBe(true);
+  });
+
+  it('covers Due Diligence and Closing; a pre-LOI Candidate keeps the keyword-guard result', () => {
+    const out = mergeDeals([], [
+      deal({ id: 'n1', name: 'DD Deal', stage: 'Due Diligence', confidential: false }),
+      deal({ id: 'n2', name: 'Closing Deal', stage: 'Closing', confidential: false }),
+      deal({ id: 'n3', name: 'Early Candidate', stage: 'Candidate', confidential: false }),
+      deal({ id: 'n4', name: 'Done Deal', stage: 'Closed', confidential: false }),
+    ]);
+    expect(out.find((d) => d.id === 'n1')!.confidential).toBe(true);
+    expect(out.find((d) => d.id === 'n2')!.confidential).toBe(true);
+    expect(out.find((d) => d.id === 'n3')!.confidential).toBe(false); // pre-LOI: keyword guard only
+    expect(out.find((d) => d.id === 'n4')!.confidential).toBe(false); // closed: public per Invariant 3
+  });
+
+  it('a seed-matched active deal still takes the seed flag — public-by-seed stays possible', () => {
+    const out = mergeDeals(
+      [deal({ id: 's1', name: 'Known Public Deal', stage: 'LOI/PSA', confidential: false })],
+      [deal({ id: 'n1', name: 'Known Public Deal', stage: 'LOI/PSA', confidential: false })],
+    );
+    expect(out.find((d) => d.id === 's1')!.confidential).toBe(false);
+    expect(out).toHaveLength(1);
+  });
+});
+
 describe('mergeDeals — name aliases (dedup a deal named differently in Notion)', () => {
   const seed = [deal({ id: 'seed-cedar', name: 'Cedar Industrial Park', stage: 'Due Diligence', confidential: true, shortName: 'Cedar' })];
   // Same real deal, different name in Notion → would NOT match by name.
