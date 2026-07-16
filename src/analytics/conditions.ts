@@ -117,16 +117,35 @@ function annualDebtService(l: {
   rate: number | null;
   absBalance: number;
 }): number | null {
+  // MAGNITUDE, NOT SIGNED FLOW (hardened 2026-07-16). Every path returns an absolute
+  // annual dollar figure. Path 3 already guarded this by construction (it uses absBalance,
+  // documented as existing "to avoid producing a negative debt service for lender-side
+  // rows") — but Path 1 short-circuits before Path 3 is ever reached, so that guard never
+  // applied to a row with a populated monthlyPmt.
+  //
+  // The workbook signs lender-side payments negative (mirroring currentBalance, "negative
+  // for lender (capital deployed)"). Live proof: Restoration Church Trust carries
+  // monthlyPmt -5571.216666666667, which Path 1 turned into an impactAnnualUsd of
+  // -$40,669.88 — a negative dollar figure on a ranking field. The sign is not even
+  // internally consistent among lender rows (485 S. Walnut St. is +1365), so trusting it
+  // is unsound in both directions.
+  //
+  // Borrower rows are unaffected: all five in the live snapshot carry positive monthlyPmt,
+  // so Math.abs() is an identity for them. This is a magnitude for ranking/impact display;
+  // flow direction is conveyed by the insight's category and copy, never by this number's sign.
+  //
   // Path 1: monthly payment
   if (l.monthlyPmt !== null && Number.isFinite(l.monthlyPmt)) {
-    return l.monthlyPmt * 12;
+    return Math.abs(l.monthlyPmt * 12);
   }
   // Path 2: annual interest + principal components
   const hasInterest = l.annualInterest !== null && Number.isFinite(l.annualInterest);
   const hasPrincipal = l.annualPrincipal !== null && Number.isFinite(l.annualPrincipal);
   if (hasInterest || hasPrincipal) {
-    return (hasInterest ? (l.annualInterest as number) : 0) +
-           (hasPrincipal ? (l.annualPrincipal as number) : 0);
+    return Math.abs(
+      (hasInterest ? (l.annualInterest as number) : 0) +
+        (hasPrincipal ? (l.annualPrincipal as number) : 0),
+    );
   }
   // Path 3: rate fallback — interest-only estimate using absBalance (magnitude)
   if (
@@ -226,20 +245,65 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
           provenance = 'derived';
         }
 
-        out.push({
-          id: `balloon-${l.id}`,
-          severity: days < T.balloonCriticalDays ? 'critical' : 'warning',
-          category: 'debt',
-          title: `Balloon due — ${l.name}`,
-          detail: `${fmtUsd(l.absBalance)} balance, balloon ${fmtDate(l.maturity)} (${fmtMonths(monthsRemaining)}). Prepare refinance or payoff.`,
-          metric: fmtUsd(l.absBalance),
-          entityType: 'loan',
-          entityId: l.id,
-          action: { label: 'Open refi workspace', kind: 'open-refi' },
-          impactAnnualUsd,
-          spine: 'B',
-          provenance,
-        });
+        // Direction awareness (2026-07-16). `direction` splits three ways — see
+        // contracts/loan.ts: "Borrower = Oxford pays; Lender = Oxford receives; Internal =
+        // intercompany accrual", with currentBalance signed negative for lender (capital
+        // deployed). A maturing `lender` note is an ASSET arriving, not a liability coming
+        // due; "Prepare refinance or payoff" inverts the fact, and `category: 'debt'` files
+        // a receivable under debt. Live defect: Restoration Church Trust ($979,772 @ 9%,
+        // balloon 2027-02-20, direction 'lender') shipped in the 2026-07-16 Daily Brief
+        // telling the reader to refinance money owed TO Oxford.
+        //
+        // Split follows the refi-spread precedent below (~line 259), which already restricts
+        // ORA-obligation alerts to `borrower`: borrower keeps the debt/refi alert unchanged;
+        // lender gets a collections alert; internal (intercompany) fires neither, matching
+        // refi-spread's exclusion — it is neither an external obligation nor a collectible.
+        if (l.direction === 'borrower') {
+          out.push({
+            id: `balloon-${l.id}`,
+            severity: days < T.balloonCriticalDays ? 'critical' : 'warning',
+            category: 'debt',
+            title: `Balloon due — ${l.name}`,
+            detail: `${fmtUsd(l.absBalance)} balance, balloon ${fmtDate(l.maturity)} (${fmtMonths(monthsRemaining)}). Prepare refinance or payoff.`,
+            metric: fmtUsd(l.absBalance),
+            entityType: 'loan',
+            entityId: l.id,
+            action: { label: 'Open refi workspace', kind: 'open-refi' },
+            impactAnnualUsd,
+            spine: 'B',
+            provenance,
+          });
+        } else if (l.direction === 'lender') {
+          // Category stays 'debt', deliberately — NOT 'collections'. In this codebase
+          // CATEGORY_TO_FAMILY maps collections → 'TE', documented as "AR aging/arrears
+          // reflect a tenant's payment behavior", and money.ts enforces non-negativity on
+          // collections dollars. A note borrower is not a tenant, and this row is not tenant
+          // AR. 'debt' → 'CF' ("capital-structure decisions … are capital actions") is the
+          // correct family: a maturing note is a capital-flow event regardless of which side
+          // Oxford sits on. What makes this a distinct alert is the id, title, copy and
+          // action — not the category bucket.
+          //
+          // Severity is CAPPED AT 'warning' — a lender note never goes critical. The
+          // balloonCriticalDays=180 window is calibrated to REFINANCING lead time; confirming
+          // a borrower's repayment needs nothing like six months. Reusing that ladder would
+          // flip Restoration Church Trust to critical on 2026-08-24, and brief/run.ts sends an
+          // individual outbound email per new critical id — i.e. a CRITICAL-branded alert
+          // about money arriving. Inbound capital is not an emergency.
+          out.push({
+            id: `note-maturity-${l.id}`,
+            severity: 'warning',
+            category: 'debt',
+            title: `Note maturing — ${l.name}`,
+            detail: `${fmtUsd(l.absBalance)} receivable, matures ${fmtDate(l.maturity)} (${fmtMonths(monthsRemaining)}). Oxford is the lender — confirm the borrower's repayment or extension terms.`,
+            metric: fmtUsd(l.absBalance),
+            entityType: 'loan',
+            entityId: l.id,
+            action: { label: 'Review note', kind: 'review' },
+            impactAnnualUsd,
+            spine: 'B',
+            provenance,
+          });
+        }
       }
     }
 
