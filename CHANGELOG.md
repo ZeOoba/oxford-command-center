@@ -1,12 +1,15 @@
 # Changelog
 
-> **Note (added 2026-07-06):** entries below stop at 2026-06-13. Substantial work has shipped since
-> then (Phase 2 debt/refi + AI narrative, Phase 3 forecast/leasing, Phase 5 capital allocation
-> capstone, Directions 1-3, and the 2026-07-06 design-parity initiative) without a matching
-> CHANGELOG entry. Rather than backfill ~15 entries in this file's detailed narrative style without
-> complete first-hand grounding in every technical decision, this note points to the two sources
-> that ARE current: `CLAUDE.md` §3 (Active Roadmap table, merge-PR-level detail) and `git log`
-> directly. If you're picking up CHANGELOG maintenance, start the next entry from PR #95 forward.
+> **Note (added 2026-07-06, refreshed 2026-07-16):** this file's detailed narrative covers work
+> through **2026-06-13**, plus the single 2026-07-10 P4c/C2 entry below. Substantial work has
+> shipped since 06-13 without a matching entry — Phase 2 debt/refi + AI narrative, Phase 3
+> forecast/leasing, Phase 5 capital-allocation capstone, Directions 1-3, the design-parity /
+> Mission-Control initiative, and RCT v03 (per-market replacement cost, PR #210). Rather than
+> backfill the ~115-PR gap in this narrative style without complete first-hand grounding, consult
+> the two sources that ARE current: `CLAUDE.md` §3 (Active Roadmap table, merge-PR-level detail)
+> and `git log` directly. If you're picking up CHANGELOG maintenance, the un-narrated span is
+> PR #95–#210 (excluding #200, narrated below); when you add an entry, refresh this note's
+> coverage line in the same commit so the note itself never goes stale.
 
 ## P4c (Insurance) + C2 (Tax) Placeholder Buildout (2026-07-10)
 
