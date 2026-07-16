@@ -114,6 +114,7 @@ function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
         style={{ borderBottom: '1px solid var(--border-subtle)' }}
       >
         <LabeledInput
+          id="capex-irr-capex"
           label="Proposed capex ($)"
           value={capex}
           min={1}
@@ -121,6 +122,7 @@ function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
           onChange={setCapex}
         />
         <LabeledInput
+          id="capex-irr-uplift"
           label="Annual NOI uplift ($)"
           value={uplift}
           min={0}
@@ -128,6 +130,7 @@ function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
           onChange={setUplift}
         />
         <LabeledInput
+          id="capex-irr-hold"
           label="Hold period (years)"
           value={hold}
           min={1}
@@ -210,6 +213,7 @@ function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
 // ---------------------------------------------------------------------------
 
 function LabeledInput({
+  id,
   label,
   value,
   min,
@@ -217,6 +221,7 @@ function LabeledInput({
   step,
   onChange,
 }: {
+  id: string;
   label: string;
   value: number;
   min?: number;
@@ -227,12 +232,14 @@ function LabeledInput({
   return (
     <div>
       <label
+        htmlFor={id}
         className="num mb-1.5 block text-2xs font-semibold uppercase"
         style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}
       >
         {label}
       </label>
       <input
+        id={id}
         type="number"
         value={value}
         min={min}
