@@ -14,6 +14,8 @@ import { streamSSE } from 'hono/streaming';
 import { brain } from './brain';
 import { DealStage, RenewalStageInput, NoiBudgetInput, AcquisitionInput, TenantArrearsInput } from '../src/contracts/index';
 import { DealCompsActionInput } from '../src/contracts/index';
+import type { GovernorSet } from '../src/contracts/index';
+import { loadGovernors, GOVERNOR_DEFAULTS } from './warehouse/governors';
 import { fetchDealComps } from './ai/comps';
 import { runAgent } from './ai/agent';
 import { searchDocuments, docStatus, warmDocIndex } from './sources/documents';
@@ -171,11 +173,26 @@ app.get('/api/health', (c) => {
   });
 });
 
+/**
+ * Ratified governor set for the client alert engine (I10) — warehouse-fresh when the sqlite is
+ * reachable; the compile-time GOVERNOR_DEFAULTS otherwise (identical unless a DB-only
+ * re-ratification has landed). Fail-open: governor attach must never 503 the snapshot.
+ */
+function liveGovernors(): GovernorSet {
+  try {
+    const g = loadGovernors(getWarehouse());
+    return { dscrFloor: g.dscrFloor, ltvCeiling: g.ltvCeiling, version: g.version, effectiveFrom: g.effectiveFrom };
+  } catch {
+    const d = GOVERNOR_DEFAULTS;
+    return { dscrFloor: d.dscrFloor, ltvCeiling: d.ltvCeiling, version: d.version, effectiveFrom: d.effectiveFrom };
+  }
+}
+
 /** The single typed payload: snapshot + live meta. */
 app.get('/api/snapshot', (c) => {
   const snapshot = brain.getSnapshot();
   if (!snapshot) return c.json({ error: 'no snapshot available', state: brain.getState() }, 503);
-  return c.json({ snapshot, state: brain.getState() });
+  return c.json({ snapshot: { ...snapshot, governors: liveGovernors() }, state: brain.getState() });
 });
 
 app.post('/api/refresh', async (c) => {

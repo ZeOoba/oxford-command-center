@@ -55,6 +55,28 @@ export type SnapshotMeta = z.infer<typeof SnapshotMeta>;
  * THE typed boundary between every data source and the UI.
  * The whole app renders from exactly this shape — mock, live-Excel, or future API.
  */
+/** The ratified capital-governor boundaries the client alert engine reads (I10). */
+export const GovernorSet = z.object({
+  dscrFloor: z.number(),
+  ltvCeiling: z.number(),
+  version: z.number(),
+  effectiveFrom: z.string(),
+});
+export type GovernorSet = z.infer<typeof GovernorSet>;
+
+/**
+ * FALLBACK governor set for legacy snapshots that predate the server-attached payload (I10).
+ * A guarded mirror of the server's compile-time ratified set — tests/unit/conditions.test.ts
+ * drift-pins it to server/warehouse/capital-config.ts CAPITAL_CONFIG; never edit one without
+ * the other (CLAUDE.md §4).
+ */
+export const GOVERNOR_FALLBACK: GovernorSet = {
+  dscrFloor: 1.25,
+  ltvCeiling: 0.40,
+  version: 1,
+  effectiveFrom: '2026-06-13',
+};
+
 export const PortfolioSnapshot = z.object({
   meta: SnapshotMeta,
   assumptions: Assumptions,
@@ -80,6 +102,8 @@ export const PortfolioSnapshot = z.object({
   tenantArrears: z.record(z.string(), TenantArrears).default({}),
   /** Server-attached QuickBooks actuals (Phase 3 ②); null when no export configured. */
   quickbooks: QbActuals.nullable().default(null),
+  /** Server/bake-attached ratified governor set (I10); null on legacy payloads → GOVERNOR_FALLBACK. */
+  governors: GovernorSet.nullable().default(null),
   /**
    * Phase 3 — user-supplied market rents ($/SF PSF, annual) from overlay.marketRents.
    * Keyed by leaseId (precedence) or propertyKey. Empty when no market rents have been entered.

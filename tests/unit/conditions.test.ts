@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { PortfolioSnapshot, Property, Lease, Loan, InsurancePolicy, Deal } from '@contracts/index';
+import { GOVERNOR_FALLBACK } from '@contracts/index';
 import { evaluateConditions, ALERT_THRESHOLDS, extractDgs5MarketRate } from '@analytics/index';
 import type { MacroSnapshot } from '@contracts/index';
 import { CAPITAL_CONFIG } from '../../server/warehouse/capital-config';
@@ -360,17 +361,48 @@ describe('ALERT_THRESHOLDS', () => {
     expect(ALERT_THRESHOLDS.leaseWarningDays).toBe(180);
     expect(ALERT_THRESHOLDS.cashConcentrationWarn).toBe(0.3);
   });
-  it('pins the ratified DSCR/LTV governor-derived thresholds', () => {
+  it('pins the alert-specific (non-governor) thresholds; governor thresholds moved to the payload (I10)', () => {
     expect(ALERT_THRESHOLDS.dscrFloor).toBe(1.1);
-    expect(ALERT_THRESHOLDS.dscrWatch).toBe(1.25);
-    expect(ALERT_THRESHOLDS.ltvGovernor).toBe(0.4);
     expect(ALERT_THRESHOLDS.ltvCeiling).toBe(0.65);
+    // dscrWatch / ltvGovernor no longer live here: the governor boundaries ride the snapshot
+    // payload (s.governors, warehouse-fresh) with GOVERNOR_FALLBACK for legacy snapshots.
+    expect('dscrWatch' in ALERT_THRESHOLDS).toBe(false);
+    expect('ltvGovernor' in ALERT_THRESHOLDS).toBe(false);
   });
-  it('the alert thresholds track the ratified capital governor — cannot silently drift (B3)', () => {
-    // The "above governor" info tier MUST equal the ratified LTV governor; the DSCR watch MUST
-    // equal the ratified DSCR floor (CLAUDE.md §4, capital-config.ts).
-    expect(ALERT_THRESHOLDS.ltvGovernor).toBe(CAPITAL_CONFIG.ltvCeiling);
-    expect(ALERT_THRESHOLDS.dscrWatch).toBe(CAPITAL_CONFIG.dscrFloor);
+  it('the fallback governor set tracks the ratified capital governor — cannot silently drift (B3/I10)', () => {
+    // GOVERNOR_FALLBACK guards only legacy payloads; it MUST equal the server's compile-time
+    // ratified set (CLAUDE.md §4, capital-config.ts) — never edit one without the other.
+    expect(GOVERNOR_FALLBACK.ltvCeiling).toBe(CAPITAL_CONFIG.ltvCeiling);
+    expect(GOVERNOR_FALLBACK.dscrFloor).toBe(CAPITAL_CONFIG.dscrFloor);
+    expect(GOVERNOR_FALLBACK.dscrFloor).toBe(1.25);
+    expect(GOVERNOR_FALLBACK.ltvCeiling).toBe(0.4);
+  });
+});
+
+describe('evaluateConditions — payload-sourced governors (I10)', () => {
+  const gov = (o: Partial<{ dscrFloor: number; ltvCeiling: number }> = {}) =>
+    ({ dscrFloor: 1.25, ltvCeiling: 0.4, version: 2, effectiveFrom: '2026-07-16', ...o });
+
+  it('a tightened payload DSCR governor moves the watch boundary — no conditions.ts edit', () => {
+    const s = snap({ properties: [prop({ dscr: 1.30 })], governors: gov({ dscrFloor: 1.35 }) });
+    expect(evaluateConditions(s, opts).find((i) => i.id === 'dscr-p1')?.severity).toBe('warning');
+  });
+
+  it('the same property does not fire under the fallback governor (1.30 >= 1.25)', () => {
+    const out = evaluateConditions(snap({ properties: [prop({ dscr: 1.30 })] }), opts);
+    expect(out.find((i) => i.id === 'dscr-p1')).toBeUndefined();
+  });
+
+  it('a tightened payload LTV governor moves the info tier and its interpolated boundary text', () => {
+    const s = snap({ properties: [prop({ ltv: 0.36 })], governors: gov({ ltvCeiling: 0.35 }) });
+    const hit = evaluateConditions(s, opts).find((i) => i.id === 'ltv-governor-p1');
+    expect(hit?.severity).toBe('info');
+    expect(hit?.detail).toContain('35'); // boundary text derives from the payload, not a literal
+  });
+
+  it('fallback: ltv 0.36 within the 0.40 fallback governor — no info alert', () => {
+    const out = evaluateConditions(snap({ properties: [prop({ ltv: 0.36 })] }), opts);
+    expect(out.find((i) => i.id === 'ltv-governor-p1')).toBeUndefined();
   });
 });
 

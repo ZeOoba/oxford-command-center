@@ -1,11 +1,14 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
 import { getMacro } from '../server/macro/getMacro';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, referenceDate } from '../server/config';
 import { etNow } from '../server/brief/state';
-import type { PortfolioSnapshot } from '../src/contracts/index';
+import type { GovernorSet, PortfolioSnapshot } from '../src/contracts/index';
+// governors.ts is dependency-light (its ./db import is type-only); the sqlite driver itself is
+// still loaded ONLY via the existsSync-gated dynamic import below (cadence decoupling preserved).
+import { GOVERNOR_DEFAULTS } from '../server/warehouse/governors';
 
 loadEnvFile();
 
@@ -69,7 +72,33 @@ async function main() {
     ? { snapshot: raw, removed: [], removedCounterparties: [] }
     : redactConfidential(raw);
 
-  writeFileSync(join(pub, 'snapshot.json'), JSON.stringify(snapshot));
+  // I10: the client alert engine reads governor boundaries from the payload. Warehouse-fresh
+  // when the sqlite exists on the bake machine; compile-time defaults otherwise (CI/worktree
+  // bakes) — existsSync-gated so the light snapshot path never creates a stray DB or loads the
+  // sqlite driver unnecessarily.
+  let governors: GovernorSet | null = null;
+  const dbPath = process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
+  if (existsSync(dbPath)) {
+    try {
+      const [{ loadGovernors }, { openWarehouse }] = await Promise.all([
+        import('../server/warehouse/governors'),
+        import('../server/warehouse/db'),
+      ]);
+      const db = openWarehouse(dbPath);
+      const g = loadGovernors(db);
+      governors = { dscrFloor: g.dscrFloor, ltvCeiling: g.ltvCeiling, version: g.version, effectiveFrom: g.effectiveFrom };
+    } catch {
+      governors = null; // fall through to compile-time defaults below
+    }
+  }
+  if (!governors) {
+    governors = {
+      dscrFloor: GOVERNOR_DEFAULTS.dscrFloor, ltvCeiling: GOVERNOR_DEFAULTS.ltvCeiling,
+      version: GOVERNOR_DEFAULTS.version, effectiveFrom: GOVERNOR_DEFAULTS.effectiveFrom,
+    };
+  }
+
+  writeFileSync(join(pub, 'snapshot.json'), JSON.stringify({ ...snapshot, governors }));
   writeFileSync(join(pub, 'macro.json'), JSON.stringify(await getMacro()));
 
   const mode = includeConfidential ? 'FULL (confidential included — Access-gated targets only)' : 'REDACTED (public-safe)';

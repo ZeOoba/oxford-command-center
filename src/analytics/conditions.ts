@@ -1,4 +1,5 @@
 import type { PortfolioSnapshot, MacroSnapshot } from '@contracts/index';
+import { GOVERNOR_FALLBACK } from '@contracts/index';
 import { fmtUsd, fmtUsdCompact, fmtPct, fmtMonths, fmtDate } from './format';
 import type { Insight, InsightSeverity } from './types';
 import { tenantScorecards } from '@/brain/tenants';
@@ -14,8 +15,9 @@ export const ALERT_THRESHOLDS = {
   balloonCriticalDays: 180,
   balloonWarningDays: 365,
   dscrFloor: 1.1,
-  dscrWatch: 1.25,
-  ltvGovernor: 0.40, // B3: the ratified LTV governor (capital-config.ts ltvCeiling) — info-level "above governor"
+  // dscrWatch / ltvGovernor intentionally ABSENT (I10): the ratified DSCR/LTV governor boundaries
+  // ride the snapshot payload (s.governors, warehouse-fresh) — GOVERNOR_FALLBACK covers legacy
+  // payloads. Only genuinely alert-specific, non-governor thresholds live here.
   ltvCeiling: 0.65,
   leaseCriticalDays: 60,
   leaseWarningDays: 180,
@@ -172,6 +174,9 @@ export interface EvaluateOpts {
  */
 export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}): Insight[] {
   const T = ALERT_THRESHOLDS;
+  // Governor boundaries come from the payload (server/bake attach the ratified capital_config
+  // set) so a governor change moves the alert boundary with no code edit here (I10).
+  const gov = s.governors ?? GOVERNOR_FALLBACK;
   const asOf = opts.referenceDate ?? s.meta.asOf;
   const now = opts.now ?? Date.now();
   const out: Insight[] = [];
@@ -288,10 +293,10 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         metric: `${p.dscr.toFixed(2)}x`, entityType: 'property', entityId: p.id,
         impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
-    } else if (p.dscr !== null && p.dscr < T.dscrWatch) {
+    } else if (p.dscr !== null && p.dscr < gov.dscrFloor) {
       out.push({
         id: `dscr-${p.id}`, severity: 'warning', category: 'debt',
-        title: `DSCR below 1.25 — ${p.name}`,
+        title: `DSCR below ${gov.dscrFloor.toFixed(2)} — ${p.name}`,
         detail: `Debt-service coverage is ${p.dscr.toFixed(2)}x (covenant watch). Review the loan.`,
         metric: `${p.dscr.toFixed(2)}x`, entityType: 'property', entityId: p.id,
         impactAnnualUsd: null, spine: 'B', provenance: 'absent',
@@ -305,13 +310,13 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         metric: fmtPct(p.ltv), entityType: 'property', entityId: p.id,
         impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
-    } else if (p.ltv !== null && p.ltv > T.ltvGovernor) {
-      // B3 Option B: above the ratified LTV governor (≤40%) but within the operational ceiling —
+    } else if (p.ltv !== null && p.ltv > gov.ltvCeiling) {
+      // B3 Option B: above the ratified LTV governor but within the operational ceiling —
       // an info-level signal so a governor deviation is visible without warning-noise on every levered property.
       out.push({
         id: `ltv-governor-${p.id}`, severity: 'info', category: 'debt',
         title: `LTV above governor — ${p.name}`,
-        detail: `Loan-to-value is ${fmtPct(p.ltv)} — above the ${fmtPct(T.ltvGovernor)} portfolio governor (LTV ≤ 40%).`,
+        detail: `Loan-to-value is ${fmtPct(p.ltv)} — above the ${fmtPct(gov.ltvCeiling)} portfolio governor (LTV ≤ ${fmtPct(gov.ltvCeiling)}).`,
         metric: fmtPct(p.ltv), entityType: 'property', entityId: p.id,
         impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
