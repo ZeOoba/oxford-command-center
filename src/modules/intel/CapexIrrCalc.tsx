@@ -2,21 +2,35 @@
 //
 // Capex / Improvement IRR Calculator panel (item-8).
 //
-// Shows the capital verdict says "invest" but leaves return on investment unquantified.
-// This panel fills that gap: given a proposed capex, projected annual NOI uplift, and
-// hold period, it computes the unlevered IRR and compares it to the ratified capex hurdle
-// (CAPITAL_CONFIG.capexIrr = 15%) imported from capital-config — never hardcoded here.
+// Shows the capital verdict says "invest"/"monitor"/"hold" but leaves return on investment
+// unquantified. This panel fills that gap: given a proposed capex, projected annual NOI uplift,
+// and hold period, it computes the unlevered IRR and compares it to the DB-governed hurdleRatePct
+// — the SAME threshold the live capital-allocation engine's own improve-gate uses
+// (server/warehouse/capital-allocation.ts). Read live via useSnapshot() (governors.hurdleRatePct),
+// falling back to GOVERNOR_FALLBACK — never the separate, static CAPITAL_CONFIG.capexIrr constant,
+// which a refute pass found this panel silently contradicting (15% vs the engine's real 8% gate).
 //
-// Only rendered when capitalAction is 'invest' or 'monitor' (improvement is being considered).
+// Rendered for capitalAction 'invest', 'monitor', or 'hold' (hold widened 2026-07-16 — routine
+// maintenance/roof capex decisions live there day to day). Not shown for 'disposition-candidate'.
 //
 // Math: see src/modules/intel/capex-irr.ts — pure functions, independently tested.
 import { useState, useMemo } from 'react';
 import { fmtUsd, fmtPct } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
-import { CAPITAL_CONFIG } from '../../../server/warehouse/capital-config';
+import { useSnapshot } from '@/data/queries';
+import { GOVERNOR_FALLBACK } from '@contracts/index';
 import { computeCapexIrr, npvAtRate } from './capex-irr';
 import type { PropertyScore } from './analytics-hooks';
+
+/** Round to fmtPct's own 1-decimal display precision (3 decimal places on the raw fraction)
+ *  before comparing IRR to the hurdle — otherwise a value that DISPLAYS as e.g. "8.0%" can read
+ *  "Below hurdle (8.0%)" next to an "8.0%" IRR figure, a visible self-contradiction (refute-pass
+ *  finding). Comparing at the same precision the reader actually sees keeps the verdict and the
+ *  numbers in agreement. */
+function roundToDisplay(n: number): number {
+  return Math.round(n * 1000) / 1000;
+}
 
 // ---------------------------------------------------------------------------
 // Defaults — representative starting point, user overrides via inputs.
@@ -43,21 +57,23 @@ interface Props {
 /**
  * Interactive IRR calculator for a proposed capex improvement on a property.
  *
- * Renders only when capitalAction is 'invest' or 'monitor'. Inputs are controlled
- * locally (no server round-trip — pure client math). The hurdle rate is imported from
- * CAPITAL_CONFIG.capexIrr so any future governed rate change flows through automatically.
+ * Renders for capitalAction 'invest', 'monitor', or 'hold'. Inputs are controlled locally (no
+ * server round-trip — pure client math). The hurdle rate is read live via useSnapshot(), so a
+ * DB-governed re-ratification of hurdleRatePct flows through with no code change here.
  */
 export function CapexIrrCalc({ capitalAction, propertyName }: Props) {
-  // Only relevant when investment/improvement is being considered.
-  if (capitalAction !== 'invest' && capitalAction !== 'monitor') return null;
+  // Relevant whenever a capex/improvement decision is live: invest/monitor already have one on
+  // the table; hold is where routine maintenance/roof capex decisions actually get made.
+  if (capitalAction === 'disposition-candidate') return null;
 
   return <CapexIrrPanel propertyName={propertyName} />;
 }
 
 function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
-  const hurdle = CAPITAL_CONFIG.capexIrr; // 0.15 from governed constants
+  const { data } = useSnapshot();
+  const hurdle = data?.snapshot.governors?.hurdleRatePct ?? GOVERNOR_FALLBACK.hurdleRatePct;
 
-  // Controlled inputs
+  // Controlled inputs — generic starting figures, not this property's actual projected numbers.
   const [capex, setCapex] = useState<number>(DEFAULT_CAPEX);
   const [uplift, setUplift] = useState<number>(DEFAULT_UPLIFT);
   const [hold, setHold] = useState<number>(DEFAULT_HOLD);
@@ -68,11 +84,13 @@ function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
     const npv = Number.isFinite(irr)
       ? npvAtRate(capex, uplift, hold, hurdle)
       : null;
-    const passesHurdle = Number.isFinite(irr) && irr >= hurdle;
+    const passesHurdle = Number.isFinite(irr) && roundToDisplay(irr) >= roundToDisplay(hurdle);
     return { irr, npv, passesHurdle };
   }, [capex, uplift, hold, hurdle]);
 
-  // Derived display
+  // Derived display. NaN (invalid inputs, e.g. capex=0) and -Infinity (a genuine no-return
+  // project, uplift<=0) are DISTINCT failure modes with distinct copy — conflating them under one
+  // "no return" message mislabels an input error as an investment verdict.
   const irrDisplay = !Number.isFinite(result.irr)
     ? result.irr === -Infinity
       ? '−∞'
@@ -84,8 +102,9 @@ function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
       ? fmtUsd(result.npv)
       : '—';
 
-  const verdict =
-    !Number.isFinite(result.irr)
+  const verdict = Number.isNaN(result.irr)
+    ? 'Invalid inputs — enter a positive capex and hold period'
+    : result.irr === -Infinity
       ? 'No return — do not deploy capital'
       : result.passesHurdle
         ? `Above hurdle (${fmtPct(hurdle)}) — deploy capital`
@@ -107,6 +126,18 @@ function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
           </Badge>
         }
       />
+
+      {/* Assumptions disclosure — the model is unlevered, single-point (no growth), and has no
+          terminal/exit value; omitting a caption invites reading a bare "%"/"$" figure as if it
+          already accounted for those (refute-pass finding). */}
+      <div
+        className="px-4 pt-3 text-2xs"
+        style={{ color: 'var(--text-tertiary)' }}
+      >
+        Unlevered IRR on a uniform annual NOI uplift — no growth, no terminal/exit value, whole
+        years only. Figures below are example starting values, not this property's projected
+        capex — edit them to model your own scenario.
+      </div>
 
       {/* Inputs */}
       <div

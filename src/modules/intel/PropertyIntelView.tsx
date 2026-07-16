@@ -187,7 +187,11 @@ export function PropertyIntelView({ propertyId, onSelectProperty, period, period
       )}
 
       {score && (
+        // key={selectedId} forces a remount on property switch — without it, PropertyIntelView
+        // never unmounts on selection change (refute-pass finding), so the panel's local capex/
+        // uplift/hold state silently carried Property A's numbers under Property B's heading.
         <CapexIrrCalc
+          key={selectedId}
           capitalAction={score.capitalAction}
           propertyName={score.propertyName ?? null}
         />
