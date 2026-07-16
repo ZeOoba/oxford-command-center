@@ -31,7 +31,7 @@ describe('POST /acquisition/score', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { score: AcquisitionScore };
     expect(body.score.advisoryOnly).toBe(false);
-    expect(body.score.rulesetVersion).toBe('1.0.0');
+    expect(body.score.rulesetVersion).toBe('1.1.0');
     expect(body.score.verdict).toBe('PURSUE');
   });
 

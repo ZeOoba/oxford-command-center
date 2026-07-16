@@ -13,7 +13,7 @@ import { z } from 'zod';
 import { Confidence, DataQualityFlag } from './common';
 
 /** Ruleset identity — both surfaces assert against it; bumped on any calibration change. */
-export const RULESET_VERSION = '1.0.0' as const;
+export const RULESET_VERSION = '1.1.0' as const;
 
 /** Ratification provenance (mirrors intel-config / CAPITAL_CONFIG ratified-vs-proposed). */
 export const Ratification = z.enum(['ratified', 'proposed']);
