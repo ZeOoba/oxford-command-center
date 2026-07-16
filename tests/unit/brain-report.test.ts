@@ -465,6 +465,69 @@ describe('buildBrainReport — openQuestions (honest gap surfacing)', () => {
     expect(floor[0]!.wouldClose).toBe('the missing underwriting inputs');
     expect(floor[0]!.title).toContain('123 Test St');
   });
+
+  it('dedupes floor-indeterminate to the LATEST row per candidate (refute finding: I1 re-key duplicated rows)', () => {
+    // The I1 governor-fingerprint fix mints a new acq_scores row per governor regime, so a
+    // candidate re-scored after a governor change (or the one-time post-deploy re-key) leaves an
+    // older floor_indeterminate=1 row behind it. Without a per-candidate dedup, the SAME candidate
+    // was double-listed — crowding out other candidates under OPEN_QUESTION_GROUP_CAP.
+    const db = freshDb();
+    seedPropertyMaster(db);
+
+    db.prepare(`
+      INSERT INTO acq_candidates (id, source, address, county, state)
+      VALUES ('parcel:test:dup', 'manual', '999 Dup Ave', 'Test County', 'OH')
+    `).run();
+    for (const iv of ['iv-old', 'iv-new']) {
+      db.prepare(`
+        INSERT INTO acq_score_inputs (candidate_id, inputs_version, input_json)
+        VALUES ('parcel:test:dup', ?, '{}')
+      `).run(iv);
+      const scoreInputId = (
+        db.prepare('SELECT id FROM acq_score_inputs WHERE inputs_version = ?').get(iv) as { id: number }
+      ).id;
+      db.prepare(`
+        INSERT INTO acq_scores (candidate_id, score_input_id, inputs_version, composite, tier, verdict, floor_indeterminate, score_json, scored_at)
+        VALUES ('parcel:test:dup', ?, ?, 50, 'T2', 'WATCH', 1, '{}', ?)
+      `).run(scoreInputId, iv, iv === 'iv-old' ? '2026-06-01T00:00:00Z' : '2026-07-01T00:00:00Z');
+    }
+
+    const report = buildBrainReport(db, '2026-07-06T00:00:00Z');
+    const floor = report.openQuestions.filter((q) => q.kind === 'floor-indeterminate' && q.title.includes('999 Dup Ave'));
+    expect(floor).toHaveLength(1); // not 2 — only the latest (iv-new) row surfaces
+  });
+
+  it('the LIMIT truncation is total-ordered (scored_at, id) — deterministic under same-second ties (refute fix)', () => {
+    // The I1 governor-fingerprint fix can re-key an entire candidate pool within the same
+    // wall-clock second (a governor-ratification re-score batch). Without an `id DESC` tiebreak
+    // on the OUTER ORDER BY (the inner per-candidate dedup subquery already had one), which 10 of
+    // N tied candidates survive OPEN_QUESTION_GROUP_CAP was SQLite's unspecified tie-iteration
+    // order — nondeterministic across runs on identical data.
+    const db = freshDb();
+    seedPropertyMaster(db);
+    const TIED_AT = '2026-07-01T00:00:00Z';
+    for (let i = 1; i <= 11; i++) {
+      const id = `parcel:test:tie-${i}`;
+      db.prepare(`INSERT INTO acq_candidates (id, source, address, county, state) VALUES (?, 'manual', ?, 'Test County', 'OH')`)
+        .run(id, `${i} Tie St`);
+      db.prepare(`INSERT INTO acq_score_inputs (candidate_id, inputs_version, input_json) VALUES (?, ?, '{}')`)
+        .run(id, `iv-tie-${i}`);
+      const scoreInputId = (db.prepare('SELECT id FROM acq_score_inputs WHERE inputs_version = ?').get(`iv-tie-${i}`) as { id: number }).id;
+      db.prepare(`
+        INSERT INTO acq_scores (candidate_id, score_input_id, inputs_version, composite, tier, verdict, floor_indeterminate, score_json, scored_at)
+        VALUES (?, ?, ?, 50, 'T2', 'WATCH', 1, '{}', ?)
+      `).run(id, scoreInputId, `iv-tie-${i}`, TIED_AT);
+    }
+    const report = buildBrainReport(db, '2026-07-06T00:00:00Z');
+    const tied = report.openQuestions.filter((q) => q.kind === 'floor-indeterminate' && q.title.includes('Tie St'));
+    expect(tied).toHaveLength(10); // capped
+    // Total order (scored_at DESC, id DESC) means the HIGHEST-id (most-recently-inserted) rows
+    // win a same-second tie — candidate #1 (lowest id) is the one excluded by the cap. Exact
+    // "N Tie St" match (not substring — "1 Tie St" is a substring of "11 Tie St").
+    const addresses = new Set(tied.map((q) => q.title.replace('Floor indeterminate — ', '')));
+    expect(addresses.has('1 Tie St')).toBe(false);
+    expect(addresses.has('11 Tie St')).toBe(true);
+  });
 });
 
 // ── versionLog ───────────────────────────────────────────────────────────────────────────────

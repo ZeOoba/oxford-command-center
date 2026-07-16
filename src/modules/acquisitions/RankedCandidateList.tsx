@@ -6,8 +6,10 @@
 // ltvCleared is always null at screen time (no loan amount in AcquisitionInput — indeterminate);
 // the ltvCleared === false branch below is reserved for the future financing-stage LTV gate.
 import type { RankedCandidate } from '@contracts/acquisition';
+import { GOVERNOR_FALLBACK } from '@contracts/index';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { useSetCandidateStatus } from './hooks';
+import { useSnapshot } from '@/data/queries';
 
 const TIER_STYLES: Record<string, { label: string; bg: string; color: string }> = {
   T1:     { label: 'T1 · PURSUE', bg: 'var(--accent)', color: 'var(--text-on-accent)' },
@@ -40,6 +42,12 @@ type GovernorCellProps = {
   ltvCleared: boolean | null;
 };
 function GovernorCell({ dscrCleared, ltvCleared }: GovernorCellProps) {
+  // I10 refute fix: this tooltip used to hardcode 1.25x/40% — after a DB-only re-ratification
+  // (e.g. dscrFloor tightened to 1.30) it would misstate WHY the server demoted the verdict.
+  // Read the same payload-sourced governors evaluateConditions uses. Hook called unconditionally
+  // (before any early return) per the Rules of Hooks.
+  const { data } = useSnapshot();
+  const gov = data?.snapshot.governors ?? GOVERNOR_FALLBACK;
   const breach = dscrCleared === false || ltvCleared === false;
   if (!breach && dscrCleared === null && ltvCleared === null) {
     return <span style={{ color: 'var(--text-tertiary)', fontSize: '0.75rem' }}>–</span>;
@@ -48,8 +56,8 @@ function GovernorCell({ dscrCleared, ltvCleared }: GovernorCellProps) {
     return <span style={{ color: 'var(--text-pos)', fontSize: '0.75rem' }}>✓</span>;
   }
   const tip = [
-    dscrCleared === false ? 'DSCR governor failed (proxy < 1.25x)' : '',
-    ltvCleared === false  ? 'LTV governor failed (> 40%)'          : '',
+    dscrCleared === false ? `DSCR governor failed (proxy < ${gov.dscrFloor.toFixed(2)}x)` : '',
+    ltvCleared === false  ? `LTV governor failed (> ${(gov.ltvCeiling * 100).toFixed(0)}%)` : '',
   ].filter(Boolean).join(' · ');
   return (
     <span

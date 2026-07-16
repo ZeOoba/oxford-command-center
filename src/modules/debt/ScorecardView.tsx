@@ -3,11 +3,14 @@
 // Phase 2 Step 6 — Per-property debt score table.
 // Displays DSCR, debt yield, LTV, signal, and score band for every scored property.
 // Consumes useDebtScores() — degrades to an informational empty state when unavailable.
+import { useMemo } from 'react';
 import { Skeleton } from '@/primitives/Skeleton';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { fmtPct } from '@analytics/index';
+import { GOVERNOR_FALLBACK } from '@contracts/index';
+import { useSnapshot } from '@/data/queries';
 import { isWarehouseUnavailable } from '../intel/hooks';
 import { useDebtScores, signalTone, signalLabel, bandTone } from './hooks';
 import type { DebtScore } from './hooks';
@@ -21,7 +24,11 @@ function fmtDebtYield(n: number | null): string {
   return fmtPct(n, 1);
 }
 
-const COLS: Column<DebtScore>[] = [
+// I10 refute fix: the DSCR cell used to color at a hardcoded 1.25 — after a DB-only
+// re-ratification it would color a property "healthy" that the payload-governed alert engine
+// already flags as breaching. Built per-render from the live governors (see ScorecardView).
+function buildColumns(dscrFloor: number): Column<DebtScore>[] {
+  return [
   {
     key: 'property',
     header: 'Property',
@@ -57,7 +64,7 @@ const COLS: Column<DebtScore>[] = [
     header: 'DSCR',
     align: 'right',
     render: (row) => (
-      <span className="num text-xs" style={{ color: row.dscr !== null && row.dscr < 1.25 ? 'var(--text-neg)' : 'var(--text-primary)' }}>
+      <span className="num text-xs" style={{ color: row.dscr !== null && row.dscr < dscrFloor ? 'var(--text-neg)' : 'var(--text-primary)' }}>
         {fmtDscr(row.dscr)}
       </span>
     ),
@@ -87,10 +94,14 @@ const COLS: Column<DebtScore>[] = [
     render: (row) => <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>{row.noiBasis}</span>,
     sortValue: (row) => row.noiBasis,
   },
-];
+  ];
+}
 
 export function ScorecardView() {
   const { data, isLoading, error } = useDebtScores();
+  const { data: snapshotResponse } = useSnapshot();
+  const dscrFloor = (snapshotResponse?.snapshot.governors ?? GOVERNOR_FALLBACK).dscrFloor;
+  const columns = useMemo(() => buildColumns(dscrFloor), [dscrFloor]);
 
   if (isLoading) return <Skeleton style={{ height: 280 }} />;
 
@@ -149,7 +160,7 @@ export function ScorecardView() {
         </div>
       ) : (
         <DataTable
-          columns={COLS}
+          columns={columns}
           rows={scores}
           getRowId={(s) => s.propertyId}
           initialSort={{ key: 'score', dir: 'asc' }}

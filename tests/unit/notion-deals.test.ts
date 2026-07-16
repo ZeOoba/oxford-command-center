@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import type { Deal } from '../../src/contracts/index';
 import { mapNotionPage, mergeDeals, parseNameAliases } from '../../server/sources/notion-deals';
 
@@ -53,6 +53,15 @@ describe('mapNotionPage', () => {
     expect(mapNotionPage({ properties: { 'Deal Name': { type: 'title', title: [] } } })).toBeNull();
   });
 
+  it('an UNKNOWN Notion stage label still maps to Candidate for display (schema-drift tolerated at this layer)', () => {
+    // A renamed/added select option maps to 'Candidate' for display; this layer no longer needs a
+    // confidential guard for it — mergeDeals defaults EVERY unmatched deal confidential regardless
+    // of stage (2026-07-16 policy widening), which subsumes the schema-drift case. See
+    // notion-deals.test.ts "fail-closed on unflagged unmatched Notion deals".
+    const d = mapNotionPage(page({ Stage: { type: 'select', select: { name: 'PSA Executed' } } }))!;
+    expect(d.stage).toBe('Candidate');
+  });
+
   it('maps Target Close Date to targetCloseDate (ISO date)', () => {
     const d = mapNotionPage(page({ 'Target Close Date': { type: 'date', date: { start: '2026-06-15' } } }))!;
     expect(d.targetCloseDate).toBe('2026-06-15');
@@ -86,6 +95,71 @@ describe('mergeDeals — seed is the confidential-flag source of truth', () => {
     expect(out.find((d) => d.name === 'Banwick Refi')).toBeDefined();
     expect(out.find((d) => d.name === 'New Columbus Flex')).toBeDefined();
     expect(out).toHaveLength(3);
+  });
+});
+
+describe('mergeDeals — fail-closed on unflagged unmatched Notion deals (I9, widened 2026-07-16)', () => {
+  // Before I9 the ONLY confidential guard for a Notion-only deal was the optional
+  // NOTION_CONFIDENTIAL_NAME_PATTERNS env regex (empty by default) — a new confidential deal
+  // entered in Notion but not the seed baked UNFLAGGED. I9 initially defaulted only active-stage
+  // (LOI-Closing) unmatched deals confidential; Gabriel widened this 2026-07-16 (policy review)
+  // to EVERY unmatched deal regardless of stage — a pre-LOI Candidate is already identifying
+  // (address/price/lender) and an unmatched deal reaching 'Closed Won' must not auto-flip public
+  // (surviving NDA/price-confidentiality risk). To make an unmatched deal public, add it to
+  // seed-deals.ts with confidential: false (the seed stays the source of truth).
+  it('an unmatched Notion deal defaults confidential regardless of stage — no env pattern required', () => {
+    const out = mergeDeals([], [
+      deal({ id: 'n1', name: 'DD Deal', stage: 'Due Diligence', confidential: false }),
+      deal({ id: 'n2', name: 'Closing Deal', stage: 'Closing', confidential: false }),
+      deal({ id: 'n3', name: 'Early Candidate', stage: 'Candidate', confidential: false }),
+      deal({ id: 'n4', name: 'Done Deal', stage: 'Closed', confidential: false }),
+    ]);
+    expect(out.find((d) => d.id === 'n1')!.confidential).toBe(true);
+    expect(out.find((d) => d.id === 'n2')!.confidential).toBe(true);
+    expect(out.find((d) => d.id === 'n3')!.confidential).toBe(true); // widened: pre-LOI no longer public-by-default
+    expect(out.find((d) => d.id === 'n4')!.confidential).toBe(true); // widened: closing no longer auto-publishes
+  });
+
+  it('a seed-matched deal still takes the seed flag — public-by-seed escape hatch unchanged', () => {
+    const out = mergeDeals(
+      [deal({ id: 's1', name: 'Known Public Deal', stage: 'LOI/PSA', confidential: false })],
+      [deal({ id: 'n1', name: 'Known Public Deal', stage: 'LOI/PSA', confidential: false })],
+    );
+    expect(out.find((d) => d.id === 's1')!.confidential).toBe(false);
+    expect(out).toHaveLength(1);
+  });
+});
+
+describe('mergeDeals — seed staleness tripwire (policy item 3, 2026-07-16)', () => {
+  // A seed-matched deal keeps its seed confidential:false forever, even as the live stage
+  // advances into an active acquisition stage — intended (the escape hatch), but a one-way
+  // ratchet toward public with no visibility. Non-blocking: logs, never flips the flag or throws.
+  it('warns when a seed-matched public deal advances into an active stage', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const out = mergeDeals(
+      [deal({ id: 's1', name: 'Was Candidate', stage: 'Candidate', confidential: false })],
+      [deal({ id: 'n1', name: 'Was Candidate', stage: 'Due Diligence', confidential: false })],
+    );
+    expect(out.find((d) => d.id === 's1')!.confidential).toBe(false); // flag unchanged
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('s1'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('Due Diligence'));
+    warn.mockRestore();
+  });
+
+  it('does not warn when the deal is already confidential, or stays at a non-active stage', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mergeDeals(
+      [
+        deal({ id: 's1', name: 'Already Confidential', stage: 'Candidate', confidential: true }),
+        deal({ id: 's2', name: 'Still Prospecting', stage: 'Candidate', confidential: false }),
+      ],
+      [
+        deal({ id: 'n1', name: 'Already Confidential', stage: 'Due Diligence', confidential: false }),
+        deal({ id: 'n2', name: 'Still Prospecting', stage: 'Candidate', confidential: false }),
+      ],
+    );
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });
 

@@ -162,7 +162,17 @@ function canonicalDd(dd: AcquisitionInput['ddKnown']): Record<string, boolean> {
     'deferred-maintenance-capex': dd['deferred-maintenance-capex'] === true,
   };
 }
-export function computeInputsVersion(rawInput: AcquisitionInput, ruleset: AcquisitionRuleset, rctVersion: string = RCT_VERSION): string {
+export function computeInputsVersion(
+  rawInput: AcquisitionInput,
+  ruleset: AcquisitionRuleset,
+  rctVersion: string = RCT_VERSION,
+  governorFingerprint?: string | null,
+): string {
+  if (governorFingerprint === '') {
+    // An empty string would silently fall into the legacy keyspace via the truthiness fold below —
+    // a keyspace collision, not a degradation. Pass null for the legacy hash, or a real fingerprint.
+    throw new Error('computeInputsVersion: empty governor fingerprint — pass null or a real fingerprint (refusing silent keyspace collision)');
+  }
   const input = AcquisitionInput.parse(rawInput); // apply defaults → canonical form
   // ddKnown is .partial(): an ABSENT key and an explicit false are decision-identical (engine reads `!== true`),
   // so canonicalize to the four booleans — otherwise logically-identical deals hash differently. (Refute fix.)
@@ -172,6 +182,10 @@ export function computeInputsVersion(rawInput: AcquisitionInput, ruleset: Acquis
     rulesetVersion: ruleset.rulesetVersion,
     ratification: ruleset.ratification,
     rctVersion,
+    // Persistence-layer callers fold the governor regime into the dedup key so a DSCR/LTV change
+    // re-derives persisted verdicts (I1). Folded ONLY when provided: pure/edge callers with no DB
+    // pass nothing and keep their legacy hashes — absent and null are hash-identical by design.
+    ...(governorFingerprint ? { governors: governorFingerprint } : {}),
   });
   return createHash('sha256').update(canonical).digest('hex').slice(0, 16);
 }

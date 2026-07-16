@@ -96,6 +96,21 @@ describe('determinism', () => {
   it('inputsVersion is stable, changes on a real field, and treats absent ddKnown ≡ false', () => {
     expect(computeInputsVersion(strongDeal(), ratified)).toBe(computeInputsVersion(strongDeal(), ratified));
     expect(computeInputsVersion(strongDeal(), ratified)).not.toBe(computeInputsVersion(strongDeal({ price: 3_600_000 }), ratified));
+  });
+  it('governor fingerprint mints a distinct inputs_version; absent/null preserves the legacy hash', () => {
+    // I1 (governor-excluded-from-score-dedup-key): the persistence layer folds a governor
+    // fingerprint into the dedup key so a DSCR/LTV change re-derives persisted verdicts. Pure/edge
+    // callers that pass no fingerprint (or null) must keep their legacy hashes — the key is only
+    // widened where governor state is actually loaded.
+    const legacy = computeInputsVersion(strongDeal(), ratified);
+    expect(computeInputsVersion(strongDeal(), ratified, undefined, null)).toBe(legacy);
+    const fp1 = computeInputsVersion(strongDeal(), ratified, undefined, '1.25:0.4:0.085');
+    const fp2 = computeInputsVersion(strongDeal(), ratified, undefined, '1.3:0.4:0.085');
+    expect(fp1).not.toBe(legacy);
+    expect(fp2).not.toBe(fp1);
+    expect(computeInputsVersion(strongDeal(), ratified, undefined, '1.25:0.4:0.085')).toBe(fp1);
+    // Empty-string fingerprint throws — never a silent legacy-keyspace collision (refute fix).
+    expect(() => computeInputsVersion(strongDeal(), ratified, undefined, '')).toThrow(/empty governor fingerprint/);
     const a = computeInputsVersion(AcquisitionInput.parse({ dealId: 'd', ddKnown: { flood: true } }), ratified);
     const b = computeInputsVersion(AcquisitionInput.parse({ dealId: 'd', ddKnown: { flood: true, roof: false, zoning: false, 'deferred-maintenance-capex': false } }), ratified);
     expect(a).toBe(b);

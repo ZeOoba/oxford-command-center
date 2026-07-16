@@ -141,6 +141,7 @@ function snap(s: Partial<PortfolioSnapshot>): PortfolioSnapshot {
     acquisitionInputs: {},
     marketRents: {},
     quickbooks: null,
+    governors: null,
     dataQuality: [],
     ...s,
   };
