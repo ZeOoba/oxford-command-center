@@ -14,6 +14,8 @@ import { streamSSE } from 'hono/streaming';
 import { brain } from './brain';
 import { DealStage, RenewalStageInput, NoiBudgetInput, AcquisitionInput, TenantArrearsInput } from '../src/contracts/index';
 import { DealCompsActionInput } from '../src/contracts/index';
+import type { GovernorSet } from '../src/contracts/index';
+import { loadGovernors, GOVERNOR_DEFAULTS } from './warehouse/governors';
 import { fetchDealComps } from './ai/comps';
 import { runAgent } from './ai/agent';
 import { searchDocuments, docStatus, warmDocIndex } from './sources/documents';
@@ -171,11 +173,36 @@ app.get('/api/health', (c) => {
   });
 });
 
+/**
+ * Ratified governor set for the client alert engine (I10) — warehouse-fresh when the sqlite is
+ * reachable; the compile-time GOVERNOR_DEFAULTS otherwise (identical unless a DB-only
+ * re-ratification has landed). Fail-open: governor attach must never 503 the snapshot.
+ * existsSync-gated (refute finding): getWarehouse() would otherwise CREATE + migrate a stray DB
+ * as a side effect of a GET on cold/mirror machines. Defaults are logged ONCE, not silently —
+ * a post-re-ratification regression to defaults must be observable in the server log.
+ */
+let governorFallbackWarned = false;
+function liveGovernors(): GovernorSet {
+  try {
+    const dbPath = process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
+    if (!existsSync(dbPath)) throw new Error(`warehouse absent at ${dbPath}`);
+    const g = loadGovernors(getWarehouse());
+    return { dscrFloor: g.dscrFloor, ltvCeiling: g.ltvCeiling, version: g.version, effectiveFrom: g.effectiveFrom };
+  } catch (err) {
+    if (!governorFallbackWarned) {
+      governorFallbackWarned = true;
+      console.warn(`[governors] warehouse unavailable — serving compile-time defaults (v${GOVERNOR_DEFAULTS.version}): ${err instanceof Error ? err.message : String(err)}`);
+    }
+    const d = GOVERNOR_DEFAULTS;
+    return { dscrFloor: d.dscrFloor, ltvCeiling: d.ltvCeiling, version: d.version, effectiveFrom: d.effectiveFrom };
+  }
+}
+
 /** The single typed payload: snapshot + live meta. */
 app.get('/api/snapshot', (c) => {
   const snapshot = brain.getSnapshot();
   if (!snapshot) return c.json({ error: 'no snapshot available', state: brain.getState() }, 503);
-  return c.json({ snapshot, state: brain.getState() });
+  return c.json({ snapshot: { ...snapshot, governors: liveGovernors() }, state: brain.getState() });
 });
 
 app.post('/api/refresh', async (c) => {
@@ -396,7 +423,10 @@ app.post('/api/ai', (c) =>
     await runAgent({
       question,
       history,
-      snapshot,
+      // Governor attach (refute finding): the agent's get_alerts tool runs evaluateConditions —
+      // without this it would use the compile-time fallback and diverge from the dashboard
+      // after a DB-only re-ratification.
+      snapshot: { ...snapshot, governors: liveGovernors() },
       apiKey: process.env.ANTHROPIC_API_KEY,
       model: process.env.ANTHROPIC_MODEL,
       effort: process.env.ANTHROPIC_EFFORT as 'low' | 'medium' | 'high' | 'max' | undefined,

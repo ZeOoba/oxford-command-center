@@ -224,6 +224,82 @@ describe('persistAndLogScore — governors cleared (ratified ruleset)', () => {
 });
 
 describe('persistAndLogScore — idempotency', () => {
+  it('a governor change mints a new inputs_version and re-derives the persisted verdict (no stale no-op)', async () => {
+    // I1 (governor-excluded-from-score-dedup-key): before this fix, INSERT OR IGNORE silently
+    // no-opped after a capital_config governor edit, so the ranked pipeline kept the verdict made
+    // under the OLD governor regime while /acquisition/score returned fresh. The DB CHECKs only
+    // permit tightening (dscr_floor >= 1.25), so the test tightens DSCR to 1.30 as version 2.
+    const db = freshDb();
+    const candidateId = 'test-deal-governor-refresh';
+    seedCandidate(db, candidateId);
+    const input = strongInput();
+
+    await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT);
+    db.prepare(
+      `INSERT INTO capital_config
+         (version, effective_from, dscr_floor, ltv_ceiling, disposition_cap_rate, hold_cap_rate,
+          acq_irr, capex_irr, refi_trigger_bps, payout_pct, notes)
+       VALUES (2, '2026-07-16', 1.30, 0.40, 0.065, 0.075, 0.12, 0.15, 150, 0.0, 'test: tightened DSCR governor')`,
+    ).run();
+    await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT);
+
+    const rows = db.prepare(
+      'SELECT inputs_version FROM acq_scores WHERE candidate_id = ? ORDER BY id',
+    ).all(candidateId) as Array<{ inputs_version: string }>;
+    expect(rows.length).toBe(2); // NOT an INSERT-OR-IGNORE no-op
+    expect(rows[0]!.inputs_version).not.toBe(rows[1]!.inputs_version);
+  });
+
+  it('the returned score and score_json carry the SAME inputs_version as the row key (refute fix)', async () => {
+    const db = freshDb();
+    const candidateId = 'test-deal-hash-coherence';
+    seedCandidate(db, candidateId);
+
+    const result = await persistAndLogScore(db, candidateId, strongInput(), RATIFIED_RULESET, RCT);
+    const row = db.prepare(
+      'SELECT inputs_version, score_json FROM acq_scores WHERE candidate_id = ?',
+    ).get(candidateId) as { inputs_version: string; score_json: string };
+
+    expect(result.score.inputsVersion).toBe(row.inputs_version);
+    expect((JSON.parse(row.score_json) as { inputsVersion: string }).inputsVersion).toBe(row.inputs_version);
+  });
+
+  it('a governor REVERSION (A -> B -> A values) never shadows behind the abandoned interim regime (refute fix)', async () => {
+    // Refute finding (2 independent lenses, live-reproduced): governorFingerprint hashed only
+    // VALUES, not capital_config.version. capital_config is append-only, so reverting dscrFloor
+    // back to its original value re-hashed to the ORIGINAL row's key; INSERT OR IGNORE no-opped,
+    // and every latest-by-scored_at reader (api.ts, capital-allocation.ts, brain-report.ts) served
+    // the interim (B) verdict forever while persistAndLogScore itself returned the correct (A)
+    // verdict. Folding `version` into the fingerprint gives every regime — even a values-identical
+    // reversion — its own row, so the reverted regime always becomes the new latest.
+    const db = freshDb();
+    const candidateId = 'test-deal-governor-reversion';
+    seedCandidate(db, candidateId);
+    const input = strongInput();
+
+    await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT); // regime A (v1)
+    db.prepare(
+      `INSERT INTO capital_config
+         (version, effective_from, dscr_floor, ltv_ceiling, disposition_cap_rate, hold_cap_rate,
+          acq_irr, capex_irr, refi_trigger_bps, payout_pct, notes)
+       VALUES (2, '2026-07-16', 1.30, 0.40, 0.065, 0.075, 0.12, 0.15, 150, 0.0, 'test: interim regime B')`,
+    ).run();
+    await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT); // regime B (v2)
+    db.prepare(
+      `INSERT INTO capital_config
+         (version, effective_from, dscr_floor, ltv_ceiling, disposition_cap_rate, hold_cap_rate,
+          acq_irr, capex_irr, refi_trigger_bps, payout_pct, notes)
+       VALUES (3, '2026-07-16', 1.25, 0.40, 0.065, 0.075, 0.12, 0.15, 150, 0.0, 'test: reverted to regime-A values')`,
+    ).run();
+    const final = await persistAndLogScore(db, candidateId, input, RATIFIED_RULESET, RCT); // regime A values again, but v3
+
+    const rows = db.prepare(
+      'SELECT inputs_version FROM acq_scores WHERE candidate_id = ? ORDER BY scored_at DESC, id DESC',
+    ).all(candidateId) as Array<{ inputs_version: string }>;
+    expect(rows.length).toBe(3); // no INSERT-OR-IGNORE collision on the values-reversion
+    expect(rows[0]!.inputs_version).toBe(final.score.inputsVersion); // latest-by-scored_at IS the final call's row
+  });
+
   it('second call on identical inputs is a no-op (INSERT OR IGNORE skips)', async () => {
     const db = freshDb();
     const candidateId = 'test-deal-idempotent';

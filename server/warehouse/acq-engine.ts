@@ -23,7 +23,8 @@
 // lives in acq-governor-proxy.ts (a screening heuristic, not a capital_config governor constant).
 import type { WarehouseDb } from './db';
 import { loadGovernors } from './governors';
-import { applyGovernorProxy } from './acq-governor-proxy';
+import type { Governors } from './governors';
+import { applyGovernorProxy, SCREENING_DEBT_CONSTANT } from './acq-governor-proxy';
 import { scoreAcquisition, computeInputsVersion, RATIFIED_RULESET_PATH, REPLACEMENT_COST_TABLE_PATH } from './acquisition';
 import { logVerdicts } from './calibration';
 import { CalibrationVerdictSchema, CalibrationOutcomeSchema } from '../../src/contracts/warehouse';
@@ -37,6 +38,23 @@ import type {
 export interface PersistAndLogScoreResult {
   score: AcquisitionScore;
   calibrationVerdictId: number | null;
+}
+
+/**
+ * The governor-regime component of the persisted dedup key (I1): a DSCR/LTV governor edit must
+ * mint a NEW inputs_version so INSERT OR IGNORE re-derives the verdict instead of silently keeping
+ * one made under the old regime. SCREENING_DEBT_CONSTANT is part of the DSCR-proxy formula, so a
+ * (ratified) change to it re-keys too. Format pinned — changing it re-keys every candidate once.
+ *
+ * Leads with the monotonic capital_config `version` (refute fix): capital_config is append-only,
+ * so hashing only VALUES let a reversion (v1 dscrFloor 1.25 -> v2 1.30 -> v3 back to 1.25) collide
+ * back onto v1's key. INSERT OR IGNORE then no-opped, and every latest-by-scored_at reader
+ * (api.ts, capital-allocation.ts, brain-report.ts) permanently served the abandoned v2 verdict
+ * while this function kept returning the correct v3 one. Version-leading means EVERY regime —
+ * even a values-identical reversion — mints its own row and becomes the new latest.
+ */
+export function governorFingerprint(g: Governors): string {
+  return `${g.version}:${g.dscrFloor}:${g.ltvCeiling}:${SCREENING_DEBT_CONSTANT}`;
 }
 
 /**
@@ -67,20 +85,28 @@ export async function persistAndLogScore(
   // 1. Compute the score (pure — no side effects).
   const score = scoreAcquisition(input, ruleset, { rct });
 
-  // 2. Compute the inputs_version dedup key.
-  const inputsVersion = computeInputsVersion(input, ruleset, rct.rctVersion);
-
-  // 3. Load governors at query time (never hardcoded — Invariant 4) and apply the SHARED governor
-  //    proxy — the SAME demotion the ad-hoc /acquisition/score route and the edge Pages Function
-  //    apply, so all three surfaces agree. LTV is indeterminate at screen time (null, never demotes);
-  //    DSCR proxy + KILLED-monotonicity unchanged. See acq-governor-proxy.ts header.
+  // 2. Load governors at query time (never hardcoded — Invariant 4). Loaded BEFORE the dedup key
+  //    so the governor regime is part of the persisted score's identity (I1).
   const governors = loadGovernors(db);
+
+  // 3. Compute the inputs_version dedup key — governor-fingerprinted, so a capital_config edit
+  //    re-derives persisted verdicts instead of INSERT-OR-IGNORE keeping a stale one.
+  const inputsVersion = computeInputsVersion(input, ruleset, rct.rctVersion, governorFingerprint(governors));
+
+  // 3b. Apply the SHARED governor proxy — the SAME demotion the ad-hoc /acquisition/score route
+  //     and the edge Pages Function apply, so all three surfaces agree. LTV is indeterminate at
+  //     screen time (null, never demotes); DSCR proxy + KILLED-monotonicity unchanged.
   const { verdict: finalVerdict, governorDscrCleared, governorLtvCleared } =
     applyGovernorProxy(score, input, governors);
 
   // 6. Advisory: use the engine's own advisoryOnly flag as the source of truth.
   // This guards against future engine conditions beyond ratification (e.g. RCT version).
   const advisoryOnly = score.advisoryOnly;
+
+  // 6b. The persisted/returned score blob must carry the SAME inputs_version as the row's key
+  // columns (refute finding: the engine's self-computed hash is un-fingerprinted, so score_json
+  // and API responses would otherwise embed a hash that matches no DB key).
+  const persistedScore: AcquisitionScore = { ...score, verdict: finalVerdict, inputsVersion };
 
   // 7. INSERT OR IGNORE into acq_score_inputs (idempotent on UNIQUE(candidate_id, inputs_version)).
   db.prepare(`
@@ -129,7 +155,7 @@ export async function persistAndLogScore(
     score.floorIndeterminate ? 1 : 0,
     governorDscrCleared === null ? null : (governorDscrCleared ? 1 : 0),
     governorLtvCleared === null ? null : (governorLtvCleared ? 1 : 0),
-    JSON.stringify({ ...score, verdict: finalVerdict }),
+    JSON.stringify(persistedScore),
   );
   // changes === 0 means this is an idempotent re-score — no-op is correct.
 
@@ -225,7 +251,7 @@ export async function persistAndLogScore(
   }
 
   return {
-    score: { ...score, verdict: finalVerdict },
+    score: persistedScore,
     calibrationVerdictId,
   };
 }
