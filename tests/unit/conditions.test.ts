@@ -374,6 +374,8 @@ describe('ALERT_THRESHOLDS', () => {
     // ratified set (CLAUDE.md §4, capital-config.ts) — never edit one without the other.
     expect(GOVERNOR_FALLBACK.ltvCeiling).toBe(CAPITAL_CONFIG.ltvCeiling);
     expect(GOVERNOR_FALLBACK.dscrFloor).toBe(CAPITAL_CONFIG.dscrFloor);
+    expect(GOVERNOR_FALLBACK.version).toBe(CAPITAL_CONFIG.version);
+    expect(GOVERNOR_FALLBACK.effectiveFrom).toBe(CAPITAL_CONFIG.effectiveFrom);
     expect(GOVERNOR_FALLBACK.dscrFloor).toBe(1.25);
     expect(GOVERNOR_FALLBACK.ltvCeiling).toBe(0.4);
   });

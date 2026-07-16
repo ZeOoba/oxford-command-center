@@ -49,6 +49,7 @@ function makeSnapshot(over: Partial<PortfolioSnapshot> = {}): PortfolioSnapshot 
     noiBudgets: {},
     tenantArrears: {},
     quickbooks: null,
+    governors: null,
     marketRents: {},
     dataQuality: [],
     ...over,

@@ -50,6 +50,7 @@ function emptySnapshot(): PortfolioSnapshot {
     noiBudgets: {},
     tenantArrears: {},
     quickbooks: null,
+    governors: null,
     marketRents: {},
     dataQuality: [],
   };

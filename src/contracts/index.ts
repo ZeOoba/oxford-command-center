@@ -57,8 +57,8 @@ export type SnapshotMeta = z.infer<typeof SnapshotMeta>;
  */
 /** The ratified capital-governor boundaries the client alert engine reads (I10). */
 export const GovernorSet = z.object({
-  dscrFloor: z.number(),
-  ltvCeiling: z.number(),
+  dscrFloor: z.number().finite().positive(),
+  ltvCeiling: z.number().finite().positive(),
   version: z.number(),
   effectiveFrom: z.string(),
 });
@@ -102,8 +102,10 @@ export const PortfolioSnapshot = z.object({
   tenantArrears: z.record(z.string(), TenantArrears).default({}),
   /** Server-attached QuickBooks actuals (Phase 3 ②); null when no export configured. */
   quickbooks: QbActuals.nullable().default(null),
-  /** Server/bake-attached ratified governor set (I10); null on legacy payloads → GOVERNOR_FALLBACK. */
-  governors: GovernorSet.nullable().default(null),
+  /** Server/bake-attached ratified governor set (I10); null on legacy payloads → GOVERNOR_FALLBACK.
+   *  .catch(null): a corrupt governor payload degrades to the fallback instead of bricking the
+   *  entire snapshot parse (alerts must stay available even if this field is malformed). */
+  governors: GovernorSet.nullable().default(null).catch(null),
   /**
    * Phase 3 — user-supplied market rents ($/SF PSF, annual) from overlay.marketRents.
    * Keyed by leaseId (precedence) or propertyKey. Empty when no market rents have been entered.

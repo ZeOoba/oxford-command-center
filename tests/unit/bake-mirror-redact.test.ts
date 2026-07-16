@@ -20,8 +20,17 @@ const cp = (o: Partial<Counterparty>): Counterparty => ({
   links: { properties: [], loans: [], deals: [], insurance: [] }, ...o,
 });
 
-const snap = (deals: Deal[], counterparties: Counterparty[]): PortfolioSnapshot =>
-  ({ deals, counterparties } as unknown as PortfolioSnapshot);
+const task = (o: Record<string, unknown>) => ({
+  id: 't', label: 'Ordinary ops task', section: 'Ops', role: null, type: null,
+  dueDay: null, notes: null, status: 'pending', monthlyPmt: null, ...o,
+});
+
+const snap = (
+  deals: Deal[],
+  counterparties: Counterparty[],
+  extra: Record<string, unknown> = {},
+): PortfolioSnapshot =>
+  ({ deals, counterparties, tasks: [], dealComps: {}, acquisitionInputs: {}, ...extra } as unknown as PortfolioSnapshot);
 
 describe('redactConfidential — orphaned-counterparty residue (I8)', () => {
   it('drops a counterparty orphaned by deal redaction — no lender name/kind/market residue', () => {
@@ -68,14 +77,46 @@ describe('redactConfidential — orphaned-counterparty residue (I8)', () => {
     expect(removedCounterparties).toHaveLength(0);
   });
 
+  it('drops tasks whose label or notes mention a removed deal name (M365 To-Do residue)', () => {
+    const s = snap(
+      [deal({ id: 'deal-x', name: 'Quiet Deal', shortName: 'QD-Short', confidential: true })],
+      [],
+      {
+        tasks: [
+          task({ id: 't1', label: 'Send PSA redline — Quiet Deal, 42 Elm St' }),
+          task({ id: 't2', label: 'Call lender', notes: 'follow up on qd-short appraisal' }),
+          task({ id: 't3', label: 'File quarterly CAM reconciliation' }),
+        ],
+      },
+    );
+    const { snapshot, removedTasks } = redactConfidential(s);
+    expect(snapshot.tasks.map((t) => t.id)).toEqual(['t3']); // t1 by name, t2 by shortName (case-insensitive, in notes)
+    expect(removedTasks).toBe(2);
+  });
+
+  it('strips deal-keyed overlay records (dealComps / acquisitionInputs) for removed deals', () => {
+    const s = snap(
+      [deal({ id: 'deal-x', name: 'Quiet Deal', confidential: true }), deal({ id: 'deal-y', name: 'Public Deal' })],
+      [],
+      {
+        dealComps: { 'deal-x': { comps: [] }, 'deal-y': { comps: [] } },
+        acquisitionInputs: { 'deal-x': { dealId: 'deal-x' }, 'deal-y': { dealId: 'deal-y' } },
+      },
+    );
+    const { snapshot } = redactConfidential(s);
+    expect(Object.keys(snapshot.dealComps)).toEqual(['deal-y']);
+    expect(Object.keys(snapshot.acquisitionInputs)).toEqual(['deal-y']);
+  });
+
   it('no confidential deals — snapshot passes through unchanged', () => {
     const s = snap(
       [deal({ id: 'deal-y', name: 'Public Deal' })],
       [cp({ id: 'lender-3', name: 'Plain Bank', links: { properties: [], loans: [], deals: ['deal-y'], insurance: [] } })],
     );
-    const { snapshot, removed, removedCounterparties } = redactConfidential(s);
+    const { snapshot, removed, removedCounterparties, removedTasks } = redactConfidential(s);
     expect(snapshot).toBe(s); // identity — the zero-confidential fast path
     expect(removed).toHaveLength(0);
     expect(removedCounterparties).toHaveLength(0);
+    expect(removedTasks).toBe(0);
   });
 });

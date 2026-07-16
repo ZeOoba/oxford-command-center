@@ -247,7 +247,21 @@ describe('persistAndLogScore — idempotency', () => {
       'SELECT inputs_version FROM acq_scores WHERE candidate_id = ? ORDER BY id',
     ).all(candidateId) as Array<{ inputs_version: string }>;
     expect(rows.length).toBe(2); // NOT an INSERT-OR-IGNORE no-op
-    expect(rows[0].inputs_version).not.toBe(rows[1].inputs_version);
+    expect(rows[0]!.inputs_version).not.toBe(rows[1]!.inputs_version);
+  });
+
+  it('the returned score and score_json carry the SAME inputs_version as the row key (refute fix)', async () => {
+    const db = freshDb();
+    const candidateId = 'test-deal-hash-coherence';
+    seedCandidate(db, candidateId);
+
+    const result = await persistAndLogScore(db, candidateId, strongInput(), RATIFIED_RULESET, RCT);
+    const row = db.prepare(
+      'SELECT inputs_version, score_json FROM acq_scores WHERE candidate_id = ?',
+    ).get(candidateId) as { inputs_version: string; score_json: string };
+
+    expect(result.score.inputsVersion).toBe(row.inputs_version);
+    expect((JSON.parse(row.score_json) as { inputsVersion: string }).inputsVersion).toBe(row.inputs_version);
   });
 
   it('second call on identical inputs is a no-op (INSERT OR IGNORE skips)', async () => {

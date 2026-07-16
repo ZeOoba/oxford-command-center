@@ -94,6 +94,12 @@ export function mapNotionPage(page: NotionPage): Deal | null {
   const p = page.properties ?? {};
   const name = title(p, 'Deal Name');
   if (!name) return null;
+  // Fail-closed on stage-schema drift (refute finding C2): an UNKNOWN Notion stage label maps to
+  // 'Candidate' for display — the one class the active-stage confidential default ignores. A
+  // renamed/added select option must not silently reopen the pre-I9 leak, so an unmapped label
+  // flags the deal confidential at the source (the seed still overrides on a name match).
+  const rawStage = select(p, 'Stage');
+  const stageUnknown = !!rawStage && !(rawStage in STAGE_MAP);
   return {
     id: `notion-${slug(name)}`,
     name,
@@ -102,7 +108,7 @@ export function mapNotionPage(page: NotionPage): Deal | null {
     market: mapMarket(select(p, 'Market')),
     sf: num(p, 'Total SF'),
     buildings: null,
-    stage: mapStage(select(p, 'Stage')),
+    stage: mapStage(rawStage),
     estPrice: num(p, 'Purchase Price'),
     capRate: asRate(num(p, 'Going-In Cap Rate')),
     irr: asRate(num(p, 'Levered IRR')),
@@ -113,7 +119,7 @@ export function mapNotionPage(page: NotionPage): Deal | null {
     nextAction: text(p, 'Next Action'),
     owner: text(p, 'Deal Owner'),
     targetCloseDate: dateProp(p, 'Target Close Date'),
-    confidential: isConfidentialByName(name),
+    confidential: isConfidentialByName(name) || stageUnknown,
     estimatedFields: [],
   };
 }

@@ -96,6 +96,11 @@ export async function persistAndLogScore(
   // This guards against future engine conditions beyond ratification (e.g. RCT version).
   const advisoryOnly = score.advisoryOnly;
 
+  // 6b. The persisted/returned score blob must carry the SAME inputs_version as the row's key
+  // columns (refute finding: the engine's self-computed hash is un-fingerprinted, so score_json
+  // and API responses would otherwise embed a hash that matches no DB key).
+  const persistedScore: AcquisitionScore = { ...score, verdict: finalVerdict, inputsVersion };
+
   // 7. INSERT OR IGNORE into acq_score_inputs (idempotent on UNIQUE(candidate_id, inputs_version)).
   db.prepare(`
     INSERT OR IGNORE INTO acq_score_inputs
@@ -143,7 +148,7 @@ export async function persistAndLogScore(
     score.floorIndeterminate ? 1 : 0,
     governorDscrCleared === null ? null : (governorDscrCleared ? 1 : 0),
     governorLtvCleared === null ? null : (governorLtvCleared ? 1 : 0),
-    JSON.stringify({ ...score, verdict: finalVerdict }),
+    JSON.stringify(persistedScore),
   );
   // changes === 0 means this is an idempotent re-score — no-op is correct.
 
@@ -239,7 +244,7 @@ export async function persistAndLogScore(
   }
 
   return {
-    score: { ...score, verdict: finalVerdict },
+    score: persistedScore,
     calibrationVerdictId,
   };
 }

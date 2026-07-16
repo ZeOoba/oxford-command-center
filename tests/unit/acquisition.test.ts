@@ -109,6 +109,8 @@ describe('determinism', () => {
     expect(fp1).not.toBe(legacy);
     expect(fp2).not.toBe(fp1);
     expect(computeInputsVersion(strongDeal(), ratified, undefined, '1.25:0.4:0.085')).toBe(fp1);
+    // Empty-string fingerprint throws — never a silent legacy-keyspace collision (refute fix).
+    expect(() => computeInputsVersion(strongDeal(), ratified, undefined, '')).toThrow(/empty governor fingerprint/);
     const a = computeInputsVersion(AcquisitionInput.parse({ dealId: 'd', ddKnown: { flood: true } }), ratified);
     const b = computeInputsVersion(AcquisitionInput.parse({ dealId: 'd', ddKnown: { flood: true, roof: false, zoning: false, 'deferred-maintenance-capex': false } }), ratified);
     expect(a).toBe(b);

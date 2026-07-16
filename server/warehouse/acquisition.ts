@@ -168,6 +168,11 @@ export function computeInputsVersion(
   rctVersion: string = RCT_VERSION,
   governorFingerprint?: string | null,
 ): string {
+  if (governorFingerprint === '') {
+    // An empty string would silently fall into the legacy keyspace via the truthiness fold below —
+    // a keyspace collision, not a degradation. Pass null for the legacy hash, or a real fingerprint.
+    throw new Error('computeInputsVersion: empty governor fingerprint — pass null or a real fingerprint (refusing silent keyspace collision)');
+  }
   const input = AcquisitionInput.parse(rawInput); // apply defaults → canonical form
   // ddKnown is .partial(): an ABSENT key and an explicit false are decision-identical (engine reads `!== true`),
   // so canonicalize to the four booleans — otherwise logically-identical deals hash differently. (Refute fix.)

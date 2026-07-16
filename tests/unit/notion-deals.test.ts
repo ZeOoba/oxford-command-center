@@ -53,6 +53,19 @@ describe('mapNotionPage', () => {
     expect(mapNotionPage({ properties: { 'Deal Name': { type: 'title', title: [] } } })).toBeNull();
   });
 
+  it('an UNKNOWN Notion stage label flags the deal confidential (schema-drift fail-closed)', () => {
+    // A renamed/added select option maps to 'Candidate' for display — the one class the
+    // active-stage default ignores — so the mapper itself must fail closed on unmapped labels.
+    const d = mapNotionPage(page({ Stage: { type: 'select', select: { name: 'PSA Executed' } } }))!;
+    expect(d.stage).toBe('Candidate'); // display mapping unchanged
+    expect(d.confidential).toBe(true); // but never bakes public on schema drift
+  });
+
+  it('a KNOWN stage label does not trigger the schema-drift flag', () => {
+    const d = mapNotionPage(page())!; // 'Under Contract' — mapped
+    expect(d.confidential).toBe(false);
+  });
+
   it('maps Target Close Date to targetCloseDate (ISO date)', () => {
     const d = mapNotionPage(page({ 'Target Close Date': { type: 'date', date: { start: '2026-06-15' } } }))!;
     expect(d.targetCloseDate).toBe('2026-06-15');
@@ -97,7 +110,7 @@ describe('mergeDeals — fail-closed on unflagged active-stage Notion-only deals
   // with confidential: false (the seed stays the source of truth).
   it('an unmatched active-stage Notion deal defaults confidential — no env pattern required', () => {
     const out = mergeDeals([], [deal({ id: 'notion-q', name: 'Quiet Acquisition', stage: 'LOI/PSA', confidential: false })]);
-    expect(out[0].confidential).toBe(true);
+    expect(out[0]!.confidential).toBe(true);
   });
 
   it('covers Due Diligence and Closing; a pre-LOI Candidate keeps the keyword-guard result', () => {

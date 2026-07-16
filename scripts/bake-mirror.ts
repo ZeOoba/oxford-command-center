@@ -22,10 +22,10 @@ loadEnvFile();
  * *.pages.dev deploy must always run in the default (redacted) mode.
  */
 export function redactConfidential(snapshot: PortfolioSnapshot): {
-  snapshot: PortfolioSnapshot; removed: string[]; removedCounterparties: string[];
+  snapshot: PortfolioSnapshot; removed: string[]; removedCounterparties: string[]; removedTasks: number;
 } {
   const confidential = snapshot.deals.filter((d) => d.confidential);
-  if (confidential.length === 0) return { snapshot, removed: [], removedCounterparties: [] };
+  if (confidential.length === 0) return { snapshot, removed: [], removedCounterparties: [], removedTasks: 0 };
   const removedIds = new Set(confidential.map((d) => d.id));
   const deals = snapshot.deals.filter((d) => !d.confidential);
   const counterparties: PortfolioSnapshot['counterparties'] = [];
@@ -44,10 +44,36 @@ export function redactConfidential(snapshot: PortfolioSnapshot): {
     }
     counterparties.push({ ...cp, links: { ...cp.links, deals: keptDeals } });
   }
+  // Task-text residue (refute finding C1): snapshot.tasks carries live M365 To-Do titles + note
+  // bodies and workbook checklist labels — a task like "Send PSA redline — <deal name>" leaks the
+  // deal redaction just deleted. Drop any task whose text mentions a removed deal's name.
+  // (Residual risk accepted + documented: a task referencing only the ADDRESS is not caught.)
+  const removedNames = confidential
+    .flatMap((d) => [d.name, d.shortName])
+    .filter((s): s is string => !!s)
+    .map((s) => s.toLowerCase());
+  const tasks = snapshot.tasks.filter((t) => {
+    const hay = `${t.label} ${t.notes ?? ''}`.toLowerCase();
+    return !removedNames.some((n) => hay.includes(n));
+  });
+  const removedTasks = snapshot.tasks.length - tasks.length;
+  // Deal-keyed overlay records (refute finding C3): dealComps/acquisitionInputs are keyed by deal
+  // id — and the id is a slug of the deal NAME, so the key alone identifies the deal. Empty on
+  // today's bake path (parseWorkbook supplies neither) but redaction must be an exhaustive walk
+  // of the contract, not a bet on the current producer. Remaining fields audited 2026-07-16:
+  // renewalStages/tenantNotes/tenantArrears are lease/tenant-keyed, loans/insurance are
+  // workbook-only (a pipeline deal produces neither), dataQuality is parser-emitted.
+  const dealComps = Object.fromEntries(
+    Object.entries(snapshot.dealComps).filter(([id]) => !removedIds.has(id)),
+  );
+  const acquisitionInputs = Object.fromEntries(
+    Object.entries(snapshot.acquisitionInputs).filter(([id]) => !removedIds.has(id)),
+  );
   return {
-    snapshot: { ...snapshot, deals, counterparties },
+    snapshot: { ...snapshot, deals, counterparties, tasks, dealComps, acquisitionInputs },
     removed: confidential.map((d) => d.name),
     removedCounterparties,
+    removedTasks,
   };
 }
 
@@ -61,34 +87,31 @@ async function main() {
   // evening would otherwise roll monthsToExpiry a day early). Precedence mirrors run.ts:
   // REPORT_DATE pin → ET send date. Data-month selection is unaffected (still WORKBOOK_AS_OF).
   const { snapshot: raw } = await parseWorkbook(workbookPath(), referenceDate(etNow().date));
-  if (process.env.BRIEF_ENABLED === '1') {
-    const { runBrief } = await import('../server/brief/run');
-    // M3: thread getMacro as macroProvider so the brief's refi-spread signal uses the live
-    // DGS10 rate rather than the 0.065 fallback. Fail-open if getMacro throws.
-    const r = await runBrief(raw, { macroProvider: getMacro });
-    console.log(`  Brief: sent=${r.briefSent}, alerts=${r.alertsSent}`);
-  }
-  const { snapshot, removed, removedCounterparties } = includeConfidential
-    ? { snapshot: raw, removed: [], removedCounterparties: [] }
-    : redactConfidential(raw);
 
-  // I10: the client alert engine reads governor boundaries from the payload. Warehouse-fresh
-  // when the sqlite exists on the bake machine; compile-time defaults otherwise (CI/worktree
-  // bakes) — existsSync-gated so the light snapshot path never creates a stray DB or loads the
-  // sqlite driver unnecessarily.
+  // I10: the client alert engine reads governor boundaries from the payload. Resolved BEFORE the
+  // brief (refute finding: the brief's evaluateConditions needs the same live governors or its
+  // alerts diverge from the dashboard after a DB-only re-ratification). Warehouse-fresh when the
+  // sqlite exists on the bake machine — opened READ-ONLY + fileMustExist so the bake can never
+  // create, migrate, or WAL-touch the DB (refute finding) — compile-time defaults otherwise.
   let governors: GovernorSet | null = null;
+  let governorSource = `compile-time defaults (v${GOVERNOR_DEFAULTS.version})`;
   const dbPath = process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
   if (existsSync(dbPath)) {
     try {
-      const [{ loadGovernors }, { openWarehouse }] = await Promise.all([
-        import('../server/warehouse/governors'),
-        import('../server/warehouse/db'),
+      const [{ loadCapitalConfig }, { default: Database }] = await Promise.all([
+        import('../server/warehouse/capital-config'),
+        import('better-sqlite3'),
       ]);
-      const db = openWarehouse(dbPath);
-      const g = loadGovernors(db);
-      governors = { dscrFloor: g.dscrFloor, ltvCeiling: g.ltvCeiling, version: g.version, effectiveFrom: g.effectiveFrom };
-    } catch {
-      governors = null; // fall through to compile-time defaults below
+      const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+      try {
+        const g = loadCapitalConfig(db as unknown as Parameters<typeof loadCapitalConfig>[0]);
+        governors = { dscrFloor: g.dscrFloor, ltvCeiling: g.ltvCeiling, version: g.version, effectiveFrom: g.effectiveFrom };
+        governorSource = `warehouse (v${g.version}, effective ${g.effectiveFrom})`;
+      } finally {
+        db.close();
+      }
+    } catch (err) {
+      console.warn(`  ⚠ Governors: warehouse read failed — using compile-time defaults: ${err instanceof Error ? err.message : String(err)}`);
     }
   }
   if (!governors) {
@@ -98,17 +121,37 @@ async function main() {
     };
   }
 
+  if (process.env.BRIEF_ENABLED === '1') {
+    const { runBrief } = await import('../server/brief/run');
+    // M3: thread getMacro as macroProvider so the brief's refi-spread signal uses the live
+    // DGS10 rate rather than the 0.065 fallback. Fail-open if getMacro throws.
+    // Governors attached so brief alerts use the same live boundaries as the dashboard (I10).
+    const r = await runBrief({ ...raw, governors }, { macroProvider: getMacro });
+    console.log(`  Brief: sent=${r.briefSent}, alerts=${r.alertsSent}`);
+  }
+  const { snapshot, removed, removedCounterparties, removedTasks } = includeConfidential
+    ? { snapshot: raw, removed: [], removedCounterparties: [], removedTasks: 0 }
+    : redactConfidential(raw);
+
   writeFileSync(join(pub, 'snapshot.json'), JSON.stringify({ ...snapshot, governors }));
   writeFileSync(join(pub, 'macro.json'), JSON.stringify(await getMacro()));
 
   const mode = includeConfidential ? 'FULL (confidential included — Access-gated targets only)' : 'REDACTED (public-safe)';
   console.log(`✓ Baked public/snapshot.json (${snapshot.properties.length} props, ${snapshot.leases.length} leases, ${snapshot.deals.length} deals) + public/macro.json`);
   console.log(`  Mode: ${mode}`);
+  console.log(`  Governors: ${governorSource} — DSCR ≥ ${governors.dscrFloor} / LTV ≤ ${governors.ltvCeiling}`);
   // Operator visibility (I9): enumerate every baked deal so an unexpectedly-public deal is
-  // visible in the bake log, not just discoverable after it ships.
-  console.log(`  Deals baked: ${snapshot.deals.length ? snapshot.deals.map((d) => d.name).join(' · ') : '(none)'}`);
-  if (removed.length) console.log(`  Redacted ${removed.length} confidential deal(s): ${removed.join(', ')}`);
-  if (removedCounterparties.length) console.log(`  Dropped ${removedCounterparties.length} orphaned counterpart${removedCounterparties.length === 1 ? 'y' : 'ies'} (I8): ${removedCounterparties.join(', ')}`);
+  // visible in the bake log. Names are printed ONLY in redacted mode (where every baked deal is
+  // public by construction); FULL mode logs a count so confidential names never hit a log sink
+  // (refute finding — a future Start-Transcript around the deploy must not become a name sink).
+  console.log(includeConfidential
+    ? `  Deals baked: ${snapshot.deals.length} (names withheld — FULL mode)`
+    : `  Deals baked: ${snapshot.deals.length ? snapshot.deals.map((d) => d.name).join(' · ') : '(none)'}`);
+  // Counts only — confidential deal names and their orphaned counterparties must never hit a log
+  // sink, even one Task Scheduler discards today (same by-construction rule as the FULL-mode line).
+  if (removed.length) console.log(`  Redacted ${removed.length} confidential deal(s)`);
+  if (removedCounterparties.length) console.log(`  Dropped ${removedCounterparties.length} orphaned counterpart${removedCounterparties.length === 1 ? 'y' : 'ies'} (I8)`);
+  if (removedTasks) console.log(`  Dropped ${removedTasks} task(s) mentioning a confidential deal name`);
   if (includeConfidential) console.warn('  ⚠ CONFIDENTIAL DATA INCLUDED — deploy ONLY to a Cloudflare Access-gated target.');
 
   // Fat Mirror (Phase 1b): the HEAVY warehouse bake is OPT-IN (--warehouse / BAKE_WAREHOUSE=1) so the
