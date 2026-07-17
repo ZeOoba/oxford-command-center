@@ -57,6 +57,43 @@ function gitSubcommandIndex(tokens, sub) {
   return tokens.indexOf(sub, gi + 1);
 }
 
+/**
+ * True when a `cp` invocation in `rawTokens` writes INTO a path matching
+ * `guardPathRe` (destination argument only - `cp` sourced FROM that path is
+ * a pure read/backup and must not trip this). Destination is the argument to
+ * -t/--target-directory= when present (that form puts the destination
+ * first), otherwise the last non-flag argument. Quote-unaware, matching this
+ * file's existing tokenization elsewhere.
+ */
+function cpGuardWrite(rawTokens, guardPathRe) {
+  const cpIdx = rawTokens.findIndex((t) => t === 'cp' || t.endsWith('/cp'));
+  if (cpIdx === -1) return false;
+  const args = rawTokens.slice(cpIdx + 1);
+  // GNU cp accepts any unambiguous prefix of a long option, and accepts a
+  // long option's argument either `=`-attached OR as the next token (e.g.
+  // `--target-directory DIR` works identically to `--target-directory=DIR`
+  // and to the `-t DIR` short form). Adversarial-review finds: matching only
+  // the literal full `--target-directory=` spelling let `--target-dir=` (an
+  // abbreviation) through, and matching only the `=`-attached form let the
+  // space-separated `--target-directory DIR` form through. No other GNU cp
+  // long option starts with `target-`, so any `--target-d...` prefix
+  // unambiguously means this form regardless of which shape supplies DIR.
+  const nextTokenFlagIdx = args.findIndex(
+    (t) => t === '-t' || /^--target-d[a-z]*$/i.test(t),
+  );
+  const tdFlag = args.find((t) => /^--target-d[a-z]*=/i.test(t));
+  let destArg;
+  if (nextTokenFlagIdx !== -1) {
+    destArg = args[nextTokenFlagIdx + 1];
+  } else if (tdFlag) {
+    destArg = tdFlag.slice(tdFlag.indexOf('=') + 1);
+  } else {
+    const nonFlagArgs = args.filter((t) => !t.startsWith('-'));
+    destArg = nonFlagArgs[nonFlagArgs.length - 1];
+  }
+  return destArg ? new RegExp(guardPathRe, 'i').test(destArg) : false;
+}
+
 /** True when token is a single-dash short-option cluster containing letter `ch`. */
 function shortClusterHas(token, ch) {
   return (
@@ -569,11 +606,41 @@ try {
       }
     }
 
-    // (d) git config / git -c touching core.hooksPath
+    // (d) git config / git -c touching core.hooksPath - MUTATIONS only. A pure
+    // read (`--get`/`--get-all`/`--get-regexp`/`--get-urlmatch`, or a bare
+    // `git config core.hooksPath` with no value argument) is not tampering
+    // and must not be denied - only a form that actually sets/unsets the
+    // value is (OI-011). Anything this can't positively identify as a
+    // recognized read still denies, matching this hook's conservative
+    // default elsewhere.
     if (tokens.includes('git') && /core\.hookspath/i.test(rawSeg)) {
-      deny(
-        'Changing core.hooksPath is blocked: git hook-path tampering disables the repo safety hooks (CLAUDE.md 9).',
-      );
+      const inlineSet = /(?:^|\s)-c\s*["']?core\.hookspath\s*=/i.test(rawSeg);
+      const cfgi = gitSubcommandIndex(tokens, 'config');
+      const cfgRest = cfgi === -1 ? [] : tokens.slice(cfgi + 1);
+      const isExplicitRead = cfgRest.some((t) => /^--get(-all|-regexp|-urlmatch)?$/i.test(t));
+      const isExplicitMutate = cfgRest.some((t) => /^--(unset(-all)?|add|replace-all)$/i.test(t));
+      // Find the key's position WITHOUT filtering out dash-prefixed tokens
+      // first (adversarial-review find: `git config core.hooksPath
+      // -evilhooks` is a fully valid git SET with no `--` needed - filtering
+      // dash-prefixed tokens before this search made the value invisible and
+      // let it through as a "bare read"). Any token positioned after the key
+      // at all means a value is present - EXCEPT for an explicit --get*/
+      // regexp read, where a single trailing token is git's own
+      // value-PATTERN filter argument, not a value being set.
+      const keyIdx = cfgRest.findIndex((t) => /^core\.hookspath$/i.test(t));
+      const hasTrailingToken = keyIdx !== -1 && keyIdx < cfgRest.length - 1;
+      const hasValueArg = hasTrailingToken && !isExplicitRead;
+      const isRecognizedRead =
+        cfgi !== -1 &&
+        !isExplicitMutate &&
+        !hasValueArg &&
+        (isExplicitRead || keyIdx !== -1);
+
+      if (inlineSet || !isRecognizedRead) {
+        deny(
+          'Changing core.hooksPath is blocked: git hook-path tampering disables the repo safety hooks (CLAUDE.md 9).',
+        );
+      }
     }
 
     // (f) rm/unlink of the live warehouse or overlay. With a preceding `cd data`
@@ -602,8 +669,15 @@ try {
         new RegExp('\\btee\\b[^|;&]*' + GUARD_PATH, 'i').test(rawSeg) ||
         // in-place sed edit of the path
         new RegExp('\\bsed\\b[^|;&]*\\s-i\\b[^|;&]*' + GUARD_PATH, 'i').test(rawSeg) ||
-        // mv/cp with the path as an argument (destination)
-        new RegExp('\\b(?:mv|cp)\\b[^|;&]*' + GUARD_PATH, 'i').test(rawSeg) ||
+        // mv: guard path anywhere (source or destination) is a mutation - as
+        // source it removes/neutralizes the file (same severity as rm), as
+        // destination it overwrites. Unlike cp, mv has no pure-read form.
+        new RegExp('\\bmv\\b[^|;&]*' + GUARD_PATH, 'i').test(rawSeg) ||
+        // cp: only the DESTINATION argument is a mutation - copying FROM a
+        // guardrail file (e.g. a backup) is a pure read and must not be
+        // denied (OI-011). Destination is the last non-flag argument, or the
+        // argument to -t/--target-directory= when that form is used.
+        cpGuardWrite(rawTokens, GUARD_PATH) ||
         // rm/unlink of the path
         isRm;
       if (guardWrite) {
