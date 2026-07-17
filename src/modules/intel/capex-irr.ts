@@ -11,21 +11,27 @@
 //   - Whole years only — holdYears must be a positive integer, no partial years
 //
 // Numerical method: bisection. For uplift > 0 and r > -1, NPV is strictly monotone decreasing in
-// r and NPV(r) -> +Infinity as r -> -1+, so a root always exists somewhere in (-1, 10) — the
-// bracket's lower bound starts at -0.99 and adaptively pushes closer to -1 (never reaching it)
-// until NPV(lo) > 0, so even a catastrophic-loss project converges to its REAL negative rate with
-// a near-zero residual, rather than clamping to an arbitrary floor (refute-pass finding: a fixed
-// -0.99 floor left a five-figure NPV residual — i.e. a wrong answer — for a severe enough loss).
-// Convergence: |hi-lo| < 1e-9 OR 200 iterations; the root property (NPV ~ 0 at the returned rate)
-// is asserted directly in tests for both the ordinary and catastrophic-loss regions.
+// r and NPV(r) -> +Infinity as r -> -1+, so a root always exists somewhere above -1 — both bracket
+// ends start at [0, 10] and adaptively widen outward (lower toward -1, never reaching it; upper by
+// 10x steps, uncapped) until NPV brackets a sign change, so even a catastrophic-loss or
+// extreme-return project converges to its REAL rate with a near-zero residual in the ordinary
+// case, rather than clamping to an arbitrary floor/ceiling (refute-pass findings: a fixed -0.99
+// floor, and separately a fixed 10 ceiling, each left a residual — i.e. a wrong answer — outside
+// their bracket). Convergence: |hi-lo| < 1e-9 OR 200 iterations. Precision degrades as r -> -1
+// (dNPV/dr is unbounded there), so a residual on the order of the capex's own magnitude is
+// possible for a large-enough capex at a deeply negative rate — decision-irrelevant in practice
+// since the verdict is already unambiguously "does not clear" well before that region, but the
+// root property is NOT a blanket "near-zero residual" guarantee at every input.
 //
 // CAPITAL_CONFIG.capexIrr (15%) is a SEPARATE governed constant (capex-approval yield-on-cost
 // floor) from the general hurdleRatePct (8%) the live capital-allocation engine's own improve-gate
-// compares against — CapexIrrCalc.tsx reads hurdleRatePct and compares with the SAME strict `>`
-// the engine uses, so the two can never disagree on the SAME metric. They remain conceptually
-// different calculations (this is a full IRR on user-entered capex; the engine's capexIrr is a
-// portfolio-level proxy estimate), so this only guarantees comparison-logic parity, not that the
-// two numbers are ever literally equal.
+// (capexIrr > hurdleRatePct, strict) compares against — CapexIrrCalc.tsx reads hurdleRatePct and
+// applies the same strict `>`. This guarantees comparison-LOGIC parity only: the two are
+// conceptually different calculations (this is a full IRR on user-entered capex; the engine's
+// capexIrr is a portfolio-level proxy) computed on different numbers, so an exact tie between this
+// panel's bisected IRR and the live hurdle can still land on either side of `>` depending on the
+// bisection's own sub-cent residual — a decision-irrelevant edge case (a genuine $0-NPV project),
+// not a "can never disagree" guarantee.
 
 /**
  * Discount a uniform annual cash flow stream and subtract the initial capex.
@@ -91,7 +97,13 @@ export function computeCapexIrr(
       lo = -1 + (1 + lo) / 10; // shrinks the distance to -1 by 10x each attempt: -0.99, -0.999, ...
     }
   }
+  // Same defect class on the other side (round-3 finding): a fixed hi=10 (1000%) silently
+  // truncates a true IRR above 1000% (e.g. capex small relative to annual uplift) with a large
+  // positive NPV residual. Widen outward, uncapped, until the root is actually bracketed.
   let hi = 10;
+  for (let guard = 0; guard < 30 && npvAtRate(capex, annualNOIUplift, holdYears, hi) > 0; guard++) {
+    hi *= 10;
+  }
 
   for (let i = 0; i < 200; i++) {
     const mid = (lo + hi) / 2;

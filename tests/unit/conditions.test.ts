@@ -401,6 +401,20 @@ describe('ALERT_THRESHOLDS', () => {
     expect(parsed.ltvCeiling).toBe(0.35);
     expect(parsed.hurdleRatePct).toBe(GOVERNOR_FALLBACK.hurdleRatePct); // defaults, doesn't reject
   });
+
+  // -------------------------------------------------------------------------
+  // Round-3 finding (S2): the skew test above pins GOVERNOR_FALLBACK/CAPITAL_CONFIG agreement, but
+  // never pins the SCHEMA's own `.default('ratified')` independently -- flip that default to
+  // 'proposed' and every existing assertion (all sourced from GOVERNOR_FALLBACK, a separately
+  // hand-maintained constant, not the schema) would stay green while every skew/fallback-shaped
+  // payload spuriously banners as non-binding. Parse a payload missing hurdleRateRatification and
+  // assert the schema's own default value directly, with no GOVERNOR_FALLBACK indirection.
+  // -------------------------------------------------------------------------
+  it('the GovernorSet schema defaults hurdleRateRatification to "ratified" on its own (not via GOVERNOR_FALLBACK)', () => {
+    const skewed = { dscrFloor: 1.30, ltvCeiling: 0.35, hurdleRatePct: 0.09, version: 2, effectiveFrom: '2026-08-01' };
+    const parsed = GovernorSet.parse(skewed);
+    expect(parsed.hurdleRateRatification).toBe('ratified');
+  });
 });
 
 describe('evaluateConditions — payload-sourced governors (I10)', () => {

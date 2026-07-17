@@ -175,7 +175,9 @@ describe('CapexIrrCalc — proposed-but-unratified hurdle gets advisory treatmen
     renderPanel('invest', null, 0.10, 'proposed');
     expect(screen.getByText(/Advisory only/i)).toBeTruthy();
     expect(screen.getByText(/pending ratification/i)).toBeTruthy();
-    expect(screen.getByText(/non-binding/i)).toBeTruthy();
+    // "non-binding" now also appears on the verdict card itself (round-3 finding, S4) — this
+    // assertion only needs the banner's own copy, so scope to it rather than the whole document.
+    expect(screen.getByText(/Verdicts below are non-binding/i)).toBeTruthy();
   });
 
   it('shows no advisory banner when the live hurdle is ratified (today\'s real state)', () => {
@@ -186,6 +188,55 @@ describe('CapexIrrCalc — proposed-but-unratified hurdle gets advisory treatmen
   it('shows no advisory banner on the fallback (no live payload) -- the fallback is compile-time ratified', () => {
     renderPanel('invest');
     expect(screen.queryByText(/Advisory only/i)).toBeNull();
+  });
+
+  // Round-3 finding (S4): the banner was purely additive -- verdict/verdictTone never read
+  // isProposed, so a proposed-state panel still showed a plain green "Clears the hurdle" card with
+  // no qualifier of its own, relying entirely on the banner above it being noticed.
+  it('marks the verdict itself as non-binding when the hurdle is proposed, not just the banner above it', () => {
+    renderPanel('invest', null, 0.10, 'proposed');
+    setInputs(100_000, 20_000, 10); // clears even the higher 10% hurdle
+    expect(screen.getByText(/Clears the hurdle \(10(\.0)?%\) — non-binding/i)).toBeTruthy();
+  });
+
+  it('does not add a non-binding qualifier when the hurdle is ratified', () => {
+    renderPanel('invest');
+    setInputs(100_000, 20_000, 10);
+    expect(screen.getByText(/^Clears the hurdle \(8(\.0)?%\)$/i)).toBeTruthy();
+  });
+});
+
+describe('CapexIrrCalc — default inputs (round-3 finding: must not default to a failing example)', () => {
+  // Round-3 completeness lens: the prior defaults (100k capex / 20k uplift / 5yr hold) undiscount
+  // to exactly capex (20k*5=100k) -- a 0% IRR, unambiguously below any real hurdle. Every property
+  // this panel renders for showed a RED "Does not clear the hurdle" verdict on first paint, with
+  // no user interaction. A representative example should demonstrate a genuine pass by default.
+  it('shows a passing ("Clears the hurdle") verdict with no user interaction, against the fallback hurdle', () => {
+    renderPanel('invest');
+    expect(screen.getByText(/Clears the hurdle \(8(\.0)?%\)/i)).toBeTruthy();
+  });
+});
+
+describe('CapexIrrCalc — NPV caption agrees with the NPV sign (round-3 finding)', () => {
+  // The caption was previously unconditional ("surplus above the hurdle rate"), which read
+  // backwards whenever NPV was negative -- including the panel's own prior default state.
+  it('reads "surplus" when NPV is non-negative', () => {
+    renderPanel('invest');
+    setInputs(100_000, 20_000, 10); // IRR ~15.1%, NPV at 8% hurdle is positive
+    expect(screen.getByText(/surplus above the 8(\.0)?% hurdle rate/i)).toBeTruthy();
+  });
+
+  it('reads "shortfall" (not "surplus") when NPV is negative', () => {
+    renderPanel('invest');
+    setInputs(100_000, 12_000, 10); // well under the 8% hurdle -- NPV at hurdle is negative
+    expect(screen.getByText(/shortfall against the 8(\.0)?% hurdle rate/i)).toBeTruthy();
+  });
+
+  it('reads a neutral caption (no "surplus") when inputs are invalid', () => {
+    renderPanel('invest');
+    fireEvent.change(screen.getByLabelText(/proposed capex/i), { target: { value: '0' } });
+    expect(screen.queryByText(/surplus/i)).toBeNull();
+    expect(screen.getByText(/at the 8(\.0)?% hurdle rate/i)).toBeTruthy();
   });
 });
 
@@ -229,6 +280,26 @@ describe('CapexIrrCalc — state resets on property switch (refute-pass finding)
     expect(screen.getByText(/Capex IRR Calculator — Property B/i)).toBeTruthy();
     // State reset to the defaults, not carried over from Property A's entered values.
     expect((screen.getByLabelText(/proposed capex/i) as HTMLInputElement).value).toBe('100000');
+  });
+});
+
+describe('CapexIrrCalc — number inputs can be cleared (round-3 finding)', () => {
+  // Previously onChange ignored a non-finite parseFloat result entirely, so a backspace-to-empty
+  // left the DOM value uncontrolled-vs-React out of sync: the input visually snapped back to the
+  // last valid value, and typing a fresh number concatenated onto it instead of replacing it.
+  it('shows an empty field (not the old value) when the user clears it', () => {
+    renderPanel('invest');
+    const input = screen.getByLabelText(/proposed capex/i) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '' } });
+    expect(input.value).toBe('');
+  });
+
+  it('lets the user type a fresh number after clearing, without concatenating onto the old value', () => {
+    renderPanel('invest');
+    const input = screen.getByLabelText(/proposed capex/i) as HTMLInputElement;
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.change(input, { target: { value: '7' } });
+    expect(input.value).toBe('7'); // not "1000007" or similar
   });
 });
 

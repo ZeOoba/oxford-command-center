@@ -136,6 +136,21 @@ describe('computeCapexIrr', () => {
   });
 
   // -------------------------------------------------------------------------
+  // Third refute round: the upper bound had the SAME defect class the lower bound was fixed for
+  // in round 2 -- a fixed hi=10 (1000%) clamp silently truncates a true IRR above 1000%, leaving a
+  // large positive NPV residual (a wrong answer) instead of reporting the real rate. capex=10,000,
+  // uplift=200,000, hold=5 -> true IRR is far beyond 1000% (first-year cash flow alone is 20x
+  // capex). The bracket now adaptively pushes the upper bound outward (never bounded) until the
+  // root is actually contained, mirroring the lower-bound fix.
+  // -------------------------------------------------------------------------
+  it('converges to the real rate (near-zero residual), not a clamped 1000.0%, for an extreme-return project', () => {
+    const irr = computeCapexIrr(10_000, 200_000, 5);
+    expect(irr).toBeGreaterThan(10); // genuinely beyond the old fixed 1000% clamp
+    const nv = npvAtRate(10_000, 200_000, 5, irr);
+    expect(Math.abs(nv)).toBeLessThan(0.01); // real convergence, not a residual-laden clamp
+  });
+
+  // -------------------------------------------------------------------------
   // Refute-pass finding: computeCapexIrr's own guard only checked `uplift <= 0`, so
   // `NaN <= 0` (false) and `Infinity > 0` (passes) both slipped through as "valid" inputs and
   // produced finite-looking garbage, contradicting the function's own documented contract

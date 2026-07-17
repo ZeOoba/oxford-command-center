@@ -2,8 +2,8 @@
 //
 // Capex / Improvement IRR Calculator panel (item-8).
 //
-// Shows the capital verdict says "invest"/"monitor"/"hold" but leaves return on investment
-// unquantified. This panel fills that gap: given a proposed capex, projected annual NOI uplift,
+// The capital verdict says "invest"/"monitor"/"hold" but leaves return on investment unquantified.
+// This panel fills that gap: given a proposed capex, projected annual NOI uplift,
 // and hold period, it computes the unlevered IRR and compares it to the DB-governed hurdleRatePct
 // — the SAME threshold the live capital-allocation engine's own improve-gate uses
 // (server/warehouse/capital-allocation.ts). Read live via useSnapshot() (governors.hurdleRatePct),
@@ -26,9 +26,13 @@ import type { PropertyScore } from './analytics-hooks';
 // ---------------------------------------------------------------------------
 // Defaults — representative starting point, user overrides via inputs.
 // ---------------------------------------------------------------------------
+// Round-3 finding: the prior defaults (100k/20k/5yr) undiscounted to exactly capex (20k*5=100k,
+// a 0% IRR) -- every property showed a failing example verdict with zero user interaction. hold=10
+// reuses the cross-checked ~15.1% case from capex-irr.test.ts (well above the 8% hurdle) instead
+// of introducing a new unverified magic number.
 const DEFAULT_CAPEX = 100_000;
 const DEFAULT_UPLIFT = 20_000;
-const DEFAULT_HOLD = 5;
+const DEFAULT_HOLD = 10;
 
 // ---------------------------------------------------------------------------
 // Props
@@ -76,12 +80,13 @@ function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
   const [hold, setHold] = useState<number>(DEFAULT_HOLD);
 
   // Pure computation — no side effects. passesHurdle uses the RAW (unrounded) values with the
-  // SAME strict `>` the live capital-allocation engine's own improve-gate uses, so this tool's
-  // comparison logic can never disagree with the engine's for the same numbers. This also keeps
-  // the NPV sign and the verdict permanently in agreement for free: NPV(hurdle) > 0 iff
-  // hurdle < irr iff irr > hurdle — the SAME inequality, not two independently-rounded ones (a
-  // prior display-precision rounding scheme here reintroduced the exact self-contradiction it was
-  // meant to fix, per a second refute pass — removed rather than patched again).
+  // SAME strict `>` the live capital-allocation engine's own improve-gate uses — this is
+  // comparison-LOGIC parity (see capex-irr.ts's header for the boundary case a third refute round
+  // found: the bisected irr and hurdle can land on either side of `>` at a genuine tie, because
+  // the bisection's own residual isn't exactly zero). Reading NPV and passesHurdle off the SAME
+  // raw irr (not two independently-rounded values) is still what keeps them from CONTRADICTING
+  // each other — a prior display-precision rounding scheme here reintroduced exactly that
+  // contradiction, per a second refute pass — removed rather than patched again.
   const result = useMemo(() => {
     const irr = computeCapexIrr(capex, uplift, hold);
     const npv = Number.isFinite(irr)
@@ -110,13 +115,18 @@ function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
   // 'hold' and 'monitor', reusing that phrasing would put "deploy capital" directly under a "Hold"
   // verdict header — a visible contradiction a refute pass flagged. This tool's own vocabulary
   // ("clears the hurdle") stays independent of the platform's capital-action verbs.
+  // Round-3 finding (S4): the advisory banner above was purely additive -- the verdict card itself
+  // never referenced isProposed, so it could still read as a plain, unqualified "Clears the
+  // hurdle" if the banner went unnoticed. Only the two hurdle-comparison branches carry a
+  // qualifier — the NaN/-Infinity branches are already not verdicts about the hurdle at all.
+  const nonBindingSuffix = isProposed ? ' — non-binding' : '';
   const verdict = Number.isNaN(result.irr)
     ? 'Invalid inputs — enter a positive capex and hold period'
     : result.irr === -Infinity
       ? 'No positive return at these inputs'
       : result.passesHurdle
-        ? `Clears the hurdle (${fmtPct(hurdle)})`
-        : `Does not clear the hurdle (${fmtPct(hurdle)})`;
+        ? `Clears the hurdle (${fmtPct(hurdle)})${nonBindingSuffix}`
+        : `Does not clear the hurdle (${fmtPct(hurdle)})${nonBindingSuffix}`;
 
   const verdictTone = !Number.isFinite(result.irr)
     ? ('red' as const)
@@ -250,7 +260,11 @@ function CapexIrrPanel({ propertyName }: { propertyName: string | null }) {
             className="num mt-1 text-2xs"
             style={{ color: 'var(--text-tertiary)' }}
           >
-            surplus above the {fmtPct(hurdle)} hurdle rate
+            {result.npv === null || !Number.isFinite(result.npv)
+              ? `at the ${fmtPct(hurdle)} hurdle rate`
+              : result.npv >= 0
+                ? `surplus above the ${fmtPct(hurdle)} hurdle rate`
+                : `shortfall against the ${fmtPct(hurdle)} hurdle rate`}
           </div>
         </div>
 
@@ -290,6 +304,14 @@ function LabeledInput({
   step?: number;
   onChange: (v: number) => void;
 }) {
+  // Round-3 finding: the field previously ignored a non-finite parseFloat result entirely, so
+  // backspacing to empty snapped the DOM value back to the last valid number and a fresh keystroke
+  // concatenated onto it instead of replacing it. rawText holds the user's in-progress (not yet
+  // parseable) text; it's cleared back to null the moment a keystroke DOES parse, so the field then
+  // reflects the (possibly clamped, e.g. hold-period) controlled value like it always did.
+  const [rawText, setRawText] = useState<string | null>(null);
+  const displayValue = rawText !== null ? rawText : String(value);
+
   return (
     <div>
       <label
@@ -302,13 +324,19 @@ function LabeledInput({
       <input
         id={id}
         type="number"
-        value={value}
+        value={displayValue}
         min={min}
         max={max}
         step={step}
         onChange={(e) => {
-          const v = parseFloat(e.target.value);
-          if (Number.isFinite(v)) onChange(v);
+          const text = e.target.value;
+          const v = parseFloat(text);
+          if (Number.isFinite(v)) {
+            setRawText(null);
+            onChange(v);
+          } else {
+            setRawText(text);
+          }
         }}
         className="num w-full rounded-md px-3 py-2 text-sm font-semibold"
         style={{
