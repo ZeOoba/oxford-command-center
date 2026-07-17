@@ -68,6 +68,135 @@ describe('evaluateConditions — debt', () => {
     const out = evaluateConditions(snap({ loans: [loan({ balloon: true, maturity: iso(180) })] }), opts);
     expect(out.find((i) => i.id === 'balloon-n1')?.severity).toBe('warning');
   });
+
+  // ── Balloon direction awareness ───────────────────────────────────────────
+  // A `lender`-direction loan is money ORA is OWED (contracts/loan.ts: "Lender = Oxford
+  // receives"; currentBalance is negative = capital deployed). Telling the reader to
+  // "prepare refinance or payoff" on an asset inverts the fact. Live case that motivated
+  // this: REDACTED-306 — $979,772 @ 9%, balloon 2027-02-20, direction 'lender'
+  // — shipped in the 2026-07-16 Daily Brief as a debt obligation.
+  //
+  // Convention follows the refi-spread precedent already in this file (test (f)):
+  // ORA-obligation alerts fire for `borrower` only; `lender` and `internal` are excluded.
+  it('balloon does NOT fire the debt/refi alert for a lender-direction loan (ORA is owed, not owing)', () => {
+    const out = evaluateConditions(
+      snap({ loans: [loan({ id: 'lend1', direction: 'lender', balloon: true, maturity: iso(120) })] }),
+      opts,
+    );
+    expect(out.some((i) => i.id === 'balloon-lend1')).toBe(false);
+  });
+
+  it('balloon does NOT fire the debt/refi alert for an internal-direction loan (intercompany accrual)', () => {
+    const out = evaluateConditions(
+      snap({ loans: [loan({ id: 'int1', direction: 'internal', balloon: true, maturity: iso(120) })] }),
+      opts,
+    );
+    expect(out.some((i) => i.id === 'balloon-int1')).toBe(false);
+  });
+
+  it('a maturing lender-direction note fires its own insight, distinct from the balloon one', () => {
+    const out = evaluateConditions(
+      snap({ loans: [loan({ id: 'lend2', name: 'REDACTED-306', direction: 'lender', balloon: true, maturity: iso(120), absBalance: 979_772 })] }),
+      opts,
+    );
+    const note = out.find((i) => i.id === 'note-maturity-lend2');
+    expect(note).toBeDefined();
+    // 'debt' (family CF, a capital event), NOT 'collections' (family TE = tenant AR, and
+    // non-negativity-enforced). A note borrower is not a tenant.
+    expect(note!.category).toBe('debt');
+    expect(note!.entityType).toBe('loan');
+    expect(note!.entityId).toBe('lend2');
+    expect(out.some((i) => i.id === 'balloon-lend2')).toBe(false);
+  });
+
+  // REGRESSION GUARD — the live row, with its REAL fields, not just its name.
+  // The first cut of this test carried absBalance alone and left monthlyPmt/rate null, so
+  // annualDebtService returned null, impactAnnualUsd was null, and the suite was green while
+  // the real row produced -$REDACTED-AMT. A fixture must carry the data that breaks, not the
+  // label of the thing that broke.
+  it('the live REDACTED-306 row yields a POSITIVE impact (signed workbook pmt must not leak through)', () => {
+    const out = evaluateConditions(
+      snap({
+        loans: [
+          loan({
+            id: 'rct',
+            name: 'REDACTED-306',
+            direction: 'lender',
+            balloon: true,
+            maturity: iso(120),
+            absBalance: REDACTED-AMT,
+            currentBalance: -REDACTED-AMT,
+            monthlyPmt: -REDACTED-AMT, // workbook signs lender payments negative
+            rate: 0.09,
+          }),
+        ],
+      }),
+      opts,
+    );
+    const note = out.find((i) => i.id === 'note-maturity-rct');
+    expect(note).toBeDefined();
+    expect(note!.provenance).toBe('derived');
+    expect(note!.impactAnnualUsd).not.toBeNull();
+    expect(note!.impactAnnualUsd!).toBeGreaterThan(0);
+    // |−REDACTED-AMT × 12| × min(120/30/12, 1) = 66854.6 × 0.3333… = 22284.87
+    expect(note!.impactAnnualUsd!).toBeCloseTo(22_284.87, 1);
+  });
+
+  it('a borrower balloon with a positive workbook pmt is numerically unchanged by the abs() hardening', () => {
+    const out = evaluateConditions(
+      snap({ loans: [loan({ id: 'bpos', direction: 'borrower', balloon: true, maturity: iso(120), monthlyPmt: REDACTED-AMT })] }),
+      opts,
+    );
+    const b = out.find((i) => i.id === 'balloon-bpos');
+    expect(b).toBeDefined();
+    // |REDACTED-AMT × 12| × 0.3333… = REDACTED-AMT × 0.3333… = 65217.84 — identical to pre-hardening.
+    expect(b!.impactAnnualUsd!).toBeCloseTo(65_217.84, 1);
+  });
+
+  it('a lender note never reaches critical severity, however close its maturity', () => {
+    const out = evaluateConditions(
+      snap({ loans: [loan({ id: 'lend5', direction: 'lender', balloon: true, maturity: iso(3) })] }),
+      opts,
+    );
+    // brief/run.ts emails an individual alert per NEW critical id — inbound capital must
+    // never trigger a CRITICAL-branded outbound email.
+    expect(out.find((i) => i.id === 'note-maturity-lend5')?.severity).toBe('warning');
+  });
+
+  it('a maturing lender-direction note never tells the reader to refinance or pay it off', () => {
+    const out = evaluateConditions(
+      snap({ loans: [loan({ id: 'lend3', direction: 'lender', balloon: true, maturity: iso(120) })] }),
+      opts,
+    );
+    const note = out.find((i) => i.id === 'note-maturity-lend3');
+    expect(note).toBeDefined();
+    expect(note!.detail.toLowerCase()).not.toContain('refinance');
+    expect(note!.detail.toLowerCase()).not.toContain('payoff');
+    expect(note!.action?.kind).not.toBe('open-refi');
+  });
+
+  it('a borrower-direction balloon is unchanged — still debt, still refi (regression guard)', () => {
+    const out = evaluateConditions(
+      snap({ loans: [loan({ id: 'borr1', direction: 'borrower', balloon: true, maturity: iso(120) })] }),
+      opts,
+    );
+    const b = out.find((i) => i.id === 'balloon-borr1');
+    expect(b).toBeDefined();
+    expect(b!.category).toBe('debt');
+    expect(b!.severity).toBe('critical');
+    expect(b!.detail).toContain('Prepare refinance or payoff');
+    expect(b!.action?.kind).toBe('open-refi');
+    expect(out.some((i) => i.id === 'note-maturity-borr1')).toBe(false);
+  });
+
+  it('a lender note beyond the warning window does not fire either alert', () => {
+    const out = evaluateConditions(
+      snap({ loans: [loan({ id: 'lend4', direction: 'lender', balloon: true, maturity: iso(400) })] }),
+      opts,
+    );
+    expect(out.some((i) => i.id === 'note-maturity-lend4')).toBe(false);
+    expect(out.some((i) => i.id === 'balloon-lend4')).toBe(false);
+  });
   it('balloon at exactly 365d still fires (warning)', () => {
     const out = evaluateConditions(snap({ loans: [loan({ balloon: true, maturity: iso(365) })] }), opts);
     expect(out.find((i) => i.id === 'balloon-n1')?.severity).toBe('warning');
