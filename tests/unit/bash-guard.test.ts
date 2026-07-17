@@ -62,6 +62,30 @@ describe('bash-guard.mjs — original 7 blocked classes (regression, post-indire
     expect(runGuard('git config core.hooksPath /tmp/evil', repo).denied).toBe(true);
   });
 
+  it('(d) allows reading core.hooksPath (OI-011)', () => {
+    expect(runGuard('git config --get core.hooksPath', repo).denied).toBe(false);
+    expect(runGuard('git config --get-all core.hooksPath', repo).denied).toBe(false);
+    expect(runGuard('git config core.hooksPath', repo).denied).toBe(false);
+  });
+
+  it('(d) still denies core.hooksPath mutation forms beyond the plain set (OI-011 regression guard)', () => {
+    expect(runGuard('git config --unset core.hooksPath', repo).denied).toBe(true);
+    expect(runGuard('git -c core.hooksPath=/tmp/evil status', repo).denied).toBe(true);
+    expect(runGuard('git config --global core.hooksPath /tmp/evil', repo).denied).toBe(true);
+  });
+
+  it('(d) denies a dash-prefixed core.hooksPath value (adversarial-review find, no -- separator needed)', () => {
+    // Confirmed real bypass during OI-011 adversarial review: `git config core.hooksPath
+    // -evilhooks` is a fully valid git SET (no `--` needed) - filtering dash-prefixed
+    // tokens out before searching for a value made it invisible and let this through as
+    // a misclassified "bare read".
+    expect(runGuard('git config core.hooksPath -evilhooks', repo).denied).toBe(true);
+  });
+
+  it('(d) allows --get with a trailing value-pattern argument (real git: a filter, not a set)', () => {
+    expect(runGuard('git config --get core.hooksPath /tmp/pattern', repo).denied).toBe(false);
+  });
+
   it('(e) denies sqlite3 DDL/DML against the live warehouse', () => {
     expect(
       runGuard('sqlite3 data/warehouse/finance.sqlite "DELETE FROM users"', repo).denied,
@@ -86,6 +110,43 @@ describe('bash-guard.mjs — original 7 blocked classes (regression, post-indire
 
   it('(g) allows reads of guardrail files', () => {
     expect(runGuard('cat .claude/settings.json', repo).denied).toBe(false);
+  });
+
+  it('(g) allows cp FROM a guardrail file (backup/read), denies cp INTO one (OI-011)', () => {
+    expect(runGuard('cp .claude/settings.json /tmp/backup.json', repo).denied).toBe(false);
+    expect(runGuard('cp /tmp/evil.json .claude/settings.json', repo).denied).toBe(true);
+  });
+
+  it('(g) still denies mv of a guardrail file in either argument position (OI-011 regression guard)', () => {
+    // mv, unlike cp, removes the file from its source location - source-position mv is
+    // effectively a deletion/neutralization of the guard file, same severity as rm, so it
+    // must stay denied even though cp-as-source is now allowed.
+    expect(runGuard('mv .claude/hooks/bash-guard.mjs /tmp/gone.mjs', repo).denied).toBe(true);
+    expect(runGuard('mv /tmp/evil.json .claude/settings.json', repo).denied).toBe(true);
+  });
+
+  it('(g) denies cp into a guardrail directory via -t/--target-directory (OI-011 regression guard)', () => {
+    expect(runGuard('cp -t .claude/hooks/ /tmp/evil.mjs', repo).denied).toBe(true);
+    expect(runGuard('cp --target-directory=.claude/hooks/ /tmp/evil.mjs', repo).denied).toBe(true);
+  });
+
+  it('(g) denies cp into a guardrail directory via the --target-dir abbreviation (adversarial-review find)', () => {
+    // Confirmed real bypass during OI-011 adversarial review: GNU cp accepts unambiguous
+    // prefix abbreviations of long options, so `--target-dir=` (and shorter prefixes)
+    // work identically to `--target-directory=` but weren't matched by the literal-only
+    // regex, letting a write straight into .claude/hooks/ through undetected.
+    expect(runGuard('cp --target-dir=.claude/hooks/ evil.mjs', repo).denied).toBe(true);
+    expect(runGuard('cp --target-d=.claude/hooks/ evil.mjs', repo).denied).toBe(true);
+  });
+
+  it('(g) denies cp into a guardrail directory via space-separated --target-directory (adversarial-review round 2 find)', () => {
+    // Confirmed real bypass during OI-011 round-2 adversarial review: GNU cp accepts a
+    // long option's argument either `=`-attached OR as the next token entirely - only
+    // the `=`-attached form was matched, so `cp --target-directory .claude/hooks/
+    // evil.mjs` (space-separated, real GNU cp behavior, verified empirically) slipped
+    // through with the destination argument mis-picked as `evil.mjs` instead.
+    expect(runGuard('cp --target-directory .claude/hooks/ evil.mjs', repo).denied).toBe(true);
+    expect(runGuard('cp --target-dir .claude/hooks/ evil.mjs', repo).denied).toBe(true);
   });
 
   it('still catches git add -A hidden in sh -c / $() / backticks', () => {
