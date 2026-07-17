@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import type { PortfolioSnapshot, Property, Lease, Loan, InsurancePolicy, Deal } from '@contracts/index';
-import { GOVERNOR_FALLBACK } from '@contracts/index';
+import { GOVERNOR_FALLBACK, GovernorSet } from '@contracts/index';
 import { evaluateConditions, ALERT_THRESHOLDS, extractDgs5MarketRate } from '@analytics/index';
 import type { MacroSnapshot } from '@contracts/index';
 import { CAPITAL_CONFIG } from '../../server/warehouse/capital-config';
@@ -507,12 +507,48 @@ describe('ALERT_THRESHOLDS', () => {
     expect(GOVERNOR_FALLBACK.effectiveFrom).toBe(CAPITAL_CONFIG.effectiveFrom);
     expect(GOVERNOR_FALLBACK.dscrFloor).toBe(1.25);
     expect(GOVERNOR_FALLBACK.ltvCeiling).toBe(0.4);
+    // hurdleRatePct (item-8 capex-IRR calculator) drift-pinned the same way as dscrFloor/ltvCeiling.
+    expect(GOVERNOR_FALLBACK.hurdleRatePct).toBe(CAPITAL_CONFIG.hurdleRatePct);
+    expect(GOVERNOR_FALLBACK.hurdleRatePct).toBe(0.08);
+    expect(GOVERNOR_FALLBACK.hurdleRateRatification).toBe(CAPITAL_CONFIG.hurdleRateRatification);
+    expect(GOVERNOR_FALLBACK.hurdleRateRatification).toBe('ratified');
+  });
+
+  // -------------------------------------------------------------------------
+  // Refute-pass finding: hurdleRatePct was added as a REQUIRED zod field. Since the whole
+  // `governors` snapshot field is `.nullable().default(null).catch(null)`, a payload whose
+  // governors object is missing just this ONE new field (an un-restarted old server, or a
+  // baked mirror snapshot from before this field existed -- a real deploy-skew window) would fail
+  // the ENTIRE GovernorSet parse and lose dscrFloor/ltvCeiling too, silently degrading DSCR/LTV
+  // alerts to compile-time fallback. hurdleRatePct must default on its own so a skewed payload
+  // still keeps its other (older, already-relied-upon) governor fields.
+  // -------------------------------------------------------------------------
+  it('a governors payload missing ONLY hurdleRatePct (deploy-skew shape) still parses -- dscrFloor/ltvCeiling are not lost', () => {
+    const skewed = { dscrFloor: 1.30, ltvCeiling: 0.35, version: 2, effectiveFrom: '2026-08-01' };
+    const parsed = GovernorSet.parse(skewed);
+    expect(parsed.dscrFloor).toBe(1.30);
+    expect(parsed.ltvCeiling).toBe(0.35);
+    expect(parsed.hurdleRatePct).toBe(GOVERNOR_FALLBACK.hurdleRatePct); // defaults, doesn't reject
+  });
+
+  // -------------------------------------------------------------------------
+  // Round-3 finding (S2): the skew test above pins GOVERNOR_FALLBACK/CAPITAL_CONFIG agreement, but
+  // never pins the SCHEMA's own `.default('ratified')` independently -- flip that default to
+  // 'proposed' and every existing assertion (all sourced from GOVERNOR_FALLBACK, a separately
+  // hand-maintained constant, not the schema) would stay green while every skew/fallback-shaped
+  // payload spuriously banners as non-binding. Parse a payload missing hurdleRateRatification and
+  // assert the schema's own default value directly, with no GOVERNOR_FALLBACK indirection.
+  // -------------------------------------------------------------------------
+  it('the GovernorSet schema defaults hurdleRateRatification to "ratified" on its own (not via GOVERNOR_FALLBACK)', () => {
+    const skewed = { dscrFloor: 1.30, ltvCeiling: 0.35, hurdleRatePct: 0.09, version: 2, effectiveFrom: '2026-08-01' };
+    const parsed = GovernorSet.parse(skewed);
+    expect(parsed.hurdleRateRatification).toBe('ratified');
   });
 });
 
 describe('evaluateConditions — payload-sourced governors (I10)', () => {
   const gov = (o: Partial<{ dscrFloor: number; ltvCeiling: number }> = {}) =>
-    ({ dscrFloor: 1.25, ltvCeiling: 0.4, version: 2, effectiveFrom: '2026-07-16', ...o });
+    ({ dscrFloor: 1.25, ltvCeiling: 0.4, hurdleRatePct: 0.08, hurdleRateRatification: 'ratified' as const, version: 2, effectiveFrom: '2026-07-16', ...o });
 
   it('a tightened payload DSCR governor moves the watch boundary — no conditions.ts edit', () => {
     const s = snap({ properties: [prop({ dscr: 1.30 })], governors: gov({ dscrFloor: 1.35 }) });

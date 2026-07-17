@@ -59,6 +59,18 @@ export type SnapshotMeta = z.infer<typeof SnapshotMeta>;
 export const GovernorSet = z.object({
   dscrFloor: z.number().finite().positive(),
   ltvCeiling: z.number().finite().positive(),
+  /** General unlevered-IRR hurdle (Phase 5 governor, DB-backed hurdle_rate_pct). The capex-IRR
+   *  calculator (item-8) compares against THIS, not the separate static CAPITAL_CONFIG.capexIrr
+   *  constant, so its comparison logic can never contradict the live capital-allocation engine's
+   *  own improve-gate. Defaults rather than requires: a payload missing only this (newer) field
+   *  must not fail the whole GovernorSet parse and silently lose dscrFloor/ltvCeiling too — a
+   *  real deploy-skew risk a refute pass caught. Default matches GOVERNOR_FALLBACK below. */
+  hurdleRatePct: z.number().finite().nonnegative().default(0.08),
+  /** Whether hurdleRatePct is Gabriel-ratified or still proposed — consumers (e.g. CapexIrrCalc,
+   *  item-8) must show advisory ("non-binding") treatment when 'proposed', matching
+   *  HurdleRateBanner.tsx's existing pattern. Defaults 'ratified' (today's true DB state) so a
+   *  skew-window payload missing this field doesn't spuriously flip to advisory. */
+  hurdleRateRatification: z.enum(['ratified', 'proposed']).default('ratified'),
   version: z.number(),
   effectiveFrom: z.string(),
 });
@@ -73,6 +85,8 @@ export type GovernorSet = z.infer<typeof GovernorSet>;
 export const GOVERNOR_FALLBACK: GovernorSet = {
   dscrFloor: 1.25,
   ltvCeiling: 0.40,
+  hurdleRatePct: 0.08,
+  hurdleRateRatification: 'ratified',
   version: 1,
   effectiveFrom: '2026-06-13',
 };
