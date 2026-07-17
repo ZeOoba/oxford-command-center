@@ -34,7 +34,10 @@ data/reindex.log
 logs/
 run/
 .superpowers/
-.worktrees
+# Git worktrees (EnterWorktree / git worktree add) — never committed; node_modules inside these otherwise slows git status to a crawl
+.claude/worktrees/
+.claude-worktrees/
+.worktrees/
 # Architect-ack override sentinel for .claude/hooks/file-guard.mjs — machine-local, never committed
 .claude/overrides/
 # Personal per-machine Claude Code overrides (note: *.local above does NOT match settings.local.json)
