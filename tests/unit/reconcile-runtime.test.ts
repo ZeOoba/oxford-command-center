@@ -49,4 +49,53 @@ describe('checkSnapshot — runtime reconciliation', () => {
     const flags = checkSnapshot(base({ properties: [{ id: 'a' }, { id: 'b' }] }));
     expect(flags.some((f) => f.field === 'properties.id')).toBe(false);
   });
+
+  it('flags a cash-history latest point that disagrees with the current total (error)', () => {
+    const flags = checkSnapshot(
+      base({ cash: { totalCash: 500, entities: [{ id: 'e1', currentBalance: 500 }], history: [{ total: 100 }] } }),
+    );
+    expect(flags.some((f) => f.field === 'cash.history' && f.severity === 'error')).toBe(true);
+  });
+
+  it('does not flag cash history when there is none (no history array supplied)', () => {
+    const flags = checkSnapshot(base());
+    expect(flags.some((f) => f.field === 'cash.history')).toBe(false);
+  });
+
+  it('flags a property NOI sum that disagrees with the workbook\'s own Portfolio Total', () => {
+    const flags = checkSnapshot(
+      base({ properties: [{ id: 'p1', noi: 100 }], workbookTotals: { noi: 999, value: null, rent: null } }),
+    );
+    expect(flags.some((f) => f.field === 'properties.noi' && f.severity === 'error')).toBe(true);
+  });
+
+  it('flags an Oxford value sum that disagrees with the workbook\'s own Portfolio Total', () => {
+    const flags = checkSnapshot(
+      base({ properties: [{ id: 'p1', oxfordValue: 100 }], workbookTotals: { noi: null, value: 999, rent: null } }),
+    );
+    expect(flags.some((f) => f.field === 'properties.oxfordValue' && f.severity === 'error')).toBe(true);
+  });
+
+  it('flags an annual rent sum that disagrees with the workbook\'s own Portfolio Total', () => {
+    const flags = checkSnapshot(
+      base({ leases: [{ id: 'l1', annualRent: 1200, monthlyRent: 100 }], workbookTotals: { noi: null, value: null, rent: 5000 } }),
+    );
+    expect(flags.some((f) => f.field === 'leases.annualRent' && f.severity === 'error')).toBe(true);
+  });
+
+  it('does not cross-check against the workbook Portfolio Total when workbookTotals is absent (legacy payload)', () => {
+    const flags = checkSnapshot(base({ properties: [{ id: 'p1', noi: 100 }] }));
+    expect(flags.some((f) => f.field === 'properties.noi')).toBe(false);
+  });
+
+  it('passes when property NOI/value and annual rent all agree with the workbook Portfolio Total', () => {
+    const flags = checkSnapshot(
+      base({
+        properties: [{ id: 'p1', noi: 400, oxfordValue: 5000000 }],
+        leases: [{ id: 'l1', annualRent: 1200, monthlyRent: 100 }],
+        workbookTotals: { noi: 400, value: 5000000, rent: 1200 },
+      }),
+    );
+    expect(flags).toEqual([]);
+  });
 });
