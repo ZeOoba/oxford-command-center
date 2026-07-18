@@ -328,33 +328,40 @@ app.post('/api/actions/om-extract', async (c) => {
   if (file.size > MAX_BYTES) {
     return c.json({ ok: false, error: 'File too large (max 25 MB).' }, 413);
   }
+
+  // Resolve the deal BEFORE extraction (previously only looked up after, for the save step) so a
+  // confidential deal's OM text can be blocked pre-egress, before it ever reaches the Anthropic API.
+  // No dealId (blank-deal upload) means nothing to check against — extraction proceeds as today.
+  // A dealId that fails to resolve (snapshot unavailable / unknown id) is a DIFFERENT case — that
+  // fails closed via dealLookupFailed below rather than silently proceeding as non-confidential.
+  const dealId = form.get('dealId');
+  const hasDealId = typeof dealId === 'string' && dealId !== '';
+  const deal = hasDealId ? brain.getSnapshot()?.deals.find((d) => d.id === dealId) : undefined;
+
   const buf = Buffer.from(await file.arrayBuffer());
   const result = await extractOmFields(buf, {
     apiKey: process.env.ANTHROPIC_API_KEY,
     model: process.env.OM_EXTRACT_MODEL ?? 'claude-haiku-4-5-20251001', // separate from ANTHROPIC_MODEL (the assistant model)
+    dealConfidential: deal?.confidential,
+    dealLookupFailed: hasDealId && !deal,
   });
-  if (!result.ok) return c.json({ ok: false, error: result.error }, result.status as 422 | 500 | 502 | 503);
+  if (!result.ok) return c.json({ ok: false, error: result.error }, result.status as 403 | 422 | 500 | 502 | 503);
 
   // If a dealId is provided, save the PDF into the deal's Investment Candidates subfolder.
   let savedPath: string | undefined;
-  const dealId = form.get('dealId');
-  if (typeof dealId === 'string' && dealId) {
-    const snapshot = brain.getSnapshot();
-    const deal = snapshot?.deals.find((d) => d.id === dealId);
-    if (deal && process.env.DOCUMENTS_DIR) {
-      const year = new Date().getFullYear();
-      // eslint-disable-next-line no-control-regex -- intentional: strip Windows-reserved chars + ASCII control range (\x00-\x1f) from uploaded filenames
-      const safeFileName = basename(file.name).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
-      const dealDir = join(process.env.DOCUMENTS_DIR, `Investment Candidates -- ${year}`, `${deal.name} — ${deal.location}`);
-      try {
-        await mkdir(dealDir, { recursive: true });
-        const outPath = resolve(join(dealDir, safeFileName));
-        if (!outPath.startsWith(resolve(dealDir) + sep)) throw new Error('path traversal');
-        await writeFile(outPath, buf);
-        savedPath = dealDir;
-      } catch {
-        // save is best-effort — extraction already succeeded
-      }
+  if (deal && process.env.DOCUMENTS_DIR) {
+    const year = new Date().getFullYear();
+    // eslint-disable-next-line no-control-regex -- intentional: strip Windows-reserved chars + ASCII control range (\x00-\x1f) from uploaded filenames
+    const safeFileName = basename(file.name).replace(/[<>:"/\\|?*\x00-\x1f]/g, '_');
+    const dealDir = join(process.env.DOCUMENTS_DIR, `Investment Candidates -- ${year}`, `${deal.name} — ${deal.location}`);
+    try {
+      await mkdir(dealDir, { recursive: true });
+      const outPath = resolve(join(dealDir, safeFileName));
+      if (!outPath.startsWith(resolve(dealDir) + sep)) throw new Error('path traversal');
+      await writeFile(outPath, buf);
+      savedPath = dealDir;
+    } catch {
+      // save is best-effort — extraction already succeeded
     }
   }
 

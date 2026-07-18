@@ -12,6 +12,17 @@ export interface OmExtractOptions {
   fetchImpl?: typeof fetch;
   // Injectable for tests — avoids needing to vi.mock the pdf-parse module
   pdfParseFn?: (buffer: Buffer) => Promise<{ text: string }>;
+  // Confidentiality egress guard input — the caller (route) resolves the Deal and passes its
+  // `confidential` flag down. Undefined (no dealId / blank-deal upload) means nothing to check
+  // against, so extraction proceeds. See the block below for why this stays a bare boolean rather
+  // than a full Deal import — mirrors server/ai/comps.ts's pre-network confidentiality guard.
+  dealConfidential?: boolean;
+  // Set true by the caller when a dealId WAS supplied but the Deal record couldn't be resolved
+  // (brain snapshot unavailable, or an unknown/stale id) — confidentiality can't be verified in
+  // that case. This must fail CLOSED rather than silently proceeding as non-confidential, mirroring
+  // server/briefing/confidential.ts's fail-closed doctrine for confidentiality gates. Distinct from
+  // omitting dealConfidential entirely (no dealId at all — nothing to check against, safe to proceed).
+  dealLookupFailed?: boolean;
 }
 
 // Fields loaded from om-extract-fields.json — edit that file to add/tune fields without touching this module.
@@ -36,6 +47,24 @@ export async function extractOmFields(
   pdfBuffer: Buffer,
   opts: OmExtractOptions,
 ): Promise<OmExtractResult> {
+  // Confidentiality egress guard (mirrors server/ai/comps.ts): a confidential deal's OM text must
+  // never reach the Anthropic API. Block before any PDF parse or network call, regardless of
+  // API-key state — the caller resolves the Deal and passes `confidential` down BEFORE this call.
+  if (opts.dealConfidential) {
+    return {
+      ok: false,
+      error: 'OM extraction is disabled for confidential deals — sending this PDF to the Anthropic API would leak the deal identity externally.',
+      status: 403,
+    };
+  }
+  if (opts.dealLookupFailed) {
+    return {
+      ok: false,
+      error: 'Could not verify this deal\'s confidentiality status (deal not found or the brain snapshot is unavailable) — refusing to send OM text externally until this can be confirmed.',
+      status: 403,
+    };
+  }
+
   if (!opts.apiKey) {
     return { ok: false, error: 'AI extraction requires ANTHROPIC_API_KEY — start the Brain server with a key configured.', status: 500 };
   }
