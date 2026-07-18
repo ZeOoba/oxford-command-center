@@ -58,8 +58,9 @@ export interface OmExtractJsonSchema {
  *  instead of an omitted key — which extractOmFields()'s existing `typeof v === 'string'`
  *  filter already drops, so "never guess" is preserved with no change to the read path.
  *  Every property here counts against Anthropic's "parameters with union types" limit (16,
- *  separate from the unused "optional parameters" limit of 24) — this schema uses exactly
- *  15; a 16th extractable field would need to split into a second schema/call. */
+ *  separate from the unused "optional parameters" limit of 24) — 16 total is the documented
+ *  ceiling (not the trigger point), this schema uses 15, so a 16th field still fits; a 17th
+ *  extractable field would need to split into a second schema/call. */
 export function buildOmExtractSchema(): OmExtractJsonSchema {
   const properties: Record<string, OmSchemaProperty> = {};
   for (const field of EXTRACTABLE_FIELDS) {

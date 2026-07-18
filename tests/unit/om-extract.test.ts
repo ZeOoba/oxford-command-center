@@ -282,11 +282,12 @@ describe('buildOmExtractSchema', () => {
     });
   });
 
-  it('stays within Anthropic\'s union-type-parameter limit (16) with room to spare', () => {
+  it('stays within Anthropic\'s union-type-parameter limit (16 total allowed) with 1 field of headroom', () => {
     // Every property here uses either a type array or anyOf, so all 15 count toward this
     // limit (separate from the unused "optional parameters" limit of 24) — documented at
-    // https://platform.claude.com/docs/en/build-with-claude/structured-outputs. A 16th
-    // extractable field would need to split into a second schema/call.
+    // https://platform.claude.com/docs/en/build-with-claude/structured-outputs. 16 is the
+    // ceiling (not the trigger point); this guard fails CI before a 17th manifest field
+    // would silently produce an invalid request, discovered only via a live API failure.
     expect(Object.keys(schema.properties).length).toBeLessThanOrEqual(16);
   });
 });
