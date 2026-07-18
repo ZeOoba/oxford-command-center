@@ -156,12 +156,35 @@ export function disambiguatePropertyIds<T extends { id: string; name: string }>(
 }
 
 // ── properties (Property NOI) ─────────────────────────────────────────────────
-function parseProperties(ws: Worksheet, flags: DataQualityFlag[]): Property[] {
+interface PropertiesParseResult {
+  properties: Property[];
+  /** The workbook's own "Portfolio Total" row (NOI col 13 / Value col 10), captured during the
+   *  same pass that skips that row from the per-property list -- no second read. Null if the
+   *  workbook has no such row, so reconcile-runtime can skip the cross-check rather than false-flag. */
+  workbookNoiTotal: number | null;
+  workbookValueTotal: number | null;
+}
+
+function parseProperties(ws: Worksheet, flags: DataQualityFlag[]): PropertiesParseResult {
   const out: Property[] = [];
+  let workbookNoiTotal: number | null = null;
+  let workbookValueTotal: number | null = null;
+  let foundPortfolioTotalRow = false;
   for (let r = 1; r <= ws.rowCount; r++) {
     const idx = num(row(ws, r, 1));
     const name = str(row(ws, r, 2));
-    if (idx === null || !name || /portfolio total/i.test(name)) continue;
+    if (name && /portfolio total/i.test(name)) {
+      // First match wins (mirrors scripts/reconcile.ts's find(), which returns on its first hit) --
+      // a second matching row (e.g. a footnote/banner row) is ignored rather than silently
+      // overwriting an already-captured total.
+      if (!foundPortfolioTotalRow) {
+        foundPortfolioTotalRow = true;
+        workbookNoiTotal = num(row(ws, r, 13));
+        workbookValueTotal = num(row(ws, r, 10));
+      }
+      continue;
+    }
+    if (idx === null || !name) continue;
     const id = slug(name);
     const loanBalance = num(row(ws, r, 20)) ?? 0;
     const occ = num(row(ws, r, 6)) ?? 0;
@@ -204,7 +227,7 @@ function parseProperties(ws: Worksheet, flags: DataQualityFlag[]): Property[] {
     });
   }
   // Guarantee distinct property ids before leases/counterparties resolve against them.
-  return disambiguatePropertyIds(out, flags);
+  return { properties: disambiguatePropertyIds(out, flags), workbookNoiTotal, workbookValueTotal };
 }
 
 function resolvePropertyId(key: string, properties: Property[]): string | null {
@@ -221,13 +244,23 @@ function resolvePropertyId(key: string, properties: Property[]): string | null {
 }
 
 // ── leases (Master Tenant Rent Roll) ──────────────────────────────────────────
+interface LeasesParseResult {
+  leases: Lease[];
+  /** The workbook's own "Portfolio Total" row (Annualized Rent, col 14 -- one column right of
+   *  where individual rows carry annualRent at col 13). Captured during the same pass that skips
+   *  that row from the per-lease list -- no second read. Null if no such row is found. */
+  workbookRentTotal: number | null;
+}
+
 function parseLeases(
   ws: Worksheet,
   properties: Property[],
   flags: DataQualityFlag[],
   referenceDateIso: string,
-): Lease[] {
+): LeasesParseResult {
   const out: Lease[] = [];
+  let workbookRentTotal: number | null = null;
+  let foundPortfolioTotalRow = false;
   // Day-count reference = the RUN date, NOT the workbook data date: a June-pinned
   // WORKBOOK_AS_OF froze every monthsToExpiry while the calendar advanced (frozen-dateline
   // defect, 2026-07). WORKBOOK_AS_OF still governs data-month selection (monthCol in
@@ -237,8 +270,16 @@ function parseLeases(
   for (let r = 1; r <= ws.rowCount; r++) {
     const propertyKey = str(row(ws, r, 1));
     const tenantName = str(row(ws, r, 2));
+    if (/portfolio total/i.test(`${propertyKey ?? ''} ${tenantName ?? ''}`)) {
+      // First match wins -- see the identical rationale in parseProperties above.
+      if (!foundPortfolioTotalRow) {
+        foundPortfolioTotalRow = true;
+        workbookRentTotal = num(row(ws, r, 14));
+      }
+      continue;
+    }
     if (!propertyKey || !tenantName) continue;
-    if (/portfolio total|tenant roster/i.test(propertyKey)) continue;
+    if (/tenant roster/i.test(propertyKey)) continue;
     if (tenantName.toLowerCase() === 'tenant name') continue; // header
     const monthlyRent = num(row(ws, r, 6));
     const annualRent = num(row(ws, r, 13));
@@ -271,7 +312,7 @@ function parseLeases(
       flags: [],
     });
   }
-  return out;
+  return { leases: out, workbookRentTotal };
 }
 
 // ── loans (Loan Index — section-aware) ────────────────────────────────────────
@@ -569,8 +610,8 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
     return ws;
   };
 
-  const properties = parseProperties(get('Property NOI'), flags);
-  const leases = parseLeases(get('Master Tenant Rent Roll'), properties, flags, refIso);
+  const { properties, workbookNoiTotal, workbookValueTotal } = parseProperties(get('Property NOI'), flags);
+  const { leases, workbookRentTotal } = parseLeases(get('Master Tenant Rent Roll'), properties, flags, refIso);
   const loans = parseLoans(get('Loan Index'), flags);
   const cash = parseCash(get('Cash Balances'), flags);
   const insurance = parseInsurance(get('Insurance Renewals'), flags);
@@ -598,6 +639,7 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
     deals,
     tasks,
     counterparties,
+    workbookTotals: { noi: workbookNoiTotal, value: workbookValueTotal, rent: workbookRentTotal },
     dataQuality: flags,
   });
 

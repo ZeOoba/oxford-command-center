@@ -155,4 +155,75 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
     const { snapshot } = await parseWorkbook(file);
     expect(snapshot.properties.map((p) => p.name)).toEqual([PROPERTY_NAME]);
   });
+
+  it('captures the workbook\'s own "Portfolio Total" row into snapshot.workbookTotals', async () => {
+    // The Portfolio Total row is excluded from properties/leases (it isn't a real entity), but its
+    // NOI/Value (Property NOI cols 13/10) and Annualized Rent (Master Tenant Rent Roll col 14) must
+    // still be captured for reconcile-runtime's cross-check against the derived per-entity sums.
+    const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
+    const file = join(dir, 'fixture-portfolio-total.xlsx');
+    const wb = new ExcelJS.Workbook();
+
+    const props = wb.addWorksheet('Property NOI');
+    props.addRow([1, PROPERTY_NAME, 'Industrial', 50000, 3, 0.92, new Date('2020-01-01'), 5000000, 1, 5000000, 600000, 200000, 400000]);
+    // col10 (value) = 7654321, col13 (noi) = 987654; everything else irrelevant to this test.
+    props.addRow([null, 'Portfolio Total', null, null, null, null, null, null, null, 7654321, null, null, 987654]);
+
+    const rentRoll = wb.addWorksheet('Master Tenant Rent Roll');
+    rentRoll.addRow([PROPERTY_NAME, 'Fixture Tenant Co', 'Suite 100', 'Fixture Tenant Co', 10000, 8000, 9.6, new Date('2022-01-01'), new Date('2027-01-01'), null, null, 'Active', 96000]);
+    // col14 (the workbook's own rent total, one column right of individual rows' col13 annualRent).
+    rentRoll.addRow(['Portfolio Total', null, null, null, null, null, null, null, null, null, null, null, null, 555555]);
+
+    wb.addWorksheet('Loan Index');
+    wb.addWorksheet('Cash Balances');
+    wb.addWorksheet('Insurance Renewals');
+    wb.addWorksheet('Monthly Checklist');
+    wb.addWorksheet('Assumptions');
+    await wb.xlsx.writeFile(file);
+
+    const { snapshot } = await parseWorkbook(file);
+    // The total row itself must not leak into the per-entity lists.
+    expect(snapshot.properties.map((p) => p.name)).toEqual([PROPERTY_NAME]);
+    expect(snapshot.leases).toHaveLength(1);
+    expect(snapshot.workbookTotals).toEqual({ noi: 987654, value: 7654321, rent: 555555 });
+  });
+
+  it('keeps the FIRST "Portfolio Total" row match, ignoring a second matching row', async () => {
+    // Regression guard: a naive last-match-wins capture would let a second banner/footnote row
+    // (e.g. a stray note also containing "Portfolio Total") silently clobber an already-captured
+    // total with no warning. scripts/reconcile.ts's own find() returns on the FIRST match --
+    // parse.ts must agree, not silently disagree with the CI gate it's meant to mirror.
+    const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
+    const file = join(dir, 'fixture-duplicate-total-row.xlsx');
+    const wb = new ExcelJS.Workbook();
+
+    const props = wb.addWorksheet('Property NOI');
+    props.addRow([1, PROPERTY_NAME, 'Industrial', 50000, 3, 0.92, new Date('2020-01-01'), 5000000, 1, 5000000, 600000, 200000, 400000]);
+    props.addRow([null, 'Portfolio Total', null, null, null, null, null, null, null, 111, null, null, 222]); // first match — kept
+    props.addRow([null, 'Portfolio Total (footnote)', null, null, null, null, null, null, null, 999, null, null, 888]); // second match — ignored
+
+    const rentRoll = wb.addWorksheet('Master Tenant Rent Roll');
+    rentRoll.addRow([PROPERTY_NAME, 'Fixture Tenant Co', 'Suite 100', 'Fixture Tenant Co', 10000, 8000, 9.6, new Date('2022-01-01'), new Date('2027-01-01'), null, null, 'Active', 96000]);
+    rentRoll.addRow(['Portfolio Total', null, null, null, null, null, null, null, null, null, null, null, null, 333]); // first — kept
+    rentRoll.addRow(['Portfolio Total (footnote)', null, null, null, null, null, null, null, null, null, null, null, null, 777]); // second — ignored
+
+    wb.addWorksheet('Loan Index');
+    wb.addWorksheet('Cash Balances');
+    wb.addWorksheet('Insurance Renewals');
+    wb.addWorksheet('Monthly Checklist');
+    wb.addWorksheet('Assumptions');
+    await wb.xlsx.writeFile(file);
+
+    const { snapshot } = await parseWorkbook(file);
+    expect(snapshot.workbookTotals).toEqual({ noi: 222, value: 111, rent: 333 });
+  });
+
+  it('leaves snapshot.workbookTotals all-null when the workbook has no "Portfolio Total" row', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
+    const file = join(dir, 'fixture-no-total-row.xlsx');
+    await writeFixtureWorkbook(file);
+
+    const { snapshot } = await parseWorkbook(file);
+    expect(snapshot.workbookTotals).toEqual({ noi: null, value: null, rent: null });
+  });
 });
