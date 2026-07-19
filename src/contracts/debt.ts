@@ -71,3 +71,87 @@ export type DebtScoreResponse = z.infer<typeof DebtScoreResponse>;
 
 export const MaturityLadderResponse = z.object({ ladder: z.array(MaturityLadderEntry) });
 export type MaturityLadderResponse = z.infer<typeof MaturityLadderResponse>;
+
+// ── Debt & Maturity module v1 (server/warehouse/debt-maturity.ts) ─────────────────────────
+// CONFIDENTIALITY: these surfaces are tighter than MaturityLadderEntry — no balances, no
+// rate VALUES, no lender names. rateType is loan STRUCTURE ("Fixed"/"Floating"), not a term.
+
+/** One event on the chronological maturity/rate-reset timeline. */
+export const MaturityTimelineEvent = z.object({
+  /** demand-callable = a demand note, callable immediately (always sorted first). */
+  eventType: z.enum(['maturity', 'rate-reset', 'demand-callable']),
+  /** ISO date; null for demand notes and for loans with no determinable maturity date. */
+  eventDate: z.string().nullable(),
+  /** Months from the reference date, recomputed FRESH (never the stored workbook cell
+   *  when a real date exists); null for demand notes / undeterminable. */
+  monthsOut: z.number().nullable(),
+  loanId: z.string(),
+  loanName: z.string(),
+  propertyId: z.string().nullable(),
+  propertyName: z.string().nullable(),
+  balloon: z.boolean(),
+  rateType: z.string().nullable(),
+});
+export type MaturityTimelineEvent = z.infer<typeof MaturityTimelineEvent>;
+
+export const MaturityTimelineResponse = z.object({
+  asOf: z.string(),
+  events: z.array(MaturityTimelineEvent),
+});
+export type MaturityTimelineResponse = z.infer<typeof MaturityTimelineResponse>;
+
+/** Per-property refi-window flags. Boolean-or-null breach flags: null = the input is
+ *  unknown — unknown is never clearance, and never a fabricated breach (F1/F2 precedent). */
+export const RefiWindowEntry = z.object({
+  propertyId: z.string(),
+  propertyName: z.string(),
+  loanCount: z.number().int().positive(),
+  soonestMaturityDate: z.string().nullable(),
+  monthsToSoonestMaturity: z.number().nullable(),
+  /** A demand note is callable immediately — forces both windows true. */
+  hasDemandNote: z.boolean(),
+  /** Some loan's maturity could not be determined (flagged, not guessed). */
+  hasUnknownMaturity: z.boolean(),
+  maturityWithin12mo: z.boolean(),
+  maturityWithin24mo: z.boolean(),
+  /** Passthrough from the ratified scoring engine (Spine-B NOI basis; D1 LTV convention). */
+  dscr: z.number().nullable(),
+  dscrFloorBreach: z.boolean().nullable(),
+  ltv: z.number().nullable(),
+  /** vs the ratified LTV governor (capital_config ltv_ceiling). */
+  govLtvCeilingBreach: z.boolean().nullable(),
+  /** vs the per-property refi ceiling (ALERT_THRESHOLDS.ltvCeiling). */
+  refiLtvHeadroom: z.number().nullable(),
+  refiCeilingBreach: z.boolean().nullable(),
+});
+export type RefiWindowEntry = z.infer<typeof RefiWindowEntry>;
+
+/** Conservative portfolio-aggregate LTV vs the ratified aggregate governor.
+ *  Basis: implied collateral value (balance ÷ per-loan LTV) for single-active-loan
+ *  properties only; unlevered-property value is NOT in the denominator, so the basis
+ *  OVERSTATES true aggregate LTV. Therefore complete coverage AND ≤ ceiling is a TRUE
+ *  clearance; anything else is false/null — never a fabricated verdict. */
+export const PortfolioAggregateLtv = z.object({
+  aggregateLtv: z.number().nullable(),
+  basis: z.literal('levered-properties-implied-value'),
+  coveredLoanCount: z.number().int().nonnegative(),
+  totalLoanCount: z.number().int().nonnegative(),
+  coveredBalancePct: z.number().nullable(),
+  complete: z.boolean(),
+  clearedConservatively: z.boolean().nullable(),
+  note: z.string(),
+});
+export type PortfolioAggregateLtv = z.infer<typeof PortfolioAggregateLtv>;
+
+export const RefiWindowsResponse = z.object({
+  asOf: z.string(),
+  windows: z.array(RefiWindowEntry),
+  aggregate: PortfolioAggregateLtv,
+  /** The governor values the flags were computed against — echoed for auditability. */
+  governors: z.object({
+    dscrFloor: z.number(),
+    ltvCeilingAggregate: z.number(),
+    refiLtvCeilingPerProperty: z.number(),
+  }),
+});
+export type RefiWindowsResponse = z.infer<typeof RefiWindowsResponse>;

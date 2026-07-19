@@ -69,8 +69,16 @@ interface DebtRow {
  * workbook parser enforces maturity=null for every is_demand row, but debt-api.ts's POST
  * /snapshot route performs zero schema validation on its JSON payload, so is_demand=1 with a
  * populated maturity_date is a reachable (if malformed) row — treating "no date" as the sole
- * demand-note signal would let such a row silently clear the cash-out gate. */
-function effectiveMonthsToMaturity(row: DebtRow, asOf: string): number | null {
+ * demand-note signal would let such a row silently clear the cash-out gate.
+ *
+ * Exported (structural MaturityInputRow param) so debt-maturity.ts reuses this ratified
+ * fresh-recompute + demand-first logic instead of duplicating the date math. */
+export interface MaturityInputRow {
+  is_demand: number;
+  maturity_date: string | null;
+  months_to_maturity: number | null;
+}
+export function effectiveMonthsToMaturity(row: MaturityInputRow, asOf: string): number | null {
   if (row.is_demand) return null;
   const maturityMs = row.maturity_date ? new Date(row.maturity_date).getTime() : NaN;
   const asOfMs = new Date(asOf).getTime();
