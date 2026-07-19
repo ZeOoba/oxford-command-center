@@ -136,8 +136,13 @@ export function buildMaturityTimeline(
   const sortKey = (e: MaturityTimelineEvent): number =>
     e.eventType === 'demand-callable' ? -Infinity : (e.monthsOut ?? Infinity);
   events.sort((a, b) => {
-    const d = sortKey(a) - sortKey(b);
-    if (d !== 0) return d;
+    const ka = sortKey(a);
+    const kb = sortKey(b);
+    // Guard the subtraction against NaN: two same-key events — e.g. two demand-callable
+    // (both -Infinity) or two unknown-maturity (both Infinity) — would make ka - kb === NaN,
+    // and a NaN comparator return is undefined (non-deterministic) order. Only subtract once
+    // the keys are known to differ (mirrors the buildRefiWindows sort guard below).
+    if (ka !== kb) return ka - kb;
     if (a.loanId !== b.loanId) return a.loanId < b.loanId ? -1 : 1;
     return a.eventType < b.eventType ? -1 : a.eventType > b.eventType ? 1 : 0;
   });

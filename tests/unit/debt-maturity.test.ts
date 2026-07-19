@@ -284,6 +284,28 @@ describe('buildMaturityTimeline', () => {
     const events = buildMaturityTimeline(db, ASOF);
     expect(events.map((e) => e.loanId)).toEqual(['live']);
   });
+
+  // Regression: the sort comparator must not do sortKey(a) - sortKey(b) when the keys are
+  // equal ±Infinity. Two demand-callable events (both -Infinity) or two unknown-maturity
+  // events (both Infinity) would otherwise make the comparator return NaN → undefined
+  // (non-deterministic) order. Both must fall to the deterministic loanId tie-break.
+  it('deterministically orders multiple demand-callable events by loanId (no NaN-comparator order)', () => {
+    const db = freshDb();
+    seedLoan(db, { id: 'demand-b', isDemand: 1, maturityDate: null, monthsToMaturity: null });
+    seedLoan(db, { id: 'demand-a', isDemand: 1, maturityDate: null, monthsToMaturity: null });
+    seedLoan(db, { id: 'demand-c', isDemand: 1, maturityDate: null, monthsToMaturity: null });
+    const ids = buildMaturityTimeline(db, ASOF).map((e) => e.loanId);
+    expect(ids).toEqual(['demand-a', 'demand-b', 'demand-c']);
+  });
+
+  it('deterministically orders multiple unknown-maturity events by loanId (no NaN-comparator order)', () => {
+    const db = freshDb();
+    seedLoan(db, { id: 'u-z', maturityDate: null, monthsToMaturity: null });
+    seedLoan(db, { id: 'u-a', maturityDate: null, monthsToMaturity: null });
+    seedLoan(db, { id: 'u-m', maturityDate: null, monthsToMaturity: null });
+    const ids = buildMaturityTimeline(db, ASOF).map((e) => e.loanId);
+    expect(ids).toEqual(['u-a', 'u-m', 'u-z']);
+  });
 });
 
 // ── buildRefiWindows ──────────────────────────────────────────────────────────────────────
@@ -382,6 +404,44 @@ describe('buildRefiWindows', () => {
     expect(REFI_WINDOW_MONTHS_NEAR).toBe(12);
     expect(REFI_WINDOW_MONTHS_FAR).toBe(24);
   });
+
+  // Governor-boundary edge cases (refute pass): the ceilings are inclusive — LTV AT the
+  // ceiling is compliant, not a breach (governor is "LTV ≤ X").
+  it('LTV exactly at the 40% aggregate governor is NOT a breach (ceiling is inclusive)', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    seedLoan(db, { propertyId: 'p1', maturityDate: isoMonthsFromAsOf(18) });
+    const governors = loadGovernors(db);
+    const [w] = buildRefiWindows(
+      db,
+      [score({ propertyId: 'p1', ltv: governors.ltvCeiling })],
+      ASOF,
+    );
+    expect(w!.govLtvCeilingBreach).toBe(false);
+  });
+
+  it('LTV exactly at the 65% per-property refi ceiling is NOT a breach; headroom is exactly 0', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    seedLoan(db, { propertyId: 'p1', maturityDate: isoMonthsFromAsOf(18) });
+    const [w] = buildRefiWindows(
+      db,
+      [score({ propertyId: 'p1', ltv: ALERT_THRESHOLDS.ltvCeiling })],
+      ASOF,
+    );
+    expect(w!.refiCeilingBreach).toBe(false);
+    expect(w!.refiLtvHeadroom).toBeCloseTo(0, 10);
+  });
+
+  it('a loan maturing today (0 months) falls inside both windows', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    seedLoan(db, { propertyId: 'p1', maturityDate: ASOF });
+    const [w] = buildRefiWindows(db, [], ASOF);
+    expect(w!.maturityWithin12mo).toBe(true);
+    expect(w!.maturityWithin24mo).toBe(true);
+    expect(w!.monthsToSoonestMaturity!).toBeCloseTo(0, 1);
+  });
 });
 
 // ── computePortfolioAggregateLtv ──────────────────────────────────────────────────────────
@@ -456,6 +516,23 @@ describe('computePortfolioAggregateLtv', () => {
     seedLoan(db, { propertyId: 'p1', currentBalance: 500_000, ltv: 0.3, status: 'superseded' });
     const agg = computePortfolioAggregateLtv(db, loadGovernors(db));
     expect(agg.totalLoanCount).toBe(0);
+  });
+
+  it('aggregate LTV exactly at the 40% governor clears conservatively (≤ ceiling is inclusive)', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    const gov = loadGovernors(db);
+    // single sole loan whose per-loan LTV equals the ceiling → implied aggregate == ceiling
+    seedLoan(db, {
+      propertyId: 'p1',
+      currentBalance: 800_000,
+      ltv: gov.ltvCeiling,
+      maturityDate: isoMonthsFromAsOf(30),
+    });
+    const agg = computePortfolioAggregateLtv(db, gov);
+    expect(agg.complete).toBe(true);
+    expect(agg.aggregateLtv).toBeCloseTo(gov.ltvCeiling, 10);
+    expect(agg.clearedConservatively).toBe(true);
   });
 });
 
