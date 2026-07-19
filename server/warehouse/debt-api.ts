@@ -28,10 +28,20 @@ import { buildLoanPropertyMap } from './property-crosswalk';
 import {
   DebtScoreResponse,
   MaturityLadderResponse,
+  MaturityTimelineResponse,
+  RefiWindowsResponse,
   type MaturityLadderEntry,
   type DebtSignal,
 } from '../../src/contracts/debt';
 import type { Loan } from '../../src/contracts/loan';
+import {
+  buildMaturityTimeline,
+  buildRefiWindows,
+  computePortfolioAggregateLtv,
+  REFI_LTV_CEILING,
+} from './debt-maturity';
+import { loadGovernors } from './governors';
+import { referenceDate } from '../config';
 
 // ── POST /snapshot payload type ────────────────────────────────────────────────────────────
 
@@ -186,6 +196,63 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
       } catch (err) {
         console.error('[debt-api] /maturity error:', err instanceof Error ? err.message : String(err));
         return c.json({ error: 'maturity ladder failed' }, 500);
+      }
+    }),
+  );
+
+  // ── GET /timeline ──────────────────────────────────────────────────────────────────────
+  //
+  // Debt & Maturity module v1: chronological maturity / rate-reset / demand-callable event
+  // stream (see server/warehouse/debt-maturity.DESIGN.md). Confidentiality is TIGHTER than
+  // /maturity: no balances, no rate values, no lender names cross this boundary.
+  //
+  // H6 read boundary: the response is parsed through MaturityTimelineResponse before emitting.
+  app.get('/timeline', (c) =>
+    withDb((db) => {
+      try {
+        const asOf = referenceDate();
+        const events = buildMaturityTimeline(db, asOf);
+        return c.json(MaturityTimelineResponse.parse({ asOf, events }));
+      } catch (err) {
+        console.error('[debt-api] /timeline error:', err instanceof Error ? err.message : String(err));
+        return c.json({ error: 'maturity timeline failed' }, 500);
+      }
+    }),
+  );
+
+  // ── GET /refi-windows ──────────────────────────────────────────────────────────────────
+  //
+  // Debt & Maturity module v1: per-property 12/24-month refi-window flags + governor breach
+  // flags + the conservative portfolio-aggregate LTV. DSCR/LTV come from the ratified scoring
+  // engine (scoreDebtPositions) — the market rate is deliberately null: the windows consume
+  // DSCR/LTV only, a null rate merely suppresses the unused 'refi' signal, and the route
+  // stays deterministic and offline-safe (no FRED dependency).
+  //
+  // H6 read boundary: the response is parsed through RefiWindowsResponse before emitting.
+  app.get('/refi-windows', (c) =>
+    withDb((db) => {
+      try {
+        const asOf = referenceDate();
+        const governors = loadGovernors(db);
+        const metrics = propertyPeriodMetrics(db);
+        const scores = scoreDebtPositions(db, metrics, null, asOf);
+        const windows = buildRefiWindows(db, scores, asOf);
+        const aggregate = computePortfolioAggregateLtv(db, governors);
+        return c.json(
+          RefiWindowsResponse.parse({
+            asOf,
+            windows,
+            aggregate,
+            governors: {
+              dscrFloor: governors.dscrFloor,
+              ltvCeilingAggregate: governors.ltvCeiling,
+              refiLtvCeilingPerProperty: REFI_LTV_CEILING,
+            },
+          }),
+        );
+      } catch (err) {
+        console.error('[debt-api] /refi-windows error:', err instanceof Error ? err.message : String(err));
+        return c.json({ error: 'refi windows failed' }, 500);
       }
     }),
   );
