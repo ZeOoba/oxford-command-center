@@ -2,6 +2,8 @@
 
 **Branch:** `next5-debt-module` · **Date:** 2026-07-18 · **Origin:** N3 of next5-improvements-2026-07-18 (Gabriel-ruled) — the Intelligence Platform Master Plan's named "debt" gap.
 
+**Status 2026-07-19: all PR #222 blocking items resolved.** Workbook column mapping confirmed by direct read (commit 53c8ea3); refi-window thresholds ratified by Gabriel ("approve as-is").
+
 ## 1. What already exists (explored first — do not duplicate)
 
 The 06-13 master plan named debt as a gap; Phase 2 (PRs #95–#101, merged ~2026-07-10) closed most of it:
@@ -22,7 +24,7 @@ v1 therefore builds only the missing four rows above, reusing the existing engin
 
 - **DSCR 1.25 floor & LTV 0.40 ceiling:** `loadGovernors(db)` (`server/warehouse/governors.ts` → `capital-config.ts`, DB-backed with ratified compile-time fallback). No new literals.
 - **65% per-property refi ceiling:** imported as `ALERT_THRESHOLDS.ltvCeiling` from `src/analytics/conditions.ts` (the codebase's single existing definition; server→`src/analytics` imports are established precedent — `server/ai/tools.ts`, `server/brief/run.ts`). No new literal.
-- **12/24-month refi windows:** new v1 module constants (`REFI_WINDOW_MONTHS_NEAR = 12`, `REFI_WINDOW_MONTHS_FAR = 24`) — these are window definitions from the task brief, not governors; no existing constant defines them.
+- **12/24-month refi windows:** new v1 module constants (`REFI_WINDOW_MONTHS_NEAR = 12`, `REFI_WINDOW_MONTHS_FAR = 24`) — window definitions, not governors; no existing constant defines them. **RATIFIED by Gabriel 2026-07-19 ("approve as-is") on PR #222.**
 
 ## 3. New pieces
 

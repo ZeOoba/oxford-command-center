@@ -34,7 +34,12 @@ import type {
   RefiWindowEntry,
 } from '../../src/contracts/debt';
 
-/** Refi-window horizons (months) — v1 task-brief definitions, module-owned (not governors). */
+/**
+ * Refi-window horizons (months) — module-owned constant, not a CLAUDE.md governor.
+ * RATIFIED by Gabriel 2026-07-19 ("approve as-is") on PR #222. Not DB-backed like
+ * dscrFloor/ltvCeiling — a future change here is a code edit + review, not a
+ * capital_config write.
+ */
 export const REFI_WINDOW_MONTHS_NEAR = 12;
 export const REFI_WINDOW_MONTHS_FAR = 24;
 
