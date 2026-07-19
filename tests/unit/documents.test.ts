@@ -360,6 +360,35 @@ describe('DOCUMENTS_INCLUDE_DIRS — fail-closed top-level allowlist', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('treats a top-level "Business" folder as transparent to the allowlist, without opening up other unlisted root dirs', async () => {
+    // Regression test for the 2026-07-17 OneDrive Business/Personal split: DOCUMENTS_DIR stays at
+    // OneDrive root, but most allowlisted folders now live one level deeper under Business\. An
+    // allowlisted folder that stayed at root (like the real "Muirkirk 2013 Refinancing") must still
+    // resolve too — this is not a DOCUMENTS_DIR repoint, it's a transparent pass-through.
+    const root = mkdtempSync(join(tmpdir(), 'passthrough-'));
+    try {
+      mkdirSync(join(root, 'Business', '6300 Sherriff Road'), { recursive: true });
+      mkdirSync(join(root, 'Business', 'Unlisted Folder'), { recursive: true });
+      mkdirSync(join(root, 'Muirkirk 2013 Refinancing'), { recursive: true });
+      mkdirSync(join(root, 'Personal'), { recursive: true });
+      writeFileSync(join(root, 'Business', '6300 Sherriff Road', 'lease.txt'), 'Tenant renewal option clause text.');
+      writeFileSync(join(root, 'Business', 'Unlisted Folder', 'x.txt'), 'should never be indexed');
+      writeFileSync(join(root, 'Muirkirk 2013 Refinancing', 'doc.txt'), 'refinancing note text.');
+      writeFileSync(join(root, 'Personal', 'y.txt'), 'should never be indexed');
+
+      process.env.DOCUMENTS_DIR = root;
+      delete process.env.DOCUMENTS_PATH_INCLUDE;
+      process.env.DOCUMENTS_DROP_NONLEASE = '0';
+      process.env.DOCUMENTS_INCLUDE_DIRS = '6300 Sherriff Road|Muirkirk 2013 Refinancing';
+
+      const { docs } = await collectDocChunks();
+      const names = docs.map((d) => d.name.replace(/\\/g, '/')).sort();
+      expect(names).toEqual(['Business/6300 Sherriff Road/lease.txt', 'Muirkirk 2013 Refinancing/doc.txt']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('includeDirs — delimiter robust to comma-containing folder names', () => {

@@ -540,6 +540,17 @@ export function matchesIndexFilters(relPath: string, includeRe: RegExp | null, d
 }
 
 /**
+ * Top-level directory names that are transparent to the allowlist scope check — their children are
+ * evaluated against `DOCUMENTS_INCLUDE_DIRS` as if they sat directly under `DOCUMENTS_DIR`, instead
+ * of being blocked outright for not being in the allowlist themselves. Exists because the 2026-07-17
+ * OneDrive Business/Personal split nested the entire business corpus one level deeper, under
+ * `Business\`, without moving `DOCUMENTS_DIR` (which stays at OneDrive root so folders that were
+ * deliberately left at root, e.g. the unclassified `Muirkirk 2013 Refinancing`, stay reachable too).
+ * Deliberately does NOT include `Personal` — that must keep failing the allowlist check outright.
+ */
+const PASSTHROUGH_TOP_LEVEL_DIRS = new Set(['business']);
+
+/**
  * Recursively collect indexable files under `root`, pruning excluded paths (directories AND files,
  * so e.g. an estate/confidential folder is never descended into) and applying the optional include
  * filter. Stops at `max` files and flags truncation (never silently drops).
@@ -571,8 +582,9 @@ function listFiles(
       const rel = full.slice(root.length).replace(/^[\\/]+/, '');
       if (isExcludedPath(rel, excludes)) continue; // prune excluded dirs + files (defense-in-depth)
       if (e.isDirectory()) {
-        if (depth === 0 && allow && !allow.has(e.name.toLowerCase())) continue; // fail-closed top-level scope
-        walk(full, depth + 1);
+        const isPassthrough = depth === 0 && PASSTHROUGH_TOP_LEVEL_DIRS.has(e.name.toLowerCase());
+        if (depth === 0 && !isPassthrough && allow && !allow.has(e.name.toLowerCase())) continue; // fail-closed top-level scope
+        walk(full, isPassthrough ? depth : depth + 1); // passthrough: children re-checked against the allowlist at effective depth 0
       } else if (matchesIndexFilters(rel, includeRe)) files.push(full);
     }
   };
