@@ -26,22 +26,62 @@ export interface OmExtractOptions {
 }
 
 // Fields loaded from om-extract-fields.json — edit that file to add/tune fields without touching this module.
-const EXTRACTABLE_FIELDS = fieldsConfig.fields;
+interface OmField {
+  key: string;
+  desc: string;
+  enum?: readonly string[];
+}
+const EXTRACTABLE_FIELDS: readonly OmField[] = fieldsConfig.fields;
 
 const VALID_KEYS = new Set<string>(EXTRACTABLE_FIELDS.map((f) => f.key));
 
+type OmSchemaProperty =
+  | { type: ['string', 'null'] }
+  | { anyOf: [{ type: 'string'; enum: readonly string[] }, { type: 'null' }] };
+
+export interface OmExtractJsonSchema {
+  type: 'object';
+  properties: Record<string, OmSchemaProperty>;
+  required: string[];
+  additionalProperties: false;
+}
+
+/** Builds the Anthropic `output_config.format` JSON Schema from the field manifest.
+ *
+ *  Every field is REQUIRED and nullable (`type:['string','null']`, or `anyOf` with an
+ *  embedded `null` branch for the 3 enum fields) rather than optional-and-omittable. This
+ *  is not a style choice — empirically verified against the live API (2026-07-18): a 15-
+ *  property schema with NONE required (the "omit what you can't find" shape the Anthropic
+ *  docs describe as supported) reliably hits "Grammar compilation timed out" server-side,
+ *  even with zero enums. The all-required + nullable shape compiles in ~12s and returns
+ *  correct results. The model still expresses "not found" — as an explicit JSON `null`
+ *  instead of an omitted key — which extractOmFields()'s existing `typeof v === 'string'`
+ *  filter already drops, so "never guess" is preserved with no change to the read path.
+ *  Every property here counts against Anthropic's "parameters with union types" limit (16,
+ *  separate from the unused "optional parameters" limit of 24) — 16 total is the documented
+ *  ceiling (not the trigger point), this schema uses 15, so a 16th field still fits; a 17th
+ *  extractable field would need to split into a second schema/call. */
+export function buildOmExtractSchema(): OmExtractJsonSchema {
+  const properties: Record<string, OmSchemaProperty> = {};
+  for (const field of EXTRACTABLE_FIELDS) {
+    properties[field.key] = field.enum
+      ? { anyOf: [{ type: 'string', enum: field.enum }, { type: 'null' }] }
+      : { type: ['string', 'null'] };
+  }
+  return { type: 'object', properties, required: EXTRACTABLE_FIELDS.map((f) => f.key), additionalProperties: false };
+}
+
 const SYSTEM =
   `You are a commercial real estate data extractor. Extract field values from the OM text.\n` +
-  `Return ONLY a JSON object — no markdown, no explanation, no code fences.\n` +
-  `Keys are the exact field names listed. Values are strings.\n` +
+  `The response is schema-constrained; every listed key will be present in your output.\n` +
   `Rules:\n` +
-  `- Include ONLY fields stated explicitly in the document with high confidence.\n` +
-  `- Omit any field not clearly present. Do NOT guess or infer.\n` +
+  `- Only fill in a field when it is stated explicitly in the document with high confidence.\n` +
+  `- Use null for any field not clearly present. Do NOT guess or infer.\n` +
   `- Numbers: digits only, no currency symbols, no commas, no units.\n` +
   `- Percentages: 0–100 range (not decimal). Example: "15" not "0.15".\n` +
-  `- hasDock / hasDriveIn: output exactly "yes" or "no".\n` +
-  `- constructionType: output exactly one of the listed values.\n` +
-  `- If a field is absent or ambiguous, omit it.`;
+  `- hasDock / hasDriveIn: output exactly "yes" or "no" (never guess — use null if not stated).\n` +
+  `- constructionType: output exactly one of the listed values, or null if not stated.\n` +
+  `- If a field is absent or ambiguous, use null.`;
 
 export async function extractOmFields(
   pdfBuffer: Buffer,
@@ -91,7 +131,10 @@ export async function extractOmFields(
 
   const f = opts.fetchImpl ?? fetch;
   const ac = new AbortController();
-  const timeout = setTimeout(() => ac.abort(), 20_000);
+  // 45s (was 20s): a cold structured-outputs schema compile empirically took ~12s in testing
+  // (2026-07-18) with real load-dependent variance — Anthropic caches compiled grammars for
+  // 24h from last use, so only a first-of-the-day (or first-ever) request pays this cost.
+  const timeout = setTimeout(() => ac.abort(), 45_000);
   let res: { ok: boolean; status: number; json: () => Promise<unknown>; text: () => Promise<string> };
   try {
     res = await f('https://api.anthropic.com/v1/messages', {
@@ -106,8 +149,12 @@ export async function extractOmFields(
         // Haiku: structured extraction from text — no reasoning required, haiku is sufficient and fast.
         model: opts.model ?? 'claude-haiku-4-5-20251001',
         max_tokens: 1024,
+        temperature: 0,
         system: SYSTEM,
         messages: [{ role: 'user', content: userPrompt }],
+        // Structured outputs: constrains the response to this schema, eliminating the
+        // markdown-fence / preamble / truncation failures a prompt-only instruction can't prevent.
+        output_config: { format: { type: 'json_schema', schema: buildOmExtractSchema() } },
       }),
     });
   } catch (e) {

@@ -127,6 +127,14 @@ export const PortfolioSnapshot = z.object({
    * LeaseForecastModule UI. No external API — overlay-only.
    */
   marketRents: z.record(z.string(), z.number()).default({}),
+  /** The workbook's own declared "Portfolio Total" cells (NOI, Value, Annualized Rent), captured
+   *  during the single parse pass -- lets reconcile-runtime cross-check derived sums against the
+   *  workbook's own totals with no second read. Null per-field when the workbook has no such row
+   *  (legacy fixture, or a row the regex didn't match) so reconcile-runtime skips rather than
+   *  false-flags. Defaults to all-null for pre-existing snapshot payloads. */
+  workbookTotals: z
+    .object({ noi: z.number().nullable(), value: z.number().nullable(), rent: z.number().nullable() })
+    .default({ noi: null, value: null, rent: null }),
   dataQuality: z.array(DataQualityFlag),
 });
 export type PortfolioSnapshot = z.infer<typeof PortfolioSnapshot>;

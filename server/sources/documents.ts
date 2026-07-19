@@ -469,8 +469,10 @@ export function pathIncludeRe(): RegExp | null {
  * relative to DOCUMENTS_DIR, case-insensitive). Pipe (not comma) because real property folder names
  * contain commas (e.g. "3883 Livingston, LLC"); `|` is illegal in Windows paths so it can never
  * collide. When set, ONLY these top-level directories are descended into — a FAIL-CLOSED scope so a
- * broad DOCUMENTS_DIR (the whole OneDrive) never sweeps in personal/unlisted folders. Unset → walk
- * every top-level dir (legacy), still subject to excludes. */
+ * broad DOCUMENTS_DIR (the whole OneDrive) never sweeps in personal/unlisted folders. A loose FILE
+ * sitting directly at that same top level is excluded outright too (it can never itself be an
+ * allowlisted directory) — see `listFiles`. Unset → walk every top-level dir (legacy) and index
+ * top-level loose files too, still subject to excludes. */
 export function includeDirs(): Set<string> | null {
   const raw = (process.env.DOCUMENTS_INCLUDE_DIRS ?? '').split('|').map((s) => s.trim()).filter(Boolean);
   return raw.length ? new Set(raw.map((s) => s.toLowerCase())) : null;
@@ -540,6 +542,17 @@ export function matchesIndexFilters(relPath: string, includeRe: RegExp | null, d
 }
 
 /**
+ * Top-level directory names that are transparent to the allowlist scope check — their children are
+ * evaluated against `DOCUMENTS_INCLUDE_DIRS` as if they sat directly under `DOCUMENTS_DIR`, instead
+ * of being blocked outright for not being in the allowlist themselves. Exists because the 2026-07-17
+ * OneDrive Business/Personal split nested the entire business corpus one level deeper, under
+ * `Business\`, without moving `DOCUMENTS_DIR` (which stays at OneDrive root so folders that were
+ * deliberately left at root, e.g. the unclassified `Muirkirk 2013 Refinancing`, stay reachable too).
+ * Deliberately does NOT include `Personal` — that must keep failing the allowlist check outright.
+ */
+const PASSTHROUGH_TOP_LEVEL_DIRS = new Set(['business']);
+
+/**
  * Recursively collect indexable files under `root`, pruning excluded paths (directories AND files,
  * so e.g. an estate/confidential folder is never descended into) and applying the optional include
  * filter. Stops at `max` files and flags truncation (never silently drops).
@@ -571,9 +584,18 @@ function listFiles(
       const rel = full.slice(root.length).replace(/^[\\/]+/, '');
       if (isExcludedPath(rel, excludes)) continue; // prune excluded dirs + files (defense-in-depth)
       if (e.isDirectory()) {
-        if (depth === 0 && allow && !allow.has(e.name.toLowerCase())) continue; // fail-closed top-level scope
-        walk(full, depth + 1);
-      } else if (matchesIndexFilters(rel, includeRe)) files.push(full);
+        const isPassthrough = depth === 0 && PASSTHROUGH_TOP_LEVEL_DIRS.has(e.name.toLowerCase());
+        if (depth === 0 && !isPassthrough && allow && !allow.has(e.name.toLowerCase())) continue; // fail-closed top-level scope
+        walk(full, isPassthrough ? depth : depth + 1); // passthrough: children re-checked against the allowlist at effective depth 0
+      } else {
+        // Fail-closed: with an allowlist active, a loose file sitting directly at this effective
+        // top level is never itself an allowlisted directory, so it can never pass the scope check
+        // above — index it only from inside an allowlisted folder. Applies at any depth the
+        // allowlist check applies at (depth 0, or inside a passthrough dir like Business\ which is
+        // walked at unchanged depth), not just literal depth 0.
+        if (depth === 0 && allow) continue;
+        if (matchesIndexFilters(rel, includeRe)) files.push(full);
+      }
     }
   };
   walk(root, 0);

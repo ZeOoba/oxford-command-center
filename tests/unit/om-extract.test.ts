@@ -1,6 +1,7 @@
 // tests/unit/om-extract.test.ts
 import { describe, it, expect } from 'vitest';
-import { extractOmFields } from '../../server/warehouse/om-extract';
+import { extractOmFields, buildOmExtractSchema } from '../../server/warehouse/om-extract';
+import fieldsConfig from '../../server/warehouse/om-extract-fields.json';
 
 // Minimal real-shaped Anthropic response
 function mockFetch(text: string, status = 200) {
@@ -10,6 +11,21 @@ function mockFetch(text: string, status = 200) {
     json: async () => ({ content: [{ type: 'text', text }] }),
     text: async () => text,
   });
+}
+
+// Captures the request so wiring tests can assert on the actual POST body.
+function capturingFetch(text: string, status = 200) {
+  const calls: Array<{ url: unknown; opts: { body?: string } }> = [];
+  const fetchImpl = async (url: unknown, opts: { body?: string }) => {
+    calls.push({ url, opts });
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => ({ content: [{ type: 'text', text }] }),
+      text: async () => text,
+    };
+  };
+  return { fetchImpl, calls };
 }
 
 const VALID_PDF_BUFFER = Buffer.from('fake-pdf');
@@ -182,5 +198,96 @@ describe('extractOmFields', () => {
       expect(pdfParseCalled).toBe(false);
       expect(fetchCalled).toBe(false);
     });
+  });
+
+  it('drops explicit JSON null values (the schema requires every key; "not found" is null, not omission)', async () => {
+    const pdfParseFn = async () => ({ text: 'OM text' });
+    const responseWithNulls = JSON.stringify({
+      price: '1450000',
+      totalSf: null,
+      yearBuilt: null,
+      constructionType: null,
+      hasDock: 'yes',
+    });
+    const result = await extractOmFields(VALID_PDF_BUFFER, {
+      apiKey: 'test-key',
+      pdfParseFn,
+      fetchImpl: mockFetch(responseWithNulls) as unknown as typeof fetch,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.fields).toEqual({ price: '1450000', hasDock: 'yes' });
+    expect(result.fieldCount).toBe(2);
+  });
+
+  it('sends output_config.format (structured outputs) and temperature:0 on the request', async () => {
+    const pdfParseFn = async () => ({ text: 'OM text' });
+    const { fetchImpl, calls } = capturingFetch(VALID_JSON);
+    const result = await extractOmFields(VALID_PDF_BUFFER, {
+      apiKey: 'test-key',
+      pdfParseFn,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    expect(result.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    const call = calls[0];
+    if (!call) throw new Error('expected exactly one fetch call');
+    const body = JSON.parse(call.opts.body ?? '{}');
+    expect(body.temperature).toBe(0);
+    expect(body.output_config?.format?.type).toBe('json_schema');
+    expect(body.output_config.format.schema).toEqual(buildOmExtractSchema());
+    // The rest of the request is unchanged by this fix.
+    expect(typeof body.model).toBe('string');
+    expect(body.max_tokens).toBe(1024);
+    expect(typeof body.system).toBe('string');
+    expect(Array.isArray(body.messages)).toBe(true);
+  });
+});
+
+describe('buildOmExtractSchema', () => {
+  const schema = buildOmExtractSchema();
+  const manifestKeys = fieldsConfig.fields.map((f) => f.key);
+
+  // Shape verified against the live API (2026-07-18): an all-optional / omit-from-required
+  // version of this schema reliably hit "Grammar compilation timed out" (even with zero
+  // enums), while this all-required + nullable shape compiled in ~12s and returned correct
+  // results. "Not found" is expressed as JSON null, not an omitted key — see the
+  // "drops explicit JSON null values" test in the extractOmFields describe block above.
+  it('is a JSON Schema object with additionalProperties:false and every field required', () => {
+    expect(schema.type).toBe('object');
+    expect(schema.additionalProperties).toBe(false);
+    expect(schema.required).toEqual(manifestKeys);
+  });
+
+  it('has exactly one property per manifest field', () => {
+    expect(Object.keys(schema.properties)).toEqual(manifestKeys);
+  });
+
+  it('types every non-enum field as a nullable string', () => {
+    for (const field of fieldsConfig.fields) {
+      if ('enum' in field) continue;
+      expect(schema.properties[field.key]).toEqual({ type: ['string', 'null'] });
+    }
+  });
+
+  it('constrains constructionType, hasDock, hasDriveIn via anyOf(enum-string, null)', () => {
+    expect(schema.properties.constructionType).toEqual({
+      anyOf: [{ type: 'string', enum: ['block-tilt-brick', 'mixed', 'pemb', 'unknown'] }, { type: 'null' }],
+    });
+    expect(schema.properties.hasDock).toEqual({
+      anyOf: [{ type: 'string', enum: ['yes', 'no'] }, { type: 'null' }],
+    });
+    expect(schema.properties.hasDriveIn).toEqual({
+      anyOf: [{ type: 'string', enum: ['yes', 'no'] }, { type: 'null' }],
+    });
+  });
+
+  it('stays within Anthropic\'s union-type-parameter limit (16 total allowed) with 1 field of headroom', () => {
+    // Every property here uses either a type array or anyOf, so all 15 count toward this
+    // limit (separate from the unused "optional parameters" limit of 24) — documented at
+    // https://platform.claude.com/docs/en/build-with-claude/structured-outputs. 16 is the
+    // ceiling (not the trigger point); this guard fails CI before a 17th manifest field
+    // would silently produce an invalid request, discovered only via a live API failure.
+    expect(Object.keys(schema.properties).length).toBeLessThanOrEqual(16);
   });
 });
