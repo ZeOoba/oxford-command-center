@@ -31,9 +31,7 @@ v1 therefore builds only the missing four rows above, reusing the existing engin
 - `ALTER TABLE debt_positions ADD COLUMN next_rate_reset TEXT` — ISO date of next scheduled rate reset, nullable.
 - Index on `(next_rate_reset, status)`.
 
-Both columns stay **NULL until the workbook mapping is confirmed** — `writeDebtSnapshot()` is deliberately NOT extended to populate them, because the `Loan` contract has no rateType/reset fields and the Loan Index tab's column layout for rate structure is unverified. Guessing would violate Hard Invariant 7.
-
-> **[GG: confirm workbook tab/column mapping]** — which Loan Index / External Loans Summary columns (if any) carry rate type and next rate-reset date? Once confirmed: add the two fields to `src/contracts/loan.ts`, map them in `server/workbook/parse.ts`, and pass them through `writeDebtSnapshot()`.
+Both columns stay **NULL — confirmed 2026-07-19, not merely unmapped.** Direct workbook inspection (full header scan of Loan Index A1:L8 and its live source `External Loans Summary` A1:AL5 — Loan Index's own A2 note: *"All metrics are live from External Loans Summary"*) found exactly one rate-related field in either sheet: **"Annual Rate."** No rate-type/structure column and no reset-date column exist anywhere in the Master Workbook today. `writeDebtSnapshot()` is correctly NOT extended to populate them — there is nothing to map. **Resolution, not open question:** if this data is wanted, it needs a new workbook column (Gabriel-added to External Loans Summary, which Loan Index would then inherit live) or a different source entirely (loan documents/term sheets). Guessing would violate Hard Invariant 7.
 
 ### 3b. `server/warehouse/debt-maturity.ts` (financial-decision code — refute pass required)
 - `buildMaturityTimeline(db, asOf)` — one chronological event stream from active `debt_positions`:
@@ -48,7 +46,7 @@ Both columns stay **NULL until the workbook mapping is confirmed** — `writeDeb
 - `computePortfolioAggregateLtv(db, governors)` — conservative aggregate vs the 40% governor:
   - Implied collateral value is derivable only for **single-active-loan properties with known ltv > 0** (balance ÷ ltv). Multi-loan properties are excluded — the workbook's per-loan LTV semantics for stacked loans are unconfirmed, and blending was already refute-rejected once (see C-2 note in `debt-scoring.ts`).
   - The denominator excludes unlevered-property value entirely (warehouse has no appraised values — `governors.ts` header), so this basis **overstates** LTV. Consequence: `complete`-coverage AND ≤ 40% ⇒ the true portfolio aggregate is also ≤ 40% (`clearedConservatively: true`). Anything else ⇒ `false`/`null` with an explanatory note — never a fabricated "breach" or "clear".
-  - > **[GG: confirm]** — is the Loan Index per-loan `ltv` column loan-balance/collateral-value, or combined-debt/value? Determines whether multi-loan properties can join the aggregate denominator.
+  - **CONFIRMED 2026-07-19** (direct workbook inspection): Loan Index's `ltv` column (I) is the live formula `='External Loans Summary'!O_` — that sheet's own header labels column O **"LTV (Balance/Value)"**, i.e. that single loan's outstanding balance ÷ that property's value (column N, "Property Value ($)"). Confirmed loan-balance/collateral-value, per-loan basis — **not** combined-debt/value. This validates the existing single-active-loan-only aggregation as the economically correct conservative choice: per-loan LTVs on a shared property aren't directly summable into a combined ratio without also re-deriving each loan's implied property value and checking they agree (which the code already tests for in the multi-loan-disagreement case and correctly excludes) — a true combined-LTV extension for multi-loan properties is a defined v2 scope item, not a blocker for v1.
 
 ### 3c. Contracts (`src/contracts/debt.ts`, additive)
 `MaturityTimelineEvent/Response`, `RefiWindowEntry`, `PortfolioAggregateLtv`, `RefiWindowsResponse` (which also echoes the governor values used, read from the live set).
@@ -61,7 +59,7 @@ Both columns stay **NULL until the workbook mapping is confirmed** — `writeDeb
 `effectiveMonthsToMaturity()` exported (with a structural `MaturityInputRow` param type) so the timeline reuses the ratified fresh-recompute + demand-note-first logic instead of duplicating date math.
 
 ## 4. What v1 does NOT do
-- Does **not** ingest rate_type / next_rate_reset from the workbook (mapping unconfirmed — see [GG: confirm] above); the timeline emits no rate-reset events until it lands.
+- Does **not** ingest rate_type / next_rate_reset from the workbook — confirmed 2026-07-19 that no such columns exist in Loan Index or External Loans Summary (see §3a); the timeline emits no rate-reset events unless a future workbook change or alternate source adds this data.
 - Does **not** compute a true portfolio aggregate LTV (needs appraised values for all properties, absent from the warehouse) — only the conservative-clearance estimate above.
 - Does **not** compute per-loan DSCR (loan-level debt-service allocation against shared property NOI is not well-defined for stacked loans; per-property DSCR from the ratified engine is passed through instead).
 - Does **not** add UI; API + contracts only.
