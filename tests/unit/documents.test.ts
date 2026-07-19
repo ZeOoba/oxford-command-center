@@ -389,6 +389,33 @@ describe('DOCUMENTS_INCLUDE_DIRS — fail-closed top-level allowlist', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('fail-closed: a loose file at the effective top level is never indexed, even when it matches a supported extension', async () => {
+    // A loose file directly at DOCUMENTS_DIR (or directly under a passthrough dir like Business\,
+    // which is walked at the same effective depth) is never itself an allowlisted directory, so it
+    // must be excluded outright — closing the gap where matchesIndexFilters alone (extension +
+    // optional DOCUMENTS_PATH_INCLUDE) let such files through regardless of DOCUMENTS_INCLUDE_DIRS.
+    const root = mkdtempSync(join(tmpdir(), 'root-file-gate-'));
+    try {
+      mkdirSync(join(root, '6300 Sherriff Road'), { recursive: true });
+      mkdirSync(join(root, 'Business', '6300 Sherriff Road'), { recursive: true });
+      writeFileSync(join(root, '6300 Sherriff Road', 'lease.txt'), 'Tenant renewal option clause text.');
+      writeFileSync(join(root, 'Business', '6300 Sherriff Road', 'lease2.txt'), 'Another lease clause.');
+      writeFileSync(join(root, 'Complete POF.pdf'.replace('.pdf', '.txt')), 'loose root-level file — must never be indexed');
+      writeFileSync(join(root, 'Business', 'Asphalt cost doc.txt'), 'loose file directly under Business\\ — must never be indexed');
+
+      process.env.DOCUMENTS_DIR = root;
+      delete process.env.DOCUMENTS_PATH_INCLUDE;
+      process.env.DOCUMENTS_DROP_NONLEASE = '0';
+      process.env.DOCUMENTS_INCLUDE_DIRS = '6300 Sherriff Road';
+
+      const { docs } = await collectDocChunks();
+      const names = docs.map((d) => d.name.replace(/\\/g, '/')).sort();
+      expect(names).toEqual(['6300 Sherriff Road/lease.txt', 'Business/6300 Sherriff Road/lease2.txt']);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('includeDirs — delimiter robust to comma-containing folder names', () => {
