@@ -38,7 +38,7 @@ import { MIN_PROPERTIES_FOR_COLLAPSE_CHECK, SINGLE_BAND_COLLAPSE_SHARE, scoreBan
 loadEnvFile();
 
 const FINANCIALS_DIR = process.env.FINANCIALS_DIR
-  ?? 'C:/Users/Owner/OneDrive - Oxford Capital Partners/Property Financials';
+  ?? 'C:/Users/Owner/OneDrive - Oxford Capital Partners/Business/Property Financials';
 const SEED_PATH = join(process.cwd(), 'docs', 'superpowers', 'specs', '2026-06-12-pfi-account-mapping-seed.json');
 const MIN_COMMITTED = 32;
 const INCOME_TIE_TOLERANCE = 1; // dollars
