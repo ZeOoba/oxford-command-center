@@ -49,6 +49,7 @@ export function AcquisitionsModule() {
   const qc = useQueryClient();
   const [scoreDealId, setScoreDealId] = useState<string>('');
   const [sync, setSync] = useState<SyncState>({ phase: 'idle' });
+  const [hubspotSync, setHubspotSync] = useState<SyncState>({ phase: 'idle' });
   const [acqTab, setAcqTab] = useState<AcqTab>('pipeline');
 
   async function handleNotionSync() {
@@ -72,6 +73,32 @@ export function AcquisitionsModule() {
       void qc.invalidateQueries({ queryKey: ['warehouse', 'acq'] });
     } catch {
       setSync({ phase: 'error', message: 'Sync failed — network error' });
+    }
+  }
+
+  // Mirrors handleNotionSync exactly. Second, independent feed (PR #203's syncHubSpotPipeline /
+  // POST /acq/sync/hubspot) — the backend route shipped merged but never got a frontend trigger
+  // until now, so HubSpot-sourced deals never reached acq_candidates in practice.
+  async function handleHubSpotSync() {
+    setHubspotSync({ phase: 'syncing' });
+    try {
+      const res = await fetch('/api/warehouse/acq/sync/hubspot', { method: 'POST' });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as Record<string, unknown>;
+        const msg = typeof body['error'] === 'string' ? body['error'] : `Sync failed (${res.status})`;
+        setHubspotSync({ phase: 'error', message: msg });
+        return;
+      }
+      const body = await res.json() as { inserted?: number; updated?: number; errors?: string[] };
+      setHubspotSync({
+        phase: 'done',
+        inserted: body.inserted ?? 0,
+        updated: body.updated ?? 0,
+        errors: body.errors ?? [],
+      });
+      void qc.invalidateQueries({ queryKey: ['warehouse', 'acq'] });
+    } catch {
+      setHubspotSync({ phase: 'error', message: 'Sync failed — network error' });
     }
   }
   if (!data) return null;
@@ -170,6 +197,42 @@ export function AcquisitionsModule() {
         {sync.phase === 'error' && (
           <span className="num text-2xs" style={{ color: 'var(--text-neg)', letterSpacing: '0.05em' }}>
             Sync failed — {sync.message}
+          </span>
+        )}
+        <button
+          type="button"
+          onClick={() => { void handleHubSpotSync(); }}
+          disabled={hubspotSync.phase === 'syncing'}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.375rem',
+            padding: '0.25rem 0.75rem',
+            fontSize: '0.75rem',
+            fontFamily: 'var(--font-mono)',
+            fontWeight: 600,
+            letterSpacing: '0.05em',
+            textTransform: 'uppercase',
+            borderRadius: 'var(--radius-sm)',
+            border: '1px solid var(--border-strong)',
+            background: 'var(--surface-overlay)',
+            color: 'var(--text-primary)',
+            cursor: hubspotSync.phase === 'syncing' ? 'not-allowed' : 'pointer',
+            opacity: hubspotSync.phase === 'syncing' ? 0.6 : 1,
+          }}
+        >
+          <RefreshCw size={11} style={hubspotSync.phase === 'syncing' ? { animation: 'spin 1s linear infinite' } : undefined} />
+          {hubspotSync.phase === 'syncing' ? 'Syncing…' : 'Sync from HubSpot'}
+        </button>
+        {hubspotSync.phase === 'done' && (
+          <span className="num text-2xs" style={{ color: 'var(--text-pos)', letterSpacing: '0.05em' }}>
+            Synced — {hubspotSync.inserted} inserted · {hubspotSync.updated} updated
+            {hubspotSync.errors.length > 0 && ` · ${hubspotSync.errors.length} error(s)`}
+          </span>
+        )}
+        {hubspotSync.phase === 'error' && (
+          <span className="num text-2xs" style={{ color: 'var(--text-neg)', letterSpacing: '0.05em' }}>
+            Sync failed — {hubspotSync.message}
           </span>
         )}
       </div>
