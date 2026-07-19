@@ -1,15 +1,39 @@
 # Changelog
 
-> **Note (added 2026-07-06, refreshed 2026-07-16):** this file's detailed narrative covers work
-> through **2026-06-13**, plus the single 2026-07-10 P4c/C2 entry below. Substantial work has
-> shipped since 06-13 without a matching entry — Phase 2 debt/refi + AI narrative, Phase 3
-> forecast/leasing, Phase 5 capital-allocation capstone, Directions 1-3, the design-parity /
-> Mission-Control initiative, and RCT v03 (per-market replacement cost, PR #210). Rather than
-> backfill the ~115-PR gap in this narrative style without complete first-hand grounding, consult
-> the two sources that ARE current: `CLAUDE.md` §3 (Active Roadmap table, merge-PR-level detail)
-> and `git log` directly. If you're picking up CHANGELOG maintenance, the un-narrated span is
-> PR #95–#210 (excluding #200, narrated below); when you add an entry, refresh this note's
-> coverage line in the same commit so the note itself never goes stale.
+> **Note (added 2026-07-06, refreshed 2026-07-19):** this file's detailed narrative covers work
+> through **2026-06-13**, plus the 2026-07-10 P4c/C2 entry and the 2026-07-19 appsec-sweep-remediation
+> entry, both below. Substantial work has shipped since 06-13 without a matching entry — Phase 2
+> debt/refi + AI narrative, Phase 3 forecast/leasing, Phase 5 capital-allocation capstone,
+> Directions 1-3, the design-parity / Mission-Control initiative, and RCT v03 (per-market
+> replacement cost, PR #210). Rather than backfill the ~115-PR gap in this narrative style without
+> complete first-hand grounding, consult the two sources that ARE current: `CLAUDE.md` §3 (Active
+> Roadmap table, merge-PR-level detail) and `git log` directly. If you're picking up CHANGELOG
+> maintenance, the un-narrated span is PR #95–#219 (excluding #200, narrated below); when you add
+> an entry, refresh this note's coverage line in the same commit so the note itself never goes stale.
+
+## AppSec sweep remediation + HubSpot sync trigger (2026-07-19)
+
+Follow-up to the 2026-07-18 `ora-appsec-sweep` first run (OI-017), plus one unrelated gap closed
+the same day.
+
+- **Dependency CVE remediation (PR #220).** Rather than the flagged semver-major top-level bumps
+  (`exceljs`, `@huggingface/transformers`, `vitest`), used targeted npm `overrides` on just the
+  vulnerable transitive packages — `adm-zip` → `^0.6.0` (GHSA-xcpc-8h2w-3j85, crafted-ZIP 4GB DoS,
+  transitive via `@huggingface/transformers → onnxruntime-node`), `uuid` → `^14.0.1` (transitive via
+  `exceljs`), `esbuild` → `^0.25.0` (transitive via `vite`/`vite-node`). Closes 6 of 9 originally-flagged
+  CVE instances with zero top-level version changes; full `gate:ci` green (232 files / 2828 tests).
+  A `vitest` 2.x→4.1.10 attempt to close the remaining 3 (all in vitest's own internally-bundled
+  `vite@5.x`) was tried and reverted — it surfaced a systemic `vi.mock('node:fs')` automocking
+  incompatibility spanning most of `tests/unit/governance-check.test.ts`, not worth forcing through
+  on a repo covering live financial-data reconciliation. Tracked as its own follow-up (OI-017).
+- **HubSpot sync UI trigger (PR #221).** `syncHubSpotPipeline()` / `POST /acq/sync/hubspot` (PR #203)
+  had no frontend trigger — unlike the symmetric Notion sync. Added `handleHubSpotSync()` + a "Sync
+  from HubSpot" button in `AcquisitionsModule.tsx`, mirroring the Notion pattern exactly. Live-verified
+  against the real HubSpot Acquisitions pipeline: 4 real deals (6150 Avery Road, 1333 Research Road,
+  2146 Enterprise Pkwy, Pendleton Trade Center) currently have no path into `acq_candidates`. Button
+  will 400 until Gabriel adds a `HUBSPOT_TOKEN` (Private App, `crm.objects.deals.read`) to `.env` —
+  a credential, not something any PR sets. No scheduled/automatic sync added, matching Notion's
+  existing manual-trigger-only design.
 
 ## P4c (Insurance) + C2 (Tax) Placeholder Buildout (2026-07-10)
 
