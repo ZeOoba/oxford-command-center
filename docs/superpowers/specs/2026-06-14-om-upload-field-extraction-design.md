@@ -137,7 +137,7 @@ This means `onApply` can merge directly into `FormState` with no conversion — 
 | Non-PDF uploaded | Server returns `{ error: "unsupported file type" }`; drawer shows error state |
 | pdf-parse returns empty text | Returns `{ fields: {}, fieldCount: 0 }` with drawer message "No extractable text found — is this a scanned/image PDF?" |
 | Claude API unavailable | Server returns 503; drawer shows "Extraction service unavailable, try again" |
-| Claude returns malformed JSON | Server catches parse error, returns 422; drawer shows error state |
+| Claude returns malformed JSON | **2026-07 update:** mitigated by Anthropic `output_config.format` (structured outputs) — the request now constrains the response to a JSON Schema built from `om-extract-fields.json` (`buildOmExtractSchema()`), which the original prose-only "no markdown, no code fences" instruction could not guarantee. The try/catch around `JSON.parse` is retained — it's now the guard for the schema's two documented residual cases (a `refusal` stop reason, or `max_tokens` truncation), not the common case. An `OM_EXTRACT_MODEL` override pointed at a model without structured-outputs support surfaces as the existing "AI service error (400)" 502 branch. **Caveat (flagged by the 2026-07-18 REFUTE pass, unconfirmed):** the request now also pins `temperature: 0` — if switching `OM_EXTRACT_MODEL` away from the default Haiku to another model ever 400s specifically on the temperature field (not confirmed against current docs at review time), that would surface through the same 502 branch; worth a quick check before pointing this override at a new model. |
 | Network failure | Client catch → drawer error state + "Try again" button |
 
 ## Testing Strategy

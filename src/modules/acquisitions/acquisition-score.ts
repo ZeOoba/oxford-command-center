@@ -223,7 +223,10 @@ export async function omExtractRequest(file: File, dealId?: string): Promise<OmE
   body.append('file', file);
   if (dealId) body.append('dealId', dealId);
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30_000);
+  // 55s: must exceed the server's own 45s Anthropic-call timeout (om-extract.ts) plus margin for
+  // this request's own upload + PDF-parse time — a shorter client timeout aborts (and shows the
+  // user an error for) a request the server is still processing to a real, billed completion.
+  const timeoutId = setTimeout(() => controller.abort(), 55_000);
   let res: Response;
   try {
     res = await fetch('/api/actions/om-extract', { method: 'POST', body, signal: controller.signal });
