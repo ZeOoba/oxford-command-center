@@ -108,6 +108,15 @@
       "review_needed": false,
       "review_detail": "MERGED via PR #193 (commit 40d73c7). load-env.ts now resolves the default .env path from its own on-disk location (import.meta.url) instead of process.cwd(), via the new exported defaultEnvPath(). Worktree removed, branch deleted (local + remote) post-merge.",
       "last_updated": "2026-07-09T20:16:39Z"
+    },
+    "next5-debt-module": {
+      "agent_role": "Analytics Agent - Claude Fable 5 (N3 next5-improvements-2026-07-18, Gabriel-ruled)",
+      "phase": "Debt & maturity warehouse module v1 - migration 023 (rate_type/next_rate_reset), debt-maturity.ts (maturity/reset timeline + refi-window flags vs referenced governors), GET /timeline + /refi-windows on debt-api, contracts additions",
+      "status": "review_needed",
+      "blocked_by": null,
+      "review_needed": true,
+      "review_detail": "Touches Architect-owned surfaces: server/warehouse/migrations/ (023_debt_rate_reset.sql, additive columns only) and src/contracts/debt.ts (new response schemas, additive only). Governor constants referenced read-only via loadGovernors + ALERT_THRESHOLDS.ltvCeiling - no redefinition. Branch not pushed; Gabriel confirms before any PR/merge.",
+      "last_updated": "2026-07-18T00:00:00Z"
     }
   },
   "phase-4-steps-5-7-8-9": {
