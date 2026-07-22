@@ -53,3 +53,28 @@ export type TenantArrears = z.infer<typeof TenantArrears>;
 /** POST /api/actions/tenant-arrears body. */
 export const TenantArrearsInput = z.object({ leaseId: z.string().min(1), arrears: TenantArrears });
 export type TenantArrearsInput = z.infer<typeof TenantArrearsInput>;
+
+/**
+ * Denormalized, brief-friendly projection of one lease's AR arrears — the read model the daily
+ * brief's 4c (and any flat-JSON consumer) reads WITHOUT a leaseId→lease join. Derived at
+ * snapshot-build time from PortfolioSnapshot.tenantArrears + leases (see
+ * server/ar/derive-ar-balances). total = d30+d60+d90+d90plus. An all-zero entry means
+ * "checked, current" — distinct from an ABSENT entry, which means "no AR data". Never overlay
+ * state: always recomputed each derive, so it can't drift from tenantArrears.
+ */
+export const ArBalance = z.object({
+  leaseId: z.string(),
+  tenantName: z.string(),
+  company: z.string().nullable().default(null),
+  unit: z.string().nullable().default(null),
+  propertyKey: z.string(),
+  propertyId: z.string().nullable().default(null),
+  d30: z.number().nonnegative().default(0),     // 1–30 days past due
+  d60: z.number().nonnegative().default(0),     // 31–60 days past due
+  d90: z.number().nonnegative().default(0),     // 61–90 days past due
+  d90plus: z.number().nonnegative().default(0), // 90+ days past due
+  total: z.number().nonnegative(),
+  asOfDate: z.coerce.date().nullable().optional(),
+  sourceFile: z.string().nullable().optional(),
+});
+export type ArBalance = z.infer<typeof ArBalance>;

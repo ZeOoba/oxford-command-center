@@ -19,9 +19,11 @@ import { basename } from 'node:path';
 import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { parseArAging, isGarbageExtraction, extractAsOfDateFromFilename } from '../server/ar/ar-aging';
-import { matchTenantToLease, normalizeTokens, type LeaseLite } from '../server/ar/match-tenant';
+import { matchTenantToLease, normalizeTokens } from '../server/ar/match-tenant';
 import { loadCache, saveCache, cacheKey } from '../server/ar/mapping-cache';
 import { mergeByLease } from '../server/ar/merge-buckets';
+import { filterAgainstPersisted, type DatedArrearsWrite } from '../server/ar/resolve-latest';
+import { parseSnapshotForImport, type SnapshotForImport } from '../server/ar/parse-snapshot-for-import';
 import type { TenantArrears } from '../src/contracts/index';
 
 const SERVER = process.env.ORA_SERVER ?? 'http://localhost:3000';
@@ -47,7 +49,7 @@ with pdfplumber.open(sys.argv[1]) as pdf:
 
 // ─── Snapshot / lease lookup ──────────────────────────────────────────────────
 
-async function fetchLeases(): Promise<LeaseLite[]> {
+async function fetchSnapshotForImport(): Promise<SnapshotForImport> {
   let resp: Response;
   try {
     resp = await fetch(`${SERVER}/api/snapshot`);
@@ -61,8 +63,14 @@ async function fetchLeases(): Promise<LeaseLite[]> {
     throw e;
   }
   if (!resp.ok) throw new Error(`/api/snapshot returned ${resp.status}`);
-  const snap = await resp.json() as { leases?: Array<{ id: string; tenantName: string; company: string | null }> };
-  return (snap.leases ?? []).map((l) => ({ id: l.id, tenantName: l.tenantName, company: l.company ?? null }));
+  return parseSnapshotForImport(await resp.json());
+}
+
+/** Pretty-print an as-of value for a console warning; 'undated' for null/undefined/unparseable. */
+function fmtAsOf(d: Date | string | null | undefined): string {
+  if (d === null || d === undefined) return 'undated';
+  const dt = d instanceof Date ? d : new Date(d);
+  return Number.isNaN(dt.getTime()) ? 'undated' : dt.toISOString().slice(0, 10);
 }
 
 // ─── Overlay write ────────────────────────────────────────────────────────────
@@ -144,9 +152,9 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // 3 — Load leases + cache
-  console.log('→ Loading leases from snapshot…');
-  const leases = await fetchLeases();
+  // 3 — Load leases + persisted arrears + cache
+  console.log('→ Loading leases + persisted arrears from snapshot…');
+  const { leases, tenantArrears: persistedArrears } = await fetchSnapshotForImport();
   console.log(`✓ ${leases.length} lease(s) loaded`);
   const cache = loadCache();
   const leaseIdSet = new Set(leases.map((l) => l.id));
@@ -238,12 +246,29 @@ async function main(): Promise<void> {
   // 5 — Merge multi-unit rows by leaseId (sum buckets) before writing.
   // The overlay write does a REPLACE — without merging, a tenant with two units would have
   // the second write silently overwrite the first, losing one unit's delinquency balance.
-  const toWrite = mergeByLease(confirmed);
-  if (toWrite.some((r) => r.multiUnit)) {
+  const merged = mergeByLease(confirmed);
+  if (merged.some((r) => r.multiUnit)) {
     console.log('\n  ℹ Multi-unit tenants detected — buckets summed per lease:');
-    for (const r of toWrite.filter((r) => r.multiUnit)) {
+    for (const r of merged.filter((r) => r.multiUnit)) {
       console.log(`    ${r.leaseId}: ${r.tenant}`);
     }
+  }
+
+  // 5b — Guard against overwriting a fresher balance (refute 2026-07-22 round 2): this report's
+  // asOfDate applies to every row (one file, one as-of), so compare each merged row against the
+  // PERSISTED entry for that lease before it's ever offered for write/confirm — the headless feed
+  // (scripts/ar-import-headless.ts) may have already imported a newer report for some of these leases
+  // since this PDF was queued, and the review-queue workflow that sends a human here is by
+  // construction working the OLDEST, stalest backlog rows.
+  const withProvenance: DatedArrearsWrite[] = merged.map((r) => ({ leaseId: r.leaseId, tenant: r.tenant, arrears: { ...r.arrears, asOfDate, sourceFile } }));
+  const { toWrite, rejectedStale, undatedConflict } = filterAgainstPersisted(withProvenance, persistedArrears);
+  if (rejectedStale.length > 0) {
+    console.log('\n  ⚠ SKIPPED — a PERSISTED record is already newer than this report:');
+    for (const r of rejectedStale) console.log(`    ${r.leaseId}: persisted ${fmtAsOf(r.persistedAsOf)} > incoming ${fmtAsOf(r.incomingAsOf)}`);
+  }
+  if (undatedConflict.length > 0) {
+    console.log('\n  ⚠ SKIPPED — this report has no as-of date but a DATED record is already persisted (cannot verify recency):');
+    for (const r of undatedConflict) console.log(`    ${r.leaseId}: persisted ${fmtAsOf(r.persistedAsOf)}`);
   }
 
   // 6 — Summary + confirm write
@@ -272,11 +297,27 @@ async function main(): Promise<void> {
     process.exit(0);
   }
 
-  // 7 — Write
+  // 7a — Re-check against a FRESH snapshot read (refute round 3/edges): the human review session
+  // between step 5b's guard and this confirm can run for minutes to hours (per-row prompts), and a
+  // scheduled headless sweep can persist a newer report for one of these SAME leases in that window —
+  // the check-then-act gap step 5b alone can't close. Re-fetching now and re-filtering closes it with
+  // one more cheap round-trip rather than trusting a staleness check that's now potentially stale
+  // itself.
+  const freshArrears = (await fetchSnapshotForImport()).tenantArrears;
+  const recheck = filterAgainstPersisted(toWrite, freshArrears);
+  if (recheck.rejectedStale.length > 0 || recheck.undatedConflict.length > 0) {
+    console.log('\n  ⚠ SKIPPED at final confirm — a newer record was persisted DURING this review session:');
+    for (const r of recheck.rejectedStale) console.log(`    ${r.leaseId}: persisted ${fmtAsOf(r.persistedAsOf)} > incoming ${fmtAsOf(r.incomingAsOf)}`);
+    for (const r of recheck.undatedConflict) console.log(`    ${r.leaseId}: persisted ${fmtAsOf(r.persistedAsOf)} (this report is undated)`);
+  }
+  const finalWrite = recheck.toWrite;
+
+  // 7b — Write. `arrears` already carries this report's asOfDate/sourceFile (stamped in step 5b) —
+  // no need to re-spread it here.
   console.log('\n→ Writing…');
   let written = 0;
-  for (const { leaseId, arrears, tenant } of toWrite) {
-    const ok = await writeTenantArrears(leaseId, { ...arrears, asOfDate, sourceFile });
+  for (const { leaseId, arrears, tenant } of finalWrite) {
+    const ok = await writeTenantArrears(leaseId, arrears);
     if (ok) {
       written++;
       console.log(`  ✓ ${leaseId}  (${tenant})`);
@@ -284,7 +325,7 @@ async function main(): Promise<void> {
   }
 
   await saveCache(cache);
-  console.log(`\n✓ Done — ${written}/${toWrite.length} written · ${skipped} skipped · mapping cache saved`);
+  console.log(`\n✓ Done — ${written}/${finalWrite.length} written · ${skipped} skipped · mapping cache saved`);
 }
 
 main().catch((e: unknown) => {
