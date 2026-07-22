@@ -30,12 +30,12 @@
     },
     "fix-acq-hubspot-sync-content-hash": {
       "agent_role": "Engineering (Claude Code) — Gabriel-directed in-turn 2026-07-21",
-      "phase": "Mirror the property-master.ts content_hash fix (branch fix/property-master-content-hash, migration 024, uncommitted) onto acq-hubspot-sync.ts's UPDATE (lines 190-196): stop stamping updated_at=datetime('now') on every sync run regardless of whether address/status actually changed. Adds migration 025_acq_hubspot_sync_content_hash.sql (content_hash TEXT, additive) to acq_candidates.",
-      "status": "review_needed",
+      "phase": "Mirror the property-master.ts content_hash fix onto acq-hubspot-sync.ts's UPDATE: stop stamping updated_at=datetime('now') on every sync run regardless of whether address/status actually changed. Added migration 025_acq_hubspot_sync_content_hash.sql (content_hash TEXT, additive) to acq_candidates.",
+      "status": "merged",
       "blocked_by": null,
-      "review_needed": true,
-      "review_detail": "Touches architect-owned server/warehouse/migrations/ (new file 025_acq_hubspot_sync_content_hash.sql) and architecture/database-schema.md. Additive-only ALTER TABLE, same pattern as migration 024 (property-master.ts, same session's prior fix). Gabriel directed this specific change in-turn; proceeding per CLAUDE.md Autonomy (unambiguous, deterministic) while leaving this declaration as the audit trail the claim_protocol requires.",
-      "last_updated": "2026-07-21T00:00:00Z"
+      "review_needed": false,
+      "review_detail": "MERGED via PR #224 (2026-07-22), after PR #225 (property-master.ts, the reference pattern) also merged. The refute-financial-change workflow was broken at the time (hidden control character in .claude/workflows/refute-financial-change.js, since fixed by another session) — cleared check:refute via a justified Refute-Skip trailer instead. Worktree removed.",
+      "last_updated": "2026-07-22T03:45:00Z"
     },
     "pfi-phase-b": {
       "agent_role": "Analytics Agent",
