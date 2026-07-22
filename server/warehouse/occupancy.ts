@@ -167,9 +167,10 @@ function easternCalendarDay(iso: string | undefined | null): string | null {
  * (degraded-mode startup) or an unparseable generatedAt is a safe no-op.
  *
  * Critical: we key on meta.generatedAt (the real per-refresh build timestamp), NOT meta.asOf.
- * meta.asOf is a static config constant (WORKBOOK_AS_OF, default '2026-06-01') that does not move
- * with the calendar or the workbook contents — keying on it would collapse every refresh onto a
- * single (property, asOf, source) row and the "time-series" would never accumulate beyond one point.
+ * meta.asOf is the workbook's own "As of" dateline (since OI-023; previously a static config
+ * constant) — it only moves when the workbook is saved, not per refresh — keying on it would
+ * collapse same-day refreshes onto a single (property, asOf, source) row and stall the series
+ * whenever the workbook goes unsaved.
  * generatedAt advances each refresh, so the series gains one point per Eastern calendar day; multiple
  * refreshes on the same ET day idempotently overwrite that day's point (recordOccupancyBatch upserts).
  */
