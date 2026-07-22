@@ -72,6 +72,17 @@ describe('partitionArRows — headless auto-write policy', () => {
     expect(p.learned).toEqual({}); // already cached → not re-learned
   });
 
+  it('routes a cached mapping to review when the leaseId no longer exists (vacated tenant, refute 2026-07-22)', () => {
+    // The lease was removed from the roster (tenant vacated owing money) but the AR export still
+    // lists them and the cache still points at the dead id — must NOT silently write to nowhere.
+    const cache = { [cacheKey('Acme Fabrication')]: 'lease-0042-REMOVED' };
+    const p = partitionArRows([row('Acme Fabrication', { d90plus: 9800 })], [lease('L1', 'Some Other Tenant')], cache);
+    expect(p.write).toEqual([]);
+    expect(p.review).toHaveLength(1);
+    expect(p.review[0]!.proposedLeaseId).toBe('lease-0042-REMOVED');
+    expect(p.review[0]!.reason).toMatch(/no longer exists/);
+  });
+
   it('honors a cached SKIP — counts it skipped, never writes or reviews', () => {
     const cache = { [cacheKey('Old Vacated Tenant')]: 'SKIP' };
     const p = partitionArRows([row('Old Vacated Tenant', { d90plus: 500 })], [lease('L1', 'Acme Tool')], cache);

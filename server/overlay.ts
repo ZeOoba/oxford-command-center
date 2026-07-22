@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, rename } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { z } from 'zod';
 import type { PortfolioSnapshot, DealStage, TenantArrears } from '../src/contracts/index';
@@ -47,7 +47,11 @@ export const EMPTY_OVERLAY: Overlay = { dealStages: {}, tasks: [], renewalStages
 // isolation, or by the harness after load-env runs — is honored. Production behavior is unchanged:
 // index.ts runs loadEnvFile() before importing this module, so the env value (or the default) is
 // identical to the previous module-const at every real call site.
-function overlayPath(): string {
+// Exported (refute 2026-07-22 round 3) so a caller that needs to pre-check the file BEFORE calling
+// loadOverlay — e.g. scripts/ar-import-headless.ts guarding against an unattended write amplifying a
+// corrupt overlay.json into a full reset — resolves the SAME path loadOverlay/saveOverlay use,
+// rather than re-deriving (and risking drifting from) the OVERLAY_PATH/default logic.
+export function overlayPath(): string {
   return process.env.OVERLAY_PATH ?? join(process.cwd(), 'data', 'overlay.json');
 }
 
@@ -60,6 +64,23 @@ export function nextStage(stage: DealStage): DealStage | null {
   return STAGE_FLOW[i + 1]!;
 }
 
+/** Coerce a raw asOfDate value (JSON round-trips a Date as an ISO string) to a Date, or null when
+ *  absent/unparseable — never throws, matching the rest of this loader's fail-safe-salvage style. */
+function coerceArrearsDate(v: unknown): Date | null {
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
+  if (typeof v === 'string' || typeof v === 'number') {
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  return null;
+}
+
+/** Coerce a raw sourceFile value to a non-empty string, or null. */
+function coerceSourceFile(v: unknown): string | null {
+  return typeof v === 'string' && v.length > 0 ? v : null;
+}
+
 /** Coerce the on-disk tenantArrears map PER BUCKET (via the shared coerceNonNegMoney) so a partial /
  *  hand-edited / legacy / export record yields a contract-valid {d30,d60,d90,d90plus} of non-negative
  *  numbers. overlay.json is the documented QB-AR-export / manual-entry surface (CLAUDE.md §9), NOT
@@ -68,14 +89,24 @@ export function nextStage(stage: DealStage): DealStage | null {
  *  SALVAGE per bucket, never drop a balance: dropping the whole record would silently suppress a
  *  co-occurring real 60+ delinquency (refute F3/edges). A non-object record value carries no buckets
  *  and is skipped. The SAME coerceNonNegMoney is the in-memory backstop in conditions.ts, so the
- *  load path and the rule agree on exactly one coercion (no string/number asymmetry). */
+ *  load path and the rule agree on exactly one coercion (no string/number asymmetry).
+ *
+ *  asOfDate/sourceFile are carried through ONLY when the raw record has the key at all (refute
+ *  2026-07-22: this loader used to silently DROP both fields on every load, which erased the headless
+ *  AR feed's provenance on the very next overlay save and defeated conditions.ts's staleness gate,
+ *  whose `'asOfDate' in r` check requires the key's PRESENCE, not just a non-null value, to
+ *  distinguish "Track-B-stamped" from "legacy/manual, never stamped"). Adding the key unconditionally
+ *  would wrongly promote every pre-existing legacy record into the stamped bucket on next load. */
 function parseArrears(raw: unknown): Record<string, TenantArrears> {
   if (!raw || typeof raw !== 'object') return {};
   const out: Record<string, TenantArrears> = {};
   for (const [leaseId, v] of Object.entries(raw as Record<string, unknown>)) {
     if (!v || typeof v !== 'object') continue; // a non-object record value carries no buckets
     const r = v as Record<string, unknown>;
-    out[leaseId] = { d30: coerceNonNegMoney(r.d30), d60: coerceNonNegMoney(r.d60), d90: coerceNonNegMoney(r.d90), d90plus: coerceNonNegMoney(r.d90plus) };
+    const entry: TenantArrears = { d30: coerceNonNegMoney(r.d30), d60: coerceNonNegMoney(r.d60), d90: coerceNonNegMoney(r.d90), d90plus: coerceNonNegMoney(r.d90plus) };
+    if ('asOfDate' in r) entry.asOfDate = coerceArrearsDate(r.asOfDate);
+    if ('sourceFile' in r) entry.sourceFile = coerceSourceFile(r.sourceFile);
+    out[leaseId] = entry;
   }
   return out;
 }
@@ -154,8 +185,19 @@ export function loadOverlay(): Overlay {
 
 export async function saveOverlay(o: Overlay): Promise<boolean> {
   try {
-    await mkdir(dirname(overlayPath()), { recursive: true });
-    await writeFile(overlayPath(), JSON.stringify(o, null, 2));
+    const path = overlayPath();
+    await mkdir(dirname(path), { recursive: true });
+    // Atomic write (temp file + rename), not a direct writeFile: overlay.json is the canonical
+    // mutation store for every write-back this module exposes (deal stages, tasks, notes, NOI
+    // budgets, tenantArrears, ...). A crash/power-loss mid-write previously left it truncated, and
+    // loadOverlay's corrupt-file handling silently resets to a clean/empty overlay on the NEXT load —
+    // refute 2026-07-22 round 2/edges: the headless AR feed added an UNATTENDED scheduled writer on
+    // this same path, so that failure mode is no longer gated behind a human UI action. A rename is a
+    // single filesystem operation on the same volume — either the old file remains intact or the new
+    // one is fully in place; there is no truncated-in-between state to observe.
+    const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
+    await writeFile(tmp, JSON.stringify(o, null, 2));
+    await rename(tmp, path);
     return true;
   } catch {
     return false;

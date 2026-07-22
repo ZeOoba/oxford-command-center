@@ -160,6 +160,30 @@ describe('loadOverlay — tenantArrears per-bucket salvage (refute F3 / edges)',
     expect(out.l1).toBeUndefined();
     expect(out.l2).toEqual({ d30: 0, d60: 0, d90: 1000, d90plus: 0 });
   });
+
+  // refute 2026-07-22 (arBalances/headless-feed PR): this loader used to silently DROP asOfDate and
+  // sourceFile on every load, which erased the AR feed's provenance on the very next overlay save and
+  // defeated conditions.ts's staleness gate (`'asOfDate' in r` — presence, not just non-null value,
+  // marks a Track-B-stamped record vs a legacy/manual one that never had the key at all).
+  it('round-trips a valid asOfDate + sourceFile', () => {
+    const out = loadArrears({ l1: { d90plus: 5000, asOfDate: '2026-07-15T00:00:00.000Z', sourceFile: 'AR_2026-07-15.pdf' } });
+    expect(out.l1!.asOfDate).toEqual(new Date('2026-07-15T00:00:00.000Z'));
+    expect(out.l1!.sourceFile).toBe('AR_2026-07-15.pdf');
+  });
+  it('does NOT add an asOfDate/sourceFile key when the raw record never had one (legacy/manual record)', () => {
+    const out = loadArrears({ l1: { d90plus: 5000 } });
+    expect('asOfDate' in out.l1!).toBe(false);
+    expect('sourceFile' in out.l1!).toBe(false);
+  });
+  it('coerces an unparseable asOfDate to null but KEEPS the key present (still a stamped record)', () => {
+    const out = loadArrears({ l1: { d90plus: 5000, asOfDate: 'not-a-date' } });
+    expect('asOfDate' in out.l1!).toBe(true);
+    expect(out.l1!.asOfDate).toBeNull();
+  });
+  it('coerces a non-string sourceFile to null', () => {
+    const out = loadArrears({ l1: { d90plus: 5000, sourceFile: 12345 } });
+    expect(out.l1!.sourceFile).toBeNull();
+  });
 });
 
 describe('loadOverlay — structured-map validation (closes the whole-overlay bypass)', () => {

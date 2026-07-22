@@ -70,6 +70,13 @@ export function partitionArRows(
   const review: ArReviewRow[] = [];
   const learned: Record<string, string> = {};
   let skipped = 0;
+  // Refute 2026-07-22: a cached mapping was trusted with NO check that the leaseId still exists —
+  // the fresh-match path validates implicitly via matchTenantToLease, but the cache path did not.
+  // A vacated tenant's lease drops out of `leases` on the next workbook refresh while the AR export
+  // keeps listing them; a stale cache hit then writes to a dead leaseId, and deriveArBalances
+  // silently skips that orphan — the delinquency vanishes from every read model with zero
+  // visibility. Validate every cache hit against the live roster before trusting it.
+  const leaseIds = new Set(leases.map((l) => l.id));
 
   for (const row of rows) {
     const { tenant, property, d30, d60, d90, d90plus } = row;
@@ -82,7 +89,23 @@ export function partitionArRows(
       continue;
     }
     if (cached !== undefined) {
-      // Previously human-confirmed mapping — trusted.
+      if (!leaseIds.has(cached)) {
+        review.push({
+          tenant,
+          property,
+          d30,
+          d60,
+          d90,
+          d90plus,
+          proposedLeaseId: cached,
+          proposedCandidate: null,
+          confidence: 'none',
+          ambiguous: false,
+          reason: `cached mapping → ${cached} no longer exists in the current lease roster (lease removed/vacated) — needs re-mapping`,
+        });
+        continue;
+      }
+      // Previously human-confirmed mapping, and the leaseId is still live — trusted.
       writePre.push({ leaseId: cached, arrears, tenant });
       continue;
     }
