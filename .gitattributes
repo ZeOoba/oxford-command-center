@@ -11,3 +11,12 @@
 # settings.json, so their shebang (and therefore CRLF-vs-LF) is irrelevant; scoping this narrowly
 # to the one file with an actual exposure, not the whole hooks/ directory.
 .claude/hooks/session-start.sh text eol=lf
+
+# .claude/workflows/*.js are consumed via Workflow({scriptPath: ...}) -- the Workflow tool's
+# approval-dialog safety check rejects raw \r bytes as "hidden control characters", so any file
+# in this checkout on Windows (autocrlf=true converts LF->CRLF on checkout) makes every
+# scriptPath-based invocation fail outright. Confirmed live 2026-07-21: refute-financial-change.js
+# was 100% CRLF and every Workflow({scriptPath}) call against it failed with that exact error;
+# converting to LF-only fixed it. Force LF regardless of platform checkout, same rationale/pattern
+# as session-start.sh above.
+.claude/workflows/*.js text eol=lf
