@@ -24,7 +24,13 @@
 //   scope for this sync — a separate human/process problem.
 // TEST-DATA GUARD: any deal whose name starts with "_Preflight" or "_Test" is skipped outright.
 // HUBSPOT_TOKEN must never be committed; callers source it from process.env.
+import { createHash } from 'node:crypto';
 import type { WarehouseDb } from './db';
+import { stableStringify } from './stable-stringify';
+
+function sha16(s: string): string {
+  return createHash('sha256').update(s).digest('hex').slice(0, 16);
+}
 
 /** HubSpot pipeline id for the "Acquisitions" pipeline (label distinguishes it from "default" = Lease Renewals). */
 export const HUBSPOT_ACQ_PIPELINE_ID = '885606973';
@@ -92,6 +98,17 @@ function mapDealStage(stage: string | null | undefined): { status: 'active' | 'a
 function isTestDeal(dealName: string | null): boolean {
   if (!dealName) return false;
   return dealName.startsWith('_Preflight') || dealName.startsWith('_Test');
+}
+
+/** Hash of the fields the upsert below actually writes (address, status), excluding id and
+ *  the timestamp columns — so a resync with no real HubSpot-side change reseeds to an identical
+ *  hash and doesn't bump updated_at. Mirrors migration 024's property_master content_hash fix.
+ *  Reflects the INCOMING mapped status, not the status no-clobber CASE's persisted resolution
+ *  (see STATUS NO-CLOBBER above) — an already-locked acquired/passed row can still see its hash
+ *  change (and updated_at bump) if HubSpot's reported stage shifts, even though `status` itself
+ *  stays locked; accepted, same tradeoff class as the no-clobber behavior it sits alongside. */
+function contentHash(address: string | null, status: string): string {
+  return sha16(stableStringify({ address, status }));
 }
 
 const HUBSPOT_TIMEOUT_MS = 15_000;
@@ -186,14 +203,17 @@ export async function syncHubSpotPipeline(
         'SELECT id FROM acq_candidates WHERE id = ?',
       ).get(candidateId) as { id: string } | undefined;
 
+      const newHash = contentHash(dealName, status);
+
       if (existing) {
         db.prepare(`
           UPDATE acq_candidates
           SET address = ?,
               status = CASE WHEN status IN ('acquired','passed') THEN status ELSE ? END,
-              updated_at = datetime('now')
+              content_hash = ?,
+              updated_at = CASE WHEN content_hash IS ? THEN updated_at ELSE datetime('now') END
           WHERE id = ?
-        `).run(dealName, status, candidateId);
+        `).run(dealName, status, newHash, newHash, candidateId);
         result.updated += 1;
       } else {
         // county/state/market/rentable_sf/year_built/owner_name: HubSpot's deal object in
@@ -203,9 +223,9 @@ export async function syncHubSpotPipeline(
         // nice-to-have, not implemented here.
         db.prepare(`
           INSERT INTO acq_candidates
-            (id, source, address, county, state, market, rentable_sf, year_built, owner_name, status)
-          VALUES (?, 'hubspot-pipeline', ?, NULL, NULL, NULL, NULL, NULL, NULL, ?)
-        `).run(candidateId, dealName, status);
+            (id, source, address, county, state, market, rentable_sf, year_built, owner_name, status, content_hash)
+          VALUES (?, 'hubspot-pipeline', ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, ?)
+        `).run(candidateId, dealName, status, newHash);
         result.inserted += 1;
       }
     } catch (e) {
