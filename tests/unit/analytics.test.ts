@@ -138,6 +138,7 @@ function snap(s: Partial<PortfolioSnapshot>): PortfolioSnapshot {
     dealComps: {},
     noiBudgets: {},
     tenantArrears: {},
+    arBalances: [],
     acquisitionInputs: {},
     marketRents: {},
     workbookTotals: { noi: null, value: null, rent: null },

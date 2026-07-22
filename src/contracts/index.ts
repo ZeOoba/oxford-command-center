@@ -12,7 +12,7 @@ import { Assumptions, ScenarioName } from './scenario';
 import { RenewalStage } from './renewal';
 import { CompSet } from './comps';
 import { AcquisitionInput } from './acquisition';
-import { QbActuals, TenantArrears } from './quickbooks';
+import { ArBalance, QbActuals, TenantArrears } from './quickbooks';
 
 export * from './common';
 export * from './brain';
@@ -114,6 +114,11 @@ export const PortfolioSnapshot = z.object({
   noiBudgets: z.record(z.string(), z.number()).default({}),
   /** Overlay-sourced per-lease AR aging (audit Fix #2 — collections), keyed by Lease.id. Workbook has none → empty. */
   tenantArrears: z.record(z.string(), TenantArrears).default({}),
+  /** Denormalized read model of tenantArrears joined onto leases (server/ar/derive-ar-balances):
+   *  each entry carries tenant/property identity + a summed total, worst-delinquency-first, so
+   *  flat-JSON consumers (the daily brief's 4c) need no leaseId→lease lookup. Recomputed every
+   *  derive from tenantArrears — never overlay state; [] when no arrears recorded. */
+  arBalances: z.array(ArBalance).default([]),
   /** Server-attached QuickBooks actuals (Phase 3 ②); null when no export configured. */
   quickbooks: QbActuals.nullable().default(null),
   /** Server/bake-attached ratified governor set (I10); null on legacy payloads → GOVERNOR_FALLBACK.
