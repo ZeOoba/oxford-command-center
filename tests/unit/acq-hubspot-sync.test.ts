@@ -123,6 +123,58 @@ describe('syncHubSpotPipeline — upsert idempotency', () => {
   });
 });
 
+describe('syncHubSpotPipeline — content_hash gates updated_at', () => {
+  it('does not bump updated_at on a resync when nothing actually changed', async () => {
+    const db = freshDb();
+    const deal = makeDeal({ id: 'gate-1', dealname: 'Unchanged Deal', dealstage: '1331037317' });
+
+    await syncHubSpotPipeline(db, 'tok', { fetchImpl: mockFetch([deal]) });
+    db.prepare("UPDATE acq_candidates SET updated_at = '2000-01-01 00:00:00' WHERE id = 'deal:hubspot:gate-1'").run();
+
+    await syncHubSpotPipeline(db, 'tok', { fetchImpl: mockFetch([deal]) });
+
+    const row = db.prepare('SELECT updated_at FROM acq_candidates WHERE id = ?')
+      .get('deal:hubspot:gate-1') as { updated_at: string };
+    expect(row.updated_at).toBe('2000-01-01 00:00:00');
+  });
+
+  it('does bump updated_at when the synced data actually changed', async () => {
+    const db = freshDb();
+    await syncHubSpotPipeline(db, 'tok', {
+      fetchImpl: mockFetch([makeDeal({ id: 'gate-2', dealname: 'Old Name', dealstage: '1331037317' })]),
+    });
+    db.prepare("UPDATE acq_candidates SET updated_at = '2000-01-01 00:00:00' WHERE id = 'deal:hubspot:gate-2'").run();
+
+    // HubSpot-side dealname change → address changes → content_hash mismatch → real bump.
+    await syncHubSpotPipeline(db, 'tok', {
+      fetchImpl: mockFetch([makeDeal({ id: 'gate-2', dealname: 'New Name', dealstage: '1331037317' })]),
+    });
+
+    const row = db.prepare('SELECT updated_at, address FROM acq_candidates WHERE id = ?')
+      .get('deal:hubspot:gate-2') as { updated_at: string; address: string };
+    expect(row.updated_at).not.toBe('2000-01-01 00:00:00');
+    expect(row.address).toBe('New Name');
+  });
+
+  it('bumps updated_at on the first resync after migration, when content_hash is still NULL', async () => {
+    // Simulates a pre-existing row from before migration 025 added the column: content_hash
+    // is genuinely NULL (not just a mismatched value), which is the exact transition the
+    // upsert's `IS` (NULL-safe) comparison — rather than `=` — is meant to handle correctly.
+    const db = freshDb();
+    const deal = makeDeal({ id: 'gate-3', dealname: 'Legacy Deal', dealstage: '1331037317' });
+    await syncHubSpotPipeline(db, 'tok', { fetchImpl: mockFetch([deal]) });
+    db.prepare(
+      "UPDATE acq_candidates SET updated_at = '2000-01-01 00:00:00', content_hash = NULL WHERE id = 'deal:hubspot:gate-3'",
+    ).run();
+
+    await syncHubSpotPipeline(db, 'tok', { fetchImpl: mockFetch([deal]) });
+
+    const row = db.prepare('SELECT updated_at FROM acq_candidates WHERE id = ?')
+      .get('deal:hubspot:gate-3') as { updated_at: string };
+    expect(row.updated_at).not.toBe('2000-01-01 00:00:00');
+  });
+});
+
 describe('syncHubSpotPipeline — dealstage → status mapping', () => {
   it('maps every in-flight stage (Sourced/Screened/LOI/Under Contract/DD/Closing) to active', async () => {
     const db = freshDb();
