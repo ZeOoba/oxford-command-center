@@ -1,6 +1,12 @@
 // server/warehouse/property-master.ts
+import { createHash } from 'node:crypto';
 import { PropertyMasterRowSchema, type PropertyMasterRow } from '../../src/contracts/warehouse';
 import type { WarehouseDb } from './db';
+import { stableStringify } from './stable-stringify';
+
+function sha16(s: string): string {
+  return createHash('sha256').update(s).digest('hex').slice(0, 16);
+}
 
 export interface PropertyMasterRecord {
   id: string;
@@ -74,18 +80,36 @@ export const CANON_PROPERTIES: PropertyMasterRow[] = ([
   { id: '1851-s-club-solar', name: '1851 S Club — Solar (25% roof project)', market: 'Columbus OH', financialMode: 'pnl', ownershipPct: 0.25, ownershipStatus: 'active', rentableSf: null, acquisitionDate: null, assetClass: 'Solar', notes: 'No real estate owned — 25% roof/solar project (Perfect Settings PPA). Building sold to RLIF East.' },
 ] as const).map((row) => PropertyMasterRowSchema.parse(row));
 
+/** Hash of every field seedPropertyMaster writes, excluding id (the key) and the timestamp columns
+ *  themselves — so an unchanged row reseeds to an identical hash regardless of when it runs. */
+function contentHash(r: PropertyMasterRow): string {
+  return sha16(stableStringify({
+    name: r.name, market: r.market ?? null,
+    propertyManager: r.propertyManager ?? null, pmContact: r.pmContact ?? null,
+    pmPlatform: r.pmPlatform ?? null, financialMode: r.financialMode,
+    rentableSf: r.rentableSf ?? null, acquisitionDate: r.acquisitionDate ?? null,
+    ownershipPct: r.ownershipPct, ownershipStatus: r.ownershipStatus,
+    assetClass: r.assetClass ?? null, notes: r.notes ?? null,
+  }));
+}
+
 export function seedPropertyMaster(db: WarehouseDb): void {
   const up = db.prepare(`
     INSERT INTO property_master (id, name, market, property_manager, pm_contact, pm_platform,
-      financial_mode, rentable_sf, acquisition_date, ownership_pct, ownership_status, asset_class, notes)
+      financial_mode, rentable_sf, acquisition_date, ownership_pct, ownership_status, asset_class, notes,
+      content_hash)
     VALUES (@id, @name, @market, @propertyManager, @pmContact, @pmPlatform,
-      @financialMode, @rentableSf, @acquisitionDate, @ownershipPct, @ownershipStatus, @assetClass, @notes)
+      @financialMode, @rentableSf, @acquisitionDate, @ownershipPct, @ownershipStatus, @assetClass, @notes,
+      @contentHash)
     ON CONFLICT(id) DO UPDATE SET
       name=excluded.name, market=excluded.market, property_manager=excluded.property_manager,
       pm_contact=excluded.pm_contact, pm_platform=excluded.pm_platform, financial_mode=excluded.financial_mode,
       rentable_sf=excluded.rentable_sf, acquisition_date=excluded.acquisition_date,
       ownership_pct=excluded.ownership_pct, ownership_status=excluded.ownership_status,
-      asset_class=excluded.asset_class, notes=excluded.notes, updated_at=datetime('now')
+      asset_class=excluded.asset_class, notes=excluded.notes,
+      content_hash=excluded.content_hash,
+      updated_at=CASE WHEN property_master.content_hash IS excluded.content_hash
+        THEN property_master.updated_at ELSE datetime('now') END
   `);
   const tx = db.transaction((rows: PropertyMasterRow[]) => {
     for (const r of rows) {
@@ -96,6 +120,7 @@ export function seedPropertyMaster(db: WarehouseDb): void {
         rentableSf: r.rentableSf ?? null, acquisitionDate: r.acquisitionDate ?? null,
         ownershipPct: r.ownershipPct, ownershipStatus: r.ownershipStatus,
         assetClass: r.assetClass ?? null, notes: r.notes ?? null,
+        contentHash: contentHash(r),
       });
     }
   });
