@@ -197,20 +197,26 @@ export function scoreDebtPositions(
     let annualDebtService: number | null = null;
     {
       let sum = 0;
-      let anyNonNull = false;
+      let hasUnknownLoan = false;
       for (const loan of loans) {
         if (loan.monthly_pmt !== null) {
           sum += loan.monthly_pmt * 12;
-          anyNonNull = true;
-        } else if (loan.annual_interest !== null || loan.annual_principal !== null) {
-          sum += (loan.annual_interest ?? 0) + (loan.annual_principal ?? 0);
-          anyNonNull = true;
+        } else if (loan.annual_interest !== null && loan.annual_principal !== null) {
+          // R1: BOTH fields must be known before treating the pair as a real total — a single
+          // known field (e.g. principal) standing in for the other via `?? 0` previously let a
+          // genuinely unrecorded interest amount silently vanish, understating debt service and
+          // therefore inflating DSCR past the governor floor on data that was actually incomplete.
+          sum += loan.annual_interest + loan.annual_principal;
+        } else {
+          hasUnknownLoan = true;
         }
       }
-      // F4: separate "no payment data" (anyNonNull=false → null) from "fields present but sum to 0"
-      // (anyNonNull=true, sum=0 → 0). A legitimate zero means fully paid down; that is NOT the
-      // same as unknown. Division-by-zero is guarded at the DSCR calculation below.
-      annualDebtService = anyNonNull ? sum : null;
+      // F4: separate "no payment data" from "fields present but sum to 0" — a legitimate zero
+      // means fully paid down, not unknown. R1: ANY loan with an unresolvable pair forces the
+      // WHOLE property's annualDebtService to unknown (mirrors hasUnknownMaturity below) — a
+      // partial sum that silently omits one loan's payment is not a true total, and presenting
+      // it as one would fabricate completeness the data doesn't have (Hard Invariant 7).
+      annualDebtService = hasUnknownLoan ? null : sum;
     }
 
     // === Get NOI from PeriodMetrics (Spine B) ===
@@ -375,7 +381,17 @@ export function scoreDebtPositions(
     const rawScore =
       ((dscrComp + ltvComp + maturityComp + debtYieldComp) / 4) * 100;
     const score = clamp(Math.round(rawScore), 0, 100);
-    const scoreBand = toBand(score);
+    // R3: dscrComp/ltvComp default to a "neutral" 0.5 when dscr/ltv is unknown (lines above), so
+    // a property whose DSCR or LTV governor was never actually verified can still land a high
+    // rawScore purely from the other components' neutral fill — reading as 'strong'/'adequate'
+    // when `signal` itself is 'hold' precisely because a governor input is unverified. Cap the
+    // band (never raise it) so 'strong'/'adequate' require governorsClear; a band that already
+    // computed 'watch'/'critical' on its own merits is left alone.
+    const rawBand = toBand(score);
+    const scoreBand =
+      governorsClear || (rawBand !== 'strong' && rawBand !== 'adequate')
+        ? rawBand
+        : 'watch';
 
     // C-2: post-refi annualized cash savings as % of equity. Undrivable (any input
     // missing, a leveraged-to-zero/negative-equity property, or >1 active loan) → null,
@@ -385,8 +401,13 @@ export function scoreDebtPositions(
     // figure with no real basis (refute-verified defect), so this is restricted to
     // single-loan properties, where the single loan's balance/ltv/rate are mutually
     // consistent by construction.
+    // R2: also gated on governorsClear — as ltv approaches 1.0, `value - totalBalance` (equity)
+    // approaches zero and the ratio diverges into a triple-digit, no-real-basis "savings" figure;
+    // that only happens above the governor's own 40% ceiling, so requiring governorsClear both
+    // bounds the ratio to a sane range AND stops a governor-blocked property from surfacing a
+    // headline savings number alongside the block signal.
     let refiCashSavingsPct: number | null = null;
-    if (loans.length === 1) {
+    if (loans.length === 1 && governorsClear) {
       const currentAnnualInterest = avgLoanRate !== null ? avgLoanRate * totalBalance : null;
       const refiAnnualInterest = marketRate !== null ? marketRate * totalBalance : null;
       const value = ltv !== null && ltv > 0 ? totalBalance / ltv : null;
