@@ -679,6 +679,141 @@ describe('F4 regression — annualDebtService=null when all payment fields are n
   });
 });
 
+// ============================================================================
+// Refute-pass fixes — 2026-07-21 adversarial review (3 independent reviewers)
+// ============================================================================
+
+describe('R1 regression — a partial-null debt-service pair must not be zero-filled', () => {
+  it('treats a loan with annual_principal known but annual_interest null as UNKNOWN debt service, not principal-only', () => {
+    const db = freshDb();
+    // Buggy behavior: annual_interest ?? 0 lets a $50k known principal stand in for the WHOLE
+    // debt service, silently dropping a genuinely unrecorded ~$30k of interest. NOI=62,500 over
+    // a (wrongly) zero-filled $50,000 DS gives dscr=1.25 (exactly clears the 1.25 floor); the
+    // true DS (~$80,000, if interest were known) would give dscr=0.78 (governor-block).
+    // Fix: this loan's contribution must be UNKNOWN (not $50,000), so annualDebtService (and
+    // therefore dscr) must be null — never a value computed from a silently-zeroed field.
+    insertLoan(db, {
+      monthly_pmt: null,
+      annual_interest: null,
+      annual_principal: 50_000,
+      ltv: 0.30,
+      months_to_maturity: 42,
+    });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 62_500 })];
+    const results = scoreDebtPositions(db, metrics, MARKET_5Y);
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s).toBeDefined();
+    expect(s.dscr).toBeNull();
+    expect(s.signal).toBe('hold');
+    expect(s.signalReason).toMatch(/DSCR unknown/i);
+  });
+
+  it('still sums debt service correctly when a loan reports BOTH annual_interest and annual_principal', () => {
+    const db = freshDb();
+    // Both fields present (even if principal is legitimately 0, e.g. interest-only) — a fully
+    // known pair must still be summed, not treated as unknown.
+    insertLoan(db, {
+      monthly_pmt: null,
+      annual_interest: 48_000,
+      annual_principal: 0,
+      ltv: 0.30,
+      months_to_maturity: 42,
+    });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 96_000 })];
+    const results = scoreDebtPositions(db, metrics, MARKET_5Y);
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s.dscr).toBeCloseTo(96_000 / 48_000, 5); // 2.0 — not null
+  });
+
+  it('forces the WHOLE property annualDebtService to unknown when ANY loan among several has a partial-null pair', () => {
+    const db = freshDb();
+    insertLoan(db, {
+      id: 'loan-known', property_id: 'prop-a', monthly_pmt: 2_000, current_balance: 300_000, ltv: 0.20,
+    });
+    insertLoan(db, {
+      id: 'loan-partial', property_id: 'prop-a', monthly_pmt: null,
+      annual_interest: null, annual_principal: 10_000, current_balance: 100_000, ltv: 0.10,
+    });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const results = scoreDebtPositions(db, metrics, MARKET_5Y);
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s.dscr).toBeNull();
+  });
+});
+
+describe('R2 regression — refiCashSavingsPct must be gated on governors being clear', () => {
+  it('returns null (not an unbounded/huge value) for a single loan in LTV governor-block', () => {
+    const db = freshDb();
+    // Extreme LTV near 1.0 on a single loan drives the old formula's implied equity toward
+    // zero, producing a triple-digit "savings %" with no real basis — and it fired even though
+    // the property is already governor-blocked, which reads as upside on a property the engine
+    // itself says shouldn't be touched.
+    insertLoan(db, { rate: 0.10, ltv: 0.97, monthly_pmt: 1_000, current_balance: 970_000 });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const results = scoreDebtPositions(db, metrics, MARKET_5Y);
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s.signal).toBe('governor-block');
+    expect(s.refiCashSavingsPct).toBeNull();
+  });
+
+  it('still computes a drivable value for a single loan when governors ARE clear (no regression on TC4b)', () => {
+    const db = freshDb();
+    insertLoan(db, { rate: 0.09, ltv: 0.30, monthly_pmt: 3_000 });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const results = scoreDebtPositions(db, metrics, MARKET_5Y);
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s.signal).toBe('refi');
+    expect(s.refiCashSavingsPct).not.toBeNull();
+    expect(s.refiCashSavingsPct!).toBeCloseTo(0.0107143, 5);
+  });
+});
+
+describe('R3 regression — scoreBand must not read strong/adequate when a governor input is unverified', () => {
+  it('caps scoreBand at watch when LTV is unknown, even though DSCR/maturity/yield all look excellent', () => {
+    const db = freshDb();
+    // dscr ~16.7x (excellent), long maturity, healthy yield — but ltv=null (unverified).
+    // Old behavior: ltvComp defaults to a "neutral" 0.5, producing rawScore ~87.5 -> 'strong',
+    // even though the LTV governor was never actually confirmed clear (signal='hold').
+    insertLoan(db, {
+      rate: 0.055, ltv: null, monthly_pmt: 1_000, months_to_maturity: 60, current_balance: 200_000,
+    });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const results = scoreDebtPositions(db, metrics, MARKET_5Y);
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s.signal).toBe('hold');
+    expect(s.signalReason).toMatch(/LTV unknown/i);
+    expect(s.scoreBand).not.toBe('strong');
+    expect(s.scoreBand).not.toBe('adequate');
+  });
+
+  it('does not downgrade a genuinely critical score when governors are unknown (never upgrades a bad score)', () => {
+    const db = freshDb();
+    // DSCR unknown (no NOI) AND everything else weak — score should stay whatever toBand()
+    // computes, never get pulled UP toward watch from critical.
+    insertLoan(db, {
+      rate: 0.10, ltv: null, monthly_pmt: 50_000, months_to_maturity: 3, current_balance: 900_000,
+    });
+    const metrics: PeriodMetrics[] = []; // no NOI data at all -> dscr null too
+    const results = scoreDebtPositions(db, metrics, MARKET_5Y);
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s.signal).toBe('hold');
+    // A property with essentially no verified inputs must not read as 'strong' or 'adequate'.
+    expect(s.scoreBand).not.toBe('strong');
+    expect(s.scoreBand).not.toBe('adequate');
+  });
+
+  it('does NOT cap scoreBand when governors ARE clear (no regression on the existing "strong" band test)', () => {
+    const db = freshDb();
+    insertLoan(db, {
+      id: 'loan-strong', property_id: 'prop-a', monthly_pmt: 100, ltv: 0.01,
+      months_to_maturity: 480, current_balance: 5_000,
+    });
+    const metricsStrong = [makePeriodMetrics({ propertyId: 'prop-a', noi: 500_000 })];
+    const r = scoreDebtPositions(db, metricsStrong, null);
+    expect(r[0]!.scoreBand).toBe('strong');
+  });
+});
+
 describe('F5 regression — negative NOI correctly triggers governor-block (not a crash)', () => {
   it('fires governor-block when NOI is negative (DSCR < dscrFloor)', () => {
     const db = freshDb();

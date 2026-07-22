@@ -23,4 +23,51 @@ describe('property master seed', () => {
     expect(byId.has('9510-persimmon-tree-rd-potomac-md')).toBe(false); // residence excluded
     expect(CANON_PROPERTIES).toHaveLength(14);
   });
+
+  it('does not bump updated_at on a reseed when no field actually changed', () => {
+    const db = openWarehouse(join(mkdtempSync(join(tmpdir(), 'wh-')), 'f.sqlite'));
+    seedPropertyMaster(db);
+    const before = db.prepare('SELECT id, updated_at FROM property_master ORDER BY id')
+      .all() as Array<{ id: string; updated_at: string }>;
+
+    // Force every row's updated_at into the past so a real bump would be detectable,
+    // then reseed with byte-for-byte identical CANON_PROPERTIES data.
+    db.prepare("UPDATE property_master SET updated_at = '2000-01-01 00:00:00'").run();
+    seedPropertyMaster(db);
+
+    const after = db.prepare('SELECT id, updated_at FROM property_master ORDER BY id')
+      .all() as Array<{ id: string; updated_at: string }>;
+    expect(after).toHaveLength(before.length);
+    for (const row of after) {
+      expect(row.updated_at).toBe('2000-01-01 00:00:00');
+    }
+  });
+
+  it('does bump updated_at when a field actually changed', () => {
+    const db = openWarehouse(join(mkdtempSync(join(tmpdir(), 'wh-')), 'f.sqlite'));
+    seedPropertyMaster(db);
+    db.prepare("UPDATE property_master SET updated_at = '2000-01-01 00:00:00'").run();
+    db.prepare("UPDATE property_master SET content_hash = 'stale-hash-forces-mismatch' WHERE id = '1100-rarig-ave-columbus-oh'").run();
+    seedPropertyMaster(db);
+
+    const row = db.prepare('SELECT updated_at FROM property_master WHERE id = ?')
+      .get('1100-rarig-ave-columbus-oh') as { updated_at: string };
+    expect(row.updated_at).not.toBe('2000-01-01 00:00:00');
+  });
+
+  it('bumps updated_at on the first reseed after migration, when content_hash is still NULL', () => {
+    // Simulates a pre-existing row from before migration 024 added the column: content_hash
+    // is genuinely NULL (not just a mismatched value), which is the exact transition the
+    // upsert's `IS` (NULL-safe) comparison — rather than `=` — is meant to handle correctly.
+    const db = openWarehouse(join(mkdtempSync(join(tmpdir(), 'wh-')), 'f.sqlite'));
+    seedPropertyMaster(db);
+    db.prepare("UPDATE property_master SET updated_at = '2000-01-01 00:00:00', content_hash = NULL").run();
+
+    seedPropertyMaster(db);
+
+    const rows = db.prepare('SELECT updated_at FROM property_master').all() as Array<{ updated_at: string }>;
+    for (const row of rows) {
+      expect(row.updated_at).not.toBe('2000-01-01 00:00:00');
+    }
+  });
 });

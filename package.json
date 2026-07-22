@@ -21,6 +21,7 @@
     "build:mirror": "npm run bake && npm run build",
     "deploy:mirror": "npm run build:mirror && npx wrangler pages deploy dist --project-name=ora-command-center --branch=main",
     "reconcile": "tsx scripts/reconcile.ts",
+    "reconcile:leases": "tsx scripts/reconcile-lease-sources.ts",
     "warehouse:backfill": "tsx scripts/warehouse-backfill.ts",
     "warehouse:verify": "tsx scripts/warehouse-verify.ts",
     "warehouse:drift": "tsx scripts/warehouse-live-drift-check.ts",
