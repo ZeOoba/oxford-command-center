@@ -6,6 +6,7 @@ import type { PortfolioSnapshot, DealStage, TenantArrears } from '../src/contrac
 import { Task, RenewalStage, CompSet, AcquisitionInput } from '../src/contracts/index';
 import type { LeaseRunAssumptions } from '../src/contracts/lease-run';
 import { coerceNonNegMoney } from '../src/lib/money';
+import { deriveArBalances } from './ar/derive-ar-balances';
 
 /**
  * Write-back overlay (Phase 5). The master workbook is canonical and READ-ONLY, so user
@@ -185,5 +186,5 @@ export function applyOverlay(s: PortfolioSnapshot, o: Overlay): PortfolioSnapsho
     return stage && stage !== d.stage ? { ...d, stage: stage as DealStage } : d;
   });
   const tasks = o.tasks.length ? [...o.tasks, ...s.tasks] : s.tasks;
-  return { ...s, deals, tasks, renewalStages: o.renewalStages, tenantNotes: o.tenantNotes, dealComps: o.dealComps, noiBudgets: o.noiBudgets, tenantArrears: o.tenantArrears, acquisitionInputs: o.acquisitionInputs, marketRents: o.marketRents };
+  return { ...s, deals, tasks, renewalStages: o.renewalStages, tenantNotes: o.tenantNotes, dealComps: o.dealComps, noiBudgets: o.noiBudgets, tenantArrears: o.tenantArrears, arBalances: deriveArBalances(s.leases, o.tenantArrears), acquisitionInputs: o.acquisitionInputs, marketRents: o.marketRents };
 }
