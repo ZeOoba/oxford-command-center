@@ -7,7 +7,7 @@ import { tenantScorecards } from '../src/brain/tenants';
 import { parseWorkbook } from './workbook/parse';
 import { applyOverlay, loadOverlay, saveOverlay, type Overlay } from './overlay';
 import { checkSnapshot } from './reconcile-runtime';
-import { SNAPSHOT_PATH, workbookPath } from './config';
+import { SNAPSHOT_PATH, workbookPath, referenceDate } from './config';
 import { loadQuickbooks } from './sources/quickbooks';
 
 /**
@@ -104,7 +104,9 @@ class Brain extends EventEmitter {
   /** Write-back: set (or clear) a tenant's free-text note. Returns false if the tenant is unknown. */
   setTenantNote(tenantId: string, note: string): boolean {
     if (!this.base) return false;
-    const known = new Set(tenantScorecards(this.base).map((t) => t.id));
+    // Only tenant IDs are consumed here, but pass the run date anyway — no call site may rely
+    // on tenantScorecards' silent `?? s.meta.asOf` day-count fallback (OI-023 audit).
+    const known = new Set(tenantScorecards(this.base, referenceDate()).map((t) => t.id));
     if (!known.has(tenantId)) return false;
     const notes = { ...this.overlay.tenantNotes };
     const trimmed = note.trim();

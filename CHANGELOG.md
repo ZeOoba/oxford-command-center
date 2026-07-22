@@ -1,8 +1,8 @@
 # Changelog
 
-> **Note (added 2026-07-06, refreshed 2026-07-19):** this file's detailed narrative covers work
-> through **2026-06-13**, plus the 2026-07-10 P4c/C2 entry and the 2026-07-19 appsec-sweep-remediation
-> entry, both below. Substantial work has shipped since 06-13 without a matching entry — Phase 2
+> **Note (added 2026-07-06, refreshed 2026-07-22):** this file's detailed narrative covers work
+> through **2026-06-13**, plus the 2026-07-10 P4c/C2 entry, the 2026-07-19 appsec-sweep-remediation
+> entry, and the 2026-07-22 snapshot-provenance (OI-023) entry, all below. Substantial work has shipped since 06-13 without a matching entry — Phase 2
 > debt/refi + AI narrative, Phase 3 forecast/leasing, Phase 5 capital-allocation capstone,
 > Directions 1-3, the design-parity / Mission-Control initiative, and RCT v03 (per-market
 > replacement cost, PR #210). Rather than backfill the ~115-PR gap in this narrative style without
@@ -10,6 +10,32 @@
 > Roadmap table, merge-PR-level detail) and `git log` directly. If you're picking up CHANGELOG
 > maintenance, the un-narrated span is PR #95–#219 (excluding #200, narrated below); when you add
 > an entry, refresh this note's coverage line in the same commit so the note itself never goes stale.
+
+## Snapshot provenance decouple — meta.asOf reads the workbook dateline (OI-023, 2026-07-22)
+
+The portfolio snapshot's provenance labels (`meta.asOf`, `cash.asOf`, `assumptions.asOf`) were
+pinned to the `WORKBOOK_AS_OF` config constant (`'2026-06-01'`), so `portfolio.json`, the TopBar,
+and every module "As of" badge reported June while the underlying rent-roll data was July-current
+(the workbook's own header read "As of July 17, 2026"). Raised by the ora-pm-ledger 2026-07-21
+rent-roll divergence audit.
+
+- **`server/workbook/parse.ts`:** new `datelineToIso()` + `sheetDataAsOf()` read each sheet's own
+  cached "As of …" header (ExcelJS surfaces the last-saved formula result). `meta.asOf` and
+  `assumptions.asOf` take the rent-roll/Assumptions dateline; `cash.asOf` takes the Cash Balances
+  sheet's own dateline, which is data-derived (`MAX` of the Cash Data date row) and can
+  legitimately sit earlier. A sheet with no parseable dateline falls back (cash/assumptions → the
+  rent-roll dateline; meta → `WORKBOOK_AS_OF`) with a `DataQualityFlag` warn — never a silent pin.
+  `parseTasks` data-month selection (`monthCol`) deliberately stays on `WORKBOOK_AS_OF`, locked by
+  test — early in a month the workbook may not carry the run month's column yet.
+- **Day-count fallback audit (`?? s.meta.asOf` in conditions/engine/critical-dates/renewals/
+  tenants/insurance-conditions):** every production alerting path already passes an explicit run
+  date (queries.ts, Calendar/Tenants/Renewals modules, ai/tools, ai/respond, brief/run). The one
+  omitting caller — `server/brain.ts` `setTenantNote`, ids-only — now passes `referenceDate()`.
+  The fallback itself can no longer freeze ~50 days stale: it now tracks the workbook's own
+  dateline, which advances with every workbook save.
+- **Tests:** `tests/unit/workbook-asof.test.ts` (9 cases: per-sheet datelines, cached-formula
+  unwrap, loud fallback flags, monthCol isolation). Live-verified against the real Master
+  Workbook: `meta.asOf 2026-07-17`, `cash.asOf 2026-07-10`, 137 leases, zero degradation flags.
 
 ## AppSec sweep remediation + HubSpot sync trigger (2026-07-19)
 
