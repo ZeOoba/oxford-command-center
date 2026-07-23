@@ -114,6 +114,52 @@ export function inferType(raw: string | null): PropertyType {
   return 'Other';
 }
 
+// ── workbook dateline (provenance "As of") ──────────────────────────────────
+const MONTH_INDEX: Record<string, number> = {
+  january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
+  july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
+};
+
+/**
+ * Extract an ISO date from a sheet dateline like
+ * "As of July 17, 2026   │   137 tenants   │   513,000 SF leased" (rent roll / assumptions,
+ * TEXT(TODAY(),...) cached at last save) or "As of July 10, 2026" (Cash Balances,
+ * data-derived MAX of the Cash Data date row). Deterministic string parse — deliberately no
+ * `new Date(text)` round-trip, whose local-timezone midnight can shift the ISO day (OI-023).
+ */
+export function datelineToIso(text: string): string | null {
+  const m = /as of\s+([a-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})/i.exec(text);
+  if (!m) return null;
+  const token = m[1]!.toLowerCase();
+  const month =
+    MONTH_INDEX[token] ??
+    (token.length >= 3
+      ? Object.entries(MONTH_INDEX).find(([name]) => name.startsWith(token))?.[1] ?? null
+      : null);
+  if (!month) return null;
+  const day = Number(m[2]);
+  const year = Number(m[3]);
+  if (day < 1 || day > 31 || year < 1990 || year > 2100) return null;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/**
+ * Scan the top of a sheet (column A) for its own "As of …" dateline. The real workbook stores
+ * these as formulas; ExcelJS surfaces the CACHED result from the last save, which cv() unwraps.
+ * Returns null when no parseable dateline exists (e.g. programmatic fixtures with no cached
+ * formula results) — callers fall back LOUDLY via a DataQualityFlag, never silently (OI-023).
+ */
+export function sheetDataAsOf(ws: Worksheet, maxRows = 6): string | null {
+  const last = Math.min(maxRows, ws.rowCount);
+  for (let r = 1; r <= last; r++) {
+    const text = str(row(ws, r, 1));
+    if (!text) continue;
+    const iso = datelineToIso(text);
+    if (iso) return iso;
+  }
+  return null;
+}
+
 /**
  * Property.id is `slug(name)` (parse.ts), and it is the join key for every downstream
  * consumer — capital-allocation, debt-scoring, the warehouse crosswalk, overlay note keys.
@@ -264,8 +310,10 @@ function parseLeases(
   // Day-count reference = the RUN date, NOT the workbook data date: a June-pinned
   // WORKBOOK_AS_OF froze every monthsToExpiry while the calendar advanced (frozen-dateline
   // defect, 2026-07). WORKBOOK_AS_OF still governs data-month selection (monthCol in
-  // parseTasks below) and data-snapshot labels — do not conflate the two. The caller resolves
-  // the exact reference (the brief passes its ET send date; other callers pass the UTC default).
+  // parseTasks below) — do not conflate the two. Data-snapshot labels (meta.asOf, cash.asOf,
+  // assumptions.asOf) read the workbook's OWN dateline since OI-023 (2026-07-22), with
+  // WORKBOOK_AS_OF as the flagged fallback. The caller resolves the exact day-count
+  // reference (the brief passes its ET send date; other callers pass the UTC default).
   const asOf = parseISO(referenceDateIso);
   for (let r = 1; r <= ws.rowCount; r++) {
     const propertyKey = str(row(ws, r, 1));
@@ -367,7 +415,13 @@ function parseLoans(ws: Worksheet, flags: DataQualityFlag[]): Loan[] {
 }
 
 // ── cash (Cash Balances) ──────────────────────────────────────────────────────
-function parseCash(ws: Worksheet, flags: DataQualityFlag[]) {
+/**
+ * @param fallbackAsOf Provenance fallback when the sheet carries no parseable "As of" dateline
+ *   (the resolved workbook dateline, itself falling back to WORKBOOK_AS_OF — OI-023). The Cash
+ *   Balances dateline is data-derived (MAX of the Cash Data date row) and can legitimately sit
+ *   earlier than the rent roll's TODAY()-cached stamp, so it is read per-sheet, not shared.
+ */
+function parseCash(ws: Worksheet, flags: DataQualityFlag[], fallbackAsOf: string) {
   const entities: CashEntity[] = [];
   let totalCash: number | null = null;
 
@@ -453,8 +507,18 @@ function parseCash(ws: Worksheet, flags: DataQualityFlag[]) {
   const sorted = [...entities].sort((a, b) => b.currentBalance - a.currentBalance);
   const largest = sorted[0] ?? null;
 
+  const ownAsOf = sheetDataAsOf(ws);
+  if (!ownAsOf) {
+    flags.push({
+      entity: 'cash',
+      field: 'asOf',
+      issue: `no parseable "As of" dateline on the Cash Balances sheet — provenance falls back to ${fallbackAsOf}`,
+      severity: 'warn',
+    });
+  }
+
   return {
-    asOf: WORKBOOK_AS_OF,
+    asOf: ownAsOf ?? fallbackAsOf,
     totalCash: total,
     activeEntities: entities.length,
     largestEntity: largest?.entity ?? null,
@@ -559,7 +623,8 @@ function parseTasks(ws: Worksheet): Task[] {
 }
 
 // ── assumptions (Assumptions) — label-scanned ─────────────────────────────────
-function parseAssumptions(ws: Worksheet) {
+/** @param fallbackAsOf See parseCash — same OI-023 per-sheet dateline convention. */
+function parseAssumptions(ws: Worksheet, flags: DataQualityFlag[], fallbackAsOf: string) {
   let activeScenario: ScenarioName = 'Base';
   let balloonAlertMonths = 18;
   let concentrationYellow = 0.25;
@@ -576,13 +641,22 @@ function parseAssumptions(ws: Worksheet) {
     else if (/concentration.*red/i.test(label)) concentrationRed = num(val) ?? 0.5;
   }
   const preset = SCENARIO_PRESETS[activeScenario];
+  const ownAsOf = sheetDataAsOf(ws);
+  if (!ownAsOf) {
+    flags.push({
+      entity: 'assumptions',
+      field: 'asOf',
+      issue: `no parseable "As of" dateline on the Assumptions sheet — provenance falls back to ${fallbackAsOf}`,
+      severity: 'warn',
+    });
+  }
   return {
     activeScenario,
     revenueFactor: preset.revenueFactor,
     vacancyFactor: preset.vacancyFactor,
     exitCapFactor: preset.exitCapFactor,
     thresholds: { balloonAlertMonths, concentrationYellow, concentrationRed },
-    asOf: WORKBOOK_AS_OF,
+    asOf: ownAsOf ?? fallbackAsOf,
   };
 }
 
@@ -610,22 +684,39 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
     return ws;
   };
 
+  // Provenance "As of" (OI-023): the workbook's own rent-roll dateline is the data date the
+  // snapshot advertises (TopBar / module badges / portfolio.json). The June-pinned
+  // WORKBOOK_AS_OF constant is only the LOUD fallback — a missing dateline surfaces as a
+  // DataQualityFlag, never a silent stale label. monthCol (parseTasks) deliberately stays on
+  // WORKBOOK_AS_OF — see the comment above parseLeases.
+  const rentRollWs = get('Master Tenant Rent Roll');
+  const workbookDataAsOf = sheetDataAsOf(rentRollWs);
+  if (!workbookDataAsOf) {
+    flags.push({
+      entity: 'meta',
+      field: 'asOf',
+      issue: `no parseable "As of" dateline on the Master Tenant Rent Roll sheet — provenance falls back to WORKBOOK_AS_OF (${WORKBOOK_AS_OF})`,
+      severity: 'warn',
+    });
+  }
+  const dataAsOf = workbookDataAsOf ?? WORKBOOK_AS_OF;
+
   const { properties, workbookNoiTotal, workbookValueTotal } = parseProperties(get('Property NOI'), flags);
-  const { leases, workbookRentTotal } = parseLeases(get('Master Tenant Rent Roll'), properties, flags, refIso);
+  const { leases, workbookRentTotal } = parseLeases(rentRollWs, properties, flags, refIso);
   const loans = parseLoans(get('Loan Index'), flags);
-  const cash = parseCash(get('Cash Balances'), flags);
+  const cash = parseCash(get('Cash Balances'), flags, dataAsOf);
   const insurance = parseInsurance(get('Insurance Renewals'), flags);
   const checklistTasks = parseTasks(get('Monthly Checklist'));
   const m365Tasks = await loadM365Tasks(); // live M365 To-Do prepended when GRAPH_TOKEN set, else []
   const tasks = m365Tasks.length ? [...m365Tasks, ...checklistTasks] : checklistTasks;
-  const assumptions = parseAssumptions(get('Assumptions'));
+  const assumptions = parseAssumptions(get('Assumptions'), flags, dataAsOf);
   const deals = await loadDeals(); // live Notion pipeline merged onto seed when configured, else seed
   const counterparties = deriveCounterparties({ properties, loans, insurance, deals });
 
   const snapshot = PortfolioSnapshot.parse({
     meta: {
       schemaVersion: SCHEMA_VERSION,
-      asOf: WORKBOOK_AS_OF,
+      asOf: dataAsOf,
       generatedAt: new Date().toISOString(),
       source: 'Master Excel Template Company Wide -- Oxford.xlsx',
       scenario: assumptions.activeScenario,

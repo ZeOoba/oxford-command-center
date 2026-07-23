@@ -40,6 +40,8 @@ vi.mock('../../server/config', () => ({
   SNAPSHOT_PATH: h.snapshotPath,
   serverPort: () => 8911,
   WORKBOOK_AS_OF: '2026-06-01',
+  // setTenantNote passes the run date to tenantScorecards (OI-023) — ids-only usage, any date works.
+  referenceDate: () => '2026-07-22',
 }));
 
 vi.mock('../../server/workbook/parse', () => ({

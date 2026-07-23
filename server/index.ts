@@ -110,7 +110,7 @@ brain.on('snapshot', (info: unknown) => {
     const snapshot = brain.getSnapshot();
     if (snapshot) {
       // Uses generatedAt (the per-refresh ISO timestamp) as source_date — NOT meta.asOf, which
-      // is the workbook data-month label (see config.ts referenceDate() docstring). This sibling
+      // is the workbook's own "As of" dateline (OI-023), not a per-refresh timestamp. This sibling
       // call was missed when the occupancy/debt-snapshot calls below were fixed. Note: unlike
       // occupancy, property_insurance_policies is keyed on (property_id, policy_number,
       // effective_date) with INSERT OR REPLACE, not a per-refresh-date history table — this fix
@@ -126,7 +126,8 @@ brain.on('snapshot', (info: unknown) => {
   }
   // Debt snapshot: write borrower-side debt positions to the warehouse on every workbook refresh.
   // Uses generatedAt (the per-refresh ISO timestamp) as the snapshot_date — NOT meta.asOf, which
-  // is the static WORKBOOK_AS_OF constant '2026-06-01' (see occupancy.ts:169-171 for this trap).
+  // is the workbook's own "As of" dateline (since OI-023; previously the static WORKBOOK_AS_OF
+  // constant) and only moves on a workbook save (see occupancy.ts captureOccupancy for this trap).
   // Unresolved loans (collateralProperty null/blank/typo'd) are warned, never silently dropped.
   try {
     const snapshot = brain.getSnapshot();

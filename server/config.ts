@@ -41,10 +41,13 @@ export function serverPort(): number {
 /**
  * The workbook's stated DATA "As of" date for v1 (the file carries June 1, 2026).
  * This is the WORKBOOK-DATA date only: it selects the workbook data-month column
- * (parse.ts monthCol) and stamps data-snapshot/data-freshness labels (meta.asOf, cash.asOf,
- * macro asOf). It is deliberately NOT the reference for day-count math or the Daily Brief
- * body's "As of" label — those track referenceDate() below (frozen-dateline defect, 2026-07:
- * this constant froze every "expires in Nd" and the brief dateline at June 1).
+ * (parse.ts monthCol) and stamps macro asOf labels. Since OI-023 (2026-07-22) the snapshot's
+ * provenance labels (meta.asOf, cash.asOf, assumptions.asOf) read the workbook's OWN "As of"
+ * dateline (parse.ts sheetDataAsOf) — this constant is only their flagged fallback, so a
+ * stale pin can no longer masquerade as current data. It is deliberately NOT the reference
+ * for day-count math or the Daily Brief body's "As of" label — those track referenceDate()
+ * below (frozen-dateline defect, 2026-07: this constant froze every "expires in Nd" and the
+ * brief dateline at June 1).
  */
 export const WORKBOOK_AS_OF = process.env.WORKBOOK_AS_OF ?? '2026-06-01';
 
