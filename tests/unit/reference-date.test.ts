@@ -159,7 +159,8 @@ describe('parseWorkbook — day-counts track referenceDate, data-month column st
     expect(snapshot.tasks).toHaveLength(1);
     expect(snapshot.tasks[0]!.status).toBe('done');
 
-    // Data-snapshot label unchanged: meta.asOf remains the workbook DATA date.
+    // Data-snapshot label: this fixture carries no "As of" dateline, so meta.asOf falls back
+    // to WORKBOOK_AS_OF (loudly — see workbook-asof.test.ts for the OI-023 dateline suite).
     expect(snapshot.meta.asOf).toBe(WORKBOOK_AS_OF);
   });
 });
