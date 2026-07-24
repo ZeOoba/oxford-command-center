@@ -201,6 +201,42 @@ export function disambiguatePropertyIds<T extends { id: string; name: string }>(
   return items;
 }
 
+/**
+ * Lease.id twin of disambiguatePropertyIds above — same collision-in-parse-order semantics,
+ * described via tenant identity instead of a property `name`. Deliberately NOT a shared
+ * generalization of disambiguatePropertyIds: keeping them independent means this fix cannot
+ * perturb the already-shipped, already-tested property-id path.
+ */
+export function disambiguateLeaseIds<T extends { id: string; tenantName: string; company: string | null }>(
+  items: T[],
+  flags: DataQualityFlag[],
+): T[] {
+  const taken = new Set<string>();
+  for (const item of items) {
+    if (!taken.has(item.id)) {
+      taken.add(item.id);
+      continue;
+    }
+    const base = item.id;
+    let n = 2;
+    let candidate = `${base}-${n}`;
+    while (taken.has(candidate)) {
+      n += 1;
+      candidate = `${base}-${n}`;
+    }
+    flags.push({
+      entity: candidate,
+      field: 'id',
+      issue: `lease id collision on "${base}" (tenant "${item.company ?? item.tenantName}") — disambiguated to "${candidate}"`,
+      rawValue: base,
+      severity: 'warn',
+    });
+    item.id = candidate;
+    taken.add(candidate);
+  }
+  return items;
+}
+
 // ── properties (Property NOI) ─────────────────────────────────────────────────
 interface PropertiesParseResult {
   properties: Property[];
@@ -332,7 +368,7 @@ function parseLeases(
     const monthlyRent = num(row(ws, r, 6));
     const annualRent = num(row(ws, r, 13));
     if (monthlyRent === null && annualRent === null) continue;
-    const id = `${slug(propertyKey)}-${slug(str(row(ws, r, 3)) ?? tenantName)}-${r}`;
+    const id = `${slug(propertyKey)}-${slug(str(row(ws, r, 3)) ?? tenantName)}`;
     const leaseEnd = isoOrNull(row(ws, r, 9), flags, id, 'leaseEnd');
     const rawStatus = (str(row(ws, r, 12)) ?? '').toLowerCase();
     let status: LeaseStatus = 'Unknown';
@@ -360,7 +396,7 @@ function parseLeases(
       flags: [],
     });
   }
-  return { leases: out, workbookRentTotal };
+  return { leases: disambiguateLeaseIds(out, flags), workbookRentTotal };
 }
 
 // ── loans (Loan Index — section-aware) ────────────────────────────────────────

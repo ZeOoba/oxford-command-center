@@ -104,6 +104,60 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
     expect(ownFlags).toEqual([]);
   });
 
+  it('a lease id is stable when an unrelated row is inserted above it in the rent roll (row-position regression)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
+    const fileBefore = join(dir, 'before.xlsx');
+    const fileAfter = join(dir, 'after.xlsx');
+
+    async function writeWithLeases(path: string, insertExtraRowFirst: boolean): Promise<void> {
+      const wb = new ExcelJS.Workbook();
+      const props = wb.addWorksheet('Property NOI');
+      props.addRow([
+        1, PROPERTY_NAME, 'Industrial', 50000, 3, 0.92, new Date('2020-01-01'),
+        5000000, 1, 5000000, 600000, 200000, 400000, 400000, 300000, 100000, 0.08, 1.3,
+        'Fixture Bank', 3000000, 0.6, 100, 12, 1500000, 0.08, 5,
+      ]);
+      const rentRoll = wb.addWorksheet('Master Tenant Rent Roll');
+      if (insertExtraRowFirst) {
+        rentRoll.addRow([
+          PROPERTY_NAME, 'Newly Added Tenant Co', 'Suite 050', 'Newly Added Tenant Co',
+          5000, 4000, 9.6, new Date('2023-01-01'), new Date('2028-01-01'), null, null, 'Active', 48000,
+        ]);
+      }
+      rentRoll.addRow([
+        PROPERTY_NAME, 'Fixture Tenant Co', 'Suite 100', 'Fixture Tenant Co',
+        10000, 8000, 9.6, new Date('2022-01-01'), new Date('2027-01-01'), null, null, 'Active', 96000,
+      ]);
+      const loans = wb.addWorksheet('Loan Index');
+      loans.addRow(['IS BORROWER']); // banner row -> section = 'borrower'
+      loans.addRow([
+        1, 'Fixture Loan A', 'Fixture Bank', 3000000, 0.06, 18000,
+        new Date('2030-01-01'), 42, 0.6, 'Current', PROPERTY_NAME,
+      ]);
+      wb.addWorksheet('Cash Balances');
+      wb.addWorksheet('Insurance Renewals');
+      wb.addWorksheet('Monthly Checklist');
+      wb.addWorksheet('Assumptions');
+      await wb.xlsx.writeFile(path);
+    }
+
+    await writeWithLeases(fileBefore, false);
+    await writeWithLeases(fileAfter, true);
+
+    const before = await parseWorkbook(fileBefore);
+    const after = await parseWorkbook(fileAfter);
+
+    const leaseBefore = before.snapshot.leases.find((l) => l.tenantName === 'Fixture Tenant Co')!;
+    const leaseAfter = after.snapshot.leases.find((l) => l.tenantName === 'Fixture Tenant Co')!;
+
+    // THE regression this fix closes: inserting an unrelated row above must NOT change this lease's id.
+    expect(leaseAfter.id).toBe(leaseBefore.id);
+    // The id is exactly the slug-derived base — no extra row-number suffix appended beyond what
+    // the property/unit names naturally produce (the unit label "Suite 100" itself ends in
+    // digits, so a bare /-\d+$/ check would false-positive; assert exact equality instead).
+    expect(leaseBefore.id).toBe(`${slug(PROPERTY_NAME)}-${slug('Suite 100')}`);
+  });
+
   it('tolerates the four optional sheets being present but empty (Cash/Insurance/Checklist/Assumptions)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-empty-optional.xlsx');

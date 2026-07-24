@@ -6,6 +6,7 @@ import {
   statusFromSymbol,
   isTaskBannerRow,
   disambiguatePropertyIds,
+  disambiguateLeaseIds,
 } from '../../server/workbook/parse';
 import { slug } from '@contracts/index';
 import type { DataQualityFlag } from '@contracts/index';
@@ -121,6 +122,35 @@ describe('disambiguatePropertyIds — propertyId tiebreaker (collision guard)', 
     const items = mk('Same', 'Same');
     const ret = disambiguatePropertyIds(items, []);
     expect(ret).toBe(items);
+  });
+});
+
+describe('disambiguateLeaseIds — lease id stability (row-position bug)', () => {
+  const mkLease = (id: string, tenantName: string, company: string | null = null) => ({ id, tenantName, company });
+
+  it('leaves distinct base ids untouched', () => {
+    const items = [mkLease('alpha-suite-100', 'Fixture Tenant Co'), mkLease('alpha-suite-200', 'Other Co')];
+    const flags: DataQualityFlag[] = [];
+    disambiguateLeaseIds(items, flags);
+    expect(items.map((i) => i.id)).toEqual(['alpha-suite-100', 'alpha-suite-200']);
+    expect(flags).toHaveLength(0);
+  });
+
+  it('two leases with colliding base ids get disambiguated in parse order', () => {
+    const items = [mkLease('alpha-suite-100', 'Tenant A'), mkLease('alpha-suite-100', 'Tenant B')];
+    const flags: DataQualityFlag[] = [];
+    disambiguateLeaseIds(items, flags);
+    expect(items.map((i) => i.id)).toEqual(['alpha-suite-100', 'alpha-suite-100-2']);
+    expect(new Set(items.map((i) => i.id)).size).toBe(items.length);
+    expect(flags.some((f) => f.field === 'id' && /collision|duplicate/i.test(f.issue))).toBe(true);
+  });
+
+  it('does not collide a disambiguator against a lease that already owns that suffixed id', () => {
+    const items = [mkLease('alpha-suite-100', 'Tenant A'), mkLease('alpha-suite-100-2', 'Tenant B'), mkLease('alpha-suite-100', 'Tenant C')];
+    const flags: DataQualityFlag[] = [];
+    disambiguateLeaseIds(items, flags);
+    expect(new Set(items.map((i) => i.id)).size).toBe(items.length);
+    expect(items[2]!.id).toBe('alpha-suite-100-3');
   });
 });
 
