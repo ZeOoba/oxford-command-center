@@ -43,7 +43,11 @@ async function main() {
   }
 
   if (apply && changed) {
-    await saveOverlay(overlay);
+    const ok = await saveOverlay(overlay);
+    if (!ok) {
+      console.error('✗ overlay.json write FAILED — see server/overlay.ts saveOverlay for the swallowed error detail. Migration NOT applied; re-run after resolving the write failure.');
+      process.exit(1);
+    }
     console.log('overlay.json updated.');
   } else if (!apply) {
     console.log('\nDry run only — re-run with --apply to write changes.');

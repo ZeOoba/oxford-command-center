@@ -341,6 +341,7 @@ function parseLeases(
   referenceDateIso: string,
 ): LeasesParseResult {
   const out: Lease[] = [];
+  const pendingRowFlags: { lease: Lease; rowFlags: DataQualityFlag[] }[] = [];
   let workbookRentTotal: number | null = null;
   let foundPortfolioTotalRow = false;
   // Day-count reference = the RUN date, NOT the workbook data date: a June-pinned
@@ -369,14 +370,19 @@ function parseLeases(
     const annualRent = num(row(ws, r, 13));
     if (monthlyRent === null && annualRent === null) continue;
     const id = `${slug(propertyKey)}-${slug(str(row(ws, r, 3)) ?? tenantName)}`;
-    const leaseEnd = isoOrNull(row(ws, r, 9), flags, id, 'leaseEnd');
+    // Date-quality flags for this row are collected locally, not pushed to `flags` directly:
+    // `id` here is pre-disambiguation and may be renamed once disambiguateLeaseIds runs over the
+    // full `out` array below, which would otherwise leave a stale `entity` on any flag raised
+    // before the rename -- misattributing a data-quality warning to the wrong lease on a collision.
+    const rowFlags: DataQualityFlag[] = [];
+    const leaseEnd = isoOrNull(row(ws, r, 9), rowFlags, id, 'leaseEnd');
     const rawStatus = (str(row(ws, r, 12)) ?? '').toLowerCase();
     let status: LeaseStatus = 'Unknown';
     if (rawStatus.includes('expiring')) status = 'Expiring Soon';
     else if (rawStatus.includes('expired')) status = 'Expired';
     else if (rawStatus.includes('active')) status = 'Active';
     else if (rawStatus.includes('vacant')) status = 'Vacant';
-    out.push({
+    const lease: Lease = {
       id,
       propertyKey,
       propertyId: resolvePropertyId(propertyKey, properties),
@@ -386,17 +392,27 @@ function parseLeases(
       sf: num(row(ws, r, 5)) ?? 0,
       monthlyRent: monthlyRent ?? 0,
       rentPerSf: num(row(ws, r, 7)),
-      leaseStart: isoOrNull(row(ws, r, 8), flags, id, 'leaseStart'),
+      leaseStart: isoOrNull(row(ws, r, 8), rowFlags, id, 'leaseStart'),
       leaseEnd,
-      escalationDate: isoOrNull(row(ws, r, 10), flags, id, 'escalationDate'),
+      escalationDate: isoOrNull(row(ws, r, 10), rowFlags, id, 'escalationDate'),
       escalationPct: num(row(ws, r, 11)),
       status,
       annualRent: annualRent ?? (monthlyRent ?? 0) * 12,
       monthsToExpiry: leaseEnd ? differenceInCalendarMonths(parseISO(leaseEnd), asOf) : null,
       flags: [],
-    });
+    };
+    out.push(lease);
+    pendingRowFlags.push({ lease, rowFlags });
   }
-  return { leases: disambiguateLeaseIds(out, flags), workbookRentTotal };
+  const finalLeases = disambiguateLeaseIds(out, flags);
+  // Now that every lease's id is final, re-home each row's locally-collected flags onto the real
+  // `flags` array with the corrected (possibly disambiguated) entity -- see the rowFlags comment
+  // above. Correlated by object reference (`lease`), not by id string, so it stays correct even
+  // when two leases shared the same pre-dedup base id.
+  for (const { lease, rowFlags } of pendingRowFlags) {
+    for (const f of rowFlags) flags.push({ ...f, entity: lease.id });
+  }
+  return { leases: finalLeases, workbookRentTotal };
 }
 
 // ── loans (Loan Index — section-aware) ────────────────────────────────────────

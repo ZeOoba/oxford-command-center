@@ -158,6 +158,67 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
     expect(leaseBefore.id).toBe(`${slug(PROPERTY_NAME)}-${slug('Suite 100')}`);
   });
 
+  it('attributes a date-quality flag to the FINAL (disambiguated) lease id, not the stale pre-collision base id', async () => {
+    // Regression for the flag-misattribution defect: two rows collide on the same base lease id
+    // (same property + same Suite/Unit -- the id formula keys off unit, not tenant name). The
+    // SECOND colliding row carries an implausible-year leaseEnd cell (isoOrNull rejects years
+    // outside 1990-2100 and raises a data-quality flag using the row's PRE-disambiguation id).
+    // Under the pre-fix code, that flag's `entity` stayed the stale base id -- indistinguishable
+    // from a flag legitimately belonging to the FIRST lease, which keeps that same base id after
+    // disambiguateLeaseIds runs. The fix re-homes each row's flags onto the lease's FINAL id via
+    // object-reference correlation, so the flag must land on the second lease's disambiguated
+    // "<base>-2" id -- never the bare base id shared by the first lease.
+    const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
+    const file = join(dir, 'fixture-lease-id-collision-flag.xlsx');
+    const wb = new ExcelJS.Workbook();
+
+    const props = wb.addWorksheet('Property NOI');
+    props.addRow([1, PROPERTY_NAME, 'Industrial', 50000, 3, 0.92]);
+
+    const rentRoll = wb.addWorksheet('Master Tenant Rent Roll');
+    // First row: same unit, valid leaseEnd -- raises no flag, keeps the base id.
+    rentRoll.addRow([
+      PROPERTY_NAME, 'Tenant One Co', 'Suite 100', 'Tenant One Co',
+      10000, 8000, 9.6, new Date('2022-01-01'), new Date('2027-01-01'),
+      null, null, 'Active', 96000,
+    ]);
+    // Second row: SAME unit ("Suite 100") -> collides on the pre-dedup base id; different tenant
+    // name; leaseEnd year (1899) is outside isoOrNull's 1990-2100 plausible range -> raises a
+    // 'leaseEnd' flag keyed (pre-fix) to the shared base id.
+    rentRoll.addRow([
+      PROPERTY_NAME, 'Tenant Two Co', 'Suite 100', 'Tenant Two Co',
+      6000, 5000, 9.6, new Date('2022-06-01'), new Date('1899-01-01'),
+      null, null, 'Active', 60000,
+    ]);
+
+    wb.addWorksheet('Loan Index');
+    wb.addWorksheet('Cash Balances');
+    wb.addWorksheet('Insurance Renewals');
+    wb.addWorksheet('Monthly Checklist');
+    wb.addWorksheet('Assumptions');
+    await wb.xlsx.writeFile(file);
+
+    const { snapshot, flags } = await parseWorkbook(file);
+
+    expect(snapshot.leases).toHaveLength(2);
+    const leaseOne = snapshot.leases.find((l) => l.tenantName === 'Tenant One Co')!;
+    const leaseTwo = snapshot.leases.find((l) => l.tenantName === 'Tenant Two Co')!;
+
+    const baseId = `${slug(PROPERTY_NAME)}-${slug('Suite 100')}`;
+    // (a) distinct ids: first keeps the base, second gets disambiguated.
+    expect(leaseOne.id).toBe(baseId);
+    expect(leaseTwo.id).toBe(`${baseId}-2`);
+    expect(leaseTwo.id).not.toBe(leaseOne.id);
+
+    // (b) the leaseEnd flag must be attributed to the SECOND lease's final id -- not the bare
+    // base id, and not the first lease's id (which happens to equal the bare base id).
+    const leaseEndFlags = flags.filter((f) => f.field === 'leaseEnd');
+    expect(leaseEndFlags).toHaveLength(1);
+    expect(leaseEndFlags[0]!.entity).toBe(leaseTwo.id);
+    expect(leaseEndFlags[0]!.entity).not.toBe(baseId);
+    expect(leaseEndFlags[0]!.entity).not.toBe(leaseOne.id);
+  });
+
   it('tolerates the four optional sheets being present but empty (Cash/Insurance/Checklist/Assumptions)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
     const file = join(dir, 'fixture-empty-optional.xlsx');
