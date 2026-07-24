@@ -33,6 +33,8 @@ import {
   type MaturityLadderEntry,
   type DebtSignal,
 } from '../../src/contracts/debt';
+import { z } from 'zod';
+import { Loan as LoanSchema } from '../../src/contracts/loan';
 import type { Loan } from '../../src/contracts/loan';
 import {
   buildMaturityTimeline,
@@ -54,7 +56,51 @@ export interface DebtApiSnapshotPayload {
   snapshotDate: string;
   loans: Loan[];
   properties: { id: string; name: string }[];
+  /** See DebtApiSnapshotPayloadSchema's doc comment below (H2a reachability fix). */
+  allowEmptySupersede?: boolean;
 }
+
+/**
+ * Runtime schema for the POST /snapshot body.
+ *
+ * 2026-07-24 integrity sweep — ROOT CAUSE of both HIGH governor findings. This route used to
+ * take its body through a bare `as DebtApiSnapshotPayload` cast plus an Array.isArray() shape
+ * check, while every GET route in this file Zod-parses its RESPONSE. That asymmetry (unvalidated
+ * in, validated out) meant arbitrary JSON reached the warehouse writer: a negative absBalance
+ * flowed into debt_positions.current_balance and deflated the portfolio aggregate LTV into a
+ * false clearance of the Hard-Invariant-4 40% governor. debt-scoring.ts's effectiveMonthsToMaturity
+ * already carried a comment naming this exact route as a live threat model (a malformed
+ * is_demand row with a populated maturity_date), which was hardened per-function rather than at
+ * the boundary. This closes it at the boundary instead — one parse, every field.
+ *
+ * The Loan contract ALREADY declares `absBalance: z.number().nonnegative()`; it simply was never
+ * enforced here. No new financial rule is introduced — an existing one is now applied.
+ *
+ * ltv IS bounded here, narrowly, unlike the base Loan schema (round 5 correction — see loan.ts's
+ * doc comment for the full reasoning): a sign error or an order-of-magnitude entry error is
+ * rejected on THIS supervised, explicit write route without imposing the same bound on
+ * server/workbook/parse.ts's whole-portfolio PortfolioSnapshot.parse(), where a single bad cell
+ * failing the entire snapshot would break this repo's DataQualityFlag-not-hard-throw convention.
+ * The bound still does NOT defend the too-LOW direction — see loan.ts; that risk is open.
+ */
+const BoundedLoanForSnapshotWrite = LoanSchema.extend({ ltv: z.number().min(0).max(1.5).nullable() });
+
+export const DebtApiSnapshotPayloadSchema = z.object({
+  snapshotDate: z.string().min(1),
+  loans: z.array(BoundedLoanForSnapshotWrite),
+  properties: z.array(z.object({ id: z.string(), name: z.string() })),
+  // 2026-07-24 (H2a/shrinkage-guard reachability fix, refute-review): writeDebtSnapshot's
+  // REFUSED error names `{ allowEmptySupersede: true }` as the remedy for a CONFIRMED book loss
+  // (a total wipe, or — since round 4 — a verified majority net runoff with no replacement), but
+  // no caller could ever pass it — this schema had no field for it, and the automated
+  // server/index.ts reload path deliberately never gets one (see the route handler below:
+  // threading it there would let the exact parser regression this guard defends against wipe
+  // the book by itself). POST /snapshot is the one SUPERVISED, explicit write surface, so it is
+  // the one place a human/caller can confirm a genuine book-shrinking snapshot is intentional.
+  // NOTE: an ordinary refinance or an id rename that keeps the total loan count intact never
+  // trips the guard and never needs this flag — see debt-snapshot.ts's netLoss reasoning.
+  allowEmptySupersede: z.boolean().optional(),
+});
 
 // ── Maturity ladder helpers ────────────────────────────────────────────────────────────────
 
@@ -270,28 +316,51 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
   // buildLoanPropertyMap() as the shared canonical path.
   app.post('/snapshot', (c) =>
     withDb(async (db) => {
-      let payload: DebtApiSnapshotPayload;
+      let rawBody: unknown;
       try {
-        payload = (await c.req.json()) as DebtApiSnapshotPayload;
+        rawBody = await c.req.json();
       } catch {
         return c.json({ ok: false, error: 'Invalid JSON body' }, 400);
       }
-      if (!payload.snapshotDate || !Array.isArray(payload.loans) || !Array.isArray(payload.properties)) {
-        return c.json({ ok: false, error: 'snapshotDate, loans, and properties are required' }, 400);
+      // Full schema parse — see DebtApiSnapshotPayloadSchema. Rejects at the boundary rather
+      // than letting a malformed row reach the warehouse and corrupt a governor verdict.
+      const parsed = DebtApiSnapshotPayloadSchema.safeParse(rawBody);
+      if (!parsed.success) {
+        return c.json(
+          { ok: false, error: 'invalid snapshot payload', issues: parsed.error.issues },
+          400,
+        );
       }
+      const payload: DebtApiSnapshotPayload = parsed.data;
       try {
         const validPropertyIds = new Set<string>(
           (db.prepare('SELECT id FROM property_master').all() as { id: string }[]).map((r) => r.id),
         );
         const { map, unresolved } = buildLoanPropertyMap(payload.loans, payload.properties, validPropertyIds);
-        const result = writeDebtSnapshot(db, payload.loans, payload.snapshotDate, map);
+        const result = writeDebtSnapshot(db, payload.loans, payload.snapshotDate, map, {
+          allowEmptySupersede: payload.allowEmptySupersede === true,
+        });
         if (unresolved.length > 0) {
           console.warn(`[debt-api] POST /snapshot: ${unresolved.length} borrower loan(s) unattributed (collateralProperty null, blank, or typo'd name not in property_master): ${unresolved.join(', ')}`);
         }
         if (result.errors.length > 0) {
-          console.warn(`[debt-api] POST /snapshot: ${result.errors.length} FK-validation error(s) during writeDebtSnapshot (belt-and-suspenders backstop): ${result.errors.join('; ')}`);
+          // errors[] carries several classes — FK-validation backstops, unrecognized loan
+          // statuses, id collisions, and (2026-07-24) a refused empty-set book wipe — so the
+          // label stays generic rather than asserting they are all FK failures.
+          console.warn(`[debt-api] POST /snapshot: ${result.errors.length} writeDebtSnapshot warning(s)/error(s): ${result.errors.join('; ')}`);
         }
-        return c.json({ ok: true, written: result.written, unresolved: unresolved.length, errors: result.errors });
+        // refused (2026-07-24): true iff the H2a empty-set guard declined the whole-book
+        // supersede (result.refusedEmptySupersede — a typed field, not prose-parsed). Not an
+        // HTTP-level failure (the request was well-formed and the response accurately reports
+        // what happened) — 200/ok:true stands — but a caller checking only `ok`/`written`
+        // could otherwise mistake "nothing needed writing" for "actively refused".
+        return c.json({
+          ok: true,
+          written: result.written,
+          unresolved: unresolved.length,
+          errors: result.errors,
+          refused: result.refusedEmptySupersede,
+        });
       } catch (err) {
         console.error('[debt-api] POST /snapshot error:', err instanceof Error ? err.message : String(err));
         return c.json({ error: 'debt snapshot write failed' }, 500);

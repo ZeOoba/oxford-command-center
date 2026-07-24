@@ -138,6 +138,14 @@ brain.on('snapshot', (info: unknown) => {
       );
       const { map, unresolved } = buildLoanPropertyMap(snapshot.loans, snapshot.properties, validPropertyIds);
       const snapshotDate = snapshot.meta.generatedAt.slice(0, 10);
+      // No opts here — deliberately. This is the AUTOMATED reload path (fires on every workbook
+      // refresh, unattended); it is exactly the untrusted producer writeDebtSnapshot's H2a
+      // empty-set guard exists to catch (2026-07-24). allowEmptySupersede is reachable only from
+      // POST /snapshot (debt-api.ts), a SUPERVISED write a human/caller explicitly confirms.
+      // The `snapshot.loans.length > 0` check above already screens the obvious empty-payload
+      // case; the guard inside writeDebtSnapshot is the second line of defense for the subtler
+      // case where the raw array is non-empty but filters to zero borrower loans (e.g. a
+      // direction-column parse regression, or every loan classifying terminal).
       const result = writeDebtSnapshot(db, snapshot.loans, snapshotDate, map);
       if (unresolved.length > 0) {
         console.warn(
@@ -145,8 +153,13 @@ brain.on('snapshot', (info: unknown) => {
         );
       }
       if (result.errors.length > 0) {
+        // Generic label (2026-07-24, matching debt-api.ts's POST /snapshot twin): errors[] now
+        // carries several classes — FK-validation backstops, unrecognized loan statuses, id
+        // collisions, and (2026-07-24) a refused empty-set book-wipe from the H2a guard, which
+        // is this reload path's SECOND line of defense (see the call site comment above). A
+        // REFUSED message under a "FK-validation" label would read as the wrong failure class.
         console.warn(
-          `⚠ Debt snapshot: ${result.errors.length} FK-validation error(s) (belt-and-suspenders backstop): ${result.errors.join('; ')}`,
+          `⚠ Debt snapshot: ${result.errors.length} writeDebtSnapshot warning(s)/error(s): ${result.errors.join('; ')}`,
         );
       }
     }
