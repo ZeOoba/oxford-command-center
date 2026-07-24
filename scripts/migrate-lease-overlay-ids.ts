@@ -8,10 +8,11 @@
 // base — printing what it would change. Run with --apply to write data/overlay.json.
 //
 // Usage: npx tsx scripts/migrate-lease-overlay-ids.ts [--apply]
+import { existsSync, readFileSync } from 'node:fs';
 import { parseWorkbook } from '../server/workbook/parse';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath } from '../server/config';
-import { loadOverlay, saveOverlay } from '../server/overlay';
+import { loadOverlay, saveOverlay, overlayPath } from '../server/overlay';
 
 loadEnvFile();
 
@@ -252,6 +253,27 @@ async function main() {
   const { snapshot } = await parseWorkbook(workbookPath());
   const liveIds = new Set(snapshot.leases.map((l) => l.id));
   const livePropertyKeys = new Set(snapshot.leases.map((l) => l.propertyKey));
+
+  // Round-5 REFUTE (4th copy of this guard -- see the identical checks in extract-workbook.ts,
+  // lease-snapshot-drift-check.ts, and ar-import-headless.ts): loadOverlay() fails OPEN to an
+  // empty overlay on corrupt/wrong-shape JSON. A total-shape corruption is inert here (every
+  // domain empties, nothing migrates, saveOverlay never fires) -- but a --apply run also writes
+  // the FULL overlay object back once ANY domain has a legitimate migration, so a corrupt
+  // overlay.json read successfully as {} would silently commit the loss of every OTHER domain's
+  // data. Refuse loudly up front rather than rely on that inertness.
+  const rawOverlayPath = overlayPath();
+  if (existsSync(rawOverlayPath)) {
+    try {
+      const parsedOverlay: unknown = JSON.parse(readFileSync(rawOverlayPath, 'utf8'));
+      if (!parsedOverlay || typeof parsedOverlay !== 'object' || Array.isArray(parsedOverlay)) {
+        console.error(`✗ ${rawOverlayPath} is valid JSON but not a valid overlay object — refusing to run (would risk committing data loss on --apply). Fix or restore it first.`);
+        process.exit(1);
+      }
+    } catch (e) {
+      console.error(`✗ ${rawOverlayPath} is corrupt/unparseable — refusing to run (would risk committing data loss on --apply). Fix or restore it first. (${e instanceof Error ? e.message : String(e)})`);
+      process.exit(1);
+    }
+  }
 
   const overlay = loadOverlay();
   let changed = false;
