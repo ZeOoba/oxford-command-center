@@ -27,6 +27,23 @@ export function workbookPath(): string {
 export const SNAPSHOT_PATH =
   process.env.SNAPSHOT_PATH ?? join(process.cwd(), 'data', 'snapshots', 'portfolio.json');
 
+/** Default max age before a persisted portfolio.json is treated as stale rather than current. */
+export const SNAPSHOT_MAX_AGE_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+export function snapshotAgeMs(nowMs: number, generatedAtIso: string): number {
+  return nowMs - new Date(generatedAtIso).getTime();
+}
+
+/** Fails loud (treats as stale) on an unparseable generatedAt rather than silently trusting it. */
+export function isSnapshotStale(
+  nowMs: number,
+  generatedAtIso: string,
+  maxAgeMs: number = SNAPSHOT_MAX_AGE_MS,
+): boolean {
+  const age = snapshotAgeMs(nowMs, generatedAtIso);
+  return !Number.isFinite(age) || age > maxAgeMs;
+}
+
 /**
  * Resolved at CALL time (not module load) — same rationale as workbookPath() above: a top-level
  * `const` freezes in whatever process.env held when config.ts was first imported, which happens
