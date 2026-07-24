@@ -211,6 +211,11 @@ export function disambiguateLeaseIds<T extends { id: string; tenantName: string;
   items: T[],
   flags: DataQualityFlag[],
 ): T[] {
+  // Every row's NATURAL id, computed up front -- a synthetic "-N" candidate below must never
+  // claim one of these, or a colliding lease early in parse order could steal a not-yet-processed
+  // lease's rightful id, flipping ownership under row reordering (the exact instability this
+  // function exists to eliminate, reintroduced in the collision-adjacent id space).
+  const allNaturalIds = new Set(items.map((i) => i.id));
   const taken = new Set<string>();
   for (const item of items) {
     if (!taken.has(item.id)) {
@@ -220,7 +225,7 @@ export function disambiguateLeaseIds<T extends { id: string; tenantName: string;
     const base = item.id;
     let n = 2;
     let candidate = `${base}-${n}`;
-    while (taken.has(candidate)) {
+    while (taken.has(candidate) || allNaturalIds.has(candidate)) {
       n += 1;
       candidate = `${base}-${n}`;
     }
@@ -369,7 +374,16 @@ function parseLeases(
     const monthlyRent = num(row(ws, r, 6));
     const annualRent = num(row(ws, r, 13));
     if (monthlyRent === null && annualRent === null) continue;
-    const id = `${slug(propertyKey)}-${slug(str(row(ws, r, 3)) ?? tenantName)}`;
+    const unit = str(row(ws, r, 3));
+    // Tenant identity is part of the id, not just the fallback for a missing unit: a suite
+    // turnover (same unit, new tenant) must produce a DIFFERENT id, or every overlay entry keyed
+    // to the old id (tenantArrears, renewalStages, marketRents) silently re-attaches to the new
+    // tenant's lease -- a real defect a mandatory adversarial review round found (financial data
+    // silently misattributed to the wrong counterparty on the routine suite-turnover case).
+    const tenantSlug = slug(str(row(ws, r, 4)) ?? tenantName);
+    const id = unit
+      ? `${slug(propertyKey)}-${slug(unit)}-${tenantSlug}`
+      : `${slug(propertyKey)}-${tenantSlug}`;
     // Date-quality flags for this row are collected locally, not pushed to `flags` directly:
     // `id` here is pre-disambiguation and may be renamed once disambiguateLeaseIds runs over the
     // full `out` array below, which would otherwise leave a stale `entity` on any flag raised
@@ -387,7 +401,7 @@ function parseLeases(
       propertyKey,
       propertyId: resolvePropertyId(propertyKey, properties),
       tenantName,
-      unit: str(row(ws, r, 3)),
+      unit,
       company: str(row(ws, r, 4)),
       sf: num(row(ws, r, 5)) ?? 0,
       monthlyRent: monthlyRent ?? 0,

@@ -20,10 +20,25 @@ loadEnvFile();
  *  server/ar/match-tenant.ts's own LeaseLite (different shape) to avoid a same-name mixup. */
 interface DriftLeaseView { id: string; tenantName: string; company: string | null; leaseEnd: string | null; annualRent: number; }
 
+function loadPrevious(): DriftLeaseView[] {
+  if (!existsSync(SNAPSHOT_PATH)) return [];
+  try {
+    const parsed = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8'));
+    if (!Array.isArray(parsed?.leases)) {
+      console.warn(`⚠ ${SNAPSHOT_PATH} parsed but has no "leases" array — treating previous snapshot as empty (will report every current lease as new).`);
+      return [];
+    }
+    return parsed.leases;
+  } catch (err) {
+    // A truncated/corrupt snapshot (a known OneDrive-sync hazard here) must not permanently block
+    // the refresh this script exists to perform on every subsequent scheduled run.
+    console.warn(`⚠ failed to parse ${SNAPSHOT_PATH} (${(err as Error).message}) — treating previous snapshot as empty (will report every current lease as new).`);
+    return [];
+  }
+}
+
 async function main() {
-  const previous: DriftLeaseView[] = existsSync(SNAPSHOT_PATH)
-    ? JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')).leases
-    : [];
+  const previous = loadPrevious();
   const prevById = new Map(previous.map((l) => [l.id, l]));
 
   const { snapshot } = await parseWorkbook(workbookPath());
@@ -31,6 +46,9 @@ async function main() {
   // assignment (not `as unknown as`) means a future Lease shape change that breaks the
   // assumption fails typecheck here instead of silently disabling the check.
   const current: DriftLeaseView[] = snapshot.leases;
+
+  const currentIds = new Set(current.map((l) => l.id));
+  const removedIds = previous.filter((l) => !currentIds.has(l.id));
 
   const newIds = current.filter((l) => !prevById.has(l.id));
   const changedDates = current.filter((l) => {
@@ -41,7 +59,7 @@ async function main() {
   mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });
   writeFileSync(SNAPSHOT_PATH, JSON.stringify(snapshot, null, 2));
 
-  if (newIds.length === 0 && changedDates.length === 0) {
+  if (newIds.length === 0 && changedDates.length === 0 && removedIds.length === 0) {
     console.log(`✓ No lease drift. portfolio.json regenerated (${current.length} leases).`);
     return;
   }
@@ -57,6 +75,10 @@ async function main() {
       const prev = prevById.get(l.id)!;
       console.log(`  ${l.id} | ${l.company ?? l.tenantName} | ${prev.leaseEnd} -> ${l.leaseEnd}`);
     }
+  }
+  if (removedIds.length) {
+    console.log(`\nRemoved leases (${removedIds.length}):`);
+    for (const l of removedIds) console.log(`  ${l.id} | ${l.company ?? l.tenantName} | was end: ${l.leaseEnd}`);
   }
 }
 

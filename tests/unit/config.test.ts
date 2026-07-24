@@ -83,10 +83,19 @@ describe('snapshotAgeMs / isSnapshotStale — portfolio.json staleness guard', (
     expect(isSnapshotStale(now, generatedAt)).toBe(false);
   });
 
-  it('treats a future-dated generatedAt as fresh (documenting current behavior: negative age never > maxAgeMs)', () => {
-    // Current implementation: negative age will never satisfy age > maxAgeMs, so future dates are treated as fresh.
+  it('REFUTE Defect E — treats a future-dated generatedAt (beyond clock-skew tolerance) as STALE, not fresh forever', () => {
+    // Pre-fix: a negative age (future generatedAt) never satisfies `age > maxAgeMs`, so a
+    // clock-skewed or corrupted-but-parseable future timestamp read as fresh and STAYED fresh
+    // until real time caught up to the future stamp plus the threshold. A future timestamp is
+    // itself a red flag this fail-loud function must not wave through.
     const now = new Date('2026-07-24T12:00:00.000Z').getTime();
-    const generatedAt = '2026-07-24T13:00:00.000Z'; // 1h in the future
+    const generatedAt = '2026-07-24T13:00:00.000Z'; // 1h in the future — well beyond the 5min tolerance
+    expect(isSnapshotStale(now, generatedAt)).toBe(true);
+  });
+
+  it('does not over-eagerly flag ordinary clock jitter — a few seconds in the future stays fresh', () => {
+    const now = new Date('2026-07-24T12:00:00.000Z').getTime();
+    const generatedAt = '2026-07-24T12:00:10.000Z'; // 10s in the future — well within the 5min tolerance
     expect(isSnapshotStale(now, generatedAt)).toBe(false);
   });
 });

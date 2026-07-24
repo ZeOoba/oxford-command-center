@@ -34,6 +34,12 @@ export function snapshotAgeMs(nowMs: number, generatedAtIso: string): number {
   return nowMs - new Date(generatedAtIso).getTime();
 }
 
+/** Tolerance for a `generatedAt` that lands slightly in the future (ordinary clock jitter between
+ *  the machine that wrote the snapshot and the machine that's checking it). Beyond this, a
+ *  future-dated stamp is itself a red flag (clock skew or a corrupted-but-parseable timestamp)
+ *  and must not read as "fresh forever". */
+const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000; // 5 min
+
 /** Fails loud (treats as stale) on an unparseable generatedAt rather than silently trusting it. */
 export function isSnapshotStale(
   nowMs: number,
@@ -41,7 +47,7 @@ export function isSnapshotStale(
   maxAgeMs: number = SNAPSHOT_MAX_AGE_MS,
 ): boolean {
   const age = snapshotAgeMs(nowMs, generatedAtIso);
-  return !Number.isFinite(age) || age > maxAgeMs;
+  return !Number.isFinite(age) || age > maxAgeMs || age < -CLOCK_SKEW_TOLERANCE_MS;
 }
 
 /**

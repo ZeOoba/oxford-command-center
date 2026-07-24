@@ -152,6 +152,40 @@ describe('disambiguateLeaseIds — lease id stability (row-position bug)', () =>
     expect(new Set(items.map((i) => i.id)).size).toBe(items.length);
     expect(items[2]!.id).toBe('alpha-suite-100-3');
   });
+
+  it('REFUTE Defect B — a colliding lease earlier in parse order cannot steal a later lease\'s own natural id', () => {
+    // ['x', 'x', 'x-2']: items 0 and 1 both have base id "x" (collide); item 2's OWN natural id is
+    // "x-2", and it is listed AFTER the colliding pair. Pre-fix, `taken` only accumulated ids SEEN
+    // SO FAR, so item 1's collision-resolution probe for "x-2" would find it NOT YET in `taken`
+    // (item 2 hadn't been processed yet) and claim it -- leaving item 2 (the real owner of "x-2")
+    // bumped to "x-2-2" or similar. The fix pre-seeds every item's natural id up front so a
+    // synthetic candidate can never claim one.
+    const items = [mkLease('x', 'Tenant A'), mkLease('x', 'Tenant B'), mkLease('x-2', 'Tenant C')];
+    const flags: DataQualityFlag[] = [];
+    disambiguateLeaseIds(items, flags);
+    // Item 2 (the real "x-2"-natural tenant) keeps its rightful id -- never stolen.
+    expect(items[2]!.id).toBe('x-2');
+    // Item 1 (the collision) is bumped PAST "x-2" since that's already spoken for.
+    expect(items[1]!.id).toBe('x-3');
+    expect(items[0]!.id).toBe('x');
+    expect(new Set(items.map((i) => i.id)).size).toBe(items.length);
+  });
+
+  it('REFUTE Defect B — natural-id ownership of "x-2" is independent of row order (the actual regression test)', () => {
+    // Same three logical leases as above, but with the array order permuted so the "x-2"-natural
+    // item comes BEFORE the second colliding "x" item. Pre-fix, swapping row order flipped which
+    // lease ended up owning "x-2" -- a pure reorder silently re-attaching overlay data keyed to
+    // that id onto a different tenant. Post-fix, the natural-id owner keeps "x-2" regardless of
+    // where it sits in parse order.
+    const itemsReordered = [mkLease('x', 'Tenant A'), mkLease('x-2', 'Tenant C'), mkLease('x', 'Tenant B')];
+    const flags: DataQualityFlag[] = [];
+    disambiguateLeaseIds(itemsReordered, flags);
+    const owner = itemsReordered.find((i) => i.tenantName === 'Tenant C')!;
+    const collider = itemsReordered.find((i) => i.tenantName === 'Tenant B')!;
+    expect(owner.id).toBe('x-2'); // still keeps its natural id regardless of position
+    expect(collider.id).toBe('x-3');
+    expect(new Set(itemsReordered.map((i) => i.id)).size).toBe(itemsReordered.length);
+  });
 });
 
 describe('isTaskBannerRow — reject Monthly Checklist banner rows (Defect 9 regression)', () => {
