@@ -362,6 +362,430 @@ describe('writeDebtSnapshot — F-stale: stale-row reconcile (paid-off loan remo
   });
 });
 
+// ── H2a: empty-snapshot book wipe ────────────────────────────────────────────────────────
+//
+// 2026-07-24 financial-code integrity sweep (edges lens). The F-stale clause above supersedes
+// every active row whose id is absent from the incoming set. With an EMPTY incoming set that
+// retires the entire book in one statement — and computePortfolioAggregateLtv then read the
+// resulting zero-row cohort as "no debt" and reported a Hard-Invariant-4 CLEARANCE. An empty
+// borrower set is far more likely to mean an upstream parse regression (direction column moved,
+// Loan Index tab renamed) than a genuinely debt-free portfolio, so it must never silently wipe.
+
+describe('writeDebtSnapshot — H2a: an empty borrower set must not wipe the book', () => {
+  it('refuses the whole-book supersede, keeps rows active, and surfaces a loud error', () => {
+    const db = freshDb();
+    const loanA = makeBorrowerLoan({ id: 'loan-A', name: 'Loan A' });
+    const loanB = makeBorrowerLoan({ id: 'loan-B', name: 'Loan B' });
+    writeDebtSnapshot(db, [loanA, loanB], '2026-05-01');
+
+    const result = writeDebtSnapshot(db, [], '2026-06-01');
+
+    const stillActive = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active' ORDER BY id")
+      .all() as Array<{ id: string }>;
+    expect(stillActive.map((r) => r.id)).toEqual(['loan-A', 'loan-B']);
+    expect(result.written).toBe(0);
+    expect(result.errors.join(' ')).toMatch(/empty borrower set/i);
+    // Typed signal (2026-07-24, round-2 refute-review) — callers (POST /snapshot, the backfill
+    // CLI) key off this field, not the prose message, so a wording edit can't silently break them.
+    expect(result.refusedEmptySupersede).toBe(true);
+  });
+
+  it('an explicit allowEmptySupersede opt-in still performs the wipe (verified zero-debt state)', () => {
+    const db = freshDb();
+    writeDebtSnapshot(db, [makeBorrowerLoan({ id: 'loan-A' })], '2026-05-01');
+
+    const result = writeDebtSnapshot(db, [], '2026-06-01', undefined, { allowEmptySupersede: true });
+
+    const active = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active'")
+      .all() as Array<{ id: string }>;
+    expect(active).toHaveLength(0);
+    expect(result.errors.join(' ')).not.toMatch(/empty borrower set/i);
+    expect(result.refusedEmptySupersede).toBe(false);
+  });
+
+  it('an empty snapshot against an already-empty book is a silent no-op, not an error', () => {
+    const db = freshDb();
+    const result = writeDebtSnapshot(db, [], '2026-06-01');
+    expect(result.written).toBe(0);
+    expect(result.errors).toEqual([]);
+    expect(result.refusedEmptySupersede).toBe(false);
+  });
+
+  // Known, documented tradeoff (see the KNOWN TRADEOFF comment above the guard): a genuine
+  // full payoff of a borrower's LAST loan is indistinguishable, from this function's inputs
+  // alone, from an upstream parse bug that emptied the loans array. Both require the explicit
+  // opt-in — pinned here so the behavior is a considered choice, not an untested surprise.
+  it('a legitimate full payoff of the LAST loan also requires the explicit opt-in (documented tradeoff)', () => {
+    const db = freshDb();
+    const loanA = makeBorrowerLoan({ id: 'loan-A', name: 'Loan A' });
+    writeDebtSnapshot(db, [loanA], '2026-05-01');
+
+    // The payload is NOT empty — it carries the paid-off loan with a terminal status — but it
+    // classifies to zero SURVIVING borrower loans, the same signal an empty payload produces.
+    const paidOff = makeBorrowerLoan({ id: 'loan-A', name: 'Loan A', status: 'Paid Off' });
+    const result = writeDebtSnapshot(db, [paidOff], '2026-06-01');
+
+    const stillActive = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active'")
+      .all() as Array<{ id: string }>;
+    // Refused, same as the bug case: the loan stays visibly active rather than silently vanish.
+    expect(stillActive.map((r) => r.id)).toEqual(['loan-A']);
+    expect(result.errors.join(' ')).toMatch(/empty borrower set/i);
+
+    // The opt-in resolves it, exactly as it does for the bug case.
+    const optedIn = writeDebtSnapshot(db, [paidOff], '2026-06-02', undefined, { allowEmptySupersede: true });
+    const afterOptIn = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active'")
+      .all() as Array<{ id: string }>;
+    expect(afterOptIn).toHaveLength(0);
+    expect(optedIn.errors.join(' ')).not.toMatch(/empty borrower set/i);
+  });
+
+  it('a non-empty snapshot still supersedes stale rows normally (guard is scoped to empty)', () => {
+    const db = freshDb();
+    const loanA = makeBorrowerLoan({ id: 'loan-A', name: 'Loan A' });
+    const loanB = makeBorrowerLoan({ id: 'loan-B', name: 'Loan B' });
+    writeDebtSnapshot(db, [loanA, loanB], '2026-05-01');
+
+    writeDebtSnapshot(db, [loanA], '2026-06-01');
+
+    const active = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active' ORDER BY id")
+      .all() as Array<{ id: string }>;
+    expect(active.map((r) => r.id)).toEqual(['loan-A']);
+  });
+});
+
+// ── Partial-wipe shrinkage guard (follow-up to H2a, flagged by Gabriel post-sweep) ────────
+//
+// H2a as originally built refuses ONLY a fully-empty incoming set. A subtler parse regression
+// — a status classifier newly misreading one column, a workbook tab partially truncated —
+// could leave a NON-empty but drastically SHRUNKEN incoming set (e.g. 1 of 12 loans surviving),
+// which still silently supersedes the other 11 real active rows through the exact same F-stale
+// path, still reachable via the exact same route (POST /snapshot, the automated reload, the
+// backfill CLI). The rule below generalizes H2a from "0 incoming" to "an unexplained MAJORITY of
+// the book about to disappear":
+//
+//   REFUSE when (net rows that would be lost) >= MIN_SUPERSEDED_ROWS_FOR_SHRINKAGE_GUARD (2)
+//           AND (net rows lost) / (current active rows) >= MAX_SUPERSEDE_SHARE (0.5)
+//   net rows lost = max(activeRowCount - borrowerLoansAll.length, 0)
+//
+// CONTRACT CORRECTION (round 4, adversarial-review finding, HIGH): the first version of this
+// guard measured id-set overlap (how many PREVIOUSLY-active ids are missing from the incoming
+// set), not NET shrinkage. That version could not tell a genuine parse regression apart from an
+// ORDINARY portfolio refinance or a loan renamed for the codebase's own documented
+// slug-collision remedy — both retire old loan ids and replace them with new ones at the SAME
+// total count, and both tripped the old id-overlap rule exactly as hard as a real regression
+// did. Demonstrated (adversarial review, reproduced against the real function): a 12-loan book
+// refinances 7 loans under new ids (12 in, 12 out, net shrinkage ZERO) — the old rule refused
+// the entire write, so the refi's own new loans never landed, and the STALE pre-refi aggregate
+// (a lower, now-wrong LTV) kept reporting `clearedConservatively: true` indefinitely on every
+// subsequent automated reload, since nothing downstream distinguishes "refused" from "healthy".
+// Measuring NET shrinkage instead (current count vs. incoming count, not id membership) means a
+// refi or a rename that keeps the total count intact trips NOTHING, regardless of how many ids
+// changed — while a genuine collapse in row count (whether via id churn or a bare drop) still
+// does. `>=` (not `>`, corrected from round 3 alongside this fix): once legitimate churn no
+// longer touches this predicate at all, an EXACT 50% net collapse has no remaining legitimate
+// interpretation and should also require confirmation, not just anything strictly above it.
+//
+// The absolute floor of 2 is unchanged and still deliberate: a single loan disappearing with NO
+// replacement (paid off, and the book is genuinely one loan smaller) is ordinary business and
+// must never become guard noise — the ORIGINAL "total wipe, any size" rule (H2a, unchanged
+// above) already covers the single-loan-book special case where that one loan IS the whole book.
+describe('writeDebtSnapshot — partial-wipe shrinkage guard', () => {
+  it('refuses when the active book NET-shrinks by a clear majority with no replacement', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'].map((s) =>
+      makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }),
+    );
+    writeDebtSnapshot(db, loans, '2026-05-01');
+
+    // Only 1 of 12 survives, nothing replaces the other 11 — net shrinkage 11/12 (92%).
+    const result = writeDebtSnapshot(db, [loans[0]!], '2026-06-01');
+
+    const active = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active' ORDER BY id")
+      .all() as Array<{ id: string }>;
+    expect(active).toHaveLength(12);
+    expect(result.written).toBe(0);
+    expect(result.refusedEmptySupersede).toBe(true);
+    expect(result.errors.join(' ')).toMatch(/11.*12|majority|shrink/i);
+  });
+
+  // Regression pin for the round-4 fix — the exact scenario the adversarial review demonstrated.
+  it('does NOT refuse a refinance that retires old loan ids and replaces them with new ones at the same count', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'].map((s) =>
+      makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }),
+    );
+    writeDebtSnapshot(db, loans, '2026-05-01');
+
+    // 5 unchanged + 7 NEW loan ids replacing the retired ones — 12 in, 12 out. Net shrinkage 0,
+    // even though 7 of 12 previously-active ids are individually absent from the incoming set.
+    const refinanced = [
+      ...loans.slice(0, 5),
+      ...['M', 'N', 'O', 'P', 'Q', 'R', 'S'].map((s) => makeBorrowerLoan({ id: `loan-${s}-refi`, name: `Loan ${s} (refi)` })),
+    ];
+    const result = writeDebtSnapshot(db, refinanced, '2026-06-01');
+
+    expect(result.refusedEmptySupersede).toBe(false);
+    expect(result.written).toBe(12);
+    const active = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active' ORDER BY id")
+      .all() as Array<{ id: string }>;
+    expect(active).toHaveLength(12);
+    // The 7 retired old ids (F-L) must be superseded, not silently left active forever — the
+    // exact reason the F-stale clause exists. (The 5 unchanged ids also pick up a superseded
+    // row for their prior 2026-05-01 snapshot_date, per this function's normal multi-date upsert
+    // semantics — unrelated to this guard, so this checks the specific retired ids, not a raw
+    // superseded-row count.)
+    const supersededIds = new Set(
+      (
+        db.prepare("SELECT id FROM debt_positions WHERE status = 'superseded'").all() as Array<{ id: string }>
+      ).map((r) => r.id),
+    );
+    for (const s of ['F', 'G', 'H', 'I', 'J', 'K', 'L']) {
+      expect(supersededIds.has(`loan-${s}`)).toBe(true);
+    }
+  });
+
+  // CONTRACT CORRECTION (round 5, SECOND adversarial-review pass, HIGH severity): the round-4
+  // netLoss formula used borrowerLoansAll.length (the RAW incoming count, before the F-collision
+  // filter runs) as the "how many loans are incoming" side of the comparison. Duplicate/colliding
+  // ids inflate that raw count without producing any actual written or preserved-as-new rows —
+  // the F-collision filter (above) excludes EVERY colliding id from the write. A name-column
+  // drift that makes many loans slug to the same id therefore inflated borrowerLoansAll.length
+  // enough to compute netLoss=0 while the real book silently collapsed underneath — demonstrated
+  // by the reviewer up to a TOTAL SILENT WIPE (12-loan book, all 12 collide to one slug, guard
+  // never fires, book goes to 0 active rows). netLoss must be computed against the DISTINCT,
+  // actually-writable id set (borrowerLoans, post-collision-filter), not the raw incoming count.
+  it('refuses when duplicate/colliding ids mask a real collapse (a single name-column drift)', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'].map((s) =>
+      makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }),
+    );
+    writeDebtSnapshot(db, loans, '2026-05-01');
+
+    // A parse regression makes ALL 12 incoming loans slug to the SAME id. Raw incoming count is
+    // 12 (matching activeRowCount, which is what let the old formula compute netLoss=0), but the
+    // F-collision filter excludes every one of them from the actual write.
+    const collided = loans.map((l) => ({ ...l, id: 'loan-drifted' }));
+    const result = writeDebtSnapshot(db, collided, '2026-06-01');
+
+    expect(result.refusedEmptySupersede).toBe(true);
+    expect(result.written).toBe(0);
+    const active = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active'")
+      .all() as Array<{ id: string }>;
+    expect(active).toHaveLength(12); // untouched — the whole book was refused, not silently wiped
+  });
+
+  it('refuses when a partial collision cluster masks a majority collapse (5 survivors + 7 duplicates)', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'].map((s) =>
+      makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }),
+    );
+    writeDebtSnapshot(db, loans, '2026-05-01');
+
+    // 5 loans keep their real, distinct ids; the other 7 all drift onto ONE shared id. Raw
+    // incoming count is still 12 (masking netLoss under the old formula), but only 5 loans are
+    // actually writable — the 7 colliding ones are excluded, and the 7 ORIGINAL active rows they
+    // were supposed to replace have no surviving replacement at all.
+    const mixed = [
+      ...loans.slice(0, 5),
+      ...loans.slice(5).map((l) => ({ ...l, id: 'loan-drifted' })),
+    ];
+    const result = writeDebtSnapshot(db, mixed, '2026-06-01');
+
+    expect(result.refusedEmptySupersede).toBe(true);
+    expect(result.written).toBe(0);
+    const active = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active'")
+      .all() as Array<{ id: string }>;
+    expect(active).toHaveLength(12); // untouched
+  });
+
+  it('a SMALL, incidental collision (not a majority) does not itself trip the shrinkage guard', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J'].map((s) =>
+      makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }),
+    );
+    writeDebtSnapshot(db, loans, '2026-05-01');
+
+    // 8 loans keep distinct ids; 2 (a genuine, unrelated accidental name clash) collide onto one
+    // shared id. 2 of 10 lost to the collision (20%) is under the majority threshold — the
+    // F-collision mechanism's own narrower handling (preserve their prior rows untouched) is the
+    // right response here, not a whole-book refusal.
+    const mostlyFine = [
+      ...loans.slice(0, 8),
+      ...loans.slice(8).map((l) => ({ ...l, id: 'loan-accidental-clash' })),
+    ];
+    const result = writeDebtSnapshot(db, mostlyFine, '2026-06-01');
+
+    expect(result.refusedEmptySupersede).toBe(false);
+    const active = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active'")
+      .all() as Array<{ id: string }>;
+    expect(active).toHaveLength(8); // the 8 clean loans wrote; the 2 colliding ids' prior rows preserved untouched
+  });
+
+  // CONTRACT CORRECTION (round 6, THIRD independent adversarial-review pass, MEDIUM severity):
+  // the round-5 fix computed distinctWritableIds from `borrowerLoans` alone — the F-collision
+  // filter, correctly, excludes a colliding id from being FRESHLY WRITTEN, but the F-stale clause
+  // separately PRESERVES that id's PRIOR row (it's still present in borrowerLoansAll's incoming
+  // set, so it's never superseded — see the F-collision comment above: "a previously-written row
+  // for it is preserved rather than superseded"). Counting only borrowerLoans therefore treated
+  // every preserved-but-colliding id as a LOSS, over-triggering the guard whenever a collision
+  // cluster happens to reuse an id that was ALREADY active — reproduced by the reviewer at 12
+  // loans / 3 collision clusters onto previously-active ids: the guard refused at a claimed "6 of
+  // 12 lost" when the real post-write book would have been 9 of 12 (a genuine loss of only 3,
+  // from 3 OTHER loans genuinely absent from the payload — nothing to do with the collisions).
+  // netLoss must count the union of (ids freshly written) and (previously-active ids preserved
+  // by the F-stale exclusion), not `borrowerLoans` alone.
+  it('a collision cluster reusing a PREVIOUSLY-ACTIVE id is preserved, not double-counted as a loss', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L'].map((s) =>
+      makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }),
+    );
+    writeDebtSnapshot(db, loans, '2026-05-01');
+
+    // 6 clean survivors (A-F). Three previously-active ids (G, I, K) each get TWO colliding
+    // incoming loan objects reusing that exact id — a name-column drift that happens to collide
+    // onto an id that was already on the books, not a brand-new one. H, J, L are genuinely
+    // absent from this payload entirely (a real, unrelated loss of exactly 3 loans).
+    const mixed = [
+      ...loans.slice(0, 6), // A-F, unchanged
+      makeBorrowerLoan({ id: 'loan-G', name: 'Loan G (drift 1)' }),
+      makeBorrowerLoan({ id: 'loan-G', name: 'Loan G (drift 2)' }),
+      makeBorrowerLoan({ id: 'loan-I', name: 'Loan I (drift 1)' }),
+      makeBorrowerLoan({ id: 'loan-I', name: 'Loan I (drift 2)' }),
+      makeBorrowerLoan({ id: 'loan-K', name: 'Loan K (drift 1)' }),
+      makeBorrowerLoan({ id: 'loan-K', name: 'Loan K (drift 2)' }),
+    ];
+    const result = writeDebtSnapshot(db, mixed, '2026-06-01');
+
+    // The TRUE net loss is 3 (H, J, L — genuinely absent), which is 25%: under the 50% guard.
+    expect(result.refusedEmptySupersede).toBe(false);
+
+    const active = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active' ORDER BY id")
+      .all() as Array<{ id: string }>;
+    // A-F freshly written (6) + G, I, K preserved at their PRIOR values, untouched (3) = 9.
+    expect(active.map((r) => r.id)).toEqual([
+      'loan-A', 'loan-B', 'loan-C', 'loan-D', 'loan-E', 'loan-F', 'loan-G', 'loan-I', 'loan-K',
+    ]);
+    // H, J, L (genuinely absent from the payload) must be superseded — the real, unrelated loss.
+    // (A-F's PRIOR 2026-05-01 rows are ALSO superseded here, per this function's normal
+    // multi-date upsert semantics — unrelated to this guard, see the refi test above.)
+    const supersededIds = new Set(
+      (
+        db.prepare("SELECT id FROM debt_positions WHERE status = 'superseded'").all() as Array<{ id: string }>
+      ).map((r) => r.id),
+    );
+    for (const s of ['H', 'J', 'L']) {
+      expect(supersededIds.has(`loan-${s}`)).toBe(true);
+    }
+    // G, I, K must NOT be superseded — their prior rows are preserved, not lost.
+    for (const s of ['G', 'I', 'K']) {
+      expect(supersededIds.has(`loan-${s}`)).toBe(false);
+    }
+  });
+
+  // Regression pin: the codebase's own documented remedy for a loan-id slug collision is
+  // "rename in the workbook to disambiguate" (debt-snapshot.ts's F-collision comment). Renaming
+  // a majority of loans must not itself trip this guard.
+  it('does NOT refuse renaming a majority of loans for slug disambiguation (same count, new ids)', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C', 'D', 'E'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01');
+
+    // 3 of 5 renamed, 2 unchanged — 5 in, 5 out, net shrinkage 0.
+    const renamed = [
+      ...loans.slice(0, 2),
+      ...['C', 'D', 'E'].map((s) => makeBorrowerLoan({ id: `loan-${s}-renamed`, name: `Loan ${s} Renamed` })),
+    ];
+    const result = writeDebtSnapshot(db, renamed, '2026-06-01');
+
+    expect(result.refusedEmptySupersede).toBe(false);
+    expect(result.written).toBe(5);
+  });
+
+  it('allows a minority NET reduction to churn normally (one loan paid off out of many, no replacement)', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C', 'D', 'E'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01');
+
+    // 4 of 5 survive, nothing replaces the missing one — net shrinkage 1/5 (20%), under the guard.
+    const result = writeDebtSnapshot(db, loans.slice(0, 4), '2026-06-01');
+
+    const active = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active' ORDER BY id")
+      .all() as Array<{ id: string }>;
+    expect(active).toHaveLength(4);
+    expect(result.refusedEmptySupersede).toBe(false);
+  });
+
+  it('refuses an exact 50% NET collapse with no replacement (inclusive threshold, corrected from round 3)', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C', 'D'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01');
+
+    // Exactly half (2 of 4) survive, nothing replaces the other 2 — net shrinkage exactly 50%.
+    const result = writeDebtSnapshot(db, loans.slice(0, 2), '2026-06-01');
+
+    expect(result.refusedEmptySupersede).toBe(true);
+    const active = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active'")
+      .all() as Array<{ id: string }>;
+    expect(active).toHaveLength(4); // refused — nothing written, prior book untouched
+  });
+
+  it('never trips on a single loan disappearing with no replacement, regardless of how small the book is', () => {
+    const db = freshDb();
+    const loans = ['A', 'B'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01');
+
+    // 1 of 2 survives — net shrinkage 1, which fails the absolute floor of 2 regardless of %.
+    const result = writeDebtSnapshot(db, [loans[0]!], '2026-06-01');
+
+    expect(result.refusedEmptySupersede).toBe(false);
+    const active = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active'")
+      .all() as Array<{ id: string }>;
+    expect(active).toHaveLength(1);
+  });
+
+  it('the explicit opt-in still performs a majority supersede when verified', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C', 'D', 'E'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01');
+
+    const result = writeDebtSnapshot(db, [loans[0]!], '2026-06-01', undefined, { allowEmptySupersede: true });
+
+    const active = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active'")
+      .all() as Array<{ id: string }>;
+    expect(active).toHaveLength(1);
+    expect(result.refusedEmptySupersede).toBe(false);
+  });
+
+  it('a majority-shrinkage refusal leaves ALL previously-active rows untouched, not just the missing ones', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01');
+
+    // 1 of 3 survives, no replacement — net shrinkage 2 (67%, and 2 >= the absolute floor).
+    writeDebtSnapshot(db, [loans[0]!], '2026-06-01');
+
+    const active = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active' ORDER BY id")
+      .all() as Array<{ id: string }>;
+    expect(active.map((r) => r.id)).toEqual(['loan-A', 'loan-B', 'loan-C']);
+  });
+});
+
 // ── F-FK-safe: property_id validated before insert ───────────────────────────────────────
 
 describe('writeDebtSnapshot — F-FK-safe: invalid property_id → null + surfaced', () => {
