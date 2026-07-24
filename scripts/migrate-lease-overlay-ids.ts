@@ -129,9 +129,26 @@ export interface MigrationPlan {
  * this same pass — the `hasOwnProperty` check below can therefore never wrongly block a key from
  * landing on its own, legitimately-vacated former slot; that case is structurally impossible here.
  *
- * Never mutates `oldKeysMap` or `liveIds` — callers apply `toMigrate` themselves (see main()).
+ * Never mutates `oldKeysMap`, `liveIds`, or `existingKeysMap` — callers apply `toMigrate`
+ * themselves (see main()).
+ *
+ * `existingKeysMap` (Round-4 REFUTE, Defect 3) is the map the invariant-1 overwrite guard checks
+ * for "does something already live at this target key" — defaults to `oldKeysMap` itself, which is
+ * correct for renewalStages/tenantArrears (planned and applied against the SAME map) but NOT for
+ * marketRents: main() calls this with `oldKeysMap` set to `partitionMarketRents`'s `forMigration`
+ * subset (propertyKey-keyed entries already filtered out), while the actual apply step in main()
+ * mutates the FULL original overlay.marketRents map (which still has those propertyKey-keyed
+ * entries). If the guard read `oldKeysMap` in that case, a migration target that happens to
+ * coincide with a propertyKey-keyed entry (invisible to the guard, since it was partitioned out)
+ * could be silently overwritten by the apply step despite the guard existing specifically to
+ * prevent that. Passing the FULL map as `existingKeysMap` keeps the guard's view of "what already
+ * exists at this key" consistent with the apply step's view of the same map, for every domain.
  */
-export function planMigration(oldKeysMap: Record<string, unknown>, liveIds: ReadonlySet<string>): MigrationPlan {
+export function planMigration(
+  oldKeysMap: Record<string, unknown>,
+  liveIds: ReadonlySet<string>,
+  existingKeysMap: Record<string, unknown> = oldKeysMap,
+): MigrationPlan {
   const toWarn: MigrationWarning[] = [];
   // target newKey -> old keys that resolved to it via an EXACT match. Only exact-kind resolutions
   // are ever eligible to auto-migrate (Invariant 3), so only they compete for a target here.
@@ -189,14 +206,16 @@ export function planMigration(oldKeysMap: Record<string, unknown>, liveIds: Read
   const toMigrate: MigrationPlanItem[] = [];
   for (const target of [...exactClaimants.keys()].sort()) {
     const claimants = [...exactClaimants.get(target)!].sort();
-    if (Object.prototype.hasOwnProperty.call(oldKeysMap, target)) {
+    if (Object.prototype.hasOwnProperty.call(existingKeysMap, target)) {
       // Invariant 1: NOTHING overwrites a pre-existing overlay entry — not a solo claimant, not any
-      // of a multi-claimant group. Checked directly against `oldKeysMap` (not a derived "live-valid"
-      // subset) so this also protects keys the invariant-4 check above flagged as ambiguous — those
-      // keys were deliberately excluded from a "silently fine" bucket precisely because they need
-      // their OWN review, which means they need overwrite protection MORE, not less. (Not
-      // `liveIds.has(target)` — that's true for every exact match and would refuse ALL of them; see
-      // the planMigration doc comment above for why this specific check can never over-refuse.)
+      // of a multi-claimant group. Checked against `existingKeysMap` (defaults to `oldKeysMap`, but
+      // see the planMigration doc comment above for why marketRents passes the FULL map here, not
+      // the partitioned subset) so this also protects keys the invariant-4 check above flagged as
+      // ambiguous — those keys were deliberately excluded from a "silently fine" bucket precisely
+      // because they need their OWN review, which means they need overwrite protection MORE, not
+      // less. (Not `liveIds.has(target)` — that's true for every exact match and would refuse ALL of
+      // them; see the planMigration doc comment above for why this specific check can never
+      // over-refuse.)
       for (const oldKey of claimants) {
         const others = claimants.filter((k) => k !== oldKey);
         toWarn.push({
@@ -247,7 +266,13 @@ async function main() {
       for (const key of validPropertyKeyed) console.log(`[marketRents] "${key}" is a propertyKey-keyed entry — valid as-is, not migrated`);
       planInput = forMigration;
     }
-    const plan = planMigration(planInput, liveIds);
+    // Round-4 REFUTE Defect 3: pass `map` (the FULL original overlay[domain] map, the same one the
+    // apply step below mutates) as the overwrite-check's `existingKeysMap` — for renewalStages/
+    // tenantArrears this equals `planInput` (no partitioning happens) so it's a no-op change; for
+    // marketRents, `planInput` is the partitioned `forMigration` subset while `map` still includes
+    // the propertyKey-keyed entries partitioned out above, so the guard's view of "what already
+    // exists at this key" now matches what the apply step below actually sees.
+    const plan = planMigration(planInput, liveIds, map);
     for (const w of plan.toWarn) console.warn(`[${domain}] ${w.reason}`);
     for (const { oldKey, newKey } of plan.toMigrate) {
       console.log(`[${domain}] "${oldKey}" -> "${newKey}"`);

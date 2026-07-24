@@ -222,6 +222,63 @@ describe('partitionMarketRents — Round-3 REFUTE Defect N: marketRents mixed-ke
   });
 });
 
+describe('planMigration — Round-4 REFUTE Defect 3: overwrite guard must see the map the apply step actually mutates', () => {
+  it('a migration target that already exists in existingKeysMap (but NOT in oldKeysMap) is refused, not migrated', () => {
+    // Synthetic/contrived shapes on purpose (this is a structural correctness test, not a realism
+    // test -- per the task brief, a propertyKey string coinciding with a live lease id is
+    // effectively impossible today given the codebase's slug/id conventions).
+    //
+    // `oldKeysMap` mirrors main()'s `planInput` for marketRents: the PARTITIONED subset fed to the
+    // planner, containing only the one genuinely-orphaned old-scheme key.
+    const oldKeysMap: Record<string, unknown> = { 'contrived-1': { note: 'orphaned old-scheme entry' } };
+    // `existingKeysMap` mirrors main()'s `map`: the FULL original overlay[domain] map, which also
+    // still holds a partitioned-out entry that happens to already sit at "contrived" -- the exact
+    // key "contrived-1" would resolve to (strip the `-\d+` suffix). This entry is invisible to
+    // `oldKeysMap` (it was filtered out before planMigration ever saw it), but it IS what main()'s
+    // apply step (`map[newKey] = map[oldKey]; delete map[oldKey]`) would actually overwrite.
+    const FRESH_DATA = { note: 'FRESH -- a partitioned-out entry the guard must protect' };
+    const existingKeysMap: Record<string, unknown> = { 'contrived-1': oldKeysMap['contrived-1'], contrived: FRESH_DATA };
+    const liveIds = new Set(['contrived']);
+
+    // Precondition: the target really is invisible to a guard that only looks at oldKeysMap.
+    expect(Object.prototype.hasOwnProperty.call(oldKeysMap, 'contrived')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(existingKeysMap, 'contrived')).toBe(true);
+
+    const planWithoutExistingMap = planMigration(oldKeysMap, liveIds);
+    // Pre-fix behavior (existingKeysMap defaults to oldKeysMap): the guard is blind to the
+    // partitioned-out "contrived" entry and would auto-migrate onto it.
+    expect(planWithoutExistingMap.toMigrate).toEqual([{ oldKey: 'contrived-1', newKey: 'contrived' }]);
+
+    const planWithExistingMap = planMigration(oldKeysMap, liveIds, existingKeysMap);
+    // Post-fix behavior: passing the FULL map as existingKeysMap makes the guard see the
+    // partitioned-out entry and refuse, exactly like invariant 1's ordinary same-map case.
+    expect(planWithExistingMap.toMigrate).toHaveLength(0);
+    expect(planWithExistingMap.toWarn).toHaveLength(1);
+    expect(planWithExistingMap.toWarn[0]!.oldKey).toBe('contrived-1');
+    expect(planWithExistingMap.toWarn[0]!.reason).toMatch(/already has an existing overlay entry/);
+
+    // Simulate main()'s actual apply step against a copy of the full map: with the fixed plan
+    // (toMigrate empty), FRESH_DATA at "contrived" must survive untouched.
+    const applied = { ...existingKeysMap };
+    for (const { oldKey, newKey } of planWithExistingMap.toMigrate) {
+      applied[newKey] = applied[oldKey];
+      delete applied[oldKey];
+    }
+    expect(applied['contrived']).toBe(FRESH_DATA);
+  });
+
+  it('renewalStages/tenantArrears (no partitioning) are unaffected — existingKeysMap defaults to oldKeysMap', () => {
+    // For domains where main() never partitions (renewalStages, tenantArrears), `existingKeysMap` is
+    // omitted at the call site, so it defaults to `oldKeysMap` itself — identical to pre-fix
+    // behavior. Confirmed by re-running an existing invariant-1 scenario without the third argument.
+    const overlay = { 'prop-acme': { stage: 'Renewal Sent (fresh)' }, 'prop-acme-3': { stage: 'stale value' } };
+    const liveIds = new Set(['prop-acme', 'prop-other']);
+    const plan = planMigration(overlay, liveIds);
+    expect(plan.toMigrate).toHaveLength(0);
+    expect(plan.toWarn[0]!.reason).toMatch(/already has an existing overlay entry/);
+  });
+});
+
 describe('resolveLiveId — sanity (already covered indirectly above, pinned directly here too)', () => {
   it('exact match wins even when another live id also has that prefix', () => {
     const liveIds = new Set(['base', 'base-9']);

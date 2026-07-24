@@ -46,7 +46,8 @@ function loadPrevious(): PreviousSnapshot {
     return { leases: parsed.leases, corrupt: false };
   } catch (err) {
     // A truncated/corrupt snapshot (a known OneDrive-sync hazard here) is a genuine corruption, not
-    // an empty baseline -- see the main() handling below (backs the file aside and refuses to write).
+    // an empty baseline -- see the main() handling below (refuses to write, leaving the corrupt file
+    // exactly where it is).
     console.error(`✗ failed to parse ${SNAPSHOT_PATH} (${(err as Error).message}).`);
     return { leases: [], corrupt: true };
   }
@@ -56,18 +57,21 @@ async function main() {
   const force = process.argv.includes('--force');
   const previousResult = loadPrevious();
   if (previousResult.corrupt) {
-    // Back the corrupt file aside (mirrors scripts/ar-import-headless.ts's backupCorruptQueue
-    // pattern) and refuse to write -- a corrupt previous snapshot must not be silently treated as an
-    // empty baseline and paved over with an unverified current parse; a human needs to notice and
-    // investigate. Unconditional -- NOT bypassed by --force, which is reserved for a genuine
+    // Refuse to write WITHOUT moving/renaming/deleting the corrupt file -- it stays exactly where it
+    // is, at SNAPSHOT_PATH. Round-4 REFUTE: an earlier version of this guard "backed the file aside"
+    // (renameSync(SNAPSHOT_PATH, backup)) before refusing, which looked like a reasonable safety
+    // gesture but was actually self-defeating -- it moved the corrupt file AWAY from SNAPSHOT_PATH,
+    // so the very NEXT run's existsSync(SNAPSHOT_PATH) came back false, loadPrevious() reported the
+    // normal first-run state ({ leases: [], corrupt: false }) instead of "corrupt", and the
+    // anomaly floor below (gated on `previous.length > 0`) was silently skipped one run later --
+    // recreating, one run downstream, the exact "floor disabled" failure this refusal exists to
+    // close, now caused BY the fix. Leaving the file in place instead means: (a) the message below is
+    // literally true (nothing was modified), and (b) the NEXT run hits this same corrupt file and
+    // refuses again -- persistent, not one-shot, detection that stays blocking until a human actually
+    // fixes or restores it (matching the overlay-corruption guard below, which never moves anything
+    // either). Unconditional -- NOT bypassed by --force, which is reserved for a genuine
     // mass-disposition event, a different failure class from "the baseline file is unreadable".
-    const backup = `${SNAPSHOT_PATH}.corrupt-${Date.now()}`;
-    try {
-      renameSync(SNAPSHOT_PATH, backup);
-      console.error(`✗ ${SNAPSHOT_PATH} is corrupt — backed up to ${backup}; refusing to write. portfolio.json was NOT modified. Investigate the backup, then re-run.`);
-    } catch (e) {
-      console.error(`✗ ${SNAPSHOT_PATH} is corrupt and could not be backed up (${e instanceof Error ? e.message : String(e)}); refusing to write. portfolio.json was NOT modified.`);
-    }
+    console.error(`✗ ${SNAPSHOT_PATH} is corrupt — refusing to write. portfolio.json was NOT modified. Investigate/fix/restore it, then re-run.`);
     process.exit(1);
   }
   const previous = previousResult.leases;
@@ -82,7 +86,19 @@ async function main() {
   const rawOverlayPath = overlayPath();
   if (existsSync(rawOverlayPath)) {
     try {
-      JSON.parse(readFileSync(rawOverlayPath, 'utf8'));
+      const parsedOverlay: unknown = JSON.parse(readFileSync(rawOverlayPath, 'utf8'));
+      // Round-4 REFUTE: a JSON.parse THROW only catches malformed JSON syntax. Content that is
+      // syntactically valid JSON but the wrong shape (`null`, `[]`, `0`, `"some string"`, or an
+      // object missing the expected top-level overlay domains) parses successfully, passes a
+      // parse-only guard, but still causes loadOverlay() to fall back to EMPTY_OVERLAY internally
+      // (its helpers -- stringRecord/validRecord/coerceBudgets/validTasks -- all return empty for a
+      // non-object) -- silently zeroing enrichment data exactly as before, just via a different
+      // malformed-content shape than a parse error. Reject anything that isn't a non-null, non-array
+      // object before letting it through.
+      if (!parsedOverlay || typeof parsedOverlay !== 'object' || Array.isArray(parsedOverlay)) {
+        console.error(`✗ ${rawOverlayPath} is valid JSON but not a valid overlay object — refusing to regenerate portfolio.json (would zero enrichment data). Fix or restore it first.`);
+        process.exit(1);
+      }
     } catch (e) {
       console.error(`✗ ${rawOverlayPath} is corrupt/unparseable — refusing to regenerate portfolio.json (would zero enrichment data). Fix or restore it first. (${e instanceof Error ? e.message : String(e)})`);
       process.exit(1);
