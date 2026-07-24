@@ -54,8 +54,15 @@ export interface MigrationPlan {
  * loop unsafe on several fronts; this two-pass design (resolve every key's disposition FIRST, THEN
  * decide) is what makes all five required invariants hold simultaneously:
  *
- *  1. No overwrite of a live-valid entry — a target already in `liveIds` is NEVER a migration
- *     destination, solo claimant or not (see the `liveIds.has(target)` branch below).
+ *  1. No overwrite of ANY pre-existing overlay entry — a target that is already a key in
+ *     `oldKeysMap` (regardless of WHY it's there — plain live-valid data, or a key the invariant-4
+ *     check below flagged as an ambiguous collision-cluster coincidence) is NEVER a migration
+ *     destination, solo claimant or not (see the `hasOwnProperty(oldKeysMap, target)` branch below).
+ *     This is checked directly against `oldKeysMap`, not a derived subset — a derived "live-valid"
+ *     set that deliberately excludes invariant-4-flagged keys (so they get their OWN ambiguity
+ *     warning) must never be reused as "the set of destinations safe to overwrite", or those very
+ *     keys lose overwrite protection precisely because they were flagged. See Defect 1 in
+ *     docs/superpowers/sdd/refute-fix-3-report.md for the concrete collision this closes.
  *  2. Symmetric refusal on multi-claimant targets — 2+ old keys resolving to the same target are
  *     ALL refused, each warning naming the full set of competing claimants.
  *  3. Only an EXACT resolveLiveId match is ever eligible to migrate — a `prefix` resolution always
@@ -67,6 +74,14 @@ export interface MigrationPlan {
  *     RESOLVED TARGET (not visit order), and every claimant list is sorted before use, so permuting
  *     `oldKeysMap`'s on-disk key order can never change which entries migrate or which are refused.
  *
+ * Note on invariant 1 never over-refusing: a migration target (`resolved.kind === 'exact'`) is by
+ * construction always a live id (`liveIds.has(target)` is what "exact" means), while every
+ * `exactClaimants` SOURCE is by construction NOT live (only oldKeys that fail the
+ * `liveIds.has(oldKey)` check below ever reach `resolveLiveId`). A live string and a non-live string
+ * can never be the same string, so a target can never equal one of the old keys migrating away in
+ * this same pass — the `hasOwnProperty` check below can therefore never wrongly block a key from
+ * landing on its own, legitimately-vacated former slot; that case is structurally impossible here.
+ *
  * Never mutates `oldKeysMap` or `liveIds` — callers apply `toMigrate` themselves (see main()).
  */
 export function planMigration(oldKeysMap: Record<string, unknown>, liveIds: ReadonlySet<string>): MigrationPlan {
@@ -74,14 +89,6 @@ export function planMigration(oldKeysMap: Record<string, unknown>, liveIds: Read
   // target newKey -> old keys that resolved to it via an EXACT match. Only exact-kind resolutions
   // are ever eligible to auto-migrate (Invariant 3), so only they compete for a target here.
   const exactClaimants = new Map<string, string[]>();
-  // Keys of oldKeysMap that are ALREADY a live id and unambiguously correct (the first loop's
-  // silent-skip case). NOTE: this is deliberately NOT the same test as "target ∈ liveIds" — every
-  // exact-kind resolution target is a member of liveIds by construction (that's what "exact" means),
-  // so liveIds membership alone can never distinguish "the overlay map already has fresh data at
-  // this key" (Invariant 1's actual hazard) from "this live id merely happens to be the resolution
-  // target of some other old key" (an ordinary, safe migration). Only a key that ITSELF appears in
-  // oldKeysMap and is already live-valid represents real data that must never be overwritten.
-  const liveValidOverlayKeys = new Set<string>();
 
   for (const oldKey of Object.keys(oldKeysMap).sort()) {
     if (liveIds.has(oldKey)) {
@@ -96,11 +103,10 @@ export function planMigration(oldKeysMap: Record<string, unknown>, liveIds: Read
           oldKey,
           reason: `"${oldKey}" is already a live id, but it ends in a numeric suffix and its base "${strippedBase}" is ALSO live — this is the shape of a genuine collision cluster, so being live does not prove "${oldKey}" is attached to the correct physical lease — left as-is, needs manual review`,
         });
-      } else {
-        // Unambiguously already correct — this key holds real, currently-valid overlay data that a
-        // later exact-match resolution onto it (from some other old key) must never overwrite.
-        liveValidOverlayKeys.add(oldKey);
       }
+      // Else: unambiguously already correct — a genuine no-op. Nothing to add to any tracking set;
+      // Invariant 1's overwrite guard below checks `oldKeysMap` directly (this key is already IN
+      // it), so this key stays protected as a migration destination without needing its own set.
       continue;
     }
     const strippedBase = oldKey.replace(/-\d+$/, '');
@@ -136,15 +142,19 @@ export function planMigration(oldKeysMap: Record<string, unknown>, liveIds: Read
   const toMigrate: MigrationPlanItem[] = [];
   for (const target of [...exactClaimants.keys()].sort()) {
     const claimants = [...exactClaimants.get(target)!].sort();
-    if (liveValidOverlayKeys.has(target)) {
-      // Invariant 1: NOTHING overwrites a live-valid entry — not a solo claimant, not any of a
-      // multi-claimant group. (See the liveValidOverlayKeys comment above for why this check is
-      // NOT `liveIds.has(target)` — that would be true for every exact match and refuse ALL of them.)
+    if (Object.prototype.hasOwnProperty.call(oldKeysMap, target)) {
+      // Invariant 1: NOTHING overwrites a pre-existing overlay entry — not a solo claimant, not any
+      // of a multi-claimant group. Checked directly against `oldKeysMap` (not a derived "live-valid"
+      // subset) so this also protects keys the invariant-4 check above flagged as ambiguous — those
+      // keys were deliberately excluded from a "silently fine" bucket precisely because they need
+      // their OWN review, which means they need overwrite protection MORE, not less. (Not
+      // `liveIds.has(target)` — that's true for every exact match and would refuse ALL of them; see
+      // the planMigration doc comment above for why this specific check can never over-refuse.)
       for (const oldKey of claimants) {
         const others = claimants.filter((k) => k !== oldKey);
         toWarn.push({
           oldKey,
-          reason: `old key "${oldKey}" resolves (exact) to "${target}", which is ALREADY a live-valid overlay entry — auto-migrating would silently overwrite current data — left as-is, needs manual review${others.length ? ` (also contested by: ${others.join(', ')})` : ''}`,
+          reason: `old key "${oldKey}" resolves (exact) to "${target}", which already has an existing overlay entry — auto-migrating would silently overwrite it — left as-is, needs manual review${others.length ? ` (also contested by: ${others.join(', ')})` : ''}`,
         });
       }
       continue;

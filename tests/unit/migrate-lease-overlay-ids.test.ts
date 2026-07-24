@@ -24,7 +24,7 @@ describe('planMigration — invariant 1: no overwrite of a live-valid entry', ()
     expect(plan.toMigrate).toHaveLength(0);
     expect(plan.toWarn).toHaveLength(1);
     expect(plan.toWarn[0]!.oldKey).toBe('prop-acme-3');
-    expect(plan.toWarn[0]!.reason).toMatch(/ALREADY a live-valid overlay entry/);
+    expect(plan.toWarn[0]!.reason).toMatch(/already has an existing overlay entry/);
     // The live-valid entry's data is provably unchanged: the caller only ever mutates keys named in
     // toMigrate, and "prop-acme" never appears there.
     expect(plan.toMigrate.some((m) => m.newKey === 'prop-acme')).toBe(false);
@@ -86,6 +86,45 @@ describe('planMigration — invariant 4: old-key/live-id coincidence in a genuin
     const plan = planMigration(overlay, liveIds);
     expect(plan.toMigrate).toHaveLength(0);
     expect(plan.toWarn).toHaveLength(0);
+  });
+});
+
+describe('planMigration — Defect 1 fix: overwrite-protection covers invariant-4-flagged targets too', () => {
+  it('a separate old key that exact-matches an invariant-4-ambiguous key is refused, not silently migrated', () => {
+    // liveIds = {'x', 'x-2'} is a genuine collision cluster. The overlay holds BOTH 'x-2' (itself
+    // live, and flagged invariant-4-ambiguous because it ends in '-2' and its stripped base 'x' is
+    // ALSO live) holding FRESH data, AND a separate old-scheme key 'x-2-7' (not live, strips to
+    // 'x-2') holding STALE data. Pre-fix, 'x-2' was excluded from `liveValidOverlayKeys` (it got its
+    // own invariant-4 warning instead), so the Invariant-1 overwrite guard never fired for 'x-2-7',
+    // and its stale data would silently clobber 'x-2's fresh data via an ordinary-looking migration
+    // line with no warning about the overwrite itself.
+    const FRESH_DATA = { note: 'FRESH — the real, currently-valid entry for the collision-winner lease' };
+    const STALE_DATA = { note: 'STALE — an orphaned old-scheme entry that must never land here' };
+    const overlay: Record<string, unknown> = { 'x-2': FRESH_DATA, 'x-2-7': STALE_DATA };
+    const liveIds = new Set(['x', 'x-2']);
+
+    const plan = planMigration(overlay, liveIds);
+
+    // 'x-2' itself still gets its own invariant-4 ambiguity warning.
+    // 'x-2-7' must be warned/skipped, NEVER migrated.
+    expect(plan.toMigrate).toHaveLength(0);
+    expect(plan.toMigrate.some((m) => m.newKey === 'x-2')).toBe(false);
+    const warnedKeys = plan.toWarn.map((w) => w.oldKey).sort();
+    expect(warnedKeys).toEqual(['x-2', 'x-2-7']);
+    const byKey = new Map(plan.toWarn.map((w) => [w.oldKey, w.reason]));
+    expect(byKey.get('x-2')).toMatch(/collision cluster/);
+    expect(byKey.get('x-2-7')).toMatch(/already has an existing overlay entry/);
+
+    // Simulate applying the plan to a copy of the map, exactly as main() does: mutate only keys
+    // named in toMigrate. Since toMigrate is empty here, the map must be byte-for-byte unchanged,
+    // and in particular 'x-2' must still hold FRESH_DATA, not STALE_DATA.
+    const applied = { ...overlay };
+    for (const { oldKey, newKey } of plan.toMigrate) {
+      applied[newKey] = applied[oldKey];
+      delete applied[oldKey];
+    }
+    expect(applied['x-2']).toBe(FRESH_DATA);
+    expect(applied['x-2']).not.toBe(STALE_DATA);
   });
 });
 
