@@ -1,8 +1,9 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, SNAPSHOT_PATH } from '../server/config';
+import { loadOverlay, applyOverlay, overlayPath } from '../server/overlay';
 
 loadEnvFile();
 
@@ -10,8 +11,48 @@ async function main() {
   console.log(`→ Reading workbook: ${workbookPath()}`);
   const { snapshot, flags } = await parseWorkbook(workbookPath());
 
+  // Round-3 REFUTE finding: loadOverlay() fails OPEN to an empty overlay on corrupt/unparseable
+  // JSON — a defensible default for a UI-driven mutation, but this script is an UNATTENDED
+  // scheduled/manual writer: silently enriching with an empty overlay would zero real
+  // tenantArrears/renewalStages/marketRents/noiBudgets data in the written snapshot with no
+  // warning. Mirrors the identical guard in scripts/ar-import-headless.ts (same hazard class).
+  const rawOverlayPath = overlayPath();
+  if (existsSync(rawOverlayPath)) {
+    try {
+      const parsedOverlay: unknown = JSON.parse(readFileSync(rawOverlayPath, 'utf8'));
+      // Round-4 REFUTE: a JSON.parse THROW only catches malformed JSON syntax. Content that is
+      // syntactically valid JSON but the wrong TOP-LEVEL shape (`null`, `[]`, `0`, `"some string"`)
+      // parses successfully, passes a parse-only guard, but still causes loadOverlay() to fall back
+      // to EMPTY_OVERLAY internally -- silently zeroing enrichment data exactly as before, just via
+      // a different malformed-content shape than a parse error. Same fix as
+      // scripts/lease-snapshot-drift-check.ts -- keep both in sync (see that file's header comment
+      // on why, including the narrower residual gap this check does NOT close).
+      if (!parsedOverlay || typeof parsedOverlay !== 'object' || Array.isArray(parsedOverlay)) {
+        console.error(`✗ ${rawOverlayPath} is valid JSON but not a valid overlay object — refusing to regenerate portfolio.json (would zero enrichment data). Fix or restore it first.`);
+        process.exit(1);
+      }
+    } catch (e) {
+      console.error(`✗ ${rawOverlayPath} is corrupt/unparseable — refusing to regenerate portfolio.json (would zero enrichment data). Fix or restore it first. (${e instanceof Error ? e.message : String(e)})`);
+      process.exit(1);
+    }
+  }
+  // portfolio.json's canonical content is the OVERLAY-ENRICHED snapshot (see server/brain.ts's
+  // refresh(), which persists applyOverlay(snapshot, overlay)), not the raw parse -- writing the
+  // raw parse here would silently zero out real tenantArrears/renewalStages/marketRents/noiBudgets
+  // data. Same fix as scripts/lease-snapshot-drift-check.ts (its header comment claims this script
+  // regenerates "the same as `npm run extract`" -- that was false until this fix; keep both
+  // regeneration tools in sync going forward, since whichever one runs last against
+  // data/snapshots/portfolio.json wins).
+  const overlay = loadOverlay();
+  const enriched = applyOverlay(snapshot, overlay);
+
   mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });
-  writeFileSync(SNAPSHOT_PATH, JSON.stringify(snapshot, null, 2));
+  // Atomic write (temp file + rename), same pattern as lease-snapshot-drift-check.ts and
+  // scripts/ar-import-headless.ts's patchSnapshot(): a crash mid-write must not leave
+  // portfolio.json truncated for the next reader.
+  const tmp = `${SNAPSHOT_PATH}.tmp-${process.pid}-${Date.now()}`;
+  writeFileSync(tmp, JSON.stringify(enriched, null, 2));
+  renameSync(tmp, SNAPSHOT_PATH);
 
   const p = snapshot.properties;
   const noiTotal = p.reduce((s, x) => s + x.noi, 0);
