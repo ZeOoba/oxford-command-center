@@ -236,6 +236,65 @@ describe('syncNotionPipeline — status no-clobber', () => {
       { status: string } | undefined;
     expect(row?.status).toBe('acquired');
   });
+
+  // 2026-07-24 (integrity sweep M1/L1, twin-writer gap closed on refute-review): this UPDATE
+  // used to lock only acquired/passed. An archived candidate was silently reactivated by the
+  // very next Notion resync — the exact defect class this describe block exists to guard, just
+  // missing one status. Mirrors the equivalent test in acq-hubspot-sync.test.ts.
+  it('does not resurrect a human-archived candidate back to active on sync', async () => {
+    const db = freshDb();
+    await syncNotionPipeline(db, 'tok', {
+      databaseId: 'db',
+      fetchImpl: mockFetch([makePage({ id: 'archive-test', status: 'Active' })]),
+    });
+    db.prepare("UPDATE acq_candidates SET status = 'archived', updated_at = '2026-07-10 09:00:00' WHERE id = 'deal:archive-test'").run();
+
+    // Notion still says Active — must NOT reactivate, and updated_at must NOT move (nothing
+    // persisted actually changed: status stays locked, address/etc are unchanged).
+    await syncNotionPipeline(db, 'tok', {
+      databaseId: 'db',
+      fetchImpl: mockFetch([makePage({ id: 'archive-test', status: 'Active' })]),
+    });
+
+    const row = db.prepare('SELECT status, updated_at FROM acq_candidates WHERE id = ?')
+      .get('deal:archive-test') as { status: string; updated_at: string };
+    expect(row.status).toBe('archived');
+    expect(row.updated_at).toBe('2026-07-10 09:00:00');
+  });
+
+  // 2026-07-24 (M1): the old UPDATE bumped updated_at UNCONDITIONALLY on every resync — worse
+  // than the pre-fix HubSpot gate. A resync with no real Notion-side change must not touch it.
+  it('a no-op resync (nothing changed) does not bump updated_at', async () => {
+    const db = freshDb();
+    const page = makePage({ id: 'noop-test', address: '123 Main St', status: 'Active' });
+    await syncNotionPipeline(db, 'tok', { databaseId: 'db', fetchImpl: mockFetch([page]) });
+    db.prepare("UPDATE acq_candidates SET updated_at = '2000-01-01 00:00:00' WHERE id = 'deal:noop-test'").run();
+
+    await syncNotionPipeline(db, 'tok', { databaseId: 'db', fetchImpl: mockFetch([page]) });
+
+    const row = db.prepare('SELECT updated_at FROM acq_candidates WHERE id = ?')
+      .get('deal:noop-test') as { updated_at: string };
+    expect(row.updated_at).toBe('2000-01-01 00:00:00');
+  });
+
+  it('does bump updated_at when a Notion-side field genuinely changed', async () => {
+    const db = freshDb();
+    await syncNotionPipeline(db, 'tok', {
+      databaseId: 'db',
+      fetchImpl: mockFetch([makePage({ id: 'real-change', address: '123 Main St', status: 'Active' })]),
+    });
+    db.prepare("UPDATE acq_candidates SET updated_at = '2000-01-01 00:00:00' WHERE id = 'deal:real-change'").run();
+
+    await syncNotionPipeline(db, 'tok', {
+      databaseId: 'db',
+      fetchImpl: mockFetch([makePage({ id: 'real-change', address: '456 Oak Ave', status: 'Active' })]),
+    });
+
+    const row = db.prepare('SELECT address, updated_at FROM acq_candidates WHERE id = ?')
+      .get('deal:real-change') as { address: string; updated_at: string };
+    expect(row.address).toBe('456 Oak Ave');
+    expect(row.updated_at).not.toBe('2000-01-01 00:00:00');
+  });
 });
 
 describe('syncNotionPipeline — error isolation', () => {
