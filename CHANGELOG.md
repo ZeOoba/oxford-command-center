@@ -11,6 +11,56 @@
 > maintenance, the un-narrated span is PR #95–#219 (excluding #200, narrated below); when you add
 > an entry, refresh this note's coverage line in the same commit so the note itself never goes stale.
 
+## Stable lease ids + overlay-write hardening (2026-07-24)
+
+Root cause: `server/workbook/parse.ts` built every `Lease.id` by appending the literal Excel
+worksheet row number, so any row inserted/removed in the Master Tenant Rent Roll sheet silently
+shifted every id below it. Confirmed 124/137 lease ids drifted between a live parse and a 2-day-old
+cached `portfolio.json`, causing the Command Center's alerts engine and its own portfolio snapshot
+to disagree about the portfolio's largest near-term lease expiration — a real ~$90K/yr lease. Raised
+by Gabriel 2026-07-24; second lease-date integrity incident that month.
+
+- **`server/workbook/parse.ts`:** lease ids are now `property-unit-tenant` (stable, no row number),
+  disambiguated only on a genuine collision via the new `disambiguateLeaseIds` (twin of the existing
+  `disambiguatePropertyIds`, pre-seeded so a synthetic suffix can never steal a not-yet-parsed row's
+  natural id, and content-tie-broken by `leaseEnd → leaseStart → monthlyRent → annualRent → sf` for
+  identical-natural-id groups). Per-row date-quality flags are re-homed onto each lease's *final*
+  post-disambiguation id (object-reference correlated) rather than the pre-collision id.
+- **`server/config.ts` / `scripts/check-snapshot-freshness.ts`:** new `isSnapshotStale` staleness
+  guard (6h default threshold, fail-loud on unparseable or future-dated `generatedAt`).
+- **`scripts/lease-snapshot-drift-check.ts`:** new script — regenerates `portfolio.json` and reports
+  new/removed/date-changed leases, meant to run on a schedule independent of the interactive server
+  (the actual root cause of `portfolio.json` staleness). Refuses to write (exit 1, `--force` to
+  override) on a 0-lease or >25%-removed parse, so an anomalous read can't silently overwrite a good
+  snapshot; distinguishes clean/refused/drifted/crashed via exit codes 0/1/2/3.
+- **`scripts/migrate-lease-overlay-ids.ts`:** new one-time migration for `data/overlay.json` entries
+  keyed by the old row-suffixed scheme, built around an exported, pure `planMigration()` satisfying
+  five explicit invariants (no overwrite of any pre-existing overlay entry; symmetric refusal on
+  multi-claimant targets; only an exact id match auto-migrates, never a prefix guess; a coincidental
+  old-key/live-id shape match is treated as ambiguous, not "already correct"; fully deterministic
+  under key-order permutation). `overlay.marketRents`'s propertyKey-keyed entries are recognized and
+  left alone rather than misdiagnosed as orphans.
+- **Mandatory adversarial REFUTE pass** (5 rounds, this being financial-decision-adjacent code —
+  lease id is the join key for renewal signals, alerts, and rent forecasts, and the write paths touch
+  real tenant arrears/renewal-stage/market-rent data): found and closed 4 HIGH-severity defects
+  across the rounds, most notably (a) the new id scheme initially dropped tenant identity, so a suite
+  turnover would have silently re-attached a departed tenant's arrears to the new tenant; (b) the
+  scheduled drift-check initially wrote the raw parse instead of the overlay-enriched snapshot,
+  which would have zeroed real financial data on every unattended run; (c) `loadOverlay()`'s
+  fail-open-to-empty behavior on corrupt JSON was unguarded in all four scripts that write
+  `overlay.json`/`portfolio.json` (now uniformly guarded, mirroring the pattern already established
+  in `scripts/ar-import-headless.ts`). Full findings and fix-by-fix verification:
+  `.superpowers/sdd/refute-fix-{1..5}-report.md` on branch `fix/lease-id-integrity`.
+- **Tests:** `tests/unit/parse.test.ts` / `tests/unit/parse-workbook.test.ts` (id stability across
+  row insertion, tenant-turnover id divergence, collision ordering, flag re-attribution),
+  `tests/unit/config.test.ts` (staleness boundary), `tests/unit/migrate-lease-overlay-ids.test.ts`
+  (all 5 `planMigration` invariants). 3001 tests passing across the branch.
+- **Known deployment dependency, not yet executed:** the new `ora-lease-snapshot-refresh` scheduled
+  task (regenerates `portfolio.json` on a cron independent of server uptime) is deferred until this
+  PR merges — the script it runs doesn't exist on `main` yet. Register post-merge via the
+  `register-scheduled-task` skill. The one existing production `overlay.json` entry under the old id
+  scheme needs `scripts/migrate-lease-overlay-ids.ts --apply` run against it post-merge.
+
 ## Snapshot provenance decouple — meta.asOf reads the workbook dateline (OI-023, 2026-07-22)
 
 The portfolio snapshot's provenance labels (`meta.asOf`, `cash.asOf`, `assumptions.asOf`) were
