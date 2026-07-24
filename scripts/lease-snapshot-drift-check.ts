@@ -16,16 +16,21 @@ import { workbookPath, SNAPSHOT_PATH } from '../server/config';
 
 loadEnvFile();
 
-interface LeaseLite { id: string; tenantName: string; company: string | null; leaseEnd: string | null; annualRent: number; }
+/** Local view of the fields this drift check compares -- named distinctly from
+ *  server/ar/match-tenant.ts's own LeaseLite (different shape) to avoid a same-name mixup. */
+interface DriftLeaseView { id: string; tenantName: string; company: string | null; leaseEnd: string | null; annualRent: number; }
 
 async function main() {
-  const previous: LeaseLite[] = existsSync(SNAPSHOT_PATH)
+  const previous: DriftLeaseView[] = existsSync(SNAPSHOT_PATH)
     ? JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')).leases
     : [];
   const prevById = new Map(previous.map((l) => [l.id, l]));
 
   const { snapshot } = await parseWorkbook(workbookPath());
-  const current = snapshot.leases as unknown as LeaseLite[];
+  // No cast: Lease already structurally satisfies DriftLeaseView. Keeping this a plain
+  // assignment (not `as unknown as`) means a future Lease shape change that breaks the
+  // assumption fails typecheck here instead of silently disabling the check.
+  const current: DriftLeaseView[] = snapshot.leases;
 
   const newIds = current.filter((l) => !prevById.has(l.id));
   const changedDates = current.filter((l) => {
