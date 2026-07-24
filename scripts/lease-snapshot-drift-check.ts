@@ -7,13 +7,19 @@
 // running (which is the actual root cause of the staleness this script exists to close --
 // see docs/superpowers/plans/2026-07-24-lease-id-integrity-fix-plan.md).
 //
+// Exit codes: 0 = ran clean, no drift. 1 = refused to write (anomaly floor tripped, corrupt
+// overlay/previous-snapshot, or force-eligible refusal) -- portfolio.json is UNCHANGED. 2 = ran,
+// wrote portfolio.json, and found drift worth a look. 3 = unexpected error/crash (main() threw) --
+// distinguished from 1 so an unattended scheduler can tell "correctly refused, nothing touched"
+// apart from "crashed before doing anything useful" using the exit code alone (Round-3 REFUTE).
+//
 // Usage: npx tsx scripts/lease-snapshot-drift-check.ts
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, SNAPSHOT_PATH } from '../server/config';
-import { loadOverlay, applyOverlay } from '../server/overlay';
+import { loadOverlay, applyOverlay, overlayPath } from '../server/overlay';
 
 loadEnvFile();
 
@@ -21,29 +27,67 @@ loadEnvFile();
  *  server/ar/match-tenant.ts's own LeaseLite (different shape) to avoid a same-name mixup. */
 interface DriftLeaseView { id: string; tenantName: string; company: string | null; leaseEnd: string | null; annualRent: number; }
 
-function loadPrevious(): DriftLeaseView[] {
-  if (!existsSync(SNAPSHOT_PATH)) return [];
+/** loadPrevious's result distinguishes a normal "no snapshot yet" first-run state (`corrupt: false`,
+ *  `leases: []`) from a genuinely CORRUPT previous file (`corrupt: true`) -- Round-3 REFUTE: these
+ *  used to be conflated (both mapped to `[]`), which silently disarmed the anomaly-refusal floor
+ *  below (gated on `previous.length > 0`) whenever the previous snapshot happened to be corrupt, and
+ *  the newly (possibly bad) written snapshot became the new "previous" with its own small/zero
+ *  count -- permanently disarming the floor going forward. */
+interface PreviousSnapshot { leases: DriftLeaseView[]; corrupt: boolean; }
+
+function loadPrevious(): PreviousSnapshot {
+  if (!existsSync(SNAPSHOT_PATH)) return { leases: [], corrupt: false }; // normal first-run state, not corruption
   try {
     const parsed = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8'));
     if (!Array.isArray(parsed?.leases)) {
-      console.warn(`⚠ ${SNAPSHOT_PATH} parsed but has no "leases" array — treating previous snapshot as empty (will report every current lease as new).`);
-      return [];
+      console.error(`✗ ${SNAPSHOT_PATH} parsed but has no "leases" array.`);
+      return { leases: [], corrupt: true };
     }
-    return parsed.leases;
+    return { leases: parsed.leases, corrupt: false };
   } catch (err) {
-    // A truncated/corrupt snapshot (a known OneDrive-sync hazard here) must not permanently block
-    // the refresh this script exists to perform on every subsequent scheduled run.
-    console.warn(`⚠ failed to parse ${SNAPSHOT_PATH} (${(err as Error).message}) — treating previous snapshot as empty (will report every current lease as new).`);
-    return [];
+    // A truncated/corrupt snapshot (a known OneDrive-sync hazard here) is a genuine corruption, not
+    // an empty baseline -- see the main() handling below (backs the file aside and refuses to write).
+    console.error(`✗ failed to parse ${SNAPSHOT_PATH} (${(err as Error).message}).`);
+    return { leases: [], corrupt: true };
   }
 }
 
 async function main() {
   const force = process.argv.includes('--force');
-  const previous = loadPrevious();
+  const previousResult = loadPrevious();
+  if (previousResult.corrupt) {
+    // Back the corrupt file aside (mirrors scripts/ar-import-headless.ts's backupCorruptQueue
+    // pattern) and refuse to write -- a corrupt previous snapshot must not be silently treated as an
+    // empty baseline and paved over with an unverified current parse; a human needs to notice and
+    // investigate. Unconditional -- NOT bypassed by --force, which is reserved for a genuine
+    // mass-disposition event, a different failure class from "the baseline file is unreadable".
+    const backup = `${SNAPSHOT_PATH}.corrupt-${Date.now()}`;
+    try {
+      renameSync(SNAPSHOT_PATH, backup);
+      console.error(`✗ ${SNAPSHOT_PATH} is corrupt — backed up to ${backup}; refusing to write. portfolio.json was NOT modified. Investigate the backup, then re-run.`);
+    } catch (e) {
+      console.error(`✗ ${SNAPSHOT_PATH} is corrupt and could not be backed up (${e instanceof Error ? e.message : String(e)}); refusing to write. portfolio.json was NOT modified.`);
+    }
+    process.exit(1);
+  }
+  const previous = previousResult.leases;
   const prevById = new Map(previous.map((l) => [l.id, l]));
 
   const { snapshot } = await parseWorkbook(workbookPath());
+  // Round-3 REFUTE finding: loadOverlay() fails OPEN to an empty overlay on corrupt/unparseable
+  // JSON — a defensible default for a UI-driven mutation, but this script is an UNATTENDED
+  // scheduled/manual writer: silently enriching with an empty overlay would zero real
+  // tenantArrears/renewalStages/marketRents/noiBudgets data in the written snapshot with no
+  // warning. Mirrors the identical guard in scripts/ar-import-headless.ts (same hazard class).
+  const rawOverlayPath = overlayPath();
+  if (existsSync(rawOverlayPath)) {
+    try {
+      JSON.parse(readFileSync(rawOverlayPath, 'utf8'));
+    } catch (e) {
+      console.error(`✗ ${rawOverlayPath} is corrupt/unparseable — refusing to regenerate portfolio.json (would zero enrichment data). Fix or restore it first. (${e instanceof Error ? e.message : String(e)})`);
+      process.exit(1);
+    }
+  }
   // portfolio.json's canonical content is the OVERLAY-ENRICHED snapshot (see server/brain.ts's
   // refresh(), which persists applyOverlay(snapshot, overlay)), not the raw parse -- writing the
   // raw parse here would silently zero out real tenantArrears/renewalStages/marketRents/noiBudgets
@@ -68,15 +112,33 @@ async function main() {
     return prev && prev.leaseEnd !== l.leaseEnd;
   });
 
-  // Refuse to overwrite a known-good snapshot with a suspiciously small/empty one: a parse that
-  // goes wrong for a reason OTHER than genuine lease removal (workbook read mid-save, a
-  // renamed/missing worksheet section, a wrong WORKBOOK_PATH resolving to the wrong file) must not
-  // silently replace real data, get a fresh meta.generatedAt stamp, and have this branch's OWN
-  // staleness guard vouch for it as "fresh". Fraction is of the OLD (previous) set that vanished --
-  // removedIds.length / previous.length -- not some other ratio.
-  if (previous.length > 0) {
+  // Refuse to overwrite a known-good snapshot with an EMPTY one: unconditional, regardless of
+  // `previous.length` (Round-3 REFUTE -- previously this was gated on `previous.length > 0`, so
+  // whenever the previous snapshot was corrupt/missing -- now handled above, but a fresh/legitimate
+  // 0-lease previous state reaches here too -- this refusal was bypassed entirely and ANY current
+  // parse result, including a genuinely broken 0-lease parse, wrote through unguarded at exit 0). A
+  // workbook that genuinely has zero leases is not a realistic scenario for this portfolio, so
+  // refusing and requiring --force is the safe default.
+  if (current.length === 0) {
+    if (!force) {
+      console.error(
+        `✗ Refusing to write ${SNAPSHOT_PATH}: this parse produced 0 leases (previous snapshot had ${previous.length}) -- this looks like a bad parse, not a genuine full portfolio wind-down. portfolio.json was NOT modified. Re-run with --force if this is a real, intentional event.`,
+      );
+      process.exit(1);
+    }
+    console.warn(`⚠ --force: proceeding despite a 0-lease current parse (previous snapshot had ${previous.length}).`);
+  }
+
+  // Refuse to overwrite a known-good snapshot with a suspiciously small one: a parse that goes wrong
+  // for a reason OTHER than genuine lease removal (workbook read mid-save, a renamed/missing
+  // worksheet section, a wrong WORKBOOK_PATH resolving to the wrong file) must not silently replace
+  // real data, get a fresh meta.generatedAt stamp, and have this branch's OWN staleness guard vouch
+  // for it as "fresh". Fraction is of the OLD (previous) set that vanished -- removedIds.length /
+  // previous.length -- not some other ratio. Gated on `current.length > 0` because the
+  // current.length === 0 case is fully handled by the unconditional check above already.
+  if (previous.length > 0 && current.length > 0) {
     const removedFraction = removedIds.length / previous.length;
-    const anomalous = current.length === 0 || removedFraction > 0.25;
+    const anomalous = removedFraction > 0.25;
     if (anomalous && !force) {
       console.error(
         `✗ Refusing to write ${SNAPSHOT_PATH}: previous snapshot had ${previous.length} lease(s), this parse produced ${current.length}, ` +
@@ -128,5 +190,5 @@ async function main() {
 
 main().catch((err) => {
   console.error('drift check failed:', err);
-  process.exit(1);
+  process.exit(3);
 });

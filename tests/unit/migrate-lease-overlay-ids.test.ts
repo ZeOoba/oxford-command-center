@@ -10,7 +10,7 @@
 // without parsing the live workbook or touching overlay.json (importing this module used to run
 // main() at module load — see the entrypoint guard at the bottom of the script under test).
 import { describe, expect, it } from 'vitest';
-import { planMigration, resolveLiveId } from '../../scripts/migrate-lease-overlay-ids';
+import { partitionMarketRents, planMigration, resolveLiveId } from '../../scripts/migrate-lease-overlay-ids';
 
 describe('planMigration — invariant 1: no overwrite of a live-valid entry', () => {
   it('a live-valid key with data is left untouched when a separate old key resolves (exact) onto it', () => {
@@ -179,6 +179,49 @@ describe('planMigration — positive path: a clean, unambiguous exact match migr
   });
 });
 
+describe('partitionMarketRents — Round-3 REFUTE Defect N: marketRents mixed-key handling', () => {
+  it('a key that exactly matches a live propertyKey is excluded from migration planning, no warning', () => {
+    // "1100 Rarig Ave" is the RAW propertyKey server/brain.ts's setMarketRent writes -- not a lease
+    // id. Pre-fix, feeding this straight into planMigration (liveIds = lease ids only) misdiagnosed
+    // it as an orphaned old-scheme key ("no live lease matches...", or worse, an ambiguous prefix
+    // match), inviting an operator to manually remap it onto one specific lease -- silently removing
+    // the property-level market-rent fallback for every OTHER lease at that property.
+    const marketRents = { '1100 Rarig Ave': 12.5 };
+    const livePropertyKeys = new Set(['1100 Rarig Ave', 'Other Property']);
+    const { forMigration, validPropertyKeyed } = partitionMarketRents(marketRents, livePropertyKeys);
+    expect(validPropertyKeyed).toEqual(['1100 Rarig Ave']);
+    expect(forMigration).toEqual({});
+
+    // Feeding the partitioned-out forMigration set into planMigration produces ZERO warnings for
+    // this domain -- the whole point of partitioning before planning.
+    const plan = planMigration(forMigration, new Set(['some-lease-id']));
+    expect(plan.toWarn).toHaveLength(0);
+    expect(plan.toMigrate).toHaveLength(0);
+  });
+
+  it('a key that does NOT match any live propertyKey still goes through normal old-scheme resolution', () => {
+    const marketRents = { 'prop-omega-1': 15.0 };
+    const livePropertyKeys = new Set(['Other Property']);
+    const { forMigration, validPropertyKeyed } = partitionMarketRents(marketRents, livePropertyKeys);
+    expect(validPropertyKeyed).toEqual([]);
+    expect(forMigration).toEqual({ 'prop-omega-1': 15.0 });
+
+    const plan = planMigration(forMigration, new Set(['prop-omega']));
+    expect(plan.toMigrate).toEqual([{ oldKey: 'prop-omega-1', newKey: 'prop-omega' }]);
+  });
+
+  it('a mixed marketRents map partitions propertyKey-keyed and lease-id-shaped entries independently', () => {
+    const marketRents = {
+      '1100 Rarig Ave': 12.5, // valid propertyKey entry
+      'prop-omega-1': 15.0, // orphaned old-scheme lease-id entry
+    };
+    const livePropertyKeys = new Set(['1100 Rarig Ave']);
+    const { forMigration, validPropertyKeyed } = partitionMarketRents(marketRents, livePropertyKeys);
+    expect(validPropertyKeyed).toEqual(['1100 Rarig Ave']);
+    expect(forMigration).toEqual({ 'prop-omega-1': 15.0 });
+  });
+});
+
 describe('resolveLiveId — sanity (already covered indirectly above, pinned directly here too)', () => {
   it('exact match wins even when another live id also has that prefix', () => {
     const liveIds = new Set(['base', 'base-9']);
@@ -191,5 +234,22 @@ describe('resolveLiveId — sanity (already covered indirectly above, pinned dir
     const liveIds = new Set(['base-1', 'base-2']);
     const r = resolveLiveId('base', liveIds);
     expect(r.kind).toBe('ambiguous');
+  });
+
+  it('Round-3 REFUTE Defect R — ambiguous candidates are sorted, independent of Set insertion order', () => {
+    // Same logical candidate set, inserted in two different orders (simulating a re-sorted
+    // worksheet). Set iteration order preserves insertion order, so the pre-fix `candidates` array
+    // (and therefore the warning text built from it) varied across runs even though the underlying
+    // refuse-it-as-ambiguous DECISION never changes.
+    const forward = new Set(['base-2', 'base-1', 'base-3']);
+    const reversed = new Set(['base-3', 'base-1', 'base-2']);
+    const rForward = resolveLiveId('base', forward);
+    const rReversed = resolveLiveId('base', reversed);
+    expect(rForward.kind).toBe('ambiguous');
+    expect(rReversed.kind).toBe('ambiguous');
+    if (rForward.kind === 'ambiguous' && rReversed.kind === 'ambiguous') {
+      expect(rForward.candidates).toEqual(['base-1', 'base-2', 'base-3']);
+      expect(rForward.candidates).toEqual(rReversed.candidates);
+    }
   });
 });

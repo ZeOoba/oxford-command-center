@@ -28,10 +28,57 @@ export function resolveLiveId(
   liveIds: ReadonlySet<string>,
 ): { kind: 'exact' | 'prefix'; id: string } | { kind: 'none' } | { kind: 'ambiguous'; candidates: string[] } {
   if (liveIds.has(strippedBase)) return { kind: 'exact', id: strippedBase };
-  const prefixMatches = [...liveIds].filter((id) => id.startsWith(`${strippedBase}-`));
+  // .sort() -- Round-3 REFUTE (LOW): `prefixMatches` is built from a Set, which preserves insertion
+  // (worksheet row) order, so an unsorted candidates array made the `ambiguous` warning text (and
+  // this single-match `prefix` id, moot with only one element but sorted for consistency) vary
+  // across runs if the worksheet were re-sorted, even though the underlying refuse-it-as-ambiguous
+  // DECISION never changes. Purely cosmetic (dry-run diff noise), but this file's own stated goal is
+  // determinism.
+  const prefixMatches = [...liveIds].filter((id) => id.startsWith(`${strippedBase}-`)).sort();
   if (prefixMatches.length === 0) return { kind: 'none' };
   if (prefixMatches.length === 1) return { kind: 'prefix', id: prefixMatches[0]! };
   return { kind: 'ambiguous', candidates: prefixMatches };
+}
+
+export interface MarketRentsPartition {
+  /** Keys to feed into planMigration -- NOT currently a valid live-propertyKey-keyed entry. */
+  forMigration: Record<string, unknown>;
+  /** Keys that already exactly match a live lease's RAW propertyKey -- valid as-is per the
+   *  documented mixed-key contract, never fed to planMigration / never migrated. */
+  validPropertyKeyed: string[];
+}
+
+/**
+ * `overlay.marketRents` is a MIXED-key domain BY DESIGN (see server/overlay.ts's Overlay.marketRents
+ * doc comment: "Keyed by leaseId (precedence) or propertyKey"). The only application write path
+ * (server/brain.ts's setMarketRent) writes keys as the RAW `propertyKey` string (never a lease id),
+ * and the read path (src/analytics/lease-forecast.ts) does `marketRents[l.id] ?? marketRents[l.propertyKey]`.
+ * Round-3 REFUTE (2 independent reviewers): planMigration was previously run over the ENTIRE
+ * marketRents map with `liveIds` = lease ids only, so every legitimate, currently-correct
+ * propertyKey-keyed entry was misdiagnosed as an orphaned old-scheme key needing "manual review" (a
+ * raw propertyKey like "1100 Rarig Ave" -> `kind: 'none'`; a slug-shaped or digit-suffixed
+ * propertyKey could even prefix-match some lease and warn "ambiguous"). An operator following the
+ * tool's own "needs manual review" instruction could then manually remap a correct property-level
+ * fallback rent onto one specific lease -- silently removing the market-rent fallback for every
+ * OTHER lease at that property.
+ *
+ * This partitions marketRents' keys BEFORE planMigration ever sees them: any key that exactly
+ * equals a live lease's RAW propertyKey is valid-as-is and excluded entirely from migration
+ * planning. Only the remaining keys (genuinely not a live propertyKey) go through the normal
+ * old-scheme-key resolution. renewalStages/tenantArrears are genuinely lease-id-only domains and
+ * are unaffected -- this partitioning is scoped to marketRents alone.
+ */
+export function partitionMarketRents(
+  marketRents: Record<string, unknown>,
+  livePropertyKeys: ReadonlySet<string>,
+): MarketRentsPartition {
+  const forMigration: Record<string, unknown> = {};
+  const validPropertyKeyed: string[] = [];
+  for (const key of Object.keys(marketRents).sort()) {
+    if (livePropertyKeys.has(key)) validPropertyKeyed.push(key);
+    else forMigration[key] = marketRents[key];
+  }
+  return { forMigration, validPropertyKeyed };
 }
 
 export interface MigrationPlanItem {
@@ -183,15 +230,24 @@ async function main() {
   const apply = process.argv.includes('--apply');
   const { snapshot } = await parseWorkbook(workbookPath());
   const liveIds = new Set(snapshot.leases.map((l) => l.id));
+  const livePropertyKeys = new Set(snapshot.leases.map((l) => l.propertyKey));
 
   const overlay = loadOverlay();
   let changed = false;
 
   // marketRents is leaseId-keyed too (with precedence over propertyKey — see server/overlay.ts /
   // src/analytics/lease-forecast.ts) — an old-scheme entry there orphans silently if omitted here.
+  // It is ALSO propertyKey-keyed (see partitionMarketRents' doc comment above) — those entries are
+  // partitioned out below and never fed to planMigration, so they're never misdiagnosed as orphaned.
   for (const domain of ['renewalStages', 'tenantArrears', 'marketRents'] as const) {
     const map = overlay[domain] as Record<string, unknown>;
-    const plan = planMigration(map, liveIds);
+    let planInput = map;
+    if (domain === 'marketRents') {
+      const { forMigration, validPropertyKeyed } = partitionMarketRents(map, livePropertyKeys);
+      for (const key of validPropertyKeyed) console.log(`[marketRents] "${key}" is a propertyKey-keyed entry — valid as-is, not migrated`);
+      planInput = forMigration;
+    }
+    const plan = planMigration(planInput, liveIds);
     for (const w of plan.toWarn) console.warn(`[${domain}] ${w.reason}`);
     for (const { oldKey, newKey } of plan.toMigrate) {
       console.log(`[${domain}] "${oldKey}" -> "${newKey}"`);

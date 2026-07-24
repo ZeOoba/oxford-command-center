@@ -221,6 +221,59 @@ describe('disambiguateLeaseIds — lease id stability (row-position bug)', () =>
     expect(flagsA.some((f) => f.field === 'id' && /collision/i.test(f.issue))).toBe(true);
     expect(flagsB.some((f) => f.field === 'id' && /collision/i.test(f.issue))).toBe(true);
   });
+
+  it('Round-3 REFUTE Defect P — a leaseEnd/leaseStart/monthlyRent full tie is broken by annualRent, not array order', () => {
+    // Two rows share the IDENTICAL natural id AND identical leaseEnd/leaseStart/monthlyRent -- the
+    // 3-field chain (pre-round-3) had nothing left to break the tie on, so array/parse order decided.
+    // annualRent differs (it's read independently from a different workbook column and can diverge
+    // from monthlyRent * 12) -- the item with the LOWER annualRent must win the bare base id,
+    // regardless of array position.
+    const lowerAnnual = { id: 'gamma-suite-300', tenantName: 'Fixture Tenant Co', company: null, leaseEnd: '2027-03-31', leaseStart: '2022-04-01', monthlyRent: 4000, annualRent: 47500 };
+    const higherAnnual = { id: 'gamma-suite-300', tenantName: 'Fixture Tenant Co', company: null, leaseEnd: '2027-03-31', leaseStart: '2022-04-01', monthlyRent: 4000, annualRent: 48500 };
+
+    // Order A: lower-annualRent item listed first.
+    const orderA = [{ ...lowerAnnual }, { ...higherAnnual }];
+    const flagsA: DataQualityFlag[] = [];
+    disambiguateLeaseIds(orderA, flagsA);
+    expect(orderA.find((i) => i.annualRent === 47500)!.id).toBe('gamma-suite-300');
+    expect(orderA.find((i) => i.annualRent === 48500)!.id).toBe('gamma-suite-300-2');
+
+    // Order B: SAME two logical leases, array order reversed. The lower-annualRent item must still
+    // win the bare base id -- content-based, not array-position-based.
+    const orderB = [{ ...higherAnnual }, { ...lowerAnnual }];
+    const flagsB: DataQualityFlag[] = [];
+    disambiguateLeaseIds(orderB, flagsB);
+    expect(orderB.find((i) => i.annualRent === 47500)!.id).toBe('gamma-suite-300');
+    expect(orderB.find((i) => i.annualRent === 48500)!.id).toBe('gamma-suite-300-2');
+
+    // The normal (chain-decided) flag wording is used here -- the annualRent field DID distinguish
+    // the pair, so this is not a residual full-tie case.
+    expect(flagsA[0]!.issue).toMatch(/deterministic order/);
+    expect(flagsA[0]!.issue).not.toMatch(/fully tied/);
+  });
+
+  it('Round-3 REFUTE Defect P — a genuine full tie (all 5 fields identical) still produces a valid result without throwing, and its flag does NOT falsely claim full determinism', () => {
+    // Every compared field (leaseEnd, leaseStart, monthlyRent, annualRent, sf) is IDENTICAL between
+    // the two rows -- a true content duplicate. There is nothing left to break the tie on, so array
+    // order is the (documented, honestly-labeled) fallback. This must not throw, and the base id must
+    // still be assigned to exactly one of the two.
+    const dupA = { id: 'delta-suite-400', tenantName: 'Fixture Tenant Co', company: null, leaseEnd: '2027-03-31', leaseStart: '2022-04-01', monthlyRent: 4000, annualRent: 48000, sf: 2000 };
+    const dupB = { id: 'delta-suite-400', tenantName: 'Fixture Tenant Co', company: null, leaseEnd: '2027-03-31', leaseStart: '2022-04-01', monthlyRent: 4000, annualRent: 48000, sf: 2000 };
+
+    const items = [{ ...dupA }, { ...dupB }];
+    const flags: DataQualityFlag[] = [];
+    expect(() => disambiguateLeaseIds(items, flags)).not.toThrow();
+    expect(new Set(items.map((i) => i.id)).size).toBe(2);
+    expect(items.map((i) => i.id).sort()).toEqual(['delta-suite-400', 'delta-suite-400-2']);
+
+    // The residual-tie flag wording is used -- it must NOT claim "deterministic order" for a group
+    // the full chain didn't actually distinguish.
+    const flag = flags.find((f) => f.field === 'id' && /collision/i.test(f.issue))!;
+    expect(flag).toBeDefined();
+    expect(flag.issue).toMatch(/fully tied/);
+    expect(flag.issue).toMatch(/worksheet position/);
+    expect(flag.issue).not.toMatch(/^lease id collision on "delta-suite-400" \(tenant "Fixture Tenant Co"\) — disambiguated to "delta-suite-400-2" \(deterministic order/);
+  });
 });
 
 describe('isTaskBannerRow — reject Monthly Checklist banner rows (Defect 9 regression)', () => {
