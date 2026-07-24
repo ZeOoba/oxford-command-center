@@ -21,12 +21,12 @@ async function main() {
     try {
       const parsedOverlay: unknown = JSON.parse(readFileSync(rawOverlayPath, 'utf8'));
       // Round-4 REFUTE: a JSON.parse THROW only catches malformed JSON syntax. Content that is
-      // syntactically valid JSON but the wrong shape (`null`, `[]`, `0`, `"some string"`, or an
-      // object missing the expected top-level overlay domains) parses successfully, passes a
-      // parse-only guard, but still causes loadOverlay() to fall back to EMPTY_OVERLAY internally --
-      // silently zeroing enrichment data exactly as before, just via a different malformed-content
-      // shape than a parse error. Same fix as scripts/lease-snapshot-drift-check.ts -- keep both in
-      // sync (see that file's header comment on why).
+      // syntactically valid JSON but the wrong TOP-LEVEL shape (`null`, `[]`, `0`, `"some string"`)
+      // parses successfully, passes a parse-only guard, but still causes loadOverlay() to fall back
+      // to EMPTY_OVERLAY internally -- silently zeroing enrichment data exactly as before, just via
+      // a different malformed-content shape than a parse error. Same fix as
+      // scripts/lease-snapshot-drift-check.ts -- keep both in sync (see that file's header comment
+      // on why, including the narrower residual gap this check does NOT close).
       if (!parsedOverlay || typeof parsedOverlay !== 'object' || Array.isArray(parsedOverlay)) {
         console.error(`✗ ${rawOverlayPath} is valid JSON but not a valid overlay object — refusing to regenerate portfolio.json (would zero enrichment data). Fix or restore it first.`);
         process.exit(1);

@@ -340,8 +340,20 @@ async function main(): Promise<void> {
     const rawOverlayPath = overlayPath();
     if (existsSync(rawOverlayPath)) {
       try {
-        JSON.parse(readFileSync(rawOverlayPath, 'utf8'));
+        const parsedOverlay: unknown = JSON.parse(readFileSync(rawOverlayPath, 'utf8'));
+        // Round-5 REFUTE: a JSON.parse THROW only catches malformed JSON syntax. Content that is
+        // syntactically valid JSON but the wrong shape (null/array/scalar) parses successfully,
+        // passes a parse-only guard, but still causes loadOverlay() to fall back to EMPTY_OVERLAY
+        // internally -- the same amplify-into-a-full-reset hazard this guard exists to prevent,
+        // just via a different malformed-content shape than a parse error. This is the
+        // highest-consequence copy of this guard in the codebase: unlike the drift-check/extract
+        // scripts (which only zero enrichment in a regenerable snapshot), this script's save
+        // path writes straight back to the canonical overlay.json mutation store.
+        if (!parsedOverlay || typeof parsedOverlay !== 'object' || Array.isArray(parsedOverlay)) {
+          throw new Error(`${rawOverlayPath} is valid JSON but not a valid overlay object — refusing to run (would amplify into a full overlay reset on save). Fix or restore it first.`);
+        }
       } catch (e) {
+        if (e instanceof Error && e.message.includes('not a valid overlay object')) throw e;
         throw new Error(`${rawOverlayPath} is corrupt/unparseable — refusing to run (would amplify into a full overlay reset on save). Fix or restore it first. (${e instanceof Error ? e.message : String(e)})`);
       }
     }

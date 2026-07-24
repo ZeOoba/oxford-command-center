@@ -88,13 +88,16 @@ async function main() {
     try {
       const parsedOverlay: unknown = JSON.parse(readFileSync(rawOverlayPath, 'utf8'));
       // Round-4 REFUTE: a JSON.parse THROW only catches malformed JSON syntax. Content that is
-      // syntactically valid JSON but the wrong shape (`null`, `[]`, `0`, `"some string"`, or an
-      // object missing the expected top-level overlay domains) parses successfully, passes a
-      // parse-only guard, but still causes loadOverlay() to fall back to EMPTY_OVERLAY internally
-      // (its helpers -- stringRecord/validRecord/coerceBudgets/validTasks -- all return empty for a
-      // non-object) -- silently zeroing enrichment data exactly as before, just via a different
-      // malformed-content shape than a parse error. Reject anything that isn't a non-null, non-array
-      // object before letting it through.
+      // syntactically valid JSON but the wrong TOP-LEVEL shape (`null`, `[]`, `0`, `"some string"`)
+      // parses successfully, passes a parse-only guard, but still causes loadOverlay() to fall back
+      // to EMPTY_OVERLAY internally -- silently zeroing enrichment data exactly as before, just via
+      // a different malformed-content shape than a parse error. Reject anything that isn't a
+      // non-null, non-array object before letting it through. NOTE: this only catches the wrong-
+      // top-level-type case -- a syntactically valid object missing some/all of the expected overlay
+      // domain keys (e.g. `{"foo": 1}`, or a file truncated to one surviving key) still passes this
+      // check and still yields a partially/fully empty overlay from loadOverlay's per-domain
+      // fallbacks. Closing that residual gap would need a keys-overlap check against EMPTY_OVERLAY's
+      // shape; left as a known, narrower residual rather than expanding this guard further.
       if (!parsedOverlay || typeof parsedOverlay !== 'object' || Array.isArray(parsedOverlay)) {
         console.error(`✗ ${rawOverlayPath} is valid JSON but not a valid overlay object — refusing to regenerate portfolio.json (would zero enrichment data). Fix or restore it first.`);
         process.exit(1);

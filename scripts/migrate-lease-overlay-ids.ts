@@ -102,13 +102,15 @@ export interface MigrationPlan {
  * decide) is what makes all five required invariants hold simultaneously:
  *
  *  1. No overwrite of ANY pre-existing overlay entry — a target that is already a key in
- *     `oldKeysMap` (regardless of WHY it's there — plain live-valid data, or a key the invariant-4
- *     check below flagged as an ambiguous collision-cluster coincidence) is NEVER a migration
- *     destination, solo claimant or not (see the `hasOwnProperty(oldKeysMap, target)` branch below).
- *     This is checked directly against `oldKeysMap`, not a derived subset — a derived "live-valid"
- *     set that deliberately excludes invariant-4-flagged keys (so they get their OWN ambiguity
- *     warning) must never be reused as "the set of destinations safe to overwrite", or those very
- *     keys lose overwrite protection precisely because they were flagged. See Defect 1 in
+ *     `existingKeysMap` (regardless of WHY it's there — plain live-valid data, or a key the
+ *     invariant-4 check below flagged as an ambiguous collision-cluster coincidence) is NEVER a
+ *     migration destination, solo claimant or not (see the `hasOwnProperty(existingKeysMap, target)`
+ *     branch below). This is checked directly against `existingKeysMap` (which defaults to
+ *     `oldKeysMap` itself, but see the `existingKeysMap` doc below for why marketRents needs a
+ *     different map here), not a derived subset — a derived "live-valid" set that deliberately
+ *     excludes invariant-4-flagged keys (so they get their OWN ambiguity warning) must never be
+ *     reused as "the set of destinations safe to overwrite", or those very keys lose overwrite
+ *     protection precisely because they were flagged. See Defect 1 in
  *     docs/superpowers/sdd/refute-fix-3-report.md for the concrete collision this closes.
  *  2. Symmetric refusal on multi-claimant targets — 2+ old keys resolving to the same target are
  *     ALL refused, each warning naming the full set of competing claimants.
@@ -169,8 +171,8 @@ export function planMigration(
         });
       }
       // Else: unambiguously already correct — a genuine no-op. Nothing to add to any tracking set;
-      // Invariant 1's overwrite guard below checks `oldKeysMap` directly (this key is already IN
-      // it), so this key stays protected as a migration destination without needing its own set.
+      // Invariant 1's overwrite guard below checks `existingKeysMap` directly (this key is already
+      // IN it), so this key stays protected as a migration destination without needing its own set.
       continue;
     }
     const strippedBase = oldKey.replace(/-\d+$/, '');
