@@ -8,9 +8,14 @@
 //   First-page network/auth failure → throws (route returns 502).
 //   Per-page extraction/write error → pushed to errors[], sync continues.
 // NO OUTER TRANSACTION: intentional — per-page autocommit gives partial-success tolerance.
-// STATUS NO-CLOBBER: UPDATE never downgrades a locally-advanced `acquired` or `passed` back to `active`.
+// STATUS NO-CLOBBER: UPDATE never downgrades a locally-advanced `acquired`, `passed` or
+//   `archived` (LOCAL_LOCKED_STATUSES, shared with acq-hubspot-sync.ts) back to `active`.
 // NOTION_TOKEN must never be committed; callers source it from process.env.
 import type { WarehouseDb } from './db';
+// LOCAL_LOCKED_STATUSES is defined once in acq-hubspot-sync.ts (Notion and HubSpot are the two
+// independent writers to acq_candidates and must never diverge on which statuses are locked
+// against a resync — see the constant's doc comment for the 2026-07-24 incident this closes).
+import { LOCAL_LOCKED_STATUSES } from './acq-hubspot-sync';
 
 /** Full UUID for the Acquisition Pipeline Tracker Notion database (short id bcfe4a03). */
 export const ACQ_PIPELINE_DB_ID = 'bcfe4a03-7e61-4ac1-a0bb-c44174fa138b';
@@ -180,19 +185,67 @@ export async function syncNotionPipeline(
       const statusRaw = propText(props, 'status', 'stage');
       const status = mapStatus(statusRaw);
 
-      const existing = db.prepare(
-        'SELECT id FROM acq_candidates WHERE notion_deal_id = ?',
-      ).get(notionPageId) as { id: string } | undefined;
+      // SELECT-then-UPDATE, wrapped atomically (2026-07-24, round-2 refute-review): mirrors
+      // acq-hubspot-sync.ts's identical fix — see that module's comment on the same pattern
+      // for the full rationale. Not reachable in-process today (no await between the read and
+      // write), but this closes the twin-writer asymmetry the L1 fix below was itself meant to
+      // eliminate: fixing HubSpot's TOCTOU exposure while leaving Notion's freshly-rewritten
+      // SELECT+UPDATE pair unwrapped would have recreated exactly that drift.
+      const isExistingCandidate = db.transaction((): boolean => {
+        const existing = db.prepare(
+          'SELECT id, address, county, state, market, rentable_sf, year_built, owner_name, status FROM acq_candidates WHERE notion_deal_id = ?',
+        ).get(notionPageId) as
+          | {
+              id: string;
+              address: string | null;
+              county: string | null;
+              state: string | null;
+              market: string | null;
+              rentable_sf: number | null;
+              year_built: number | null;
+              owner_name: string | null;
+              status: string;
+            }
+          | undefined;
+        if (existing === undefined) return false;
 
-      if (existing) {
+        // 2026-07-24 (integrity sweep M1/L1, applied to this writer on refute-review): mirrors
+        // acq-hubspot-sync.ts's fix. Two changes from the prior UPDATE:
+        //   (1) status no-clobber now uses the SHARED LOCAL_LOCKED_STATUSES (adds 'archived' —
+        //       previously only acquired/passed were protected here, so an archived candidate
+        //       was silently reactivated by the next Notion resync).
+        //   (2) updated_at is gated on whether this UPDATE genuinely changes a PERSISTED column,
+        //       not bumped unconditionally on every sync. The old unconditional
+        //       `updated_at = datetime('now')` bumped every synced row's timestamp on every
+        //       resync regardless of whether anything changed — worse than the pre-fix HubSpot
+        //       gate (which at least compared a hash), and meant a PATCH-driven status/edit
+        //       timestamp was overwritten by the very next scheduled sync even with no real
+        //       Notion-side change.
+        const resolvedStatus = LOCAL_LOCKED_STATUSES.has(existing.status) ? existing.status : status;
+        const persistedChanged =
+          existing.address !== address ||
+          existing.county !== county ||
+          existing.state !== state ||
+          existing.market !== market ||
+          existing.rentable_sf !== rentableSf ||
+          existing.year_built !== yearBuilt ||
+          existing.owner_name !== ownerName ||
+          existing.status !== resolvedStatus;
         db.prepare(`
           UPDATE acq_candidates
           SET address = ?, county = ?, state = ?, market = ?, rentable_sf = ?,
               year_built = ?, owner_name = ?,
-              status = CASE WHEN status IN ('acquired','passed') THEN status ELSE ? END,
-              updated_at = datetime('now')
+              status = ?,
+              updated_at = CASE WHEN ? THEN datetime('now') ELSE updated_at END
           WHERE notion_deal_id = ?
-        `).run(address, county, state, market, rentableSf, yearBuilt, ownerName, status, notionPageId);
+        `).run(
+          address, county, state, market, rentableSf, yearBuilt, ownerName,
+          resolvedStatus, persistedChanged ? 1 : 0, notionPageId,
+        );
+        return true;
+      })();
+
+      if (isExistingCandidate) {
         result.updated += 1;
       } else {
         db.prepare(`

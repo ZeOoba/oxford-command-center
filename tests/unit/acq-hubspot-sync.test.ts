@@ -156,10 +156,13 @@ describe('syncHubSpotPipeline — content_hash gates updated_at', () => {
     expect(row.address).toBe('New Name');
   });
 
-  it('bumps updated_at on the first resync after migration, when content_hash is still NULL', async () => {
-    // Simulates a pre-existing row from before migration 025 added the column: content_hash
-    // is genuinely NULL (not just a mismatched value), which is the exact transition the
-    // upsert's `IS` (NULL-safe) comparison — rather than `=` — is meant to handle correctly.
+  // CONTRACT CHANGE 2026-07-24 (M1). This case previously asserted that a legacy row with a
+  // NULL content_hash BUMPS updated_at on the next resync — an artifact of gating on the stored
+  // hash, which made the migration itself look like an edit to every row. updated_at is now
+  // gated on whether a PERSISTED column actually changed, so backfilling the hash is correctly
+  // invisible: nothing about the row changed, so its edit timestamp must not move. Strictly
+  // better — it removes a one-time mass phantom-bump that migration 025 would otherwise cause.
+  it('backfilling a NULL content_hash is NOT an edit — updated_at stays put', async () => {
     const db = freshDb();
     const deal = makeDeal({ id: 'gate-3', dealname: 'Legacy Deal', dealstage: '1331037317' });
     await syncHubSpotPipeline(db, 'tok', { fetchImpl: mockFetch([deal]) });
@@ -169,9 +172,11 @@ describe('syncHubSpotPipeline — content_hash gates updated_at', () => {
 
     await syncHubSpotPipeline(db, 'tok', { fetchImpl: mockFetch([deal]) });
 
-    const row = db.prepare('SELECT updated_at FROM acq_candidates WHERE id = ?')
-      .get('deal:hubspot:gate-3') as { updated_at: string };
-    expect(row.updated_at).not.toBe('2000-01-01 00:00:00');
+    const row = db.prepare('SELECT updated_at, content_hash FROM acq_candidates WHERE id = ?')
+      .get('deal:hubspot:gate-3') as { updated_at: string; content_hash: string | null };
+    expect(row.updated_at).toBe('2000-01-01 00:00:00');
+    // …but the fingerprint is still backfilled for audit/debug use.
+    expect(row.content_hash).not.toBeNull();
   });
 });
 
@@ -412,5 +417,76 @@ describe('syncHubSpotPipeline — spine isolation', () => {
     });
     const count = (db.prepare('SELECT COUNT(*) AS n FROM import_batches').get() as { n: number }).n;
     expect(count).toBe(0);
+  });
+});
+
+// ── M1/L1: the updated_at gate must reflect PERSISTED state ──────────────────────────────
+//
+// 2026-07-24 integrity sweep. The original gate compared the STORED content_hash against the
+// INCOMING hash — a fingerprint of the last sync's input, not of the row as it actually stands.
+// acq_candidates has a real third writer (PATCH /acq/candidates/:id/status, api.ts), which
+// changes status without touching content_hash. So "hash unchanged" did NOT imply "this UPDATE
+// writes nothing": the sync could revert a human's edit while FREEZING updated_at at the
+// human's timestamp — destroying the only audit trace and misattributing the row. The gate now
+// compares the row's actual persisted values against the values the UPDATE will resolve to.
+
+describe('syncHubSpotPipeline — updated_at gate reflects persisted state (M1)', () => {
+  /** Simulate the PATCH /acq/candidates/:id/status endpoint: status + updated_at, no hash. */
+  function patchStatus(db: WarehouseDb, id: string, status: string, at: string): void {
+    db.prepare('UPDATE acq_candidates SET status = ?, updated_at = ? WHERE id = ?').run(status, at, id);
+  }
+
+  it('a human-archived candidate is not resurrected to active by the next resync', async () => {
+    const db = freshDb();
+    const deal = makeDeal({ id: 'm1-1', dealname: '123 Main St', dealstage: '1331037317' });
+    await syncHubSpotPipeline(db, 'tok', { fetchImpl: mockFetch([deal]) });
+
+    patchStatus(db, 'deal:hubspot:m1-1', 'archived', '2026-07-10 09:00:00');
+    await syncHubSpotPipeline(db, 'tok', { fetchImpl: mockFetch([deal]) });
+
+    const row = db.prepare('SELECT status, updated_at FROM acq_candidates WHERE id = ?')
+      .get('deal:hubspot:m1-1') as { status: string; updated_at: string };
+    // The human decision stands — a sync is not authoritative over a local lifecycle call.
+    expect(row.status).toBe('archived');
+    // Nothing persisted changed, so the timestamp legitimately stays put.
+    expect(row.updated_at).toBe('2026-07-10 09:00:00');
+  });
+
+  it('when a resync genuinely rewrites a drifted column, updated_at bumps (no frozen timestamp)', async () => {
+    const db = freshDb();
+    const deal = makeDeal({ id: 'm1-2', dealname: '456 Oak Ave', dealstage: '1331037317' });
+    await syncHubSpotPipeline(db, 'tok', { fetchImpl: mockFetch([deal]) });
+
+    // Out-of-band edit that leaves content_hash stale relative to the real columns.
+    db.prepare("UPDATE acq_candidates SET address = 'MANUALLY CORRECTED', updated_at = '2000-01-01 00:00:00' WHERE id = ?")
+      .run('deal:hubspot:m1-2');
+
+    // Resync with UNCHANGED HubSpot data: the stored hash still matches the incoming hash, so
+    // the old gate kept updated_at — even though this UPDATE reverts `address` back to canon.
+    await syncHubSpotPipeline(db, 'tok', { fetchImpl: mockFetch([deal]) });
+
+    const row = db.prepare('SELECT address, updated_at FROM acq_candidates WHERE id = ?')
+      .get('deal:hubspot:m1-2') as { address: string; updated_at: string };
+    expect(row.address).toBe('456 Oak Ave');
+    expect(row.updated_at).not.toBe('2000-01-01 00:00:00');
+  });
+
+  it('L1: a status-locked row whose HubSpot stage merely shifts does not phantom-bump updated_at', async () => {
+    const db = freshDb();
+    // Closed Lost → persisted status 'passed' (a locked terminal state).
+    const lost = makeDeal({ id: 'm1-3', dealname: '789 Pine Rd', dealstage: '1331037323' });
+    await syncHubSpotPipeline(db, 'tok', { fetchImpl: mockFetch([lost]) });
+    db.prepare("UPDATE acq_candidates SET updated_at = '2000-01-01 00:00:00' WHERE id = ?")
+      .run('deal:hubspot:m1-3');
+
+    // HubSpot stage moves between two NON-terminal stages. status stays locked at 'passed' and
+    // address is unchanged, so NOTHING persisted changes — the timestamp must not move.
+    const reopened = makeDeal({ id: 'm1-3', dealname: '789 Pine Rd', dealstage: '1331037319' });
+    await syncHubSpotPipeline(db, 'tok', { fetchImpl: mockFetch([reopened]) });
+
+    const row = db.prepare('SELECT status, updated_at FROM acq_candidates WHERE id = ?')
+      .get('deal:hubspot:m1-3') as { status: string; updated_at: string };
+    expect(row.status).toBe('passed');
+    expect(row.updated_at).toBe('2000-01-01 00:00:00');
   });
 });

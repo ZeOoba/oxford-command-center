@@ -210,6 +210,29 @@ describe('buildMaturityTimeline', () => {
     expect(ev!.propertyId).toBe(pid);
   });
 
+  // L3 gap (independent-review finding, 2026-07-24): this event's eventDate was still emitting
+  // row.maturity_date unconditionally — the identical defect class L3 closed in
+  // buildRefiWindows' soonestMaturityDate (see that describe block below). A free-form
+  // unparseable workbook cell must not reach a date-typed field on the client-facing timeline.
+  it('an unparseable maturity cell yields eventDate=null while monthsOut still uses the stored fallback', () => {
+    const db = freshDb();
+    seedLoan(db, { id: 'garbage-date', maturityDate: 'TBD', monthsToMaturity: 9 });
+    const events = buildMaturityTimeline(db, ASOF);
+    const ev = events.find((e) => e.loanId === 'garbage-date' && e.eventType === 'maturity');
+    expect(ev).toBeDefined();
+    expect(ev!.eventDate).toBeNull();
+    expect(ev!.monthsOut).toBe(9);
+  });
+
+  it('a real parseable maturity_date is still carried through as eventDate', () => {
+    const db = freshDb();
+    const date = isoMonthsFromAsOf(4);
+    seedLoan(db, { id: 'real-date', maturityDate: date });
+    const events = buildMaturityTimeline(db, ASOF);
+    const ev = events.find((e) => e.loanId === 'real-date' && e.eventType === 'maturity');
+    expect(ev!.eventDate).toBe(date);
+  });
+
   it('emits demand notes as demand-callable events sorted FIRST (callable now beats any dated event)', () => {
     const db = freshDb();
     seedLoan(db, { id: 'dated', maturityDate: isoMonthsFromAsOf(1) });
@@ -501,12 +524,31 @@ describe('computePortfolioAggregateLtv', () => {
     expect(agg.clearedConservatively).toBeNull();
   });
 
-  it('no active debt → trivially cleared (true aggregate LTV is 0)', () => {
+  // H2b (2026-07-24 sweep, edges lens): the previous contract here was
+  // `clearedConservatively: true` on the vacuous-truth reading "zero active rows ⇒ no debt ⇒
+  // aggregate LTV is 0". That is only sound if zero rows means a VERIFIED unlevered portfolio.
+  // It does not: writeDebtSnapshot's stale-supersede clause retires every active row absent from
+  // an incoming snapshot, so an empty borrower set wipes the whole book — after which this
+  // function manufactured a Hard-Invariant-4 CLEARANCE out of an empty cohort. "No data" and
+  // "no debt" are now distinguished: emptyCohort marks the cohort, and the verdict is null
+  // (unknown is never clearance — the module's own F1/F2 doctrine).
+  it('no active debt → emptyCohort, verdict NULL (absence of data is not evidence of no debt)', () => {
     const db = freshDb();
     const agg = computePortfolioAggregateLtv(db, loadGovernors(db));
     expect(agg.totalLoanCount).toBe(0);
     expect(agg.aggregateLtv).toBeNull();
     expect(agg.complete).toBe(true);
+    expect(agg.emptyCohort).toBe(true);
+    expect(agg.clearedConservatively).toBeNull();
+    expect(agg.note).toMatch(/no active debt positions/i);
+  });
+
+  it('a non-empty cohort is never flagged emptyCohort', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    seedLoan(db, { propertyId: 'p1', currentBalance: 800_000, ltv: 0.3 });
+    const agg = computePortfolioAggregateLtv(db, loadGovernors(db));
+    expect(agg.emptyCohort).toBe(false);
     expect(agg.clearedConservatively).toBe(true);
   });
 
@@ -533,6 +575,274 @@ describe('computePortfolioAggregateLtv', () => {
     expect(agg.complete).toBe(true);
     expect(agg.aggregateLtv).toBeCloseTo(gov.ltvCeiling, 10);
     expect(agg.clearedConservatively).toBe(true);
+  });
+});
+
+// ── Governor-hardening regressions (2026-07-24 financial-code integrity sweep) ─────────────
+//
+// Every case below is a defect the merge gate's 2,865 green tests did NOT exercise. Each is
+// pinned here so it cannot silently return.
+
+describe('computePortfolioAggregateLtv — balance-sign guard (H1)', () => {
+  // The coverage predicate guarded the sign of `ltv` but not of `current_balance`. A negative
+  // balance contributes a NEGATIVE implied value (balance ÷ ltv), shrinking the denominator
+  // asymmetrically and DEFLATING the aggregate — turning a real breach into a false clearance.
+  // Reachable because POST /snapshot took its payload through a bare TS cast (see debt-api).
+  it('a negative-balance row can no longer flip a real 55% breach into a false clearance', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    seedProperty(db, 'p2');
+    // p1 alone is a TRUE breach of the 40% aggregate governor.
+    seedLoan(db, { propertyId: 'p1', currentBalance: 4_000_000, ltv: 0.55 });
+    // The malformed row that used to deflate the aggregate to 0.396 (≤ 0.40 ⇒ "cleared").
+    seedLoan(db, { propertyId: 'p2', currentBalance: -2_000_000, ltv: 0.9 });
+
+    const agg = computePortfolioAggregateLtv(db, loadGovernors(db));
+
+    // The non-positive-balance loan is now UNCOVERED, so coverage is incomplete and the
+    // verdict is null — never a clearance built on a sign error.
+    expect(agg.coveredLoanCount).toBe(1);
+    expect(agg.totalLoanCount).toBe(2);
+    expect(agg.complete).toBe(false);
+    expect(agg.clearedConservatively).toBeNull();
+    // The honestly-labelled covered slice is still the real breaching loan.
+    expect(agg.aggregateLtv).toBeCloseTo(0.55, 10);
+    // Regression pin: the old deflated figure must never reappear.
+    expect(agg.aggregateLtv).not.toBeCloseTo(0.396, 3);
+  });
+
+  // CONTRACT CORRECTION (same-day refute-review): a strictly negative balance is what deflates
+  // the aggregate (H1's actual attack) — a genuinely active ZERO-balance loan (undrawn revolver,
+  // blank cell parsed as 0) contributes exactly 0 to both sums and cannot deflate anything, so
+  // excluding it too would needlessly downgrade a real, correct verdict to no-verdict with no
+  // data actually missing. It IS covered, contributing nothing.
+  it('a zero-balance loan is covered — it cannot deflate the aggregate, unlike a negative one', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    seedProperty(db, 'p2');
+    seedLoan(db, { propertyId: 'p1', currentBalance: 4_000_000, ltv: 0.35 });
+    seedLoan(db, { propertyId: 'p2', currentBalance: 0, ltv: 0.5 }); // undrawn revolver
+    const agg = computePortfolioAggregateLtv(db, loadGovernors(db));
+    expect(agg.coveredLoanCount).toBe(2);
+    expect(agg.complete).toBe(true);
+    // The zero-balance loan contributes nothing to either sum — the aggregate is exactly the
+    // real loan's own LTV, unaffected by the revolver's presence.
+    expect(agg.aggregateLtv).toBeCloseTo(0.35, 10);
+    expect(agg.clearedConservatively).toBe(true);
+  });
+
+  // Round-2 refute-review regression (determinism lens): the >=0 relaxation reopened a
+  // reachable degenerate state — complete coverage but every covered loan has a zero balance
+  // (aggregateLtv null, since coveredImpliedValue stays 0). The note ternary used to be binary
+  // over what is really a three-way verdict, so this state silently fell into the ABOVE-CEILING
+  // wording despite no ceiling comparison ever running.
+  it('an all-zero-balance covered cohort gets its own note, not the above-ceiling wording', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    seedLoan(db, { propertyId: 'p1', currentBalance: 0, ltv: 0.5 }); // undrawn revolver, sole loan
+    const agg = computePortfolioAggregateLtv(db, loadGovernors(db));
+    expect(agg.complete).toBe(true);
+    expect(agg.aggregateLtv).toBeNull();
+    expect(agg.clearedConservatively).toBeNull();
+    expect(agg.note).not.toMatch(/above the aggregate ceiling/i);
+    expect(agg.note).toMatch(/zero balance/i);
+  });
+
+  it('a strictly negative balance is still excluded (the actual H1 attack, unaffected by the >=0 relaxation)', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    seedLoan(db, { propertyId: 'p1', currentBalance: -500_000, ltv: 0.5 });
+    const agg = computePortfolioAggregateLtv(db, loadGovernors(db));
+    expect(agg.coveredLoanCount).toBe(0);
+    expect(agg.complete).toBe(false);
+    expect(agg.clearedConservatively).toBeNull();
+  });
+
+  // coveredBalancePct regression (same-day refute-review): a negative row was still summed
+  // uncapped into totalBalance, so a positive-only coveredBalance could exceed it — a "200%
+  // covered" figure. totalBalance must clamp each row to max(balance, 0).
+  it('coveredBalancePct never exceeds 1.0, even with a negative-balance row present', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    seedProperty(db, 'p2');
+    seedLoan(db, { propertyId: 'p1', currentBalance: 4_000_000, ltv: 0.55 });
+    seedLoan(db, { propertyId: 'p2', currentBalance: -2_000_000, ltv: 0.9 });
+    const agg = computePortfolioAggregateLtv(db, loadGovernors(db));
+    expect(agg.coveredBalancePct).not.toBeNull();
+    expect(agg.coveredBalancePct!).toBeLessThanOrEqual(1);
+    expect(agg.coveredBalancePct!).toBeGreaterThanOrEqual(0);
+    // 4.0M covered / 4.0M clamped-total (the -2.0M row contributes 0, not -2.0M) = 1.0
+    expect(agg.coveredBalancePct).toBeCloseTo(1, 10);
+  });
+});
+
+describe('computePortfolioAggregateLtv — inclusive ceiling is float-stable (M2)', () => {
+  // `aggregateLtv <= ceiling` with no tolerance was unstable at EXACTLY the ratified ceiling:
+  // the b/(b/ltv) double roundtrip lands a hair above 0.4 for most cents-precision balances,
+  // producing a false NOT-cleared on a portfolio sitting exactly at the inclusive ceiling.
+  it('a balance whose implied-value roundtrip lands above the ceiling still clears', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    const gov = loadGovernors(db);
+    // 7,839,422.99 @ 0.40 roundtrips to 0.40000000000000008 — strictly > 0.4 as a double.
+    const balance = 7_839_422.99;
+    expect(balance / (balance / gov.ltvCeiling)).toBeGreaterThan(gov.ltvCeiling);
+
+    seedLoan(db, { propertyId: 'p1', currentBalance: balance, ltv: gov.ltvCeiling });
+    const agg = computePortfolioAggregateLtv(db, gov);
+    expect(agg.complete).toBe(true);
+    expect(agg.clearedConservatively).toBe(true);
+  });
+
+  it('the verdict does not flip with loan-id (summation) order at the ceiling', () => {
+    const gov = loadGovernors(freshDb());
+    const balances = [1_919_611.0, 1_159_134.95, 8_382_785.65];
+    // Loan ids drive `ORDER BY d.id ASC`, i.e. the float summation order. Renaming a loan is
+    // this repo's own documented slug-collision remedy, so order genuinely changes in practice.
+    const verdicts = [
+      ['a-loan', 'b-loan', 'c-loan'],
+      ['c-loan', 'b-loan', 'a-loan'],
+      ['b-loan', 'a-loan', 'c-loan'],
+    ].map((ids) => {
+      const db = freshDb();
+      ids.forEach((id, i) => {
+        seedProperty(db, `prop-${id}`);
+        seedLoan(db, { id, propertyId: `prop-${id}`, currentBalance: balances[i]!, ltv: gov.ltvCeiling });
+      });
+      return computePortfolioAggregateLtv(db, gov).clearedConservatively;
+    });
+    expect(verdicts).toEqual([true, true, true]);
+  });
+
+  it('a genuinely breaching aggregate is still NOT cleared (the tolerance is not a loophole)', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    const gov = loadGovernors(db);
+    // A hair above the ceiling by far more than the tolerance.
+    seedLoan(db, { propertyId: 'p1', currentBalance: 1_000_000, ltv: gov.ltvCeiling + 0.0001 });
+    const agg = computePortfolioAggregateLtv(db, gov);
+    expect(agg.complete).toBe(true);
+    expect(agg.clearedConservatively).toBe(false);
+  });
+});
+
+// ── Low-LTV structural defense (round 7, low-LTV directional gap) ─────────────────────────
+//
+// H1 excluded a NEGATIVE ltv/balance from coverage. It never addressed the OTHER direction: for
+// a sole covered loan, aggregateLtv reduces algebraically to exactly that loan's own ltv
+// (balance ÷ (balance ÷ ltv) = ltv), so a too-LOW ltv value produces a too-LOW reported
+// aggregate — a false clearance by the same mechanism, just via a plausible-looking positive
+// number instead of an obviously-wrong negative one. The demonstrated, reproducible attack
+// (round-4/5 adversarial review) is a one-column drift in the workbook parser: `ltv` accidentally
+// reads the loan's own interest-RATE cell instead of its LTV cell — both are small decimals
+// (rates commonly 0.02-0.12), so the drifted value looks entirely plausible in isolation.
+//
+// A magnitude floor cannot safely catch this: this exact codebase's own legitimate test fixtures
+// (debt-scoring.test.ts) already use ltv as low as 0.01 for genuine near-payoff loans, so any
+// floor tight enough to catch a drifted 0.065 would also reject real data at a materially higher
+// false-positive rate than is acceptable for a governor-adjacent check.
+//
+// The structural defense instead cross-checks ltv against the SAME loan's own `rate` field
+// (read internally here — never added to this module's returned shape, preserving the
+// confidentiality contract: "nothing returned here carries... a rate VALUE"). A column-drift bug
+// copies the exact same underlying cell value into both fields, so `ltv === rate` (to float
+// precision) is strong, specific evidence of that exact failure — a genuine, independently-set
+// low LTV has no causal reason to numerically coincide with its own loan's rate. This is
+// deliberately narrow: it closes the ONE demonstrated attack, not "any implausible ltv" in
+// general — see the module's aggregate-LTV docblock for the residual gap this does not close.
+describe('computePortfolioAggregateLtv — low-LTV rate-collision defense (round 7)', () => {
+  it('excludes a loan whose ltv exactly collides with its own rate (the demonstrated column-drift attack)', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    seedProperty(db, 'p2');
+    seedProperty(db, 'p3');
+    seedProperty(db, 'p4');
+    // 4 loans, true aggregate LTV 62% (a real breach of the 40% ceiling) — one loan's ltv column
+    // drifted to read its own 6.5% rate cell instead.
+    seedLoan(db, { propertyId: 'p1', currentBalance: 3_000_000, ltv: 0.62, rate: 0.058 });
+    seedLoan(db, { propertyId: 'p2', currentBalance: 3_000_000, ltv: 0.62, rate: 0.061 });
+    seedLoan(db, { propertyId: 'p3', currentBalance: 3_000_000, ltv: 0.62, rate: 0.059 });
+    seedLoan(db, { propertyId: 'p4', currentBalance: 3_000_000, ltv: 0.065, rate: 0.065 }); // drifted
+
+    const agg = computePortfolioAggregateLtv(db, loadGovernors(db));
+    // The drifted loan is excluded from coverage entirely — never trusted as data.
+    expect(agg.coveredLoanCount).toBe(3);
+    expect(agg.totalLoanCount).toBe(4);
+    expect(agg.complete).toBe(false);
+    expect(agg.clearedConservatively).toBeNull();
+    // The 3 clean loans still report their honest (breaching) aggregate.
+    expect(agg.aggregateLtv).toBeCloseTo(0.62, 10);
+  });
+
+  it('does NOT exclude a loan whose ltv is merely in the same ballpark as its rate but not equal', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    // A genuine near-payoff loan: ltv 0.07, rate 0.055 — both small decimals, but NOT the same
+    // value. Coincidental proximity must never be enough to exclude real data.
+    seedLoan(db, { propertyId: 'p1', currentBalance: 100_000, ltv: 0.07, rate: 0.055 });
+    const agg = computePortfolioAggregateLtv(db, loadGovernors(db));
+    expect(agg.coveredLoanCount).toBe(1);
+    expect(agg.complete).toBe(true);
+    expect(agg.clearedConservatively).toBe(true);
+  });
+
+  it('does NOT exclude a normal loan whose ltv happens to equal a HIGH rate coincidentally', () => {
+    // Guard against an overzealous version of this check that fires on ANY ltv===rate match
+    // regardless of magnitude — a genuinely high ltv that happens to numerically match a high
+    // rate is not the attack signature (the attack specifically produces an implausibly LOW ltv,
+    // since real rates are always well under 1.0). Still, exact equality is exact equality: this
+    // loan's own value literally IS suspect by the same signal, so it is excluded too — the test
+    // documents this as an accepted, narrow false-positive on an edge case that essentially never
+    // occurs with real rate magnitudes, not as a defect.
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    seedLoan(db, { propertyId: 'p1', currentBalance: 500_000, ltv: 0.45, rate: 0.45 });
+    const agg = computePortfolioAggregateLtv(db, loadGovernors(db));
+    expect(agg.coveredLoanCount).toBe(0);
+    expect(agg.complete).toBe(false);
+    expect(agg.clearedConservatively).toBeNull();
+  });
+
+  it('a null rate never excludes a loan (no data to collide with)', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    seedLoan(db, { propertyId: 'p1', currentBalance: 500_000, ltv: 0.065, rate: null });
+    const agg = computePortfolioAggregateLtv(db, loadGovernors(db));
+    expect(agg.coveredLoanCount).toBe(1);
+    expect(agg.complete).toBe(true);
+  });
+
+  it('never returns the rate value anywhere in the response shape (confidentiality)', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    // A distinctive, non-colliding rate value on an otherwise normal covered loan — confirms the
+    // internal rate read (added for the collision check) never leaks into the returned shape.
+    seedLoan(db, { propertyId: 'p1', currentBalance: 500_000, ltv: 0.35, rate: 0.091234 });
+    const agg = computePortfolioAggregateLtv(db, loadGovernors(db));
+    expect(agg.coveredLoanCount).toBe(1); // sanity: the loan IS covered and DID contribute data
+    expect(JSON.stringify(agg)).not.toContain('091234');
+  });
+});
+
+describe('buildRefiWindows — soonestMaturityDate never emits an unparseable date (L3)', () => {
+  it('an unparseable maturity cell yields a null date while months comes from the stored fallback', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    seedLoan(db, { propertyId: 'p1', maturityDate: 'TBD', monthsToMaturity: 6 });
+    const [entry] = buildRefiWindows(db, [], ASOF);
+    expect(entry).toBeDefined();
+    expect(entry!.monthsToSoonestMaturity).toBe(6);
+    expect(entry!.soonestMaturityDate).toBeNull();
+    expect(entry!.maturityWithin12mo).toBe(true);
+  });
+
+  it('a real parseable date is still carried through', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    const date = isoMonthsFromAsOf(6);
+    seedLoan(db, { propertyId: 'p1', maturityDate: date });
+    const [entry] = buildRefiWindows(db, [], ASOF);
+    expect(entry!.soonestMaturityDate).toBe(date);
   });
 });
 

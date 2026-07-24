@@ -4,7 +4,50 @@ import type { Loan } from '../../src/contracts/index';
 export interface DebtSnapshotResult {
   written: number;
   errors: string[];
+  /** True iff the shrinkage guard declined the whole/majority-book supersede this call (either
+   *  the H2a empty-set trigger or the partial-wipe majority trigger — see the REFUSED branch
+   *  below). A typed field, not a prose-parsed sentinel — callers (POST /snapshot, the backfill
+   *  CLI) need this signal to be robust to the errors[] message text changing; string-matching
+   *  would silently break both consumers on a wording edit. */
+  refusedEmptySupersede: boolean;
 }
+
+/**
+ * Absolute floor (row count) below which the partial-wipe shrinkage guard never fires, even at
+ * 100% relative shrinkage. A single loan disappearing — paid off, or refinanced and re-keyed
+ * under a new id — is completely ordinary business and must never become guard noise, in a book
+ * of any size. The pre-existing H2a rule (fully empty incoming set, any book size) already
+ * covers the case where that one loan IS the entire book; this floor exists so the NEW
+ * partial-wipe rule below doesn't re-litigate that same single-loan case at, say, a 2-loan book
+ * (1 gone = 50% shrinkage, which would otherwise cross the percentage threshold below).
+ */
+export const MIN_SUPERSEDED_ROWS_FOR_SHRINKAGE_GUARD = 2;
+
+/**
+ * Fraction of the current active book that may be superseded-without-replacement in one
+ * snapshot before the write is refused pending explicit confirmation (2026-07-24, follow-up to
+ * H2a — flagged post-sweep: the original guard caught only a FULLY empty incoming set, missing
+ * a subtler parse regression that leaves a non-empty but drastically shrunken set, e.g. 1 of 12
+ * loans surviving).
+ *
+ * 0.5 (a clear majority) is chosen because normal book churn retires loans ONE AT A TIME —
+ * a payoff, a single refinance — while a systematic parser regression (a status classifier
+ * newly misreading a column, a workbook tab partially truncated) is structural and tends to
+ * drop MOST or ALL rows in the same snapshot. A majority vanishing at once is presumptively
+ * abnormal; anything under half is presumptively ordinary churn and proceeds without
+ * confirmation.
+ *
+ * The comparison against this share is measured on NET shrinkage (see the netLoss computation
+ * at the call site), not id-set overlap — a refinance or an id rename that keeps the total loan
+ * count intact computes netLoss=0 regardless of how many ids changed, so it never reaches this
+ * comparison at all. `>=` (INCLUSIVE, corrected in round 4 from an earlier `>` — this docstring
+ * itself went stale for one round after that correction shipped, caught on a second independent
+ * review; the code and its tests are the source of truth, always verify against them): once
+ * ordinary refi/rename churn no longer touches this predicate under ANY circumstance, an EXACT
+ * 50% net collapse with no replacement has no remaining legitimate interpretation and requires
+ * confirmation exactly like anything strictly above it.
+ */
+export const MAX_SUPERSEDE_SHARE_WITHOUT_CONFIRMATION = 0.5;
 
 // Loan.status (src/contracts/loan.ts) is free-form workbook text, not a fixed enum — the real
 // Loan Index tab uses descriptive values like "Amortizing", "Interest Only", "Balloon Due Feb-27",
@@ -98,6 +141,7 @@ export function writeDebtSnapshot(
   loans: Loan[],
   snapshotDate: string,
   loanPropertyMap?: ReadonlyMap<string, string>,
+  opts?: { allowEmptySupersede?: boolean },
 ): DebtSnapshotResult {
   const errors: string[] = [];
   let written = 0;
@@ -189,7 +233,120 @@ export function writeDebtSnapshot(
        status             = 'active'`,
   );
 
+  // H2a (2026-07-24 integrity sweep, edges lens): an EMPTY incoming borrower set makes the
+  // F-stale clause below supersede EVERY active row in one statement — retiring the entire debt
+  // book. Downstream, computePortfolioAggregateLtv then saw a zero-row cohort. An empty borrower
+  // set is far more likely to mean an upstream failure (the workbook's direction column moved,
+  // the Loan Index tab was renamed, a caller POSTed `loans: []`) than a genuinely debt-free
+  // portfolio, and the two are indistinguishable once the rows are gone. So: never wipe the book
+  // on emptiness alone. A caller that has genuinely verified a zero-debt state opts in explicitly.
+  //
+  // KNOWN TRADEOFF, considered not accidental: borrowerLoansAll is empty both when the RAW
+  // incoming loans array is empty (the bug case above) AND when a borrower's LAST remaining
+  // active loan is present in the payload but classifies as 'terminal' (a genuine full payoff).
+  // The two are indistinguishable from this signal alone — the function has no way to tell
+  // "the parser broke" from "you just paid off your last loan" — so both require the same
+  // explicit allowEmptySupersede opt-in. The consequence of guessing wrong is asymmetric: on a
+  // real payoff, the paid-off loan stays visibly 'active' (a stale-but-honest dashboard state,
+  // surfaced via errors[] for a human/caller to confirm and re-run with the opt-in) rather than
+  // risking a silent false governor clearance on a parser bug. Same conservative posture as
+  // F-collision above: an ambiguous signal is never silently resolved by guessing.
+  // Round 6: fetch the actual active id LIST (not just a count) — the corrected netLoss formula
+  // below needs to intersect it against the incoming set, matching exactly what F-stale itself
+  // preserves vs. supersedes, not merely how many rows there were.
+  const activeIds = (
+    db.prepare("SELECT id FROM debt_positions WHERE status = 'active'").all() as Array<{ id: string }>
+  ).map((r) => r.id);
+  const activeRowCount = activeIds.length;
+
+  // Partial-wipe shrinkage guard (2026-07-24, follow-up to H2a above). NET shrinkage, NOT
+  // id-set overlap: this measures whether the BOOK COUNT is collapsing, not how many
+  // previously-active ids individually survive into the incoming set.
+  //
+  // CONTRACT CORRECTION (round 4, adversarial-review finding, HIGH severity): the first version
+  // of this guard counted supersededCount = active ids absent from the incoming set. That
+  // conflates a genuine parse regression with completely ordinary portfolio activity — a
+  // refinance that retires old loan ids and replaces them with NEW ids at the same total count,
+  // or a rename applied for this codebase's own documented slug-collision remedy (F-collision
+  // above: "rename in the workbook to disambiguate"). Both retire a majority of old ids while
+  // the book's real size is UNCHANGED, and the old id-overlap rule refused them exactly as hard
+  // as a genuine regression. Demonstrated (adversarial review, reproduced against the real
+  // function): a 12-loan book refinances 7 loans under new ids — 12 in, 12 out, zero net
+  // shrinkage — and the old rule refused the entire write. Because round 3 also made a refusal
+  // abort the whole write (not just the supersede), the refi's new loans never landed, and the
+  // now-STALE pre-refi aggregate LTV kept reporting `clearedConservatively: true` on every
+  // subsequent automated reload, since nothing downstream distinguishes "refused" from
+  // "healthy" — a governor false clearance the fix itself introduced.
+  //
+  // netLoss = how many MORE active rows there were than are incoming, floored at 0. A refi or
+  // rename that keeps the total count intact (however many ids changed) computes netLoss = 0 and
+  // never trips this guard; a genuine collapse in row count still does, regardless of whether it
+  // happened via id churn or a bare drop.
+  //
+  // CONTRACT CORRECTION (round 5, SECOND independent adversarial-review pass, HIGH severity):
+  // this must count DISTINCT ids in `borrowerLoans` (the F-collision-filtered, actually-writable
+  // set) — NOT `borrowerLoansAll.length` (the raw incoming count, computed BEFORE F-collision
+  // filtering runs above). A parse regression that makes many loans slug to the same id (a
+  // name-column drift is F-collision's own documented threat model, two paragraphs up) inflates
+  // the raw count without producing any written or preserved-as-new rows — every colliding id is
+  // excluded from the write entirely. Using the raw count let a mass collision compute netLoss=0
+  // while the real active book collapsed underneath.
+  //
+  // CONTRACT CORRECTION (round 6, THIRD independent adversarial-review pass, MEDIUM severity):
+  // counting distinct ids in `borrowerLoans` ALONE over-corrected. F-collision excludes a
+  // colliding id from being freshly WRITTEN, but F-stale separately PRESERVES that id's prior
+  // row (it is still present in borrowerLoansAll's incoming set, so it is never superseded — see
+  // the F-collision comment above: "a previously-written row for it is preserved rather than
+  // superseded"). Counting only borrowerLoans treated every preserved-but-colliding id as a
+  // LOSS too, over-triggering the guard whenever a collision cluster happened to reuse an id
+  // that was ALREADY active — demonstrated at 12 loans / 3 such clusters: the guard refused at a
+  // claimed "6 of 12 lost" when the true post-write book would have been 9 of 12 (a genuine loss
+  // of only 3, from loans genuinely absent from the payload — unrelated to the collisions).
+  //
+  // The book's actual post-write id set is the union of (ids freshly written this run) and
+  // (previously-active ids that survive F-stale's exclusion, i.e. present in the incoming set
+  // regardless of whether they end up freshly written or merely preserved-as-colliding).
+  const survivingOrWrittenIds = new Set<string>(borrowerLoans.map((l) => l.id));
+  const incomingIdSetForGuard = new Set(borrowerLoansAll.map((l) => l.id));
+  for (const id of activeIds) {
+    if (incomingIdSetForGuard.has(id)) survivingOrWrittenIds.add(id);
+  }
+  const netLoss = Math.max(activeRowCount - survivingOrWrittenIds.size, 0);
+  const wouldTotallyEmpty = borrowerLoansAll.length === 0 && activeRowCount > 0;
+  // `>=` (not `>`, corrected alongside this fix): once ordinary refi/rename churn no longer
+  // touches this predicate at all (it computes netLoss=0), an EXACT 50% net collapse has no
+  // remaining legitimate interpretation and should also require confirmation.
+  const wouldMajorityShrink =
+    activeRowCount > 0 &&
+    netLoss >= MIN_SUPERSEDED_ROWS_FOR_SHRINKAGE_GUARD &&
+    netLoss / activeRowCount >= MAX_SUPERSEDE_SHARE_WITHOUT_CONFIRMATION;
+  const refuseEmptySupersede =
+    (wouldTotallyEmpty || wouldMajorityShrink) && opts?.allowEmptySupersede !== true;
+
+  if (refuseEmptySupersede) {
+    const reason = wouldTotallyEmpty
+      ? `empty borrower set would have superseded all ${activeRowCount} active debt_positions row(s)`
+      : `borrower set would net-shrink the active debt_positions book from ${activeRowCount} to ` +
+        `${activeRowCount - netLoss} row(s) (${netLoss} of ${activeRowCount} lost with no replacement, ` +
+        `${Math.round((netLoss / activeRowCount) * 100)}%) — a majority shrinkage in one snapshot`;
+    errors.push(
+      `REFUSED: ${reason} — refusing to shrink the debt book on an unexplained loss (likely an upstream ` +
+        'parse/payload failure, not genuine portfolio churn — a refinance or id rename that keeps the total ' +
+        'loan count intact is NOT affected by this guard). Existing rows left untouched. Confirm and pass ' +
+        '{ allowEmptySupersede: true } if this net loss is verified.',
+    );
+  }
+
   const runAll = db.transaction(() => {
+    // Shrinkage guard: when refused, skip the write ENTIRELY — not just the F-stale supersede.
+    // A snapshot we don't trust enough to retire the missing rows also isn't trustworthy for the
+    // rows it DID include: the same parse regression that dropped 11 of 12 loans could just as
+    // easily have corrupted a field (balance, ltv) on the 1 that came through. Writing that one
+    // row while refusing the rest would be a half-measure — the caller sees `written: 1` and may
+    // reasonably read that as "the snapshot was fine", masking the REFUSED signal in errors[].
+    // All-or-nothing matches the rest of this function's "never guess" posture.
+    if (refuseEmptySupersede) return;
+
     // F-stale: supersede all previously-active rows whose id is not in the incoming set. Uses
     // borrowerLoansAll (not the collision-filtered borrowerLoans) so a colliding id's PRIOR row is
     // preserved rather than superseded — we are not confident enough to touch it either direction.
@@ -243,5 +400,5 @@ export function writeDebtSnapshot(
   });
 
   runAll();
-  return { written, errors };
+  return { written, errors, refusedEmptySupersede: refuseEmptySupersede };
 }

@@ -170,4 +170,51 @@ describe('contracts accept real workbook records', () => {
       MacroIndicator.parse({ id: 'DGS10', label: '10Y', value: -Infinity, unit: '%', change: null }),
     ).toThrow();
   });
+
+  // Loan.ltv is UNBOUNDED at the base schema (2026-07-24 follow-up to the governor-LTV
+  // integrity sweep; round-5 correction — see the full reasoning on the field's own doc comment
+  // in src/contracts/loan.ts). Round 4 briefly bounded it here directly, but a SECOND
+  // independent adversarial review proved this base schema is validated by
+  // server/workbook/parse.ts's whole-portfolio PortfolioSnapshot.parse() — every writer goes
+  // through it, not just POST /snapshot — so a magnitude bound here would make a single bad ltv
+  // cell fail the ENTIRE snapshot parse, breaking this repo's DataQualityFlag-not-hard-throw
+  // convention. The bound now lives narrowly at the POST /snapshot boundary only (see
+  // debt-api.test.ts's "POST /snapshot — payload validation" describe block for its coverage).
+  describe('Loan.ltv — unbounded at the base schema (bound lives at the POST /snapshot boundary only)', () => {
+    const baseLoan = {
+      id: 'loan-x', name: 'Test Loan', counterparty: null, direction: 'borrower' as const,
+      originalPrincipal: null, currentBalance: 500_000, absBalance: 500_000, rate: 0.06,
+      monthlyPmt: null, annualInterest: null, annualPrincipal: null, loanType: null,
+      status: null, isDemand: false, maturity: null, monthsToMaturity: null,
+      lender: null, balloon: false,
+    };
+
+    it('accepts the full realistic range observed across this repo (0.01–0.99)', () => {
+      expect(Loan.parse({ ...baseLoan, ltv: 0.01 }).ltv).toBe(0.01);
+      expect(Loan.parse({ ...baseLoan, ltv: 0.99 }).ltv).toBe(0.99);
+      expect(Loan.parse({ ...baseLoan, ltv: null }).ltv).toBeNull();
+      expect(Loan.parse({ ...baseLoan, ltv: 0 }).ltv).toBe(0);
+    });
+
+    // Regression pin (round 5): a bound WAS briefly added directly to this base schema in round
+    // 4 and had to be reverted — these values must never start throwing here again, since that
+    // would mean the bound leaked back onto the whole-portfolio parse path. The actual sign-error
+    // / magnitude-error rejection is covered at the POST /snapshot boundary (debt-api.test.ts).
+    it('regression: does NOT reject a negative ltv or an order-of-magnitude value at this base schema', () => {
+      expect(Loan.parse({ ...baseLoan, ltv: -0.5 }).ltv).toBe(-0.5);
+      expect(Loan.parse({ ...baseLoan, ltv: 55 }).ltv).toBe(55);
+      expect(Loan.parse({ ...baseLoan, ltv: 5.5 }).ltv).toBe(5.5);
+    });
+
+    // KNOWN OPEN GAP, deliberately pinned rather than left as silent absence of coverage: NO
+    // schema anywhere in this codebase catches a too-LOW ltv, which is the direction that
+    // actually causes a false governor clearance (see loan.ts's doc comment). A column-drift bug
+    // that makes ltv read an interest-rate cell (typically 0.03-0.09) passes straight through
+    // every write path. If this test ever starts failing because someone closed the gap, that's
+    // a deliberate contract change — update this test to match, don't just delete it.
+    it('KNOWN GAP: still accepts an implausibly low ltv (e.g. a misread rate-cell value)', () => {
+      expect(Loan.parse({ ...baseLoan, ltv: 0.065 }).ltv).toBe(0.065);
+      expect(Loan.parse({ ...baseLoan, ltv: 0.001 }).ltv).toBe(0.001);
+    });
+  });
 });
