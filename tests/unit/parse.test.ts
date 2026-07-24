@@ -186,6 +186,41 @@ describe('disambiguateLeaseIds — lease id stability (row-position bug)', () =>
     expect(collider.id).toBe('x-3');
     expect(new Set(itemsReordered.map((i) => i.id)).size).toBe(itemsReordered.length);
   });
+
+  it('REFUTE Defect J — identical-natural-id collision (e.g. an expiring lease + its own already-executed renewal) is tie-broken by leaseEnd, not by array/parse order', () => {
+    // Two rows for the same suite share the IDENTICAL natural id "beta-suite-200" -- a realistic
+    // rent-roll shape (a tenant's expiring lease plus its own already-executed renewal, both listed
+    // as separate rows). Pre-fix, the bare base id went to whichever happened to parse FIRST (pure
+    // row-position tie-break); a worksheet re-sort (e.g. by lease-end date) would silently move any
+    // overlay data attached to the base id from one physical lease record to the other. Post-fix,
+    // the item with the EARLIER leaseEnd always wins the bare base id, regardless of array order.
+    const earlier = { id: 'beta-suite-200', tenantName: 'Fixture Tenant Co', company: null, leaseEnd: '2027-03-31', leaseStart: '2022-04-01', monthlyRent: 4000 };
+    const later = { id: 'beta-suite-200', tenantName: 'Fixture Tenant Co', company: null, leaseEnd: '2032-03-31', leaseStart: '2027-04-01', monthlyRent: 4200 };
+
+    // Order A: earlier lease listed first (matches its earlier row position too -- not a useful test
+    // on its own, but establishes the baseline expectation).
+    const orderA = [{ ...earlier }, { ...later }];
+    const flagsA: DataQualityFlag[] = [];
+    disambiguateLeaseIds(orderA, flagsA);
+    const earlierInA = orderA.find((i) => i.leaseEnd === '2027-03-31')!;
+    const laterInA = orderA.find((i) => i.leaseEnd === '2032-03-31')!;
+    expect(earlierInA.id).toBe('beta-suite-200');
+    expect(laterInA.id).toBe('beta-suite-200-2');
+
+    // Order B: SAME two logical leases, array order reversed (the later-leaseEnd renewal listed
+    // FIRST -- e.g. after a worksheet re-sort by lease-end date). The item identified by its earlier
+    // leaseEnd (not by array position) must win the base id both times.
+    const orderB = [{ ...later }, { ...earlier }];
+    const flagsB: DataQualityFlag[] = [];
+    disambiguateLeaseIds(orderB, flagsB);
+    const earlierInB = orderB.find((i) => i.leaseEnd === '2027-03-31')!;
+    const laterInB = orderB.find((i) => i.leaseEnd === '2032-03-31')!;
+    expect(earlierInB.id).toBe('beta-suite-200');
+    expect(laterInB.id).toBe('beta-suite-200-2');
+
+    expect(flagsA.some((f) => f.field === 'id' && /collision/i.test(f.issue))).toBe(true);
+    expect(flagsB.some((f) => f.field === 'id' && /collision/i.test(f.issue))).toBe(true);
+  });
 });
 
 describe('isTaskBannerRow — reject Monthly Checklist banner rows (Defect 9 regression)', () => {

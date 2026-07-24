@@ -206,38 +206,98 @@ export function disambiguatePropertyIds<T extends { id: string; name: string }>(
  * described via tenant identity instead of a property `name`. Deliberately NOT a shared
  * generalization of disambiguatePropertyIds: keeping them independent means this fix cannot
  * perturb the already-shipped, already-tested property-id path.
+ *
+ * Suffix assignment WITHIN a collision group (2+ items sharing the same natural/pre-disambiguation
+ * id) is decided by a deterministic property of the LEASE CONTENT — leaseEnd asc, then leaseStart
+ * asc, then monthlyRent asc (nulls/undefined sort last at every step) — NOT by parse/array order
+ * (Defect J, round-2 REFUTE). Two rows that share an IDENTICAL natural id (e.g. a tenant's expiring
+ * lease plus its own already-executed renewal, both listed as separate rent-roll rows for the same
+ * suite) previously had the bare base id assigned to whichever happened to parse first, so a
+ * worksheet re-sort (e.g. by lease-end date) silently moved any overlay data (arrears, renewal
+ * stage, market rent) attached to that id from one physical lease record to the other. Groups are
+ * themselves processed in a canonical (sorted-by-base-id) order so the overall outcome — including
+ * which candidate suffixes are still free for one group after another group has claimed some — is
+ * independent of the original items[] array order, not just independent of order WITHIN a group.
+ * leaseEnd/leaseStart/monthlyRent are OPTIONAL on the constraint (absent → treated as null/tied) so
+ * a caller that doesn't carry lease-content fields (e.g. this file's own unit tests) still type-checks
+ * and falls back to array order via the sort's stability, matching pre-Defect-J behavior exactly.
  */
-export function disambiguateLeaseIds<T extends { id: string; tenantName: string; company: string | null }>(
-  items: T[],
-  flags: DataQualityFlag[],
-): T[] {
+export function disambiguateLeaseIds<
+  T extends {
+    id: string;
+    tenantName: string;
+    company: string | null;
+    leaseEnd?: string | null;
+    leaseStart?: string | null;
+    monthlyRent?: number | null;
+  },
+>(items: T[], flags: DataQualityFlag[]): T[] {
   // Every row's NATURAL id, computed up front -- a synthetic "-N" candidate below must never
   // claim one of these, or a colliding lease early in parse order could steal a not-yet-processed
   // lease's rightful id, flipping ownership under row reordering (the exact instability this
   // function exists to eliminate, reintroduced in the collision-adjacent id space).
   const allNaturalIds = new Set(items.map((i) => i.id));
-  const taken = new Set<string>();
+
+  // Group items by their natural (pre-disambiguation) id -- collisions only exist within a group.
+  const groups = new Map<string, T[]>();
   for (const item of items) {
-    if (!taken.has(item.id)) {
-      taken.add(item.id);
+    const g = groups.get(item.id);
+    if (g) g.push(item);
+    else groups.set(item.id, [item]);
+  }
+
+  // (nullRank, comparable) -- absent/null sorts after any real value, matching "nulls last".
+  const rank = (v: string | number | null | undefined): [number, string | number] =>
+    v === null || v === undefined ? [1, ''] : [0, v];
+  const compareRanked = (a: string | number | null | undefined, b: string | number | null | undefined): number => {
+    const [aNull, aVal] = rank(a);
+    const [bNull, bVal] = rank(b);
+    if (aNull !== bNull) return aNull - bNull;
+    if (aVal === bVal) return 0;
+    return aVal < bVal ? -1 : 1;
+  };
+
+  const taken = new Set<string>();
+  // Canonical (alphabetical) base-id order -- makes the WHOLE function's output independent of the
+  // original items[] order, not just order within one group (required for Invariant 5-style
+  // determinism: distinct collision groups never fight over each other's candidate suffixes, but
+  // processing them in a fixed order removes even that theoretical dependency).
+  for (const base of [...groups.keys()].sort()) {
+    const group = groups.get(base)!;
+    if (group.length === 1) {
+      taken.add(base); // no collision -- keeps its natural id untouched, exactly as before
       continue;
     }
-    const base = item.id;
-    let n = 2;
-    let candidate = `${base}-${n}`;
-    while (taken.has(candidate) || allNaturalIds.has(candidate)) {
-      n += 1;
-      candidate = `${base}-${n}`;
+    // Deterministic tie-break chain. Array.prototype.sort is stable, so when every ranked field
+    // ties (e.g. this file's own tests, which don't set leaseEnd/leaseStart/monthlyRent), the
+    // group's original relative (array) order decides -- identical to pre-Defect-J behavior.
+    const sorted = [...group].sort(
+      (a, b) =>
+        compareRanked(a.leaseEnd, b.leaseEnd) ||
+        compareRanked(a.leaseStart, b.leaseStart) ||
+        compareRanked(a.monthlyRent, b.monthlyRent),
+    );
+    // First in the deterministic order keeps the bare base id (already equals it -- explicit for
+    // clarity, since "first" is no longer necessarily items[0] within the group).
+    taken.add(base);
+    for (let i = 1; i < sorted.length; i++) {
+      const item = sorted[i]!;
+      let n = 2;
+      let candidate = `${base}-${n}`;
+      while (taken.has(candidate) || allNaturalIds.has(candidate)) {
+        n += 1;
+        candidate = `${base}-${n}`;
+      }
+      flags.push({
+        entity: candidate,
+        field: 'id',
+        issue: `lease id collision on "${base}" (tenant "${item.company ?? item.tenantName}") — disambiguated to "${candidate}" (deterministic order: leaseEnd asc, then leaseStart, then monthlyRent, nulls last)`,
+        rawValue: base,
+        severity: 'warn',
+      });
+      item.id = candidate;
+      taken.add(candidate);
     }
-    flags.push({
-      entity: candidate,
-      field: 'id',
-      issue: `lease id collision on "${base}" (tenant "${item.company ?? item.tenantName}") — disambiguated to "${candidate}"`,
-      rawValue: base,
-      severity: 'warn',
-    });
-    item.id = candidate;
-    taken.add(candidate);
   }
   return items;
 }

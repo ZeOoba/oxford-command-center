@@ -34,6 +34,141 @@ export function resolveLiveId(
   return { kind: 'ambiguous', candidates: prefixMatches };
 }
 
+export interface MigrationPlanItem {
+  oldKey: string;
+  newKey: string;
+}
+export interface MigrationWarning {
+  oldKey: string;
+  reason: string;
+}
+export interface MigrationPlan {
+  toMigrate: MigrationPlanItem[];
+  toWarn: MigrationWarning[];
+}
+
+/**
+ * Pure, order-independent planner for ONE overlay domain map (renewalStages / tenantArrears /
+ * marketRents all share this shape: leaseId-keyed). Round-2 REFUTE (3 independent reviewers, plus
+ * 2 more on a determinism/prefix follow-up) found the original single-pass "first old key wins"
+ * loop unsafe on several fronts; this two-pass design (resolve every key's disposition FIRST, THEN
+ * decide) is what makes all five required invariants hold simultaneously:
+ *
+ *  1. No overwrite of a live-valid entry — a target already in `liveIds` is NEVER a migration
+ *     destination, solo claimant or not (see the `liveIds.has(target)` branch below).
+ *  2. Symmetric refusal on multi-claimant targets — 2+ old keys resolving to the same target are
+ *     ALL refused, each warning naming the full set of competing claimants.
+ *  3. Only an EXACT resolveLiveId match is ever eligible to migrate — a `prefix` resolution always
+ *     warns (a prefix match on a legacy, pre-tenant-aware key can't rule out suite turnover).
+ *  4. An old key that's already a live id but whose shape (`-\d+` suffix) AND stripped base being
+ *     ALSO live puts it inside a genuine collision cluster is treated as ambiguous, not
+ *     "already correct".
+ *  5. Determinism — every key is visited in sorted order, every grouping/decision keys off the
+ *     RESOLVED TARGET (not visit order), and every claimant list is sorted before use, so permuting
+ *     `oldKeysMap`'s on-disk key order can never change which entries migrate or which are refused.
+ *
+ * Never mutates `oldKeysMap` or `liveIds` — callers apply `toMigrate` themselves (see main()).
+ */
+export function planMigration(oldKeysMap: Record<string, unknown>, liveIds: ReadonlySet<string>): MigrationPlan {
+  const toWarn: MigrationWarning[] = [];
+  // target newKey -> old keys that resolved to it via an EXACT match. Only exact-kind resolutions
+  // are ever eligible to auto-migrate (Invariant 3), so only they compete for a target here.
+  const exactClaimants = new Map<string, string[]>();
+  // Keys of oldKeysMap that are ALREADY a live id and unambiguously correct (the first loop's
+  // silent-skip case). NOTE: this is deliberately NOT the same test as "target ∈ liveIds" — every
+  // exact-kind resolution target is a member of liveIds by construction (that's what "exact" means),
+  // so liveIds membership alone can never distinguish "the overlay map already has fresh data at
+  // this key" (Invariant 1's actual hazard) from "this live id merely happens to be the resolution
+  // target of some other old key" (an ordinary, safe migration). Only a key that ITSELF appears in
+  // oldKeysMap and is already live-valid represents real data that must never be overwritten.
+  const liveValidOverlayKeys = new Set<string>();
+
+  for (const oldKey of Object.keys(oldKeysMap).sort()) {
+    if (liveIds.has(oldKey)) {
+      // Invariant 4: an old row-suffixed key can coincidentally equal a live disambiguated id.
+      // Only genuinely ambiguous when oldKey's own shape could be EITHER an old row-suffix OR a new
+      // disambiguation suffix (ends in `-\d+`) AND its stripped base is ALSO live — the signature of
+      // a real collision cluster (disambiguateLeaseIds), where "oldKey is live" does not prove it's
+      // attached to the SAME physical lease the overlay entry was originally recorded for.
+      const strippedBase = oldKey.replace(/-\d+$/, '');
+      if (/-\d+$/.test(oldKey) && liveIds.has(strippedBase)) {
+        toWarn.push({
+          oldKey,
+          reason: `"${oldKey}" is already a live id, but it ends in a numeric suffix and its base "${strippedBase}" is ALSO live — this is the shape of a genuine collision cluster, so being live does not prove "${oldKey}" is attached to the correct physical lease — left as-is, needs manual review`,
+        });
+      } else {
+        // Unambiguously already correct — this key holds real, currently-valid overlay data that a
+        // later exact-match resolution onto it (from some other old key) must never overwrite.
+        liveValidOverlayKeys.add(oldKey);
+      }
+      continue;
+    }
+    const strippedBase = oldKey.replace(/-\d+$/, '');
+    const resolved = resolveLiveId(strippedBase, liveIds);
+    if (resolved.kind === 'none') {
+      toWarn.push({ oldKey, reason: `no live lease matches old key "${oldKey}" (stripped base "${strippedBase}") — left as-is, needs manual review` });
+      continue;
+    }
+    if (resolved.kind === 'ambiguous') {
+      toWarn.push({
+        oldKey,
+        reason: `old key "${oldKey}" (stripped base "${strippedBase}") matches multiple live leases [${resolved.candidates.join(', ')}] — ambiguous, left as-is, needs manual review`,
+      });
+      continue;
+    }
+    if (resolved.kind === 'prefix') {
+      // Invariant 3: never auto-applied, even though it resolves to exactly one live id — a prefix
+      // match on a legacy key can't distinguish "same tenant, unit still occupied" from "different
+      // tenant now occupies the same unit" (suite turnover between when the overlay entry was
+      // written and when this migration runs).
+      toWarn.push({
+        oldKey,
+        reason: `old key "${oldKey}" (stripped base "${strippedBase}") resolves only via a PREFIX match to "${resolved.id}" — a prefix match cannot rule out suite turnover (a different tenant may now occupy that unit); never auto-applied, left as-is, needs manual review`,
+      });
+      continue;
+    }
+    // kind === 'exact' — a genuine migration candidate. Don't decide yet; group by target first.
+    const list = exactClaimants.get(resolved.id);
+    if (list) list.push(oldKey);
+    else exactClaimants.set(resolved.id, [oldKey]);
+  }
+
+  const toMigrate: MigrationPlanItem[] = [];
+  for (const target of [...exactClaimants.keys()].sort()) {
+    const claimants = [...exactClaimants.get(target)!].sort();
+    if (liveValidOverlayKeys.has(target)) {
+      // Invariant 1: NOTHING overwrites a live-valid entry — not a solo claimant, not any of a
+      // multi-claimant group. (See the liveValidOverlayKeys comment above for why this check is
+      // NOT `liveIds.has(target)` — that would be true for every exact match and refuse ALL of them.)
+      for (const oldKey of claimants) {
+        const others = claimants.filter((k) => k !== oldKey);
+        toWarn.push({
+          oldKey,
+          reason: `old key "${oldKey}" resolves (exact) to "${target}", which is ALREADY a live-valid overlay entry — auto-migrating would silently overwrite current data — left as-is, needs manual review${others.length ? ` (also contested by: ${others.join(', ')})` : ''}`,
+        });
+      }
+      continue;
+    }
+    if (claimants.length === 1) {
+      toMigrate.push({ oldKey: claimants[0]!, newKey: target });
+      continue;
+    }
+    // Invariant 2: 2+ distinct old keys resolve to the SAME (not-yet-live) target — none auto-apply;
+    // each warning names the shared target and the FULL set of competing claimants.
+    for (const oldKey of claimants) {
+      const others = claimants.filter((k) => k !== oldKey);
+      toWarn.push({
+        oldKey,
+        reason: `old key "${oldKey}" resolves (exact) to "${target}", which is ALSO claimed by old key(s) [${others.join(', ')}] in this run — ambiguous multi-claimant target, NONE auto-migrated, left as-is, needs manual review`,
+      });
+    }
+  }
+
+  toWarn.sort((a, b) => (a.oldKey < b.oldKey ? -1 : a.oldKey > b.oldKey ? 1 : 0));
+  toMigrate.sort((a, b) => (a.oldKey < b.oldKey ? -1 : a.oldKey > b.oldKey ? 1 : 0));
+  return { toMigrate, toWarn };
+}
+
 async function main() {
   const apply = process.argv.includes('--apply');
   const { snapshot } = await parseWorkbook(workbookPath());
@@ -46,29 +181,9 @@ async function main() {
   // src/analytics/lease-forecast.ts) — an old-scheme entry there orphans silently if omitted here.
   for (const domain of ['renewalStages', 'tenantArrears', 'marketRents'] as const) {
     const map = overlay[domain] as Record<string, unknown>;
-    // Claimed within THIS migration run only — two different old-scheme keys resolving to the
-    // same live id (Bug C2: e.g. a tenant with two leases at one property, exactly the collision
-    // case disambiguateLeaseIds exists for) must not silently overwrite one another.
-    const claimed = new Map<string, string>(); // newKey -> the oldKey that claimed it
-    for (const oldKey of Object.keys(map)) {
-      if (liveIds.has(oldKey)) continue; // already a valid live id, nothing to do
-      const strippedBase = oldKey.replace(/-\d+$/, '');
-      const resolved = resolveLiveId(strippedBase, liveIds);
-      if (resolved.kind === 'none') {
-        console.warn(`[${domain}] no live lease matches old key "${oldKey}" (stripped base "${strippedBase}") — left as-is, needs manual review`);
-        continue;
-      }
-      if (resolved.kind === 'ambiguous') {
-        console.warn(`[${domain}] old key "${oldKey}" (stripped base "${strippedBase}") matches multiple live leases [${resolved.candidates.join(', ')}] — ambiguous, left as-is, needs manual review`);
-        continue;
-      }
-      const newKey = resolved.id;
-      const priorClaimant = claimed.get(newKey);
-      if (priorClaimant) {
-        console.warn(`[${domain}] old key "${oldKey}" also resolves to "${newKey}", already claimed by old key "${priorClaimant}" in this run — ambiguous, left as-is, needs manual review`);
-        continue;
-      }
-      claimed.set(newKey, oldKey);
+    const plan = planMigration(map, liveIds);
+    for (const w of plan.toWarn) console.warn(`[${domain}] ${w.reason}`);
+    for (const { oldKey, newKey } of plan.toMigrate) {
       console.log(`[${domain}] "${oldKey}" -> "${newKey}"`);
       if (apply) {
         map[newKey] = map[oldKey];
@@ -92,7 +207,11 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error('migration failed:', err);
-  process.exit(1);
-});
+// Run the CLI only when invoked directly (importing for tests — e.g. planMigration/resolveLiveId —
+// must NOT parse the live workbook, touch overlay.json, or exit the test process).
+if (process.argv[1]?.replace(/\\/g, '/').endsWith('scripts/migrate-lease-overlay-ids.ts')) {
+  main().catch((err) => {
+    console.error('migration failed:', err);
+    process.exit(1);
+  });
+}
