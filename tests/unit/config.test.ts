@@ -76,4 +76,17 @@ describe('snapshotAgeMs / isSnapshotStale — portfolio.json staleness guard', (
     const now = new Date('2026-07-24T12:00:00.000Z').getTime();
     expect(isSnapshotStale(now, 'not-a-date')).toBe(true);
   });
+
+  it('is not stale exactly at the threshold (strict > comparison, not >=)', () => {
+    const now = new Date('2026-07-24T12:00:00.000Z').getTime();
+    const generatedAt = '2026-07-24T06:00:00.000Z'; // exactly 6h old
+    expect(isSnapshotStale(now, generatedAt)).toBe(false);
+  });
+
+  it('treats a future-dated generatedAt as fresh (documenting current behavior: negative age never > maxAgeMs)', () => {
+    // Current implementation: negative age will never satisfy age > maxAgeMs, so future dates are treated as fresh.
+    const now = new Date('2026-07-24T12:00:00.000Z').getTime();
+    const generatedAt = '2026-07-24T13:00:00.000Z'; // 1h in the future
+    expect(isSnapshotStale(now, generatedAt)).toBe(false);
+  });
 });
