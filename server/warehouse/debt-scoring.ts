@@ -148,13 +148,23 @@ export function scoreDebtPositions(
 
   // F5: ORDER BY current_balance DESC, id ASC ensures deterministic LTV tie-break when two
   // loans share the same current_balance. Without ORDER BY, SQLite row order is unspecified.
+  // 2026-07-25 hardening: `, snapshot_date DESC` closes a residual non-total-sort gap — debt_
+  // positions' PRIMARY KEY is (id, snapshot_date), not id alone, so two ACTIVE rows can share an
+  // id at different snapshot_dates (unreachable via writeDebtSnapshot's transactional supersede
+  // today, but not prevented by the schema). Without this key, id ASC does not fully order such
+  // a pair and the tie falls through to unspecified physical row order — empirically proven
+  // insertion-order-sensitive (see the '2026-07-25 hardening' describe block in
+  // debt-scoring.test.ts), which could silently flip a property's D1 LTV pick between a clean
+  // and a governor-breaching value. snapshot_date DESC prefers the freshest row on a genuine tie,
+  // matching the property's PK-declared recency ordering; zero behavior change when ids are
+  // unique among active rows (the app's own actual state today).
   const getLoansForProperty = db.prepare<[string]>(
     `SELECT id, property_id, loan_name, current_balance, rate,
             monthly_pmt, annual_interest, annual_principal,
             is_demand, maturity_date, months_to_maturity, ltv, status
      FROM debt_positions
      WHERE property_id = ? AND status = 'active'
-     ORDER BY current_balance DESC, id ASC`,
+     ORDER BY current_balance DESC, id ASC, snapshot_date DESC`,
   );
 
   const getPropertyName = db.prepare<[string]>(
