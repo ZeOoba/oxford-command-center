@@ -334,11 +334,16 @@ export function buildRefiWindows(
  * independently-set ltv has no causal reason to equal its own loan's rate) — this closes the
  * ONE demonstrated attack, not "any implausible ltv" in general; a broader defense remains a
  * genuinely open question (see the residual note in src/contracts/loan.ts's ltv doc comment).
- * SCOPE: this check protects THIS aggregate function only. debt-scoring.ts's per-property
- * governor checks (ltvCeiling breach, cash-out gate) consume the same raw ltv column unguarded
- * — a drifted value there yields per-property "governors clear" signals feeding
- * capital-allocation.ts. Same defect class, separate consumer; extending the identical
- * cross-check there is a known follow-up, deliberately not bundled into this change.
+ * SCOPE: this check protects this aggregate function AND debt-scoring.ts's per-property
+ * governor checks (ltvCeiling breach, cash-out gate) — same defect class, separate consumer;
+ * scoreDebtPositions's D1 ltv pick applies the identical cross-check (round-7 follow-up
+ * commit; there, a collision on ANY loan poisons the whole property's ltv one-directionally
+ * — a breach measured on clean rows still fires, only clearance is forbidden) so a drifted
+ * value can no longer yield per-property "governors clear" signals feeding
+ * capital-allocation.ts. RESIDUAL: debt-api.ts's toLoanSignal (the /maturity ladder's
+ * per-loan display hint — explicitly NOT governor enforcement, per its own docblock) still
+ * reads the raw ltv column unguarded; a drifted rate-magnitude value there displays 'hold'
+ * for a loan whose true ltv may breach. Known follow-up, not bundled here.
  */
 export function computePortfolioAggregateLtv(
   db: WarehouseDb,

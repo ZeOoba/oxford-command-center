@@ -18,6 +18,9 @@ import type { DebtScore, DebtSignal, DebtScoreBand } from '../../src/contracts/d
 import { clamp } from './clamp';
 import { referenceDate } from '../config';
 import { MONTH_MS } from './time-constants';
+// Module cycle with debt-maturity.ts (it imports effectiveMonthsToMaturity from here) —
+// safe: both cross-bindings are consumed only inside function bodies, never at module init.
+import { RATE_LTV_COLLISION_EPSILON } from './debt-maturity';
 
 const DEBT_CONFIG = {
   fredSpreadBps: 200,          // D3: spread over 5-Year Treasury
@@ -232,16 +235,53 @@ export function scoreDebtPositions(
         : null;
     const dscrHeadroom = dscr !== null ? dscr - governors.dscrFloor : null;
 
-    // D1: LTV from highest-balance loan
+    // D1: LTV from highest-balance loan.
+    // Round 7 follow-up (see computePortfolioAggregateLtv's ROUND 7 docblock in
+    // debt-maturity.ts): an ltv that exactly equals its own loan's rate (within
+    // RATE_LTV_COLLISION_EPSILON) is the demonstrated workbook column-drift signature — the
+    // ltv column read the loan's own interest-rate cell. Such a value is never trusted as
+    // data. A collision on ANY loan poisons the WHOLE property's ltv, not just that row
+    // (refute-review correction, same change): a same-row collision is evidence the ltv
+    // COLUMN drifted for this snapshot, so a sibling row's non-colliding value is not thereby
+    // trustworthy — falling through to it let a property whose dominant loan carried
+    // detected-corrupt data clear governors off the minority loan. Mirrors R1's
+    // annualDebtService and F3's hasUnknownMaturity any-loan-poisons semantics, and the
+    // aggregate's complete=false stance on identical evidence. Unknown governor → hold via
+    // the F1/F2 handling below, never a fabricated clearance. The collided row's `rate` needs
+    // no separate exclusion from avgLoanRate: the signature cannot say WHICH column drifted,
+    // but every action signal (refi, cash-out, refiCashSavingsPct) requires governorsClear,
+    // which a collision now forces false — a corrupt rate can never drive an action.
+    //
+    // Poisoning is ONE-DIRECTIONAL (second refute-review correction): if the pick computed
+    // from the NON-collided rows already BREACHES the ceiling, it is kept, so isGovernorBlock
+    // still fires with the measured value ('fires even on partial knowledge' — matching the
+    // DSCR side, which also still fires on a collided snapshot). Suppressing a clean row's
+    // measured breach because a sibling collided would trade a real Hard-Invariant-4 alarm
+    // for data-quality caution in the wrong direction. Only a non-breaching (would-be
+    // clearing) pick degrades to unknown.
     let ltv: number | null = null;
+    let hasCollidedLtv = false;
     {
       let maxBalance = -Infinity;
       for (const loan of loans) {
+        const rateCollision =
+          loan.rate !== null &&
+          loan.ltv !== null &&
+          Math.abs(loan.ltv - loan.rate) < RATE_LTV_COLLISION_EPSILON;
+        if (rateCollision) {
+          hasCollidedLtv = true;
+          continue;
+        }
         if (loan.ltv !== null && loan.current_balance > maxBalance) {
           maxBalance = loan.current_balance;
           ltv = loan.ltv;
         }
       }
+      // The keep predicate MUST stay the exact complement of governorsClear's LTV conjunct
+      // (`ltv <= governors.ltvCeiling`, below): kept ⇒ isGovernorBlock fires, nulled ⇒ hold —
+      // no gap. Do NOT "harmonize" it with the aggregate's GOVERNOR_LTV_EPSILON; an epsilon
+      // here would open a kept-but-not-blocked sliver on a poisoned snapshot.
+      if (hasCollidedLtv && !(ltv !== null && ltv > governors.ltvCeiling)) ltv = null;
     }
     const ltvHeadroom = ltv !== null ? governors.ltvCeiling - ltv : null;
 
@@ -314,15 +354,24 @@ export function scoreDebtPositions(
     } else if (!governorsClear) {
       // Unknown governor — cannot recommend action signals; fall through to hold.
       signal = 'hold';
+      // The collision path gets its own text (refute-review correction, same change): the
+      // generic "column is unpopulated" remediation is an impossible errand when the cell IS
+      // populated with a drifted value — the fix is the workbook's ltv column MAPPING, not
+      // the data, and re-running the snapshot unchanged reproduces the hold forever. The
+      // non-collision branches keep their pre-change literals byte-identical.
+      const collidedLtvText =
+        "LTV rejected — ltv exactly collides with its own loan's rate (workbook column-drift signature); fix the workbook ltv column mapping, then re-run snapshot";
       if (dscr === null && ltv === null) {
-        signalReason =
-          'Governor check skipped — DSCR unknown (no warehouse NOI for this property); LTV unknown at snapshot time. Re-run after populating both.';
+        signalReason = hasCollidedLtv
+          ? `Governor check skipped — DSCR unknown (no warehouse NOI for this property); ${collidedLtvText}`
+          : 'Governor check skipped — DSCR unknown (no warehouse NOI for this property); LTV unknown at snapshot time. Re-run after populating both.';
       } else if (dscr === null) {
         signalReason =
           'Governor check skipped — DSCR unknown (no warehouse NOI for this property)';
       } else {
-        signalReason =
-          'Governor check incomplete — LTV unknown at snapshot time; re-run snapshot after workbook LTV column is populated';
+        signalReason = hasCollidedLtv
+          ? `Governor check incomplete — ${collidedLtvText}`
+          : 'Governor check incomplete — LTV unknown at snapshot time; re-run snapshot after workbook LTV column is populated';
       }
     } else if (
       marketRate !== null &&
