@@ -24,8 +24,156 @@ import { loadOverlay, applyOverlay, overlayPath } from '../server/overlay';
 loadEnvFile();
 
 /** Local view of the fields this drift check compares -- named distinctly from
- *  server/ar/match-tenant.ts's own LeaseLite (different shape) to avoid a same-name mixup. */
-interface DriftLeaseView { id: string; tenantName: string; company: string | null; leaseEnd: string | null; annualRent: number; }
+ *  server/ar/match-tenant.ts's own LeaseLite (different shape) to avoid a same-name mixup.
+ *  `propertyKey`/`unit` are here for the business-key pairing below, not the id diff. */
+export interface DriftLeaseView {
+  id: string;
+  propertyKey: string;
+  tenantName: string;
+  company: string | null;
+  unit: string | null;
+  leaseEnd: string | null;
+  annualRent: number;
+}
+
+/** A previous lease and a current lease that are the same real-world tenancy under different ids. */
+export interface RekeyedLease {
+  key: string;
+  previous: DriftLeaseView;
+  current: DriftLeaseView;
+  leaseEndChanged: boolean;
+}
+
+/** A business key that maps to more than one lease on either side -- reported, never paired. */
+export interface AmbiguousKey { key: string; previousCount: number; currentCount: number; }
+
+export interface DriftResult {
+  /** Raw id-level diff. `removedIds` is what the anomaly floor is computed from -- see main(). */
+  newIds: DriftLeaseView[];
+  removedIds: DriftLeaseView[];
+  /** leaseEnd changes on leases whose id did NOT change (pre-existing behavior, unchanged). */
+  changedDates: DriftLeaseView[];
+  /** id-unmatched leases paired across the id change by business key. */
+  rekeyed: RekeyedLease[];
+  genuinelyNew: DriftLeaseView[];
+  genuinelyRemoved: DriftLeaseView[];
+  ambiguous: AmbiguousKey[];
+}
+
+/** Trim, collapse internal runs of whitespace, lowercase. Keeps cosmetic workbook edits
+ *  ("Acme  LLC" -> "Acme LLC") from reading as a different tenancy. */
+function normalize(s: string | null): string {
+  return (s ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+/**
+ * Identity of a tenancy independent of its generated id: property + unit + tenant.
+ *
+ * `propertyKey` (not `propertyId`) is the property component deliberately -- propertyKey is
+ * non-nullable in the Lease contract (the raw rent-roll label), while `propertyId` is nullable
+ * (only set when the property was matchable), so keying on propertyId would silently collapse
+ * every unmatched-property lease into one key. `unit` IS nullable (single-tenant buildings carry
+ * none) and contributes an empty component in that case, which is fine -- the tenant component
+ * still separates them.
+ *
+ * Returns null when the tenant component is empty, i.e. the key cannot identify anything and must
+ * never be used to pair.
+ */
+export function businessKey(lease: DriftLeaseView): string | null {
+  const tenant = normalize(lease.company) || normalize(lease.tenantName);
+  if (!tenant) return null;
+  return `${normalize(lease.propertyKey)} | ${normalize(lease.unit)} | ${tenant}`;
+}
+
+function countKeys(leases: DriftLeaseView[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const l of leases) {
+    const k = businessKey(l);
+    if (k !== null) counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * Diff two lease sets by id, then pair whatever the id diff left unmatched by BUSINESS key.
+ *
+ * Why this exists (2026-07-24): PR #232 changed every lease id at once (row-position ->
+ * tenant-identity). The id-only diff reported "137 removed / 138 new" and said nothing about the
+ * five leases whose leaseEnd actually moved underneath that churn -- two of which had gone into
+ * holdover on 2026-06-30 while the snapshot still showed 8-10 months of term. Pairing by business
+ * key turns that report into "137 re-keyed (5 with date changes), 1 genuinely new, 0 removed".
+ *
+ * Pairing is deliberately conservative: a key is only used when it is unique across the FULL
+ * previous set AND the FULL current set -- not merely unique among the unmatched leaves. A key
+ * that is unique among unmatched leaves but duplicated in the full set could pair against a lease
+ * that is already id-matched to something else, attaching one tenancy's history to another. That
+ * is the same misattachment hazard that makes migrate-lease-overlay-ids.ts refuse prefix matches.
+ */
+export function computeDrift(previous: DriftLeaseView[], current: DriftLeaseView[]): DriftResult {
+  const prevById = new Map(previous.map((l) => [l.id, l]));
+  const currentIds = new Set(current.map((l) => l.id));
+
+  const removedIds = previous.filter((l) => !currentIds.has(l.id));
+  const newIds = current.filter((l) => !prevById.has(l.id));
+  const changedDates = current.filter((l) => {
+    const prev = prevById.get(l.id);
+    return prev && prev.leaseEnd !== l.leaseEnd;
+  });
+
+  // Uniqueness counted over the FULL sets -- see the doc comment above for why not the unmatched subset.
+  const prevKeyCounts = countKeys(previous);
+  const currentKeyCounts = countKeys(current);
+
+  const unmatchedPrevByKey = new Map<string, DriftLeaseView[]>();
+  for (const l of removedIds) {
+    const k = businessKey(l);
+    if (k === null) continue;
+    const bucket = unmatchedPrevByKey.get(k);
+    if (bucket) bucket.push(l);
+    else unmatchedPrevByKey.set(k, [l]);
+  }
+
+  const rekeyed: RekeyedLease[] = [];
+  const ambiguousByKey = new Map<string, AmbiguousKey>();
+  const pairedPrevIds = new Set<string>();
+  const genuinelyNew: DriftLeaseView[] = [];
+
+  for (const cur of newIds) {
+    const k = businessKey(cur);
+    if (k === null) {
+      genuinelyNew.push(cur);
+      continue;
+    }
+    const prevCount = prevKeyCounts.get(k) ?? 0;
+    const currentCount = currentKeyCounts.get(k) ?? 0;
+    if (prevCount > 1 || currentCount > 1) {
+      // Ambiguous: report the key once, and let the lease fall through to the conservative reading.
+      if (!ambiguousByKey.has(k)) ambiguousByKey.set(k, { key: k, previousCount: prevCount, currentCount });
+      genuinelyNew.push(cur);
+      continue;
+    }
+    const candidates = unmatchedPrevByKey.get(k);
+    const prev = candidates?.[0];
+    if (!prev) {
+      genuinelyNew.push(cur);
+      continue;
+    }
+    pairedPrevIds.add(prev.id);
+    rekeyed.push({ key: k, previous: prev, current: cur, leaseEndChanged: prev.leaseEnd !== cur.leaseEnd });
+  }
+
+  const genuinelyRemoved = removedIds.filter((l) => !pairedPrevIds.has(l.id));
+
+  return {
+    newIds,
+    removedIds,
+    changedDates,
+    rekeyed,
+    genuinelyNew,
+    genuinelyRemoved,
+    ambiguous: [...ambiguousByKey.values()],
+  };
+}
 
 /** loadPrevious's result distinguishes a normal "no snapshot yet" first-run state (`corrupt: false`,
  *  `leases: []`) from a genuinely CORRUPT previous file (`corrupt: true`) -- Round-3 REFUTE: these
@@ -122,14 +270,12 @@ async function main() {
   // pick between.
   const current: DriftLeaseView[] = enriched.leases;
 
-  const currentIds = new Set(current.map((l) => l.id));
-  const removedIds = previous.filter((l) => !currentIds.has(l.id));
-
-  const newIds = current.filter((l) => !prevById.has(l.id));
-  const changedDates = current.filter((l) => {
-    const prev = prevById.get(l.id);
-    return prev && prev.leaseEnd !== l.leaseEnd;
-  });
+  const drift = computeDrift(previous, current);
+  // `removedIds` stays the RAW id-level removal set on purpose: it is the anomaly floor's input
+  // below, and the floor must keep tripping on a wholesale id change. Feeding it the business-key
+  // -paired `genuinelyRemoved` instead would have let the 2026-07-24 re-baseline write through
+  // unattended -- convenient, but it would retire the exact safety property the floor provides.
+  const { removedIds, newIds, changedDates } = drift;
 
   // Refuse to overwrite a known-good snapshot with an EMPTY one: unconditional, regardless of
   // `previous.length` (Round-3 REFUTE -- previously this was gated on `previous.length > 0`, so
@@ -181,16 +327,15 @@ async function main() {
   writeFileSync(tmp, JSON.stringify(enriched, null, 2));
   renameSync(tmp, SNAPSHOT_PATH);
 
+  const { rekeyed, genuinelyNew, genuinelyRemoved, ambiguous } = drift;
   if (newIds.length === 0 && changedDates.length === 0 && removedIds.length === 0) {
     console.log(`✓ No lease drift. portfolio.json regenerated (${current.length} leases).`);
     process.exit(0);
   }
 
+  const label = (l: DriftLeaseView) => `${l.propertyKey}${l.unit ? ` ${l.unit}` : ''} | ${l.company ?? l.tenantName}`;
+
   console.log(`⚠ Lease drift detected — portfolio.json regenerated (${current.length} leases).`);
-  if (newIds.length) {
-    console.log(`\nNew/changed-id leases (${newIds.length}):`);
-    for (const l of newIds) console.log(`  ${l.id} | ${l.company ?? l.tenantName} | end: ${l.leaseEnd}`);
-  }
   if (changedDates.length) {
     console.log(`\nLease end date changes (${changedDates.length}):`);
     for (const l of changedDates) {
@@ -198,16 +343,49 @@ async function main() {
       console.log(`  ${l.id} | ${l.company ?? l.tenantName} | ${prev.leaseEnd} -> ${l.leaseEnd}`);
     }
   }
-  if (removedIds.length) {
-    console.log(`\nRemoved leases (${removedIds.length}):`);
-    for (const l of removedIds) console.log(`  ${l.id} | ${l.company ?? l.tenantName} | was end: ${l.leaseEnd}`);
+  if (rekeyed.length) {
+    // The headline number during an id-scheme migration. Value changes first -- during the
+    // 2026-07-24 re-baseline these five rows were the entire signal, and the id-only report
+    // buried them under 274 lines of churn.
+    const withDateChange = rekeyed.filter((r) => r.leaseEndChanged);
+    console.log(`\nRe-keyed leases (${rekeyed.length}) — same property/unit/tenant, new id:`);
+    if (withDateChange.length) {
+      console.log(`  ⚠ ${withDateChange.length} with a leaseEnd change:`);
+      for (const r of withDateChange) {
+        console.log(`    ${label(r.current)} | ${r.previous.leaseEnd} -> ${r.current.leaseEnd}`);
+        console.log(`      id: ${r.previous.id} -> ${r.current.id}`);
+      }
+    }
+    const unchanged = rekeyed.length - withDateChange.length;
+    if (unchanged) console.log(`  ${unchanged} re-keyed with no value change (ids only).`);
+  }
+  if (genuinelyNew.length) {
+    console.log(`\nGenuinely new leases (${genuinelyNew.length}):`);
+    for (const l of genuinelyNew) console.log(`  ${l.id} | ${l.company ?? l.tenantName} | end: ${l.leaseEnd}`);
+  }
+  if (genuinelyRemoved.length) {
+    console.log(`\nGenuinely removed leases (${genuinelyRemoved.length}):`);
+    for (const l of genuinelyRemoved) console.log(`  ${l.id} | ${l.company ?? l.tenantName} | was end: ${l.leaseEnd}`);
+  }
+  if (ambiguous.length) {
+    // Not paired on purpose -- these fell through to the new/removed lists above. Surfaced so a
+    // reader knows the pairing declined to guess rather than silently finding nothing.
+    console.log(`\nAmbiguous business keys (${ambiguous.length}) — not paired, listed above as new/removed:`);
+    for (const a of ambiguous) {
+      console.log(`  ${a.key} | ${a.previousCount} previous, ${a.currentCount} current`);
+    }
   }
   // Distinguish "ran, found drift worth a look" (2) from "ran clean" (0) and "refused to write" (1)
   // above, so an unattended scheduler can tell these apart instead of every run exiting 0.
   process.exit(2);
 }
 
-main().catch((err) => {
-  console.error('drift check failed:', err);
-  process.exit(3);
-});
+// Run the CLI only when invoked directly (importing for tests -- computeDrift/businessKey -- must
+// NOT parse the live workbook, rewrite portfolio.json, or exit the test process). Same guard as
+// scripts/migrate-lease-overlay-ids.ts, which was extracted for unit-testability the same way.
+if (process.argv[1]?.replace(/\\/g, '/').endsWith('scripts/lease-snapshot-drift-check.ts')) {
+  main().catch((err) => {
+    console.error('drift check failed:', err);
+    process.exit(3);
+  });
+}
