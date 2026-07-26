@@ -10,6 +10,16 @@ export interface DebtSnapshotResult {
    *  CLI) need this signal to be robust to the errors[] message text changing; string-matching
    *  would silently break both consumers on a wording edit. */
   refusedEmptySupersede: boolean;
+  /** Count of loans whose per-loan insert FAILED this write (round 10) — each such loan's prior
+   *  row may already have been superseded, so the book may have lost rows. >0 sets the DEGRADED
+   *  marker. Typed so the reload path can route a degraded write to its failure-level log
+   *  branch instead of the generic warning. */
+  degradedRows: number;
+  /** True when THIS write was clean (not refused, zero insert losses) but a standing DEGRADED
+   *  marker was retained because the trusted book has not recovered (round 13 — ninth-pass LOW:
+   *  such writes previously returned a fully-quiet result, so the unattended reload logged
+   *  nothing for the entire damaged window after damage day). */
+  staleMarkerHeld: boolean;
 }
 
 /**
@@ -48,6 +58,138 @@ export const MIN_SUPERSEDED_ROWS_FOR_SHRINKAGE_GUARD = 2;
  * confirmation exactly like anything strictly above it.
  */
 export const MAX_SUPERSEDE_SHARE_WITHOUT_CONFIRMATION = 0.5;
+
+/** warehouse_meta key for the persisted refusal marker (migration 026). */
+const REFUSAL_MARKER_KEY = 'debt_snapshot.last_write_refused';
+
+export interface SnapshotRefusalMarker {
+  /** The full REFUSED:/DEGRADED: reason string recorded at marker time. */
+  reason: string;
+  /** SQLite datetime('now') at the moment the marker was set (UTC, 'YYYY-MM-DD HH:MM:SS'). */
+  refusedAt: string;
+  /**
+   * Round 10 (sixth adversarial pass — all three lenses converged): the two marker classes have
+   * DIFFERENT data-trust semantics and consumers must not conflate them.
+   *   'refused'  — the write was declined wholesale; the active rows are UNTOUCHED and genuinely
+   *                are the last trusted book (a breach computed from them is real and survives).
+   *   'degraded' — per-loan inserts failed after their prior rows were retired; the active rows
+   *                are a POST-DAMAGE REMNANT the marker itself distrusts (a verdict computed
+   *                from them — in EITHER direction — is fabricated; reviewers reproduced a
+   *                genuinely-clearing book minting a phantom breach off its 0.55-LTV remnant).
+   * Round 11: kind reflects the book's TRUST HISTORY, not merely the last attempt — a refusal
+   * (which touches zero rows) can never upgrade a standing 'degraded' back to 'refused'.
+   */
+  kind: 'refused' | 'degraded';
+  /**
+   * Round 11 (seventh adversarial pass, HIGH — the "ratchet" false clearance): the row count of
+   * the last TRUSTED/VETTED book, captured when the marker first latched from a clean state and
+   * carried forward across subsequent refusals/degradations. Round 12 (eighth pass, two HIGHs):
+   * on a degraded-from-clean latch this is max(pre-write active count, the guard-vetted INTENDED
+   * book size) — the pre-write count alone let growth-direction damage (new financing rows lost
+   * to insert failures) latch a stale baseline the remnant trivially matched, and a first-ever
+   * snapshot latched baseline 0, which auto-cleared everything. A degraded marker clears ONLY on
+   * FULL recovery to this baseline or explicit human opt-in — no churn floor: the eighth pass
+   * reproduced a $9M loan lost to one poisoned cell auto-clearing under the >=2-row floor.
+   * Null only for legacy/unparseable marker values (which can never auto-clear).
+   */
+  baselineCount: number | null;
+  /** The FIRST damage/refusal message, captured at latch time and carried forward VERBATIM
+   *  (round 12 — the round-11 recursive slice reduced it to boilerplate within two failed-clear
+   *  cycles, destroying the resolver's breadcrumb). Null only for legacy values. */
+  originalReason: string | null;
+  /** ISO timestamp of the FIRST latch (the damage/refusal moment) — refusedAt tracks the latest
+   *  re-upsert instead, which is the wrong time to show a resolver. Null only for legacy. */
+  latchedAt: string | null;
+  /**
+   * Round 13 (ninth adversarial pass — two lenses reproduced count-grain HIGHs): the trusted
+   * book as an id SET, not a count. baselineCount alone let (a) a refused→degraded chain carry a
+   * stale smaller count, and (b) an unrelated NEW financing substitute for a destroyed loan —
+   * both minting clearances with real debt off-book. A degraded marker now clears only when
+   * EVERY id in this set is freshly re-written by a clean write (or a human opts in); growth
+   * beyond the set is fine; count-padding and substitution are structurally impossible. Null
+   * only for legacy values (which can never auto-clear).
+   */
+  trustedIds: string[] | null;
+}
+
+/**
+ * The persisted stale-book marker, or null when the last write attempt was clean (obs-3 /
+ * PR #233 residual #2 — both adversarial reviews flagged that a refusal on the unattended
+ * reload path was invisible downstream, leaving a stale book to keep reporting a governor
+ * clearance). Set by a shrinkage-guard REFUSAL and (round 9) by a DEGRADED write — one whose
+ * per-loan inserts failed after their prior rows were superseded, silently losing rows without
+ * ever tripping the guard. Cleared only by a clean write (not refused, zero insert losses), so
+ * it always reflects the LATEST write attempt — self-healing, no manual reset. Set/cleared
+ * INSIDE the write transaction, so (book, marker) commit atomically even across the documented
+ * dev-server + backfill-CLI concurrency. Consumer: computePortfolioAggregateLtv withholds a
+ * would-be clearance while this is set (a would-be BREACH survives — see the round-9 precedence
+ * note there).
+ */
+export function readLastSnapshotRefusal(db: Database): SnapshotRefusalMarker | null {
+  const row = db
+    .prepare('SELECT value, updated_at FROM warehouse_meta WHERE key = ?')
+    .get(REFUSAL_MARKER_KEY) as { value: string; updated_at: string } | undefined;
+  if (row === undefined) return null;
+  // Round 11: the value is structured JSON {kind, reason, baselineCount}. Anything that fails
+  // to parse (a legacy plain-string marker, or a future writer forgetting the contract)
+  // classifies as 'degraded' with an unknown baseline — the MOST conservative reading: a
+  // degraded marker never lets a verdict through in either direction, and an unknown baseline
+  // never auto-clears (only a human confirmation can).
+  try {
+    const parsed = JSON.parse(row.value) as {
+      kind?: unknown;
+      reason?: unknown;
+      baselineCount?: unknown;
+      originalReason?: unknown;
+      latchedAt?: unknown;
+      trustedIds?: unknown;
+    };
+    const kind: SnapshotRefusalMarker['kind'] = parsed.kind === 'refused' ? 'refused' : 'degraded';
+    return {
+      reason: typeof parsed.reason === 'string' ? parsed.reason : row.value,
+      refusedAt: row.updated_at,
+      kind,
+      baselineCount:
+        typeof parsed.baselineCount === 'number' && Number.isFinite(parsed.baselineCount)
+          ? parsed.baselineCount
+          : null,
+      originalReason: typeof parsed.originalReason === 'string' ? parsed.originalReason : null,
+      latchedAt: typeof parsed.latchedAt === 'string' ? parsed.latchedAt : null,
+      trustedIds:
+        Array.isArray(parsed.trustedIds) && parsed.trustedIds.every((x) => typeof x === 'string')
+          ? (parsed.trustedIds as string[])
+          : null,
+    };
+  } catch {
+    return {
+      reason: row.value,
+      refusedAt: row.updated_at,
+      kind: 'degraded',
+      baselineCount: null,
+      originalReason: null,
+      latchedAt: null,
+      trustedIds: null,
+    };
+  }
+}
+
+/** Serialize a marker value for warehouse_meta (rounds 11-13 — structured, not prefix-parsed). */
+function markerValue(
+  kind: SnapshotRefusalMarker['kind'],
+  reason: string,
+  originalReason: string,
+  latchedAt: string,
+  trustedIds: string[] | null,
+): string {
+  return JSON.stringify({
+    kind,
+    reason,
+    baselineCount: trustedIds !== null ? trustedIds.length : null,
+    originalReason,
+    latchedAt,
+    trustedIds,
+  });
+}
 
 // Loan.status (src/contracts/loan.ts) is free-form workbook text, not a fixed enum — the real
 // Loan Index tab uses descriptive values like "Amortizing", "Interest Only", "Balloon Due Feb-27",
@@ -145,6 +287,9 @@ export function writeDebtSnapshot(
 ): DebtSnapshotResult {
   const errors: string[] = [];
   let written = 0;
+  let degradedRows = 0;
+  let staleMarkerHeld = false;
+  const writtenIds = new Set<string>(); // ids whose insert SUCCEEDED this write (round 13)
 
   // Filter: borrower-side only, active — null status, or classifyLoanStatus() resolves to
   // 'active' or 'unrecognized' (see the three-bucket design note above). An 'unrecognized' status
@@ -323,21 +468,40 @@ export function writeDebtSnapshot(
   const refuseEmptySupersede =
     (wouldTotallyEmpty || wouldMajorityShrink) && opts?.allowEmptySupersede !== true;
 
+  let refusalMessage: string | null = null;
   if (refuseEmptySupersede) {
     const reason = wouldTotallyEmpty
       ? `empty borrower set would have superseded all ${activeRowCount} active debt_positions row(s)`
       : `borrower set would net-shrink the active debt_positions book from ${activeRowCount} to ` +
         `${activeRowCount - netLoss} row(s) (${netLoss} of ${activeRowCount} lost with no replacement, ` +
         `${Math.round((netLoss / activeRowCount) * 100)}%) — a majority shrinkage in one snapshot`;
-    errors.push(
+    refusalMessage =
       `REFUSED: ${reason} — refusing to shrink the debt book on an unexplained loss (likely an upstream ` +
-        'parse/payload failure, not genuine portfolio churn — a refinance or id rename that keeps the total ' +
-        'loan count intact is NOT affected by this guard). Existing rows left untouched. Confirm and pass ' +
-        '{ allowEmptySupersede: true } if this net loss is verified.',
-    );
+      'parse/payload failure, not genuine portfolio churn — a refinance or id rename that keeps the total ' +
+      'loan count intact is NOT affected by this guard). Existing rows left untouched. Confirm and pass ' +
+      '{ allowEmptySupersede: true } if this net loss is verified.';
+    errors.push(refusalMessage);
   }
 
+  // Refusal/degraded marker statements (obs-3 / round 9). Prepared here, executed INSIDE the
+  // transaction below — round-9 correction (fifth adversarial pass, determinism lens): the
+  // round-8 version ran the marker upsert/delete AFTER the transaction, so the documented
+  // dev-server + backfill-CLI concurrency (db.ts busy_timeout note) could interleave one
+  // process's book commit between another's commit and marker write, leaving the marker
+  // describing the WRONG attempt. Inside the transaction, (book, marker) commit atomically:
+  // a mid-write throw rolls both back together, preserving the previous marker state (a crash
+  // still never silently clears a standing refusal).
+  const upsertMarker = db.prepare(
+    `INSERT INTO warehouse_meta (key, value, updated_at) VALUES (?, ?, datetime('now'))
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`,
+  );
+  const deleteMarker = db.prepare('DELETE FROM warehouse_meta WHERE key = ?');
+
   const runAll = db.transaction(() => {
+    // Round 11: the standing marker is read INSIDE the transaction — the trust decision below
+    // depends on the book's history, and it must be the same snapshot the write acts on.
+    const standing = readLastSnapshotRefusal(db);
+
     // Shrinkage guard: when refused, skip the write ENTIRELY — not just the F-stale supersede.
     // A snapshot we don't trust enough to retire the missing rows also isn't trustworthy for the
     // rows it DID include: the same parse regression that dropped 11 of 12 loans could just as
@@ -345,7 +509,26 @@ export function writeDebtSnapshot(
     // row while refusing the rest would be a half-measure — the caller sees `written: 1` and may
     // reasonably read that as "the snapshot was fine", masking the REFUSED signal in errors[].
     // All-or-nothing matches the rest of this function's "never guess" posture.
-    if (refuseEmptySupersede) return;
+    if (refuseEmptySupersede) {
+      // Round 11 (seventh adversarial pass, MEDIUM — reproduced): a refusal touches ZERO rows,
+      // so it can never UPGRADE trust. If the standing marker says the rows are a damaged
+      // remnant ('degraded'), they still are — overwriting kind to 'refused' laundered the
+      // remnant into "the last trusted book" and resurrected the fabricated-BREACH defect via
+      // the degrade-then-refuse ordering. Kind ratchets: degraded stays degraded until a clean,
+      // fully-recovered write clears the marker entirely.
+      const kind: SnapshotRefusalMarker['kind'] = standing?.kind === 'degraded' ? 'degraded' : 'refused';
+      const originalReason = standing?.originalReason ?? standing?.reason ?? refusalMessage!;
+      const latchedAt = standing?.latchedAt ?? standing?.refusedAt ?? new Date().toISOString();
+      // Trusted ids: carried from the standing marker; on a refused-from-clean latch, the
+      // UNTOUCHED active book is the trusted set (a refusal changes no rows).
+      const trustedIds = standing !== null ? standing.trustedIds : activeIds;
+      const reason =
+        kind === 'degraded'
+          ? `DEGRADED (standing) — latest attempt also REFUSED: ${refusalMessage!} Original damage (${latchedAt}): ${originalReason.slice(0, 300)}`
+          : refusalMessage!;
+      upsertMarker.run(REFUSAL_MARKER_KEY, markerValue(kind, reason, originalReason, latchedAt, trustedIds));
+      return;
+    }
 
     // F-stale: supersede all previously-active rows whose id is not in the incoming set. Uses
     // borrowerLoansAll (not the collision-filtered borrowerLoans) so a colliding id's PRIOR row is
@@ -393,12 +576,108 @@ export function writeDebtSnapshot(
           snapshot_date: snapshotDate,
         });
         written++;
+        writtenIds.add(loan.id); // round 13 — identity-grain recovery tracking
       } catch (e) {
         errors.push(`loan ${loan.id}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
+    // Marker lifecycle, non-refused branch (round-9 correction — fifth adversarial pass, edges
+    // lens, REPRODUCED): "not refused" does NOT mean "healthy". The shrinkage guard judges the
+    // INCOMING id set before any write outcome is known, but the per-loan sequence above is
+    // supersede-prior-row THEN insert, with insert failures swallowed by the per-loan catch —
+    // a failed insert therefore LOSES a row (prior superseded, replacement never landed). The
+    // round-8 rule cleared a standing marker on any non-refused write, so a write that shrank
+    // the book 3→1 through insert failures both destroyed rows AND released the staleness latch,
+    // restoring a false clearance (reproduced end-to-end by the reviewer: NaN balance → SQL NULL
+    // → NOT NULL constraint → book 3→1, marker gone, clearedConservatively=true at the
+    // remnant's own LTV). Every loop iteration either increments `written` or pushes to the
+    // catch, so borrowerLoans.length − written counts exactly the insert-failure losses.
+    const lostRows = borrowerLoans.length - written;
+    degradedRows = lostRows;
+    if (lostRows > 0) {
+      // Wording (round-10 nit): a failed insert LOSES a row only when that loan HAD a prior
+      // active row (the per-loan supersede retired it before the insert failed) — a net-new
+      // loan's failed insert just never lands. Both cases are untrusted-write territory, so
+      // both latch the marker; the message claims "may have lost", never "did lose".
+      //
+      // Round-13 trusted-set latch (ninth pass, HIGH ×2 — reproduced): the trusted book is an
+      // id SET, not a count. When damage starts now (no standing marker, or a standing pure
+      // REFUSAL — which touched zero rows), the trusted set is this write's guard-vetted
+      // intended book (survivingOrWrittenIds: written ∪ preserved ∪ failed — the failed ids ARE
+      // in it, which is exactly what forces their return for recovery), unioned with any
+      // standing refusal's trusted set (a refusal's set can only describe the same untouched
+      // book; the union closes the refused→degraded stale-carry hole where a transient refusal
+      // collapsed the growth latch back to the smaller pre-growth count). A standing DEGRADED
+      // marker carries its earliest trusted set unchanged — a remnant-vetted payload proves
+      // nothing about the pre-damage book.
+      const damageStartsNow = standing === null || standing.kind === 'refused';
+      const trustedIds = damageStartsNow
+        ? [...new Set([...(standing?.trustedIds ?? []), ...survivingOrWrittenIds])]
+        : standing.trustedIds;
+      const degradedMsg =
+        `DEGRADED: ${lostRows} of ${borrowerLoans.length} loan upsert(s) failed this write — any such loan ` +
+        'with a prior active row had that row superseded before its replacement failed, so the active ' +
+        'debt book may have silently lost rows. The surviving rows are NOT a trusted book state. ' +
+        'Treated as stale (no aggregate-LTV verdict in either direction) until a clean write re-lands ' +
+        'every trusted loan. See errors[] on the triggering writeDebtSnapshot result.';
+      upsertMarker.run(
+        REFUSAL_MARKER_KEY,
+        markerValue(
+          'degraded',
+          degradedMsg,
+          damageStartsNow ? degradedMsg : (standing.originalReason ?? standing.reason),
+          damageStartsNow ? new Date().toISOString() : (standing.latchedAt ?? standing.refusedAt),
+          trustedIds,
+        ),
+      );
+    } else if (standing === null || opts?.allowEmptySupersede === true || standing.kind === 'refused') {
+      // Clean write with no standing marker (routine no-op delete); a human explicitly
+      // confirmed this book state via the opt-in; or the standing marker was a pure REFUSAL —
+      // the rows were never damaged, this write passed the per-write shrinkage guard against
+      // that trusted book, so the fresh book is trusted. Clear.
+      deleteMarker.run(REFUSAL_MARKER_KEY);
+    } else {
+      // Rounds 11-13 (three consecutive adversarial passes, each a reproduced HIGH): a clean
+      // write clears a standing DEGRADED marker ONLY when EVERY id in the trusted set was
+      // freshly RE-WRITTEN by this write. The predicate's history, each version reproduced as a
+      // false clearance: round 11 used the churn-floor thresholds (single-row damage of any
+      // dollar size auto-cleared — a $9M loan); round 12 used a count baseline (an unrelated
+      // NEW financing substituted for the destroyed loan; a transient refusal carried a stale
+      // smaller count). Identity ×freshly-written closes the whole class: substitution is
+      // impossible (the destroyed id itself must return), count-padding is impossible, and a
+      // collision-PRESERVED remnant row does not count as recovered (it was never re-vetted —
+      // only an actual successful insert this write counts). Growth beyond the trusted set is
+      // fine. A genuine payoff of a trusted loan during the damaged window is resolved with one
+      // explicit opt-in run. A legacy marker without a trusted set can never auto-clear.
+      const fullyRecovered =
+        standing.trustedIds !== null && standing.trustedIds.every((id) => writtenIds.has(id));
+      if (fullyRecovered) {
+        deleteMarker.run(REFUSAL_MARKER_KEY);
+      } else {
+        staleMarkerHeld = true;
+        const originalReason = standing.originalReason ?? standing.reason;
+        const latchedAt = standing.latchedAt ?? standing.refusedAt;
+        const missing =
+          standing.trustedIds === null
+            ? 'UNKNOWN (legacy marker without a trusted id set)'
+            : standing.trustedIds.filter((id) => !writtenIds.has(id)).join(', ');
+        upsertMarker.run(
+          REFUSAL_MARKER_KEY,
+          markerValue(
+            'degraded',
+            `DEGRADED: trusted loan(s) still missing or not re-verified this write: ${missing}. The book ` +
+              'remains untrusted until a clean write re-lands every trusted loan (or the loss is confirmed ' +
+              `via allowEmptySupersede). Original damage (${latchedAt}): ${originalReason.slice(0, 300)}`,
+            originalReason,
+            latchedAt,
+            standing.trustedIds,
+          ),
+        );
       }
     }
   });
 
   runAll();
-  return { written, errors, refusedEmptySupersede: refuseEmptySupersede };
+  return { written, errors, refusedEmptySupersede: refuseEmptySupersede, degradedRows, staleMarkerHeld };
 }

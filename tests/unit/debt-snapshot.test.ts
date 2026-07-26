@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
-import { writeDebtSnapshot } from '../../server/warehouse/debt-snapshot';
+import { writeDebtSnapshot, readLastSnapshotRefusal } from '../../server/warehouse/debt-snapshot';
 import { DebtPosition } from '../../src/contracts/debt';
 import type { Loan } from '../../src/contracts/index';
 
@@ -927,5 +927,370 @@ describe('DebtPosition Zod type — lender suppression invariant', () => {
     expect(parsed.loanName).toBe('First Mortgage — 123 Main St');
     expect(parsed.currentBalance).toBe(850_000);
     expect(parsed.isDemand).toBe(false);
+  });
+});
+
+// ── Refusal marker: a refused write must be VISIBLE downstream (obs-3 / residual #2) ──────
+//
+// Both adversarial reviews on PR #233 flagged the same hole from opposite directions: when the
+// shrinkage guard refuses a write on the AUTOMATED reload path (server/index.ts), the only trace
+// is a console.warn. The stale prior book keeps feeding computePortfolioAggregateLtv, which has
+// no idea a write was refused — so a book frozen at a pre-refi/pre-collapse state can keep
+// reporting clearedConservatively=true indefinitely. The marker below closes that: every
+// writeDebtSnapshot call either records a refusal (persisted, in the same warehouse DB) or
+// clears it on a non-refused write, and the aggregate reads it (see debt-maturity tests).
+describe('writeDebtSnapshot — persisted refusal marker', () => {
+  it('a refused write persists a readable marker with the refusal reason', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01');
+    expect(readLastSnapshotRefusal(db)).toBeNull(); // successful write → no marker
+
+    writeDebtSnapshot(db, [], '2026-06-01'); // empty set vs 3 active rows → refused
+
+    const marker = readLastSnapshotRefusal(db);
+    expect(marker).not.toBeNull();
+    expect(marker!.reason).toMatch(/REFUSED/);
+    expect(marker!.refusedAt).toMatch(/^\d{4}-\d{2}-\d{2}/); // a real timestamp, not prose
+  });
+
+  it('a subsequent successful write clears the marker (self-healing)', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01');
+    writeDebtSnapshot(db, [], '2026-06-01'); // refused → marker set
+    expect(readLastSnapshotRefusal(db)).not.toBeNull();
+
+    writeDebtSnapshot(db, loans, '2026-06-02'); // normal successful write
+
+    expect(readLastSnapshotRefusal(db)).toBeNull();
+  });
+
+  it('an explicit opt-in supersede clears the marker too (the confirmed path is a real write)', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01');
+    writeDebtSnapshot(db, [], '2026-06-01'); // refused → marker set
+
+    writeDebtSnapshot(db, [], '2026-06-02', undefined, { allowEmptySupersede: true });
+
+    expect(readLastSnapshotRefusal(db)).toBeNull();
+  });
+
+  // Round-9 (fifth adversarial pass, edges lens, REPRODUCED): the round-8 lifecycle equated
+  // "not refused" with "healthy" — but the shrinkage guard judges INCOMING id sets before any
+  // write outcome is known. A write whose ids all match the book (netLoss 0, not refused) can
+  // still LOSE rows inside the transaction: the per-loan sequence is supersede-prior-row THEN
+  // insert, with insert failures swallowed by the per-loan try/catch — the prior row is retired
+  // and the replacement never lands. That degraded write must set (never clear) the marker.
+  it('a non-refused write that LOSES rows to per-loan insert failures sets a DEGRADED marker', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01');
+
+    // Same 3 ids (netLoss 0 → NOT refused), but 2 of 3 carry NaN balances — better-sqlite3 binds
+    // NaN as SQL NULL → NOT NULL constraint failure inside the per-loan try/catch, AFTER those
+    // loans' prior rows were superseded. The book silently shrinks 3 → 1.
+    const poisoned = [
+      makeBorrowerLoan({ id: 'loan-A', name: 'Loan A' }),
+      makeBorrowerLoan({ id: 'loan-B', name: 'Loan B', currentBalance: NaN, absBalance: NaN }),
+      makeBorrowerLoan({ id: 'loan-C', name: 'Loan C', currentBalance: NaN, absBalance: NaN }),
+    ];
+    const result = writeDebtSnapshot(db, poisoned, '2026-06-01');
+
+    expect(result.refusedEmptySupersede).toBe(false); // the guard itself did not fire...
+    expect(result.written).toBe(1); // ...but 2 of 3 upserts failed
+    expect(result.degradedRows).toBe(2); // typed count for callers (round 10 — reload-path ⛔ routing)
+    const marker = readLastSnapshotRefusal(db);
+    expect(marker).not.toBeNull(); // ...so the book is marked stale, not blessed
+    expect(marker!.reason).toMatch(/DEGRADED/);
+    // Round 10: the marker carries its KIND — consumers must distinguish "rows untouched, frozen"
+    // (refused) from "rows possibly LOST, remnant untrusted" (degraded); see debt-maturity tests.
+    expect(marker!.kind).toBe('degraded');
+  });
+
+  it('a refused write carries kind "refused" on its marker', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01');
+    writeDebtSnapshot(db, [], '2026-06-01');
+    expect(readLastSnapshotRefusal(db)!.kind).toBe('refused');
+  });
+
+  it('a degraded write never CLEARS a standing refusal marker', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01');
+    writeDebtSnapshot(db, [], '2026-06-01'); // refused → standing marker
+    expect(readLastSnapshotRefusal(db)).not.toBeNull();
+
+    const poisoned = loans.map((l) => ({ ...l, currentBalance: NaN, absBalance: NaN }));
+    writeDebtSnapshot(db, poisoned, '2026-06-02'); // not refused, but every insert fails
+
+    expect(readLastSnapshotRefusal(db)).not.toBeNull(); // marker survives
+  });
+
+  // Round-11 (seventh adversarial pass — reproduced by all three lenses): the marker records
+  // the last ATTEMPT, but row-trust is a property of the book's HISTORY. Two lifecycle holes:
+  // (a) MEDIUM: a refusal (touches zero rows) unconditionally overwrote a standing DEGRADED
+  // marker, upgrading the damaged remnant to "trusted" — the fabricated-BREACH defect
+  // resurrected via degrade-then-refuse ordering. A write that modifies no rows must never
+  // upgrade trust.
+  it('a REFUSED write never upgrades a standing DEGRADED marker to refused (trust is not laundered)', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01');
+    // Degrade: loan-A poisoned, its prior row superseded, replacement fails → remnant B, C.
+    writeDebtSnapshot(db, [{ ...loans[0]!, currentBalance: NaN, absBalance: NaN }, loans[1]!, loans[2]!], '2026-06-01');
+    expect(readLastSnapshotRefusal(db)!.kind).toBe('degraded');
+
+    // Refuse: empty parse (banner drift). Rows untouched — still the damaged remnant.
+    writeDebtSnapshot(db, [], '2026-06-02');
+
+    const marker = readLastSnapshotRefusal(db);
+    expect(marker).not.toBeNull();
+    expect(marker!.kind).toBe('degraded'); // NOT 'refused' — the remnant did not become trusted
+  });
+
+  // (b) HIGH: the DEGRADED marker was cleared by any write judged "clean" against the
+  // POST-damage baseline — so a majority loss the shrinkage guard refuses in ONE step succeeded
+  // when split into degrade-then-remnant-match, deleting the marker and minting a false
+  // CLEARANCE of a last-trusted-BREACH book. The marker now persists the pre-damage trusted
+  // row count, and a clean write only clears it once the book recovers to that baseline (or a
+  // human confirms via allowEmptySupersede).
+  it('RATCHET: a clean write matching the damaged remnant does NOT clear the marker (book still below its trusted baseline)', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C', 'D'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01'); // trusted baseline: 4 rows
+
+    // Degrade: A and B poisoned → their priors superseded, replacements fail → remnant C, D.
+    writeDebtSnapshot(
+      db,
+      [
+        { ...loans[0]!, currentBalance: NaN, absBalance: NaN },
+        { ...loans[1]!, currentBalance: NaN, absBalance: NaN },
+        loans[2]!,
+        loans[3]!,
+      ],
+      '2026-06-01',
+    );
+    expect(readLastSnapshotRefusal(db)!.kind).toBe('degraded');
+
+    // Next reload: the corrupted rows drop from the parse entirely — incoming exactly matches
+    // the remnant. netLoss vs the CURRENT (damaged) book is 0, every insert succeeds… but the
+    // book is still 2 of 4 vs its trusted baseline. The write proceeds; the marker must survive.
+    const result = writeDebtSnapshot(db, [loans[2]!, loans[3]!], '2026-06-02');
+    expect(result.refusedEmptySupersede).toBe(false);
+    expect(result.written).toBe(2);
+
+    const marker = readLastSnapshotRefusal(db);
+    expect(marker).not.toBeNull(); // NOT cleared — this two-step loss equals the one-step loss the guard refuses
+    expect(marker!.kind).toBe('degraded');
+  });
+
+  it('RATCHET recovery: the marker clears once a clean write restores the book to its trusted baseline', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C', 'D'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01');
+    writeDebtSnapshot(
+      db,
+      [
+        { ...loans[0]!, currentBalance: NaN, absBalance: NaN },
+        { ...loans[1]!, currentBalance: NaN, absBalance: NaN },
+        loans[2]!,
+        loans[3]!,
+      ],
+      '2026-06-01',
+    ); // degraded, baseline 4
+    writeDebtSnapshot(db, [loans[2]!, loans[3]!], '2026-06-02'); // remnant-match: marker survives
+
+    writeDebtSnapshot(db, loans, '2026-06-03'); // full book restored — 4 of 4 trusted rows
+
+    expect(readLastSnapshotRefusal(db)).toBeNull();
+  });
+
+  // Round-12 (eighth adversarial pass — two lenses each reproduced a HIGH in the round-11
+  // baseline latch): (a) the latch recorded the PRE-write count, but the shrinkage guard had
+  // already vetted the payload's INTENDED book — in the growth direction (new financing) the
+  // lost NEW rows left a remnant equal to the stale baseline, so remnant-match auto-cleared and
+  // minted a clearance while ~$3.6M of observed debt sat off-book; (b) the churn floor (>=2)
+  // let single-row damage of ANY dollar size auto-clear — a $9M loan lost to one poisoned cell.
+  // Now: baseline latches max(pre-write, intended); a degraded marker clears only on FULL
+  // recovery to baseline or explicit human opt-in — no churn floor on marker clearance.
+  it('RATCHET (growth): losing NEW rows to insert failures holds the marker against a remnant-match of the OLD book', () => {
+    const db = freshDb();
+    const oldLoans = ['A', 'B', 'C', 'D'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, oldLoans, '2026-05-01'); // trusted book: 4
+
+    // Growth payload: 4 old + 6 new, but every NEW loan's balance is poisoned — the guard vets
+    // an intended 10-row book (netLoss 0), the 6 new inserts fail, remnant = the old 4.
+    const newLoans = ['E', 'F', 'G', 'H', 'I', 'J'].map((s) =>
+      makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}`, currentBalance: NaN, absBalance: NaN }),
+    );
+    const grow = writeDebtSnapshot(db, [...oldLoans, ...newLoans], '2026-06-01');
+    expect(grow.degradedRows).toBe(6);
+    expect(readLastSnapshotRefusal(db)).not.toBeNull();
+
+    // Next reload: the malformed rows drop from the parse — payload matches the old book
+    // exactly. Under round-11 rules baselineLoss vs the stale baseline (4) was 0 → auto-clear.
+    writeDebtSnapshot(db, oldLoans, '2026-06-02');
+
+    expect(readLastSnapshotRefusal(db)).not.toBeNull(); // held: 6 of the 10 vetted rows are missing
+  });
+
+  it('RATCHET (single row): losing ONE loan to damage never auto-clears — full recovery or opt-in only', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01'); // trusted book: 3
+
+    // One poisoned loan — under round-11's churn floor (>=2), baselineLoss=1 always cleared,
+    // regardless of the lost loan's dollar size (the reviewers' repro lost a $9M loan).
+    writeDebtSnapshot(db, [{ ...loans[0]!, currentBalance: NaN, absBalance: NaN }, loans[1]!, loans[2]!], '2026-06-01');
+    expect(readLastSnapshotRefusal(db)!.kind).toBe('degraded');
+
+    writeDebtSnapshot(db, [loans[1]!, loans[2]!], '2026-06-02'); // remnant-match, 2 of 3
+
+    expect(readLastSnapshotRefusal(db)).not.toBeNull(); // held — a damaged row is not churn
+    // The explicit opt-in still resolves a genuine single-loan payoff during the damaged window.
+    writeDebtSnapshot(db, [loans[1]!, loans[2]!], '2026-06-03', undefined, { allowEmptySupersede: true });
+    expect(readLastSnapshotRefusal(db)).toBeNull();
+  });
+
+  it('RATCHET (first snapshot): a partially-failed FIRST write cannot latch a zero baseline that auto-clears everything', () => {
+    const db = freshDb();
+    // First-ever snapshot on an empty warehouse: 4 loans, 2 poisoned. Round-11 latched
+    // baseline=0 (the pre-write count), after which ANY clean write auto-cleared.
+    const loans = ['A', 'B', 'C', 'D'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(
+      db,
+      [
+        { ...loans[0]!, currentBalance: NaN, absBalance: NaN },
+        { ...loans[1]!, currentBalance: NaN, absBalance: NaN },
+        loans[2]!,
+        loans[3]!,
+      ],
+      '2026-05-01',
+    );
+    expect(readLastSnapshotRefusal(db)).not.toBeNull();
+
+    writeDebtSnapshot(db, [loans[2]!, loans[3]!], '2026-05-02'); // matches the 2-row remnant
+
+    expect(readLastSnapshotRefusal(db)).not.toBeNull(); // held: the vetted first book was 4 rows
+
+    writeDebtSnapshot(db, loans, '2026-05-03'); // all 4 land cleanly — genuine recovery
+    expect(readLastSnapshotRefusal(db)).toBeNull();
+  });
+
+  it('FORENSICS: the original damage reason and latch time survive repeated failed-clear cycles', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C', 'D'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01');
+    writeDebtSnapshot(
+      db,
+      [
+        { ...loans[0]!, currentBalance: NaN, absBalance: NaN },
+        { ...loans[1]!, currentBalance: NaN, absBalance: NaN },
+        loans[2]!,
+        loans[3]!,
+      ],
+      '2026-06-01',
+    );
+    const first = readLastSnapshotRefusal(db)!;
+    expect(first.originalReason).toMatch(/upsert\(s\) failed/);
+
+    // Two routine remnant-match reloads (round-11's recursive slice lost the original damage
+    // text after exactly two of these).
+    writeDebtSnapshot(db, [loans[2]!, loans[3]!], '2026-06-02');
+    writeDebtSnapshot(db, [loans[2]!, loans[3]!], '2026-06-03');
+
+    const after = readLastSnapshotRefusal(db)!;
+    expect(after.originalReason).toMatch(/upsert\(s\) failed/); // damage core carried verbatim
+    expect(after.latchedAt).toBe(first.latchedAt); // damage TIME preserved, not the re-upsert time
+  });
+
+  // Round-13 (ninth adversarial pass — two lenses reproduced HIGHs in the round-12 lifecycle):
+  // (a) a refused→degraded chain carried the REFUSAL's stale baseline, so one transient refusal
+  // before growth-direction damage collapsed the vetted-book latch; (b) recovery was COUNT-grain,
+  // so an unrelated NEW financing substituted for a destroyed loan and cleared the marker with
+  // the damaged loan still off-book. Root cause both times: counting where identity is needed.
+  // The marker now latches the trusted id SET, and a degraded marker clears only when every
+  // trusted id is FRESHLY RE-WRITTEN by a clean write (or a human opts in).
+  it('a transient refusal before growth damage does not collapse the trusted-book latch', () => {
+    const db = freshDb();
+    const oldLoans = ['A', 'B', 'C', 'D'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, oldLoans, '2026-05-01'); // trusted book: 4
+
+    writeDebtSnapshot(db, [], '2026-06-01'); // transient refusal (banner glitch) — rows untouched
+    expect(readLastSnapshotRefusal(db)!.kind).toBe('refused');
+
+    // Growth payload 4→10, all 6 NEW loans poisoned. Round-12 carried the refusal's baseline
+    // (4) here, so the later remnant-match auto-cleared with $9M of observed debt off-book.
+    const newLoans = ['E', 'F', 'G', 'H', 'I', 'J'].map((s) =>
+      makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}`, currentBalance: NaN, absBalance: NaN }),
+    );
+    writeDebtSnapshot(db, [...oldLoans, ...newLoans], '2026-06-02');
+    expect(readLastSnapshotRefusal(db)!.kind).toBe('degraded');
+
+    writeDebtSnapshot(db, oldLoans, '2026-06-03'); // remnant-match of the old book
+
+    expect(readLastSnapshotRefusal(db)).not.toBeNull(); // held — the 6 vetted new loans are still missing
+  });
+
+  it('an unrelated NEW loan cannot substitute for a destroyed one (identity-grain recovery)', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C', 'D', 'E', 'F'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01'); // trusted book: 6
+
+    // Destroy loan-F (poisoned insert) — remnant 5.
+    writeDebtSnapshot(db, [...loans.slice(0, 5), { ...loans[5]!, currentBalance: NaN, absBalance: NaN }], '2026-06-01');
+    expect(readLastSnapshotRefusal(db)!.kind).toBe('degraded');
+
+    // A genuinely new financing (loan-G) closes during the damaged window. Round-12's count
+    // predicate saw 6 >= 6 and cleared — with loan-F's debt still off-book.
+    const loanG = makeBorrowerLoan({ id: 'loan-G', name: 'Loan G' });
+    writeDebtSnapshot(db, [...loans.slice(0, 5), loanG], '2026-06-02');
+
+    expect(readLastSnapshotRefusal(db)).not.toBeNull(); // held — loan-F is still missing
+
+    // True recovery: loan-F comes back (fixed cell). Growth beyond the trusted set is fine.
+    writeDebtSnapshot(db, [...loans, loanG], '2026-06-03');
+    expect(readLastSnapshotRefusal(db)).toBeNull();
+  });
+
+  it('a clean write that holds a standing marker reports staleMarkerHeld for the reload log', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C', 'D'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01');
+    writeDebtSnapshot(
+      db,
+      [
+        { ...loans[0]!, currentBalance: NaN, absBalance: NaN },
+        { ...loans[1]!, currentBalance: NaN, absBalance: NaN },
+        loans[2]!,
+        loans[3]!,
+      ],
+      '2026-06-01',
+    );
+
+    // Ninth-pass LOW: this remnant-match reload used to return a fully-quiet result (no errors,
+    // no degradedRows, refused false) while re-upserting the marker — so the unattended path
+    // logged NOTHING for the whole damaged window after damage day.
+    const held = writeDebtSnapshot(db, [loans[2]!, loans[3]!], '2026-06-02');
+    expect(held.staleMarkerHeld).toBe(true);
+
+    const clean = writeDebtSnapshot(db, loans, '2026-06-03');
+    expect(clean.staleMarkerHeld).toBe(false);
+  });
+
+  it('repeated refusals keep the marker current with the LATEST refusal', () => {
+    const db = freshDb();
+    const loans = ['A', 'B', 'C', 'D'].map((s) => makeBorrowerLoan({ id: `loan-${s}`, name: `Loan ${s}` }));
+    writeDebtSnapshot(db, loans, '2026-05-01');
+    writeDebtSnapshot(db, [], '2026-06-01'); // refusal 1 (empty)
+    writeDebtSnapshot(db, [loans[0]!], '2026-06-02'); // refusal 2 (majority shrink 3/4)
+
+    const marker = readLastSnapshotRefusal(db);
+    expect(marker).not.toBeNull();
+    expect(marker!.reason).toMatch(/net-shrink/); // the SECOND refusal's reason, not the first's
   });
 });
