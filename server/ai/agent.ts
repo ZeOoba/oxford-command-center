@@ -173,7 +173,7 @@ function cleanBlocks(blocks: Block[]): unknown[] {
 
 export async function runAgent(opts: AgentOptions): Promise<void> {
   const { question, snapshot, emit, signal } = opts;
-  const model = opts.model || 'claude-opus-4-8';
+  const model = opts.model || 'claude-opus-5';
   const effort = opts.effort || 'medium';
   const maxTurns = opts.maxTurns ?? 8;
   const allRefs: EntityRefLite[] = [];
