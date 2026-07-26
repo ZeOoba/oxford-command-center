@@ -13,8 +13,25 @@
 // Importing this module must NOT parse the live workbook or exit the test process -- see the
 // entrypoint guard at the bottom of the script under test (same pattern as
 // scripts/migrate-lease-overlay-ids.ts).
-import { describe, expect, it } from 'vitest';
-import { businessKey, computeDrift, evaluateAnomalyFloor, type DriftLeaseView } from '../../scripts/lease-snapshot-drift-check';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, describe, expect, it } from 'vitest';
+import { businessKey, computeDrift, evaluateAnomalyFloor, loadPrevious, type AnomalyFloorResult, type DriftLeaseView } from '../../scripts/lease-snapshot-drift-check';
+
+/** Asserts refusal and narrows the discriminated union so `.reason` type-checks below. */
+function expectRefused(result: AnomalyFloorResult): { refuse: true; reason: string } {
+  expect(result.refuse).toBe(true);
+  if (!result.refuse) throw new Error('expectRefused: result.refuse was false');
+  return result;
+}
+
+/** Asserts non-refusal and narrows the discriminated union so `.warning` type-checks below. */
+function expectAllowed(result: AnomalyFloorResult): { refuse: false; warning?: string } {
+  expect(result.refuse).toBe(false);
+  if (result.refuse) throw new Error('expectAllowed: result.refuse was true');
+  return result;
+}
 
 /** Minimal lease factory -- only the fields computeDrift actually reads. */
 function lease(over: Partial<DriftLeaseView> & { id: string }): DriftLeaseView {
@@ -237,17 +254,15 @@ describe('evaluateAnomalyFloor — 0-lease refusal', () => {
   it('refuses when the current parse produces zero leases and a previous baseline exists', () => {
     const previous = [lease({ id: 'banwick-2802-105', company: 'Acme LLC' })];
 
-    const result = evaluateAnomalyFloor(previous, [], [], '/tmp/portfolio.json', false);
+    const result = expectRefused(evaluateAnomalyFloor(previous, [], [], '/tmp/portfolio.json', false));
 
-    expect(result.refuse).toBe(true);
     expect(result.reason).toMatch(/0 leases/);
     expect(result.reason).toMatch(/previous snapshot had 1/);
   });
 
   it('refuses a 0-lease parse even on a first run with no previous baseline -- unconditional per Round-3 REFUTE (gating on previous.length > 0 was the original bug)', () => {
-    const result = evaluateAnomalyFloor([], [], [], '/tmp/portfolio.json', false);
+    const result = expectRefused(evaluateAnomalyFloor([], [], [], '/tmp/portfolio.json', false));
 
-    expect(result.refuse).toBe(true);
     expect(result.reason).toMatch(/0 leases/);
     expect(result.reason).toMatch(/previous snapshot had 0/);
   });
@@ -255,11 +270,14 @@ describe('evaluateAnomalyFloor — 0-lease refusal', () => {
   it('--force bypasses the 0-lease refusal and returns a warning instead', () => {
     const previous = [lease({ id: 'banwick-2802-105', company: 'Acme LLC' })];
 
-    const result = evaluateAnomalyFloor(previous, [], [], '/tmp/portfolio.json', true);
+    const result = expectAllowed(evaluateAnomalyFloor(previous, [], [], '/tmp/portfolio.json', true));
 
-    expect(result.refuse).toBe(false);
     expect(result.warning).toMatch(/force/);
     expect(result.warning).toMatch(/0-lease/);
+    // The 0-lease branch returns before the mass-removal branch ever runs (see the
+    // "does not fire the mass-removal check" test below for the refuse:true side of this same
+    // guarantee) -- the force-bypass warning must not also carry mass-removal wording.
+    expect(result.warning).not.toMatch(/leases removed/);
   });
 });
 
@@ -281,9 +299,8 @@ describe('evaluateAnomalyFloor — >25% mass-removal refusal', () => {
     const current = previous.slice(2); // 2 remain
     const removedIds = previous.slice(0, 2);
 
-    const result = evaluateAnomalyFloor(previous, current, removedIds, '/tmp/portfolio.json', false);
+    const result = expectRefused(evaluateAnomalyFloor(previous, current, removedIds, '/tmp/portfolio.json', false));
 
-    expect(result.refuse).toBe(true);
     expect(result.reason).toMatch(/2 \(50\.0%\) would be removed/);
     expect(result.reason).toMatch(/mass disposition/);
   });
@@ -293,9 +310,8 @@ describe('evaluateAnomalyFloor — >25% mass-removal refusal', () => {
     const current = previous.slice(2);
     const removedIds = previous.slice(0, 2);
 
-    const result = evaluateAnomalyFloor(previous, current, removedIds, '/tmp/portfolio.json', true);
+    const result = expectAllowed(evaluateAnomalyFloor(previous, current, removedIds, '/tmp/portfolio.json', true));
 
-    expect(result.refuse).toBe(false);
     expect(result.warning).toMatch(/2\/4/);
     expect(result.warning).toMatch(/50\.0%/);
   });
@@ -313,9 +329,65 @@ describe('evaluateAnomalyFloor — >25% mass-removal refusal', () => {
     // handled entirely by the 0-lease branch, and this branch must not also run against it.
     const previous = [1, 2].map((n) => lease({ id: `id-${n}`, company: `Tenant ${n}` }));
 
-    const result = evaluateAnomalyFloor(previous, [], previous, '/tmp/portfolio.json', false);
+    const result = expectRefused(evaluateAnomalyFloor(previous, [], previous, '/tmp/portfolio.json', false));
 
     expect(result.reason).toMatch(/0 leases/);
     expect(result.reason).not.toMatch(/mass disposition/);
+  });
+});
+
+// loadPrevious() is where the corrupt-previous-snapshot refusal actually lives -- it had zero
+// direct coverage before 2026-07-26 (only its downstream effect, via evaluateAnomalyFloor's
+// unrelated checks, was ever exercised). `path` is overridable specifically so this is testable
+// against a real temp file instead of the live SNAPSHOT_PATH.
+describe('loadPrevious', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'load-previous-test-'));
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('reports a normal first-run state (no file yet) as NOT corrupt', () => {
+    const result = loadPrevious(join(dir, 'does-not-exist.json'));
+
+    expect(result.corrupt).toBe(false);
+    expect(result.leases).toEqual([]);
+  });
+
+  it('reports a valid snapshot as not corrupt and returns its leases', () => {
+    const path = join(dir, 'valid.json');
+    writeFileSync(path, JSON.stringify({ leases: [{ id: 'x-1', propertyKey: 'banwick', tenantName: 'T', company: null, unit: null, leaseEnd: null, annualRent: 0 }] }));
+
+    const result = loadPrevious(path);
+
+    expect(result.corrupt).toBe(false);
+    expect(result.leases).toHaveLength(1);
+    expect(result.leases[0]!.id).toBe('x-1');
+  });
+
+  it('reports syntactically invalid JSON as corrupt', () => {
+    const path = join(dir, 'malformed.json');
+    writeFileSync(path, '{ this is not valid json');
+
+    const result = loadPrevious(path);
+
+    expect(result.corrupt).toBe(true);
+    expect(result.leases).toEqual([]);
+  });
+
+  it('reports valid JSON with a missing/wrong-shaped "leases" field as corrupt', () => {
+    const path = join(dir, 'wrong-shape.json');
+    writeFileSync(path, JSON.stringify({ notLeases: [] }));
+
+    const result = loadPrevious(path);
+
+    expect(result.corrupt).toBe(true);
+    expect(result.leases).toEqual([]);
+  });
+
+  it('reports valid JSON whose "leases" field is not an array as corrupt', () => {
+    const path = join(dir, 'leases-not-array.json');
+    writeFileSync(path, JSON.stringify({ leases: 'oops' }));
+
+    const result = loadPrevious(path);
+
+    expect(result.corrupt).toBe(true);
   });
 });
