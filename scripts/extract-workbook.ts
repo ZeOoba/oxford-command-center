@@ -4,19 +4,23 @@ import { parseWorkbook } from '../server/workbook/parse';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, SNAPSHOT_PATH } from '../server/config';
 import { loadOverlay, applyOverlay, overlayPath } from '../server/overlay';
-import { computeDrift, evaluateAnomalyFloor, loadPrevious, type DriftLeaseView } from './lease-snapshot-drift-check';
+import { computeDrift, evaluateAnomalyFloor, formatDriftReport, loadPrevious, type DriftLeaseView } from './lease-snapshot-drift-check';
 
 loadEnvFile();
 
-// 2026-07-26: this raw regen path had NO anomaly floor at all -- a manual `npm run extract` run
-// (outside any registered schedule; no scheduled task's cron fires on the day it happened) wrote
-// corrupted lease-end dates for two Sepich Portfolio tenants straight through, unvalidated (see the
-// 2026-07-26 orphaned-task-forensics finding in event_log.md). This script now shares the exact
-// same refusal decision as scripts/lease-snapshot-drift-check.ts (the protected weekday path) via
-// evaluateAnomalyFloor -- both writers refuse on the same conditions instead of only one being
-// protected. This does NOT add the drift-check script's verbose drift report (new/removed/re-keyed
-// listing) -- that stays the protected path's job; this script's role stays "raw regen, now
-// refusal-guarded," not "raw regen plus reporting."
+// 2026-07-26: this raw regen path had NO anomaly floor and NO drift reporting at all -- a manual
+// `npm run extract` run (outside any registered schedule; no scheduled task's cron fires on the day
+// it happened) wrote corrupted lease-end dates for two Sepich Portfolio tenants straight through,
+// unvalidated and unreported (see the 2026-07-26 orphaned-task-forensics finding in event_log.md).
+// This script now shares BOTH the refusal decision (evaluateAnomalyFloor) AND the drift report
+// (formatDriftReport) with scripts/lease-snapshot-drift-check.ts (the protected weekday path).
+// The floor alone was not enough to close the incident: the anomaly floor is count-based
+// (0-lease / >25%-removed) and would NOT have caught these two tenants, since neither was added or
+// removed -- only their leaseEnd values changed. Only the drift report's "Lease end date changes"
+// section catches that class of corruption, and it REPORTS rather than REFUSES (a legitimate lease
+// renewal changes leaseEnd too; refusing on every date change would block real, wanted edits).
+// Exit codes now match lease-snapshot-drift-check.ts's convention: 0 = clean, 1 = refused
+// (portfolio.json unchanged), 2 = wrote successfully but found drift worth a look.
 async function main() {
   const force = process.argv.includes('--force');
   const previousResult = loadPrevious();
@@ -27,6 +31,7 @@ async function main() {
     process.exit(1);
   }
   const previous = previousResult.leases;
+  const prevById = new Map(previous.map((l) => [l.id, l]));
 
   console.log(`→ Reading workbook: ${workbookPath()}`);
   const { snapshot, flags } = await parseWorkbook(workbookPath());
@@ -67,10 +72,8 @@ async function main() {
   const enriched = applyOverlay(snapshot, overlay);
   const current: DriftLeaseView[] = enriched.leases;
 
-  // Raw id-level removal set, same as lease-snapshot-drift-check.ts's main() -- the floor must see
-  // this, not a business-key-paired count (see computeDrift's doc comment for why).
-  const { removedIds } = computeDrift(previous, current);
-  const floor = evaluateAnomalyFloor(previous, current, removedIds, SNAPSHOT_PATH, force);
+  const drift = computeDrift(previous, current);
+  const floor = evaluateAnomalyFloor(previous, current, drift.removedIds, SNAPSHOT_PATH, force);
   if (floor.refuse) {
     console.error(`✗ ${floor.reason}`);
     process.exit(1);
@@ -113,6 +116,11 @@ async function main() {
     for (const f of flags.slice(0, 12)) console.log(`   ⚠ ${f.entity} · ${f.field}: ${f.issue}`);
   }
   console.log('───────────────────────────────────────────────────────');
+
+  const report = formatDriftReport(drift, prevById, current.length);
+  console.log();
+  for (const line of report.lines) console.log(line);
+  if (report.hasDrift) process.exit(2);
 }
 
 main().catch((err) => {
