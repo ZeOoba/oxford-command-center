@@ -180,10 +180,12 @@ export function computeDrift(previous: DriftLeaseView[], current: DriftLeaseView
  *  used to be conflated (both mapped to `[]`), which silently disarmed the anomaly-refusal floor
  *  below (gated on `previous.length > 0`) whenever the previous snapshot happened to be corrupt, and
  *  the newly (possibly bad) written snapshot became the new "previous" with its own small/zero
- *  count -- permanently disarming the floor going forward. */
-interface PreviousSnapshot { leases: DriftLeaseView[]; corrupt: boolean; }
+ *  count -- permanently disarming the floor going forward. Exported so extract-workbook.ts's raw
+ *  regen path shares this exact corrupt-previous detection (2026-07-26 -- see evaluateAnomalyFloor
+ *  below for why). */
+export interface PreviousSnapshot { leases: DriftLeaseView[]; corrupt: boolean; }
 
-function loadPrevious(): PreviousSnapshot {
+export function loadPrevious(): PreviousSnapshot {
   if (!existsSync(SNAPSHOT_PATH)) return { leases: [], corrupt: false }; // normal first-run state, not corruption
   try {
     const parsed = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8'));
@@ -199,6 +201,79 @@ function loadPrevious(): PreviousSnapshot {
     console.error(`✗ failed to parse ${SNAPSHOT_PATH} (${(err as Error).message}).`);
     return { leases: [], corrupt: true };
   }
+}
+
+export interface AnomalyFloorResult {
+  refuse: boolean;
+  /** Present when `refuse` is true -- the operator-facing explanation (caller prefixes with '✗'). */
+  reason?: string;
+  /** Present when `--force` bypassed a tripped floor -- the operator-facing warning (caller prefixes with '⚠'). */
+  warning?: string;
+}
+
+/**
+ * Decides whether a lease-set write should be refused, given the previous set, the new set, and
+ * the RAW id-level removedIds (not the business-key-paired `genuinelyRemoved` -- see
+ * computeDrift's doc comment on why the floor must see the raw removal count). Pure: no I/O, no
+ * process.exit -- the caller acts on the result.
+ *
+ * Extracted 2026-07-26 so this file (the protected weekday path) and scripts/extract-workbook.ts
+ * (the raw regen / manual `npm run extract` path) share ONE tested refusal decision instead of two
+ * copies that can drift apart -- see the 2026-07-26 orphaned-task-forensics finding in
+ * event_log.md: a manual `npm run extract` run wrote corrupted lease-end dates for two Sepich
+ * Portfolio tenants through extract-workbook.ts, which had no anomaly floor of its own at all.
+ */
+export function evaluateAnomalyFloor(
+  previous: DriftLeaseView[],
+  current: DriftLeaseView[],
+  removedIds: DriftLeaseView[],
+  snapshotPath: string,
+  force: boolean,
+): AnomalyFloorResult {
+  // Refuse to overwrite a known-good snapshot with an EMPTY one: unconditional, regardless of
+  // `previous.length` (Round-3 REFUTE -- previously this was gated on `previous.length > 0`, so
+  // whenever the previous snapshot was corrupt/missing -- now handled by loadPrevious()'s corrupt
+  // flag, but a fresh/legitimate 0-lease previous state reaches here too -- this refusal was
+  // bypassed entirely and ANY current parse result, including a genuinely broken 0-lease parse,
+  // wrote through unguarded). A workbook that genuinely has zero leases is not a realistic scenario
+  // for this portfolio, so refusing and requiring --force is the safe default.
+  if (current.length === 0) {
+    if (!force) {
+      return {
+        refuse: true,
+        reason: `Refusing to write ${snapshotPath}: this parse produced 0 leases (previous snapshot had ${previous.length}) -- this looks like a bad parse, not a genuine full portfolio wind-down. portfolio.json was NOT modified. Re-run with --force if this is a real, intentional event.`,
+      };
+    }
+    return {
+      refuse: false,
+      warning: `--force: proceeding despite a 0-lease current parse (previous snapshot had ${previous.length}).`,
+    };
+  }
+
+  // Refuse to overwrite a known-good snapshot with a suspiciously small one: a parse that goes
+  // wrong for a reason OTHER than genuine lease removal (workbook read mid-save, a renamed/missing
+  // worksheet section, a wrong WORKBOOK_PATH resolving to the wrong file) must not silently replace
+  // real data. Fraction is of the OLD (previous) set that vanished -- removedIds.length /
+  // previous.length -- not some other ratio. Gated on `current.length > 0` because the
+  // current.length === 0 case is fully handled by the branch above.
+  if (previous.length > 0) {
+    const removedFraction = removedIds.length / previous.length;
+    const anomalous = removedFraction > 0.25;
+    if (anomalous) {
+      if (!force) {
+        return {
+          refuse: true,
+          reason: `Refusing to write ${snapshotPath}: previous snapshot had ${previous.length} lease(s), this parse produced ${current.length}, ${removedIds.length} (${(removedFraction * 100).toFixed(1)}%) would be removed -- this looks like a bad parse, not a genuine mass disposition. portfolio.json was NOT modified. Re-run with --force if this is a real, intentional mass-disposition event.`,
+        };
+      }
+      return {
+        refuse: false,
+        warning: `--force: proceeding despite ${removedIds.length}/${previous.length} (${(removedFraction * 100).toFixed(1)}%) leases removed (current count ${current.length}).`,
+      };
+    }
+  }
+
+  return { refuse: false };
 }
 
 async function main() {
@@ -277,46 +352,11 @@ async function main() {
   // unattended -- convenient, but it would retire the exact safety property the floor provides.
   const { removedIds, newIds, changedDates } = drift;
 
-  // Refuse to overwrite a known-good snapshot with an EMPTY one: unconditional, regardless of
-  // `previous.length` (Round-3 REFUTE -- previously this was gated on `previous.length > 0`, so
-  // whenever the previous snapshot was corrupt/missing -- now handled above, but a fresh/legitimate
-  // 0-lease previous state reaches here too -- this refusal was bypassed entirely and ANY current
-  // parse result, including a genuinely broken 0-lease parse, wrote through unguarded at exit 0). A
-  // workbook that genuinely has zero leases is not a realistic scenario for this portfolio, so
-  // refusing and requiring --force is the safe default.
-  if (current.length === 0) {
-    if (!force) {
-      console.error(
-        `✗ Refusing to write ${SNAPSHOT_PATH}: this parse produced 0 leases (previous snapshot had ${previous.length}) -- this looks like a bad parse, not a genuine full portfolio wind-down. portfolio.json was NOT modified. Re-run with --force if this is a real, intentional event.`,
-      );
-      process.exit(1);
-    }
-    console.warn(`⚠ --force: proceeding despite a 0-lease current parse (previous snapshot had ${previous.length}).`);
-  }
-
-  // Refuse to overwrite a known-good snapshot with a suspiciously small one: a parse that goes wrong
-  // for a reason OTHER than genuine lease removal (workbook read mid-save, a renamed/missing
-  // worksheet section, a wrong WORKBOOK_PATH resolving to the wrong file) must not silently replace
-  // real data, get a fresh meta.generatedAt stamp, and have this branch's OWN staleness guard vouch
-  // for it as "fresh". Fraction is of the OLD (previous) set that vanished -- removedIds.length /
-  // previous.length -- not some other ratio. Gated on `current.length > 0` because the
-  // current.length === 0 case is fully handled by the unconditional check above already.
-  if (previous.length > 0 && current.length > 0) {
-    const removedFraction = removedIds.length / previous.length;
-    const anomalous = removedFraction > 0.25;
-    if (anomalous && !force) {
-      console.error(
-        `✗ Refusing to write ${SNAPSHOT_PATH}: previous snapshot had ${previous.length} lease(s), this parse produced ${current.length}, ` +
-          `${removedIds.length} (${(removedFraction * 100).toFixed(1)}%) would be removed -- this looks like a bad parse, not a genuine mass ` +
-          `disposition. portfolio.json was NOT modified. Re-run with --force if this is a real, intentional mass-disposition event.`,
-      );
-      process.exit(1);
-    }
-    if (anomalous && force) {
-      console.warn(
-        `⚠ --force: proceeding despite ${removedIds.length}/${previous.length} (${(removedFraction * 100).toFixed(1)}%) leases removed (current count ${current.length}).`,
-      );
-    }
+  const floor = evaluateAnomalyFloor(previous, current, removedIds, SNAPSHOT_PATH, force);
+  if (floor.warning) console.warn(`⚠ ${floor.warning}`);
+  if (floor.refuse) {
+    console.error(`✗ ${floor.reason}`);
+    process.exit(1);
   }
 
   mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });

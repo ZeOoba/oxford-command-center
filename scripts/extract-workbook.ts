@@ -4,10 +4,30 @@ import { parseWorkbook } from '../server/workbook/parse';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, SNAPSHOT_PATH } from '../server/config';
 import { loadOverlay, applyOverlay, overlayPath } from '../server/overlay';
+import { computeDrift, evaluateAnomalyFloor, loadPrevious, type DriftLeaseView } from './lease-snapshot-drift-check';
 
 loadEnvFile();
 
+// 2026-07-26: this raw regen path had NO anomaly floor at all -- a manual `npm run extract` run
+// (outside any registered schedule; no scheduled task's cron fires on the day it happened) wrote
+// corrupted lease-end dates for two Sepich Portfolio tenants straight through, unvalidated (see the
+// 2026-07-26 orphaned-task-forensics finding in event_log.md). This script now shares the exact
+// same refusal decision as scripts/lease-snapshot-drift-check.ts (the protected weekday path) via
+// evaluateAnomalyFloor -- both writers refuse on the same conditions instead of only one being
+// protected. This does NOT add the drift-check script's verbose drift report (new/removed/re-keyed
+// listing) -- that stays the protected path's job; this script's role stays "raw regen, now
+// refusal-guarded," not "raw regen plus reporting."
 async function main() {
+  const force = process.argv.includes('--force');
+  const previousResult = loadPrevious();
+  if (previousResult.corrupt) {
+    // Same unconditional, leave-the-file-in-place refusal as lease-snapshot-drift-check.ts -- see
+    // that file's loadPrevious()/main() comments for why the corrupt file must never be moved aside.
+    console.error(`✗ ${SNAPSHOT_PATH} is corrupt — refusing to write. portfolio.json was NOT modified. Investigate/fix/restore it, then re-run.`);
+    process.exit(1);
+  }
+  const previous = previousResult.leases;
+
   console.log(`→ Reading workbook: ${workbookPath()}`);
   const { snapshot, flags } = await parseWorkbook(workbookPath());
 
@@ -45,6 +65,17 @@ async function main() {
   // data/snapshots/portfolio.json wins).
   const overlay = loadOverlay();
   const enriched = applyOverlay(snapshot, overlay);
+  const current: DriftLeaseView[] = enriched.leases;
+
+  // Raw id-level removal set, same as lease-snapshot-drift-check.ts's main() -- the floor must see
+  // this, not a business-key-paired count (see computeDrift's doc comment for why).
+  const { removedIds } = computeDrift(previous, current);
+  const floor = evaluateAnomalyFloor(previous, current, removedIds, SNAPSHOT_PATH, force);
+  if (floor.warning) console.warn(`⚠ ${floor.warning}`);
+  if (floor.refuse) {
+    console.error(`✗ ${floor.reason}`);
+    process.exit(1);
+  }
 
   mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });
   // Atomic write (temp file + rename), same pattern as lease-snapshot-drift-check.ts and

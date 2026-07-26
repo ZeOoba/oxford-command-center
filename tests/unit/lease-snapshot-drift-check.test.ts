@@ -14,7 +14,7 @@
 // entrypoint guard at the bottom of the script under test (same pattern as
 // scripts/migrate-lease-overlay-ids.ts).
 import { describe, expect, it } from 'vitest';
-import { businessKey, computeDrift, type DriftLeaseView } from '../../scripts/lease-snapshot-drift-check';
+import { businessKey, computeDrift, evaluateAnomalyFloor, type DriftLeaseView } from '../../scripts/lease-snapshot-drift-check';
 
 /** Minimal lease factory -- only the fields computeDrift actually reads. */
 function lease(over: Partial<DriftLeaseView> & { id: string }): DriftLeaseView {
@@ -224,5 +224,98 @@ describe('computeDrift — full-set uniqueness, not just the unmatched subset', 
 
     expect(drift.rekeyed).toHaveLength(0);
     expect(drift.ambiguous).toHaveLength(1);
+  });
+});
+
+// evaluateAnomalyFloor was extracted 2026-07-26 so lease-snapshot-drift-check.ts (the protected
+// weekday path) and scripts/extract-workbook.ts (the raw regen / manual `npm run extract` path)
+// can share ONE tested refusal decision instead of drifting copies -- see the 2026-07-26
+// orphaned-task-forensics finding in event_log.md: a manual `npm run extract` run wrote corrupted
+// lease dates through extract-workbook.ts, which had no anomaly floor of its own at all. Before
+// this extraction, these branches lived inline in main() and had ZERO unit coverage.
+describe('evaluateAnomalyFloor — 0-lease refusal', () => {
+  it('refuses when the current parse produces zero leases and a previous baseline exists', () => {
+    const previous = [lease({ id: 'banwick-2802-105', company: 'Acme LLC' })];
+
+    const result = evaluateAnomalyFloor(previous, [], [], '/tmp/portfolio.json', false);
+
+    expect(result.refuse).toBe(true);
+    expect(result.reason).toMatch(/0 leases/);
+    expect(result.reason).toMatch(/previous snapshot had 1/);
+  });
+
+  it('refuses a 0-lease parse even on a first run with no previous baseline -- unconditional per Round-3 REFUTE (gating on previous.length > 0 was the original bug)', () => {
+    const result = evaluateAnomalyFloor([], [], [], '/tmp/portfolio.json', false);
+
+    expect(result.refuse).toBe(true);
+    expect(result.reason).toMatch(/0 leases/);
+    expect(result.reason).toMatch(/previous snapshot had 0/);
+  });
+
+  it('--force bypasses the 0-lease refusal and returns a warning instead', () => {
+    const previous = [lease({ id: 'banwick-2802-105', company: 'Acme LLC' })];
+
+    const result = evaluateAnomalyFloor(previous, [], [], '/tmp/portfolio.json', true);
+
+    expect(result.refuse).toBe(false);
+    expect(result.warning).toMatch(/force/);
+    expect(result.warning).toMatch(/0-lease/);
+  });
+});
+
+describe('evaluateAnomalyFloor — >25% mass-removal refusal', () => {
+  it('does not refuse when removal is at or below the 25% threshold', () => {
+    // 1 of 4 removed = exactly 25% -- the floor trips on >25%, not >=25%.
+    const previous = [1, 2, 3, 4].map((n) => lease({ id: `id-${n}`, company: `Tenant ${n}` }));
+    const current = previous.slice(1); // 3 remain
+    const removedIds = [previous[0]!];
+
+    const result = evaluateAnomalyFloor(previous, current, removedIds, '/tmp/portfolio.json', false);
+
+    expect(result.refuse).toBe(false);
+  });
+
+  it('refuses when more than 25% of the previous set would be removed', () => {
+    // 2 of 4 removed = 50% -- over the threshold.
+    const previous = [1, 2, 3, 4].map((n) => lease({ id: `id-${n}`, company: `Tenant ${n}` }));
+    const current = previous.slice(2); // 2 remain
+    const removedIds = previous.slice(0, 2);
+
+    const result = evaluateAnomalyFloor(previous, current, removedIds, '/tmp/portfolio.json', false);
+
+    expect(result.refuse).toBe(true);
+    expect(result.reason).toMatch(/2 \(50\.0%\) would be removed/);
+    expect(result.reason).toMatch(/mass disposition/);
+  });
+
+  it('--force bypasses the mass-removal refusal and returns a warning instead', () => {
+    const previous = [1, 2, 3, 4].map((n) => lease({ id: `id-${n}`, company: `Tenant ${n}` }));
+    const current = previous.slice(2);
+    const removedIds = previous.slice(0, 2);
+
+    const result = evaluateAnomalyFloor(previous, current, removedIds, '/tmp/portfolio.json', true);
+
+    expect(result.refuse).toBe(false);
+    expect(result.warning).toMatch(/2\/4/);
+    expect(result.warning).toMatch(/50\.0%/);
+  });
+
+  it('is a no-op when there is no previous baseline (first run)', () => {
+    const current = [lease({ id: 'id-1', company: 'Tenant 1' })];
+
+    const result = evaluateAnomalyFloor([], current, [], '/tmp/portfolio.json', false);
+
+    expect(result.refuse).toBe(false);
+  });
+
+  it('does not fire the mass-removal check when the 0-lease check already covers this parse', () => {
+    // Regression guard: the two checks must not double-fire or interact -- 0 current leases is
+    // handled entirely by the 0-lease branch, and this branch must not also run against it.
+    const previous = [1, 2].map((n) => lease({ id: `id-${n}`, company: `Tenant ${n}` }));
+
+    const result = evaluateAnomalyFloor(previous, [], previous, '/tmp/portfolio.json', false);
+
+    expect(result.reason).toMatch(/0 leases/);
+    expect(result.reason).not.toMatch(/mass disposition/);
   });
 });
