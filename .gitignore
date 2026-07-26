@@ -46,3 +46,5 @@ run/
 .claude/launch.json
 # Cloudflare Wrangler build/dev cache — regenerated per build, never committed
 .wrangler/
+# Pre-migration/pre-rebaseline snapshot backups — machine-local, never committed (2026-07-26)
+data/_backup/
