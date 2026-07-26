@@ -20,6 +20,7 @@ import { parseWorkbook } from '../server/workbook/parse';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, SNAPSHOT_PATH } from '../server/config';
 import { loadOverlay, applyOverlay, overlayPath } from '../server/overlay';
+import { evaluateAnomalyFloor as evaluateAnomalyFloorCore } from '../server/anomaly-floor';
 
 loadEnvFile();
 
@@ -224,6 +225,16 @@ export type AnomalyFloorResult =
  * copies that can drift apart -- see the 2026-07-26 orphaned-task-forensics finding in
  * event_log.md: a manual `npm run extract` run wrote corrupted lease-end dates for two Sepich
  * Portfolio tenants through extract-workbook.ts, which had no anomaly floor of its own at all.
+ *
+ * CONSOLIDATED FURTHER 2026-07-26 (Gabriel-directed, same day): the actual 0-lease / >25%-removed
+ * threshold decision now lives in ../server/anomaly-floor.ts's evaluateAnomalyFloor -- the same
+ * function server/brain.ts's Brain.refresh() calls to guard the live in-memory adoption path
+ * (fix/brain-persist-anomaly-floor). This function is now a thin CLI-shaped wrapper: it converts
+ * the DriftLeaseView-array inputs to plain counts, delegates the threshold decision, and wraps a
+ * refusal in the "Refusing to write <path>: ..." operator-facing framing a CLI run needs (a live
+ * server has no file path to report and no operator staring at stdout). All three writers of
+ * portfolio.json now share ONE implementation of the actual thresholds instead of two/three
+ * independently maintained copies that could drift apart from each other.
  */
 export function evaluateAnomalyFloor(
   previous: DriftLeaseView[],
@@ -232,49 +243,17 @@ export function evaluateAnomalyFloor(
   snapshotPath: string,
   force: boolean,
 ): AnomalyFloorResult {
-  // Refuse to overwrite a known-good snapshot with an EMPTY one: unconditional, regardless of
-  // `previous.length` (Round-3 REFUTE -- previously this was gated on `previous.length > 0`, so
-  // whenever the previous snapshot was corrupt/missing -- now handled by loadPrevious()'s corrupt
-  // flag, but a fresh/legitimate 0-lease previous state reaches here too -- this refusal was
-  // bypassed entirely and ANY current parse result, including a genuinely broken 0-lease parse,
-  // wrote through unguarded). A workbook that genuinely has zero leases is not a realistic scenario
-  // for this portfolio, so refusing and requiring --force is the safe default.
-  if (current.length === 0) {
-    if (!force) {
-      return {
-        refuse: true,
-        reason: `Refusing to write ${snapshotPath}: this parse produced 0 leases (previous snapshot had ${previous.length}) -- this looks like a bad parse, not a genuine full portfolio wind-down. portfolio.json was NOT modified. Re-run with --force if this is a real, intentional event.`,
-      };
-    }
+  const core = evaluateAnomalyFloorCore(previous.length, current.length, removedIds.length, force);
+  if (core.refuse) {
+    const eventKind = current.length === 0 ? 'event' : 'mass-disposition event';
     return {
-      refuse: false,
-      warning: `--force: proceeding despite a 0-lease current parse (previous snapshot had ${previous.length}).`,
+      refuse: true,
+      reason: `Refusing to write ${snapshotPath}: ${core.reason} portfolio.json was NOT modified. Re-run with --force if this is a real, intentional ${eventKind}.`,
     };
   }
-
-  // Refuse to overwrite a known-good snapshot with a suspiciously small one: a parse that goes
-  // wrong for a reason OTHER than genuine lease removal (workbook read mid-save, a renamed/missing
-  // worksheet section, a wrong WORKBOOK_PATH resolving to the wrong file) must not silently replace
-  // real data. Fraction is of the OLD (previous) set that vanished -- removedIds.length /
-  // previous.length -- not some other ratio. Gated on `current.length > 0` because the
-  // current.length === 0 case is fully handled by the branch above.
-  if (previous.length > 0) {
-    const removedFraction = removedIds.length / previous.length;
-    const anomalous = removedFraction > 0.25;
-    if (anomalous) {
-      if (!force) {
-        return {
-          refuse: true,
-          reason: `Refusing to write ${snapshotPath}: previous snapshot had ${previous.length} lease(s), this parse produced ${current.length}, ${removedIds.length} (${(removedFraction * 100).toFixed(1)}%) would be removed -- this looks like a bad parse, not a genuine mass disposition. portfolio.json was NOT modified. Re-run with --force if this is a real, intentional mass-disposition event.`,
-        };
-      }
-      return {
-        refuse: false,
-        warning: `--force: proceeding despite ${removedIds.length}/${previous.length} (${(removedFraction * 100).toFixed(1)}%) leases removed (current count ${current.length}).`,
-      };
-    }
+  if (core.warning) {
+    return { refuse: false, warning: `--force: ${core.warning}` };
   }
-
   return { refuse: false };
 }
 

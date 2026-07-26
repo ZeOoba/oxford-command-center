@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { watch } from 'chokidar';
 import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, type DealStage, type RenewalStage, type CompSet, type AcquisitionInput, type TenantArrears } from '../src/contracts/index';
@@ -9,6 +9,7 @@ import { applyOverlay, loadOverlay, saveOverlay, type Overlay } from './overlay'
 import { checkSnapshot } from './reconcile-runtime';
 import { SNAPSHOT_PATH, workbookPath, referenceDate } from './config';
 import { loadQuickbooks } from './sources/quickbooks';
+import { evaluateAnomalyFloor, loadPreviousLeaseIds } from './anomaly-floor';
 
 /**
  * The live brain: single source of in-memory truth. Parses the workbook on demand,
@@ -45,6 +46,37 @@ class Brain extends EventEmitter {
     this.setState({ status: 'refreshing' });
     try {
       const { snapshot, flags } = await parseWorkbook(workbookPath());
+
+      // Anomaly floor: gate the in-memory ADOPTION itself, not just the disk mirror below --
+      // this.snapshot is what refresh()/rederive() serve live to the UI/API, so refusing only
+      // the file write would still hand every downstream reader a corrupted lease set
+      // immediately. On every refresh after the first, the true previous lease set already
+      // lives in memory (this.snapshot, read here before anything below reassigns it) --
+      // cheaper than a disk re-read and unaffected by any OneDrive-sync race on the mirror
+      // file. Only the very first refresh since server startup (this.snapshot still null) has
+      // no in-memory baseline, so it falls back to the on-disk mirror from a prior session, the
+      // same baseline a one-shot CLI regen would use. A refusal here is thrown so it flows
+      // through the existing catch/fallback path below exactly like a parseWorkbook() failure --
+      // no separate error-handling branch needed.
+      let previousIds: Set<string>;
+      if (this.snapshot) {
+        previousIds = new Set(this.snapshot.leases.map((l) => l.id));
+      } else {
+        const previous = loadPreviousLeaseIds(SNAPSHOT_PATH);
+        if (previous.corrupt) {
+          // Not a refusal (see loadPreviousLeaseIds' doc comment -- a live server must not
+          // refuse a good fresh parse just because a stale mirror is unreadable), but it must
+          // not be invisible: the removed-fraction check below is about to run with no real
+          // baseline, silently, unless this is logged.
+          console.error(`✗ Brain.refresh: previous mirror at ${SNAPSHOT_PATH} is corrupt -- proceeding with no removed-fraction baseline for this refresh.`);
+        }
+        previousIds = previous.ids;
+      }
+      const currentIds = new Set(snapshot.leases.map((l) => l.id));
+      const removedCount = [...previousIds].filter((id) => !currentIds.has(id)).length;
+      const floor = evaluateAnomalyFloor(previousIds.size, currentIds.size, removedCount);
+      if (floor.refuse) throw new Error(floor.reason);
+
       this.base = snapshot;
       const merged = applyOverlay(snapshot, this.overlay);
       // Attach QuickBooks actuals (read on every refresh; null if QUICKBOOKS_CSV not set/present).
@@ -172,11 +204,31 @@ class Brain extends EventEmitter {
   }
 
   private persist(snapshot: PortfolioSnapshot) {
+    // Declared outside the try so the catch below can clean it up -- a renameSync failure still
+    // leaves the temp file written by writeFileSync on disk; without this it leaks a
+    // `.tmp-<pid>-<timestamp>` file on every failed persist (2026-07-26 adversarial review finding).
+    let tmp: string | undefined;
     try {
       mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });
-      writeFileSync(SNAPSHOT_PATH, JSON.stringify(snapshot, null, 2));
-    } catch {
-      /* mirror persistence is best-effort */
+      // Atomic write (temp file + rename): a crash or a reader mid-read must never see a
+      // truncated/partial portfolio.json -- same pattern as scripts/extract-workbook.ts and
+      // scripts/lease-snapshot-drift-check.ts, which write the same file.
+      tmp = `${SNAPSHOT_PATH}.tmp-${process.pid}-${Date.now()}`;
+      writeFileSync(tmp, JSON.stringify(snapshot, null, 2));
+      renameSync(tmp, SNAPSHOT_PATH);
+    } catch (err) {
+      // Mirror persistence is best-effort -- a write failure must not crash the live server or
+      // block serving this.snapshot from memory -- but it must not be INVISIBLE either: a
+      // silently-stale portfolio.json would mislead every external reader (the daily brief,
+      // loadFallback() after a restart) with no trace of why. Logged, not swallowed.
+      console.error(`✗ Brain.persist: failed to write ${SNAPSHOT_PATH}:`, err instanceof Error ? err.message : err);
+      if (tmp) {
+        try {
+          unlinkSync(tmp);
+        } catch {
+          /* best-effort cleanup of the orphaned temp file -- the logged error above is what matters */
+        }
+      }
     }
   }
 
