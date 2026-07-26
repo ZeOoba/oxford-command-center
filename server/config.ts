@@ -27,6 +27,29 @@ export function workbookPath(): string {
 export const SNAPSHOT_PATH =
   process.env.SNAPSHOT_PATH ?? join(process.cwd(), 'data', 'snapshots', 'portfolio.json');
 
+/** Default max age before a persisted portfolio.json is treated as stale rather than current. */
+export const SNAPSHOT_MAX_AGE_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+export function snapshotAgeMs(nowMs: number, generatedAtIso: string): number {
+  return nowMs - new Date(generatedAtIso).getTime();
+}
+
+/** Tolerance for a `generatedAt` that lands slightly in the future (ordinary clock jitter between
+ *  the machine that wrote the snapshot and the machine that's checking it). Beyond this, a
+ *  future-dated stamp is itself a red flag (clock skew or a corrupted-but-parseable timestamp)
+ *  and must not read as "fresh forever". */
+const CLOCK_SKEW_TOLERANCE_MS = 5 * 60 * 1000; // 5 min
+
+/** Fails loud (treats as stale) on an unparseable generatedAt rather than silently trusting it. */
+export function isSnapshotStale(
+  nowMs: number,
+  generatedAtIso: string,
+  maxAgeMs: number = SNAPSHOT_MAX_AGE_MS,
+): boolean {
+  const age = snapshotAgeMs(nowMs, generatedAtIso);
+  return !Number.isFinite(age) || age > maxAgeMs || age < -CLOCK_SKEW_TOLERANCE_MS;
+}
+
 /**
  * Resolved at CALL time (not module load) — same rationale as workbookPath() above: a top-level
  * `const` freezes in whatever process.env held when config.ts was first imported, which happens
@@ -41,10 +64,13 @@ export function serverPort(): number {
 /**
  * The workbook's stated DATA "As of" date for v1 (the file carries June 1, 2026).
  * This is the WORKBOOK-DATA date only: it selects the workbook data-month column
- * (parse.ts monthCol) and stamps data-snapshot/data-freshness labels (meta.asOf, cash.asOf,
- * macro asOf). It is deliberately NOT the reference for day-count math or the Daily Brief
- * body's "As of" label — those track referenceDate() below (frozen-dateline defect, 2026-07:
- * this constant froze every "expires in Nd" and the brief dateline at June 1).
+ * (parse.ts monthCol) and stamps macro asOf labels. Since OI-023 (2026-07-22) the snapshot's
+ * provenance labels (meta.asOf, cash.asOf, assumptions.asOf) read the workbook's OWN "As of"
+ * dateline (parse.ts sheetDataAsOf) — this constant is only their flagged fallback, so a
+ * stale pin can no longer masquerade as current data. It is deliberately NOT the reference
+ * for day-count math or the Daily Brief body's "As of" label — those track referenceDate()
+ * below (frozen-dateline defect, 2026-07: this constant froze every "expires in Nd" and the
+ * brief dateline at June 1).
  */
 export const WORKBOOK_AS_OF = process.env.WORKBOOK_AS_OF ?? '2026-06-01';
 

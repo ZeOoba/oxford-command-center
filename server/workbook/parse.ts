@@ -114,6 +114,52 @@ export function inferType(raw: string | null): PropertyType {
   return 'Other';
 }
 
+// ── workbook dateline (provenance "As of") ──────────────────────────────────
+const MONTH_INDEX: Record<string, number> = {
+  january: 1, february: 2, march: 3, april: 4, may: 5, june: 6,
+  july: 7, august: 8, september: 9, october: 10, november: 11, december: 12,
+};
+
+/**
+ * Extract an ISO date from a sheet dateline like
+ * "As of July 17, 2026   │   137 tenants   │   513,000 SF leased" (rent roll / assumptions,
+ * TEXT(TODAY(),...) cached at last save) or "As of July 10, 2026" (Cash Balances,
+ * data-derived MAX of the Cash Data date row). Deterministic string parse — deliberately no
+ * `new Date(text)` round-trip, whose local-timezone midnight can shift the ISO day (OI-023).
+ */
+export function datelineToIso(text: string): string | null {
+  const m = /as of\s+([a-z]+)\.?\s+(\d{1,2}),?\s+(\d{4})/i.exec(text);
+  if (!m) return null;
+  const token = m[1]!.toLowerCase();
+  const month =
+    MONTH_INDEX[token] ??
+    (token.length >= 3
+      ? Object.entries(MONTH_INDEX).find(([name]) => name.startsWith(token))?.[1] ?? null
+      : null);
+  if (!month) return null;
+  const day = Number(m[2]);
+  const year = Number(m[3]);
+  if (day < 1 || day > 31 || year < 1990 || year > 2100) return null;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/**
+ * Scan the top of a sheet (column A) for its own "As of …" dateline. The real workbook stores
+ * these as formulas; ExcelJS surfaces the CACHED result from the last save, which cv() unwraps.
+ * Returns null when no parseable dateline exists (e.g. programmatic fixtures with no cached
+ * formula results) — callers fall back LOUDLY via a DataQualityFlag, never silently (OI-023).
+ */
+export function sheetDataAsOf(ws: Worksheet, maxRows = 6): string | null {
+  const last = Math.min(maxRows, ws.rowCount);
+  for (let r = 1; r <= last; r++) {
+    const text = str(row(ws, r, 1));
+    if (!text) continue;
+    const iso = datelineToIso(text);
+    if (iso) return iso;
+  }
+  return null;
+}
+
 /**
  * Property.id is `slug(name)` (parse.ts), and it is the join key for every downstream
  * consumer — capital-allocation, debt-scoring, the warehouse crosswalk, overlay note keys.
@@ -151,6 +197,152 @@ export function disambiguatePropertyIds<T extends { id: string; name: string }>(
     });
     item.id = candidate;
     taken.add(candidate);
+  }
+  return items;
+}
+
+/**
+ * Lease.id twin of disambiguatePropertyIds above — same collision-in-parse-order semantics,
+ * described via tenant identity instead of a property `name`. Deliberately NOT a shared
+ * generalization of disambiguatePropertyIds: keeping them independent means this fix cannot
+ * perturb the already-shipped, already-tested property-id path.
+ *
+ * Suffix assignment WITHIN a collision group (2+ items sharing the same natural/pre-disambiguation
+ * id) is decided by a deterministic property of the LEASE CONTENT — leaseEnd asc, then leaseStart
+ * asc, then monthlyRent asc, then annualRent asc, then sf asc (nulls/undefined sort last at every
+ * step) — NOT by parse/array order (Defect J, round-2 REFUTE; annualRent/sf added round-3 REFUTE).
+ * Two rows that share an IDENTICAL natural id (e.g. a tenant's expiring lease plus its own
+ * already-executed renewal, both listed as separate rent-roll rows for the same suite) previously
+ * had the bare base id assigned to whichever happened to parse first, so a worksheet re-sort (e.g.
+ * by lease-end date) silently moved any overlay data (arrears, renewal stage, market rent) attached
+ * to that id from one physical lease record to the other. Groups are themselves processed in a
+ * canonical (sorted-by-base-id) order so the overall outcome — including which candidate suffixes
+ * are still free for one group after another group has claimed some — is independent of the
+ * original items[] array order, not just independent of order WITHIN a group.
+ *
+ * Round-3 REFUTE (HIGH): the original 3-field chain (leaseEnd/leaseStart/monthlyRent) was not a
+ * TOTAL order — two rows that tie on all three (identical dates AND monthlyRent, but a different
+ * `sf` or an `annualRent` read independently from a different workbook column that can diverge from
+ * `monthlyRent * 12`) had nothing left to break the tie on, so the sort's stability silently fell
+ * back to array (worksheet row) order for that residual case — reintroducing the exact instability
+ * this function exists to eliminate, just one level further down the tie-break chain. Extending the
+ * chain with annualRent then sf closes every realistic case; if items STILL tie after all five
+ * fields, that is a genuine full content duplicate — array order remains the fallback there (there
+ * is nothing else to break the tie on), but the emitted flag message says so explicitly instead of
+ * claiming a "deterministic order" the code didn't actually deliver for that residual group.
+ *
+ * leaseEnd/leaseStart/monthlyRent/annualRent/sf are all OPTIONAL on the constraint (absent →
+ * treated as null/tied) so a caller that doesn't carry lease-content fields (e.g. this file's own
+ * unit tests) still type-checks and falls back to array order via the sort's stability, matching
+ * pre-Defect-J behavior exactly.
+ */
+export function disambiguateLeaseIds<
+  T extends {
+    id: string;
+    tenantName: string;
+    company: string | null;
+    leaseEnd?: string | null;
+    leaseStart?: string | null;
+    monthlyRent?: number | null;
+    annualRent?: number | null;
+    sf?: number | null;
+  },
+>(items: T[], flags: DataQualityFlag[]): T[] {
+  // Every row's NATURAL id, computed up front -- a synthetic "-N" candidate below must never
+  // claim one of these, or a colliding lease early in parse order could steal a not-yet-processed
+  // lease's rightful id, flipping ownership under row reordering (the exact instability this
+  // function exists to eliminate, reintroduced in the collision-adjacent id space).
+  const allNaturalIds = new Set(items.map((i) => i.id));
+
+  // Group items by their natural (pre-disambiguation) id -- collisions only exist within a group.
+  const groups = new Map<string, T[]>();
+  for (const item of items) {
+    const g = groups.get(item.id);
+    if (g) g.push(item);
+    else groups.set(item.id, [item]);
+  }
+
+  // (nullRank, comparable) -- absent/null sorts after any real value, matching "nulls last".
+  const rank = (v: string | number | null | undefined): [number, string | number] =>
+    v === null || v === undefined ? [1, ''] : [0, v];
+  const compareRanked = (a: string | number | null | undefined, b: string | number | null | undefined): number => {
+    const [aNull, aVal] = rank(a);
+    const [bNull, bVal] = rank(b);
+    if (aNull !== bNull) return aNull - bNull;
+    if (aVal === bVal) return 0;
+    return aVal < bVal ? -1 : 1;
+  };
+  // String form of `rank()`, used only to build a full-chain equality KEY (not a comparison) for
+  // clustering fully-tied items -- see the fullKey usage below.
+  const compareRankedKey = (v: string | number | null | undefined): string => {
+    const [nullRank, val] = rank(v);
+    return `${nullRank}:${val}`;
+  };
+
+  const taken = new Set<string>();
+  // Canonical (alphabetical) base-id order -- makes the WHOLE function's output independent of the
+  // original items[] order, not just order within one group (required for Invariant 5-style
+  // determinism: distinct collision groups never fight over each other's candidate suffixes, but
+  // processing them in a fixed order removes even that theoretical dependency).
+  for (const base of [...groups.keys()].sort()) {
+    const group = groups.get(base)!;
+    if (group.length === 1) {
+      taken.add(base); // no collision -- keeps its natural id untouched, exactly as before
+      continue;
+    }
+    // Deterministic tie-break chain. Array.prototype.sort is stable, so when every ranked field
+    // ties (e.g. this file's own tests, which don't set any of the five content fields), the
+    // group's original relative (array) order decides -- identical to pre-Defect-J behavior.
+    const sorted = [...group].sort(
+      (a, b) =>
+        compareRanked(a.leaseEnd, b.leaseEnd) ||
+        compareRanked(a.leaseStart, b.leaseStart) ||
+        compareRanked(a.monthlyRent, b.monthlyRent) ||
+        compareRanked(a.annualRent, b.annualRent) ||
+        compareRanked(a.sf, b.sf),
+    );
+    // Round-3 REFUTE (HIGH): the prior 3-field chain wasn't a TOTAL order over lease content -- two
+    // rows tying on leaseEnd/leaseStart/monthlyRent (but differing sf, or an annualRent read
+    // independently from a different workbook column that can diverge from monthlyRent * 12) had
+    // nothing left to break the tie on, silently falling back to array/worksheet-row order for that
+    // residual case -- exactly the instability this function exists to eliminate. The chain above now
+    // also covers annualRent/sf; cluster items by whether the FULL 5-field key still ties (equal-key
+    // items are always contiguous after this sort, since it's a total preorder on that key) so the
+    // flag text below can say honestly whether the chain actually decided this item's position, or
+    // whether it's a genuine full content duplicate that fell back to array order.
+    const fullKey = (v: T): string =>
+      [compareRankedKey(v.leaseEnd), compareRankedKey(v.leaseStart), compareRankedKey(v.monthlyRent), compareRankedKey(v.annualRent), compareRankedKey(v.sf)].join('|');
+    const fullKeyCounts = new Map<string, number>();
+    for (const item of sorted) {
+      const k = fullKey(item);
+      fullKeyCounts.set(k, (fullKeyCounts.get(k) ?? 0) + 1);
+    }
+    // First in the deterministic order keeps the bare base id (already equals it -- explicit for
+    // clarity, since "first" is no longer necessarily items[0] within the group).
+    taken.add(base);
+    for (let i = 1; i < sorted.length; i++) {
+      const item = sorted[i]!;
+      let n = 2;
+      let candidate = `${base}-${n}`;
+      while (taken.has(candidate) || allNaturalIds.has(candidate)) {
+        n += 1;
+        candidate = `${base}-${n}`;
+      }
+      const clusterSize = fullKeyCounts.get(fullKey(item)) ?? 1;
+      const issue =
+        clusterSize > 1
+          ? `lease id collision on "${base}" (tenant "${item.company ?? item.tenantName}") — disambiguated to "${candidate}" (tie-broken by leaseEnd/leaseStart/monthlyRent/annualRent/sf; ${clusterSize} members remained fully tied and were ordered by worksheet position — a true content duplicate)`
+          : `lease id collision on "${base}" (tenant "${item.company ?? item.tenantName}") — disambiguated to "${candidate}" (deterministic order: leaseEnd asc, then leaseStart, then monthlyRent, then annualRent, then sf, nulls last)`;
+      flags.push({
+        entity: candidate,
+        field: 'id',
+        issue,
+        rawValue: base,
+        severity: 'warn',
+      });
+      item.id = candidate;
+      taken.add(candidate);
+    }
   }
   return items;
 }
@@ -259,13 +451,16 @@ function parseLeases(
   referenceDateIso: string,
 ): LeasesParseResult {
   const out: Lease[] = [];
+  const pendingRowFlags: { lease: Lease; rowFlags: DataQualityFlag[] }[] = [];
   let workbookRentTotal: number | null = null;
   let foundPortfolioTotalRow = false;
   // Day-count reference = the RUN date, NOT the workbook data date: a June-pinned
   // WORKBOOK_AS_OF froze every monthsToExpiry while the calendar advanced (frozen-dateline
   // defect, 2026-07). WORKBOOK_AS_OF still governs data-month selection (monthCol in
-  // parseTasks below) and data-snapshot labels — do not conflate the two. The caller resolves
-  // the exact reference (the brief passes its ET send date; other callers pass the UTC default).
+  // parseTasks below) — do not conflate the two. Data-snapshot labels (meta.asOf, cash.asOf,
+  // assumptions.asOf) read the workbook's OWN dateline since OI-023 (2026-07-22), with
+  // WORKBOOK_AS_OF as the flagged fallback. The caller resolves the exact day-count
+  // reference (the brief passes its ET send date; other callers pass the UTC default).
   const asOf = parseISO(referenceDateIso);
   for (let r = 1; r <= ws.rowCount; r++) {
     const propertyKey = str(row(ws, r, 1));
@@ -284,35 +479,59 @@ function parseLeases(
     const monthlyRent = num(row(ws, r, 6));
     const annualRent = num(row(ws, r, 13));
     if (monthlyRent === null && annualRent === null) continue;
-    const id = `${slug(propertyKey)}-${slug(str(row(ws, r, 3)) ?? tenantName)}-${r}`;
-    const leaseEnd = isoOrNull(row(ws, r, 9), flags, id, 'leaseEnd');
+    const unit = str(row(ws, r, 3));
+    // Tenant identity is part of the id, not just the fallback for a missing unit: a suite
+    // turnover (same unit, new tenant) must produce a DIFFERENT id, or every overlay entry keyed
+    // to the old id (tenantArrears, renewalStages, marketRents) silently re-attaches to the new
+    // tenant's lease -- a real defect a mandatory adversarial review round found (financial data
+    // silently misattributed to the wrong counterparty on the routine suite-turnover case).
+    const tenantSlug = slug(str(row(ws, r, 4)) ?? tenantName);
+    const id = unit
+      ? `${slug(propertyKey)}-${slug(unit)}-${tenantSlug}`
+      : `${slug(propertyKey)}-${tenantSlug}`;
+    // Date-quality flags for this row are collected locally, not pushed to `flags` directly:
+    // `id` here is pre-disambiguation and may be renamed once disambiguateLeaseIds runs over the
+    // full `out` array below, which would otherwise leave a stale `entity` on any flag raised
+    // before the rename -- misattributing a data-quality warning to the wrong lease on a collision.
+    const rowFlags: DataQualityFlag[] = [];
+    const leaseEnd = isoOrNull(row(ws, r, 9), rowFlags, id, 'leaseEnd');
     const rawStatus = (str(row(ws, r, 12)) ?? '').toLowerCase();
     let status: LeaseStatus = 'Unknown';
     if (rawStatus.includes('expiring')) status = 'Expiring Soon';
     else if (rawStatus.includes('expired')) status = 'Expired';
     else if (rawStatus.includes('active')) status = 'Active';
     else if (rawStatus.includes('vacant')) status = 'Vacant';
-    out.push({
+    const lease: Lease = {
       id,
       propertyKey,
       propertyId: resolvePropertyId(propertyKey, properties),
       tenantName,
-      unit: str(row(ws, r, 3)),
+      unit,
       company: str(row(ws, r, 4)),
       sf: num(row(ws, r, 5)) ?? 0,
       monthlyRent: monthlyRent ?? 0,
       rentPerSf: num(row(ws, r, 7)),
-      leaseStart: isoOrNull(row(ws, r, 8), flags, id, 'leaseStart'),
+      leaseStart: isoOrNull(row(ws, r, 8), rowFlags, id, 'leaseStart'),
       leaseEnd,
-      escalationDate: isoOrNull(row(ws, r, 10), flags, id, 'escalationDate'),
+      escalationDate: isoOrNull(row(ws, r, 10), rowFlags, id, 'escalationDate'),
       escalationPct: num(row(ws, r, 11)),
       status,
       annualRent: annualRent ?? (monthlyRent ?? 0) * 12,
       monthsToExpiry: leaseEnd ? differenceInCalendarMonths(parseISO(leaseEnd), asOf) : null,
       flags: [],
-    });
+    };
+    out.push(lease);
+    pendingRowFlags.push({ lease, rowFlags });
   }
-  return { leases: out, workbookRentTotal };
+  const finalLeases = disambiguateLeaseIds(out, flags);
+  // Now that every lease's id is final, re-home each row's locally-collected flags onto the real
+  // `flags` array with the corrected (possibly disambiguated) entity -- see the rowFlags comment
+  // above. Correlated by object reference (`lease`), not by id string, so it stays correct even
+  // when two leases shared the same pre-dedup base id.
+  for (const { lease, rowFlags } of pendingRowFlags) {
+    for (const f of rowFlags) flags.push({ ...f, entity: lease.id });
+  }
+  return { leases: finalLeases, workbookRentTotal };
 }
 
 // ── loans (Loan Index — section-aware) ────────────────────────────────────────
@@ -367,7 +586,13 @@ function parseLoans(ws: Worksheet, flags: DataQualityFlag[]): Loan[] {
 }
 
 // ── cash (Cash Balances) ──────────────────────────────────────────────────────
-function parseCash(ws: Worksheet, flags: DataQualityFlag[]) {
+/**
+ * @param fallbackAsOf Provenance fallback when the sheet carries no parseable "As of" dateline
+ *   (the resolved workbook dateline, itself falling back to WORKBOOK_AS_OF — OI-023). The Cash
+ *   Balances dateline is data-derived (MAX of the Cash Data date row) and can legitimately sit
+ *   earlier than the rent roll's TODAY()-cached stamp, so it is read per-sheet, not shared.
+ */
+function parseCash(ws: Worksheet, flags: DataQualityFlag[], fallbackAsOf: string) {
   const entities: CashEntity[] = [];
   let totalCash: number | null = null;
 
@@ -453,8 +678,18 @@ function parseCash(ws: Worksheet, flags: DataQualityFlag[]) {
   const sorted = [...entities].sort((a, b) => b.currentBalance - a.currentBalance);
   const largest = sorted[0] ?? null;
 
+  const ownAsOf = sheetDataAsOf(ws);
+  if (!ownAsOf) {
+    flags.push({
+      entity: 'cash',
+      field: 'asOf',
+      issue: `no parseable "As of" dateline on the Cash Balances sheet — provenance falls back to ${fallbackAsOf}`,
+      severity: 'warn',
+    });
+  }
+
   return {
-    asOf: WORKBOOK_AS_OF,
+    asOf: ownAsOf ?? fallbackAsOf,
     totalCash: total,
     activeEntities: entities.length,
     largestEntity: largest?.entity ?? null,
@@ -559,7 +794,8 @@ function parseTasks(ws: Worksheet): Task[] {
 }
 
 // ── assumptions (Assumptions) — label-scanned ─────────────────────────────────
-function parseAssumptions(ws: Worksheet) {
+/** @param fallbackAsOf See parseCash — same OI-023 per-sheet dateline convention. */
+function parseAssumptions(ws: Worksheet, flags: DataQualityFlag[], fallbackAsOf: string) {
   let activeScenario: ScenarioName = 'Base';
   let balloonAlertMonths = 18;
   let concentrationYellow = 0.25;
@@ -576,13 +812,22 @@ function parseAssumptions(ws: Worksheet) {
     else if (/concentration.*red/i.test(label)) concentrationRed = num(val) ?? 0.5;
   }
   const preset = SCENARIO_PRESETS[activeScenario];
+  const ownAsOf = sheetDataAsOf(ws);
+  if (!ownAsOf) {
+    flags.push({
+      entity: 'assumptions',
+      field: 'asOf',
+      issue: `no parseable "As of" dateline on the Assumptions sheet — provenance falls back to ${fallbackAsOf}`,
+      severity: 'warn',
+    });
+  }
   return {
     activeScenario,
     revenueFactor: preset.revenueFactor,
     vacancyFactor: preset.vacancyFactor,
     exitCapFactor: preset.exitCapFactor,
     thresholds: { balloonAlertMonths, concentrationYellow, concentrationRed },
-    asOf: WORKBOOK_AS_OF,
+    asOf: ownAsOf ?? fallbackAsOf,
   };
 }
 
@@ -610,22 +855,39 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
     return ws;
   };
 
+  // Provenance "As of" (OI-023): the workbook's own rent-roll dateline is the data date the
+  // snapshot advertises (TopBar / module badges / portfolio.json). The June-pinned
+  // WORKBOOK_AS_OF constant is only the LOUD fallback — a missing dateline surfaces as a
+  // DataQualityFlag, never a silent stale label. monthCol (parseTasks) deliberately stays on
+  // WORKBOOK_AS_OF — see the comment above parseLeases.
+  const rentRollWs = get('Master Tenant Rent Roll');
+  const workbookDataAsOf = sheetDataAsOf(rentRollWs);
+  if (!workbookDataAsOf) {
+    flags.push({
+      entity: 'meta',
+      field: 'asOf',
+      issue: `no parseable "As of" dateline on the Master Tenant Rent Roll sheet — provenance falls back to WORKBOOK_AS_OF (${WORKBOOK_AS_OF})`,
+      severity: 'warn',
+    });
+  }
+  const dataAsOf = workbookDataAsOf ?? WORKBOOK_AS_OF;
+
   const { properties, workbookNoiTotal, workbookValueTotal } = parseProperties(get('Property NOI'), flags);
-  const { leases, workbookRentTotal } = parseLeases(get('Master Tenant Rent Roll'), properties, flags, refIso);
+  const { leases, workbookRentTotal } = parseLeases(rentRollWs, properties, flags, refIso);
   const loans = parseLoans(get('Loan Index'), flags);
-  const cash = parseCash(get('Cash Balances'), flags);
+  const cash = parseCash(get('Cash Balances'), flags, dataAsOf);
   const insurance = parseInsurance(get('Insurance Renewals'), flags);
   const checklistTasks = parseTasks(get('Monthly Checklist'));
   const m365Tasks = await loadM365Tasks(); // live M365 To-Do prepended when GRAPH_TOKEN set, else []
   const tasks = m365Tasks.length ? [...m365Tasks, ...checklistTasks] : checklistTasks;
-  const assumptions = parseAssumptions(get('Assumptions'));
+  const assumptions = parseAssumptions(get('Assumptions'), flags, dataAsOf);
   const deals = await loadDeals(); // live Notion pipeline merged onto seed when configured, else seed
   const counterparties = deriveCounterparties({ properties, loans, insurance, deals });
 
   const snapshot = PortfolioSnapshot.parse({
     meta: {
       schemaVersion: SCHEMA_VERSION,
-      asOf: WORKBOOK_AS_OF,
+      asOf: dataAsOf,
       generatedAt: new Date().toISOString(),
       source: 'Master Excel Template Company Wide -- Oxford.xlsx',
       scenario: assumptions.activeScenario,

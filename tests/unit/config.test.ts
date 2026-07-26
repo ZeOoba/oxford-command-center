@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { workbookPath, serverPort } from '../../server/config';
+import { workbookPath, serverPort, snapshotAgeMs, isSnapshotStale } from '../../server/config';
 
 describe('serverPort()', () => {
   const original = process.env.BRAIN_SERVER_PORT;
@@ -44,5 +44,58 @@ describe('workbookPath()', () => {
   it('falls back to the OneDrive default path when unset', () => {
     delete process.env.WORKBOOK_PATH;
     expect(workbookPath()).toContain('Master Excel Template Company Wide -- Oxford.xlsx');
+  });
+});
+
+describe('snapshotAgeMs / isSnapshotStale — portfolio.json staleness guard', () => {
+  it('computes age in ms between now and generatedAt', () => {
+    const now = new Date('2026-07-24T12:00:00.000Z').getTime();
+    const generatedAt = '2026-07-24T10:00:00.000Z';
+    expect(snapshotAgeMs(now, generatedAt)).toBe(2 * 60 * 60 * 1000);
+  });
+
+  it('is not stale within the default 6h threshold', () => {
+    const now = new Date('2026-07-24T12:00:00.000Z').getTime();
+    const generatedAt = '2026-07-24T10:00:00.000Z';
+    expect(isSnapshotStale(now, generatedAt)).toBe(false);
+  });
+
+  it('is stale past the default 6h threshold', () => {
+    const now = new Date('2026-07-24T12:00:00.000Z').getTime();
+    const generatedAt = '2026-07-24T05:00:00.000Z'; // 7h old
+    expect(isSnapshotStale(now, generatedAt)).toBe(true);
+  });
+
+  it('respects a custom threshold', () => {
+    const now = new Date('2026-07-24T12:00:00.000Z').getTime();
+    const generatedAt = '2026-07-24T11:00:00.000Z'; // 1h old
+    expect(isSnapshotStale(now, generatedAt, 30 * 60 * 1000)).toBe(true); // 30min threshold
+  });
+
+  it('treats an unparseable generatedAt as stale (fail loud, not silent)', () => {
+    const now = new Date('2026-07-24T12:00:00.000Z').getTime();
+    expect(isSnapshotStale(now, 'not-a-date')).toBe(true);
+  });
+
+  it('is not stale exactly at the threshold (strict > comparison, not >=)', () => {
+    const now = new Date('2026-07-24T12:00:00.000Z').getTime();
+    const generatedAt = '2026-07-24T06:00:00.000Z'; // exactly 6h old
+    expect(isSnapshotStale(now, generatedAt)).toBe(false);
+  });
+
+  it('REFUTE Defect E — treats a future-dated generatedAt (beyond clock-skew tolerance) as STALE, not fresh forever', () => {
+    // Pre-fix: a negative age (future generatedAt) never satisfies `age > maxAgeMs`, so a
+    // clock-skewed or corrupted-but-parseable future timestamp read as fresh and STAYED fresh
+    // until real time caught up to the future stamp plus the threshold. A future timestamp is
+    // itself a red flag this fail-loud function must not wave through.
+    const now = new Date('2026-07-24T12:00:00.000Z').getTime();
+    const generatedAt = '2026-07-24T13:00:00.000Z'; // 1h in the future — well beyond the 5min tolerance
+    expect(isSnapshotStale(now, generatedAt)).toBe(true);
+  });
+
+  it('does not over-eagerly flag ordinary clock jitter — a few seconds in the future stays fresh', () => {
+    const now = new Date('2026-07-24T12:00:00.000Z').getTime();
+    const generatedAt = '2026-07-24T12:00:10.000Z'; // 10s in the future — well within the 5min tolerance
+    expect(isSnapshotStale(now, generatedAt)).toBe(false);
   });
 });

@@ -37,6 +37,31 @@ export const DELIVERY_ONLY_PATHS: ReadonlySet<string> = new Set([
   'server/warehouse/ic-memo.ts',
 ]);
 
+// Financial CONTRACT schemas (2026-07-24, PR #233 follow-up): a Zod contract change can carry
+// direct governor blast radius — the LTV-bound episode put a magnitude bound on loan.ts's ltv
+// field that made ONE bad workbook cell fail the ENTIRE portfolio snapshot parse, and the same
+// field feeds computePortfolioAggregateLtv's Hard-Invariant-4 verdict. Yet no contracts file
+// required a refute trailer: this gate had the same file-enumeration blind spot the weekly
+// sweep's path list did. Enumerated (not the whole src/contracts/ dir) because most contracts
+// there are non-financial plumbing (lease, property, insurance display shapes) — these four are
+// the ones whose fields are consumed by governor/scoring math.
+const FINANCIAL_CONTRACT_PATHS: ReadonlySet<string> = new Set([
+  'src/contracts/loan.ts',
+  'src/contracts/debt.ts',
+  'src/contracts/warehouse.ts',
+  'src/contracts/macro.ts',
+  // Round-9 (fifth adversarial pass — all three lenses flagged the omission independently, one
+  // by executing this very function): capital.ts holds HurdleRateConfig, the RATIFIED
+  // hurdle-rate governor (bounds + ratification superRefine) consumed by capital-allocation.ts
+  // and calibration.ts; capital-allocation.ts is the H6 read boundary bounding the capstone
+  // scoring response (priorityScore/debtScore/dscr). Both meet the inclusion criterion above.
+  // Evaluated and deliberately NOT included (yet): scenario.ts (alert display thresholds, no
+  // governor math consumes its fields directly) and tax.ts (feeds tax-analysis display; add it
+  // if a capital-decision path ever branches on its parsed fields — re-evaluate on next sweep).
+  'src/contracts/capital.ts',
+  'src/contracts/capital-allocation.ts',
+]);
+
 /** True when a changed path holds financial-decision SOURCE (not a test / doc / json fixture). */
 export function isFinancialSourcePath(p: string): boolean {
   const path = p.replace(/\\/g, '/');
@@ -45,6 +70,7 @@ export function isFinancialSourcePath(p: string): boolean {
   return (
     path.startsWith('src/analytics/') ||
     path.startsWith('server/warehouse/') ||
+    FINANCIAL_CONTRACT_PATHS.has(path) ||
     path === 'src/brain/anomaly-insights.ts' ||
     path === 'src/brain/principal-digest.ts' ||
     path === 'server/overlay.ts'
