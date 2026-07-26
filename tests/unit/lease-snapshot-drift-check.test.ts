@@ -17,7 +17,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { businessKey, computeDrift, evaluateAnomalyFloor, loadPrevious, type AnomalyFloorResult, type DriftLeaseView } from '../../scripts/lease-snapshot-drift-check';
+import { businessKey, computeDrift, evaluateAnomalyFloor, formatDriftReport, loadPrevious, type AnomalyFloorResult, type DriftLeaseView } from '../../scripts/lease-snapshot-drift-check';
 
 /** Asserts refusal and narrows the discriminated union so `.reason` type-checks below. */
 function expectRefused(result: AnomalyFloorResult): { refuse: true; reason: string } {
@@ -389,5 +389,84 @@ describe('loadPrevious', () => {
     const result = loadPrevious(path);
 
     expect(result.corrupt).toBe(true);
+  });
+});
+
+// formatDriftReport is the function that actually would have caught the 2026-07-25 incident
+// (REDACTED-386 / REDACTED-220 leaseEnd corruption) -- evaluateAnomalyFloor
+// is count-based and stays silent when nothing is added or removed, only changed. This is the
+// regression cover for THAT gap specifically, not a restatement of computeDrift's own tests above.
+describe('formatDriftReport', () => {
+  it('reports hasDrift: false and a clean-run line when nothing changed', () => {
+    const leases = [lease({ id: 'id-1', company: 'Acme LLC' })];
+    const drift = computeDrift(leases, leases);
+
+    const report = formatDriftReport(drift, new Map(leases.map((l) => [l.id, l])), leases.length);
+
+    expect(report.hasDrift).toBe(false);
+    expect(report.lines).toHaveLength(1);
+    expect(report.lines[0]).toMatch(/No lease drift/);
+  });
+
+  it('reports hasDrift: true and surfaces the exact leaseEnd change for an id-matched lease -- the 2026-07-25 incident shape', () => {
+    // The incident: a tenant's id is unchanged (never added/removed -- computeDrift.removedIds and
+    // .newIds both stay empty), only leaseEnd corrupts underneath it. evaluateAnomalyFloor alone
+    // would see this as a completely clean run. This is the one place that must not.
+    const previous = [lease({ id: 'REDACTED-709', company: 'REDACTED-386', leaseEnd: '2026-05-31' })];
+    const current = [lease({ id: 'REDACTED-709', company: 'REDACTED-386', leaseEnd: '2026-07-31' })];
+    const drift = computeDrift(previous, current);
+
+    // Confirm the incident's actual blind spot first: the count-based inputs are empty.
+    expect(drift.removedIds).toHaveLength(0);
+    expect(drift.newIds).toHaveLength(0);
+
+    const report = formatDriftReport(drift, new Map(previous.map((l) => [l.id, l])), current.length);
+
+    expect(report.hasDrift).toBe(true);
+    const dateLine = report.lines.find((l) => l.includes('REDACTED-386'));
+    expect(dateLine).toBeDefined();
+    expect(dateLine).toMatch(/2026-05-31 -> 2026-07-31/);
+  });
+
+  it('surfaces a leaseEnd change hidden underneath a re-key, not just id-matched changes', () => {
+    const previous = [lease({ id: 'banwick-2802-105', company: 'REDACTED-321', leaseEnd: '2027-04-30' })];
+    const current = [lease({ id: 'banwick-2802-REDACTED-322', company: 'REDACTED-321', leaseEnd: '2026-06-30' })];
+    const drift = computeDrift(previous, current);
+
+    const report = formatDriftReport(drift, new Map(previous.map((l) => [l.id, l])), current.length);
+
+    expect(report.hasDrift).toBe(true);
+    const rekeyLine = report.lines.find((l) => l.includes('2027-04-30 -> 2026-06-30'));
+    expect(rekeyLine).toBeDefined();
+  });
+
+  it('lists genuinely new and genuinely removed leases separately from re-keyed ones', () => {
+    const previous = [
+      lease({ id: 'banwick-2802-105', company: 'Acme LLC' }),
+      lease({ id: 'banwick-2804-106', unit: '2804', company: 'Departed LLC' }),
+    ];
+    const current = [
+      lease({ id: 'banwick-2802-acme-llc', company: 'Acme LLC' }),
+      lease({ id: 'banwick-2806-new-tenant', unit: '2806', company: 'New Tenant LLC' }),
+    ];
+    const drift = computeDrift(previous, current);
+
+    const report = formatDriftReport(drift, new Map(previous.map((l) => [l.id, l])), current.length);
+
+    expect(report.hasDrift).toBe(true);
+    expect(report.lines.some((l) => l.includes('Genuinely new leases (1)'))).toBe(true);
+    expect(report.lines.some((l) => l.includes('New Tenant LLC'))).toBe(true);
+    expect(report.lines.some((l) => l.includes('Genuinely removed leases (1)'))).toBe(true);
+    expect(report.lines.some((l) => l.includes('Departed LLC'))).toBe(true);
+  });
+
+  it('does not report a lease as changed when its leaseEnd is identical (no false positive)', () => {
+    const previous = [lease({ id: 'id-1', company: 'Acme LLC', leaseEnd: '2027-01-01' })];
+    const current = [lease({ id: 'id-1', company: 'Acme LLC', leaseEnd: '2027-01-01' })];
+    const drift = computeDrift(previous, current);
+
+    const report = formatDriftReport(drift, new Map(previous.map((l) => [l.id, l])), current.length);
+
+    expect(report.hasDrift).toBe(false);
   });
 });
