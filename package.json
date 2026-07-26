@@ -22,6 +22,7 @@
     "deploy:mirror": "npm run build:mirror && npx wrangler pages deploy dist --project-name=ora-command-center --branch=main",
     "reconcile": "tsx scripts/reconcile.ts",
     "reconcile:leases": "tsx scripts/reconcile-lease-sources.ts",
+    "reconcile:noi-crosscheck": "tsx scripts/reconcile-noi-crosscheck.ts",
     "warehouse:backfill": "tsx scripts/warehouse-backfill.ts",
     "warehouse:verify": "tsx scripts/warehouse-verify.ts",
     "warehouse:drift": "tsx scripts/warehouse-live-drift-check.ts",
@@ -42,7 +43,7 @@
     "prepare": "node scripts/install-git-hooks.mjs",
     "governance": "tsx scripts/governance-check.ts",
     "check:refute": "tsx scripts/check-refute-required.ts",
-    "gate": "npm run governance && npm run typecheck && npm run lint && npm run check:dev-css && npm run test && npm run reconcile && npm run warehouse:verify && npm run warehouse:drift",
+    "gate": "npm run governance && npm run typecheck && npm run lint && npm run check:dev-css && npm run test && npm run reconcile && npm run reconcile:noi-crosscheck && npm run warehouse:verify && npm run warehouse:drift",
     "gate:ci": "npm run typecheck && npm run lint && npm run check:dev-css && npm run test && npm run build && npm run check:bundle"
   },
   "dependencies": {
@@ -118,5 +119,12 @@
     "adm-zip": "^0.6.0",
     "uuid": "^14.0.1",
     "esbuild": "^0.25.0"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.10.0": true,
+    "esbuild@0.25.12": true,
+    "onnxruntime-node@1.24.3": true,
+    "protobufjs@7.6.5": true,
+    "sharp@0.34.5": true
   }
 }
