@@ -50,6 +50,10 @@ Write-Host "[$stamp] Mirror deploy starting in $repo"
 # deploy-mirror.smoke-test.ps1) so the smoke test exercises the real function, not a
 # hand-copied duplicate that can drift out of sync.
 . (Join-Path $PSScriptRoot 'lib\deploy-alert.ps1')
+# Invoke-GitFetchCapture lives in lib/git-capture.ps1 (shared with
+# git-fetch-capture.smoke-test.ps1) -- see that file for why a plain
+# `(& git fetch origin 2>&1 | Out-String)` is unsafe under $ErrorActionPreference = 'Stop'.
+. (Join-Path $PSScriptRoot 'lib\git-capture.ps1')
 
 try {
   # 1) Fast-forward to origin/main first -- otherwise this deploys whatever old code happens to
@@ -69,13 +73,21 @@ try {
   #    failure that isn't an auth signature) falls through to the original throw shape unchanged,
   #    so Test-OfflineSignature still matches and today's suppression/escalation behavior is
   #    unaffected for real outages.
-  $fetchOutput = (& git fetch origin 2>&1 | Out-String)
-  $fetchExit = $LASTEXITCODE
+  # Invoke-GitFetchCapture (not a plain `& git fetch origin 2>&1 | Out-String`) -- see
+  # lib/git-capture.ps1 for why: PowerShell 5.1 converts native stderr into ErrorRecord objects
+  # even when merged via 2>&1, and under $ErrorActionPreference = 'Stop' (set above) that throws
+  # immediately on ANY stderr output -- including git fetch's routine "From <url>" progress
+  # header on a completely successful fetch with new commits. That discarded this script's own
+  # throw wording entirely and alerted with just the raw stderr line as "Reason" (2026-07-26).
+  $fetchResult = Invoke-GitFetchCapture -GitArgs @('fetch', 'origin')
+  $fetchOutput = $fetchResult.Output
+  $fetchExit = $fetchResult.ExitCode
   if ($fetchExit -ne 0) {
     if (Test-GitAuthFailureSignature -Reason $fetchOutput) {
       Write-Host "[git-auth] git fetch origin failed ($fetchExit) with an auth-looking error -- attempting self-heal via Credential Manager fallback"
-      $retryOutput = (& git -c credential.https://github.com.helper= -c credential.https://github.com.helper=manager fetch origin 2>&1 | Out-String)
-      $retryExit = $LASTEXITCODE
+      $retryResult = Invoke-GitFetchCapture -GitArgs @('-c', 'credential.https://github.com.helper=', '-c', 'credential.https://github.com.helper=manager', 'fetch', 'origin')
+      $retryOutput = $retryResult.Output
+      $retryExit = $retryResult.ExitCode
       if ($retryExit -eq 0) {
         Write-Host "[git-auth] self-heal succeeded via Credential Manager fallback"
       } else {
@@ -128,7 +140,14 @@ try {
   $location = ''
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     if ($attempt -gt 1) { Start-Sleep -Seconds 15 }
-    $curlOut = & curl.exe -s -I --max-redirs 0 $VerifyUrl 2>&1
+    # Invoke-NativeCommandCapture (not a plain `& curl.exe ... 2>&1`) -- same ErrorRecord-under-
+    # Stop hazard as the git fetch case above applies here too: curl's `-s` flag normally
+    # suppresses curl's own stderr text, but if it or a future flag change ever leaks anything to
+    # stderr, a bare `2>&1` would throw and silently replace this gate-check's own
+    # "GATE CHECK FAILED"/"GATE CHECK INCONCLUSIVE" wording -- the highest-stakes throw in this
+    # script, since it's what detects a confidential bake being publicly exposed.
+    $curlResult = Invoke-NativeCommandCapture -Executable 'curl.exe' -Arguments @('-s', '-I', '--max-redirs', '0', $VerifyUrl)
+    $curlOut = $curlResult.Output -split "`n"
     $statusLine   = ($curlOut | Where-Object { $_ -match '^HTTP/' } | Select-Object -First 1) -as [string]
     $locationLine = ($curlOut | Where-Object { $_ -match '^[Ll]ocation:' } | Select-Object -First 1) -as [string]
     $code     = if ($statusLine   -match 'HTTP/\S+\s+(\d+)') { [int]$Matches[1] } else { 0 }
