@@ -340,10 +340,9 @@ export function buildRefiWindows(
  * commit; there, a collision on ANY loan poisons the whole property's ltv one-directionally
  * — a breach measured on clean rows still fires, only clearance is forbidden) so a drifted
  * value can no longer yield per-property "governors clear" signals feeding
- * capital-allocation.ts. RESIDUAL: debt-api.ts's toLoanSignal (the /maturity ladder's
- * per-loan display hint — explicitly NOT governor enforcement, per its own docblock) still
- * reads the raw ltv column unguarded; a drifted rate-magnitude value there displays 'hold'
- * for a loan whose true ltv may breach. Known follow-up, not bundled here.
+ * capital-allocation.ts. debt-api.ts's toLoanSignal (the /maturity ladder's per-loan display
+ * hint — explicitly NOT governor enforcement, per its own docblock) applies the identical
+ * cross-check too — no remaining unguarded consumer of debt_positions.ltv in this repo.
  */
 export function computePortfolioAggregateLtv(
   db: WarehouseDb,
