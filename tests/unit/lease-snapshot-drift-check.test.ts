@@ -397,11 +397,29 @@ describe('loadPrevious', () => {
 // is count-based and stays silent when nothing is added or removed, only changed. This is the
 // regression cover for THAT gap specifically, not a restatement of computeDrift's own tests above.
 describe('formatDriftReport', () => {
+  it('reports hasDrift: false and a BASELINE line (not a false "all new" drift dump) when there is no previous snapshot', () => {
+    // 2026-07-26 REFUTE finding: without this guard, computeDrift([], current) puts every current
+    // lease in genuinelyNew, so a first run (or any run after the snapshot file is deleted) reported
+    // "drift" and exited 2, dumping the whole portfolio as "new leases". A bootstrap is not drift.
+    const current = [
+      lease({ id: 'id-1', company: 'Acme LLC' }),
+      lease({ id: 'id-2', company: 'Other Tenant LLC', unit: '2804' }),
+    ];
+    const drift = computeDrift([], current);
+
+    const report = formatDriftReport(drift, [], current);
+
+    expect(report.hasDrift).toBe(false);
+    expect(report.lines).toHaveLength(1);
+    expect(report.lines[0]).toMatch(/Baseline established \(2 leases\)/);
+    expect(report.lines[0]).not.toMatch(/drift/i);
+  });
+
   it('reports hasDrift: false and a clean-run line when nothing changed', () => {
     const leases = [lease({ id: 'id-1', company: 'Acme LLC' })];
     const drift = computeDrift(leases, leases);
 
-    const report = formatDriftReport(drift, new Map(leases.map((l) => [l.id, l])), leases.length);
+    const report = formatDriftReport(drift, leases, leases);
 
     expect(report.hasDrift).toBe(false);
     expect(report.lines).toHaveLength(1);
@@ -416,11 +434,12 @@ describe('formatDriftReport', () => {
     const current = [lease({ id: 'REDACTED-709', company: 'REDACTED-386', leaseEnd: '2026-07-31' })];
     const drift = computeDrift(previous, current);
 
-    // Confirm the incident's actual blind spot first: the count-based inputs are empty.
-    expect(drift.removedIds).toHaveLength(0);
-    expect(drift.newIds).toHaveLength(0);
+    // Confirm the incident's actual blind spot directly, not just by inference from empty arrays:
+    // the anomaly floor itself, given this exact drift, allows the write through silently.
+    const floor = expectAllowed(evaluateAnomalyFloor(previous, current, drift.removedIds, '/tmp/portfolio.json', false));
+    expect(floor.warning).toBeUndefined();
 
-    const report = formatDriftReport(drift, new Map(previous.map((l) => [l.id, l])), current.length);
+    const report = formatDriftReport(drift, previous, current);
 
     expect(report.hasDrift).toBe(true);
     const dateLine = report.lines.find((l) => l.includes('REDACTED-386'));
@@ -433,7 +452,7 @@ describe('formatDriftReport', () => {
     const current = [lease({ id: 'banwick-2802-REDACTED-322', company: 'REDACTED-321', leaseEnd: '2026-06-30' })];
     const drift = computeDrift(previous, current);
 
-    const report = formatDriftReport(drift, new Map(previous.map((l) => [l.id, l])), current.length);
+    const report = formatDriftReport(drift, previous, current);
 
     expect(report.hasDrift).toBe(true);
     const rekeyLine = report.lines.find((l) => l.includes('2027-04-30 -> 2026-06-30'));
@@ -451,7 +470,7 @@ describe('formatDriftReport', () => {
     ];
     const drift = computeDrift(previous, current);
 
-    const report = formatDriftReport(drift, new Map(previous.map((l) => [l.id, l])), current.length);
+    const report = formatDriftReport(drift, previous, current);
 
     expect(report.hasDrift).toBe(true);
     expect(report.lines.some((l) => l.includes('Genuinely new leases (1)'))).toBe(true);
@@ -465,7 +484,7 @@ describe('formatDriftReport', () => {
     const current = [lease({ id: 'id-1', company: 'Acme LLC', leaseEnd: '2027-01-01' })];
     const drift = computeDrift(previous, current);
 
-    const report = formatDriftReport(drift, new Map(previous.map((l) => [l.id, l])), current.length);
+    const report = formatDriftReport(drift, previous, current);
 
     expect(report.hasDrift).toBe(false);
   });

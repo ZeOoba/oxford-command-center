@@ -31,7 +31,6 @@ async function main() {
     process.exit(1);
   }
   const previous = previousResult.leases;
-  const prevById = new Map(previous.map((l) => [l.id, l]));
 
   console.log(`→ Reading workbook: ${workbookPath()}`);
   const { snapshot, flags } = await parseWorkbook(workbookPath());
@@ -117,13 +116,17 @@ async function main() {
   }
   console.log('───────────────────────────────────────────────────────');
 
-  const report = formatDriftReport(drift, prevById, current.length);
+  const report = formatDriftReport(drift, previous, current);
   console.log();
   for (const line of report.lines) console.log(line);
   if (report.hasDrift) process.exit(2);
 }
 
 main().catch((err) => {
+  // Exit 3, not 1: now that this script shares lease-snapshot-drift-check.ts's exit-code
+  // convention (0 clean / 1 refused, portfolio.json unchanged / 2 wrote with drift), an unattended
+  // caller reading exit 1 as "refused, nothing written, benign" must not conflate that with an
+  // unexpected crash that could have failed mid-write. Matches drift-check's own main().catch().
   console.error('✗ Extraction failed:', err);
-  process.exit(1);
+  process.exit(3);
 });
