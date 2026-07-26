@@ -297,19 +297,33 @@ export interface DriftReportResult {
  * actually surfaces a date-only corruption for human review. It does not REFUSE the write (a
  * legitimate lease renewal changes leaseEnd too, so refusing here would block real, wanted edits);
  * it reports, and the reader/reviewer judges.
+ *
+ * Takes the raw `previous`/`current` arrays (not a caller-derived `prevById` map / lease count) so
+ * the map and count can never silently disagree with `drift` -- a 2026-07-26 REFUTE finding on the
+ * first version of this function, which took both as separate args a future caller could mismatch.
  */
 export function formatDriftReport(
   drift: DriftResult,
-  prevById: Map<string, DriftLeaseView>,
-  currentLeaseCount: number,
+  previous: DriftLeaseView[],
+  current: DriftLeaseView[],
 ): DriftReportResult {
+  // A run with no previous snapshot to diff against is establishing a baseline, not detecting
+  // drift -- 2026-07-26 REFUTE finding: without this guard, computeDrift([], current) puts EVERY
+  // current lease in `genuinelyNew`, so a first run (or any run after the snapshot file is deleted)
+  // unconditionally reports "drift" and exits 2, dumping the entire portfolio as a "new leases"
+  // list. That is a normal bootstrap, not something for a human to review.
+  if (previous.length === 0) {
+    return { hasDrift: false, lines: [`✓ Baseline established (${current.length} leases). No previous snapshot to diff against.`] };
+  }
+
+  const prevById = new Map(previous.map((l) => [l.id, l]));
   const { removedIds, newIds, changedDates, rekeyed, genuinelyNew, genuinelyRemoved, ambiguous } = drift;
   if (newIds.length === 0 && changedDates.length === 0 && removedIds.length === 0) {
-    return { hasDrift: false, lines: [`✓ No lease drift. portfolio.json regenerated (${currentLeaseCount} leases).`] };
+    return { hasDrift: false, lines: [`✓ No lease drift. portfolio.json regenerated (${current.length} leases).`] };
   }
 
   const label = (l: DriftLeaseView) => `${l.propertyKey}${l.unit ? ` ${l.unit}` : ''} | ${l.company ?? l.tenantName}`;
-  const lines: string[] = [`⚠ Lease drift detected — portfolio.json regenerated (${currentLeaseCount} leases).`];
+  const lines: string[] = [`⚠ Lease drift detected — portfolio.json regenerated (${current.length} leases).`];
 
   if (changedDates.length) {
     lines.push('', `Lease end date changes (${changedDates.length}):`);
@@ -374,7 +388,6 @@ async function main() {
     process.exit(1);
   }
   const previous = previousResult.leases;
-  const prevById = new Map(previous.map((l) => [l.id, l]));
 
   const { snapshot } = await parseWorkbook(workbookPath());
   // Round-3 REFUTE finding: loadOverlay() fails OPEN to an empty overlay on corrupt/unparseable
@@ -443,7 +456,7 @@ async function main() {
   writeFileSync(tmp, JSON.stringify(enriched, null, 2));
   renameSync(tmp, SNAPSHOT_PATH);
 
-  const report = formatDriftReport(drift, prevById, current.length);
+  const report = formatDriftReport(drift, previous, current);
   for (const line of report.lines) console.log(line);
   // Distinguish "ran, found drift worth a look" (2) from "ran clean" (0) and "refused to write" (1)
   // above, so an unattended scheduler can tell these apart instead of every run exiting 0.
