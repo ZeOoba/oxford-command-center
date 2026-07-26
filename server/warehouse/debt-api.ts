@@ -40,6 +40,7 @@ import {
   buildMaturityTimeline,
   buildRefiWindows,
   computePortfolioAggregateLtv,
+  RATE_LTV_COLLISION_EPSILON,
   REFI_LTV_CEILING,
 } from './debt-maturity';
 import { loadGovernors } from './governors';
@@ -117,8 +118,17 @@ function toBucket(monthsToMaturity: number | null): MaturityLadderEntry['bucket'
  * Uses the stored LTV only (same D1 rationale: best snapshot data we have).
  * - 'governor-block' when ltv is known and exceeds the 40% hard ceiling.
  * - 'hold' otherwise (no refi/cash-out evaluation at the per-loan display level).
+ *
+ * Round-7 follow-up (residual consumer named in debt-maturity.ts's ROUND 7 docblock, closed
+ * here): an ltv that exactly equals the loan's own rate (within RATE_LTV_COLLISION_EPSILON)
+ * is the demonstrated workbook column-drift signature — never trusted as data. Displaying
+ * 'hold' for such a row (same as a genuinely null ltv) is correct: this display hint doesn't
+ * fabricate a breach from suspect data any more than it fabricates a clearance.
  */
-function toLoanSignal(ltv: number | null): DebtSignal {
+function toLoanSignal(ltv: number | null, rate: number | null): DebtSignal {
+  const rateCollision =
+    ltv !== null && rate !== null && Math.abs(ltv - rate) < RATE_LTV_COLLISION_EPSILON;
+  if (rateCollision) return 'hold';
   if (ltv !== null && ltv > 0.40) return 'governor-block';
   return 'hold';
 }
@@ -136,6 +146,9 @@ interface MaturityRow {
   balloon: number; // SQLite INTEGER boolean
   is_demand: number; // SQLite INTEGER boolean
   ltv: number | null;
+  /** INTERNAL ONLY — consumed exclusively by toLoanSignal's collision check, never returned
+   *  in the response shape (CONFIDENTIALITY: raw loan terms never cross the route boundary). */
+  rate: number | null;
 }
 
 // ── Router factory ─────────────────────────────────────────────────────────────────────────
@@ -216,7 +229,7 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
           .prepare(
             `SELECT d.id, d.property_id, p.name AS property_name,
                     d.loan_name, d.current_balance, d.maturity_date,
-                    d.months_to_maturity, d.balloon, d.is_demand, d.ltv
+                    d.months_to_maturity, d.balloon, d.is_demand, d.ltv, d.rate
              FROM debt_positions d
              LEFT JOIN property_master p ON p.id = d.property_id
              WHERE d.status = 'active'
@@ -235,7 +248,7 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
           bucket: toBucket(row.months_to_maturity),
           balloon: row.balloon === 1,
           isDemand: row.is_demand === 1,
-          signal: toLoanSignal(row.ltv),
+          signal: toLoanSignal(row.ltv, row.rate),
         }));
 
         return c.json(MaturityLadderResponse.parse({ ladder }));
