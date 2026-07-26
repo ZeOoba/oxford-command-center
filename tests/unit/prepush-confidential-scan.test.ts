@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 
 import {
   scanDiffForConfidential,
+  scanDiffForContextTerms,
   parseAddedLines,
   loadTerms,
 } from '../../scripts/prepush-confidential-scan.mjs';
@@ -103,18 +104,19 @@ describe('prepush-confidential-scan / loadTerms', () => {
   });
 
   it('returns the built-in denylist (and does not throw) when the roster file is absent', () => {
-    const terms = loadTerms(tmpHome);
-    expect(Array.isArray(terms)).toBe(true);
+    const roster = loadTerms(tmpHome);
+    expect(Array.isArray(roster.alwaysTerms)).toBe(true);
     // Built-in denylist is always present even with no roster file.
-    expect(terms.length).toBeGreaterThan(0);
+    expect(roster.alwaysTerms.length).toBeGreaterThan(0);
+    expect(roster.contextGroups).toEqual([]);
   });
 
-  it('extracts string terms from a roster file shaped like the real one', () => {
+  it('extracts always terms and a context group from an ACTIVE deal shaped like the real one', () => {
     const hooksDir = join(tmpHome, '.claude', 'hooks');
     mkdirSync(hooksDir, { recursive: true });
     // Synthetic roster mirroring the real per-deal object shape (label/active/string arrays).
     const roster = {
-      _meta: { purpose: 'test', matching: 'whole', policy: 'fail-closed' },
+      _meta: { purpose: 'test', matching: 'lowercased substring', policy: 'fail-closed' },
       fake_deal: {
         label: 'Fake Deal (synthetic)',
         active: true,
@@ -126,11 +128,40 @@ describe('prepush-confidential-scan / loadTerms', () => {
     };
     writeFileSync(join(hooksDir, 'confidential-terms.json'), JSON.stringify(roster), 'utf8');
 
-    const terms = loadTerms(tmpHome);
-    expect(terms).toContain(FAKE_TERM);
-    expect(terms).toContain(FAKE_TERM_2);
-    expect(terms).toContain('SyntheticCounterparty LLC');
-    expect(terms).toContain('fake-figure-9999');
+    const loaded = loadTerms(tmpHome);
+    expect(loaded.alwaysTerms).toContain(FAKE_TERM);
+    expect(loaded.alwaysTerms).toContain(FAKE_TERM_2);
+    // Context terms are NOT flattened into alwaysTerms — they need the separate gated scan.
+    expect(loaded.alwaysTerms).not.toContain('SyntheticCounterparty LLC');
+    expect(loaded.contextGroups).toHaveLength(1);
+    expect(loaded.contextGroups[0]).toEqual({
+      dealKey: 'fake_deal',
+      contextTerms: ['SyntheticCounterparty LLC'],
+      requiresAny: ['12.5x', 'fake-figure-9999'],
+    });
+  });
+
+  it('excludes a RETIRED deal (active: false) entirely — both always and context terms', () => {
+    // Mirrors the real roster's own documented policy: "Set active=false to retire a deal
+    // post-closing" — a retired deal's block stays in the JSON as an audit-trail record but is
+    // no longer enforced.
+    const hooksDir = join(tmpHome, '.claude', 'hooks');
+    mkdirSync(hooksDir, { recursive: true });
+    const roster = {
+      _meta: { purpose: 'test' },
+      retired_deal: {
+        label: 'Retired Deal (synthetic)',
+        active: false,
+        always: [FAKE_TERM],
+        context: ['SyntheticCounterparty LLC'],
+        context_requires_any: ['fake-figure-9999'],
+      },
+    };
+    writeFileSync(join(hooksDir, 'confidential-terms.json'), JSON.stringify(roster), 'utf8');
+
+    const loaded = loadTerms(tmpHome);
+    expect(loaded.alwaysTerms).not.toContain(FAKE_TERM);
+    expect(loaded.contextGroups).toEqual([]);
   });
 
   it('does not throw on an unparseable roster file and still returns the built-in denylist', () => {
@@ -138,8 +169,51 @@ describe('prepush-confidential-scan / loadTerms', () => {
     mkdirSync(hooksDir, { recursive: true });
     writeFileSync(join(hooksDir, 'confidential-terms.json'), '{ this is not json', 'utf8');
 
-    const terms = loadTerms(tmpHome);
-    expect(Array.isArray(terms)).toBe(true);
-    expect(terms.length).toBeGreaterThan(0);
+    const loaded = loadTerms(tmpHome);
+    expect(Array.isArray(loaded.alwaysTerms)).toBe(true);
+    expect(loaded.alwaysTerms.length).toBeGreaterThan(0);
+    expect(loaded.contextGroups).toEqual([]);
+  });
+});
+
+describe('prepush-confidential-scan / scanDiffForContextTerms', () => {
+  // Regression coverage for the real-world false positive this function fixes: a generic
+  // 3-letter context term ('tce', an environmental-context abbreviation on the real roster)
+  // matched as a bare substring inside ordinary code (ExcelJS's `getCell` method — 'ge-tCe-ll')
+  // with no identifying companion anywhere in the push. Synthetic equivalent below.
+  const GROUP = { dealKey: 'fake_deal', contextTerms: ['xyz'], requiresAny: ['fake-fulton-st'] };
+
+  it('does NOT flag a context term when no context_requires_any companion appears anywhere in the corpus', () => {
+    const added = [
+      { file: 'src/widget.ts', lineNo: 1, text: 'function getXyzCell() { return 1; }' },
+      { file: 'src/other.ts', lineNo: 4, text: 'const unrelated = "nothing to see here";' },
+    ];
+    expect(scanDiffForContextTerms(added, [GROUP])).toHaveLength(0);
+  });
+
+  it('DOES flag a context term once a context_requires_any companion appears anywhere in the same push (not necessarily the same line)', () => {
+    const added = [
+      { file: 'src/widget.ts', lineNo: 1, text: 'function getXyzCell() { return 1; }' },
+      { file: 'src/other.ts', lineNo: 4, text: 'reference to fake-fulton-st appears here' },
+    ];
+    const hits = scanDiffForContextTerms(added, [GROUP]);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.term).toBe('xyz');
+    expect(hits[0]?.file).toBe('src/widget.ts');
+  });
+
+  it('scopes gating per deal — a companion from deal A does not unlock deal B\'s context terms', () => {
+    const groupA = { dealKey: 'deal_a', contextTerms: ['alpha'], requiresAny: ['alpha-companion'] };
+    const groupB = { dealKey: 'deal_b', contextTerms: ['beta'], requiresAny: ['beta-companion'] };
+    const added = [
+      { file: 'a.ts', lineNo: 1, text: 'alpha alpha-companion beta' }, // beta present, but no beta-companion
+    ];
+    const hits = scanDiffForContextTerms(added, [groupA, groupB]);
+    expect(hits.map((h) => h.term)).toEqual(['alpha']);
+  });
+
+  it('returns no hits for an empty contextGroups list', () => {
+    const added = [{ file: 'a.ts', lineNo: 1, text: 'xyz fake-fulton-st' }];
+    expect(scanDiffForContextTerms(added, [])).toHaveLength(0);
   });
 });
