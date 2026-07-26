@@ -39,59 +39,70 @@ const EXCLUDE_PATHS = new Set([
 const MIN_TERM_LENGTH = 3;
 
 /**
- * Collect string leaves from an arbitrary roster value (arrays / nested objects), skipping the
- * `_meta` block. Defensive: tolerates whatever shape the roster has.
+ * Extract this roster's per-deal terms, honoring the roster's OWN documented contract
+ * (confidential-terms.json's `_meta.matching` / `_meta.policy`):
+ *   - a deal only contributes terms while `active === true` — `_meta.policy` says "Set
+ *     active=false to retire a deal post-closing"; a retired deal's block stays in the JSON as
+ *     an audit-trail record, but is no longer enforced by this scanner.
+ *   - `always` terms fire on any occurrence, same as BUILTIN_DENYLIST.
+ *   - `context` terms (generic words only confidential in deal context — e.g. an environmental
+ *     abbreviation) fire ONLY alongside a co-occurring `context_requires_any` term from the SAME
+ *     deal, never standalone. `_meta.matching` states this explicitly; the prior implementation
+ *     never actually implemented it, flattening every string from every deal (active or not)
+ *     into one undifferentiated always-list — which is what let a short, generic context term
+ *     false-positive against ordinary code containing it as a substring.
+ * Tolerates any roster shape defensively (a malformed deal entry is skipped, not fatal).
  */
-function collectStrings(value, keyPath, out) {
-  if (typeof value === 'string') {
-    out.push(value);
-    return;
-  }
-  if (Array.isArray(value)) {
-    for (const item of value) collectStrings(item, keyPath, out);
-    return;
-  }
-  if (value && typeof value === 'object') {
-    for (const [k, v] of Object.entries(value)) {
-      if (keyPath.length === 0 && k === '_meta') continue; // metadata, not terms
-      // Skip obvious non-term scalar metadata fields nested in deal objects.
-      if (typeof v === 'string' && (k === 'label' || k === 'note' || k === 'purpose')) continue;
-      if (typeof v === 'boolean') continue;
-      collectStrings(v, [...keyPath, k], out);
+function collectDealTerms(parsed, alwaysTerms, contextGroups) {
+  if (!parsed || typeof parsed !== 'object') return;
+  for (const [key, deal] of Object.entries(parsed)) {
+    if (key === '_meta') continue;
+    if (!deal || typeof deal !== 'object' || deal.active !== true) continue;
+    if (Array.isArray(deal.always)) {
+      for (const t of deal.always) if (typeof t === 'string') alwaysTerms.push(t);
+    }
+    if (Array.isArray(deal.context) && Array.isArray(deal.context_requires_any)) {
+      const contextTerms = deal.context.filter((t) => typeof t === 'string');
+      const requiresAny = deal.context_requires_any.filter((t) => typeof t === 'string');
+      if (contextTerms.length > 0 && requiresAny.length > 0) {
+        contextGroups.push({ dealKey: key, contextTerms, requiresAny });
+      }
     }
   }
 }
 
 /**
- * Load confidential terms: built-in denylist MERGED with string terms extracted from the
- * machine-local roster (if present and parseable). Never throws; prints a WARN and returns just
- * the denylist when the roster is missing or unparseable.
+ * Load confidential terms: built-in denylist MERGED with `always` terms from every ACTIVE deal
+ * in the machine-local roster (if present and parseable), plus that roster's `context` groups
+ * (scanned separately by scanDiffForContextTerms — see collectDealTerms above for why they
+ * can't just be flattened into the same list). Never throws; prints a WARN and returns just the
+ * denylist (no context groups) when the roster is missing or unparseable.
  *
  * @param {string} [homeDirOverride] - test seam; defaults to os.homedir().
- * @returns {string[]} de-duplicated term strings.
+ * @returns {{alwaysTerms: string[], contextGroups: {dealKey: string, contextTerms: string[], requiresAny: string[]}[]}}
  */
 export function loadTerms(homeDirOverride) {
   const home = homeDirOverride ?? homedir();
   const rosterPath = join(home, '.claude', 'hooks', 'confidential-terms.json');
-  const terms = [...BUILTIN_DENYLIST];
+  const alwaysTerms = [...BUILTIN_DENYLIST];
+  const contextGroups = [];
 
   if (!existsSync(rosterPath)) {
     console.warn(
       `[prepush-confidential-scan] WARN: roster not found at ${rosterPath} — scanning built-in denylist only.`,
     );
-    return dedupe(terms);
+    return { alwaysTerms: dedupe(alwaysTerms), contextGroups };
   }
 
   try {
     const parsed = JSON.parse(readFileSync(rosterPath, 'utf8'));
-    const extracted = [];
-    collectStrings(parsed, [], extracted);
-    return dedupe([...terms, ...extracted]);
+    collectDealTerms(parsed, alwaysTerms, contextGroups);
+    return { alwaysTerms: dedupe(alwaysTerms), contextGroups };
   } catch (err) {
     console.warn(
       `[prepush-confidential-scan] WARN: roster at ${rosterPath} is unparseable (${err?.message ?? err}) — scanning built-in denylist only.`,
     );
-    return dedupe(terms);
+    return { alwaysTerms: dedupe(alwaysTerms), contextGroups };
   }
 }
 
@@ -118,6 +129,46 @@ export function scanDiffForConfidential(addedLines, terms) {
     for (const term of usable) {
       if (haystack.includes(term.toLowerCase())) {
         hits.push({ term, line: added.lineNo, text: added.text, file: added.file });
+      }
+    }
+  }
+  return hits;
+}
+
+/**
+ * Scan added diff lines for `context` terms, per-deal, honoring the roster's documented gating:
+ * a context term is a hit ONLY when at least one of its deal's `context_requires_any` companions
+ * also appears somewhere in the SAME scanned corpus (this function's whole `addedLines` input —
+ * the entire diff range being pushed, not necessarily the same line or file). A generic/ambiguous
+ * context term with no identifying companion anywhere in the push is never flagged standalone.
+ *
+ * @param {{file: string, lineNo: number, text: string}[]} addedLines
+ * @param {{dealKey: string, contextTerms: string[], requiresAny: string[]}[]} contextGroups
+ * @returns {{term: string, line: number, text: string, file: string}[]}
+ */
+export function scanDiffForContextTerms(addedLines, contextGroups) {
+  const hits = [];
+  if (!Array.isArray(addedLines) || !Array.isArray(contextGroups)) return hits;
+
+  const lines = addedLines.filter((a) => a && typeof a.text === 'string');
+  const corpus = lines.map((a) => a.text.toLowerCase()).join('\n');
+
+  for (const group of contextGroups) {
+    const requiresAny = (group?.requiresAny ?? []).filter(
+      (t) => typeof t === 'string' && t.trim().length >= MIN_TERM_LENGTH,
+    );
+    const companionPresent = requiresAny.some((t) => corpus.includes(t.toLowerCase()));
+    if (!companionPresent) continue; // no identifying companion anywhere — context suppressed
+
+    const contextTerms = (group?.contextTerms ?? []).filter(
+      (t) => typeof t === 'string' && t.trim().length >= MIN_TERM_LENGTH,
+    );
+    for (const added of lines) {
+      const haystack = added.text.toLowerCase();
+      for (const term of contextTerms) {
+        if (haystack.includes(term.toLowerCase())) {
+          hits.push({ term, line: added.lineNo, text: added.text, file: added.file });
+        }
       }
     }
   }
@@ -198,7 +249,7 @@ function readStdin() {
 }
 
 function main() {
-  const terms = loadTerms();
+  const { alwaysTerms, contextGroups } = loadTerms();
   const stdin = readStdin();
   const allHits = [];
 
@@ -221,7 +272,8 @@ function main() {
       continue;
     }
     const added = parseAddedLines(diffText).filter((a) => !EXCLUDE_PATHS.has(a.file));
-    allHits.push(...scanDiffForConfidential(added, terms));
+    allHits.push(...scanDiffForConfidential(added, alwaysTerms));
+    allHits.push(...scanDiffForContextTerms(added, contextGroups));
   }
 
   if (allHits.length > 0) {
