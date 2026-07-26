@@ -61,8 +61,10 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, renameSync, statSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
+import ExcelJS from 'exceljs';
 import { extractPdfText } from '../server/ar/pdf-extract';
-import { parseArAging, isGarbageExtraction, extractAsOfDateFromFilename } from '../server/ar/ar-aging';
+import { parseArAging, isGarbageExtraction, extractAsOfDateFromFilename, type ArAgingRow } from '../server/ar/ar-aging';
+import { detectRentManagerDelinquencyDetail, parseRentManagerWorksheet, type SubtotalMismatch } from '../server/ar/rent-manager-delinquency';
 import { partitionArRows, type ArReviewRow } from '../server/ar/partition-confidence';
 import { resolveLatestArrears, filterAgainstPersisted } from '../server/ar/resolve-latest';
 import { loadCache, saveCache } from '../server/ar/mapping-cache';
@@ -203,8 +205,8 @@ async function main(): Promise<void> {
   // inbox had its mtime change BETWEEN comparator calls, violating the total-order contract sort()
   // requires and making the tie-break's outcome unspecified. A file that vanishes between the
   // readdirSync and the stat here is simply skipped (not fatal) — it will be picked up next sweep.
-  const pdfs = readdirSync(INBOX)
-    .filter((f) => f.toLowerCase().endsWith('.pdf'))
+  const files = readdirSync(INBOX)
+    .filter((f) => { const lower = f.toLowerCase(); return lower.endsWith('.pdf') || lower.endsWith('.xlsx'); })
     .map((f) => join(INBOX, f))
     .flatMap((p) => {
       try {
@@ -215,8 +217,8 @@ async function main(): Promise<void> {
     })
     .sort((a, b) => a.m - b.m)
     .map(({ p }) => p);
-  if (pdfs.length === 0) {
-    console.log('  No PDFs in inbox — nothing to do.');
+  if (files.length === 0) {
+    console.log('  No PDF/xlsx files in inbox — nothing to do.');
     return;
   }
 
@@ -231,7 +233,7 @@ async function main(): Promise<void> {
     throw new Error(`Snapshot at ${SNAPSHOT_PATH} has zero leases — refusing to run against a degraded/partial snapshot. Wait for a full Brain refresh.`);
   }
   const cache = loadCache();
-  console.log(`  ${pdfs.length} PDF(s) · ${leases.length} lease(s) loaded`);
+  console.log(`  ${files.length} file(s) · ${leases.length} lease(s) loaded`);
 
   // Accumulate across ALL files, then resolve once: AR aging is a point-in-time balance, so a lease
   // hit by more than one report in this sweep is resolved to the LATEST as-of (resolveLatestArrears)
@@ -242,34 +244,87 @@ async function main(): Promise<void> {
   const pdfBySourceFile = new Map<string, string>(); // basename -> full path, for the ambiguousTies handling below
   let totalSkipped = 0;
 
-  for (const pdf of pdfs) {
-    const sourceFile = basename(pdf);
-    let text: string;
-    try {
-      text = extractPdfText(pdf);
-    } catch (e) {
-      quarantine(pdf, e instanceof Error ? e.message : String(e));
-      continue;
-    }
-    if (isGarbageExtraction(text)) {
-      quarantine(pdf, 'no text layer (image/scanned) — re-export as a text PDF');
-      continue;
-    }
-    const { format, rows, unsupportedReason } = parseArAging(text);
-    if (unsupportedReason) {
-      quarantine(pdf, `format '${format}': ${unsupportedReason}`);
-      continue;
+  for (const file of files) {
+    const sourceFile = basename(file);
+    const isXlsx = file.toLowerCase().endsWith('.xlsx');
+
+    let rows: ArAgingRow[];
+    let format: string;
+    // Only the xlsx path has a reliable in-file as-of date (the report's own "Current tenants as
+    // of MM/DD/YY" line — see rent-manager-delinquency.ts's module doc: more reliable than a
+    // filename-derived date). Left null for PDFs, which fall back to extractAsOfDateFromFilename
+    // below exactly as before.
+    let xlsxAsOfDate: Date | null = null;
+
+    if (isXlsx) {
+      let workbook: ExcelJS.Workbook;
+      try {
+        workbook = new ExcelJS.Workbook();
+        await workbook.xlsx.readFile(file);
+      } catch (e) {
+        quarantine(file, e instanceof Error ? e.message : String(e));
+        continue;
+      }
+      const worksheet = workbook.worksheets.find((ws) => detectRentManagerDelinquencyDetail(ws));
+      if (worksheet === undefined) {
+        // ar-aging.ts's own module doc names two OTHER real xlsx shapes ORA receives (a
+        // Yardi-style bucketed export, a 2-bucket "Northwood" variant) that this module
+        // deliberately does not parse yet — quarantine, don't guess at an unrecognized layout.
+        quarantine(
+          file,
+          'xlsx format not recognized as Rent Manager "Delinquency (Detail)" — other RM/Yardi bucketed xlsx exports are not yet supported',
+        );
+        continue;
+      }
+      const parsed = parseRentManagerWorksheet(worksheet);
+      if (parsed.unsupportedReason) {
+        quarantine(file, `rent-manager-delinquency: ${parsed.unsupportedReason}`);
+        continue;
+      }
+      if (parsed.subtotalMismatches.length > 0) {
+        const detail: SubtotalMismatch[] = parsed.subtotalMismatches;
+        console.log(
+          `  ⚠ ${sourceFile}: ${detail.length} tenant subtotal mismatch(es) — computed buckets used anyway (see rent-manager-delinquency.ts docs): ${detail
+            .map((m) => `${m.tenant} (computed ${m.computedTotal} vs reported ${m.reportedTotal})`)
+            .join('; ')}`,
+        );
+      }
+      rows = parsed.rows;
+      format = 'rent-manager-delinquency';
+      xlsxAsOfDate = parsed.asOfDate;
+    } else {
+      let text: string;
+      try {
+        text = extractPdfText(file);
+      } catch (e) {
+        quarantine(file, e instanceof Error ? e.message : String(e));
+        continue;
+      }
+      if (isGarbageExtraction(text)) {
+        quarantine(file, 'no text layer (image/scanned) — re-export as a text PDF');
+        continue;
+      }
+      const parsed = parseArAging(text);
+      if (parsed.unsupportedReason) {
+        quarantine(file, `format '${parsed.format}': ${parsed.unsupportedReason}`);
+        continue;
+      }
+      rows = parsed.rows;
+      format = parsed.format;
     }
 
     const part = partitionArRows(rows, leases, cache.entries);
-    const asOfDate = extractAsOfDateFromFilename(pdf);
+    const asOfDate = isXlsx ? xlsxAsOfDate : extractAsOfDateFromFilename(file);
     if (asOfDate === null && part.write.length > 0) {
       // Refute round 2/edges: a null-stamped record SURVIVES overlay reload (fix #2 in this same
       // remediation made asOfDate round-trip) and conditions.ts's staleness gate treats a null asOf
       // as stale — which suppresses ALL per-lease AR alerts portfolio-wide until a dated report
       // re-imports. That is conditions.ts's own defensible fail-safe design, but writing it should
       // never be quiet: name the file so an operator can rename it with its as-of date if this recurs.
-      console.log(`  ⚠ ${sourceFile} has no YYYY-MM-DD in its filename — ${part.write.length} row(s) will be written UNDATED (asOfDate=null), which suppresses portfolio-wide AR staleness alerting until a dated report follows. Rename the export with its as-of date to avoid this.`);
+      const howToFix = isXlsx
+        ? "confirm the report's \"Current tenants as of\" header line is present and well-formed"
+        : 'rename the export with its as-of date';
+      console.log(`  ⚠ ${sourceFile} has no recoverable as-of date — ${part.write.length} row(s) will be written UNDATED (asOfDate=null), which suppresses portfolio-wide AR staleness alerting until a dated report follows. Please ${howToFix} to avoid this.`);
     }
     for (const w of part.write) {
       allWrites.push({ leaseId: w.leaseId, arrears: { ...w.arrears, asOfDate, sourceFile }, tenant: w.tenant });
@@ -277,8 +332,8 @@ async function main(): Promise<void> {
     for (const r of part.review) allReviews.push({ ...r, sourceFile, queuedAt: nowIso });
     Object.assign(cache.entries, part.learned);
     totalSkipped += part.skipped;
-    processed.push(pdf);
-    pdfBySourceFile.set(sourceFile, pdf);
+    processed.push(file);
+    pdfBySourceFile.set(sourceFile, file);
     console.log(`  ✓ ${sourceFile} [${format}] — ${part.write.length} auto · ${part.review.length} review · ${part.skipped} skip`);
   }
 
@@ -405,7 +460,7 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    `\n${overlayWriteFailed ? '✗' : '✓'} Done — ${writtenCount} lease(s) written · ${allReviews.length} queued for review · ${totalSkipped} skipped · ${archivedCount}/${pdfs.length} archived${conflictPdfPaths.size > 0 ? ` · ${conflictPdfPaths.size} left in inbox (ambiguous tie)` : ''}`,
+    `\n${overlayWriteFailed ? '✗' : '✓'} Done — ${writtenCount} lease(s) written · ${allReviews.length} queued for review · ${totalSkipped} skipped · ${archivedCount}/${files.length} archived${conflictPdfPaths.size > 0 ? ` · ${conflictPdfPaths.size} left in inbox (ambiguous tie)` : ''}`,
   );
   if (allReviews.length > 0) {
     console.log(`  ⚠ ${allReviews.length} row(s) need a human map — see ${REVIEW_QUEUE} (run scripts/ar-import.ts to resolve).`);
