@@ -70,6 +70,7 @@ function seedLoan(
     monthsToMaturity?: number | null;
     maturityDate?: string | null;
     ltv?: number | null;
+    rate?: number | null;
     balloon?: number;
     isDemand?: number;
     status?: string;
@@ -81,9 +82,9 @@ function seedLoan(
   db.prepare(
     `INSERT INTO debt_positions
        (id, snapshot_date, property_id, loan_name, current_balance,
-        months_to_maturity, maturity_date, ltv, balloon, is_demand,
+        months_to_maturity, maturity_date, ltv, rate, balloon, is_demand,
         monthly_pmt, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
     '2026-06-01',
@@ -93,6 +94,7 @@ function seedLoan(
     opts.monthsToMaturity ?? null,
     opts.maturityDate ?? null,
     opts.ltv ?? 0.30,
+    opts.rate ?? null,
     opts.balloon ?? 0,
     opts.isDemand ?? 0,
     opts.monthlyPmt ?? 3_000,
@@ -609,6 +611,248 @@ describe('GET /maturity loan signal', () => {
     const body = await res.json() as { ladder: Array<{ loanId: string; signal: string }> };
     const entry = body.ladder.find((e) => e.loanId === 'loan-no-ltv');
     expect(entry?.signal).toBe('hold');
+  });
+
+  // Round-7 follow-up (residual consumer named in debt-maturity.ts's ROUND 7 docblock, closed
+  // here). Discriminating fixture: a rate-magnitude collision (e.g. 0.065/0.065) already reads
+  // 'hold' from the pre-existing >0.40 threshold with or without the guard, so it can't prove
+  // the guard fired. A BREACH-magnitude collision (0.45/0.45 — the same fixture round 7 and
+  // debt-scoring's round-7-follow-up both use) does discriminate: unguarded, this displays
+  // 'governor-block' sourced from data the collision check itself flags as suspect — a
+  // dashboard alarm built on suspect data. Guarded, it must display 'hold', matching
+  // debt-scoring's ratified hold-not-block direction for the identical collision.
+  it('a breach-magnitude collision (ltv === rate) never displays "governor-block" from suspect data', async () => {
+    const db = freshDb();
+    const app = makeApp(db);
+    seedProperty(db, 'prop-P');
+    seedLoan(db, {
+      id: 'loan-collided',
+      propertyId: 'prop-P',
+      ltv: 0.45,
+      rate: 0.45,
+      monthsToMaturity: 18,
+    });
+
+    const res = await app.request('/maturity');
+    const body = await res.json() as { ladder: Array<{ loanId: string; signal: string }> };
+    const entry = body.ladder.find((e) => e.loanId === 'loan-collided');
+    expect(entry?.signal).toBe('hold');
+  });
+
+  // Refute-round finding (mutation-proven): the two tests above pin the guard's SENSITIVITY
+  // (collision -> hold) but not its SPECIFICITY. Both used rate values at or below breach
+  // magnitude, so a pathological mutation (e.g. `rate !== null` — ANY known rate forces hold,
+  // suppressing every real governor-block on the ladder) still passed the full suite. This
+  // test uses a breach-magnitude ltv with a POPULATED, NON-colliding rate — the realistic
+  // production shape — so a guard that over-fires on "has a rate" rather than "collides with
+  // its rate" fails here.
+  it('a genuine breach with a populated, non-colliding rate still displays "governor-block"', async () => {
+    const db = freshDb();
+    const app = makeApp(db);
+    seedProperty(db, 'prop-R');
+    seedLoan(db, {
+      id: 'loan-real-breach',
+      propertyId: 'prop-R',
+      ltv: 0.45,
+      rate: 0.065,
+      monthsToMaturity: 18,
+    });
+
+    const res = await app.request('/maturity');
+    const body = await res.json() as { ladder: Array<{ loanId: string; signal: string }> };
+    const entry = body.ladder.find((e) => e.loanId === 'loan-real-breach');
+    expect(entry?.signal).toBe('governor-block');
+  });
+
+  it('does NOT exclude an ltv merely in the same ballpark as its rate but not equal (maturity ladder)', async () => {
+    const db = freshDb();
+    const app = makeApp(db);
+    seedProperty(db, 'prop-Q');
+    // Genuine near-payoff loan: ltv 0.07, rate 0.055 — both small decimals, not equal.
+    seedLoan(db, {
+      id: 'loan-ballpark',
+      propertyId: 'prop-Q',
+      ltv: 0.07,
+      rate: 0.055,
+      monthsToMaturity: 18,
+    });
+
+    const res = await app.request('/maturity');
+    const body = await res.json() as { ladder: Array<{ loanId: string; signal: string }> };
+    const entry = body.ladder.find((e) => e.loanId === 'loan-ballpark');
+    expect(entry?.signal).toBe('hold');
+  });
+
+  // Refute-round finding: debt-maturity.ts's identical internal rate read is enforced by a
+  // dedicated confidentiality test; this route's equivalent read had none, resting the
+  // "rate never crosses the route boundary" contract on convention rather than a gate.
+  it('never returns the rate value anywhere in the /maturity response shape (confidentiality)', async () => {
+    const db = freshDb();
+    const app = makeApp(db);
+    seedProperty(db, 'prop-S');
+    seedLoan(db, {
+      id: 'loan-confidential-rate',
+      propertyId: 'prop-S',
+      ltv: 0.30,
+      rate: 0.077712, // distinctive, non-colliding value
+      monthsToMaturity: 18,
+    });
+
+    const res = await app.request('/maturity');
+    const body: unknown = await res.json();
+    expect(JSON.stringify(body)).not.toContain('077712');
+  });
+});
+
+// ── POST /snapshot input validation (2026-07-24 integrity sweep, root cause) ──────────────
+//
+// The route previously took its body through a bare `as DebtApiSnapshotPayload` cast and
+// checked only Array.isArray(loans) — while every GET route Zod-parses its RESPONSE. That
+// asymmetric trust boundary (unvalidated in, validated out) is the route both HIGH governor
+// findings arrived through: a negative absBalance deflated the portfolio aggregate LTV into a
+// false clearance, and a malformed is_demand row was already a documented threat in
+// debt-scoring.ts. The Loan contract ALREADY declares absBalance as nonnegative — it simply
+// was never enforced here.
+
+describe('POST /snapshot — payload validation', () => {
+  const validLoan = {
+    id: 'borrower-1',
+    name: 'Test Mortgage',
+    counterparty: 'Acme Lending LLC',
+    direction: 'borrower' as const,
+    originalPrincipal: 1_000_000,
+    currentBalance: 800_000,
+    absBalance: 800_000,
+    rate: 0.065,
+    monthlyPmt: 5_000,
+    annualInterest: 52_000,
+    annualPrincipal: 8_000,
+    loanType: 'Amortizing',
+    status: 'Active',
+    isDemand: false,
+    maturity: '2031-01-01',
+    monthsToMaturity: 54,
+    ltv: 0.35,
+    lender: 'Acme Lending LLC',
+    balloon: false,
+    flags: [],
+    collateralProperty: 'Test Property A',
+  };
+
+  function post(app: ReturnType<typeof makeApp>, payload: unknown) {
+    return app.request('/snapshot', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  it('rejects a negative absBalance with 400 and writes nothing (H1 reachability closed)', async () => {
+    const db = freshDb();
+    seedProperty(db, 'prop-A', 'Test Property A');
+    const res = await post(makeApp(db), {
+      snapshotDate: '2026-06-21',
+      loans: [{ ...validLoan, absBalance: -2_000_000, currentBalance: -2_000_000 }],
+      properties: [{ id: 'prop-A', name: 'Test Property A' }],
+    });
+
+    expect(res.status).toBe(400);
+    const rows = db.prepare('SELECT COUNT(*) AS n FROM debt_positions').get() as { n: number };
+    expect(rows.n).toBe(0);
+  });
+
+  it('rejects an out-of-bounds ltv (order-of-magnitude entry error) with 400 and writes nothing', async () => {
+    const db = freshDb();
+    seedProperty(db, 'prop-A', 'Test Property A');
+    const res = await post(makeApp(db), {
+      snapshotDate: '2026-06-21',
+      loans: [{ ...validLoan, ltv: 55 }], // "55" meant "0.55"
+      properties: [{ id: 'prop-A', name: 'Test Property A' }],
+    });
+
+    expect(res.status).toBe(400);
+    const rows = db.prepare('SELECT COUNT(*) AS n FROM debt_positions').get() as { n: number };
+    expect(rows.n).toBe(0);
+  });
+
+  it('rejects a structurally malformed loan with 400', async () => {
+    const db = freshDb();
+    seedProperty(db, 'prop-A', 'Test Property A');
+    const res = await post(makeApp(db), {
+      snapshotDate: '2026-06-21',
+      loans: [{ id: 'broken', name: 'No direction field' }],
+      properties: [],
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('an empty loans array does NOT wipe an existing active book (H2a end-to-end)', async () => {
+    const db = freshDb();
+    seedProperty(db, 'prop-A', 'Test Property A');
+    const app = makeApp(db);
+
+    const seeded = await post(app, {
+      snapshotDate: '2026-06-21',
+      loans: [validLoan],
+      properties: [{ id: 'prop-A', name: 'Test Property A' }],
+    });
+    expect(seeded.status).toBe(200);
+
+    const wipe = await post(app, { snapshotDate: '2026-06-22', loans: [], properties: [] });
+    expect(wipe.status).toBe(200);
+    const body = await wipe.json() as { errors: string[]; refused: boolean };
+    expect(body.errors.join(' ')).toMatch(/empty borrower set/i);
+    // Typed signal (2026-07-24, round-2 refute-review): a caller checking only ok/written
+    // could mistake "nothing needed writing" for "actively refused" — `refused` disambiguates.
+    expect(body.refused).toBe(true);
+
+    const active = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active'")
+      .all() as Array<{ id: string }>;
+    expect(active.map((r) => r.id)).toEqual(['borrower-1']);
+  });
+
+  it('allowEmptySupersede:true on the payload actually reaches writeDebtSnapshot (H2a reachability fix)', async () => {
+    const db = freshDb();
+    seedProperty(db, 'prop-A', 'Test Property A');
+    const app = makeApp(db);
+
+    const seeded = await post(app, {
+      snapshotDate: '2026-06-21',
+      loans: [validLoan],
+      properties: [{ id: 'prop-A', name: 'Test Property A' }],
+    });
+    expect(seeded.status).toBe(200);
+
+    // Without the opt-in: refused (already covered by the H2a end-to-end test above).
+    // WITH it: the verified-zero-debt wipe goes through.
+    const wipe = await post(app, {
+      snapshotDate: '2026-06-22',
+      loans: [],
+      properties: [],
+      allowEmptySupersede: true,
+    });
+    expect(wipe.status).toBe(200);
+    const body = await wipe.json() as { errors: string[]; refused: boolean };
+    expect(body.errors.join(' ')).not.toMatch(/empty borrower set/i);
+    expect(body.refused).toBe(false);
+
+    const active = db.prepare("SELECT id FROM debt_positions WHERE status = 'active'").all();
+    expect(active).toHaveLength(0);
+  });
+
+  it('a well-formed payload is still accepted (validation is not over-tight)', async () => {
+    const db = freshDb();
+    seedProperty(db, 'prop-A', 'Test Property A');
+    const res = await post(makeApp(db), {
+      snapshotDate: '2026-06-21',
+      loans: [validLoan],
+      properties: [{ id: 'prop-A', name: 'Test Property A' }],
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean; written: number };
+    expect(body.ok).toBe(true);
+    expect(body.written).toBe(1);
   });
 });
 

@@ -131,7 +131,7 @@ brain.on('snapshot', (info: unknown) => {
   // Unresolved loans (collateralProperty null/blank/typo'd) are warned, never silently dropped.
   try {
     const snapshot = brain.getSnapshot();
-    if (snapshot && snapshot.loans.length > 0) {
+    if (snapshot) {
       const db = getWarehouse();
       const validPropertyIds = new Set<string>(
         (db.prepare('SELECT id FROM property_master').all() as { id: string }[]).map((r) => r.id),
@@ -142,22 +142,53 @@ brain.on('snapshot', (info: unknown) => {
       // refresh, unattended); it is exactly the untrusted producer writeDebtSnapshot's H2a
       // empty-set guard exists to catch (2026-07-24). allowEmptySupersede is reachable only from
       // POST /snapshot (debt-api.ts), a SUPERVISED write a human/caller explicitly confirms.
-      // The `snapshot.loans.length > 0` check above already screens the obvious empty-payload
-      // case; the guard inside writeDebtSnapshot is the second line of defense for the subtler
-      // case where the raw array is non-empty but filters to zero borrower loans (e.g. a
-      // direction-column parse regression, or every loan classifying terminal).
+      //
+      // Round-9 correction (fifth adversarial pass, two lenses independently, HIGH): this call
+      // is now UNCONDITIONAL on the loans array — a `snapshot.loans.length > 0` pre-screen used
+      // to sit here, and it silently swallowed the exact regression the guard exists to catch.
+      // parseLoans is section-banner-driven: banner drift in the Loan Index tab makes it return
+      // a plain [] while every OTHER tab parses fine, so the old screen skipped this entire
+      // block — no refusal, no persisted staleness marker, no log line — and the frozen book
+      // kept reporting clearedConservatively=true indefinitely. Routing the empty array THROUGH
+      // writeDebtSnapshot lets the wouldTotallyEmpty guard refuse safely, persist the marker
+      // (migration 026), and hit the ⛔ branch below. Never re-add a length pre-screen here.
       const result = writeDebtSnapshot(db, snapshot.loans, snapshotDate, map);
       if (unresolved.length > 0) {
         console.warn(
           `⚠ Debt snapshot: ${unresolved.length} borrower loan(s) unattributed (fill Loan Index col 11): ${unresolved.join(', ')}`,
         );
       }
-      if (result.errors.length > 0) {
-        // Generic label (2026-07-24, matching debt-api.ts's POST /snapshot twin): errors[] now
+      if (result.refusedEmptySupersede) {
+        // Obs-3 (PR #233 residual #2): a refusal on this UNATTENDED path is not routine sync
+        // noise — the debt book is now frozen at its prior state until a human resolves it, and
+        // computePortfolioAggregateLtv is withholding its governor verdict (via the persisted
+        // refusal marker, migration 026 — that part is automatic, not dependent on this log).
+        // console.error + distinct prefix so log scans treat it as a failure.
+        console.error(
+          `⛔ DEBT SNAPSHOT WRITE REFUSED — book frozen at prior state; aggregate-LTV verdict withheld until resolved: ${result.errors.join('; ')}`,
+        );
+      } else if (result.degradedRows > 0) {
+        // Round 10 (sixth adversarial pass): a DEGRADED write — per-loan inserts failed after
+        // their prior rows were retired, so the book may have silently LOST rows — is the one
+        // event class that destroys data rather than freezing it, and it was landing in the
+        // generic warning below. Failure-level, same as a refusal; the persisted marker is
+        // already withholding the governor verdict either way.
+        console.error(
+          `⛔ DEBT SNAPSHOT DEGRADED — ${result.degradedRows} loan upsert(s) failed, book may have lost rows; aggregate-LTV verdict withheld until a clean write: ${result.errors.join('; ')}`,
+        );
+      } else if (result.staleMarkerHeld) {
+        // Round 13 (ninth adversarial pass, LOW): a clean write that fails to recover the
+        // trusted book re-upserts the standing DEGRADED marker but used to return a fully-quiet
+        // result — so the unattended path logged nothing for the entire damaged window after
+        // damage day, making a weeks-long unnoticed freeze realistic. Failure-level, every
+        // reload, until the book actually recovers.
+        console.error(
+          '⛔ DEBT BOOK STILL DEGRADED — trusted loans are still missing; aggregate-LTV verdict remains withheld (see the persisted marker for the missing ids).',
+        );
+      } else if (result.errors.length > 0) {
+        // Generic label (2026-07-24, matching debt-api.ts's POST /snapshot twin): errors[] still
         // carries several classes — FK-validation backstops, unrecognized loan statuses, id
-        // collisions, and (2026-07-24) a refused empty-set book-wipe from the H2a guard, which
-        // is this reload path's SECOND line of defense (see the call site comment above). A
-        // REFUSED message under a "FK-validation" label would read as the wrong failure class.
+        // collisions. REFUSED/DEGRADED messages never land here (dedicated branches above).
         console.warn(
           `⚠ Debt snapshot: ${result.errors.length} writeDebtSnapshot warning(s)/error(s): ${result.errors.join('; ')}`,
         );
