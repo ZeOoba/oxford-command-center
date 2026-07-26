@@ -24,6 +24,7 @@
 import type { WarehouseDb } from './db';
 import { loadGovernors, type Governors } from './governors';
 import { effectiveMonthsToMaturity } from './debt-scoring';
+import { readLastSnapshotRefusal } from './debt-snapshot';
 import { referenceDate } from '../config';
 import { MONTH_MS } from './time-constants';
 import { ALERT_THRESHOLDS } from '../../src/analytics/conditions';
@@ -340,18 +341,31 @@ export function buildRefiWindows(
  * independently-set ltv has no causal reason to equal its own loan's rate) — this closes the
  * ONE demonstrated attack, not "any implausible ltv" in general; a broader defense remains a
  * genuinely open question (see the residual note in src/contracts/loan.ts's ltv doc comment).
- * SCOPE: this check protects THIS aggregate function only. debt-scoring.ts's per-property
- * governor checks (ltvCeiling breach, cash-out gate) consume the same raw ltv column unguarded
- * — a drifted value there yields per-property "governors clear" signals feeding
- * capital-allocation.ts. Same defect class, separate consumer; extending the identical
- * cross-check there is a known follow-up, deliberately not bundled into this change.
+ * SCOPE: this check protects this aggregate function AND debt-scoring.ts's per-property
+ * governor checks (ltvCeiling breach, cash-out gate) — same defect class, separate consumer;
+ * scoreDebtPositions's D1 ltv pick applies the identical cross-check (round-7 follow-up
+ * commit; there, a collision on ANY loan poisons the whole property's ltv one-directionally
+ * — a breach measured on clean rows still fires, only clearance is forbidden) so a drifted
+ * value can no longer yield per-property "governors clear" signals feeding
+ * capital-allocation.ts. debt-api.ts's toLoanSignal (the /maturity ladder's per-loan display
+ * hint — explicitly NOT governor enforcement, per its own docblock) applies the identical
+ * cross-check too — no remaining unguarded consumer of debt_positions.ltv in this repo.
  */
 export function computePortfolioAggregateLtv(
   db: WarehouseDb,
   governors?: Governors,
 ): PortfolioAggregateLtv {
   const g = governors ?? loadGovernors(db);
-  const loans = activeLoans(db);
+  // Round 10 (sixth adversarial pass, determinism + edges lenses): the rows and the staleness
+  // marker are read inside ONE transaction so both observe a single database snapshot. Read as
+  // two separate autocommit statements, the documented dev-server + backfill-CLI concurrency
+  // could commit a clean healing write BETWEEN them — pairing pre-heal frozen rows with a
+  // freshly cleared marker and minting an unwithheld verdict from stale data (the exact class
+  // the marker exists to prevent). Mirrors the write-side fix in writeDebtSnapshot.
+  const { loans, refusal } = db.transaction(() => ({
+    loans: activeLoans(db),
+    refusal: readLastSnapshotRefusal(db),
+  }))();
 
   const countByProperty = new Map<string, number>();
   for (const l of loans) {
@@ -409,6 +423,16 @@ export function computePortfolioAggregateLtv(
   const complete = coveredLoanCount === totalLoanCount; // vacuously true at zero debt
   const emptyCohort = totalLoanCount === 0;
 
+  // Obs-3 (PR #233 residual #2, both adversarial reviews): when the shrinkage guard refused (or
+  // per-loan insert failures degraded) the last snapshot write, the active rows this function
+  // just read are FROZEN/DAMAGED at a state the warehouse itself declined/failed to update — a
+  // book stuck pre-refi (or pre-collapse) could keep clearing indefinitely with only a
+  // console.warn anywhere in the system. The persisted marker (writeDebtSnapshot / migration
+  // 026, read atomically with the rows above) makes that condition visible here: while it is
+  // set, a would-be clearance is always withheld; whether a would-be BREACH survives depends on
+  // the marker KIND (see the precedence note below).
+  const lastWriteRefused = refusal !== null;
+
   // H2b (2026-07-24 integrity sweep): an empty cohort is NO LONGER a clearance.
   //
   // This branch previously returned `true` on the reasoning "no active debt ⇒ true aggregate LTV
@@ -423,7 +447,8 @@ export function computePortfolioAggregateLtv(
   //
   // M2: the ceiling comparison carries GOVERNOR_LTV_EPSILON so the RATIFIED INCLUSIVE ceiling
   // survives floating-point roundtrip and summation-order noise. See the constant's note.
-  const clearedConservatively = !complete
+  // The verdict the current rows produce ON THEIR OWN, before the staleness marker is applied.
+  const trustedRowsVerdict = !complete
     ? null
     : emptyCohort
       ? null
@@ -431,6 +456,29 @@ export function computePortfolioAggregateLtv(
         ? aggregateLtv <= g.ltvCeiling + GOVERNOR_LTV_EPSILON
         : null; // complete ∧ loans>0 ∧ null aggregate ⇒ all covered balances are 0 (implied
                 // value 0) — a degenerate snapshot; no verdict rather than a guessed one
+
+  // Obs-3 precedence, corrected round 9 then split by marker KIND in round 10 (sixth
+  // adversarial pass — all three lenses converged, reproduced):
+  //
+  //   marker 'refused'  — the write was declined wholesale; the rows ARE the last trusted book.
+  //                       A would-be TRUE is withheld (unknown is never clearance), but a
+  //                       would-be FALSE survives: a refused write does not retroactively
+  //                       un-breach a book whose last trusted data was already above the
+  //                       ceiling, and nulling it would silence a standing Hard-Invariant-4
+  //                       alarm at exactly the moment the system is last-known-in-breach AND
+  //                       blind.
+  //   marker 'degraded' — per-loan inserts failed after priors were retired; the rows are the
+  //                       POST-DAMAGE REMNANT the marker itself distrusts. A verdict computed
+  //                       from them is fabricated in EITHER direction — the reviewers reproduced
+  //                       a genuinely-clearing book (~0.305 aggregate) minting a phantom hard
+  //                       BREACH from its surviving 0.55-LTV remnant. Null both ways.
+  //
+  // Net: a freeze can never mint a clearance; only a TRUSTED frozen book can sustain an alarm.
+  const clearedConservatively = lastWriteRefused
+    ? refusal!.kind === 'refused' && trustedRowsVerdict === false
+      ? false
+      : null
+    : trustedRowsVerdict;
 
   // Round-2 refute-review correction: this ternary used to be BINARY over what is actually a
   // THREE-way verdict (true / false / null). Once the >=0 relaxation let an all-zero-balance
@@ -440,7 +488,13 @@ export function computePortfolioAggregateLtv(
   // routed that null verdict into the ABOVE-CEILING wording — asserting a Hard-Invariant-4
   // breach-direction claim about a comparison that never ran. Never inferred: each of the three
   // clearedConservatively states now gets its own sentence.
-  const note = emptyCohort
+  const note = lastWriteRefused
+    ? clearedConservatively === false
+      ? `BREACH (stale data) — the last trusted book was already above the aggregate ceiling on this conservative basis, AND the latest debt-snapshot write was REFUSED (${refusal!.refusedAt} UTC), so the book is frozen at that breaching state. The write failure does NOT clear the breach: resolve it (verify the workbook parse, or confirm the loss via allowEmptySupersede) and re-run the snapshot. Marker: ${refusal!.reason}`
+      : refusal!.kind === 'degraded'
+        ? `STALE (degraded) — the debt book has been in a degraded state since ${refusal!.latchedAt ?? refusal!.refusedAt} (a snapshot write lost rows to per-loan insert failures), so the surviving rows are a damaged remnant, not a trusted book state. No aggregate-LTV verdict is issued in either direction — the remnant can neither clear nor breach. Fix the failing loan rows and re-run the snapshot. Marker: ${refusal!.reason}`
+        : `STALE — the last debt-snapshot write was REFUSED (${refusal!.refusedAt} UTC), so the active book may be frozen at an outdated state and no aggregate-LTV verdict is issued. Resolve it (verify the workbook parse, or confirm the loss via allowEmptySupersede) and re-run the snapshot. Marker: ${refusal!.reason}`
+    : emptyCohort
     ? 'No active debt positions in the warehouse. This is NOT a clearance: an empty cohort is indistinguishable from a wiped or never-loaded snapshot, so no aggregate-LTV verdict is issued. Confirm the debt snapshot loaded before reading this as an unlevered portfolio.'
     : !complete
       ? `Partial coverage (${coveredLoanCount}/${totalLoanCount} active loans; multi-loan properties, negative-balance loans, unknown-LTV/unattributed loans, and loans whose ltv exactly collides with their own rate (a likely column-drift, see round 7) excluded) — no aggregate verdict. See DESIGN.md [GG: confirm] on per-loan LTV semantics.`
@@ -458,6 +512,7 @@ export function computePortfolioAggregateLtv(
     coveredBalancePct: totalBalance > 0 ? coveredBalance / totalBalance : null,
     complete,
     emptyCohort,
+    lastWriteRefused,
     clearedConservatively,
     note,
   };
