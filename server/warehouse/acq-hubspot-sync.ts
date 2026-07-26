@@ -11,9 +11,10 @@
 //   First-page network/auth failure → throws (route returns 502).
 //   Per-deal extraction/write error → pushed to errors[], sync continues.
 // NO OUTER TRANSACTION: intentional — per-deal autocommit gives partial-success tolerance.
-// STATUS NO-CLOBBER: UPDATE never downgrades a locally-advanced `acquired` or `passed` back to
-//   `active`. This protects a human decision recorded via PATCH /acq/candidates/:id/status from
-//   being silently reverted by a resync -- accepted deliberately, same tradeoff as the Notion sync.
+// STATUS NO-CLOBBER: UPDATE never downgrades a locally-advanced `acquired`, `passed` or
+//   `archived` (see LOCAL_LOCKED_STATUSES) back to `active`. This protects a human decision
+//   recorded via PATCH /acq/candidates/:id/status from being silently reverted by a resync --
+//   accepted deliberately, same tradeoff as the Notion sync.
 //   Adversarial review (2026-07-10) flagged that this also means a genuine HubSpot-side correction
 //   (a fat-fingered "Closed Won" reopened back to active in HubSpot) can never flow through once
 //   synced -- if that scenario needs to be supported, it requires an explicit manual status PATCH
@@ -100,13 +101,38 @@ function isTestDeal(dealName: string | null): boolean {
   return dealName.startsWith('_Preflight') || dealName.startsWith('_Test');
 }
 
-/** Hash of the fields the upsert below actually writes (address, status), excluding id and
- *  the timestamp columns — so a resync with no real HubSpot-side change reseeds to an identical
- *  hash and doesn't bump updated_at. Mirrors migration 024's property_master content_hash fix.
- *  Reflects the INCOMING mapped status, not the status no-clobber CASE's persisted resolution
- *  (see STATUS NO-CLOBBER above) — an already-locked acquired/passed row can still see its hash
- *  change (and updated_at bump) if HubSpot's reported stage shifts, even though `status` itself
- *  stays locked; accepted, same tradeoff class as the no-clobber behavior it sits alongside. */
+/**
+ * Statuses that represent a LOCAL human decision and must never be overwritten by a resync.
+ *
+ * 'archived' was added 2026-07-24 (integrity sweep, M1). PATCH /acq/candidates/:id/status
+ * accepts active|archived|acquired|passed, but the no-clobber list only covered the two terminal
+ * ones — so archiving a candidate was silently undone by the next sync, which reverted status to
+ * the HubSpot-mapped value. Combined with the hash-based updated_at gate (also fixed), the revert
+ * left NO trace: the row ended up asserting 'active' while carrying the timestamp of the moment
+ * a human archived it. Archiving is a local lifecycle decision exactly like acquired/passed and
+ * gets the same protection.
+ *
+ * Exported so acq-notion-sync.ts's UPDATE branch imports THIS set rather than maintaining its
+ * own copy. Refute-lens finding (2026-07-24 gov-ltv-hardening review): this fix originally only
+ * touched the HubSpot writer, leaving acq_candidates' SECOND sync writer (Notion) with the old
+ * two-status no-clobber list -- an archived-via-Notion-resync candidate was still silently
+ * reactivated. One shared set means the two writers cannot drift apart on this again.
+ */
+export const LOCAL_LOCKED_STATUSES: ReadonlySet<string> = new Set(['acquired', 'passed', 'archived']);
+
+/**
+ * Fingerprint of the values the row actually PERSISTS (address + resolved status).
+ *
+ * 2026-07-24 (M1/L1): this now hashes the RESOLVED status — the value the row will really hold
+ * after the no-clobber CASE — not the raw incoming one. Previously a status-locked row whose
+ * HubSpot stage merely shifted between two non-terminal stages produced a different hash on every
+ * sync and bumped updated_at with nothing persisted changed: the exact phantom-edit signal
+ * migration 025 existed to remove, reintroduced for locked rows.
+ *
+ * NOTE: content_hash is now a DEBUG/AUDIT fingerprint only. It is NOT the authority for
+ * change detection — updated_at is gated on a direct persisted-column comparison instead,
+ * because any out-of-band writer (e.g. the PATCH status route) can leave this column stale.
+ */
 function contentHash(address: string | null, status: string): string {
   return sha16(stableStringify({ address, status }));
 }
@@ -199,23 +225,47 @@ export async function syncHubSpotPipeline(
         );
       }
 
-      const existing = db.prepare(
-        'SELECT id FROM acq_candidates WHERE id = ?',
-      ).get(candidateId) as { id: string } | undefined;
+      // SELECT-then-UPDATE, wrapped atomically (2026-07-24, refute-review): resolving
+      // resolvedStatus/persistedChanged in TypeScript happens BETWEEN a read and a write — a
+      // read-then-write pair that a concurrent writer to the SAME SQLite file (a second OS
+      // process, e.g. a CLI/scheduled-task run overlapping this one) could interleave with,
+      // landing a PATCH between the SELECT and UPDATE and having it silently overwritten by
+      // this sync's stale-read resolution. Not reachable in-process today (no await between
+      // them), but financial-decision code should not depend on process topology for its
+      // no-clobber invariant. db.transaction() makes the SELECT+UPDATE pair atomic without
+      // touching the "NO OUTER TRANSACTION" per-deal isolation contract above — this
+      // transaction is scoped to one deal, same partial-success tolerance as before.
+      const isExistingCandidate = db.transaction((): boolean => {
+        const existingRow = db.prepare(
+          'SELECT id, address, status FROM acq_candidates WHERE id = ?',
+        ).get(candidateId) as { id: string; address: string | null; status: string } | undefined;
+        if (existingRow === undefined) return false;
 
-      const newHash = contentHash(dealName, status);
-
-      if (existing) {
+        // The status the row will ACTUALLY hold after this UPDATE, resolved in TS so the
+        // change-detection below compares persisted-vs-persisted (see M1 note above).
+        const resolvedStatus = LOCAL_LOCKED_STATUSES.has(existingRow.status) ? existingRow.status : status;
+        // M1: gate updated_at on whether this UPDATE genuinely changes a PERSISTED column —
+        // not on whether the incoming hash matches a stored one. The stored hash records the
+        // last sync's INPUT; a third writer (PATCH /acq/candidates/:id/status) changes status
+        // without touching it, so a matching hash never proved the row was unchanged. It could
+        // and did mean "revert the human's edit and freeze updated_at at their timestamp".
+        const persistedChanged =
+          existingRow.address !== dealName || existingRow.status !== resolvedStatus;
         db.prepare(`
           UPDATE acq_candidates
           SET address = ?,
-              status = CASE WHEN status IN ('acquired','passed') THEN status ELSE ? END,
+              status = ?,
               content_hash = ?,
-              updated_at = CASE WHEN content_hash IS ? THEN updated_at ELSE datetime('now') END
+              updated_at = CASE WHEN ? THEN datetime('now') ELSE updated_at END
           WHERE id = ?
-        `).run(dealName, status, newHash, newHash, candidateId);
+        `).run(dealName, resolvedStatus, contentHash(dealName, resolvedStatus), persistedChanged ? 1 : 0, candidateId);
+        return true;
+      })();
+
+      if (isExistingCandidate) {
         result.updated += 1;
       } else {
+        const newHash = contentHash(dealName, status);
         // county/state/market/rentable_sf/year_built/owner_name: HubSpot's deal object in
         // this account has no structured equivalent of Notion's page properties for these —
         // dealname is the only descriptive text available, so it lands in `address` and the

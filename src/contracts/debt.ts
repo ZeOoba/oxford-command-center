@@ -128,9 +128,11 @@ export type RefiWindowEntry = z.infer<typeof RefiWindowEntry>;
 
 /** Conservative portfolio-aggregate LTV vs the ratified aggregate governor.
  *  Basis: implied collateral value (balance ÷ per-loan LTV) for single-active-loan
- *  properties only; unlevered-property value is NOT in the denominator, so the basis
- *  OVERSTATES true aggregate LTV. Therefore complete coverage AND ≤ ceiling is a TRUE
- *  clearance; anything else is false/null — never a fabricated verdict. */
+ *  properties with a NON-NEGATIVE balance (a zero balance, e.g. an undrawn revolver,
+ *  contributes nothing to either sum and cannot deflate the aggregate — only a strictly
+ *  negative balance is excluded); unlevered-property value is NOT in the denominator, so
+ *  the basis OVERSTATES true aggregate LTV. Therefore complete coverage AND ≤ ceiling is a
+ *  TRUE clearance; anything else is false/null — never a fabricated verdict. */
 export const PortfolioAggregateLtv = z.object({
   aggregateLtv: z.number().nullable(),
   basis: z.literal('levered-properties-implied-value'),
@@ -138,6 +140,18 @@ export const PortfolioAggregateLtv = z.object({
   totalLoanCount: z.number().int().nonnegative(),
   coveredBalancePct: z.number().nullable(),
   complete: z.boolean(),
+  /** No active debt rows at all. Distinguishes "no debt" from "no data": the warehouse
+   *  cannot tell a genuinely unlevered portfolio from one whose rows were wiped by a bad
+   *  snapshot, so an empty cohort yields clearedConservatively=null, never a clearance.
+   *  Consumers must branch on this before reading the verdict. */
+  emptyCohort: z.boolean(),
+  /** The LAST debt-snapshot write attempt was REFUSED by the shrinkage guard or DEGRADED by
+   *  per-loan insert failures (obs-3, PR #233 residual #2) — the active book may be frozen at a
+   *  stale state. While true, a would-be clearance is withheld (clearedConservatively null —
+   *  unknown is never clearance) but a would-be BREACH survives as false (a write failure never
+   *  clears a standing alarm); the note carries the marker reason either way. Cleared
+   *  automatically by the next clean write. */
+  lastWriteRefused: z.boolean(),
   clearedConservatively: z.boolean().nullable(),
   note: z.string(),
 });

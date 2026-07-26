@@ -272,7 +272,7 @@ npx wrangler pages secret put ANTHROPIC_API_KEY --project-name=ora-command-cente
 ```
 
 The Ask panel is a **streaming tool-using agent** (`server/ai/agent.ts`, shared by the server and the
-Pages Function) — model defaults to `claude-opus-4-8`. With no key it streams the deterministic
+Pages Function) — model defaults to `claude-opus-5`. With no key it streams the deterministic
 responder and the **System Health** view shows "AI offline" — never a silent fake.
 
 **Scheduled freshness (local).** Because the canonical workbook is a local OneDrive file, the daily

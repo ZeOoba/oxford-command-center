@@ -81,7 +81,11 @@ export const CANON_PROPERTIES: PropertyMasterRow[] = ([
 ] as const).map((row) => PropertyMasterRowSchema.parse(row));
 
 /** Hash of every field seedPropertyMaster writes, excluding id (the key) and the timestamp columns
- *  themselves — so an unchanged row reseeds to an identical hash regardless of when it runs. */
+ *  themselves — so an unchanged row reseeds to an identical hash regardless of when it runs.
+ *
+ *  NOTE (2026-07-24, M1): this is a DEBUG/AUDIT fingerprint, NOT the authority for change
+ *  detection. updated_at is gated on a direct column-by-column comparison in the upsert below,
+ *  because an out-of-band writer can leave this column stale relative to the real row. */
 function contentHash(r: PropertyMasterRow): string {
   return sha16(stableStringify({
     name: r.name, market: r.market ?? null,
@@ -108,7 +112,28 @@ export function seedPropertyMaster(db: WarehouseDb): void {
       ownership_pct=excluded.ownership_pct, ownership_status=excluded.ownership_status,
       asset_class=excluded.asset_class, notes=excluded.notes,
       content_hash=excluded.content_hash,
-      updated_at=CASE WHEN property_master.content_hash IS excluded.content_hash
+      -- M1 (2026-07-24 integrity sweep): gate updated_at on the ACTUAL persisted column values,
+      -- not on the stored content_hash. The stored hash records what the LAST SEED wrote; any
+      -- out-of-band write (a manual SQL correction, or property-onboarding.ts, which INSERTs
+      -- without a hash) leaves it stale relative to the real columns. The hash then still
+      -- matched on the next seed, so updated_at was KEPT — while the SET clause above was
+      -- actively reverting the drifted column back to canon. A real persisted change with no
+      -- timestamp bump: the precise inverse of the defect migration 024 was written to fix.
+      -- Comparing the columns themselves cannot go stale. IS is SQLite's NULL-safe equality,
+      -- required because most of these columns are nullable.
+      updated_at=CASE WHEN
+             property_master.name             IS excluded.name
+         AND property_master.market           IS excluded.market
+         AND property_master.property_manager IS excluded.property_manager
+         AND property_master.pm_contact       IS excluded.pm_contact
+         AND property_master.pm_platform      IS excluded.pm_platform
+         AND property_master.financial_mode   IS excluded.financial_mode
+         AND property_master.rentable_sf      IS excluded.rentable_sf
+         AND property_master.acquisition_date IS excluded.acquisition_date
+         AND property_master.ownership_pct    IS excluded.ownership_pct
+         AND property_master.ownership_status IS excluded.ownership_status
+         AND property_master.asset_class      IS excluded.asset_class
+         AND property_master.notes            IS excluded.notes
         THEN property_master.updated_at ELSE datetime('now') END
   `);
   const tx = db.transaction((rows: PropertyMasterRow[]) => {

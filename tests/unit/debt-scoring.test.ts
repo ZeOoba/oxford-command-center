@@ -832,3 +832,183 @@ describe('F5 regression — negative NOI correctly triggers governor-block (not 
     expect(s.score).toBeLessThanOrEqual(100);
   });
 });
+
+// ============================================================================
+// Round-7 follow-up — ltv/rate column-drift collision defense (per-property)
+// ============================================================================
+// Mirrors tests/unit/debt-maturity.test.ts's "low-LTV rate-collision defense (round 7)"
+// describe block. Same defect class, this module's consumer: D1 picks the raw
+// debt_positions.ltv column off the max-balance loan, so a workbook column drift that makes
+// ltv read the loan's own interest-rate cell yields per-property "governors clear" signals
+// (cash-out/refi) that feed capital-allocation.ts. A colliding ltv is never trusted — it is
+// treated as unknown and flows into the existing null-ltv handling (hold, no fabricated
+// clearance).
+
+describe('scoreDebtPositions — ltv/rate collision defense (round 7 follow-up)', () => {
+  it('a drifted ltv (=== its own rate) never fabricates per-property governor clearance', () => {
+    const db = freshDb();
+    // Cash-out-shaped fixture EXCEPT the ltv column drifted to the loan's own 6.5% rate cell:
+    // DSCR = 200_000 / 24_000 ≈ 8.33 (headroom 7.08 > 0.5 ✓), months_to_maturity 36 > 24 ✓,
+    // and the drifted 0.065 reads as ltvHeadroom 0.335 > 0.10 ✓ — unguarded, this scores
+    // signal='cash-out' on a governor that was never actually verified.
+    insertLoan(db, { rate: 0.065, ltv: 0.065, monthly_pmt: 2_000, months_to_maturity: 36 });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const s = scoreDebtPositions(db, metrics, MARKET_5Y).find((r) => r.propertyId === 'prop-a')!;
+    // The colliding ltv is never trusted as data — unknown governor → hold, not action.
+    expect(s.ltv).toBeNull();
+    expect(s.ltvHeadroom).toBeNull();
+    expect(s.signal).toBe('hold');
+    // Refute finding (round 2): the reason must name the COLLISION, not claim the ltv cell is
+    // unpopulated — the cell IS populated (with a drifted value); telling the operator to
+    // populate it sends them on an impossible errand.
+    expect(s.signalReason).toMatch(/collides|column-drift/i);
+    // R3 band cap: a property whose LTV governor was never verified can't read strong/adequate.
+    expect(['watch', 'critical']).toContain(s.scoreBand);
+  });
+
+  it('a collision on ANY loan poisons the whole property ltv — a clean minority loan cannot clear governors', () => {
+    const db = freshDb();
+    // Refute finding (round 2, confirmed by probe): per-loan fall-through let 75% of the
+    // property's balance carry a DETECTED-corrupt ltv while the minority loan's clean 0.30
+    // cleared governors and emitted cash-out at band 'strong'. A same-row collision is evidence
+    // the ltv COLUMN drifted for this snapshot, so sibling rows' values are not thereby
+    // trustworthy — mirror R1's (annualDebtService) and F3's (hasUnknownMaturity) any-loan-
+    // poisons semantics and the aggregate's complete=false stance on the identical evidence.
+    insertLoan(db, { id: 'loan-a', current_balance: 600_000, rate: 0.065, ltv: 0.065, monthly_pmt: 3_000 }); // drifted
+    insertLoan(db, { id: 'loan-b', current_balance: 200_000, rate: 0.06, ltv: 0.30, monthly_pmt: 1_000 });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const s = scoreDebtPositions(db, metrics, MARKET_5Y).find((r) => r.propertyId === 'prop-a')!;
+    expect(s.ltv).toBeNull();
+    expect(s.signal).toBe('hold');
+    expect(s.signalReason).toMatch(/collides|column-drift/i);
+    expect(['watch', 'critical']).toContain(s.scoreBand);
+  });
+
+  it('a sibling collision never suppresses a breach measured on a clean loan (poisoning is one-directional)', () => {
+    const db = freshDb();
+    // Refute round 2: the dominant CLEAN loan genuinely breaches (ltv 0.50 > 0.40 ceiling); the
+    // minority loan's collision must not demote that breach alarm to hold — isGovernorBlock
+    // 'fires even on partial knowledge', and a breach surfaced from suspect-adjacent data is the
+    // conservative direction. Only CLEARANCE is forbidden from a poisoned snapshot.
+    insertLoan(db, { id: 'loan-a', current_balance: 600_000, rate: 0.065, ltv: 0.50, monthly_pmt: 3_000 }); // clean, breaching
+    insertLoan(db, { id: 'loan-b', current_balance: 100_000, rate: 0.06, ltv: 0.06, monthly_pmt: 500 });   // collided
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const s = scoreDebtPositions(db, metrics, MARKET_5Y).find((r) => r.propertyId === 'prop-a')!;
+    expect(s.signal).toBe('governor-block');
+    expect(s.signalReason).toMatch(/above ceiling/);
+    // Full parity with pre-change breach reporting: the clean breaching value is reported, and
+    // its negative headroom keeps ltvComp at 0 (no +12.5 score inflation for a breach).
+    expect(s.ltv).toBe(0.50);
+    expect(s.ltvHeadroom).toBeLessThan(0);
+  });
+
+  it('a poisoned pick exactly at the ceiling is nulled to hold (keep predicate = exact complement of governorsClear)', () => {
+    const db = freshDb();
+    // Guards the complement invariant (refute round 3): at ltv == ltvCeiling (0.40) a poisoned
+    // pick must be NULLED — an unpoisoned 0.40 clears, but clearance can never come from a
+    // poisoned snapshot, and if the keep predicate ever drifts from isGovernorBlock's LTV
+    // clause (e.g. an epsilon "harmonization"), a kept-but-not-blocked gap opens here first.
+    insertLoan(db, { id: 'loan-a', current_balance: 600_000, rate: 0.065, ltv: 0.40, monthly_pmt: 3_000 }); // clean, exactly at ceiling
+    insertLoan(db, { id: 'loan-b', current_balance: 100_000, rate: 0.06, ltv: 0.06, monthly_pmt: 500 });   // collided
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const s = scoreDebtPositions(db, metrics, MARKET_5Y).find((r) => r.propertyId === 'prop-a')!;
+    expect(s.ltv).toBeNull();
+    expect(s.signal).toBe('hold');
+    expect(s.signalReason).toMatch(/collides/);
+  });
+
+  it("a collided row's rate never fabricates a refi signal (the signature cannot say WHICH column drifted)", () => {
+    const db = freshDb();
+    // Refute finding (round 2, confirmed by probe): rate=ltv=0.35 on the dominant loan is just
+    // as likely rate-read-the-ltv-cell drift; trusting it in avgLoanRate produced signal='refi'
+    // citing a bogus 27.75% in-place rate. Collision → !governorsClear → hold blocks every
+    // action signal (refi requires affirmative clearance), so the corrupt rate can never drive
+    // an action regardless of which column actually drifted.
+    insertLoan(db, { id: 'loan-a', current_balance: 600_000, rate: 0.35, ltv: 0.35, monthly_pmt: 3_000 }); // collided
+    insertLoan(db, { id: 'loan-b', current_balance: 200_000, rate: 0.06, ltv: 0.20, monthly_pmt: 1_000 });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const s = scoreDebtPositions(db, metrics, MARKET_5Y).find((r) => r.propertyId === 'prop-a')!;
+    expect(s.signal).toBe('hold');
+    expect(s.ltv).toBeNull();
+  });
+
+  it('does NOT exclude an ltv merely in the same ballpark as its rate but not equal', () => {
+    const db = freshDb();
+    // A genuine near-payoff loan: ltv 0.07, rate 0.055 — both small decimals, but NOT the same
+    // value. Coincidental proximity must never be enough to discard real data.
+    insertLoan(db, { rate: 0.055, ltv: 0.07, monthly_pmt: 2_000 });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const s = scoreDebtPositions(db, metrics, MARKET_5Y).find((r) => r.propertyId === 'prop-a')!;
+    expect(s.ltv).toBe(0.07);
+  });
+
+  it('a null rate never excludes a loan (no data to collide with)', () => {
+    const db = freshDb();
+    insertLoan(db, { rate: null, ltv: 0.065, monthly_pmt: 2_000 });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const s = scoreDebtPositions(db, metrics, MARKET_5Y).find((r) => r.propertyId === 'prop-a')!;
+    expect(s.ltv).toBe(0.065);
+  });
+
+  it('exact equality at breach magnitude is excluded too → hold, never a governor-block computed from suspect data', () => {
+    // Mirrors round 7's documented narrow false-positive: exact equality is exact equality — the
+    // value is suspect in EITHER direction, so a colliding 0.45 (above the 0.40 ceiling if
+    // trusted) produces the conservative unknown→hold, not a breach verdict built on a value
+    // that is never trusted as data.
+    const db = freshDb();
+    insertLoan(db, { rate: 0.45, ltv: 0.45, monthly_pmt: 2_000 });
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const s = scoreDebtPositions(db, metrics, MARKET_5Y).find((r) => r.propertyId === 'prop-a')!;
+    expect(s.ltv).toBeNull();
+    expect(s.signal).toBe('hold');
+  });
+});
+
+describe('2026-07-25 hardening — getLoansForProperty ORDER BY is total under duplicate active ids', () => {
+  // debt_positions' PRIMARY KEY is (id, snapshot_date), not id alone — so two active rows CAN
+  // legitimately share an id at different snapshot_dates (unreachable via the app's own
+  // writeDebtSnapshot transactional supersede today, but not prevented by the schema). D1's
+  // getLoansForProperty query sorted `ORDER BY current_balance DESC, id ASC` — with equal
+  // balances and identical ids, both tie-break keys are exhausted and SQLite falls back to
+  // physical row order, which tracks INSERTION order, not any property of the data. Constructed
+  // directly via raw SQL insert (this duplicate-id state cannot arise through insertLoan() alone
+  // in a normal test flow — the point is to prove the query itself, not a realistic caller).
+  function insertDup(
+    db: WarehouseDb,
+    snapshotDate: string,
+    ltv: number,
+  ): void {
+    db.prepare(`
+      INSERT INTO debt_positions
+        (id, snapshot_date, property_id, loan_name, current_balance, rate,
+         monthly_pmt, is_demand, maturity_date, months_to_maturity, ltv, status)
+      VALUES
+        ('dup-loan', ?, 'prop-a', 'Duplicate-Id Loan', 800000, 0.065,
+         1000, 0, NULL, 42, ?, 'active')
+    `).run(snapshotDate, ltv);
+  }
+
+  it('picks the later-snapshot_date row for D1 regardless of insertion order (earlier-then-later)', () => {
+    const db = freshDb();
+    // Clean row (ltv clears the 0.40 ceiling) inserted FIRST, breaching row inserted SECOND.
+    insertDup(db, '2026-01-01', 0.30);
+    insertDup(db, '2026-02-01', 0.55);
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const s = scoreDebtPositions(db, metrics, MARKET_5Y).find((r) => r.propertyId === 'prop-a')!;
+    expect(s.ltv).toBe(0.55);
+    expect(s.signal).toBe('governor-block');
+  });
+
+  it('picks the same later-snapshot_date row when insertion order is reversed (later-then-earlier)', () => {
+    const db = freshDb();
+    // Same two rows, opposite insertion order — the query result, and therefore the score,
+    // must be identical to the case above. Pre-fix this flips ltv to 0.30 and signal to
+    // something other than governor-block, because the sort has no total order to fall back on.
+    insertDup(db, '2026-02-01', 0.55);
+    insertDup(db, '2026-01-01', 0.30);
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const s = scoreDebtPositions(db, metrics, MARKET_5Y).find((r) => r.propertyId === 'prop-a')!;
+    expect(s.ltv).toBe(0.55);
+    expect(s.signal).toBe('governor-block');
+  });
+});
