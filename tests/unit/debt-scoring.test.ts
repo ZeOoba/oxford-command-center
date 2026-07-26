@@ -963,3 +963,52 @@ describe('scoreDebtPositions — ltv/rate collision defense (round 7 follow-up)'
     expect(s.signal).toBe('hold');
   });
 });
+
+describe('2026-07-25 hardening — getLoansForProperty ORDER BY is total under duplicate active ids', () => {
+  // debt_positions' PRIMARY KEY is (id, snapshot_date), not id alone — so two active rows CAN
+  // legitimately share an id at different snapshot_dates (unreachable via the app's own
+  // writeDebtSnapshot transactional supersede today, but not prevented by the schema). D1's
+  // getLoansForProperty query sorted `ORDER BY current_balance DESC, id ASC` — with equal
+  // balances and identical ids, both tie-break keys are exhausted and SQLite falls back to
+  // physical row order, which tracks INSERTION order, not any property of the data. Constructed
+  // directly via raw SQL insert (this duplicate-id state cannot arise through insertLoan() alone
+  // in a normal test flow — the point is to prove the query itself, not a realistic caller).
+  function insertDup(
+    db: WarehouseDb,
+    snapshotDate: string,
+    ltv: number,
+  ): void {
+    db.prepare(`
+      INSERT INTO debt_positions
+        (id, snapshot_date, property_id, loan_name, current_balance, rate,
+         monthly_pmt, is_demand, maturity_date, months_to_maturity, ltv, status)
+      VALUES
+        ('dup-loan', ?, 'prop-a', 'Duplicate-Id Loan', 800000, 0.065,
+         1000, 0, NULL, 42, ?, 'active')
+    `).run(snapshotDate, ltv);
+  }
+
+  it('picks the later-snapshot_date row for D1 regardless of insertion order (earlier-then-later)', () => {
+    const db = freshDb();
+    // Clean row (ltv clears the 0.40 ceiling) inserted FIRST, breaching row inserted SECOND.
+    insertDup(db, '2026-01-01', 0.30);
+    insertDup(db, '2026-02-01', 0.55);
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const s = scoreDebtPositions(db, metrics, MARKET_5Y).find((r) => r.propertyId === 'prop-a')!;
+    expect(s.ltv).toBe(0.55);
+    expect(s.signal).toBe('governor-block');
+  });
+
+  it('picks the same later-snapshot_date row when insertion order is reversed (later-then-earlier)', () => {
+    const db = freshDb();
+    // Same two rows, opposite insertion order — the query result, and therefore the score,
+    // must be identical to the case above. Pre-fix this flips ltv to 0.30 and signal to
+    // something other than governor-block, because the sort has no total order to fall back on.
+    insertDup(db, '2026-02-01', 0.55);
+    insertDup(db, '2026-01-01', 0.30);
+    const metrics = [makePeriodMetrics({ propertyId: 'prop-a', noi: 200_000 })];
+    const s = scoreDebtPositions(db, metrics, MARKET_5Y).find((r) => r.propertyId === 'prop-a')!;
+    expect(s.ltv).toBe(0.55);
+    expect(s.signal).toBe('governor-block');
+  });
+});

@@ -46,7 +46,7 @@ export async function fetchDealComps(deal: Deal, opts: FetchCompsOptions): Promi
     `If solid data is thin, record what you can and note the gaps in summary. End by calling record_comps.`;
 
   const body = {
-    model: opts.model || 'claude-opus-4-8',
+    model: opts.model || 'claude-opus-5',
     max_tokens: 4096,
     tools: [{ type: 'web_search_20250305', name: 'web_search', max_uses: 6 }, RECORD_COMPS_TOOL],
     messages: [{ role: 'user', content: prompt }],

@@ -4,10 +4,34 @@ import { parseWorkbook } from '../server/workbook/parse';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, SNAPSHOT_PATH } from '../server/config';
 import { loadOverlay, applyOverlay, overlayPath } from '../server/overlay';
+import { computeDrift, evaluateAnomalyFloor, formatDriftReport, loadPrevious, type DriftLeaseView } from './lease-snapshot-drift-check';
 
 loadEnvFile();
 
+// 2026-07-26: this raw regen path had NO anomaly floor and NO drift reporting at all -- a manual
+// `npm run extract` run (outside any registered schedule; no scheduled task's cron fires on the day
+// it happened) wrote corrupted lease-end dates for two Sepich Portfolio tenants straight through,
+// unvalidated and unreported (see the 2026-07-26 orphaned-task-forensics finding in event_log.md).
+// This script now shares BOTH the refusal decision (evaluateAnomalyFloor) AND the drift report
+// (formatDriftReport) with scripts/lease-snapshot-drift-check.ts (the protected weekday path).
+// The floor alone was not enough to close the incident: the anomaly floor is count-based
+// (0-lease / >25%-removed) and would NOT have caught these two tenants, since neither was added or
+// removed -- only their leaseEnd values changed. Only the drift report's "Lease end date changes"
+// section catches that class of corruption, and it REPORTS rather than REFUSES (a legitimate lease
+// renewal changes leaseEnd too; refusing on every date change would block real, wanted edits).
+// Exit codes now match lease-snapshot-drift-check.ts's convention: 0 = clean, 1 = refused
+// (portfolio.json unchanged), 2 = wrote successfully but found drift worth a look.
 async function main() {
+  const force = process.argv.includes('--force');
+  const previousResult = loadPrevious();
+  if (previousResult.corrupt) {
+    // Same unconditional, leave-the-file-in-place refusal as lease-snapshot-drift-check.ts -- see
+    // that file's loadPrevious()/main() comments for why the corrupt file must never be moved aside.
+    console.error(`✗ ${SNAPSHOT_PATH} is corrupt — refusing to write. portfolio.json was NOT modified. Investigate/fix/restore it, then re-run.`);
+    process.exit(1);
+  }
+  const previous = previousResult.leases;
+
   console.log(`→ Reading workbook: ${workbookPath()}`);
   const { snapshot, flags } = await parseWorkbook(workbookPath());
 
@@ -45,6 +69,16 @@ async function main() {
   // data/snapshots/portfolio.json wins).
   const overlay = loadOverlay();
   const enriched = applyOverlay(snapshot, overlay);
+  const current: DriftLeaseView[] = enriched.leases;
+
+  const drift = computeDrift(previous, current);
+  const floor = evaluateAnomalyFloor(previous, current, drift.removedIds, SNAPSHOT_PATH, force);
+  if (floor.refuse) {
+    console.error(`✗ ${floor.reason}`);
+    process.exit(1);
+  } else if (floor.warning) {
+    console.warn(`⚠ ${floor.warning}`);
+  }
 
   mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });
   // Atomic write (temp file + rename), same pattern as lease-snapshot-drift-check.ts and
@@ -81,9 +115,18 @@ async function main() {
     for (const f of flags.slice(0, 12)) console.log(`   ⚠ ${f.entity} · ${f.field}: ${f.issue}`);
   }
   console.log('───────────────────────────────────────────────────────');
+
+  const report = formatDriftReport(drift, previous, current);
+  console.log();
+  for (const line of report.lines) console.log(line);
+  if (report.hasDrift) process.exit(2);
 }
 
 main().catch((err) => {
+  // Exit 3, not 1: now that this script shares lease-snapshot-drift-check.ts's exit-code
+  // convention (0 clean / 1 refused, portfolio.json unchanged / 2 wrote with drift), an unattended
+  // caller reading exit 1 as "refused, nothing written, benign" must not conflate that with an
+  // unexpected crash that could have failed mid-write. Matches drift-check's own main().catch().
   console.error('✗ Extraction failed:', err);
-  process.exit(1);
+  process.exit(3);
 });

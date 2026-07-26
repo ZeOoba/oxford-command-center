@@ -20,27 +20,180 @@ import { parseWorkbook } from '../server/workbook/parse';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, SNAPSHOT_PATH } from '../server/config';
 import { loadOverlay, applyOverlay, overlayPath } from '../server/overlay';
+import { evaluateAnomalyFloor as evaluateAnomalyFloorCore } from '../server/anomaly-floor';
 
 loadEnvFile();
 
 /** Local view of the fields this drift check compares -- named distinctly from
- *  server/ar/match-tenant.ts's own LeaseLite (different shape) to avoid a same-name mixup. */
-interface DriftLeaseView { id: string; tenantName: string; company: string | null; leaseEnd: string | null; annualRent: number; }
+ *  server/ar/match-tenant.ts's own LeaseLite (different shape) to avoid a same-name mixup.
+ *  `propertyKey`/`unit` are here for the business-key pairing below, not the id diff. */
+export interface DriftLeaseView {
+  id: string;
+  propertyKey: string;
+  tenantName: string;
+  company: string | null;
+  unit: string | null;
+  leaseEnd: string | null;
+  annualRent: number;
+}
+
+/** A previous lease and a current lease that are the same real-world tenancy under different ids. */
+export interface RekeyedLease {
+  key: string;
+  previous: DriftLeaseView;
+  current: DriftLeaseView;
+  leaseEndChanged: boolean;
+}
+
+/** A business key that maps to more than one lease on either side -- reported, never paired. */
+export interface AmbiguousKey { key: string; previousCount: number; currentCount: number; }
+
+export interface DriftResult {
+  /** Raw id-level diff. `removedIds` is what the anomaly floor is computed from -- see main(). */
+  newIds: DriftLeaseView[];
+  removedIds: DriftLeaseView[];
+  /** leaseEnd changes on leases whose id did NOT change (pre-existing behavior, unchanged). */
+  changedDates: DriftLeaseView[];
+  /** id-unmatched leases paired across the id change by business key. */
+  rekeyed: RekeyedLease[];
+  genuinelyNew: DriftLeaseView[];
+  genuinelyRemoved: DriftLeaseView[];
+  ambiguous: AmbiguousKey[];
+}
+
+/** Trim, collapse internal runs of whitespace, lowercase. Keeps cosmetic workbook edits
+ *  ("Acme  LLC" -> "Acme LLC") from reading as a different tenancy. */
+function normalize(s: string | null): string {
+  return (s ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+/**
+ * Identity of a tenancy independent of its generated id: property + unit + tenant.
+ *
+ * `propertyKey` (not `propertyId`) is the property component deliberately -- propertyKey is
+ * non-nullable in the Lease contract (the raw rent-roll label), while `propertyId` is nullable
+ * (only set when the property was matchable), so keying on propertyId would silently collapse
+ * every unmatched-property lease into one key. `unit` IS nullable (single-tenant buildings carry
+ * none) and contributes an empty component in that case, which is fine -- the tenant component
+ * still separates them.
+ *
+ * Returns null when the tenant component is empty, i.e. the key cannot identify anything and must
+ * never be used to pair.
+ */
+export function businessKey(lease: DriftLeaseView): string | null {
+  const tenant = normalize(lease.company) || normalize(lease.tenantName);
+  if (!tenant) return null;
+  return `${normalize(lease.propertyKey)} | ${normalize(lease.unit)} | ${tenant}`;
+}
+
+function countKeys(leases: DriftLeaseView[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const l of leases) {
+    const k = businessKey(l);
+    if (k !== null) counts.set(k, (counts.get(k) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * Diff two lease sets by id, then pair whatever the id diff left unmatched by BUSINESS key.
+ *
+ * Why this exists (2026-07-24): PR #232 changed every lease id at once (row-position ->
+ * tenant-identity). The id-only diff reported "137 removed / 138 new" and said nothing about the
+ * five leases whose leaseEnd actually moved underneath that churn -- two of which had gone into
+ * holdover on 2026-06-30 while the snapshot still showed 8-10 months of term. Pairing by business
+ * key turns that report into "137 re-keyed (5 with date changes), 1 genuinely new, 0 removed".
+ *
+ * Pairing is deliberately conservative: a key is only used when it is unique across the FULL
+ * previous set AND the FULL current set -- not merely unique among the unmatched leaves. A key
+ * that is unique among unmatched leaves but duplicated in the full set could pair against a lease
+ * that is already id-matched to something else, attaching one tenancy's history to another. That
+ * is the same misattachment hazard that makes migrate-lease-overlay-ids.ts refuse prefix matches.
+ */
+export function computeDrift(previous: DriftLeaseView[], current: DriftLeaseView[]): DriftResult {
+  const prevById = new Map(previous.map((l) => [l.id, l]));
+  const currentIds = new Set(current.map((l) => l.id));
+
+  const removedIds = previous.filter((l) => !currentIds.has(l.id));
+  const newIds = current.filter((l) => !prevById.has(l.id));
+  const changedDates = current.filter((l) => {
+    const prev = prevById.get(l.id);
+    return prev && prev.leaseEnd !== l.leaseEnd;
+  });
+
+  // Uniqueness counted over the FULL sets -- see the doc comment above for why not the unmatched subset.
+  const prevKeyCounts = countKeys(previous);
+  const currentKeyCounts = countKeys(current);
+
+  const unmatchedPrevByKey = new Map<string, DriftLeaseView[]>();
+  for (const l of removedIds) {
+    const k = businessKey(l);
+    if (k === null) continue;
+    const bucket = unmatchedPrevByKey.get(k);
+    if (bucket) bucket.push(l);
+    else unmatchedPrevByKey.set(k, [l]);
+  }
+
+  const rekeyed: RekeyedLease[] = [];
+  const ambiguousByKey = new Map<string, AmbiguousKey>();
+  const pairedPrevIds = new Set<string>();
+  const genuinelyNew: DriftLeaseView[] = [];
+
+  for (const cur of newIds) {
+    const k = businessKey(cur);
+    if (k === null) {
+      genuinelyNew.push(cur);
+      continue;
+    }
+    const prevCount = prevKeyCounts.get(k) ?? 0;
+    const currentCount = currentKeyCounts.get(k) ?? 0;
+    if (prevCount > 1 || currentCount > 1) {
+      // Ambiguous: report the key once, and let the lease fall through to the conservative reading.
+      if (!ambiguousByKey.has(k)) ambiguousByKey.set(k, { key: k, previousCount: prevCount, currentCount });
+      genuinelyNew.push(cur);
+      continue;
+    }
+    const candidates = unmatchedPrevByKey.get(k);
+    const prev = candidates?.[0];
+    if (!prev) {
+      genuinelyNew.push(cur);
+      continue;
+    }
+    pairedPrevIds.add(prev.id);
+    rekeyed.push({ key: k, previous: prev, current: cur, leaseEndChanged: prev.leaseEnd !== cur.leaseEnd });
+  }
+
+  const genuinelyRemoved = removedIds.filter((l) => !pairedPrevIds.has(l.id));
+
+  return {
+    newIds,
+    removedIds,
+    changedDates,
+    rekeyed,
+    genuinelyNew,
+    genuinelyRemoved,
+    ambiguous: [...ambiguousByKey.values()],
+  };
+}
 
 /** loadPrevious's result distinguishes a normal "no snapshot yet" first-run state (`corrupt: false`,
  *  `leases: []`) from a genuinely CORRUPT previous file (`corrupt: true`) -- Round-3 REFUTE: these
  *  used to be conflated (both mapped to `[]`), which silently disarmed the anomaly-refusal floor
  *  below (gated on `previous.length > 0`) whenever the previous snapshot happened to be corrupt, and
  *  the newly (possibly bad) written snapshot became the new "previous" with its own small/zero
- *  count -- permanently disarming the floor going forward. */
-interface PreviousSnapshot { leases: DriftLeaseView[]; corrupt: boolean; }
+ *  count -- permanently disarming the floor going forward. Exported so extract-workbook.ts's raw
+ *  regen path shares this exact corrupt-previous detection (2026-07-26 -- see evaluateAnomalyFloor
+ *  below for why). `path` defaults to SNAPSHOT_PATH; overridable so this is unit-testable against a
+ *  real temp file instead of the live snapshot path (2026-07-26 REFUTE finding -- this function had
+ *  zero test coverage despite being where the corrupt-previous-snapshot refusal actually lives). */
+export interface PreviousSnapshot { leases: DriftLeaseView[]; corrupt: boolean; }
 
-function loadPrevious(): PreviousSnapshot {
-  if (!existsSync(SNAPSHOT_PATH)) return { leases: [], corrupt: false }; // normal first-run state, not corruption
+export function loadPrevious(path: string = SNAPSHOT_PATH): PreviousSnapshot {
+  if (!existsSync(path)) return { leases: [], corrupt: false }; // normal first-run state, not corruption
   try {
-    const parsed = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8'));
+    const parsed = JSON.parse(readFileSync(path, 'utf8'));
     if (!Array.isArray(parsed?.leases)) {
-      console.error(`✗ ${SNAPSHOT_PATH} parsed but has no "leases" array.`);
+      console.error(`✗ ${path} parsed but has no "leases" array.`);
       return { leases: [], corrupt: true };
     }
     return { leases: parsed.leases, corrupt: false };
@@ -48,9 +201,148 @@ function loadPrevious(): PreviousSnapshot {
     // A truncated/corrupt snapshot (a known OneDrive-sync hazard here) is a genuine corruption, not
     // an empty baseline -- see the main() handling below (refuses to write, leaving the corrupt file
     // exactly where it is).
-    console.error(`✗ failed to parse ${SNAPSHOT_PATH} (${(err as Error).message}).`);
+    console.error(`✗ failed to parse ${path} (${(err as Error).message}).`);
     return { leases: [], corrupt: true };
   }
+}
+
+// Discriminated union (2026-07-26 REFUTE finding): the previous `{refuse: boolean; reason?: string;
+// warning?: string}` shape let a `refuse: true` with no `reason` compile and print `✗ undefined` --
+// both call sites interpolate `reason`/`warning` unconditionally. This makes that combination
+// unrepresentable instead of merely unlikely.
+export type AnomalyFloorResult =
+  | { refuse: true; reason: string }
+  | { refuse: false; warning?: string };
+
+/**
+ * Decides whether a lease-set write should be refused, given the previous set, the new set, and
+ * the RAW id-level removedIds (not the business-key-paired `genuinelyRemoved` -- see
+ * computeDrift's doc comment on why the floor must see the raw removal count). Pure: no I/O, no
+ * process.exit -- the caller acts on the result.
+ *
+ * Extracted 2026-07-26 so this file (the protected weekday path) and scripts/extract-workbook.ts
+ * (the raw regen / manual `npm run extract` path) share ONE tested refusal decision instead of two
+ * copies that can drift apart -- see the 2026-07-26 orphaned-task-forensics finding in
+ * event_log.md: a manual `npm run extract` run wrote corrupted lease-end dates for two Sepich
+ * Portfolio tenants through extract-workbook.ts, which had no anomaly floor of its own at all.
+ *
+ * CONSOLIDATED FURTHER 2026-07-26 (Gabriel-directed, same day): the actual 0-lease / >25%-removed
+ * threshold decision now lives in ../server/anomaly-floor.ts's evaluateAnomalyFloor -- the same
+ * function server/brain.ts's Brain.refresh() calls to guard the live in-memory adoption path
+ * (fix/brain-persist-anomaly-floor). This function is now a thin CLI-shaped wrapper: it converts
+ * the DriftLeaseView-array inputs to plain counts, delegates the threshold decision, and wraps a
+ * refusal in the "Refusing to write <path>: ..." operator-facing framing a CLI run needs (a live
+ * server has no file path to report and no operator staring at stdout). All three writers of
+ * portfolio.json now share ONE implementation of the actual thresholds instead of two/three
+ * independently maintained copies that could drift apart from each other.
+ */
+export function evaluateAnomalyFloor(
+  previous: DriftLeaseView[],
+  current: DriftLeaseView[],
+  removedIds: DriftLeaseView[],
+  snapshotPath: string,
+  force: boolean,
+): AnomalyFloorResult {
+  const core = evaluateAnomalyFloorCore(previous.length, current.length, removedIds.length, force);
+  if (core.refuse) {
+    const eventKind = current.length === 0 ? 'event' : 'mass-disposition event';
+    return {
+      refuse: true,
+      reason: `Refusing to write ${snapshotPath}: ${core.reason} portfolio.json was NOT modified. Re-run with --force if this is a real, intentional ${eventKind}.`,
+    };
+  }
+  if (core.warning) {
+    return { refuse: false, warning: `--force: ${core.warning}` };
+  }
+  return { refuse: false };
+}
+
+export interface DriftReportResult {
+  /** True when anything in `drift` is worth a human's attention (new/removed/re-keyed/date-changed). */
+  hasDrift: boolean;
+  /** Plain lines, ready to console.log() or join('\n') for a Notion post -- no trailing newlines. */
+  lines: string[];
+}
+
+/**
+ * Formats `computeDrift`'s output as human-readable lines and decides whether any of it counts as
+ * "drift worth a look." Pure: no I/O, no process.exit -- extracted 2026-07-26 alongside
+ * evaluateAnomalyFloor for the same reason (see that function's doc comment) PLUS one more: the
+ * anomaly floor alone (0-lease / >25%-removed) would NOT have caught the incident that prompted
+ * this extraction -- the two corrupted tenants (REDACTED-386, REDACTED-421
+ * Construction) were never added or removed, only their `leaseEnd` values changed, so
+ * `removedIds` stayed empty and the count-based floor saw nothing wrong. This report -- previously
+ * only ever generated by lease-snapshot-drift-check.ts, never by extract-workbook.ts -- is what
+ * actually surfaces a date-only corruption for human review. It does not REFUSE the write (a
+ * legitimate lease renewal changes leaseEnd too, so refusing here would block real, wanted edits);
+ * it reports, and the reader/reviewer judges.
+ *
+ * Takes the raw `previous`/`current` arrays (not a caller-derived `prevById` map / lease count) so
+ * the map and count can never silently disagree with `drift` -- a 2026-07-26 REFUTE finding on the
+ * first version of this function, which took both as separate args a future caller could mismatch.
+ */
+export function formatDriftReport(
+  drift: DriftResult,
+  previous: DriftLeaseView[],
+  current: DriftLeaseView[],
+): DriftReportResult {
+  // A run with no previous snapshot to diff against is establishing a baseline, not detecting
+  // drift -- 2026-07-26 REFUTE finding: without this guard, computeDrift([], current) puts EVERY
+  // current lease in `genuinelyNew`, so a first run (or any run after the snapshot file is deleted)
+  // unconditionally reports "drift" and exits 2, dumping the entire portfolio as a "new leases"
+  // list. That is a normal bootstrap, not something for a human to review.
+  if (previous.length === 0) {
+    return { hasDrift: false, lines: [`✓ Baseline established (${current.length} leases). No previous snapshot to diff against.`] };
+  }
+
+  const prevById = new Map(previous.map((l) => [l.id, l]));
+  const { removedIds, newIds, changedDates, rekeyed, genuinelyNew, genuinelyRemoved, ambiguous } = drift;
+  if (newIds.length === 0 && changedDates.length === 0 && removedIds.length === 0) {
+    return { hasDrift: false, lines: [`✓ No lease drift. portfolio.json regenerated (${current.length} leases).`] };
+  }
+
+  const label = (l: DriftLeaseView) => `${l.propertyKey}${l.unit ? ` ${l.unit}` : ''} | ${l.company ?? l.tenantName}`;
+  const lines: string[] = [`⚠ Lease drift detected — portfolio.json regenerated (${current.length} leases).`];
+
+  if (changedDates.length) {
+    lines.push('', `Lease end date changes (${changedDates.length}):`);
+    for (const l of changedDates) {
+      const prev = prevById.get(l.id)!;
+      lines.push(`  ${l.id} | ${l.company ?? l.tenantName} | ${prev.leaseEnd} -> ${l.leaseEnd}`);
+    }
+  }
+  if (rekeyed.length) {
+    // The headline number during an id-scheme migration. Value changes first -- during the
+    // 2026-07-24 re-baseline these five rows were the entire signal, and the id-only report
+    // buried them under 274 lines of churn.
+    const withDateChange = rekeyed.filter((r) => r.leaseEndChanged);
+    lines.push('', `Re-keyed leases (${rekeyed.length}) — same property/unit/tenant, new id:`);
+    if (withDateChange.length) {
+      lines.push(`  ⚠ ${withDateChange.length} with a leaseEnd change:`);
+      for (const r of withDateChange) {
+        lines.push(`    ${label(r.current)} | ${r.previous.leaseEnd} -> ${r.current.leaseEnd}`);
+        lines.push(`      id: ${r.previous.id} -> ${r.current.id}`);
+      }
+    }
+    const unchanged = rekeyed.length - withDateChange.length;
+    if (unchanged) lines.push(`  ${unchanged} re-keyed with no value change (ids only).`);
+  }
+  if (genuinelyNew.length) {
+    lines.push('', `Genuinely new leases (${genuinelyNew.length}):`);
+    for (const l of genuinelyNew) lines.push(`  ${l.id} | ${l.company ?? l.tenantName} | end: ${l.leaseEnd}`);
+  }
+  if (genuinelyRemoved.length) {
+    lines.push('', `Genuinely removed leases (${genuinelyRemoved.length}):`);
+    for (const l of genuinelyRemoved) lines.push(`  ${l.id} | ${l.company ?? l.tenantName} | was end: ${l.leaseEnd}`);
+  }
+  if (ambiguous.length) {
+    // Not paired on purpose -- these fell through to the new/removed lists above. Surfaced so a
+    // reader knows the pairing declined to guess rather than silently finding nothing.
+    lines.push('', `Ambiguous business keys (${ambiguous.length}) — not paired, listed above as new/removed:`);
+    for (const a of ambiguous) lines.push(`  ${a.key} | ${a.previousCount} previous, ${a.currentCount} current`);
+  }
+
+  return { hasDrift: true, lines };
 }
 
 async function main() {
@@ -75,7 +367,6 @@ async function main() {
     process.exit(1);
   }
   const previous = previousResult.leases;
-  const prevById = new Map(previous.map((l) => [l.id, l]));
 
   const { snapshot } = await parseWorkbook(workbookPath());
   // Round-3 REFUTE finding: loadOverlay() fails OPEN to an empty overlay on corrupt/unparseable
@@ -122,55 +413,18 @@ async function main() {
   // pick between.
   const current: DriftLeaseView[] = enriched.leases;
 
-  const currentIds = new Set(current.map((l) => l.id));
-  const removedIds = previous.filter((l) => !currentIds.has(l.id));
-
-  const newIds = current.filter((l) => !prevById.has(l.id));
-  const changedDates = current.filter((l) => {
-    const prev = prevById.get(l.id);
-    return prev && prev.leaseEnd !== l.leaseEnd;
-  });
-
-  // Refuse to overwrite a known-good snapshot with an EMPTY one: unconditional, regardless of
-  // `previous.length` (Round-3 REFUTE -- previously this was gated on `previous.length > 0`, so
-  // whenever the previous snapshot was corrupt/missing -- now handled above, but a fresh/legitimate
-  // 0-lease previous state reaches here too -- this refusal was bypassed entirely and ANY current
-  // parse result, including a genuinely broken 0-lease parse, wrote through unguarded at exit 0). A
-  // workbook that genuinely has zero leases is not a realistic scenario for this portfolio, so
-  // refusing and requiring --force is the safe default.
-  if (current.length === 0) {
-    if (!force) {
-      console.error(
-        `✗ Refusing to write ${SNAPSHOT_PATH}: this parse produced 0 leases (previous snapshot had ${previous.length}) -- this looks like a bad parse, not a genuine full portfolio wind-down. portfolio.json was NOT modified. Re-run with --force if this is a real, intentional event.`,
-      );
-      process.exit(1);
-    }
-    console.warn(`⚠ --force: proceeding despite a 0-lease current parse (previous snapshot had ${previous.length}).`);
-  }
-
-  // Refuse to overwrite a known-good snapshot with a suspiciously small one: a parse that goes wrong
-  // for a reason OTHER than genuine lease removal (workbook read mid-save, a renamed/missing
-  // worksheet section, a wrong WORKBOOK_PATH resolving to the wrong file) must not silently replace
-  // real data, get a fresh meta.generatedAt stamp, and have this branch's OWN staleness guard vouch
-  // for it as "fresh". Fraction is of the OLD (previous) set that vanished -- removedIds.length /
-  // previous.length -- not some other ratio. Gated on `current.length > 0` because the
-  // current.length === 0 case is fully handled by the unconditional check above already.
-  if (previous.length > 0 && current.length > 0) {
-    const removedFraction = removedIds.length / previous.length;
-    const anomalous = removedFraction > 0.25;
-    if (anomalous && !force) {
-      console.error(
-        `✗ Refusing to write ${SNAPSHOT_PATH}: previous snapshot had ${previous.length} lease(s), this parse produced ${current.length}, ` +
-          `${removedIds.length} (${(removedFraction * 100).toFixed(1)}%) would be removed -- this looks like a bad parse, not a genuine mass ` +
-          `disposition. portfolio.json was NOT modified. Re-run with --force if this is a real, intentional mass-disposition event.`,
-      );
-      process.exit(1);
-    }
-    if (anomalous && force) {
-      console.warn(
-        `⚠ --force: proceeding despite ${removedIds.length}/${previous.length} (${(removedFraction * 100).toFixed(1)}%) leases removed (current count ${current.length}).`,
-      );
-    }
+  const drift = computeDrift(previous, current);
+  // `drift.removedIds` stays the RAW id-level removal set on purpose: it is the anomaly floor's
+  // input below, and the floor must keep tripping on a wholesale id change. Feeding it the
+  // business-key-paired `genuinelyRemoved` instead would have let the 2026-07-24 re-baseline write
+  // through unattended -- convenient, but it would retire the exact safety property the floor
+  // provides.
+  const floor = evaluateAnomalyFloor(previous, current, drift.removedIds, SNAPSHOT_PATH, force);
+  if (floor.refuse) {
+    console.error(`✗ ${floor.reason}`);
+    process.exit(1);
+  } else if (floor.warning) {
+    console.warn(`⚠ ${floor.warning}`);
   }
 
   mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });
@@ -181,33 +435,19 @@ async function main() {
   writeFileSync(tmp, JSON.stringify(enriched, null, 2));
   renameSync(tmp, SNAPSHOT_PATH);
 
-  if (newIds.length === 0 && changedDates.length === 0 && removedIds.length === 0) {
-    console.log(`✓ No lease drift. portfolio.json regenerated (${current.length} leases).`);
-    process.exit(0);
-  }
-
-  console.log(`⚠ Lease drift detected — portfolio.json regenerated (${current.length} leases).`);
-  if (newIds.length) {
-    console.log(`\nNew/changed-id leases (${newIds.length}):`);
-    for (const l of newIds) console.log(`  ${l.id} | ${l.company ?? l.tenantName} | end: ${l.leaseEnd}`);
-  }
-  if (changedDates.length) {
-    console.log(`\nLease end date changes (${changedDates.length}):`);
-    for (const l of changedDates) {
-      const prev = prevById.get(l.id)!;
-      console.log(`  ${l.id} | ${l.company ?? l.tenantName} | ${prev.leaseEnd} -> ${l.leaseEnd}`);
-    }
-  }
-  if (removedIds.length) {
-    console.log(`\nRemoved leases (${removedIds.length}):`);
-    for (const l of removedIds) console.log(`  ${l.id} | ${l.company ?? l.tenantName} | was end: ${l.leaseEnd}`);
-  }
+  const report = formatDriftReport(drift, previous, current);
+  for (const line of report.lines) console.log(line);
   // Distinguish "ran, found drift worth a look" (2) from "ran clean" (0) and "refused to write" (1)
   // above, so an unattended scheduler can tell these apart instead of every run exiting 0.
-  process.exit(2);
+  process.exit(report.hasDrift ? 2 : 0);
 }
 
-main().catch((err) => {
-  console.error('drift check failed:', err);
-  process.exit(3);
-});
+// Run the CLI only when invoked directly (importing for tests -- computeDrift/businessKey -- must
+// NOT parse the live workbook, rewrite portfolio.json, or exit the test process). Same guard as
+// scripts/migrate-lease-overlay-ids.ts, which was extracted for unit-testability the same way.
+if (process.argv[1]?.replace(/\\/g, '/').endsWith('scripts/lease-snapshot-drift-check.ts')) {
+  main().catch((err) => {
+    console.error('drift check failed:', err);
+    process.exit(3);
+  });
+}
