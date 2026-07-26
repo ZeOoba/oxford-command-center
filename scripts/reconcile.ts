@@ -115,7 +115,7 @@ async function main() {
   // Count integrity
   const counts = [
     ['Properties', snapshot.properties.length, 14],
-    ['Leases', snapshot.leases.length, 137],
+    ['Leases', snapshot.leases.length, 138],
     ['Cash entities', snapshot.cash.entities.length, 16],
   ] as const;
   for (const [label, got, exp] of counts) {
