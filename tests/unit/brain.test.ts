@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
+import { dirname, basename } from 'node:path';
 import type { DealStage, RenewalStage } from '../../src/contracts/index';
 import { AcquisitionInput } from '../../src/contracts/acquisition';
 import type { brain as BrainSingleton } from '../../server/brain';
@@ -33,6 +34,10 @@ function makeBase(): Record<string, unknown> {
     properties: [{ id: 'p1' }],
     dataQuality: [],
   };
+}
+
+function makeBaseWithLeaseIds(ids: string[]): Record<string, unknown> {
+  return { ...makeBase(), leases: ids.map((id) => ({ id })) };
 }
 
 vi.mock('../../server/config', () => ({
@@ -155,6 +160,125 @@ describe('Brain.refresh', () => {
     expect(state.source).toBe('snapshot-fallback');
     expect(state.lastError).toBe('transient read error');
     expect(brain.getSnapshot()).not.toBeNull();
+  });
+});
+
+describe('Brain.refresh — anomaly floor', () => {
+  it('refuses to adopt a 0-lease parse and keeps serving the last good in-memory snapshot', async () => {
+    await brain.refresh(); // seed: leases=[l1]
+    h.base = makeBaseWithLeaseIds([]);
+
+    const state = await brain.refresh('file-change');
+
+    expect(state.status).toBe('fresh');
+    expect(state.source).toBe('snapshot-fallback');
+    expect(state.lastError).toContain('0-lease');
+    expect(brain.getSnapshot()!.leases).toHaveLength(1);
+    // The disk mirror from the good refresh is untouched -- the bad parse never reached persist().
+    const persisted = JSON.parse(readFileSync(h.snapshotPath, 'utf8')) as { leases: unknown[] };
+    expect(persisted.leases).toHaveLength(1);
+  });
+
+  it('refuses to adopt a parse that removes more than 25% of the previous lease set', async () => {
+    h.base = makeBaseWithLeaseIds(['l1', 'l2', 'l3', 'l4']);
+    await brain.refresh();
+    h.base = makeBaseWithLeaseIds(['l1']); // 3 of 4 removed = 75%
+
+    const state = await brain.refresh('file-change');
+
+    expect(state.status).toBe('fresh');
+    expect(state.source).toBe('snapshot-fallback');
+    expect(state.lastError).toContain('removed');
+    expect(brain.getSnapshot()!.leases).toHaveLength(4);
+  });
+
+  it('adopts a parse at exactly the 25% removed boundary (not > 25%)', async () => {
+    h.base = makeBaseWithLeaseIds(['l1', 'l2', 'l3', 'l4']);
+    await brain.refresh();
+    h.base = makeBaseWithLeaseIds(['l1', 'l2', 'l3']); // 1 of 4 = 25%, not >25%
+
+    const state = await brain.refresh('file-change');
+
+    expect(state.status).toBe('fresh');
+    expect(state.source).toBe('workbook');
+    expect(brain.getSnapshot()!.leases).toHaveLength(3);
+  });
+
+  it('adopts a normal parse where leases were only added', async () => {
+    h.base = makeBaseWithLeaseIds(['l1']);
+    await brain.refresh();
+    h.base = makeBaseWithLeaseIds(['l1', 'l2']);
+
+    const state = await brain.refresh('file-change');
+
+    expect(state.status).toBe('fresh');
+    expect(state.source).toBe('workbook');
+    expect(brain.getSnapshot()!.leases).toHaveLength(2);
+  });
+
+  it('falls back to the on-disk mirror as the baseline on the very first refresh since startup', async () => {
+    // Simulate a prior server session's good snapshot on disk; THIS brain instance has never
+    // refreshed yet, so this.snapshot is still null and refresh() must fall back to disk.
+    mkdirSync(dirname(h.snapshotPath), { recursive: true });
+    writeFileSync(
+      h.snapshotPath,
+      JSON.stringify({ leases: Array.from({ length: 10 }, (_, i) => ({ id: `prior-${i}` })) }),
+    );
+    h.base = makeBaseWithLeaseIds([]); // this process's first-ever parse comes back empty
+
+    const state = await brain.refresh();
+
+    // No in-memory fallback exists either (this.snapshot was never set), and the disk file isn't
+    // a valid PortfolioSnapshot (loadFallback() rejects it) -- genuinely nothing safe to serve.
+    expect(state.status).toBe('error');
+    expect(state.lastError).toContain('0-lease');
+    expect(state.lastError).toContain('10');
+  });
+
+  it('logs (does not refuse) when the on-disk baseline is corrupt on the first refresh', async () => {
+    mkdirSync(dirname(h.snapshotPath), { recursive: true });
+    writeFileSync(h.snapshotPath, '{ not valid json at all');
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const state = await brain.refresh();
+
+    // A corrupt stale mirror must not block adopting a good fresh parse into memory.
+    expect(state.status).toBe('fresh');
+    expect(state.source).toBe('workbook');
+    expect(errSpy).toHaveBeenCalled();
+    expect(String(errSpy.mock.calls[0]![0])).toContain('corrupt');
+    errSpy.mockRestore();
+  });
+});
+
+describe('Brain.persist', () => {
+  it('writes the mirror atomically -- no leftover tmp file after a successful refresh', async () => {
+    await brain.refresh();
+    const dir = dirname(h.snapshotPath);
+    const leftovers = readdirSync(dir).filter((f) => f.includes('.tmp-'));
+    expect(leftovers).toEqual([]);
+    expect(existsSync(h.snapshotPath)).toBe(true);
+  });
+
+  it('logs (does not throw or corrupt the refresh outcome) when the mirror write fails', async () => {
+    rmSync(h.snapshotPath, { force: true, recursive: true });
+    mkdirSync(h.snapshotPath, { recursive: true }); // SNAPSHOT_PATH itself is now a directory
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    let state: Awaited<ReturnType<typeof brain.refresh>> | undefined;
+    try {
+      state = await brain.refresh();
+    } finally {
+      // Cleanup runs even if the assertions below throw, so the directory never leaks into the
+      // next test's beforeEach -- but restoring/asserting on the spy happens AFTER, below.
+      rmSync(h.snapshotPath, { force: true, recursive: true });
+    }
+
+    expect(state!.status).toBe('fresh');
+    expect(state!.source).toBe('workbook');
+    expect(errSpy).toHaveBeenCalled();
+    expect(String(errSpy.mock.calls[0]![0])).toContain(basename(h.snapshotPath));
+    errSpy.mockRestore();
   });
 });
 

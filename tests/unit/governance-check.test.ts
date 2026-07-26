@@ -1,3 +1,8 @@
+// @vitest-environment node
+// governance-check.ts is a pure Node script (fs/path only — no DOM). The node environment is
+// required, not just appropriate: under vitest 4, vi.mock() of Node builtins ('node:fs') is a
+// silent no-op in the jsdom environment (mocks never intercept; the real fs is called), which
+// breaks every test in this file. Verified empirically 2026-07-26 (OI-017 vitest-4 migration).
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import * as fs from 'node:fs';
 

@@ -855,3 +855,155 @@ describe('POST /snapshot — payload validation', () => {
     expect(body.written).toBe(1);
   });
 });
+
+// ── POST /snapshot input validation (2026-07-24 integrity sweep, root cause) ──────────────
+//
+// The route previously took its body through a bare `as DebtApiSnapshotPayload` cast and
+// checked only Array.isArray(loans) — while every GET route Zod-parses its RESPONSE. That
+// asymmetric trust boundary (unvalidated in, validated out) is the route both HIGH governor
+// findings arrived through: a negative absBalance deflated the portfolio aggregate LTV into a
+// false clearance, and a malformed is_demand row was already a documented threat in
+// debt-scoring.ts. The Loan contract ALREADY declares absBalance as nonnegative — it simply
+// was never enforced here.
+
+describe('POST /snapshot — payload validation', () => {
+  const validLoan = {
+    id: 'borrower-1',
+    name: 'Test Mortgage',
+    counterparty: 'Acme Lending LLC',
+    direction: 'borrower' as const,
+    originalPrincipal: 1_000_000,
+    currentBalance: 800_000,
+    absBalance: 800_000,
+    rate: 0.065,
+    monthlyPmt: 5_000,
+    annualInterest: 52_000,
+    annualPrincipal: 8_000,
+    loanType: 'Amortizing',
+    status: 'Active',
+    isDemand: false,
+    maturity: '2031-01-01',
+    monthsToMaturity: 54,
+    ltv: 0.35,
+    lender: 'Acme Lending LLC',
+    balloon: false,
+    flags: [],
+    collateralProperty: 'Test Property A',
+  };
+
+  function post(app: ReturnType<typeof makeApp>, payload: unknown) {
+    return app.request('/snapshot', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+  }
+
+  it('rejects a negative absBalance with 400 and writes nothing (H1 reachability closed)', async () => {
+    const db = freshDb();
+    seedProperty(db, 'prop-A', 'Test Property A');
+    const res = await post(makeApp(db), {
+      snapshotDate: '2026-06-21',
+      loans: [{ ...validLoan, absBalance: -2_000_000, currentBalance: -2_000_000 }],
+      properties: [{ id: 'prop-A', name: 'Test Property A' }],
+    });
+
+    expect(res.status).toBe(400);
+    const rows = db.prepare('SELECT COUNT(*) AS n FROM debt_positions').get() as { n: number };
+    expect(rows.n).toBe(0);
+  });
+
+  it('rejects an out-of-bounds ltv (order-of-magnitude entry error) with 400 and writes nothing', async () => {
+    const db = freshDb();
+    seedProperty(db, 'prop-A', 'Test Property A');
+    const res = await post(makeApp(db), {
+      snapshotDate: '2026-06-21',
+      loans: [{ ...validLoan, ltv: 55 }], // "55" meant "0.55"
+      properties: [{ id: 'prop-A', name: 'Test Property A' }],
+    });
+
+    expect(res.status).toBe(400);
+    const rows = db.prepare('SELECT COUNT(*) AS n FROM debt_positions').get() as { n: number };
+    expect(rows.n).toBe(0);
+  });
+
+  it('rejects a structurally malformed loan with 400', async () => {
+    const db = freshDb();
+    seedProperty(db, 'prop-A', 'Test Property A');
+    const res = await post(makeApp(db), {
+      snapshotDate: '2026-06-21',
+      loans: [{ id: 'broken', name: 'No direction field' }],
+      properties: [],
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('an empty loans array does NOT wipe an existing active book (H2a end-to-end)', async () => {
+    const db = freshDb();
+    seedProperty(db, 'prop-A', 'Test Property A');
+    const app = makeApp(db);
+
+    const seeded = await post(app, {
+      snapshotDate: '2026-06-21',
+      loans: [validLoan],
+      properties: [{ id: 'prop-A', name: 'Test Property A' }],
+    });
+    expect(seeded.status).toBe(200);
+
+    const wipe = await post(app, { snapshotDate: '2026-06-22', loans: [], properties: [] });
+    expect(wipe.status).toBe(200);
+    const body = await wipe.json() as { errors: string[]; refused: boolean };
+    expect(body.errors.join(' ')).toMatch(/empty borrower set/i);
+    // Typed signal (2026-07-24, round-2 refute-review): a caller checking only ok/written
+    // could mistake "nothing needed writing" for "actively refused" — `refused` disambiguates.
+    expect(body.refused).toBe(true);
+
+    const active = db
+      .prepare("SELECT id FROM debt_positions WHERE status = 'active'")
+      .all() as Array<{ id: string }>;
+    expect(active.map((r) => r.id)).toEqual(['borrower-1']);
+  });
+
+  it('allowEmptySupersede:true on the payload actually reaches writeDebtSnapshot (H2a reachability fix)', async () => {
+    const db = freshDb();
+    seedProperty(db, 'prop-A', 'Test Property A');
+    const app = makeApp(db);
+
+    const seeded = await post(app, {
+      snapshotDate: '2026-06-21',
+      loans: [validLoan],
+      properties: [{ id: 'prop-A', name: 'Test Property A' }],
+    });
+    expect(seeded.status).toBe(200);
+
+    // Without the opt-in: refused (already covered by the H2a end-to-end test above).
+    // WITH it: the verified-zero-debt wipe goes through.
+    const wipe = await post(app, {
+      snapshotDate: '2026-06-22',
+      loans: [],
+      properties: [],
+      allowEmptySupersede: true,
+    });
+    expect(wipe.status).toBe(200);
+    const body = await wipe.json() as { errors: string[]; refused: boolean };
+    expect(body.errors.join(' ')).not.toMatch(/empty borrower set/i);
+    expect(body.refused).toBe(false);
+
+    const active = db.prepare("SELECT id FROM debt_positions WHERE status = 'active'").all();
+    expect(active).toHaveLength(0);
+  });
+
+  it('a well-formed payload is still accepted (validation is not over-tight)', async () => {
+    const db = freshDb();
+    seedProperty(db, 'prop-A', 'Test Property A');
+    const res = await post(makeApp(db), {
+      snapshotDate: '2026-06-21',
+      loans: [validLoan],
+      properties: [{ id: 'prop-A', name: 'Test Property A' }],
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { ok: boolean; written: number };
+    expect(body.ok).toBe(true);
+    expect(body.written).toBe(1);
+  });
+});

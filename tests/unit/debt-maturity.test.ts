@@ -848,6 +848,55 @@ describe('buildRefiWindows — soonestMaturityDate never emits an unparseable da
   });
 });
 
+describe('2026-07-25 hardening — activeLoans ORDER BY is total under duplicate active ids', () => {
+  // Same PK fact as debt-scoring.ts's companion test (id, snapshot_date), not id alone: two
+  // active rows can legitimately share an id at different snapshot_dates. activeLoans() sorted
+  // `ORDER BY d.id ASC` only — with identical ids that key is exhausted and SQLite falls back to
+  // physical row (insertion) order. buildMaturityTimeline's final sort ties two same-loanId
+  // same-monthsOut events on eventType too, so the tie ultimately resolves to activeLoans' row
+  // order — making the emitted event order (and thus which loan's `balloon` flag appears first
+  // for that loanId) a function of insertion order, not the data. Raw SQL insert, not seedLoan()
+  // (whose helper hardcodes snapshot_date) — this duplicate-id state is a direct schema-legal
+  // fixture, not something a normal caller constructs.
+  function insertDup(db: WarehouseDb, snapshotDate: string, balloon: number): void {
+    db.prepare(`
+      INSERT INTO debt_positions
+        (id, snapshot_date, property_id, loan_name, current_balance,
+         maturity_date, months_to_maturity, ltv, balloon, is_demand, status)
+      VALUES
+        ('dup-loan', ?, 'prop-a', 'Duplicate-Id Loan', 500000,
+         '2027-01-01', NULL, 0.3, ?, 0, 'active')
+    `).run(snapshotDate, balloon);
+  }
+
+  it('orders the tied duplicate-id maturity events by snapshot_date DESC (earlier-then-later insertion)', () => {
+    const db = freshDb();
+    seedProperty(db, 'prop-a');
+    insertDup(db, '2026-01-01', 0); // earlier snapshot, non-balloon — inserted FIRST
+    insertDup(db, '2026-02-01', 1); // later snapshot, balloon — inserted SECOND
+    const events = buildMaturityTimeline(db, ASOF).filter(
+      (e) => e.loanId === 'dup-loan' && e.eventType === 'maturity',
+    );
+    expect(events).toHaveLength(2);
+    // The later snapshot_date (balloon=1) must sort first, regardless of insertion order.
+    expect(events[0]!.balloon).toBe(true);
+    expect(events[1]!.balloon).toBe(false);
+  });
+
+  it('produces the identical order when insertion order is reversed (later-then-earlier)', () => {
+    const db = freshDb();
+    seedProperty(db, 'prop-a');
+    insertDup(db, '2026-02-01', 1); // later snapshot, balloon — inserted FIRST this time
+    insertDup(db, '2026-01-01', 0); // earlier snapshot, non-balloon — inserted SECOND
+    const events = buildMaturityTimeline(db, ASOF).filter(
+      (e) => e.loanId === 'dup-loan' && e.eventType === 'maturity',
+    );
+    expect(events).toHaveLength(2);
+    expect(events[0]!.balloon).toBe(true);
+    expect(events[1]!.balloon).toBe(false);
+  });
+});
+
 // ── API routes ────────────────────────────────────────────────────────────────────────────
 
 describe('debt API — GET /timeline and GET /refi-windows', () => {

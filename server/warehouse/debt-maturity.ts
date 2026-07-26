@@ -106,7 +106,13 @@ interface ActiveLoanRow {
   rate: number | null;
 }
 
-/** All active debt_positions rows joined to property_master, deterministic order. */
+/** All active debt_positions rows joined to property_master, deterministic order.
+ * 2026-07-25 hardening: `, d.snapshot_date DESC` closes the same non-total-sort gap as
+ * debt-scoring.ts's getLoansForProperty (see that query's comment) — debt_positions' PRIMARY KEY
+ * is (id, snapshot_date), not id alone, so `ORDER BY d.id ASC` alone does not fully order two
+ * active rows sharing an id at different snapshot_dates. Preferring the freshest row on a tie
+ * matches the PK-declared recency ordering; zero behavior change when ids are unique among
+ * active rows. */
 function activeLoans(db: WarehouseDb): ActiveLoanRow[] {
   return db
     .prepare(
@@ -116,7 +122,7 @@ function activeLoans(db: WarehouseDb): ActiveLoanRow[] {
        FROM debt_positions d
        LEFT JOIN property_master p ON p.id = d.property_id
        WHERE d.status = 'active'
-       ORDER BY d.id ASC`,
+       ORDER BY d.id ASC, d.snapshot_date DESC`,
     )
     .all() as ActiveLoanRow[];
 }
