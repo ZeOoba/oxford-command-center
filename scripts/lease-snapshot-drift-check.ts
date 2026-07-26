@@ -182,15 +182,17 @@ export function computeDrift(previous: DriftLeaseView[], current: DriftLeaseView
  *  the newly (possibly bad) written snapshot became the new "previous" with its own small/zero
  *  count -- permanently disarming the floor going forward. Exported so extract-workbook.ts's raw
  *  regen path shares this exact corrupt-previous detection (2026-07-26 -- see evaluateAnomalyFloor
- *  below for why). */
+ *  below for why). `path` defaults to SNAPSHOT_PATH; overridable so this is unit-testable against a
+ *  real temp file instead of the live snapshot path (2026-07-26 REFUTE finding -- this function had
+ *  zero test coverage despite being where the corrupt-previous-snapshot refusal actually lives). */
 export interface PreviousSnapshot { leases: DriftLeaseView[]; corrupt: boolean; }
 
-export function loadPrevious(): PreviousSnapshot {
-  if (!existsSync(SNAPSHOT_PATH)) return { leases: [], corrupt: false }; // normal first-run state, not corruption
+export function loadPrevious(path: string = SNAPSHOT_PATH): PreviousSnapshot {
+  if (!existsSync(path)) return { leases: [], corrupt: false }; // normal first-run state, not corruption
   try {
-    const parsed = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8'));
+    const parsed = JSON.parse(readFileSync(path, 'utf8'));
     if (!Array.isArray(parsed?.leases)) {
-      console.error(`✗ ${SNAPSHOT_PATH} parsed but has no "leases" array.`);
+      console.error(`✗ ${path} parsed but has no "leases" array.`);
       return { leases: [], corrupt: true };
     }
     return { leases: parsed.leases, corrupt: false };
@@ -198,18 +200,18 @@ export function loadPrevious(): PreviousSnapshot {
     // A truncated/corrupt snapshot (a known OneDrive-sync hazard here) is a genuine corruption, not
     // an empty baseline -- see the main() handling below (refuses to write, leaving the corrupt file
     // exactly where it is).
-    console.error(`✗ failed to parse ${SNAPSHOT_PATH} (${(err as Error).message}).`);
+    console.error(`✗ failed to parse ${path} (${(err as Error).message}).`);
     return { leases: [], corrupt: true };
   }
 }
 
-export interface AnomalyFloorResult {
-  refuse: boolean;
-  /** Present when `refuse` is true -- the operator-facing explanation (caller prefixes with '✗'). */
-  reason?: string;
-  /** Present when `--force` bypassed a tripped floor -- the operator-facing warning (caller prefixes with '⚠'). */
-  warning?: string;
-}
+// Discriminated union (2026-07-26 REFUTE finding): the previous `{refuse: boolean; reason?: string;
+// warning?: string}` shape let a `refuse: true` with no `reason` compile and print `✗ undefined` --
+// both call sites interpolate `reason`/`warning` unconditionally. This makes that combination
+// unrepresentable instead of merely unlikely.
+export type AnomalyFloorResult =
+  | { refuse: true; reason: string }
+  | { refuse: false; warning?: string };
 
 /**
  * Decides whether a lease-set write should be refused, given the previous set, the new set, and
@@ -353,10 +355,11 @@ async function main() {
   const { removedIds, newIds, changedDates } = drift;
 
   const floor = evaluateAnomalyFloor(previous, current, removedIds, SNAPSHOT_PATH, force);
-  if (floor.warning) console.warn(`⚠ ${floor.warning}`);
   if (floor.refuse) {
     console.error(`✗ ${floor.reason}`);
     process.exit(1);
+  } else if (floor.warning) {
+    console.warn(`⚠ ${floor.warning}`);
   }
 
   mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });

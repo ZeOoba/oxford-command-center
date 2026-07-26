@@ -71,10 +71,11 @@ async function main() {
   // this, not a business-key-paired count (see computeDrift's doc comment for why).
   const { removedIds } = computeDrift(previous, current);
   const floor = evaluateAnomalyFloor(previous, current, removedIds, SNAPSHOT_PATH, force);
-  if (floor.warning) console.warn(`⚠ ${floor.warning}`);
   if (floor.refuse) {
     console.error(`✗ ${floor.reason}`);
     process.exit(1);
+  } else if (floor.warning) {
+    console.warn(`⚠ ${floor.warning}`);
   }
 
   mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });
