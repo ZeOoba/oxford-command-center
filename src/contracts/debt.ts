@@ -145,6 +145,13 @@ export const PortfolioAggregateLtv = z.object({
    *  snapshot, so an empty cohort yields clearedConservatively=null, never a clearance.
    *  Consumers must branch on this before reading the verdict. */
   emptyCohort: z.boolean(),
+  /** The LAST debt-snapshot write attempt was REFUSED by the shrinkage guard or DEGRADED by
+   *  per-loan insert failures (obs-3, PR #233 residual #2) — the active book may be frozen at a
+   *  stale state. While true, a would-be clearance is withheld (clearedConservatively null —
+   *  unknown is never clearance) but a would-be BREACH survives as false (a write failure never
+   *  clears a standing alarm); the note carries the marker reason either way. Cleared
+   *  automatically by the next clean write. */
+  lastWriteRefused: z.boolean(),
   clearedConservatively: z.boolean().nullable(),
   note: z.string(),
 });
