@@ -33,6 +33,8 @@ import {
   REFI_WINDOW_MONTHS_FAR,
 } from '../../server/warehouse/debt-maturity';
 import { effectiveMonthsToMaturity } from '../../server/warehouse/debt-scoring';
+import { writeDebtSnapshot } from '../../server/warehouse/debt-snapshot';
+import type { Loan } from '../../src/contracts/index';
 import { loadGovernors } from '../../server/warehouse/governors';
 import { debtApi } from '../../server/warehouse/debt-api';
 import { ALERT_THRESHOLDS } from '../../src/analytics/conditions';
@@ -889,5 +891,178 @@ describe('debt API — GET /timeline and GET /refi-windows', () => {
     });
     const res = await app.request('/refi-windows');
     expect(res.status).toBe(503);
+  });
+});
+
+// ── Refusal marker → aggregate verdict (obs-3 / residual #2) ──────────────────────────────
+//
+// Companion to debt-snapshot.test.ts's "persisted refusal marker" block: this is the CONSUMER
+// side. Both adversarial reviews on PR #233 demonstrated the same end state — a refused write
+// on the automated reload path leaves a stale book that keeps reporting
+// clearedConservatively=true with nothing downstream able to tell "refused/frozen" from
+// "healthy". While the marker is set, the aggregate must report lastWriteRefused=true and a
+// NULL verdict (unknown is never clearance), regardless of what the stale rows alone would say.
+
+/** Minimal borrower Loan for driving writeDebtSnapshot in this file's marker tests. */
+function borrowerLoan(id: string, overrides: Partial<Loan> = {}): Loan {
+  return {
+    id, name: `Loan ${id}`, counterparty: null, direction: 'borrower',
+    originalPrincipal: null, currentBalance: 800_000, absBalance: 800_000, rate: 0.055,
+    monthlyPmt: null, annualInterest: null, annualPrincipal: null, loanType: 'Amortizing',
+    status: null, isDemand: false, maturity: null, monthsToMaturity: 30, ltv: 0.3,
+    lender: null, balloon: false, flags: [], collateralProperty: null,
+    ...overrides,
+  };
+}
+
+/** Map each loan onto its own seeded property so the book is fully covered (sole loans). */
+function seedCoveredBook(db: WarehouseDb, ltv = 0.3): { loans: Loan[]; map: Map<string, string> } {
+  const loans = ['a', 'b', 'c'].map((s) => borrowerLoan(`loan-${s}`, { ltv }));
+  const map = new Map<string, string>();
+  for (const s of ['a', 'b', 'c']) {
+    seedProperty(db, `prop-${s}`);
+    map.set(`loan-${s}`, `prop-${s}`);
+  }
+  return { loans, map };
+}
+
+describe('computePortfolioAggregateLtv — refused-write marker forces a null verdict', () => {
+  it('a stale book that would clear on its own reports NULL + lastWriteRefused after a refused write', () => {
+    const db = freshDb();
+    const { loans, map } = seedCoveredBook(db);
+    writeDebtSnapshot(db, loans, '2026-05-01', map);
+
+    // Sanity: the book genuinely clears on its own before any refusal (3 sole loans @ 0.3 LTV).
+    const before = computePortfolioAggregateLtv(db, loadGovernors(db));
+    expect(before.lastWriteRefused).toBe(false);
+    expect(before.clearedConservatively).toBe(true);
+
+    // A refused write (empty set vs 3 active rows) — the book itself is UNCHANGED...
+    writeDebtSnapshot(db, [], '2026-06-01');
+
+    // ...but the verdict must no longer be trusted: the warehouse now KNOWS its data is stale.
+    const after = computePortfolioAggregateLtv(db, loadGovernors(db));
+    expect(after.lastWriteRefused).toBe(true);
+    expect(after.clearedConservatively).toBeNull();
+    expect(after.note).toMatch(/refused/i);
+  });
+
+  it('the verdict is restored after a subsequent successful write clears the marker', () => {
+    const db = freshDb();
+    const { loans, map } = seedCoveredBook(db);
+    writeDebtSnapshot(db, loans, '2026-05-01', map);
+    writeDebtSnapshot(db, [], '2026-06-01'); // refused → marker
+
+    writeDebtSnapshot(db, loans, '2026-06-02', map); // healthy write → marker cleared
+
+    const agg = computePortfolioAggregateLtv(db, loadGovernors(db));
+    expect(agg.lastWriteRefused).toBe(false);
+    expect(agg.clearedConservatively).toBe(true);
+  });
+
+  // Round-9 (fifth adversarial pass, edges lens): while frozen, a would-be TRUE (clearance)
+  // verdict is nulled — but a would-be FALSE (breach) verdict must SURVIVE. A refused write does
+  // not retroactively un-breach a book whose last trusted data was already above the ceiling; it
+  // only means things changed in an unknown direction from an already-breaching baseline. Nulling
+  // it would silence a standing Hard-Invariant-4 alarm at exactly the moment the system is both
+  // last-known-in-breach AND blind. Asymmetric on purpose: unknown is never clearance, but a
+  // freeze is never an all-clear either.
+  it('a frozen book whose last trusted verdict was BREACH keeps reporting false (refusal never clears an alarm)', () => {
+    const db = freshDb();
+    const { loans, map } = seedCoveredBook(db, 0.6); // 60% — above the 40% aggregate ceiling
+    writeDebtSnapshot(db, loans, '2026-05-01', map);
+    const before = computePortfolioAggregateLtv(db, loadGovernors(db));
+    expect(before.clearedConservatively).toBe(false); // genuine breach on trusted data
+
+    writeDebtSnapshot(db, [], '2026-06-01'); // refused → marker set, book frozen
+
+    const after = computePortfolioAggregateLtv(db, loadGovernors(db));
+    expect(after.lastWriteRefused).toBe(true);
+    expect(after.clearedConservatively).toBe(false); // the alarm survives the freeze
+    expect(after.note).toMatch(/refused/i); // and the staleness is still disclosed
+  });
+
+  // Round-10 (sixth adversarial pass — all three lenses converged, reproduced): the round-9
+  // breach-survives rule conflated the two marker kinds. For a REFUSED write the frozen rows
+  // genuinely ARE the last trusted book, so a breach computed from them survives (test above).
+  // For a DEGRADED write the rows are the POST-DAMAGE REMNANT — prior rows superseded,
+  // replacements lost — i.e. exactly the data the marker distrusts. A remnant is a subset, and a
+  // subset's aggregate LTV can be far above the full book's: the reviewers reproduced a
+  // genuinely-CLEARING book (~0.305) minting a phantom hard BREACH (0.55 remnant) whose note
+  // falsely claimed "the last trusted book was already above the ceiling". On a degraded marker
+  // the verdict is null in BOTH directions — the remnant can neither clear nor breach.
+  it('a DEGRADED write on a genuinely-clearing book yields NULL, never a fabricated breach', () => {
+    const db = freshDb();
+    seedProperty(db, 'p1');
+    seedProperty(db, 'p2');
+    const bigClean = borrowerLoan('loan-big', { currentBalance: 9_000_000, absBalance: 9_000_000, ltv: 0.3 });
+    const smallHigh = borrowerLoan('loan-small', { currentBalance: 500_000, absBalance: 500_000, ltv: 0.55 });
+    const map = new Map([['loan-big', 'p1'], ['loan-small', 'p2']]);
+    writeDebtSnapshot(db, [bigClean, smallHigh], '2026-05-01', map);
+    // Trusted book genuinely clears: 9.5M / (30M + 0.909M) ≈ 0.307 ≤ 0.40.
+    expect(computePortfolioAggregateLtv(db, loadGovernors(db)).clearedConservatively).toBe(true);
+
+    // Degraded write: same ids (guard silent), but the big clean loan's balance is poisoned —
+    // its prior row is superseded, its replacement fails, and only the 0.55-LTV remnant survives.
+    const poisonedBig = { ...bigClean, currentBalance: NaN, absBalance: NaN };
+    writeDebtSnapshot(db, [poisonedBig, smallHigh], '2026-06-01', map);
+
+    const agg = computePortfolioAggregateLtv(db, loadGovernors(db));
+    expect(agg.lastWriteRefused).toBe(true);
+    expect(agg.clearedConservatively).toBeNull(); // NOT false — the remnant is untrusted wreckage
+    expect(agg.note).not.toMatch(/last trusted book was already above/i);
+    expect(agg.note).toMatch(/lost rows|degraded/i);
+  });
+
+  // Round-11 (seventh adversarial pass, edges lens, HIGH — reproduced): the ratchet false
+  // clearance end-to-end. Last-trusted book BREACHES at ~0.508; two high-LTV loans are lost to
+  // a degraded write; the next reload's payload matches the surviving low-LTV remnant, which
+  // under round-10 rules cleared the marker and minted clearedConservatively=TRUE at 0.300 —
+  // $9M of real debt silently off-book with zero signal. With the baseline ratchet, the marker
+  // survives the remnant-matching write and the verdict stays null until real recovery.
+  it('RATCHET: a last-trusted-BREACH book can never mint a clearance through degrade-then-remnant-match', () => {
+    const db = freshDb();
+    for (const p of ['pa', 'pb', 'pc', 'pd']) seedProperty(db, p);
+    const A = borrowerLoan('loan-A', { currentBalance: 5_000_000, absBalance: 5_000_000, ltv: 0.55 });
+    const B = borrowerLoan('loan-B', { currentBalance: 4_000_000, absBalance: 4_000_000, ltv: 0.55 });
+    const C = borrowerLoan('loan-C', { currentBalance: 600_000, absBalance: 600_000, ltv: 0.3 });
+    const D = borrowerLoan('loan-D', { currentBalance: 400_000, absBalance: 400_000, ltv: 0.3 });
+    const map = new Map([['loan-A', 'pa'], ['loan-B', 'pb'], ['loan-C', 'pc'], ['loan-D', 'pd']]);
+    writeDebtSnapshot(db, [A, B, C, D], '2026-05-01', map);
+    // Trusted book genuinely BREACHES: 10M / ~19.7M ≈ 0.508 > 0.40.
+    expect(computePortfolioAggregateLtv(db, loadGovernors(db)).clearedConservatively).toBe(false);
+
+    // Degrade: both high-LTV loans poisoned → priors superseded, replacements fail.
+    writeDebtSnapshot(
+      db,
+      [
+        { ...A, currentBalance: NaN, absBalance: NaN },
+        { ...B, currentBalance: NaN, absBalance: NaN },
+        C,
+        D,
+      ],
+      '2026-06-01',
+      map,
+    );
+    // Remnant-match: the corrupted rows drop from the next parse entirely.
+    writeDebtSnapshot(db, [C, D], '2026-06-02', map);
+
+    const agg = computePortfolioAggregateLtv(db, loadGovernors(db));
+    expect(agg.lastWriteRefused).toBe(true); // marker survived the remnant-matching write
+    expect(agg.clearedConservatively).toBeNull(); // NEVER true — the 0.30 remnant cannot clear the book
+  });
+
+  it('GET /refi-windows carries lastWriteRefused end-to-end after a refused write (the unattended-path scenario)', async () => {
+    const db = freshDb();
+    const { loans, map } = seedCoveredBook(db);
+    writeDebtSnapshot(db, loans, '2026-05-01', map);
+    writeDebtSnapshot(db, [], '2026-06-01'); // simulate the reload path's refused write
+
+    const app = debtApi(() => db);
+    const res = await app.request('/refi-windows');
+    expect(res.status).toBe(200);
+    const parsed = RefiWindowsResponse.parse(await res.json());
+    expect(parsed.aggregate.lastWriteRefused).toBe(true);
+    expect(parsed.aggregate.clearedConservatively).toBeNull();
   });
 });
