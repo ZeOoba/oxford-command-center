@@ -96,6 +96,7 @@ function seedLoan(
     lender?: string | null;
     rateType?: string | null;
     nextRateReset?: string | null;
+    snapshotDate?: string;
   } = {},
 ): string {
   const id = opts.id ?? `loan-${++loanSeq}`;
@@ -107,7 +108,7 @@ function seedLoan(
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     id,
-    '2026-07-01',
+    opts.snapshotDate ?? '2026-07-01',
     opts.propertyId ?? null,
     opts.loanName ?? `Test Loan ${id}`,
     opts.currentBalance ?? 500_000,
@@ -174,7 +175,7 @@ describe('effectiveMonthsToMaturity (exported from debt-scoring)', () => {
   it('demand note wins over a (malformed) populated maturity_date — F3', () => {
     expect(
       effectiveMonthsToMaturity(
-        { is_demand: 1, maturity_date: '2030-01-01', months_to_maturity: 40 },
+        { is_demand: 1, maturity_date: '2030-01-01', months_to_maturity: 40, snapshot_date: ASOF },
         ASOF,
       ),
     ).toBeNull();
@@ -182,12 +183,76 @@ describe('effectiveMonthsToMaturity (exported from debt-scoring)', () => {
 
   it('recomputes fresh from maturity_date, ignoring the stale stored column', () => {
     const months = effectiveMonthsToMaturity(
-      { is_demand: 0, maturity_date: isoMonthsFromAsOf(6), months_to_maturity: 99 },
+      { is_demand: 0, maturity_date: isoMonthsFromAsOf(6), months_to_maturity: 99, snapshot_date: ASOF },
       ASOF,
     );
     expect(months).not.toBeNull();
     expect(months!).toBeGreaterThan(5);
     expect(months!).toBeLessThan(7);
+  });
+
+  // ── L3 (2026-07-27 round-19-LOWs sweep) ─────────────────────────────────────────────────
+  // The stored-cell fallback (maturity_date absent/unparseable) must discount for how stale the
+  // snapshot itself is, not report the frozen figure as if it were measured today.
+  describe('L3 — stored-cell fallback is discounted by elapsed time since snapshot_date', () => {
+    it('a 7-month-old months_to_maturity=30 with an unparseable date reads as ~23, not 30', () => {
+      const months = effectiveMonthsToMaturity(
+        {
+          is_demand: 0,
+          maturity_date: 'TBD',
+          months_to_maturity: 30,
+          snapshot_date: isoMonthsFromAsOf(-7), // snapshot taken 7 months before ASOF
+        },
+        ASOF,
+      );
+      expect(months).not.toBeNull();
+      expect(months!).toBeGreaterThan(22);
+      expect(months!).toBeLessThan(24);
+    });
+
+    it('a snapshot taken TODAY applies no discount — the stored figure stands as-is', () => {
+      const months = effectiveMonthsToMaturity(
+        { is_demand: 0, maturity_date: null, months_to_maturity: 30, snapshot_date: ASOF },
+        ASOF,
+      );
+      expect(months).toBeCloseTo(30, 1);
+    });
+
+    it('a stale fallback can go negative (the estimate says it should already have matured) — not clamped', () => {
+      const months = effectiveMonthsToMaturity(
+        {
+          is_demand: 0,
+          maturity_date: null,
+          months_to_maturity: 3,
+          snapshot_date: isoMonthsFromAsOf(-7), // 7 months stale, only had 3 months left then
+        },
+        ASOF,
+      );
+      expect(months).not.toBeNull();
+      expect(months!).toBeLessThan(0);
+    });
+
+    it('a snapshot_date AFTER asOf (malformed data) applies ZERO discount, never a bonus', () => {
+      const months = effectiveMonthsToMaturity(
+        {
+          is_demand: 0,
+          maturity_date: null,
+          months_to_maturity: 20,
+          snapshot_date: isoMonthsFromAsOf(7), // snapshot "taken" 7 months AFTER asOf — malformed
+        },
+        ASOF,
+      );
+      // Must stand as-is (20), never be inflated past the stored figure.
+      expect(months).toBeCloseTo(20, 1);
+    });
+
+    it('null months_to_maturity stays null regardless of staleness (nothing to discount)', () => {
+      const months = effectiveMonthsToMaturity(
+        { is_demand: 0, maturity_date: null, months_to_maturity: null, snapshot_date: isoMonthsFromAsOf(-7) },
+        ASOF,
+      );
+      expect(months).toBeNull();
+    });
   });
 });
 
@@ -218,7 +283,7 @@ describe('buildMaturityTimeline', () => {
   // unparseable workbook cell must not reach a date-typed field on the client-facing timeline.
   it('an unparseable maturity cell yields eventDate=null while monthsOut still uses the stored fallback', () => {
     const db = freshDb();
-    seedLoan(db, { id: 'garbage-date', maturityDate: 'TBD', monthsToMaturity: 9 });
+    seedLoan(db, { id: 'garbage-date', maturityDate: 'TBD', monthsToMaturity: 9, snapshotDate: ASOF });
     const events = buildMaturityTimeline(db, ASOF);
     const ev = events.find((e) => e.loanId === 'garbage-date' && e.eventType === 'maturity');
     expect(ev).toBeDefined();
@@ -830,7 +895,7 @@ describe('buildRefiWindows — soonestMaturityDate never emits an unparseable da
   it('an unparseable maturity cell yields a null date while months comes from the stored fallback', () => {
     const db = freshDb();
     seedProperty(db, 'p1');
-    seedLoan(db, { propertyId: 'p1', maturityDate: 'TBD', monthsToMaturity: 6 });
+    seedLoan(db, { propertyId: 'p1', maturityDate: 'TBD', monthsToMaturity: 6, snapshotDate: ASOF });
     const [entry] = buildRefiWindows(db, [], ASOF);
     expect(entry).toBeDefined();
     expect(entry!.monthsToSoonestMaturity).toBe(6);
