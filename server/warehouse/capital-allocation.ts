@@ -50,11 +50,10 @@
 import { getMacro } from '../macro/getMacro';
 import { getMacroMarketBenchmarks } from '../macro/market-benchmarks';
 import { referenceDate } from '../config';
-import { MONTH_MS } from './time-constants';
 import { getRegionalMacro } from '../macro/regional-macro';
 import { propertyPeriodMetrics, latestFullYearPeriod } from './metrics';
 import { scoreProperties } from './scores';
-import { scoreDebtPositions } from './debt-scoring';
+import { scoreDebtPositions, effectiveMonthsToMaturity } from './debt-scoring';
 import { clamp } from './clamp';
 import { loadCapitalConfig } from './capital-config';
 import { loadGovernors } from './governors';
@@ -834,6 +833,7 @@ interface BalloonRow {
   maturity_date: string | null;
   months_to_maturity: number | null;
   is_demand: number;
+  snapshot_date: string;
 }
 
 /**
@@ -842,7 +842,11 @@ interface BalloonRow {
  * recalced/saved into the warehouse, which feeds debtUrgency (15% of priorityScore) and would
  * otherwise silently drift from the workbook-save date exactly like the frozen-dateline bug class
  * (#206/#207) eliminates elsewhere. Falls back to the stored value only for a row with no
- * maturity_date.
+ * maturity_date — and that fallback itself now goes through `effectiveMonthsToMaturity`
+ * (debt-scoring.ts), which discounts the stored figure by the elapsed time since the row's own
+ * `snapshot_date` rather than returning it unadjusted (adversarial review of PR #244, 2026-07-27:
+ * this function had an independent, PRE-FIX copy of that date math with no snapshot_date in its
+ * query at all — a stale stored months_to_maturity read as current, understating debtUrgency).
  *
  * Fetches every qualifying row (no SQL aggregate) and computes each row's effective months in JS
  * BEFORE taking the per-property minimum — a naive fix that only freshened the recomputed VALUE
@@ -865,7 +869,7 @@ interface BalloonRow {
 function getBalloonMonthsByProperty(db: WarehouseDb, asOf: string = referenceDate()): Map<string, number | null> {
   const rows = db
     .prepare(
-      `SELECT id, property_id, maturity_date, months_to_maturity, is_demand
+      `SELECT id, property_id, maturity_date, months_to_maturity, is_demand, snapshot_date
        FROM debt_positions
        WHERE status = 'active'
          AND balloon = 1
@@ -874,7 +878,6 @@ function getBalloonMonthsByProperty(db: WarehouseDb, asOf: string = referenceDat
     )
     .all() as BalloonRow[];
 
-  const asOfMs = new Date(asOf).getTime();
   const best = new Map<string, { months: number; tieKey: string }>();
 
   for (const row of rows) {
@@ -883,14 +886,12 @@ function getBalloonMonthsByProperty(db: WarehouseDb, asOf: string = referenceDat
     if (row.is_demand) {
       months = 0;
     } else {
-      // Fall back to the stored value whenever the FRESH result itself is non-finite (a bad
-      // maturity_date, OR an unparseable `asOf` — referenceDate()/REPORT_DATE performs no
-      // validation) — checking only the intermediate maturityMs would silently DROP a real row
-      // (and its available stored value) whenever asOf alone was bad, even though the row's own
-      // data was perfectly usable.
-      const maturityMs = row.maturity_date ? new Date(row.maturity_date).getTime() : NaN;
-      const fresh = (maturityMs - asOfMs) / MONTH_MS;
-      months = Number.isFinite(fresh) ? fresh : row.months_to_maturity;
+      // Delegates to the ratified effectiveMonthsToMaturity (debt-scoring.ts): fresh recompute
+      // from maturity_date when parseable, else the stored months_to_maturity discounted by
+      // elapsed time since snapshot_date (never the raw stale figure) — same fallback path
+      // scoreDebtPositions/debt-maturity.ts already share, closing this function's own
+      // duplicated pre-fix copy of that date math.
+      months = effectiveMonthsToMaturity(row, asOf);
     }
     if (months === null || !Number.isFinite(months)) continue;
     const tieKey = `${row.maturity_date ?? ''}|${row.id}`;
