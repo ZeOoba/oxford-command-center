@@ -93,6 +93,7 @@ interface ActiveLoanRow {
   current_balance: number;
   maturity_date: string | null;
   months_to_maturity: number | null;
+  snapshot_date: string;
   is_demand: number;
   balloon: number;
   ltv: number | null;
@@ -117,7 +118,7 @@ function activeLoans(db: WarehouseDb): ActiveLoanRow[] {
   return db
     .prepare(
       `SELECT d.id, d.property_id, p.name AS property_name, d.loan_name,
-              d.current_balance, d.maturity_date, d.months_to_maturity,
+              d.current_balance, d.maturity_date, d.months_to_maturity, d.snapshot_date,
               d.is_demand, d.balloon, d.ltv, d.rate_type, d.next_rate_reset, d.rate
        FROM debt_positions d
        LEFT JOIN property_master p ON p.id = d.property_id
