@@ -115,6 +115,37 @@ describe('resolvePropertyMasterId — unknown name → slug fallback', () => {
   });
 });
 
+// L4 (2026-07-27 round-19-LOWs sweep): two properties sharing a normalized display name must not
+// be resolved by array order — not constructible from today's canon roster, but a silent
+// first-match pick would misattribute a loan to whichever duplicate happened to sort first.
+describe('resolvePropertyMasterId — L4: duplicate normalized names must not resolve by array order', () => {
+  const DUPES = [
+    { id: 'warehouse-a-market-x', name: 'Main St Warehouse' },
+    { id: 'warehouse-b-market-y', name: 'Main St Warehouse' },
+  ];
+
+  it('two properties with the identical name return null (ambiguous), never the first array entry', () => {
+    expect(resolvePropertyMasterId('Main St Warehouse', DUPES)).toBeNull();
+  });
+
+  it('reversing the array order does not change the (null) result — order-independence', () => {
+    const reversed = [DUPES[1]!, DUPES[0]!];
+    expect(resolvePropertyMasterId('Main St Warehouse', DUPES)).toBe(
+      resolvePropertyMasterId('Main St Warehouse', reversed),
+    );
+    expect(resolvePropertyMasterId('Main St Warehouse', reversed)).toBeNull();
+  });
+
+  it('whitespace/case variants of the ambiguous name still resolve to null, not a guess', () => {
+    expect(resolvePropertyMasterId('  main st   warehouse ', DUPES)).toBeNull();
+  });
+
+  it('a name matching only ONE of two similarly-named properties still resolves normally (ambiguity is per-name, not global)', () => {
+    const mixed = [...DUPES, { id: '1100-rarig-ave-columbus-oh', name: '1100 Rarig Ave, Columbus OH' }];
+    expect(resolvePropertyMasterId('1100 Rarig Ave, Columbus OH', mixed)).toBe('1100-rarig-ave-columbus-oh');
+  });
+});
+
 describe('PROPERTY_ALIASES map', () => {
   it('contains the FVC Sepich alias', () => {
     expect(PROPERTY_ALIASES['fvc-fairground-village-center-sepich-portfolio-8-props']).toBe('sepich-portfolio-columbus-oh-8-props');
