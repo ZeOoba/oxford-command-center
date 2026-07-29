@@ -1,6 +1,6 @@
 # Architecture Decision Records
 
-New convention as of 2026-07-29 (this repo had none before — see the Oxford Intelligence Platform roadmap, `docs/roadmap/intelligence-platform/`, for why one was introduced now).
+New convention as of 2026-07-29 (this repo had none before — see the Oxford Intelligence Platform roadmap, `docs/roadmap/intelligence-platform/`, for why one was introduced now). Governed by [`docs/constitution/ENGINEERING_CONSTITUTION.md`](../constitution/ENGINEERING_CONSTITUTION.md) §12, which sets the bar for what warrants a record here.
 
 ## When to write one
 
