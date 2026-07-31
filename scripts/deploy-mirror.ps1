@@ -37,7 +37,18 @@ param(
   [string]$VerifyUrl       = 'https://ora-command-center.pages.dev/',
   [string]$AccessHost      = 'cloudflareaccess.com',
   [string]$AlertSendScript = 'C:\Users\Owner\.claude\scheduled-tasks\_shared\send-via-outlook.ps1',
-  [string]$AlertTo         = 'ggoldberg@oxfordra.net'
+  [string]$AlertTo         = 'ggoldberg@oxfordra.net',
+  # Upper bound for the wrangler deploy (step 3). Must stay comfortably BELOW the registered task's
+  # ExecutionTimeLimit (PT30M) -- the whole point is that this script gets to fail on its own terms,
+  # and still has time to send the alert, before Task Scheduler force-kills the tree and silences it.
+  # 10 minutes is ~10x a normal deploy, so it only trips on a genuine stall. See the 2026-07-29 note
+  # on step 3 below. Range floor (60s) keeps this meaningfully above a normal deploy; ceiling (1200s
+  # = 20min) leaves headroom under PT30M for the fetch/build that precede it and the gate-check/alert
+  # that follow -- added 2026-07-31 (security review) alongside the library-level ValidateRange in
+  # Invoke-NativeCommandWithTimeout, after finding an out-of-range value could previously leave a
+  # process running, unwaited and unkilled.
+  [ValidateRange(60, 1200)]
+  [int]$DeployTimeoutSeconds = 600
 )
 
 $ErrorActionPreference = 'Stop'
@@ -54,6 +65,66 @@ Write-Host "[$stamp] Mirror deploy starting in $repo"
 # git-fetch-capture.smoke-test.ps1) -- see that file for why a plain
 # `(& git fetch origin 2>&1 | Out-String)` is unsafe under $ErrorActionPreference = 'Stop'.
 . (Join-Path $PSScriptRoot 'lib\git-capture.ps1')
+# Invoke-NativeCommandWithTimeout lives in lib/native-timeout.ps1 (shared with
+# native-command-timeout.smoke-test.ps1) -- see that file for why an unbounded external call here
+# turns a transient upstream stall into a completely unalerted outage.
+. (Join-Path $PSScriptRoot 'lib\native-timeout.ps1')
+
+# Invoke-AccessGateProbe -- extracted 2026-07-31 (security review) so the deploy-timeout path
+# (step 3) can run the SAME Access-gate re-verification as the normal path (step 4), instead of
+# skipping it entirely. Before this, a deploy that timed out never got its gate re-checked at all --
+# meaning a PERSISTENT stall (the same transient-looking signature recurring hourly) left the one
+# control that detects an Access-policy regression unrun for as long as the stall continued, even on
+# runs where the mirror genuinely did publish before wrangler hung. Extracting to a shared function
+# means both call sites can't silently drift the way the pre-extraction duplicated cmd-guard did.
+function Invoke-AccessGateProbe {
+  param(
+    [Parameter(Mandatory=$true)][string]$VerifyUrl,
+    [Parameter(Mandatory=$true)][string]$AccessHost
+  )
+  # Incident (2026-07-09 17:08): a single-shot probe missed transiently and fired the CRITICAL
+  # "confidential bake may be exposed" alert even though the gate was fine. Retry up to 3x
+  # (initial 5s settle, then 15s between attempts) before declaring failure, and split severity
+  # on the last observed $code -- a 2xx apex means the bake really is exposed (CRITICAL); any
+  # other result (0/timeout, 3xx-other, 4xx, 5xx) is an inconclusive probe/edge issue.
+  Start-Sleep -Seconds 5
+  $verified = $false
+  $code = 0
+  $location = ''
+  $lastCurlExit = $null
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    if ($attempt -gt 1) { Start-Sleep -Seconds 15 }
+    # Invoke-NativeCommandCapture (not a plain `& curl.exe ... 2>&1`) -- same ErrorRecord-under-
+    # Stop hazard the git fetch case has: curl's `-s` flag normally suppresses curl's own stderr
+    # text, but if it or a future flag change ever leaks anything to stderr, a bare `2>&1` would
+    # throw and silently replace this gate-check's own "GATE CHECK FAILED"/"GATE CHECK INCONCLUSIVE"
+    # wording -- the highest-stakes throw in this script, since it's what detects a confidential
+    # bake being publicly exposed.
+    # --connect-timeout/--max-time (added 2026-07-29, code-review follow-up): without these curl can
+    # hang indefinitely if the edge accepts the TCP connection and then stalls -- the same
+    # unbounded-external-call shape as the wrangler deploy hang this whole fix addresses, on the
+    # single highest-stakes step in the script. Bounded to ~20s per attempt x3 attempts, still
+    # trivial against the scheduler's PT30M limit.
+    $curlResult = Invoke-NativeCommandCapture -Executable 'curl.exe' -Arguments @('-s', '-I', '--connect-timeout', '10', '--max-time', '20', '--max-redirs', '0', $VerifyUrl)
+    $lastCurlExit = $curlResult.ExitCode
+    $curlOut = $curlResult.Output -split "`n"
+    $statusLine   = ($curlOut | Where-Object { $_ -match '^HTTP/' } | Select-Object -First 1) -as [string]
+    $locationLine = ($curlOut | Where-Object { $_ -match '^[Ll]ocation:' } | Select-Object -First 1) -as [string]
+    $code     = if ($statusLine   -match 'HTTP/\S+\s+(\d+)') { [int]$Matches[1] } else { 0 }
+    $location = if ($locationLine -match '^[Ll]ocation:\s*(.+)') { $Matches[1].Trim() } else { '' }
+    if ($code -eq 302 -and ($location -match [regex]::Escape($AccessHost))) {
+      $verified = $true
+      break
+    }
+    Write-Host "[gate-check] attempt $attempt/3 not yet verified (code=$code, Location='$location')"
+  }
+  return [pscustomobject]@{
+    Verified     = $verified
+    Code         = $code
+    Location     = $location
+    CurlExitCode = $lastCurlExit
+  }
+}
 
 try {
   # 1) Fast-forward to origin/main first -- otherwise this deploys whatever old code happens to
@@ -117,8 +188,32 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "build:mirror failed ($LASTEXITCODE)" }
 
     # 3) Deploy the static bake to the gated Pages project.
-    npx wrangler pages deploy dist --project-name=$ProjectName --branch=main
-    if ($LASTEXITCODE -ne 0) { throw "wrangler deploy failed ($LASTEXITCODE)" }
+    #    Incident (2026-07-29): this call ran unbounded and hung ~26 minutes, so the Windows Task
+    #    Scheduler ExecutionTimeLimit (PT30M) force-terminated the process tree -- exit 3221225786
+    #    (0xC000013A). A forced kill does NOT unwind try/catch, so the catch block below never ran
+    #    and NO alert was sent (no email, and no data/outbox/ fallback entry either); the failure was
+    #    found only because a separate sampling checker read LastTaskResult afterwards. The 11:00 run
+    #    then succeeded unattended, confirming a transient stall rather than bad credentials.
+    #    Bounding the call here means a stall becomes an ordinary throw that the catch CAN alert on,
+    #    with time to spare before the scheduler's own limit. Tree-kill matters: npx spawns node as a
+    #    child, and killing only npx would orphan the real uploader.
+    $deploy = Invoke-NativeCommandWithTimeout `
+      -Executable 'npx' `
+      -Arguments @('wrangler', 'pages', 'deploy', 'dist', "--project-name=$ProjectName", '--branch=main') `
+      -TimeoutSeconds $DeployTimeoutSeconds
+    if ($deploy.TimedOut) {
+      $timeoutReason = Get-DeployTimeoutReason -Seconds $DeployTimeoutSeconds
+      # 2026-07-31 (security review): run the Access-gate probe on the timeout path too, instead of
+      # skipping it entirely as before. ~95s worst case (5s settle + 3x20s + 2x15s) is trivial
+      # against the scheduler's PT30M budget, and this is the one control that can still catch a
+      # genuine exposure even though the deploy itself never confirmed success.
+      $gate = Invoke-AccessGateProbe -VerifyUrl $VerifyUrl -AccessHost $AccessHost
+      if ($gate.Code -ge 200 -and $gate.Code -le 299) {
+        throw "GATE CHECK FAILED: $VerifyUrl returned $($gate.Code) (Location='$($gate.Location)') -- detected while investigating a deploy timeout. Expected 302 -> *$AccessHost. Confidential bake may be exposed - investigate immediately. $timeoutReason"
+      }
+      throw $timeoutReason
+    }
+    if ($deploy.ExitCode -ne 0) { throw "wrangler deploy failed ($($deploy.ExitCode))" }
   }
   finally {
     Remove-Item Env:\MIRROR_INCLUDE_CONFIDENTIAL -ErrorAction SilentlyContinue
@@ -129,42 +224,17 @@ try {
   # 4) Verify Access is still enforcing -- unauthenticated must 302 to the Access login host.
   #    Uses curl.exe (Windows 11 built-in) -- PS5.1-compatible; Invoke-WebRequest cannot capture
   #    302 response objects on PS5.1 (SkipHttpErrorCheck is PS7+ only).
-  #    Incident (2026-07-09 17:08): a single-shot probe missed transiently and fired the CRITICAL
-  #    "confidential bake may be exposed" alert even though the gate was fine. Retry up to 3x
-  #    (initial 5s settle, then 15s between attempts) before declaring failure, and split severity
-  #    on the last observed $code -- a 2xx apex means the bake really is exposed (CRITICAL); any
-  #    other result (0/timeout, 3xx-other, 4xx, 5xx) is an inconclusive probe/edge issue.
-  Start-Sleep -Seconds 5
-  $gateVerified = $false
-  $code     = 0
-  $location = ''
-  for ($attempt = 1; $attempt -le 3; $attempt++) {
-    if ($attempt -gt 1) { Start-Sleep -Seconds 15 }
-    # Invoke-NativeCommandCapture (not a plain `& curl.exe ... 2>&1`) -- same ErrorRecord-under-
-    # Stop hazard as the git fetch case above applies here too: curl's `-s` flag normally
-    # suppresses curl's own stderr text, but if it or a future flag change ever leaks anything to
-    # stderr, a bare `2>&1` would throw and silently replace this gate-check's own
-    # "GATE CHECK FAILED"/"GATE CHECK INCONCLUSIVE" wording -- the highest-stakes throw in this
-    # script, since it's what detects a confidential bake being publicly exposed.
-    $curlResult = Invoke-NativeCommandCapture -Executable 'curl.exe' -Arguments @('-s', '-I', '--max-redirs', '0', $VerifyUrl)
-    $curlOut = $curlResult.Output -split "`n"
-    $statusLine   = ($curlOut | Where-Object { $_ -match '^HTTP/' } | Select-Object -First 1) -as [string]
-    $locationLine = ($curlOut | Where-Object { $_ -match '^[Ll]ocation:' } | Select-Object -First 1) -as [string]
-    $code     = if ($statusLine   -match 'HTTP/\S+\s+(\d+)') { [int]$Matches[1] } else { 0 }
-    $location = if ($locationLine -match '^[Ll]ocation:\s*(.+)') { $Matches[1].Trim() } else { '' }
-    if ($code -eq 302 -and ($location -match [regex]::Escape($AccessHost))) {
-      $gateVerified = $true
-      break
-    }
-    Write-Host "[gate-check] attempt $attempt/3 not yet verified (code=$code, Location='$location')"
-  }
-  if (-not $gateVerified) {
-    if ($code -ge 200 -and $code -le 299) {
-      throw "GATE CHECK FAILED: $VerifyUrl returned $code (Location='$location') after 3 attempts. Expected 302 -> *$AccessHost. Confidential bake may be exposed - investigate immediately."
+  #    Invoke-AccessGateProbe (defined above) is shared with the deploy-timeout path in step 3 --
+  #    see that definition for the retry/severity-split rationale.
+  $gate = Invoke-AccessGateProbe -VerifyUrl $VerifyUrl -AccessHost $AccessHost
+  if (-not $gate.Verified) {
+    if ($gate.Code -ge 200 -and $gate.Code -le 299) {
+      throw "GATE CHECK FAILED: $VerifyUrl returned $($gate.Code) (Location='$($gate.Location)') after 3 attempts. Expected 302 -> *$AccessHost. Confidential bake may be exposed - investigate immediately."
     } else {
-      throw "GATE CHECK INCONCLUSIVE: $VerifyUrl returned $code (Location='$location') after 3 attempts. Probe/network issue or edge propagation - gate NOT verified open; verify manually."
+      throw "GATE CHECK INCONCLUSIVE: $VerifyUrl returned $($gate.Code) (Location='$($gate.Location)') after 3 attempts (last curl exit $($gate.CurlExitCode)). Probe/network issue or edge propagation - gate NOT verified open; verify manually."
     }
   }
+  $location = $gate.Location
 
   $stamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
   Write-Host "[$stamp] OK - deployed and Access gate verified (302 -> $AccessHost). Location: $location"
