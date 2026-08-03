@@ -54,6 +54,21 @@ Write-Host "[$stamp] Mirror deploy starting in $repo"
 # git-fetch-capture.smoke-test.ps1) -- see that file for why a plain
 # `(& git fetch origin 2>&1 | Out-String)` is unsafe under $ErrorActionPreference = 'Stop'.
 . (Join-Path $PSScriptRoot 'lib\git-capture.ps1')
+# Write-DeployBeacon* lives in lib/deploy-beacon.ps1 (shared with
+# deploy-beacon.smoke-test.ps1). See that file for the full rationale; in short, the
+# try/catch below can only report failures that THROW, and 0xC000013A (process killed --
+# reboot, Modern Standby transition) never throws, so three such failures in the week of
+# 2026-08-01 alerted nobody. The beacon is the out-of-process record that the run started
+# and, separately, that it finished.
+. (Join-Path $PSScriptRoot 'lib\deploy-beacon.ps1')
+
+$beaconPath = Get-DeployBeaconPath -RepoRoot $repo
+# Stamped BEFORE the try block so that a kill at any point inside it -- including during the
+# very first git call -- still leaves a 'running' beacon behind for the health check to find.
+# HEAD is captured here as the pre-fast-forward sha purely for diagnostics; it is not used
+# for any control flow.
+$beaconHeadSha = (& git rev-parse --short HEAD 2>$null)
+Write-DeployBeaconStart -BeaconPath $beaconPath -HeadSha $beaconHeadSha
 
 try {
   # 1) Fast-forward to origin/main first -- otherwise this deploys whatever old code happens to
@@ -176,9 +191,33 @@ try {
   } catch {
     Write-Host "Send-DeployRecoveryDigestIfSuppressed itself failed: $($_.Exception.Message)"
   }
+
+  # Reached the normal exit path. Beacon writes are wrapped so a beacon problem can never
+  # turn an otherwise-successful deploy into a failed one -- this is observability, and it
+  # must not become a new way for the deploy to break.
+  try {
+    Write-DeployBeaconEnd -BeaconPath $beaconPath -Outcome 'success'
+  } catch {
+    Write-Host "Write-DeployBeaconEnd (success) itself failed: $($_.Exception.Message)"
+  }
 }
 catch {
   $original = $_
+  # ORDER MATTERS: stamp the beacon BEFORE attempting the alert send, not after.
+  #
+  # Send-DeployFailureAlert drives Outlook COM and retries once on failure, so it can occupy
+  # several seconds. If the machine reboots or suspends during that window, the beacon would
+  # still read 'running' and mirror-run-classify.ps1 would find a correlating power event and
+  # classify a genuine failure as BENIGN_INTERRUPTED -- silently, and worst of all for a
+  # GATE CHECK FAILED (confidential bake possibly exposed), which is the highest-stakes throw
+  # in this script. Recording outcome='failed' first makes that misclassification impossible:
+  # the classifier keys on status='completed', so the run can no longer be excused as a kill.
+  # Found by the adversarial review of this change, not in production.
+  try {
+    Write-DeployBeaconEnd -BeaconPath $beaconPath -Outcome 'failed' -Reason $original.Exception.Message
+  } catch {
+    Write-Host "Write-DeployBeaconEnd (failed) itself failed: $($_.Exception.Message)"
+  }
   try {
     $reason = $original.Exception.Message
     $isGateFailure = $reason -match '^GATE CHECK FAILED'
