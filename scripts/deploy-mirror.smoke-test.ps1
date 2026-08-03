@@ -19,6 +19,8 @@ $AlertTo = 'test@example.invalid'
 $stateFile = Join-Path $repo 'data\alert-state\offline-suppression.json'
 
 . (Join-Path $PSScriptRoot 'lib\deploy-alert.ps1')
+# Get-DeployTimeoutReason -- needed for scenarios 6q/6r below (2026-07-29 code-review follow-up).
+. (Join-Path $PSScriptRoot 'lib\native-timeout.ps1')
 
 $failures = @()
 function Assert-True {
@@ -91,6 +93,18 @@ Assert-True (Test-OfflineSignature -Reason 'git fetch origin failed (128)') "sce
 Assert-True (Test-OfflineSignature -Reason 'git pull --ff-only failed (1) -- local main has diverged from origin/main') "scenario 6b: git pull failure classified as offline signature"
 Assert-True (-not (Test-OfflineSignature -Reason 'build:mirror failed (1)')) "scenario 6c: build failure NOT classified as offline signature"
 Assert-True (-not (Test-OfflineSignature -Reason 'GATE CHECK FAILED: TEST')) "scenario 6d: gate check failure NOT classified as offline signature"
+# 6q/6r (2026-07-29, code-review follow-up): the deploy-timeout throw must reach Gabriel on the
+# FIRST occurrence. If its wording ever drifted into Test-OfflineSignature's match, the timeout
+# would be treated as a suppressible offline blip and silently swallowed below the streak threshold
+# -- which would restore the exact silent-failure hole the timeout was added to close. This calls
+# the REAL Get-DeployTimeoutReason (lib/native-timeout.ps1) rather than a hand-copied literal --
+# an earlier draft of this test used a copied string that had already drifted from the production
+# message by the time it was reviewed, which would have let a real regression pass silently.
+$timeoutReason = Get-DeployTimeoutReason -Seconds 600
+Assert-True (-not (Test-OfflineSignature -Reason $timeoutReason)) "scenario 6q: deploy timeout NOT classified as offline signature (must never be suppressed)"
+# It is also not a gate failure: a stall's publication state is UNKNOWN, not a confirmed exposure,
+# so it must not be escalated to CRITICAL the way a confirmed 2xx gate-check response would be.
+Assert-True (-not ($timeoutReason -match '^GATE CHECK FAILED')) "scenario 6r: deploy timeout NOT classified as a gate failure (publication state unknown, not a confirmed confidentiality exposure)"
 
 # Scenario 6e-6k: Test-GitAuthFailureSignature classification -- real git/GitHub credential-
 # failure wording (2026-07-10 incident: gh.exe's credential helper going missing/unauthenticated
