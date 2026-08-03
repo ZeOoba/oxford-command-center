@@ -1,8 +1,14 @@
 name: CI
 
-# Quality gate on every push/PR. Note: the $0 reconcile check (`npm run reconcile`) reads the
-# canonical workbook (a local OneDrive file) and is LOCAL-ONLY — it cannot run in CI. CI runs
-# typecheck + lint + tests + a production build + the bundle-size budget.
+# Quality gate on every push/PR. Note: the full $0 reconcile check (`npm run reconcile`) reads the
+# canonical workbook (a local OneDrive file) TWICE as an independent cross-check and is
+# LOCAL-ONLY — it cannot run here (see full-gate-selfhosted.yml, which runs it but is
+# workflow_dispatch only, never automatic on push/PR). `npm run reconcile:snapshot`
+# (scripts/reconcile-snapshot.ts, added 2026-08-03 after the phantom-vacancy-lease incident —
+# see PR #250 — shipped to the committed snapshot uncaught) IS wired in below: it runs
+# checkSnapshot() against the COMMITTED data/snapshots/portfolio.json with zero workbook I/O, so
+# it's a strict subset of the full check but runs on every PR here. CI runs typecheck + lint +
+# tests + the snapshot reconciliation + a production build + the bundle-size budget.
 on:
   push:
     branches: [main]
