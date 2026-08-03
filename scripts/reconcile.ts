@@ -112,16 +112,26 @@ async function main() {
     );
   }
 
-  // Count integrity
-  const counts = [
-    ['Properties', snapshot.properties.length, 14],
-    ['Leases', snapshot.leases.length, 138],
-    ['Cash entities', snapshot.cash.entities.length, 16],
+  // Count floor (non-zero, not exact-match): a parse that silently emptied a sheet must still
+  // fail loudly. This was previously an EXACT count against hardcoded baselines (Properties 14 /
+  // Leases 138 / Cash entities 16) captured on 2026-06-05 — a false-fail waiting on the next
+  // genuine lease signing, property acquisition, or entity onboarding, and it was never the check
+  // that actually caught anything: the phantom-vacancy-lease incident (2026-08-03, PR #250, +10
+  // leases / +$REDACTED-AMT) shipped with the Lease count at exactly... 148, which this WOULD have
+  // caught by luck of a stale baseline, but only because nobody had bumped the "138" since. The
+  // "Annualized rent total" check above is the real, non-time-bombed assertion for exactly this
+  // failure mode — it compares the snapshot's own derived total against the workbook's declared
+  // total, which drifts with genuine business changes on its own and needs no hand-maintained
+  // constant.
+  const floors = [
+    ['Properties', snapshot.properties.length],
+    ['Leases', snapshot.leases.length],
+    ['Cash entities', snapshot.cash.entities.length],
   ] as const;
-  for (const [label, got, exp] of counts) {
-    const pass = got === exp;
+  for (const [label, got] of floors) {
+    const pass = got > 0;
     if (!pass) failed++;
-    console.log(`${pass ? '✓ PASS' : '✗ FAIL'}  ${`Count: ${label}`.padEnd(42)} exp ${exp} · got ${got}`);
+    console.log(`${pass ? '✓ PASS' : '✗ FAIL'}  ${`Non-empty: ${label}`.padEnd(42)} got ${got}`);
   }
 
   // Entity-graph integrity: every counterparty edge must resolve to a real node.
