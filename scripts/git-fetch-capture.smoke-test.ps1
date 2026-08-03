@@ -53,8 +53,12 @@ function Invoke-ScenarioNoThrow {
 }
 
 try {
-  Invoke-SetupGit -GitArgs @('init', '--quiet', '--bare', "`"$originPath`"")
-  Invoke-SetupGit -GitArgs @('clone', '--quiet', "`"$originPath`"", "`"$seedPath`"")
+  # 2026-07-31: stopped manually quote-wrapping these paths -- cmd-arg-guard.ps1 now rejects any
+  # embedded double-quote outright (a wrap was found to silently SPLIT a space-containing value
+  # once the callee's own whitespace-quoter wrapped it a second time). The whitespace-quoter in
+  # Invoke-NativeCommandCapture already handles a space-containing path correctly on its own.
+  Invoke-SetupGit -GitArgs @('init', '--quiet', '--bare', $originPath)
+  Invoke-SetupGit -GitArgs @('clone', '--quiet', $originPath, $seedPath)
 
   Push-Location $seedPath
   Invoke-SetupGit -GitArgs @('checkout', '-q', '-b', 'main')
@@ -64,7 +68,7 @@ try {
   Invoke-SetupGit -GitArgs @('push', '-q', 'origin', 'main')
   Pop-Location
 
-  Invoke-SetupGit -GitArgs @('clone', '--quiet', "`"$originPath`"", "`"$workPath`"")
+  Invoke-SetupGit -GitArgs @('clone', '--quiet', $originPath, $workPath)
 
   # Scenario 1: no new content to fetch (already up to date) -- must not throw, exit 0.
   Push-Location $workPath

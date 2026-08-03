@@ -40,18 +40,35 @@
   call sites share one hardened implementation instead of two copies drifting apart.
 #>
 
+# Assert-CmdSafeArgument (lib/cmd-arg-guard.ps1) -- shared with lib/native-timeout.ps1's
+# Invoke-NativeCommandWithTimeout, extracted 2026-07-29 after a regression from maintaining this
+# guard as two separate copies. See that file for the rule.
+. (Join-Path $PSScriptRoot 'cmd-arg-guard.ps1')
+
 function Invoke-NativeCommandCapture {
   param(
     [Parameter(Mandatory=$true)][string]$Executable,
     [Parameter(Mandatory=$true)][string[]]$Arguments
   )
-  # This function builds a single cmd.exe command-line string, so any argument containing a
-  # cmd.exe metacharacter (&|<>^) would be misparsed rather than passed through literally -- none
-  # of today's call sites (git fetch/-c key=value args, curl flags/a fixed apex URL) need one,
-  # but a future caller that did would fail silently instead of loudly. Reject those up front.
+  # Guard extracted to Assert-CmdSafeArgument (lib/cmd-arg-guard.ps1) -- see that file for the exact
+  # rule and the 2026-07-29 regression that made a shared, single-copy guard the correct fix rather
+  # than two independently-maintained copies.
+  #
+  # $Executable is validated too (added 2026-07-31, security review): every existing call site
+  # passes a hardcoded literal ('git', 'curl.exe'), so this is not exploitable today, but the guard
+  # only validated $Arguments -- a future caller passing a caller-influenced executable string would
+  # have bypassed it entirely, on the exact command line this function exists to make safe. Proven
+  # via a real PoC against this function ('echo hi & mkdir ...' as $Executable executed the mkdir).
+  try {
+    Assert-CmdSafeArgument -Argument $Executable
+  } catch {
+    throw "Invoke-NativeCommandCapture: Executable: $($_.Exception.Message)"
+  }
   foreach ($arg in $Arguments) {
-    if ($arg -match '[&|<>^]') {
-      throw "Invoke-NativeCommandCapture: argument contains a cmd.exe metacharacter this function does not escape: '$arg'"
+    try {
+      Assert-CmdSafeArgument -Argument $arg
+    } catch {
+      throw "Invoke-NativeCommandCapture: $($_.Exception.Message)"
     }
   }
   # Quote any arg containing whitespace -- a plain `-join ' '` would silently split a multi-word
