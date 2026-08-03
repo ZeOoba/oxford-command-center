@@ -2,7 +2,7 @@
   "meta": {
     "schemaVersion": "1.0.0",
     "asOf": "2026-08-03",
-    "generatedAt": "2026-08-03T20:28:47.625Z",
+    "generatedAt": "2026-08-03T23:46:45.031Z",
     "source": "Master Excel Template Company Wide -- Oxford.xlsx",
     "scenario": "Base"
   },
@@ -3251,29 +3251,6 @@
       "collateralProperty": "3875-3883 E Livingston Ave, Columbus OH"
     },
     {
-      "id": "borrower-2203-2207-northwood-dr",
-      "name": "2203-2207 Northwood Dr",
-      "counterparty": "2203 Northwood, LLC (2900 Loch Raven LLC)",
-      "direction": "borrower",
-      "originalPrincipal": null,
-      "currentBalance": 2800000,
-      "absBalance": 2800000,
-      "rate": 0.0699,
-      "monthlyPmt": 16310,
-      "annualInterest": null,
-      "annualPrincipal": null,
-      "loanType": "Interest Only",
-      "status": "Interest Only",
-      "isDemand": false,
-      "maturity": "2031-10-01",
-      "monthsToMaturity": 61,
-      "ltv": null,
-      "lender": "2203 Northwood, LLC (2900 Loch Raven LLC)",
-      "balloon": false,
-      "flags": [],
-      "collateralProperty": "2203-2207 Northwood Dr, Salisbury MD"
-    },
-    {
       "id": "lender-1100-rarig-fenton",
       "name": "1100 Rarig (Fenton)",
       "counterparty": "1100 Rarig Ave, LLC (Oxford Capital) — Oxford 50% share",
@@ -3402,6 +3379,29 @@
       "annualPrincipal": null,
       "loanType": "Paid Off",
       "status": "Paid Off",
+      "isDemand": true,
+      "maturity": null,
+      "monthsToMaturity": null,
+      "ltv": null,
+      "lender": null,
+      "balloon": false,
+      "flags": [],
+      "collateralProperty": null
+    },
+    {
+      "id": "internal-2203-2207-northwood",
+      "name": "2203-2207 Northwood",
+      "counterparty": "EG Florida LLC (EGFLLC)",
+      "direction": "internal",
+      "originalPrincipal": null,
+      "currentBalance": 2800000,
+      "absBalance": 2800000,
+      "rate": 0.0699,
+      "monthlyPmt": 16310,
+      "annualInterest": null,
+      "annualPrincipal": null,
+      "loanType": "Int Only | matures 2031-10-01",
+      "status": "Int Only | matures 2031-10-01",
       "isDemand": true,
       "maturity": null,
       "monthsToMaturity": null,
@@ -6308,26 +6308,6 @@
           "fvc-11153",
           "banwick-morrison-refi"
         ],
-        "insurance": []
-      }
-    },
-    {
-      "id": "cp-2203-northwood-llc-2900-loch-raven-llc",
-      "name": "2203 Northwood, LLC (2900 Loch Raven LLC)",
-      "kind": "lender",
-      "firm": "2203 Northwood, LLC (2900 Loch Raven LLC)",
-      "role": null,
-      "email": null,
-      "phone": null,
-      "market": null,
-      "notes": null,
-      "source": "workbook",
-      "links": {
-        "properties": [],
-        "loans": [
-          "borrower-2203-2207-northwood-dr"
-        ],
-        "deals": [],
         "insurance": []
       }
     },
