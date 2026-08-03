@@ -1,0 +1,263 @@
+<#
+  Run-completion beacon for deploy-mirror.ps1, plus the classifier that reads it.
+
+  WHY (incident, 2026-08-03): deploy-mirror.ps1 reports failures from a try/catch, which only
+  fires when the script THROWS. Three runs in seven days instead returned 3221225786
+  (0xC000013A = STATUS_CONTROL_C_EXIT) -- the process was KILLED, so the catch never ran,
+  Send-DeployFailureAlert was never called, and data/outbox/ (its own can't-send fallback)
+  recorded nothing. The pipeline had no way to report the one failure mode it cannot catch.
+
+  You cannot catch 0xC000013A from inside the process, so this does the inverse: the script
+  announces that it STARTED, and separately announces that it FINISHED. A run that was killed
+  leaves a beacon stuck at status='running' -- absence of the finish record IS the signal.
+
+  Why not just use run duration as the signal: the three real kills lasted 4 seconds, 96
+  seconds, and several hours. There is no duration threshold that separates them from healthy
+  runs (which take 5-19 minutes). Duration was evaluated and rejected; only the beacon works.
+
+  Classification, not just detection: most of these kills are benign machine lifecycle (a
+  reboot or a Modern Standby transition mid-run), and the next hourly fire self-heals them.
+  Alerting on all of them would train the reader to ignore the alert. Get-MirrorRunVerdict
+  therefore correlates the kill against System-log power/session events and only alarms when
+  nothing explains it -- which is exactly the 2026-08-01 13:01:37 case.
+#>
+
+# Correlation half-window, in seconds, around the run's END. Deliberately tight.
+#
+# DO NOT WIDEN THIS CASUALLY. The machine this runs on enters Modern Standby roughly 20x/day;
+# at a few minutes' width, every kill finds some nearby power event, everything classifies
+# BENIGN_INTERRUPTED, and the check goes permanently silent. 90s comfortably covers both real
+# benign incidents (event was 10s and 8s from the kill) while still excluding the real
+# unexplained one (nearest event 263s away). Scenarios 2g and 3c in
+# deploy-beacon.smoke-test.ps1 are the regression guards for exactly this.
+$script:BeaconCorrelationWindowSeconds = 90
+
+# A beacon written more than this long before the run Windows just reported is treated as
+# belonging to an EARLIER run, i.e. this run produced no beacon at all.
+$script:BeaconFreshnessToleranceSeconds = 120
+
+function Get-DeployBeaconPath {
+  <# Default beacon location. data/_state/ is gitignored -- this is machine state, not repo content. #>
+  param([string]$RepoRoot)
+  if (-not $RepoRoot) { $RepoRoot = Split-Path -Parent $PSScriptRoot | Split-Path -Parent }
+  Join-Path $RepoRoot 'data\_state\mirror-deploy-beacon.json'
+}
+
+function Write-DeployBeaconStart {
+  <#
+    Announce that a run has begun. Called as early as possible in deploy-mirror.ps1 so that a
+    kill at ANY later point still leaves a 'running' beacon behind.
+  #>
+  param(
+    [Parameter(Mandatory)][string]$BeaconPath,
+    [datetime]$StartedAt = (Get-Date),
+    [string]$HeadSha = ''
+  )
+  $dir = Split-Path -Parent $BeaconPath
+  # A fresh clone has no data/_state/ (gitignored), so the first deploy on a new machine
+  # would otherwise die inside the beacon call instead of doing its actual job.
+  if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+
+  $beacon = [ordered]@{
+    schemaVersion = 1
+    status        = 'running'
+    outcome       = $null
+    reason        = $null
+    startedAt     = $StartedAt.ToString('o')
+    finishedAt    = $null
+    headSha       = $HeadSha
+    pid           = $PID
+    hostname      = $env:COMPUTERNAME
+  }
+  $beacon | ConvertTo-Json | Set-Content -Path $BeaconPath -Encoding UTF8
+}
+
+function Write-DeployBeaconEnd {
+  <#
+    Announce that a run reached its exit path. Called for BOTH outcomes -- 'success' and
+    'failed' -- because "the script threw and self-alerted" and "the script was killed and
+    could not alert" are different situations that must not collapse into one signal.
+  #>
+  param(
+    [Parameter(Mandatory)][string]$BeaconPath,
+    [Parameter(Mandatory)][ValidateSet('success', 'failed')][string]$Outcome,
+    [datetime]$FinishedAt = (Get-Date),
+    [string]$Reason = ''
+  )
+  # Preserve startedAt/headSha/pid from the start beacon rather than re-stamping them; the
+  # gap between the two is the only record of how long the run actually took.
+  $existing = Get-DeployBeacon -BeaconPath $BeaconPath
+  $startedAt = if ($existing -and $existing.startedAt) { $existing.startedAt } else { $FinishedAt }
+  $headSha   = if ($existing) { $existing.headSha } else { '' }
+
+  $dir = Split-Path -Parent $BeaconPath
+  if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+
+  $beacon = [ordered]@{
+    schemaVersion = 1
+    status        = 'completed'
+    outcome       = $Outcome
+    reason        = $Reason
+    startedAt     = ([datetime]$startedAt).ToString('o')
+    finishedAt    = $FinishedAt.ToString('o')
+    headSha       = $headSha
+    pid           = $PID
+    hostname      = $env:COMPUTERNAME
+  }
+  $beacon | ConvertTo-Json | Set-Content -Path $BeaconPath -Encoding UTF8
+}
+
+function Get-DeployBeacon {
+  <#
+    Read the beacon. Returns $null for missing OR unparseable content -- a half-written
+    beacon is precisely what a kill mid-write produces, so a corrupt file is a live case,
+    not a hypothetical, and it must not throw inside a health check.
+  #>
+  param([Parameter(Mandatory)][string]$BeaconPath)
+  if (-not (Test-Path $BeaconPath)) { return $null }
+  try {
+    $raw = Get-Content $BeaconPath -Raw -ErrorAction Stop
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+    $obj = $raw | ConvertFrom-Json -ErrorAction Stop
+  } catch {
+    return $null
+  }
+  # Re-hydrate the round-trip 'o' strings into real datetimes so callers can compare them.
+  $startedAt  = if ($obj.startedAt)  { [datetime]::Parse($obj.startedAt,  $null, [System.Globalization.DateTimeStyles]::RoundtripKind) } else { $null }
+  $finishedAt = if ($obj.finishedAt) { [datetime]::Parse($obj.finishedAt, $null, [System.Globalization.DateTimeStyles]::RoundtripKind) } else { $null }
+  [pscustomobject]@{
+    schemaVersion = $obj.schemaVersion
+    status        = $obj.status
+    outcome       = $obj.outcome
+    reason        = $obj.reason
+    startedAt     = $startedAt
+    finishedAt    = $finishedAt
+    headSha       = $obj.headSha
+    pid           = $obj.pid
+    hostname      = $obj.hostname
+  }
+}
+
+function Get-MirrorRunVerdict {
+  <#
+    Classify the last mirror-deploy run. All inputs are injected so this is testable without a
+    real event log or a real scheduled task.
+
+    Verdicts:
+      HEALTHY                 -- rc=0 and this run wrote a fresh success beacon.
+      ALARM_SILENT_INCOMPLETE -- rc=0 but the script never reached its exit path. Windows says
+                                 success; the script disagrees. Nothing detected this before.
+      ALARM_SCRIPT_FAILED     -- rc!=0 and the script threw. It already self-alerted; this
+                                 confirms rather than discovers.
+      BENIGN_INTERRUPTED      -- killed mid-run, with a power/session event that explains it.
+      ALARM_UNEXPLAINED_KILL  -- killed mid-run with nothing to explain it.
+      INDETERMINATE           -- no readable beacon. Never fabricate HEALTHY from this.
+  #>
+  param(
+    $Beacon,
+    [Parameter(Mandatory)][long]$LastTaskResult,
+    [datetime]$RunStartedAt,
+    [datetime]$RunEndedAt,
+    [object[]]$EnvironmentalEvents = @()
+  )
+
+  if ($null -eq $Beacon) {
+    return [pscustomobject]@{
+      verdict = 'INDETERMINATE'
+      reason  = 'No readable beacon file. Either this run predates the beacon change, or the beacon was lost/corrupted. Cannot confirm the run completed.'
+      correlatingEvent = $null
+    }
+  }
+
+  # Is the beacon actually from THIS run? A stale beacon left by an earlier successful run
+  # would otherwise make a beacon-less run look perfectly healthy.
+  $beaconIsFresh = $true
+  if ($Beacon.startedAt -and $RunStartedAt) {
+    $skew = [math]::Abs(($Beacon.startedAt - $RunStartedAt).TotalSeconds)
+    $beaconIsFresh = ($skew -le $script:BeaconFreshnessToleranceSeconds)
+  }
+
+  $killed = ($Beacon.status -ne 'completed')
+
+  if ($LastTaskResult -eq 0) {
+    if ($killed -or -not $beaconIsFresh) {
+      $why = if (-not $beaconIsFresh) {
+        "Windows reported success (rc=0), but the beacon is from an earlier run (beacon startedAt $($Beacon.startedAt), this run started $RunStartedAt) -- this run wrote no beacon."
+      } else {
+        "Windows reported success (rc=0), but the beacon is still 'running' -- the script never reached its exit path."
+      }
+      return [pscustomobject]@{ verdict = 'ALARM_SILENT_INCOMPLETE'; reason = $why; correlatingEvent = $null }
+    }
+    if ($Beacon.outcome -eq 'failed') {
+      return [pscustomobject]@{
+        verdict = 'ALARM_SCRIPT_FAILED'
+        reason  = "Windows reported rc=0 but the script recorded outcome='failed': $($Beacon.reason)"
+        correlatingEvent = $null
+      }
+    }
+    return [pscustomobject]@{ verdict = 'HEALTHY'; reason = 'Run completed and recorded outcome=success.'; correlatingEvent = $null }
+  }
+
+  # rc != 0 from here down.
+  if (-not $killed) {
+    return [pscustomobject]@{
+      verdict = 'ALARM_SCRIPT_FAILED'
+      reason  = "Script threw and reached its exit path (outcome=$($Beacon.outcome)): $($Beacon.reason). Send-DeployFailureAlert should have already fired."
+      correlatingEvent = $null
+    }
+  }
+
+  # Killed mid-run. Look for something that explains it, anchored to the run's END -- not its
+  # start, because a run can be killed hours after launching (the 2026-08-01 10:06 case).
+  # Pick the NEAREST in-window event, not the first one the log happened to return.
+  # Get-WinEvent yields newest-first, so a first-match-wins loop attributes a kill to the
+  # boot that FOLLOWED the shutdown rather than to the shutdown itself -- both are inside the
+  # window and both are "true", but only the closest names the actual cause.
+  $match = $null
+  if ($RunEndedAt -and $EnvironmentalEvents) {
+    $bestDelta = [double]::MaxValue
+    foreach ($e in $EnvironmentalEvents) {
+      if ($null -eq $e) { continue }
+      $delta = [math]::Abs(($e.TimeCreated - $RunEndedAt).TotalSeconds)
+      if ($delta -le $script:BeaconCorrelationWindowSeconds -and $delta -lt $bestDelta) {
+        $bestDelta = $delta
+        $match = $e
+      }
+    }
+  }
+
+  if ($match) {
+    return [pscustomobject]@{
+      verdict = 'BENIGN_INTERRUPTED'
+      reason  = "Run was killed (rc=$LastTaskResult) by machine lifecycle: '$($match.Label)' (event $($match.Id)) at $($match.TimeCreated), $([math]::Round([math]::Abs(($match.TimeCreated - $RunEndedAt).TotalSeconds)))s from the run's end. The next hourly fire re-bakes; no action needed."
+      correlatingEvent = $match
+    }
+  }
+
+  return [pscustomobject]@{
+    verdict = 'ALARM_UNEXPLAINED_KILL'
+    reason  = "Run was killed (rc=$LastTaskResult) mid-flight with NO power/session event within ${script:BeaconCorrelationWindowSeconds}s of the run's end ($RunEndedAt). Something other than normal machine lifecycle terminated the deploy."
+    correlatingEvent = $null
+  }
+}
+
+function Test-MirrorRepoAhead {
+  <#
+    Flag local main being AHEAD of origin/main.
+
+    WHY (2026-08-03): the drift check measured only `git rev-list --count HEAD..origin/main`
+    (behind) and reported "drift 0 = clean" while local main carried commit 3692385 for five
+    days -- present on no remote branch, so the mirror was serving code nobody could review on
+    GitHub, and a hard reset of local main would have destroyed it. Behind and ahead are
+    different hazards and the check needs both.
+  #>
+  param([Parameter(Mandatory)][int]$AheadCount)
+  if ($AheadCount -le 0) {
+    return [pscustomobject]@{ isAhead = $false; severity = 'OK'; reason = 'Local main is not ahead of origin/main.' }
+  }
+  [pscustomobject]@{
+    isAhead  = $true
+    severity = 'FLAG'
+    reason   = "Local main is $AheadCount commit(s) AHEAD of origin/main. The mirror is deploying code that is not on the remote -- unreviewable on GitHub, and lost if local main is ever reset. Push or open a PR."
+  }
+}
