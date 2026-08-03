@@ -16,11 +16,13 @@
 // Usage: npx tsx scripts/lease-snapshot-drift-check.ts
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import type { PortfolioSnapshot } from '../src/contracts/index';
 import { parseWorkbook } from '../server/workbook/parse';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, SNAPSHOT_PATH } from '../server/config';
 import { loadOverlay, applyOverlay, overlayPath } from '../server/overlay';
 import { evaluateAnomalyFloor as evaluateAnomalyFloorCore } from '../server/anomaly-floor';
+import { checkSnapshot } from '../server/reconcile-runtime';
 
 loadEnvFile();
 
@@ -257,6 +259,59 @@ export function evaluateAnomalyFloor(
   return { refuse: false };
 }
 
+/**
+ * Dollar-exact reconciliation gate -- closes the anomaly floor's blind spot (2026-08-03 phantom-
+ * lease incident, PR #250). The floor above is COUNT-based (0-lease / >25%-removed); it does
+ * nothing when a bad parse only ADDS rows, which is exactly what happened when the rent roll's
+ * derived "VACANCY & UPCOMING AVAILABILITY" block got ingested as 10 real leases -- nothing was
+ * removed, so the floor saw no anomaly at all while annual rent was overstated by $REDACTED-AMT.
+ *
+ * `server/reconcile-runtime.ts`'s checkSnapshot() already ties parsed lease annualRent (and NOI,
+ * property value, cash, and structural invariants) to the workbook's own declared totals -- it is
+ * the check that WOULD have caught the incident, and did the moment `npm run reconcile` was run by
+ * hand. It was simply never called from either CLI writer, only from server/brain.ts's live-server
+ * refresh path (deliberately independent of server uptime -- see this file's header). This function
+ * wires it in with the identical "Refusing to write <path>: ..." + --force framing as
+ * evaluateAnomalyFloor above, so both writers share ONE tested gate rather than reimplementing the
+ * decision twice.
+ *
+ * Gated on error-severity flags ONLY -- checkSnapshot also emits warn-severity notices (e.g. the
+ * Σannual ≠ Σmonthly×12 self-consistency check) that are informational, not a reason to refuse an
+ * otherwise-clean write; refusing on every warn would make this gate far too trigger-happy for
+ * routine self-consistency noise. Deliberately does NOT reuse scripts/reconcile.ts's own lease-
+ * count check, which hardcodes an expected count and would false-fail on the next genuine lease
+ * signing -- see that script's own doc comment.
+ *
+ * Checks the UNION of checkSnapshot(snapshot)'s freshly-computed flags AND any error-severity flag
+ * already sitting in snapshot.dataQuality. checkSnapshot() only recomputes its own 6 categories
+ * (cash/rent-self-consistency/workbook-totals/empty-sets/dup-ids/dangling-edges) -- it does not
+ * read snapshot.dataQuality at all, so a parse-time flag (raised inside parse.ts itself, e.g. the
+ * unrecognised-dated-row flag PR #250 added) would be silently invisible to a gate that consulted
+ * checkSnapshot() alone. Every parse.ts flag is 'warn'-severity today, so this has no live effect
+ * yet -- but "refuse on any error-severity flag" (the design this suspension was lifted on) means
+ * ANY source of one, not just the ones this function happens to compute itself.
+ */
+export function evaluateReconciliationGate(
+  snapshot: PortfolioSnapshot,
+  snapshotPath: string,
+  force: boolean,
+): AnomalyFloorResult {
+  const errors = [...snapshot.dataQuality, ...checkSnapshot(snapshot)].filter((f) => f.severity === 'error');
+  if (errors.length === 0) return { refuse: false };
+
+  const summary = errors.map((f) => `${f.entity} · ${f.field}: ${f.issue}`).join('; ');
+  if (!force) {
+    return {
+      refuse: true,
+      reason: `Refusing to write ${snapshotPath}: reconciliation check failed -- ${errors.length} error-severity flag(s): ${summary}. portfolio.json was NOT modified. Re-run with --force only if this is a known, intentional discrepancy.`,
+    };
+  }
+  return {
+    refuse: false,
+    warning: `--force: proceeding despite ${errors.length} reconciliation error(s): ${summary}.`,
+  };
+}
+
 export interface DriftReportResult {
   /** True when anything in `drift` is worth a human's attention (new/removed/re-keyed/date-changed). */
   hasDrift: boolean;
@@ -425,6 +480,19 @@ async function main() {
     process.exit(1);
   } else if (floor.warning) {
     console.warn(`⚠ ${floor.warning}`);
+  }
+
+  // Dollar-exact reconciliation, separate from and in addition to the count-based floor above --
+  // see evaluateReconciliationGate's doc comment for why the floor alone missed the 2026-08-03
+  // phantom-lease incident (rows only ADDED, nothing removed). Checked against `enriched`, the
+  // actual object about to be written, matching server/brain.ts's own checkSnapshot(withQb) call
+  // on its post-overlay snapshot.
+  const reconciliation = evaluateReconciliationGate(enriched, SNAPSHOT_PATH, force);
+  if (reconciliation.refuse) {
+    console.error(`✗ ${reconciliation.reason}`);
+    process.exit(1);
+  } else if (reconciliation.warning) {
+    console.warn(`⚠ ${reconciliation.warning}`);
   }
 
   mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });
