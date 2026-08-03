@@ -436,6 +436,10 @@ function resolvePropertyId(key: string, properties: Property[]): string | null {
 }
 
 // ── leases (Master Tenant Rent Roll) ──────────────────────────────────────────
+/** Banner that opens a trailing DERIVED block on the rent roll — everything at or below it is a
+ *  view of leases already parsed above, not tenancy data. See the latch in parseLeases. */
+const LEASE_SECTION_TERMINATOR = /vacancy\s*&\s*upcoming availability/i;
+
 interface LeasesParseResult {
   leases: Lease[];
   /** The workbook's own "Portfolio Total" row (Annualized Rent, col 14 -- one column right of
@@ -454,6 +458,7 @@ function parseLeases(
   const pendingRowFlags: { lease: Lease; rowFlags: DataQualityFlag[] }[] = [];
   let workbookRentTotal: number | null = null;
   let foundPortfolioTotalRow = false;
+  let trailingSectionReached = false;
   // Day-count reference = the RUN date, NOT the workbook data date: a June-pinned
   // WORKBOOK_AS_OF froze every monthsToExpiry while the calendar advanced (frozen-dateline
   // defect, 2026-07). WORKBOOK_AS_OF still governs data-month selection (monthCol in
@@ -463,7 +468,16 @@ function parseLeases(
   // reference (the brief passes its ET send date; other callers pass the UTC default).
   const asOf = parseISO(referenceDateIso);
   for (let r = 1; r <= ws.rowCount; r++) {
-    const propertyKey = str(row(ws, r, 1));
+    // A property key is never a date in a valid roster row. str() STRINGIFIES a Date rather than
+    // returning null ("Tue Sep 29 2026 20:00:00 GMT-0400 (...)"), so without this a dated row sails
+    // through the emptiness guard below and becomes a lease. That is precisely how the trailing
+    // vacancy block (see LEASE_SECTION_TERMINATOR) was ingested. Kept as a second, text-independent
+    // line of defence: the banner match above stops working the moment the block is retitled.
+    // Narrowed to this column deliberately -- str() is shared by every parser in this file and
+    // must keep its current behaviour for genuinely date-like text elsewhere.
+    const propertyKeyRaw = row(ws, r, 1);
+    const propertyKeyIsDate = propertyKeyRaw instanceof Date;
+    const propertyKey = propertyKeyIsDate ? null : str(propertyKeyRaw);
     const tenantName = str(row(ws, r, 2));
     if (/portfolio total/i.test(`${propertyKey ?? ''} ${tenantName ?? ''}`)) {
       // First match wins -- see the identical rationale in parseProperties above.
@@ -472,6 +486,43 @@ function parseLeases(
         workbookRentTotal = num(row(ws, r, 14));
       }
       continue;
+    }
+    // The rent roll ends with DERIVED summary blocks -- currently "VACANCY & UPCOMING AVAILABILITY
+    // -- VACANT + NOTICE TO VACATE (sorted by Lease End)", added to the live workbook 2026-08. Every
+    // row in such a block is a cross-reference formula back into the roster ABOVE it, and its
+    // columns sit one to the right of the roster's (col 1 is a Move-Out Date, col 6 is SF where the
+    // roster's col 6 is monthlyRent). They are views of leases already parsed, never tenancies of
+    // their own. Once a block begins, no later row on the sheet is a lease -- so latch and skip the
+    // remainder rather than trying to re-align columns.
+    //
+    // Deliberately checked AFTER the portfolio-total capture above and via a latch rather than
+    // `break`, so a totals row placed BELOW a banner would still be captured. Do not "simplify"
+    // this into a break: that would silently couple workbookRentTotal to sheet row ordering.
+    if (LEASE_SECTION_TERMINATOR.test(`${propertyKey ?? ''} ${tenantName ?? ''}`)) {
+      trailingSectionReached = true;
+    }
+    if (trailingSectionReached) continue;
+    // Past this point a dated property key is UNEXPECTED — the row is not inside any block we
+    // recognise, so it is either a derived block that has been retitled/moved (the terminator
+    // above no longer matching) or a genuine roster row Excel has coerced to a date. Both need a
+    // human. Dropping it is still right, but dropping it SILENTLY is not: "no lease and no flag"
+    // reads identically to "there was nothing here", which is precisely how the phantom leases
+    // shipped under a "Data-quality flags: 0" banner.
+    //
+    // Deliberately NOT raised for rows inside a recognised block above: that block is a permanent,
+    // legitimate part of the sheet, and ora-cc-snapshot-refresh alerts whenever flags > 0 — so
+    // flagging the expected case would mean an alert email 3x/weekday forever. Flag the anomaly,
+    // stay silent on the understood. Gated on tenantName so the block's header/total rows, which
+    // carry no tenant, never trip it.
+    if (propertyKeyIsDate && tenantName) {
+      flags.push({
+        entity: `rent-roll-row-${r}`,
+        field: 'propertyKey',
+        issue:
+          'row skipped — property key is a date, not a property name (an unrecognised derived block, or a roster row Excel coerced to a date)',
+        rawValue: String(propertyKeyRaw),
+        severity: 'warn',
+      });
     }
     if (!propertyKey || !tenantName) continue;
     if (/tenant roster/i.test(propertyKey)) continue;
