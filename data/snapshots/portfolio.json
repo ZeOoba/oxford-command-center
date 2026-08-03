@@ -1,8 +1,8 @@
 {
   "meta": {
     "schemaVersion": "1.0.0",
-    "asOf": "2026-07-29",
-    "generatedAt": "2026-07-29T18:33:18.959Z",
+    "asOf": "2026-08-03",
+    "generatedAt": "2026-08-03T20:28:47.625Z",
     "source": "Master Excel Template Company Wide -- Oxford.xlsx",
     "scenario": "Base"
   },
@@ -16,7 +16,7 @@
       "concentrationYellow": 0.25,
       "concentrationRed": 0.5
     },
-    "asOf": "2026-07-29"
+    "asOf": "2026-08-03"
   },
   "properties": [
     {
@@ -50,7 +50,7 @@
       "rentPerSf": 13.112726009150403,
       "equityInvested": 1800000,
       "cashOnCash": 0.25157493333333336,
-      "holdYrs": 9.6,
+      "holdYrs": 9.7,
       "encumbered": false,
       "flags": []
     },
@@ -67,22 +67,22 @@
       "tenantCount": 23,
       "occPct": 1,
       "acqDate": "2021-01-01",
-      "estValue100": 7313661.714285715,
+      "estValue100": 7335947.428571429,
       "oxfordOwnPct": 1,
-      "oxfordValue": 7313661.714285715,
-      "grossIncome": 671956.3200000001,
+      "oxfordValue": 7335947.428571429,
+      "grossIncome": 673516.3200000001,
       "expenses": 160000,
-      "noi": 511956.32000000007,
-      "noiScenarioAdj": 511956.32000000007,
+      "noi": 513516.32000000007,
+      "noiScenarioAdj": 513516.32000000007,
       "debtService": 208344.72,
-      "netCashFlow": 303611.6000000001,
+      "netCashFlow": 305171.6000000001,
       "capRate": 0.07,
-      "dscr": 2.4572560322143038,
+      "dscr": 2.4647436229725432,
       "lender": "Symetra",
-      "loanBalance": 2769508,
-      "ltv": 0.3786759776693449,
-      "valuePerSf": 152.36795238095237,
-      "rentPerSf": 13.99909,
+      "loanBalance": 2765070.31,
+      "ltv": 0.37692068228717635,
+      "valuePerSf": 152.8322380952381,
+      "rentPerSf": 14.031590000000001,
       "equityInvested": -800000,
       "cashOnCash": null,
       "holdYrs": 5.6,
@@ -140,21 +140,21 @@
       "estValue100": 16960000,
       "oxfordOwnPct": 0.5,
       "oxfordValue": 8480000,
-      "grossIncome": 534311.4,
+      "grossIncome": 535828.26,
       "expenses": 0,
-      "noi": 534311.4,
-      "noiScenarioAdj": 534311.4,
+      "noi": 535828.26,
+      "noiScenarioAdj": 535828.26,
       "debtService": 146269.26,
-      "netCashFlow": 388042.14,
-      "capRate": 0.06300841981132076,
-      "dscr": 3.6529302192408712,
+      "netCashFlow": 389559,
+      "capRate": 0.06318729481132075,
+      "dscr": 3.6633005458563197,
       "lender": "NorthMarq",
-      "loanBalance": 1329638.895,
-      "ltv": 0.156797039504717,
+      "loanBalance": 1322139.74,
+      "ltv": 0.15591270518867925,
       "valuePerSf": 94.22222222222223,
-      "rentPerSf": 5.936793333333334,
+      "rentPerSf": 5.9536473333333335,
       "equityInvested": 1750000,
-      "cashOnCash": 0.22173836571428573,
+      "cashOnCash": 0.22260514285714286,
       "holdYrs": 10.9,
       "encumbered": true,
       "flags": []
@@ -175,19 +175,19 @@
       "estValue100": 4500000,
       "oxfordOwnPct": 1,
       "oxfordValue": 4500000,
-      "grossIncome": 282768,
+      "grossIncome": 289837.19999999995,
       "expenses": 0,
-      "noi": 282768,
-      "noiScenarioAdj": 282768,
-      "debtService": 195653.52,
-      "netCashFlow": 87114.48000000001,
-      "capRate": 0.06283733333333333,
-      "dscr": 1.44524872335545,
+      "noi": 289837.19999999995,
+      "noiScenarioAdj": 289837.19999999995,
+      "debtService": 195653.52000000002,
+      "netCashFlow": 94183.67999999993,
+      "capRate": 0.06440826666666666,
+      "dscr": 1.4813799414393358,
       "lender": "Park National",
-      "loanBalance": 2444773.4499999997,
-      "ltv": 0.5432829888888888,
+      "loanBalance": 2441184.53,
+      "ltv": 0.542485451111111,
       "valuePerSf": 125.39709078749372,
-      "rentPerSf": 7.879618792844006,
+      "rentPerSf": 8.076609262665105,
       "equityInvested": -200000,
       "cashOnCash": null,
       "holdYrs": 4.5,
@@ -207,24 +207,24 @@
       "tenantCount": 41,
       "occPct": 1,
       "acqDate": "2021-03-16",
-      "estValue100": 11814374.285714284,
+      "estValue100": 10932607.428571427,
       "oxfordOwnPct": 1,
-      "oxfordValue": 11814374.285714284,
-      "grossIncome": 1177006.2,
+      "oxfordValue": 10932607.428571427,
+      "grossIncome": 1115282.52,
       "expenses": 350000,
-      "noi": 827006.2,
-      "noiScenarioAdj": 827006.2,
+      "noi": 765282.52,
+      "noiScenarioAdj": 765282.52,
       "debtService": 275031.24,
-      "netCashFlow": 551974.96,
+      "netCashFlow": 490251.28,
       "capRate": 0.07,
-      "dscr": 3.006953682788908,
+      "dscr": 2.78252943192926,
       "lender": "Symetra",
-      "loanBalance": 3719215.73,
-      "ltv": 0.31480429179370123,
-      "valuePerSf": 107.40340259740258,
-      "rentPerSf": 10.700056363636364,
+      "loanBalance": 3713404.852358,
+      "ltv": 0.3396632392244632,
+      "valuePerSf": 99.38734025974024,
+      "rentPerSf": 10.138932,
       "equityInvested": 900000,
-      "cashOnCash": 0.6133055111111111,
+      "cashOnCash": 0.5447236444444444,
       "holdYrs": 5.4,
       "encumbered": true,
       "flags": []
@@ -260,7 +260,7 @@
       "rentPerSf": 8.696078431372548,
       "equityInvested": 1650000,
       "cashOnCash": 0.0713090909090909,
-      "holdYrs": 1.8,
+      "holdYrs": 1.9,
       "encumbered": false,
       "flags": []
     },
@@ -277,24 +277,24 @@
       "tenantCount": 32,
       "occPct": 1,
       "acqDate": "2024-10-03",
-      "estValue100": 4809606,
+      "estValue100": 4706078.999999999,
       "oxfordOwnPct": 1,
-      "oxfordValue": 4809606,
-      "grossIncome": 534768.48,
+      "oxfordValue": 4706078.999999999,
+      "grossIncome": 526486.32,
       "expenses": 150000,
-      "noi": 384768.48,
-      "noiScenarioAdj": 384768.48,
+      "noi": 376486.31999999995,
+      "noiScenarioAdj": 376486.31999999995,
       "debtService": 0,
-      "netCashFlow": 384768.48,
+      "netCashFlow": 376486.31999999995,
       "capRate": 0.08,
       "dscr": null,
       "lender": null,
       "loanBalance": 0,
       "ltv": null,
-      "valuePerSf": 89.56435754189944,
-      "rentPerSf": 9.95844469273743,
+      "valuePerSf": 87.63648044692735,
+      "rentPerSf": 9.804214525139663,
       "equityInvested": 4400000,
-      "cashOnCash": 0.08744738181818182,
+      "cashOnCash": 0.08556507272727272,
       "holdYrs": 1.8,
       "encumbered": false,
       "flags": []
@@ -527,7 +527,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 15600,
-      "monthsToExpiry": 21,
+      "monthsToExpiry": 20,
       "flags": []
     },
     {
@@ -546,7 +546,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 15450,
-      "monthsToExpiry": 39,
+      "monthsToExpiry": 38,
       "flags": []
     },
     {
@@ -565,7 +565,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 15450,
-      "monthsToExpiry": 14,
+      "monthsToExpiry": 13,
       "flags": []
     },
     {
@@ -584,7 +584,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 13768.32,
-      "monthsToExpiry": 8,
+      "monthsToExpiry": 7,
       "flags": []
     },
     {
@@ -603,7 +603,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 14077.439999999999,
-      "monthsToExpiry": 21,
+      "monthsToExpiry": 20,
       "flags": []
     },
     {
@@ -622,7 +622,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 57992.399999999994,
-      "monthsToExpiry": 5,
+      "monthsToExpiry": 4,
       "flags": []
     },
     {
@@ -639,9 +639,9 @@
       "leaseEnd": "2026-10-31",
       "escalationDate": "2027-05-01",
       "escalationPct": 0.03,
-      "status": "Active",
+      "status": "Expiring Soon",
       "annualRent": 38196,
-      "monthsToExpiry": 3,
+      "monthsToExpiry": 2,
       "flags": []
     },
     {
@@ -658,9 +658,9 @@
       "leaseEnd": "2026-10-31",
       "escalationDate": "2026-11-01",
       "escalationPct": 0.03,
-      "status": "Active",
+      "status": "Expiring Soon",
       "annualRent": 19096.199999999997,
-      "monthsToExpiry": 3,
+      "monthsToExpiry": 2,
       "flags": []
     },
     {
@@ -679,7 +679,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19800,
-      "monthsToExpiry": 11,
+      "monthsToExpiry": 10,
       "flags": []
     },
     {
@@ -698,7 +698,7 @@
       "escalationPct": 0.0384,
       "status": "Active",
       "annualRent": 46800,
-      "monthsToExpiry": 9,
+      "monthsToExpiry": 8,
       "flags": []
     },
     {
@@ -717,7 +717,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 129484.92,
-      "monthsToExpiry": 17,
+      "monthsToExpiry": 16,
       "flags": []
     },
     {
@@ -736,7 +736,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 166470,
-      "monthsToExpiry": 60,
+      "monthsToExpiry": 59,
       "flags": []
     },
     {
@@ -755,7 +755,7 @@
       "escalationPct": -0.0001,
       "status": "Active",
       "annualRent": 198660,
-      "monthsToExpiry": 61,
+      "monthsToExpiry": 60,
       "flags": []
     },
     {
@@ -774,7 +774,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 36000,
-      "monthsToExpiry": 59,
+      "monthsToExpiry": 58,
       "flags": []
     },
     {
@@ -793,7 +793,7 @@
       "escalationPct": 0.05,
       "status": "Active",
       "annualRent": 11988,
-      "monthsToExpiry": 37,
+      "monthsToExpiry": 36,
       "flags": []
     },
     {
@@ -808,11 +808,11 @@
       "rentPerSf": 10.5,
       "leaseStart": "2026-09-01",
       "leaseEnd": "2029-08-31",
-      "escalationDate": "2027-03-01",
+      "escalationDate": "2027-09-01",
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 12600,
-      "monthsToExpiry": 37,
+      "monthsToExpiry": 36,
       "flags": []
     },
     {
@@ -831,7 +831,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 22248,
-      "monthsToExpiry": 23,
+      "monthsToExpiry": 22,
       "flags": []
     },
     {
@@ -850,7 +850,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 14627.64,
-      "monthsToExpiry": 35,
+      "monthsToExpiry": 34,
       "flags": []
     },
     {
@@ -869,7 +869,7 @@
       "escalationPct": 0,
       "status": "Expired",
       "annualRent": 10020,
-      "monthsToExpiry": -22,
+      "monthsToExpiry": -23,
       "flags": []
     },
     {
@@ -888,7 +888,7 @@
       "escalationPct": 0,
       "status": "Active",
       "annualRent": 23459.28,
-      "monthsToExpiry": 4,
+      "monthsToExpiry": 3,
       "flags": []
     },
     {
@@ -907,7 +907,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 31800,
-      "monthsToExpiry": 57,
+      "monthsToExpiry": 56,
       "flags": []
     },
     {
@@ -926,7 +926,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 14196,
-      "monthsToExpiry": 9,
+      "monthsToExpiry": 8,
       "flags": []
     },
     {
@@ -945,7 +945,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 13992,
-      "monthsToExpiry": 9,
+      "monthsToExpiry": 8,
       "flags": []
     },
     {
@@ -956,15 +956,15 @@
       "unit": "A15",
       "company": "Evans Gymnastics and Dance LLC",
       "sf": 1200,
-      "monthlyRent": 750,
-      "rentPerSf": 7.5,
+      "monthlyRent": 0,
+      "rentPerSf": null,
       "leaseStart": "2025-06-01",
       "leaseEnd": "2027-05-31",
       "escalationDate": "2027-06-01",
       "escalationPct": 0.065,
       "status": "Active",
-      "annualRent": 9000,
-      "monthsToExpiry": 10,
+      "annualRent": 0,
+      "monthsToExpiry": 9,
       "flags": []
     },
     {
@@ -983,7 +983,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 12600,
-      "monthsToExpiry": 8,
+      "monthsToExpiry": 7,
       "flags": []
     },
     {
@@ -1002,7 +1002,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 27984,
-      "monthsToExpiry": 10,
+      "monthsToExpiry": 9,
       "flags": []
     },
     {
@@ -1021,7 +1021,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 13937.52,
-      "monthsToExpiry": 16,
+      "monthsToExpiry": 15,
       "flags": []
     },
     {
@@ -1040,7 +1040,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 11988,
-      "monthsToExpiry": 15,
+      "monthsToExpiry": 14,
       "flags": []
     },
     {
@@ -1059,7 +1059,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 11988,
-      "monthsToExpiry": 13,
+      "monthsToExpiry": 12,
       "flags": []
     },
     {
@@ -1078,7 +1078,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 15180,
-      "monthsToExpiry": 5,
+      "monthsToExpiry": 4,
       "flags": []
     },
     {
@@ -1097,7 +1097,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 9540,
-      "monthsToExpiry": 4,
+      "monthsToExpiry": 3,
       "flags": []
     },
     {
@@ -1116,7 +1116,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 13991.52,
-      "monthsToExpiry": 11,
+      "monthsToExpiry": 10,
       "flags": []
     },
     {
@@ -1135,7 +1135,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 14580,
-      "monthsToExpiry": 23,
+      "monthsToExpiry": 22,
       "flags": []
     },
     {
@@ -1154,7 +1154,7 @@
       "escalationPct": 0,
       "status": "Active",
       "annualRent": 12347.64,
-      "monthsToExpiry": 17,
+      "monthsToExpiry": 16,
       "flags": []
     },
     {
@@ -1173,7 +1173,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 12348,
-      "monthsToExpiry": 11,
+      "monthsToExpiry": 10,
       "flags": []
     },
     {
@@ -1184,15 +1184,15 @@
       "unit": "B13",
       "company": "STOIC FARMS LLC",
       "sf": 1200,
-      "monthlyRent": 999,
-      "rentPerSf": 9.99,
+      "monthlyRent": 1028.97,
+      "rentPerSf": 10.2897,
       "leaseStart": "2025-08-12",
       "leaseEnd": "2028-10-31",
-      "escalationDate": "2026-08-01",
+      "escalationDate": "2027-08-01",
       "escalationPct": 0.03,
       "status": "Active",
-      "annualRent": 11988,
-      "monthsToExpiry": 27,
+      "annualRent": 12347.64,
+      "monthsToExpiry": 26,
       "flags": []
     },
     {
@@ -1211,7 +1211,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 13728,
-      "monthsToExpiry": 5,
+      "monthsToExpiry": 4,
       "flags": []
     },
     {
@@ -1222,15 +1222,15 @@
       "unit": "B15",
       "company": "BRITMAN CORPORATION",
       "sf": 1200,
-      "monthlyRent": 995,
-      "rentPerSf": 9.95,
+      "monthlyRent": 1024.85,
+      "rentPerSf": 10.2485,
       "leaseStart": "2025-08-01",
       "leaseEnd": "2026-10-31",
-      "escalationDate": "2026-08-01",
+      "escalationDate": "2026-11-01",
       "escalationPct": 0.03,
-      "status": "Active",
-      "annualRent": 11940,
-      "monthsToExpiry": 3,
+      "status": "Expiring Soon",
+      "annualRent": 12298.199999999999,
+      "monthsToExpiry": 2,
       "flags": []
     },
     {
@@ -1249,7 +1249,7 @@
       "escalationPct": 0.0325,
       "status": "Active",
       "annualRent": 24696,
-      "monthsToExpiry": 13,
+      "monthsToExpiry": 12,
       "flags": []
     },
     {
@@ -1268,7 +1268,7 @@
       "escalationPct": 0,
       "status": "Expired",
       "annualRent": 4788,
-      "monthsToExpiry": -22,
+      "monthsToExpiry": -23,
       "flags": []
     },
     {
@@ -1287,7 +1287,7 @@
       "escalationPct": 0.119,
       "status": "Active",
       "annualRent": 25200,
-      "monthsToExpiry": 32,
+      "monthsToExpiry": 31,
       "flags": []
     },
     {
@@ -1306,7 +1306,7 @@
       "escalationPct": 0.0256,
       "status": "Active",
       "annualRent": 47988,
-      "monthsToExpiry": 5,
+      "monthsToExpiry": 4,
       "flags": []
     },
     {
@@ -1325,7 +1325,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 11988,
-      "monthsToExpiry": 35,
+      "monthsToExpiry": 34,
       "flags": []
     },
     {
@@ -1344,7 +1344,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 25436.879999999997,
-      "monthsToExpiry": 22,
+      "monthsToExpiry": 21,
       "flags": []
     },
     {
@@ -1382,7 +1382,7 @@
       "escalationPct": 0.03,
       "status": "Expiring Soon",
       "annualRent": 19096.199999999997,
-      "monthsToExpiry": 2,
+      "monthsToExpiry": 1,
       "flags": []
     },
     {
@@ -1401,7 +1401,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19776,
-      "monthsToExpiry": 23,
+      "monthsToExpiry": 22,
       "flags": []
     },
     {
@@ -1420,7 +1420,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 38934,
-      "monthsToExpiry": 13,
+      "monthsToExpiry": 12,
       "flags": []
     },
     {
@@ -1439,7 +1439,7 @@
       "escalationPct": 0.03,
       "status": "Expiring Soon",
       "annualRent": 22200,
-      "monthsToExpiry": 1,
+      "monthsToExpiry": 0,
       "flags": []
     },
     {
@@ -1458,7 +1458,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 22200,
-      "monthsToExpiry": 17,
+      "monthsToExpiry": 16,
       "flags": []
     },
     {
@@ -1477,7 +1477,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 25647,
-      "monthsToExpiry": 46,
+      "monthsToExpiry": 45,
       "flags": []
     },
     {
@@ -1496,7 +1496,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 22947.36,
-      "monthsToExpiry": 26,
+      "monthsToExpiry": 25,
       "flags": []
     },
     {
@@ -1515,7 +1515,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 18777.96,
-      "monthsToExpiry": 6,
+      "monthsToExpiry": 5,
       "flags": []
     },
     {
@@ -1534,7 +1534,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19776,
-      "monthsToExpiry": 18,
+      "monthsToExpiry": 17,
       "flags": []
     },
     {
@@ -1553,7 +1553,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 45732,
-      "monthsToExpiry": 21,
+      "monthsToExpiry": 20,
       "flags": []
     },
     {
@@ -1572,7 +1572,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19800,
-      "monthsToExpiry": 5,
+      "monthsToExpiry": 4,
       "flags": []
     },
     {
@@ -1591,7 +1591,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 36837.12,
-      "monthsToExpiry": 33,
+      "monthsToExpiry": 32,
       "flags": []
     },
     {
@@ -1610,7 +1610,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 43260,
-      "monthsToExpiry": 20,
+      "monthsToExpiry": 19,
       "flags": []
     },
     {
@@ -1629,7 +1629,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 21000,
-      "monthsToExpiry": 37,
+      "monthsToExpiry": 36,
       "flags": []
     },
     {
@@ -1648,7 +1648,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 21630,
-      "monthsToExpiry": 26,
+      "monthsToExpiry": 25,
       "flags": []
     },
     {
@@ -1667,7 +1667,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 18334.68,
-      "monthsToExpiry": 9,
+      "monthsToExpiry": 8,
       "flags": []
     },
     {
@@ -1686,7 +1686,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 20394,
-      "monthsToExpiry": 14,
+      "monthsToExpiry": 13,
       "flags": []
     },
     {
@@ -1705,7 +1705,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 37080,
-      "monthsToExpiry": 46,
+      "monthsToExpiry": 45,
       "flags": []
     },
     {
@@ -1724,7 +1724,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 22200,
-      "monthsToExpiry": 26,
+      "monthsToExpiry": 25,
       "flags": []
     },
     {
@@ -1743,7 +1743,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 17304,
-      "monthsToExpiry": 19,
+      "monthsToExpiry": 18,
       "flags": []
     },
     {
@@ -1762,7 +1762,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 21630,
-      "monthsToExpiry": 8,
+      "monthsToExpiry": 7,
       "flags": []
     },
     {
@@ -1781,7 +1781,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 44400,
-      "monthsToExpiry": 13,
+      "monthsToExpiry": 12,
       "flags": []
     },
     {
@@ -1792,15 +1792,15 @@
       "unit": "504 - 507",
       "company": "Eastern Shore Entrepreneurship  Center, INC.",
       "sf": 6000,
-      "monthlyRent": 7750,
-      "rentPerSf": 15.5,
+      "monthlyRent": 7880,
+      "rentPerSf": 15.76,
       "leaseStart": "2024-07-01",
       "leaseEnd": "2029-06-30",
-      "escalationDate": "2026-08-01",
+      "escalationDate": "2027-08-01",
       "escalationPct": 0.02,
       "status": "Active",
-      "annualRent": 93000,
-      "monthsToExpiry": 35,
+      "annualRent": 94560,
+      "monthsToExpiry": 34,
       "flags": []
     },
     {
@@ -1819,7 +1819,7 @@
       "escalationPct": 0.0353,
       "status": "Active",
       "annualRent": 156060,
-      "monthsToExpiry": 50,
+      "monthsToExpiry": 49,
       "flags": []
     },
     {
@@ -1838,7 +1838,7 @@
       "escalationPct": null,
       "status": "Active",
       "annualRent": 3600,
-      "monthsToExpiry": 226,
+      "monthsToExpiry": 225,
       "flags": []
     },
     {
@@ -1849,15 +1849,15 @@
       "unit": null,
       "company": "I.M.H LLC",
       "sf": 35886,
-      "monthlyRent": 23564,
-      "rentPerSf": 7.879618792844006,
+      "monthlyRent": 24153.1,
+      "rentPerSf": 8.076609262665105,
       "leaseStart": "2023-04-03",
       "leaseEnd": "2033-07-31",
-      "escalationDate": "2026-08-01",
+      "escalationDate": "2027-08-01",
       "escalationPct": 0.025,
       "status": "Active",
-      "annualRent": 282768,
-      "monthsToExpiry": 84,
+      "annualRent": 289837.19999999995,
+      "monthsToExpiry": 83,
       "flags": []
     },
     {
@@ -1876,7 +1876,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 98550,
-      "monthsToExpiry": 61,
+      "monthsToExpiry": 60,
       "flags": []
     },
     {
@@ -1895,7 +1895,7 @@
       "escalationPct": 0.1333,
       "status": "Active",
       "annualRent": 76950,
-      "monthsToExpiry": 80,
+      "monthsToExpiry": 79,
       "flags": []
     },
     {
@@ -1914,7 +1914,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 41375.04,
-      "monthsToExpiry": 31,
+      "monthsToExpiry": 30,
       "flags": []
     },
     {
@@ -1933,7 +1933,7 @@
       "escalationPct": 0.02,
       "status": "Active",
       "annualRent": 39731.04,
-      "monthsToExpiry": 23,
+      "monthsToExpiry": 22,
       "flags": []
     },
     {
@@ -1952,7 +1952,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 452834.88,
-      "monthsToExpiry": 17,
+      "monthsToExpiry": 16,
       "flags": []
     },
     {
@@ -1971,7 +1971,7 @@
       "escalationPct": 0.02,
       "status": "Active",
       "annualRent": 102480,
-      "monthsToExpiry": 62,
+      "monthsToExpiry": 61,
       "flags": []
     },
     {
@@ -1990,7 +1990,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 133385.04,
-      "monthsToExpiry": 22,
+      "monthsToExpiry": 21,
       "flags": []
     },
     {
@@ -2009,7 +2009,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 69750,
-      "monthsToExpiry": 41,
+      "monthsToExpiry": 40,
       "flags": []
     },
     {
@@ -2028,7 +2028,7 @@
       "escalationPct": 0.1846,
       "status": "Active",
       "annualRent": 50647.92,
-      "monthsToExpiry": 38,
+      "monthsToExpiry": 37,
       "flags": []
     },
     {
@@ -2047,7 +2047,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 133776.36000000002,
-      "monthsToExpiry": 5,
+      "monthsToExpiry": 4,
       "flags": []
     },
     {
@@ -2066,7 +2066,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 120000,
-      "monthsToExpiry": 55,
+      "monthsToExpiry": 54,
       "flags": []
     },
     {
@@ -2085,7 +2085,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 64374.96,
-      "monthsToExpiry": 9,
+      "monthsToExpiry": 8,
       "flags": []
     },
     {
@@ -2104,7 +2104,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 54636.36,
-      "monthsToExpiry": 20,
+      "monthsToExpiry": 19,
       "flags": []
     },
     {
@@ -2115,15 +2115,15 @@
       "unit": "J",
       "company": "Elite Baseball LLC",
       "sf": 5000,
-      "monthlyRent": 4213.5,
-      "rentPerSf": 10.1124,
+      "monthlyRent": 4466.31,
+      "rentPerSf": 10.719144,
       "leaseStart": "2023-08-01",
       "leaseEnd": "2030-07-31",
-      "escalationDate": "2026-08-01",
+      "escalationDate": "2027-08-01",
       "escalationPct": 0.06,
       "status": "Active",
-      "annualRent": 50562,
-      "monthsToExpiry": 48,
+      "annualRent": 53595.72,
+      "monthsToExpiry": 47,
       "flags": []
     },
     {
@@ -2142,7 +2142,7 @@
       "escalationPct": 0.1324,
       "status": "Active",
       "annualRent": 53461.56,
-      "monthsToExpiry": 62,
+      "monthsToExpiry": 61,
       "flags": []
     },
     {
@@ -2161,7 +2161,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 59225.04,
-      "monthsToExpiry": 17,
+      "monthsToExpiry": 16,
       "flags": []
     },
     {
@@ -2180,7 +2180,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 104380.08,
-      "monthsToExpiry": 50,
+      "monthsToExpiry": 49,
       "flags": []
     },
     {
@@ -2199,7 +2199,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 67500,
-      "monthsToExpiry": 7,
+      "monthsToExpiry": 6,
       "flags": []
     },
     {
@@ -2218,7 +2218,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 106923.48000000001,
-      "monthsToExpiry": 4,
+      "monthsToExpiry": 3,
       "flags": []
     },
     {
@@ -2237,7 +2237,7 @@
       "escalationPct": 0.0599,
       "status": "Active",
       "annualRent": 48000,
-      "monthsToExpiry": 30,
+      "monthsToExpiry": 29,
       "flags": []
     },
     {
@@ -2256,7 +2256,7 @@
       "escalationPct": null,
       "status": "Active",
       "annualRent": 26640,
-      "monthsToExpiry": 17,
+      "monthsToExpiry": 16,
       "flags": []
     },
     {
@@ -2275,7 +2275,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 21615,
-      "monthsToExpiry": 29,
+      "monthsToExpiry": 28,
       "flags": []
     },
     {
@@ -2294,7 +2294,7 @@
       "escalationPct": 0,
       "status": "Active",
       "annualRent": 13080.599999999999,
-      "monthsToExpiry": 5,
+      "monthsToExpiry": 4,
       "flags": []
     },
     {
@@ -2313,7 +2313,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 13260,
-      "monthsToExpiry": 5,
+      "monthsToExpiry": 4,
       "flags": []
     },
     {
@@ -2332,7 +2332,7 @@
       "escalationPct": 0.0526,
       "status": "Active",
       "annualRent": 26640,
-      "monthsToExpiry": 13,
+      "monthsToExpiry": 12,
       "flags": []
     },
     {
@@ -2351,7 +2351,7 @@
       "escalationPct": 0.0961,
       "status": "Active",
       "annualRent": 32882.04,
-      "monthsToExpiry": 21,
+      "monthsToExpiry": 20,
       "flags": []
     },
     {
@@ -2370,7 +2370,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 28800,
-      "monthsToExpiry": 33,
+      "monthsToExpiry": 32,
       "flags": []
     },
     {
@@ -2389,7 +2389,7 @@
       "escalationPct": 0.0303,
       "status": "Active",
       "annualRent": 47520,
-      "monthsToExpiry": 22,
+      "monthsToExpiry": 21,
       "flags": []
     },
     {
@@ -2408,7 +2408,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19800,
-      "monthsToExpiry": 27,
+      "monthsToExpiry": 26,
       "flags": []
     },
     {
@@ -2419,15 +2419,15 @@
       "unit": "2802",
       "company": "Fully Equipped Cleaning Maintenance Services LLC",
       "sf": 1500,
-      "monthlyRent": 1692.14,
-      "rentPerSf": 13.53712,
+      "monthlyRent": 0,
+      "rentPerSf": null,
       "leaseStart": "2024-05-03",
       "leaseEnd": "2026-06-30",
       "escalationDate": "2027-05-01",
       "escalationPct": 0.03,
       "status": "Expired",
-      "annualRent": 20305.68,
-      "monthsToExpiry": -1,
+      "annualRent": 0,
+      "monthsToExpiry": -2,
       "flags": []
     },
     {
@@ -2446,7 +2446,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 16200,
-      "monthsToExpiry": 27,
+      "monthsToExpiry": 26,
       "flags": []
     },
     {
@@ -2465,7 +2465,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 20394,
-      "monthsToExpiry": 20,
+      "monthsToExpiry": 19,
       "flags": []
     },
     {
@@ -2484,7 +2484,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 20394,
-      "monthsToExpiry": 26,
+      "monthsToExpiry": 25,
       "flags": []
     },
     {
@@ -2503,7 +2503,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19158,
-      "monthsToExpiry": 17,
+      "monthsToExpiry": 16,
       "flags": []
     },
     {
@@ -2522,7 +2522,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 38400,
-      "monthsToExpiry": 6,
+      "monthsToExpiry": 5,
       "flags": []
     },
     {
@@ -2541,7 +2541,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 20400,
-      "monthsToExpiry": 34,
+      "monthsToExpiry": 33,
       "flags": []
     },
     {
@@ -2560,7 +2560,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 32400,
-      "monthsToExpiry": 10,
+      "monthsToExpiry": 9,
       "flags": []
     },
     {
@@ -2579,7 +2579,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19140,
-      "monthsToExpiry": 26,
+      "monthsToExpiry": 25,
       "flags": []
     },
     {
@@ -2598,7 +2598,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19158,
-      "monthsToExpiry": 21,
+      "monthsToExpiry": 20,
       "flags": []
     },
     {
@@ -2617,7 +2617,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19800,
-      "monthsToExpiry": 17,
+      "monthsToExpiry": 16,
       "flags": []
     },
     {
@@ -2636,7 +2636,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 31470.48,
-      "monthsToExpiry": 15,
+      "monthsToExpiry": 14,
       "flags": []
     },
     {
@@ -2655,7 +2655,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 24188.52,
-      "monthsToExpiry": 12,
+      "monthsToExpiry": 11,
       "flags": []
     },
     {
@@ -2666,15 +2666,15 @@
       "unit": "386 + 388",
       "company": "Columbus Suburban Construction",
       "sf": 3600,
-      "monthlyRent": 3502,
-      "rentPerSf": 11.673333333333334,
+      "monthlyRent": 0,
+      "rentPerSf": null,
       "leaseStart": "2021-09-01",
       "leaseEnd": "2026-05-31",
       "escalationDate": "2026-09-01",
       "escalationPct": 0.03,
       "status": "Expired",
-      "annualRent": 42024,
-      "monthsToExpiry": -2,
+      "annualRent": 0,
+      "monthsToExpiry": -3,
       "flags": []
     },
     {
@@ -2693,7 +2693,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 24000,
-      "monthsToExpiry": 33,
+      "monthsToExpiry": 32,
       "flags": []
     },
     {
@@ -2712,7 +2712,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 24124.920000000002,
-      "monthsToExpiry": 19,
+      "monthsToExpiry": 18,
       "flags": []
     },
     {
@@ -2731,7 +2731,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 37200,
-      "monthsToExpiry": 27,
+      "monthsToExpiry": 26,
       "flags": []
     },
     {
@@ -2750,7 +2750,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 22915.44,
-      "monthsToExpiry": 10,
+      "monthsToExpiry": 9,
       "flags": []
     },
     {
@@ -2769,7 +2769,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 25956,
-      "monthsToExpiry": 13,
+      "monthsToExpiry": 12,
       "flags": []
     },
     {
@@ -2788,7 +2788,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 25200,
-      "monthsToExpiry": 32,
+      "monthsToExpiry": 31,
       "flags": []
     },
     {
@@ -2807,7 +2807,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 26574,
-      "monthsToExpiry": 6,
+      "monthsToExpiry": 5,
       "flags": []
     },
     {
@@ -2826,7 +2826,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 30553.92,
-      "monthsToExpiry": 7,
+      "monthsToExpiry": 6,
       "flags": []
     },
     {
@@ -2845,7 +2845,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 21642.36,
-      "monthsToExpiry": 33,
+      "monthsToExpiry": 32,
       "flags": []
     },
     {
@@ -2864,7 +2864,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 24720,
-      "monthsToExpiry": 18,
+      "monthsToExpiry": 17,
       "flags": []
     },
     {
@@ -2883,7 +2883,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 27501,
-      "monthsToExpiry": 11,
+      "monthsToExpiry": 10,
       "flags": []
     },
     {
@@ -2902,7 +2902,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 23940,
-      "monthsToExpiry": 27,
+      "monthsToExpiry": 26,
       "flags": []
     },
     {
@@ -2919,9 +2919,9 @@
       "leaseEnd": "2026-07-31",
       "escalationDate": "2026-06-01",
       "escalationPct": 0.03,
-      "status": "Expiring Soon",
+      "status": "Expired",
       "annualRent": 89952,
-      "monthsToExpiry": 0,
+      "monthsToExpiry": -1,
       "flags": []
     },
     {
@@ -2940,7 +2940,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 67980,
-      "monthsToExpiry": 20,
+      "monthsToExpiry": 19,
       "flags": []
     },
     {
@@ -2959,7 +2959,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 43272,
-      "monthsToExpiry": 13,
+      "monthsToExpiry": 12,
       "flags": []
     },
     {
@@ -2978,7 +2978,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 51432,
-      "monthsToExpiry": 14,
+      "monthsToExpiry": 13,
       "flags": []
     },
     {
@@ -2989,15 +2989,15 @@
       "unit": "2012",
       "company": "STONE CREST COUNTERS LLC",
       "sf": 1800,
-      "monthlyRent": 1699.5,
-      "rentPerSf": 11.33,
+      "monthlyRent": 1750,
+      "rentPerSf": 11.666666666666666,
       "leaseStart": "2024-08-07",
       "leaseEnd": "2028-07-31",
-      "escalationDate": "2026-08-01",
+      "escalationDate": "2027-08-01",
       "escalationPct": 0.03,
       "status": "Active",
-      "annualRent": 20394,
-      "monthsToExpiry": 24,
+      "annualRent": 21000,
+      "monthsToExpiry": 23,
       "flags": []
     },
     {
@@ -3016,7 +3016,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 20340,
-      "monthsToExpiry": 6,
+      "monthsToExpiry": 5,
       "flags": []
     },
     {
@@ -3035,7 +3035,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19800,
-      "monthsToExpiry": 33,
+      "monthsToExpiry": 32,
       "flags": []
     },
     {
@@ -3054,7 +3054,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 20340,
-      "monthsToExpiry": 7,
+      "monthsToExpiry": 6,
       "flags": []
     },
     {
@@ -3073,7 +3073,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 21880.32,
-      "monthsToExpiry": 6,
+      "monthsToExpiry": 5,
       "flags": []
     },
     {
@@ -3090,9 +3090,9 @@
       "leaseEnd": "2026-10-31",
       "escalationDate": "2026-11-01",
       "escalationPct": 0.03,
-      "status": "Active",
+      "status": "Expiring Soon",
       "annualRent": 20369.28,
-      "monthsToExpiry": 3,
+      "monthsToExpiry": 2,
       "flags": []
     },
     {
@@ -3111,7 +3111,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 23484,
-      "monthsToExpiry": 9,
+      "monthsToExpiry": 8,
       "flags": []
     },
     {
@@ -3130,7 +3130,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19096.199999999997,
-      "monthsToExpiry": 11,
+      "monthsToExpiry": 10,
       "flags": []
     }
   ],
@@ -3141,10 +3141,10 @@
       "counterparty": "3540 Fifth Ave, LLC (Park National Bank)",
       "direction": "borrower",
       "originalPrincipal": null,
-      "currentBalance": 2444773.4499999997,
-      "absBalance": 2444773.4499999997,
+      "currentBalance": 2441184.53,
+      "absBalance": 2441184.53,
       "rate": 0.0604,
-      "monthlyPmt": 16304.46,
+      "monthlyPmt": 16304.460000000001,
       "annualInterest": null,
       "annualPrincipal": null,
       "loanType": "Amortizing",
@@ -3152,7 +3152,7 @@
       "isDemand": false,
       "maturity": "2032-04-16",
       "monthsToMaturity": 68,
-      "ltv": 0.5432829888888888,
+      "ltv": 0.542485451111111,
       "lender": "3540 Fifth Ave, LLC (Park National Bank)",
       "balloon": false,
       "flags": [],
@@ -3164,8 +3164,8 @@
       "counterparty": "Muirkirk Properties (NorthMarq/Symetra) — Oxford 50% share",
       "direction": "borrower",
       "originalPrincipal": null,
-      "currentBalance": 1329638.895,
-      "absBalance": 1329638.895,
+      "currentBalance": 1322139.74,
+      "absBalance": 1322139.74,
       "rate": 0.0425,
       "monthlyPmt": 12189.105000000001,
       "annualInterest": null,
@@ -3174,8 +3174,8 @@
       "status": "Amortizing",
       "isDemand": false,
       "maturity": "2028-01-01",
-      "monthsToMaturity": 17,
-      "ltv": 0.156797039504717,
+      "monthsToMaturity": 16,
+      "ltv": 0.15591270518867925,
       "lender": "Muirkirk Properties (NorthMarq/Symetra) — Oxford 50% share",
       "balloon": false,
       "flags": [],
@@ -3187,8 +3187,8 @@
       "counterparty": "Oxford / Symetra Life Insurance (Loan #10258)",
       "direction": "borrower",
       "originalPrincipal": null,
-      "currentBalance": 2769508,
-      "absBalance": 2769508,
+      "currentBalance": 2765070.31,
+      "absBalance": 2765070.31,
       "rate": 0.056,
       "monthlyPmt": 17362.06,
       "annualInterest": null,
@@ -3198,7 +3198,7 @@
       "isDemand": false,
       "maturity": "2030-12-10",
       "monthsToMaturity": 52,
-      "ltv": 0.4149075655430712,
+      "ltv": 0.41424274307116105,
       "lender": "Oxford / Symetra Life Insurance (Loan #10258)",
       "balloon": false,
       "flags": [],
@@ -3210,8 +3210,8 @@
       "counterparty": "Fairground Village Center LLC (Symetra Life Insurance)",
       "direction": "borrower",
       "originalPrincipal": null,
-      "currentBalance": 3719215.73,
-      "absBalance": 3719215.73,
+      "currentBalance": 3713404.852358,
+      "absBalance": 3713404.852358,
       "rate": 0.0552,
       "monthlyPmt": 22919.27,
       "annualInterest": null,
@@ -3221,7 +3221,7 @@
       "isDemand": false,
       "maturity": "2031-06-05",
       "monthsToMaturity": 58,
-      "ltv": 0.6198692883333333,
+      "ltv": 0.6189008087263334,
       "lender": "Fairground Village Center LLC (Symetra Life Insurance)",
       "balloon": false,
       "flags": [],
@@ -3266,7 +3266,7 @@
       "status": "Interest Only",
       "isDemand": false,
       "maturity": "2031-10-01",
-      "monthsToMaturity": 62,
+      "monthsToMaturity": 61,
       "ltv": null,
       "lender": "2203 Northwood, LLC (2900 Loch Raven LLC)",
       "balloon": false,
@@ -3302,8 +3302,8 @@
       "counterparty": "Restoration Church Trust (Oxford Capital) — Oxford 50% share",
       "direction": "lender",
       "originalPrincipal": null,
-      "currentBalance": -979771.96,
-      "absBalance": 979771.96,
+      "currentBalance": -978763.425,
+      "absBalance": 978763.425,
       "rate": 0.09,
       "monthlyPmt": -4874.814583333334,
       "annualInterest": null,
@@ -3313,7 +3313,7 @@
       "isDemand": false,
       "maturity": "2027-02-20",
       "monthsToMaturity": 6,
-      "ltv": 0.783817568,
+      "ltv": 0.78301074,
       "lender": null,
       "balloon": true,
       "flags": [],
@@ -3436,113 +3436,113 @@
     }
   ],
   "cash": {
-    "asOf": "2026-07-10",
-    "totalCash": 8182637.644999999,
+    "asOf": "2026-08-10",
+    "totalCash": 8376954.33,
     "activeEntities": 16,
     "largestEntity": "Fairground Village Center",
-    "concentrationTopPct": 0.5350966509772658,
+    "concentrationTopPct": 0.526305928899579,
     "cagr": null,
     "entities": [
       {
         "entity": "1851 South Club Solar (25%)",
         "id": "1851-south-club-solar-25",
-        "currentBalance": 5904.75,
-        "priorBalance": 6564.5,
-        "deltaDollar": -659.75,
-        "deltaPct": -0.1005027039378475,
-        "avg3": 6100.3525,
+        "currentBalance": 8294,
+        "priorBalance": 8294,
+        "deltaDollar": null,
+        "deltaPct": null,
+        "avg3": 7497.583333333333,
         "minAllTime": 889,
         "maxAllTime": 8741,
-        "bal12moAgo": 889,
-        "growth12Dollar": 5015.75,
-        "growth12Pct": 5.642013498312711,
-        "pctOfPortfolio": 0.0007216193917138807,
-        "trend": "down",
+        "bal12moAgo": 7279,
+        "growth12Dollar": 1015,
+        "growth12Pct": 0.1394422310756972,
+        "pctOfPortfolio": 0.0009900973161924831,
+        "trend": "flat",
         "flags": []
       },
       {
         "entity": "Fairground Village Center",
         "id": "fairground-village-center",
-        "currentBalance": 4378502,
-        "priorBalance": 4270718.91,
-        "deltaDollar": 107783.08999999985,
-        "deltaPct": 0.025237692358451157,
-        "avg3": 3064963.803333333,
+        "currentBalance": 4408840.73,
+        "priorBalance": 4408840.73,
+        "deltaDollar": null,
+        "deltaPct": null,
+        "avg3": 4398727.82,
         "minAllTime": 216139,
         "maxAllTime": 792176,
-        "bal12moAgo": 487188,
-        "growth12Dollar": 3891314,
-        "growth12Pct": 7.9872944325393895,
-        "pctOfPortfolio": 0.5350966509772658,
-        "trend": "up",
+        "bal12moAgo": 647615,
+        "growth12Dollar": 3761225.7300000004,
+        "growth12Pct": 5.807811323085476,
+        "pctOfPortfolio": 0.526305928899579,
+        "trend": "flat",
         "flags": []
       },
       {
         "entity": "6718 Industrial Dr (9620 State 350)",
         "id": "6718-industrial-dr-9620-state-350",
-        "currentBalance": 1772961.67,
-        "priorBalance": 1766213,
-        "deltaDollar": 6748.6699999999255,
-        "deltaPct": 0.003820983086411393,
-        "avg3": 1748699.05,
+        "currentBalance": 1816490.43,
+        "priorBalance": 1816490.43,
+        "deltaDollar": null,
+        "deltaPct": null,
+        "avg3": 1801980.843333333,
         "minAllTime": 412689,
         "maxAllTime": 3105701,
-        "bal12moAgo": 2938125,
-        "growth12Dollar": -1165163.33,
-        "growth12Pct": -0.39656697043182304,
-        "pctOfPortfolio": 0.21667361392733409,
-        "trend": "up",
+        "bal12moAgo": 3006941.62,
+        "growth12Dollar": -1190451.1900000002,
+        "growth12Pct": -0.39590099857010197,
+        "pctOfPortfolio": 0.21684377859082823,
+        "trend": "flat",
         "flags": []
       },
       {
         "entity": "29000 Information Lane",
         "id": "29000-information-lane",
-        "currentBalance": 45143.12,
-        "priorBalance": 37766.51,
-        "deltaDollar": 7376.610000000001,
-        "deltaPct": 0.19532146338118084,
-        "avg3": 37107.96666666667,
+        "currentBalance": 36264.89,
+        "priorBalance": 36264.89,
+        "deltaDollar": null,
+        "deltaPct": null,
+        "avg3": 39224.299999999996,
         "minAllTime": 18351.19,
         "maxAllTime": 72066.5,
-        "bal12moAgo": 70455,
-        "growth12Dollar": -25311.879999999997,
-        "growth12Pct": -0.3592630757220921,
-        "pctOfPortfolio": 0.005516939886441716,
-        "trend": "up",
+        "bal12moAgo": 67288.8,
+        "growth12Dollar": -31023.910000000003,
+        "growth12Pct": -0.46105607471079885,
+        "pctOfPortfolio": 0.004329125905596289,
+        "trend": "flat",
         "flags": []
       },
       {
         "entity": "Oxford",
         "id": "oxford",
-        "currentBalance": 1553125.01,
-        "priorBalance": 1380000,
-        "deltaDollar": 173125.01,
-        "deltaPct": 0.12545290579710144,
-        "avg3": 1398265.093333333,
+        "currentBalance": 1663525.76,
+        "priorBalance": 1663525.76,
+        "deltaDollar": null,
+        "deltaPct": null,
+        "avg3": 1626725.51,
         "minAllTime": 631479,
         "maxAllTime": 1325000,
-        "bal12moAgo": 828000,
-        "growth12Dollar": 725125.01,
-        "growth12Pct": 0.8757548429951691,
-        "pctOfPortfolio": 0.1898073796472018,
-        "trend": "up",
+        "bal12moAgo": 1050000,
+        "growth12Dollar": 613525.76,
+        "growth12Pct": 0.5843102476190476,
+        "pctOfPortfolio": 0.19858360144599235,
+        "trend": "flat",
         "flags": []
       },
       {
         "entity": "55 New Plant Court",
         "id": "55-new-plant-court",
-        "currentBalance": 29762.88,
-        "priorBalance": 500,
-        "deltaDollar": 29262.88,
-        "deltaPct": 58.525760000000005,
-        "avg3": 10254.293333333333,
+        "currentBalance": 95287.36,
+        "priorBalance": 95287.36,
+        "deltaDollar": null,
+        "deltaPct": null,
+        "avg3": 73445.86666666667,
         "minAllTime": 500,
         "maxAllTime": 517,
         "bal12moAgo": 500,
-        "growth12Dollar": 29262.88,
-        "growth12Pct": 58.525760000000005,
-        "pctOfPortfolio": 0.003637321031585287,
-        "trend": "up",
+        "growth12Dollar": 94787.36,
+        "growth12Pct": 189.57472,
+        "pctOfPortfolio": 0.011374940849176146,
+        "trend": "flat",
         "flags": []
       },
       {
@@ -3558,76 +3558,76 @@
         "bal12moAgo": 250,
         "growth12Dollar": null,
         "growth12Pct": null,
-        "pctOfPortfolio": 0.000030552495521143176,
+        "pctOfPortfolio": 0.000029843782137463318,
         "trend": "flat",
         "flags": []
       },
       {
         "entity": "3540 E. 5th Avenue",
         "id": "3540-e-5th-avenue",
-        "currentBalance": 14630.14,
-        "priorBalance": 5972.25,
-        "deltaDollar": 8657.89,
-        "deltaPct": 1.449686466574574,
-        "avg3": 10624.493333333334,
+        "currentBalance": 21663.72,
+        "priorBalance": 21663.72,
+        "deltaDollar": null,
+        "deltaPct": null,
+        "avg3": 19319.193333333333,
         "minAllTime": 648,
         "maxAllTime": 25221,
-        "bal12moAgo": 14612,
-        "growth12Dollar": 18.139999999999418,
-        "growth12Pct": 0.001241445387352821,
-        "pctOfPortfolio": 0.0017879491472947903,
-        "trend": "up",
+        "bal12moAgo": 13358.4,
+        "growth12Dollar": 8305.320000000002,
+        "growth12Pct": 0.6217301473230328,
+        "pctOfPortfolio": 0.0025861093598680274,
+        "trend": "flat",
         "flags": []
       },
       {
         "entity": "5242 Angola Road (Westerville)",
         "id": "5242-angola-road-westerville",
-        "currentBalance": 18776.05,
-        "priorBalance": 14400,
-        "deltaDollar": 4376.049999999999,
-        "deltaPct": 0.30389236111111106,
-        "avg3": 15697.35,
+        "currentBalance": 2780,
+        "priorBalance": 2780,
+        "deltaDollar": null,
+        "deltaPct": null,
+        "avg3": 8112.016666666666,
         "minAllTime": -15302.99,
         "maxAllTime": 14668,
-        "bal12moAgo": 1648,
-        "growth12Dollar": 17128.05,
-        "growth12Pct": 10.39323422330097,
-        "pctOfPortfolio": 0.002294620734119041,
-        "trend": "up",
+        "bal12moAgo": 14668,
+        "growth12Dollar": -11888,
+        "growth12Pct": -0.8104717752931552,
+        "pctOfPortfolio": 0.00033186285736859207,
+        "trend": "flat",
         "flags": []
       },
       {
         "entity": "9050 Red Branch Rd (50%)",
         "id": "9050-red-branch-rd-50",
-        "currentBalance": 18571.01,
-        "priorBalance": 23418,
-        "deltaDollar": -4846.990000000002,
-        "deltaPct": -0.20697711162353752,
-        "avg3": 17771.336666666666,
+        "currentBalance": 25809.54,
+        "priorBalance": 25809.54,
+        "deltaDollar": null,
+        "deltaPct": null,
+        "avg3": 23396.696666666667,
         "minAllTime": 3912,
         "maxAllTime": 28204,
-        "bal12moAgo": 12838,
-        "growth12Dollar": 5733.009999999998,
-        "growth12Pct": 0.4465656644337123,
-        "pctOfPortfolio": 0.0022695627993924205,
-        "trend": "down",
+        "bal12moAgo": 24195,
+        "growth12Dollar": 1614.5400000000009,
+        "growth12Pct": 0.06673031618102918,
+        "pctOfPortfolio": 0.00308101715531258,
+        "trend": "flat",
         "flags": []
       },
       {
         "entity": "1900 N Broadway (50%)",
         "id": "1900-n-broadway-50",
-        "currentBalance": 21228.75,
-        "priorBalance": 5412,
-        "deltaDollar": 15816.75,
-        "deltaPct": 2.922533259423503,
-        "avg3": 10021.211666666668,
+        "currentBalance": 2567.19,
+        "priorBalance": 2567.19,
+        "deltaDollar": null,
+        "deltaPct": null,
+        "avg3": 8787.710000000001,
         "minAllTime": -6834,
         "maxAllTime": 14614,
-        "bal12moAgo": 13265,
-        "growth12Dollar": 7963.75,
-        "growth12Pct": 0.6003580851865812,
-        "pctOfPortfolio": 0.0025943651571778727,
-        "trend": "up",
+        "bal12moAgo": -174,
+        "growth12Dollar": 2741.19,
+        "growth12Pct": -15.75396551724138,
+        "pctOfPortfolio": 0.00030645863626189784,
+        "trend": "flat",
         "flags": []
       },
       {
@@ -3637,130 +3637,88 @@
         "priorBalance": 567.41,
         "deltaDollar": null,
         "deltaPct": null,
-        "avg3": 479.06333333333333,
+        "avg3": 567.41,
         "minAllTime": 255,
         "maxAllTime": 7258,
-        "bal12moAgo": 5015,
-        "growth12Dollar": -4447.59,
-        "growth12Pct": -0.8868574277168495,
-        "pctOfPortfolio": 0.0000693431659346074,
+        "bal12moAgo": 4960,
+        "growth12Dollar": -4392.59,
+        "growth12Pct": -0.8856028225806452,
+        "pctOfPortfolio": 0.00006773464169047224,
         "trend": "flat",
         "flags": []
       },
       {
         "entity": "EG 5600",
         "id": "eg-5600",
-        "currentBalance": 217562.913,
-        "priorBalance": 216940.5,
-        "deltaDollar": 622.4130000000005,
-        "deltaPct": 0.002869049347632187,
-        "avg3": 216935.13766666665,
+        "currentBalance": 218209.59,
+        "priorBalance": 218209.59,
+        "deltaDollar": null,
+        "deltaPct": null,
+        "avg3": 217994.031,
         "minAllTime": 2297,
         "maxAllTime": 216302,
-        "bal12moAgo": 203706,
-        "growth12Dollar": 13856.913,
-        "growth12Pct": 0.06802407881947513,
-        "pctOfPortfolio": 0.02658835969999745,
-        "trend": "up",
+        "bal12moAgo": 205141,
+        "growth12Dollar": 13068.589999999997,
+        "growth12Pct": 0.06370540262551122,
+        "pctOfPortfolio": 0.026048797857060775,
+        "trend": "flat",
         "flags": []
       },
       {
         "entity": "2203 Northwood",
         "id": "2203-northwood",
-        "currentBalance": 12475.59,
-        "priorBalance": 10609.12,
-        "deltaDollar": 1866.4699999999993,
-        "deltaPct": 0.17593070867329233,
-        "avg3": 12938.163333333332,
+        "currentBalance": 15754.55,
+        "priorBalance": 15754.55,
+        "deltaDollar": null,
+        "deltaPct": null,
+        "avg3": 14661.563333333334,
         "minAllTime": 500,
         "maxAllTime": 29740.49,
-        "bal12moAgo": 657,
-        "growth12Dollar": 11818.59,
-        "growth12Pct": 17.988721461187215,
-        "pctOfPortfolio": 0.0015246416303944744,
-        "trend": "up",
+        "bal12moAgo": 11114.21,
+        "growth12Dollar": 4640.34,
+        "growth12Pct": 0.4175141553020863,
+        "pctOfPortfolio": 0.0018807014314950908,
+        "trend": "flat",
         "flags": []
       },
       {
         "entity": "EG GST",
         "id": "eg-gst",
-        "currentBalance": 100645.452,
-        "priorBalance": 100357,
-        "deltaDollar": 288.4520000000048,
-        "deltaPct": 0.002874258895742248,
-        "avg3": 100334.15066666667,
+        "currentBalance": 101765.4,
+        "priorBalance": 101765.4,
+        "deltaDollar": null,
+        "deltaPct": null,
+        "avg3": 101392.08399999999,
         "minAllTime": 89422,
         "maxAllTime": 495708,
-        "bal12moAgo": 89422,
-        "growth12Dollar": 11223.452000000005,
-        "growth12Pct": 0.12551108228400176,
-        "pctOfPortfolio": 0.012299878885813723,
-        "trend": "up",
+        "bal12moAgo": 99001,
+        "growth12Dollar": 2764.399999999994,
+        "growth12Pct": 0.027922950273229503,
+        "pctOfPortfolio": 0.012148257706927238,
+        "trend": "flat",
         "flags": []
       },
       {
         "entity": "3883 Livingston",
         "id": "3883-livingston",
-        "currentBalance": -7469.1,
-        "priorBalance": 6918,
-        "deltaDollar": -14387.1,
-        "deltaPct": -2.079661751951431,
-        "avg3": 4499.1866666666665,
+        "currentBalance": -41116.24,
+        "priorBalance": -41116.24,
+        "deltaDollar": null,
+        "deltaPct": null,
+        "avg3": -29900.52666666667,
         "minAllTime": -22530.51,
         "maxAllTime": 22353.04,
         "bal12moAgo": null,
-        "growth12Dollar": -7469.1,
+        "growth12Dollar": -41116.24,
         "growth12Pct": null,
-        "pctOfPortfolio": -0.0009127985771878821,
-        "trend": "down",
+        "pctOfPortfolio": -0.004908256435486619,
+        "trend": "flat",
         "flags": []
       }
     ],
     "history": [
       {
         "date": "2025-08-10",
-        "total": 4913070,
-        "balances": {
-          "1851 South Club Solar (25%)": 6780,
-          "Fairground Village Center": 566039,
-          "6718 Industrial Dr (9620 State 350)": 2987069,
-          "29000 Information Lane": 37840,
-          "Oxford": 978953,
-          "55 New Plant Court": 500,
-          "Fenton Street (50%)": 250,
-          "3540 E. 5th Avenue": 5048,
-          "5242 Angola Road (Westerville)": 3196,
-          "9050 Red Branch Rd (50%)": 21222,
-          "1900 N Broadway (50%)": 644,
-          "Carol Jerry (50%)": 4960,
-          "EG 5600": 204423,
-          "2203 Northwood": 500,
-          "EG GST": 95646
-        }
-      },
-      {
-        "date": "2025-09-10",
-        "total": 5152138.03,
-        "balances": {
-          "1851 South Club Solar (25%)": 7279,
-          "Fairground Village Center": 647615,
-          "6718 Industrial Dr (9620 State 350)": 3006941.62,
-          "29000 Information Lane": 67288.8,
-          "Oxford": 1050000,
-          "55 New Plant Court": 500,
-          "Fenton Street (50%)": 250,
-          "3540 E. 5th Avenue": 13358.4,
-          "5242 Angola Road (Westerville)": 14668,
-          "9050 Red Branch Rd (50%)": 24195,
-          "1900 N Broadway (50%)": -174,
-          "Carol Jerry (50%)": 4960,
-          "EG 5600": 205141,
-          "2203 Northwood": 11114.21,
-          "EG GST": 99001
-        }
-      },
-      {
-        "date": "2025-10-10",
         "total": 4863699.71,
         "balances": {
           "1851 South Club Solar (25%)": 3668,
@@ -3782,7 +3740,7 @@
         }
       },
       {
-        "date": "2025-11-10",
+        "date": "2025-09-10",
         "total": 5135224.7020000005,
         "balances": {
           "1851 South Club Solar (25%)": 7840,
@@ -3804,7 +3762,7 @@
         }
       },
       {
-        "date": "2025-12-10",
+        "date": "2025-10-10",
         "total": 5205307.235000001,
         "balances": {
           "1851 South Club Solar (25%)": 8741,
@@ -3826,7 +3784,7 @@
         }
       },
       {
-        "date": "2026-01-10",
+        "date": "2025-11-10",
         "total": 5167055.4399999995,
         "balances": {
           "1851 South Club Solar (25%)": 6182,
@@ -3848,7 +3806,7 @@
         }
       },
       {
-        "date": "2026-02-10",
+        "date": "2025-12-10",
         "total": 3460016.599,
         "balances": {
           "1851 South Club Solar (25%)": 6418.395,
@@ -3870,7 +3828,7 @@
         }
       },
       {
-        "date": "2026-03-10",
+        "date": "2026-01-10",
         "total": 3630366.7850000006,
         "balances": {
           "1851 South Club Solar (25%)": 6575,
@@ -3892,7 +3850,7 @@
         }
       },
       {
-        "date": "2026-04-10",
+        "date": "2026-02-10",
         "total": 3883787.28,
         "balances": {
           "1851 South Club Solar (25%)": 6953.58,
@@ -3914,7 +3872,7 @@
         }
       },
       {
-        "date": "2026-05-10",
+        "date": "2026-03-10",
         "total": 3935577.1125,
         "balances": {
           "1851 South Club Solar (25%)": 5831.8075,
@@ -3936,7 +3894,7 @@
         }
       },
       {
-        "date": "2026-06-10",
+        "date": "2026-04-10",
         "total": 7846607.2,
         "balances": {
           "1851 South Club Solar (25%)": 6564.5,
@@ -3958,7 +3916,7 @@
         }
       },
       {
-        "date": "2026-07-10",
+        "date": "2026-05-10",
         "total": 8182637.644999999,
         "balances": {
           "1851 South Club Solar (25%)": 5904.75,
@@ -3978,6 +3936,50 @@
           "EG GST": 100645.452,
           "3883 Livingston": -7469.1
         }
+      },
+      {
+        "date": "2026-06-10",
+        "total": 8376954.33,
+        "balances": {
+          "1851 South Club Solar (25%)": 8294,
+          "Fairground Village Center": 4408840.73,
+          "6718 Industrial Dr (9620 State 350)": 1816490.43,
+          "29000 Information Lane": 36264.89,
+          "Oxford": 1663525.76,
+          "55 New Plant Court": 95287.36,
+          "Fenton Street (50%)": 250,
+          "3540 E. 5th Avenue": 21663.72,
+          "5242 Angola Road (Westerville)": 2780,
+          "9050 Red Branch Rd (50%)": 25809.54,
+          "1900 N Broadway (50%)": 2567.19,
+          "Carol Jerry (50%)": 567.41,
+          "EG 5600": 218209.59,
+          "2203 Northwood": 15754.55,
+          "EG GST": 101765.4,
+          "3883 Livingston": -41116.24
+        }
+      },
+      {
+        "date": "2026-07-10",
+        "total": 8376954.33,
+        "balances": {
+          "1851 South Club Solar (25%)": 8294,
+          "Fairground Village Center": 4408840.73,
+          "6718 Industrial Dr (9620 State 350)": 1816490.43,
+          "29000 Information Lane": 36264.89,
+          "Oxford": 1663525.76,
+          "55 New Plant Court": 95287.36,
+          "Fenton Street (50%)": 250,
+          "3540 E. 5th Avenue": 21663.72,
+          "5242 Angola Road (Westerville)": 2780,
+          "9050 Red Branch Rd (50%)": 25809.54,
+          "1900 N Broadway (50%)": 2567.19,
+          "Carol Jerry (50%)": 567.41,
+          "EG 5600": 218209.59,
+          "2203 Northwood": 15754.55,
+          "EG GST": 101765.4,
+          "3883 Livingston": -41116.24
+        }
       }
     ]
   },
@@ -3992,7 +3994,7 @@
       "policyNo": "Q61-0512756",
       "carrier": "Erie Insurance",
       "premium": 13722,
-      "daysToExpiry": 146,
+      "daysToExpiry": 141,
       "status": "Current",
       "notes": "Will need to convert to John P under Pr/Br at renewal",
       "flags": [],
@@ -4010,7 +4012,7 @@
       "policyNo": "Q36-2270428",
       "carrier": "Erie Insurance",
       "premium": 594,
-      "daysToExpiry": 146,
+      "daysToExpiry": 141,
       "status": "Current",
       "notes": "Will need to convert to John P under Pr/Br at renewal",
       "flags": [],
@@ -4028,7 +4030,7 @@
       "policyNo": "Q61-0246004",
       "carrier": "Erie Insurance",
       "premium": 8491,
-      "daysToExpiry": 156,
+      "daysToExpiry": 151,
       "status": "Current",
       "notes": null,
       "flags": [],
@@ -4046,7 +4048,7 @@
       "policyNo": "Q25-0177359",
       "carrier": "Erie Insurance",
       "premium": 584,
-      "daysToExpiry": 156,
+      "daysToExpiry": 151,
       "status": "Current",
       "notes": null,
       "flags": [],
@@ -4064,7 +4066,7 @@
       "policyNo": "Q61-0076471",
       "carrier": "Erie Insurance",
       "premium": 22292,
-      "daysToExpiry": -176,
+      "daysToExpiry": -181,
       "status": "Expired",
       "notes": "Will need to be rewritten to ESB at renewal",
       "flags": [],
@@ -4082,7 +4084,7 @@
       "policyNo": "Q26-0370289",
       "carrier": "Erie Insurance",
       "premium": 1995,
-      "daysToExpiry": -176,
+      "daysToExpiry": -181,
       "status": "Expired",
       "notes": null,
       "flags": [],
@@ -4100,7 +4102,7 @@
       "policyNo": "Q61-0538048",
       "carrier": "Erie Insurance",
       "premium": 990,
-      "daysToExpiry": -115,
+      "daysToExpiry": -120,
       "status": "Expired",
       "notes": null,
       "flags": [],
@@ -4118,7 +4120,7 @@
       "policyNo": "Q28-0570665",
       "carrier": "Erie Insurance",
       "premium": 664,
-      "daysToExpiry": -115,
+      "daysToExpiry": -120,
       "status": "Expired",
       "notes": null,
       "flags": [],
@@ -4136,7 +4138,7 @@
       "policyNo": "MQ04214580",
       "carrier": "XPT Specialty",
       "premium": 2628,
-      "daysToExpiry": 81,
+      "daysToExpiry": 76,
       "status": "Renewing Soon",
       "notes": null,
       "flags": [],
@@ -4154,7 +4156,7 @@
       "policyNo": "MMF17962784",
       "carrier": "XPT Specialty",
       "premium": 28071,
-      "daysToExpiry": 81,
+      "daysToExpiry": 76,
       "status": "Renewing Soon",
       "notes": null,
       "flags": [],
@@ -4172,7 +4174,7 @@
       "policyNo": "Q61-0456794",
       "carrier": "Erie Insurance",
       "premium": 7838,
-      "daysToExpiry": 51,
+      "daysToExpiry": 46,
       "status": "Renewing Soon",
       "notes": null,
       "flags": [],
@@ -4190,7 +4192,7 @@
       "policyNo": "Q61-0159747",
       "carrier": "Erie Insurance",
       "premium": 11314,
-      "daysToExpiry": 175,
+      "daysToExpiry": 170,
       "status": "Current",
       "notes": null,
       "flags": [],
@@ -4208,7 +4210,7 @@
       "policyNo": "Q25-2070432",
       "carrier": "Erie Insurance",
       "premium": 964,
-      "daysToExpiry": 175,
+      "daysToExpiry": 170,
       "status": "Current",
       "notes": null,
       "flags": [],
@@ -4226,7 +4228,7 @@
       "policyNo": "Q61-0467591",
       "carrier": "Erie Insurance",
       "premium": 15272,
-      "daysToExpiry": 88,
+      "daysToExpiry": 83,
       "status": "Renewing Soon",
       "notes": null,
       "flags": [],
@@ -4244,7 +4246,7 @@
       "policyNo": "Q34-2570536",
       "carrier": "Erie Insurance",
       "premium": 594,
-      "daysToExpiry": 88,
+      "daysToExpiry": 83,
       "status": "Renewing Soon",
       "notes": null,
       "flags": [],
@@ -4262,7 +4264,7 @@
       "policyNo": "Q44-2750780",
       "carrier": "Erie Insurance",
       "premium": 11166,
-      "daysToExpiry": 29,
+      "daysToExpiry": 24,
       "status": "Renew Now",
       "notes": null,
       "flags": [],
@@ -4280,7 +4282,7 @@
       "policyNo": "Q32-2770246",
       "carrier": "Erie Insurance",
       "premium": 2271,
-      "daysToExpiry": 29,
+      "daysToExpiry": 24,
       "status": "Renew Now",
       "notes": null,
       "flags": [],
@@ -4298,7 +4300,7 @@
       "policyNo": "MX1930853871382",
       "carrier": "RT Specialty",
       "premium": 8776,
-      "daysToExpiry": -80,
+      "daysToExpiry": -85,
       "status": "Cancelled",
       "notes": "CANCELLED effective 5/30/2025 — moved to another agent; confirm replacement coverage",
       "flags": [],
@@ -4316,7 +4318,7 @@
       "policyNo": "Q61-0380462",
       "carrier": "Erie Insurance",
       "premium": 5643,
-      "daysToExpiry": -132,
+      "daysToExpiry": -137,
       "status": "Expired",
       "notes": null,
       "flags": [],
@@ -4334,7 +4336,7 @@
       "policyNo": "Q27-1970494",
       "carrier": "Erie Insurance",
       "premium": 595,
-      "daysToExpiry": -132,
+      "daysToExpiry": -137,
       "status": "Expired",
       "notes": null,
       "flags": [],
@@ -4352,8 +4354,8 @@
       "policyNo": "Q61-0483681",
       "carrier": "Erie Insurance",
       "premium": 21511,
-      "daysToExpiry": 33,
-      "status": "Renewing Soon",
+      "daysToExpiry": 28,
+      "status": "Renew Now",
       "notes": null,
       "flags": [],
       "tiv": null,
@@ -4370,8 +4372,8 @@
       "policyNo": "Q32-3170306",
       "carrier": "Erie Insurance",
       "premium": 2228,
-      "daysToExpiry": 33,
-      "status": "Renewing Soon",
+      "daysToExpiry": 28,
+      "status": "Renew Now",
       "notes": null,
       "flags": [],
       "tiv": null,
@@ -4388,7 +4390,7 @@
       "policyNo": "Q61-0566802",
       "carrier": "Erie Insurance",
       "premium": 5815,
-      "daysToExpiry": -48,
+      "daysToExpiry": -53,
       "status": "Expired",
       "notes": null,
       "flags": [],
@@ -4406,7 +4408,7 @@
       "policyNo": "Q30-1170446",
       "carrier": "Erie Insurance",
       "premium": 614,
-      "daysToExpiry": -48,
+      "daysToExpiry": -53,
       "status": "Expired",
       "notes": null,
       "flags": [],
@@ -4424,7 +4426,7 @@
       "policyNo": "CN101642069-SRS-Prop-26-27",
       "carrier": "Allianz (via SRS Distribution / Marsh)",
       "premium": 0,
-      "daysToExpiry": 246,
+      "daysToExpiry": 241,
       "status": "Current",
       "notes": "Tenant (SRS / Heritage Pool) carries property coverage; 7658 Fishel LLC is additional insured. Liability COI renews 3/1/2026",
       "flags": [],
@@ -4545,7 +4547,7 @@
       "holdYrs": 5,
       "lender": null,
       "status": "Not Started",
-      "nextAction": "[2026-07-24 — GABRIEL POSITION SET] BUY PRICE IS $1.25M. Hold posture: no active pursuit, no re-approach at the v05 $1.4M number. We wait for the seller to get desperate and come to us. Do NOT submit an LOI at $1.4M. If the seller (or broker) re-engages, the counter is $1,250,000 all-cash — the v05 structure otherwise stands ($100K EMD, 30-day Study, 15-day close post-Study). Re-verify the 23 PSA conditions precedent and refresh the Phase I/II env position (1990 MEK release, OEPA DERR-listed; walk if remediation >$140K) before anything is signed — the v05 diligence is now ~2 months stale. ——— [Prior, retained for history] REOPENED 2026-07-21 per Gabriel (v05 GO verdict controls over the stale 3/27 kill note). Executive Brief v05 (May 14, 2026) recommended GO at $1,400,000. Levered IRR 14.42%, EM 5.29x, Yr1 YoC 7.37%, going-in cap 7.36%, effective-SF (17,500) replacement discount 33%. Tenant: Buckeye Elm Contracting (sale-leaseback affiliate, no PG absent Perelman guaranty) NNN through 8/31/2042 + 2x5yr options, $102,999.96/yr NNN. STATUS CONFLICT NOTE (still unreconciled): this row previously showed IC Memo=Not Started / Stage=Passed (killed 3/27/2026); Deal Sourcing Log separately shows Status=Dead. Both predate the v05 work product and neither has been reconciled.",
+      "nextAction": "⏸ PARKED 2026-07-24 (Gabriel) — Stage intentionally kept 'Candidate'; deal ON HOLD at Gabriel's $1,250,000 counter-price reservation. NOT awaiting a per-deal status decision; stale-pipeline-nudge should not re-flag. Revisit only if the seller or broker re-engages. ——— [2026-07-24 — GABRIEL POSITION SET] BUY PRICE IS $1.25M. Hold posture: no active pursuit, no re-approach at the v05 $1.4M number. We wait for the seller to get desperate and come to us. Do NOT submit an LOI at $1.4M. If the seller (or broker) re-engages, the counter is $1,250,000 all-cash — the v05 structure otherwise stands ($100K EMD, 30-day Study, 15-day close post-Study). Re-verify the 23 PSA conditions precedent and refresh the Phase I/II env position (1990 MEK release, OEPA DERR-listed; walk if remediation >$140K) before anything is signed — the v05 diligence is now ~2 months stale. ——— [Prior, retained for history] REOPENED 2026-07-21 per Gabriel (v05 GO verdict controls over the stale 3/27 kill note). Executive Brief v05 (May 14, 2026) recommended GO at $1,400,000. Levered IRR 14.42%, EM 5.29x, Yr1 YoC 7.37%, going-in cap 7.36%, effective-SF (17,500) replacement discount 33%. Tenant: Buckeye Elm Contracting (sale-leaseback affiliate, no PG absent Perelman guaranty) NNN through 8/31/2042 + 2x5yr options, $102,999.96/yr NNN. STATUS CONFLICT NOTE (still unreconciled): this row previously showed IC Memo=Not Started / Stage=Passed (killed 3/27/2026); Deal Sourcing Log separately shows Status=Dead. Both predate the v05 work product and neither has been reconciled.",
       "owner": "Gabriel Goldberg",
       "targetCloseDate": null,
       "confidential": false,
@@ -4701,7 +4703,7 @@
       "holdYrs": null,
       "lender": null,
       "status": "Not Started",
-      "nextAction": "[2026-07-24 — GABRIEL: LEAN PASS, KEEP OPEN] Not proceeding at the $2,742,267 asking-basis LOI. Posture is patient-opportunistic: let it sit on the market. RE-CHECK 2026-08-14 — if still unsold after ~3 weeks of continued marketing, come back in with a materially lower offer sized to clear the 6-yr IRR floor (15%), not just the 10-yr (12%). Do NOT let this row auto-close to Passed; Stage stays Candidate by decision. If it goes under contract to another buyer, then pass and log it. ——— [Prior] IC decision on MARGINAL ADVANCE verdict: 6-yr IRR floor FAILS (13.4% vs 15%); 10-yr floor clears narrowly (13.9% vs 12%).",
+      "nextAction": "⏸ PARKED 2026-07-24 (Gabriel) — Stage intentionally kept 'Candidate'; deal ON HOLD, patient-opportunistic (let it sit on market). NOT awaiting a per-deal status decision; stale-pipeline-nudge should not re-flag. Revisit 2026-08-14 per Gabriel's re-check instruction. ——— [2026-07-24 — GABRIEL: LEAN PASS, KEEP OPEN] Not proceeding at the $2,742,267 asking-basis LOI. Posture is patient-opportunistic: let it sit on the market. RE-CHECK 2026-08-14 — if still unsold after ~3 weeks of continued marketing, come back in with a materially lower offer sized to clear the 6-yr IRR floor (15%), not just the 10-yr (12%). Do NOT let this row auto-close to Passed; Stage stays Candidate by decision. If it goes under contract to another buyer, then pass and log it. ——— [Prior] IC decision on MARGINAL ADVANCE verdict: 6-yr IRR floor FAILS (13.4% vs 15%); 10-yr floor clears narrowly (13.9% vs 12%).",
       "owner": "Gabriel Goldberg",
       "targetCloseDate": null,
       "confidential": true,
@@ -4833,7 +4835,7 @@
       "holdYrs": null,
       "lender": null,
       "status": "In Negotiation",
-      "nextAction": "[2026-07-24 — SEND CONFIRMED by Gabriel; supersedes the 07-21 'not sent' note below.] The PSA WAS sent. Eric transmitted the PSA with minor modifications to William J. Patterson (Seller's counsel, wpatterson@kmklaw.com) on 2026-07-23 14:51 UTC, subject 'RE: 754 Old State PSA', with attachment. The open item is therefore with SELLER'S COUNSEL, not with ORA: awaiting Patterson's turn on the modified PSA. Counterparty-aging clock runs from 2026-07-23 (counsel class, 7-business-day threshold; 1 bd elapsed as of 07-24 — inside SLA). Parallel workstream: Clermont Twp PD/parking-easement question with Craig Flaute (CFlaute@utclermont.gov) — Twp confirmed 07-21 the cross-access easement was not part of the original PD agreement. Broker Josh Gerth (JLL) pressing to get the PSA signed. STILL OPEN and NOT unilaterally draftable — need Gabriel's input: exact vacancy % threshold in §9.2(i) (75% placeholder used), the new §26 offer-expiration date (8/15/2026 placeholder), and the west-side replacement easement (Register Item 1, separate workstream). ——— [2026-07-21 PM — SEND-STATUS SUPERSEDED, terms detail retained for the record] Formal redline drafted and staged for Gabriel's review: '754 Old State Route 74 PSA Redline 07-2026.docx' (deal folder). Tracked-change edits: §4.1 Feasibility Period reverted to a clean 30-day trigger keyed off a new §31 Parking Contingency Period (implementing Patterson's actual 30-day-pre-DD structure, replacing the broken PUD-modification language); §31 also adds Seller's obligation to deliver the 1996 easement termination + 2000 easement amendment at Closing; new §32 Memorandum of Contract recording right; §11.3.2 Willful Default Carve-Out added (actual damages, not just deposit refund/specific performance); §2.2/2.3 escrow now interest-bearing; §2.5 refund triggers conformed to LOI; §4.2 Phase II extension restored to 30 days + refundability; §9.2 adds MAC clause (h) and 75% occupancy vacancy cross-default (i); §12 casualty threshold reverted 10%→5%; §15.1 rep survival 6→12 months; stale §26 offer-expiration date and recital month corrected; §7 typo fixed.",
+      "nextAction": "[2026-07-24 — SEND CONFIRMED by Gabriel; supersedes the 07-21 'not sent' note below.] The PSA WAS sent. Eric transmitted the PSA with minor modifications to William J. Patterson (Seller's counsel, wpatterson@kmklaw.com) on 2026-07-23 14:51 UTC, subject 'RE: 754 Old State PSA', with attachment. The open item is therefore with SELLER'S COUNSEL, not with ORA: awaiting Patterson's turn on the modified PSA. Aging for this deal is computed from the live Outlook thread by ora-deal-aging-sla; per Gabriel 2026-08-03 no elapsed-day count or threshold verdict is to be recorded in this field. Parallel workstream: Clermont Twp PD/parking-easement question with Craig Flaute (CFlaute@utclermont.gov) — Twp confirmed 07-21 the cross-access easement was not part of the original PD agreement. Broker Josh Gerth (JLL) pressing to get the PSA signed. STILL OPEN and NOT unilaterally draftable — need Gabriel's input: exact vacancy % threshold in §9.2(i) (75% placeholder used), the new §26 offer-expiration date (8/15/2026 placeholder), and the west-side replacement easement (Register Item 1, separate workstream). ——— [2026-07-21 PM — SEND-STATUS SUPERSEDED, terms detail retained for the record] Formal redline drafted and staged for Gabriel's review: '754 Old State Route 74 PSA Redline 07-2026.docx' (deal folder). Tracked-change edits: §4.1 Feasibility Period reverted to a clean 30-day trigger keyed off a new §31 Parking Contingency Period (implementing Patterson's actual 30-day-pre-DD structure, replacing the broken PUD-modification language); §31 also adds Seller's obligation to deliver the 1996 easement termination + 2000 easement amendment at Closing; new §32 Memorandum of Contract recording right; §11.3.2 Willful Default Carve-Out added (actual damages, not just deposit refund/specific performance); §2.2/2.3 escrow now interest-bearing; §2.5 refund triggers conformed to LOI; §4.2 Phase II extension restored to 30 days + refundability; §9.2 adds MAC clause (h) and 75% occupancy vacancy cross-default (i); §12 casualty threshold reverted 10%→5%; §15.1 rep survival 6→12 months; stale §26 offer-expiration date and recital month corrected; §7 typo fixed.",
       "owner": "Gabriel Goldberg",
       "targetCloseDate": null,
       "confidential": true,
@@ -6989,9 +6991,9 @@
   "governors": null,
   "marketRents": {},
   "workbookTotals": {
-    "noi": 3846260.7399999998,
-    "value": 58696999.617382616,
-    "rent": 5634879.600000001
+    "noi": 3786400.96,
+    "value": 57733991.47452547,
+    "rent": 5576536.680000002
   },
   "dataQuality": []
 }
