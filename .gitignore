@@ -24,6 +24,9 @@ data/alert-inbox.json
 data/__test-alert-inbox.json
 data/outbox/
 data/brief-health.json
+# Mirror-deploy run beacon — per-machine run state written by scripts/deploy-mirror.ps1,
+# read by scripts/mirror-run-classify.ps1. Machine state, never repo content.
+data/_state/
 # Financial warehouse — immutable raw copies + sqlite ledger, rebuilt by `npm run warehouse:backfill`, never committed
 data/warehouse/
 # Persisted document RAG index — built offline by `npm run index:docs`, never committed
