@@ -126,6 +126,15 @@
       "review_needed": true,
       "review_detail": "Touches Architect-owned surfaces: server/warehouse/migrations/ (023_debt_rate_reset.sql, additive columns only) and src/contracts/debt.ts (new response schemas, additive only). Governor constants referenced read-only via loadGovernors + ALERT_THRESHOLDS.ltvCeiling - no redefinition. Branch not pushed; Gabriel confirms before any PR/merge.",
       "last_updated": "2026-07-18T00:00:00Z"
+    },
+    "compassionate-pike-3d7a86": {
+      "agent_role": "Integration Agent — Claude Code Opus 5",
+      "phase": "Deals data-quality remediation — seed↔Notion join key (duplicate contradictory rows) + stale confidential flag; handoff from the 2026-08-04 ora-am-brief run",
+      "status": "review_needed",
+      "blocked_by": "data/snapshots/portfolio.json — needs a REAL bake (npm run extract with live NOTION_TOKEN); a worktree bake would collapse deals[] to the 6 seed rows",
+      "review_needed": true,
+      "review_detail": "Touches src/data/seed-deals.ts (confidential-flag source of truth) and adds a declassification allowlist gating Hard Invariant 3. Scope ratified by Gabriel in-session 2026-08-04 (Pendleton/2146 = passed, E. Fulton declassified, join-key code fix + gate detector, both residuals). Awaiting: Gabriel bake of portfolio.json, then reconcile:snapshot goes green.",
+      "last_updated": "2026-08-04T00:00:00Z"
     }
   },
   "phase-4-steps-5-7-8-9": {
