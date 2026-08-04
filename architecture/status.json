@@ -131,9 +131,9 @@
       "agent_role": "Integration Agent — Claude Code Opus 5",
       "phase": "Deals data-quality remediation — seed↔Notion join key (duplicate contradictory rows) + stale confidential flag; handoff from the 2026-08-04 ora-am-brief run",
       "status": "review_needed",
-      "blocked_by": "data/snapshots/portfolio.json — needs a REAL bake (npm run extract with live NOTION_TOKEN); a worktree bake would collapse deals[] to the 6 seed rows",
+      "blocked_by": null,
       "review_needed": true,
-      "review_detail": "Touches src/data/seed-deals.ts (confidential-flag source of truth) and adds a declassification allowlist gating Hard Invariant 3. Scope ratified by Gabriel in-session 2026-08-04 (Pendleton/2146 = passed, E. Fulton declassified, join-key code fix + gate detector, both residuals). Awaiting: Gabriel bake of portfolio.json, then reconcile:snapshot goes green.",
+      "review_detail": "Code fix + re-baked snapshot both landed. Gate green (governance/typecheck/lint/check:dev-css/reconcile:snapshot/reconcile/warehouse:verify); only known-flaky bash-guard wall-clock test fails under load. Awaiting Gabriel review of the seed-flag change and the new PUBLIC_DEAL_IDS allowlist (Hard Invariant 3 surface). Allowlist ships EMPTY by design.",
       "last_updated": "2026-08-04T00:00:00Z"
     }
   },
