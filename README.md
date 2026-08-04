@@ -52,8 +52,8 @@ flowchart TB
         BAKE["scripts/bake-mirror.ts\nredacts confidential deals by default"]
         BUILD["vite build → dist/"]
         PAGES["Cloudflare Pages\nora-command-center.pages.dev\nbehind Cloudflare Access"]
-        FUNC["functions/api/ai.ts\nPages Function — Ask panel on the mirror"]
-        CI[".github/workflows/ci.yml\ntypecheck + lint + test + build (gate:ci)"]
+        FUNC["functions/api/*\nPages Functions on the mirror:\nai.ts (Ask panel), whoami.ts (Access\nidentity), warehouse/acquisition/score.ts\n(edge-portable acquisition scoring)"]
+        CI[".github/workflows/ci.yml\ntypecheck + lint + test + snapshot\nreconciliation + build + bundle budget\n(gate:ci)"]
     end
 
     WB -- watched --> PARSE --> WATCH
@@ -90,8 +90,11 @@ flowchart TB
 - **Spine B — "Time Dimension"**: a SQLite financial warehouse (`server/warehouse/`) built by
   ingesting 32 property P&L files, used for historical NOI trend, drivers, benchmarks, health
   scores, debt scoring, tax analysis, capital allocation, and the acquisition-underwriting engine.
-  `Property.noi` (Spine A) and the warehouse ledger NOI (Spine B) are independent computations
-  with no automatic reconciliation — a known, deliberately-flagged structural gap.
+  `Property.noi` (Spine A) and the warehouse ledger NOI (Spine B) are independent computations.
+  A local-only gate (`npm run reconcile:noi-crosscheck`, wired into `npm run gate` — not
+  `gate:ci`, since CI has no live workbook or warehouse DB) cross-checks them per property and
+  fails on material drift; in-band drift and structurally-expected mismatches (e.g. a
+  newly-acquired property pre-ingest) warn without failing.
 
 ## 3. Directory structure
 
