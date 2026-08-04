@@ -147,20 +147,43 @@ function Get-DeployBeacon {
   }
 }
 
+function Format-BeaconReasonSuffix {
+  <#
+    Render a beacon's recorded reason as a sentence suffix, or as nothing at all when it is
+    empty.
+
+    WHY (2026-08-04): the verdict text interpolated $Beacon.reason unconditionally, but
+    Write-DeployBeaconEnd defaults -Reason to '', so a beacon can legitimately carry an empty
+    one. The result was a ": ." stranded mid-sentence -- observed live in the 11:00 run's
+    verdict. An absent reason must read as absent, not as punctuation.
+  #>
+  param([string]$Reason)
+  if ([string]::IsNullOrWhiteSpace($Reason)) { return '' }
+  ": $Reason"
+}
+
 function Get-MirrorRunVerdict {
   <#
     Classify the last mirror-deploy run. All inputs are injected so this is testable without a
     real event log or a real scheduled task.
 
     Verdicts:
-      HEALTHY                 -- rc=0 and this run wrote a fresh success beacon.
-      ALARM_SILENT_INCOMPLETE -- rc=0 but the script never reached its exit path. Windows says
-                                 success; the script disagrees. Nothing detected this before.
-      ALARM_SCRIPT_FAILED     -- rc!=0 and the script threw. It already self-alerted; this
-                                 confirms rather than discovers.
-      BENIGN_INTERRUPTED      -- killed mid-run, with a power/session event that explains it.
-      ALARM_UNEXPLAINED_KILL  -- killed mid-run with nothing to explain it.
-      INDETERMINATE           -- no readable beacon. Never fabricate HEALTHY from this.
+      HEALTHY                       -- rc=0 and this run wrote a fresh success beacon.
+      ALARM_SILENT_INCOMPLETE       -- rc=0 but the script never reached its exit path. Windows
+                                       says success; the script disagrees.
+      ALARM_SCRIPT_FAILED           -- the script threw and reached its catch. It already
+                                       self-alerted; this confirms rather than discovers.
+      BENIGN_KILLED_AFTER_COMPLETION-- rc!=0, but THIS run's beacon already recorded
+                                       outcome=success: the deploy published and only teardown
+                                       was killed. The mirror is not stale. Silent.
+      BENIGN_INTERRUPTED            -- killed mid-run, with a power/session event that explains it.
+      ALARM_UNEXPLAINED_KILL        -- killed mid-run with nothing to explain it.
+      INDETERMINATE                 -- no readable beacon. Never fabricate HEALTHY from this.
+
+    A note on beacon FRESHNESS, because it is the whole subject of the 2026-08-04 fix: the
+    beacon is a single file that each run overwrites, so "a completed beacon exists" and "THIS
+    run completed" are different claims. Both rc branches must therefore test freshness before
+    reading anything else out of the beacon. Only the rc=0 branch used to.
   #>
   param(
     $Beacon,
@@ -200,7 +223,7 @@ function Get-MirrorRunVerdict {
     if ($Beacon.outcome -eq 'failed') {
       return [pscustomobject]@{
         verdict = 'ALARM_SCRIPT_FAILED'
-        reason  = "Windows reported rc=0 but the script recorded outcome='failed': $($Beacon.reason)"
+        reason  = "Windows reported rc=0 but the script recorded outcome='failed'$(Format-BeaconReasonSuffix $Beacon.reason)."
         correlatingEvent = $null
       }
     }
@@ -208,12 +231,59 @@ function Get-MirrorRunVerdict {
   }
 
   # rc != 0 from here down.
-  if (-not $killed) {
+  #
+  # FRESHNESS IS NOT OPTIONAL ON THIS SIDE EITHER (2026-08-04). This branch used to test only
+  # $killed -- i.e. only the beacon's status -- so a 'completed' beacon left by ANY earlier run
+  # made $killed false and short-circuited straight to ALARM_SCRIPT_FAILED, never reaching the
+  # correlation logic below. The rc=0 branch above has always applied the freshness test
+  # (scenario 2c); this one did not, and the asymmetry was the bug.
+  #
+  # What it cost, live: the 11:00:01 run on 2026-08-04 was killed at 11:00:29, 28 seconds in --
+  # before Write-DeployBeaconStart could run -- so it left no beacon. The classifier read the
+  # 10:00 run's completed/success beacon and announced "Script threw and reached its exit path
+  # (outcome=success)", which is incoherent (killed is not threw, success is not a failure), and
+  # directed the reader to a Send-DeployFailureAlert email that could not exist. Step 5 of the
+  # drift-check SKILL reads a missing self-alert as a broken send path and "the bigger finding",
+  # so the bad text invented a second incident to chase -- while masking the real one: that run
+  # was the THIRD unexplained kill in four days (08-01 13:01, 08-03 20:05, 08-04 11:00), and it
+  # went into the log as a script failure instead.
+  $hasBeaconForThisRun = (-not $killed) -and $beaconIsFresh
+
+  if ($hasBeaconForThisRun -and $Beacon.outcome -eq 'success') {
+    # Killed AFTER this run recorded success. Write-DeployBeaconEnd -Outcome 'success' sits past
+    # the wrangler deploy, which throws on a non-zero exit, so a fresh success beacon is positive
+    # proof the mirror actually published -- not merely that dist/ looks fresh, which the
+    # 2026-08-03 incident established is no evidence of anything. The work is done; only teardown
+    # died, and the next hourly fire has nothing to repair.
+    #
+    # This is deliberately NOT folded into BENIGN_INTERRUPTED, and it does not widen that
+    # bucket: it is gated on this run's own success record, not on whether some power event
+    # happened to land within 90s. Modern Standby churn cannot route runs into it, which is
+    # exactly the property the correlation window lacks and why widening that window is the
+    # failure direction that silences the check. Scenario 2o pins the gate.
     return [pscustomobject]@{
-      verdict = 'ALARM_SCRIPT_FAILED'
-      reason  = "Script threw and reached its exit path (outcome=$($Beacon.outcome)): $($Beacon.reason). Send-DeployFailureAlert should have already fired."
+      verdict = 'BENIGN_KILLED_AFTER_COMPLETION'
+      reason  = "Run recorded outcome=success at $($Beacon.finishedAt), then the process was killed (rc=$LastTaskResult) during teardown. The deploy had already published, so the mirror is NOT stale and no action is needed. The script did not fail and did not throw -- no Send-DeployFailureAlert was sent, and none should be looked for."
       correlatingEvent = $null
     }
+  }
+
+  if ($hasBeaconForThisRun) {
+    return [pscustomobject]@{
+      verdict = 'ALARM_SCRIPT_FAILED'
+      reason  = "Script threw and reached its exit path (outcome=$($Beacon.outcome))$(Format-BeaconReasonSuffix $Beacon.reason). Send-DeployFailureAlert should have already fired."
+      correlatingEvent = $null
+    }
+  }
+
+  # No usable record of THIS run: either the beacon is still 'running', or it belongs to an
+  # earlier run. Both mean the same thing here -- nothing tells us how far this run got -- so
+  # both take the correlation path below rather than being reported as a script failure.
+  # Gated on freshness ALONE, not on status: two kills in a row leave a stale 'running' beacon
+  # from the previous run, which is just as misleading to a reader as a stale 'completed' one.
+  $staleNote = ''
+  if (-not $beaconIsFresh) {
+    $staleNote = " The beacon on disk is from an earlier run (beacon startedAt $($Beacon.startedAt), this run started $RunStartedAt), so this run left no completion record of its own and the beacon says nothing about it."
   }
 
   # Killed mid-run. Look for something that explains it, anchored to the run's END -- not its
@@ -238,14 +308,14 @@ function Get-MirrorRunVerdict {
   if ($match) {
     return [pscustomobject]@{
       verdict = 'BENIGN_INTERRUPTED'
-      reason  = "Run was killed (rc=$LastTaskResult) by machine lifecycle: '$($match.Label)' (event $($match.Id)) at $($match.TimeCreated), $([math]::Round([math]::Abs(($match.TimeCreated - $RunEndedAt).TotalSeconds)))s from the run's end. The next hourly fire re-bakes; no action needed."
+      reason  = "Run was killed (rc=$LastTaskResult) by machine lifecycle: '$($match.Label)' (event $($match.Id)) at $($match.TimeCreated), $([math]::Round([math]::Abs(($match.TimeCreated - $RunEndedAt).TotalSeconds)))s from the run's end. The next hourly fire re-bakes; no action needed.$staleNote"
       correlatingEvent = $match
     }
   }
 
   return [pscustomobject]@{
     verdict = 'ALARM_UNEXPLAINED_KILL'
-    reason  = "Run was killed (rc=$LastTaskResult) mid-flight with NO power/session event within ${script:BeaconCorrelationWindowSeconds}s of the run's end ($RunEndedAt). Something other than normal machine lifecycle terminated the deploy."
+    reason  = "Run was killed (rc=$LastTaskResult) mid-flight with NO power/session event within ${script:BeaconCorrelationWindowSeconds}s of the run's end ($RunEndedAt). Something other than normal machine lifecycle terminated the deploy.$staleNote"
     correlatingEvent = $null
   }
 }

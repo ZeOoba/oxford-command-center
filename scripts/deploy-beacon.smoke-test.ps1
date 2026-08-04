@@ -15,11 +15,14 @@
       restart at 11:28:21, eight seconds later).
     * 2026-08-01 13:01:37 -- NO correlating power/session event anywhere near it. Genuinely
       unexplained; this is the one that must still alarm.
+    * 2026-08-04 11:00:01 -- also unexplained, and originally MISCLASSIFIED as
+      ALARM_SCRIPT_FAILED because the run was killed before it could write a beacon and the
+      classifier read the PREVIOUS hour's beacon as this run's. See Part 2b and fixture 3d.
 
   So the requirement is not "detect kills" (they are mostly benign machine lifecycle) but
   "tell a benign environmental interruption apart from an unexplained one, and never go
-  silent on the latter". Scenarios 8a-8c below replay all three real incidents as
-  regression fixtures.
+  silent on the latter". Scenarios 3a-3d below replay all four real incidents as regression
+  fixtures.
 
   This repo has no Pester/.Tests.ps1 convention for PowerShell (same as
   deploy-mirror.smoke-test.ps1), so this is a plain run-by-hand assertion script rather than
@@ -102,8 +105,8 @@ Assert-True ($null -eq (Get-DeployBeacon -BeaconPath (Join-Path $scratch 'corrup
 # ---------------------------------------------------------------------------
 
 function New-Beacon {
-  param($Status, $Outcome, $StartedAt, $FinishedAt)
-  [pscustomobject]@{ status = $Status; outcome = $Outcome; startedAt = $StartedAt; finishedAt = $FinishedAt; reason = $null }
+  param($Status, $Outcome, $StartedAt, $FinishedAt, $Reason = $null)
+  [pscustomobject]@{ status = $Status; outcome = $Outcome; startedAt = $StartedAt; finishedAt = $FinishedAt; reason = $Reason }
 }
 
 $start = [datetime]'2026-08-03 14:00:00'
@@ -173,7 +176,127 @@ $v = Get-MirrorRunVerdict -Beacon $null -LastTaskResult 0 -RunStartedAt $start -
 Assert-Equal 'INDETERMINATE' $v.verdict '2h: no beacon -> INDETERMINATE'
 
 # ---------------------------------------------------------------------------
-# Part 3 -- regression fixtures: the three REAL 2026-08 incidents
+# Part 2b -- rc!=0 when the beacon did NOT come from this run (2026-08-04 defect)
+#
+# The rc=0 path has always tested beacon FRESHNESS (scenario 2c). The rc!=0 path tested only
+# status, so a 'completed' beacon left behind by ANY earlier run made $killed false and
+# short-circuited every kill straight to ALARM_SCRIPT_FAILED, never reaching the correlation
+# logic at all.
+#
+# Live consequence, 2026-08-04 11:00:01: a run killed 28 seconds in -- before
+# Write-DeployBeaconStart at deploy-mirror.ps1:146 ever executed -- was reported as "Script
+# threw and reached its exit path (outcome=success)". That is self-contradictory on its face
+# (killed is not threw; outcome=success is not a failure), and it told the reader a
+# Send-DeployFailureAlert email should have arrived. None could: the script never threw. Step 5
+# of the drift-check SKILL says a missing self-alert means the send path is itself broken and
+# is "the bigger finding" -- so the bad verdict text manufactured a phantom second incident to
+# go chase. Worse, it hid a real one (see 3d).
+#
+# The principle: a stale beacon carries exactly as much information about THIS run as no beacon
+# at all -- none. It must route to the same correlation logic a 'running' beacon does.
+# ---------------------------------------------------------------------------
+
+$staleStart = [datetime]'2026-08-03 13:00:00'
+$staleEnd   = [datetime]'2026-08-03 13:05:00'
+
+# 2j: routing to correlation must not silently become "always alarm". An ordinary reboot
+# mid-run is benign whether or not the run got far enough to leave a beacon of its own.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'completed' 'success' $staleStart $staleEnd) `
+                          -LastTaskResult 3221225786 -RunStartedAt $start -RunEndedAt $end `
+                          -EnvironmentalEvents @([pscustomobject]@{ TimeCreated = $end.AddSeconds(8); Id = 1074; Label = 'restart initiated' })
+Assert-Equal 'BENIGN_INTERRUPTED' $v.verdict '2j: kill + STALE beacon + correlating event -> BENIGN_INTERRUPTED'
+
+# 2k: THE 08-04 SHAPE. Stale completed/success beacon, killed, nothing explains it.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'completed' 'success' $staleStart $staleEnd) `
+                          -LastTaskResult 3221225786 -RunStartedAt $start -RunEndedAt $end -EnvironmentalEvents @()
+Assert-Equal 'ALARM_UNEXPLAINED_KILL' $v.verdict '2k: kill + STALE beacon + no event -> ALARM_UNEXPLAINED_KILL'
+Assert-True ($v.reason -notlike '*Send-DeployFailureAlert*') '2k: reason does not send the reader hunting a self-alert email'
+Assert-True ($v.reason -notlike '*threw*')                   '2k: reason does not claim the script threw'
+Assert-True ($v.reason -like '*earlier run*')                '2k: reason says why the beacon on disk was disregarded'
+
+# 2l: a stale FAILED beacon must not be pinned on this run either. Otherwise a throw from an
+# hour ago gets reported as this run's failure, with the same phantom-alert-email advice, and
+# the actual kill goes unclassified.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'completed' 'failed' $staleStart $staleEnd -Reason 'GATE CHECK FAILED') `
+                          -LastTaskResult 3221225786 -RunStartedAt $start -RunEndedAt $end -EnvironmentalEvents @()
+Assert-Equal 'ALARM_UNEXPLAINED_KILL' $v.verdict '2l: kill + STALE failed beacon -> ALARM_UNEXPLAINED_KILL, not ALARM_SCRIPT_FAILED'
+
+# 2m: killed during TEARDOWN, after this run recorded success. Write-DeployBeaconEnd -Outcome
+# 'success' sits past the wrangler deploy, which throws on a non-zero exit, so a FRESH success
+# beacon is positive proof the mirror actually published. The work is done; only teardown died.
+# This is the case the 08-04 report hypothesised -- it was not what happened that morning, but
+# it is independently reachable (killed between deploy-mirror.ps1:274 and process exit) and the
+# old code produced the same wrong text for it.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'completed' 'success' $start $end) `
+                          -LastTaskResult 3221225786 -RunStartedAt $start -RunEndedAt $end -EnvironmentalEvents @()
+Assert-Equal 'BENIGN_KILLED_AFTER_COMPLETION' $v.verdict '2m: kill + FRESH success beacon -> BENIGN_KILLED_AFTER_COMPLETION'
+
+# 2n: and it must not claim a self-alert email exists (defect 1 of the 08-04 report).
+Assert-True ($v.reason -notlike '*Send-DeployFailureAlert should*') '2n: does not claim a failure alert should have fired'
+Assert-True ($v.reason -notlike '*threw*')                          '2n: does not claim the script threw'
+Assert-True ($v.reason -like '*NOT stale*')                         '2n: states plainly that the mirror is not stale'
+
+# 2o: this verdict is gated on the beacon ALONE, never on a nearby power event. That is exactly
+# what keeps it from becoming the creeping-silence failure a wider correlation window would be:
+# no amount of Modern Standby churn can route a run into it, because the gate is this run's own
+# success record. It must therefore classify identically with a far-away event present (2m had
+# none) -- if this ever starts depending on $EnvironmentalEvents, the gate has moved.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'completed' 'success' $start $end) `
+                          -LastTaskResult 3221225786 -RunStartedAt $start -RunEndedAt $end `
+                          -EnvironmentalEvents @([pscustomobject]@{ TimeCreated = $end.AddMinutes(30); Id = 507; Label = 'standby exit' })
+Assert-Equal 'BENIGN_KILLED_AFTER_COMPLETION' $v.verdict '2o: verdict comes from the beacon, not from event correlation'
+
+# 2p: a FRESH failed beacon still means the script threw and self-alerted. 2d must not regress
+# -- the new silent verdict is scoped to outcome=success and nothing else.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'completed' 'failed' $start $end -Reason 'wrangler deploy failed (1)') `
+                          -LastTaskResult 3221225786 -RunStartedAt $start -RunEndedAt $end -EnvironmentalEvents @()
+Assert-Equal 'ALARM_SCRIPT_FAILED' $v.verdict '2p: kill rc + FRESH failed beacon -> still ALARM_SCRIPT_FAILED'
+Assert-True ($v.reason -like '*wrangler deploy failed (1)*') '2p: the recorded failure reason is quoted'
+
+# 2q: DANGLING PUNCTUATION (defect 2 of the 08-04 report). Write-DeployBeaconEnd defaults
+# -Reason to '', so a beacon can legitimately carry an empty reason; interpolating it
+# unconditionally produced a ": ." stranded mid-sentence. Empty must render as absent, not as
+# punctuation.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'completed' 'failed' $start $end -Reason '') `
+                          -LastTaskResult 3221225786 -RunStartedAt $start -RunEndedAt $end -EnvironmentalEvents @()
+Assert-Equal 'ALARM_SCRIPT_FAILED' $v.verdict '2q: empty reason still classifies as ALARM_SCRIPT_FAILED'
+Assert-True ($v.reason -notlike '*: .*') '2q: empty beacon reason leaves no dangling ": ."'
+
+# 2r: the rc=0 branch interpolates the reason the same way and needs the same guard. Its
+# sentence has no trailing period, so an empty reason strands a hanging "...outcome='failed': "
+# instead of a ": ." -- a different shape of the same defect, which is why this asserts on the
+# trailing colon rather than reusing 2q's pattern.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'completed' 'failed' $start $end -Reason '') `
+                          -LastTaskResult 0 -RunStartedAt $start -RunEndedAt $end -EnvironmentalEvents @()
+Assert-Equal 'ALARM_SCRIPT_FAILED' $v.verdict '2r: rc=0 + failed beacon still ALARM_SCRIPT_FAILED'
+Assert-True ($v.reason -notlike '*: .*')                  '2r: rc=0 branch leaves no dangling ": ."'
+Assert-True (-not $v.reason.TrimEnd().EndsWith(':'))      '2r: rc=0 branch leaves no hanging trailing colon'
+
+# 2t: TWO KILLS IN A ROW. The previous run was killed and left a stale 'running' beacon; this
+# run was killed too. The verdict was already right (a 'running' beacon takes the correlation
+# path regardless), but the reason must still tell the reader the beacon on disk is not this
+# run's -- otherwise they read a 'running' beacon as evidence about a run it has nothing to do
+# with. Freshness, not status, is what makes a beacon worth quoting.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null $staleStart $null) `
+                          -LastTaskResult 3221225786 -RunStartedAt $start -RunEndedAt $end -EnvironmentalEvents @()
+Assert-Equal 'ALARM_UNEXPLAINED_KILL' $v.verdict '2t: kill + stale RUNNING beacon -> ALARM_UNEXPLAINED_KILL'
+Assert-True ($v.reason -like '*earlier run*') '2t: reason still flags the beacon as belonging to an earlier run'
+
+# 2u: the converse -- a FRESH running beacon is this run's own, so it must NOT be disclaimed.
+# If this ever starts printing the stale note, the gate has inverted and every ordinary
+# mid-run kill would tell the reader to distrust a beacon that is in fact correct.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null $start $null) `
+                          -LastTaskResult 3221225786 -RunStartedAt $start -RunEndedAt $end -EnvironmentalEvents @()
+Assert-Equal 'ALARM_UNEXPLAINED_KILL' $v.verdict '2u: kill + FRESH running beacon -> ALARM_UNEXPLAINED_KILL'
+Assert-True ($v.reason -notlike '*earlier run*') '2u: a fresh beacon is NOT disclaimed as stale'
+
+# 2s: and the same branch must still quote a reason when there IS one.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'completed' 'failed' $start $end -Reason 'GATE CHECK INCONCLUSIVE') `
+                          -LastTaskResult 0 -RunStartedAt $start -RunEndedAt $end -EnvironmentalEvents @()
+Assert-True ($v.reason -like '*GATE CHECK INCONCLUSIVE*') '2s: rc=0 branch still quotes a non-empty reason'
+
+# ---------------------------------------------------------------------------
+# Part 3 -- regression fixtures: the four REAL 2026-08 incidents
 # ---------------------------------------------------------------------------
 
 # 3a: 2026-08-01 10:06:18 -- Modern Standby exit at 10:06:08, ten seconds before the kill.
@@ -204,6 +327,30 @@ $v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null ([datetime]'2026-0
                           -RunEndedAt   ([datetime]'2026-08-01 13:01:37') `
                           -EnvironmentalEvents @([pscustomobject]@{ TimeCreated = [datetime]'2026-08-01 13:06:00'; Id = 105; Label = 'power source change' })
 Assert-Equal 'ALARM_UNEXPLAINED_KILL' $v.verdict '3c: real 08-01 13:01 unexplained kill -> ALARM_UNEXPLAINED_KILL'
+
+# 3d: 2026-08-04 11:00:01 -- the incident that exposed the Part 2b defect, replayed from the
+# live evidence rather than from the report's hypothesis about it.
+#
+# What actually happened: the hourly run started 11:00:01 and was killed at 11:00:29, 28
+# seconds in -- before Write-DeployBeaconStart at deploy-mirror.ps1:146 ever executed -- so it
+# wrote NO beacon of its own. The beacon sitting on disk belonged to the 10:00 run
+# (startedAt 10:00:02, finishedAt 10:04:54, completed/success); that finishedAt matches the
+# 10:00 run's Task Scheduler 201 completion event exactly, which is how the ownership was
+# pinned. The nearest System power/session event was 09:51:33 -- 4,136s away, far outside the
+# 90s window. The empty in-window result was re-run against an 08:00-13:00 window to prove it
+# was a real null and not a failed query, per the verified-null-vs-inferred-null rule.
+#
+# So this is the THIRD unexplained kill (08-01 13:01, 08-03 20:05, 08-04 11:00), and the old
+# code hid it behind ALARM_SCRIPT_FAILED -- an alarm, but for the wrong failure, pointing at a
+# non-existent email. A wrong alarm is not a safe failure mode: it consumed the reader's
+# attention on a phantom send-path outage while the real signal went unrecorded.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'completed' 'success' ([datetime]'2026-08-04 10:00:02') ([datetime]'2026-08-04 10:04:54')) `
+                          -LastTaskResult 3221225786 `
+                          -RunStartedAt ([datetime]'2026-08-04 11:00:01') `
+                          -RunEndedAt   ([datetime]'2026-08-04 11:00:29') `
+                          -EnvironmentalEvents @([pscustomobject]@{ TimeCreated = [datetime]'2026-08-04 09:51:33'; Id = 6008; Label = 'unexpected shutdown' })
+Assert-Equal 'ALARM_UNEXPLAINED_KILL' $v.verdict '3d: real 08-04 11:00 stale-beacon kill -> ALARM_UNEXPLAINED_KILL'
+Assert-True ($v.reason -notlike '*Send-DeployFailureAlert*') '3d: reason promises no self-alert email that never fired'
 
 # ---------------------------------------------------------------------------
 # Part 4 -- Test-MirrorRepoAhead (the 2026-08-03 blind spot)
