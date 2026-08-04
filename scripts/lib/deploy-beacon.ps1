@@ -36,6 +36,15 @@ $script:BeaconCorrelationWindowSeconds = 90
 # belonging to an EARLIER run, i.e. this run produced no beacon at all.
 $script:BeaconFreshnessToleranceSeconds = 120
 
+# At or above this many unpushed commits, being ahead of origin stops being a hygiene note
+# and becomes an alarm. Set to 3 by Gabriel 2026-08-03. WHY a threshold rather than "any
+# ahead > 0 pages": ora-lease-snapshot-refresh auto-commits data/snapshots/portfolio.json up
+# to 3x/weekday and is instructed never to push, so ahead=1..2 is the EXPECTED steady state.
+# Paging on it would over-fire daily and train the reader to ignore the alert -- the identical
+# failure mode the blanket "rc != 0 is an ALARM" rule was rolled back for in v1.2. Do not
+# lower this to 1 without also changing that no-push rule; the two settings are coupled.
+$script:MirrorAheadEscalationThreshold = 3
+
 function Get-DeployBeaconPath {
   <# Default beacon location. data/_state/ is gitignored -- this is machine state, not repo content. #>
   param([string]$RepoRoot)
@@ -252,12 +261,31 @@ function Test-MirrorRepoAhead {
     different hazards and the check needs both.
   #>
   param([Parameter(Mandatory)][int]$AheadCount)
+  $threshold = $script:MirrorAheadEscalationThreshold
   if ($AheadCount -le 0) {
-    return [pscustomobject]@{ isAhead = $false; severity = 'OK'; reason = 'Local main is not ahead of origin/main.' }
+    return [pscustomobject]@{
+      isAhead   = $false
+      severity  = 'OK'
+      threshold = $threshold
+      reason    = 'Local main is not ahead of origin/main.'
+    }
+  }
+
+  # Two tiers, NOT one. FLAG = record it in the Notion row and stay silent; ESCALATE = alarm
+  # email. See $script:MirrorAheadEscalationThreshold for why the routine 1-2 case must not page.
+  $base = "Local main is $AheadCount commit(s) AHEAD of origin/main. The mirror is deploying code that is not on the remote -- unreviewable on GitHub, and lost if local main is ever reset. Push or open a PR."
+  if ($AheadCount -ge $threshold) {
+    return [pscustomobject]@{
+      isAhead   = $true
+      severity  = 'ESCALATE'
+      threshold = $threshold
+      reason    = "$base This is at or past the escalation threshold of $threshold unpushed commit(s), so it is no longer routine drift -- alarm rather than a silent Notion row."
+    }
   }
   [pscustomobject]@{
-    isAhead  = $true
-    severity = 'FLAG'
-    reason   = "Local main is $AheadCount commit(s) AHEAD of origin/main. The mirror is deploying code that is not on the remote -- unreviewable on GitHub, and lost if local main is ever reset. Push or open a PR."
+    isAhead   = $true
+    severity  = 'FLAG'
+    threshold = $threshold
+    reason    = "$base Below the escalation threshold of $threshold, so this is recorded as a hygiene note without an alarm email."
   }
 }

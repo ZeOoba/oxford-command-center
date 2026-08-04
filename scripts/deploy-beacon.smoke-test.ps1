@@ -215,7 +215,33 @@ Assert-Equal 'ALARM_UNEXPLAINED_KILL' $v.verdict '3c: real 08-01 13:01 unexplain
 
 Assert-True  (Test-MirrorRepoAhead -AheadCount 1).isAhead   '4a: 1 commit ahead is flagged'
 Assert-True  (-not (Test-MirrorRepoAhead -AheadCount 0).isAhead) '4b: 0 commits ahead is not flagged'
-Assert-Equal 'FLAG' (Test-MirrorRepoAhead -AheadCount 3).severity '4c: ahead of origin is a FLAG'
+Assert-Equal 'FLAG' (Test-MirrorRepoAhead -AheadCount 2).severity '4c: below threshold is a FLAG (Notion row only)'
+
+# Severity TIERING (2026-08-03, Gabriel ruling "option 3"). Ahead-of-origin is a hygiene
+# problem, not a broken pipeline, so it must not page on the routine case: the lease-snapshot
+# task auto-commits up to 3x/weekday and is instructed never to push, so ahead=1..2 is the
+# EXPECTED steady state and emailing on it would train the reader to ignore the alert (the
+# same over-firing failure the v1.2 rc!=0 rule was rolled back for). The threshold converts
+# the old vague SKILL.md prose -- "persists across runs or exceeds a handful of commits" --
+# into tested code, per this file's own doctrine that classification never lives in prose
+# re-derived on each run.
+Assert-Equal 'FLAG'     (Test-MirrorRepoAhead -AheadCount 1).severity  '4d: 1 ahead stays a FLAG, no email'
+Assert-Equal 'ESCALATE' (Test-MirrorRepoAhead -AheadCount 3).severity  '4e: AT the threshold escalates'
+Assert-Equal 'ESCALATE' (Test-MirrorRepoAhead -AheadCount 25).severity '4f: far above threshold escalates'
+Assert-Equal 'OK'       (Test-MirrorRepoAhead -AheadCount 0).severity  '4g: not ahead is OK, never FLAG/ESCALATE'
+
+# The threshold is exposed so the consumer reports it instead of hardcoding "3" in prose --
+# the hardcoded-baseline-list rot this task already hit twice.
+Assert-Equal 3 (Test-MirrorRepoAhead -AheadCount 5).threshold '4h: threshold is exposed on the result'
+Assert-True ((Test-MirrorRepoAhead -AheadCount 5).reason -like '*3*') '4i: escalation reason names the threshold'
+Assert-True ((Test-MirrorRepoAhead -AheadCount 5).isAhead) '4j: escalation still reports isAhead'
+
+# Boundary guard: off-by-one here silently changes when the check pages. Pin both sides.
+Assert-Equal 'FLAG'     (Test-MirrorRepoAhead -AheadCount 2).severity '4k: threshold-1 does NOT escalate'
+Assert-Equal 'ESCALATE' (Test-MirrorRepoAhead -AheadCount 4).severity '4l: threshold+1 escalates'
+
+# Negative counts are a caller bug (git rev-list can't return < 0); must not read as ahead.
+Assert-True (-not (Test-MirrorRepoAhead -AheadCount -1).isAhead) '4m: negative count is not ahead'
 
 # ---------------------------------------------------------------------------
 
