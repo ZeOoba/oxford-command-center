@@ -53,7 +53,7 @@ flowchart TB
         BUILD["vite build → dist/"]
         PAGES["Cloudflare Pages\nora-command-center.pages.dev\nbehind Cloudflare Access"]
         FUNC["functions/api/*\nPages Functions on the mirror:\nai.ts (Ask panel), whoami.ts (Access\nidentity), warehouse/acquisition/score.ts\n(edge-portable acquisition scoring)"]
-        CI[".github/workflows/ci.yml\ntypecheck + lint + test + snapshot\nreconciliation + build + bundle budget\n(gate:ci)"]
+        CI[".github/workflows/ci.yml\ntypecheck + lint + check:dev-css + test\n+ snapshot reconciliation + build\n+ bundle budget (gate:ci)"]
     end
 
     WB -- watched --> PARSE --> WATCH
