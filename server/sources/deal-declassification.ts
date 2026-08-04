@@ -11,27 +11,47 @@ import { PUBLIC_DEAL_IDS } from '../../src/data/public-deals';
 import { scanForConfidential } from '../briefing/confidential';
 
 /**
- * The identifying text a confidentiality scan must see. Deliberately more than the name: an address
- * or a lender can identify a deal on its own, and confidential-terms.json carries address- and
- * counterparty-level terms (street numbers, ownership entities) precisely for that reason.
+ * The sentinel term carried by `confidential.ts`'s FALLBACK_TERMS — the placeholder roster returned
+ * (instead of throwing) when CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1 is set and the real file is
+ * absent. Probing for it is how we detect that we are scanning against a roster with NO real terms.
+ * `loadTerms` is not exported, so this probe is the available seam.
  */
-function identifyingText(deal: Deal): string {
-  return [deal.id, deal.name, deal.shortName, deal.location, deal.lender, deal.owner]
-    .filter((s): s is string => typeof s === 'string' && s.length > 0)
-    .join(' ');
-}
+const PLACEHOLDER_SENTINEL = '__ora_confidential_placeholder__';
 
 /**
  * True only if this deal may be published. Returns false — keeping the deal confidential — for any
- * deal that is not allowlisted, that matches an active roster group, or whose roster could not be
- * read. The catch is the fail-closed leg, not defensive noise: `scanForConfidential` loads
+ * deal that is not allowlisted, that matches an active roster group, whose roster could not be read,
+ * or whose roster is the placeholder stand-in.
+ *
+ * The catch is the fail-closed leg, not defensive noise: `scanForConfidential` loads
  * confidential-terms.json and THROWS when it is absent or unreadable, and a confidentiality gate
  * that treated an unreadable roster as "nothing is confidential" would invert the invariant.
+ *
+ * PLACEHOLDER REJECTION (review 2026-08-04, CRITICAL — this gate previously failed OPEN). The throw
+ * is not the only way the roster can be missing. CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1 makes
+ * `loadTerms` return FALLBACK_TERMS instead of throwing, so the catch never fires, every real term
+ * silently fails to match, and an allowlisted deal was declared publishable with the roster never
+ * consulted. That env is a deliberate reduced-coverage concession for a briefing RENDER on a dev
+ * box; it must not carry over to a PUBLICATION decision. Verified failing-open before this guard.
+ *
+ * The whole Deal is scanned, not a hand-picked field list. An earlier version scanned only
+ * id/name/shortName/location/lender/owner and missed `status` and `nextAction` — the two long
+ * free-text fields, which in real pipeline data carry addresses, brokers and counsel names, and
+ * which bake-mirror publishes verbatim. `collectText` flattens objects, so passing the record is
+ * both simpler and strictly more conservative.
  */
 export function isDeclassified(deal: Deal, allowlist: readonly string[] = PUBLIC_DEAL_IDS): boolean {
   if (!allowlist.includes(deal.id)) return false;
   try {
-    const hit = scanForConfidential(identifyingText(deal));
+    if (scanForConfidential(PLACEHOLDER_SENTINEL)) {
+      console.warn(
+        `[deal-declassification] the confidential roster is the PLACEHOLDER stand-in ` +
+          `(CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER is set and the real file is unreadable) — refusing ` +
+          `to declassify ${deal.id}. A publication decision must never run against a disabled roster.`,
+      );
+      return false;
+    }
+    const hit = scanForConfidential(deal);
     if (hit) {
       console.warn(
         `[deal-declassification] ${deal.id} is on PUBLIC_DEAL_IDS but still matches the ACTIVE ` +

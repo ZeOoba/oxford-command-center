@@ -13,7 +13,10 @@ import type { Deal } from '@contracts/index';
  * NAMES ARE JOIN KEYS: `name` is what matches a row to its Notion counterpart
  * (server/sources/deal-name.ts). Notion's convention is "<Deal Name> — <City>, <ST>"; the locality
  * tail is stripped automatically, but the remaining name must otherwise match Notion's, or the deal
- * double-lists. checkSnapshot's near-duplicate detector fails the gate if it ever does.
+ * double-lists. checkSnapshot's near-duplicate detector catches TRAILING-token variance only
+ * ("2146 Enterprise" vs "2146 Enterprise Pkwy"); it does NOT catch abbreviation or spelling drift
+ * ("Blvd"/"Boulevard", "E."/"East"), so it is a backstop, not a guarantee — match Notion's spelling
+ * exactly rather than relying on it.
  */
 export const SEED_DEALS: Deal[] = [
   {
@@ -46,15 +49,15 @@ export const SEED_DEALS: Deal[] = [
     market: 'Columbus OH',
     sf: 202703,
     buildings: 5,
-    // ECONOMICS DELIBERATELY NULL (scrubbed 2026-08-04, Gabriel's sign-off). This row previously
-    // committed the live underwriting — $18,500,000 basis, 8.91% cap, 21% IRR, 2.57x EM, stage
-    // LOI/PSA — plus named outside counsel and the environmental consultant, to an off-machine
-    // remote. Every one of those figures was stale (the acquisition terminated; the live pipeline
-    // carries a $4M basis and status "Terminated") and, since `e_fulton` went active:false on
-    // 2026-07-09, they are no longer covered by the confidentiality egress guard either. They are
-    // null rather than refreshed on purpose: the seed's job is to be a join key, the confidential
-    // -flag carrier, and a DEGRADED fallback when Notion is unreachable — not a second, silently
-    // diverging copy of deal economics. The live values come from the Notion merge.
+    // ECONOMICS DELIBERATELY NULL (scrubbed 2026-08-04, Gabriel's sign-off — see PR #258 for the
+    // figures this replaced and why). They are null rather than refreshed on purpose: the seed's job
+    // is to be a join key, the confidential-flag carrier, and a DEGRADED fallback when Notion is
+    // unreachable — not a second, silently diverging copy of deal economics.
+    //
+    // NOTE — this nulls the SEED, not the output. mergeDeals' pick(live, seed) means the live Notion
+    // values still flow onto every surface this deal reaches, and since confidential is now false
+    // that includes the public mirror. Scrubbing here narrows what the REPO commits; it does not
+    // narrow what gets published. Those are separate decisions.
     stage: 'Dead',
     estPrice: null,
     capRate: null,

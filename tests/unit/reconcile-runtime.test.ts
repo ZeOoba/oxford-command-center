@@ -52,6 +52,16 @@ describe('checkSnapshot — runtime reconciliation', () => {
     expect(f?.issue).toContain('2146 Enterprise Pkwy');
   });
 
+  it('names the breached fields without asserting a workbook-total cause', () => {
+    // The live alert condition renders every entity==='reconciliation' flag; it must not hardcode
+    // "derived totals do not match the workbook" for a deal-naming collision.
+    const flags = checkSnapshot(base({
+      deals: [{ id: 'a', name: '2146 Enterprise' }, { id: 'b', name: '2146 Enterprise Pkwy — Twinsburg, OH' }],
+    }));
+    const f = flags.find((x) => x.field === 'deals.name')!;
+    expect(f.issue).not.toMatch(/workbook/i);
+  });
+
   it('does not flag distinct deals, or a pair the join key already unified', () => {
     const flags = checkSnapshot(base({
       deals: [
