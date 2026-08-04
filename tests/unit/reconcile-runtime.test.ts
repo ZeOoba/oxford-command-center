@@ -40,6 +40,29 @@ describe('checkSnapshot — runtime reconciliation', () => {
     expect(flags.some((f) => f.field === 'properties' && f.severity === 'error')).toBe(true);
   });
 
+  it('flags near-duplicate deal rows (error) — the seed↔Notion join-key backstop', () => {
+    const flags = checkSnapshot(base({
+      deals: [
+        { id: 'seed-x', name: '2146 Enterprise' },
+        { id: 'notion-x', name: 'REDACTED-367 — Twinsburg, OH' },
+      ],
+    }));
+    const f = flags.find((x) => x.field === 'deals.name');
+    expect(f?.severity).toBe('error');
+    expect(f?.issue).toContain('REDACTED-367');
+  });
+
+  it('does not flag distinct deals, or a pair the join key already unified', () => {
+    const flags = checkSnapshot(base({
+      deals: [
+        { id: 'a', name: 'REDACTED-185' },
+        { id: 'b', name: 'REDACTED-116' },
+        { id: 'c', name: 'REDACTED-340' },
+      ],
+    }));
+    expect(flags.some((x) => x.field === 'deals.name')).toBe(false);
+  });
+
   it('flags duplicate property ids (error) — the join-key collision backstop', () => {
     const flags = checkSnapshot(base({ properties: [{ id: 'dup' }, { id: 'dup' }, { id: 'ok' }] }));
     expect(flags.some((f) => f.field === 'properties.id' && f.severity === 'error' && /dup/.test(f.issue))).toBe(true);

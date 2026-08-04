@@ -186,6 +186,47 @@ describe('mergeDeals — name aliases (dedup a deal named differently in Notion)
   });
 });
 
+describe('mergeDeals — locality-suffix join key (regression: 2026-08-04 duplicate deal rows)', () => {
+  // Notion names pipeline rows "<Deal Name> — <City>, <ST>"; the seed uses the bare name. Nothing
+  // bridged the two, so the seed row AND the Notion row both shipped — contradicting each other on
+  // stage/next-action, and disagreeing on redaction (the unmatched Notion copy defaulted
+  // confidential:true while the seed copy stayed public).
+  it('merges a Notion row carrying the "— City, ST" tail into its seed record', () => {
+    const out = mergeDeals(
+      [deal({ id: 'pendleton', name: 'REDACTED-340', shortName: 'REDACTED-577', sf: 35_000, stage: 'Candidate', nextAction: 'LOI decision required', confidential: false })],
+      [deal({ id: 'notion-pendleton', name: 'REDACTED-340 — Indianapolis, IN', stage: 'Dead', nextAction: 'PASSED — formally passed 3/26.' })],
+      new Map(), // no aliases configured — the key itself must do this
+    );
+    expect(out).toHaveLength(1); // was 2 before the fix
+    const d = out[0]!;
+    expect(d.id).toBe('pendleton'); // seed identity kept
+    expect(d.shortName).toBe('REDACTED-577');
+    expect(d.sf).toBe(35_000); // seed value survives (Notion's was null)
+    expect(d.stage).toBe('Dead'); // live state wins
+    expect(d.nextAction).toBe('PASSED — formally passed 3/26.');
+    expect(d.confidential).toBe(false); // seed flag preserved — no phantom confidential twin
+  });
+
+  it('does not merge two genuinely different deals that share a locality', () => {
+    const out = mergeDeals(
+      [deal({ id: 's-470', name: 'REDACTED-401' })],
+      [deal({ id: 'n-511', name: 'REDACTED-116' })],
+      new Map(),
+    );
+    expect(out).toHaveLength(2);
+  });
+
+  it('still merges on an exact name match (no regression to the plain path)', () => {
+    const out = mergeDeals(
+      [deal({ id: 's1', name: 'REDACTED-398', confidential: false })],
+      [deal({ id: 'n1', name: 'REDACTED-398', stage: 'Dead' })],
+      new Map(),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]!.stage).toBe('Dead');
+  });
+});
+
 describe('parseNameAliases', () => {
   it('parses ;/newline-separated "from=>to" pairs, normalized and case-insensitive', () => {
     const m = parseNameAliases('A Deal => Seed One;  Other=>Seed Two\nbad-line-no-arrow');

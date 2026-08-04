@@ -1,6 +1,8 @@
 import type { Deal, DealStage, Market } from '../../src/contracts/index';
 import { slug } from '../../src/contracts/index';
 import { SEED_DEALS } from '../../src/data/seed-deals';
+import { dealJoinKey } from './deal-name';
+import { isDeclassified } from './deal-declassification';
 
 /**
  * Live deals adapter (Phase 6) — Notion "Acquisition Pipeline Tracker" → Deal[].
@@ -64,7 +66,13 @@ const mapMarket = (s: string | null): Market | null => (s ? (MARKET_MAP[s] ?? 'O
 const mapStage = (s: string | null): DealStage => (s ? (STAGE_MAP[s] ?? 'Candidate') : 'Candidate');
 /** Notion may store rates as 0.07 or 7 — normalize to a 0–1 decimal. */
 const asRate = (n: number | null): number | null => (n === null ? null : n > 1.5 ? n / 100 : n);
-const normName = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+/**
+ * The seed↔Notion match key. Notion names rows "<Deal Name> — <City>, <ST>" while the seed uses the
+ * bare name; dealJoinKey normalizes that anchored suffix away so the two sides join instead of
+ * double-listing (2026-08-04 — see server/sources/deal-name.ts for why this is deterministic and
+ * not a similarity match).
+ */
+const normName = dealJoinKey;
 
 // ── Notion page → Deal (exported for tests) ────────────────────────────────────
 interface NotionPage { properties?: Record<string, unknown> }
@@ -187,11 +195,15 @@ export function mergeDeals(seed: Deal[], notion: Deal[], aliases: Map<string, st
   // carries identifying data (address/price/lender) and an unmatched deal must not auto-publish
   // the moment it reaches 'Closed Won' (surviving NDA/price-confidentiality risk) — redaction must
   // not depend on the optional NOTION_CONFIDENTIAL_NAME_PATTERNS env being set. To make an
-  // unmatched deal public, add it to seed-deals.ts with confidential: false (the seed stays the
-  // flag's source of truth).
+  // unmatched deal public, either add it to seed-deals.ts with confidential: false (the seed stays
+  // the flag's source of truth for seed-matched deals) or, for a deal that never needs a seed row,
+  // add its id to src/data/public-deals.ts — see below.
+  // The ONE exit from that default (Defect 1b, 2026-08-04): an id explicitly listed in
+  // src/data/public-deals.ts AND cleared by the live confidential-terms roster. isDeclassified
+  // fails closed on an unreadable roster, so the default above still holds in every ambiguous case.
   const extras = notion
     .filter((d) => !usedKeys.has(keyOf(d.name)))
-    .map((d) => (d.confidential ? d : { ...d, confidential: true }));
+    .map((d) => (d.confidential ? d : { ...d, confidential: !isDeclassified(d) }));
   return [...merged, ...extras];
 }
 

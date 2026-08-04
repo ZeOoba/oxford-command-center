@@ -126,6 +126,15 @@
       "review_needed": true,
       "review_detail": "Touches Architect-owned surfaces: server/warehouse/migrations/ (023_debt_rate_reset.sql, additive columns only) and src/contracts/debt.ts (new response schemas, additive only). Governor constants referenced read-only via loadGovernors + ALERT_THRESHOLDS.ltvCeiling - no redefinition. Branch not pushed; Gabriel confirms before any PR/merge.",
       "last_updated": "2026-07-18T00:00:00Z"
+    },
+    "compassionate-pike-3d7a86": {
+      "agent_role": "Integration Agent — Claude Code Opus 5",
+      "phase": "Deals data-quality remediation — seed↔Notion join key (duplicate contradictory rows) + stale confidential flag; handoff from the 2026-08-04 ora-am-brief run",
+      "status": "review_needed",
+      "blocked_by": null,
+      "review_needed": true,
+      "review_detail": "Code fix + re-baked snapshot both landed. Gate green (governance/typecheck/lint/check:dev-css/reconcile:snapshot/reconcile/warehouse:verify); only known-flaky bash-guard wall-clock test fails under load. Awaiting Gabriel review of the seed-flag change and the new PUBLIC_DEAL_IDS allowlist (Hard Invariant 3 surface). Allowlist ships EMPTY by design.",
+      "last_updated": "2026-08-04T00:00:00Z"
     }
   },
   "phase-4-steps-5-7-8-9": {
