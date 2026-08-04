@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import type { Deal } from '../../src/contracts/index';
 import { mapNotionPage, mergeDeals, parseNameAliases } from '../../server/sources/notion-deals';
+import { findNearDuplicateNames } from '../../server/sources/deal-name';
 
 const page = (over: Record<string, unknown> = {}) => ({
   properties: {
@@ -224,6 +225,62 @@ describe('mergeDeals — locality-suffix join key (regression: 2026-08-04 duplic
     );
     expect(out).toHaveLength(1);
     expect(out[0]!.stage).toBe('Dead');
+  });
+});
+
+describe('mergeDeals — join-key collision must never silently drop a deal (review 2026-08-04)', () => {
+  // The locality tail is exactly how Notion disambiguates same-named assets across metros, so
+  // stripping it makes two rows collide on one key. Building `notionByKey` with `new Map(...)`
+  // kept only the LAST row, and because a matching seed row put that key into `usedKeys`, neither
+  // colliding row reached `extras` — one real deal vanished from the snapshot with no flag, and the
+  // survivor wore the other's economics under the seed's public confidential flag. That was a
+  // REGRESSION: pre-fix, neither row matched the bare seed name, so all three survived as visible
+  // duplicates. Loud duplicates beat silent data loss.
+  const seed = [deal({ id: 'seed-ebp', name: 'Enterprise Business Park', confidential: false })];
+  const notion = [
+    deal({ id: 'n-cols', name: 'Enterprise Business Park — Columbus, OH', estPrice: 1_000_000, status: 'LOI out' }),
+    deal({ id: 'n-indy', name: 'Enterprise Business Park — Indianapolis, IN', estPrice: 9_000_000, status: 'Dead' }),
+  ];
+
+  it('keeps every colliding row instead of collapsing them into one', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const out = mergeDeals(seed, notion, new Map());
+    expect(out).toHaveLength(3); // was 1 before the fix — two deals lost
+    expect(out.map((d) => d.id).sort()).toEqual(['n-cols', 'n-indy', 'seed-ebp']);
+    warn.mockRestore();
+  });
+
+  it('holds colliding rows OUT of the seed merge, so they keep the fail-closed confidential default', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const out = mergeDeals(seed, notion, new Map());
+    // The public seed row is untouched — it did not absorb a colliding deal's economics.
+    const s = out.find((d) => d.id === 'seed-ebp')!;
+    expect(s.estPrice).toBeNull();
+    expect(s.confidential).toBe(false);
+    // Both Notion rows land as extras and default confidential.
+    expect(out.find((d) => d.id === 'n-cols')!.confidential).toBe(true);
+    expect(out.find((d) => d.id === 'n-indy')!.confidential).toBe(true);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('join-key collision'));
+    warn.mockRestore();
+  });
+
+  it('leaves the surviving rows detectable, so the gate blocks rather than shipping them', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const out = mergeDeals(seed, notion, new Map());
+    expect(findNearDuplicateNames(out.map((d) => d.name), new Set()).length).toBeGreaterThan(0);
+    warn.mockRestore();
+  });
+
+  it('a locality tail after a real name segment does not over-strip into the parent deal', () => {
+    // "Foo — Bldg A - Indianapolis, IN" must strip only the locality, keeping "— Bldg A" as the
+    // building-level discriminator; otherwise a building merges into its parent.
+    const out = mergeDeals(
+      [deal({ id: 'seed-ptc', name: 'REDACTED-340', confidential: false })],
+      [deal({ id: 'n-bldg', name: 'REDACTED-340 — Bldg A - Indianapolis, IN', estPrice: 1_000_000 })],
+      new Map(),
+    );
+    expect(out).toHaveLength(2);
+    expect(out.find((d) => d.id === 'seed-ptc')!.estPrice).toBeNull();
   });
 });
 

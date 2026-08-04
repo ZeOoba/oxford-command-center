@@ -129,11 +129,11 @@
     },
     "compassionate-pike-3d7a86": {
       "agent_role": "Integration Agent — Claude Code Opus 5",
-      "phase": "Deals data-quality remediation — seed↔Notion join key (duplicate contradictory rows) + stale confidential flag; handoff from the 2026-08-04 ora-am-brief run",
+      "phase": "PR #259 — closes 2 critical + 3 high findings from the post-merge adversarial review of PR #258 (deals join-key + declassification gate)",
       "status": "review_needed",
       "blocked_by": null,
       "review_needed": true,
-      "review_detail": "Code fix + re-baked snapshot both landed. Gate green (governance/typecheck/lint/check:dev-css/reconcile:snapshot/reconcile/warehouse:verify); only known-flaky bash-guard wall-clock test fails under load. Awaiting Gabriel review of the seed-flag change and the new PUBLIC_DEAL_IDS allowlist (Hard Invariant 3 surface). Allowlist ships EMPTY by design.",
+      "review_detail": "PR #259 open: https://github.com/ZeOoba/oxford-command-center/pull/259. Fixes a fail-open confidentiality bug and a silent-data-loss regression found by a 3-agent parallel review Gabriel requested after #258 merged. Gate green (governance/typecheck/lint/check:dev-css/reconcile:snapshot); 3259/3260 tests (known-flaky bash-guard wall-clock excluded).",
       "last_updated": "2026-08-04T00:00:00Z"
     }
   },

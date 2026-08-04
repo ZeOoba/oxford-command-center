@@ -16,8 +16,10 @@ loadEnvFile();
  * Bakes the current workbook + macro into static JSON the client reads with no server —
  * powering the read-only Cloudflare mirror.
  *
- * CONFIDENTIALITY (non-negotiable): confidential deals (e.g. E. Fulton Street) are REDACTED
- * by default. They are included ONLY when MIRROR_INCLUDE_CONFIDENTIAL=1 is set explicitly,
+ * CONFIDENTIALITY (non-negotiable): deals carrying `confidential: true` are REDACTED
+ * by default. (No worked example is named here on purpose — the previous one, E. Fulton Street, was
+ * declassified 2026-07-09 and the stale reference outlived it by weeks. The flag is the contract;
+ * the current roster lives in confidential-terms.json.) They are included ONLY when MIRROR_INCLUDE_CONFIDENTIAL=1 is set explicitly,
  * which must happen ONLY for a target verified to be gated behind Cloudflare Access. A public
  * *.pages.dev deploy must always run in the default (redacted) mode.
  */

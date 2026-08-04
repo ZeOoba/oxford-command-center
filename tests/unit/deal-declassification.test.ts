@@ -21,8 +21,10 @@ const ROSTER = {
 
 let dir: string;
 const originalPath = process.env.CONFIDENTIAL_TERMS_PATH;
+const originalPlaceholder = process.env.CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER;
 
 beforeEach(() => {
+  delete process.env.CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER;
   dir = mkdtempSync(join(tmpdir(), 'ora-declass-'));
   const p = join(dir, 'terms.json');
   writeFileSync(p, JSON.stringify(ROSTER), 'utf8');
@@ -33,6 +35,8 @@ beforeEach(() => {
 afterEach(() => {
   if (originalPath === undefined) delete process.env.CONFIDENTIAL_TERMS_PATH;
   else process.env.CONFIDENTIAL_TERMS_PATH = originalPath;
+  if (originalPlaceholder === undefined) delete process.env.CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER;
+  else process.env.CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER = originalPlaceholder;
   rmSync(dir, { recursive: true, force: true });
   vi.restoreAllMocks();
 });
@@ -64,6 +68,25 @@ describe('isDeclassified — the allowlist can only subtract from the fail-close
   it('FAILS CLOSED when the roster file is unreadable — allowlist goes inert', () => {
     process.env.CONFIDENTIAL_TERMS_PATH = join(dir, 'does-not-exist.json');
     expect(isDeclassified(deal({ id: 'notion-clean', name: 'Clean Deal' }), ['notion-clean'])).toBe(false);
+  });
+
+  it('FAILS CLOSED under CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER — the roster is not really loaded', () => {
+    // Regression: this gate previously failed OPEN here. That env makes loadTerms() return the
+    // placeholder stand-in INSTEAD OF THROWING, so the catch never fired, no real term could match,
+    // and an allowlisted deal was declared publishable with the roster never consulted. The env is a
+    // reduced-coverage concession for a briefing RENDER; it must not reach a publication decision.
+    process.env.CONFIDENTIAL_TERMS_PATH = join(dir, 'does-not-exist.json');
+    process.env.CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER = '1';
+    expect(isDeclassified(deal({ id: 'notion-clean', name: 'Clean Deal' }), ['notion-clean'])).toBe(false);
+  });
+
+  it('scans the free-text fields, not just name/location — status and nextAction carry identifiers', () => {
+    // These are the two long human-typed fields, and bake-mirror publishes them verbatim on a
+    // non-confidential deal. An earlier field allowlist omitted both.
+    const viaNextAction = deal({ id: 'notion-x', name: 'Clean Deal', nextAction: 'compare basis to 9900 Quarry Rd' });
+    expect(isDeclassified(viaNextAction, ['notion-x'])).toBe(false);
+    const viaStatus = deal({ id: 'notion-y', name: 'Clean Deal', status: 'awaiting Zephyr counsel turn' });
+    expect(isDeclassified(viaStatus, ['notion-y'])).toBe(false);
   });
 
   it('defaults to the committed allowlist, which ships empty', async () => {
