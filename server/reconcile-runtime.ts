@@ -1,4 +1,5 @@
 import type { PortfolioSnapshot, DataQualityFlag } from '../src/contracts/index';
+import { findNearDuplicateNames } from './sources/deal-name';
 
 /**
  * In-process reconciliation (Phase 6, §10). Runs on every brain.refresh() and verifies the
@@ -74,6 +75,24 @@ export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
   if (new Set(propIds).size !== propIds.length) {
     const dupes = [...new Set(propIds.filter((id, i) => propIds.indexOf(id) !== i))];
     flag('properties.id', `duplicate property id(s): ${dupes.join(', ')}`);
+  }
+
+  // Deal rows must not near-duplicate each other. deals[] is assembled by MERGING the committed
+  // seed onto the live Notion pipeline on a name key, so a naming variance on either side produces
+  // TWO rows for one deal — and because unmatched Notion rows default confidential:true while the
+  // seed copy stays public, the pair also disagrees about redaction. That is how Pendleton Trade
+  // Center and REDACTED-367 shipped as contradictory duplicates (2026-08-04): one row
+  // "LOI decision required", the other "formally passed". Deleting a row does not fix it; the join
+  // key does. This is the always-on backstop that keeps it from silently regrowing.
+  const nearDupes = findNearDuplicateNames(s.deals.map((d) => d.name));
+  if (nearDupes.length > 0) {
+    flag(
+      'deals.name',
+      `${nearDupes.length} near-duplicate deal row(s) — the seed↔Notion join key did not unify: ` +
+        nearDupes.map(([a, b]) => `"${a}" ⇄ "${b}"`).join('; ') +
+        '. Fix the key (align the seed name with Notion, or add a NOTION_DEALS_NAME_ALIASES entry), ' +
+        'not the symptom — and if these are genuinely different deals, disambiguate one of the names.',
+    );
   }
 
   // Relationship-graph edges must resolve to real nodes.
