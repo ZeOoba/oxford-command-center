@@ -23,11 +23,20 @@
 [CmdletBinding()]
 param(
   [string]$TaskName = 'ORA Command Center - Mirror Deploy',
-  [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot)
+  [string]$RepoRoot
 )
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib\deploy-beacon.ps1')
+
+# Resolve the repo root HERE, in the body -- never as a param-block default. Param defaults are
+# evaluated before $PSScriptRoot is populated under `powershell -File`, so the previous
+# `[string]$RepoRoot = (Split-Path -Parent $PSScriptRoot)` died on every -File launch with
+# "Cannot bind argument to parameter 'Path' because it is an empty string" -- and -File is
+# exactly how the drift-check SKILL.md invokes this. Body-level $PSScriptRoot is populated in
+# every invocation mode, which is why the dot-source above and deploy-mirror.ps1:55 were always
+# fine. Same idiom as Get-DeployBeaconPath. Regression guard: mirror-run-classify.smoke-test.ps1.
+if (-not $RepoRoot) { $RepoRoot = Split-Path -Parent $PSScriptRoot }
 
 # System-log events that legitimately explain a mid-run kill. IDs are Windows-defined.
 $EnvEventLabels = @{
