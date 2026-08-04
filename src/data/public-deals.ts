@@ -14,11 +14,16 @@
  * lives in reviewed source rather than a runtime-editable file — an allowlist that can be mutated
  * without review is an Invariant 3 hole.
  *
- * TWO INDEPENDENT SAFETY PROPERTIES (see server/sources/deal-declassification.ts):
+ * THREE INDEPENDENT SAFETY PROPERTIES (see server/sources/deal-declassification.ts):
  *   1. An entry here is honored ONLY if the deal also fails to match any ACTIVE group in
- *      confidential-terms.json. The roster always wins; this list can never override it.
+ *      confidential-terms.json — scanning the WHOLE deal record, including the free-text
+ *      status/nextAction fields. The roster always wins; this list can never override it.
  *   2. If the terms file is missing or unreadable, the whole allowlist goes inert and every
- *      unmatched deal stays confidential. It fails closed, never open.
+ *      unmatched deal stays confidential.
+ *   3. If the roster loaded is the PLACEHOLDER stand-in (CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1
+ *      with the real file absent), the allowlist is likewise inert. Property 2 alone was NOT
+ *      sufficient — that env makes the loader return a stub instead of throwing, so the gate
+ *      failed OPEN until this was added (caught in review 2026-08-04, before any entry existed).
  *
  * Ids are the merged snapshot ids (`notion-<slug of the Notion Deal Name>`). Deliberately EMPTY:
  * populating it is a per-deal call for Gabriel, not an inference from a deal's stage — "Dead" is

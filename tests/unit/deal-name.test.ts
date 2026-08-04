@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stripLocalitySuffix, dealJoinKey, findNearDuplicateNames } from '../../server/sources/deal-name';
+import { stripLocalitySuffix, dealJoinKey, findNearDuplicateNames, parseAcceptedNearDupes } from '../../server/sources/deal-name';
 
 describe('stripLocalitySuffix — Notion "<Deal Name> — <City>, <ST>" convention', () => {
   it('strips an anchored "— City, ST" tail', () => {
@@ -29,6 +29,16 @@ describe('stripLocalitySuffix — Notion "<Deal Name> — <City>, <ST>" conventi
   it('never strips a name down to nothing', () => {
     expect(stripLocalitySuffix('— Columbus, OH')).toBe('— Columbus, OH');
   });
+
+  it('strips ONLY the locality tail when an earlier dash segment exists (regression)', () => {
+    // The locality body must exclude "-" as well as the em/en dashes. With "-" allowed, the leftmost
+    // em dash matched and the body swallowed the building segment, collapsing a building-level deal
+    // into its parent — a silent wrong merge. Caught in review 2026-08-04.
+    expect(stripLocalitySuffix('Pendleton Trade Center — Bldg A - Indianapolis, IN'))
+      .toBe('Pendleton Trade Center — Bldg A');
+    expect(dealJoinKey('Pendleton Trade Center — Bldg A - Indianapolis, IN'))
+      .not.toBe(dealJoinKey('Pendleton Trade Center'));
+  });
 });
 
 describe('dealJoinKey', () => {
@@ -56,8 +66,34 @@ describe('findNearDuplicateNames — the regrowth tripwire', () => {
     expect(findNearDuplicateNames(['470 McCormick Blvd', '511 Industrial Mile Road'])).toHaveLength(0);
   });
 
-  it('does not flag a pair the join key already unifies (they collapse to one row upstream)', () => {
-    expect(findNearDuplicateNames(['Pendleton Trade Center'])).toHaveLength(0);
+  it('does not flag a pair the join key already unifies', () => {
+    // The previous version of this test passed a ONE-element list, which cannot produce a pair and
+    // so asserted nothing (caught in review 2026-08-04). Two names that unify is the real case.
+    expect(dealJoinKey('Pendleton Trade Center')).toBe(dealJoinKey('Pendleton Trade Center — Indianapolis, IN'));
+    expect(findNearDuplicateNames(['Pendleton Trade Center', 'Pendleton Trade Center — Indianapolis, IN'])).toHaveLength(1);
+    // ...and it is exactly ONE pair, not a silent drop — mergeDeals collapses it; the detector's job
+    // is only to notice that two rows reached the snapshot still unmerged.
+  });
+
+  it('reports EVERY colliding pair, not just the first', () => {
+    const pairs = findNearDuplicateNames(['Alpha Park', 'Alpha Park Two', 'Beta Yard', 'Beta Yard North']);
+    expect(pairs).toHaveLength(2);
+  });
+
+  it('does NOT catch abbreviation/spelling variance — documented scope limit, not a bug', () => {
+    // Pinned so a future reader does not mistake the detector for a general duplicate guarantee.
+    expect(findNearDuplicateNames(['Pendleton Trade Center', 'Pendleton Trade Ctr — Indianapolis, IN'])).toHaveLength(0);
+    expect(findNearDuplicateNames(['470 McCormick Blvd', '470 McCormick Boulevard — Columbus, OH'])).toHaveLength(0);
+  });
+
+  it('honors an explicit accepted-pair entry so a real phased asset need not be renamed', () => {
+    const names = ['Fairground Village', 'Fairground Village Center'];
+    expect(findNearDuplicateNames(names, new Set())).toHaveLength(1);
+    const accepted = parseAcceptedNearDupes('Fairground Village=>Fairground Village Center');
+    expect(findNearDuplicateNames(names, accepted)).toHaveLength(0);
+    // Order-independent: config should not have to guess which name comes first.
+    const reversed = parseAcceptedNearDupes('Fairground Village Center=>Fairground Village');
+    expect(findNearDuplicateNames(names, reversed)).toHaveLength(0);
   });
 
   it('returns nothing for an empty or single-name list', () => {

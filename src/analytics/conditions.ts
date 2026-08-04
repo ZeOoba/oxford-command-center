@@ -751,7 +751,13 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
     out.push({
       id: 'reconcile-fail', severity: 'critical', category: 'data',
       title: 'Reconciliation failure',
-      detail: `${reconFlags.length} invariant ${reconFlags.length === 1 ? 'breach' : 'breaches'} (${reconFlags.map((f) => f.field).join(', ')}). Derived totals do not match the workbook.`,
+      // The detail must not assert a CAUSE. This condition fires for every entity==='reconciliation'
+      // flag, and checkSnapshot emits several that have nothing to do with workbook totals — e.g.
+      // duplicate property ids and near-duplicate deal names. Hardcoding "derived totals do not
+      // match the workbook" sent operators to audit the workbook for a deal-naming collision
+      // (caught in review 2026-08-04). Name the breached fields and let the reconciler's own message
+      // carry the cause.
+      detail: `${reconFlags.length} invariant ${reconFlags.length === 1 ? 'breach' : 'breaches'} (${reconFlags.map((f) => f.field).join(', ')}). Run \`npm run reconcile:snapshot\` for the per-flag detail.`,
       metric: String(reconFlags.length),
       impactAnnualUsd: null, spine: 'B', provenance: 'absent',
     });

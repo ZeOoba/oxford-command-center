@@ -157,7 +157,33 @@ export function parseNameAliases(raw: string = process.env.NOTION_DEALS_NAME_ALI
 export function mergeDeals(seed: Deal[], notion: Deal[], aliases: Map<string, string> = parseNameAliases()): Deal[] {
   // A Notion deal's match key is its aliased seed name when an alias exists, else its own name.
   const keyOf = (name: string): string => aliases.get(normName(name)) ?? normName(name);
-  const notionByKey = new Map(notion.map((d) => [keyOf(d.name), d]));
+  // COLLISION GUARD (review 2026-08-04, CRITICAL). `new Map(notion.map(...))` is a silent-drop
+  // primitive: two Notion rows sharing a key keep only the LAST, and if a seed row also matches that
+  // key both collide into `usedKeys` and neither reaches `extras` — one real deal disappears from
+  // the snapshot with no flag, wearing the other's economics under the seed's (possibly public)
+  // confidential flag. Because dealJoinKey strips the locality tail, and the locality is exactly how
+  // Notion disambiguates same-named assets across metros ("X — Columbus, OH" vs "X — Louisville,
+  // KY"), this collision is reachable in normal operation rather than exotic.
+  //
+  // A colliding key is therefore treated as UNMERGEABLE: every row carrying it is withheld from the
+  // seed join and falls through to `extras`, where the fail-closed confidential default applies.
+  // Nothing is dropped, and the surviving rows share a join key, so findNearDuplicateNames pairs
+  // them and checkSnapshot blocks the gate — a loud duplicate instead of silent data loss.
+  const notionByKey = new Map<string, Deal>();
+  const collidingKeys = new Set<string>();
+  for (const d of notion) {
+    const k = keyOf(d.name);
+    if (notionByKey.has(k)) collidingKeys.add(k);
+    else notionByKey.set(k, d);
+  }
+  for (const k of collidingKeys) {
+    notionByKey.delete(k);
+    console.warn(
+      `[notion-deals] join-key collision on '${k}' — multiple Notion deals normalize to the same ` +
+        `key. All of them are held out of the seed merge and default confidential; ` +
+        `checkSnapshot's near-duplicate flag will block the gate until the names are disambiguated.`,
+    );
+  }
   const usedKeys = new Set<string>();
   // Staleness tripwire (policy item 3, 2026-07-16): a seed-matched deal keeps its seed
   // confidential:false forever (the intended escape hatch) even as the live stage advances into

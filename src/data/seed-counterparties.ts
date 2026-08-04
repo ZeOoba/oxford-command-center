@@ -6,7 +6,9 @@ import type { Counterparty } from '@contracts/index';
  * deals. Links are filled in by deriveCounterparties() (owner/firm matching). Live
  * source later = HubSpot contacts + Notion People DB (same shape).
  *
- * Confidentiality: notes are role-based and never name confidential deals (E. Fulton).
+ * Confidentiality: notes are role-based and never name a confidential deal. (Deliberately no
+ * example named — the former one, E. Fulton, was declassified 2026-07-09; see confidential-terms.json
+ * for the live roster.)
  * Deal links carry only ids; the confidential flag travels with the deal record itself.
  */
 export const SEED_PEOPLE: Counterparty[] = [
