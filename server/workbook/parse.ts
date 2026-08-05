@@ -930,8 +930,20 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
   // OI-092: parseLoans reads only `Loan Index`, so a wrong next-12-month debt-service window in
   // `External Loans Summary` reaches monthlyPmt (and therefore DSCR) with nothing in its path
   // able to see it. This cross-checks that figure against the amortization schedules themselves.
-  // warn-severity by ruling — it reports on workbook formulas this pipeline does not own.
-  flags.push(...crossCheckDebtService(wb));
+  // warn-severity by ruling — it reports on workbook formulas this pipeline does not own, and a
+  // warn-severity advisory check must never be able to take down the whole refresh. Isolated in
+  // its own try/catch for exactly that reason — everything else in parseWorkbook still runs even
+  // if a future workbook edit produces a shape this check cannot handle.
+  try {
+    flags.push(...crossCheckDebtService(wb));
+  } catch (err) {
+    flags.push({
+      entity: 'meta',
+      field: 'annualDebtService',
+      issue: `debt-service cross-check threw and did not complete: ${err instanceof Error ? err.message : String(err)}`,
+      severity: 'warn',
+    });
+  }
   const cash = parseCash(get('Cash Balances'), flags, dataAsOf);
   const insurance = parseInsurance(get('Insurance Renewals'), flags);
   const checklistTasks = parseTasks(get('Monthly Checklist'));

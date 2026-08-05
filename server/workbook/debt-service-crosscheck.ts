@@ -211,7 +211,9 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
   // outside the current window. Banwick's excluded row 71 carries a $3.35M balloon that only
   // starts to matter around mid-2030 — by which point nothing would be watching.
   if (declaredRangeEnd !== null) {
-    const lastRow = Math.max(...rows.map((r) => r.row));
+    // rows is scan-ordered ascending (scanSchedule walks r upward), so the last element is the
+    // max — avoids a `Math.max(...spread)` stack overflow on a pathologically large schedule.
+    const lastRow = rows[rows.length - 1]!.row;
     if (lastRow > declaredRangeEnd) {
       const excluded = rows.filter((r) => r.row > declaredRangeEnd);
       const amount = excluded.reduce(
@@ -246,10 +248,11 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
     }
   }
 
-  // ── 3. duplicate payment dates (the 485 S Walnut double-count) ───────────────────────────
+  // ── 3. duplicate payment dates (the OI-096-shaped double-count) ──────────────────────────
   // A date-predicate SUMPRODUCT sums every matching ROW, so two rows sharing a date are both
-  // captured. At 485 S Walnut the final regular payment and the payoff row both carry
-  // 2028-09-26, double-counting $1,365 of September interest.
+  // captured. 485 S Walnut's r45/r46 shape (final regular payment and payoff row both dated
+  // 2028-09-26, both carrying that month's interest) is the reference case, since fixed at
+  // source — but the check must still catch its recurrence anywhere else.
   const byDate = new Map<number, ScheduleRow[]>();
   for (const r of inWindow) {
     const k = r.date.getTime();
@@ -259,17 +262,18 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
     if (dupes.length < 2) continue;
     // Two rows CAN legitimately share a date: a balloon settles on the same day as the final
     // regular payment (Restoration Church Trust r35/r36). That is not a double-count. The
-    // double-count signature is the SAME amount repeated in the SAME column — 485 S Walnut's
-    // r45/r46 both carrying $1,365 of September interest.
+    // double-count signature is the SAME amount repeated in the SAME column — compared with
+    // TOLERANCE, not bit-for-bit equality, since a payoff row is typically computed differently
+    // from the amortizing rows above it and can land a cent off an otherwise-identical figure.
     const contributing = dupes.filter((r) => (r.interest ?? 0) !== 0 || (r.principal ?? 0) !== 0);
     if (contributing.length < 2) continue; // annotation rows carry no amounts
     const repeated = (pick: (r: ScheduleRow) => number) => {
-      const seenAmounts = new Set<number>();
+      const seen: number[] = [];
       return contributing.some((r) => {
         const v = Math.abs(pick(r) ?? 0);
         if (v === 0) return false;
-        if (seenAmounts.has(v)) return true;
-        seenAmounts.add(v);
+        if (seen.some((s) => Math.abs(s - v) <= TOLERANCE)) return true;
+        seen.push(v);
         return false;
       });
     };
@@ -292,11 +296,26 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
   // misses it and the workbook and a naive recomputation agree while both understate Oxford's
   // returning capital by $972,551. Only the balance column exposes it.
   if (comparePrincipal && !isLender) {
-    const first = inWindow[0];
+    // Opening balance is read from the row IMMEDIATELY BEFORE the window in the full schedule
+    // (`rows`, not `inWindow`) — not reconstructed from the first in-window row's own principal.
+    // Reconstructing it that way makes the check blind to a defect on exactly that row: understate
+    // the first in-window row's principal and the same figure that built `opening` shrinks with
+    // it, so `retired` and `summed` move together and the gap stays zero. Reading the true prior
+    // period's balance instead means a hidden defect on the window's leading row still surfaces
+    // as a mismatch against an independent number.
+    const windowStartIdx = rows.findIndex((r) => r.date > asOf);
     const lastWithBalance = [...inWindow].reverse().find((r) => r.balance !== null);
-    if (first && lastWithBalance && first.balance !== null) {
-      // Balance entering the window = first in-window row's closing balance + its own principal.
-      const opening = first.balance + Math.abs(first.principal ?? 0);
+    const priorRow = windowStartIdx > 0 ? rows[windowStartIdx - 1] : null;
+    const windowStartRow = windowStartIdx >= 0 ? rows[windowStartIdx] : null;
+    // Fallback only when no prior-period row was scanned at all (the loan originates inside this
+    // window) — there, the first in-window row genuinely IS the origination row, so its principal
+    // is the full origination amount rather than a figure the check needs to stay independent of.
+    const opening =
+      priorRow?.balance ??
+      (windowStartRow?.balance !== null && windowStartRow?.balance !== undefined
+        ? windowStartRow.balance + Math.abs(windowStartRow.principal ?? 0)
+        : null);
+    if (opening !== null && lastWithBalance) {
       const retired = opening - lastWithBalance.balance!;
       const summed = inWindow.reduce((s, r) => s + Math.abs(r.principal ?? 0), 0);
       const gap = retired - summed;
@@ -442,19 +461,54 @@ function formulaOf(ws: Worksheet, addr: string): string | null {
 }
 
 /**
- * Rows of `External Loans Summary` that carry per-loan H/I figures. Used as a COVERAGE FLOOR,
- * not as the definition: any other row carrying a parseable schedule formula is also checked, and
- * a shortfall against this floor is reported. Silent under-coverage would be an inferred null.
+ * All known `External Loans Summary` loan rows. Two of these (10, 14) are computed
+ * arithmetically rather than from a schedule and are legitimately skipped.
  */
 const ELS_LOAN_ROWS = [6, 7, 8, 9, 10, 14, 15, 16];
-const ELS_SCAN_ROWS = 40;
 
 /**
- * Lender rows (Oxford receives) wrap in `-ABS(...)`; borrower rows do not. Read from the formula's
- * own shape rather than a hardcoded row list, so it survives sheet edits.
+ * The subset of `ELS_LOAN_ROWS` that IS schedule-backed today (excludes 10, the LAST Non note
+ * computed as `G10*E10`, and 14, the 1100 Rarig demand note computed as `-ABS(G14*E14)`).
+ *
+ * This is the coverage FLOOR, and it is deliberately NOT derived by re-parsing the live
+ * formulas — a floor computed from the thing it's meant to guard is self-defeating: paste a
+ * schedule formula to a literal value (what Paste-Special-Values or an openpyxl round-trip
+ * does) and a self-referential floor silently drops with it, so a real loss of coverage reads
+ * as a clean run. Fixed against known structure, any of these rows failing to parse is always
+ * reported below, regardless of what its formula currently looks like.
  */
-function isLenderFormula(formula: string | null): boolean {
-  return /^\s*=?\s*-\s*ABS\s*\(/i.test(formula ?? '');
+const KNOWN_SCHEDULE_BACKED_ROWS = [6, 7, 8, 9, 15, 16];
+
+/** Minimum row band to scan for loans outside `ELS_LOAN_ROWS` — widened to the sheet's own
+ *  extent below, this is only the floor for a pathologically small/malformed sheet. */
+const ELS_SCAN_ROWS_MIN = 40;
+/** Sanity cap — a loan block legitimately living past this would be a workbook redesign. */
+const ELS_SCAN_ROWS_MAX = 500;
+
+/**
+ * Classify a loan row as borrower or lender from the sheet's OWN section banners
+ * (`External Loans Summary!B5` "▼ WE ARE THE BORROWER", `B13` "▼ WE ARE THE LENDER") — not
+ * from the formula's sign-wrapper shape. A prior version keyed this off whether H's formula was
+ * wrapped in `-ABS(...)`, which is a sign-normalization convention with no borrower/lender
+ * semantics: a borrower loan copy-pasted from a lender row (or wrapped for any other reason)
+ * would silently exempt a real understatement from the principal-reconciliation check — exactly
+ * the failure mode this module exists to catch. An unrecognized row defaults to BORROWER
+ * (checked), never lender (exempt): a classification failure must never be able to disable a
+ * check, only over-apply it.
+ */
+function classifyLenderRows(els: Worksheet, maxRow: number): Map<number, boolean> {
+  const banners: { row: number; isLender: boolean }[] = [];
+  for (let r = 1; r <= maxRow; r++) {
+    const text = cellText(els, 'A', r) ?? cellText(els, 'B', r) ?? '';
+    if (/WE ARE THE BORROWER/i.test(text)) banners.push({ row: r, isLender: false });
+    else if (/WE ARE THE LENDER/i.test(text)) banners.push({ row: r, isLender: true });
+  }
+  const out = new Map<number, boolean>();
+  for (let r = 1; r <= maxRow; r++) {
+    const governing = [...banners].reverse().find((b) => b.row < r);
+    out.set(r, governing?.isLender ?? false);
+  }
+  return out;
 }
 
 /** Does this cell hold a summing formula that SHOULD have been parseable as a schedule ref? */
@@ -502,28 +556,46 @@ export function crossCheckDebtService(
 
   const flags: DataQualityFlag[] = [];
   let checked = 0;
+  const checkedRows = new Set<number>();
 
-  // Scan a band of rows rather than only the known list, so a loan added below the current block is
-  // picked up instead of silently going unchecked.
+  // Scan a band of rows rather than only the known list, so a loan added below the current block
+  // is picked up instead of silently going unchecked. Driven off the sheet's own extent, not a
+  // fixed constant — a hardcoded band just relocates the same hole to whatever row sits outside it.
+  const scanBand = Math.min(Math.max(els.rowCount, ELS_SCAN_ROWS_MIN), ELS_SCAN_ROWS_MAX);
   const candidates = new Set<number>([
     ...ELS_LOAN_ROWS,
-    ...Array.from({ length: ELS_SCAN_ROWS }, (_, i) => i + 1),
+    ...Array.from({ length: scanBand }, (_, i) => i + 1),
   ]);
+  const lenderByRow = classifyLenderRows(els, scanBand);
 
   for (const r of [...candidates].sort((a, b) => a - b)) {
     const hFormula = formulaOf(els, `H${r}`);
     const interestRef = parseElsFormula(hFormula);
+    const rawLabel = cellText(els, 'B', r);
+    const label = String(rawLabel ?? `External Loans Summary row ${r}`);
+    // A known row only counts against the coverage floor once it's actually populated (column B
+    // carries a loan name) — on the live sheet all six always are, so this changes nothing there;
+    // it only stops the floor firing on partial fixtures that never claimed to model that row.
+    const isKnownAndPopulated = KNOWN_SCHEDULE_BACKED_ROWS.includes(r) && rawLabel !== null;
 
     if (!interestRef) {
-      // A summing formula we could not parse is a coverage hole, not an arithmetic row.
-      if (looksLikeScheduleFormula(hFormula)) {
+      // A row known to be schedule-backed that no longer parses as one is ALWAYS a coverage
+      // hole, regardless of what its formula currently looks like — this is what stops a
+      // paste-to-value edit from silently vanishing from the floor it should be measured
+      // against. Any other row is flagged only when its shape still looks like an attempted
+      // schedule sum (an unquoted sheet name, a whole-column range).
+      if (isKnownAndPopulated || looksLikeScheduleFormula(hFormula)) {
         flags.push({
-          entity: String(cellText(els, 'B', r) ?? `External Loans Summary row ${r}`),
+          entity: label,
           field: 'annualDebtService',
-          issue:
-            `H${r} is a summing formula but its schedule reference could not be parsed, so this ` +
-            `loan was NOT cross-checked. Unquoted sheet names and whole-column ranges are the usual ` +
-            `causes. Reported rather than skipped — an unchecked loan must not read as a clean one.`,
+          issue: isKnownAndPopulated
+            ? `H${r} is expected to be a schedule-summing formula but is not (formula: ` +
+              `${(hFormula ?? '(no formula — likely pasted to a literal value)').slice(0, 100)}). ` +
+              `This loan was NOT cross-checked.`
+            : `H${r} is a summing formula but its schedule reference could not be parsed, so this ` +
+              `loan was NOT cross-checked. Unquoted sheet names and whole-column ranges are the ` +
+              `usual causes. Reported rather than skipped — an unchecked loan must not read as a ` +
+              `clean one.`,
           rawValue: (hFormula ?? '').slice(0, 120),
           severity: 'warn',
         });
@@ -531,7 +603,6 @@ export function crossCheckDebtService(
       continue;
     }
 
-    const label = String(cellText(els, 'B', r) ?? interestRef.sheet);
     const sheet = wb.getWorksheet(interestRef.sheet);
     if (!sheet) {
       flags.push({
@@ -610,7 +681,14 @@ export function crossCheckDebtService(
       minLastRow: interestRef.rangeEnd,
     });
 
-    checked += 1;
+    // Only count a loan as meaningfully checked when the scan actually produced rows to compare
+    // — otherwise `checked` could be satisfied by loans crossCheckSchedule immediately bails on
+    // (its own "no rows resolved" flag fires below), letting the coverage floor pass on paper
+    // while nothing was really verified.
+    if (scan.rows.length > 0) {
+      checked += 1;
+      checkedRows.add(r);
+    }
     flags.push(
       ...crossCheckSchedule({
         id: label,
@@ -620,23 +698,25 @@ export function crossCheckDebtService(
         bookInterest,
         bookPrincipal,
         asOf: resolvedAsOf,
-        isLender: isLenderFormula(hFormula),
+        isLender: lenderByRow.get(r) ?? false,
         scanReachedDeclaredEnd: scan.reachedDeclaredEnd,
       }),
     );
   }
 
-  // Coverage is asserted, not assumed: "0 flags" must mean "checked and clean", never
-  // "checked nothing".
-  const floor = ELS_LOAN_ROWS.filter((r) => parseElsFormula(formulaOf(els, `H${r}`))).length;
-  if (checked < floor) {
+  // Coverage is asserted against the FIXED expected set, not the live formulas — see
+  // KNOWN_SCHEDULE_BACKED_ROWS. "0 flags" must mean "checked and clean", never "checked nothing",
+  // and a floor derived from the thing it guards could shrink along with a real coverage loss.
+  const populatedKnownRows = KNOWN_SCHEDULE_BACKED_ROWS.filter((r) => cellText(els, 'B', r) !== null);
+  const missingKnown = populatedKnownRows.filter((r) => !checkedRows.has(r));
+  if (missingKnown.length > 0) {
     flags.push({
       entity: 'meta',
       field: 'annualDebtService',
       issue:
-        `only ${checked} of ${floor} schedule-backed loans were cross-checked — the rest were ` +
-        `skipped for the reasons flagged above. A clean run with reduced coverage is not a clean ` +
-        `workbook.`,
+        `only ${checked} of ${populatedKnownRows.length} known schedule-backed loans were ` +
+        `cross-checked (missing row(s): ${missingKnown.join(', ')}) — the rest were skipped for the ` +
+        `reasons flagged above. A clean run with reduced coverage is not a clean workbook.`,
       severity: 'warn',
     });
   }
