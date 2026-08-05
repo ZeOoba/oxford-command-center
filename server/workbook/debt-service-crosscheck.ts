@@ -60,6 +60,39 @@ export interface CrossCheckInput {
   /** null when the workbook's principal is synthetic (485 S Walnut: I16 = D16-E16). */
   bookPrincipal: number | null;
   asOf: Date;
+  /**
+   * Lender rows (Oxford receives) are exempt from the principal reconciliation.
+   *
+   * Ruling, 2026-08-05 (OI-095, closed — do not re-litigate): excluding a balloon from a LENDER
+   * row's principal is INTENTIONAL, not a defect. "Annual debt service" means recurring P&I only;
+   * a lender balloon is capital returning to Oxford, not debt service. The borrower/lender
+   * asymmetry is principled — 3540's balloon is cash Oxford must pay and does belong.
+   * Encoding the ruling rather than the raw arithmetic is what stops this firing permanently
+   * on Restoration Church Trust.
+   */
+  isLender: boolean;
+  /**
+   * True when `scanSchedule` terminated on a run of undated rows rather than reaching the end of
+   * its probe. Without this, an early-terminating scan silently disables the truncation check,
+   * because that check can only fire when the scan runs PAST the declared range end.
+   */
+  scanStoppedOnGap?: boolean;
+  /** False when the scan never reached the declared range end — see ScanResult. */
+  scanReachedDeclaredEnd?: boolean;
+}
+
+export interface ScanResult {
+  rows: ScheduleRow[];
+  /** Whether the walk ended on undated rows (vs exhausting its probe budget). */
+  stoppedOnGap: boolean;
+  /**
+   * Whether the walk actually inspected every row up to the formula's declared range end.
+   * A schedule that simply stops early inside a generously over-declared range (Restoration
+   * Church Trust declares B11:B310 for a 26-row schedule) is NORMAL and must stay silent; the
+   * real hazard is running out of probe budget before reaching the declared end, which would
+   * leave the truncation check unable to fire.
+   */
+  reachedDeclaredEnd: boolean;
 }
 
 /**
@@ -77,6 +110,20 @@ export function edateMonths(d: Date, months: number): Date {
   const targetM = ((m % 12) + 12) % 12;
   const lastDay = new Date(Date.UTC(targetY, targetM + 1, 0)).getUTCDate();
   return new Date(Date.UTC(targetY, targetM, Math.min(d.getUTCDate(), lastDay)));
+}
+
+/**
+ * Excel `EOMONTH` semantics: the LAST day of the month `months` away. EOMONTH(2027-02-28, 12)
+ * = 2028-02-29, where EDATE would give 2028-02-28.
+ *
+ * This — not `edateMonths` — is the window's right edge, because the workbook's own formulas use
+ * `EOMONTH(Assumptions!$B$30,12)`. They were moved off EDATE precisely because EDATE under-captures
+ * (11 payments) for a month-end payer on a February as-of date in a pre-leap year. Computing the
+ * end any other way would compare two different windows instead of two computations of one window,
+ * and would accuse a correct workbook of the very defect this check exists to find.
+ */
+export function eomonthMonths(d: Date, months: number): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + months + 1, 0));
 }
 
 export interface ScheduleColumns {
@@ -114,7 +161,10 @@ const money = (n: number): string =>
  * silently skipped (a verified null beats an inferred one).
  */
 export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
-  const { id, rows, declaredRangeEnd, share, bookInterest, bookPrincipal, asOf } = input;
+  const {
+    id, rows, declaredRangeEnd, share, bookInterest, bookPrincipal, asOf, isLender,
+    scanReachedDeclaredEnd = true,
+  } = input;
   const flags: DataQualityFlag[] = [];
 
   if (rows.length === 0) {
@@ -126,7 +176,7 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
     }];
   }
 
-  const end = edateMonths(asOf, 12);
+  const end = eomonthMonths(asOf, 12);
   const inWindow = rows.filter((r) => r.date > asOf && r.date <= end);
 
   // ── 1. total cross-check: our recomputation vs the workbook's own cached figure ──────────
@@ -179,6 +229,20 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
         rawValue: String(declaredRangeEnd),
         severity: 'warn',
       });
+    } else if (!scanReachedDeclaredEnd) {
+      // The truncation test above is one-directional, so an early-terminating scan would
+      // silently disable it: with lastRow < declaredRangeEnd it can never fire, and a genuinely
+      // truncated range reads clean. Report the short scan instead of inferring "no truncation".
+      flags.push({
+        entity: id,
+        field: 'scheduleRange',
+        issue:
+          `the schedule scan ran out of probe budget at row ${lastRow} without reaching the ` +
+          `declared range end (row ${declaredRangeEnd}), so rows in between were never read. ` +
+          `This loan's total and its truncation check are both unverified.`,
+        rawValue: String(lastRow),
+        severity: 'warn',
+      });
     }
   }
 
@@ -193,8 +257,23 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
   }
   for (const [, dupes] of byDate) {
     if (dupes.length < 2) continue;
+    // Two rows CAN legitimately share a date: a balloon settles on the same day as the final
+    // regular payment (Restoration Church Trust r35/r36). That is not a double-count. The
+    // double-count signature is the SAME amount repeated in the SAME column — 485 S Walnut's
+    // r45/r46 both carrying $1,365 of September interest.
     const contributing = dupes.filter((r) => (r.interest ?? 0) !== 0 || (r.principal ?? 0) !== 0);
-    if (contributing.length < 2) continue; // annotation rows carry no amounts — not a double-count
+    if (contributing.length < 2) continue; // annotation rows carry no amounts
+    const repeated = (pick: (r: ScheduleRow) => number) => {
+      const seenAmounts = new Set<number>();
+      return contributing.some((r) => {
+        const v = Math.abs(pick(r) ?? 0);
+        if (v === 0) return false;
+        if (seenAmounts.has(v)) return true;
+        seenAmounts.add(v);
+        return false;
+      });
+    };
+    if (!repeated((r) => r.interest ?? 0) && !repeated((r) => r.principal ?? 0)) continue;
     flags.push({
       entity: id,
       field: 'duplicatePaymentDate',
@@ -212,7 +291,7 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
   // Church Trust's $1,945,102.73 balloon sits in PAYMENT AMOUNT, so a principal-column sum
   // misses it and the workbook and a naive recomputation agree while both understate Oxford's
   // returning capital by $972,551. Only the balance column exposes it.
-  if (comparePrincipal) {
+  if (comparePrincipal && !isLender) {
     const first = inWindow[0];
     const lastWithBalance = [...inWindow].reverse().find((r) => r.balance !== null);
     if (first && lastWithBalance && first.balance !== null) {
@@ -289,19 +368,30 @@ export function scanSchedule(
   ws: Worksheet,
   cols: ScheduleColumns,
   firstRow: number,
-  opts: { maxProbe?: number; gapTolerance?: number } = {},
-): ScheduleRow[] {
-  const maxProbe = opts.maxProbe ?? 400;
+  opts: { maxProbe?: number; gapTolerance?: number; minLastRow?: number } = {},
+): ScanResult {
   const gapTolerance = opts.gapTolerance ?? 6;
-  if (!cols.date) return [];
+  // Probe past the formula's declared end even when the dated rows stop earlier. Otherwise a
+  // blank gap inside a schedule ends the walk short of the declared range, and the truncation
+  // check -- which can only fire on an OVER-run -- goes quietly inert.
+  const floor = opts.minLastRow ?? 0;
+  const maxProbe = Math.max(opts.maxProbe ?? 400, floor - firstRow + gapTolerance + 2);
+  if (!cols.date) return { rows: [], stoppedOnGap: false, reachedDeclaredEnd: false };
 
   const rows: ScheduleRow[] = [];
   let gap = 0;
+  let stoppedOnGap = false;
+  let lastProbed = firstRow - 1;
   for (let r = firstRow; r < firstRow + maxProbe; r++) {
+    lastProbed = r;
     const date = cellDate(ws, cols.date, r);
     if (!date) {
       gap += 1;
-      if (gap > gapTolerance && rows.length) break;
+      // Never stop before the declared range end -- that region is exactly what must be inspected.
+      if (gap > gapTolerance && rows.length && r > floor) {
+        stoppedOnGap = true;
+        break;
+      }
       continue;
     }
     gap = 0;
@@ -313,7 +403,7 @@ export function scanSchedule(
       balance: cols.balance ? cellNumber(ws, cols.balance, r) : null,
     });
   }
-  return rows;
+  return { rows, stoppedOnGap, reachedDeclaredEnd: lastProbed >= floor };
 }
 
 export interface ElsFormulaRef {
@@ -351,17 +441,35 @@ function formulaOf(ws: Worksheet, addr: string): string | null {
   return v && typeof v === 'object' && 'formula' in v ? String(v.formula) : null;
 }
 
-/** Rows of `External Loans Summary` that carry per-loan H/I figures (11 is a SUM subtotal). */
+/**
+ * Rows of `External Loans Summary` that carry per-loan H/I figures. Used as a COVERAGE FLOOR,
+ * not as the definition: any other row carrying a parseable schedule formula is also checked, and
+ * a shortfall against this floor is reported. Silent under-coverage would be an inferred null.
+ */
 const ELS_LOAN_ROWS = [6, 7, 8, 9, 10, 14, 15, 16];
+const ELS_SCAN_ROWS = 40;
 
 /**
- * Run the cross-check across every `External Loans Summary` loan row that is backed by an
- * amortization schedule.
+ * Lender rows (Oxford receives) wrap in `-ABS(...)`; borrower rows do not. Read from the formula's
+ * own shape rather than a hardcoded row list, so it survives sheet edits.
+ */
+function isLenderFormula(formula: string | null): boolean {
+  return /^\s*=?\s*-\s*ABS\s*\(/i.test(formula ?? '');
+}
+
+/** Does this cell hold a summing formula that SHOULD have been parseable as a schedule ref? */
+function looksLikeScheduleFormula(formula: string | null): boolean {
+  return /\bSUMPRODUCT\s*\(|\bSUMIFS?\s*\(/i.test(formula ?? '');
+}
+
+/**
+ * Run the cross-check across every `External Loans Summary` loan row backed by an amortization
+ * schedule.
  *
- * Rows whose H/I are computed arithmetically rather than from a schedule (H10 = G10*E10 for the
- * LAST Non note, H14 for the 1100 Rarig demand note, I16's synthetic D16-E16) have nothing to
- * cross-check against and are skipped — not flagged. Skipping them is safe precisely because
- * they never depended on the summing window that carried the defect.
+ * Rows whose H/I are computed arithmetically rather than from a schedule (H10 = G10*E10, H14 for
+ * the 1100 Rarig demand note, I16's synthetic D16-E16) have nothing to cross-check and are skipped
+ * silently — safe precisely because they never depended on the summing window that carried the
+ * defect. Every OTHER reason for not checking a loan is reported, never skipped.
  */
 export function crossCheckDebtService(
   wb: { getWorksheet(name: string): Worksheet | undefined },
@@ -377,9 +485,9 @@ export function crossCheckDebtService(
     }];
   }
 
-  // The window is anchored on the workbook's own "Loan As-Of Date" (Assumptions!B30), the same
-  // cell the H/I formulas anchor on. Deriving it any other way would compare two windows rather
-  // than two computations of the same window.
+  // The window is anchored on the workbook's own "Loan As-Of Date" (Assumptions!B30), the same cell
+  // the H/I formulas anchor on. Deriving it any other way would compare two windows rather than two
+  // computations of the same window.
   const resolvedAsOf = asOf ?? readLoanAsOf(wb);
   if (!resolvedAsOf) {
     return [{
@@ -393,50 +501,144 @@ export function crossCheckDebtService(
   }
 
   const flags: DataQualityFlag[] = [];
-  for (const r of ELS_LOAN_ROWS) {
-    const interestRef = parseElsFormula(formulaOf(els, `H${r}`));
-    if (!interestRef) continue; // arithmetic row, no schedule to cross-check
-    const principalRef = parseElsFormula(formulaOf(els, `I${r}`));
+  let checked = 0;
 
+  // Scan a band of rows rather than only the known list, so a loan added below the current block is
+  // picked up instead of silently going unchecked.
+  const candidates = new Set<number>([
+    ...ELS_LOAN_ROWS,
+    ...Array.from({ length: ELS_SCAN_ROWS }, (_, i) => i + 1),
+  ]);
+
+  for (const r of [...candidates].sort((a, b) => a - b)) {
+    const hFormula = formulaOf(els, `H${r}`);
+    const interestRef = parseElsFormula(hFormula);
+
+    if (!interestRef) {
+      // A summing formula we could not parse is a coverage hole, not an arithmetic row.
+      if (looksLikeScheduleFormula(hFormula)) {
+        flags.push({
+          entity: String(cellText(els, 'B', r) ?? `External Loans Summary row ${r}`),
+          field: 'annualDebtService',
+          issue:
+            `H${r} is a summing formula but its schedule reference could not be parsed, so this ` +
+            `loan was NOT cross-checked. Unquoted sheet names and whole-column ranges are the usual ` +
+            `causes. Reported rather than skipped — an unchecked loan must not read as a clean one.`,
+          rawValue: (hFormula ?? '').slice(0, 120),
+          severity: 'warn',
+        });
+      }
+      continue;
+    }
+
+    const label = String(cellText(els, 'B', r) ?? interestRef.sheet);
     const sheet = wb.getWorksheet(interestRef.sheet);
     if (!sheet) {
       flags.push({
-        entity: `els-row-${r}`,
+        entity: label,
         field: 'annualDebtService',
-        issue: `schedule sheet "${interestRef.sheet}" referenced by H${r} not found — cross-check did not run for this loan`,
+        issue:
+          `schedule sheet "${interestRef.sheet}" referenced by H${r} not found — cross-check did ` +
+          `not run for this loan`,
         severity: 'warn',
       });
       continue;
     }
 
     // The header sits immediately above the formula's first data row on all six schedules.
-    const cols = resolveScheduleColumns(readHeader(sheet, interestRef.rangeStart - 1));
+    const headerRow = interestRef.rangeStart - 1;
+    const cols = resolveScheduleColumns(readHeader(sheet, headerRow));
     if (!cols.date || !cols.interest) {
       flags.push({
-        entity: interestRef.sheet,
+        entity: label,
         field: 'annualDebtService',
         issue:
           `could not resolve ${!cols.date ? 'a "Payment Date"' : 'an "Interest Paid"'} column from ` +
-          `row ${interestRef.rangeStart - 1} — cross-check did not run for this loan`,
+          `row ${headerRow} of "${interestRef.sheet}" — cross-check did not run for this loan`,
         severity: 'warn',
       });
       continue;
     }
 
-    const bookInterest = cellNumber(els, 'H', r) ?? 0;
-    const bookPrincipal = principalRef ? cellNumber(els, 'I', r) : null;
+    // A missing cached result means "cannot compare", NOT "the workbook says zero". Treating it as
+    // 0 would report a spurious six-figure divergence after any openpyxl-mediated workbook edit,
+    // which drops every cached value in the file.
+    const bookInterest = cellNumber(els, 'H', r);
+    if (bookInterest === null) {
+      flags.push({
+        entity: label,
+        field: 'annualDebtService',
+        issue:
+          `H${r} has no cached value, so there is nothing to cross-check against — recalculate and ` +
+          `save the workbook in Excel. (Editing via openpyxl drops every cached formula result.)`,
+        severity: 'warn',
+      });
+      continue;
+    }
 
+    const principalRef = parseElsFormula(formulaOf(els, `I${r}`));
+    let bookPrincipal: number | null = null;
+    if (principalRef) {
+      const cached = cellNumber(els, 'I', r);
+      if (cached === null) {
+        // Distinguish "deliberately synthetic" from "unreadable" — collapsing them would silently
+        // degrade to an interest-only check and hide every principal-side defect.
+        flags.push({
+          entity: label,
+          field: 'annualDebtService',
+          issue:
+            `I${r} is a schedule formula but has no cached value — the principal side of this loan ` +
+            `was NOT cross-checked. Recalculate and save the workbook in Excel.`,
+          severity: 'warn',
+        });
+      } else if (!cols.principal) {
+        flags.push({
+          entity: label,
+          field: 'annualDebtService',
+          issue:
+            `I${r} sums a principal column, but no "Principal Paid"/"Principal Reduction" header ` +
+            `could be resolved on "${interestRef.sheet}" — the principal side was NOT cross-checked. ` +
+            `A header-label change is the usual cause.`,
+          severity: 'warn',
+        });
+      } else {
+        bookPrincipal = cached;
+      }
+    }
+
+    const scan = scanSchedule(sheet, cols, interestRef.rangeStart, {
+      minLastRow: interestRef.rangeEnd,
+    });
+
+    checked += 1;
     flags.push(
       ...crossCheckSchedule({
-        id: String(cellText(els, 'B', r) ?? interestRef.sheet),
-        rows: scanSchedule(sheet, cols, interestRef.rangeStart),
+        id: label,
+        rows: scan.rows,
         declaredRangeEnd: interestRef.rangeEnd,
         share: interestRef.share,
         bookInterest,
         bookPrincipal,
         asOf: resolvedAsOf,
+        isLender: isLenderFormula(hFormula),
+        scanReachedDeclaredEnd: scan.reachedDeclaredEnd,
       }),
     );
+  }
+
+  // Coverage is asserted, not assumed: "0 flags" must mean "checked and clean", never
+  // "checked nothing".
+  const floor = ELS_LOAN_ROWS.filter((r) => parseElsFormula(formulaOf(els, `H${r}`))).length;
+  if (checked < floor) {
+    flags.push({
+      entity: 'meta',
+      field: 'annualDebtService',
+      issue:
+        `only ${checked} of ${floor} schedule-backed loans were cross-checked — the rest were ` +
+        `skipped for the reasons flagged above. A clean run with reduced coverage is not a clean ` +
+        `workbook.`,
+      severity: 'warn',
+    });
   }
   return flags;
 }

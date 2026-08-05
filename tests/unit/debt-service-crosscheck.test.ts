@@ -19,6 +19,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   edateMonths,
+  eomonthMonths,
   crossCheckSchedule,
   resolveScheduleColumns,
   type ScheduleRow,
@@ -53,9 +54,21 @@ function schedule(
 
 const ASOF = d(2026, 8, 31);
 
-/** Sum interest+principal over the correct (asOf, EDATE(asOf,12)] window. */
+/**
+ * A schedule whose final balloon is recorded OUTSIDE the principal column (the Restoration Church
+ * Trust shape: the balloon sits in Payment Amount, with the principal/interest cells empty), so a
+ * principal-column sum misses it and only the remaining-balance column exposes the gap.
+ */
+function balloonOutsidePrincipalColumn(): ScheduleRow[] {
+  const rows = schedule(2026, 9, 20, 6, 14600, 2100, { openingBalance: 1_957_526.85 });
+  const last = rows[rows.length - 1]!;
+  rows.push({ row: last.row + 1, date: last.date, interest: null, principal: null, balance: 0 });
+  return rows;
+}
+
+/** Sum interest+principal over the correct (asOf, EOMONTH(asOf,12)] window. */
 function correctTotal(rows: ScheduleRow[], asOf: Date, share = 1): number {
-  const end = edateMonths(asOf, 12);
+  const end = eomonthMonths(asOf, 12);
   return (
     rows
       .filter((r) => r.date > asOf && r.date <= end)
@@ -109,6 +122,7 @@ describe('crossCheckSchedule — clean cases stay silent', () => {
       bookInterest: 15000 * 12,
       bookPrincipal: 7900 * 12,
       asOf: ASOF,
+      isLender: false,
     });
     expect(flags).toEqual([]);
   });
@@ -123,6 +137,7 @@ describe('crossCheckSchedule — clean cases stay silent', () => {
       bookInterest: 4500 * 12 * 0.5,
       bookPrincipal: 7700 * 12 * 0.5,
       asOf: ASOF,
+      isLender: false,
     });
     expect(flags).toEqual([]);
   });
@@ -139,6 +154,7 @@ describe('crossCheckSchedule — clean cases stay silent', () => {
       bookInterest: 14600 * 6,
       bookPrincipal: 2100 * 6,
       asOf: ASOF,
+      isLender: false,
     });
     expect(flags).toEqual([]);
   });
@@ -154,6 +170,7 @@ describe('crossCheckSchedule — clean cases stay silent', () => {
       bookInterest: 1365 * 12,
       bookPrincipal: null,
       asOf: ASOF,
+      isLender: false,
     });
     expect(flags).toEqual([]);
   });
@@ -173,6 +190,7 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
       bookInterest: buggy * (15000 / 22900),
       bookPrincipal: buggy * (7900 / 22900),
       asOf: ASOF,
+      isLender: false,
     });
 
     const total = flags.filter((f) => f.field === 'annualDebtService');
@@ -193,6 +211,7 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
       bookInterest: 15000 * 12,
       bookPrincipal: 7900 * 12,
       asOf: ASOF,
+      isLender: false,
     });
 
     const trunc = flags.filter((f) => f.field === 'scheduleRange');
@@ -213,6 +232,7 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
       bookInterest: full * (15000 / 22900),
       bookPrincipal: full * (7900 / 22900),
       asOf: ASOF,
+      isLender: false,
     });
     expect(flags.filter((f) => f.field === 'annualDebtService')).toHaveLength(1);
   });
@@ -231,37 +251,104 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
       bookInterest: 1365 * 13, // the double-counted total the workbook actually produces
       bookPrincipal: null,
       asOf: ASOF,
+      isLender: false,
     });
     expect(flags.filter((f) => f.field === 'duplicatePaymentDate')).toHaveLength(1);
   });
 
-  it('FIRES when principal retired per the balance column exceeds the principal column (OI-094b)', () => {
-    // Restoration Church Trust: the $1.945M balloon sits in the PAYMENT AMOUNT column, so a
-    // D/E-only sum misses it entirely — the workbook and a naive recompute agree, and both are
-    // wrong. Only reconciling against the remaining-balance column sees it.
-    const rows = schedule(2026, 9, 20, 6, 14600, 2100, { openingBalance: 1_957_526.85 });
-    const last = rows[rows.length - 1]!;
-    rows.push({
-      row: last.row + 1,
-      date: last.date,
-      interest: null,
-      principal: null, // balloon lives in a column this mapping does not read
-      balance: 0,
-    });
-
+  it('FIRES on a BORROWER balloon recorded outside the principal column', () => {
+    // A balloon parked in the payment-amount column is invisible to a principal-column sum, so
+    // the workbook and a naive recompute agree while both understate. Only reconciling against
+    // the remaining-balance column sees it. On a borrower loan the balloon is cash Oxford must
+    // pay, so it genuinely belongs in debt service (ruling 2, 2026-08-05).
     const flags = crossCheckSchedule({
-      id: 'restoration-church-trust',
-      rows,
-      declaredRangeEnd: last.row + 1,
+      id: '3540-e-fifth-ave',
+      rows: balloonOutsidePrincipalColumn(),
+      declaredRangeEnd: 17,
       share: 1,
       bookInterest: 14600 * 6,
       bookPrincipal: 2100 * 6,
       asOf: ASOF,
+      isLender: false,
     });
 
     const gap = flags.filter((f) => f.field === 'principalReconciliation');
     expect(gap).toHaveLength(1);
     expect(gap[0]!.issue).toMatch(/balance/i);
+  });
+
+  it('FIRES when the scan never reaches the declared range end', () => {
+    // The truncation check is one-directional — it can only fire when the scan runs PAST the
+    // declared end. An early-terminating scan would therefore silently disable it, and a genuinely
+    // truncated range would read clean. That is the OI-094 false negative, restored.
+    const rows = schedule(2026, 9, 5, 24, 15000, 7900);
+    const flags = crossCheckSchedule({
+      id: 'banwick-morrison',
+      rows,
+      declaredRangeEnd: rows[rows.length - 1]!.row + 20, // declared range extends well past the scan
+      share: 1,
+      bookInterest: 15000 * 12,
+      bookPrincipal: 7900 * 12,
+      asOf: ASOF,
+      isLender: false,
+      scanReachedDeclaredEnd: false,
+    });
+
+    const short = flags.filter((f) => f.field === 'scheduleRange');
+    expect(short).toHaveLength(1);
+    expect(short[0]!.issue).toMatch(/probe budget/i);
+  });
+});
+
+describe('crossCheckSchedule — encodes the OI-095 ruling, not the raw arithmetic', () => {
+  // Ruling 2026-08-05 (OI-095, CLOSED): excluding a balloon from a LENDER row's principal is
+  // INTENTIONAL. "Annual debt service" means recurring P&I only; a lender balloon is capital
+  // returning to Oxford, not debt service. Flagging the raw arithmetic here would fire
+  // permanently on Restoration Church Trust with a $1.9M "unaccounted for" figure on a workbook
+  // already adjudicated correct — the costliest kind of false positive.
+  it('stays SILENT on a lender balloon excluded from the principal column', () => {
+    const flags = crossCheckSchedule({
+      id: 'restoration-church-trust',
+      rows: balloonOutsidePrincipalColumn(),
+      declaredRangeEnd: 17,
+      share: 0.5,
+      bookInterest: 14600 * 6 * 0.5,
+      bookPrincipal: 2100 * 6 * 0.5,
+      asOf: ASOF,
+      isLender: true,
+    });
+    expect(flags.filter((f) => f.field === 'principalReconciliation')).toEqual([]);
+  });
+
+  it('still cross-checks a lender row TOTAL — the exemption is scoped to the balloon check', () => {
+    const rows = schedule(2026, 9, 20, 6, 14600, 2100);
+    const flags = crossCheckSchedule({
+      id: 'restoration-church-trust',
+      rows,
+      declaredRangeEnd: rows[rows.length - 1]!.row,
+      share: 1,
+      bookInterest: 14600 * 7, // one payment too many
+      bookPrincipal: 2100 * 6,
+      asOf: ASOF,
+      isLender: true,
+    });
+    expect(flags.filter((f) => f.field === 'annualDebtService')).toHaveLength(1);
+  });
+});
+
+describe('eomonthMonths — the window end the workbook actually uses', () => {
+  it('returns the LAST day of the target month', () => {
+    expect(eomonthMonths(d(2026, 8, 31), 12)).toEqual(d(2027, 8, 31));
+    expect(eomonthMonths(d(2026, 9, 15), 12)).toEqual(d(2027, 9, 30));
+  });
+
+  it('diverges from EDATE exactly where the workbook was moved off EDATE', () => {
+    // Feb month-end anchor in a pre-leap year: EDATE under-captures (11 payments), which is why
+    // all 11 window cells now use EOMONTH. A detector still on EDATE would compute a different
+    // window from the workbook and accuse a correct sheet of the OI-092 defect.
+    expect(eomonthMonths(d(2027, 2, 28), 12)).toEqual(d(2028, 2, 29));
+    expect(edateMonths(d(2027, 2, 28), 12)).toEqual(d(2028, 2, 28));
+    expect(eomonthMonths(d(2031, 2, 28), 12)).toEqual(d(2032, 2, 29));
   });
 });
 
