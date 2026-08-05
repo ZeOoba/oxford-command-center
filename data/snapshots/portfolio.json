@@ -2,7 +2,7 @@
   "meta": {
     "schemaVersion": "1.0.0",
     "asOf": "2026-08-05",
-    "generatedAt": "2026-08-05T20:50:36.558Z",
+    "generatedAt": "2026-08-05T21:02:26.673Z",
     "source": "Master Excel Template Company Wide -- Oxford.xlsx",
     "scenario": "Base"
   },
@@ -3379,29 +3379,6 @@
       "annualPrincipal": null,
       "loanType": "Paid Off",
       "status": "Paid Off",
-      "isDemand": true,
-      "maturity": null,
-      "monthsToMaturity": null,
-      "ltv": null,
-      "lender": null,
-      "balloon": false,
-      "flags": [],
-      "collateralProperty": null
-    },
-    {
-      "id": "internal-duplicate-of-row-22-do-not-use",
-      "name": "⚠ DUPLICATE OF ROW 22 — DO NOT USE",
-      "counterparty": "EG Florida LLC (EGFLLC)",
-      "direction": "internal",
-      "originalPrincipal": null,
-      "currentBalance": 0,
-      "absBalance": 0,
-      "rate": 0.0699,
-      "monthlyPmt": null,
-      "annualInterest": null,
-      "annualPrincipal": null,
-      "loanType": "Int Only | matures 2031-10-01",
-      "status": "Int Only | matures 2031-10-01",
       "isDemand": true,
       "maturity": null,
       "monthsToMaturity": null,
@@ -6928,5 +6905,13 @@
     "value": 57951345.04595404,
     "rent": 5598136.680000002
   },
-  "dataQuality": []
+  "dataQuality": [
+    {
+      "entity": "loans",
+      "field": "name",
+      "issue": "Loan Index row 24 is tombstoned in the workbook and was skipped, so it cannot claim a snapshot id or warehouse key",
+      "rawValue": "⚠ DUPLICATE OF ROW 22 — DO NOT USE",
+      "severity": "info"
+    }
+  ]
 }
