@@ -2,7 +2,7 @@
   "meta": {
     "schemaVersion": "1.0.0",
     "asOf": "2026-08-05",
-    "generatedAt": "2026-08-05T19:43:23.122Z",
+    "generatedAt": "2026-08-05T20:50:36.558Z",
     "source": "Master Excel Template Company Wide -- Oxford.xlsx",
     "scenario": "Base"
   },
@@ -3239,8 +3239,8 @@
       "monthlyPmt": 3991.2566666666717,
       "annualInterest": null,
       "annualPrincipal": null,
-      "loanType": "Amortizing",
-      "status": "Amortizing",
+      "loanType": "Interest Only (curtailments)",
+      "status": "Interest Only (curtailments)",
       "isDemand": false,
       "maturity": "2035-06-01",
       "monthsToMaturity": 105,
@@ -3389,8 +3389,8 @@
       "collateralProperty": null
     },
     {
-      "id": "internal-2203-2207-northwood-no-journal-sheet",
-      "name": "⚠ 2203-2207 Northwood — NO JOURNAL SHEET",
+      "id": "internal-duplicate-of-row-22-do-not-use",
+      "name": "⚠ DUPLICATE OF ROW 22 — DO NOT USE",
       "counterparty": "EG Florida LLC (EGFLLC)",
       "direction": "internal",
       "originalPrincipal": null,
