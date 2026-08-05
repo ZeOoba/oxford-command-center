@@ -2,7 +2,7 @@
   "meta": {
     "schemaVersion": "1.0.0",
     "asOf": "2026-08-05",
-    "generatedAt": "2026-08-05T19:43:23.122Z",
+    "generatedAt": "2026-08-05T21:22:35.229Z",
     "source": "Master Excel Template Company Wide -- Oxford.xlsx",
     "scenario": "Base"
   },
@@ -3239,8 +3239,8 @@
       "monthlyPmt": 3991.2566666666717,
       "annualInterest": null,
       "annualPrincipal": null,
-      "loanType": "Amortizing",
-      "status": "Amortizing",
+      "loanType": "Interest Only (curtailments)",
+      "status": "Interest Only (curtailments)",
       "isDemand": false,
       "maturity": "2035-06-01",
       "monthsToMaturity": 105,
@@ -3259,7 +3259,7 @@
       "currentBalance": -553045,
       "absBalance": 553045,
       "rate": 0.06,
-      "monthlyPmt": -10428.141666666666,
+      "monthlyPmt": -2765.225,
       "annualInterest": null,
       "annualPrincipal": null,
       "loanType": "Amortizing",
@@ -3282,7 +3282,7 @@
       "currentBalance": -978763.425,
       "absBalance": 978763.425,
       "rate": 0.09,
-      "monthlyPmt": -4178.412499999999,
+      "monthlyPmt": -85224.35958333334,
       "annualInterest": null,
       "annualPrincipal": null,
       "loanType": "Balloon Due Feb-27",
@@ -3379,29 +3379,6 @@
       "annualPrincipal": null,
       "loanType": "Paid Off",
       "status": "Paid Off",
-      "isDemand": true,
-      "maturity": null,
-      "monthsToMaturity": null,
-      "ltv": null,
-      "lender": null,
-      "balloon": false,
-      "flags": [],
-      "collateralProperty": null
-    },
-    {
-      "id": "internal-2203-2207-northwood-no-journal-sheet",
-      "name": "⚠ 2203-2207 Northwood — NO JOURNAL SHEET",
-      "counterparty": "EG Florida LLC (EGFLLC)",
-      "direction": "internal",
-      "originalPrincipal": null,
-      "currentBalance": 0,
-      "absBalance": 0,
-      "rate": 0.0699,
-      "monthlyPmt": null,
-      "annualInterest": null,
-      "annualPrincipal": null,
-      "loanType": "Int Only | matures 2031-10-01",
-      "status": "Int Only | matures 2031-10-01",
       "isDemand": true,
       "maturity": null,
       "monthsToMaturity": null,
@@ -6928,5 +6905,13 @@
     "value": 57951345.04595404,
     "rent": 5598136.680000002
   },
-  "dataQuality": []
+  "dataQuality": [
+    {
+      "entity": "loans",
+      "field": "name",
+      "issue": "Loan Index row 24 is tombstoned in the workbook and was skipped, so it cannot claim a snapshot id or warehouse key",
+      "rawValue": "⚠ DUPLICATE OF ROW 22 — DO NOT USE",
+      "severity": "info"
+    }
+  ]
 }
