@@ -124,7 +124,6 @@ describe('crossCheckSchedule — clean cases stay silent', () => {
       bookInterest: 15000 * 12,
       bookPrincipal: 7900 * 12,
       asOf: ASOF,
-      isLender: false,
     });
     expect(flags).toEqual([]);
   });
@@ -139,7 +138,6 @@ describe('crossCheckSchedule — clean cases stay silent', () => {
       bookInterest: 4500 * 12 * 0.5,
       bookPrincipal: 7700 * 12 * 0.5,
       asOf: ASOF,
-      isLender: false,
     });
     expect(flags).toEqual([]);
   });
@@ -156,7 +154,6 @@ describe('crossCheckSchedule — clean cases stay silent', () => {
       bookInterest: 14600 * 6,
       bookPrincipal: 2100 * 6,
       asOf: ASOF,
-      isLender: false,
     });
     expect(flags).toEqual([]);
   });
@@ -172,7 +169,6 @@ describe('crossCheckSchedule — clean cases stay silent', () => {
       bookInterest: 1365 * 12,
       bookPrincipal: null,
       asOf: ASOF,
-      isLender: false,
     });
     expect(flags).toEqual([]);
   });
@@ -192,7 +188,6 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
       bookInterest: buggy * (15000 / 22900),
       bookPrincipal: buggy * (7900 / 22900),
       asOf: ASOF,
-      isLender: false,
     });
 
     const total = flags.filter((f) => f.field === 'annualDebtService');
@@ -213,7 +208,6 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
       bookInterest: 15000 * 12,
       bookPrincipal: 7900 * 12,
       asOf: ASOF,
-      isLender: false,
     });
 
     const trunc = flags.filter((f) => f.field === 'scheduleRange');
@@ -234,7 +228,6 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
       bookInterest: full * (15000 / 22900),
       bookPrincipal: full * (7900 / 22900),
       asOf: ASOF,
-      isLender: false,
     });
     expect(flags.filter((f) => f.field === 'annualDebtService')).toHaveLength(1);
   });
@@ -253,7 +246,6 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
       bookInterest: 1365 * 13, // the double-counted total the workbook actually produces
       bookPrincipal: null,
       asOf: ASOF,
-      isLender: false,
     });
     expect(flags.filter((f) => f.field === 'duplicatePaymentDate')).toHaveLength(1);
   });
@@ -271,7 +263,6 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
       bookInterest: 14600 * 6,
       bookPrincipal: 2100 * 6,
       asOf: ASOF,
-      isLender: false,
     });
 
     const gap = flags.filter((f) => f.field === 'principalReconciliation');
@@ -292,7 +283,6 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
       bookInterest: 15000 * 12,
       bookPrincipal: 7900 * 12,
       asOf: ASOF,
-      isLender: false,
       scanReachedDeclaredEnd: false,
     });
 
@@ -302,13 +292,20 @@ describe('crossCheckSchedule — REFUTE: the defect the withdrawn draft could no
   });
 });
 
-describe('crossCheckSchedule — encodes the OI-095 ruling, not the raw arithmetic', () => {
-  // Ruling 2026-08-05 (OI-095, CLOSED): excluding a balloon from a LENDER row's principal is
-  // INTENTIONAL. "Annual debt service" means recurring P&I only; a lender balloon is capital
-  // returning to Oxford, not debt service. Flagging the raw arithmetic here would fire
-  // permanently on Restoration Church Trust with a $1.9M "unaccounted for" figure on a workbook
-  // already adjudicated correct — the costliest kind of false positive.
-  it('stays SILENT on a lender balloon excluded from the principal column', () => {
+describe('crossCheckSchedule — no borrower/lender exemption (superseded ruling, 2026-08-05)', () => {
+  // Gabriel's FIRST ruling on RCT's balloon exclusion (~17:00, 2026-08-05) held it as
+  // intentional: "C = total payment, D/E = the itemized split a balloon legitimately doesn't
+  // carry" — a principled borrower/lender asymmetry. That ruling was ITSELF superseded same-day
+  // ("Turn 149"): the real root cause was I14/I15/I16 computing principal on three inconsistent
+  // bases, not one deliberate design choice. All three were fixed to a single consistent
+  // forward-looking basis, and RCT's balloon is now genuinely included (I15 -$978,763.425,
+  // confirmed live). The tracker records this explicitly as a detector constraint: "must NOT be
+  // built to treat balloon-excluded lender principal as correct."
+  //
+  // An earlier version of this check carried an isLender exemption built against the FIRST
+  // ruling. These tests pin its removal — a balloon excluded from a lender row's principal
+  // column is now a real defect and must fire, exactly like a borrower row's would.
+  it('FIRES on a lender-row balloon excluded from the principal column', () => {
     const flags = crossCheckSchedule({
       id: 'restoration-church-trust',
       rows: balloonOutsidePrincipalColumn(),
@@ -317,12 +314,12 @@ describe('crossCheckSchedule — encodes the OI-095 ruling, not the raw arithmet
       bookInterest: 14600 * 6 * 0.5,
       bookPrincipal: 2100 * 6 * 0.5,
       asOf: ASOF,
-      isLender: true,
     });
-    expect(flags.filter((f) => f.field === 'principalReconciliation')).toEqual([]);
+    const gap = flags.filter((f) => f.field === 'principalReconciliation');
+    expect(gap, JSON.stringify(flags, null, 2)).toHaveLength(1);
   });
 
-  it('still cross-checks a lender row TOTAL — the exemption is scoped to the balloon check', () => {
+  it('still cross-checks a lender row TOTAL the same as any other row', () => {
     const rows = schedule(2026, 9, 20, 6, 14600, 2100);
     const flags = crossCheckSchedule({
       id: 'restoration-church-trust',
@@ -332,7 +329,6 @@ describe('crossCheckSchedule — encodes the OI-095 ruling, not the raw arithmet
       bookInterest: 14600 * 7, // one payment too many
       bookPrincipal: 2100 * 6,
       asOf: ASOF,
-      isLender: true,
     });
     expect(flags.filter((f) => f.field === 'annualDebtService')).toHaveLength(1);
   });
@@ -425,8 +421,11 @@ function countInWindow(
   return count;
 }
 
-/** A minimal but structurally real fixture: Assumptions + External Loans Summary (with the
- *  sheet's own borrower/lender section banners) + one schedule sheet per loan. */
+/** A minimal but structurally real fixture: Assumptions + External Loans Summary + one schedule
+ *  sheet per loan. Carries the sheet's own section banners as harmless decorative text — the
+ *  detector no longer distinguishes borrower from lender rows (see the "no borrower/lender
+ *  exemption" describe block below), but the banners are real content on the live sheet and
+ *  keeping them here confirms the parser doesn't trip over them. */
 function buildFixtureWorkbook(opts: {
   asOf?: Date;
   loans: {
@@ -439,7 +438,7 @@ function buildFixtureWorkbook(opts: {
     payDay: number;
     startYear?: number;
     startMonth?: number;
-    wrapInAbs?: boolean; // sign-normalization shape — must NOT drive lender classification
+    wrapInAbs?: boolean; // sign-normalization shape — Math.abs() must make this a non-issue
     hFormulaOverride?: string; // for malformed-formula test cases
   }[];
 }): ExcelJS.Workbook {
@@ -491,7 +490,7 @@ function buildFixtureWorkbook(opts: {
 }
 
 describe('crossCheckDebtService — fixture end-to-end', () => {
-  it('stays silent on a clean two-loan workbook (one borrower, one lender)', () => {
+  it('stays silent on a clean two-loan workbook (one borrower row, one lender row)', () => {
     const wb = buildFixtureWorkbook({
       loans: [
         { row: 6, label: '3540 E Fifth Ave', sheet: 'Sched-3540', interest: 12000, principal: 4000, n: 24, payDay: 1 },
@@ -502,11 +501,10 @@ describe('crossCheckDebtService — fixture end-to-end', () => {
     expect(flags, JSON.stringify(flags, null, 2)).toEqual([]);
   });
 
-  it('does NOT let a borrower row wrapped in -ABS(...) escape the principal-reconciliation check', () => {
-    // Finding A from the REFUTE pass: isLender must come from the sheet's own BORROWER/LENDER
-    // section banners, not from whether H happens to be -ABS(...)-wrapped. A borrower loan
-    // sharing that wrapper (a sign-normalization accident, or a copy-paste from a lender row)
-    // must still be checked — otherwise a real borrower-side understatement goes unflagged.
+  it('does NOT let a -ABS(...)-wrapped formula escape the principal-reconciliation check', () => {
+    // The sign-normalization wrapper must never gate this check — every comparison inside it
+    // uses Math.abs(), so a -ABS(...)-wrapped row (a sign-normalization accident, or a
+    // copy-paste from elsewhere on the sheet) must still be checked exactly like any other row.
     // Start the schedule well before the window so a real prior-period row exists — the fixed
     // opening-balance logic reads from that row; a schedule beginning INSIDE the window has no
     // independent predecessor to read and falls back to the (still-limited) origination case.
@@ -519,8 +517,7 @@ describe('crossCheckDebtService — fixture end-to-end', () => {
       ],
     });
     // Hide principal on the first in-window row (2026-09-01) — only the balance-column
-    // reconciliation can see it. Same shape as the RCT balloon, but here it belongs in debt
-    // service because the loan is a BORROWER loan (row 6, below the sheet's BORROWER banner).
+    // reconciliation can see it.
     const sched = wb.getWorksheet('Sched-3540')!;
     sched.getCell('E21').value = null; // row 9 + 12 months = the first row inside (asOf, +12mo]
 
@@ -529,7 +526,10 @@ describe('crossCheckDebtService — fixture end-to-end', () => {
     expect(gap.length, JSON.stringify(flags, null, 2)).toBeGreaterThan(0);
   });
 
-  it('stays silent on a genuine lender balloon exclusion (OI-095) regardless of -ABS wrapping', () => {
+  it('FIRES on a lender-row balloon excluded from the principal column, -ABS wrapping notwithstanding', () => {
+    // Superseded-ruling regression test (see the dedicated describe block above for the full
+    // history): a balloon excluded from a LENDER row's principal column is a real defect, not an
+    // exempt design choice — and the -ABS(...) sign wrapper must not matter either way.
     const wb = buildFixtureWorkbook({
       loans: [
         { row: 15, label: 'Restoration Church Trust', sheet: 'Sched-RCT', interest: 14600, principal: 2100, n: 6, payDay: 20, wrapInAbs: true },
@@ -544,7 +544,8 @@ describe('crossCheckDebtService — fixture end-to-end', () => {
     els.getCell('I15').value = formulaCell(iCell.formula, iCell.result - removedPrincipal);
 
     const flags = crossCheckDebtService(wb);
-    expect(flags.filter((f) => f.field === 'principalReconciliation')).toEqual([]);
+    const gap = flags.filter((f) => f.field === 'principalReconciliation');
+    expect(gap.length, JSON.stringify(flags, null, 2)).toBeGreaterThan(0);
   });
 
   it('flags a known schedule-backed row pasted to a literal value, not a self-referential floor', () => {
@@ -598,6 +599,24 @@ describe('crossCheckDebtService — fixture end-to-end', () => {
     const flags = crossCheckDebtService(wb);
     expect(flags.some((f) => f.entity === 'New Loan Added Later')).toBe(true);
   });
+
+  it('flags — rather than silently skips — an unresolvable "Remaining Balance" header', () => {
+    // Independent review finding (2026-08-05): every other unresolvable-column path here is
+    // flagged (cols.date/cols.interest at the top of the loop, cols.principal below), but
+    // cols.balance was never validated. crossCheckSchedule cannot tell "column absent" from
+    // "loan genuinely has no balance data" — every row's balance just reads null either way —
+    // so its principal-reconciliation check (finding #4, the ONE check that can see a balloon
+    // parked outside the Principal column, e.g. the real RCT case) silently no-ops. A borrower
+    // loan whose balance header gets renamed would read as clean while that entire check is
+    // dark for it.
+    const wb = buildFixtureWorkbook({
+      loans: [{ row: 6, label: '3540 E Fifth Ave', sheet: 'Sched-3540', interest: 12000, principal: 4000, n: 24, payDay: 1 }],
+    });
+    wb.getWorksheet('Sched-3540')!.getCell('F8').value = 'Balance Post-Payment'; // no longer starts with "remaining balance"
+
+    const flags = crossCheckDebtService(wb);
+    expect(flags.some((f) => f.entity === '3540 E Fifth Ave' && /Remaining Balance/.test(f.issue))).toBe(true);
+  });
 });
 
 describe('crossCheckSchedule — F-1: opening balance is read independently, not reconstructed', () => {
@@ -623,7 +642,6 @@ describe('crossCheckSchedule — F-1: opening balance is read independently, not
       bookInterest: 15000 * 12,
       bookPrincipal: bookPrincipalOnly, // the workbook's own I matches the same corrupted figure
       asOf: ASOF,
-      isLender: false,
     });
 
     expect(flags.filter((f) => f.field === 'principalReconciliation')).toHaveLength(1);
@@ -644,7 +662,6 @@ describe('crossCheckSchedule — D: duplicate-date detection tolerates a roundin
       bookInterest: rows.reduce((s, r) => s + (r.interest ?? 0), 0),
       bookPrincipal: null,
       asOf: ASOF,
-      isLender: false,
     });
 
     expect(flags.filter((f) => f.field === 'duplicatePaymentDate')).toHaveLength(1);

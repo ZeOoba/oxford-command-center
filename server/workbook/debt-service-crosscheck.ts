@@ -61,17 +61,6 @@ export interface CrossCheckInput {
   bookPrincipal: number | null;
   asOf: Date;
   /**
-   * Lender rows (Oxford receives) are exempt from the principal reconciliation.
-   *
-   * Ruling, 2026-08-05 (OI-095, closed — do not re-litigate): excluding a balloon from a LENDER
-   * row's principal is INTENTIONAL, not a defect. "Annual debt service" means recurring P&I only;
-   * a lender balloon is capital returning to Oxford, not debt service. The borrower/lender
-   * asymmetry is principled — 3540's balloon is cash Oxford must pay and does belong.
-   * Encoding the ruling rather than the raw arithmetic is what stops this firing permanently
-   * on Restoration Church Trust.
-   */
-  isLender: boolean;
-  /**
    * True when `scanSchedule` terminated on a run of undated rows rather than reaching the end of
    * its probe. Without this, an early-terminating scan silently disables the truncation check,
    * because that check can only fire when the scan runs PAST the declared range end.
@@ -162,7 +151,7 @@ const money = (n: number): string =>
  */
 export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
   const {
-    id, rows, declaredRangeEnd, share, bookInterest, bookPrincipal, asOf, isLender,
+    id, rows, declaredRangeEnd, share, bookInterest, bookPrincipal, asOf,
     scanReachedDeclaredEnd = true,
   } = input;
   const flags: DataQualityFlag[] = [];
@@ -291,11 +280,25 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
   }
 
   // ── 4. principal reconciliation against the remaining-balance column ─────────────────────
-  // The one check that can see a balloon parked outside the principal column. Restoration
-  // Church Trust's $1,945,102.73 balloon sits in PAYMENT AMOUNT, so a principal-column sum
-  // misses it and the workbook and a naive recomputation agree while both understate Oxford's
-  // returning capital by $972,551. Only the balance column exposes it.
-  if (comparePrincipal && !isLender) {
+  // The one check that can see a balloon parked outside the principal column. Restoration Church
+  // Trust's $1,945,102.73 balloon originally sat in PAYMENT AMOUNT, so a principal-column sum
+  // missed it and the workbook and a naive recomputation agreed while both understated Oxford's
+  // returning capital by $972,551. Only the balance column exposes that shape.
+  //
+  // Applies uniformly to every loan, lender rows included — this was NOT always the design.
+  // Gabriel's first-pass ruling on RCT's exclusion (2026-08-05, ~17:00) held it as intentional:
+  // "C = total payment, D/E = the itemized split a balloon legitimately doesn't carry" — a
+  // principled borrower/lender asymmetry, with 3540's borrower balloon belonging in debt service
+  // and RCT's lender balloon not. That ruling was ITSELF superseded same-day ("Turn 149"): the
+  // real root cause was that I14/I15/I16 computed principal on three inconsistent bases, not one
+  // deliberate design choice. All three were fixed to a single consistent forward-looking basis,
+  // and RCT's balloon is now included (I15 -$978,763.425, confirmed live). The tracker records
+  // this explicitly as a detector constraint: "must NOT be built to treat balloon-excluded lender
+  // principal as correct." A prior version of this check carried an `isLender` exemption built
+  // against the first, superseded ruling — removed; it would have silently exempted a real
+  // borrower-side OR lender-side defect from ever being caught, exactly the failure mode this
+  // check exists to close.
+  if (comparePrincipal) {
     // Opening balance is read from the row IMMEDIATELY BEFORE the window in the full schedule
     // (`rows`, not `inWindow`) — not reconstructed from the first in-window row's own principal.
     // Reconstructing it that way makes the check blind to a defect on exactly that row: understate
@@ -485,32 +488,6 @@ const ELS_SCAN_ROWS_MIN = 40;
 /** Sanity cap — a loan block legitimately living past this would be a workbook redesign. */
 const ELS_SCAN_ROWS_MAX = 500;
 
-/**
- * Classify a loan row as borrower or lender from the sheet's OWN section banners
- * (`External Loans Summary!B5` "▼ WE ARE THE BORROWER", `B13` "▼ WE ARE THE LENDER") — not
- * from the formula's sign-wrapper shape. A prior version keyed this off whether H's formula was
- * wrapped in `-ABS(...)`, which is a sign-normalization convention with no borrower/lender
- * semantics: a borrower loan copy-pasted from a lender row (or wrapped for any other reason)
- * would silently exempt a real understatement from the principal-reconciliation check — exactly
- * the failure mode this module exists to catch. An unrecognized row defaults to BORROWER
- * (checked), never lender (exempt): a classification failure must never be able to disable a
- * check, only over-apply it.
- */
-function classifyLenderRows(els: Worksheet, maxRow: number): Map<number, boolean> {
-  const banners: { row: number; isLender: boolean }[] = [];
-  for (let r = 1; r <= maxRow; r++) {
-    const text = cellText(els, 'A', r) ?? cellText(els, 'B', r) ?? '';
-    if (/WE ARE THE BORROWER/i.test(text)) banners.push({ row: r, isLender: false });
-    else if (/WE ARE THE LENDER/i.test(text)) banners.push({ row: r, isLender: true });
-  }
-  const out = new Map<number, boolean>();
-  for (let r = 1; r <= maxRow; r++) {
-    const governing = [...banners].reverse().find((b) => b.row < r);
-    out.set(r, governing?.isLender ?? false);
-  }
-  return out;
-}
-
 /** Does this cell hold a summing formula that SHOULD have been parseable as a schedule ref? */
 function looksLikeScheduleFormula(formula: string | null): boolean {
   return /\bSUMPRODUCT\s*\(|\bSUMIFS?\s*\(/i.test(formula ?? '');
@@ -566,7 +543,6 @@ export function crossCheckDebtService(
     ...ELS_LOAN_ROWS,
     ...Array.from({ length: scanBand }, (_, i) => i + 1),
   ]);
-  const lenderByRow = classifyLenderRows(els, scanBand);
 
   for (const r of [...candidates].sort((a, b) => a - b)) {
     const hFormula = formulaOf(els, `H${r}`);
@@ -629,6 +605,25 @@ export function crossCheckDebtService(
         severity: 'warn',
       });
       continue;
+    }
+
+    // Unlike date/interest/principal above, an unresolvable balance column does NOT skip the
+    // loan — checks 1-3 (total, share, duplicate-date) don't need it. But without this flag, a
+    // renamed/missing "Remaining Balance" header degrades to every row reading balance: null,
+    // and crossCheckSchedule's principal-reconciliation check (the ONE check that can see a
+    // balloon parked outside the Principal column — the RCT case, and per the ruling below the
+    // one every loan is expected to pass) silently no-ops: it cannot distinguish "column absent"
+    // from "loan genuinely has no balance data" on its own.
+    if (!cols.balance) {
+      flags.push({
+        entity: label,
+        field: 'annualDebtService',
+        issue:
+          `no "Remaining Balance" header could be resolved from row ${headerRow} of ` +
+          `"${interestRef.sheet}" — the principal-reconciliation check (which catches a balloon ` +
+          `recorded outside the Principal column) was NOT run for this loan.`,
+        severity: 'warn',
+      });
     }
 
     // A missing cached result means "cannot compare", NOT "the workbook says zero". Treating it as
@@ -698,7 +693,6 @@ export function crossCheckDebtService(
         bookInterest,
         bookPrincipal,
         asOf: resolvedAsOf,
-        isLender: lenderByRow.get(r) ?? false,
         scanReachedDeclaredEnd: scan.reachedDeclaredEnd,
       }),
     );
