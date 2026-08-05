@@ -36,15 +36,31 @@ Constraints the retry must handle:
 
 ## Known defects the retry is the auto-check for
 
-- **OI-094** — `External Loans Summary!H9`/`I9` sum Banwick over `B11:B70`, but the schedule's
-  balloon is row **71** (`2031-06-05`, $3,349,289.87). Audited 2026-08-05: Banwick is the **only**
-  truncated range of the six; the other five end exactly on their final payment row.
-- **OI-095** — Restoration Church Trust's balloon rows (36–37) are *inside* the range but carry
-  their amount only in column C; `H15`/`I15` sum columns D/E, which are blank there, so the
-  $972,551.37 balloon due 2027-02-20 contributes zero. Live now, not deferred.
-- **Feb month-end under-capture (OI-096)** — month-end anchoring closed over-capture but not
-  under-capture; a February month-end close in the year before a leap year captures 11 payments.
-  Latent (no current loan pays month-end) but the same cross-check catches it.
+All four are tracked under **OI-092** and **OI-094** — none has its own id. Check the tracker for
+current status before acting; the audit below was completed independently by two sessions on
+2026-08-05 and the conclusions agree.
+
+- **OI-094 (primary)** — `External Loans Summary!H9`/`I9` sum Banwick over `B11:B70`, but the
+  schedule's balloon is row **71** (`2031-06-05`, $3,349,289.87). Audited across all six ranges:
+  Banwick is the **only** truncated one; the other five end exactly on their final payment row.
+  Bites ~mid-2030.
+- **OI-094 finding (a) — 485 S Walnut double-count.** Rows 45 and 46 both carry `2028-09-26`: r45 is
+  the final regular payment, r46 the payoff. `H16` sums column `E` over the date predicate and picks
+  up **both** rows' $1,365 — the same September interest twice. Bites ~Oct 2027. Small, but it is the
+  same over-count shape as OI-092, and it is why the retry must key on **distinct dates, not rows**.
+- **OI-094 finding (b) — Restoration Church Trust balloon absent from `I15`.** Rows 35/36/37 all carry
+  `2027-02-20`: r35 is the regular payment; r36 holds the full balloon **in column C**
+  ($1,945,102.73, D/E empty); r37 holds Oxford's 50% share ($972,551.37, D/E empty). `H15`/`I15` sum
+  D/E only, so the balloon contributes **zero** and next-12-month principal return understates
+  Oxford's returning capital by $972,551. **Live now** — 2027-02-20 is already inside the window.
+  May be intentional (C = total, D/E = the itemized split balloons don't carry); needs Gabriel's read.
+- **OI-092 residual — February month-end under-capture.** Month-end anchoring closed the over-capture
+  path, not the under-capture one: a February month-end close in the year before a leap year captures
+  **11** payments. Simulation over 1,080 cases (120 month-ends × 9 pay-days) found `EDATE(B30,12)`
+  leaves **9 deviations** and `EOMONTH(B30,12)` leaves **0** — but `EOMONTH` is catastrophic under a
+  manual `B32` override (1,428 deviations). The fix is therefore a **pair**: move the six cells to
+  `EOMONTH(Assumptions!$B$30,12)` **and** constrain `B30` to month-end. Latent today (no loan pays
+  month-end) but the same cross-check catches it.
 
 Full context: `memory/reference_workbook_annual_debt_service_366day_overcapture.md` and the OI-092
 entry (plus its 2026-08-05 CORRECTION) in `memory/open-items-tracker.md`.
