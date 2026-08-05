@@ -30,37 +30,31 @@ Constraints the retry must handle:
 - The lender-row sign convention (`conditions.ts`).
 - `parseLoans()` reads **only** the `Loan Index` sheet — never `External Loans Summary` or any
   amortization schedule — so this needs new sheet access either way.
-- Distinct dates, not row counts (the 485 S Walnut duplicate-date case above).
+- Distinct dates, not row counts (OI-096, resolved — see below — but the pattern recurs).
 - Gabriel ruled **warn-severity**, not blocking. An error-severity flag here would block legitimate
   refreshes.
+- **Expect balloon-inclusive, forward-looking principal on EVERY lender row** — see OI-095 below. A
+  lender row whose principal excludes a contractually-due balloon should be flagged as WRONG, not
+  treated as acceptable variance.
 
-## Known defects the retry is the auto-check for
+## Status as of 2026-08-05 (end of day) — check the tracker before trusting this table
 
-All four are tracked under **OI-092** and **OI-094** — none has its own id. Check the tracker for
-current status before acting; the audit below was completed independently by two sessions on
-2026-08-05 and the conclusions agree.
+Everything below landed the same day this draft was withdrawn. **`memory/open-items-tracker.md` is
+authoritative — this table is a snapshot, not a live source.**
 
-- **OI-094 (primary)** — `External Loans Summary!H9`/`I9` sum Banwick over `B11:B70`, but the
-  schedule's balloon is row **71** (`2031-06-05`, $3,349,289.87). Audited across all six ranges:
-  Banwick is the **only** truncated one; the other five end exactly on their final payment row.
-  Bites ~mid-2030.
-- **OI-094 finding (a) — 485 S Walnut double-count.** Rows 45 and 46 both carry `2028-09-26`: r45 is
-  the final regular payment, r46 the payoff. `H16` sums column `E` over the date predicate and picks
-  up **both** rows' $1,365 — the same September interest twice. Bites ~Oct 2027. Small, but it is the
-  same over-count shape as OI-092, and it is why the retry must key on **distinct dates, not rows**.
-- **OI-094 finding (b) — Restoration Church Trust balloon absent from `I15`.** Rows 35/36/37 all carry
-  `2027-02-20`: r35 is the regular payment; r36 holds the full balloon **in column C**
-  ($1,945,102.73, D/E empty); r37 holds Oxford's 50% share ($972,551.37, D/E empty). `H15`/`I15` sum
-  D/E only, so the balloon contributes **zero** and next-12-month principal return understates
-  Oxford's returning capital by $972,551. **Live now** — 2027-02-20 is already inside the window.
-  May be intentional (C = total, D/E = the itemized split balloons don't carry); needs Gabriel's read.
-- **OI-092 residual — February month-end under-capture.** Month-end anchoring closed the over-capture
-  path, not the under-capture one: a February month-end close in the year before a leap year captures
-  **11** payments. Simulation over 1,080 cases (120 month-ends × 9 pay-days) found `EDATE(B30,12)`
-  leaves **9 deviations** and `EOMONTH(B30,12)` leaves **0** — but `EOMONTH` is catastrophic under a
-  manual `B32` override (1,428 deviations). The fix is therefore a **pair**: move the six cells to
-  `EOMONTH(Assumptions!$B$30,12)` **and** constrain `B30` to month-end. Latent today (no loan pays
-  month-end) but the same cross-check catches it.
+| id | what | status |
+|---|---|---|
+| OI-092 | window `+366` over-capture | RESOLVED — workbook fixed |
+| OI-092 | February month-end under-capture | RESOLVED — `EOMONTH(B30,12)` + `B30` month-end pair applied |
+| OI-092 | detector (this draft) | WITHDRAWN, rebuild queued (this doc) |
+| OI-094 | Banwick range truncated at row 70, balloon at 71 | RESOLVED — extended to `B11:B71` |
+| OI-095 | RCT balloon absent from `I15` | RESOLVED — **INCLUDED**, not excluded. Root cause was not a design choice: `I14`/`I15`/`I16` computed principal on three inconsistent bases (paid-to-date vs. forward-looking); all three fixed to one consistent forward basis. An earlier same-day ruling called the exclusion intentional — that was superseded within the day; do not build against it. |
+| OI-096 | 485 S Walnut double-counts $1,365 (rows 45/46 both `2028-09-26`) | RESOLVED — r46 corrected to a pure balloon (`D`=252,000, `E`=0); TOTALS reconciled |
 
-Full context: `memory/reference_workbook_annual_debt_service_366day_overcapture.md` and the OI-092
-entry (plus its 2026-08-05 CORRECTION) in `memory/open-items-tracker.md`.
+Detail on each, including exact formula text and verification numbers, is in the tracker entries and in
+`memory/reference_workbook_annual_debt_service_366day_overcapture.md`.
+
+**What this means for the retry:** every known defect this draft was meant to catch has already been
+fixed by hand in the workbook. The detector is no longer urgent — it is insurance against a *future*
+recurrence of the same shapes (wrong window, truncated range, inconsistent basis, duplicate dates), not
+a fix for a currently-live defect. Build it against the corrected workbook as ground truth.
