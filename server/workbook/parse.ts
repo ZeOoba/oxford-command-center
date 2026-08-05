@@ -23,6 +23,7 @@ import { SCENARIO_PRESETS } from '../../src/contracts/scenario';
 import { loadDeals } from '../sources/notion-deals';
 import { loadM365Tasks } from '../sources/m365-tasks';
 import { deriveCounterparties } from './counterparties';
+import { crossCheckDebtService } from './debt-service-crosscheck';
 import { WORKBOOK_AS_OF, referenceDate } from '../config';
 
 type Worksheet = ExcelJS.Worksheet;
@@ -926,6 +927,11 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
   const { properties, workbookNoiTotal, workbookValueTotal } = parseProperties(get('Property NOI'), flags);
   const { leases, workbookRentTotal } = parseLeases(rentRollWs, properties, flags, refIso);
   const loans = parseLoans(get('Loan Index'), flags);
+  // OI-092: parseLoans reads only `Loan Index`, so a wrong next-12-month debt-service window in
+  // `External Loans Summary` reaches monthlyPmt (and therefore DSCR) with nothing in its path
+  // able to see it. This cross-checks that figure against the amortization schedules themselves.
+  // warn-severity by ruling — it reports on workbook formulas this pipeline does not own.
+  flags.push(...crossCheckDebtService(wb));
   const cash = parseCash(get('Cash Balances'), flags, dataAsOf);
   const insurance = parseInsurance(get('Insurance Renewals'), flags);
   const checklistTasks = parseTasks(get('Monthly Checklist'));
