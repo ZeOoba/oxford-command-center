@@ -585,6 +585,20 @@ function parseLeases(
   return { leases: finalLeases, workbookRentTotal };
 }
 
+/**
+ * Rows Gabriel has retired in place rather than deleted, so the workbook keeps its own
+ * audit trail — e.g. Loan Index r24, `⚠ DUPLICATE OF ROW 22 — DO NOT USE` (2026-08-05).
+ *
+ * These must not become Loan records: `debt_positions` is keyed `ON CONFLICT(id,
+ * snapshot_date)`, so a tombstone would claim a warehouse key on every snapshot and
+ * inflate the loan count. Matching is deliberately narrow — the bare word "duplicate" is
+ * not a marker, only `DUPLICATE OF <something>` — so a real counterparty name can't be
+ * swallowed. OI-093 residual.
+ */
+export function isTombstonedLoanRow(name: string): boolean {
+  return /DO\s+NOT\s+USE/i.test(name) || /DUPLICATE\s+OF\s+\S/i.test(name);
+}
+
 // ── loans (Loan Index — section-aware) ────────────────────────────────────────
 function parseLoans(ws: Worksheet, flags: DataQualityFlag[]): Loan[] {
   const out: Loan[] = [];
@@ -602,6 +616,18 @@ function parseLoans(ws: Worksheet, flags: DataQualityFlag[]): Loan[] {
     const rawName = c2;
     if (idx === null || !rawName) continue;
     const name = rawName.replace(/\s*→\s*$/, '').trim();
+    if (isTombstonedLoanRow(name)) {
+      // Skipped, but never silently — an invisible skip is indistinguishable from a
+      // parser that stopped seeing the row at all.
+      flags.push({
+        entity: 'loans',
+        field: 'name',
+        issue: `Loan Index row ${r} is tombstoned in the workbook and was skipped, so it cannot claim a snapshot id or warehouse key`,
+        rawValue: name,
+        severity: 'info',
+      });
+      continue;
+    }
     const id = slug(`${section}-${name}`);
     const balance = num(row(ws, r, 4)) ?? 0;
     const maturityStr = section === 'internal' ? null : str(row(ws, r, 7));
