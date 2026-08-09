@@ -10,6 +10,7 @@ import { checkSnapshot } from './reconcile-runtime';
 import { SNAPSHOT_PATH, workbookPath, referenceDate } from './config';
 import { loadQuickbooks } from './sources/quickbooks';
 import { evaluateAnomalyFloor, loadPreviousLeaseIds } from './anomaly-floor';
+import { hasDealsPipelineFailure } from './sources/notion-deals';
 
 /**
  * The live brain: single source of in-memory truth. Parses the workbook on demand,
@@ -204,6 +205,19 @@ class Brain extends EventEmitter {
   }
 
   private persist(snapshot: PortfolioSnapshot) {
+    // The live server keeps SERVING a deals-degraded snapshot (the UI staying up matters more than
+    // the deals section being live), but it must not write those seed placeholders to the shared,
+    // git-tracked portfolio.json -- that mirror is what the scheduled refresh commits and pushes,
+    // and this path runs neither evaluateReconciliationGate nor requireLiveDealsSource. Declining
+    // the write leaves the last good mirror in place; the next healthy refresh rewrites it.
+    if (hasDealsPipelineFailure(snapshot.dataQuality)) {
+      console.error(
+        `✗ Brain.persist: declining to write ${SNAPSHOT_PATH} — the Notion deals pipeline is ` +
+          `unavailable, so this snapshot's deals/counterparties are seed placeholders. Serving it ` +
+          `in memory; the on-disk mirror is left at its last good state.`,
+      );
+      return;
+    }
     // Declared outside the try so the catch below can clean it up -- a renameSync failure still
     // leaves the temp file written by writeFileSync on disk; without this it leaks a
     // `.tmp-<pid>-<timestamp>` file on every failed persist (2026-07-26 adversarial review finding).

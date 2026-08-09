@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import type { Deal } from '../../src/contracts/index';
-import { mapNotionPage, mergeDeals, parseNameAliases } from '../../server/sources/notion-deals';
+import { mapNotionPage, mergeDeals, parseNameAliases, loadDeals, dealsDegradationFlag, hasDealsPipelineFailure } from '../../server/sources/notion-deals';
+import { SEED_DEALS } from '../../src/data/seed-deals';
 import { findNearDuplicateNames } from '../../server/sources/deal-name';
 
 const page = (over: Record<string, unknown> = {}) => ({
@@ -294,5 +295,112 @@ describe('parseNameAliases', () => {
 
   it('returns an empty map for blank/unset input', () => {
     expect(parseNameAliases('').size).toBe(0);
+  });
+});
+
+/**
+ * 2026-08-09 seed-fallback regression. loadDeals() used to swallow a live-fetch failure and return
+ * SEED_DEALS with no signal, so a transient `fetch failed` silently replaced the live pipeline with
+ * seed placeholders (deals 20 → 6, counterparties 15 → 14) while the run still exited 0. The
+ * scheduled ora-lease-snapshot-refresh task's material-change gate read that wipe as real portfolio
+ * movement and — under the 2026-08-09 auto-push directive — would have pushed it to origin/main.
+ * The degradation must be REPORTABLE so parse.ts can raise an error-severity dataQuality flag and
+ * evaluateReconciliationGate (PR #252) refuses the write in both CLI writers.
+ */
+describe('loadDeals degradation reporting', () => {
+  const originalToken = process.env.NOTION_TOKEN;
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    if (originalToken === undefined) delete process.env.NOTION_TOKEN;
+    else process.env.NOTION_TOKEN = originalToken;
+    delete process.env.NOTION_DEALS_DATA_SOURCE;
+  });
+
+  it('reports degraded="fetch-failed" (not a silent seed substitution) when the live fetch throws', async () => {
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('fetch failed')));
+    const out = await loadDeals();
+    expect(out.degraded?.reason).toBe('fetch-failed');
+    expect(out.degraded?.detail).toContain('fetch failed');
+    expect(out.deals).toEqual(SEED_DEALS); // still degrades gracefully for the live server
+  });
+
+  it('reports degraded="empty-result" when a configured token returns zero deals', async () => {
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ results: [], has_more: false }), text: async () => '',
+    }));
+    const out = await loadDeals();
+    expect(out.degraded?.reason).toBe('empty-result');
+    expect(out.deals).toEqual(SEED_DEALS);
+  });
+
+  it('reports degraded="not-configured" (NOT an error) when no token is set', async () => {
+    delete process.env.NOTION_TOKEN;
+    const out = await loadDeals();
+    expect(out.degraded?.reason).toBe('not-configured');
+    expect(out.deals).toEqual(SEED_DEALS);
+  });
+
+  it('reports degraded=null on a healthy live fetch', async () => {
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [page()], has_more: false }),
+      text: async () => '',
+    }));
+    const out = await loadDeals();
+    expect(out.degraded).toBeNull();
+    expect(out.deals.length).toBeGreaterThan(0);
+  });
+});
+
+describe('dealsDegradationFlag', () => {
+  it('raises an ERROR-severity flag for fetch-failed so the reconciliation gate refuses the write', () => {
+    const f = dealsDegradationFlag({ reason: 'fetch-failed', detail: 'fetch failed' }, 6)!;
+    expect(f.severity).toBe('error');
+    expect(f.entity).toBe('deals');
+    expect(f.issue).toContain('6'); // the seed count that would have been written
+  });
+
+  it('raises an ERROR-severity flag for empty-result', () => {
+    expect(dealsDegradationFlag({ reason: 'empty-result', detail: 'x' }, 6)!.severity).toBe('error');
+  });
+
+  it('returns null for not-configured — an unconfigured dev server must keep working unflagged', () => {
+    expect(dealsDegradationFlag({ reason: 'not-configured', detail: 'x' }, 6)).toBeNull();
+  });
+
+  it('returns null when there is no degradation', () => {
+    expect(dealsDegradationFlag(null, 20)).toBeNull();
+  });
+});
+
+/**
+ * The live server is a THIRD writer of portfolio.json (Brain.persist), and it deliberately does not
+ * run evaluateReconciliationGate -- it appends flags and keeps serving, which is right for a UI but
+ * would re-introduce the seed wipe on the shared git-tracked mirror whenever a server happens to be
+ * refreshing during a Notion outage. Brain.persist consults this predicate so it can keep serving
+ * the degraded snapshot in memory while declining to poison the mirror.
+ */
+describe('hasDealsPipelineFailure', () => {
+  it('detects the error-severity deals-pipeline flag', () => {
+    const flag = dealsDegradationFlag({ reason: 'fetch-failed', detail: 'x' }, 6)!;
+    expect(hasDealsPipelineFailure([flag])).toBe(true);
+  });
+
+  it('ignores unrelated error flags — only the deals-pipeline failure blocks the mirror write', () => {
+    expect(hasDealsPipelineFailure([{ entity: 'cash', field: 'balance', issue: 'x', severity: 'error' }])).toBe(false);
+  });
+
+  it('ignores a warn-severity deals flag', () => {
+    expect(hasDealsPipelineFailure([{ entity: 'deals', field: 'pipeline', issue: 'x', severity: 'warn' }])).toBe(false);
+  });
+
+  it('is false for an empty flag set', () => {
+    expect(hasDealsPipelineFailure([])).toBe(false);
   });
 });

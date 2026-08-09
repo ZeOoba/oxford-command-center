@@ -1,4 +1,4 @@
-import type { Deal, DealStage, Market } from '../../src/contracts/index';
+import type { DataQualityFlag, Deal, DealStage, Market } from '../../src/contracts/index';
 import { slug } from '../../src/contracts/index';
 import { SEED_DEALS } from '../../src/data/seed-deals';
 import { dealJoinKey } from './deal-name';
@@ -280,15 +280,84 @@ async function fetchNotionDeals(token: string): Promise<Deal[]> {
   return [...byId.values()];
 }
 
+/**
+ * Why the seed fallback has to be REPORTED, not just logged (2026-08-09 regression):
+ *
+ * This function degrading to SEED_DEALS is correct for a live server (the UI keeps rendering), but
+ * catastrophic for a snapshot WRITER -- the seed is ~6 placeholder deals against a ~20-deal live
+ * pipeline, so a silent fallback rewrites portfolio.json's deals/counterparties with placeholders
+ * (estPrice → null, location → "TBD", stage flips) while the run still exits 0. That happened on
+ * 2026-08-09 07:40 ET: one transient `fetch failed` produced deals 20 → 6 and counterparties 15 → 14,
+ * which ora-lease-snapshot-refresh's material-change gate read as genuine portfolio movement and,
+ * under that morning's auto-push directive, would have published to origin/main unattended and
+ * unalarmed (Exit 0 suppresses both the Notion post and the email).
+ *
+ * The old signature (`Promise<Deal[]>`) made that unrepresentable: callers could not distinguish
+ * "Notion is genuinely seed-only" from "the fetch blew up". Callers now get the reason, and
+ * parse.ts turns the data-losing reasons into an error-severity dataQuality flag -- which
+ * evaluateReconciliationGate (PR #252) already refuses to write on, in BOTH CLI writers. That
+ * converts a silent Exit-0 corruption into a loud Exit-1 alarm on the existing routing.
+ */
+export type DealsDegradation = {
+  /** `not-configured` is intentional (no token); the other two are failures that lose live data. */
+  reason: 'not-configured' | 'fetch-failed' | 'empty-result';
+  detail: string;
+};
+
+export type DealsLoad = { deals: Deal[]; degraded: DealsDegradation | null };
+
+/**
+ * Maps a degradation to the dataQuality flag the reconciliation gate acts on, or null when there is
+ * nothing to raise. `not-configured` returns null deliberately: a developer running without a
+ * NOTION_TOKEN is a supported mode, and flagging it would make the dev server permanently "dirty".
+ * The snapshot writers close that hole separately (see requireLiveDealsSource) -- writer policy
+ * belongs in the writers, not in a source adapter shared with the live server.
+ */
+export function dealsDegradationFlag(
+  degraded: DealsDegradation | null,
+  seedCount: number,
+): DataQualityFlag | null {
+  if (!degraded || degraded.reason === 'not-configured') return null;
+  return {
+    entity: 'deals',
+    field: 'pipeline',
+    issue:
+      `Notion deals pipeline unavailable (${degraded.reason}) — the deals/counterparties sections ` +
+      `would be written from the ${seedCount}-deal seed placeholder set, wiping the live pipeline. ` +
+      `Refusing rather than publishing placeholders. Cause: ${degraded.detail}`,
+    severity: 'error',
+  };
+}
+
+/**
+ * True when a snapshot's flags carry the data-losing deals degradation above. Used by the live
+ * server's mirror write (Brain.persist), which is a THIRD writer of portfolio.json and deliberately
+ * does NOT run evaluateReconciliationGate -- it appends flags and keeps serving, correct for a UI
+ * but not for the shared git-tracked mirror. Without this, a server refreshing during a Notion
+ * outage would write the seed placeholders straight past both CLI writers' gates.
+ */
+export function hasDealsPipelineFailure(flags: readonly DataQualityFlag[]): boolean {
+  return flags.some((f) => f.severity === 'error' && f.entity === 'deals' && f.field === 'pipeline');
+}
+
 /** The deals source: live Notion (merged onto seed) when configured, else the seed pipeline. */
-export async function loadDeals(): Promise<Deal[]> {
+export async function loadDeals(): Promise<DealsLoad> {
   const token = process.env.NOTION_TOKEN;
-  if (!token) return SEED_DEALS;
+  if (!token) {
+    return { deals: SEED_DEALS, degraded: { reason: 'not-configured', detail: 'NOTION_TOKEN is not set' } };
+  }
   try {
     const notion = await fetchNotionDeals(token);
-    return notion.length ? mergeDeals(SEED_DEALS, notion) : SEED_DEALS;
+    if (!notion.length) {
+      // A configured token returning zero deals is anomalous, not a legitimately empty pipeline:
+      // it wipes the live set exactly like a thrown fetch does, so it degrades identically.
+      console.warn('[notion-deals] live fetch returned 0 deals, using seed');
+      return { deals: SEED_DEALS, degraded: { reason: 'empty-result', detail: 'Notion returned 0 deals for a configured token' } };
+    }
+    return { deals: mergeDeals(SEED_DEALS, notion), degraded: null };
   } catch (e) {
-    console.warn(`[notion-deals] live fetch failed, using seed: ${e instanceof Error ? e.message : String(e)}`);
-    return SEED_DEALS;
+    const detail = e instanceof Error ? e.message : String(e);
+    console.warn(`[notion-deals] live fetch failed, using seed: ${detail}`);
+    return { deals: SEED_DEALS, degraded: { reason: 'fetch-failed', detail } };
   }
 }

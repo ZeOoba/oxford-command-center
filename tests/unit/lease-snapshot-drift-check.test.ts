@@ -16,9 +16,9 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
-import { businessKey, computeDrift, evaluateAnomalyFloor, evaluateReconciliationGate, formatDriftReport, loadPrevious, type AnomalyFloorResult, type DriftLeaseView } from '../../scripts/lease-snapshot-drift-check';
+import { businessKey, computeDrift, evaluateAnomalyFloor, evaluateReconciliationGate, formatDriftReport, loadPrevious, requireLiveDealsSource, type AnomalyFloorResult, type DriftLeaseView } from '../../scripts/lease-snapshot-drift-check';
 
 /** Asserts refusal and narrows the discriminated union so `.reason` type-checks below. */
 function expectRefused(result: AnomalyFloorResult): { refuse: true; reason: string } {
@@ -606,5 +606,41 @@ describe('formatDriftReport', () => {
     const report = formatDriftReport(drift, previous, current);
 
     expect(report.hasDrift).toBe(false);
+  });
+});
+
+/**
+ * 2026-08-09: the token-less half of the seed-fallback regression. loadDeals()/parse.ts raise an
+ * error flag only when a token IS configured and the fetch fails; a MISSING token degrades to the
+ * seed set just as destructively (deals ~20 → ~6) but is a supported dev-server mode, so the
+ * writers -- not the shared source adapter -- have to refuse it.
+ */
+describe('requireLiveDealsSource', () => {
+  const original = process.env.NOTION_TOKEN;
+  afterEach(() => {
+    if (original === undefined) delete process.env.NOTION_TOKEN;
+    else process.env.NOTION_TOKEN = original;
+  });
+
+  it('refuses to write when NOTION_TOKEN is unset, naming the wipe it prevents', () => {
+    delete process.env.NOTION_TOKEN;
+    const r = requireLiveDealsSource('/tmp/portfolio.json', false);
+    expect(r.refuse).toBe(true);
+    if (r.refuse) {
+      expect(r.reason).toContain('NOTION_TOKEN is not set');
+      expect(r.reason).toContain('was NOT modified');
+    }
+  });
+
+  it('allows the write when NOTION_TOKEN is set', () => {
+    process.env.NOTION_TOKEN = 't';
+    expect(requireLiveDealsSource('/tmp/portfolio.json', false).refuse).toBe(false);
+  });
+
+  it('--force downgrades the refusal to a warning rather than silently proceeding', () => {
+    delete process.env.NOTION_TOKEN;
+    const r = requireLiveDealsSource('/tmp/portfolio.json', true);
+    expect(r.refuse).toBe(false);
+    if (!r.refuse) expect(r.warning).toContain('seed placeholder set');
   });
 });
