@@ -23,6 +23,7 @@ import { SCENARIO_PRESETS } from '../../src/contracts/scenario';
 import { loadDeals } from '../sources/notion-deals';
 import { loadM365Tasks } from '../sources/m365-tasks';
 import { deriveCounterparties } from './counterparties';
+import { checkAnnualDebtService } from './debt-service-recompute';
 import { WORKBOOK_AS_OF, referenceDate } from '../config';
 
 type Worksheet = ExcelJS.Worksheet;
@@ -952,6 +953,10 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
   const { properties, workbookNoiTotal, workbookValueTotal } = parseProperties(get('Property NOI'), flags);
   const { leases, workbookRentTotal } = parseLeases(rentRollWs, properties, flags, refIso);
   const loans = parseLoans(get('Loan Index'), flags);
+  // OI-092 detector rebuild: cross-check External Loans Summary H/I/J against an independent
+  // full-schedule recomputation. Warn-severity flags only — surfaces through dataQuality,
+  // never blocks the parse. Tolerant of fixtures/restructures lacking the summary sheets.
+  checkAnnualDebtService((name) => wb.getWorksheet(name), flags);
   const cash = parseCash(get('Cash Balances'), flags, dataAsOf);
   const insurance = parseInsurance(get('Insurance Renewals'), flags);
   const checklistTasks = parseTasks(get('Monthly Checklist'));
