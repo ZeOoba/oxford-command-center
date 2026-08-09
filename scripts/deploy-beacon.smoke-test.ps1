@@ -391,6 +391,154 @@ Assert-Equal 'ESCALATE' (Test-MirrorRepoAhead -AheadCount 4).severity '4l: thres
 Assert-True (-not (Test-MirrorRepoAhead -AheadCount -1).isAhead) '4m: negative count is not ahead'
 
 # ---------------------------------------------------------------------------
+# Part 5 -- rc = SCHED_S_TASK_RUNNING: a run still IN FLIGHT is not a kill
+#
+# LIVE DEFECT, 2026-08-09 09:08. Get-MirrorRunVerdict had exactly two branches -- rc=0, and
+# "rc != 0 from here down", which it treats as killed. 267009 (0x00041301,
+# SCHED_S_TASK_RUNNING) is NEITHER: Windows sets it while the instance is still executing.
+# So the 09:00:01 run, eight minutes in and perfectly healthy, fell into the kill path and
+# came out as BENIGN_INTERRUPTED with the text "Run was killed (rc=267009) by machine
+# lifecycle". Corroboration that it was in fact running: Get-ScheduledTask reported
+# State=Running, and the beacon held status=running with a live pid (34312).
+#
+# Why this matters beyond a wrong word in a Notion row: the kill path is the path that can
+# ALARM. An in-flight run reaching it means every hourly check that lands mid-run is one
+# absent power event away from ALARM_UNEXPLAINED_KILL -- a false page on a healthy deploy.
+# It landed benign on 08-09 only because a Modern Standby event happened to sit near the
+# stale end time (see Part 6); that was luck, not a safety property.
+# ---------------------------------------------------------------------------
+
+$ipStart  = [datetime]'2026-08-09 09:00:01'   # LastRunTime of the in-flight run
+$ipNow    = [datetime]'2026-08-09 09:08:07'   # when the drift check looked
+$priorEnd = [datetime]'2026-08-09 08:51:07'   # 201 completion event of the PREVIOUS run
+
+# 5a: the live case, replayed exactly.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null ([datetime]'2026-08-09 09:00:02') $null) `
+                          -LastTaskResult 267009 `
+                          -RunStartedAt $ipStart -RunEndedAt $priorEnd -Now $ipNow `
+                          -EnvironmentalEvents @([pscustomobject]@{ TimeCreated = [datetime]'2026-08-09 08:51:02'; Id = 507; Label = 'exiting Modern Standby' })
+Assert-Equal 'RUN_IN_PROGRESS' $v.verdict '5a: rc=267009 + fresh running beacon -> RUN_IN_PROGRESS, not BENIGN_INTERRUPTED'
+Assert-True ($v.reason -notlike '*killed*')   '5a: reason does not claim the run was killed'
+Assert-True ($null -eq $v.correlatingEvent)   '5a: an in-flight run is correlated to no power event'
+
+# 5b: checked seconds into a run, BEFORE Write-DeployBeaconStart has written anything. The
+# null-beacon INDETERMINATE guard runs first in the function, and the SKILL reads a persistent
+# INDETERMINATE as an alarm -- so without an in-progress test ahead of it, every check that
+# lands in the opening seconds of a run alarms on a healthy deploy.
+$v = Get-MirrorRunVerdict -Beacon $null -LastTaskResult 267009 `
+                          -RunStartedAt $ipStart -RunEndedAt $priorEnd -Now $ipStart.AddSeconds(10) `
+                          -EnvironmentalEvents @()
+Assert-Equal 'RUN_IN_PROGRESS' $v.verdict '5b: rc=267009 with no beacon yet -> RUN_IN_PROGRESS, not INDETERMINATE'
+
+# 5c: the run wrote its success beacon and is still tearing down. Still in flight, still silent.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'completed' 'success' ([datetime]'2026-08-09 09:00:02') ([datetime]'2026-08-09 09:06:40')) `
+                          -LastTaskResult 267009 `
+                          -RunStartedAt $ipStart -RunEndedAt $priorEnd -Now $ipNow -EnvironmentalEvents @()
+Assert-Equal 'RUN_IN_PROGRESS' $v.verdict '5c: rc=267009 + this run already recorded success -> RUN_IN_PROGRESS'
+
+# 5d: STUCK. RUN_IN_PROGRESS must not become a permanent silence: a hung deploy would sit at
+# rc=267009 forever and never page. Duration was rejected as a KILL detector (see the header)
+# because killed runs lasted 4s to hours and no threshold separates them from healthy ones --
+# but that argument does not transfer here. There is no ambiguity about state in this branch;
+# Windows is telling us the process is still alive. Elapsed time is the only available signal
+# for "alive too long", and it is a sound one.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null ([datetime]'2026-08-09 09:00:02') $null) `
+                          -LastTaskResult 267009 `
+                          -RunStartedAt $ipStart -RunEndedAt $priorEnd -Now $ipStart.AddMinutes(200) -EnvironmentalEvents @()
+Assert-Equal 'ALARM_RUN_STUCK' $v.verdict '5d: rc=267009 far past the stuck threshold -> ALARM_RUN_STUCK'
+Assert-True ($v.reason -like '*200*') '5d: reason states how long the run has been in flight'
+
+# 5e/5f: pin BOTH sides of the boundary. Healthy runs take 5-19 minutes and the task fires
+# hourly, so the threshold sits above one full cycle; an off-by-one here silently changes
+# when a hung deploy starts paging.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null $ipStart $null) -LastTaskResult 267009 `
+                          -RunStartedAt $ipStart -RunEndedAt $priorEnd -Now $ipStart.AddMinutes(89) -EnvironmentalEvents @()
+Assert-Equal 'RUN_IN_PROGRESS' $v.verdict '5e: threshold-1 minutes still in progress, no alarm'
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null $ipStart $null) -LastTaskResult 267009 `
+                          -RunStartedAt $ipStart -RunEndedAt $priorEnd -Now $ipStart.AddMinutes(90) -EnvironmentalEvents @()
+Assert-Equal 'ALARM_RUN_STUCK' $v.verdict '5f: AT the threshold alarms'
+
+# 5g: do NOT widen the in-progress branch past the one code that means it. 267014
+# (0x00041306, SCHED_S_TASK_TERMINATED) is a real kill and must keep taking the kill path --
+# absorbing informational SCHED_S_* codes wholesale would silence genuine terminations.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null $ipStart $null) -LastTaskResult 267014 `
+                          -RunStartedAt $ipStart -RunEndedAt $ipStart.AddMinutes(4) -Now $ipNow -EnvironmentalEvents @()
+Assert-Equal 'ALARM_UNEXPLAINED_KILL' $v.verdict '5g: 267014 TERMINATED is a kill, not in-progress'
+
+# 5h: the ordinary kill code is untouched by the new branch.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null $start $null) `
+                          -LastTaskResult 3221225786 -RunStartedAt $start -RunEndedAt $end -EnvironmentalEvents @()
+Assert-Equal 'ALARM_UNEXPLAINED_KILL' $v.verdict '5h: 0xC000013A still classifies as a kill'
+
+# ---------------------------------------------------------------------------
+# Part 6 -- runEndedAt must belong to THIS run before it can excuse a kill
+#
+# Same defect family as the v1.4 beacon-freshness fix, one field over. mirror-run-classify.ps1
+# takes the newest TaskScheduler 201 event in a 7-day window with `Select-Object -First 1` and
+# never checks whose run it describes. On 2026-08-09 that handed the classifier runEndedAt
+# 08:51:07 for a run that started at 09:00:01 -- an end time nine minutes BEFORE its own start.
+#
+# The correlation window is anchored to that end time, so a foreign end time drags the whole
+# 90s window onto a different point in history. That is the exact failure direction the header
+# warns about for widening the window: it lets an unrelated power event excuse a kill. Here it
+# does so without widening anything, which is why the window guards (2g/3c) could not catch it.
+# ---------------------------------------------------------------------------
+
+$k6 = [datetime]'2026-08-09 09:00:01'
+
+# 6a: a REAL kill whose end time is unknowable, next to a power event from the previous run's
+# end. Correlating those would be the silencing failure; it must alarm instead.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null $k6 $null) `
+                          -LastTaskResult 3221225786 `
+                          -RunStartedAt $k6 -RunEndedAt $priorEnd -Now ([datetime]'2026-08-09 09:08:00') `
+                          -EnvironmentalEvents @([pscustomobject]@{ TimeCreated = [datetime]'2026-08-09 08:51:02'; Id = 507; Label = 'exiting Modern Standby' })
+Assert-Equal 'ALARM_UNEXPLAINED_KILL' $v.verdict '6a: kill + end time from an EARLIER run -> must not be excused as BENIGN_INTERRUPTED'
+Assert-True ($v.reason -like '*earlier run*') '6a: reason says the end time was disregarded and why'
+
+# 5i/6c: -RunEndedAt OMITTED ENTIRELY. This is now the routine live shape, not an edge case:
+# Select-RunCompletionEvent returns $null for an in-flight run, and mirror-run-classify.ps1
+# omits the parameter rather than passing $null (PowerShell cannot bind $null to [datetime] --
+# it throws "Cannot convert null to type System.DateTime", which would have killed the whole
+# health check). Both branches must survive the omission without throwing.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null $ipStart $null) -LastTaskResult 267009 `
+                          -RunStartedAt $ipStart -Now $ipNow -EnvironmentalEvents @()
+Assert-Equal 'RUN_IN_PROGRESS' $v.verdict '5i: in-flight run with no end time at all -> RUN_IN_PROGRESS'
+
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null $k6 $null) -LastTaskResult 3221225786 `
+                          -RunStartedAt $k6 -Now ([datetime]'2026-08-09 09:08:00') `
+                          -EnvironmentalEvents @([pscustomobject]@{ TimeCreated = $k6.AddSeconds(30); Id = 507; Label = 'exiting Modern Standby' })
+Assert-Equal 'ALARM_UNEXPLAINED_KILL' $v.verdict '6c: kill with no end time cannot be excused by a nearby event'
+
+# 6b: the ordinary case must keep correlating -- this guard must not cost the check its ability
+# to recognise a genuinely benign interruption.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null $k6 $null) `
+                          -LastTaskResult 3221225786 `
+                          -RunStartedAt $k6 -RunEndedAt $k6.AddMinutes(4) -Now ([datetime]'2026-08-09 09:08:00') `
+                          -EnvironmentalEvents @([pscustomobject]@{ TimeCreated = $k6.AddMinutes(4).AddSeconds(6); Id = 507; Label = 'exiting Modern Standby' })
+Assert-Equal 'BENIGN_INTERRUPTED' $v.verdict '6b: kill + end time that belongs to this run still correlates'
+
+# ---------------------------------------------------------------------------
+# Part 7 -- Select-RunCompletionEvent: the ownership rule at the gathering layer
+#
+# The classifier guard above stops a foreign end time from changing the VERDICT. This stops it
+# from being REPORTED: the drift-check SKILL copies runEndedAt straight into the Notion row, so
+# on 08-09 the row would have carried a prior run's end time presented as this run's.
+# ---------------------------------------------------------------------------
+
+# Events arrive newest-first, exactly as Get-WinEvent yields them.
+$evThis  = [pscustomobject]@{ TimeCreated = [datetime]'2026-08-09 09:05:12' }
+$evPrior = [pscustomobject]@{ TimeCreated = $priorEnd }
+
+Assert-True ($null -eq (Select-RunCompletionEvent -Events @($evPrior) -RunStartedAt $k6)) `
+  '7a: the only completion event predates this run -> null, never borrowed'
+Assert-Equal '2026-08-09 09:05:12' ((Select-RunCompletionEvent -Events @($evThis, $evPrior) -RunStartedAt $k6).TimeCreated.ToString('yyyy-MM-dd HH:mm:ss')) `
+  '7b: this run''s completion event is selected over the previous run''s'
+Assert-True ($null -eq (Select-RunCompletionEvent -Events @() -RunStartedAt $k6)) `
+  '7c: no events -> null'
+Assert-True ($null -ne (Select-RunCompletionEvent -Events @([pscustomobject]@{ TimeCreated = $k6 }) -RunStartedAt $k6)) `
+  '7d: an event exactly at the run start counts as this run''s (LastRunTime is second-truncated)'
+
+# ---------------------------------------------------------------------------
 
 Write-Host ''
 if ($failures.Count -gt 0) {

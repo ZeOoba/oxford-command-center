@@ -36,6 +36,30 @@ $script:BeaconCorrelationWindowSeconds = 90
 # belonging to an EARLIER run, i.e. this run produced no beacon at all.
 $script:BeaconFreshnessToleranceSeconds = 120
 
+# LastTaskResult while an instance is STILL EXECUTING. 0x00041301 = SCHED_S_TASK_RUNNING.
+# It is an informational status, not a completion code, and it is neither success nor a kill.
+#
+# WHY (2026-08-09): the classifier had only two branches -- rc=0, and everything else treated
+# as killed -- so a healthy run eight minutes into its bake was reported as "Run was killed
+# (rc=267009) by machine lifecycle". Windows independently said State=Running and the beacon
+# held a live pid; nothing was killed. Match ONLY this code: its sibling 0x00041306
+# (SCHED_S_TASK_TERMINATED, 267014) is a genuine kill and must keep taking the kill path.
+$script:MirrorRunInProgressResultCode = 267009
+
+# How long a run may stay in flight before being in flight is itself the problem.
+#
+# This does NOT contradict the header's rejection of run duration. Duration was rejected as a
+# KILL detector, where it cannot work: killed runs lasted 4s, 96s, and several hours, so no
+# threshold separates them from healthy 5-19 minute runs. This branch has no such ambiguity --
+# Windows is affirmatively reporting the process alive -- and elapsed time is the only signal
+# that distinguishes "working" from "hung". Without it, RUN_IN_PROGRESS would be a permanent
+# silence: a wedged deploy would sit at rc=267009 forever and never page.
+#
+# 90 minutes is above one full hourly cycle and ~4.7x the healthy ceiling, and it fires before
+# the SKILL's existing "LastRunTime older than ~3 hours" backstop, so the two agree in
+# direction rather than contradicting each other.
+$script:MirrorRunStuckThresholdMinutes = 90
+
 # At or above this many unpushed commits, being ahead of origin stops being a hygiene note
 # and becomes an alarm. Set to 3 by Gabriel 2026-08-03. WHY a threshold rather than "any
 # ahead > 0 pages": ora-lease-snapshot-refresh auto-commits data/snapshots/portfolio.json up
@@ -162,12 +186,46 @@ function Format-BeaconReasonSuffix {
   ": $Reason"
 }
 
+function Select-RunCompletionEvent {
+  <#
+    Pick the TaskScheduler completion (201) event belonging to THIS run, out of the events the
+    caller collected -- i.e. the newest one that does not predate the run's own start.
+
+    WHY (2026-08-09): mirror-run-classify.ps1 took the newest 201 event in a 7-day window with
+    `Select-Object -First 1` and never asked whose run it described. While a run is in flight,
+    no 201 exists for it yet, so the newest one belongs to the PREVIOUS run -- which is how the
+    09:00:01 run was handed an end time of 08:51:07, nine minutes BEFORE its own start.
+
+    Returns $null rather than borrowing a neighbouring run's end time. A null end time is an
+    honest "not established yet"; a foreign one silently relocates the correlation window (see
+    Get-MirrorRunVerdict) and gets copied into the Notion row as if it were this run's.
+
+    Comparison is >= the run start with no tolerance: a run's own completion event cannot
+    precede its start, and LastRunTime is second-truncated, so any rounding error is toward
+    accepting this run's event rather than a foreign one.
+  #>
+  param(
+    [object[]]$Events = @(),
+    [datetime]$RunStartedAt
+  )
+  if (-not $Events) { return $null }
+  $best = $null
+  foreach ($e in $Events) {
+    if ($null -eq $e -or $null -eq $e.TimeCreated) { continue }
+    if ($e.TimeCreated -lt $RunStartedAt) { continue }
+    if ($null -eq $best -or $e.TimeCreated -gt $best.TimeCreated) { $best = $e }
+  }
+  $best
+}
+
 function Get-MirrorRunVerdict {
   <#
     Classify the last mirror-deploy run. All inputs are injected so this is testable without a
     real event log or a real scheduled task.
 
     Verdicts:
+      RUN_IN_PROGRESS               -- the run is still executing. Not a result at all yet.
+      ALARM_RUN_STUCK               -- still executing, but far past any plausible runtime.
       HEALTHY                       -- rc=0 and this run wrote a fresh success beacon.
       ALARM_SILENT_INCOMPLETE       -- rc=0 but the script never reached its exit path. Windows
                                        says success; the script disagrees.
@@ -190,8 +248,35 @@ function Get-MirrorRunVerdict {
     [Parameter(Mandatory)][long]$LastTaskResult,
     [datetime]$RunStartedAt,
     [datetime]$RunEndedAt,
-    [object[]]$EnvironmentalEvents = @()
+    [object[]]$EnvironmentalEvents = @(),
+    [datetime]$Now = (Get-Date)
   )
+
+  # IN FLIGHT -- tested FIRST, ahead of even the null-beacon guard.
+  #
+  # Order matters. A run checked in its opening seconds has not reached Write-DeployBeaconStart
+  # yet, so it has no beacon; if the INDETERMINATE guard ran first it would return a verdict the
+  # SKILL reads as an alarm, on a perfectly healthy deploy. rc is the authority on liveness here
+  # and the beacon has nothing to say yet.
+  if ($LastTaskResult -eq $script:MirrorRunInProgressResultCode) {
+    $elapsedMinutes = $null
+    if ($RunStartedAt -gt [datetime]::MinValue) {
+      $elapsedMinutes = [math]::Round(($Now - $RunStartedAt).TotalMinutes)
+    }
+    if ($null -ne $elapsedMinutes -and $elapsedMinutes -ge $script:MirrorRunStuckThresholdMinutes) {
+      return [pscustomobject]@{
+        verdict = 'ALARM_RUN_STUCK'
+        reason  = "The run that started $RunStartedAt is STILL executing $elapsedMinutes minutes later (rc=$LastTaskResult, SCHED_S_TASK_RUNNING), past the ${script:MirrorRunStuckThresholdMinutes}-minute threshold. Healthy runs take 5-19 minutes and the task fires hourly, so this run is wedged rather than working. The mirror is not advancing."
+        correlatingEvent = $null
+      }
+    }
+    $elapsedNote = if ($null -ne $elapsedMinutes) { " (started $RunStartedAt, $elapsedMinutes minutes ago)" } else { '' }
+    return [pscustomobject]@{
+      verdict = 'RUN_IN_PROGRESS'
+      reason  = "The run is still executing$elapsedNote. rc=$LastTaskResult is SCHED_S_TASK_RUNNING -- an in-flight status, not a completion code, and not a kill. Nothing can be concluded about this run's outcome until it finishes; the next check will classify it."
+      correlatingEvent = $null
+    }
+  }
 
   if ($null -eq $Beacon) {
     return [pscustomobject]@{
@@ -286,6 +371,24 @@ function Get-MirrorRunVerdict {
     $staleNote = " The beacon on disk is from an earlier run (beacon startedAt $($Beacon.startedAt), this run started $RunStartedAt), so this run left no completion record of its own and the beacon says nothing about it."
   }
 
+  # Does the end time even belong to THIS run? (2026-08-09.) Same defect family as the v1.4
+  # beacon-freshness fix, one field over -- and the reason it needs its own guard is that the
+  # beacon test cannot catch it: on 08-09 the beacon was fresh (1s skew) while runEndedAt came
+  # from a run nine minutes earlier.
+  #
+  # An end time that precedes its own run's start is from a previous run, and correlation is
+  # anchored to the end time -- so accepting it drags the entire 90s window onto an unrelated
+  # point in history, where any passing Modern Standby event will excuse the kill. That is
+  # exactly the silencing failure the window constant warns about, achieved without widening
+  # the window, which is why the 2g/3c guards could not see it. Refuse to correlate instead:
+  # an unexplained kill is the safe direction, a falsely-excused one is not.
+  $endTimeNote = ''
+  $endTimeIsThisRun = $true
+  if ($RunEndedAt -gt [datetime]::MinValue -and $RunStartedAt -gt [datetime]::MinValue -and $RunEndedAt -lt $RunStartedAt) {
+    $endTimeIsThisRun = $false
+    $endTimeNote = " This run's END time could not be established: the newest completion event on record ($RunEndedAt) predates this run's start ($RunStartedAt), so it belongs to an earlier run and was NOT used to correlate power events."
+  }
+
   # Killed mid-run. Look for something that explains it, anchored to the run's END -- not its
   # start, because a run can be killed hours after launching (the 2026-08-01 10:06 case).
   # Pick the NEAREST in-window event, not the first one the log happened to return.
@@ -293,7 +396,7 @@ function Get-MirrorRunVerdict {
   # boot that FOLLOWED the shutdown rather than to the shutdown itself -- both are inside the
   # window and both are "true", but only the closest names the actual cause.
   $match = $null
-  if ($RunEndedAt -and $EnvironmentalEvents) {
+  if ($RunEndedAt -and $EnvironmentalEvents -and $endTimeIsThisRun) {
     $bestDelta = [double]::MaxValue
     foreach ($e in $EnvironmentalEvents) {
       if ($null -eq $e) { continue }
@@ -308,14 +411,14 @@ function Get-MirrorRunVerdict {
   if ($match) {
     return [pscustomobject]@{
       verdict = 'BENIGN_INTERRUPTED'
-      reason  = "Run was killed (rc=$LastTaskResult) by machine lifecycle: '$($match.Label)' (event $($match.Id)) at $($match.TimeCreated), $([math]::Round([math]::Abs(($match.TimeCreated - $RunEndedAt).TotalSeconds)))s from the run's end. The next hourly fire re-bakes; no action needed.$staleNote"
+      reason  = "Run was killed (rc=$LastTaskResult) by machine lifecycle: '$($match.Label)' (event $($match.Id)) at $($match.TimeCreated), $([math]::Round([math]::Abs(($match.TimeCreated - $RunEndedAt).TotalSeconds)))s from the run's end. The next hourly fire re-bakes; no action needed.$staleNote$endTimeNote"
       correlatingEvent = $match
     }
   }
 
   return [pscustomobject]@{
     verdict = 'ALARM_UNEXPLAINED_KILL'
-    reason  = "Run was killed (rc=$LastTaskResult) mid-flight with NO power/session event within ${script:BeaconCorrelationWindowSeconds}s of the run's end ($RunEndedAt). Something other than normal machine lifecycle terminated the deploy.$staleNote"
+    reason  = "Run was killed (rc=$LastTaskResult) mid-flight with NO usable power/session event within ${script:BeaconCorrelationWindowSeconds}s of the run's end$(if ($endTimeIsThisRun) { " ($RunEndedAt)" }). Something other than normal machine lifecycle terminated the deploy.$staleNote$endTimeNote"
     correlatingEvent = $null
   }
 }
