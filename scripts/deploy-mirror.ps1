@@ -203,6 +203,18 @@ try {
   $env:MIRROR_INCLUDE_CONFIDENTIAL = '1'
   $env:BRIEF_ENABLED               = '1'
   $env:BRIEF_SEND_SCRIPT           = 'C:\Users\Owner\.claude\scheduled-tasks\_shared\send-via-outlook.ps1'
+  # Incident (2026-08-05 -> 2026-08-09, ~13 consecutive failed runs): this machine is dual-stack
+  # but has NO working IPv6 route, while its only DNS server (10.254.1.1, no secondary) still
+  # returns AAAA records. Node's default dual-stack resolution therefore pays a ~5s penalty per
+  # fresh hostname (measured: api.cloudflare.com 5.11s default vs 0.013s with -4), and under load
+  # it fails outright -- the same fault produced "Could not resolve host: github.com" on the git
+  # fetch in step 1. That delay compounds across wrangler's Cloudflare API calls until they trip
+  # its internal connection timeout ("The request to Cloudflare's API timed out", errorType
+  # ConnectionTimeout). Forcing IPv4-first resolution made an otherwise-identical deploy succeed
+  # on the first attempt. This is a WORKAROUND for a host network fault, not a fix for it -- if
+  # IPv6 is ever routed correctly (or the resolver stops returning AAAA), this line becomes a
+  # no-op rather than a hazard, so it is safe to leave in place.
+  $env:NODE_OPTIONS = '--dns-result-order=ipv4first'
   try {
     npm run build:mirror
     if ($LASTEXITCODE -ne 0) { throw "build:mirror failed ($LASTEXITCODE)" }
@@ -215,11 +227,30 @@ try {
     #    found only because a separate sampling checker read LastTaskResult afterwards. The 11:00 run
     #    then succeeded unattended, confirming a transient stall rather than bad credentials.
     #    Bounding the call here means a stall becomes an ordinary throw that the catch CAN alert on,
-    #    with time to spare before the scheduler's own limit. Tree-kill matters: npx spawns node as a
-    #    child, and killing only npx would orphan the real uploader.
+    #    with time to spare before the scheduler's own limit. Tree-kill matters: the launcher spawns
+    #    node as a child, and killing only the launcher would orphan the real uploader.
+    #
+    #    Why the LOCAL wrangler binary and not `npx wrangler` (2026-08-09): wrangler was not a
+    #    dependency of this repo, so `npx` re-resolved it from the npm registry on every hourly run.
+    #    Combined with the DNS fault described in step 2, that fetch is what actually consumed the
+    #    600s budget -- the proof is that ~/.wrangler/logs/ contains NO log for any of the ~13 failed
+    #    runs between 2026-08-05 and 2026-08-09, and wrangler writes a log even for `--version`, so
+    #    wrangler never started at all. npx also has no timeout of its own, so it hangs indefinitely.
+    #    wrangler is now pinned in devDependencies; resolve its local bin and fall back to npx only
+    #    if node_modules is missing, so a fresh checkout degrades to the old behavior rather than
+    #    hard-failing.
+    $wranglerBin  = Join-Path $repo 'node_modules\.bin\wrangler.cmd'
+    if (Test-Path -LiteralPath $wranglerBin) {
+      $deployExe  = $wranglerBin
+      $deployArgs = @('pages', 'deploy', 'dist', "--project-name=$ProjectName", '--branch=main')
+    } else {
+      Write-Host "[deploy] local wrangler not found at $wranglerBin -- falling back to npx (run 'npm ci' to restore the pinned version)"
+      $deployExe  = 'npx'
+      $deployArgs = @('wrangler', 'pages', 'deploy', 'dist', "--project-name=$ProjectName", '--branch=main')
+    }
     $deploy = Invoke-NativeCommandWithTimeout `
-      -Executable 'npx' `
-      -Arguments @('wrangler', 'pages', 'deploy', 'dist', "--project-name=$ProjectName", '--branch=main') `
+      -Executable $deployExe `
+      -Arguments $deployArgs `
       -TimeoutSeconds $DeployTimeoutSeconds
     if ($deploy.TimedOut) {
       $timeoutReason = Get-DeployTimeoutReason -Seconds $DeployTimeoutSeconds
@@ -239,6 +270,7 @@ try {
     Remove-Item Env:\MIRROR_INCLUDE_CONFIDENTIAL -ErrorAction SilentlyContinue
     Remove-Item Env:\BRIEF_ENABLED               -ErrorAction SilentlyContinue
     Remove-Item Env:\BRIEF_SEND_SCRIPT           -ErrorAction SilentlyContinue
+    Remove-Item Env:\NODE_OPTIONS                -ErrorAction SilentlyContinue
   }
 
   # 4) Verify Access is still enforcing -- unauthenticated must 302 to the Access login host.
