@@ -20,7 +20,7 @@ import {
   type ScenarioName,
 } from '../../src/contracts/index';
 import { SCENARIO_PRESETS } from '../../src/contracts/scenario';
-import { loadDeals } from '../sources/notion-deals';
+import { loadDeals, dealsDegradationFlag } from '../sources/notion-deals';
 import { loadM365Tasks } from '../sources/m365-tasks';
 import { deriveCounterparties } from './counterparties';
 import { crossCheckDebtService } from './debt-service-crosscheck';
@@ -976,7 +976,13 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
   const m365Tasks = await loadM365Tasks(); // live M365 To-Do prepended when GRAPH_TOKEN set, else []
   const tasks = m365Tasks.length ? [...m365Tasks, ...checklistTasks] : checklistTasks;
   const assumptions = parseAssumptions(get('Assumptions'), flags, dataAsOf);
-  const deals = await loadDeals(); // live Notion pipeline merged onto seed when configured, else seed
+  // live Notion pipeline merged onto seed when configured, else seed. A data-losing degradation
+  // (fetch-failed / empty-result) raises an ERROR-severity flag so evaluateReconciliationGate
+  // refuses the write rather than publishing seed placeholders over the live pipeline -- see
+  // loadDeals' doc comment for the 2026-08-09 regression this closes.
+  const { deals, degraded: dealsDegraded } = await loadDeals();
+  const dealsFlag = dealsDegradationFlag(dealsDegraded, deals.length);
+  if (dealsFlag) flags.push(dealsFlag);
   const counterparties = deriveCounterparties({ properties, loans, insurance, deals });
 
   const snapshot = PortfolioSnapshot.parse({

@@ -4,7 +4,7 @@ import { parseWorkbook } from '../server/workbook/parse';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, SNAPSHOT_PATH } from '../server/config';
 import { loadOverlay, applyOverlay, overlayPath } from '../server/overlay';
-import { computeDrift, evaluateAnomalyFloor, evaluateReconciliationGate, formatDriftReport, loadPrevious, type DriftLeaseView } from './lease-snapshot-drift-check';
+import { computeDrift, evaluateAnomalyFloor, evaluateReconciliationGate, formatDriftReport, loadPrevious, requireLiveDealsSource, type DriftLeaseView } from './lease-snapshot-drift-check';
 
 loadEnvFile();
 
@@ -90,6 +90,16 @@ async function main() {
     process.exit(1);
   } else if (reconciliation.warning) {
     console.warn(`⚠ ${reconciliation.warning}`);
+  }
+
+  // Config-regression guard, complementing the flag-based gate above -- see its doc comment. This
+  // path is the manual `npm run extract` one, historically the LESS guarded of the two writers.
+  const dealsSource = requireLiveDealsSource(SNAPSHOT_PATH, force);
+  if (dealsSource.refuse) {
+    console.error(`✗ ${dealsSource.reason}`);
+    process.exit(1);
+  } else if (dealsSource.warning) {
+    console.warn(`⚠ ${dealsSource.warning}`);
   }
 
   mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });
