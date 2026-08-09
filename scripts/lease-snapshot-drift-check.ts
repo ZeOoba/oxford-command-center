@@ -291,6 +291,36 @@ export function evaluateAnomalyFloor(
  * yet -- but "refuse on any error-severity flag" (the design this suspension was lifted on) means
  * ANY source of one, not just the ones this function happens to compute itself.
  */
+/**
+ * Writer-only precondition (2026-08-09): an authoritative portfolio.json must be written from the
+ * LIVE deals pipeline, never from the seed placeholder set.
+ *
+ * Why this is separate from the dataQuality flag loadDeals/parse.ts now raise: that flag covers the
+ * cases where a token IS configured and the fetch fails, but it deliberately stays silent for
+ * `not-configured`, because running the dev server without a NOTION_TOKEN is a supported mode and
+ * flagging it would leave every credential-less dev session permanently "dirty". For a WRITER the
+ * calculus is the opposite -- no token means the deals/counterparties sections get written from ~6
+ * seed placeholders over a ~20-deal live pipeline, which is the same wipe as a failed fetch, just
+ * from a config regression instead of a network one. Writer policy belongs in the writers.
+ *
+ * Shared by both CLI writers (this script and scripts/extract-workbook.ts) for the same reason
+ * evaluateAnomalyFloor and evaluateReconciliationGate are: two copies drift apart, and the
+ * 2026-07-26 forensics showed exactly what an unguarded second writer costs.
+ */
+export function requireLiveDealsSource(snapshotPath: string, force: boolean): AnomalyFloorResult {
+  if (process.env.NOTION_TOKEN) return { refuse: false };
+  if (!force) {
+    return {
+      refuse: true,
+      reason:
+        `Refusing to write ${snapshotPath}: NOTION_TOKEN is not set, so the deals and counterparties ` +
+        `sections would be written from the seed placeholder set, wiping the live pipeline. ` +
+        `portfolio.json was NOT modified. Re-run with --force only if a seed-only snapshot is intended.`,
+    };
+  }
+  return { refuse: false, warning: '--force: writing with no NOTION_TOKEN — deals/counterparties come from the seed placeholder set, not the live pipeline.' };
+}
+
 export function evaluateReconciliationGate(
   snapshot: PortfolioSnapshot,
   snapshotPath: string,
@@ -493,6 +523,15 @@ async function main() {
     process.exit(1);
   } else if (reconciliation.warning) {
     console.warn(`⚠ ${reconciliation.warning}`);
+  }
+
+  // Config-regression guard, complementing the flag-based gate above -- see its doc comment.
+  const dealsSource = requireLiveDealsSource(SNAPSHOT_PATH, force);
+  if (dealsSource.refuse) {
+    console.error(`✗ ${dealsSource.reason}`);
+    process.exit(1);
+  } else if (dealsSource.warning) {
+    console.warn(`⚠ ${dealsSource.warning}`);
   }
 
   mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });
