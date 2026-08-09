@@ -114,6 +114,24 @@ describe('fixture integrity — the withdrawn draft never tested these', () => {
 });
 
 describe('crossCheckSchedule — clean cases stay silent', () => {
+  it('reports — rather than silently returning [] — when no schedule rows resolved', () => {
+    const flags = crossCheckSchedule({
+      id: 'no-schedule-loan',
+      rows: [],
+      declaredRangeEnd: null,
+      share: 1,
+      bookInterest: 12000,
+      bookPrincipal: 4000,
+      asOf: ASOF,
+    });
+    expect(flags).toEqual([{
+      entity: 'no-schedule-loan',
+      field: 'annualDebtService',
+      issue: 'no amortization-schedule rows resolved — cross-check could not run',
+      severity: 'warn',
+    }]);
+  });
+
   it('emits no flag when the workbook matches the recomputation', () => {
     const rows = schedule(2026, 9, 5, 24, 15000, 7900);
     const flags = crossCheckSchedule({
@@ -665,5 +683,27 @@ describe('crossCheckSchedule — D: duplicate-date detection tolerates a roundin
     });
 
     expect(flags.filter((f) => f.field === 'duplicatePaymentDate')).toHaveLength(1);
+  });
+
+  it('stays silent when two same-date rows carry genuinely different amounts', () => {
+    // Not every shared date is the duplicate-row defect — two distinct schedule events (a regular
+    // payment and an unrelated fee/adjustment row, say) can legitimately land on the same calendar
+    // date. Only a REPEATED amount signals the double-counting shape; two rows that merely share a
+    // date but disagree on both interest and principal must not fire.
+    const rows = schedule(2027, 3, 26, 6, REDACTED-AMT, 500);
+    const dupeDate = rows[2]!.date;
+    rows.push({ row: rows[rows.length - 1]!.row + 1, date: dupeDate, interest: 9999, principal: 8888, balance: 0 });
+
+    const flags = crossCheckSchedule({
+      id: 'distinct-same-date-rows',
+      rows,
+      declaredRangeEnd: rows[rows.length - 1]!.row,
+      share: 1,
+      bookInterest: rows.reduce((s, r) => s + (r.interest ?? 0), 0),
+      bookPrincipal: rows.reduce((s, r) => s + (r.principal ?? 0), 0),
+      asOf: ASOF,
+    });
+
+    expect(flags.filter((f) => f.field === 'duplicatePaymentDate')).toEqual([]);
   });
 });
