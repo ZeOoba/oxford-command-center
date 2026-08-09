@@ -41,6 +41,23 @@
  *
  * `parseLoans()` (parse.ts) reads only the `Loan Index` sheet, so everything here is new
  * sheet access: `External Loans Summary`, `Assumptions`, and the per-loan schedule sheets.
+ *
+ * SCOPE LIMITATIONS — a clean run means less than it looks like it means:
+ *
+ * (A) This detector validates SUMMARY-vs-SCHEDULE consistency: the workbook's own cached
+ *     H/I/J against the amortization schedule the workbook itself points to. It does NOT
+ *     validate SCHEDULE-vs-CONTRACT correctness. A defect where the schedule and the summary
+ *     agree with each other but both are wrong relative to the actual loan terms — the
+ *     historical OI-095 shape, where RCT's balloon sat in a column neither the formula nor a
+ *     naive reader summed — is invisible here. A clean run says "the summary faithfully
+ *     reflects the schedule," never "the schedule is right."
+ *
+ * (B) The Oxford-share multiplier is READ from the workbook's own formula text and applied
+ *     as-is — this detector never judges whether that multiplier is itself correct. A
+ *     wrongly-added or wrongly-dropped ×0.5 on a loan is followed silently, by design:
+ *     reading the factor from the formula (rather than hardcoding a loan list) is what keeps
+ *     the detector maintenance-free across workbook edits, and the price is that multiplier
+ *     correctness is out of scope.
  */
 
 import type ExcelJS from 'exceljs';
@@ -275,22 +292,38 @@ const fmt = (n: number): string =>
  * append DataQualityFlags. Warn-severity findings only (plus the info-severity unmapped-loan
  * notice) — this check must never block a refresh (Gabriel, 2026-08-05).
  *
- * Tolerant by design at the WORKBOOK level: a fixture or restructured workbook without the
- * summary sheet, the Assumptions sheet, or a readable as-of date is simply not checked. At
- * the LOAN level silence is not allowed: a mapped loan with a missing schedule sheet warns,
- * and an unmapped loan announces itself — the withdrawn design's silent carve-out is exactly
- * how a truncated/stale schedule went unnoticed.
+ * Silence policy (REFUTE fix, 2026-08-09): silence is legitimate ONLY when there is nothing
+ * to check — no `External Loans Summary` sheet at all (fixture workbooks, pre-restructure
+ * snapshots). When the summary IS present but the Assumptions "Loan As-Of Date" anchor is
+ * missing or unreadable, the check emits one info-severity flag saying it is DISABLED rather
+ * than returning silently: a single label rename in the workbook would otherwise switch this
+ * detector off permanently with zero signal, and a disabled detector must never be
+ * indistinguishable from a clean run (verified-null vs inferred-null standing rule). At the
+ * LOAN level silence is likewise not allowed: a mapped loan with a missing schedule sheet
+ * warns, and an unmapped loan announces itself — the withdrawn design's silent carve-out is
+ * exactly how a truncated/stale schedule went unnoticed.
  */
 export function checkAnnualDebtService(
   getSheet: (name: string) => Worksheet | undefined,
   flags: DataQualityFlag[],
 ): void {
   const els = getSheet(ELS_SHEET);
-  if (!els) return;
+  if (!els) return; // nothing to check — the only legitimately-silent case
   const assumptions = getSheet(ASSUMPTIONS_SHEET);
-  if (!assumptions) return;
-  const asOf = readLoanAsOf(assumptions);
-  if (!asOf) return;
+  const asOf = assumptions ? readLoanAsOf(assumptions) : null;
+  if (!asOf) {
+    flags.push({
+      entity: 'loans',
+      field: 'annualDebtService',
+      issue:
+        `annual-debt-service cross-check DISABLED: "${ELS_SHEET}" is present but the ` +
+        `Assumptions "Loan As-Of Date" anchor was not found, so no loan could be verified. ` +
+        `A disabled detector is not a clean run — restore the Assumptions month-end close ` +
+        `block (label "Loan As-Of Date", value beside it) to re-enable.`,
+      severity: 'info',
+    });
+    return;
+  }
   const end = eomonthMonths(asOf, 12);
   const windowLabel = `(${asOf.toISOString().slice(0, 10)}, ${end.toISOString().slice(0, 10)}]`;
 

@@ -262,21 +262,37 @@ describe('checkAnnualDebtService — clean workbook', () => {
     expect(runCheck(wb)).toEqual([]);
   });
 
-  it('tolerates a missing External Loans Summary sheet (fixture workbooks) — no flags, no throw', () => {
+  it('stays FULLY silent when there is no External Loans Summary sheet at all (nothing to check)', () => {
+    // Fixture workbooks without the summary sheet are the one legitimately-silent case —
+    // there is nothing to verify, so no "disabled" notice either. Must not regress.
     const wb = new ExcelJS.Workbook();
     addAssumptions(wb, d('2026-08-31'));
     expect(runCheck(wb)).toEqual([]);
   });
 
-  it('tolerates a missing Assumptions sheet or as-of date — no flags, no throw', () => {
-    const wb1 = new ExcelJS.Workbook();
-    addEls(wb1, [{ name: 'Banwick/Morrison', role: 'Borrower', h: 1, i: 1, j: 2 }]);
-    expect(runCheck(wb1)).toEqual([]);
+  it('ELS present but the as-of anchor missing → ONE info flag, never silence (disabled ≠ clean)', () => {
+    // REFUTE fix: a silent return here would let a single Assumptions label rename disable
+    // the whole detector permanently with zero signal — the verified-null vs inferred-null
+    // failure. A disabled detector must announce itself.
+    const missingAnchorCases: ExcelJS.Workbook[] = [];
 
-    const wb2 = new ExcelJS.Workbook();
-    addAssumptions(wb2, null); // sheet exists, label row absent
+    const wb1 = new ExcelJS.Workbook(); // Assumptions sheet absent entirely
+    addEls(wb1, [{ name: 'Banwick/Morrison', role: 'Borrower', h: 1, i: 1, j: 2 }]);
+    missingAnchorCases.push(wb1);
+
+    const wb2 = new ExcelJS.Workbook(); // Assumptions exists, "Loan As-Of Date" label absent
+    addAssumptions(wb2, null);
     addEls(wb2, [{ name: 'Banwick/Morrison', role: 'Borrower', h: 1, i: 1, j: 2 }]);
-    expect(runCheck(wb2)).toEqual([]);
+    missingAnchorCases.push(wb2);
+
+    for (const wb of missingAnchorCases) {
+      const flags = runCheck(wb);
+      expect(flags).toHaveLength(1);
+      expect(flags[0]!.severity).toBe('info');
+      expect(flags[0]!.field).toBe('annualDebtService');
+      expect(flags[0]!.issue).toMatch(/disabled/i);
+      expect(flags[0]!.issue).toMatch(/loan as-of date/i);
+    }
   });
 });
 
