@@ -356,15 +356,36 @@ function cellText(ws: Worksheet, col: string, row: number): string | null {
   return String(v);
 }
 
+/**
+ * The cached value behind a cell, whether it is a literal or a formula result.
+ *
+ * ExcelJS's public `cell.value` getter builds its formula object with a falsy-check, so it OMITS
+ * `result` entirely whenever the cached value is `0` — making "cached 0" indistinguishable from
+ * "never calculated". The underlying `cell.model.result` keeps it.
+ *
+ * This is not hypothetical: ELS `I16` (610 Northampton St. LLC / 485 S Walnut) is an interest-only
+ * position with no principal scheduled in the next 12 months, so its cached value is a real `0`
+ * (`<v>0</v>` in the sheet XML). Reading the getter alone made the detector report "I16 is a
+ * schedule formula but has no cached value — recalculate and save the workbook in Excel", which is
+ * both unachievable (no recalc turns a true 0 into a non-zero) and actively harmful: it means the
+ * principal side of every zero-principal loan was silently never cross-checked. 2026-08-09.
+ */
+function cachedValue(ws: Worksheet, col: string, row: number): unknown {
+  const cell = ws.getCell(`${col}${row}`);
+  const v = cell.value;
+  if (v && typeof v === 'object' && 'result' in v) return (v as { result: unknown }).result;
+  const model = (cell as unknown as { model?: { result?: unknown } }).model;
+  if (model && model.result !== undefined) return model.result;
+  return v;
+}
+
 function cellNumber(ws: Worksheet, col: string, row: number): number | null {
-  const v = ws.getCell(`${col}${row}`).value;
-  const raw = v && typeof v === 'object' && 'result' in v ? v.result : v;
+  const raw = cachedValue(ws, col, row);
   return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
 }
 
 function cellDate(ws: Worksheet, col: string, row: number): Date | null {
-  const v = ws.getCell(`${col}${row}`).value;
-  const raw = v && typeof v === 'object' && 'result' in v ? v.result : v;
+  const raw = cachedValue(ws, col, row);
   return raw instanceof Date && !Number.isNaN(raw.getTime()) ? raw : null;
 }
 
