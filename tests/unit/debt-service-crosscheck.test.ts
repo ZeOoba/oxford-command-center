@@ -584,6 +584,54 @@ describe('crossCheckDebtService — fixture end-to-end', () => {
     expect(coverage.length, JSON.stringify(flags, null, 2)).toBeGreaterThan(0);
   });
 
+  it('does not claim "no cached value" when the cached principal is legitimately 0', () => {
+    // Live defect, 2026-08-09: REDACTED-312 (REDACTED-554, ELS row 16) is an
+    // interest-only position — no principal is contractually scheduled in the next 12 months, so
+    // I16's cached value is a real 0 (`<v>0</v>` in the sheet XML). ExcelJS's public `cell.value`
+    // getter OMITS `result` whenever it is falsy, so cellNumber() read undefined and the detector
+    // reported "I16 is a schedule formula but has no cached value — recalculate and save the
+    // workbook in Excel." That instruction is unachievable (no recalc can make a true 0 non-zero)
+    // and, worse, it means the principal side of every zero-principal loan silently goes
+    // un-cross-checked. `cell.model.result` carries the 0 correctly.
+    const wb = buildFixtureWorkbook({
+      loans: [{ row: 6, label: '3540 E Fifth Ave', sheet: 'Sched-3540', interest: 12000, principal: 0, n: 24, payDay: 1 }],
+    });
+    const els = wb.getWorksheet('External Loans Summary')!;
+
+    // Guard the premise: the getter really does drop the 0 this fixture wrote.
+    expect((els.getCell('I6').value as { result?: number }).result).toBeUndefined();
+    expect((els.getCell('I6') as unknown as { model: { result?: number } }).model.result).toBe(0);
+
+    const flags = crossCheckDebtService(wb);
+    const bogus = flags.filter(
+      (f) => f.field === 'annualDebtService' && /has no cached value/.test(f.issue),
+    );
+    expect(bogus, JSON.stringify(flags, null, 2)).toHaveLength(0);
+  });
+
+  it('STILL flags a schedule formula whose cached value is genuinely absent', () => {
+    // REFUTE guard for the cached-0 fix above. Recovering a falsy `result` from `cell.model` must
+    // not blunt the detector's actual purpose: a formula that was never calculated (no <v> at all
+    // — the openpyxl round-trip signature) has to keep reporting. Without this test the zero-fix
+    // could disable the check entirely and the suite would stay green.
+    const wb = buildFixtureWorkbook({
+      loans: [{ row: 6, label: '3540 E Fifth Ave', sheet: 'Sched-3540', interest: 12000, principal: 4000, n: 24, payDay: 1 }],
+    });
+    const els = wb.getWorksheet('External Loans Summary')!;
+    const iFormula = (els.getCell('I6').value as { formula: string }).formula;
+    els.getCell('I6').value = { formula: iFormula } as unknown as ExcelJS.CellValue; // no result
+
+    // Premise guard: neither the getter nor the model carries a cached value here.
+    expect((els.getCell('I6').value as { result?: number }).result).toBeUndefined();
+    expect((els.getCell('I6') as unknown as { model: { result?: number } }).model.result).toBeUndefined();
+
+    const flags = crossCheckDebtService(wb);
+    const absent = flags.filter(
+      (f) => f.field === 'annualDebtService' && /has no cached value/.test(f.issue),
+    );
+    expect(absent.length, JSON.stringify(flags, null, 2)).toBeGreaterThan(0);
+  });
+
   it('flags — rather than silently skips — an unquoted sheet name on a row outside the known list', () => {
     // Row 20 is neither a KNOWN_SCHEDULE_BACKED row nor an ELS_LOAN_ROWS row — this specifically
     // exercises the "looks like a schedule formula but isn't a known row" path, distinct from the
