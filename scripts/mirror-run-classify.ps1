@@ -88,13 +88,27 @@ try {
 # --- 2) The run's actual END time --------------------------------------------------------
 # LastRunTime is when the task STARTED. The correlation window is anchored to the end,
 # because a run can be killed hours after launching (the 2026-08-01 10:06 incident).
+#
+# The event must belong to THIS run, which `Select-Object -First 1` never checked. While a run
+# is in flight it has no 201 event yet, so the newest one is the PREVIOUS run's: on 2026-08-09
+# the 09:00:01 run was handed 08:51:07, an end time before its own start, and the classifier
+# correlated a Modern Standby event from that earlier moment. Select-RunCompletionEvent returns
+# $null instead of borrowing, because the drift-check SKILL copies this field straight into the
+# Notion row -- a foreign end time there reads as this run's.
 $runEndedAt = $null
 try {
-  $completion = Get-WinEvent -FilterHashtable @{
+  $completions = @(Get-WinEvent -FilterHashtable @{
     LogName   = 'Microsoft-Windows-TaskScheduler/Operational'
     Id        = 201
     StartTime = (Get-Date).AddDays(-7)
-  } -ErrorAction Stop | Where-Object { $_.Message -like "*$TaskName*" } | Select-Object -First 1
+  } -ErrorAction Stop | Where-Object { $_.Message -like "*$TaskName*" })
+
+  $completion = if ($info -and $info.LastRunTime) {
+    Select-RunCompletionEvent -Events $completions -RunStartedAt $info.LastRunTime
+  } else {
+    # No LastRunTime to test ownership against; fall back to the newest, as before.
+    $completions | Select-Object -First 1
+  }
   if ($completion) {
     $runEndedAt = $completion.TimeCreated
     $result.runEndedAt = $runEndedAt.ToString('o')
@@ -164,11 +178,19 @@ try {
 
 # --- 6) Classify -------------------------------------------------------------------------
 if ($null -ne $result.lastTaskResult) {
-  $verdict = Get-MirrorRunVerdict -Beacon $beacon `
-                                  -LastTaskResult ([long]$result.lastTaskResult) `
-                                  -RunStartedAt $info.LastRunTime `
-                                  -RunEndedAt $runEndedAt `
-                                  -EnvironmentalEvents $envEvents
+  # Splatted, and the two datetimes are omitted when unknown rather than passed as $null.
+  # PowerShell cannot bind $null to a [datetime] parameter -- it throws "Cannot convert null to
+  # type System.DateTime" -- so the previous `-RunEndedAt $runEndedAt` killed this script
+  # outright whenever no completion event was found. That was latent before (it needed an empty
+  # 7-day event window); with the ownership test above, an in-flight run reaches it every time.
+  $verdictArgs = @{
+    Beacon              = $beacon
+    LastTaskResult      = [long]$result.lastTaskResult
+    EnvironmentalEvents = $envEvents
+  }
+  if ($info -and $info.LastRunTime) { $verdictArgs['RunStartedAt'] = $info.LastRunTime }
+  if ($runEndedAt)                  { $verdictArgs['RunEndedAt']   = $runEndedAt }
+  $verdict = Get-MirrorRunVerdict @verdictArgs
   $result.verdict = $verdict.verdict
   $result.reason  = $verdict.reason
   $result.correlatingEvent = $verdict.correlatingEvent
