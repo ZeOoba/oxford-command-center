@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import type { DataQualityFlag } from '../../src/contracts/index';
 import type { Deal } from '../../src/contracts/index';
 import { mapNotionPage, mergeDeals, parseNameAliases, loadDeals, dealsDegradationFlag, hasDealsPipelineFailure } from '../../server/sources/notion-deals';
 import { SEED_DEALS } from '../../src/data/seed-deals';
@@ -285,6 +286,104 @@ describe('mergeDeals — join-key collision must never silently drop a deal (rev
   });
 });
 
+/**
+ * CATCH-UP SWEEP 2026-07-28→08-04, C1 (CRITICAL — found by 2 of 3 lenses, both with an executed
+ * repro) and H1 (HIGH — determinism lens, executed).
+ *
+ * C1: dealJoinKey strips the "— City, ST" locality tail, and normName IS dealJoinKey, so BOTH sides
+ * of the seed↔Notion join are locality-stripped. #259's collision guard only fires when TWO OR MORE
+ * *Notion* rows share a key — the cross-side case (ONE Notion row whose stripped name coincides with
+ * an unrelated seed's bare name) is unguarded. The merge then folds a DIFFERENT deal's economics into
+ * the seed row while keeping the seed's confidential flag. Notion's locality suffix exists precisely
+ * because bare street names repeat across metros, so the key deletes the one disambiguator.
+ *
+ * H1: mergeDeals' keyOf is alias-aware but findNearDuplicateNames tokenizes the raw dealJoinKey
+ * WITHOUT aliases — the "detector running a different notion of same deal than the joiner" state
+ * deal-name.ts's own header calls worse than no detector. And mergeDeals discards its own
+ * collidingKeys knowledge as a console.warn instead of a gate-visible flag.
+ */
+describe('mergeDeals — C1: a locality-strip match needs corroboration, not just key equality', () => {
+  const seedRow = deal({ id: 'seed-1', name: 'Enterprise Parkway', market: 'Columbus OH', confidential: false });
+
+  it('REFUSES the merge when the strip was load-bearing and the markets contradict', () => {
+    // Same bare name, genuinely different property in another metro.
+    const live = deal({ id: 'notion-1', name: 'Enterprise Parkway — Kansas City, MO', market: 'Kansas City MO', estPrice: 4_750_000, lender: 'Some Bank' });
+    const flags: DataQualityFlag[] = [];
+
+    const out = mergeDeals([seedRow], [live], new Map(), flags);
+
+    // Two rows, not one: nothing is destroyed and nothing wears the other's economics.
+    expect(out).toHaveLength(2);
+    const seedOut = out.find((d) => d.id === 'seed-1')!;
+    expect(seedOut.estPrice).toBeNull();
+    expect(seedOut.market).toBe('Columbus OH');
+    // The unmatched live row takes the fail-closed confidential default.
+    const liveOut = out.find((d) => d.id === 'notion-1')!;
+    expect(liveOut.confidential).toBe(true);
+    // And it is gate-visible, not a console.warn.
+    expect(flags.some((f) => f.severity === 'error' && /locality|corrobor|market/i.test(f.issue))).toBe(true);
+  });
+
+  it('still merges when the markets agree (control — the ordinary Notion naming convention)', () => {
+    const live = deal({ id: 'notion-2', name: 'Enterprise Parkway — Columbus, OH', market: 'Columbus OH', estPrice: 6_000_000 });
+    const flags: DataQualityFlag[] = [];
+
+    const out = mergeDeals([seedRow], [live], new Map(), flags);
+
+    expect(out).toHaveLength(1);
+    expect(out[0]!.id).toBe('seed-1');
+    expect(out[0]!.estPrice).toBe(6_000_000);
+    expect(out[0]!.confidential).toBe(false);
+    expect(flags).toHaveLength(0);
+  });
+
+  it('still merges when the live row carries no market (control — cannot contradict)', () => {
+    const live = deal({ id: 'notion-3', name: 'Enterprise Parkway — Columbus, OH', market: null, estPrice: 6_000_000 });
+    const flags: DataQualityFlag[] = [];
+
+    const out = mergeDeals([seedRow], [live], new Map(), flags);
+
+    expect(out).toHaveLength(1);
+    expect(out[0]!.estPrice).toBe(6_000_000);
+    expect(flags).toHaveLength(0);
+  });
+
+  it('still merges an EXACT name match even with a differing market (the strip was not load-bearing)', () => {
+    // No locality tail, so C1's mechanism is absent. This is pre-existing behavior and stays put:
+    // the names are literally identical, which is its own corroboration.
+    const live = deal({ id: 'notion-4', name: 'Enterprise Parkway', market: 'Kansas City MO', estPrice: 6_000_000 });
+    const flags: DataQualityFlag[] = [];
+
+    const out = mergeDeals([seedRow], [live], new Map(), flags);
+
+    expect(out).toHaveLength(1);
+    expect(out[0]!.estPrice).toBe(6_000_000);
+  });
+});
+
+describe('mergeDeals — H1: a join-key collision must be gate-visible, not just logged', () => {
+  it('emits an error-severity flag for an alias-mediated collision', () => {
+    const aliases = new Map([
+      ['alpha park ctr', 'alpha park center'],
+      ['alpha pc', 'alpha park center'],
+    ]);
+    const seedRow = deal({ id: 'seed-a', name: 'Alpha Park Center', market: 'Columbus OH' });
+    const dupes = [
+      deal({ id: 'n-1', name: 'Alpha Park Ctr — Columbus, OH' }),
+      deal({ id: 'n-2', name: 'Alpha PC — Columbus, OH' }),
+    ];
+    const flags: DataQualityFlag[] = [];
+
+    const out = mergeDeals([seedRow], dupes, aliases, flags);
+
+    // Nothing dropped: seed + both withheld rows.
+    expect(out).toHaveLength(3);
+    expect(out.filter((d) => d.id.startsWith('n-')).every((d) => d.confidential)).toBe(true);
+    // The joiner detected the collision itself, so it must say so where the gate can see it.
+    expect(flags.some((f) => f.severity === 'error' && /collision/i.test(f.issue))).toBe(true);
+  });
+});
+
 describe('parseNameAliases', () => {
   it('parses ;/newline-separated "from=>to" pairs, normalized and case-insensitive', () => {
     const m = parseNameAliases('A Deal => Seed One;  Other=>Seed Two\nbad-line-no-arrow');
@@ -342,6 +441,27 @@ describe('loadDeals degradation reporting', () => {
     const out = await loadDeals();
     expect(out.degraded?.reason).toBe('not-configured');
     expect(out.deals).toEqual(SEED_DEALS);
+  });
+
+  it('surfaces merge join-key flags on DealsLoad so the reconciliation gate can act on them', async () => {
+    // Two live rows colliding on one join key: the flag must escape the adapter, not just the log.
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [
+          page({ 'Deal Name': { type: 'title', title: [{ plain_text: 'Collide Park — Columbus, OH' }] } }),
+          page({ 'Deal Name': { type: 'title', title: [{ plain_text: 'Collide Park — Louisville, KY' }] } }),
+        ],
+        has_more: false,
+      }),
+      text: async () => '',
+    }));
+
+    const out = await loadDeals();
+
+    expect(out.flags.some((f) => f.field === 'joinKey' && f.severity === 'error')).toBe(true);
   });
 
   it('reports degraded=null on a healthy live fetch', async () => {

@@ -48,6 +48,35 @@ export function dealJoinKey(name: string): string {
 }
 
 /**
+ * The alias map: a Notion spelling → the seed name it should join to. Lives HERE, beside the key
+ * function it modifies, because the joiner and the near-duplicate detector must resolve "same deal"
+ * identically — the whole reason this module exists. Format: "From=>To" pairs separated by ';' or
+ * newlines. Env-configured so a confidential deal name never lands in the repo.
+ *
+ * Moved out of notion-deals.ts 2026-08-11 (catch-up sweep H1): while the joiner owned the map
+ * privately, findNearDuplicateNames could not see it and silently keyed on the raw name.
+ */
+export function parseNameAliases(
+  raw: string = process.env.NOTION_DEALS_NAME_ALIASES ?? '',
+): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const pair of raw.split(/[;\n]+/)) {
+    const idx = pair.indexOf('=>');
+    if (idx < 0) continue;
+    const from = dealJoinKey(pair.slice(0, idx));
+    const to = dealJoinKey(pair.slice(idx + 2));
+    if (from && to) m.set(from, to);
+  }
+  return m;
+}
+
+/** `dealJoinKey` with the alias map applied — the ONE key both the joiner and the detector use. */
+export function aliasedJoinKey(name: string, aliases: ReadonlyMap<string, string>): string {
+  const k = dealJoinKey(name);
+  return aliases.get(k) ?? k;
+}
+
+/**
  * Regrowth tripwire. Returns every pair of names whose join-key token lists are in a prefix
  * relationship (equal, or one a strict prefix of the other) WITHOUT having been unified by
  * dealJoinKey.
@@ -76,8 +105,15 @@ export function dealJoinKey(name: string): string {
 export function findNearDuplicateNames(
   names: readonly string[],
   accepted: ReadonlySet<string> = parseAcceptedNearDupes(),
+  aliases: ReadonlyMap<string, string> = parseNameAliases(),
 ): Array<[string, string]> {
-  const rows = names.map((name) => ({ name, tokens: dealJoinKey(name).split(' ').filter(Boolean) }));
+  // Alias-aware, exactly like mergeDeals' keyOf. Tokenizing the RAW key here let the joiner and this
+  // detector run two different notions of "same deal" -- the state this module's header calls worse
+  // than no detector: two names reaching one key only via NOTION_DEALS_NAME_ALIASES collided in the
+  // joiner (both rows withheld, seed emitted unenriched) while this returned NO pair, so the gate
+  // saw nothing and the snapshot published. The alias map is owned by this module and applied by
+  // DEFAULT so no caller has to remember it. (Catch-up sweep 2026-07-28..08-04, H1.)
+  const rows = names.map((name) => ({ name, tokens: aliasedJoinKey(name, aliases).split(' ').filter(Boolean) }));
   const pairs: Array<[string, string]> = [];
   for (let i = 0; i < rows.length; i++) {
     for (let k = i + 1; k < rows.length; k++) {

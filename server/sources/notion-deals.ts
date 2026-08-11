@@ -1,7 +1,7 @@
 import type { DataQualityFlag, Deal, DealStage, Market } from '../../src/contracts/index';
 import { slug } from '../../src/contracts/index';
 import { SEED_DEALS } from '../../src/data/seed-deals';
-import { dealJoinKey } from './deal-name';
+import { dealJoinKey, parseNameAliases, stripLocalitySuffix } from './deal-name';
 import { isDeclassified } from './deal-declassification';
 
 /**
@@ -131,22 +131,13 @@ export function mapNotionPage(page: NotionPage): Deal | null {
 }
 
 /**
- * Optional Notion→seed name aliases so a deal recorded under a different name in Notion still merges
- * into its seed record instead of double-listing. Format: "Notion Name=>Seed Name" pairs separated
- * by ';' or newlines. Configured via env so confidential deal names never live in the repo.
- * Exported + injectable for tests.
+ * Optional Notion→seed name aliases. MOVED to ./deal-name 2026-08-11 (catch-up sweep, H1): while the
+ * map lived here privately, findNearDuplicateNames could not see it and keyed on the raw name, so the
+ * joiner and the detector disagreed about what "same deal" means. It now lives beside the key
+ * function it modifies and is applied by default in both. Re-exported so existing importers and
+ * tests are unaffected.
  */
-export function parseNameAliases(raw: string = process.env.NOTION_DEALS_NAME_ALIASES ?? ''): Map<string, string> {
-  const m = new Map<string, string>();
-  for (const pair of raw.split(/[;\n]+/)) {
-    const idx = pair.indexOf('=>');
-    if (idx < 0) continue;
-    const from = normName(pair.slice(0, idx));
-    const to = normName(pair.slice(idx + 2));
-    if (from && to) m.set(from, to);
-  }
-  return m;
-}
+export { parseNameAliases };
 
 /**
  * Merge live Notion deals onto the seed. The seed is the confidential-flag source of truth:
@@ -154,7 +145,12 @@ export function parseNameAliases(raw: string = process.env.NOTION_DEALS_NAME_ALI
  * KEEPS the seed id, confidential flag, and shortName. Unmatched Notion deals are added (confidential
  * via keyword guard). Seed deals absent from Notion are retained (their flags intact).
  */
-export function mergeDeals(seed: Deal[], notion: Deal[], aliases: Map<string, string> = parseNameAliases()): Deal[] {
+export function mergeDeals(
+  seed: Deal[],
+  notion: Deal[],
+  aliases: Map<string, string> = parseNameAliases(),
+  flags: DataQualityFlag[] = [],
+): Deal[] {
   // A Notion deal's match key is its aliased seed name when an alias exists, else its own name.
   const keyOf = (name: string): string => aliases.get(normName(name)) ?? normName(name);
   // COLLISION GUARD (review 2026-08-04, CRITICAL). `new Map(notion.map(...))` is a silent-drop
@@ -180,9 +176,27 @@ export function mergeDeals(seed: Deal[], notion: Deal[], aliases: Map<string, st
     notionByKey.delete(k);
     console.warn(
       `[notion-deals] join-key collision on '${k}' — multiple Notion deals normalize to the same ` +
-        `key. All of them are held out of the seed merge and default confidential; ` +
-        `checkSnapshot's near-duplicate flag will block the gate until the names are disambiguated.`,
+        `key. All of them are held out of the seed merge and default confidential.`,
     );
+    // Emit the flag HERE rather than delegating detection to findNearDuplicateNames. The old code
+    // detected the collision itself and then discarded that knowledge as a console.warn, trusting a
+    // downstream detector that was keyed differently (raw name, no aliases) -- so an alias-mediated
+    // collision produced withheld rows, an unenriched seed presenting null economics as the live
+    // pipeline, and NO gate flag at all. A detector that can miss what the joiner already knows is
+    // worse than no detector; the joiner should just say so. The alias-awareness gap is fixed too,
+    // but this flag no longer depends on it. (Catch-up sweep 2026-07-28..08-04, H1.)
+    flags.push({
+      entity: 'deals',
+      field: 'joinKey',
+      issue:
+        `join-key collision on '${k}': multiple Notion pipeline rows normalize to the same match ` +
+        `key, so none of them could be joined to a seed record. All were held out of the merge and ` +
+        `default confidential — nothing was dropped, but the seed row for this key is presenting ` +
+        `SEED values rather than live ones. Disambiguate the Notion names, or add a ` +
+        `NOTION_DEALS_NAME_ALIASES entry mapping exactly one of them to the seed name.`,
+      rawValue: k,
+      severity: 'error',
+    });
   }
   const usedKeys = new Set<string>();
   // Staleness tripwire (policy item 3, 2026-07-16): a seed-matched deal keeps its seed
@@ -193,6 +207,46 @@ export function mergeDeals(seed: Deal[], notion: Deal[], aliases: Map<string, st
     const k = normName(s.name);
     const live = notionByKey.get(k);
     if (!live) return s;
+
+    // ── C1: a locality-strip match requires CORROBORATION, not just key equality ──────────────
+    // The collision guard above only sees Notion↔Notion collisions. The cross-side case — ONE Notion
+    // row whose locality-stripped name coincides with an unrelated seed's bare name — reached this
+    // merge unguarded and folded a DIFFERENT deal's economics (price, cap, IRR, lender, and the
+    // free-text status/nextAction fields that carry broker and counsel names) into the seed row,
+    // which keeps the seed's confidential flag. That bypasses the fail-closed "unmatched Notion rows
+    // default confidential" invariant, and the near-duplicate detector is structurally blind to it:
+    // after the merge only ONE row carries the key, so no pair exists to flag.
+    //
+    // Notion's locality suffix exists PRECISELY because bare street names repeat across metros, so
+    // stripping it deletes the one disambiguator the join had. When the strip was load-bearing and
+    // the two sides name contradictory markets, that is not the naming convention — it is two
+    // different assets. Refuse: leave the seed unenriched and let the live row fall through to
+    // `extras`, where it takes the fail-closed confidential default. Nothing is destroyed, and the
+    // error flag blocks the write until a human adjudicates.
+    //
+    // Scoped deliberately to the load-bearing case. An EXACT name match needs no corroboration —
+    // identical names are their own — and a missing market on either side cannot contradict, so the
+    // ordinary convention keeps merging untouched. Market only, never the free-text address: the
+    // Market select is normalized, addresses are not, and comparing them would refuse good merges.
+    // (Catch-up sweep 2026-07-28..08-04, C1 — CRITICAL, 2 lenses, both with executed repros.)
+    const localityWasStripped = stripLocalitySuffix(live.name) !== live.name;
+    if (localityWasStripped && s.market !== null && live.market !== null && s.market !== live.market) {
+      flags.push({
+        entity: 'deals',
+        field: 'joinKey',
+        issue:
+          `refused a seed↔Notion merge that matched only after stripping the locality suffix: the ` +
+          `seed record is in market '${s.market}' but the live pipeline row is in '${live.market}'. ` +
+          `A shared bare name across two markets is far more likely to be two different assets than ` +
+          `one — merging would attribute one deal's economics to the other and publish it under the ` +
+          `seed's confidential flag. Both rows were kept, the live one defaulting to confidential. ` +
+          `Rename one side, or add a NOTION_DEALS_NAME_ALIASES entry if they really are one deal.`,
+        rawValue: k,
+        severity: 'error',
+      });
+      return s;
+    }
+
     usedKeys.add(k);
     if (!s.confidential && ACTIVE_STAGES.has(live.stage)) {
       console.warn(`[notion-deals] seed staleness: ${s.id} is confidential:false but live stage is now '${live.stage}' — re-confirm the seed flag is still correct.`);
@@ -330,7 +384,19 @@ export type DealsDegradation = {
   detail: string;
 };
 
-export type DealsLoad = { deals: Deal[]; degraded: DealsDegradation | null };
+export type DealsLoad = {
+  deals: Deal[];
+  degraded: DealsDegradation | null;
+  /**
+   * Data-quality flags raised by the MERGE itself (join-key collisions, refused locality-strip
+   * merges). Separate from `degraded`, which describes the FETCH. These are error-severity, so
+   * evaluateReconciliationGate refuses the write until a human disambiguates the names — the same
+   * doctrine findNearDuplicateNames already follows. Previously the joiner logged these to the
+   * console and relied on a downstream detector keyed differently, which could miss them entirely.
+   * (Catch-up sweep 2026-07-28..08-04, C1 + H1.)
+   */
+  flags: DataQualityFlag[];
+};
 
 /**
  * Maps a degradation to the dataQuality flag the reconciliation gate acts on, or null when there is
@@ -370,7 +436,7 @@ export function hasDealsPipelineFailure(flags: readonly DataQualityFlag[]): bool
 export async function loadDeals(): Promise<DealsLoad> {
   const token = process.env.NOTION_TOKEN;
   if (!token) {
-    return { deals: SEED_DEALS, degraded: { reason: 'not-configured', detail: 'NOTION_TOKEN is not set' } };
+    return { deals: SEED_DEALS, degraded: { reason: 'not-configured', detail: 'NOTION_TOKEN is not set' }, flags: [] };
   }
   try {
     const notion = await fetchNotionDeals(token);
@@ -378,12 +444,14 @@ export async function loadDeals(): Promise<DealsLoad> {
       // A configured token returning zero deals is anomalous, not a legitimately empty pipeline:
       // it wipes the live set exactly like a thrown fetch does, so it degrades identically.
       console.warn('[notion-deals] live fetch returned 0 deals, using seed');
-      return { deals: SEED_DEALS, degraded: { reason: 'empty-result', detail: 'Notion returned 0 deals for a configured token' } };
+      return { deals: SEED_DEALS, degraded: { reason: 'empty-result', detail: 'Notion returned 0 deals for a configured token' }, flags: [] };
     }
-    return { deals: mergeDeals(SEED_DEALS, notion), degraded: null };
+    const flags: DataQualityFlag[] = [];
+    const deals = mergeDeals(SEED_DEALS, notion, parseNameAliases(), flags);
+    return { deals, degraded: null, flags };
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
     console.warn(`[notion-deals] live fetch failed, using seed: ${detail}`);
-    return { deals: SEED_DEALS, degraded: { reason: 'fetch-failed', detail } };
+    return { deals: SEED_DEALS, degraded: { reason: 'fetch-failed', detail }, flags: [] };
   }
 }

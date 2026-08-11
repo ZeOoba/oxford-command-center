@@ -1017,9 +1017,14 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
   // (fetch-failed / empty-result) raises an ERROR-severity flag so evaluateReconciliationGate
   // refuses the write rather than publishing seed placeholders over the live pipeline -- see
   // loadDeals' doc comment for the 2026-08-09 regression this closes.
-  const { deals, degraded: dealsDegraded } = await loadDeals();
+  const { deals, degraded: dealsDegraded, flags: dealsMergeFlags } = await loadDeals();
   const dealsFlag = dealsDegradationFlag(dealsDegraded, deals.length);
   if (dealsFlag) flags.push(dealsFlag);
+  // Merge-time join-key flags (collisions, refused locality-strip merges). Error-severity, so
+  // evaluateReconciliationGate refuses the write until the names are disambiguated -- the joiner used
+  // to log these and rely on a detector keyed differently that could miss them entirely.
+  // (Catch-up sweep 2026-07-28..08-04, C1 + H1.)
+  for (const f of dealsMergeFlags) flags.push(f);
   const counterparties = deriveCounterparties({ properties, loans, insurance, deals });
 
   const snapshot = PortfolioSnapshot.parse({

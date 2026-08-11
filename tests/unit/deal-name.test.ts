@@ -1,5 +1,44 @@
 import { describe, it, expect } from 'vitest';
-import { stripLocalitySuffix, dealJoinKey, findNearDuplicateNames, parseAcceptedNearDupes } from '../../server/sources/deal-name';
+import { stripLocalitySuffix, dealJoinKey, findNearDuplicateNames, parseAcceptedNearDupes, parseNameAliases } from '../../server/sources/deal-name';
+
+/**
+ * CATCH-UP SWEEP 2026-07-28→08-04, H1 (HIGH). mergeDeals' keyOf resolves aliases; this detector
+ * tokenized the RAW dealJoinKey and ignored them. Two names that reach the same join key only via
+ * NOTION_DEALS_NAME_ALIASES therefore merged-or-collided in the joiner while the detector saw no
+ * pair at all — the exact "detector running a different notion of 'same deal' than the joiner" state
+ * this module's own header calls worse than no detector. The alias map is now owned HERE and applied
+ * by default, so no caller has to remember and the two cannot drift again.
+ */
+describe('findNearDuplicateNames — H1: the detector shares the joiner’s alias-aware key', () => {
+  it('pairs two names that only collide once aliases are applied', () => {
+    const aliases = new Map([
+      ['alpha park ctr', 'alpha park center'],
+      ['alpha pc', 'alpha park center'],
+    ]);
+
+    const pairs = findNearDuplicateNames(
+      ['Alpha Park Ctr — Columbus, OH', 'Alpha PC — Columbus, OH'],
+      new Set(),
+      aliases,
+    );
+
+    expect(pairs).toHaveLength(1);
+  });
+
+  it('leaves genuinely distinct names alone when no alias unifies them', () => {
+    const pairs = findNearDuplicateNames(
+      ['REDACTED-401', 'REDACTED-293'],
+      new Set(),
+      new Map(),
+    );
+    expect(pairs).toHaveLength(0);
+  });
+
+  it('parseNameAliases is available from this module (single owner for the key + alias map)', () => {
+    const m = parseNameAliases('Foo Ctr=>Foo Center');
+    expect(m.get('foo ctr')).toBe('foo center');
+  });
+});
 
 describe('stripLocalitySuffix — Notion "<Deal Name> — <City>, <ST>" convention', () => {
   it('strips an anchored "— City, ST" tail', () => {
