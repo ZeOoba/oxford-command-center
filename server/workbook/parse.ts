@@ -607,7 +607,19 @@ export function isTombstonedLoanRow(name: string): boolean {
   //
   // `DO NOT USE` deliberately still matches anywhere, case-insensitively: the workbook uses it as a
   // trailing annotation too ("Old note -- DO NOT USE"), which the tests pin.
-  return /DO\s+NOT\s+USE/i.test(name) || /^\W*DUPLICATE\s+OF\s+\S/i.test(name);
+  // The marker must be the LEADING CLAUSE, optionally preceded by punctuation/emoji and one of the
+  // retirement words a human actually types. Requiring literally no leading word (the first pass's
+  // `^\W*`) traded the false positive for a SILENT false negative: "RETIRED — DUPLICATE OF row 9",
+  // "(VOID) DUPLICATE OF #7" and "2019 DUPLICATE OF consolidated note" were all caught by the
+  // original unanchored regex and all missed by the anchored one. A missed tombstone is ingested as a
+  // live loan, so its stale balance double-counts the duplicated facility in aggregate debt and it
+  // claims a debt_positions key -- and that direction emits NO flag at all, because the warn below
+  // only fires on a match. Caught by the refute pass on this branch.
+  const leadIn = String.raw`(?:\W|RETIRED|VOID|OLD|DEFUNCT|SUPERSEDED|CLOSED|\d+)*`;
+  return (
+    /DO\s+NOT\s+USE/i.test(name) ||
+    new RegExp(String.raw`^${leadIn}\s*DUPLICATE\s+OF\s+\S`, 'i').test(name)
+  );
 }
 
 // ── loans (Loan Index — section-aware) ────────────────────────────────────────

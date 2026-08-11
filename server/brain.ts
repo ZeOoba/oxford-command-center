@@ -53,7 +53,6 @@ class Brain extends EventEmitter {
     this.setState({ status: 'refreshing' });
     try {
       const { snapshot, flags, dealsDegraded } = await parseWorkbook(workbookPath());
-      this.dealsDegraded = dealsDegraded;
 
       // Anomaly floor: gate the in-memory ADOPTION itself, not just the disk mirror below --
       // this.snapshot is what refresh()/rederive() serve live to the UI/API, so refusing only
@@ -86,6 +85,12 @@ class Brain extends EventEmitter {
       if (floor.refuse) throw new Error(floor.reason);
 
       this.base = snapshot;
+      // Adopted together with `base`, never before the floor gate above. Assigning it right after
+      // parseWorkbook meant a floor-REFUSED parse left its degradation attached to the retained
+      // clean snapshot, so every later write-back declined to mirror genuinely-live deals and logged
+      // a seed-placeholder reason that was false for the snapshot being written. The field must
+      // always describe the parse that was actually adopted. (Refute pass on this branch, 2 lenses.)
+      this.dealsDegraded = dealsDegraded;
       const merged = applyOverlay(snapshot, this.overlay);
       // Attach QuickBooks actuals (read on every refresh; null if QUICKBOOKS_CSV not set/present).
       const withQb = { ...merged, quickbooks: loadQuickbooks(merged.properties) };

@@ -420,9 +420,27 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
     const laterOf = (a: ScheduleRow, b: ScheduleRow): ScheduleRow => {
       if (a.date > b.date) return a;
       if (a.date < b.date) return b;
+      if (a.balance === null && b.balance === null) return a.row <= b.row ? a : b;
       if (a.balance === null) return b;
       if (b.balance === null) return a;
-      return a.balance <= b.balance ? a : b;
+      if (a.balance !== b.balance) return a.balance < b.balance ? a : b;
+      return a.row <= b.row ? a : b;
+    };
+    // Dual of laterOf for the origination path: earliest date wins, and on a date tie the HIGHEST
+    // balance wins (the earliest state of that day), preferring a readable balance over a null.
+    // The first pass selected this with a bare `r.date < ...`, which kept the first PHYSICAL row and
+    // so broke this block's own stated row-order-independence contract on the one path that uses it.
+    // Reproduced by the refute pass in both directions: a same-dated balance-0 holdback row placed
+    // first produced a false ~$1.0M accusation on financially identical content, and the null-balance
+    // variant SILENTLY MASKED a real defect.
+    const earlierOf = (a: ScheduleRow, b: ScheduleRow): ScheduleRow => {
+      if (a.date < b.date) return a;
+      if (a.date > b.date) return b;
+      if (a.balance === null && b.balance === null) return a.row <= b.row ? a : b;
+      if (a.balance === null) return b;
+      if (b.balance === null) return a;
+      if (a.balance !== b.balance) return a.balance > b.balance ? a : b;
+      return a.row <= b.row ? a : b;
     };
     let priorRow: ScheduleRow | null = null;
     for (const r of rows) {
@@ -436,7 +454,7 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
     }
     let windowStartRow: ScheduleRow | null = null;
     for (const r of inWindow) {
-      if (windowStartRow === null || r.date < windowStartRow.date) windowStartRow = r;
+      windowStartRow = windowStartRow === null ? r : earlierOf(windowStartRow, r);
     }
 
     // A prior-period row that EXISTS but carries no readable balance must not fall through to the
@@ -467,6 +485,23 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
       // row genuinely IS the origination row and its principal is the full origination amount.
       opening = windowStartRow.balance + Math.abs(windowStartRow.principal ?? 0);
     } else {
+      // Same rule as the priorRow-null branch above: an unreadable opening is REPORTED, never
+      // silently skipped. The first pass left this a bare `opening = null`, which meant a loan
+      // originating inside the window whose earliest row had no balance had its principal
+      // reconciliation quietly disabled -- masking a real defect, and contradicting the very
+      // verified-null-beats-inferred-null principle the L1 fix was written for.
+      if (windowStartRow !== null) {
+        flags.push({
+          entity: id,
+          field: 'principalReconciliation',
+          issue:
+            `this loan originates inside the window and its earliest in-window row ` +
+            `(row ${windowStartRow.row}) carries no readable Remaining Balance, so the opening ` +
+            `balance could not be established and the principal reconciliation was NOT run.`,
+          rawValue: String(windowStartRow.row),
+          severity: 'warn',
+        });
+      }
       opening = null;
     }
     if (opening !== null && lastWithBalance) {
@@ -617,6 +652,16 @@ export function scanSchedule(
     });
   }
 
+  // Reaching the sheet's PHYSICAL end counts as reaching the declared end. Rows past `rowCount` are
+  // absent from the sheet XML, so there is nothing there to have missed -- claiming the loan is
+  // "unverified" in that case is factually wrong. Without this, the sheet-extent cap above turned the
+  // ordinary over-declared range into a permanent false flag: REDACTED-306 declares
+  // B11:B310 over a 60-row sheet, and the live workbook went from 0 flags to 1 on every refresh --
+  // the exact shape ScanResult's own doc calls NORMAL and says must stay silent. Found by the refute
+  // pass on this branch, reproduced against the real workbook; the first pass's own comment asserting
+  // that firing was correct was simply wrong.
+  const effectiveFloor = sheetLastRow >= firstRow ? Math.min(floor, sheetLastRow) : floor;
+
   // Look PAST the gap for a continuation, without adopting it. Detection only: a dated row below the
   // gap means this schedule's true extent is ambiguous, and crossCheckSchedule reports that rather
   // than guessing. Adopting the rows instead could absorb an unrelated dated block further down a
@@ -632,7 +677,7 @@ export function scanSchedule(
       }
     }
   }
-  return { rows, stoppedOnGap, firstRowBeyondGap, reachedDeclaredEnd: lastProbed >= floor };
+  return { rows, stoppedOnGap, firstRowBeyondGap, reachedDeclaredEnd: lastProbed >= effectiveFloor };
 }
 
 export interface ElsFormulaRef {
@@ -665,9 +710,19 @@ export interface ElsFormulaRef {
 function parseShare(formula: string): number {
   const t = formula.trim();
   const half = String.raw`0?\.50?|50\s*%`;
-  if (new RegExp(String.raw`\*\s*(?:${half})\s*$`).test(t)) return 0.5;
-  if (/\/\s*2(?:\.0*)?\s*$/.test(t)) return 0.5;
-  if (new RegExp(String.raw`^=?\s*(?:${half})\s*\*`).test(t)) return 0.5;
+  // The multiplier must bind the WHOLE expression, so a trailing form only counts when it follows a
+  // closing paren (in practice the SUMPRODUCT itself) and a leading form only when it multiplies a
+  // parenthesised/function term. Dropping that requirement -- as the first pass did -- read a
+  // SUBTERM multiplier as a whole-formula share: by Excel's operator precedence
+  // `=SUMPRODUCT(...)-'Escrow'!B2*0.5` halves only the escrow term, but the unanchored version
+  // halved the entire recomputation, producing a permanent ~50% false divergence. That is the very
+  // standing-noise class this function was widened to eliminate. Caught by the refute pass on this
+  // branch via an old-vs-new differential.
+  if (new RegExp(String.raw`\)\s*\*\s*(?:${half})\s*$`).test(t)) return 0.5;
+  if (/\)\s*\/\s*2(?:\.0*)?\s*$/.test(t)) return 0.5;
+  if (new RegExp(String.raw`^=?\s*(?:${half})\s*\*\s*-?(?:ABS\s*\(|SUMPRODUCT\s*\(|\()`, 'i').test(t)) {
+    return 0.5;
+  }
   return 1;
 }
 

@@ -985,8 +985,121 @@ describe('scanSchedule — L3: the probe is bounded by the sheet’s own extent'
     expect(out.rows.length).toBe(30);
     // Bounded by the sheet, not by the absurd declared end.
     expect(reads).toBeLessThan(5000);
-    // And the caller must be able to see the scan never reached the declared end.
-    expect(out.reachedDeclaredEnd).toBe(false);
+    // Reaching the sheet's physical end IS reaching everything that can exist: rows past rowCount
+    // are absent from the sheet XML, so nothing was left unread and the caller must not be told the
+    // loan is "unverified". (Corrected after the refute pass — see the RCT case below.)
+    expect(out.reachedDeclaredEnd).toBe(true);
+  });
+
+  /**
+   * REFUTE-PASS REGRESSION (HIGH, confirmed by execution against the live Master Workbook).
+   *
+   * The first version of the L3 cap made REDACTED-306 — H15 declares
+   * 'REDACTED-306'!B11:B310 while the sheet's rowCount is 60 — report "ran out of probe
+   * budget ... this loan's total and its truncation check are both unverified" on EVERY refresh.
+   * Old code: 0 flags. New code: 1 permanent false flag on a real loan, in the DSCR-denominator
+   * audit channel. That over-declared shape is the exact one ScanResult's own doc calls NORMAL and
+   * says "must stay silent", and my in-code comment asserting the firing was correct was wrong.
+   *
+   * The 24 tests added in the first pass structurally could not catch it: every mock either set
+   * rowCount at/above its declared end, or omitted rowCount entirely (which the escape hatch maps
+   * to old behavior). None modeled declaredEnd >> rowCount.
+   */
+  it('stays silent on the live RCT shape: declared end 310 over a 60-row sheet', () => {
+    const ws = {
+      rowCount: 60,
+      getCell: (addr: string) => {
+        const row = Number(/\d+/.exec(addr)?.[0] ?? 0);
+        return row >= 11 && row <= 37
+          ? { value: d(2026, 9, 1), model: { result: d(2026, 9, 1) } }
+          : { value: null, model: {} };
+      },
+    } as unknown as Parameters<typeof scanSchedule>[0];
+
+    const out = scanSchedule(ws, { date: 'B', interest: 'D' }, 11, { minLastRow: 310 });
+
+    expect(out.rows).toHaveLength(27);
+    expect(out.reachedDeclaredEnd).toBe(true);
+
+    // And end-to-end: no scheduleRange flag of any kind for this loan.
+    const flags = crossCheckSchedule({
+      id: 'REDACTED-306', rows: out.rows, declaredRangeEnd: 310, share: 1,
+      bookInterest: 0, bookPrincipal: null, asOf: ASOF,
+      scanReachedDeclaredEnd: out.reachedDeclaredEnd,
+      scanFirstRowBeyondGap: out.firstRowBeyondGap,
+    });
+    expect(flags.filter((f) => f.field === 'scheduleRange')).toHaveLength(0);
+  });
+});
+
+/**
+ * REFUTE-PASS REGRESSION (MEDIUM). The first parseShare dropped the old regex's requirement that
+ * the half-multiplier follow a closing paren, so it read a SUBTERM multiplier as a whole-formula
+ * share: `=SUMPRODUCT(...)-'Escrow'!B2*0.5` halved the entire recomputation where the old code
+ * correctly read 1. By Excel's operator precedence the half binds the subterm only. Effect is a
+ * permanent ~50% false divergence — the exact standing-noise class L4 existed to remove.
+ */
+describe('parseElsFormula — REFUTE: a subterm multiplier is not a whole-formula share', () => {
+  const body = "SUMPRODUCT(('Banwick'!B9:B33>Assumptions!$B$30)*('Banwick'!B9:B33<=EOMONTH(Assumptions!$B$30,12))*'Banwick'!D9:D33)";
+
+  it('reads 1.0 when the half applies only to a trailing or leading subterm', () => {
+    for (const f of [
+      `=${body}-'Escrow'!B2*0.5`,
+      `=${body}+Assumptions!B31/2`,
+      `=${body}-C5/2`,
+      `=0.5*Assumptions!B31+${body}`,
+      `=${body}+H50*0.5`,
+    ]) {
+      expect(parseElsFormula(f)?.share, `share for ${f}`).toBe(1);
+    }
+  });
+
+  it('still reads 0.5 for a genuine whole-formula half-share', () => {
+    for (const f of [`=${body}*0.5`, `=${body}*0.50`, `=${body}*.5`, `=${body}*50%`, `=${body}/2`, `=0.5*${body}`]) {
+      expect(parseElsFormula(f)?.share, `share for ${f}`).toBe(0.5);
+    }
+  });
+});
+
+/**
+ * REFUTE-PASS REGRESSION (MEDIUM, reproduced by execution). The M3 rewrite applied `laterOf` to
+ * priorRow and lastWithBalance but selected windowStartRow with a bare `r.date < ...`, so on a date
+ * tie it kept the first PHYSICAL row with no balance tie-break — breaking its own stated contract on
+ * the origination-inside-window path. And when that row's balance was null the code fell to a bare
+ * `opening = null` with NO flag, contradicting L1's own "a verified null beats an inferred one".
+ */
+describe('crossCheckSchedule — REFUTE: the origination path must be permutation-invariant too', () => {
+  const origination: ScheduleRow = { row: 10, date: d(2026, 9, 1), interest: 0, principal: 0, balance: 1_000_000 };
+  const payment: ScheduleRow = { row: 12, date: d(2026, 10, 1), interest: 4000, principal: 10_000, balance: 990_000 };
+
+  function run(rows: ScheduleRow[]) {
+    return crossCheckSchedule({
+      id: 'originates-in-window', rows, declaredRangeEnd: 12, share: 1,
+      bookInterest: 4000, bookPrincipal: 10_000, asOf: ASOF,
+    }).filter((f) => f.field === 'principalReconciliation');
+  }
+
+  it('does not fire a false accusation when a same-dated balance-0 row is physically first', () => {
+    // A holdback/annotation row sharing the origination date. Financially identical either way.
+    const annotation: ScheduleRow = { row: 11, date: d(2026, 9, 1), interest: null, principal: null, balance: 0 };
+
+    expect(run([origination, annotation, payment])).toHaveLength(0);
+    expect(run([annotation, origination, payment])).toHaveLength(0);
+  });
+
+  it('reports rather than silently skipping when the origination balance is unreadable', () => {
+    // Real defect present: principal column says 5,000 but the balance column moved 10,000.
+    const nullBal: ScheduleRow = { row: 11, date: d(2026, 9, 1), interest: null, principal: null, balance: null };
+    const defective: ScheduleRow = { ...payment, principal: 5000 };
+
+    for (const rows of [[origination, nullBal, defective], [nullBal, origination, defective]]) {
+      const flags = crossCheckSchedule({
+        id: 'unreadable-origination', rows, declaredRangeEnd: 12, share: 1,
+        bookInterest: 4000, bookPrincipal: 5000, asOf: ASOF,
+      });
+      // Either the defect is caught, or the inability to check it is reported — never silence.
+      expect(flags.some((f) => f.field === 'principalReconciliation')).toBe(true);
+    }
   });
 });
 
