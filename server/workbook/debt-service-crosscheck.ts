@@ -54,6 +54,17 @@ export interface CrossCheckInput {
   rows: ScheduleRow[];
   /** Last row the ELS formula actually sums, or null when it could not be determined. */
   declaredRangeEnd: number | null;
+  /**
+   * Last row the I (PRINCIPAL) formula sums, when it differs from the H (interest) one above.
+   *
+   * The two are parsed separately and genuinely can diverge. Passing only H's end meant check 2's
+   * structural truncation guarantee — the one that must fire even when today's delta is zero,
+   * because the excluded rows are simply outside the current window — held for the interest column
+   * ALONE. A truncated I range excluding a future-dated balloon produced ZERO flags and stayed
+   * silent until that balloon entered the 12-month window: exactly the late-detection failure mode
+   * OI-094 was closed for. (2026-08-11 integrity sweep, M1.)
+   */
+  principalRangeEnd?: number | null;
   /** Oxford-share multiplier applied by the formula (1.0 or 0.5). */
   share: number;
   bookInterest: number;
@@ -66,6 +77,12 @@ export interface CrossCheckInput {
    * because that check can only fire when the scan runs PAST the declared range end.
    */
   scanStoppedOnGap?: boolean;
+  /**
+   * The first dated row found BELOW the gap the scan stopped on, or null when the schedule genuinely
+   * ended there. Non-null means the extent is ambiguous: rows past the gap are summed by neither the
+   * workbook's formula nor this recomputation, so the two agree while both may understate.
+   */
+  scanFirstRowBeyondGap?: number | null;
   /** False when the scan never reached the declared range end — see ScanResult. */
   scanReachedDeclaredEnd?: boolean;
 }
@@ -74,6 +91,8 @@ export interface ScanResult {
   rows: ScheduleRow[];
   /** Whether the walk ended on undated rows (vs exhausting its probe budget). */
   stoppedOnGap: boolean;
+  /** First dated row below that gap, if any — detection only, never adopted into `rows`. */
+  firstRowBeyondGap: number | null;
   /**
    * Whether the walk actually inspected every row up to the formula's declared range end.
    * A schedule that simply stops early inside a generously over-declared range (Restoration
@@ -151,8 +170,8 @@ const money = (n: number): string =>
  */
 export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
   const {
-    id, rows, declaredRangeEnd, share, bookInterest, bookPrincipal, asOf,
-    scanReachedDeclaredEnd = true,
+    id, rows, declaredRangeEnd, principalRangeEnd = null, share, bookInterest, bookPrincipal, asOf,
+    scanReachedDeclaredEnd = true, scanFirstRowBeyondGap = null,
   } = input;
   const flags: DataQualityFlag[] = [];
 
@@ -237,6 +256,85 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
     }
   }
 
+  // ── 2a. a schedule CONTINUATION below the gap the scan stopped on ─────────────────────────
+  // scanSchedule stops after `gapTolerance` undated rows and concludes the schedule ended. When it
+  // does so at/after the declared range end, all four checks operate on the truncated row set, so a
+  // continuation below the gap is invisible to the recomputation AND to the workbook's own sum
+  // IDENTICALLY -- recomputed == book, zero flags, permanently, not merely early. That falsifies
+  // this module's contract ("0 flags must mean checked and clean, never checked nothing") in the
+  // governor-relevant direction: H under-captures next-12-month debt service, so the DSCR
+  // denominator is understated and DSCR reads high.
+  //
+  // This is reported from an OBSERVATION, not a heuristic. An earlier attempt flagged whenever the
+  // scan stopped on a gap at exactly the declared end, which also describes the perfectly normal
+  // case of a range that covers its schedule precisely -- it false-positived on the clean fixture.
+  // scanSchedule now probes PAST the gap (bounded by the sheet's own extent) purely to detect
+  // whether dated rows exist below it, without adopting them into the totals: adopting them could
+  // absorb an unrelated dated block further down a hand-maintained sheet and corrupt a figure that
+  // is correct today. So the extent is reported as AMBIGUOUS and a human decides.
+  // (2026-08-11 integrity sweep, M2 -- the safeguard field was declared and documented as
+  // load-bearing, but never passed or read.)
+  if (scanFirstRowBeyondGap !== null && rows.length > 0) {
+    const lastRow = rows[rows.length - 1]!.row;
+    flags.push({
+      entity: id,
+      field: 'scheduleRange',
+      issue:
+        `the schedule appears to continue below a blank gap: dated rows stop at row ${lastRow}, but ` +
+        `row ${scanFirstRowBeyondGap} carries another date. Rows below that gap are summed by ` +
+        `neither the workbook's formula nor this cross-check, so both agree while both may be ` +
+        `understating debt service. Either extend the summing range to cover the continuation, or ` +
+        `confirm row ${scanFirstRowBeyondGap} is unrelated content rather than a second rate phase.`,
+      rawValue: String(scanFirstRowBeyondGap),
+      severity: 'warn',
+    });
+  }
+
+  // ── 2b. the SAME structural test for the I (PRINCIPAL) formula's declared range ───────────
+  // Run separately rather than folded into the loop above so the existing H-column message and its
+  // pinned assertions stay byte-identical. Skipped when the two ends agree (the common case) so a
+  // single truncation cannot be double-reported.
+  if (
+    principalRangeEnd !== null &&
+    principalRangeEnd !== declaredRangeEnd &&
+    bookPrincipal !== null
+  ) {
+    const lastRow = rows[rows.length - 1]!.row;
+    if (lastRow > principalRangeEnd) {
+      const excluded = rows.filter((r) => r.row > principalRangeEnd);
+      const amount = excluded.reduce((s, r) => s + Math.abs(r.principal ?? 0), 0);
+      flags.push({
+        entity: id,
+        field: 'scheduleRange',
+        issue:
+          `the PRINCIPAL summing range (column I) is truncated independently of the interest range: ` +
+          `it ends at row ${principalRangeEnd} but the schedule runs to row ${lastRow}. ` +
+          `${excluded.length} dated row(s) carrying ${money(amount)} of principal ` +
+          `(through ${iso(excluded[excluded.length - 1]!.date)}) can never be summed. ` +
+          `Harmless only while those rows sit outside the forward window — a balloon among them ` +
+          `becomes a live understatement of debt service the moment it enters.`,
+        rawValue: String(principalRangeEnd),
+        severity: 'warn',
+      });
+    }
+  }
+
+  // ── 2c. row order vs payment chronology ──────────────────────────────────────────────────
+  // Check 4 below is now date-driven and therefore correct under any row order, but a schedule
+  // whose rows run backwards still means the sheet is not what anyone reading it assumes. Verify
+  // the assumption instead of silently depending on it.
+  if (rows.some((r, i) => i > 0 && r.date < rows[i - 1]!.date)) {
+    flags.push({
+      entity: id,
+      field: 'scheduleOrder',
+      issue:
+        `schedule rows are not in ascending date order — row order and payment chronology disagree. ` +
+        `The cross-check itself is unaffected (it selects rows by date, not position), but a sheet ` +
+        `in this state usually means rows were inserted or re-sorted by hand.`,
+      severity: 'warn',
+    });
+  }
+
   // ── 3. duplicate payment dates (the OI-096-shaped double-count) ──────────────────────────
   // A date-predicate SUMPRODUCT sums every matching ROW, so two rows sharing a date are both
   // captured. REDACTED-554's r45/r46 shape (final regular payment and payoff row both dated
@@ -306,18 +404,71 @@ export function crossCheckSchedule(input: CrossCheckInput): DataQualityFlag[] {
     // it, so `retired` and `summed` move together and the gap stays zero. Reading the true prior
     // period's balance instead means a hidden defect on the window's leading row still surfaces
     // as a mismatch against an independent number.
-    const windowStartIdx = rows.findIndex((r) => r.date > asOf);
-    const lastWithBalance = [...inWindow].reverse().find((r) => r.balance !== null);
-    const priorRow = windowStartIdx > 0 ? rows[windowStartIdx - 1] : null;
-    const windowStartRow = windowStartIdx >= 0 ? rows[windowStartIdx] : null;
-    // Fallback only when no prior-period row was scanned at all (the loan originates inside this
-    // window) — there, the first in-window row genuinely IS the origination row, so its principal
-    // is the full origination amount rather than a figure the check needs to stay independent of.
-    const opening =
-      priorRow?.balance ??
-      (windowStartRow?.balance !== null && windowStartRow?.balance !== undefined
-        ? windowStartRow.balance + Math.abs(windowStartRow.principal ?? 0)
-        : null);
+    // Selected by DATE, never by physical row position. The quantity this check audits is a
+    // date-predicate SUMPRODUCT, which is row-order-INSENSITIVE — so two sheets with identical
+    // financial content and swapped row positions are indistinguishable to Excel and must be
+    // indistinguishable here. The previous positional reads (findIndex, the physical predecessor,
+    // and reverse().find for the closing balance) flipped the verdict in BOTH directions on the
+    // documented RCT r35/r36 same-date pair: a payoff row placed above its same-dated final regular
+    // payment MASKED a real $995K balloon-outside-principal defect, and on a correct workbook the
+    // reverse arrangement fired a false $995K accusation. These sheets are hand-maintained and
+    // multi-section (gapTolerance exists because of interior banners), so nothing guarantees
+    // chronological row order. (2026-08-11 integrity sweep, M3.)
+    //
+    // Same-date tie-breaks both take the LOWER balance: an amortizing balance is non-increasing in
+    // time, so among rows sharing a date the smallest balance is the latest state of that day.
+    const laterOf = (a: ScheduleRow, b: ScheduleRow): ScheduleRow => {
+      if (a.date > b.date) return a;
+      if (a.date < b.date) return b;
+      if (a.balance === null) return b;
+      if (b.balance === null) return a;
+      return a.balance <= b.balance ? a : b;
+    };
+    let priorRow: ScheduleRow | null = null;
+    for (const r of rows) {
+      if (r.date > asOf) continue;
+      priorRow = priorRow === null ? r : laterOf(priorRow, r);
+    }
+    let lastWithBalance: ScheduleRow | null = null;
+    for (const r of inWindow) {
+      if (r.balance === null) continue;
+      lastWithBalance = lastWithBalance === null ? r : laterOf(lastWithBalance, r);
+    }
+    let windowStartRow: ScheduleRow | null = null;
+    for (const r of inWindow) {
+      if (windowStartRow === null || r.date < windowStartRow.date) windowStartRow = r;
+    }
+
+    // A prior-period row that EXISTS but carries no readable balance must not fall through to the
+    // origination reconstruction. `?? ` used to do exactly that, contradicting this block's own
+    // comment ("only when no prior-period row was scanned at all") and silently re-opening the F-1
+    // blindness: rebuilding `opening` from the first in-window row's own principal makes a defect on
+    // that row move in lockstep, so the gap stays zero and nothing is reported. Every other
+    // unreadable input in this module raises a flag; a verified null beats an inferred one.
+    // (2026-08-11 integrity sweep, L1 — found by 2 lenses independently.)
+    let opening: number | null;
+    if (priorRow !== null && priorRow.balance === null) {
+      flags.push({
+        entity: id,
+        field: 'principalReconciliation',
+        issue:
+          `the last schedule row before the window (row ${priorRow.row}) carries no readable ` +
+          `Remaining Balance, so the opening balance could not be read and the principal ` +
+          `reconciliation was NOT run for this loan. Reconstructing it from the first in-window row ` +
+          `instead would make the check blind to a defect on exactly that row.`,
+        rawValue: String(priorRow.row),
+        severity: 'warn',
+      });
+      opening = null;
+    } else if (priorRow !== null) {
+      opening = priorRow.balance;
+    } else if (windowStartRow !== null && windowStartRow.balance !== null) {
+      // No prior-period row at all: the loan originates inside this window, so the first in-window
+      // row genuinely IS the origination row and its principal is the full origination amount.
+      opening = windowStartRow.balance + Math.abs(windowStartRow.principal ?? 0);
+    } else {
+      opening = null;
+    }
     if (opening !== null && lastWithBalance) {
       const retired = opening - lastWithBalance.balance!;
       const summed = inWindow.reduce((s, r) => s + Math.abs(r.principal ?? 0), 0);
@@ -418,13 +569,31 @@ export function scanSchedule(
   // blank gap inside a schedule ends the walk short of the declared range, and the truncation
   // check -- which can only fire on an OVER-run -- goes quietly inert.
   const floor = opts.minLastRow ?? 0;
-  const maxProbe = Math.max(opts.maxProbe ?? 400, floor - firstRow + gapTolerance + 2);
-  if (!cols.date) return { rows: [], stoppedOnGap: false, reachedDeclaredEnd: false };
+  const requested = Math.max(opts.maxProbe ?? 400, floor - firstRow + gapTolerance + 2);
+  // Bound the walk by the sheet's OWN extent. The gap-break can never fire inside the declared
+  // range (it requires r > floor), so a declared end of 1048576 -- what Excel produces once a
+  // whole-column reference materialises, or a drag-fill "cover everything" edit -- forced ~1M
+  // ws.getCell calls, and ExcelJS CREATES row/cell objects for absent cells. That is a CPU/memory
+  // blowup inside every parseWorkbook, on both CLI writers and the live server, which parse.ts's
+  // try/catch cannot contain (it catches a throw, not an OOM or a multi-minute stall). Capping is
+  // safe for detection: the scan then legitimately fails to reach the declared end, and check 2's
+  // existing `!scanReachedDeclaredEnd` branch reports exactly that. A degenerate/unknown rowCount
+  // (0, or above the first data row) disables the cap rather than scanning nothing.
+  // (2026-08-11 integrity sweep, L3.)
+  const sheetLastRow = Math.max(0, Number((ws as { rowCount?: number }).rowCount ?? 0));
+  const maxProbe =
+    sheetLastRow >= firstRow
+      ? Math.min(requested, sheetLastRow - firstRow + 1 + gapTolerance + 2)
+      : requested;
+  if (!cols.date) {
+    return { rows: [], stoppedOnGap: false, firstRowBeyondGap: null, reachedDeclaredEnd: false };
+  }
 
   const rows: ScheduleRow[] = [];
   let gap = 0;
   let stoppedOnGap = false;
   let lastProbed = firstRow - 1;
+  let stoppedAt = 0;
   for (let r = firstRow; r < firstRow + maxProbe; r++) {
     lastProbed = r;
     const date = cellDate(ws, cols.date, r);
@@ -433,6 +602,7 @@ export function scanSchedule(
       // Never stop before the declared range end -- that region is exactly what must be inspected.
       if (gap > gapTolerance && rows.length && r > floor) {
         stoppedOnGap = true;
+        stoppedAt = r;
         break;
       }
       continue;
@@ -446,7 +616,23 @@ export function scanSchedule(
       balance: cols.balance ? cellNumber(ws, cols.balance, r) : null,
     });
   }
-  return { rows, stoppedOnGap, reachedDeclaredEnd: lastProbed >= floor };
+
+  // Look PAST the gap for a continuation, without adopting it. Detection only: a dated row below the
+  // gap means this schedule's true extent is ambiguous, and crossCheckSchedule reports that rather
+  // than guessing. Adopting the rows instead could absorb an unrelated dated block further down a
+  // hand-maintained sheet and corrupt totals that are correct today, so the choice is deliberately
+  // left to a human. Bounded by the same sheet-extent cap as the main walk, so this cannot become
+  // the unbounded scan that cap exists to prevent. (2026-08-11 integrity sweep, M2.)
+  let firstRowBeyondGap: number | null = null;
+  if (stoppedOnGap) {
+    for (let r = stoppedAt + 1; r < firstRow + maxProbe; r++) {
+      if (cellDate(ws, cols.date, r)) {
+        firstRowBeyondGap = r;
+        break;
+      }
+    }
+  }
+  return { rows, stoppedOnGap, firstRowBeyondGap, reachedDeclaredEnd: lastProbed >= floor };
 }
 
 export interface ElsFormulaRef {
@@ -465,11 +651,31 @@ export interface ElsFormulaRef {
  * SCHEDULE_SOURCES did) is what keeps the truncation check honest as the workbook evolves:
  * the declared range is the thing under test, so it must be observed, not assumed.
  */
+/**
+ * The WHOLE-FORMULA Oxford-share multiplier: 0.5 when the formula halves its result, else 1.
+ *
+ * Until 2026-08-11 this was a single `/\)\s*\*\s*0\.5\s*$/`, which missed `*0.50`, `*.5`, `*50%`,
+ * `/2` and a LEADING `0.5*SUMPRODUCT(...)` — all of which Excel treats identically. A miss reads
+ * share=1 against a halved cached H/I and produces a permanent ~50%-of-that-loan false divergence
+ * on EVERY refresh. That is never a false clean (the error direction always flags), but a standing
+ * loud false positive is how the whole warn channel comes to be ignored, which would then bury a
+ * real OI-092 recurrence. Anchored to the formula's start/end so a `*0.5` inside an unrelated inner
+ * term is not mistaken for a share multiplier.
+ */
+function parseShare(formula: string): number {
+  const t = formula.trim();
+  const half = String.raw`0?\.50?|50\s*%`;
+  if (new RegExp(String.raw`\*\s*(?:${half})\s*$`).test(t)) return 0.5;
+  if (/\/\s*2(?:\.0*)?\s*$/.test(t)) return 0.5;
+  if (new RegExp(String.raw`^=?\s*(?:${half})\s*\*`).test(t)) return 0.5;
+  return 1;
+}
+
 export function parseElsFormula(formula: string | null | undefined): ElsFormulaRef | null {
   if (!formula) return null;
   const m = /'([^']+)'!\$?([A-H])\$?(\d+):\$?[A-H]\$?(\d+)/.exec(formula);
   if (!m) return null;
-  const share = /\)\s*\*\s*0\.5\s*$/.test(formula.trim()) ? 0.5 : 1;
+  const share = parseShare(formula);
   return {
     sheet: m[1]!,
     dateCol: m[2]!,
@@ -691,6 +897,34 @@ export function crossCheckDebtService(
       } else {
         bookPrincipal = cached;
       }
+      // H and I are parsed independently but only H's sheet/start/share are actually USED (the scan
+      // and the share multiplier both derive from it). When they disagree, the comparison silently
+      // mixes bases: a divergent share applies H's multiplier to both sides of the total, and a
+      // divergent sheet or start row compares I's cached figure against principal scanned from H's
+      // rows. Neither can falsely CLEAR — both directions flag — but the flag text would misattribute
+      // the cause, so say it plainly here. (2026-08-11 integrity sweep, M1.)
+      const disagreements: string[] = [];
+      if (principalRef.sheet !== interestRef.sheet) {
+        disagreements.push(`sheet ("${interestRef.sheet}" vs "${principalRef.sheet}")`);
+      }
+      if (principalRef.rangeStart !== interestRef.rangeStart) {
+        disagreements.push(`first data row (${interestRef.rangeStart} vs ${principalRef.rangeStart})`);
+      }
+      if (principalRef.share !== interestRef.share) {
+        disagreements.push(`Oxford share (${interestRef.share} vs ${principalRef.share})`);
+      }
+      if (disagreements.length > 0) {
+        flags.push({
+          entity: label,
+          field: 'annualDebtService',
+          issue:
+            `H${r} and I${r} disagree on ${disagreements.join(', ')}. The cross-check derives its ` +
+            `scan and share from H alone, so the principal side is being compared on a different ` +
+            `basis than it was summed on — treat any divergence reported for this loan as ` +
+            `unattributed until the two formulas agree.`,
+          severity: 'warn',
+        });
+      }
     }
 
     const scan = scanSchedule(sheet, cols, interestRef.rangeStart, {
@@ -710,11 +944,14 @@ export function crossCheckDebtService(
         id: label,
         rows: scan.rows,
         declaredRangeEnd: interestRef.rangeEnd,
+        // The I formula's own declared range, so check 2b can test it independently of H's.
+        principalRangeEnd: principalRef?.rangeEnd ?? null,
         share: interestRef.share,
         bookInterest,
         bookPrincipal,
         asOf: resolvedAsOf,
         scanReachedDeclaredEnd: scan.reachedDeclaredEnd,
+        scanFirstRowBeyondGap: scan.firstRowBeyondGap,
       }),
     );
   }
