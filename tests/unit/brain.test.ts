@@ -159,6 +159,33 @@ describe('Brain.persist — deals-degradation mirror guard', () => {
 
     expect(existsSync(h.snapshotPath)).toBe(true);
   });
+
+  /**
+   * REFUTE-PASS REGRESSION (LOW, found by 2 lenses). The first fix assigned this.dealsDegraded
+   * immediately after parseWorkbook — BEFORE the anomaly-floor gate can throw and before
+   * this.base/this.snapshot adopt the parse. On a floor refusal the previous CLEAN snapshot is
+   * retained, but the field then described the REJECTED parse, so every later UI write-back declined
+   * to mirror a snapshot whose deals were genuinely live, logging "this snapshot's
+   * deals/counterparties are seed placeholders" — false for the snapshot actually being written.
+   * The field must always describe the parse that was adopted.
+   */
+  it('does not let a refused parse’s degradation block mirroring of the clean adopted snapshot', async () => {
+    h.base = makeBaseWithLeaseIds(['l1', 'l2', 'l3', 'l4']);
+    await brain.refresh();
+    expect(existsSync(h.snapshotPath)).toBe(true);
+    rmSync(h.snapshotPath, { force: true });
+
+    // This parse both degrades AND trips the anomaly floor, so it is never adopted.
+    h.dealsDegraded = { reason: 'fetch-failed', detail: 'fetch failed' };
+    h.base = makeBaseWithLeaseIds(['l1']);
+    const state = await brain.refresh('file-change');
+    expect(state.source).toBe('snapshot-fallback');
+
+    // The retained snapshot's deals are live, so a write-back must still mirror it.
+    brain.setDealStage('d1', 'Diligence' as DealStage);
+
+    expect(existsSync(h.snapshotPath)).toBe(true);
+  });
 });
 
 describe('Brain.refresh', () => {
