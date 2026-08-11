@@ -10,6 +10,22 @@ describe('check-refute-required — financial-source classification', () => {
     expect(isFinancialSourcePath('src/brain/anomaly-insights.ts')).toBe(true);
     expect(isFinancialSourcePath('server\\warehouse\\anomalies.ts')).toBe(true);
   });
+  // 2026-08-11 sweep: server/workbook/ was absent from the gate while parse.ts and
+  // debt-service-crosscheck.ts both sit in the annualDebtService chain feeding debt-scoring.ts
+  // (DSCR) and src/analytics/engine.ts. Three commits touching the DSCR denominator landed
+  // without a gate-required refute trailer. This is the second occurrence of the scope-staleness
+  // mode (2026-07-24 was the first, one directory over) — a NEW financial directory must not be
+  // invisible by default.
+  it('flags server/workbook/ — the workbook parser and debt-service cross-check feed DSCR', () => {
+    expect(isFinancialSourcePath('server/workbook/parse.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/workbook/debt-service-crosscheck.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/workbook/counterparties.ts')).toBe(true);
+    expect(isFinancialSourcePath('server\\workbook\\parse.ts')).toBe(true);
+  });
+  it('still ignores workbook tests and docs', () => {
+    expect(isFinancialSourcePath('tests/unit/debt-service-crosscheck.test.ts')).toBe(false);
+    expect(isFinancialSourcePath('server/workbook/debt-maturity.DESIGN.md')).toBe(false);
+  });
   it('ignores tests, docs, json, and non-financial source', () => {
     expect(isFinancialSourcePath('tests/unit/conditions.test.ts')).toBe(false);
     expect(isFinancialSourcePath('src/analytics/conditions.test.ts')).toBe(false);
