@@ -250,6 +250,11 @@ async function resolveDataSourceIds(token: string): Promise<string[]> {
   return (db.data_sources ?? []).map((d) => d.id).filter((x): x is string => !!x);
 }
 
+const QUERY_PAGE_SIZE = 100;
+/** Page-walk bound. Hitting it with `has_more` still true is a truncation, and is thrown, not
+ *  silently accepted -- see the check at the end of the per-data-source loop. */
+const MAX_QUERY_PAGES = 5;
+
 /**
  * Fetch the Notion deals DB (all pages across its data sources). Throws on non-ok so callers can
  * fall back. Non-deal rows (no "Deal Name" title) map to null and are skipped, so querying every
@@ -261,11 +266,16 @@ async function fetchNotionDeals(token: string): Promise<Deal[]> {
   const byId = new Map<string, Deal>();
   for (const dsId of dataSourceIds) {
     let cursor: string | undefined;
-    for (let i = 0; i < 5; i++) {
+    let exhausted = false;
+    for (let i = 0; i < MAX_QUERY_PAGES; i++) {
       const res = await fetch(`${NOTION}/data_sources/${dsId}/query`, {
         method: 'POST',
         headers: notionHeaders(token),
-        body: JSON.stringify(cursor ? { page_size: 100, start_cursor: cursor } : { page_size: 100 }),
+        body: JSON.stringify(
+          cursor
+            ? { page_size: QUERY_PAGE_SIZE, start_cursor: cursor }
+            : { page_size: QUERY_PAGE_SIZE },
+        ),
       });
       if (!res.ok) throw new Error(`Notion ds ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
       const data = (await res.json()) as { results?: NotionPage[]; has_more?: boolean; next_cursor?: string };
@@ -273,8 +283,24 @@ async function fetchNotionDeals(token: string): Promise<Deal[]> {
         const d = mapNotionPage(page);
         if (d) byId.set(d.id, d);
       }
-      if (!data.has_more || !data.next_cursor) break;
+      if (!data.has_more || !data.next_cursor) {
+        exhausted = true;
+        break;
+      }
       cursor = data.next_cursor;
+    }
+    // Falling out of the loop with Notion still saying `has_more` means the page cap truncated the
+    // result. Throwing (rather than returning the partial set) routes this into loadDeals' catch as
+    // a `fetch-failed` degradation, which raises an error-severity flag both CLI gates and
+    // Brain.persist refuse to write on. Returning a partial set instead would reproduce the
+    // 2026-08-09 movement-gate false signal at smaller amplitude -- a shrunken deal set, no
+    // degradation, exit 0. A truncated fetch loses live data, so it degrades like one.
+    // (2026-08-11 integrity sweep, L5.)
+    if (!exhausted) {
+      throw new Error(
+        `Notion deals pagination cap reached (${MAX_QUERY_PAGES} pages x ${QUERY_PAGE_SIZE} rows) on ` +
+          `data source ${dsId} while has_more was still true — the result would be silently truncated`,
+      );
     }
   }
   return [...byId.values()];

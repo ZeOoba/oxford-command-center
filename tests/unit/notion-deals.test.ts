@@ -356,6 +356,49 @@ describe('loadDeals degradation reporting', () => {
     expect(out.degraded).toBeNull();
     expect(out.deals.length).toBeGreaterThan(0);
   });
+
+  /**
+   * 2026-08-11 integrity sweep, L5. fetchNotionDeals paginates `for (let i = 0; i < 5; i++)` at 100
+   * rows/page, so a data source past 500 rows was silently truncated even while `has_more` was still
+   * true. That is the same movement-gate false signal as the 2026-08-09 incident at smaller
+   * amplitude: a reduced deal set, no degradation, exit 0, past both CLI gates AND Brain.persist.
+   * A truncated fetch is a data-LOSING degradation and must be reported as one.
+   */
+  it('reports a degradation when the pagination cap is hit while has_more is still true', async () => {
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    // Every page claims there is more — i.e. the source is larger than the cap can walk.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [page()], has_more: true, next_cursor: 'c' }),
+      text: async () => '',
+    }));
+
+    const out = await loadDeals();
+
+    expect(out.degraded).not.toBeNull();
+    expect(out.degraded?.detail).toMatch(/truncat|pagination|cap/i);
+    // Must fall back to seed rather than publish a partial set as authoritative.
+    expect(out.deals).toEqual(SEED_DEALS);
+    // And it must map to an error-severity flag so both CLI gates refuse the write.
+    expect(dealsDegradationFlag(out.degraded, 6)?.severity).toBe('error');
+  });
+
+  it('does NOT report a degradation when pagination completes within the cap', async () => {
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    let call = 0;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => ({
+      ok: true,
+      // Two pages then done — well inside the cap.
+      json: async () => ({ results: [page()], has_more: ++call < 2, next_cursor: 'c' }),
+      text: async () => '',
+    })));
+
+    const out = await loadDeals();
+
+    expect(out.degraded).toBeNull();
+  });
 });
 
 describe('dealsDegradationFlag', () => {
