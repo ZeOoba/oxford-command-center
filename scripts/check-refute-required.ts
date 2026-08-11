@@ -70,6 +70,14 @@ export function isFinancialSourcePath(p: string): boolean {
   return (
     path.startsWith('src/analytics/') ||
     path.startsWith('server/warehouse/') ||
+    // server/workbook/ added 2026-08-11 after the weekly integrity sweep found it uncovered.
+    // parse.ts produces the loans/NOI/debt-service snapshot and debt-service-crosscheck.ts audits
+    // the next-12-month figure; BOTH sit in the annualDebtService chain feeding debt-scoring.ts
+    // (the DSCR verdict) and src/analytics/engine.ts. Three commits touching the DSCR denominator
+    // (9ab137d, 59d1995, b9a58c2) merged without this gate ever requiring a refute trailer.
+    // Second occurrence of the scope-staleness mode — 2026-07-24 was the first, one directory
+    // over — so prefer a broad directory prefix and subtract via DELIVERY_ONLY_PATHS above.
+    path.startsWith('server/workbook/') ||
     FINANCIAL_CONTRACT_PATHS.has(path) ||
     path === 'src/brain/anomaly-insights.ts' ||
     path === 'src/brain/principal-digest.ts' ||
