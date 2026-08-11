@@ -1,8 +1,40 @@
 import type { DataQualityFlag, Deal, DealStage, Market } from '../../src/contracts/index';
 import { slug } from '../../src/contracts/index';
 import { SEED_DEALS } from '../../src/data/seed-deals';
-import { dealJoinKey, parseNameAliases, stripLocalitySuffix } from './deal-name';
+import {
+  dealJoinKey,
+  parseNameAliases,
+  stripLocalitySuffix,
+  acceptedPairKey,
+  parseAcceptedNearDupes,
+} from './deal-name';
+
 import { isDeclassified } from './deal-declassification';
+
+/**
+ * A short, stable, NON-IDENTIFYING digest of a join key, for flag text.
+ *
+ * These flags flow into snapshot.dataQuality, which scripts/bake-mirror.ts publishes to the PUBLIC
+ * brain.oxfordra.net payload (it gates only on `degraded`) and which redactConfidential explicitly
+ * does NOT sweep. Embedding the key -- which IS the deal name, normalized -- would put a duplicated
+ * confidential deal's name on an external surface: Hard Invariant 3. The digest is enough to
+ * correlate a published flag with the console.warn beside it, which keeps the real name LOCAL.
+ * FNV-1a rather than node:crypto so this module stays safe for any bundle that reaches it.
+ * (Refute pass on the C1/H1 fix, 2026-08-11 — CRITICAL.)
+ */
+function keyDigest(key: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
+/** Market values that carry no real information: mapMarket's fallbacks, not evidence of location. */
+const LOSSY_MARKETS: ReadonlySet<string> = new Set(['Other', 'Unknown']);
+const isRealMarket = (m: Market | null | undefined): boolean =>
+  m !== null && m !== undefined && !LOSSY_MARKETS.has(m);
 
 /**
  * Live deals adapter (Phase 6) — Notion "Acquisition Pipeline Tracker" → Deal[].
@@ -150,6 +182,7 @@ export function mergeDeals(
   notion: Deal[],
   aliases: Map<string, string> = parseNameAliases(),
   flags: DataQualityFlag[] = [],
+  accepted: ReadonlySet<string> = parseAcceptedNearDupes(),
 ): Deal[] {
   // A Notion deal's match key is its aliased seed name when an alias exists, else its own name.
   const keyOf = (name: string): string => aliases.get(normName(name)) ?? normName(name);
@@ -178,6 +211,20 @@ export function mergeDeals(
       `[notion-deals] join-key collision on '${k}' — multiple Notion deals normalize to the same ` +
         `key. All of them are held out of the seed merge and default confidential.`,
     );
+    // Honor the documented NOTION_DEALS_ACCEPTED_NEAR_DUPES steady state. Two genuinely-different
+    // same-bare-name assets across metros are the case deal-name.ts directs the operator to ACCEPT
+    // rather than rename ("Accept such a pair via NOTION_DEALS_ACCEPTED_NEAR_DUPES rather than
+    // renaming the asset"). An unconditional error flag removed that exit and blocked the gate on
+    // every run with no config remedy -- and for two Notion-ONLY rows the alias remedy is impossible,
+    // since there is no seed record to alias to. Accepted pairs degrade to warn; unaccepted stay
+    // error. (Refute pass on the C1/H1 fix.)
+    const colliding = notion.filter((d) => keyOf(d.name) === k).map((d) => d.name);
+    let allAccepted = colliding.length > 1;
+    for (let i = 0; i < colliding.length && allAccepted; i++) {
+      for (let j = i + 1; j < colliding.length && allAccepted; j++) {
+        if (!accepted.has(acceptedPairKey(colliding[i]!, colliding[j]!))) allAccepted = false;
+      }
+    }
     // Emit the flag HERE rather than delegating detection to findNearDuplicateNames. The old code
     // detected the collision itself and then discarded that knowledge as a console.warn, trusting a
     // downstream detector that was keyed differently (raw name, no aliases) -- so an alias-mediated
@@ -189,13 +236,16 @@ export function mergeDeals(
       entity: 'deals',
       field: 'joinKey',
       issue:
-        `join-key collision on '${k}': multiple Notion pipeline rows normalize to the same match ` +
-        `key, so none of them could be joined to a seed record. All were held out of the merge and ` +
-        `default confidential — nothing was dropped, but the seed row for this key is presenting ` +
-        `SEED values rather than live ones. Disambiguate the Notion names, or add a ` +
-        `NOTION_DEALS_NAME_ALIASES entry mapping exactly one of them to the seed name.`,
-      rawValue: k,
-      severity: 'error',
+        `join-key collision (key ${keyDigest(k)}): ${colliding.length} Notion pipeline rows normalize ` +
+        `to the same match key, so none could be joined to a seed record. All were held out of the ` +
+        `merge and default confidential — nothing was dropped, but any seed row for this key is ` +
+        `presenting SEED values rather than live ones. Names are in the server log, not here (these ` +
+        `flags reach the public mirror). Remedies: disambiguate the Notion names; if a seed record ` +
+        `exists, add a NOTION_DEALS_NAME_ALIASES entry mapping exactly ONE of them to the seed name; ` +
+        `if these are genuinely different assets, accept the pair via ` +
+        `NOTION_DEALS_ACCEPTED_NEAR_DUPES.`,
+      rawValue: keyDigest(k),
+      severity: allAccepted ? 'warn' : 'error',
     });
   }
   const usedKeys = new Set<string>();
@@ -235,20 +285,53 @@ export function mergeDeals(
     // markets and raised no flag at all. An alias asserts that two NAMES denote one deal; it is not
     // an assertion about markets, so a contradiction still has to surface. Only a literally exact
     // name match is self-corroborating.
-    const exactNameMatch = dealJoinKey(live.name) === k && stripLocalitySuffix(live.name) === live.name;
-    if (!exactNameMatch && s.market !== null && live.market !== null && s.market !== live.market) {
+    // Exact on BOTH sides. Testing the strip on the live name only left a suffix-bearing SEED name
+    // plus a bare Notion name looking "exact", so the wrong deal's economics still merged silently.
+    const exactNameMatch =
+      dealJoinKey(live.name) === k &&
+      stripLocalitySuffix(live.name) === live.name &&
+      stripLocalitySuffix(s.name) === s.name;
+
+    // Corroboration needs REAL markets on both sides. mapMarket collapses any Notion select outside
+    // MARKET_MAP to 'Other', so treating that sentinel as evidence meant one cosmetic select rename
+    // false-refused every conventionally-named row at once -- and because these joinKey flags fall
+    // through Brain.persist's pipeline-only check, the live server would then publish a DOUBLE-COUNTED
+    // deal (unenriched seed + confidential extra) to the auto-committed mirror. Bricking every
+    // portfolio write, and corrupting the one path that isn't gated, is far worse than the defect.
+    // Corollary: where either side lacks a real market the merge proceeds UNCORROBORATED, so C1 is
+    // closed only as far as market coverage reaches (1 of 6 seeds and 1 of 20 live rows carry none
+    // today). That is reported at warn rather than left silent, so the gap is visible and erosion is
+    // detectable. (Refute pass on the C1/H1 fix.)
+    const corroborable = isRealMarket(s.market) && isRealMarket(live.market);
+    if (!exactNameMatch && !corroborable) {
       flags.push({
         entity: 'deals',
         field: 'joinKey',
         issue:
-          `refused a seed↔Notion merge that matched only after name normalization (locality strip ` +
-          `and/or alias) rather than exactly: the ` +
-          `seed record is in market '${s.market}' but the live pipeline row is in '${live.market}'. ` +
-          `A shared bare name across two markets is far more likely to be two different assets than ` +
-          `one — merging would attribute one deal's economics to the other and publish it under the ` +
-          `seed's confidential flag. Both rows were kept, the live one defaulting to confidential. ` +
-          `Rename one side, or add a NOTION_DEALS_NAME_ALIASES entry if they really are one deal.`,
-        rawValue: k,
+          `merged a seed↔Notion pair that matched only after name normalization (key ` +
+          `${keyDigest(k)}), and the match could not be corroborated: ` +
+          `${isRealMarket(s.market) ? 'the live row' : 'the seed row'} carries no specific market. ` +
+          `If these are two different assets sharing a bare name, this merge attributes one deal's ` +
+          `economics to the other. Set a specific Market on both sides to make this checkable.`,
+        rawValue: keyDigest(k),
+        severity: 'warn',
+      });
+    }
+    if (!exactNameMatch && corroborable && s.market !== live.market) {
+      flags.push({
+        entity: 'deals',
+        field: 'joinKey',
+        issue:
+          `refused a seed↔Notion merge (key ${keyDigest(k)}) that matched only after name ` +
+          `normalization rather than exactly: the seed record is in market '${s.market}' but the live ` +
+          `pipeline row is in '${live.market}'. A shared bare name across two markets is far more ` +
+          `likely to be two different assets than one — merging would attribute one deal's economics ` +
+          `to the other and publish it under the seed's confidential flag. Both rows are kept and the ` +
+          `live one defaults to confidential. Names are in the server log, not here (these flags reach ` +
+          `the public mirror). Remedies: correct whichever market is wrong, rename one side, or — if ` +
+          `an alias is what joined them and they really are one deal — remove the alias and fix the ` +
+          `names. Adding an alias will NOT clear this: the check runs after aliases are applied.`,
+        rawValue: keyDigest(k),
         severity: 'error',
       });
       return s;
@@ -454,7 +537,7 @@ export async function loadDeals(): Promise<DealsLoad> {
       return { deals: SEED_DEALS, degraded: { reason: 'empty-result', detail: 'Notion returned 0 deals for a configured token' }, flags: [] };
     }
     const flags: DataQualityFlag[] = [];
-    const deals = mergeDeals(SEED_DEALS, notion, parseNameAliases(), flags);
+    const deals = mergeDeals(SEED_DEALS, notion, parseNameAliases(), flags, parseAcceptedNearDupes());
     return { deals, degraded: null, flags };
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);

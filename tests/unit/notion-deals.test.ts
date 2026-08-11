@@ -3,7 +3,7 @@ import type { DataQualityFlag } from '../../src/contracts/index';
 import type { Deal } from '../../src/contracts/index';
 import { mapNotionPage, mergeDeals, parseNameAliases, loadDeals, dealsDegradationFlag, hasDealsPipelineFailure } from '../../server/sources/notion-deals';
 import { SEED_DEALS } from '../../src/data/seed-deals';
-import { findNearDuplicateNames } from '../../server/sources/deal-name';
+import { findNearDuplicateNames, acceptedPairKey } from '../../server/sources/deal-name';
 
 const page = (over: Record<string, unknown> = {}) => ({
   properties: {
@@ -345,7 +345,11 @@ describe('mergeDeals — C1: a locality-strip match needs corroboration, not jus
 
     expect(out).toHaveLength(1);
     expect(out[0]!.estPrice).toBe(6_000_000);
-    expect(flags).toHaveLength(0);
+    // Merges (availability preserved), but no longer SILENTLY — the refute pass showed that C1 is
+    // only closed as far as market coverage reaches, and silence made that gap invisible. Warn, never
+    // error: an error here would block every portfolio.json write.
+    expect(flags.some((f) => f.severity === 'error')).toBe(false);
+    expect(flags.some((f) => f.severity === 'warn')).toBe(true);
   });
 
   it('also requires corroboration when an ALIAS did the matching, not a locality strip', () => {
@@ -390,6 +394,113 @@ describe('mergeDeals — C1: a locality-strip match needs corroboration, not jus
 
     expect(out).toHaveLength(1);
     expect(out[0]!.estPrice).toBe(6_000_000);
+  });
+});
+
+/**
+ * REFUTE-PASS FINDINGS on the C1/H1 fix (wf_e5c7092c-a22). Five real defects, all in my own fix.
+ */
+describe('mergeDeals — REFUTE: join-key flags must not carry deal names (Hard Invariant 3)', () => {
+  it('names no deal in the flag text or rawValue — those flags reach the PUBLIC mirror', () => {
+    // snapshot.dataQuality is published by scripts/bake-mirror.ts, which gates only on `degraded`,
+    // and redactConfidential explicitly does NOT sweep dataQuality. So a name in a flag emitted for
+    // a duplicated CONFIDENTIAL row lands on brain.oxfordra.net. The console.warn keeps the name for
+    // local debugging; the published flag must carry only a correlatable digest.
+    const secret = 'Wolverine Holdings Portfolio';
+    const flags: DataQualityFlag[] = [];
+
+    mergeDeals(
+      [],
+      [
+        deal({ id: 'n-1', name: `${secret} — Columbus, OH`, confidential: true }),
+        deal({ id: 'n-2', name: `${secret} — Kansas City, MO`, confidential: true }),
+      ],
+      new Map(),
+      flags,
+    );
+
+    expect(flags.length).toBeGreaterThan(0);
+    for (const f of flags) {
+      const blob = `${f.issue} ${f.rawValue ?? ''} ${f.entity} ${f.field}`;
+      expect(blob).not.toContain('Wolverine');
+      expect(blob.toLowerCase()).not.toContain('wolverine');
+    }
+  });
+});
+
+describe('mergeDeals — REFUTE: a lossy market sentinel must not corroborate or refuse', () => {
+  const seedRow = deal({ id: 'seed-1', name: 'Enterprise Parkway', market: 'Columbus OH' });
+
+  it('MERGES when the live market is the lossy "Other" sentinel, not refuses', () => {
+    // mapMarket collapses any Notion select outside MARKET_MAP to 'Other'. Treating that as a real
+    // market means one cosmetic select rename false-refuses every conventionally-named row at once
+    // and bricks every portfolio.json write — an availability regression far worse than the defect.
+    const live = deal({ id: 'notion-1', name: 'Enterprise Parkway — Columbus, OH', market: 'Other', estPrice: 6_000_000 });
+    const flags: DataQualityFlag[] = [];
+
+    const out = mergeDeals([seedRow], [live], new Map(), flags);
+
+    expect(out).toHaveLength(1);
+    expect(out[0]!.estPrice).toBe(6_000_000);
+    expect(flags.some((f) => f.severity === 'error')).toBe(false);
+  });
+
+  it('still REPORTS the uncorroborated merge at warn severity so the coverage hole is visible', () => {
+    // C1 is only closed where both sides carry a real market. 1 of 6 seed rows and 1 of 20 live rows
+    // carry none today, so the guarantee is conditional — and silence made that invisible.
+    const live = deal({ id: 'notion-2', name: 'Enterprise Parkway — Columbus, OH', market: null, estPrice: 6_000_000 });
+    const flags: DataQualityFlag[] = [];
+
+    const out = mergeDeals([seedRow], [live], new Map(), flags);
+
+    expect(out).toHaveLength(1); // still merges — availability over purity
+    expect(flags.some((f) => f.severity === 'warn' && /uncorroborated|could not be corroborated/i.test(f.issue))).toBe(true);
+  });
+});
+
+describe('mergeDeals — REFUTE: corroboration must consider the SEED name’s suffix too', () => {
+  it('refuses when the SEED name carries the locality tail and the bare live name is another market', () => {
+    // The check tested stripLocalitySuffix on the LIVE name only, so a suffix-bearing SEED plus a
+    // bare Notion name matched "exactly" and merged the wrong deal's economics silently.
+    const seedRow = deal({ id: 'seed-s', name: 'Foundry Row — Columbus, OH', market: 'Columbus OH' });
+    const live = deal({ id: 'notion-s', name: 'Foundry Row', market: 'Kansas City MO', estPrice: 7_000_000 });
+    const flags: DataQualityFlag[] = [];
+
+    const out = mergeDeals([seedRow], [live], new Map(), flags);
+
+    expect(out).toHaveLength(2);
+    expect(out.find((d) => d.id === 'seed-s')!.estPrice).toBeNull();
+    expect(flags.some((f) => f.severity === 'error')).toBe(true);
+  });
+});
+
+describe('mergeDeals — REFUTE: an accepted near-dupe pair must not block the gate forever', () => {
+  it('downgrades the collision flag to warn when the operator has accepted the pair', () => {
+    // Pre-fix, a Notion↔Notion collision was gated only via findNearDuplicateNames, which consults
+    // NOTION_DEALS_ACCEPTED_NEAR_DUPES — so two genuinely-different same-bare-name assets had a
+    // documented gate-passing steady state. An unconditional error flag removed it, and the flag's
+    // prescribed alias remedy is impossible when neither row has a seed record.
+    const a = 'Synthetic Pkwy — Columbus, OH';
+    const b = 'Synthetic Pkwy — Kansas City, MO';
+    const accepted = new Set([acceptedPairKey(a, b)]);
+    const flags: DataQualityFlag[] = [];
+
+    mergeDeals([], [deal({ id: 'n-a', name: a }), deal({ id: 'n-b', name: b })], new Map(), flags, accepted);
+
+    expect(flags.some((f) => f.severity === 'error')).toBe(false);
+    expect(flags.some((f) => f.severity === 'warn')).toBe(true);
+  });
+
+  it('still raises an ERROR for a collision the operator has NOT accepted (control)', () => {
+    const flags: DataQualityFlag[] = [];
+    mergeDeals(
+      [],
+      [deal({ id: 'n-a', name: 'Other Pkwy — Columbus, OH' }), deal({ id: 'n-b', name: 'Other Pkwy — Kansas City, MO' })],
+      new Map(),
+      flags,
+      new Set(),
+    );
+    expect(flags.some((f) => f.severity === 'error')).toBe(true);
   });
 });
 
