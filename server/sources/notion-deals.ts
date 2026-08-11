@@ -229,13 +229,20 @@ export function mergeDeals(
     // ordinary convention keeps merging untouched. Market only, never the free-text address: the
     // Market select is normalized, addresses are not, and comparing them would refuse good merges.
     // (Catch-up sweep 2026-07-28..08-04, C1 — CRITICAL, 2 lenses, both with executed repros.)
-    const localityWasStripped = stripLocalitySuffix(live.name) !== live.name;
-    if (localityWasStripped && s.market !== null && live.market !== null && s.market !== live.market) {
+    // Corroboration is required whenever ANY normalization did the matching -- a locality strip OR
+    // an alias. Keying this on the strip alone (the first version of this fix) left the alias path
+    // wide open: an alias that reached the seed key with no locality tail merged contradicting
+    // markets and raised no flag at all. An alias asserts that two NAMES denote one deal; it is not
+    // an assertion about markets, so a contradiction still has to surface. Only a literally exact
+    // name match is self-corroborating.
+    const exactNameMatch = dealJoinKey(live.name) === k && stripLocalitySuffix(live.name) === live.name;
+    if (!exactNameMatch && s.market !== null && live.market !== null && s.market !== live.market) {
       flags.push({
         entity: 'deals',
         field: 'joinKey',
         issue:
-          `refused a seed↔Notion merge that matched only after stripping the locality suffix: the ` +
+          `refused a seed↔Notion merge that matched only after name normalization (locality strip ` +
+          `and/or alias) rather than exactly: the ` +
           `seed record is in market '${s.market}' but the live pipeline row is in '${live.market}'. ` +
           `A shared bare name across two markets is far more likely to be two different assets than ` +
           `one — merging would attribute one deal's economics to the other and publish it under the ` +
