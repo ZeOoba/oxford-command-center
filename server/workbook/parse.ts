@@ -20,7 +20,7 @@ import {
   type ScenarioName,
 } from '../../src/contracts/index';
 import { SCENARIO_PRESETS } from '../../src/contracts/scenario';
-import { loadDeals, dealsDegradationFlag } from '../sources/notion-deals';
+import { loadDeals, dealsDegradationFlag, type DealsDegradation } from '../sources/notion-deals';
 import { loadM365Tasks } from '../sources/m365-tasks';
 import { deriveCounterparties } from './counterparties';
 import { crossCheckDebtService } from './debt-service-crosscheck';
@@ -597,7 +597,17 @@ function parseLeases(
  * swallowed. OI-093 residual.
  */
 export function isTombstonedLoanRow(name: string): boolean {
-  return /DO\s+NOT\s+USE/i.test(name) || /DUPLICATE\s+OF\s+\S/i.test(name);
+  // `DUPLICATE OF` is ANCHORED to the start of the cell (after any ⚠ / whitespace / dash), because
+  // the marker REPLACES the loan name rather than annotating it. Matching it anywhere, as this did
+  // until 2026-08-11, swallowed any live row whose name merely carried the phrase -- e.g. "Fifth
+  // Third (consolidated -- duplicate of prior facility retired)". That direction matters: a skipped
+  // row's balance leaves aggregate debt, so portfolio LTV reads LOWER than reality and the
+  // Hard-Invariant-4 40% ceiling is evaluated against an understated numerator -- the falsely
+  // CLEARING direction. (2026-08-11 integrity sweep, L2.)
+  //
+  // `DO NOT USE` deliberately still matches anywhere, case-insensitively: the workbook uses it as a
+  // trailing annotation too ("Old note -- DO NOT USE"), which the tests pin.
+  return /DO\s+NOT\s+USE/i.test(name) || /^\W*DUPLICATE\s+OF\s+\S/i.test(name);
 }
 
 // ── loans (Loan Index — section-aware) ────────────────────────────────────────
@@ -625,7 +635,10 @@ function parseLoans(ws: Worksheet, flags: DataQualityFlag[]): Loan[] {
         field: 'name',
         issue: `Loan Index row ${r} is tombstoned in the workbook and was skipped, so it cannot claim a snapshot id or warehouse key`,
         rawValue: name,
-        severity: 'info',
+        // 'warn', not 'info': skipping a row removes its balance from aggregate debt, which moves a
+        // GOVERNOR input (portfolio LTV) in the falsely-clearing direction. An info flag no gate
+        // reads is too quiet for that. (2026-08-11 integrity sweep, L2.)
+        severity: 'warn',
       });
       continue;
     }
@@ -913,6 +926,18 @@ function parseAssumptions(ws: Worksheet, flags: DataQualityFlag[], fallbackAsOf:
 export interface ParseResult {
   snapshot: PortfolioSnapshot;
   flags: DataQualityFlag[];
+  /**
+   * How the deals source degraded on this parse, or null when it was fully live.
+   *
+   * Reported SEPARATELY from `flags` on purpose. `dealsDegradationFlag` maps only the data-losing
+   * reasons to an error-severity flag and deliberately returns null for `not-configured`, so a
+   * developer without a NOTION_TOKEN isn't permanently "dirty" — but a WRITER still must not put
+   * the ~6-deal seed placeholder set into the shared, git-tracked mirror. Threading the raw
+   * degradation lets each writer apply its own policy without changing what the flag stream says.
+   * (2026-08-11 integrity sweep, H1: Brain.persist gated only on the flag, so a token-less live
+   * server rewrote portfolio.json with seed placeholders on every refresh.)
+   */
+  dealsDegraded: DealsDegradation | null;
 }
 
 /**
@@ -1006,5 +1031,5 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
     dataQuality: flags,
   });
 
-  return { snapshot, flags };
+  return { snapshot, flags, dealsDegraded };
 }
