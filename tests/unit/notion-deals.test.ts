@@ -348,6 +348,38 @@ describe('mergeDeals — C1: a locality-strip match needs corroboration, not jus
     expect(flags).toHaveLength(0);
   });
 
+  it('also requires corroboration when an ALIAS did the matching, not a locality strip', () => {
+    // Self-found gap in the first version of this fix: the guard keyed on
+    // `stripLocalitySuffix(live.name) !== live.name`, so an alias that reached the seed key WITHOUT
+    // any locality tail bypassed corroboration entirely — merged, contradicting markets, 0 flags.
+    // An alias asserts the NAMES denote one deal; it is not an assertion about markets, so a
+    // contradiction still has to surface.
+    const aliases = new Map([['foo ctr', 'foo center']]);
+    const seedFoo = deal({ id: 'seed-foo', name: 'Foo Center', market: 'Columbus OH' });
+    const live = deal({ id: 'notion-foo', name: 'Foo Ctr', market: 'Kansas City MO', estPrice: 9_000_000 });
+    const flags: DataQualityFlag[] = [];
+
+    const out = mergeDeals([seedFoo], [live], aliases, flags);
+
+    expect(out).toHaveLength(2);
+    expect(out.find((d) => d.id === 'seed-foo')!.estPrice).toBeNull();
+    expect(out.find((d) => d.id === 'notion-foo')!.confidential).toBe(true);
+    expect(flags.some((f) => f.severity === 'error')).toBe(true);
+  });
+
+  it('still merges an aliased pair whose markets agree (control — aliases keep working)', () => {
+    const aliases = new Map([['foo ctr', 'foo center']]);
+    const seedFoo = deal({ id: 'seed-foo', name: 'Foo Center', market: 'Columbus OH' });
+    const live = deal({ id: 'notion-foo', name: 'Foo Ctr', market: 'Columbus OH', estPrice: 9_000_000 });
+    const flags: DataQualityFlag[] = [];
+
+    const out = mergeDeals([seedFoo], [live], aliases, flags);
+
+    expect(out).toHaveLength(1);
+    expect(out[0]!.estPrice).toBe(9_000_000);
+    expect(flags).toHaveLength(0);
+  });
+
   it('still merges an EXACT name match even with a differing market (the strip was not load-bearing)', () => {
     // No locality tail, so C1's mechanism is absent. This is pre-existing behavior and stays put:
     // the names are literally identical, which is its own corroboration.
