@@ -24,6 +24,8 @@ const h = vi.hoisted(() => {
     lastOverlay: null as Record<string, unknown> | null,
     tenantIds: [] as string[],
     base: null as Record<string, unknown> | null,
+    /** DealsLoad.degraded as parseWorkbook now reports it (2026-08-11 sweep H1). */
+    dealsDegraded: null as { reason: string; detail: string } | null,
   };
 });
 
@@ -52,7 +54,7 @@ vi.mock('../../server/config', () => ({
 vi.mock('../../server/workbook/parse', () => ({
   parseWorkbook: vi.fn(async () => {
     if (h.parseError) throw h.parseError;
-    return { snapshot: h.base, flags: [] };
+    return { snapshot: h.base, flags: [], dealsDegraded: h.dealsDegraded };
   }),
 }));
 
@@ -92,6 +94,7 @@ beforeEach(async () => {
   h.tenantIds = [];
   h.lastOverlay = null;
   h.base = makeBase();
+  h.dealsDegraded = null;
   rmSync(h.snapshotPath, { force: true });
   vi.clearAllMocks();
   vi.resetModules();
@@ -100,6 +103,89 @@ beforeEach(async () => {
 
 afterAll(() => {
   rmSync(h.snapshotPath, { force: true });
+});
+
+/**
+ * 2026-08-11 integrity sweep, H1 (found independently by 2 of 3 refuter lenses).
+ *
+ * PR #265 closed the seed-placeholder wipe for both CLI writers, but Brain.persist — the THIRD
+ * writer of portfolio.json — gated only on hasDealsPipelineFailure(), which matches error-severity
+ * flags. `not-configured` (no NOTION_TOKEN) deliberately raises NO flag so a dev server isn't
+ * permanently "dirty", and requireLiveDealsSource (which does treat a missing token as the same
+ * wipe as a failed fetch) has zero server-side callers. So a token-less live server deterministically
+ * rewrote the git-tracked, unattended-auto-committed mirror with the ~6-deal seed set on every
+ * refresh — the exact 2026-08-09 signature, reachable in normal use via a worktree env-drop.
+ */
+describe('Brain.persist — deals-degradation mirror guard', () => {
+  it('declines the mirror write when the deals source is not configured, but keeps serving', async () => {
+    h.dealsDegraded = { reason: 'not-configured', detail: 'NOTION_TOKEN is not set' };
+
+    const state = await brain.refresh();
+
+    // Serving is unchanged — the UI staying up matters more than the deals section being live.
+    expect(state.status).toBe('fresh');
+    expect(brain.getSnapshot()).not.toBeNull();
+    // The shared mirror must NOT carry seed placeholders.
+    expect(existsSync(h.snapshotPath)).toBe(false);
+  });
+
+  it('leaves a pre-existing good mirror byte-intact rather than overwriting it with seed', async () => {
+    mkdirSync(dirname(h.snapshotPath), { recursive: true });
+    const lastGood = JSON.stringify({ deals: [{ id: 'live-1' }, { id: 'live-2' }] });
+    writeFileSync(h.snapshotPath, lastGood);
+    h.dealsDegraded = { reason: 'not-configured', detail: 'NOTION_TOKEN is not set' };
+
+    await brain.refresh();
+
+    expect(readFileSync(h.snapshotPath, 'utf8')).toBe(lastGood);
+  });
+
+  it('also declines on the rederive write-back path, not just refresh', async () => {
+    h.dealsDegraded = { reason: 'not-configured', detail: 'NOTION_TOKEN is not set' };
+    await brain.refresh();
+    expect(existsSync(h.snapshotPath)).toBe(false);
+
+    // A UI write-back calls rederive() → persist() without re-parsing, so the degradation must be
+    // remembered on the instance rather than re-derived from the parse result each time.
+    brain.setDealStage('d1', 'Diligence' as DealStage);
+
+    expect(existsSync(h.snapshotPath)).toBe(false);
+  });
+
+  it('still writes the mirror when the deals source is healthy (control)', async () => {
+    h.dealsDegraded = null;
+
+    await brain.refresh();
+
+    expect(existsSync(h.snapshotPath)).toBe(true);
+  });
+
+  /**
+   * REFUTE-PASS REGRESSION (LOW, found by 2 lenses). The first fix assigned this.dealsDegraded
+   * immediately after parseWorkbook — BEFORE the anomaly-floor gate can throw and before
+   * this.base/this.snapshot adopt the parse. On a floor refusal the previous CLEAN snapshot is
+   * retained, but the field then described the REJECTED parse, so every later UI write-back declined
+   * to mirror a snapshot whose deals were genuinely live, logging "this snapshot's
+   * deals/counterparties are seed placeholders" — false for the snapshot actually being written.
+   * The field must always describe the parse that was adopted.
+   */
+  it('does not let a refused parse’s degradation block mirroring of the clean adopted snapshot', async () => {
+    h.base = makeBaseWithLeaseIds(['l1', 'l2', 'l3', 'l4']);
+    await brain.refresh();
+    expect(existsSync(h.snapshotPath)).toBe(true);
+    rmSync(h.snapshotPath, { force: true });
+
+    // This parse both degrades AND trips the anomaly floor, so it is never adopted.
+    h.dealsDegraded = { reason: 'fetch-failed', detail: 'fetch failed' };
+    h.base = makeBaseWithLeaseIds(['l1']);
+    const state = await brain.refresh('file-change');
+    expect(state.source).toBe('snapshot-fallback');
+
+    // The retained snapshot's deals are live, so a write-back must still mirror it.
+    brain.setDealStage('d1', 'Diligence' as DealStage);
+
+    expect(existsSync(h.snapshotPath)).toBe(true);
+  });
 });
 
 describe('Brain.refresh', () => {

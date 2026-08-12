@@ -56,6 +56,55 @@ describe('isTombstonedLoanRow', () => {
     expect(isTombstonedLoanRow('Useful Capital Partners')).toBe(false);
   });
 
+  /**
+   * 2026-08-11 integrity sweep, L2 — the one finding in the falsely-CLEARING governor direction.
+   *
+   * A skipped row's balance leaves aggregate debt, so portfolio LTV reads LOWER than reality, and
+   * the Hard-Invariant-4 40% aggregate ceiling is evaluated against an understated numerator. The
+   * marker is an ANNOTATION that replaces the name, so `DUPLICATE OF` is anchored to the start of
+   * the cell (after any ⚠/whitespace/punctuation). A real counterparty name carrying the phrase
+   * mid-string — the shape Gabriel would actually type when consolidating a facility — must survive.
+   *
+   * `DO NOT USE` is intentionally left matching anywhere and case-insensitively: the tests above
+   * deliberately assert that ('Old note — DO NOT USE'), so narrowing it would contradict a
+   * documented decision rather than fix a defect.
+   */
+  it('does not fire on a live loan name carrying "duplicate of" mid-string', () => {
+    expect(isTombstonedLoanRow('Fifth Third (consolidated — duplicate of prior facility retired)')).toBe(false);
+    expect(isTombstonedLoanRow('Huntington — replaces duplicate of r22 exposure')).toBe(false);
+    expect(isTombstonedLoanRow('Note A, a duplicate of the 2019 facility, refinanced')).toBe(false);
+  });
+
+  /**
+   * REFUTE-PASS REGRESSION (MEDIUM, differential-confirmed). Anchoring with `^\W*` stops at the
+   * first WORD character, so every one of these — all caught by the old unanchored regex — became a
+   * MISS. A missed tombstone parses as a live loan: its stale balance double-counts the duplicated
+   * facility in aggregate debt (the LTV numerator) and it claims a debt_positions warehouse key.
+   * And the miss direction is completely SILENT, because the warn only fires when the regex matches.
+   * So the first fix traded a flagged false-positive for an unflagged false-negative on a
+   * hand-maintained sheet where the marker wording is human-chosen. Both directions must be loud.
+   */
+  it('still catches a tombstone whose marker is preceded by a retirement word', () => {
+    expect(isTombstonedLoanRow('RETIRED — DUPLICATE OF row 9')).toBe(true);
+    expect(isTombstonedLoanRow('OLD: DUPLICATE OF Fifth Third note')).toBe(true);
+    expect(isTombstonedLoanRow('(VOID) DUPLICATE OF #7')).toBe(true);
+    expect(isTombstonedLoanRow('Retired - duplicate of row 12')).toBe(true);
+    expect(isTombstonedLoanRow('DEFUNCT DUPLICATE OF ROW 3')).toBe(true);
+  });
+
+  it('still rejects a real counterparty name carrying the phrase mid-sentence', () => {
+    // The false positive the anchor was introduced for must stay fixed.
+    expect(isTombstonedLoanRow('Fifth Third (consolidated — duplicate of prior facility retired)')).toBe(false);
+    expect(isTombstonedLoanRow('Note A, a duplicate of the 2019 facility, refinanced')).toBe(false);
+  });
+
+  it('still fires when the marker leads the cell, with or without the ⚠ prefix', () => {
+    expect(isTombstonedLoanRow('DUPLICATE OF ROW 22')).toBe(true);
+    expect(isTombstonedLoanRow('⚠ DUPLICATE OF ROW 22')).toBe(true);
+    expect(isTombstonedLoanRow('  duplicate of row 7 — superseded')).toBe(true);
+    expect(isTombstonedLoanRow('— DUPLICATE OF ROW 9')).toBe(true);
+  });
+
   it('handles empty and whitespace input without throwing', () => {
     expect(isTombstonedLoanRow('')).toBe(false);
     expect(isTombstonedLoanRow('   ')).toBe(false);

@@ -10,7 +10,7 @@ import { checkSnapshot } from './reconcile-runtime';
 import { SNAPSHOT_PATH, workbookPath, referenceDate } from './config';
 import { loadQuickbooks } from './sources/quickbooks';
 import { evaluateAnomalyFloor, loadPreviousLeaseIds } from './anomaly-floor';
-import { hasDealsPipelineFailure } from './sources/notion-deals';
+import { hasDealsPipelineFailure, type DealsDegradation } from './sources/notion-deals';
 
 /**
  * The live brain: single source of in-memory truth. Parses the workbook on demand,
@@ -20,6 +20,12 @@ class Brain extends EventEmitter {
   /** The freshly-parsed workbook (read-only canonical), before overlay merge. */
   private base: PortfolioSnapshot | null = null;
   private snapshot: PortfolioSnapshot | null = null;
+  /**
+   * How the deals source degraded on the most recent parse. Held on the instance rather than read
+   * per-write because `rederive()` (every UI write-back) persists WITHOUT re-parsing, so a
+   * parse-local check would guard `refresh()` and leak on that second path.
+   */
+  private dealsDegraded: DealsDegradation | null = null;
   private overlay: Overlay = loadOverlay();
   private state: BrainState = {
     status: 'idle',
@@ -46,7 +52,7 @@ class Brain extends EventEmitter {
   async refresh(reason = 'manual'): Promise<BrainState> {
     this.setState({ status: 'refreshing' });
     try {
-      const { snapshot, flags } = await parseWorkbook(workbookPath());
+      const { snapshot, flags, dealsDegraded } = await parseWorkbook(workbookPath());
 
       // Anomaly floor: gate the in-memory ADOPTION itself, not just the disk mirror below --
       // this.snapshot is what refresh()/rederive() serve live to the UI/API, so refusing only
@@ -79,6 +85,12 @@ class Brain extends EventEmitter {
       if (floor.refuse) throw new Error(floor.reason);
 
       this.base = snapshot;
+      // Adopted together with `base`, never before the floor gate above. Assigning it right after
+      // parseWorkbook meant a floor-REFUSED parse left its degradation attached to the retained
+      // clean snapshot, so every later write-back declined to mirror genuinely-live deals and logged
+      // a seed-placeholder reason that was false for the snapshot being written. The field must
+      // always describe the parse that was actually adopted. (Refute pass on this branch, 2 lenses.)
+      this.dealsDegraded = dealsDegraded;
       const merged = applyOverlay(snapshot, this.overlay);
       // Attach QuickBooks actuals (read on every refresh; null if QUICKBOOKS_CSV not set/present).
       const withQb = { ...merged, quickbooks: loadQuickbooks(merged.properties) };
@@ -210,11 +222,23 @@ class Brain extends EventEmitter {
     // git-tracked portfolio.json -- that mirror is what the scheduled refresh commits and pushes,
     // and this path runs neither evaluateReconciliationGate nor requireLiveDealsSource. Declining
     // the write leaves the last good mirror in place; the next healthy refresh rewrites it.
-    if (hasDealsPipelineFailure(snapshot.dataQuality)) {
+    //
+    // Gate on the RAW degradation, not only on the error-severity flag. `dealsDegradationFlag` maps
+    // `not-configured` (no NOTION_TOKEN) to NO flag on purpose -- flagging it would make a dev
+    // server permanently dirty -- and requireLiveDealsSource, the one guard that DOES treat a
+    // missing token as "the same wipe as a failed fetch", has zero server-side callers. Gating on
+    // the flag alone therefore left this writer open in precisely the mode the code documents as
+    // supported: a token-less server adopts the ~6-deal seed set with no flag at all and rewrote
+    // this mirror on every refresh (and every UI write-back), reproducing the 2026-08-09 wipe on a
+    // file that is auto-committed unattended. ANY degradation disqualifies the SHARED mirror;
+    // in-memory serving is unchanged. (2026-08-11 integrity sweep H1 -- 2 of 3 lenses, independently.)
+    const dealsReason = this.dealsDegraded?.reason ?? null;
+    if (dealsReason !== null || hasDealsPipelineFailure(snapshot.dataQuality)) {
       console.error(
         `✗ Brain.persist: declining to write ${SNAPSHOT_PATH} — the Notion deals pipeline is ` +
-          `unavailable, so this snapshot's deals/counterparties are seed placeholders. Serving it ` +
-          `in memory; the on-disk mirror is left at its last good state.`,
+          `${dealsReason ? `degraded (${dealsReason})` : 'unavailable'}, so this snapshot's ` +
+          `deals/counterparties are seed placeholders. Serving it in memory; the on-disk mirror is ` +
+          `left at its last good state.`,
       );
       return;
     }
