@@ -168,7 +168,36 @@ try {
   if ($behind -match '^\d+$') { $result.gitBehind = [int]$behind }
   if ($ahead  -match '^\d+$') {
     $result.gitAhead = [int]$ahead
-    $result.aheadFlag = Test-MirrorRepoAhead -AheadCount ([int]$ahead)
+    # Escalation is driven by how LONG a commit has been stranded, not how many there are
+    # (see $script:MirrorAheadStaleHours). --reverse puts the oldest ahead-commit first, and
+    # %cI is the COMMITTER date -- when it actually landed on local main. Author date would
+    # be wrong here: a cherry-picked commit can carry an author date from weeks earlier and
+    # would read as stranded the moment it lands. (This does NOT hold for MERGE commits: the
+    # oldest commit reachable via a just-merged feature branch keeps its original committer
+    # date, so a stale branch merged locally reads as stranded from its own creation. That
+    # over-pages rather than going silent, and this repo merges on the remote, so it is
+    # accepted rather than special-cased.)
+    $oldestAheadAt = [datetime]::MinValue
+    if ([int]$ahead -gt 0) {
+      # The git call belongs INSIDE this try, not just the parse (adversarial review,
+      # 2026-08-12). $ErrorActionPreference='Stop' is set at the top of this script, and
+      # under PS 5.1 a native command writing ANYTHING to stderr -- including a warning
+      # while succeeding -- throws (same hazard documented at deploy-mirror.ps1:169). With
+      # the call outside, that throw escaped to the outer catch, left aheadFlag $null while
+      # gitAhead was already set, and mislabelled it "git rev-list failed" -- an inferred
+      # null in the one field this change exists to make trustworthy.
+      try {
+        $oldestRaw = (& git log origin/main..HEAD --reverse --format=%cI 2>$null | Select-Object -First 1)
+        if ($oldestRaw) {
+          $oldestAheadAt = [datetime]::Parse($oldestRaw, $null, [System.Globalization.DateTimeStyles]::RoundtripKind)
+        }
+      } catch {
+        # Leave it at MinValue -- Test-MirrorRepoAhead escalates on an unreadable date
+        # rather than assuming the commit is fresh.
+        $result.errors += "could not read oldest ahead-commit date: $($_.Exception.Message)"
+      }
+    }
+    $result.aheadFlag = Test-MirrorRepoAhead -AheadCount ([int]$ahead) -OldestAheadCommitAt $oldestAheadAt
   }
 } catch {
   $result.errors += "git rev-list failed: $($_.Exception.Message)"
