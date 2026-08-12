@@ -418,8 +418,29 @@ Assert-True  ($r.isAhead)             '4l-ii: escalation still reports isAhead'
 # Negative counts are a caller bug (git rev-list can't return < 0); must not read as ahead.
 Assert-True (-not (Test-MirrorRepoAhead -AheadCount -1 -Now $aheadNow).isAhead) '4m: negative count is not ahead'
 
-# A future-dated commit (clock skew) yields a negative age -- must not wrap into ESCALATE.
-Assert-Equal 'FLAG' (Test-MirrorRepoAhead -AheadCount 1 -OldestAheadCommitAt $aheadNow.AddHours(2) -Now $aheadNow).severity '4n: a future-dated commit is a FLAG, not an escalation'
+# A FUTURE-dated commit must ESCALATE, not FLAG (adversarial review, 2026-08-12 -- this
+# assertion previously pinned the exact opposite and blessed a permanent-silence bug).
+#
+# A negative age can never satisfy the -ge threshold test, so treating it as a FLAG exempted
+# future-dated commits from escalation FOREVER, at any commit count. The realistic producer is
+# a system clock stepped BACKWARD (NTP/RTC correction after running fast): every commit made
+# under the fast clock reads future-dated, and the gate stays silent for skew + 24h. It is
+# also incoherent with 4j -- an ABSENT date escalates as unverifiable, so a provably impossible
+# one cannot be treated as cleaner.
+Assert-Equal 'ESCALATE' (Test-MirrorRepoAhead -AheadCount 1 -OldestAheadCommitAt $aheadNow.AddHours(2)  -Now $aheadNow).severity '4n-i: a future-dated commit ESCALATES (clock stepped backward)'
+Assert-Equal 'ESCALATE' (Test-MirrorRepoAhead -AheadCount 1 -OldestAheadCommitAt $aheadNow.AddDays(30)  -Now $aheadNow).severity '4n-ii: a wildly future-dated commit ESCALATES'
+Assert-True  ((Test-MirrorRepoAhead -AheadCount 1 -OldestAheadCommitAt $aheadNow.AddHours(2) -Now $aheadNow).reason -like '*FUTURE*') '4n-iii: the reason names the impossible date rather than reporting staleness'
+
+# Sub-hour jitter between the committer's clock and this process is normal and must NOT page,
+# or the check over-fires on ordinary clock drift. The tolerance is what separates 4n-i's real
+# breakage from noise.
+Assert-Equal 'FLAG' (Test-MirrorRepoAhead -AheadCount 1 -OldestAheadCommitAt $aheadNow.AddMinutes(30) -Now $aheadNow).severity '4o: 30 minutes of clock jitter stays a FLAG, not an alarm'
+
+# Floor, not Round. Under Round the effective threshold was 23.5h and the reason string would
+# claim "stranded 24 hours" for a commit 23h31m old -- the message has to be an at-least claim.
+$justUnder = Test-MirrorRepoAhead -AheadCount 1 -OldestAheadCommitAt $aheadNow.AddHours(-23).AddMinutes(-59) -Now $aheadNow
+Assert-Equal 'FLAG' $justUnder.severity '4p: 23h59m does not escalate (Floor, not Round)'
+Assert-Equal 23     $justUnder.ageHours '4p-ii: reported age never overstates elapsed time'
 
 # ---------------------------------------------------------------------------
 # Part 5 -- rc = SCHED_S_TASK_RUNNING: a run still IN FLIGHT is not a kill

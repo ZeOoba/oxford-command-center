@@ -487,10 +487,34 @@ function Test-MirrorRepoAhead {
     }
   }
 
-  # Rounded to whole hours before comparing, matching Get-MirrorRunVerdict's elapsed-minute
-  # idiom. A future-dated commit (clock skew) yields a negative age and correctly stays a FLAG.
-  $ageHours = [math]::Round(($Now - $OldestAheadCommitAt).TotalHours)
+  # Floor, not Round: the reason strings below claim the commit "has been stranded N hours",
+  # and only Floor makes that an at-least statement. Round made the effective threshold 23.5h
+  # and would report "stranded 24 hours" for a commit 23h31m old.
+  $ageHours = [math]::Floor(($Now - $OldestAheadCommitAt).TotalHours)
   $stamp    = $OldestAheadCommitAt.ToString('o')
+
+  # A commit dated in the FUTURE is not merely unverifiable, it is provably wrong -- so it
+  # cannot be treated as cleaner than the absent date handled above, which escalates.
+  #
+  # WHY THIS IS NOT A FLAG (adversarial review, 2026-08-12): a negative age can never satisfy
+  # the -ge test below, so a future-dated commit would be exempt from escalation FOREVER. The
+  # realistic producer is a system clock stepped BACKWARD (NTP/RTC correction after running
+  # fast): every commit made under the fast clock then reads future-dated, and the gate goes
+  # silent for skew + 24h -- a month of skew is a month of silence, at any commit count. That
+  # is the permanent-silence failure mode this whole check exists to avoid.
+  #
+  # -1 rather than 0 is deliberate tolerance: sub-hour jitter between the committer's clock
+  # and this process is normal and must not page. Anything beyond that is clock breakage.
+  if ($ageHours -lt -1) {
+    return [pscustomobject]@{
+      isAhead             = $true
+      severity            = 'ESCALATE'
+      thresholdHours      = $thresholdHours
+      ageHours            = $ageHours
+      oldestAheadCommitAt = $stamp
+      reason              = "$base The oldest ahead-commit is dated $stamp, which is $([math]::Abs($ageHours)) hours in the FUTURE -- the ${thresholdHours}-hour staleness gate cannot be evaluated against an impossible date. This usually means the system clock was stepped backward; until it is reconciled, staleness here cannot be measured at all, so this escalates rather than reporting a clean hygiene note."
+    }
+  }
 
   if ($ageHours -ge $thresholdHours) {
     return [pscustomobject]@{
