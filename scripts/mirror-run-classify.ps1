@@ -168,7 +168,25 @@ try {
   if ($behind -match '^\d+$') { $result.gitBehind = [int]$behind }
   if ($ahead  -match '^\d+$') {
     $result.gitAhead = [int]$ahead
-    $result.aheadFlag = Test-MirrorRepoAhead -AheadCount ([int]$ahead)
+    # Escalation is driven by how LONG a commit has been stranded, not how many there are
+    # (see $script:MirrorAheadStaleHours). --reverse puts the oldest ahead-commit first, and
+    # %cI is the COMMITTER date -- when it actually landed on local main. Author date would
+    # be wrong here: a rebased or cherry-picked commit can carry an author date from weeks
+    # earlier and would read as stranded the moment it lands.
+    $oldestAheadAt = [datetime]::MinValue
+    if ([int]$ahead -gt 0) {
+      $oldestRaw = (& git log origin/main..HEAD --reverse --format=%cI 2>$null | Select-Object -First 1)
+      if ($oldestRaw) {
+        try {
+          $oldestAheadAt = [datetime]::Parse($oldestRaw, $null, [System.Globalization.DateTimeStyles]::RoundtripKind)
+        } catch {
+          # Leave it at MinValue -- Test-MirrorRepoAhead escalates on an unreadable date
+          # rather than assuming the commit is fresh.
+          $result.errors += "could not parse oldest ahead-commit date '$oldestRaw': $($_.Exception.Message)"
+        }
+      }
+    }
+    $result.aheadFlag = Test-MirrorRepoAhead -AheadCount ([int]$ahead) -OldestAheadCommitAt $oldestAheadAt
   }
 } catch {
   $result.errors += "git rev-list failed: $($_.Exception.Message)"

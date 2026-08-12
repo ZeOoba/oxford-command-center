@@ -60,14 +60,29 @@ $script:MirrorRunInProgressResultCode = 267009
 # direction rather than contradicting each other.
 $script:MirrorRunStuckThresholdMinutes = 90
 
-# At or above this many unpushed commits, being ahead of origin stops being a hygiene note
-# and becomes an alarm. Set to 3 by Gabriel 2026-08-03. WHY a threshold rather than "any
-# ahead > 0 pages": ora-lease-snapshot-refresh auto-commits data/snapshots/portfolio.json up
-# to 3x/weekday and is instructed never to push, so ahead=1..2 is the EXPECTED steady state.
-# Paging on it would over-fire daily and train the reader to ignore the alert -- the identical
-# failure mode the blanket "rc != 0 is an ALARM" rule was rolled back for in v1.2. Do not
-# lower this to 1 without also changing that no-push rule; the two settings are coupled.
-$script:MirrorAheadEscalationThreshold = 3
+# Once a commit has sat ahead of origin/main longer than this many hours, being ahead stops
+# being a hygiene note and becomes an alarm. Set to 24 by Gabriel 2026-08-12, REPLACING the
+# previous count threshold of 3 (`$script:MirrorAheadEscalationThreshold`, 2026-08-03..08-11).
+#
+# WHY AGE AND NOT COUNT. The count threshold existed solely to suppress EXPECTED noise:
+# ora-lease-snapshot-refresh auto-committed portfolio.json and was instructed never to push,
+# so ahead=1..2 was the steady state and paging on it would have over-fired daily. Both
+# snapshot tasks now auto-push (ora-lease-snapshot-refresh v1.5 2026-08-09,
+# ora-cc-snapshot-refresh v1.2 2026-08-11), so that noise source is gone and the count rule's
+# entire justification went with it.
+#
+# Lowering the count to 1 was considered and REJECTED: humans leave commits ahead mid-session
+# too -- Gabriel's own 2026-08-05 batch sat 7 commits ahead for ~4 hours before being pushed --
+# so a count-1 rule would page through normal work. That is the same over-firing that got the
+# blanket "rc != 0 is an ALARM" rule rolled back in v1.2, just relocated from automation noise
+# to human noise.
+#
+# Age separates them cleanly because the real hazard was never "how many" but "how long":
+# 3692385 sat unpushed for FIVE DAYS while the mirror deployed it, and that is the incident
+# Test-MirrorRepoAhead was written for. Commits minutes old are an active session; anything
+# stranded overnight is not. 24h is above any plausible working session and below the
+# multi-day strand that motivated the check.
+$script:MirrorAheadStaleHours = 24
 
 function Get-DeployBeaconPath {
   <# Default beacon location. data/_state/ is gitignored -- this is machine state, not repo content. #>
@@ -433,32 +448,66 @@ function Test-MirrorRepoAhead {
     GitHub, and a hard reset of local main would have destroyed it. Behind and ahead are
     different hazards and the check needs both.
   #>
-  param([Parameter(Mandatory)][int]$AheadCount)
-  $threshold = $script:MirrorAheadEscalationThreshold
+  param(
+    [Parameter(Mandatory)][int]$AheadCount,
+    # Committer date of the OLDEST commit ahead of origin/main -- the one stranded longest.
+    # [datetime]::MinValue means "unknown", matching this file's absent-timestamp idiom.
+    [datetime]$OldestAheadCommitAt = [datetime]::MinValue,
+    [datetime]$Now = (Get-Date)
+  )
+  $thresholdHours = $script:MirrorAheadStaleHours
+
   if ($AheadCount -le 0) {
     return [pscustomobject]@{
-      isAhead   = $false
-      severity  = 'OK'
-      threshold = $threshold
-      reason    = 'Local main is not ahead of origin/main.'
+      isAhead             = $false
+      severity            = 'OK'
+      thresholdHours      = $thresholdHours
+      ageHours            = $null
+      oldestAheadCommitAt = $null
+      reason              = 'Local main is not ahead of origin/main.'
     }
   }
 
   # Two tiers, NOT one. FLAG = record it in the Notion row and stay silent; ESCALATE = alarm
-  # email. See $script:MirrorAheadEscalationThreshold for why the routine 1-2 case must not page.
+  # email. See $script:MirrorAheadStaleHours for why COUNT must not decide this.
   $base = "Local main is $AheadCount commit(s) AHEAD of origin/main. The mirror is deploying code that is not on the remote -- unreviewable on GitHub, and lost if local main is ever reset. Push or open a PR."
-  if ($AheadCount -ge $threshold) {
+
+  # Can't-verify is not healthy. Without a commit date the staleness gate cannot run, and
+  # defaulting it to FLAG would report a clean-looking hygiene note that actually means
+  # "couldn't look" -- the inferred-null failure this project treats as a defect in its own
+  # right. Escalate instead; a genuinely fresh commit costs one email to correct.
+  if ($OldestAheadCommitAt -le [datetime]::MinValue) {
     return [pscustomobject]@{
-      isAhead   = $true
-      severity  = 'ESCALATE'
-      threshold = $threshold
-      reason    = "$base This is at or past the escalation threshold of $threshold unpushed commit(s), so it is no longer routine drift -- alarm rather than a silent Notion row."
+      isAhead             = $true
+      severity            = 'ESCALATE'
+      thresholdHours      = $thresholdHours
+      ageHours            = $null
+      oldestAheadCommitAt = $null
+      reason              = "$base The oldest ahead-commit's date could not be read, so the ${thresholdHours}-hour staleness gate could not be evaluated -- escalating rather than assuming the commit is recent, because an unverifiable age is not a clean one."
+    }
+  }
+
+  # Rounded to whole hours before comparing, matching Get-MirrorRunVerdict's elapsed-minute
+  # idiom. A future-dated commit (clock skew) yields a negative age and correctly stays a FLAG.
+  $ageHours = [math]::Round(($Now - $OldestAheadCommitAt).TotalHours)
+  $stamp    = $OldestAheadCommitAt.ToString('o')
+
+  if ($ageHours -ge $thresholdHours) {
+    return [pscustomobject]@{
+      isAhead             = $true
+      severity            = 'ESCALATE'
+      thresholdHours      = $thresholdHours
+      ageHours            = $ageHours
+      oldestAheadCommitAt = $stamp
+      reason              = "$base The oldest of those commits ($stamp) has been stranded $ageHours hours, at or past the ${thresholdHours}-hour staleness threshold -- this is no longer an active session's work in flight, so it alarms rather than sitting in a silent Notion row."
     }
   }
   [pscustomobject]@{
-    isAhead   = $true
-    severity  = 'FLAG'
-    threshold = $threshold
-    reason    = "$base Below the escalation threshold of $threshold, so this is recorded as a hygiene note without an alarm email."
+    isAhead             = $true
+    severity            = 'FLAG'
+    thresholdHours      = $thresholdHours
+    ageHours            = $ageHours
+    oldestAheadCommitAt = $stamp
+    reason              = "$base The oldest of those commits ($stamp) is $ageHours hour(s) old, below the ${thresholdHours}-hour staleness threshold, so this reads as an active session's work in flight -- recorded as a hygiene note without an alarm email."
   }
 }
