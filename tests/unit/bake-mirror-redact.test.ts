@@ -11,6 +11,44 @@ import { redactConfidential, refuseBakeOnDegradedDeals } from '../../scripts/bak
  * scheduled bake published the ~6-deal seed placeholder set over the ~20-deal live pipeline to an
  * EXTERNAL surface, at exit 0 — the 2026-08-09 mode, on the worst possible surface.
  */
+/**
+ * CATCH-UP SWEEP M2, second half. redactConfidential swept tasks, notes, counterparties and
+ * deal-keyed overlays, but SKIPPED dataQuality on the recorded ground that it is "parser-emitted" —
+ * an assumption ca068c5 falsified in the same window by routing confidential rows into the
+ * near-duplicate detector, whose flag text names them. Today the public mirror escapes only because
+ * the bake path never runs checkSnapshot; wiring that in (H2) without this sweep would publish those
+ * names. Belt AND braces: the producer stops emitting them, and the publication boundary sweeps.
+ */
+describe('bake-mirror — M2: redaction sweeps dataQuality flag text', () => {
+  const snap = (dataQuality: unknown[]): PortfolioSnapshot => ({
+    deals: [deal({ id: 'secret', name: 'Wolverine Holdings', confidential: true }), deal({ id: 'pub', name: 'Public Yard' })],
+    counterparties: [], tasks: [], dealComps: {}, acquisitionInputs: {}, tenantNotes: {},
+    properties: [], leases: [], loans: [], insurance: [],
+    dataQuality,
+  } as unknown as PortfolioSnapshot);
+
+  it('drops a flag whose text names a redacted deal', () => {
+    const out = redactConfidential(snap([
+      { entity: 'reconciliation', field: 'deals.name', issue: 'near-duplicate: "Wolverine Holdings" ⇄ "Public Yard"', severity: 'error' },
+    ]));
+    expect(out.snapshot.dataQuality).toHaveLength(0);
+  });
+
+  it('keeps a flag that names nothing redacted', () => {
+    const out = redactConfidential(snap([
+      { entity: 'reconciliation', field: 'cash.totalCash', issue: 'total 999 does not equal sum 500', severity: 'error' },
+    ]));
+    expect(out.snapshot.dataQuality).toHaveLength(1);
+  });
+
+  it('sweeps rawValue too, not just issue', () => {
+    const out = redactConfidential(snap([
+      { entity: 'deals', field: 'joinKey', issue: 'collision', rawValue: 'wolverine holdings', severity: 'error' },
+    ]));
+    expect(out.snapshot.dataQuality).toHaveLength(0);
+  });
+});
+
 describe('bake-mirror — refuses to bake a degraded deals source to the public mirror', () => {
   it('returns a refusal reason for every data-losing degradation', () => {
     for (const reason of ['fetch-failed', 'empty-result', 'not-configured'] as const) {

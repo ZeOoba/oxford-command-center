@@ -86,10 +86,31 @@ export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
   // key does. This is the always-on backstop that keeps it from silently regrowing.
   const nearDupes = findNearDuplicateNames(s.deals.map((d) => d.name));
   if (nearDupes.length > 0) {
+    // These flags travel. brain.refresh attaches them to data/snapshots/portfolio.json, which the
+    // scheduled task auto-commits and pushes OFF-MACHINE, and they are published to the public
+    // brain.oxfordra.net payload once the bake path is gated on checkSnapshot. The colliding-key
+    // design in notion-deals.ts DELIBERATELY routes confidential rows into this detector, so naming
+    // both sides verbatim put an active confidential deal's name onto external surfaces --
+    // Hard Invariant 3. (Catch-up sweep 2026-07-28..08-04, M2, found by 2 of 3 lenses.)
+    //
+    // Redacted PER PAIR, not all-or-nothing: a public pair keeps its names, because a diagnostic that
+    // cannot say what to rename is not a diagnostic. The withheld pair is logged locally instead.
+    const confidentialNames = new Set(s.deals.filter((d) => d.confidential).map((d) => d.name));
+    const isSensitive = ([a, b]: [string, string]): boolean =>
+      confidentialNames.has(a) || confidentialNames.has(b);
+    const shown = nearDupes.map((p) =>
+      isSensitive(p) ? '[names withheld — confidential deal; see the server log]' : `"${p[0]}" ⇄ "${p[1]}"`,
+    );
+    for (const p of nearDupes.filter(isSensitive)) {
+      console.warn(
+        `[reconcile] near-duplicate deal rows involving a confidential deal (names withheld from the ` +
+          `published flag): "${p[0]}" ⇄ "${p[1]}"`,
+      );
+    }
     flag(
       'deals.name',
       `${nearDupes.length} near-duplicate deal row(s) — the seed↔Notion join key did not unify: ` +
-        nearDupes.map(([a, b]) => `"${a}" ⇄ "${b}"`).join('; ') +
+        shown.join('; ') +
         '. Fix the key (align the seed name with Notion, or add a NOTION_DEALS_NAME_ALIASES entry), ' +
         'not the symptom — and if these are genuinely different deals, disambiguate one of the names.',
     );

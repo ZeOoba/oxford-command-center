@@ -15,6 +15,46 @@ const base = (over: Partial<Record<string, unknown>> = {}): PortfolioSnapshot =>
     ...over,
   }) as unknown as PortfolioSnapshot;
 
+/**
+ * CATCH-UP SWEEP 2026-07-28→08-04, M2 (MEDIUM, found by 2 of 3 lenses).
+ *
+ * This flag writes both deal names VERBATIM, and the colliding-key design in notion-deals.ts
+ * deliberately routes CONFIDENTIAL rows into this detector ("so findNearDuplicateNames pairs them").
+ * brain.refresh then attaches these flags to data/snapshots/portfolio.json, which the scheduled task
+ * auto-commits and pushes OFF-MACHINE — and redactConfidential explicitly does not sweep dataQuality.
+ * So an active confidential deal's name rides out in flag text. Hard Invariant 3.
+ *
+ * The names must stay for the ordinary public case: a diagnostic that cannot name what to fix is not
+ * a diagnostic (the lesson from the digest-only flags earlier in this sweep). So: names when neither
+ * row is confidential, redacted when either is, with the full pair logged locally.
+ */
+describe('checkSnapshot — M2: the near-duplicate flag must not name a confidential deal', () => {
+  const pair = (confidentialOn: 'a' | 'b' | 'none') => base({
+    deals: [
+      { id: 'a', name: 'Wolverine Holdings Portfolio', confidential: confidentialOn === 'a' },
+      { id: 'b', name: 'Wolverine Holdings Portfolio Phase II', confidential: confidentialOn === 'b' },
+    ],
+  });
+
+  it('redacts BOTH names when either row is confidential', () => {
+    for (const on of ['a', 'b'] as const) {
+      const flags = checkSnapshot(pair(on));
+      const dup = flags.find((f) => f.field === 'deals.name');
+      expect(dup, `expected a near-dup flag for ${on}`).toBeDefined();
+      expect(dup!.issue).not.toContain('Wolverine');
+      // Still says a near-dup exists, and still blocks the gate.
+      expect(dup!.severity).toBe('error');
+      expect(dup!.issue).toMatch(/redact|withheld|server log/i);
+    }
+  });
+
+  it('keeps the names when NEITHER row is confidential (the diagnostic must stay usable)', () => {
+    const flags = checkSnapshot(pair('none'));
+    const dup = flags.find((f) => f.field === 'deals.name');
+    expect(dup!.issue).toContain('Wolverine Holdings Portfolio');
+  });
+});
+
 describe('checkSnapshot — runtime reconciliation', () => {
   it('returns no flags for a consistent snapshot', () => {
     expect(checkSnapshot(base())).toEqual([]);
