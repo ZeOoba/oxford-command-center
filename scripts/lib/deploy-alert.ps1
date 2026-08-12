@@ -38,6 +38,25 @@
   "GIT AUTH FAILURE (128): ..." reason (never matched by Test-OfflineSignature above) so a
   non-self-healing credential problem always alerts immediately instead of going quiet inside
   the offline-suppression digest.
+
+  Widening (2026-08-11): the suppression above only ever applied to Test-OfflineSignature's
+  narrow `^git (fetch|pull)` match, so every OTHER repeating failure class re-alerted on every
+  hourly run indefinitely -- 44 "Mirror deploy FAILED" emails between 2026-07-09 and 2026-08-11,
+  16 of them on 08-05 alone, against only 1 escalation and 3 recovery digests in the same log.
+  Test-SuppressibleReason now gates suppressibility instead (everything except GATE CHECK
+  FAILED, GATE CHECK INCONCLUSIVE, and GIT AUTH FAILURE -- the confidentiality- and
+  credential-critical classes), and a changed failure CLASS resets the streak so a new class
+  always alerts immediately rather than inheriting the previous one's suppression.
+  Test-OfflineSignature is unchanged and still meaningful -- it now selects escalation WORDING,
+  not suppressibility.
+
+  Review follow-ups the same day, all three found by adversarial review rather than production:
+  streaks key on Get-FailureClassKey (raw reasons embed git stderr and elapsed times that vary
+  every run, which reset the streak continuously and un-fixed the flood); malformed state files
+  are discarded rather than throwing (`$state.streakCount++` on a partial object raised a
+  TERMINATING error that deploy-mirror.ps1's bare catch swallowed -- no email AND no outbox,
+  the exact outcome this file exists to prevent); and Test-SuppressibleReason is enforced inside
+  Send-DeployFailureAlert, not just at the call site.
 #>
 
 function Test-OfflineSignature {
@@ -51,6 +70,68 @@ function Test-OfflineSignature {
   # immediately, never fold into this suppression path (see incident note at the top of this
   # file, 2026-07-10 credential-vs-offline follow-up).
   return $Reason -match '^git (fetch|pull)\b'
+}
+
+function Test-SuppressibleReason {
+  param([string]$Reason)
+  # Which failure classes are eligible for streak suppression. As of 2026-08-11: everything
+  # except a confirmed gate failure.
+  #
+  # Incident (2026-08-05 .. 2026-08-11): 44 "Mirror deploy FAILED" emails, 16 on 08-05 alone,
+  # roughly hourly for days. Suppression already existed but was gated on
+  # Test-OfflineSignature, which by design matches ONLY `^git (fetch|pull)`. Every other
+  # repeating class -- build:mirror, wrangler deploy, deploy timeout -- therefore re-alerted on
+  # every single hourly run, forever, with no backoff. Across all 44 sends the log carries just
+  # 1 escalation and 3 recovery digests, confirming the burst never entered the suppression
+  # path at all. Widening the gate here (rather than widening Test-OfflineSignature) keeps that
+  # classifier honest: it still means "looks like a network outage", which is what the
+  # escalation wording and the auth-vs-offline split below both depend on.
+  #
+  # NEVER-suppressible classes (all three confidentiality- or credential-critical):
+  #   GATE CHECK FAILED        -- a confidential bake may be publicly reachable right now.
+  #   GATE CHECK INCONCLUSIVE  -- the Access gate was NOT verified. Reduced cadence on "we
+  #                               could not confirm the gate is closed" is a confidentiality
+  #                               judgement call, not an obvious win (Gabriel, 2026-08-11).
+  #   GIT AUTH FAILURE (128)   -- this file's header (2026-07-10 follow-up) documents that a
+  #                               non-self-healing credential problem "always alerts
+  #                               immediately instead of going quiet inside the suppression
+  #                               digest". The first cut of this function silently reversed
+  #                               that by excluding only '^GATE CHECK FAILED'.
+  #
+  # Send-DeployFailureAlert calls this function on EVERY invocation and forces $Suppressible =
+  # $false when it returns false -- so the guarantee holds no matter what flags a caller passes.
+  # That is deliberate: -Critical alone was not sufficient (only deploy-mirror.ps1's GATE CHECK
+  # FAILED path passes it), so a gate-inconclusive or auth reason sent with -Suppressible and no
+  # -Critical used to be suppressible. Both guards are now genuinely independent (scenario 26).
+  return -not ($Reason -match '^(GATE CHECK|GIT AUTH FAILURE)')
+}
+
+function Get-FailureClassKey {
+  param([string]$Reason)
+  # Collapse a reason to a stable failure CLASS, for streak comparison.
+  #
+  # The streak must key on the class, never the raw message: deploy-mirror.ps1:188 embeds raw
+  # git stderr in the reason and Get-DeployTimeoutReason embeds an elapsed-seconds value, so a
+  # connectivity failure reads "...after 21038 ms" one run and "...after 74522 ms" the next.
+  # Comparing raw strings made every occurrence look like a brand-new class, which reset the
+  # streak every time and restored per-run alerting for exactly the offline incident this
+  # suppression exists to collapse (found in review, 2026-08-11 -- the first cut compared
+  # $state.reason -ne $Reason directly).
+  switch -Regex ($Reason) {
+    '^GATE CHECK FAILED'        { return 'gate-failed' }
+    '^GATE CHECK INCONCLUSIVE'  { return 'gate-inconclusive' }
+    '^GIT AUTH FAILURE'         { return 'git-auth' }
+    '^git fetch'                { return 'git-fetch' }
+    '^git pull'                 { return 'git-pull' }
+    '^wrangler deploy TIMED OUT' { return 'deploy-timeout' }
+    '^wrangler deploy failed'   { return 'wrangler-deploy' }
+    '^build:mirror failed'      { return 'build-mirror' }
+  }
+  # Unknown class: strip digits so numeric detail (exit codes, durations, byte counts) cannot
+  # fragment the streak, and cap the length so a long stderr tail can't dominate the key.
+  $stripped = ($Reason -replace '\d+', '#')
+  if ($stripped.Length -gt 120) { $stripped = $stripped.Substring(0, 120) }
+  return "other:$stripped"
 }
 
 function Test-GitAuthFailureSignature {
@@ -155,6 +236,13 @@ function Send-DeployFailureAlert {
   )
   if ($Critical) { $Suppressible = $false }  # GATE CHECK FAILED must never be suppressed.
 
+  # Second, INDEPENDENT guard on the same invariant: a never-suppressible reason class stays
+  # unsuppressed even if a caller passes -Suppressible without -Critical. Only deploy-mirror's
+  # GATE CHECK FAILED path sets -Critical, so without this a gate-inconclusive or auth reason
+  # routed through the widened suppressibility would go quiet. A confidentiality guarantee must
+  # not depend on every caller getting its flags right (review finding, 2026-08-11).
+  if (-not (Test-SuppressibleReason -Reason $Reason)) { $Suppressible = $false }
+
   $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz'
   $subject = if ($Critical) { '[ORA Command Center] CRITICAL - Access gate check failed' } else { '[ORA Command Center] Mirror deploy FAILED' }
 
@@ -194,12 +282,36 @@ function Send-DeployFailureAlert {
   # the two safeguards), the alert send, and therefore its outbox fallback, was never reached
   # at all. Send first so the one thing this function exists to do always happens.
   $state = Get-OfflineSuppressionState -StateFile $StateFile
+  $classKey = Get-FailureClassKey -Reason $Reason
+
+  # Discard unusable state rather than throwing on it. A partially-written or hand-edited
+  # state file (missing streakCount, missing classKey) previously made `$state.streakCount++`
+  # raise "The property 'streakCount' cannot be found on this object" -- a TERMINATING error
+  # that deploy-mirror.ps1's bare catch swallows, producing NO email and NO outbox fallback.
+  # That is the one outcome this whole file exists to prevent, and widening suppressibility
+  # routed nearly every failure class down this path. Reproduced in review, 2026-08-11
+  # (smoke scenario 25). Treat malformed state as "no state": alert immediately, start fresh.
+  if ($null -ne $state) {
+    $props = $state.PSObject.Properties
+    $usable = $props['streakCount'] -and $props['lastEscalatedAtStreak'] -and $props['classKey']
+    if (-not $usable) { $state = $null }
+  }
+
+  # A changed failure CLASS is new information and must never inherit the suppression the
+  # previous class earned -- otherwise a fresh problem could arrive silently just because an
+  # unrelated one was already mid-streak. Compare the class key, never the raw reason: the
+  # reason embeds git stderr and elapsed times that vary run to run (see Get-FailureClassKey).
+  if ($null -ne $state -and $state.classKey -ne $classKey) {
+    $state = $null
+  }
+
   if ($null -eq $state) {
     $state = [pscustomobject]@{
       firstFailureTime      = $ts
       lastFailureTime       = $ts
       streakCount           = 1
       lastEscalatedAtStreak = 0
+      classKey              = $classKey
       reason                = $Reason
     }
     Send-RawRetriedAlert -Subject $subject -Body $body
@@ -213,7 +325,11 @@ function Send-DeployFailureAlert {
 
   if (($state.streakCount - $state.lastEscalatedAtStreak) -ge $EscalationThreshold) {
     $state.lastEscalatedAtStreak = $state.streakCount
-    $escSubject = '[ORA Command Center] Mirror deploy still failing (offline signature, escalated)'
+    # Wording note: suppression now covers every non-gate failure class, not just the offline
+    # signature, so the subject no longer claims one. Test-OfflineSignature still distinguishes
+    # a genuine network outage from a build/deploy fault -- surfaced in the body, not asserted
+    # in the subject.
+    $escSubject = '[ORA Command Center] Mirror deploy still failing (escalated)'
     $escBody = @(
       $escSubject,
       '',
@@ -221,8 +337,9 @@ function Send-DeployFailureAlert {
       "Still failing as of:   $ts",
       "Consecutive failures:  $($state.streakCount)",
       "Reason:                $Reason",
+      "Classification:        $(if (Test-OfflineSignature -Reason $Reason) { 'offline/network signature' } else { 'build, deploy, or other non-network failure' })",
       '',
-      "This has now persisted past $EscalationThreshold consecutive hourly runs -- no longer treating it as a transient blip. Investigate machine/network connectivity. You will get another alert like this every $EscalationThreshold further consecutive failures until it recovers -- this does not go silent."
+      "This has now persisted past $EscalationThreshold consecutive hourly runs -- no longer treating it as a transient blip. You will get another alert like this every $EscalationThreshold further consecutive failures until it recovers -- this does not go silent."
     ) -join "`n"
     Send-RawRetriedAlert -Subject $escSubject -Body $escBody
     Save-OfflineSuppressionState -StateFile $StateFile -State $state
@@ -230,7 +347,7 @@ function Send-DeployFailureAlert {
   }
 
   Save-OfflineSuppressionState -StateFile $StateFile -State $state
-  Write-Host "[$ts] Offline-signature failure (streak=$($state.streakCount)) -- suppressed, collapsing into one digest on recovery."
+  Write-Host "[$ts] Repeat failure (streak=$($state.streakCount), reason='$Reason') -- suppressed, collapsing into one digest on recovery."
 }
 
 # Call after a successful deploy. If a suppressed offline-signature streak is on record, sends
@@ -250,7 +367,7 @@ function Send-DeployRecoveryDigestIfSuppressed {
   }
 
   $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz'
-  $subject = '[ORA Command Center] Mirror deploy recovered (offline signature cleared)'
+  $subject = '[ORA Command Center] Mirror deploy recovered (failure streak cleared)'
   $body = @(
     $subject,
     '',
@@ -261,7 +378,7 @@ function Send-DeployRecoveryDigestIfSuppressed {
     "Last escalation sent at streak count:        $($state.lastEscalatedAtStreak) (0 = none)",
     "Last reason:                                $($state.reason)",
     '',
-    "No action needed -- the most recent run succeeded. This digest replaces what would otherwise have been $($state.streakCount - 1) separate duplicate `"Mirror deploy FAILED`" emails for the same offline incident."
+    "No action needed -- the most recent run succeeded. This digest replaces what would otherwise have been $($state.streakCount - 1) separate duplicate `"Mirror deploy FAILED`" emails for the same recurring failure."
   ) -join "`n"
   Send-RawRetriedAlert -Subject $subject -Body $body
   Clear-OfflineSuppressionState -StateFile $StateFile

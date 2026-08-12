@@ -328,8 +328,12 @@ catch {
   try {
     $reason = $original.Exception.Message
     $isGateFailure = $reason -match '^GATE CHECK FAILED'
-    $isOfflineSignature = Test-OfflineSignature -Reason $reason
-    Send-DeployFailureAlert -Reason $reason -Critical:$isGateFailure -Suppressible:$isOfflineSignature
+    # Suppressibility widened 2026-08-11 from "offline git fetch/pull signature only" to every
+    # class except a confirmed gate failure -- see Test-SuppressibleReason for the 44-email
+    # incident that motivated it. Test-OfflineSignature still exists and is still meaningful,
+    # but it now selects alert WORDING, not whether repeats are suppressed at all.
+    $isSuppressible = Test-SuppressibleReason -Reason $reason
+    Send-DeployFailureAlert -Reason $reason -Critical:$isGateFailure -Suppressible:$isSuppressible
   } catch {
     Write-Host "Send-DeployFailureAlert itself failed: $($_.Exception.Message)"
   }
