@@ -360,35 +360,66 @@ Assert-True ($v.reason -notlike '*Send-DeployFailureAlert*') '3d: reason promise
 # was deploying a commit nobody could review on GitHub.
 # ---------------------------------------------------------------------------
 
-Assert-True  (Test-MirrorRepoAhead -AheadCount 1).isAhead   '4a: 1 commit ahead is flagged'
-Assert-True  (-not (Test-MirrorRepoAhead -AheadCount 0).isAhead) '4b: 0 commits ahead is not flagged'
-Assert-Equal 'FLAG' (Test-MirrorRepoAhead -AheadCount 2).severity '4c: below threshold is a FLAG (Notion row only)'
+# Trigger RE-BASED from COUNT to AGE (2026-08-12, Gabriel ruling "option 3"). Through
+# 2026-08-11 escalation fired at >= 3 unpushed commits. That threshold's entire justification
+# was suppressing EXPECTED noise: ora-lease-snapshot-refresh auto-committed and was instructed
+# never to push, so ahead=1..2 was the steady state. Both snapshot tasks now auto-push
+# (ora-lease-snapshot-refresh v1.5 2026-08-09, ora-cc-snapshot-refresh v1.2 2026-08-11), so
+# that noise source is gone and the count rule's rationale went with it.
+#
+# Lowering the count to 1 was considered and REJECTED: humans also leave commits ahead
+# mid-session -- Gabriel's own 2026-08-05 batch sat 7 commits ahead across ~4 hours before
+# being pushed -- so a count-1 rule would have paged repeatedly through normal work, which is
+# the exact over-firing that got the blanket "rc != 0 is an ALARM" rule rolled back in v1.2.
+#
+# AGE separates the two cleanly. The real hazard was never "how many" but "how long": 3692385
+# sat unpushed for FIVE DAYS while the mirror deployed it. An active session with commits
+# minutes old is normal; anything stranded overnight is not.
+$aheadNow = [datetime]'2026-08-11 18:00:00'
+$fresh    = $aheadNow.AddHours(-1)     # committed an hour ago -- an active session
+$stale    = $aheadNow.AddHours(-30)    # stranded overnight
 
-# Severity TIERING (2026-08-03, Gabriel ruling "option 3"). Ahead-of-origin is a hygiene
-# problem, not a broken pipeline, so it must not page on the routine case: the lease-snapshot
-# task auto-commits up to 3x/weekday and is instructed never to push, so ahead=1..2 is the
-# EXPECTED steady state and emailing on it would train the reader to ignore the alert (the
-# same over-firing failure the v1.2 rc!=0 rule was rolled back for). The threshold converts
-# the old vague SKILL.md prose -- "persists across runs or exceeds a handful of commits" --
-# into tested code, per this file's own doctrine that classification never lives in prose
-# re-derived on each run.
-Assert-Equal 'FLAG'     (Test-MirrorRepoAhead -AheadCount 1).severity  '4d: 1 ahead stays a FLAG, no email'
-Assert-Equal 'ESCALATE' (Test-MirrorRepoAhead -AheadCount 3).severity  '4e: AT the threshold escalates'
-Assert-Equal 'ESCALATE' (Test-MirrorRepoAhead -AheadCount 25).severity '4f: far above threshold escalates'
-Assert-Equal 'OK'       (Test-MirrorRepoAhead -AheadCount 0).severity  '4g: not ahead is OK, never FLAG/ESCALATE'
+Assert-True  (Test-MirrorRepoAhead -AheadCount 1 -OldestAheadCommitAt $fresh -Now $aheadNow).isAhead '4a: 1 commit ahead is flagged'
+Assert-True  (-not (Test-MirrorRepoAhead -AheadCount 0 -Now $aheadNow).isAhead) '4b: 0 commits ahead is not flagged'
+Assert-Equal 'OK' (Test-MirrorRepoAhead -AheadCount 0 -Now $aheadNow).severity '4c: not ahead is OK, never FLAG/ESCALATE'
 
-# The threshold is exposed so the consumer reports it instead of hardcoding "3" in prose --
-# the hardcoded-baseline-list rot this task already hit twice.
-Assert-Equal 3 (Test-MirrorRepoAhead -AheadCount 5).threshold '4h: threshold is exposed on the result'
-Assert-True ((Test-MirrorRepoAhead -AheadCount 5).reason -like '*3*') '4i: escalation reason names the threshold'
-Assert-True ((Test-MirrorRepoAhead -AheadCount 5).isAhead) '4j: escalation still reports isAhead'
+# The core behavioral change: COUNT ALONE MUST NO LONGER PAGE. 4d is the regression guard
+# against anyone reinstating a count trigger -- 25 fresh commits is an active session, not an
+# alarm. Under the old rule this exact case escalated (old test 4f).
+Assert-Equal 'FLAG' (Test-MirrorRepoAhead -AheadCount 1  -OldestAheadCommitAt $fresh -Now $aheadNow).severity '4d-i: 1 fresh commit is a FLAG, no email'
+Assert-Equal 'FLAG' (Test-MirrorRepoAhead -AheadCount 25 -OldestAheadCommitAt $fresh -Now $aheadNow).severity '4d-ii: 25 FRESH commits is still only a FLAG -- count alone must not page'
 
-# Boundary guard: off-by-one here silently changes when the check pages. Pin both sides.
-Assert-Equal 'FLAG'     (Test-MirrorRepoAhead -AheadCount 2).severity '4k: threshold-1 does NOT escalate'
-Assert-Equal 'ESCALATE' (Test-MirrorRepoAhead -AheadCount 4).severity '4l: threshold+1 escalates'
+# Age escalation + the real incident as a regression anchor.
+Assert-Equal 'ESCALATE' (Test-MirrorRepoAhead -AheadCount 1 -OldestAheadCommitAt $stale -Now $aheadNow).severity '4e: a single commit stranded 30h escalates'
+$c3692385 = [datetime]'2026-07-29 14:34:52'
+Assert-Equal 'ESCALATE' (Test-MirrorRepoAhead -AheadCount 1 -OldestAheadCommitAt $c3692385 -Now ([datetime]'2026-08-03 15:00:00')).severity '4f: the real 3692385 five-day strand escalates'
+
+# Boundary guard: off-by-one here silently changes when the check pages. Pin both sides of 24h.
+Assert-Equal 'FLAG'     (Test-MirrorRepoAhead -AheadCount 2 -OldestAheadCommitAt $aheadNow.AddHours(-23) -Now $aheadNow).severity '4g: 23h does NOT escalate'
+Assert-Equal 'ESCALATE' (Test-MirrorRepoAhead -AheadCount 2 -OldestAheadCommitAt $aheadNow.AddHours(-24) -Now $aheadNow).severity '4h: AT 24h escalates'
+
+# OLDEST commit ahead drives the verdict, not the newest -- a fresh commit landing on top of a
+# stranded one must not reset the clock and hide it.
+Assert-Equal 'ESCALATE' (Test-MirrorRepoAhead -AheadCount 5 -OldestAheadCommitAt $stale -Now $aheadNow).severity '4i: a fresh commit on top of a stranded one does not mask it'
+
+# Can't-verify is not healthy. If we are ahead but the commit date is unavailable, the age
+# gate cannot run -- that must ESCALATE, never silently downgrade to FLAG. An absent date is
+# exactly the "inferred null" that reads as a clean result while meaning "couldn't look".
+Assert-Equal 'ESCALATE' (Test-MirrorRepoAhead -AheadCount 1 -Now $aheadNow).severity '4j: ahead with an UNKNOWN commit date escalates, never FLAG'
+
+# The threshold and the measured age are exposed so the consumer reports them instead of
+# hardcoding "24" in prose -- the hardcoded-baseline rot this task already hit twice.
+$r = Test-MirrorRepoAhead -AheadCount 2 -OldestAheadCommitAt $stale -Now $aheadNow
+Assert-Equal 24 $r.thresholdHours '4k: threshold hours exposed on the result'
+Assert-Equal 30 $r.ageHours       '4k-ii: measured age exposed on the result'
+Assert-True  ($r.reason -like '*24*') '4l: escalation reason names the threshold'
+Assert-True  ($r.isAhead)             '4l-ii: escalation still reports isAhead'
 
 # Negative counts are a caller bug (git rev-list can't return < 0); must not read as ahead.
-Assert-True (-not (Test-MirrorRepoAhead -AheadCount -1).isAhead) '4m: negative count is not ahead'
+Assert-True (-not (Test-MirrorRepoAhead -AheadCount -1 -Now $aheadNow).isAhead) '4m: negative count is not ahead'
+
+# A future-dated commit (clock skew) yields a negative age -- must not wrap into ESCALATE.
+Assert-Equal 'FLAG' (Test-MirrorRepoAhead -AheadCount 1 -OldestAheadCommitAt $aheadNow.AddHours(2) -Now $aheadNow).severity '4n: a future-dated commit is a FLAG, not an escalation'
 
 # ---------------------------------------------------------------------------
 # Part 5 -- rc = SCHED_S_TASK_RUNNING: a run still IN FLIGHT is not a kill
