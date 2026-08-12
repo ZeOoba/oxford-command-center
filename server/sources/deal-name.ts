@@ -39,6 +39,22 @@ export function stripLocalitySuffix(name: string): string {
   return stripped || name;
 }
 
+/**
+ * The 2-letter state from a name's locality tail, uppercased, or null when there is no tail.
+ *
+ * The tail is the disambiguator `dealJoinKey` deletes, and it is the ONLY corroborating evidence that
+ * is always present on a conventionally-named Notion row. Recovering it lets the merge check a
+ * cross-metro contradiction without depending on the Market select mapping — which covers 6 metros
+ * while the live pipeline spans about ten, so 11 of 20 live rows carry no usable mapped market.
+ * (Fourth refute pass, 2026-08-12 — the HIGH.)
+ */
+export function localityStateOf(name: string): string | null {
+  const m = LOCALITY_SUFFIX.exec(name);
+  if (!m) return null;
+  const st = /([A-Za-z]{2})\s*$/.exec(m[0]);
+  return st ? st[1]!.toUpperCase() : null;
+}
+
 /** The canonical seed↔Notion match key: locality-stripped, lowercased, punctuation-collapsed. */
 export function dealJoinKey(name: string): string {
   return stripLocalitySuffix(name)
@@ -132,6 +148,35 @@ export function findNearDuplicateNames(
 /** Order-independent key for an accepted pair, so config need not guess which name comes first. */
 export function acceptedPairKey(a: string, b: string): string {
   return [dealJoinKey(a), dealJoinKey(b)].sort().join('||');
+}
+
+/**
+ * Order-independent key for an accepted pair keyed on the FULL names rather than their join keys.
+ *
+ * `acceptedPairKey` is degenerate for the case it is most needed in: when two rows COLLIDE they share
+ * one join key by definition, so it yields "k||k" for ANY pair on that key — one historical acceptance
+ * silently grandfathered every future collision on the same bare name, including a third row the
+ * operator had never seen. Collision acceptance therefore keys on the full names, which do differ.
+ * (Fourth refute pass, 2026-08-12.)
+ */
+export function acceptedCollisionKey(a: string, b: string): string {
+  const norm = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, ' ');
+  return [norm(a), norm(b)].sort().join('||');
+}
+
+/** `parseAcceptedNearDupes`, keyed on full names — the set `acceptedCollisionKey` is checked against. */
+export function parseAcceptedCollisions(
+  raw: string = process.env.NOTION_DEALS_ACCEPTED_NEAR_DUPES ?? '',
+): Set<string> {
+  const out = new Set<string>();
+  for (const entry of raw.split(/[;\n]+/)) {
+    const idx = entry.indexOf('=>');
+    if (idx < 0) continue;
+    const a = entry.slice(0, idx);
+    const b = entry.slice(idx + 2);
+    if (a.trim() && b.trim()) out.add(acceptedCollisionKey(a, b));
+  }
+  return out;
 }
 
 /**
