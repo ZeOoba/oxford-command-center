@@ -236,6 +236,118 @@ Assert-True ($calls.Count -eq 1) "scenario 16 (default -StateFile path): expecte
 Assert-True (Test-Path $stateFile) "scenario 16: default -StateFile expression should have created the state file at `$repo\data\alert-state\offline-suppression.json"
 Reset-State
 
+# ── Scenarios 17-21: suppression widened beyond the offline signature (2026-08-11) ──────
+# Incident: 44 "Mirror deploy FAILED" emails, 16 of them on 2026-08-05 alone, roughly hourly
+# for days. Streak suppression already existed but was gated on Test-OfflineSignature
+# (`^git (fetch|pull)`), so every OTHER repeating failure class -- build:mirror, wrangler
+# deploy, deploy timeout -- alerted on every single run forever. Only 1 escalation and 3
+# recovery digests were ever sent across those 44, confirming the burst was a non-suppressible
+# class. Ruling (Gabriel, 2026-08-11): suppress every repeating class; GATE CHECK FAILED stays
+# never-suppressible because it may mean a confidential bake is publicly reachable.
+
+# Scenario 17: the suppressibility decision itself -- everything except a gate failure.
+Assert-True (Test-SuppressibleReason -Reason 'build:mirror failed (1)') "scenario 17a: build failure IS suppressible"
+Assert-True (Test-SuppressibleReason -Reason 'wrangler deploy failed (1)') "scenario 17b: wrangler deploy failure IS suppressible"
+Assert-True (Test-SuppressibleReason -Reason 'git fetch origin failed (128)') "scenario 17c: offline signature still suppressible"
+Assert-True (-not (Test-SuppressibleReason -Reason 'GATE CHECK FAILED: TEST')) "scenario 17d: GATE CHECK FAILED is NEVER suppressible"
+
+# Scenario 18: a repeating build failure -- first alerts, second is suppressed. This is the
+# exact 2026-08-05 burst shape, and the behaviour that did not exist before this change.
+Reset-Log
+Reset-State
+$env:FAKE_SEND_EXIT_CODE = '0'
+Send-DeployFailureAlert -Reason 'build:mirror failed (1)' -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 1) "scenario 18a (build failure, 1st): expected 1 immediate alert, got $($calls.Count)"
+Reset-Log
+Send-DeployFailureAlert -Reason 'build:mirror failed (1)' -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 0) "scenario 18b (build failure, 2nd, same reason): expected 0 calls (suppressed), got $($calls.Count)"
+
+# Scenario 19: a DIFFERENT failure reason mid-streak must alert immediately and restart the
+# streak -- a new failure class is new information, and must never inherit the suppression
+# earned by the previous one.
+Reset-Log
+Send-DeployFailureAlert -Reason 'wrangler deploy failed (1)' -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 1) "scenario 19 (reason changed mid-streak): expected 1 immediate alert, got $($calls.Count)"
+$state = Get-Content $stateFile -Raw | ConvertFrom-Json
+Assert-True ($state.streakCount -eq 1) "scenario 19: streakCount should restart at 1 for a new reason, got $($state.streakCount)"
+Assert-True ($state.lastEscalatedAtStreak -eq 0) "scenario 19: lastEscalatedAtStreak should reset for a new reason"
+
+# Scenario 20: the new reason then suppresses on ITS repeat, exactly like the first one did.
+Reset-Log
+Send-DeployFailureAlert -Reason 'wrangler deploy failed (1)' -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 0) "scenario 20 (new reason, 2nd occurrence): expected 0 calls (suppressed), got $($calls.Count)"
+
+# Scenario 21: a gate failure arriving mid-suppressed-streak still alerts immediately -- the
+# confidentiality guarantee must survive the widened suppression.
+Reset-Log
+Send-DeployFailureAlert -Reason 'GATE CHECK FAILED: TEST' -Critical -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 1 -and $calls[0].Contains('CRITICAL')) "scenario 21: GATE CHECK FAILED must alert immediately mid-streak, got $($calls.Count) call(s)"
+Reset-State
+
+# ── Scenarios 22-26: review findings, 2026-08-11 ────────────────────────────────────────
+
+# Scenario 22: GATE CHECK INCONCLUSIVE and GIT AUTH FAILURE must NOT be suppressible.
+# INCONCLUSIVE means the Access gate was not VERIFIED -- reduced cadence there is a
+# confidentiality judgement call, not an obvious win. GIT AUTH FAILURE is documented in this
+# file's header as always alerting immediately (non-self-healing credential problem); the
+# first cut of Test-SuppressibleReason silently reversed both by excluding only
+# '^GATE CHECK FAILED'.
+Assert-True (-not (Test-SuppressibleReason -Reason 'GATE CHECK INCONCLUSIVE: https://x returned 000')) "scenario 22a: GATE CHECK INCONCLUSIVE must NOT be suppressible"
+Assert-True (-not (Test-SuppressibleReason -Reason "GIT AUTH FAILURE (128): git fetch origin failed with a credential/auth error")) "scenario 22b: GIT AUTH FAILURE must NOT be suppressible"
+Assert-True (Test-SuppressibleReason -Reason 'build:mirror failed (1)') "scenario 22c: build failure still suppressible"
+
+# Scenario 23: the same failure CLASS with varying numeric detail must still suppress.
+# deploy-mirror.ps1:188 embeds raw git stderr in the reason, and a connectivity error carries
+# a millisecond count that differs every run ("after 21038 ms"). Comparing the raw string made
+# every occurrence look like a new class, restoring per-run alerting for exactly the offline
+# incident the suppression was built for.
+Reset-Log
+Reset-State
+$env:FAKE_SEND_EXIT_CODE = '0'
+Send-DeployFailureAlert -Reason 'git fetch origin failed (128): Failed to connect to github.com port 443 after 21038 ms' -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 1) "scenario 23a (first occurrence): expected 1 alert, got $($calls.Count)"
+Reset-Log
+Send-DeployFailureAlert -Reason 'git fetch origin failed (128): Failed to connect to github.com port 443 after 74522 ms' -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 0) "scenario 23b (same class, different ms): expected 0 calls (suppressed), got $($calls.Count)"
+$state = Get-Content $stateFile -Raw | ConvertFrom-Json
+Assert-True ($state.streakCount -eq 2) "scenario 23b: streak should accumulate across varying numeric detail, got $($state.streakCount)"
+
+# Scenario 24: a genuinely different class still resets and alerts immediately.
+Reset-Log
+Send-DeployFailureAlert -Reason 'build:mirror failed (1)' -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 1) "scenario 24 (different class): expected 1 immediate alert, got $($calls.Count)"
+
+# Scenario 25: a corrupt / partial state file must never EAT the alert. A ConvertFrom-Json
+# object missing streakCount throws on ++ under $ErrorActionPreference='Stop', and
+# deploy-mirror.ps1's bare catch swallows it -- no email AND no outbox fallback.
+Reset-Log
+'{"reason":"build:mirror failed (1)","firstFailureTime":"x"}' | Out-File -FilePath $stateFile -Encoding UTF8
+Send-DeployFailureAlert -Reason 'build:mirror failed (1)' -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 1) "scenario 25 (corrupt state, missing streakCount): expected 1 alert (fail open), got $($calls.Count)"
+
+# Scenario 26: a gate failure passed -Suppressible WITHOUT -Critical must still not suppress.
+# The first cut claimed caller+callee were independently sufficient ("defense in depth"); they
+# were not -- Test-SuppressibleReason lives in the caller, so this combination was suppressible.
+Reset-Log
+Reset-State
+Send-DeployFailureAlert -Reason 'GATE CHECK FAILED: TEST' -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 1) "scenario 26a (gate failure, -Suppressible, no -Critical, 1st): expected 1 alert, got $($calls.Count)"
+Reset-Log
+Send-DeployFailureAlert -Reason 'GATE CHECK FAILED: TEST' -Suppressible -StateFile $stateFile
+$calls = @(Get-Calls)
+Assert-True ($calls.Count -eq 1) "scenario 26b (gate failure repeat): expected 1 alert (never suppressed), got $($calls.Count)"
+Reset-State
+
 Remove-Item Env:\FAKE_SEND_CALL_LOG -ErrorAction SilentlyContinue
 Remove-Item Env:\FAKE_SEND_EXIT_CODE -ErrorAction SilentlyContinue
 Reset-Log

@@ -933,3 +933,65 @@ describe('extractDgs5MarketRate', () => {
     expect(result!).toBeCloseTo(0.090, 6);
   });
 });
+
+// ── Insurance alert TITLE distinguishability (2026-08-11) ────────────────────
+// Incident: on 2026-06-21 four properties each produced TWO "Policy expired — <property>"
+// emails one second apart. They were NOT duplicates (send-log `bytes=` differed on every
+// pair) — they were one alert per POLICY carrying a title that named only the PROPERTY, so
+// two genuinely distinct lapsed policies were indistinguishable in the inbox. The alert
+// subject is `[ORA Command Center] CRITICAL: ${title}` (server/brief/render.ts), so the
+// title is the ONLY thing separating them. Ruling (Gabriel, 2026-08-11): keep one alert per
+// policy — both are real things to fix — and disambiguate via the coverage.
+describe('evaluateConditions — insurance alert titles disambiguate co-located policies', () => {
+  const twoLapsedAtOneProperty = {
+    insurance: [
+      policy({ id: 'ins-fvc-pckg', property: 'Sepich Portfolio', coverage: 'Package (PCKG)', status: 'Expired' }),
+      policy({ id: 'ins-fvc-bcl', property: 'Sepich Portfolio', coverage: 'Business Crime Liability (BCL)', status: 'Expired' }),
+    ],
+  };
+
+  it('two lapsed policies at one property produce two DISTINCT titles', () => {
+    const out = evaluateConditions(snap(twoLapsedAtOneProperty), opts);
+    const titles = out.filter((i) => i.id.startsWith('ins-lapsed-')).map((i) => i.title);
+    expect(titles).toHaveLength(2);
+    expect(new Set(titles).size).toBe(2); // the whole point — no two identical subjects
+  });
+
+  it('each title still names the property AND now names the coverage', () => {
+    const out = evaluateConditions(snap(twoLapsedAtOneProperty), opts);
+    const pckg = out.find((i) => i.id === 'ins-lapsed-ins-fvc-pckg')!;
+    const bcl = out.find((i) => i.id === 'ins-lapsed-ins-fvc-bcl')!;
+    expect(pckg.title).toContain('Sepich Portfolio');
+    expect(bcl.title).toContain('Sepich Portfolio');
+    expect(pckg.title).toContain('Package (PCKG)');
+    expect(bcl.title).toContain('Business Crime Liability (BCL)');
+  });
+
+  it('a policy with no coverage on file still yields a usable, non-empty title', () => {
+    const out = evaluateConditions(
+      snap({ insurance: [policy({ id: 'ins-x', property: 'Prop One', coverage: null, status: 'Cancelled' })] }),
+      opts,
+    );
+    const ins = out.find((i) => i.id === 'ins-lapsed-ins-x')!;
+    expect(ins.title).toContain('Prop One');
+    expect(ins.title).not.toContain('null');
+    // Discriminating assertion: the old title was exactly `Policy cancelled — Prop One`, which
+    // also contained 'Prop One' and no 'null'. The coverage segment must actually be present.
+    expect(ins.title).toContain('· Coverage');
+  });
+
+  it('the live-lapsed (F3) branch disambiguates the same way', () => {
+    const out = evaluateConditions(
+      snap({
+        insurance: [
+          policy({ id: 'ins-a-pckg', property: 'Prop One', coverage: 'Package (PCKG)', status: 'Current', expires: iso(-10) }),
+          policy({ id: 'ins-a-bcl', property: 'Prop One', coverage: 'Business Crime Liability (BCL)', status: 'Current', expires: iso(-10) }),
+        ],
+      }),
+      opts,
+    );
+    const titles = out.filter((i) => i.id.startsWith('ins-lapsed-live-')).map((i) => i.title);
+    expect(titles).toHaveLength(2);
+    expect(new Set(titles).size).toBe(2);
+  });
+});

@@ -69,3 +69,79 @@ describe('runBrief', () => {
     expect(subjects.some((s) => s.includes('CRITICAL'))).toBe(false);
   });
 });
+
+// ── Failed alert sends must be retried (2026-08-11 review finding) ───────────
+// run.ts persisted `nextAlerted` regardless of whether each send SUCCEEDED, so an alert whose
+// Outlook COM send failed was recorded as "already alerted" and never re-attempted. Under the
+// old forget-immediately behaviour a flap-out-and-back gave it an accidental second chance;
+// confirm-clear retains the id through exactly those flaps, closing the only recovery route.
+// Given "under-alerting is far worse than over-alerting", a failed send must re-alert.
+describe('runBrief — failed alert sends are not recorded as alerted', () => {
+  // Asserts on WHICH alerts are retried, never on an absolute count: when a warehouse DB is
+  // present (worktrees that copied one in, or a dev box) runBrief also emits real ins-expiry-*
+  // criticals, so counts are environment-dependent while identity is not.
+  function snapWithTwoCriticals(): PortfolioSnapshot {
+    const snap = baseSnap();
+    (snap.insurance as unknown[]) = [
+      { id: 'aaa', property: 'PropAAA', coverage: 'GL', carrier: 'C', expires: null, premium: 0, daysToExpiry: null, status: 'Cancelled', notes: null, flags: [] },
+      { id: 'bbb', property: 'PropBBB', coverage: 'Umbrella', carrier: 'C', expires: null, premium: 0, daysToExpiry: null, status: 'Cancelled', notes: null, flags: [] },
+    ];
+    return snap;
+  }
+  const ours = (subjects: string[]) =>
+    subjects.filter((x) => x.includes('PropAAA') || x.includes('PropBBB')).sort();
+
+  it('re-alerts on the next run when the send failed', async () => {
+    const statePath = join(dir(), 'state.json');
+    const now = new Date('2026-06-04T11:00:00Z');
+
+    const firstAttempt: string[] = [];
+    await runBrief(snapWithTwoCriticals(), {
+      statePath, now,
+      send: async (email) => {
+        if (email.subject.includes('CRITICAL')) { firstAttempt.push(email.subject); return { ok: false, via: 'com', error: 'COM exit 2' }; }
+        return { ok: true, via: 'com' };
+      },
+    });
+    expect(ours(firstAttempt)).toHaveLength(2);
+
+    // Same conditions, sends now succeed — both failures must be retried.
+    const secondAttempt: string[] = [];
+    await runBrief(snapWithTwoCriticals(), {
+      statePath, now,
+      send: async (email) => {
+        if (email.subject.includes('CRITICAL')) secondAttempt.push(email.subject);
+        return { ok: true, via: 'com' };
+      },
+    });
+    expect(ours(secondAttempt)).toEqual(ours(firstAttempt));
+  });
+
+  it('a SUCCESSFUL send is still recorded, so it does not re-alert', async () => {
+    const statePath = join(dir(), 'state.json');
+    const now = new Date('2026-06-04T11:00:00Z');
+    await runBrief(snapWithTwoCriticals(), { statePath, now, send: async () => ({ ok: true, via: 'com' }) });
+    const second: string[] = [];
+    await runBrief(snapWithTwoCriticals(), {
+      statePath, now,
+      send: async (email) => { if (email.subject.includes('CRITICAL')) second.push(email.subject); return { ok: true, via: 'com' }; },
+    });
+    expect(ours(second)).toEqual([]);
+  });
+
+  it('a partial failure retries ONLY the one that failed', async () => {
+    const statePath = join(dir(), 'state.json');
+    const now = new Date('2026-06-04T11:00:00Z');
+    await runBrief(snapWithTwoCriticals(), {
+      statePath, now,
+      send: async (email) => (email.subject.includes('PropBBB') ? { ok: false, via: 'com', error: 'x' } : { ok: true, via: 'com' }),
+    });
+    const second: string[] = [];
+    await runBrief(snapWithTwoCriticals(), {
+      statePath, now,
+      send: async (email) => { if (email.subject.includes('CRITICAL')) second.push(email.subject); return { ok: true, via: 'com' }; },
+    });
+    expect(ours(second)).toHaveLength(1);
+    expect(ours(second)[0]).toContain('PropBBB');
+  });
+});
