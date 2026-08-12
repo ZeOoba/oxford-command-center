@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { PortfolioSnapshot, Deal } from '../../src/contracts/index';
 import type { Counterparty } from '../../src/contracts/counterparty';
-import { redactConfidential, refuseBakeOnDegradedDeals } from '../../scripts/bake-mirror';
+import { redactConfidential, refuseBakeOnDegradedDeals, refuseBakeOnReconciliation } from '../../scripts/bake-mirror';
 
 /**
  * REFUTE-PASS FINDING (MEDIUM). The 2026-08-11 seed-wipe fix threaded DealsLoad.degraded through
@@ -19,6 +19,44 @@ import { redactConfidential, refuseBakeOnDegradedDeals } from '../../scripts/bak
  * the bake path never runs checkSnapshot; wiring that in (H2) without this sweep would publish those
  * names. Belt AND braces: the producer stops emitting them, and the publication boundary sweeps.
  */
+/**
+ * CATCH-UP SWEEP H2, the fourth publication path. bake-mirror publishes the payload served by the
+ * PUBLIC brain.oxfordra.net mirror and ran NO reconciliation gate at all — so an internally
+ * inconsistent snapshot (a phantom-lease-class rent overstatement, i.e. NOI overstated: the
+ * falsely-clearing direction) could ship publicly while both CLI writers refused the same state.
+ *
+ * This lands only AFTER M2 above: gating the bake on checkSnapshot is exactly what would have
+ * published confidential deal names out of the near-duplicate flag text.
+ */
+describe('bake-mirror — H2: refuses to bake an internally inconsistent snapshot', () => {
+  const reconSnap = (over: Record<string, unknown> = {}): PortfolioSnapshot => ({
+    properties: [{ id: 'p1' }],
+    leases: [{ id: 'l1', annualRent: 1200, monthlyRent: 100 }],
+    loans: [], deals: [], insurance: [], counterparties: [],
+    cash: { totalCash: 500, entities: [{ id: 'e1', currentBalance: 500 }] },
+    dataQuality: [], tasks: [], dealComps: {}, acquisitionInputs: {}, tenantNotes: {},
+    ...over,
+  } as unknown as PortfolioSnapshot);
+
+  it('returns a refusal when reconciliation reports an error', () => {
+    // Cash total disagrees with Σ entities — an error-severity reconciliation finding.
+    const out = refuseBakeOnReconciliation(
+      reconSnap({ cash: { totalCash: 999, entities: [{ id: 'e1', currentBalance: 500 }] } }),
+    );
+    expect(out).not.toBeNull();
+    expect(out).toMatch(/reconcil/i);
+  });
+
+  it('permits the bake for a consistent snapshot', () => {
+    expect(refuseBakeOnReconciliation(reconSnap())).toBeNull();
+  });
+
+  it('permits the bake when the only findings are warnings', () => {
+    // annualRent ≠ monthly×12 is warn-severity; it must not block the public bake.
+    expect(refuseBakeOnReconciliation(reconSnap({ leases: [{ id: 'l1', annualRent: 1000, monthlyRent: 100 }] }))).toBeNull();
+  });
+});
+
 describe('bake-mirror — M2: redaction sweeps dataQuality flag text', () => {
   const snap = (dataQuality: unknown[]): PortfolioSnapshot => ({
     deals: [deal({ id: 'secret', name: 'Wolverine Holdings', confidential: true }), deal({ id: 'pub', name: 'Public Yard' })],

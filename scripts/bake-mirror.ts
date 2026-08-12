@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
 import type { DealsDegradation } from '../server/sources/notion-deals';
+import { checkSnapshot, hasReconciliationError } from '../server/reconcile-runtime';
 import { getMacro } from '../server/macro/getMacro';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, referenceDate } from '../server/config';
@@ -24,6 +25,34 @@ import { GOVERNOR_DEFAULTS } from '../server/warehouse/governors';
  * without a token, and "the mirror is public" outranks "don't make the dev loop dirty".
  * (2026-08-11 integrity sweep, found by the refute pass on its own remediation branch.)
  */
+/**
+ * Writer policy for the PUBLIC mirror, part two: never bake an internally inconsistent snapshot.
+ * Returns the refusal message, or null when the bake may proceed.
+ *
+ * This is the FOURTH publication path, and it ran no reconciliation gate at all — so a
+ * phantom-lease-class rent overstatement (NOI overstated: the falsely-clearing direction) could ship
+ * to an external surface while both CLI writers refused the very same snapshot. ERROR only, never
+ * warn, matching Brain.persist and the CLI writers: warn-severity findings are long-lived and would
+ * block the daily brief permanently.
+ *
+ * Deliberately evaluated on the PRE-redaction snapshot. Redaction removes confidential deals and
+ * their counterparty links, which would itself look like an inconsistency to checkSnapshot — gating
+ * after it would manufacture false refusals. (Catch-up sweep 2026-07-28..08-04, H2.)
+ */
+export function refuseBakeOnReconciliation(snapshot: PortfolioSnapshot): string | null {
+  const flags = checkSnapshot(snapshot);
+  if (!hasReconciliationError(flags)) return null;
+  const which = flags
+    .filter((f) => f.severity === 'error' && f.entity === 'reconciliation')
+    .map((f) => `${f.field}: ${f.issue}`)
+    .join('; ');
+  return (
+    `✗ bake-mirror: refusing to bake — this snapshot is internally inconsistent and this payload is ` +
+    `served publicly. Both CLI writers refuse the same state. Reconciliation error(s): ${which}. ` +
+    `Leaving the last good public/snapshot.json in place.`
+  );
+}
+
 export function refuseBakeOnDegradedDeals(degraded: DealsDegradation | null): string | null {
   if (!degraded) return null;
   return (
@@ -151,6 +180,12 @@ async function main() {
   const dealsRefusal = refuseBakeOnDegradedDeals(dealsDegraded);
   if (dealsRefusal) {
     console.error(dealsRefusal);
+    process.exit(1);
+  }
+  // Reconciliation gate, on the PRE-redaction snapshot (see refuseBakeOnReconciliation).
+  const reconRefusal = refuseBakeOnReconciliation(raw);
+  if (reconRefusal) {
+    console.error(reconRefusal);
     process.exit(1);
   }
 

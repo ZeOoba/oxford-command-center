@@ -15,6 +15,21 @@ import { findNearDuplicateNames } from './sources/deal-name';
  */
 const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
 
+/**
+ * True when a snapshot carries an error-severity reconciliation flag — i.e. it is internally
+ * inconsistent and must not be PUBLISHED, whatever it is safe to serve in memory.
+ *
+ * Lives here, beside checkSnapshot, because there are FOUR publication paths and PR #252 wired the
+ * policy into only two of them (the CLI writers) by inlining a severity filter. Brain.persist and
+ * scripts/bake-mirror.ts were left ungated, so every live-server refresh republished exactly the
+ * inconsistencies those writers refuse, to a git-tracked mirror that is auto-committed and pushed
+ * off-machine. One exported predicate so a fifth writer cannot quietly disagree about what
+ * "publishable" means. (Catch-up sweep 2026-07-28..08-04, H2.)
+ */
+export function hasReconciliationError(flags: readonly DataQualityFlag[]): boolean {
+  return flags.some((f) => f.severity === 'error' && f.entity === 'reconciliation');
+}
+
 export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
   const flags: DataQualityFlag[] = [];
   const flag = (field: string, issue: string, severity: DataQualityFlag['severity'] = 'error') =>
