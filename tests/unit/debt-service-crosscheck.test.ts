@@ -24,6 +24,8 @@ import {
   crossCheckSchedule,
   crossCheckDebtService,
   resolveScheduleColumns,
+  parseElsFormula,
+  scanSchedule,
   type ScheduleRow,
 } from '../../server/workbook/debt-service-crosscheck';
 
@@ -711,6 +713,393 @@ describe('crossCheckSchedule — F-1: opening balance is read independently, not
     });
 
     expect(flags.filter((f) => f.field === 'principalReconciliation')).toHaveLength(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// 2026-08-11 weekly integrity sweep. Six defects, all found by adversarial refuters against a
+// green suite. Grouped here because they share the module, not because they share a cause.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+/**
+ * M3 (determinism lens). Check 4 keyed on PHYSICAL row order — `findIndex`, the physical
+ * predecessor, and `[...inWindow].reverse().find(...)` for the closing balance — while the
+ * workbook quantity it audits (a date-predicate SUMPRODUCT) is row-order-INSENSITIVE. So two
+ * sheets with identical financial content and swapped row positions were indistinguishable to
+ * Excel yet got opposite verdicts. The same-date pair is the documented RCT r35/r36 shape.
+ */
+describe('crossCheckSchedule — M3: check 4 must be invariant under same-date row permutation', () => {
+  /** Prior-period row, then a final regular payment and a payoff row sharing one date. */
+  function sameDatePair(payoffPrincipal: number | null, closingBalance: number) {
+    const prior: ScheduleRow = { row: 34, date: d(2026, 8, 1), interest: 0, principal: 5000, balance: 1_000_000 };
+    const payoff: ScheduleRow = { row: 35, date: d(2027, 3, 1), interest: null, principal: payoffPrincipal, balance: 0 };
+    const regular: ScheduleRow = { row: 36, date: d(2027, 3, 1), interest: 4000, principal: 5000, balance: closingBalance };
+    return { prior, payoff, regular };
+  }
+
+  function run(rows: ScheduleRow[], bookPrincipal: number) {
+    return crossCheckSchedule({
+      id: 'perm-loan',
+      rows,
+      declaredRangeEnd: 36,
+      share: 1,
+      bookInterest: 4000,
+      bookPrincipal,
+      asOf: ASOF,
+    }).filter((f) => f.field === 'principalReconciliation');
+  }
+
+  it('FIRES on a real balloon-outside-principal defect regardless of which row is physically last', () => {
+    // Balloon parked outside the principal column: $995,000 retired per the balance column,
+    // only $5,000 in the principal column. This is the defect check 4 exists to catch.
+    const { prior, payoff, regular } = sameDatePair(null, 995_000);
+
+    const payoffLast = run([prior, regular, payoff], 5000);
+    const payoffFirst = run([prior, payoff, regular], 5000);
+
+    expect(payoffLast).toHaveLength(1);
+    // Same row SET, same dates, same amounts — only physical position differs.
+    expect(payoffFirst).toHaveLength(1);
+  });
+
+  it('stays SILENT on a correct workbook regardless of physical order (no false accusation)', () => {
+    // Balloon correctly recorded IN the principal column: 5,000 + 995,000 = 1,000,000 retired.
+    const { prior, payoff, regular } = sameDatePair(995_000, 995_000);
+
+    expect(run([prior, regular, payoff], 1_000_000)).toHaveLength(0);
+    expect(run([prior, payoff, regular], 1_000_000)).toHaveLength(0);
+  });
+
+  it('reports a schedule whose dates run backwards in row order rather than trusting position', () => {
+    const rows: ScheduleRow[] = [
+      { row: 11, date: d(2026, 10, 1), interest: 100, principal: 100, balance: 900 },
+      { row: 12, date: d(2026, 9, 1), interest: 100, principal: 100, balance: 800 },
+    ];
+    const flags = crossCheckSchedule({
+      id: 'non-monotone', rows, declaredRangeEnd: 12, share: 1,
+      bookInterest: 200, bookPrincipal: 200, asOf: ASOF,
+    });
+    expect(flags.some((f) => /row order|non-monoton|out of date order/i.test(f.issue))).toBe(true);
+  });
+});
+
+/**
+ * L1 (correctness + determinism lenses, independently). `opening = priorRow?.balance ?? recon` —
+ * `??` also fires when priorRow EXISTS with balance null, silently rebuilding the opening balance
+ * from the first in-window row's own principal: exactly the self-referential construction F-1 was
+ * closed for. The comment claimed the fallback applied "only when no prior-period row was scanned
+ * at all". A verified null must beat an inferred one.
+ */
+describe('crossCheckSchedule — L1: an unreadable pre-window balance must not silently reconstruct', () => {
+  const rows: ScheduleRow[] = [
+    { row: 34, date: d(2026, 8, 1), interest: 0, principal: 5000, balance: null }, // prior, unreadable
+    { row: 35, date: d(2026, 9, 1), interest: 0, principal: 5000, balance: 950_000 },
+    { row: 36, date: d(2026, 10, 1), interest: 0, principal: 5000, balance: 945_000 },
+  ];
+
+  it('reports that the reconciliation did not run instead of quietly passing', () => {
+    const flags = crossCheckSchedule({
+      id: 'null-prior-balance', rows, declaredRangeEnd: 36, share: 1,
+      bookInterest: 0, bookPrincipal: 10_000, asOf: ASOF,
+    });
+    expect(flags.some((f) => /unreadable|not run|could not be read/i.test(f.issue))).toBe(true);
+  });
+
+  it('still reconstructs when the loan genuinely originates inside the window (no prior row)', () => {
+    // windowStartIdx === 0: the first in-window row IS the origination row, so reconstruction is
+    // legitimate there and must stay silent.
+    const originating = rows.slice(1);
+    const flags = crossCheckSchedule({
+      id: 'originates-in-window', rows: originating, declaredRangeEnd: 36, share: 1,
+      bookInterest: 0, bookPrincipal: 10_000, asOf: ASOF,
+    });
+    expect(flags.filter((f) => /unreadable|not run/i.test(f.issue))).toHaveLength(0);
+  });
+});
+
+/**
+ * M2 (edges lens). `scanStoppedOnGap` was declared on CrossCheckInput, documented as load-bearing
+ * ("without this, an early-terminating scan silently disables the truncation check"), computed and
+ * returned by scanSchedule — and never passed or read. A >6-row undated gap starting right where
+ * the summing range ends leaves lastRow === declaredRangeEnd, so neither check-2 branch can fire
+ * and a continuation below the gap is invisible to ALL FOUR checks, permanently.
+ */
+describe('crossCheckSchedule — M2: a schedule continuation below a gap must not read as clean', () => {
+  const rows = schedule(2026, 9, 1, 12, 1000, 500, { firstRow: 29 }); // rows 29..40
+
+  it('FIRES when a dated row was observed below the gap the scan stopped on', () => {
+    const flags = crossCheckSchedule({
+      id: 'continuation', rows, declaredRangeEnd: 40, share: 1,
+      bookInterest: 12_000, bookPrincipal: 6000, asOf: ASOF,
+      scanFirstRowBeyondGap: 48,
+    });
+    const hit = flags.filter((f) => f.field === 'scheduleRange');
+    expect(hit).toHaveLength(1);
+    expect(hit[0]!.issue).toMatch(/continue|continuation/i);
+    expect(hit[0]!.issue).toContain('48');
+  });
+
+  it('stays SILENT when the schedule genuinely ended at the gap (nothing observed below)', () => {
+    // This is also the ordinary case of a range that covers its schedule exactly — an earlier
+    // heuristic version of this check false-positived on precisely that shape.
+    const flags = crossCheckSchedule({
+      id: 'genuine-end', rows, declaredRangeEnd: 40, share: 1,
+      bookInterest: 12_000, bookPrincipal: 6000, asOf: ASOF,
+      scanFirstRowBeyondGap: null,
+    });
+    expect(flags.filter((f) => f.field === 'scheduleRange')).toHaveLength(0);
+  });
+});
+
+describe('scanSchedule — M2: the gap lookahead observes a continuation without adopting it', () => {
+  /** Dated rows 11..40, a 7-row banner gap at 41..47, then a continuation at 48..50. */
+  function sheetWithContinuation() {
+    return {
+      rowCount: 50,
+      getCell: (addr: string) => {
+        const row = Number(/\d+/.exec(addr)?.[0] ?? 0);
+        const dated = (row >= 11 && row <= 40) || (row >= 48 && row <= 50);
+        return dated
+          ? { value: d(2026, 9, 1), model: { result: d(2026, 9, 1) } }
+          : { value: null, model: {} };
+      },
+    } as unknown as Parameters<typeof scanSchedule>[0];
+  }
+
+  it('reports the first dated row below the gap and leaves rows untouched', () => {
+    const out = scanSchedule(sheetWithContinuation(), { date: 'B', interest: 'D' }, 11, { minLastRow: 40 });
+
+    expect(out.stoppedOnGap).toBe(true);
+    // Totals must be unchanged — the continuation is detected, never adopted.
+    expect(out.rows).toHaveLength(30);
+    expect(out.rows[out.rows.length - 1]!.row).toBe(40);
+    expect(out.firstRowBeyondGap).toBe(48);
+  });
+
+  it('reports null when the schedule really does end at the gap', () => {
+    const ws = {
+      rowCount: 50,
+      getCell: (addr: string) => {
+        const row = Number(/\d+/.exec(addr)?.[0] ?? 0);
+        return row >= 11 && row <= 40
+          ? { value: d(2026, 9, 1), model: { result: d(2026, 9, 1) } }
+          : { value: null, model: {} };
+      },
+    } as unknown as Parameters<typeof scanSchedule>[0];
+
+    const out = scanSchedule(ws, { date: 'B', interest: 'D' }, 11, { minLastRow: 40 });
+
+    expect(out.stoppedOnGap).toBe(true);
+    expect(out.firstRowBeyondGap).toBeNull();
+  });
+});
+
+/**
+ * M1 (correctness lens as MEDIUM, edges lens as LOW — same root cause). crossCheckSchedule received
+ * `declaredRangeEnd: interestRef.rangeEnd` only; principalRef.rangeEnd was parsed then discarded. So
+ * check 2's structural guarantee — which the header says must fire even when today's delta is zero —
+ * held for the H (interest) column alone. A truncated I (principal) range excluding a future-dated
+ * balloon produced ZERO flags until that balloon entered the 12-month window.
+ */
+describe('crossCheckSchedule — M1: the principal column’s declared range is checked too', () => {
+  // 12 in-window payments (rows 11..22) plus a future-dated balloon at row 23, outside the window.
+  const rows: ScheduleRow[] = [
+    ...schedule(2026, 9, 1, 12, 1000, 500, { firstRow: 11, openingBalance: 341_000 }),
+    { row: 23, date: d(2030, 6, 5), interest: 0, principal: 335_000, balance: 0 },
+  ];
+
+  it('FIRES when only the I-column range is truncated and the excluded rows are future-dated', () => {
+    const flags = crossCheckSchedule({
+      id: 'i-truncated', rows,
+      declaredRangeEnd: 23,        // H is intact
+      principalRangeEnd: 22,       // I is one row short — excludes the 2030 balloon
+      share: 1,
+      bookInterest: 12_000, bookPrincipal: 6000, asOf: ASOF,
+    });
+    expect(flags.some((f) => f.field === 'scheduleRange' && /principal|I\b/i.test(f.issue))).toBe(true);
+  });
+
+  it('stays SILENT when both declared ranges cover the schedule', () => {
+    const flags = crossCheckSchedule({
+      id: 'both-intact', rows,
+      declaredRangeEnd: 23, principalRangeEnd: 23, share: 1,
+      bookInterest: 12_000, bookPrincipal: 6000, asOf: ASOF,
+    });
+    expect(flags.filter((f) => f.field === 'scheduleRange')).toHaveLength(0);
+  });
+});
+
+/**
+ * L4 (edges lens). Share detection matched only a trailing `)*0.5`. Equivalent spellings read as
+ * share=1.0 against a halved cached H/I, producing a permanent ~50% false divergence on every
+ * refresh — never a false clean, but a standing loud false positive is how a warn channel gets
+ * ignored, which would then bury a real OI-092 recurrence.
+ */
+describe('parseElsFormula — L4: Oxford-share detection across equivalent spellings', () => {
+  const body = "SUMPRODUCT(('Banwick'!B9:B33>Assumptions!$B$30)*('Banwick'!B9:B33<=EOMONTH(Assumptions!$B$30,12))*'Banwick'!D9:D33)";
+
+  it('reads 0.5 for every spelling Excel treats as a half-share', () => {
+    for (const f of [
+      `=${body}*0.5`,
+      `=${body}*0.50`,
+      `=${body}*.5`,
+      `=${body}*50%`,
+      `=${body}/2`,
+      `=0.5*${body}`,
+      `=${body} * 0.5 `,
+    ]) {
+      expect(parseElsFormula(f)?.share, `share for ${f}`).toBe(0.5);
+    }
+  });
+
+  it('reads 1.0 for a full-share formula', () => {
+    expect(parseElsFormula(`=${body}`)?.share).toBe(1);
+    // A *0.5 buried in an unrelated inner term is not a whole-formula share multiplier.
+    expect(parseElsFormula(`=SUMPRODUCT(('Banwick'!B9:B33>Assumptions!$B$30)*0.5*'Banwick'!D9:D33)+1`)?.share).toBe(1);
+  });
+});
+
+/**
+ * L3 (correctness lens). maxProbe = max(400, rangeEnd - firstRow + slack) and the gap-break requires
+ * r > floor, so the walk could never terminate early INSIDE the declared range. A declared end of
+ * 1048576 — what Excel produces when a whole-column reference materialises — forced ~1M ws.getCell
+ * calls, which in ExcelJS CREATE row/cell objects for absent cells, inside every parseWorkbook.
+ */
+describe('scanSchedule — L3: the probe is bounded by the sheet’s own extent', () => {
+  it('does not walk a pasted whole-column-equivalent range end', () => {
+    let reads = 0;
+    const ws = {
+      rowCount: 40,
+      getCell: (addr: string) => {
+        reads += 1;
+        const row = Number(/\d+/.exec(addr)?.[0] ?? 0);
+        // Dated rows 11..40, nothing below.
+        return row >= 11 && row <= 40
+          ? { value: d(2026, 9, 1), model: { result: d(2026, 9, 1) } }
+          : { value: null, model: {} };
+      },
+    } as unknown as Parameters<typeof scanSchedule>[0];
+
+    const out = scanSchedule(ws, { date: 'B', interest: 'D' }, 11, { minLastRow: 1_048_576 });
+
+    expect(out.rows.length).toBe(30);
+    // Bounded by the sheet, not by the absurd declared end.
+    expect(reads).toBeLessThan(5000);
+    // Reaching the sheet's physical end IS reaching everything that can exist: rows past rowCount
+    // are absent from the sheet XML, so nothing was left unread and the caller must not be told the
+    // loan is "unverified". (Corrected after the refute pass — see the RCT case below.)
+    expect(out.reachedDeclaredEnd).toBe(true);
+  });
+
+  /**
+   * REFUTE-PASS REGRESSION (HIGH, confirmed by execution against the live Master Workbook).
+   *
+   * The first version of the L3 cap made REDACTED-306 — H15 declares
+   * 'REDACTED-306'!B11:B310 while the sheet's rowCount is 60 — report "ran out of probe
+   * budget ... this loan's total and its truncation check are both unverified" on EVERY refresh.
+   * Old code: 0 flags. New code: 1 permanent false flag on a real loan, in the DSCR-denominator
+   * audit channel. That over-declared shape is the exact one ScanResult's own doc calls NORMAL and
+   * says "must stay silent", and my in-code comment asserting the firing was correct was wrong.
+   *
+   * The 24 tests added in the first pass structurally could not catch it: every mock either set
+   * rowCount at/above its declared end, or omitted rowCount entirely (which the escape hatch maps
+   * to old behavior). None modeled declaredEnd >> rowCount.
+   */
+  it('stays silent on the live RCT shape: declared end 310 over a 60-row sheet', () => {
+    const ws = {
+      rowCount: 60,
+      getCell: (addr: string) => {
+        const row = Number(/\d+/.exec(addr)?.[0] ?? 0);
+        return row >= 11 && row <= 37
+          ? { value: d(2026, 9, 1), model: { result: d(2026, 9, 1) } }
+          : { value: null, model: {} };
+      },
+    } as unknown as Parameters<typeof scanSchedule>[0];
+
+    const out = scanSchedule(ws, { date: 'B', interest: 'D' }, 11, { minLastRow: 310 });
+
+    expect(out.rows).toHaveLength(27);
+    expect(out.reachedDeclaredEnd).toBe(true);
+
+    // And end-to-end: no scheduleRange flag of any kind for this loan.
+    const flags = crossCheckSchedule({
+      id: 'REDACTED-306', rows: out.rows, declaredRangeEnd: 310, share: 1,
+      bookInterest: 0, bookPrincipal: null, asOf: ASOF,
+      scanReachedDeclaredEnd: out.reachedDeclaredEnd,
+      scanFirstRowBeyondGap: out.firstRowBeyondGap,
+    });
+    expect(flags.filter((f) => f.field === 'scheduleRange')).toHaveLength(0);
+  });
+});
+
+/**
+ * REFUTE-PASS REGRESSION (MEDIUM). The first parseShare dropped the old regex's requirement that
+ * the half-multiplier follow a closing paren, so it read a SUBTERM multiplier as a whole-formula
+ * share: `=SUMPRODUCT(...)-'Escrow'!B2*0.5` halved the entire recomputation where the old code
+ * correctly read 1. By Excel's operator precedence the half binds the subterm only. Effect is a
+ * permanent ~50% false divergence — the exact standing-noise class L4 existed to remove.
+ */
+describe('parseElsFormula — REFUTE: a subterm multiplier is not a whole-formula share', () => {
+  const body = "SUMPRODUCT(('Banwick'!B9:B33>Assumptions!$B$30)*('Banwick'!B9:B33<=EOMONTH(Assumptions!$B$30,12))*'Banwick'!D9:D33)";
+
+  it('reads 1.0 when the half applies only to a trailing or leading subterm', () => {
+    for (const f of [
+      `=${body}-'Escrow'!B2*0.5`,
+      `=${body}+Assumptions!B31/2`,
+      `=${body}-C5/2`,
+      `=0.5*Assumptions!B31+${body}`,
+      `=${body}+H50*0.5`,
+    ]) {
+      expect(parseElsFormula(f)?.share, `share for ${f}`).toBe(1);
+    }
+  });
+
+  it('still reads 0.5 for a genuine whole-formula half-share', () => {
+    for (const f of [`=${body}*0.5`, `=${body}*0.50`, `=${body}*.5`, `=${body}*50%`, `=${body}/2`, `=0.5*${body}`]) {
+      expect(parseElsFormula(f)?.share, `share for ${f}`).toBe(0.5);
+    }
+  });
+});
+
+/**
+ * REFUTE-PASS REGRESSION (MEDIUM, reproduced by execution). The M3 rewrite applied `laterOf` to
+ * priorRow and lastWithBalance but selected windowStartRow with a bare `r.date < ...`, so on a date
+ * tie it kept the first PHYSICAL row with no balance tie-break — breaking its own stated contract on
+ * the origination-inside-window path. And when that row's balance was null the code fell to a bare
+ * `opening = null` with NO flag, contradicting L1's own "a verified null beats an inferred one".
+ */
+describe('crossCheckSchedule — REFUTE: the origination path must be permutation-invariant too', () => {
+  const origination: ScheduleRow = { row: 10, date: d(2026, 9, 1), interest: 0, principal: 0, balance: 1_000_000 };
+  const payment: ScheduleRow = { row: 12, date: d(2026, 10, 1), interest: 4000, principal: 10_000, balance: 990_000 };
+
+  function run(rows: ScheduleRow[]) {
+    return crossCheckSchedule({
+      id: 'originates-in-window', rows, declaredRangeEnd: 12, share: 1,
+      bookInterest: 4000, bookPrincipal: 10_000, asOf: ASOF,
+    }).filter((f) => f.field === 'principalReconciliation');
+  }
+
+  it('does not fire a false accusation when a same-dated balance-0 row is physically first', () => {
+    // A holdback/annotation row sharing the origination date. Financially identical either way.
+    const annotation: ScheduleRow = { row: 11, date: d(2026, 9, 1), interest: null, principal: null, balance: 0 };
+
+    expect(run([origination, annotation, payment])).toHaveLength(0);
+    expect(run([annotation, origination, payment])).toHaveLength(0);
+  });
+
+  it('reports rather than silently skipping when the origination balance is unreadable', () => {
+    // Real defect present: principal column says 5,000 but the balance column moved 10,000.
+    const nullBal: ScheduleRow = { row: 11, date: d(2026, 9, 1), interest: null, principal: null, balance: null };
+    const defective: ScheduleRow = { ...payment, principal: 5000 };
+
+    for (const rows of [[origination, nullBal, defective], [nullBal, origination, defective]]) {
+      const flags = crossCheckSchedule({
+        id: 'unreadable-origination', rows, declaredRangeEnd: 12, share: 1,
+        bookInterest: 4000, bookPrincipal: 5000, asOf: ASOF,
+      });
+      // Either the defect is caught, or the inability to check it is reported — never silence.
+      expect(flags.some((f) => f.field === 'principalReconciliation')).toBe(true);
+    }
   });
 });
 

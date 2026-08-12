@@ -39,12 +39,57 @@ export function stripLocalitySuffix(name: string): string {
   return stripped || name;
 }
 
+/**
+ * The 2-letter state from a name's locality tail, uppercased, or null when there is no tail.
+ *
+ * The tail is the disambiguator `dealJoinKey` deletes, and it is the ONLY corroborating evidence that
+ * is always present on a conventionally-named Notion row. Recovering it lets the merge check a
+ * cross-metro contradiction without depending on the Market select mapping — which covers 6 metros
+ * while the live pipeline spans about ten, so 11 of 20 live rows carry no usable mapped market.
+ * (Fourth refute pass, 2026-08-12 — the HIGH.)
+ */
+export function localityStateOf(name: string): string | null {
+  const m = LOCALITY_SUFFIX.exec(name);
+  if (!m) return null;
+  const st = /([A-Za-z]{2})\s*$/.exec(m[0]);
+  return st ? st[1]!.toUpperCase() : null;
+}
+
 /** The canonical seed↔Notion match key: locality-stripped, lowercased, punctuation-collapsed. */
 export function dealJoinKey(name: string): string {
   return stripLocalitySuffix(name)
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
+}
+
+/**
+ * The alias map: a Notion spelling → the seed name it should join to. Lives HERE, beside the key
+ * function it modifies, because the joiner and the near-duplicate detector must resolve "same deal"
+ * identically — the whole reason this module exists. Format: "From=>To" pairs separated by ';' or
+ * newlines. Env-configured so a confidential deal name never lands in the repo.
+ *
+ * Moved out of notion-deals.ts 2026-08-11 (catch-up sweep H1): while the joiner owned the map
+ * privately, findNearDuplicateNames could not see it and silently keyed on the raw name.
+ */
+export function parseNameAliases(
+  raw: string = process.env.NOTION_DEALS_NAME_ALIASES ?? '',
+): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const pair of raw.split(/[;\n]+/)) {
+    const idx = pair.indexOf('=>');
+    if (idx < 0) continue;
+    const from = dealJoinKey(pair.slice(0, idx));
+    const to = dealJoinKey(pair.slice(idx + 2));
+    if (from && to) m.set(from, to);
+  }
+  return m;
+}
+
+/** `dealJoinKey` with the alias map applied — the ONE key both the joiner and the detector use. */
+export function aliasedJoinKey(name: string, aliases: ReadonlyMap<string, string>): string {
+  const k = dealJoinKey(name);
+  return aliases.get(k) ?? k;
 }
 
 /**
@@ -76,8 +121,15 @@ export function dealJoinKey(name: string): string {
 export function findNearDuplicateNames(
   names: readonly string[],
   accepted: ReadonlySet<string> = parseAcceptedNearDupes(),
+  aliases: ReadonlyMap<string, string> = parseNameAliases(),
 ): Array<[string, string]> {
-  const rows = names.map((name) => ({ name, tokens: dealJoinKey(name).split(' ').filter(Boolean) }));
+  // Alias-aware, exactly like mergeDeals' keyOf. Tokenizing the RAW key here let the joiner and this
+  // detector run two different notions of "same deal" -- the state this module's header calls worse
+  // than no detector: two names reaching one key only via NOTION_DEALS_NAME_ALIASES collided in the
+  // joiner (both rows withheld, seed emitted unenriched) while this returned NO pair, so the gate
+  // saw nothing and the snapshot published. The alias map is owned by this module and applied by
+  // DEFAULT so no caller has to remember it. (Catch-up sweep 2026-07-28..08-04, H1.)
+  const rows = names.map((name) => ({ name, tokens: aliasedJoinKey(name, aliases).split(' ').filter(Boolean) }));
   const pairs: Array<[string, string]> = [];
   for (let i = 0; i < rows.length; i++) {
     for (let k = i + 1; k < rows.length; k++) {
@@ -96,6 +148,35 @@ export function findNearDuplicateNames(
 /** Order-independent key for an accepted pair, so config need not guess which name comes first. */
 export function acceptedPairKey(a: string, b: string): string {
   return [dealJoinKey(a), dealJoinKey(b)].sort().join('||');
+}
+
+/**
+ * Order-independent key for an accepted pair keyed on the FULL names rather than their join keys.
+ *
+ * `acceptedPairKey` is degenerate for the case it is most needed in: when two rows COLLIDE they share
+ * one join key by definition, so it yields "k||k" for ANY pair on that key — one historical acceptance
+ * silently grandfathered every future collision on the same bare name, including a third row the
+ * operator had never seen. Collision acceptance therefore keys on the full names, which do differ.
+ * (Fourth refute pass, 2026-08-12.)
+ */
+export function acceptedCollisionKey(a: string, b: string): string {
+  const norm = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, ' ');
+  return [norm(a), norm(b)].sort().join('||');
+}
+
+/** `parseAcceptedNearDupes`, keyed on full names — the set `acceptedCollisionKey` is checked against. */
+export function parseAcceptedCollisions(
+  raw: string = process.env.NOTION_DEALS_ACCEPTED_NEAR_DUPES ?? '',
+): Set<string> {
+  const out = new Set<string>();
+  for (const entry of raw.split(/[;\n]+/)) {
+    const idx = entry.indexOf('=>');
+    if (idx < 0) continue;
+    const a = entry.slice(0, idx);
+    const b = entry.slice(idx + 2);
+    if (a.trim() && b.trim()) out.add(acceptedCollisionKey(a, b));
+  }
+  return out;
 }
 
 /**
