@@ -3,7 +3,7 @@ import type { DataQualityFlag } from '../../src/contracts/index';
 import type { Deal } from '../../src/contracts/index';
 import { mapNotionPage, mergeDeals, parseNameAliases, loadDeals, dealsDegradationFlag, hasDealsPipelineFailure } from '../../server/sources/notion-deals';
 import { SEED_DEALS } from '../../src/data/seed-deals';
-import { findNearDuplicateNames, acceptedPairKey } from '../../server/sources/deal-name';
+import { findNearDuplicateNames, acceptedCollisionKey } from '../../server/sources/deal-name';
 
 const page = (over: Record<string, unknown> = {}) => ({
   properties: {
@@ -337,7 +337,10 @@ describe('mergeDeals — C1: a locality-strip match needs corroboration, not jus
     expect(flags).toHaveLength(0);
   });
 
-  it('still merges when the live row carries no market (control — cannot contradict)', () => {
+  it('merges CLEANLY when the live row has no market but its name’s tail agrees with the seed', () => {
+    // Updated after the 4th pass: the locality tail is now a corroborating signal in its own right,
+    // so a missing Market no longer leaves this unverifiable. Tail says OH, seed market is Columbus
+    // OH — corroborated, no flag of any severity.
     const live = deal({ id: 'notion-3', name: 'Enterprise Parkway — Columbus, OH', market: null, estPrice: 6_000_000 });
     const flags: DataQualityFlag[] = [];
 
@@ -345,11 +348,7 @@ describe('mergeDeals — C1: a locality-strip match needs corroboration, not jus
 
     expect(out).toHaveLength(1);
     expect(out[0]!.estPrice).toBe(6_000_000);
-    // Merges (availability preserved), but no longer SILENTLY — the refute pass showed that C1 is
-    // only closed as far as market coverage reaches, and silence made that gap invisible. Warn, never
-    // error: an error here would block every portfolio.json write.
-    expect(flags.some((f) => f.severity === 'error')).toBe(false);
-    expect(flags.some((f) => f.severity === 'warn')).toBe(true);
+    expect(flags).toHaveLength(0);
   });
 
   it('also requires corroboration when an ALIAS did the matching, not a locality strip', () => {
@@ -445,16 +444,18 @@ describe('mergeDeals — REFUTE: a lossy market sentinel must not corroborate or
     expect(flags.some((f) => f.severity === 'error')).toBe(false);
   });
 
-  it('still REPORTS the uncorroborated merge at warn severity so the coverage hole is visible', () => {
-    // C1 is only closed where both sides carry a real market. 1 of 6 seed rows and 1 of 20 live rows
-    // carry none today, so the guarantee is conditional — and silence made that invisible.
-    const live = deal({ id: 'notion-2', name: 'Enterprise Parkway — Columbus, OH', market: null, estPrice: 6_000_000 });
+  it('REPORTS at warn only when NEITHER signal is available (no mapped market, no locality tail)', () => {
+    // Genuinely unverifiable: the live name carries no "— City, ST" tail and no usable market, so
+    // neither corroboration signal exists. Still merges (availability over purity) but never silently.
+    const live = deal({ id: 'notion-2', name: 'Enterprise Parkway Extension', market: null, estPrice: 6_000_000 });
+    const bareSeed = deal({ id: 'seed-b', name: 'Enterprise Parkway Extension!', market: null });
     const flags: DataQualityFlag[] = [];
 
-    const out = mergeDeals([seedRow], [live], new Map(), flags);
+    const out = mergeDeals([bareSeed], [live], new Map(), flags);
 
     expect(out).toHaveLength(1); // still merges — availability over purity
-    expect(flags.some((f) => f.severity === 'warn' && /uncorroborated|could not be corroborated/i.test(f.issue))).toBe(true);
+    expect(flags.some((f) => f.severity === 'warn' && /could not be corroborated/i.test(f.issue))).toBe(true);
+    expect(flags.some((f) => f.severity === 'error')).toBe(false);
   });
 });
 
@@ -482,7 +483,7 @@ describe('mergeDeals — REFUTE: an accepted near-dupe pair must not block the g
     // prescribed alias remedy is impossible when neither row has a seed record.
     const a = 'Synthetic Pkwy — Columbus, OH';
     const b = 'Synthetic Pkwy — Kansas City, MO';
-    const accepted = new Set([acceptedPairKey(a, b)]);
+    const accepted = new Set([acceptedCollisionKey(a, b)]);
     const flags: DataQualityFlag[] = [];
 
     mergeDeals([], [deal({ id: 'n-a', name: a }), deal({ id: 'n-b', name: b })], new Map(), flags, accepted);
@@ -501,6 +502,132 @@ describe('mergeDeals — REFUTE: an accepted near-dupe pair must not block the g
       new Set(),
     );
     expect(flags.some((f) => f.severity === 'error')).toBe(true);
+  });
+});
+
+/**
+ * FOURTH-PASS FINDINGS (wf_f0cfcc19-9eb). Six defects in the third round of fixes.
+ */
+describe('mergeDeals — 4th pass: the name’s own locality tail is corroborating evidence', () => {
+  it('REFUSES on a contradicting locality tail even when the live market is the lossy sentinel', () => {
+    // The HIGH. Treating only the 6-entry mapped Market as evidence left the guard inert for 11 of
+    // 20 live rows (10 'Other' + 1 null) — a majority, not the "1 of 20" my own comment claimed.
+    // Worse, it was a REGRESSION: in that zone a wrong cross-side merge now proceeded where the
+    // previous commit refused, publishing the wrong deal's economics under the seed's public flag.
+    // The disambiguator dealJoinKey deleted is still IN THE NAME, so use it: a tail naming another
+    // state contradicts the seed's market regardless of how the Market select happened to map.
+    const seedRow = deal({ id: 'seed-1', name: 'Synthetic Trade Center', market: 'Indianapolis IN' });
+    const live = deal({ id: 'notion-1', name: 'Synthetic Trade Center — Grand Rapids, MI', market: 'Other', estPrice: 4_000_000 });
+    const flags: DataQualityFlag[] = [];
+
+    const out = mergeDeals([seedRow], [live], new Map(), flags);
+
+    expect(out).toHaveLength(2);
+    expect(out.find((d) => d.id === 'seed-1')!.estPrice).toBeNull();
+    expect(out.find((d) => d.id === 'notion-1')!.confidential).toBe(true);
+    expect(flags.some((f) => f.severity === 'error')).toBe(true);
+  });
+
+  it('MERGES when the locality tail agrees with the seed market despite a lossy sentinel', () => {
+    const seedRow = deal({ id: 'seed-2', name: 'Synthetic Trade Center', market: 'Columbus OH' });
+    const live = deal({ id: 'notion-2', name: 'Synthetic Trade Center — Dublin, OH', market: 'Other', estPrice: 4_000_000 });
+    const flags: DataQualityFlag[] = [];
+
+    const out = mergeDeals([seedRow], [live], new Map(), flags);
+
+    expect(out).toHaveLength(1);
+    expect(out[0]!.estPrice).toBe(4_000_000);
+    // Corroborated by the tail, so no uncorroborated warn either.
+    expect(flags).toHaveLength(0);
+  });
+
+  it('treats a multi-state market as covering all of its states', () => {
+    const seedRow = deal({ id: 'seed-3', name: 'Synthetic Yard', market: 'Kansas City MO' });
+    const live = deal({ id: 'notion-3', name: 'Synthetic Yard — Kansas City, KS', market: 'Other', estPrice: 1_000_000 });
+    const flags: DataQualityFlag[] = [];
+
+    const out = mergeDeals([seedRow], [live], new Map(), flags);
+
+    expect(out).toHaveLength(1);
+    expect(flags.some((f) => f.severity === 'error')).toBe(false);
+  });
+});
+
+describe('mergeDeals — 4th pass: identical names are self-corroborating', () => {
+  it('merges two LITERALLY IDENTICAL names even though both carry a locality tail', () => {
+    // exactNameMatch demanded strip-idempotence on both sides, so identical suffix-bearing names
+    // were classified non-exact and had corroboration demanded of them — the inverse error.
+    const seedRow = deal({ id: 'seed-i', name: 'Synthetic Park — Columbus, OH', market: 'Columbus OH' });
+    const live = deal({ id: 'notion-i', name: 'Synthetic Park — Columbus, OH', market: 'Other', estPrice: 2_000_000 });
+    const flags: DataQualityFlag[] = [];
+
+    const out = mergeDeals([seedRow], [live], new Map(), flags);
+
+    expect(out).toHaveLength(1);
+    expect(out[0]!.estPrice).toBe(2_000_000);
+    expect(flags).toHaveLength(0);
+  });
+});
+
+describe('mergeDeals — 4th pass: acceptance must not grandfather future collisions', () => {
+  it('does NOT degrade a collision involving a row the operator never accepted', () => {
+    // acceptedPairKey sorts the two JOIN KEYS, and in a same-key collision both names share one key,
+    // so it yields "k||k" for ANY pair on that key: one historical acceptance silently grandfathered
+    // every future collision on the same bare name.
+    const a = 'Synthetic Pkwy — Columbus, OH';
+    const b = 'Synthetic Pkwy — Kansas City, MO';
+    const c = 'Synthetic Pkwy — Indianapolis, IN'; // NEW, never accepted
+    const accepted = new Set([acceptedCollisionKey(a, b)]);
+    const flags: DataQualityFlag[] = [];
+
+    mergeDeals(
+      [],
+      [deal({ id: 'n-a', name: a }), deal({ id: 'n-b', name: b }), deal({ id: 'n-c', name: c })],
+      new Map(),
+      flags,
+      accepted,
+    );
+
+    expect(flags.some((f) => f.severity === 'error')).toBe(true);
+  });
+
+  it('does NOT degrade to warn when a SEED row shares the colliding key', () => {
+    // The degrade was justified by "two Notion-ONLY rows, no seed to alias to". With a seed present
+    // the steady state is 3 published rows for 2 assets with the seed's live economics suppressed.
+    const a = 'Synthetic Ridge — Columbus, OH';
+    const b = 'Synthetic Ridge — Kansas City, MO';
+    const flags: DataQualityFlag[] = [];
+
+    mergeDeals(
+      [deal({ id: 'seed-r', name: 'Synthetic Ridge', market: 'Columbus OH' })],
+      [deal({ id: 'n-a', name: a }), deal({ id: 'n-b', name: b })],
+      new Map(),
+      flags,
+      new Set([acceptedCollisionKey(a, b)]),
+    );
+
+    expect(flags.some((f) => f.severity === 'error')).toBe(true);
+  });
+});
+
+describe('mergeDeals — 4th pass: duplicate seed join keys must fail closed', () => {
+  it('refuses to merge when two seed rows normalize to one join key', () => {
+    // Both seeds looked up the same live row: one merged it, the other "refused" it, and the refusal
+    // flag text asserted the live row was kept separate when it had actually been merged.
+    const flags: DataQualityFlag[] = [];
+    const out = mergeDeals(
+      [
+        deal({ id: 'seed-x1', name: 'Synthetic Depot', market: 'Columbus OH' }),
+        deal({ id: 'seed-x2', name: 'Synthetic  Depot!', market: 'Columbus OH' }), // same join key
+      ],
+      [deal({ id: 'n-x', name: 'Synthetic Depot — Columbus, OH', estPrice: 5_000_000 })],
+      new Map(),
+      flags,
+    );
+
+    expect(flags.some((f) => f.severity === 'error' && /seed/i.test(f.issue))).toBe(true);
+    // Neither seed may absorb the live row while the ambiguity stands.
+    expect(out.filter((d) => d.estPrice === 5_000_000 && d.id.startsWith('seed-'))).toHaveLength(0);
   });
 });
 
