@@ -158,6 +158,12 @@ export const SEED_DEALS: Deal[] = [
     owner: 'David Ludwig',
     targetCloseDate: null,
     notionDealId: 'DEAL-2', // "1333 Research Road" (Candidate)
+    // PUBLIC BY DELIBERATE CHOICE (Gabriel, 2026-08-13, in-turn — same posture as e-fulton-street
+    // above). The Deal ID mirror lets this row enrich with LIVE negotiating economics from Notion
+    // (price/cap/IRR), which then publish to the brain.oxfordra.net mirror since confidential:false.
+    // Flagged by the id-join cutover's adversarial refute pass (2nd round, wf_850e84c0-73b) as a
+    // disclosure question rather than a defect — the numbers are correct, the question was whether
+    // an active mid-negotiation deal should be public. Confirmed yes.
     confidential: false,
     estimatedFields: [],
   },
