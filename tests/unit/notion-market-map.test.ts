@@ -62,3 +62,45 @@ describe('MARKET_MAP covers every live Notion Market option', () => {
     expect(mapNotionPage(p)!.market).toBeNull();
   });
 });
+
+/**
+ * The Stage select, same defect class as the Market one and found the same way — by running the
+ * cutover against live data, not by reading the map. 'Killed' was absent while the select offered
+ * it, so a killed deal took mapStage's DEFAULT. That default is 'Candidate', which is not neutral:
+ * it asserts an active early-stage deal. One live row (seed-matched and public) was publishing to
+ * the mirror as a Candidate while Notion said Killed.
+ */
+const LIVE_STAGE_OPTIONS = [
+  'Closing',
+  'Under Contract',
+  'Due Diligence',
+  'LOI Executed',
+  'LOI Pending',
+  'Candidate',
+  'Closed Won',
+  'Passed',
+  'Killed',
+] as const;
+
+const pageWithStage = (stage: string) => ({
+  properties: {
+    'Deal Name': { type: 'title', title: [{ plain_text: 'Some Deal' }] },
+    Stage: { type: 'select', select: { name: stage } },
+  },
+});
+
+describe('STAGE_MAP covers every live Notion Stage option', () => {
+  it.each(LIVE_STAGE_OPTIONS.filter((s) => s !== 'Candidate'))(
+    'maps %s to something other than the Candidate default',
+    (option) => {
+      // Any option resolving to 'Candidate' is indistinguishable from an unmapped one, and the
+      // failure is silent: a dead deal presents as live. Only 'Candidate' may map to 'Candidate'.
+      expect(mapNotionPage(pageWithStage(option))!.stage).not.toBe('Candidate');
+    },
+  );
+
+  it('maps both terminal-negative options to Dead', () => {
+    expect(mapNotionPage(pageWithStage('Passed'))!.stage).toBe('Dead');
+    expect(mapNotionPage(pageWithStage('Killed'))!.stage).toBe('Dead');
+  });
+});

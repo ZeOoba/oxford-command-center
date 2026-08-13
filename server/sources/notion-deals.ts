@@ -102,6 +102,16 @@ const MARKET_MAP: Record<string, Market> = {
   // silently landing in 'Other'.
   'Toledo OH': 'Toledo OH',
 };
+/**
+ * Notion "Stage" select value → DealStage. Same discipline as MARKET_MAP: keys must be strings the
+ * live select can actually emit, and an unmapped value falls through to 'Candidate'.
+ *
+ * 'Killed' added 2026-08-13, found by the live cutover verification rather than by review. The
+ * select offers 9 options and this map covered 8, so a Killed deal resolved to the DEFAULT — and the
+ * default is 'Candidate', which is not a neutral fallback but an active early-stage claim. One live
+ * row was affected, and because it is seed-matched and public it was publishing to the mirror as an
+ * active Candidate while Notion said Killed.
+ */
 const STAGE_MAP: Record<string, DealStage> = {
   Candidate: 'Candidate',
   'LOI Pending': 'LOI/PSA',
@@ -111,10 +121,18 @@ const STAGE_MAP: Record<string, DealStage> = {
   Closing: 'Closing',
   'Closed Won': 'Closed',
   Passed: 'Dead',
+  Killed: 'Dead',
 };
 
-const mapMarket = (s: string | null): Market | null => (s ? (MARKET_MAP[s] ?? 'Other') : null);
-const mapStage = (s: string | null): DealStage => (s ? (STAGE_MAP[s] ?? 'Candidate') : 'Candidate');
+// Object.hasOwn, not `MAP[s] ?? fallback`: a select option literally named 'constructor' or
+// 'toString' resolves the inherited Object.prototype member on a plain-object lookup — truthy, so
+// `??` never fires — and the caller gets a Function where it expects a Market/DealStage string.
+// Not reachable from live data today, but one line closes it for both maps at once.
+// (Refute pass 2026-08-13, determinism lens, LOW.)
+const mapMarket = (s: string | null): Market | null =>
+  s ? (Object.hasOwn(MARKET_MAP, s) ? MARKET_MAP[s]! : 'Other') : null;
+const mapStage = (s: string | null): DealStage =>
+  s && Object.hasOwn(STAGE_MAP, s) ? STAGE_MAP[s]! : 'Candidate';
 /** Notion may store rates as 0.07 or 7 — normalize to a 0–1 decimal. */
 const asRate = (n: number | null): number | null => (n === null ? null : n > 1.5 ? n / 100 : n);
 
@@ -127,7 +145,7 @@ const asRate = (n: number | null): number | null => (n === null ? null : n > 1.5
 const DEAL_ID_PROP = process.env.NOTION_DEALS_ID_PROP ?? 'Deal ID';
 
 // ── Notion page → Deal (exported for tests) ────────────────────────────────────
-interface NotionPage { properties?: Record<string, unknown> }
+interface NotionPage { id?: string; properties?: Record<string, unknown> }
 const title = (p: Record<string, unknown>, k: string): string => {
   const v = p[k] as { title?: Array<{ plain_text?: string }> } | undefined;
   return (v?.title ?? []).map((t) => t.plain_text ?? '').join('').trim();
@@ -335,6 +353,14 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
       console.warn(`[notion-deals] seed staleness: ${s.id} is confidential:false but live stage is now '${live.stage}' — re-confirm the seed flag is still correct.`);
     }
     const pick = <T>(a: T, b: T): T => (a !== null && a !== undefined ? a : b);
+    // A field named in the seed's estimatedFields stops being an estimate the moment a REAL live
+    // value replaces it — pick() already does that replacement, but estimatedFields was carried
+    // through untouched, so a live number could publish under an "Estimated" provenance label.
+    // Live SF is null on every seed-matched row today, so this is latent, not firing — but the id
+    // fill is what makes the path reachable in production once Notion's Total SF is populated.
+    // (Refute pass 2026-08-13, correctness lens, LOW.)
+    const liveValue: Partial<Record<string, unknown>> = { sf: live.sf, estPrice: live.estPrice };
+    const estimatedFields = s.estimatedFields.filter((f) => liveValue[f] === null || liveValue[f] === undefined);
     return {
       ...s,
       location: pick(live.location, s.location),
@@ -350,6 +376,7 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
       owner: pick(live.owner, s.owner),
       targetCloseDate: pick(live.targetCloseDate, s.targetCloseDate),
       status: pick(live.status, s.status),
+      estimatedFields,
       // id, name, shortName, confidential, notionDealId, buildings, holdYrs preserved from the seed.
     };
   });
@@ -525,7 +552,26 @@ const MAX_QUERY_PAGES = 5;
  * fall back. Non-deal rows (no "Deal Name" title) map to null and are skipped, so querying every
  * data source is safe; results are de-duplicated by id.
  */
-async function fetchNotionDeals(token: string): Promise<Deal[]> {
+/**
+ * Distinct raw Notion "Stage" select values seen that are NOT keys of STAGE_MAP — populated by
+ * fetchNotionDeals, read by loadDeals to raise one aggregate flag.
+ *
+ * mapStage silently resolves an unmapped (or cleared) Stage to 'Candidate', and 'Candidate' is not
+ * a neutral fallback the way mapMarket's 'Other' is — it is an ACTIVE-DEAL claim. STAGE_MAP missing
+ * 'Killed' let exactly this happen to a public, seed-matched deal (found by the 2026-08-13 live
+ * cutover, not by review): it published as an active Candidate while Notion said Killed, zero flags.
+ * Adding 'Killed' fixed that ONE value; a select rename or a new option tomorrow reproduces the
+ * identical incident with the fix in place, because the point-fix does not touch the fallback
+ * mechanism. Reported here rather than fixed inline in mapStage because mapNotionPage's signature
+ * (Deal | null) has no channel for "this field's mapping is untrustworthy" — that has to reach
+ * `loadDeals`, which already owns the DealsLoad.flags channel this reuses.
+ * (Refute pass 2026-08-13, edge-case lens, MEDIUM.)
+ */
+function collectStageDrift(rawStage: string | null, seen: Set<string>): void {
+  if (rawStage !== null && !(rawStage in STAGE_MAP)) seen.add(rawStage);
+}
+
+async function fetchNotionDeals(token: string, stageDrift: Set<string>): Promise<Deal[]> {
   const dataSourceIds = await resolveDataSourceIds(token);
   if (!dataSourceIds.length) throw new Error('Notion: no data sources on deals database');
   const byId = new Map<string, Deal>();
@@ -546,20 +592,22 @@ async function fetchNotionDeals(token: string): Promise<Deal[]> {
       const data = (await res.json()) as { results?: NotionPage[]; has_more?: boolean; next_cursor?: string };
       for (const page of data.results ?? []) {
         const d = mapNotionPage(page);
-        // Key on the Deal ID, falling back to the name slug only for a row that has none.
+        collectStageDrift(select(page.properties ?? {}, 'Stage'), stageDrift);
+        // Key on the Deal ID, falling back to the Notion PAGE id — never the name slug — for a row
+        // that has none.
         //
         // This map used to key on d.id — `notion-${slug(name)}` — which made row EXISTENCE a
         // function of the NAME, last-write-wins over Notion's return order, UPSTREAM of every guard
-        // in mergeDeals. Two live rows whose titles slug identically (punctuation-only variance, or
-        // any two names agreeing on slug()'s first 64 chars) collapsed to one before the joiner ran,
-        // so the refusal machinery never saw the destroyed row and no flag fired. Executed in the
-        // refute pass: two rows with distinct Deal IDs, and a pure permutation of the API page order
-        // flipped which one survived — a confidential live row present in neither `merged` nor
-        // `extras`, exit clean. Pre-existing (it predates the id join), but the id join is what
-        // makes the fix available: with the opaque key here, both rows survive to mergeDeals, where
-        // a genuine id collision raises an error and distinct ids simply both publish.
-        // (Refute pass 2026-08-12, determinism lens, HIGH.)
-        if (d) byId.set(d.notionDealId ?? d.id, d);
+        // in mergeDeals. The 2026-08-12 fix keyed id-carrying rows on notionDealId but left the
+        // fallback as `d.id`, which is STILL the name slug — so two IDLESS rows with punctuation-only
+        // name variance (slug() strips non-word characters) still collided. Executed in the second
+        // refute pass: two idless rows fed in both API page orders — which one survived flipped with
+        // the order, the loser present in neither `merged` nor `extras`, and the idless-count flag
+        // undercounted by exactly one, contradicting its own "the count IS the diagnostic" claim.
+        // page.id is the Notion page UUID — always present, always unique, never derived from the
+        // name — so it cannot collide the way a slug can. (Refute pass 2026-08-13, determinism lens,
+        // MEDIUM — the class this was meant to close for id-carrying rows on 2026-08-12, HIGH.)
+        if (d) byId.set(d.notionDealId ?? page.id ?? d.id, d);
       }
       if (!data.has_more || !data.next_cursor) {
         exhausted = true;
@@ -664,7 +712,8 @@ export async function loadDeals(): Promise<DealsLoad> {
     return { deals: SEED_DEALS, degraded: { reason: 'not-configured', detail: 'NOTION_TOKEN is not set' }, flags: [] };
   }
   try {
-    const notion = await fetchNotionDeals(token);
+    const stageDrift = new Set<string>();
+    const notion = await fetchNotionDeals(token, stageDrift);
     if (!notion.length) {
       // A configured token returning zero deals is anomalous, not a legitimately empty pipeline:
       // it wipes the live set exactly like a thrown fetch does, so it degrades identically.
@@ -672,6 +721,27 @@ export async function loadDeals(): Promise<DealsLoad> {
       return { deals: SEED_DEALS, degraded: { reason: 'empty-result', detail: 'Notion returned 0 deals for a configured token' }, flags: [] };
     }
     const flags: DataQualityFlag[] = [];
+    if (stageDrift.size) {
+      // Aggregated (one flag naming every drifted value), matching the idless-row pattern: N
+      // near-identical flags bury the cause. WARN, not error — mapStage's 'Candidate' fallback still
+      // returns something the schema accepts, so a drifted row does not fail the write, only the
+      // redaction/staleness judgment built on stage. See collectStageDrift for why this can't be
+      // reported closer to the source.
+      console.warn(`[notion-deals] Stage drift: unmapped Notion Stage value(s) resolved to the 'Candidate' default: ${[...stageDrift].join(', ')}`);
+      flags.push({
+        entity: 'deals',
+        field: 'stage',
+        issue:
+          `${stageDrift.size} live pipeline row(s) carry a Stage value not in STAGE_MAP, so they ` +
+          `resolved to 'Candidate' — an active-deal claim, not a neutral default. A dead or closed ` +
+          `deal presenting as an active Candidate is the incident this flag exists to catch (found ` +
+          `2026-08-13: STAGE_MAP was missing 'Killed'). Add the missing Stage value(s) to STAGE_MAP ` +
+          `in server/sources/notion-deals.ts. Values are in the server log, not here (these flags ` +
+          `reach the public mirror).`,
+        rawValue: String(stageDrift.size),
+        severity: 'warn',
+      });
+    }
     const deals = mergeDeals(SEED_DEALS, notion, flags);
     return { deals, degraded: null, flags };
   } catch (e) {

@@ -16,17 +16,42 @@
 import { describe, it, expect } from 'vitest';
 import { SEED_DEALS } from '../../src/data/seed-deals';
 
+/**
+ * Seed rows that deliberately carry NO Deal ID, because they have no row in the Acquisition
+ * Pipeline Tracker to carry one — verified against the live tracker 2026-08-13 (20 rows, DEAL-1..20,
+ * neither of these among them).
+ *
+ * The tracker holds acquisition SOURCING candidates. These two are neither: FVC is a closing on an
+ * asset ORA is acquiring, and Banwick/Morrison is a refinance of an owned asset. They publish their
+ * seed values and join nothing, which is correct.
+ *
+ * This list is the difference between "deliberately not in the pipeline" and "someone forgot to
+ * mirror an id" — states that are otherwise identical in the data and have opposite consequences.
+ * Adding an entry is a deliberate, diff-visible act; the second test below fails if an entry ever
+ * goes stale.
+ */
+const NOT_IN_PIPELINE: ReadonlySet<string> = new Set(['fvc-11153', 'banwick-morrison-refi']);
+
 describe('seed-deals.ts — every row carries its Notion Deal ID', () => {
-  it('has no row with a null notionDealId', () => {
-    const missing = SEED_DEALS.filter((d) => !d.notionDealId).map((d) => d.id);
+  it('has no row with a null notionDealId outside the explicit NOT_IN_PIPELINE list', () => {
+    const missing = SEED_DEALS.filter((d) => !d.notionDealId && !NOT_IN_PIPELINE.has(d.id)).map((d) => d.id);
     expect(
       missing,
       `These seed rows have no notionDealId, so they CANNOT join their live Notion row and will ` +
         `publish stale seed figures as if live: ${missing.join(', ')}. Copy each row's "Deal ID" ` +
-        `from the Notion Acquisition Pipeline Tracker into src/data/seed-deals.ts. A seed deal that ` +
-        `genuinely is not in the live pipeline should be removed from the seed set rather than left ` +
-        `idless — an unjoinable row that still publishes is the failure this guards.`,
+        `from the Notion Acquisition Pipeline Tracker into src/data/seed-deals.ts. If a row genuinely ` +
+        `has no tracker entry, add it to NOT_IN_PIPELINE above with the reason — do not leave the ` +
+        `null unexplained, because a forgotten id looks exactly like an intentional one.`,
     ).toEqual([]);
+  });
+
+  it('has no STALE NOT_IN_PIPELINE entry — an id there means the exemption is obsolete', () => {
+    // Guards the list in the other direction: once a deal does get a tracker row and an id, its
+    // exemption is a lie that would let a future null slip through unnoticed.
+    const stale = SEED_DEALS.filter((d) => d.notionDealId && NOT_IN_PIPELINE.has(d.id)).map((d) => d.id);
+    expect(stale, `NOT_IN_PIPELINE lists rows that now HAVE a Deal ID: ${stale.join(', ')}`).toEqual([]);
+    const unknown = [...NOT_IN_PIPELINE].filter((id) => !SEED_DEALS.some((d) => d.id === id));
+    expect(unknown, `NOT_IN_PIPELINE names rows not in SEED_DEALS: ${unknown.join(', ')}`).toEqual([]);
   });
 
   it('has no two rows sharing a notionDealId', () => {

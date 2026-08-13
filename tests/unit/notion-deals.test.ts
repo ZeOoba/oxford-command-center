@@ -239,10 +239,82 @@ describe('loadDeals degradation reporting', () => {
         text: async () => '',
       }));
       const out = await loadDeals();
-      const ids = out.deals.map((d) => d.notionDealId).filter(Boolean).sort();
-      expect(ids).toEqual(['DEAL-21', 'DEAL-7']);
-      expect(out.deals.filter((d) => d.notionDealId).every((d) => d.confidential)).toBe(true);
+      // Scoped to the two rows under test: loadDeals merges against the REAL SEED_DEALS, which
+      // carry their own live Deal IDs, so asserting the whole id set would pin unrelated data.
+      const under = out.deals.filter((d) => d.notionDealId === 'DEAL-7' || d.notionDealId === 'DEAL-21');
+      expect(under.map((d) => d.notionDealId).sort()).toEqual(['DEAL-21', 'DEAL-7']);
+      expect(under.every((d) => d.confidential)).toBe(true); // neither is seeded — both fail closed
     }
+  });
+
+  it('keeps BOTH idless rows when their names slug identically, regardless of API page order', async () => {
+    // The second refute pass' MEDIUM: the 2026-08-12 fix keyed id-CARRYING rows on notionDealId but
+    // left the idless fallback as `d.id`, which IS still the name slug — so two idless rows with
+    // punctuation-only name variance (slug() strips non-word characters) still collided, upstream of
+    // every guard in mergeDeals. Fixed by falling back to the Notion PAGE id (page.id), which cannot
+    // collide the way a slug can. Asserted in both orders.
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    const idlessRow = (pageId: string, title: string) => ({
+      id: pageId,
+      ...page({ 'Deal Name': { type: 'title', title: [{ plain_text: title }] } }),
+    });
+
+    for (const results of [
+      [idlessRow('page-a', 'Collide Park — Columbus, OH'), idlessRow('page-b', 'Collide. Park — Columbus, OH')],
+      [idlessRow('page-b', 'Collide. Park — Columbus, OH'), idlessRow('page-a', 'Collide Park — Columbus, OH')],
+    ]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ results, has_more: false }),
+        text: async () => '',
+      }));
+      const out = await loadDeals();
+      const under = out.deals.filter((d) => d.name.startsWith('Collide'));
+      expect(under.map((d) => d.name).sort()).toEqual(['Collide Park — Columbus, OH', 'Collide. Park — Columbus, OH']);
+      expect(under.every((d) => d.confidential)).toBe(true);
+    }
+  });
+
+  it('raises ONE aggregated warn flag when a live Stage value is not in STAGE_MAP', async () => {
+    // The edge-case lens' MEDIUM: the 'Killed' fix was a point-fix, not a systemic one. A future
+    // rename or new Stage option resolves to mapStage's 'Candidate' default — an active-deal claim,
+    // not a neutral fallback — with zero flags, reproducing the identical dead-deal-as-active
+    // incident. This flag makes the drift visible instead of silent.
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [
+          page({
+            'Deal Name': { type: 'title', title: [{ plain_text: 'Renamed Stage Deal' }] },
+            Stage: { type: 'select', select: { name: 'Abandoned' } },
+          }),
+        ],
+        has_more: false,
+      }),
+      text: async () => '',
+    }));
+    const out = await loadDeals();
+    const drift = out.flags.filter((f) => f.field === 'stage');
+    expect(drift).toHaveLength(1);
+    expect(drift[0]!.severity).toBe('warn');
+    // The unmapped VALUE itself must not appear in the published flag (reaches the public mirror).
+    expect(drift[0]!.issue).not.toContain('Abandoned');
+  });
+
+  it('drops a field from estimatedFields once a live value actually replaces it', () => {
+    const seed = [
+      deal({ id: 's', name: 'S', notionDealId: 'DEAL-1', sf: 100, estimatedFields: ['sf'] }),
+    ];
+    const withLiveSf = mergeDeals(seed, [deal({ id: 'n', name: 'N', notionDealId: 'DEAL-1', sf: 5000 })]);
+    expect(withLiveSf[0]!.sf).toBe(5000);
+    expect(withLiveSf[0]!.estimatedFields).toEqual([]); // real number now — no longer an estimate
+
+    const withNoLiveSf = mergeDeals(seed, [deal({ id: 'n', name: 'N', notionDealId: 'DEAL-1', sf: null })]);
+    expect(withNoLiveSf[0]!.sf).toBe(100); // seed value survives
+    expect(withNoLiveSf[0]!.estimatedFields).toEqual(['sf']); // still an estimate — correctly labeled
   });
 
   it('surfaces merge Deal-ID flags on DealsLoad so the reconciliation gate can act on them', async () => {

@@ -43,7 +43,10 @@ export const SEED_DEALS: Deal[] = [
     nextAction: 'Resolve ACH; confirm Symetra lender review complete',
     owner: 'Tamara',
     targetCloseDate: null,
-    notionDealId: null, // TODO(deal-id): mirror the Notion Deal ID
+    // NOT IN THE ACQUISITION PIPELINE TRACKER, deliberately: FVC is a closing on an asset ORA is
+    // acquiring/owns, not a sourcing candidate, so it has no row there to carry a Deal ID. Listed in
+    // tests/unit/seed-deal-ids.test.ts's NOT_IN_PIPELINE so the cutover gate accepts the null.
+    notionDealId: null,
     confidential: false,
     estimatedFields: [],
   },
@@ -75,7 +78,7 @@ export const SEED_DEALS: Deal[] = [
     nextAction: null,
     owner: 'Gabriel Goldberg',
     targetCloseDate: null,
-    notionDealId: null, // TODO(deal-id): mirror the Notion Deal ID
+    notionDealId: 'DEAL-3', // "E Fulton Street Portfolio — Columbus, OH" (Killed)
     // DECLASSIFIED 2026-07-09 by Gabriel's in-turn directive; `e_fulton` was set active:false in
     // confidential-terms.json the same day. This flag stayed true until 2026-08-04, so the deal was
     // still being redacted from the mirror, hidden from the AI agent, and blocked from comps almost
@@ -102,7 +105,9 @@ export const SEED_DEALS: Deal[] = [
     nextAction: 'Third-party + insurance; target close early May',
     owner: 'Symetra · Morrissey',
     targetCloseDate: null,
-    notionDealId: null, // TODO(deal-id): mirror the Notion Deal ID
+    // NOT IN THE ACQUISITION PIPELINE TRACKER, deliberately: this is a REFINANCE of an owned asset,
+    // not an acquisition candidate. Listed in NOT_IN_PIPELINE (tests/unit/seed-deal-ids.test.ts).
+    notionDealId: null,
     confidential: false,
     estimatedFields: ['sf'],
   },
@@ -129,7 +134,7 @@ export const SEED_DEALS: Deal[] = [
     nextAction: 'Revisit or shelve',
     owner: 'Internal',
     targetCloseDate: null,
-    notionDealId: null, // TODO(deal-id): mirror the Notion Deal ID
+    notionDealId: 'DEAL-4', // "2146 Enterprise Pkwy — Twinsburg, OH" (Passed)
     confidential: false,
     estimatedFields: ['sf'],
   },
@@ -152,7 +157,7 @@ export const SEED_DEALS: Deal[] = [
     nextAction: 'Counter, walk, or hold',
     owner: 'David Ludwig',
     targetCloseDate: null,
-    notionDealId: null, // TODO(deal-id): mirror the Notion Deal ID
+    notionDealId: 'DEAL-2', // "1333 Research Road" (Candidate)
     confidential: false,
     estimatedFields: [],
   },
@@ -175,7 +180,7 @@ export const SEED_DEALS: Deal[] = [
     nextAction: 'LOI decision required',
     owner: 'Internal',
     targetCloseDate: null,
-    notionDealId: null, // TODO(deal-id): mirror the Notion Deal ID
+    notionDealId: 'DEAL-1', // "Pendleton Trade Center — Indianapolis, IN" (Passed)
     confidential: false,
     estimatedFields: ['sf'],
   },
