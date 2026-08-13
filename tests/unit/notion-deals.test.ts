@@ -214,6 +214,37 @@ describe('loadDeals degradation reporting', () => {
     expect(out.deals).toEqual(SEED_DEALS);
   });
 
+  it('keeps BOTH rows when two live titles are identical but the Deal IDs differ', async () => {
+    // The determinism lens' HIGH. fetchNotionDeals keyed its dedupe map on `notion-${slug(name)}`,
+    // so row EXISTENCE was a function of the NAME, last-write-wins over Notion's return order —
+    // upstream of every guard in mergeDeals. A pure permutation of the API page order flipped which
+    // row survived, and the destroyed one appeared in neither `merged` nor `extras`: a confidential
+    // live row gone, zero flags, exit clean. Keying on the Deal ID is what the id join makes
+    // possible. Asserted in BOTH orders, because one order passing proves nothing here.
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    const row = (title: string, n: number) =>
+      page({
+        'Deal Name': { type: 'title', title: [{ plain_text: title }] },
+        'Deal ID': { type: 'unique_id', unique_id: { prefix: 'DEAL', number: n } },
+      });
+
+    for (const results of [
+      [row('E Fulton St — Columbus, OH', 7), row('E. Fulton St — Columbus, OH', 21)],
+      [row('E. Fulton St — Columbus, OH', 21), row('E Fulton St — Columbus, OH', 7)],
+    ]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ results, has_more: false }),
+        text: async () => '',
+      }));
+      const out = await loadDeals();
+      const ids = out.deals.map((d) => d.notionDealId).filter(Boolean).sort();
+      expect(ids).toEqual(['DEAL-21', 'DEAL-7']);
+      expect(out.deals.filter((d) => d.notionDealId).every((d) => d.confidential)).toBe(true);
+    }
+  });
+
   it('surfaces merge Deal-ID flags on DealsLoad so the reconciliation gate can act on them', async () => {
     // Live rows the joiner had to refuse: the flag must ESCAPE the adapter, not just reach the log.
     // Here they carry no Deal ID at all, which is what a renamed or unshared "Deal ID" column looks

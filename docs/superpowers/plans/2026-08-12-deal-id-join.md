@@ -113,6 +113,52 @@ Verified against live before merge.
 8. Mandatory adversarial refute pass (`.claude/workflows/refute-financial-change.js`) +
    `Refute-Reviewed` trailer; `npm run check:refute`.
 
+## What the adversarial refute pass changed (wf_80769cd1-096, 2026-08-12)
+
+Three lenses, worst severity HIGH, **five real defects in the first version of this change**. Two of
+them refuted claims stated above, so the design as built differs from the design as planned.
+
+**The claim "the tripwire strictly dominates `findNearDuplicateNames`" was wrong.** It was refuted by
+execution. The tripwire compares only `unjoinedSeeds × extras`, so three pair classes stayed
+invisible: joined-seed × extra, extra × extra, and seed × seed. The dangerous one: delete and
+re-create a Notion row — Notion assigns a **fresh** Unique ID, so no id collision fires — and a seed
+keeps enriching from the abandoned row, publishing stale price/stage/cap-rate as if live, gate green,
+where the old code raised a blocking error. That is the 2026-08-04 Pendleton/2146 incident class.
+So the backstop is **restored**, inside the joiner, over the full published set, with exact-key
+matching (no prefix false positives, so no acceptance hatch) and cross-metro suppression via the
+locality tail. `localityStateOf` comes back for that suppression **only** — it can silence a false
+alarm, never authorize a merge.
+
+**The "atomic cutover" had zero mechanical enforcement.** Merging before the ids were filled would
+have published null economics for all six seed rows *gate-green*, because the tripwire is warn and
+the error-severity backstop had just been deleted. "A human remembers" is the exact guarantee class
+this subsystem has already paid for four times, so it is now `tests/unit/seed-deal-ids.test.ts` —
+the branch is literally unmergeable until every seed carries a well-formed id.
+
+**`fetchNotionDeals` keyed row existence on the name slug.** `byId.set(notion-${slug(name)})`,
+last-write-wins over Notion's return order, **upstream of every guard here**. A pure permutation of
+the API page order flipped which of two same-titled rows survived, and the loser appeared in neither
+`merged` nor `extras` — a confidential live row destroyed, zero flags, exit clean. Pre-existing, but
+the id join is what made the fix available: the map now keys on `notionDealId`.
+
+**Two smaller ones:** a seed id that resolves to nothing was undetectable (the seed side is a
+hand-copied mirror — the one place Notion's read-only guarantee does not reach), so a reverse
+tripwire now flags it, at error when the seed sits at an active stage; and the migration tripwire
+emitted one flag per pair and told the operator to copy an id on a name match, which for a false
+match hand-creates the very wrong merge this key prevents. It is now aggregated per seed and says
+CONFIRM first.
+
+**Verified sound and left alone:** `uniqueId` on number 0 / empty prefix / malformed shapes; every
+fail-closed path (colliding ids, ambiguous seeds, idless rows) reaching `extras` confidential with
+nothing dropped; no name leaking into any flag; the Market enum and `MARKET_MAP` claims in the
+section below, both confirmed by execution.
+
+**Residual risk, stated rather than solved:** a seed id typo that lands on *another valid* id
+wrong-merges with no corroboration — the id join deliberately has none. The published-duplicate
+detector catches the common shape of this (the abandoned live row surfaces as a same-name duplicate),
+but not the case where the two deals' names differ. The real fix is to stop hand-copying the mirror;
+see the follow-up note in the PR.
+
 ## Separate commit — Market enum (Q3)
 
 Add `Cincinnati OH`, `Madison WI`, `Grand Rapids MI`, `Des Moines IA`, `Louisville KY`, `Richmond VA`

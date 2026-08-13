@@ -24,8 +24,14 @@ const deal = (o: Partial<Deal>): Deal => ({
 
 /** The id shapes that distinguish a code path. */
 const ID_SHAPES = [null, 'DEAL-1', 'DEAL-2'] as const;
-/** Names chosen so some pairs collide under the retired name key and others do not. */
-const NAMES = ['Shared Name', 'Shared Name — Columbus, OH', 'Distinct Asset'] as const;
+/**
+ * Names chosen so some pairs collide under the retired name key and others do not — and built from
+ * NONSENSE TOKENS on purpose. An earlier version used 'Shared Name' / 'Distinct Asset', and the
+ * leak assertion below then matched the ordinary English words "name" and "asset" in the flags'
+ * own prose. A confidentiality test that trips on its own explanatory text is not testing
+ * confidentiality; every token here appears in the corpus only if a name really leaked.
+ */
+const NAMES = ['Zephyrine Yard', 'Zephyrine Yard — Columbus, OH', 'Quorravale Depot'] as const;
 
 interface Case { seeds: Deal[]; live: Deal[]; label: string }
 
@@ -48,7 +54,7 @@ function allCases(): Case[] {
               seeds,
               live: [
                 deal({ id: 'n1', name: lname, notionDealId: lid, estPrice: 1_000_000 }),
-                deal({ id: 'n2', name: 'Second Row', notionDealId: lid2, estPrice: 2_000_000 }),
+                deal({ id: 'n2', name: 'Marrowbeck Row', notionDealId: lid2, estPrice: 2_000_000 }),
               ],
               label: `seed(${sid},${sname}) x live(${lid},${lname})+live2(${lid2})`,
             });
@@ -61,10 +67,10 @@ function allCases(): Case[] {
   for (const lid of ID_SHAPES) {
     cases.push({
       seeds: [
-        deal({ id: 's1', name: 'Shared Name', notionDealId: 'DEAL-1' }),
-        deal({ id: 's2', name: 'Shared Name — Columbus, OH', notionDealId: 'DEAL-1' }),
+        deal({ id: 's1', name: 'Zephyrine Yard', notionDealId: 'DEAL-1' }),
+        deal({ id: 's2', name: 'Zephyrine Yard — Columbus, OH', notionDealId: 'DEAL-1' }),
       ],
-      live: [deal({ id: 'n1', name: 'Shared Name', notionDealId: lid, estPrice: 3_000_000 })],
+      live: [deal({ id: 'n1', name: 'Zephyrine Yard', notionDealId: lid, estPrice: 3_000_000 })],
       label: `ambiguous seeds x live(${lid})`,
     });
   }

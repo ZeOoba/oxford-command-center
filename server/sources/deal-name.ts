@@ -68,3 +68,21 @@ export function dealJoinKey(name: string): string {
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
 }
+
+/**
+ * The 2-letter state from a name's locality tail, uppercased, or null when there is no tail.
+ *
+ * DETECTION-SIDE SUPPRESSOR ONLY. Under the name join this was a corroboration signal — evidence
+ * used to decide whether a merge was allowed to proceed — and that is exactly the role it must
+ * never have again. Its only caller now is mergeDeals' published-duplicate detector, where it
+ * SUPPRESSES a warning: two rows sharing a bare street name in demonstrably different states are
+ * the documented steady state ("470 McCormick Blvd — Columbus, OH" vs "— Louisville, KY"), not a
+ * duplicate. Suppressing a false alarm and authorizing a merge are different powers; this has only
+ * the first.
+ */
+export function localityStateOf(name: string): string | null {
+  const m = LOCALITY_SUFFIX.exec(name);
+  if (!m) return null;
+  const st = /([A-Za-z]{2})\s*$/.exec(m[0]);
+  return st ? st[1]!.toUpperCase() : null;
+}

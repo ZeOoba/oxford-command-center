@@ -1,7 +1,7 @@
 import type { DataQualityFlag, Deal, DealStage, Market } from '../../src/contracts/index';
 import { slug } from '../../src/contracts/index';
 import { SEED_DEALS } from '../../src/data/seed-deals';
-import { dealJoinKey } from './deal-name';
+import { dealJoinKey, localityStateOf } from './deal-name';
 
 import { isDeclassified } from './deal-declassification';
 
@@ -369,47 +369,133 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
     .filter((d) => !d.notionDealId || !usedIds.has(d.notionDealId))
     .map((d) => (d.confidential ? d : { ...d, confidential: !isDeclassified(d) }));
 
-  // ── Migration tripwire ────────────────────────────────────────────────────────────────────────
-  // The one job names still have, and it is DETECTION ONLY — a name never causes a merge here.
+  const published = [...merged, ...extras];
+
+  // ── Migration tripwire: an unjoined seed that looks like an unjoined live row ─────────────────
+  // The one job names still have here, and it is DETECTION ONLY — a name never causes a merge.
   //
-  // Without this, forgetting to mirror one Deal ID into seed-deals.ts degrades SILENTLY: the seed
-  // publishes its own stale economics as if they were the live pipeline (post-847a17c seeds carry
-  // null economics and a hand-set stage), while the live row quietly becomes a confidential extra.
-  // That is the same silent-unenrichment failure PR #271 called out, reached by a new route.
+  // Without it, forgetting to mirror one Deal ID degrades SILENTLY: the seed publishes its own
+  // stale economics as if they were the live pipeline (post-847a17c seeds carry null economics and
+  // a hand-set stage) while the live row quietly becomes a confidential extra.
   //
-  // It runs HERE rather than in reconcile-runtime's near-duplicate check, which it replaces: that
-  // check ran over the MERGED output, where a wrong merge leaves exactly one row and is therefore
-  // structurally invisible to it. This runs inside the joiner, which knows precisely which rows
-  // failed to join — the "a detector that can miss what the joiner already knows is worse than no
-  // detector" lesson from the H1 fix, applied one layer earlier.
+  // AGGREGATED per seed. One flag per matching PAIR meant a single seed name matching three extras
+  // published three near-identical flags, and a colliding id produced the collision error plus a
+  // tripwire warn for the same underlying rows. (Refute pass 2026-08-12, edge lens, LOW.)
   for (const s of unjoinedSeeds) {
     const key = dealJoinKey(s.name);
     if (!key) continue;
-    for (const live of extras) {
-      if (dealJoinKey(live.name) !== key) continue;
-      console.warn(
-        `[notion-deals] MIGRATION GAP: seed '${s.name}' and live row '${live.name}' look like one ` +
-          `deal, but they are not joined (seed Deal ID ${s.notionDealId ?? 'unset'}, live ` +
-          `${live.notionDealId ?? 'unset'}).`,
-      );
-      flags.push({
-        entity: 'deals',
-        field: 'notionDealId',
-        issue:
-          `a seed record and live pipeline row ${live.notionDealId ?? '(no Deal ID)'} have matching ` +
-          `names but no shared Deal ID, so they published as TWO rows for what looks like one deal ` +
-          `— the seed showing its own stale figures rather than the live ones. They were NOT merged: ` +
-          `names are evidence that something needs attention here, never grounds for a merge. Set ` +
-          `notionDealId on the matching row in src/data/seed-deals.ts (seed digest ` +
-          `${keyDigest(key)}; the names are in the server log, not here — these flags reach the ` +
-          `public mirror).`,
-        rawValue: live.notionDealId ?? keyDigest(key),
-        severity: 'warn',
-      });
-    }
+    const matches = extras.filter((live) => dealJoinKey(live.name) === key);
+    if (!matches.length) continue;
+    console.warn(
+      `[notion-deals] MIGRATION GAP: seed '${s.name}' (Deal ID ${s.notionDealId ?? 'unset'}) looks like ` +
+        matches.map((m) => `'${m.name}' (${m.notionDealId ?? 'no id'})`).join(', ') +
+        ` — but they are not joined.`,
+    );
+    flags.push({
+      entity: 'deals',
+      field: 'notionDealId',
+      issue:
+        `a seed record and ${matches.length} live pipeline row(s) — ` +
+        `${matches.map((m) => m.notionDealId ?? '(no Deal ID)').join(', ')} — have matching names ` +
+        `but share no Deal ID, so they published separately for what may be one deal, the seed ` +
+        `showing its own stale figures rather than the live ones. They were NOT merged: matching ` +
+        `names are grounds to warn, never to merge. CONFIRM the rows are the same asset before ` +
+        `acting — a bare street name repeats across metros, and copying an id for a false match ` +
+        `creates exactly the wrong merge this key exists to prevent. Both names are in the server ` +
+        `log, not here (these flags reach the public mirror). If they are the same asset, set ` +
+        `notionDealId on the matching row in src/data/seed-deals.ts (seed digest ${keyDigest(key)}).`,
+      rawValue: matches[0]!.notionDealId ?? keyDigest(key),
+      severity: 'warn',
+    });
   }
 
-  return [...merged, ...extras];
+  // ── Reverse tripwire: a seed id that resolves to NOTHING ──────────────────────────────────────
+  // The seed side of this join is a HAND-COPIED mirror, so it is the one place the "Notion assigns
+  // it, nothing can perturb it" guarantee does not reach. A transposed digit ('DEAL-13' for
+  // 'DEAL-31') that lands on no live row leaves the seed publishing hand-set figures as live, and
+  // the name tripwire above cannot see it — a seed carrying a non-null id is not "unjoined" for any
+  // reason a name would explain. (Refute pass 2026-08-12, correctness + edge lenses, MEDIUM.)
+  //
+  // A seed at an ACTIVE stage that is absent from the live pipeline is far more likely a broken
+  // link than a departed deal, so that case is an error; a Dead/Closed/Candidate seed genuinely
+  // leaves the pipeline all the time and stays a warning.
+  for (const s of seed) {
+    if (!s.notionDealId || ambiguousSeedIds.has(s.notionDealId) || usedIds.has(s.notionDealId)) continue;
+    const active = ACTIVE_STAGES.has(s.stage);
+    console.warn(
+      `[notion-deals] DANGLING seed Deal ID ${s.notionDealId} on '${s.name}' (stage ${s.stage}) — ` +
+        `no live pipeline row carries it.`,
+    );
+    flags.push({
+      entity: 'deals',
+      field: 'notionDealId',
+      issue:
+        `a seed record carries Deal ID ${s.notionDealId}, but no live pipeline row has it, so the ` +
+        `record is publishing its own hand-set figures where a reader expects live ones. Either the ` +
+        `id is mistyped, or the Notion row was deleted and re-created (which assigns a NEW id). ` +
+        (active
+          ? `The seed is at stage '${s.stage}', which a deal absent from the live pipeline should not ` +
+            `be — treated as a broken link rather than a departure.`
+          : `The seed is at stage '${s.stage}', so this may simply be a deal that left the pipeline.`),
+      rawValue: s.notionDealId,
+      severity: active ? 'error' : 'warn',
+    });
+  }
+
+  // ── Published-duplicate detector: the always-on backstop, restored ────────────────────────────
+  // RESTORED after the refute pass REFUTED my claim that the migration tripwire dominates the
+  // findNearDuplicateNames call deleted from checkSnapshot. It does not: the tripwire compares only
+  // unjoinedSeeds x extras, leaving three pair classes invisible that the old check caught —
+  // joinedSeed x extra, extra x extra, and seed x seed. The dangerous one was executed: delete and
+  // re-create a Notion row (Notion assigns a FRESH Unique ID, so no id collision fires), the team
+  // updates the new row while a seed keeps enriching from the abandoned one, and the public record
+  // publishes stale price/stage/cap-rate as if live — gate green, where the old code raised a
+  // blocking error. That is the 2026-08-04 Pendleton/2146 incident class the deleted check was
+  // built from. (Refute pass 2026-08-12, edge lens, HIGH.)
+  //
+  // Two deliberate improvements over what it replaces, both possible only from inside the joiner:
+  //  - EXACT key equality, not the old leading-token-PREFIX match, so phased assets ("Fairground
+  //    Village" vs "Fairground Village Center") no longer false-positive and need no acceptance
+  //    hatch — which is why NOTION_DEALS_ACCEPTED_NEAR_DUPES stays retired.
+  //  - Cross-metro namesakes are SUPPRESSED via the locality tail: two different assets sharing a
+  //    bare street name in different states are the documented steady state, not a defect. This is
+  //    localityStateOf used purely as a detection-side suppressor; it decides nothing about what
+  //    merges, which is the line this subsystem must not cross again.
+  const byName = new Map<string, Deal[]>();
+  for (const d of published) {
+    const key = dealJoinKey(d.name);
+    if (!key) continue;
+    byName.set(key, [...(byName.get(key) ?? []), d]);
+  }
+  for (const [key, rows] of byName) {
+    if (rows.length < 2) continue;
+    const states = rows.map((r) => localityStateOf(r.name));
+    const known = states.filter((st): st is string => st !== null);
+    // Suppress ONLY when every row names a state and all of them differ — a genuine cross-metro
+    // namesake set. A missing tail cannot establish distinctness, so it never suppresses.
+    if (known.length === rows.length && new Set(known).size === rows.length) continue;
+    console.warn(
+      `[notion-deals] DUPLICATE published rows for one name: ` +
+        rows.map((r) => `'${r.name}' (${r.notionDealId ?? 'no id'}, ${r.id})`).join(' | '),
+    );
+    flags.push({
+      entity: 'deals',
+      field: 'deals.name',
+      issue:
+        `${rows.length} published deal rows share one normalized name but were not joined ` +
+        `(Deal IDs: ${rows.map((r) => r.notionDealId ?? '(none)').join(', ')}). One deal is being ` +
+        `presented twice, and the copies can disagree about economics AND about redaction. The ` +
+        `usual cause is a Notion row deleted and re-created — which assigns a NEW Deal ID, leaving ` +
+        `any seed record enriching from the ABANDONED row and publishing stale figures as if live. ` +
+        `Fix the ids so the rows join; or, if these really are different assets sharing a bare ` +
+        `street name, give each its "— City, ST" locality tail in Notion, which marks them distinct ` +
+        `here. Names are in the server log, not here (these flags reach the public mirror).`,
+      rawValue: keyDigest(key),
+      severity: 'error',
+    });
+  }
+
+  return published;
 }
 
 const NOTION = 'https://api.notion.com/v1';
@@ -460,7 +546,20 @@ async function fetchNotionDeals(token: string): Promise<Deal[]> {
       const data = (await res.json()) as { results?: NotionPage[]; has_more?: boolean; next_cursor?: string };
       for (const page of data.results ?? []) {
         const d = mapNotionPage(page);
-        if (d) byId.set(d.id, d);
+        // Key on the Deal ID, falling back to the name slug only for a row that has none.
+        //
+        // This map used to key on d.id — `notion-${slug(name)}` — which made row EXISTENCE a
+        // function of the NAME, last-write-wins over Notion's return order, UPSTREAM of every guard
+        // in mergeDeals. Two live rows whose titles slug identically (punctuation-only variance, or
+        // any two names agreeing on slug()'s first 64 chars) collapsed to one before the joiner ran,
+        // so the refusal machinery never saw the destroyed row and no flag fired. Executed in the
+        // refute pass: two rows with distinct Deal IDs, and a pure permutation of the API page order
+        // flipped which one survived — a confidential live row present in neither `merged` nor
+        // `extras`, exit clean. Pre-existing (it predates the id join), but the id join is what
+        // makes the fix available: with the opaque key here, both rows survive to mergeDeals, where
+        // a genuine id collision raises an error and distinct ids simply both publish.
+        // (Refute pass 2026-08-12, determinism lens, HIGH.)
+        if (d) byId.set(d.notionDealId ?? d.id, d);
       }
       if (!data.has_more || !data.next_cursor) {
         exhausted = true;

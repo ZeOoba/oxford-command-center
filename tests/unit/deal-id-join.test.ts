@@ -93,7 +93,10 @@ describe('mergeDeals — a missing or duplicate id REFUSES; it never falls back 
 
     expect(out.find((d) => d.id === 'seed-a')!.estPrice).toBeNull();
     expect(out.find((d) => d.id === 'n')!.confidential).toBe(true);
-    expect(flags.filter((f) => f.severity === 'error')).toHaveLength(1);
+    // The idless refusal. The published-duplicate detector ALSO fires here (the seed and the
+    // held-out row share a name), so assert this flag specifically rather than the total.
+    const idless = flags.filter((f) => f.severity === 'error' && f.field === 'notionDealId');
+    expect(idless).toHaveLength(1);
   });
 
   it('aggregates idless live rows into ONE flag rather than one per row', () => {
@@ -201,5 +204,112 @@ describe('mergeDeals — flags reach the PUBLIC mirror, so they must not carry d
     expect(flags.length).toBeGreaterThan(0);
     // …and the operator can still resolve every flag, because the names went to the local log.
     expect(warn.mock.calls.flat().join(' ')).toContain('Zephyr');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// REFUTE PASS 2026-08-12 (wf_80769cd1-096) — the defects three adversarial lenses found in the
+// FIRST version of this change. Each case below is a refuter's executed repro, pinned.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+describe('mergeDeals — REFUTE: a re-created Notion row must not publish twice in silence', () => {
+  it('raises an ERROR when a joined seed and an unjoined live row share a name', () => {
+    // The HIGH the edge lens executed: delete + re-create a Notion row and Notion assigns a FRESH
+    // Unique ID, so no id collision fires. The team updates the new row while the seed keeps
+    // enriching from the ABANDONED one — stale price/stage published as live, gate green. This is
+    // the 2026-08-04 Pendleton/2146 incident class, and the tripwire could not see it because a
+    // JOINED seed never enters unjoinedSeeds.
+    const seed = [deal({ id: 'seed-p', name: 'Pendleton Trade Center', notionDealId: 'DEAL-8' })];
+    const live = [
+      deal({ id: 'n-old', name: 'Pendleton Trade Center', notionDealId: 'DEAL-8', estPrice: 1 }),
+      deal({ id: 'n-new', name: 'Pendleton Trade Center', notionDealId: 'DEAL-31', estPrice: 2 }),
+    ];
+    const flags: DataQualityFlag[] = [];
+    const out = mergeDeals(seed, live, flags);
+
+    expect(out).toHaveLength(2); // still nothing dropped
+    expect(flags.some((f) => f.severity === 'error' && f.field === 'deals.name')).toBe(true);
+  });
+
+  it('raises an ERROR for the same deal entered TWICE in Notion (extra x extra)', () => {
+    const live = [
+      deal({ id: 'n1', name: 'Maple Logistics', notionDealId: 'DEAL-40' }),
+      deal({ id: 'n2', name: 'Maple Logistics', notionDealId: 'DEAL-41' }),
+    ];
+    const flags: DataQualityFlag[] = [];
+    mergeDeals([], live, flags);
+    expect(flags.some((f) => f.severity === 'error' && f.field === 'deals.name')).toBe(true);
+  });
+
+  it('SUPPRESSES the genuine cross-metro namesake — both tails present, states differ', () => {
+    // The documented steady state, and the reason the old detector needed an acceptance hatch.
+    // Exact-key matching plus the locality tail handles it with no config at all.
+    const live = [
+      deal({ id: 'n1', name: '470 McCormick Blvd — Columbus, OH', notionDealId: 'DEAL-50' }),
+      deal({ id: 'n2', name: '470 McCormick Blvd — Louisville, KY', notionDealId: 'DEAL-51' }),
+    ];
+    const flags: DataQualityFlag[] = [];
+    mergeDeals([], live, flags);
+    expect(flags.filter((f) => f.field === 'deals.name')).toHaveLength(0);
+  });
+
+  it('does NOT suppress when only one side carries a locality tail', () => {
+    // A missing tail cannot establish distinctness, so it must not buy silence.
+    const live = [
+      deal({ id: 'n1', name: '470 McCormick Blvd', notionDealId: 'DEAL-50' }),
+      deal({ id: 'n2', name: '470 McCormick Blvd — Louisville, KY', notionDealId: 'DEAL-51' }),
+    ];
+    const flags: DataQualityFlag[] = [];
+    mergeDeals([], live, flags);
+    expect(flags.some((f) => f.severity === 'error' && f.field === 'deals.name')).toBe(true);
+  });
+
+  it('leaves phased assets alone — exact keys differ, so no acceptance hatch is needed', () => {
+    const live = [
+      deal({ id: 'n1', name: 'Fairground Village', notionDealId: 'DEAL-60' }),
+      deal({ id: 'n2', name: 'Fairground Village Center', notionDealId: 'DEAL-61' }),
+    ];
+    const flags: DataQualityFlag[] = [];
+    mergeDeals([], live, flags);
+    expect(flags.filter((f) => f.field === 'deals.name')).toHaveLength(0);
+  });
+});
+
+describe('mergeDeals — REFUTE: a seed Deal ID that resolves to nothing', () => {
+  it('ERRORS when the seed is at an active stage — a broken link, not a departure', () => {
+    // The seed side is a HAND-COPIED mirror: the one place Notion's read-only guarantee stops.
+    // A transposed digit ('DEAL-13' for 'DEAL-31') leaves the seed publishing hand-set figures.
+    const seed = [deal({ id: 'seed-a', name: 'A', notionDealId: 'DEAL-13', stage: 'Due Diligence' })];
+    const flags: DataQualityFlag[] = [];
+    mergeDeals(seed, [deal({ id: 'n', name: 'B', notionDealId: 'DEAL-31' })], flags);
+
+    const f = flags.find((x) => x.rawValue === 'DEAL-13');
+    expect(f?.severity).toBe('error');
+  });
+
+  it('only WARNS for a Dead/Candidate seed — those leave the pipeline legitimately', () => {
+    const seed = [deal({ id: 'seed-a', name: 'A', notionDealId: 'DEAL-13', stage: 'Dead' })];
+    const flags: DataQualityFlag[] = [];
+    mergeDeals(seed, [], flags);
+    expect(flags.find((x) => x.rawValue === 'DEAL-13')?.severity).toBe('warn');
+  });
+});
+
+describe('mergeDeals — REFUTE: the tripwire must not spam one flag per pair', () => {
+  it('emits ONE aggregated flag for a seed matching several live rows', () => {
+    const seed = [deal({ id: 'seed-a', name: 'Shared Name', notionDealId: null })];
+    const live = [
+      deal({ id: 'n1', name: 'Shared Name — Columbus, OH', notionDealId: 'DEAL-70' }),
+      deal({ id: 'n2', name: 'Shared Name — Madison, WI', notionDealId: 'DEAL-71' }),
+    ];
+    const flags: DataQualityFlag[] = [];
+    mergeDeals(seed, live, flags);
+
+    const tripwires = flags.filter((f) => f.field === 'notionDealId' && f.severity === 'warn');
+    expect(tripwires).toHaveLength(1);
+    expect(tripwires[0]!.issue).toContain('DEAL-70');
+    expect(tripwires[0]!.issue).toContain('DEAL-71');
+    // …and it tells the operator to CONFIRM rather than to copy an id on a name match.
+    expect(tripwires[0]!.issue).toMatch(/CONFIRM/);
   });
 });

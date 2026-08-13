@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react';
-import { Market, PROPERTY_MARKETS, PropertyType } from '@contracts/index';
+import type { Market } from '@contracts/index';
+import { PROPERTY_MARKETS, PropertyType } from '@contracts/index';
 import { Button } from '@/primitives/Button';
 import { usePortfolioFilter } from './PortfolioFilterContext';
 
