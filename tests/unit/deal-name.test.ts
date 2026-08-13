@@ -1,45 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { stripLocalitySuffix, dealJoinKey, findNearDuplicateNames, parseAcceptedNearDupes, parseNameAliases } from '../../server/sources/deal-name';
+import { stripLocalitySuffix, dealJoinKey } from '../../server/sources/deal-name';
 
 /**
- * CATCH-UP SWEEP 2026-07-28→08-04, H1 (HIGH). mergeDeals' keyOf resolves aliases; this detector
- * tokenized the RAW dealJoinKey and ignored them. Two names that reach the same join key only via
- * NOTION_DEALS_NAME_ALIASES therefore merged-or-collided in the joiner while the detector saw no
- * pair at all — the exact "detector running a different notion of 'same deal' than the joiner" state
- * this module's own header calls worse than no detector. The alias map is now owned HERE and applied
- * by default, so no caller has to remember and the two cannot drift again.
+ * SCOPE, AS OF 2026-08-12. These functions no longer decide what merges — the seed↔Notion join is
+ * `Deal.notionDealId` (Notion's Unique ID). All that survives here is the normalization behind
+ * mergeDeals' migration-gap tripwire, where a name is evidence that something needs a human's
+ * attention and a false positive costs a warning rather than a wrong merge.
+ *
+ * Retired with the name join, along with their tests: findNearDuplicateNames, parseNameAliases,
+ * parseAcceptedNearDupes, parseAcceptedCollisions, acceptedPairKey, acceptedCollisionKey,
+ * aliasedJoinKey, localityStateOf. See server/sources/deal-name.ts for why they all existed.
  */
-describe('findNearDuplicateNames — H1: the detector shares the joiner’s alias-aware key', () => {
-  it('pairs two names that only collide once aliases are applied', () => {
-    const aliases = new Map([
-      ['alpha park ctr', 'alpha park center'],
-      ['alpha pc', 'alpha park center'],
-    ]);
-
-    const pairs = findNearDuplicateNames(
-      ['Alpha Park Ctr — Columbus, OH', 'Alpha PC — Columbus, OH'],
-      new Set(),
-      aliases,
-    );
-
-    expect(pairs).toHaveLength(1);
-  });
-
-  it('leaves genuinely distinct names alone when no alias unifies them', () => {
-    const pairs = findNearDuplicateNames(
-      ['REDACTED-401', 'REDACTED-293'],
-      new Set(),
-      new Map(),
-    );
-    expect(pairs).toHaveLength(0);
-  });
-
-  it('parseNameAliases is available from this module (single owner for the key + alias map)', () => {
-    const m = parseNameAliases('Foo Ctr=>Foo Center');
-    expect(m.get('foo ctr')).toBe('foo center');
-  });
-});
-
 describe('stripLocalitySuffix — Notion "<Deal Name> — <City>, <ST>" convention', () => {
   it('strips an anchored "— City, ST" tail', () => {
     expect(stripLocalitySuffix('REDACTED-340 — Indianapolis, IN')).toBe('REDACTED-340');
@@ -72,7 +43,8 @@ describe('stripLocalitySuffix — Notion "<Deal Name> — <City>, <ST>" conventi
   it('strips ONLY the locality tail when an earlier dash segment exists (regression)', () => {
     // The locality body must exclude "-" as well as the em/en dashes. With "-" allowed, the leftmost
     // em dash matched and the body swallowed the building segment, collapsing a building-level deal
-    // into its parent — a silent wrong merge. Caught in review 2026-08-04.
+    // into its parent. Under the name join that was a silent wrong merge (caught in review
+    // 2026-08-04); it now costs at most a spurious tripwire warning, but the anchoring is still right.
     expect(stripLocalitySuffix('REDACTED-340 — Bldg A - Indianapolis, IN'))
       .toBe('REDACTED-340 — Bldg A');
     expect(dealJoinKey('REDACTED-340 — Bldg A - Indianapolis, IN'))
@@ -80,8 +52,8 @@ describe('stripLocalitySuffix — Notion "<Deal Name> — <City>, <ST>" conventi
   });
 });
 
-describe('dealJoinKey', () => {
-  it('normalizes case, punctuation and the locality suffix to one key', () => {
+describe('dealJoinKey — a comparison form for the tripwire, NOT a join key', () => {
+  it('normalizes case, punctuation and the locality suffix to one value', () => {
     expect(dealJoinKey('REDACTED-340 — Indianapolis, IN')).toBe(dealJoinKey('REDACTED-340'));
     expect(dealJoinKey('REDACTED-367 — Twinsburg, OH')).toBe(dealJoinKey('REDACTED-367'));
   });
@@ -91,52 +63,11 @@ describe('dealJoinKey', () => {
     // Same street name, different number — distinct deals.
     expect(dealJoinKey('100 Main St')).not.toBe(dealJoinKey('200 Main St'));
   });
-});
 
-describe('findNearDuplicateNames — the regrowth tripwire', () => {
-  it('flags a token-prefix pair that the join key did NOT unify', () => {
-    const pairs = findNearDuplicateNames(['2146 Enterprise', 'REDACTED-367 — Twinsburg, OH']);
-    expect(pairs).toHaveLength(1);
-    expect(pairs[0]).toEqual(['2146 Enterprise', 'REDACTED-367 — Twinsburg, OH']);
-  });
-
-  it('does not flag names that merely share a leading token', () => {
-    expect(findNearDuplicateNames(['100 Main St', '100 Oak Ave'])).toHaveLength(0);
-    expect(findNearDuplicateNames(['REDACTED-401', 'REDACTED-293'])).toHaveLength(0);
-  });
-
-  it('does not flag a pair the join key already unifies', () => {
-    // The previous version of this test passed a ONE-element list, which cannot produce a pair and
-    // so asserted nothing (caught in review 2026-08-04). Two names that unify is the real case.
-    expect(dealJoinKey('REDACTED-340')).toBe(dealJoinKey('REDACTED-340 — Indianapolis, IN'));
-    expect(findNearDuplicateNames(['REDACTED-340', 'REDACTED-340 — Indianapolis, IN'])).toHaveLength(1);
-    // ...and it is exactly ONE pair, not a silent drop — mergeDeals collapses it; the detector's job
-    // is only to notice that two rows reached the snapshot still unmerged.
-  });
-
-  it('reports EVERY colliding pair, not just the first', () => {
-    const pairs = findNearDuplicateNames(['Alpha Park', 'Alpha Park Two', 'Beta Yard', 'Beta Yard North']);
-    expect(pairs).toHaveLength(2);
-  });
-
-  it('does NOT catch abbreviation/spelling variance — documented scope limit, not a bug', () => {
-    // Pinned so a future reader does not mistake the detector for a general duplicate guarantee.
-    expect(findNearDuplicateNames(['REDACTED-340', 'Pendleton Trade Ctr — Indianapolis, IN'])).toHaveLength(0);
-    expect(findNearDuplicateNames(['REDACTED-401', 'REDACTED-520 Boulevard — Columbus, OH'])).toHaveLength(0);
-  });
-
-  it('honors an explicit accepted-pair entry so a real phased asset need not be renamed', () => {
-    const names = ['Fairground Village', 'Fairground Village Center'];
-    expect(findNearDuplicateNames(names, new Set())).toHaveLength(1);
-    const accepted = parseAcceptedNearDupes('Fairground Village=>Fairground Village Center');
-    expect(findNearDuplicateNames(names, accepted)).toHaveLength(0);
-    // Order-independent: config should not have to guess which name comes first.
-    const reversed = parseAcceptedNearDupes('Fairground Village Center=>Fairground Village');
-    expect(findNearDuplicateNames(names, reversed)).toHaveLength(0);
-  });
-
-  it('returns nothing for an empty or single-name list', () => {
-    expect(findNearDuplicateNames([])).toHaveLength(0);
-    expect(findNearDuplicateNames(['Solo Deal'])).toHaveLength(0);
+  it('COLLIDES across metros — which is exactly why it is no longer the join key', () => {
+    // The defect the id join retired, pinned as a property of this function rather than a story:
+    // the locality tail is the only thing distinguishing these two, and this deletes it.
+    expect(dealJoinKey('REDACTED-185'))
+      .toBe(dealJoinKey('REDACTED-401 — Louisville, KY'));
   });
 });

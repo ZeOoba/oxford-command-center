@@ -35,6 +35,11 @@ export const DELIVERY_ONLY_PATHS: ReadonlySet<string> = new Set([
   // Direction 2: pure HTML IC-Memo renderer; all financial math lives in buildPortfolioAllocation
   // (capital-allocation.ts). This file only formats PortfolioAllocation for print-to-PDF.
   'server/warehouse/ic-memo.ts',
+  // server/sources/ subtractions (2026-08-12): transport and indexing plumbing that carries no deal
+  // or portfolio figures. Everything else under that prefix requires a trailer.
+  'server/sources/graph-auth.ts',
+  'server/sources/m365-tasks.ts',
+  'server/sources/documents.ts',
 ]);
 
 // Financial CONTRACT schemas (2026-07-24, PR #233 follow-up): a Zod contract change can carry
@@ -48,6 +53,13 @@ export const DELIVERY_ONLY_PATHS: ReadonlySet<string> = new Set([
 const FINANCIAL_CONTRACT_PATHS: ReadonlySet<string> = new Set([
   'src/contracts/loan.ts',
   'src/contracts/debt.ts',
+  // deal.ts (2026-08-12): carries estPrice / capRate / irr / equityMultiple, the `confidential`
+  // flag the bake redaction acts on, and notionDealId — the join key that decides which live
+  // economics attach to which record. Added with the server/sources/ prefix below.
+  'src/contracts/deal.ts',
+  // common.ts holds the Market enum, which keys RCT_V03 (the ratified replacement-cost
+  // denominator) and the cap-rate benchmark table.
+  'src/contracts/common.ts',
   'src/contracts/warehouse.ts',
   'src/contracts/macro.ts',
   // Round-9 (fifth adversarial pass — all three lenses flagged the omission independently, one
@@ -78,9 +90,24 @@ export function isFinancialSourcePath(p: string): boolean {
     // Second occurrence of the scope-staleness mode — 2026-07-24 was the first, one directory
     // over — so prefer a broad directory prefix and subtract via DELIVERY_ONLY_PATHS above.
     path.startsWith('server/workbook/') ||
+    // server/sources/ added 2026-08-12 — the THIRD occurrence of this scope-staleness mode, after
+    // src/contracts (2026-07-24) and server/workbook (2026-08-11). The Deal-ID join redesign
+    // rewrote the seed<->Notion joiner, which decides which live price / cap rate / IRR / lender
+    // lands on which deal record AND which rows keep the fail-closed confidential default — and
+    // this gate reported "no financial-decision source files changed" for the entire branch.
+    // quickbooks.ts and notion-tenants.ts sit on the same prefix and carry cash and rent figures.
+    // Broad prefix with subtractions above, per the doctrine the workbook entry established: an
+    // enumeration goes stale silently, a prefix fails closed.
+    path.startsWith('server/sources/') ||
+    // The seed pipeline: source of truth for Deal.confidential AND the fallback deal set a Notion
+    // outage publishes. A wrong edit here is a Hard-Invariant-3 exposure, not a fixture change.
+    path === 'src/data/seed-deals.ts' ||
+    path === 'src/data/public-deals.ts' ||
     FINANCIAL_CONTRACT_PATHS.has(path) ||
     path === 'src/brain/anomaly-insights.ts' ||
     path === 'src/brain/principal-digest.ts' ||
+    // Priced against RCT v03, the ratified basis denominator — a governor-adjacent constant table.
+    path === 'src/brain/replacement-cost.ts' ||
     path === 'server/overlay.ts'
   );
 }

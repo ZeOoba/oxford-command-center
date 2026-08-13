@@ -1,23 +1,38 @@
 // server/sources/deal-name.ts
 //
-// Deal-name normalization shared by the Notion merge (server/sources/notion-deals.ts) and the
-// runtime reconciler (server/reconcile-runtime.ts). It lives in its own module precisely so those
-// two cannot drift: the adapter decides what MERGES and the reconciler decides what gets FLAGGED,
-// and a detector running a different notion of "same deal" than the joiner is worse than no
-// detector at all.
+// Deal-name normalization. As of 2026-08-12 this is a DETECTOR ONLY — nothing here decides what
+// merges.
 //
-// BACKGROUND (2026-08-04). Notion's Acquisition Pipeline Tracker names rows
-// "<Deal Name> — <City>, <ST>"; src/data/seed-deals.ts uses the bare deal name. Nothing bridged the
-// two, so `mergeDeals` failed to match and emitted BOTH the seed row and the Notion row — two
-// mutually contradictory records for one deal (REDACTED-340; REDACTED-367), with
-// the Notion copy additionally carrying the fail-closed confidential:true default for unmatched
-// rows. The optional NOTION_DEALS_NAME_ALIASES escape hatch existed but had never been configured.
+// HISTORY, because the scar tissue is the point. This module used to own the seed↔Notion join key:
+// `dealJoinKey` stripped Notion's "<Deal Name> — <City>, <ST>" tail, lowercased, and collapsed
+// punctuation, and `mergeDeals` merged two rows whose keys were equal. Notion's locality tail exists
+// PRECISELY because bare street names repeat across metros, so that key deleted the only
+// disambiguator the join had — and confidentiality rides on the join, because a wrong merge folds an
+// unmatched (fail-closed confidential) row into a public seed record: Hard Invariant 3.
 //
-// WHY DETERMINISTIC AND NOT FUZZY. A wrong merge is strictly worse here than a duplicate: it
-// destroys one of the two rows and can fold an unmatched (fail-closed confidential) Notion deal
-// into a public seed record, which is a Hard Invariant 3 exposure. So this module only unifies an
-// ANCHORED, documented naming convention, and anything short of that is surfaced by
-// findNearDuplicateNames as a gate-blocking flag rather than merged on a similarity guess.
+// Four adversarial passes over 2026-08-11/12 found, in this subsystem alone: a CRITICAL cross-side
+// wrong merge with executed repros; an alias path that bypassed the guard written to contain it;
+// corroboration that was inert for the MAJORITY of live rows; and an acceptance key that was
+// degenerate for exactly the collisions it gated. Each fix bolted on another corroborating signal.
+// Three of them shared one shape — a guard stated over a MECHANISM instead of the INVARIANT — and
+// that kept recurring for a reason no amount of care would have fixed: "same deal" has no ground
+// truth in a name.
+//
+// The join now uses Notion's native Unique ID (`Deal.notionDealId`), which is opaque, assigned by
+// Notion, and read-only at the source. See server/sources/notion-deals.ts and
+// docs/superpowers/plans/2026-08-12-deal-id-join.md.
+//
+// RETIRED with the name join, and deliberately NOT ported: NOTION_DEALS_NAME_ALIASES,
+// NOTION_DEALS_ACCEPTED_NEAR_DUPES, parseNameAliases, aliasedJoinKey, acceptedPairKey,
+// acceptedCollisionKey, parseAcceptedNearDupes, parseAcceptedCollisions, localityStateOf, and
+// findNearDuplicateNames. Every one of them existed to shore up a key that could not carry the
+// weight; an opaque id needs no aliases, no acceptance hatches, and no corroboration. If you find
+// yourself adding a "just one more signal" here, that is the smell this change was made to remove.
+//
+// WHAT SURVIVES, AND WHY ONLY THIS. `mergeDeals` needs to tell an operator "you forgot to mirror a
+// Deal ID" — a seed and a live row that are plainly the same asset but share no id. That is a
+// DETECTION question, where a name is legitimate evidence and a false positive costs a warning
+// rather than a wrong merge. Names must never again decide what joins.
 
 /**
  * A trailing " — City, ST" locality tail: a spaced dash separator, a locality containing NO further
@@ -28,8 +43,9 @@
  *
  * The locality body excludes the ASCII hyphen as well as the em/en dashes. It must: the separator
  * class accepts " - ", so a body that permitted "-" would let the leftmost em dash match and swallow
- * a real name segment — "Foo — Bldg A - Indianapolis, IN" stripped all the way to "Foo", merging a
- * building-level deal into its parent. Caught in review 2026-08-04 before merge.
+ * a real name segment — "Foo — Bldg A - Indianapolis, IN" stripped all the way to "Foo". When this
+ * fed the joiner that merged a building-level deal into its parent (caught in review 2026-08-04);
+ * it now only costs a spurious tripwire warning, but the anchoring is still correct and cheap.
  */
 const LOCALITY_SUFFIX = /\s+[—–-]\s+[^—–-]+,\s*[A-Za-z]{2}\s*$/;
 
@@ -40,22 +56,12 @@ export function stripLocalitySuffix(name: string): string {
 }
 
 /**
- * The 2-letter state from a name's locality tail, uppercased, or null when there is no tail.
+ * Normalized comparison form of a deal name: locality-stripped, lowercased, punctuation-collapsed.
  *
- * The tail is the disambiguator `dealJoinKey` deletes, and it is the ONLY corroborating evidence that
- * is always present on a conventionally-named Notion row. Recovering it lets the merge check a
- * cross-metro contradiction without depending on the Market select mapping — which covers 6 metros
- * while the live pipeline spans about ten, so 11 of 20 live rows carry no usable mapped market.
- * (Fourth refute pass, 2026-08-12 — the HIGH.)
+ * NOT A JOIN KEY. Two names sharing this value are a REASON TO WARN, never grounds to merge — the
+ * whole point of the id join is that this function can no longer move data between records. Its one
+ * caller is mergeDeals' migration tripwire.
  */
-export function localityStateOf(name: string): string | null {
-  const m = LOCALITY_SUFFIX.exec(name);
-  if (!m) return null;
-  const st = /([A-Za-z]{2})\s*$/.exec(m[0]);
-  return st ? st[1]!.toUpperCase() : null;
-}
-
-/** The canonical seed↔Notion match key: locality-stripped, lowercased, punctuation-collapsed. */
 export function dealJoinKey(name: string): string {
   return stripLocalitySuffix(name)
     .toLowerCase()
@@ -64,138 +70,92 @@ export function dealJoinKey(name: string): string {
 }
 
 /**
- * The alias map: a Notion spelling → the seed name it should join to. Lives HERE, beside the key
- * function it modifies, because the joiner and the near-duplicate detector must resolve "same deal"
- * identically — the whole reason this module exists. Format: "From=>To" pairs separated by ';' or
- * newlines. Env-configured so a confidential deal name never lands in the repo.
+ * The 2-letter state from a name's locality tail, uppercased, or null when there is no tail.
  *
- * Moved out of notion-deals.ts 2026-08-11 (catch-up sweep H1): while the joiner owned the map
- * privately, findNearDuplicateNames could not see it and silently keyed on the raw name.
+ * DETECTION-SIDE SUPPRESSOR ONLY. Under the name join this was a corroboration signal — evidence
+ * used to decide whether a merge was allowed to proceed — and that is exactly the role it must
+ * never have again. Its only caller now is mergeDeals' published-duplicate detector, where it
+ * SUPPRESSES a warning: two rows sharing a bare street name in demonstrably different states are
+ * the documented steady state ("REDACTED-185" vs "— Louisville, KY"), not a
+ * duplicate. Suppressing a false alarm and authorizing a merge are different powers; this has only
+ * the first.
  */
-export function parseNameAliases(
-  raw: string = process.env.NOTION_DEALS_NAME_ALIASES ?? '',
-): Map<string, string> {
-  const m = new Map<string, string>();
-  for (const pair of raw.split(/[;\n]+/)) {
-    const idx = pair.indexOf('=>');
-    if (idx < 0) continue;
-    const from = dealJoinKey(pair.slice(0, idx));
-    const to = dealJoinKey(pair.slice(idx + 2));
-    if (from && to) m.set(from, to);
+/**
+ * A short, stable, NON-IDENTIFYING digest of a deal-join key, for flag text that would otherwise
+ * carry a deal NAME.
+ *
+ * Moved here 2026-08-13 (code review) from server/sources/notion-deals.ts, where its own doc
+ * comment claimed exactly ONE caller needed it — already stale at two call sites there, and now a
+ * third exists (checkSnapshot, server/reconcile-runtime.ts) reachable via the COMMITTED-snapshot
+ * CI path that has no console.warn to log the real name beside it. Living beside dealJoinKey
+ * rather than duplicated per caller keeps "how do we reference a name-derived key safely" answered
+ * once.
+ *
+ * dataQuality flags reach the PUBLIC brain.oxfordra.net payload (scripts/bake-mirror.ts) and
+ * redactConfidential does NOT sweep them regardless of `entity` — verified against the live code
+ * 2026-08-13, not assumed: its own comment says "dataQuality is parser-emitted" and it sweeps only
+ * dealComps/acquisitionInputs/tenantNotes. Embedding a duplicated CONFIDENTIAL deal's name in any
+ * flag text is therefore a Hard Invariant 3 exposure. Prefer `Deal.notionDealId` where available —
+ * opaque and non-identifying by construction — and fall back to this digest only when it is null.
+ * FNV-1a rather than node:crypto so this module stays safe for any bundle that reaches it.
+ */
+export function keyDigest(key: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
   }
-  return m;
+  return h.toString(16).padStart(8, '0');
 }
 
-/** `dealJoinKey` with the alias map applied — the ONE key both the joiner and the detector use. */
-export function aliasedJoinKey(name: string, aliases: ReadonlyMap<string, string>): string {
-  const k = dealJoinKey(name);
-  return aliases.get(k) ?? k;
+export function localityStateOf(name: string): string | null {
+  const m = LOCALITY_SUFFIX.exec(name);
+  if (!m) return null;
+  const st = /([A-Za-z]{2})\s*$/.exec(m[0]);
+  return st ? st[1]!.toUpperCase() : null;
 }
 
 /**
- * Regrowth tripwire. Returns every pair of names whose join-key token lists are in a prefix
- * relationship (equal, or one a strict prefix of the other) WITHOUT having been unified by
- * dealJoinKey.
+ * Groups of 2+ rows sharing one normalized name that were never joined onto each other — the
+ * always-on published-duplicate backstop.
  *
- * SCOPE — read this before trusting it. It catches TRAILING-TOKEN variance only: a name that is a
- * leading-token-sequence prefix of another ("2146 Enterprise" ⇄ "REDACTED-367 — …"). It
- * does NOT catch abbreviation or spelling variance anywhere in the name — "REDACTED-340"
- * vs "Pendleton Trade Ctr", "REDACTED-401" vs "REDACTED-520 Boulevard", and "E. Fulton" vs
- * "East Fulton" all return nothing. Widening it to fuzzy/token-set matching was considered and
- * rejected: this feeds a GATE-BLOCKING flag, and false positives there block the build on data the
- * operator cannot fix without renaming a real asset. Narrow-and-honest beats broad-and-noisy here.
+ * SHARED by two callers that must judge "same deal" identically: mergeDeals (over its freshly
+ * merged output) and checkSnapshot (over the COMMITTED, POST-MERGE snapshot, reachable via
+ * scripts/reconcile-snapshot.ts's `npm run gate:ci` path — zero Notion I/O, zero call into
+ * mergeDeals). A merge conflict, a hand-edit, or a future writer bug can introduce two rows for
+ * one deal without ever going through mergeDeals at all; checkSnapshot's own CI gate exists
+ * PRECISELY to catch corruption independent of how the file was produced (its header cites the
+ * 2026-08-03 phantom-vacancy-lease incident that shipped under exactly that kind of blind spot).
+ * A second, code-review-caught instance of the "detector diverges from the joiner" trap this
+ * module's own header already warns about — this time not a stale key function, but the detector
+ * existing in only ONE of two reachable code paths. One function, two call sites, closes it for
+ * both. (Independent code review, 2026-08-13 — HIGH.)
  *
- * Requiring a full leading-token-sequence match also keeps it quiet on genuinely distinct deals:
- * "100 Main St" vs "200 Main St" and "REDACTED-401" vs "REDACTED-293" do not pair.
- *
- * FALSE POSITIVES ARE REAL AND HAVE AN ESCAPE HATCH. Phased and multi-building assets legitimately
- * share a prefix ("Fairground Village Center" ⇄ "Fairground Village", "… Center" ⇄ "… Center II").
- * Accept such a pair via NOTION_DEALS_ACCEPTED_NEAR_DUPES rather than renaming the asset — see
- * parseAcceptedNearDupes.
- *
- * Callers treat a non-empty result as an error, not a warning: the fix is to align the seed name
- * with Notion's, add a NOTION_DEALS_NAME_ALIASES entry, accept the pair explicitly, or disambiguate
- * two deals that genuinely share a prefix — the same "disambiguate the join key" doctrine the parse
- * layer already applies to colliding property ids.
+ * Cross-metro namesakes are suppressed: two rows that both carry a locality tail, both name a
+ * state, and disagree on every state, are the documented steady state (a bare street name
+ * repeating across metros — "REDACTED-185" vs "— Louisville, KY"), not a
+ * duplicate. A row with NO tail cannot establish distinctness, so it never suppresses.
  */
-export function findNearDuplicateNames(
-  names: readonly string[],
-  accepted: ReadonlySet<string> = parseAcceptedNearDupes(),
-  aliases: ReadonlyMap<string, string> = parseNameAliases(),
-): Array<[string, string]> {
-  // Alias-aware, exactly like mergeDeals' keyOf. Tokenizing the RAW key here let the joiner and this
-  // detector run two different notions of "same deal" -- the state this module's header calls worse
-  // than no detector: two names reaching one key only via NOTION_DEALS_NAME_ALIASES collided in the
-  // joiner (both rows withheld, seed emitted unenriched) while this returned NO pair, so the gate
-  // saw nothing and the snapshot published. The alias map is owned by this module and applied by
-  // DEFAULT so no caller has to remember it. (Catch-up sweep 2026-07-28..08-04, H1.)
-  const rows = names.map((name) => ({ name, tokens: aliasedJoinKey(name, aliases).split(' ').filter(Boolean) }));
-  const pairs: Array<[string, string]> = [];
-  for (let i = 0; i < rows.length; i++) {
-    for (let k = i + 1; k < rows.length; k++) {
-      const a = rows[i]!;
-      const b = rows[k]!;
-      if (!a.tokens.length || !b.tokens.length) continue;
-      const [shorter, longer] = a.tokens.length <= b.tokens.length ? [a.tokens, b.tokens] : [b.tokens, a.tokens];
-      if (!shorter.every((t, ix) => longer[ix] === t)) continue;
-      if (accepted.has(acceptedPairKey(a.name, b.name))) continue;
-      pairs.push([a.name, b.name]);
-    }
+export function findDuplicateDealRows<T extends { id: string; name: string; notionDealId: string | null }>(
+  rows: readonly T[],
+): Array<{ key: string; rows: T[] }> {
+  const byName = new Map<string, T[]>();
+  for (const d of rows) {
+    const key = dealJoinKey(d.name);
+    if (!key) continue;
+    const bucket = byName.get(key);
+    if (bucket) bucket.push(d);
+    else byName.set(key, [d]);
   }
-  return pairs;
-}
-
-/** Order-independent key for an accepted pair, so config need not guess which name comes first. */
-export function acceptedPairKey(a: string, b: string): string {
-  return [dealJoinKey(a), dealJoinKey(b)].sort().join('||');
-}
-
-/**
- * Order-independent key for an accepted pair keyed on the FULL names rather than their join keys.
- *
- * `acceptedPairKey` is degenerate for the case it is most needed in: when two rows COLLIDE they share
- * one join key by definition, so it yields "k||k" for ANY pair on that key — one historical acceptance
- * silently grandfathered every future collision on the same bare name, including a third row the
- * operator had never seen. Collision acceptance therefore keys on the full names, which do differ.
- * (Fourth refute pass, 2026-08-12.)
- */
-export function acceptedCollisionKey(a: string, b: string): string {
-  const norm = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, ' ');
-  return [norm(a), norm(b)].sort().join('||');
-}
-
-/** `parseAcceptedNearDupes`, keyed on full names — the set `acceptedCollisionKey` is checked against. */
-export function parseAcceptedCollisions(
-  raw: string = process.env.NOTION_DEALS_ACCEPTED_NEAR_DUPES ?? '',
-): Set<string> {
-  const out = new Set<string>();
-  for (const entry of raw.split(/[;\n]+/)) {
-    const idx = entry.indexOf('=>');
-    if (idx < 0) continue;
-    const a = entry.slice(0, idx);
-    const b = entry.slice(idx + 2);
-    if (a.trim() && b.trim()) out.add(acceptedCollisionKey(a, b));
+  const groups: Array<{ key: string; rows: T[] }> = [];
+  for (const [key, group] of byName) {
+    if (group.length < 2) continue;
+    const states = group.map((r) => localityStateOf(r.name));
+    const known = states.filter((st): st is string => st !== null);
+    // Suppress ONLY when every row names a state and all of them differ. A missing tail cannot
+    // establish distinctness, so it never suppresses.
+    if (known.length === group.length && new Set(known).size === group.length) continue;
+    groups.push({ key, rows: group });
   }
-  return out;
-}
-
-/**
- * Operator escape hatch for a near-duplicate pair that is genuinely two different deals (phased or
- * multi-building assets that legitimately share a name prefix). Format: "Name A=>Name B" pairs
- * separated by ';' or newlines — same shape as NOTION_DEALS_NAME_ALIASES, but the opposite meaning:
- * aliases MERGE two names, this one affirms they must stay SEPARATE. Env-configured so a
- * confidential deal name never lands in the repo. Exported + injectable for tests.
- */
-export function parseAcceptedNearDupes(
-  raw: string = process.env.NOTION_DEALS_ACCEPTED_NEAR_DUPES ?? '',
-): Set<string> {
-  const out = new Set<string>();
-  for (const entry of raw.split(/[;\n]+/)) {
-    const idx = entry.indexOf('=>');
-    if (idx < 0) continue;
-    const a = entry.slice(0, idx);
-    const b = entry.slice(idx + 2);
-    if (dealJoinKey(a) && dealJoinKey(b)) out.add(acceptedPairKey(a, b));
-  }
-  return out;
+  return groups;
 }

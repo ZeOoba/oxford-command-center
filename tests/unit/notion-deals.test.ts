@@ -1,9 +1,11 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import type { DataQualityFlag } from '../../src/contracts/index';
 import type { Deal } from '../../src/contracts/index';
-import { mapNotionPage, mergeDeals, parseNameAliases, loadDeals, dealsDegradationFlag, hasDealsPipelineFailure } from '../../server/sources/notion-deals';
+import { mapNotionPage, mergeDeals, loadDeals, dealsDegradationFlag, hasDealsPipelineFailure } from '../../server/sources/notion-deals';
 import { SEED_DEALS } from '../../src/data/seed-deals';
-import { findNearDuplicateNames, acceptedCollisionKey } from '../../server/sources/deal-name';
+
+// The join-key describes that used to live here — aliases, locality-suffix matching, collisions,
+// corroboration, and the four refute rounds' regressions — were retired with the name join on
+// 2026-08-12. tests/unit/deal-id-join.test.ts covers the id join that replaced them.
 
 const page = (over: Record<string, unknown> = {}) => ({
   properties: {
@@ -27,7 +29,7 @@ const deal = (o: Partial<Deal>): Deal => ({
   id: 'd', name: 'D', shortName: null, location: null, market: null, sf: null, buildings: null,
   stage: 'Candidate', estPrice: null, capRate: null, irr: null, equityMultiple: null, holdYrs: null,
   lender: null, status: null, nextAction: null, owner: null, targetCloseDate: null,
-  confidential: false, estimatedFields: [], ...o,
+  notionDealId: null, confidential: false, estimatedFields: [], ...o,
 });
 
 afterEach(() => {
@@ -38,7 +40,7 @@ describe('mapNotionPage', () => {
   it('maps a Notion page to a Deal with stage/market/rate normalization', () => {
     const d = mapNotionPage(page())!;
     expect(d.name).toBe('Maple Logistics');
-    expect(d.market).toBe('Other'); // Cincinnati OH → Other (not in our Market enum)
+    expect(d.market).toBe('Cincinnati OH'); // in the Market enum as of 2026-08-12 (was 'Other')
     expect(d.stage).toBe('Due Diligence'); // "Under Contract" → Due Diligence
     expect(d.sf).toBe(50000);
     expect(d.capRate).toBeCloseTo(0.075, 4); // 7.5 normalized to a decimal
@@ -50,6 +52,21 @@ describe('mapNotionPage', () => {
     process.env.NOTION_CONFIDENTIAL_NAME_PATTERNS = 'atlas';
     const d = mapNotionPage(page({ 'Deal Name': { type: 'title', title: [{ plain_text: 'Project Atlas' }] } }))!;
     expect(d.confidential).toBe(true);
+  });
+
+  it('takes Deal.id from the Notion page UUID when present, not a name slug', () => {
+    // Code review, 2026-08-13, HIGH. An unmatched (extras) row's own `.id` feeds two
+    // Hard-Invariant-3-adjacent consumers directly: isDeclassified()'s `allowlist.includes(id)`
+    // check and bake-mirror's redactConfidential link-stripping. A slug-derived id let two
+    // DIFFERENT live deals collide on it whenever their names agreed on the first 64 characters
+    // (slug()'s truncation) — a real risk for "Phase One"/"Phase Two"-style names.
+    const d = mapNotionPage({ id: 'notion-page-uuid-abc123', ...page() })!;
+    expect(d.id).toBe('notion-page-uuid-abc123');
+  });
+
+  it('falls back to the name-slug id only when the page carries no id (fixture convenience)', () => {
+    const d = mapNotionPage(page())!;
+    expect(d.id).toBe('notion-maple-logistics');
   });
 
   it('returns null for a row with no Deal Name', () => {
@@ -77,12 +94,12 @@ describe('mapNotionPage', () => {
 
 describe('mergeDeals — seed is the confidential-flag source of truth', () => {
   const seed = [
-    deal({ id: 'seed-atlas', name: 'Project Atlas Industrial', stage: 'Due Diligence', confidential: true, shortName: 'Atlas' }),
-    deal({ id: 'seed-banwick', name: 'Banwick Refi', stage: 'Candidate', confidential: false }),
+    deal({ id: 'seed-atlas', name: 'Project Atlas Industrial', notionDealId: 'DEAL-1', stage: 'Due Diligence', confidential: true, shortName: 'Atlas' }),
+    deal({ id: 'seed-banwick', name: 'Banwick Refi', notionDealId: 'DEAL-2', stage: 'Candidate', confidential: false }),
   ];
   const notion = [
-    deal({ id: 'notion-atlas', name: 'Project Atlas Industrial', stage: 'Closing', estPrice: 18_500_000, confidential: false }),
-    deal({ id: 'notion-new', name: 'New Columbus Flex', stage: 'Candidate', confidential: false }),
+    deal({ id: 'notion-atlas', name: 'Project Atlas Industrial', notionDealId: 'DEAL-1', stage: 'Closing', estPrice: 18_500_000, confidential: false }),
+    deal({ id: 'notion-new', name: 'New Columbus Flex', notionDealId: 'DEAL-3', stage: 'Candidate', confidential: false }),
   ];
   const out = mergeDeals(seed, notion);
 
@@ -112,10 +129,10 @@ describe('mergeDeals — fail-closed on unflagged unmatched Notion deals (I9, wi
   // seed-deals.ts with confidential: false (the seed stays the source of truth).
   it('an unmatched Notion deal defaults confidential regardless of stage — no env pattern required', () => {
     const out = mergeDeals([], [
-      deal({ id: 'n1', name: 'DD Deal', stage: 'Due Diligence', confidential: false }),
-      deal({ id: 'n2', name: 'Closing Deal', stage: 'Closing', confidential: false }),
-      deal({ id: 'n3', name: 'Early Candidate', stage: 'Candidate', confidential: false }),
-      deal({ id: 'n4', name: 'Done Deal', stage: 'Closed', confidential: false }),
+      deal({ id: 'n1', name: 'DD Deal', notionDealId: 'DEAL-11', stage: 'Due Diligence', confidential: false }),
+      deal({ id: 'n2', name: 'Closing Deal', notionDealId: 'DEAL-12', stage: 'Closing', confidential: false }),
+      deal({ id: 'n3', name: 'Early Candidate', notionDealId: 'DEAL-13', stage: 'Candidate', confidential: false }),
+      deal({ id: 'n4', name: 'Done Deal', notionDealId: 'DEAL-14', stage: 'Closed', confidential: false }),
     ]);
     expect(out.find((d) => d.id === 'n1')!.confidential).toBe(true);
     expect(out.find((d) => d.id === 'n2')!.confidential).toBe(true);
@@ -125,8 +142,8 @@ describe('mergeDeals — fail-closed on unflagged unmatched Notion deals (I9, wi
 
   it('a seed-matched deal still takes the seed flag — public-by-seed escape hatch unchanged', () => {
     const out = mergeDeals(
-      [deal({ id: 's1', name: 'Known Public Deal', stage: 'LOI/PSA', confidential: false })],
-      [deal({ id: 'n1', name: 'Known Public Deal', stage: 'LOI/PSA', confidential: false })],
+      [deal({ id: 's1', name: 'Known Public Deal', notionDealId: 'DEAL-20', stage: 'LOI/PSA', confidential: false })],
+      [deal({ id: 'n1', name: 'Known Public Deal', notionDealId: 'DEAL-20', stage: 'LOI/PSA', confidential: false })],
     );
     expect(out.find((d) => d.id === 's1')!.confidential).toBe(false);
     expect(out).toHaveLength(1);
@@ -140,8 +157,8 @@ describe('mergeDeals — seed staleness tripwire (policy item 3, 2026-07-16)', (
   it('warns when a seed-matched public deal advances into an active stage', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const out = mergeDeals(
-      [deal({ id: 's1', name: 'Was Candidate', stage: 'Candidate', confidential: false })],
-      [deal({ id: 'n1', name: 'Was Candidate', stage: 'Due Diligence', confidential: false })],
+      [deal({ id: 's1', name: 'Was Candidate', notionDealId: 'DEAL-31', stage: 'Candidate', confidential: false })],
+      [deal({ id: 'n1', name: 'Was Candidate', notionDealId: 'DEAL-31', stage: 'Due Diligence', confidential: false })],
     );
     expect(out.find((d) => d.id === 's1')!.confidential).toBe(false); // flag unchanged
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('s1'));
@@ -153,517 +170,16 @@ describe('mergeDeals — seed staleness tripwire (policy item 3, 2026-07-16)', (
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     mergeDeals(
       [
-        deal({ id: 's1', name: 'Already Confidential', stage: 'Candidate', confidential: true }),
-        deal({ id: 's2', name: 'Still Prospecting', stage: 'Candidate', confidential: false }),
+        deal({ id: 's1', name: 'Already Confidential', notionDealId: 'DEAL-32', stage: 'Candidate', confidential: true }),
+        deal({ id: 's2', name: 'Still Prospecting', notionDealId: 'DEAL-33', stage: 'Candidate', confidential: false }),
       ],
       [
-        deal({ id: 'n1', name: 'Already Confidential', stage: 'Due Diligence', confidential: false }),
-        deal({ id: 'n2', name: 'Still Prospecting', stage: 'Candidate', confidential: false }),
+        deal({ id: 'n1', name: 'Already Confidential', notionDealId: 'DEAL-32', stage: 'Due Diligence', confidential: false }),
+        deal({ id: 'n2', name: 'Still Prospecting', notionDealId: 'DEAL-33', stage: 'Candidate', confidential: false }),
       ],
     );
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
-  });
-});
-
-describe('mergeDeals — name aliases (dedup a deal named differently in Notion)', () => {
-  const seed = [deal({ id: 'seed-cedar', name: 'Cedar Industrial Park', stage: 'Due Diligence', confidential: true, shortName: 'Cedar' })];
-  // Same real deal, different name in Notion → would NOT match by name.
-  const notion = [deal({ id: 'notion-cedar', name: 'Cedar Park Acquisition', stage: 'Closing', estPrice: 12_000_000 })];
-
-  it('double-lists without an alias (the cosmetic duplicate)', () => {
-    const out = mergeDeals(seed, notion, new Map());
-    expect(out).toHaveLength(2); // seed copy + Notion extra
-  });
-
-  it('merges into the single seed record when an alias maps the names', () => {
-    const aliases = parseNameAliases('Cedar Park Acquisition=>Cedar Industrial Park');
-    const out = mergeDeals(seed, notion, aliases);
-    expect(out).toHaveLength(1); // deduped
-    const d = out[0]!;
-    expect(d.id).toBe('seed-cedar'); // seed identity kept
-    expect(d.confidential).toBe(true); // flag preserved
-    expect(d.shortName).toBe('Cedar');
-    expect(d.stage).toBe('Closing'); // live field won
-    expect(d.estPrice).toBe(12_000_000);
-  });
-});
-
-describe('mergeDeals — locality-suffix join key (regression: 2026-08-04 duplicate deal rows)', () => {
-  // Notion names pipeline rows "<Deal Name> — <City>, <ST>"; the seed uses the bare name. Nothing
-  // bridged the two, so the seed row AND the Notion row both shipped — contradicting each other on
-  // stage/next-action, and disagreeing on redaction (the unmatched Notion copy defaulted
-  // confidential:true while the seed copy stayed public).
-  it('merges a Notion row carrying the "— City, ST" tail into its seed record', () => {
-    const out = mergeDeals(
-      [deal({ id: 'pendleton', name: 'REDACTED-340', shortName: 'REDACTED-577', sf: 35_000, stage: 'Candidate', nextAction: 'LOI decision required', confidential: false })],
-      [deal({ id: 'notion-pendleton', name: 'REDACTED-340 — Indianapolis, IN', stage: 'Dead', nextAction: 'PASSED — formally passed 3/26.' })],
-      new Map(), // no aliases configured — the key itself must do this
-    );
-    expect(out).toHaveLength(1); // was 2 before the fix
-    const d = out[0]!;
-    expect(d.id).toBe('pendleton'); // seed identity kept
-    expect(d.shortName).toBe('REDACTED-577');
-    expect(d.sf).toBe(35_000); // seed value survives (Notion's was null)
-    expect(d.stage).toBe('Dead'); // live state wins
-    expect(d.nextAction).toBe('PASSED — formally passed 3/26.');
-    expect(d.confidential).toBe(false); // seed flag preserved — no phantom confidential twin
-  });
-
-  it('does not merge two genuinely different deals that share a locality', () => {
-    const out = mergeDeals(
-      [deal({ id: 's-470', name: 'REDACTED-401' })],
-      [deal({ id: 'n-511', name: 'REDACTED-116' })],
-      new Map(),
-    );
-    expect(out).toHaveLength(2);
-  });
-
-  it('still merges on an exact name match (no regression to the plain path)', () => {
-    const out = mergeDeals(
-      [deal({ id: 's1', name: 'REDACTED-398', confidential: false })],
-      [deal({ id: 'n1', name: 'REDACTED-398', stage: 'Dead' })],
-      new Map(),
-    );
-    expect(out).toHaveLength(1);
-    expect(out[0]!.stage).toBe('Dead');
-  });
-});
-
-describe('mergeDeals — join-key collision must never silently drop a deal (review 2026-08-04)', () => {
-  // The locality tail is exactly how Notion disambiguates same-named assets across metros, so
-  // stripping it makes two rows collide on one key. Building `notionByKey` with `new Map(...)`
-  // kept only the LAST row, and because a matching seed row put that key into `usedKeys`, neither
-  // colliding row reached `extras` — one real deal vanished from the snapshot with no flag, and the
-  // survivor wore the other's economics under the seed's public confidential flag. That was a
-  // REGRESSION: pre-fix, neither row matched the bare seed name, so all three survived as visible
-  // duplicates. Loud duplicates beat silent data loss.
-  const seed = [deal({ id: 'seed-ebp', name: 'Enterprise Business Park', confidential: false })];
-  const notion = [
-    deal({ id: 'n-cols', name: 'Enterprise Business Park — Columbus, OH', estPrice: 1_000_000, status: 'LOI out' }),
-    deal({ id: 'n-indy', name: 'Enterprise Business Park — Indianapolis, IN', estPrice: 9_000_000, status: 'Dead' }),
-  ];
-
-  it('keeps every colliding row instead of collapsing them into one', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const out = mergeDeals(seed, notion, new Map());
-    expect(out).toHaveLength(3); // was 1 before the fix — two deals lost
-    expect(out.map((d) => d.id).sort()).toEqual(['n-cols', 'n-indy', 'seed-ebp']);
-    warn.mockRestore();
-  });
-
-  it('holds colliding rows OUT of the seed merge, so they keep the fail-closed confidential default', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const out = mergeDeals(seed, notion, new Map());
-    // The public seed row is untouched — it did not absorb a colliding deal's economics.
-    const s = out.find((d) => d.id === 'seed-ebp')!;
-    expect(s.estPrice).toBeNull();
-    expect(s.confidential).toBe(false);
-    // Both Notion rows land as extras and default confidential.
-    expect(out.find((d) => d.id === 'n-cols')!.confidential).toBe(true);
-    expect(out.find((d) => d.id === 'n-indy')!.confidential).toBe(true);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('join-key collision'));
-    warn.mockRestore();
-  });
-
-  it('leaves the surviving rows detectable, so the gate blocks rather than shipping them', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const out = mergeDeals(seed, notion, new Map());
-    expect(findNearDuplicateNames(out.map((d) => d.name), new Set()).length).toBeGreaterThan(0);
-    warn.mockRestore();
-  });
-
-  it('a locality tail after a real name segment does not over-strip into the parent deal', () => {
-    // "Foo — Bldg A - Indianapolis, IN" must strip only the locality, keeping "— Bldg A" as the
-    // building-level discriminator; otherwise a building merges into its parent.
-    const out = mergeDeals(
-      [deal({ id: 'seed-ptc', name: 'REDACTED-340', confidential: false })],
-      [deal({ id: 'n-bldg', name: 'REDACTED-340 — Bldg A - Indianapolis, IN', estPrice: 1_000_000 })],
-      new Map(),
-    );
-    expect(out).toHaveLength(2);
-    expect(out.find((d) => d.id === 'seed-ptc')!.estPrice).toBeNull();
-  });
-});
-
-/**
- * CATCH-UP SWEEP 2026-07-28→08-04, C1 (CRITICAL — found by 2 of 3 lenses, both with an executed
- * repro) and H1 (HIGH — determinism lens, executed).
- *
- * C1: dealJoinKey strips the "— City, ST" locality tail, and normName IS dealJoinKey, so BOTH sides
- * of the seed↔Notion join are locality-stripped. #259's collision guard only fires when TWO OR MORE
- * *Notion* rows share a key — the cross-side case (ONE Notion row whose stripped name coincides with
- * an unrelated seed's bare name) is unguarded. The merge then folds a DIFFERENT deal's economics into
- * the seed row while keeping the seed's confidential flag. Notion's locality suffix exists precisely
- * because bare street names repeat across metros, so the key deletes the one disambiguator.
- *
- * H1: mergeDeals' keyOf is alias-aware but findNearDuplicateNames tokenizes the raw dealJoinKey
- * WITHOUT aliases — the "detector running a different notion of same deal than the joiner" state
- * deal-name.ts's own header calls worse than no detector. And mergeDeals discards its own
- * collidingKeys knowledge as a console.warn instead of a gate-visible flag.
- */
-describe('mergeDeals — C1: a locality-strip match needs corroboration, not just key equality', () => {
-  const seedRow = deal({ id: 'seed-1', name: 'Enterprise Parkway', market: 'Columbus OH', confidential: false });
-
-  it('REFUSES the merge when the strip was load-bearing and the markets contradict', () => {
-    // Same bare name, genuinely different property in another metro.
-    const live = deal({ id: 'notion-1', name: 'Enterprise Parkway — Kansas City, MO', market: 'Kansas City MO', estPrice: 4_750_000, lender: 'Some Bank' });
-    const flags: DataQualityFlag[] = [];
-
-    const out = mergeDeals([seedRow], [live], new Map(), flags);
-
-    // Two rows, not one: nothing is destroyed and nothing wears the other's economics.
-    expect(out).toHaveLength(2);
-    const seedOut = out.find((d) => d.id === 'seed-1')!;
-    expect(seedOut.estPrice).toBeNull();
-    expect(seedOut.market).toBe('Columbus OH');
-    // The unmatched live row takes the fail-closed confidential default.
-    const liveOut = out.find((d) => d.id === 'notion-1')!;
-    expect(liveOut.confidential).toBe(true);
-    // And it is gate-visible, not a console.warn.
-    expect(flags.some((f) => f.severity === 'error' && /locality|corrobor|market/i.test(f.issue))).toBe(true);
-  });
-
-  it('still merges when the markets agree (control — the ordinary Notion naming convention)', () => {
-    const live = deal({ id: 'notion-2', name: 'Enterprise Parkway — Columbus, OH', market: 'Columbus OH', estPrice: 6_000_000 });
-    const flags: DataQualityFlag[] = [];
-
-    const out = mergeDeals([seedRow], [live], new Map(), flags);
-
-    expect(out).toHaveLength(1);
-    expect(out[0]!.id).toBe('seed-1');
-    expect(out[0]!.estPrice).toBe(6_000_000);
-    expect(out[0]!.confidential).toBe(false);
-    expect(flags).toHaveLength(0);
-  });
-
-  it('merges CLEANLY when the live row has no market but its name’s tail agrees with the seed', () => {
-    // Updated after the 4th pass: the locality tail is now a corroborating signal in its own right,
-    // so a missing Market no longer leaves this unverifiable. Tail says OH, seed market is Columbus
-    // OH — corroborated, no flag of any severity.
-    const live = deal({ id: 'notion-3', name: 'Enterprise Parkway — Columbus, OH', market: null, estPrice: 6_000_000 });
-    const flags: DataQualityFlag[] = [];
-
-    const out = mergeDeals([seedRow], [live], new Map(), flags);
-
-    expect(out).toHaveLength(1);
-    expect(out[0]!.estPrice).toBe(6_000_000);
-    expect(flags).toHaveLength(0);
-  });
-
-  it('also requires corroboration when an ALIAS did the matching, not a locality strip', () => {
-    // Self-found gap in the first version of this fix: the guard keyed on
-    // `stripLocalitySuffix(live.name) !== live.name`, so an alias that reached the seed key WITHOUT
-    // any locality tail bypassed corroboration entirely — merged, contradicting markets, 0 flags.
-    // An alias asserts the NAMES denote one deal; it is not an assertion about markets, so a
-    // contradiction still has to surface.
-    const aliases = new Map([['foo ctr', 'foo center']]);
-    const seedFoo = deal({ id: 'seed-foo', name: 'Foo Center', market: 'Columbus OH' });
-    const live = deal({ id: 'notion-foo', name: 'Foo Ctr', market: 'Kansas City MO', estPrice: 9_000_000 });
-    const flags: DataQualityFlag[] = [];
-
-    const out = mergeDeals([seedFoo], [live], aliases, flags);
-
-    expect(out).toHaveLength(2);
-    expect(out.find((d) => d.id === 'seed-foo')!.estPrice).toBeNull();
-    expect(out.find((d) => d.id === 'notion-foo')!.confidential).toBe(true);
-    expect(flags.some((f) => f.severity === 'error')).toBe(true);
-  });
-
-  it('still merges an aliased pair whose markets agree (control — aliases keep working)', () => {
-    const aliases = new Map([['foo ctr', 'foo center']]);
-    const seedFoo = deal({ id: 'seed-foo', name: 'Foo Center', market: 'Columbus OH' });
-    const live = deal({ id: 'notion-foo', name: 'Foo Ctr', market: 'Columbus OH', estPrice: 9_000_000 });
-    const flags: DataQualityFlag[] = [];
-
-    const out = mergeDeals([seedFoo], [live], aliases, flags);
-
-    expect(out).toHaveLength(1);
-    expect(out[0]!.estPrice).toBe(9_000_000);
-    expect(flags).toHaveLength(0);
-  });
-
-  it('still merges an EXACT name match even with a differing market (the strip was not load-bearing)', () => {
-    // No locality tail, so C1's mechanism is absent. This is pre-existing behavior and stays put:
-    // the names are literally identical, which is its own corroboration.
-    const live = deal({ id: 'notion-4', name: 'Enterprise Parkway', market: 'Kansas City MO', estPrice: 6_000_000 });
-    const flags: DataQualityFlag[] = [];
-
-    const out = mergeDeals([seedRow], [live], new Map(), flags);
-
-    expect(out).toHaveLength(1);
-    expect(out[0]!.estPrice).toBe(6_000_000);
-  });
-});
-
-/**
- * REFUTE-PASS FINDINGS on the C1/H1 fix (wf_e5c7092c-a22). Five real defects, all in my own fix.
- */
-describe('mergeDeals — REFUTE: join-key flags must not carry deal names (Hard Invariant 3)', () => {
-  it('names no deal in the flag text or rawValue — those flags reach the PUBLIC mirror', () => {
-    // snapshot.dataQuality is published by scripts/bake-mirror.ts, which gates only on `degraded`,
-    // and redactConfidential explicitly does NOT sweep dataQuality. So a name in a flag emitted for
-    // a duplicated CONFIDENTIAL row lands on brain.oxfordra.net. The console.warn keeps the name for
-    // local debugging; the published flag must carry only a correlatable digest.
-    const secret = 'Wolverine Holdings Portfolio';
-    const flags: DataQualityFlag[] = [];
-
-    mergeDeals(
-      [],
-      [
-        deal({ id: 'n-1', name: `${secret} — Columbus, OH`, confidential: true }),
-        deal({ id: 'n-2', name: `${secret} — Kansas City, MO`, confidential: true }),
-      ],
-      new Map(),
-      flags,
-    );
-
-    expect(flags.length).toBeGreaterThan(0);
-    for (const f of flags) {
-      const blob = `${f.issue} ${f.rawValue ?? ''} ${f.entity} ${f.field}`;
-      expect(blob).not.toContain('Wolverine');
-      expect(blob.toLowerCase()).not.toContain('wolverine');
-    }
-  });
-});
-
-describe('mergeDeals — REFUTE: a lossy market sentinel must not corroborate or refuse', () => {
-  const seedRow = deal({ id: 'seed-1', name: 'Enterprise Parkway', market: 'Columbus OH' });
-
-  it('MERGES when the live market is the lossy "Other" sentinel, not refuses', () => {
-    // mapMarket collapses any Notion select outside MARKET_MAP to 'Other'. Treating that as a real
-    // market means one cosmetic select rename false-refuses every conventionally-named row at once
-    // and bricks every portfolio.json write — an availability regression far worse than the defect.
-    const live = deal({ id: 'notion-1', name: 'Enterprise Parkway — Columbus, OH', market: 'Other', estPrice: 6_000_000 });
-    const flags: DataQualityFlag[] = [];
-
-    const out = mergeDeals([seedRow], [live], new Map(), flags);
-
-    expect(out).toHaveLength(1);
-    expect(out[0]!.estPrice).toBe(6_000_000);
-    expect(flags.some((f) => f.severity === 'error')).toBe(false);
-  });
-
-  it('REPORTS at warn only when NEITHER signal is available (no mapped market, no locality tail)', () => {
-    // Genuinely unverifiable: the live name carries no "— City, ST" tail and no usable market, so
-    // neither corroboration signal exists. Still merges (availability over purity) but never silently.
-    const live = deal({ id: 'notion-2', name: 'Enterprise Parkway Extension', market: null, estPrice: 6_000_000 });
-    const bareSeed = deal({ id: 'seed-b', name: 'Enterprise Parkway Extension!', market: null });
-    const flags: DataQualityFlag[] = [];
-
-    const out = mergeDeals([bareSeed], [live], new Map(), flags);
-
-    expect(out).toHaveLength(1); // still merges — availability over purity
-    expect(flags.some((f) => f.severity === 'warn' && /could not be corroborated/i.test(f.issue))).toBe(true);
-    expect(flags.some((f) => f.severity === 'error')).toBe(false);
-  });
-});
-
-describe('mergeDeals — REFUTE: corroboration must consider the SEED name’s suffix too', () => {
-  it('refuses when the SEED name carries the locality tail and the bare live name is another market', () => {
-    // The check tested stripLocalitySuffix on the LIVE name only, so a suffix-bearing SEED plus a
-    // bare Notion name matched "exactly" and merged the wrong deal's economics silently.
-    const seedRow = deal({ id: 'seed-s', name: 'Foundry Row — Columbus, OH', market: 'Columbus OH' });
-    const live = deal({ id: 'notion-s', name: 'Foundry Row', market: 'Kansas City MO', estPrice: 7_000_000 });
-    const flags: DataQualityFlag[] = [];
-
-    const out = mergeDeals([seedRow], [live], new Map(), flags);
-
-    expect(out).toHaveLength(2);
-    expect(out.find((d) => d.id === 'seed-s')!.estPrice).toBeNull();
-    expect(flags.some((f) => f.severity === 'error')).toBe(true);
-  });
-});
-
-describe('mergeDeals — REFUTE: an accepted near-dupe pair must not block the gate forever', () => {
-  it('downgrades the collision flag to warn when the operator has accepted the pair', () => {
-    // Pre-fix, a Notion↔Notion collision was gated only via findNearDuplicateNames, which consults
-    // NOTION_DEALS_ACCEPTED_NEAR_DUPES — so two genuinely-different same-bare-name assets had a
-    // documented gate-passing steady state. An unconditional error flag removed it, and the flag's
-    // prescribed alias remedy is impossible when neither row has a seed record.
-    const a = 'Synthetic Pkwy — Columbus, OH';
-    const b = 'Synthetic Pkwy — Kansas City, MO';
-    const accepted = new Set([acceptedCollisionKey(a, b)]);
-    const flags: DataQualityFlag[] = [];
-
-    mergeDeals([], [deal({ id: 'n-a', name: a }), deal({ id: 'n-b', name: b })], new Map(), flags, accepted);
-
-    expect(flags.some((f) => f.severity === 'error')).toBe(false);
-    expect(flags.some((f) => f.severity === 'warn')).toBe(true);
-  });
-
-  it('still raises an ERROR for a collision the operator has NOT accepted (control)', () => {
-    const flags: DataQualityFlag[] = [];
-    mergeDeals(
-      [],
-      [deal({ id: 'n-a', name: 'Other Pkwy — Columbus, OH' }), deal({ id: 'n-b', name: 'Other Pkwy — Kansas City, MO' })],
-      new Map(),
-      flags,
-      new Set(),
-    );
-    expect(flags.some((f) => f.severity === 'error')).toBe(true);
-  });
-});
-
-/**
- * FOURTH-PASS FINDINGS (wf_f0cfcc19-9eb). Six defects in the third round of fixes.
- */
-describe('mergeDeals — 4th pass: the name’s own locality tail is corroborating evidence', () => {
-  it('REFUSES on a contradicting locality tail even when the live market is the lossy sentinel', () => {
-    // The HIGH. Treating only the 6-entry mapped Market as evidence left the guard inert for 11 of
-    // 20 live rows (10 'Other' + 1 null) — a majority, not the "1 of 20" my own comment claimed.
-    // Worse, it was a REGRESSION: in that zone a wrong cross-side merge now proceeded where the
-    // previous commit refused, publishing the wrong deal's economics under the seed's public flag.
-    // The disambiguator dealJoinKey deleted is still IN THE NAME, so use it: a tail naming another
-    // state contradicts the seed's market regardless of how the Market select happened to map.
-    const seedRow = deal({ id: 'seed-1', name: 'Synthetic Trade Center', market: 'Indianapolis IN' });
-    const live = deal({ id: 'notion-1', name: 'Synthetic Trade Center — Grand Rapids, MI', market: 'Other', estPrice: 4_000_000 });
-    const flags: DataQualityFlag[] = [];
-
-    const out = mergeDeals([seedRow], [live], new Map(), flags);
-
-    expect(out).toHaveLength(2);
-    expect(out.find((d) => d.id === 'seed-1')!.estPrice).toBeNull();
-    expect(out.find((d) => d.id === 'notion-1')!.confidential).toBe(true);
-    expect(flags.some((f) => f.severity === 'error')).toBe(true);
-  });
-
-  it('MERGES when the locality tail agrees with the seed market despite a lossy sentinel', () => {
-    const seedRow = deal({ id: 'seed-2', name: 'Synthetic Trade Center', market: 'Columbus OH' });
-    const live = deal({ id: 'notion-2', name: 'Synthetic Trade Center — Dublin, OH', market: 'Other', estPrice: 4_000_000 });
-    const flags: DataQualityFlag[] = [];
-
-    const out = mergeDeals([seedRow], [live], new Map(), flags);
-
-    expect(out).toHaveLength(1);
-    expect(out[0]!.estPrice).toBe(4_000_000);
-    // Corroborated by the tail, so no uncorroborated warn either.
-    expect(flags).toHaveLength(0);
-  });
-
-  it('treats a multi-state market as covering all of its states', () => {
-    const seedRow = deal({ id: 'seed-3', name: 'Synthetic Yard', market: 'Kansas City MO' });
-    const live = deal({ id: 'notion-3', name: 'Synthetic Yard — Kansas City, KS', market: 'Other', estPrice: 1_000_000 });
-    const flags: DataQualityFlag[] = [];
-
-    const out = mergeDeals([seedRow], [live], new Map(), flags);
-
-    expect(out).toHaveLength(1);
-    expect(flags.some((f) => f.severity === 'error')).toBe(false);
-  });
-});
-
-describe('mergeDeals — 4th pass: identical names are self-corroborating', () => {
-  it('merges two LITERALLY IDENTICAL names even though both carry a locality tail', () => {
-    // exactNameMatch demanded strip-idempotence on both sides, so identical suffix-bearing names
-    // were classified non-exact and had corroboration demanded of them — the inverse error.
-    const seedRow = deal({ id: 'seed-i', name: 'Synthetic Park — Columbus, OH', market: 'Columbus OH' });
-    const live = deal({ id: 'notion-i', name: 'Synthetic Park — Columbus, OH', market: 'Other', estPrice: 2_000_000 });
-    const flags: DataQualityFlag[] = [];
-
-    const out = mergeDeals([seedRow], [live], new Map(), flags);
-
-    expect(out).toHaveLength(1);
-    expect(out[0]!.estPrice).toBe(2_000_000);
-    expect(flags).toHaveLength(0);
-  });
-});
-
-describe('mergeDeals — 4th pass: acceptance must not grandfather future collisions', () => {
-  it('does NOT degrade a collision involving a row the operator never accepted', () => {
-    // acceptedPairKey sorts the two JOIN KEYS, and in a same-key collision both names share one key,
-    // so it yields "k||k" for ANY pair on that key: one historical acceptance silently grandfathered
-    // every future collision on the same bare name.
-    const a = 'Synthetic Pkwy — Columbus, OH';
-    const b = 'Synthetic Pkwy — Kansas City, MO';
-    const c = 'Synthetic Pkwy — Indianapolis, IN'; // NEW, never accepted
-    const accepted = new Set([acceptedCollisionKey(a, b)]);
-    const flags: DataQualityFlag[] = [];
-
-    mergeDeals(
-      [],
-      [deal({ id: 'n-a', name: a }), deal({ id: 'n-b', name: b }), deal({ id: 'n-c', name: c })],
-      new Map(),
-      flags,
-      accepted,
-    );
-
-    expect(flags.some((f) => f.severity === 'error')).toBe(true);
-  });
-
-  it('does NOT degrade to warn when a SEED row shares the colliding key', () => {
-    // The degrade was justified by "two Notion-ONLY rows, no seed to alias to". With a seed present
-    // the steady state is 3 published rows for 2 assets with the seed's live economics suppressed.
-    const a = 'Synthetic Ridge — Columbus, OH';
-    const b = 'Synthetic Ridge — Kansas City, MO';
-    const flags: DataQualityFlag[] = [];
-
-    mergeDeals(
-      [deal({ id: 'seed-r', name: 'Synthetic Ridge', market: 'Columbus OH' })],
-      [deal({ id: 'n-a', name: a }), deal({ id: 'n-b', name: b })],
-      new Map(),
-      flags,
-      new Set([acceptedCollisionKey(a, b)]),
-    );
-
-    expect(flags.some((f) => f.severity === 'error')).toBe(true);
-  });
-});
-
-describe('mergeDeals — 4th pass: duplicate seed join keys must fail closed', () => {
-  it('refuses to merge when two seed rows normalize to one join key', () => {
-    // Both seeds looked up the same live row: one merged it, the other "refused" it, and the refusal
-    // flag text asserted the live row was kept separate when it had actually been merged.
-    const flags: DataQualityFlag[] = [];
-    const out = mergeDeals(
-      [
-        deal({ id: 'seed-x1', name: 'Synthetic Depot', market: 'Columbus OH' }),
-        deal({ id: 'seed-x2', name: 'Synthetic  Depot!', market: 'Columbus OH' }), // same join key
-      ],
-      [deal({ id: 'n-x', name: 'Synthetic Depot — Columbus, OH', estPrice: 5_000_000 })],
-      new Map(),
-      flags,
-    );
-
-    expect(flags.some((f) => f.severity === 'error' && /seed/i.test(f.issue))).toBe(true);
-    // Neither seed may absorb the live row while the ambiguity stands.
-    expect(out.filter((d) => d.estPrice === 5_000_000 && d.id.startsWith('seed-'))).toHaveLength(0);
-  });
-});
-
-describe('mergeDeals — H1: a join-key collision must be gate-visible, not just logged', () => {
-  it('emits an error-severity flag for an alias-mediated collision', () => {
-    const aliases = new Map([
-      ['alpha park ctr', 'alpha park center'],
-      ['alpha pc', 'alpha park center'],
-    ]);
-    const seedRow = deal({ id: 'seed-a', name: 'Alpha Park Center', market: 'Columbus OH' });
-    const dupes = [
-      deal({ id: 'n-1', name: 'Alpha Park Ctr — Columbus, OH' }),
-      deal({ id: 'n-2', name: 'Alpha PC — Columbus, OH' }),
-    ];
-    const flags: DataQualityFlag[] = [];
-
-    const out = mergeDeals([seedRow], dupes, aliases, flags);
-
-    // Nothing dropped: seed + both withheld rows.
-    expect(out).toHaveLength(3);
-    expect(out.filter((d) => d.id.startsWith('n-')).every((d) => d.confidential)).toBe(true);
-    // The joiner detected the collision itself, so it must say so where the gate can see it.
-    expect(flags.some((f) => f.severity === 'error' && /collision/i.test(f.issue))).toBe(true);
-  });
-});
-
-describe('parseNameAliases', () => {
-  it('parses ;/newline-separated "from=>to" pairs, normalized and case-insensitive', () => {
-    const m = parseNameAliases('A Deal => Seed One;  Other=>Seed Two\nbad-line-no-arrow');
-    expect(m.get('a deal')).toBe('seed one');
-    expect(m.get('other')).toBe('seed two');
-    expect(m.size).toBe(2);
-  });
-
-  it('returns an empty map for blank/unset input', () => {
-    expect(parseNameAliases('').size).toBe(0);
   });
 });
 
@@ -713,8 +229,179 @@ describe('loadDeals degradation reporting', () => {
     expect(out.deals).toEqual(SEED_DEALS);
   });
 
-  it('surfaces merge join-key flags on DealsLoad so the reconciliation gate can act on them', async () => {
-    // Two live rows colliding on one join key: the flag must escape the adapter, not just the log.
+  it('keeps BOTH rows when two live titles are identical but the Deal IDs differ', async () => {
+    // The determinism lens' HIGH. fetchNotionDeals keyed its dedupe map on `notion-${slug(name)}`,
+    // so row EXISTENCE was a function of the NAME, last-write-wins over Notion's return order —
+    // upstream of every guard in mergeDeals. A pure permutation of the API page order flipped which
+    // row survived, and the destroyed one appeared in neither `merged` nor `extras`: a confidential
+    // live row gone, zero flags, exit clean. Keying on the Deal ID is what the id join makes
+    // possible. Asserted in BOTH orders, because one order passing proves nothing here.
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    const row = (title: string, n: number) =>
+      page({
+        'Deal Name': { type: 'title', title: [{ plain_text: title }] },
+        'Deal ID': { type: 'unique_id', unique_id: { prefix: 'DEAL', number: n } },
+      });
+
+    for (const results of [
+      [row('E Fulton St — Columbus, OH', 7), row('E. Fulton St — Columbus, OH', 21)],
+      [row('E. Fulton St — Columbus, OH', 21), row('E Fulton St — Columbus, OH', 7)],
+    ]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ results, has_more: false }),
+        text: async () => '',
+      }));
+      const out = await loadDeals();
+      // Scoped to the two rows under test: loadDeals merges against the REAL SEED_DEALS, which
+      // carry their own live Deal IDs, so asserting the whole id set would pin unrelated data.
+      const under = out.deals.filter((d) => d.notionDealId === 'DEAL-7' || d.notionDealId === 'DEAL-21');
+      expect(under.map((d) => d.notionDealId).sort()).toEqual(['DEAL-21', 'DEAL-7']);
+      expect(under.every((d) => d.confidential)).toBe(true); // neither is seeded — both fail closed
+    }
+  });
+
+  it('keeps BOTH idless rows when their names slug identically, regardless of API page order', async () => {
+    // The second refute pass' MEDIUM: the 2026-08-12 fix keyed id-CARRYING rows on notionDealId but
+    // left the idless fallback as `d.id`, which IS still the name slug — so two idless rows with
+    // punctuation-only name variance (slug() strips non-word characters) still collided, upstream of
+    // every guard in mergeDeals. Fixed by falling back to the Notion PAGE id (page.id), which cannot
+    // collide the way a slug can. Asserted in both orders.
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    const idlessRow = (pageId: string, title: string) => ({
+      id: pageId,
+      ...page({ 'Deal Name': { type: 'title', title: [{ plain_text: title }] } }),
+    });
+
+    for (const results of [
+      [idlessRow('page-a', 'Collide Park — Columbus, OH'), idlessRow('page-b', 'Collide. Park — Columbus, OH')],
+      [idlessRow('page-b', 'Collide. Park — Columbus, OH'), idlessRow('page-a', 'Collide Park — Columbus, OH')],
+    ]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ results, has_more: false }),
+        text: async () => '',
+      }));
+      const out = await loadDeals();
+      const under = out.deals.filter((d) => d.name.startsWith('Collide'));
+      expect(under.map((d) => d.name).sort()).toEqual(['Collide Park — Columbus, OH', 'Collide. Park — Columbus, OH']);
+      expect(under.every((d) => d.confidential)).toBe(true);
+    }
+  });
+
+  it('raises ONE aggregated warn flag when a live Stage value is not in STAGE_MAP', async () => {
+    // The edge-case lens' MEDIUM: the 'Killed' fix was a point-fix, not a systemic one. A future
+    // rename or new Stage option resolves to mapStage's 'Candidate' default — an active-deal claim,
+    // not a neutral fallback — with zero flags, reproducing the identical dead-deal-as-active
+    // incident. This flag makes the drift visible instead of silent.
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [
+          page({
+            'Deal Name': { type: 'title', title: [{ plain_text: 'Renamed Stage Deal' }] },
+            Stage: { type: 'select', select: { name: 'Abandoned' } },
+          }),
+        ],
+        has_more: false,
+      }),
+      text: async () => '',
+    }));
+    const out = await loadDeals();
+    const drift = out.flags.filter((f) => f.field === 'stage');
+    expect(drift).toHaveLength(1);
+    expect(drift[0]!.severity).toBe('warn');
+    // The unmapped VALUE itself must not appear in the published flag (reaches the public mirror).
+    expect(drift[0]!.issue).not.toContain('Abandoned');
+  });
+
+  it('drops a field from estimatedFields once a live value actually replaces it', () => {
+    const seed = [
+      deal({ id: 's', name: 'S', notionDealId: 'DEAL-1', sf: 100, estimatedFields: ['sf'] }),
+    ];
+    const withLiveSf = mergeDeals(seed, [deal({ id: 'n', name: 'N', notionDealId: 'DEAL-1', sf: 5000 })]);
+    expect(withLiveSf[0]!.sf).toBe(5000);
+    expect(withLiveSf[0]!.estimatedFields).toEqual([]); // real number now — no longer an estimate
+
+    const withNoLiveSf = mergeDeals(seed, [deal({ id: 'n', name: 'N', notionDealId: 'DEAL-1', sf: null })]);
+    expect(withNoLiveSf[0]!.sf).toBe(100); // seed value survives
+    expect(withNoLiveSf[0]!.estimatedFields).toEqual(['sf']); // still an estimate — correctly labeled
+  });
+
+  it('generalizes past sf/estPrice — any pick()-able field drops out once live supplies it', () => {
+    // The first version of this fix hardcoded sf/estPrice, which was itself the same class of
+    // incompleteness it was fixing. Pinned here for capRate, a field no seed lists today but
+    // nothing in the Deal type prevents.
+    const seed = [deal({ id: 's', name: 'S', notionDealId: 'DEAL-1', capRate: 0.06, estimatedFields: ['capRate'] })];
+    const out = mergeDeals(seed, [deal({ id: 'n', name: 'N', notionDealId: 'DEAL-1', capRate: 0.072 })]);
+    expect(out[0]!.capRate).toBe(0.072);
+    expect(out[0]!.estimatedFields).toEqual([]);
+  });
+
+  it('leaves a NON-pick()-able field (e.g. buildings) permanently labeled estimated', () => {
+    // buildings is never replaced by a live value (preserved from the seed unconditionally), so
+    // nothing in this merge could ever un-estimate it — the filter must not drop it regardless.
+    const seed = [deal({ id: 's', name: 'S', notionDealId: 'DEAL-1', buildings: 3, estimatedFields: ['buildings'] })];
+    const out = mergeDeals(seed, [deal({ id: 'n', name: 'N', notionDealId: 'DEAL-1' })]);
+    expect(out[0]!.estimatedFields).toEqual(['buildings']);
+  });
+
+  it('drops "stage" too — it is taken from live UNCONDITIONALLY, more definitively live-sourced than a pick()-able field', () => {
+    // Adversarial pass, 2026-08-13, all 3 lenses (executed proof): the first generalization missed
+    // this field specifically because it is not pick()'d — but `stage: live.stage` is assigned with
+    // no fallback at all, so it can never legitimately remain "just an estimate" once a live row
+    // joins. Real-world plausibility per the module's own comment: post-847a17c seeds carry "null
+    // economics and a hand-set stage" — stage is the field a seed author is MOST likely to mark
+    // estimated.
+    const seed = [deal({ id: 's', name: 'S', notionDealId: 'DEAL-1', stage: 'Candidate', estimatedFields: ['stage', 'sf'] })];
+    const out = mergeDeals(seed, [deal({ id: 'n', name: 'N', notionDealId: 'DEAL-1', stage: 'Due Diligence', sf: 5000 })]);
+    expect(out[0]!.stage).toBe('Due Diligence');
+    expect(out[0]!.estimatedFields).toEqual([]);
+  });
+
+  it('reaches mergeDeals’ collision detector for two DIFFERENT pages sharing one Deal ID', async () => {
+    // Code review, 2026-08-13, HIGH. fetchNotionDeals used to key its dedupe map on notionDealId
+    // FIRST, so two distinct live pages sharing a colliding Deal ID (a genuine data defect the
+    // second refute round's own comment anticipated but this dedup order silently absorbed)
+    // overwrote each other in that Map BEFORE mergeDeals' exhaustively tested collision detector
+    // ever received more than one row to compare. Keying on the Notion PAGE id first means both
+    // distinct pages now survive to mergeDeals, which correctly raises the collision error and
+    // holds both out — the fix is that the detector gets to run at all, not that the fetch layer
+    // resolves the collision itself.
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    const collidingRow = (pageId: string, title: string) => ({
+      id: pageId,
+      ...page({
+        'Deal Name': { type: 'title', title: [{ plain_text: title }] },
+        'Deal ID': { type: 'unique_id', unique_id: { prefix: 'DEAL', number: 90 } },
+      }),
+    });
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [collidingRow('page-x', 'First Colliding Row'), collidingRow('page-y', 'Second Colliding Row')],
+        has_more: false,
+      }),
+      text: async () => '',
+    }));
+    const out = await loadDeals();
+
+    const under = out.deals.filter((d) => d.name.includes('Colliding Row'));
+    expect(under).toHaveLength(2); // BOTH pages survived the fetch layer — nothing silently dropped
+    expect(under.every((d) => d.confidential)).toBe(true); // and mergeDeals correctly refused both
+    expect(out.flags.some((f) => f.field === 'notionDealId' && f.severity === 'error' && f.rawValue === 'DEAL-90')).toBe(true);
+  });
+
+  it('surfaces merge Deal-ID flags on DealsLoad so the reconciliation gate can act on them', async () => {
+    // Live rows the joiner had to refuse: the flag must ESCAPE the adapter, not just reach the log.
+    // Here they carry no Deal ID at all, which is what a renamed or unshared "Deal ID" column looks
+    // like from this side — the join refuses rather than falling back to the names.
     process.env.NOTION_TOKEN = 't';
     process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
@@ -731,7 +418,10 @@ describe('loadDeals degradation reporting', () => {
 
     const out = await loadDeals();
 
-    expect(out.flags.some((f) => f.field === 'joinKey' && f.severity === 'error')).toBe(true);
+    expect(out.flags.some((f) => f.field === 'notionDealId' && f.severity === 'error')).toBe(true);
+    // …and both rows survive, defaulting confidential — a refusal never drops a deal.
+    expect(out.deals.filter((d) => d.name.startsWith('Collide Park'))).toHaveLength(2);
+    expect(out.deals.filter((d) => d.name.startsWith('Collide Park')).every((d) => d.confidential)).toBe(true);
   });
 
   it('reports degraded=null on a healthy live fetch', async () => {
