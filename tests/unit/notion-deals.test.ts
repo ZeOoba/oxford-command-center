@@ -54,6 +54,21 @@ describe('mapNotionPage', () => {
     expect(d.confidential).toBe(true);
   });
 
+  it('takes Deal.id from the Notion page UUID when present, not a name slug', () => {
+    // Code review, 2026-08-13, HIGH. An unmatched (extras) row's own `.id` feeds two
+    // Hard-Invariant-3-adjacent consumers directly: isDeclassified()'s `allowlist.includes(id)`
+    // check and bake-mirror's redactConfidential link-stripping. A slug-derived id let two
+    // DIFFERENT live deals collide on it whenever their names agreed on the first 64 characters
+    // (slug()'s truncation) — a real risk for "Phase One"/"Phase Two"-style names.
+    const d = mapNotionPage({ id: 'notion-page-uuid-abc123', ...page() })!;
+    expect(d.id).toBe('notion-page-uuid-abc123');
+  });
+
+  it('falls back to the name-slug id only when the page carries no id (fixture convenience)', () => {
+    const d = mapNotionPage(page())!;
+    expect(d.id).toBe('notion-maple-logistics');
+  });
+
   it('returns null for a row with no Deal Name', () => {
     expect(mapNotionPage({ properties: { 'Deal Name': { type: 'title', title: [] } } })).toBeNull();
   });
@@ -315,6 +330,72 @@ describe('loadDeals degradation reporting', () => {
     const withNoLiveSf = mergeDeals(seed, [deal({ id: 'n', name: 'N', notionDealId: 'DEAL-1', sf: null })]);
     expect(withNoLiveSf[0]!.sf).toBe(100); // seed value survives
     expect(withNoLiveSf[0]!.estimatedFields).toEqual(['sf']); // still an estimate — correctly labeled
+  });
+
+  it('generalizes past sf/estPrice — any pick()-able field drops out once live supplies it', () => {
+    // The first version of this fix hardcoded sf/estPrice, which was itself the same class of
+    // incompleteness it was fixing. Pinned here for capRate, a field no seed lists today but
+    // nothing in the Deal type prevents.
+    const seed = [deal({ id: 's', name: 'S', notionDealId: 'DEAL-1', capRate: 0.06, estimatedFields: ['capRate'] })];
+    const out = mergeDeals(seed, [deal({ id: 'n', name: 'N', notionDealId: 'DEAL-1', capRate: 0.072 })]);
+    expect(out[0]!.capRate).toBe(0.072);
+    expect(out[0]!.estimatedFields).toEqual([]);
+  });
+
+  it('leaves a NON-pick()-able field (e.g. buildings) permanently labeled estimated', () => {
+    // buildings is never replaced by a live value (preserved from the seed unconditionally), so
+    // nothing in this merge could ever un-estimate it — the filter must not drop it regardless.
+    const seed = [deal({ id: 's', name: 'S', notionDealId: 'DEAL-1', buildings: 3, estimatedFields: ['buildings'] })];
+    const out = mergeDeals(seed, [deal({ id: 'n', name: 'N', notionDealId: 'DEAL-1' })]);
+    expect(out[0]!.estimatedFields).toEqual(['buildings']);
+  });
+
+  it('drops "stage" too — it is taken from live UNCONDITIONALLY, more definitively live-sourced than a pick()-able field', () => {
+    // Adversarial pass, 2026-08-13, all 3 lenses (executed proof): the first generalization missed
+    // this field specifically because it is not pick()'d — but `stage: live.stage` is assigned with
+    // no fallback at all, so it can never legitimately remain "just an estimate" once a live row
+    // joins. Real-world plausibility per the module's own comment: post-847a17c seeds carry "null
+    // economics and a hand-set stage" — stage is the field a seed author is MOST likely to mark
+    // estimated.
+    const seed = [deal({ id: 's', name: 'S', notionDealId: 'DEAL-1', stage: 'Candidate', estimatedFields: ['stage', 'sf'] })];
+    const out = mergeDeals(seed, [deal({ id: 'n', name: 'N', notionDealId: 'DEAL-1', stage: 'Due Diligence', sf: 5000 })]);
+    expect(out[0]!.stage).toBe('Due Diligence');
+    expect(out[0]!.estimatedFields).toEqual([]);
+  });
+
+  it('reaches mergeDeals’ collision detector for two DIFFERENT pages sharing one Deal ID', async () => {
+    // Code review, 2026-08-13, HIGH. fetchNotionDeals used to key its dedupe map on notionDealId
+    // FIRST, so two distinct live pages sharing a colliding Deal ID (a genuine data defect the
+    // second refute round's own comment anticipated but this dedup order silently absorbed)
+    // overwrote each other in that Map BEFORE mergeDeals' exhaustively tested collision detector
+    // ever received more than one row to compare. Keying on the Notion PAGE id first means both
+    // distinct pages now survive to mergeDeals, which correctly raises the collision error and
+    // holds both out — the fix is that the detector gets to run at all, not that the fetch layer
+    // resolves the collision itself.
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    const collidingRow = (pageId: string, title: string) => ({
+      id: pageId,
+      ...page({
+        'Deal Name': { type: 'title', title: [{ plain_text: title }] },
+        'Deal ID': { type: 'unique_id', unique_id: { prefix: 'DEAL', number: 90 } },
+      }),
+    });
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [collidingRow('page-x', 'First Colliding Row'), collidingRow('page-y', 'Second Colliding Row')],
+        has_more: false,
+      }),
+      text: async () => '',
+    }));
+    const out = await loadDeals();
+
+    const under = out.deals.filter((d) => d.name.includes('Colliding Row'));
+    expect(under).toHaveLength(2); // BOTH pages survived the fetch layer — nothing silently dropped
+    expect(under.every((d) => d.confidential)).toBe(true); // and mergeDeals correctly refused both
+    expect(out.flags.some((f) => f.field === 'notionDealId' && f.severity === 'error' && f.rawValue === 'DEAL-90')).toBe(true);
   });
 
   it('surfaces merge Deal-ID flags on DealsLoad so the reconciliation gate can act on them', async () => {

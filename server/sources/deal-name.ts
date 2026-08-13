@@ -80,9 +80,82 @@ export function dealJoinKey(name: string): string {
  * duplicate. Suppressing a false alarm and authorizing a merge are different powers; this has only
  * the first.
  */
+/**
+ * A short, stable, NON-IDENTIFYING digest of a deal-join key, for flag text that would otherwise
+ * carry a deal NAME.
+ *
+ * Moved here 2026-08-13 (code review) from server/sources/notion-deals.ts, where its own doc
+ * comment claimed exactly ONE caller needed it — already stale at two call sites there, and now a
+ * third exists (checkSnapshot, server/reconcile-runtime.ts) reachable via the COMMITTED-snapshot
+ * CI path that has no console.warn to log the real name beside it. Living beside dealJoinKey
+ * rather than duplicated per caller keeps "how do we reference a name-derived key safely" answered
+ * once.
+ *
+ * dataQuality flags reach the PUBLIC brain.oxfordra.net payload (scripts/bake-mirror.ts) and
+ * redactConfidential does NOT sweep them regardless of `entity` — verified against the live code
+ * 2026-08-13, not assumed: its own comment says "dataQuality is parser-emitted" and it sweeps only
+ * dealComps/acquisitionInputs/tenantNotes. Embedding a duplicated CONFIDENTIAL deal's name in any
+ * flag text is therefore a Hard Invariant 3 exposure. Prefer `Deal.notionDealId` where available —
+ * opaque and non-identifying by construction — and fall back to this digest only when it is null.
+ * FNV-1a rather than node:crypto so this module stays safe for any bundle that reaches it.
+ */
+export function keyDigest(key: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
 export function localityStateOf(name: string): string | null {
   const m = LOCALITY_SUFFIX.exec(name);
   if (!m) return null;
   const st = /([A-Za-z]{2})\s*$/.exec(m[0]);
   return st ? st[1]!.toUpperCase() : null;
+}
+
+/**
+ * Groups of 2+ rows sharing one normalized name that were never joined onto each other — the
+ * always-on published-duplicate backstop.
+ *
+ * SHARED by two callers that must judge "same deal" identically: mergeDeals (over its freshly
+ * merged output) and checkSnapshot (over the COMMITTED, POST-MERGE snapshot, reachable via
+ * scripts/reconcile-snapshot.ts's `npm run gate:ci` path — zero Notion I/O, zero call into
+ * mergeDeals). A merge conflict, a hand-edit, or a future writer bug can introduce two rows for
+ * one deal without ever going through mergeDeals at all; checkSnapshot's own CI gate exists
+ * PRECISELY to catch corruption independent of how the file was produced (its header cites the
+ * 2026-08-03 phantom-vacancy-lease incident that shipped under exactly that kind of blind spot).
+ * A second, code-review-caught instance of the "detector diverges from the joiner" trap this
+ * module's own header already warns about — this time not a stale key function, but the detector
+ * existing in only ONE of two reachable code paths. One function, two call sites, closes it for
+ * both. (Independent code review, 2026-08-13 — HIGH.)
+ *
+ * Cross-metro namesakes are suppressed: two rows that both carry a locality tail, both name a
+ * state, and disagree on every state, are the documented steady state (a bare street name
+ * repeating across metros — "470 McCormick Blvd — Columbus, OH" vs "— Louisville, KY"), not a
+ * duplicate. A row with NO tail cannot establish distinctness, so it never suppresses.
+ */
+export function findDuplicateDealRows<T extends { id: string; name: string; notionDealId: string | null }>(
+  rows: readonly T[],
+): Array<{ key: string; rows: T[] }> {
+  const byName = new Map<string, T[]>();
+  for (const d of rows) {
+    const key = dealJoinKey(d.name);
+    if (!key) continue;
+    const bucket = byName.get(key);
+    if (bucket) bucket.push(d);
+    else byName.set(key, [d]);
+  }
+  const groups: Array<{ key: string; rows: T[] }> = [];
+  for (const [key, group] of byName) {
+    if (group.length < 2) continue;
+    const states = group.map((r) => localityStateOf(r.name));
+    const known = states.filter((st): st is string => st !== null);
+    // Suppress ONLY when every row names a state and all of them differ. A missing tail cannot
+    // establish distinctness, so it never suppresses.
+    if (known.length === group.length && new Set(known).size === group.length) continue;
+    groups.push({ key, rows: group });
+  }
+  return groups;
 }

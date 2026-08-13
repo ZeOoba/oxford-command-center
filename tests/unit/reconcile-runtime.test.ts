@@ -62,6 +62,86 @@ describe('checkSnapshot — runtime reconciliation', () => {
     expect(flags.some((f) => f.field === 'properties.id')).toBe(false);
   });
 
+  // Restored 2026-08-13 (code review): this check stood here as findNearDuplicateNames until
+  // 2026-08-12, when it was retired on the argument that mergeDeals' migration tripwire replaced
+  // it. That missed that checkSnapshot is ALSO invoked by scripts/reconcile-snapshot.ts's
+  // `npm run gate:ci` — zero Notion I/O, zero call into mergeDeals — which exists precisely to
+  // catch corruption in the COMMITTED snapshot independent of how it was generated.
+  describe('deal duplicate/collision backstop — reachable independent of a live Notion fetch', () => {
+    it('flags duplicate deal Deal IDs (error) — same shape as properties.id', () => {
+      const flags = checkSnapshot(base({
+        deals: [
+          { id: 'a', name: 'Alpha', notionDealId: 'DEAL-1' },
+          { id: 'b', name: 'Beta', notionDealId: 'DEAL-1' },
+        ],
+      }));
+      expect(flags.some((f) => f.field === 'deals.notionDealId' && f.severity === 'error' && /DEAL-1/.test(f.issue))).toBe(true);
+    });
+
+    it('flags two rows sharing a normalized name and DIFFERENT Deal IDs, naming both ids', () => {
+      const flags = checkSnapshot(base({
+        deals: [
+          { id: 'a', name: 'Quorravale Depot', notionDealId: 'DEAL-1' },
+          { id: 'b', name: 'Quorravale Depot', notionDealId: 'DEAL-2' },
+        ],
+      }));
+      const f = flags.find((x) => x.field === 'deals.name')!;
+      expect(f.severity).toBe('error');
+      expect(f.issue).toContain('different Deal IDs');
+      expect(f.issue).toContain('DEAL-1');
+      expect(f.issue).toContain('DEAL-2');
+    });
+
+    it('says "SAME Deal ID" — not "different" — for a verbatim-duplicated row (the CI path’s primary target)', () => {
+      // The exact scenario reconcile-snapshot.ts's gate:ci call exists to catch: a merge conflict
+      // or hand-edit duplicating one row. Asserting "different Deal IDs" here would be false and
+      // would misdirect the operator toward Notion for a defect that lives in the committed file.
+      const flags = checkSnapshot(base({
+        deals: [
+          { id: 'a', name: 'Quorravale Depot', notionDealId: 'DEAL-1' },
+          { id: 'a', name: 'Quorravale Depot', notionDealId: 'DEAL-1' },
+        ],
+      }));
+      const f = flags.find((x) => x.field === 'deals.name')!;
+      expect(f.issue).toContain('SAME Deal ID');
+      expect(f.issue).not.toContain('different Deal IDs');
+      expect(f.issue.toLowerCase()).toContain('merge conflict');
+    });
+
+    it('names no deal in either the notionDealId or the name duplicate flag — both reach the public mirror', () => {
+      const flags = checkSnapshot(base({
+        deals: [
+          { id: 'a', name: 'Zephyrine Yard', notionDealId: 'DEAL-9' },
+          { id: 'b', name: 'Zephyrine Yard', notionDealId: 'DEAL-9' },
+        ],
+      }));
+      const published = JSON.stringify(flags);
+      expect(published).not.toContain('Zephyrine');
+    });
+
+    it('suppresses a genuine cross-metro namesake, but only when the states actually differ', () => {
+      const suppressed = checkSnapshot(base({
+        deals: [
+          { id: 'a', name: '470 McCormick Blvd — Columbus, OH', notionDealId: 'DEAL-1' },
+          { id: 'b', name: '470 McCormick Blvd — Louisville, KY', notionDealId: 'DEAL-2' },
+        ],
+      }));
+      expect(suppressed.some((f) => f.field === 'deals.name')).toBe(false);
+
+      // Same-STATE namesakes are realistic for ORA's own Columbus/Cincinnati OH cluster and must
+      // NOT be waved through by a bare locality tail — the remedy text says so explicitly.
+      const notSuppressed = checkSnapshot(base({
+        deals: [
+          { id: 'a', name: '1200 Main St — Columbus, OH', notionDealId: 'DEAL-1' },
+          { id: 'b', name: '1200 Main St — Cincinnati, OH', notionDealId: 'DEAL-2' },
+        ],
+      }));
+      const f = notSuppressed.find((x) => x.field === 'deals.name')!;
+      expect(f).toBeDefined();
+      expect(f.issue).toContain('DIFFERENT STATE');
+    });
+  });
+
   it('flags a cash-history latest point that disagrees with the current total (error)', () => {
     const flags = checkSnapshot(
       base({ cash: { totalCash: 500, entities: [{ id: 'e1', currentBalance: 500 }], history: [{ total: 100 }] } }),

@@ -142,6 +142,17 @@ describe('PortfolioFilterProvider persistence', () => {
     expect(screen.getByTestId('manager').textContent).toBe('all');
   });
 
+  it('rejects a deal-only market (e.g. from a stale/tampered session) as invalid for a property filter', () => {
+    // Code review, 2026-08-13. MARKET_VALUES validated against the FULL Market enum here while
+    // PortfolioFilterBar's dropdown (fixed in e2aff7b) could no longer WRITE one of the six
+    // 2026-08-12 deal-only markets — so a persisted value equal to one of them passed isMarket()
+    // and would then match zero PortfolioRow (a property) forever, silently. This filter matches
+    // properties, and PROPERTY_MARKETS is the codomain a property row can actually carry.
+    sessionStorage.setItem('ora-portfolio-filter', JSON.stringify({ market: 'Cincinnati OH', propertyType: 'all', manager: 'all' }));
+    render(<PortfolioFilterProvider><FilterProbe /></PortfolioFilterProvider>);
+    expect(screen.getByTestId('market').textContent).toBe('all');
+  });
+
   it('clear() resets to the default filter and persists it', () => {
     render(<PortfolioFilterProvider><FilterProbe /></PortfolioFilterProvider>);
     fireEvent.click(screen.getByText('set-market'));

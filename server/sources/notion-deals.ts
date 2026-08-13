@@ -1,34 +1,10 @@
 import type { DataQualityFlag, Deal, DealStage, Market } from '../../src/contracts/index';
 import { slug } from '../../src/contracts/index';
 import { SEED_DEALS } from '../../src/data/seed-deals';
-import { dealJoinKey, localityStateOf } from './deal-name';
+import { dealJoinKey, findDuplicateDealRows, keyDigest } from './deal-name';
 
 import { isDeclassified } from './deal-declassification';
-
-/**
- * A short, stable, NON-IDENTIFYING digest, for flag text that would otherwise carry a deal NAME.
- *
- * These flags flow into snapshot.dataQuality, which scripts/bake-mirror.ts publishes to the PUBLIC
- * brain.oxfordra.net payload (it gates only on `degraded`) and which redactConfidential explicitly
- * does NOT sweep. Naming a deal here would put it on an external surface: Hard Invariant 3. The
- * digest is enough to correlate a published flag with the console.warn beside it, which keeps the
- * real name LOCAL. FNV-1a rather than node:crypto so this module stays safe for any bundle that
- * reaches it. (Refute pass on the C1/H1 fix, 2026-08-11 — CRITICAL.)
- *
- * SCOPE NARROWED 2026-08-12. Under the name join, EVERY flag had to be digested, and the fourth
- * refute pass then found the operator could not resolve an 8-hex digest back to a deal without
- * hand-computing FNV-1a. A Notion Deal ID ("DEAL-7") is opaque and non-identifying by construction,
- * so id-keyed flags now name the id DIRECTLY and are actionable as published. This remains only for
- * the one flag keyed on something derived from a name: the seed side of the migration tripwire.
- */
-function keyDigest(key: string): string {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < key.length; i++) {
-    h ^= key.charCodeAt(i);
-    h = Math.imul(h, 0x01000193) >>> 0;
-  }
-  return h.toString(16).padStart(8, '0');
-}
+import { PUBLIC_DEAL_IDS } from '../../src/data/public-deals';
 
 /**
  * Live deals adapter (Phase 6) — Notion "Acquisition Pipeline Tracker" → Deal[].
@@ -186,7 +162,25 @@ export function mapNotionPage(page: NotionPage): Deal | null {
   if (!name) return null;
   const rawStage = select(p, 'Stage');
   return {
-    id: `notion-${slug(name)}`,
+    // The Notion page UUID when available — always, on real API traffic. `notion-${slug(name)}`
+    // is the FALLBACK, for hand-built fixtures with no page.id, not the live default.
+    //
+    // A slug-derived id is unsafe for an UNMATCHED (extras) row: it is a live Deal's OWN
+    // identifier, and two different live rows sharing a name (or agreeing on slug()'s first 64
+    // truncated characters — exactly the "Phase One"/"Phase Two" scenario the second refute round
+    // cited) collide on it. That id then feeds two Hard-Invariant-3-adjacent consumers directly:
+    // isDeclassified() gates purely on `allowlist.includes(deal.id)` (server/sources/
+    // deal-declassification.ts) — a collision between an allowlisted deal and an unrelated,
+    // currently-confidential one sharing the same slug would pass that check and CAN publish the
+    // wrong deal; and scripts/bake-mirror.ts's redactConfidential strips counterparty↔deal links
+    // by `removedIds = new Set(confidential.map(d => d.id))`, so a legitimate, non-confidential
+    // deal sharing the id loses its link too. (A MATCHED/seed-joined row is unaffected either way
+    // — mergeDeals always keeps the SEED's own `.id`, never the live row's.)
+    // (Code review, 2026-08-13, HIGH.)
+    // `||`, not `??`: an empty-string page.id (constructible only from a hand-built fixture — the
+    // live API never returns one) must fall through to the slug the same as an absent id, or two
+    // such fixtures would collide on the empty string. (Refute pass 2026-08-13, all 3 lenses.)
+    id: page.id || `notion-${slug(name)}`,
     name,
     shortName: null,
     location: text(p, 'Address'),
@@ -356,11 +350,31 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
     // A field named in the seed's estimatedFields stops being an estimate the moment a REAL live
     // value replaces it — pick() already does that replacement, but estimatedFields was carried
     // through untouched, so a live number could publish under an "Estimated" provenance label.
-    // Live SF is null on every seed-matched row today, so this is latent, not firing — but the id
-    // fill is what makes the path reachable in production once Notion's Total SF is populated.
-    // (Refute pass 2026-08-13, correctness lens, LOW.)
-    const liveValue: Partial<Record<string, unknown>> = { sf: live.sf, estPrice: live.estPrice };
-    const estimatedFields = s.estimatedFields.filter((f) => liveValue[f] === null || liveValue[f] === undefined);
+    //
+    // GENERALIZED, not just sf/estPrice: the first version of this fix hardcoded those two fields,
+    // which was itself latent-incomplete in the same way it was fixing — a seed author adding
+    // `estimatedFields: ['capRate']` (nothing in the Deal type stops that) would have hit the exact
+    // defect again. This checks every field the live row can replace, generically, driven by one
+    // list rather than a second, independently-maintained one that can drift from `pick()`/`stage`.
+    //
+    // `stage` is included even though it is not itself `pick()`'d two lines below — it is taken
+    // from `live.stage` UNCONDITIONALLY, which makes it MORE definitively live-sourced than a
+    // pick()'d field, not less. The second review round's own generalization missed exactly this
+    // field and reproduced the bug it was fixing, for the one field seeds are most likely to
+    // hand-set (post-847a17c seeds carry "null economics and a hand-set stage").
+    // Object.hasOwn, not `f in pickedFromLive`: matches the hardening already applied to
+    // MARKET_MAP/STAGE_MAP above, for the same reason (a field literally named 'constructor' or
+    // 'toString' must not resolve an inherited Object.prototype member).
+    // (Refute pass 2026-08-13, correctness lens, LOW; generalized and corrected in code review, 2026-08-13.)
+    const pickedFromLive: Record<string, unknown> = {
+      location: live.location, market: live.market, sf: live.sf, estPrice: live.estPrice,
+      capRate: live.capRate, irr: live.irr, equityMultiple: live.equityMultiple, lender: live.lender,
+      nextAction: live.nextAction, owner: live.owner, targetCloseDate: live.targetCloseDate,
+      status: live.status, stage: live.stage,
+    };
+    const estimatedFields = s.estimatedFields.filter(
+      (f) => !Object.hasOwn(pickedFromLive, f) || pickedFromLive[f] === null || pickedFromLive[f] === undefined,
+    );
     return {
       ...s,
       location: pick(live.location, s.location),
@@ -397,6 +411,34 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
     .map((d) => (d.confidential ? d : { ...d, confidential: !isDeclassified(d) }));
 
   const published = [...merged, ...extras];
+
+  // ── Dangling PUBLIC_DEAL_IDS entries ───────────────────────────────────────────────────────────
+  // isDeclassified()'s not-in-allowlist path returns false SILENTLY — no warn, no flag — because
+  // that is the correct behavior for the common case (an id that was never meant to be there).
+  // But it makes the OPPOSITE failure invisible: an entry that WAS meant to match but no longer
+  // does (public-deals.ts's id format changed under it, or the Notion page was deleted and
+  // re-created, which mints a new page UUID) silently reverts a Gabriel-ratified publication
+  // decision to confidential with nothing anywhere reporting it. Same "verified null vs inferred
+  // null" shape as the reverse seed-id tripwire above, one list over. (Code review, 2026-08-13.)
+  for (const id of PUBLIC_DEAL_IDS) {
+    if (published.some((d) => d.id === id)) continue;
+    // The dangling entry itself might be the STALE "notion-<slug>" format this tripwire exists to
+    // catch — i.e. name-derived — so it goes to the local log only, never into the published flag.
+    console.warn(`[notion-deals] DANGLING PUBLIC_DEAL_IDS entry '${id}' — no published deal carries it.`);
+    flags.push({
+      entity: 'deals',
+      field: 'publicDealIds',
+      issue:
+        `src/data/public-deals.ts lists a deal id that matches no published deal, so the ` +
+        `declassification decision it represents is silently not taking effect. Likely causes: ` +
+        `the id was authored in the retired "notion-<slug>" format (extras ids are now the Notion ` +
+        `page UUID) or the Notion row was deleted and re-created, which assigns a new UUID. The ` +
+        `entry is in the server log, not here (these flags reach the public mirror). Verify it ` +
+        `against the deal's current id and correct it.`,
+      rawValue: keyDigest(id),
+      severity: 'warn',
+    });
+  }
 
   // ── Migration tripwire: an unjoined seed that looks like an unjoined live row ─────────────────
   // The one job names still have here, and it is DETECTION ONLY — a name never causes a merge.
@@ -485,22 +527,14 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
   //    Village" vs "Fairground Village Center") no longer false-positive and need no acceptance
   //    hatch — which is why NOTION_DEALS_ACCEPTED_NEAR_DUPES stays retired.
   //  - Cross-metro namesakes are SUPPRESSED via the locality tail: two different assets sharing a
-  //    bare street name in different states are the documented steady state, not a defect. This is
-  //    localityStateOf used purely as a detection-side suppressor; it decides nothing about what
-  //    merges, which is the line this subsystem must not cross again.
-  const byName = new Map<string, Deal[]>();
-  for (const d of published) {
-    const key = dealJoinKey(d.name);
-    if (!key) continue;
-    byName.set(key, [...(byName.get(key) ?? []), d]);
-  }
-  for (const [key, rows] of byName) {
-    if (rows.length < 2) continue;
-    const states = rows.map((r) => localityStateOf(r.name));
-    const known = states.filter((st): st is string => st !== null);
-    // Suppress ONLY when every row names a state and all of them differ — a genuine cross-metro
-    // namesake set. A missing tail cannot establish distinctness, so it never suppresses.
-    if (known.length === rows.length && new Set(known).size === rows.length) continue;
+  //    bare street name in different states are the documented steady state, not a defect.
+  //
+  // The detector itself lives in deal-name.ts, shared with checkSnapshot (server/reconcile-runtime.ts)
+  // — code review 2026-08-13 found the restoration above was reachable only from a fresh Notion
+  // fetch, leaving the COMMITTED-snapshot CI path (npm run gate:ci, zero Notion I/O) with no
+  // independent duplicate-deal check at all. One function, two callers, so "same deal" is judged
+  // identically in both and cannot drift the way the old joiner/detector split did.
+  for (const { key, rows } of findDuplicateDealRows(published)) {
     console.warn(
       `[notion-deals] DUPLICATE published rows for one name: ` +
         rows.map((r) => `'${r.name}' (${r.notionDealId ?? 'no id'}, ${r.id})`).join(' | '),
@@ -515,8 +549,9 @@ export function mergeDeals(seed: Deal[], notion: Deal[], flags: DataQualityFlag[
         `usual cause is a Notion row deleted and re-created — which assigns a NEW Deal ID, leaving ` +
         `any seed record enriching from the ABANDONED row and publishing stale figures as if live. ` +
         `Fix the ids so the rows join; or, if these really are different assets sharing a bare ` +
-        `street name, give each its "— City, ST" locality tail in Notion, which marks them distinct ` +
-        `here. Names are in the server log, not here (these flags reach the public mirror).`,
+        `street name, give each a "— City, ST" locality tail naming a DIFFERENT STATE in Notion — ` +
+        `same-state tails do not distinguish them here. Names are in the server log, not here ` +
+        `(these flags reach the public mirror).`,
       rawValue: keyDigest(key),
       severity: 'error',
     });
@@ -593,21 +628,38 @@ async function fetchNotionDeals(token: string, stageDrift: Set<string>): Promise
       for (const page of data.results ?? []) {
         const d = mapNotionPage(page);
         collectStageDrift(select(page.properties ?? {}, 'Stage'), stageDrift);
-        // Key on the Deal ID, falling back to the Notion PAGE id — never the name slug — for a row
-        // that has none.
+        // Key on the Notion PAGE id FIRST — never on notionDealId alone. This map's only job is
+        // "have I already seen this exact page" (pagination overlap, or the same page returned by
+        // more than one data source query); a genuine notionDealId COLLISION across two DIFFERENT
+        // pages must reach mergeDeals, which already has an exhaustively tested collision detector
+        // for exactly that (server/sources/notion-deals.ts:279-309), and must not be resolved
+        // silently up here.
         //
-        // This map used to key on d.id — `notion-${slug(name)}` — which made row EXISTENCE a
-        // function of the NAME, last-write-wins over Notion's return order, UPSTREAM of every guard
-        // in mergeDeals. The 2026-08-12 fix keyed id-carrying rows on notionDealId but left the
-        // fallback as `d.id`, which is STILL the name slug — so two IDLESS rows with punctuation-only
-        // name variance (slug() strips non-word characters) still collided. Executed in the second
-        // refute pass: two idless rows fed in both API page orders — which one survived flipped with
-        // the order, the loser present in neither `merged` nor `extras`, and the idless-count flag
-        // undercounted by exactly one, contradicting its own "the count IS the diagnostic" claim.
-        // page.id is the Notion page UUID — always present, always unique, never derived from the
-        // name — so it cannot collide the way a slug can. (Refute pass 2026-08-13, determinism lens,
-        // MEDIUM — the class this was meant to close for id-carrying rows on 2026-08-12, HIGH.)
-        if (d) byId.set(d.notionDealId ?? page.id ?? d.id, d);
+        // Two things this replaced, both of the same shape: destroying data BEFORE mergeDeals'
+        // guards ever see it.
+        //  (a) The ORIGINAL code keyed on `d.id` (`notion-${slug(name)}`), making row EXISTENCE a
+        //      function of the NAME, last-write-wins over API return order — fixed 2026-08-13 for
+        //      idless rows by falling back to page.id.
+        //  (b) That fix's own PRIMARY key was still `d.notionDealId` — so two DIFFERENT pages
+        //      sharing a colliding Deal ID (a data defect the mergeDeals comment above explicitly
+        //      anticipates, and structurally reachable here since this function already loops over
+        //      MULTIPLE data sources: a "Deal ID" column added independently to the second data
+        //      source would auto-number from DEAL-1 on its own, guaranteed to collide with the
+        //      first) silently overwrote one another in THIS Map before mergeDeals' collision
+        //      detector ever received more than one row to compare — an id-carrying live deal
+        //      destroyed with zero flags, the exact "nothing is destroyed" invariant this whole
+        //      redesign is built on, violated one layer upstream of where it was being enforced.
+        //
+        // page.id is ALWAYS present on a real Notion API page object, so live traffic always keys
+        // on it and both (a) and (b) stay fixed. notionDealId stays as the SECOND preference only
+        // for hand-built fixtures that omit page.id (page.id is optional in the NotionPage
+        // interface for exactly that reason) — without it, two synthetic rows with distinct
+        // notionDealId but no page.id would collide on the identical d.id name-slug fallback,
+        // reintroducing bug (a) for that narrow case. d.id (the slug) is the last resort, for a
+        // row with neither.
+        // (Code review, 2026-08-13, HIGH.) `||`, not `??`, for the same empty-string reason as
+        // mapNotionPage's id construction above (adversarial pass, 2026-08-13, all 3 lenses).
+        if (d) byId.set(page.id || d.notionDealId || d.id, d);
       }
       if (!data.has_more || !data.next_cursor) {
         exhausted = true;

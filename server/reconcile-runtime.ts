@@ -1,4 +1,5 @@
 import type { PortfolioSnapshot, DataQualityFlag } from '../src/contracts/index';
+import { findDuplicateDealRows, keyDigest } from './sources/deal-name';
 
 
 /**
@@ -77,16 +78,56 @@ export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
     flag('properties.id', `duplicate property id(s): ${dupes.join(', ')}`);
   }
 
-  // The near-duplicate deal-name check that stood here until 2026-08-12 has moved INTO the joiner
-  // (mergeDeals' migration tripwire), because this was the wrong layer for it. It ran over the
-  // MERGED output, where a wrong merge leaves exactly one row — so the failure it most needed to
-  // catch was structurally invisible to it, while the duplicates it did catch were reported without
-  // the one fact that explains them: which rows failed to join. mergeDeals knows that, and now says
-  // so. Its remedy text is also live rather than stale — this one prescribed a
-  // NOTION_DEALS_NAME_ALIASES entry, and that env is retired along with the name join.
+  // Deal.notionDealId must not repeat — same shape as properties.id above, and cheap: Notion's
+  // Unique ID cannot duplicate at the source, so a repeat here means the seed mirror, a merge
+  // conflict, or a hand-edit is wrong, not that two live rows collided.
+  const dealIds = s.deals.map((d) => d.notionDealId).filter((id): id is string => id !== null);
+  if (new Set(dealIds).size !== dealIds.length) {
+    const dupes = [...new Set(dealIds.filter((id, i) => dealIds.indexOf(id) !== i))];
+    flag('deals.notionDealId', `duplicate deal Deal ID(s): ${dupes.join(', ')}`);
+  }
+
+  // Deal rows must not near-duplicate each other by NAME either — restored 2026-08-13 (code
+  // review). This stood here as findNearDuplicateNames until 2026-08-12, when it was retired on
+  // the argument that mergeDeals' migration tripwire replaced it. That argument covered the
+  // WRONG PATH: checkSnapshot also runs over the COMMITTED snapshot via
+  // scripts/reconcile-snapshot.ts's `npm run gate:ci` — zero Notion I/O, zero call into
+  // mergeDeals — which exists PRECISELY to catch corruption independent of how the file was
+  // produced (its own header cites the 2026-08-03 phantom-vacancy-lease incident that shipped
+  // under an identical blind spot). A merge conflict or a hand-edit introducing two rows for one
+  // deal is invisible to mergeDeals because it never runs, and was invisible here too until this
+  // line. findDuplicateDealRows is the SAME function mergeDeals calls over its own output
+  // (server/sources/deal-name.ts) — one detector, two reachable call sites, so "same deal" is
+  // judged identically in both rather than by two implementations that can drift.
   //
-  // Deals are joined on Notion's Unique ID (`Deal.notionDealId`) as of that date; a naming variance
-  // can no longer produce two rows for one deal. See server/sources/deal-name.ts for the history.
+  // NAMES NEVER APPEAR IN THE FLAG TEXT — this function has no console.warn to log them to
+  // locally (unlike mergeDeals, checkSnapshot is a pure function), and these flags reach the same
+  // unswept public payload. Reference rows by Deal ID (opaque, already published elsewhere) where
+  // one exists; keyDigest covers the case where it doesn't.
+  for (const { key, rows } of findDuplicateDealRows(s.deals)) {
+    // The CI path's primary target is a merge conflict or hand-edit duplicating a row VERBATIM —
+    // same or both-null Deal ID — where "carry different Deal IDs" would be false and the
+    // locality-tail remedy inapplicable (there is nothing to distinguish; the snapshot itself is
+    // corrupted). Distinguish that case explicitly rather than asserting distinctness this check
+    // never verified. (Code review, 2026-08-13 — the edge lens caught this in the text I'd just
+    // written for the restoration above.)
+    const ids = rows.map((r) => r.notionDealId ?? keyDigest(r.id));
+    const distinctIds = new Set(ids).size > 1;
+    flag(
+      'deals.name',
+      `${rows.length} deal row(s) share one normalized name` +
+        (distinctIds
+          ? ` but carry different Deal IDs — ${ids.join(', ')} (name digest ${keyDigest(key)}). One ` +
+            `deal may be presented twice with disagreeing economics or redaction; if these are ` +
+            `genuinely different assets sharing a bare street name, give each a "— City, ST" ` +
+            `locality tail naming a DIFFERENT STATE in Notion — same-state tails do not distinguish ` +
+            `them here.`
+          : ` and the SAME Deal ID (${ids[0]}, name digest ${keyDigest(key)}) — this looks like the ` +
+            `same row duplicated verbatim, not two deals. The likely cause is a merge conflict or a ` +
+            `hand-edit to the committed snapshot; restore it from the last good bake rather than ` +
+            `editing Notion.`),
+    );
+  }
 
   // Relationship-graph edges must resolve to real nodes.
   const ids = {
