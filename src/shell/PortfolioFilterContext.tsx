@@ -1,6 +1,7 @@
 /* eslint-disable react-refresh/only-export-components -- store helpers + context + Provider colocated by design */
 import { createContext, useContext, useState, type ReactNode } from 'react';
-import { Market, PropertyType } from '@contracts/index';
+import type { Market } from '@contracts/index';
+import { PROPERTY_MARKETS, PropertyType } from '@contracts/index';
 
 /**
  * Global, shell-level portfolio filter — the production analog of the design
@@ -40,7 +41,13 @@ export interface PortfolioRow {
   propertyManager?: string | null;
 }
 
-const MARKET_VALUES = new Set<string>(Market.options);
+// PROPERTY_MARKETS, not the full Market enum: this filter matches PortfolioRow (properties), and
+// PortfolioFilterBar's dropdown (fixed in e2aff7b) can no longer WRITE one of the 2026-08-12
+// deal-only markets into this filter's state. Left as the full enum here, a persisted/stale
+// sessionStorage value equal to one of those markets would validate and silently match zero
+// property rows — the same failure class the dropdown fix closed, one layer over.
+// (Code review, 2026-08-13.)
+const MARKET_VALUES = new Set<string>(PROPERTY_MARKETS);
 const PROPERTY_TYPE_VALUES = new Set<string>(PropertyType.options);
 
 function isMarket(v: unknown): v is Market {
