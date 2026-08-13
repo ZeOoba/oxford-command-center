@@ -81,6 +81,30 @@ export const Market = z.enum([
 ]);
 export type Market = z.infer<typeof Market>;
 
+/**
+ * The subset of Market that OWNED PROPERTIES can take — the codomain of inferMarket()
+ * (server/workbook/parse.ts), plus 'Unknown'.
+ *
+ * The portfolio filter enumerates THIS rather than the whole enum. The markets added 2026-08-12 are
+ * PIPELINE metros where ORA owns nothing, so listing them in a property filter offers options that
+ * can only ever match zero rows. Deal markets and property markets are different populations that
+ * happen to share a type.
+ *
+ * Keep in sync with inferMarket: a new branch there needs a member here, and
+ * tests/unit/portfolio-filter.test.tsx pins that inferMarket never returns anything absent from
+ * this list.
+ */
+export const PROPERTY_MARKETS: readonly Market[] = [
+  'Columbus OH',
+  'Mid-Atlantic',
+  'Toledo OH',
+  'Cleveland MSA',
+  'Kansas City MO',
+  'Indianapolis IN',
+  'Other',
+  'Unknown',
+];
+
 export const PropertyType = z.enum(['Flex', 'Retail', 'Industrial', 'Residence', 'Other']);
 export type PropertyType = z.infer<typeof PropertyType>;
 

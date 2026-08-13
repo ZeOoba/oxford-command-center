@@ -10,6 +10,8 @@ import {
   type PortfolioRow,
 } from '../../src/shell/PortfolioFilterContext';
 import { PortfolioFilterBar } from '../../src/shell/PortfolioFilterBar';
+import { PROPERTY_MARKETS } from '@contracts/index';
+import { inferMarket } from '../../server/workbook/parse';
 
 const ROWS: PortfolioRow[] = [
   { market: 'Columbus OH', type: 'Flex', propertyManager: 'CRC' },
@@ -168,6 +170,11 @@ describe('PortfolioFilterBar', () => {
     const type = screen.getByLabelText(/filter by property type/i) as HTMLSelectElement;
     const manager = screen.getByLabelText(/filter by property manager/i) as HTMLSelectElement;
 
+    // PROPERTY markets only. The Market enum gained six PIPELINE metros on 2026-08-12
+    // (Cincinnati, Madison, Grand Rapids, Des Moines, Louisville, Richmond) where ORA owns
+    // nothing; this filter matches PortfolioRows, so those must NOT appear here — they would be
+    // options that can only ever match zero rows. The list below is therefore unchanged by that
+    // enum extension, which is the point.
     expect(Array.from(market.options).map((o) => o.value)).toEqual([
       'all',
       'Columbus OH',
@@ -179,6 +186,9 @@ describe('PortfolioFilterBar', () => {
       'Other',
       'Unknown',
     ]);
+    for (const dealOnly of ['Cincinnati OH', 'Madison WI', 'Grand Rapids MI', 'Des Moines IA', 'Louisville KY', 'Richmond VA']) {
+      expect(Array.from(market.options).map((o) => o.value)).not.toContain(dealOnly);
+    }
     expect(Array.from(type.options).map((o) => o.value)).toEqual(['all', 'Flex', 'Retail', 'Industrial', 'Residence', 'Other']);
     expect(Array.from(manager.options).map((o) => o.value)).toEqual(['all', 'CRC', 'SVN', 'Thomas Park']);
   });
@@ -227,5 +237,25 @@ describe('PortfolioFilterBar', () => {
     fireEvent.click(clearBtn);
     expect(market.value).toBe('all');
     expect(screen.queryByLabelText(/clear portfolio filter/i)).toBeNull();
+  });
+});
+
+/**
+ * Drift guard for PROPERTY_MARKETS (added 2026-08-12 with the Market enum extension). The filter
+ * bar enumerates that subset instead of the full enum, which is only correct while it really does
+ * cover everything inferMarket() can return — a new branch there with no member here would silently
+ * make a real owned market unfilterable.
+ */
+describe('PROPERTY_MARKETS covers inferMarket’s codomain', () => {
+  it('every market inferMarket can produce is offered by the filter', () => {
+    const probes = [
+      'Raytown MO', 'Kansas City', 'Secor Toledo', 'McGregor', 'Twinsburg', 'Cleveland',
+      'Indianapolis', 'N Richardt', 'Columbus', 'Dublin', 'Westerville', 'Rarig', 'Banwick',
+      'Zettler', 'Fishel', 'Ohio', 'Owings Mills', 'Baltimore', 'Easton', 'Salisbury',
+      'Maryland', 'somewhere unmatched entirely',
+    ];
+    const produced = new Set(probes.map((p) => inferMarket(p)));
+    expect(produced.size).toBeGreaterThan(5); // the probes really do exercise the branches
+    for (const m of produced) expect(PROPERTY_MARKETS).toContain(m);
   });
 });

@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { Market, PropertyType } from '@contracts/index';
+import { Market, PROPERTY_MARKETS, PropertyType } from '@contracts/index';
 import { Button } from '@/primitives/Button';
 import { usePortfolioFilter } from './PortfolioFilterContext';
 
@@ -48,7 +48,10 @@ export function PortfolioFilterBar({ managers, slice }: PortfolioFilterBarProps)
         style={filter.market !== 'all' ? fieldStyleSet : fieldStyle}
       >
         <option value="all">All markets</option>
-        {Market.options.map((m) => (
+        {/* PROPERTY_MARKETS, not Market.options: the 2026-08-12 enum additions are pipeline-deal
+            metros where ORA owns nothing, and this filter matches PROPERTIES (matchesFilter takes a
+            PortfolioRow). Listing them would offer options that can only ever match zero rows. */}
+        {PROPERTY_MARKETS.map((m) => (
           <option key={m} value={m}>
             {m}
           </option>

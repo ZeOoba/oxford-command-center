@@ -40,38 +40,17 @@ describe('checkSnapshot — runtime reconciliation', () => {
     expect(flags.some((f) => f.field === 'properties' && f.severity === 'error')).toBe(true);
   });
 
-  it('flags near-duplicate deal rows (error) — the seed↔Notion join-key backstop', () => {
-    const flags = checkSnapshot(base({
-      deals: [
-        { id: 'seed-x', name: '2146 Enterprise' },
-        { id: 'notion-x', name: '2146 Enterprise Pkwy — Twinsburg, OH' },
-      ],
-    }));
-    const f = flags.find((x) => x.field === 'deals.name');
-    expect(f?.severity).toBe('error');
-    expect(f?.issue).toContain('2146 Enterprise Pkwy');
-  });
-
-  it('names the breached fields without asserting a workbook-total cause', () => {
-    // The live alert condition renders every entity==='reconciliation' flag; it must not hardcode
-    // "derived totals do not match the workbook" for a deal-naming collision.
-    const flags = checkSnapshot(base({
-      deals: [{ id: 'a', name: '2146 Enterprise' }, { id: 'b', name: '2146 Enterprise Pkwy — Twinsburg, OH' }],
-    }));
-    const f = flags.find((x) => x.field === 'deals.name')!;
-    expect(f.issue).not.toMatch(/workbook/i);
-  });
-
-  it('does not flag distinct deals, or a pair the join key already unified', () => {
-    const flags = checkSnapshot(base({
-      deals: [
-        { id: 'a', name: '470 McCormick Blvd — Columbus, OH' },
-        { id: 'b', name: '511 Industrial Mile Road — Columbus, OH' },
-        { id: 'c', name: 'Pendleton Trade Center' },
-      ],
-    }));
-    expect(flags.some((x) => x.field === 'deals.name')).toBe(false);
-  });
+  // The three near-duplicate deal-name cases that stood here were RETIRED 2026-08-12 with the check
+  // they covered. checkSnapshot ran findNearDuplicateNames over the MERGED deal set, which was the
+  // wrong layer: a wrong merge leaves exactly ONE row, so the failure the check most needed to
+  // catch was structurally invisible to it, and the duplicates it did catch were reported without
+  // the fact that explains them — which rows failed to join. mergeDeals now raises that itself
+  // (its migration tripwire), and deals join on an opaque Deal ID, so a naming variance can no
+  // longer produce two rows for one deal at all. Coverage lives in
+  // tests/unit/deal-id-join.test.ts and tests/unit/deal-id-join-invariants.test.ts.
+  //
+  // The property-id collision backstop below is UNRELATED and stays: property ids are a different
+  // join key with a different producer (parse.ts), and nothing about the deal join touches it.
 
   it('flags duplicate property ids (error) — the join-key collision backstop', () => {
     const flags = checkSnapshot(base({ properties: [{ id: 'dup' }, { id: 'dup' }, { id: 'ok' }] }));
