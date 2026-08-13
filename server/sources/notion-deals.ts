@@ -69,13 +69,38 @@ function isConfidentialByName(name: string): boolean {
     });
 }
 
+/**
+ * Notion "Market" select value → the Market enum. KEYS MUST BE STRINGS NOTION CAN ACTUALLY EMIT;
+ * anything else falls through to 'Other', which is not evidence of location, only of a missing entry.
+ *
+ * Re-derived 2026-08-12 against the live select's 12 options, because three of the six keys here
+ * were strings Notion could NOT produce and had therefore never matched anything:
+ *   'Kansas City MO'  — the live option is 'Kansas City MO/KS'
+ *   'Mid-Atlantic'    — the live option is 'Maryland (Baltimore/DC)'
+ *   'Toledo OH'       — not an option on the select at all
+ * The effect was mis-recorded as "6 of ~10 metros covered": only 3 keys were live, so 12 of 20 rows
+ * resolved to 'Other'/null. The two renamed keys also cost those deals their RCT coverage, since
+ * 'Kansas City MO' and 'Mid-Atlantic' ARE priced in RCT_V03 while 'Other' is not — no live row
+ * carries either value today, so this restores coverage prospectively rather than changing a
+ * published number.
+ */
 const MARKET_MAP: Record<string, Market> = {
   'Columbus OH': 'Columbus OH',
-  'Indianapolis IN': 'Indianapolis IN',
-  'Kansas City MO': 'Kansas City MO',
-  'Mid-Atlantic': 'Mid-Atlantic',
-  'Toledo OH': 'Toledo OH',
+  'Cincinnati OH': 'Cincinnati OH',
   'Cleveland OH': 'Cleveland MSA',
+  'Indianapolis IN': 'Indianapolis IN',
+  'Kansas City MO/KS': 'Kansas City MO',
+  'Maryland (Baltimore/DC)': 'Mid-Atlantic',
+  'Madison WI': 'Madison WI',
+  'Grand Rapids MI': 'Grand Rapids MI',
+  'Richmond VA': 'Richmond VA',
+  'Des Moines IA': 'Des Moines IA',
+  'Louisville KY': 'Louisville KY',
+  Other: 'Other',
+  // Not currently an option on the Notion select — kept because the enum member is live for OWNED
+  // properties (inferMarket returns it), so a future select option would map correctly rather than
+  // silently landing in 'Other'.
+  'Toledo OH': 'Toledo OH',
 };
 const STAGE_MAP: Record<string, DealStage> = {
   Candidate: 'Candidate',

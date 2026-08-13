@@ -40,7 +40,7 @@ describe('mapNotionPage', () => {
   it('maps a Notion page to a Deal with stage/market/rate normalization', () => {
     const d = mapNotionPage(page())!;
     expect(d.name).toBe('Maple Logistics');
-    expect(d.market).toBe('Other'); // Cincinnati OH → Other (not in our Market enum)
+    expect(d.market).toBe('Cincinnati OH'); // in the Market enum as of 2026-08-12 (was 'Other')
     expect(d.stage).toBe('Due Diligence'); // "Under Contract" → Due Diligence
     expect(d.sf).toBe(50000);
     expect(d.capRate).toBeCloseTo(0.075, 4); // 7.5 normalized to a decimal
