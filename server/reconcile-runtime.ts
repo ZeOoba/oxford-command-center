@@ -1,5 +1,5 @@
 import type { PortfolioSnapshot, DataQualityFlag } from '../src/contracts/index';
-import { findNearDuplicateNames } from './sources/deal-name';
+
 
 /**
  * In-process reconciliation (Phase 6, §10). Runs on every brain.refresh() and verifies the
@@ -77,23 +77,16 @@ export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
     flag('properties.id', `duplicate property id(s): ${dupes.join(', ')}`);
   }
 
-  // Deal rows must not near-duplicate each other. deals[] is assembled by MERGING the committed
-  // seed onto the live Notion pipeline on a name key, so a naming variance on either side produces
-  // TWO rows for one deal — and because unmatched Notion rows default confidential:true while the
-  // seed copy stays public, the pair also disagrees about redaction. That is how Pendleton Trade
-  // Center and 2146 Enterprise Pkwy shipped as contradictory duplicates (2026-08-04): one row
-  // "LOI decision required", the other "formally passed". Deleting a row does not fix it; the join
-  // key does. This is the always-on backstop that keeps it from silently regrowing.
-  const nearDupes = findNearDuplicateNames(s.deals.map((d) => d.name));
-  if (nearDupes.length > 0) {
-    flag(
-      'deals.name',
-      `${nearDupes.length} near-duplicate deal row(s) — the seed↔Notion join key did not unify: ` +
-        nearDupes.map(([a, b]) => `"${a}" ⇄ "${b}"`).join('; ') +
-        '. Fix the key (align the seed name with Notion, or add a NOTION_DEALS_NAME_ALIASES entry), ' +
-        'not the symptom — and if these are genuinely different deals, disambiguate one of the names.',
-    );
-  }
+  // The near-duplicate deal-name check that stood here until 2026-08-12 has moved INTO the joiner
+  // (mergeDeals' migration tripwire), because this was the wrong layer for it. It ran over the
+  // MERGED output, where a wrong merge leaves exactly one row — so the failure it most needed to
+  // catch was structurally invisible to it, while the duplicates it did catch were reported without
+  // the one fact that explains them: which rows failed to join. mergeDeals knows that, and now says
+  // so. Its remedy text is also live rather than stale — this one prescribed a
+  // NOTION_DEALS_NAME_ALIASES entry, and that env is retired along with the name join.
+  //
+  // Deals are joined on Notion's Unique ID (`Deal.notionDealId`) as of that date; a naming variance
+  // can no longer produce two rows for one deal. See server/sources/deal-name.ts for the history.
 
   // Relationship-graph edges must resolve to real nodes.
   const ids = {

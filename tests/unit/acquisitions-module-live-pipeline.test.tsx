@@ -14,7 +14,7 @@ function makeDeal(partial: Partial<Deal> & Pick<Deal, 'id' | 'name' | 'stage'>):
     shortName: null, location: null, market: null, sf: null, buildings: null,
     estPrice: null, capRate: null, irr: null, equityMultiple: null, holdYrs: null,
     lender: null, status: null, nextAction: null, owner: null, targetCloseDate: null,
-    confidential: false, estimatedFields: [],
+    notionDealId: null, confidential: false, estimatedFields: [],
     ...partial,
   };
 }

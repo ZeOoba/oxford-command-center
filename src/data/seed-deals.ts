@@ -10,13 +10,18 @@ import type { Deal } from '@contracts/index';
  * active-deal roster in ~/.claude/hooks/confidential-terms.json — a deal set `active: false` there
  * is declassified and must be cleared here too.
  *
- * NAMES ARE JOIN KEYS: `name` is what matches a row to its Notion counterpart
- * (server/sources/deal-name.ts). Notion's convention is "<Deal Name> — <City>, <ST>"; the locality
- * tail is stripped automatically, but the remaining name must otherwise match Notion's, or the deal
- * double-lists. checkSnapshot's near-duplicate detector catches TRAILING-token variance only
- * ("2146 Enterprise" vs "2146 Enterprise Pkwy"); it does NOT catch abbreviation or spelling drift
- * ("Blvd"/"Boulevard", "E."/"East"), so it is a backstop, not a guarantee — match Notion's spelling
- * exactly rather than relying on it.
+ * `notionDealId` IS THE JOIN KEY — names are not (changed 2026-08-12). It mirrors the "Deal ID"
+ * Unique ID column on Notion's Acquisition Pipeline Tracker, which Notion assigns and keeps
+ * read-only. To link a seed row to its live pipeline row, copy that row's Deal ID here; `null` means
+ * "not in the live pipeline" and the row simply publishes its seed values.
+ *
+ * Names are free to differ from Notion's in spelling, abbreviation, or locality suffix without
+ * consequence. Until this date `name` WAS the join key, which cost a CRITICAL cross-side wrong merge
+ * and three further defects across four adversarial passes — see server/sources/deal-name.ts.
+ *
+ * If a seed row and a live row are obviously the same deal but carry no shared id, mergeDeals raises
+ * a migration-gap warning naming the live Deal ID to copy here. It will NOT merge them: matching
+ * names are grounds to warn, never to merge.
  */
 export const SEED_DEALS: Deal[] = [
   {
@@ -38,6 +43,7 @@ export const SEED_DEALS: Deal[] = [
     nextAction: 'Resolve ACH; confirm Symetra lender review complete',
     owner: 'Tamara',
     targetCloseDate: null,
+    notionDealId: null, // TODO(deal-id): mirror the Notion Deal ID
     confidential: false,
     estimatedFields: [],
   },
@@ -69,6 +75,7 @@ export const SEED_DEALS: Deal[] = [
     nextAction: null,
     owner: 'Gabriel Goldberg',
     targetCloseDate: null,
+    notionDealId: null, // TODO(deal-id): mirror the Notion Deal ID
     // DECLASSIFIED 2026-07-09 by Gabriel's in-turn directive; `e_fulton` was set active:false in
     // confidential-terms.json the same day. This flag stayed true until 2026-08-04, so the deal was
     // still being redacted from the mirror, hidden from the AI agent, and blocked from comps almost
@@ -95,13 +102,16 @@ export const SEED_DEALS: Deal[] = [
     nextAction: 'Third-party + insurance; target close early May',
     owner: 'Symetra · Morrissey',
     targetCloseDate: null,
+    notionDealId: null, // TODO(deal-id): mirror the Notion Deal ID
     confidential: false,
     estimatedFields: ['sf'],
   },
   {
     id: '2146-enterprise-twinsburg',
-    // Named to match Notion's "2146 Enterprise Pkwy — Twinsburg, OH" once the locality tail is
-    // stripped. The bare "2146 Enterprise" did not match, so this deal double-listed (2026-08-04).
+    // This name was chosen to survive the old locality-strip join — bare "2146 Enterprise" did not
+    // match Notion's "2146 Enterprise Pkwy — Twinsburg, OH", so the deal double-listed (2026-08-04).
+    // The name no longer has to match anything (the join is notionDealId as of 2026-08-12); it is
+    // kept because it is the correct name, not because the joiner needs it.
     name: '2146 Enterprise Pkwy',
     shortName: 'Twinsburg',
     location: 'Twinsburg, OH (Cleveland MSA)',
@@ -119,6 +129,7 @@ export const SEED_DEALS: Deal[] = [
     nextAction: 'Revisit or shelve',
     owner: 'Internal',
     targetCloseDate: null,
+    notionDealId: null, // TODO(deal-id): mirror the Notion Deal ID
     confidential: false,
     estimatedFields: ['sf'],
   },
@@ -141,6 +152,7 @@ export const SEED_DEALS: Deal[] = [
     nextAction: 'Counter, walk, or hold',
     owner: 'David Ludwig',
     targetCloseDate: null,
+    notionDealId: null, // TODO(deal-id): mirror the Notion Deal ID
     confidential: false,
     estimatedFields: [],
   },
@@ -163,6 +175,7 @@ export const SEED_DEALS: Deal[] = [
     nextAction: 'LOI decision required',
     owner: 'Internal',
     targetCloseDate: null,
+    notionDealId: null, // TODO(deal-id): mirror the Notion Deal ID
     confidential: false,
     estimatedFields: ['sf'],
   },
