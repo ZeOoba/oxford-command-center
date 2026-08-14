@@ -83,11 +83,12 @@ financial-decision logic — a new or modified `evaluateConditions` alert rule, 
 (growth / drivers / anomalies / benchmarks / scores), NOI/reconciliation math, the acquisition
 scorecard, or anything feeding capital allocation — gets the `refute-financial-change` workflow
 (`.claude/workflows/refute-financial-change.js`) BEFORE merge: independent reviewers told to *break*
-the change across the correctness / determinism / edge-case lenses, not bless it. This is not
-optional and is separate from the standard code-review pass. It exists because a green gate has
-shipped, among others: a collections rule that NaN-suppressed a real delinquency on a partial
-overlay record, an alert-id collision that let one anomaly silently mark another read, and an
-off-by-one aging-bucket tier — none of which any fixture caught. New `evaluateConditions` rules MUST
+the change across the correctness / determinism / edge-case / sweep-completeness / scope-integrity
+lenses, not bless it. This is not optional and is separate from the standard code-review pass. It
+exists because a green gate has shipped, among others: a collections rule that NaN-suppressed a
+real delinquency on a partial overlay record, an alert-id collision that let one anomaly silently
+mark another read, and an off-by-one aging-bucket tier — none of which any fixture caught. New
+`evaluateConditions` rules MUST
 also (a) coerce every overlay-sourced numeric defensively (overlay JSON bypasses Zod on the live
 path — see `server/overlay.ts`; coerce via the shared `coerceNonNegMoney` in `src/lib/money.ts`) and
 (b) emit a collision-free `Insight.id` (guarded by `tests/unit/insight-id-uniqueness.test.ts`).
