@@ -24,7 +24,11 @@ import { loadDeals, dealsDegradationFlag, type DealsDegradation } from '../sourc
 import { loadM365Tasks } from '../sources/m365-tasks';
 import { deriveCounterparties } from './counterparties';
 import { crossCheckDebtService } from './debt-service-crosscheck';
-import { describeOpenpyxlReadFailure, assertCachedValuesPresent } from './openpyxl-integrity';
+import {
+  assertRelationshipTargetsResolvable,
+  describeOpenpyxlReadFailure,
+  assertCachedValuesPresent,
+} from './openpyxl-integrity';
 import { WORKBOOK_AS_OF, referenceDate } from '../config';
 
 type Worksheet = ExcelJS.Worksheet;
@@ -961,15 +965,17 @@ export interface ParseResult {
  */
 export async function parseWorkbook(path: string, referenceDateIso?: string): Promise<ParseResult> {
   const wb = new ExcelJS.Workbook();
-  // An openpyxl re-save corrupts this workbook two ways: unresolvable comment
-  // relationships (an opaque exceljs crash) and stripped cached formula values (silent
-  // nulls for every computed figure). Name both precisely instead of crashing or, worse,
-  // parsing a null-filled workbook. See ./openpyxl-integrity.ts.
+  // An openpyxl re-save corrupts this workbook three ways: unresolvable relationship
+  // targets (an opaque exceljs crash), stripped cached formula values (silent nulls for
+  // every computed figure), and formulas replaced by static values (figures frozen
+  // forever). Name each precisely instead of crashing or, worse, parsing a workbook whose
+  // financials are null or stale. See ./openpyxl-integrity.ts.
+  assertRelationshipTargetsResolvable(path);
   try {
     await wb.xlsx.readFile(path);
   } catch (err) {
-    const diagnosis = describeOpenpyxlReadFailure(err);
-    if (diagnosis) throw new Error(`${diagnosis} Path: ${path}`);
+    const diagnosis = describeOpenpyxlReadFailure(err, path);
+    if (diagnosis) throw new Error(diagnosis, { cause: err });
     throw err;
   }
   assertCachedValuesPresent(wb, path);
