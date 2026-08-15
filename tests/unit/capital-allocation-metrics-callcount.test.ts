@@ -15,7 +15,24 @@ vi.mock('../../server/macro/getMacro', () => ({ getMacro: vi.fn() }));
 vi.mock('../../server/macro/market-benchmarks', () => ({ getMacroMarketBenchmarks: vi.fn() }));
 vi.mock('../../server/macro/regional-macro', () => ({ getRegionalMacro: vi.fn() }));
 vi.mock('../../server/warehouse/scores', () => ({ scoreProperties: vi.fn() }));
-vi.mock('../../server/warehouse/debt-scoring', () => ({ scoreDebtPositions: vi.fn() }));
+// Round 19g: capital-allocation.ts now calls scoreDebtPositionsWithTrust (one atomic read of
+// scores + book trust — round 19f/19g fixed a CRITICAL/HIGH disagreement caused by callers
+// re-deriving trust with a second, separate read). The mock must export it too, deriving trust
+// from whatever scoreDebtPositions is configured to return (matching production for the
+// non-empty case) and falling back to the REAL readDebtBookTrust for the empty-scores case, so
+// tests that set up a real marker/unattributed-loan state still observe correct behavior.
+import type { WarehouseDb as WarehouseDbForMock } from '../../server/warehouse/db';
+vi.mock('../../server/warehouse/debt-scoring', async () => {
+  const { readDebtBookTrust } = await import('../../server/warehouse/debt-trust');
+  const scoreDebtPositions = vi.fn();
+  return {
+    scoreDebtPositions,
+    scoreDebtPositionsWithTrust: vi.fn((db: unknown, ...rest: unknown[]) => {
+      const scores = scoreDebtPositions(db, ...rest);
+      return { scores, bookTrust: scores[0]?.bookTrust ?? readDebtBookTrust(db as WarehouseDbForMock) };
+    }),
+  };
+});
 vi.mock('../../server/warehouse/metrics', () => ({ propertyPeriodMetrics: vi.fn() }));
 vi.mock('../../src/analytics/lease-forecast', () => ({
   renewalSignals: vi.fn().mockReturnValue([]),

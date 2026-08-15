@@ -14,7 +14,8 @@
 import type { WarehouseDb } from './db';
 import type { PeriodMetrics } from '../../src/contracts/warehouse';
 import { loadGovernors } from './governors';
-import type { DebtScore, DebtSignal, DebtScoreBand } from '../../src/contracts/debt';
+import type { DebtScore, DebtSignal, DebtScoreBand, DebtBookTrust } from '../../src/contracts/debt';
+import { readDebtBookTrust } from './debt-trust';
 import { clamp } from './clamp';
 import { referenceDate } from '../config';
 import { MONTH_MS } from './time-constants';
@@ -121,13 +122,49 @@ export function effectiveMonthsToMaturity(row: MaturityInputRow, asOf: string): 
  *   server/config.ts). Anchors the fresh months-to-maturity recompute that drives
  *   minMonthsToMaturity / the cash-out gate / maturityComp.
  */
-export function scoreDebtPositions(
+/**
+ * Round 19g (adversarial refute of 19f, HIGH — reproduced): 19f made scoreDebtPositions read
+ * readDebtBookTrust ITSELF, closing the CRITICAL per-score-vs-envelope disagreement — but every
+ * production caller that ALSO needs the book trust for its own envelope/verdict (GET /scores, GET
+ * /refi-windows, buildPortfolioAllocation, buildCapitalAllocationReport) then called
+ * readDebtBookTrust(db) A SECOND TIME, in a separate transaction. Reproduced: a healing or
+ * damaging write landing between the two calls reopens the identical contradiction one call
+ * deeper — `scores[].bookTrust` from the FIRST read disagreeing with the envelope's own
+ * `bookTrust` from the SECOND, in the same response. `scores[0]?.bookTrust` is not a fix either:
+ * the empty-scores case (total destruction, or an all-unattributed book) is exactly when trust
+ * matters most, and is exactly the case that fallback has nothing to read.
+ *
+ * scoreDebtPositionsWithTrust is the ONE atomic read: marker, both loan counts, and every row this
+ * engine scores, in a single transaction, returning the trust value it actually used alongside the
+ * scores it computed from it. Every production caller must use THIS function and consume the
+ * returned bookTrust directly — never re-read trust afterward. `scoreDebtPositions` below is kept
+ * as a thin wrapper purely so the ~80 existing unit tests that call it directly (testing pure
+ * scoring math against a fixed DB snapshot, where no concurrent write is possible) do not all need
+ * rewriting for a concern that does not apply to them.
+ */
+export function scoreDebtPositionsWithTrust(
   db: WarehouseDb,
   metrics: PeriodMetrics[],
   marketRateFiveYearTreasury: number | null,
   referenceDateIso: string = referenceDate(),
-): DebtScore[] {
+): { scores: DebtScore[]; bookTrust: DebtBookTrust } {
   const governors = loadGovernors(db);
+
+  // Round 19 (H1 — 2026-07-27 integrity sweep, HIGH, reproduced end-to-end and found
+  // independently by all three refuter lenses): read the snapshot trust marker HERE, inside the
+  // engine, rather than expecting each of the five call sites to remember. The marker existed for
+  // five rounds with exactly ONE consumer (computePortfolioAggregateLtv) while scoreDebtPositions,
+  // GET /scores, GET /refi-windows, buildPortfolioAllocation (×2) and the new permanent
+  // debt_scores writer all scored the same distrusted rows blind. Adding the check at the call
+  // sites would have fixed the five that exist today and left the sixth — added next month — to
+  // repeat the defect. Reading it where the ROWS are read means a consumer cannot forget, because
+  // it never has to remember.
+  //
+  // Read in the same transaction as the row reads (see the single db.transaction below),
+  // mirroring the round-10 fix in computePortfolioAggregateLtv: as separate autocommit reads, the
+  // documented dev-server + backfill-CLI concurrency can commit a healing write between them and
+  // pair pre-heal rows with a freshly cleared marker — the exact class the marker exists to
+  // prevent.
 
   // Precompute: market rate proxy (D3)
   const marketRate =
@@ -160,15 +197,11 @@ export function scoreDebtPositions(
   }
 
   // Get all distinct active property_ids from debt_positions
-  const propertyRows = db
-    .prepare(
-      `SELECT DISTINCT property_id
-       FROM debt_positions
-       WHERE status = 'active' AND property_id IS NOT NULL`,
-    )
-    .all() as Array<{ property_id: string }>;
-
-  const activePropertyIds = propertyRows.map((r) => r.property_id);
+  const selectActiveProperties = db.prepare(
+    `SELECT DISTINCT property_id
+     FROM debt_positions
+     WHERE status = 'active' AND property_id IS NOT NULL`,
+  );
 
   // F5: ORDER BY current_balance DESC, id ASC ensures deterministic LTV tie-break when two
   // loans share the same current_balance. Without ORDER BY, SQLite row order is unspecified.
@@ -195,14 +228,43 @@ export function scoreDebtPositions(
     `SELECT name FROM property_master WHERE id = ?`,
   );
 
+  // Round 19 (H1): ONE transaction for the trust marker AND every row this engine scores, so all
+  // of them observe a single database snapshot. Reading the marker separately would let a healing
+  // (or damaging) write commit in between and pair rows with the wrong trust state.
+  //
+  // Round 19f (adversarial refute of 19e, CRITICAL — reproduced): this used to read ONLY the raw
+  // marker (readLastSnapshotRefusal), while round 19e taught readDebtBookTrust a SECOND way to
+  // reach 'degraded' — an unattributed active loan (property_id NULL), with no marker required.
+  // That second path was wired into every REPORTING surface (the /scores, /maturity, /timeline
+  // envelopes, capital-allocation's book-level trust) but never into WITHHOLDING: this engine kept
+  // reading the marker alone, so an unattributed loan sitting alongside an attributed one produced
+  // full, un-withheld DSCR/LTV — even a 'refinance'/'cash-out' action — on a score whose own
+  // envelope simultaneously reported bookTrust:'degraded'. Reproduced: DSCR 2.00x, signal
+  // 'cash-out', action 'refinance', empty rationale, while the response envelope said 'degraded'
+  // and the entry's own dataQuality flag said "DSCR/LTV are withheld entirely." One helper for
+  // REPORTING trust is not the same guarantee as one gate for WITHHOLDING it — readDebtBookTrust
+  // is now the single source for BOTH, closing the gap at its root rather than patching each
+  // consumer's display logic separately.
+  const { bookTrust, activePropertyIds, loansByProperty, nameByProperty } = db.transaction(() => {
+    const trust = readDebtBookTrust(db);
+    const ids = (selectActiveProperties.all() as Array<{ property_id: string }>).map(
+      (r) => r.property_id,
+    );
+    const loansBy = new Map<string, DebtRow[]>();
+    const nameBy = new Map<string, string>();
+    for (const id of ids) {
+      loansBy.set(id, getLoansForProperty.all(id) as DebtRow[]);
+      const nameRow = getPropertyName.get(id) as { name: string } | undefined;
+      nameBy.set(id, nameRow?.name ?? id);
+    }
+    return { bookTrust: trust, activePropertyIds: ids, loansByProperty: loansBy, nameByProperty: nameBy };
+  })();
+
   const scores: DebtScore[] = [];
 
   for (const propertyId of activePropertyIds) {
-    const loans = getLoansForProperty.all(propertyId) as DebtRow[];
-
-    // Lookup property name
-    const nameRow = getPropertyName.get(propertyId) as { name: string } | undefined;
-    const propertyName = nameRow?.name ?? propertyId;
+    const loans = loansByProperty.get(propertyId) ?? [];
+    const propertyName = nameByProperty.get(propertyId) ?? propertyId;
 
     // === no-debt branch (handled at query level — no active loans for propertyId) ===
     // If loans is empty here, the property had its rows deleted between the DISTINCT query and now;
@@ -223,6 +285,7 @@ export function scoreDebtPositions(
         scoreBand: 'strong',
         capitalConfigVersion: governors.version,
         refiCashSavingsPct: null,
+        bookTrust: 'trusted', // overwritten by applyBookTrust below when the book is distrusted
       });
       continue;
     }
@@ -517,10 +580,135 @@ export function scoreDebtPositions(
       scoreBand,
       capitalConfigVersion: governors.version,
       refiCashSavingsPct,
+      bookTrust: 'trusted', // overwritten by applyBookTrust below when the book is distrusted
     });
   }
 
-  return scores;
+  // Round 19 (H1): every score leaves through this one transform, so no branch above can emit a
+  // governor verdict the warehouse itself distrusts.
+  return { scores: applyBookTrust(scores, bookTrust), bookTrust };
+}
+
+/**
+ * Thin wrapper over scoreDebtPositionsWithTrust for callers (and the existing unit-test suite)
+ * that only need the scores, not the book trust. See that function's docblock — production
+ * callers that ALSO need trust for their own envelope/verdict must call
+ * scoreDebtPositionsWithTrust directly and consume its returned bookTrust, never re-derive it.
+ */
+export function scoreDebtPositions(
+  db: WarehouseDb,
+  metrics: PeriodMetrics[],
+  marketRateFiveYearTreasury: number | null,
+  referenceDateIso: string = referenceDate(),
+): DebtScore[] {
+  return scoreDebtPositionsWithTrust(db, metrics, marketRateFiveYearTreasury, referenceDateIso)
+    .scores;
+}
+
+/**
+ * Score band FLOOR for a 'degraded' property — applied as a cap, never as a raise.
+ *
+ * Round 19b (adversarial refute, MEDIUM — reproduced): round 19a assigned this band
+ * UNCONDITIONALLY, so a property scoring 12 / band 'critical' (a real DSCR 1.10 + LTV 0.55 double
+ * breach) was UPGRADED to 'watch' the moment the book degraded. That is the opposite of
+ * withholding: `ScorecardView` computes its red "N critical" badge as
+ * `scores.filter(s => s.scoreBand === 'critical').length`, so the badge for a known-breaching
+ * property disappeared exactly when the system went blind. It also contradicted this module's own
+ * precedent ~120 lines above, which caps the band and never raises it.
+ */
+const DEGRADED_SCORE_BAND: DebtScoreBand = 'watch';
+
+/**
+ * Score ceiling under a 'degraded' book. The underlying number is meaningless once rows are
+ * missing, but `score` is a required 0-100 field that feeds ranking, so it is CAPPED rather than
+ * invented: a distrusted property can never outrank a verified one, and the companion
+ * bookTrust/scoreBand/signalReason fields carry the real "we do not know" signal.
+ */
+const DEGRADED_SCORE_CAP = 50;
+
+/**
+ * Apply the book's derived trust level to a set of freshly computed DebtScores.
+ *
+ * Precedence mirrors computePortfolioAggregateLtv's, per-property (round 10's ratified split):
+ *
+ *   'trusted' / 'unknown' — no withholding. 'unknown' is reachable here only in principle (a
+ *                book-wide zero-active-row state means no property would have a score to begin
+ *                with), kept as a no-op rather than a throw so the function stays total over the
+ *                DebtBookTrust type.
+ *
+ *   'refused'  — the write was DECLINED, so zero rows changed and these ARE the last trusted
+ *                book. The measured numbers survive and a measured BREACH still fires — nulling
+ *                it would silence a standing Hard-Invariant-4 alarm at exactly the moment the
+ *                system is last-known-in-breach AND blind. Only the CLEARANCE-direction action
+ *                signals ('refi', 'cash-out') are demoted to 'hold', because acting on a book the
+ *                warehouse just declined to update is acting on knowingly stale data.
+ *
+ *   'degraded' — some portion of the book cannot be reasoned about, either because rows were
+ *                LOST (a marker stands) or because an active loan sits UNATTRIBUTED (round 19e:
+ *                readDebtBookTrust also returns 'degraded' for property_id IS NULL rows, with no
+ *                marker required — the same withholding applies regardless of which condition
+ *                triggered it, because both leave the same book incomplete in the same way). The
+ *                survivors are an incomplete remnant and every governor-derived figure computed
+ *                from them is fabricated in either direction, so dscr / ltv / their headrooms /
+ *                debtYield / refiCashSavingsPct are all withheld and the signal collapses to
+ *                'hold'. Reproduced (marker case): a property whose true DSCR is 0.71x (a real
+ *                governor-block) reported "Governors clear; DSCR 1.67x" once one of its two loans
+ *                was destroyed. Reproduced (round 19f, unattributed case): a property with an
+ *                unattributed sibling loan reported DSCR 2.00x and action 'refinance' while its
+ *                own response envelope said bookTrust:'degraded'.
+ *
+ * Deliberately NOT 'no-debt' and NOT 'governor-block' under 'degraded': 'no-debt' reads as a
+ * verified unlevered property (capital allocation treats it as free to lever), and
+ * 'governor-block' asserts a breach this data cannot support either. 'hold' is the only existing
+ * signal that asserts nothing.
+ */
+export function applyBookTrust(scores: DebtScore[], trust: DebtBookTrust): DebtScore[] {
+  if (trust === 'trusted' || trust === 'unknown') return scores;
+
+  return scores.map((s) => {
+    if (trust === 'refused') {
+      const demoted = s.signal === 'refi' || s.signal === 'cash-out';
+      // Round 19b (adversarial refute, MEDIUM — reproduced): the staleness note was attached to
+      // the DEMOTION, not to the trust state. A property already sitting at 'hold' (e.g. governors
+      // clear but ltvHeadroom too thin for the cash-out gate) therefore kept asserting
+      // "Governors clear; DSCR 1.60x, LTV 35.0%" verbatim and unannotated, off a book the
+      // warehouse had just declined to update. signalReason is the human-facing scorecard string
+      // and is persisted into debt_scores.signal_reason, so the unannotated claim outlives the
+      // incident. Annotate on TRUST, not on demotion.
+      const staleNote =
+        'the last debt snapshot write was REFUSED, so this book may be stale (figures are the last trusted book)';
+      return {
+        ...s,
+        signal: demoted ? ('hold' as DebtSignal) : s.signal,
+        signalReason: `${s.signalReason ?? ''} — ${demoted ? 'action withheld: ' : ''}${staleNote}`.trim(),
+        bookTrust: trust,
+      };
+    }
+    return {
+      ...s,
+      dscr: null,
+      dscrHeadroom: null,
+      ltv: null,
+      ltvHeadroom: null,
+      debtYield: null,
+      refiCashSavingsPct: null,
+      signal: 'hold' as DebtSignal,
+      // Round 19f: this text used to name only the marker-loss cause ("see the debt-snapshot
+      // refusal marker"), which is wrong for the round-19e unattributed-loan trigger — no marker
+      // exists in that case, and a reader sent to look for one would find nothing standing.
+      signalReason:
+        'Book state not trusted: the debt book is incomplete — either the last snapshot write ' +
+        'lost rows (see the debt-snapshot refusal marker), or an active loan could not be ' +
+        'attributed to a property. Per-property DSCR/LTV computed from the surviving/incomplete ' +
+        'rows would be fabricated in either direction, so no governor verdict is reported.',
+      score: Math.min(s.score, DEGRADED_SCORE_CAP),
+      // Cap, never raise (round 19b). 'critical' is a worse band than DEGRADED_SCORE_BAND, so a
+      // property already known to be critical keeps that band — withholding a verdict must never
+      // improve a property's standing.
+      scoreBand: s.scoreBand === 'critical' ? 'critical' : DEGRADED_SCORE_BAND,
+      bookTrust: trust,
+    };
+  });
 }
 
 /**
@@ -531,6 +719,14 @@ export function noDebtScore(
   propertyId: string,
   propertyName: string,
   capitalConfigVersion: number,
+  /**
+   * Round 19b: REQUIRED, not defaulted. This helper previously hardcoded `bookTrust: 'trusted'`
+   * behind a prose warning — the last remaining way to mint a trusted DebtScore without
+   * consulting the marker, in a module whose whole H1 rationale is "a consumer cannot forget,
+   * because it never has to remember." A prose comment is exactly what failed for five rounds.
+   * The parameter has no default so the compiler forces every future call site to answer.
+   */
+  bookTrust: DebtBookTrust,
 ): DebtScore {
   return {
     propertyId,
@@ -547,5 +743,10 @@ export function noDebtScore(
     scoreBand: 'strong',
     capitalConfigVersion,
     refiCashSavingsPct: null,
+    // Callers deriving "no debt" from an ABSENCE in scoreDebtPositions' output must pass the
+    // book's real trust level here — under a degraded book an absent score means "its loans were
+    // destroyed", not "unlevered". Only a caller with independent knowledge that the property has
+    // no debt may pass 'trusted'.
+    bookTrust,
   };
 }

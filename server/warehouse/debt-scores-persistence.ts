@@ -38,15 +38,51 @@ export function persistDebtScores(
   const insert = db.prepare(`
     INSERT INTO debt_scores (
       property_id, scored_at, snapshot_date, noi_period, dscr, dscr_headroom, ltv, ltv_headroom,
-      debt_yield, signal, signal_reason, refi_trigger_bps, capital_config_version, score, score_band
+      debt_yield, signal, signal_reason, refi_trigger_bps, capital_config_version, score, score_band,
+      book_trust
     ) VALUES (
       @propertyId, @scoredAt, @snapshotDate, @noiPeriod, @dscr, @dscrHeadroom, @ltv, @ltvHeadroom,
-      @debtYield, @signal, @signalReason, @refiTriggerBps, @capitalConfigVersion, @score, @scoreBand
+      @debtYield, @signal, @signalReason, @refiTriggerBps, @capitalConfigVersion, @score, @scoreBand,
+      @bookTrust
     )
   `);
 
   const skipped: PersistDebtScoresResult['skipped'] = [];
   const tx = db.transaction((rows: DebtScore[]) => {
+    // Round 19 (H1 — 2026-07-27 integrity sweep, HIGH): refuse to append while the book is
+    // distrusted. This table is a PERMANENT append-only trend history with no retraction path, so
+    // a governor verdict written under a degraded/refused marker is not merely wrong for the
+    // duration of the damage — it is wrong forever, and every downstream trend consumer reads it
+    // as fact long after the book recovers. This module's own header says the writer was delayed
+    // until the scoring defects were fixed precisely so unverified scores would not be "baked
+    // into a permanent trend history"; that reasoning applies with more force to a book the
+    // warehouse has explicitly marked untrusted than to one merely suspected of bugs.
+    //
+    // Checked from bookTrust (set by scoreDebtPositions inside the same transaction that read the
+    // rows) rather than by re-reading the marker here: re-reading would be a SECOND, later
+    // observation and could disagree with the state the scores were actually computed under.
+    // Trust travels WITH the data.
+    // Round 19b (adversarial refute, MEDIUM): gate on 'degraded' ONLY, not on `!== 'trusted'`.
+    // Round 19a swept 'refused' in too — but under a refusal zero rows changed, the figures ARE
+    // the last trusted book, and applyBookTrust deliberately preserves a measured breach there.
+    // Refusing to append for the whole refusal window therefore stopped recording a STANDING
+    // Hard-Invariant-4 breach in the permanent trend history: a later reader would see a gap
+    // where a breach actually persisted. A 'refused'-era row is written, and stamped with its
+    // trust level (migration 027) so no reader can mistake it for a clean-book observation.
+    const distrusted = rows.filter((s) => s.bookTrust === 'degraded');
+    if (distrusted.length > 0) {
+      for (const s of distrusted) {
+        skipped.push({
+          propertyId: s.propertyId,
+          reason: `debt book is '${s.bookTrust}' — refusing to append a governor verdict to the permanent trend history`,
+        });
+      }
+      // All-or-nothing: a partial write would leave the history claiming the untouched properties
+      // were scored against a healthy book on this date, which is exactly the false-provenance
+      // problem. Matches writeDebtSnapshot's own all-or-nothing refusal posture.
+      return 0;
+    }
+
     let count = 0;
     for (const s of rows) {
       const noiPeriod = latestFullYearPeriod(metricsByProperty.get(s.propertyId) ?? []);
@@ -75,6 +111,9 @@ export function persistDebtScores(
         capitalConfigVersion: s.capitalConfigVersion,
         score: s.score,
         scoreBand: s.scoreBand,
+        // Round 19b: the row states its own provenance (migration 027), so a refusal-window
+        // observation can never be mistaken for a clean-book one by a future trend reader.
+        bookTrust: s.bookTrust,
       });
       count++;
     }

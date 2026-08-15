@@ -40,6 +40,7 @@ function verdict(over: Partial<AllocationVerdict> = {}): AllocationVerdict {
       ltv: 0.35,
       noiPerSf: 8.54,
       forecastPresent: false,
+      bookTrust: 'trusted', // round 19d - fixture models a healthy book
     },
     ...over,
   });
@@ -319,5 +320,76 @@ describe('buildIcMemoHtml — M6 Leasing Risk column', () => {
     expect(html).toContain('Leasing Risk');
     expect(html).not.toContain('undefined%');
     expect(html).not.toContain('NaN%');
+  });
+});
+
+// Round 19e (adversarial refute of round 19d, MEDIUM — confirmed by two independent lenses): the
+// dataQuality/bookTrust disclosure this round added to AllocationVerdict never reached this
+// artifact. `reasons[0]` is seeded from PropertyScore's own reasons — a "Health X/100" line always
+// wins the slot — so the trust line, pushed later, was essentially never rendered. A distrusted
+// property read as an ordinary one on the artifact that becomes a printed PDF and drives capital
+// decisions. Pinned here against the actual rendered HTML, not the verdict object.
+describe('buildIcMemoHtml — debt-book trust disclosure', () => {
+  it('a healthy portfolio (all trusted) shows no Book column at all', () => {
+    const html = buildIcMemoHtml(portfolio());
+    expect(html).not.toContain('>Book<');
+  });
+
+  it('a distrusted verdict renders a Book column naming the trust level, regardless of reasons[0] ordering', () => {
+    const p = portfolio({
+      verdicts: [
+        verdict({
+          propertyId: 'p-distrust',
+          propertyName: 'Livingston Flex',
+          // reasons[0] is an unrelated health line — the exact production shape that hid the
+          // trust disclosure. It must NOT be required for the Book column to appear.
+          reasons: ['Health 71.2/100 (good).', 'Debt book not trusted — DSCR/LTV withheld'],
+          inputs: {
+            healthBand: 'good',
+            attentionBand: 'green',
+            capitalAction: 'hold',
+            debtSignal: 'hold',
+            debtScoreBand: 'watch',
+            dscr: null,
+            dscrHeadroom: null,
+            ltv: null,
+            noiPerSf: null,
+            forecastPresent: false,
+            bookTrust: 'degraded',
+          },
+        }),
+      ],
+    });
+    const html = buildIcMemoHtml(p);
+    expect(html).toContain('>Book<');
+    expect(html).toContain('degraded');
+  });
+
+  it('a mixed portfolio (one trusted, one not) still surfaces the column for everyone', () => {
+    const p = portfolio({
+      verdicts: [
+        verdict({ propertyId: 'p-ok', propertyName: 'Healthy Property' }),
+        verdict({
+          propertyId: 'p-bad',
+          propertyName: 'Unknown-Debt Property',
+          inputs: {
+            healthBand: 'good',
+            attentionBand: 'green',
+            capitalAction: 'hold',
+            debtSignal: 'hold',
+            debtScoreBand: 'adequate',
+            dscr: null,
+            dscrHeadroom: null,
+            ltv: null,
+            noiPerSf: null,
+            forecastPresent: false,
+            bookTrust: 'unknown',
+          },
+        }),
+      ],
+    });
+    const html = buildIcMemoHtml(p);
+    expect(html).toContain('>Book<');
+    expect(html).toContain('unknown');
   });
 });

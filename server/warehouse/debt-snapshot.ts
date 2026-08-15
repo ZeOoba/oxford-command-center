@@ -20,6 +20,15 @@ export interface DebtSnapshotResult {
    *  such writes previously returned a fully-quiet result, so the unattended reload logged
    *  nothing for the entire damaged window after damage day). */
   staleMarkerHeld: boolean;
+  /**
+   * Round 19b (adversarial refute of round 19a, HIGH — reproduced): ids that vanished from THIS
+   * write with no identity-explained replacement and no terminal status. Round 19a's latch pushed
+   * nothing to errors[] and set no typed flag, so the unattended reload path (server/index.ts)
+   * logged NOTHING on damage day and the latching write was reported to its caller as a clean
+   * success — the round-13 "fully-quiet result" defect, re-introduced at the one moment that
+   * matters most. Typed so the reload path can branch on it without parsing errors[] text.
+   */
+  vanishedIds: string[];
 }
 
 /**
@@ -110,6 +119,29 @@ export interface SnapshotRefusalMarker {
    * only for legacy values (which can never auto-clear).
    */
   trustedIds: string[] | null;
+  /**
+   * Round 19b (adversarial refute of 19a, HIGH ×2 — both reproduced): the UNEXPLAINED-VANISH
+   * obligation, kept STRICTLY SEPARATE from trustedIds.
+   *
+   * Round 19a folded vanished ids into trustedIds and additionally unioned the whole surviving
+   * book (survivingOrWrittenIds) in with them. Two reproduced consequences:
+   *   1. A renamed-away id joined the obligation and could NEVER discharge it — trustedIds clears
+   *      only via writtenIds.has(id), and a renamed id will never be written under its old id
+   *      again. A book with 2 renames + 1 payoff latched permanently, aggregate null forever.
+   *   2. The only exit was blanket allowEmptySupersede, which round 18's own comment concedes
+   *      "also waives any genuinely-unresolved original damage" — so every routine payoff trained
+   *      the operator to run a full amnesty, waiving real damage along with it.
+   *
+   * The two obligations have DIFFERENT discharge conditions and must not share a list:
+   *   trustedIds — damaged by a failed insert. Discharged only by being FRESHLY RE-WRITTEN (the
+   *                loan must actually come back), because the row was destroyed mid-write.
+   *   absentIds  — merely gone from the payload. Discharged by returning OR by an explicit
+   *                per-id confirmAbsent, because "this loan is genuinely gone" is a claim a human
+   *                can make about ONE loan without asserting anything about the rest of the book.
+   *
+   * Null only for legacy marker values written before this round.
+   */
+  absentIds: string[] | null;
 }
 
 /**
@@ -143,6 +175,7 @@ export function readLastSnapshotRefusal(db: Database): SnapshotRefusalMarker | n
       originalReason?: unknown;
       latchedAt?: unknown;
       trustedIds?: unknown;
+      absentIds?: unknown;
     };
     const kind: SnapshotRefusalMarker['kind'] = parsed.kind === 'refused' ? 'refused' : 'degraded';
     return {
@@ -159,6 +192,10 @@ export function readLastSnapshotRefusal(db: Database): SnapshotRefusalMarker | n
         Array.isArray(parsed.trustedIds) && parsed.trustedIds.every((x) => typeof x === 'string')
           ? (parsed.trustedIds as string[])
           : null,
+      absentIds:
+        Array.isArray(parsed.absentIds) && parsed.absentIds.every((x) => typeof x === 'string')
+          ? (parsed.absentIds as string[])
+          : null,
     };
   } catch {
     return {
@@ -169,6 +206,7 @@ export function readLastSnapshotRefusal(db: Database): SnapshotRefusalMarker | n
       originalReason: null,
       latchedAt: null,
       trustedIds: null,
+      absentIds: null,
     };
   }
 }
@@ -180,6 +218,13 @@ function markerValue(
   originalReason: string,
   latchedAt: string,
   trustedIds: string[] | null,
+  // Round 19d: REQUIRED, no default. 19b gave this a `= null` default and then missed one of the
+  // five call sites — the refusal branch still passed five arguments, so a shrinkage REFUSAL
+  // silently wiped a standing absentIds. A refusal touches ZERO rows and therefore cannot resolve
+  // a vanish, yet it discharged the obligation completely and the next clean write deleted the
+  // marker ($6M @ 0.90 off-book, reproduced). The defaulted parameter is exactly what let that
+  // ship: with no default the compiler names every site that has to decide.
+  absentIds: string[] | null,
 ): string {
   return JSON.stringify({
     kind,
@@ -188,6 +233,7 @@ function markerValue(
     originalReason,
     latchedAt,
     trustedIds,
+    absentIds,
   });
 }
 
@@ -283,12 +329,30 @@ export function writeDebtSnapshot(
   loans: Loan[],
   snapshotDate: string,
   loanPropertyMap?: ReadonlyMap<string, string>,
-  opts?: { allowEmptySupersede?: boolean },
+  opts?: {
+    allowEmptySupersede?: boolean;
+    /**
+     * Round 19b: confirm that THESE SPECIFIC loans are genuinely gone (paid off, sold, removed
+     * from the workbook on purpose). Discharges only the named ids from the vanish obligation,
+     * leaving any standing insert-failure damage untouched.
+     *
+     * This exists because allowEmptySupersede is a blanket amnesty — round 18's own comment notes
+     * it "also waives any genuinely-unresolved original damage." With a routine payoff-by-row-
+     * deletion latching the marker, the operator would have had to run that blanket waiver
+     * regularly, which trains exactly the reflex that waives real damage. A per-id confirmation
+     * lets a human say the one true thing they actually know.
+     */
+    confirmAbsent?: string[];
+  },
 ): DebtSnapshotResult {
   const errors: string[] = [];
   let written = 0;
   let degradedRows = 0;
   let staleMarkerHeld = false;
+  // Round 19 (M1): the guard decision now happens inside the transaction, so the returned flag is
+  // assigned from in there rather than closed over from an outer const.
+  let refusedEmptySupersede = false;
+  let vanishedIds: string[] = [];
   const writtenIds = new Set<string>(); // ids whose insert SUCCEEDED this write (round 13)
 
   // Filter: borrower-side only, active — null status, or classifyLoanStatus() resolves to
@@ -330,11 +394,12 @@ export function writeDebtSnapshot(
   }
   const borrowerLoans = borrowerLoansAll.filter((l) => !collidingIds.has(l.id));
 
-  // F-FK-safe: load the valid property_master id set ONCE before the transaction.
-  // Any loanPropertyMap value not in this set is coerced to null + surfaced as an error.
-  const validPropertyIds = new Set(
-    (db.prepare('SELECT id FROM property_master').all() as Array<{ id: string }>).map((r) => r.id),
-  );
+  // F-FK-safe: the valid property_master id set. Round 19 (M1 — 2026-07-27 integrity sweep):
+  // this load MOVED INSIDE the transaction (see runAll below). It was previously read here, in
+  // autocommit, before the transaction opened — so a concurrent writer committing a new property
+  // between this read and the insert loop coerced a perfectly valid property_id to null. Same
+  // pre-command-state class as the shrinkage-guard baseline moved in the same round.
+  const selectValidPropertyIds = db.prepare('SELECT id FROM property_master');
 
   const supersede = db.prepare(
     `UPDATE debt_positions
@@ -399,10 +464,20 @@ export function writeDebtSnapshot(
   // Round 6: fetch the actual active id LIST (not just a count) — the corrected netLoss formula
   // below needs to intersect it against the incoming set, matching exactly what F-stale itself
   // preserves vs. supersedes, not merely how many rows there were.
-  const activeIds = (
-    db.prepare("SELECT id FROM debt_positions WHERE status = 'active'").all() as Array<{ id: string }>
-  ).map((r) => r.id);
-  const activeRowCount = activeIds.length;
+  //
+  // ROUND 19 (M1 — 2026-07-27 integrity sweep, MEDIUM, same defect class as H1/H2 below): this
+  // read and the whole guard computation that follows it MOVED INSIDE runAll's transaction. They
+  // previously ran as autocommit statements BEFORE `db.transaction(runAll)` opened, so the guard
+  // judged a book that could no longer exist by the time the supersede it authorized executed.
+  // Reproduced class: the backfill CLI commits a fresh 12-loan book at T1; an overlapping
+  // dev-server reload whose activeIds SELECT ran at T0 < T1 (seeing 5 rows → netLoss 0, no
+  // refusal) commits at T2 > T1 and supersedes 7 of the 12 fresh rows — a 58% majority shrinkage
+  // the guard exists to refuse — with no refusal and no marker. Rounds 9 and 10 fixed exactly
+  // this pre-command-state class on the marker write and the aggregate read; the guard's own
+  // baseline was the last surface still reading outside the boundary.
+  const selectActiveRows = db.prepare(
+    "SELECT id FROM debt_positions WHERE status = 'active'",
+  );
 
   // Partial-wipe shrinkage guard (2026-07-24, follow-up to H2a above). NET shrinkage, NOT
   // id-set overlap: this measures whether the BOOK COUNT is collapsing, not how many
@@ -451,37 +526,9 @@ export function writeDebtSnapshot(
   // The book's actual post-write id set is the union of (ids freshly written this run) and
   // (previously-active ids that survive F-stale's exclusion, i.e. present in the incoming set
   // regardless of whether they end up freshly written or merely preserved-as-colliding).
-  const survivingOrWrittenIds = new Set<string>(borrowerLoans.map((l) => l.id));
-  const incomingIdSetForGuard = new Set(borrowerLoansAll.map((l) => l.id));
-  for (const id of activeIds) {
-    if (incomingIdSetForGuard.has(id)) survivingOrWrittenIds.add(id);
-  }
-  const netLoss = Math.max(activeRowCount - survivingOrWrittenIds.size, 0);
-  const wouldTotallyEmpty = borrowerLoansAll.length === 0 && activeRowCount > 0;
-  // `>=` (not `>`, corrected alongside this fix): once ordinary refi/rename churn no longer
-  // touches this predicate at all (it computes netLoss=0), an EXACT 50% net collapse has no
-  // remaining legitimate interpretation and should also require confirmation.
-  const wouldMajorityShrink =
-    activeRowCount > 0 &&
-    netLoss >= MIN_SUPERSEDED_ROWS_FOR_SHRINKAGE_GUARD &&
-    netLoss / activeRowCount >= MAX_SUPERSEDE_SHARE_WITHOUT_CONFIRMATION;
-  const refuseEmptySupersede =
-    (wouldTotallyEmpty || wouldMajorityShrink) && opts?.allowEmptySupersede !== true;
-
-  let refusalMessage: string | null = null;
-  if (refuseEmptySupersede) {
-    const reason = wouldTotallyEmpty
-      ? `empty borrower set would have superseded all ${activeRowCount} active debt_positions row(s)`
-      : `borrower set would net-shrink the active debt_positions book from ${activeRowCount} to ` +
-        `${activeRowCount - netLoss} row(s) (${netLoss} of ${activeRowCount} lost with no replacement, ` +
-        `${Math.round((netLoss / activeRowCount) * 100)}%) — a majority shrinkage in one snapshot`;
-    refusalMessage =
-      `REFUSED: ${reason} — refusing to shrink the debt book on an unexplained loss (likely an upstream ` +
-      'parse/payload failure, not genuine portfolio churn — a refinance or id rename that keeps the total ' +
-      'loan count intact is NOT affected by this guard). Existing rows left untouched. Confirm and pass ' +
-      '{ allowEmptySupersede: true } if this net loss is verified.';
-    errors.push(refusalMessage);
-  }
+  // (The guard computation that used to live here — survivingOrWrittenIds / netLoss /
+  // wouldMajorityShrink / refuseEmptySupersede / refusalMessage — now runs INSIDE runAll, per the
+  // round-19 M1 note above. It is unchanged apart from its position.)
 
   // Refusal/degraded marker statements (obs-3 / round 9). Prepared here, executed INSIDE the
   // transaction below — round-9 correction (fifth adversarial pass, determinism lens): the
@@ -498,6 +545,53 @@ export function writeDebtSnapshot(
   const deleteMarker = db.prepare('DELETE FROM warehouse_meta WHERE key = ?');
 
   const runAll = db.transaction(() => {
+    // ── ROUND 19 (M1): baseline reads + guard decision, INSIDE the transaction ──────────────
+    // Everything from here to `refusalMessage` was previously computed in autocommit before the
+    // transaction opened. Logic is byte-for-byte the rounds 4-6 logic; only the position moved.
+    const validPropertyIds = new Set(
+      (selectValidPropertyIds.all() as Array<{ id: string }>).map((r) => r.id),
+    );
+    const activeRows = selectActiveRows.all() as Array<{ id: string }>;
+    const activeIds = activeRows.map((r) => r.id);
+    const activeRowCount = activeIds.length;
+
+    // The book's actual post-write id set is the union of (ids freshly written this run) and
+    // (previously-active ids that survive F-stale's exclusion, i.e. present in the incoming set
+    // regardless of whether they end up freshly written or merely preserved-as-colliding).
+    const survivingOrWrittenIds = new Set<string>(borrowerLoans.map((l) => l.id));
+    const incomingIdSetForGuard = new Set(borrowerLoansAll.map((l) => l.id));
+    for (const id of activeIds) {
+      if (incomingIdSetForGuard.has(id)) survivingOrWrittenIds.add(id);
+    }
+    const netLoss = Math.max(activeRowCount - survivingOrWrittenIds.size, 0);
+    const wouldTotallyEmpty = borrowerLoansAll.length === 0 && activeRowCount > 0;
+    // `>=` (not `>`): once ordinary refi/rename churn no longer touches this predicate at all
+    // (it computes netLoss=0), an EXACT 50% net collapse has no remaining legitimate
+    // interpretation and should also require confirmation.
+    const wouldMajorityShrink =
+      activeRowCount > 0 &&
+      netLoss >= MIN_SUPERSEDED_ROWS_FOR_SHRINKAGE_GUARD &&
+      netLoss / activeRowCount >= MAX_SUPERSEDE_SHARE_WITHOUT_CONFIRMATION;
+    const refuseEmptySupersede =
+      (wouldTotallyEmpty || wouldMajorityShrink) && opts?.allowEmptySupersede !== true;
+    refusedEmptySupersede = refuseEmptySupersede;
+
+    let refusalMessage: string | null = null;
+    if (refuseEmptySupersede) {
+      const reason = wouldTotallyEmpty
+        ? `empty borrower set would have superseded all ${activeRowCount} active debt_positions row(s)`
+        : `borrower set would net-shrink the active debt_positions book from ${activeRowCount} to ` +
+          `${activeRowCount - netLoss} row(s) (${netLoss} of ${activeRowCount} lost with no replacement, ` +
+          `${Math.round((netLoss / activeRowCount) * 100)}%) — a majority shrinkage in one snapshot`;
+      refusalMessage =
+        `REFUSED: ${reason} — refusing to shrink the debt book on an unexplained loss (likely an upstream ` +
+        'parse/payload failure, not genuine portfolio churn — a refinance or id rename that keeps the total ' +
+        'loan count intact is NOT affected by this guard). Existing rows left untouched. Confirm and pass ' +
+        '{ allowEmptySupersede: true } if this net loss is verified.';
+      errors.push(refusalMessage);
+    }
+    // ── end round-19 M1 relocation ─────────────────────────────────────────────────────────
+
     // Round 11: the standing marker is read INSIDE the transaction — the trust decision below
     // depends on the book's history, and it must be the same snapshot the write acts on.
     const standing = readLastSnapshotRefusal(db);
@@ -522,11 +616,25 @@ export function writeDebtSnapshot(
       // Trusted ids: carried from the standing marker; on a refused-from-clean latch, the
       // UNTOUCHED active book is the trusted set (a refusal changes no rows).
       const trustedIds = standing !== null ? standing.trustedIds : activeIds;
+      // Round 19d: CARRY THE VANISH OBLIGATION FORWARD. 19b omitted this argument entirely (it had
+      // a `= null` default), so a refusal silently discharged a standing absentIds and the next
+      // clean write cleared the marker with real debt off-book — reproduced, HIGH. A refusal
+      // changes ZERO rows, so it cannot resolve a vanish; the obligation must survive it
+      // untouched. An explicit per-id confirmAbsent still applies, because that is a human
+      // statement about a loan, independent of whether this particular write was refused.
+      const refusalConfirmed = new Set(opts?.confirmAbsent ?? []);
+      const carriedAbsent =
+        standing?.absentIds === null || standing?.absentIds === undefined
+          ? (standing?.absentIds ?? null)
+          : standing.absentIds.filter((id) => !refusalConfirmed.has(id));
       const reason =
         kind === 'degraded'
           ? `DEGRADED (standing) — latest attempt also REFUSED: ${refusalMessage!} Original damage (${latchedAt}): ${originalReason.slice(0, 300)}`
           : refusalMessage!;
-      upsertMarker.run(REFUSAL_MARKER_KEY, markerValue(kind, reason, originalReason, latchedAt, trustedIds));
+      upsertMarker.run(
+        REFUSAL_MARKER_KEY,
+        markerValue(kind, reason, originalReason, latchedAt, trustedIds, carriedAbsent),
+      );
       return;
     }
 
@@ -631,29 +739,86 @@ export function writeDebtSnapshot(
         )
         .map((l) => l.id),
     );
-    let unexplainedSupersededIds: string[] = [];
-    if (standing === null || standing.trustedIds !== null) {
-      const trustedSetSoFar = new Set(standing?.trustedIds ?? []);
-      const activeIdSet = new Set(activeIds);
-      const incomingIdSet = new Set(borrowerLoansAll.map((l) => l.id));
-      const nonTrustedActiveBefore = activeIds.filter((id) => !trustedSetSoFar.has(id));
-      const supersededNonTrusted = nonTrustedActiveBefore.filter(
-        (id) => !incomingIdSet.has(id) && !explainedTerminalIds.has(id),
+    // ── ROUND 19d: NO REPLACEMENT CREDIT. Any active loan that leaves the book without the
+    // payload SAYING SO is an obligation. Full stop. (Gabriel's ruling, 2026-07-27.)
+    //
+    // This DELETES a predicate rather than hardening it, and that is the point. Across rounds
+    // 17-19b the predicate was rewritten three times — by COUNT, then by property IDENTITY +
+    // BALANCE share — and every version was reproduced as a Hard-Invariant-4 false clearance by
+    // an independent adversarial pass:
+    //   • count            — one unrelated $1k financing laundered a $1M @ 0.62 loan; aggregate
+    //                        0.62 (breach) → 0.05 (CLEARED), marker NULL.
+    //   • identity+balance — the >=50% share test was PER WRITE, so halving a property's debt each
+    //                        refresh compounded geometrically: $8.0M @ 0.90 → $0.25M across five
+    //                        writes, marker NULL at every step. The one-shot equivalent latches.
+    //   • unmapped bucket  — reintroduced cross-property substitution exactly when the crosswalk
+    //                        fails, i.e. precisely when the workbook is damaged.
+    //   • `lost <= 0`      — treated a corrupted (blank-cell → 0) balance as PROOF that nothing
+    //                        was lost: inferred null presented as a verified null.
+    // Each version was strictly stronger than the last and each still had a bypass, because the
+    // predicate was inferring "was this disappearance legitimate?" from data that cannot answer
+    // it. Only two things actually know: the PAYLOAD (a terminal status via classifyLoanStatus —
+    // free and automatic) or a HUMAN (confirmAbsent — per-id and cheap).
+    //
+    // Cost, accepted with the ruling: a refinance under a new id, a slug rename, and a payoff
+    // whose workbook row is deleted rather than restatused each need one confirmAbsent run. At
+    // ~14 properties that is a handful of events a year, and the operator is told exactly which
+    // ids to name (result.vanishedIds, errors[], and the reload log line).
+    //
+    // NO trustedSetSoFar EXCLUSION (two independent lenses reproduced its cost): 19b skipped ids
+    // already in trustedIds, which is only safe when they carry an equivalent obligation. Under a
+    // 'refused' marker they do not — that branch clears wholesale — so a refusal blinded the
+    // detector for a whole write and the next clean write deleted the marker with $8M @ 0.62 off
+    // the book. Under a 'degraded' marker it pushed vanished loans into trustedIds, where only a
+    // re-write discharges them, making confirmAbsent unreachable for the exact class it exists
+    // for. An id may now sit in BOTH lists; absentObligation de-dupes and the two discharge rules
+    // are independent by design.
+    //
+    // NO LEGACY GATE: 19b computed this only when `standing === null || standing.trustedIds !==
+    // null`, so ANY legacy marker disabled vanish detection for the entire write — and a legacy
+    // 'refused' marker then cleared itself. Detection needs only activeRows and the incoming id
+    // set, both always available.
+    //
+    // F-collision (round 16) is now moot here: colliding ids mattered only as candidate
+    // replacements. A colliding id still sits in incomingIdSet, so its prior row is preserved and
+    // never counted as vanished — unchanged.
+    const incomingIdSet = new Set(borrowerLoansAll.map((l) => l.id));
+    const unexplainedSupersededIds = activeRows
+      .filter((r) => !incomingIdSet.has(r.id) && !explainedTerminalIds.has(r.id))
+      .map((r) => r.id)
+      .sort();
+
+    // ── ROUND 19b: the vanish obligation, tracked separately from the trusted book ──────────
+    // One computation handles all three discharge routes, so no branch below can forget one:
+    //   • the loan RETURNS on its own          → writtenIds.has(id)
+    //   • a human confirms THAT loan is gone   → confirmAbsent: ['loan-05']
+    //   • a human waives everything            → allowEmptySupersede (handled in the branches)
+    // Deliberately NOT unioned with survivingOrWrittenIds: round 19a did that and dragged
+    // renamed-away ids into an obligation they could never discharge (reproduced: 2 renames + 1
+    // payoff latched the book permanently). Only ids that actually went missing belong here.
+    const confirmedAbsent = new Set(opts?.confirmAbsent ?? []);
+    const absentObligation = [
+      ...new Set([...(standing?.absentIds ?? []), ...unexplainedSupersededIds]),
+    ]
+      // Round 19e: a self-documenting terminal restatement discharges a STANDING absentIds entry
+      // too, not only preventing a new one. The absentIds contract says discharge is "the loan
+      // returns OR a human confirms it" — the payload restating a loan as 'Paid in Full' after it
+      // was previously latched as an unexplained vanish IS that confirmation, made the honest way.
+      .filter(
+        (id) => !writtenIds.has(id) && !confirmedAbsent.has(id) && !explainedTerminalIds.has(id),
+      )
+      .sort();
+    vanishedIds = unexplainedSupersededIds;
+
+    // R3: the latching write must not be quiet. errors[] is what POST /snapshot returns and what
+    // server/index.ts inspects; round 19a pushed nothing, so damage day logged nothing at all.
+    if (unexplainedSupersededIds.length > 0 && opts?.allowEmptySupersede !== true) {
+      errors.push(
+        `VANISHED: ${unexplainedSupersededIds.length} previously-active loan(s) disappeared from this ` +
+          `snapshot with no terminal status and no same-property replacement: ` +
+          `${unexplainedSupersededIds.join(', ')}. The book is treated as incomplete until each ` +
+          'returns or is individually confirmed via { confirmAbsent: [...] }.',
       );
-      // Round 16 (adversarial refute, HIGH — reproduced twice independently): an F-collision id
-      // (two distinct loans sharing a slug) sits in incomingIdSet but lands ZERO rows (excluded
-      // from borrowerLoans entirely, line ~331) — writtenIds.has(id) is required so a phantom
-      // collision id can never count as the "replacement" that explains a real disappearance.
-      const netNewNonTrusted = [...incomingIdSet].filter(
-        (id) => !activeIdSet.has(id) && !trustedSetSoFar.has(id) && writtenIds.has(id),
-      );
-      if (supersededNonTrusted.length > netNewNonTrusted.length) {
-        // Shortfall: more non-trusted active loans vanished than genuinely-new ids explain. The
-        // count-based comparison can't say WHICH specific disappearance was "explained" by which
-        // specific replacement, so — consistent with this whole function's never-guess posture —
-        // ALL superseded non-trusted ids join the obligation, not just the unexplained excess.
-        unexplainedSupersededIds = supersededNonTrusted;
-      }
     }
 
     if (lostRows > 0) {
@@ -687,11 +852,31 @@ export function writeDebtSnapshot(
       // evidence of damage; a loan's later absence from a payload — with no failed attempt — is
       // exactly the shrinkage guard's own job to police, not this set's.
       const failedIdsThisWrite = borrowerLoans.filter((l) => !writtenIds.has(l.id)).map((l) => l.id);
-      const trustedIds = damageStartsNow
-        ? [...new Set([...(standing?.trustedIds ?? []), ...survivingOrWrittenIds, ...unexplainedSupersededIds])]
-        : standing.trustedIds === null
-          ? null
-          : [...new Set([...standing.trustedIds, ...failedIdsThisWrite, ...unexplainedSupersededIds])];
+      // Round 19b: unexplainedSupersededIds no longer joins trustedIds — it has its own list with
+      // its own discharge rule (absentObligation). Mixing them is what made a renamed-away id an
+      // unrecoverable trustedIds entry in round 19a.
+      //
+      // Round 19e (adversarial refute of 19d, HIGH — reproduced): the two lists still were not kept
+      // DISJOINT. standing?.trustedIds can carry an id forward from an EARLIER write — a refusal
+      // latches the whole untouched book into trustedIds (line ~624), and a first-damage latch
+      // pulls in the whole intended book, successes included (survivingOrWrittenIds, just below).
+      // If that same id THEN vanishes on a later write, it lands in absentObligation too — but
+      // trustedIds' only discharge is writtenIds.has(id), which a permanently-gone loan (paid off,
+      // renamed) can never satisfy. confirmAbsent becomes permanently unreachable for that id, and
+      // the only remaining exit is the blanket allowEmptySupersede amnesty — exactly the reflex
+      // this round's confirmAbsent lever was built to stop training. Reproduced: refusal (whole
+      // book -> trustedIds) -> payoff-by-row-deletion -> 10x confirmAbsent, still held, message
+      // self-contradicts ("damaged loan(s) not yet re-verified: l6. Vanished ... none.") because
+      // l6 was never damaged by a failed insert — it was merely swept into trustedIds by the
+      // refusal. An id under a live ABSENCE obligation must not simultaneously carry a DESTRUCTION
+      // obligation; absentObligation already tracks it with a reachable discharge.
+      const trustedIds = (
+        damageStartsNow
+          ? [...new Set([...(standing?.trustedIds ?? []), ...survivingOrWrittenIds])]
+          : standing.trustedIds === null
+            ? null
+            : [...new Set([...standing.trustedIds, ...failedIdsThisWrite])]
+      )?.filter((id) => !absentObligation.includes(id)) ?? null;
       const degradedMsg =
         `DEGRADED: ${lostRows} of ${borrowerLoans.length} loan upsert(s) failed this write — any such loan ` +
         'with a prior active row had that row superseded before its replacement failed, so the active ' +
@@ -706,13 +891,85 @@ export function writeDebtSnapshot(
           damageStartsNow ? degradedMsg : (standing.originalReason ?? standing.reason),
           damageStartsNow ? new Date().toISOString() : (standing.latchedAt ?? standing.refusedAt),
           trustedIds,
+          absentObligation,
         ),
       );
-    } else if (standing === null || opts?.allowEmptySupersede === true || standing.kind === 'refused') {
-      // Clean write with no standing marker (routine no-op delete); a human explicitly
-      // confirmed this book state via the opt-in; or the standing marker was a pure REFUSAL —
-      // the rows were never damaged, this write passed the per-write shrinkage guard against
-      // that trusted book, so the fresh book is trusted. Clear.
+    } else if (opts?.allowEmptySupersede === true) {
+      // Blanket human confirmation of the whole book state — clears both obligations. Kept as the
+      // last-resort lever; routine single-loan losses now have the narrower confirmAbsent instead,
+      // so an operator no longer has to reach for this one every time a loan is paid off.
+      deleteMarker.run(REFUSAL_MARKER_KEY);
+    } else if (
+      absentObligation.length > 0 &&
+      (standing === null || standing.kind === 'refused')
+    ) {
+      // ── ROUND 19 (H2 — 2026-07-27 integrity sweep, HIGH, reproduced end-to-end) ────────────
+      // The unexplained-supersession obligation computed above was previously DISCARDED on this
+      // branch: a clean write from a clean state (or from a pure refusal) always fell through to
+      // deleteMarker below, no matter how many previously-active loans had just vanished with no
+      // replacement and no terminal status. Rounds 15-18 built the obligation but only ever
+      // consulted it while a marker already stood, and the shrinkage guard — the only other thing
+      // watching — evaluates NET loss strictly PER WRITE. The two mechanisms mutually punted:
+      // the guard's comments delegate silent vanishes on clean writes to the obligation, the
+      // obligation's branch never ran on clean writes, and cumulative loss was policed by nobody.
+      //
+      // Reproduced: a 12-loan book written as 12→7→4→3→2→1 across five successive snapshots.
+      // Per-write netLoss is 5/12 (41.7%), 3/7 (42.9%), then three single-row losses under the
+      // 2-row MIN_SUPERSEDED_ROWS floor — every step passes the guard, every step cleared the
+      // marker, and computePortfolioAggregateLtv then returned clearedConservatively=TRUE off the
+      // one surviving loan with 11 loans' debt off-book. The identical 12→1 collapse in ONE write
+      // is correctly refused, so the guard's ratified presumption — "a systematic parser
+      // regression tends to drop MOST or ALL rows in the SAME snapshot" — is precisely what fails
+      // for a progressively-worsening regression, and the unattended reload path fires on every
+      // workbook refresh.
+      //
+      // Latching 'degraded' (not a new kind) is deliberate. An incomplete book fabricates a
+      // verdict in EITHER direction, exactly like a post-damage remnant: dropping a HIGH-ltv loan
+      // deflates the aggregate into a false clearance, while dropping a LOW-ltv loan inflates it
+      // into a phantom breach. That is the ratified 'degraded' contract.
+      //
+      // ROUND 19b CORRECTION (adversarial refute of 19a, HIGH ×2, both reproduced):
+      //   • trustedIds is now the STANDING trusted set only — NOT unioned with the surviving book
+      //     and NOT with the vanished ids. Round 19a unioned all three, so a renamed-away id
+      //     entered a trustedIds obligation dischargeable only by writtenIds.has(id), which a
+      //     renamed id can never satisfy. Reproduced: 2 renames + 1 payoff latched permanently.
+      //     A pure-vanish latch therefore carries trustedIds = [] (vacuously recovered), and the
+      //     clear decision rests entirely on absentObligation — which has a reachable discharge.
+      //   • The vanish set lives in absentIds, dischargeable per-id via confirmAbsent, so
+      //     confirming one routine payoff no longer waives unrelated standing damage.
+      //
+      // Round 19e: filter out anything already in absentObligation. standing?.trustedIds can carry
+      // an id forward from an EARLIER refusal (which latches the whole untouched book, not only
+      // ids that ever failed an insert — see line ~624). If that id is vanishing on THIS write, it
+      // must land in absentObligation only — otherwise it is stuck in trustedIds forever, since a
+      // permanently-gone loan can never satisfy writtenIds.has(id). See the matching note at the
+      // damageStartsNow branch above for the reproduced trigger.
+      const trustedIds = [...new Set(standing?.trustedIds ?? [])].filter(
+        (id) => !absentObligation.includes(id),
+      );
+      const vanishMsg =
+        `DEGRADED: ${absentObligation.length} previously-active loan(s) disappeared with no terminal ` +
+        `status and no same-property replacement: ${absentObligation.join(', ')}. ` +
+        'Each write was individually under the shrinkage guard, but the loss is cumulative and ' +
+        'unexplained, so the surviving rows are NOT a complete book. Treated as stale (no ' +
+        'aggregate-LTV or per-property governor verdict in either direction) until each loan ' +
+        'returns, or is confirmed gone via { confirmAbsent: [...] }.';
+      const latchedAt = standing?.latchedAt ?? standing?.refusedAt ?? new Date().toISOString();
+      upsertMarker.run(
+        REFUSAL_MARKER_KEY,
+        markerValue(
+          'degraded',
+          vanishMsg,
+          standing?.originalReason ?? standing?.reason ?? vanishMsg,
+          latchedAt,
+          trustedIds,
+          absentObligation,
+        ),
+      );
+    } else if (standing === null || standing.kind === 'refused') {
+      // Clean write with no standing marker (routine no-op delete), or the standing marker was a
+      // pure REFUSAL — the rows were never damaged, this write passed the per-write shrinkage
+      // guard against that trusted book, and nothing vanished unexplained. Clear.
       deleteMarker.run(REFUSAL_MARKER_KEY);
     } else {
       // Rounds 11-13 (three consecutive adversarial passes, each a reproduced HIGH): a clean
@@ -727,46 +984,62 @@ export function writeDebtSnapshot(
       // only an actual successful insert this write counts). Growth beyond the trusted set is
       // fine. A genuine payoff of a trusted loan during the damaged window is resolved with one
       // explicit opt-in run. A legacy marker without a trusted set can never auto-clear.
-      // Round 17: unexplainedSupersededIds (computed once, above, before either branch) is
-      // folded directly into the trusted set here — durably, not as a one-shot gate — before the
-      // fullyRecovered check runs. A newly-latched id was never written THIS round (it merely
-      // vanished), so fullyRecovered against the EXPANDED set correctly evaluates false on its
-      // own, with no separate boolean needed; and because it is now genuinely part of trustedIds,
-      // it stays part of the recovery obligation on every subsequent write until it actually
-      // returns or a human passes allowEmptySupersede — closing round 15/16's one-shot gap.
-      const trustedIds =
-        standing.trustedIds === null
-          ? null
-          : unexplainedSupersededIds.length > 0
-            ? [...new Set([...standing.trustedIds, ...unexplainedSupersededIds])]
-            : standing.trustedIds;
-      const fullyRecovered = trustedIds !== null && trustedIds.every((id) => writtenIds.has(id));
-      if (fullyRecovered) {
+      // Round 19b: the two obligations are checked SEPARATELY and both must be satisfied. Round
+      // 17/19a folded the vanish set into trustedIds, which conflated two different discharge
+      // rules and made renamed ids unrecoverable (see the absentIds contract note above).
+      //   trustedIds      — destroyed by a failed insert; must be FRESHLY RE-WRITTEN.
+      //   absentObligation — merely absent; discharged by returning OR by per-id confirmAbsent.
+      //
+      // Round 19e (adversarial refute of 19d, HIGH — reproduced): this is the branch that runs on
+      // EVERY subsequent write while a marker stays held, so it is the one most likely to re-latch
+      // the same disjointness bug the other two latch sites were fixed for. standing.trustedIds
+      // can contain an id that is now ALSO in absentObligation (it was swept in by an earlier
+      // damage-latch or refusal that captured the whole book, and has since vanished) — filter it
+      // out here too, or the recovery check demands writtenIds.has(id) for an id that can only
+      // ever be discharged by confirmAbsent, and the re-persisted message contradicts itself
+      // ("damaged loan(s) not yet re-verified: X. Vanished loan(s): none.") while X sits unnamed
+      // in the vanished list one line below.
+      const trustedIds = standing.trustedIds?.filter((id) => !absentObligation.includes(id)) ?? null;
+      const trustedRecovered = trustedIds !== null && trustedIds.every((id) => writtenIds.has(id));
+      if (trustedRecovered && absentObligation.length === 0) {
         deleteMarker.run(REFUSAL_MARKER_KEY);
       } else {
         staleMarkerHeld = true;
         const originalReason = standing.originalReason ?? standing.reason;
         const latchedAt = standing.latchedAt ?? standing.refusedAt;
-        const missing =
+        const missingTrusted =
           trustedIds === null
             ? 'UNKNOWN (legacy marker without a trusted id set)'
-            : trustedIds.filter((id) => !writtenIds.has(id)).join(', ');
+            : trustedIds.filter((id) => !writtenIds.has(id)).join(', ') || 'none';
+        const missingAbsent = absentObligation.length > 0 ? absentObligation.join(', ') : 'none';
         upsertMarker.run(
           REFUSAL_MARKER_KEY,
           markerValue(
             'degraded',
-            `DEGRADED: trusted loan(s) still missing or not re-verified this write: ${missing}. The book ` +
-              'remains untrusted until a clean write re-lands every trusted loan (or the loss is confirmed ' +
-              `via allowEmptySupersede). Original damage (${latchedAt}): ${originalReason.slice(0, 300)}`,
+            `DEGRADED: damaged loan(s) not yet re-verified: ${missingTrusted}. Vanished loan(s) not yet ` +
+              `returned or confirmed: ${missingAbsent}. The book remains untrusted until every damaged loan ` +
+              're-lands and every vanished loan either returns or is confirmed via ' +
+              `{ confirmAbsent: [...] }. Original damage (${latchedAt}): ${originalReason.slice(0, 300)}`,
             originalReason,
             latchedAt,
             trustedIds,
+            absentObligation,
           ),
         );
       }
     }
   });
 
-  runAll();
-  return { written, errors, refusedEmptySupersede: refuseEmptySupersede, degradedRows, staleMarkerHeld };
+  // Round 19b (adversarial refute, MEDIUM — reproduced by two independent lenses): `.immediate`,
+  // not a plain deferred transaction. The round-19a M1 relocation moved two SELECTs to the front
+  // of runAll, so BEGIN (deferred) took a READ snapshot first and the later write upgraded — and
+  // when a peer commits in between, SQLite fails that upgrade with SQLITE_BUSY_SNAPSHOT, for
+  // which it does NOT invoke the busy handler. The repo's deliberate busy_timeout=15000
+  // (server/warehouse/db.ts) was therefore bypassed and the write threw instantly, turning a
+  // previously-waiting-then-succeeding write into a WARN-level silent skip on the unattended
+  // reload path — for the exact dev-server + backfill-CLI concurrency the relocation cited.
+  // BEGIN IMMEDIATE takes the write lock up front, so the busy handler applies and the reads
+  // still observe the same snapshot as the writes.
+  runAll.immediate();
+  return { written, errors, refusedEmptySupersede, degradedRows, staleMarkerHeld, vanishedIds };
 }

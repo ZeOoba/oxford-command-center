@@ -53,7 +53,8 @@ import { referenceDate } from '../config';
 import { getRegionalMacro } from '../macro/regional-macro';
 import { propertyPeriodMetrics, latestFullYearPeriod } from './metrics';
 import { scoreProperties } from './scores';
-import { scoreDebtPositions, effectiveMonthsToMaturity } from './debt-scoring';
+import { scoreDebtPositionsWithTrust, effectiveMonthsToMaturity } from './debt-scoring';
+import { isDistrusted } from './debt-trust';
 import { clamp } from './clamp';
 import { loadCapitalConfig } from './capital-config';
 import { loadGovernors } from './governors';
@@ -62,7 +63,23 @@ import { classifyCapRateBand, benchmarkKey } from '../../src/contracts/market-in
 import type { CapRateBenchmark, MarketBenchmarkSet } from '../../src/contracts/market-intelligence';
 import type { WarehouseDb } from './db';
 import type { HealthBand, PeriodMetrics } from '../../src/contracts/warehouse';
-import type { DebtScore } from '../../src/contracts/debt';
+import type { DebtScore, DebtBookTrust, DebtScoreBand } from '../../src/contracts/debt';
+
+/**
+ * debtUrgency assigned to a property whose debt cannot be evaluated because the book is
+ * distrusted. Equal to the contribution a KNOWN DSCR breach makes, i.e. unknown debt is ranked as
+ * if it were breaching. Round 19b: the alternative (0, the round-19a behaviour) let a nulled dscr
+ * read as "no breach" and DEMOTED a known-breaching property in the ranked capital list.
+ */
+const UNKNOWN_DEBT_URGENCY = 30;
+
+// Round 19g: the deriveBookTrust helper that lived here (a second, separate readDebtBookTrust
+// call) is deleted. Both buildPortfolioAllocation and buildCapitalAllocationReport now consume
+// the bookTrust returned by scoreDebtPositionsWithTrust's own atomic read instead — see that
+// function's docblock in debt-scoring.ts for why a second call reopened a CRITICAL race. The
+// documented GET /ic-memo residual (two separate builder calls, each its own atomic read, still
+// not atomic WITH EACH OTHER) is unchanged by this — narrower now that each builder's OWN read is
+// internally consistent, but still open; would require passing one shared read into both.
 import type {
   AllocationVerdict,
   PortfolioAllocation,
@@ -88,6 +105,36 @@ function healthBandToRisk(band: HealthBand): RiskBand {
     concern: 'high',
   };
   return map[band];
+}
+
+function debtScoreBandToRisk(band: DebtScoreBand): RiskBand {
+  const map: Record<DebtScoreBand, RiskBand> = {
+    strong: 'low',
+    adequate: 'moderate',
+    watch: 'elevated',
+    critical: 'high',
+  };
+  return map[band];
+}
+
+const RISK_BAND_SEVERITY: Record<RiskBand, number> = { low: 0, moderate: 1, elevated: 2, high: 3 };
+
+/**
+ * Round 8 fresh-sweep (adversarial refute, HIGH — reproduced): the `hold` branches below used to
+ * derive riskBand from operating health alone, ignoring debtScoreBand entirely. A property with a
+ * real, measured 0.71x DSCR breach (signal 'governor-block', scoreBand 'critical') falls into
+ * action='hold' (governor-block doesn't match sell/refinance/improve) and rendered riskBand 'low'
+ * whenever the property's operating health looked fine — a green "low risk" badge sitting directly
+ * on top of an active Hard-Invariant-4 breach. Combining with debtScoreBandToRisk also closes the
+ * companion book-trust gap: under a distrusted book, debtScoreBand is either the applyBookTrust-
+ * capped value (which preserves 'critical', floors to 'watch' otherwise) or 'watch' via debtUnknown
+ * — so an untrusted book can no longer read safer than 'elevated' purely because health looks good.
+ * Never take the LESS severe of the two signals — that would let a real debt-side breach be masked
+ * by good operating health, the same false-clearance direction this whole class of defect is about.
+ */
+function combinedRiskBand(healthBased: RiskBand, debtBand: DebtScoreBand): RiskBand {
+  const debtBased = debtScoreBandToRisk(debtBand);
+  return RISK_BAND_SEVERITY[debtBased] >= RISK_BAND_SEVERITY[healthBased] ? debtBased : healthBased;
 }
 
 function confidenceTierFrom(c01: number): Confidence {
@@ -165,6 +212,11 @@ function buildBuyVerdict(
       ltv: null,
       noiPerSf: null,
       forecastPresent: forecastInputs !== undefined,
+      // A pipeline acquisition candidate is not owned, so no debt book describes it — 'unknown',
+      // not 'trusted'. Consistent with the placeholder disclosure in reasons[] above: these
+      // inputs are neutral placeholders, and claiming a trusted debt book would be a measured
+      // claim about data that does not exist.
+      bookTrust: 'unknown',
     },
     dataQuality,
   };
@@ -378,9 +430,21 @@ function buildVerdict(
   forecastInputs: { periods: number } | undefined,
   expectedReturnPct: number | null,
   capexIrr: number | null,
+  bookTrust: DebtBookTrust,
 ): AllocationVerdict {
-  const debtSignal = ds?.signal ?? 'no-debt';
-  const debtScoreBand = ds?.scoreBand ?? 'adequate';
+  // Round 19 (H1 — 2026-07-27 integrity sweep, HIGH): an ABSENT DebtScore means "this property
+  // has no active debt_positions rows". Under a trusted book that is a verified unlevered
+  // property, and 'no-debt'/'adequate' is right. Under a DISTRUSTED book it may instead mean the
+  // property's loans were DESTROYED by the damaged write — and the old unconditional defaults
+  // then allocated a leveraged, possibly governor-breaching property as UNLEVERED, erasing its
+  // governor-block and unblocking further capital deployment into it. Reproduced: a property
+  // carrying $9M at 0.55 LTV whose sole loan row was lost to a failed insert surfaced with
+  // debtSignal 'no-debt' and band 'adequate'.
+  //
+  // "No score row" and "verified no debt" are different claims and must not share a default.
+  const debtUnknown = ds === null && isDistrusted(bookTrust);
+  const debtSignal = ds?.signal ?? (debtUnknown ? 'hold' : 'no-debt');
+  const debtScoreBand = ds?.scoreBand ?? (debtUnknown ? 'watch' : 'adequate');
   const dscr = ds?.dscr ?? null;
   const dscrHeadroom = ds?.dscrHeadroom ?? null;
   const ltv = ds?.ltv ?? null;
@@ -389,7 +453,15 @@ function buildVerdict(
   const horizonPeriods = forecastInputs?.periods ?? 0;
 
   // Confidence: base 0.6 when both PropertyScore + DebtScore present; boost capped at 0.65/0.85
-  const baseConf = ds !== null ? 0.6 : 0.45;
+  // Round 19d correction (adversarial refute, MEDIUM — reproduced): 19b gated the low confidence
+  // on `ds === null`, so a SURVIVING score under a degraded book — one applyBookTrust had already
+  // emptied of dscr/ltv/debtYield/headrooms — kept baseConf 0.6, while a property with merely no
+  // score row got 0.3. Confidence was HIGHEST exactly where the data had been deliberately
+  // withheld (0.61 vs 0.31, reproduced). ic-memo.ts sorts verdicts by confidence01 DESC and
+  // headlines the top one, so the memo's lead recommendation was drawn from the withheld-figures
+  // property. Trust caps confidence regardless of whether a score object exists.
+  const baseConf =
+    bookTrust === 'degraded' ? 0.3 : ds !== null ? 0.6 : debtUnknown ? 0.3 : 0.45;
   const subBoost = Math.min(0.05, Object.keys(ps.subScores).length * 0.01);
   const rawConf = baseConf + subBoost;
   const confCap = forecastInputs !== undefined ? 0.85 : 0.65;
@@ -450,7 +522,7 @@ function buildVerdict(
     // 3-neg. invest signal present but capexIrr proxy undrivable or doesn't clear hurdle →
     // degrades to hold (matches Phase 5 v1's original fail-safe default).
     action = 'hold';
-    riskBand = healthBandToRisk(ps.healthBand);
+    riskBand = combinedRiskBand(healthBandToRisk(ps.healthBand), debtScoreBand);
     timelineMonths = 0;
     reasons.push(
       capexIrr === null
@@ -461,7 +533,7 @@ function buildVerdict(
     // 4. hold (default — handles monitor, governor-block, no-debt)
     // timelineMonths=0: Phase 5 defers a concrete hold timeline (Phase 5 v2 will set 12 months)
     action = 'hold';
-    riskBand = healthBandToRisk(ps.healthBand);
+    riskBand = combinedRiskBand(healthBandToRisk(ps.healthBand), debtScoreBand);
     timelineMonths = 0;
   }
 
@@ -479,6 +551,31 @@ function buildVerdict(
   const noiPerSf: number | null = null;
 
   const dataQuality: AllocationVerdict['dataQuality'] = [];
+  // Round 19d: disclose an untrusted debt book structurally, not only through a nulled number.
+  // AllocationVerdict.dataQuality exists precisely for this and was unused here, so the IC memo
+  // rendered a distrusted book as an ordinary one.
+  if (isDistrusted(bookTrust)) {
+    dataQuality.push({
+      entity: ps.propertyId,
+      field: 'debtBook',
+      issue:
+        bookTrust === 'unknown'
+          ? 'No debt book loaded (debt_positions is empty and no snapshot has been written) — ' +
+            'this property is NOT verified unlevered; its debt is simply unknown.'
+          : bookTrust === 'refused'
+            ? 'The last debt snapshot write was REFUSED by the shrinkage guard — DSCR/LTV below ' +
+              'are the last TRUSTED book and may be out of date; clearance-direction actions are withheld.'
+            : 'The debt book is DEGRADED — the last snapshot write lost rows, so per-property ' +
+              'DSCR/LTV are withheld entirely; figures computed from the survivors would be wrong ' +
+              'in either direction.',
+      severity: bookTrust === 'degraded' ? 'error' : 'warn',
+    });
+    reasons.push(
+      bookTrust === 'unknown'
+        ? 'Debt book not loaded — debt position unknown, not verified absent'
+        : 'Debt book not trusted — governor figures withheld or stale',
+    );
+  }
   if (expectedReturnPct === null) {
     dataQuality.push({
       entity: ps.propertyId,
@@ -529,6 +626,7 @@ function buildVerdict(
       ltv,
       noiPerSf,
       forecastPresent: forecastInputs !== undefined,
+      bookTrust,
     },
     dataQuality,
   };
@@ -627,7 +725,15 @@ export async function buildPortfolioAllocation(
   // Spine B: period metrics → property scores + debt scores
   const metrics = propertyPeriodMetrics(db);
   const propertyScores = scoreProperties(db, metrics);
-  const debtScores = scoreDebtPositions(db, metrics, dgs5, asOf);
+  // Round 19g: consume the trust the engine itself read, inside its own atomic transaction —
+  // never re-derive it with a second, separate call (that reopened the exact CRITICAL
+  // per-score-vs-envelope disagreement round 19f fixed, one call deeper).
+  const { scores: debtScores, bookTrust: allocationBookTrust } = scoreDebtPositionsWithTrust(
+    db,
+    metrics,
+    dgs5,
+    asOf,
+  );
 
   // Index DebtScore by propertyId
   const debtByProperty = new Map<string, DebtScore>();
@@ -674,6 +780,7 @@ export async function buildPortfolioAllocation(
       forecastInputs,
       expectedReturnPct,
       capexIrr,
+      allocationBookTrust,
     );
   });
 
@@ -973,7 +1080,14 @@ export async function buildCapitalAllocationReport(
   const scores = scoreProperties(db, metrics);
   const scoreByPropertyId = new Map(scores.map((s) => [s.propertyId, s]));
 
-  const debtScores = scoreDebtPositions(db, metrics, null, refDate);
+  // Round 19g: consume the trust the engine itself read — see the buildPortfolioAllocation note
+  // above for why a second, separate readDebtBookTrust/deriveBookTrust call is unsafe here.
+  const { scores: debtScores, bookTrust: reportBookTrust } = scoreDebtPositionsWithTrust(
+    db,
+    metrics,
+    null,
+    refDate,
+  );
   const debtByPropertyId = new Map(debtScores.map((d) => [d.propertyId, d]));
 
   const balloonMonthsByProperty = getBalloonMonthsByProperty(db, refDate);
@@ -1054,10 +1168,46 @@ export async function buildCapitalAllocationReport(
     const nearTermExpiryRent = nearTermExpiryRentByProperty.get(property.id) ?? 0;
     const atRiskLikelihoodCount = atRiskCountByProperty.get(property.id) ?? 0;
 
+    // ── ROUND 19b (adversarial refute of 19a, HIGH — found by all three lenses, reproduced) ──
+    // Round 19a threaded book trust into buildPortfolioAllocation's buildVerdict and left the
+    // IDENTICAL unconditional default here, 700 lines below in the same file — the surface that
+    // feeds GET /capital-allocation, GET /capital-allocation/ic-memo, the insights engine, and
+    // POST /capital-allocation/sync-notion, which WRITES capitalAction and priorityScore into the
+    // Notion Property Register. A false clearance here leaves the warehouse entirely.
+    //
+    // Two reproduced failure modes, both from `hasDebt = debtScore !== undefined && ...`:
+    //   E1  a property whose loan rows were DESTROYED produces no DebtScore, so hasDebt=false and
+    //       the entry is byte-identical to a genuinely unlevered one (dscr, debtScore,
+    //       balloonMonths all null, debtUrgency 0, empty rationale).
+    //   E2  a SURVIVING property with a real 1.10x DSCR breach has its dscr nulled by
+    //       applyBookTrust, so debtUrgency silently loses its `dscr < dscrFloor ? 30 : 0` term,
+    //       the "DSCR at 1.10 (below 1.25x governor)" rationale line disappears, and
+    //       priorityScore DROPS 37 -> 32.5 — demoting the property that most needs attention in
+    //       the ranked list written back to Notion.
+    //
+    // Three states, not two: "no score row under a trusted book" (verified unlevered) is a
+    // different claim from "no score row under a degraded book" (loans possibly destroyed).
+    // ROUND 19d correction (adversarial refute, HIGH — reproduced): 19b required
+    // `reportBookTrust === 'degraded'` for BOTH conjuncts, so under a standing 'refused' marker
+    // this surface got NO unknown-debt treatment at all — and a warehouse WITH a refusal marker
+    // therefore reported LESS conservatively (priorityScore 32.5, empty rationale) than the same
+    // warehouse with NO marker (37, explicit warning). Adding evidence that something went wrong
+    // silenced the warning. It also put the two engines in this file in contradiction:
+    // buildVerdict used `!== 'trusted'`, this used `=== 'degraded'`, and the IC memo renders both.
+    //   • ABSENCE of a score is unknown under ANY non-trusted book (matching buildVerdict).
+    //   • WITHHELD figures on a present score is the 'degraded' case specifically.
+    const distrusted = isDistrusted(reportBookTrust);
+    const debtUnknown =
+      (debtScore === undefined && distrusted) ||
+      (reportBookTrust === 'degraded' && debtScore !== undefined && debtScore.dscr === null);
     const hasDebt = debtScore !== undefined && debtScore.signal !== 'no-debt';
-    const debtScoreValue = hasDebt ? debtScore!.score : null;
+    const debtScoreValue = hasDebt && !debtUnknown ? debtScore!.score : null;
     const dscr = hasDebt ? debtScore!.dscr : null;
-    const effectiveBalloonMonths = hasDebt ? balloonMonths : null;
+    // Round 19d: balloonMonths was published from the distrusted book while dscr/debtScore were
+    // withheld — getBalloonMonthsByProperty reads debt_positions directly, so it reports only the
+    // SURVIVING loans and a destroyed near-term balloon silently becomes the survivor's later
+    // date, presented as fact. Withhold it on the same condition as the other figures.
+    const effectiveBalloonMonths = hasDebt && !debtUnknown ? balloonMonths : null;
 
     const healthVal = healthScore ?? 50;
 
@@ -1066,16 +1216,52 @@ export async function buildCapitalAllocationReport(
         ? Math.min(100, (nearTermExpiryRent / noi) * 100 + atRiskLikelihoodCount * 10)
         : Math.min(50, atRiskLikelihoodCount * 10);
 
-    const debtUrgency = !hasDebt
+    // Round 19b: a distrusted book must never let a property DROP in the ranking. With dscr
+    // nulled, the `dscr < dscrFloor ? 30 : 0` term silently evaluates to 0 — reading "no breach"
+    // when the truth is "we cannot tell", which reproduced as a known-breaching property sinking
+    // 37 -> 32.5. Unknown debt is scored as if it were breaching, matching this codebase's own
+    // ratified "unknown is never far away" posture for unknown maturities.
+    // ROUND 19d correction (adversarial refute, HIGH — reproduced): 19b REPLACED the whole
+    // expression with the flat constant, which is the opposite of what its own comment claimed.
+    //
+    // ROUND 19e correction (adversarial refute of 19d, MEDIUM-HIGH — reproduced): the 19d "floor"
+    // was itself dead. `Math.max(UNKNOWN_DEBT_URGENCY, measuredUrgency)` can only ever return the
+    // constant, because `measuredUrgency` was computed from `effectiveBalloonMonths`/`dscr` — the
+    // SAME variables 19d had just withheld to null whenever `debtUnknown` is true. A distrusted
+    // property with a genuine 3-month survivor balloon and one with none scored IDENTICALLY (37),
+    // and a real 1.10x-DSCR breach still dropped 47.5 -> 37 on becoming distrusted — the exact
+    // regression 19d's own comment claims to have closed.
+    //
+    // Fix: the urgency FORMULA reads the RAW measured balloon term (before withholding), never the
+    // display-facing `effectiveBalloonMonths`. This is safe because the withholding boundary this
+    // module protects is DISPLAY — presenting a number as fact off distrusted rows (round 19b/19d's
+    // own "balloonMonths leaking from a degraded book" finding) — not INTERNAL use as one input to
+    // a floor that can only ever push urgency UP, never mint a clearance. `entry.balloonMonths`,
+    // `entry.dscr`, and `debtScoreValue` all remain withheld exactly as before; only the number fed
+    // into this clamp changes. dscr itself is unrecoverable here — under 'degraded' applyBookTrust
+    // already nulled it one layer up in debt-scoring.ts (round 19f closed the gap where an
+    // unattributed-loan-triggered 'degraded' bypassed that withholding entirely — see debt-scoring
+    // .ts's applyBookTrust) — so the floor's only exploitable signal is the balloon term, which
+    // getBalloonMonthsByProperty reads independently of that gate.
+    const rawBalloonMonths = hasDebt ? balloonMonths : null;
+    const balloonComponent =
+      rawBalloonMonths === null ? 0 : Math.max(0, 100 - (rawBalloonMonths / 12) * 10);
+    const measuredUrgency = !hasDebt
       ? 0
-      : clamp(
-          (effectiveBalloonMonths === null
-            ? 0
-            : Math.max(0, 100 - (effectiveBalloonMonths / 12) * 10)) +
-            (dscr !== null && dscr < dscrFloor ? 30 : 0),
-          0,
-          100,
-        );
+      : clamp(balloonComponent + (dscr !== null && dscr < dscrFloor ? 30 : 0), 0, 100);
+    // ROUND 19f correction (adversarial refute of 19e, MEDIUM — reproduced): `Math.max(30,
+    // measuredUrgency)` means "at least 30," not the doctrine this module states two paragraphs up
+    // — "unknown debt is scored AS IF IT WERE BREACHING." A real breach scores
+    // `balloonComponent + 30`; the old floor only matched that when balloonComponent happened to be
+    // 0 or the clamp was already saturated. For any balloon between 0 and ~120 months the
+    // distrusted property landed UP TO 30 URGENCY POINTS (4.5 PRIORITY POINTS) SAFER than the
+    // identical measured breach — withholding a verdict improved the property's standing, exactly
+    // the failure direction this whole mechanism exists to prevent. dscr's OWN 30-point breach
+    // contribution is a known constant regardless of whether the dscr value itself is recoverable,
+    // so "as if breaching" means adding it unconditionally, not flooring the sum against it.
+    const debtUrgency = debtUnknown
+      ? clamp(balloonComponent + UNKNOWN_DEBT_URGENCY, 0, 100)
+      : measuredUrgency;
 
     const raw =
       (100 - healthVal) * 0.35 + attentionScore * 0.3 + leasingRisk * 0.2 + debtUrgency * 0.15;
@@ -1087,7 +1273,19 @@ export async function buildCapitalAllocationReport(
     // live governor value rather than a hardcoded 1.25 literal (C1).
     // The old inline balloon/DSCR blocks that lived here have been removed (I1) —
     // they duplicated what _buildDebtReasonImpacts already emits.
+    // Round 19d: the trust line is PREPENDED to the measured reasons rather than replacing them.
+    // 19b replaced the whole seed, so a known balloon's reason line disappeared along with the
+    // figures — losing information the operator still has (the balloon date is measured on
+    // surviving rows) instead of merely qualifying it.
     const reasons: Array<{ text: string; impact: number }> = [
+      ...(debtUnknown
+        ? [
+            {
+              text: 'Debt book not trusted — DSCR/LTV withheld; this property may carry undisclosed debt',
+              impact: UNKNOWN_DEBT_URGENCY * 0.15,
+            },
+          ]
+        : []),
       ..._buildDebtReasonImpacts({ hasDebt, effectiveBalloonMonths, dscr, dscrFloor }),
     ];
 

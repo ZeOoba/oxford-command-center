@@ -22,6 +22,21 @@ function freshDb(): WarehouseDb {
   return openWarehouse(join(dir, 'test.sqlite'));
 }
 
+/**
+ * Every id the marker still owes a recovery for, across BOTH obligations.
+ *
+ * Round 19b split the single trustedIds list in two, because the two kinds of loss have different
+ * discharge rules: a loan destroyed by a failed insert must be FRESHLY RE-WRITTEN (trustedIds),
+ * while a loan that merely vanished from the payload may also be discharged by an explicit per-id
+ * confirmAbsent (absentIds). Folding them together made a renamed-away id permanently
+ * unrecoverable. The rounds 15-18 tests below assert that a specific loan REMAINS AN OBLIGATION —
+ * which list carries it is an implementation detail, so they assert against the union.
+ */
+function markerObligations(db: WarehouseDb): Set<string> {
+  const m = readLastSnapshotRefusal(db)!;
+  return new Set([...(m.trustedIds ?? []), ...(m.absentIds ?? [])]);
+}
+
 /** Minimal borrower loan fixture. */
 function makeBorrowerLoan(overrides: Partial<Loan> = {}): Loan {
   return {
@@ -1349,9 +1364,20 @@ describe('writeDebtSnapshot — persisted refusal marker', () => {
     const loanC2 = makeBorrowerLoan({ id: 'loan-C2', name: 'Loan C (refi)' });
     const recovered = writeDebtSnapshot(db, [loans[0]!, loans[1]!, loanC2], '2026-06-03');
 
-    // The book is fully healthy (A, B, C2 all active) — the marker must clear, not hold forever
-    // on an unrelated refinance loan-C never actually failed to write.
-    expect(recovered.staleMarkerHeld).toBe(false);
+    // ROUND 19d CONTRACT CHANGE (Gabriel's ruling): the replacement predicate is deleted, so a
+    // rename/refi no longer auto-explains itself — loan-C's disappearance IS an obligation, and
+    // loan-B's insert-failure damage is separately recovered. What this test is named for and
+    // exists to protect is the word PERMANENTLY: loan-C must not hold the marker open forever,
+    // because nothing about it ever failed to write. It does not. One narrow confirmAbsent — not
+    // the blanket allowEmptySupersede amnesty — resolves it, and loan-B's real damage having been
+    // re-written is what lets the marker clear at all.
+    expect(recovered.staleMarkerHeld).toBe(true);
+    expect(readLastSnapshotRefusal(db)!.absentIds).toEqual(['loan-C']);
+
+    const confirmed = writeDebtSnapshot(db, [loans[0]!, loans[1]!, loanC2], '2026-06-04', undefined, {
+      confirmAbsent: ['loan-C'],
+    });
+    expect(confirmed.staleMarkerHeld).toBe(false);
     expect(readLastSnapshotRefusal(db)).toBeNull();
   });
 
@@ -1462,7 +1488,7 @@ describe('writeDebtSnapshot — persisted refusal marker', () => {
       '2026-06-03',
     );
     expect(bypass.degradedRows).toBe(1);
-    expect(new Set(readLastSnapshotRefusal(db)!.trustedIds)).toEqual(new Set(['loan-A', 'loan-B']));
+    expect(markerObligations(db)).toEqual(new Set(['loan-A', 'loan-B']));
 
     // Loan-A now recovers (cell fixed) — loan-B never returns.
     const finalWrite = writeDebtSnapshot(db, [loanA], '2026-06-04');
@@ -1496,7 +1522,7 @@ describe('writeDebtSnapshot — persisted refusal marker', () => {
     // Recovery write: loan-A returns, loan-B omitted (superseded this write) — must hold.
     const held = writeDebtSnapshot(db, [loanA], '2026-06-03');
     expect(held.staleMarkerHeld).toBe(true);
-    expect(new Set(readLastSnapshotRefusal(db)!.trustedIds)).toEqual(new Set(['loan-A', 'loan-B']));
+    expect(markerObligations(db)).toEqual(new Set(['loan-A', 'loan-B']));
 
     // The IDENTICAL payload runs again on the next scheduled tick — loan-B is now already gone
     // from activeIds (superseded last write), so a transient per-write check would see nothing
@@ -1540,7 +1566,7 @@ describe('writeDebtSnapshot — persisted refusal marker', () => {
       '2026-07-02',
     );
     expect(latch.degradedRows).toBe(1);
-    expect(new Set(readLastSnapshotRefusal(db)!.trustedIds)).toEqual(
+    expect(markerObligations(db)).toEqual(
       new Set(['loan-A', 'loan-B', 'loan-C']),
     );
 

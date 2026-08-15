@@ -47,9 +47,14 @@ describe('capitalAllocationApi', () => {
   // used identically in 5 other files (api.ts x3, insights-api.ts, lease-forecast-api.ts,
   // tax-api.ts) with no documented reason it must be dynamic rather than static, so
   // changing the import style itself is a separate, wider decision than this test fix.
+  // Round 8 fresh-sweep (adversarial refute, MEDIUM — corroborated by two independent lenses):
+  // the default 10s hook timeout intermittently expired under full-suite parallel-fork load
+  // (2 of 3 full runs), skipping ALL tests in this file -- including R-5, the calibration-history
+  // regression gate for round 8's filterTrustedVerdicts fix. Explicit generous timeout so a loaded
+  // CI runner doesn't silently drop CI's only coverage of that gate.
   beforeAll(async () => {
     await import('../../server/brain');
-  });
+  }, 60_000);
 
   afterEach(() => {
     for (const db of openedDbs) db.close();
@@ -98,5 +103,54 @@ describe('capitalAllocationApi', () => {
     const body = await res.json() as unknown;
     const obj = body as Record<string, unknown> | undefined;
     expect(obj?.['advisoryOnly']).toBe(false);
+  });
+
+  // Round 19g (adversarial refute, MEDIUM-HIGH — reproduced on a surface no prior round had
+  // reviewed): calibration_verdict is a SECOND permanent, append-only history — later resolved
+  // against realized outcomes — that got neither of debt_scores' two protections (a write gate, a
+  // provenance column). A distrusted verdict's dedupKey has no trust component, so INSERT OR
+  // IGNORE on the same key after the book heals silently discards the corrected verdict, and the
+  // firm's calibration statistics get permanently scored against a verdict that was never real.
+  //
+  // filterTrustedVerdicts is tested directly (a real verdict from buildPortfolioAllocation
+  // requires a full ledger-seeded PropertyScore, which is out of scope for this route-level
+  // suite) — this pins the actual gate the route calls, not a re-implementation of it.
+  it('R-5: filterTrustedVerdicts excludes every non-trusted verdict, keeps trusted ones', async () => {
+    const { filterTrustedVerdicts } = await import('../../server/warehouse/capital-allocation-api');
+    const base = {
+      propertyName: null, period: '2026', expectedReturnPct: null, returnAboveHurdle: null,
+      riskBand: 'moderate' as const, timelineMonths: 12, horizonPeriods: 0, confidence01: 0.5,
+      confidenceTier: 'estimated' as const, advisoryOnly: false, reasons: [], dataQuality: [],
+      inputs: {
+        healthBand: 'good' as const, attentionBand: 'green' as const, capitalAction: 'hold' as const,
+        debtSignal: 'hold' as const, debtScoreBand: 'adequate' as const, dscr: null, dscrHeadroom: null,
+        ltv: null, noiPerSf: null, forecastPresent: false, bookTrust: 'trusted' as const,
+      },
+    };
+    const trusted = { ...base, propertyId: 'p-trusted', action: 'hold' as const };
+    const degraded = {
+      ...base, propertyId: 'p-degraded', action: 'refinance' as const,
+      inputs: { ...base.inputs, bookTrust: 'degraded' as const, debtSignal: 'refi' as const },
+    };
+    const unknown = {
+      ...base, propertyId: 'p-unknown', action: 'hold' as const,
+      inputs: { ...base.inputs, bookTrust: 'unknown' as const },
+    };
+    const refused = {
+      ...base, propertyId: 'p-refused', action: 'hold' as const,
+      inputs: { ...base.inputs, bookTrust: 'refused' as const },
+    };
+    // Round 8 fresh-sweep (adversarial refute, MEDIUM-HIGH -- reproduced): buildBuyVerdict
+    // hardcodes bookTrust:'unknown' for pipeline candidates BY DESIGN -- "not applicable" (no
+    // owned debt book describes an unowned pipeline candidate), not a real trust failure. A naive
+    // filter dropped this verdict forever, even on a fully trusted book -- silently killing the
+    // calibration flywheel's entire acquisition-prediction history.
+    const buyPipeline = {
+      ...base, propertyId: 'pipeline:cand-1', action: 'buy' as const,
+      inputs: { ...base.inputs, bookTrust: 'unknown' as const },
+    };
+
+    const kept = filterTrustedVerdicts([trusted, degraded, unknown, refused, buyPipeline]);
+    expect(kept.map((v) => v.propertyId)).toEqual(['p-trusted', 'pipeline:cand-1']);
   });
 });

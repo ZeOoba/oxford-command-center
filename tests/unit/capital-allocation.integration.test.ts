@@ -382,9 +382,19 @@ describe('buildCapitalAllocationReport — real engine integration (no mocks)', 
     // relative to the run date and status !== 'Expired'; L-H2-1 is far out and L-H2-3's
     // status:'Expired' + long tenure keep it out of every at-risk/lapsing band.)
     // priorityScore = (100-healthVal)*0.35 + attentionScore*0.30 + leasingRisk*0.20 + debtUrgency*0.15
-    //   healthVal/attentionScore default to 50 (unscored property), debtUrgency = 0 (no debt scored)
-    //   = (100-50)*0.35 + 50*0.30 + 83.684*0.20 + 0 = 17.5 + 15 + 16.7368 ≈ 49.2368
-    // Empirically confirmed via this exact fixture before writing this assertion.
-    expect(entry.priorityScore).toBeCloseTo(49.2368, 3);
+    //   healthVal/attentionScore default to 50 (unscored property).
+    //
+    // ROUND 19b: debtUrgency is now UNKNOWN_DEBT_URGENCY (30), not 0. This fixture seeds no
+    // debt_positions rows at all, and an adversarial refuter reproduced that state being reported
+    // as a VERIFIED unlevered portfolio — every property allocated as debt-free with band
+    // 'adequate' on a warehouse where the debt backfill had simply never run. debt-maturity.ts's
+    // ratified H2b doctrine already refuses that inference for the portfolio aggregate ("the
+    // warehouse cannot distinguish 'no debt' from 'no data', so it must not guess"); capital
+    // allocation now agrees, and an empty book scores as unknown-debt rather than no-debt.
+    //   = (100-50)*0.35 + 50*0.30 + 83.684*0.20 + 30*0.15
+    //   = 17.5 + 15 + 16.7368 + 4.5 ≈ 53.7368
+    // The subject of THIS test — nearTermExpiryRent Oxford-share scaling, the 83.684 leasingRisk
+    // term — is unchanged; the whole delta is the new debt term.
+    expect(entry.priorityScore).toBeCloseTo(53.7368, 3);
   });
 });

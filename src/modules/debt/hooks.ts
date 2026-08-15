@@ -36,7 +36,10 @@ export function useDebtScores() {
   return useQuery({
     queryKey: DEBT_KEYS.scores,
     queryFn: () =>
-      fetchParsedOrMirror('/api/warehouse/debt/scores', DebtScoreResponse).then((r) => r.scores),
+      // Round 19d: keep the WHOLE envelope. Mapping to `.scores` here is what stranded bookTrust
+      // — with every row destroyed the array is empty, so the view had nothing to read the book's
+      // trust state from and rendered a reassuring "run a debt snapshot" empty state instead.
+      fetchParsedOrMirror('/api/warehouse/debt/scores', DebtScoreResponse),
     ...QUERY_OPTS,
   });
 }
@@ -49,7 +52,12 @@ export function useDebtMaturity() {
   return useQuery({
     queryKey: DEBT_KEYS.maturity,
     queryFn: () =>
-      fetchParsedOrMirror('/api/warehouse/debt/maturity', MaturityLadderResponse).then((r) => r.ladder),
+      // Round 19e (adversarial refute, MEDIUM — confirmed by two independent lenses): the exact
+      // `.then((r) => r.ladder)` mapping round 19d fixed for useDebtScores two functions above,
+      // left in place here. `/maturity` computes and serializes bookTrust specifically so the
+      // ladder cannot serve a post-damage remnant as a clean, complete book — the field was
+      // stranded at this line and no client ever saw it.
+      fetchParsedOrMirror('/api/warehouse/debt/maturity', MaturityLadderResponse),
     ...QUERY_OPTS,
   });
 }

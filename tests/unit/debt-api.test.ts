@@ -20,7 +20,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { debtApi, type DebtApiSnapshotPayload } from '../../server/warehouse/debt-api';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
-import { DebtScoreResponse, MaturityLadderResponse } from '@contracts/debt';
+import { DebtScoreResponse, MaturityLadderResponse, RefiWindowsResponse } from '@contracts/debt';
 
 // ── Mock getMacro — no live FRED calls in unit tests ──────────────────────────────────────
 
@@ -1077,5 +1077,73 @@ describe('POST /snapshot — payload validation', () => {
     const body = await res.json() as { ok: boolean; written: number };
     expect(body.ok).toBe(true);
     expect(body.written).toBe(1);
+  });
+});
+// Round 19g (adversarial refute, MEDIUM-HIGH -- reproduced): buildRefiWindows sources
+// soonestMaturityDate/monthsToSoonestMaturity/maturityWithin12mo/24mo from its own independent
+// activeLoans(db) read, not from the trust-aware scoring engine -- a destroyed near-term balloon
+// silently became a surviving loan's later date presented as fact, and maturityWithin12mo could
+// read false when the true (destroyed) urgency was true. Withheld now, matching the round-19d
+// capital-allocation.ts balloonMonths precedent.
+describe('GET /refi-windows -- maturity-window withholding under a distrusted book', () => {
+  beforeEach(() => {
+    mockGetMacro.mockResolvedValue(null as never);
+  });
+
+  it('a fully trusted book publishes the real maturity-window facts', async () => {
+    const db = freshDb();
+    seedProperty(db, 'prop-A', 'Test Property A');
+    seedLoan(db, {
+      id: 'loan-near', propertyId: 'prop-A', balloon: 1,
+      maturityDate: '2026-08-01', monthsToMaturity: 1,
+    });
+    const app = makeApp(db);
+    const res = await app.fetch(new Request('http://localhost/refi-windows'));
+    expect(res.status).toBe(200);
+    const body = RefiWindowsResponse.parse(await res.json());
+    expect(body.bookTrust).toBe('trusted');
+    const w = body.windows.find((x) => x.propertyId === 'prop-A')!;
+    expect(w.maturityWithin12mo).toBe(true);
+    expect(w.soonestMaturityDate).not.toBeNull();
+  });
+
+  it('a destroyed near-term balloon does not silently present the survivor date as fact', async () => {
+    const db = freshDb();
+    seedProperty(db, 'prop-A', 'Test Property A');
+    seedLoan(db, {
+      id: 'loan-near', propertyId: 'prop-A', balloon: 1,
+      maturityDate: '2026-08-01', monthsToMaturity: 1,
+    });
+    seedLoan(db, {
+      id: 'loan-far', propertyId: 'prop-A',
+      maturityDate: '2032-01-01', monthsToMaturity: 66,
+    });
+    const { writeDebtSnapshot } = await import('../../server/warehouse/debt-snapshot');
+    writeDebtSnapshot(
+      db,
+      [
+        {
+          id: 'loan-far', name: 'Loan Far', counterparty: 'Bank', direction: 'borrower',
+          originalPrincipal: 500_000, currentBalance: 500_000, absBalance: 500_000, rate: 0.06,
+          monthlyPmt: 3_000, annualInterest: null, annualPrincipal: null, loanType: 'Amortizing',
+          status: 'Amortizing', isDemand: false, maturity: '2032-01-01', monthsToMaturity: 66,
+          ltv: 0.3, lender: 'Bank', balloon: false, flags: [], collateralProperty: null,
+        },
+      ],
+      '2026-07-27',
+      new Map([['loan-far', 'prop-A']]),
+    );
+
+    const app = makeApp(db);
+    const res = await app.fetch(new Request('http://localhost/refi-windows'));
+    expect(res.status).toBe(200);
+    const body = RefiWindowsResponse.parse(await res.json());
+    expect(body.bookTrust).toBe('degraded');
+    const w = body.windows.find((x) => x.propertyId === 'prop-A')!;
+    expect(w.soonestMaturityDate).toBeNull();
+    expect(w.monthsToSoonestMaturity).toBeNull();
+    expect(w.maturityWithin12mo).toBeNull();
+    expect(w.maturityWithin24mo).toBeNull();
+    expect(w.hasUnknownMaturity).toBe(true);
   });
 });
