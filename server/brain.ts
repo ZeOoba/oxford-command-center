@@ -6,7 +6,7 @@ import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, ty
 import { tenantScorecards } from '../src/brain/tenants';
 import { parseWorkbook } from './workbook/parse';
 import { applyOverlay, loadOverlay, saveOverlay, type Overlay } from './overlay';
-import { checkSnapshot } from './reconcile-runtime';
+import { checkSnapshot, hasReconciliationError } from './reconcile-runtime';
 import { SNAPSHOT_PATH, workbookPath, referenceDate } from './config';
 import { loadQuickbooks } from './sources/quickbooks';
 import { evaluateAnomalyFloor, loadPreviousLeaseIds } from './anomaly-floor';
@@ -123,7 +123,19 @@ class Brain extends EventEmitter {
   /** Re-derive the merged snapshot from the cached base + overlay (no workbook re-parse). */
   private rederive(reason: string) {
     if (!this.base) return;
-    this.snapshot = { ...applyOverlay(this.base, this.overlay), quickbooks: loadQuickbooks(this.base.properties) };
+    const merged = { ...applyOverlay(this.base, this.overlay), quickbooks: loadQuickbooks(this.base.properties) };
+    // Reconciliation is re-run here, not just in refresh(). Rebuilding from base+overlay and
+    // persisting WITHOUT it meant every UI write-back rewrote the mirror carrying the same breached
+    // numbers with the reconciliation flags ABSENT -- which erases conditions.ts's 'reconcile-fail'
+    // critical condition (it filters entity==='reconciliation'). Breach intact, alarm gone, and
+    // self-clearing on any deal-stage click. It also means the persist() gate below could not fire on
+    // this path at all, so M1 and H2 are one change. `this.base` never carries rtFlags (it is the
+    // pre-overlay parse result), so recomputing cannot double-add them.
+    // (Catch-up sweep 2026-07-28..08-04, M1 -- found by 2 lenses.)
+    const rtFlags = checkSnapshot(merged);
+    this.snapshot = rtFlags.length
+      ? { ...merged, dataQuality: [...merged.dataQuality, ...rtFlags] }
+      : merged;
     void saveOverlay(this.overlay);
     this.persist(this.snapshot);
     this.setState({ lastUpdated: new Date().toISOString() });
@@ -239,6 +251,32 @@ class Brain extends EventEmitter {
           `${dealsReason ? `degraded (${dealsReason})` : 'unavailable'}, so this snapshot's ` +
           `deals/counterparties are seed placeholders. Serving it in memory; the on-disk mirror is ` +
           `left at its last good state.`,
+      );
+      return;
+    }
+    // H2: the same reconciliation policy both CLI writers apply. PR #252 wired checkSnapshot into
+    // "BOTH portfolio.json writers", but there are FOUR publication paths and this is the third -- so
+    // the error-severity inconsistencies those writers REFUSE (cash total vs Σ entities, duplicate
+    // property ids, near-duplicate deal rows) were still published here by every live-server refresh,
+    // to a mirror that is auto-committed and pushed off-machine. This path's own comment above conceded
+    // it "runs neither evaluateReconciliationGate nor requireLiveDealsSource"; that is now only true of
+    // requireLiveDealsSource.
+    //
+    // ERROR only, never warn: warn-severity reconciliation findings are long-lived and informational,
+    // and blocking on them would strand the mirror permanently. The accepted tradeoff is that a
+    // genuine error DOES stall the mirror until a human fixes the workbook -- the same tradeoff #252
+    // already made for the CLI writers, made visible by the console.error and backstopped by the
+    // snapshot-freshness gate. Serving from memory is unchanged either way.
+    // (Catch-up sweep 2026-07-28..08-04, H2 -- found by 2 of 3 lenses.)
+    if (hasReconciliationError(snapshot.dataQuality)) {
+      const which = snapshot.dataQuality
+        .filter((f) => f.severity === 'error' && f.entity === 'reconciliation')
+        .map((f) => f.field)
+        .join(', ');
+      console.error(
+        `✗ Brain.persist: declining to write ${SNAPSHOT_PATH} — this snapshot is internally ` +
+          `inconsistent (reconciliation error on: ${which}). Both CLI writers refuse the same state. ` +
+          `Serving it in memory; the on-disk mirror is left at its last good state.`,
       );
       return;
     }
