@@ -15,17 +15,22 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi, beforeEach, beforeAll, afterAll } from 'vitest';
+import type * as DebtScoringModule from '../../server/warehouse/debt-scoring';
 
 vi.mock('../../server/warehouse/scores', () => ({
   scoreProperties: vi.fn().mockReturnValue([]),
 }));
 // Round 19g: see capital-allocation-metrics-callcount.test.ts's note — capital-allocation.ts now
-// calls scoreDebtPositionsWithTrust (one atomic read), and the mock must supply it too.
+// calls scoreDebtPositionsWithTrust (one atomic read), and the mock must supply it too. Built on
+// importOriginal (not a bare stub) so the real effectiveMonthsToMaturity this file actually tests
+// stays live -- only scoreDebtPositions/scoreDebtPositionsWithTrust are mocked.
 import type { WarehouseDb as WarehouseDbForMock } from '../../server/warehouse/db';
-vi.mock('../../server/warehouse/debt-scoring', async () => {
+vi.mock('../../server/warehouse/debt-scoring', async (importOriginal) => {
+  const actual = await importOriginal<typeof DebtScoringModule>();
   const { readDebtBookTrust } = await import('../../server/warehouse/debt-trust');
   const scoreDebtPositions = vi.fn();
   return {
+    ...actual,
     scoreDebtPositions,
     scoreDebtPositionsWithTrust: vi.fn((db: unknown, ...rest: unknown[]) => {
       const scores = scoreDebtPositions(db, ...rest);
@@ -84,11 +89,12 @@ function insertLoan(
     maturity_date?: string | null;
     months_to_maturity?: number | null;
     is_demand?: number;
+    snapshot_date?: string;
   },
 ): void {
   const row = {
     id: overrides.id,
-    snapshot_date: ASOF,
+    snapshot_date: overrides.snapshot_date ?? ASOF,
     property_id: overrides.property_id ?? 'prop-x',
     loan_name: overrides.id,
     lender: 'Test Bank',
@@ -299,5 +305,32 @@ describe('getBalloonMonthsByProperty (via buildCapitalAllocationReport entries[]
 
     expect(entry).toBeDefined();
     expect(entry!.balloonMonths).toBe(0);
+  });
+
+  // L3 follow-up (adversarial review of PR #244, 2026-07-27): this function had its OWN
+  // duplicated copy of the PRE-FIX effectiveMonthsToMaturity logic (no snapshot_date in its
+  // query, no staleness discount) — a balloon loan with an unparseable maturity_date and a
+  // stale stored months_to_maturity understated debtUrgency (15% of priorityScore) by reading
+  // the frozen cell as if it were measured today.
+  it('discounts the stored months_to_maturity fallback by elapsed time since snapshot_date (not the raw stale figure)', async () => {
+    const db = freshDb();
+    (scoreDebtPositions as ReturnType<typeof vi.fn>).mockReturnValue([makeDebtScore('prop-x')]);
+    // Snapshot taken ~7 months before ASOF (2026-07-12); stale cell says 30 months were left THEN.
+    insertLoan(db, {
+      id: 'loan-stale',
+      maturity_date: 'TBD', // unparseable — forces the stored-value fallback path
+      months_to_maturity: 30,
+      snapshot_date: '2025-12-12',
+    });
+
+    const report = await buildCapitalAllocationReport(db, makeSnapshot('prop-x'));
+    const entry = report.entries.find((e) => e.propertyId === 'prop-x');
+
+    expect(entry).toBeDefined();
+    // ~23 months out today (30 - ~7 elapsed) — NOT the raw stale 30.
+    expect(entry!.balloonMonths).not.toBeNull();
+    expect(entry!.balloonMonths!).not.toBe(30);
+    expect(entry!.balloonMonths!).toBeGreaterThan(22);
+    expect(entry!.balloonMonths!).toBeLessThan(24);
   });
 });

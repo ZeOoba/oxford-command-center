@@ -44,8 +44,11 @@ export const PROPERTY_ALIASES: Record<string, string> = {
 // Resolution order:
 //   1. Blank / null → null (safe: unattributed, never misattributed).
 //   2. Normalize (trim + collapse whitespace + lowercase).
-//   3. Name-match: find a Property whose normalized name equals the normalized input
-//      → use that Property.id as spineAId.
+//   3. Name-match: find every Property whose normalized name equals the normalized input.
+//      Exactly one match → use that Property.id as spineAId. More than one match (two
+//      properties sharing a display name) → null (safe: ambiguous, never misattributed — see
+//      L4 below). Not constructible from today's canon roster, but if it ever occurs this must
+//      not silently pick whichever duplicate happens to sort first.
 //   4. Slug fallback: if no name match, spineAId = slug(collateralName).
 //   5. Alias lookup: PROPERTY_ALIASES[spineAId] ?? spineAId.
 //      → identity when the id is already aligned.
@@ -58,9 +61,20 @@ export function resolvePropertyMasterId(
 
   const normalized = collateralName.trim().replace(/\s+/g, ' ').toLowerCase();
 
-  // Step 1: name-match (case-insensitive, whitespace-normalized)
-  const matched = properties.find((p) => p.name.trim().replace(/\s+/g, ' ').toLowerCase() === normalized);
-  const spineAId = matched ? matched.id : slug(collateralName);
+  // Step 1: name-match (case-insensitive, whitespace-normalized).
+  //
+  // L4 (2026-07-27 round-19-LOWs sweep): the original .find() picked the FIRST match by array
+  // order — an artifact of whatever order `properties` happened to arrive in, with no
+  // correctness meaning. Two distinct properties sharing a display name would silently
+  // misattribute a loan to whichever one sorted first, at random, rather than the one the
+  // collateral name actually named. Collecting ALL matches and refusing to guess on ambiguity
+  // (returning null, same as the blank-name case) routes it into buildLoanPropertyMap's existing
+  // `unresolved` reporting instead of a coin-flip attribution.
+  const matches = properties.filter(
+    (p) => p.name.trim().replace(/\s+/g, ' ').toLowerCase() === normalized,
+  );
+  if (matches.length > 1) return null;
+  const spineAId = matches.length === 1 ? matches[0]!.id : slug(collateralName);
 
   // Step 2: alias lookup — resolves entity names whose id differs from slug(name)
   return PROPERTY_ALIASES[spineAId] ?? spineAId;

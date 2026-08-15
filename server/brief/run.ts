@@ -93,15 +93,20 @@ export async function runBrief(
   }
 
   const criticalIds = insights.filter((i) => i.severity === 'critical').map((i) => i.id);
-  const { toAlert, nextAlerted } = diffCriticalAlerts(criticalIds, state);
+  const { toAlert, nextAlerted, nextClearStreaks } = diffCriticalAlerts(criticalIds, state);
 
   let alertsSent = 0;
   const failures: string[] = [];
+  // Ids whose send FAILED must not be persisted as alerted, or they are never retried.
+  const failedToSend = new Set<string>();
   for (const id of toAlert) {
     const ins = insights.find((i) => i.id === id)!;
     const r = await send(renderAlert(ins), ALERT_RECIPIENTS);
     if (r.ok) alertsSent++;
-    else failures.push(`alert ${id}: ${r.error ?? r.via}`);
+    else {
+      failures.push(`alert ${id}: ${r.error ?? r.via}`);
+      failedToSend.add(id);
+    }
   }
 
   let briefSent = false;
@@ -147,7 +152,12 @@ export async function runBrief(
     }
   }
 
-  state.alertedCriticalIds = nextAlerted;
+  // Drop ids whose alert never actually went out, so the next run re-attempts them. Recording
+  // a failed send as "alerted" silently loses it forever — and the confirm-clear retention
+  // added alongside this removed the accidental flap-out-and-back retry that used to mask it.
+  // Erring toward a duplicate email is correct here; erring toward silence is not.
+  state.alertedCriticalIds = nextAlerted.filter((id) => !failedToSend.has(id));
+  state.clearStreaks = nextClearStreaks;
   saveState(state, deps.statePath);
   writeHealth({ ranAt: now.toISOString(), briefSent, alertsSent, failures });
   return { briefSent, alertsSent };

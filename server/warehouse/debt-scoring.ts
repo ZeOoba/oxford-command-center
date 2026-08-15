@@ -55,6 +55,7 @@ interface DebtRow {
   is_demand: number;
   maturity_date: string | null;
   months_to_maturity: number | null;
+  snapshot_date: string;
   ltv: number | null;
   status: string;
 }
@@ -68,6 +69,15 @@ interface DebtRow {
  * checking only the intermediate maturityMs would let a NaN asOf silently produce a NaN months
  * value that then poisons minMonthsToMaturity/maturityComp/DebtScore.score.
  *
+ * L3 (2026-07-27 round-19-LOWs sweep): the stored months_to_maturity cell is itself a snapshot
+ * frozen as of row.snapshot_date, not asOf — the same staleness this function exists to avoid on
+ * the happy path. Using it unadjusted in the fallback silently re-ages a stale figure: a 'TBD'
+ * maturity with a 7-month-old months_to_maturity=30 read as "30 months out" when the loan is
+ * actually ~23 months out by now. The fallback is discounted by the elapsed time between
+ * snapshot_date and asOf. A negative result (the stale estimate says the loan should already have
+ * matured) is real information and is NOT clamped away — same "never fabricate a comfortable
+ * number" posture as the rest of this function.
+ *
  * is_demand is checked FIRST and wins regardless of maturity_date: F3 (ratified) requires a
  * demand note to never pass the >24mo cash-out gate because it is callable immediately. The
  * workbook parser enforces maturity=null for every is_demand row, but debt-api.ts's POST
@@ -75,19 +85,30 @@ interface DebtRow {
  * populated maturity_date is a reachable (if malformed) row — treating "no date" as the sole
  * demand-note signal would let such a row silently clear the cash-out gate.
  *
- * Exported (structural MaturityInputRow param) so debt-maturity.ts reuses this ratified
- * fresh-recompute + demand-first logic instead of duplicating the date math. */
+ * Exported (structural MaturityInputRow param) so debt-maturity.ts and debt-api.ts reuse this
+ * ratified fresh-recompute + demand-first + staleness-discounted-fallback logic instead of
+ * duplicating the date math. */
 export interface MaturityInputRow {
   is_demand: number;
   maturity_date: string | null;
   months_to_maturity: number | null;
+  snapshot_date: string;
 }
 export function effectiveMonthsToMaturity(row: MaturityInputRow, asOf: string): number | null {
   if (row.is_demand) return null;
   const maturityMs = row.maturity_date ? new Date(row.maturity_date).getTime() : NaN;
   const asOfMs = new Date(asOf).getTime();
   const fresh = (maturityMs - asOfMs) / MONTH_MS;
-  return Number.isFinite(fresh) ? fresh : row.months_to_maturity;
+  if (Number.isFinite(fresh)) return fresh;
+  if (row.months_to_maturity === null) return null;
+  // Clamped to >= 0: snapshot_date is expected to be <= asOf (data is logged for past/present
+  // times). A malformed row where it isn't must not invent EXTRA runway — that would let bad
+  // data manufacture the exact "comfortable number" this function exists to prevent (e.g. a
+  // phantom >24mo reading that clears the cash-out gate). Worst case on malformed input: zero
+  // discount, i.e. the stored figure stands as-is, same as a snapshot taken today.
+  const elapsedMonths = Math.max(0, (asOfMs - new Date(row.snapshot_date).getTime()) / MONTH_MS);
+  const discounted = row.months_to_maturity - elapsedMonths;
+  return Number.isFinite(discounted) ? discounted : row.months_to_maturity;
 }
 
 /**
@@ -197,7 +218,7 @@ export function scoreDebtPositionsWithTrust(
   const getLoansForProperty = db.prepare<[string]>(
     `SELECT id, property_id, loan_name, current_balance, rate,
             monthly_pmt, annual_interest, annual_principal,
-            is_demand, maturity_date, months_to_maturity, ltv, status
+            is_demand, maturity_date, months_to_maturity, snapshot_date, ltv, status
      FROM debt_positions
      WHERE property_id = ? AND status = 'active'
      ORDER BY current_balance DESC, id ASC, snapshot_date DESC`,

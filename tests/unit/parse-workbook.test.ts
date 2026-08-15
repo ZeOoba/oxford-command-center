@@ -386,4 +386,125 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
     const { snapshot } = await parseWorkbook(file);
     expect(snapshot.workbookTotals).toEqual({ noi: null, value: null, rent: null });
   });
+
+  // Regression: 2026-08-03. The live rent roll gained a trailing "VACANCY & UPCOMING AVAILABILITY"
+  // summary block whose column 1 is a Move-Out DATE (not a property key) and whose columns sit one
+  // to the right of the roster's -- so its col 6 is SF where the roster's col 6 is monthlyRent.
+  // parseLeases' `if (!propertyKey || !tenantName) continue` guard read col 1 via str(), which
+  // STRINGIFIES a Date rather than rejecting it, so every row of that derived block was ingested as
+  // a real lease: 10 phantom leases and +$312,540 of fabricated annual rent (each phantom's "rent"
+  // was literally the unit's square footage x 12). Nothing raised a data-quality flag.
+  it('ignores the trailing VACANCY & UPCOMING AVAILABILITY block instead of ingesting it as leases', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
+    const file = join(dir, 'fixture-vacancy-block.xlsx');
+
+    const wb = new ExcelJS.Workbook();
+    const props = wb.addWorksheet('Property NOI');
+    props.addRow([
+      1, PROPERTY_NAME, 'Industrial', 50000, 3, 0.92, new Date('2020-01-01'),
+      5000000, 1, 5000000, 600000, 200000, 400000, 400000, 300000, 100000, 0.08, 1.3,
+      'Fixture Bank', 3000000, 0.6, 100, 12, 1500000, 0.08, 5,
+    ]);
+
+    const rentRoll = wb.addWorksheet('Master Tenant Rent Roll');
+    // The one genuine lease.
+    rentRoll.addRow([
+      PROPERTY_NAME, 'Fixture Tenant Co', 'Suite 100', 'Fixture Tenant Co',
+      10000, 8000, 9.6, new Date('2022-01-01'), new Date('2027-01-01'),
+      null, null, 'Active', 96000,
+    ]);
+    rentRoll.addRow([]); // spacer, as in the live sheet
+    // Banner row -- the live workbook repeats the same text across the merged range.
+    const BANNER = 'VACANCY & UPCOMING AVAILABILITY — VACANT + NOTICE TO VACATE (sorted by Lease End)';
+    rentRoll.addRow([BANNER, BANNER, BANNER, BANNER, BANNER, BANNER]);
+    rentRoll.addRow(['Move-Out Date', 'Property', 'Unit', 'Tenant Name', 'Company', 'SF']);
+    // Derived rows: col 1 = Date, col 6 = SF (NOT rent). Both must be excluded entirely.
+    rentRoll.addRow([
+      new Date('2026-09-30'), PROPERTY_NAME, 'Suite 100', 'Fixture Person One',
+      'Fixture Tenant Co', 1800,
+    ]);
+    rentRoll.addRow([
+      new Date('2026-10-31'), PROPERTY_NAME, 'Suite 200', 'Fixture Person Two',
+      'Fixture Other Co', 3000,
+    ]);
+    rentRoll.addRow(['TOTAL — 2 units', null, null, null, null, 4800]);
+
+    wb.addWorksheet('Loan Index');
+    wb.addWorksheet('Cash Balances');
+    wb.addWorksheet('Insurance Renewals');
+    wb.addWorksheet('Monthly Checklist');
+    wb.addWorksheet('Assumptions');
+    await wb.xlsx.writeFile(file);
+
+    const { snapshot, flags } = await parseWorkbook(file);
+
+    // Only the genuine lease survives -- the two derived rows are not tenancies.
+    expect(snapshot.leases).toHaveLength(1);
+    expect(snapshot.leases[0]!.tenantName).toBe('Fixture Tenant Co');
+
+    // A RECOGNISED block must be skipped SILENTLY. It is a permanent, legitimate part of the sheet,
+    // so flagging its rows would emit warnings on every run forever -- and ora-cc-snapshot-refresh
+    // emails an alert whenever data-quality flags > 0, turning a correct parse into 3x/weekday
+    // alert fatigue. Flags are for the UNEXPECTED (see the no-banner case below), not for this.
+    expect(flags.filter((f) => f.field === 'propertyKey')).toEqual([]);
+
+    // No lease may carry a stringified Date as its property key (the phantom-id signature).
+    expect(snapshot.leases.filter((l) => /GMT[+-]\d{4}/.test(l.propertyKey))).toEqual([]);
+
+    // Annual rent must not be inflated by the block's SF column being read as rent.
+    expect(snapshot.leases.reduce((sum, l) => sum + (l.annualRent ?? 0), 0)).toBe(96000);
+  });
+
+  // Defence in depth for the regression above. The banner terminator is text-matched, so it stops
+  // working the moment someone retitles the block. A property key is never a date in any valid
+  // roster row, so reject that at the type level too -- str() stringifies a Date rather than
+  // returning null, which is what let these rows through the emptiness guard in the first place.
+  it('never treats a date-valued property key as a lease, even with no section banner present', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
+    const file = join(dir, 'fixture-dated-key-no-banner.xlsx');
+
+    const wb = new ExcelJS.Workbook();
+    const props = wb.addWorksheet('Property NOI');
+    props.addRow([
+      1, PROPERTY_NAME, 'Industrial', 50000, 3, 0.92, new Date('2020-01-01'),
+      5000000, 1, 5000000, 600000, 200000, 400000, 400000, 300000, 100000, 0.08, 1.3,
+      'Fixture Bank', 3000000, 0.6, 100, 12, 1500000, 0.08, 5,
+    ]);
+
+    const rentRoll = wb.addWorksheet('Master Tenant Rent Roll');
+    rentRoll.addRow([
+      PROPERTY_NAME, 'Fixture Tenant Co', 'Suite 100', 'Fixture Tenant Co',
+      10000, 8000, 9.6, new Date('2022-01-01'), new Date('2027-01-01'),
+      null, null, 'Active', 96000,
+    ]);
+    // Same offset-column shape, but the banner has been renamed to something unrecognised.
+    rentRoll.addRow(['ROLL-OFF SCHEDULE (RETITLED)', null, null, null, null, null]);
+    rentRoll.addRow([
+      new Date('2026-09-30'), PROPERTY_NAME, 'Suite 100', 'Fixture Person One',
+      'Fixture Tenant Co', 1800,
+    ]);
+
+    wb.addWorksheet('Loan Index');
+    wb.addWorksheet('Cash Balances');
+    wb.addWorksheet('Insurance Renewals');
+    wb.addWorksheet('Monthly Checklist');
+    wb.addWorksheet('Assumptions');
+    await wb.xlsx.writeFile(file);
+
+    const { snapshot, flags } = await parseWorkbook(file);
+
+    expect(snapshot.leases).toHaveLength(1);
+    expect(snapshot.leases[0]!.tenantName).toBe('Fixture Tenant Co');
+    expect(snapshot.leases.reduce((sum, l) => sum + (l.annualRent ?? 0), 0)).toBe(96000);
+
+    // The drop must never be SILENT. A dropped row is the correct outcome here, but "no lease and
+    // no flag" is indistinguishable from "nothing was there" -- which is exactly the blind spot
+    // that let the phantom leases ship unnoticed (the original corrupt extract reported
+    // "Data-quality flags: 0"). If a genuine roster row ever gets Excel-coerced to a date, this
+    // flag is the only thing standing between that and a silently vanished tenancy.
+    const droppedFlags = flags.filter((f) => f.field === 'propertyKey');
+    expect(droppedFlags).toHaveLength(1);
+    expect(droppedFlags[0]!.issue).toMatch(/date/i);
+    expect(droppedFlags[0]!.severity).toBe('warn');
+  });
 });

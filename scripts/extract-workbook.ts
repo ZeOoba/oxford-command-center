@@ -4,7 +4,7 @@ import { parseWorkbook } from '../server/workbook/parse';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, SNAPSHOT_PATH } from '../server/config';
 import { loadOverlay, applyOverlay, overlayPath } from '../server/overlay';
-import { computeDrift, evaluateAnomalyFloor, formatDriftReport, loadPrevious, type DriftLeaseView } from './lease-snapshot-drift-check';
+import { computeDrift, evaluateAnomalyFloor, evaluateReconciliationGate, formatDriftReport, loadPrevious, requireLiveDealsSource, type DriftLeaseView } from './lease-snapshot-drift-check';
 
 loadEnvFile();
 
@@ -78,6 +78,28 @@ async function main() {
     process.exit(1);
   } else if (floor.warning) {
     console.warn(`⚠ ${floor.warning}`);
+  }
+
+  // Dollar-exact reconciliation, separate from and in addition to the count-based floor above --
+  // see evaluateReconciliationGate's doc comment (scripts/lease-snapshot-drift-check.ts) for why
+  // the floor alone missed the 2026-08-03 phantom-lease incident (rows only ADDED, nothing
+  // removed). Checked against `enriched`, the actual object about to be written.
+  const reconciliation = evaluateReconciliationGate(enriched, SNAPSHOT_PATH, force);
+  if (reconciliation.refuse) {
+    console.error(`✗ ${reconciliation.reason}`);
+    process.exit(1);
+  } else if (reconciliation.warning) {
+    console.warn(`⚠ ${reconciliation.warning}`);
+  }
+
+  // Config-regression guard, complementing the flag-based gate above -- see its doc comment. This
+  // path is the manual `npm run extract` one, historically the LESS guarded of the two writers.
+  const dealsSource = requireLiveDealsSource(SNAPSHOT_PATH, force);
+  if (dealsSource.refuse) {
+    console.error(`✗ ${dealsSource.reason}`);
+    process.exit(1);
+  } else if (dealsSource.warning) {
+    console.warn(`⚠ ${dealsSource.warning}`);
   }
 
   mkdirSync(dirname(SNAPSHOT_PATH), { recursive: true });

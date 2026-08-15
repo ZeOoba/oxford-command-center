@@ -325,3 +325,88 @@ describe('insuranceConditions', () => {
     expect(expiry[0]!.impactAnnualUsd).toBe(4000);
   });
 });
+
+// ── Policy-slug → subject-label resolution (2026-08-11) ─────────────────────
+// Production reality: property_insurance_policies.property_id holds POLICY-level slugs
+// ("ins-fvc-pckg"), not property ids — 25 rows, 25 distinct values, 0 matching a property id.
+// Consequence that reached Gabriel: raw slugs in the email subject line
+// ("Insurance expiring soon — ins-1900broadway-bcl", sent 2026-07-12).
+//
+// The fixtures below use the REAL production strings, deliberately. An earlier version of
+// these tests used idealized fixtures where insurance[].property === properties[].name, which
+// made a broken join look fixed — the two fields disagree on abbreviation and ZIP in every
+// one of the 25 real rows. Anything asserted here must hold for data that actually exists.
+describe('insuranceConditions — policy-slug subject labelling', () => {
+  let db: WarehouseDb;
+  let dbDir: string;
+
+  beforeEach(() => { const t = tmpDb(); db = t.db; dbDir = t.dir; });
+  afterEach(() => { db.close(); rmSync(dbDir, { recursive: true, force: true }); });
+
+  /** Real property names and real policy `.property` strings — note they never match. */
+  function realisticSnap(): PortfolioSnapshot {
+    const base = makeSnap([]) as unknown as Record<string, unknown>;
+    return {
+      ...base,
+      properties: [
+        { id: '55-new-plant-ct-owings-mills-md', name: '55 New Plant Ct, Owings Mills MD' },
+        { id: 'sepich-portfolio-columbus-oh-8-props', name: 'Sepich Portfolio, Columbus OH (8 props)' },
+      ],
+      insurance: [
+        { id: 'ins-55newplant-pckg', property: '55 New Plant Court, Owings Mills MD 21117', coverage: 'Package (PCKG)', status: 'Current', premium: 0, flags: [] },
+        { id: 'ins-55newplant-bcl', property: '55 New Plant Court, Owings Mills MD 21117', coverage: 'Business Crime Liability (BCL)', status: 'Current', premium: 0, flags: [] },
+      ],
+    } as unknown as PortfolioSnapshot;
+  }
+
+  it('a raw policy slug never survives into the alert title', () => {
+    insertPolicy(db, { propertyId: 'ins-55newplant-pckg', expirationDate: addDays(AS_OF, 10), premiumAnnual: 1000 });
+    const expiry = insuranceConditions(db, realisticSnap(), AS_OF).filter((i) => i.id.startsWith('ins-expiry-'));
+    expect(expiry).toHaveLength(1);
+    expect(expiry[0]!.title).not.toContain('ins-55newplant-pckg');
+    expect(expiry[0]!.title).toContain('55 New Plant Court');
+    expect(expiry[0]!.title).toContain('Package (PCKG)');
+  });
+
+  it('the insight id is UNCHANGED, so existing alert-state entries keep matching', () => {
+    // Guards against a one-time re-alert of every open policy on first run after deploy.
+    insertPolicy(db, { propertyId: 'ins-55newplant-pckg', expirationDate: addDays(AS_OF, 10), premiumAnnual: 1000 });
+    const expiry = insuranceConditions(db, realisticSnap(), AS_OF).filter((i) => i.id.startsWith('ins-expiry-'));
+    expect(expiry[0]!.id).toBe('ins-expiry-ins-55newplant-pckg');
+  });
+
+  it('two policies at one property produce two DISTINCT, non-slug titles', () => {
+    insertPolicy(db, { propertyId: 'ins-55newplant-pckg', expirationDate: addDays(AS_OF, 10), premiumAnnual: 1000 });
+    insertPolicy(db, { propertyId: 'ins-55newplant-bcl', expirationDate: addDays(AS_OF, 12), premiumAnnual: 50 });
+    const titles = insuranceConditions(db, realisticSnap(), AS_OF)
+      .filter((i) => i.id.startsWith('ins-expiry-')).map((i) => i.title);
+    expect(titles).toHaveLength(2);
+    expect(new Set(titles).size).toBe(2);
+    expect(titles.every((t) => !t.includes('ins-55newplant'))).toBe(true);
+    expect(titles.some((t) => t.includes('Package (PCKG)'))).toBe(true);
+    expect(titles.some((t) => t.includes('Business Crime Liability (BCL)'))).toBe(true);
+  });
+
+  it('a warehouse property_id that IS a real property id resolves to the property name', () => {
+    insertPolicy(db, { propertyId: '55-new-plant-ct-owings-mills-md', expirationDate: addDays(AS_OF, 5), premiumAnnual: 10 });
+    const expiry = insuranceConditions(db, realisticSnap(), AS_OF).filter((i) => i.id.startsWith('ins-expiry-'));
+    expect(expiry[0]!.title).toContain('55 New Plant Ct, Owings Mills MD');
+  });
+
+  it('an unresolvable slug fails OPEN and still names something', () => {
+    insertPolicy(db, { propertyId: 'ins-orphan-pckg', expirationDate: addDays(AS_OF, 5), premiumAnnual: 1000 });
+    const expiry = insuranceConditions(db, realisticSnap(), AS_OF).filter((i) => i.id.startsWith('ins-expiry-'));
+    expect(expiry).toHaveLength(1); // never silently dropped
+    expect(expiry[0]!.title).toContain('ins-orphan-pckg'); // raw value is the last resort
+  });
+
+  it('a snapshot with no insurance array does not throw (mirror / fresh worktree)', () => {
+    // insuranceConditions runs inside run.ts's catch-all: a throw here silently drops EVERY
+    // insurance critical, so this must degrade to slug labelling rather than fail.
+    const base = makeSnap([]) as unknown as Record<string, unknown>;
+    const noIns = { ...base, properties: [], insurance: undefined } as unknown as PortfolioSnapshot;
+    insertPolicy(db, { propertyId: 'ins-55newplant-pckg', expirationDate: addDays(AS_OF, 5), premiumAnnual: 1 });
+    expect(() => insuranceConditions(db, noIns, AS_OF)).not.toThrow();
+    expect(insuranceConditions(db, noIns, AS_OF).filter((i) => i.id.startsWith('ins-expiry-'))).toHaveLength(1);
+  });
+});

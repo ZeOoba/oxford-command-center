@@ -20,9 +20,15 @@ import {
   type ScenarioName,
 } from '../../src/contracts/index';
 import { SCENARIO_PRESETS } from '../../src/contracts/scenario';
-import { loadDeals } from '../sources/notion-deals';
+import { loadDeals, dealsDegradationFlag, type DealsDegradation } from '../sources/notion-deals';
 import { loadM365Tasks } from '../sources/m365-tasks';
 import { deriveCounterparties } from './counterparties';
+import { crossCheckDebtService } from './debt-service-crosscheck';
+import {
+  assertRelationshipTargetsResolvable,
+  describeOpenpyxlReadFailure,
+  assertCachedValuesPresent,
+} from './openpyxl-integrity';
 import { WORKBOOK_AS_OF, referenceDate } from '../config';
 
 type Worksheet = ExcelJS.Worksheet;
@@ -436,6 +442,10 @@ function resolvePropertyId(key: string, properties: Property[]): string | null {
 }
 
 // ── leases (Master Tenant Rent Roll) ──────────────────────────────────────────
+/** Banner that opens a trailing DERIVED block on the rent roll — everything at or below it is a
+ *  view of leases already parsed above, not tenancy data. See the latch in parseLeases. */
+const LEASE_SECTION_TERMINATOR = /vacancy\s*&\s*upcoming availability/i;
+
 interface LeasesParseResult {
   leases: Lease[];
   /** The workbook's own "Portfolio Total" row (Annualized Rent, col 14 -- one column right of
@@ -454,6 +464,7 @@ function parseLeases(
   const pendingRowFlags: { lease: Lease; rowFlags: DataQualityFlag[] }[] = [];
   let workbookRentTotal: number | null = null;
   let foundPortfolioTotalRow = false;
+  let trailingSectionReached = false;
   // Day-count reference = the RUN date, NOT the workbook data date: a June-pinned
   // WORKBOOK_AS_OF froze every monthsToExpiry while the calendar advanced (frozen-dateline
   // defect, 2026-07). WORKBOOK_AS_OF still governs data-month selection (monthCol in
@@ -463,7 +474,16 @@ function parseLeases(
   // reference (the brief passes its ET send date; other callers pass the UTC default).
   const asOf = parseISO(referenceDateIso);
   for (let r = 1; r <= ws.rowCount; r++) {
-    const propertyKey = str(row(ws, r, 1));
+    // A property key is never a date in a valid roster row. str() STRINGIFIES a Date rather than
+    // returning null ("Tue Sep 29 2026 20:00:00 GMT-0400 (...)"), so without this a dated row sails
+    // through the emptiness guard below and becomes a lease. That is precisely how the trailing
+    // vacancy block (see LEASE_SECTION_TERMINATOR) was ingested. Kept as a second, text-independent
+    // line of defence: the banner match above stops working the moment the block is retitled.
+    // Narrowed to this column deliberately -- str() is shared by every parser in this file and
+    // must keep its current behaviour for genuinely date-like text elsewhere.
+    const propertyKeyRaw = row(ws, r, 1);
+    const propertyKeyIsDate = propertyKeyRaw instanceof Date;
+    const propertyKey = propertyKeyIsDate ? null : str(propertyKeyRaw);
     const tenantName = str(row(ws, r, 2));
     if (/portfolio total/i.test(`${propertyKey ?? ''} ${tenantName ?? ''}`)) {
       // First match wins -- see the identical rationale in parseProperties above.
@@ -472,6 +492,43 @@ function parseLeases(
         workbookRentTotal = num(row(ws, r, 14));
       }
       continue;
+    }
+    // The rent roll ends with DERIVED summary blocks -- currently "VACANCY & UPCOMING AVAILABILITY
+    // -- VACANT + NOTICE TO VACATE (sorted by Lease End)", added to the live workbook 2026-08. Every
+    // row in such a block is a cross-reference formula back into the roster ABOVE it, and its
+    // columns sit one to the right of the roster's (col 1 is a Move-Out Date, col 6 is SF where the
+    // roster's col 6 is monthlyRent). They are views of leases already parsed, never tenancies of
+    // their own. Once a block begins, no later row on the sheet is a lease -- so latch and skip the
+    // remainder rather than trying to re-align columns.
+    //
+    // Deliberately checked AFTER the portfolio-total capture above and via a latch rather than
+    // `break`, so a totals row placed BELOW a banner would still be captured. Do not "simplify"
+    // this into a break: that would silently couple workbookRentTotal to sheet row ordering.
+    if (LEASE_SECTION_TERMINATOR.test(`${propertyKey ?? ''} ${tenantName ?? ''}`)) {
+      trailingSectionReached = true;
+    }
+    if (trailingSectionReached) continue;
+    // Past this point a dated property key is UNEXPECTED — the row is not inside any block we
+    // recognise, so it is either a derived block that has been retitled/moved (the terminator
+    // above no longer matching) or a genuine roster row Excel has coerced to a date. Both need a
+    // human. Dropping it is still right, but dropping it SILENTLY is not: "no lease and no flag"
+    // reads identically to "there was nothing here", which is precisely how the phantom leases
+    // shipped under a "Data-quality flags: 0" banner.
+    //
+    // Deliberately NOT raised for rows inside a recognised block above: that block is a permanent,
+    // legitimate part of the sheet, and ora-cc-snapshot-refresh alerts whenever flags > 0 — so
+    // flagging the expected case would mean an alert email 3x/weekday forever. Flag the anomaly,
+    // stay silent on the understood. Gated on tenantName so the block's header/total rows, which
+    // carry no tenant, never trip it.
+    if (propertyKeyIsDate && tenantName) {
+      flags.push({
+        entity: `rent-roll-row-${r}`,
+        field: 'propertyKey',
+        issue:
+          'row skipped — property key is a date, not a property name (an unrecognised derived block, or a roster row Excel coerced to a date)',
+        rawValue: String(propertyKeyRaw),
+        severity: 'warn',
+      });
     }
     if (!propertyKey || !tenantName) continue;
     if (/tenant roster/i.test(propertyKey)) continue;
@@ -534,6 +591,42 @@ function parseLeases(
   return { leases: finalLeases, workbookRentTotal };
 }
 
+/**
+ * Rows Gabriel has retired in place rather than deleted, so the workbook keeps its own
+ * audit trail — e.g. Loan Index r24, `⚠ DUPLICATE OF ROW 22 — DO NOT USE` (2026-08-05).
+ *
+ * These must not become Loan records: `debt_positions` is keyed `ON CONFLICT(id,
+ * snapshot_date)`, so a tombstone would claim a warehouse key on every snapshot and
+ * inflate the loan count. Matching is deliberately narrow — the bare word "duplicate" is
+ * not a marker, only `DUPLICATE OF <something>` — so a real counterparty name can't be
+ * swallowed. OI-093 residual.
+ */
+export function isTombstonedLoanRow(name: string): boolean {
+  // `DUPLICATE OF` is ANCHORED to the start of the cell (after any ⚠ / whitespace / dash), because
+  // the marker REPLACES the loan name rather than annotating it. Matching it anywhere, as this did
+  // until 2026-08-11, swallowed any live row whose name merely carried the phrase -- e.g. "Fifth
+  // Third (consolidated -- duplicate of prior facility retired)". That direction matters: a skipped
+  // row's balance leaves aggregate debt, so portfolio LTV reads LOWER than reality and the
+  // Hard-Invariant-4 40% ceiling is evaluated against an understated numerator -- the falsely
+  // CLEARING direction. (2026-08-11 integrity sweep, L2.)
+  //
+  // `DO NOT USE` deliberately still matches anywhere, case-insensitively: the workbook uses it as a
+  // trailing annotation too ("Old note -- DO NOT USE"), which the tests pin.
+  // The marker must be the LEADING CLAUSE, optionally preceded by punctuation/emoji and one of the
+  // retirement words a human actually types. Requiring literally no leading word (the first pass's
+  // `^\W*`) traded the false positive for a SILENT false negative: "RETIRED — DUPLICATE OF row 9",
+  // "(VOID) DUPLICATE OF #7" and "2019 DUPLICATE OF consolidated note" were all caught by the
+  // original unanchored regex and all missed by the anchored one. A missed tombstone is ingested as a
+  // live loan, so its stale balance double-counts the duplicated facility in aggregate debt and it
+  // claims a debt_positions key -- and that direction emits NO flag at all, because the warn below
+  // only fires on a match. Caught by the refute pass on this branch.
+  const leadIn = String.raw`(?:\W|RETIRED|VOID|OLD|DEFUNCT|SUPERSEDED|CLOSED|\d+)*`;
+  return (
+    /DO\s+NOT\s+USE/i.test(name) ||
+    new RegExp(String.raw`^${leadIn}\s*DUPLICATE\s+OF\s+\S`, 'i').test(name)
+  );
+}
+
 // ── loans (Loan Index — section-aware) ────────────────────────────────────────
 function parseLoans(ws: Worksheet, flags: DataQualityFlag[]): Loan[] {
   const out: Loan[] = [];
@@ -551,6 +644,21 @@ function parseLoans(ws: Worksheet, flags: DataQualityFlag[]): Loan[] {
     const rawName = c2;
     if (idx === null || !rawName) continue;
     const name = rawName.replace(/\s*→\s*$/, '').trim();
+    if (isTombstonedLoanRow(name)) {
+      // Skipped, but never silently — an invisible skip is indistinguishable from a
+      // parser that stopped seeing the row at all.
+      flags.push({
+        entity: 'loans',
+        field: 'name',
+        issue: `Loan Index row ${r} is tombstoned in the workbook and was skipped, so it cannot claim a snapshot id or warehouse key`,
+        rawValue: name,
+        // 'warn', not 'info': skipping a row removes its balance from aggregate debt, which moves a
+        // GOVERNOR input (portfolio LTV) in the falsely-clearing direction. An info flag no gate
+        // reads is too quiet for that. (2026-08-11 integrity sweep, L2.)
+        severity: 'warn',
+      });
+      continue;
+    }
     const id = slug(`${section}-${name}`);
     const balance = num(row(ws, r, 4)) ?? 0;
     const maturityStr = section === 'internal' ? null : str(row(ws, r, 7));
@@ -835,6 +943,18 @@ function parseAssumptions(ws: Worksheet, flags: DataQualityFlag[], fallbackAsOf:
 export interface ParseResult {
   snapshot: PortfolioSnapshot;
   flags: DataQualityFlag[];
+  /**
+   * How the deals source degraded on this parse, or null when it was fully live.
+   *
+   * Reported SEPARATELY from `flags` on purpose. `dealsDegradationFlag` maps only the data-losing
+   * reasons to an error-severity flag and deliberately returns null for `not-configured`, so a
+   * developer without a NOTION_TOKEN isn't permanently "dirty" — but a WRITER still must not put
+   * the ~6-deal seed placeholder set into the shared, git-tracked mirror. Threading the raw
+   * degradation lets each writer apply its own policy without changing what the flag stream says.
+   * (2026-08-11 integrity sweep, H1: Brain.persist gated only on the flag, so a token-less live
+   * server rewrote portfolio.json with seed placeholders on every refresh.)
+   */
+  dealsDegraded: DealsDegradation | null;
 }
 
 /**
@@ -845,7 +965,20 @@ export interface ParseResult {
  */
 export async function parseWorkbook(path: string, referenceDateIso?: string): Promise<ParseResult> {
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile(path);
+  // An openpyxl re-save corrupts this workbook three ways: unresolvable relationship
+  // targets (an opaque exceljs crash), stripped cached formula values (silent nulls for
+  // every computed figure), and formulas replaced by static values (figures frozen
+  // forever). Name each precisely instead of crashing or, worse, parsing a workbook whose
+  // financials are null or stale. See ./openpyxl-integrity.ts.
+  assertRelationshipTargetsResolvable(path);
+  try {
+    await wb.xlsx.readFile(path);
+  } catch (err) {
+    const diagnosis = describeOpenpyxlReadFailure(err, path);
+    if (diagnosis) throw new Error(diagnosis, { cause: err });
+    throw err;
+  }
+  assertCachedValuesPresent(wb, path);
   const flags: DataQualityFlag[] = [];
   const refIso = referenceDateIso ?? referenceDate();
 
@@ -875,13 +1008,41 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
   const { properties, workbookNoiTotal, workbookValueTotal } = parseProperties(get('Property NOI'), flags);
   const { leases, workbookRentTotal } = parseLeases(rentRollWs, properties, flags, refIso);
   const loans = parseLoans(get('Loan Index'), flags);
+  // OI-092: parseLoans reads only `Loan Index`, so a wrong next-12-month debt-service window in
+  // `External Loans Summary` reaches monthlyPmt (and therefore DSCR) with nothing in its path
+  // able to see it. This cross-checks that figure against the amortization schedules themselves.
+  // warn-severity by ruling — it reports on workbook formulas this pipeline does not own, and a
+  // warn-severity advisory check must never be able to take down the whole refresh. Isolated in
+  // its own try/catch for exactly that reason — everything else in parseWorkbook still runs even
+  // if a future workbook edit produces a shape this check cannot handle.
+  try {
+    flags.push(...crossCheckDebtService(wb));
+  } catch (err) {
+    flags.push({
+      entity: 'meta',
+      field: 'annualDebtService',
+      issue: `debt-service cross-check threw and did not complete: ${err instanceof Error ? err.message : String(err)}`,
+      severity: 'warn',
+    });
+  }
   const cash = parseCash(get('Cash Balances'), flags, dataAsOf);
   const insurance = parseInsurance(get('Insurance Renewals'), flags);
   const checklistTasks = parseTasks(get('Monthly Checklist'));
   const m365Tasks = await loadM365Tasks(); // live M365 To-Do prepended when GRAPH_TOKEN set, else []
   const tasks = m365Tasks.length ? [...m365Tasks, ...checklistTasks] : checklistTasks;
   const assumptions = parseAssumptions(get('Assumptions'), flags, dataAsOf);
-  const deals = await loadDeals(); // live Notion pipeline merged onto seed when configured, else seed
+  // live Notion pipeline merged onto seed when configured, else seed. A data-losing degradation
+  // (fetch-failed / empty-result) raises an ERROR-severity flag so evaluateReconciliationGate
+  // refuses the write rather than publishing seed placeholders over the live pipeline -- see
+  // loadDeals' doc comment for the 2026-08-09 regression this closes.
+  const { deals, degraded: dealsDegraded, flags: dealsMergeFlags } = await loadDeals();
+  const dealsFlag = dealsDegradationFlag(dealsDegraded, deals.length);
+  if (dealsFlag) flags.push(dealsFlag);
+  // Merge-time join-key flags (collisions, refused locality-strip merges). Error-severity, so
+  // evaluateReconciliationGate refuses the write until the names are disambiguated -- the joiner used
+  // to log these and rely on a detector keyed differently that could miss them entirely.
+  // (Catch-up sweep 2026-07-28..08-04, C1 + H1.)
+  for (const f of dealsMergeFlags) flags.push(f);
   const counterparties = deriveCounterparties({ properties, loans, insurance, deals });
 
   const snapshot = PortfolioSnapshot.parse({
@@ -905,5 +1066,5 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
     dataQuality: flags,
   });
 
-  return { snapshot, flags };
+  return { snapshot, flags, dealsDegraded };
 }

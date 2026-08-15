@@ -8,6 +8,7 @@
     "node": ">=20"
   },
   "//devServerNote": "dev:server (tsx watch) intermittently hangs before ever binding its port on this machine (~2/5 trials, 2026-07-08) — reproduced via preview_start and raw shell alike; npm --prefix cwd resolution and preview_start's process model were both ruled out as the cause via direct A/B testing. Root cause undetermined, likely transient resource contention on a machine that runs many concurrent node processes. dev:server:once (tsx, no watch) was 5/5 reliable across the same trials and is the launch.json default — no hot-reload, so restart manually after backend edits. See event_log.md 2026-07-08 for the full investigation.",
+  "//deployMirrorNote": "deploy:mirror is a MANUAL, unbounded convenience script for a human at a terminal — it does NOT go through scripts/deploy-mirror.ps1 and has none of its hardening (no fetch/merge fast-forward, no Access-gate re-verification, no timeout on the wrangler deploy, no alerting). The registered hourly Windows Scheduled Task calls deploy-mirror.ps1 directly, never this script. Found 2026-07-29 (code-review follow-up to a deploy-mirror.ps1 hang incident): this script has the identical unbounded `npx wrangler pages deploy` call, left un-hardened deliberately rather than by oversight — repointing it at deploy-mirror.ps1 would silently add its git fast-forward-merge requirement and confidential-bake env vars to what is meant to be a quick manual deploy of whatever is currently checked out. If a human runs this and it hangs, Ctrl-C same as any manual command; it does not carry the scheduled task's silent-30-minute-kill risk because a human is watching.",
   "scripts": {
     "dev": "concurrently -k -n server,web -c magenta,cyan \"npm:dev:server\" \"npm:dev:web\"",
     "dev:web": "vite",
@@ -19,8 +20,9 @@
     "bake": "tsx scripts/bake-mirror.ts",
     "index:docs": "tsx scripts/index-docs.ts",
     "build:mirror": "npm run bake && npm run build",
-    "deploy:mirror": "npm run build:mirror && npx wrangler pages deploy dist --project-name=ora-command-center --branch=main",
+    "deploy:mirror": "npm run build:mirror && wrangler pages deploy dist --project-name=ora-command-center --branch=main",
     "reconcile": "tsx scripts/reconcile.ts",
+    "reconcile:snapshot": "tsx scripts/reconcile-snapshot.ts",
     "reconcile:leases": "tsx scripts/reconcile-lease-sources.ts",
     "reconcile:noi-crosscheck": "tsx scripts/reconcile-noi-crosscheck.ts",
     "warehouse:backfill": "tsx scripts/warehouse-backfill.ts",
@@ -43,8 +45,8 @@
     "prepare": "node scripts/install-git-hooks.mjs",
     "governance": "tsx scripts/governance-check.ts",
     "check:refute": "tsx scripts/check-refute-required.ts",
-    "gate": "npm run governance && npm run typecheck && npm run lint && npm run check:dev-css && npm run test && npm run reconcile && npm run reconcile:noi-crosscheck && npm run warehouse:verify && npm run warehouse:drift",
-    "gate:ci": "npm run typecheck && npm run lint && npm run check:dev-css && npm run test && npm run build && npm run check:bundle"
+    "gate": "npm run governance && npm run typecheck && npm run lint && npm run check:dev-css && npm run test && npm run reconcile:snapshot && npm run reconcile && npm run reconcile:noi-crosscheck && npm run warehouse:verify && npm run warehouse:drift",
+    "gate:ci": "npm run typecheck && npm run lint && npm run check:dev-css && npm run test && npm run reconcile:snapshot && npm run build && npm run check:bundle"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.32.1",
@@ -75,7 +77,7 @@
     "exceljs": "^4.4.0",
     "framer-motion": "^11.15.0",
     "fuse.js": "^7.0.0",
-    "hono": "^4.6.14",
+    "hono": "^4.12.34",
     "lucide-react": "^0.468.0",
     "mammoth": "^1.12.0",
     "pdf-parse": "^2.4.5",
@@ -113,7 +115,8 @@
     "typescript-eslint": "^8.18.1",
     "vite": "^6.4.3",
     "vite-plugin-pwa": "^0.21.1",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "wrangler": "^4.120.0"
   },
   "overrides": {
     "adm-zip": "^0.6.0",

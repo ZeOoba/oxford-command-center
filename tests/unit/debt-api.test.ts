@@ -9,7 +9,7 @@
 //   GET /scores returns array — mock db + metrics + null FRED → valid DebtScoreResponse
 //   GET /scores with FRED null — null market rate → all signals are 'hold' (no refi without rate)
 //   GET /maturity returns ladder — active debt_positions → buckets assigned correctly
-//   GET /maturity bucket boundaries — months_to_maturity=12→'0-12', =13→'13-24', null→'37+'
+//   GET /maturity bucket boundaries — months_to_maturity=12→'0-12', =13→'13-24', demand-note→'0-12'
 //
 // All tests use a fresh in-memory SQLite warehouse (tmpdir) — never touches finance.sqlite.
 // FRED is never called live: getMacro() is mocked to return null/seeded values.
@@ -278,8 +278,23 @@ describe('GET /maturity', () => {
 });
 
 // ── GET /maturity bucket boundary tests ───────────────────────────────────────────────────
-
+//
+// Pin REPORT_DATE to seedLoan's default snapshot_date ('2026-06-01') so these threshold tests
+// exercise the >12/>24/>36 boundaries in isolation, at zero staleness discount (L3's discount is
+// tested separately in debt-maturity.test.ts's effectiveMonthsToMaturity suite) — without this,
+// the boundary each test targets drifts by however many months have elapsed since 2026-06-01
+// whenever the suite actually runs, flipping bucket assignments as a side effect of wall-clock
+// time rather than the logic under test.
 describe('GET /maturity bucket boundaries', () => {
+  const priorReportDate = process.env.REPORT_DATE;
+  beforeEach(() => {
+    process.env.REPORT_DATE = '2026-06-01';
+  });
+  afterEach(() => {
+    if (priorReportDate === undefined) delete process.env.REPORT_DATE;
+    else process.env.REPORT_DATE = priorReportDate;
+  });
+
   it('months_to_maturity = 12 → bucket "0-12"', async () => {
     const db = freshDb();
     const app = makeApp(db);
@@ -352,7 +367,11 @@ describe('GET /maturity bucket boundaries', () => {
     expect(entry?.bucket).toBe('37+');
   });
 
-  it('months_to_maturity = null (demand note / unknown) → bucket "37+"', async () => {
+  // L2 (2026-07-27 round-19-LOWs sweep): a demand note is callable IMMEDIATELY and must land in
+  // the MOST urgent bucket, not share '37+' with a merely-unknown maturity — the original
+  // "→ 37+" expectation here was itself pinning the bug (a real ~immediately-due obligation
+  // displaying as if it were the farthest-out loan in the book).
+  it('a demand note (months_to_maturity=null, isDemand) → bucket "0-12", the most urgent', async () => {
     const db = freshDb();
     const app = makeApp(db);
     seedProperty(db, 'prop-L');
@@ -361,8 +380,61 @@ describe('GET /maturity bucket boundaries', () => {
     const res = await app.request('/maturity');
     const body = await res.json() as { ladder: Array<{ loanId: string; bucket: string; isDemand: boolean }> };
     const entry = body.ladder.find((e) => e.loanId === 'loan-null');
-    expect(entry?.bucket).toBe('37+');
+    expect(entry?.bucket).toBe('0-12');
     expect(entry?.isDemand).toBe(true);
+  });
+
+  // A genuinely unknown (non-demand, unparseable date, no usable stored fallback) maturity has
+  // no urgency signal at all — '37+' ("don't assume urgency") remains correct here, unlike the
+  // demand-note case above. This is the one behavior L2 leaves unchanged.
+  it('a non-demand loan with no maturity data at all stays in bucket "37+", NOT promoted like a demand note', async () => {
+    const db = freshDb();
+    const app = makeApp(db);
+    seedProperty(db, 'prop-M');
+    seedLoan(db, { id: 'loan-unknown', propertyId: 'prop-M', monthsToMaturity: null, maturityDate: null, isDemand: 0 });
+
+    const res = await app.request('/maturity');
+    const body = await res.json() as { ladder: Array<{ loanId: string; bucket: string; isDemand: boolean }> };
+    const entry = body.ladder.find((e) => e.loanId === 'loan-unknown');
+    expect(entry?.bucket).toBe('37+');
+    expect(entry?.isDemand).toBe(false);
+  });
+});
+
+// ── L1 regression (2026-07-27 round-19-LOWs sweep) ────────────────────────────────────────
+//
+// GET /maturity used to bucket on the raw stored months_to_maturity cell while /timeline,
+// /refi-windows, and the scoring engine all recomputed fresh from maturity_date — a balloon at a
+// true ~11.4 months could display in the 13-24 bucket. Pin REPORT_DATE so "true" is unambiguous.
+describe('GET /maturity — L1: buckets on the FRESH recompute, not the stale stored cell', () => {
+  const priorReportDate = process.env.REPORT_DATE;
+  beforeEach(() => {
+    process.env.REPORT_DATE = '2026-07-27';
+  });
+  afterEach(() => {
+    if (priorReportDate === undefined) delete process.env.REPORT_DATE;
+    else process.env.REPORT_DATE = priorReportDate;
+  });
+
+  it('a stale stored months_to_maturity=24 with a maturity_date that is truly ~11 months out buckets as 0-12, not 13-24', async () => {
+    const db = freshDb();
+    const app = makeApp(db);
+    seedProperty(db, 'prop-N');
+    // ~11 months from 2026-07-27 (REPORT_DATE above): a date comfortably inside 0-12, while the
+    // stale stored cell (24) alone would land it in 13-24.
+    seedLoan(db, {
+      id: 'loan-stale-cell',
+      propertyId: 'prop-N',
+      monthsToMaturity: 24,
+      maturityDate: '2027-07-01',
+    });
+
+    const res = await app.request('/maturity');
+    const body = await res.json() as { ladder: Array<{ loanId: string; bucket: string; monthsToMaturity: number | null }> };
+    const entry = body.ladder.find((e) => e.loanId === 'loan-stale-cell');
+    expect(entry?.bucket).toBe('0-12');
+    expect(entry?.monthsToMaturity).not.toBeNull();
+    expect(entry!.monthsToMaturity!).toBeLessThan(12);
   });
 });
 

@@ -1,7 +1,29 @@
 import { describe, it, expect } from 'vitest';
 import type { PortfolioSnapshot, Deal } from '../../src/contracts/index';
 import type { Counterparty } from '../../src/contracts/counterparty';
-import { redactConfidential } from '../../scripts/bake-mirror';
+import { redactConfidential, refuseBakeOnDegradedDeals } from '../../scripts/bake-mirror';
+
+/**
+ * REFUTE-PASS FINDING (MEDIUM). The 2026-08-11 seed-wipe fix threaded DealsLoad.degraded through
+ * ParseResult so "each writer can apply its own policy", and gated Brain.persist — but bake-mirror
+ * destructured only `{ snapshot }` and wrote public/snapshot.json regardless. That is the payload
+ * served by the PUBLIC brain.oxfordra.net mirror, so a transient Notion `fetch failed` during a
+ * scheduled bake published the ~6-deal seed placeholder set over the ~20-deal live pipeline to an
+ * EXTERNAL surface, at exit 0 — the 2026-08-09 mode, on the worst possible surface.
+ */
+describe('bake-mirror — refuses to bake a degraded deals source to the public mirror', () => {
+  it('returns a refusal reason for every data-losing degradation', () => {
+    for (const reason of ['fetch-failed', 'empty-result', 'not-configured'] as const) {
+      const out = refuseBakeOnDegradedDeals({ reason, detail: 'x' });
+      expect(out, `reason ${reason} must refuse`).not.toBeNull();
+      expect(out).toContain(reason);
+    }
+  });
+
+  it('permits the bake when the deals source is live', () => {
+    expect(refuseBakeOnDegradedDeals(null)).toBeNull();
+  });
+});
 
 // I8 (bake-redact-keeps-confidential-counterparties): redaction removed confidential deals and
 // filtered links.deals, but KEPT the counterparty entity — an orphaned lender name + market in the
@@ -11,7 +33,7 @@ const deal = (o: Partial<Deal>): Deal => ({
   id: 'd', name: 'D', shortName: null, location: null, market: null, sf: null, buildings: null,
   stage: 'LOI/PSA', estPrice: null, capRate: null, irr: null, equityMultiple: null, holdYrs: null,
   lender: null, status: null, nextAction: null, owner: null, targetCloseDate: null,
-  confidential: false, estimatedFields: [], ...o,
+  notionDealId: null, confidential: false, estimatedFields: [], ...o,
 });
 
 const cp = (o: Partial<Counterparty>): Counterparty => ({

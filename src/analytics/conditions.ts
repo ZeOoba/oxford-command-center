@@ -674,11 +674,20 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   }
 
   // ── Insurance ───────────────────────────────────────────────────────────────
+  // Each critical insight below becomes its OWN email, subject-lined `CRITICAL: ${title}`
+  // (server/brief/render.ts). These are per-POLICY insights, and a property routinely carries
+  // several policies (Package + Business Crime Liability is the standard ORA pair), so a title
+  // naming only the property makes two genuinely different lapsed policies arrive as what look
+  // like duplicate emails — the 2026-06-21 incident, where four properties each produced two
+  // "Policy expired — <property>" alerts one second apart. They were never duplicates (the
+  // send-log `bytes=` differed on every pair); the subject just couldn't tell them apart.
+  // Ruling (Gabriel, 2026-08-11): keep one alert per policy — two lapsed policies are two
+  // things to fix — and carry the coverage in the title so they are distinguishable at a glance.
   for (const p of s.insurance) {
     if (p.status === 'Expired' || p.status === 'Cancelled') {
       out.push({
         id: `ins-lapsed-${p.id}`, severity: 'critical', category: 'insurance',
-        title: `Policy ${p.status.toLowerCase()} — ${p.property}`,
+        title: `Policy ${p.status.toLowerCase()} — ${p.property} · ${p.coverage ?? 'Coverage'}`,
         detail: `${p.coverage ?? 'Coverage'} · ${p.carrier ?? ''}. Confirm replacement coverage is bound.`,
         metric: fmtUsdCompact(p.premium), entityType: 'insurance', entityId: p.id,
         action: { label: 'Review policy', kind: 'review' },
@@ -700,7 +709,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         // discrepancy explicitly rather than silently trusting the stale status text.
         out.push({
           id: `ins-lapsed-live-${p.id}`, severity: 'critical', category: 'insurance',
-          title: `Policy lapsed — ${p.property}`,
+          title: `Policy lapsed — ${p.property} · ${p.coverage ?? 'Coverage'}`,
           detail: `${p.coverage ?? 'Coverage'} expired ${fmtDate(p.expires)} (${-days}d ago) — workbook status still reads "${p.status}". Confirm replacement coverage is bound.`,
           metric: fmtUsdCompact(p.premium), entityType: 'insurance', entityId: p.id,
           action: { label: 'Review policy', kind: 'review' },
@@ -725,7 +734,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       // date to check against, so this stays on the workbook's own (frozen) count — say so.
       out.push({
         id: `ins-${p.id}`, severity: 'warning', category: 'insurance',
-        title: `Insurance renewing soon — ${p.property}`,
+        title: `Insurance renewing soon — ${p.property} · ${p.coverage ?? 'Coverage'}`,
         detail: `${p.coverage ?? 'Coverage'} renews in ${p.daysToExpiry}d (workbook estimate — no expiry date on file).`,
         entityType: 'insurance', entityId: p.id,
         action: { label: 'Review policy', kind: 'review' },
@@ -751,7 +760,13 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
     out.push({
       id: 'reconcile-fail', severity: 'critical', category: 'data',
       title: 'Reconciliation failure',
-      detail: `${reconFlags.length} invariant ${reconFlags.length === 1 ? 'breach' : 'breaches'} (${reconFlags.map((f) => f.field).join(', ')}). Derived totals do not match the workbook.`,
+      // The detail must not assert a CAUSE. This condition fires for every entity==='reconciliation'
+      // flag, and checkSnapshot emits several that have nothing to do with workbook totals — e.g.
+      // duplicate property ids and near-duplicate deal names. Hardcoding "derived totals do not
+      // match the workbook" sent operators to audit the workbook for a deal-naming collision
+      // (caught in review 2026-08-04). Name the breached fields and let the reconciler's own message
+      // carry the cause.
+      detail: `${reconFlags.length} invariant ${reconFlags.length === 1 ? 'breach' : 'breaches'} (${reconFlags.map((f) => f.field).join(', ')}). Run \`npm run reconcile:snapshot\` for the per-flag detail.`,
       metric: String(reconFlags.length),
       impactAnnualUsd: null, spine: 'B', provenance: 'absent',
     });

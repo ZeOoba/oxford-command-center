@@ -126,6 +126,15 @@
       "review_needed": true,
       "review_detail": "Touches Architect-owned surfaces: server/warehouse/migrations/ (023_debt_rate_reset.sql, additive columns only) and src/contracts/debt.ts (new response schemas, additive only). Governor constants referenced read-only via loadGovernors + ALERT_THRESHOLDS.ltvCeiling - no redefinition. Branch not pushed; Gabriel confirms before any PR/merge.",
       "last_updated": "2026-07-18T00:00:00Z"
+    },
+    "compassionate-pike-3d7a86": {
+      "agent_role": "Integration Agent — Claude Code Opus 5",
+      "phase": "PR #259 — closes 2 critical + 3 high findings from the post-merge adversarial review of PR #258 (deals join-key + declassification gate)",
+      "status": "review_needed",
+      "blocked_by": null,
+      "review_needed": true,
+      "review_detail": "PR #259 open: https://github.com/ZeOoba/oxford-command-center/pull/259. Fixes a fail-open confidentiality bug and a silent-data-loss regression found by a 3-agent parallel review Gabriel requested after #258 merged. Gate green (governance/typecheck/lint/check:dev-css/reconcile:snapshot); 3259/3260 tests (known-flaky bash-guard wall-clock excluded).",
+      "last_updated": "2026-08-04T00:00:00Z"
     }
   },
   "phase-4-steps-5-7-8-9": {
@@ -554,5 +563,14 @@
     "review_needed": false,
     "review_detail": "READY FOR REVIEW. 17 commits on feat/cc-p4c-c2-placeholders (worktree .claude/worktrees/p4c-placeholders), Gabriel-authorized in-turn 2026-07-09. Ships P4c (insurance EAL/deductible-review/self-insure-split/re-bid-pipeline, Self-Insure & Bids tab + SavingsBoard Optimize tier) and C2 (tax cost-seg acceleration + entity-strategy tier + metadata-only Filed Returns tab) on fixture-fallback placeholder data (server/warehouse/placeholders/*.placeholder.json) with automatic warehouse-first cutover (proven by a direct test calling the real resolveLossEvents post-import, not mocked). New routes GET /api/warehouse/insurance/loss + GET /api/warehouse/tax/strategy (zero calibration writes on placeholder inputs, verified). Real-data swap: npm run warehouse:import-loss-runs (idempotent, validated). Architect-owned touches (Gabriel-authorized, declared at claim time): NEW src/contracts/insurance-loss.ts, NEW src/contracts/tax-strategy.ts, ONE mount line in server/index.ts, CLAUDE.md §3 Pending-line doc-drift fix (Phase 7 was stale-marked deferred; corrected to MERGED via PR #169). Mandatory 3-lens adversarial refute pass run on the two financial engines (insurance-loss-analysis.ts, tax-strategy.ts) plus their import/resolver boundary — correctness and determinism lenses found no real defect; the edges lens found 3 real gaps in the real-data-import boundary (non-ISO loss_date silently corrupting EAL; blank-propertyId portfolio losses wrongly rejected against a pre-existing template's documented convention; deductible>coverageLimit breaking the retained/transferred partition) — all 3 fixed at the importer boundary (commit bf96cd7), re-verified clean. Full local gate green: governance/typecheck/lint/check:dev-css all clean; test suite 222/222 files, 2513 tests, 0 failures (verified across 4 batched runs — npm test's own Windows/Node teardown segfault, a documented pre-existing environment artifact unrelated to this branch, prevented one single full-suite run from completing, so evidence was gathered in batches; zero FAIL markers throughout); reconcile $0 tolerance; warehouse:verify confirmed passing on the main checkout (worktree-only EPERM/FINANCIALS_DIR path gaps are the documented pre-existing worktree artifacts, not a regression); warehouse:drift correctly SKIPPED (no live db in this worktree); build + check:bundle clean. Repo-wide brand/undefined-token grep clean on the touched module scope. Housekeeping note for a future session: scripts/check-refute-required.ts's DELIVERY_ONLY_PATHS allowlist doesn't yet list insurance-loss-api.ts/tax-api.ts as delivery-only (non-blocking — commits already carry Refute-Skip trailers). [STATUS CORRECTED 2026-07-19 by status-json-stale-cleanup: this work merged as PR #200 (commit ae9ff57) — marker was never flipped after merge.]",
     "last_updated": "2026-07-19T16:40:44Z"
+  },
+  "occ-wt-balloon-fallback": {
+    "agent_role": "Engineering (Claude Code, Sonnet 5) — Gabriel-directed, in-turn 2026-07-27",
+    "phase": "fix/balloon-months-stale-fallback (worktree ../occ-wt-balloon-fallback, STACKED on fix/maturity-bucket-lows / PR #244, not yet merged): close the duplicated pre-fix staleness gap an adversarial reviewer found in getBalloonMonthsByProperty (server/warehouse/capital-allocation.ts:865) during PR #244's own review — it re-implemented the OLD un-discounted stored-months_to_maturity fallback with no snapshot_date in its query, feeding debtUrgency (15% of priorityScore) an un-aged figure. Refactoring to call the now-shared, exported effectiveMonthsToMaturity (server/warehouse/debt-scoring.ts) instead of duplicating the date math.",
+    "status": "in_progress",
+    "blocked_by": "fix/maturity-bucket-lows (PR #244) — this branch is stacked on it per CLAUDE.md §7 Stacked PRs; merge #244 first, this branch second.",
+    "review_needed": false,
+    "review_detail": "No architect-owned files touched in the fix itself. Financial-decision code (feeds capital-allocation priorityScore) — mandatory adversarial refute + eos-review-gate.py pinned-model review required before commit per CLAUDE.md/hooks. Not pushed; Gabriel confirms before any PR. (This status.json claim entry itself required the architect-edit-ok override sentinel — Gabriel directed this exact worktree/claim in-turn.)",
+    "last_updated": "2026-07-27T00:00:00Z"
   }
 }

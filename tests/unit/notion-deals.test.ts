@@ -1,6 +1,11 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import type { Deal } from '../../src/contracts/index';
-import { mapNotionPage, mergeDeals, parseNameAliases } from '../../server/sources/notion-deals';
+import { mapNotionPage, mergeDeals, loadDeals, dealsDegradationFlag, hasDealsPipelineFailure } from '../../server/sources/notion-deals';
+import { SEED_DEALS } from '../../src/data/seed-deals';
+
+// The join-key describes that used to live here — aliases, locality-suffix matching, collisions,
+// corroboration, and the four refute rounds' regressions — were retired with the name join on
+// 2026-08-12. tests/unit/deal-id-join.test.ts covers the id join that replaced them.
 
 const page = (over: Record<string, unknown> = {}) => ({
   properties: {
@@ -24,7 +29,7 @@ const deal = (o: Partial<Deal>): Deal => ({
   id: 'd', name: 'D', shortName: null, location: null, market: null, sf: null, buildings: null,
   stage: 'Candidate', estPrice: null, capRate: null, irr: null, equityMultiple: null, holdYrs: null,
   lender: null, status: null, nextAction: null, owner: null, targetCloseDate: null,
-  confidential: false, estimatedFields: [], ...o,
+  notionDealId: null, confidential: false, estimatedFields: [], ...o,
 });
 
 afterEach(() => {
@@ -35,7 +40,7 @@ describe('mapNotionPage', () => {
   it('maps a Notion page to a Deal with stage/market/rate normalization', () => {
     const d = mapNotionPage(page())!;
     expect(d.name).toBe('Maple Logistics');
-    expect(d.market).toBe('Other'); // Cincinnati OH → Other (not in our Market enum)
+    expect(d.market).toBe('Cincinnati OH'); // in the Market enum as of 2026-08-12 (was 'Other')
     expect(d.stage).toBe('Due Diligence'); // "Under Contract" → Due Diligence
     expect(d.sf).toBe(50000);
     expect(d.capRate).toBeCloseTo(0.075, 4); // 7.5 normalized to a decimal
@@ -47,6 +52,21 @@ describe('mapNotionPage', () => {
     process.env.NOTION_CONFIDENTIAL_NAME_PATTERNS = 'atlas';
     const d = mapNotionPage(page({ 'Deal Name': { type: 'title', title: [{ plain_text: 'Project Atlas' }] } }))!;
     expect(d.confidential).toBe(true);
+  });
+
+  it('takes Deal.id from the Notion page UUID when present, not a name slug', () => {
+    // Code review, 2026-08-13, HIGH. An unmatched (extras) row's own `.id` feeds two
+    // Hard-Invariant-3-adjacent consumers directly: isDeclassified()'s `allowlist.includes(id)`
+    // check and bake-mirror's redactConfidential link-stripping. A slug-derived id let two
+    // DIFFERENT live deals collide on it whenever their names agreed on the first 64 characters
+    // (slug()'s truncation) — a real risk for "Phase One"/"Phase Two"-style names.
+    const d = mapNotionPage({ id: 'notion-page-uuid-abc123', ...page() })!;
+    expect(d.id).toBe('notion-page-uuid-abc123');
+  });
+
+  it('falls back to the name-slug id only when the page carries no id (fixture convenience)', () => {
+    const d = mapNotionPage(page())!;
+    expect(d.id).toBe('notion-maple-logistics');
   });
 
   it('returns null for a row with no Deal Name', () => {
@@ -74,12 +94,12 @@ describe('mapNotionPage', () => {
 
 describe('mergeDeals — seed is the confidential-flag source of truth', () => {
   const seed = [
-    deal({ id: 'seed-atlas', name: 'Project Atlas Industrial', stage: 'Due Diligence', confidential: true, shortName: 'Atlas' }),
-    deal({ id: 'seed-banwick', name: 'Banwick Refi', stage: 'Candidate', confidential: false }),
+    deal({ id: 'seed-atlas', name: 'Project Atlas Industrial', notionDealId: 'DEAL-1', stage: 'Due Diligence', confidential: true, shortName: 'Atlas' }),
+    deal({ id: 'seed-banwick', name: 'Banwick Refi', notionDealId: 'DEAL-2', stage: 'Candidate', confidential: false }),
   ];
   const notion = [
-    deal({ id: 'notion-atlas', name: 'Project Atlas Industrial', stage: 'Closing', estPrice: 18_500_000, confidential: false }),
-    deal({ id: 'notion-new', name: 'New Columbus Flex', stage: 'Candidate', confidential: false }),
+    deal({ id: 'notion-atlas', name: 'Project Atlas Industrial', notionDealId: 'DEAL-1', stage: 'Closing', estPrice: 18_500_000, confidential: false }),
+    deal({ id: 'notion-new', name: 'New Columbus Flex', notionDealId: 'DEAL-3', stage: 'Candidate', confidential: false }),
   ];
   const out = mergeDeals(seed, notion);
 
@@ -109,10 +129,10 @@ describe('mergeDeals — fail-closed on unflagged unmatched Notion deals (I9, wi
   // seed-deals.ts with confidential: false (the seed stays the source of truth).
   it('an unmatched Notion deal defaults confidential regardless of stage — no env pattern required', () => {
     const out = mergeDeals([], [
-      deal({ id: 'n1', name: 'DD Deal', stage: 'Due Diligence', confidential: false }),
-      deal({ id: 'n2', name: 'Closing Deal', stage: 'Closing', confidential: false }),
-      deal({ id: 'n3', name: 'Early Candidate', stage: 'Candidate', confidential: false }),
-      deal({ id: 'n4', name: 'Done Deal', stage: 'Closed', confidential: false }),
+      deal({ id: 'n1', name: 'DD Deal', notionDealId: 'DEAL-11', stage: 'Due Diligence', confidential: false }),
+      deal({ id: 'n2', name: 'Closing Deal', notionDealId: 'DEAL-12', stage: 'Closing', confidential: false }),
+      deal({ id: 'n3', name: 'Early Candidate', notionDealId: 'DEAL-13', stage: 'Candidate', confidential: false }),
+      deal({ id: 'n4', name: 'Done Deal', notionDealId: 'DEAL-14', stage: 'Closed', confidential: false }),
     ]);
     expect(out.find((d) => d.id === 'n1')!.confidential).toBe(true);
     expect(out.find((d) => d.id === 'n2')!.confidential).toBe(true);
@@ -122,8 +142,8 @@ describe('mergeDeals — fail-closed on unflagged unmatched Notion deals (I9, wi
 
   it('a seed-matched deal still takes the seed flag — public-by-seed escape hatch unchanged', () => {
     const out = mergeDeals(
-      [deal({ id: 's1', name: 'Known Public Deal', stage: 'LOI/PSA', confidential: false })],
-      [deal({ id: 'n1', name: 'Known Public Deal', stage: 'LOI/PSA', confidential: false })],
+      [deal({ id: 's1', name: 'Known Public Deal', notionDealId: 'DEAL-20', stage: 'LOI/PSA', confidential: false })],
+      [deal({ id: 'n1', name: 'Known Public Deal', notionDealId: 'DEAL-20', stage: 'LOI/PSA', confidential: false })],
     );
     expect(out.find((d) => d.id === 's1')!.confidential).toBe(false);
     expect(out).toHaveLength(1);
@@ -137,8 +157,8 @@ describe('mergeDeals — seed staleness tripwire (policy item 3, 2026-07-16)', (
   it('warns when a seed-matched public deal advances into an active stage', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const out = mergeDeals(
-      [deal({ id: 's1', name: 'Was Candidate', stage: 'Candidate', confidential: false })],
-      [deal({ id: 'n1', name: 'Was Candidate', stage: 'Due Diligence', confidential: false })],
+      [deal({ id: 's1', name: 'Was Candidate', notionDealId: 'DEAL-31', stage: 'Candidate', confidential: false })],
+      [deal({ id: 'n1', name: 'Was Candidate', notionDealId: 'DEAL-31', stage: 'Due Diligence', confidential: false })],
     );
     expect(out.find((d) => d.id === 's1')!.confidential).toBe(false); // flag unchanged
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('s1'));
@@ -150,12 +170,12 @@ describe('mergeDeals — seed staleness tripwire (policy item 3, 2026-07-16)', (
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     mergeDeals(
       [
-        deal({ id: 's1', name: 'Already Confidential', stage: 'Candidate', confidential: true }),
-        deal({ id: 's2', name: 'Still Prospecting', stage: 'Candidate', confidential: false }),
+        deal({ id: 's1', name: 'Already Confidential', notionDealId: 'DEAL-32', stage: 'Candidate', confidential: true }),
+        deal({ id: 's2', name: 'Still Prospecting', notionDealId: 'DEAL-33', stage: 'Candidate', confidential: false }),
       ],
       [
-        deal({ id: 'n1', name: 'Already Confidential', stage: 'Due Diligence', confidential: false }),
-        deal({ id: 'n2', name: 'Still Prospecting', stage: 'Candidate', confidential: false }),
+        deal({ id: 'n1', name: 'Already Confidential', notionDealId: 'DEAL-32', stage: 'Due Diligence', confidential: false }),
+        deal({ id: 'n2', name: 'Still Prospecting', notionDealId: 'DEAL-33', stage: 'Candidate', confidential: false }),
       ],
     );
     expect(warn).not.toHaveBeenCalled();
@@ -163,38 +183,347 @@ describe('mergeDeals — seed staleness tripwire (policy item 3, 2026-07-16)', (
   });
 });
 
-describe('mergeDeals — name aliases (dedup a deal named differently in Notion)', () => {
-  const seed = [deal({ id: 'seed-cedar', name: 'Cedar Industrial Park', stage: 'Due Diligence', confidential: true, shortName: 'Cedar' })];
-  // Same real deal, different name in Notion → would NOT match by name.
-  const notion = [deal({ id: 'notion-cedar', name: 'Cedar Park Acquisition', stage: 'Closing', estPrice: 12_000_000 })];
-
-  it('double-lists without an alias (the cosmetic duplicate)', () => {
-    const out = mergeDeals(seed, notion, new Map());
-    expect(out).toHaveLength(2); // seed copy + Notion extra
+/**
+ * 2026-08-09 seed-fallback regression. loadDeals() used to swallow a live-fetch failure and return
+ * SEED_DEALS with no signal, so a transient `fetch failed` silently replaced the live pipeline with
+ * seed placeholders (deals 20 → 6, counterparties 15 → 14) while the run still exited 0. The
+ * scheduled ora-lease-snapshot-refresh task's material-change gate read that wipe as real portfolio
+ * movement and — under the 2026-08-09 auto-push directive — would have pushed it to origin/main.
+ * The degradation must be REPORTABLE so parse.ts can raise an error-severity dataQuality flag and
+ * evaluateReconciliationGate (PR #252) refuses the write in both CLI writers.
+ */
+describe('loadDeals degradation reporting', () => {
+  const originalToken = process.env.NOTION_TOKEN;
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    if (originalToken === undefined) delete process.env.NOTION_TOKEN;
+    else process.env.NOTION_TOKEN = originalToken;
+    delete process.env.NOTION_DEALS_DATA_SOURCE;
   });
 
-  it('merges into the single seed record when an alias maps the names', () => {
-    const aliases = parseNameAliases('Cedar Park Acquisition=>Cedar Industrial Park');
-    const out = mergeDeals(seed, notion, aliases);
-    expect(out).toHaveLength(1); // deduped
-    const d = out[0]!;
-    expect(d.id).toBe('seed-cedar'); // seed identity kept
-    expect(d.confidential).toBe(true); // flag preserved
-    expect(d.shortName).toBe('Cedar');
-    expect(d.stage).toBe('Closing'); // live field won
-    expect(d.estPrice).toBe(12_000_000);
+  it('reports degraded="fetch-failed" (not a silent seed substitution) when the live fetch throws', async () => {
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('fetch failed')));
+    const out = await loadDeals();
+    expect(out.degraded?.reason).toBe('fetch-failed');
+    expect(out.degraded?.detail).toContain('fetch failed');
+    expect(out.deals).toEqual(SEED_DEALS); // still degrades gracefully for the live server
+  });
+
+  it('reports degraded="empty-result" when a configured token returns zero deals', async () => {
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true, json: async () => ({ results: [], has_more: false }), text: async () => '',
+    }));
+    const out = await loadDeals();
+    expect(out.degraded?.reason).toBe('empty-result');
+    expect(out.deals).toEqual(SEED_DEALS);
+  });
+
+  it('reports degraded="not-configured" (NOT an error) when no token is set', async () => {
+    delete process.env.NOTION_TOKEN;
+    const out = await loadDeals();
+    expect(out.degraded?.reason).toBe('not-configured');
+    expect(out.deals).toEqual(SEED_DEALS);
+  });
+
+  it('keeps BOTH rows when two live titles are identical but the Deal IDs differ', async () => {
+    // The determinism lens' HIGH. fetchNotionDeals keyed its dedupe map on `notion-${slug(name)}`,
+    // so row EXISTENCE was a function of the NAME, last-write-wins over Notion's return order —
+    // upstream of every guard in mergeDeals. A pure permutation of the API page order flipped which
+    // row survived, and the destroyed one appeared in neither `merged` nor `extras`: a confidential
+    // live row gone, zero flags, exit clean. Keying on the Deal ID is what the id join makes
+    // possible. Asserted in BOTH orders, because one order passing proves nothing here.
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    const row = (title: string, n: number) =>
+      page({
+        'Deal Name': { type: 'title', title: [{ plain_text: title }] },
+        'Deal ID': { type: 'unique_id', unique_id: { prefix: 'DEAL', number: n } },
+      });
+
+    for (const results of [
+      [row('E Fulton St — Columbus, OH', 7), row('E. Fulton St — Columbus, OH', 21)],
+      [row('E. Fulton St — Columbus, OH', 21), row('E Fulton St — Columbus, OH', 7)],
+    ]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ results, has_more: false }),
+        text: async () => '',
+      }));
+      const out = await loadDeals();
+      // Scoped to the two rows under test: loadDeals merges against the REAL SEED_DEALS, which
+      // carry their own live Deal IDs, so asserting the whole id set would pin unrelated data.
+      const under = out.deals.filter((d) => d.notionDealId === 'DEAL-7' || d.notionDealId === 'DEAL-21');
+      expect(under.map((d) => d.notionDealId).sort()).toEqual(['DEAL-21', 'DEAL-7']);
+      expect(under.every((d) => d.confidential)).toBe(true); // neither is seeded — both fail closed
+    }
+  });
+
+  it('keeps BOTH idless rows when their names slug identically, regardless of API page order', async () => {
+    // The second refute pass' MEDIUM: the 2026-08-12 fix keyed id-CARRYING rows on notionDealId but
+    // left the idless fallback as `d.id`, which IS still the name slug — so two idless rows with
+    // punctuation-only name variance (slug() strips non-word characters) still collided, upstream of
+    // every guard in mergeDeals. Fixed by falling back to the Notion PAGE id (page.id), which cannot
+    // collide the way a slug can. Asserted in both orders.
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    const idlessRow = (pageId: string, title: string) => ({
+      id: pageId,
+      ...page({ 'Deal Name': { type: 'title', title: [{ plain_text: title }] } }),
+    });
+
+    for (const results of [
+      [idlessRow('page-a', 'Collide Park — Columbus, OH'), idlessRow('page-b', 'Collide. Park — Columbus, OH')],
+      [idlessRow('page-b', 'Collide. Park — Columbus, OH'), idlessRow('page-a', 'Collide Park — Columbus, OH')],
+    ]) {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ results, has_more: false }),
+        text: async () => '',
+      }));
+      const out = await loadDeals();
+      const under = out.deals.filter((d) => d.name.startsWith('Collide'));
+      expect(under.map((d) => d.name).sort()).toEqual(['Collide Park — Columbus, OH', 'Collide. Park — Columbus, OH']);
+      expect(under.every((d) => d.confidential)).toBe(true);
+    }
+  });
+
+  it('raises ONE aggregated warn flag when a live Stage value is not in STAGE_MAP', async () => {
+    // The edge-case lens' MEDIUM: the 'Killed' fix was a point-fix, not a systemic one. A future
+    // rename or new Stage option resolves to mapStage's 'Candidate' default — an active-deal claim,
+    // not a neutral fallback — with zero flags, reproducing the identical dead-deal-as-active
+    // incident. This flag makes the drift visible instead of silent.
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [
+          page({
+            'Deal Name': { type: 'title', title: [{ plain_text: 'Renamed Stage Deal' }] },
+            Stage: { type: 'select', select: { name: 'Abandoned' } },
+          }),
+        ],
+        has_more: false,
+      }),
+      text: async () => '',
+    }));
+    const out = await loadDeals();
+    const drift = out.flags.filter((f) => f.field === 'stage');
+    expect(drift).toHaveLength(1);
+    expect(drift[0]!.severity).toBe('warn');
+    // The unmapped VALUE itself must not appear in the published flag (reaches the public mirror).
+    expect(drift[0]!.issue).not.toContain('Abandoned');
+  });
+
+  it('drops a field from estimatedFields once a live value actually replaces it', () => {
+    const seed = [
+      deal({ id: 's', name: 'S', notionDealId: 'DEAL-1', sf: 100, estimatedFields: ['sf'] }),
+    ];
+    const withLiveSf = mergeDeals(seed, [deal({ id: 'n', name: 'N', notionDealId: 'DEAL-1', sf: 5000 })]);
+    expect(withLiveSf[0]!.sf).toBe(5000);
+    expect(withLiveSf[0]!.estimatedFields).toEqual([]); // real number now — no longer an estimate
+
+    const withNoLiveSf = mergeDeals(seed, [deal({ id: 'n', name: 'N', notionDealId: 'DEAL-1', sf: null })]);
+    expect(withNoLiveSf[0]!.sf).toBe(100); // seed value survives
+    expect(withNoLiveSf[0]!.estimatedFields).toEqual(['sf']); // still an estimate — correctly labeled
+  });
+
+  it('generalizes past sf/estPrice — any pick()-able field drops out once live supplies it', () => {
+    // The first version of this fix hardcoded sf/estPrice, which was itself the same class of
+    // incompleteness it was fixing. Pinned here for capRate, a field no seed lists today but
+    // nothing in the Deal type prevents.
+    const seed = [deal({ id: 's', name: 'S', notionDealId: 'DEAL-1', capRate: 0.06, estimatedFields: ['capRate'] })];
+    const out = mergeDeals(seed, [deal({ id: 'n', name: 'N', notionDealId: 'DEAL-1', capRate: 0.072 })]);
+    expect(out[0]!.capRate).toBe(0.072);
+    expect(out[0]!.estimatedFields).toEqual([]);
+  });
+
+  it('leaves a NON-pick()-able field (e.g. buildings) permanently labeled estimated', () => {
+    // buildings is never replaced by a live value (preserved from the seed unconditionally), so
+    // nothing in this merge could ever un-estimate it — the filter must not drop it regardless.
+    const seed = [deal({ id: 's', name: 'S', notionDealId: 'DEAL-1', buildings: 3, estimatedFields: ['buildings'] })];
+    const out = mergeDeals(seed, [deal({ id: 'n', name: 'N', notionDealId: 'DEAL-1' })]);
+    expect(out[0]!.estimatedFields).toEqual(['buildings']);
+  });
+
+  it('drops "stage" too — it is taken from live UNCONDITIONALLY, more definitively live-sourced than a pick()-able field', () => {
+    // Adversarial pass, 2026-08-13, all 3 lenses (executed proof): the first generalization missed
+    // this field specifically because it is not pick()'d — but `stage: live.stage` is assigned with
+    // no fallback at all, so it can never legitimately remain "just an estimate" once a live row
+    // joins. Real-world plausibility per the module's own comment: post-847a17c seeds carry "null
+    // economics and a hand-set stage" — stage is the field a seed author is MOST likely to mark
+    // estimated.
+    const seed = [deal({ id: 's', name: 'S', notionDealId: 'DEAL-1', stage: 'Candidate', estimatedFields: ['stage', 'sf'] })];
+    const out = mergeDeals(seed, [deal({ id: 'n', name: 'N', notionDealId: 'DEAL-1', stage: 'Due Diligence', sf: 5000 })]);
+    expect(out[0]!.stage).toBe('Due Diligence');
+    expect(out[0]!.estimatedFields).toEqual([]);
+  });
+
+  it('reaches mergeDeals’ collision detector for two DIFFERENT pages sharing one Deal ID', async () => {
+    // Code review, 2026-08-13, HIGH. fetchNotionDeals used to key its dedupe map on notionDealId
+    // FIRST, so two distinct live pages sharing a colliding Deal ID (a genuine data defect the
+    // second refute round's own comment anticipated but this dedup order silently absorbed)
+    // overwrote each other in that Map BEFORE mergeDeals' exhaustively tested collision detector
+    // ever received more than one row to compare. Keying on the Notion PAGE id first means both
+    // distinct pages now survive to mergeDeals, which correctly raises the collision error and
+    // holds both out — the fix is that the detector gets to run at all, not that the fetch layer
+    // resolves the collision itself.
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    const collidingRow = (pageId: string, title: string) => ({
+      id: pageId,
+      ...page({
+        'Deal Name': { type: 'title', title: [{ plain_text: title }] },
+        'Deal ID': { type: 'unique_id', unique_id: { prefix: 'DEAL', number: 90 } },
+      }),
+    });
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [collidingRow('page-x', 'First Colliding Row'), collidingRow('page-y', 'Second Colliding Row')],
+        has_more: false,
+      }),
+      text: async () => '',
+    }));
+    const out = await loadDeals();
+
+    const under = out.deals.filter((d) => d.name.includes('Colliding Row'));
+    expect(under).toHaveLength(2); // BOTH pages survived the fetch layer — nothing silently dropped
+    expect(under.every((d) => d.confidential)).toBe(true); // and mergeDeals correctly refused both
+    expect(out.flags.some((f) => f.field === 'notionDealId' && f.severity === 'error' && f.rawValue === 'DEAL-90')).toBe(true);
+  });
+
+  it('surfaces merge Deal-ID flags on DealsLoad so the reconciliation gate can act on them', async () => {
+    // Live rows the joiner had to refuse: the flag must ESCAPE the adapter, not just reach the log.
+    // Here they carry no Deal ID at all, which is what a renamed or unshared "Deal ID" column looks
+    // like from this side — the join refuses rather than falling back to the names.
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        results: [
+          page({ 'Deal Name': { type: 'title', title: [{ plain_text: 'Collide Park — Columbus, OH' }] } }),
+          page({ 'Deal Name': { type: 'title', title: [{ plain_text: 'Collide Park — Louisville, KY' }] } }),
+        ],
+        has_more: false,
+      }),
+      text: async () => '',
+    }));
+
+    const out = await loadDeals();
+
+    expect(out.flags.some((f) => f.field === 'notionDealId' && f.severity === 'error')).toBe(true);
+    // …and both rows survive, defaulting confidential — a refusal never drops a deal.
+    expect(out.deals.filter((d) => d.name.startsWith('Collide Park'))).toHaveLength(2);
+    expect(out.deals.filter((d) => d.name.startsWith('Collide Park')).every((d) => d.confidential)).toBe(true);
+  });
+
+  it('reports degraded=null on a healthy live fetch', async () => {
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [page()], has_more: false }),
+      text: async () => '',
+    }));
+    const out = await loadDeals();
+    expect(out.degraded).toBeNull();
+    expect(out.deals.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * 2026-08-11 integrity sweep, L5. fetchNotionDeals paginates `for (let i = 0; i < 5; i++)` at 100
+   * rows/page, so a data source past 500 rows was silently truncated even while `has_more` was still
+   * true. That is the same movement-gate false signal as the 2026-08-09 incident at smaller
+   * amplitude: a reduced deal set, no degradation, exit 0, past both CLI gates AND Brain.persist.
+   * A truncated fetch is a data-LOSING degradation and must be reported as one.
+   */
+  it('reports a degradation when the pagination cap is hit while has_more is still true', async () => {
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    // Every page claims there is more — i.e. the source is larger than the cap can walk.
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ results: [page()], has_more: true, next_cursor: 'c' }),
+      text: async () => '',
+    }));
+
+    const out = await loadDeals();
+
+    expect(out.degraded).not.toBeNull();
+    expect(out.degraded?.detail).toMatch(/truncat|pagination|cap/i);
+    // Must fall back to seed rather than publish a partial set as authoritative.
+    expect(out.deals).toEqual(SEED_DEALS);
+    // And it must map to an error-severity flag so both CLI gates refuse the write.
+    expect(dealsDegradationFlag(out.degraded, 6)?.severity).toBe('error');
+  });
+
+  it('does NOT report a degradation when pagination completes within the cap', async () => {
+    process.env.NOTION_TOKEN = 't';
+    process.env.NOTION_DEALS_DATA_SOURCE = 'ds-1';
+    let call = 0;
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(async () => ({
+      ok: true,
+      // Two pages then done — well inside the cap.
+      json: async () => ({ results: [page()], has_more: ++call < 2, next_cursor: 'c' }),
+      text: async () => '',
+    })));
+
+    const out = await loadDeals();
+
+    expect(out.degraded).toBeNull();
   });
 });
 
-describe('parseNameAliases', () => {
-  it('parses ;/newline-separated "from=>to" pairs, normalized and case-insensitive', () => {
-    const m = parseNameAliases('A Deal => Seed One;  Other=>Seed Two\nbad-line-no-arrow');
-    expect(m.get('a deal')).toBe('seed one');
-    expect(m.get('other')).toBe('seed two');
-    expect(m.size).toBe(2);
+describe('dealsDegradationFlag', () => {
+  it('raises an ERROR-severity flag for fetch-failed so the reconciliation gate refuses the write', () => {
+    const f = dealsDegradationFlag({ reason: 'fetch-failed', detail: 'fetch failed' }, 6)!;
+    expect(f.severity).toBe('error');
+    expect(f.entity).toBe('deals');
+    expect(f.issue).toContain('6'); // the seed count that would have been written
   });
 
-  it('returns an empty map for blank/unset input', () => {
-    expect(parseNameAliases('').size).toBe(0);
+  it('raises an ERROR-severity flag for empty-result', () => {
+    expect(dealsDegradationFlag({ reason: 'empty-result', detail: 'x' }, 6)!.severity).toBe('error');
+  });
+
+  it('returns null for not-configured — an unconfigured dev server must keep working unflagged', () => {
+    expect(dealsDegradationFlag({ reason: 'not-configured', detail: 'x' }, 6)).toBeNull();
+  });
+
+  it('returns null when there is no degradation', () => {
+    expect(dealsDegradationFlag(null, 20)).toBeNull();
+  });
+});
+
+/**
+ * The live server is a THIRD writer of portfolio.json (Brain.persist), and it deliberately does not
+ * run evaluateReconciliationGate -- it appends flags and keeps serving, which is right for a UI but
+ * would re-introduce the seed wipe on the shared git-tracked mirror whenever a server happens to be
+ * refreshing during a Notion outage. Brain.persist consults this predicate so it can keep serving
+ * the degraded snapshot in memory while declining to poison the mirror.
+ */
+describe('hasDealsPipelineFailure', () => {
+  it('detects the error-severity deals-pipeline flag', () => {
+    const flag = dealsDegradationFlag({ reason: 'fetch-failed', detail: 'x' }, 6)!;
+    expect(hasDealsPipelineFailure([flag])).toBe(true);
+  });
+
+  it('ignores unrelated error flags — only the deals-pipeline failure blocks the mirror write', () => {
+    expect(hasDealsPipelineFailure([{ entity: 'cash', field: 'balance', issue: 'x', severity: 'error' }])).toBe(false);
+  });
+
+  it('ignores a warn-severity deals flag', () => {
+    expect(hasDealsPipelineFailure([{ entity: 'deals', field: 'pipeline', issue: 'x', severity: 'warn' }])).toBe(false);
+  });
+
+  it('is false for an empty flag set', () => {
+    expect(hasDealsPipelineFailure([])).toBe(false);
   });
 });

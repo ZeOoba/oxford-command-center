@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
+import type { DealsDegradation } from '../server/sources/notion-deals';
 import { getMacro } from '../server/macro/getMacro';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, referenceDate } from '../server/config';
@@ -10,14 +11,38 @@ import type { GovernorSet, PortfolioSnapshot } from '../src/contracts/index';
 // still loaded ONLY via the existsSync-gated dynamic import below (cadence decoupling preserved).
 import { GOVERNOR_DEFAULTS } from '../server/warehouse/governors';
 
+/**
+ * Writer policy for the PUBLIC mirror: never bake a degraded deals source. Returns the refusal
+ * message, or null when the bake may proceed.
+ *
+ * This is the strictest of portfolio.json's writers because its output is served EXTERNALLY by
+ * brain.oxfordra.net. Brain.persist declines the shared mirror and keeps serving from memory; both
+ * CLI writers refuse via requireLiveDealsSource. This script had NO gate at all, so a transient
+ * Notion `fetch failed` during a scheduled bake published the ~6-deal seed placeholder set over the
+ * ~20-deal live pipeline at exit 0 -- the 2026-08-09 failure mode on the worst possible surface.
+ * `not-configured` refuses here too: unlike a dev server, a bake has no legitimate reason to run
+ * without a token, and "the mirror is public" outranks "don't make the dev loop dirty".
+ * (2026-08-11 integrity sweep, found by the refute pass on its own remediation branch.)
+ */
+export function refuseBakeOnDegradedDeals(degraded: DealsDegradation | null): string | null {
+  if (!degraded) return null;
+  return (
+    `✗ bake-mirror: refusing to bake — the Notion deals pipeline degraded (${degraded.reason}), so ` +
+    `snapshot.deals would be the seed placeholder set rather than the live pipeline, and this payload ` +
+    `is served publicly. Leaving the last good public/snapshot.json in place. Cause: ${degraded.detail}`
+  );
+}
+
 loadEnvFile();
 
 /**
  * Bakes the current workbook + macro into static JSON the client reads with no server —
  * powering the read-only Cloudflare mirror.
  *
- * CONFIDENTIALITY (non-negotiable): confidential deals (e.g. E. Fulton Street) are REDACTED
- * by default. They are included ONLY when MIRROR_INCLUDE_CONFIDENTIAL=1 is set explicitly,
+ * CONFIDENTIALITY (non-negotiable): deals carrying `confidential: true` are REDACTED
+ * by default. (No worked example is named here on purpose — the previous one, E. Fulton Street, was
+ * declassified 2026-07-09 and the stale reference outlived it by weeks. The flag is the contract;
+ * the current roster lives in confidential-terms.json.) They are included ONLY when MIRROR_INCLUDE_CONFIDENTIAL=1 is set explicitly,
  * which must happen ONLY for a target verified to be gated behind Cloudflare Access. A public
  * *.pages.dev deploy must always run in the default (redacted) mode.
  */
@@ -101,7 +126,17 @@ async function main() {
   // this bake feeds — track the firm's timezone, not the process UTC date (a month-boundary
   // evening would otherwise roll monthsToExpiry a day early). Precedence mirrors run.ts:
   // REPORT_DATE pin → ET send date. Data-month selection is unaffected (still WORKBOOK_AS_OF).
-  const { snapshot: raw } = await parseWorkbook(workbookPath(), referenceDate(etNow().date));
+  const { snapshot: raw, dealsDegraded } = await parseWorkbook(
+    workbookPath(),
+    referenceDate(etNow().date),
+  );
+  // This bake feeds an EXTERNAL surface, so it is the strictest of the writers: refuse outright
+  // rather than publish placeholders. See refuseBakeOnDegradedDeals.
+  const dealsRefusal = refuseBakeOnDegradedDeals(dealsDegraded);
+  if (dealsRefusal) {
+    console.error(dealsRefusal);
+    process.exit(1);
+  }
 
   // I10: the client alert engine reads governor boundaries from the payload. Resolved BEFORE the
   // brief (refute finding: the brief's evaluateConditions needs the same live governors or its

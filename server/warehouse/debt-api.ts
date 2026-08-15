@@ -20,7 +20,7 @@
 //   - 500 on unexpected engine errors.
 import { Hono } from 'hono';
 import type { WarehouseDb } from './db';
-import { scoreDebtPositionsWithTrust } from './debt-scoring';
+import { scoreDebtPositionsWithTrust, effectiveMonthsToMaturity } from './debt-scoring';
 import { readDebtBookTrust } from './debt-trust';
 import { propertyPeriodMetrics } from './metrics';
 import { fetchFredMacro } from '../macro/fred';
@@ -114,12 +114,20 @@ export const DebtApiSnapshotPayloadSchema = z.object({
 
 // ── Maturity ladder helpers ────────────────────────────────────────────────────────────────
 
-/** Assign a maturity bucket from months_to_maturity. */
-function toBucket(monthsToMaturity: number | null): MaturityLadderEntry['bucket'] {
+/**
+ * Assign a maturity bucket from months_to_maturity.
+ *
+ * L2 (2026-07-27 round-19-LOWs sweep): a demand note is callable IMMEDIATELY — the single most
+ * urgent state a loan can be in — so it must not share the '37+' bucket with a merely-unknown,
+ * non-demand maturity, where '37+' ("we don't know, don't assume urgency") is the correct
+ * default. Matches buildMaturityTimeline's "callable now beats any dated event" precedence (F3).
+ */
+function toBucket(monthsToMaturity: number | null, isDemand: boolean): MaturityLadderEntry['bucket'] {
+  if (isDemand) return '0-12';
   if (monthsToMaturity !== null && monthsToMaturity <= 12) return '0-12';
   if (monthsToMaturity !== null && monthsToMaturity <= 24) return '13-24';
   if (monthsToMaturity !== null && monthsToMaturity <= 36) return '25-36';
-  return '37+'; // null (demand/unknown) OR > 36
+  return '37+'; // null (non-demand, genuinely unknown maturity) OR > 36
 }
 
 /**
@@ -158,6 +166,7 @@ interface MaturityRow {
   current_balance: number;
   maturity_date: string | null;
   months_to_maturity: number | null;
+  snapshot_date: string;
   balloon: number; // SQLite INTEGER boolean
   is_demand: number; // SQLite INTEGER boolean
   ltv: number | null;
@@ -254,21 +263,16 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
   app.get('/maturity', (c) =>
     withDb((db) => {
       try {
-        // Round 19b: the ladder reads debt_positions directly, so it needs the trust state read
-        // in the same transaction as the rows — otherwise it serves a post-damage remnant as a
-        // complete book with a clean 200 and no indication anything was lost.
-        //
-        // Round 19f (adversarial refute of 19e, LOW-MEDIUM — argued from source): the comment
-        // above was aspirational, not true — the row SELECT and readDebtBookTrust were two
-        // separate autocommit reads, unlike /timeline three lines below (which genuinely wraps
-        // both in one db.transaction) and scoreDebtPositions (same pattern). A healing write
-        // landing between the two reads could pair remnant rows with a freshly-cleared 'trusted'.
+        // Round 19b/19f: the ladder reads debt_positions directly, so the trust state must be
+        // read in the SAME transaction as the rows — a healing write landing between two
+        // separate autocommit reads could pair remnant rows with a freshly-cleared 'trusted'.
+        const asOf = referenceDate();
         const { rows, bookTrust } = db.transaction(() => ({
           rows: db
             .prepare(
               `SELECT d.id, d.property_id, p.name AS property_name,
                       d.loan_name, d.current_balance, d.maturity_date,
-                      d.months_to_maturity, d.balloon, d.is_demand, d.ltv, d.rate
+                      d.months_to_maturity, d.snapshot_date, d.balloon, d.is_demand, d.ltv, d.rate
                FROM debt_positions d
                LEFT JOIN property_master p ON p.id = d.property_id
                WHERE d.status = 'active'
@@ -278,37 +282,39 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
           bookTrust: readDebtBookTrust(db),
         }))();
 
-        const ladder: MaturityLadderEntry[] = rows.map((row) => ({
-          propertyId: row.property_id ?? 'unknown',
-          propertyName: row.property_name ?? row.property_id ?? 'Unknown',
-          loanId: row.id,
-          loanName: row.loan_name,
-          currentBalance: row.current_balance,
-          maturityDate: row.maturity_date,
-          monthsToMaturity: row.months_to_maturity,
-          bucket: toBucket(row.months_to_maturity),
-          balloon: row.balloon === 1,
-          isDemand: row.is_demand === 1,
-          // Round 19d: under a degraded book, collapse to 'hold' so the ladder cannot show a
-          // CLEARANCE-direction hint off data the warehouse distrusts.
-          //
-          // Round 19g (adversarial refute, MEDIUM — reversing the round-19f "accept as residual"
-          // call): the blanket collapse also suppressed a TRUE, independently-measured breach on a
-          // row the degraded write never touched. Reproduced: an unrelated loan on the same
-          // property fails to insert (marking the book 'degraded'); a SECOND loan on that property
-          // with a genuine ltv > 0.40 — never touched by the failed write — still had its
-          // toLoanSignal collapsed to 'hold', silencing a real governor-block that had nothing to
-          // do with the damage. Same failure for the round-19e unattributed-loan trigger: the
-          // unattributed loan's OWN row is the one carrying the real breach, and blanket collapse
-          // hid it. toLoanSignal only ever returns 'governor-block' or 'hold' — it structurally
-          // cannot mint a clearance — so a measured breach on an untouched row must survive,
-          // exactly like applyBookTrust's 'refused' precedent (a standing alarm is never silenced
-          // by an unrelated distrust event). Collapse only when this SPECIFIC row's own governor
-          // figures are the ones in question — i.e. never for a value toLoanSignal already computes
-          // straight from ltv/rate on that row; the withholding this route protects is the
-          // BOOK-LEVEL clearance direction, not a per-row breach the data still supports.
-          signal: toLoanSignal(row.ltv, row.rate),
-        }));
+        // L1 (2026-07-27 round-19-LOWs sweep): this route used to bucket on the raw
+        // months_to_maturity column — a workbook-cell snapshot frozen at whenever the workbook
+        // was last recalced — while /timeline, /refi-windows, and the scoring engine all
+        // recompute fresh from maturity_date. A balloon at a true ~11.4 months could display in
+        // the 13-24 bucket. effectiveMonthsToMaturity is the one ratified fresh-recompute (now
+        // also staleness-discounted on its stored-cell fallback — see L3 in debt-scoring.ts).
+        const ladder: MaturityLadderEntry[] = rows.map((row) => {
+          const monthsToMaturity = effectiveMonthsToMaturity(row, asOf);
+          return {
+            propertyId: row.property_id ?? 'unknown',
+            propertyName: row.property_name ?? row.property_id ?? 'Unknown',
+            loanId: row.id,
+            loanName: row.loan_name,
+            currentBalance: row.current_balance,
+            maturityDate: row.maturity_date,
+            monthsToMaturity,
+            bucket: toBucket(monthsToMaturity, row.is_demand === 1),
+            balloon: row.balloon === 1,
+            isDemand: row.is_demand === 1,
+            // Round 19d: under a degraded book, collapse to 'hold' so the ladder cannot show a
+            // CLEARANCE-direction hint off data the warehouse distrusts.
+            //
+            // Round 19g (adversarial refute, MEDIUM — reversing the round-19f "accept as
+            // residual" call): the blanket collapse also suppressed a TRUE, independently-
+            // measured breach on a row the degraded write never touched. toLoanSignal only ever
+            // returns 'governor-block' or 'hold' — it structurally cannot mint a clearance — so
+            // a measured breach on an untouched row must survive, exactly like applyBookTrust's
+            // 'refused' precedent. Collapse only ever applies at the BOOK-LEVEL clearance
+            // direction (bookTrust in the response), never by silencing a per-row breach the
+            // data still supports.
+            signal: toLoanSignal(row.ltv, row.rate),
+          };
+        });
 
         return c.json(MaturityLadderResponse.parse({ ladder, bookTrust }));
       } catch (err) {
