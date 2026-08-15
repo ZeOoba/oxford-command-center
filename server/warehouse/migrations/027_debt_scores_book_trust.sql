@@ -1,0 +1,31 @@
+-- 027_debt_scores_book_trust.sql
+--
+-- Round 19b (2026-07-27 adversarial refute of the round-19 governor fix, MEDIUM).
+--
+-- debt_scores is a PERMANENT append-only trend history with no retraction path. Round 19a added a
+-- gate so no NEW row is appended while the debt book is distrusted — but every row written BEFORE
+-- that gate existed is indistinguishable from a clean-book observation, forever. The damaged
+-- windows of rounds 15-18 are in that history, unmarked, and the first trend consumer written will
+-- read them as fact.
+--
+-- The column exists so a row can state its own provenance:
+--   'trusted'  — the book was clean when this score was computed.
+--   'refused'  — the last snapshot write had been declined; the figures are the last TRUSTED book
+--                (a measured breach here is real), but the book may be stale. Round 19b wrote
+--                these rows deliberately rather than dropping them, so a standing Hard-Invariant-4
+--                breach keeps being recorded through a refusal window instead of leaving a gap —
+--                but round 19b's own persistence gate was UNREACHABLE from production: the
+--                scripts/debt-scores-snapshot.ts CLI (the sole production caller of
+--                persistDebtScores) refused on ANY standing marker before persistDebtScores was
+--                ever reached, so this branch never actually fired and round19c's own regression
+--                test only passed by calling persistDebtScores directly. Round 19d narrowed the
+--                CLI's gate to 'degraded' only, so this row class is now genuinely reachable.
+--   'degraded' — never written; the persistence gate refuses. Present in the CHECK only so the
+--                column can express the full DebtBookTrust contract.
+--   'unknown'  — a row written before this migration. Deliberately NOT backfilled to 'trusted':
+--                that would be a fabricated provenance claim about data nobody verified, which is
+--                the exact never-guess rule this whole line of work enforces. Any future trend
+--                reader must branch on 'unknown' rather than assume it.
+ALTER TABLE debt_scores
+  ADD COLUMN book_trust TEXT NOT NULL DEFAULT 'unknown'
+  CHECK (book_trust IN ('trusted', 'refused', 'degraded', 'unknown'));

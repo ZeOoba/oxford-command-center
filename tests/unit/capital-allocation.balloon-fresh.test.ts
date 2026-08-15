@@ -19,9 +19,20 @@ import { describe, expect, it, vi, beforeEach, beforeAll, afterAll } from 'vites
 vi.mock('../../server/warehouse/scores', () => ({
   scoreProperties: vi.fn().mockReturnValue([]),
 }));
-vi.mock('../../server/warehouse/debt-scoring', () => ({
-  scoreDebtPositions: vi.fn(),
-}));
+// Round 19g: see capital-allocation-metrics-callcount.test.ts's note — capital-allocation.ts now
+// calls scoreDebtPositionsWithTrust (one atomic read), and the mock must supply it too.
+import type { WarehouseDb as WarehouseDbForMock } from '../../server/warehouse/db';
+vi.mock('../../server/warehouse/debt-scoring', async () => {
+  const { readDebtBookTrust } = await import('../../server/warehouse/debt-trust');
+  const scoreDebtPositions = vi.fn();
+  return {
+    scoreDebtPositions,
+    scoreDebtPositionsWithTrust: vi.fn((db: unknown, ...rest: unknown[]) => {
+      const scores = scoreDebtPositions(db, ...rest);
+      return { scores, bookTrust: scores[0]?.bookTrust ?? readDebtBookTrust(db as WarehouseDbForMock) };
+    }),
+  };
+});
 vi.mock('../../server/warehouse/metrics', () => ({
   propertyPeriodMetrics: vi.fn().mockReturnValue([]),
 }));

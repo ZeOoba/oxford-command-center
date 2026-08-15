@@ -3,7 +3,7 @@
 // Phase 2 Step 5 + binding — Debt/Refi API sub-router.
 //
 // Routes:
-//   GET  /scores   — scoreDebtPositions() across all active loans; FRED DGS5 is non-fatal when null
+//   GET  /scores   — scoreDebtPositionsWithTrust() across all active loans; FRED DGS5 is non-fatal when null
 //   GET  /maturity — maturity ladder: active loans bucketed into 4 time horizons
 //   POST /snapshot — write a debt snapshot from a portfolio snapshot payload
 //                    (loans + properties + snapshotDate → debt_positions via crosswalk)
@@ -20,7 +20,8 @@
 //   - 500 on unexpected engine errors.
 import { Hono } from 'hono';
 import type { WarehouseDb } from './db';
-import { scoreDebtPositions } from './debt-scoring';
+import { scoreDebtPositionsWithTrust } from './debt-scoring';
+import { readDebtBookTrust } from './debt-trust';
 import { propertyPeriodMetrics } from './metrics';
 import { fetchFredMacro } from '../macro/fred';
 import { writeDebtSnapshot } from './debt-snapshot';
@@ -59,6 +60,8 @@ export interface DebtApiSnapshotPayload {
   properties: { id: string; name: string }[];
   /** See DebtApiSnapshotPayloadSchema's doc comment below (H2a reachability fix). */
   allowEmptySupersede?: boolean;
+  /** Round 19b: per-id confirmation that these specific loans are genuinely gone. */
+  confirmAbsent?: string[];
 }
 
 /**
@@ -101,6 +104,12 @@ export const DebtApiSnapshotPayloadSchema = z.object({
   // NOTE: an ordinary refinance or an id rename that keeps the total loan count intact never
   // trips the guard and never needs this flag — see debt-snapshot.ts's netLoss reasoning.
   allowEmptySupersede: z.boolean().optional(),
+  // Round 19b: the NARROW counterpart to allowEmptySupersede. An adversarial refuter showed the
+  // blanket flag was the only exit from a vanish latch, and that round 18's own comment concedes
+  // it "also waives any genuinely-unresolved original damage" — so a routine payoff would have
+  // trained the operator to run a full amnesty every time, waiving real damage with it. This
+  // confirms only the named loans are genuinely gone. Same supervised route, much smaller claim.
+  confirmAbsent: z.array(z.string()).optional(),
 });
 
 // ── Maturity ladder helpers ────────────────────────────────────────────────────────────────
@@ -125,6 +134,12 @@ function toBucket(monthsToMaturity: number | null): MaturityLadderEntry['bucket'
  * 'hold' for such a row (same as a genuinely null ltv) is correct: this display hint doesn't
  * fabricate a breach from suspect data any more than it fabricates a clearance.
  */
+// Round 19d: ONE trust derivation for every debt route (previously /maturity and /timeline each
+// mapped the raw marker themselves). Round 19e: that "one derivation" still ran its own
+// COUNT(*) — no property_id filter — while capital-allocation.ts counted scoreDebtPositions
+// output (attributed properties only), so an unattributed loan made the two surfaces disagree.
+// readDebtBookTrust (server/warehouse/debt-trust.ts) is now the ONLY place either count is taken.
+
 function toLoanSignal(ltv: number | null, rate: number | null): DebtSignal {
   const rateCollision =
     ltv !== null && rate !== null && Math.abs(ltv - rate) < RATE_LTV_COLLISION_EPSILON;
@@ -182,7 +197,7 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
 
   // ── GET /scores ────────────────────────────────────────────────────────────────────────
   //
-  // Calls scoreDebtPositions() with all PeriodMetrics and the live FRED DGS5 rate.
+  // Calls scoreDebtPositionsWithTrust() with all PeriodMetrics and the live FRED DGS5 rate.
   // FRED unavailability is non-fatal: null market rate is passed through and the scorer
   // handles it (refi signal is suppressed; other signals are unaffected).
   //
@@ -206,8 +221,22 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
           }
         }
 
-        const scores = scoreDebtPositions(db, metrics, marketRateFiveYearTreasury);
-        return c.json(DebtScoreResponse.parse({ scores }));
+        // Round 19d: trust on the ENVELOPE. With every row destroyed, `scores` is empty and a
+        // per-score trust field can say nothing at all — the scorecard then rendered a reassuring
+        // "run a debt snapshot" empty state over a book known to be destroyed.
+        //
+        // Round 19g (adversarial refute of 19f, HIGH — reproduced): a separate readDebtBookTrust
+        // call for the envelope, AFTER scoreDebtPositions had already read trust internally for
+        // its own withholding, reopened the exact CRITICAL contradiction round 19f fixed — a
+        // healing/damaging write landing between the two calls made `scores[].bookTrust` and this
+        // envelope's `bookTrust` disagree in the same response. scoreDebtPositionsWithTrust
+        // returns the trust it actually used; consume that, never re-read.
+        const { scores, bookTrust } = scoreDebtPositionsWithTrust(
+          db,
+          metrics,
+          marketRateFiveYearTreasury,
+        );
+        return c.json(DebtScoreResponse.parse({ scores, bookTrust }));
       } catch (err) {
         console.error('[debt-api] /scores error:', err instanceof Error ? err.message : String(err));
         return c.json({ error: 'debt scoring failed' }, 500);
@@ -225,17 +254,29 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
   app.get('/maturity', (c) =>
     withDb((db) => {
       try {
-        const rows = db
-          .prepare(
-            `SELECT d.id, d.property_id, p.name AS property_name,
-                    d.loan_name, d.current_balance, d.maturity_date,
-                    d.months_to_maturity, d.balloon, d.is_demand, d.ltv, d.rate
-             FROM debt_positions d
-             LEFT JOIN property_master p ON p.id = d.property_id
-             WHERE d.status = 'active'
-             ORDER BY d.months_to_maturity ASC NULLS LAST, d.id ASC`,
-          )
-          .all() as MaturityRow[];
+        // Round 19b: the ladder reads debt_positions directly, so it needs the trust state read
+        // in the same transaction as the rows — otherwise it serves a post-damage remnant as a
+        // complete book with a clean 200 and no indication anything was lost.
+        //
+        // Round 19f (adversarial refute of 19e, LOW-MEDIUM — argued from source): the comment
+        // above was aspirational, not true — the row SELECT and readDebtBookTrust were two
+        // separate autocommit reads, unlike /timeline three lines below (which genuinely wraps
+        // both in one db.transaction) and scoreDebtPositions (same pattern). A healing write
+        // landing between the two reads could pair remnant rows with a freshly-cleared 'trusted'.
+        const { rows, bookTrust } = db.transaction(() => ({
+          rows: db
+            .prepare(
+              `SELECT d.id, d.property_id, p.name AS property_name,
+                      d.loan_name, d.current_balance, d.maturity_date,
+                      d.months_to_maturity, d.balloon, d.is_demand, d.ltv, d.rate
+               FROM debt_positions d
+               LEFT JOIN property_master p ON p.id = d.property_id
+               WHERE d.status = 'active'
+               ORDER BY d.months_to_maturity ASC NULLS LAST, d.id ASC`,
+            )
+            .all() as MaturityRow[],
+          bookTrust: readDebtBookTrust(db),
+        }))();
 
         const ladder: MaturityLadderEntry[] = rows.map((row) => ({
           propertyId: row.property_id ?? 'unknown',
@@ -248,10 +289,28 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
           bucket: toBucket(row.months_to_maturity),
           balloon: row.balloon === 1,
           isDemand: row.is_demand === 1,
+          // Round 19d: under a degraded book, collapse to 'hold' so the ladder cannot show a
+          // CLEARANCE-direction hint off data the warehouse distrusts.
+          //
+          // Round 19g (adversarial refute, MEDIUM — reversing the round-19f "accept as residual"
+          // call): the blanket collapse also suppressed a TRUE, independently-measured breach on a
+          // row the degraded write never touched. Reproduced: an unrelated loan on the same
+          // property fails to insert (marking the book 'degraded'); a SECOND loan on that property
+          // with a genuine ltv > 0.40 — never touched by the failed write — still had its
+          // toLoanSignal collapsed to 'hold', silencing a real governor-block that had nothing to
+          // do with the damage. Same failure for the round-19e unattributed-loan trigger: the
+          // unattributed loan's OWN row is the one carrying the real breach, and blanket collapse
+          // hid it. toLoanSignal only ever returns 'governor-block' or 'hold' — it structurally
+          // cannot mint a clearance — so a measured breach on an untouched row must survive,
+          // exactly like applyBookTrust's 'refused' precedent (a standing alarm is never silenced
+          // by an unrelated distrust event). Collapse only when this SPECIFIC row's own governor
+          // figures are the ones in question — i.e. never for a value toLoanSignal already computes
+          // straight from ltv/rate on that row; the withholding this route protects is the
+          // BOOK-LEVEL clearance direction, not a per-row breach the data still supports.
           signal: toLoanSignal(row.ltv, row.rate),
         }));
 
-        return c.json(MaturityLadderResponse.parse({ ladder }));
+        return c.json(MaturityLadderResponse.parse({ ladder, bookTrust }));
       } catch (err) {
         console.error('[debt-api] /maturity error:', err instanceof Error ? err.message : String(err));
         return c.json({ error: 'maturity ladder failed' }, 500);
@@ -270,8 +329,12 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
     withDb((db) => {
       try {
         const asOf = referenceDate();
-        const events = buildMaturityTimeline(db, asOf);
-        return c.json(MaturityTimelineResponse.parse({ asOf, events }));
+        // Round 19b: same read-the-rows-directly problem as /maturity above.
+        const { events, bookTrust } = db.transaction(() => ({
+          events: buildMaturityTimeline(db, asOf),
+          bookTrust: readDebtBookTrust(db),
+        }))();
+        return c.json(MaturityTimelineResponse.parse({ asOf, events, bookTrust }));
       } catch (err) {
         console.error('[debt-api] /timeline error:', err instanceof Error ? err.message : String(err));
         return c.json({ error: 'maturity timeline failed' }, 500);
@@ -292,11 +355,47 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
     withDb((db) => {
       try {
         const asOf = referenceDate();
-        const governors = loadGovernors(db);
-        const metrics = propertyPeriodMetrics(db);
-        const scores = scoreDebtPositions(db, metrics, null, asOf);
-        const windows = buildRefiWindows(db, scores, asOf);
-        const aggregate = computePortfolioAggregateLtv(db, governors);
+        // Round 19g (adversarial refute, MEDIUM-HIGH — reproduced): this route previously made
+        // THREE independent reads (scoreDebtPositions, buildRefiWindows' own activeLoans(db),
+        // computePortfolioAggregateLtv), none atomic with each other — the widest window of any
+        // debt route. scoreDebtPositionsWithTrust supplies the trust-aware scores AND the trust
+        // value itself from one atomic read; wrapping all calls in one transaction closes the
+        // gap: better-sqlite3 nested db.transaction() calls become savepoints on the SAME
+        // connection, so buildRefiWindows' internal activeLoans(db) read observes the identical
+        // snapshot (verified by probe in round 8's refute — a concurrent commit mid-transaction
+        // was NOT visible to a nested read, and WAS visible to the same read outside the wrapper).
+        // Round 8 fix: governors/metrics moved inside too — they were read BEFORE the transaction
+        // opened, so aggregate LTV and windows could still be computed from an earlier instant
+        // than the rows/trust below (the actual residual gap; the prior comment above misidentified
+        // it as buildRefiWindows' internal read, which this same transaction already covers).
+        const { windows, aggregate, bookTrust, governors } = db.transaction(() => {
+          const governors = loadGovernors(db);
+          const metrics = propertyPeriodMetrics(db);
+          const { scores, bookTrust: trust } = scoreDebtPositionsWithTrust(db, metrics, null, asOf);
+          const rawWindows = buildRefiWindows(db, scores, asOf);
+          // Round 19g: soonestMaturityDate/monthsToSoonestMaturity/maturityWithin12mo/24mo are
+          // computed by buildRefiWindows from its own independent activeLoans(db) read, not from
+          // the trust-aware scoring engine — withhold them the same way capital-allocation.ts
+          // withholds balloonMonths under an identical remnant-book condition. dscr/ltv/*Breach
+          // need no change here: they already pass through trust-aware `scores`.
+          const withheldWindows =
+            trust === 'trusted'
+              ? rawWindows
+              : rawWindows.map((w) => ({
+                  ...w,
+                  soonestMaturityDate: null,
+                  monthsToSoonestMaturity: null,
+                  maturityWithin12mo: null,
+                  maturityWithin24mo: null,
+                  hasUnknownMaturity: true,
+                }));
+          return {
+            windows: withheldWindows,
+            aggregate: computePortfolioAggregateLtv(db, governors),
+            bookTrust: trust,
+            governors,
+          };
+        })();
         return c.json(
           RefiWindowsResponse.parse({
             asOf,
@@ -307,6 +406,7 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
               ltvCeilingAggregate: governors.ltvCeiling,
               refiLtvCeilingPerProperty: REFI_LTV_CEILING,
             },
+            bookTrust,
           }),
         );
       } catch (err) {
@@ -352,6 +452,7 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
         const { map, unresolved } = buildLoanPropertyMap(payload.loans, payload.properties, validPropertyIds);
         const result = writeDebtSnapshot(db, payload.loans, payload.snapshotDate, map, {
           allowEmptySupersede: payload.allowEmptySupersede === true,
+          confirmAbsent: payload.confirmAbsent,
         });
         if (unresolved.length > 0) {
           console.warn(`[debt-api] POST /snapshot: ${unresolved.length} borrower loan(s) unattributed (collateralProperty null, blank, or typo'd name not in property_master): ${unresolved.join(', ')}`);

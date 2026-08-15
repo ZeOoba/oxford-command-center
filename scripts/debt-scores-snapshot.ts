@@ -12,7 +12,7 @@
 import { join } from 'node:path';
 import { openWarehouse } from '../server/warehouse/db';
 import type { WarehouseDb } from '../server/warehouse/db';
-import { scoreDebtPositions } from '../server/warehouse/debt-scoring';
+import { scoreDebtPositionsWithTrust } from '../server/warehouse/debt-scoring';
 import { persistDebtScores } from '../server/warehouse/debt-scores-persistence';
 import { propertyPeriodMetrics } from '../server/warehouse/metrics';
 import { loadGovernors } from '../server/warehouse/governors';
@@ -75,7 +75,38 @@ export async function main(argv: string[]): Promise<number> {
       }
     }
 
-    const scores = scoreDebtPositions(db, metrics, marketRateFiveYearTreasury);
+    // Round 19b (adversarial refute, MEDIUM-HIGH — reproduced): the trust check MUST precede the
+    // empty-scores early return. Round 19a put it after, so the WORST case — a damaged write that
+    // destroyed every active row — routed straight around it and exited 0 with
+    // "no active debt positions to score", an affirmative claim of an unlevered portfolio when
+    // the truth is "we destroyed the rows and don't know". Verified-null vs inferred-null, in the
+    // very guard written to prevent it.
+    // Round 19d (adversarial refute, MEDIUM — reproduced): gate on 'degraded' ONLY, matching
+    // persistDebtScores. 19b refused on ANY standing marker here while the persistence layer
+    // deliberately allowed 'refused' rows — and since this CLI is the sole production caller of
+    // persistDebtScores, that allowance was UNREACHABLE. Under 'refused' the figures are the last
+    // TRUSTED book, a measured breach survives, every signalReason is annotated, and the row is
+    // stamped book_trust='refused' — safe to record, and the gap it fills is a real one.
+    // Round 19g (adversarial refute of 19f, MEDIUM-HIGH — reproduced): this still gated on the RAW
+    // MARKER (readLastSnapshotRefusal), never re-pointed at readDebtBookTrust when round 19e taught
+    // it a SECOND way to reach 'degraded' — an all-unattributed active book, no marker required. On
+    // that state the marker check passed, scoreDebtPositionsWithTrust correctly returned
+    // scores:[], and the code fell straight to the empty-scores branch: "no active debt positions
+    // to score", exit 0 — the identical affirmative-unlevered-claim defect the comment above says
+    // this guard exists to prevent, just reached via the path this guard forgot to check. Fixed by
+    // consuming the SAME bookTrust scoreDebtPositionsWithTrust already computed, rather than a
+    // second, narrower, marker-only read.
+    const { scores, bookTrust } = scoreDebtPositionsWithTrust(db, metrics, marketRateFiveYearTreasury);
+    if (bookTrust === 'degraded') {
+      console.error(
+        `debt-scores-snapshot: REFUSED -- the debt book is 'degraded' (the last snapshot write ` +
+          'lost rows, or an active loan could not be attributed to a property). Scores derived ' +
+          'from it would be fabricated, and debt_scores is a permanent append-only history with ' +
+          'no retraction path, so nothing was written.',
+      );
+      return 1;
+    }
+
     if (scores.length === 0) {
       console.log('debt-scores-snapshot: no active debt positions to score -- debt_scores unchanged.');
       return 0;
@@ -84,7 +115,14 @@ export async function main(argv: string[]): Promise<number> {
     const result = persistDebtScores(db, scores, metrics, snapshotDate, governors.refiTriggerBps);
     console.log(`debt-scores-snapshot: ${result.written} score(s) written (snapshot_date=${snapshotDate})`);
     if (result.skipped.length > 0) {
-      console.log(`  ${result.skipped.length} score(s) skipped (no full-year NOI period): ${result.skipped.map((s) => s.propertyId).join(', ')}`);
+      // Round 19: print each skip's OWN reason. This line previously hardcoded "(no full-year NOI
+      // period)" — the only skip reason that existed when it was written — so the new book-trust
+      // refusal would have been reported to the operator under a wholly unrelated cause, sending
+      // them to look for missing NOI data while the real problem was a damaged debt book.
+      console.log(`  ${result.skipped.length} score(s) skipped:`);
+      for (const s of result.skipped) {
+        console.log(`    ${s.propertyId}: ${s.reason}`);
+      }
     }
   } finally {
     db.close();

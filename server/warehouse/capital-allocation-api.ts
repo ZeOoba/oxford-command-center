@@ -21,6 +21,35 @@ import {
 } from '../../src/contracts/capital';
 import { verdictsFromAllocations, logVerdicts, computeInputsVersion } from './calibration';
 import { referenceDate } from '../config';
+import type { AllocationVerdict } from '../../src/contracts/capital';
+
+/**
+ * Round 19g (adversarial refute, MEDIUM-HIGH — reproduced on a surface no prior round had
+ * reviewed): calibration_verdict is a SECOND permanent, append-only history — later resolved
+ * against realized outcomes by resolveDueOutcomes — that got neither of debt_scores' two
+ * protections (a write gate, a provenance column). Migration 027's own doctrine: "a row written
+ * before the gate existed is indistinguishable from a clean-book observation, forever."
+ * Reproduced: a distrusted verdict's dedupKey (subjectKind|subjectId|verdictKind|verdictSubkind
+ * |asOfPeriod|inputsVersion) contains no trust/action/confidence component, so `INSERT OR IGNORE`
+ * on the SAME key after the book heals silently discards the corrected verdict — the firm's own
+ * calibration statistics get permanently scored against a verdict that was never a real
+ * prediction. Extracted as a standalone function (rather than inlined at the call site) so it is
+ * directly unit-testable without needing a full ledger-seeded PropertyScore to reach it.
+ */
+// Round 8 fresh-sweep (adversarial refute, MEDIUM-HIGH -- reproduced): a naive bookTrust==='trusted'
+// filter also silently dropped every 'buy' verdict, forever, even on a fully trusted book.
+// buildBuyVerdict (capital-allocation.ts) hardcodes inputs.bookTrust:'unknown' for pipeline
+// candidates BY DESIGN -- a buy verdict isn't tied to an owned property, so no debt book describes
+// it (see that function's own docblock). That 'unknown' means "not applicable," not "distrusted,"
+// but this filter read the same enum value as a trust failure and discarded the verdict before it
+// ever reached logVerdicts -- silently killing the calibration flywheel's entire acquisition-
+// prediction history with no log line, no dataQuality flag, nothing. Reproduced: a trusted book +
+// a T1 pipeline candidate scoring 80 produced action:'buy', inputs.bookTrust:'unknown'; the old
+// filter dropped it. 'buy' verdicts are exempted here rather than given a distinct trust value, to
+// avoid widening AllocationVerdict.inputs.bookTrust's meaning per-action.
+export function filterTrustedVerdicts(verdicts: AllocationVerdict[]): AllocationVerdict[] {
+  return verdicts.filter((v) => v.action === 'buy' || v.inputs.bookTrust === 'trusted');
+}
 
 // ── Cluster enumeration ──────────────────────────────────────────────────────────────────────
 
@@ -83,10 +112,12 @@ export function capitalAllocationApi(getDb: () => WarehouseDb): Hono {
         advisoryOnly: portfolio.advisoryOnly,
         portfolio,
       });
-      // Log calibration verdicts — fail-open (never blocks the response)
+      // Log calibration verdicts — fail-open (never blocks the response). See
+      // filterTrustedVerdicts' docblock above for why distrusted verdicts are excluded.
       try {
         const iv = computeInputsVersion(db);
-        const calibVerdicts = verdictsFromAllocations(portfolio.verdicts, iv, 'capital-allocation-api');
+        const trustedVerdicts = filterTrustedVerdicts(portfolio.verdicts);
+        const calibVerdicts = verdictsFromAllocations(trustedVerdicts, iv, 'capital-allocation-api');
         logVerdicts(db, calibVerdicts);
       } catch {
         // calibration logging is observational; failure must not 500 the route

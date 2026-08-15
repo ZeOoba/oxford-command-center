@@ -156,7 +156,9 @@ describe('TC1 — no-debt signal: property with no debt_positions rows → signa
 
   it('noDebtScore helper: returns score=100, signal=no-debt, scoreBand=strong', () => {
     // Use the exported noDebtScore helper for the no-debt case
-    const s = noDebtScore('prop-z', 'Zero Debt Property', 1);
+    // Round 19b: bookTrust is a required argument — the caller must state what it knows about the
+    // book rather than inheriting a hardcoded 'trusted'.
+    const s = noDebtScore('prop-z', 'Zero Debt Property', 1, 'trusted');
     expect(s.signal).toBe('no-debt');
     expect(s.score).toBe(100);
     expect(s.scoreBand).toBe('strong');

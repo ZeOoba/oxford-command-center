@@ -526,6 +526,63 @@ async function main(): Promise<number> {
       }
     }
 
+    // 8t. Migration 027 schema presence — debt_scores.book_trust column with CHECK enforcement.
+    // Round 19d: every migration through 022 had a presence check here; 027 (added in round 19b)
+    // did not, so a DB that silently missed it would pass this script. 023-026 share the same
+    // pre-existing gap (out of scope for this fix — flagged, not fixed, to avoid growing this
+    // patch beyond the debt-book-trust work it is part of).
+    {
+      const debtScoresCols = (
+        db.prepare('PRAGMA table_info(debt_scores)').all() as Array<{ name: string }>
+      ).map((c) => c.name);
+      if (!debtScoresCols.includes('book_trust')) {
+        failures.push('debt_scores.book_trust column missing — migration 027 did not apply');
+      } else {
+        // Round 19e (adversarial refute of 19d, LOW-MEDIUM — reproduced): the probe originally
+        // used a bogus property_id ('verify-probe') not present in property_master. debt_scores
+        // .property_id REFERENCES property_master(id) (migration 010) and openWarehouse sets
+        // PRAGMA foreign_keys=ON, so on the REAL schema SQLite evaluates the FK violation before
+        // (or instead of, depending on plan) the CHECK — the insert throws either way, so the
+        // assertion looked correct but could not fail: removing the CHECK entirely still made this
+        // probe pass. The sibling migration-020/021/022 probes immediately above pick a real id out
+        // of CANON_PROPERTIES for exactly this reason; this one didn't. Match that pattern so the
+        // ONLY constraint that can reject the insert is the one under test.
+        const probeProperty3 = CANON_PROPERTIES[0]?.id;
+        if (probeProperty3 === undefined) {
+          failures.push('migration 027 constraint probe: CANON_PROPERTIES is empty — cannot pick a probe property id');
+        } else {
+          let checkRejected = false;
+          try {
+            db.transaction(() => {
+              db.prepare(
+                `INSERT INTO debt_scores
+                   (property_id, scored_at, snapshot_date, noi_period, dscr, dscr_headroom, ltv, ltv_headroom,
+                    debt_yield, signal, signal_reason, refi_trigger_bps, capital_config_version, score, score_band,
+                    book_trust)
+                 VALUES (?, '2026-01-01T00:00:00Z', '2026-01-01', '2025', null, null, null, null,
+                         null, 'hold', 'verify-probe', 150, 1, 50, 'watch', 'bogus')`,
+              ).run(probeProperty3);
+            })();
+          } catch {
+            checkRejected = true;
+          }
+          if (!checkRejected) {
+            failures.push(
+              'debt_scores.book_trust CHECK did not reject an out-of-enum value — migration 027 constraint regression',
+            );
+          }
+          const residue = (
+            db.prepare(`SELECT COUNT(*) AS c FROM debt_scores WHERE signal_reason = 'verify-probe'`).get() as {
+              c: number;
+            }
+          ).c;
+          if (residue > 0) {
+            failures.push(`migration 027 constraint probe left ${residue} residual row(s) — transaction rollback did not clean up`);
+          }
+        }
+      }
+    }
+
     // 9. Re-ingest smoke — exercise the parser-version RESTALE re-derive path, which verify otherwise
     //    never hits (it builds a fresh DB). Stale every committed import's parser_version, re-ingest the
     //    same files (→ in-place re-derive), then assert the re-derive is idempotent (same basis), empties
@@ -666,7 +723,8 @@ async function main(): Promise<number> {
     `ux_recommendations_versioned index present (migration 018), ` +
     `property_tax_assessments/tax_appeals schema + constraints present (migration 020), ` +
     `recommendation_feedback schema + constraints present (migration 021), ` +
-    `insurance_loss_events schema + constraints present + property_insurance_policies deductible/coverage_limit columns present (migration 022)`);
+    `insurance_loss_events schema + constraints present + property_insurance_policies deductible/coverage_limit columns present (migration 022), ` +
+    `debt_scores.book_trust schema + CHECK constraint present (migration 027)`);
   return 0;
 }
 

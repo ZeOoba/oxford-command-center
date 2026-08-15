@@ -185,6 +185,15 @@ function renderVerdictTable(
   </section>`;
   }
 
+  // Round 19e (adversarial refute, MEDIUM — confirmed by two independent lenses): the debt-book
+  // trust disclosure this round added to AllocationVerdict (inputs.bookTrust, dataQuality) never
+  // actually reached this table. `reasons[0]` is seeded from `[...ps.reasons]` — scores.ts
+  // unconditionally pushes a "Health X/100 (band)" line first — so the trust line, pushed onto
+  // `reasons` well after that seed, is essentially never `reasons[0]` in production. A distrusted
+  // property therefore read as an ordinary one in the artifact that turns into a printed PDF.
+  // A dedicated Book column reads inputs.bookTrust directly and cannot be pre-empted by ordering.
+  const anyDistrusted = portfolio.verdicts.some((v) => v.inputs.bookTrust !== 'trusted');
+
   const rows = portfolio.verdicts
     .slice()
     .sort((a, b) => b.confidence01 - a.confidence01)
@@ -196,6 +205,10 @@ function renderVerdictTable(
         v.returnAboveHurdle === null ? DASH : v.returnAboveHurdle ? '&#10003;' : '&#10007;';
       const entry = entries?.find((e) => e.propertyId === v.propertyId);
       const leasingRiskCell = pct0(entry?.leasingRisk);
+      const bookCell =
+        v.inputs.bookTrust === 'trusted'
+          ? DASH
+          : `<span class="ic-badge" style="color:#b3261e;border-color:#b3261e">${esc(v.inputs.bookTrust)}</span>`;
       return `        <tr class="ic-row">
           <td class="ic-name">${name}</td>
           <td><span class="ic-badge" style="color:${actionColor(v.action)};border-color:${actionColor(v.action)}">${actionLabel(v.action)}</span></td>
@@ -204,6 +217,7 @@ function renderVerdictTable(
           <td class="ic-r">${retPct}</td>
           <td class="ic-r">${hurdle}</td>
           <td class="ic-r">${leasingRiskCell}</td>
+          ${anyDistrusted ? `<td class="ic-r">${bookCell}</td>` : ''}
           <td class="ic-rationale">${reason}</td>
         </tr>`;
     })
@@ -217,7 +231,8 @@ function renderVerdictTable(
         <tr>
           <th>Property</th><th>Action</th><th>Risk</th>
           <th class="ic-r">Confidence</th><th class="ic-r">Expected Return</th>
-          <th class="ic-r">Hurdle</th><th class="ic-r">Leasing Risk</th><th>Reason</th>
+          <th class="ic-r">Hurdle</th><th class="ic-r">Leasing Risk</th>
+          ${anyDistrusted ? '<th class="ic-r">Book</th>' : ''}<th>Reason</th>
         </tr>
       </thead>
       <tbody>
@@ -225,7 +240,11 @@ ${rows}
       </tbody>
     </table>
     <p class="ic-note">Sorted descending by confidence. Em-dash (${DASH}) = value not available
-    (never zero-substituted). &#10003; = above hurdle; &#10007; = below hurdle.</p>
+    (never zero-substituted). &#10003; = above hurdle; &#10007; = below hurdle.${
+      anyDistrusted
+        ? ' Book column shows the debt-book trust level for any property NOT on a fully trusted book — "unknown" (no snapshot loaded), "refused" (last write declined, figures may be stale), or "degraded" (rows lost, DSCR/LTV withheld).'
+        : ''
+    }</p>
   </section>`;
 }
 

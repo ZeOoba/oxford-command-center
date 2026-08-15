@@ -133,10 +133,31 @@ export function ScorecardView() {
     );
   }
 
-  const scores = data ?? [];
+  const scores = data?.scores ?? [];
+  // Round 19d: trust comes from the ENVELOPE, so it survives an empty score list — the
+  // total-destruction case, which is exactly when the operator most needs to be told.
+  const bookTrust = data?.bookTrust ?? 'trusted';
 
   const criticalCount = scores.filter((s) => s.scoreBand === 'critical').length;
   const watchCount = scores.filter((s) => s.scoreBand === 'watch').length;
+
+  // Round 19d: read trust from the envelope, so it survives `scores.length === 0`. 19b derived it
+  // with scores.find(...), which could say nothing in exactly the worst case — a write that
+  // destroyed every row — and the empty state then told the operator to "run a debt snapshot" as
+  // if the book were merely unpopulated.
+  const distrusted = bookTrust !== 'trusted';
+  const trustHeadline =
+    bookTrust === 'degraded'
+      ? 'Debt book DEGRADED — rows were lost by the last snapshot write.'
+      : bookTrust === 'refused'
+        ? 'Debt book STALE — the last snapshot write was refused.'
+        : 'Debt book NOT LOADED — no debt snapshot has been written.';
+  const trustDetail =
+    bookTrust === 'degraded'
+      ? 'Per-property DSCR/LTV are withheld: computed from the surviving rows they would be wrong in either direction. Nothing below is a governor verdict.'
+      : bookTrust === 'refused'
+        ? 'Figures below are the last trusted book and may be out of date; clearance-direction actions are withheld.'
+        : 'No properties are confirmed unlevered — their debt is simply unknown until a snapshot lands.';
 
   return (
     <Card>
@@ -144,18 +165,36 @@ export function ScorecardView() {
         title="Debt Scorecard"
         trailing={
           <div className="flex items-center gap-1.5">
+            {distrusted && (
+              <Badge tone={bookTrust === 'unknown' ? 'amber' : 'red'}>
+                {bookTrust === 'unknown' ? 'book not loaded' : 'book not trusted'}
+              </Badge>
+            )}
             {criticalCount > 0 && <Badge tone="red">{criticalCount} critical</Badge>}
             {watchCount > 0 && <Badge tone="amber">{watchCount} watch</Badge>}
             <Badge tone="neutral">{scores.length} properties</Badge>
           </div>
         }
       />
+      {distrusted && (
+        <div
+          className="px-4 py-3 text-2xs"
+          style={{ color: 'var(--text-neg)', borderBottom: '1px solid var(--border-subtle)' }}
+        >
+          <strong>{trustHeadline}</strong> {trustDetail}
+        </div>
+      )}
       {scores.length === 0 ? (
         <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
-          <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>No scored debt positions.</div>
+          <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+            {bookTrust === 'degraded'
+              ? 'No scored debt positions — the book was DESTROYED, not merely unpopulated.'
+              : 'No scored debt positions.'}
+          </div>
           <div className="text-2xs" style={{ color: 'var(--text-tertiary)', maxWidth: 400 }}>
-            Run a debt snapshot (POST /api/warehouse/debt/snapshot) after the master workbook is
-            refreshed to populate the scoring engine.
+            {bookTrust === 'degraded'
+              ? 'The last snapshot write lost every active row. Resolve the debt-snapshot marker before trusting any debt figure on this dashboard.'
+              : 'Run a debt snapshot (POST /api/warehouse/debt/snapshot) after the master workbook is refreshed to populate the scoring engine.'}
           </div>
         </div>
       ) : (

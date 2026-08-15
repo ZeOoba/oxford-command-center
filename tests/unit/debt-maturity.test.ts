@@ -142,6 +142,7 @@ function score(overrides: Partial<DebtScore> & { propertyId: string }): DebtScor
     scoreBand: 'adequate',
     capitalConfigVersion: 1,
     refiCashSavingsPct: null,
+    bookTrust: 'trusted', // round 19 — these fixtures model a healthy book unless a test overrides
     ...overrides,
   };
 }
