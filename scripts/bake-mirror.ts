@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
 import type { DealsDegradation } from '../server/sources/notion-deals';
+import { checkSnapshot, hasReconciliationError } from '../server/reconcile-runtime';
 import { getMacro } from '../server/macro/getMacro';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, referenceDate } from '../server/config';
@@ -24,6 +25,34 @@ import { GOVERNOR_DEFAULTS } from '../server/warehouse/governors';
  * without a token, and "the mirror is public" outranks "don't make the dev loop dirty".
  * (2026-08-11 integrity sweep, found by the refute pass on its own remediation branch.)
  */
+/**
+ * Writer policy for the PUBLIC mirror, part two: never bake an internally inconsistent snapshot.
+ * Returns the refusal message, or null when the bake may proceed.
+ *
+ * This is the FOURTH publication path, and it ran no reconciliation gate at all — so a
+ * phantom-lease-class rent overstatement (NOI overstated: the falsely-clearing direction) could ship
+ * to an external surface while both CLI writers refused the very same snapshot. ERROR only, never
+ * warn, matching Brain.persist and the CLI writers: warn-severity findings are long-lived and would
+ * block the daily brief permanently.
+ *
+ * Deliberately evaluated on the PRE-redaction snapshot. Redaction removes confidential deals and
+ * their counterparty links, which would itself look like an inconsistency to checkSnapshot — gating
+ * after it would manufacture false refusals. (Catch-up sweep 2026-07-28..08-04, H2.)
+ */
+export function refuseBakeOnReconciliation(snapshot: PortfolioSnapshot): string | null {
+  const flags = checkSnapshot(snapshot);
+  if (!hasReconciliationError(flags)) return null;
+  const which = flags
+    .filter((f) => f.severity === 'error' && f.entity === 'reconciliation')
+    .map((f) => `${f.field}: ${f.issue}`)
+    .join('; ');
+  return (
+    `✗ bake-mirror: refusing to bake — this snapshot is internally inconsistent and this payload is ` +
+    `served publicly. Both CLI writers refuse the same state. Reconciliation error(s): ${which}. ` +
+    `Leaving the last good public/snapshot.json in place.`
+  );
+}
+
 export function refuseBakeOnDegradedDeals(degraded: DealsDegradation | null): string | null {
   if (!degraded) return null;
   return (
@@ -97,12 +126,28 @@ export function redactConfidential(snapshot: PortfolioSnapshot): {
   const acquisitionInputs = Object.fromEntries(
     Object.entries(snapshot.acquisitionInputs).filter(([id]) => !removedIds.has(id)),
   );
+  // dataQuality IS free text and DOES name deals. The previous justification for skipping it — "it is
+  // parser-emitted" — was falsified in the same window it was written (ca068c5): checkSnapshot's
+  // near-duplicate flag names both sides of a pair, and notion-deals' colliding-key design
+  // deliberately routes CONFIDENTIAL rows into that detector. Until now the public mirror escaped only
+  // by plumbing coincidence, because the bake path never ran checkSnapshot; gating the bake on it (H2)
+  // without this sweep would have published those names. So the producer no longer emits them
+  // (server/reconcile-runtime.ts) AND the publication boundary sweeps — belt and braces, because the
+  // producer set is open-ended and any future flag author would otherwise have to remember this.
+  // Swept over the whole flag, not just `issue`: `rawValue` is the field most likely to carry a raw
+  // name or key. (Catch-up sweep 2026-07-28..08-04, M2.)
+  // `?? []` deliberately: the contract makes dataQuality required, but a REDACTION step that throws on
+  // a malformed snapshot is a worse failure mode than one that treats absent as empty -- a throw here
+  // either fails the bake or, if some future caller catches it, skips redaction entirely.
+  const dataQuality = (snapshot.dataQuality ?? []).filter(
+    (f) => !mentionsRemoved(`${f.entity} ${f.field} ${f.issue} ${f.rawValue ?? ''}`),
+  );
   // tenantNotes is TENANT-keyed, not deal-keyed, so the key alone never identifies a deal — but
   // its VALUE is free text (2nd refute pass: the initial "keyed fields are safe" audit reasoned
   // about keys only and missed this). Drop (not scrub — values are non-nullable) any entry
   // mentioning a removed deal's name. renewalStages/tenantArrears are structured, not free text;
-  // loans/insurance are workbook-only (a pipeline deal produces neither); dataQuality is
-  // parser-emitted. dealComps' own free-text fields (CompSet.summary, comp addresses) are NOT
+  // loans/insurance are workbook-only (a pipeline deal produces neither).
+  // dealComps' own free-text fields (CompSet.summary, comp addresses) are NOT
   // swept — accepted residual risk, same as today's zero-trigger status (bake never populates
   // dealComps/acquisitionInputs; the day a caller merges overlay data into the bake, this must be
   // revisited alongside them).
@@ -110,7 +155,7 @@ export function redactConfidential(snapshot: PortfolioSnapshot): {
     Object.entries(snapshot.tenantNotes).filter(([, note]) => !mentionsRemoved(note)),
   );
   return {
-    snapshot: { ...snapshot, deals, counterparties, tasks, dealComps, acquisitionInputs, tenantNotes },
+    snapshot: { ...snapshot, deals, counterparties, tasks, dealComps, acquisitionInputs, tenantNotes, dataQuality },
     removed: confidential.map((d) => d.name),
     removedCounterparties,
     removedTasks,
@@ -135,6 +180,12 @@ async function main() {
   const dealsRefusal = refuseBakeOnDegradedDeals(dealsDegraded);
   if (dealsRefusal) {
     console.error(dealsRefusal);
+    process.exit(1);
+  }
+  // Reconciliation gate, on the PRE-redaction snapshot (see refuseBakeOnReconciliation).
+  const reconRefusal = refuseBakeOnReconciliation(raw);
+  if (reconRefusal) {
+    console.error(reconRefusal);
     process.exit(1);
   }
 

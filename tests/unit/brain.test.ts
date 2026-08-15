@@ -4,6 +4,7 @@ import { dirname, basename } from 'node:path';
 import type { DealStage, RenewalStage } from '../../src/contracts/index';
 import { AcquisitionInput } from '../../src/contracts/acquisition';
 import type { brain as BrainSingleton } from '../../server/brain';
+import type * as ReconcileRuntimeModule from '../../server/reconcile-runtime';
 
 /**
  * Orchestration tests for the live Brain (server/brain.ts) — the in-memory single source of
@@ -70,7 +71,11 @@ vi.mock('../../server/overlay', () => ({
   }),
 }));
 
-vi.mock('../../server/reconcile-runtime', () => ({
+// Only checkSnapshot is stubbed; hasReconciliationError keeps its REAL implementation via
+// importOriginal, so these tests exercise the actual severity/entity predicate the publication gate
+// depends on rather than a copy of it that could drift.
+vi.mock('../../server/reconcile-runtime', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReconcileRuntimeModule>()),
   checkSnapshot: vi.fn(() => h.reconcileFlags),
 }));
 
@@ -185,6 +190,80 @@ describe('Brain.persist — deals-degradation mirror guard', () => {
     brain.setDealStage('d1', 'Diligence' as DealStage);
 
     expect(existsSync(h.snapshotPath)).toBe(true);
+  });
+});
+
+/**
+ * CATCH-UP SWEEP H2 (HIGH, 2 of 3 lenses) + M1 (MEDIUM, 2 lenses).
+ *
+ * H2: PR #252 wired checkSnapshot into "BOTH portfolio.json writers" — but there are FOUR
+ * publication paths, and Brain.persist is the third. So the error-severity inconsistencies the CLI
+ * writers refuse (workbook rent/NOI/value mismatches, duplicate property ids, near-duplicate deal
+ * rows) were still published to the shared, git-tracked, auto-committed mirror by every live-server
+ * refresh. brain.ts's own comment conceded it "runs neither evaluateReconciliationGate nor
+ * requireLiveDealsSource".
+ *
+ * M1: rederive() rebuilt from base+overlay WITHOUT re-running checkSnapshot, then persisted — so
+ * after any UI write-back the rewritten mirror carried the same breached numbers with the
+ * reconciliation flags ABSENT, which erases conditions.ts's 'reconcile-fail' critical condition.
+ * Breach intact, alarm gone. That also means H2's gate cannot fire on this path unless M1 is fixed
+ * with it — they are one change, not two.
+ */
+describe('Brain.persist — H2/M1: reconciliation gate on the third writer', () => {
+  const reconErr = { entity: 'reconciliation', field: 'cash.totalCash', issue: 'total ≠ Σ entities', severity: 'error' };
+  const reconWarn = { entity: 'reconciliation', field: 'leases.annualRent', issue: 'Σ annual ≠ Σ(monthly×12)', severity: 'warn' };
+
+  it('declines the mirror write when reconciliation reports an error, but keeps serving', async () => {
+    h.reconcileFlags = [reconErr];
+
+    const state = await brain.refresh();
+
+    expect(state.status).toBe('fresh');
+    expect(brain.getSnapshot()).not.toBeNull();
+    expect(existsSync(h.snapshotPath)).toBe(false);
+  });
+
+  it('still writes when reconciliation reports only warnings (availability over purity)', async () => {
+    h.reconcileFlags = [reconWarn];
+
+    await brain.refresh();
+
+    expect(existsSync(h.snapshotPath)).toBe(true);
+  });
+
+  it('leaves a pre-existing good mirror intact rather than overwriting it with a breached snapshot', async () => {
+    mkdirSync(dirname(h.snapshotPath), { recursive: true });
+    const lastGood = JSON.stringify({ deals: [{ id: 'good' }] });
+    writeFileSync(h.snapshotPath, lastGood);
+    h.reconcileFlags = [reconErr];
+
+    await brain.refresh();
+
+    expect(readFileSync(h.snapshotPath, 'utf8')).toBe(lastGood);
+  });
+
+  it('M1: rederive re-runs reconciliation, so a write-back cannot launder the flags away', async () => {
+    // Healthy first refresh: mirror written.
+    h.reconcileFlags = [];
+    await brain.refresh();
+    expect(existsSync(h.snapshotPath)).toBe(true);
+    rmSync(h.snapshotPath, { force: true });
+
+    // The snapshot becomes internally inconsistent. A UI write-back must NOT republish it flagless.
+    h.reconcileFlags = [reconErr];
+    brain.setDealStage('d1', 'Diligence' as DealStage);
+
+    expect(existsSync(h.snapshotPath)).toBe(false);
+  });
+
+  it('M1: rederive keeps reconciliation flags ON the served snapshot', async () => {
+    h.reconcileFlags = [reconWarn];
+    await brain.refresh();
+
+    brain.setDealStage('d1', 'Diligence' as DealStage);
+
+    const served = brain.getSnapshot()!;
+    expect(served.dataQuality.some((f) => f.entity === 'reconciliation')).toBe(true);
   });
 });
 
