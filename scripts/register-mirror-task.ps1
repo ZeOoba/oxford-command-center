@@ -32,7 +32,16 @@ $pwsh = if ($pwshCmd) { $pwshCmd.Source } else { (Get-Command powershell).Source
 $action   = New-ScheduledTaskAction -Execute $pwsh -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$script`"" -WorkingDirectory $repo
 # Run regardless of power state — a laptop won't always be on AC at 06:45, and the default
 # DisallowStartIfOnBatteries/StopIfGoingOnBatteries would silently queue/kill the brief.
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
+# -WakeToRun: this machine is S0 Modern Standby and sleeps overnight. Without it the hourly
+# trigger simply does not fire while asleep and the "guaranteed" 06:45 brief trigger is not
+# guaranteed at all — on 2026-08-12 the mirror served an 08-11 19:00 bake until 11:06, a
+# 16-hour gap that StartWhenAvailable only recovered ~6 min after the lid was opened.
+# Caveat: WakeToRun is not sufficient on its own — it is gated by the active power plan's
+# "Allow wake timers" setting, which is stored separately for AC and DC, so the task can wake
+# the machine on one and silently not on the other. Do not assume; read the live values with:
+#   powercfg /query SCHEME_CURRENT SUB_SLEEP BD3B718A-0680-4D9D-8AB2-E1D2B4AC806D
+# (0x0 = Disable, 0x1 = Enable, 0x2 = Important Wake Timers Only.)
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -WakeToRun -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
 
 # Hourly all day + a guaranteed 06:45 brief trigger. The lastBriefDate gate makes the brief fire once/day.
 $hourly  = New-ScheduledTaskTrigger -Once -At 12:00am -RepetitionInterval (New-TimeSpan -Hours 1) -RepetitionDuration (New-TimeSpan -Days 3650)

@@ -47,7 +47,7 @@ const policy = (o: Partial<InsurancePolicy>): InsurancePolicy => ({
 const deal = (o: Partial<Deal>): Deal => ({
   id: 'd1', name: 'Deal One', shortName: null, location: null, market: null, sf: null, buildings: null, stage: 'Sourcing',
   estPrice: null, capRate: null, irr: null, equityMultiple: null, holdYrs: null, lender: null, status: null,
-  nextAction: null, owner: null, targetCloseDate: null, confidential: false, estimatedFields: [], ...o,
+  nextAction: null, owner: null, targetCloseDate: null, notionDealId: null, confidential: false, estimatedFields: [], ...o,
 });
 const opts = { now: NOW };
 

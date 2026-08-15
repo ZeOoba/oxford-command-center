@@ -9,7 +9,7 @@ const deal = (o: Partial<Deal>): Deal => ({
   id: 'd', name: 'D', shortName: null, location: null, market: null, sf: null, buildings: null,
   stage: 'Candidate', estPrice: null, capRate: null, irr: null, equityMultiple: null, holdYrs: null,
   lender: null, status: null, nextAction: null, owner: null, targetCloseDate: null,
-  confidential: false, estimatedFields: [], ...o,
+  notionDealId: null, confidential: false, estimatedFields: [], ...o,
 });
 
 // A synthetic roster — never the real deal terms, which live only in the gitignored, off-machine

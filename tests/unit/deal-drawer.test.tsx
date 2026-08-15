@@ -110,6 +110,7 @@ function makeDeal(overrides: Partial<Deal> & Pick<Deal, 'id'>): Deal {
     owner: null,
     targetCloseDate: null,
     confidential: false,
+    notionDealId: null,
     estimatedFields: [],
     ...overrides,
   };

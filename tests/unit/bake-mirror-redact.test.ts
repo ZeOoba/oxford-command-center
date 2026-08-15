@@ -109,7 +109,7 @@ const deal = (o: Partial<Deal>): Deal => ({
   id: 'd', name: 'D', shortName: null, location: null, market: null, sf: null, buildings: null,
   stage: 'LOI/PSA', estPrice: null, capRate: null, irr: null, equityMultiple: null, holdYrs: null,
   lender: null, status: null, nextAction: null, owner: null, targetCloseDate: null,
-  confidential: false, estimatedFields: [], ...o,
+  notionDealId: null, confidential: false, estimatedFields: [], ...o,
 });
 
 const cp = (o: Partial<Counterparty>): Counterparty => ({
