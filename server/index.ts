@@ -176,6 +176,20 @@ brain.on('snapshot', (info: unknown) => {
         console.error(
           `⛔ DEBT SNAPSHOT DEGRADED — ${result.degradedRows} loan upsert(s) failed, book may have lost rows; aggregate-LTV verdict withheld until a clean write: ${result.errors.join('; ')}`,
         );
+      } else if (result.vanishedIds.length > 0) {
+        // Round 19b (adversarial refute, HIGH — reproduced): the write that FIRST latches an
+        // unexplained-vanish marker used to be completely silent here. It sets neither
+        // refusedEmptySupersede nor degradedRows, and staleMarkerHeld only fires on LATER writes,
+        // so damage day logged nothing at all and the only signal the operator ever got was the
+        // next reload's generic "STILL DEGRADED" — which never names the loan that disappeared.
+        // Failure-level, and it names the ids, because this is the one moment someone can still
+        // go look at the workbook and see what happened.
+        console.error(
+          `⛔ DEBT SNAPSHOT — LOANS VANISHED — ${result.vanishedIds.length} previously-active loan(s) disappeared ` +
+            `with no terminal status and no same-property replacement: ${result.vanishedIds.join(', ')}. ` +
+            'Governor verdicts are withheld until each returns or is confirmed gone ' +
+            '(POST /api/warehouse/debt/snapshot with { confirmAbsent: [...] }).',
+        );
       } else if (result.staleMarkerHeld) {
         // Round 13 (ninth adversarial pass, LOW): a clean write that fails to recover the
         // trusted book re-upserts the standing DEGRADED marker but used to return a fully-quiet

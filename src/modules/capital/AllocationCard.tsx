@@ -29,12 +29,32 @@ function ConfidenceBar({ value }: { value: number }) {
 
 interface Props { verdict: AllocationVerdict; hurdleRatePct: number }
 
+/**
+ * Round 8 fresh-sweep (adversarial refute, HIGH — reproduced with byte-identical rendered DOM):
+ * this card never read verdict.inputs.bookTrust or verdict.dataQuality at all, even though both
+ * were already required/populated by the server (round 19's whole point). A withheld-because-
+ * distrusted verdict rendered pixel-identical to a genuine clean hold, and — because riskBand in
+ * the server's default hold branch used to be derived from operating health alone — a real 0.71x
+ * DSCR governor-block breach rendered with a GREEN "low" risk badge. capital-allocation.ts's
+ * combinedRiskBand() (this same round) fixes the badge's own color for a measured breach; the
+ * trust badge + inline flag below are the independent fix for the *unmeasured* case (degraded/
+ * unknown book), which no risk-band derivation can recover since the governor figures don't exist.
+ * Mirrors the pattern already shipped for ScorecardView.tsx / LadderView.tsx in round 19d.
+ */
 export function AllocationCard({ verdict, hurdleRatePct }: Props) {
   const [open, setOpen] = useState(false);
 
   const returnStr = fmtPct(verdict.expectedReturnPct);
   const hurdleStr = fmtPct(hurdleRatePct);
   const aboveHurdle = verdict.returnAboveHurdle;
+
+  const bookTrust = verdict.inputs.bookTrust;
+  // 'buy' verdicts hardcode bookTrust:'unknown' as a "not applicable" placeholder (pipeline
+  // candidates aren't owned, so no debt book describes them — see buildBuyVerdict's docblock),
+  // not a real trust failure. Same distinction filterTrustedVerdicts (capital-allocation-api.ts)
+  // makes on the server side.
+  const distrusted = verdict.action !== 'buy' && bookTrust !== 'trusted';
+  const debtBookFlag = verdict.dataQuality.find((f) => f.field === 'debtBook');
 
   return (
     <Card>
@@ -53,10 +73,29 @@ export function AllocationCard({ verdict, hurdleRatePct }: Props) {
           <span style={{ fontWeight: 600, fontSize: 13, flex: 1 }}>
             {verdict.propertyName ?? verdict.propertyId}
           </span>
+          {distrusted && (
+            <Badge tone={bookTrust === 'unknown' ? 'amber' : 'red'}>
+              {bookTrust === 'unknown' ? 'book not loaded' : 'book not trusted'}
+            </Badge>
+          )}
           <Badge tone={riskBandTone(verdict.riskBand)}>
             {verdict.riskBand}
           </Badge>
         </div>
+
+        {/* Debt-book distrust flag — independent of the reasons accordion below, since
+            scores.ts unconditionally seeds a health line as reasons[0], so this fact would
+            otherwise never be the visible line even when it is the most important one. */}
+        {distrusted && debtBookFlag && (
+          <div
+            style={{
+              fontSize: 11,
+              color: debtBookFlag.severity === 'error' ? 'var(--text-neg)' : 'var(--text-warn)',
+            }}
+          >
+            {debtBookFlag.issue}
+          </div>
+        )}
 
         {/* Return vs hurdle */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12, color: 'var(--text-secondary)' }}>

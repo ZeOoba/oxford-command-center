@@ -63,6 +63,7 @@ function allocationResponse(): CapitalAllocationResponse {
             ltv: 0.55,
             noiPerSf: 8.2,
             forecastPresent: true,
+      bookTrust: 'trusted', // round 19d - fixture models a healthy book
           },
           dataQuality: [],
         },
@@ -134,6 +135,62 @@ function capitalAllocationReport(): CapitalAllocationReport {
     macro: { tenYearRate: 4.1, cpi: 3.1, source: 'fred', asOf: '2026-07-01' },
     marketBenchmarks: { available: true, source: 'fred', asOf: '2026-07-01' },
     regionalMacro: null,
+  };
+}
+
+/**
+ * Round 8 fresh-sweep (adversarial refute, HIGH — reproduced with byte-identical rendered DOM):
+ * AllocationCard/CapitalModule never read verdict.inputs.bookTrust or verdict.dataQuality at all,
+ * so a withheld-because-distrusted verdict rendered pixel-identical to a genuine clean hold. Adds
+ * one degraded owned-property verdict (must show the distrust badge + inline dataQuality text) and
+ * one pipeline 'buy' verdict with bookTrust:'unknown' (must NOT show it — that value is a
+ * documented "not applicable" placeholder for unowned candidates, not a real trust failure; see
+ * buildBuyVerdict's docblock in capital-allocation.ts and filterTrustedVerdicts' in
+ * capital-allocation-api.ts, which draw the identical distinction server-side).
+ */
+function allocationResponseWithTrustIssues(): CapitalAllocationResponse {
+  const base = allocationResponse();
+  const trustedVerdict = base.portfolio.verdicts[0]!;
+  const degraded = {
+    ...trustedVerdict,
+    propertyId: 'prop-2',
+    propertyName: 'Prop Two',
+    action: 'hold' as const,
+    riskBand: 'elevated' as const,
+    inputs: {
+      ...trustedVerdict.inputs,
+      bookTrust: 'degraded' as const,
+      dscr: null,
+      ltv: null,
+    },
+    dataQuality: [
+      {
+        entity: 'prop-2',
+        field: 'debtBook',
+        issue: 'The debt book is DEGRADED — the last snapshot write lost rows.',
+        severity: 'error' as const,
+      },
+    ],
+  };
+  const buy = {
+    ...trustedVerdict,
+    propertyId: 'pipeline:cand-1',
+    propertyName: 'Pipeline Candidate One',
+    action: 'buy' as const,
+    riskBand: 'moderate' as const,
+    inputs: {
+      ...trustedVerdict.inputs,
+      bookTrust: 'unknown' as const,
+    },
+    dataQuality: [],
+  };
+  return {
+    ...base,
+    portfolio: {
+      ...base.portfolio,
+      verdicts: [...base.portfolio.verdicts, degraded, buy],
+      actionCounts: { buy: 1, hold: 2, sell: 0, refinance: 0, improve: 0 },
+    },
   };
 }
 
@@ -251,5 +308,46 @@ describe('CapitalModule — Notion sync (folded in from CapitalAllocationModule)
 
     await waitFor(() => expect(screen.getByText('Notion sync failed')).toBeTruthy());
     expect(screen.getByText('NOTION_TOKEN not configured')).toBeTruthy();
+  });
+});
+
+describe('CapitalModule / AllocationCard — round 8 fresh-sweep: debt-book trust surfacing', () => {
+  function renderWithTrustIssues() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
+    qc.setQueryData(['warehouse', 'capital', 'allocation'], allocationResponseWithTrustIssues());
+    qc.setQueryData(['warehouse', 'capital-allocation', 'report'], capitalAllocationReport());
+    return render(
+      <QueryClientProvider client={qc}>
+        <ToastProvider>
+          <CapitalModule />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+  }
+
+  it('shows a "book not trusted" badge and the debtBook dataQuality text for a degraded verdict', () => {
+    renderWithTrustIssues();
+    expect(screen.getByText('book not trusted')).toBeTruthy();
+    expect(screen.getByText(/DEGRADED — the last snapshot write lost rows/)).toBeTruthy();
+  });
+
+  it('does NOT show a distrust badge on a "buy" verdict whose bookTrust is the "not applicable" placeholder', () => {
+    renderWithTrustIssues();
+    // Only the one degraded owned-property verdict should carry the badge — the buy verdict's
+    // bookTrust:'unknown' is a documented placeholder, not a real distrust signal.
+    expect(screen.getAllByText('book not trusted')).toHaveLength(1);
+    expect(screen.queryByText('book not loaded')).toBeNull();
+  });
+
+  it('surfaces a portfolio-level count of properties on an untrusted book, excluding buy verdicts', () => {
+    renderWithTrustIssues();
+    expect(screen.getByText('1 on untrusted book')).toBeTruthy();
+  });
+
+  it('renders no distrust indicator at all for a fully trusted portfolio (no false positive)', () => {
+    renderModule();
+    expect(screen.queryByText('book not trusted')).toBeNull();
+    expect(screen.queryByText('book not loaded')).toBeNull();
+    expect(screen.queryByText(/on untrusted book/)).toBeNull();
   });
 });

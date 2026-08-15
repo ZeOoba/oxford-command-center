@@ -63,21 +63,83 @@ function defaultDbPath(): string {
  * empty. The operator was sent to debug the wrong problem. Order matters: refusedEmptySupersede
  * must be checked before written===0, since a refusal is a distinct outcome from a genuinely
  * empty parse.
+ *
+ * Round 19e (adversarial refute of round 19d, MEDIUM — reproduced): this function checked only
+ * `refusedEmptySupersede` and `written===0`, so every OTHER outcome that changes the snapshot
+ * trust marker — a degraded write, a first-time or continuing vanish latch, a standing latch that
+ * a clean write failed to fully recover — fell through to `null` and this CLI's own caller printed
+ * nothing beyond the routine "N loan(s) written" line and exited 0. `server/index.ts` grew branches
+ * for exactly these cases (degradedRows > 0, vanishedIds.length > 0, staleMarkerHeld) when this
+ * round added the vanish obligation; this CLI's twin never got them, so a scheduled wrapper
+ * watching the exit code sees success indefinitely while every governor verdict is withheld. Order
+ * mirrors server/index.ts: refusedEmptySupersede -> degradedRows -> vanishedIds -> staleMarkerHeld.
+ *
+ * Round 19f (adversarial refute of 19e, HIGH — reproduced): the doc comment above CLAIMED that
+ * ordering, but the `allowEmptySupersedeFlag` success branch actually ran FIRST, ahead of all
+ * three new checks — so the one event class that DESTROYS data rather than freezing it (a
+ * degraded write) was silently masked whenever the operator passed --allow-empty-supersede.
+ * Reproduced sequence: a loan vanishes -> CLI prints "VANISHED ... re-run with
+ * --allow-empty-supersede" -> operator does exactly that -> a DIFFERENT loan's insert fails this
+ * same run (degradedRows:1, book shrinks 3->1 active rows) -> exitCode 0, message "confirmed
+ * supersede performed" — affirmatively false; nothing about the destroyed row was confirmed.
+ * `staleMarkerHeld` can never be true here (the amnesty branch deletes the marker outright), and a
+ * `vanishedIds`-only outcome under the flag is a legitimate, explicitly-confirmed waiver — but
+ * `degradedRows` is real, unconfirmed data loss and must win regardless of the flag.
  */
 export function selectOutcome(
-  result: { written: number; refusedEmptySupersede: boolean },
+  result: {
+    written: number;
+    refusedEmptySupersede: boolean;
+    degradedRows: number;
+    vanishedIds: string[];
+    staleMarkerHeld: boolean;
+  },
   allowEmptySupersedeFlag: boolean,
 ): { message: string; exitCode: 0 | 1 } | null {
-  if (allowEmptySupersedeFlag && !result.refusedEmptySupersede) {
+  if (result.refusedEmptySupersede) {
+    return {
+      message:
+        '  Write REFUSED by the shrinkage guard -- see the warning(s) above for the exact reason. No rows were written this run; the prior debt book is untouched. Re-run with --allow-empty-supersede once the loss is verified.',
+      exitCode: 1,
+    };
+  }
+  // Round 19f: DEGRADED must win regardless of the flag — it is real, unconfirmed data loss (a
+  // per-loan insert failure), not the row-count shrinkage --allow-empty-supersede exists to waive.
+  // writeDebtSnapshot itself enforces this precedence (the lostRows>0 branch runs before the
+  // allowEmptySupersede amnesty branch); this function must not silently un-enforce it.
+  if (result.degradedRows > 0) {
+    return {
+      message:
+        `  DEGRADED -- ${result.degradedRows} loan upsert(s) failed this run; the active book may have lost rows. ` +
+        'Governor verdicts are withheld until a clean run re-lands every trusted loan. See the warning(s) above.',
+      exitCode: 1,
+    };
+  }
+  // The flag success branch sits HERE — after refusedEmptySupersede and degradedRows (both of
+  // which represent state the flag cannot legitimately waive), before vanishedIds/staleMarkerHeld
+  // (which the flag DOES waive: writeDebtSnapshot's amnesty branch deletes the marker outright
+  // whenever lostRows===0 and the flag is set, regardless of what vanished this write).
+  if (allowEmptySupersedeFlag) {
     return {
       message: `  confirmed supersede performed -- ${result.written} active row(s) written (any prior active rows not in this snapshot were retired).`,
       exitCode: 0,
     };
   }
-  if (result.refusedEmptySupersede) {
+  if (result.vanishedIds.length > 0) {
     return {
       message:
-        '  Write REFUSED by the shrinkage guard -- see the warning(s) above for the exact reason. No rows were written this run; the prior debt book is untouched. Re-run with --allow-empty-supersede once the loss is verified.',
+        `  VANISHED -- ${result.vanishedIds.length} previously-active loan(s) disappeared with no terminal ` +
+        `status and no same-property replacement: ${result.vanishedIds.join(', ')}. Governor verdicts are ` +
+        'withheld until each returns or is confirmed gone (re-run with --allow-empty-supersede, or use ' +
+        'POST /api/warehouse/debt/snapshot with confirmAbsent for a narrower per-loan confirmation).',
+      exitCode: 1,
+    };
+  }
+  if (result.staleMarkerHeld) {
+    return {
+      message:
+        '  STILL DEGRADED -- a standing trust marker was not fully recovered by this run; a damaged or ' +
+        'vanished loan is still missing. Governor verdicts remain withheld. See the warning(s) above.',
       exitCode: 1,
     };
   }

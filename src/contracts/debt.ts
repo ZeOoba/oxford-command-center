@@ -6,6 +6,40 @@ export type DebtSignal = z.infer<typeof DebtSignal>;
 export const DebtScoreBand = z.enum(['strong', 'adequate', 'watch', 'critical']);
 export type DebtScoreBand = z.infer<typeof DebtScoreBand>;
 
+/**
+ * Round 19 (2026-07-27 integrity sweep, H1): how far the warehouse trusts the debt_positions rows
+ * a DebtScore was computed from. Previously this was known ONLY inside
+ * computePortfolioAggregateLtv, which read the snapshot refusal marker directly; every
+ * per-property consumer (scoreDebtPositions, the /scores and /refi-windows routes, capital
+ * allocation, and the permanent debt_scores trend writer) read the same distrusted rows with no
+ * marker awareness and emitted "Governors clear" off a post-damage remnant.
+ *
+ *   'trusted'  — the last snapshot write was clean; the numbers mean what they say.
+ *   'unknown'  — there is no debt book to judge: debt_positions is empty and no marker stands
+ *                (a never-backfilled or freshly-migrated warehouse). Round 19d, on Gabriel's
+ *                ruling: 19b forced this state to 'degraded', which contractually asserts rows
+ *                were LOST — sending an operator to hunt an incident that never happened, since
+ *                readLastSnapshotRefusal returns null. It is still NOT 'trusted': debt-maturity's
+ *                ratified H2b doctrine refuses that inference ("the warehouse cannot distinguish
+ *                'no debt' from 'no data', so it must not guess"). Consumers must treat it as
+ *                non-trusted for every clearance-direction decision, exactly like 'degraded'.
+ *                Migration 027's CHECK already reserved this name for the same meaning.
+ *   'refused'  — the last write was DECLINED by the shrinkage guard; zero rows changed, so these
+ *                ARE the last trusted book. Numbers survive and a measured BREACH still fires,
+ *                but the book may be stale, so no clearance-direction action signal is emitted.
+ *   'degraded' — rows were lost (a per-loan insert failed after its prior row was superseded, or
+ *                loans vanished across writes with no replacement). The survivors are an
+ *                INCOMPLETE/post-damage remnant: a verdict computed from them is fabricated in
+ *                EITHER direction — missing high-LTV debt deflates the picture into a false
+ *                clearance, missing low-LTV debt inflates it into a phantom breach. All
+ *                governor-derived figures are withheld.
+ *
+ * Mirrors, per-property, the precedence computePortfolioAggregateLtv already applies to the
+ * portfolio aggregate — same marker, same semantics, no second source of truth.
+ */
+export const DebtBookTrust = z.enum(['trusted', 'unknown', 'refused', 'degraded']);
+export type DebtBookTrust = z.infer<typeof DebtBookTrust>;
+
 export const DebtPosition = z.object({
   id: z.string(),
   propertyId: z.string().nullable(),
@@ -42,6 +76,13 @@ export const DebtScore = z.object({
   score: z.number().min(0).max(100),
   scoreBand: DebtScoreBand,
   capitalConfigVersion: z.number().int(),
+  /**
+   * Round 19 (H1): trust level of the rows this score was computed from. REQUIRED, not optional —
+   * a required field makes the compiler force every present and future producer to state a trust
+   * level, which is exactly the failure mode this closes: the marker existed for five rounds and
+   * five of its six consumers simply never asked. Defaults nowhere; see DebtBookTrust.
+   */
+  bookTrust: DebtBookTrust,
   // Post-refi annualized cash savings as a % of equity: (currentAnnualInterest -
   // refiAnnualInterest) / equity. Null when rate, LTV, or balance is undrivable, or when
   // the property has more than one active loan (single-loan LTV cannot be blended against
@@ -66,10 +107,31 @@ export const MaturityLadderEntry = z.object({
 });
 export type MaturityLadderEntry = z.infer<typeof MaturityLadderEntry>;
 
-export const DebtScoreResponse = z.object({ scores: z.array(DebtScore) });
+/**
+ * Round 19d (adversarial refute, HIGH — reproduced): `bookTrust` is on the ENVELOPE, not only on
+ * each DebtScore. ScorecardView derived its badge and banner from `scores.find(...)`, so the WORST
+ * case — a damaged write that destroyed every active row — produced `scores: []`, neither could
+ * fire, and the page rendered "No scored debt positions. Run a debt snapshot…": an affirmative,
+ * reassuring instruction about a book the warehouse knows was destroyed. 19b added trust to the
+ * two maturity routes that needed it less and missed this one, which is the one the scorecard reads.
+ */
+export const DebtScoreResponse = z.object({
+  scores: z.array(DebtScore),
+  bookTrust: DebtBookTrust,
+});
 export type DebtScoreResponse = z.infer<typeof DebtScoreResponse>;
 
-export const MaturityLadderResponse = z.object({ ladder: z.array(MaturityLadderEntry) });
+/**
+ * Round 19b (adversarial refute, MEDIUM — reproduced): `bookTrust` is REQUIRED on this response.
+ * The ladder queries debt_positions directly, so under a degraded book it served the post-damage
+ * remnant as a complete, clean 200 — every destroyed high-LTV loan's governor-block simply absent,
+ * every survivor reading 'hold', and nothing anywhere saying a row had been lost. /refi-windows
+ * already carried its trust state (via aggregate.lastWriteRefused); these two routes did not.
+ */
+export const MaturityLadderResponse = z.object({
+  ladder: z.array(MaturityLadderEntry),
+  bookTrust: DebtBookTrust,
+});
 export type MaturityLadderResponse = z.infer<typeof MaturityLadderResponse>;
 
 // ── Debt & Maturity module v1 (server/warehouse/debt-maturity.ts) ─────────────────────────
@@ -97,6 +159,8 @@ export type MaturityTimelineEvent = z.infer<typeof MaturityTimelineEvent>;
 export const MaturityTimelineResponse = z.object({
   asOf: z.string(),
   events: z.array(MaturityTimelineEvent),
+  /** Round 19b — see the MaturityLadderResponse note. Required, not optional. */
+  bookTrust: DebtBookTrust,
 });
 export type MaturityTimelineResponse = z.infer<typeof MaturityTimelineResponse>;
 
@@ -112,8 +176,20 @@ export const RefiWindowEntry = z.object({
   hasDemandNote: z.boolean(),
   /** Some loan's maturity could not be determined (flagged, not guessed). */
   hasUnknownMaturity: z.boolean(),
-  maturityWithin12mo: z.boolean(),
-  maturityWithin24mo: z.boolean(),
+  /**
+   * Round 19g (adversarial refute, MEDIUM-HIGH — reproduced): these were plain booleans, computed
+   * by buildRefiWindows from its own independent `activeLoans(db)` read — NOT withheld under a
+   * distrusted book the way `dscr`/`ltv` already are (those pass through the trust-aware scoring
+   * engine). Reproduced: a demand note callable NOW with a typo'd collateral-property cell
+   * (property_id NULL) makes the loan invisible to this route entirely, so a property's ONLY
+   * measured urgency signal vanishes and `maturityWithin12mo` reads FALSE — the dangerous
+   * direction, identical in shape to the balloonMonths finding round 19d already fixed in
+   * capital-allocation.ts ("a destroyed near-term balloon silently becomes the survivor's later
+   * date, presented as fact"). Nullable so the route can withhold rather than present a remnant
+   * computation as settled fact.
+   */
+  maturityWithin12mo: z.boolean().nullable(),
+  maturityWithin24mo: z.boolean().nullable(),
   /** Passthrough from the ratified scoring engine (Spine-B NOI basis; D1 LTV convention). */
   dscr: z.number().nullable(),
   dscrFloorBreach: z.boolean().nullable(),
@@ -167,5 +243,20 @@ export const RefiWindowsResponse = z.object({
     ltvCeilingAggregate: z.number(),
     refiLtvCeilingPerProperty: z.number(),
   }),
+  /**
+   * Round 19g (adversarial refute, MEDIUM-HIGH — reproduced): this response had no trust field at
+   * all when first found. `windows[].dscr/ltv/*Breach` are already withheld correctly (they pass
+   * through the ratified scoring engine, itself trust-aware since round 19f). The maturity-window
+   * fields — `soonestMaturityDate` / `monthsToSoonestMaturity` / `maturityWithin12mo` /
+   * `maturityWithin24mo` — are sourced from buildRefiWindows' own independent `activeLoans(db)`
+   * read; a destroyed near-term balloon silently became a surviving loan's later date presented as
+   * fact, and `maturityWithin12mo` could read false when the true (destroyed) urgency was true —
+   * the dangerous direction, same class as the round-19d capital-allocation.ts balloonMonths
+   * finding. Those four fields are now nulled at the route (debt-api.ts) under a distrusted book,
+   * matching that precedent. `aggregate.note`/`lastWriteRefused` answer a DIFFERENT question (the
+   * aggregate LTV computation specifically) and cannot substitute for a machine-readable trust
+   * field on this envelope.
+   */
+  bookTrust: DebtBookTrust,
 });
 export type RefiWindowsResponse = z.infer<typeof RefiWindowsResponse>;

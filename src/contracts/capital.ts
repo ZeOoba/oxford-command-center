@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { Confidence, DataQualityFlag } from './common';
 import { AttentionBand, HealthBand } from './warehouse';
 import { ClusterTier, Ratification } from './acquisition';
+import { DebtBookTrust } from './debt';
 
 export const AllocationAction = z.enum(['buy', 'hold', 'sell', 'refinance', 'improve']);
 export type AllocationAction = z.infer<typeof AllocationAction>;
@@ -59,6 +60,14 @@ export const AllocationVerdict = z.object({
     ltv: z.number().nullable(),
     noiPerSf: z.number().nullable(),
     forecastPresent: z.boolean(),
+    /**
+     * Round 19d (adversarial refute, MEDIUM-HIGH): the IC memo — the artifact that becomes a
+     * printed PDF and drives capital decisions — carried ZERO indication that the debt book was
+     * untrusted. A verdict read debtSignal 'hold' / debtScoreBand 'watch' / dscr null / ltv null,
+     * visually identical to a property that merely lacks NOI data. That is the exact failure mode
+     * this work fixed for the scorecard and left unfixed on the higher-stakes surface.
+     */
+    bookTrust: DebtBookTrust,
   }),
   dataQuality: z.array(DataQualityFlag).default([]),
 });

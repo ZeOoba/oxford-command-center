@@ -38,6 +38,7 @@ function makeVerdict(overrides: Partial<AllocationVerdict> = {}): AllocationVerd
       ltv: 0.30,
       noiPerSf: null,
       forecastPresent: false,
+    bookTrust: 'trusted', // round 19d - fixture models a healthy book
     },
     dataQuality: [],
     ...overrides,

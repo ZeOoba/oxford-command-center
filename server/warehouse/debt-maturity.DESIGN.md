@@ -42,7 +42,7 @@ Both columns stay **NULL — confirmed 2026-07-19, not merely unmapped.** Direct
   - `demand-callable` events for demand notes (callable now — sorted first, F3 spirit).
   - **Confidentiality:** no balance, rate value, or lender crosses this surface (tighter than the existing ladder, per migration-009's intent). `rate_type` (structure, not terms) is included.
 - `buildRefiWindows(db, scores, asOf)` — per-property refi-window entries joining active loans with the already-computed `DebtScore[]` (no re-derivation of DSCR/LTV math):
-  - `maturityWithin12mo` / `maturityWithin24mo` from the soonest **known** fresh months-to-maturity; a demand note forces both windows true (callable immediately > 12/24-mo urgency);
+  - `maturityWithin12mo` / `maturityWithin24mo` from the soonest **known** fresh months-to-maturity; a demand note forces both windows true (callable immediately > 12/24-mo urgency). **Nullable, not plain booleans (round 8 correction):** under a distrusted book (`bookTrust !== 'trusted'`), `/refi-windows` withholds these two fields to `null` alongside `soonestMaturityDate` / `monthsToSoonestMaturity`, since `buildRefiWindows`' maturity fields come from its own `activeLoans(db)` read, not the trust-aware scoring engine — see §3d.
   - `hasUnknownMaturity` surfaced explicitly (unknown ≠ far away, but also ≠ fabricated-near — flagged, not guessed);
   - `dscr`, `ltv` passthrough from `DebtScore` (D1 convention); `dscrFloorBreach` / `govLtvCeilingBreach` vs `loadGovernors()`; `refiLtvHeadroom` / `refiCeilingBreach` vs the 65% `ALERT_THRESHOLDS.ltvCeiling`. Unknown inputs → `null` flags, never a cleared/false verdict (F1/F2 precedent: unknown is not clearance).
 - `computePortfolioAggregateLtv(db, governors)` — conservative aggregate vs the 40% governor:
@@ -55,7 +55,7 @@ Both columns stay **NULL — confirmed 2026-07-19, not merely unmapped.** Direct
 
 ### 3d. API (`server/warehouse/debt-api.ts` — delivery-only, no math)
 - `GET /api/warehouse/debt/timeline` → `MaturityTimelineResponse`.
-- `GET /api/warehouse/debt/refi-windows` → `RefiWindowsResponse`. Calls `scoreDebtPositions(db, metrics, null)` — market rate deliberately null (no FRED dependency; the windows consume DSCR/LTV only, and a null rate merely suppresses the unused `refi` signal), keeping the route deterministic and offline-safe.
+- `GET /api/warehouse/debt/refi-windows` → `RefiWindowsResponse`. Calls `scoreDebtPositionsWithTrust(db, metrics, null, asOf)` inside one `db.transaction()` alongside the governors/metrics reads and `buildRefiWindows`/`computePortfolioAggregateLtv` — market rate deliberately null (no FRED dependency; the windows consume DSCR/LTV only, and a null rate merely suppresses the unused `refi` signal), keeping the route deterministic and offline-safe. The response carries a required `bookTrust`; under a distrusted book, maturity-window fields are withheld to `null` (see §3b).
 
 ### 3e. Small surgical export (`debt-scoring.ts`)
 `effectiveMonthsToMaturity()` exported (with a structural `MaturityInputRow` param type) so the timeline reuses the ratified fresh-recompute + demand-note-first logic instead of duplicating date math.

@@ -234,6 +234,13 @@ export function CapitalModule() {
   const actionEntries = Object.entries(portfolio.actionCounts) as Array<[string, number]>;
   const capEntries = report?.entries ?? [];
   const bench = report?.marketBenchmarks;
+  // Round 8 fresh-sweep: actionCounts silently absorbs withheld-because-distrusted verdicts into
+  // whatever action they collapsed to (usually 'hold') with no indication anything was withheld.
+  // 'buy' is excluded — bookTrust:'unknown' there is a "not applicable" placeholder, not distrust
+  // (see AllocationCard.tsx / filterTrustedVerdicts for the same distinction).
+  const distrustedCount = portfolio.verdicts.filter(
+    (v) => v.action !== 'buy' && v.inputs.bookTrust !== 'trusted',
+  ).length;
 
   return (
     <div className="flex flex-col gap-4">
@@ -246,6 +253,9 @@ export function CapitalModule() {
           title="Capital Allocation"
           trailing={
             <div style={{ display: 'flex', gap: 6 }}>
+              {distrustedCount > 0 && (
+                <Badge tone="red">{distrustedCount} on untrusted book</Badge>
+              )}
               {actionEntries.filter(([, n]) => n > 0).map(([action, count]) => (
                 <span key={action} style={{
                   fontSize: 11, fontWeight: 700, padding: '2px 7px', borderRadius: 4,

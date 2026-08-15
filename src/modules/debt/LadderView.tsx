@@ -156,13 +156,31 @@ export function LadderView() {
     );
   }
 
-  const ladder = data ?? [];
+  // Round 19e: LadderView previously read the ladder array directly; the hook now returns the
+  // whole envelope (see hooks.ts's useDebtMaturity note) so the trust banner below has a field
+  // to read even when the ladder is empty — the same fix ScorecardView got in round 19d.
+  const ladder = data?.ladder ?? [];
+  const bookTrust = data?.bookTrust ?? 'trusted';
   const grouped = groupByBucket(ladder);
 
   const imminentCount = (grouped.get('0-12') ?? []).length;
   const totalLoans = ladder.length;
   const demandCount = ladder.filter((e) => e.isDemand).length;
   const balloonCount = ladder.filter((e) => e.balloon).length;
+
+  const distrusted = bookTrust !== 'trusted';
+  const trustHeadline =
+    bookTrust === 'degraded'
+      ? 'Debt book DEGRADED — rows were lost by the last snapshot write.'
+      : bookTrust === 'refused'
+        ? 'Debt book STALE — the last snapshot write was refused.'
+        : 'Debt book NOT LOADED — no debt snapshot has been written.';
+  const trustDetail =
+    bookTrust === 'degraded'
+      ? 'This ladder may be missing loans lost by the last write. Clearance-direction signals below are withheld — but a measured per-loan breach (governor-block) still displays if present.'
+      : bookTrust === 'refused'
+        ? 'This ladder is the last trusted book and may be out of date.'
+        : 'No debt snapshot has populated this ladder yet.';
 
   return (
     <div className="flex flex-col gap-4">
@@ -172,6 +190,11 @@ export function LadderView() {
           title="Maturity Ladder"
           trailing={
             <div className="flex items-center gap-1.5">
+              {distrusted && (
+                <Badge tone={bookTrust === 'unknown' ? 'amber' : 'red'}>
+                  {bookTrust === 'unknown' ? 'book not loaded' : 'book not trusted'}
+                </Badge>
+              )}
               {imminentCount > 0 && <Badge tone="red">{imminentCount} ≤12 mo</Badge>}
               {balloonCount > 0 && <Badge tone="amber">{balloonCount} balloon</Badge>}
               {demandCount > 0 && <Badge tone="amber">{demandCount} demand</Badge>}
@@ -179,6 +202,14 @@ export function LadderView() {
             </div>
           }
         />
+        {distrusted && (
+          <div
+            className="px-4 py-3 text-2xs"
+            style={{ color: 'var(--text-neg)', borderBottom: '1px solid var(--border-subtle)' }}
+          >
+            <strong>{trustHeadline}</strong> {trustDetail}
+          </div>
+        )}
         {totalLoans === 0 && (
           <div className="flex flex-col items-center gap-2 px-4 py-8 text-center">
             <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>No active debt positions.</div>

@@ -8,7 +8,20 @@ import type { WarehouseDb } from '../../server/warehouse/db';
 
 vi.mock('../../server/macro/getMacro', () => ({ getMacro: vi.fn() }));
 vi.mock('../../server/warehouse/scores', () => ({ scoreProperties: vi.fn() }));
-vi.mock('../../server/warehouse/debt-scoring', () => ({ scoreDebtPositions: vi.fn() }));
+// Round 19g: see capital-allocation-metrics-callcount.test.ts's note — capital-allocation.ts now
+// calls scoreDebtPositionsWithTrust (one atomic read), and the mock must supply it too.
+import type { WarehouseDb as WarehouseDbForMock } from '../../server/warehouse/db';
+vi.mock('../../server/warehouse/debt-scoring', async () => {
+  const { readDebtBookTrust } = await import('../../server/warehouse/debt-trust');
+  const scoreDebtPositions = vi.fn();
+  return {
+    scoreDebtPositions,
+    scoreDebtPositionsWithTrust: vi.fn((db: unknown, ...rest: unknown[]) => {
+      const scores = scoreDebtPositions(db, ...rest);
+      return { scores, bookTrust: scores[0]?.bookTrust ?? readDebtBookTrust(db as WarehouseDbForMock) };
+    }),
+  };
+});
 // Preserve latestFullYearPeriod/isOperatingRealEstate (real implementations, used by
 // capital-allocation.ts's currentSpineBNoi helper) — only propertyPeriodMetrics is mocked,
 // so C-4 tests can hand a controlled Spine-B fixture without a real ledger ingest.
@@ -118,6 +131,7 @@ function makeDebtScore(overrides: Partial<DebtScore> = {}): DebtScore {
     scoreBand: 'strong',
     capitalConfigVersion: 1,
     refiCashSavingsPct: 0.05,
+    bookTrust: 'trusted', // round 19 — these fixtures model a healthy book unless a test overrides
     ...overrides,
   };
 }
@@ -678,7 +692,13 @@ describe('buildPortfolioAllocation — expectedReturnPct wiring (C-4)', () => {
     // returnAboveHurdle must be the direct comparison against the report's own hurdleRatePct —
     // not just "some boolean" (a real assertion, not a tautology).
     expect(v.returnAboveHurdle).toBe(v.expectedReturnPct! >= result.hurdleRatePct);
-    expect(v.dataQuality).toHaveLength(0);
+    // Round 19e: dataQuality may ALSO carry a 'debtBook' flag now — book-level trust is derived
+    // from the real (unseeded, empty) debt_positions table, independent of this test's mocked
+    // scoreDebtPositions return value (the D1 fix: the two must not be able to disagree). This
+    // test's own subject is expectedReturnPct, so exclude the unrelated 'debtBook' flag rather
+    // than asserting only on the one field — a stray THIRD, unrelated dataQuality entry (a future
+    // regression) would otherwise go unnoticed (round 19f tightening).
+    expect(v.dataQuality.filter((f) => f.field !== 'debtBook')).toHaveLength(0);
   });
 
   it('C4-8: latest FULL-YEAR period is used, not a more-recent YTD partial (basis-consistency with scores.ts)', async () => {
@@ -725,8 +745,12 @@ describe('buildPortfolioAllocation — expectedReturnPct wiring (C-4)', () => {
     // Must abstain (null), not fabricate a deeply negative/understated IRR from a partial NOI.
     expect(v.expectedReturnPct).toBeNull();
     expect(v.returnAboveHurdle).toBeNull();
-    expect(v.dataQuality).toHaveLength(1);
-    expect(v.dataQuality[0]!.field).toBe('expectedReturnPct');
+    // Round 19e/19f: see the C4-7 note above — dataQuality may also carry an unrelated 'debtBook'
+    // flag from the real (unseeded) debt book; excluded rather than merely checked-for so a stray
+    // extra/duplicate expectedReturnPct flag would still be caught.
+    expect(v.dataQuality.filter((f) => f.field !== 'debtBook')).toEqual([
+      expect.objectContaining({ field: 'expectedReturnPct' }),
+    ]);
   });
 
   it('C4-9: no snapshot supplied → expectedReturnPct stays null (pre-v2 backward compatibility)', async () => {
@@ -742,8 +766,9 @@ describe('buildPortfolioAllocation — expectedReturnPct wiring (C-4)', () => {
     const v = result.verdicts[0]!;
     expect(v.expectedReturnPct).toBeNull();
     expect(v.returnAboveHurdle).toBeNull();
-    expect(v.dataQuality).toHaveLength(1);
-    expect(v.dataQuality[0]!.field).toBe('expectedReturnPct');
+    expect(v.dataQuality.filter((f) => f.field !== 'debtBook')).toEqual([
+      expect.objectContaining({ field: 'expectedReturnPct' }),
+    ]);
   });
 
   it('C4-10: snapshot present but oxfordValue non-positive → expectedReturnPct stays null', async () => {
