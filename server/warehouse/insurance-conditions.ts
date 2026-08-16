@@ -247,3 +247,167 @@ export function insuranceConditions(
 
   return out;
 }
+
+// ── Condition 3: insurance-warehouse-drift ──────────────────────────────────
+//
+// Cross-checks Source A ("workbook rows" — the LIVE read of PortfolioSnapshot.insurance[],
+// straight off the Insurance Renewals tab) against Source B ("warehouse rows" —
+// property_insurance_policies, a periodic BATCH snapshot of that same tab written at ingest
+// time). Until now these were only ever compared by hand. Joined on `property_id` /
+// `insurance[].id`, which are the SAME key on both sides: both are `slug(RowID)`
+// (server/workbook/parse.ts's parseInsurance sets `id: slug(rowId)`; server/warehouse/
+// insurance.ts's snapshotPoliciesToWarehouse sets `propertyId: p.id`) — unlike the
+// property-name join above (coveredIds), this join is exact by construction, not heuristic.
+//
+// Two independent findings, checked in this priority order for a given property_id:
+//
+//   1. INGEST DRIFT (warning) — the stored `expiration_date` (warehouse) and the live
+//      `expires` (workbook) disagree. This is the EXPECTED shape of the warehouse being a
+//      periodic snapshot rather than a live mirror — Gabriel's 2026-08-15 finding (FVC,
+//      3883 Livingston) is exactly this: the workbook was hand-corrected and the warehouse
+//      had not yet re-ingested. The insight states both dates plainly and does NOT assert
+//      which side is stale: an earlier warehouse date is consistent with the warehouse
+//      lagging a later workbook correction, but a correction that pulls the workbook date
+//      EARLIER (as in the FVC case) leaves the warehouse holding the LATER of the two — so
+//      "earlier = stale" is not a safe inference in general. Re-ingesting resolves this
+//      class regardless of direction.
+//
+//   2. LOGIC DISAGREEMENT (warning) — the two dates AGREE, but the computed lapsed/expired
+//      VERDICT differs: the warehouse side is a pure date comparison
+//      (`expiration_date < asOf`), the workbook side is its own live Status column
+//      (Expired/Cancelled — a `=TODAY()`-driven formula, column K in the workbook). Same
+//      input, different output means the two systems compute "lapsed" differently, which a
+//      matching date can otherwise mask. Checked only when case 1 does NOT fire — a date
+//      mismatch already explains any verdict difference on that row, so firing both would
+//      be redundant noise describing the same underlying fact.
+//
+// Both severities are 'warning' and category 'data' (not 'insurance'): this reports a
+// data-RECONCILIATION finding — the two systems disagree — not a coverage claim; the coverage
+// claim itself belongs to insurance-expiry-soon/insurance-gap above and to
+// src/analytics/conditions.ts's ins-lapsed-*/ins-lapsed-live-* conditions. 'warning' keeps this
+// out of the immediate per-critical alert email (server/brief/run.ts's criticalIds filter);
+// it still reaches Gabriel via the existing brief digest / Notion Ops Hub path once merged into
+// the same `insights` array insuranceConditions() feeds — no new notification channel.
+//
+// A property_id with no matching row on the OTHER side is skipped, not flagged: that gap is
+// insurance-gap's job (warehouse side) or simply not yet ingested (workbook-only side), and is
+// not evidence of drift. A missing date on either side is likewise skipped — nothing to compare.
+//
+// PURE — no mutations of inputs. Never throws (callers guard with try/catch, matching
+// insuranceConditions above). DETERMINISTIC — sorted by id (lexicographic).
+interface DriftPolicyRow {
+  id: number;
+  property_id: string;
+  expiration_date: string | null;
+  effective_date: string | null;
+}
+
+/**
+ * Pick the warehouse row that best represents the CURRENT term for a property_id that has
+ * multiple rows on file (the schema's UNIQUE spans policy_number + effective_date, so a prior
+ * term's row can sit alongside the current one). Greatest effective_date wins; ties broken by
+ * greatest expiration_date, then by highest row id (insertion order) for full determinism.
+ */
+function pickCurrentRow(rows: DriftPolicyRow[]): DriftPolicyRow {
+  return [...rows].sort((a, b) => {
+    const ae = a.effective_date ?? '';
+    const be = b.effective_date ?? '';
+    if (ae !== be) return ae < be ? 1 : -1;
+    const aex = a.expiration_date ?? '';
+    const bex = b.expiration_date ?? '';
+    if (aex !== bex) return aex < bex ? 1 : -1;
+    return b.id - a.id;
+  })[0]!;
+}
+
+/**
+ * Evaluate the warehouse-vs-live-workbook insurance cross-check.
+ *
+ * @param db       Open WarehouseDb (caller owns lifecycle).
+ * @param snapshot PortfolioSnapshot — snapshot.insurance[] is the LIVE workbook read
+ *                 (Source A for this comparison); snapshot.meta.asOf is the day-count fallback.
+ * @param referenceDateIso Optional day-count reference (YYYY-MM-DD), mirroring
+ *                 insuranceConditions above. Defaults to snapshot.meta.asOf.
+ * @returns        Insight[] sorted by id (lexicographic).
+ */
+export function insuranceWarehouseDriftConditions(
+  db: WarehouseDb,
+  snapshot: PortfolioSnapshot,
+  referenceDateIso?: string,
+): Insight[] {
+  const asOf = referenceDateIso ?? snapshot.meta.asOf;
+
+  const rows = db
+    .prepare(
+      'SELECT id, property_id, expiration_date, effective_date FROM property_insurance_policies',
+    )
+    .all() as DriftPolicyRow[];
+
+  const rowsByPropertyId = new Map<string, DriftPolicyRow[]>();
+  for (const row of rows) {
+    const list = rowsByPropertyId.get(row.property_id);
+    if (list) list.push(row);
+    else rowsByPropertyId.set(row.property_id, [row]);
+  }
+
+  // `?? []` guards a snapshot missing the key entirely (fresh worktree / mirror), matching
+  // buildOwnerResolver above — a throw here would silently drop this condition inside run.ts's
+  // catch-all.
+  const liveById = new Map((snapshot.insurance ?? []).map((p) => [p.id, p]));
+
+  const out: Insight[] = [];
+
+  for (const [propertyId, candidateRows] of rowsByPropertyId) {
+    const live = liveById.get(propertyId);
+    if (!live) continue; // no matching live-workbook row on file — not a drift, just not joinable
+
+    const warehouseRow = pickCurrentRow(candidateRows);
+    const warehouseExpiry = warehouseRow.expiration_date;
+    const liveExpiry = live.expires;
+
+    if (!warehouseExpiry || !liveExpiry) continue; // nothing to compare on one side
+
+    const coverage = live.coverage ? ` · ${live.coverage}` : '';
+
+    if (warehouseExpiry !== liveExpiry) {
+      out.push({
+        id: `insurance-warehouse-drift-${propertyId}`,
+        severity: 'warning',
+        category: 'data',
+        title: `Insurance date mismatch — warehouse vs workbook — ${live.property}${coverage}`,
+        detail: `Warehouse expiration ${warehouseExpiry} vs live workbook expiration ${liveExpiry} for the same policy. One source is stale relative to the other — the warehouse is a periodic batch snapshot and can lag a workbook correction, but the workbook can also be the one that changed. Re-ingest to confirm which is current.`,
+        entityType: 'insurance',
+        entityId: propertyId,
+        action: { label: 'Review policy', kind: 'review' },
+        impactAnnualUsd: null,
+        spine: 'B',
+        provenance: 'derived',
+      });
+      continue; // date drift already explains any verdict difference on this row
+    }
+
+    // Dates agree — check whether the two sides compute the SAME lapsed verdict from it.
+    const warehouseLapsed = warehouseExpiry < asOf;
+    const liveLapsed = live.status === 'Expired' || live.status === 'Cancelled';
+
+    if (warehouseLapsed !== liveLapsed) {
+      out.push({
+        id: `insurance-warehouse-drift-logic-${propertyId}`,
+        severity: 'warning',
+        category: 'data',
+        title: `Insurance lapse verdict disagreement — ${live.property}${coverage}`,
+        detail: `Both sources agree on expiration ${warehouseExpiry}, but the warehouse date-check reads ${warehouseLapsed ? 'LAPSED' : 'current'} while the workbook Status column reads "${live.status}". Same input, different verdict — investigate before trusting either.`,
+        entityType: 'insurance',
+        entityId: propertyId,
+        action: { label: 'Review policy', kind: 'review' },
+        impactAnnualUsd: null,
+        spine: 'B',
+        provenance: 'derived',
+      });
+    }
+  }
+
+  out.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+
+  return out;
+}

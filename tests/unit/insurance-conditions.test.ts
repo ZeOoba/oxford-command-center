@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
-import { insuranceConditions } from '../../server/warehouse/insurance-conditions';
+import { insuranceConditions, insuranceWarehouseDriftConditions } from '../../server/warehouse/insurance-conditions';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -408,5 +408,255 @@ describe('insuranceConditions — policy-slug subject labelling', () => {
     insertPolicy(db, { propertyId: 'ins-55newplant-pckg', expirationDate: addDays(AS_OF, 5), premiumAnnual: 1 });
     expect(() => insuranceConditions(db, noIns, AS_OF)).not.toThrow();
     expect(insuranceConditions(db, noIns, AS_OF).filter((i) => i.id.startsWith('ins-expiry-'))).toHaveLength(1);
+  });
+});
+
+// ── insuranceWarehouseDriftConditions — warehouse vs live-workbook cross-check ─────────────
+// Cross-checks property_insurance_policies (the warehouse's periodic ingest snapshot — Source A
+// / "warehouse rows") against the live PortfolioSnapshot.insurance[] read straight off the
+// workbook's Insurance Renewals tab (Source B / "workbook"). The two are joined on `property_id`
+// / `insurance[].id`, both of which are `slug(RowID)` (server/workbook/parse.ts:827,
+// server/warehouse/insurance.ts:46) — the same key, so a direct equality join is correct, unlike
+// the property-name join that fails elsewhere in this file.
+//
+//   INGEST DRIFT   — the two sides carry a DIFFERENT `expires`/`expiration_date` for the same
+//                    RowID. This is the expected, legitimate shape of the warehouse being a
+//                    periodic batch snapshot (Gabriel's 2026-08-15 finding: FVC and 3883
+//                    Livingston drifted this way after a 2026-08-13 hand-correction to the
+//                    workbook that the warehouse hadn't re-ingested yet). The insight states
+//                    BOTH dates plainly and does NOT assert which side is stale — an earlier
+//                    warehouse date is consistent with the warehouse lagging a workbook
+//                    correction, but a workbook correction that pulls a date EARLIER (as in the
+//                    FVC case) would leave the warehouse holding the LATER of the two, so "earlier
+//                    date = stale" is not a safe inference in general.
+//
+//   LOGIC DISAGREEMENT — the two sides agree on the expiration DATE but compute a different
+//                    lapsed/expired VERDICT from it: the warehouse side is date-based
+//                    (expiration_date < asOf), the workbook side is its own live Status column
+//                    (Expired/Cancelled, driven by a `=TODAY()` formula — column K). A boundary
+//                    case (policy expiring exactly on asOf) is the natural place these two
+//                    verdict computations can disagree even from identical input.
+//
+// Both conditions are severity 'warning' / category 'data' (not 'insurance'): this is a
+// data-reconciliation finding about the two SYSTEMS disagreeing, not a claim that a property is
+// actually uncovered — that claim already belongs to insurance-expiry-soon / insurance-gap above
+// and to src/analytics/conditions.ts's ins-lapsed-* conditions. Keeping it 'warning' also keeps
+// it out of the immediate per-critical alert email (server/brief/run.ts's criticalIds filter) —
+// it still rides the existing brief digest / Notion Ops Hub path via the shared `insights` array,
+// per Gabriel's instruction not to build a new notification channel.
+describe('insuranceWarehouseDriftConditions', () => {
+  let db: WarehouseDb;
+  let dbDir: string;
+
+  beforeEach(() => { const t = tmpDb(); db = t.db; dbDir = t.dir; });
+  afterEach(() => { db.close(); rmSync(dbDir, { recursive: true, force: true }); });
+
+  /** Minimal live-workbook insurance row, keyed the same way as the warehouse's property_id. */
+  function liveRow(o: {
+    id: string;
+    property?: string;
+    coverage?: string | null;
+    expires?: string | null;
+    status?: string;
+  }) {
+    return {
+      id: o.id,
+      property: o.property ?? `Property for ${o.id}`,
+      entity: null,
+      coverage: o.coverage ?? 'Package',
+      effective: null,
+      expires: o.expires ?? null,
+      policyNo: null,
+      carrier: 'Test Carrier',
+      premium: 1000,
+      daysToExpiry: null,
+      status: o.status ?? 'Current',
+      notes: null,
+      flags: [],
+      tiv: null,
+      deductible: null,
+      coverageLimit: null,
+    };
+  }
+
+  function snapWithInsurance(propertyIds: string[], insurance: ReturnType<typeof liveRow>[]): PortfolioSnapshot {
+    const base = makeSnap(propertyIds) as unknown as Record<string, unknown>;
+    return { ...base, insurance } as unknown as PortfolioSnapshot;
+  }
+
+  // ── (a) INGEST DRIFT — dates differ ─────────────────────────────────────
+
+  it('(a) flags INGEST DRIFT when warehouse and live workbook expiration dates differ', () => {
+    // Mirrors the confirmed 2026-08-15 finding: workbook hand-corrected, warehouse not yet
+    // re-ingested — the two sides disagree on the same policy's expiration date.
+    insertPolicy(db, { propertyId: 'ins-fvc-pckg', expirationDate: addDays(AS_OF, 10), premiumAnnual: 5000 });
+    const snap = snapWithInsurance([], [
+      liveRow({ id: 'ins-fvc-pckg', property: 'FVC', coverage: 'Package', expires: addDays(AS_OF, -20), status: 'Expired' }),
+    ]);
+
+    const out = insuranceWarehouseDriftConditions(db, snap, AS_OF);
+
+    expect(out).toHaveLength(1);
+    const ins = out[0]!;
+    expect(ins.id).toBe('insurance-warehouse-drift-ins-fvc-pckg');
+    expect(ins.severity).toBe('warning');
+    expect(ins.category).toBe('data');
+    expect(ins.entityType).toBe('insurance');
+    expect(ins.entityId).toBe('ins-fvc-pckg');
+    // Both dates must be stated plainly, not just one.
+    expect(ins.detail).toContain(addDays(AS_OF, 10));
+    expect(ins.detail).toContain(addDays(AS_OF, -20));
+    // Must NOT assert which side is stale.
+    expect(ins.detail.toLowerCase()).not.toMatch(/warehouse is stale|workbook is stale|warehouse is wrong|workbook is wrong/);
+    expect(ins.spine).toBe('B');
+    expect(ins.provenance).toBe('derived');
+  });
+
+  it('(a) INGEST DRIFT fires regardless of which side has the later date', () => {
+    // The reverse direction of the fixture above: warehouse holds the LATER date this time
+    // (the workbook correction pulled the live date EARLIER, as in the real FVC case) — the
+    // insight must still fire and still avoid asserting a stale side.
+    insertPolicy(db, { propertyId: 'ins-livingston-pckg', expirationDate: addDays(AS_OF, 30), premiumAnnual: 4000 });
+    const snap = snapWithInsurance([], [
+      liveRow({ id: 'ins-livingston-pckg', property: '3883 Livingston', expires: addDays(AS_OF, -5), status: 'Expired' }),
+    ]);
+
+    const out = insuranceWarehouseDriftConditions(db, snap, AS_OF);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.id).toBe('insurance-warehouse-drift-ins-livingston-pckg');
+  });
+
+  it('(a) does NOT also fire LOGIC DISAGREEMENT for a row already flagged as INGEST DRIFT', () => {
+    // Date drift is the root-cause explanation for any verdict difference on the same row —
+    // firing both would be redundant noise about the same underlying fact.
+    insertPolicy(db, { propertyId: 'ins-dual', expirationDate: addDays(AS_OF, -10), premiumAnnual: 1000 });
+    const snap = snapWithInsurance([], [
+      liveRow({ id: 'ins-dual', expires: addDays(AS_OF, 10), status: 'Current' }),
+    ]);
+
+    const out = insuranceWarehouseDriftConditions(db, snap, AS_OF);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.id).toBe('insurance-warehouse-drift-ins-dual');
+  });
+
+  // ── (b) LOGIC DISAGREEMENT — same date, different verdict ────────────────
+
+  it('(b) flags LOGIC DISAGREEMENT when dates match but computed lapse verdicts differ', () => {
+    // Boundary case: the policy expires exactly ON asOf. The warehouse's date-based check
+    // (expiration_date < asOf) reads "not yet lapsed" for day 0, while the workbook's own
+    // Status column (its live =TODAY()-driven formula) already reads "Expired" for the same day.
+    insertPolicy(db, { propertyId: 'ins-boundary', expirationDate: AS_OF, premiumAnnual: 2000 });
+    const snap = snapWithInsurance([], [
+      liveRow({ id: 'ins-boundary', property: 'Boundary Property', expires: AS_OF, status: 'Expired' }),
+    ]);
+
+    const out = insuranceWarehouseDriftConditions(db, snap, AS_OF);
+
+    expect(out).toHaveLength(1);
+    const ins = out[0]!;
+    expect(ins.id).toBe('insurance-warehouse-drift-logic-ins-boundary');
+    expect(ins.severity).toBe('warning');
+    expect(ins.category).toBe('data');
+    expect(ins.detail).toContain(AS_OF);
+    expect(ins.spine).toBe('B');
+    expect(ins.provenance).toBe('derived');
+  });
+
+  it('(b) does NOT fire when dates match and both sides agree the policy is current', () => {
+    insertPolicy(db, { propertyId: 'ins-agree-current', expirationDate: addDays(AS_OF, 90), premiumAnnual: 3000 });
+    const snap = snapWithInsurance([], [
+      liveRow({ id: 'ins-agree-current', expires: addDays(AS_OF, 90), status: 'Current' }),
+    ]);
+
+    expect(insuranceWarehouseDriftConditions(db, snap, AS_OF)).toHaveLength(0);
+  });
+
+  it('(b) does NOT fire when dates match and both sides agree the policy has lapsed', () => {
+    insertPolicy(db, { propertyId: 'ins-agree-lapsed', expirationDate: addDays(AS_OF, -30), premiumAnnual: 3000 });
+    const snap = snapWithInsurance([], [
+      liveRow({ id: 'ins-agree-lapsed', expires: addDays(AS_OF, -30), status: 'Cancelled' }),
+    ]);
+
+    expect(insuranceWarehouseDriftConditions(db, snap, AS_OF)).toHaveLength(0);
+  });
+
+  // ── (c) no matching row on one side → skip silently, never throw ─────────
+
+  it('(c) skips a warehouse row with no matching live-workbook insurance id', () => {
+    insertPolicy(db, { propertyId: 'ins-warehouse-only', expirationDate: addDays(AS_OF, 10), premiumAnnual: 1000 });
+    const snap = snapWithInsurance([], []); // no live insurance rows at all
+
+    expect(insuranceWarehouseDriftConditions(db, snap, AS_OF)).toHaveLength(0);
+  });
+
+  it('(c) skips a live-workbook row with no matching warehouse property_id', () => {
+    const snap = snapWithInsurance([], [
+      liveRow({ id: 'ins-live-only', expires: addDays(AS_OF, 10), status: 'Current' }),
+    ]);
+
+    expect(insuranceWarehouseDriftConditions(db, snap, AS_OF)).toHaveLength(0);
+  });
+
+  it('(c) never throws on a snapshot with no insurance array (mirror / fresh worktree)', () => {
+    const base = makeSnap([]) as unknown as Record<string, unknown>;
+    const noIns = { ...base, insurance: undefined } as unknown as PortfolioSnapshot;
+    insertPolicy(db, { propertyId: 'ins-whatever', expirationDate: addDays(AS_OF, 10), premiumAnnual: 1000 });
+    expect(() => insuranceWarehouseDriftConditions(db, noIns, AS_OF)).not.toThrow();
+    expect(insuranceWarehouseDriftConditions(db, noIns, AS_OF)).toEqual([]);
+  });
+
+  it('(c) skips a row where either side has no expiration date on file', () => {
+    insertPolicy(db, { propertyId: 'ins-no-date', expirationDate: null, premiumAnnual: 1000 });
+    const snap = snapWithInsurance([], [
+      liveRow({ id: 'ins-no-date', expires: null, status: 'Unknown' }),
+    ]);
+
+    expect(insuranceWarehouseDriftConditions(db, snap, AS_OF)).toHaveLength(0);
+  });
+
+  // ── (d) multiple warehouse rows for one property_id → compare against the current term ──
+
+  it('(d) compares against the warehouse row with the latest effective_date when several exist', () => {
+    // property_insurance_policies allows multiple rows per property_id (UNIQUE spans
+    // policy_number + effective_date too) — e.g. a prior term's row left in place alongside
+    // the current term's. The comparison must use the CURRENT term, not an arbitrary row.
+    db.prepare(`
+      INSERT INTO property_insurance_policies
+        (property_id, insurer, policy_number, effective_date, expiration_date,
+         premium_annual, coverage_tiv, policy_type, source, source_date, ingested_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('ins-multi', 'Old Insurer', 'POL-OLD', addDays(AS_OF, -400), addDays(AS_OF, -35), 1000, null, 'general-liability', 'test', AS_OF, 'test');
+    db.prepare(`
+      INSERT INTO property_insurance_policies
+        (property_id, insurer, policy_number, effective_date, expiration_date,
+         premium_annual, coverage_tiv, policy_type, source, source_date, ingested_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('ins-multi', 'Current Insurer', 'POL-NEW', addDays(AS_OF, -20), addDays(AS_OF, 40), 6000, null, 'general-liability', 'test', AS_OF, 'test');
+
+    // Live workbook agrees with the CURRENT term (40d out), not the old row (-35d).
+    const snap = snapWithInsurance([], [
+      liveRow({ id: 'ins-multi', expires: addDays(AS_OF, 40), status: 'Current' }),
+    ]);
+
+    expect(insuranceWarehouseDriftConditions(db, snap, AS_OF)).toHaveLength(0);
+  });
+
+  // ── (e) determinism ────────────────────────────────────────────────────
+
+  it('(e) is deterministic: two calls on the same db+snapshot produce deeply-equal output', () => {
+    insertPolicy(db, { propertyId: 'ins-a', expirationDate: addDays(AS_OF, 10), premiumAnnual: 1000 });
+    insertPolicy(db, { propertyId: 'ins-b', expirationDate: AS_OF, premiumAnnual: 2000 });
+    const snap = snapWithInsurance([], [
+      liveRow({ id: 'ins-a', expires: addDays(AS_OF, -10), status: 'Expired' }), // drift
+      liveRow({ id: 'ins-b', expires: AS_OF, status: 'Expired' }), // logic disagreement
+    ]);
+
+    const first = insuranceWarehouseDriftConditions(db, snap, AS_OF);
+    const second = insuranceWarehouseDriftConditions(db, snap, AS_OF);
+    expect(first).toEqual(second);
+    expect(first.map((i) => i.id)).toEqual([
+      'insurance-warehouse-drift-ins-a',
+      'insurance-warehouse-drift-logic-ins-b',
+    ]);
   });
 });
