@@ -147,7 +147,7 @@ Silent drops are prohibited by construction.
 - **Conservation identity**, asserted every run: `inputRows == matched + unmatched + excluded`, where every excluded row (totals, vacancy blocks) is individually listed. A run that cannot assert this is a **failed run**, not a report with a gap.
 - Unmatched PM rows and unmatched ORA-side units each get a mandatory report section, **ranked by dollar value**. A large unmatched balance is itself a 🔴 finding — that is how the Suburan case should have surfaced.
 - An unmatched row persisting ≥ 2 runs escalates one severity level.
-- Resolution is by human addition to the alias ledger. Additions are internal writes and autonomous-eligible once the workflow is ratified; until then they are proposed in the report.
+- **Alias-ledger write authority** (ruled 2026-08-16): R1 and R2 resolutions — deterministic ledger hits and exact-normalized (property, unit) matches — commit to the ledger autonomously. **R3 and R4 always propose and wait**, because fuzzy-unit and fuzzy-name matches are judgment calls and a wrong permanent mapping is expensive to detect later. Every autonomous addition is listed in the run's report.
 
 ### 4.4 Detectors — `server/pm/detectors/`
 
@@ -183,7 +183,9 @@ Each carries its citation so a later session cannot re-derive the wrong inferenc
 The threat model: the 2026-08-01 vacancy-convention change moved reported occupancy 98.6% → 94.9% **by definition, not deterioration**. A naive diff screams; a screaming engine trains its reader to ignore it.
 
 1. **Convention ledger** — `server/pm/conventions.json`, versioned. Per derived metric: definition and effective date. Seeded with the 08-01 vacancy epoch and the three coexisting portfolio-SF denominators (513,761 / 513,158 / 512,258). Diffs compare **within an epoch only**; across a boundary the engine reports "series break — definitional" once, with both bases, then goes quiet.
-2. **Change-of-definition tripwire** — a run in which a single field changes on more than 10 lease rows (≈7% of 138), or in which a portfolio aggregate moves more than 2%, triggers classification *before* any alarm: many-small-changes (definitional — one 🟡 "convention change?" asking Gabriel to ratify a new epoch) vs one-big-change (a real event). Both thresholds live in `conventions.json` as `tripwire.rowCount` / `tripwire.aggregatePct` and are tunable without a code change. Generalizes the bulk-field guard that already caught `Months to Expiry` in `tenant_db_snapshot_diff.py`.
+2. **Change-of-definition tripwire** — when a run's change volume exceeds threshold, classification runs *before* any alarm: many-small-changes (definitional — one 🟡 "convention change?" asking Gabriel to ratify a new epoch) vs one-big-change (a real event). Generalizes the bulk-field guard that already caught `Months to Expiry` in `tenant_db_snapshot_diff.py`.
+
+   **Thresholds are calibrated from data, not guessed** (ruled 2026-08-16). Replay the snapshot archive — already required as the §6 fixture corpus — and derive `tripwire.rowCount` and `tripwire.aggregatePct` from what real runs actually produced, with the 08-01 vacancy event as the known positive that must trip classification and the ordinary weekly runs as the negatives that must not. Both values live in `conventions.json` and stay tunable without a code change. Calibration is a Phase 1 deliverable and its inputs are recorded in the run manifest, so the thresholds can be re-derived rather than inherited as magic numbers.
 3. **Exception state machine** — keyed on business key + class, carrying `NEW | PERSISTING | RESOLVED`. PERSISTING items do not re-headline; they appear in a monthly digest. This is what breaks the cry-wolf cycle.
 4. **Time-derived field exclusion** — never diff calendar-recomputed fields (the `Days to Expiration` class: 267-of-298 false diffs). Every detector's test suite includes an advance-the-clock case; a same-day rerun is not a valid test.
 
@@ -222,12 +224,14 @@ For the four self-managed properties there is no PM feed; counterparty truth bec
 - **Lease-vs-cash** — expected rent from lease terms vs actual receipts. Escalation enforcement is fully checkable here: both the lease and the deposit stream are ORA-visible.
 - **Obligation calendar** — escalation effective dates, option/notice windows, COI renewals, and tenant-paid obligations (taxes/insurance where the lease shifts them), each with a **proof-of-performance** expectation. "Tenant handles it" without evidence is an *inferred* zero-exposure and reports as UNVERIFIED, never clean.
 
-**Known blocker:** the QuickBooks feed cannot support this as it stands — 8 of 14 properties, 2 unmapped to a `propertyId`, single `month: "2024"` bucket. Monthly, current-year data is a prerequisite. Phase 3 does not start until that is resolved.
+**Prerequisite (ruled 2026-08-16):** the QuickBooks feed cannot support this as it stands — 8 of 14 properties, 2 unmapped to a `propertyId`, single `month: "2024"` bucket. The fix is a refreshed export via the existing SharePoint CSV path: **monthly P&L by property for 2025–2026**, plus `propertyId` mappings for the two currently-unmapped rows (`1851 S Club — Solar`, `FVC — Fairground Village Center / Sepich Portfolio`). This is an internal ask with no external dependency. Phase 3 does not start until it lands; Phases 0–2 are unaffected.
 
 ### Phase 4 — Scheduling and absorption
 Register via supervised `create_scheduled_task` only — never registry JSON splicing. Natural slot is weekly, after the Monday `ora-master-workbook-ingest` refresh; PM exports are at best biweekly, so daily would mostly re-report.
 
 Rewrite `portfolio-anomaly-scout` to dispatch this engine's report (its description finally becomes true) and correct its ~600K SF figure. Wire the exception report into `ora-am-brief` as a *cited source*, respecting its no-independent-re-derivation doctrine. Point `_pipeline/README.md` at its replacement.
+
+**Retire the `ora-pm` critical-dates feed here** (ruled 2026-08-16) — not earlier. Through Phases 1–3 the feed keeps running and is consumed as one more *reconciled input*, so its known 5-of-10 error rate becomes visible in the exception report rather than silently inherited by downstream consumers. It retires only once this engine demonstrably supersedes it, which avoids opening a coverage window between removal and replacement. Retirement follows the CC/MCP order: `delete_scheduled_task` first, then archive.
 
 ---
 
@@ -261,7 +265,8 @@ Replayed against a fixture corpus built from documented incidents, the engine mu
 - CAM under-recovery detection — deferred until recovery-type and pro-rata-share fields exist (§4.4).
 - Any write to the Master Workbook.
 - Any write to non-Claude Oxford OneDrive business folders, including `_pipeline`, beyond a README pointer at Phase 4.
-- Retiring the `ora-pm` critical-dates feed — that ruling is Gabriel's and still open.
+- Retiring the `ora-pm` critical-dates feed before Phase 4 — it is consumed as a reconciled input until then (§5, Phase 4).
+- Phase 3 lease-vs-cash until the refreshed monthly QuickBooks export lands (§5, Phase 3).
 
 ---
 
@@ -278,12 +283,26 @@ Phase 0 re-derives the base from the Master Workbook: portfolio annualized rent,
 
 ---
 
-## 10. Open items carried into implementation
+## 10. Decision record — 2026-08-16
 
-| # | Item | Blocks |
+All eight open decisions were put to Gabriel and ruled the same day. Recorded here so implementation does not relitigate them.
+
+| # | Decision | Ruling | Spec §|
+|---|---|---|---|
+| 1 | Value estimate treatment | **Withdraw pending Phase 0** — no figure carried forward; re-derive from the workbook | §9 |
+| 2 | AR parser language | **Port Python → TypeScript** — one runtime, one test harness, one CI gate | §4.1 |
+| 3 | Phase 1 acceptance gate | **False-positive criteria block** — (d) and (e) can fail the phase alone | §6 |
+| 4 | Tripwire thresholds | **Calibrate from snapshot history**, not invented defaults | §4.6 |
+| 5 | Alias-ledger write authority | **R1/R2 autonomous; R3/R4 always propose** | §4.3 |
+| 6 | `ora-pm` critical-dates feed | **Reconcile as input, retire at Phase 4** — never before its replacement is proven | §5 |
+| 7 | CAM under-recovery | **Leave deferred**; `cam.ts` renders COVERAGE GAP every run | §4.4, §8 |
+| 8 | QuickBooks Phase 3 blocker | **Request refreshed monthly 2025–2026 export** + `propertyId` mappings for the 2 unmapped rows | §5 |
+
+## 11. Remaining unknowns
+
+Discovery tasks, not decisions — resolved by looking, during Phase 0.
+
+| # | Unknown | Blocks |
 |---|---|---|
-| 1 | CAM/OpEx source of record per property — PM statements, QB Desktop, or workbook Property NOI tab | `cam.ts` |
-| 2 | QuickBooks monthly + current-year export path | Phase 3 |
-| 3 | `ora-pm` critical-dates feed: keep as a reconciled input, or retire as superseded | Phase 4 wiring |
-| 4 | Whether alias-ledger additions for R1-corroborated exact matches may be committed autonomously | §4.3 automation |
-| 5 | 3875-3883 E Livingston platform; 9620 State Route 350 current manager | Phase 0 completion |
+| 1 | 3875-3883 E Livingston Ave — which PM platform | Phase 0 completion |
+| 2 | 9620 State Route 350 — current manager (AppFolio per `sync_log.json`; a 2025 Venture Property Management report sits in its deal folder) | Phase 0 completion |
