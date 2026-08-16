@@ -407,6 +407,39 @@ Assert-Equal 'ESCALATE' (Test-MirrorRepoAhead -AheadCount 5 -OldestAheadCommitAt
 # exactly the "inferred null" that reads as a clean result while meaning "couldn't look".
 Assert-Equal 'ESCALATE' (Test-MirrorRepoAhead -AheadCount 1 -Now $aheadNow).severity '4j: ahead with an UNKNOWN commit date escalates, never FLAG'
 
+# --- 4-premise-a..d: the PREMISE went stale on 2026-08-16, the SEVERITY did not -------------------
+#
+# This check was born (2026-08-03) of a hazard with TWO halves: unpushed commits are (1) what
+# the mirror was actually deploying, and (2) unreviewable + destroyed by a reset. PR #279 made
+# the deploy build origin/main in an isolated build root, which killed half (1) outright -- the
+# mirror can no longer serve a local commit, by construction.
+#
+# Observed live at 16:22 on 2026-08-16: with local main 2 ahead, the check told an operator
+# "The mirror is deploying code that is not on the remote" while the deploy it was describing
+# had just built and shipped origin/main from the build root. A monitoring check asserting
+# something false about the system it monitors is worse than no check -- it spends the reader's
+# trust and misdirects the next incident.
+#
+# Half (2) is untouched and still worth paging on, and the AGE tiering was always measuring
+# work-loss risk (how long a commit is stranded), never mirror content. So the severity
+# behaviour above is deliberately unchanged and 4a-4j stand as its regression guard; only the
+# claim is corrected.
+$staleReason = (Test-MirrorRepoAhead -AheadCount 2 -OldestAheadCommitAt $stale -Now $aheadNow).reason
+$freshReason = (Test-MirrorRepoAhead -AheadCount 1 -OldestAheadCommitAt $fresh -Now $aheadNow).reason
+$unknownReason = (Test-MirrorRepoAhead -AheadCount 1 -Now $aheadNow).reason
+
+Assert-True ($staleReason -notmatch 'mirror is deploying') `
+  '4-premise-a: reason must NOT claim the mirror is deploying unpushed code (false since PR #279)'
+Assert-True ($freshReason -notmatch 'mirror is deploying') `
+  '4-premise-b: the FLAG-tier reason carries the same corrected premise'
+Assert-True ($unknownReason -notmatch 'mirror is deploying') `
+  '4-premise-c: the unknown-date reason carries it too -- all three exit paths, not just the one'
+
+# The surviving hazard must still be stated, or the correction would gut the warning instead of
+# fixing it: the operator still needs to know WHY unpushed commits matter.
+Assert-True ($staleReason -match 'reset|lost|unreviewable') `
+  '4-premise-d: reason still states the real surviving hazard (work loss / unreviewable)'
+
 # The threshold and the measured age are exposed so the consumer reports them instead of
 # hardcoding "24" in prose -- the hardcoded-baseline rot this task already hit twice.
 $r = Test-MirrorRepoAhead -AheadCount 2 -OldestAheadCommitAt $stale -Now $aheadNow
