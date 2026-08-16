@@ -51,8 +51,11 @@ describe('install-git-hooks WRAPPER template — live shell behavior', () => {
     try {
       execSync(`sh "${hookPath}"`, { cwd: dir, stdio: 'pipe' });
       return 0;
-    } catch (e: any) {
-      return e.status ?? 1;
+    } catch (e) {
+      // execSync throws an Error carrying the child's exit code on `status` (null when the child
+      // was killed by a signal). Narrowed rather than `any` to satisfy no-explicit-any; the `?? 1`
+      // keeps the original behaviour for both the null and absent cases.
+      return (e as { status?: number | null }).status ?? 1;
     }
   }
 
