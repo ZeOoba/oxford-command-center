@@ -447,6 +447,22 @@ function Test-MirrorRepoAhead {
     days -- present on no remote branch, so the mirror was serving code nobody could review on
     GitHub, and a hard reset of local main would have destroyed it. Behind and ahead are
     different hazards and the check needs both.
+
+    PREMISE CORRECTED (2026-08-16, PR #279). That original hazard had two halves: unpushed
+    commits were (1) what the mirror actually deployed, and (2) unreviewable on GitHub and
+    destroyed by a reset. #279 moved the deploy onto an isolated build root pinned to
+    origin/main, which eliminates half (1) BY CONSTRUCTION -- the mirror can no longer serve a
+    local commit no matter how far ahead this checkout drifts.
+
+    Observed live at 16:22 that day: with local main 2 ahead, this check told an operator "The
+    mirror is deploying code that is not on the remote" about a deploy that had just built and
+    shipped origin/main from the build root. A monitoring check that asserts something false
+    about the system it monitors is worse than no check -- it spends the reader's trust and
+    misdirects the next incident.
+
+    Half (2) is untouched and still worth paging on, so the check STAYS and its severity
+    behaviour is deliberately unchanged: the age tiering below was always measuring work-loss
+    risk (how long a commit sits stranded), never mirror content. Only the claim is corrected.
   #>
   param(
     [Parameter(Mandatory)][int]$AheadCount,
@@ -470,7 +486,11 @@ function Test-MirrorRepoAhead {
 
   # Two tiers, NOT one. FLAG = record it in the Notion row and stay silent; ESCALATE = alarm
   # email. See $script:MirrorAheadStaleHours for why COUNT must not decide this.
-  $base = "Local main is $AheadCount commit(s) AHEAD of origin/main. The mirror is deploying code that is not on the remote -- unreviewable on GitHub, and lost if local main is ever reset. Push or open a PR."
+  # Wording is load-bearing: it must state the hazard that SURVIVES #279 (work loss /
+  # unreviewable) without reasserting the one that does not (mirror content). The parenthetical
+  # is there so an operator reading this mid-incident does not go hunting for a mirror problem
+  # that cannot exist -- the misdirection this correction is fixing.
+  $base = "Local main is $AheadCount commit(s) AHEAD of origin/main -- unreviewable on GitHub, and lost if local main is ever reset. (Since PR #279 the mirror builds origin/main in an isolated build root, so this does NOT affect what the mirror serves -- it is a work-loss hazard, not a mirror-content one.) Push or open a PR."
 
   # Can't-verify is not healthy. Without a commit date the staleness gate cannot run, and
   # defaulting it to FLAG would report a clean-looking hygiene note that actually means
