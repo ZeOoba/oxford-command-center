@@ -69,6 +69,10 @@ Write-Host "[$stamp] Mirror deploy starting in $repo"
 # native-command-timeout.smoke-test.ps1) -- see that file for why an unbounded external call here
 # turns a transient upstream stall into a completely unalerted outage.
 . (Join-Path $PSScriptRoot 'lib\native-timeout.ps1')
+# Get-DeployBuildRoot / Assert-BuildRootIsolated / Sync-DeployBuildRoot / Import-DotEnvIntoEnvironment
+# live in lib/deploy-buildroot.ps1 (shared with deploy-buildroot.smoke-test.ps1). See that file for
+# the 2026-08-16 incident that motivated building outside the shared checkout.
+. (Join-Path $PSScriptRoot 'lib\deploy-buildroot.ps1')
 # Write-DeployBeacon* lives in lib/deploy-beacon.ps1 (shared with
 # deploy-beacon.smoke-test.ps1). See that file for the full rationale; in short, the
 # try/catch below can only report failures that THROW, and 0xC000013A (process killed --
@@ -196,8 +200,25 @@ try {
   # `git pull` implicitly re-fetches over the network, which would re-expose this same
   # credential-failure risk a second time for no benefit. `git merge --ff-only` is purely local
   # (no network, no credentials) once the fetch above has succeeded.
-  git merge --ff-only origin/main
-  if ($LASTEXITCODE -ne 0) { throw "git pull --ff-only failed ($LASTEXITCODE) -- local main has diverged from origin/main or has conflicting uncommitted changes; resolve manually, then re-run this script" }
+  # 1b) Sync the ISOLATED BUILD ROOT to origin/main and build THERE, not in this checkout.
+  #
+  # Incident (2026-08-16): the canonical checkout is a multi-session development surface. Another
+  # session left an uncommitted `tests/unit/install-git-hooks.test.ts` here at 14:13; it failed
+  # `tsc --noEmit` (TS7016), `build:mirror` exited 2, and EVERY subsequent hourly run failed
+  # identically while the mirror kept serving the 13:00 bake. "Whatever is on disk" is not a safe
+  # build input for a production deploy.
+  #
+  # The 2026-07-09 fast-forward fixed the sibling half of this (stale code from origin) but could
+  # not fix this half -- and is now REMOVED deliberately. Fast-forwarding the shared checkout is
+  # both unnecessary (we no longer build from it) and undesirable: it made an unattended job
+  # mutate a tree that humans and other sessions are actively working in, and it re-coupled the
+  # deploy's success to that tree's cleanliness. The fetch above still runs, because the build
+  # root resolves origin/main from THIS repo's object store.
+  $buildRoot = Get-DeployBuildRoot -RepoRoot $repo
+  Assert-BuildRootIsolated -RepoRoot $repo -BuildRoot $buildRoot | Out-Null
+  $buildHeadSha = Sync-DeployBuildRoot -RepoRoot $repo -BuildRoot $buildRoot -Ref 'origin/main'
+  Install-DeployBuildRootDeps -BuildRoot $buildRoot | Out-Null
+  Write-Host "  Building from $buildRoot (origin/main @ $buildHeadSha), NOT from the shared checkout"
 
   # 2) Bake (confidential included -- target is Access-gated) + build.
   $env:MIRROR_INCLUDE_CONFIDENTIAL = '1'
@@ -215,9 +236,30 @@ try {
   # IPv6 is ever routed correctly (or the resolver stops returning AAAA), this line becomes a
   # no-op rather than a hazard, so it is safe to leave in place.
   $env:NODE_OPTIONS = '--dns-result-order=ipv4first'
+
+  # The build root is a CLEAN checkout, so the gitignored inputs the bake needs are not in it.
+  # Supply them from the canonical repo rather than duplicating them on disk:
+  #   .env  -- injected into this process's environment (inherited by the npm child). Precedence
+  #            matches server/load-env.ts, and load-env.ts anchors to its OWN file location, so the
+  #            build root's absent .env is a harmless no-op once these are real env vars.
+  #   WAREHOUSE_DB -- an ABSOLUTE path back to the canonical data dir. Without this it would
+  #            default to <cwd>/data/warehouse/finance.sqlite, i.e. a nonexistent file in the fresh
+  #            build root, and the Fat Mirror bake would silently have no warehouse to read.
+  $importedEnvCount = Import-DotEnvIntoEnvironment -Path (Join-Path $repo '.env')
+  Write-Host "  Imported $importedEnvCount var(s) from the canonical .env"
+  if (-not $env:WAREHOUSE_DB) { $env:WAREHOUSE_DB = Join-Path $repo 'data\warehouse\finance.sqlite' }
+
   try {
-    npm run build:mirror
-    if ($LASTEXITCODE -ne 0) { throw "build:mirror failed ($LASTEXITCODE)" }
+    # Build in the ISOLATED root. Note npm --prefix does NOT chdir the spawned script (confirmed
+    # 2026-07-09, see server/load-env.ts) -- Push-Location makes the build root the real cwd so
+    # every cwd-relative path inside the bake resolves there, not into the canonical checkout.
+    Push-Location $buildRoot
+    try {
+      npm run build:mirror
+      if ($LASTEXITCODE -ne 0) { throw "build:mirror failed ($LASTEXITCODE)" }
+    } finally {
+      Pop-Location
+    }
 
     # 3) Deploy the static bake to the gated Pages project.
     #    Incident (2026-07-29): this call ran unbounded and hung ~26 minutes, so the Windows Task
@@ -239,14 +281,23 @@ try {
     #    wrangler is now pinned in devDependencies; resolve its local bin and fall back to npx only
     #    if node_modules is missing, so a fresh checkout degrades to the old behavior rather than
     #    hard-failing.
-    $wranglerBin  = Join-Path $repo 'node_modules\.bin\wrangler.cmd'
+    #    The artifact now lives in the ISOLATED build root, so this path must be ABSOLUTE. It was
+    #    the relative 'dist', which resolved against $repo -- after the 2026-08-16 build-isolation
+    #    change that would publish the canonical checkout's stale dist (13:00 in the incident)
+    #    while reporting a successful deploy: the worst possible outcome, a silent wrong-artifact
+    #    publish to an external surface.
+    $distPath = Join-Path $buildRoot 'dist'
+    if (-not (Test-Path -LiteralPath (Join-Path $distPath 'index.html'))) {
+      throw "Build root produced no dist/index.html at $distPath -- refusing to deploy (a missing artifact must never fall back to another tree's dist)."
+    }
+    $wranglerBin  = Join-Path $buildRoot 'node_modules\.bin\wrangler.cmd'
     if (Test-Path -LiteralPath $wranglerBin) {
       $deployExe  = $wranglerBin
-      $deployArgs = @('pages', 'deploy', 'dist', "--project-name=$ProjectName", '--branch=main')
+      $deployArgs = @('pages', 'deploy', $distPath, "--project-name=$ProjectName", '--branch=main')
     } else {
       Write-Host "[deploy] local wrangler not found at $wranglerBin -- falling back to npx (run 'npm ci' to restore the pinned version)"
       $deployExe  = 'npx'
-      $deployArgs = @('wrangler', 'pages', 'deploy', 'dist', "--project-name=$ProjectName", '--branch=main')
+      $deployArgs = @('wrangler', 'pages', 'deploy', $distPath, "--project-name=$ProjectName", '--branch=main')
     }
     $deploy = Invoke-NativeCommandWithTimeout `
       -Executable $deployExe `
