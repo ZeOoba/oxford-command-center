@@ -1,9 +1,11 @@
 // scripts/install-git-hooks.mjs
 //
-// Idempotently install the pre-push confidentiality hook (audit finding H1). Resolves the real
-// hooks dir via `git rev-parse --git-path hooks` (works for worktrees, where .git is a file), writes
-// a tiny POSIX wrapper that invokes scripts/prepush-confidential-scan.mjs, and marks it executable.
-// Safe to run repeatedly — invoked from `npm run hooks:install` and from `prepare` on install.
+// Idempotently install the pre-push hooks: the confidentiality scanner (audit finding H1,
+// fail-closed/blocking) and the NOI cross-check reminder (OI-137/OI-162 fix #1, WARN-only/
+// non-blocking — see scripts/prepush-noi-crosscheck.mjs for why it must never block). Resolves
+// the real hooks dir via `git rev-parse --git-path hooks` (works for worktrees, where .git is a
+// file), writes a tiny POSIX wrapper chaining both checks, and marks it executable. Safe to run
+// repeatedly — invoked from `npm run hooks:install` and from `prepare` on install.
 //
 // Node built-ins only.
 import { existsSync, mkdirSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
@@ -14,11 +16,22 @@ function git(args) {
   return execFileSync('git', args, { encoding: 'utf8' }).trim();
 }
 
-const WRAPPER = `#!/bin/sh
-# Managed by scripts/install-git-hooks.mjs — pre-push confidentiality scanner (audit H1).
-# Fail-closed: a non-zero exit blocks the push.
+// Exported (not just a local const) so tests/unit/install-git-hooks.test.ts can assert on the
+// literal template — this is what tests/unit/prepush-noi-crosscheck.test.ts guards against
+// regressing back into a blocking 'exec' of the advisory-only stage.
+export const WRAPPER = `#!/bin/sh
+# Managed by scripts/install-git-hooks.mjs.
+# 1) pre-push confidentiality scanner (audit H1) — fail-closed: a non-zero exit blocks the push.
+# 2) NOI cross-check reminder (OI-137/OI-162 fix #1) — ADVISORY ONLY. Its exit status must never
+#    determine this hook's exit status — no 'exec', no bare invocation as the last statement.
+#    .git/hooks is the common dir shared by every worktree; a checkout that predates this file
+#    (or lacks it for any other reason) must still push cleanly, hence the -f guard and '|| true'.
 root="$(git rev-parse --show-toplevel)"
-exec node "$root/scripts/prepush-confidential-scan.mjs"
+node "$root/scripts/prepush-confidential-scan.mjs" || exit 1
+if [ -f "$root/scripts/prepush-noi-crosscheck.mjs" ]; then
+  node "$root/scripts/prepush-noi-crosscheck.mjs" || true
+fi
+exit 0
 `;
 
 function main() {
