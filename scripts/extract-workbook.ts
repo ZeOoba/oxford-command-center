@@ -5,6 +5,7 @@ import { loadEnvFile } from '../server/load-env';
 import { workbookPath, SNAPSHOT_PATH } from '../server/config';
 import { loadOverlay, applyOverlay, overlayPath } from '../server/overlay';
 import { computeDrift, evaluateAnomalyFloor, evaluateReconciliationGate, formatDriftReport, loadPrevious, requireLiveDealsSource, type DriftLeaseView } from './lease-snapshot-drift-check';
+import { resolveQuickbooks } from '../server/sources/quickbooks';
 
 loadEnvFile();
 
@@ -68,7 +69,16 @@ async function main() {
   // regeneration tools in sync going forward, since whichever one runs last against
   // data/snapshots/portfolio.json wins).
   const overlay = loadOverlay();
-  const enriched = applyOverlay(snapshot, overlay);
+  const merged = applyOverlay(snapshot, overlay);
+  // quickbooks is SERVER-ATTACHED (server/brain.ts calls loadQuickbooks() itself; parseWorkbook/
+  // applyOverlay never touch it), and the contract defaults it to null. Without this step this CLI
+  // writer would silently NULL OUT whatever the server path had previously written -- the
+  // 2026-08-17 incident (see resolveQuickbooks's doc comment in server/sources/quickbooks.ts).
+  // Attached here, before the reconciliation gate below, so that gate sees the same object shape
+  // server/brain.ts's checkSnapshot(withQb) does.
+  const { quickbooks, preservedFrom } = resolveQuickbooks(merged.properties, SNAPSHOT_PATH);
+  if (preservedFrom) console.log(`ℹ quickbooks: no fresh QUICKBOOKS_CSV parse — carried forward the previous snapshot's block (parsedAt ${quickbooks!.parsedAt}) instead of nulling it.`);
+  const enriched = { ...merged, quickbooks };
   const current: DriftLeaseView[] = enriched.leases;
 
   const drift = computeDrift(previous, current);

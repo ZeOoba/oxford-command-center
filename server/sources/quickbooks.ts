@@ -104,3 +104,51 @@ export function loadQuickbooks(properties: Property[], now: string = new Date().
     return null;
   }
 }
+
+export interface ResolvedQuickbooks {
+  quickbooks: QbActuals | null;
+  /** Non-null iff `quickbooks` came from carrying the previous snapshot forward rather than a
+   *  fresh CSV parse -- set to the snapshot path it was read from, for logging. */
+  preservedFrom: string | null;
+}
+
+/**
+ * 2026-08-17 fix: `quickbooks` is SERVER-ATTACHED (loadQuickbooks() was called only from
+ * server/brain.ts) while both CLI writers (scripts/extract-workbook.ts and
+ * scripts/lease-snapshot-drift-check.ts) build their output via applyOverlay(snapshot, overlay)
+ * alone, with no attach step at all. Because src/contracts/index.ts declares
+ * `quickbooks: QbActuals.nullable().default(null)`, that meant every committed CLI-driven refresh
+ * legitimately zod-defaulted the section to null and DELETED whatever the server path had
+ * written -- on 2026-08-17 that silently destroyed 8 populated per-property P&L rows (828 deleted
+ * lines in one commit), and the section-shrink guard in ora-cc-snapshot-refresh's SKILL.md could
+ * not see it: that guard only counts leases/deals/counterparties/properties/loans.
+ *
+ * This is the single point both CLI writers now call instead of leaving `quickbooks` unset (which
+ * zod would default to null): try a fresh parse first (CSV takes priority when it's actually
+ * readable -- fresher data should win), and if that comes back null AND the previous on-disk
+ * snapshot carries a populated, schema-valid quickbooks block, carry that block forward rather
+ * than destroying it. `parsedAt` is preserved as-is (not restamped to `now`) so the carried block
+ * self-documents its own staleness for the next reader -- never silently posing as fresh.
+ *
+ * A quickbooks block with an empty `properties` array is NOT preserved: an empty block is
+ * indistinguishable from "nothing to lose" and preserving a husk would just perpetuate a prior
+ * failed parse forever instead of surfacing it. Any read failure (missing file, corrupt JSON,
+ * schema mismatch) degrades to null exactly like loadQuickbooks()'s own catch-all -- this must
+ * never THROW and abort an unattended scheduled run over a stale/corrupt previous snapshot.
+ */
+export function resolveQuickbooks(properties: Property[], snapshotPath: string, now: string = new Date().toISOString()): ResolvedQuickbooks {
+  const fresh = loadQuickbooks(properties, now);
+  if (fresh) return { quickbooks: fresh, preservedFrom: null };
+
+  try {
+    if (!existsSync(snapshotPath)) return { quickbooks: null, preservedFrom: null };
+    const parsed: unknown = JSON.parse(readFileSync(snapshotPath, 'utf8'));
+    const candidate = (parsed as { quickbooks?: unknown } | null)?.quickbooks;
+    if (!candidate) return { quickbooks: null, preservedFrom: null };
+    const result = QbActuals.safeParse(candidate);
+    if (!result.success || result.data.properties.length === 0) return { quickbooks: null, preservedFrom: null };
+    return { quickbooks: result.data, preservedFrom: snapshotPath };
+  } catch {
+    return { quickbooks: null, preservedFrom: null };
+  }
+}

@@ -1,6 +1,12 @@
-import { describe, it, expect } from 'vitest';
+// @vitest-environment node
+// Node environment (not the jsdom default): resolveQuickbooks reads the previous snapshot off disk,
+// so this file imports node:fs. The pre-existing pure-function suites below are env-agnostic.
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, describe, it, expect } from 'vitest';
 import { QbActuals, NoiBudgetInput } from '../../src/contracts/quickbooks';
-import { parseQuickbooksCsv } from '../../server/sources/quickbooks';
+import { parseQuickbooksCsv, resolveQuickbooks } from '../../server/sources/quickbooks';
 import type { Property } from '../../src/contracts/index';
 
 describe('QuickBooks contract', () => {
@@ -68,5 +74,115 @@ describe('parseQuickbooksCsv', () => {
   it('returns null for empty/headerless content', () => {
     expect(parseQuickbooksCsv('', props, NOW)).toBeNull();
     expect(parseQuickbooksCsv('not,a,recognized,header', props, NOW)).toBeNull();
+  });
+});
+
+// resolveQuickbooks() closes the 2026-08-17 two-producer data-loss gap. `quickbooks` is a
+// SERVER-ATTACHED section: loadQuickbooks() was called only from server/brain.ts, while the two
+// CLI writers (scripts/extract-workbook.ts and scripts/lease-snapshot-drift-check.ts) wrote
+// applyOverlay(snapshot, overlay) with no attach at all. Because src/contracts/index.ts declares
+// `quickbooks: QbActuals.nullable().default(null)`, both writers legitimately emitted `null` and
+// every committed CLI refresh DELETED whatever the server path had written -- on 2026-08-17 that
+// was 8 per-property P&L rows (828 deleted lines), and the spec'd section-shrink guard could not
+// see it because it only counts leases/deals/counterparties/properties/loans.
+//
+// The floor this locks in: a CLI writer must never turn a populated quickbooks block into null.
+// Fresh parse wins when QUICKBOOKS_CSV is readable; otherwise the previous block is carried
+// forward (it self-documents its own staleness via parsedAt) rather than destroyed.
+describe('resolveQuickbooks', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'resolve-qb-test-'));
+  const saved = process.env.QUICKBOOKS_CSV;
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+    if (saved === undefined) delete process.env.QUICKBOOKS_CSV;
+    else process.env.QUICKBOOKS_CSV = saved;
+  });
+
+  /** A previous snapshot on disk carrying a populated, schema-valid quickbooks block. */
+  function writePrevSnapshot(name: string, quickbooks: unknown): string {
+    const path = join(dir, name);
+    writeFileSync(path, JSON.stringify({ leases: [], quickbooks }));
+    return path;
+  }
+
+  const POPULATED = {
+    sourceFile: 'C:\\ora\\ora-pl-by-property.csv',
+    parsedAt: '2026-08-16T18:51:31.040Z',
+    properties: [{ propertyKey: '1100 Rarig', propertyId: 'rarig', annualIncome: 84000, annualExpense: 4000, annualNoi: 80000, monthly: [], glExpense: [] }],
+  };
+
+  it('preserves a populated previous block instead of nulling it when QUICKBOOKS_CSV is unset', () => {
+    delete process.env.QUICKBOOKS_CSV;
+    const path = writePrevSnapshot('prev-populated.json', POPULATED);
+
+    const result = resolveQuickbooks(props, path, NOW);
+
+    expect(result.quickbooks).not.toBeNull();
+    expect(result.quickbooks!.properties).toHaveLength(1);
+    expect(result.quickbooks!.parsedAt).toBe('2026-08-16T18:51:31.040Z'); // carried, not restamped
+    expect(result.preservedFrom).not.toBeNull();
+  });
+
+  it('preserves a populated previous block when QUICKBOOKS_CSV points at a missing file', () => {
+    process.env.QUICKBOOKS_CSV = join(dir, 'no-such-export.csv');
+    const path = writePrevSnapshot('prev-populated-2.json', POPULATED);
+
+    const result = resolveQuickbooks(props, path, NOW);
+
+    expect(result.quickbooks!.properties).toHaveLength(1);
+    expect(result.preservedFrom).not.toBeNull();
+  });
+
+  it('prefers a fresh CSV parse over the previous block', () => {
+    const csv = join(dir, 'fresh.csv');
+    writeFileSync(csv, CSV);
+    process.env.QUICKBOOKS_CSV = csv;
+    const path = writePrevSnapshot('prev-stale.json', POPULATED);
+
+    const result = resolveQuickbooks(props, path, NOW);
+
+    expect(result.preservedFrom).toBeNull(); // fresh, not carried
+    expect(result.quickbooks!.parsedAt).toBe(NOW);
+    expect(result.quickbooks!.properties.length).toBeGreaterThan(1); // CSV has 3 property keys
+  });
+
+  it('returns null on a genuine first run (no CSV, no previous snapshot) without throwing', () => {
+    delete process.env.QUICKBOOKS_CSV;
+
+    const result = resolveQuickbooks(props, join(dir, 'does-not-exist.json'), NOW);
+
+    expect(result.quickbooks).toBeNull();
+    expect(result.preservedFrom).toBeNull();
+  });
+
+  it('returns null when the previous block is itself null (nothing to lose)', () => {
+    delete process.env.QUICKBOOKS_CSV;
+    const path = writePrevSnapshot('prev-null.json', null);
+
+    const result = resolveQuickbooks(props, path, NOW);
+
+    expect(result.quickbooks).toBeNull();
+    expect(result.preservedFrom).toBeNull();
+  });
+
+  it('does not carry forward an empty-properties husk', () => {
+    delete process.env.QUICKBOOKS_CSV;
+    const path = writePrevSnapshot('prev-husk.json', { sourceFile: null, parsedAt: NOW, properties: [] });
+
+    const result = resolveQuickbooks(props, path, NOW);
+
+    expect(result.quickbooks).toBeNull();
+    expect(result.preservedFrom).toBeNull();
+  });
+
+  it('returns null rather than throwing when the previous snapshot is corrupt', () => {
+    delete process.env.QUICKBOOKS_CSV;
+    const path = join(dir, 'corrupt.json');
+    writeFileSync(path, '{ not valid json');
+
+    const result = resolveQuickbooks(props, path, NOW);
+
+    expect(result.quickbooks).toBeNull();
+    expect(result.preservedFrom).toBeNull();
   });
 });
