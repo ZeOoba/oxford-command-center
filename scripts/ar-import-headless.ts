@@ -65,6 +65,9 @@ import ExcelJS from 'exceljs';
 import { extractPdfText } from '../server/ar/pdf-extract';
 import { parseArAging, isGarbageExtraction, extractAsOfDateFromFilename, type ArAgingRow } from '../server/ar/ar-aging';
 import { detectRentManagerDelinquencyDetail, parseRentManagerWorksheet, type SubtotalMismatch } from '../server/ar/rent-manager-delinquency';
+import { detectDelinquencyTransactional, parseDelinquencyTransactional } from '../server/ar/delinquency-transactional';
+import { detectDelinquencyBucketed, parseDelinquencyBucketed } from '../server/ar/delinquency-bucketed';
+import { resolveByUnit, type UnitLease } from '../server/ar/resolve-by-unit';
 import { partitionArRows, type ArReviewRow } from '../server/ar/partition-confidence';
 import { resolveLatestArrears, filterAgainstPersisted } from '../server/ar/resolve-latest';
 import { loadCache, saveCache } from '../server/ar/mapping-cache';
@@ -94,6 +97,38 @@ function loadLeasesFromSnapshot(): LeaseLite[] {
     leases?: Array<{ id: string; tenantName: string; company: string | null }>;
   };
   return (snap.leases ?? []).map((l) => ({ id: l.id, tenantName: l.tenantName, company: l.company ?? null }));
+}
+
+/** Read {id, unit, propertyId} for every lease from the persisted snapshot, for Format B's
+ *  (property, unit) resolution — a different projection than loadLeasesFromSnapshot's
+ *  {id, tenantName, company}, which match-tenant.ts's NAME-based matching needs instead. Kept as a
+ *  separate loader rather than widening LeaseLite itself: LeaseLite is a shared type match-tenant.ts
+ *  exports, and widening it would ripple into every consumer of name-based matching for no reason. */
+function loadUnitLeasesFromSnapshot(): UnitLease[] {
+  const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')) as {
+    leases?: Array<{ id: string; unit: string | null; propertyId: string }>;
+  };
+  return (snap.leases ?? []).map((l) => ({ id: l.id, unit: l.unit, propertyId: l.propertyId }));
+}
+
+// Format B's group-header text -> portfolio.json property id. EXPLICIT table, not a fuzzy/substring
+// guess: verified against the one real Format B source (2203-2207 Northwood, 2026-08-16) — all three
+// of its group headers, including the source's own 'Nothwood' typo, map to the SAME single property
+// record (2203-2207-northwood-dr-salisbury-md covers all three buildings). A header not in this table
+// returns null, which routes every row under it to review rather than guessing a property — the same
+// "never guess across the portfolio" rule resolve-by-unit.ts applies to units. Add an entry here only
+// after confirming a NEW Format B source's real header strings against a real property id; never widen
+// this to a substring/keyword match.
+const NORTHWOOD_PROPERTY_ID = '2203-2207-northwood-dr-salisbury-md';
+const BUCKETED_PROPERTY_HEADERS: ReadonlyMap<string, string> = new Map([
+  ['nbc-a - 2207 Nothwood Drive Bldg A Salisbury, MD 21801', NORTHWOOD_PROPERTY_ID],
+  ['nbc-b - 2205 Northwood Drive Bldg B Salisbury, MD 21801', NORTHWOOD_PROPERTY_ID],
+  ['nbc-c - 2203 Marvel Road Salisbury, MD 21801', NORTHWOOD_PROPERTY_ID],
+]);
+
+function resolvePropertyId(header: string | null): string | null {
+  if (header === null) return null;
+  return BUCKETED_PROPERTY_HEADERS.get(header) ?? null;
 }
 
 /** Patch the persisted snapshot's tenantArrears + recomputed arBalances in place (immediate 4c visibility). */
@@ -233,6 +268,7 @@ async function main(): Promise<void> {
     throw new Error(`Snapshot at ${SNAPSHOT_PATH} has zero leases — refusing to run against a degraded/partial snapshot. Wait for a full Brain refresh.`);
   }
   const cache = loadCache();
+  const unitLeases = loadUnitLeasesFromSnapshot();
   console.log(`  ${files.length} file(s) · ${leases.length} lease(s) loaded`);
 
   // Accumulate across ALL files, then resolve once: AR aging is a point-in-time balance, so a lease
@@ -265,33 +301,107 @@ async function main(): Promise<void> {
         quarantine(file, e instanceof Error ? e.message : String(e));
         continue;
       }
+      // Ordered detection: A (Rent Manager "Delinquency (Detail)", 5/8 real files) → C (Yardi "DB
+      // Caption" transactional, 2/8) → B (two-bucket unit-only "Delinquency", 1/8). Order is chosen
+      // for readability/frequency, not correctness: each detector's own row-1 check is already
+      // disjoint from the others (B requires an EXACT 'delinquency' match, which 'delinquency
+      // (detail)' fails; C requires a 'db caption:' prefix neither A nor B can produce), so no two
+      // can collide regardless of try-order.
       const worksheet = workbook.worksheets.find((ws) => detectRentManagerDelinquencyDetail(ws));
-      if (worksheet === undefined) {
-        // ar-aging.ts's own module doc names two OTHER real xlsx shapes ORA receives (a
-        // Yardi-style bucketed export, a 2-bucket "Northwood" variant) that this module
-        // deliberately does not parse yet — quarantine, don't guess at an unrecognized layout.
+      const transactionalWs = worksheet ? undefined : workbook.worksheets.find((ws) => detectDelinquencyTransactional(ws));
+      const bucketedWs = worksheet || transactionalWs ? undefined : workbook.worksheets.find((ws) => detectDelinquencyBucketed(ws));
+
+      if (worksheet === undefined && transactionalWs === undefined && bucketedWs === undefined) {
         quarantine(
           file,
-          'xlsx format not recognized as Rent Manager "Delinquency (Detail)" — other RM/Yardi bucketed xlsx exports are not yet supported',
+          'xlsx format not recognized as Rent Manager "Delinquency (Detail)", Yardi "DB Caption" transactional, or two-bucket "Delinquency" (Northwood-style)',
         );
         continue;
       }
-      const parsed = parseRentManagerWorksheet(worksheet);
-      if (parsed.unsupportedReason) {
-        quarantine(file, `rent-manager-delinquency: ${parsed.unsupportedReason}`);
+
+      if (bucketedWs !== undefined) {
+        // Format B carries NO TENANT NAME (unit-only identity) — it cannot go through the shared
+        // partitionArRows() name-matching path below, which every other format uses. Resolved and
+        // logged entirely here, then `continue`s to the next file directly.
+        const bucketedRows = parseDelinquencyBucketed(bucketedWs);
+        const asOfDate = extractAsOfDateFromFilename(file);
+        if (asOfDate === null && bucketedRows.length > 0) {
+          quarantine(file, 'two-bucket "Delinquency" export carries no in-file as-of date and none could be derived from the filename — refusing to age/write undated unit balances');
+          continue;
+        }
+        let autoCount = 0;
+        let reviewCount = 0;
+        for (const row of bucketedRows) {
+          const propertyId = resolvePropertyId(row.property);
+          const res = resolveByUnit(row, unitLeases, propertyId);
+          const label = `${row.property ?? 'unknown property'} / ${row.unit}`;
+          if (res.leaseId !== null) {
+            allWrites.push({
+              leaseId: res.leaseId,
+              arrears: { d30: row.d30, d60: 0, d90: 0, d90plus: row.d30plus, asOfDate, sourceFile },
+              tenant: label,
+            });
+            autoCount++;
+          } else {
+            const reason =
+              propertyId === null
+                ? `property header not in the known-property table: '${row.property ?? '(none)'}' — add it to BUCKETED_PROPERTY_HEADERS once confirmed against a real property id`
+                : res.ambiguous
+                  ? `unit '${row.unit}' matches more than one lease at this property — needs a human look`
+                  : `unit '${row.unit}' has no exact match at this property (may be part of a larger merged lease — never auto-attributed on a partial overlap)`;
+            allReviews.push({
+              tenant: label,
+              property: row.property,
+              d30: row.d30,
+              d60: 0,
+              d90: 0,
+              d90plus: row.d30plus,
+              proposedLeaseId: null,
+              proposedCandidate: null,
+              confidence: 'none',
+              ambiguous: res.ambiguous,
+              reason,
+              sourceFile,
+              queuedAt: nowIso,
+            });
+            reviewCount++;
+          }
+        }
+        processed.push(file);
+        pdfBySourceFile.set(sourceFile, file);
+        console.log(`  ✓ ${sourceFile} [delinquency-bucketed] — ${autoCount} auto · ${reviewCount} review · 0 skip`);
         continue;
       }
-      if (parsed.subtotalMismatches.length > 0) {
-        const detail: SubtotalMismatch[] = parsed.subtotalMismatches;
-        console.log(
-          `  ⚠ ${sourceFile}: ${detail.length} tenant subtotal mismatch(es) — computed buckets used anyway (see rent-manager-delinquency.ts docs): ${detail
-            .map((m) => `${m.tenant} (computed ${m.computedTotal} vs reported ${m.reportedTotal})`)
-            .join('; ')}`,
-        );
+
+      if (transactionalWs !== undefined) {
+        // Format C has no in-file as-of line, so aging is relative to the filename date; without one,
+        // every charge would silently age against "now" and report stale balances as current.
+        const asOfDate = extractAsOfDateFromFilename(file);
+        if (asOfDate === null) {
+          quarantine(file, 'DB Caption export carries no in-file as-of date and none could be derived from the filename — refusing to age charges against an assumed date');
+          continue;
+        }
+        rows = parseDelinquencyTransactional(transactionalWs, asOfDate);
+        format = 'delinquency-transactional';
+        xlsxAsOfDate = asOfDate;
+      } else if (worksheet !== undefined) {
+        const parsed = parseRentManagerWorksheet(worksheet);
+        if (parsed.unsupportedReason) {
+          quarantine(file, `rent-manager-delinquency: ${parsed.unsupportedReason}`);
+          continue;
+        }
+        if (parsed.subtotalMismatches.length > 0) {
+          const detail: SubtotalMismatch[] = parsed.subtotalMismatches;
+          console.log(
+            `  ⚠ ${sourceFile}: ${detail.length} tenant subtotal mismatch(es) — computed buckets used anyway (see rent-manager-delinquency.ts docs): ${detail
+              .map((m) => `${m.tenant} (computed ${m.computedTotal} vs reported ${m.reportedTotal})`)
+              .join('; ')}`,
+          );
+        }
+        rows = parsed.rows;
+        format = 'rent-manager-delinquency';
+        xlsxAsOfDate = parsed.asOfDate;
       }
-      rows = parsed.rows;
-      format = 'rent-manager-delinquency';
-      xlsxAsOfDate = parsed.asOfDate;
     } else {
       let text: string;
       try {
