@@ -46,10 +46,21 @@ import { listLeaseTermPropertyIds } from './warehouse/lease-terms';
 import { setLeaseRunAssumptions } from './overlay';
 import { LeaseRunAssumptionsInput } from '../src/contracts/lease-run';
 import { isAllowedOrigin } from './cors-policy';
+import { accessAuthz, accessAuthzOptionsFromEnv } from './access-authz';
 
 const app = new Hono();
 // Confidential data — only same-machine localhost origins may call the API (see cors-policy.ts).
 app.use('/api/*', cors({ origin: isAllowedOrigin }));
+
+// Application-level authorization (Eric Live Phase 2, W2). INERT by default: with ACCESS_REQUIRE
+// unset this is a pass-through, so localhost development is completely unaffected. It is turned on
+// for the tunnelled deployment, where loopback binding is no longer the security boundary and a
+// verified Cloudflare Access assertion becomes the only thing standing in front of the warehouse.
+//
+// Mounted HERE, immediately after cors and BEFORE every app.route() below, so there is no route —
+// present or future — that can run its handler ahead of the check. Adding routes above this line
+// would silently exempt them.
+app.use('/api/*', accessAuthz(accessAuthzOptionsFromEnv(process.env)));
 
 // Property Financial Intelligence warehouse — opened lazily as a process singleton on
 // first /api/warehouse/* request (not at boot: a cold/mirror env may lack the sqlite
