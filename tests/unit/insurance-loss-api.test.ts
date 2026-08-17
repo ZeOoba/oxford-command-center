@@ -36,7 +36,10 @@ interface PolicyFixture {
   coverageTiv?: number | null;
   deductible?: number | null;
   coverageLimit?: number | null;
+  effectiveDate?: string | null;
   expirationDate?: string | null;
+  policyNumber?: string;
+  sourceDate?: string;
 }
 
 function insertPolicy(db: WarehouseDb, f: PolicyFixture): void {
@@ -49,14 +52,14 @@ function insertPolicy(db: WarehouseDb, f: PolicyFixture): void {
   ).run(
     f.propertyId,
     'Test Insurer',
-    `POL-${f.propertyId}`,
-    '2025-01-01',
+    f.policyNumber ?? `POL-${f.propertyId}`,
+    f.effectiveDate ?? '2025-01-01',
     f.expirationDate ?? '2027-01-01',
     f.premiumAnnual ?? 5000,
     f.coverageTiv ?? 1_000_000,
     f.policyType,
     'test-fixture',
-    '2026-06-01',
+    f.sourceDate ?? '2026-06-01',
     'test-runner',
     f.deductible ?? null,
     f.coverageLimit ?? null,
@@ -133,6 +136,58 @@ describe('GET /api/warehouse/insurance/loss', () => {
     const after = calibrationVerdictCount(db);
     expect(after).toBe(before);
     expect(after).toBe(0);
+  });
+
+  it('a stale prior-term row never produces a second deductibleReviews row (2026-08-17 rollover fix)', async () => {
+    // Regression for the rollover-supersession fix in insurance-analysis.ts: before that fix,
+    // buildInsuranceAnalysis's renewalCalendar carried BOTH the old and new term of a rolled-over
+    // policy (dedupeLatest's identity key doesn't recognize a new effective_date/policy_number as
+    // the same logical policy), so this route's deductibleReviews loop (which iterates every
+    // property-package policy in `policies`) reviewed the SAME loss events twice against two
+    // different deductible/coverage-limit bases for one property — a silent double-review, not
+    // just a display artifact. Confirms buildInsuranceAnalysis's collapse now narrows this to
+    // exactly one row per property.
+    const db = freshDb();
+    seedProperty(db, '3540-e-5th-ave-columbus-oh', 'Property A');
+    // Old term.
+    insertPolicy(db, {
+      propertyId: '3540-e-5th-ave-columbus-oh',
+      policyType: 'Property Package',
+      policyNumber: 'POL-A',
+      effectiveDate: '2025-01-01',
+      expirationDate: '2026-01-01',
+      premiumAnnual: 5000,
+      coverageTiv: 1_000_000,
+      deductible: 10_000,
+      coverageLimit: 500_000,
+      sourceDate: '2025-01-05',
+    });
+    // Rolled-over term — same policy_number, new effective_date (the common case), superseding it.
+    insertPolicy(db, {
+      propertyId: '3540-e-5th-ave-columbus-oh',
+      policyType: 'Property Package',
+      policyNumber: 'POL-A',
+      effectiveDate: '2026-01-01',
+      expirationDate: '2027-01-01',
+      premiumAnnual: 5300,
+      coverageTiv: 1_000_000,
+      deductible: 15_000,
+      coverageLimit: 500_000,
+      sourceDate: '2026-06-01',
+    });
+
+    const app = makeApp(db);
+    const res = await app.request('/');
+    expect(res.status).toBe(200);
+    const parsed = InsuranceLossReport.safeParse(await res.json());
+    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+    if (parsed.success) {
+      const rows = parsed.data.deductibleReviews.filter(
+        (r) => r.propertyId === '3540-e-5th-ave-columbus-oh',
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0]?.deductible).toBe(15_000); // the CURRENT term's deductible, not the stale $10,000.
+    }
   });
 
   it('200s with an empty, contract-valid report on a fully empty book', async () => {

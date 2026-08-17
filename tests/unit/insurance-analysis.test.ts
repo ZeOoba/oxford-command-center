@@ -687,6 +687,34 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
     expect(rows).toHaveLength(2);
     expect(new Set(rows.map((p) => p.premium))).toEqual(new Set([8_000, 1_500]));
   });
+
+  it('KNOWN GAP (pinned, not a target): a rollover into a null-effective-date capture does not supersede', () => {
+    // collapseToCurrentTerm deliberately never compares a dated row against an undated one (see
+    // its module doc — doing so would risk re-breaking the F2 doctrine above, since the only
+    // signal distinguishing "this undated row is the newer capture of the same policy" from "this
+    // undated row is a second, genuinely distinct policy" is the very ambiguity F2 exists to
+    // protect). A rollover whose NEW capture has a data-entry gap (missing effective_date) is
+    // therefore NOT superseded — both the old dated term and the new undated one survive. This is
+    // a real but narrower recurrence of the 2026-08-17 bug (requires BOTH a rollover AND a missing
+    // effective_date on the new capture, vs. the original bug which fired on every ordinary
+    // dated rollover). Pinned here as documented, accepted behavior — not asserting it's correct,
+    // only that it's known and won't silently drift.
+    const db = freshDb();
+    insertPolicy(db, {
+      propertyId: 'p-gap', policyType: 'Property', policyNumber: 'GAP-1', premiumAnnual: 9_000,
+      coverageTiv: 2_000_000, effectiveDate: '2025-06-01', sourceDate: '2025-06-05',
+    });
+    insertPolicy(db, {
+      propertyId: 'p-gap', policyType: 'Property', policyNumber: 'GAP-1', premiumAnnual: 9_400,
+      coverageTiv: 2_000_000, effectiveDate: null, sourceDate: '2026-06-05',
+    });
+
+    const report = buildInsuranceAnalysis(db, AS_OF);
+
+    const rows = report.renewalCalendar.filter((p) => p.propertyId === 'p-gap');
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((p) => p.premium))).toEqual(new Set([9_000, 9_400]));
+  });
 });
 
 describe('buildInsuranceAnalysis — unclassified-cohort visibility (refute F1-MEDIUM)', () => {
