@@ -55,6 +55,13 @@ export function normalizeTokens(raw: string): string[] {
       s = before; // entity suffix after the comma: drop it
     }
   }
+  // Collapse a dotted initialism ('I.M.H', 'I.M.H.', 'P.U.P.S.') into one run of bare letters BEFORE
+  // the generic punctuation strip below, which would otherwise turn every '.' into a space and split
+  // it into isolated single-letter tokens ('i','m','h') — zero overlap against an undotted spelling
+  // of the same name ('IMH'). Requires 2+ consecutive single-letter-dot pairs, so a single first/
+  // middle initial ('W.' in "Louis W. Foxwell") is deliberately left untouched — that stays its own
+  // token, exactly as it always has.
+  s = s.replace(/\b(?:[a-z]\.){2,}[a-z]?\b/g, (m) => m.replace(/\./g, ''));
   return s
     .replace(/[^a-z0-9\s]/g, ' ') // strip punctuation
     .split(/\s+/)
