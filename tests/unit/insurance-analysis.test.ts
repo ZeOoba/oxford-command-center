@@ -595,6 +595,100 @@ describe('dedupeLatest — re-ingest dedup for null-keyed policies (refute F2 co
   });
 });
 
+describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (2026-08-17 bug)', () => {
+  // A genuine renewal changes effective_date (and often policy_number — e.g. a carrier's suffix
+  // bump MMF17962784 -> MMF17962784-002), so it is a NEW row under the table's
+  // UNIQUE(property_id, policy_number, effective_date) key — dedupeLatest's identity key doesn't
+  // recognize it as the same logical policy, so the prior term was never superseded and both
+  // rows flowed into the "current" view (renewalCalendar/policiesN/premiumAnnualTotal/benchmark).
+  // Live repro (2026-08-17): policiesN 34 vs the correct 26; "ins-1900broadway-ufx" showed the
+  // OLD 2025-26 term ($11,166, daysToExpiry 10) instead of the 2026-27 rollover ($11,554).
+  it('keeps only the latest-effective-date term per (property, policy_type) in the current view', () => {
+    const db = freshDb();
+    // Old 2025-26 term.
+    insertPolicy(db, {
+      propertyId: 'p-1900broadway',
+      policyType: 'Property',
+      insurer: 'Unified Fire & Casualty',
+      policyNumber: 'Q44-2750780',
+      effectiveDate: '2025-08-27',
+      expirationDate: '2026-08-27',
+      premiumAnnual: 11_166,
+      coverageTiv: 4_000_000,
+      sourceDate: '2025-09-01',
+    });
+    // Rolled-over 2026-27 term — new effective_date, same policy_number (a same-number renewal).
+    insertPolicy(db, {
+      propertyId: 'p-1900broadway',
+      policyType: 'Property',
+      insurer: 'Unified Fire & Casualty',
+      policyNumber: 'Q44-2750780',
+      effectiveDate: '2026-08-27',
+      expirationDate: '2027-08-27',
+      premiumAnnual: 11_554,
+      coverageTiv: 4_000_000,
+      sourceDate: '2026-08-17',
+    });
+
+    const report = buildInsuranceAnalysis(db, AS_OF);
+
+    const rows = report.renewalCalendar.filter((p) => p.propertyId === 'p-1900broadway');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.premium).toBe(11_554);
+    expect(report.policiesN).toBe(1);
+    expect(report.premiumAnnualTotal).toBeCloseTo(11_554, 2);
+  });
+
+  it('also supersedes on a rollover that bumps the policy_number suffix (carrier-issued correction)', () => {
+    const db = freshDb();
+    insertPolicy(db, {
+      propertyId: 'p-9620state350',
+      policyType: 'General Liability',
+      insurer: 'XPT Specialty',
+      policyNumber: 'MQ04214580',
+      effectiveDate: '2025-06-01',
+      premiumAnnual: 2_628,
+      coverageTiv: null,
+      sourceDate: '2025-06-05',
+    });
+    insertPolicy(db, {
+      propertyId: 'p-9620state350',
+      policyType: 'General Liability',
+      insurer: 'Westchester (Illinois Union) via XPT Partners',
+      policyNumber: 'GLWF18677015-001',
+      effectiveDate: '2026-06-01',
+      premiumAnnual: 2_576,
+      coverageTiv: null,
+      sourceDate: '2026-08-17',
+    });
+
+    const report = buildInsuranceAnalysis(db, AS_OF);
+
+    const rows = report.renewalCalendar.filter((p) => p.propertyId === 'p-9620state350');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.premium).toBe(2_576);
+    expect(rows[0]?.carrier).toBe('Westchester (Illinois Union) via XPT Partners');
+  });
+
+  it('does not collide two DIFFERENT coverages on the same property (policy_type still partitions)', () => {
+    const db = freshDb();
+    insertPolicy(db, {
+      propertyId: 'p-multi', policyType: 'Property', policyNumber: 'PROP-1', premiumAnnual: 8_000,
+      coverageTiv: 3_000_000, effectiveDate: '2026-01-01', sourceDate: '2026-01-05',
+    });
+    insertPolicy(db, {
+      propertyId: 'p-multi', policyType: 'General Liability', policyNumber: 'GL-1', premiumAnnual: 1_500,
+      coverageTiv: null, effectiveDate: '2026-01-01', sourceDate: '2026-01-05',
+    });
+
+    const report = buildInsuranceAnalysis(db, AS_OF);
+
+    const rows = report.renewalCalendar.filter((p) => p.propertyId === 'p-multi');
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((p) => p.premium))).toEqual(new Set([8_000, 1_500]));
+  });
+});
+
 describe('buildInsuranceAnalysis — unclassified-cohort visibility (refute F1-MEDIUM)', () => {
   it('an All-Risk policy with valid TIV/rate classifies as other (unchanged) AND is flagged for review', () => {
     const db = freshDb();

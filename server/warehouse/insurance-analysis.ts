@@ -125,6 +125,60 @@ function dedupeLatest(rows: RawPolicyRow[]): RawPolicyRow[] {
   return [...byKey.values()];
 }
 
+/**
+ * Collapse to one row per (property_id, policy_type) — the CURRENT term. A genuine policy
+ * rollover changes effective_date (and often policy_number too — e.g. a carrier's suffix bump
+ * MMF17962784 -> MMF17962784-002), so it is a NEW row under the table's
+ * UNIQUE(property_id, policy_number, effective_date) key: dedupeLatest's identity key treats it
+ * as a distinct policy, not a replacement, so the prior term is never removed from the table (no
+ * delete path exists — see insurance.ts captureInsurance's INSERT OR REPLACE). Confirmed live
+ * 2026-08-17: stale prior-term rows accumulated in renewalCalendar (policiesN 34 vs the correct
+ * 26; a property's card showed last year's premium/days-to-expiry instead of the rolled term).
+ *
+ * This is the "current view" reduction only — it keeps every other row's data intact in the
+ * table (no UI or feature currently reads multi-term history from this table; grep confirmed
+ * before choosing this over a delete-on-capture approach), so a future premium-history feature
+ * can still read the full table directly rather than through buildInsuranceAnalysis.
+ *
+ * Grouped by policy_type (not a stable per-row id — the table doesn't persist one; see module
+ * header) so two genuinely distinct concurrent coverages on the same property (e.g. Property vs.
+ * General Liability) never collide. Latest wins by effective_date, then the same source_date/id
+ * tiebreak as dedupeLatest.
+ *
+ * NULL-DATED ROWS ARE NEVER COLLAPSED BY THIS STEP (left for dedupeLatest's own null-key content
+ * dedup to arbitrate): a rollover always carries a real effective_date on both the old and new
+ * term, so grouping on it is only meaningful for dated rows. Two undated rows sharing a
+ * property_id/policy_type have no ordering signal — collapsing them here would silently drop a
+ * genuinely distinct concurrent policy that dedupeLatest's own F2 doctrine deliberately keeps
+ * apart (see dedupeLatest's null-key content key, which folds policy_type in for exactly this).
+ */
+type DatedPolicyRow = RawPolicyRow & { effective_date: string };
+const hasEffectiveDate = (r: RawPolicyRow): r is DatedPolicyRow => r.effective_date !== null;
+
+function collapseToCurrentTerm(rows: RawPolicyRow[]): RawPolicyRow[] {
+  const undated: RawPolicyRow[] = [];
+  const byKey = new Map<string, DatedPolicyRow>();
+  for (const r of rows) {
+    if (!hasEffectiveDate(r)) {
+      undated.push(r);
+      continue;
+    }
+    const key = `${r.property_id}|${r.policy_type}`;
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, r);
+      continue;
+    }
+    const isNewer =
+      r.effective_date > existing.effective_date ||
+      (r.effective_date === existing.effective_date &&
+        (r.source_date > existing.source_date ||
+          (r.source_date === existing.source_date && r.id > existing.id)));
+    if (isNewer) byKey.set(key, r);
+  }
+  return [...byKey.values(), ...undated];
+}
+
 /** Cohort classifier — see module header for the documented precedence.
  *
  * KEYWORD ALLOWLIST IS DELIBERATELY NARROW (refute F1-MEDIUM): 'property'/'package'/'building' is
@@ -219,7 +273,7 @@ export function buildInsuranceAnalysis(db: WarehouseDb, asOf: string): Insurance
     )
     .all() as RawPolicyRow[];
 
-  const deduped = dedupeLatest(raw);
+  const deduped = collapseToCurrentTerm(dedupeLatest(raw));
 
   // Pass 1: everything EXCEPT excessPremiumVsMedian, which needs the benchmark computed first.
   const drafts: Draft[] = deduped.map((r) => {
