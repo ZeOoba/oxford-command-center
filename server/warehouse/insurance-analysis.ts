@@ -151,6 +151,13 @@ function dedupeLatest(rows: RawPolicyRow[]): RawPolicyRow[] {
  * property_id/policy_type have no ordering signal — collapsing them here would silently drop a
  * genuinely distinct concurrent policy that dedupeLatest's own F2 doctrine deliberately keeps
  * apart (see dedupeLatest's null-key content key, which folds policy_type in for exactly this).
+ *
+ * KNOWN GAP (accepted, pinned by test): a rollover whose NEW capture has a data-entry gap (missing
+ * effective_date) is NOT superseded by this step — the old dated term and the new undated one both
+ * survive. There is no safe general fix: an undated row can't be distinguished from a genuinely
+ * distinct second policy without a stable per-row id this table doesn't persist (see module
+ * header). Narrower than the bug this function fixes (requires a rollover AND a missing date on
+ * the new capture, not just an ordinary dated rollover) — see the "KNOWN GAP" test below.
  */
 type DatedPolicyRow = RawPolicyRow & { effective_date: string };
 const hasEffectiveDate = (r: RawPolicyRow): r is DatedPolicyRow => r.effective_date !== null;
