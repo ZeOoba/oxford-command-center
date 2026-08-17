@@ -185,15 +185,37 @@ function parseAppfolioAging(text: string): ArAgingRow[] {
  * Matches the first YYYY-MM-DD pattern found anywhere in the basename.
  * Returns null when no date is present (manual or renamed files).
  */
-export function extractAsOfDateFromFilename(filePath: string): Date | null {
-  const base = filePath.replace(/.*[\\/]/, '');
-  const m = base.match(/(\d{4}-\d{2}-\d{2})/);
-  if (!m) return null;
-  const iso = m[1]!;
+/** Parse one YYYY-MM-DD string, rejecting impossible calendar dates (e.g. 2026-02-31) that JS
+ *  would otherwise silently normalize into a different, wrong date instead of raising an error. */
+function parseIsoRoundtrip(iso: string): Date | null {
   const d = new Date(`${iso}T00:00:00.000Z`);
   if (!Number.isFinite(d.getTime())) return null;
-  // Roundtrip: reject impossible dates (e.g. 2026-02-31) that JS normalizes instead of rejecting.
   return d.toISOString().slice(0, 10) === iso ? d : null;
+}
+
+export function extractAsOfDateFromFilename(filePath: string): Date | null {
+  const base = filePath.replace(/.*[\\/]/, '');
+
+  const isoMatch = base.match(/(\d{4}-\d{2}-\d{2})/);
+  if (isoMatch) {
+    const d = parseIsoRoundtrip(isoMatch[1]!);
+    if (d) return d;
+  }
+
+  // Dot-separated M.D.YYYY — the real PM delinquency-export convention (verified against every file
+  // in Business/A.R. Reports/, 2026-08-16: "... Delinquency 7.15.2026.xlsx"), distinct from the ISO
+  // convention above the existing tests were written against (QuickBooks CSV exports). 1- or 2-digit
+  // month/day, always a 4-digit year, always month-day-year order (matching every other date in these
+  // same exports). Tried only after ISO fails, so an ISO date anywhere in the filename still wins.
+  const dotMatch = base.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+  if (dotMatch) {
+    const [, monthStr, dayStr, yearStr] = dotMatch;
+    const iso = `${yearStr}-${monthStr!.padStart(2, '0')}-${dayStr!.padStart(2, '0')}`;
+    const d = parseIsoRoundtrip(iso);
+    if (d) return d;
+  }
+
+  return null;
 }
 
 /**
