@@ -125,6 +125,154 @@ function dedupeLatest(rows: RawPolicyRow[]): RawPolicyRow[] {
   return [...byKey.values()];
 }
 
+/**
+ * Collapse to one row per SAME-LINEAGE CLUSTER within (property_id, policy_type) — the CURRENT
+ * view. The table's UNIQUE(property_id, policy_number, effective_date) key + INSERT OR REPLACE
+ * only collapses a same-key re-ingest; a genuine rollover or correction is a NEW row (no delete
+ * path exists — see insurance.ts captureInsurance), so the prior term is never removed and both
+ * flowed into renewalCalendar/policiesN/premiumAnnualTotal/the benchmark (confirmed live
+ * 2026-08-17: policiesN 34 vs the correct 26; a stale premium/expiry shown instead of the rolled
+ * term).
+ *
+ * REAL-DATA SHAPES (verified against a read-only copy of finance.sqlite, corrected 2026-08-17
+ * after an adversarial refute pass showed the original verification claim — "every duplicate is
+ * a sequential rollover where old.expiration_date == new.effective_date" — was FALSE for 2 of 8
+ * groups): duplicates come in (at least) two distinct shapes —
+ *   (a) SEQUENTIAL ROLLOVER — effective_date advances, old.expiration_date == new.effective_date
+ *       (e.g. 1900 Broadway: old exp 2026-08-27 == new eff 2026-08-27).
+ *   (b) SAME-TERM REISSUE — effective_date and expiration_date are IDENTICAL on both rows, only
+ *       policy_number/insurer/premium changed (a carrier renumbering/correcting mid-term — e.g.
+ *       9620 State 350: MMF17962784 -> MMF17962784-002, both eff/exp 2025-10-18/2026-10-18).
+ * Neither shape is safely detected by "pick the max effective_date" ALONE — (b) is a tie on
+ * effective_date, and a downward correction to a previously-overstated effective_date (a typo
+ * fix) would make the STALE row win permanently under a pure max-effective_date rule, which is
+ * strictly worse than the pre-fix behaviour (both rows at least appeared before).
+ *
+ * ALGORITHM: within a (property_id, normalized policy_type) group, two dated rows are the SAME
+ * LINEAGE (one supersedes the other) when they share a policy_number, OR have identical
+ * effective_date+expiration_date (shape b), OR their term ranges do NOT overlap (shape a — one
+ * ends at/before the other begins). Rows that meet none of these are treated as genuinely
+ * DISTINCT CONCURRENT policies (e.g. two separate buildings on one property, both legitimately
+ * in force) and both survive undisturbed — this is what protects
+ * insurance-loss-analysis.ts's documented "a property has multiple policies" case. Within a
+ * lineage cluster, the winner is the most recently CAPTURED row (source_date DESC, then
+ * effective_date DESC, then id DESC) — NOT the max effective_date: captureInsurance's INSERT OR
+ * REPLACE only refreshes source_date on a row still emitted by the workbook, so a superseded
+ * row's source_date freezes at its last snapshot while the surviving term's source_date keeps
+ * advancing on every run — a strictly more reliable "is this still current" signal than
+ * effective_date, which a correction can move backward or leave unchanged.
+ *
+ * The group key normalizes policy_type (trim + lowercase, matching classifyCohort's own
+ * case-insensitivity) so a label with incidental whitespace/case drift between terms still
+ * collapses — the raw string would otherwise silently un-collapse a genuine rollover.
+ *
+ * This is the "current view" reduction only — every other row's data stays intact in the table
+ * (no UI or feature deliberately reads OLD/superseded terms as a premium-history feature; grep
+ * confirmed) for a future premium-history feature to read directly. NOTE (2026-08-17, adversarial
+ * sweep): this claim covers intentional history-reading only — it does NOT mean every OTHER
+ * reader of this table already collapses to current-term correctly. insurance-conditions.ts's
+ * expiry-soon condition turned out to read the raw, uncollapsed rows (not for history — by
+ * omission) and has been fixed to call this same function; re-grep before trusting this claim
+ * again if a new reader of property_insurance_policies is added.
+ *
+ * NULL-DATED ROWS ARE NEVER CLUSTERED BY THIS STEP (left for dedupeLatest's own null-key content
+ * dedup to arbitrate, in BOTH directions — an old term captured before a data-entry gap, or a new
+ * term captured WITH one): an undated row can't be safely distinguished from a genuinely distinct
+ * second policy without a stable per-row id this table doesn't persist (see module header), and
+ * collapsing them here on any signal would risk re-breaking dedupeLatest's own F2 doctrine (two
+ * genuinely distinct undated concurrent policies must both survive).
+ *
+ * KNOWN GAP (accepted, pinned by test): a rollover whose new OR old capture has a null
+ * effective_date is not superseded — see the "KNOWN GAP" test below.
+ *
+ * Exported so insurance-conditions.ts's expiry-soon condition (a sibling reader of this same
+ * table found by an adversarial sweep pass to be reading raw, uncollapsed rows — 2026-08-17) uses
+ * the identical algorithm rather than a second, drift-prone implementation.
+ */
+export interface CollapsibleInsuranceRow {
+  id: number;
+  property_id: string;
+  policy_number: string | null;
+  effective_date: string | null;
+  expiration_date: string | null;
+  policy_type: string;
+  source_date: string;
+}
+type Dated<T extends CollapsibleInsuranceRow> = T & { effective_date: string };
+const hasEffectiveDate = <T extends CollapsibleInsuranceRow>(r: T): r is Dated<T> =>
+  r.effective_date !== null;
+
+/** True when two dated rows are captures of the SAME policy lineage — see collapseToCurrentTerm's
+ *  doc for the two real-data shapes this covers (sequential rollover, same-term reissue). */
+function sameLineage<T extends CollapsibleInsuranceRow>(a: Dated<T>, b: Dated<T>): boolean {
+  if (a.policy_number !== null && a.policy_number === b.policy_number) return true;
+  if (a.effective_date === b.effective_date && (a.expiration_date ?? '') === (b.expiration_date ?? '')) {
+    return true;
+  }
+  if (a.expiration_date !== null && a.expiration_date <= b.effective_date) return true;
+  if (b.expiration_date !== null && b.expiration_date <= a.effective_date) return true;
+  return false;
+}
+
+/** Winner within a lineage cluster: most recently CAPTURED (source_date), not most recently
+ *  effective — see collapseToCurrentTerm's doc for why source_date is the sound primary signal. */
+function isMoreCurrent<T extends CollapsibleInsuranceRow>(a: Dated<T>, b: Dated<T>): boolean {
+  if (a.source_date !== b.source_date) return a.source_date > b.source_date;
+  if (a.effective_date !== b.effective_date) return a.effective_date > b.effective_date;
+  return a.id > b.id;
+}
+
+export function collapseToCurrentTerm<T extends CollapsibleInsuranceRow>(rows: T[]): T[] {
+  const undated: T[] = [];
+  const groups = new Map<string, Dated<T>[]>();
+  for (const r of rows) {
+    if (!hasEffectiveDate(r)) {
+      undated.push(r);
+      continue;
+    }
+    const key = `${r.property_id}|${r.policy_type.trim().toLowerCase()}`;
+    const arr = groups.get(key);
+    if (arr) arr.push(r);
+    else groups.set(key, [r]);
+  }
+
+  const out: T[] = [...undated];
+  for (const groupRows of groups.values()) {
+    // Union-Find clustering by sameLineage — a group can hold more than one genuinely distinct
+    // concurrent policy (different clusters), each of which independently keeps its own winner.
+    const parent = groupRows.map((_, i) => i);
+    const find = (i: number): number => {
+      while (parent[i] !== i) {
+        parent[i] = parent[parent[i]!]!;
+        i = parent[i]!;
+      }
+      return i;
+    };
+    for (let i = 0; i < groupRows.length; i++) {
+      for (let j = i + 1; j < groupRows.length; j++) {
+        if (sameLineage(groupRows[i]!, groupRows[j]!)) {
+          const ri = find(i);
+          const rj = find(j);
+          if (ri !== rj) parent[ri] = rj;
+        }
+      }
+    }
+    const clusters = new Map<number, Dated<T>[]>();
+    for (let i = 0; i < groupRows.length; i++) {
+      const root = find(i);
+      const arr = clusters.get(root);
+      if (arr) arr.push(groupRows[i]!);
+      else clusters.set(root, [groupRows[i]!]);
+    }
+    for (const cluster of clusters.values()) {
+      let winner = cluster[0]!;
+      for (const r of cluster.slice(1)) if (isMoreCurrent(r, winner)) winner = r;
+      out.push(winner);
+    }
+  }
+  return out;
+}
+
 /** Cohort classifier — see module header for the documented precedence.
  *
  * KEYWORD ALLOWLIST IS DELIBERATELY NARROW (refute F1-MEDIUM): 'property'/'package'/'building' is
@@ -219,7 +367,7 @@ export function buildInsuranceAnalysis(db: WarehouseDb, asOf: string): Insurance
     )
     .all() as RawPolicyRow[];
 
-  const deduped = dedupeLatest(raw);
+  const deduped = collapseToCurrentTerm(dedupeLatest(raw));
 
   // Pass 1: everything EXCEPT excessPremiumVsMedian, which needs the benchmark computed first.
   const drafts: Draft[] = deduped.map((r) => {
