@@ -17,7 +17,7 @@
 // Pure classifier + assembler at the top of the file; thin DB wrapper at the bottom for the
 // gate / UI integration.
 
-import type { PortfolioSnapshot } from '../../src/contracts/index';
+import type { Lease, PortfolioSnapshot } from '../../src/contracts/index';
 import type { WarehouseDb } from './db';
 import { latestFullYearPeriod, propertyPeriodMetrics, type PeriodMetrics } from './metrics';
 import { PROPERTY_ALIASES } from './property-crosswalk';
@@ -42,6 +42,13 @@ export type NoiReconciliationStatus =
   | 'in-tolerance'
   | 'drift'
   | 'large-drift'
+  // OI-137 (2026-08-17): a large drift explained by ownership or tenancy changing since the
+  // warehouse's latest-full-year comparison period is NOT an integrity break — Spine A (workbook,
+  // current rent roll) and Spine B (warehouse, that period's historical actuals) are both correct;
+  // they're answering different questions. Distinct from 'large-drift' so a genuine disagreement
+  // still gates while a timing difference doesn't. Severity 'warn', not 'info' — still visible in
+  // every report and count, just doesn't fail the gate.
+  | 'structural-mismatch'
   | 'missing-from-workbook'
   | 'missing-from-warehouse'
   | 'lease-run-skipped'
@@ -61,6 +68,15 @@ export interface NoiReconcileInput {
   warehouseBasis: string | null;
   isLeaseRun: boolean;
   isResidence: boolean;
+  /** Property.acqDate (ISO date), normalized to null when unknown/absent. Ownership-change signal
+   *  for the structural-mismatch downgrade (OI-137) — an acquisition on/after the comparison
+   *  period's start means the warehouse actuals may predate or only partially reflect ownership. */
+  acqDate: string | null;
+  /** Sum of CURRENT annualRent (Spine A) across this property's leases whose leaseStart falls on
+   *  or after the warehouse FY comparison period's first day. Tenancy-change signal for the
+   *  structural-mismatch downgrade (OI-137). Null only when there is no comparison period to
+   *  evaluate leaseStart against (never null merely because no lease qualified — that's a real 0). */
+  recentTenancyAnnualRent: number | null;
 }
 
 export interface NoiReconciliationRow {
@@ -79,6 +95,62 @@ export interface NoiReconciliationRow {
 
 function formatUsd(n: number): string {
   return (n < 0 ? '-' : '') + '$' + Math.round(Math.abs(n)).toLocaleString();
+}
+
+/**
+ * Decides whether a large drift is plausibly explained by ownership or tenancy changing since the
+ * warehouse's comparison period, rather than a genuine integrity break (OI-137). Returns the
+ * evidence sentence to fold into the row's reason, or null when there isn't enough evidence.
+ *
+ *  - Tenancy alone: leases that started on or after the comparison period's first day contribute
+ *    AT LEAST HALF of the drift's dollar magnitude to the current rent roll — large enough that
+ *    their absence from that period's actuals plausibly explains most of the disagreement. Half,
+ *    not "any", because a single small recent lease next to an otherwise-unexplained large gap is
+ *    weak evidence of a structural cause and should not mask a real integrity break.
+ *  - Ownership + tenancy corroboration: the property was acquired ON OR AFTER the comparison
+ *    period's first day AND there is at least SOME rent-roll evidence of leasing activity since
+ *    then (any nonzero recentTenancyAnnualRent, even below the tenancy-alone bar). A bare
+ *    acquisition date is deliberately NOT sufficient on its own (adversarial-review finding,
+ *    2026-08-17): without requiring corroboration, any same-sign large-drift at a newly-acquired
+ *    property would be waved through indefinitely regardless of cause, masking exactly the kind of
+ *    ingestion bug (duplicate rows, misattributed import, decimal error) most likely to go
+ *    unnoticed at a property whose numbers are least familiar.
+ *
+ * Deliberately conservative: never fires on missing evidence (a null acqDate and a null/zero
+ * recentTenancyAnnualRent prove nothing), and the caller must never invoke this when the two NOIs
+ * disagree on sign — a profit-vs-loss disagreement is always a genuine concern regardless of
+ * tenancy/ownership history. Known accepted residual risk (not closed by this function): the
+ * "half the delta" tenancy bar is a proportionality heuristic, not a dollar-exact reconciliation —
+ * an unrelated genuine drift sitting next to an even larger legitimate new lease at the SAME
+ * property could still clear it. Gabriel ruled against normalizing the spines to close this
+ * precisely (2026-08-17, OI-137 fix-shape decision); tightening further would re-open that choice.
+ */
+function detectStructuralMismatchReason(input: NoiReconcileInput, absDelta: number): string | null {
+  const periodYear = input.warehousePeriod?.slice(0, 4) ?? null;
+  if (periodYear === null) return null; // nothing to compare acqDate/leaseStart against
+  const periodStart = `${periodYear}-01-01`;
+
+  const recentRent = input.recentTenancyAnnualRent;
+  const hasAnyRecentTenancy = recentRent !== null && recentRent > 0;
+  const acquiredSincePeriodStart = input.acqDate !== null && input.acqDate >= periodStart;
+
+  if (hasAnyRecentTenancy && recentRent! >= absDelta * 0.5) {
+    return (
+      `${formatUsd(recentRent!)}/yr of the current rent roll comes from leases starting on or after ` +
+      `${periodStart} — at least half of the ${formatUsd(absDelta)} delta, so the ${periodYear} warehouse ` +
+      `actuals could not have collected that rent.`
+    );
+  }
+
+  if (acquiredSincePeriodStart && hasAnyRecentTenancy) {
+    return (
+      `Oxford acquired this property ${input.acqDate}, on or after the ${periodYear} comparison period ` +
+      `began, and ${formatUsd(recentRent!)}/yr of the current rent roll comes from leases starting since ` +
+      `then — the warehouse actuals may predate or only partially reflect Oxford ownership.`
+    );
+  }
+
+  return null;
 }
 
 /** Pure classifier: takes one property's tie-out inputs, returns one row. */
@@ -199,11 +271,24 @@ export function classifyNoiReconciliation(
     const signNote = signsConflict
       ? ' Sign inversion: the spines disagree on profit vs loss.'
       : '';
-    status = 'large-drift';
-    severity = 'error';
-    reason =
-      `Large drift: ${direction} by ${(deltaPct * 100).toFixed(2)}% (${formatUsd(delta)}) — ` +
-      `workbook and warehouse materially disagree on NOI.${signNote}`;
+    // OI-137: a sign-inverted disagreement is NEVER waved through by a tenancy/ownership
+    // explanation — that explains a MAGNITUDE gap, not a profit-vs-loss flip, which points at a
+    // parsing or classification defect. Only consulted when the signs agree.
+    const structuralEvidence = signsConflict ? null : detectStructuralMismatchReason(input, absDelta);
+    if (structuralEvidence !== null) {
+      status = 'structural-mismatch';
+      severity = 'warn';
+      reason =
+        `Structural mismatch, not an integrity break: ${direction} by ${(deltaPct * 100).toFixed(2)}% ` +
+        `(${formatUsd(delta)}) — ${structuralEvidence} Spine A (workbook) reflects the current rent ` +
+        `roll; Spine B (warehouse) reflects that period's historical actuals — neither is wrong. (OI-137)`;
+    } else {
+      status = 'large-drift';
+      severity = 'error';
+      reason =
+        `Large drift: ${direction} by ${(deltaPct * 100).toFixed(2)}% (${formatUsd(delta)}) — ` +
+        `workbook and warehouse materially disagree on NOI.${signNote}`;
+    }
   }
 
   // Basis-unknown downgrade (Phase 1a discipline): a 'match' on basis='unknown' is low-confidence
@@ -254,12 +339,42 @@ export function buildNoiReconcileInputs(
   const financialModeById = new Map<string, string>();
   for (const p of propertyMaster) financialModeById.set(p.id, p.financialMode);
 
+  // OI-137: leases keyed by their WORKBOOK property id (Lease.propertyId === Property.id, set by
+  // parse.ts's resolvePropertyId — see that function's callers). This is the pre-PROPERTY_ALIASES
+  // id (wp.id below), never the warehouse-canonical id; the alias bridges workbook-name → warehouse
+  // slug mismatches (H4) and is orthogonal to the lease-to-property link within the workbook.
+  // `?? []` guards pre-OI-137 test/caller snapshots that never set `leases` at all.
+  const leasesByPropertyId = new Map<string, Lease[]>();
+  for (const l of snapshot.leases ?? []) {
+    if (l.propertyId === null) continue;
+    const arr = leasesByPropertyId.get(l.propertyId) ?? [];
+    arr.push(l);
+    leasesByPropertyId.set(l.propertyId, arr);
+  }
+
   const inputs: NoiReconcileInput[] = [];
   for (const wp of snapshot.properties) {
     const canonicalId = PROPERTY_ALIASES[wp.id] ?? wp.id;
     const series = metricsByProperty.get(canonicalId) ?? [];
     const fyPeriod = latestFullYearPeriod(series);
     const fyRow = fyPeriod !== null ? series.find((m) => m.period === fyPeriod) ?? null : null;
+
+    // OI-137 tenancy signal: sum CURRENT annualRent across leases that started on/after the FY
+    // comparison period's first day. Null (not 0) when there is no FY period to compare against —
+    // 0 is reserved for "we could compare, and nothing qualified."
+    const periodYear = fyPeriod?.slice(0, 4) ?? null;
+    const periodStart = periodYear !== null ? `${periodYear}-01-01` : null;
+    const recentTenancyAnnualRent = periodStart !== null
+      ? (leasesByPropertyId.get(wp.id) ?? [])
+          // Also require the lease to be CURRENTLY in force (Active / Expiring Soon) — an Expired
+          // or Vacant lease that started and already churned out within the comparison window is
+          // no longer part of the current rent roll this signal is meant to represent, and must
+          // not count as evidence for a drift it can no longer be causing (adversarial-review
+          // finding, 2026-08-17).
+          .filter((l) => l.leaseStart !== null && l.leaseStart >= periodStart && (l.status === 'Active' || l.status === 'Expiring Soon'))
+          .reduce((sum, l) => sum + l.annualRent, 0)
+      : null;
+
     inputs.push({
       propertyId: canonicalId,
       propertyName: wp.name,
@@ -269,6 +384,8 @@ export function buildNoiReconcileInputs(
       warehouseBasis: fyRow ? fyRow.basis : null,
       isLeaseRun: financialModeById.get(canonicalId) === 'lease-run',
       isResidence: wp.type === 'Residence',
+      acqDate: wp.acqDate ?? null,
+      recentTenancyAnnualRent,
     });
   }
 
@@ -291,6 +408,12 @@ export function buildNoiReconcileInputs(
       // they have no P&L files — so this path cannot fire for a residence under current invariants.
       // If property_master gains a `type` column (Pass 4), read it here instead.
       isResidence: false,
+      // No workbook Property/Lease record exists on this path (warehouse-only) — no acqDate or
+      // rent-roll data to derive OI-137's structural-mismatch signals from. Harmless: this row is
+      // always 'missing-from-workbook' (workbookOxfordNoi is null above), never large-drift, so
+      // detectStructuralMismatchReason is never invoked against it.
+      acqDate: null,
+      recentTenancyAnnualRent: null,
     });
   }
   return inputs;

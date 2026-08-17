@@ -7,8 +7,9 @@
 // against warehouse oxfordNoi per property at the latest full-year period, prints one row per
 // property, and fails (exit 1) if any row is 'error' severity (large-drift — the spines
 // materially disagree on NOI). 'warn' rows (in-band drift, missing-from-one-side, low-confidence
-// basis) are printed but do not fail the gate — the classifier already encodes which states are
-// structurally expected (e.g. a newly-acquired property pre-ingest) vs. a real integrity break.
+// basis, structural-mismatch) are printed but do not fail the gate — the classifier already
+// encodes which states are structurally expected (e.g. a newly-acquired property pre-ingest, or
+// OI-137's ownership/tenancy-changed-since-comparison-period case) vs. a real integrity break.
 //
 // Local-only gate (wired into `npm run gate`, NOT gate:ci — CI runners have no live workbook or
 // warehouse DB), matching the existing reconcile / warehouse:verify / warehouse:drift pattern.
@@ -62,9 +63,15 @@ async function main() {
 
   const errors = rows.filter((r) => r.severity === 'error');
   const warnings = rows.filter((r) => r.severity === 'warn');
+  // OI-137: 'structural-mismatch' is a warn-severity status folded into `warnings` above (it must
+  // never fail the gate), but a headline count that only says "N warning(s)" would let a spike in
+  // downgrades go unnoticed even though each row prints its own status — break it out explicitly
+  // (adversarial-review finding, 2026-08-17).
+  const structuralMismatches = rows.filter((r) => r.status === 'structural-mismatch');
+  const structuralNote = structuralMismatches.length > 0 ? ` (${structuralMismatches.length} structural-mismatch)` : '';
   console.log('──────────────────────────────────────────────────────────────────────');
   console.log(
-    `${rows.length} propert${rows.length === 1 ? 'y' : 'ies'} checked · ${errors.length} error(s) · ${warnings.length} warning(s)`,
+    `${rows.length} propert${rows.length === 1 ? 'y' : 'ies'} checked · ${errors.length} error(s) · ${warnings.length} warning(s)${structuralNote}`,
   );
 
   if (errors.length > 0) {
