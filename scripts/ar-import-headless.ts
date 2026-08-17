@@ -384,8 +384,15 @@ async function main(): Promise<void> {
         rows = parseDelinquencyTransactional(transactionalWs, asOfDate);
         format = 'delinquency-transactional';
         xlsxAsOfDate = asOfDate;
-      } else if (worksheet !== undefined) {
-        const parsed = parseRentManagerWorksheet(worksheet);
+      } else {
+        // By elimination, not by re-checking `worksheet !== undefined`: the top-of-block guard
+        // already `continue`d when all three detectors miss, and the `bucketedWs` branch already
+        // `continue`d when THAT one hits — so reaching here with `transactionalWs` also undefined
+        // means `worksheet` is the only detector that could have matched. Written as a plain `else`
+        // (not `else if (worksheet !== undefined)`) so TypeScript can prove `rows`/`format` are
+        // definitely assigned by the end of this block without relying on that external reasoning —
+        // an `else if` here left a path where neither branch fires and both stay unassigned.
+        const parsed = parseRentManagerWorksheet(worksheet!);
         if (parsed.unsupportedReason) {
           quarantine(file, `rent-manager-delinquency: ${parsed.unsupportedReason}`);
           continue;
