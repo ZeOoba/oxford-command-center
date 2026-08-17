@@ -596,14 +596,22 @@ describe('dedupeLatest — re-ingest dedup for null-keyed policies (refute F2 co
 });
 
 describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (2026-08-17 bug)', () => {
-  // A genuine renewal changes effective_date (and often policy_number — e.g. a carrier's suffix
-  // bump MMF17962784 -> MMF17962784-002), so it is a NEW row under the table's
+  // A genuine renewal or correction is a NEW row under the table's
   // UNIQUE(property_id, policy_number, effective_date) key — dedupeLatest's identity key doesn't
   // recognize it as the same logical policy, so the prior term was never superseded and both
   // rows flowed into the "current" view (renewalCalendar/policiesN/premiumAnnualTotal/benchmark).
   // Live repro (2026-08-17): policiesN 34 vs the correct 26; "ins-1900broadway-ufx" showed the
   // OLD 2025-26 term ($11,166, daysToExpiry 10) instead of the 2026-27 rollover ($11,554).
-  it('keeps only the latest-effective-date term per (property, policy_type) in the current view', () => {
+  //
+  // REAL-DATA SHAPES (corrected 2026-08-17 after an adversarial refute pass — the original claim
+  // "every duplicate is a sequential rollover, old.expiration_date == new.effective_date" was
+  // FALSE for 2 of the 8 live groups): (a) sequential rollover — effective_date advances,
+  // old.expiration_date == new.effective_date; (b) same-term reissue — effective_date AND
+  // expiration_date are IDENTICAL, only policy_number/insurer/premium changed (a carrier
+  // renumbering mid-term). Shape (b) can ONLY be resolved by source_date (capture recency) —
+  // effective_date is a tie — which is why collapseToCurrentTerm's winner-pick is source_date
+  // primary, not max-effective_date.
+  it('sequential rollover (shape a): same policy_number, effective_date advances — winner picked by capture recency', () => {
     const db = freshDb();
     // Old 2025-26 term.
     insertPolicy(db, {
@@ -639,25 +647,49 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
     expect(report.premiumAnnualTotal).toBeCloseTo(11_554, 2);
   });
 
-  it('also supersedes on a rollover that bumps the policy_number suffix (carrier-issued correction)', () => {
+  it('sequential rollover (shape a) with a DIFFERENT policy_number: old.expiration_date == new.effective_date still collapses', () => {
+    // Unlike the 1900 Broadway fixture above, this pins the "non-overlapping term ranges" branch
+    // of sameLineage on its own — no shared policy_number to trigger the identity branch instead.
+    const db = freshDb();
+    insertPolicy(db, {
+      propertyId: 'p-seq', policyType: 'Property', policyNumber: 'SEQ-OLD', premiumAnnual: 4_000,
+      coverageTiv: 1_000_000, effectiveDate: '2025-01-01', expirationDate: '2026-01-01', sourceDate: '2025-01-05',
+    });
+    insertPolicy(db, {
+      propertyId: 'p-seq', policyType: 'Property', policyNumber: 'SEQ-NEW', premiumAnnual: 4_200,
+      coverageTiv: 1_000_000, effectiveDate: '2026-01-01', expirationDate: '2027-01-01', sourceDate: '2026-01-10',
+    });
+
+    const report = buildInsuranceAnalysis(db, AS_OF);
+
+    const rows = report.renewalCalendar.filter((p) => p.propertyId === 'p-seq');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.premium).toBe(4_200);
+  });
+
+  it('same-term reissue (shape b, the REAL 9620 State 350 example): identical effective/expiration dates, different policy_number — decided by source_date', () => {
     const db = freshDb();
     insertPolicy(db, {
       propertyId: 'p-9620state350',
-      policyType: 'General Liability',
+      policyType: 'Property',
       insurer: 'XPT Specialty',
-      policyNumber: 'MQ04214580',
-      effectiveDate: '2025-06-01',
-      premiumAnnual: 2_628,
+      policyNumber: 'MMF17962784',
+      effectiveDate: '2025-10-18',
+      expirationDate: '2026-10-18',
+      premiumAnnual: 28_071,
       coverageTiv: null,
-      sourceDate: '2025-06-05',
+      sourceDate: '2026-08-16',
     });
+    // Carrier renumbered/corrected the SAME term — dates unchanged, only policy_number/insurer/
+    // premium changed, captured one day later. effective_date is a TIE; only source_date decides.
     insertPolicy(db, {
       propertyId: 'p-9620state350',
-      policyType: 'General Liability',
-      insurer: 'Westchester (Illinois Union) via XPT Partners',
-      policyNumber: 'GLWF18677015-001',
-      effectiveDate: '2026-06-01',
-      premiumAnnual: 2_576,
+      policyType: 'Property',
+      insurer: 'Westchester Surplus Lines (Chubb) via XPT Partners',
+      policyNumber: 'MMF17962784-002',
+      effectiveDate: '2025-10-18',
+      expirationDate: '2026-10-18',
+      premiumAnnual: 27_609,
       coverageTiv: null,
       sourceDate: '2026-08-17',
     });
@@ -666,8 +698,77 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
 
     const rows = report.renewalCalendar.filter((p) => p.propertyId === 'p-9620state350');
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.premium).toBe(2_576);
-    expect(rows[0]?.carrier).toBe('Westchester (Illinois Union) via XPT Partners');
+    expect(rows[0]?.premium).toBe(27_609);
+    expect(rows[0]?.carrier).toBe('Westchester Surplus Lines (Chubb) via XPT Partners');
+  });
+
+  it('REGRESSION GUARD: removing the source_date tiebreak would silently restore the stale premium (pins why it is load-bearing)', () => {
+    // Same fixture as the shape-(b) test above. If a future edit removed/weakened the source_date
+    // ordering (e.g. reverting to max-effective_date-only, which ties here), this assertion would
+    // flip to the STALE premium ($28,071) while every other test in this file stayed green —
+    // exactly the failure mode an adversarial refute pass found was unpinned.
+    const db = freshDb();
+    insertPolicy(db, {
+      propertyId: 'p-9620-guard', policyType: 'Property', policyNumber: 'MMF-OLD', premiumAnnual: 28_071,
+      coverageTiv: null, effectiveDate: '2025-10-18', expirationDate: '2026-10-18', sourceDate: '2026-08-16',
+    });
+    insertPolicy(db, {
+      propertyId: 'p-9620-guard', policyType: 'Property', policyNumber: 'MMF-NEW-002', premiumAnnual: 27_609,
+      coverageTiv: null, effectiveDate: '2025-10-18', expirationDate: '2026-10-18', sourceDate: '2026-08-17',
+    });
+
+    const report = buildInsuranceAnalysis(db, AS_OF);
+    const rows = report.renewalCalendar.filter((p) => p.propertyId === 'p-9620-guard');
+    expect(rows[0]?.premium).toBe(27_609);
+    expect(rows[0]?.premium).not.toBe(28_071);
+  });
+
+  it('a backdated (downward) effective_date CORRECTION is not masked by a stale future-dated capture', () => {
+    // Adversarial-refute finding: max-effective_date-first ordering permanently hides a correction
+    // that moves effective_date EARLIER (e.g. a typo'd future year fixed) — the stale typo'd row
+    // would win forever since no later snapshot can ever re-touch its now-superseded UNIQUE key.
+    // source_date-primary ordering (capture recency) resolves this correctly: the correction is
+    // captured later, so it wins regardless of which direction effective_date moved.
+    const db = freshDb();
+    insertPolicy(db, {
+      propertyId: 'p-typo', policyType: 'Property', policyNumber: 'TYPO-1', premiumAnnual: 11_166,
+      coverageTiv: 4_000_000, effectiveDate: '2027-08-27', expirationDate: '2028-08-27', sourceDate: '2026-08-01',
+    });
+    // Corrected: the real effective_date, captured later.
+    insertPolicy(db, {
+      propertyId: 'p-typo', policyType: 'Property', policyNumber: 'TYPO-1', premiumAnnual: 11_554,
+      coverageTiv: 4_000_000, effectiveDate: '2026-08-27', expirationDate: '2027-08-27', sourceDate: '2026-08-15',
+    });
+
+    const report = buildInsuranceAnalysis(db, AS_OF);
+
+    const rows = report.renewalCalendar.filter((p) => p.propertyId === 'p-typo');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.premium).toBe(11_554);
+    expect(rows[0]?.daysToExpiry).toBeLessThan(700); // the corrected 2027-08-27 expiry (~417d out), not the typo'd 2028-08-27 one (~782d out).
+  });
+
+  it('does NOT merge two genuinely CONCURRENT policies of the same policy_type with overlapping terms and unrelated policy_number', () => {
+    // Adversarial-refute finding: two distinct, simultaneously-in-force policies (e.g. separate
+    // buildings on one property) sharing (property_id, policy_type) but with staggered effective
+    // dates and no shared policy_number must both survive — sameLineage's overlap check is what
+    // protects this from being silently merged into one (which would understate premiumAnnualTotal).
+    const db = freshDb();
+    insertPolicy(db, {
+      propertyId: 'p-concurrent', policyType: 'Property', policyNumber: 'BLDG-A', premiumAnnual: 8_000,
+      coverageTiv: 2_000_000, effectiveDate: '2026-01-01', expirationDate: '2027-01-01', sourceDate: '2026-01-05',
+    });
+    insertPolicy(db, {
+      propertyId: 'p-concurrent', policyType: 'Property', policyNumber: 'BLDG-B', premiumAnnual: 6_000,
+      coverageTiv: 1_500_000, effectiveDate: '2026-03-01', expirationDate: '2027-03-01', sourceDate: '2026-03-05',
+    });
+
+    const report = buildInsuranceAnalysis(db, AS_OF);
+
+    const rows = report.renewalCalendar.filter((p) => p.propertyId === 'p-concurrent');
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((p) => p.premium))).toEqual(new Set([8_000, 6_000]));
+    expect(report.premiumAnnualTotal).toBeCloseTo(14_000, 2);
   });
 
   it('does not collide two DIFFERENT coverages on the same property (policy_type still partitions)', () => {

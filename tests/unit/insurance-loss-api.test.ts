@@ -53,7 +53,7 @@ function insertPolicy(db: WarehouseDb, f: PolicyFixture): void {
     f.propertyId,
     'Test Insurer',
     f.policyNumber ?? `POL-${f.propertyId}`,
-    f.effectiveDate ?? '2025-01-01',
+    f.effectiveDate === undefined ? '2025-01-01' : f.effectiveDate,
     f.expirationDate ?? '2027-01-01',
     f.premiumAnnual ?? 5000,
     f.coverageTiv ?? 1_000_000,
