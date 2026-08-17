@@ -428,12 +428,26 @@ function parseProperties(ws: Worksheet, flags: DataQualityFlag[]): PropertiesPar
   return { properties: disambiguatePropertyIds(out, flags), workbookNoiTotal, workbookValueTotal };
 }
 
-function resolvePropertyId(key: string, properties: Property[]): string | null {
+// Generic street-type words carry no disambiguating signal between properties and are exactly the
+// tokens most likely to appear as an ACCIDENTAL SUBSTRING of an unrelated word elsewhere ('road'
+// inside 'Broadway', 'lane' inside 'Wonderland', 'court' inside a business name). Real defect
+// (2026-08-17, OI-184): '3034 Westerville Road' matched '1900 N Broadway, Baltimore MD' on 'road'
+// alone, purely because Baltimore's entry happened to sit earlier in the properties array — a
+// street's own suffix word silently mis-tagged both of Westerville's real leases to a property in a
+// different state. Same category as ENTITY_SUFFIXES in match-tenant.ts: strip the generic word
+// before matching so only the DISTINCTIVE part of the address (the street name, the number) can
+// match at all.
+const STREET_SUFFIXES = new Set([
+  'road', 'rd', 'street', 'st', 'avenue', 'ave', 'lane', 'ln', 'drive', 'dr', 'court', 'ct',
+  'boulevard', 'blvd', 'way', 'place', 'pl', 'circle', 'cir', 'highway', 'hwy', 'route',
+]);
+
+export function resolvePropertyId(key: string, properties: Property[]): string | null {
   const token = key
     .toLowerCase()
     .replace(/[^a-z0-9 ]/g, ' ')
     .split(/\s+/)
-    .filter((t) => t.length >= 4);
+    .filter((t) => t.length >= 4 && !STREET_SUFFIXES.has(t));
   for (const p of properties) {
     const a = p.address.toLowerCase();
     if (token.some((t) => a.includes(t))) return p.id;
