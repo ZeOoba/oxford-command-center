@@ -162,6 +162,28 @@ export function redactConfidential(snapshot: PortfolioSnapshot): {
   };
 }
 
+/**
+ * Should this bake run also produce the HEAVY `public/warehouse.json` (Fat Mirror)?
+ *
+ * Two inputs, deliberately narrow:
+ *   - `--warehouse` as an exact argv token (a human at a terminal)
+ *   - `BAKE_WAREHOUSE=1` in the environment (the scheduled daily task / deploy-mirror.ps1)
+ *
+ * STRICT on both: `=== '1'`, not a truthiness check, so `BAKE_WAREHOUSE=0` genuinely disables it;
+ * and an exact argv match, so `--warehouse-dry-run` / `--no-warehouse` can never enable it by
+ * prefix. Both matter because the warehouse bake is RAM/IO-heavy and contends with the live
+ * server's WAL lock — the cadence decoupling this flag exists to enforce (spec §2.2) fails open
+ * if the trigger is sloppy.
+ *
+ * Pure and injectable so the trigger can be tested without spawning the CLI or touching a DB.
+ */
+export function shouldBakeWarehouse(
+  argv: readonly string[],
+  env: Record<string, string | undefined>,
+): boolean {
+  return argv.includes('--warehouse') || env.BAKE_WAREHOUSE === '1';
+}
+
 async function main() {
   const includeConfidential = process.env.MIRROR_INCLUDE_CONFIDENTIAL === '1';
   const pub = join(process.cwd(), 'public');
@@ -258,9 +280,12 @@ async function main() {
   if (includeConfidential) console.warn('  ⚠ CONFIDENTIAL DATA INCLUDED — deploy ONLY to a Cloudflare Access-gated target.');
 
   // Fat Mirror (Phase 1b): the HEAVY warehouse bake is OPT-IN (--warehouse / BAKE_WAREHOUSE=1) so the
+  // NOTE: the trigger itself lives in shouldBakeWarehouse() below and is unit-tested
+  // (tests/unit/bake-mirror-warehouse-flag.test.ts). It was inline and untested for two months,
+  // during which nothing ever set either input and public/warehouse.json was never produced.
   // light hourly snapshot bake never pays for it (cadence decoupling). Dynamic import keeps the
   // warehouse deps (better-sqlite3, the api.ts router) out of the snapshot-only path entirely.
-  if (process.argv.includes('--warehouse') || process.env.BAKE_WAREHOUSE === '1') {
+  if (shouldBakeWarehouse(process.argv, process.env)) {
     const { bakeWarehouseJson } = await import('./bake-warehouse');
     const r = await bakeWarehouseJson();
     console.log(`✓ Baked public/warehouse.json (${r.count} endpoints, source: ${r.warehouseSource})`);
