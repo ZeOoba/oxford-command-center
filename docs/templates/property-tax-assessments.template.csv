@@ -10,8 +10,18 @@
 # in OneDrive "Business/Property Taxes Historical/" (+ "Business/2203-2207 Northwood/" for Northwood,
 # whose History folder exists but was empty). source column carries full document provenance per row
 # since the schema has no separate notes field. Known gaps/caveats, not fixed here:
-#  - 7658 Fishel 2024: the "2024" screenshot is a mislabeled duplicate of the 2023 bill — no genuine
-#    2024 data exists yet; row omitted, needs re-capture from Franklin County Auditor.
+#  - 7658 Fishel 2024: RESOLVED 2026-08-17. The OneDrive "2024" screenshot was a mislabeled
+#    duplicate of the 2023 bill (no genuine 2024 rate/computation screenshot exists). Recaptured
+#    directly from the Franklin County Treasurer's payment-by-year record (parcel 272-000599-00,
+#    treapropsearch.franklincountyohio.gov) instead: Ohio real-estate tax is billed/paid in
+#    arrears, so a payment made in calendar year N+1 is that parcel's tax-year-N bill. Verified
+#    against 3 other years before trusting it for 2024: calendar-2023 payment $40,516.36 = tax
+#    year 2022 (matches the existing row exactly); calendar-2024 payment $38,768.42 = tax year
+#    2023 (matches exactly); calendar-2026 payment $42,746.22 = tax year 2025 (matches the
+#    Auditor's current "2025 TAX STATUS" exactly). The calendar-2025 payment of $42,786.82
+#    (paid 1/27/2025) is therefore tax year 2024's real total — added below. No Full/Reduction/
+#    Effective Rate breakdown was available for this specific past year (only the Auditor's
+#    current-year rate table is exposed), so millage_rate is left blank rather than interpolated.
 #  - 29000 Information Lane 2025: Talbot County Lot 4's screenshot is a misfiled duplicate of the
 #    Easton Lot 4 2025 bill — the 2025 total would be incomplete without it, so the row is omitted
 #    rather than publishing a partial sum. 2026/2027 rows ARE complete (Easton + Talbot, both lots).
@@ -60,6 +70,7 @@ sepich-portfolio-columbus-oh-8-props,"FVC — Fairground Village Center / Sepich
 1900-n-broadway-baltimore-md,"1900 N Broadway, Baltimore MD",Mid-Atlantic,2027,"Baltimore City, MD",2525800,,,59608.88,"Baltimore City (Mayor and City Council of Baltimore) Real Property Tax Levy bill, FY2027 (Jul 2026-Jun 2027); Total Tax $59,608.88. OneDrive .../1900 N Broadway Property Taxes 2026-2027.png",
 7658-fishel-dr-n-dublin-oh,"7658 Fishel Dr N, Dublin OH",Columbus OH,2022,"Franklin County OH (Tax District 272-Washington Twp-Hilliard CSD)",,,131.84,40516.36,"Franklin County OH Auditor tax-rate/computation screenshot (Full Rate 131.840000 / Effective Rate 86.124388); OneDrive .../7658 Fishel Property Taxes 2022.png",
 7658-fishel-dr-n-dublin-oh,"7658 Fishel Dr N, Dublin OH",Columbus OH,2023,"Franklin County OH (Tax District 272-Washington Twp-Hilliard CSD)",,,132.59,38768.42,"Franklin County OH Auditor tax-rate/computation screenshot (Full Rate 132.590000 / Effective Rate 77.453208); OneDrive .../7658 Fishel Property Taxes 2023.png",
+7658-fishel-dr-n-dublin-oh,"7658 Fishel Dr N, Dublin OH",Columbus OH,2024,"Franklin County OH (Tax District 272-Washington Twp-Hilliard CSD)",,,,42786.82,"Franklin County Treasurer payment-by-year record (parcel 272-000599-00, treapropsearch.franklincountyohio.gov/Details.aspx?district=272&parcel=599&tab=3&year=2025) — arrears convention: the $42,786.82 payment transacted 1/27/2025 is tax year 2024's bill. Cross-verified against 3 other years' known totals before trusting this method (see file header note). Recaptures the OneDrive 2024 screenshot, which was a mislabeled duplicate of the 2023 bill.",2025-01-27
 7658-fishel-dr-n-dublin-oh,"7658 Fishel Dr N, Dublin OH",Columbus OH,2025,"Franklin County OH (Tax District 272-Washington Twp-Hilliard CSD)",,,140.09,42746.22,"Franklin County OH Auditor tax-rate/computation screenshot (Full Rate 140.090000 / Effective Rate 85.400200); OneDrive .../7658 Fishel Property Taxes 2025.png",
 401-sunburst-hwy-cambridge-md,"401 Sunburst Hwy, Cambridge MD",Mid-Atlantic,2024,"Dorchester County, MD",,,,10555.64,"Dorchester County MD online tax account screen (District-Account 07-116446, Account Id 6276) — County $5,292.38 + State $639.63 + Municip $4,623.63, due 09/30/2024, PAID. OneDrive .../401 Sunburst Property Taxes 2024-2026.png",
 401-sunburst-hwy-cambridge-md,"401 Sunburst Hwy, Cambridge MD",Mid-Atlantic,2025,"Dorchester County, MD",,,,11006.84,"Dorchester County MD online tax account screen — County $5,606.26 + State $656.32 + Municip $4,744.26, due 09/30/2025, PAID.",
