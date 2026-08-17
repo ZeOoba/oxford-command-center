@@ -2,7 +2,7 @@
   "meta": {
     "schemaVersion": "1.0.0",
     "asOf": "2026-08-14",
-    "generatedAt": "2026-08-14T14:57:26.577Z",
+    "generatedAt": "2026-08-16T18:51:30.970Z",
     "source": "Master Excel Template Company Wide -- Oxford.xlsx",
     "scenario": "Base"
   },
@@ -6969,7 +6969,772 @@
   "noiBudgets": {},
   "tenantArrears": {},
   "arBalances": [],
-  "quickbooks": null,
+  "quickbooks": {
+    "sourceFile": "C:\\Users\\Owner\\OneDrive - Oxford Capital Partners\\Business\\Quickbooks Backups -- CURRENT FILES\\ora-pl-by-property.csv",
+    "parsedAt": "2026-08-16T18:51:31.040Z",
+    "properties": [
+      {
+        "propertyKey": "1100 Rarig Ave, Columbus OH",
+        "propertyId": "1100-rarig-ave-columbus-oh",
+        "annualIncome": 222187.84,
+        "annualExpense": 99832.34,
+        "annualNoi": 122355.5,
+        "monthly": [
+          {
+            "month": "2024",
+            "income": 222187.84,
+            "expense": 99832.34,
+            "noi": 122355.5
+          }
+        ],
+        "glExpense": [
+          {
+            "account": "Tax Real Estate",
+            "amount": 43321.96
+          },
+          {
+            "account": "Water",
+            "amount": 12468.46
+          },
+          {
+            "account": "Management Fee",
+            "amount": 8905.9
+          },
+          {
+            "account": "Insurance Package",
+            "amount": 5883
+          },
+          {
+            "account": "Consulting Fee",
+            "amount": 5300
+          },
+          {
+            "account": "Gas",
+            "amount": 3079.97
+          },
+          {
+            "account": "Paint Interior",
+            "amount": 2600
+          },
+          {
+            "account": "Snow/Ice Removal",
+            "amount": 2548.83
+          },
+          {
+            "account": "Misc Repair",
+            "amount": 2371.36
+          },
+          {
+            "account": "Accounting",
+            "amount": 2362
+          },
+          {
+            "account": "Survey",
+            "amount": 2000
+          },
+          {
+            "account": "Landscaping",
+            "amount": 1950
+          },
+          {
+            "account": "Plumbing Repair",
+            "amount": 1841.33
+          },
+          {
+            "account": "Electricity",
+            "amount": 1397.13
+          },
+          {
+            "account": "Meter Reader",
+            "amount": 756.25
+          },
+          {
+            "account": "HVAC Repair",
+            "amount": 630.95
+          },
+          {
+            "account": "Electrical Repair",
+            "amount": 567.05
+          },
+          {
+            "account": "Legal Fees",
+            "amount": 499
+          },
+          {
+            "account": "Turnover/Rehab",
+            "amount": 490.85
+          },
+          {
+            "account": "Cleaning",
+            "amount": 400
+          },
+          {
+            "account": "Light Bulb Replacement",
+            "amount": 283.8
+          },
+          {
+            "account": "Grounds Upkeep",
+            "amount": 89
+          },
+          {
+            "account": "Lock Repair",
+            "amount": 85.5
+          }
+        ]
+      },
+      {
+        "propertyKey": "1851 S Club — Solar (25% roof project)",
+        "propertyId": null,
+        "annualIncome": 668798.47,
+        "annualExpense": 37973.28999999999,
+        "annualNoi": 630825.1799999999,
+        "monthly": [
+          {
+            "month": "2024",
+            "income": 668798.47,
+            "expense": 37973.28999999999,
+            "noi": 630825.1799999999
+          }
+        ],
+        "glExpense": [
+          {
+            "account": "Insurance Expense",
+            "amount": 17556.92
+          },
+          {
+            "account": "Repairs and Maintenance",
+            "amount": 17062.37
+          },
+          {
+            "account": "Professional Fees",
+            "amount": 3000
+          },
+          {
+            "account": "Tax -- Personal Property",
+            "amount": 309
+          },
+          {
+            "account": "Bank Service Charges - Other",
+            "amount": 30
+          },
+          {
+            "account": "Wire Fee",
+            "amount": 15
+          }
+        ]
+      },
+      {
+        "propertyKey": "1900 N Broadway, Baltimore MD",
+        "propertyId": "1900-n-broadway-baltimore-md",
+        "annualIncome": 701442.2899999999,
+        "annualExpense": 342590.6400000001,
+        "annualNoi": 358851.64999999985,
+        "monthly": [
+          {
+            "month": "2024",
+            "income": 701442.2899999999,
+            "expense": 342590.6400000001,
+            "noi": 358851.64999999985
+          }
+        ],
+        "glExpense": [
+          {
+            "account": "Water and Sewer",
+            "amount": 76116.2
+          },
+          {
+            "account": "Real Estate Taxes",
+            "amount": 57915.76
+          },
+          {
+            "account": "Electricity - Common Area",
+            "amount": 35975.03
+          },
+          {
+            "account": "Management Fee",
+            "amount": 28111.25
+          },
+          {
+            "account": "Contract Cleaning",
+            "amount": 22630
+          },
+          {
+            "account": "General Building Exterior",
+            "amount": 17020
+          },
+          {
+            "account": "Snow Removal Contract",
+            "amount": 11490
+          },
+          {
+            "account": "Gas",
+            "amount": 11354.19
+          },
+          {
+            "account": "Multi-Peril Insurance",
+            "amount": 10784
+          },
+          {
+            "account": "Fire and Life Safety Contract",
+            "amount": 7850.18
+          },
+          {
+            "account": "Electrical",
+            "amount": 7463.09
+          },
+          {
+            "account": "Elevator Contract",
+            "amount": 7084.44
+          },
+          {
+            "account": "Painting - Public Space",
+            "amount": 7000
+          },
+          {
+            "account": "Miscellaneous Maintenance",
+            "amount": 6483.5
+          },
+          {
+            "account": "HVAC Repair",
+            "amount": 4708
+          },
+          {
+            "account": "Roof Repair",
+            "amount": 4655
+          },
+          {
+            "account": "Audit Fees",
+            "amount": 4290
+          },
+          {
+            "account": "Alarm System Contract",
+            "amount": 3462.24
+          },
+          {
+            "account": "Exterior Landscaping Contract",
+            "amount": 3360
+          },
+          {
+            "account": "Pest Control Contract",
+            "amount": 3197
+          },
+          {
+            "account": "Cable/Internet/Phone",
+            "amount": 3135.48
+          },
+          {
+            "account": "Pavement and Grounds",
+            "amount": 2885
+          },
+          {
+            "account": "Excess Liability Insurance",
+            "amount": 1992
+          },
+          {
+            "account": "Fire and Life Safety",
+            "amount": 1337.06
+          },
+          {
+            "account": "Miscellaneous Administrative",
+            "amount": 974.89
+          },
+          {
+            "account": "Computer Services",
+            "amount": 469.39
+          },
+          {
+            "account": "Maintenance Assistance",
+            "amount": 440
+          },
+          {
+            "account": "Blanket Crime",
+            "amount": 259.08
+          },
+          {
+            "account": "Bank Fees",
+            "amount": 120.54
+          },
+          {
+            "account": "Postage",
+            "amount": 27.32
+          }
+        ]
+      },
+      {
+        "propertyKey": "29000 Information Lane, Easton MD",
+        "propertyId": "29000-information-lane-easton-md",
+        "annualIncome": 628472.17,
+        "annualExpense": 162419.71000000002,
+        "annualNoi": 466052.46,
+        "monthly": [
+          {
+            "month": "2024",
+            "income": 628472.17,
+            "expense": 162419.71000000002,
+            "noi": 466052.46
+          }
+        ],
+        "glExpense": [
+          {
+            "account": "Landscaping - Other",
+            "amount": 34680
+          },
+          {
+            "account": "Real Estate Taxes",
+            "amount": 28545.22
+          },
+          {
+            "account": "Property Management Fees",
+            "amount": 24692.59
+          },
+          {
+            "account": "Trash Removal Contract",
+            "amount": 19854.56
+          },
+          {
+            "account": "Landscaping - Service Contract",
+            "amount": 17380
+          },
+          {
+            "account": "Snow Removal",
+            "amount": 7315.75
+          },
+          {
+            "account": "Lighting & Electrical Repairs",
+            "amount": 6967.22
+          },
+          {
+            "account": "Utilities - Water/Sewer",
+            "amount": 6036.4
+          },
+          {
+            "account": "Repairs and Maintenance - General",
+            "amount": 4751.88
+          },
+          {
+            "account": "HVAC - Repairs",
+            "amount": 3324.78
+          },
+          {
+            "account": "Accounting Fees",
+            "amount": 1971
+          },
+          {
+            "account": "Repairs and Maintenance - Exterior",
+            "amount": 1500
+          },
+          {
+            "account": "Parking Lot & Sidewalk Repairs",
+            "amount": 1133.8
+          },
+          {
+            "account": "Repairs and Maintenance - Interior",
+            "amount": 882.05
+          },
+          {
+            "account": "Software",
+            "amount": 874.9
+          },
+          {
+            "account": "Miscellaneous Admin Expense",
+            "amount": 730.24
+          },
+          {
+            "account": "Legal Fees - Non-Rec",
+            "amount": 525
+          },
+          {
+            "account": "Legal Fees - Tenant - Non-Rec",
+            "amount": 525
+          },
+          {
+            "account": "Trash Removal - Bulk",
+            "amount": 250
+          },
+          {
+            "account": "Grounds Expense - Other",
+            "amount": 170
+          },
+          {
+            "account": "Plumbing",
+            "amount": 157.5
+          },
+          {
+            "account": "Directory Signs - Non-Rec",
+            "amount": 132.5
+          },
+          {
+            "account": "Utilities - Electric/Gas",
+            "amount": 19.32
+          }
+        ]
+      },
+      {
+        "propertyKey": "3540 E. 5th Ave, Columbus OH",
+        "propertyId": "3540-e-5th-ave-columbus-oh",
+        "annualIncome": 313840.35,
+        "annualExpense": 43811.61,
+        "annualNoi": 270028.74,
+        "monthly": [
+          {
+            "month": "2024",
+            "income": 313840.35,
+            "expense": 43811.61,
+            "noi": 270028.74
+          }
+        ],
+        "glExpense": [
+          {
+            "account": "Insurance Package",
+            "amount": 10356
+          },
+          {
+            "account": "Management Fee",
+            "amount": 8166.17
+          },
+          {
+            "account": "Tax Real Estate",
+            "amount": 6171.82
+          },
+          {
+            "account": "HVAC Repair",
+            "amount": 5675
+          },
+          {
+            "account": "Fire Sprinkler Testing",
+            "amount": 3525.45
+          },
+          {
+            "account": "Roof Repair",
+            "amount": 2897.69
+          },
+          {
+            "account": "Accounting",
+            "amount": 2168
+          },
+          {
+            "account": "Environmental",
+            "amount": 1778.2
+          },
+          {
+            "account": "Electrical Repair",
+            "amount": 1054.38
+          },
+          {
+            "account": "Misc Repair",
+            "amount": 1021.9
+          },
+          {
+            "account": "HVAC Maintenance",
+            "amount": 500
+          },
+          {
+            "account": "Legal Fees",
+            "amount": 499
+          },
+          {
+            "account": "Backflow",
+            "amount": 228
+          },
+          {
+            "account": "Landscaping",
+            "amount": -230
+          }
+        ]
+      },
+      {
+        "propertyKey": "55 New Plant Ct, Owings Mills MD",
+        "propertyId": "55-new-plant-ct-owings-mills-md",
+        "annualIncome": 426950.49,
+        "annualExpense": 5113,
+        "annualNoi": 421837.49,
+        "monthly": [
+          {
+            "month": "2024",
+            "income": 426950.49,
+            "expense": 5113,
+            "noi": 421837.49
+          }
+        ],
+        "glExpense": [
+          {
+            "account": "Professional Fees",
+            "amount": 3520
+          },
+          {
+            "account": "REPAIR & MAINT--BLDG",
+            "amount": 975
+          },
+          {
+            "account": "Property",
+            "amount": 309
+          },
+          {
+            "account": "Tax - Other",
+            "amount": 309
+          },
+          {
+            "account": "Insurance",
+            "amount": 0
+          }
+        ]
+      },
+      {
+        "propertyKey": "9050 Red Branch Rd, Columbia MD",
+        "propertyId": "9050-red-branch-rd-columbia-md",
+        "annualIncome": 1142775.7999999998,
+        "annualExpense": 139714.35,
+        "annualNoi": 1003061.4499999998,
+        "monthly": [
+          {
+            "month": "2024",
+            "income": 1142775.7999999998,
+            "expense": 139714.35,
+            "noi": 1003061.4499999998
+          }
+        ],
+        "glExpense": [
+          {
+            "account": "Management Fee",
+            "amount": 39713.08
+          },
+          {
+            "account": "Electricity - Common Area",
+            "amount": 19982.42
+          },
+          {
+            "account": "Exterior Landscaping Contract",
+            "amount": 14867
+          },
+          {
+            "account": "Snow Removal Contract",
+            "amount": 12250
+          },
+          {
+            "account": "Fire and Life Safety Contract",
+            "amount": 6764.47
+          },
+          {
+            "account": "Water and Sewer",
+            "amount": 6315.22
+          },
+          {
+            "account": "Audit Fees",
+            "amount": 6194
+          },
+          {
+            "account": "Plumbing",
+            "amount": 5580.13
+          },
+          {
+            "account": "Gas",
+            "amount": 4450.64
+          },
+          {
+            "account": "Electrical",
+            "amount": 4147.05
+          },
+          {
+            "account": "Pavement and Grounds",
+            "amount": 3845
+          },
+          {
+            "account": "Environmental R&M",
+            "amount": 3600
+          },
+          {
+            "account": "Maintenance Assistance",
+            "amount": 3080
+          },
+          {
+            "account": "Roof Repair",
+            "amount": 2508.37
+          },
+          {
+            "account": "Pest Control Contract",
+            "amount": 1232.55
+          },
+          {
+            "account": "Computer Services",
+            "amount": 1101.25
+          },
+          {
+            "account": "Cable/Internet/Phone",
+            "amount": 943.89
+          },
+          {
+            "account": "Miscellaneous Oper. Expense",
+            "amount": 867.4
+          },
+          {
+            "account": "Community Assoc. Fee",
+            "amount": 815
+          },
+          {
+            "account": "Postage",
+            "amount": 481
+          },
+          {
+            "account": "Miscellaneous Maintenance",
+            "amount": 417.5
+          },
+          {
+            "account": "Blanket Crime",
+            "amount": 259.08
+          },
+          {
+            "account": "Replacement Units and Parts",
+            "amount": 225.17
+          },
+          {
+            "account": "Miscellaneous Administrative",
+            "amount": 62.13
+          },
+          {
+            "account": "Bank Fees",
+            "amount": 12
+          }
+        ]
+      },
+      {
+        "propertyKey": "FVC — Fairground Village Center / Sepich Portfolio (8 props)",
+        "propertyId": null,
+        "annualIncome": 1070765.5100000002,
+        "annualExpense": 276757.9,
+        "annualNoi": 794007.6100000002,
+        "monthly": [
+          {
+            "month": "2024",
+            "income": 1070765.5100000002,
+            "expense": 276757.9,
+            "noi": 794007.6100000002
+          }
+        ],
+        "glExpense": [
+          {
+            "account": "Tax Real Estate",
+            "amount": 130913.14
+          },
+          {
+            "account": "Management Fee",
+            "amount": 41928.32
+          },
+          {
+            "account": "Insurance Package",
+            "amount": 22158
+          },
+          {
+            "account": "Water",
+            "amount": 14874.98
+          },
+          {
+            "account": "Snow/Ice Removal",
+            "amount": 13706.27
+          },
+          {
+            "account": "Landscaping",
+            "amount": 9395.63
+          },
+          {
+            "account": "Electricity",
+            "amount": 8602.58
+          },
+          {
+            "account": "Plumbing Repair",
+            "amount": 5047.9
+          },
+          {
+            "account": "Gas",
+            "amount": 4437.88
+          },
+          {
+            "account": "Accounting",
+            "amount": 4429
+          },
+          {
+            "account": "Misc Repair",
+            "amount": 3298.88
+          },
+          {
+            "account": "Door Repair",
+            "amount": 2930.18
+          },
+          {
+            "account": "Drywall Repair",
+            "amount": 2702
+          },
+          {
+            "account": "Roof Repair",
+            "amount": 2098.92
+          },
+          {
+            "account": "Paint Interior",
+            "amount": 2018.71
+          },
+          {
+            "account": "Meter Reader",
+            "amount": 1920
+          },
+          {
+            "account": "Special",
+            "amount": 1370.62
+          },
+          {
+            "account": "Drain Clog Cleaning",
+            "amount": 1078.6
+          },
+          {
+            "account": "HVAC Repair",
+            "amount": 973.46
+          },
+          {
+            "account": "Lock Repair",
+            "amount": 644.48
+          },
+          {
+            "account": "Rekey",
+            "amount": 410.34
+          },
+          {
+            "account": "Parking Lot Repair",
+            "amount": 341.66
+          },
+          {
+            "account": "Electrical Repair",
+            "amount": 313.17
+          },
+          {
+            "account": "Cleaning",
+            "amount": 275
+          },
+          {
+            "account": "Legal Fees",
+            "amount": 250
+          },
+          {
+            "account": "Backflow",
+            "amount": 240
+          },
+          {
+            "account": "Trash Removal",
+            "amount": 124.66
+          },
+          {
+            "account": "Carpet Cleaning",
+            "amount": 118.19
+          },
+          {
+            "account": "HVAC Maintenance",
+            "amount": 115.5
+          },
+          {
+            "account": "Keys",
+            "amount": 39.83
+          }
+        ]
+      }
+    ]
+  },
   "governors": null,
   "marketRents": {},
   "workbookTotals": {
