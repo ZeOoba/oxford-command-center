@@ -48,7 +48,16 @@ param(
   # Invoke-NativeCommandWithTimeout, after finding an out-of-range value could previously leave a
   # process running, unwaited and unkilled.
   [ValidateRange(60, 1200)]
-  [int]$DeployTimeoutSeconds = 600
+  [int]$DeployTimeoutSeconds = 600,
+  # Also bake the Fat Mirror payload (public/warehouse.json) in step 2 -- the COMPUTED PFI +
+  # Calibration-read route payloads that make those two server-only modules work on the mirror,
+  # and (Eric Live Phase 2) the cold-standby payload the edge proxy serves when the workstation
+  # is asleep.
+  #
+  # OFF by default and deliberately NOT on the hourly task: the warehouse bake is RAM/IO-heavy
+  # and contends with the live Brain Server's WAL lock, so it runs on its own DAILY schedule
+  # (cadence decoupling -- spec section 2.2). The hourly snapshot bake must stay light.
+  [switch]$IncludeWarehouse
 )
 
 $ErrorActionPreference = 'Stop'
@@ -223,6 +232,12 @@ try {
   # 2) Bake (confidential included -- target is Access-gated) + build.
   $env:MIRROR_INCLUDE_CONFIDENTIAL = '1'
   $env:BRIEF_ENABLED               = '1'
+  # Fat Mirror / cold-standby payload. Set explicitly to '0' rather than left unset when the switch
+  # is absent: this process inherits the caller's environment, and a BAKE_WAREHOUSE=1 lingering in an
+  # operator's shell would otherwise silently turn every hourly run into the heavy bake -- the exact
+  # WAL contention the daily cadence exists to avoid. bake-mirror.ts's shouldBakeWarehouse() is
+  # strict ('0' is OFF, not a truthy string), so this pins the hourly path OFF by construction.
+  $env:BAKE_WAREHOUSE              = if ($IncludeWarehouse) { '1' } else { '0' }
   $env:BRIEF_SEND_SCRIPT           = 'C:\Users\Owner\.claude\scheduled-tasks\_shared\send-via-outlook.ps1'
   # Incident (2026-08-05 -> 2026-08-09, ~13 consecutive failed runs): this machine is dual-stack
   # but has NO working IPv6 route, while its only DNS server (10.254.1.1, no secondary) still
