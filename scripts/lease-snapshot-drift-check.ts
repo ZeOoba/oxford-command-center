@@ -23,6 +23,7 @@ import { workbookPath, SNAPSHOT_PATH } from '../server/config';
 import { loadOverlay, applyOverlay, overlayPath } from '../server/overlay';
 import { evaluateAnomalyFloor as evaluateAnomalyFloorCore } from '../server/anomaly-floor';
 import { checkSnapshot } from '../server/reconcile-runtime';
+import { resolveQuickbooks } from '../server/sources/quickbooks';
 
 loadEnvFile();
 
@@ -488,7 +489,17 @@ async function main() {
   // raw parse here would silently zero out real tenantArrears/renewalStages/marketRents/noiBudgets
   // data on every scheduled run (a mandatory adversarial review round caught this).
   const overlay = loadOverlay();
-  const enriched = applyOverlay(snapshot, overlay);
+  const merged = applyOverlay(snapshot, overlay);
+  // quickbooks is SERVER-ATTACHED (server/brain.ts calls loadQuickbooks() itself; parseWorkbook/
+  // applyOverlay never touch it), and the contract defaults it to null. Without this step this CLI
+  // writer would silently NULL OUT whatever the server path had previously written -- the
+  // 2026-08-17 incident (see resolveQuickbooks's doc comment in server/sources/quickbooks.ts).
+  // Attached here, before the reconciliation gate below, so that gate sees the same object shape
+  // server/brain.ts's checkSnapshot(withQb) does. Same attach point as scripts/extract-workbook.ts
+  // -- keep both regeneration tools in sync (see this file's header comment).
+  const { quickbooks, preservedFrom } = resolveQuickbooks(merged.properties, SNAPSHOT_PATH);
+  if (preservedFrom) console.log(`ℹ quickbooks: no fresh QUICKBOOKS_CSV parse — carried forward the previous snapshot's block (parsedAt ${quickbooks!.parsedAt}) instead of nulling it.`);
+  const enriched = { ...merged, quickbooks };
   // No cast: Lease already structurally satisfies DriftLeaseView. Keeping this a plain
   // assignment (not `as unknown as`) means a future Lease shape change that breaks the
   // assumption fails typecheck here instead of silently disabling the check. enriched.leases is
