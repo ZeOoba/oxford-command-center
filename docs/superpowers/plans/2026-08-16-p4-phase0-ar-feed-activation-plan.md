@@ -96,13 +96,21 @@ Expected: `server down - safe`. If `SERVER UP`, stop it — see Global Constrain
 - [ ] **Step 4: Run the importer against the dry-run copies**
 
 ```bash
+cp data/overlay.json data/ar-dryrun/overlay.json
 AR_INBOX="$PWD/data/ar-dryrun/inbox" \
 SNAPSHOT_PATH="$PWD/data/ar-dryrun/portfolio.json" \
+OVERLAY_PATH="$PWD/data/ar-dryrun/overlay.json" \
 AR_MAPPING_CACHE="$PWD/data/ar-dryrun/mapping-cache.json" \
 npx tsx scripts/ar-import-headless.ts
 ```
 
+**`OVERLAY_PATH` is not optional.** The importer writes the overlay as the canonical store and only *then* patches the snapshot, so redirecting `SNAPSHOT_PATH` alone still writes the live `data/overlay.json` — a "dry" run that mutates production state. `overlayPath()` reads `process.env.OVERLAY_PATH` at call time (`server/overlay.ts:54`), so the redirect works. Verify isolation by checksumming `data/overlay.json` and `data/snapshots/portfolio.json` before and after; both must be byte-identical.
+
+**Run from the main checkout, not the worktree.** `node_modules` is gitignored and does not propagate into a worktree, so `npx tsx` fails there. Task 1 changes no code, so running the unmodified script from the main checkout with all four paths redirected into the worktree's `data/ar-dryrun/` is equivalent and fully isolated.
+
 Expected: exit 0, log showing `5 file(s) · 138 lease(s) loaded`. Any file landing in `data/ar-dryrun/failed/` is a finding — record the quarantine reason verbatim and stop.
+
+**Actual result, 2026-08-16 (run completed):** all five parsed as `rent-manager-delinquency`, `18 lease(s) written · 8 queued for review · 0 skipped · 5/5 archived` — 26 rows total, exactly matching `_pipeline`'s count for these five files. Written $54,762.78; review queue $75,213.11; combined **$129,975.89**, leaving $74,812.59 for Formats B and C. **`Columbus Suburan Construction` surfaced in the review queue at $20,457.24**, matching the documented balance to the cent — acceptance criterion (a) satisfied. Both real files verified byte-identical before and after.
 
 - [ ] **Step 5: Verify what was written**
 
@@ -839,11 +847,15 @@ rm -rf data/ar-dryrun/inbox data/ar-dryrun/processed data/ar-dryrun/failed
 mkdir -p data/ar-dryrun/inbox
 cp "/c/Users/Owner/OneDrive - Oxford Capital Partners/Business/A.R. Reports/"*.xlsx data/ar-dryrun/inbox/
 cp data/snapshots/portfolio.json data/ar-dryrun/portfolio.json
+cp data/overlay.json data/ar-dryrun/overlay.json
 AR_INBOX="$PWD/data/ar-dryrun/inbox" \
 SNAPSHOT_PATH="$PWD/data/ar-dryrun/portfolio.json" \
+OVERLAY_PATH="$PWD/data/ar-dryrun/overlay.json" \
 AR_MAPPING_CACHE="$PWD/data/ar-dryrun/mapping-cache.json" \
 npx tsx scripts/ar-import-headless.ts
 ```
+
+`OVERLAY_PATH` is mandatory here for the same reason as Task 1 — without it a dry run writes the live overlay. Re-checksum both real files afterwards.
 
 Expected: `8 file(s)` loaded, exit 0, `data/ar-dryrun/failed/` empty.
 
