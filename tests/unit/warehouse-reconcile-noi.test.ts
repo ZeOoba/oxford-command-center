@@ -36,6 +36,8 @@ const input = (over: Partial<NoiReconcileInput>): NoiReconcileInput => ({
   warehouseBasis: 'cash',
   isLeaseRun: false,
   isResidence: false,
+  acqDate: null,
+  recentTenancyAnnualRent: null,
   ...over,
 });
 
@@ -251,6 +253,130 @@ describe('sign-inversion guard (CORRECTNESS — adversarial fix, the absolute fl
   });
 });
 
+describe('structural-mismatch downgrade (OI-137 — ownership/tenancy changed since the comparison period, not an integrity break)', () => {
+  // 2026-08-17 root cause (open-items-tracker.md OI-137): a large drift can be fully explained by
+  // Spine A (workbook, current rent roll) and Spine B (warehouse, the LATEST FULL-YEAR period's
+  // historical actuals) measuring different things when ownership or tenancy changed since that
+  // period. Neither spine is wrong. This downgrade must be conservative: it only ever applies to
+  // what would otherwise be large-drift (never escalates or touches in-tolerance/drift), it never
+  // fires without positive evidence (absence of acqDate/lease data is not evidence), and it must
+  // NEVER fire on a sign-inverted disagreement (profit vs loss is always a genuine break regardless
+  // of tenancy/ownership history).
+  const LARGE_DRIFT = { workbookOxfordNoi: 98550, warehouseOxfordNoi: 8638 }; // Livingston's real numbers, absDelta=$89,912, deltaPct=91.23%
+
+  it('ownership signal: acquired on/after the comparison period start, WITH some rent-roll corroboration → structural-mismatch/warn', () => {
+    // Corroboration deliberately below the standalone tenancy bar (50% of $89,912 ≈ $44,956) — the
+    // point of this test is that a SMALL amount of post-acquisition leasing, combined with the
+    // acquisition date, is enough; ownership is not required to explain the full dollar gap alone.
+    const r = classifyNoiReconciliation(input({ ...LARGE_DRIFT, acqDate: '2025-06-01', recentTenancyAnnualRent: 5000 }), TOL);
+    expect(r.status).toBe('structural-mismatch');
+    expect(r.severity).toBe('warn');
+    expect(r.reason).toMatch(/OI-137/);
+    expect(r.reason).toMatch(/acquired/i);
+  });
+
+  it('boundary: acqDate exactly equal to the period start date still counts as on/after (inclusive)', () => {
+    const r = classifyNoiReconciliation(input({ ...LARGE_DRIFT, acqDate: '2025-01-01', recentTenancyAnnualRent: 5000 }), TOL);
+    expect(r.status).toBe('structural-mismatch');
+  });
+
+  it('no ownership signal: acqDate well before the comparison period → stays large-drift/error', () => {
+    const r = classifyNoiReconciliation(input({ ...LARGE_DRIFT, acqDate: '2018-03-14', recentTenancyAnnualRent: 5000 }), TOL);
+    expect(r.status).toBe('large-drift');
+    expect(r.severity).toBe('error');
+  });
+
+  it('ADVERSARIAL FIX: acqDate alone, with ZERO rent-roll corroboration, does NOT downgrade — a bare acquisition date is not evidence for THIS drift', () => {
+    // Closes a gap an adversarial review found: without this guard, any same-sign large-drift at a
+    // newly-acquired property would be waved through indefinitely regardless of cause — masking a
+    // genuine ingestion bug (duplicate rows, misattributed import, decimal error) at exactly the
+    // properties where such a bug is most likely to go unnoticed.
+    const r = classifyNoiReconciliation(input({ ...LARGE_DRIFT, acqDate: '2025-06-01', recentTenancyAnnualRent: null }), TOL);
+    expect(r.status).toBe('large-drift');
+    expect(r.severity).toBe('error');
+  });
+
+  it('ADVERSARIAL FIX: acqDate present but recentTenancyAnnualRent computed to exactly 0 also does NOT downgrade', () => {
+    const r = classifyNoiReconciliation(input({ ...LARGE_DRIFT, acqDate: '2025-06-01', recentTenancyAnnualRent: 0 }), TOL);
+    expect(r.status).toBe('large-drift');
+  });
+
+  it('tenancy signal: recent-tenancy rent covers at least half the delta → structural-mismatch/warn', () => {
+    // absDelta=$89,912; $98,550 (100% of current rent) is well over half.
+    const r = classifyNoiReconciliation(input({ ...LARGE_DRIFT, recentTenancyAnnualRent: 98550 }), TOL);
+    expect(r.status).toBe('structural-mismatch');
+    expect(r.severity).toBe('warn');
+    expect(r.reason).toMatch(/OI-137/);
+    expect(r.reason).toMatch(/\$98,550/);
+  });
+
+  it('boundary: recent-tenancy rent exactly half the delta still counts (inclusive)', () => {
+    const r = classifyNoiReconciliation(input({ ...LARGE_DRIFT, recentTenancyAnnualRent: 89912 * 0.5 }), TOL);
+    expect(r.status).toBe('structural-mismatch');
+  });
+
+  it('insufficient tenancy evidence: recent-tenancy rent under half the delta → stays large-drift/error', () => {
+    const r = classifyNoiReconciliation(input({ ...LARGE_DRIFT, recentTenancyAnnualRent: 10000 }), TOL);
+    expect(r.status).toBe('large-drift');
+    expect(r.severity).toBe('error');
+  });
+
+  it('zero recent-tenancy rent is treated as no signal, not a false match', () => {
+    const r = classifyNoiReconciliation(input({ ...LARGE_DRIFT, recentTenancyAnnualRent: 0 }), TOL);
+    expect(r.status).toBe('large-drift');
+  });
+
+  it('no evidence at all (both null) → stays large-drift/error — absence of evidence is not evidence of a structural cause', () => {
+    const r = classifyNoiReconciliation(input({ ...LARGE_DRIFT, acqDate: null, recentTenancyAnnualRent: null }), TOL);
+    expect(r.status).toBe('large-drift');
+    expect(r.severity).toBe('error');
+  });
+
+  it('ADVERSARIAL: a sign-inverted large drift is NEVER downgraded, even with strong ownership AND tenancy evidence', () => {
+    // Profit-vs-loss disagreement must always surface as a genuine break — a tenancy/ownership
+    // explanation for the MAGNITUDE of a gap says nothing about a SIGN flip, which points at a
+    // parsing or classification defect, not a timing difference.
+    const r = classifyNoiReconciliation(
+      input({
+        workbookOxfordNoi: 50000,
+        warehouseOxfordNoi: -50000,
+        warehouseBasis: 'cash',
+        acqDate: '2026-01-01',
+        recentTenancyAnnualRent: 999999,
+      }),
+      TOL,
+    );
+    expect(r.status).not.toBe('structural-mismatch');
+    expect(r.status).toBe('large-drift');
+    expect(r.severity).toBe('error');
+    expect(r.reason).toMatch(/sign|inversion/i);
+  });
+
+  it('never crashes and never false-positives when there is no comparison period to evaluate (warehousePeriod null)', () => {
+    // Defensive: large-drift with both NOIs present but no period string should still classify
+    // deterministically rather than throwing on a null period.slice().
+    const r = classifyNoiReconciliation(
+      input({ ...LARGE_DRIFT, warehousePeriod: null, acqDate: '2025-06-01', recentTenancyAnnualRent: 98550 }),
+      TOL,
+    );
+    expect(r.status).toBe('large-drift'); // no period to compare against ⇒ no structural evidence possible
+  });
+
+  it('scope containment: strong ownership/tenancy evidence does NOT touch a row that is already in-tolerance or drift', () => {
+    const inTolerance = classifyNoiReconciliation(
+      input({ workbookOxfordNoi: 104000, warehouseOxfordNoi: 100000, acqDate: '2026-01-01', recentTenancyAnnualRent: 999999 }),
+      TOL,
+    );
+    expect(inTolerance.status).toBe('in-tolerance'); // unchanged — the downgrade only ever applies FROM large-drift
+
+    const drift = classifyNoiReconciliation(
+      input({ workbookOxfordNoi: 220000, warehouseOxfordNoi: 200000, acqDate: '2026-01-01', recentTenancyAnnualRent: 999999 }),
+      TOL,
+    );
+    expect(drift.status).toBe('drift'); // unchanged — still warn, but not relabeled 'structural-mismatch'
+  });
+});
+
 describe('both-null no-data status (COMPLETENESS — neither spine reports a value)', () => {
   it('a property tracked in both spines that newly has no NOI on either side is "no-data" (info), not missing-from-workbook (warn)', () => {
     // Adversarial finding (COMPLETENESS/MEDIUM): the prior both-null branch labeled the case
@@ -358,9 +484,14 @@ const RED_BRANCH = '9050-red-branch-rd-columbia-md'; // pnl, 50% owned
 const FISHEL = '7658-fishel-dr-n-dublin-oh';        // financial_mode = 'lease-run'
 const PHANTOM = 'not-a-real-property-slug';          // present ONLY in the snapshot — slug mismatch
 
-/** Minimal snapshot stub — buildNoiReconcileInputs/reconcileNoiABFromDb read only properties[].{id,name,noi,type}. */
-function snapshot(properties: Array<{ id: string; name: string; noi: number | null; type?: string }>): PortfolioSnapshot {
-  return { properties } as unknown as PortfolioSnapshot;
+/** Minimal snapshot stub — buildNoiReconcileInputs/reconcileNoiABFromDb read only
+ *  properties[].{id,name,noi,type,acqDate} and leases[].{propertyId,leaseStart,annualRent}.
+ *  `leases` defaults to [] so every pre-existing call site (which predates OI-137) is unaffected. */
+function snapshot(
+  properties: Array<{ id: string; name: string; noi: number | null; type?: string; acqDate?: string | null }>,
+  leases: Array<{ propertyId: string | null; leaseStart: string | null; annualRent: number; status?: string }> = [],
+): PortfolioSnapshot {
+  return { properties, leases } as unknown as PortfolioSnapshot;
 }
 
 describe('reconcileNoiABFromDb / buildNoiReconcileInputs — DB join (live periodMetrics, no mocks)', () => {
@@ -472,5 +603,67 @@ describe('reconcileNoiABFromDb / buildNoiReconcileInputs — DB join (live perio
     const row = rows.find((r) => r.propertyId === RARIG);
     expect(row).toBeDefined();
     expect(row!.status).toBe('missing-from-workbook');
+  });
+
+  it('(g) buildNoiReconcileInputs carries Property.acqDate through to NoiReconcileInput.acqDate (OI-137)', () => {
+    const snap = snapshot([{ id: RARIG, name: 'Rarig', noi: 95000, acqDate: '2025-06-01' }]);
+    const inputs = buildNoiReconcileInputs(snap, propertyPeriodMetrics(db), [{ id: RARIG, financialMode: 'pnl' }]);
+    expect(inputs.find((i) => i.propertyId === RARIG)!.acqDate).toBe('2025-06-01');
+  });
+
+  it('(g2) a missing acqDate normalizes to null, not undefined — NoiReconcileInput.acqDate is always string | null', () => {
+    const snap = snapshot([{ id: RARIG, name: 'Rarig', noi: 95000 }]); // acqDate omitted entirely
+    const inputs = buildNoiReconcileInputs(snap, propertyPeriodMetrics(db), [{ id: RARIG, financialMode: 'pnl' }]);
+    expect(inputs.find((i) => i.propertyId === RARIG)!.acqDate).toBeNull();
+  });
+
+  it('(h) buildNoiReconcileInputs sums recentTenancyAnnualRent from ONLY this property\'s leases starting on/after the FY period, ignoring others (OI-137)', () => {
+    // Rarig's warehousePeriod resolves to '2025' (from the shared beforeAll fixture) ⇒ periodStart 2025-01-01.
+    const snap = snapshot(
+      [{ id: RARIG, name: 'Rarig', noi: 95000 }],
+      [
+        { propertyId: RARIG, leaseStart: '2026-01-15', annualRent: 30000, status: 'Active' },  // counts: after period start
+        { propertyId: RARIG, leaseStart: '2025-01-01', annualRent: 20000, status: 'Active' },  // counts: boundary, inclusive
+        { propertyId: RARIG, leaseStart: '2019-05-01', annualRent: 50000, status: 'Active' },  // excluded: long before the period
+        { propertyId: RARIG, leaseStart: null, annualRent: 15000, status: 'Active' },          // excluded: no start date to evaluate
+        { propertyId: RED_BRANCH, leaseStart: '2026-01-15', annualRent: 99999, status: 'Active' }, // excluded: different property
+      ],
+    );
+    const inputs = buildNoiReconcileInputs(snap, propertyPeriodMetrics(db), [{ id: RARIG, financialMode: 'pnl' }]);
+    expect(inputs.find((i) => i.propertyId === RARIG)!.recentTenancyAnnualRent).toBe(50000); // 30000 + 20000
+  });
+
+  it('(h1) ADVERSARIAL FIX: recentTenancyAnnualRent excludes leases that are no longer currently in force (Expired/Vacant), even if leaseStart qualifies', () => {
+    // Closes a gap an adversarial review found: an Expired lease that started and already churned
+    // out within the comparison window is not part of the CURRENT rent roll this signal is meant
+    // to represent, and must not count as evidence for a drift it can no longer be causing.
+    const snap = snapshot(
+      [{ id: RARIG, name: 'Rarig', noi: 95000 }],
+      [
+        { propertyId: RARIG, leaseStart: '2026-01-15', annualRent: 30000, status: 'Active' },        // counts
+        { propertyId: RARIG, leaseStart: '2026-02-01', annualRent: 40000, status: 'Expiring Soon' },  // counts — still currently in force
+        { propertyId: RARIG, leaseStart: '2025-03-01', annualRent: 25000, status: 'Expired' },        // excluded — no longer current
+        { propertyId: RARIG, leaseStart: '2025-04-01', annualRent: 18000, status: 'Vacant' },         // excluded — no longer current
+      ],
+    );
+    const inputs = buildNoiReconcileInputs(snap, propertyPeriodMetrics(db), [{ id: RARIG, financialMode: 'pnl' }]);
+    expect(inputs.find((i) => i.propertyId === RARIG)!.recentTenancyAnnualRent).toBe(70000); // 30000 + 40000 only
+  });
+
+  it('(h2) recentTenancyAnnualRent is null (not 0) when there is no FY period to compare leaseStart against', () => {
+    // mystery-prop has no warehouse data at all ⇒ no fyPeriod ⇒ the tenancy signal cannot be computed.
+    const snap = snapshot(
+      [{ id: 'mystery-prop-not-in-warehouse', name: 'Mystery', noi: 50000 }],
+      [{ propertyId: 'mystery-prop-not-in-warehouse', leaseStart: '2026-01-15', annualRent: 30000 }],
+    );
+    const inputs = buildNoiReconcileInputs(snap, propertyPeriodMetrics(db), []);
+    expect(inputs.find((i) => i.propertyId === 'mystery-prop-not-in-warehouse')!.recentTenancyAnnualRent).toBeNull();
+  });
+
+  it('(h3) buildNoiReconcileInputs never crashes when snapshot.leases is absent (pre-OI-137 minimal snapshot stubs)', () => {
+    const bareSnap = { properties: [{ id: RARIG, name: 'Rarig', noi: 95000 }] } as unknown as PortfolioSnapshot;
+    expect(() => buildNoiReconcileInputs(bareSnap, propertyPeriodMetrics(db), [{ id: RARIG, financialMode: 'pnl' }])).not.toThrow();
+    const inputs = buildNoiReconcileInputs(bareSnap, propertyPeriodMetrics(db), [{ id: RARIG, financialMode: 'pnl' }]);
+    expect(inputs.find((i) => i.propertyId === RARIG)!.recentTenancyAnnualRent).toBe(0);
   });
 });
