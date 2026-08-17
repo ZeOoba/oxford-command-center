@@ -22,15 +22,21 @@
 #    (paid 1/27/2025) is therefore tax year 2024's real total — added below. No Full/Reduction/
 #    Effective Rate breakdown was available for this specific past year (only the Auditor's
 #    current-year rate table is exposed), so millage_rate is left blank rather than interpolated.
-#  - 29000 Information Lane 2025: Talbot County Lot 4's screenshot is a misfiled duplicate of the
-#    Easton Lot 4 2025 bill — the 2025 total would be incomplete without it, so the row is omitted
-#    rather than publishing a partial sum. 2026/2027 rows ARE complete (Easton + Talbot, both lots).
+#  - 29000 Information Lane 2025: RESOLVED 2026-08-17. Talbot County Lot 4's OneDrive screenshot
+#    was a misfiled duplicate of the Easton Lot 4 2025 bill. Recaptured the real Talbot County
+#    Lot 4 tax-year-2025 bill directly from Talbot County's own Citizen Self Service portal
+#    (talbotcountymd.munisselfservice.com, parcel 01088742): Bill #7072, $8,239.00 (2 installments,
+#    fully paid). 2025 row added below, now complete (Easton + Talbot, both lots).
 #  - 2203-2207 Northwood: only FY2026 found (3 parcels x 2 jurisdictions, summed into one row); no
 #    prior-year history exists anywhere searched. annual_tax_billed/assessed_value are sums across
 #    parcels 09-053646/09-053654/09-053662 — see source for the per-parcel/per-jurisdiction breakout.
-#  - 9050 Red Branch: jurisdiction blank — the source screenshot (online tax-bill portal) never
-#    prints a county name; Howard County is likely (Columbia MD address) but unconfirmed by the
-#    document itself, so left blank rather than asserted.
+#  - 9050 Red Branch jurisdiction: RESOLVED 2026-08-17. The source tax-bill-portal screenshot never
+#    printed a county name, so it was left blank rather than asserted from the address alone.
+#    Confirmed as Howard County, MD via parcel match: multiple independent MLS listing sources
+#    (Howard Hanna, Berkshire Hathaway, PenFed Realty, etc., MLS# MDHW2042726 — "HW" = Howard
+#    County) give this property's APN as 12-000413, identical to the "12000413" account number
+#    already in every existing row's source note. Not sourced from Maryland SDAT — SDAT's Terms
+#    of Use explicitly prohibit automated/robotic data collection, so it was not used here.
 #  - millage_rate is left blank wherever the source states a composite/multi-line rate (e.g. MD's
 #    separate State % + City/County % per $100 assessed) rather than a single number — populating it
 #    would silently conflate incompatible bases with the Ohio single-mills-figure rows that ARE
@@ -53,18 +59,19 @@ property_id,property_name,market,tax_year,jurisdiction,assessed_value,assessment
 3875-3883-e-livingston-ave-columbus-oh,"3875-3883 E Livingston Ave, Columbus OH",Columbus OH,2025,"Franklin County OH (Tax District 010-City of Columbus)",,,115.89,21354.68,"Franklin County OH Auditor tax-rate/billing summary screenshot; OneDrive .../3875-3883 Livingston Property Taxes 2025.png",
 sepich-portfolio-columbus-oh-8-props,"FVC — Fairground Village Center / Sepich Portfolio (8 props)",Columbus OH,2026,,,,,,county-portal,
 1100-rarig-ave-columbus-oh,"1100 Rarig Ave, Columbus OH",Columbus OH,2026,,,,,,county-portal,
+29000-information-lane-easton-md,"29000 Information Lane, Easton MD",Mid-Atlantic,2025,"Town of Easton + Talbot County, MD (Lots 4 and 5, both jurisdictions)",,,,28808.28,"Sum of 4 bills: Easton Lot 4 $5,564.00 + Easton Lot 5 $6,048.64 + Talbot County Lot 4 $8,239.00 (recaptured from talbotcountymd.munisselfservice.com, parcel 01088742, Bill #7072, fully paid — the OneDrive screenshot for this bill was a misfiled duplicate of the Easton bill) + Talbot County Lot 5 $8,956.64.",
 29000-information-lane-easton-md,"29000 Information Lane, Easton MD",Mid-Atlantic,2026,"Town of Easton + Talbot County, MD (Lots 4 and 5, both jurisdictions)",,,,35845.23,"Sum of 4 bills: Easton Lot 4 $6,911.50 + Easton Lot 5 $7,402.38 + Talbot County Lot 4 $10,396.48 + Talbot County Lot 5 $11,134.87. OneDrive Business/Property Taxes Historical/29000 Information Lane Property Taxes/*.png",
 29000-information-lane-easton-md,"29000 Information Lane, Easton MD",Mid-Atlantic,2027,"Town of Easton + Talbot County, MD (Lots 4 and 5, both jurisdictions)",,,,43094.03,"Sum of 4 bills (gross/pre-discount): Easton Lot 4 $8,259.00 + Easton Lot 5 $8,756.12 + Talbot County Lot 4 $12,658.49 + Talbot County Lot 5 $13,420.42. OneDrive Business/Property Taxes Historical/29000 Information Lane Property Taxes/*.png",
 9620-e-state-route-350-raytown-mo,"9620 E State Route 350, Raytown MO",Kansas City MO,2026,,,,,,county-portal,
-9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2018,,,,,84594.20,"Online real-estate tax bill payment portal, Bill History table, parcel #12000413 (Muirkirk Properties LLC) — jurisdiction not printed on document, not asserted. OneDrive .../9050 Red Branch Road Property Taxesd 2018-2026.png",
-9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2019,,,,,95228.85,"Online real-estate tax bill payment portal, Bill History table, parcel #12000413 (Muirkirk Properties LLC) — jurisdiction not printed on document, not asserted.",
-9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2020,,,,,102177.92,"Online real-estate tax bill payment portal, Bill History table, parcel #12000413 (Muirkirk Properties LLC) — jurisdiction not printed on document, not asserted.",
-9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2021,,,,,97314.33,"Online real-estate tax bill payment portal, Bill History table, parcel #12000413 (Muirkirk Properties LLC) — jurisdiction not printed on document, not asserted.",
-9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2022,,,,,102706.45,"Online real-estate tax bill payment portal, Bill History table, parcel #12000413 (Muirkirk Properties LLC) — jurisdiction not printed on document, not asserted.",
-9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2023,,,,,107410.74,"Online real-estate tax bill payment portal, Bill History table, parcel #12000413 (Muirkirk Properties LLC) — jurisdiction not printed on document, not asserted.",
-9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2024,,,,,117727.57,"Online real-estate tax bill payment portal, Bill History table, parcel #12000413 (Muirkirk Properties LLC) — jurisdiction not printed on document, not asserted.",
-9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2025,,,,,120025.11,"Online real-estate tax bill payment portal, Bill History table, parcel #12000413 (Muirkirk Properties LLC) — jurisdiction not printed on document, not asserted.",
-9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2026,,,,,121439.30,"Online real-estate tax bill payment portal, 'Total Current' balance line, bill #30496804, parcel #12000413 (Muirkirk Properties LLC) — jurisdiction not printed on document, not asserted.",
+9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2018,"Howard County, MD",,,,84594.20,"Online real-estate tax bill payment portal, Bill History table, parcel #12000413 (Muirkirk Properties LLC). Jurisdiction not printed on source document — confirmed Howard County via APN 12-000413 match against MLS# MDHW2042726 (multiple independent listing sources). OneDrive .../9050 Red Branch Road Property Taxesd 2018-2026.png",
+9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2019,"Howard County, MD",,,,95228.85,"Online real-estate tax bill payment portal, Bill History table, parcel #12000413 (Muirkirk Properties LLC). Jurisdiction confirmed Howard County via APN 12-000413 match (see 2018 row note).",
+9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2020,"Howard County, MD",,,,102177.92,"Online real-estate tax bill payment portal, Bill History table, parcel #12000413 (Muirkirk Properties LLC). Jurisdiction confirmed Howard County via APN 12-000413 match (see 2018 row note).",
+9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2021,"Howard County, MD",,,,97314.33,"Online real-estate tax bill payment portal, Bill History table, parcel #12000413 (Muirkirk Properties LLC). Jurisdiction confirmed Howard County via APN 12-000413 match (see 2018 row note).",
+9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2022,"Howard County, MD",,,,102706.45,"Online real-estate tax bill payment portal, Bill History table, parcel #12000413 (Muirkirk Properties LLC). Jurisdiction confirmed Howard County via APN 12-000413 match (see 2018 row note).",
+9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2023,"Howard County, MD",,,,107410.74,"Online real-estate tax bill payment portal, Bill History table, parcel #12000413 (Muirkirk Properties LLC). Jurisdiction confirmed Howard County via APN 12-000413 match (see 2018 row note).",
+9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2024,"Howard County, MD",,,,117727.57,"Online real-estate tax bill payment portal, Bill History table, parcel #12000413 (Muirkirk Properties LLC). Jurisdiction confirmed Howard County via APN 12-000413 match (see 2018 row note).",
+9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2025,"Howard County, MD",,,,120025.11,"Online real-estate tax bill payment portal, Bill History table, parcel #12000413 (Muirkirk Properties LLC). Jurisdiction confirmed Howard County via APN 12-000413 match (see 2018 row note).",
+9050-red-branch-rd-columbia-md,"9050 Red Branch Rd, Columbia MD",Mid-Atlantic,2026,"Howard County, MD",,,,121439.30,"Online real-estate tax bill payment portal, 'Total Current' balance line, bill #30496804, parcel #12000413 (Muirkirk Properties LLC). Jurisdiction confirmed Howard County via APN 12-000413 match (see 2018 row note).",
 1900-n-broadway-baltimore-md,"1900 N Broadway, Baltimore MD",Mid-Atlantic,2025,"Baltimore City, MD",2439300,,,57567.48,"Baltimore City (Mayor and City Council of Baltimore) Real Property Tax Levy bill, FY2025 (Jul 2024-Jun 2025), Bureau of Revenue Collections; parcel WD 08/Sec 020/Blk 4159/Lot 005; Total Tax $57,567.48 (State 0.112% + City 2.248% of assessed value; Other Charges $348.28 excluded). OneDrive .../1900 N Broadway Property Taxes 2024-2025.png",
 1900-n-broadway-baltimore-md,"1900 N Broadway, Baltimore MD",Mid-Atlantic,2026,"Baltimore City, MD (year/jurisdiction inferred — this screenshot's header is cropped off; confirmed via matching parcel/rate format + sequential IVR reference prefix 25)",2507000,,,59165.20,"Bureau of Revenue Collections-format bill, same format as confirmed FY2025/FY2027 bills; Total Tax $59,165.20 (Other Charges $294.88 excluded). OneDrive .../1900 N Broadway Property Taxes 2025-2026.png",
 1900-n-broadway-baltimore-md,"1900 N Broadway, Baltimore MD",Mid-Atlantic,2027,"Baltimore City, MD",2525800,,,59608.88,"Baltimore City (Mayor and City Council of Baltimore) Real Property Tax Levy bill, FY2027 (Jul 2026-Jun 2027); Total Tax $59,608.88. OneDrive .../1900 N Broadway Property Taxes 2026-2027.png",
