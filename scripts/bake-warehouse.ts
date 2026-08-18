@@ -18,6 +18,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { warehouseRoutes } from '../server/warehouse/api';
+import { brainApi } from '../server/warehouse/brain-api';
 import { openWarehouse } from '../server/warehouse/db';
 import type { WarehouseDb } from '../server/warehouse/db';
 import { serverPort } from '../server/config';
@@ -31,11 +32,27 @@ import {
 /** Resolve ONE warehouse route. `routerPath` omits the `/api/warehouse` mount prefix. */
 export type RouteResolver = (routerPath: string) => Promise<{ status: number; json: unknown }>;
 
-/** In-process resolver: drives the real Hono router over a db handle (no network). */
+/** Mount prefix for the Command Brain sub-router. brainApi is mounted SEPARATELY from
+ *  warehouseRoutes() in server/index.ts (`app.route('/api/warehouse/brain', brainApi(...))` — see
+ *  brain-api.ts's own header comment for why), not nested inside it like the routes FIXED_ROUTES
+ *  already covers. inProcessResolver below has to know about that split; httpResolver does not,
+ *  because it calls the real running server, which already has both mounts wired. */
+const BRAIN_PREFIX = '/brain';
+
+/** In-process resolver: drives the real Hono router over a db handle (no network). Routes under
+ *  BRAIN_PREFIX are delegated to a standalone brainApi instance — warehouseRoutes() never had it
+ *  mounted, so without this split every /brain/* path 404s here even though the SAME db handle
+ *  would serve it fine on the live server (server/index.ts mounts both). This was the actual reason
+ *  the Command Brain module read as "offline" on every checkpoint-read bake (the common case for
+ *  the unattended scheduled deploy, which runs with no dev server up) while working locally. */
 export function inProcessResolver(db: WarehouseDb): RouteResolver {
   const app = warehouseRoutes(() => db);
+  const brain = brainApi(() => db);
   return async (routerPath) => {
-    const res = await app.request(routerPath);
+    const target = routerPath.startsWith(BRAIN_PREFIX)
+      ? { app: brain, path: routerPath.slice(BRAIN_PREFIX.length) || '/' }
+      : { app, path: routerPath };
+    const res = await target.app.request(target.path);
     return { status: res.status, json: res.status === 200 ? await res.json() : null };
   };
 }
@@ -79,6 +96,7 @@ const FIXED_ROUTES = [
   '/analytics/metrics', '/analytics/scores', '/analytics/pm',
   '/analytics/growth', '/analytics/anomalies', '/analytics/lease-run',
   '/calibration/log', '/calibration/pending', '/calibration/report',
+  '/brain/report',
 ] as const;
 
 export function warehouseEndpointPlan(metrics: MetricRow[], leaseRunIds: string[]): string[] {
