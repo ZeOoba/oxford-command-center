@@ -428,17 +428,177 @@ function parseProperties(ws: Worksheet, flags: DataQualityFlag[]): PropertiesPar
   return { properties: disambiguatePropertyIds(out, flags), workbookNoiTotal, workbookValueTotal };
 }
 
-function resolvePropertyId(key: string, properties: Property[]): string | null {
-  const token = key
+// A 2026-08-17 fix (OI-184) first tried stripping known street-suffix words ('road', 'lane', ...)
+// out of the substring match, closing the ONE word that mis-tagged '3034 Westerville Road' onto
+// '1900 N Broadway, Baltimore MD' ('road' is a raw substring of 'b-ROAD-way'). A same-day
+// adversarial refute pass proved the denylist patched the symptom, not the mechanism: ANY-token
+// RAW SUBSTRING matching with first-array-hit-wins is still an open class for every OTHER generic
+// word. Executed against the real portfolio: the live rent-roll key '1900 North Broadway' matches
+// Salisbury's 'Northwood Dr' on 'north' alone (a directional, not a suffix — saved only by
+// Broadway's row currently sitting above Northwood's in the human-maintained Properties sheet, so
+// a routine re-sort would silently retag it), and the property's OWN canonical name '3034
+// Westerville Rd, Columbus OH' resolves to the WRONG Columbus property via the shared 'columbus'
+// token (6 of 14 properties share a city). A denylist can only ever cover the words someone
+// thought to list — 'roadway', 'pike', 'parkway', every plural — inherit the identical hole.
+//
+// Fix: tokenize both the key and every candidate address IDENTICALLY, require WHOLE-TOKEN
+// equality (not substring — this alone kills the entire accidental-substring class, suffix,
+// directional, and city alike, since 'north' as its own token never equals 'northwood' as a
+// whole word), and score each candidate by matched-token count so the MOST DISTINCTIVE address
+// wins instead of whichever property happens to sit first in sheet order. A tie between two
+// candidates resolves to null rather than guessing — the same fail-closed shape already used by
+// resolvePropertyMasterId (property-crosswalk) and ar-import-headless's explicit lookup table.
+// These words name a street TYPE or a compass DIRECTION or a building UNIT rather than a specific
+// place — spelled out in enough addresses across a small portfolio that, alone, they identify
+// nothing ('Lane' matching Easton purely because 'lane' happens to be spelled out in exactly one
+// property's address, with zero other corroborating signal; 'North' matching a Baltimore street
+// that happens to share a house number with an unrelated 'North'-something address). The
+// distinctiveMatch gate below uses this set to require that at least one of a candidate's matched
+// words be genuinely distinctive; it never strips these words out of scoring entirely — that was
+// round 1's approach, and it reopened the directional/city-token collisions rounds 1-2 exist to
+// describe. A generic word can still ADD to score once a real distinctive word has already
+// qualified the candidate.
+const GENERIC_WORDS = new Set([
+  'road', 'street', 'avenue', 'ave', 'lane', 'drive', 'court', 'boulevard', 'blvd', 'place',
+  'circle', 'cir', 'highway', 'hwy', 'route', 'way', 'branch', 'plaza', 'park', 'parkway', 'pkwy',
+  'trail', 'pike', 'terrace', 'square', 'loop', 'crossing',
+  'north', 'south', 'east', 'west', 'northeast', 'northwest', 'southeast', 'southwest',
+  'suite', 'ste', 'unit', 'bldg', 'building', 'apt', 'floor', 'rear',
+]);
+
+function addressTokens(s: string): string[] {
+  return s
     .toLowerCase()
     .replace(/[^a-z0-9 ]/g, ' ')
     .split(/\s+/)
-    .filter((t) => t.length >= 4);
+    .filter((t) => t.length >= 3);
+}
+
+/** All-digit tokens in `s`, extracted independently of addressTokens' length>=3 word filter — a
+ *  1-2 digit house number ('55 New Plant Ct') must still arm the number-range gate below; folding
+ *  digit extraction into the same length-filtered pass as words silently dropped it (refute pass,
+ *  round 3: '57 New Plant Court' wrong-matched to the real '55 New Plant Ct' because its own '57'
+ *  never reached keyNumbers to disqualify the mismatch). */
+function numberTokens(s: string): number[] {
+  const matches = s.match(/\d+/g);
+  return matches ? matches.map(Number) : [];
+}
+
+function normalizedAddress(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** The property's own leading house-number-or-range: '2203-2207 Northwood Dr' -> [2203, 2207],
+ *  '3034 Westerville Rd' -> [3034, 3034]. Null when the address doesn't open with a number. */
+function leadingNumberRange(address: string): [number, number] | null {
+  const m = address.trim().match(/^(\d+)(?:\s*-\s*(\d+))?/);
+  if (!m) return null;
+  const lo = Number(m[1]);
+  const hi = m[2] !== undefined ? Number(m[2]) : lo;
+  return [Math.min(lo, hi), Math.max(lo, hi)];
+}
+
+/** Word tokens from everything after the address's FIRST comma — the city/state/zip tail,
+ *  regardless of how many further commas it contains ('Street, City MD', 'Street, City, MD
+ *  21613' both work) — derived structurally from the address text rather than a hardcoded city
+ *  list, so it stays correct as the portfolio grows into new markets. A city name is exactly as
+ *  non-distinctive as a street-suffix word when it is the ONLY thing a key shares with a
+ *  candidate: refute pass round 3 demonstrated '401 Cambridge Ave' resolving to Sunburst (401
+ *  Sunburst Hwy, Cambridge MD) purely because 'cambridge' happened to match, with the actual
+ *  street name ('Sunburst') absent from the key entirely. Round 4 caught the FIRST version of
+ *  this using lastIndexOf: correct only for the sheet's current single-comma convention, and
+ *  silently defeated by the equally-standard 'Street, City, ST ZIP' postal format, where the
+ *  city sits in the middle segment and the last-comma slice keeps only the ZIP. */
+function cityTokens(address: string): Set<string> {
+  const comma = address.indexOf(',');
+  return new Set(comma === -1 ? [] : addressTokens(address.slice(comma + 1)));
+}
+
+/** Word tokens from the address's own STREET segment — everything before the first comma. A word
+ *  that names both the street AND the city ('3034 Westerville Rd, Westerville OH' — an Ohio
+ *  naming pattern this exact portfolio already uses) must not be excluded as a mere city
+ *  qualifier: it is the property's own distinctive street name, and excluding it would make the
+ *  property's own canonical address permanently unable to resolve any of its leases (refute pass,
+ *  round 4). */
+function streetTokens(address: string): Set<string> {
+  const comma = address.indexOf(',');
+  return new Set(addressTokens(comma === -1 ? address : address.slice(0, comma)));
+}
+
+export function resolvePropertyId(key: string, properties: Property[]): string | null {
+  const keyTokenList = addressTokens(key);
+  if (keyTokenList.length === 0) return null;
+  const keyWordTokens = new Set(keyTokenList.filter((t) => !/^\d+$/.test(t)));
+  const keyNumbers = numberTokens(key);
+  // A single-token key ('Sunburst') has nothing else to require, but a multi-token key needs at
+  // least two independent signals before it is trusted — one shared word alone is exactly the
+  // failure the refute pass demonstrated: a hypothetical 'Banwick Lane' key would match Easton's
+  // address on the bare word 'lane' with no other corroborating signal. Two matched words, or one
+  // matched word plus an agreeing street number, both clear this floor; one matched word alone
+  // does not.
+  const floor = keyTokenList.length >= 2 ? 2 : 1;
+
+  const eligible: { p: Property; score: number }[] = [];
   for (const p of properties) {
-    const a = p.address.toLowerCase();
-    if (token.some((t) => a.includes(t))) return p.id;
+    const range = leadingNumberRange(p.address);
+    // A street NUMBER match is the strongest single disambiguator two addresses on the same
+    // street can offer — '4595 E. 5th Ave' is a different building from '3540 E. 5th Ave,
+    // Columbus OH' despite sharing every word (caught by the refute pass's differential replay:
+    // word-overlap scoring alone mis-resolved the Sepich sub-address to the unrelated numbered
+    // property). So when the key carries a number, a candidate whose OWN number range doesn't
+    // cover it is disqualified outright, however many words overlap. A RANGE, not exact equality,
+    // so a real multi-suite address ('2203-2207 Northwood Dr' housing a '2205 Northwood' lease)
+    // still matches on its own street number — an exact-equality gate (an earlier version of this
+    // fix) silently dropped every such lease, a regression the refute pass also caught.
+    const numberMatches = range !== null && keyNumbers.some((n) => n >= range[0] && n <= range[1]);
+    if (keyNumbers.length > 0 && !numberMatches) continue;
+
+    const addrWordTokens = new Set(addressTokens(p.address).filter((t) => !/^\d+$/.test(t)));
+    const addrCityTokens = cityTokens(p.address);
+    const addrStreetTokens = streetTokens(p.address);
+    let wordScore = 0;
+    let distinctiveMatch = false;
+    for (const t of keyWordTokens) {
+      if (!addrWordTokens.has(t)) continue;
+      wordScore++;
+      // Not generic, AND (not a city word OR also the property's own street word) — a word that
+      // names both the street and the city ('Westerville Rd, Westerville OH') is still the
+      // property's own distinctive street name, not a mere city qualifier (refute pass, round 4).
+      if (!GENERIC_WORDS.has(t) && (!addrCityTokens.has(t) || addrStreetTokens.has(t))) distinctiveMatch = true;
+    }
+    // At least one matched word must be genuinely distinctive — not a generic street-type word,
+    // not the address's own city/state qualifier. A number match alone, or generic/city words
+    // alone, corroborate a real match but must never CARRY one by themselves (refute pass, round
+    // 3: a bare numeric key resolved on the range bonus with zero word evidence at all; a single
+    // shared generic word resolved confidently with no other signal; a shared city word plus a
+    // coincidental number resolved to the wrong street entirely).
+    if (wordScore === 0 || !distinctiveMatch) continue;
+    const score = wordScore + (keyNumbers.length > 0 && numberMatches ? 1 : 0);
+    if (score >= floor) eligible.push({ p, score });
   }
-  return null;
+  if (eligible.length === 0) return null;
+
+  let best = eligible[0]!; // safe: eligible.length > 0 just checked above
+  let tied = false;
+  for (const c of eligible.slice(1)) {
+    if (c.score > best.score) {
+      best = c;
+      tied = false;
+    } else if (c.score === best.score && normalizedAddress(c.p.address) !== normalizedAddress(best.p.address)) {
+      // Two DIFFERENT addresses tied at the same score is genuine ambiguity — fail closed. Two
+      // candidates sharing the SAME normalized address are the same physical property (a
+      // human-entered duplicate Properties-sheet row, which disambiguatePropertyIds already
+      // suffixes with '-2' rather than merges) — keep the first rather than nulling out every one
+      // of that property's leases, a regression the refute pass caught in an earlier tie-always
+      // version of this fix.
+      tied = true;
+    }
+  }
+  return tied ? null : best.p.id;
 }
 
 // ── leases (Master Tenant Rent Roll) ──────────────────────────────────────────
