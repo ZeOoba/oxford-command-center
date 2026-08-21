@@ -13,8 +13,12 @@
 // it is built as `const renewalCalendar = [...policies].sort(...)`, an unfiltered copy of the
 // full `policies: PolicyEconomics[]` array, just sorted by expiry. "Complete" means one row per
 // (property_id, policy_type): buildInsuranceAnalysis's collapseToCurrentTerm (2026-08-17 fix)
-// keeps only the latest-effective-date term per coverage, so a rolled-over policy's prior term
-// never reaches this route — deductibleReviews below reviews each property's loss events exactly
+// keeps only the most recently CAPTURED term per coverage (source_date DESC, then effective_date,
+// then id — NOT max effective_date; see collapseToCurrentTerm's own doc for why source_date is
+// the sound primary signal) — corrected 2026-08-21, this comment previously said "latest-
+// effective-date," which collapseToCurrentTerm's doc explicitly calls out and rejects as unsafe.
+// Either way, a rolled-over policy's prior term never reaches this route — deductibleReviews below
+// reviews each property's loss events exactly
 // once per (still-legitimate) distinct coverage, not once per stale duplicate term. No new
 // exported helper is needed; `rebidCandidates` would be the WRONG field here (it's filtered to
 // excess>0 policies only).

@@ -666,4 +666,22 @@ describe('reconcileNoiABFromDb / buildNoiReconcileInputs — DB join (live perio
     const inputs = buildNoiReconcileInputs(bareSnap, propertyPeriodMetrics(db), [{ id: RARIG, financialMode: 'pnl' }]);
     expect(inputs.find((i) => i.propertyId === RARIG)!.recentTenancyAnnualRent).toBe(0);
   });
+
+  it('(h4) a lease with propertyId: null — the shape server/workbook/parse.ts\'s resolvePropertyId ' +
+     'returns for a rent-roll key it could not resolve — is silently excluded from every property\'s ' +
+     'recentTenancyAnnualRent (2026-08-21, closes the untested resolvePropertyId->reconcile-noi ' +
+     'integration path an adversarial review flagged: this pins the current, accepted drop-silently ' +
+     'behavior so a future change to the propertyId===null branch can\'t regress it unnoticed)', () => {
+    const snap = snapshot(
+      [{ id: RARIG, name: 'Rarig', noi: 95000 }],
+      [
+        { propertyId: RARIG, leaseStart: '2026-01-15', annualRent: 30000, status: 'Active' }, // counts
+        // Unresolved rent-roll key: must not leak into ANY property's total, including Rarig's.
+        { propertyId: null, leaseStart: '2026-01-15', annualRent: 999999, status: 'Active' },
+      ],
+    );
+    expect(() => buildNoiReconcileInputs(snap, propertyPeriodMetrics(db), [{ id: RARIG, financialMode: 'pnl' }])).not.toThrow();
+    const inputs = buildNoiReconcileInputs(snap, propertyPeriodMetrics(db), [{ id: RARIG, financialMode: 'pnl' }]);
+    expect(inputs.find((i) => i.propertyId === RARIG)!.recentTenancyAnnualRent).toBe(30000);
+  });
 });

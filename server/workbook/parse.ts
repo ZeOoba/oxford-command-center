@@ -529,6 +529,39 @@ function streetTokens(address: string): Set<string> {
   return new Set(addressTokens(comma === -1 ? address : address.slice(0, comma)));
 }
 
+interface PropertyAddressTokens {
+  range: [number, number] | null;
+  wordTokens: Set<string>;
+  cityTokens: Set<string>;
+  streetTokens: Set<string>;
+}
+
+/** Per-property address tokenization, cached per `properties` array. FIXED 2026-08-21
+ *  (adversarial review finding): resolvePropertyId is called once per lease row (~140 rows in
+ *  the live portfolio) and used to re-tokenize every property's address from scratch — 4 regex/
+ *  string passes per property per call — on every one of those calls, even though property
+ *  addresses are static for the whole parse run. Keyed on the `properties` array's own identity
+ *  (a WeakMap, so a different array — a different parse run, a test fixture — never sees a stale
+ *  cache and nothing needs manual invalidation) rather than on Property.id, since disambiguated
+ *  duplicate rows already guarantee id uniqueness (see disambiguatePropertyIds). */
+const propertyTokenCache = new WeakMap<Property[], Map<string, PropertyAddressTokens>>();
+
+function propertyTokensFor(properties: Property[]): Map<string, PropertyAddressTokens> {
+  const cached = propertyTokenCache.get(properties);
+  if (cached) return cached;
+  const table = new Map<string, PropertyAddressTokens>();
+  for (const p of properties) {
+    table.set(p.id, {
+      range: leadingNumberRange(p.address),
+      wordTokens: new Set(addressTokens(p.address).filter((t) => !/^\d+$/.test(t))),
+      cityTokens: cityTokens(p.address),
+      streetTokens: streetTokens(p.address),
+    });
+  }
+  propertyTokenCache.set(properties, table);
+  return table;
+}
+
 export function resolvePropertyId(key: string, properties: Property[]): string | null {
   const keyTokenList = addressTokens(key);
   if (keyTokenList.length === 0) return null;
@@ -542,9 +575,11 @@ export function resolvePropertyId(key: string, properties: Property[]): string |
   // does not.
   const floor = keyTokenList.length >= 2 ? 2 : 1;
 
+  const tokenTable = propertyTokensFor(properties);
   const eligible: { p: Property; score: number }[] = [];
   for (const p of properties) {
-    const range = leadingNumberRange(p.address);
+    const { range, wordTokens: addrWordTokens, cityTokens: addrCityTokens, streetTokens: addrStreetTokens } =
+      tokenTable.get(p.id)!;
     // A street NUMBER match is the strongest single disambiguator two addresses on the same
     // street can offer — '4595 E. 5th Ave' is a different building from '3540 E. 5th Ave,
     // Columbus OH' despite sharing every word (caught by the refute pass's differential replay:
@@ -557,9 +592,6 @@ export function resolvePropertyId(key: string, properties: Property[]): string |
     const numberMatches = range !== null && keyNumbers.some((n) => n >= range[0] && n <= range[1]);
     if (keyNumbers.length > 0 && !numberMatches) continue;
 
-    const addrWordTokens = new Set(addressTokens(p.address).filter((t) => !/^\d+$/.test(t)));
-    const addrCityTokens = cityTokens(p.address);
-    const addrStreetTokens = streetTokens(p.address);
     let wordScore = 0;
     let distinctiveMatch = false;
     for (const t of keyWordTokens) {

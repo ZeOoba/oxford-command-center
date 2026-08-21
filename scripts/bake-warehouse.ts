@@ -18,7 +18,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { warehouseRoutes } from '../server/warehouse/api';
-import { brainApi } from '../server/warehouse/brain-api';
+import { WAREHOUSE_SUB_ROUTERS } from '../server/warehouse/sub-routers';
 import { openWarehouse } from '../server/warehouse/db';
 import type { WarehouseDb } from '../server/warehouse/db';
 import { serverPort } from '../server/config';
@@ -32,25 +32,29 @@ import {
 /** Resolve ONE warehouse route. `routerPath` omits the `/api/warehouse` mount prefix. */
 export type RouteResolver = (routerPath: string) => Promise<{ status: number; json: unknown }>;
 
-/** Mount prefix for the Command Brain sub-router. brainApi is mounted SEPARATELY from
- *  warehouseRoutes() in server/index.ts (`app.route('/api/warehouse/brain', brainApi(...))` — see
- *  brain-api.ts's own header comment for why), not nested inside it like the routes FIXED_ROUTES
- *  already covers. inProcessResolver below has to know about that split; httpResolver does not,
- *  because it calls the real running server, which already has both mounts wired. */
-const BRAIN_PREFIX = '/brain';
-
-/** In-process resolver: drives the real Hono router over a db handle (no network). Routes under
- *  BRAIN_PREFIX are delegated to a standalone brainApi instance — warehouseRoutes() never had it
- *  mounted, so without this split every /brain/* path 404s here even though the SAME db handle
- *  would serve it fine on the live server (server/index.ts mounts both). This was the actual reason
- *  the Command Brain module read as "offline" on every checkpoint-read bake (the common case for
- *  the unattended scheduled deploy, which runs with no dev server up) while working locally. */
+/** In-process resolver: drives the real Hono routers over a db handle (no network). Every
+ *  sub-router in WAREHOUSE_SUB_ROUTERS (warehouse/sub-routers.ts — the SAME list server/index.ts
+ *  mounts from) is mounted SEPARATELY from the base warehouseRoutes() app, so a routerPath under
+ *  one of those prefixes has to be delegated to that specific sub-router instance or it 404s here
+ *  even though the SAME db handle would serve it fine on the live server. httpResolver doesn't
+ *  need this split — it calls the real running server, which already has every mount wired.
+ *
+ *  FIXED 2026-08-21 (adversarial review finding): this used to hardcode a single BRAIN_PREFIX
+ *  branch for brainApi alone — the fix for the Command Brain module reading "offline" on every
+ *  checkpoint-read bake (the unattended scheduled-deploy case, which runs with no dev server up).
+ *  That left the identical 404 gap latent for the other 7 sub-routers, and duplicated the '/brain'
+ *  mount-path literal across two files. Now builds the dispatch table from the shared
+ *  WAREHOUSE_SUB_ROUTERS list — checked longest-prefix-first so '/insurance/analysis' and
+ *  '/insurance/loss' don't collide — with any unmatched path falling through to the base app. */
 export function inProcessResolver(db: WarehouseDb): RouteResolver {
   const app = warehouseRoutes(() => db);
-  const brain = brainApi(() => db);
+  const subApps = WAREHOUSE_SUB_ROUTERS
+    .map(({ prefix, factory }) => ({ prefix, app: factory(() => db) }))
+    .sort((a, b) => b.prefix.length - a.prefix.length);
   return async (routerPath) => {
-    const target = routerPath.startsWith(BRAIN_PREFIX)
-      ? { app: brain, path: routerPath.slice(BRAIN_PREFIX.length) || '/' }
+    const sub = subApps.find((s) => routerPath === s.prefix || routerPath.startsWith(`${s.prefix}/`));
+    const target = sub
+      ? { app: sub.app, path: routerPath.slice(sub.prefix.length) || '/' }
       : { app, path: routerPath };
     const res = await target.app.request(target.path);
     return { status: res.status, json: res.status === 200 ? await res.json() : null };
@@ -98,6 +102,18 @@ const FIXED_ROUTES = [
   '/calibration/log', '/calibration/pending', '/calibration/report',
   '/brain/report',
 ] as const;
+
+/** Routes whose failure hard-aborts the whole bake (fail LOUD — a broken bake DB, never a
+ *  silent partial mirror). A SUBSET of FIXED_ROUTES: FIXED 2026-08-21 (adversarial review
+ *  finding) — /brain/report is still always planned (baked normally when it succeeds), but
+ *  deliberately excluded from "required" here. Unlike the other FIXED_ROUTES (simple DB reads),
+ *  it composes multiple derived cohorts (calibration report, pending queue, coverage confidence,
+ *  open questions) and can plausibly throw on an edge-case data state; giving it the same
+ *  must-succeed status as NOI/analytics/calibration meant one brain-report failure took the
+ *  entire mirror down with it. A brain-report failure now just omits that one endpoint from
+ *  warehouse.json (the Brain view reads as offline, same as before this route was wired in)
+ *  instead of failing every other view too. */
+const REQUIRED_ROUTES = new Set<string>(FIXED_ROUTES.filter((r) => r !== '/brain/report'));
 
 export function warehouseEndpointPlan(metrics: MetricRow[], leaseRunIds: string[]): string[] {
   const fixed = [...FIXED_ROUTES];
@@ -164,7 +180,7 @@ export async function buildWarehouseEnvelope(
   const leaseRunIds = [...new Set([...rollupIds, ...metrics.map((m) => m.propertyId)])];
 
   const plan = warehouseEndpointPlan(metrics, leaseRunIds);
-  const required = new Set<string>(FIXED_ROUTES);
+  const required = REQUIRED_ROUTES;
   const endpoints: Record<string, unknown> = {};
   for (const routerPath of plan) {
     const { status, json } = await resolver(routerPath);

@@ -691,12 +691,16 @@ describe('insuranceWarehouseDriftConditions', () => {
     // property_insurance_policies allows multiple rows per property_id (UNIQUE spans
     // policy_number + effective_date too) — e.g. a prior term's row left in place alongside
     // the current term's. The comparison must use the CURRENT term, not an arbitrary row.
+    // Old row's expiration is EXACTLY adjacent to the new row's effective_date (2026-08-21 fix:
+    // sameLineage now requires exact adjacency, matching the only verified real rollover shape —
+    // an arbitrary gap no longer collapses two rows, see insurance-analysis.test.ts's "does NOT
+    // merge two genuinely DISTINCT... policies" test for that case).
     db.prepare(`
       INSERT INTO property_insurance_policies
         (property_id, insurer, policy_number, effective_date, expiration_date,
          premium_annual, coverage_tiv, policy_type, source, source_date, ingested_by)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run('ins-multi', 'Old Insurer', 'POL-OLD', addDays(AS_OF, -400), addDays(AS_OF, -35), 1000, null, 'general-liability', 'test', AS_OF, 'test');
+    `).run('ins-multi', 'Old Insurer', 'POL-OLD', addDays(AS_OF, -400), addDays(AS_OF, -20), 1000, null, 'general-liability', 'test', AS_OF, 'test');
     db.prepare(`
       INSERT INTO property_insurance_policies
         (property_id, insurer, policy_number, effective_date, expiration_date,
@@ -709,6 +713,29 @@ describe('insuranceWarehouseDriftConditions', () => {
       liveRow({ id: 'ins-multi', expires: addDays(AS_OF, 40), status: 'Current' }),
     ]);
 
+    expect(insuranceWarehouseDriftConditions(db, snap, AS_OF)).toHaveLength(0);
+  });
+
+  it('FIXED 2026-08-21 (adversarial review finding): pickCurrentRow does not compare the wrong policy_type when one property_id/slug carries more than one coverage', () => {
+    // Before this fix, pickCurrentRow picked purely by source_date across ALL policy_type
+    // clusters sharing this property_id/slug — so a more-recently-captured General Liability row
+    // could get diffed against the live workbook's Property coverage, producing a spurious drift
+    // alert even though the actual Property coverage's dates agree exactly. Now it prefers the
+    // cluster whose policy_type matches live.coverage.
+    insertPolicy(db, {
+      propertyId: 'ins-multi-type', policyType: 'Property', policyNumber: 'MULTI-PROP',
+      expirationDate: addDays(AS_OF, 90), premiumAnnual: 5000, sourceDate: addDays(AS_OF, -30),
+    });
+    insertPolicy(db, {
+      propertyId: 'ins-multi-type', policyType: 'General Liability', policyNumber: 'MULTI-GL',
+      expirationDate: addDays(AS_OF, 200), premiumAnnual: 2000, sourceDate: AS_OF, // captured MORE recently than the Property row
+    });
+    const snap = snapWithInsurance([], [
+      liveRow({ id: 'ins-multi-type', coverage: 'Property', expires: addDays(AS_OF, 90), status: 'Current' }),
+    ]);
+
+    // The Property coverage's dates genuinely agree — no drift, and no wrong-type comparison
+    // against the GL row's very different (200d out) expiration.
     expect(insuranceWarehouseDriftConditions(db, snap, AS_OF)).toHaveLength(0);
   });
 
