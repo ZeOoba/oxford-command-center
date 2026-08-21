@@ -150,8 +150,18 @@ function dedupeLatest(rows: RawPolicyRow[]): RawPolicyRow[] {
  *
  * ALGORITHM: within a (property_id, normalized policy_type) group, two dated rows are the SAME
  * LINEAGE (one supersedes the other) when they share a policy_number, OR have identical
- * effective_date+expiration_date (shape b), OR their term ranges do NOT overlap (shape a — one
- * ends at/before the other begins). Rows that meet none of these are treated as genuinely
+ * effective_date+expiration_date (shape b), OR one term ends EXACTLY when the other begins (shape
+ * a — the one verified real-data rollover example: old.expiration_date === new.effective_date,
+ * e.g. 1900 Broadway's 2026-08-27/2026-08-27). FIXED 2026-08-21 (adversarial review finding): this
+ * used to be a non-overlap test (`<=`, any gap size), which also matched two GENUINELY DISTINCT,
+ * unrelated policies of the same type that simply happened not to overlap — e.g. a cancelled
+ * policy years ago followed by an unrelated new policy, no shared policy_number — silently
+ * merging them and dropping one from renewalCalendar/policiesN/premiumAnnualTotal. Tightened to
+ * exact adjacency (`===`), matching the only verified rollover shape; a real rollover with a
+ * multi-day admin gap would currently fall through to "distinct concurrent" (safe: both rows
+ * survive) rather than to a false merge — see the KNOWN GAP test for this trade-off, chosen
+ * because the codebase has no verified evidence of a non-zero-gap rollover to size a threshold
+ * against (CLAUDE.md "never invent"). Rows that meet none of these are treated as genuinely
  * DISTINCT CONCURRENT policies (e.g. two separate buildings on one property, both legitimately
  * in force) and both survive undisturbed — this is what protects
  * insurance-loss-analysis.ts's documented "a property has multiple policies" case. Within a
@@ -209,8 +219,10 @@ function sameLineage<T extends CollapsibleInsuranceRow>(a: Dated<T>, b: Dated<T>
   if (a.effective_date === b.effective_date && (a.expiration_date ?? '') === (b.expiration_date ?? '')) {
     return true;
   }
-  if (a.expiration_date !== null && a.expiration_date <= b.effective_date) return true;
-  if (b.expiration_date !== null && b.expiration_date <= a.effective_date) return true;
+  // Exact adjacency only (not `<=` — see collapseToCurrentTerm's doc, "FIXED 2026-08-21"): a mere
+  // non-overlap does not imply the same lineage, only a term boundary that lines up exactly does.
+  if (a.expiration_date !== null && a.expiration_date === b.effective_date) return true;
+  if (b.expiration_date !== null && b.expiration_date === a.effective_date) return true;
   return false;
 }
 

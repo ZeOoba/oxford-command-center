@@ -8,7 +8,7 @@ import { loadState, saveState, diffCriticalAlerts, shouldSendBrief, etNow, type 
 import { renderBrief, renderAlert, type Email } from './render';
 import { sendEmail, type SendResult } from './send';
 import { openWarehouse } from '../warehouse/db';
-import { insuranceConditions, insuranceWarehouseDriftConditions } from '../warehouse/insurance-conditions';
+import { insuranceConditions, insuranceWarehouseDriftConditions, fetchCurrentInsuranceRows } from '../warehouse/insurance-conditions';
 import { DAY_MS } from '../warehouse/time-constants';
 import { referenceDate, WORKBOOK_AS_OF } from '../config';
 
@@ -81,7 +81,11 @@ export async function runBrief(
     if (existsSync(warehousePath)) {
       const wdb = openWarehouse(warehousePath);
       try {
-        const insInsights = insuranceConditions(wdb, snapshot, refDate);
+        // Fetched ONCE and shared with both conditions below (2026-08-21 fix) — they used to
+        // each run their own full property_insurance_policies scan + collapseToCurrentTerm pass
+        // over nearly the same rows on every runBrief call.
+        const currentInsuranceRows = fetchCurrentInsuranceRows(wdb);
+        const insInsights = insuranceConditions(wdb, snapshot, refDate, currentInsuranceRows);
         // Merge BEFORE criticalIds filter so insurance-expiry criticals flow into alert path.
         insights.push(...insInsights);
         // Warehouse-vs-live-workbook cross-check (insurance-warehouse-drift). Reads the SAME
@@ -91,7 +95,7 @@ export async function runBrief(
         // the same `insights` array (all severity 'warning', so it rides the existing brief
         // digest / Notion Ops Hub path rather than the immediate per-critical alert email) —
         // no new notification channel.
-        insights.push(...insuranceWarehouseDriftConditions(wdb, snapshot, refDate));
+        insights.push(...insuranceWarehouseDriftConditions(wdb, snapshot, refDate, currentInsuranceRows));
       } finally {
         wdb.close();
       }

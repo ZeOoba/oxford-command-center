@@ -107,10 +107,50 @@ describe('Fat Mirror bake — warehouse.json shape matches the server endpoints'
   });
 
   it('bakes the Command Brain report via its OWN sub-router, not warehouseRoutes() (brainApi is ' +
-    'mounted separately in server/index.ts — see inProcessResolver\'s BRAIN_PREFIX split)', () => {
+    'mounted separately in server/index.ts — see inProcessResolver\'s WAREHOUSE_SUB_ROUTERS dispatch)', () => {
     const key = '/api/warehouse/brain/report';
     expect(endpoints[key], `missing baked endpoint ${key}`).toBeDefined();
     expect(() => BrainReport.parse(endpoints[key])).not.toThrow();
+  });
+
+  it('FIXED 2026-08-21 (adversarial review finding): a /brain/report failure does not abort the ' +
+    'rest of the bake — brain was removed from REQUIRED_ROUTES precisely so one complex, ' +
+    'multi-source endpoint failing can\'t take NOI/analytics/calibration down with it', async () => {
+    const real = inProcessResolver(db);
+    const failingBrain: typeof real = async (routerPath) =>
+      routerPath === '/brain/report' ? { status: 500, json: null } : real(routerPath);
+
+    const env = await buildWarehouseEnvelope(failingBrain, {
+      now: Date.parse('2026-06-15T00:00:00.000Z'),
+      warehouseSource: 'checkpoint-read',
+    });
+
+    // Every OTHER required endpoint still baked — the failure did not abort buildWarehouseEnvelope.
+    expect(env.endpoints['/api/warehouse/noi']).toBeDefined();
+    expect(env.endpoints['/api/warehouse/analytics/metrics']).toBeDefined();
+    expect(env.endpoints['/api/warehouse/calibration/report']).toBeDefined();
+    // The failed brain endpoint is simply omitted (a 500 is not required), not a thrown bake.
+    expect(env.endpoints['/api/warehouse/brain/report']).toBeUndefined();
+  });
+
+  it('FIXED 2026-08-21 (adversarial review finding): inProcessResolver dispatches to sub-routers ' +
+    'generically via WAREHOUSE_SUB_ROUTERS, not just a hardcoded brain special-case — proven here ' +
+    'against a DIFFERENT sub-router (insurance/analysis) that was never wired into the old ' +
+    'BRAIN_PREFIX-only branch', async () => {
+    const resolve = inProcessResolver(db);
+    const res = await resolve('/insurance/analysis');
+    expect(res.status).not.toBe(404);
+    expect(res.status).toBe(200);
+  });
+
+  it('inProcessResolver matches the longest sub-router prefix first (/insurance/analysis vs ' +
+    '/insurance/loss must not collide)', async () => {
+    const resolve = inProcessResolver(db);
+    const analysis = await resolve('/insurance/analysis');
+    const loss = await resolve('/insurance/loss');
+    expect(analysis.status).toBe(200);
+    expect(loss.status).toBe(200);
+    expect(analysis.json).not.toEqual(loss.json);
   });
 
   it('each baked payload validates against the SAME contract schema the server parses', () => {

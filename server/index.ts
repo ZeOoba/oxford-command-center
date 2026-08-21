@@ -26,14 +26,7 @@ import { AlertActionInput } from '../src/contracts/alerts';
 import { openWarehouse } from './warehouse/db';
 import type { WarehouseDb } from './warehouse/db';
 import { warehouseRoutes } from './warehouse/api';
-import { debtApi } from './warehouse/debt-api';
-import { leaseForecastApi } from './warehouse/lease-forecast-api';
-import { capitalAllocationApi } from './warehouse/capital-allocation-api';
-import { insuranceAnalysisApi } from './warehouse/insurance-analysis-api';
-import { insuranceLossApi } from './warehouse/insurance-loss-api';
-import { taxApi } from './warehouse/tax-api';
-import { brainApi } from './warehouse/brain-api';
-import { insightsApi } from './warehouse/insights-api';
+import { WAREHOUSE_SUB_ROUTERS } from './warehouse/sub-routers';
 import { onboardProperty, PropertyOnboardingInputSchema } from './warehouse/property-onboarding';
 import type { PropertyOnboardingInput } from './warehouse/property-onboarding';
 import { MarketRentInput } from '../src/contracts/lease-forecast';
@@ -74,15 +67,12 @@ function getWarehouse(): WarehouseDb {
   return _warehouse;
 }
 app.route('/api/warehouse', warehouseRoutes(getWarehouse));
-app.route('/api/warehouse/debt', debtApi(getWarehouse));
-app.route('/api/warehouse/leasing', leaseForecastApi(getWarehouse));
-app.route('/api/warehouse/capital', capitalAllocationApi(getWarehouse));
-// Design-parity engines (P2/P4/P5/P6): sub-routers per the debt-api pattern.
-app.route('/api/warehouse/insurance/analysis', insuranceAnalysisApi(getWarehouse));
-app.route('/api/warehouse/insurance/loss', insuranceLossApi(getWarehouse));
-app.route('/api/warehouse/tax', taxApi(getWarehouse));
-app.route('/api/warehouse/brain', brainApi(getWarehouse));
-app.route('/api/warehouse/insights', insightsApi(getWarehouse));
+// Design-parity engines (P2/P4/P5/P6) + brain/insights: sub-routers per the debt-api pattern.
+// Mount list lives in warehouse/sub-routers.ts — shared with bake-warehouse.ts's
+// inProcessResolver so the two never drift apart on what's mounted where (2026-08-21 fix).
+for (const { prefix, factory } of WAREHOUSE_SUB_ROUTERS) {
+  app.route(`/api/warehouse${prefix}`, factory(getWarehouse));
+}
 
 // POST /api/warehouse/properties/onboard — data-driven property onboarding (Phase 5 W4)
 app.post('/api/warehouse/properties/onboard', async (c) => {

@@ -61,6 +61,30 @@ interface PolicyRow extends CollapsibleInsuranceRow {
   premium_annual: number | null;
 }
 
+/**
+ * Fetch property_insurance_policies and reduce to the current-term view ONCE. Shared by
+ * insuranceConditions and insuranceWarehouseDriftConditions below — server/brief/run.ts calls
+ * both, back-to-back, on the same db handle/snapshot/refDate in a single runBrief() execution.
+ *
+ * FIXED 2026-08-21 (adversarial review finding): each function used to run its own near-identical
+ * full-table SELECT and its own full collapseToCurrentTerm union-find pass, so every brief run
+ * paid for two scans + two O(n^2) clustering passes over nearly the same rows. collapseToCurrentTerm
+ * never drops a property_id (an undated row is passed through untouched; every dated group
+ * produces at least one winner row), so the resulting set of property_id values is identical to
+ * the raw table's — safe for insuranceConditions' coveredIds check below to read from this
+ * collapsed set instead of a second raw fetch.
+ */
+export function fetchCurrentInsuranceRows(db: WarehouseDb): PolicyRow[] {
+  const rows = db
+    .prepare(
+      `SELECT id, property_id, policy_number, effective_date, expiration_date,
+              premium_annual, policy_type, source_date
+       FROM property_insurance_policies`,
+    )
+    .all() as PolicyRow[];
+  return collapseToCurrentTerm(rows);
+}
+
 /** What a warehouse `property_id` value actually points at, once resolved. */
 interface ResolvedOwner {
   /** Best available human label for the subject line. Never empty. */
@@ -144,36 +168,32 @@ interface ExpiryCandidate {
  * @param referenceDateIso Optional day-count reference (YYYY-MM-DD); the brief passes its RUN
  *                 date so "expires in Nd" tracks today (frozen-dateline defect, 2026-07).
  *                 Defaults to snapshot.meta.asOf for backward compatibility.
+ * @param currentRowsOverride Pre-fetched, already-current-term rows (fetchCurrentInsuranceRows(db)),
+ *                 for a caller (server/brief/run.ts) that also calls
+ *                 insuranceWarehouseDriftConditions in the same pass and wants to share one
+ *                 fetch+collapse instead of paying for it twice. Omit to have this function fetch
+ *                 for itself (unchanged default behavior, what every existing test relies on).
  * @returns        Insight[] sorted by id (lexicographic) for deterministic output.
  */
 export function insuranceConditions(
   db: WarehouseDb,
   snapshot: PortfolioSnapshot,
   referenceDateIso?: string,
+  currentRowsOverride?: PolicyRow[],
 ): Insight[] {
   const asOf = referenceDateIso ?? snapshot.meta.asOf;
 
-  // Columns needed both for display (premium_annual, expiration_date) and to reduce to the
-  // CURRENT term (id, policy_number, effective_date, policy_type, source_date) — see the
-  // collapseToCurrentTerm import above.
-  const rows = db
-    .prepare(
-      `SELECT id, property_id, policy_number, effective_date, expiration_date,
-              premium_annual, policy_type, source_date
-       FROM property_insurance_policies`,
-    )
-    .all() as PolicyRow[];
-
   // CURRENT-TERM REDUCTION (2026-08-17, sweep-completer refute finding): this condition used to
-  // read `rows` raw. A rolled-over policy's stale prior term still has the (already-past-due)
-  // near-term expiry that made it "soonest" in the per-property min-days pick below, so the
-  // ALREADY-RENEWED policy fired a false CRITICAL "expires in N days — renew immediately" alert
-  // while its actual (rolled, ~1-year-out) term sat unalarmed in the same table. Verified live
-  // 2026-08-17 against production data: 1900 Broadway's BCL and UFX policies both false-alarmed
-  // this way, feeding server/brief/run.ts's criticalIds -> email/daily-brief path. Reusing
-  // insurance-analysis.ts's collapseToCurrentTerm (rather than a second implementation) is what
-  // keeps this condition and buildInsuranceAnalysis from silently drifting apart again.
-  const currentRows = collapseToCurrentTerm(rows);
+  // read raw, uncollapsed rows. A rolled-over policy's stale prior term still has the
+  // (already-past-due) near-term expiry that made it "soonest" in the per-property min-days pick
+  // below, so the ALREADY-RENEWED policy fired a false CRITICAL "expires in N days — renew
+  // immediately" alert while its actual (rolled, ~1-year-out) term sat unalarmed in the same
+  // table. Verified live 2026-08-17 against production data: 1900 Broadway's BCL and UFX policies
+  // both false-alarmed this way, feeding server/brief/run.ts's criticalIds -> email/daily-brief
+  // path. Reusing insurance-analysis.ts's collapseToCurrentTerm (rather than a second
+  // implementation) is what keeps this condition and buildInsuranceAnalysis from silently
+  // drifting apart again.
+  const currentRows = currentRowsOverride ?? fetchCurrentInsuranceRows(db);
 
   const resolveOwner = buildOwnerResolver(snapshot);
 
@@ -189,7 +209,9 @@ export function insuranceConditions(
   // into a CRITICAL alert. Deferred to its own change with an explicit, auditable mapping
   // table and a fixture built from the real policy strings. These are warning-severity and
   // never email, so the cost is brief noise, not a missed alert.
-  const coveredIds = new Set<string>(rows.map((r) => r.property_id));
+  // Reads from currentRows, not a second raw fetch — collapseToCurrentTerm never drops a
+  // property_id (see fetchCurrentInsuranceRows' doc), so the value set is identical either way.
+  const coveredIds = new Set<string>(currentRows.map((r) => r.property_id));
 
   // ── Condition 1: insurance-expiry-soon ──────────────────────────────────
   // Deduplicate by raw property_id VALUE, soonest-expiring row winning within a value. In
@@ -331,13 +353,29 @@ type DriftPolicyRow = CollapsibleInsuranceRow;
  * adversarial refute pass found in the original collapseToCurrentTerm, which would have let a
  * corrected/backdated effective_date get permanently masked here too). `rows` is already scoped
  * to one property_id by the caller; collapseToCurrentTerm can in principle return more than one
- * row (the same "genuinely distinct concurrent policy" case it protects elsewhere) — this
- * comparison only wants ONE representative for the date-drift check below, so the most recently
- * CAPTURED result (max source_date, matching the same signal collapseToCurrentTerm itself uses)
- * is taken as primary.
+ * row — not just the documented "genuinely distinct concurrent policy" case, but also more than
+ * one policy_type sharing this property_id/slug (logRebidVerdicts' own doc: "several policies can
+ * share one property_id") — this comparison only wants ONE representative for the date-drift
+ * check below.
+ *
+ * FIXED 2026-08-21 (adversarial review finding): picking purely by max source_date across
+ * collapseToCurrentTerm's output silently compared across policy_type when more than one existed
+ * for this property_id — e.g. a General Liability row's expiration_date getting diffed against
+ * the live workbook's Property coverage, producing a spurious drift/lapse-disagreement alert for
+ * the wrong coverage entirely. Now prefers whichever cluster's policy_type matches the live
+ * workbook's `coverage` label (the coverage this comparison is actually checking); only falls
+ * back to mixing types by pure recency when no type match exists, or the live coverage is
+ * unknown — fail-open, matching this module's doctrine (a coarse comparison beats none).
  */
-function pickCurrentRow(rows: DriftPolicyRow[]): DriftPolicyRow {
+function pickCurrentRow(rows: DriftPolicyRow[], liveCoverage: string | null): DriftPolicyRow {
   const current = collapseToCurrentTerm(rows);
+  if (liveCoverage) {
+    const norm = liveCoverage.trim().toLowerCase();
+    const matching = current.filter((r) => r.policy_type.trim().toLowerCase() === norm);
+    if (matching.length > 0) {
+      return matching.reduce((best, r) => (r.source_date > best.source_date ? r : best));
+    }
+  }
   return current.reduce((best, r) => (r.source_date > best.source_date ? r : best));
 }
 
@@ -349,21 +387,25 @@ function pickCurrentRow(rows: DriftPolicyRow[]): DriftPolicyRow {
  *                 (Source A for this comparison); snapshot.meta.asOf is the day-count fallback.
  * @param referenceDateIso Optional day-count reference (YYYY-MM-DD), mirroring
  *                 insuranceConditions above. Defaults to snapshot.meta.asOf.
+ * @param currentRowsOverride Pre-fetched, already-current-term rows (fetchCurrentInsuranceRows(db)),
+ *                 shared with insuranceConditions above when a caller (server/brief/run.ts) runs
+ *                 both in the same pass. Omit to have this function fetch for itself (unchanged
+ *                 default behavior, what every existing test relies on).
  * @returns        Insight[] sorted by id (lexicographic).
  */
 export function insuranceWarehouseDriftConditions(
   db: WarehouseDb,
   snapshot: PortfolioSnapshot,
   referenceDateIso?: string,
+  currentRowsOverride?: PolicyRow[],
 ): Insight[] {
   const asOf = referenceDateIso ?? snapshot.meta.asOf;
 
-  const rows = db
-    .prepare(
-      `SELECT id, property_id, policy_number, effective_date, expiration_date, policy_type, source_date
-       FROM property_insurance_policies`,
-    )
-    .all() as DriftPolicyRow[];
+  // Already current-term (one row per property_id+policy_type cluster) when shared via
+  // currentRowsOverride — pickCurrentRow's own collapseToCurrentTerm call below still runs, but
+  // over an already-singleton-per-type set, so it's a cheap pass-through rather than a second
+  // full scan+clustering pass (2026-08-21 fix — see fetchCurrentInsuranceRows' doc).
+  const rows: DriftPolicyRow[] = currentRowsOverride ?? fetchCurrentInsuranceRows(db);
 
   const rowsByPropertyId = new Map<string, DriftPolicyRow[]>();
   for (const row of rows) {
@@ -383,7 +425,7 @@ export function insuranceWarehouseDriftConditions(
     const live = liveById.get(propertyId);
     if (!live) continue; // no matching live-workbook row on file — not a drift, just not joinable
 
-    const warehouseRow = pickCurrentRow(candidateRows);
+    const warehouseRow = pickCurrentRow(candidateRows, live.coverage);
     const warehouseExpiry = warehouseRow.expiration_date;
     const liveExpiry = live.expires;
 

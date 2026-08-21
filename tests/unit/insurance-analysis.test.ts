@@ -771,6 +771,32 @@ describe('buildInsuranceAnalysis — policy ROLLOVER supersedes the prior term (
     expect(report.premiumAnnualTotal).toBeCloseTo(14_000, 2);
   });
 
+  it('FIXED 2026-08-21 (adversarial review finding): does NOT merge two genuinely DISTINCT, unrelated policies of the same type/property whose date ranges do not overlap but are NOT exactly adjacent', () => {
+    // Before this fix, sameLineage's non-overlap branch used `<=` (any gap size counted as a
+    // rollover), so a cancelled policy years ago and an unrelated later policy — no shared
+    // policy_number, no adjacency — silently merged into one cluster and the older row's premium
+    // vanished from renewalCalendar/policiesN/premiumAnnualTotal. Tightened to exact adjacency
+    // (`===`), matching the only verified real rollover shape (the "old.expiration_date ==
+    // new.effective_date" tests above) — a real gap, however small, now correctly falls through
+    // to "distinct" and both rows survive.
+    const db = freshDb();
+    insertPolicy(db, {
+      propertyId: 'p-gap', policyType: 'Property', policyNumber: 'GAP-OLD-CANCELLED', premiumAnnual: 5_000,
+      coverageTiv: 1_000_000, effectiveDate: '2020-01-01', expirationDate: '2021-01-01', sourceDate: '2020-01-05',
+    });
+    insertPolicy(db, {
+      propertyId: 'p-gap', policyType: 'Property', policyNumber: 'GAP-NEW-UNRELATED', premiumAnnual: 9_000,
+      coverageTiv: 1_200_000, effectiveDate: '2026-01-02', expirationDate: '2027-01-02', sourceDate: '2026-01-05',
+    });
+
+    const report = buildInsuranceAnalysis(db, AS_OF);
+
+    const rows = report.renewalCalendar.filter((p) => p.propertyId === 'p-gap');
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((p) => p.premium))).toEqual(new Set([5_000, 9_000]));
+    expect(report.premiumAnnualTotal).toBeCloseTo(14_000, 2);
+  });
+
   it('does not collide two DIFFERENT coverages on the same property (policy_type still partitions)', () => {
     const db = freshDb();
     insertPolicy(db, {
