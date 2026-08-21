@@ -9,10 +9,15 @@
 //           returning (H6 read boundary, mirrors insuranceAnalysisApi).
 //
 // POLICY LIST SOURCE (resolved ambiguity — verified by reading insurance-analysis.ts):
-// buildInsuranceAnalysis's `renewalCalendar` IS the complete deduped PolicyEconomics list — it is
-// built as `const renewalCalendar = [...policies].sort(...)`, an unfiltered copy of the full
-// `policies: PolicyEconomics[]` array, just sorted by expiry. No new exported helper is needed;
-// `rebidCandidates` would be the WRONG field here (it's filtered to excess>0 policies only).
+// buildInsuranceAnalysis's `renewalCalendar` IS the complete CURRENT-TERM PolicyEconomics list —
+// it is built as `const renewalCalendar = [...policies].sort(...)`, an unfiltered copy of the
+// full `policies: PolicyEconomics[]` array, just sorted by expiry. "Complete" means one row per
+// (property_id, policy_type): buildInsuranceAnalysis's collapseToCurrentTerm (2026-08-17 fix)
+// keeps only the latest-effective-date term per coverage, so a rolled-over policy's prior term
+// never reaches this route — deductibleReviews below reviews each property's loss events exactly
+// once per (still-legitimate) distinct coverage, not once per stale duplicate term. No new
+// exported helper is needed; `rebidCandidates` would be the WRONG field here (it's filtered to
+// excess>0 policies only).
 //
 // Registration: server/index.ts mounts this at /api/warehouse/insurance/loss (not this file's
 // concern — see the ARCHITECT-OWNED mount line there).
