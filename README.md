@@ -80,6 +80,7 @@ flowchart TB
     FUNC -.-> PAGES
     CI -. every push/PR .-> BUILD
 ```
+<!-- diagram-verified: 2026-08-21 -->
 
 **Two data spines, by design** (documented in `architecture/system-overview.md`):
 
