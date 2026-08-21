@@ -25,6 +25,7 @@ import {
   PmScorecardsResponseSchema, BenchmarksResponseSchema, DriversResponseSchema,
   CalibrationLogResponseSchema, CalibrationPendingResponseSchema, CalibrationReportSchema,
 } from '../../src/contracts/warehouse';
+import { BrainReport } from '../../src/contracts/brain-report';
 import { LeaseRunRollupResponse, LeaseRunProjectionEnvelope } from '../../src/contracts/lease-run';
 import { WAREHOUSE_MIRROR_SCHEMA_VERSION } from '../../src/lib/warehouse-mirror';
 import { buildWarehouseEnvelope, inProcessResolver } from '../../scripts/bake-warehouse';
@@ -99,10 +100,17 @@ describe('Fat Mirror bake — warehouse.json shape matches the server endpoints'
       '/api/warehouse/analytics/pm', '/api/warehouse/analytics/growth',
       '/api/warehouse/analytics/anomalies', '/api/warehouse/analytics/lease-run',
       '/api/warehouse/calibration/log', '/api/warehouse/calibration/pending',
-      '/api/warehouse/calibration/report',
+      '/api/warehouse/calibration/report', '/api/warehouse/brain/report',
     ]) {
       expect(endpoints[k], `missing baked endpoint ${k}`).toBeDefined();
     }
+  });
+
+  it('bakes the Command Brain report via its OWN sub-router, not warehouseRoutes() (brainApi is ' +
+    'mounted separately in server/index.ts — see inProcessResolver\'s BRAIN_PREFIX split)', () => {
+    const key = '/api/warehouse/brain/report';
+    expect(endpoints[key], `missing baked endpoint ${key}`).toBeDefined();
+    expect(() => BrainReport.parse(endpoints[key])).not.toThrow();
   });
 
   it('each baked payload validates against the SAME contract schema the server parses', () => {

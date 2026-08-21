@@ -80,6 +80,9 @@ function insertPolicy(
     premiumAnnual: number | null;
     insurer?: string;
     policyType?: string;
+    policyNumber?: string;
+    effectiveDate?: string | null;
+    sourceDate?: string;
   },
 ): void {
   db.prepare(`
@@ -90,14 +93,14 @@ function insertPolicy(
   `).run(
     opts.propertyId,
     opts.insurer ?? 'Test Insurer',
-    `POL-${opts.propertyId}`,
-    addDays(AS_OF, -365),
+    opts.policyNumber ?? `POL-${opts.propertyId}`,
+    opts.effectiveDate === undefined ? addDays(AS_OF, -365) : opts.effectiveDate,
     opts.expirationDate,
     opts.premiumAnnual,
     null,
     opts.policyType ?? 'general-liability',
     'test',
-    AS_OF,
+    opts.sourceDate ?? AS_OF,
     'test',
   );
 }
@@ -323,6 +326,74 @@ describe('insuranceConditions', () => {
     // The soonest-expiring policy (15 days) wins.
     expect(expiry[0]!.detail).toContain('15 day');
     expect(expiry[0]!.impactAnnualUsd).toBe(4000);
+  });
+
+  // ── Rollover false-critical regression (2026-08-17, adversarial refute sweep finding) ────
+
+  it('a ROLLED-OVER policy does not fire a false expiry-soon critical for its superseded prior term', () => {
+    // Live production bug: the OLD term (already renewed, superseded by a new term filed a year
+    // later) still has an expiration_date inside the 60-day window as of its own capture. Before
+    // the 2026-08-17 fix, insuranceConditions read raw rows and the stale term's near-term expiry
+    // won the per-property "soonest" pick, firing a false CRITICAL for a policy that was already
+    // renewed — verified against production data (1900 Broadway BCL + UFX). The rolled term
+    // (expiring ~1 year out) is what should actually govern.
+    const snap = makeSnap(['prop-rolled']);
+    // Old term: expires in 10 days — inside the alert window, but already superseded.
+    insertPolicy(db, {
+      propertyId: 'prop-rolled',
+      policyType: 'Property',
+      policyNumber: 'ROLL-OLD',
+      effectiveDate: addDays(AS_OF, -365),
+      expirationDate: addDays(AS_OF, 10),
+      premiumAnnual: 11_166,
+      sourceDate: addDays(AS_OF, -1),
+    });
+    // Rolled-over current term: same property/coverage, new policy_number, expiring ~1 year out
+    // — outside the alert window, captured more recently.
+    insertPolicy(db, {
+      propertyId: 'prop-rolled',
+      policyType: 'Property',
+      policyNumber: 'ROLL-NEW',
+      effectiveDate: addDays(AS_OF, 10),
+      expirationDate: addDays(AS_OF, 375),
+      premiumAnnual: 11_554,
+      sourceDate: AS_OF,
+    });
+
+    const insights = insuranceConditions(db, snap);
+    const expiry = insights.filter((i) => i.id.startsWith('ins-expiry-'));
+
+    // No false critical for the already-renewed term; the real current term isn't in the window.
+    expect(expiry).toHaveLength(0);
+  });
+
+  it('a genuinely CURRENT term still fires expiry-soon on its own (rollover collapse does not suppress real alerts)', () => {
+    const snap = makeSnap(['prop-rolled2']);
+    insertPolicy(db, {
+      propertyId: 'prop-rolled2',
+      policyType: 'Property',
+      policyNumber: 'ROLL-OLD2',
+      effectiveDate: addDays(AS_OF, -730),
+      expirationDate: addDays(AS_OF, -365),
+      premiumAnnual: 10_000,
+      sourceDate: addDays(AS_OF, -366),
+    });
+    // Current term itself is the one expiring soon — must still alert.
+    insertPolicy(db, {
+      propertyId: 'prop-rolled2',
+      policyType: 'Property',
+      policyNumber: 'ROLL-NEW2',
+      effectiveDate: addDays(AS_OF, -365),
+      expirationDate: addDays(AS_OF, 20),
+      premiumAnnual: 10_500,
+      sourceDate: AS_OF,
+    });
+
+    const insights = insuranceConditions(db, snap);
+    const expiry = insights.filter((i) => i.id.startsWith('ins-expiry-'));
+
+    expect(expiry).toHaveLength(1);
+    expect(expiry[0]!.impactAnnualUsd).toBe(10_500);
   });
 });
 
