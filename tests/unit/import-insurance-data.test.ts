@@ -454,11 +454,11 @@ describe('parsePoliciesPayload', () => {
     const { rows } = parsePoliciesPayload(
       { policies: [{ ...base, source: 'row-specific.pdf' }] }, 'default-source.json',
     );
-    expect(rows[0].source).toBe('row-specific.pdf');
+    expect(rows[0]!.source).toBe('row-specific.pdf');
   });
 
   it('rejects a row missing propertyId', () => {
-    const { propertyId, ...rest } = base;
+    const { propertyId: _propertyId, ...rest } = base;
     const { rows, rejected } = parsePoliciesPayload({ policies: [rest] }, 'd');
     expect(rows).toEqual([]);
     expect(rejected).toEqual([{ index: 0, id: null, reason: 'missing or invalid "propertyId"' }]);
@@ -469,34 +469,34 @@ describe('parsePoliciesPayload', () => {
       { policies: [{ ...base, effectiveDate: '01/20/2024' }] }, 'd',
     );
     expect(rows).toEqual([]);
-    expect(rejected[0].reason).toMatch(/effectiveDate must be ISO YYYY-MM-DD/);
+    expect(rejected[0]!.reason).toMatch(/effectiveDate must be ISO YYYY-MM-DD/);
   });
 
   it('rejects a non-ISO expirationDate when present', () => {
     const { rejected } = parsePoliciesPayload({ policies: [{ ...base, expirationDate: '1/20/2025' }] }, 'd');
-    expect(rejected[0].reason).toMatch(/expirationDate must be ISO YYYY-MM-DD/);
+    expect(rejected[0]!.reason).toMatch(/expirationDate must be ISO YYYY-MM-DD/);
   });
 
   it('accepts a null expirationDate', () => {
     const { rows, rejected } = parsePoliciesPayload({ policies: [{ ...base, expirationDate: null }] }, 'd');
     expect(rejected).toEqual([]);
-    expect(rows[0].expirationDate).toBeNull();
+    expect(rows[0]!.expirationDate).toBeNull();
   });
 
   it('rejects a negative premiumAnnual', () => {
     const { rejected } = parsePoliciesPayload({ policies: [{ ...base, premiumAnnual: -1 }] }, 'd');
-    expect(rejected[0].reason).toMatch(/premiumAnnual must be a nonnegative number/);
+    expect(rejected[0]!.reason).toMatch(/premiumAnnual must be a nonnegative number/);
   });
 
   it('accepts a null coverageTiv (bcl/umbrella lines carry no TIV)', () => {
     const { rows, rejected } = parsePoliciesPayload({ policies: [{ ...base, coverageTiv: null }] }, 'd');
     expect(rejected).toEqual([]);
-    expect(rows[0].coverageTiv).toBeNull();
+    expect(rows[0]!.coverageTiv).toBeNull();
   });
 
   it('rejects a negative coverageTiv when present', () => {
     const { rejected } = parsePoliciesPayload({ policies: [{ ...base, coverageTiv: -1 }] }, 'd');
-    expect(rejected[0].reason).toMatch(/coverageTiv must be a nonnegative number/);
+    expect(rejected[0]!.reason).toMatch(/coverageTiv must be a nonnegative number/);
   });
 
   it('rejects a payload with no "policies" array', () => {
@@ -658,6 +658,68 @@ describe('importPolicyRows', () => {
       `SELECT COUNT(*) c FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
     ).get('ins-3540fifth-pckg', 'Q61-0159747', '2024-01-20') as { c: number };
     expect(count.c).toBe(1); // the one row this test wrote (fixture row has null policy_number/effective_date and doesn't match this specific key)
+  });
+});
+
+describe('importPolicies', () => {
+  const policyRow = {
+    propertyId: 'ins-3540fifth-pckg',
+    insurer: 'Erie Insurance',
+    policyNumber: 'Q61-0159747',
+    effectiveDate: '2024-01-20',
+    expirationDate: '2025-01-20',
+    premiumAnnual: 9478,
+    coverageTiv: 4393500,
+    policyType: 'Package (PCKG)',
+    sourceDate: '2026-08-17',
+  };
+
+  it('combines parse+import and defaults ingestedBy when the payload omits it', () => {
+    const db = freshDb();
+    insertPolicy(db, 'ins-3540fifth-pckg');
+
+    const result = importPolicies(db, { policies: [policyRow] }, 'payload-file.json');
+    expect(result).toEqual({ inserted: 1, updated: 0, unrecognized: 0, rejected: 0 });
+
+    const row = db.prepare(
+      `SELECT ingested_by, source FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
+    ).get('ins-3540fifth-pckg', 'Q61-0159747', '2024-01-20') as { ingested_by: string; source: string };
+    expect(row.ingested_by).toBe('import-insurance-data.ts --policies');
+    expect(row.source).toBe('payload-file.json'); // parsePoliciesPayload's own defaultSource fallback
+  });
+
+  it('uses a payload-level ingestedBy when present', () => {
+    const db = freshDb();
+    insertPolicy(db, 'ins-3540fifth-pckg');
+
+    importPolicies(db, { ingestedBy: 'import-insurance-data.ts --policies (Track A, 2026-08-22)', policies: [policyRow] }, 'payload-file.json');
+
+    const row = db.prepare(
+      `SELECT ingested_by FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
+    ).get('ins-3540fifth-pckg', 'Q61-0159747', '2024-01-20') as { ingested_by: string };
+    expect(row.ingested_by).toBe('import-insurance-data.ts --policies (Track A, 2026-08-22)');
+  });
+
+  it('reads the payload-level newLines allowlist so an unrecognized propertyId is inserted, not flagged', () => {
+    const db = freshDb();
+    const result = importPolicies(
+      db,
+      { newLines: ['ins-9620state350-umb'], policies: [{ ...policyRow, propertyId: 'ins-9620state350-umb' }] },
+      'payload-file.json',
+    );
+    expect(result).toEqual({ inserted: 1, updated: 0, unrecognized: 0, rejected: 0 });
+  });
+
+  it('sums parse-time rejects and DB-time unrecognized/rejected into the combined result', () => {
+    const db = freshDb();
+    const { propertyId: _propertyId, ...missingPropertyId } = policyRow;
+    const result = importPolicies(
+      db,
+      { policies: [missingPropertyId, { ...policyRow, propertyId: 'ins-not-a-real-line' }] },
+      'payload-file.json',
+    );
+    // row 1: parse-time reject (missing propertyId); row 2: recognized as unrecognized (no existing line, not allowlisted)
+    expect(result).toEqual({ inserted: 0, updated: 0, unrecognized: 1, rejected: 1 });
   });
 });
 
