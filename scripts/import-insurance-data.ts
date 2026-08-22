@@ -482,12 +482,12 @@ export interface ImportPoliciesResult {
 }
 
 /** Placeholder stub for Task 2 (DB import). */
-export function importPolicyRows(db: WarehouseDb, rows: ParsedPolicyRow[]): ImportPoliciesResult {
+export function importPolicyRows(_db: WarehouseDb, _rows: ParsedPolicyRow[]): ImportPoliciesResult {
   return { inserted: 0, rejected: 0 };
 }
 
 /** Placeholder stub for Task 3 (combined parse+import). */
-export function importPolicies(db: WarehouseDb, payload: unknown): ImportPoliciesResult {
+export function importPolicies(_db: WarehouseDb, _payload: unknown): ImportPoliciesResult {
   return { inserted: 0, rejected: 0 };
 }
 
