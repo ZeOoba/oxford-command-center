@@ -962,6 +962,8 @@ Expected: one row, `status: 'open'`.
 
 (No commit — this only touches the gitignored `data/warehouse/finance.sqlite`, not a tracked file.)
 
+**Amended 2026-08-22 (post-merge-review) — do not re-run Step 1's `detail` text verbatim.** After Task 6 ran the import, this row's `detail` was updated in place (`UPDATE data_quality_issues SET detail = ... WHERE id = 3`) to also name the new row the import added at the correct 2024-25 date (id 1360, `effective_date '2024-09-24'`) alongside the pre-existing suspect row (id 1336, `effective_date '2025-09-18'`) — Step 1's text above predates that insert and only describes the one row. If this warehouse is ever rebuilt from scratch and this plan re-run, re-derive the amended two-row wording from the live DB (or from `.superpowers/sdd/progress.md`'s "Final whole-branch review" section) rather than reusing Step 1's original text.
+
 ---
 
 ### Task 6: Run the import and verify
@@ -1008,3 +1010,29 @@ Confirm only this plan's files show as committed/clean (the spec, the script cha
 - **Spec coverage:** §5 upsert semantics → Task 2. §6 validation + unrecognized-line DQ check → Tasks 1 & 2. §7 testing → Tasks 1–3. §4.1 identity mapping → Task 4's payload. §8 rollout → Tasks 4–6. §3/§9 non-goals (9620, the 4 non-PROPS entities, `--dec-pages`) → explicitly not attempted; Task 4's "why only 13 rows" note documents the 9620 exclusion and the one new Westerville finding.
 - **Type consistency:** `ParsedPolicyRow`, `ImportPolicyRowsResult`, `importPolicyRows`, `importPolicies`, `parsePoliciesPayload` are named identically everywhere they're referenced across Tasks 1–3 and in the "Interfaces" blocks.
 - **No placeholders:** every step has literal code, exact commands, and exact expected output; the payload in Task 4 is the actual final data, not a sample.
+
+## Post-merge-review addendum: current-term coverage_tiv backfill (2026-08-22)
+
+The final whole-branch review's background continuation found the actual dashboard artifact (which
+neither the original spec-writing pass nor the first review pass could reach) and surfaced a real
+finding: `PROPS` carries a building/TIV figure (`t`) for every property-year, but this track's 13
+inserted rows are all *superseded history* — the *current* terms for 5 of those lines
+(`ins-1900broadway-ufx`, `ins-3034westerville-pckg`, `ins-3540fifth-pckg`, `ins-3883livingston-pckg`,
+`ins-fvc-pckg`) already existed pre-Track-A with `coverage_tiv = NULL`. `classifyCohort` in
+`server/warehouse/insurance-analysis.ts` routes any `tiv === null` row to `'excluded-null-tiv'`,
+dropping it from rate-per-$100 math, the own-book median benchmark, and `rebidCandidates` — so the
+dashboard's own headline analysis (e.g. relative rate positioning) was uncomputable for exactly the
+rows that matter, while TIV sat populated on 13 rows nothing reads.
+
+**Fix:** a targeted `UPDATE property_insurance_policies SET coverage_tiv = ? WHERE id = ? AND
+coverage_tiv IS NULL` for the 8 affected current-term rows (ids 1316, 1341, 1336, 1337, 1273, 1348,
+1255, 1330 — `ins-55newplant-pckg`'s 2026-27 term is NOT included; `PROPS` has no 2026-2027 entry for
+EGF at all, a genuine source gap, not an oversight). Deliberately **not** routed through the
+`--policies` upsert: that mode's UPDATE also overwrites `insurer`/`policy_type`/`expiration_date`/
+`source`/`source_date`/`ingested_by`, which would misattribute these rows' entire capture to this
+TIV-only enrichment. A narrow single-column UPDATE (same pattern as the existing `--dec-pages` mode's
+`SET deductible = ?, coverage_limit = ? WHERE id = ?`) is the right-scoped tool for enriching one
+field on an existing capture without touching its provenance. Verified before/after: total row count
+unchanged at 47, every other column on all 8 rows identical to its pre-update value, and 11 remaining
+NULL-TIV current-term rows correctly left alone (they belong to properties `PROPS` doesn't cover —
+2203 Northwood, 9050 Red Branch, 1100 Rarig, 9620, etc. — out of Track A's scope).
