@@ -7,7 +7,7 @@
 // those resolvers automatically stop reading the fixtures and start reading the warehouse — no
 // other code change is required. This is the ONLY way that cutover happens.
 //
-// Two modes, one script (unlike scripts/import-assessments.ts's single CSV mode):
+// Three modes, one script (unlike scripts/import-assessments.ts's single CSV mode):
 //
 //   1. Default (loss events): npx tsx scripts/import-insurance-data.ts <events.json> [--db <path>]
 //      Input JSON shape: { events: [{ id, propertyId, policyRef, lossDate, cause, grossIncurred,
@@ -25,6 +25,23 @@
 //      this importer accepts policyId as either a JSON number or a numeric string).
 //      UPDATE ... SET deductible = ?, coverage_limit = ? WHERE id = ? for each row that resolves to
 //      an existing policy id; a missing id is counted (`missing`), never thrown.
+//
+//   3. Policies (premium history): npx tsx scripts/import-insurance-data.ts --policies <policies.json> [--db <path>]
+//      Input JSON shape: { policies: [{ propertyId, insurer, policyNumber, effectiveDate,
+//      expirationDate, premiumAnnual, coverageTiv, policyType, source, sourceDate }, ...],
+//      newLines?: string[], ingestedBy?: string }. Upserts by (property_id, policy_number,
+//      effective_date) — UPDATE by the existing row's own `id` on a match, never INSERT OR REPLACE
+//      (that would mint a new autoincrement id and silently wipe any deductible/coverage_limit a
+//      separate --dec-pages run already applied). property_id has no FK; a propertyId is only
+//      accepted if a row for it already exists or it's listed in `newLines` for this run — anything
+//      else is logged to data_quality_issues (kind='insurance-policy-unrecognized-line') and skipped.
+//      CAUTION for any future history backfill through this mode: server/warehouse/insurance-
+//      analysis.ts's collapseToCurrentTerm ranks a policy line's "current" term by source_date DESC
+//      first, effective_date only as a tiebreak. A history row whose sourceDate is NEWER than the
+//      live capture's, for an OLDER effective_date, would make that older term win and surface as
+//      "current" downstream (renewalCalendar, premiumAnnualTotal, policiesN, insurance-expiry-soon).
+//      Keep a backfilled row's sourceDate no newer than the most recent live capture for that
+//      property/line — never the backfill's own compile date if that's more recent.
 //
 // Row handling (mirrors import-assessments.ts):
 //   - A row that fails FORMAT validation is rejected and reported in the printed summary — nothing
@@ -625,6 +642,13 @@ export function parseArgs(argv: string[]): CliArgs {
     }
   }
 
+  if (decPagesPath !== undefined && policiesPath !== undefined) {
+    // Foot-gun guard: these two modes have completely different write semantics against a live
+    // financial warehouse. Silently preferring one over the other on a mistyped combined invocation
+    // (the prior behavior) is exactly the class of mistake this file's validation otherwise guards
+    // against elsewhere — reject instead of guessing.
+    throw new Error('--dec-pages and --policies are mutually exclusive');
+  }
   if (decPagesPath !== undefined) {
     return { mode: 'dec-pages', filePath: decPagesPath, db };
   }

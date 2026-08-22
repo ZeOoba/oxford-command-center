@@ -597,6 +597,28 @@ describe('importPolicyRows', () => {
     expect(inserted.coverage_tiv).toBe(4393500);
   });
 
+  // Undocumented-but-real behavior flagged by the final whole-branch review: two rows sharing the
+  // same (property_id, policy_number, effective_date) key WITHIN one batch aren't rejected as
+  // duplicates — findExisting re-queries per row inside the transaction, so the first lands as an
+  // insert and the second immediately resolves to that just-inserted row's id and updates it.
+  // Last-in-batch wins. Pinning this so a future refactor can't silently change it unnoticed.
+  it('resolves two same-key rows in one batch as insert-then-update, last one winning', () => {
+    const db = freshDb();
+    insertPolicy(db, 'ins-3540fifth-pckg');
+
+    const { rows } = parsePoliciesPayload(
+      { policies: [rowFor('ins-3540fifth-pckg', { premiumAnnual: 1111 }), rowFor('ins-3540fifth-pckg', { premiumAnnual: 2222 })] },
+      'd',
+    );
+    const result = importPolicyRows(db, rows, 'test-suite');
+    expect(result).toEqual({ inserted: 1, updated: 1, unrecognized: 0, rejected: 0 });
+
+    const landed = db.prepare(
+      `SELECT premium_annual FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
+    ).get('ins-3540fifth-pckg', 'Q61-0159747', '2024-01-20') as { premium_annual: number };
+    expect(landed.premium_annual).toBe(2222); // last row in the batch wins, not the first
+  });
+
   it('inserts a new line id when explicitly allowlisted via newLines', () => {
     const db = freshDb();
     const { rows } = parsePoliciesPayload({ policies: [rowFor('ins-9620state350-umb')] }, 'd');
@@ -749,6 +771,11 @@ describe('parseArgs', () => {
   it('combines --policies with --db', () => {
     const args = parseArgs(['--policies', 'policies.json', '--db', '/tmp/test.sqlite']);
     expect(args).toEqual({ mode: 'policies', filePath: 'policies.json', db: '/tmp/test.sqlite' });
+  });
+
+  it('rejects combining --dec-pages and --policies in one invocation', () => {
+    expect(() => parseArgs(['--dec-pages', 'dec.json', '--policies', 'policies.json']))
+      .toThrow('--dec-pages and --policies are mutually exclusive');
   });
 
   it('throws when no file path is given', () => {
