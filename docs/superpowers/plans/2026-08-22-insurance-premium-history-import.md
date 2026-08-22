@@ -1025,14 +1025,24 @@ dashboard's own headline analysis (e.g. relative rate positioning) was uncomputa
 rows that matter, while TIV sat populated on 13 rows nothing reads.
 
 **Fix:** a targeted `UPDATE property_insurance_policies SET coverage_tiv = ? WHERE id = ? AND
-coverage_tiv IS NULL` for the 8 affected current-term rows (ids 1316, 1341, 1336, 1337, 1273, 1348,
-1255, 1330 — `ins-55newplant-pckg`'s 2026-27 term is NOT included; `PROPS` has no 2026-2027 entry for
-EGF at all, a genuine source gap, not an oversight). Deliberately **not** routed through the
-`--policies` upsert: that mode's UPDATE also overwrites `insurer`/`policy_type`/`expiration_date`/
-`source`/`source_date`/`ingested_by`, which would misattribute these rows' entire capture to this
-TIV-only enrichment. A narrow single-column UPDATE (same pattern as the existing `--dec-pages` mode's
-`SET deductible = ?, coverage_limit = ? WHERE id = ?`) is the right-scoped tool for enriching one
-field on an existing capture without touching its provenance. Verified before/after: total row count
-unchanged at 47, every other column on all 8 rows identical to its pre-update value, and 11 remaining
-NULL-TIV current-term rows correctly left alone (they belong to properties `PROPS` doesn't cover —
-2203 Northwood, 9050 Red Branch, 1100 Rarig, 9620, etc. — out of Track A's scope).
+coverage_tiv IS NULL` for 8 affected rows with a known `PROPS` TIV (ids 1316, 1341, 1336, 1337, 1273,
+1348, 1255, 1330 — 5 of these are each line's current term; 3 (1255, 1273, 1316) are superseded terms
+whose TIV was also unknown and got filled in as a side effect of touching the same lineage, harmless
+since `coverage_tiv` isn't part of the `isMoreCurrent` ranking. `ins-55newplant-pckg`'s current
+2026-27 term is NOT included; `PROPS` has no 2026-2027 entry for EGF at all, a genuine source gap, not
+an oversight). Deliberately **not** routed through the `--policies` upsert: that mode's UPDATE also
+overwrites `insurer`/`policy_type`/`expiration_date`/`source`/`source_date`/`ingested_by`, which would
+misattribute these rows' entire capture to this TIV-only enrichment. A narrow single-column UPDATE
+(same pattern as the existing `--dec-pages` mode's `SET deductible = ?, coverage_limit = ? WHERE id =
+?`) is the right-scoped tool for enriching one field on an existing capture without touching its
+provenance. Verified before/after: total row count unchanged at 47, every other column on all 8 rows
+identical to its pre-update value. **Correction (closing re-review, 2026-08-22):** this section
+originally claimed "11 remaining NULL-TIV current-term rows, all belonging to out-of-scope
+properties" — wrong on both the count and part of the reason. The actual current-term NULL-TIV count
+is **21**: 15 genuinely belong to properties `PROPS` doesn't cover at all (1100 Rarig, 2203 Northwood,
+29000 Information Ln, 9050 Red Branch, 9620 GL/Property, ETC POA, 1851 South Club, 401 Sunburst, 7658
+Fishel), and **6 sit within the 5 properties this track does cover** — the current BCL/umbrella line
+for 1900 Broadway, 3540 Fifth, 3883 Livingston, and FVC (`PROPS` never supplies a TIV for the
+liability line, only the package/building line, so these are correctly NULL by design, not a gap) plus
+55 New Plant Ct's current package term (the same already-noted source gap: no 2026-2027 entry in
+`PROPS` for EGF at all). No further backfill is warranted from this source for any of the 21.
