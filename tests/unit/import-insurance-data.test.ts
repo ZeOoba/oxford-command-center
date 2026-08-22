@@ -679,6 +679,16 @@ describe('parseArgs', () => {
     expect(parseArgs(['--db', '/tmp/x.sqlite', '--dec-pages', 'policies.json'])).toEqual({ mode: 'dec-pages', filePath: 'policies.json', db: '/tmp/x.sqlite' });
   });
 
+  it('parses --policies <path> as policies mode', () => {
+    const args = parseArgs(['--policies', 'policies.json']);
+    expect(args).toEqual({ mode: 'policies', filePath: 'policies.json', db: undefined });
+  });
+
+  it('combines --policies with --db', () => {
+    const args = parseArgs(['--policies', 'policies.json', '--db', '/tmp/test.sqlite']);
+    expect(args).toEqual({ mode: 'policies', filePath: 'policies.json', db: '/tmp/test.sqlite' });
+  });
+
   it('throws when no file path is given', () => {
     expect(() => parseArgs([])).toThrow();
     expect(() => parseArgs(['--db', '/tmp/x.sqlite'])).toThrow();

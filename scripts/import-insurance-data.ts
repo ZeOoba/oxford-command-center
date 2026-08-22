@@ -591,7 +591,7 @@ export function importPolicies(db: WarehouseDb, payload: unknown, defaultSource:
 // ── CLI ──────────────────────────────────────────────────────────────────────────────────────
 
 export interface CliArgs {
-  mode: 'loss-events' | 'dec-pages';
+  mode: 'loss-events' | 'dec-pages' | 'policies';
   filePath: string;
   db?: string;
 }
@@ -600,6 +600,7 @@ export function parseArgs(argv: string[]): CliArgs {
   const positional: string[] = [];
   let db: string | undefined;
   let decPagesPath: string | undefined;
+  let policiesPath: string | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -614,6 +615,11 @@ export function parseArgs(argv: string[]): CliArgs {
       if (!next || next.startsWith('--')) throw new Error('missing value for --dec-pages');
       decPagesPath = next;
       i += 1;
+    } else if (arg === '--policies') {
+      const next = argv[i + 1];
+      if (!next || next.startsWith('--')) throw new Error('missing value for --policies');
+      policiesPath = next;
+      i += 1;
     } else {
       positional.push(arg);
     }
@@ -622,12 +628,16 @@ export function parseArgs(argv: string[]): CliArgs {
   if (decPagesPath !== undefined) {
     return { mode: 'dec-pages', filePath: decPagesPath, db };
   }
+  if (policiesPath !== undefined) {
+    return { mode: 'policies', filePath: policiesPath, db };
+  }
 
   const filePath = positional[0];
   if (filePath === undefined) {
     throw new Error(
       'Usage: npx tsx scripts/import-insurance-data.ts <events.json> [--db <path>]\n'
-      + '   or: npx tsx scripts/import-insurance-data.ts --dec-pages <policies.json> [--db <path>]',
+      + '   or: npx tsx scripts/import-insurance-data.ts --dec-pages <policies.json> [--db <path>]\n'
+      + '   or: npx tsx scripts/import-insurance-data.ts --policies <policies.json> [--db <path>]',
     );
   }
   return { mode: 'loss-events', filePath, db };
@@ -676,6 +686,10 @@ function main(argv: string[]): number {
       const result = importDecPages(db, payload);
       console.log(`import-insurance-data (dec-pages): ${result.updated} polic${result.updated === 1 ? 'y' : 'ies'} updated from ${args.filePath}`);
       console.log(`  ${result.missing} missing policy id(s), ${result.rejected} rejected row(s)`);
+    } else if (args.mode === 'policies') {
+      const result = importPolicies(db, payload, args.filePath);
+      console.log(`import-insurance-data (policies): ${result.inserted} inserted, ${result.updated} updated from ${args.filePath}`);
+      console.log(`  ${result.unrecognized} unrecognized property_id row(s), ${result.rejected} rejected row(s)`);
     } else {
       const result = importLossRuns(db, payload, args.filePath);
       console.log(`import-insurance-data (loss-events): ${result.inserted} row(s) inserted from ${args.filePath}`);
