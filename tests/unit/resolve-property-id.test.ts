@@ -264,4 +264,54 @@ describe('resolvePropertyId', () => {
     expect(resolvePropertyId('3034 Westerville Rd, Westerville OH', properties)).toBe('3034-westerville-rd-westerville-oh');
     expect(resolvePropertyId('3034 Westerville Rd', properties)).toBe('3034-westerville-rd-westerville-oh');
   });
+
+  // cc-audit-army finding unresolved-lease-propertyid-silent: the Sepich Portfolio is tracked as
+  // ONE consolidated property_master row (same target detect.ts's PROPERTY_ALIASES uses for the
+  // portfolio's P&L filename token 'fvc'), so its 8 physical buildings have no per-building
+  // address for the token-matching algorithm above to match against at all -- token matching can
+  // never resolve these regardless of how it's tuned, hence the dedicated alias table.
+  describe('RENT_ROLL_PROPERTY_ALIASES — Sepich Portfolio sub-property names', () => {
+    // The alias must resolve without any address-token corroboration (none exists in
+    // property_master for these sub-buildings) -- but ONLY when its target id is actually
+    // present in `properties`, the same contract every other path through this function holds
+    // to (see the finding below). A Sepich property_master row is present in every case here.
+    const sepich = mkProperty('sepich-portfolio-columbus-oh-8-props', 'Sepich Portfolio, Columbus OH');
+
+    it('resolves the three confirmed Sepich sub-property names to the consolidated Sepich id', () => {
+      expect(resolvePropertyId('Banwick', [sepich])).toBe('sepich-portfolio-columbus-oh-8-props');
+      expect(resolvePropertyId('Morrison', [sepich])).toBe('sepich-portfolio-columbus-oh-8-props');
+      expect(resolvePropertyId('Zettler', [sepich])).toBe('sepich-portfolio-columbus-oh-8-props');
+    });
+
+    it('matches case-insensitively and tolerates surrounding whitespace', () => {
+      expect(resolvePropertyId('  BANWICK  ', [sepich])).toBe('sepich-portfolio-columbus-oh-8-props');
+      expect(resolvePropertyId('banwick', [sepich])).toBe('sepich-portfolio-columbus-oh-8-props');
+    });
+
+    // cc-audit-army code-review finding (2026-08-22): the alias previously returned its
+    // hardcoded target unconditionally, with no check it actually exists in `properties` --
+    // unlike every other path through this function. A renamed/retired/absent Sepich id must
+    // now fall through to null (a defense-in-depth backstop against future id drift), not a
+    // dangling propertyId with zero data-quality signal.
+    it('falls through to null when the alias target is absent from properties (defense in depth)', () => {
+      expect(resolvePropertyId('Banwick', [])).toBeNull();
+      const unrelated = mkProperty('some-other-property', '1 Some Other St, Anytown OH');
+      expect(resolvePropertyId('Morrison', [unrelated])).toBeNull();
+    });
+
+    // The existing 'Banwick Lane' -> null test above (round-2 refute finding) must keep passing
+    // unchanged: the alias table matches the bare single-word key actually seen in the live rent
+    // roll ("Banwick"), not a two-word variant, so it must not swallow that unrelated test's key.
+    it('does not fire on a multi-word key that merely contains an aliased word', () => {
+      const properties = [mkProperty('29000-information-lane-easton-md', '29000 Information Lane, Easton MD')];
+      expect(resolvePropertyId('Banwick Lane', properties)).toBeNull();
+    });
+
+    // The two unresolved live keys with no comparable corroborating evidence (see the alias
+    // table's own comment) must stay correctly unresolved, not silently swept into the alias.
+    it('does not alias an unrelated unresolved key that happens to share no evidence with Sepich', () => {
+      const properties = [mkProperty('3540-e-5th-ave-columbus-oh', '3540 E. 5th Ave, Columbus OH')];
+      expect(resolvePropertyId('4595 E. 5th Ave', properties)).toBeNull();
+    });
+  });
 });

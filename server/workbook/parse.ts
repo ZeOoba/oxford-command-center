@@ -562,7 +562,37 @@ function propertyTokensFor(properties: Property[]): Map<string, PropertyAddressT
   return table;
 }
 
+// Rent-roll property-key aliases for names that can never resolve via address-token matching
+// below, because property_master carries no address text for them at all: the Sepich Portfolio
+// (property id sepich-portfolio-columbus-oh-8-props) is tracked as ONE consolidated
+// property_master row for its 8 physical buildings (same target detect.ts's PROPERTY_ALIASES
+// already uses for the portfolio's P&L filename token 'fvc'), so a rent-roll row naming an
+// individual building by its street/subdivision name has no per-building address to match
+// against — same shape as detect.ts's PROPERTY_ALIASES, for the rent-roll key column instead of
+// P&L filenames. "Banwick" is not a hypothetical: it is literally the token named in this
+// function's own comment below as the example a bare-word match must NOT trust, confirmed live
+// (cc-audit-army finding unresolved-lease-propertyid-silent, 2026-08-21) as one of the Sepich
+// sub-property names actually driving 39 of 41 unresolved rent-roll rows ($1.08M of $1.14M).
+// Only alias names with that level of direct corroboration -- a handful of other unresolved keys
+// in the same run (e.g. "4595 E. 5th Ave") had no comparable evidence and were left correctly
+// unresolved (flagged, not guessed) rather than risk misattributing rent to the wrong property.
+const RENT_ROLL_PROPERTY_ALIASES: Record<string, string> = {
+  banwick: 'sepich-portfolio-columbus-oh-8-props',
+  morrison: 'sepich-portfolio-columbus-oh-8-props',
+  zettler: 'sepich-portfolio-columbus-oh-8-props',
+};
+
 export function resolvePropertyId(key: string, properties: Property[]): string | null {
+  const aliased = RENT_ROLL_PROPERTY_ALIASES[key.trim().toLowerCase()];
+  // Every OTHER path through this function only ever returns an id actually present in
+  // `properties` (see the token-matching loop below) -- the alias table must hold to that same
+  // contract. Trusting the hardcoded target unconditionally would let a future rename/retirement
+  // of the Sepich portfolio's id produce a dangling propertyId with NO data-quality signal at
+  // all (worse than null: parseLeases' resolvedPropertyId===null flag never fires for a
+  // non-null-but-wrong id).
+  if (aliased !== undefined) {
+    return properties.some((p) => p.id === aliased) ? aliased : null;
+  }
   const keyTokenList = addressTokens(key);
   if (keyTokenList.length === 0) return null;
   const keyWordTokens = new Set(keyTokenList.filter((t) => !/^\d+$/.test(t)));
@@ -750,10 +780,28 @@ function parseLeases(
     else if (rawStatus.includes('expired')) status = 'Expired';
     else if (rawStatus.includes('active')) status = 'Active';
     else if (rawStatus.includes('vacant')) status = 'Vacant';
+    const resolvedPropertyId = resolvePropertyId(propertyKey, properties);
+    // A lease that fails to resolve to a property is not dropped -- it still counts toward
+    // that property's rent -- but propertyId:null silently zeroes it out of every per-property
+    // leasing input (WALT, expiration schedule, Capital Allocation's leasing-risk component)
+    // with no signal that anything is missing. "no flag" reads identically to "nothing here",
+    // the exact failure class the 2026-08-03 phantom-lease incident and the verified-null-vs-
+    // inferred-null rule exist to prevent. checkSnapshot (reconcile-runtime.ts) aggregates this
+    // against workbookTotals.rent so a material share of unresolved rent fails the snapshot,
+    // not just this one row.
+    if (resolvedPropertyId === null) {
+      rowFlags.push({
+        entity: id,
+        field: 'propertyId',
+        issue: `lease could not be resolved to a property (propertyKey="${propertyKey}") — its rent ($${(annualRent ?? (monthlyRent ?? 0) * 12).toLocaleString()}/yr) is excluded from every per-property leasing metric`,
+        rawValue: propertyKey,
+        severity: 'warn',
+      });
+    }
     const lease: Lease = {
       id,
       propertyKey,
-      propertyId: resolvePropertyId(propertyKey, properties),
+      propertyId: resolvedPropertyId,
       tenantName,
       unit,
       company: str(row(ws, r, 4)),
