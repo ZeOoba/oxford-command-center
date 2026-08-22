@@ -564,6 +564,103 @@ describe('importDecPageRows / importDecPages', () => {
   });
 });
 
+// ── importPolicyRows (DB) ───────────────────────────────────────────────────────────────────
+
+describe('importPolicyRows', () => {
+  const rowFor = (propertyId: string, overrides: Partial<Parameters<typeof parsePoliciesPayload>[0]> = {}) => ({
+    propertyId,
+    insurer: 'Erie Insurance',
+    policyNumber: 'Q61-0159747',
+    effectiveDate: '2024-01-20',
+    expirationDate: '2025-01-20',
+    premiumAnnual: 9478,
+    coverageTiv: 4393500,
+    policyType: 'Package (PCKG)',
+    source: 'test-source.pdf',
+    sourceDate: '2026-08-17',
+    ...overrides,
+  });
+
+  it('inserts a new row for a recognized existing property line', () => {
+    const db = freshDb();
+    insertPolicy(db, 'ins-3540fifth-pckg'); // establishes the line as "known" (no FK — presence is the signal)
+
+    const { rows } = parsePoliciesPayload({ policies: [rowFor('ins-3540fifth-pckg')] }, 'd');
+    const result = importPolicyRows(db, rows, 'test-suite');
+    expect(result).toEqual({ inserted: 1, updated: 0, unrecognized: 0, rejected: 0 });
+
+    const inserted = db.prepare(
+      `SELECT premium_annual, coverage_tiv FROM property_insurance_policies
+       WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
+    ).get('ins-3540fifth-pckg', 'Q61-0159747', '2024-01-20') as { premium_annual: number; coverage_tiv: number };
+    expect(inserted.premium_annual).toBe(9478);
+    expect(inserted.coverage_tiv).toBe(4393500);
+  });
+
+  it('inserts a new line id when explicitly allowlisted via newLines', () => {
+    const db = freshDb();
+    const { rows } = parsePoliciesPayload({ policies: [rowFor('ins-9620state350-umb')] }, 'd');
+    const result = importPolicyRows(db, rows, 'test-suite', ['ins-9620state350-umb']);
+    expect(result).toEqual({ inserted: 1, updated: 0, unrecognized: 0, rejected: 0 });
+  });
+
+  it('records an unrecognized, non-allowlisted propertyId as a data_quality_issues row and skips it', () => {
+    const db = freshDb();
+    const { rows } = parsePoliciesPayload({ policies: [rowFor('ins-typo-pckg')] }, 'd');
+    const result = importPolicyRows(db, rows, 'test-suite');
+    expect(result).toEqual({ inserted: 0, updated: 0, unrecognized: 1, rejected: 0 });
+
+    const dq = db.prepare(`SELECT detail FROM data_quality_issues WHERE kind = 'insurance-policy-unrecognized-line'`)
+      .get() as { detail: string };
+    expect(dq.detail).toMatch(/ins-typo-pckg/);
+
+    const written = db.prepare('SELECT COUNT(*) c FROM property_insurance_policies WHERE property_id = ?')
+      .get('ins-typo-pckg') as { c: number };
+    expect(written.c).toBe(0);
+  });
+
+  // The core design decision (spec §5): a re-run for the SAME (property_id, policy_number,
+  // effective_date) key must UPDATE the existing row's id, never delete-and-reinsert — otherwise
+  // any deductible/coverage_limit already applied by --dec-pages is silently wiped.
+  it('updates an existing row on a matching key WITHOUT touching a previously-set deductible', () => {
+    const db = freshDb();
+    const policyId = insertPolicy(db, 'ins-3540fifth-pckg');
+    db.prepare(`
+      UPDATE property_insurance_policies
+      SET policy_number = 'Q61-0159747', effective_date = '2024-01-20', premium_annual = 1, deductible = 25000, coverage_limit = 5000000
+      WHERE id = ?
+    `).run(policyId);
+
+    const { rows } = parsePoliciesPayload({ policies: [rowFor('ins-3540fifth-pckg')] }, 'd'); // premiumAnnual: 9478
+    const result = importPolicyRows(db, rows, 'test-suite');
+    expect(result).toEqual({ inserted: 0, updated: 1, unrecognized: 0, rejected: 0 });
+
+    const row = db.prepare('SELECT id, premium_annual, deductible, coverage_limit FROM property_insurance_policies WHERE id = ?')
+      .get(policyId) as { id: number; premium_annual: number; deductible: number; coverage_limit: number };
+    expect(row.id).toBe(policyId); // same row, not delete-and-reinsert
+    expect(row.premium_annual).toBe(9478); // updated
+    expect(row.deductible).toBe(25000); // preserved
+    expect(row.coverage_limit).toBe(5000000); // preserved
+  });
+
+  it('is idempotent: importing the same file twice reports the second run as all-updated, zero duplicates', () => {
+    const db = freshDb();
+    insertPolicy(db, 'ins-3540fifth-pckg');
+    const { rows } = parsePoliciesPayload({ policies: [rowFor('ins-3540fifth-pckg')] }, 'd');
+
+    const first = importPolicyRows(db, rows, 'test-suite');
+    expect(first).toEqual({ inserted: 1, updated: 0, unrecognized: 0, rejected: 0 });
+
+    const second = importPolicyRows(db, rows, 'test-suite');
+    expect(second).toEqual({ inserted: 0, updated: 1, unrecognized: 0, rejected: 0 });
+
+    const count = db.prepare(
+      `SELECT COUNT(*) c FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
+    ).get('ins-3540fifth-pckg', 'Q61-0159747', '2024-01-20') as { c: number };
+    expect(count.c).toBe(1); // the one row this test wrote (fixture row has null policy_number/effective_date and doesn't match this specific key)
+  });
+});
+
 // ── parseArgs (CLI) ───────────────────────────────────────────────────────────────────────────
 
 describe('parseArgs', () => {

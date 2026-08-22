@@ -476,19 +476,116 @@ export function parsePoliciesPayload(payload: unknown, defaultSource: string): P
   return { rows, rejected };
 }
 
-export interface ImportPoliciesResult {
+export interface ImportPolicyRowsResult {
   inserted: number;
+  updated: number;
+  unrecognized: number;
   rejected: number;
 }
 
-/** Placeholder stub for Task 2 (DB import). */
-export function importPolicyRows(_db: WarehouseDb, _rows: ParsedPolicyRow[]): ImportPoliciesResult {
-  return { inserted: 0, rejected: 0 };
+/**
+ * Upsert parsed+validated policy rows into property_insurance_policies. property_id has NO FK
+ * (unlike property_tax_assessments/insurance_loss_events), so "recognized" means "an existing row
+ * with this property_id already exists" OR "explicitly allowlisted via newLines for this run" —
+ * the only two ways this importer will ever mint a property_id, matching the design's identity
+ * rule (spec §4.1: reuse an existing line's id, mint a new one only for a genuinely new line).
+ *
+ * On a (property_id, policy_number, effective_date) match, UPDATE by that row's own `id` rather
+ * than INSERT OR REPLACE — REPLACE deletes-and-reinserts under an AUTOINCREMENT PK, which would
+ * mint a fresh id and silently null out any deductible/coverage_limit --dec-pages already applied
+ * (spec §5). deductible/coverage_limit are never touched by this importer either way.
+ */
+export function importPolicyRows(
+  db: WarehouseDb,
+  rows: ParsedPolicyRow[],
+  ingestedBy: string,
+  newLines: string[] = [],
+): ImportPolicyRowsResult {
+  const knownPropertyIds = new Set(
+    (db.prepare('SELECT DISTINCT property_id FROM property_insurance_policies').all() as { property_id: string }[])
+      .map((r) => r.property_id),
+  );
+  const allowedNewLines = new Set(newLines);
+
+  const findExisting = db.prepare(`
+    SELECT id FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?
+  `);
+  const update = db.prepare(`
+    UPDATE property_insurance_policies
+    SET insurer = ?, expiration_date = ?, premium_annual = ?, coverage_tiv = ?, policy_type = ?,
+        source = ?, source_date = ?, ingested_by = ?, ingested_at = datetime('now')
+    WHERE id = ?
+  `);
+  const insert = db.prepare(`
+    INSERT INTO property_insurance_policies
+      (property_id, insurer, policy_number, effective_date, expiration_date, premium_annual,
+       coverage_tiv, policy_type, source, source_date, ingested_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertDqUnrecognized = db.prepare(`
+    INSERT INTO data_quality_issues (property_id, kind, detail, severity)
+    VALUES (?, 'insurance-policy-unrecognized-line', ?, 'warn')
+  `);
+
+  let inserted = 0;
+  let updated = 0;
+  let unrecognized = 0;
+  let rejected = 0;
+
+  const tx = db.transaction(() => {
+    for (const r of rows) {
+      if (!knownPropertyIds.has(r.propertyId) && !allowedNewLines.has(r.propertyId)) {
+        unrecognized += 1;
+        insertDqUnrecognized.run(
+          r.propertyId,
+          `import-insurance-data --policies: property_id '${r.propertyId}' has no existing policy line and is not in this run's newLines allowlist — row skipped`,
+        );
+        continue; // this row's own failure must never block any other row in the batch
+      }
+      try {
+        const existing = findExisting.get(r.propertyId, r.policyNumber, r.effectiveDate) as { id: number } | undefined;
+        if (existing) {
+          update.run(
+            r.insurer, r.expirationDate, r.premiumAnnual, r.coverageTiv, r.policyType,
+            r.source, r.sourceDate, ingestedBy, existing.id,
+          );
+          updated += 1;
+        } else {
+          insert.run(
+            r.propertyId, r.insurer, r.policyNumber, r.effectiveDate, r.expirationDate,
+            r.premiumAnnual, r.coverageTiv, r.policyType, r.source, r.sourceDate, ingestedBy,
+          );
+          inserted += 1;
+          knownPropertyIds.add(r.propertyId); // a newLines row counts as known for a later row in this same batch
+        }
+      } catch (e) {
+        rejected += 1;
+        const detail = e instanceof Error ? e.message : String(e);
+        console.warn(`import-insurance-data --policies: row for '${r.propertyId}' (${r.policyNumber}, ${r.effectiveDate}) failed: ${detail}`);
+      }
+    }
+  });
+  tx();
+
+  return { inserted, updated, unrecognized, rejected };
 }
 
-/** Placeholder stub for Task 3 (combined parse+import). */
-export function importPolicies(_db: WarehouseDb, _payload: unknown): ImportPoliciesResult {
-  return { inserted: 0, rejected: 0 };
+/** Combined parse+import entry point used by the CLI. */
+export function importPolicies(db: WarehouseDb, payload: unknown, defaultSource: string): ImportPolicyRowsResult {
+  const { rows, rejected } = parsePoliciesPayload(payload, defaultSource);
+  const newLines = isRecord(payload) && Array.isArray(payload.newLines)
+    ? payload.newLines.filter((x): x is string => typeof x === 'string')
+    : [];
+  const ingestedBy = isRecord(payload) && typeof payload.ingestedBy === 'string' && payload.ingestedBy !== ''
+    ? payload.ingestedBy
+    : 'import-insurance-data.ts --policies';
+  const dbResult = importPolicyRows(db, rows, ingestedBy, newLines);
+  return {
+    inserted: dbResult.inserted,
+    updated: dbResult.updated,
+    unrecognized: dbResult.unrecognized,
+    rejected: rejected.length + dbResult.rejected,
+  };
 }
 
 // ── CLI ──────────────────────────────────────────────────────────────────────────────────────
