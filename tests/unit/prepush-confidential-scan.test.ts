@@ -3,9 +3,14 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
+import { execFileSync } from 'node:child_process';
+
 import {
   scanDiffForConfidential,
   scanDiffForContextTerms,
+  scanDiffForConfidentialFlag,
+  isRegisteredConfidentialRepo,
+  currentRepoName,
   parseAddedLines,
   loadTerms,
 } from '../../scripts/prepush-confidential-scan.mjs';
@@ -215,5 +220,165 @@ describe('prepush-confidential-scan / scanDiffForContextTerms', () => {
   it('returns no hits for an empty contextGroups list', () => {
     const added = [{ file: 'a.ts', lineNo: 1, text: 'xyz fake-fulton-st' }];
     expect(scanDiffForContextTerms(added, [])).toHaveLength(0);
+  });
+});
+
+// cc-audit-army finding confidential-deals-committed-to-git-remote (2026-08-21), resolved per
+// Gabriel's ruling: formalize the repo as an intentional in-perimeter confidential store, but
+// make the push gate assert that precondition structurally rather than assuming it.
+describe('prepush-confidential-scan / scanDiffForConfidentialFlag', () => {
+  it('flags a "confidential": true payload', () => {
+    const added = [{ file: 'data/snapshots/portfolio.json', lineNo: 42, text: '    "confidential": true,' }];
+    const hits = scanDiffForConfidentialFlag(added);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.file).toBe('data/snapshots/portfolio.json');
+    expect(hits[0]?.line).toBe(42);
+  });
+
+  it('tolerates whitespace variance around the colon', () => {
+    const added = [{ file: 'a.json', lineNo: 1, text: '"confidential":true' }];
+    expect(scanDiffForConfidentialFlag(added)).toHaveLength(1);
+  });
+
+  it('does not flag "confidential": false', () => {
+    const added = [{ file: 'a.json', lineNo: 1, text: '"confidential": false,' }];
+    expect(scanDiffForConfidentialFlag(added)).toHaveLength(0);
+  });
+
+  it('does not flag an unrelated line', () => {
+    const added = [{ file: 'a.ts', lineNo: 1, text: 'const x = 1;' }];
+    expect(scanDiffForConfidentialFlag(added)).toHaveLength(0);
+  });
+
+  it('returns no hits for a non-array input', () => {
+    // @ts-expect-error deliberate bad input
+    expect(scanDiffForConfidentialFlag(null)).toHaveLength(0);
+  });
+
+  // cc-audit-army code-review finding (2026-08-22): the regex used to match ONLY the
+  // JSON-quoted-key shape. This codebase's own TS source (src/data/public-deals.ts) and test
+  // fixtures construct these records with the unquoted object-literal shape pervasively.
+  it('flags the unquoted TS/JS object-literal shape (confidential: true)', () => {
+    const added = [{ file: 'src/data/seed-deals.ts', lineNo: 10, text: '  confidential: true,' }];
+    expect(scanDiffForConfidentialFlag(added)).toHaveLength(1);
+  });
+
+  it('flags the unquoted shape with no space after the colon', () => {
+    const added = [{ file: 'a.ts', lineNo: 1, text: 'confidential:true' }];
+    expect(scanDiffForConfidentialFlag(added)).toHaveLength(1);
+  });
+
+  it('flags a single-quoted key shape too', () => {
+    const added = [{ file: 'a.ts', lineNo: 1, text: "'confidential': true" }];
+    expect(scanDiffForConfidentialFlag(added)).toHaveLength(1);
+  });
+
+  it('does not flag a longer identifier ending in "confidential" (e.g. isConfidential)', () => {
+    const added = [{ file: 'a.ts', lineNo: 1, text: 'isConfidential: true,' }];
+    expect(scanDiffForConfidentialFlag(added)).toHaveLength(0);
+  });
+
+  it('does not flag the unquoted shape when the value is false', () => {
+    const added = [{ file: 'a.ts', lineNo: 1, text: 'confidential: false,' }];
+    expect(scanDiffForConfidentialFlag(added)).toHaveLength(0);
+  });
+});
+
+describe('prepush-confidential-scan / currentRepoName', () => {
+  let tmpRoot: string;
+  let mainRepo: string;
+  let worktree: string;
+
+  beforeEach(() => {
+    tmpRoot = mkdtempSync(join(tmpdir(), 'cc-repo-name-'));
+    mainRepo = join(tmpRoot, 'oxford-command-center');
+    mkdirSync(mainRepo, { recursive: true });
+    execFileSync('git', ['init', '-q'], { cwd: mainRepo });
+    execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: mainRepo });
+    execFileSync('git', ['config', 'user.name', 'Test'], { cwd: mainRepo });
+    writeFileSync(join(mainRepo, 'README.md'), 'test', 'utf8');
+    execFileSync('git', ['add', '.'], { cwd: mainRepo });
+    execFileSync('git', ['commit', '-q', '-m', 'init'], { cwd: mainRepo });
+  });
+
+  afterEach(() => {
+    rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  it('resolves the main repo directory name when invoked from the main checkout', () => {
+    expect(currentRepoName(mainRepo)).toBe('oxford-command-center');
+  });
+
+  // cc-audit-army code-review finding (2026-08-22): --show-toplevel returns the WORKTREE's own
+  // directory from inside a linked worktree, not the main repo's. This repo currently runs with
+  // several live worktrees whose directory names don't match the registered
+  // 'oxford-command-center' -- a push from any of them would false-block under the old
+  // resolution. --git-common-dir must resolve to the MAIN repo's name regardless.
+  it('resolves the MAIN repo directory name when invoked from a linked worktree with a different directory name', () => {
+    worktree = join(tmpRoot, 'totally-different-worktree-name');
+    execFileSync('git', ['worktree', 'add', '-q', '-b', 'feature-branch', worktree], { cwd: mainRepo });
+    expect(currentRepoName(worktree)).toBe('oxford-command-center');
+  });
+
+  it('returns an empty string (fail toward blocking) outside any git repo', () => {
+    const notARepo = join(tmpRoot, 'not-a-repo');
+    mkdirSync(notARepo, { recursive: true });
+    expect(currentRepoName(notARepo)).toBe('');
+  });
+});
+
+describe('prepush-confidential-scan / isRegisteredConfidentialRepo', () => {
+  let tmpHome: string;
+
+  beforeEach(() => {
+    tmpHome = mkdtempSync(join(tmpdir(), 'cc-conf-repos-'));
+  });
+
+  afterEach(() => {
+    rmSync(tmpHome, { recursive: true, force: true });
+  });
+
+  it('returns false (fail toward blocking) when the roster file is absent', () => {
+    expect(isRegisteredConfidentialRepo('oxford-command-center', tmpHome)).toBe(false);
+  });
+
+  it('returns false for an empty repo name', () => {
+    expect(isRegisteredConfidentialRepo('', tmpHome)).toBe(false);
+  });
+
+  it('returns true for a repo name present on confidential_repos', () => {
+    const claudeDir = join(tmpHome, '.claude');
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(
+      join(claudeDir, 'confidential-repos.json'),
+      JSON.stringify({ confidential_repos: ['oxford-command-center', 'website-canonical'] }),
+      'utf8',
+    );
+    expect(isRegisteredConfidentialRepo('oxford-command-center', tmpHome)).toBe(true);
+  });
+
+  it('returns false for a repo name absent from confidential_repos', () => {
+    const claudeDir = join(tmpHome, '.claude');
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(
+      join(claudeDir, 'confidential-repos.json'),
+      JSON.stringify({ confidential_repos: ['website-canonical'] }),
+      'utf8',
+    );
+    expect(isRegisteredConfidentialRepo('some-other-repo', tmpHome)).toBe(false);
+  });
+
+  it('returns false (fail toward blocking), never throws, on an unparseable roster', () => {
+    const claudeDir = join(tmpHome, '.claude');
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(join(claudeDir, 'confidential-repos.json'), '{ not json', 'utf8');
+    expect(isRegisteredConfidentialRepo('oxford-command-center', tmpHome)).toBe(false);
+  });
+
+  it('returns false when confidential_repos is missing or malformed on an otherwise-valid roster', () => {
+    const claudeDir = join(tmpHome, '.claude');
+    mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(join(claudeDir, 'confidential-repos.json'), JSON.stringify({ rule: 'no list here' }), 'utf8');
+    expect(isRegisteredConfidentialRepo('oxford-command-center', tmpHome)).toBe(false);
   });
 });

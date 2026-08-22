@@ -11,6 +11,17 @@
 // per property (the `id DESC` tiebreaker matters: scored_at is wall-clock write time, distinct
 // from snapshot_date the business date, but two runs within the same second are possible — same
 // convention as acq_scores/api.ts/capital-allocation.ts/brain-report.ts elsewhere in this repo).
+//
+// KNOWN DISCONTINUITY (2026-08-22): scoreDebtPositions' NOI basis changed from 100%-basis
+// (m.noi) to ownership-adjusted (m.oxfordNoi) on this date. Rows written before it, for any
+// fractionally-owned property, carry DSCR/debt_yield computed on the OLD (100%-basis) NOI; rows
+// written after carry the corrected (ownership-adjusted) basis. There is no retraction path (see
+// above) and no column marking which basis a given row used, so a trend read spanning this date
+// for a fractionally-owned property will show DSCR/debt_yield step-changing overnight with
+// nothing in the row itself signaling that the cause is a basis correction, not a real change in
+// debt position. Not backfilled/annotated here — flagged for whoever next reads a debt_scores
+// trend spanning this date, and a candidate for a `noi_basis` column if this class of change
+// recurs.
 import type { WarehouseDb } from './db';
 import type { DebtScore } from '../../src/contracts/debt';
 import type { PeriodMetrics } from '../../src/contracts/warehouse';

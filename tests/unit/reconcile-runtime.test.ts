@@ -180,6 +180,69 @@ describe('checkSnapshot — runtime reconciliation', () => {
     expect(flags.some((f) => f.field === 'properties.noi')).toBe(false);
   });
 
+  // cc-audit-army finding unresolved-lease-propertyid-silent: a lease that never resolved to a
+  // property (parse.ts's rowFlags handles the per-row 'warn') must ALSO fail the snapshot at the
+  // aggregate level once the unresolved share is material — mirrors the reproduced incident (41 of
+  // 138 leases, $1.14M, ~30% of rent, on the largest-NOI property).
+  describe('unresolved lease propertyId — aggregate backstop', () => {
+    it('flags when unresolved-propertyId rent exceeds 1% of the workbook total (error)', () => {
+      const flags = checkSnapshot(
+        base({
+          leases: [
+            { id: 'l1', propertyId: 'p1', annualRent: 9_700, monthlyRent: 9_700 / 12 },
+            { id: 'l2', propertyId: null, annualRent: 300, monthlyRent: 25 },
+          ],
+          workbookTotals: { noi: null, value: null, rent: 10_000 },
+        }),
+      );
+      const f = flags.find((x) => x.field === 'leases.propertyId');
+      expect(f).toBeDefined();
+      expect(f!.severity).toBe('error');
+      expect(f!.issue).toContain('3.0%');
+      expect(f!.issue).toContain('300');
+    });
+
+    it('does not flag a negligible unresolved share (below 1%)', () => {
+      const flags = checkSnapshot(
+        base({
+          leases: [
+            { id: 'l1', propertyId: 'p1', annualRent: 9_950, monthlyRent: 9_950 / 12 },
+            { id: 'l2', propertyId: null, annualRent: 50, monthlyRent: 50 / 12 },
+          ],
+          workbookTotals: { noi: null, value: null, rent: 10_000 },
+        }),
+      );
+      expect(flags.some((f) => f.field === 'leases.propertyId')).toBe(false);
+    });
+
+    it('does not flag when workbookTotals is absent (nothing to compare against)', () => {
+      const flags = checkSnapshot(
+        base({ leases: [{ id: 'l1', propertyId: null, annualRent: 1_000_000, monthlyRent: 1_000_000 / 12 }] }),
+      );
+      expect(flags.some((f) => f.field === 'leases.propertyId')).toBe(false);
+    });
+
+    it('reproduces the incident shape: the largest-NOI property resolving zero leases fails the snapshot', () => {
+      const leases = [
+        // 41 leases, $1.14M/yr, all unresolved — matches the reproduced incident.
+        ...Array.from({ length: 41 }, (_, i) => ({
+          id: `unresolved-${i}`,
+          propertyId: null,
+          annualRent: 1_140_000 / 41,
+          monthlyRent: 1_140_000 / 41 / 12,
+        })),
+        // 97 resolved leases making up the rest of a $5M portfolio.
+        { id: 'resolved-1', propertyId: 'p1', annualRent: 5_000_000 - 1_140_000, monthlyRent: (5_000_000 - 1_140_000) / 12 },
+      ];
+      const flags = checkSnapshot(
+        base({ leases, workbookTotals: { noi: null, value: null, rent: 5_000_000 } }),
+      );
+      const f = flags.find((x) => x.field === 'leases.propertyId');
+      expect(f).toBeDefined();
+      expect(f!.severity).toBe('error');
+    });
+  });
+
   it('passes when property NOI/value and annual rent all agree with the workbook Portfolio Total', () => {
     const flags = checkSnapshot(
       base({
