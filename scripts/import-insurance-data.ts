@@ -371,6 +371,126 @@ export function importDecPages(db: WarehouseDb, payload: unknown): ImportDecPage
   };
 }
 
+// ── Policies (premium history) ──────────────────────────────────────────────────────────────
+
+export interface ParsedPolicyRow {
+  propertyId: string;
+  insurer: string;
+  policyNumber: string;
+  effectiveDate: string;
+  expirationDate: string | null;
+  premiumAnnual: number;
+  coverageTiv: number | null;
+  policyType: string;
+  source: string;
+  sourceDate: string;
+}
+
+export interface ParsePoliciesOutcome {
+  rows: ParsedPolicyRow[];
+  rejected: RejectedRow[];
+}
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Parse + validate the policies JSON payload. Pure — no DB, no I/O. Exported for tests.
+ * Mirrors parseLossEventsPayload's per-row source fallback: a row's own `source` wins, else the
+ * payload's top-level `source`, else the CLI's file-path argument (passed in as `defaultSource`).
+ */
+export function parsePoliciesPayload(payload: unknown, defaultSource: string): ParsePoliciesOutcome {
+  const rows: ParsedPolicyRow[] = [];
+  const rejected: RejectedRow[] = [];
+
+  if (!isRecord(payload) || !Array.isArray(payload.policies)) {
+    rejected.push({ index: -1, id: null, reason: 'payload must be an object with a "policies" array' });
+    return { rows, rejected };
+  }
+
+  const topLevelSource = typeof payload.source === 'string' && payload.source !== '' ? payload.source : undefined;
+  const fallbackSource = topLevelSource ?? defaultSource;
+
+  payload.policies.forEach((raw: unknown, index: number) => {
+    if (!isRecord(raw)) {
+      rejected.push({ index, id: null, reason: 'row is not an object' });
+      return;
+    }
+    const {
+      propertyId, insurer, policyNumber, effectiveDate, expirationDate,
+      premiumAnnual, coverageTiv, policyType, source, sourceDate,
+    } = raw;
+
+    if (typeof propertyId !== 'string' || propertyId === '') {
+      rejected.push({ index, id: null, reason: 'missing or invalid "propertyId"' });
+      return;
+    }
+    if (typeof insurer !== 'string' || insurer === '') {
+      rejected.push({ index, id: propertyId, reason: 'missing or invalid "insurer"' });
+      return;
+    }
+    if (typeof policyNumber !== 'string' || policyNumber === '') {
+      rejected.push({ index, id: propertyId, reason: 'missing or invalid "policyNumber"' });
+      return;
+    }
+    if (typeof effectiveDate !== 'string' || !ISO_DATE_RE.test(effectiveDate)) {
+      rejected.push({ index, id: propertyId, reason: `effectiveDate must be ISO YYYY-MM-DD, got '${String(effectiveDate)}'` });
+      return;
+    }
+    if (expirationDate !== undefined && expirationDate !== null
+      && (typeof expirationDate !== 'string' || !ISO_DATE_RE.test(expirationDate))) {
+      rejected.push({ index, id: propertyId, reason: `expirationDate must be ISO YYYY-MM-DD when present, got '${String(expirationDate)}'` });
+      return;
+    }
+    if (typeof premiumAnnual !== 'number' || !Number.isFinite(premiumAnnual) || premiumAnnual < 0) {
+      rejected.push({ index, id: propertyId, reason: `premiumAnnual must be a nonnegative number, got '${String(premiumAnnual)}'` });
+      return;
+    }
+    if (coverageTiv !== undefined && coverageTiv !== null
+      && (typeof coverageTiv !== 'number' || !Number.isFinite(coverageTiv) || coverageTiv < 0)) {
+      rejected.push({ index, id: propertyId, reason: `coverageTiv must be a nonnegative number when present, got '${String(coverageTiv)}'` });
+      return;
+    }
+    if (typeof policyType !== 'string' || policyType === '') {
+      rejected.push({ index, id: propertyId, reason: 'missing or invalid "policyType"' });
+      return;
+    }
+    if (typeof sourceDate !== 'string' || sourceDate === '') {
+      rejected.push({ index, id: propertyId, reason: 'missing or invalid "sourceDate"' });
+      return;
+    }
+
+    rows.push({
+      propertyId,
+      insurer,
+      policyNumber,
+      effectiveDate,
+      expirationDate: typeof expirationDate === 'string' ? expirationDate : null,
+      premiumAnnual,
+      coverageTiv: typeof coverageTiv === 'number' ? coverageTiv : null,
+      policyType,
+      source: typeof source === 'string' && source !== '' ? source : fallbackSource,
+      sourceDate,
+    });
+  });
+
+  return { rows, rejected };
+}
+
+export interface ImportPoliciesResult {
+  inserted: number;
+  rejected: number;
+}
+
+/** Placeholder stub for Task 2 (DB import). */
+export function importPolicyRows(db: WarehouseDb, rows: ParsedPolicyRow[]): ImportPoliciesResult {
+  return { inserted: 0, rejected: 0 };
+}
+
+/** Placeholder stub for Task 3 (combined parse+import). */
+export function importPolicies(db: WarehouseDb, payload: unknown): ImportPoliciesResult {
+  return { inserted: 0, rejected: 0 };
+}
+
 // ── CLI ──────────────────────────────────────────────────────────────────────────────────────
 
 export interface CliArgs {

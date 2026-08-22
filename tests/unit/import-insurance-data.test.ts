@@ -23,6 +23,9 @@ import {
   parseDecPagesPayload,
   importDecPageRows,
   importDecPages,
+  parsePoliciesPayload,
+  importPolicyRows,
+  importPolicies,
   parseArgs,
 } from '../../scripts/import-insurance-data';
 
@@ -423,6 +426,83 @@ describe('parseDecPagesPayload — deductible must not exceed coverageLimit (P4c
     expect(rows.map((r) => r.policyId)).toEqual([3]);
     expect(rejected).toHaveLength(1);
     expect(rejected[0]!.id).toBe('4');
+  });
+});
+
+// ── parsePoliciesPayload (pure) ──────────────────────────────────────────────────────────────
+
+describe('parsePoliciesPayload', () => {
+  const base = {
+    propertyId: 'ins-3540fifth-pckg',
+    insurer: 'Erie Insurance',
+    policyNumber: 'Q61-0159747',
+    effectiveDate: '2024-01-20',
+    expirationDate: '2025-01-20',
+    premiumAnnual: 9478,
+    coverageTiv: 4393500,
+    policyType: 'Package (PCKG)',
+    sourceDate: '2026-08-17',
+  };
+
+  it('parses a well-formed policy row', () => {
+    const { rows, rejected } = parsePoliciesPayload({ policies: [base] }, 'default-source.json');
+    expect(rejected).toEqual([]);
+    expect(rows).toEqual([{ ...base, source: 'default-source.json' }]);
+  });
+
+  it('uses a per-row source over the top-level default', () => {
+    const { rows } = parsePoliciesPayload(
+      { policies: [{ ...base, source: 'row-specific.pdf' }] }, 'default-source.json',
+    );
+    expect(rows[0].source).toBe('row-specific.pdf');
+  });
+
+  it('rejects a row missing propertyId', () => {
+    const { propertyId, ...rest } = base;
+    const { rows, rejected } = parsePoliciesPayload({ policies: [rest] }, 'd');
+    expect(rows).toEqual([]);
+    expect(rejected).toEqual([{ index: 0, id: null, reason: 'missing or invalid "propertyId"' }]);
+  });
+
+  it('rejects a non-ISO effectiveDate', () => {
+    const { rows, rejected } = parsePoliciesPayload(
+      { policies: [{ ...base, effectiveDate: '01/20/2024' }] }, 'd',
+    );
+    expect(rows).toEqual([]);
+    expect(rejected[0].reason).toMatch(/effectiveDate must be ISO YYYY-MM-DD/);
+  });
+
+  it('rejects a non-ISO expirationDate when present', () => {
+    const { rejected } = parsePoliciesPayload({ policies: [{ ...base, expirationDate: '1/20/2025' }] }, 'd');
+    expect(rejected[0].reason).toMatch(/expirationDate must be ISO YYYY-MM-DD/);
+  });
+
+  it('accepts a null expirationDate', () => {
+    const { rows, rejected } = parsePoliciesPayload({ policies: [{ ...base, expirationDate: null }] }, 'd');
+    expect(rejected).toEqual([]);
+    expect(rows[0].expirationDate).toBeNull();
+  });
+
+  it('rejects a negative premiumAnnual', () => {
+    const { rejected } = parsePoliciesPayload({ policies: [{ ...base, premiumAnnual: -1 }] }, 'd');
+    expect(rejected[0].reason).toMatch(/premiumAnnual must be a nonnegative number/);
+  });
+
+  it('accepts a null coverageTiv (bcl/umbrella lines carry no TIV)', () => {
+    const { rows, rejected } = parsePoliciesPayload({ policies: [{ ...base, coverageTiv: null }] }, 'd');
+    expect(rejected).toEqual([]);
+    expect(rows[0].coverageTiv).toBeNull();
+  });
+
+  it('rejects a negative coverageTiv when present', () => {
+    const { rejected } = parsePoliciesPayload({ policies: [{ ...base, coverageTiv: -1 }] }, 'd');
+    expect(rejected[0].reason).toMatch(/coverageTiv must be a nonnegative number/);
+  });
+
+  it('rejects a payload with no "policies" array', () => {
+    const { rows, rejected } = parsePoliciesPayload({ notPolicies: [] }, 'd');
+    expect(rows).toEqual([]);
+    expect(rejected).toEqual([{ index: -1, id: null, reason: 'payload must be an object with a "policies" array' }]);
   });
 });
 
