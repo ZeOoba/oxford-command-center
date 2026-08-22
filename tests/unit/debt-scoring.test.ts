@@ -1014,3 +1014,53 @@ describe('2026-07-25 hardening — getLoansForProperty ORDER BY is total under d
     expect(s.signal).toBe('governor-block');
   });
 });
+
+describe('cc-audit-army finding dscr-100pct-noi-over-oxford-share-debt-service — DSCR/debt yield must use oxfordNoi (ownership-adjusted), not the 100%-basis noi', () => {
+  // debt_positions carries only Oxford's OWN debt on a jointly-owned property, so
+  // annualDebtService is already an Oxford-share figure. Pairing it with 100%-basis noi (the
+  // pre-fix behavior) overstated DSCR/debt yield by ~1/ownershipPct — here, 2x on a 50%-owned
+  // property — in the false-CLEARANCE direction: a real governor breach would read as clean.
+  it('computes DSCR/debtYield from oxfordNoi at 50% ownership, not the 100%-basis noi', () => {
+    const db = freshDb();
+    // Oxford's own debt service on its 50% share: monthly_pmt=5_000 → annual DS=60_000.
+    insertLoan(db, { monthly_pmt: 5_000, ltv: 0.30, current_balance: 500_000 });
+
+    // 100%-basis noi=240_000, Oxford's 50% share oxfordNoi=120_000.
+    // Pre-fix (noi): dscr = 240_000 / 60_000 = 4.0x (governor clear).
+    // Post-fix (oxfordNoi): dscr = 120_000 / 60_000 = 2.0x — still clear here, but on the
+    // correct, ownership-adjusted basis (the assertion below pins the VALUE, not just clearance,
+    // so a regression back to the 100%-basis noi fails even though both happen to clear 1.25x).
+    const metrics = [
+      makePeriodMetrics({ propertyId: 'prop-a', noi: 240_000, oxfordNoi: 120_000, ownershipPct: 0.5 }),
+    ];
+    const results = scoreDebtPositions(db, metrics, MARKET_5Y);
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s).toBeDefined();
+
+    const annualDebtService = 5_000 * 12;
+    expect(s.dscr).toBeCloseTo(120_000 / annualDebtService, 6); // 2.0x — oxfordNoi basis
+    expect(s.dscr).not.toBeCloseTo(240_000 / annualDebtService, 6); // NOT 4.0x — the 100%-basis noi
+
+    const totalBalance = 500_000;
+    expect(s.debtYield).toBeCloseTo(120_000 / totalBalance, 6);
+    expect(s.debtYield).not.toBeCloseTo(240_000 / totalBalance, 6);
+  });
+
+  it('a real governor breach on the ownership-adjusted basis fires governor-block, where the 100%-basis noi would have falsely cleared it', () => {
+    const db = freshDb();
+    // Oxford's own debt service: monthly_pmt=10_000 → annual DS=120_000.
+    insertLoan(db, { monthly_pmt: 10_000, ltv: 0.30 });
+
+    // 100%-basis noi=300_000 → pre-fix dscr = 300_000/120_000 = 2.5x (falsely clears 1.25x floor).
+    // Oxford's 50% share oxfordNoi=150_000 → correct dscr = 150_000/120_000 = 1.25x exactly the
+    // floor; drop it slightly below to assert a clean breach rather than a boundary tie.
+    const metrics = [
+      makePeriodMetrics({ propertyId: 'prop-a', noi: 300_000, oxfordNoi: 140_000, ownershipPct: 0.5 }),
+    ];
+    const results = scoreDebtPositions(db, metrics, MARKET_5Y);
+    const s = results.find((r) => r.propertyId === 'prop-a')!;
+    expect(s.dscr).toBeCloseTo(140_000 / 120_000, 6); // ≈1.167x — below the 1.25x floor
+    expect(s.signal).toBe('governor-block');
+    expect(s.signalReason).toContain('DSCR');
+  });
+});
