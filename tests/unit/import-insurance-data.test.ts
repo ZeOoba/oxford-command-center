@@ -23,6 +23,9 @@ import {
   parseDecPagesPayload,
   importDecPageRows,
   importDecPages,
+  parsePoliciesPayload,
+  importPolicyRows,
+  importPolicies,
   parseArgs,
 } from '../../scripts/import-insurance-data';
 
@@ -426,6 +429,109 @@ describe('parseDecPagesPayload — deductible must not exceed coverageLimit (P4c
   });
 });
 
+// ── parsePoliciesPayload (pure) ──────────────────────────────────────────────────────────────
+
+describe('parsePoliciesPayload', () => {
+  const base = {
+    propertyId: 'ins-3540fifth-pckg',
+    insurer: 'REDACTED-494',
+    policyNumber: 'REDACTED-614',
+    effectiveDate: '2024-01-20',
+    expirationDate: '2025-01-20',
+    premiumAnnual: REDACTED-AMT,
+    coverageTiv: REDACTED-AMT,
+    policyType: 'Package (PCKG)',
+    sourceDate: '2026-08-17',
+  };
+
+  it('parses a well-formed policy row', () => {
+    const { rows, rejected } = parsePoliciesPayload({ policies: [base] }, 'default-source.json');
+    expect(rejected).toEqual([]);
+    expect(rows).toEqual([{ ...base, source: 'default-source.json' }]);
+  });
+
+  it('uses a per-row source over the top-level default', () => {
+    const { rows } = parsePoliciesPayload(
+      { policies: [{ ...base, source: 'row-specific.pdf' }] }, 'default-source.json',
+    );
+    expect(rows[0]!.source).toBe('row-specific.pdf');
+  });
+
+  it('rejects a row missing propertyId', () => {
+    const { propertyId: _propertyId, ...rest } = base;
+    const { rows, rejected } = parsePoliciesPayload({ policies: [rest] }, 'd');
+    expect(rows).toEqual([]);
+    expect(rejected).toEqual([{ index: 0, id: null, reason: 'missing or invalid "propertyId"' }]);
+  });
+
+  it('rejects a non-ISO effectiveDate', () => {
+    const { rows, rejected } = parsePoliciesPayload(
+      { policies: [{ ...base, effectiveDate: '01/20/2024' }] }, 'd',
+    );
+    expect(rows).toEqual([]);
+    expect(rejected[0]!.reason).toMatch(/effectiveDate must be ISO YYYY-MM-DD/);
+  });
+
+  it('rejects a non-ISO expirationDate when present', () => {
+    const { rejected } = parsePoliciesPayload({ policies: [{ ...base, expirationDate: '1/20/2025' }] }, 'd');
+    expect(rejected[0]!.reason).toMatch(/expirationDate must be ISO YYYY-MM-DD/);
+  });
+
+  it('accepts a null expirationDate', () => {
+    const { rows, rejected } = parsePoliciesPayload({ policies: [{ ...base, expirationDate: null }] }, 'd');
+    expect(rejected).toEqual([]);
+    expect(rows[0]!.expirationDate).toBeNull();
+  });
+
+  it('rejects a negative premiumAnnual', () => {
+    const { rejected } = parsePoliciesPayload({ policies: [{ ...base, premiumAnnual: -1 }] }, 'd');
+    expect(rejected[0]!.reason).toMatch(/premiumAnnual must be a nonnegative number/);
+  });
+
+  it('accepts a null coverageTiv (bcl/umbrella lines carry no TIV)', () => {
+    const { rows, rejected } = parsePoliciesPayload({ policies: [{ ...base, coverageTiv: null }] }, 'd');
+    expect(rejected).toEqual([]);
+    expect(rows[0]!.coverageTiv).toBeNull();
+  });
+
+  it('rejects a negative coverageTiv when present', () => {
+    const { rejected } = parsePoliciesPayload({ policies: [{ ...base, coverageTiv: -1 }] }, 'd');
+    expect(rejected[0]!.reason).toMatch(/coverageTiv must be a nonnegative number/);
+  });
+
+  it('rejects a payload with no "policies" array', () => {
+    const { rows, rejected } = parsePoliciesPayload({ notPolicies: [] }, 'd');
+    expect(rows).toEqual([]);
+    expect(rejected).toEqual([{ index: -1, id: null, reason: 'payload must be an object with a "policies" array' }]);
+  });
+
+  // Qodo review finding, PR #287: whitespace-only identifiers passed the old `=== ''` check,
+  // which could cause a false "unrecognized line" skip or a duplicate logical key (DB matching is
+  // exact-string).
+  it('rejects a whitespace-only propertyId', () => {
+    const { rows, rejected } = parsePoliciesPayload({ policies: [{ ...base, propertyId: '   ' }] }, 'd');
+    expect(rows).toEqual([]);
+    expect(rejected).toEqual([{ index: 0, id: null, reason: 'missing or invalid "propertyId"' }]);
+  });
+
+  it('rejects a whitespace-only insurer, policyNumber, or policyType', () => {
+    expect(parsePoliciesPayload({ policies: [{ ...base, insurer: ' ' }] }, 'd').rejected[0]!.reason)
+      .toBe('missing or invalid "insurer"');
+    expect(parsePoliciesPayload({ policies: [{ ...base, policyNumber: '\t' }] }, 'd').rejected[0]!.reason)
+      .toBe('missing or invalid "policyNumber"');
+    expect(parsePoliciesPayload({ policies: [{ ...base, policyType: '  ' }] }, 'd').rejected[0]!.reason)
+      .toBe('missing or invalid "policyType"');
+  });
+
+  // Qodo review finding, PR #287: sourceDate had no format check at all (only non-empty), unlike
+  // effectiveDate/expirationDate — a malformed value would corrupt insurance-analysis.ts's
+  // source_date-based current-term ranking (string comparison assumes ISO YYYY-MM-DD).
+  it('rejects a non-ISO sourceDate', () => {
+    const { rejected } = parsePoliciesPayload({ policies: [{ ...base, sourceDate: '08/17/2026' }] }, 'd');
+    expect(rejected[0]!.reason).toMatch(/sourceDate must be ISO YYYY-MM-DD/);
+  });
+});
+
 // ── importDecPageRows / importDecPages (DB) ──────────────────────────────────────────────────
 
 describe('importDecPageRows / importDecPages', () => {
@@ -484,6 +590,214 @@ describe('importDecPageRows / importDecPages', () => {
   });
 });
 
+// ── importPolicyRows (DB) ───────────────────────────────────────────────────────────────────
+
+describe('importPolicyRows', () => {
+  const rowFor = (propertyId: string, overrides: Partial<Parameters<typeof parsePoliciesPayload>[0]> = {}) => ({
+    propertyId,
+    insurer: 'REDACTED-494',
+    policyNumber: 'REDACTED-614',
+    effectiveDate: '2024-01-20',
+    expirationDate: '2025-01-20',
+    premiumAnnual: REDACTED-AMT,
+    coverageTiv: REDACTED-AMT,
+    policyType: 'Package (PCKG)',
+    source: 'test-source.pdf',
+    sourceDate: '2026-08-17',
+    ...overrides,
+  });
+
+  it('inserts a new row for a recognized existing property line', () => {
+    const db = freshDb();
+    insertPolicy(db, 'ins-3540fifth-pckg'); // establishes the line as "known" (no FK — presence is the signal)
+
+    const { rows } = parsePoliciesPayload({ policies: [rowFor('ins-3540fifth-pckg')] }, 'd');
+    const result = importPolicyRows(db, rows, 'test-suite');
+    expect(result).toEqual({ inserted: 1, updated: 0, unrecognized: 0, rejected: 0 });
+
+    const inserted = db.prepare(
+      `SELECT premium_annual, coverage_tiv FROM property_insurance_policies
+       WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
+    ).get('ins-3540fifth-pckg', 'REDACTED-614', '2024-01-20') as { premium_annual: number; coverage_tiv: number };
+    expect(inserted.premium_annual).toBe(REDACTED-AMT);
+    expect(inserted.coverage_tiv).toBe(REDACTED-AMT);
+  });
+
+  // Undocumented-but-real behavior flagged by the final whole-branch review: two rows sharing the
+  // same (property_id, policy_number, effective_date) key WITHIN one batch aren't rejected as
+  // duplicates — findExisting re-queries per row inside the transaction, so the first lands as an
+  // insert and the second immediately resolves to that just-inserted row's id and updates it.
+  // Last-in-batch wins. Pinning this so a future refactor can't silently change it unnoticed.
+  it('resolves two same-key rows in one batch as insert-then-update, last one winning', () => {
+    const db = freshDb();
+    insertPolicy(db, 'ins-3540fifth-pckg');
+
+    const { rows } = parsePoliciesPayload(
+      { policies: [rowFor('ins-3540fifth-pckg', { premiumAnnual: 1111 }), rowFor('ins-3540fifth-pckg', { premiumAnnual: 2222 })] },
+      'd',
+    );
+    const result = importPolicyRows(db, rows, 'test-suite');
+    expect(result).toEqual({ inserted: 1, updated: 1, unrecognized: 0, rejected: 0 });
+
+    const landed = db.prepare(
+      `SELECT premium_annual FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
+    ).get('ins-3540fifth-pckg', 'REDACTED-614', '2024-01-20') as { premium_annual: number };
+    expect(landed.premium_annual).toBe(2222); // last row in the batch wins, not the first
+  });
+
+  it('inserts a new line id when explicitly allowlisted via newLines', () => {
+    const db = freshDb();
+    const { rows } = parsePoliciesPayload({ policies: [rowFor('ins-9620state350-umb')] }, 'd');
+    const result = importPolicyRows(db, rows, 'test-suite', ['ins-9620state350-umb']);
+    expect(result).toEqual({ inserted: 1, updated: 0, unrecognized: 0, rejected: 0 });
+  });
+
+  it('records an unrecognized, non-allowlisted propertyId as a data_quality_issues row and skips it', () => {
+    const db = freshDb();
+    const { rows } = parsePoliciesPayload({ policies: [rowFor('ins-typo-pckg')] }, 'd');
+    const result = importPolicyRows(db, rows, 'test-suite');
+    expect(result).toEqual({ inserted: 0, updated: 0, unrecognized: 1, rejected: 0 });
+
+    const dq = db.prepare(`SELECT detail FROM data_quality_issues WHERE kind = 'insurance-policy-unrecognized-line'`)
+      .get() as { detail: string };
+    expect(dq.detail).toMatch(/ins-typo-pckg/);
+
+    const written = db.prepare('SELECT COUNT(*) c FROM property_insurance_policies WHERE property_id = ?')
+      .get('ins-typo-pckg') as { c: number };
+    expect(written.c).toBe(0);
+  });
+
+  // The core design decision (spec §5): a re-run for the SAME (property_id, policy_number,
+  // effective_date) key must UPDATE the existing row's id, never delete-and-reinsert — otherwise
+  // any deductible/coverage_limit already applied by --dec-pages is silently wiped.
+  it('updates an existing row on a matching key WITHOUT touching a previously-set deductible', () => {
+    const db = freshDb();
+    const policyId = insertPolicy(db, 'ins-3540fifth-pckg');
+    db.prepare(`
+      UPDATE property_insurance_policies
+      SET policy_number = 'REDACTED-614', effective_date = '2024-01-20', premium_annual = 1, deductible = 25000, coverage_limit = 5000000
+      WHERE id = ?
+    `).run(policyId);
+
+    const { rows } = parsePoliciesPayload({ policies: [rowFor('ins-3540fifth-pckg')] }, 'd'); // premiumAnnual: REDACTED-AMT
+    const result = importPolicyRows(db, rows, 'test-suite');
+    expect(result).toEqual({ inserted: 0, updated: 1, unrecognized: 0, rejected: 0 });
+
+    const row = db.prepare('SELECT id, premium_annual, deductible, coverage_limit FROM property_insurance_policies WHERE id = ?')
+      .get(policyId) as { id: number; premium_annual: number; deductible: number; coverage_limit: number };
+    expect(row.id).toBe(policyId); // same row, not delete-and-reinsert
+    expect(row.premium_annual).toBe(REDACTED-AMT); // updated
+    expect(row.deductible).toBe(25000); // preserved
+    expect(row.coverage_limit).toBe(5000000); // preserved
+  });
+
+  it('is idempotent: importing the same file twice reports the second run as all-updated, zero duplicates', () => {
+    const db = freshDb();
+    insertPolicy(db, 'ins-3540fifth-pckg');
+    const { rows } = parsePoliciesPayload({ policies: [rowFor('ins-3540fifth-pckg')] }, 'd');
+
+    const first = importPolicyRows(db, rows, 'test-suite');
+    expect(first).toEqual({ inserted: 1, updated: 0, unrecognized: 0, rejected: 0 });
+
+    const second = importPolicyRows(db, rows, 'test-suite');
+    expect(second).toEqual({ inserted: 0, updated: 1, unrecognized: 0, rejected: 0 });
+
+    const count = db.prepare(
+      `SELECT COUNT(*) c FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
+    ).get('ins-3540fifth-pckg', 'REDACTED-614', '2024-01-20') as { c: number };
+    expect(count.c).toBe(1); // the one row this test wrote (fixture row has null policy_number/effective_date and doesn't match this specific key)
+  });
+
+  // Qodo review finding, PR #287: an unexpected DB error only went to console.warn, unlike
+  // importLossEventRows' insertDqInvalid — this importer runs against a live warehouse, so a
+  // silently-dropped row with no persisted trail is a real audit gap. Forces a genuine NOT NULL
+  // violation (insurer, migration 008) by constructing a row outside the type system, the same way
+  // a caller bypassing parsePoliciesPayload could.
+  it('records a data_quality_issues row when a write violates a DB constraint, without blocking other rows', () => {
+    const db = freshDb();
+    insertPolicy(db, 'ins-3540fifth-pckg');
+    insertPolicy(db, 'ins-fvc-pckg');
+    const badRow = { ...rowFor('ins-3540fifth-pckg'), insurer: null as unknown as string };
+    const goodRow = rowFor('ins-fvc-pckg', { policyNumber: 'REDACTED-613', effectiveDate: '2024-02-03' });
+
+    const result = importPolicyRows(db, [badRow, goodRow], 'test-suite');
+    expect(result).toEqual({ inserted: 1, updated: 0, unrecognized: 0, rejected: 1 });
+
+    const dq = db.prepare(`SELECT property_id, detail FROM data_quality_issues WHERE kind = 'insurance-policy-check-violation'`)
+      .get() as { property_id: string; detail: string };
+    expect(dq.property_id).toBe('ins-3540fifth-pckg');
+    expect(dq.detail).toMatch(/REDACTED-614/);
+    expect(dq.detail).toMatch(/2024-01-20/);
+
+    const goodInserted = db.prepare(
+      `SELECT premium_annual FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
+    ).get('ins-fvc-pckg', 'REDACTED-613', '2024-02-03') as { premium_annual: number } | undefined;
+    expect(goodInserted?.premium_annual).toBe(REDACTED-AMT); // the good row still landed despite the bad row's failure
+  });
+});
+
+describe('importPolicies', () => {
+  const policyRow = {
+    propertyId: 'ins-3540fifth-pckg',
+    insurer: 'REDACTED-494',
+    policyNumber: 'REDACTED-614',
+    effectiveDate: '2024-01-20',
+    expirationDate: '2025-01-20',
+    premiumAnnual: REDACTED-AMT,
+    coverageTiv: REDACTED-AMT,
+    policyType: 'Package (PCKG)',
+    sourceDate: '2026-08-17',
+  };
+
+  it('combines parse+import and defaults ingestedBy when the payload omits it', () => {
+    const db = freshDb();
+    insertPolicy(db, 'ins-3540fifth-pckg');
+
+    const result = importPolicies(db, { policies: [policyRow] }, 'payload-file.json');
+    expect(result).toEqual({ inserted: 1, updated: 0, unrecognized: 0, rejected: 0 });
+
+    const row = db.prepare(
+      `SELECT ingested_by, source FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
+    ).get('ins-3540fifth-pckg', 'REDACTED-614', '2024-01-20') as { ingested_by: string; source: string };
+    expect(row.ingested_by).toBe('import-insurance-data.ts --policies');
+    expect(row.source).toBe('payload-file.json'); // parsePoliciesPayload's own defaultSource fallback
+  });
+
+  it('uses a payload-level ingestedBy when present', () => {
+    const db = freshDb();
+    insertPolicy(db, 'ins-3540fifth-pckg');
+
+    importPolicies(db, { ingestedBy: 'import-insurance-data.ts --policies (Track A, 2026-08-22)', policies: [policyRow] }, 'payload-file.json');
+
+    const row = db.prepare(
+      `SELECT ingested_by FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
+    ).get('ins-3540fifth-pckg', 'REDACTED-614', '2024-01-20') as { ingested_by: string };
+    expect(row.ingested_by).toBe('import-insurance-data.ts --policies (Track A, 2026-08-22)');
+  });
+
+  it('reads the payload-level newLines allowlist so an unrecognized propertyId is inserted, not flagged', () => {
+    const db = freshDb();
+    const result = importPolicies(
+      db,
+      { newLines: ['ins-9620state350-umb'], policies: [{ ...policyRow, propertyId: 'ins-9620state350-umb' }] },
+      'payload-file.json',
+    );
+    expect(result).toEqual({ inserted: 1, updated: 0, unrecognized: 0, rejected: 0 });
+  });
+
+  it('sums parse-time rejects and DB-time unrecognized/rejected into the combined result', () => {
+    const db = freshDb();
+    const { propertyId: _propertyId, ...missingPropertyId } = policyRow;
+    const result = importPolicies(
+      db,
+      { policies: [missingPropertyId, { ...policyRow, propertyId: 'ins-not-a-real-line' }] },
+      'payload-file.json',
+    );
+    // row 1: parse-time reject (missing propertyId); row 2: recognized as unrecognized (no existing line, not allowlisted)
+    expect(result).toEqual({ inserted: 0, updated: 0, unrecognized: 1, rejected: 1 });
+  });
+});
+
 // ── parseArgs (CLI) ───────────────────────────────────────────────────────────────────────────
 
 describe('parseArgs', () => {
@@ -500,6 +814,21 @@ describe('parseArgs', () => {
     expect(parseArgs(['--dec-pages', 'policies.json'])).toEqual({ mode: 'dec-pages', filePath: 'policies.json', db: undefined });
     expect(parseArgs(['--dec-pages', 'policies.json', '--db', '/tmp/x.sqlite'])).toEqual({ mode: 'dec-pages', filePath: 'policies.json', db: '/tmp/x.sqlite' });
     expect(parseArgs(['--db', '/tmp/x.sqlite', '--dec-pages', 'policies.json'])).toEqual({ mode: 'dec-pages', filePath: 'policies.json', db: '/tmp/x.sqlite' });
+  });
+
+  it('parses --policies <path> as policies mode', () => {
+    const args = parseArgs(['--policies', 'policies.json']);
+    expect(args).toEqual({ mode: 'policies', filePath: 'policies.json', db: undefined });
+  });
+
+  it('combines --policies with --db', () => {
+    const args = parseArgs(['--policies', 'policies.json', '--db', '/tmp/test.sqlite']);
+    expect(args).toEqual({ mode: 'policies', filePath: 'policies.json', db: '/tmp/test.sqlite' });
+  });
+
+  it('rejects combining --dec-pages and --policies in one invocation', () => {
+    expect(() => parseArgs(['--dec-pages', 'dec.json', '--policies', 'policies.json']))
+      .toThrow('--dec-pages and --policies are mutually exclusive');
   });
 
   it('throws when no file path is given', () => {

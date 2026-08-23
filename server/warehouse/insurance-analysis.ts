@@ -172,6 +172,13 @@ function dedupeLatest(rows: RawPolicyRow[]): RawPolicyRow[] {
  * advancing on every run — a strictly more reliable "is this still current" signal than
  * effective_date, which a correction can move backward or leave unchanged.
  *
+ * captureInsurance is not the only writer this ranking has to hold up against: scripts/import-
+ * insurance-data.ts's `--policies` mode (added 2026-08-22, Track A) can also insert/update rows
+ * here, and it sets source_date from caller-supplied history data, not a live capture timestamp.
+ * A history backfill through that mode must keep each row's source_date no newer than the most
+ * recent live capture for that property/line, or an intentionally-old term could rank as
+ * "current" here — see that file's header comment for the full constraint.
+ *
  * The group key normalizes policy_type (trim + lowercase, matching classifyCohort's own
  * case-insensitivity) so a label with incidental whitespace/case drift between terms still
  * collapses — the raw string would otherwise silently un-collapse a genuine rollover.
