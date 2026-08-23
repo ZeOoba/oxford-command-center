@@ -1,0 +1,162 @@
+{
+  "ingestedBy": "import-insurance-data.ts --policies (Track A, 2026-08-22)",
+  "newLines": [],
+  "policies": [
+    {
+      "propertyId": "ins-1900broadway-ufx",
+      "insurer": "Erie Insurance",
+      "policyNumber": "Q44-2750780",
+      "effectiveDate": "2024-08-27",
+      "expirationDate": "2025-08-27",
+      "premiumAnnual": 10784,
+      "coverageTiv": 4541000,
+      "policyType": "Unoccupied/Flex Package (UFX PCKG)",
+      "source": "1900 N Broadway 2024-2025 Insurance.pdf",
+      "sourceDate": "2026-08-17"
+    },
+    {
+      "propertyId": "ins-1900broadway-bcl",
+      "insurer": "Erie Insurance",
+      "policyNumber": "Q32-2770246",
+      "effectiveDate": "2024-08-27",
+      "expirationDate": "2025-08-27",
+      "premiumAnnual": 1992,
+      "coverageTiv": null,
+      "policyType": "Business Crime Liability (BCL)",
+      "source": "1900 N Broadway 2024-2025 Umbrella Insurance.pdf",
+      "sourceDate": "2026-08-17"
+    },
+    {
+      "propertyId": "ins-3540fifth-pckg",
+      "insurer": "Erie Insurance",
+      "policyNumber": "Q61-0159747",
+      "effectiveDate": "2024-01-20",
+      "expirationDate": "2025-01-20",
+      "premiumAnnual": 9478,
+      "coverageTiv": 4393500,
+      "policyType": "Package (PCKG)",
+      "source": "35402425.pdf",
+      "sourceDate": "2026-08-17"
+    },
+    {
+      "propertyId": "ins-3540fifth-bcl",
+      "insurer": "Erie Insurance",
+      "policyNumber": "Q25-2070432",
+      "effectiveDate": "2024-01-20",
+      "expirationDate": "2025-01-20",
+      "premiumAnnual": 878,
+      "coverageTiv": null,
+      "policyType": "Business Crime Liability (BCL)",
+      "source": "3540UM2425.pdf",
+      "sourceDate": "2026-08-17"
+    },
+    {
+      "propertyId": "ins-3540fifth-pckg",
+      "insurer": "Erie Insurance",
+      "policyNumber": "Q61-0159747",
+      "effectiveDate": "2025-01-20",
+      "expirationDate": "2026-01-20",
+      "premiumAnnual": 10903,
+      "coverageTiv": 4613500,
+      "policyType": "Package (PCKG)",
+      "source": "35402526.pdf",
+      "sourceDate": "2026-08-17"
+    },
+    {
+      "propertyId": "ins-3540fifth-bcl",
+      "insurer": "Erie Insurance",
+      "policyNumber": "Q25-2070432",
+      "effectiveDate": "2025-01-20",
+      "expirationDate": "2026-01-20",
+      "premiumAnnual": 964,
+      "coverageTiv": null,
+      "policyType": "Business Crime Liability (BCL)",
+      "source": "3540UM2526.pdf",
+      "sourceDate": "2026-08-17"
+    },
+    {
+      "propertyId": "ins-fvc-pckg",
+      "insurer": "Erie Insurance",
+      "policyNumber": "Q61-0076471",
+      "effectiveDate": "2024-02-03",
+      "expirationDate": "2025-02-03",
+      "premiumAnnual": 20345,
+      "coverageTiv": 10715500,
+      "policyType": "Package (PCKG)",
+      "source": "Fairground Insurance 2024-2025.pdf",
+      "sourceDate": "2026-08-17"
+    },
+    {
+      "propertyId": "ins-fvc-bcl",
+      "insurer": "Erie Insurance",
+      "policyNumber": "Q26-0370289",
+      "effectiveDate": "2024-02-03",
+      "expirationDate": "2025-02-03",
+      "premiumAnnual": 1813,
+      "coverageTiv": null,
+      "policyType": "Business Crime Liability (BCL)",
+      "source": "FairIM24.pdf",
+      "sourceDate": "2026-08-17"
+    },
+    {
+      "propertyId": "ins-3034westerville-pckg",
+      "insurer": "Erie Insurance",
+      "policyNumber": "Q61-0456794",
+      "effectiveDate": "2024-09-24",
+      "expirationDate": "2025-09-24",
+      "premiumAnnual": 7838,
+      "coverageTiv": 2495750,
+      "policyType": "Package (PCKG)",
+      "source": "2425 Package  3034 Westerville New.pdf",
+      "sourceDate": "2026-08-17"
+    },
+    {
+      "propertyId": "ins-55newplant-pckg",
+      "insurer": "Erie Insurance",
+      "policyNumber": "Q61-0246004",
+      "effectiveDate": "2024-01-01",
+      "expirationDate": "2025-01-01",
+      "premiumAnnual": 7907,
+      "coverageTiv": 5256000,
+      "policyType": "Package (PCKG)",
+      "source": "Eric Goldberg Family 2024-2025 Insurance.pdf",
+      "sourceDate": "2026-08-17"
+    },
+    {
+      "propertyId": "ins-55newplant-bcl",
+      "insurer": "Erie Insurance",
+      "policyNumber": "Q25-0177359",
+      "effectiveDate": "2024-01-01",
+      "expirationDate": "2025-01-01",
+      "premiumAnnual": 536,
+      "coverageTiv": null,
+      "policyType": "Business Crime Liability (BCL)",
+      "source": "Eric Goldberg Family 2024-2025 Umbrella Insurance.pdf",
+      "sourceDate": "2026-08-17"
+    },
+    {
+      "propertyId": "ins-55newplant-pckg",
+      "insurer": "Erie Insurance",
+      "policyNumber": "Q61-0246004",
+      "effectiveDate": "2025-01-01",
+      "expirationDate": "2026-01-01",
+      "premiumAnnual": 8236,
+      "coverageTiv": 5624000,
+      "policyType": "Package (PCKG)",
+      "source": "Eric Goldberg Family 2025-2026 Insurance.pdf",
+      "sourceDate": "2026-08-17"
+    },
+    {
+      "propertyId": "ins-55newplant-bcl",
+      "insurer": "Erie Insurance",
+      "policyNumber": "Q25-0177359",
+      "effectiveDate": "2025-01-01",
+      "expirationDate": "2026-01-01",
+      "premiumAnnual": 584,
+      "coverageTiv": null,
+      "policyType": "Business Crime Liability (BCL)",
+      "source": "Eric Goldberg Family 2025-2026 Umbrella Insurance.pdf",
+      "sourceDate": "2026-08-17"
+    }
+  ]
+}
