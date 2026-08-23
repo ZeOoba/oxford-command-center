@@ -504,6 +504,32 @@ describe('parsePoliciesPayload', () => {
     expect(rows).toEqual([]);
     expect(rejected).toEqual([{ index: -1, id: null, reason: 'payload must be an object with a "policies" array' }]);
   });
+
+  // Qodo review finding, PR #287: whitespace-only identifiers passed the old `=== ''` check,
+  // which could cause a false "unrecognized line" skip or a duplicate logical key (DB matching is
+  // exact-string).
+  it('rejects a whitespace-only propertyId', () => {
+    const { rows, rejected } = parsePoliciesPayload({ policies: [{ ...base, propertyId: '   ' }] }, 'd');
+    expect(rows).toEqual([]);
+    expect(rejected).toEqual([{ index: 0, id: null, reason: 'missing or invalid "propertyId"' }]);
+  });
+
+  it('rejects a whitespace-only insurer, policyNumber, or policyType', () => {
+    expect(parsePoliciesPayload({ policies: [{ ...base, insurer: ' ' }] }, 'd').rejected[0]!.reason)
+      .toBe('missing or invalid "insurer"');
+    expect(parsePoliciesPayload({ policies: [{ ...base, policyNumber: '\t' }] }, 'd').rejected[0]!.reason)
+      .toBe('missing or invalid "policyNumber"');
+    expect(parsePoliciesPayload({ policies: [{ ...base, policyType: '  ' }] }, 'd').rejected[0]!.reason)
+      .toBe('missing or invalid "policyType"');
+  });
+
+  // Qodo review finding, PR #287: sourceDate had no format check at all (only non-empty), unlike
+  // effectiveDate/expirationDate — a malformed value would corrupt insurance-analysis.ts's
+  // source_date-based current-term ranking (string comparison assumes ISO YYYY-MM-DD).
+  it('rejects a non-ISO sourceDate', () => {
+    const { rejected } = parsePoliciesPayload({ policies: [{ ...base, sourceDate: '08/17/2026' }] }, 'd');
+    expect(rejected[0]!.reason).toMatch(/sourceDate must be ISO YYYY-MM-DD/);
+  });
 });
 
 // ── importDecPageRows / importDecPages (DB) ──────────────────────────────────────────────────
@@ -680,6 +706,33 @@ describe('importPolicyRows', () => {
       `SELECT COUNT(*) c FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
     ).get('ins-3540fifth-pckg', 'Q61-0159747', '2024-01-20') as { c: number };
     expect(count.c).toBe(1); // the one row this test wrote (fixture row has null policy_number/effective_date and doesn't match this specific key)
+  });
+
+  // Qodo review finding, PR #287: an unexpected DB error only went to console.warn, unlike
+  // importLossEventRows' insertDqInvalid — this importer runs against a live warehouse, so a
+  // silently-dropped row with no persisted trail is a real audit gap. Forces a genuine NOT NULL
+  // violation (insurer, migration 008) by constructing a row outside the type system, the same way
+  // a caller bypassing parsePoliciesPayload could.
+  it('records a data_quality_issues row when a write violates a DB constraint, without blocking other rows', () => {
+    const db = freshDb();
+    insertPolicy(db, 'ins-3540fifth-pckg');
+    insertPolicy(db, 'ins-fvc-pckg');
+    const badRow = { ...rowFor('ins-3540fifth-pckg'), insurer: null as unknown as string };
+    const goodRow = rowFor('ins-fvc-pckg', { policyNumber: 'Q61-0076471', effectiveDate: '2024-02-03' });
+
+    const result = importPolicyRows(db, [badRow, goodRow], 'test-suite');
+    expect(result).toEqual({ inserted: 1, updated: 0, unrecognized: 0, rejected: 1 });
+
+    const dq = db.prepare(`SELECT property_id, detail FROM data_quality_issues WHERE kind = 'insurance-policy-check-violation'`)
+      .get() as { property_id: string; detail: string };
+    expect(dq.property_id).toBe('ins-3540fifth-pckg');
+    expect(dq.detail).toMatch(/Q61-0159747/);
+    expect(dq.detail).toMatch(/2024-01-20/);
+
+    const goodInserted = db.prepare(
+      `SELECT premium_annual FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?`,
+    ).get('ins-fvc-pckg', 'Q61-0076471', '2024-02-03') as { premium_annual: number } | undefined;
+    expect(goodInserted?.premium_annual).toBe(9478); // the good row still landed despite the bad row's failure
   });
 });
 

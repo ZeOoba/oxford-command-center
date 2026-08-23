@@ -437,15 +437,15 @@ export function parsePoliciesPayload(payload: unknown, defaultSource: string): P
       premiumAnnual, coverageTiv, policyType, source, sourceDate,
     } = raw;
 
-    if (typeof propertyId !== 'string' || propertyId === '') {
+    if (typeof propertyId !== 'string' || propertyId.trim() === '') {
       rejected.push({ index, id: null, reason: 'missing or invalid "propertyId"' });
       return;
     }
-    if (typeof insurer !== 'string' || insurer === '') {
+    if (typeof insurer !== 'string' || insurer.trim() === '') {
       rejected.push({ index, id: propertyId, reason: 'missing or invalid "insurer"' });
       return;
     }
-    if (typeof policyNumber !== 'string' || policyNumber === '') {
+    if (typeof policyNumber !== 'string' || policyNumber.trim() === '') {
       rejected.push({ index, id: propertyId, reason: 'missing or invalid "policyNumber"' });
       return;
     }
@@ -467,12 +467,16 @@ export function parsePoliciesPayload(payload: unknown, defaultSource: string): P
       rejected.push({ index, id: propertyId, reason: `coverageTiv must be a nonnegative number when present, got '${String(coverageTiv)}'` });
       return;
     }
-    if (typeof policyType !== 'string' || policyType === '') {
+    if (typeof policyType !== 'string' || policyType.trim() === '') {
       rejected.push({ index, id: propertyId, reason: 'missing or invalid "policyType"' });
       return;
     }
-    if (typeof sourceDate !== 'string' || sourceDate === '') {
-      rejected.push({ index, id: propertyId, reason: 'missing or invalid "sourceDate"' });
+    // Validated as strictly as effectiveDate/expirationDate: sourceDate feeds source_date, which
+    // insurance-analysis.ts's isMoreCurrent compares as a STRING (DESC) to rank a policy line's
+    // current term. A non-ISO value (or a missing check, as this line originally had) would sort
+    // unpredictably against real ISO dates and silently corrupt that ranking.
+    if (typeof sourceDate !== 'string' || !ISO_DATE_RE.test(sourceDate)) {
+      rejected.push({ index, id: propertyId, reason: `sourceDate must be ISO YYYY-MM-DD, got '${String(sourceDate)}'` });
       return;
     }
 
@@ -543,6 +547,10 @@ export function importPolicyRows(
     INSERT INTO data_quality_issues (property_id, kind, detail, severity)
     VALUES (?, 'insurance-policy-unrecognized-line', ?, 'warn')
   `);
+  const insertDqInvalid = db.prepare(`
+    INSERT INTO data_quality_issues (property_id, kind, detail, severity)
+    VALUES (?, 'insurance-policy-check-violation', ?, 'warn')
+  `);
 
   let inserted = 0;
   let updated = 0;
@@ -579,6 +587,14 @@ export function importPolicyRows(
         rejected += 1;
         const detail = e instanceof Error ? e.message : String(e);
         console.warn(`import-insurance-data --policies: row for '${r.propertyId}' (${r.policyNumber}, ${r.effectiveDate}) failed: ${detail}`);
+        // Mirrors importLossEventRows' insertDqInvalid: this script runs against a live warehouse,
+        // so an unexpected DB failure needs a persisted, auditable trail — not just a line in a
+        // console a later reader will never see. The row's own failure must never block the rest
+        // of the batch (already true here: caught locally, loop continues).
+        insertDqInvalid.run(
+          r.propertyId,
+          `import-insurance-data --policies: row for property_id '${r.propertyId}' (policy_number '${r.policyNumber}', effective_date '${r.effectiveDate}') violated a database constraint and was skipped: ${detail}`,
+        );
       }
     }
   });
