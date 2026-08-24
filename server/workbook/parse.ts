@@ -573,13 +573,32 @@ function propertyTokensFor(properties: Property[]): Map<string, PropertyAddressT
 // function's own comment below as the example a bare-word match must NOT trust, confirmed live
 // (cc-audit-army finding unresolved-lease-propertyid-silent, 2026-08-21) as one of the Sepich
 // sub-property names actually driving 39 of 41 unresolved rent-roll rows ($1.08M of $1.14M).
-// Only alias names with that level of direct corroboration -- a handful of other unresolved keys
-// in the same run (e.g. "4595 E. 5th Ave") had no comparable evidence and were left correctly
-// unresolved (flagged, not guessed) rather than risk misattributing rent to the wrong property.
+// Only alias names with that level of direct corroboration, rather than risk misattributing rent
+// to the wrong property. (This sentence previously cited "4595 E. 5th Ave" as an unresolved key
+// with "no comparable evidence". The rule was right; the finding was not -- the evidence was in
+// `00_Recon_RentRoll` all along, and both E. 5th Ave keys are now aliased below on it. When a key
+// looks un-corroborated, check that sheet before concluding it is: it names the portfolio's
+// member keys explicitly, which beats any inference from address tokens.)
 const RENT_ROLL_PROPERTY_ALIASES: Record<string, string> = {
   banwick: 'sepich-portfolio-columbus-oh-8-props',
   morrison: 'sepich-portfolio-columbus-oh-8-props',
   zettler: 'sepich-portfolio-columbus-oh-8-props',
+  // Added 2026-08-24. The comment above previously cited "4595 E. 5th Ave" as an example of a key
+  // deliberately left unresolved for want of corroboration. The corroboration existed; the
+  // original pass just hadn't read the sheet carrying it. `00_Recon_RentRoll` rows 16-17 label
+  // both keys "7 — Sepich Portfolio (rolled up)" / "Sepich member — no 1:1 NOI row", and row 101
+  // states the portfolio's live COUNTIFS runs over "exactly 5 keys (Banwick, Morrison, Zettler,
+  // 4595 E. 5th Ave, 4601 E. 5th Ave) returning 41 tenants" -- reconciling exactly with
+  // `Property NOI` row 11 (Sepich Portfolio, 8 props, 41 tenants). The workbook asserts this
+  // mapping directly, which is stronger evidence than the three names above carry.
+  //
+  // These MUST be aliases, not token matches: 4595/4601 are different buildings from
+  // 3540 E. 5th Ave, and the street-number range guard below deliberately refuses to match them
+  // to it (an earlier word-overlap version mis-resolved exactly this pair -- see the range-guard
+  // comment in resolvePropertyId). Their absence left $81,106 (1.45% of lease rent) unresolved,
+  // over checkSnapshot's 1% threshold, refusing every snapshot write.
+  '4595 e. 5th ave': 'sepich-portfolio-columbus-oh-8-props',
+  '4601 e. 5th ave': 'sepich-portfolio-columbus-oh-8-props',
 };
 
 export function resolvePropertyId(key: string, properties: Property[]): string | null {

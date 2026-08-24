@@ -307,11 +307,58 @@ describe('resolvePropertyId', () => {
       expect(resolvePropertyId('Banwick Lane', properties)).toBeNull();
     });
 
-    // The two unresolved live keys with no comparable corroborating evidence (see the alias
-    // table's own comment) must stay correctly unresolved, not silently swept into the alias.
-    it('does not alias an unrelated unresolved key that happens to share no evidence with Sepich', () => {
-      const properties = [mkProperty('3540-e-5th-ave-columbus-oh', '3540 E. 5th Ave, Columbus OH')];
-      expect(resolvePropertyId('4595 E. 5th Ave', properties)).toBeNull();
+    // SUPERSEDED 2026-08-24. This block previously asserted `4595 E. 5th Ave` -> null, on the
+    // alias table's stated grounds that it "had no comparable corroborating evidence". That was
+    // sound doctrine applied to an incomplete search: the corroboration the alias table demands
+    // was already in the workbook, on a sheet the original pass did not read. `00_Recon_RentRoll`
+    // rows 16-17 label BOTH `4595 E. 5th Ave` and `4601 E. 5th Ave` as
+    // "7 — Sepich Portfolio (rolled up)" / "Sepich member — no 1:1 NOI row", and row 101 states
+    // the portfolio's live COUNTIFS runs over "exactly 5 keys (Banwick, Morrison, Zettler,
+    // 4595 E. 5th Ave, 4601 E. 5th Ave) returning 41 tenants" -- which reconciles exactly with
+    // `Property NOI` row 11 (Sepich Portfolio, 8 props, 41 tenants). That is strictly stronger
+    // evidence than the three names already aliased, and it is the workbook asserting the
+    // mapping itself rather than an inference from address tokens.
+    //
+    // Consequence of leaving them unaliased: their $81,106 of rent stayed unresolved, which is
+    // 1.45% of lease rent -- over checkSnapshot's 1% UNRESOLVED_RENT_SHARE_THRESHOLD, so every
+    // snapshot write refused (exit 1) and the on-disk snapshot stayed pinned at a FAR worse
+    // state (41 unresolved leases / $1,136,883 / 20.31% -- the entire Sepich set).
+    it('resolves both E. 5th Ave Sepich member keys to the consolidated Sepich id', () => {
+      expect(resolvePropertyId('4595 E. 5th Ave', [sepich])).toBe('sepich-portfolio-columbus-oh-8-props');
+      expect(resolvePropertyId('4601 E. 5th Ave', [sepich])).toBe('sepich-portfolio-columbus-oh-8-props');
+    });
+
+    // The alias must win even when a same-street, different-building property is present -- the
+    // case the token matcher explicitly refuses to resolve (see the street-number range guard:
+    // 4595 is a different building from 3540 and must never token-match to it). Before the alias
+    // existed this returned null; it must now return Sepich, and must NEVER return 3540.
+    it('resolves the E. 5th Ave keys to Sepich, never to the unrelated 3540 E. 5th Ave building', () => {
+      const properties = [
+        sepich,
+        mkProperty('3540-e-5th-ave-columbus-oh', '3540 E. 5th Ave, Columbus OH'),
+      ];
+      expect(resolvePropertyId('4595 E. 5th Ave', properties)).toBe('sepich-portfolio-columbus-oh-8-props');
+      expect(resolvePropertyId('4601 E. 5th Ave', properties)).toBe('sepich-portfolio-columbus-oh-8-props');
+    });
+
+    // Same defense-in-depth contract the other aliases hold to: absent target => null, never a
+    // dangling id. Guards against a future rename/retirement of the Sepich property_master row.
+    it('falls through to null for the E. 5th Ave keys when the Sepich target is absent', () => {
+      expect(resolvePropertyId('4595 E. 5th Ave', [])).toBeNull();
+      const only3540 = [mkProperty('3540-e-5th-ave-columbus-oh', '3540 E. 5th Ave, Columbus OH')];
+      expect(resolvePropertyId('4601 E. 5th Ave', only3540)).toBeNull();
+    });
+
+    // The superseded test's INTENT survives: aliasing two specific, workbook-corroborated keys
+    // must not become a licence to sweep in any other E. 5th Ave address. An un-corroborated
+    // neighbour on the same street still resolves to null (street-number range guard), and is
+    // NOT swallowed by the new aliases.
+    it('does not alias an un-corroborated neighbouring address on the same street', () => {
+      const properties = [
+        sepich,
+        mkProperty('3540-e-5th-ave-columbus-oh', '3540 E. 5th Ave, Columbus OH'),
+      ];
+      expect(resolvePropertyId('4700 E. 5th Ave', properties)).toBeNull();
     });
   });
 });
