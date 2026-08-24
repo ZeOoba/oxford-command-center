@@ -83,7 +83,14 @@ export function partitionArRows(
     const arrears = { d30, d60, d90, d90plus };
     const key = cacheKey(tenant);
 
-    const cached = cacheEntries[key];
+    // Object.hasOwn guard (2026-08-24 integrity-sweep hygiene finding): cacheEntries is a plain
+    // object indexed by a normalized tenant string — a tenant name that happens to normalize to
+    // 'constructor'/'toString'/etc. would otherwise read an inherited Object.prototype member
+    // instead of undefined. No real tenant name collides with one today (this already failed
+    // CLOSED via the leaseIds.has() validation below, which routes any non-string/unrecognized
+    // hit to review), but the guard removes the class of bug rather than relying on that
+    // downstream check.
+    const cached = Object.hasOwn(cacheEntries, key) ? cacheEntries[key] : undefined;
     if (cached === 'SKIP') {
       skipped++;
       continue;

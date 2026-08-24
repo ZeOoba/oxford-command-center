@@ -599,7 +599,17 @@ const RENT_ROLL_PROPERTY_ALIASES: Record<string, string> = {
 };
 
 export function resolvePropertyId(key: string, properties: Property[]): string | null {
-  const aliased = RENT_ROLL_PROPERTY_ALIASES[key.trim().toLowerCase()];
+  // Object.hasOwn guard (2026-08-24 integrity-sweep hygiene finding): a plain object literal
+  // indexed by an untrusted string is reachable via the prototype chain for a key like
+  // 'constructor'/'toString'/'valueOf' — RENT_ROLL_PROPERTY_ALIASES['constructor'] would return
+  // Object's constructor function, not undefined. No real rent-roll property key collides with an
+  // Object.prototype member today (this already failed CLOSED via the target-must-exist check a
+  // few lines below), but the guard is one line and removes the class of bug outright rather than
+  // relying on a downstream check to keep catching it.
+  const normalizedKey = key.trim().toLowerCase();
+  const aliased = Object.hasOwn(RENT_ROLL_PROPERTY_ALIASES, normalizedKey)
+    ? RENT_ROLL_PROPERTY_ALIASES[normalizedKey]
+    : undefined;
   // Every OTHER path through this function only ever returns an id actually present in
   // `properties` (see the token-matching loop below) -- the alias table must hold to that same
   // contract. Trusting the hardcoded target unconditionally would let a future rename/retirement
@@ -670,10 +680,24 @@ export function resolvePropertyId(key: string, properties: Property[]): string |
       // Two DIFFERENT addresses tied at the same score is genuine ambiguity — fail closed. Two
       // candidates sharing the SAME normalized address are the same physical property (a
       // human-entered duplicate Properties-sheet row, which disambiguatePropertyIds already
-      // suffixes with '-2' rather than merges) — keep the first rather than nulling out every one
-      // of that property's leases, a regression the refute pass caught in an earlier tie-always
-      // version of this fix.
+      // suffixes with '-2' rather than merges) — keep one of them rather than nulling out every
+      // one of that property's leases, a regression the refute pass caught in an earlier
+      // tie-always version of this fix.
       tied = true;
+    } else if (c.score === best.score) {
+      // Same-address tie: pick a candidate deterministically from `properties` ARRAY CONTENT, not
+      // array ORDER. FIXED 2026-08-24 (integrity sweep, Finding 9): the previous version always
+      // kept whichever duplicate came first in `properties` — but that array's order need not
+      // match the order disambiguatePropertyIds ran in when it decided which row kept its base
+      // (non-suffixed) id, so a properties-order permutation could flip which id wins and
+      // silently move the lease's rent/NOI attribution between the two Property entries. Prefer
+      // the id WITHOUT a disambiguation suffix (the canonical row); if both or neither carry one,
+      // fall back to the lexicographically smaller id — either branch is properties-order
+      // INDEPENDENT.
+      const bestHasSuffix = /-\d+$/.test(best.p.id);
+      const cHasSuffix = /-\d+$/.test(c.p.id);
+      if (bestHasSuffix && !cHasSuffix) best = c;
+      else if (bestHasSuffix === cHasSuffix && c.p.id < best.p.id) best = c;
     }
   }
   return tied ? null : best.p.id;
