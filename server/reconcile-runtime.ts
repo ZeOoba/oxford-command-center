@@ -16,6 +16,12 @@ import { findDuplicateDealRows, keyDigest } from './sources/deal-name';
  */
 const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);
 
+// Materiality threshold for the unresolved-lease-rent check below: a RELATIVE share, unlike the
+// small absolute-dollar tolerances the other reconciliation checks in this file use for
+// float-rounding noise -- deliberately, since this aggregates missing rows rather than rounding
+// drift and a fixed dollar amount wouldn't scale with portfolio size.
+const UNRESOLVED_RENT_SHARE_THRESHOLD = 0.01;
+
 /**
  * True when a snapshot carries an error-severity reconciliation flag — i.e. it is internally
  * inconsistent and must not be PUBLISHED, whatever it is safe to serve in memory.
@@ -77,6 +83,27 @@ export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
   if (wt?.rent != null) {
     if (Math.abs(wt.rent - annual) > 1) {
       flag('leases.annualRent', `Σ annual rent ${Math.round(annual)} ≠ workbook total ${Math.round(wt.rent)}`);
+    }
+  }
+
+  // Leases that never resolved to a property (parse.ts flags each row individually at 'warn')
+  // are excluded from every per-property leasing metric — WALT, the expiration schedule,
+  // Capital Allocation's leasing-risk component — with propertyId:null reading identically to
+  // "no data" rather than "unresolved data". A single stray row is a curiosity; a MATERIAL
+  // share of total rent going unresolved means a whole property's leasing input is silently
+  // empty (reproduced: 41/138 leases, $1.14M — the largest-NOI property resolved zero leases).
+  // 1% catches that class while tolerating the handful of legitimately-unmapped rows a live
+  // workbook can carry without false-flagging every routine snapshot.
+  if (wt?.rent != null && wt.rent > 0) {
+    const unresolvedRent = sum(
+      s.leases.filter((l) => l.propertyId === null).map((l) => l.annualRent),
+    );
+    const unresolvedShare = unresolvedRent / wt.rent;
+    if (unresolvedShare > UNRESOLVED_RENT_SHARE_THRESHOLD) {
+      flag(
+        'leases.propertyId',
+        `${(unresolvedShare * 100).toFixed(1)}% of rent ($${Math.round(unresolvedRent).toLocaleString()}) is on leases that never resolved to a property — excluded from every per-property leasing metric`,
+      );
     }
   }
 

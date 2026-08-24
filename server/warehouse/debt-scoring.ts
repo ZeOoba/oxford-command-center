@@ -176,9 +176,18 @@ export function scoreDebtPositionsWithTrust(
   // A "latest full-year period" is the most recent period where grainHint === 'year'
   // (not a partial year like "2026-Q1" or a YTD). This matches latestFullYearPeriod()
   // logic in metrics.ts.
+  //
+  // Basis: m.oxfordNoi (ownership-adjusted), NOT m.noi (100%-basis — see
+  // PeriodMetricsSchema's doc comment in src/contracts/warehouse.ts). debt_positions
+  // carries only Oxford's own debt on a jointly-owned property, so annualDebtService
+  // below is already an Oxford-share figure; pairing it with 100%-basis NOI overstated
+  // DSCR/debt yield by ~1/ownershipPct on every fractionally-owned property — in the
+  // false-CLEARANCE direction, i.e. it could pass a deal DSCR gating should have failed
+  // (Hard Invariant 4). Mirrors capital-allocation.ts's currentSpineBNoi(), which reads
+  // oxfordNoi for the identical latest-full-year selection.
   const noiByProperty = new Map<string, number>();
   {
-    // Group by propertyId, find latest full-year period, extract noi
+    // Group by propertyId, find latest full-year period, extract oxfordNoi
     const latestPeriodByProperty = new Map<string, string>();
     for (const m of metrics) {
       if (m.grainHint !== 'year') continue;
@@ -191,7 +200,7 @@ export function scoreDebtPositionsWithTrust(
       if (m.grainHint !== 'year') continue;
       const latestPeriod = latestPeriodByProperty.get(m.propertyId);
       if (latestPeriod !== undefined && m.period === latestPeriod) {
-        noiByProperty.set(m.propertyId, m.noi);
+        noiByProperty.set(m.propertyId, m.oxfordNoi);
       }
     }
   }
@@ -316,10 +325,13 @@ export function scoreDebtPositionsWithTrust(
       annualDebtService = hasUnknownLoan ? null : sum;
     }
 
-    // === Get NOI from PeriodMetrics (Spine B) ===
+    // === Get NOI from PeriodMetrics (Spine B, Oxford-share basis) ===
     // SPINE-B NOI: use warehouse ledger NOI from PeriodMetrics, NOT Spine A Property.noi.
     // These are independent computations with no reconciliation check. Mixing them produces
     // a basis mismatch — see architecture/system-overview.md §2 NOI-spine-split warning.
+    // Ownership basis: noiByProperty is already oxfordNoi (see its construction above) to
+    // match annualDebtService, which is Oxford's own debt service — never re-derive this
+    // from m.noi (100%-basis) without also re-deriving debt service on the same basis.
     const noi = noiByProperty.get(propertyId) ?? null;
 
     // === Derived values ===

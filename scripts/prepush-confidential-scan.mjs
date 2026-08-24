@@ -13,7 +13,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 // Generic patterns the repo should never push. Intentionally NOT real deal terms — keep this
 // list synthetic/structural so the file itself is safe to commit. Extend cautiously: anything
@@ -87,27 +87,117 @@ export function loadTerms(homeDirOverride) {
   const alwaysTerms = [...BUILTIN_DENYLIST];
   const contextGroups = [];
 
-  if (!existsSync(rosterPath)) {
-    console.warn(
-      `[prepush-confidential-scan] WARN: roster not found at ${rosterPath} — scanning built-in denylist only.`,
-    );
+  const result = readJsonSafe(rosterPath);
+  if (!result.ok) {
+    const detail =
+      result.reason === 'missing'
+        ? `roster not found at ${rosterPath}`
+        : `roster at ${rosterPath} is unparseable (${result.error?.message ?? result.error})`;
+    console.warn(`[prepush-confidential-scan] WARN: ${detail} — scanning built-in denylist only.`);
     return { alwaysTerms: dedupe(alwaysTerms), contextGroups };
   }
 
-  try {
-    const parsed = JSON.parse(readFileSync(rosterPath, 'utf8'));
-    collectDealTerms(parsed, alwaysTerms, contextGroups);
-    return { alwaysTerms: dedupe(alwaysTerms), contextGroups };
-  } catch (err) {
-    console.warn(
-      `[prepush-confidential-scan] WARN: roster at ${rosterPath} is unparseable (${err?.message ?? err}) — scanning built-in denylist only.`,
-    );
-    return { alwaysTerms: dedupe(alwaysTerms), contextGroups };
-  }
+  collectDealTerms(result.data, alwaysTerms, contextGroups);
+  return { alwaysTerms: dedupe(alwaysTerms), contextGroups };
 }
 
 function dedupe(arr) {
   return [...new Set(arr)];
+}
+
+/** Safely read+parse a JSON file: `{ok:true, data}` or `{ok:false, reason:'missing'|'unparseable',
+ * error}`. Never throws — the one safe-read shape loadTerms() and isRegisteredConfidentialRepo()
+ * both need, previously duplicated between them. */
+function readJsonSafe(path) {
+  if (!existsSync(path)) return { ok: false, reason: 'missing' };
+  try {
+    return { ok: true, data: JSON.parse(readFileSync(path, 'utf8')) };
+  } catch (error) {
+    return { ok: false, reason: 'unparseable', error };
+  }
+}
+
+// cc-audit-army finding confidential-deals-committed-to-git-remote (2026-08-21), resolved per
+// Gabriel's ruling: this repo's data/snapshots/portfolio.json deliberately carries real
+// confidential-deal records (the .gitignore negation at .gitignore:14 is intentional, not a
+// leak) — formalized as an in-perimeter confidential store rather than redacted. The gap was
+// that the ONLY control on that boundary was a term denylist with no structural rule about the
+// payload SHAPE: nothing asserted that a `"confidential": true` record may only ever be pushed
+// from a repo actually registered as an intentional confidential store. This closes that gap
+// structurally — it does not change what data may be committed to THIS repo (still real data,
+// deliberately), it only makes the control assert its own precondition instead of assuming it.
+// Matches both the JSON-quoted-key shape ("confidential": true) and the unquoted object-literal
+// shape (confidential: true) — the latter is the idiomatic form this codebase's own TS source
+// and test fixtures actually use to construct these records (e.g. src/data/public-deals.ts),
+// not just data/snapshots/portfolio.json's raw JSON. \b before 'confidential' means a longer
+// identifier ending in it (e.g. isConfidential) can't match, since \b requires a non-word
+// character immediately before — camelCase has none there.
+const CONFIDENTIAL_FLAG_RE = /["']?\bconfidential\b["']?\s*:\s*true\b/;
+
+/** Resolve the current repo's directory name (matches confidential-repos.json's naming), via
+ * git rather than process.cwd() so this is correct regardless of invocation directory.
+ *
+ * --git-common-dir, NOT --show-toplevel: from inside a linked worktree, --show-toplevel
+ * returns the WORKTREE's own directory, not the main repo's — this repo runs with several
+ * live worktrees (financial-sweep-fixes, deploy-build, etc.), none of whose directory names
+ * match the registered 'oxford-command-center', which would false-block every push made from
+ * one. --git-common-dir resolves to the main repo's .git directory regardless of which
+ * worktree invoked it; its parent directory is the main repo root in every case.
+ *
+ * @param {string} [cwdOverride] - test seam; defaults to the real process cwd. */
+export function currentRepoName(cwdOverride) {
+  try {
+    const gitDir = execFileSync('git', ['rev-parse', '--git-common-dir'], {
+      encoding: 'utf8',
+      ...(cwdOverride ? { cwd: cwdOverride } : {}),
+    }).trim();
+    const top = resolve(cwdOverride ?? '.', gitDir, '..');
+    return top.split(/[\\/]/).filter(Boolean).pop() ?? '';
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * True if `repoName` is registered on ~/.claude/confidential-repos.json's `confidential_repos`
+ * list — the roster ORA already maintains for "this repo embeds confidential deal figures"
+ * (see that file's own `rule`/`notes`). Never throws: an absent/unparseable roster or an empty
+ * repoName is treated as NOT registered (fail toward blocking a confidential:true payload from
+ * an unrecognized repo, never toward silently allowing one).
+ *
+ * @param {string} repoName
+ * @param {string} [homeDirOverride] - test seam; defaults to os.homedir().
+ */
+export function isRegisteredConfidentialRepo(repoName, homeDirOverride) {
+  if (!repoName) return false;
+  const home = homeDirOverride ?? homedir();
+  const rosterPath = join(home, '.claude', 'confidential-repos.json');
+  const result = readJsonSafe(rosterPath);
+  if (!result.ok) return false;
+  const list = Array.isArray(result.data?.confidential_repos) ? result.data.confidential_repos : [];
+  return list.includes(repoName);
+}
+
+/**
+ * Scan added diff lines for a `"confidential": true` payload shape (JSON key, not a term —
+ * this fires regardless of which specific deal it is, closing the gap a per-deal denylist
+ * structurally cannot: a NEW confidential deal added to the roster is protected from the moment
+ * its `confidential: true` flag is pushed, not only once someone remembers to add its terms to
+ * confidential-terms.json too).
+ *
+ * @param {{file: string, lineNo: number, text: string}[]} addedLines
+ * @returns {{line: number, text: string, file: string}[]}
+ */
+export function scanDiffForConfidentialFlag(addedLines) {
+  const hits = [];
+  if (!Array.isArray(addedLines)) return hits;
+  for (const added of addedLines) {
+    if (!added || typeof added.text !== 'string') continue;
+    if (CONFIDENTIAL_FLAG_RE.test(added.text)) {
+      hits.push({ line: added.lineNo, text: added.text, file: added.file });
+    }
+  }
+  return hits;
 }
 
 /**
@@ -248,10 +338,19 @@ function readStdin() {
   }
 }
 
+/** Shared "print header, list hits, print trailer, exit 1" shape both block paths below use. */
+function blockOnHits(hits, header, formatHit, trailer) {
+  console.error(`\n✖  PUSH BLOCKED — ${header}:\n`);
+  for (const h of hits) console.error(`   ${formatHit(h)}`);
+  console.error(`\n${trailer}\n`);
+  process.exit(1);
+}
+
 function main() {
   const { alwaysTerms, contextGroups } = loadTerms();
   const stdin = readStdin();
   const allHits = [];
+  const flagHits = [];
 
   for (const rawLine of stdin.split('\n')) {
     const line = rawLine.trim();
@@ -274,15 +373,46 @@ function main() {
     const added = parseAddedLines(diffText).filter((a) => !EXCLUDE_PATHS.has(a.file));
     allHits.push(...scanDiffForConfidential(added, alwaysTerms));
     allHits.push(...scanDiffForContextTerms(added, contextGroups));
+    flagHits.push(...scanDiffForConfidentialFlag(added));
+  }
+
+  // Structural check: a `"confidential": true` payload is only ever legitimate FROM a repo
+  // registered as an intentional in-perimeter confidential store. Registered → informational
+  // (the control is visibly firing, not silently no-op); unregistered → BLOCK, independent of
+  // whether any specific term denylist entry also matched.
+  //
+  // currentRepoName()/isRegisteredConfidentialRepo() (a git subprocess spawn + a file read) are
+  // resolved HERE, not at the top of main() — they're only ever consulted in this branch, and
+  // the overwhelmingly common push touches no confidential:true line at all.
+  if (flagHits.length > 0) {
+    const repoName = currentRepoName();
+    const registered = isRegisteredConfidentialRepo(repoName);
+    if (registered) {
+      console.log(
+        `[prepush-confidential-scan] ${flagHits.length} confidential:true record(s) detected — ` +
+        `'${repoName}' is registered on ~/.claude/confidential-repos.json as an intentional ` +
+        `in-perimeter confidential store. Not blocking.`,
+      );
+    } else {
+      blockOnHits(
+        flagHits,
+        `confidential:true record(s) found, but '${repoName || '(unresolved repo)'}' is NOT ` +
+          'registered on ~/.claude/confidential-repos.json',
+        (h) => `${h.file}:${h.line}  ->  ${h.text.trim()}`,
+        'Either this repo should not be carrying confidential-deal payloads, or it is an ' +
+          'intentional in-perimeter store that was never registered — decide which with Gabriel, ' +
+          'then either remove the payload or add this repo to confidential-repos.json.',
+      );
+    }
   }
 
   if (allHits.length > 0) {
-    console.error('\n✖  PUSH BLOCKED — confidential terms found in added lines:\n');
-    for (const h of allHits) {
-      console.error(`   ${h.file}:${h.line}  ->  matched '${h.term}'`);
-    }
-    console.error('\nRemove the confidential content (and scrub history if already committed) before pushing.\n');
-    process.exit(1);
+    blockOnHits(
+      allHits,
+      'confidential terms found in added lines',
+      (h) => `${h.file}:${h.line}  ->  matched '${h.term}'`,
+      'Remove the confidential content (and scrub history if already committed) before pushing.',
+    );
   }
 
   process.exit(0);

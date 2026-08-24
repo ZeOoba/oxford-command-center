@@ -264,4 +264,74 @@ describe('resolvePropertyId', () => {
     expect(resolvePropertyId('3034 Westerville Rd, Westerville OH', properties)).toBe('3034-westerville-rd-westerville-oh');
     expect(resolvePropertyId('3034 Westerville Rd', properties)).toBe('3034-westerville-rd-westerville-oh');
   });
+
+  // cc-audit-army finding unresolved-lease-propertyid-silent: the Sepich Portfolio is tracked as
+  // ONE consolidated property_master row (same target detect.ts's PROPERTY_ALIASES uses for the
+  // portfolio's P&L filename token 'fvc'), so its 8 physical buildings have no per-building
+  // address for the token-matching algorithm above to match against at all -- token matching can
+  // never resolve these regardless of how it's tuned, hence the dedicated alias table.
+  describe('RENT_ROLL_PROPERTY_ALIASES — Sepich Portfolio sub-property names', () => {
+    // The alias must resolve without any address-token corroboration (none exists in
+    // property_master for these sub-buildings) -- but ONLY when its target id is actually
+    // present in `properties`, the same contract every other path through this function holds
+    // to (see the finding below). A Sepich property_master row is present in every case here.
+    const sepich = mkProperty('sepich-portfolio-columbus-oh-8-props', 'Sepich Portfolio, Columbus OH');
+
+    it('resolves the three confirmed Sepich sub-property names to the consolidated Sepich id', () => {
+      expect(resolvePropertyId('Banwick', [sepich])).toBe('sepich-portfolio-columbus-oh-8-props');
+      expect(resolvePropertyId('Morrison', [sepich])).toBe('sepich-portfolio-columbus-oh-8-props');
+      expect(resolvePropertyId('Zettler', [sepich])).toBe('sepich-portfolio-columbus-oh-8-props');
+    });
+
+    it('matches case-insensitively and tolerates surrounding whitespace', () => {
+      expect(resolvePropertyId('  BANWICK  ', [sepich])).toBe('sepich-portfolio-columbus-oh-8-props');
+      expect(resolvePropertyId('banwick', [sepich])).toBe('sepich-portfolio-columbus-oh-8-props');
+    });
+
+    // cc-audit-army code-review finding (2026-08-22): the alias previously returned its
+    // hardcoded target unconditionally, with no check it actually exists in `properties` --
+    // unlike every other path through this function. A renamed/retired/absent Sepich id must
+    // now fall through to null (a defense-in-depth backstop against future id drift), not a
+    // dangling propertyId with zero data-quality signal.
+    it('falls through to null when the alias target is absent from properties (defense in depth)', () => {
+      expect(resolvePropertyId('Banwick', [])).toBeNull();
+      const unrelated = mkProperty('some-other-property', '1 Some Other St, Anytown OH');
+      expect(resolvePropertyId('Morrison', [unrelated])).toBeNull();
+    });
+
+    // The existing 'Banwick Lane' -> null test above (round-2 refute finding) must keep passing
+    // unchanged: the alias table matches the bare single-word key actually seen in the live rent
+    // roll ("Banwick"), not a two-word variant, so it must not swallow that unrelated test's key.
+    it('does not fire on a multi-word key that merely contains an aliased word', () => {
+      const properties = [mkProperty('29000-information-lane-easton-md', '29000 Information Lane, Easton MD')];
+      expect(resolvePropertyId('Banwick Lane', properties)).toBeNull();
+    });
+
+    // SUPERSEDED 2026-08-24 (Gabriel directive), evidence-based reversal of the 2026-08-21 call.
+    // The alias table's original comment left '4595 E. 5th Ave' unresolved for want of "comparable
+    // evidence". That evidence was subsequently located in the source of record and is conclusive:
+    // 'Tax Assessment Summary -- Sepich Portfolio.xlsx' enumerates exactly EIGHT parcels -- matching
+    // the property_master row's own "(8 props)" -- and parcel 010-003904-00 is literally
+    // "4595-4601 E Fifth Ave / Sepich". ONE parcel spans BOTH street numbers, which is why the rent
+    // roll carries two separate keys for it. Independently corroborated by the 2020 acquisition DD
+    // ('Environmental Report -- 4595 - 4601 East 5th Avenue 12-2020.pdf', 'survey -- 4595 - 4601 East
+    // Fifth Ave.pdf'), by the 2022 Sepich rent roll whose own header lists "4595 E 5th Ave" as a
+    // portfolio property, and by 'Billboard Lease -- 4601 E. 5th Ave Sepich.pdf'. This is a STRONGER
+    // corroboration record than Banwick/Morrison/Zettler carried. Do NOT re-null these on the
+    // strength of the retracted comment.
+    it('resolves both E. 5th Ave sub-parcel keys to the consolidated Sepich id', () => {
+      expect(resolvePropertyId('4595 E. 5th Ave', [sepich])).toBe('sepich-portfolio-columbus-oh-8-props');
+      expect(resolvePropertyId('4601 E. 5th Ave', [sepich])).toBe('sepich-portfolio-columbus-oh-8-props');
+    });
+
+    // The number-gate protection is NOT weakened by the aliases above. With only the unrelated
+    // '3540 E. 5th Ave' property present (no Sepich row), the alias's existence-check must still
+    // fall through to null rather than mis-attributing this rent to the neighbouring building --
+    // the exact false positive the round-1 refute pass caught.
+    it('still refuses to mis-resolve an E. 5th Ave sub-parcel onto 3540 when Sepich is absent', () => {
+      const properties = [mkProperty('3540-e-5th-ave-columbus-oh', '3540 E. 5th Ave, Columbus OH')];
+      expect(resolvePropertyId('4595 E. 5th Ave', properties)).toBeNull();
+      expect(resolvePropertyId('4601 E. 5th Ave', properties)).toBeNull();
+    });
+  });
 });
