@@ -20,3 +20,17 @@
 # converting to LF-only fixed it. Force LF regardless of platform checkout, same rationale/pattern
 # as session-start.sh above.
 .claude/workflows/*.js text eol=lf
+
+# Machine-written JSON under data/ is emitted by JSON.stringify + writeFileSync, i.e. always LF
+# (server/brain.ts persist, scripts/extract-workbook.ts, scripts/lease-snapshot-drift-check.ts,
+# scripts/ar-import-headless.ts patchSnapshot/writeReviewQueue, server/ar/mapping-cache.ts saveCache).
+# Under the `* text=auto` rule above plus core.autocrlf=true, git CHECKS THESE OUT as CRLF while every
+# writer rewrites them as LF -- a permanent mismatch that makes git emit "LF will be replaced by CRLF
+# the next time Git touches it" on every status/diff/add touching them. The blob is LF either way, so
+# the warning is cosmetic (it never makes the file dirty on its own), but it is constant noise on the
+# three tracked data files a human reads git status for most often. Pinning eol=lf makes checkout
+# match what the writers emit and retires the warning. No content change: the stored blobs are
+# already LF.
+data/snapshots/portfolio.json text eol=lf
+data/ar-mapping-cache.json    text eol=lf
+data/ar/review-queue.json     text eol=lf

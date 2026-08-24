@@ -66,4 +66,13 @@ function main() {
   }
 }
 
-main();
+// Run the CLI only when invoked directly. Importing this module for tests (evaluateFlags, from
+// tests/unit/reconcile-snapshot.test.ts) previously ran main() as an import side effect: it read the
+// live SNAPSHOT_PATH and could process.exit(1) the vitest worker mid-file on any error-severity flag
+// in the committed snapshot. Same guard, and same rationale, as every sibling script here
+// (lease-snapshot-drift-check.ts, calibration-snapshot.ts, debt-scores-snapshot.ts, ...).
+// `npm run reconcile:snapshot` is `tsx scripts/reconcile-snapshot.ts`, so argv[1] still matches and
+// the CLI behaves exactly as before.
+if (process.argv[1]?.replace(/\\/g, '/').endsWith('scripts/reconcile-snapshot.ts')) {
+  main();
+}
