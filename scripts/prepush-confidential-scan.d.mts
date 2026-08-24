@@ -24,27 +24,6 @@ export interface TermRoster {
 
 export function loadTerms(homeDirOverride?: string): TermRoster;
 
-/** Hit from the `confidential: true` payload scanner. Carries no `term` -- the flag itself is the
- *  match, not a roster entry, so it is a distinct shape from ConfidentialHit. */
-export interface ConfidentialFlagHit {
-  line: number;
-  text: string;
-  file: string;
-}
-
-/** Repo name derived from `git rev-parse --git-common-dir` (NOT --show-toplevel, so it is correct
- *  from inside a linked worktree). Returns '' outside any git repo. */
-export function currentRepoName(cwdOverride?: string): string;
-
-export function isRegisteredConfidentialRepo(
-  repoName: string,
-  homeDirOverride?: string,
-): boolean;
-
-/** Non-optional `addedLines` on purpose: tests assert the null case behind @ts-expect-error, which
- *  only stays "used" while a nullable argument is a type error here. */
-export function scanDiffForConfidentialFlag(addedLines: AddedLine[]): ConfidentialFlagHit[];
-
 export function scanDiffForConfidential(
   addedLines: AddedLine[],
   terms: string[],
@@ -75,6 +54,9 @@ export function isRegisteredConfidentialRepo(
   homeDirOverride?: string,
 ): boolean;
 
+/** `addedLines` is non-optional on purpose: tests/unit/prepush-confidential-scan.test.ts asserts the
+ *  null case behind @ts-expect-error, and that directive only stays "used" (TS2578) while passing a
+ *  nullable argument is still a type error here. */
 export function scanDiffForConfidentialFlag(
   addedLines: AddedLine[],
 ): ConfidentialFlagHit[];
