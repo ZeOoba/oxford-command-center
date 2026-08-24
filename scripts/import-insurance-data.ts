@@ -7,7 +7,7 @@
 // those resolvers automatically stop reading the fixtures and start reading the warehouse — no
 // other code change is required. This is the ONLY way that cutover happens.
 //
-// Two modes, one script (unlike scripts/import-assessments.ts's single CSV mode):
+// Three modes, one script (unlike scripts/import-assessments.ts's single CSV mode):
 //
 //   1. Default (loss events): npx tsx scripts/import-insurance-data.ts <events.json> [--db <path>]
 //      Input JSON shape: { events: [{ id, propertyId, policyRef, lossDate, cause, grossIncurred,
@@ -25,6 +25,23 @@
 //      this importer accepts policyId as either a JSON number or a numeric string).
 //      UPDATE ... SET deductible = ?, coverage_limit = ? WHERE id = ? for each row that resolves to
 //      an existing policy id; a missing id is counted (`missing`), never thrown.
+//
+//   3. Policies (premium history): npx tsx scripts/import-insurance-data.ts --policies <policies.json> [--db <path>]
+//      Input JSON shape: { policies: [{ propertyId, insurer, policyNumber, effectiveDate,
+//      expirationDate, premiumAnnual, coverageTiv, policyType, source, sourceDate }, ...],
+//      newLines?: string[], ingestedBy?: string }. Upserts by (property_id, policy_number,
+//      effective_date) — UPDATE by the existing row's own `id` on a match, never INSERT OR REPLACE
+//      (that would mint a new autoincrement id and silently wipe any deductible/coverage_limit a
+//      separate --dec-pages run already applied). property_id has no FK; a propertyId is only
+//      accepted if a row for it already exists or it's listed in `newLines` for this run — anything
+//      else is logged to data_quality_issues (kind='insurance-policy-unrecognized-line') and skipped.
+//      CAUTION for any future history backfill through this mode: server/warehouse/insurance-
+//      analysis.ts's collapseToCurrentTerm ranks a policy line's "current" term by source_date DESC
+//      first, effective_date only as a tiebreak. A history row whose sourceDate is NEWER than the
+//      live capture's, for an OLDER effective_date, would make that older term win and surface as
+//      "current" downstream (renewalCalendar, premiumAnnualTotal, policiesN, insurance-expiry-soon).
+//      Keep a backfilled row's sourceDate no newer than the most recent live capture for that
+//      property/line — never the backfill's own compile date if that's more recent.
 //
 // Row handling (mirrors import-assessments.ts):
 //   - A row that fails FORMAT validation is rejected and reported in the printed summary — nothing
@@ -371,10 +388,243 @@ export function importDecPages(db: WarehouseDb, payload: unknown): ImportDecPage
   };
 }
 
+// ── Policies (premium history) ──────────────────────────────────────────────────────────────
+
+export interface ParsedPolicyRow {
+  propertyId: string;
+  insurer: string;
+  policyNumber: string;
+  effectiveDate: string;
+  expirationDate: string | null;
+  premiumAnnual: number;
+  coverageTiv: number | null;
+  policyType: string;
+  source: string;
+  sourceDate: string;
+}
+
+export interface ParsePoliciesOutcome {
+  rows: ParsedPolicyRow[];
+  rejected: RejectedRow[];
+}
+
+const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Parse + validate the policies JSON payload. Pure — no DB, no I/O. Exported for tests.
+ * Mirrors parseLossEventsPayload's per-row source fallback: a row's own `source` wins, else the
+ * payload's top-level `source`, else the CLI's file-path argument (passed in as `defaultSource`).
+ */
+export function parsePoliciesPayload(payload: unknown, defaultSource: string): ParsePoliciesOutcome {
+  const rows: ParsedPolicyRow[] = [];
+  const rejected: RejectedRow[] = [];
+
+  if (!isRecord(payload) || !Array.isArray(payload.policies)) {
+    rejected.push({ index: -1, id: null, reason: 'payload must be an object with a "policies" array' });
+    return { rows, rejected };
+  }
+
+  const topLevelSource = typeof payload.source === 'string' && payload.source !== '' ? payload.source : undefined;
+  const fallbackSource = topLevelSource ?? defaultSource;
+
+  payload.policies.forEach((raw: unknown, index: number) => {
+    if (!isRecord(raw)) {
+      rejected.push({ index, id: null, reason: 'row is not an object' });
+      return;
+    }
+    const {
+      propertyId, insurer, policyNumber, effectiveDate, expirationDate,
+      premiumAnnual, coverageTiv, policyType, source, sourceDate,
+    } = raw;
+
+    if (typeof propertyId !== 'string' || propertyId.trim() === '') {
+      rejected.push({ index, id: null, reason: 'missing or invalid "propertyId"' });
+      return;
+    }
+    if (typeof insurer !== 'string' || insurer.trim() === '') {
+      rejected.push({ index, id: propertyId, reason: 'missing or invalid "insurer"' });
+      return;
+    }
+    if (typeof policyNumber !== 'string' || policyNumber.trim() === '') {
+      rejected.push({ index, id: propertyId, reason: 'missing or invalid "policyNumber"' });
+      return;
+    }
+    if (typeof effectiveDate !== 'string' || !ISO_DATE_RE.test(effectiveDate)) {
+      rejected.push({ index, id: propertyId, reason: `effectiveDate must be ISO YYYY-MM-DD, got '${String(effectiveDate)}'` });
+      return;
+    }
+    if (expirationDate !== undefined && expirationDate !== null
+      && (typeof expirationDate !== 'string' || !ISO_DATE_RE.test(expirationDate))) {
+      rejected.push({ index, id: propertyId, reason: `expirationDate must be ISO YYYY-MM-DD when present, got '${String(expirationDate)}'` });
+      return;
+    }
+    if (typeof premiumAnnual !== 'number' || !Number.isFinite(premiumAnnual) || premiumAnnual < 0) {
+      rejected.push({ index, id: propertyId, reason: `premiumAnnual must be a nonnegative number, got '${String(premiumAnnual)}'` });
+      return;
+    }
+    if (coverageTiv !== undefined && coverageTiv !== null
+      && (typeof coverageTiv !== 'number' || !Number.isFinite(coverageTiv) || coverageTiv < 0)) {
+      rejected.push({ index, id: propertyId, reason: `coverageTiv must be a nonnegative number when present, got '${String(coverageTiv)}'` });
+      return;
+    }
+    if (typeof policyType !== 'string' || policyType.trim() === '') {
+      rejected.push({ index, id: propertyId, reason: 'missing or invalid "policyType"' });
+      return;
+    }
+    // Validated as strictly as effectiveDate/expirationDate: sourceDate feeds source_date, which
+    // insurance-analysis.ts's isMoreCurrent compares as a STRING (DESC) to rank a policy line's
+    // current term. A non-ISO value (or a missing check, as this line originally had) would sort
+    // unpredictably against real ISO dates and silently corrupt that ranking.
+    if (typeof sourceDate !== 'string' || !ISO_DATE_RE.test(sourceDate)) {
+      rejected.push({ index, id: propertyId, reason: `sourceDate must be ISO YYYY-MM-DD, got '${String(sourceDate)}'` });
+      return;
+    }
+
+    rows.push({
+      propertyId,
+      insurer,
+      policyNumber,
+      effectiveDate,
+      expirationDate: typeof expirationDate === 'string' ? expirationDate : null,
+      premiumAnnual,
+      coverageTiv: typeof coverageTiv === 'number' ? coverageTiv : null,
+      policyType,
+      source: typeof source === 'string' && source !== '' ? source : fallbackSource,
+      sourceDate,
+    });
+  });
+
+  return { rows, rejected };
+}
+
+export interface ImportPolicyRowsResult {
+  inserted: number;
+  updated: number;
+  unrecognized: number;
+  rejected: number;
+}
+
+/**
+ * Upsert parsed+validated policy rows into property_insurance_policies. property_id has NO FK
+ * (unlike property_tax_assessments/insurance_loss_events), so "recognized" means "an existing row
+ * with this property_id already exists" OR "explicitly allowlisted via newLines for this run" —
+ * the only two ways this importer will ever mint a property_id, matching the design's identity
+ * rule (spec §4.1: reuse an existing line's id, mint a new one only for a genuinely new line).
+ *
+ * On a (property_id, policy_number, effective_date) match, UPDATE by that row's own `id` rather
+ * than INSERT OR REPLACE — REPLACE deletes-and-reinserts under an AUTOINCREMENT PK, which would
+ * mint a fresh id and silently null out any deductible/coverage_limit --dec-pages already applied
+ * (spec §5). deductible/coverage_limit are never touched by this importer either way.
+ */
+export function importPolicyRows(
+  db: WarehouseDb,
+  rows: ParsedPolicyRow[],
+  ingestedBy: string,
+  newLines: string[] = [],
+): ImportPolicyRowsResult {
+  const knownPropertyIds = new Set(
+    (db.prepare('SELECT DISTINCT property_id FROM property_insurance_policies').all() as { property_id: string }[])
+      .map((r) => r.property_id),
+  );
+  const allowedNewLines = new Set(newLines);
+
+  const findExisting = db.prepare(`
+    SELECT id FROM property_insurance_policies WHERE property_id = ? AND policy_number = ? AND effective_date = ?
+  `);
+  const update = db.prepare(`
+    UPDATE property_insurance_policies
+    SET insurer = ?, expiration_date = ?, premium_annual = ?, coverage_tiv = ?, policy_type = ?,
+        source = ?, source_date = ?, ingested_by = ?, ingested_at = datetime('now')
+    WHERE id = ?
+  `);
+  const insert = db.prepare(`
+    INSERT INTO property_insurance_policies
+      (property_id, insurer, policy_number, effective_date, expiration_date, premium_annual,
+       coverage_tiv, policy_type, source, source_date, ingested_by)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  const insertDqUnrecognized = db.prepare(`
+    INSERT INTO data_quality_issues (property_id, kind, detail, severity)
+    VALUES (?, 'insurance-policy-unrecognized-line', ?, 'warn')
+  `);
+  const insertDqInvalid = db.prepare(`
+    INSERT INTO data_quality_issues (property_id, kind, detail, severity)
+    VALUES (?, 'insurance-policy-check-violation', ?, 'warn')
+  `);
+
+  let inserted = 0;
+  let updated = 0;
+  let unrecognized = 0;
+  let rejected = 0;
+
+  const tx = db.transaction(() => {
+    for (const r of rows) {
+      if (!knownPropertyIds.has(r.propertyId) && !allowedNewLines.has(r.propertyId)) {
+        unrecognized += 1;
+        insertDqUnrecognized.run(
+          r.propertyId,
+          `import-insurance-data --policies: property_id '${r.propertyId}' has no existing policy line and is not in this run's newLines allowlist — row skipped`,
+        );
+        continue; // this row's own failure must never block any other row in the batch
+      }
+      try {
+        const existing = findExisting.get(r.propertyId, r.policyNumber, r.effectiveDate) as { id: number } | undefined;
+        if (existing) {
+          update.run(
+            r.insurer, r.expirationDate, r.premiumAnnual, r.coverageTiv, r.policyType,
+            r.source, r.sourceDate, ingestedBy, existing.id,
+          );
+          updated += 1;
+        } else {
+          insert.run(
+            r.propertyId, r.insurer, r.policyNumber, r.effectiveDate, r.expirationDate,
+            r.premiumAnnual, r.coverageTiv, r.policyType, r.source, r.sourceDate, ingestedBy,
+          );
+          inserted += 1;
+          knownPropertyIds.add(r.propertyId); // a newLines row counts as known for a later row in this same batch
+        }
+      } catch (e) {
+        rejected += 1;
+        const detail = e instanceof Error ? e.message : String(e);
+        console.warn(`import-insurance-data --policies: row for '${r.propertyId}' (${r.policyNumber}, ${r.effectiveDate}) failed: ${detail}`);
+        // Mirrors importLossEventRows' insertDqInvalid: this script runs against a live warehouse,
+        // so an unexpected DB failure needs a persisted, auditable trail — not just a line in a
+        // console a later reader will never see. The row's own failure must never block the rest
+        // of the batch (already true here: caught locally, loop continues).
+        insertDqInvalid.run(
+          r.propertyId,
+          `import-insurance-data --policies: row for property_id '${r.propertyId}' (policy_number '${r.policyNumber}', effective_date '${r.effectiveDate}') violated a database constraint and was skipped: ${detail}`,
+        );
+      }
+    }
+  });
+  tx();
+
+  return { inserted, updated, unrecognized, rejected };
+}
+
+/** Combined parse+import entry point used by the CLI. */
+export function importPolicies(db: WarehouseDb, payload: unknown, defaultSource: string): ImportPolicyRowsResult {
+  const { rows, rejected } = parsePoliciesPayload(payload, defaultSource);
+  const newLines = isRecord(payload) && Array.isArray(payload.newLines)
+    ? payload.newLines.filter((x): x is string => typeof x === 'string')
+    : [];
+  const ingestedBy = isRecord(payload) && typeof payload.ingestedBy === 'string' && payload.ingestedBy !== ''
+    ? payload.ingestedBy
+    : 'import-insurance-data.ts --policies';
+  const dbResult = importPolicyRows(db, rows, ingestedBy, newLines);
+  return {
+    inserted: dbResult.inserted,
+    updated: dbResult.updated,
+    unrecognized: dbResult.unrecognized,
+    rejected: rejected.length + dbResult.rejected,
+  };
+}
+
 // ── CLI ──────────────────────────────────────────────────────────────────────────────────────
 
 export interface CliArgs {
-  mode: 'loss-events' | 'dec-pages';
+  mode: 'loss-events' | 'dec-pages' | 'policies';
   filePath: string;
   db?: string;
 }
@@ -383,6 +633,7 @@ export function parseArgs(argv: string[]): CliArgs {
   const positional: string[] = [];
   let db: string | undefined;
   let decPagesPath: string | undefined;
+  let policiesPath: string | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -397,20 +648,36 @@ export function parseArgs(argv: string[]): CliArgs {
       if (!next || next.startsWith('--')) throw new Error('missing value for --dec-pages');
       decPagesPath = next;
       i += 1;
+    } else if (arg === '--policies') {
+      const next = argv[i + 1];
+      if (!next || next.startsWith('--')) throw new Error('missing value for --policies');
+      policiesPath = next;
+      i += 1;
     } else {
       positional.push(arg);
     }
   }
 
+  if (decPagesPath !== undefined && policiesPath !== undefined) {
+    // Foot-gun guard: these two modes have completely different write semantics against a live
+    // financial warehouse. Silently preferring one over the other on a mistyped combined invocation
+    // (the prior behavior) is exactly the class of mistake this file's validation otherwise guards
+    // against elsewhere — reject instead of guessing.
+    throw new Error('--dec-pages and --policies are mutually exclusive');
+  }
   if (decPagesPath !== undefined) {
     return { mode: 'dec-pages', filePath: decPagesPath, db };
+  }
+  if (policiesPath !== undefined) {
+    return { mode: 'policies', filePath: policiesPath, db };
   }
 
   const filePath = positional[0];
   if (filePath === undefined) {
     throw new Error(
       'Usage: npx tsx scripts/import-insurance-data.ts <events.json> [--db <path>]\n'
-      + '   or: npx tsx scripts/import-insurance-data.ts --dec-pages <policies.json> [--db <path>]',
+      + '   or: npx tsx scripts/import-insurance-data.ts --dec-pages <policies.json> [--db <path>]\n'
+      + '   or: npx tsx scripts/import-insurance-data.ts --policies <policies.json> [--db <path>]',
     );
   }
   return { mode: 'loss-events', filePath, db };
@@ -459,6 +726,10 @@ function main(argv: string[]): number {
       const result = importDecPages(db, payload);
       console.log(`import-insurance-data (dec-pages): ${result.updated} polic${result.updated === 1 ? 'y' : 'ies'} updated from ${args.filePath}`);
       console.log(`  ${result.missing} missing policy id(s), ${result.rejected} rejected row(s)`);
+    } else if (args.mode === 'policies') {
+      const result = importPolicies(db, payload, args.filePath);
+      console.log(`import-insurance-data (policies): ${result.inserted} inserted, ${result.updated} updated from ${args.filePath}`);
+      console.log(`  ${result.unrecognized} unrecognized property_id row(s), ${result.rejected} rejected row(s)`);
     } else {
       const result = importLossRuns(db, payload, args.filePath);
       console.log(`import-insurance-data (loss-events): ${result.inserted} row(s) inserted from ${args.filePath}`);

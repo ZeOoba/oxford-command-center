@@ -67,8 +67,9 @@ Each row's read-then-write is wrapped in its own try/catch inside the enclosing 
 ## 6. Validation & data-quality reporting
 
 Parse-time rejects (never persisted, printed in the summary — matches existing convention):
-- missing `propertyId`, `insurer`, `policyNumber`, `effectiveDate`, `premiumAnnual`, `policyType`, `source`, or `sourceDate`
-- `effectiveDate`/`expirationDate` (when present) not strict ISO `YYYY-MM-DD` — same defect class as the existing `loss_date` check (a US `MM/DD/YYYY` or Excel-serial date must be rejected, not silently miscoerced)
+- missing (or whitespace-only) `propertyId`, `insurer`, `policyNumber`, `effectiveDate`, `premiumAnnual`, `policyType`, or `sourceDate`
+- **Correction (post-PR-review):** `source` is *not* in the reject list above — it has the same per-row-then-payload-then-CLI-default fallback chain as the existing `loss-events` mode (§`parseLossEventsPayload`'s `fallbackSource`), which is what actually shipped and is tested. An earlier draft of this section listed `source` as required; that was a spec/implementation mismatch, not a code defect — corrected here rather than in the code, since the fallback behavior is the intended, precedented one.
+- `effectiveDate`/`expirationDate` (when present) not strict ISO `YYYY-MM-DD`, and `sourceDate` likewise (added post-PR-review — the original draft only regex-checked the first two, but `sourceDate` feeds `source_date`, which `insurance-analysis.ts` ranks by string comparison) — same defect class as the existing `loss_date` check (a US `MM/DD/YYYY` or Excel-serial date must be rejected, not silently miscoerced)
 - `premiumAnnual` not a nonnegative finite number; `coverageTiv` (when present) not a nonnegative finite number
 
 **New check specific to this mode** (there is no FK to lean on): if `propertyId` does not already exist in `property_insurance_policies` **and** is not present in a small in-payload `newLines: ["ins-9620state350-umb"]` allowlist, record a `data_quality_issues` row (`kind='insurance-policy-unrecognized-line'`, severity `warn`) instead of silently inserting an orphaned line — mirrors the discipline the other two modes get for free from a real FK.
