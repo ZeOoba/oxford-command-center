@@ -22,9 +22,12 @@ describe('QuickBooks contract', () => {
   });
 });
 
+// address is now load-bearing: parseQuickbooksCsv resolves propertyId via server/workbook/parse.ts's
+// resolvePropertyId (word-token + street-number + alias matching against Property.address), not the
+// old bidirectional-substring check against Property.name.
 const props = [
-  { id: 'rarig', name: '1100 Rarig Ave' },
-  { id: 'northwood', name: '2207 Northwood' },
+  { id: 'rarig', name: '1100 Rarig Ave', address: '1100 Rarig Ave, Columbus OH' },
+  { id: 'northwood', name: '2207 Northwood', address: '2203-2207 Northwood Dr, Salisbury MD' },
 ] as unknown as Property[];
 
 const CSV = `Property,Month,Account,Type,Amount
@@ -48,9 +51,22 @@ describe('parseQuickbooksCsv', () => {
     expect(rarig.monthly).toHaveLength(2);
   });
 
-  it('resolves propertyId by name containment; leaves unmatched null', () => {
+  it('resolves propertyId via resolvePropertyId (word-token + number match); leaves unmatched null', () => {
     expect(qb.properties.find((p) => p.propertyKey === '1100 Rarig')!.propertyId).toBe('rarig');
     expect(qb.properties.find((p) => p.propertyKey === 'Unknown Strip Mall')!.propertyId).toBeNull();
+  });
+
+  it('resolves a Sepich-alias QB key via RENT_ROLL_PROPERTY_ALIASES, not left null (2026-08-24 fix)', () => {
+    // Regression for Finding 3 of the 2026-08-24 integrity sweep: the old inline resolveId() never
+    // consulted the alias table, so QB rows keyed by a Sepich-portfolio sub-address (this fixture
+    // stands in for the real 'FVC' / '4595 E. 5th Ave' keys) came back propertyId:null and were
+    // silently dropped from every per-property NOI-variance row.
+    const sepichProps = [
+      { id: 'sepich-portfolio-columbus-oh-8-props', name: 'Sepich Portfolio', address: '1234 Placeholder Way, Columbus OH' },
+    ] as unknown as Property[];
+    const csv = `Property,Month,Account,Type,Amount\n4595 E. 5th Ave,2026-01,Rental Income,Income,10000`;
+    const qbSepich = parseQuickbooksCsv(csv, sepichProps, NOW)!;
+    expect(qbSepich.properties[0]!.propertyId).toBe('sepich-portfolio-columbus-oh-8-props');
   });
 
   it('itemizes GL expense per property (no hardcoded categories)', () => {

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import type { Property } from '../../src/contracts/index';
 import { QbActuals, type QbProperty } from '../../src/contracts/quickbooks';
+import { resolvePropertyId } from '../workbook/parse';
 
 /** Parse one CSV line honoring double-quoted fields (handles embedded commas + "" escapes). */
 function parseCsvLine(line: string): string[] {
@@ -72,15 +73,17 @@ export function parseQuickbooksCsv(text: string, properties: Property[], now: st
 
   if (byProp.size === 0) return null;
 
-  const resolveId = (key: string): string | null => {
-    const k = key.toLowerCase();
-    const hit = properties.find((p) => p.name.toLowerCase().includes(k) || k.includes(p.name.toLowerCase()));
-    return hit ? hit.id : null;
-  };
-
   const out: QbProperty[] = [...byProp.values()].map((a) => ({
     propertyKey: a.key,
-    propertyId: resolveId(a.key),
+    // Route through the same whole-token + number-gate + alias-table resolver rent-roll/lease
+    // parsing already uses (server/workbook/parse.ts's resolvePropertyId), not a bidirectional
+    // raw-substring/first-match check. The old inline resolveId() was the exact failure shape
+    // fa27d4c/ead629d/1c7d17b fixed elsewhere this week (2026-08-24 integrity sweep, Finding 3):
+    // it left ~$1.42M of QB NOI actuals (Sepich Portfolio, 1851 S Club Solar) silently attributed
+    // to propertyId:null, dropped from every per-property NOI-variance row while still counted in
+    // block-level expenseRatio. resolvePropertyId also covers the Sepich/Solar keys via
+    // RENT_ROLL_PROPERTY_ALIASES, which the old inline matcher never consulted.
+    propertyId: resolvePropertyId(a.key, properties),
     annualIncome: a.income,
     annualExpense: a.expense,
     annualNoi: a.income - a.expense,
