@@ -64,41 +64,56 @@ describe('loadLeasesFromSnapshot excludes Expired leases from the auto-match can
   });
 });
 
-describe('loadUnitLeasesFromSnapshot excludes Expired leases from the Format B auto-match candidate pool', () => {
-  // PR #302 review finding (Qodo): the name-based fix above left the UNIT-based Format B path
-  // (loadUnitLeasesFromSnapshot -> resolveByUnit) with the identical exposure -- resolveByUnit's
-  // exact-match branch auto-writes with no human review, so an Expired lease could still be
-  // silently re-attributed through a unit-only export even after the name-based path was closed.
+describe('loadUnitLeasesFromSnapshot + resolveByUnit: Expired leases are visible to resolution, not silently pre-filtered', () => {
+  // PR #302 review finding (Qodo): an EARLIER version of this fix excluded Expired leases in the
+  // LOADER, mirroring the name-based path -- but that opened an adjacent hole on a re-let unit (see
+  // the third test below). loadUnitLeasesFromSnapshot now returns the FULL roster (status included)
+  // and resolveByUnit does the Expired-aware filtering itself, so it can detect an Expired sibling
+  // on the same unit and downgrade to review instead of a clean exact match.
   beforeEach(() => {
     writeFixtureSnapshot();
   });
 
-  it('drops the Expired lease (Anibal Morales, unit C4) entirely', async () => {
+  it('includes the Expired lease (Anibal Morales, unit C4) in the loader output', async () => {
     vi.resetModules();
     const { loadUnitLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
     const leases = loadUnitLeasesFromSnapshot();
-    expect(leases.find((l) => l.id === '2207-northwood-c4-anibal-morales')).toBeUndefined();
+    const morales = leases.find((l) => l.id === '2207-northwood-c4-anibal-morales');
+    expect(morales).toBeDefined();
+    expect(morales?.status).toBe('Expired');
   }, 20000); // first dynamic import of this module graph is transform-heavy
 
-  it('keeps Active, Expiring Soon, and Unknown-status leases as unit-match candidates', async () => {
-    vi.resetModules();
-    const { loadUnitLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
-    const leases = loadUnitLeasesFromSnapshot();
-    expect(leases.map((l) => l.id).sort()).toEqual(
-      ['active-lease-1', 'expiring-soon-lease-1', 'unknown-status-lease-1'].sort(),
-    );
-  });
-
-  it('end-to-end: resolveByUnit can no longer auto-attribute unit C4 once its lease is Expired', async () => {
+  it('end-to-end: resolveByUnit still refuses to auto-attribute unit C4 when Expired is the ONLY lease there', async () => {
     vi.resetModules();
     const { loadUnitLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
     const { resolveByUnit } = await import('../../server/ar/resolve-by-unit');
     const leases = loadUnitLeasesFromSnapshot();
     const res = resolveByUnit({ unit: 'C4', property: 'prop-a', d30: 0.38, d30plus: 0 }, leases, 'prop-a');
-    // No candidate at all -> 'none' confidence -> falls through to human review, never an auto-write.
+    // No LIVE candidate -> 'none' confidence -> falls through to human review, never an auto-write.
     expect(res.leaseId).toBeNull();
     expect(res.confidence).toBe('none');
-    expect(res.ambiguous).toBe(false);
+  });
+
+  it('end-to-end: a re-let unit (Expired + new Active lease sharing unit C4) resolves AMBIGUOUS, not an auto-write to the new tenant', async () => {
+    // The exact adjacent hole PR #302's own review caught: sign a new tenant into C4 while the
+    // export still carries the vacated tenant's residual delinquency for that unit.
+    const { writeFileSync: writeFile } = await import('node:fs');
+    writeFile(
+      snapshotPath,
+      JSON.stringify({
+        leases: [
+          { id: '2207-northwood-c4-anibal-morales', tenantName: 'Anibal Morales', company: 'Anibal Morales', status: 'Expired', unit: 'C4', propertyId: 'prop-a' },
+          { id: 'new-tenant-c4', tenantName: 'New Tenant LLC', company: 'New Tenant LLC', status: 'Active', unit: 'C4', propertyId: 'prop-a' },
+        ],
+      }),
+    );
+    vi.resetModules();
+    const { loadUnitLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
+    const { resolveByUnit } = await import('../../server/ar/resolve-by-unit');
+    const leases = loadUnitLeasesFromSnapshot();
+    const res = resolveByUnit({ unit: 'C4', property: 'prop-a', d30: 0.38, d30plus: 0 }, leases, 'prop-a');
+    expect(res.leaseId).toBeNull();
+    expect(res.ambiguous).toBe(true);
   });
 });
 
