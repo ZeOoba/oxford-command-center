@@ -330,6 +330,33 @@ describe('insuranceConditions', () => {
     expect(insights.filter((i) => i.id.startsWith('ins-gapped-rollover-'))).toHaveLength(0);
   });
 
+  it('(d.5) an inverted-date row (effective AFTER expiration) emits exactly ONE insight per pair, not two with the same id (PR #302 review)', () => {
+    const snap = makeSnap(['prop-inverted']);
+    // Row A has a swapped-column data-entry error: effective_date is AFTER expiration_date. Both
+    // orderings of the gap check would otherwise qualify (9 and 12 days), which pre-fix pushed two
+    // insights sharing the identical id.
+    insertPolicy(db, {
+      propertyId: 'prop-inverted',
+      policyNumber: 'INVERTED-A',
+      effectiveDate: '2026-09-01',
+      expirationDate: '2026-01-01',
+      premiumAnnual: 5000,
+    });
+    insertPolicy(db, {
+      propertyId: 'prop-inverted',
+      policyNumber: 'NORMAL-B',
+      effectiveDate: '2026-01-10',
+      expirationDate: '2026-08-20',
+      premiumAnnual: 5200,
+    });
+
+    const insights = insuranceConditions(db, snap);
+    const rollovers = insights.filter((i) => i.id.startsWith('ins-gapped-rollover-'));
+    expect(rollovers).toHaveLength(1);
+    const ids = new Set(rollovers.map((r) => r.id));
+    expect(ids.size).toBe(rollovers.length); // no duplicate ids
+  });
+
   // ── (e) determinism ──────────────────────────────────────────────────────
 
   it('(e) is deterministic: two calls on the same db+snapshot produce deeply-equal output', () => {

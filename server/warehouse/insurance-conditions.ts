@@ -325,6 +325,11 @@ export function insuranceConditions(
         // data-quality concern, not a gapped rollover.
         if (gapDays <= 0 || gapDays > GAPPED_ROLLOVER_WINDOW_DAYS) continue;
         const pairId = [a.id, b.id].sort((x, y) => x - y).join('-');
+        // Sane data can only satisfy this branch for ONE of the two orderings above -- but a row
+        // with effective_date AFTER expiration_date (corrupt source dates, unvalidated on capture)
+        // can satisfy BOTH, which would push two insights sharing the identical id `pairId` (PR #302
+        // review, LOW). `break` after the first hit: one pair, one insight, regardless of how many
+        // orderings would otherwise qualify.
         out.push({
           id: `ins-gapped-rollover-${pairId}`,
           severity: 'warning',
@@ -338,6 +343,7 @@ export function insuranceConditions(
           spine: 'B',
           provenance: 'real',
         });
+        break;
       }
     }
   }
@@ -437,7 +443,15 @@ type DriftPolicyRow = CollapsibleInsuranceRow;
  */
 export function isMoreCurrentRow(a: DriftPolicyRow, b: DriftPolicyRow): boolean {
   if (a.source_date !== b.source_date) return a.source_date > b.source_date;
-  if (a.effective_date !== b.effective_date) return (a.effective_date ?? '') > (b.effective_date ?? '');
+  // Compare the COALESCED values, not the raw ones (PR #302 review, LOW): comparing raw
+  // a.effective_date !== b.effective_date first meant the pair (null, '') counted as "different"
+  // without ever reaching a comparable state -- neither coalesced-null-safe compare would fire,
+  // silently skipping the id fallback for an otherwise-tied pair. Not reachable on live data today
+  // (source_date is NOT NULL and no row has an empty-string effective_date), but coalescing before
+  // the inequality check makes this a genuine total order rather than one with an incomparable edge.
+  const aEff = a.effective_date ?? '';
+  const bEff = b.effective_date ?? '';
+  if (aEff !== bEff) return aEff > bEff;
   return a.id > b.id;
 }
 
