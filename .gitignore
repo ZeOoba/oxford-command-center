@@ -57,3 +57,7 @@ run/
 # Pre-migration/pre-rebaseline snapshot backups — machine-local, never committed (2026-07-26)
 data/_backup/
 data/ar-dryrun/
+# Generated from scripts/prepush-confidential-scan.mjs's own JSDoc by `npm run typecheck`'s
+# pretypecheck step (tsconfig.confidential-scan-types.json) — never hand-edit, never commit.
+# See OI-206 in ~/.claude memory for why this replaced a hand-maintained sibling .d.mts.
+scripts/prepush-confidential-scan.d.mts

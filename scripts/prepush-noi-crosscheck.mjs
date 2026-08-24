@@ -7,7 +7,7 @@
 // number. This hook surfaces that on every push instead of leaving it opt-in.
 //
 // ADVISORY ONLY. This script's own exit code is NEVER trusted by the wrapper that invokes it
-// (see install-git-hooks.mjs — no 'exec', explicit '|| true', unconditional 'exit 0' after).
+// (see install-git-hooks.ts — no 'exec', explicit '|| true', unconditional 'exit 0' after).
 // This file additionally makes non-blocking true INTERNALLY (never rely on a caller alone):
 //   - main() runs inside try/catch; the catch sets process.exitCode = 0, it never calls
 //     process.exit() with a truncation risk (process.exit() does not flush pending async
