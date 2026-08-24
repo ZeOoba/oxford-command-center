@@ -121,20 +121,20 @@
     "next5-debt-module": {
       "agent_role": "Analytics Agent - Claude Fable 5 (N3 next5-improvements-2026-07-18, Gabriel-ruled)",
       "phase": "Debt & maturity warehouse module v1 - migration 023 (rate_type/next_rate_reset), debt-maturity.ts (maturity/reset timeline + refi-window flags vs referenced governors), GET /timeline + /refi-windows on debt-api, contracts additions",
-      "status": "review_needed",
+      "status": "merged",
       "blocked_by": null,
-      "review_needed": true,
-      "review_detail": "Touches Architect-owned surfaces: server/warehouse/migrations/ (023_debt_rate_reset.sql, additive columns only) and src/contracts/debt.ts (new response schemas, additive only). Governor constants referenced read-only via loadGovernors + ALERT_THRESHOLDS.ltvCeiling - no redefinition. Branch not pushed; Gabriel confirms before any PR/merge.",
-      "last_updated": "2026-07-18T00:00:00Z"
+      "review_needed": false,
+      "review_detail": "Touches Architect-owned surfaces: server/warehouse/migrations/ (023_debt_rate_reset.sql, additive columns only) and src/contracts/debt.ts (new response schemas, additive only). Governor constants referenced read-only via loadGovernors + ALERT_THRESHOLDS.ltvCeiling - no redefinition. Branch not pushed; Gabriel confirms before any PR/merge. | CLOSED OUT 2026-08-24 (stale review_needed, 37d): the work SHIPPED despite this entry still reading 'branch not pushed'. Verified on main -- server/warehouse/migrations/023_debt_rate_reset.sql and server/warehouse/debt-maturity.ts are present, and debt-api.ts serves GET /timeline and /refi-windows. Landed by PR #222 (commit 1cb8f1a), merged 2026-07-19 after Gabriel's Invariant-4 ratification -- the PR title carries the ratification. Nothing outstanding.",
+      "last_updated": "2026-08-24T17:40:00Z"
     },
     "compassionate-pike-3d7a86": {
       "agent_role": "Integration Agent — Claude Code Opus 5",
       "phase": "PR #259 — closes 2 critical + 3 high findings from the post-merge adversarial review of PR #258 (deals join-key + declassification gate)",
-      "status": "review_needed",
+      "status": "merged",
       "blocked_by": null,
-      "review_needed": true,
-      "review_detail": "PR #259 open: https://github.com/ZeOoba/oxford-command-center/pull/259. Fixes a fail-open confidentiality bug and a silent-data-loss regression found by a 3-agent parallel review Gabriel requested after #258 merged. Gate green (governance/typecheck/lint/check:dev-css/reconcile:snapshot); 3259/3260 tests (known-flaky bash-guard wall-clock excluded).",
-      "last_updated": "2026-08-04T00:00:00Z"
+      "review_needed": false,
+      "review_detail": "PR #259 open: https://github.com/ZeOoba/oxford-command-center/pull/259. Fixes a fail-open confidentiality bug and a silent-data-loss regression found by a 3-agent parallel review Gabriel requested after #258 merged. Gate green (governance/typecheck/lint/check:dev-css/reconcile:snapshot); 3259/3260 tests (known-flaky bash-guard wall-clock excluded). | CLOSED OUT 2026-08-24 (stale review_needed, 20d): PR #259 MERGED 2026-08-04. The entry was simply never flipped after the merge.",
+      "last_updated": "2026-08-24T17:40:00Z"
     }
   },
   "phase-4-steps-5-7-8-9": {
@@ -545,11 +545,11 @@
   "fix-acq-hubspot-sync-button": {
     "agent_role": "Engineering (Claude Code) — Gabriel-directed root-cause fix + PR",
     "phase": "HubSpot acq-candidates sync: add the missing 'Sync from HubSpot' UI trigger (PR #203 shipped syncHubSpotPipeline() + POST /acq/sync/hubspot but never wired a frontend trigger, unlike the symmetric Notion sync)",
-    "status": "review_needed",
+    "status": "merged",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "PR #221 opened, not merged (Gabriel's call). No architect-owned files touched (src/modules/acquisitions/AcquisitionsModule.tsx only + a new test file). Mirrors the existing handleNotionSync()/'Sync from Notion' pattern exactly. Full gate green: typecheck 0, lint 0, 232/232 test files (2834 tests); TDD (confirmed red before implementing) + local code-reviewer pass (one test-quality finding fixed). Live HubSpot query found 4 real deals with no path into acq_candidates (REDACTED-458, REDACTED-398, REDACTED-367 Twinsburg OH -- previously untracked anywhere in memory, REDACTED-340) plus a 5th deal at Due Diligence stage that is a legacy already-terminated pursuit with a stale HubSpot stage -- separate lower-priority cleanup item, not touched here (see memory, not named in this repo per its confidentiality guard). HUBSPOT_TOKEN is still unset in .env — a credential, out of scope for this PR; Gabriel must add it before the button does anything live.",
-    "last_updated": "2026-07-19T00:05:00Z"
+    "review_needed": false,
+    "review_detail": "PR #221 opened, not merged (Gabriel's call). No architect-owned files touched (src/modules/acquisitions/AcquisitionsModule.tsx only + a new test file). Mirrors the existing handleNotionSync()/'Sync from Notion' pattern exactly. Full gate green: typecheck 0, lint 0, 232/232 test files (2834 tests); TDD (confirmed red before implementing) + local code-reviewer pass (one test-quality finding fixed). Live HubSpot query found 4 real deals with no path into acq_candidates (REDACTED-458, REDACTED-398, REDACTED-367 Twinsburg OH -- previously untracked anywhere in memory, REDACTED-340) plus a 5th deal at Due Diligence stage that is a legacy already-terminated pursuit with a stale HubSpot stage -- separate lower-priority cleanup item, not touched here (see memory, not named in this repo per its confidentiality guard). HUBSPOT_TOKEN is still unset in .env — a credential, out of scope for this PR; Gabriel must add it before the button does anything live. | CLOSED OUT 2026-08-24 (stale review_needed, 36d): PR #221 MERGED 2026-07-19. The entry's 'PR #221 opened, not merged (Gabriel's call)' is stale. NOTE the one item in the original detail that is still live and is NOT closed by this: HUBSPOT_TOKEN remains a credential Gabriel must set before the Sync from HubSpot button does anything against live HubSpot. That is config, not repo work, so it does not belong in a worktree status entry -- flagged here so closing this out does not bury it.",
+    "last_updated": "2026-08-24T17:40:00Z"
   },
   "usage": {
     "how_to_update": "Edit your worktree's entry before starting and after completing work; commit it on your branch. Use ISO 8601 timestamps. Set review_needed=true and fill review_detail when you need architect sign-off on an architect-owned file.",
@@ -567,20 +567,20 @@
   "occ-wt-balloon-fallback": {
     "agent_role": "Engineering (Claude Code, Sonnet 5) — Gabriel-directed, in-turn 2026-07-27",
     "phase": "fix/balloon-months-stale-fallback (worktree ../occ-wt-balloon-fallback, STACKED on fix/maturity-bucket-lows / PR #244, not yet merged): close the duplicated pre-fix staleness gap an adversarial reviewer found in getBalloonMonthsByProperty (server/warehouse/capital-allocation.ts:865) during PR #244's own review — it re-implemented the OLD un-discounted stored-months_to_maturity fallback with no snapshot_date in its query, feeding debtUrgency (15% of priorityScore) an un-aged figure. Refactoring to call the now-shared, exported effectiveMonthsToMaturity (server/warehouse/debt-scoring.ts) instead of duplicating the date math.",
-    "status": "in_progress",
-    "blocked_by": "fix/maturity-bucket-lows (PR #244) — this branch is stacked on it per CLAUDE.md §7 Stacked PRs; merge #244 first, this branch second.",
+    "status": "merged",
+    "blocked_by": null,
     "review_needed": false,
-    "review_detail": "No architect-owned files touched in the fix itself. Financial-decision code (feeds capital-allocation priorityScore) — mandatory adversarial refute + eos-review-gate.py pinned-model review required before commit per CLAUDE.md/hooks. Not pushed; Gabriel confirms before any PR. (This status.json claim entry itself required the architect-edit-ok override sentinel — Gabriel directed this exact worktree/claim in-turn.)",
-    "last_updated": "2026-07-27T00:00:00Z"
+    "review_detail": "No architect-owned files touched in the fix itself. Financial-decision code (feeds capital-allocation priorityScore) — mandatory adversarial refute + eos-review-gate.py pinned-model review required before commit per CLAUDE.md/hooks. Not pushed; Gabriel confirms before any PR. (This status.json claim entry itself required the architect-edit-ok override sentinel — Gabriel directed this exact worktree/claim in-turn.) | CLOSED OUT 2026-08-24 (stale in_progress, 28d): both the blocker and the fix landed. blocked_by fix/maturity-bucket-lows (PR #244) MERGED 2026-07-28; the fix itself landed as PR #245 (commit 523cc7c), and server/warehouse/capital-allocation.ts:1001 now delegates to the shared effectiveMonthsToMaturity from debt-scoring.ts, which is exactly what this entry described. The ../occ-wt-balloon-fallback worktree is no longer registered in `git worktree list`, so no live work was interrupted by closing this.",
+    "last_updated": "2026-08-24T17:40:00Z"
   },
   "quizzical-wozniak-220980": {
     "agent_role": "Engineering (Claude Code, Opus 5) — Gabriel-directed, in-turn 2026-08-24 (\"fix the governance duplicate route thing\")",
     "phase": "fix/governance-middleware-false-positive (worktree .claude/worktrees/quizzical-wozniak-220980, PR #298): checkRouteDuplication's route regex matched app.<any>('/api/...'), which swept in app.use(). app.use registers MIDDLEWARE, and stacking it on one path is normal composition — server/index.ts deliberately mounts cors() then accessAuthz() on '/api/*' and its own comment requires that ordering — so `npm run governance` failed on correct code with `DUPLICATE route \"/api/*\" defined in both server/index.ts and server/index.ts`. Fix captures the method name and skips `use` only; handler/mount registrations still collide, pinned by a test that a real app.get duplicate is still caught on a path that also carries app.use middleware. Also fixes the same-file message (\"defined twice in X\" instead of \"in both X and X\"). server/index.ts is UNCHANGED — it was correct, the checker was wrong.",
-    "status": "review_needed",
+    "status": "merged",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "ARCHITECT REVIEW REQUIRED — touches architect-owned scripts/governance-check.ts (CLAUDE.md §4) plus tests/unit/governance-check.test.ts (+3 regression tests, 41→44). Gabriel authorized the fix in-turn rather than via a status.json round-trip; this entry is the committed declaration for the other concurrent sessions, same pattern as m6-leasing-risk-ic-memo. Concurrency checked before editing: governance-check.ts last touched by PR #162, and no other open PR touches it. architecture/ is otherwise untouched. Verified the 2 behavioural tests FAIL against the pre-fix checker and pass after; `npm run governance` now passes (only the 4 pre-existing non-blocking STALE_STATUS warnings, which belong to other agents' entries, remain).",
-    "last_updated": "2026-08-24T17:05:00Z"
+    "review_needed": false,
+    "review_detail": "ARCHITECT REVIEW REQUIRED — touches architect-owned scripts/governance-check.ts (CLAUDE.md §4) plus tests/unit/governance-check.test.ts (+3 regression tests, 41→44). Gabriel authorized the fix in-turn rather than via a status.json round-trip; this entry is the committed declaration for the other concurrent sessions, same pattern as m6-leasing-risk-ic-memo. Concurrency checked before editing: governance-check.ts last touched by PR #162, and no other open PR touches it. architecture/ is otherwise untouched. Verified the 2 behavioural tests FAIL against the pre-fix checker and pass after; `npm run governance` now passes (only the 4 pre-existing non-blocking STALE_STATUS warnings, which belong to other agents' entries, remain). | MERGED 2026-08-24 as PR #298 (commit a854317). Closed out in the same pass that retired the 4 stale entries, so this one does not become the next stale claim.",
+    "last_updated": "2026-08-24T17:40:00Z"
   },
   "convert-scripts-mjs-to-ts": {
     "agent_role": "Engineering (Claude Code, Sonnet 5) — Gabriel-directed, in-turn 2026-08-24 (\"yes, build it in a worktree\" / \"yes, proceed on the revised scope\")",
