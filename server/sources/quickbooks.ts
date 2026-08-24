@@ -78,11 +78,18 @@ export function parseQuickbooksCsv(text: string, properties: Property[], now: st
     // Route through the same whole-token + number-gate + alias-table resolver rent-roll/lease
     // parsing already uses (server/workbook/parse.ts's resolvePropertyId), not a bidirectional
     // raw-substring/first-match check. The old inline resolveId() was the exact failure shape
-    // fa27d4c/ead629d/1c7d17b fixed elsewhere this week (2026-08-24 integrity sweep, Finding 3):
-    // it left ~$1.42M of QB NOI actuals (Sepich Portfolio, 1851 S Club Solar) silently attributed
-    // to propertyId:null, dropped from every per-property NOI-variance row while still counted in
-    // block-level expenseRatio. resolvePropertyId also covers the Sepich/Solar keys via
-    // RENT_ROLL_PROPERTY_ALIASES, which the old inline matcher never consulted.
+    // fa27d4c/ead629d/1c7d17b fixed elsewhere this week (2026-08-24 integrity sweep, Finding 3).
+    //
+    // CORRECTED 2026-08-24 (PR #302 review, initially a false-positive fix): routing through
+    // resolvePropertyId alone did NOT recover the ~$794K Sepich/FVC NOI this comment originally
+    // claimed -- the alias table had no entry matching the QB export's actual class-key string, and
+    // the token/number-gate path independently fails on this key (see RENT_ROLL_PROPERTY_ALIASES'
+    // own comment in parse.ts). The FVC/Sepich key is now explicitly aliased and verified against
+    // the live QUICKBOOKS_CSV export to resolve correctly. The '1851 S Club Solar' ~$631K NOI
+    // remains propertyId:null -- verified DELIBERATE, not a residual bug: no property_master row
+    // exists for that entity (see the alias table's comment). This routing change is still correct
+    // and load-bearing (the alias table is now the actual source of truth for these two QB class
+    // keys), it just does not by itself explain the recovery -- the alias entries do.
     propertyId: resolvePropertyId(a.key, properties),
     annualIncome: a.income,
     annualExpense: a.expense,

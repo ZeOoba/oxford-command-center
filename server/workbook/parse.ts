@@ -590,12 +590,35 @@ function propertyTokensFor(properties: Property[]): Map<string, PropertyAddressT
 // 4601 E. 5th Ave Sepich.pdf'. Note these are a DIFFERENT building from the unrelated standalone
 // property '3540 E. 5th Ave, Columbus OH' on the same street -- the street-number gate below, and
 // the alias's own target-must-exist check, both still prevent that mis-resolution.
+// QUICKBOOKS P&L CLASS KEYS (added 2026-08-24, PR #302 review finding). server/sources/quickbooks.ts
+// routes its class-name keys through this same table via resolvePropertyId, not a separate one --
+// two DIFFERENT strings, both verified against the live QB export
+// (QUICKBOOKS_CSV, 'ora-pl-by-property.csv'): the raw CSV's class column reads
+// 'FVC - Fairground Village Center / Sepich Portfolio (8 props)' with a plain HYPHEN, while the
+// already-committed data/snapshots/portfolio.json quickbooks block (a stale prior parse) carries an
+// EM DASH ('FVC — ...') for the identical class -- the export apparently varies the dash on
+// different QuickBooks report runs. Both forms are aliased so neither a fresh parse of the live CSV
+// nor a read of the already-persisted snapshot regresses. This is the '~$1.42M QB fix' the
+// 2026-08-24 sweep and this PR's own commit claimed to close -- verified live: adding ONLY the
+// em-dash form (matching the committed snapshot) would have left the ACTUAL next CSV parse
+// unresolved, since resolvePropertyId never ran the token/number-gate path successfully for this
+// key to begin with ('(8 props)' arms the street-number gate against the Sepich row, which has no
+// leading house number) -- an exact alias hit is the only path that works for this key.
 const RENT_ROLL_PROPERTY_ALIASES: Record<string, string> = {
   banwick: 'sepich-portfolio-columbus-oh-8-props',
   morrison: 'sepich-portfolio-columbus-oh-8-props',
   zettler: 'sepich-portfolio-columbus-oh-8-props',
   '4595 e. 5th ave': 'sepich-portfolio-columbus-oh-8-props',
   '4601 e. 5th ave': 'sepich-portfolio-columbus-oh-8-props',
+  'fvc - fairground village center / sepich portfolio (8 props)': 'sepich-portfolio-columbus-oh-8-props',
+  'fvc — fairground village center / sepich portfolio (8 props)': 'sepich-portfolio-columbus-oh-8-props',
+  // '1851 S Club - Solar (25% roof project)' / '1851 S Club — Solar (...)' are DELIBERATELY NOT
+  // aliased here: verified against the live 14-row property_master roster (2026-08-24) that no
+  // property (by id, name, or address) corresponds to a '1851 S Club' or 'Solar' entity -- this QB
+  // class appears to track a rooftop solar installation that was never onboarded as its own
+  // property record. Aliasing it to an existing property would be a fabricated attribution (Hard
+  // Invariant 7); it stays propertyId:null, honestly, until a real property_master row exists for
+  // it or Gabriel rules on which existing property it should roll into.
 };
 
 export function resolvePropertyId(key: string, properties: Property[]): string | null {

@@ -56,17 +56,32 @@ describe('parseQuickbooksCsv', () => {
     expect(qb.properties.find((p) => p.propertyKey === 'Unknown Strip Mall')!.propertyId).toBeNull();
   });
 
-  it('resolves a Sepich-alias QB key via RENT_ROLL_PROPERTY_ALIASES, not left null (2026-08-24 fix)', () => {
-    // Regression for Finding 3 of the 2026-08-24 integrity sweep: the old inline resolveId() never
-    // consulted the alias table, so QB rows keyed by a Sepich-portfolio sub-address (this fixture
-    // stands in for the real 'FVC' / '4595 E. 5th Ave' keys) came back propertyId:null and were
-    // silently dropped from every per-property NOI-variance row.
+  it('resolves the REAL live FVC/Sepich QB class key (both dash variants), not a stand-in fixture (2026-08-24 fix, PR #302 review)', () => {
+    // Regression for Finding 3 of the 2026-08-24 integrity sweep, corrected after PR #302 review
+    // caught the ORIGINAL version of this test using an aliased stand-in key ('4595 E. 5th Ave')
+    // that never exercised the real failure: the live QUICKBOOKS_CSV export's class column reads
+    // 'FVC - Fairground Village Center / Sepich Portfolio (8 props)' (plain hyphen, verified
+    // 2026-08-24 against ora-pl-by-property.csv); the already-committed portfolio.json snapshot's
+    // prior parse carries an em-dash variant of the identical class. Both must resolve.
     const sepichProps = [
-      { id: 'sepich-portfolio-columbus-oh-8-props', name: 'Sepich Portfolio', address: '1234 Placeholder Way, Columbus OH' },
+      { id: 'sepich-portfolio-columbus-oh-8-props', name: 'Sepich Portfolio', address: 'Sepich Portfolio, Columbus OH (8 props)' },
     ] as unknown as Property[];
-    const csv = `Property,Month,Account,Type,Amount\n4595 E. 5th Ave,2026-01,Rental Income,Income,10000`;
-    const qbSepich = parseQuickbooksCsv(csv, sepichProps, NOW)!;
-    expect(qbSepich.properties[0]!.propertyId).toBe('sepich-portfolio-columbus-oh-8-props');
+    const hyphenCsv = `Property,Month,Account,Type,Amount\nFVC - Fairground Village Center / Sepich Portfolio (8 props),2026-01,Rent,Income,10000`;
+    const emDashCsv = `Property,Month,Account,Type,Amount\nFVC — Fairground Village Center / Sepich Portfolio (8 props),2026-01,Rent,Income,10000`;
+    expect(parseQuickbooksCsv(hyphenCsv, sepichProps, NOW)!.properties[0]!.propertyId).toBe('sepich-portfolio-columbus-oh-8-props');
+    expect(parseQuickbooksCsv(emDashCsv, sepichProps, NOW)!.properties[0]!.propertyId).toBe('sepich-portfolio-columbus-oh-8-props');
+  });
+
+  it('leaves the "1851 S Club Solar" QB key propertyId:null -- no property_master row exists for it, and this must never be fabricated', () => {
+    // No property in the live 14-row roster corresponds to a '1851 S Club' or solar-rooftop entity
+    // (verified 2026-08-24) -- aliasing it to an existing property would be a fabricated
+    // attribution (Hard Invariant 7). This locks the deliberate-null decision in as a test, not
+    // just a code comment, so a future "fix" doesn't silently guess a property for it.
+    const props = [
+      { id: 'some-other-property', name: 'Some Other Property', address: '1 Other St, Columbus OH' },
+    ] as unknown as Property[];
+    const csv = `Property,Month,Account,Type,Amount\n1851 S Club - Solar (25% roof project),2026-01,Electricity Income -- PS,Income,10000`;
+    expect(parseQuickbooksCsv(csv, props, NOW)!.properties[0]!.propertyId).toBeNull();
   });
 
   it('itemizes GL expense per property (no hardcoded categories)', () => {
