@@ -1,4 +1,4 @@
-// scripts/install-git-hooks.mjs
+// scripts/install-git-hooks.ts
 //
 // Idempotently install the pre-push hooks: the confidentiality scanner (audit finding H1,
 // fail-closed/blocking) and the NOI cross-check reminder (OI-137/OI-162 fix #1, WARN-only/
@@ -7,12 +7,19 @@
 // file), writes a tiny POSIX wrapper chaining both checks, and marks it executable. Safe to run
 // repeatedly — invoked from `npm run hooks:install` and from `prepare` on install.
 //
-// Node built-ins only.
+// Native TypeScript, run via tsx (see OI-206 / reference_vitest_green_typecheck_blind_spot —
+// this file used to be plain .mjs with a hand-maintained sibling .d.mts, which drifted out of
+// sync with its exports twice and broke `npm run typecheck` while `vitest` stayed green each
+// time). Safe to convert: this script is only ever invoked through `npm run hooks:install` /
+// `prepare`, both npm-context calls where node_modules (and therefore tsx) is guaranteed
+// present — unlike the two scripts it installs as hooks, which stay plain .mjs on purpose (see
+// their own headers: "Node built-ins only, no install step" — they run from the raw shared
+// .git/hooks with no npm context and must survive a missing/wiped node_modules).
 import { existsSync, mkdirSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join, isAbsolute } from 'node:path';
 
-function git(args) {
+function git(args: string[]): string {
   return execFileSync('git', args, { encoding: 'utf8' }).trim();
 }
 
@@ -20,7 +27,7 @@ function git(args) {
 // literal template — this is what tests/unit/prepush-noi-crosscheck.test.ts guards against
 // regressing back into a blocking 'exec' of the advisory-only stage.
 export const WRAPPER = `#!/bin/sh
-# Managed by scripts/install-git-hooks.mjs.
+# Managed by scripts/install-git-hooks.ts.
 # 1) pre-push confidentiality scanner (audit H1) — fail-closed: a non-zero exit blocks the push.
 # 2) NOI cross-check reminder (OI-137/OI-162 fix #1) — ADVISORY ONLY. Its exit status must never
 #    determine this hook's exit status — no 'exec', no bare invocation as the last statement.
@@ -34,14 +41,14 @@ fi
 exit 0
 `;
 
-function main() {
-  let hooksDir;
-  let toplevel;
+function main(): void {
+  let hooksDir: string;
+  let toplevel: string;
   try {
     hooksDir = git(['rev-parse', '--git-path', 'hooks']);
     toplevel = git(['rev-parse', '--show-toplevel']);
   } catch (err) {
-    console.error(`[install-git-hooks] not a git repo or git unavailable: ${err?.message ?? err}`);
+    console.error(`[install-git-hooks] not a git repo or git unavailable: ${(err as Error)?.message ?? err}`);
     process.exit(1);
   }
 
@@ -72,7 +79,7 @@ function main() {
   } catch (err) {
     // chmod is a no-op / may fail on some Windows filesystems; the sh wrapper still runs under
     // Git for Windows. Don't fail the install over it.
-    console.warn(`[install-git-hooks] chmod skipped: ${err?.message ?? err}`);
+    console.warn(`[install-git-hooks] chmod skipped: ${(err as Error)?.message ?? err}`);
   }
 }
 

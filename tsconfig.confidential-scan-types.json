@@ -1,0 +1,19 @@
+{
+  "//": "Generates scripts/prepush-confidential-scan.d.mts from the .mjs source's own JSDoc, run as a pre-step of `npm run typecheck` (see package.json). prepush-confidential-scan.mjs stays plain .mjs on purpose -- it is the repo's fail-closed pre-push security gate, invoked directly by the raw shared .git/hooks/pre-push shell script with no npm context, and must keep running even if node_modules is missing or wiped. A hand-maintained sibling .d.mts drifted out of sync with its exports twice (see OI-206 / reference_vitest_green_typecheck_blind_spot_2026-08-24.md in ~/.claude memory) -- generating it fresh from source on every typecheck run makes that drift structurally impossible instead of relying on a human remembering to update it. The output is gitignored, never committed -- there is nothing to go stale.",
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "moduleDetection": "force",
+    "allowJs": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "noEmitOnError": true,
+    "types": ["node"]
+  },
+  "include": ["scripts/prepush-confidential-scan.mjs"]
+}

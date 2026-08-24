@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { WRAPPER } from '../../scripts/install-git-hooks.mjs';
+import { WRAPPER } from '../../scripts/install-git-hooks';
 
 // Regression coverage for the bug an adversarial review caught before this landed (2026-08-16):
 // the pre-push wrapper originally `exec`d the advisory-only NOI cross-check script as its last
