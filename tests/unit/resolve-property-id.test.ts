@@ -333,5 +333,41 @@ describe('resolvePropertyId', () => {
       expect(resolvePropertyId('4595 E. 5th Ave', properties)).toBeNull();
       expect(resolvePropertyId('4601 E. 5th Ave', properties)).toBeNull();
     });
+
+    // Ported 2026-08-24 from the parallel branch (PR #289 / #292 lineage, closed unmerged) so its
+    // coverage is not lost with the branch. Two sessions fixed this independently and produced
+    // byte-identical alias keys, but that branch's tests covered two cases this file did not.
+    //
+    // (1) ALIAS PRECEDENCE. The test above only proves the fallthrough when Sepich is ABSENT.
+    // The live case has BOTH rows present, and the alias must win there — resolving to Sepich and
+    // never to the same-street, different-building 3540. Nothing here asserted that before.
+    it('resolves the E. 5th Ave keys to Sepich, never to the unrelated 3540 E. 5th Ave building', () => {
+      const properties = [
+        sepich,
+        mkProperty('3540-e-5th-ave-columbus-oh', '3540 E. 5th Ave, Columbus OH'),
+      ];
+      expect(resolvePropertyId('4595 E. 5th Ave', properties)).toBe('sepich-portfolio-columbus-oh-8-props');
+      expect(resolvePropertyId('4601 E. 5th Ave', properties)).toBe('sepich-portfolio-columbus-oh-8-props');
+    });
+
+    // (2) OVER-REACH GUARD. Aliasing two specific, workbook-corroborated keys must not become a
+    // licence to sweep in any other E. 5th Ave address. An un-corroborated neighbour on the same
+    // street must still resolve to null via the street-number range guard, and must NOT be
+    // swallowed by the new aliases. This is the surviving intent of the superseded
+    // "4595 -> null" assertion, and had no equivalent here.
+    it('does not alias an un-corroborated neighbouring address on the same street', () => {
+      const properties = [
+        sepich,
+        mkProperty('3540-e-5th-ave-columbus-oh', '3540 E. 5th Ave, Columbus OH'),
+      ];
+      expect(resolvePropertyId('4700 E. 5th Ave', properties)).toBeNull();
+    });
+
+    // Broader form of the absent-target contract: an EMPTY properties array, not just an array
+    // holding an unrelated property. Same defense-in-depth rule the other aliases hold to.
+    it('falls through to null for the E. 5th Ave keys when properties is empty', () => {
+      expect(resolvePropertyId('4595 E. 5th Ave', [])).toBeNull();
+      expect(resolvePropertyId('4601 E. 5th Ave', [])).toBeNull();
+    });
   });
 });
