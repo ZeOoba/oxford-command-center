@@ -5,14 +5,24 @@
  * scripts/ar-import.ts. Built for a scheduled task: no prompts, no running server required.
  *
  * Per-run pipeline:
- *   scan AR_INBOX/*.pdf + *.xlsx
- *     → pdfplumber text  (server/ar/pdf-extract)
- *     → parse buckets    (server/ar/ar-aging — Yardi/AppFolio "Aging Detail"; RM delinquency unsupported)
- *     → partition        (server/ar/partition-confidence — AUTO-WRITE HIGH-CONFIDENCE ONLY)
- *          · exact / high-≥2-token / cache-confirmed  → write
- *          · everything else                          → review queue (never written)
+ *   scan AR_INBOX/*.pdf + *.xlsx — TWO parse branches, then a shared attribute/write path
+ *     → xlsx: ExcelJS → ordered detect (each detector's row-1 check is disjoint, so the order is
+ *             chosen for readability/frequency, not correctness):
+ *               · rent-manager-delinquency  ("Delinquency (Detail)")
+ *               · delinquency-transactional (Yardi "DB Caption:")
+ *               · delinquency-bucketed      (two-bucket, unit-only "Delinquency")
+ *       pdf:  pdfplumber text (server/ar/pdf-extract) → parse (server/ar/ar-aging — Yardi/AppFolio
+ *             "Aging Detail" ONLY; an RM delinquency report is unsupported *as a PDF*, though the
+ *             xlsx form of that same report parses fine via the first detector above)
+ *     → attribute each row to a lease — which matcher runs depends on the format:
+ *          · delinquency-bucketed → by UNIT (server/ar/resolve-by-unit). Format B carries NO tenant
+ *            name, so it cannot use the name-matching path; it resolves and logs in its own branch.
+ *          · every other format   → by NAME (server/ar/partition-confidence — AUTO-WRITE
+ *            HIGH-CONFIDENCE ONLY)
+ *               · exact / high-≥2-token / cache-confirmed  → write
+ *               · everything else                          → review queue (never written)
  *     → write overlay (canonical) + patch snapshot (immediate 4c visibility)
- *     → append review queue · update mapping cache · archive the PDF
+ *     → append review queue · update mapping cache · archive the source file (pdf or xlsx alike)
  *
  * SAFETY: mirrors the interactive script's `autoAccept` rule exactly — a below-high-confidence or
  * ambiguous match is NEVER auto-attributed. Those land in AR_INBOX/../review-queue.json, which NOTHING
