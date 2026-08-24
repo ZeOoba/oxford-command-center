@@ -22,6 +22,11 @@
 //      to it, so this correctly falls through to review rather than auto-matching on partial overlap
 //      — whether the AR row's balance belongs entirely to that merged lease, or the export is
 //      tracking a sub-unit ORA's roster no longer breaks out separately, is a human call.
+//
+//   3. The export sometimes appends a PARENTHETICAL USE descriptor to the label ('C 4 (storage)');
+//      ORA's roster never does. It is an annotation, not identity, so stripAnnotations() removes it
+//      before canonicalization — the comparison stays set-EQUALITY exact, it just no longer treats
+//      'STORAGE' as part of the unit token. Found live on the 2026-08-21 nbc-c export.
 
 import type { BucketedUnitRow } from './delinquency-bucketed';
 
@@ -52,13 +57,29 @@ function canonicalToken(raw: string): string {
 const DIGITS_AND_SEPS = /^[\d+\-&,\s]+$/;
 const SEP = /[+\-&,]/;
 
+/** Strip a parenthetical descriptor the PM export appends to a unit label ('C 4 (storage)' -> 'C 4').
+ *  A parenthetical says what the space is USED for; it is never part of the unit's identity, and the
+ *  lease roster never carries one. Removing it BEFORE canonicalization keeps the match EXACT rather
+ *  than weakening it — without this, '(storage)' folds into the token ('C4STORAGE') and matches
+ *  nothing, sending a real balance to review forever (found live: the 2026-08-21 nbc-c row).
+ *  Two leases whose labels differ only by annotation still canonicalize to the SAME token and are
+ *  caught by resolveByUnit()'s hits.length > 1 ambiguity branch, so this cannot silently mis-attribute. */
+function stripAnnotations(raw: string): string {
+  return raw.replace(/\([^()]*\)/g, ' ').trim();
+}
+
 /** Expand a compound unit label into its set of canonical tokens. Handles a single letter shared
  *  across a separator-delimited numeric list, in EITHER position ('C 1-2' -> {C1,C2}; '11-12A' ->
  *  {A11,A12}), and falls back to canonicalizing each separator-delimited piece independently when
  *  every piece already carries its own letter ('A11+A12+C3' -> {A11,A12,C3}). Delimiters: '+', '-',
- *  '&', ',', and the word 'and'. */
+ *  '&', ',', and the word 'and'. A trailing parenthetical annotation is stripped first. */
 export function expandUnitTokens(raw: string): Set<string> {
-  const normalized = raw.trim().toUpperCase().replace(/\bAND\b/g, '+');
+  const stripped = stripAnnotations(raw);
+  // A label that is ONLY an annotation ('(storage)') carries no unit identity at all. Return an
+  // EMPTY set so resolveByUnit() routes it to human review, rather than letting it canonicalize to
+  // the empty token and set-equal some other label that also reduces to nothing.
+  if (stripped === '' && raw.trim() !== '') return new Set();
+  const normalized = stripped.toUpperCase().replace(/\bAND\b/g, '+');
 
   const leadMatch = /^([A-Z]+)\s*(.+)$/.exec(normalized);
   const leadBody = leadMatch?.[2] ?? '';
