@@ -32,7 +32,7 @@ const BUILTIN_DENYLIST = [
 const EXCLUDE_PATHS = new Set([
   'scripts/prepush-confidential-scan.mjs',
   'scripts/prepush-confidential-scan.d.mts',
-  'scripts/install-git-hooks.mjs',
+  'scripts/install-git-hooks.ts',
   'tests/unit/prepush-confidential-scan.test.ts',
 ]);
 
@@ -167,6 +167,7 @@ export function currentRepoName(cwdOverride) {
  *
  * @param {string} repoName
  * @param {string} [homeDirOverride] - test seam; defaults to os.homedir().
+ * @returns {boolean}
  */
 export function isRegisteredConfidentialRepo(repoName, homeDirOverride) {
   if (!repoName) return false;
@@ -265,11 +266,11 @@ export function scanDiffForContextTerms(addedLines, contextGroups) {
   return hits;
 }
 
+// Parses a unified `git diff` into ADDED content lines only ('+' lines, excluding the '+++' file
+// header), tracking the current file (from '+++ b/<path>') and new-side line numbers (from the
+// unified-diff hunk-header markers). Note: those markers are not spelled out literally inside the
+// JSDoc block below because two adjacent '@' characters there parse as an (invalid) JSDoc tag.
 /**
- * Parse a unified `git diff` into ADDED content lines only ('+' lines, excluding the '+++' file
- * header), tracking the current file (from '+++ b/<path>') and new-side line numbers (from
- * '@@ -a,b +c,d @@' hunk headers).
- *
  * @param {string} diffText
  * @returns {{file: string, lineNo: number, text: string}[]}
  */
