@@ -597,7 +597,17 @@ async function main(): Promise<void> {
   if (overlayWriteFailed) process.exitCode = 1;
 }
 
-main().catch((e: unknown) => {
-  console.error('\n✗ Fatal:', e instanceof Error ? e.message : String(e));
-  process.exit(1);
-});
+// Run the sweep ONLY when invoked as the entry script -- never on import. This script is the single
+// writer of THREE tracked files (data/ar/review-queue.json, data/ar-mapping-cache.json, and
+// data/snapshots/portfolio.json via patchSnapshot) plus data/overlay.json, and portfolio.json is
+// auto-committed/auto-pushed by the snapshot-refresh scheduled tasks -- so an accidental import (a
+// future test reaching for a helper in here) would run a live AR sweep and land its residue in an
+// unattended commit. Same guard, and same rationale, as every sibling script here.
+// ora-ar-feed-sweep invokes `npx tsx scripts/ar-import-headless.ts`, so argv[1] still matches and
+// the unattended run behaves exactly as before.
+if (process.argv[1]?.replace(/\\/g, '/').endsWith('scripts/ar-import-headless.ts')) {
+  main().catch((e: unknown) => {
+    console.error('\n✗ Fatal:', e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  });
+}
