@@ -13,9 +13,16 @@
 -- the "unmarked basis/provenance discontinuity in a permanent history table" class to recur a
 -- third time (it already did once for book_trust — see 027).
 --
--- Existing rows default to '100pct': every row written before this migration IS 100%-basis, by
--- construction — 9cb6169 is the only commit that has ever changed how this table's NOI is
--- derived. New rows are stamped 'oxford-share' by debt-scores-persistence.ts going forward.
+-- CORRECTED 2026-08-24 (PR #302 review): the ADD COLUMN's DEFAULT stamps EVERY existing row
+-- '100pct', which is false for the ~2-day window between 9cb6169 landing (2026-08-22) and this
+-- migration running -- rows written in that window already used the oxford-share basis, and the
+-- blanket default would mislabel them, inverting the exact discontinuity marker this column exists
+-- to provide. The UPDATE below corrects that window explicitly. Verified harmless on this
+-- environment's live warehouse: debt_scores has 0 rows total, so both the ADD COLUMN default and
+-- the UPDATE below touch nothing here -- this is defensive correctness for any OTHER environment
+-- where persistDebtScores ran during that window, not a live fix.
 ALTER TABLE debt_scores
   ADD COLUMN noi_basis TEXT NOT NULL DEFAULT '100pct'
   CHECK (noi_basis IN ('100pct', 'oxford-share'));
+
+UPDATE debt_scores SET noi_basis = 'oxford-share' WHERE scored_at >= '2026-08-22';
