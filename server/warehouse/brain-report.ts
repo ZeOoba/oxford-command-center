@@ -436,6 +436,16 @@ function buildVersionLog(db: WarehouseDb): VersionEvent[] {
 
 // ── entry point ──────────────────────────────────────────────────────────────────────────────
 
+/** Most recent import_batches.imported_at across the whole warehouse, or null when nothing has
+ *  been imported yet. This is the "data current as of" signal — distinct from buildBrainReport's
+ *  `asOf` param, which is report-GENERATION time (see that field's contract-level doc). */
+function latestImportedAt(db: WarehouseDb): string | null {
+  const row = db.prepare('SELECT MAX(imported_at) AS latest FROM import_batches').get() as
+    | { latest: string | null }
+    | undefined;
+  return row?.latest ?? null;
+}
+
 /**
  * Build the composed Command Brain report. Correct on an empty warehouse: every count is 0, every
  * rate/CI is null, every array is [] — never throws, never fabricates a figure. `asOf` is supplied
@@ -454,6 +464,7 @@ export function buildBrainReport(db: WarehouseDb, asOf: string): BrainReport {
 
   return {
     asOf,
+    dataAsOf: latestImportedAt(db),
     overallHitRate: report.overallHitRate,
     overallCi: buildOverallCi(report),
     resolvedTotal: report.resolvedVerdicts,

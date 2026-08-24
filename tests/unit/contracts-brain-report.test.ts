@@ -204,6 +204,7 @@ describe('TrackRecordEntry', () => {
 describe('BrainReport', () => {
   const minimalValid = {
     asOf: '2026-07-06',
+    dataAsOf: '2026-07-05T18:00:00.000Z',
     overallHitRate: 0.68,
     overallCi: { lo: 0.55, hi: 0.79 },
     resolvedTotal: 40,
@@ -244,5 +245,15 @@ describe('BrainReport', () => {
 
   it('rejects advisoryOnly: false', () => {
     expect(() => BrainReport.parse({ ...minimalValid, advisoryOnly: false })).toThrow();
+  });
+
+  it('accepts a null dataAsOf (a warehouse with no imports yet)', () => {
+    const result = BrainReport.parse({ ...minimalValid, dataAsOf: null });
+    expect(result.dataAsOf).toBeNull();
+  });
+
+  it('rejects a missing dataAsOf', () => {
+    const { dataAsOf: _omit, ...noDataAsOf } = minimalValid as Record<string, unknown>;
+    expect(() => BrainReport.parse(noDataAsOf)).toThrow();
   });
 });

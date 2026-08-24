@@ -117,6 +117,14 @@ export type TrackRecordEntry = z.infer<typeof TrackRecordEntry>;
 /** GET /api/warehouse/brain/report response envelope (5a.2). */
 export const BrainReport = z.object({
   asOf: z.string(),
+  // The warehouse's own most-recent import_batches.imported_at, distinct from `asOf` (which is
+  // report-GENERATION time — the request time on a live server, or BAKE time on the unattended
+  // scheduled-deploy mirror). Added 2026-08-24 (integrity-sweep Finding 10): before this field, a
+  // bake against a stalled import pipeline (finance.sqlite weeks behind — a documented live
+  // failure mode) kept restamping the SAME stale calibration/track-record figures with a
+  // fresh-looking `asOf` on every unattended deploy, with no signal that the underlying data
+  // hadn't moved. Null on a warehouse with no imports yet (never fabricated).
+  dataAsOf: z.string().nullable(),
   overallHitRate: z.number().nullable(),
   overallCi: z.object({ lo: z.number(), hi: z.number() }).nullable(),
   resolvedTotal: z.number().int().nonnegative(),
