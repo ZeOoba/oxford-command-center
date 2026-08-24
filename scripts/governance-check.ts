@@ -87,8 +87,9 @@ export function checkRouteDuplication(root: string): GovernanceResult {
     return { pass: true, errors: [], warnings: [] };
   }
 
-  // Extract route strings: app.get("/api/foo") → "/api/foo"
-  const routePattern = /app\.\w+\(\s*['"`](\/api\/[^'"`]+)['"`]/g;
+  // Extract route strings: app.get("/api/foo") → "/api/foo". The method name is captured so
+  // middleware can be told apart from handlers below.
+  const routePattern = /app\.(\w+)\(\s*['"`](\/api\/[^'"`]+)['"`]/g;
   const seen = new Map<string, string>(); // route → file
 
   for (const filePath of files) {
@@ -100,12 +101,23 @@ export function checkRouteDuplication(root: string): GovernanceResult {
     }
     let match: RegExpExecArray | null;
     while ((match = routePattern.exec(content)) !== null) {
-      const route = match[1];
+      const method = match[1];
+      const route = match[2];
       if (!route) continue;
+      // app.use() registers MIDDLEWARE, not a handler, and stacking several on one path is the
+      // normal composition pattern rather than a conflict -- server/index.ts deliberately mounts
+      // cors() and then accessAuthz() on '/api/*', in that order, and its own comment there
+      // requires the authz layer to sit ahead of every route. Counting those as a duplicate made
+      // `npm run governance` fail on correct code (and report the same file as "both" sides of the
+      // collision, which read as a bug in the checker). Only handler/mount registrations can
+      // genuinely collide on a path, so middleware is skipped.
+      if (method === 'use') continue;
       const prev = seen.get(route);
       if (prev) {
         errors.push(
-          `DUPLICATE route "${route}" defined in both ${prev} and ${filePath}`,
+          prev === filePath
+            ? `DUPLICATE route "${route}" defined twice in ${filePath}`
+            : `DUPLICATE route "${route}" defined in both ${prev} and ${filePath}`,
         );
       } else {
         seen.set(route, filePath);

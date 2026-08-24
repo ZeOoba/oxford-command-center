@@ -145,6 +145,48 @@ describe('checkRouteDuplication', () => {
     expect(result.pass).toBe(false);
     expect(result.errors.some((e) => e.includes('/api/health'))).toBe(true);
   });
+
+  // Regression: app.use() registers MIDDLEWARE, and stacking several on one path is normal
+  // composition, not a collision. server/index.ts mounts cors() then accessAuthz() on '/api/*'
+  // (in that order, deliberately), which made `npm run governance` fail on correct code.
+  it('does NOT flag repeated app.use() middleware on the same path', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue(['index.ts'] as never);
+    mockReadFileSync.mockReturnValue(
+      `app.use('/api/*', cors({ origin: isAllowedOrigin }));
+app.use('/api/*', accessAuthz(opts));`,
+    );
+    const result = checkRouteDuplication('/fake/root');
+    expect(result.pass).toBe(true);
+    expect(result.errors).toHaveLength(0);
+  });
+
+  // ...but middleware must not become a blanket exemption: a real handler collision on a path that
+  // also carries middleware is still a collision.
+  it('still flags a real handler duplicate on a path that also has app.use() middleware', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue(['index.ts'] as never);
+    mockReadFileSync.mockReturnValue(
+      `app.use('/api/health', mw);
+app.get('/api/health', a);
+app.get('/api/health', b);`,
+    );
+    const result = checkRouteDuplication('/fake/root');
+    expect(result.pass).toBe(false);
+    expect(result.errors.some((e) => e.includes('/api/health'))).toBe(true);
+  });
+
+  it('says "twice in <file>" rather than naming the same file as both sides', () => {
+    mockExistsSync.mockReturnValue(true);
+    mockReaddirSync.mockReturnValue(['index.ts'] as never);
+    mockReadFileSync.mockReturnValue(`app.get('/api/dup', a);
+app.get('/api/dup', b);`);
+    const result = checkRouteDuplication('/fake/root');
+    expect(result.pass).toBe(false);
+    // The old message read "defined in both X and X", which read as a bug in the checker itself.
+    expect(result.errors.some((e) => e.includes('twice in') && e.includes('/api/dup'))).toBe(true);
+    expect(result.errors.some((e) => e.includes('in both'))).toBe(false);
+  });
 });
 
 describe('checkAcqGovernorCoupling', () => {
