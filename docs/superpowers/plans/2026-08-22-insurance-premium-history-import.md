@@ -906,10 +906,13 @@ This is the fully-reconciled payload from the design spec's §4.1 mapping, cross
 }
 ```
 
-**Why only 13 rows, not the ~19–20 in the original estimate — two items deferred, not guessed:**
+**Why only 13 rows across 5 of the 7 `PROPS` properties, not ~19–20 across all 7 — one property needed zero rows, two items deferred, none guessed:**
 
-1. **3034 Westerville's 2025-26 and 2026-27 terms are withheld.** The *existing* `ins-3034westerville-pckg` row (`effective_date '2025-09-18'`, `premium_annual REDACTED-AMT`) pairs a 2024-25 premium ($REDACTED-AMT, confirmed by Source Index's "new dec 09/24/2024; premium $REDACTED-AMT") with what looks like a 2025-26-dated key. Inserting the true 2025-26 term ($REDACTED-AMT) at the same `2025-09-18` date this importer would treat as an UPDATE to that existing (likely mis-dated) row — silently overwriting a discrepancy instead of surfacing it. Task 5 logs this as a `data_quality_issues` row for Gabriel/a follow-up session to resolve against the source PDF; this plan does not guess at the true date.
+0. **3875-3883 Livingston needed zero new rows — not a gap, verified against the live DB.** `PROPS['3883']` has only two policy years (`2025-2026`, `2026-2027`) because the property is new business (Source Index: "New business 06/11/2025" — there is no 2024-25 term to have ever existed). Both years are already present in `property_insurance_policies` exactly matching `PROPS`: `ins-3883livingston-pckg`/`-bcl`, policy numbers `REDACTED-622`/`REDACTED-607`, `2025-06-11`→5815/614 and `2026-06-11`→5687/614. Re-confirmed against the live warehouse before closing this track (2026-08-22) after the whole-branch review flagged Livingston's absence from the payload as unexplained — it's fully covered, not missed.
+1. **3034 Westerville's 2025-26 and 2026-27 terms are withheld.** The *existing* `ins-3034westerville-pckg` row (`effective_date '2025-09-18'`, `premium_annual REDACTED-AMT`) pairs a 2024-25 premium ($REDACTED-AMT, confirmed by Source Index's "new dec 09/24/2024; premium $REDACTED-AMT") with what looks like a 2025-26-dated key. Inserting the true 2025-26 term ($REDACTED-AMT) at the same `2025-09-18` date this importer would treat as an UPDATE to that existing (likely mis-dated) row — silently overwriting a discrepancy instead of surfacing it. Task 5 logs this as a `data_quality_issues` row for Gabriel/a follow-up session to resolve against the source PDF; this plan does not guess at the true date. **Update (2026-08-22, post-merge-review):** the Track A import also added a *new* row for the confirmed 2024-25 term (`effective_date '2024-09-24'`, same premium $REDACTED-AMT, id 1360) — two rows now carry the same $REDACTED-AMT figure at different dates. `data_quality_issues` id=3's detail was amended to name both rows explicitly so a follow-up session isn't misled by the original text, which predated the second row.
 2. **9620 State 350 is entirely out of scope for this payload**, per spec §3 — it has a documented carrier-naming discrepancy (broker name recorded where a carrier name belongs, in the 2 existing 2025-10-18 rows), an unresolved mid-term cancellation (superseded 05/28/2026, `expiration_date` on the existing row still shows the original term end), and a Hartford 2026-27 bundle whose GL/Umbrella/fees breakdown doesn't cleanly map ($329 GL + $336 new umbrella + an unexplained $599 remainder ≠ the dashboard's single $1,264 "umbrella" figure). All three are already tracked in `reference_insurance_9620_state350_and_deductible_ladder_2026-08-17.md` — this track does not reopen them.
+
+**Constraint for any future history import into this table (surfaced by the final whole-branch review, 2026-08-22):** `server/warehouse/insurance-analysis.ts`'s `collapseToCurrentTerm`/`isMoreCurrent` picks the "current" term of a policy line by `source_date` DESC first, `effective_date` only as a tiebreak. This track's 13 rows are safe only because they all carry `source_date = '2026-08-17'`, which ties the existing `brain-server` rows and falls back to the (correct) effective-date ordering. A *future* history backfill whose `source_date` is newer than the live capture's, importing an *older* policy term, would make that older term win its cluster and surface as "current" in `renewalCalendar`/`premiumAnnualTotal`/`policiesN`/the `insurance-expiry-soon` insight. Any future `--policies` import of back-dated history must keep `sourceDate` no newer than the most recent live capture for that property, or `collapseToCurrentTerm` needs a real "is this superseded history" signal instead of relying on capture recency.
 
 - [ ] **Step 2: Validate the JSON is well-formed**
 
@@ -959,6 +962,8 @@ Expected: one row, `status: 'open'`.
 
 (No commit — this only touches the gitignored `data/warehouse/finance.sqlite`, not a tracked file.)
 
+**Amended 2026-08-22 (post-merge-review) — do not re-run Step 1's `detail` text verbatim.** After Task 6 ran the import, this row's `detail` was updated in place (`UPDATE data_quality_issues SET detail = ... WHERE id = 3`) to also name the new row the import added at the correct 2024-25 date (id 1360, `effective_date '2024-09-24'`) alongside the pre-existing suspect row (id 1336, `effective_date '2025-09-18'`) — Step 1's text above predates that insert and only describes the one row. If this warehouse is ever rebuilt from scratch and this plan re-run, re-derive the amended two-row wording from the live DB (or from `.superpowers/sdd/progress.md`'s "Final whole-branch review" section) rather than reusing Step 1's original text.
+
 ---
 
 ### Task 6: Run the import and verify
@@ -1005,3 +1010,39 @@ Confirm only this plan's files show as committed/clean (the spec, the script cha
 - **Spec coverage:** §5 upsert semantics → Task 2. §6 validation + unrecognized-line DQ check → Tasks 1 & 2. §7 testing → Tasks 1–3. §4.1 identity mapping → Task 4's payload. §8 rollout → Tasks 4–6. §3/§9 non-goals (9620, the 4 non-PROPS entities, `--dec-pages`) → explicitly not attempted; Task 4's "why only 13 rows" note documents the 9620 exclusion and the one new Westerville finding.
 - **Type consistency:** `ParsedPolicyRow`, `ImportPolicyRowsResult`, `importPolicyRows`, `importPolicies`, `parsePoliciesPayload` are named identically everywhere they're referenced across Tasks 1–3 and in the "Interfaces" blocks.
 - **No placeholders:** every step has literal code, exact commands, and exact expected output; the payload in Task 4 is the actual final data, not a sample.
+
+## Post-merge-review addendum: current-term coverage_tiv backfill (2026-08-22)
+
+The final whole-branch review's background continuation found the actual dashboard artifact (which
+neither the original spec-writing pass nor the first review pass could reach) and surfaced a real
+finding: `PROPS` carries a building/TIV figure (`t`) for every property-year, but this track's 13
+inserted rows are all *superseded history* — the *current* terms for 5 of those lines
+(`ins-1900broadway-ufx`, `ins-3034westerville-pckg`, `ins-3540fifth-pckg`, `ins-3883livingston-pckg`,
+`ins-fvc-pckg`) already existed pre-Track-A with `coverage_tiv = NULL`. `classifyCohort` in
+`server/warehouse/insurance-analysis.ts` routes any `tiv === null` row to `'excluded-null-tiv'`,
+dropping it from rate-per-$100 math, the own-book median benchmark, and `rebidCandidates` — so the
+dashboard's own headline analysis (e.g. relative rate positioning) was uncomputable for exactly the
+rows that matter, while TIV sat populated on 13 rows nothing reads.
+
+**Fix:** a targeted `UPDATE property_insurance_policies SET coverage_tiv = ? WHERE id = ? AND
+coverage_tiv IS NULL` for 8 affected rows with a known `PROPS` TIV (ids 1316, 1341, 1336, 1337, 1273,
+1348, 1255, 1330 — 5 of these are each line's current term; 3 (1255, 1273, 1316) are superseded terms
+whose TIV was also unknown and got filled in as a side effect of touching the same lineage, harmless
+since `coverage_tiv` isn't part of the `isMoreCurrent` ranking. `ins-55newplant-pckg`'s current
+2026-27 term is NOT included; `PROPS` has no 2026-2027 entry for EGF at all, a genuine source gap, not
+an oversight). Deliberately **not** routed through the `--policies` upsert: that mode's UPDATE also
+overwrites `insurer`/`policy_type`/`expiration_date`/`source`/`source_date`/`ingested_by`, which would
+misattribute these rows' entire capture to this TIV-only enrichment. A narrow single-column UPDATE
+(same pattern as the existing `--dec-pages` mode's `SET deductible = ?, coverage_limit = ? WHERE id =
+?`) is the right-scoped tool for enriching one field on an existing capture without touching its
+provenance. Verified before/after: total row count unchanged at 47, every other column on all 8 rows
+identical to its pre-update value. **Correction (closing re-review, 2026-08-22):** this section
+originally claimed "11 remaining NULL-TIV current-term rows, all belonging to out-of-scope
+properties" — wrong on both the count and part of the reason. The actual current-term NULL-TIV count
+is **21**: 15 genuinely belong to properties `PROPS` doesn't cover at all (1100 Rarig, 2203 Northwood,
+29000 Information Ln, 9050 Red Branch, 9620 GL/Property, ETC POA, 1851 South Club, 401 Sunburst, 7658
+Fishel), and **6 sit within the 5 properties this track does cover** — the current BCL/umbrella line
+for 1900 Broadway, 3540 Fifth, 3883 Livingston, and FVC (`PROPS` never supplies a TIV for the
+liability line, only the package/building line, so these are correctly NULL by design, not a gap) plus
+55 New Plant Ct's current package term (the same already-noted source gap: no 2026-2027 entry in
+`PROPS` for EGF at all). No further backfill is warranted from this source for any of the 21.
