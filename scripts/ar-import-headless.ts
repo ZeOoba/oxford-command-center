@@ -103,15 +103,25 @@ interface QueuedReview extends ArReviewRow {
   queuedAt: string;
 }
 
-/** Read {id, tenantName, company} for every lease from the persisted snapshot. */
-function loadLeasesFromSnapshot(): LeaseLite[] {
+/** Read {id, tenantName, company} for every lease from the persisted snapshot, EXCLUDING any lease
+ *  whose status is 'Expired'. An exact tenant-name hit against a dead lease auto-writes at 'exact'
+ *  confidence with no human review (matchTenantToLease has no status awareness) -- the 2026-08-24
+ *  integrity-sweep incident: a human SKIP ruling on an Expired lease's residual delinquency
+ *  (2207-northwood-c4-anibal-morales, "no current occupant") was silently reversed the next time this
+ *  loader fed that same dead lease back into the matcher. Dropping Expired leases from the candidate
+ *  pool entirely means a current-period export naming a vacated tenant can no longer auto-attribute --
+ *  it falls through to 'none' confidence and lands in the review queue instead, which is the correct
+ *  place for a human to re-confirm a SKIP or re-attribute to whatever now occupies the unit. */
+export function loadLeasesFromSnapshot(): LeaseLite[] {
   if (!existsSync(SNAPSHOT_PATH)) {
     throw new Error(`Snapshot not found at ${SNAPSHOT_PATH} — run a Brain refresh first (npm run dev).`);
   }
   const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')) as {
-    leases?: Array<{ id: string; tenantName: string; company: string | null }>;
+    leases?: Array<{ id: string; tenantName: string; company: string | null; status?: string | null }>;
   };
-  return (snap.leases ?? []).map((l) => ({ id: l.id, tenantName: l.tenantName, company: l.company ?? null }));
+  return (snap.leases ?? [])
+    .filter((l) => l.status !== 'Expired')
+    .map((l) => ({ id: l.id, tenantName: l.tenantName, company: l.company ?? null }));
 }
 
 /** Read {id, unit, propertyId} for every lease from the persisted snapshot, for Format B's
