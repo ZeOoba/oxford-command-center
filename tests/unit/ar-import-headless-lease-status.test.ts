@@ -22,10 +22,10 @@ function writeFixtureSnapshot(): void {
     snapshotPath,
     JSON.stringify({
       leases: [
-        { id: 'active-lease-1', tenantName: 'Active Tenant Co', company: 'Active Tenant Co', status: 'Active' },
-        { id: 'expiring-soon-lease-1', tenantName: 'Soon Gone LLC', company: 'Soon Gone LLC', status: 'Expiring Soon' },
-        { id: '2207-northwood-c4-anibal-morales', tenantName: 'Anibal Morales', company: 'Anibal Morales', status: 'Expired' },
-        { id: 'unknown-status-lease-1', tenantName: 'Mystery Tenant', company: null, status: 'Unknown' },
+        { id: 'active-lease-1', tenantName: 'Active Tenant Co', company: 'Active Tenant Co', status: 'Active', unit: 'A1', propertyId: 'prop-a' },
+        { id: 'expiring-soon-lease-1', tenantName: 'Soon Gone LLC', company: 'Soon Gone LLC', status: 'Expiring Soon', unit: 'A2', propertyId: 'prop-a' },
+        { id: '2207-northwood-c4-anibal-morales', tenantName: 'Anibal Morales', company: 'Anibal Morales', status: 'Expired', unit: 'C4', propertyId: 'prop-a' },
+        { id: 'unknown-status-lease-1', tenantName: 'Mystery Tenant', company: null, status: 'Unknown', unit: 'A3', propertyId: 'prop-a' },
       ],
     }),
   );
@@ -41,7 +41,7 @@ describe('loadLeasesFromSnapshot excludes Expired leases from the auto-match can
     const { loadLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
     const leases = loadLeasesFromSnapshot();
     expect(leases.find((l) => l.id === '2207-northwood-c4-anibal-morales')).toBeUndefined();
-  }, 20000); // first dynamic import of this module graph is transform-heavy
+  }, 45000); // first dynamic import of this module graph is transform-heavy
 
   it('keeps Active, Expiring Soon, and Unknown-status leases as match candidates', async () => {
     vi.resetModules();
@@ -61,6 +61,44 @@ describe('loadLeasesFromSnapshot excludes Expired leases from the auto-match can
     // No candidate at all -> 'none' confidence -> falls through to human review, never an auto-write.
     expect(match.leaseId).toBeNull();
     expect(match.confidence).toBe('none');
+  });
+});
+
+describe('loadUnitLeasesFromSnapshot excludes Expired leases from the Format B auto-match candidate pool', () => {
+  // PR #302 review finding (Qodo): the name-based fix above left the UNIT-based Format B path
+  // (loadUnitLeasesFromSnapshot -> resolveByUnit) with the identical exposure -- resolveByUnit's
+  // exact-match branch auto-writes with no human review, so an Expired lease could still be
+  // silently re-attributed through a unit-only export even after the name-based path was closed.
+  beforeEach(() => {
+    writeFixtureSnapshot();
+  });
+
+  it('drops the Expired lease (Anibal Morales, unit C4) entirely', async () => {
+    vi.resetModules();
+    const { loadUnitLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
+    const leases = loadUnitLeasesFromSnapshot();
+    expect(leases.find((l) => l.id === '2207-northwood-c4-anibal-morales')).toBeUndefined();
+  }, 20000); // first dynamic import of this module graph is transform-heavy
+
+  it('keeps Active, Expiring Soon, and Unknown-status leases as unit-match candidates', async () => {
+    vi.resetModules();
+    const { loadUnitLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
+    const leases = loadUnitLeasesFromSnapshot();
+    expect(leases.map((l) => l.id).sort()).toEqual(
+      ['active-lease-1', 'expiring-soon-lease-1', 'unknown-status-lease-1'].sort(),
+    );
+  });
+
+  it('end-to-end: resolveByUnit can no longer auto-attribute unit C4 once its lease is Expired', async () => {
+    vi.resetModules();
+    const { loadUnitLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
+    const { resolveByUnit } = await import('../../server/ar/resolve-by-unit');
+    const leases = loadUnitLeasesFromSnapshot();
+    const res = resolveByUnit({ unit: 'C4', property: 'prop-a', d30: 0.38, d30plus: 0 }, leases, 'prop-a');
+    // No candidate at all -> 'none' confidence -> falls through to human review, never an auto-write.
+    expect(res.leaseId).toBeNull();
+    expect(res.confidence).toBe('none');
+    expect(res.ambiguous).toBe(false);
   });
 });
 

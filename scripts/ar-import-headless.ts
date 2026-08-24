@@ -128,12 +128,20 @@ export function loadLeasesFromSnapshot(): LeaseLite[] {
  *  (property, unit) resolution — a different projection than loadLeasesFromSnapshot's
  *  {id, tenantName, company}, which match-tenant.ts's NAME-based matching needs instead. Kept as a
  *  separate loader rather than widening LeaseLite itself: LeaseLite is a shared type match-tenant.ts
- *  exports, and widening it would ripple into every consumer of name-based matching for no reason. */
-function loadUnitLeasesFromSnapshot(): UnitLease[] {
+ *  exports, and widening it would ripple into every consumer of name-based matching for no reason.
+ *
+ * EXCLUDES Expired leases, same as loadLeasesFromSnapshot above (2026-08-24 integrity sweep,
+ * Finding 1 follow-up — caught by PR #302 review): resolveByUnit's exact-match branch auto-writes
+ * with no human review, so this loader had the identical "dead lease resurrects a SKIP ruling"
+ * exposure the name-based path did, just reachable through Format B (unit-only) exports instead of
+ * an exact tenant-name hit. */
+export function loadUnitLeasesFromSnapshot(): UnitLease[] {
   const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')) as {
-    leases?: Array<{ id: string; unit: string | null; propertyId: string }>;
+    leases?: Array<{ id: string; unit: string | null; propertyId: string; status?: string | null }>;
   };
-  return (snap.leases ?? []).map((l) => ({ id: l.id, unit: l.unit, propertyId: l.propertyId }));
+  return (snap.leases ?? [])
+    .filter((l) => l.status !== 'Expired')
+    .map((l) => ({ id: l.id, unit: l.unit, propertyId: l.propertyId }));
 }
 
 // Format B's group-header text -> portfolio.json property id. EXPLICIT table, not a fuzzy/substring
