@@ -27,6 +27,9 @@
 //      ORA's roster never does. It is an annotation, not identity, so stripAnnotations() removes it
 //      before canonicalization — the comparison stays set-EQUALITY exact, it just no longer treats
 //      'STORAGE' as part of the unit token. Found live on the 2026-08-21 nbc-c export.
+//      Only WORD-shaped parentheticals are stripped (isUseAnnotation): a parenthetical that carries
+//      identity — 'C 4 (2)' -> C42, '12(A)' -> A12 — is left alone, because deleting its contents
+//      would silently retarget the row onto a real but DIFFERENT unit (C4, or nothing at all).
 
 import type { BucketedUnitRow } from './delinquency-bucketed';
 
@@ -57,15 +60,32 @@ function canonicalToken(raw: string): string {
 const DIGITS_AND_SEPS = /^[\d+\-&,\s]+$/;
 const SEP = /[+\-&,]/;
 
-/** Strip a parenthetical descriptor the PM export appends to a unit label ('C 4 (storage)' -> 'C 4').
- *  A parenthetical says what the space is USED for; it is never part of the unit's identity, and the
- *  lease roster never carries one. Removing it BEFORE canonicalization keeps the match EXACT rather
- *  than weakening it — without this, '(storage)' folds into the token ('C4STORAGE') and matches
- *  nothing, sending a real balance to review forever (found live: the 2026-08-21 nbc-c row).
+/** True iff a parenthetical's contents are a USE descriptor ('storage', 'cold storage') rather than
+ *  part of the unit's own identity. Deliberately narrow, because stripping the wrong parenthetical
+ *  DESTROYS identity and can mis-attribute to a real but different lease:
+ *
+ *    'C 4 (2)'  canonicalizes to C42 — strip '(2)' and it becomes C4, a DIFFERENT unit
+ *    '12(A)'    canonicalizes to A12 — strip '(A)' and it becomes 12, no unit at all
+ *
+ *  A use descriptor is a WORD: no digits, and at least three letters. That keeps every
+ *  identity-bearing parenthetical (a bare letter, or anything containing a digit) intact and routed
+ *  through the pre-existing canonicalization path untouched. */
+function isUseAnnotation(contents: string): boolean {
+  if (/\d/.test(contents)) return false;
+  return (contents.match(/[A-Za-z]/g)?.length ?? 0) >= 3;
+}
+
+/** Strip a parenthetical USE descriptor the PM export appends to a unit label
+ *  ('C 4 (storage)' -> 'C 4'). Such a parenthetical says what the space is used for; it is never
+ *  part of the unit's identity, and the lease roster never carries one. Removing it BEFORE
+ *  canonicalization keeps the match EXACT rather than weakening it — without this, '(storage)' folds
+ *  into the token ('C4STORAGE') and matches nothing, sending a real balance to review forever
+ *  (found live: the 2026-08-21 nbc-c row). A parenthetical that fails isUseAnnotation() is left
+ *  exactly where it is, so this can never delete an identity-bearing character.
  *  Two leases whose labels differ only by annotation still canonicalize to the SAME token and are
  *  caught by resolveByUnit()'s hits.length > 1 ambiguity branch, so this cannot silently mis-attribute. */
 function stripAnnotations(raw: string): string {
-  return raw.replace(/\([^()]*\)/g, ' ').trim();
+  return raw.replace(/\(([^()]*)\)/g, (whole, contents: string) => (isUseAnnotation(contents) ? ' ' : whole)).trim();
 }
 
 /** Expand a compound unit label into its set of canonical tokens. Handles a single letter shared

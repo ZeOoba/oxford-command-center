@@ -65,6 +65,23 @@ describe('expandUnitTokens', () => {
     expect(expandUnitTokens('C4')).toEqual(new Set(['C4']));
     expect(expandUnitTokens('C7-C12')).toEqual(new Set(['C7', 'C12']));
   });
+
+  // The parentheses in these labels carry IDENTITY, not a use descriptor. Stripping them would
+  // delete a real character and retarget the row onto a different unit (or none). Each expectation
+  // below is the pre-existing behaviour, pinned so the annotation rule can never widen onto them.
+  it('does NOT strip a parenthetical containing a digit — it is identity, not an annotation', () => {
+    // 'C 4 (2)' is unit C42. Stripping '(2)' would yield C4 — a DIFFERENT, real unit.
+    expect(expandUnitTokens('C 4 (2)')).toEqual(new Set(['C42']));
+  });
+
+  it('does NOT strip a parenthetical holding a bare identity letter', () => {
+    // '12(A)' is unit A12. Stripping '(A)' would yield '12' — no unit at all.
+    expect(expandUnitTokens('12(A)')).toEqual(new Set(['A12']));
+  });
+
+  it('strips a word-shaped annotation even off a letter-only unit label', () => {
+    expect(expandUnitTokens('Sign (billboard)')).toEqual(new Set(['SIGN']));
+  });
 });
 
 describe('resolveByUnit', () => {
