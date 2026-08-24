@@ -573,13 +573,29 @@ function propertyTokensFor(properties: Property[]): Map<string, PropertyAddressT
 // function's own comment below as the example a bare-word match must NOT trust, confirmed live
 // (cc-audit-army finding unresolved-lease-propertyid-silent, 2026-08-21) as one of the Sepich
 // sub-property names actually driving 39 of 41 unresolved rent-roll rows ($1.08M of $1.14M).
-// Only alias names with that level of direct corroboration -- a handful of other unresolved keys
-// in the same run (e.g. "4595 E. 5th Ave") had no comparable evidence and were left correctly
-// unresolved (flagged, not guessed) rather than risk misattributing rent to the wrong property.
+// Only alias names with that level of direct corroboration. The 2026-08-21 pass left
+// "4595 E. 5th Ave" unresolved for want of "comparable evidence"; that evidence has since been
+// located in the source of record and the call is REVERSED (Gabriel directive, 2026-08-24) --
+// see the E. 5th Ave note below. Keys are matched EXACTLY (trimmed + lowercased), so a future
+// rent-roll rewording re-raises the reconciliation flag rather than silently mis-attributing:
+// that is the intended failure mode, not a gap to paper over with fuzzy variants.
+//
+// E. 5TH AVE (added 2026-08-24). 'Tax Assessment Summary -- Sepich Portfolio.xlsx' enumerates
+// exactly EIGHT parcels -- matching this property_master row's own "(8 props)" -- and parcel
+// 010-003904-00 is literally "4595-4601 E Fifth Ave / Sepich". ONE parcel spans BOTH street
+// numbers, which is why the rent roll carries two separate keys that both map here. Independently
+// corroborated by the 2020 acquisition DD ('Environmental Report -- 4595 - 4601 East 5th Avenue
+// 12-2020.pdf', 'survey -- 4595 - 4601 East Fifth Ave.pdf'), by the 2022 Sepich rent roll whose
+// own header lists "4595 E 5th Ave" among the portfolio's properties, and by 'Billboard Lease --
+// 4601 E. 5th Ave Sepich.pdf'. Note these are a DIFFERENT building from the unrelated standalone
+// property '3540 E. 5th Ave, Columbus OH' on the same street -- the street-number gate below, and
+// the alias's own target-must-exist check, both still prevent that mis-resolution.
 const RENT_ROLL_PROPERTY_ALIASES: Record<string, string> = {
   banwick: 'sepich-portfolio-columbus-oh-8-props',
   morrison: 'sepich-portfolio-columbus-oh-8-props',
   zettler: 'sepich-portfolio-columbus-oh-8-props',
+  '4595 e. 5th ave': 'sepich-portfolio-columbus-oh-8-props',
+  '4601 e. 5th ave': 'sepich-portfolio-columbus-oh-8-props',
 };
 
 export function resolvePropertyId(key: string, properties: Property[]): string | null {

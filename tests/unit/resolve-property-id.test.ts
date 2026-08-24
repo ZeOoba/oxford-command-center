@@ -307,11 +307,31 @@ describe('resolvePropertyId', () => {
       expect(resolvePropertyId('Banwick Lane', properties)).toBeNull();
     });
 
-    // The two unresolved live keys with no comparable corroborating evidence (see the alias
-    // table's own comment) must stay correctly unresolved, not silently swept into the alias.
-    it('does not alias an unrelated unresolved key that happens to share no evidence with Sepich', () => {
+    // SUPERSEDED 2026-08-24 (Gabriel directive), evidence-based reversal of the 2026-08-21 call.
+    // The alias table's original comment left '4595 E. 5th Ave' unresolved for want of "comparable
+    // evidence". That evidence was subsequently located in the source of record and is conclusive:
+    // 'Tax Assessment Summary -- Sepich Portfolio.xlsx' enumerates exactly EIGHT parcels -- matching
+    // the property_master row's own "(8 props)" -- and parcel 010-003904-00 is literally
+    // "4595-4601 E Fifth Ave / Sepich". ONE parcel spans BOTH street numbers, which is why the rent
+    // roll carries two separate keys for it. Independently corroborated by the 2020 acquisition DD
+    // ('Environmental Report -- 4595 - 4601 East 5th Avenue 12-2020.pdf', 'survey -- 4595 - 4601 East
+    // Fifth Ave.pdf'), by the 2022 Sepich rent roll whose own header lists "4595 E 5th Ave" as a
+    // portfolio property, and by 'Billboard Lease -- 4601 E. 5th Ave Sepich.pdf'. This is a STRONGER
+    // corroboration record than Banwick/Morrison/Zettler carried. Do NOT re-null these on the
+    // strength of the retracted comment.
+    it('resolves both E. 5th Ave sub-parcel keys to the consolidated Sepich id', () => {
+      expect(resolvePropertyId('4595 E. 5th Ave', [sepich])).toBe('sepich-portfolio-columbus-oh-8-props');
+      expect(resolvePropertyId('4601 E. 5th Ave', [sepich])).toBe('sepich-portfolio-columbus-oh-8-props');
+    });
+
+    // The number-gate protection is NOT weakened by the aliases above. With only the unrelated
+    // '3540 E. 5th Ave' property present (no Sepich row), the alias's existence-check must still
+    // fall through to null rather than mis-attributing this rent to the neighbouring building --
+    // the exact false positive the round-1 refute pass caught.
+    it('still refuses to mis-resolve an E. 5th Ave sub-parcel onto 3540 when Sepich is absent', () => {
       const properties = [mkProperty('3540-e-5th-ave-columbus-oh', '3540 E. 5th Ave, Columbus OH')];
       expect(resolvePropertyId('4595 E. 5th Ave', properties)).toBeNull();
+      expect(resolvePropertyId('4601 E. 5th Ave', properties)).toBeNull();
     });
   });
 });
