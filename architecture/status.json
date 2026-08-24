@@ -572,5 +572,14 @@
     "review_needed": false,
     "review_detail": "No architect-owned files touched in the fix itself. Financial-decision code (feeds capital-allocation priorityScore) — mandatory adversarial refute + eos-review-gate.py pinned-model review required before commit per CLAUDE.md/hooks. Not pushed; Gabriel confirms before any PR. (This status.json claim entry itself required the architect-edit-ok override sentinel — Gabriel directed this exact worktree/claim in-turn.)",
     "last_updated": "2026-07-27T00:00:00Z"
+  },
+  "quizzical-wozniak-220980": {
+    "agent_role": "Engineering (Claude Code, Opus 5) — Gabriel-directed, in-turn 2026-08-24 (\"fix the governance duplicate route thing\")",
+    "phase": "fix/governance-middleware-false-positive (worktree .claude/worktrees/quizzical-wozniak-220980, PR #298): checkRouteDuplication's route regex matched app.<any>('/api/...'), which swept in app.use(). app.use registers MIDDLEWARE, and stacking it on one path is normal composition — server/index.ts deliberately mounts cors() then accessAuthz() on '/api/*' and its own comment requires that ordering — so `npm run governance` failed on correct code with `DUPLICATE route \"/api/*\" defined in both server/index.ts and server/index.ts`. Fix captures the method name and skips `use` only; handler/mount registrations still collide, pinned by a test that a real app.get duplicate is still caught on a path that also carries app.use middleware. Also fixes the same-file message (\"defined twice in X\" instead of \"in both X and X\"). server/index.ts is UNCHANGED — it was correct, the checker was wrong.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "ARCHITECT REVIEW REQUIRED — touches architect-owned scripts/governance-check.ts (CLAUDE.md §4) plus tests/unit/governance-check.test.ts (+3 regression tests, 41→44). Gabriel authorized the fix in-turn rather than via a status.json round-trip; this entry is the committed declaration for the other concurrent sessions, same pattern as m6-leasing-risk-ic-memo. Concurrency checked before editing: governance-check.ts last touched by PR #162, and no other open PR touches it. architecture/ is otherwise untouched. Verified the 2 behavioural tests FAIL against the pre-fix checker and pass after; `npm run governance` now passes (only the 4 pre-existing non-blocking STALE_STATUS warnings, which belong to other agents' entries, remain).",
+    "last_updated": "2026-08-24T17:05:00Z"
   }
 }
