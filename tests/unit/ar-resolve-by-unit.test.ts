@@ -7,6 +7,7 @@ const LEASES: UnitLease[] = [
   { id: 'L-B1', unit: 'B1', propertyId: 'northwood' },
   { id: 'L-B4', unit: 'B4', propertyId: 'northwood' },
   { id: 'L-C1C2', unit: 'C1+C2', propertyId: 'northwood' },
+  { id: 'L-C4', unit: 'C4', propertyId: 'northwood' },
   { id: 'L-A11A12C3', unit: 'A11+A12+C3', propertyId: 'northwood' },
   { id: 'L-A4-OTHER', unit: 'A4', propertyId: 'other-prop' },
 ];
@@ -44,6 +45,25 @@ describe('expandUnitTokens', () => {
 
   it('treats the word "and" the same as a separator', () => {
     expect(expandUnitTokens('A11 and A12')).toEqual(new Set(['A11', 'A12']));
+  });
+
+  it('strips a parenthetical USE annotation the export appends to the unit label', () => {
+    // Real AR row (2203-2207 Northwood, 2026-08-21): 'C 4 (storage)' is unit C4 — the parenthetical
+    // describes the use, not the unit. Before this, it folded into the token as 'C4STORAGE'.
+    expect(expandUnitTokens('C 4 (storage)')).toEqual(new Set(['C4']));
+  });
+
+  it('strips an annotation from a COMPOUND label without losing the expansion', () => {
+    expect(expandUnitTokens('C 1-2 (storage)')).toEqual(new Set(['C1', 'C2']));
+  });
+
+  it('returns an EMPTY set for an annotation-only label — no unit identity to match on', () => {
+    expect(expandUnitTokens('(storage)')).toEqual(new Set());
+  });
+
+  it('leaves an un-annotated label behaving exactly as before', () => {
+    expect(expandUnitTokens('C4')).toEqual(new Set(['C4']));
+    expect(expandUnitTokens('C7-C12')).toEqual(new Set(['C7', 'C12']));
   });
 });
 
@@ -87,6 +107,33 @@ describe('resolveByUnit', () => {
     const r = resolveByUnit({ unit: '2B', property: 'nbc-b', d30: 1, d30plus: 0 }, withOnlyB1, 'northwood');
     expect(r.leaseId).toBeNull();
     expect(r.confidence).toBe('none');
+  });
+
+  it('resolves an annotated unit label onto the plain lease unit', () => {
+    // The live row this fix was written for: $0.38 at 'C 4 (storage)' belongs to the C4 lease.
+    const r = resolveByUnit({ unit: 'C 4 (storage)', property: 'nbc-c', d30: 0.38, d30plus: 0 }, LEASES, 'northwood');
+    expect(r).toEqual({ leaseId: 'L-C4', confidence: 'exact', ambiguous: false });
+  });
+
+  it('does NOT let an annotation manufacture a match to a unit that has no lease', () => {
+    const r = resolveByUnit({ unit: 'C 9 (storage)', property: 'nbc-c', d30: 1, d30plus: 0 }, LEASES, 'northwood');
+    expect(r).toEqual({ leaseId: null, confidence: 'none', ambiguous: false });
+  });
+
+  it('routes an annotation-only unit label to review instead of matching an empty token', () => {
+    const withBlank: UnitLease[] = [...LEASES, { id: 'L-BLANK', unit: '', propertyId: 'northwood' }];
+    const r = resolveByUnit({ unit: '(storage)', property: 'nbc-c', d30: 1, d30plus: 0 }, withBlank, 'northwood');
+    expect(r).toEqual({ leaseId: null, confidence: 'none', ambiguous: false });
+  });
+
+  it('flags ambiguity when two leases differ only by annotation — never silently picks one', () => {
+    const dupes: UnitLease[] = [
+      { id: 'S', unit: 'C4 (storage)', propertyId: 'northwood' },
+      { id: 'O', unit: 'C4', propertyId: 'northwood' },
+    ];
+    const r = resolveByUnit({ unit: 'C 4 (storage)', property: 'nbc-c', d30: 1, d30plus: 0 }, dupes, 'northwood');
+    expect(r.ambiguous).toBe(true);
+    expect(r.leaseId).toBeNull();
   });
 
   it('flags ambiguity and refuses to pick when two leases resolve to the same canonical unit', () => {
