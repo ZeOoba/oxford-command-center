@@ -83,6 +83,30 @@ describe('partitionArRows — headless auto-write policy', () => {
     expect(p.review[0]!.reason).toMatch(/no longer exists/);
   });
 
+  it('trusts a cached mapping to a lease EXCLUDED from `leases` when validLeaseIds says it still exists (2026-08-24, PR #302 review)', () => {
+    // The 2026-08-24 integrity sweep started excluding Expired leases from the caller's `leases`
+    // array so a FRESH match can't auto-attribute to a dead lease -- but a PREVIOUSLY human-
+    // CONFIRMED cache mapping to an Expired lease is a different, already-trusted decision. Without
+    // the separate validLeaseIds roster, this would wrongly reject a live, confirmed mapping as
+    // "lease removed/vacated" -- exactly the bug PR #302's own review caught (2 real cache entries,
+    // $9,596.90 + $REDACTED-AMT, were about to freeze this way).
+    const cache = { [cacheKey('REDACTED-429')]: 'expired-lease-still-owed' };
+    const filteredLeases = [lease('L1', 'Some Other Tenant')]; // Expired lease already excluded here
+    const fullRosterIds = new Set(['L1', 'expired-lease-still-owed']); // but it's still a real lease id
+    const p = partitionArRows([row('REDACTED-429', { d90plus: 9596.9 })], filteredLeases, cache, fullRosterIds);
+    expect(p.write).toMatchObject([{ leaseId: 'expired-lease-still-owed', arrears: { d90plus: 9596.9 } }]);
+    expect(p.review).toEqual([]);
+  });
+
+  it('still rejects a cached mapping absent from validLeaseIds even though it is absent from `leases` too', () => {
+    const cache = { [cacheKey('Acme Fabrication')]: 'lease-0042-REMOVED' };
+    const filteredLeases = [lease('L1', 'Some Other Tenant')];
+    const fullRosterIds = new Set(['L1']); // the removed lease is gone from BOTH rosters
+    const p = partitionArRows([row('Acme Fabrication', { d90plus: 9800 })], filteredLeases, cache, fullRosterIds);
+    expect(p.write).toEqual([]);
+    expect(p.review[0]!.reason).toMatch(/no longer exists/);
+  });
+
   it('honors a cached SKIP — counts it skipped, never writes or reviews', () => {
     const cache = { [cacheKey('Old Vacated Tenant')]: 'SKIP' };
     const p = partitionArRows([row('Old Vacated Tenant', { d90plus: 500 })], [lease('L1', 'Acme Tool')], cache);

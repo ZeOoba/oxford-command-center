@@ -632,6 +632,50 @@ describe('buildBrainReport — empty warehouse (never throws, never fabricates)'
   });
 });
 
+// ── dataAsOf (2026-08-24 integrity sweep, Finding 10) ────────────────────────────────────────
+
+describe('buildBrainReport — dataAsOf (data freshness, distinct from asOf/report-generation time)', () => {
+  it('is null on an empty warehouse (no imports yet — never fabricated)', () => {
+    const db = freshDb();
+    const report = buildBrainReport(db, '2026-07-06T00:00:00Z');
+    expect(report.dataAsOf).toBeNull();
+  });
+
+  it('is the MAX(imported_at) across import_batches, independent of the asOf report-generation param', () => {
+    const db = freshDb();
+    const insertBatch = db.prepare(`
+      INSERT INTO import_batches (file_name, file_hash, raw_path, imported_at, version, status)
+      VALUES (?, ?, ?, ?, 1, 'committed')
+    `);
+    insertBatch.run('a.xlsx', 'hash-a', '/raw/a.xlsx', '2026-08-10T12:00:00Z');
+    insertBatch.run('b.xlsx', 'hash-b', '/raw/b.xlsx', '2026-08-17T09:30:00Z'); // latest
+    insertBatch.run('c.xlsx', 'hash-c', '/raw/c.xlsx', '2026-08-01T00:00:00Z');
+
+    // asOf (report-generation time) is far later than any import — this is exactly the stalled-
+    // pipeline shape Finding 10 describes: a bake keeps restamping a fresh asOf over stale data.
+    const report = buildBrainReport(db, '2026-08-24T15:00:00Z');
+    expect(report.dataAsOf).toBe('2026-08-17T09:30:00Z');
+    expect(report.dataAsOf).not.toBe(report.asOf);
+  });
+
+  it('ignores a newer pending-review import — its ledger is inactive, so it is not actually served (PR #302 review finding)', () => {
+    const db = freshDb();
+    const insertBatch = db.prepare(`
+      INSERT INTO import_batches (file_name, file_hash, raw_path, imported_at, version, status)
+      VALUES (?, ?, ?, ?, 1, ?)
+    `);
+    insertBatch.run('committed.xlsx', 'hash-committed', '/raw/committed.xlsx', '2026-08-10T12:00:00Z', 'committed');
+    // Landed LATER than the committed import, but never promoted -- its ledger_entries stayed
+    // is_active=0 (see ingest.ts), so it is not part of what the warehouse actually serves. An
+    // unfiltered MAX(imported_at) would report THIS timestamp, making dataAsOf look fresher than
+    // the served data actually is -- the exact staleness-masking bug this field exists to close.
+    insertBatch.run('pending.xlsx', 'hash-pending', '/raw/pending.xlsx', '2026-08-20T00:00:00Z', 'pending-review');
+
+    const report = buildBrainReport(db, '2026-08-24T15:00:00Z');
+    expect(report.dataAsOf).toBe('2026-08-10T12:00:00Z');
+  });
+});
+
 // ── report parses through the contract on populated data too ────────────────────────────────
 
 describe('buildBrainReport — contract parity', () => {

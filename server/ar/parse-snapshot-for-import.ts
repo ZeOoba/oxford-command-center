@@ -24,7 +24,17 @@ import type { LeaseLite } from './match-tenant';
 import type { TenantArrears } from '../../src/contracts/index';
 
 export interface SnapshotForImport {
+  /** EXCLUDES Expired leases (2026-08-24, PR #302 review finding) -- the fresh-match candidate
+   *  pool for matchTenantToLease. Before this, scripts/ar-import.ts's autoAccept branch could
+   *  silently auto-accept an exact tenant-name hit against a dead lease with no human review, the
+   *  same "dead lease resurrects a SKIP ruling" failure class the ar-import-headless.ts loaders
+   *  were fixed for in this same PR -- this was the third, unpatched entry point into that class. */
   leases: LeaseLite[];
+  /** Every lease id in the snapshot, INCLUDING Expired ones -- for validating a MANUALLY-typed
+   *  leaseId (a human may deliberately want to attribute to a dead lease) and any future cache-hit
+   *  validation. A previously human-confirmed decision is not the same class of risk as a fresh
+   *  auto-match, so it must not be blocked by the same exclusion that protects `leases`. */
+  allLeaseIds: Set<string>;
   /** Currently-persisted per-lease arrears — fetched alongside leases (one round-trip) so the
    *  interactive script's write step can guard against overwriting a fresher balance. */
   tenantArrears: Record<string, TenantArrears>;
@@ -33,7 +43,7 @@ export interface SnapshotForImport {
 export function parseSnapshotForImport(body: unknown): SnapshotForImport {
   const envelope = body as {
     snapshot?: {
-      leases?: Array<{ id: string; tenantName: string; company: string | null }>;
+      leases?: Array<{ id: string; tenantName: string; company: string | null; status?: string | null }>;
       tenantArrears?: Record<string, TenantArrears>;
     };
   };
@@ -41,8 +51,12 @@ export function parseSnapshotForImport(body: unknown): SnapshotForImport {
     throw new Error("/api/snapshot response is missing the expected 'snapshot' envelope — cannot verify the lease roster or persisted arrears. Refusing to proceed rather than silently treating everything as empty.");
   }
   const { leases, tenantArrears } = envelope.snapshot;
+  const allLeases = leases ?? [];
   return {
-    leases: (leases ?? []).map((l) => ({ id: l.id, tenantName: l.tenantName, company: l.company ?? null })),
+    leases: allLeases
+      .filter((l) => l.status !== 'Expired')
+      .map((l) => ({ id: l.id, tenantName: l.tenantName, company: l.company ?? null })),
+    allLeaseIds: new Set(allLeases.map((l) => l.id)),
     tenantArrears: tenantArrears ?? {},
   };
 }

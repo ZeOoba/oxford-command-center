@@ -103,27 +103,59 @@ interface QueuedReview extends ArReviewRow {
   queuedAt: string;
 }
 
-/** Read {id, tenantName, company} for every lease from the persisted snapshot. */
-function loadLeasesFromSnapshot(): LeaseLite[] {
+/** Read {id, tenantName, company} for every lease from the persisted snapshot, EXCLUDING any lease
+ *  whose status is 'Expired'. An exact tenant-name hit against a dead lease auto-writes at 'exact'
+ *  confidence with no human review (matchTenantToLease has no status awareness) -- the 2026-08-24
+ *  integrity-sweep incident: a human SKIP ruling on an Expired lease's residual delinquency
+ *  (REDACTED-197, "no current occupant") was silently reversed the next time this
+ *  loader fed that same dead lease back into the matcher. Dropping Expired leases from the candidate
+ *  pool entirely means a current-period export naming a vacated tenant can no longer auto-attribute --
+ *  it falls through to 'none' confidence and lands in the review queue instead, which is the correct
+ *  place for a human to re-confirm a SKIP or re-attribute to whatever now occupies the unit. */
+export function loadLeasesFromSnapshot(): LeaseLite[] {
   if (!existsSync(SNAPSHOT_PATH)) {
     throw new Error(`Snapshot not found at ${SNAPSHOT_PATH} — run a Brain refresh first (npm run dev).`);
   }
   const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')) as {
-    leases?: Array<{ id: string; tenantName: string; company: string | null }>;
+    leases?: Array<{ id: string; tenantName: string; company: string | null; status?: string | null }>;
   };
-  return (snap.leases ?? []).map((l) => ({ id: l.id, tenantName: l.tenantName, company: l.company ?? null }));
+  return (snap.leases ?? [])
+    .filter((l) => l.status !== 'Expired')
+    .map((l) => ({ id: l.id, tenantName: l.tenantName, company: l.company ?? null }));
 }
 
-/** Read {id, unit, propertyId} for every lease from the persisted snapshot, for Format B's
+/** Every lease id in the snapshot, INCLUDING Expired ones -- the wider roster partitionArRows'
+ *  cache-hit validation needs (2026-08-24, PR #302 review finding). loadLeasesFromSnapshot's
+ *  Expired-exclusion protects the FRESH-match path (a name hit that just happens to land on a dead
+ *  lease), but a PREVIOUSLY human-CONFIRMED cache mapping to an Expired lease is a different,
+ *  already-trusted decision -- excluding those ids too made partitionArRows' `leaseIds.has(cached)`
+ *  check reject live, confirmed mappings as "lease removed/vacated", silently freezing real arrears
+ *  behind a resolver-less review queue. */
+export function loadAllLeaseIdsFromSnapshot(): Set<string> {
+  const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')) as { leases?: Array<{ id: string }> };
+  return new Set((snap.leases ?? []).map((l) => l.id));
+}
+
+/** Read {id, unit, propertyId, status} for every lease from the persisted snapshot, for Format B's
  *  (property, unit) resolution — a different projection than loadLeasesFromSnapshot's
  *  {id, tenantName, company}, which match-tenant.ts's NAME-based matching needs instead. Kept as a
  *  separate loader rather than widening LeaseLite itself: LeaseLite is a shared type match-tenant.ts
- *  exports, and widening it would ripple into every consumer of name-based matching for no reason. */
-function loadUnitLeasesFromSnapshot(): UnitLease[] {
+ *  exports, and widening it would ripple into every consumer of name-based matching for no reason.
+ *
+ * INCLUDES Expired leases, unlike loadLeasesFromSnapshot above (2026-08-24 integrity sweep, Finding
+ * 1 follow-up, corrected after a further PR #302 review round): an EARLIER version of this fix
+ * excluded them here too, mirroring the name-based loader -- but that opened an adjacent hole on a
+ * re-let unit (an Expired lease and a new Active lease sharing the same unit label): excluding the
+ * Expired lease turned a 2-hit AMBIGUOUS match (the safe pre-fix outcome) into a 1-hit EXACT
+ * auto-write of the vacated tenant's arrears onto the NEW tenant's lease, with no tenant name in a
+ * Format B row to catch the swap. resolveByUnit (server/ar/resolve-by-unit.ts) now does the
+ * Expired-aware filtering itself, INSIDE resolution, so it can detect exactly this "Expired sibling
+ * on the same unit" case and downgrade to review instead. */
+export function loadUnitLeasesFromSnapshot(): UnitLease[] {
   const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')) as {
-    leases?: Array<{ id: string; unit: string | null; propertyId: string }>;
+    leases?: Array<{ id: string; unit: string | null; propertyId: string; status?: string | null }>;
   };
-  return (snap.leases ?? []).map((l) => ({ id: l.id, unit: l.unit, propertyId: l.propertyId }));
+  return (snap.leases ?? []).map((l) => ({ id: l.id, unit: l.unit, propertyId: l.propertyId, status: l.status ?? null }));
 }
 
 // Format B's group-header text -> portfolio.json property id. EXPLICIT table, not a fuzzy/substring
@@ -273,6 +305,7 @@ async function main(): Promise<void> {
   }
 
   const leases = loadLeasesFromSnapshot();
+  const allLeaseIds = loadAllLeaseIdsFromSnapshot();
   if (leases.length === 0) {
     // Refute round 2/edges: proceeding here would route EVERY cache-confirmed row (including
     // long-established, previously-human-confirmed mappings) to review, since partitionArRows'
@@ -445,7 +478,7 @@ async function main(): Promise<void> {
       format = parsed.format;
     }
 
-    const part = partitionArRows(rows, leases, cache.entries);
+    const part = partitionArRows(rows, leases, cache.entries, allLeaseIds);
     const asOfDate = isXlsx ? xlsxAsOfDate : extractAsOfDateFromFilename(file);
     if (asOfDate === null && part.write.length > 0) {
       // Refute round 2/edges: a null-stamped record SURVIVES overlay reload (fix #2 in this same

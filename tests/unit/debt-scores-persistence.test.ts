@@ -78,6 +78,26 @@ describe('persistDebtScores', () => {
     expect(row.score_band).toBe(scores[0]!.scoreBand);
     expect(row.refi_trigger_bps).toBe(150);
     expect(row.capital_config_version).toBe(scores[0]!.capitalConfigVersion);
+    // Migration 028 (2026-08-24 integrity sweep, Finding 8): every row this module writes is
+    // stamped with the CURRENT (ownership-adjusted) basis, distinct from the '100pct' default
+    // migration 028 backfilled onto every row that predates it.
+    expect(row.noi_basis).toBe('oxford-share');
+  });
+
+  it('a pre-migration-028 row (inserted with no noi_basis) defaults to \'100pct\', never fabricated as \'oxford-share\'', () => {
+    // Simulates a row written before 9cb6169/migration 028 existed: openWarehouse has already run
+    // every migration on this fresh db (including 028), so ALTER TABLE's own DEFAULT is what a
+    // historical row picks up when re-read — this is the exact backfill behavior migration 028
+    // relies on, asserted directly against the schema rather than trusted from the migration's doc.
+    const db = freshDb();
+    db.prepare(`
+      INSERT INTO debt_scores
+        (property_id, scored_at, snapshot_date, noi_period, signal, refi_trigger_bps,
+         capital_config_version, score, score_band)
+      VALUES ('prop-a', '2026-08-01T00:00:00Z', '2026-08-01', '2025', 'GREEN', 150, 1, 90, 'A')
+    `).run();
+    const row = db.prepare('SELECT noi_basis FROM debt_scores WHERE property_id = ?').get('prop-a') as { noi_basis: string };
+    expect(row.noi_basis).toBe('100pct');
   });
 
   it('skips (does not insert) a score whose property has no full-year NOI period, rather than fabricating noi_period', () => {

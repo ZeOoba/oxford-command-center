@@ -177,6 +177,18 @@ describe('resolvePropertyId', () => {
     expect(resolvePropertyId('1100 Rarig', properties)).toBe('1100-rarig-ave-columbus-oh');
   });
 
+  // FIXED 2026-08-24 (integrity sweep, Finding 9): the duplicate-address tie used to keep
+  // whichever candidate came FIRST in the `properties` array — a sheet re-sort (or simply a
+  // caller passing the array in a different order) would flip which of the two ids wins and
+  // silently move the lease's rent/NOI attribution between them. The result must be identical
+  // regardless of array order: always the id WITHOUT the disambiguation suffix.
+  it('picks the same (non-suffixed) id for a duplicate-address tie regardless of properties array order', () => {
+    const base = mkProperty('1100-rarig-ave-columbus-oh', '1100 Rarig Ave, Columbus OH');
+    const dup = mkProperty('1100-rarig-ave-columbus-oh-2', '1100 Rarig Ave, Columbus OH');
+    expect(resolvePropertyId('1100 Rarig', [base, dup])).toBe('1100-rarig-ave-columbus-oh');
+    expect(resolvePropertyId('1100 Rarig', [dup, base])).toBe('1100-rarig-ave-columbus-oh');
+  });
+
   // Round-3 refute finding: addressTokens' length>=3 filter was applied to KEY numbers too, so a
   // 1-2 digit house number never reached the numeric veto — the exact same-street-different-number
   // collision round 2 fixed for 4+ digit numbers reopened for short ones. '57' must disqualify the

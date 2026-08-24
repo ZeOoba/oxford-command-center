@@ -56,6 +56,10 @@ import { DAY_MS } from './time-constants';
 import { collapseToCurrentTerm, type CollapsibleInsuranceRow } from './insurance-analysis';
 // BOUNDARY: policies expiring within this window (inclusive) → critical alert.
 const EXPIRY_ALERT_DAYS = 60;
+// BOUNDARY: a same-property/same-type policy pair with no shared policy_number and a non-overlapping
+// gap of 1..this-many days between one's expiration and the other's effective date is flagged as a
+// possible gapped rollover (see Condition 2.5 below) rather than silently double-counted.
+const GAPPED_ROLLOVER_WINDOW_DAYS = 30;
 
 interface PolicyRow extends CollapsibleInsuranceRow {
   premium_annual: number | null;
@@ -79,7 +83,8 @@ export function fetchCurrentInsuranceRows(db: WarehouseDb): PolicyRow[] {
     .prepare(
       `SELECT id, property_id, policy_number, effective_date, expiration_date,
               premium_annual, policy_type, source_date
-       FROM property_insurance_policies`,
+       FROM property_insurance_policies
+       ORDER BY id`,
     )
     .all() as PolicyRow[];
   return collapseToCurrentTerm(rows);
@@ -285,9 +290,67 @@ export function insuranceConditions(
     });
   }
 
-  // Deterministic sort: expiry insights (id starts 'ins-expiry-') sort before
-  // gap insights ('ins-gap-') because 'e' < 'g'. Within each kind, property_id
-  // ordering is lexicographic. Stable because ids are unique per-property.
+  // ── Condition 2.5: insurance-possible-gapped-rollover — severity: warning ────────────────
+  // sameLineage (insurance-analysis.ts) requires EXACT-DAY adjacency (old.expiration_date ===
+  // new.effective_date) before treating two same-property/same-policy_type rows as one rollover
+  // — see that file's 2026-08-21 fix, which closed a false-MERGE bug. A real renewal whose dates
+  // are off by a day or more (a carrier date-convention difference, an admin gap) is NOT caught
+  // by that rule: both rows survive collapseToCurrentTerm as "distinct concurrent" policies, so
+  // buildInsuranceAnalysis double-counts the stale term's premium in premiumAnnualTotal/policiesN,
+  // and the stale term's now-past-due expiration can re-fire Condition 1's CRITICAL "renew
+  // immediately" alert on coverage that has already been renewed (2026-08-24 integrity sweep,
+  // Finding 4). No real gapped rollover has been verified in this portfolio's data, so
+  // sameLineage's threshold stays exact per that fix's own reasoning — this condition instead
+  // surfaces the FIRST one as a review item rather than letting it silently double-count or
+  // false-alarm: same property + same policy_type, no shared policy_number, non-overlapping, and
+  // within GAPPED_ROLLOVER_WINDOW_DAYS of each other in either direction.
+  for (let i = 0; i < currentRows.length; i++) {
+    for (let j = i + 1; j < currentRows.length; j++) {
+      const a = currentRows[i]!;
+      const b = currentRows[j]!;
+      if (a.property_id !== b.property_id) continue;
+      if (a.policy_type.trim().toLowerCase() !== b.policy_type.trim().toLowerCase()) continue;
+      if (a.policy_number !== null && a.policy_number === b.policy_number) continue; // already one lineage
+      if (!a.expiration_date || !a.effective_date || !b.expiration_date || !b.effective_date) continue;
+
+      // Try both orderings: does a's term end shortly before b's starts, or vice versa?
+      const gaps: Array<{ olderExpiry: string; newerEffective: string }> = [
+        { olderExpiry: a.expiration_date, newerEffective: b.effective_date },
+        { olderExpiry: b.expiration_date, newerEffective: a.effective_date },
+      ];
+      for (const { olderExpiry, newerEffective } of gaps) {
+        const gapDays = daysBetween(newerEffective, olderExpiry);
+        // gapDays === 0 is exact adjacency — sameLineage already merged that case, so it cannot
+        // reach here as two separate rows. A negative gap is overlap, a different (existing)
+        // data-quality concern, not a gapped rollover.
+        if (gapDays <= 0 || gapDays > GAPPED_ROLLOVER_WINDOW_DAYS) continue;
+        const pairId = [a.id, b.id].sort((x, y) => x - y).join('-');
+        // Sane data can only satisfy this branch for ONE of the two orderings above -- but a row
+        // with effective_date AFTER expiration_date (corrupt source dates, unvalidated on capture)
+        // can satisfy BOTH, which would push two insights sharing the identical id `pairId` (PR #302
+        // review, LOW). `break` after the first hit: one pair, one insight, regardless of how many
+        // orderings would otherwise qualify.
+        out.push({
+          id: `ins-gapped-rollover-${pairId}`,
+          severity: 'warning',
+          category: 'insurance',
+          title: `Possible gapped policy rollover — ${a.property_id}`,
+          detail: `Two ${a.policy_type} policies at property_id "${a.property_id}" are ${gapDays} day(s) apart (one expires ${olderExpiry}, the other becomes effective ${newerEffective}) with no shared policy number — they were NOT merged as one rollover and both count toward premium/policy totals. Confirm whether this is a single renewal (fix the source dates or add the shared policy number) or two genuinely distinct policies.`,
+          entityType: 'insurance',
+          entityId: a.property_id,
+          action: { label: 'Review policy', kind: 'review' },
+          impactAnnualUsd: null,
+          spine: 'B',
+          provenance: 'real',
+        });
+        break;
+      }
+    }
+  }
+
+  // Deterministic sort: expiry insights (id starts 'ins-expiry-') sort before gap-family insights
+  // ('ins-gap-', 'ins-gapped-rollover-') because 'e' < 'g'. Within each kind, ordering is
+  // lexicographic on id. Stable because ids are unique per-property (or per-pair).
   out.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
   return out;
@@ -366,17 +429,42 @@ type DriftPolicyRow = CollapsibleInsuranceRow;
  * workbook's `coverage` label (the coverage this comparison is actually checking); only falls
  * back to mixing types by pure recency when no type match exists, or the live coverage is
  * unknown — fail-open, matching this module's doctrine (a coarse comparison beats none).
+ *
+ * FIXED 2026-08-24 (integrity sweep, Finding 7): the reduce below used to tie-break on
+ * source_date alone, with no fallback — and a tie is the COMMON case, not an edge, because
+ * snapshotPoliciesToWarehouse stamps ONE uniform source_date on every policy in a single capture
+ * batch. With no further tie-break, the winner was whichever row happened to come first in
+ * SQLite's unordered SELECT — which churns between runs because migration 008's AUTOINCREMENT id
+ * gets reassigned on every INSERT OR REPLACE re-capture. Demonstrated: two same-source-date rows,
+ * reversing their row order flipped this function's pick and therefore flipped the drift/lapse
+ * verdict with zero change in the underlying data. isMoreCurrentRow below gives this the same
+ * total order insurance-analysis.ts's isMoreCurrent already uses elsewhere in this module
+ * (source_date, then effective_date, then id) so a genuine tie can no longer exist.
  */
+export function isMoreCurrentRow(a: DriftPolicyRow, b: DriftPolicyRow): boolean {
+  if (a.source_date !== b.source_date) return a.source_date > b.source_date;
+  // Compare the COALESCED values, not the raw ones (PR #302 review, LOW): comparing raw
+  // a.effective_date !== b.effective_date first meant the pair (null, '') counted as "different"
+  // without ever reaching a comparable state -- neither coalesced-null-safe compare would fire,
+  // silently skipping the id fallback for an otherwise-tied pair. Not reachable on live data today
+  // (source_date is NOT NULL and no row has an empty-string effective_date), but coalescing before
+  // the inequality check makes this a genuine total order rather than one with an incomparable edge.
+  const aEff = a.effective_date ?? '';
+  const bEff = b.effective_date ?? '';
+  if (aEff !== bEff) return aEff > bEff;
+  return a.id > b.id;
+}
+
 function pickCurrentRow(rows: DriftPolicyRow[], liveCoverage: string | null): DriftPolicyRow {
   const current = collapseToCurrentTerm(rows);
   if (liveCoverage) {
     const norm = liveCoverage.trim().toLowerCase();
     const matching = current.filter((r) => r.policy_type.trim().toLowerCase() === norm);
     if (matching.length > 0) {
-      return matching.reduce((best, r) => (r.source_date > best.source_date ? r : best));
+      return matching.reduce((best, r) => (isMoreCurrentRow(r, best) ? r : best));
     }
   }
-  return current.reduce((best, r) => (r.source_date > best.source_date ? r : best));
+  return current.reduce((best, r) => (isMoreCurrentRow(r, best) ? r : best));
 }
 
 /**

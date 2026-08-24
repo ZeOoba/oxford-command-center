@@ -590,16 +590,49 @@ function propertyTokensFor(properties: Property[]): Map<string, PropertyAddressT
 // 4601 E. 5th Ave Sepich.pdf'. Note these are a DIFFERENT building from the unrelated standalone
 // property '3540 E. 5th Ave, Columbus OH' on the same street -- the street-number gate below, and
 // the alias's own target-must-exist check, both still prevent that mis-resolution.
+// QUICKBOOKS P&L CLASS KEYS (added 2026-08-24, PR #302 review finding). server/sources/quickbooks.ts
+// routes its class-name keys through this same table via resolvePropertyId, not a separate one --
+// two DIFFERENT strings, both verified against the live QB export
+// (QUICKBOOKS_CSV, 'ora-pl-by-property.csv'): the raw CSV's class column reads
+// 'FVC - Fairground Village Center / Sepich Portfolio (8 props)' with a plain HYPHEN, while the
+// already-committed data/snapshots/portfolio.json quickbooks block (a stale prior parse) carries an
+// EM DASH ('FVC — ...') for the identical class -- the export apparently varies the dash on
+// different QuickBooks report runs. Both forms are aliased so neither a fresh parse of the live CSV
+// nor a read of the already-persisted snapshot regresses. This is the '~$1.42M QB fix' the
+// 2026-08-24 sweep and this PR's own commit claimed to close -- verified live: adding ONLY the
+// em-dash form (matching the committed snapshot) would have left the ACTUAL next CSV parse
+// unresolved, since resolvePropertyId never ran the token/number-gate path successfully for this
+// key to begin with ('(8 props)' arms the street-number gate against the Sepich row, which has no
+// leading house number) -- an exact alias hit is the only path that works for this key.
 const RENT_ROLL_PROPERTY_ALIASES: Record<string, string> = {
   banwick: 'sepich-portfolio-columbus-oh-8-props',
   morrison: 'sepich-portfolio-columbus-oh-8-props',
   zettler: 'sepich-portfolio-columbus-oh-8-props',
   '4595 e. 5th ave': 'sepich-portfolio-columbus-oh-8-props',
   '4601 e. 5th ave': 'sepich-portfolio-columbus-oh-8-props',
+  'fvc - fairground village center / sepich portfolio (8 props)': 'sepich-portfolio-columbus-oh-8-props',
+  'fvc — fairground village center / sepich portfolio (8 props)': 'sepich-portfolio-columbus-oh-8-props',
+  // '1851 S Club - Solar (25% roof project)' / '1851 S Club — Solar (...)' are DELIBERATELY NOT
+  // aliased here: verified against the live 14-row property_master roster (2026-08-24) that no
+  // property (by id, name, or address) corresponds to a '1851 S Club' or 'Solar' entity -- this QB
+  // class appears to track a rooftop solar installation that was never onboarded as its own
+  // property record. Aliasing it to an existing property would be a fabricated attribution (Hard
+  // Invariant 7); it stays propertyId:null, honestly, until a real property_master row exists for
+  // it or Gabriel rules on which existing property it should roll into.
 };
 
 export function resolvePropertyId(key: string, properties: Property[]): string | null {
-  const aliased = RENT_ROLL_PROPERTY_ALIASES[key.trim().toLowerCase()];
+  // Object.hasOwn guard (2026-08-24 integrity-sweep hygiene finding): a plain object literal
+  // indexed by an untrusted string is reachable via the prototype chain for a key like
+  // 'constructor'/'toString'/'valueOf' — RENT_ROLL_PROPERTY_ALIASES['constructor'] would return
+  // Object's constructor function, not undefined. No real rent-roll property key collides with an
+  // Object.prototype member today (this already failed CLOSED via the target-must-exist check a
+  // few lines below), but the guard is one line and removes the class of bug outright rather than
+  // relying on a downstream check to keep catching it.
+  const normalizedKey = key.trim().toLowerCase();
+  const aliased = Object.hasOwn(RENT_ROLL_PROPERTY_ALIASES, normalizedKey)
+    ? RENT_ROLL_PROPERTY_ALIASES[normalizedKey]
+    : undefined;
   // Every OTHER path through this function only ever returns an id actually present in
   // `properties` (see the token-matching loop below) -- the alias table must hold to that same
   // contract. Trusting the hardcoded target unconditionally would let a future rename/retirement
@@ -670,10 +703,24 @@ export function resolvePropertyId(key: string, properties: Property[]): string |
       // Two DIFFERENT addresses tied at the same score is genuine ambiguity — fail closed. Two
       // candidates sharing the SAME normalized address are the same physical property (a
       // human-entered duplicate Properties-sheet row, which disambiguatePropertyIds already
-      // suffixes with '-2' rather than merges) — keep the first rather than nulling out every one
-      // of that property's leases, a regression the refute pass caught in an earlier tie-always
-      // version of this fix.
+      // suffixes with '-2' rather than merges) — keep one of them rather than nulling out every
+      // one of that property's leases, a regression the refute pass caught in an earlier
+      // tie-always version of this fix.
       tied = true;
+    } else if (c.score === best.score) {
+      // Same-address tie: pick a candidate deterministically from `properties` ARRAY CONTENT, not
+      // array ORDER. FIXED 2026-08-24 (integrity sweep, Finding 9): the previous version always
+      // kept whichever duplicate came first in `properties` — but that array's order need not
+      // match the order disambiguatePropertyIds ran in when it decided which row kept its base
+      // (non-suffixed) id, so a properties-order permutation could flip which id wins and
+      // silently move the lease's rent/NOI attribution between the two Property entries. Prefer
+      // the id WITHOUT a disambiguation suffix (the canonical row); if both or neither carry one,
+      // fall back to the lexicographically smaller id — either branch is properties-order
+      // INDEPENDENT.
+      const bestHasSuffix = /-\d+$/.test(best.p.id);
+      const cHasSuffix = /-\d+$/.test(c.p.id);
+      if (bestHasSuffix && !cHasSuffix) best = c;
+      else if (bestHasSuffix === cHasSuffix && c.p.id < best.p.id) best = c;
     }
   }
   return tied ? null : best.p.id;

@@ -37,6 +37,9 @@ export interface UnitLease {
   id: string;
   unit: string | null;
   propertyId: string;
+  /** Optional -- when present and 'Expired', resolveByUnit uses it to detect a re-let unit (see
+   *  that function's doc). Callers that never populate it get the pre-2026-08-24 behavior. */
+  status?: string | null;
 }
 
 export interface UnitResolution {
@@ -128,6 +131,19 @@ function setsEqual(a: Set<string>, b: Set<string>): boolean {
   return true;
 }
 
+/**
+ * Resolve (property, unit) -> leaseId. Callers should pass the FULL lease roster, including
+ * Expired ones (2026-08-24, PR #302 review finding) -- filtering Expired leases out BEFORE calling
+ * this, as an earlier version of the fix did, opened an adjacent hole: on a re-let unit (an Expired
+ * lease and a new Active lease sharing the same unit label -- exactly the routine "vacate, then
+ * re-let" business event), the Expired lease's exact match had made this unit AMBIGUOUS (2 hits ->
+ * review), the safe outcome for a residual-delinquency row from the vacated tenant. Excluding the
+ * Expired lease from the input entirely turned that same row into a single, 'exact'-confidence hit
+ * -> AUTO-WRITE of the old tenant's arrears onto the NEW tenant's lease, with no review possible
+ * (Format B rows carry no tenant name to cross-check against). Filtering status INSIDE this
+ * function instead means an Expired sibling on the same unit still downgrades the match to
+ * ambiguous/review, closing both holes at once.
+ */
 export function resolveByUnit(
   row: BucketedUnitRow,
   leases: readonly UnitLease[],
@@ -143,8 +159,15 @@ export function resolveByUnit(
   const hits = leases.filter(
     (l) => l.propertyId === propertyId && l.unit !== null && setsEqual(expandUnitTokens(l.unit), target),
   );
+  const liveHits = hits.filter((l) => l.status !== 'Expired');
+  const hasExpiredSibling = liveHits.length < hits.length;
 
-  if (hits.length === 1) return { leaseId: hits[0]?.id ?? null, confidence: 'exact', ambiguous: false };
-  if (hits.length > 1) return { leaseId: null, confidence: 'none', ambiguous: true };
+  if (liveHits.length === 1) {
+    // A dead lease shares this unit -- possible re-let. Never silently attribute the (possibly
+    // vacated tenant's) delinquency to whichever lease happens to be live; a human must confirm.
+    if (hasExpiredSibling) return { leaseId: null, confidence: 'none', ambiguous: true };
+    return { leaseId: liveHits[0]?.id ?? null, confidence: 'exact', ambiguous: false };
+  }
+  if (liveHits.length > 1) return { leaseId: null, confidence: 'none', ambiguous: true };
   return { leaseId: null, confidence: 'none', ambiguous: false };
 }
