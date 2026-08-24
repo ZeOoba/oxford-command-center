@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync } from 'node:fs';
 import { relative, resolve, isAbsolute } from 'node:path';
+import { tmpdir } from 'node:os';
 
 /**
  * Regression guard for test-run contamination of the TRACKED files under data/.
@@ -19,19 +20,33 @@ import { relative, resolve, isAbsolute } from 'node:path';
 
 const REPO = process.cwd();
 
-/** True when `p` resolves inside this checkout (i.e. a write there would dirty the working tree). */
+/** True when `p` resolves inside this checkout (i.e. a write there would dirty the working tree).
+ *  The repo root itself (rel === '') counts as inside: an env var set to process.cwd() or '.' puts
+ *  writes squarely in the checkout, so it must fail this guard rather than slip through as "safe". */
 function insideRepo(p: string): boolean {
   const rel = relative(REPO, resolve(REPO, p));
-  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel));
 }
 
 describe('repo-data write isolation (tests/setup.ts)', () => {
+  it('insideRepo() treats the checkout root itself as inside', () => {
+    // Guarding the guard: an earlier version returned false for the repo root, so an env var set to
+    // process.cwd() or '.' would have passed the assertions below while writing into the checkout.
+    expect(insideRepo(REPO)).toBe(true);
+    expect(insideRepo('.')).toBe(true);
+    expect(insideRepo('data/snapshots/portfolio.json')).toBe(true);
+    expect(insideRepo(tmpdir())).toBe(false);
+  });
+
   it.each([
     ['SNAPSHOT_PATH', 'data/snapshots/portfolio.json'],
     ['AR_MAPPING_CACHE', 'data/ar-mapping-cache.json'],
     // ar-import-headless.ts derives review-queue.json AND processed/ from dirname(AR_INBOX), so
     // sandboxing the inbox sandboxes all three tracked AR targets at once.
     ['AR_INBOX', 'data/ar/review-queue.json + data/ar/processed/'],
+    // Gitignored, so it can never dirty the tree -- but it is live user state (deal stages, tasks,
+    // notes) with no git history to restore from, which makes a stray write worse, not better.
+    ['OVERLAY_PATH', 'data/overlay.json'],
   ])('%s is redirected out of the repo (guards %s)', (envVar, guarded) => {
     const value = process.env[envVar];
     expect(value, `${envVar} must be set by tests/setup.ts to protect ${guarded}`).toBeTruthy();
