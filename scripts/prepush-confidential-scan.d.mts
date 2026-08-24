@@ -35,3 +35,25 @@ export function scanDiffForContextTerms(
 ): ConfidentialHit[];
 
 export function parseAddedLines(diffText: string): AddedLine[];
+
+/**
+ * A `confidential: true` payload-shape hit. Distinct from ConfidentialHit: this scanner
+ * fires on the JSON/object-literal key shape rather than a roster term, so there is no
+ * `term` to report.
+ */
+export interface ConfidentialFlagHit {
+  line: number;
+  text: string;
+  file: string;
+}
+
+export function currentRepoName(cwdOverride?: string): string;
+
+export function isRegisteredConfidentialRepo(
+  repoName: string,
+  homeDirOverride?: string,
+): boolean;
+
+export function scanDiffForConfidentialFlag(
+  addedLines: AddedLine[],
+): ConfidentialFlagHit[];
