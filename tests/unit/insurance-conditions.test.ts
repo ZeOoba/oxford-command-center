@@ -9,7 +9,8 @@ import { join } from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
-import { insuranceConditions, insuranceWarehouseDriftConditions } from '../../server/warehouse/insurance-conditions';
+import { insuranceConditions, insuranceWarehouseDriftConditions, isMoreCurrentRow } from '../../server/warehouse/insurance-conditions';
+import type { CollapsibleInsuranceRow } from '../../server/warehouse/insurance-analysis';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -235,6 +236,98 @@ describe('insuranceConditions', () => {
     const insights = insuranceConditions(db, snap);
     const gaps = insights.filter((i) => i.id.startsWith('ins-gap-'));
     expect(gaps).toHaveLength(0);
+  });
+
+  // ── (d.5) gapped rollover — Finding 4 of the 2026-08-24 integrity sweep ────
+
+  it('(d.5) flags a warning when two same-property/same-type policies sit within the gap window with no shared policy number', () => {
+    const snap = makeSnap(['prop-gapped']);
+    // Old term ends 2026-08-26; new term (different policy_number) starts 2026-08-27 — 1 day
+    // apart, NOT exact adjacency, so sameLineage would treat these as two distinct policies.
+    insertPolicy(db, {
+      propertyId: 'prop-gapped',
+      policyNumber: 'OLD-TERM-1',
+      effectiveDate: '2025-08-27',
+      expirationDate: '2026-08-26',
+      premiumAnnual: 5000,
+    });
+    insertPolicy(db, {
+      propertyId: 'prop-gapped',
+      policyNumber: 'NEW-TERM-1',
+      effectiveDate: '2026-08-27',
+      expirationDate: '2027-08-27',
+      premiumAnnual: 5200,
+    });
+
+    const insights = insuranceConditions(db, snap);
+    const rollovers = insights.filter((i) => i.id.startsWith('ins-gapped-rollover-'));
+    expect(rollovers).toHaveLength(1);
+    expect(rollovers[0]!.severity).toBe('warning');
+    expect(rollovers[0]!.category).toBe('insurance');
+    expect(rollovers[0]!.entityId).toBe('prop-gapped');
+  });
+
+  it('(d.5) does NOT flag an exact-adjacency rollover (already merged by sameLineage)', () => {
+    const snap = makeSnap(['prop-exact']);
+    insertPolicy(db, {
+      propertyId: 'prop-exact',
+      policyNumber: 'OLD-TERM-2',
+      effectiveDate: '2025-08-27',
+      expirationDate: '2026-08-26',
+      premiumAnnual: 5000,
+    });
+    insertPolicy(db, {
+      propertyId: 'prop-exact',
+      policyNumber: 'NEW-TERM-2',
+      effectiveDate: '2026-08-26', // exactly equals the old term's expiration_date
+      expirationDate: '2027-08-26',
+      premiumAnnual: 5200,
+    });
+
+    const insights = insuranceConditions(db, snap);
+    expect(insights.filter((i) => i.id.startsWith('ins-gapped-rollover-'))).toHaveLength(0);
+  });
+
+  it('(d.5) does NOT flag two policies sharing a policy_number (same lineage by definition)', () => {
+    const snap = makeSnap(['prop-same-number']);
+    insertPolicy(db, {
+      propertyId: 'prop-same-number',
+      policyNumber: 'SHARED-1',
+      effectiveDate: '2025-08-27',
+      expirationDate: '2026-08-26',
+      premiumAnnual: 5000,
+    });
+    insertPolicy(db, {
+      propertyId: 'prop-same-number',
+      policyNumber: 'SHARED-1',
+      effectiveDate: '2026-08-27',
+      expirationDate: '2027-08-27',
+      premiumAnnual: 5200,
+    });
+
+    const insights = insuranceConditions(db, snap);
+    expect(insights.filter((i) => i.id.startsWith('ins-gapped-rollover-'))).toHaveLength(0);
+  });
+
+  it('(d.5) does NOT flag a gap beyond the 30-day window', () => {
+    const snap = makeSnap(['prop-far-gap']);
+    insertPolicy(db, {
+      propertyId: 'prop-far-gap',
+      policyNumber: 'OLD-TERM-3',
+      effectiveDate: '2025-08-27',
+      expirationDate: '2026-08-26',
+      premiumAnnual: 5000,
+    });
+    insertPolicy(db, {
+      propertyId: 'prop-far-gap',
+      policyNumber: 'NEW-TERM-3',
+      effectiveDate: '2026-12-01', // >30 days after the old term's expiration
+      expirationDate: '2027-12-01',
+      premiumAnnual: 5200,
+    });
+
+    const insights = insuranceConditions(db, snap);
+    expect(insights.filter((i) => i.id.startsWith('ins-gapped-rollover-'))).toHaveLength(0);
   });
 
   // ── (e) determinism ──────────────────────────────────────────────────────
@@ -608,6 +701,39 @@ describe('insuranceWarehouseDriftConditions', () => {
     const out = insuranceWarehouseDriftConditions(db, snap, AS_OF);
     expect(out).toHaveLength(1);
     expect(out[0]!.id).toBe('insurance-warehouse-drift-ins-dual');
+  });
+
+  // ── (a.5) determinism under row-order — Finding 7 of the 2026-08-24 integrity sweep ────
+
+  it('(a.5) isMoreCurrentRow gives a total order: the reduce picks the SAME winner regardless of array permutation on a source_date tie', () => {
+    // Two rows sharing source_date (the common case -- one capture batch stamps a uniform
+    // source_date on every row) and effective_date, differing only by id and expiration_date --
+    // exactly the shape that let physical row order silently decide the winner before this fix
+    // (demonstrated live: order [101,102] fired a drift alert, order [102,101] did not, same
+    // underlying data). isMoreCurrentRow's total order (source_date, then effective_date, then id)
+    // must pick the higher-id row NO MATTER which order the two rows appear in the input array.
+    const rowLowId: CollapsibleInsuranceRow = {
+      id: 101,
+      property_id: 'p',
+      policy_number: 'A',
+      effective_date: '2025-08-21',
+      expiration_date: '2026-09-01',
+      policy_type: 'general-liability',
+      source_date: '2026-08-21',
+    };
+    const rowHighId: CollapsibleInsuranceRow = {
+      id: 102,
+      property_id: 'p',
+      policy_number: 'B',
+      effective_date: '2025-08-21',
+      expiration_date: '2027-08-01',
+      policy_type: 'general-liability',
+      source_date: '2026-08-21',
+    };
+    const reduceWinner = (rows: CollapsibleInsuranceRow[]) => rows.reduce((best, r) => (isMoreCurrentRow(r, best) ? r : best));
+
+    expect(reduceWinner([rowLowId, rowHighId]).id).toBe(102);
+    expect(reduceWinner([rowHighId, rowLowId]).id).toBe(102);
   });
 
   // ── (b) LOGIC DISAGREEMENT — same date, different verdict ────────────────
