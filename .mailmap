@@ -1,0 +1,9 @@
+# .mailmap — corrects author identity for git log/blame/shortlog and GitHub's contributor view,
+# without rewriting any commit hash. See `git help shortlog` (MAPPING AUTHORS) for the format.
+#
+# 2026-08-24 integrity sweep, Finding 5: 13 commits on this date carry the placeholder identity
+# "Test <test@test.com>" instead of the canonical automated-session identity — a stray git config
+# in some worktree/session that day, isolated to 2026-08-24 (verified: `git log --all --author=
+# test@test.com` returns commits from that single date only). Mapped to the same identity every
+# other automated commit in this repo uses.
+ZE OOBA <ggoldberg@oxfordra.net> Test <test@test.com>
