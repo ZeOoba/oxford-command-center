@@ -5,26 +5,41 @@
  * scripts/ar-import.ts. Built for a scheduled task: no prompts, no running server required.
  *
  * Per-run pipeline:
- *   scan AR_INBOX/*.pdf
- *     → pdfplumber text  (server/ar/pdf-extract)
- *     → parse buckets    (server/ar/ar-aging — Yardi/AppFolio "Aging Detail"; RM delinquency unsupported)
- *     → partition        (server/ar/partition-confidence — AUTO-WRITE HIGH-CONFIDENCE ONLY)
- *          · exact / high-≥2-token / cache-confirmed  → write
- *          · everything else                          → review queue (never written)
+ *   scan AR_INBOX/*.pdf + *.xlsx — TWO parse branches, then a shared attribute/write path
+ *     → xlsx: ExcelJS → ordered detect (each detector's row-1 check is disjoint, so the order is
+ *             chosen for readability/frequency, not correctness):
+ *               · rent-manager-delinquency  ("Delinquency (Detail)")
+ *               · delinquency-transactional (Yardi "DB Caption:")
+ *               · delinquency-bucketed      (two-bucket, unit-only "Delinquency")
+ *       pdf:  pdfplumber text (server/ar/pdf-extract) → parse (server/ar/ar-aging — Yardi/AppFolio
+ *             "Aging Detail" ONLY; an RM delinquency report is unsupported *as a PDF*, though the
+ *             xlsx form of that same report parses fine via the first detector above)
+ *     → attribute each row to a lease — which matcher runs depends on the format:
+ *          · delinquency-bucketed → by UNIT (server/ar/resolve-by-unit). Format B carries NO tenant
+ *            name, so it cannot use the name-matching path; it resolves and logs in its own branch.
+ *          · every other format   → by NAME (server/ar/partition-confidence — AUTO-WRITE
+ *            HIGH-CONFIDENCE ONLY)
+ *               · exact / high-≥2-token / cache-confirmed  → write
+ *               · everything else                          → review queue (never written)
  *     → write overlay (canonical) + patch snapshot (immediate 4c visibility)
- *     → append review queue · update mapping cache · archive the PDF
+ *     → append review queue · update mapping cache · archive the source file (pdf or xlsx alike)
  *
  * SAFETY: mirrors the interactive script's `autoAccept` rule exactly — a below-high-confidence or
- * ambiguous match is NEVER auto-attributed. Those land in AR_INBOX/../review-queue.json for a human
- * to map with the interactive tool. Silent mis-attribution of a delinquency is the worst failure
- * mode and this run cannot produce one. Guards closing paths two rounds of 2026-07-22 adversarial
- * refute passes found: a cache-confirmed leaseId is validated against the CURRENT lease roster
+ * ambiguous match is NEVER auto-attributed. Those land in AR_INBOX/../review-queue.json, which NOTHING
+ * reads back — it is a report surface, not a work queue with a tool behind it. A queued row is resolved
+ * by fixing the MATCHER (server/ar/resolve-by-unit.ts, or resolvePropertyId below) so the row attributes
+ * by rule, then re-feeding its source file from ../processed back into AR_INBOX and re-running THIS
+ * script; a re-import at the same as-of date overwrites the prior entry (resolve-latest.ts's `>=` tie).
+ * scripts/ar-import.ts is NOT that tool: it takes a PDF path on argv and needs a running server.
+ * Silent mis-attribution of a delinquency is the worst failure mode and this run cannot produce one.
+ * Guards closing paths two rounds of 2026-07-22 adversarial refute passes found: a cache-confirmed
+ * leaseId is validated against the CURRENT lease roster
  * (vacated-tenant dead leaseId → review, not a silent write-to-nowhere); an incoming report is
  * checked against the ALREADY-PERSISTED arrears for that lease, not just other rows in the same
  * sweep, before being written (server/ar/resolve-latest.ts's filterAgainstPersisted); the SAME
- * comparison (isSafeToWrite) is now also applied by the interactive script's write path, since the
- * review-queue backlog it resolves is by construction the OLDEST, most stale rows; two reports
- * sharing an exact as-of date but reporting DIFFERENT totals are never silently resolved either way
+ * comparison is now also applied by the interactive script's write path, since the reports a human
+ * hand-imports there are by construction the OLDEST, most stale ones; two reports sharing an exact
+ * as-of date but reporting DIFFERENT totals are never silently resolved either way
  * (ambiguousTies); and an empty/degraded lease roster halts the run instead of silently routing every
  * cache-confirmed row to review.
  *
@@ -592,7 +607,9 @@ async function main(): Promise<void> {
     `\n${overlayWriteFailed ? '✗' : '✓'} Done — ${writtenCount} lease(s) written · ${allReviews.length} queued for review · ${totalSkipped} skipped · ${archivedCount}/${files.length} archived${conflictPdfPaths.size > 0 ? ` · ${conflictPdfPaths.size} left in inbox (ambiguous tie)` : ''}`,
   );
   if (allReviews.length > 0) {
-    console.log(`  ⚠ ${allReviews.length} row(s) need a human map — see ${REVIEW_QUEUE} (run scripts/ar-import.ts to resolve).`);
+    console.log(`  ⚠ ${allReviews.length} row(s) need a human map — see ${REVIEW_QUEUE}.`);
+    console.log(`    To resolve: fix the matcher (server/ar/resolve-by-unit.ts, or the propertyId map in this script) so the row attributes by rule, copy its source file from ${PROCESSED} back into ${INBOX}, and re-run this script. A re-import at the SAME as-of date overwrites the prior entry, so this is safe to repeat.`);
+    console.log(`    NOT scripts/ar-import.ts — that takes a PDF path and needs a running server; it never reads this queue.`);
   }
   if (overlayWriteFailed) process.exitCode = 1;
 }
