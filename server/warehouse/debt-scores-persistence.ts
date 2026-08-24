@@ -12,16 +12,16 @@
 // from snapshot_date the business date, but two runs within the same second are possible — same
 // convention as acq_scores/api.ts/capital-allocation.ts/brain-report.ts elsewhere in this repo).
 //
-// KNOWN DISCONTINUITY (2026-08-22): scoreDebtPositions' NOI basis changed from 100%-basis
-// (m.noi) to ownership-adjusted (m.oxfordNoi) on this date. Rows written before it, for any
-// fractionally-owned property, carry DSCR/debt_yield computed on the OLD (100%-basis) NOI; rows
-// written after carry the corrected (ownership-adjusted) basis. There is no retraction path (see
-// above) and no column marking which basis a given row used, so a trend read spanning this date
-// for a fractionally-owned property will show DSCR/debt_yield step-changing overnight with
-// nothing in the row itself signaling that the cause is a basis correction, not a real change in
-// debt position. Not backfilled/annotated here — flagged for whoever next reads a debt_scores
-// trend spanning this date, and a candidate for a `noi_basis` column if this class of change
-// recurs.
+// NOI BASIS DISCONTINUITY (2026-08-22, marked 2026-08-24 — migration 028): scoreDebtPositions'
+// NOI basis changed from 100%-basis (m.noi) to ownership-adjusted (m.oxfordNoi) on 2026-08-22
+// (9cb6169). Rows written before it, for any fractionally-owned property, carry DSCR/debt_yield
+// computed on the OLD (100%-basis) NOI; rows written after carry the corrected (ownership-
+// adjusted) basis. There is no retraction path (see above), so migration 028 added a noi_basis
+// column instead: existing rows default to '100pct' (true by construction — 9cb6169 is the only
+// commit that has ever changed this table's NOI derivation), and every row this module writes
+// from here on is stamped 'oxford-share'. A trend reader spanning 2026-08-22 for a fractionally-
+// owned property can now tell a basis correction apart from a real change in debt position
+// instead of seeing an unexplained step-change.
 import type { WarehouseDb } from './db';
 import type { DebtScore } from '../../src/contracts/debt';
 import type { PeriodMetrics } from '../../src/contracts/warehouse';
@@ -50,11 +50,11 @@ export function persistDebtScores(
     INSERT INTO debt_scores (
       property_id, scored_at, snapshot_date, noi_period, dscr, dscr_headroom, ltv, ltv_headroom,
       debt_yield, signal, signal_reason, refi_trigger_bps, capital_config_version, score, score_band,
-      book_trust
+      book_trust, noi_basis
     ) VALUES (
       @propertyId, @scoredAt, @snapshotDate, @noiPeriod, @dscr, @dscrHeadroom, @ltv, @ltvHeadroom,
       @debtYield, @signal, @signalReason, @refiTriggerBps, @capitalConfigVersion, @score, @scoreBand,
-      @bookTrust
+      @bookTrust, @noiBasis
     )
   `);
 
@@ -125,6 +125,10 @@ export function persistDebtScores(
         // Round 19b: the row states its own provenance (migration 027), so a refusal-window
         // observation can never be mistaken for a clean-book one by a future trend reader.
         bookTrust: s.bookTrust,
+        // Migration 028: every row this module writes uses the ownership-adjusted basis (see
+        // module header) — 'oxford-share', never the old '100pct' default, which only pre-
+        // migration historical rows carry.
+        noiBasis: 'oxford-share',
       });
       count++;
     }

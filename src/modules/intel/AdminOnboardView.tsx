@@ -26,6 +26,10 @@ export function AdminOnboardView() {
   const [name, setName] = useState('');
   const [aliases, setAliases] = useState('');
   const [sfTotal, setSfTotal] = useState('');
+  // Ownership % (2026-08-24, PR #302 review): PropertyOnboardingInputSchema requires ownershipPct
+  // with no default -- the route 400s without it. Default 100 (wholly-owned, the common case);
+  // stored here as a 0-100 display value and converted to the schema's 0-1 fraction on submit.
+  const [ownershipPctDisplay, setOwnershipPctDisplay] = useState('100');
   const [pmSystem, setPmSystem] = useState<string>('quickbooks');
   const [authSource, setAuthSource] = useState<string>('internal-quickbooks');
   const [result, setResult] = useState<OnboardResult | null>(null);
@@ -36,8 +40,14 @@ export function AdminOnboardView() {
     setResult(null);
     const cleanId = id.trim();
     const cleanName = name.trim();
+    const ownershipPct = Number(ownershipPctDisplay) / 100;
     if (!cleanId || !cleanName) {
       setResult({ ok: false, error: 'ID and Name are required.' });
+      setSubmitting(false);
+      return;
+    }
+    if (!Number.isFinite(ownershipPct) || ownershipPct <= 0 || ownershipPct > 1) {
+      setResult({ ok: false, error: 'Ownership % must be greater than 0 and at most 100.' });
       setSubmitting(false);
       return;
     }
@@ -50,13 +60,14 @@ export function AdminOnboardView() {
           name: cleanName,
           aliases: aliases.split(',').map(s => s.trim()).filter(Boolean),
           sfTotal: sfTotal ? Number(sfTotal) : null,
+          ownershipPct,
           pmSystem,
           authoritativeSource: authSource,
         }),
       });
       const data = await res.json() as OnboardResult;
       setResult(data);
-      if (data.ok) { setId(''); setName(''); setAliases(''); setSfTotal(''); }
+      if (data.ok) { setId(''); setName(''); setAliases(''); setSfTotal(''); setOwnershipPctDisplay('100'); }
     } catch {
       setResult({ ok: false, error: 'Network error — is the server running?' });
     } finally {
@@ -89,6 +100,20 @@ export function AdminOnboardView() {
         <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
           Rentable SF
           <input type="number" min={0} value={sfTotal} onChange={e => setSfTotal(e.target.value)} style={inputStyle} placeholder="10000" />
+        </label>
+        <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+          Ownership % (100 for wholly-owned; e.g. 50 for a 50% JV)
+          <input
+            required
+            type="number"
+            min={0.01}
+            max={100}
+            step="any"
+            value={ownershipPctDisplay}
+            onChange={e => setOwnershipPctDisplay(e.target.value)}
+            style={inputStyle}
+            placeholder="100"
+          />
         </label>
         <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
           PM System

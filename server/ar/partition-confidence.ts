@@ -65,6 +65,7 @@ export function partitionArRows(
   rows: ReadonlyArray<ArAgingRow>,
   leases: ReadonlyArray<LeaseLite>,
   cacheEntries: Readonly<Record<string, string>> = {},
+  validLeaseIds?: ReadonlySet<string>,
 ): ArPartition {
   const writePre: Array<{ leaseId: string; arrears: { d30: number; d60: number; d90: number; d90plus: number }; tenant: string }> = [];
   const review: ArReviewRow[] = [];
@@ -76,14 +77,32 @@ export function partitionArRows(
   // keeps listing them; a stale cache hit then writes to a dead leaseId, and deriveArBalances
   // silently skips that orphan — the delinquency vanishes from every read model with zero
   // visibility. Validate every cache hit against the live roster before trusting it.
-  const leaseIds = new Set(leases.map((l) => l.id));
+  //
+  // validLeaseIds is a SEPARATE, optional, wider roster than `leases` (2026-08-24, PR #302 review
+  // finding): the 2026-08-24 integrity sweep started excluding Expired leases from `leases` so a
+  // FRESH tenant-name match can no longer auto-attribute to a dead lease -- but `leases` also fed
+  // this validation set, so a PREVIOUSLY human-CONFIRMED cache mapping to an Expired lease (a
+  // different, already-trusted decision -- see the header doc) started failing validation too and
+  // silently froze real, live arrears (verified: 2 cache entries covering $9,596.90 + $13,019.92 in
+  // this repo's own data at review time). Callers that need the Expired-exclusion for fresh matches
+  // but must still honor a confirmed mapping to an Expired lease should pass the FULL (unfiltered)
+  // roster's ids here; omitting it falls back to deriving from `leases`, preserving old behavior for
+  // any caller that has no such distinction.
+  const leaseIds = validLeaseIds ?? new Set(leases.map((l) => l.id));
 
   for (const row of rows) {
     const { tenant, property, d30, d60, d90, d90plus } = row;
     const arrears = { d30, d60, d90, d90plus };
     const key = cacheKey(tenant);
 
-    const cached = cacheEntries[key];
+    // Object.hasOwn guard (2026-08-24 integrity-sweep hygiene finding): cacheEntries is a plain
+    // object indexed by a normalized tenant string — a tenant name that happens to normalize to
+    // 'constructor'/'toString'/etc. would otherwise read an inherited Object.prototype member
+    // instead of undefined. No real tenant name collides with one today (this already failed
+    // CLOSED via the leaseIds.has() validation below, which routes any non-string/unrecognized
+    // hit to review), but the guard removes the class of bug rather than relying on that
+    // downstream check.
+    const cached = Object.hasOwn(cacheEntries, key) ? cacheEntries[key] : undefined;
     if (cached === 'SKIP') {
       skipped++;
       continue;

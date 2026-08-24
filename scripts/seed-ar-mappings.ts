@@ -45,7 +45,10 @@ async function main(): Promise<void> {
   const cache = loadCache();
   for (const [name, leaseId, why] of CONFIRMED) {
     const key = cacheKey(name);
-    const prior = cache.entries[key];
+    // Object.hasOwn guard (2026-08-24, PR #302 review): CONFIRMED above is hardcoded, not untrusted
+    // input, so this is defense-in-depth rather than a live gap — but it keeps every cacheEntries
+    // lookup site in the AR subsystem consistent with the same guard.
+    const prior = Object.hasOwn(cache.entries, key) ? cache.entries[key] : undefined;
     if (prior !== undefined && prior !== leaseId) {
       throw new Error(
         `refusing to overwrite an existing mapping: ${key} -> ${prior} (wanted ${leaseId})`,

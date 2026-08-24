@@ -5,8 +5,12 @@
 // so subsequent imports of the same PM export don't re-prompt for the same name.
 // Cache is keyed by normalized(tenantName) so minor whitespace/case variations still hit.
 //
-// Storage: data/ar-mapping-cache.json (gitignored — local operational state, not source).
-// Never written unless the import script explicitly calls save() after a confirmed session.
+// Storage: data/ar-mapping-cache.json. CORRECTED 2026-08-24 (PR #302 review): this file is
+// git-tracked, not gitignored — local operational state that happens to be committed (a durable
+// SKIP ruling belongs in version control the same way any other human decision does; see the
+// 2026-08-24 integrity-sweep incident this repo's own history records for what an un-persisted
+// ruling costs). Never written unless the import script explicitly calls save() after a confirmed
+// session, or a session hand-edits it to add a durable SKIP outside a normal import run.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';

@@ -28,6 +28,7 @@ import type { BrainReport } from '../../src/contracts/brain-report';
 
 const EMPTY_REPORT: BrainReport = {
   asOf: '2026-07-06T00:00:00.000Z',
+  dataAsOf: null,
   overallHitRate: null,
   overallCi: null,
   resolvedTotal: 0,
@@ -44,6 +45,7 @@ const EMPTY_REPORT: BrainReport = {
 
 const POPULATED_REPORT: BrainReport = {
   asOf: '2026-07-06T00:00:00.000Z',
+  dataAsOf: '2026-07-05T18:00:00.000Z',
   overallHitRate: 0.72,
   overallCi: { lo: 0.55, hi: 0.85 },
   resolvedTotal: 18,
