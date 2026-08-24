@@ -154,10 +154,14 @@ async function main(): Promise<void> {
 
   // 3 — Load leases + persisted arrears + cache
   console.log('→ Loading leases + persisted arrears from snapshot…');
-  const { leases, tenantArrears: persistedArrears } = await fetchSnapshotForImport();
+  const { leases, allLeaseIds, tenantArrears: persistedArrears } = await fetchSnapshotForImport();
   console.log(`✓ ${leases.length} lease(s) loaded`);
   const cache = loadCache();
-  const leaseIdSet = new Set(leases.map((l) => l.id));
+  // allLeaseIds (not leaseIds derived from `leases`, which excludes Expired leases as of 2026-08-24
+  // PR #302): a human manually typing a leaseId may deliberately want to attribute to a dead lease
+  // (e.g. correcting the fresh-match's own review-queue proposal) -- that is not the same risk class
+  // as an unattended auto-match and must not be blocked by the same exclusion.
+  const leaseIdSet = allLeaseIds;
 
   // 4 — Match + review
   console.log('\n─── Review ────────────────────────────────────────────────────────────────────');
@@ -171,8 +175,11 @@ async function main(): Promise<void> {
     const { tenant, d30, d60, d90, d90plus } = row;
     const key = cacheKey(tenant);
 
-    // Cache hit — non-lossy key means this is the exact same raw name (modulo punctuation/case)
-    const cached = cache.entries[key];
+    // Cache hit — non-lossy key means this is the exact same raw name (modulo punctuation/case).
+    // Object.hasOwn guard (2026-08-24, PR #302 review): cache.entries is a plain object indexed by
+    // an untrusted normalized tenant string, reachable via the prototype chain for a key like
+    // 'constructor' — see partition-confidence.ts's identical guard for the headless path.
+    const cached = Object.hasOwn(cache.entries, key) ? cache.entries[key] : undefined;
     if (cached !== undefined) {
       if (cached === 'SKIP') {
         printRow(tenant, d30, d60, d90, d90plus, '[cached: skip]');
