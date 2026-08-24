@@ -657,6 +657,23 @@ describe('buildBrainReport — dataAsOf (data freshness, distinct from asOf/repo
     expect(report.dataAsOf).toBe('2026-08-17T09:30:00Z');
     expect(report.dataAsOf).not.toBe(report.asOf);
   });
+
+  it('ignores a newer pending-review import — its ledger is inactive, so it is not actually served (PR #302 review finding)', () => {
+    const db = freshDb();
+    const insertBatch = db.prepare(`
+      INSERT INTO import_batches (file_name, file_hash, raw_path, imported_at, version, status)
+      VALUES (?, ?, ?, ?, 1, ?)
+    `);
+    insertBatch.run('committed.xlsx', 'hash-committed', '/raw/committed.xlsx', '2026-08-10T12:00:00Z', 'committed');
+    // Landed LATER than the committed import, but never promoted -- its ledger_entries stayed
+    // is_active=0 (see ingest.ts), so it is not part of what the warehouse actually serves. An
+    // unfiltered MAX(imported_at) would report THIS timestamp, making dataAsOf look fresher than
+    // the served data actually is -- the exact staleness-masking bug this field exists to close.
+    insertBatch.run('pending.xlsx', 'hash-pending', '/raw/pending.xlsx', '2026-08-20T00:00:00Z', 'pending-review');
+
+    const report = buildBrainReport(db, '2026-08-24T15:00:00Z');
+    expect(report.dataAsOf).toBe('2026-08-10T12:00:00Z');
+  });
 });
 
 // ── report parses through the contract on populated data too ────────────────────────────────

@@ -436,13 +436,20 @@ function buildVersionLog(db: WarehouseDb): VersionEvent[] {
 
 // ── entry point ──────────────────────────────────────────────────────────────────────────────
 
-/** Most recent import_batches.imported_at across the whole warehouse, or null when nothing has
- *  been imported yet. This is the "data current as of" signal — distinct from buildBrainReport's
- *  `asOf` param, which is report-GENERATION time (see that field's contract-level doc). */
+/** Most recent import_batches.imported_at among rows whose ledger_entries are actually SERVED
+ *  (status='committed'), or null when nothing committed has been imported yet. This is the "data
+ *  current as of" signal — distinct from buildBrainReport's `asOf` param, which is report-
+ *  GENERATION time (see that field's contract-level doc).
+ *
+ * status-FILTERED (2026-08-24, PR #302 review finding): an import that landed but is
+ * 'pending-review' (or 'duplicate'/'skipped'/'needs-adapter') sets its own ledger_entries.
+ * is_active = 0 — its figures are NOT part of what's served (see ingest.ts). An unfiltered
+ * MAX(imported_at) would let a pending-review import make dataAsOf look fresher than the actually-
+ * served data, reproducing the exact staleness-masking failure mode this field exists to close. */
 function latestImportedAt(db: WarehouseDb): string | null {
-  const row = db.prepare('SELECT MAX(imported_at) AS latest FROM import_batches').get() as
-    | { latest: string | null }
-    | undefined;
+  const row = db
+    .prepare("SELECT MAX(imported_at) AS latest FROM import_batches WHERE status = 'committed'")
+    .get() as { latest: string | null } | undefined;
   return row?.latest ?? null;
 }
 
