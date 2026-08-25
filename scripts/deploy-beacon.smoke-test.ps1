@@ -625,6 +625,100 @@ Assert-True ($null -ne (Select-RunCompletionEvent -Events @([pscustomobject]@{ T
 
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Part 8 -- MODERN STANDBY SUSPENSION (2026-08-25 incident)
+#
+# THE INCIDENT. The 13:13 run was reported ALARM_SILENT_INCOMPLETE with the reason "the beacon
+# is from an earlier run ... this run wrote no beacon". It had written one. Timeline from the
+# System log, which is what actually happened:
+#
+#   13:13:14  507 exiting Modern Standby
+#   13:13:15  task launches, PID 20520          <- the run's TRUE start
+#   13:15:30  506 entering Modern Standby       <- ~2m15s in, process suspended
+#   15:22:22  507 exiting Modern Standby
+#   15:22:23  Windows LastRunTime               <- RE-STAMPED, one second after the wake
+#   15:28:23  run completes, rc=0               <- 6m01s of further work
+#
+# Actual execution was ~8m16s, inside the healthy 5-19 minute band; ExecutionTimeLimit (PT30M)
+# was never tripped, which independently proves the process was not running for 2h15m. The
+# beacon's own pid (20520) matches the launch event exactly.
+#
+# TWO DEFECTS, ONE ROOT CAUSE -- Windows LastRunTime is not a reliable run identity across a
+# Modern Standby resume, and this machine sleeps ~20x/day:
+#
+#   A. The freshness gate compares beacon.startedAt (13:13:25, true) against LastRunTime
+#      (15:22:23, re-stamped), sees 2h09m of skew, and concludes the beacon is a stranger's.
+#      The beacon's finishedAt (15:28:23.649) is 43ms from the run's own end event
+#      (15:28:23.692) -- the terminal moment correlates even when the start does not.
+#
+#   B. ALARM_RUN_STUCK measures raw wall-clock. A check at 15:00 would have computed 107
+#      minutes elapsed, crossed the 90-minute threshold, and paged about a wedged deploy that
+#      was merely asleep. Suspended time is not running time and must not count toward it.
+#
+# The guard rails below (8b, 8c, 8f) exist because both fixes widen an acceptance test, and
+# widening is the direction that silences the check. A stale beacon must still alarm, and
+# suspension must not become a blanket excuse for a genuinely wedged run.
+# ---------------------------------------------------------------------------
+
+$msTrueStart = [datetime]'2026-08-25 13:13:25'
+$msReStamp   = [datetime]'2026-08-25 15:22:23'
+$msEnd       = [datetime]'2026-08-25 15:28:23.692'
+$msBeaconEnd = [datetime]'2026-08-25 15:28:23.649'
+
+# 8a: THE LIVE SHAPE. Beacon start disagrees with the re-stamped LastRunTime, but the beacon's
+# finish matches this run's own end event. It IS this run's beacon.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'completed' 'success' $msTrueStart $msBeaconEnd) `
+                          -LastTaskResult 0 -RunStartedAt $msReStamp -RunEndedAt $msEnd -EnvironmentalEvents @()
+Assert-Equal 'HEALTHY' $v.verdict '8a: resume-restamped LastRunTime + matching finishedAt -> HEALTHY'
+
+# 8b: GUARD. The 2c shape with an explicit finishedAt that also does not match. Still stale.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'completed' 'success' ([datetime]'2026-08-25 09:00:00') ([datetime]'2026-08-25 09:05:00')) `
+                          -LastTaskResult 0 -RunStartedAt $msReStamp -RunEndedAt $msEnd -EnvironmentalEvents @()
+Assert-Equal 'ALARM_SILENT_INCOMPLETE' $v.verdict '8b: stale beacon, neither start nor finish correlates -> still alarms'
+
+# 8c: GUARD. A near-miss must NOT be absorbed -- 10 minutes off the run end is a different run.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'completed' 'success' ([datetime]'2026-08-25 15:12:00') $msEnd.AddMinutes(-10)) `
+                          -LastTaskResult 0 -RunStartedAt $msReStamp -RunEndedAt $msEnd -EnvironmentalEvents @()
+Assert-Equal 'ALARM_SILENT_INCOMPLETE' $v.verdict '8c: finishedAt 10 min off the run end is not this run'
+
+# 8d: DEFECT B. In flight, 107 minutes of wall-clock, 99 of them suspended -> 8 minutes of
+# actual runtime. This is the 15:00 check that would have paged.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null ([datetime]'2026-08-25 13:13:25') $null) `
+                          -LastTaskResult 267009 -RunStartedAt ([datetime]'2026-08-25 13:13:25') `
+                          -SuspendedMinutes 99 -Now ([datetime]'2026-08-25 15:00:00') -EnvironmentalEvents @()
+Assert-Equal 'RUN_IN_PROGRESS' $v.verdict '8d: 107 min wall-clock less 99 min suspended -> RUN_IN_PROGRESS, not stuck'
+
+# 8e: GUARD. A genuinely wedged run with no suspension must still page.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null ([datetime]'2026-08-25 13:00:00') $null) `
+                          -LastTaskResult 267009 -RunStartedAt ([datetime]'2026-08-25 13:00:00') `
+                          -SuspendedMinutes 0 -Now ([datetime]'2026-08-25 15:00:00') -EnvironmentalEvents @()
+Assert-Equal 'ALARM_RUN_STUCK' $v.verdict '8e: 120 min wall-clock, none suspended -> ALARM_RUN_STUCK'
+
+# 8f: GUARD. Suspension is a subtraction, not an excuse. 200 min wall-clock less 30 suspended
+# is still 170 minutes of real execution and must page.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null ([datetime]'2026-08-25 11:40:00') $null) `
+                          -LastTaskResult 267009 -RunStartedAt ([datetime]'2026-08-25 11:40:00') `
+                          -SuspendedMinutes 30 -Now ([datetime]'2026-08-25 15:00:00') -EnvironmentalEvents @()
+Assert-Equal 'ALARM_RUN_STUCK' $v.verdict '8f: suspension does not excuse 170 min of real runtime'
+
+# 8g: BACKWARD COMPAT. Omitting -SuspendedMinutes must behave exactly as before the change.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null ([datetime]'2026-08-25 13:00:00') $null) `
+                          -LastTaskResult 267009 -RunStartedAt ([datetime]'2026-08-25 13:00:00') `
+                          -Now ([datetime]'2026-08-25 15:00:00') -EnvironmentalEvents @()
+Assert-Equal 'ALARM_RUN_STUCK' $v.verdict '8g: -SuspendedMinutes omitted -> unchanged prior behaviour'
+
+# 8h: the stuck reason must show its arithmetic when suspension was discounted, so the reader
+# is not left comparing the verdict against a wall-clock they can compute themselves.
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null ([datetime]'2026-08-25 11:40:00') $null) `
+                          -LastTaskResult 267009 -RunStartedAt ([datetime]'2026-08-25 11:40:00') `
+                          -SuspendedMinutes 30 -Now ([datetime]'2026-08-25 15:00:00') -EnvironmentalEvents @()
+Assert-True ($v.reason -like '*suspend*') '8h: stuck reason names the suspension discount'
+
+# 8i: Test-BeaconBelongsToRun directly -- a beacon with neither timestamp testable is treated
+# as this run's, preserving the pre-change default rather than alarming on missing data.
+Assert-True (Test-BeaconBelongsToRun -Beacon (New-Beacon 'completed' 'success' $null $null) -RunStartedAt $msReStamp -RunEndedAt $msEnd) `
+  '8i: nothing to test -> beacon treated as this run''s (unchanged default)'
+
 Write-Host ''
 if ($failures.Count -gt 0) {
   Write-Host "FAILED: $($failures.Count) assertion(s)"
