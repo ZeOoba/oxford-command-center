@@ -2,7 +2,7 @@
   "meta": {
     "schemaVersion": "1.0.0",
     "asOf": "2026-08-21",
-    "generatedAt": "2026-08-24T15:07:31.716Z",
+    "generatedAt": "2026-08-25T14:35:24.342Z",
     "source": "Master Excel Template Company Wide -- Oxford.xlsx",
     "scenario": "Base"
   },
@@ -4655,7 +4655,7 @@
       "market": "Madison WI",
       "sf": 44200,
       "buildings": null,
-      "stage": "LOI/PSA",
+      "stage": "Candidate",
       "estPrice": 3800000,
       "capRate": null,
       "irr": null,
@@ -4663,7 +4663,7 @@
       "holdYrs": null,
       "lender": null,
       "status": null,
-      "nextAction": "HOLD the drafted LOI. FULL-mode underwrite completed 2026-08-22 returns PASS-band: Combined 31.5/100, Expected Score 4.7, P(exec) 15%. Three of five Stage 1 floors BREACH at the drafted $3.8M price — Basis 58.08% vs 65% floor, Yield 5.88% YoC vs 8% floor, levered 10-yr IRR 5.77% vs 12% floor. ORA walk price is $2,661,000 ($60.20/SF), $1,139,000 below the drafted LOI. Decision required by 2026-08-25 (LOI expiration): withdraw / let lapse, or override with a logged Exception Register compensating factor. DO NOT transmit at $3.8M without an explicit override.",
+      "nextAction": "None — closed out. LOI allowed to lapse per Gabriel's decision 2026-08-24; never transmitted to broker.",
       "owner": "Gabriel Goldberg",
       "targetCloseDate": null,
       "notionDealId": "DEAL-21",
@@ -7465,6 +7465,14 @@
       "d90plus": 0,
       "asOfDate": "2026-08-21T00:00:00.000Z",
       "sourceFile": "Sepich Portfolio Delinquency 8.21.2026.xlsx"
+    },
+    "2207-northwood-c4-anibal-morales": {
+      "d30": 0.38,
+      "d60": 0,
+      "d90": 0,
+      "d90plus": 0,
+      "asOfDate": "2026-08-21T00:00:00.000Z",
+      "sourceFile": "2203-2207 Northwood Delinquency 8.21.2026.xlsx"
     }
   },
   "arBalances": [
@@ -8112,11 +8120,26 @@
       "total": 64.57,
       "asOfDate": "2026-08-21T00:00:00.000Z",
       "sourceFile": "1100 Rarig Delinquency 8.21.2026.xlsx"
+    },
+    {
+      "leaseId": "2207-northwood-c4-anibal-morales",
+      "tenantName": "Anibal Morales",
+      "company": "Anibal Morales",
+      "unit": "C4",
+      "propertyKey": "2207 Northwood",
+      "propertyId": "2203-2207-northwood-dr-salisbury-md",
+      "d30": 0.38,
+      "d60": 0,
+      "d90": 0,
+      "d90plus": 0,
+      "total": 0.38,
+      "asOfDate": "2026-08-21T00:00:00.000Z",
+      "sourceFile": "2203-2207 Northwood Delinquency 8.21.2026.xlsx"
     }
   ],
   "quickbooks": {
     "sourceFile": "C:\\Users\\Owner\\OneDrive - Oxford Capital Partners\\Business\\Quickbooks Backups -- CURRENT FILES\\ora-pl-by-property.csv",
-    "parsedAt": "2026-08-24T15:07:31.771Z",
+    "parsedAt": "2026-08-25T14:35:24.365Z",
     "properties": [
       {
         "propertyKey": "1100 Rarig Ave, Columbus OH",
@@ -8743,7 +8766,7 @@
       },
       {
         "propertyKey": "FVC — Fairground Village Center / Sepich Portfolio (8 props)",
-        "propertyId": null,
+        "propertyId": "sepich-portfolio-columbus-oh-8-props",
         "annualIncome": 1070765.5100000002,
         "annualExpense": 276757.9,
         "annualNoi": 794007.6100000002,
