@@ -71,6 +71,7 @@ $result = [ordered]@{
   verdict          = 'INDETERMINATE'
   reason           = $null
   correlatingEvent = $null
+  suspendedMinutes = 0
   errors           = @()
 }
 
@@ -205,6 +206,54 @@ try {
   Pop-Location -ErrorAction SilentlyContinue
 }
 
+# --- 5b) Time the machine spent SUSPENDED inside this run's window -------------------------
+#
+# WHY (2026-08-25): ALARM_RUN_STUCK compares elapsed time against a 90-minute threshold, and it
+# was measuring raw wall-clock. This machine enters Modern Standby ~20x/day, so any run that
+# spans a sleep accrues wall-clock it never spent executing. The 13:13 run did ~8m16s of real
+# work either side of a 2h07m sleep; a check at 15:00 would have computed 107 minutes and paged
+# about a deploy that was merely asleep.
+#
+# Only the IN-FLIGHT window matters (RunStartedAt -> now), which is the only window the stuck
+# test looks at. Pairs 506 (entering) with 507 (exiting); an unclosed 506 means the machine is
+# still suspended, so the interval runs to now.
+#
+# Failure here is non-fatal by design: a missing figure means 0, which restores the previous
+# wall-clock behaviour rather than silently excusing a genuinely wedged run.
+if ($info -and $info.LastRunTime) {
+  try {
+    $windowStart = $info.LastRunTime
+    $now         = Get-Date
+    if ($windowStart -lt $now) {
+      $sleepEvents = @(Get-WinEvent -FilterHashtable @{
+        LogName   = 'System'
+        Id        = @(506, 507)
+        StartTime = $windowStart
+        EndTime   = $now
+      } -ErrorAction SilentlyContinue | Sort-Object TimeCreated)
+
+      $suspended = [timespan]::Zero
+      $sleepFrom = $null
+      foreach ($e in $sleepEvents) {
+        if ($e.Id -eq 506) {
+          # Keep the FIRST 506 of a run of them; a repeated 506 without an intervening 507 is
+          # the same suspension being re-announced, not a second one.
+          if ($null -eq $sleepFrom) { $sleepFrom = $e.TimeCreated }
+        } elseif ($e.Id -eq 507 -and $null -ne $sleepFrom) {
+          $suspended += ($e.TimeCreated - $sleepFrom)
+          $sleepFrom = $null
+        }
+      }
+      # Still suspended at check time -- the interval has not closed yet.
+      if ($null -ne $sleepFrom) { $suspended += ($now - $sleepFrom) }
+
+      $result.suspendedMinutes = [math]::Round($suspended.TotalMinutes, 1)
+    }
+  } catch {
+    $result.errors += "Modern Standby suspension lookup failed: $($_.Exception.Message)"
+  }
+}
+
 # --- 6) Classify -------------------------------------------------------------------------
 if ($null -ne $result.lastTaskResult) {
   # Splatted, and the two datetimes are omitted when unknown rather than passed as $null.
@@ -219,6 +268,7 @@ if ($null -ne $result.lastTaskResult) {
   }
   if ($info -and $info.LastRunTime) { $verdictArgs['RunStartedAt'] = $info.LastRunTime }
   if ($runEndedAt)                  { $verdictArgs['RunEndedAt']   = $runEndedAt }
+  if ($result.suspendedMinutes -gt 0) { $verdictArgs['SuspendedMinutes'] = [double]$result.suspendedMinutes }
   $verdict = Get-MirrorRunVerdict @verdictArgs
   $result.verdict = $verdict.verdict
   $result.reason  = $verdict.reason
