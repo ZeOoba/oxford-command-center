@@ -233,6 +233,62 @@ function Select-RunCompletionEvent {
   $best
 }
 
+function Test-BeaconBelongsToRun {
+  <#
+    Does this beacon describe the run Windows just reported?
+
+    The beacon is a single file each run overwrites, so "a completed beacon exists" and "THIS
+    run completed" are different claims (2026-08-04). The test used to be a single comparison
+    of beacon.startedAt against Get-ScheduledTaskInfo's LastRunTime.
+
+    WHY THAT IS NOT ENOUGH (2026-08-25): LastRunTime is not stable across a Modern Standby
+    resume. The 13:13:15 run was suspended at 13:15:30 and resumed at 15:22:22; Windows then
+    re-stamped LastRunTime to 15:22:23 -- one second after the wake -- while the beacon still
+    (correctly) held the true start of 13:13:25. The 2h09m of apparent skew is an artifact of
+    the resume, not evidence of a foreign beacon, and it produced a false
+    ALARM_SILENT_INCOMPLETE whose stated reason ("this run wrote no beacon") was flatly untrue:
+    the beacon's own pid, 20520, matched the launch event exactly.
+
+    So correlate on EITHER terminal moment. A run's completion event and its beacon's
+    finishedAt describe the same instant and are written seconds apart -- 43ms apart in the
+    live case -- and unlike the start, neither is re-stamped on resume.
+
+    This WIDENS an acceptance test, which is the direction that silences the check, so the
+    fallback is deliberately held to the same tight tolerance as the primary: a beacon ten
+    minutes off the run's end is a different run and must still alarm (fixture 8c). Every
+    pre-existing stale-beacon fixture (2c, 2j, 2k) has a finishedAt an hour or more from its
+    run's end and is unaffected.
+  #>
+  param(
+    $Beacon,
+    # Deliberately UNTYPED. Get-MirrorRunVerdict's -RunEndedAt is [datetime] but is omitted
+    # rather than passed for an in-flight run, which leaves it $null inside the function;
+    # forwarding that $null into a [datetime]-typed parameter throws "Cannot convert null to
+    # type System.DateTime" (the hazard documented at mirror-run-classify.ps1:212, and caught
+    # here by fixtures 5i/6c). An UNBOUND typed param is silently $null; an explicitly PASSED
+    # $null is a binding error. Guard for null in the body instead.
+    $RunStartedAt,
+    $RunEndedAt
+  )
+  if ($null -eq $Beacon) { return $false }
+
+  $canTestStart = ($Beacon.startedAt  -and $null -ne $RunStartedAt -and $RunStartedAt -gt [datetime]::MinValue)
+  $canTestEnd   = ($Beacon.finishedAt -and $null -ne $RunEndedAt   -and $RunEndedAt   -gt [datetime]::MinValue)
+
+  # Nothing testable -- preserve the pre-change default rather than alarming on missing data.
+  if (-not $canTestStart -and -not $canTestEnd) { return $true }
+
+  if ($canTestStart) {
+    $startSkew = [math]::Abs(($Beacon.startedAt - $RunStartedAt).TotalSeconds)
+    if ($startSkew -le $script:BeaconFreshnessToleranceSeconds) { return $true }
+  }
+  if ($canTestEnd) {
+    $endSkew = [math]::Abs(($Beacon.finishedAt - $RunEndedAt).TotalSeconds)
+    if ($endSkew -le $script:BeaconFreshnessToleranceSeconds) { return $true }
+  }
+  return $false
+}
+
 function Get-MirrorRunVerdict {
   <#
     Classify the last mirror-deploy run. All inputs are injected so this is testable without a
@@ -264,6 +320,18 @@ function Get-MirrorRunVerdict {
     [datetime]$RunStartedAt,
     [datetime]$RunEndedAt,
     [object[]]$EnvironmentalEvents = @(),
+    # Minutes the machine spent suspended (Modern Standby) inside this run's window, supplied by
+    # the caller from System-log 506/507 pairs. Subtracted from wall-clock before the stuck test.
+    #
+    # WHY (2026-08-25): ALARM_RUN_STUCK measured raw wall-clock, and this machine enters Modern
+    # Standby ~20x/day. The 13:13 run did ~8m16s of actual work either side of a 2h07m sleep; a
+    # check at 15:00 would have computed 107 minutes, crossed the 90-minute threshold, and paged
+    # about a deploy that was merely asleep. Suspended time is not running time.
+    #
+    # A subtraction, NOT an excuse: 200 minutes of wall-clock less 30 suspended is still 170
+    # minutes of real execution and must page (fixture 8f). Defaults to 0, so a caller that does
+    # not supply it gets exactly the pre-change behaviour (fixture 8g).
+    [double]$SuspendedMinutes = 0,
     [datetime]$Now = (Get-Date)
   )
 
@@ -275,20 +343,26 @@ function Get-MirrorRunVerdict {
   # and the beacon has nothing to say yet.
   if ($LastTaskResult -eq $script:MirrorRunInProgressResultCode) {
     $elapsedMinutes = $null
+    $wallClockMinutes = $null
     if ($RunStartedAt -gt [datetime]::MinValue) {
-      $elapsedMinutes = [math]::Round(($Now - $RunStartedAt).TotalMinutes)
+      $wallClockMinutes = [math]::Round(($Now - $RunStartedAt).TotalMinutes)
+      # Never let a bad/overlong suspension figure drive elapsed negative and mask a real wedge.
+      $elapsedMinutes = [math]::Max(0, [math]::Round(($Now - $RunStartedAt).TotalMinutes - $SuspendedMinutes))
     }
+    $suspendNote = if ($SuspendedMinutes -gt 0 -and $null -ne $wallClockMinutes) {
+      " That is wall-clock $wallClockMinutes min less $([math]::Round($SuspendedMinutes)) min the machine spent suspended."
+    } else { '' }
     if ($null -ne $elapsedMinutes -and $elapsedMinutes -ge $script:MirrorRunStuckThresholdMinutes) {
       return [pscustomobject]@{
         verdict = 'ALARM_RUN_STUCK'
-        reason  = "The run that started $RunStartedAt is STILL executing $elapsedMinutes minutes later (rc=$LastTaskResult, SCHED_S_TASK_RUNNING), past the ${script:MirrorRunStuckThresholdMinutes}-minute threshold. Healthy runs take 5-19 minutes and the task fires hourly, so this run is wedged rather than working. The mirror is not advancing."
+        reason  = "The run that started $RunStartedAt has been EXECUTING for $elapsedMinutes minutes (rc=$LastTaskResult, SCHED_S_TASK_RUNNING), past the ${script:MirrorRunStuckThresholdMinutes}-minute threshold.$suspendNote Healthy runs take 5-19 minutes and the task fires hourly, so this run is wedged rather than working. The mirror is not advancing."
         correlatingEvent = $null
       }
     }
-    $elapsedNote = if ($null -ne $elapsedMinutes) { " (started $RunStartedAt, $elapsedMinutes minutes ago)" } else { '' }
+    $elapsedNote = if ($null -ne $elapsedMinutes) { " (started $RunStartedAt, $elapsedMinutes minutes of execution)" } else { '' }
     return [pscustomobject]@{
       verdict = 'RUN_IN_PROGRESS'
-      reason  = "The run is still executing$elapsedNote. rc=$LastTaskResult is SCHED_S_TASK_RUNNING -- an in-flight status, not a completion code, and not a kill. Nothing can be concluded about this run's outcome until it finishes; the next check will classify it."
+      reason  = "The run is still executing$elapsedNote.$suspendNote rc=$LastTaskResult is SCHED_S_TASK_RUNNING -- an in-flight status, not a completion code, and not a kill. Nothing can be concluded about this run's outcome until it finishes; the next check will classify it."
       correlatingEvent = $null
     }
   }
@@ -303,11 +377,7 @@ function Get-MirrorRunVerdict {
 
   # Is the beacon actually from THIS run? A stale beacon left by an earlier successful run
   # would otherwise make a beacon-less run look perfectly healthy.
-  $beaconIsFresh = $true
-  if ($Beacon.startedAt -and $RunStartedAt) {
-    $skew = [math]::Abs(($Beacon.startedAt - $RunStartedAt).TotalSeconds)
-    $beaconIsFresh = ($skew -le $script:BeaconFreshnessToleranceSeconds)
-  }
+  $beaconIsFresh = Test-BeaconBelongsToRun -Beacon $Beacon -RunStartedAt $RunStartedAt -RunEndedAt $RunEndedAt
 
   $killed = ($Beacon.status -ne 'completed')
 
