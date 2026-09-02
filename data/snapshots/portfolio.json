@@ -1,8 +1,8 @@
 {
   "meta": {
     "schemaVersion": "1.0.0",
-    "asOf": "2026-08-25",
-    "generatedAt": "2026-08-26T15:29:40.347Z",
+    "asOf": "2026-09-01",
+    "generatedAt": "2026-09-02T10:24:24.215Z",
     "source": "Master Excel Template Company Wide -- Oxford.xlsx",
     "scenario": "Base"
   },
@@ -16,7 +16,7 @@
       "concentrationYellow": 0.25,
       "concentrationRed": 0.5
     },
-    "asOf": "2026-08-25"
+    "asOf": "2026-09-01"
   },
   "properties": [
     {
@@ -74,18 +74,18 @@
       "expenses": 160000,
       "noi": 513516.32000000007,
       "noiScenarioAdj": 513516.32000000007,
-      "debtService": 208344.72,
-      "netCashFlow": 305171.6000000001,
+      "debtService": 208344.72000000003,
+      "netCashFlow": 305171.60000000003,
       "capRate": 0.07,
-      "dscr": 2.4647436229725432,
+      "dscr": 2.464743622972543,
       "lender": "Symetra",
-      "loanBalance": 2765070.31,
-      "ltv": 0.37692068228717635,
+      "loanBalance": 2760611.91,
+      "ltv": 0.3763129352928842,
       "valuePerSf": 152.8322380952381,
       "rentPerSf": 14.031590000000001,
       "equityInvested": -800000,
       "cashOnCash": null,
-      "holdYrs": 5.6,
+      "holdYrs": 5.7,
       "encumbered": true,
       "flags": []
     },
@@ -149,8 +149,8 @@
       "capRate": 0.06318729481132075,
       "dscr": 3.6633005458563197,
       "lender": "NorthMarq",
-      "loanBalance": 1322139.74,
-      "ltv": 0.15591270518867925,
+      "loanBalance": 1314613.585,
+      "ltv": 0.15502518691037737,
       "valuePerSf": 94.22222222222223,
       "rentPerSf": 5.9536473333333335,
       "equityInvested": 1750000,
@@ -179,13 +179,13 @@
       "expenses": 0,
       "noi": 289837.19999999995,
       "noiScenarioAdj": 289837.19999999995,
-      "debtService": 195653.52000000002,
-      "netCashFlow": 94183.67999999993,
+      "debtService": 195653.51999999996,
+      "netCashFlow": 94183.68,
       "capRate": 0.06440826666666666,
-      "dscr": 1.4813799414393358,
+      "dscr": 1.4813799414393363,
       "lender": "Park National",
-      "loanBalance": 2441184.53,
-      "ltv": 0.542485451111111,
+      "loanBalance": 2437576.94,
+      "ltv": 0.5416837644444444,
       "valuePerSf": 125.39709078749372,
       "rentPerSf": 8.076609262665105,
       "equityInvested": -200000,
@@ -219,13 +219,13 @@
       "capRate": 0.07,
       "dscr": 2.837849511204618,
       "lender": "Symetra",
-      "loanBalance": 3713404.852358,
-      "ltv": 0.33304195883357796,
+      "loanBalance": 3707567.2446788466,
+      "ltv": 0.3325184047440925,
       "valuePerSf": 101.68033960440282,
       "rentPerSf": 10.367623772308198,
       "equityInvested": 900000,
       "cashOnCash": 0.5616289222222223,
-      "holdYrs": 5.4,
+      "holdYrs": 5.5,
       "encumbered": true,
       "flags": []
     },
@@ -330,7 +330,7 @@
       "rentPerSf": 7.534625072886298,
       "equityInvested": 2000000,
       "cashOnCash": 0.05421882000000001,
-      "holdYrs": 1.8,
+      "holdYrs": 1.9,
       "encumbered": false,
       "flags": []
     },
@@ -365,7 +365,7 @@
       "rentPerSf": 9,
       "equityInvested": 1000000,
       "cashOnCash": 0.09855,
-      "holdYrs": 1.2,
+      "holdYrs": 1.3,
       "encumbered": false,
       "flags": []
     },
@@ -527,7 +527,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 15600,
-      "monthsToExpiry": 20,
+      "monthsToExpiry": 19,
       "flags": []
     },
     {
@@ -546,7 +546,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 15450,
-      "monthsToExpiry": 38,
+      "monthsToExpiry": 37,
       "flags": []
     },
     {
@@ -565,7 +565,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 15450,
-      "monthsToExpiry": 13,
+      "monthsToExpiry": 12,
       "flags": []
     },
     {
@@ -584,7 +584,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 13768.32,
-      "monthsToExpiry": 7,
+      "monthsToExpiry": 6,
       "flags": []
     },
     {
@@ -603,7 +603,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 14077.439999999999,
-      "monthsToExpiry": 20,
+      "monthsToExpiry": 19,
       "flags": []
     },
     {
@@ -622,7 +622,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 57992.399999999994,
-      "monthsToExpiry": 4,
+      "monthsToExpiry": 3,
       "flags": []
     },
     {
@@ -641,7 +641,7 @@
       "escalationPct": 0.03,
       "status": "Expiring Soon",
       "annualRent": 38196,
-      "monthsToExpiry": 2,
+      "monthsToExpiry": 1,
       "flags": []
     },
     {
@@ -660,7 +660,7 @@
       "escalationPct": 0.03,
       "status": "Expiring Soon",
       "annualRent": 19096.199999999997,
-      "monthsToExpiry": 2,
+      "monthsToExpiry": 1,
       "flags": []
     },
     {
@@ -679,7 +679,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19800,
-      "monthsToExpiry": 10,
+      "monthsToExpiry": 9,
       "flags": []
     },
     {
@@ -698,7 +698,7 @@
       "escalationPct": 0.0384,
       "status": "Active",
       "annualRent": 46800,
-      "monthsToExpiry": 8,
+      "monthsToExpiry": 7,
       "flags": []
     },
     {
@@ -717,7 +717,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 129484.92,
-      "monthsToExpiry": 16,
+      "monthsToExpiry": 15,
       "flags": []
     },
     {
@@ -736,7 +736,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 166470,
-      "monthsToExpiry": 59,
+      "monthsToExpiry": 58,
       "flags": []
     },
     {
@@ -755,7 +755,7 @@
       "escalationPct": -0.0001,
       "status": "Active",
       "annualRent": 198660,
-      "monthsToExpiry": 60,
+      "monthsToExpiry": 59,
       "flags": []
     },
     {
@@ -774,7 +774,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 36000,
-      "monthsToExpiry": 58,
+      "monthsToExpiry": 57,
       "flags": []
     },
     {
@@ -793,7 +793,7 @@
       "escalationPct": 0.05,
       "status": "Active",
       "annualRent": 11988,
-      "monthsToExpiry": 36,
+      "monthsToExpiry": 35,
       "flags": []
     },
     {
@@ -812,7 +812,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 12600,
-      "monthsToExpiry": 36,
+      "monthsToExpiry": 35,
       "flags": []
     },
     {
@@ -831,7 +831,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 25368,
-      "monthsToExpiry": 58,
+      "monthsToExpiry": 57,
       "flags": []
     },
     {
@@ -850,7 +850,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 14627.64,
-      "monthsToExpiry": 34,
+      "monthsToExpiry": 33,
       "flags": []
     },
     {
@@ -869,7 +869,7 @@
       "escalationPct": 0,
       "status": "Expired",
       "annualRent": 10020,
-      "monthsToExpiry": -23,
+      "monthsToExpiry": -24,
       "flags": []
     },
     {
@@ -886,9 +886,9 @@
       "leaseEnd": "2026-11-30",
       "escalationDate": "2026-12-01",
       "escalationPct": 0,
-      "status": "Active",
+      "status": "Expiring Soon",
       "annualRent": 23459.28,
-      "monthsToExpiry": 3,
+      "monthsToExpiry": 2,
       "flags": []
     },
     {
@@ -907,7 +907,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 31800,
-      "monthsToExpiry": 56,
+      "monthsToExpiry": 55,
       "flags": []
     },
     {
@@ -926,7 +926,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 14196,
-      "monthsToExpiry": 8,
+      "monthsToExpiry": 7,
       "flags": []
     },
     {
@@ -945,7 +945,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 13992,
-      "monthsToExpiry": 8,
+      "monthsToExpiry": 7,
       "flags": []
     },
     {
@@ -964,7 +964,7 @@
       "escalationPct": 0.065,
       "status": "Active",
       "annualRent": 0,
-      "monthsToExpiry": 9,
+      "monthsToExpiry": 8,
       "flags": []
     },
     {
@@ -983,7 +983,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 12600,
-      "monthsToExpiry": 7,
+      "monthsToExpiry": 6,
       "flags": []
     },
     {
@@ -1002,7 +1002,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 27984,
-      "monthsToExpiry": 9,
+      "monthsToExpiry": 8,
       "flags": []
     },
     {
@@ -1021,7 +1021,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 13937.52,
-      "monthsToExpiry": 15,
+      "monthsToExpiry": 14,
       "flags": []
     },
     {
@@ -1040,7 +1040,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 11988,
-      "monthsToExpiry": 14,
+      "monthsToExpiry": 13,
       "flags": []
     },
     {
@@ -1059,7 +1059,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 11988,
-      "monthsToExpiry": 12,
+      "monthsToExpiry": 11,
       "flags": []
     },
     {
@@ -1078,7 +1078,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 15180,
-      "monthsToExpiry": 4,
+      "monthsToExpiry": 3,
       "flags": []
     },
     {
@@ -1095,9 +1095,9 @@
       "leaseEnd": "2026-11-30",
       "escalationDate": "2026-12-01",
       "escalationPct": 0.03,
-      "status": "Active",
+      "status": "Expiring Soon",
       "annualRent": 9540,
-      "monthsToExpiry": 3,
+      "monthsToExpiry": 2,
       "flags": []
     },
     {
@@ -1116,7 +1116,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 13991.52,
-      "monthsToExpiry": 10,
+      "monthsToExpiry": 9,
       "flags": []
     },
     {
@@ -1135,7 +1135,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 14580,
-      "monthsToExpiry": 22,
+      "monthsToExpiry": 21,
       "flags": []
     },
     {
@@ -1154,7 +1154,7 @@
       "escalationPct": 0,
       "status": "Active",
       "annualRent": 12347.64,
-      "monthsToExpiry": 16,
+      "monthsToExpiry": 15,
       "flags": []
     },
     {
@@ -1173,7 +1173,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 12348,
-      "monthsToExpiry": 10,
+      "monthsToExpiry": 9,
       "flags": []
     },
     {
@@ -1192,7 +1192,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 12347.64,
-      "monthsToExpiry": 26,
+      "monthsToExpiry": 25,
       "flags": []
     },
     {
@@ -1211,7 +1211,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 13728,
-      "monthsToExpiry": 4,
+      "monthsToExpiry": 3,
       "flags": []
     },
     {
@@ -1230,7 +1230,7 @@
       "escalationPct": 0.03,
       "status": "Expiring Soon",
       "annualRent": 12298.199999999999,
-      "monthsToExpiry": 2,
+      "monthsToExpiry": 1,
       "flags": []
     },
     {
@@ -1249,7 +1249,7 @@
       "escalationPct": 0.0325,
       "status": "Active",
       "annualRent": 24696,
-      "monthsToExpiry": 12,
+      "monthsToExpiry": 11,
       "flags": []
     },
     {
@@ -1268,7 +1268,7 @@
       "escalationPct": 0,
       "status": "Expired",
       "annualRent": 4788,
-      "monthsToExpiry": -23,
+      "monthsToExpiry": -24,
       "flags": []
     },
     {
@@ -1287,7 +1287,7 @@
       "escalationPct": 0.119,
       "status": "Active",
       "annualRent": 25200,
-      "monthsToExpiry": 31,
+      "monthsToExpiry": 30,
       "flags": []
     },
     {
@@ -1306,7 +1306,7 @@
       "escalationPct": 0.0256,
       "status": "Active",
       "annualRent": 47988,
-      "monthsToExpiry": 4,
+      "monthsToExpiry": 3,
       "flags": []
     },
     {
@@ -1325,7 +1325,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 11988,
-      "monthsToExpiry": 34,
+      "monthsToExpiry": 33,
       "flags": []
     },
     {
@@ -1344,7 +1344,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 25436.879999999997,
-      "monthsToExpiry": 21,
+      "monthsToExpiry": 20,
       "flags": []
     },
     {
@@ -1382,7 +1382,7 @@
       "escalationPct": 0.0369,
       "status": "Active",
       "annualRent": 19096.199999999997,
-      "monthsToExpiry": 37,
+      "monthsToExpiry": 36,
       "flags": []
     },
     {
@@ -1401,7 +1401,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19776,
-      "monthsToExpiry": 22,
+      "monthsToExpiry": 21,
       "flags": []
     },
     {
@@ -1420,7 +1420,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 38934,
-      "monthsToExpiry": 12,
+      "monthsToExpiry": 11,
       "flags": []
     },
     {
@@ -1437,9 +1437,9 @@
       "leaseEnd": "2026-08-31",
       "escalationDate": "2026-09-01",
       "escalationPct": 0.03,
-      "status": "Expiring Soon",
+      "status": "Expired",
       "annualRent": 22200,
-      "monthsToExpiry": 0,
+      "monthsToExpiry": -1,
       "flags": []
     },
     {
@@ -1458,7 +1458,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 22200,
-      "monthsToExpiry": 16,
+      "monthsToExpiry": 15,
       "flags": []
     },
     {
@@ -1477,7 +1477,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 25647,
-      "monthsToExpiry": 45,
+      "monthsToExpiry": 44,
       "flags": []
     },
     {
@@ -1496,7 +1496,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 22947.36,
-      "monthsToExpiry": 25,
+      "monthsToExpiry": 24,
       "flags": []
     },
     {
@@ -1515,7 +1515,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 18777.96,
-      "monthsToExpiry": 5,
+      "monthsToExpiry": 4,
       "flags": []
     },
     {
@@ -1534,7 +1534,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19776,
-      "monthsToExpiry": 17,
+      "monthsToExpiry": 16,
       "flags": []
     },
     {
@@ -1553,7 +1553,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 45732,
-      "monthsToExpiry": 20,
+      "monthsToExpiry": 19,
       "flags": []
     },
     {
@@ -1572,7 +1572,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19800,
-      "monthsToExpiry": 4,
+      "monthsToExpiry": 3,
       "flags": []
     },
     {
@@ -1591,7 +1591,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 36837.12,
-      "monthsToExpiry": 32,
+      "monthsToExpiry": 31,
       "flags": []
     },
     {
@@ -1610,7 +1610,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 43260,
-      "monthsToExpiry": 19,
+      "monthsToExpiry": 18,
       "flags": []
     },
     {
@@ -1629,7 +1629,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 21000,
-      "monthsToExpiry": 36,
+      "monthsToExpiry": 35,
       "flags": []
     },
     {
@@ -1648,7 +1648,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 21630,
-      "monthsToExpiry": 25,
+      "monthsToExpiry": 24,
       "flags": []
     },
     {
@@ -1667,7 +1667,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 18334.68,
-      "monthsToExpiry": 8,
+      "monthsToExpiry": 7,
       "flags": []
     },
     {
@@ -1686,7 +1686,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 20394,
-      "monthsToExpiry": 13,
+      "monthsToExpiry": 12,
       "flags": []
     },
     {
@@ -1705,7 +1705,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 37080,
-      "monthsToExpiry": 45,
+      "monthsToExpiry": 44,
       "flags": []
     },
     {
@@ -1724,7 +1724,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 22200,
-      "monthsToExpiry": 25,
+      "monthsToExpiry": 24,
       "flags": []
     },
     {
@@ -1743,7 +1743,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 17304,
-      "monthsToExpiry": 18,
+      "monthsToExpiry": 17,
       "flags": []
     },
     {
@@ -1762,7 +1762,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 21630,
-      "monthsToExpiry": 7,
+      "monthsToExpiry": 6,
       "flags": []
     },
     {
@@ -1781,7 +1781,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 44400,
-      "monthsToExpiry": 12,
+      "monthsToExpiry": 11,
       "flags": []
     },
     {
@@ -1800,7 +1800,7 @@
       "escalationPct": 0.02,
       "status": "Active",
       "annualRent": 94560,
-      "monthsToExpiry": 34,
+      "monthsToExpiry": 33,
       "flags": []
     },
     {
@@ -1819,7 +1819,7 @@
       "escalationPct": 0.0353,
       "status": "Active",
       "annualRent": 156060,
-      "monthsToExpiry": 49,
+      "monthsToExpiry": 48,
       "flags": []
     },
     {
@@ -1838,7 +1838,7 @@
       "escalationPct": null,
       "status": "Active",
       "annualRent": 3600,
-      "monthsToExpiry": 225,
+      "monthsToExpiry": 224,
       "flags": []
     },
     {
@@ -1857,7 +1857,7 @@
       "escalationPct": 0.025,
       "status": "Active",
       "annualRent": 289837.19999999995,
-      "monthsToExpiry": 83,
+      "monthsToExpiry": 82,
       "flags": []
     },
     {
@@ -1876,7 +1876,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 98550,
-      "monthsToExpiry": 60,
+      "monthsToExpiry": 59,
       "flags": []
     },
     {
@@ -1895,7 +1895,7 @@
       "escalationPct": 0.1333,
       "status": "Active",
       "annualRent": 76950,
-      "monthsToExpiry": 79,
+      "monthsToExpiry": 78,
       "flags": []
     },
     {
@@ -1914,7 +1914,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 41375.04,
-      "monthsToExpiry": 30,
+      "monthsToExpiry": 29,
       "flags": []
     },
     {
@@ -1933,7 +1933,7 @@
       "escalationPct": 0.02,
       "status": "Active",
       "annualRent": 39731.04,
-      "monthsToExpiry": 22,
+      "monthsToExpiry": 21,
       "flags": []
     },
     {
@@ -1952,7 +1952,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 452834.88,
-      "monthsToExpiry": 16,
+      "monthsToExpiry": 15,
       "flags": []
     },
     {
@@ -1971,7 +1971,7 @@
       "escalationPct": 0.02,
       "status": "Active",
       "annualRent": 102480,
-      "monthsToExpiry": 61,
+      "monthsToExpiry": 60,
       "flags": []
     },
     {
@@ -1990,7 +1990,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 133385.04,
-      "monthsToExpiry": 21,
+      "monthsToExpiry": 20,
       "flags": []
     },
     {
@@ -2009,7 +2009,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 69750,
-      "monthsToExpiry": 40,
+      "monthsToExpiry": 39,
       "flags": []
     },
     {
@@ -2028,7 +2028,7 @@
       "escalationPct": 0.1846,
       "status": "Active",
       "annualRent": 50647.92,
-      "monthsToExpiry": 37,
+      "monthsToExpiry": 36,
       "flags": []
     },
     {
@@ -2047,7 +2047,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 133776.36000000002,
-      "monthsToExpiry": 4,
+      "monthsToExpiry": 3,
       "flags": []
     },
     {
@@ -2066,7 +2066,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 120000,
-      "monthsToExpiry": 54,
+      "monthsToExpiry": 53,
       "flags": []
     },
     {
@@ -2085,7 +2085,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 64374.96,
-      "monthsToExpiry": 8,
+      "monthsToExpiry": 7,
       "flags": []
     },
     {
@@ -2104,7 +2104,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 54636.36,
-      "monthsToExpiry": 19,
+      "monthsToExpiry": 18,
       "flags": []
     },
     {
@@ -2123,7 +2123,7 @@
       "escalationPct": 0.06,
       "status": "Active",
       "annualRent": 53595.72,
-      "monthsToExpiry": 47,
+      "monthsToExpiry": 46,
       "flags": []
     },
     {
@@ -2142,7 +2142,7 @@
       "escalationPct": 0.1324,
       "status": "Active",
       "annualRent": 53461.56,
-      "monthsToExpiry": 61,
+      "monthsToExpiry": 60,
       "flags": []
     },
     {
@@ -2161,7 +2161,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 59225.04,
-      "monthsToExpiry": 16,
+      "monthsToExpiry": 15,
       "flags": []
     },
     {
@@ -2180,7 +2180,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 104380.08,
-      "monthsToExpiry": 49,
+      "monthsToExpiry": 48,
       "flags": []
     },
     {
@@ -2199,7 +2199,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 67500,
-      "monthsToExpiry": 6,
+      "monthsToExpiry": 5,
       "flags": []
     },
     {
@@ -2216,9 +2216,9 @@
       "leaseEnd": "2026-11-30",
       "escalationDate": "2026-10-01",
       "escalationPct": 0.03,
-      "status": "Active",
+      "status": "Expiring Soon",
       "annualRent": 106923.48000000001,
-      "monthsToExpiry": 3,
+      "monthsToExpiry": 2,
       "flags": []
     },
     {
@@ -2237,7 +2237,7 @@
       "escalationPct": 0.0599,
       "status": "Active",
       "annualRent": 48000,
-      "monthsToExpiry": 29,
+      "monthsToExpiry": 28,
       "flags": []
     },
     {
@@ -2256,7 +2256,7 @@
       "escalationPct": null,
       "status": "Active",
       "annualRent": 26640,
-      "monthsToExpiry": 16,
+      "monthsToExpiry": 15,
       "flags": []
     },
     {
@@ -2275,7 +2275,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 21615,
-      "monthsToExpiry": 28,
+      "monthsToExpiry": 27,
       "flags": []
     },
     {
@@ -2294,7 +2294,7 @@
       "escalationPct": 0,
       "status": "Active",
       "annualRent": 13080.599999999999,
-      "monthsToExpiry": 4,
+      "monthsToExpiry": 3,
       "flags": []
     },
     {
@@ -2313,7 +2313,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 13260,
-      "monthsToExpiry": 4,
+      "monthsToExpiry": 3,
       "flags": []
     },
     {
@@ -2332,7 +2332,7 @@
       "escalationPct": 0.0526,
       "status": "Active",
       "annualRent": 26640,
-      "monthsToExpiry": 12,
+      "monthsToExpiry": 11,
       "flags": []
     },
     {
@@ -2351,7 +2351,7 @@
       "escalationPct": 0.0961,
       "status": "Active",
       "annualRent": 32882.04,
-      "monthsToExpiry": 20,
+      "monthsToExpiry": 19,
       "flags": []
     },
     {
@@ -2370,7 +2370,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 28800,
-      "monthsToExpiry": 32,
+      "monthsToExpiry": 31,
       "flags": []
     },
     {
@@ -2389,7 +2389,7 @@
       "escalationPct": 0.0303,
       "status": "Active",
       "annualRent": 47520,
-      "monthsToExpiry": 21,
+      "monthsToExpiry": 20,
       "flags": []
     },
     {
@@ -2408,7 +2408,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19800,
-      "monthsToExpiry": 26,
+      "monthsToExpiry": 25,
       "flags": []
     },
     {
@@ -2427,7 +2427,7 @@
       "escalationPct": 0.03,
       "status": "Expired",
       "annualRent": 0,
-      "monthsToExpiry": -2,
+      "monthsToExpiry": -3,
       "flags": []
     },
     {
@@ -2446,7 +2446,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 16200,
-      "monthsToExpiry": 26,
+      "monthsToExpiry": 25,
       "flags": []
     },
     {
@@ -2465,7 +2465,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 20394,
-      "monthsToExpiry": 19,
+      "monthsToExpiry": 18,
       "flags": []
     },
     {
@@ -2484,7 +2484,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 20394,
-      "monthsToExpiry": 25,
+      "monthsToExpiry": 24,
       "flags": []
     },
     {
@@ -2503,7 +2503,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19158,
-      "monthsToExpiry": 16,
+      "monthsToExpiry": 15,
       "flags": []
     },
     {
@@ -2522,7 +2522,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 38400,
-      "monthsToExpiry": 5,
+      "monthsToExpiry": 4,
       "flags": []
     },
     {
@@ -2541,7 +2541,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 20400,
-      "monthsToExpiry": 33,
+      "monthsToExpiry": 32,
       "flags": []
     },
     {
@@ -2560,7 +2560,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 32400,
-      "monthsToExpiry": 9,
+      "monthsToExpiry": 8,
       "flags": []
     },
     {
@@ -2579,7 +2579,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19140,
-      "monthsToExpiry": 25,
+      "monthsToExpiry": 24,
       "flags": []
     },
     {
@@ -2598,7 +2598,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19158,
-      "monthsToExpiry": 20,
+      "monthsToExpiry": 19,
       "flags": []
     },
     {
@@ -2617,7 +2617,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19800,
-      "monthsToExpiry": 16,
+      "monthsToExpiry": 15,
       "flags": []
     },
     {
@@ -2636,7 +2636,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 31470.48,
-      "monthsToExpiry": 14,
+      "monthsToExpiry": 13,
       "flags": []
     },
     {
@@ -2655,7 +2655,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 24188.52,
-      "monthsToExpiry": 11,
+      "monthsToExpiry": 10,
       "flags": []
     },
     {
@@ -2674,7 +2674,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 21600,
-      "monthsToExpiry": 24,
+      "monthsToExpiry": 23,
       "flags": []
     },
     {
@@ -2693,7 +2693,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 24000,
-      "monthsToExpiry": 32,
+      "monthsToExpiry": 31,
       "flags": []
     },
     {
@@ -2712,7 +2712,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 24124.920000000002,
-      "monthsToExpiry": 18,
+      "monthsToExpiry": 17,
       "flags": []
     },
     {
@@ -2731,7 +2731,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 37200,
-      "monthsToExpiry": 26,
+      "monthsToExpiry": 25,
       "flags": []
     },
     {
@@ -2750,7 +2750,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 22915.44,
-      "monthsToExpiry": 9,
+      "monthsToExpiry": 8,
       "flags": []
     },
     {
@@ -2769,7 +2769,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 25956,
-      "monthsToExpiry": 12,
+      "monthsToExpiry": 11,
       "flags": []
     },
     {
@@ -2788,7 +2788,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 25200,
-      "monthsToExpiry": 31,
+      "monthsToExpiry": 30,
       "flags": []
     },
     {
@@ -2807,7 +2807,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 26574,
-      "monthsToExpiry": 5,
+      "monthsToExpiry": 4,
       "flags": []
     },
     {
@@ -2826,7 +2826,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 30553.92,
-      "monthsToExpiry": 6,
+      "monthsToExpiry": 5,
       "flags": []
     },
     {
@@ -2845,7 +2845,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 21642.36,
-      "monthsToExpiry": 32,
+      "monthsToExpiry": 31,
       "flags": []
     },
     {
@@ -2864,7 +2864,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 24720,
-      "monthsToExpiry": 17,
+      "monthsToExpiry": 16,
       "flags": []
     },
     {
@@ -2883,7 +2883,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 27501,
-      "monthsToExpiry": 10,
+      "monthsToExpiry": 9,
       "flags": []
     },
     {
@@ -2902,7 +2902,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 23940,
-      "monthsToExpiry": 26,
+      "monthsToExpiry": 25,
       "flags": []
     },
     {
@@ -2921,7 +2921,7 @@
       "escalationPct": 0.03,
       "status": "Expired",
       "annualRent": 89952,
-      "monthsToExpiry": -1,
+      "monthsToExpiry": -2,
       "flags": []
     },
     {
@@ -2940,7 +2940,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 67980,
-      "monthsToExpiry": 19,
+      "monthsToExpiry": 18,
       "flags": []
     },
     {
@@ -2959,7 +2959,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 43272,
-      "monthsToExpiry": 12,
+      "monthsToExpiry": 11,
       "flags": []
     },
     {
@@ -2978,7 +2978,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 51432,
-      "monthsToExpiry": 13,
+      "monthsToExpiry": 12,
       "flags": []
     },
     {
@@ -2997,7 +2997,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 21000,
-      "monthsToExpiry": 23,
+      "monthsToExpiry": 22,
       "flags": []
     },
     {
@@ -3016,7 +3016,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 20340,
-      "monthsToExpiry": 5,
+      "monthsToExpiry": 4,
       "flags": []
     },
     {
@@ -3035,7 +3035,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19800,
-      "monthsToExpiry": 32,
+      "monthsToExpiry": 31,
       "flags": []
     },
     {
@@ -3054,7 +3054,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 20340,
-      "monthsToExpiry": 6,
+      "monthsToExpiry": 5,
       "flags": []
     },
     {
@@ -3073,7 +3073,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 21880.32,
-      "monthsToExpiry": 5,
+      "monthsToExpiry": 4,
       "flags": []
     },
     {
@@ -3092,7 +3092,7 @@
       "escalationPct": 0.03,
       "status": "Expiring Soon",
       "annualRent": 20369.28,
-      "monthsToExpiry": 2,
+      "monthsToExpiry": 1,
       "flags": []
     },
     {
@@ -3111,7 +3111,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 23484,
-      "monthsToExpiry": 8,
+      "monthsToExpiry": 7,
       "flags": []
     },
     {
@@ -3130,7 +3130,7 @@
       "escalationPct": 0.03,
       "status": "Active",
       "annualRent": 19096.199999999997,
-      "monthsToExpiry": 10,
+      "monthsToExpiry": 9,
       "flags": []
     }
   ],
@@ -3141,10 +3141,10 @@
       "counterparty": "3540 Fifth Ave, LLC (Park National Bank)",
       "direction": "borrower",
       "originalPrincipal": null,
-      "currentBalance": 2441184.53,
-      "absBalance": 2441184.53,
+      "currentBalance": 2437576.94,
+      "absBalance": 2437576.94,
       "rate": 0.0604,
-      "monthlyPmt": 16304.460000000001,
+      "monthlyPmt": 16304.459999999997,
       "annualInterest": null,
       "annualPrincipal": null,
       "loanType": "Amortizing",
@@ -3152,7 +3152,7 @@
       "isDemand": false,
       "maturity": "2032-04-16",
       "monthsToMaturity": 67,
-      "ltv": 0.542485451111111,
+      "ltv": 0.5416837644444444,
       "lender": "3540 Fifth Ave, LLC (Park National Bank)",
       "balloon": false,
       "flags": [],
@@ -3164,8 +3164,8 @@
       "counterparty": "Muirkirk Properties (NorthMarq/Symetra) — Oxford 50% share",
       "direction": "borrower",
       "originalPrincipal": null,
-      "currentBalance": 1322139.74,
-      "absBalance": 1322139.74,
+      "currentBalance": 1314613.585,
+      "absBalance": 1314613.585,
       "rate": 0.0425,
       "monthlyPmt": 12189.105000000001,
       "annualInterest": null,
@@ -3175,7 +3175,7 @@
       "isDemand": false,
       "maturity": "2028-01-01",
       "monthsToMaturity": 16,
-      "ltv": 0.15591270518867925,
+      "ltv": 0.15502518691037737,
       "lender": "Muirkirk Properties (NorthMarq/Symetra) — Oxford 50% share",
       "balloon": false,
       "flags": [],
@@ -3187,8 +3187,8 @@
       "counterparty": "Oxford / Symetra Life Insurance (Loan #10258)",
       "direction": "borrower",
       "originalPrincipal": null,
-      "currentBalance": 2765070.31,
-      "absBalance": 2765070.31,
+      "currentBalance": 2760611.91,
+      "absBalance": 2760611.91,
       "rate": 0.056,
       "monthlyPmt": 17362.06,
       "annualInterest": null,
@@ -3198,7 +3198,7 @@
       "isDemand": false,
       "maturity": "2030-12-10",
       "monthsToMaturity": 51,
-      "ltv": 0.41424274307116105,
+      "ltv": 0.4135748179775281,
       "lender": "Oxford / Symetra Life Insurance (Loan #10258)",
       "balloon": false,
       "flags": [],
@@ -3210,8 +3210,8 @@
       "counterparty": "Fairground Village Center LLC (Symetra Life Insurance)",
       "direction": "borrower",
       "originalPrincipal": null,
-      "currentBalance": 3713404.852358,
-      "absBalance": 3713404.852358,
+      "currentBalance": 3707567.2446788466,
+      "absBalance": 3707567.2446788466,
       "rate": 0.0552,
       "monthlyPmt": 22919.27,
       "annualInterest": null,
@@ -3221,7 +3221,7 @@
       "isDemand": false,
       "maturity": "2031-06-05",
       "monthsToMaturity": 57,
-      "ltv": 0.6189008087263334,
+      "ltv": 0.6179278741131411,
       "lender": "Fairground Village Center LLC (Symetra Life Insurance)",
       "balloon": false,
       "flags": [],
@@ -3279,10 +3279,10 @@
       "counterparty": "Restoration Church Trust (Oxford Capital) — Oxford 50% share",
       "direction": "lender",
       "originalPrincipal": null,
-      "currentBalance": -978763.425,
-      "absBalance": 978763.425,
+      "currentBalance": -977747.325,
+      "absBalance": 977747.325,
       "rate": 0.09,
-      "monthlyPmt": -85224.35958333334,
+      "monthlyPmt": -84527.9575,
       "annualInterest": null,
       "annualPrincipal": null,
       "loanType": "Balloon Due Feb-27",
@@ -3290,7 +3290,7 @@
       "isDemand": false,
       "maturity": "2027-02-20",
       "monthsToMaturity": 5,
-      "ltv": 0.78301074,
+      "ltv": 0.7821978599999999,
       "lender": null,
       "balloon": true,
       "flags": [],
@@ -3312,7 +3312,7 @@
       "status": "Interest Only",
       "isDemand": false,
       "maturity": "2028-09-26",
-      "monthsToMaturity": 25,
+      "monthsToMaturity": 24,
       "ltv": 0.72,
       "lender": null,
       "balloon": false,
@@ -3971,7 +3971,7 @@
       "policyNo": "Q61-0512756",
       "carrier": "Erie Insurance",
       "premium": 13722,
-      "daysToExpiry": 119,
+      "daysToExpiry": 112,
       "status": "Current",
       "notes": "Will need to convert to John P under Pr/Br at renewal. 2026-08-17: cross-referenced against Insurance Premium History Analysis — that review flagged this joint 29000 Information Lane LLC & EGF LLC policy (Q61-0512756, 12/22 anniversary, $13,722) as a possible unreviewed second EGF LLC location (its Data Gaps item #22). RESOLVED from this workbook: 29000 Information Lane IS a distinct ORA asset with its own tab. Its declarations were NOT in the reviewed insurance folder — request the 12/22/25-12/22/26 dec from Foundation Insurance Group so the $13,722 premium and building limit can be dec-verified rather than tracker-sourced.",
       "flags": [],
@@ -3983,13 +3983,13 @@
       "id": "ins-29000info-bcl",
       "property": "29000 Information Lane, Easton MD 21601",
       "entity": "29000 Information Lane, LLC & Eric Goldberg Family LLC",
-      "coverage": "Business Crime Liability (BCL)",
+      "coverage": "Business Catastrophe Liability (BCL)",
       "effective": "2025-12-22",
       "expires": "2026-12-22",
       "policyNo": "Q36-2270428",
       "carrier": "Erie Insurance",
       "premium": 594,
-      "daysToExpiry": 119,
+      "daysToExpiry": 112,
       "status": "Current",
       "notes": "Will need to convert to John P under Pr/Br at renewal",
       "flags": [],
@@ -4007,7 +4007,7 @@
       "policyNo": "Q61-0246004",
       "carrier": "Erie Insurance",
       "premium": 8491,
-      "daysToExpiry": 129,
+      "daysToExpiry": 122,
       "status": "Current",
       "notes": "UNVERIFIED PREMIUM as of 2026-08-17: $8,491 is a renewal-tracker figure, NOT read from a declaration. The base ErieSecure Business package dec for the in-force 01/01/26-01/01/27 term is MISSING from the insurance folder (~7.5 months already in force) — only the BCL umbrella dec is present. Cannot confirm current premium, building limit, or deductible. Last dec-verified figures: 2025-26 package $8,236, building $5,624,000 (+7.0% auto-adjust), AOP ded $5,000. Request the 2026-27 ErieSecure Business renewal dec from Foundation Insurance Group. See Insurance Data Gaps item #21. Also open: whether Eric Goldberg Family LLC belongs in ORA portfolio premium/TIV totals (item #23) — currently EXCLUDED from the Insurance Premium History portfolio total.",
       "flags": [],
@@ -4019,13 +4019,13 @@
       "id": "ins-55newplant-bcl",
       "property": "55 New Plant Court, Owings Mills MD 21117",
       "entity": "Eric Goldberg Family LLC",
-      "coverage": "Business Crime Liability (BCL)",
+      "coverage": "Business Catastrophe Liability (BCL)",
       "effective": "2026-01-01",
       "expires": "2027-01-01",
       "policyNo": "Q25-0177359",
       "carrier": "Erie Insurance",
       "premium": 584,
-      "daysToExpiry": 129,
+      "daysToExpiry": 122,
       "status": "Current",
       "notes": "Dec-verified 2026-08-17 against source PDF (BCL Q25 0177359, term 01/01/26-01/01/27): premium $584 flat YoY, $1M/$1M unchanged, underlying schedule still keyed to Q61 0246004. No attachment-point gap — the umbrella's scheduled underlying GL matches the actual primary limits exactly (unlike FVC).",
       "flags": [],
@@ -4043,7 +4043,7 @@
       "policyNo": "Q61-0076471",
       "carrier": "Erie Insurance",
       "premium": 21781,
-      "daysToExpiry": 162,
+      "daysToExpiry": 155,
       "status": "Current",
       "notes": "CORRECTED 2026-08-13: Effective/Expires rolled from 2025-02-03/2026-02-03 (stale, prior term -- caused the false EXPIRED 07-29 disposition-review finding) to 2026-02-03/2027-02-03. Renewal occurred on schedule per broker endorsement trail (Foundation Insurance Group msg 08/06/2026). Base 2026-27 renewal dec is missing from the source folder -- premium $21,781 is the current in-force figure post-6-endorsements (reconstructed, not directly sourced; see Data Gaps tab, 2026-08-13_InsurancePremiumHistory_Analysis_v01.xlsx item #4). Prior $22,292 was the pre-amendment 2025-26 figure. Will need to be rewritten to ESB at renewal.",
       "flags": [],
@@ -4055,13 +4055,13 @@
       "id": "ins-fvc-bcl",
       "property": "Sepich Portfolio (Several Locations, Columbus OH)",
       "entity": "Fairground Village Center LLC",
-      "coverage": "Business Crime Liability (BCL)",
+      "coverage": "Business Catastrophe Liability (BCL)",
       "effective": "2026-02-03",
       "expires": "2027-02-03",
       "policyNo": "Q26-0370289",
       "carrier": "Erie Insurance",
       "premium": 2880,
-      "daysToExpiry": 162,
+      "daysToExpiry": 155,
       "status": "Current",
       "notes": "CORRECTED 2026-08-13: Effective/Expires rolled from 2025-02-03/2026-02-03 (stale -- caused the false EXPIRED 07-29 finding) to 2026-02-03/2027-02-03; premium $1,995 -> $2,880 (+44.4%). Verified directly against source PDF Fair2627.pdf (renewal certificate, policy Q26 0370289 MV, term 02/03/26-02/03/27, total premium $2,880). Rate increase flagged for broker inquiry -- underlying GL schedule on this dec still shows stale $1M/$2M vs the actual $5M/$5M primary effective 12/12/2025 (Data Gaps tab, 2026-08-13_InsurancePremiumHistory_Analysis_v01.xlsx item #1).",
       "flags": [],
@@ -4079,7 +4079,7 @@
       "policyNo": "Q61-0538048",
       "carrier": "Erie Insurance",
       "premium": 990,
-      "daysToExpiry": -142,
+      "daysToExpiry": -149,
       "status": "Expired",
       "notes": null,
       "flags": [],
@@ -4091,13 +4091,13 @@
       "id": "ins-etcpoa-bcl",
       "property": "Airport Road, Easton MD 21601 (ETC POA)",
       "entity": "Easton Technology Center Property Owner's Assoc",
-      "coverage": "Business Crime Liability (BCL)",
+      "coverage": "Business Catastrophe Liability (BCL)",
       "effective": "2025-04-05",
       "expires": "2026-04-05",
       "policyNo": "Q28-0570665",
       "carrier": "Erie Insurance",
       "premium": 664,
-      "daysToExpiry": -142,
+      "daysToExpiry": -149,
       "status": "Expired",
       "notes": null,
       "flags": [],
@@ -4115,7 +4115,7 @@
       "policyNo": "GLWF18677015-001",
       "carrier": "Westchester (Illinois Union) via XPT Partners",
       "premium": 2576,
-      "daysToExpiry": 54,
+      "daysToExpiry": 47,
       "status": "Cancelled",
       "notes": "CANCELLED 2026-08-17 (override applied). Coverage replaced by the Hartford BOP's bundled Business Liability from 05/28/2026 (row 22) — left ACTIVE it would double-count GL against the Hartford line. CAVEAT: unlike the property policy, NO cancellation notice for GLWF18677015-001 has been supplied, so the exact liability-side termination date is UNCONFIRMED and this override is inferred from the replacement policy, not from a carrier document. Do not treat it as dec-verified. See Insurance Data Gaps #31 — request the GL cancellation/policy-release from Foundation Insurance Group.",
       "flags": [],
@@ -4133,7 +4133,7 @@
       "policyNo": "MMF17962784-002",
       "carrier": "Westchester Surplus Lines (Chubb) via XPT Partners",
       "premium": 27609,
-      "daysToExpiry": 54,
+      "daysToExpiry": 47,
       "status": "Cancelled",
       "notes": "CANCELLED MID-TERM effective 05/28/2026 — dec-verified against a signed ACORD 35 policy-release (signed by Gabriel Goldberg 06/01/2026, retroactive to the 05/28 effective date). Replaced by Hartford Spectrum BOP 37 SBA CB6KKB (row 21); the 10/18 anniversary is RETIRED. The $27,609 shown is the FULL-TERM annual premium; the ACORD 35 premium-calculation section is blank, so the short-rate return premium is unknown and actual net 2025-26 cost was lower — see Insurance Data Gaps #32.",
       "flags": [],
@@ -4151,7 +4151,7 @@
       "policyNo": "37 SBA CB6KKB",
       "carrier": "Property & Casualty Ins. Co. of Hartford (via KNABE)",
       "premium": 17621,
-      "daysToExpiry": 276,
+      "daysToExpiry": 269,
       "status": "Current",
       "notes": "DEC-VERIFIED 2026-08-17 against the issued 226-page policy. Hartford Spectrum BOP 37 SBA CB6KKB, underwritten by Property and Casualty Insurance Company of Hartford (NAIC 34690); 'Previous Policy Number: New'. IN FORCE. Replaced Westchester MMF17962784-002 mid-term eff 05/28/2026; ANNIVERSARY MOVED 10/18 -> 05/28, so 10/18/2026 is RETIRED, not upcoming. LOC 1 BLDG 1, built 1985, non-combustible, Building $4,320,000 replacement cost, Business Personal Property $0. Deductible $50,000 AOP plus 2% windstorm/hail. NO coinsurance percentage appears on the declarations (prior program was 80%) — confirm with KNABE. Coverage reduction NOT in any proposal: SP 20 02 cosmetic damage to metal roof surfacing EXCLUDED. No mortgageholder or loss payee scheduled anywhere in the policy — Data Gaps #6.",
       "flags": [],
@@ -4169,7 +4169,7 @@
       "policyNo": "37 SBA CB6KKB",
       "carrier": "Property & Casualty Ins. Co. of Hartford (via KNABE)",
       "premium": 329,
-      "daysToExpiry": 276,
+      "daysToExpiry": 269,
       "status": "Current",
       "notes": "DEC-VERIFIED 2026-08-17. GL $1M each occurrence / $2M general aggregate / $2M products / $1M damage to rented premises / $10K medical, bundled into the BOP. Property-damage liability deductible NONE (the outgoing Mesa GL carried $250 BI/PD — improvement). OPEN (Data Gaps #31): no cancellation notice has been supplied for the outgoing companion GL policy GLWF18677015-001, so the liability-side transition date is unconfirmed and a gap or double-coverage period from 05/28/2026 cannot be ruled out.",
       "flags": [],
@@ -4187,7 +4187,7 @@
       "policyNo": "37 SBA CB6KKB",
       "carrier": "Property & Casualty Ins. Co. of Hartford (via KNABE)",
       "premium": 336,
-      "daysToExpiry": 276,
+      "daysToExpiry": 269,
       "status": "Current",
       "notes": "DEC-VERIFIED 2026-08-17. FIRST excess layer this property has ever carried — $1M each occurrence, with $1M general, products-completed-operations and bodily-injury-by-disease aggregates, over a $10,000 self-insured retention. 9620 carried no umbrella in either prior bound term.",
       "flags": [],
@@ -4205,7 +4205,7 @@
       "policyNo": "37 SBA CB6KKB",
       "carrier": "Property & Casualty Ins. Co. of Hartford (via KNABE)",
       "premium": 0,
-      "daysToExpiry": 276,
+      "daysToExpiry": 269,
       "status": "Current",
       "notes": "DEC-VERIFIED 2026-08-17. EPLI $25,000 each claim / $25,000 annual aggregate, deductible None, premium 'Included' — $0 here is an allocation, not a free policy. TREAT AS NOMINAL COVERAGE (Data Gaps #34): claims-made with RETROACTIVE DATE 05/28/2026, so no prior-acts coverage, and a Missouri Defense-Within-Limits acknowledgment (SL 55 58) under which claim expenses reduce and can fully exhaust the $25,000. Exact policy total is $18,885 = property $17,621 + GL $329 + umbrella $336 + policy base premium $229 + terrorism/TRIA $370.",
       "flags": [],
@@ -4223,7 +4223,7 @@
       "policyNo": "Q61-0456794",
       "carrier": "Erie Insurance",
       "premium": 7831,
-      "daysToExpiry": 24,
+      "daysToExpiry": 17,
       "status": "Renew Now",
       "notes": "CORRECTED 2026-08-17 from declarations (rev 2): premium $7,838 -> $7,831 on this same 09/18/2025-09/18/2026 term. The $7,838 was the 2024-25 premium carried forward against the 25-26 term (Data Gaps #27). RENEWAL BOUND, NOT YET INCEPTED: renewal cert printed 07/05/2026 for the 09/18/2026-09/18/2027 term at $7,522 (-3.95%). AT THAT RENEWAL the property deductible steps $10,000 -> $25,000 (2.5x) and GL limits double to $2M/$4M/$4M, with a CG2146 Abuse or Molestation Exclusion added — confirm the retention increase was authorized BEFORE 09/18/2026, not after (Data Gaps #26). No umbrella/BCL layer on this policy — only ORA property without one (Data Gaps #29). Named insured '5242 ANGOLA ROAD, LLC' does not match the insured asset (Data Gaps #24).",
       "flags": [],
@@ -4241,7 +4241,7 @@
       "policyNo": "Q61-0159747",
       "carrier": "Erie Insurance",
       "premium": 11314,
-      "daysToExpiry": 148,
+      "daysToExpiry": 141,
       "status": "Current",
       "notes": null,
       "flags": [],
@@ -4253,13 +4253,13 @@
       "id": "ins-3540fifth-bcl",
       "property": "3540 E 5th Ave, Columbus OH 43219",
       "entity": "3540 Fifth Avenue LLC",
-      "coverage": "Business Crime Liability (BCL)",
+      "coverage": "Business Catastrophe Liability (BCL)",
       "effective": "2026-01-20",
       "expires": "2027-01-20",
       "policyNo": "Q25-2070432",
       "carrier": "Erie Insurance",
       "premium": 1226,
-      "daysToExpiry": 148,
+      "daysToExpiry": 141,
       "status": "Current",
       "notes": "CORRECTED 2026-08-13: Premium $964 (stale 2025-26 figure, carried forward against the 2026-27 term) -> $1,226 (+27.2%, no limit change). Verified directly against source PDF 26-27 Umbrella Renewal.pdf (renewal certificate, policy Q25 2070432 MV, term 01/20/26-01/20/27, total premium $1,226). Effective/Expires dates were already correct.",
       "flags": [],
@@ -4277,7 +4277,7 @@
       "policyNo": "Q61-0467591",
       "carrier": "Erie Insurance",
       "premium": 15272,
-      "daysToExpiry": 61,
+      "daysToExpiry": 54,
       "status": "Renewing Soon",
       "notes": null,
       "flags": [],
@@ -4289,13 +4289,13 @@
       "id": "ins-2203northwood-bcl",
       "property": "2203-2207 Northwood / 2203 Marvel Rd, Salisbury MD",
       "entity": "2203 Northwood LLC",
-      "coverage": "Business Crime Liability (BCL)",
+      "coverage": "Business Catastrophe Liability (BCL)",
       "effective": "2025-10-25",
       "expires": "2026-10-25",
       "policyNo": "Q34-2570536",
       "carrier": "Erie Insurance",
       "premium": 594,
-      "daysToExpiry": 61,
+      "daysToExpiry": 54,
       "status": "Renewing Soon",
       "notes": null,
       "flags": [],
@@ -4308,13 +4308,13 @@
       "property": "1900 N Broadway, Baltimore MD 21213",
       "entity": "1900 North Broadway LLC",
       "coverage": "Unoccupied/Flex Package (UFX PCKG)",
-      "effective": "2025-08-27",
-      "expires": "2026-08-27",
+      "effective": "2026-08-27",
+      "expires": "2027-08-27",
       "policyNo": "Q44-2750780",
       "carrier": "Erie Insurance",
-      "premium": 11166,
-      "daysToExpiry": 2,
-      "status": "Renew Now",
+      "premium": 11554,
+      "daysToExpiry": 360,
+      "status": "Current",
       "notes": "CORRECTED 2026-08-17 — row previously carried the 08/27/2026-08/27/2027 term, which has NOT incepted, and therefore read 'Current / 375 days' while the policy actually in force lapses in 10 days. Tracker convention: the term/days/status fields hold the IN-FORCE term; issued-but-future terms live in this note. RENEWAL ISSUED, NOT YET INCEPTED: 08/27/2026-08/27/2027 at $11,554 package (+3.5%), building limit $4,912,000, AOP deductible $2,500 unchanged. Inflation guard steps down to +4%/yr. Umbrella reverts to $1,992 (-12.3%). THREE coverage-REDUCING endorsements take effect on the umbrella at inception: CU2123 nuclear energy exclusion, CAT-149 abuse/molestation broadened to negligent hiring/supervision, and CAT-202 electronic data (attachment UNCONFIRMED — Data Gaps #11). Cost down, coverage narrower.",
       "flags": [],
       "tiv": null,
@@ -4325,14 +4325,14 @@
       "id": "ins-1900broadway-bcl",
       "property": "1900 N Broadway, Baltimore MD 21213",
       "entity": "1900 North Broadway LLC",
-      "coverage": "Business Crime Liability (BCL)",
-      "effective": "2025-08-27",
-      "expires": "2026-08-27",
+      "coverage": "Business Catastrophe Liability (BCL)",
+      "effective": "2026-08-27",
+      "expires": "2027-08-27",
       "policyNo": "Q32-2770246",
       "carrier": "Erie Insurance",
-      "premium": 2271,
-      "daysToExpiry": 2,
-      "status": "Renew Now",
+      "premium": 1992,
+      "daysToExpiry": 360,
+      "status": "Current",
       "notes": "CORRECTED 2026-08-17 — see note on row 26. Row previously carried the not-yet-incepted 08/27/2026-08/27/2027 term. In-force 2025-26 BCL premium is $2,271 (+14.0% on unchanged $5M/$5M limits — cost only). RENEWAL ISSUED, NOT YET INCEPTED: 08/27/2026-08/27/2027 at $1,992, fully reversing the prior-year spike; three coverage-reducing endorsements attach at inception (Data Gaps #11).",
       "flags": [],
       "tiv": null,
@@ -4349,7 +4349,7 @@
       "policyNo": "MX1930853871382",
       "carrier": "RT Specialty",
       "premium": 8776,
-      "daysToExpiry": -107,
+      "daysToExpiry": -114,
       "status": "Cancelled",
       "notes": "CANCELLED effective 5/30/2025 — moved to another agent; confirm replacement coverage",
       "flags": [],
@@ -4367,7 +4367,7 @@
       "policyNo": "Q61-0380462",
       "carrier": "Erie Insurance",
       "premium": 5643,
-      "daysToExpiry": -159,
+      "daysToExpiry": -166,
       "status": "Expired",
       "notes": null,
       "flags": [],
@@ -4379,13 +4379,13 @@
       "id": "ins-1100rarig-bcl",
       "property": "1100 Rarig Ave, Columbus OH 43219",
       "entity": "1100 Rarig Avenue LLC",
-      "coverage": "Business Crime Liability (BCL)",
+      "coverage": "Business Catastrophe Liability (BCL)",
       "effective": "2025-03-19",
       "expires": "2026-03-19",
       "policyNo": "Q27-1970494",
       "carrier": "Erie Insurance",
       "premium": 595,
-      "daysToExpiry": -159,
+      "daysToExpiry": -166,
       "status": "Expired",
       "notes": null,
       "flags": [],
@@ -4403,8 +4403,8 @@
       "policyNo": "Q61-0483681",
       "carrier": "Erie Insurance",
       "premium": 21511,
-      "daysToExpiry": 6,
-      "status": "Renew Now",
+      "daysToExpiry": -1,
+      "status": "Expired",
       "notes": null,
       "flags": [],
       "tiv": null,
@@ -4415,14 +4415,14 @@
       "id": "ins-9050redbranch-bcl",
       "property": "9050 Red Branch Rd, Columbia MD (Muirkirk)",
       "entity": "Muirkirk Properties, LLC",
-      "coverage": "Business Crime Liability (BCL)",
+      "coverage": "Business Catastrophe Liability (BCL)",
       "effective": "2025-08-31",
       "expires": "2026-08-31",
       "policyNo": "Q32-3170306",
       "carrier": "Erie Insurance",
       "premium": 2228,
-      "daysToExpiry": 6,
-      "status": "Renew Now",
+      "daysToExpiry": -1,
+      "status": "Expired",
       "notes": null,
       "flags": [],
       "tiv": null,
@@ -4439,7 +4439,7 @@
       "policyNo": "Q61-0566802",
       "carrier": "Erie Insurance",
       "premium": 5687,
-      "daysToExpiry": 290,
+      "daysToExpiry": 283,
       "status": "Current",
       "notes": "CORRECTED 2026-08-13: Effective/Expires rolled from 2025-06-11/2026-06-11 (stale -- caused a false EXPIRED read) to 2026-06-11/2027-06-11; premium $5,815 -> $5,687 (-2.2%, loyalty discount). Verified directly against source PDF 3883 Livingston 2026-2027 Insurance.pdf (revised declaration, policy Q61 0566802, term 06/11/26-06/11/27, total net premium $5,687).",
       "flags": [],
@@ -4451,13 +4451,13 @@
       "id": "ins-3883livingston-bcl",
       "property": "3875-3883 E Livingston Ave, Columbus OH 43227",
       "entity": "3883 Livingston LLC",
-      "coverage": "Business Crime Liability (BCL)",
+      "coverage": "Business Catastrophe Liability (BCL)",
       "effective": "2026-06-11",
       "expires": "2027-06-11",
       "policyNo": "Q30-1170446",
       "carrier": "Erie Insurance",
       "premium": 614,
-      "daysToExpiry": 290,
+      "daysToExpiry": 283,
       "status": "Current",
       "notes": "CORRECTED 2026-08-13: Effective/Expires rolled from 2025-06-11/2026-06-11 (stale -- caused a false EXPIRED read) to 2026-06-11/2027-06-11; premium $614 unchanged (flat YoY). Verified directly against source PDF 3883 Livingston 2026-2027 Umbrella Insurance.pdf (revised declaration, policy Q30 1170446 MV, term 06/11/26-06/11/27, total premium $614).",
       "flags": [],
@@ -4475,7 +4475,7 @@
       "policyNo": "CN101642069-SRS-Prop-26-27",
       "carrier": "Allianz (via SRS Distribution / Marsh)",
       "premium": 0,
-      "daysToExpiry": 219,
+      "daysToExpiry": 212,
       "status": "Current",
       "notes": "Tenant (SRS / Heritage Pool) carries property coverage; 7658 Fishel LLC is additional insured. Liability COI renews 3/1/2026",
       "flags": [],
@@ -4962,7 +4962,7 @@
       "holdYrs": null,
       "lender": null,
       "status": "Not Started",
-      "nextAction": "[2026-08-21] TICKLER FIRED (ora-511-industrial-fallout-check) — ~5 weeks have passed since the 2026-07-17 competing-contract report. Status of that contract is UNVERIFIED: no inbound from Kahkonen on this deal since 2026-06-15 (his only later email, 2026-08-07, is an unrelated Circleville medical-office listing blast). ACTIONABLE STEP FOR GABRIEL: call Noah Kahkonen directly — (614) 559-3350 x117 / cell 614.707.8432 — and ask whether the $1.575M contract survived DD and financing. No outbound contact made by automation (Hard Invariant 1). Next Action Date deliberately left at 2026-08-21 so this goes overdue and keeps surfacing until the call happens. ——— ⏰ TICKLER — RE-CHECK 2026-08-21: call broker Noah Kahkonen (Best Corporate RE) and ask directly whether the competing contract at $1.575M survived DD and financing. Do not wait for a board run to surface this; a dedicated one-time task (ora-511-industrial-fallout-check) fires that day. If the contract failed → re-engage immediately at or below Oxford's LOI v02 number ($1.45M), with the tax-reassessment protection still the deal-break term (assessor resets from ~$520K owner-occupied basis to purchase price; unreimbursed tax spike kills it). If it closed → set Stage = Passed and log to deal-decision-ledger.md. ——— [2026-07-17] UNDER CONTRACT to a competing buyer at full asking price ($1.575M) per Kahkonen. Oxford's LOI v02 at $1.45M was below ask and did not win. KEEP ACTIVE per Gabriel — Stage intentionally remains Candidate (NOT Passed) to hold the fallout position. ——— [Prior] If re-engaged and live: Phase I ESA; Columbus flex rent comps for 43228/adjacent ($12+/SF NNN gates a 9%+ YoC). Vacant value-add lease-up (3-mo lease-up, 1-mo free rent modeled).",
+      "nextAction": "[2026-08-28] Gabriel emailed Noah Kahkonen directly (per this morning's Deal Aging SLA / EOD Ledger tickler) asking whether the competing $1.575M contract survived DD and financing. Outbound contact now made — the invariant-1 no-automated-outbound gap is closed. Awaiting reply. Next Action Date pushed to 2026-09-04 for re-check if no response by then. ——— [2026-08-21] TICKLER FIRED (ora-511-industrial-fallout-check) — ~5 weeks have passed since the 2026-07-17 competing-contract report. Status of that contract is UNVERIFIED: no inbound from Kahkonen on this deal since 2026-06-15 (his only later email, 2026-08-07, is an unrelated Circleville medical-office listing blast). ACTIONABLE STEP FOR GABRIEL: call Noah Kahkonen directly — (614) 559-3350 x117 / cell 614.707.8432 — and ask whether the $1.575M contract survived DD and financing. No outbound contact made by automation (Hard Invariant 1). Next Action Date deliberately left at 2026-08-21 so this goes overdue and keeps surfacing until the call happens. ——— ⏰ TICKLER — RE-CHECK 2026-08-21: call broker Noah Kahkonen (Best Corporate RE) and ask directly whether the competing contract at $1.575M survived DD and financing. Do not wait for a board run to surface this; a dedicated one-time task (ora-511-industrial-fallout-check) fires that day. If the contract failed → re-engage immediately at or below Oxford's LOI v02 number ($1.45M), with the tax-reassessment protection still the deal-break term (assessor resets from ~$520K owner-occupied basis to purchase price; unreimbursed tax spike kills it). If it closed → set Stage = Passed and log to deal-decision-ledger.md. ——— [2026-07-17] UNDER CONTRACT to a competing buyer at full asking price ($1.575M) per Kahkonen. Oxford's LOI v02 at $1.45M was below ask and did not win. KEEP ACTIVE per Gabriel — Stage intentionally remains Candidate (NOT Passed) to hold the fallout position. ——— [Prior] If re-engaged and live: Phase I ESA; Columbus flex rent comps for 43228/adjacent ($12+/SF NNN gates a 9%+ YoC). Vacant value-add lease-up (3-mo lease-up, 1-mo free rent modeled).",
       "owner": "Gabriel Goldberg",
       "targetCloseDate": null,
       "notionDealId": "DEAL-7",
@@ -8139,7 +8139,7 @@
   ],
   "quickbooks": {
     "sourceFile": "C:\\Users\\Owner\\OneDrive - Oxford Capital Partners\\Business\\Quickbooks Backups -- CURRENT FILES\\ora-pl-by-property.csv",
-    "parsedAt": "2026-08-26T15:29:40.364Z",
+    "parsedAt": "2026-09-02T10:24:24.292Z",
     "properties": [
       {
         "propertyKey": "1100 Rarig Ave, Columbus OH",
