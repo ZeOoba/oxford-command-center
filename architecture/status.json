@@ -135,6 +135,15 @@
       "review_needed": false,
       "review_detail": "PR #259 open: https://github.com/ZeOoba/oxford-command-center/pull/259. Fixes a fail-open confidentiality bug and a silent-data-loss regression found by a 3-agent parallel review Gabriel requested after #258 merged. Gate green (governance/typecheck/lint/check:dev-css/reconcile:snapshot); 3259/3260 tests (known-flaky bash-guard wall-clock excluded). | CLOSED OUT 2026-08-24 (stale review_needed, 20d): PR #259 MERGED 2026-08-04. The entry was simply never flipped after the merge.",
       "last_updated": "2026-08-24T17:40:00Z"
+    },
+    "chore-gitignore-alert-state-dir": {
+      "agent_role": "Engineering (Claude Code) -- Gabriel-directed 2026-09-02 fix pass",
+      "phase": "PR #309: ignore data/alert-state/ (producer runtime state dir surfaced as untracked by the 2026-09-02 System Schematic refresh). Claim covers exactly one path: .gitignore (line 27, +1 line). No code, no data files.",
+      "status": "in_progress",
+      "blocked_by": null,
+      "review_needed": false,
+      "review_detail": "Awaiting merge of PR #309. Flip to merged and remove worktree C:/Users/Owner/occ-wt-gitignore post-merge.",
+      "last_updated": "2026-09-02T14:40:00Z"
     }
   },
   "phase-4-steps-5-7-8-9": {
