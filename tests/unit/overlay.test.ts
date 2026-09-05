@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import { AcquisitionInput } from '../../src/contracts/acquisition';
-import { applyOverlay, loadOverlay, saveOverlay, nextStage, EMPTY_OVERLAY } from '../../server/overlay';
+import { applyOverlay, loadOverlay, saveOverlay, nextStage, EMPTY_OVERLAY, evaluateOverlayPrecondition } from '../../server/overlay';
 
 const base = {
   deals: [{ id: 'd1', name: 'FVC', stage: 'Candidate' }],
@@ -311,5 +311,74 @@ describe('saveOverlay + loadOverlay — acquisitionInputs round-trip (item-4)', 
       expect(warn).toHaveBeenCalled();
     });
     warn.mockRestore();
+  });
+});
+
+// ---- evaluateOverlayPrecondition -------------------------------------------------------------
+// Regression cover for the 2026-09-05 incident: the ora-cc-snapshot-refresh worktree-isolation
+// procedure (spec v1.7, 2026-09-02) copies only .env into the fresh worktree, and `git worktree
+// add` brings tracked files only -- so gitignored data/overlay.json was ABSENT. The three CLI
+// writers each guarded the overlay with `if (existsSync(path)) { ...validate... }`, which defends
+// against a PRESENT-but-corrupt overlay and does nothing at all when the file is MISSING. Execution
+// fell through to loadOverlay() -> EMPTY_OVERLAY -> applyOverlay(), which zeroed arBalances (44->0),
+// tenantArrears (44->0), dealComps (2->0) and renewalStages (1->0) in the written snapshot -- and
+// the script exited 0 reporting a clean run. Only the snapshot task's own section-shrink guard
+// caught it, at commit time.
+//
+// The refusal now lives in ONE shared evaluator instead of three copy-pasted blocks whose comments
+// asked future editors to "keep both in sync" -- that duplication is what let the missing-file case
+// go unnoticed in all three at once.
+describe('evaluateOverlayPrecondition — refuses on a missing overlay, not just a corrupt one', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'overlay-precondition-'));
+
+  it('refuses when the overlay file is ABSENT (the 2026-09-05 worktree-isolation case)', () => {
+    const missing = join(dir, 'does-not-exist.json');
+    const result = evaluateOverlayPrecondition(missing);
+    expect(result.refuse).toBe(true);
+    if (!result.refuse) throw new Error('expected refusal');
+    expect(result.reason).toContain(missing);
+    // The operator must be able to tell "absent" from "corrupt" without reading the source.
+    expect(result.reason).toMatch(/not found|missing|absent/i);
+  });
+
+  it('names the deliberate bootstrap escape hatch so a first-ever run is not a dead end', () => {
+    const result = evaluateOverlayPrecondition(join(dir, 'nope.json'));
+    if (!result.refuse) throw new Error('expected refusal');
+    expect(result.reason).toMatch(/\{\}/); // tells you to create an empty overlay on purpose
+  });
+
+  it('allows a well-formed overlay object', () => {
+    const good = join(dir, 'good.json');
+    writeFileSync(good, JSON.stringify({ dealStages: {}, tasks: [] }));
+    expect(evaluateOverlayPrecondition(good).refuse).toBe(false);
+  });
+
+  it('allows an intentionally empty overlay object (deliberate bootstrap)', () => {
+    const empty = join(dir, 'empty.json');
+    writeFileSync(empty, '{}');
+    expect(evaluateOverlayPrecondition(empty).refuse).toBe(false);
+  });
+
+  it('still refuses unparseable JSON (pre-existing guard, preserved)', () => {
+    const corrupt = join(dir, 'corrupt.json');
+    writeFileSync(corrupt, '{ not valid json');
+    const result = evaluateOverlayPrecondition(corrupt);
+    expect(result.refuse).toBe(true);
+    if (!result.refuse) throw new Error('expected refusal');
+    expect(result.reason).toMatch(/corrupt|unparseable/i);
+  });
+
+  it.each([
+    ['null', 'null'],
+    ['an array', '[]'],
+    ['a number', '0'],
+    ['a string', '"overlay"'],
+  ])('still refuses valid JSON that is %s, not an object (pre-existing guard, preserved)', (_label, body) => {
+    const p = join(dir, `shape-${_label.replace(/\W/g, '')}.json`);
+    writeFileSync(p, body);
+    const result = evaluateOverlayPrecondition(p);
+    expect(result.refuse).toBe(true);
+    if (!result.refuse) throw new Error('expected refusal');
+    expect(result.reason).toMatch(/not a valid overlay object/i);
   });
 });

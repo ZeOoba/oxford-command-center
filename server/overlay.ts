@@ -55,6 +55,68 @@ export function overlayPath(): string {
   return process.env.OVERLAY_PATH ?? join(process.cwd(), 'data', 'overlay.json');
 }
 
+/** Result of the pre-flight overlay check — mirrors evaluateAnomalyFloor's discriminated shape so
+ *  callers act on data instead of each re-implementing the refusal. */
+export type OverlayPrecondition = { refuse: true; reason: string } | { refuse: false };
+
+/**
+ * Pre-flight check for any UNATTENDED writer that is about to merge the overlay onto a freshly
+ * parsed snapshot (or save the overlay back). Returns a refusal instead of throwing so the caller
+ * chooses its own failure mode — process.exit(1) for the CLI writers, throw for ar-import-headless.
+ *
+ * loadOverlay() deliberately fails OPEN to EMPTY_OVERLAY on anything it cannot read: a defensible
+ * default for a UI-driven mutation, and a silent data-loss path for a scheduled writer, since
+ * applyOverlay() with an empty overlay ZEROES the enrichment sections (tenantArrears, arBalances,
+ * renewalStages, dealComps, marketRents, noiBudgets) in whatever it writes.
+ *
+ * THREE refusal cases, all of which previously reached loadOverlay() in at least one writer:
+ *   1. MISSING file      — added 2026-09-05. The prior guard was `if (existsSync(path)) {...}`, so
+ *                          an absent overlay skipped validation entirely and fell straight through
+ *                          to the zeroing path. That is exactly what happened when spec v1.7 began
+ *                          running `npm run extract` inside a git worktree: data/overlay.json is
+ *                          gitignored, `git worktree add` brings tracked files only, and the run
+ *                          exited 0 having nulled 44 tenantArrears / 44 arBalances / 2 dealComps /
+ *                          1 renewalStages. Only the snapshot task's section-shrink guard caught it.
+ *   2. UNPARSEABLE JSON  — a JSON.parse throw.
+ *   3. WRONG TOP-LEVEL SHAPE — `null`, `[]`, `0`, `"str"` all parse fine but make loadOverlay()
+ *                          fall back to EMPTY_OVERLAY internally, zeroing data via a different
+ *                          shape than a parse error.
+ *
+ * A file containing `{}` is ALLOWED: an empty overlay object is indistinguishable from a legitimate
+ * fresh install, and refusing it would leave a first-ever run with no way forward. That is also the
+ * documented escape hatch named in the missing-file reason — bootstrapping stays possible, but it
+ * must be a deliberate act, not the silent default.
+ */
+export function evaluateOverlayPrecondition(path: string): OverlayPrecondition {
+  if (!existsSync(path)) {
+    return {
+      refuse: true,
+      reason:
+        `${path} not found — refusing to proceed (would zero enrichment data: tenantArrears, ` +
+        `arBalances, renewalStages, dealComps, marketRents, noiBudgets). The overlay is gitignored ` +
+        `local state, so a fresh git worktree or clone will NOT have it: copy it in from the live ` +
+        `checkout, or point OVERLAY_PATH at it. To bootstrap a genuinely new install on purpose, ` +
+        `create the file containing {}.`,
+    };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch (e) {
+    return {
+      refuse: true,
+      reason: `${path} is corrupt/unparseable — refusing to proceed (would zero enrichment data). Fix or restore it first. (${e instanceof Error ? e.message : String(e)})`,
+    };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return {
+      refuse: true,
+      reason: `${path} is valid JSON but not a valid overlay object — refusing to proceed (would zero enrichment data). Fix or restore it first.`,
+    };
+  }
+  return { refuse: false };
+}
+
 /** Advance path through the pipeline (Refinance/Dead are off-path — set explicitly). */
 export const STAGE_FLOW: DealStage[] = ['Sourcing', 'Candidate', 'LOI/PSA', 'Due Diligence', 'Closing', 'Closed'];
 
