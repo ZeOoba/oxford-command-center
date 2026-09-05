@@ -21,7 +21,7 @@ import {
 } from '../../src/contracts/index';
 import { SCENARIO_PRESETS } from '../../src/contracts/scenario';
 import { loadDeals, dealsDegradationFlag, type DealsDegradation } from '../sources/notion-deals';
-import { loadM365Tasks } from '../sources/m365-tasks';
+import { loadM365Tasks, m365TasksDegradationFlag, type M365TasksDegradation } from '../sources/m365-tasks';
 import { deriveCounterparties } from './counterparties';
 import { crossCheckDebtService } from './debt-service-crosscheck';
 import {
@@ -1258,6 +1258,17 @@ export interface ParseResult {
    * server rewrote portfolio.json with seed placeholders on every refresh.)
    */
   dealsDegraded: DealsDegradation | null;
+  /**
+   * How the M365 To-Do source degraded on this parse, or null when it was fully live (which
+   * INCLUDES a healthy fetch that legitimately returned no open tasks).
+   *
+   * Threaded separately from `flags` for the same reason as `dealsDegraded` above:
+   * `m365TasksDegradationFlag` returns null for `not-configured` so a Graph-less dev box isn't
+   * permanently dirty, but a WRITER of the shared, git-tracked mirror still must not publish a
+   * tasks section with every live M365 row missing. Added 2026-09-05 after a refresh silently
+   * shipped `tasks` 115 -> 59 at Exit 0.
+   */
+  m365Degraded: M365TasksDegradation | null;
 }
 
 /**
@@ -1331,7 +1342,14 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
   const cash = parseCash(get('Cash Balances'), flags, dataAsOf);
   const insurance = parseInsurance(get('Insurance Renewals'), flags);
   const checklistTasks = parseTasks(get('Monthly Checklist'));
-  const m365Tasks = await loadM365Tasks(); // live M365 To-Do prepended when GRAPH_TOKEN set, else []
+  // live M365 To-Do prepended when Graph is configured, else the workbook checklist alone. A
+  // data-losing degradation (token-failed / fetch-failed / empty-result) raises an ERROR-severity
+  // flag so evaluateReconciliationGate refuses the write rather than publishing a tasks section
+  // with every live M365 row silently dropped -- see loadM365Tasks' doc comment for the 2026-09-05
+  // `tasks` 115 -> 59 incident this closes. Same shape as the deals gate directly below.
+  const { tasks: m365Tasks, degraded: m365Degraded } = await loadM365Tasks();
+  const m365Flag = m365TasksDegradationFlag(m365Degraded);
+  if (m365Flag) flags.push(m365Flag);
   const tasks = m365Tasks.length ? [...m365Tasks, ...checklistTasks] : checklistTasks;
   const assumptions = parseAssumptions(get('Assumptions'), flags, dataAsOf);
   // live Notion pipeline merged onto seed when configured, else seed. A data-losing degradation
@@ -1369,5 +1387,5 @@ export async function parseWorkbook(path: string, referenceDateIso?: string): Pr
     dataQuality: flags,
   });
 
-  return { snapshot, flags, dealsDegraded };
+  return { snapshot, flags, dealsDegraded, m365Degraded };
 }
