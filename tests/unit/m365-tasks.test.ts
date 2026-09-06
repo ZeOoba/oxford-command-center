@@ -35,7 +35,7 @@ describe('m365-tasks — Graph To-Do mapping', () => {
     keys.forEach((k) => delete process.env[k]);
     _resetGraphTokenCache();
     try {
-      expect(await loadM365Tasks()).toEqual([]);
+      expect((await loadM365Tasks()).tasks).toEqual([]);
     } finally {
       for (const k of keys) if (prev[k] !== undefined) process.env[k] = prev[k];
     }
