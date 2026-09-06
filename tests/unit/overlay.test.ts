@@ -343,13 +343,26 @@ describe('evaluateOverlayPrecondition — refuses on a missing overlay, not just
     expect(result.reason).toMatch(/not found|missing|absent/i);
   });
 
-  it('points the bootstrap hatch at ALLOW_EMPTY_OVERLAY, NOT at "create a {} file"', () => {
+  // Refute 2026-09-06, found by all five lenses: the message prescribed ALLOW_EMPTY_OVERLAY=1 as
+  // the remedy for a MISSING file, but the missing branch never consults it — a dead remedy, and
+  // the previous version of this test pinned the contradiction by asserting only on the string.
+  // The bootstrap is now explicitly TWO acts, and this asserts the behavior, not the wording.
+  it('does NOT let ALLOW_EMPTY_OVERLAY=1 bypass a MISSING overlay file', () => {
+    const prev = process.env.ALLOW_EMPTY_OVERLAY;
+    process.env.ALLOW_EMPTY_OVERLAY = '1';
+    try {
+      expect(evaluateOverlayPrecondition(join(dir, 'nope.json')).refuse).toBe(true);
+      expect(evaluateOverlayPrecondition(join(dir, 'nope.json'), { expectEnriched: true }).refuse).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.ALLOW_EMPTY_OVERLAY;
+      else process.env.ALLOW_EMPTY_OVERLAY = prev;
+    }
+  });
+
+  it('states the real two-act bootstrap in the missing-file reason', () => {
     const result = evaluateOverlayPrecondition(join(dir, 'nope.json'));
     if (!result.refuse) throw new Error('expected refusal');
-    expect(result.reason).toContain('ALLOW_EMPTY_OVERLAY=1');
-    // Regression: the first version of this message told operators to hand-create `{}`, which
-    // merges exactly like a missing overlay and re-armed the very zeroing it was printed to stop.
-    expect(result.reason).not.toMatch(/create the file containing/i);
+    expect(result.reason).toMatch(/create the file containing \{\} AND set ALLOW_EMPTY_OVERLAY=1/);
   });
 
   it('allows a well-formed overlay object', () => {
@@ -396,6 +409,49 @@ describe('evaluateOverlayPrecondition — refuses on a missing overlay, not just
       if (prev === undefined) delete process.env.ALLOW_EMPTY_OVERLAY;
       else process.env.ALLOW_EMPTY_OVERLAY = prev;
     }
+  });
+
+  // Refute 2026-09-06 (4 of 5 lenses): hasNoEnrichment judged the RAW parse while loadOverlay
+  // applies per-entry Zod/coercion, so these shapes passed the guard and still merged as
+  // EMPTY_OVERLAY — the same silent zeroing, reached through the loader instead of a missing file.
+  // Each was reproduced in-process by a refuter before this test existed.
+  it.each([
+    ['dealComps entries that fail CompSet', '{"dealComps":{"d1":{"bogus":true}}}'],
+    ['renewalStages values that fail RenewalStage', '{"renewalStages":{"l1":"NotAStage"}}'],
+    ['tenantArrears entries that are not objects', '{"tenantArrears":{"x-1":"oops","x-2":5}}'],
+    ['tasks as an object rather than an array', '{"tasks":{"a":1}}'],
+  ])('refuses %s — raw-populated but dropped by the loader', (_label, body) => {
+    const p = join(dir, `dropped-${_label.replace(/\W/g, '')}.json`);
+    writeFileSync(p, body);
+    const result = evaluateOverlayPrecondition(p);
+    expect(result.refuse).toBe(true);
+    if (!result.refuse) throw new Error('expected refusal');
+    expect(result.reason).toMatch(/do NOT survive validation/);
+  });
+
+  it('refuses a loader-dropped domain even WITHOUT expectEnriched (ar-import would cement it)', () => {
+    const p = join(dir, 'dropped-no-expect.json');
+    writeFileSync(p, '{"tenantArrears":{"x-1":"oops"},"dealStages":{"d1":"Closing"}}');
+    // dealStages survives, so this is NOT an empty overlay — but tenantArrears is silently lost,
+    // and ar-import-headless's saveOverlay() would write that loss back as canonical.
+    expect(evaluateOverlayPrecondition(p).refuse).toBe(true);
+  });
+
+  it('treats a non-null SCALAR domain as empty, not as enrichment', () => {
+    const p = join(dir, 'scalar-domain.json');
+    writeFileSync(p, '{"tenantArrears":0}');
+    // Pre-2026-09-06 the fall-through returned false ("populated"), so this passed expectEnriched
+    // and then loaded as {} — junk that reads as data is exactly the silent-zeroing shape.
+    expect(evaluateOverlayPrecondition(p, { expectEnriched: true }).refuse).toBe(true);
+  });
+
+  it('ALLOWS a real overlay whose entries all survive the loader', () => {
+    const p = join(dir, 'genuinely-good.json');
+    writeFileSync(p, JSON.stringify({
+      dealStages: { d1: 'Closing' },
+      tenantArrears: { 'x-1': { d30: 100, d60: 0, d90: 0, d90plus: 0 } },
+    }));
+    expect(evaluateOverlayPrecondition(p, { expectEnriched: true }).refuse).toBe(false);
   });
 
   it('refuses a BOM-prefixed overlay — loadOverlay cannot read it either, so accepting would zero', () => {
