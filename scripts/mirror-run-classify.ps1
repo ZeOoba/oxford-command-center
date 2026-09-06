@@ -143,6 +143,35 @@ if ($runEndedAt) {
       $result.errors += "System event lookup failed: $($_.Exception.Message)"
     }
   }
+
+  # SESSION-class events (2026-09-05). Queried SEPARATELY from the power ids above and scoped
+  # by PROVIDER, because these ids (IsolatedUserMode 1 and 5) are generic across providers;
+  # folding them into the id-only query would match unrelated events and excuse kills that
+  # nothing explains. Get-MirrorSessionEventLabel in lib/deploy-beacon.ps1 is the authoritative
+  # provider+id pairing and is covered by the smoke test -- the -FilterHashtable here is only a
+  # coarse pre-filter, so every returned event is re-checked through it before being accepted.
+  try {
+    $rawSession = Get-WinEvent -FilterHashtable @{
+      LogName      = 'System'
+      ProviderName = @(Get-MirrorSessionEventProviders)
+      Id           = @(Get-MirrorSessionEventIds)
+      StartTime    = $runEndedAt.AddMinutes(-5)
+      EndTime      = $runEndedAt.AddMinutes(5)
+    } -ErrorAction Stop
+    foreach ($e in $rawSession) {
+      $label = Get-MirrorSessionEventLabel -ProviderName $e.ProviderName -Id ([int]$e.Id)
+      if (-not $label) { continue }
+      $envEvents += [pscustomobject]@{
+        TimeCreated = $e.TimeCreated
+        Id          = $e.Id
+        Label       = $label
+      }
+    }
+  } catch {
+    if ($_.Exception.Message -notmatch 'No events were found') {
+      $result.errors += "Session event lookup failed: $($_.Exception.Message)"
+    }
+  }
 }
 
 # --- 4) Beacon ---------------------------------------------------------------------------
