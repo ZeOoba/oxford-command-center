@@ -36,6 +36,73 @@ $script:BeaconCorrelationWindowSeconds = 90
 # belonging to an EARLIER run, i.e. this run produced no beacon at all.
 $script:BeaconFreshnessToleranceSeconds = 120
 
+# SESSION-class lifecycle events, keyed by PROVIDER then id.
+#
+# Why this exists (2026-09-05): the 16:02:25 kill correlated with nothing, because the
+# collector only ever queried the power ids (41/42/107/506/507/1074/...). Windows Hello
+# trustlets started 79s later -- inside the existing 90s window, but the wrong event TYPE, so
+# the run reported ALARM_UNEXPLAINED_KILL for what a sign-in/unlock plausibly explains.
+#
+# This is deliberately NOT a widening of $script:BeaconCorrelationWindowSeconds, which the
+# comment above forbids and scenarios 2g/2i/3c guard. Same window; more event types inside it.
+# It is still a change in the make-kills-look-benign direction, so it is scoped as tightly as
+# the evidence supports: measured against all four recorded unexplained kills, it reclassifies
+# ONLY 2026-09-05 16:02:25. The 08-01 13:01, 08-03 20:05 and 08-04 11:00 windows contain no
+# System events of ANY provider, so they keep alarming (fixtures 3a-3d unchanged).
+#
+# Keyed by provider AND id, never id alone. IsolatedUserMode uses ids 1 and 5, which dozens of
+# unrelated System-log providers also emit; adding bare ids to the existing id-only query would
+# pull in arbitrary events and excuse kills that nothing actually explains -- the precise
+# failure this file exists to prevent. Scenario 5b is the regression guard.
+$script:MirrorSessionEventAllowlist = @{
+  'Microsoft-Windows-IsolatedUserMode' = @{
+    1 = 'secure trustlet started (sign-in/unlock)'
+    5 = 'secure trustlet started (sign-in/unlock)'
+  }
+  'Microsoft-Windows-Winlogon' = @{
+    7001 = 'user logon'
+    7002 = 'user logoff'
+  }
+}
+
+function Get-MirrorSessionEventLabel {
+  <#
+    .SYNOPSIS Label for a session-class lifecycle event, or $null if it is not one.
+    .DESCRIPTION
+      The single decision point for "does this System-log event count as a session-lifecycle
+      explanation for a kill". Lives here, in tested code, rather than in the collector, so
+      the allowlist is covered by the smoke test instead of being an untested query filter.
+
+      Returns $null for a provider that is not on the allowlist, and for an allowlisted
+      provider carrying an id that is not. Match is exact on provider name -- no prefix or
+      wildcard matching, which would re-admit the generic-id problem through the back door.
+  #>
+  param(
+    [string]$ProviderName,
+    [int]$Id
+  )
+  if ([string]::IsNullOrWhiteSpace($ProviderName)) { return $null }
+  if (-not $script:MirrorSessionEventAllowlist.ContainsKey($ProviderName)) { return $null }
+  $ids = $script:MirrorSessionEventAllowlist[$ProviderName]
+  if (-not $ids.ContainsKey($Id)) { return $null }
+  return $ids[$Id]
+}
+
+function Get-MirrorSessionEventProviders {
+  <# .SYNOPSIS Provider names to query for session-class events. #>
+  return @($script:MirrorSessionEventAllowlist.Keys)
+}
+
+function Get-MirrorSessionEventIds {
+  <# .SYNOPSIS Every id used by any allowlisted provider (query pre-filter only -- the
+     authoritative provider+id pairing is Get-MirrorSessionEventLabel). #>
+  $ids = @()
+  foreach ($p in $script:MirrorSessionEventAllowlist.Keys) {
+    $ids += @($script:MirrorSessionEventAllowlist[$p].Keys)
+  }
+  return @($ids | Sort-Object -Unique)
+}
+
 # LastTaskResult while an instance is STILL EXECUTING. 0x00041301 = SCHED_S_TASK_RUNNING.
 # It is an informational status, not a completion code, and it is neither success nor a kill.
 #
