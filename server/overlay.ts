@@ -87,7 +87,29 @@ export type OverlayPrecondition = { refuse: true; reason: string } | { refuse: f
  * documented escape hatch named in the missing-file reason — bootstrapping stays possible, but it
  * must be a deliberate act, not the silent default.
  */
-export function evaluateOverlayPrecondition(path: string): OverlayPrecondition {
+/** Domains whose loss is what "zeroing the snapshot" actually means. Kept as a literal list, not
+ *  `Object.keys(EMPTY_OVERLAY)`, so ADDING a domain does not silently widen the emptiness test. */
+const ENRICHMENT_DOMAINS = [
+  'dealStages', 'tasks', 'renewalStages', 'tenantNotes', 'dealComps',
+  'noiBudgets', 'tenantArrears', 'acquisitionInputs', 'marketRents',
+] as const;
+
+/** True when every enrichment domain is absent or empty — i.e. merging this overlay is
+ *  indistinguishable from merging EMPTY_OVERLAY, which is exactly what zeroes a snapshot. */
+function hasNoEnrichment(o: Record<string, unknown>): boolean {
+  return ENRICHMENT_DOMAINS.every((k) => {
+    const v = o[k];
+    if (v === null || v === undefined) return true;
+    if (Array.isArray(v)) return v.length === 0;
+    if (typeof v === 'object') return Object.keys(v as object).length === 0;
+    return false;
+  });
+}
+
+export function evaluateOverlayPrecondition(
+  path: string,
+  opts: { expectEnriched?: boolean } = {},
+): OverlayPrecondition {
   if (!existsSync(path)) {
     return {
       refuse: true,
@@ -96,7 +118,7 @@ export function evaluateOverlayPrecondition(path: string): OverlayPrecondition {
         `arBalances, renewalStages, dealComps, marketRents, noiBudgets). The overlay is gitignored ` +
         `local state, so a fresh git worktree or clone will NOT have it: copy it in from the live ` +
         `checkout, or point OVERLAY_PATH at it. To bootstrap a genuinely new install on purpose, ` +
-        `create the file containing {}.`,
+        `set ALLOW_EMPTY_OVERLAY=1 to bootstrap a genuinely new install on purpose.`,
     };
   }
   let parsed: unknown;
@@ -112,6 +134,30 @@ export function evaluateOverlayPrecondition(path: string): OverlayPrecondition {
     return {
       refuse: true,
       reason: `${path} is valid JSON but not a valid overlay object — refusing to proceed (would zero enrichment data). Fix or restore it first.`,
+    };
+  }
+  // The residual the missing-file check alone does NOT close: an overlay that is PRESENT and a
+  // well-formed object but carries no enrichment merges exactly like EMPTY_OVERLAY and zeroes the
+  // snapshot at exit 0 — the 2026-09-05 outcome via a different door. Two realistic ways to get one
+  // WITHOUT any operator error: a first server-side saveOverlay() in a fresh checkout writes a
+  // near-empty file, and (before this change) the missing-file message told operators to create
+  // `{}` by hand — a remedy that re-armed the very failure it was printed to stop.
+  //
+  // Only the SNAPSHOT writers pass expectEnriched. ar-import-headless and migrate-lease-overlay-ids
+  // must NOT: an empty overlay is legitimate on a genuinely first AR sweep, which is about to
+  // POPULATE arrears rather than merge them onto a snapshot. Bootstrapping stays possible for both
+  // via ALLOW_EMPTY_OVERLAY=1 — deliberate, auditable in the environment, and impossible to reach
+  // by accidentally truncating a file.
+  if (opts.expectEnriched && process.env.ALLOW_EMPTY_OVERLAY !== '1' && hasNoEnrichment(parsed as Record<string, unknown>)) {
+    return {
+      refuse: true,
+      reason:
+        `${path} parses but carries NO enrichment data (every domain empty) — refusing to proceed. ` +
+        `Merging it would zero tenantArrears, arBalances, renewalStages, dealComps, marketRents and ` +
+        `noiBudgets in the snapshot exactly as a missing overlay would. This is usually a truncated ` +
+        `or freshly-bootstrapped overlay, NOT the real one: copy the live checkout's ` +
+        `data/overlay.json in, or point OVERLAY_PATH at it. If this install genuinely has no overlay ` +
+        `data yet, set ALLOW_EMPTY_OVERLAY=1 to proceed on purpose.`,
     };
   }
   return { refuse: false };

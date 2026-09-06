@@ -468,7 +468,9 @@ async function main() {
   // there, tested once, precisely so these three writers can no longer drift out of sync (the
   // missing-file case was absent from all three simultaneously until 2026-09-05).
   const rawOverlayPath = overlayPath();
-  const overlayCheck = evaluateOverlayPrecondition(rawOverlayPath);
+  // expectEnriched: this writer MERGES the overlay onto a parsed snapshot, so a present-but-empty
+  // overlay zeroes enrichment just as surely as a missing one. ar-import does not pass it.
+  const overlayCheck = evaluateOverlayPrecondition(rawOverlayPath, { expectEnriched: true });
   if (overlayCheck.refuse) {
     console.error(`✗ ${overlayCheck.reason}`);
     process.exit(1);
