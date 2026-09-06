@@ -9,9 +9,27 @@ name: Test order fragility (canary)
 # On failure, the vitest log prints the RNG seed — reproduce locally with
 # `npm run test -- --sequence.shuffle.files=true --sequence.shuffle.tests=true --sequence.seed=<N>`.
 #
-# Known currently-flagged: tests/unit/documents.test.ts has a within-file order dependency
-# (tracked separately). Until that is fixed this canary will report red; that is the canary
-# doing its job. Once green, consider promoting test:shuffle into the blocking gate.
+# Known currently-flagged: none as of 2026-09-06.
+#
+# History, so the next reader does not re-chase a bug that is already fixed: this header used
+# to name tests/unit/documents.test.ts as a standing within-file order dependency that would
+# keep the canary red. That claim was already stale the day it merged — PR #42 (1db788d,
+# 2026-06-14) had made that file order-independent two days BEFORE this workflow landed
+# (2026-06-16). Re-verified 2026-09-06: 20/20 shuffle seeds green on that file, and with both
+# layers of the #42 fix reverted as a control, 10/10 seeds fail — so the fuzzer does still
+# catch that bug class; there is simply nothing left there to catch.
+#
+# The canary's actual red runs (2026-08-17, 2026-08-31) were a different bug entirely: a
+# shared vi.mock leak in tests/unit/capital-allocation.book-trust.round19.test.ts, both
+# failing "expected 'governor-block' to be 'hold'". Fixed by PR #315 (2026-09-06); both of
+# those runs' seeds now pass the full shuffled suite (277/277 files). The stale header above
+# actively masked this — a red canary was read as the known documents issue and not chased.
+#
+# Before promoting test:shuffle into the blocking gate, note that tests/unit/bash-guard.test.ts
+# asserts a fixed 2s wall-clock budget on git alias-chain resolution. It fails on slower
+# machines (measured 8250ms / 2331ms / pass on three consecutive local runs) regardless of
+# ordering, so promoting the shuffle today would make the merge gate flaky on machine speed
+# rather than on test order. Fix that first.
 
 on:
   schedule:
