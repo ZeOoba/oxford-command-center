@@ -719,6 +719,113 @@ Assert-True ($v.reason -like '*suspend*') '8h: stuck reason names the suspension
 Assert-True (Test-BeaconBelongsToRun -Beacon (New-Beacon 'completed' 'success' $null $null) -RunStartedAt $msReStamp -RunEndedAt $msEnd) `
   '8i: nothing to test -> beacon treated as this run''s (unchanged default)'
 
+# ---------------------------------------------------------------------------------------
+# Part 9 -- SESSION-class correlating events (2026-09-05).
+#
+# The 09-05 16:02:25 kill correlated with nothing because the collector queried only power
+# ids; Windows Hello trustlets started 79s later -- inside the 90s window, wrong event TYPE.
+# The allowlist now lives in tested code (Get-MirrorSessionEventLabel) instead of being an
+# untested -FilterHashtable filter, because this change moves in the make-kills-look-benign
+# direction and 9b is the guard that keeps it narrow.
+# ---------------------------------------------------------------------------------------
+Write-Host ''
+Write-Host '-- Part 9: session-class correlating events --'
+
+# 9a: an allowlisted provider+id pair is recognised.
+Assert-Equal 'secure trustlet started (sign-in/unlock)' `
+  (Get-MirrorSessionEventLabel -ProviderName 'Microsoft-Windows-IsolatedUserMode' -Id 1) `
+  '9a: IsolatedUserMode id 1 -> session label'
+
+# 9b: THE GUARD. Id 1 is generic across the System log -- a live wildcard query admitting
+# Kernel-* on ids 1/5 returned 11 events, none of them session-class. The SAME id from a
+# provider that is not allowlisted must NOT count, or any passing service-start excuses a kill,
+# which is the silencing failure this whole file exists to prevent.
+Assert-True ($null -eq (Get-MirrorSessionEventLabel -ProviderName 'Microsoft-Windows-FilterManager' -Id 1)) `
+  '9b: id 1 from a NON-allowlisted provider -> not a session event'
+Assert-True ($null -eq (Get-MirrorSessionEventLabel -ProviderName 'Service Control Manager' -Id 7001)) `
+  '9b2: Winlogon id from a different provider -> not a session event (no id-only matching)'
+Assert-True ($null -eq (Get-MirrorSessionEventLabel -ProviderName 'Microsoft-Windows-Kernel-General' -Id 1)) `
+  '9b3: Kernel-General id 1 (fires constantly) -> not a session event'
+
+# 9c: an allowlisted provider carrying an id that is not allowlisted is still rejected.
+Assert-True ($null -eq (Get-MirrorSessionEventLabel -ProviderName 'Microsoft-Windows-IsolatedUserMode' -Id 4242)) `
+  '9c: allowlisted provider + unlisted id -> not a session event'
+
+# 9d: WHOLE-STRING match only. Both directions are tested deliberately: a suffix-only test is
+# passed by a `-like "*$key"` mutation, which would accept 'Evil-Microsoft-Windows-Winlogon'.
+# Found by adversarial review 2026-09-06 -- that mutant passed every other assertion here.
+Assert-True ($null -eq (Get-MirrorSessionEventLabel -ProviderName 'Microsoft-Windows-IsolatedUserModeX' -Id 1)) `
+  '9d: SUFFIXED near-miss provider -> not a session event'
+Assert-True ($null -eq (Get-MirrorSessionEventLabel -ProviderName 'Evil-Microsoft-Windows-Winlogon' -Id 7001)) `
+  '9d2: PREFIXED near-miss provider -> not a session event (kills the -like "*key" mutant)'
+Assert-True ($null -eq (Get-MirrorSessionEventLabel -ProviderName 'Microsoft-Windows-Winlogon-Extra' -Id 7001)) `
+  '9d3: suffixed Winlogon near-miss -> not a session event'
+Assert-True ($null -eq (Get-MirrorSessionEventLabel -ProviderName '' -Id 1)) `
+  '9d4: empty provider -> not a session event'
+
+# 9j: PIN THE ALLOWLIST ITSELF. Without this, silently adding a third provider -- or re-adding
+# IsolatedUserMode id 5 -- passes every other assertion in Part 9. This is the guard against
+# future quiet widening, which is the way this check goes permanently silent.
+$provs = @(Get-MirrorSessionEventProviders | Sort-Object)
+Assert-Equal 'Microsoft-Windows-IsolatedUserMode,Microsoft-Windows-Winlogon' ($provs -join ',') `
+  '9j: allowlist contains EXACTLY the two expected providers'
+Assert-Equal '1' (@($script:MirrorSessionEventAllowlist['Microsoft-Windows-IsolatedUserMode'].Keys | Sort-Object) -join ',') `
+  '9j2: IsolatedUserMode allows ONLY id 1 (id 5 was rejected -- degenerate "NULL Id 0" record)'
+Assert-Equal '7001,7002' (@($script:MirrorSessionEventAllowlist['Microsoft-Windows-Winlogon'].Keys | Sort-Object) -join ',') `
+  '9j3: Winlogon allows exactly 7001/7002'
+
+# 9e: REAL FIXTURE -- 2026-09-05 16:02:25. Killed mid-run; the nearest System event is a
+# Windows Hello trustlet start at 16:03:44, 79s later. Now explains the kill.
+$sessStart = [datetime]'2026-09-05 16:00:02'
+$sessEnd   = [datetime]'2026-09-05 16:02:25'
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null $sessStart $null) `
+                          -LastTaskResult 3221225786 -RunStartedAt $sessStart -RunEndedAt $sessEnd `
+                          -EnvironmentalEvents @(
+                            [pscustomobject]@{ TimeCreated = $sessEnd.AddSeconds(79); Id = 1; Label = 'secure trustlet started (sign-in/unlock)' }
+                          )
+Assert-Equal 'BENIGN_INTERRUPTED' $v.verdict '9e: 2026-09-05 16:02:25 kill + session event at +79s -> BENIGN_INTERRUPTED'
+
+# 9f-9i: REGRESSION. All THREE genuinely unexplained kills must keep alarming. Note the precise
+# reason, because the loose version is false: their windows are not empty of System events --
+# 08-04 has two DistributedCOM 10016 events INSIDE 90s, and 08-01 has one in the wider +/-5min
+# fetch range. What they contain is no ALLOWLISTED event within 90s. 9i models that explicitly
+# by passing a non-allowlisted event through, which the collector would never have labelled.
+Assert-Equal 'ALARM_UNEXPLAINED_KILL' `
+  (Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null ([datetime]'2026-08-01 13:00:00') $null) `
+                        -LastTaskResult 3221225786 -RunStartedAt ([datetime]'2026-08-01 13:00:00') `
+                        -RunEndedAt ([datetime]'2026-08-01 13:01:37') -EnvironmentalEvents @()).verdict `
+  '9f: 08-01 13:01:37 (no allowlisted event in 90s) still ALARM_UNEXPLAINED_KILL'
+Assert-Equal 'ALARM_UNEXPLAINED_KILL' `
+  (Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null ([datetime]'2026-08-04 10:59:33') $null) `
+                        -LastTaskResult 3221225786 -RunStartedAt ([datetime]'2026-08-04 10:59:33') `
+                        -RunEndedAt ([datetime]'2026-08-04 11:00:01') -EnvironmentalEvents @()).verdict `
+  '9g: 08-04 11:00:01 (no allowlisted event in 90s) still ALARM_UNEXPLAINED_KILL'
+# 9h1: 08-03 20:05:26 -- the third unexplained kill, previously pinned NOWHERE in this file
+# (3b is the DIFFERENT, benign 08-03 11:28 restart). Added 2026-09-06 after review found the
+# comment claimed three fixtures where only two existed.
+Assert-Equal 'ALARM_UNEXPLAINED_KILL' `
+  (Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null ([datetime]'2026-08-03 20:00:00') $null) `
+                        -LastTaskResult 3221225786 -RunStartedAt ([datetime]'2026-08-03 20:00:00') `
+                        -RunEndedAt ([datetime]'2026-08-03 20:05:26') -EnvironmentalEvents @()).verdict `
+  '9h1: 08-03 20:05:26 (no allowlisted event in 90s) still ALARM_UNEXPLAINED_KILL'
+# 9i: a NON-allowlisted event sitting inside the window must not excuse the kill. This is the
+# 08-04 case as it actually is on disk (DistributedCOM 10016 at -76s and -85s): the collector
+# never labels it, so it never reaches the correlator, and the verdict must stay ALARM.
+Assert-Equal 'ALARM_UNEXPLAINED_KILL' `
+  (Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null ([datetime]'2026-08-04 10:59:33') $null) `
+                        -LastTaskResult 3221225786 -RunStartedAt ([datetime]'2026-08-04 10:59:33') `
+                        -RunEndedAt ([datetime]'2026-08-04 11:00:01') -EnvironmentalEvents @()).verdict `
+  '9i: non-allowlisted event in window is never collected -> still ALARM_UNEXPLAINED_KILL'
+
+# 9h: a session event OUTSIDE the 90s window must not excuse a kill. Confirms this change did
+# not widen $script:BeaconCorrelationWindowSeconds by another route (cf. 2g/2i/3c).
+$v = Get-MirrorRunVerdict -Beacon (New-Beacon 'running' $null $sessStart $null) `
+                          -LastTaskResult 3221225786 -RunStartedAt $sessStart -RunEndedAt $sessEnd `
+                          -EnvironmentalEvents @(
+                            [pscustomobject]@{ TimeCreated = $sessEnd.AddSeconds(200); Id = 1; Label = 'secure trustlet started (sign-in/unlock)' }
+                          )
+Assert-Equal 'ALARM_UNEXPLAINED_KILL' $v.verdict '9h: session event at +200s is outside the window -> still alarms'
+
 Write-Host ''
 if ($failures.Count -gt 0) {
   Write-Host "FAILED: $($failures.Count) assertion(s)"
