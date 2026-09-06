@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeAll, afterAll } from 'vitest';
+import { requireLiveM365Source } from '../../scripts/lease-snapshot-drift-check';
 import {
   loadM365Tasks,
   m365TasksDegradationFlag,
@@ -138,5 +139,44 @@ describe('hasM365TasksFailure', () => {
     expect(hasM365TasksFailure([])).toBe(false);
     expect(hasM365TasksFailure([{ entity: 'tasks', field: 'm365', issue: 'x', severity: 'warn' }])).toBe(false);
     expect(hasM365TasksFailure([{ entity: 'deals', field: 'pipeline', issue: 'x', severity: 'error' }])).toBe(false);
+  });
+});
+
+// ---- writer-side config-regression gate --------------------------------------------------------
+// Refute 2026-09-06: the two auto-committing/auto-pushing CLI writers gated only on the dataQuality
+// FLAG, which m365TasksDegradationFlag deliberately returns null for on 'not-configured'. So an
+// .env carrying NOTION_TOKEN but missing the Graph keys — what a GRAPH_CLIENT_SECRET rotation
+// produces — wrote tasks 115 -> 59 at exit 0 and pushed it to origin/main unannounced. The flag gate
+// cannot cover this by construction; writer policy belongs in the writers, exactly as
+// requireLiveDealsSource already argues for the deals side.
+describe('requireLiveM365Source — writer-side gate for the unflagged not-configured case', () => {
+  it('allows a healthy load', () => {
+    expect(requireLiveM365Source(null, '/tmp/portfolio.json', false).refuse).toBe(false);
+  });
+
+  it('REFUSES not-configured — the case the dataQuality flag deliberately does not raise', () => {
+    // Pin the premise too: if this flag ever becomes non-null, the writer gate is no longer the
+    // only thing standing between a secret rotation and a silent push.
+    expect(m365TasksDegradationFlag({ reason: 'not-configured', detail: 'no creds' })).toBeNull();
+
+    const result = requireLiveM365Source({ reason: 'not-configured', detail: 'no creds' }, '/tmp/portfolio.json', false);
+    expect(result.refuse).toBe(true);
+    if (!result.refuse) throw new Error('expected refusal');
+    expect(result.reason).toMatch(/not-configured/);
+    expect(result.reason).toMatch(/NOT\s+modified/);
+  });
+
+  it.each(['token-failed', 'fetch-failed', 'empty-result'] as const)(
+    'REFUSES %s as well (defence in depth behind the flag gate)',
+    (reason) => {
+      expect(requireLiveM365Source({ reason, detail: 'x' }, '/tmp/portfolio.json', false).refuse).toBe(true);
+    },
+  );
+
+  it('--force downgrades the refusal to a warning naming the reason', () => {
+    const result = requireLiveM365Source({ reason: 'not-configured', detail: 'no creds' }, '/tmp/portfolio.json', true);
+    expect(result.refuse).toBe(false);
+    if (result.refuse) throw new Error('expected allow');
+    expect(result.warning).toMatch(/not-configured/);
   });
 });

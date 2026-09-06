@@ -4,7 +4,7 @@ import { parseWorkbook } from '../server/workbook/parse';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, SNAPSHOT_PATH } from '../server/config';
 import { loadOverlay, applyOverlay, overlayPath } from '../server/overlay';
-import { computeDrift, evaluateAnomalyFloor, evaluateReconciliationGate, formatDriftReport, loadPrevious, requireLiveDealsSource, type DriftLeaseView } from './lease-snapshot-drift-check';
+import { computeDrift, evaluateAnomalyFloor, evaluateReconciliationGate, formatDriftReport, loadPrevious, requireLiveDealsSource, requireLiveM365Source, type DriftLeaseView } from './lease-snapshot-drift-check';
 import { resolveQuickbooks } from '../server/sources/quickbooks';
 
 loadEnvFile();
@@ -34,7 +34,7 @@ async function main() {
   const previous = previousResult.leases;
 
   console.log(`→ Reading workbook: ${workbookPath()}`);
-  const { snapshot, flags } = await parseWorkbook(workbookPath());
+  const { snapshot, flags, m365Degraded } = await parseWorkbook(workbookPath());
 
   // Round-3 REFUTE finding: loadOverlay() fails OPEN to an empty overlay on corrupt/unparseable
   // JSON — a defensible default for a UI-driven mutation, but this script is an UNATTENDED
@@ -102,8 +102,16 @@ async function main() {
     console.warn(`⚠ ${reconciliation.warning}`);
   }
 
-  // Config-regression guard, complementing the flag-based gate above -- see its doc comment. This
-  // path is the manual `npm run extract` one, historically the LESS guarded of the two writers.
+  // Config-regression guards, complementing the flag-based gate above -- see their doc comments.
+  // This path is the manual `npm run extract` one, historically the LESS guarded of the two writers.
+  const m365Source = requireLiveM365Source(m365Degraded, SNAPSHOT_PATH, force);
+  if (m365Source.refuse) {
+    console.error(`✗ ${m365Source.reason}`);
+    process.exit(1);
+  } else if (m365Source.warning) {
+    console.warn(`⚠ ${m365Source.warning}`);
+  }
+
   const dealsSource = requireLiveDealsSource(SNAPSHOT_PATH, force);
   if (dealsSource.refuse) {
     console.error(`✗ ${dealsSource.reason}`);
