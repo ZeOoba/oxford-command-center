@@ -12,6 +12,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Tier, TierItem } from '@/primitives/TierBoard';
 import type { BadgeTone } from '@/primitives/Badge';
+import { ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
 import { fetchParsedOrMirror, QUERY_OPTS, WarehouseUnavailableError, isWarehouseUnavailable } from '../intel/hooks';
 import {
   BrainReport,
@@ -47,7 +48,7 @@ async function postFeedback(body: FeedbackInput): Promise<FeedbackDecision> {
   try {
     res = await fetch('/api/warehouse/brain/feedback', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: ORA_JSON_MUTATION_HEADERS,
       body: JSON.stringify(body),
     });
   } catch {

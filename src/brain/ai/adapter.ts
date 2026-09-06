@@ -1,4 +1,5 @@
 import type { StreamHandlers } from './types';
+import { ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
 
 /**
  * Client adapter for the assistant. POSTs to `/api/ai` and consumes the agent's SSE stream
@@ -13,7 +14,7 @@ export async function askBrainStream(
 ): Promise<void> {
   const res = await fetch('/api/ai', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: ORA_JSON_MUTATION_HEADERS,
     body: JSON.stringify({ question, history }),
     signal,
   });
