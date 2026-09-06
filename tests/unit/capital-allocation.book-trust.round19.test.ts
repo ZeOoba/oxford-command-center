@@ -204,6 +204,21 @@ function makePropertyScore(propertyId: string): PropertyScore {
   } as unknown as PropertyScore;
 }
 
+// The `scoreDebtPositions` mock is created ONCE by the vi.mock factory above and shared by every
+// test in this file, and the repo sets no global clearMocks/resetMocks (see vitest.config.ts) — so
+// a `mockReturnValue` set inside one test persists into every test that runs after it. The tests
+// that rely on the factory's own `[]` default (the two H2b-parity cases below) therefore inherited
+// whatever the last test to set it left behind: under shuffled order the round-8 governor-block
+// case ran first and its injected DebtScore made `debtSignal` read 'governor-block' instead of
+// 'hold' (reproduced deterministically with `npm run test:shuffle -- --sequence.seed=1788712019600`,
+// which is what .github/workflows/order-fragility.yml runs). Re-establish the default before EVERY
+// test so no test can depend on a predecessor. Note this cannot be solved with vitest's `mockReset`
+// option: mockReset drops the factory's `mockReturnValue([])` too, leaving the mock returning
+// undefined. The describes' own `scoreProperties` resets already follow this pattern.
+beforeEach(() => {
+  vi.mocked(scoreDebtPositions).mockReturnValue([]);
+});
+
 describe('capital allocation — a missing DebtScore under a distrusted book is UNKNOWN, not no-debt', () => {
   beforeEach(() => {
     vi.mocked(scoreProperties).mockReturnValue([makePropertyScore('prop-x')]);
