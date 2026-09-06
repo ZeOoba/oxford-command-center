@@ -5,7 +5,7 @@ import { watch } from 'chokidar';
 import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, type DealStage, type RenewalStage, type CompSet, type AcquisitionInput, type TenantArrears } from '../src/contracts/index';
 import { tenantScorecards } from '../src/brain/tenants';
 import { parseWorkbook } from './workbook/parse';
-import { applyOverlay, loadOverlay, saveOverlay, type Overlay } from './overlay';
+import { applyOverlay, evaluateOverlayPrecondition, loadOverlay, overlayPath, saveOverlay, type Overlay } from './overlay';
 import { checkSnapshot, hasReconciliationError } from './reconcile-runtime';
 import { SNAPSHOT_PATH, workbookPath, referenceDate } from './config';
 import { loadQuickbooks } from './sources/quickbooks';
@@ -271,6 +271,25 @@ class Brain extends EventEmitter {
           `${m365Reason ? `degraded (${m365Reason})` : 'unavailable'}, so this snapshot's tasks ` +
           `section is missing every live M365 row. Serving it in memory; the on-disk mirror is ` +
           `left at its last good state.`,
+      );
+      return;
+    }
+    // The same policy again, for the OVERLAY itself (2026-09-06, refute on PR #311 -- 2 of 5 lenses,
+    // independently). This is the FIFTH writer of the tracked portfolio.json, and the one the
+    // overlay precondition had not reached: `this.overlay` comes from loadOverlay(), which fails
+    // OPEN to EMPTY_OVERLAY on a missing, unparseable or wrong-shaped file, and rederive() merges
+    // that into the mirror on EVERY UI write-back without re-parsing. A server started against an
+    // absent or truncated overlay would therefore publish tenantArrears/arBalances/renewalStages/
+    // dealComps/marketRents/noiBudgets as EMPTY to a git-tracked, auto-committed, auto-pushed file
+    // -- the exact 2026-09-05 loss, from the one writer the CLI-side fix did not cover.
+    //
+    // expectEnriched, like both CLI writers: this path MERGES the overlay onto a snapshot rather
+    // than populating it. Serving from memory is unchanged; only the shared mirror is declined.
+    const overlayCheck = evaluateOverlayPrecondition(overlayPath(), { expectEnriched: true });
+    if (overlayCheck.refuse) {
+      console.error(
+        `✗ Brain.persist: declining to write ${SNAPSHOT_PATH} — ${overlayCheck.reason} Serving in ` +
+          `memory; the on-disk mirror is left at its last good state.`,
       );
       return;
     }
