@@ -564,10 +564,15 @@ async function main(): Promise<void> {
     // of every overlay map (deal stages, tasks, NOI budgets) with exit 0 — and overlay.json is
     // gitignored, so there is no git history to recover it from. Abort loudly, leaving PDFs in
     // place (same as the empty-lease-roster halt above). Shared evaluator: server/overlay.ts.
+    // The evaluator's own reason is surfaced verbatim: a previously-appended "would amplify into a
+    // full overlay reset on save" clause was FALSE for the missing-file case (there is no overlay
+    // to reset), and each reason already states its own consequence.
+    // Deliberately NOT expectEnriched: an empty overlay is legitimate on a genuinely first AR
+    // sweep, which POPULATES arrears rather than merging them onto a snapshot.
     const rawOverlayPath = overlayPath();
     const overlayCheck = evaluateOverlayPrecondition(rawOverlayPath);
     if (overlayCheck.refuse) {
-      throw new Error(`${overlayCheck.reason} (refusing to run: would amplify into a full overlay reset on save)`);
+      throw new Error(overlayCheck.reason);
     }
     const overlay = loadOverlay();
     // resolveLatestArrears only sees rows collected THIS sweep. A stale report processed alone in a

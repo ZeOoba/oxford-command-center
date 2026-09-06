@@ -49,7 +49,9 @@ async function main() {
   // there, tested once, precisely so these three writers can no longer drift out of sync (the
   // missing-file case was absent from all three simultaneously until 2026-09-05).
   const rawOverlayPath = overlayPath();
-  const overlayCheck = evaluateOverlayPrecondition(rawOverlayPath);
+  // expectEnriched: this writer MERGES the overlay onto a parsed snapshot, so a present-but-empty
+  // overlay zeroes enrichment just as surely as a missing one. ar-import does not pass it.
+  const overlayCheck = evaluateOverlayPrecondition(rawOverlayPath, { expectEnriched: true });
   if (overlayCheck.refuse) {
     console.error(`✗ ${overlayCheck.reason}`);
     process.exit(1);
@@ -147,7 +149,14 @@ async function main() {
   if (report.hasDrift) process.exit(2);
 }
 
-main().catch((err) => {
+// Entrypoint guard — matches lease-snapshot-drift-check.ts / ar-import-headless.ts / migrate-lease
+// -overlay-ids.ts. Without it, merely IMPORTING this module runs main(): it parses the live workbook
+// and can process.exit() the caller. tests/setup.ts points OVERLAY_PATH at a sandbox path that is
+// never created, so since 2026-09-05 the first test to import this file would hit the overlay
+// refusal and kill its vitest worker. No test imports it today; this keeps that true by accident
+// rather than by luck.
+if (process.argv[1]?.replace(/\\/g, '/').endsWith('scripts/extract-workbook.ts')) {
+  main().catch((err) => {
   // Exit 3, not 1: now that this script shares lease-snapshot-drift-check.ts's exit-code
   // convention (0 clean / 1 refused, portfolio.json unchanged / 2 wrote with drift), an unattended
   // caller reading exit 1 as "refused, nothing written, benign" must not conflate that with an
@@ -155,3 +164,4 @@ main().catch((err) => {
   console.error('✗ Extraction failed:', err);
   process.exit(3);
 });
+}

@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { writeFileSync, mkdtempSync } from 'node:fs';
+import { describe, it, expect, vi, afterAll } from 'vitest';
+import { writeFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
@@ -330,6 +330,8 @@ describe('saveOverlay + loadOverlay — acquisitionInputs round-trip (item-4)', 
 // go unnoticed in all three at once.
 describe('evaluateOverlayPrecondition — refuses on a missing overlay, not just a corrupt one', () => {
   const dir = mkdtempSync(join(tmpdir(), 'overlay-precondition-'));
+  // tests/setup.ts reasons carefully about not leaking one temp dir per test FILE; clean up ours.
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
   it('refuses when the overlay file is ABSENT (the 2026-09-05 worktree-isolation case)', () => {
     const missing = join(dir, 'does-not-exist.json');
@@ -341,10 +343,13 @@ describe('evaluateOverlayPrecondition — refuses on a missing overlay, not just
     expect(result.reason).toMatch(/not found|missing|absent/i);
   });
 
-  it('names the deliberate bootstrap escape hatch so a first-ever run is not a dead end', () => {
+  it('points the bootstrap hatch at ALLOW_EMPTY_OVERLAY, NOT at "create a {} file"', () => {
     const result = evaluateOverlayPrecondition(join(dir, 'nope.json'));
     if (!result.refuse) throw new Error('expected refusal');
-    expect(result.reason).toMatch(/\{\}/); // tells you to create an empty overlay on purpose
+    expect(result.reason).toContain('ALLOW_EMPTY_OVERLAY=1');
+    // Regression: the first version of this message told operators to hand-create `{}`, which
+    // merges exactly like a missing overlay and re-armed the very zeroing it was printed to stop.
+    expect(result.reason).not.toMatch(/create the file containing/i);
   });
 
   it('allows a well-formed overlay object', () => {
@@ -353,10 +358,61 @@ describe('evaluateOverlayPrecondition — refuses on a missing overlay, not just
     expect(evaluateOverlayPrecondition(good).refuse).toBe(false);
   });
 
-  it('allows an intentionally empty overlay object (deliberate bootstrap)', () => {
+  it('allows {} for a NON-snapshot caller (ar-import bootstrapping a first sweep)', () => {
     const empty = join(dir, 'empty.json');
     writeFileSync(empty, '{}');
     expect(evaluateOverlayPrecondition(empty).refuse).toBe(false);
+  });
+
+  it('REFUSES a present-but-empty overlay for a snapshot writer (expectEnriched)', () => {
+    const empty = join(dir, 'empty-enriched.json');
+    writeFileSync(empty, '{}');
+    const result = evaluateOverlayPrecondition(empty, { expectEnriched: true });
+    expect(result.refuse).toBe(true);
+    if (!result.refuse) throw new Error('expected refusal');
+    expect(result.reason).toMatch(/NO enrichment data/);
+  });
+
+  it('REFUSES an overlay whose domains are all present but empty (the first-saveOverlay case)', () => {
+    const p = join(dir, 'all-empty-domains.json');
+    writeFileSync(p, JSON.stringify({ dealStages: {}, tasks: [], tenantArrears: {}, dealComps: {} }));
+    expect(evaluateOverlayPrecondition(p, { expectEnriched: true }).refuse).toBe(true);
+  });
+
+  it('ALLOWS an overlay with real enrichment in any single domain', () => {
+    const p = join(dir, 'has-arrears.json');
+    writeFileSync(p, JSON.stringify({ dealStages: {}, tasks: [], tenantArrears: { 'x-1': { d30: 100 } } }));
+    expect(evaluateOverlayPrecondition(p, { expectEnriched: true }).refuse).toBe(false);
+  });
+
+  it('ALLOW_EMPTY_OVERLAY=1 opens the deliberate bootstrap path for a snapshot writer', () => {
+    const empty = join(dir, 'empty-allowed.json');
+    writeFileSync(empty, '{}');
+    const prev = process.env.ALLOW_EMPTY_OVERLAY;
+    process.env.ALLOW_EMPTY_OVERLAY = '1';
+    try {
+      expect(evaluateOverlayPrecondition(empty, { expectEnriched: true }).refuse).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.ALLOW_EMPTY_OVERLAY;
+      else process.env.ALLOW_EMPTY_OVERLAY = prev;
+    }
+  });
+
+  it('refuses a BOM-prefixed overlay — loadOverlay cannot read it either, so accepting would zero', () => {
+    const bom = join(dir, 'bom.json');
+    writeFileSync(bom, '﻿{"tenantArrears":{"x":{"d30":1}}}');
+    // Deliberately NOT stripping the BOM here: loadOverlay() uses the same JSON.parse and would
+    // fall back to EMPTY_OVERLAY, so "accepting" this file is the silent-zeroing path.
+    expect(evaluateOverlayPrecondition(bom).refuse).toBe(true);
+  });
+
+  it('refuses a zero-byte overlay and a directory at the path', () => {
+    const zero = join(dir, 'zero.json');
+    writeFileSync(zero, '');
+    expect(evaluateOverlayPrecondition(zero).refuse).toBe(true);
+    const asDir = join(dir, 'a-directory.json');
+    mkdirSync(asDir, { recursive: true });
+    expect(evaluateOverlayPrecondition(asDir).refuse).toBe(true);
   });
 
   it('still refuses unparseable JSON (pre-existing guard, preserved)', () => {
@@ -380,5 +436,61 @@ describe('evaluateOverlayPrecondition — refuses on a missing overlay, not just
     expect(result.refuse).toBe(true);
     if (!result.refuse) throw new Error('expected refusal');
     expect(result.reason).toMatch(/not a valid overlay object/i);
+  });
+});
+
+// ---- call-site guard SHAPE ---------------------------------------------------------------------
+// I5, 2026-09-05 independent review: every other test here exercises the pure predicate, but the
+// predicate was never the bug. The defect was the SHAPE of the call-site guard --
+// `if (existsSync(rawOverlayPath)) { ...validate... }` -- which by construction cannot fire when the
+// file is absent. A future editor could revert any single call site to that wrapper and every
+// behavioral test above would still pass. These assertions pin the shape itself.
+//
+// Source-level rather than behavioral on purpose: the two snapshot writers call process.exit() deep
+// inside a main() that first parses the live Master Workbook (absent in CI), so genuinely executing
+// them here is not possible. This is the cheapest thing that actually fails on a regression.
+describe('overlay guard — call-site shape (regression cover for the guard, not the predicate)', () => {
+  const repoRoot = join(__dirname, '..', '..');
+  const WRITERS = [
+    'scripts/extract-workbook.ts',
+    'scripts/lease-snapshot-drift-check.ts',
+    'scripts/ar-import-headless.ts',
+    'scripts/migrate-lease-overlay-ids.ts',
+  ] as const;
+
+  it.each(WRITERS)('%s routes the overlay through the shared evaluator', (rel) => {
+    const src = readFileSync(join(repoRoot, rel), 'utf8');
+    expect(src).toContain('evaluateOverlayPrecondition(rawOverlayPath');
+    expect(src).toMatch(/overlayCheck\.refuse/);
+  });
+
+  it.each(WRITERS)('%s no longer wraps the overlay guard in an existsSync() that skips a missing file', (rel) => {
+    const src = readFileSync(join(repoRoot, rel), 'utf8');
+    expect(src).not.toMatch(/if\s*\(\s*existsSync\(\s*rawOverlayPath\s*\)\s*\)/);
+  });
+
+  // Only the writers that MERGE an overlay onto a snapshot may demand enrichment. ar-import and
+  // migrate legitimately run against an empty overlay, so opting them in would break a first sweep.
+  it.each(['scripts/extract-workbook.ts', 'scripts/lease-snapshot-drift-check.ts'] as const)(
+    '%s opts into expectEnriched (it merges onto a snapshot)',
+    (rel) => {
+      expect(readFileSync(join(repoRoot, rel), 'utf8')).toContain('expectEnriched: true');
+    },
+  );
+
+  it.each(['scripts/ar-import-headless.ts', 'scripts/migrate-lease-overlay-ids.ts'] as const)(
+    '%s does NOT opt into expectEnriched (an empty overlay is legitimate there)',
+    (rel) => {
+      // Assert on the CALL, not the word: both files explain in prose why they opt out.
+      expect(readFileSync(join(repoRoot, rel), 'utf8')).not.toMatch(/expectEnriched:\s*true/);
+    },
+  );
+
+  // I6: importing a CLI script must never run main(). tests/setup.ts points OVERLAY_PATH at a
+  // sandbox path that is never created, so an unguarded main() would now hit the overlay refusal
+  // and process.exit() the vitest worker.
+  it.each(WRITERS)('%s guards its entrypoint on process.argv[1]', (rel) => {
+    const src = readFileSync(join(repoRoot, rel), 'utf8');
+    expect(src).toMatch(/process\.argv\[1\]\?\.replace/);
   });
 });
