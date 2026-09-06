@@ -131,6 +131,12 @@ export async function loadM365Tasks(): Promise<M365TasksLoad> {
     return { tasks: [], degraded: { reason: 'token-failed', detail } };
   }
   if (!token) {
+    // Logged, unlike the pre-2026-09-06 silent return. This branch raises no dataQuality flag by
+    // design (a credential-less dev session must not be permanently "dirty"), which made it the ONE
+    // degradation that produced no output at all -- so the snapshot task specs' stdout degradation
+    // scan had no string to match, on the very path a secret rotation lands on. The WRITER-side
+    // refusal is requireLiveM365Source; this line is what makes it visible in a run log.
+    console.warn('[m365-tasks] Graph not configured, skipping — live M365 rows will be absent');
     return {
       tasks: [],
       degraded: { reason: 'not-configured', detail: 'Graph is not configured (no GRAPH_TOKEN, no client-credentials trio)' },
