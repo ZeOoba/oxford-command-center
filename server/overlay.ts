@@ -82,34 +82,63 @@ export type OverlayPrecondition = { refuse: true; reason: string } | { refuse: f
  *                          fall back to EMPTY_OVERLAY internally, zeroing data via a different
  *                          shape than a parse error.
  *
- * A file containing `{}` is ALLOWED: an empty overlay object is indistinguishable from a legitimate
- * fresh install, and refusing it would leave a first-ever run with no way forward. That is also the
- * documented escape hatch named in the missing-file reason — bootstrapping stays possible, but it
- * must be a deliberate act, not the silent default.
+ *   4. LOADER-DROPPED DOMAIN — added 2026-09-06 after the refute pass. A domain the file visibly
+ *                          carries but which does NOT survive parseOverlayRaw's per-entry
+ *                          Zod/coercion. Raw JSON looks populated; the merge zeroes it anyway.
+ *                          Applies to EVERY caller: for ar-import-headless a dropped domain would
+ *                          be cemented into the canonical overlay by its own saveOverlay().
+ *   5. NO ENRICHMENT AT ALL — expectEnriched callers only (the two snapshot writers, which MERGE
+ *                          onto a snapshot). A present, well-formed, wholly empty overlay merges
+ *                          exactly like EMPTY_OVERLAY.
+ *
+ * Cases 4 and 5 judge parseOverlayRaw's OUTPUT, not the raw JSON — the two must agree by
+ * construction, because a guard that checks something different from what the loader produces is
+ * the bug class this whole function exists to close.
+ *
+ * Bootstrapping a genuinely new install takes TWO deliberate acts: create the file containing `{}`
+ * AND set ALLOW_EMPTY_OVERLAY=1. The missing-file case is NOT bypassable by that variable — the
+ * 2026-09-05 incident IS the missing case, and loadEnvFile() fills env vars if absent, so a single
+ * stray line in a copied `.env` would otherwise silently re-arm it. When the variable IS honored the
+ * run warns loudly, every time, because the bypass is sticky and the snapshot specs copy `.env` into
+ * every worktree.
  */
-/** Domains whose loss is what "zeroing the snapshot" actually means. Kept as a literal list, not
- *  `Object.keys(EMPTY_OVERLAY)`, so ADDING a domain does not silently widen the emptiness test. */
+/**
+ * Domains whose loss is what "zeroing the snapshot" actually means. A literal list, not
+ * `Object.keys(EMPTY_OVERLAY)`, so ADDING a domain does not silently widen the emptiness test.
+ *
+ * `leaseRunAssumptions` is deliberately EXCLUDED: applyOverlay() never carries it into the snapshot
+ * (its consumers — server/briefing/compose.ts and server/warehouse/api.ts — read the overlay live),
+ * so its loss cannot change a written snapshot figure. Refute 2026-09-06 confirmed the exclusion is
+ * correct and flagged only that it read as an oversight; this comment is the fix.
+ */
 const ENRICHMENT_DOMAINS = [
   'dealStages', 'tasks', 'renewalStages', 'tenantNotes', 'dealComps',
   'noiBudgets', 'tenantArrears', 'acquisitionInputs', 'marketRents',
 ] as const;
 
-/** True when every enrichment domain is absent or empty — i.e. merging this overlay is
- *  indistinguishable from merging EMPTY_OVERLAY, which is exactly what zeroes a snapshot. */
+/** True when a domain holds nothing a merge could carry. A non-null SCALAR counts as empty: the
+ *  loader coerces `{"tenantArrears": 0}` to `{}`, so treating a scalar as "populated" (the pre
+ *  2026-09-06 fall-through) let junk pass the guard and still zero the snapshot. */
+function domainIsEmpty(v: unknown): boolean {
+  if (v === null || v === undefined) return true;
+  if (Array.isArray(v)) return v.length === 0;
+  if (typeof v === 'object') return Object.keys(v as object).length === 0;
+  return true;
+}
+
+/** True when EVERY enrichment domain is empty — merging is indistinguishable from EMPTY_OVERLAY. */
 function hasNoEnrichment(o: Record<string, unknown>): boolean {
-  return ENRICHMENT_DOMAINS.every((k) => {
-    const v = o[k];
-    if (v === null || v === undefined) return true;
-    if (Array.isArray(v)) return v.length === 0;
-    if (typeof v === 'object') return Object.keys(v as object).length === 0;
-    return false;
-  });
+  return ENRICHMENT_DOMAINS.every((k) => domainIsEmpty(o[k]));
 }
 
 export function evaluateOverlayPrecondition(
   path: string,
   opts: { expectEnriched?: boolean } = {},
 ): OverlayPrecondition {
+  // MISSING is deliberately NOT bypassable by ALLOW_EMPTY_OVERLAY. The 2026-09-05 incident IS the
+  // missing case, and loadEnvFile() fills env vars if absent, so one stray line in a copied `.env`
+  // would otherwise re-arm the exact failure. Bootstrapping a genuinely new install therefore takes
+  // TWO deliberate acts — create the file, and set the variable — neither reachable by accident.
   if (!existsSync(path)) {
     return {
       refuse: true,
@@ -118,7 +147,7 @@ export function evaluateOverlayPrecondition(
         `arBalances, renewalStages, dealComps, marketRents, noiBudgets). The overlay is gitignored ` +
         `local state, so a fresh git worktree or clone will NOT have it: copy it in from the live ` +
         `checkout, or point OVERLAY_PATH at it. To bootstrap a genuinely new install on purpose, ` +
-        `set ALLOW_EMPTY_OVERLAY=1 to bootstrap a genuinely new install on purpose.`,
+        `create the file containing {} AND set ALLOW_EMPTY_OVERLAY=1 — both, deliberately.`,
     };
   }
   let parsed: unknown;
@@ -136,29 +165,57 @@ export function evaluateOverlayPrecondition(
       reason: `${path} is valid JSON but not a valid overlay object — refusing to proceed (would zero enrichment data). Fix or restore it first.`,
     };
   }
-  // The residual the missing-file check alone does NOT close: an overlay that is PRESENT and a
-  // well-formed object but carries no enrichment merges exactly like EMPTY_OVERLAY and zeroes the
-  // snapshot at exit 0 — the 2026-09-05 outcome via a different door. Two realistic ways to get one
-  // WITHOUT any operator error: a first server-side saveOverlay() in a fresh checkout writes a
-  // near-empty file, and (before this change) the missing-file message told operators to create
-  // `{}` by hand — a remedy that re-armed the very failure it was printed to stop.
-  //
-  // Only the SNAPSHOT writers pass expectEnriched. ar-import-headless and migrate-lease-overlay-ids
-  // must NOT: an empty overlay is legitimate on a genuinely first AR sweep, which is about to
-  // POPULATE arrears rather than merge them onto a snapshot. Bootstrapping stays possible for both
-  // via ALLOW_EMPTY_OVERLAY=1 — deliberate, auditable in the environment, and impossible to reach
-  // by accidentally truncating a file.
-  if (opts.expectEnriched && process.env.ALLOW_EMPTY_OVERLAY !== '1' && hasNoEnrichment(parsed as Record<string, unknown>)) {
+
+  // Judge what the LOADER will produce, not the raw JSON. Refute 2026-09-06 (4 of 5 lenses): the
+  // per-entry Zod/coercion in parseOverlayRaw drops entries the raw JSON appears to carry, so
+  // `{"dealComps":{"d1":{"bogus":true}}}` and `{"tenantArrears":{"x":"oops"}}` passed a raw check
+  // and still merged as EMPTY_OVERLAY — the same silent zeroing this guard exists to stop, reached
+  // through the loader instead of through a missing file.
+  const raw = parsed as Record<string, unknown>;
+  const loaded = parseOverlayRaw(parsed as Partial<Overlay>) as unknown as Record<string, unknown>;
+
+  // DATA-LOSS check — applies to EVERY caller, expectEnriched or not. A domain the file visibly
+  // carries that survives the loader as empty is a silent loss regardless of what the caller does
+  // next; for ar-import-headless it is worse than a bad read, because its saveOverlay() would then
+  // cement the dropped domain into the canonical overlay with no git history to recover from.
+  const dropped = ENRICHMENT_DOMAINS.filter((k) => !domainIsEmpty(raw[k]) && domainIsEmpty(loaded[k]));
+  if (dropped.length > 0) {
     return {
       refuse: true,
       reason:
-        `${path} parses but carries NO enrichment data (every domain empty) — refusing to proceed. ` +
-        `Merging it would zero tenantArrears, arBalances, renewalStages, dealComps, marketRents and ` +
-        `noiBudgets in the snapshot exactly as a missing overlay would. This is usually a truncated ` +
-        `or freshly-bootstrapped overlay, NOT the real one: copy the live checkout's ` +
-        `data/overlay.json in, or point OVERLAY_PATH at it. If this install genuinely has no overlay ` +
-        `data yet, set ALLOW_EMPTY_OVERLAY=1 to proceed on purpose.`,
+        `${path} carries ${dropped.length} domain(s) that do NOT survive validation — refusing to ` +
+        `proceed: ${dropped.join(', ')}. The file has entries there, but every one is dropped by the ` +
+        `overlay loader's per-entry schema check, so a merge would silently zero those sections. ` +
+        `This usually means the overlay was hand-edited, written by an older schema, or truncated. ` +
+        `Inspect those domains against the current contracts before re-running.`,
     };
+  }
+
+  // A PRESENT, well-formed overlay carrying no enrichment at all merges exactly like EMPTY_OVERLAY.
+  // Only the SNAPSHOT writers pass expectEnriched: ar-import-headless and migrate-lease-overlay-ids
+  // must not, because an empty overlay is legitimate for a writer that is about to POPULATE it.
+  if (opts.expectEnriched && hasNoEnrichment(loaded)) {
+    if (process.env.ALLOW_EMPTY_OVERLAY === '1') {
+      // Never silent: the bypass is sticky (a `.env` line, or `setx`) and the snapshot specs copy
+      // `.env` into every worktree, so an operator who set it once must still see it in the log of
+      // every later unattended run.
+      console.warn(
+        `⚠ ALLOW_EMPTY_OVERLAY=1 — proceeding with an EMPTY overlay (${path}). tenantArrears, ` +
+        `arBalances, renewalStages, dealComps, marketRents and noiBudgets will be written EMPTY. ` +
+        `Unset this variable unless this is a deliberate first-run bootstrap.`,
+      );
+    } else {
+      return {
+        refuse: true,
+        reason:
+          `${path} parses but carries NO enrichment data (every domain empty) — refusing to proceed. ` +
+          `Merging it would zero tenantArrears, arBalances, renewalStages, dealComps, marketRents and ` +
+          `noiBudgets in the snapshot exactly as a missing overlay would. This is usually a truncated ` +
+          `or freshly-bootstrapped overlay, NOT the real one: copy the live checkout's ` +
+          `data/overlay.json in, or point OVERLAY_PATH at it. If this install genuinely has no overlay ` +
+          `data yet, set ALLOW_EMPTY_OVERLAY=1 to proceed on purpose.`,
+      };
+    }
   }
   return { refuse: false };
 }
@@ -260,35 +317,48 @@ function validTasks(raw: unknown): Task[] {
   return out;
 }
 
+/**
+ * The COERCION half of loadOverlay, split out 2026-09-06 so the pre-flight guard can judge what the
+ * loader will actually PRODUCE rather than the raw JSON. The refute pass on PR #311 found that
+ * asymmetry to be the surviving half of the very bug class the PR set out to close: content that is
+ * present, well-formed and non-empty as raw JSON (`{"dealComps":{"d1":{"bogus":true}}}`,
+ * `{"tenantArrears":{"x":"oops"}}`, `{"tasks":{"a":1}}`, ...) passes a raw-JSON check, then loses
+ * every entry to the per-entry Zod/coercion below and merges as EMPTY_OVERLAY — zeroing the snapshot
+ * at exit 0, exactly as a missing file did. Pure: no I/O, so both the loader and the guard agree by
+ * construction instead of by two checks kept in sync by hand.
+ */
+export function parseOverlayRaw(raw: Partial<Overlay>): Overlay {
+  // Every overlay map is coerced/validated here — overlay.json bypasses Zod on the live path, so
+  // this is the one place that closes the bypass class for the whole surface. Numeric money fields
+  // go through coerceNonNegMoney (never drop a balance); structured maps are per-entry
+  // Zod-validated (drop+warn an invalid entry rather than crash its consumer); free-text maps are
+  // string-filtered. leaseRunAssumptions is a partial merged onto spec defaults, so it is validated
+  // at the merge site, not here.
+  return {
+    dealStages: stringRecord(raw.dealStages),
+    tasks: validTasks(raw.tasks),
+    renewalStages: validRecord(raw.renewalStages, RenewalStage, 'renewalStages'),
+    tenantNotes: stringRecord(raw.tenantNotes),
+    dealComps: validRecord(raw.dealComps, CompSet, 'dealComps'),
+    noiBudgets: coerceBudgets(raw.noiBudgets),
+    tenantArrears: parseArrears(raw.tenantArrears),
+    acquisitionInputs: validRecord(raw.acquisitionInputs, AcquisitionInput, 'acquisitionInputs'),
+    leaseRunAssumptions: raw.leaseRunAssumptions ?? {},
+    // Phase 3: market rents — coerce per entry via coerceNonNegMoney (negative/junk → 0).
+    // A 0 is treated as "absent" by the consumer (marketRentGaps skips 0 market rents).
+    marketRents: coerceBudgets(raw.marketRents),
+  };
+}
+
 export function loadOverlay(): Overlay {
   try {
     if (existsSync(overlayPath())) {
-      const raw = JSON.parse(readFileSync(overlayPath(), 'utf8')) as Partial<Overlay>;
-      // Every overlay map is now coerced/validated on load — overlay.json bypasses Zod on the live
-      // path, so this is the one place that closes the bypass class for the whole surface. Numeric
-      // money fields go through coerceNonNegMoney (never drop a balance); structured maps are
-      // per-entry Zod-validated (drop+warn an invalid entry rather than crash its consumer);
-      // free-text maps are string-filtered. leaseRunAssumptions is a partial merged onto spec
-      // defaults, so it is validated at the merge site, not here.
-      return {
-        dealStages: stringRecord(raw.dealStages),
-        tasks: validTasks(raw.tasks),
-        renewalStages: validRecord(raw.renewalStages, RenewalStage, 'renewalStages'),
-        tenantNotes: stringRecord(raw.tenantNotes),
-        dealComps: validRecord(raw.dealComps, CompSet, 'dealComps'),
-        noiBudgets: coerceBudgets(raw.noiBudgets),
-        tenantArrears: parseArrears(raw.tenantArrears),
-        acquisitionInputs: validRecord(raw.acquisitionInputs, AcquisitionInput, 'acquisitionInputs'),
-        leaseRunAssumptions: raw.leaseRunAssumptions ?? {},
-        // Phase 3: market rents — coerce per entry via coerceNonNegMoney (negative/junk → 0).
-        // A 0 is treated as "absent" by the consumer (marketRentGaps skips 0 market rents).
-        marketRents: coerceBudgets(raw.marketRents),
-      };
+      return parseOverlayRaw(JSON.parse(readFileSync(overlayPath(), 'utf8')) as Partial<Overlay>);
     }
   } catch {
     /* corrupt overlay → start clean */
   }
-  return { dealStages: {}, tasks: [], renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, tenantArrears: {}, acquisitionInputs: {}, leaseRunAssumptions: {}, marketRents: {} };
+  return { ...EMPTY_OVERLAY };
 }
 
 export async function saveOverlay(o: Overlay): Promise<boolean> {
