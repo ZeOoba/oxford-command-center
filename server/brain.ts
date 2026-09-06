@@ -11,6 +11,7 @@ import { SNAPSHOT_PATH, workbookPath, referenceDate } from './config';
 import { loadQuickbooks } from './sources/quickbooks';
 import { evaluateAnomalyFloor, loadPreviousLeaseIds } from './anomaly-floor';
 import { hasDealsPipelineFailure, type DealsDegradation } from './sources/notion-deals';
+import { hasM365TasksFailure, type M365TasksDegradation } from './sources/m365-tasks';
 
 /**
  * The live brain: single source of in-memory truth. Parses the workbook on demand,
@@ -26,6 +27,8 @@ class Brain extends EventEmitter {
    * parse-local check would guard `refresh()` and leak on that second path.
    */
   private dealsDegraded: DealsDegradation | null = null;
+  /** Same contract as dealsDegraded above, for the M365 To-Do source (2026-09-05). */
+  private m365Degraded: M365TasksDegradation | null = null;
   private overlay: Overlay = loadOverlay();
   private state: BrainState = {
     status: 'idle',
@@ -52,7 +55,7 @@ class Brain extends EventEmitter {
   async refresh(reason = 'manual'): Promise<BrainState> {
     this.setState({ status: 'refreshing' });
     try {
-      const { snapshot, flags, dealsDegraded } = await parseWorkbook(workbookPath());
+      const { snapshot, flags, dealsDegraded, m365Degraded } = await parseWorkbook(workbookPath());
 
       // Anomaly floor: gate the in-memory ADOPTION itself, not just the disk mirror below --
       // this.snapshot is what refresh()/rederive() serve live to the UI/API, so refusing only
@@ -91,6 +94,7 @@ class Brain extends EventEmitter {
       // a seed-placeholder reason that was false for the snapshot being written. The field must
       // always describe the parse that was actually adopted. (Refute pass on this branch, 2 lenses.)
       this.dealsDegraded = dealsDegraded;
+      this.m365Degraded = m365Degraded;
       const merged = applyOverlay(snapshot, this.overlay);
       // Attach QuickBooks actuals (read on every refresh; null if QUICKBOOKS_CSV not set/present).
       const withQb = { ...merged, quickbooks: loadQuickbooks(merged.properties) };
@@ -250,6 +254,22 @@ class Brain extends EventEmitter {
         `✗ Brain.persist: declining to write ${SNAPSHOT_PATH} — the Notion deals pipeline is ` +
           `${dealsReason ? `degraded (${dealsReason})` : 'unavailable'}, so this snapshot's ` +
           `deals/counterparties are seed placeholders. Serving it in memory; the on-disk mirror is ` +
+          `left at its last good state.`,
+      );
+      return;
+    }
+    // The same policy, for the M365 To-Do source (2026-09-05). Gated on the RAW degradation for the
+    // same reason as deals: m365TasksDegradationFlag maps `not-configured` to NO flag so a Graph-less
+    // dev box isn't permanently dirty, but this mirror is git-tracked and auto-committed, and a
+    // Graph-less server writing it drops every live M365 row a Graph-configured writer had put there
+    // -- the identical 56-row loss, just sourced from a missing credential instead of a failed fetch.
+    // Serving from memory is unchanged; only the shared mirror is declined.
+    const m365Reason = this.m365Degraded?.reason ?? null;
+    if (m365Reason !== null || hasM365TasksFailure(snapshot.dataQuality)) {
+      console.error(
+        `✗ Brain.persist: declining to write ${SNAPSHOT_PATH} — the Microsoft 365 To-Do source is ` +
+          `${m365Reason ? `degraded (${m365Reason})` : 'unavailable'}, so this snapshot's tasks ` +
+          `section is missing every live M365 row. Serving it in memory; the on-disk mirror is ` +
           `left at its last good state.`,
       );
       return;
