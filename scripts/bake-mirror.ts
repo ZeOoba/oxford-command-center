@@ -193,10 +193,27 @@ async function main() {
   // this bake feeds — track the firm's timezone, not the process UTC date (a month-boundary
   // evening would otherwise roll monthsToExpiry a day early). Precedence mirrors run.ts:
   // REPORT_DATE pin → ET send date. Data-month selection is unaffected (still WORKBOOK_AS_OF).
-  const { snapshot: raw, dealsDegraded } = await parseWorkbook(
+  const { snapshot: raw, dealsDegraded, m365Degraded } = await parseWorkbook(
     workbookPath(),
     referenceDate(etNow().date),
   );
+  // m365Degraded is WARNED, deliberately NOT refused -- the one writer of the four that does not
+  // gate on it, so the asymmetry is recorded here rather than left to read as an oversight.
+  // `tasks` does reach this public payload (see the redaction walk below), so a degraded M365 load
+  // publishes a tasks section missing every live To-Do row. That is an OMISSION; the deals
+  // degradation this function refuses on is an ASSERTION OF FALSEHOOD (seed placeholders presented
+  // as the live pipeline). Refusing here would convert a transient Graph blip into an hourly
+  // EXTERNAL deploy outage on the registered deploy-mirror.ps1 task, which is a worse outcome than
+  // a temporarily short task list that claims nothing untrue. The git-tracked portfolio.json
+  // writers DO refuse, because there the same loss is auto-committed and auto-pushed unattended at
+  // Exit 0 with no Notion or email routing -- see loadM365Tasks' doc comment (2026-09-05).
+  if (m365Degraded) {
+    console.warn(
+      `  ⚠ bake-mirror: M365 To-Do source degraded (${m365Degraded.reason}) — this public payload's ` +
+        `tasks section is missing every live M365 row. Baking anyway (omission, not placeholder ` +
+        `data). Cause: ${m365Degraded.detail}`,
+    );
+  }
   // This bake feeds an EXTERNAL surface, so it is the strictest of the writers: refuse outright
   // rather than publish placeholders. See refuseBakeOnDegradedDeals.
   const dealsRefusal = refuseBakeOnDegradedDeals(dealsDegraded);
