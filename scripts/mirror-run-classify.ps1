@@ -143,6 +143,47 @@ if ($runEndedAt) {
       $result.errors += "System event lookup failed: $($_.Exception.Message)"
     }
   }
+
+  # SESSION-class events (2026-09-05). Queried SEPARATELY from the power ids above and scoped
+  # by PROVIDER, because IsolatedUserMode id 1 is generic across providers; folding it into the
+  # id-only query would match unrelated events and excuse kills that nothing explains (verified:
+  # a Kernel-* wildcard query on ids 1/5 returned 11 non-session events).
+  #
+  # The re-check below is NOT belt-and-braces, it is load-bearing, for two independent reasons:
+  #   1. -FilterHashtable ANDs LogName/ProviderName/Id, so it returns the CROSS-PRODUCT and can
+  #      hand back e.g. a Winlogon event carrying id 1.
+  #   2. ProviderName in -FilterHashtable is WILDCARD-matched, not exact (verified live:
+  #      '*IsolatedUserMode*' resolves). Today's allowlist strings contain no metacharacters, so
+  #      nothing is smuggled -- but the exactness guarantee comes from
+  #      Get-MirrorSessionEventLabel, never from this hashtable.
+  # That function (lib/deploy-beacon.ps1) is the authoritative pairing and is covered by smoke
+  # scenarios 9a-9j; the hashtable here is only a coarse pre-filter.
+  #
+  # A non-existent provider name here throws a message that does NOT match 'No events were
+  # found', so it lands in $result.errors and this whole block yields nothing -- failing toward
+  # ALARM, which is the safe direction.
+  try {
+    $rawSession = Get-WinEvent -FilterHashtable @{
+      LogName      = 'System'
+      ProviderName = @(Get-MirrorSessionEventProviders)
+      Id           = @(Get-MirrorSessionEventIds)
+      StartTime    = $runEndedAt.AddMinutes(-5)
+      EndTime      = $runEndedAt.AddMinutes(5)
+    } -ErrorAction Stop
+    foreach ($e in $rawSession) {
+      $label = Get-MirrorSessionEventLabel -ProviderName $e.ProviderName -Id ([int]$e.Id)
+      if (-not $label) { continue }
+      $envEvents += [pscustomobject]@{
+        TimeCreated = $e.TimeCreated
+        Id          = $e.Id
+        Label       = $label
+      }
+    }
+  } catch {
+    if ($_.Exception.Message -notmatch 'No events were found') {
+      $result.errors += "Session event lookup failed: $($_.Exception.Message)"
+    }
+  }
 }
 
 # --- 4) Beacon ---------------------------------------------------------------------------

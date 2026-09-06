@@ -27,6 +27,9 @@ const h = vi.hoisted(() => {
     base: null as Record<string, unknown> | null,
     /** DealsLoad.degraded as parseWorkbook now reports it (2026-08-11 sweep H1). */
     dealsDegraded: null as { reason: string; detail: string } | null,
+    /** Overlay precondition result Brain.persist sees; null => healthy (2026-09-06 refute). */
+    overlayRefusal: null as { refuse: true; reason: string } | null,
+    overlayPath: '/tmp/test-overlay.json',
   };
 });
 
@@ -69,6 +72,12 @@ vi.mock('../../server/overlay', () => ({
     h.lastOverlay = o;
     return { ...s };
   }),
+  // Brain.persist gates the mirror write on the overlay precondition (2026-09-06). Mocked HEALTHY
+  // by default so the existing gate tests below still exercise their own subject; h.overlayRefusal
+  // drives the refusal path in its own test. A partial mock factory silently yields `undefined` for
+  // any export it omits, which is what made 21 tests here fail the moment brain.ts imported these.
+  overlayPath: vi.fn(() => h.overlayPath),
+  evaluateOverlayPrecondition: vi.fn(() => h.overlayRefusal ?? { refuse: false }),
 }));
 
 // Only checkSnapshot is stubbed; hasReconciliationError keeps its REAL implementation via
@@ -100,6 +109,7 @@ beforeEach(async () => {
   h.lastOverlay = null;
   h.base = makeBase();
   h.dealsDegraded = null;
+  h.overlayRefusal = null;
   rmSync(h.snapshotPath, { force: true });
   vi.clearAllMocks();
   vi.resetModules();
@@ -163,6 +173,38 @@ describe('Brain.persist — deals-degradation mirror guard', () => {
     await brain.refresh();
 
     expect(existsSync(h.snapshotPath)).toBe(true);
+  });
+
+  /**
+   * REFUTE 2026-09-06 (PR #311, 2 of 5 lenses independently). Brain is the FIFTH writer of the
+   * git-tracked, auto-committed, auto-pushed portfolio.json, and the overlay precondition added to
+   * the four CLI writers had not reached it. loadOverlay() fails OPEN to EMPTY_OVERLAY on a missing,
+   * truncated or schema-invalid overlay, and rederive() merges that into the mirror on EVERY UI
+   * write-back without re-parsing — so a server started against a bad overlay published
+   * tenantArrears/arBalances/renewalStages/dealComps as EMPTY. Same policy as the deals and M365
+   * gates above: decline the SHARED mirror, keep serving from memory.
+   */
+  it('declines the mirror when the overlay precondition refuses', async () => {
+    h.overlayRefusal = { refuse: true, reason: 'overlay.json not found — refusing to proceed.' };
+
+    await brain.refresh();
+    expect(existsSync(h.snapshotPath)).toBe(false);
+
+    // rederive() persists without re-parsing, so the gate must hold on every write-back too.
+    brain.setDealStage('d1', 'Diligence' as DealStage);
+    expect(existsSync(h.snapshotPath)).toBe(false);
+  });
+
+  it('serves in memory even while declining the mirror on an overlay refusal', async () => {
+    h.overlayRefusal = { refuse: true, reason: 'overlay.json not found — refusing to proceed.' };
+
+    const state = await brain.refresh();
+
+    // Availability over purity: the refusal must not take the live server down, only the shared
+    // file. BrainState carries no snapshot field, so adoption is asserted via source/lastError.
+    expect(state.source).toBe('workbook'); // adopted the live parse, not a fallback
+    expect(state.lastError).toBeNull();
+    expect(existsSync(h.snapshotPath)).toBe(false);
   });
 
   /**

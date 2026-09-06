@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname } from 'node:path';
 import type { PortfolioSnapshot } from '../src/contracts/index';
 import { parseWorkbook } from '../server/workbook/parse';
+import type { M365TasksDegradation } from '../server/sources/m365-tasks';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, SNAPSHOT_PATH } from '../server/config';
 import { loadOverlay, applyOverlay, overlayPath, evaluateOverlayPrecondition } from '../server/overlay';
@@ -322,6 +323,46 @@ export function requireLiveDealsSource(snapshotPath: string, force: boolean): An
   return { refuse: false, warning: '--force: writing with no NOTION_TOKEN — deals/counterparties come from the seed placeholder set, not the live pipeline.' };
 }
 
+/**
+ * Config-regression guard for the M365 To-Do source — the tasks-side twin of
+ * requireLiveDealsSource, and for exactly the same reason its doc comment gives.
+ *
+ * WHY THE FLAG GATE IS NOT ENOUGH (refute 2026-09-06). m365TasksDegradationFlag deliberately
+ * returns null for `not-configured`, so evaluateReconciliationGate never sees it: flagging it would
+ * leave every credential-less dev session permanently "dirty". For a WRITER the calculus inverts —
+ * absent Graph credentials mean the tasks section is written from the workbook checklist alone,
+ * dropping every live M365 row (115 -> 59 on 2026-09-05), which is the SAME loss as a failed fetch,
+ * just sourced from a config regression instead of a network one. A GRAPH_CLIENT_SECRET rotation
+ * (24-month expiry) or any .env edit that drops the key trio produces it.
+ *
+ * Nothing downstream catches that: `not-configured` was the one branch of loadM365Tasks that logged
+ * nothing, `tasks` is not among the section-shrink guard's five hardcoded list keys, and that
+ * guard's generic half fires only on populated -> empty, so a partial 115 -> 59 is invisible. Exit 0
+ * then suppresses both the Notion post and the alert email, and both snapshot tasks auto-push.
+ */
+export function requireLiveM365Source(
+  degraded: M365TasksDegradation | null,
+  snapshotPath: string,
+  force: boolean,
+): AnomalyFloorResult {
+  if (degraded === null) return { refuse: false };
+  if (!force) {
+    return {
+      refuse: true,
+      reason:
+        `Refusing to write ${snapshotPath}: the Microsoft 365 To-Do source is unavailable ` +
+        `(${degraded.reason}), so the tasks section would be written from the workbook checklist ` +
+        `alone, dropping every live M365 row that was previously present. portfolio.json was NOT ` +
+        `modified. Cause: ${degraded.detail}. Re-run with --force only if a checklist-only tasks ` +
+        `section is intended.`,
+    };
+  }
+  return {
+    refuse: false,
+    warning: `--force: writing with the M365 To-Do source unavailable (${degraded.reason}) — the tasks section omits every live M365 row. Cause: ${degraded.detail}.`,
+  };
+}
+
 export function evaluateReconciliationGate(
   snapshot: PortfolioSnapshot,
   snapshotPath: string,
@@ -454,7 +495,7 @@ async function main() {
   }
   const previous = previousResult.leases;
 
-  const { snapshot } = await parseWorkbook(workbookPath());
+  const { snapshot, m365Degraded } = await parseWorkbook(workbookPath());
   // Round-3 REFUTE finding: loadOverlay() fails OPEN to an empty overlay on corrupt/unparseable
   // JSON — a defensible default for a UI-driven mutation, but this script is an UNATTENDED
   // scheduled/manual writer: silently enriching with an empty overlay would zero real
@@ -527,7 +568,15 @@ async function main() {
     console.warn(`⚠ ${reconciliation.warning}`);
   }
 
-  // Config-regression guard, complementing the flag-based gate above -- see its doc comment.
+  // Config-regression guards, complementing the flag-based gate above -- see their doc comments.
+  const m365Source = requireLiveM365Source(m365Degraded, SNAPSHOT_PATH, force);
+  if (m365Source.refuse) {
+    console.error(`✗ ${m365Source.reason}`);
+    process.exit(1);
+  } else if (m365Source.warning) {
+    console.warn(`⚠ ${m365Source.warning}`);
+  }
+
   const dealsSource = requireLiveDealsSource(SNAPSHOT_PATH, force);
   if (dealsSource.refuse) {
     console.error(`✗ ${dealsSource.reason}`);

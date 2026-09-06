@@ -1,4 +1,4 @@
-<#
+﻿<#
   Run-completion beacon for deploy-mirror.ps1, plus the classifier that reads it.
 
   WHY (incident, 2026-08-03): deploy-mirror.ps1 reports failures from a try/catch, which only
@@ -35,6 +35,109 @@ $script:BeaconCorrelationWindowSeconds = 90
 # A beacon written more than this long before the run Windows just reported is treated as
 # belonging to an EARLIER run, i.e. this run produced no beacon at all.
 $script:BeaconFreshnessToleranceSeconds = 120
+
+# SESSION-class lifecycle events, keyed by PROVIDER then id.
+#
+# Why this exists (2026-09-05): the 16:02:25 kill correlated with nothing, because the
+# collector only ever queried the power ids (41/42/107/506/507/1074/...). Windows Hello
+# trustlets started 79s later -- inside the existing 90s window, but the wrong event TYPE, so
+# the run reported ALARM_UNEXPLAINED_KILL for what a sign-in/unlock plausibly explains.
+#
+# This is deliberately NOT a widening of $script:BeaconCorrelationWindowSeconds, which the
+# comment above forbids and scenarios 2g/2i/3c guard. Same window; more event types inside it.
+#
+# It is still a change in the make-kills-look-benign direction, so it is scoped as tightly as
+# the evidence supports. Measured against all four recorded unexplained kills, and against
+# every kill-code run in the TaskScheduler log's retention (17 runs, 2026-08-28..09-06), it
+# flips EXACTLY ONE verdict: 2026-09-05 16:02:25, the target case. State that precisely --
+# the other three windows are not empty, they contain no ALLOWLISTED event within 90s:
+#   08-01 13:01:37  no events within 90s (one DistributedCOM 10016 in the wider +/-5min fetch)
+#   08-03 20:05:26  no events within 90s
+#   08-04 11:00:01  two DistributedCOM 10016 events within 90s -- not allowlisted, so no match
+# Fixtures 9f/9g/9i pin all three; 3a-3d are unchanged.
+#
+# Keyed by provider AND id, never id alone. IsolatedUserMode id 1 is emitted by many unrelated
+# System-log providers, so adding bare ids to the existing id-only query would pull in arbitrary
+# events and excuse kills that nothing actually explains -- the precise failure this file exists
+# to prevent. Verified live: a wildcard query admitting Kernel-* on ids 1/5 returned 11 events,
+# all correctly rejected by Get-MirrorSessionEventLabel. Scenario 9b is the regression guard,
+# and 9j pins the allowlist's exact contents so a future silent widening cannot pass the suite.
+#
+# IsolatedUserMode id 5 was TRIED AND REJECTED (2026-09-06 review). Its message text is
+# "Secure Trustlet NULL Id 0 and Pid 0 started" -- a degenerate record naming no trustlet, so
+# labelling it a sign-in/unlock was inference the event does not support. It also fires 1247x
+# vs 859 for id 1 and carried the entire measured widening (+1.11pp of correlation-surface
+# coverage, vs +0.63pp for id 1), while supplying NONE of the benefit: the 09-05 window holds
+# two id-1 records (NgcIso.exe = Windows Hello, BioIso.exe = biometric) at the same second.
+# Dropping it keeps the whole benefit at roughly half the blast radius. Do not re-add it.
+$script:MirrorSessionEventAllowlist = @{
+  'Microsoft-Windows-IsolatedUserMode' = @{
+    1 = 'secure trustlet started (sign-in/unlock)'
+  }
+  'Microsoft-Windows-Winlogon' = @{
+    7001 = 'user logon'
+    7002 = 'user logoff'
+  }
+}
+
+function Get-MirrorSessionEventLabel {
+  <#
+    .SYNOPSIS
+      Label for a session-class lifecycle event, or $null if it is not one.
+
+    .DESCRIPTION
+      The single decision point for "does this System-log event count as a session-lifecycle
+      explanation for a kill". Lives here, in tested code, rather than in the collector, so the
+      allowlist is covered by the smoke test instead of being an untested query filter.
+
+      Returns $null for a provider that is not on the allowlist, and for an allowlisted provider
+      carrying an id that is not. Whole-string match only -- no prefix, suffix or wildcard
+      matching, which would re-admit the generic-id problem through the back door. Note the
+      comparison is case-INSENSITIVE (default Hashtable comparer); that is intentional and
+      correct, because Windows provider names are themselves case-insensitive, and Get-WinEvent
+      returns canonical casing anyway. Scenario 9d covers both a prefixed and a suffixed
+      near-miss, because a wildcard mutation passes a suffix-only test.
+  #>
+  param(
+    [string]$ProviderName,
+    [int]$Id
+  )
+  # NB: a [string]-typed parameter coerces $null to '' at binding, so this guard is really about
+  # '' and whitespace. It is kept anyway: ContainsKey($null) THROWS rather than returning false,
+  # so if this parameter is ever retyped to [object] the guard is what stops that becoming an
+  # unhandled exception inside the classifier.
+  if ([string]::IsNullOrWhiteSpace($ProviderName)) { return $null }
+  if (-not $script:MirrorSessionEventAllowlist.ContainsKey($ProviderName)) { return $null }
+  $ids = $script:MirrorSessionEventAllowlist[$ProviderName]
+  if (-not $ids.ContainsKey($Id)) { return $null }
+  return $ids[$Id]
+}
+
+function Get-MirrorSessionEventProviders {
+  <#
+    .SYNOPSIS
+      Provider names to query for session-class events.
+  #>
+  return @($script:MirrorSessionEventAllowlist.Keys)
+}
+
+function Get-MirrorSessionEventIds {
+  <#
+    .SYNOPSIS
+      Every id used by any allowlisted provider.
+
+    .DESCRIPTION
+      Query pre-filter ONLY. -FilterHashtable ANDs LogName/ProviderName/Id, so this returns the
+      cross-product and can admit e.g. a Winlogon event carrying id 1. The authoritative
+      provider+id pairing is Get-MirrorSessionEventLabel, through which every returned event
+      must pass before it is accepted.
+  #>
+  $ids = @()
+  foreach ($p in $script:MirrorSessionEventAllowlist.Keys) {
+    $ids += @($script:MirrorSessionEventAllowlist[$p].Keys)
+  }
+  return @($ids | Sort-Object -Unique)
+}
 
 # LastTaskResult while an instance is STILL EXECUTING. 0x00041301 = SCHED_S_TASK_RUNNING.
 # It is an informational status, not a completion code, and it is neither success nor a kill.

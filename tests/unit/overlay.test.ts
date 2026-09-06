@@ -550,3 +550,33 @@ describe('overlay guard — call-site shape (regression cover for the guard, not
     expect(src).toMatch(/process\.argv\[1\]\?\.replace/);
   });
 });
+
+// ---- the fifth writer -------------------------------------------------------------------------
+// Refute 2026-09-06 (2 of 5 lenses, independently): server/brain.ts is the fifth writer of the
+// git-tracked, auto-committed, auto-pushed data/snapshots/portfolio.json, and the CLI-side fix did
+// not reach it. `this.overlay` comes from loadOverlay(), which fails OPEN to EMPTY_OVERLAY, and
+// rederive() merges it into the mirror on every UI write-back WITHOUT re-parsing — so a server
+// started against an absent or truncated overlay publishes the enrichment sections as empty.
+//
+// Source-level for the same reason as the call-site tests above: exercising Brain.persist means
+// standing up a server against the live workbook. This pins that the gate is present and matches
+// the sibling source gates it was modelled on.
+describe('server/brain.ts — the fifth portfolio.json writer carries the overlay gate', () => {
+  const brainSrc = readFileSync(join(__dirname, '..', '..', 'server', 'brain.ts'), 'utf8');
+
+  it('gates Brain.persist on the overlay precondition', () => {
+    expect(brainSrc).toContain('evaluateOverlayPrecondition(overlayPath()');
+  });
+
+  it('uses expectEnriched, like the two writers that also merge onto a snapshot', () => {
+    expect(brainSrc).toMatch(/evaluateOverlayPrecondition\(overlayPath\(\),\s*\{\s*expectEnriched:\s*true\s*\}\)/);
+  });
+
+  it('declines the mirror write rather than throwing — in-memory serving must be unaffected', () => {
+    const i = brainSrc.indexOf('evaluateOverlayPrecondition(overlayPath()');
+    const after = brainSrc.slice(i, i + 700);
+    expect(after).toMatch(/declining to write/);
+    expect(after).toMatch(/return;/);
+    expect(after).not.toMatch(/process\.exit|throw new Error/);
+  });
+});
