@@ -1,5 +1,6 @@
 import type { DealStage, RenewalStage } from '@contracts/index';
 import type { CompSet } from '@contracts/index';
+import { ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
 
 /**
  * Write-back actions (Phase 5). These POST to the Brain Server, which persists to the local
@@ -8,7 +9,7 @@ import type { CompSet } from '@contracts/index';
  * query refetches automatically — callers may also invalidate for immediacy.
  */
 async function postAction(url: string, body: unknown): Promise<void> {
-  const res = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const res = await fetch(url, { method: 'POST', headers: ORA_JSON_MUTATION_HEADERS, body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`Action failed (${res.status})`);
 }
 
@@ -39,7 +40,7 @@ export const saveMarketRent = (key: string, rentPsf: number): Promise<void> =>
 export const refreshDealComps = async (dealId: string): Promise<CompSet> => {
   const res = await fetch('/api/actions/deal-comps', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: ORA_JSON_MUTATION_HEADERS,
     body: JSON.stringify({ dealId }),
   });
   const json = (await res.json().catch(() => ({}))) as { ok?: boolean; comps?: CompSet; error?: string };

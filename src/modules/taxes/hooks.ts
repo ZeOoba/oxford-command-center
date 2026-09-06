@@ -20,6 +20,7 @@ import { fetchParsedOrMirror, QUERY_OPTS } from '../intel/hooks';
 import { TaxAnalysisReport, TaxAppeal } from '@contracts/tax';
 import type { TaxAppealInput, TaxAppealStatus, TaxOpportunity, TaxAssessment } from '@contracts/tax';
 import { TaxStrategyReport } from '@contracts/tax-strategy';
+import { ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
 import type { CostSegOpportunity, EntityStrategyItem, FiledReturnMeta, StrategyDataSource } from '@contracts/tax-strategy';
 import type { BadgeTone } from '@/primitives/Badge';
 import type { Tier, TierItem } from '@/primitives/TierBoard';
@@ -53,7 +54,7 @@ export function useTaxAnalysis() {
 export async function postTaxAppeal(input: TaxAppealInput): Promise<TaxAppeal> {
   const res = await fetch('/api/warehouse/tax/appeals', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: ORA_JSON_MUTATION_HEADERS,
     body: JSON.stringify(input),
   });
   if (!res.ok) {

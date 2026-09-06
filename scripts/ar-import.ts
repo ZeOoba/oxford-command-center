@@ -25,6 +25,7 @@ import { mergeByLease } from '../server/ar/merge-buckets';
 import { filterAgainstPersisted, type DatedArrearsWrite } from '../server/ar/resolve-latest';
 import { parseSnapshotForImport, type SnapshotForImport } from '../server/ar/parse-snapshot-for-import';
 import type { TenantArrears } from '../src/contracts/index';
+import { ORA_JSON_MUTATION_HEADERS } from '../src/contracts/client-header';
 
 const SERVER = process.env.ORA_SERVER ?? 'http://localhost:3000';
 const PYTHON = process.env.ORA_PYTHON ?? 'python';
@@ -79,7 +80,7 @@ async function writeTenantArrears(leaseId: string, arrears: TenantArrears): Prom
   try {
     const resp = await fetch(`${SERVER}/api/actions/tenant-arrears`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: ORA_JSON_MUTATION_HEADERS,
       body: JSON.stringify({ leaseId, arrears }),
     });
     if (!resp.ok) {

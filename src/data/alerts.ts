@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertInboxState, EMPTY_INBOX_STATE, type AlertActionInput } from '../contracts/alerts';
+import { ORA_JSON_MUTATION_HEADERS } from '../contracts/client-header';
 import { applyAlertAction, buildAlertView, type AlertView } from '../brain/alerts-view';
 import { anomaliesToInsights } from '../brain/anomaly-insights';
 import { useAnalytics, useSnapshot } from './queries';
@@ -51,7 +52,7 @@ export function useAlertAction() {
       try {
         const res = await fetch('/api/actions/alert', {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: ORA_JSON_MUTATION_HEADERS,
           body: JSON.stringify(input),
         });
         if (isJsonResponse(res)) {

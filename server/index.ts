@@ -40,10 +40,21 @@ import { listLeaseTermPropertyIds } from './warehouse/lease-terms';
 import { setLeaseRunAssumptions } from './overlay';
 import { LeaseRunAssumptionsInput } from '../src/contracts/lease-run';
 import { isAllowedOrigin } from './cors-policy';
+import { requestBoundary, allowedHosts, extraAllowedHostsFromEnv } from './host-guard';
 import { accessAuthz, accessAuthzOptionsFromEnv } from './access-authz';
 
 const app = new Hono();
+// Request boundary (OI-050, see host-guard.ts) — the check that actually REJECTS a request: Host must
+// be this server's own loopback authority (defeats DNS rebinding, where a foreign page is same-origin
+// to the browser and cors() never even runs), a present Origin must be same-machine (fail-closed, not
+// merely un-CORSed), and every non-GET/HEAD/OPTIONS must carry X-ORA-Client (forces a preflight, which
+// the localhost-only cors() below then refuses for a foreign page). Mounted FIRST — ahead of cors()
+// and accessAuthz — and on /sse too, which lives outside /api/* but streams confidential state.
+const boundary = requestBoundary({ allowedHosts: allowedHosts(serverPort(), extraAllowedHostsFromEnv(process.env)) });
+app.use('/api/*', boundary);
+app.use('/sse', boundary);
 // Confidential data — only same-machine localhost origins may call the API (see cors-policy.ts).
+// This sets the CORS response header; it does not block anything — the boundary above does.
 app.use('/api/*', cors({ origin: isAllowedOrigin }));
 
 // Application-level authorization (Eric Live Phase 2, W2). INERT by default: with ACCESS_REQUIRE

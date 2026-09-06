@@ -6,6 +6,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { z } from 'zod';
 import { AcqIntelResponse, AcqCandidateRow } from '@contracts/acquisition';
+import { ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
 import { fetchParsedOrMirror, QUERY_OPTS } from '../intel/hooks';
 
 const ACQ_KEYS = {
@@ -66,7 +67,7 @@ export function useSetCandidateStatus() {
         `/api/warehouse/acq/candidates/${encodeURIComponent(v.candidateId)}/status`,
         {
           method: 'PATCH',
-          headers: { 'content-type': 'application/json' },
+          headers: ORA_JSON_MUTATION_HEADERS,
           body: JSON.stringify({ status: v.status }),
         },
       );
