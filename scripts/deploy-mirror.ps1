@@ -13,15 +13,19 @@
   is considered successful; if the apex does NOT 302 to Access, the script FAILS loudly so a
   confidential bake is never left publicly reachable.
 
-  Incident (2026-07-09): this script builds+deploys whatever is currently checked out on
-  disk. Since the hourly scheduled task never pulled, merged main PRs (a full retokenization,
+  Incident (2026-07-09): this script used to build+deploy whatever was currently checked out
+  on disk. Since the hourly scheduled task never pulled, merged main PRs (a full retokenization,
   7 commits) sat undeployed for over a day -- the "baked Nm ago" freshness badge only reflects
-  the data snapshot, not the code, so the mirror silently served stale UI. Step 1 below now
-  fast-forwards to origin/main first and fails loudly (never silently) if that isn't possible.
+  the data snapshot, not the code, so the mirror silently served stale UI. The original fix
+  fast-forwarded this checkout to origin/main first. SUPERSEDED 2026-08-16 (#279): that
+  fast-forward is GONE. The build now happens in an ISOLATED BUILD ROOT -- a sibling worktree
+  hard-reset to origin/main (see lib/deploy-buildroot.ps1 and step 1b below) -- so this
+  checkout's branch position and cleanliness no longer affect the deploy at all. Do NOT
+  reintroduce a merge/pull against this tree without reading that section first.
 
   Incident follow-up (2026-07-09): "fails loudly" only helps a human already watching Windows
   Task Scheduler history -- there was no alert of any kind. Any throw below now also emails
-  ggoldberg@oxfordra.net via the standard Outlook COM path before re-raising, so a failed pull
+  ggoldberg@oxfordra.net via the standard Outlook COM path before re-raising, so a failed fetch
   or a failed Access-gate check reaches a human even when nobody is watching this machine. If
   the alert email itself can't be sent, the failure is written to data/outbox/ (the same
   gitignored fallback location server/brief/send.ts already uses) so it's never silently lost.
@@ -153,17 +157,20 @@ function Invoke-AccessGateProbe {
 $beaconPath = Get-DeployBeaconPath -RepoRoot $repo
 # Stamped BEFORE the try block so that a kill at any point inside it -- including during the
 # very first git call -- still leaves a 'running' beacon behind for the health check to find.
-# HEAD is captured here as the pre-fast-forward sha purely for diagnostics; it is not used
-# for any control flow.
+# HEAD is this SHARED checkout's sha, captured purely for diagnostics; it is not used for any
+# control flow. Note it is NOT what gets built -- the bake runs from the isolated build root at
+# origin/main (step 1b), so this value can legitimately sit behind the deployed code. The health
+# check reads the build root's sha for freshness, not this one.
 $beaconHeadSha = (& git rev-parse --short HEAD 2>$null)
 Write-DeployBeaconStart -BeaconPath $beaconPath -HeadSha $beaconHeadSha
 
 
 try {
-  # 1) Fast-forward to origin/main first -- otherwise this deploys whatever old code happens to
-  #    be on disk. Fails loudly (never silently) if the local checkout has diverged or has
-  #    uncommitted changes that conflict with incoming commits; a stale-but-successful deploy is
-  #    worse than a loud failure here.
+  # 1) Fetch origin so the build root (step 1b) can resolve origin/main from THIS repo's object
+  #    store. Historically this step also fast-forwarded the shared checkout; that merge was
+  #    REMOVED 2026-08-16 (#279) and `git fetch` is now the only git operation performed against
+  #    this tree. Nothing here mutates the working tree, so a dirty or behind checkout cannot
+  #    fail the deploy.
   #
   #    Auth-vs-offline (2026-07-10 follow-up): git exit code 128 is generic and shared by BOTH a
   #    genuine network-down condition AND a git credential/auth failure (gh.exe's credential
@@ -201,14 +208,15 @@ try {
       throw "git fetch origin failed ($fetchExit): $($fetchOutput.Trim())"
     }
   }
-  # Note: still worded "git pull --ff-only failed" (not "git merge") below intentionally, even
-  # though the actual command is now `git merge --ff-only origin/main` -- this preserves
-  # Test-OfflineSignature's existing `^git (fetch|pull)\b` match and suppression behavior for
-  # this failure mode unchanged. Switched from `git pull --ff-only` to an explicit merge because
-  # origin/main was already fetched above (with auth self-heal already handled there); a plain
-  # `git pull` implicitly re-fetches over the network, which would re-expose this same
-  # credential-failure risk a second time for no benefit. `git merge --ff-only` is purely local
-  # (no network, no credentials) once the fetch above has succeeded.
+  # Historical note (2026-07-10 -> 2026-08-16): a `git merge --ff-only origin/main` used to run
+  # here, and this comment explained why its throw kept "git pull --ff-only failed" wording. That
+  # merge was REMOVED by #279 -- there is no merge, pull or reset against this checkout any more.
+  #
+  # What still matters from it: the fetch throw above must KEEP its "git fetch ..." prefix.
+  # Test-OfflineSignature (lib/deploy-alert.ps1) matches `^git (fetch|pull)\b` to tell a transient
+  # network outage apart from a build/deploy fault, and Get-FailureClassKey derives the
+  # 'git-fetch' streak class from the same prefix. Reword that throw and you silently change
+  # which failures are suppressible.
   # 1b) Sync the ISOLATED BUILD ROOT to origin/main and build THERE, not in this checkout.
   #
   # Incident (2026-08-16): the canonical checkout is a multi-session development surface. Another
