@@ -139,20 +139,20 @@
     "chore-gitignore-alert-state-dir": {
       "agent_role": "Engineering (Claude Code) -- Gabriel-directed 2026-09-02 fix pass",
       "phase": "PR #309: ignore data/alert-state/ (producer runtime state dir surfaced as untracked by the 2026-09-02 System Schematic refresh). Claim covers exactly one path: .gitignore (line 27, +1 line). No code, no data files.",
-      "status": "in_progress",
+      "status": "merged",
       "blocked_by": null,
       "review_needed": false,
-      "review_detail": "Awaiting merge of PR #309. Flip to merged and remove worktree C:/Users/Owner/occ-wt-gitignore post-merge.",
-      "last_updated": "2026-09-02T14:40:00Z"
+      "review_detail": "Awaiting merge of PR #309. Flip to merged and remove worktree C:/Users/Owner/occ-wt-gitignore post-merge. [Stale-row sweep 2026-09-07: PR confirmed MERGED (#309 merged 2026-09-03) via `gh pr list`; row had been left at its pre-merge status. Flipped to merged, review_needed cleared. No code impact -- this file is a declaration bus, not a build input.]",
+      "last_updated": "2026-09-07T15:45:00Z"
     },
     "fix-documents-test-order-dependency": {
       "agent_role": "Engineering (Claude Code) -- Gabriel-directed 2026-09-06 order-fragility pass",
       "phase": "Correct the stale 'known currently-flagged' header in .github/workflows/order-fragility.yml. Claim covers exactly one path: .github/workflows/order-fragility.yml (comment block only; no `on:`/`jobs:`/step changes). tests/unit/documents.test.ts is NOT modified -- its order dependency was already fixed by 1db788d (PR #42, 2026-06-14), which the header predates.",
-      "status": "in_progress",
+      "status": "merged",
       "blocked_by": null,
       "review_needed": false,
-      "review_detail": "Shared-infra single-writer claim per CLAUDE.md S2 (.github/workflows/*). No competing claim present at time of write. Flip to merged post-PR.",
-      "last_updated": "2026-09-06T22:45:00Z"
+      "review_detail": "Shared-infra single-writer claim per CLAUDE.md S2 (.github/workflows/*). No competing claim present at time of write. Flip to merged post-PR. [Stale-row sweep 2026-09-07: PR confirmed MERGED (#317 merged 2026-09-07) via `gh pr list`; row had been left at its pre-merge status. Flipped to merged, review_needed cleared. No code impact -- this file is a declaration bus, not a build input.]",
+      "last_updated": "2026-09-07T15:45:00Z"
     }
   },
   "phase-4-steps-5-7-8-9": {
@@ -603,10 +603,10 @@
   "convert-scripts-mjs-to-ts": {
     "agent_role": "Engineering (Claude Code, Sonnet 5) — Gabriel-directed, in-turn 2026-08-24 (\"yes, build it in a worktree\" / \"yes, proceed on the revised scope\")",
     "phase": "convert/scripts-mjs-to-ts (worktree .claude-worktrees/mjs-to-ts-scripts, PR #299): closes OI-206 (ORA memory tracker) — a hand-maintained .d.mts sibling drifting out of sync with its .mjs source's real exports broke `npm run typecheck` on main twice in a week while vitest stayed green each time (vitest transpiles without typechecking). scripts/install-git-hooks.mjs -> .ts, run via tsx (matching the other 16 scripts already using it), sibling .d.mts deleted -- compiler generates types itself. scripts/prepush-confidential-scan.mjs stays .mjs (it's the fail-closed pre-push security gate, invoked from the raw shared .git/hooks/pre-push with no npm context, and must survive a missing/wiped node_modules -- converting it to require tsx would reintroduce that exact fragility); its .d.mts is now GENERATED from the source's own JSDoc by a new pretypecheck/prebuild step and gitignored rather than hand-maintained. ensure-deps.mjs and prepush-noi-crosscheck.mjs untouched -- neither is imported by any test for its types, so neither was ever exposed to this drift class.",
-    "status": "review_needed",
+    "status": "merged",
     "blocked_by": null,
-    "review_needed": true,
-    "review_detail": "ARCHITECT REVIEW REQUIRED — touches architect-owned package.json (7 script entries: prebuild/pretypecheck/generate:confidential-scan-types added, hooks:install/prepare repointed at the .ts installer, typecheck's inline generate step moved to the pretypecheck hook). Gabriel authorized the conversion in-turn across two separate confirmations (runtime approach = tsx, then the revised per-file scope once the 'Node builtins only, no install step' constraint on the two git-hook scripts surfaced) rather than a status.json round-trip; this entry is the committed declaration for other concurrent sessions, same pattern as quizzical-wozniak-220980. Concurrency checked before merging: rebased onto origin/main (16e13a6 / #297 prepush-confidential-scan.d.mts de-dup, a854317 / #298 governance-check.ts app.use fix) -- only real conflict was scripts/prepush-confidential-scan.d.mts (modified on main, deleted here by design; kept the deletion). Full local gate green: typecheck/lint clean, 273 files / 3789 tests passing; regenerated .git/hooks/pre-push via the new installer and smoke-tested the confidentiality scanner directly (a diff saturated with the literal word 'confidential' -- this PR's own files -- produces zero false positives; a synthetic denylisted string in an unexcluded file still blocks the push).",
-    "last_updated": "2026-08-24T17:35:00Z"
+    "review_needed": false,
+    "review_detail": "ARCHITECT REVIEW REQUIRED — touches architect-owned package.json (7 script entries: prebuild/pretypecheck/generate:confidential-scan-types added, hooks:install/prepare repointed at the .ts installer, typecheck's inline generate step moved to the pretypecheck hook). Gabriel authorized the conversion in-turn across two separate confirmations (runtime approach = tsx, then the revised per-file scope once the 'Node builtins only, no install step' constraint on the two git-hook scripts surfaced) rather than a status.json round-trip; this entry is the committed declaration for other concurrent sessions, same pattern as quizzical-wozniak-220980. Concurrency checked before merging: rebased onto origin/main (16e13a6 / #297 prepush-confidential-scan.d.mts de-dup, a854317 / #298 governance-check.ts app.use fix) -- only real conflict was scripts/prepush-confidential-scan.d.mts (modified on main, deleted here by design; kept the deletion). Full local gate green: typecheck/lint clean, 273 files / 3789 tests passing; regenerated .git/hooks/pre-push via the new installer and smoke-tested the confidentiality scanner directly (a diff saturated with the literal word 'confidential' -- this PR's own files -- produces zero false positives; a synthetic denylisted string in an unexcluded file still blocks the push). [Stale-row sweep 2026-09-07: PR confirmed MERGED (#299 merged 2026-08-24) via `gh pr list`; row had been left at its pre-merge status. Flipped to merged, review_needed cleared. No code impact -- this file is a declaration bus, not a build input.]",
+    "last_updated": "2026-09-07T15:45:00Z"
   }
 }
