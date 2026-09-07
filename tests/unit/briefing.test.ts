@@ -204,7 +204,7 @@ describe('composeManagerBriefing — per-PM roll-up', () => {
 });
 
 describe('PDF render — extractable text layer (contract #1, adversarial #2)', () => {
-  it('renders a property briefing whose key figures appear as EXTRACTABLE TEXT (not a flattened image)', { timeout: 30000 }, async () => {
+  it('renders a property briefing whose key figures appear as EXTRACTABLE TEXT (not a flattened image)', async () => {
     const db = seededDb();
     const id = KRG_PROPS[0]!;
     const model = PropertyBriefingModel.parse(composePropertyBriefing(db, id, { generatedDate: GEN }));
@@ -224,7 +224,7 @@ describe('PDF render — extractable text layer (contract #1, adversarial #2)', 
     expect(flat).toContain(GEN); // generated-date stamp
   });
 
-  it('renders a manager briefing whose name + scorecard averages extract as text', { timeout: 30000 }, async () => {
+  it('renders a manager briefing whose name + scorecard averages extract as text', async () => {
     const db = seededDb();
     const model = ManagerBriefingModel.parse(composeManagerBriefing(db, KRG_SLUG, { generatedDate: GEN }));
     const bytes = await renderBriefingPdf(model);
@@ -236,7 +236,7 @@ describe('PDF render — extractable text layer (contract #1, adversarial #2)', 
 });
 
 describe('determinism (contract #2 — same model → identical extracted text, no Date.now in renderer)', () => {
-  it('two renders of the same model yield identical extracted text', { timeout: 30000 }, async () => {
+  it('two renders of the same model yield identical extracted text', async () => {
     const db = seededDb();
     const model = PropertyBriefingModel.parse(composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN }));
     const t1 = (await pdfParse(await renderBriefingPdf(model))).text;
@@ -329,7 +329,7 @@ describe('filename', () => {
 });
 
 describe('routes — /api/warehouse/briefing/*', () => {
-  it('property .pdf streams application/pdf with the right filename', { timeout: 30000 }, async () => {
+  it('property .pdf streams application/pdf with the right filename', async () => {
     const db = seededDb();
     const app = warehouseRoutes(() => db);
     const res = await app.request(`/briefing/property/${KRG_PROPS[0]}.pdf`);
@@ -349,7 +349,7 @@ describe('routes — /api/warehouse/briefing/*', () => {
     expect(body.subject.propertyId).toBe(KRG_PROPS[0]);
   });
 
-  it('manager .pdf + JSON sibling work', { timeout: 30000 }, async () => {
+  it('manager .pdf + JSON sibling work', async () => {
     const db = seededDb();
     const app = warehouseRoutes(() => db);
     const pdf = await app.request(`/briefing/manager/${KRG_SLUG}.pdf`);
