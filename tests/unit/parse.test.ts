@@ -7,12 +7,17 @@ import {
   isTaskBannerRow,
   disambiguatePropertyIds,
   disambiguateLeaseIds,
+  resolvePropertyId,
 } from '../../server/workbook/parse';
 import { slug } from '@contracts/index';
 import type { DataQualityFlag } from '@contracts/index';
+import type { Property } from '@contracts/index';
 
 type IdName = { id: string; name: string };
 const mk = (...names: string[]): IdName[] => names.map((name) => ({ id: slug(name), name }));
+
+/** Minimal Property fixture for resolvePropertyId — only id/address are read. */
+const mkProp = (id: string, address: string): Property => ({ id, address } as unknown as Property);
 
 describe('isoOrNull — date guard (the bug that crashed extraction)', () => {
   it('passes a valid Date through as ISO', () => {
@@ -122,6 +127,30 @@ describe('disambiguatePropertyIds — propertyId tiebreaker (collision guard)', 
     const items = mk('Same', 'Same');
     const ret = disambiguatePropertyIds(items, []);
     expect(ret).toBe(items);
+  });
+});
+
+describe('resolvePropertyId — rent-roll label to Property.id token matching', () => {
+  it('matches on a whole-word token', () => {
+    const properties = [mkProp('3034-westerville-rd-columbus-oh', '3034 Westerville Rd, Columbus OH')];
+    expect(resolvePropertyId('3034 Westerville Road', properties)).toBe('3034-westerville-rd-columbus-oh');
+  });
+
+  it('REGRESSION (2026-08-17, $16,026.27 Columbus→Baltimore AR misattribution): a token must not match as a bare substring inside an unrelated word — "road" must not match inside "Broadway"', () => {
+    // Confirmed root cause: raw `.includes()` let the "road" token (from "3034 Westerville Road")
+    // match "1900 N Broadway, Baltimore MD" because "road" is a literal substring of "broadway".
+    // Baltimore precedes the correct Westerville property in this fixture (matching the real
+    // properties array order), so a pre-fix resolver returns Baltimore's id here.
+    const properties = [
+      mkProp('1900-n-broadway-baltimore-md', '1900 N Broadway, Baltimore MD'),
+      mkProp('3034-westerville-rd-columbus-oh', '3034 Westerville Rd, Columbus OH'),
+    ];
+    expect(resolvePropertyId('3034 Westerville Road', properties)).toBe('3034-westerville-rd-columbus-oh');
+  });
+
+  it('returns null when no property address contains any token', () => {
+    const properties = [mkProp('other', '100 Other St, Nowhere OH')];
+    expect(resolvePropertyId('3034 Westerville Road', properties)).toBeNull();
   });
 });
 

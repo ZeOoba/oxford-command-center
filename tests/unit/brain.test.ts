@@ -80,7 +80,7 @@ vi.mock('../../server/reconcile-runtime', async (importOriginal) => ({
 }));
 
 vi.mock('../../server/sources/quickbooks', () => ({
-  loadQuickbooks: vi.fn(() => null),
+  resolveQuickbooks: vi.fn(() => ({ quickbooks: null, preservedFrom: null })),
 }));
 
 vi.mock('../../src/brain/tenants', () => ({

@@ -75,7 +75,7 @@ import { loadOverlay, saveOverlay, overlayPath } from '../server/overlay';
 import { deriveArBalances } from '../server/ar/derive-ar-balances';
 import { SNAPSHOT_PATH } from '../server/config';
 import type { LeaseLite } from '../server/ar/match-tenant';
-import type { TenantArrears } from '../src/contracts/index';
+import type { TenantArrears, DataQualityFlag } from '../src/contracts/index';
 
 const INBOX = process.env.AR_INBOX ?? join(process.cwd(), 'data', 'ar', 'inbox');
 const AR_ROOT = dirname(INBOX);
@@ -135,12 +135,26 @@ function resolvePropertyId(header: string | null): string | null {
 function patchSnapshot(newArrears: Record<string, TenantArrears>): void {
   const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')) as {
     leases?: unknown[];
+    properties?: unknown[];
     tenantArrears?: Record<string, TenantArrears>;
     arBalances?: unknown;
+    dataQuality?: DataQualityFlag[];
   };
   snap.tenantArrears = { ...(snap.tenantArrears ?? {}), ...newArrears };
+  // propertyId cross-check (2026-08-17 fix) — see deriveArBalances's doc comment.
+  const arFlags: DataQualityFlag[] = [];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  snap.arBalances = deriveArBalances((snap.leases ?? []) as any, snap.tenantArrears);
+  snap.arBalances = deriveArBalances((snap.leases ?? []) as any, snap.tenantArrears, (snap.properties ?? []) as any, arFlags);
+  if (arFlags.length) {
+    // Replace, don't append (2026-08-17 refute-pass fix): the underlying disagreement is a stale
+    // lease.propertyId this script never corrects, so every subsequent run re-derives the SAME
+    // flag -- appending unconditionally would accumulate byte-identical error-severity duplicates
+    // in the git-tracked, auto-committed snapshot on every headless run.
+    const freshKeys = new Set(arFlags.map((f) => `${f.entity}::${f.field}`));
+    const stale = (snap.dataQuality ?? []).filter((f) => !freshKeys.has(`${f.entity}::${f.field}`));
+    snap.dataQuality = [...stale, ...arFlags];
+    for (const f of arFlags) console.log(`  ⚠ ${f.issue}`);
+  }
   // Atomic write (temp file + rename), same pattern as saveOverlay/appendReviewQueue (refute round
   // 3/edges): portfolio.json is read by the daily brief's 4c and by this script's own
   // loadLeasesFromSnapshot on the next run — a crash mid-write must not leave it truncated.

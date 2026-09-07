@@ -2,6 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { deriveArBalances } from '../../server/ar/derive-ar-balances';
 import type { Lease } from '../../src/contracts/lease';
 import type { TenantArrears } from '../../src/contracts/quickbooks';
+import type { Property } from '../../src/contracts/property';
+import type { DataQualityFlag } from '../../src/contracts/common';
+
+/** Minimal Property fixture — deriveArBalances only reads id/address via resolvePropertyId. */
+const mkProp = (id: string, address: string): Property => ({ id, address } as unknown as Property);
 
 /** Minimal valid Lease for join tests — only identity fields matter to the projection. */
 function lease(over: Partial<Lease> & { id: string }): Lease {
@@ -86,5 +91,48 @@ describe('deriveArBalances', () => {
     });
     expect(out[0]!.asOfDate).toEqual(d);
     expect(out[0]!.sourceFile).toBe('yardi-2026-07-20.pdf');
+  });
+
+  describe('propertyId cross-check (2026-08-17 — Columbus/Baltimore AR misattribution fix)', () => {
+    it('without a properties arg, trusts lease.propertyId as before (backward compatible)', () => {
+      const leases = [lease({ id: 'L1', propertyKey: '3034 Westerville Road', propertyId: 'wrong-id' })];
+      const out = deriveArBalances(leases, { L1: arr({ d30: 100 }) });
+      expect(out[0]!.propertyId).toBe('wrong-id');
+    });
+
+    it('with a properties arg, corrects a propertyId that disagrees with the freshly-resolved id and flags it', () => {
+      const leases = [lease({
+        id: 'REDACTED-074',
+        propertyKey: '3034 Westerville Road',
+        propertyId: '1900-n-broadway-baltimore-md', // the real, confirmed-wrong stored value
+      })];
+      const properties = [
+        mkProp('1900-n-broadway-baltimore-md', '1900 N Broadway, Baltimore MD'),
+        mkProp('3034-westerville-rd-columbus-oh', '3034 Westerville Rd, Columbus OH'),
+      ];
+      const flags: DataQualityFlag[] = [];
+      const out = deriveArBalances(leases, { 'REDACTED-074': arr({ d30: REDACTED-AMT }) }, properties, flags);
+      expect(out[0]!.propertyId).toBe('3034-westerville-rd-columbus-oh');
+      expect(flags).toHaveLength(1);
+      expect(flags[0]).toMatchObject({ entity: 'REDACTED-074', field: 'propertyId', severity: 'error' });
+    });
+
+    it('does not flag when the stored propertyId already agrees with the resolved one', () => {
+      const leases = [lease({ id: 'L1', propertyKey: '3034 Westerville Road', propertyId: '3034-westerville-rd-columbus-oh' })];
+      const properties = [mkProp('3034-westerville-rd-columbus-oh', '3034 Westerville Rd, Columbus OH')];
+      const flags: DataQualityFlag[] = [];
+      const out = deriveArBalances(leases, { L1: arr({ d30: 100 }) }, properties, flags);
+      expect(out[0]!.propertyId).toBe('3034-westerville-rd-columbus-oh');
+      expect(flags).toHaveLength(0);
+    });
+
+    it('does not flag when the resolver itself cannot resolve anything (keeps the stored value rather than nulling it)', () => {
+      const leases = [lease({ id: 'L1', propertyKey: 'Some Unmatched Address', propertyId: 'stored-id' })];
+      const properties = [mkProp('other-id', '100 Other St, Nowhere OH')];
+      const flags: DataQualityFlag[] = [];
+      const out = deriveArBalances(leases, { L1: arr({ d30: 100 }) }, properties, flags);
+      expect(out[0]!.propertyId).toBe('stored-id');
+      expect(flags).toHaveLength(0);
+    });
   });
 });

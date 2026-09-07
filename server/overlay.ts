@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile, rename } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { z } from 'zod';
-import type { PortfolioSnapshot, DealStage, TenantArrears } from '../src/contracts/index';
+import type { PortfolioSnapshot, DealStage, TenantArrears, DataQualityFlag } from '../src/contracts/index';
 import { Task, RenewalStage, CompSet, AcquisitionInput } from '../src/contracts/index';
 import type { LeaseRunAssumptions } from '../src/contracts/lease-run';
 import { coerceNonNegMoney } from '../src/lib/money';
@@ -228,5 +228,10 @@ export function applyOverlay(s: PortfolioSnapshot, o: Overlay): PortfolioSnapsho
     return stage && stage !== d.stage ? { ...d, stage: stage as DealStage } : d;
   });
   const tasks = o.tasks.length ? [...o.tasks, ...s.tasks] : s.tasks;
-  return { ...s, deals, tasks, renewalStages: o.renewalStages, tenantNotes: o.tenantNotes, dealComps: o.dealComps, noiBudgets: o.noiBudgets, tenantArrears: o.tenantArrears, arBalances: deriveArBalances(s.leases, o.tenantArrears), acquisitionInputs: o.acquisitionInputs, marketRents: o.marketRents };
+  // Cross-check each AR balance's propertyId against s.properties (2026-08-17 fix) — see
+  // deriveArBalances's doc comment. Flags merge into dataQuality so a correction is visible, not silent.
+  const arFlags: DataQualityFlag[] = [];
+  const arBalances = deriveArBalances(s.leases, o.tenantArrears, s.properties, arFlags);
+  const dataQuality = arFlags.length ? [...s.dataQuality, ...arFlags] : s.dataQuality;
+  return { ...s, deals, tasks, dataQuality, renewalStages: o.renewalStages, tenantNotes: o.tenantNotes, dealComps: o.dealComps, noiBudgets: o.noiBudgets, tenantArrears: o.tenantArrears, arBalances, acquisitionInputs: o.acquisitionInputs, marketRents: o.marketRents };
 }

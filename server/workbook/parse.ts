@@ -428,7 +428,17 @@ function parseProperties(ws: Worksheet, flags: DataQualityFlag[]): PropertiesPar
   return { properties: disambiguatePropertyIds(out, flags), workbookNoiTotal, workbookValueTotal };
 }
 
-function resolvePropertyId(key: string, properties: Property[]): string | null {
+/**
+ * Match a raw rent-roll property label to a Property.id by token overlap against Property.address.
+ *
+ * Word-boundary matching, not raw substring (fixed 2026-08-17 — financial-code integrity sweep):
+ * `.includes()` let the token "road" match inside "1900 N Broadway, Baltimore MD" (b-ROAD-way),
+ * so a "3034 Westerville Road" lease resolved to the Baltimore property whenever Baltimore
+ * preceded the correct Westerville property in `properties` — this is the confirmed root cause of
+ * the 2026-08-17 $16,026.27 Columbus→Baltimore AR misattribution. Exported for reuse by
+ * server/ar/derive-ar-balances.ts's defensive cross-check.
+ */
+export function resolvePropertyId(key: string, properties: Property[]): string | null {
   const token = key
     .toLowerCase()
     .replace(/[^a-z0-9 ]/g, ' ')
@@ -436,7 +446,7 @@ function resolvePropertyId(key: string, properties: Property[]): string | null {
     .filter((t) => t.length >= 4);
   for (const p of properties) {
     const a = p.address.toLowerCase();
-    if (token.some((t) => a.includes(t))) return p.id;
+    if (token.some((t) => new RegExp(`\\b${t}\\b`).test(a))) return p.id;
   }
   return null;
 }
