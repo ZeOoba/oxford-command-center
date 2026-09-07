@@ -547,8 +547,10 @@ describe('bash-guard.mjs — adversarial-review round 2: performance/DoS regress
 
   // The adversarial-review alias bomb: each leaf alias invokes several sibling
   // leaves and the root invokes all of them, so an unbudgeted resolver fans out
-  // as depth^branching. Built once - it is read-only fixture state, and rebuilding
-  // it per test cost 11 extra subprocess spawns each time.
+  // as depth^branching. Built once here in beforeAll - it is read-only fixture
+  // state. An earlier draft built it via a per-test helper instead: 5 leaf
+  // aliases + the root alias is 6 `git config` spawns per call, so every
+  // additional test needing the fixture paid that cost again for no reason.
   const ALIAS_BOMB = 'git bomb0';
 
   beforeAll(() => {
