@@ -10,7 +10,7 @@ import ExcelJS from 'exceljs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, beforeAll, afterAll } from 'vitest';
+import { describe, expect, it, beforeAll, afterAll, vi } from 'vitest';
 import type { Property, PortfolioSnapshot } from '../../src/contracts/index';
 import { CapitalAllocationReport } from '../../src/contracts/capital-allocation';
 import { openWarehouse } from '../../server/warehouse/db';
@@ -139,6 +139,26 @@ function makeSnapshot(properties: Property[]): PortfolioSnapshot {
     dataQuality: [],
   } as unknown as PortfolioSnapshot;
 }
+
+// vitest's default testTimeout is 5000ms. This file opens a real better-sqlite3 warehouse
+// in every test and ingests ExcelJS workbook fixtures in four of them (I-5 and I-6 seed
+// the database but never ingest), so its cost is dominated by filesystem latency rather
+// than by the logic under test - and on this hardware (on-access AV scanning, loaded
+// runner) that latency swings by more than an order of magnitude. The slowest test here
+// takes 1395ms on an idle machine, yet this file timed out at 5000ms during a full-suite
+// run on 2026-09-07 while passing in isolation moments later. (The macro fetches are
+// fail-open and skip the network entirely unless FRED_API_KEY is exported; where it is,
+// each fetch is bounded at FRED_TIMEOUT_MS = 4s, itself close to the old 5000ms budget.)
+//
+// This is an outer HANG guard - it catches a wedged SQLite/ExcelJS write or an unresolved
+// promise. It is NOT a performance budget: a fixed millisecond budget cannot express a
+// performance assertion on this hardware. See tests/unit/bash-guard.test.ts, where the
+// equivalent assertion is made on a counted quantity instead.
+//
+// Scoped to the file rather than to individual slow tests because the observed stalls were
+// not confined to the expensive ones: the test that timed out in
+// debt-book-trust.round19b.test.ts runs in 67ms idle.
+vi.setConfig({ testTimeout: 60_000 });
 
 describe('buildCapitalAllocationReport — real engine integration (no mocks)', () => {
   it('I-1: parses through CapitalAllocationReport Zod schema end-to-end with real warehouse data', async () => {

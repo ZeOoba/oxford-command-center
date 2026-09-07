@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { execSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -10,6 +10,23 @@ import { WRAPPER } from '../../scripts/install-git-hooks';
 // the pre-push wrapper originally `exec`d the advisory-only NOI cross-check script as its last
 // statement, so a missing/broken NOI script silently determined the whole hook's exit code and
 // blocked every push — defeating the entire "never blocks" design of OI-137/OI-162 fix #1.
+
+// vitest's default testTimeout is 5000ms. This file spawns real shells via execSync
+// against a temp git repo, so its cost is dominated by OS process and filesystem latency
+// rather than by the logic under test - and on this hardware (on-access AV scanning,
+// loaded runner) that latency swings by more than an order of magnitude. The slowest test
+// here takes 551ms on an idle machine, yet this file timed out at 5000ms during a
+// full-suite run on 2026-09-07 while passing in isolation moments later.
+//
+// This is an outer HANG guard - it catches a wedged subprocess or an unresolved promise.
+// It is NOT a performance budget: a fixed millisecond budget cannot express a performance
+// assertion on this hardware. See tests/unit/bash-guard.test.ts, where the equivalent
+// assertion is made on a counted quantity instead.
+//
+// Scoped to the file rather than to individual slow tests because the observed stalls were
+// not confined to the expensive ones: the test that timed out in
+// debt-book-trust.round19b.test.ts runs in 67ms idle.
+vi.setConfig({ testTimeout: 60_000 });
 
 describe('install-git-hooks WRAPPER template — structural invariants', () => {
   it('does not exec the advisory NOI stage as the last statement', () => {
