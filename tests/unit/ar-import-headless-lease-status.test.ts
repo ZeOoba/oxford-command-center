@@ -41,7 +41,7 @@ describe('loadLeasesFromSnapshot excludes Expired leases from the auto-match can
     const { loadLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
     const leases = loadLeasesFromSnapshot();
     expect(leases.find((l) => l.id === '2207-northwood-c4-anibal-morales')).toBeUndefined();
-  }, 45000); // first dynamic import of this module graph is transform-heavy
+  }); // slow: first dynamic import of this module graph is transform-heavy
 
   it('keeps Active, Expiring Soon, and Unknown-status leases as match candidates', async () => {
     vi.resetModules();
@@ -81,7 +81,7 @@ describe('loadUnitLeasesFromSnapshot + resolveByUnit: Expired leases are visible
     const morales = leases.find((l) => l.id === '2207-northwood-c4-anibal-morales');
     expect(morales).toBeDefined();
     expect(morales?.status).toBe('Expired');
-  }, 20000); // first dynamic import of this module graph is transform-heavy
+  }); // slow: first dynamic import of this module graph is transform-heavy
 
   it('end-to-end: resolveByUnit still refuses to auto-attribute unit C4 when Expired is the ONLY lease there', async () => {
     vi.resetModules();

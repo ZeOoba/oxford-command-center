@@ -37,7 +37,8 @@ describe('capitalAllocationApi', () => {
   // registry is fresh, so R-1 pays that dynamic import's full module-resolution/
   // compile/eval cost INSIDE the timed test body on its first call -- measured at
   // 1278ms standalone (plain node, no vitest overhead) and up to 5000ms+ under
-  // concurrent suite load, occasionally exceeding the 5s default test timeout.
+  // concurrent suite load, occasionally exceeding the 5s test timeout that was the
+  // default when this was written (vitest.config.ts now sets 60s globally).
   // brain.ts pulls in chokidar + workbook parsing + quickbooks + contracts/index --
   // a real module-load cost, not a bug in the route's own logic (confirmed: imports,
   // openWarehouse migrations, and seedPropertyMaster together cost ~126ms; the dynamic
@@ -48,7 +49,7 @@ describe('capitalAllocationApi', () => {
   // tax-api.ts) with no documented reason it must be dynamic rather than static, so
   // changing the import style itself is a separate, wider decision than this test fix.
   // Round 8 fresh-sweep (adversarial refute, MEDIUM — corroborated by two independent lenses):
-  // the default 10s hook timeout intermittently expired under full-suite parallel-fork load
+  // the then-default 10s hook timeout intermittently expired under full-suite parallel-fork load
   // (2 of 3 full runs), skipping ALL tests in this file -- including R-5, the calibration-history
   // regression gate for round 8's filterTrustedVerdicts fix. Explicit generous timeout so a loaded
   // CI runner doesn't silently drop CI's only coverage of that gate.
