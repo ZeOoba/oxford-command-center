@@ -137,7 +137,16 @@ export function partitionArRows(
       match.leaseId !== null;
 
     if (autoAccept && match.leaseId) {
-      learned[key] = match.leaseId;
+      // Deliberately NOT cached (2026-09-06 adversarial review, MEDIUM): a cache hit is trusted
+      // unconditionally on the next sweep as "a previously human-CONFIRMED decision" (see the
+      // module doc above and mapping-cache.ts's header) -- which was never true for an unattended
+      // auto-accept nobody reviewed. Freezing it also bypassed re-evaluation forever: if the roster
+      // later gained a competing lease with the same normalized name, the cache hit would keep
+      // writing to the ORIGINAL lease with no ambiguity check, silently missing the now-real tie.
+      // Auto-accepts re-derive from matchTenantToLease fresh every sweep instead — deterministic
+      // and cheap, and the correct outcome (write, unattended) is unaffected when the roster hasn't
+      // changed. `learned` is populated only by an explicit human decision on a row that did NOT
+      // auto-accept (see scripts/ar-import.ts's interactive y/manual/skip branches).
       writePre.push({ leaseId: match.leaseId, arrears, tenant });
       continue;
     }
