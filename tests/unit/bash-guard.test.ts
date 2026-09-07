@@ -539,8 +539,10 @@ describe('bash-guard.mjs — adversarial-review round 2: performance/DoS regress
 
   // Each guard run here spawns up to MAX_ALIAS_LOOKUPS subprocesses, which on a
   // loaded Windows box with on-access AV scanning measured ~190ms apiece - past
-  // vitest's 5s default. These are outer hang-guards, not the property under
-  // test (that is the spawn COUNT), so they are set with room to spare.
+  // the 5s default these were written against. vitest.config.ts now sets the same
+  // 60s budget globally, so this constant is belt-and-braces rather than the only
+  // thing holding the budget up. These are outer hang-guards, not the property
+  // under test (that is the spawn COUNT), so they are set with room to spare.
   const SPAWN_TEST_TIMEOUT_MS = 60_000;
 
   // The adversarial-review alias bomb: each leaf alias invokes several sibling
