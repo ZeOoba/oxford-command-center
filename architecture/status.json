@@ -157,11 +157,11 @@
     "blissful-tharp-76b4f3": {
       "agent_role": "Engineering (Claude Code) -- Gabriel-directed 2026-09-07 test-flake pass",
       "phase": "Set global test.testTimeout and test.hookTimeout (60s) in vitest.config.ts, and remove the 25 per-test timeout overrides that sat BELOW that global and would silently defeat it. Claim covers 7 paths: vitest.config.ts (adds testTimeout + hookTimeout only; pool/isolate/setupFiles/include/coverage untouched), tests/unit/briefing.test.ts, tests/unit/briefing-pdf-narrative.test.ts, tests/unit/briefing-narrative-routes.test.ts, tests/unit/ar-import-headless-lease-status.test.ts, tests/unit/insurance-module.test.tsx, tests/unit/taxes-module.test.tsx (timeout arguments removed; no test name, callback or assertion changed). Also refreshes now-stale timeout comments in tests/unit/bash-guard.test.ts and tests/unit/capital-allocation-api.test.ts. Follow-up to PR #316 (bash-guard spawn-count assertion). PR #319 (per-file timeouts on four IO-heavy files) is still OPEN and is superseded by this: it should be closed unmerged, or if merged first its four vi.setConfig calls become redundant no-ops equal to this global.",
-      "status": "in_progress",
+      "status": "merged",
       "blocked_by": null,
       "review_needed": false,
-      "review_detail": "Shared-infra single-writer claim per CLAUDE.md S2 -- vitest.config.ts is cross-cutting (governs all 277 test files). No competing claim present at time of write: no worktree entry was in_progress or review_needed. Flip to merged post-PR.",
-      "last_updated": "2026-09-07T17:05:00Z"
+      "review_detail": "Shared-infra single-writer claim per CLAUDE.md S2 -- vitest.config.ts is cross-cutting (governs all 277 test files). No competing claim present at time of write: no worktree entry was in_progress or review_needed. MERGED via PR #322 (squash 3eb859a, 2026-09-07); the claim is released and vitest.config.ts is free for the next writer. Superseded PR #319 was closed unmerged.",
+      "last_updated": "2026-09-07T17:50:00Z"
     }
   },
   "phase-4-steps-5-7-8-9": {
