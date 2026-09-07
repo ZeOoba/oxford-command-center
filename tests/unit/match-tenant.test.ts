@@ -105,4 +105,81 @@ describe('matchTenantToLease', () => {
     expect(m.leaseId).toBe('l-imh');
     expect(m.confidence).toBe('exact');
   });
+
+  // Real defect (2026-09-06 adversarial review): overlap() counted a report-name token once PER
+  // OCCURRENCE instead of once, so a report name with a repeated token ("Syed" appears twice in
+  // "Ahmed Kareem Syed & Karishma Syed") produced an intersection count larger than either side's
+  // token-set size, pushing the score above 1.0. That let a SHORTER, non-exact candidate ("Karishma
+  // Syed") outscore the true EXACT candidate (score exactly 1) and WIN OUTRIGHT (no ambiguity flag
+  // at all), silently attributing the report row's balance to the wrong lease.
+  //
+  // A same-day self-review of the FIRST fix attempt (which additionally made "exact" strictly
+  // dominate any tied non-exact candidate) found that dominance rule itself introduces a DIFFERENT
+  // silent mis-attribution: a report name that is exactly one lease's name and also a genuine
+  // token-subset of a different lease's longer name (the real "Hobart" vs "Hobart Service" wrap
+  // case this scorer exists to handle) is precisely the coin-flip the ambiguity flag is designed to
+  // catch, and forcing exact to win regardless bypasses that human-review gate entirely. The correct
+  // fix is narrower: bound the score to [0,1] so a non-exact candidate can at most TIE an exact
+  // match (never beat it outright); a tie between two DIFFERENT leases already sets `ambiguous` via
+  // the pre-existing tie-detection logic below, which is what actually prevents the wrong-lease
+  // write (partitionArRows requires `!ambiguous` to auto-accept).
+  it('bounds a repeated report-name token to score <=1 and flags the tie ambiguous (never silently picks a side)', () => {
+    const dup: LeaseLite[] = [
+      { id: 'l-exact', tenantName: 'Ahmed Kareem Syed & Karishma Syed', company: null },
+      { id: 'l-wrong', tenantName: 'Karishma Syed', company: null },
+    ];
+    const m = matchTenantToLease('Ahmed Kareem Syed & Karishma Syed', dup);
+    expect(m.score).toBeLessThanOrEqual(1);
+    expect(m.ambiguous).toBe(true); // a human must confirm — never auto-written either way
+  });
+
+  it('the same tie is flagged ambiguous regardless of roster order (order affects the label only, never the safety outcome)', () => {
+    const forward: LeaseLite[] = [
+      { id: 'l-exact', tenantName: 'Ahmed Kareem Syed & Karishma Syed', company: null },
+      { id: 'l-wrong', tenantName: 'Karishma Syed', company: null },
+    ];
+    const reversed = [...forward].reverse();
+    for (const roster of [forward, reversed]) {
+      const m = matchTenantToLease('Ahmed Kareem Syed & Karishma Syed', roster);
+      expect(m.score).toBeLessThanOrEqual(1);
+      expect(m.ambiguous).toBe(true);
+    }
+  });
+
+  it('minimal repeated-token case: a duplicated-word report name still bounds at 1.0 and is flagged ambiguous', () => {
+    const dup: LeaseLite[] = [
+      { id: 'l-exact', tenantName: 'Syed Syed Consulting', company: null },
+      { id: 'l-wrong', tenantName: 'Syed', company: null },
+    ];
+    const m = matchTenantToLease('Syed Syed Consulting', dup);
+    expect(m.score).toBeLessThanOrEqual(1);
+    expect(m.ambiguous).toBe(true);
+  });
+
+  // Real defect in an EARLIER version of this same-day fix (2026-09-06 self-review, HIGH): the
+  // overlap() denominator was changed to use the DEDUPED candidate-side size, which shrinks for a
+  // candidate whose own name repeats a token — silently promoting a genuinely low-confidence match
+  // to high-confidence and auto-writing it unattended. The denominator must stay the RAW candidate
+  // length (matching the original, pre-fix code) — only the intersection COUNT is deduped.
+  it('a repeated token in the CANDIDATE (lease) name does not shrink the denominator and inflate the score', () => {
+    const leases: LeaseLite[] = [{ id: 'l-smith-smith', tenantName: 'Smith & Smith LLC', company: null }];
+    const m = matchTenantToLease('John Smith', leases);
+    expect(m.score).toBe(0.5); // NOT 1.0 — "smith" is 1 of 2 report tokens vs the true 2-token candidate name
+    expect(m.confidence).toBe('low');
+  });
+
+  // Real defect in the SAME earlier fix attempt (MEDIUM): making "exact" strictly dominate silently
+  // removed the ambiguity flag for an exact-vs-genuine-subset tie between two DIFFERENT leases — the
+  // real wrap/truncation case (e.g. a PDF-truncated "Hobart" matching both "Hobart" exactly and
+  // "Hobart Service" as a 1.0 subset). That case must stay a human decision.
+  it('an exact match for one lease that also subset-matches a DIFFERENT lease at 1.0 stays ambiguous, never auto-resolved', () => {
+    const roster: LeaseLite[] = [
+      { id: 'l-short', tenantName: 'Hobart', company: null },
+      { id: 'l-long', tenantName: 'Hobart Service', company: null },
+    ];
+    for (const leases of [roster, [...roster].reverse()]) {
+      const m = matchTenantToLease('Hobart', leases);
+      expect(m.ambiguous).toBe(true);
+    }
+  });
 });
