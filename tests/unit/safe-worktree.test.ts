@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   canonical,
   isOrphanWorktreeDir,
@@ -17,6 +17,24 @@ import {
 // Reproduces the 2026-06-13 node_modules-junction hazard: a worktree's node_modules was a Windows
 // junction into the REAL node_modules; `git worktree remove --force` recursed THROUGH it and deleted
 // the real target. The safe primitive must unlink the reparse point WITHOUT touching target contents.
+
+// vitest's default testTimeout is 5000ms. This file spawns real git subprocesses against
+// temp repos and creates/removes junctions, so its cost is dominated by OS process and
+// filesystem latency rather than by the logic under test - and on this hardware (on-access
+// AV scanning, loaded runner) that latency swings by more than an order of magnitude. The
+// slowest test here takes 419ms on an idle machine, yet this file timed out at 5000ms
+// during a full-suite run on 2026-09-07 while passing in isolation moments later.
+//
+// This is an outer HANG guard - it catches a wedged subprocess or an unresolved promise.
+// It is NOT a performance budget: a fixed millisecond budget cannot express a performance
+// assertion on this hardware. See tests/unit/bash-guard.test.ts, where the equivalent
+// assertion is made on a counted quantity instead.
+//
+// Scoped to the file rather than to individual slow tests because the observed stalls were
+// not confined to the expensive ones: the test that timed out in
+// debt-book-trust.round19b.test.ts runs in 67ms idle.
+vi.setConfig({ testTimeout: 60_000 });
+
 describe('safe-worktree reparse-point handling (node_modules junction wipe hazard)', () => {
   it('unlinks a junction/symlink WITHOUT deleting the target contents', () => {
     const base = mkdtempSync(join(tmpdir(), 'sw-'));
