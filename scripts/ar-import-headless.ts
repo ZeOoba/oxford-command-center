@@ -85,6 +85,7 @@ import { detectDelinquencyBucketed, parseDelinquencyBucketed } from '../server/a
 import { resolveByUnit, type UnitLease } from '../server/ar/resolve-by-unit';
 import { partitionArRows, type ArReviewRow } from '../server/ar/partition-confidence';
 import { resolveLatestArrears, filterAgainstPersisted } from '../server/ar/resolve-latest';
+import { reconcileCoveredProperties } from '../server/ar/reconcile-covered';
 import { loadCache, saveCache } from '../server/ar/mapping-cache';
 import { loadOverlay, saveOverlay, overlayPath } from '../server/overlay';
 import { deriveArBalances } from '../server/ar/derive-ar-balances';
@@ -547,6 +548,10 @@ async function main(): Promise<void> {
 
   let overlayWriteFailed = false;
   let writtenCount = 0;
+  let reconciledCount = 0;
+  let restampedCount = 0;
+  let refusedCount = 0;
+  let reconciledUsd = 0;
   if (resolved.length > 0) {
     // Refute round 3/edges: loadOverlay() silently returns a clean/empty overlay on unparseable JSON
     // — a defensible default for a UI-driven mutation (a human would immediately notice an empty
@@ -600,7 +605,77 @@ async function main(): Promise<void> {
     if (toWrite.length > 0) {
       const newArrears: Record<string, TenantArrears> = {};
       for (const r of toWrite) newArrears[r.leaseId] = r.arrears; // arrears already carries asOfDate/sourceFile
-      overlay.tenantArrears = { ...overlay.tenantArrears, ...newArrears };
+
+      // STALE-ROW RECONCILE. A delinquency export lists only currently-delinquent tenants, so a
+      // tenant who PAID simply vanishes from the next report. A pure spread merge (what this line
+      // used to be on its own) never clears a vanished row, so that tenant keeps their last balance
+      // AND their last asOfDate forever — and because conditions.ts's staleness gate degrades on the
+      // WORST stamped record, a few long-paid tenants silently hold `ar-stale` on and suppress
+      // per-lease collections alerting for the ENTIRE portfolio while every source file is fresh.
+      // Scoped to properties this run provably covered; never fires on an empty/failed parse.
+      // See server/ar/reconcile-covered.ts for the full rule and why "evict what vanished" is wrong.
+      //
+      // `seen` is load-bearing and MUST stay exhaustive. `newArrears` is only what survived every
+      // suppression in this pipeline (rejectedStale, undatedConflict, ambiguousTies, review-queue
+      // routing, dead-leaseId rejection), so passing it alone as "what the run saw" makes every
+      // deliberately-held-back row look like a tenant who paid. An adversarial review demonstrated
+      // that with a real repro: $18,333.71 zeroed at 1100 Rarig, including a $12,380.94 row sitting
+      // unresolved in the review queue. If you add a new suppression path anywhere above, add its
+      // leaseIds here in the same commit.
+      const seenLeaseIds = new Set<string>();
+      for (const w of allWrites) seenLeaseIds.add(w.leaseId);                      // incl. rejectedStale/undatedConflict/equalDateOverwrite
+      for (const r of allReviews) if (r.proposedLeaseId) seenLeaseIds.add(r.proposedLeaseId); // review queue + ambiguous ties
+      for (const t of ambiguousTies) seenLeaseIds.add(t);
+      for (const r of rejectedStale) seenLeaseIds.add(r.leaseId);
+      for (const r of undatedConflict) seenLeaseIds.add(r.leaseId);
+
+      const reconciled = reconcileCoveredProperties({
+        persisted: overlay.tenantArrears ?? {},
+        written: newArrears,
+        seen: seenLeaseIds,
+        leases: unitLeases,
+      });
+      const zeroedIds = Object.keys(reconciled.zeroed);
+      const restampedIds = Object.keys(reconciled.restamped);
+      if (zeroedIds.length > 0) {
+        const cleared = reconciled.clearedUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        // Deliberately NOT phrased "i.e. paid" — this module cannot know that, it can only know the
+        // row was absent from a report that covered its property.
+        console.log(`  ✓ ${zeroedIds.length} lease(s) reconciled to $0 ($${cleared} cleared) — absent from a report covering their property: ${zeroedIds.join(', ')}`);
+      }
+      if (restampedIds.length > 0) {
+        console.log(`  ℹ ${restampedIds.length} already-zero/credit lease(s) re-stamped to the covering report's as-of (balance untouched) so they cannot become the next worst-stamped record: ${restampedIds.join(', ')}`);
+      }
+      // RULE 5 refusals — the partial-export shape. This is the one line that must never be silent.
+      for (const r of reconciled.refusedProperties) {
+        console.log(`  ⚠ REFUSED to reconcile ${r.propertyId} — this run wrote ${r.written} row(s) there but would have zeroed ${r.wouldZero}. That is the shape of a PARTIAL export (one propertyId can span several buildings), not of tenants paying. Left untouched: ${r.leaseIds.join(', ')}`);
+      }
+      // byProperty is the mitigation the module documents; surface the suspicious shapes, not all.
+      for (const [pid, b] of Object.entries(reconciled.byProperty)) {
+        if (b.zeroed > 0 && b.zeroed >= b.written) {
+          console.log(`  ⚠ ${pid}: wrote ${b.written} row(s), zeroed ${b.zeroed} ($${b.clearedUsd.toFixed(2)}) — worth a human look before trusting this property's AR.`);
+        }
+      }
+      if (reconciled.skippedSuppressed.length > 0) {
+        console.log(`  ℹ ${reconciled.skippedSuppressed.length} persisted lease(s) were seen and suppressed by this sweep (review/stale/tie), so their balances were PRESERVED, not reconciled: ${reconciled.skippedSuppressed.join(', ')}`);
+      }
+      if (reconciled.skippedExpired.length > 0) {
+        console.log(`  ℹ ${reconciled.skippedExpired.length} Expired lease(s) with a persisted balance were preserved — a move-out balance is never auto-cleared, and it will keep the staleness gate shut until a human resolves it: ${reconciled.skippedExpired.join(', ')}`);
+      }
+      if (reconciled.skippedUncovered.length > 0) {
+        console.log(`  ℹ ${reconciled.skippedUncovered.length} persisted lease(s) left untouched — this run carried no file for their property, and absence of data is not payment: ${reconciled.skippedUncovered.join(', ')}`);
+      }
+      if (reconciled.skippedUnmapped.length > 0) {
+        console.log(`  ⚠ ${reconciled.skippedUnmapped.length} persisted lease(s) are absent from the snapshot roster, so their property is unknowable and they were NOT reconciled: ${reconciled.skippedUnmapped.join(', ')}`);
+      }
+      if (reconciled.skippedNewer.length > 0) {
+        console.log(`  ℹ ${reconciled.skippedNewer.length} persisted lease(s) are NEWER than every qualifying report for their property and were preserved: ${reconciled.skippedNewer.join(', ')}`);
+      }
+
+      // newArrears last: a lease this run actually wrote always wins over a reconcile entry.
+      // (reconcileCoveredProperties already excludes anything present in newArrears; the ordering is
+      // belt-and-braces so a future change to that exclusion cannot silently zero a real write.)
+      overlay.tenantArrears = { ...overlay.tenantArrears, ...reconciled.zeroed, ...reconciled.restamped, ...newArrears };
       const saved = await saveOverlay(overlay);
       if (!saved) {
         // Refute 2026-07-22/edges: saveOverlay deliberately returns false (never throws) on a write
@@ -611,8 +686,15 @@ async function main(): Promise<void> {
         overlayWriteFailed = true;
         console.error('  ✗ FATAL: overlay save failed (disk/permissions) — the canonical write did NOT happen.');
       } else {
-        patchSnapshot(newArrears);
+        // The snapshot patch is the SAME spread merge as the overlay write above, so it needs the
+        // same reconcile applied or portfolio.json (and the brief's 4c) would keep showing the
+        // cleared balances the overlay just dropped.
+        patchSnapshot({ ...reconciled.zeroed, ...reconciled.restamped, ...newArrears });
         writtenCount = toWrite.length;
+        reconciledCount = zeroedIds.length;
+        restampedCount = restampedIds.length;
+        reconciledUsd = reconciled.clearedUsd;
+        refusedCount = reconciled.refusedProperties.length;
       }
     }
   }
@@ -637,7 +719,7 @@ async function main(): Promise<void> {
   }
 
   console.log(
-    `\n${overlayWriteFailed ? '✗' : '✓'} Done — ${writtenCount} lease(s) written · ${allReviews.length} queued for review · ${totalSkipped} skipped · ${archivedCount}/${files.length} archived${conflictPdfPaths.size > 0 ? ` · ${conflictPdfPaths.size} left in inbox (ambiguous tie)` : ''}`,
+    `\n${overlayWriteFailed ? '✗' : '✓'} Done — ${writtenCount} lease(s) written · ${reconciledCount} reconciled to $0${reconciledCount > 0 ? ` ($${reconciledUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})` : ''}${restampedCount > 0 ? ` · ${restampedCount} re-stamped` : ''}${refusedCount > 0 ? ` · ${refusedCount} propert(ies) REFUSED (partial-export shape)` : ''} · ${allReviews.length} queued for review · ${totalSkipped} skipped · ${archivedCount}/${files.length} archived${conflictPdfPaths.size > 0 ? ` · ${conflictPdfPaths.size} left in inbox (ambiguous tie)` : ''}`,
   );
   if (allReviews.length > 0) {
     console.log(`  ⚠ ${allReviews.length} row(s) need a human map — see ${REVIEW_QUEUE}.`);
