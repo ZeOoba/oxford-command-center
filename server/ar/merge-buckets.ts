@@ -10,6 +10,16 @@
 
 import type { TenantArrears } from '../../src/contracts/index';
 
+/** Round to the nearest cent. Real defect (2026-09-06 adversarial review, MEDIUM): summing
+ *  multi-unit rows with plain float addition is sensitive to row order (float non-associativity —
+ *  verified on real exports: 225.66+385+142.20 summed in different orders lands on
+ *  REDACTED-AMT vs 752.86). resolve-latest.ts's sameBuckets compares with `===`, so that
+ *  drift made an identical re-import look like two DIFFERENT totals and stranded the write behind
+ *  a false "conflicting reports" tie. */
+function toCents(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
 export interface MergedRow {
   leaseId: string;
   arrears: TenantArrears;
@@ -36,7 +46,7 @@ export function mergeByLease(
   }
   return [...map].map(([leaseId, acc]) => ({
     leaseId,
-    arrears: { d30: acc.d30, d60: acc.d60, d90: acc.d90, d90plus: acc.d90plus },
+    arrears: { d30: toCents(acc.d30), d60: toCents(acc.d60), d90: toCents(acc.d90), d90plus: toCents(acc.d90plus) },
     tenant: acc.tenants.join(' + '),
     multiUnit: acc.tenants.length > 1,
   }));

@@ -71,11 +71,25 @@ export function normalizeTokens(raw: string): string[] {
 /** Symmetric token-overlap score (size of intersection / size of the SMALLER set) in [0,1]. Using
  *  the smaller set means a wrapped/truncated report name that is a subset of the full rent-roll name
  *  still scores 1.0 — the common real case ("Building Bridges Therapy" ⊂ "Building Bridges Therapy
- *  Svcs"). Empty either side → 0. */
+ *  Svcs"). Empty either side → 0.
+ *
+ *  Only the REPORT-name side (`a`) is de-duplicated for the intersection count — a token repeated in
+ *  the report name (e.g. two tenants joined by "&" who share a surname) must not be counted once per
+ *  occurrence, which could otherwise inflate the intersection past either side's true size and push
+ *  the score above 1.0. The CANDIDATE side (`b`) and the denominator (`Math.min(a.length, b.length)`)
+ *  are deliberately left as raw arrays/lengths, matching the original, pre-fix denominator exactly:
+ *  an earlier version of this fix also de-duplicated `b` for the denominator, which shrinks it for a
+ *  candidate whose OWN name repeats a token (e.g. "Smith & Smith LLC" → 1 distinct token) and wrongly
+ *  promoted a genuinely low-confidence match ("John Smith" vs "Smith & Smith LLC", true overlap 0.5)
+ *  to a high-confidence one (1.0) — an unattended auto-write to the wrong lease. Deduping only `a` is
+ *  sufficient to bound the score to [0,1] (intersection can never exceed the number of distinct
+ *  target tokens) without touching the candidate-side arithmetic at all. */
 function overlap(a: string[], b: string[]): number {
   if (!a.length || !b.length) return 0;
+  const setA = new Set(a);
   const setB = new Set(b);
-  const inter = a.filter((t) => setB.has(t)).length;
+  let inter = 0;
+  for (const t of setA) if (setB.has(t)) inter++;
   return inter / Math.min(a.length, b.length);
 }
 
@@ -92,6 +106,16 @@ export function matchTenantToLease(reportName: string, leases: ReadonlyArray<Lea
   const target = normalizeTokens(reportName);
   if (!target.length) return { leaseId: null, confidence: 'none', score: 0, candidate: null, ambiguous: false };
 
+  // Compare on the raw score (unchanged from the original design, deliberately NOT an "exact
+  // strictly dominates" rule): a report name that exactly equals one lease's name AND is also a
+  // genuine token-subset of a DIFFERENT lease's longer name (the wrap/truncation case this module
+  // exists to handle, e.g. "REDACTED-675" vs "REDACTED-495") is exactly the kind of coin-flip the
+  // ambiguity flag below exists to catch — a same-day adversarial re-review confirmed that an
+  // earlier version of this fix which made exact strictly dominate silently converted that
+  // legitimate human-review case into an unattended auto-write (real roster pair: "THE BAY AREA
+  // CORPORATION" vs "REDACTED-330"). Bounding `overlap()` to [0,1] above is sufficient on
+  // its own: a non-exact candidate can now at most TIE an exact match (never exceed it), and a tie
+  // between two different leases already sets `ambiguous` below, which blocks any unattended write.
   let best = { leaseId: null as string | null, score: 0, candidate: null as string | null, exact: false };
   let topCount = 0;
   for (const l of leases) {

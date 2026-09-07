@@ -186,6 +186,27 @@ describe('parseRentManagerRows — bucket computation', () => {
     expect(r.rows).toEqual([]);
     expect(r.subtotalMismatches).toEqual([]);
   });
+
+  // Real defect (2026-09-06 adversarial review, MEDIUM): the bucket accumulator was a plain
+  // running float sum with no cent-rounding, so a tenant's total depended on the ORDER the
+  // charge rows happened to appear in the worksheet -- an identical re-export with the same
+  // charges enumerated in a different row order could sum to a different last-ulp float (e.g.
+  // REDACTED-AMT vs 752.86). resolve-latest.ts's sameBuckets compares with `===`, so that
+  // ulp difference made an unchanged re-import look like two reports "disagreeing" and stranded
+  // the write behind a false ambiguousTies conflict. Verified on the real archived exports.
+  it('sums to the same cent-precise total regardless of charge-row order (float-drift regression)', () => {
+    const chargesForward = [
+      tenantCharge('REDACTED-689', { other: 225.66 }, 'Late Fee', new Date(ASOF.getTime() - 5 * 86400000)),
+      tenantCharge(null, { rent: 385 }, 'Rent Charge', new Date(ASOF.getTime() - 10 * 86400000)),
+      tenantCharge(null, { other: 142.2 }, 'Water', new Date(ASOF.getTime() - 15 * 86400000)),
+    ];
+    const chargesReversed = [chargesForward[2]!, chargesForward[1]!, { ...chargesForward[0]!, tenantName: 'REDACTED-689' }];
+    const forward = parseRentManagerRows([...chargesForward, subtotal(385, 367.86)], ASOF);
+    const reversed = parseRentManagerRows([...chargesReversed, subtotal(385, 367.86)], ASOF);
+    const totalOf = (r: typeof forward) => r.rows[0]!.d30 + r.rows[0]!.d60 + r.rows[0]!.d90 + r.rows[0]!.d90plus;
+    expect(totalOf(forward)).toBe(totalOf(reversed));
+    expect(totalOf(forward)).toBe(752.86); // exact cent value, not REDACTED-AMT
+  });
 });
 
 /** Builds an in-memory worksheet mirroring the REAL 1100 Rarig file's exact layout (verified

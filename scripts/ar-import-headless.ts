@@ -85,6 +85,7 @@ import { detectDelinquencyBucketed, parseDelinquencyBucketed } from '../server/a
 import { resolveByUnit, type UnitLease } from '../server/ar/resolve-by-unit';
 import { partitionArRows, type ArReviewRow } from '../server/ar/partition-confidence';
 import { resolveLatestArrears, filterAgainstPersisted } from '../server/ar/resolve-latest';
+import { applyWritesAndClears, type SweepReportInfo } from '../server/ar/clear-dropped-leases';
 import { loadCache, saveCache } from '../server/ar/mapping-cache';
 import { loadOverlay, saveOverlay, overlayPath, evaluateOverlayPrecondition } from '../server/overlay';
 import { deriveArBalances } from '../server/ar/derive-ar-balances';
@@ -326,6 +327,11 @@ async function main(): Promise<void> {
   const allReviews: QueuedReview[] = [];
   const processed: string[] = [];
   const pdfBySourceFile = new Map<string, string>(); // basename -> full path, for the ambiguousTies handling below
+  // Every report successfully parsed this sweep (source file + as-of date), regardless of how many
+  // rows it produced — the input to computeDroppedLeaseClears below, which needs to know which
+  // report SERIES actually ran this sweep so it can retract a persisted balance for a tenant who
+  // dropped off a newer report of the same series.
+  const sweepReportInfos: SweepReportInfo[] = [];
   let totalSkipped = 0;
 
   for (const file of files) {
@@ -417,6 +423,7 @@ async function main(): Promise<void> {
         }
         processed.push(file);
         pdfBySourceFile.set(sourceFile, file);
+        sweepReportInfos.push({ sourceFile, asOfDate, hadUnresolvedRow: reviewCount > 0 });
         console.log(`  ✓ ${sourceFile} [delinquency-bucketed] — ${autoCount} auto · ${reviewCount} review · 0 skip`);
         continue;
       }
@@ -499,6 +506,12 @@ async function main(): Promise<void> {
     totalSkipped += part.skipped;
     processed.push(file);
     pdfBySourceFile.set(sourceFile, file);
+    // Real defect fix (2026-09-06 round-3 self-review, MEDIUM): a cached SKIP is a durable,
+    // already-resolved human decision ("never attribute this name"), not an ambiguous row — do
+    // NOT fold `part.skipped` into hadUnresolvedRow, or a standing SKIP for a perpetually
+    // reappearing non-tenant name (real example: "REDACTED-696") would
+    // exempt its whole series from clearing forever. Only a genuine review row counts.
+    sweepReportInfos.push({ sourceFile, asOfDate, hadUnresolvedRow: part.review.length > 0 });
     console.log(`  ✓ ${sourceFile} [${format}] — ${part.write.length} auto · ${part.review.length} review · ${part.skipped} skip`);
   }
 
@@ -547,7 +560,13 @@ async function main(): Promise<void> {
 
   let overlayWriteFailed = false;
   let writtenCount = 0;
-  if (resolved.length > 0) {
+  // Real defect fix (2026-09-06 adversarial review, MEDIUM): gating the whole overlay-load/clear
+  // block on `resolved.length > 0` skipped the clear step entirely on a sweep whose only report(s)
+  // parsed successfully but produced zero write-eligible rows (an all-paid-off single-property
+  // drop) — exactly the case most likely to hold a stale ghost, and a realistic one given AR
+  // exports are pulled by hand, often one property at a time. Also gate on any report having been
+  // successfully parsed this sweep, regardless of row count.
+  if (resolved.length > 0 || sweepReportInfos.length > 0) {
     // Refute round 3/edges: loadOverlay() silently returns a clean/empty overlay on unparseable JSON
     // — a defensible default for a UI-driven mutation (a human would immediately notice an empty
     // app), but this feed is an UNATTENDED scheduled writer: loadOverlay-reset → merge this sweep's
@@ -594,9 +613,23 @@ async function main(): Promise<void> {
       // day's entry) but was previously indistinguishable from a routine newer-date write in the log.
       console.log(`  ℹ ${equalDateOverwrite.length} lease(s) overwrote a SAME-DATE persisted record with a different bucket vector (same-day correction applied): ${equalDateOverwrite.map((r) => r.leaseId).join(', ')}`);
     }
-    if (toWrite.length > 0) {
-      const newArrears: Record<string, TenantArrears> = {};
-      for (const r of toWrite) newArrears[r.leaseId] = r.arrears; // arrears already carries asOfDate/sourceFile
+    // Real defect fix (2026-09-06 adversarial review, HIGH, through THREE same-day rounds — see
+    // clear-dropped-leases.ts's module doc for the full history): the write path above only ever
+    // adds or updates a lease's arrears — a tenant who paid off and no longer appears on a NEWER
+    // report of the same series (property) kept its old, aging record forever. Because
+    // conditions.ts's staleness gate is all-or-nothing (any one stamped record older than 35 days
+    // suppresses EVERY per-lease collections alert, not just that lease's own), a handful of
+    // paid-off ghosts silently disabled collections alerting portfolio-wide. Zero-stamp them
+    // instead — the read model already treats an all-zero record as "checked, current"
+    // (server/ar/derive-ar-balances.ts). `applyWritesAndClears` (not a manual merge here) computes
+    // the clear against the POST-write state and applies it last — round 3 found that computing
+    // clears against the pre-write map and merging `toWrite` in afterward let a same-sweep write
+    // sourced from an OLDER report of a series silently override a correct clear.
+    const { newArrears, clearedLeaseIds } = applyWritesAndClears(overlay.tenantArrears, sweepReportInfos, toWrite);
+    if (clearedLeaseIds.length > 0) {
+      console.log(`  ℹ ${clearedLeaseIds.length} lease(s) cleared — no fresh write this sweep from a newer report of the same, fully-attributed series: ${clearedLeaseIds.join(', ')}`);
+    }
+    if (toWrite.length > 0 || clearedLeaseIds.length > 0) {
       overlay.tenantArrears = { ...overlay.tenantArrears, ...newArrears };
       const saved = await saveOverlay(overlay);
       if (!saved) {
