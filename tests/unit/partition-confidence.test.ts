@@ -16,13 +16,20 @@ const row = (tenant: string, over: Partial<ArAgingRow> = {}): ArAgingRow => ({
 });
 
 describe('partitionArRows — headless auto-write policy', () => {
-  it('auto-writes an exact match (≥2 tokens) and learns the cache entry', () => {
+  it('auto-writes an exact match (≥2 tokens) but does NOT cache it as a confirmed mapping', () => {
+    // Real defect (2026-09-06 adversarial review, MEDIUM): an unattended auto-accept used to be
+    // persisted into the mapping cache via `learned`, and the NEXT sweep's cache-hit path trusts
+    // any cache entry as "a previously human-CONFIRMED decision" (this file's own module doc) --
+    // which was never true for an auto-accept nobody reviewed. Freezing it also meant a later
+    // roster change (e.g. a second lease later matching the same normalized name) could never
+    // trigger re-evaluation: the cache hit short-circuits straight past matchTenantToLease and its
+    // ambiguity/exact-dominance checks. Auto-accepts must re-derive fresh every sweep instead.
     const leases = [lease('L1', 'Acme Tool')];
     const p = partitionArRows([row('Acme Tool, LLC', { d30: 100 })], leases);
     expect(p.write).toHaveLength(1);
     expect(p.write[0]).toMatchObject({ leaseId: 'L1', arrears: { d30: 100 } });
     expect(p.review).toEqual([]);
-    expect(p.learned).toEqual({ [cacheKey('Acme Tool, LLC')]: 'L1' });
+    expect(p.learned).toEqual({});
   });
 
   it('auto-writes a high-confidence match with ≥2 report tokens', () => {

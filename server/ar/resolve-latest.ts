@@ -28,7 +28,7 @@ export interface DatedArrearsWrite {
  *  VALID dated report supersedes an undated (or corrupt-dated) one. Total over every reachable input
  *  — including an invalid Date instance (refute 2026-07-22/determinism: NaN is not comparable via
  *  >=, so an unmapped invalid Date used to reject every future write for that lease forever). */
-function asOfMs(a: TenantArrears): number {
+export function asOfMs(a: TenantArrears): number {
   const d = a.asOfDate;
   if (d instanceof Date) {
     const t = d.getTime();
@@ -41,15 +41,27 @@ function asOfMs(a: TenantArrears): number {
   return -Infinity;
 }
 
-/** Whether two arrears records agree on EVERY bucket, not just the sum (refute round 3/determinism,
- *  demonstrated with a repro): a comparison on `sumBuckets` alone treats an equal-TOTAL,
- *  different-DISTRIBUTION pair (e.g. $5,000 re-dated from d60 into d90plus, an invoice-correction
- *  re-export) as harmless agreement and silently keeps whichever row scans later — but the bucket
- *  split is itself a financial signal downstream (src/analytics/conditions.ts fires CRITICAL only on
- *  d90+d90plus, WARNING on d30+d60), so that "harmless" tie was silently flipping an alert tier on a
- *  scan-order coin-flip. Only a full bucket-vector match is a genuine, safe-to-resolve agreement. */
+/** Cent-precision equality — mirrors rent-manager-delinquency.ts's own subtotal cross-check
+ *  convention. Real defect (2026-09-06 adversarial review, MEDIUM): comparing bucket floats with
+ *  strict `===` made a last-ulp summation difference (the same charges totaled in a different row
+ *  order — see merge-buckets.ts/rent-manager-delinquency.ts) register as a genuine disagreement
+ *  even though both sides are the same money to the cent. Rounding is defense-in-depth here: both
+ *  producers now round their own output to cents, but this comparison must not silently regress if
+ *  a future caller doesn't. */
+function sameCents(x: number, y: number): boolean {
+  return Math.round((x - y) * 100) === 0;
+}
+
+/** Whether two arrears records agree on EVERY bucket to the cent, not just the sum (refute round
+ *  3/determinism, demonstrated with a repro): a comparison on `sumBuckets` alone treats an
+ *  equal-TOTAL, different-DISTRIBUTION pair (e.g. $5,000 re-dated from d60 into d90plus, an
+ *  invoice-correction re-export) as harmless agreement and silently keeps whichever row scans
+ *  later — but the bucket split is itself a financial signal downstream
+ *  (src/analytics/conditions.ts fires CRITICAL only on d90+d90plus, WARNING on d30+d60), so that
+ *  "harmless" tie was silently flipping an alert tier on a scan-order coin-flip. Only a full
+ *  bucket-vector match (to the cent) is a genuine, safe-to-resolve agreement. */
 function sameBuckets(a: TenantArrears, b: TenantArrears): boolean {
-  return a.d30 === b.d30 && a.d60 === b.d60 && a.d90 === b.d90 && a.d90plus === b.d90plus;
+  return sameCents(a.d30, b.d30) && sameCents(a.d60, b.d60) && sameCents(a.d90, b.d90) && sameCents(a.d90plus, b.d90plus);
 }
 
 /**

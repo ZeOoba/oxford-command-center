@@ -87,6 +87,20 @@ describe('resolveLatestArrears — cross-report supersede (never sum)', () => {
     expect(r2.ambiguousTies).toEqual(['L1']);
   });
 
+  // Real defect (2026-09-06 adversarial review, MEDIUM): sameBuckets compared with `===`, so a
+  // last-ulp float difference between two reports that actually agree to the cent (produced by
+  // summing the same charges in a different row order — see merge-buckets.test.ts /
+  // rent-manager-delinquency.test.ts's own float-drift regressions) registered as a genuine
+  // "conflicting reports" disagreement and stranded the write behind a false ambiguousTies entry,
+  // even though the two totals are the SAME MONEY to the cent.
+  it('an exact as-of tie whose buckets differ only by a sub-cent float ulp is harmless, not ambiguous', () => {
+    const original = wb('L1', { d30: 752.8599999999999 }, new Date('2026-08-21'), 'a.pdf');
+    const reExport = wb('L1', { d30: 752.86 }, new Date('2026-08-21'), 'b.pdf');
+    const r = resolveLatestArrears([original, reExport]);
+    expect(r.ambiguousTies).toEqual([]);
+    expect(r.resolved).toHaveLength(1);
+  });
+
   it('a THIRD, decisively-later row resolves a prior ambiguous tie', () => {
     const r = resolveLatestArrears([
       w('L1', 12000, new Date('2026-07-15'), 'original.pdf'),
