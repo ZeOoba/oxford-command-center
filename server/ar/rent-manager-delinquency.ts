@@ -77,6 +77,18 @@ function nonNeg(n: number): number {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
+/** Round to the nearest cent. Real defect (2026-09-06 adversarial review, MEDIUM): a plain running
+ *  float sum of per-charge amounts is sensitive to the ORDER those charges happen to be enumerated
+ *  in the worksheet (classic float non-associativity — verified on real exports: the same three
+ *  charges summed 225.66+385+142.20 vs 142.20+385+225.66 land on REDACTED-AMT vs 752.86).
+ *  resolve-latest.ts's sameBuckets compares bucket vectors with `===`, so that last-ulp drift made
+ *  an unchanged re-import of the same report look like two DIFFERENT totals and stranded the write
+ *  behind a false ambiguousTies conflict. Round every bucket to the cent as soon as it's finalized —
+ *  the same convention this module's own subtotal cross-check already applies (see `flush` below). */
+function toCents(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
 /** Whole days between two dates, ignoring time-of-day (both inputs are already midnight-normalized
  *  Dates from ExcelJS date cells). Positive = date is BEFORE reference (i.e. how many days past due). */
 function daysBefore(reference: Date, date: Date): number {
@@ -151,7 +163,7 @@ export function parseRentManagerRows(cells: readonly RmDetailCell[], asOfDate: D
         subtotalMismatches.push({ tenant: curTenant, property: curTenantProperty, computedTotal, reportedTotal });
       }
     }
-    rows.push({ tenant: curTenant, property: curTenantProperty, d30: acc.d30, d60: acc.d60, d90: acc.d90, d90plus: acc.d90plus });
+    rows.push({ tenant: curTenant, property: curTenantProperty, d30: toCents(acc.d30), d60: toCents(acc.d60), d90: toCents(acc.d90), d90plus: toCents(acc.d90plus) });
     curTenant = null;
     resetAcc();
   }
