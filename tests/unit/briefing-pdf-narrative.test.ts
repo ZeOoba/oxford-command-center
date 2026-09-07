@@ -94,7 +94,6 @@ const NARRATIVE: NarrativeBlock = {
 describe('renderBriefingPdf — property model content-identical invariant (narrative absent)', () => {
   it(
     'extracted text is identical for no-arg, null, and undefined narrative',
-    { timeout: 30000 },
     async () => {
       const db = seededDb();
       const model = PropertyBriefingModel.parse(composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN }));
@@ -108,7 +107,6 @@ describe('renderBriefingPdf — property model content-identical invariant (narr
 
   it(
     'the narrative section does not appear when narrative is absent',
-    { timeout: 30000 },
     async () => {
       const db = seededDb();
       const model = PropertyBriefingModel.parse(composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN }));
@@ -123,7 +121,6 @@ describe('renderBriefingPdf — property model content-identical invariant (narr
 describe('renderBriefingPdf — manager model content-identical invariant (narrative absent)', () => {
   it(
     'extracted text is identical for no-arg, null, and undefined narrative',
-    { timeout: 30000 },
     async () => {
       const db = seededDb();
       const model = ManagerBriefingModel.parse(composeManagerBriefing(db, KRG_SLUG, { generatedDate: GEN }));
@@ -137,7 +134,6 @@ describe('renderBriefingPdf — manager model content-identical invariant (narra
 
   it(
     'the narrative section does not appear when narrative is absent',
-    { timeout: 30000 },
     async () => {
       const db = seededDb();
       const model = ManagerBriefingModel.parse(composeManagerBriefing(db, KRG_SLUG, { generatedDate: GEN }));
@@ -152,7 +148,6 @@ describe('renderBriefingPdf — manager model content-identical invariant (narra
 describe('renderBriefingPdf — with non-null narrative (property)', () => {
   it(
     'buffer is larger than the no-narrative buffer (the narrative section was added)',
-    { timeout: 30000 },
     async () => {
       const db = seededDb();
       const model = PropertyBriefingModel.parse(composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN }));
@@ -164,7 +159,6 @@ describe('renderBriefingPdf — with non-null narrative (property)', () => {
 
   it(
     'narrative headline appears in extractable PDF text',
-    { timeout: 30000 },
     async () => {
       const db = seededDb();
       const model = PropertyBriefingModel.parse(composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN }));
@@ -177,7 +171,6 @@ describe('renderBriefingPdf — with non-null narrative (property)', () => {
 
   it(
     'does not throw when narrative is provided',
-    { timeout: 30000 },
     async () => {
       const db = seededDb();
       const model = PropertyBriefingModel.parse(composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN }));
@@ -187,7 +180,6 @@ describe('renderBriefingPdf — with non-null narrative (property)', () => {
 
   it(
     'narrative summary and bullets appear in extractable text (and not when absent)',
-    { timeout: 30000 },
     async () => {
       const db = seededDb();
       const model = PropertyBriefingModel.parse(composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN }));
@@ -207,7 +199,6 @@ describe('renderBriefingPdf — with non-null narrative (property)', () => {
 describe('renderBriefingPdf — with non-null narrative (manager)', () => {
   it(
     'buffer is larger than the no-narrative buffer',
-    { timeout: 30000 },
     async () => {
       const db = seededDb();
       const model = ManagerBriefingModel.parse(composeManagerBriefing(db, KRG_SLUG, { generatedDate: GEN }));
@@ -219,7 +210,6 @@ describe('renderBriefingPdf — with non-null narrative (manager)', () => {
 
   it(
     'narrative headline appears in extractable PDF text',
-    { timeout: 30000 },
     async () => {
       const db = seededDb();
       const model = ManagerBriefingModel.parse(composeManagerBriefing(db, KRG_SLUG, { generatedDate: GEN }));
@@ -231,7 +221,6 @@ describe('renderBriefingPdf — with non-null narrative (manager)', () => {
 
   it(
     'does not throw when narrative is provided',
-    { timeout: 30000 },
     async () => {
       const db = seededDb();
       const model = ManagerBriefingModel.parse(composeManagerBriefing(db, KRG_SLUG, { generatedDate: GEN }));

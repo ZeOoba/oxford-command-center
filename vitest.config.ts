@@ -39,6 +39,44 @@ export default defineConfig({
     // for the regression guard.
     pool: 'forks',
     isolate: true,
+    // testTimeout/hookTimeout: 60s, not vitest's 5000ms/10000ms defaults (2026-09-07).
+    // This suite's slow tests are slow because of OS latency - spawning processes, opening
+    // better-sqlite3 databases, writing ExcelJS workbooks, shelling out to git - not
+    // because of the logic under test. On a loaded Windows runner with on-access AV
+    // scanning that latency swings by 3x to nearly 90x, so a fixed millisecond budget
+    // silently encodes the calibrating machine's speed and fails on any slower or busier
+    // one.
+    //
+    // Measured on LAPTOP-CSHSCBE6 across one full-suite session: six files timed out and
+    // then passed in isolation moments later. Slowest test per file on an idle machine,
+    // and the stall each needed to blow its budget - capital-allocation.integration
+    // 1395ms (3.6x), calibration 1484ms (3.4x), install-git-hooks 551ms (9x),
+    // safe-worktree 419ms (12x), debt-book-trust.round19b 67ms (75x), and
+    // briefing-narrative-routes 344ms, which blew an already-raised 30000ms per-test
+    // budget (87x). Patching files one at a time was whack-a-mole; the condition is
+    // global, so the budget is too.
+    //
+    // hookTimeout moves with it. Hooks do the same IO as test bodies and would otherwise
+    // become the weakest link at 6x tighter: warehouse-reconcile-noi.test.ts's beforeAll
+    // opens a warehouse, writes two ExcelJS fixtures and ingests both, which is work
+    // comparable to the 1395ms body above; and bash-guard.test.ts's beforeAll spawns nine
+    // git processes, which that file prices at ~190ms each under load on this box.
+    //
+    // For the same reason, no per-test `{ timeout: N }` below this value should be
+    // reintroduced: a local budget silently overrides this one (a per-test option wins
+    // over config) and brings the flake back. 25 such sites were removed when this landed:
+    // 21 x 30000ms across the briefing tests (including the 87x case above), 2 x 10s in
+    // the module tests, and a 45s/20s pair in ar-import-headless-lease-status. The
+    // `waitFor(..., { timeout: 3000 })` calls in the .tsx tests are NOT this - that is
+    // testing-library assertion polling, not a test budget, and it stays.
+    //
+    // This is a HANG guard: it catches a wedged subprocess, a wedged SQLite/ExcelJS write,
+    // or an unresolved promise. It is NOT a performance budget, and nothing here should
+    // treat it as one. Where a perf property genuinely needs guarding, assert a counted
+    // quantity instead - tests/unit/bash-guard.test.ts bounds alias resolution by counting
+    // `git config` spawns via GIT_TRACE2_EVENT rather than by timing them.
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
     setupFiles: ['./tests/setup.ts'],
     include: ['tests/unit/**/*.{test,spec}.{ts,tsx}', 'src/**/*.{test,spec}.{ts,tsx}'],
     coverage: {

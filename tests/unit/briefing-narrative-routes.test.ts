@@ -194,7 +194,7 @@ describe('GET /briefing/manager/:slug/narrative', () => {
 // ── ?narrative=1 on existing PDF routes ──────────────────────────────────────────────────────
 
 describe('GET /briefing/property/:slug.pdf?narrative=1', () => {
-  it('returns 200 application/pdf (valid PDF even when no key → null narrative)', { timeout: 30000 }, async () => {
+  it('returns 200 application/pdf (valid PDF even when no key → null narrative)', async () => {
     const db = seededDb();
     const app = warehouseRoutes(() => db);
     const res = await app.request(`/briefing/property/${KRG_PROPS[0]!}.pdf?narrative=1`);
@@ -204,7 +204,7 @@ describe('GET /briefing/property/:slug.pdf?narrative=1', () => {
     expect(buf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
   });
 
-  it('without ?narrative=1 is still unaffected (no-param path unchanged)', { timeout: 30000 }, async () => {
+  it('without ?narrative=1 is still unaffected (no-param path unchanged)', async () => {
     const db = seededDb();
     const app = warehouseRoutes(() => db);
     const res = await app.request(`/briefing/property/${KRG_PROPS[0]!}.pdf`);
@@ -212,7 +212,7 @@ describe('GET /briefing/property/:slug.pdf?narrative=1', () => {
     expect(res.headers.get('content-type')).toBe('application/pdf');
   });
 
-  it('?narrative=1 with no key yields content-identical PDF to no-param (null narrative → same render)', { timeout: 30000 }, async () => {
+  it('?narrative=1 with no key yields content-identical PDF to no-param (null narrative → same render)', async () => {
     await withoutApiKey(async () => {
       const db = seededDb();
       const app = warehouseRoutes(() => db);
@@ -226,7 +226,7 @@ describe('GET /briefing/property/:slug.pdf?narrative=1', () => {
 });
 
 describe('GET /briefing/manager/:slug.pdf?narrative=1', () => {
-  it('returns 200 application/pdf', { timeout: 30000 }, async () => {
+  it('returns 200 application/pdf', async () => {
     const db = seededDb();
     const app = warehouseRoutes(() => db);
     const res = await app.request(`/briefing/manager/${KRG_SLUG}.pdf?narrative=1`);
@@ -236,7 +236,7 @@ describe('GET /briefing/manager/:slug.pdf?narrative=1', () => {
     expect(buf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
   });
 
-  it('?narrative=1 with no key yields content-identical PDF to no-param', { timeout: 30000 }, async () => {
+  it('?narrative=1 with no key yields content-identical PDF to no-param', async () => {
     await withoutApiKey(async () => {
       const db = seededDb();
       const app = warehouseRoutes(() => db);
