@@ -144,6 +144,15 @@
       "review_needed": false,
       "review_detail": "Awaiting merge of PR #309. Flip to merged and remove worktree C:/Users/Owner/occ-wt-gitignore post-merge.",
       "last_updated": "2026-09-02T14:40:00Z"
+    },
+    "fix-documents-test-order-dependency": {
+      "agent_role": "Engineering (Claude Code) -- Gabriel-directed 2026-09-06 order-fragility pass",
+      "phase": "Correct the stale 'known currently-flagged' header in .github/workflows/order-fragility.yml. Claim covers exactly one path: .github/workflows/order-fragility.yml (comment block only; no `on:`/`jobs:`/step changes). tests/unit/documents.test.ts is NOT modified -- its order dependency was already fixed by 1db788d (PR #42, 2026-06-14), which the header predates.",
+      "status": "in_progress",
+      "blocked_by": null,
+      "review_needed": false,
+      "review_detail": "Shared-infra single-writer claim per CLAUDE.md S2 (.github/workflows/*). No competing claim present at time of write. Flip to merged post-PR.",
+      "last_updated": "2026-09-06T22:45:00Z"
     }
   },
   "phase-4-steps-5-7-8-9": {
