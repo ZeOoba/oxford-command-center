@@ -35,6 +35,30 @@ export interface AgentOptions {
   /** Live macro provider (FRED w/ key, seeded fallback otherwise). Absent on the mirror → get_macro
    *  stays a stub. Mirrors the docSearch precedent — async; returns null only on a hard failure. */
   macroProvider?: () => Promise<MacroSnapshot | null>;
+  /**
+   * Pre-send confidentiality scan over each tool result, run BEFORE it enters `messages` (OI-225).
+   * Defense-in-depth behind the tool-layer `confidential` filter in tools.ts — this is the
+   * roster-based layer that also catches free text no flag covers.
+   *
+   * INJECTED, not imported, and that is load-bearing: server/briefing/confidential.ts reads the
+   * roster off disk via node:fs/node:os, and this module must stay runtime-agnostic (it also runs in
+   * the Cloudflare Pages Function). Absent on the mirror → the tool-layer flag filter is the whole
+   * defense there, which is why that filter is keyed on the flag and not on the roster. Same
+   * injected-capability shape as docSearch / macroProvider.
+   *
+   * Signature matches scanForConfidential so the Node server can pass it straight through.
+   *
+   * ROSTER-AUTHORING NOTE (2nd refute pass, 2026-09-10): this layer's `always` terms are matched by
+   * plain lowercase SUBSTRING, and a hit halts the whole run — unlike the tools.ts tool-layer filter,
+   * which deliberately TOLERATES a title-only substring collision on an unrelated public entity (see
+   * tools.ts get_alerts). A collision-prone term here — a bare place name, a common word, a street
+   * that also appears in an owned property's address — does not leak anything (this layer fails
+   * closed by refusing the whole request), but it does mean every question touching that public
+   * entity dies with a message that reads like a caught leak, for the life of the deal. Confidential
+   * terms that are also plausible substrings of real portfolio data belong in a deal's `context` list
+   * behind a `context_requires_any` anchor in confidential-terms.json, not in `always`.
+   */
+  confidentialScan?: (value: unknown) => { dealLabel: string } | null;
 }
 
 const TOOL_LABELS: Record<string, string> = {
@@ -244,6 +268,24 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
               : runTool(b.name ?? '', snapshot, {});
           } else {
             result = runTool(b.name ?? '', snapshot, (b.input as Record<string, unknown>) ?? {});
+          }
+          // Pre-send confidentiality guard (OI-225) — must fire BEFORE this result reaches
+          // `messages`. Scans exactly what egresses (`result.data`); `refs` are rendered in our own
+          // UI and never sent, so scanning them here would only produce false halts.
+          //
+          // A hit means the tool-layer filter failed, so this HALTS the whole run rather than
+          // dropping the one result: `messages` accumulates and is re-sent in full on every
+          // subsequent turn, so continuing would ship the leak on the next request anyway.
+          const hit = opts.confidentialScan?.(result.data) ?? null;
+          if (hit) {
+            await emit({
+              type: 'error',
+              // Report the label only — never the matched term or the payload (don't widen the leak).
+              message:
+                `Refusing to send: a tool result carries a confidential deal term (${hit.dealLabel}). ` +
+                `The request was stopped before reaching the API.`,
+            });
+            return;
           }
           allRefs.push(...result.refs);
           toolResults.push({ type: 'tool_result', tool_use_id: b.id, content: JSON.stringify(result.data) });
