@@ -124,8 +124,19 @@ function formatUsd(n: number): string {
  * an unrelated genuine drift sitting next to an even larger legitimate new lease at the SAME
  * property could still clear it. Gabriel ruled against normalizing the spines to close this
  * precisely (2026-08-17, OI-137 fix-shape decision); tightening further would re-open that choice.
+ *
+ * DIRECTION (2026-08-17 adversarial finding, financial-code integrity sweep): the tenancy-alone
+ * rung's evidence sentence — "the warehouse actuals could not have collected that rent" — is only
+ * coherent when the WORKBOOK exceeds the WAREHOUSE (delta > 0): new leases add rent Spine A
+ * collects that Spine B's historical actuals predate. When the warehouse exceeds the workbook
+ * (delta < 0), the same recent-lease evidence makes the disagreement MORE anomalous, not less — it
+ * is the signature of a warehouse-side double-count or misattributed import, exactly the ingestion
+ * bug this gate exists to catch. This rung is therefore gated on `delta > 0`. The ownership+tenancy
+ * corroboration rung below stays bidirectional — partial-year blended actuals from a change in
+ * ownership can plausibly cut either way.
  */
-function detectStructuralMismatchReason(input: NoiReconcileInput, absDelta: number): string | null {
+function detectStructuralMismatchReason(input: NoiReconcileInput, delta: number): string | null {
+  const absDelta = Math.abs(delta);
   const periodYear = input.warehousePeriod?.slice(0, 4) ?? null;
   if (periodYear === null) return null; // nothing to compare acqDate/leaseStart against
   const periodStart = `${periodYear}-01-01`;
@@ -134,7 +145,7 @@ function detectStructuralMismatchReason(input: NoiReconcileInput, absDelta: numb
   const hasAnyRecentTenancy = recentRent !== null && recentRent > 0;
   const acquiredSincePeriodStart = input.acqDate !== null && input.acqDate >= periodStart;
 
-  if (hasAnyRecentTenancy && recentRent! >= absDelta * 0.5) {
+  if (delta > 0 && hasAnyRecentTenancy && recentRent! >= absDelta * 0.5) {
     return (
       `${formatUsd(recentRent!)}/yr of the current rent roll comes from leases starting on or after ` +
       `${periodStart} — at least half of the ${formatUsd(absDelta)} delta, so the ${periodYear} warehouse ` +
@@ -274,7 +285,7 @@ export function classifyNoiReconciliation(
     // OI-137: a sign-inverted disagreement is NEVER waved through by a tenancy/ownership
     // explanation — that explains a MAGNITUDE gap, not a profit-vs-loss flip, which points at a
     // parsing or classification defect. Only consulted when the signs agree.
-    const structuralEvidence = signsConflict ? null : detectStructuralMismatchReason(input, absDelta);
+    const structuralEvidence = signsConflict ? null : detectStructuralMismatchReason(input, delta);
     if (structuralEvidence !== null) {
       status = 'structural-mismatch';
       severity = 'warn';
