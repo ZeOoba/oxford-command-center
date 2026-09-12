@@ -326,6 +326,37 @@ describe('structural-mismatch downgrade (OI-137 — ownership/tenancy changed si
     expect(r.status).toBe('large-drift');
   });
 
+  it('DIRECTION FIX (2026-08-17): tenancy-alone evidence does NOT downgrade when the WAREHOUSE exceeds the workbook — that direction is the signature of a warehouse-side over-count, not a timing gap the evidence explains', () => {
+    // Same magnitude/shape as the tenancy-signal case above, but the drift runs the OPPOSITE
+    // direction: warehouse (200000) exceeds workbook (80000). Recent-lease rent explains why the
+    // CURRENT rent roll might exceed stale historical actuals — it says nothing about why the
+    // HISTORICAL actuals would exceed the current rent roll, which points at a double-counted or
+    // misattributed warehouse import instead.
+    const r = classifyNoiReconciliation(
+      input({ workbookOxfordNoi: 80000, warehouseOxfordNoi: 200000, recentTenancyAnnualRent: 120000 }),
+      TOL,
+    );
+    expect(r.status).toBe('large-drift');
+    expect(r.severity).toBe('error');
+  });
+
+  it('DIRECTION FIX: the same tenancy evidence DOES still downgrade in the workbook-exceeds-warehouse direction (unchanged behavior)', () => {
+    const r = classifyNoiReconciliation(
+      input({ workbookOxfordNoi: 200000, warehouseOxfordNoi: 80000, recentTenancyAnnualRent: 120000 }),
+      TOL,
+    );
+    expect(r.status).toBe('structural-mismatch');
+    expect(r.severity).toBe('warn');
+  });
+
+  it('DIRECTION FIX: ownership+tenancy corroboration (the OTHER rung) stays bidirectional — still downgrades when the warehouse exceeds the workbook', () => {
+    const r = classifyNoiReconciliation(
+      input({ workbookOxfordNoi: 80000, warehouseOxfordNoi: 200000, acqDate: '2025-06-01', recentTenancyAnnualRent: 5000 }),
+      TOL,
+    );
+    expect(r.status).toBe('structural-mismatch');
+  });
+
   it('no evidence at all (both null) → stays large-drift/error — absence of evidence is not evidence of a structural cause', () => {
     const r = classifyNoiReconciliation(input({ ...LARGE_DRIFT, acqDate: null, recentTenancyAnnualRent: null }), TOL);
     expect(r.status).toBe('large-drift');
