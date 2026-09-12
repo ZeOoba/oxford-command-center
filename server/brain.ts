@@ -2,16 +2,40 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { watch } from 'chokidar';
-import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, type DealStage, type RenewalStage, type CompSet, type AcquisitionInput, type TenantArrears } from '../src/contracts/index';
+import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, type DealStage, type RenewalStage, type CompSet, type AcquisitionInput, type TenantArrears, type QbActuals, type Property } from '../src/contracts/index';
 import { tenantScorecards } from '../src/brain/tenants';
 import { parseWorkbook } from './workbook/parse';
 import { applyOverlay, evaluateOverlayPrecondition, loadOverlay, overlayPath, saveOverlay, type Overlay } from './overlay';
 import { checkSnapshot, hasReconciliationError } from './reconcile-runtime';
 import { SNAPSHOT_PATH, workbookPath, referenceDate } from './config';
-import { loadQuickbooks } from './sources/quickbooks';
+import { resolveQuickbooks, type ResolvedQuickbooks } from './sources/quickbooks';
 import { evaluateAnomalyFloor, loadPreviousLeaseIds } from './anomaly-floor';
 import { hasDealsPipelineFailure, type DealsDegradation } from './sources/notion-deals';
 import { hasM365TasksFailure, type M365TasksDegradation } from './sources/m365-tasks';
+
+/**
+ * resolveQuickbooks(), layered with an in-memory preference (2026-08-17 — refute pass on the
+ * resolveQuickbooks fix itself). resolveQuickbooks's disk fallback reads SNAPSHOT_PATH from disk,
+ * but brain.persist() DECLINES to write that file during a deals-degraded or reconciliation-error
+ * window — so the disk mirror can lag behind a FRESHER quickbooks block this live server is
+ * already holding in memory from an earlier successful CSV parse. A later transient CSV failure
+ * would then have resolveQuickbooks's disk fallback silently replace the fresher in-memory block
+ * with the staler on-disk one. A fresh CSV parse always wins outright (freshest possible data);
+ * only when that fails do we compare the in-memory candidate's parsedAt against whatever
+ * resolveQuickbooks found (disk fallback or null) and keep whichever is newer.
+ */
+function resolveQuickbooksPreferMemory(
+  properties: Property[],
+  snapshotPath: string,
+  inMemory: QbActuals | null,
+): ResolvedQuickbooks {
+  const result = resolveQuickbooks(properties, snapshotPath);
+  if (result.quickbooks && result.preservedFrom === null) return result; // fresh CSV parse always wins
+  if (inMemory && (!result.quickbooks || inMemory.parsedAt >= result.quickbooks.parsedAt)) {
+    return { quickbooks: inMemory, preservedFrom: 'memory' };
+  }
+  return result;
+}
 
 /**
  * The live brain: single source of in-memory truth. Parses the workbook on demand,
@@ -96,8 +120,18 @@ class Brain extends EventEmitter {
       this.dealsDegraded = dealsDegraded;
       this.m365Degraded = m365Degraded;
       const merged = applyOverlay(snapshot, this.overlay);
-      // Attach QuickBooks actuals (read on every refresh; null if QUICKBOOKS_CSV not set/present).
-      const withQb = { ...merged, quickbooks: loadQuickbooks(merged.properties) };
+      // Attach QuickBooks actuals via resolveQuickbooks (2026-08-17 fix): a live server's refresh()
+      // fires far more often than either CLI writer, so a transient read/parse failure here (a
+      // OneDrive sync lock on QUICKBOOKS_CSV, a momentary schema hiccup) is MORE likely to hit,
+      // not less -- and this path feeds `this.snapshot`, which persist() below writes straight to
+      // the git-tracked, auto-committed mirror. Bare loadQuickbooks() would null a populated block
+      // on any such failure and reproduce the exact 828-line-deletion incident this fix closed for
+      // the two CLI writers, just via the server path instead. Same pattern as
+      // scripts/extract-workbook.ts / scripts/lease-snapshot-drift-check.ts.
+      const { quickbooks, preservedFrom } = resolveQuickbooksPreferMemory(merged.properties, SNAPSHOT_PATH, this.snapshot?.quickbooks ?? null);
+      if (preservedFrom === 'memory') console.log(`ℹ Brain.refresh: no fresh QUICKBOOKS_CSV parse — kept the fresher in-memory block (parsedAt ${quickbooks!.parsedAt}) over a staler on-disk one.`);
+      else if (preservedFrom) console.log(`ℹ Brain.refresh: no fresh QUICKBOOKS_CSV parse — carried forward the previous snapshot's block (parsedAt ${quickbooks!.parsedAt}) instead of nulling it.`);
+      const withQb = { ...merged, quickbooks };
       // Runtime reconciliation: surface any internal inconsistency as data-quality flags.
       const rtFlags = checkSnapshot(withQb);
       this.snapshot = rtFlags.length ? { ...withQb, dataQuality: [...withQb.dataQuality, ...rtFlags] } : withQb;
@@ -127,7 +161,13 @@ class Brain extends EventEmitter {
   /** Re-derive the merged snapshot from the cached base + overlay (no workbook re-parse). */
   private rederive(reason: string) {
     if (!this.base) return;
-    const merged = { ...applyOverlay(this.base, this.overlay), quickbooks: loadQuickbooks(this.base.properties) };
+    // Same resolveQuickbooks fix as refresh() above -- this path re-runs on EVERY UI write-back
+    // (a deal-stage click, a task edit), so it re-arms the null-out risk far more often than a
+    // scheduled refresh alone.
+    const { quickbooks, preservedFrom } = resolveQuickbooksPreferMemory(this.base.properties, SNAPSHOT_PATH, this.snapshot?.quickbooks ?? null);
+    if (preservedFrom === 'memory') console.log(`ℹ Brain.rederive: no fresh QUICKBOOKS_CSV parse — kept the fresher in-memory block (parsedAt ${quickbooks!.parsedAt}) over a staler on-disk one.`);
+    else if (preservedFrom) console.log(`ℹ Brain.rederive: no fresh QUICKBOOKS_CSV parse — carried forward the previous snapshot's block (parsedAt ${quickbooks!.parsedAt}) instead of nulling it.`);
+    const merged = { ...applyOverlay(this.base, this.overlay), quickbooks };
     // Reconciliation is re-run here, not just in refresh(). Rebuilding from base+overlay and
     // persisting WITHOUT it meant every UI write-back rewrote the mirror carrying the same breached
     // numbers with the reconciliation flags ABSENT -- which erases conditions.ts's 'reconcile-fail'
