@@ -2,15 +2,40 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { watch } from 'chokidar';
-import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, type DealStage, type RenewalStage, type CompSet, type AcquisitionInput, type TenantArrears } from '../src/contracts/index';
+import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, type DealStage, type RenewalStage, type CompSet, type AcquisitionInput, type TenantArrears, type QbActuals, type Property } from '../src/contracts/index';
 import { tenantScorecards } from '../src/brain/tenants';
 import { parseWorkbook } from './workbook/parse';
-import { applyOverlay, loadOverlay, saveOverlay, type Overlay } from './overlay';
+import { applyOverlay, evaluateOverlayPrecondition, loadOverlay, overlayPath, saveOverlay, type Overlay } from './overlay';
 import { checkSnapshot, hasReconciliationError } from './reconcile-runtime';
 import { SNAPSHOT_PATH, workbookPath, referenceDate } from './config';
-import { loadQuickbooks } from './sources/quickbooks';
+import { resolveQuickbooks, type ResolvedQuickbooks } from './sources/quickbooks';
 import { evaluateAnomalyFloor, loadPreviousLeaseIds } from './anomaly-floor';
 import { hasDealsPipelineFailure, type DealsDegradation } from './sources/notion-deals';
+import { hasM365TasksFailure, type M365TasksDegradation } from './sources/m365-tasks';
+
+/**
+ * resolveQuickbooks(), layered with an in-memory preference (2026-08-17 — refute pass on the
+ * resolveQuickbooks fix itself). resolveQuickbooks's disk fallback reads SNAPSHOT_PATH from disk,
+ * but brain.persist() DECLINES to write that file during a deals-degraded or reconciliation-error
+ * window — so the disk mirror can lag behind a FRESHER quickbooks block this live server is
+ * already holding in memory from an earlier successful CSV parse. A later transient CSV failure
+ * would then have resolveQuickbooks's disk fallback silently replace the fresher in-memory block
+ * with the staler on-disk one. A fresh CSV parse always wins outright (freshest possible data);
+ * only when that fails do we compare the in-memory candidate's parsedAt against whatever
+ * resolveQuickbooks found (disk fallback or null) and keep whichever is newer.
+ */
+function resolveQuickbooksPreferMemory(
+  properties: Property[],
+  snapshotPath: string,
+  inMemory: QbActuals | null,
+): ResolvedQuickbooks {
+  const result = resolveQuickbooks(properties, snapshotPath);
+  if (result.quickbooks && result.preservedFrom === null) return result; // fresh CSV parse always wins
+  if (inMemory && (!result.quickbooks || inMemory.parsedAt >= result.quickbooks.parsedAt)) {
+    return { quickbooks: inMemory, preservedFrom: 'memory' };
+  }
+  return result;
+}
 
 /**
  * The live brain: single source of in-memory truth. Parses the workbook on demand,
@@ -26,6 +51,8 @@ class Brain extends EventEmitter {
    * parse-local check would guard `refresh()` and leak on that second path.
    */
   private dealsDegraded: DealsDegradation | null = null;
+  /** Same contract as dealsDegraded above, for the M365 To-Do source (2026-09-05). */
+  private m365Degraded: M365TasksDegradation | null = null;
   private overlay: Overlay = loadOverlay();
   private state: BrainState = {
     status: 'idle',
@@ -52,7 +79,7 @@ class Brain extends EventEmitter {
   async refresh(reason = 'manual'): Promise<BrainState> {
     this.setState({ status: 'refreshing' });
     try {
-      const { snapshot, flags, dealsDegraded } = await parseWorkbook(workbookPath());
+      const { snapshot, flags, dealsDegraded, m365Degraded } = await parseWorkbook(workbookPath());
 
       // Anomaly floor: gate the in-memory ADOPTION itself, not just the disk mirror below --
       // this.snapshot is what refresh()/rederive() serve live to the UI/API, so refusing only
@@ -91,9 +118,20 @@ class Brain extends EventEmitter {
       // a seed-placeholder reason that was false for the snapshot being written. The field must
       // always describe the parse that was actually adopted. (Refute pass on this branch, 2 lenses.)
       this.dealsDegraded = dealsDegraded;
+      this.m365Degraded = m365Degraded;
       const merged = applyOverlay(snapshot, this.overlay);
-      // Attach QuickBooks actuals (read on every refresh; null if QUICKBOOKS_CSV not set/present).
-      const withQb = { ...merged, quickbooks: loadQuickbooks(merged.properties) };
+      // Attach QuickBooks actuals via resolveQuickbooks (2026-08-17 fix): a live server's refresh()
+      // fires far more often than either CLI writer, so a transient read/parse failure here (a
+      // OneDrive sync lock on QUICKBOOKS_CSV, a momentary schema hiccup) is MORE likely to hit,
+      // not less -- and this path feeds `this.snapshot`, which persist() below writes straight to
+      // the git-tracked, auto-committed mirror. Bare loadQuickbooks() would null a populated block
+      // on any such failure and reproduce the exact 828-line-deletion incident this fix closed for
+      // the two CLI writers, just via the server path instead. Same pattern as
+      // scripts/extract-workbook.ts / scripts/lease-snapshot-drift-check.ts.
+      const { quickbooks, preservedFrom } = resolveQuickbooksPreferMemory(merged.properties, SNAPSHOT_PATH, this.snapshot?.quickbooks ?? null);
+      if (preservedFrom === 'memory') console.log(`ℹ Brain.refresh: no fresh QUICKBOOKS_CSV parse — kept the fresher in-memory block (parsedAt ${quickbooks!.parsedAt}) over a staler on-disk one.`);
+      else if (preservedFrom) console.log(`ℹ Brain.refresh: no fresh QUICKBOOKS_CSV parse — carried forward the previous snapshot's block (parsedAt ${quickbooks!.parsedAt}) instead of nulling it.`);
+      const withQb = { ...merged, quickbooks };
       // Runtime reconciliation: surface any internal inconsistency as data-quality flags.
       const rtFlags = checkSnapshot(withQb);
       this.snapshot = rtFlags.length ? { ...withQb, dataQuality: [...withQb.dataQuality, ...rtFlags] } : withQb;
@@ -123,7 +161,13 @@ class Brain extends EventEmitter {
   /** Re-derive the merged snapshot from the cached base + overlay (no workbook re-parse). */
   private rederive(reason: string) {
     if (!this.base) return;
-    const merged = { ...applyOverlay(this.base, this.overlay), quickbooks: loadQuickbooks(this.base.properties) };
+    // Same resolveQuickbooks fix as refresh() above -- this path re-runs on EVERY UI write-back
+    // (a deal-stage click, a task edit), so it re-arms the null-out risk far more often than a
+    // scheduled refresh alone.
+    const { quickbooks, preservedFrom } = resolveQuickbooksPreferMemory(this.base.properties, SNAPSHOT_PATH, this.snapshot?.quickbooks ?? null);
+    if (preservedFrom === 'memory') console.log(`ℹ Brain.rederive: no fresh QUICKBOOKS_CSV parse — kept the fresher in-memory block (parsedAt ${quickbooks!.parsedAt}) over a staler on-disk one.`);
+    else if (preservedFrom) console.log(`ℹ Brain.rederive: no fresh QUICKBOOKS_CSV parse — carried forward the previous snapshot's block (parsedAt ${quickbooks!.parsedAt}) instead of nulling it.`);
+    const merged = { ...applyOverlay(this.base, this.overlay), quickbooks };
     // Reconciliation is re-run here, not just in refresh(). Rebuilding from base+overlay and
     // persisting WITHOUT it meant every UI write-back rewrote the mirror carrying the same breached
     // numbers with the reconciliation flags ABSENT -- which erases conditions.ts's 'reconcile-fail'
@@ -251,6 +295,41 @@ class Brain extends EventEmitter {
           `${dealsReason ? `degraded (${dealsReason})` : 'unavailable'}, so this snapshot's ` +
           `deals/counterparties are seed placeholders. Serving it in memory; the on-disk mirror is ` +
           `left at its last good state.`,
+      );
+      return;
+    }
+    // The same policy, for the M365 To-Do source (2026-09-05). Gated on the RAW degradation for the
+    // same reason as deals: m365TasksDegradationFlag maps `not-configured` to NO flag so a Graph-less
+    // dev box isn't permanently dirty, but this mirror is git-tracked and auto-committed, and a
+    // Graph-less server writing it drops every live M365 row a Graph-configured writer had put there
+    // -- the identical 56-row loss, just sourced from a missing credential instead of a failed fetch.
+    // Serving from memory is unchanged; only the shared mirror is declined.
+    const m365Reason = this.m365Degraded?.reason ?? null;
+    if (m365Reason !== null || hasM365TasksFailure(snapshot.dataQuality)) {
+      console.error(
+        `✗ Brain.persist: declining to write ${SNAPSHOT_PATH} — the Microsoft 365 To-Do source is ` +
+          `${m365Reason ? `degraded (${m365Reason})` : 'unavailable'}, so this snapshot's tasks ` +
+          `section is missing every live M365 row. Serving it in memory; the on-disk mirror is ` +
+          `left at its last good state.`,
+      );
+      return;
+    }
+    // The same policy again, for the OVERLAY itself (2026-09-06, refute on PR #311 -- 2 of 5 lenses,
+    // independently). This is the FIFTH writer of the tracked portfolio.json, and the one the
+    // overlay precondition had not reached: `this.overlay` comes from loadOverlay(), which fails
+    // OPEN to EMPTY_OVERLAY on a missing, unparseable or wrong-shaped file, and rederive() merges
+    // that into the mirror on EVERY UI write-back without re-parsing. A server started against an
+    // absent or truncated overlay would therefore publish tenantArrears/arBalances/renewalStages/
+    // dealComps/marketRents/noiBudgets as EMPTY to a git-tracked, auto-committed, auto-pushed file
+    // -- the exact 2026-09-05 loss, from the one writer the CLI-side fix did not cover.
+    //
+    // expectEnriched, like both CLI writers: this path MERGES the overlay onto a snapshot rather
+    // than populating it. Serving from memory is unchanged; only the shared mirror is declined.
+    const overlayCheck = evaluateOverlayPrecondition(overlayPath(), { expectEnriched: true });
+    if (overlayCheck.refuse) {
+      console.error(
+        `✗ Brain.persist: declining to write ${SNAPSHOT_PATH} — ${overlayCheck.reason} Serving in ` +
+          `memory; the on-disk mirror is left at its last good state.`,
       );
       return;
     }

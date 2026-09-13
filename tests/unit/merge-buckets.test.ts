@@ -51,4 +51,21 @@ describe('mergeByLease', () => {
   it('returns empty array for empty input', () => {
     expect(mergeByLease([])).toEqual([]);
   });
+
+  // Real defect (2026-09-06 adversarial review, MEDIUM): a plain running float sum across
+  // multi-unit rows is sensitive to summation order (0.1+0.2 non-associativity) — the same
+  // three unit-rows summed in a different order can land on a different last-ulp float, which
+  // resolve-latest.ts's `===` bucket comparison then reads as two DISAGREEING reports.
+  it('sums to the same cent-precise total regardless of row order (float-drift regression)', () => {
+    const rowsForward = [
+      { leaseId: 'l-multi', arrears: { d30: 225.66, d60: 0, d90: 0, d90plus: 0 }, tenant: 'Unit A' },
+      { leaseId: 'l-multi', arrears: { d30: 385, d60: 0, d90: 0, d90plus: 0 }, tenant: 'Unit B' },
+      { leaseId: 'l-multi', arrears: { d30: 142.2, d60: 0, d90: 0, d90plus: 0 }, tenant: 'Unit C' },
+    ];
+    const rowsReversed = [...rowsForward].reverse();
+    const fwd = mergeByLease(rowsForward)[0]!.arrears.d30;
+    const rev = mergeByLease(rowsReversed)[0]!.arrears.d30;
+    expect(fwd).toBe(rev);
+    expect(fwd).toBe(752.86); // exact cent value, not 752.8599999999999
+  });
 });

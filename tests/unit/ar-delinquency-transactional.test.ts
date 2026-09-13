@@ -67,6 +67,59 @@ describe('parseDelinquencyTransactional', () => {
     expect(parseDelinquencyTransactional(ws, AS_OF)).toHaveLength(0);
   });
 
+  it('reads a prepayment carried ONLY in the Pre-payments column (col 14, Current Owed=0) instead of dropping it', () => {
+    // Real-file shape (29000 Info Lane, verified 2026-08-17): every prepayment row in the actual
+    // export has 0 in the Current Owed column (9) and the credit amount ONLY in Pre-payments (14).
+    // The old code read column 9 alone, so `if (owed === 0) continue` silently dropped every
+    // credit before the clamp logic ever ran, making the documented offset dead code.
+    const H14 = [...H, null, null, null, null, null]; // pad to col 14 (Pre-payments)
+    const ws = sheet([
+      ['DB Caption:  LIVE'], H14,
+      [null, null, null, null, null, 'Code', null, null, 'Owed', null, null, null, null, 'payments'],
+      ['prop1', null, 'Credit Co', 'Current', 'R-9', 'Prepay', d('2026-07-01'), '07/2026', 0, null, null, null, null, -500],
+    ]);
+    expect(parseDelinquencyTransactional(ws, AS_OF)).toHaveLength(0);
+  });
+
+  it('REGRESSION (refute-pass finding): a fully-offset tenant with cent-denominated amounts is dropped, not kept as a phantom $0.00 row from float residue', () => {
+    // Pooling/applying credits across buckets via repeated float subtraction can leave a bucket at
+    // a sub-cent positive residue (e.g. 3.55e-15) instead of exact 0. Without cent-rounding, the
+    // keep-filter (sum > 0) would retain this tenant as delinquent despite owing nothing.
+    const oldest = new Date(AS_OF.getTime() - 100 * 86_400_000);
+    const older = new Date(AS_OF.getTime() - 65 * 86_400_000);
+    const recentCredit = new Date(AS_OF.getTime() - 5 * 86_400_000);
+    const ws = sheet([
+      ['DB Caption:  LIVE'],
+      [...H, null, null, null, null, null],
+      [null, null, null, null, null, 'Code', null, null, 'Owed', null, null, null, null, 'payments'],
+      ['prop1', null, 'Paid Off LLC', 'Current', 'R-1', 'Rent', oldest, '', 0.01],
+      ['prop1', null, 'Paid Off LLC', 'Current', 'R-2', 'Rent', older, '', 16.26],
+      ['prop1', null, 'Paid Off LLC', 'Current', 'R-3', 'Prepay', recentCredit, '', 0, null, null, null, null, -16.27],
+    ]);
+    expect(parseDelinquencyTransactional(ws, AS_OF)).toHaveLength(0);
+  });
+
+  it('nets a recent prepayment against an OLD charge instead of clamping each independently and overstating the balance', () => {
+    // Real-file shape: a charge 100 days old (-> d90plus) and a credit dated near as-of (-> d30,
+    // via col 14) for the SAME tenant. Old behavior clamped d30 to 0 (discarding the credit) while
+    // leaving d90plus's full charge intact, overstating delinquency by the whole credit amount and
+    // able to fire a false CRITICAL on a tenant who owes far less than reported.
+    const oldCharge = new Date(AS_OF.getTime() - 100 * 86_400_000);
+    const recentCredit = new Date(AS_OF.getTime() - 5 * 86_400_000);
+    const ws = sheet([
+      ['DB Caption:  LIVE'],
+      [...H, null, null, null, null, null],
+      [null, null, null, null, null, 'Code', null, null, 'Owed', null, null, null, null, 'payments'],
+      ['prop1', null, 'Partial Payer LLC', 'Current', 'R-1', 'Rent', oldCharge, '', 1000],
+      ['prop1', null, 'Partial Payer LLC', 'Current', 'R-2', 'Prepay', recentCredit, '', 0, null, null, null, null, -400],
+    ]);
+    const rows = parseDelinquencyTransactional(ws, AS_OF);
+    expect(rows).toHaveLength(1);
+    // Net owed is $600, applied against the OLDEST bucket first (d90plus), not left inflated at
+    // $1000 with the credit silently discarded in d30.
+    expect(rows[0]).toMatchObject({ tenant: 'Partial Payer LLC', d30: 0, d60: 0, d90: 0, d90plus: 600 });
+  });
+
   it('skips a merged banner row where ExcelJS echoes one string into every column', () => {
     // Real-file defect (found probing 29000 Info Lane, 2026-08-16): a merged property/tenant-name
     // banner row makes ExcelJS report the SAME text for Property, Lease, and Current Owed on that

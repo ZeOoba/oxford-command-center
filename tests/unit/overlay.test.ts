@@ -1,10 +1,10 @@
-import { describe, it, expect, vi } from 'vitest';
-import { writeFileSync, mkdtempSync } from 'node:fs';
+import { describe, it, expect, vi, afterAll } from 'vitest';
+import { writeFileSync, mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import { AcquisitionInput } from '../../src/contracts/acquisition';
-import { applyOverlay, loadOverlay, saveOverlay, nextStage, EMPTY_OVERLAY } from '../../server/overlay';
+import { applyOverlay, loadOverlay, saveOverlay, nextStage, EMPTY_OVERLAY, evaluateOverlayPrecondition } from '../../server/overlay';
 
 const base = {
   deals: [{ id: 'd1', name: 'FVC', stage: 'Candidate' }],
@@ -311,5 +311,272 @@ describe('saveOverlay + loadOverlay — acquisitionInputs round-trip (item-4)', 
       expect(warn).toHaveBeenCalled();
     });
     warn.mockRestore();
+  });
+});
+
+// ---- evaluateOverlayPrecondition -------------------------------------------------------------
+// Regression cover for the 2026-09-05 incident: the ora-cc-snapshot-refresh worktree-isolation
+// procedure (spec v1.7, 2026-09-02) copies only .env into the fresh worktree, and `git worktree
+// add` brings tracked files only -- so gitignored data/overlay.json was ABSENT. The three CLI
+// writers each guarded the overlay with `if (existsSync(path)) { ...validate... }`, which defends
+// against a PRESENT-but-corrupt overlay and does nothing at all when the file is MISSING. Execution
+// fell through to loadOverlay() -> EMPTY_OVERLAY -> applyOverlay(), which zeroed arBalances (44->0),
+// tenantArrears (44->0), dealComps (2->0) and renewalStages (1->0) in the written snapshot -- and
+// the script exited 0 reporting a clean run. Only the snapshot task's own section-shrink guard
+// caught it, at commit time.
+//
+// The refusal now lives in ONE shared evaluator instead of three copy-pasted blocks whose comments
+// asked future editors to "keep both in sync" -- that duplication is what let the missing-file case
+// go unnoticed in all three at once.
+describe('evaluateOverlayPrecondition — refuses on a missing overlay, not just a corrupt one', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'overlay-precondition-'));
+  // tests/setup.ts reasons carefully about not leaking one temp dir per test FILE; clean up ours.
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it('refuses when the overlay file is ABSENT (the 2026-09-05 worktree-isolation case)', () => {
+    const missing = join(dir, 'does-not-exist.json');
+    const result = evaluateOverlayPrecondition(missing);
+    expect(result.refuse).toBe(true);
+    if (!result.refuse) throw new Error('expected refusal');
+    expect(result.reason).toContain(missing);
+    // The operator must be able to tell "absent" from "corrupt" without reading the source.
+    expect(result.reason).toMatch(/not found|missing|absent/i);
+  });
+
+  // Refute 2026-09-06, found by all five lenses: the message prescribed ALLOW_EMPTY_OVERLAY=1 as
+  // the remedy for a MISSING file, but the missing branch never consults it — a dead remedy, and
+  // the previous version of this test pinned the contradiction by asserting only on the string.
+  // The bootstrap is now explicitly TWO acts, and this asserts the behavior, not the wording.
+  it('does NOT let ALLOW_EMPTY_OVERLAY=1 bypass a MISSING overlay file', () => {
+    const prev = process.env.ALLOW_EMPTY_OVERLAY;
+    process.env.ALLOW_EMPTY_OVERLAY = '1';
+    try {
+      expect(evaluateOverlayPrecondition(join(dir, 'nope.json')).refuse).toBe(true);
+      expect(evaluateOverlayPrecondition(join(dir, 'nope.json'), { expectEnriched: true }).refuse).toBe(true);
+    } finally {
+      if (prev === undefined) delete process.env.ALLOW_EMPTY_OVERLAY;
+      else process.env.ALLOW_EMPTY_OVERLAY = prev;
+    }
+  });
+
+  it('states the real two-act bootstrap in the missing-file reason', () => {
+    const result = evaluateOverlayPrecondition(join(dir, 'nope.json'));
+    if (!result.refuse) throw new Error('expected refusal');
+    expect(result.reason).toMatch(/create the file containing \{\} AND set ALLOW_EMPTY_OVERLAY=1/);
+  });
+
+  it('allows a well-formed overlay object', () => {
+    const good = join(dir, 'good.json');
+    writeFileSync(good, JSON.stringify({ dealStages: {}, tasks: [] }));
+    expect(evaluateOverlayPrecondition(good).refuse).toBe(false);
+  });
+
+  it('allows {} for a NON-snapshot caller (ar-import bootstrapping a first sweep)', () => {
+    const empty = join(dir, 'empty.json');
+    writeFileSync(empty, '{}');
+    expect(evaluateOverlayPrecondition(empty).refuse).toBe(false);
+  });
+
+  it('REFUSES a present-but-empty overlay for a snapshot writer (expectEnriched)', () => {
+    const empty = join(dir, 'empty-enriched.json');
+    writeFileSync(empty, '{}');
+    const result = evaluateOverlayPrecondition(empty, { expectEnriched: true });
+    expect(result.refuse).toBe(true);
+    if (!result.refuse) throw new Error('expected refusal');
+    expect(result.reason).toMatch(/NO enrichment data/);
+  });
+
+  it('REFUSES an overlay whose domains are all present but empty (the first-saveOverlay case)', () => {
+    const p = join(dir, 'all-empty-domains.json');
+    writeFileSync(p, JSON.stringify({ dealStages: {}, tasks: [], tenantArrears: {}, dealComps: {} }));
+    expect(evaluateOverlayPrecondition(p, { expectEnriched: true }).refuse).toBe(true);
+  });
+
+  it('ALLOWS an overlay with real enrichment in any single domain', () => {
+    const p = join(dir, 'has-arrears.json');
+    writeFileSync(p, JSON.stringify({ dealStages: {}, tasks: [], tenantArrears: { 'x-1': { d30: 100 } } }));
+    expect(evaluateOverlayPrecondition(p, { expectEnriched: true }).refuse).toBe(false);
+  });
+
+  it('ALLOW_EMPTY_OVERLAY=1 opens the deliberate bootstrap path for a snapshot writer', () => {
+    const empty = join(dir, 'empty-allowed.json');
+    writeFileSync(empty, '{}');
+    const prev = process.env.ALLOW_EMPTY_OVERLAY;
+    process.env.ALLOW_EMPTY_OVERLAY = '1';
+    try {
+      expect(evaluateOverlayPrecondition(empty, { expectEnriched: true }).refuse).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.ALLOW_EMPTY_OVERLAY;
+      else process.env.ALLOW_EMPTY_OVERLAY = prev;
+    }
+  });
+
+  // Refute 2026-09-06 (4 of 5 lenses): hasNoEnrichment judged the RAW parse while loadOverlay
+  // applies per-entry Zod/coercion, so these shapes passed the guard and still merged as
+  // EMPTY_OVERLAY — the same silent zeroing, reached through the loader instead of a missing file.
+  // Each was reproduced in-process by a refuter before this test existed.
+  it.each([
+    ['dealComps entries that fail CompSet', '{"dealComps":{"d1":{"bogus":true}}}'],
+    ['renewalStages values that fail RenewalStage', '{"renewalStages":{"l1":"NotAStage"}}'],
+    ['tenantArrears entries that are not objects', '{"tenantArrears":{"x-1":"oops","x-2":5}}'],
+    ['tasks as an object rather than an array', '{"tasks":{"a":1}}'],
+  ])('refuses %s — raw-populated but dropped by the loader', (_label, body) => {
+    const p = join(dir, `dropped-${_label.replace(/\W/g, '')}.json`);
+    writeFileSync(p, body);
+    const result = evaluateOverlayPrecondition(p);
+    expect(result.refuse).toBe(true);
+    if (!result.refuse) throw new Error('expected refusal');
+    expect(result.reason).toMatch(/do NOT survive validation/);
+  });
+
+  it('refuses a loader-dropped domain even WITHOUT expectEnriched (ar-import would cement it)', () => {
+    const p = join(dir, 'dropped-no-expect.json');
+    writeFileSync(p, '{"tenantArrears":{"x-1":"oops"},"dealStages":{"d1":"Closing"}}');
+    // dealStages survives, so this is NOT an empty overlay — but tenantArrears is silently lost,
+    // and ar-import-headless's saveOverlay() would write that loss back as canonical.
+    expect(evaluateOverlayPrecondition(p).refuse).toBe(true);
+  });
+
+  it('treats a non-null SCALAR domain as empty, not as enrichment', () => {
+    const p = join(dir, 'scalar-domain.json');
+    writeFileSync(p, '{"tenantArrears":0}');
+    // Pre-2026-09-06 the fall-through returned false ("populated"), so this passed expectEnriched
+    // and then loaded as {} — junk that reads as data is exactly the silent-zeroing shape.
+    expect(evaluateOverlayPrecondition(p, { expectEnriched: true }).refuse).toBe(true);
+  });
+
+  it('ALLOWS a real overlay whose entries all survive the loader', () => {
+    const p = join(dir, 'genuinely-good.json');
+    writeFileSync(p, JSON.stringify({
+      dealStages: { d1: 'Closing' },
+      tenantArrears: { 'x-1': { d30: 100, d60: 0, d90: 0, d90plus: 0 } },
+    }));
+    expect(evaluateOverlayPrecondition(p, { expectEnriched: true }).refuse).toBe(false);
+  });
+
+  it('refuses a BOM-prefixed overlay — loadOverlay cannot read it either, so accepting would zero', () => {
+    const bom = join(dir, 'bom.json');
+    writeFileSync(bom, '﻿{"tenantArrears":{"x":{"d30":1}}}');
+    // Deliberately NOT stripping the BOM here: loadOverlay() uses the same JSON.parse and would
+    // fall back to EMPTY_OVERLAY, so "accepting" this file is the silent-zeroing path.
+    expect(evaluateOverlayPrecondition(bom).refuse).toBe(true);
+  });
+
+  it('refuses a zero-byte overlay and a directory at the path', () => {
+    const zero = join(dir, 'zero.json');
+    writeFileSync(zero, '');
+    expect(evaluateOverlayPrecondition(zero).refuse).toBe(true);
+    const asDir = join(dir, 'a-directory.json');
+    mkdirSync(asDir, { recursive: true });
+    expect(evaluateOverlayPrecondition(asDir).refuse).toBe(true);
+  });
+
+  it('still refuses unparseable JSON (pre-existing guard, preserved)', () => {
+    const corrupt = join(dir, 'corrupt.json');
+    writeFileSync(corrupt, '{ not valid json');
+    const result = evaluateOverlayPrecondition(corrupt);
+    expect(result.refuse).toBe(true);
+    if (!result.refuse) throw new Error('expected refusal');
+    expect(result.reason).toMatch(/corrupt|unparseable/i);
+  });
+
+  it.each([
+    ['null', 'null'],
+    ['an array', '[]'],
+    ['a number', '0'],
+    ['a string', '"overlay"'],
+  ])('still refuses valid JSON that is %s, not an object (pre-existing guard, preserved)', (_label, body) => {
+    const p = join(dir, `shape-${_label.replace(/\W/g, '')}.json`);
+    writeFileSync(p, body);
+    const result = evaluateOverlayPrecondition(p);
+    expect(result.refuse).toBe(true);
+    if (!result.refuse) throw new Error('expected refusal');
+    expect(result.reason).toMatch(/not a valid overlay object/i);
+  });
+});
+
+// ---- call-site guard SHAPE ---------------------------------------------------------------------
+// I5, 2026-09-05 independent review: every other test here exercises the pure predicate, but the
+// predicate was never the bug. The defect was the SHAPE of the call-site guard --
+// `if (existsSync(rawOverlayPath)) { ...validate... }` -- which by construction cannot fire when the
+// file is absent. A future editor could revert any single call site to that wrapper and every
+// behavioral test above would still pass. These assertions pin the shape itself.
+//
+// Source-level rather than behavioral on purpose: the two snapshot writers call process.exit() deep
+// inside a main() that first parses the live Master Workbook (absent in CI), so genuinely executing
+// them here is not possible. This is the cheapest thing that actually fails on a regression.
+describe('overlay guard — call-site shape (regression cover for the guard, not the predicate)', () => {
+  const repoRoot = join(__dirname, '..', '..');
+  const WRITERS = [
+    'scripts/extract-workbook.ts',
+    'scripts/lease-snapshot-drift-check.ts',
+    'scripts/ar-import-headless.ts',
+    'scripts/migrate-lease-overlay-ids.ts',
+  ] as const;
+
+  it.each(WRITERS)('%s routes the overlay through the shared evaluator', (rel) => {
+    const src = readFileSync(join(repoRoot, rel), 'utf8');
+    expect(src).toContain('evaluateOverlayPrecondition(rawOverlayPath');
+    expect(src).toMatch(/overlayCheck\.refuse/);
+  });
+
+  it.each(WRITERS)('%s no longer wraps the overlay guard in an existsSync() that skips a missing file', (rel) => {
+    const src = readFileSync(join(repoRoot, rel), 'utf8');
+    expect(src).not.toMatch(/if\s*\(\s*existsSync\(\s*rawOverlayPath\s*\)\s*\)/);
+  });
+
+  // Only the writers that MERGE an overlay onto a snapshot may demand enrichment. ar-import and
+  // migrate legitimately run against an empty overlay, so opting them in would break a first sweep.
+  it.each(['scripts/extract-workbook.ts', 'scripts/lease-snapshot-drift-check.ts'] as const)(
+    '%s opts into expectEnriched (it merges onto a snapshot)',
+    (rel) => {
+      expect(readFileSync(join(repoRoot, rel), 'utf8')).toContain('expectEnriched: true');
+    },
+  );
+
+  it.each(['scripts/ar-import-headless.ts', 'scripts/migrate-lease-overlay-ids.ts'] as const)(
+    '%s does NOT opt into expectEnriched (an empty overlay is legitimate there)',
+    (rel) => {
+      // Assert on the CALL, not the word: both files explain in prose why they opt out.
+      expect(readFileSync(join(repoRoot, rel), 'utf8')).not.toMatch(/expectEnriched:\s*true/);
+    },
+  );
+
+  // I6: importing a CLI script must never run main(). tests/setup.ts points OVERLAY_PATH at a
+  // sandbox path that is never created, so an unguarded main() would now hit the overlay refusal
+  // and process.exit() the vitest worker.
+  it.each(WRITERS)('%s guards its entrypoint on process.argv[1]', (rel) => {
+    const src = readFileSync(join(repoRoot, rel), 'utf8');
+    expect(src).toMatch(/process\.argv\[1\]\?\.replace/);
+  });
+});
+
+// ---- the fifth writer -------------------------------------------------------------------------
+// Refute 2026-09-06 (2 of 5 lenses, independently): server/brain.ts is the fifth writer of the
+// git-tracked, auto-committed, auto-pushed data/snapshots/portfolio.json, and the CLI-side fix did
+// not reach it. `this.overlay` comes from loadOverlay(), which fails OPEN to EMPTY_OVERLAY, and
+// rederive() merges it into the mirror on every UI write-back WITHOUT re-parsing — so a server
+// started against an absent or truncated overlay publishes the enrichment sections as empty.
+//
+// Source-level for the same reason as the call-site tests above: exercising Brain.persist means
+// standing up a server against the live workbook. This pins that the gate is present and matches
+// the sibling source gates it was modelled on.
+describe('server/brain.ts — the fifth portfolio.json writer carries the overlay gate', () => {
+  const brainSrc = readFileSync(join(__dirname, '..', '..', 'server', 'brain.ts'), 'utf8');
+
+  it('gates Brain.persist on the overlay precondition', () => {
+    expect(brainSrc).toContain('evaluateOverlayPrecondition(overlayPath()');
+  });
+
+  it('uses expectEnriched, like the two writers that also merge onto a snapshot', () => {
+    expect(brainSrc).toMatch(/evaluateOverlayPrecondition\(overlayPath\(\),\s*\{\s*expectEnriched:\s*true\s*\}\)/);
+  });
+
+  it('declines the mirror write rather than throwing — in-memory serving must be unaffected', () => {
+    const i = brainSrc.indexOf('evaluateOverlayPrecondition(overlayPath()');
+    const after = brainSrc.slice(i, i + 700);
+    expect(after).toMatch(/declining to write/);
+    expect(after).toMatch(/return;/);
+    expect(after).not.toMatch(/process\.exit|throw new Error/);
   });
 });

@@ -2,7 +2,7 @@
   "meta": {
     "schemaVersion": "1.0.0",
     "asOf": "2026-09-06",
-    "generatedAt": "2026-09-07T17:28:48.728Z",
+    "generatedAt": "2026-09-07T16:09:21.136Z",
     "source": "Master Excel Template Company Wide -- Oxford.xlsx",
     "scenario": "Base"
   },
@@ -8139,7 +8139,7 @@
   ],
   "quickbooks": {
     "sourceFile": "C:\\Users\\Owner\\OneDrive - Oxford Capital Partners\\Business\\Quickbooks Backups -- CURRENT FILES\\ora-pl-by-property.csv",
-    "parsedAt": "2026-09-07T17:28:48.744Z",
+    "parsedAt": "2026-09-07T16:09:21.154Z",
     "properties": [
       {
         "propertyKey": "1100 Rarig Ave, Columbus OH",

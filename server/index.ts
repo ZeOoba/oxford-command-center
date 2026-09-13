@@ -18,6 +18,7 @@ import type { GovernorSet } from '../src/contracts/index';
 import { loadGovernors, GOVERNOR_DEFAULTS } from './warehouse/governors';
 import { fetchDealComps } from './ai/comps';
 import { runAgent } from './ai/agent';
+import { scanForConfidential } from './briefing/confidential';
 import { searchDocuments, docStatus, warmDocIndex } from './sources/documents';
 import { getMacro } from './macro/getMacro';
 import { serverPort } from './config';
@@ -39,10 +40,22 @@ import { listLeaseTermPropertyIds } from './warehouse/lease-terms';
 import { setLeaseRunAssumptions } from './overlay';
 import { LeaseRunAssumptionsInput } from '../src/contracts/lease-run';
 import { isAllowedOrigin } from './cors-policy';
+import { requestBoundary, allowedHosts, extraAllowedHostsFromEnv } from './host-guard';
 import { accessAuthz, accessAuthzOptionsFromEnv } from './access-authz';
+import { createRateLimiter, createConcurrencyLimiter } from './rate-limit';
 
 const app = new Hono();
+// Request boundary (OI-050, see host-guard.ts) — the check that actually REJECTS a request: Host must
+// be this server's own loopback authority (defeats DNS rebinding, where a foreign page is same-origin
+// to the browser and cors() never even runs), a present Origin must be same-machine (fail-closed, not
+// merely un-CORSed), and every non-GET/HEAD/OPTIONS must carry X-ORA-Client (forces a preflight, which
+// the localhost-only cors() below then refuses for a foreign page). Mounted FIRST — ahead of cors()
+// and accessAuthz — and on /sse too, which lives outside /api/* but streams confidential state.
+const boundary = requestBoundary({ allowedHosts: allowedHosts(serverPort(), extraAllowedHostsFromEnv(process.env)) });
+app.use('/api/*', boundary);
+app.use('/sse', boundary);
 // Confidential data — only same-machine localhost origins may call the API (see cors-policy.ts).
+// This sets the CORS response header; it does not block anything — the boundary above does.
 app.use('/api/*', cors({ origin: isAllowedOrigin }));
 
 // Application-level authorization (Eric Live Phase 2, W2). INERT by default: with ACCESS_REQUIRE
@@ -54,6 +67,33 @@ app.use('/api/*', cors({ origin: isAllowedOrigin }));
 // present or future — that can run its handler ahead of the check. Adding routes above this line
 // would silently exempt them.
 app.use('/api/*', accessAuthz(accessAuthzOptionsFromEnv(process.env)));
+
+// Consumption bounds (OI-090, OWASP LLM10 — see rate-limit.ts). The three routes below already cap
+// each request; these cap how OFTEN they may be started and, for the SSE agent loop, how many may be
+// open at once. Per-route mounts (not /api/*) because the limits differ, and a FRESH instance per
+// mount because a shared one would count every route against a single bucket. Mounted after the
+// boundary/cors/authz stack so a refused caller costs a 403, never a token; before the route
+// registrations so a rejected request never reaches the handler that would spend the money.
+// The /api/ai concurrency slot follows the SSE body (streamSSE returns before runAgent finishes).
+//
+// app.on(METHOD, …), NOT app.use(path, …): app.use is method-agnostic, so a request with the WRONG
+// method (GET /api/ai, which no handler serves) would still run the limiter chain and then 404 —
+// spending a token for free, and for HEAD (which Hono dispatches as GET and answers body-less, so
+// the wrapped body is never read) pinning a concurrency slot until restart. Scoping the mount to
+// the one method the route actually serves lets every other method fall straight through to the
+// not-found handler with no token spent and no slot touched (server-rate-limit.test.ts proves it).
+app.on(
+  'POST',
+  '/api/ai',
+  createRateLimiter({ capacity: 10, refillIntervalMs: 60_000 }),
+  createConcurrencyLimiter({ max: 3 }),
+);
+app.on('POST', '/api/actions/om-extract', createRateLimiter({ capacity: 5, refillIntervalMs: 60_000 }));
+// 90/min, not 30: the Documents search box fetches on every keystroke (useDocSearch keys React Query on
+// the raw query, no debounce), so one ~28-char phrase is ~26 requests and 30 would 429 the second phrase's
+// final, most-relevant keystrokes. 90 survives realistic typing bursts while still bounding a runaway loop
+// against the CPU/memory-bound local embedding search (~1.5/s sustained).
+app.on('GET', '/api/documents/search', createRateLimiter({ capacity: 90, refillIntervalMs: 60_000 }));
 
 // Property Financial Intelligence warehouse — opened lazily as a process singleton on
 // first /api/warehouse/* request (not at boot: a cold/mirror env may lack the sqlite
@@ -500,6 +540,24 @@ app.post('/api/ai', (c) =>
       signal: ac.signal,
       docSearch: searchDocuments,
       macroProvider: getMacro,
+      // OI-225 layer 2. Server-only: scanForConfidential reads the roster off disk, so it cannot be
+      // imported into the runtime-agnostic agent module (the mirror has no filesystem) — it is
+      // injected here instead. Evaluated per tool result rather than hoisted, so a roster edit takes
+      // effect without a restart. If the roster is absent/unreadable, loadTerms THROWS by design and
+      // runAgent's catch re-emits e.message verbatim as an SSE error event: a confidentiality gate
+      // fails closed, but that raw message embeds the roster's absolute filesystem path and the
+      // ALLOW_PLACEHOLDER opt-out's name (refute finding, LOW) — fine on stderr, not fine streamed to
+      // whatever is reading the browser's network tab. Catch here, log the real detail server-side,
+      // and re-throw a generic message; the fail-closed behavior (still throws, still halts) and the
+      // documented CONFIDENTIAL_TERMS_ALLOW_PLACEHOLDER=1 opt-out are both unchanged.
+      confidentialScan: (value) => {
+        try {
+          return scanForConfidential(value);
+        } catch (err) {
+          console.error('[ai] confidentiality guard unavailable:', err);
+          throw new Error('Confidentiality guard unavailable — refusing to send.');
+        }
+      },
       emit: async (e) => {
         await stream.writeSSE({ event: e.type, data: JSON.stringify(e) });
       },
