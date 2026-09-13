@@ -33,6 +33,7 @@
     "worktree": "tsx scripts/safe-worktree.ts",
     "check:bundle": "tsx scripts/check-bundle.ts",
     "check:dev-css": "tsx scripts/check-dev-css.ts",
+    "check:schema-drift": "tsx scripts/check-write-schema-drift.ts",
     "generate:confidential-scan-types": "tsc -p tsconfig.confidential-scan-types.json",
     "pretypecheck": "npm run generate:confidential-scan-types",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p functions/tsconfig.json",
@@ -48,7 +49,7 @@
     "prepare": "node scripts/prepare-hooks.mjs",
     "governance": "tsx scripts/governance-check.ts",
     "check:refute": "tsx scripts/check-refute-required.ts",
-    "gate": "npm run governance && npm run typecheck && npm run lint && npm run check:dev-css && npm run test && npm run reconcile:snapshot && npm run reconcile && npm run reconcile:noi-crosscheck && npm run warehouse:verify && npm run warehouse:drift",
+    "gate": "npm run governance && npm run typecheck && npm run lint && npm run check:dev-css && npm run check:schema-drift && npm run test && npm run reconcile:snapshot && npm run reconcile && npm run reconcile:noi-crosscheck && npm run warehouse:verify && npm run warehouse:drift",
     "gate:ci": "npm run typecheck && npm run lint && npm run check:dev-css && npm run test && npm run reconcile:snapshot && npm run build && npm run check:bundle"
   },
   "dependencies": {
