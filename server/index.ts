@@ -42,6 +42,7 @@ import { LeaseRunAssumptionsInput } from '../src/contracts/lease-run';
 import { isAllowedOrigin } from './cors-policy';
 import { requestBoundary, allowedHosts, extraAllowedHostsFromEnv } from './host-guard';
 import { accessAuthz, accessAuthzOptionsFromEnv } from './access-authz';
+import { createRateLimiter, createConcurrencyLimiter } from './rate-limit';
 
 const app = new Hono();
 // Request boundary (OI-050, see host-guard.ts) — the check that actually REJECTS a request: Host must
@@ -66,6 +67,29 @@ app.use('/api/*', cors({ origin: isAllowedOrigin }));
 // present or future — that can run its handler ahead of the check. Adding routes above this line
 // would silently exempt them.
 app.use('/api/*', accessAuthz(accessAuthzOptionsFromEnv(process.env)));
+
+// Consumption bounds (OI-090, OWASP LLM10 — see rate-limit.ts). The three routes below already cap
+// each request; these cap how OFTEN they may be started and, for the SSE agent loop, how many may be
+// open at once. Per-route mounts (not /api/*) because the limits differ, and a FRESH instance per
+// mount because a shared one would count every route against a single bucket. Mounted after the
+// boundary/cors/authz stack so a refused caller costs a 403, never a token; before the route
+// registrations so a rejected request never reaches the handler that would spend the money.
+// The /api/ai concurrency slot follows the SSE body (streamSSE returns before runAgent finishes).
+//
+// app.on(METHOD, …), NOT app.use(path, …): app.use is method-agnostic, so a request with the WRONG
+// method (GET /api/ai, which no handler serves) would still run the limiter chain and then 404 —
+// spending a token for free, and for HEAD (which Hono dispatches as GET and answers body-less, so
+// the wrapped body is never read) pinning a concurrency slot until restart. Scoping the mount to
+// the one method the route actually serves lets every other method fall straight through to the
+// not-found handler with no token spent and no slot touched (server-rate-limit.test.ts proves it).
+app.on(
+  'POST',
+  '/api/ai',
+  createRateLimiter({ capacity: 10, refillIntervalMs: 60_000 }),
+  createConcurrencyLimiter({ max: 3 }),
+);
+app.on('POST', '/api/actions/om-extract', createRateLimiter({ capacity: 5, refillIntervalMs: 60_000 }));
+app.on('GET', '/api/documents/search', createRateLimiter({ capacity: 30, refillIntervalMs: 60_000 }));
 
 // Property Financial Intelligence warehouse — opened lazily as a process singleton on
 // first /api/warehouse/* request (not at boot: a cold/mirror env may lack the sqlite
