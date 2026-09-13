@@ -57,7 +57,7 @@ function buildApp(now: () => number) {
     createConcurrencyLimiter({ max: 3 }),
   );
   app.on('POST', '/api/actions/om-extract', createRateLimiter({ capacity: 5, refillIntervalMs: MINUTE, now }));
-  app.on('GET', '/api/documents/search', createRateLimiter({ capacity: 30, refillIntervalMs: MINUTE, now }));
+  app.on('GET', '/api/documents/search', createRateLimiter({ capacity: 90, refillIntervalMs: MINUTE, now }));
 
   app.post('/api/ai', (c) =>
     streamSSE(c, async (stream) => {
@@ -289,17 +289,17 @@ describe('/api/actions/om-extract — 5 uploads per minute', () => {
   });
 });
 
-describe('/api/documents/search — 30 queries per minute', () => {
-  it('serves 30 searches, 429s the 31st, and the embedder is never invoked for it', async () => {
+describe('/api/documents/search — 90 queries per minute', () => {
+  it('serves 90 searches, 429s the 91st, and the embedder is never invoked for it', async () => {
     const t = buildApp(clock().now);
-    for (let i = 0; i < 30; i++) {
+    for (let i = 0; i < 90; i++) {
       const res = await t.search(`q${i}`);
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ hits: [] });
     }
-    expect(t.searches()).toBe(30);
-    await expectRateLimited(await t.search('q31'));
-    expect(t.searches()).toBe(30);
+    expect(t.searches()).toBe(90);
+    await expectRateLimited(await t.search('q91'));
+    expect(t.searches()).toBe(90);
   });
 });
 
@@ -398,12 +398,12 @@ describe('wrong-method requests never enter the limiter chain', () => {
     expect((await t.omExtract()).status).toBe(429);
   });
 
-  it('POST /api/documents/search does not spend a token — the full 30-query budget survives', async () => {
+  it('POST /api/documents/search does not spend a token — the full 90-query budget survives', async () => {
     const t = buildApp(clock().now);
-    for (let i = 0; i < 30; i++) expect((await t.probe('POST', '/api/documents/search')).status).toBe(404);
-    for (let i = 0; i < 30; i++) expect((await t.search(`q${i}`)).status).toBe(200);
-    expect(t.searches()).toBe(30);
-    expect((await t.search('q31')).status).toBe(429);
+    for (let i = 0; i < 90; i++) expect((await t.probe('POST', '/api/documents/search')).status).toBe(404);
+    for (let i = 0; i < 90; i++) expect((await t.search(`q${i}`)).status).toBe(200);
+    expect(t.searches()).toBe(90);
+    expect((await t.search('q91')).status).toBe(429);
   });
 
   it.each(['PUT', 'PATCH', 'DELETE'])('%s /api/ai is a plain 404 with no token spent and no slot taken', async (method) => {
@@ -537,9 +537,9 @@ describe('OI-090 — limiter mounts in server/index.ts', () => {
     );
   });
 
-  it('mounts a fresh 30/min bucket on GET /api/documents/search', () => {
+  it('mounts a fresh 90/min bucket on GET /api/documents/search', () => {
     expect(stmt('/api/documents/search').text).toMatch(
-      /createRateLimiter\(\{ capacity: 30, refillIntervalMs: 60_000 \}\)/,
+      /createRateLimiter\(\{ capacity: 90, refillIntervalMs: 60_000 \}\)/,
     );
   });
 
