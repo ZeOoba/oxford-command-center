@@ -89,7 +89,11 @@ app.on(
   createConcurrencyLimiter({ max: 3 }),
 );
 app.on('POST', '/api/actions/om-extract', createRateLimiter({ capacity: 5, refillIntervalMs: 60_000 }));
-app.on('GET', '/api/documents/search', createRateLimiter({ capacity: 30, refillIntervalMs: 60_000 }));
+// 90/min, not 30: the Documents search box fetches on every keystroke (useDocSearch keys React Query on
+// the raw query, no debounce), so one ~28-char phrase is ~26 requests and 30 would 429 the second phrase's
+// final, most-relevant keystrokes. 90 survives realistic typing bursts while still bounding a runaway loop
+// against the CPU/memory-bound local embedding search (~1.5/s sustained).
+app.on('GET', '/api/documents/search', createRateLimiter({ capacity: 90, refillIntervalMs: 60_000 }));
 
 // Property Financial Intelligence warehouse — opened lazily as a process singleton on
 // first /api/warehouse/* request (not at boot: a cold/mirror env may lack the sqlite
