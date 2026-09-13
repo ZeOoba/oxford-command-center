@@ -11,6 +11,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { z } from 'zod';
 import { fetchParsedOrMirror, QUERY_OPTS, WarehouseUnavailableError } from '../intel/hooks';
+import { ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
 import {
   CalibrationLogResponseSchema,
   CalibrationPendingResponseSchema,
@@ -100,7 +101,7 @@ async function postResolve(id: number, body: CalibrationResolveRequest): Promise
   try {
     res = await fetch(`/api/warehouse/calibration/${id}/resolve`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: ORA_JSON_MUTATION_HEADERS,
       body: JSON.stringify(body),
     });
   } catch {

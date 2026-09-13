@@ -17,6 +17,7 @@ import type { AllocationAction } from '@contracts/capital';
 import { CapitalAllocationReport } from '@contracts/capital-allocation';
 import type { CapitalAllocationEntry } from '@contracts/capital-allocation';
 import { NotionSyncResult } from '@contracts/notion-writeback';
+import { ORA_CLIENT_HEADERS } from '@contracts/client-header';
 import { fetchParsedOrMirror, QUERY_OPTS } from '../intel/hooks';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
@@ -57,7 +58,7 @@ function useCapitalAllocationReport() {
  * surfaces a thrown Error the caller turns into an error toast.
  */
 async function postCapitalNotionSync(): Promise<NotionSyncResult> {
-  const res = await fetch('/api/warehouse/capital-allocation/sync-notion', { method: 'POST' });
+  const res = await fetch('/api/warehouse/capital-allocation/sync-notion', { method: 'POST', headers: ORA_CLIENT_HEADERS });
   const json = await res.json().catch(() => null);
   if (!res.ok) {
     const msg = json && typeof json === 'object' && 'error' in json ? String((json as { error: unknown }).error) : `HTTP ${res.status}`;

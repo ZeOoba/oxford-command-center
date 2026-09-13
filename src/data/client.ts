@@ -1,4 +1,5 @@
 import { PortfolioSnapshot, type BrainState } from '@contracts/index';
+import { ORA_CLIENT_HEADERS } from '@contracts/client-header';
 
 export interface SnapshotResponse {
   snapshot: PortfolioSnapshot;
@@ -39,7 +40,7 @@ export async function fetchSnapshot(): Promise<SnapshotResponse> {
 }
 
 export async function refreshSnapshot(): Promise<BrainState> {
-  const res = await fetch('/api/refresh', { method: 'POST' });
+  const res = await fetch('/api/refresh', { method: 'POST', headers: ORA_CLIENT_HEADERS });
   if (!res.ok) throw new Error(`Refresh failed (${res.status})`);
   const json = (await res.json()) as { state: BrainState };
   return json.state;

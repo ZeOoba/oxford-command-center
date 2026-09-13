@@ -9,6 +9,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type { z } from 'zod';
 import type { Classification } from '@contracts/warehouse';
+import { ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
 import { loadWarehouseMirror, getMirrorEndpoint } from '../../lib/warehouse-mirror';
 import { computeWarehouseFreshness, type Freshness } from '../../lib/freshness';
 
@@ -208,7 +209,7 @@ async function postJson<T>(path: string, body?: unknown): Promise<T> {
   try {
     res = await fetch(path, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: ORA_JSON_MUTATION_HEADERS,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {

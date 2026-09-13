@@ -10,6 +10,7 @@ import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { BarList } from '@/charts/BarList';
 import { cn } from '@/lib/cn';
 import type { Deal, DealStage } from '@contracts/index';
+import { ORA_CLIENT_HEADERS } from '@contracts/client-header';
 import { AcquisitionWorkbench } from './AcquisitionWorkbench';
 import { AcquisitionsIntel } from './AcquisitionsIntel';
 import { GraderView } from './GraderView';
@@ -55,7 +56,7 @@ export function AcquisitionsModule() {
   async function handleNotionSync() {
     setSync({ phase: 'syncing' });
     try {
-      const res = await fetch('/api/warehouse/acq/sync/notion', { method: 'POST' });
+      const res = await fetch('/api/warehouse/acq/sync/notion', { method: 'POST', headers: ORA_CLIENT_HEADERS });
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as Record<string, unknown>;
         const msg = typeof body['error'] === 'string' ? body['error'] : `Sync failed (${res.status})`;
@@ -82,7 +83,7 @@ export function AcquisitionsModule() {
   async function handleHubSpotSync() {
     setHubspotSync({ phase: 'syncing' });
     try {
-      const res = await fetch('/api/warehouse/acq/sync/hubspot', { method: 'POST' });
+      const res = await fetch('/api/warehouse/acq/sync/hubspot', { method: 'POST', headers: ORA_CLIENT_HEADERS });
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as Record<string, unknown>;
         const msg = typeof body['error'] === 'string' ? body['error'] : `Sync failed (${res.status})`;
