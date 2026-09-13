@@ -5,6 +5,7 @@
 import React, { useState } from 'react';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Button } from '@/primitives/Button';
+import { ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
 
 interface OnboardResult { ok: boolean; propertyId?: string; error?: string }
 
@@ -54,7 +55,7 @@ export function AdminOnboardView() {
     try {
       const res = await fetch('/api/warehouse/properties/onboard', {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: ORA_JSON_MUTATION_HEADERS,
         body: JSON.stringify({
           id: cleanId,
           name: cleanName,

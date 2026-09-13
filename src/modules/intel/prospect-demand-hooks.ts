@@ -9,6 +9,7 @@
 // WarehouseUnavailableError → the module degrades gracefully.
 import { useQuery } from '@tanstack/react-query';
 import { fetchParsedOrMirror, QUERY_OPTS } from './hooks';
+import { ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
 import {
   ProspectDemandReport,
   ProspectDemandEvent,
@@ -34,7 +35,7 @@ export async function addProspectEvent(
 ): Promise<ProspectDemandEvent> {
   const res = await fetch('/api/warehouse/prospect-demand', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: ORA_JSON_MUTATION_HEADERS,
     body: JSON.stringify(input),
   });
   if (!res.ok) throw new Error(`Failed to log demand event (${res.status})`);
