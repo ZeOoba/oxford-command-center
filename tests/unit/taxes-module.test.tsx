@@ -818,5 +818,5 @@ describe('TaxesModule tabs (P4c / C2)', () => {
       { timeout: 3000 },
     );
     expect(screen.getByText(/Filed-return metadata requires the live brain server/i)).toBeTruthy();
-  }, 10_000);
+  });
 });

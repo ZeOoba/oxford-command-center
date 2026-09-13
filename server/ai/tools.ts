@@ -29,6 +29,66 @@ export interface ToolResult {
 }
 type Exec = (snapshot: PortfolioSnapshot, input: Record<string, unknown>) => ToolResult;
 
+/**
+ * Hard Invariant 3 on the AI egress (OI-225). `get_deals` and `search_entities` already dropped
+ * `confidential:true` rows; `get_alerts` and `get_relationships` did not, and every tool result is
+ * appended verbatim into the outbound Anthropic `messages` array.
+ *
+ * Keyed on the `confidential` FLAG, not on the confidential-terms roster: this must work on the
+ * Cloudflare mirror, which is deliberately baked WITH confidential data under
+ * MIRROR_INCLUDE_CONFIDENTIAL=1 and has no filesystem to read a roster from. The terms-based scan is
+ * a second, server-only layer injected into runAgent.
+ *
+ * The filter lives HERE and not in src/analytics/conditions.ts on purpose: the dashboard and the
+ * briefing legitimately show Gabriel his own confidential alerts. It is only the egress that must
+ * not carry them.
+ *
+ * `mentions` is the free-text residue sweep — dropping rows by id alone is not enough, because a
+ * human can name a confidential deal from a PUBLIC row's free text (a next-action cross-reference,
+ * say). scripts/bake-mirror.ts's redactConfidential hit the identical case; that was a high-severity
+ * refute finding there, so it is built in here rather than waiting to be rediscovered.
+ */
+function confidentialScope(s: PortfolioSnapshot): {
+  ids: Set<string>;
+  any: boolean;
+  mentions: (text: string | null | undefined) => boolean;
+} {
+  const confidential = s.deals.filter((d) => d.confidential);
+  const ids = new Set(confidential.map((d) => d.id));
+  const names = confidential
+    .flatMap((d) => [d.name, d.shortName])
+    .filter((n): n is string => !!n)
+    .map((n) => n.toLowerCase());
+  return {
+    ids,
+    any: confidential.length > 0,
+    mentions: (text) => !!text && names.some((n) => text.toLowerCase().includes(n)),
+  };
+}
+
+/** Stand-in for a detail line whose free text named a confidential deal. Never echoes the term. */
+const REDACTED_DETAIL = 'Detail withheld — references a confidential deal.';
+
+/** Shared confidentiality visibility rule for a counterparty (OI-225 refute finding: this was
+ *  implemented only in get_relationships and silently absent from search_entities, so the exact
+ *  counterparty get_relationships drops was still reachable by name search). One rule, two callers. */
+function isConfidentialCounterparty(c: PortfolioSnapshot['counterparties'][number], conf: ReturnType<typeof confidentialScope>): boolean {
+  if (!conf.any) return false;
+  // Orphaned BY the redaction: a counterparty whose ONLY edges were confidential deals. An orphaned
+  // counsel name + market identifies the deal it worked. A node with a surviving property/loan/
+  // insurance link stands on its own and is kept (bake-mirror I8, same rule).
+  const keptDeals = c.links.deals.filter((id) => !conf.ids.has(id));
+  const droppedAny = keptDeals.length !== c.links.deals.length;
+  const linkless =
+    keptDeals.length === 0 &&
+    c.links.properties.length === 0 &&
+    c.links.loans.length === 0 &&
+    c.links.insurance.length === 0;
+  if (droppedAny && linkless) return true;
+  // Residue: the node's own free text names a confidential deal.
+  return conf.mentions(c.name) || conf.mentions(c.firm) || conf.mentions(c.role) || conf.mentions(c.notes);
+}
+
 const asStr = (v: unknown): string => (v == null ? '' : String(v));
 const asNum = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const norm = (s: string): string => s.toLowerCase().trim();
@@ -225,11 +285,16 @@ const EXECUTORS: Record<ToolName, Exec> = {
   }),
 
   get_deals: (s) => {
+    // Residue sweep (refute finding, CRITICAL): a PUBLIC deal's own free-text `nextAction` can name
+    // a confidential deal (a pricing/comps cross-reference) — dropping rows by `confidential` alone
+    // missed this, and it is the exact scenario this tool's own test fixture already carried.
+    const conf = confidentialScope(s);
     const visible = s.deals.filter((d) => !d.confidential);
     return {
       data: visible.map((d) => ({
         name: d.name, stage: d.stage, market: d.market, sf: d.sf, estPrice: fmtUsdCompact(d.estPrice),
-        capRate: fmtPct(d.capRate, 2), irr: fmtPct(d.irr), nextAction: d.nextAction,
+        capRate: fmtPct(d.capRate, 2), irr: fmtPct(d.irr),
+        nextAction: conf.mentions(d.nextAction) ? REDACTED_DETAIL : d.nextAction,
       })),
       refs: visible.map((d) => ({ type: 'deal', id: d.id, label: d.shortName ?? d.name })),
     };
@@ -238,7 +303,8 @@ const EXECUTORS: Record<ToolName, Exec> = {
   get_relationships: (s, input) => {
     const kind = input.kind ? asStr(input.kind) : null;
     const q = input.query ? norm(asStr(input.query)) : null;
-    let rows = s.counterparties;
+    const conf = confidentialScope(s);
+    let rows = s.counterparties.filter((c) => !isConfidentialCounterparty(c, conf));
     if (kind) rows = rows.filter((c) => c.kind === kind);
     if (q) rows = rows.filter((c) => norm(c.name).includes(q) || norm(c.firm ?? '').includes(q));
     rows = rows.slice(0, 20);
@@ -251,8 +317,36 @@ const EXECUTORS: Record<ToolName, Exec> = {
   get_alerts: (s) => {
     // Alert day-counts and near-term exposure track the run date, not the workbook data date.
     const ref = referenceDate();
-    const insights = evaluateConditions(s, { referenceDate: ref });
+    const raw = evaluateConditions(s, { referenceDate: ref });
     const r = revenueAtRisk(s.leases, ref);
+    // Confidentiality pass BEFORE anything is derived. Every count, ref and row below comes off the
+    // filtered list: reporting `count: 3` beside two visible alerts would itself disclose that a
+    // third deal exists and is being withheld.
+    const conf = confidentialScope(s);
+    const insights = !conf.any
+      ? raw
+      : raw
+          // The deal's own alerts, by id — the only case where dropping the row is correct: the row
+          // IS the confidential deal, so no redacted version of it is safe to keep.
+          .filter((i) => !(i.entityType === 'deal' && i.entityId && conf.ids.has(i.entityId)))
+          // TITLE is deliberately NEVER checked here (2nd refute pass, 2026-09-10 — an earlier
+          // version of this function did, and that was itself the bug). A title is
+          // template-derived from the entity's OWN canonical name field, never free text (verified
+          // across every category in conditions.ts) — a surviving row's title can only coincide with
+          // a confidential deal's name/shortName by substring accident (shortName "Easton" landing
+          // inside "29000 Information Lane, Easton MD"), never by actually referencing the deal.
+          // Redacting that title bought NOTHING: the identical canonical name is already reachable
+          // unfiltered via get_property/get_loans/get_leases in the very same conversation, so a
+          // model that wanted it could just ask — while the redacted stand-in string was itself a
+          // distinguishing "something is being withheld right here" tell, and (the actual defect
+          // that pass caught) blanking `detail` alongside a title-only hit destroyed real content —
+          // once a covenant-breach DSCR detail — that had already been proven clean.
+          //
+          // DETAIL is the one field checked, because it is the one field that legitimately carries
+          // human free text (a nextAction cross-reference is the proven case) rather than a
+          // templated name. Redact-in-place, not drop: the row stays counted, so a real alert about
+          // an unrelated entity is never silently denied.
+          .map((i) => (conf.mentions(i.detail) ? { ...i, detail: REDACTED_DETAIL } : i));
     const refs: EntityRefLite[] = insights
       .filter((i) => i.entityType && i.entityId && i.entityType !== 'cashEntity')
       .map((i) => ({ type: i.entityType as EntityRefLite['type'], id: i.entityId!, label: i.title }));
@@ -271,12 +365,16 @@ const EXECUTORS: Record<ToolName, Exec> = {
   search_entities: (s, input) => {
     const q = norm(asStr(input.query));
     if (!q) return { data: [], refs: [] };
+    // Refute finding (HIGH): get_relationships' confidentiality rule (orphaned-link + free-text
+    // residue) was implemented ONLY there — the same withheld counterparty, and any counterparty
+    // whose own name/firm/role/notes named a confidential deal, was still reachable via search.
+    const conf = confidentialScope(s);
     const refs: EntityRefLite[] = [];
     for (const p of s.properties) if (norm(p.name).includes(q)) refs.push({ type: 'property', id: p.id, label: p.name });
     for (const l of s.leases) if (norm(l.company ?? l.tenantName).includes(q)) refs.push({ type: 'lease', id: l.id, label: l.company ?? l.tenantName });
     for (const l of s.loans) if (norm(l.name).includes(q)) refs.push({ type: 'loan', id: l.id, label: l.name });
     for (const d of s.deals) if (!d.confidential && norm(d.name).includes(q)) refs.push({ type: 'deal', id: d.id, label: d.name });
-    for (const c of s.counterparties) if (norm(c.name).includes(q)) refs.push({ type: 'counterparty', id: c.id, label: c.name });
+    for (const c of s.counterparties) if (!isConfidentialCounterparty(c, conf) && norm(c.name).includes(q)) refs.push({ type: 'counterparty', id: c.id, label: c.name });
     const top = refs.slice(0, 20);
     return { data: top.map((r) => ({ type: r.type, name: r.label })), refs: top };
   },

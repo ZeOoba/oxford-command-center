@@ -445,7 +445,7 @@ describe('SelfInsureView', () => {
       { timeout: 3000 },
     );
     expect(screen.getByText(/Loss reasoning requires the live brain server/)).toBeTruthy();
-  }, 10_000);
+  });
 });
 
 describe('insurance hooks — pure helpers', () => {

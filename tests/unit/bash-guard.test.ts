@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -16,6 +16,57 @@ function runGuard(command: string, cwd: string): { denied: boolean; reason?: str
     denied: decision === 'deny',
     reason: parsed?.hookSpecificOutput?.permissionDecisionReason,
   };
+}
+
+const GUARD_SOURCE = readFileSync(GUARD, 'utf8');
+
+/**
+ * The guard's hard cap on `git config --get` spawns per hook invocation, read
+ * out of its source so these tests track the constant instead of duplicating
+ * it. See the DoS describe block below for why that bound is what gets
+ * asserted rather than elapsed time.
+ */
+const MAX_ALIAS_LOOKUPS = Number(
+  /^const MAX_ALIAS_LOOKUPS = (\d+);$/m.exec(GUARD_SOURCE)?.[1],
+);
+
+/**
+ * Run the guard and count the `git config` subprocesses it spawned, using
+ * git's own trace2 event stream (GIT_TRACE2_EVENT; git >= 2.20, so present on
+ * every supported dev machine and CI runner). Each spawned `git` inherits the
+ * env var and appends its own newline-delimited JSON events to the file.
+ *
+ * The guard has exactly one execFileSync call site and it only ever runs
+ * `git config --get alias.<name>`, so this count IS the alias-lookup count
+ * that MAX_ALIAS_LOOKUPS bounds. Requires no change to the guard itself.
+ */
+function countGitSpawns(command: string, cwd: string, guard: string = GUARD): number {
+  const traceDir = mkdtempSync(path.join(tmpdir(), 'bash-guard-trace-'));
+  const traceFile = path.join(traceDir, 'trace2.json');
+  try {
+    execFileSync('node', [guard], {
+      input: JSON.stringify({ tool_input: { command } }),
+      cwd,
+      encoding: 'utf8',
+      env: { ...process.env, GIT_TRACE2_EVENT: traceFile },
+    });
+    if (!existsSync(traceFile)) return 0;
+    return readFileSync(traceFile, 'utf8')
+      .split('\n')
+      .filter((line) => {
+        if (!line.trim()) return false;
+        try {
+          const evt = JSON.parse(line);
+          return (
+            evt.event === 'start' && Array.isArray(evt.argv) && evt.argv.includes('config')
+          );
+        } catch {
+          return false;
+        }
+      }).length;
+  } finally {
+    rmSync(traceDir, { recursive: true, force: true });
+  }
 }
 
 describe('bash-guard.mjs — original 7 blocked classes (regression, post-indirection-fix refactor)', () => {
@@ -486,21 +537,28 @@ describe('bash-guard.mjs — adversarial-review round 2: in-script variable indi
 describe('bash-guard.mjs — adversarial-review round 2: performance/DoS regressions', () => {
   let repo: string;
 
+  // Each guard run here spawns up to MAX_ALIAS_LOOKUPS subprocesses, which on a
+  // loaded Windows box with on-access AV scanning measured ~190ms apiece - past
+  // the 5s default these were written against. vitest.config.ts now sets the same
+  // 60s budget globally, so this constant is belt-and-braces rather than the only
+  // thing holding the budget up. These are outer hang-guards, not the property
+  // under test (that is the spawn COUNT), so they are set with room to spare.
+  const SPAWN_TEST_TIMEOUT_MS = 60_000;
+
+  // The adversarial-review alias bomb: each leaf alias invokes several sibling
+  // leaves and the root invokes all of them, so an unbudgeted resolver fans out
+  // as depth^branching. Built once here in beforeAll - it is read-only fixture
+  // state. An earlier draft built it via a per-test helper instead: 5 leaf
+  // aliases + the root alias is 6 `git config` spawns per call, so every
+  // additional test needing the fixture paid that cost again for no reason.
+  const ALIAS_BOMB = 'git bomb0';
+
   beforeAll(() => {
     repo = mkdtempSync(path.join(tmpdir(), 'bash-guard-perf-'));
     execFileSync('git', ['init', '-q'], { cwd: repo });
     execFileSync('git', ['config', 'user.email', 'test@test.local'], { cwd: repo });
     execFileSync('git', ['config', 'user.name', 'Test'], { cwd: repo });
-  });
 
-  afterAll(() => {
-    rmSync(repo, { recursive: true, force: true });
-  });
-
-  it('a chain of self-referential/mutually-referencing git aliases resolves in well under a second (was 4-8s+)', () => {
-    // Mirrors the adversarial-review reproduction: each leaf alias invokes several
-    // sibling leaves, and the root alias invokes all of them - MAX_ALIAS_LOOKUPS
-    // must bound total subprocess spawns regardless of branching factor.
     const leaves = ['leaf1', 'leaf2', 'leaf3', 'leaf4', 'leaf5'];
     for (const leaf of leaves) {
       const others = leaves.filter((l) => l !== leaf).map((l) => `git ${l}`).join(' && ');
@@ -511,19 +569,108 @@ describe('bash-guard.mjs — adversarial-review round 2: performance/DoS regress
       ['config', 'alias.bomb0', `!${leaves.map((l) => `git ${l}`).join(' && ')}`],
       { cwd: repo },
     );
-    const start = Date.now();
-    runGuard('git bomb0', repo);
-    expect(Date.now() - start).toBeLessThan(2000);
   });
 
-  it('an inline -c alias override with a long unterminated quote resolves in well under a second (was ~10s)', () => {
+  afterAll(() => {
+    rmSync(repo, { recursive: true, force: true });
+  });
+
+  it('bounds alias-resolution spawns to MAX_ALIAS_LOOKUPS regardless of branching (was 4-8s+ / 106 spawns)', () => {
+    // Mirrors the adversarial-review reproduction: each leaf alias invokes several
+    // sibling leaves, and the root alias invokes all of them - MAX_ALIAS_LOOKUPS
+    // must bound total subprocess spawns regardless of branching factor.
+    //
+    // This asserts the SPAWN COUNT, not elapsed time. The original assertion was
+    // `Date.now() - start < 2000`, which measures OS process-creation latency for
+    // ~17 processes - a quantity the guard does not control and that swings wildly
+    // with machine load and on-access AV scanning. Measured on LAPTOP-CSHSCBE6
+    // 2026-09-06: 1910ms against the 2000ms budget inside vitest (a 4.7% margin),
+    // and outright failures at 2331ms / 2582ms / 8250ms, reddening `gate` and
+    // order-fragility.yml. The identical unbounded workload below timed at 7146ms
+    // and 20005ms in the same session - a 2.8x swing on the same work - which is
+    // exactly why a wall-clock budget cannot express this invariant.
+    //
+    // The count, by contrast, is exact and machine-independent: 16 with the budget
+    // in place, 106 with it removed (verified 2026-09-06, same fixture).
+
+    // Positive control: trace2 really is observing the guard's subprocesses, so a
+    // 0 below means "the guard spawned nothing", never "counting silently broke".
+    expect(countGitSpawns('git notaconfiguredalias', repo)).toBe(1);
+
+    // Saturated AND bounded. Exact equality is the non-vacuity guard: a fixture
+    // that stopped branching would spawn fewer, a removed budget spawns 106.
+    expect(countGitSpawns(ALIAS_BOMB, repo)).toBe(MAX_ALIAS_LOOKUPS);
+  }, SPAWN_TEST_TIMEOUT_MS);
+
+  it('the spawn bound comes from MAX_ALIAS_LOOKUPS, not from the fixture (mutation check)', () => {
+    // Non-vacuity proof for the assertion above: run a copy of the guard whose
+    // budget is LOWERED, against the same alias bomb, and confirm the observed
+    // count follows the constant. The bomb can supply 106 lookups, so any budget
+    // below that saturates - and if the budget mechanism were deleted, this copy
+    // would spawn 106 instead of `lowered` and fail, which is exactly the
+    // regression the DoS guard exists to catch. Lowering rather than raising
+    // proves the same coupling for a fraction of the subprocess cost. The guard
+    // reads nothing relative to its own location, so a copy in tmpdir behaves
+    // identically.
+    const lowered = 4;
+    expect(lowered).toBeLessThan(MAX_ALIAS_LOOKUPS);
+    const dir = mkdtempSync(path.join(tmpdir(), 'bash-guard-mutant-'));
+    try {
+      const copy = path.join(dir, 'bash-guard-lowered.mjs');
+      const mutated = GUARD_SOURCE.replace(
+        new RegExp(`^const MAX_ALIAS_LOOKUPS = ${MAX_ALIAS_LOOKUPS};$`, 'm'),
+        `const MAX_ALIAS_LOOKUPS = ${lowered};`,
+      );
+      // Guard against a silent no-op rewrite (e.g. the constant's declaration
+      // form changed), which would otherwise make this test assert nothing.
+      expect(mutated).not.toBe(GUARD_SOURCE);
+      writeFileSync(copy, mutated);
+      expect(countGitSpawns(ALIAS_BOMB, repo, copy)).toBe(lowered);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, SPAWN_TEST_TIMEOUT_MS);
+
+  it('keeps MAX_ALIAS_LOOKUPS itself at a DoS-safe value', () => {
+    // The count assertions above stay green for ANY budget, so the budget itself
+    // needs a ceiling or the DoS bound could be raised back into the 4-8s regime
+    // without a test noticing. ~35ms per `git config` spawn measured on
+    // LAPTOP-CSHSCBE6, so 32 keeps the worst case near a second.
+    expect(Number.isInteger(MAX_ALIAS_LOOKUPS)).toBe(true);
+    expect(MAX_ALIAS_LOOKUPS).toBeGreaterThan(0);
+    expect(MAX_ALIAS_LOOKUPS).toBeLessThanOrEqual(32);
+  });
+
+  it('an inline -c alias override with a long unterminated quote resolves in ~baseline time (was ~10s)', () => {
+    // Same defect class as the test above, but this path spawns no subprocesses
+    // at all (measured: 0) - its cost is regex backtracking over the unterminated
+    // quote, so there is no counted quantity to assert against. The budget is
+    // therefore calibrated against a trivial guard run on the SAME machine in the
+    // SAME process class, so it scales with the runner instead of assuming its
+    // speed; a machine-wide stall inflates both sides.
+    //
+    // Measured on LAPTOP-CSHSCBE6 2026-09-06: baseline ~165ms, this case ~128ms
+    // standalone / 220ms in vitest - a ratio below 1.5x. The pre-fix unbounded
+    // `[\s\S]*?` quantifier took ~10s, a ratio near 60x. 8x sits between them with
+    // an order of magnitude of headroom on each side.
+    const timeGuard = (cmd: string): number => {
+      const start = Date.now();
+      runGuard(cmd, repo);
+      return Date.now() - start;
+    };
+    const samples = [timeGuard('echo hi'), timeGuard('echo hi'), timeGuard('echo hi')].sort(
+      (a, b) => a - b,
+    );
+    const baseline = samples[1] as number; // median of 3, resistant to a single stall
+
     const junk = 'c'.repeat(3000);
     const command = Array.from(
       { length: 100 },
       (_, i) => `git -c alias.a${i}="${junk}`,
     ).join(' ; ');
-    const start = Date.now();
-    runGuard(command, repo);
-    expect(Date.now() - start).toBeLessThan(2000);
-  });
+
+    // Floor the baseline so an anomalously fast trivial run cannot squeeze the
+    // allowance down to near-zero on a fast machine.
+    expect(timeGuard(command)).toBeLessThan(Math.max(baseline, 50) * 8);
+  }, SPAWN_TEST_TIMEOUT_MS);
 });

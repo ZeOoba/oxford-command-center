@@ -18,9 +18,10 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { dirname } from 'node:path';
 import type { PortfolioSnapshot } from '../src/contracts/index';
 import { parseWorkbook } from '../server/workbook/parse';
+import type { M365TasksDegradation } from '../server/sources/m365-tasks';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, SNAPSHOT_PATH } from '../server/config';
-import { loadOverlay, applyOverlay, overlayPath } from '../server/overlay';
+import { loadOverlay, applyOverlay, overlayPath, evaluateOverlayPrecondition } from '../server/overlay';
 import { evaluateAnomalyFloor as evaluateAnomalyFloorCore } from '../server/anomaly-floor';
 import { checkSnapshot } from '../server/reconcile-runtime';
 import { resolveQuickbooks } from '../server/sources/quickbooks';
@@ -322,6 +323,46 @@ export function requireLiveDealsSource(snapshotPath: string, force: boolean): An
   return { refuse: false, warning: '--force: writing with no NOTION_TOKEN — deals/counterparties come from the seed placeholder set, not the live pipeline.' };
 }
 
+/**
+ * Config-regression guard for the M365 To-Do source — the tasks-side twin of
+ * requireLiveDealsSource, and for exactly the same reason its doc comment gives.
+ *
+ * WHY THE FLAG GATE IS NOT ENOUGH (refute 2026-09-06). m365TasksDegradationFlag deliberately
+ * returns null for `not-configured`, so evaluateReconciliationGate never sees it: flagging it would
+ * leave every credential-less dev session permanently "dirty". For a WRITER the calculus inverts —
+ * absent Graph credentials mean the tasks section is written from the workbook checklist alone,
+ * dropping every live M365 row (115 -> 59 on 2026-09-05), which is the SAME loss as a failed fetch,
+ * just sourced from a config regression instead of a network one. A GRAPH_CLIENT_SECRET rotation
+ * (24-month expiry) or any .env edit that drops the key trio produces it.
+ *
+ * Nothing downstream catches that: `not-configured` was the one branch of loadM365Tasks that logged
+ * nothing, `tasks` is not among the section-shrink guard's five hardcoded list keys, and that
+ * guard's generic half fires only on populated -> empty, so a partial 115 -> 59 is invisible. Exit 0
+ * then suppresses both the Notion post and the alert email, and both snapshot tasks auto-push.
+ */
+export function requireLiveM365Source(
+  degraded: M365TasksDegradation | null,
+  snapshotPath: string,
+  force: boolean,
+): AnomalyFloorResult {
+  if (degraded === null) return { refuse: false };
+  if (!force) {
+    return {
+      refuse: true,
+      reason:
+        `Refusing to write ${snapshotPath}: the Microsoft 365 To-Do source is unavailable ` +
+        `(${degraded.reason}), so the tasks section would be written from the workbook checklist ` +
+        `alone, dropping every live M365 row that was previously present. portfolio.json was NOT ` +
+        `modified. Cause: ${degraded.detail}. Re-run with --force only if a checklist-only tasks ` +
+        `section is intended.`,
+    };
+  }
+  return {
+    refuse: false,
+    warning: `--force: writing with the M365 To-Do source unavailable (${degraded.reason}) — the tasks section omits every live M365 row. Cause: ${degraded.detail}.`,
+  };
+}
+
 export function evaluateReconciliationGate(
   snapshot: PortfolioSnapshot,
   snapshotPath: string,
@@ -454,35 +495,26 @@ async function main() {
   }
   const previous = previousResult.leases;
 
-  const { snapshot } = await parseWorkbook(workbookPath());
+  const { snapshot, m365Degraded } = await parseWorkbook(workbookPath());
   // Round-3 REFUTE finding: loadOverlay() fails OPEN to an empty overlay on corrupt/unparseable
   // JSON — a defensible default for a UI-driven mutation, but this script is an UNATTENDED
   // scheduled/manual writer: silently enriching with an empty overlay would zero real
   // tenantArrears/renewalStages/marketRents/noiBudgets data in the written snapshot with no
   // warning. Mirrors the identical guard in scripts/ar-import-headless.ts (same hazard class).
+  // Pre-flight overlay check. loadOverlay() fails OPEN to EMPTY_OVERLAY on anything unreadable — a
+  // defensible default for a UI-driven mutation, but this script is an UNATTENDED writer, and
+  // enriching with an empty overlay would ZERO real tenantArrears/arBalances/renewalStages/
+  // dealComps/marketRents/noiBudgets in the written snapshot with no warning. The shared evaluator
+  // in server/overlay.ts covers missing, unparseable AND wrong-top-level-shape overlays; it lives
+  // there, tested once, precisely so these three writers can no longer drift out of sync (the
+  // missing-file case was absent from all three simultaneously until 2026-09-05).
   const rawOverlayPath = overlayPath();
-  if (existsSync(rawOverlayPath)) {
-    try {
-      const parsedOverlay: unknown = JSON.parse(readFileSync(rawOverlayPath, 'utf8'));
-      // Round-4 REFUTE: a JSON.parse THROW only catches malformed JSON syntax. Content that is
-      // syntactically valid JSON but the wrong TOP-LEVEL shape (`null`, `[]`, `0`, `"some string"`)
-      // parses successfully, passes a parse-only guard, but still causes loadOverlay() to fall back
-      // to EMPTY_OVERLAY internally -- silently zeroing enrichment data exactly as before, just via
-      // a different malformed-content shape than a parse error. Reject anything that isn't a
-      // non-null, non-array object before letting it through. NOTE: this only catches the wrong-
-      // top-level-type case -- a syntactically valid object missing some/all of the expected overlay
-      // domain keys (e.g. `{"foo": 1}`, or a file truncated to one surviving key) still passes this
-      // check and still yields a partially/fully empty overlay from loadOverlay's per-domain
-      // fallbacks. Closing that residual gap would need a keys-overlap check against EMPTY_OVERLAY's
-      // shape; left as a known, narrower residual rather than expanding this guard further.
-      if (!parsedOverlay || typeof parsedOverlay !== 'object' || Array.isArray(parsedOverlay)) {
-        console.error(`✗ ${rawOverlayPath} is valid JSON but not a valid overlay object — refusing to regenerate portfolio.json (would zero enrichment data). Fix or restore it first.`);
-        process.exit(1);
-      }
-    } catch (e) {
-      console.error(`✗ ${rawOverlayPath} is corrupt/unparseable — refusing to regenerate portfolio.json (would zero enrichment data). Fix or restore it first. (${e instanceof Error ? e.message : String(e)})`);
-      process.exit(1);
-    }
+  // expectEnriched: this writer MERGES the overlay onto a parsed snapshot, so a present-but-empty
+  // overlay zeroes enrichment just as surely as a missing one. ar-import does not pass it.
+  const overlayCheck = evaluateOverlayPrecondition(rawOverlayPath, { expectEnriched: true });
+  if (overlayCheck.refuse) {
+    console.error(`✗ ${overlayCheck.reason}`);
+    process.exit(1);
   }
   // portfolio.json's canonical content is the OVERLAY-ENRICHED snapshot (see server/brain.ts's
   // refresh(), which persists applyOverlay(snapshot, overlay)), not the raw parse -- writing the
@@ -536,7 +568,15 @@ async function main() {
     console.warn(`⚠ ${reconciliation.warning}`);
   }
 
-  // Config-regression guard, complementing the flag-based gate above -- see its doc comment.
+  // Config-regression guards, complementing the flag-based gate above -- see their doc comments.
+  const m365Source = requireLiveM365Source(m365Degraded, SNAPSHOT_PATH, force);
+  if (m365Source.refuse) {
+    console.error(`✗ ${m365Source.reason}`);
+    process.exit(1);
+  } else if (m365Source.warning) {
+    console.warn(`⚠ ${m365Source.warning}`);
+  }
+
   const dealsSource = requireLiveDealsSource(SNAPSHOT_PATH, force);
   if (dealsSource.refuse) {
     console.error(`✗ ${dealsSource.reason}`);

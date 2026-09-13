@@ -16,6 +16,7 @@ import { useLeaseForecast, BUCKET_DISPLAY_ORDER } from './hooks';
 import { isWarehouseUnavailable, WAREHOUSE_KEYS } from '../intel/hooks';
 import { useSnapshot, SNAPSHOT_KEY } from '@/data/queries';
 import { saveMarketRent } from '@/data/actions';
+import { ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
 import { fmtUsdCompact, fmtNum } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
@@ -57,7 +58,7 @@ async function fetchRentForecast(
 ): Promise<RentForecastResult | null> {
   const res = await fetch('/api/warehouse/leasing/rent-forecast', {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: ORA_JSON_MUTATION_HEADERS,
     body: JSON.stringify({ scenarios: [scenario], horizonMonths: 12, vacancyPct }),
   });
   if (!res.ok) throw new Error(`Rent forecast failed (${res.status})`);

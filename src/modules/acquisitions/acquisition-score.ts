@@ -6,6 +6,7 @@
 // unavailability semantics (503 / non-JSON mirror → typed AcquisitionEngineUnavailable).
 import type { AcquisitionInput, AcquisitionScore } from '@contracts/acquisition';
 import type { Deal } from '@contracts/index';
+import { ORA_CLIENT_HEADERS, ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
 
 export class AcquisitionEngineUnavailable extends Error {
   constructor(message = 'acquisition engine unavailable') {
@@ -24,7 +25,7 @@ export async function scoreDealRequest(input: Record<string, unknown>): Promise<
   try {
     res = await fetch('/api/warehouse/acquisition/score', {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: ORA_JSON_MUTATION_HEADERS,
       body: JSON.stringify(input),
     });
   } catch {
@@ -165,7 +166,7 @@ export function buildInput(form: FormState, dealId: string): Record<string, unkn
 export async function saveDealInput(input: Record<string, unknown>): Promise<boolean> {
   try {
     const res = await fetch('/api/actions/acquisition-input', {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input),
+      method: 'POST', headers: ORA_JSON_MUTATION_HEADERS, body: JSON.stringify(input),
     });
     if (!res.ok) return false;
     const body = (await res.json()) as { ok?: boolean };
@@ -229,7 +230,9 @@ export async function omExtractRequest(file: File, dealId?: string): Promise<OmE
   const timeoutId = setTimeout(() => controller.abort(), 55_000);
   let res: Response;
   try {
-    res = await fetch('/api/actions/om-extract', { method: 'POST', body, signal: controller.signal });
+    // No content-type here on purpose: the browser sets the multipart boundary. ORA_CLIENT_HEADERS
+    // still marks it as a first-party write (server/host-guard.ts).
+    res = await fetch('/api/actions/om-extract', { method: 'POST', headers: ORA_CLIENT_HEADERS, body, signal: controller.signal });
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') {
       throw new OmExtractError('Extraction timed out. Please try again.');

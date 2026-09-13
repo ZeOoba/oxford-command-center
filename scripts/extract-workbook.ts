@@ -1,10 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, SNAPSHOT_PATH } from '../server/config';
-import { loadOverlay, applyOverlay, overlayPath } from '../server/overlay';
-import { computeDrift, evaluateAnomalyFloor, evaluateReconciliationGate, formatDriftReport, loadPrevious, requireLiveDealsSource, type DriftLeaseView } from './lease-snapshot-drift-check';
+import { loadOverlay, applyOverlay, overlayPath, evaluateOverlayPrecondition } from '../server/overlay';
+import { computeDrift, evaluateAnomalyFloor, evaluateReconciliationGate, formatDriftReport, loadPrevious, requireLiveDealsSource, requireLiveM365Source, type DriftLeaseView } from './lease-snapshot-drift-check';
 import { resolveQuickbooks } from '../server/sources/quickbooks';
 
 loadEnvFile();
@@ -34,32 +34,27 @@ async function main() {
   const previous = previousResult.leases;
 
   console.log(`→ Reading workbook: ${workbookPath()}`);
-  const { snapshot, flags } = await parseWorkbook(workbookPath());
+  const { snapshot, flags, m365Degraded } = await parseWorkbook(workbookPath());
 
   // Round-3 REFUTE finding: loadOverlay() fails OPEN to an empty overlay on corrupt/unparseable
   // JSON — a defensible default for a UI-driven mutation, but this script is an UNATTENDED
   // scheduled/manual writer: silently enriching with an empty overlay would zero real
   // tenantArrears/renewalStages/marketRents/noiBudgets data in the written snapshot with no
   // warning. Mirrors the identical guard in scripts/ar-import-headless.ts (same hazard class).
+  // Pre-flight overlay check. loadOverlay() fails OPEN to EMPTY_OVERLAY on anything unreadable — a
+  // defensible default for a UI-driven mutation, but this script is an UNATTENDED writer, and
+  // enriching with an empty overlay would ZERO real tenantArrears/arBalances/renewalStages/
+  // dealComps/marketRents/noiBudgets in the written snapshot with no warning. The shared evaluator
+  // in server/overlay.ts covers missing, unparseable AND wrong-top-level-shape overlays; it lives
+  // there, tested once, precisely so these three writers can no longer drift out of sync (the
+  // missing-file case was absent from all three simultaneously until 2026-09-05).
   const rawOverlayPath = overlayPath();
-  if (existsSync(rawOverlayPath)) {
-    try {
-      const parsedOverlay: unknown = JSON.parse(readFileSync(rawOverlayPath, 'utf8'));
-      // Round-4 REFUTE: a JSON.parse THROW only catches malformed JSON syntax. Content that is
-      // syntactically valid JSON but the wrong TOP-LEVEL shape (`null`, `[]`, `0`, `"some string"`)
-      // parses successfully, passes a parse-only guard, but still causes loadOverlay() to fall back
-      // to EMPTY_OVERLAY internally -- silently zeroing enrichment data exactly as before, just via
-      // a different malformed-content shape than a parse error. Same fix as
-      // scripts/lease-snapshot-drift-check.ts -- keep both in sync (see that file's header comment
-      // on why, including the narrower residual gap this check does NOT close).
-      if (!parsedOverlay || typeof parsedOverlay !== 'object' || Array.isArray(parsedOverlay)) {
-        console.error(`✗ ${rawOverlayPath} is valid JSON but not a valid overlay object — refusing to regenerate portfolio.json (would zero enrichment data). Fix or restore it first.`);
-        process.exit(1);
-      }
-    } catch (e) {
-      console.error(`✗ ${rawOverlayPath} is corrupt/unparseable — refusing to regenerate portfolio.json (would zero enrichment data). Fix or restore it first. (${e instanceof Error ? e.message : String(e)})`);
-      process.exit(1);
-    }
+  // expectEnriched: this writer MERGES the overlay onto a parsed snapshot, so a present-but-empty
+  // overlay zeroes enrichment just as surely as a missing one. ar-import does not pass it.
+  const overlayCheck = evaluateOverlayPrecondition(rawOverlayPath, { expectEnriched: true });
+  if (overlayCheck.refuse) {
+    console.error(`✗ ${overlayCheck.reason}`);
+    process.exit(1);
   }
   // portfolio.json's canonical content is the OVERLAY-ENRICHED snapshot (see server/brain.ts's
   // refresh(), which persists applyOverlay(snapshot, overlay)), not the raw parse -- writing the
@@ -102,8 +97,16 @@ async function main() {
     console.warn(`⚠ ${reconciliation.warning}`);
   }
 
-  // Config-regression guard, complementing the flag-based gate above -- see its doc comment. This
-  // path is the manual `npm run extract` one, historically the LESS guarded of the two writers.
+  // Config-regression guards, complementing the flag-based gate above -- see their doc comments.
+  // This path is the manual `npm run extract` one, historically the LESS guarded of the two writers.
+  const m365Source = requireLiveM365Source(m365Degraded, SNAPSHOT_PATH, force);
+  if (m365Source.refuse) {
+    console.error(`✗ ${m365Source.reason}`);
+    process.exit(1);
+  } else if (m365Source.warning) {
+    console.warn(`⚠ ${m365Source.warning}`);
+  }
+
   const dealsSource = requireLiveDealsSource(SNAPSHOT_PATH, force);
   if (dealsSource.refuse) {
     console.error(`✗ ${dealsSource.reason}`);
@@ -154,7 +157,14 @@ async function main() {
   if (report.hasDrift) process.exit(2);
 }
 
-main().catch((err) => {
+// Entrypoint guard — matches lease-snapshot-drift-check.ts / ar-import-headless.ts / migrate-lease
+// -overlay-ids.ts. Without it, merely IMPORTING this module runs main(): it parses the live workbook
+// and can process.exit() the caller. tests/setup.ts points OVERLAY_PATH at a sandbox path that is
+// never created, so since 2026-09-05 the first test to import this file would hit the overlay
+// refusal and kill its vitest worker. No test imports it today; this keeps that true by accident
+// rather than by luck.
+if (process.argv[1]?.replace(/\\/g, '/').endsWith('scripts/extract-workbook.ts')) {
+  main().catch((err) => {
   // Exit 3, not 1: now that this script shares lease-snapshot-drift-check.ts's exit-code
   // convention (0 clean / 1 refused, portfolio.json unchanged / 2 wrote with drift), an unattended
   // caller reading exit 1 as "refused, nothing written, benign" must not conflate that with an
@@ -162,3 +172,4 @@ main().catch((err) => {
   console.error('✗ Extraction failed:', err);
   process.exit(3);
 });
+}
