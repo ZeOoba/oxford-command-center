@@ -6,8 +6,7 @@
 - Test: `tests/unit/lease-market-contract.test.ts`
 
 **Interfaces:**
-- Consumes: nothing.
-- Produces (exact exported names, used by every later task): `RentBasis`, `LmSubtype`, `BuildingStatus`, `SIZE_BANDS`, `SizeBand`, `OfficeStratum`, `OwnerType`, `ListingStatus`, `OriginTier`, `ObservationConfidence`, `OpexComponent`, `CanonicalListingRow`, `OpexDefaults`, `LmMarketConfig`, `OraPropertyConfig`, `LmThresholds`, `LeaseMarketConfig`, `CellBenchmark`, `MarketFreshness`, `DistributionPoint`, `DomBin`, `LeaseMarketSummaryResponse`, `PositioningBand`, `PositioningRow`, `PositioningResponse`, `SignalKind`, `SignalSeverity`, `EvidenceValue`, `SignalRow`, `SignalsResponse` — each both a Zod schema and a same-named `z.infer` type.
+- Produces every schema + same-named type below. Later tasks import these exact names.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -16,74 +15,61 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { LeaseMarketConfig, CanonicalListingRow, SIZE_BANDS } from '../../src/contracts/lease-market';
+import { CanonicalListingRow, LeaseMarketConfig, RadarDecisionInput, SIZE_BANDS } from '../../src/contracts/lease-market';
 
 const shipped = JSON.parse(readFileSync(join(process.cwd(), 'config', 'lease-market.json'), 'utf8')) as unknown;
+const baseRow = {
+  costarPropertyId: null, address: '1 Main St', suite: null, city: null, state: null, zip: null, lat: null, lon: null,
+  submarket: null, subtype: 'warehouse', buildingStatus: 'existing', buildingSf: null, yearBuilt: null, clearHeightFt: null,
+  docks: null, driveIns: null, officePct: null, ownerName: null, availableSf: 1200, minDivisibleSf: null, rentLow: null,
+  rentHigh: null, rentPeriod: null, rentIsTotal: false, rentBasis: 'WITHHELD', opexQuotedPsf: null, isSublease: false,
+  costarDateOnMarket: null, brokerName: null, brokerCompany: null, listingUrl: null, description: null, sourceRow: 2,
+};
 
 describe('lease-market contracts', () => {
-  it('the shipped config parses', () => {
+  it('the shipped config parses with spec rev 3 thresholds and no fabricated opex', () => {
     const cfg = LeaseMarketConfig.parse(shipped);
     expect(cfg.markets.map((m) => m.id)).toContain('columbus');
-    expect(cfg.thresholds.belowMarketMedianRatio).toBe(0.85);
-    expect(cfg.thresholds.benchmarkMinN).toBe(5);
-    expect(cfg.thresholds.belowMarketMinN).toBe(10);
+    expect(cfg.thresholds).toMatchObject({ belowMarketMedianRatio: 0.85, benchmarkMinN: 5, similarityMinScore: 60, similarityTopK: 15, similarityMinComps: 8, similarityHighComps: 15, radarMinScore: 50, rentMinPsfYr: 1, rentMaxPsfYr: 60 });
+    expect(Object.values(cfg.similarityWeights).reduce((a, b) => a + b, 0)).toBe(100);
+    for (const m of cfg.markets) expect(m.opexDefaults).toEqual({ warehouse: null, flex: null });
   });
 
-  it('shipped config carries no fabricated opex numbers', () => {
+  it('rejects weights that do not sum to 100, unknown ORA markets, and duplicate markets', () => {
     const cfg = LeaseMarketConfig.parse(shipped);
-    for (const m of cfg.markets) {
-      expect(m.opexDefaults.warehouse).toBeNull();
-      expect(m.opexDefaults.flex).toBeNull();
-    }
+    expect(LeaseMarketConfig.safeParse({ ...cfg, similarityWeights: { ...cfg.similarityWeights, location: 31 } }).success).toBe(false);
+    const ora = { propertyKey: 'X', marketId: 'nowhere', submarket: null, subtype: 'warehouse', officePct: null, typicalUnitSf: 5000, leaseBasis: 'NNN', addressNorms: ['1 MAIN ST'], lat: null, lon: null, clearHeightFt: null, yearBuilt: null, docks: null, driveIns: null };
+    expect(LeaseMarketConfig.safeParse({ ...cfg, oraProperties: [ora] }).success).toBe(false);
+    expect(LeaseMarketConfig.safeParse({ ...cfg, markets: [cfg.markets[0], cfg.markets[0]] }).success).toBe(false);
   });
 
-  it('rejects an ORA property pointing at an unknown market', () => {
-    const cfg = LeaseMarketConfig.parse(shipped);
-    const bad = {
-      ...cfg,
-      oraProperties: [
-        { propertyKey: 'X', marketId: 'nowhere', submarket: null, subtype: 'warehouse', officePct: null, typicalUnitSf: 5000, leaseBasis: 'NNN', addressNorms: ['1 MAIN ST'] },
-      ],
-    };
-    expect(LeaseMarketConfig.safeParse(bad).success).toBe(false);
-  });
-
-  it('rejects duplicate market ids', () => {
-    const cfg = LeaseMarketConfig.parse(shipped);
-    const bad = { ...cfg, markets: [cfg.markets[0], cfg.markets[0]] };
-    expect(LeaseMarketConfig.safeParse(bad).success).toBe(false);
-  });
-
-  it('size bands are ordered smallest to largest', () => {
+  it('size bands are ordered', () => {
     expect(SIZE_BANDS).toEqual(['<5K', '5-15K', '15-30K', '30-50K', '50-80K']);
   });
 
-  it('canonical row requires positive available SF', () => {
-    const row = {
-      costarPropertyId: null, address: '1 Main St', suite: null, city: null, state: null, submarket: null,
-      subtype: 'warehouse', buildingStatus: 'existing', buildingSf: null, yearBuilt: null, clearHeightFt: null,
-      docks: null, driveIns: null, officePct: null, ownerName: null, availableSf: 0, minDivisibleSf: null,
-      rentLow: null, rentHigh: null, rentPeriod: null, rentBasis: 'WITHHELD', isSublease: false, costarDateOnMarket: null,
-    };
-    expect(CanonicalListingRow.safeParse(row).success).toBe(false);
-    expect(CanonicalListingRow.safeParse({ ...row, availableSf: 1200 }).success).toBe(true);
+  it('canonical row validates SF and coordinates', () => {
+    expect(CanonicalListingRow.safeParse(baseRow).success).toBe(true);
+    expect(CanonicalListingRow.safeParse({ ...baseRow, availableSf: 0 }).success).toBe(false);
+    expect(CanonicalListingRow.safeParse({ ...baseRow, lat: 91 }).success).toBe(false);
+  });
+
+  it('radar decision input is bounded', () => {
+    expect(RadarDecisionInput.safeParse({ propertyId: 3, decision: 'investigate', note: null }).success).toBe(true);
+    expect(RadarDecisionInput.safeParse({ propertyId: 3, decision: 'buy', note: null }).success).toBe(false);
+    expect(RadarDecisionInput.safeParse({ propertyId: 3, decision: 'pass', note: 'x'.repeat(501) }).success).toBe(false);
   });
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `npx vitest run tests/unit/lease-market-contract.test.ts`
-Expected: FAIL — cannot resolve `../../src/contracts/lease-market`.
+- [ ] **Step 2:** `npx vitest run tests/unit/lease-market-contract.test.ts` — Expected: FAIL (module not found).
 
 - [ ] **Step 3: Write the contracts**
 
 ```ts
 // src/contracts/lease-market.ts
 //
-// Lease Market Intelligence — shared Zod contracts.
-// Spec: docs/superpowers/specs/2026-09-16-lease-market-intelligence-design.md (rev 2).
-// Server routes parse responses through these before emitting; client hooks validate with the same schemas.
+// Lease Market Intelligence — shared Zod contracts (spec rev 3). Server routes parse responses through
+// these; client hooks validate with the same schemas.
 import { z } from 'zod';
 
 // ── Enums ─────────────────────────────────────────────────────────────────────
@@ -108,14 +94,35 @@ export const ObservationConfidence = z.enum(['high', 'low']);
 export type ObservationConfidence = z.infer<typeof ObservationConfidence>;
 export const OpexComponent = z.enum(['tax', 'ins', 'cam']);
 export type OpexComponent = z.infer<typeof OpexComponent>;
+export const ListingEventKind = z.enum(['new', 'returned', 'price_cut', 'price_increase', 'sf_change', 'dom_reset', 'missing', 'removed']);
+export type ListingEventKind = z.infer<typeof ListingEventKind>;
+export const SignalKind = z.enum(['new_listing', 'stale', 'rent_cut', 'below_market', 'withdrawn_after_stale', 'radar_candidate']);
+export type SignalKind = z.infer<typeof SignalKind>;
+export const SignalSeverity = z.enum(['info', 'watch', 'high']);
+export type SignalSeverity = z.infer<typeof SignalSeverity>;
+export const ConfidenceLabel = z.enum(['HIGH', 'MEDIUM', 'LOW']);
+export type ConfidenceLabel = z.infer<typeof ConfidenceLabel>;
+export const CompBasis = z.enum(['similarity', 'cell']);
+export type CompBasis = z.infer<typeof CompBasis>;
+export const RadarDecisionKind = z.enum(['investigate', 'monitor', 'pass', 'pursued', 'loi', 'closed']);
+export type RadarDecisionKind = z.infer<typeof RadarDecisionKind>;
+export const PositioningBand = z.enum(['above', 'in_band', 'below', 'unknown']);
+export type PositioningBand = z.infer<typeof PositioningBand>;
+export const EvidenceValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+export type EvidenceValue = z.infer<typeof EvidenceValue>;
 
-// ── Canonical listing row: the ONLY shape downstream of a parser ──────────────
+const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+
+// ── Canonical listing row (the ONLY shape downstream of a parser) ─────────────
 export const CanonicalListingRow = z.object({
   costarPropertyId: z.string().nullable(),
   address: z.string().min(1),
   suite: z.string().nullable(),
   city: z.string().nullable(),
   state: z.string().nullable(),
+  zip: z.string().nullable(),
+  lat: z.number().min(-90).max(90).nullable(),
+  lon: z.number().min(-180).max(180).nullable(),
   submarket: z.string().nullable(),
   subtype: LmSubtype,
   buildingStatus: BuildingStatus,
@@ -130,10 +137,17 @@ export const CanonicalListingRow = z.object({
   minDivisibleSf: z.number().positive().nullable(),
   rentLow: z.number().nonnegative().nullable(),
   rentHigh: z.number().nonnegative().nullable(),
-  rentPeriod: z.enum(['yr', 'mo']).nullable(), // null = period not stated
+  rentPeriod: z.enum(['yr', 'mo']).nullable(),
+  rentIsTotal: z.boolean(), // amount is a total $ for the space, not $/SF
   rentBasis: RentBasis,
+  opexQuotedPsf: z.number().nonnegative().nullable(), // "$7.25/SF + $2.50 NNN" => 2.50
   isSublease: z.boolean(),
-  costarDateOnMarket: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable(),
+  costarDateOnMarket: IsoDate.nullable(),
+  brokerName: z.string().nullable(),
+  brokerCompany: z.string().nullable(),
+  listingUrl: z.string().nullable(),
+  description: z.string().max(4000).nullable(),
+  sourceRow: z.number().int().positive(),
 });
 export type CanonicalListingRow = z.infer<typeof CanonicalListingRow>;
 
@@ -151,6 +165,7 @@ export const LmMarketConfig = z.object({
   id: z.string().regex(/^[a-z0-9-]+$/),
   label: z.string().min(1),
   tier: z.enum(['established', 'entry']),
+  enabled: z.boolean(), // Columbus-first validation gate (A17): only enabled markets ingest
   costarMarketNames: z.array(z.string()),
   mgLandlordPays: z.array(OpexComponent),
   opexDefaults: z.object({ warehouse: OpexDefaults.nullable(), flex: OpexDefaults.nullable() }),
@@ -158,16 +173,32 @@ export const LmMarketConfig = z.object({
 export type LmMarketConfig = z.infer<typeof LmMarketConfig>;
 
 export const OraPropertyConfig = z.object({
-  propertyKey: z.string().min(1), // raw rent-roll label, e.g. "1100 Rarig" (Lease.propertyKey)
+  propertyKey: z.string().min(1), // raw rent-roll label (Lease.propertyKey)
   marketId: z.string().min(1),
   submarket: z.string().nullable(),
   subtype: LmSubtype,
   officePct: z.number().min(0).max(100).nullable(),
   typicalUnitSf: z.number().positive(),
   leaseBasis: z.enum(['NNN', 'MG', 'GROSS', 'UNKNOWN']),
-  addressNorms: z.array(z.string().min(1)), // splitAddress(...).addressNorm values for this property
+  addressNorms: z.array(z.string().min(1)),
+  lat: z.number().min(-90).max(90).nullable(),
+  lon: z.number().min(-180).max(180).nullable(),
+  clearHeightFt: z.number().nonnegative().nullable(),
+  yearBuilt: z.number().int().nullable(),
+  docks: z.number().int().nonnegative().nullable(),
+  driveIns: z.number().int().nonnegative().nullable(),
 });
 export type OraPropertyConfig = z.infer<typeof OraPropertyConfig>;
+
+export const SimilarityWeights = z.object({
+  location: z.number().nonnegative(),
+  size: z.number().nonnegative(),
+  clearHeight: z.number().nonnegative(),
+  age: z.number().nonnegative(),
+  loading: z.number().nonnegative(),
+  office: z.number().nonnegative(),
+});
+export type SimilarityWeights = z.infer<typeof SimilarityWeights>;
 
 export const LmThresholds = z.object({
   benchmarkMinN: z.number().int().positive(),
@@ -184,10 +215,21 @@ export const LmThresholds = z.object({
   positioningBandPct: z.number().positive(),
   rangeMaxSpread: z.number().positive(),
   monthlyValueCeiling: z.number().positive(),
+  rentMinPsfYr: z.number().positive(),
+  rentMaxPsfYr: z.number().positive(),
+  quotedOpexMinN: z.number().int().positive(),
   exportMinRowRatio: z.number().min(0).max(1),
   exportRowCap: z.number().int().positive(),
   freshnessDays: z.number().int().positive(),
   flexOfficeSplitPct: z.number().min(0).max(100),
+  similarityMinScore: z.number().min(0).max(100),
+  similarityTopK: z.number().int().positive(),
+  similarityMinComps: z.number().int().positive(),
+  similarityHighComps: z.number().int().positive(),
+  radarMinScore: z.number().min(0).max(100),
+  radarPushScore: z.number().min(0).max(100),
+  withdrawnLookbackDays: z.number().int().positive(),
+  sfChangePct: z.number().positive(),
 });
 export type LmThresholds = z.infer<typeof LmThresholds>;
 
@@ -198,20 +240,24 @@ export const LeaseMarketConfig = z
     ownerScreenModulePath: z.string().min(1),
     markets: z.array(LmMarketConfig).min(1),
     oraProperties: z.array(OraPropertyConfig),
+    similarityWeights: SimilarityWeights,
     thresholds: LmThresholds,
   })
   .superRefine((c, ctx) => {
     const ids = new Set(c.markets.map((m) => m.id));
     if (ids.size !== c.markets.length) ctx.addIssue({ code: 'custom', message: 'duplicate market id in markets[]' });
     for (const p of c.oraProperties) {
-      if (!ids.has(p.marketId)) {
-        ctx.addIssue({ code: 'custom', message: `oraProperties["${p.propertyKey}"].marketId "${p.marketId}" is not a configured market` });
-      }
+      if (!ids.has(p.marketId)) ctx.addIssue({ code: 'custom', message: `oraProperties["${p.propertyKey}"].marketId "${p.marketId}" is not a configured market` });
     }
+    const sum = Object.values(c.similarityWeights).reduce((a, b) => a + b, 0);
+    if (Math.abs(sum - 100) > 1e-9) ctx.addIssue({ code: 'custom', message: `similarityWeights must sum to 100 (got ${sum})` });
+    if (c.thresholds.rentMinPsfYr >= c.thresholds.rentMaxPsfYr) ctx.addIssue({ code: 'custom', message: 'rentMinPsfYr must be < rentMaxPsfYr' });
   });
 export type LeaseMarketConfig = z.infer<typeof LeaseMarketConfig>;
 
-// ── API responses ─────────────────────────────────────────────────────────────
+// ── Shared response parts ─────────────────────────────────────────────────────
+const NullableNum = z.number().nullable();
+
 export const CellBenchmark = z.object({
   cellKey: z.string(),
   marketId: z.string(),
@@ -223,16 +269,55 @@ export const CellBenchmark = z.object({
   n: z.number().int().nonnegative(),
   totalN: z.number().int().nonnegative(),
   quotedShare: z.number().min(0).max(1),
-  p25: z.number().nullable(),
-  median: z.number().nullable(),
-  p75: z.number().nullable(),
+  p25: NullableNum,
+  median: NullableNum,
+  p75: NullableNum,
   lowCoverage: z.boolean(),
 });
 export type CellBenchmark = z.infer<typeof CellBenchmark>;
 
+export const ComparableStats = z.object({
+  basis: CompBasis,
+  n: z.number().int().nonnegative(),
+  low: NullableNum,
+  p25: NullableNum,
+  median: NullableNum,
+  p75: NullableNum,
+  high: NullableNum,
+  confidence: ConfidenceLabel,
+  cellKey: z.string().nullable(),
+});
+export type ComparableStats = z.infer<typeof ComparableStats>;
+
+export const CompRow = z.object({
+  listingId: z.number().int(),
+  propertyId: z.number().int(),
+  address: z.string().nullable(),
+  availableSf: z.number(),
+  askingNnnEq: z.number(),
+  score: z.number(),
+  distanceMi: NullableNum,
+});
+export type CompRow = z.infer<typeof CompRow>;
+
+export const ListingEventRow = z.object({
+  id: z.number().int(),
+  listingId: z.number().int(),
+  propertyId: z.number().int(),
+  marketId: z.string(),
+  address: z.string().nullable(),
+  kind: ListingEventKind,
+  eventDate: z.string(),
+  prevValue: NullableNum,
+  newValue: NullableNum,
+});
+export type ListingEventRow = z.infer<typeof ListingEventRow>;
+
+// ── /summary ──────────────────────────────────────────────────────────────────
 export const MarketFreshness = z.object({
   marketId: z.string(),
   label: z.string(),
+  enabled: z.boolean(),
   lastLandingDate: z.string().nullable(),
   lastCompleteDate: z.string().nullable(),
   lastCompleteness: z.enum(['complete', 'partial']).nullable(),
@@ -241,68 +326,111 @@ export const MarketFreshness = z.object({
 });
 export type MarketFreshness = z.infer<typeof MarketFreshness>;
 
-export const DistributionPoint = z.object({
+export const MarketDataQuality = z.object({
+  marketId: z.string(),
+  activeSpaces: z.number().int().nonnegative(),
+  lastExportRows: z.number().int().nonnegative(),
+  lastExportSkipped: z.number().int().nonnegative(),
+  quotedShare: z.number().min(0).max(1),
+  coordsShare: z.number().min(0).max(1),
+  lowConfidenceShare: z.number().min(0).max(1),
+  rejectedRents: z.number().int().nonnegative(),
+});
+export type MarketDataQuality = z.infer<typeof MarketDataQuality>;
+
+export const CurvePoint = z.object({
   listingId: z.number().int(),
+  propertyId: z.number().int(),
   marketId: z.string(),
   subtype: LmSubtype,
-  sizeBand: SizeBand,
+  availableSf: z.number().positive(),
   askingNnnEq: z.number(),
-  solid: z.boolean(), // benchmark-eligible (NNN quoted); false = converted / low confidence
+  solid: z.boolean(),
   isOra: z.boolean(),
-  address: z.string().nullable(), // null when config.mirrorRowLevel is false
+  address: z.string().nullable(),
 });
-export type DistributionPoint = z.infer<typeof DistributionPoint>;
+export type CurvePoint = z.infer<typeof CurvePoint>;
 
 export const DomBin = z.object({ label: z.string(), count: z.number().int().nonnegative() });
 export type DomBin = z.infer<typeof DomBin>;
 
+export const LeaseMarketKpis = z.object({
+  marketsFresh: z.number().int().nonnegative(),
+  marketsEnabled: z.number().int().nonnegative(),
+  activeSpaces: z.number().int().nonnegative(),
+  newInLatest: z.number().int().nonnegative(),
+  priceCutsInLatest: z.number().int().nonnegative(),
+  stale: z.number().int().nonnegative(),
+  radarCandidates: z.number().int().nonnegative(),
+});
+export type LeaseMarketKpis = z.infer<typeof LeaseMarketKpis>;
+
 export const LeaseMarketSummaryResponse = z.object({
   asOf: z.string(),
   rowLevel: z.boolean(),
+  kpis: LeaseMarketKpis,
   freshness: z.array(MarketFreshness),
+  dataQuality: z.array(MarketDataQuality),
   benchmarks: z.array(CellBenchmark),
-  distribution: z.array(DistributionPoint),
+  curve: z.array(CurvePoint),
   domByMarket: z.array(z.object({ marketId: z.string(), bins: z.array(DomBin) })),
 });
 export type LeaseMarketSummaryResponse = z.infer<typeof LeaseMarketSummaryResponse>;
 
-export const PositioningBand = z.enum(['above', 'in_band', 'below', 'unknown']);
-export type PositioningBand = z.infer<typeof PositioningBand>;
-
+// ── /positioning ──────────────────────────────────────────────────────────────
 export const PositioningRow = z.object({
   propertyKey: z.string(),
   unit: z.string().nullable(),
   sf: z.number().nonnegative(),
-  oraAskingNnnEq: z.number().nullable(),
-  cell: CellBenchmark.nullable(),
+  oraListingId: z.number().int().nullable(),
+  oraAskingNnnEq: NullableNum,
+  stats: ComparableStats.nullable(),
+  comps: z.array(CompRow),
   percentile: z.number().min(0).max(1).nullable(),
-  gapPct: z.number().nullable(),
+  gapPct: NullableNum,
   band: PositioningBand,
+  recommendation: z.string(),
+  flags: z.array(z.enum(['not_listed'])),
   effectiveDom: z.number().int().nullable(),
+  brokerName: z.string().nullable(),
+  listingUrl: z.string().nullable(),
+  dateListed: z.string().nullable(),
 });
 export type PositioningRow = z.infer<typeof PositioningRow>;
+
+export const ListedButLeased = z.object({
+  propertyKey: z.string(),
+  listingId: z.number().int(),
+  suite: z.string(),
+  askingNnnEq: NullableNum,
+  effectiveDom: z.number().int(),
+  address: z.string().nullable(),
+});
+export type ListedButLeased = z.infer<typeof ListedButLeased>;
 
 export const PositioningResponse = z.object({
   asOf: z.string(),
   unconfiguredPropertyKeys: z.array(z.string()),
   rows: z.array(PositioningRow),
+  listedButLeased: z.array(ListedButLeased),
 });
 export type PositioningResponse = z.infer<typeof PositioningResponse>;
 
-export const SignalKind = z.enum(['new_listing', 'stale', 'rent_cut', 'below_market', 'acq_candidate']);
-export type SignalKind = z.infer<typeof SignalKind>;
-export const SignalSeverity = z.enum(['info', 'watch', 'high']);
-export type SignalSeverity = z.infer<typeof SignalSeverity>;
-export const EvidenceValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);
-export type EvidenceValue = z.infer<typeof EvidenceValue>;
+// ── /signals ──────────────────────────────────────────────────────────────────
+export const WithheldMarket = z.object({ marketId: z.string(), reason: z.string() });
+export type WithheldMarket = z.infer<typeof WithheldMarket>;
 
 export const SignalRow = z.object({
   id: z.number().int(),
-  listingId: z.number().int(),
+  propertyId: z.number().int(),
+  listingId: z.number().int().nullable(),
   marketId: z.string(),
   address: z.string().nullable(),
   kind: SignalKind,
   severity: SignalSeverity,
+  score: z.number().int().nullable(),
+  confidence: ConfidenceLabel.nullable(),
+  compBasis: CompBasis.nullable(),
   cellKey: z.string().nullable(),
   computedAt: z.string(),
   evidence: z.record(z.string(), EvidenceValue),
@@ -311,15 +439,90 @@ export type SignalRow = z.infer<typeof SignalRow>;
 
 export const SignalsResponse = z.object({
   asOf: z.string(),
-  candidatesWithheld: z.array(z.object({ marketId: z.string(), reason: z.string() })),
+  candidatesWithheld: z.array(WithheldMarket),
   signals: z.array(SignalRow),
 });
 export type SignalsResponse = z.infer<typeof SignalsResponse>;
+
+// ── /radar ────────────────────────────────────────────────────────────────────
+export const RadarScoreParts = z.object({
+  dom: z.number().int().nonnegative(),
+  reductions: z.number().int().nonnegative(),
+  belowMarket: z.number().int().nonnegative(),
+  vacancy: z.number().int().nonnegative(),
+  buyBoxFit: z.number().int().nonnegative(),
+  owner: z.number().int().nonnegative(),
+});
+export type RadarScoreParts = z.infer<typeof RadarScoreParts>;
+
+export const RadarDecisionRecord = z.object({ decision: RadarDecisionKind, decidedAt: z.string(), note: z.string().nullable() });
+export type RadarDecisionRecord = z.infer<typeof RadarDecisionRecord>;
+
+export const RadarCandidate = z.object({
+  propertyId: z.number().int(),
+  marketId: z.string(),
+  address: z.string().nullable(),
+  subtype: LmSubtype,
+  buildingSf: NullableNum,
+  score: z.number().int().min(0).max(100),
+  parts: RadarScoreParts,
+  confidence: ConfidenceLabel,
+  vacancyShare: NullableNum,
+  maxEffectiveDom: z.number().int().nonnegative(),
+  reductionCount: z.number().int().nonnegative(),
+  cumulativeReductionPct: NullableNum,
+  bestGapPct: NullableNum,
+  comparableMedian: NullableNum,
+  indicativeRentGapUsd: NullableNum, // gross, vacant space only — NOT NOI
+  ownerName: z.string().nullable(),
+  ownerType: OwnerType,
+  ownerListingCount: z.number().int().nonnegative(),
+  brokerName: z.string().nullable(),
+  latestDecision: RadarDecisionRecord.nullable(),
+});
+export type RadarCandidate = z.infer<typeof RadarCandidate>;
+
+export const RadarResponse = z.object({
+  asOf: z.string(),
+  candidatesWithheld: z.array(WithheldMarket),
+  candidates: z.array(RadarCandidate),
+  monitor: z.array(SignalRow), // withdrawn_after_stale
+});
+export type RadarResponse = z.infer<typeof RadarResponse>;
+
+export const RadarDecisionInput = z.object({
+  propertyId: z.number().int().positive(),
+  decision: RadarDecisionKind,
+  note: z.string().max(500).nullable(),
+});
+export type RadarDecisionInput = z.infer<typeof RadarDecisionInput>;
+
+export const RadarDecisionResponse = z.object({ ok: z.literal(true), id: z.number().int() });
+export type RadarDecisionResponse = z.infer<typeof RadarDecisionResponse>;
+
+// ── /changes and /history ─────────────────────────────────────────────────────
+export const ChangesResponse = z.object({ asOf: z.string(), events: z.array(ListingEventRow) });
+export type ChangesResponse = z.infer<typeof ChangesResponse>;
+
+export const HistoryResponse = z.object({
+  listingId: z.number().int(),
+  address: z.string().nullable(),
+  observations: z.array(
+    z.object({
+      observedAt: z.string(),
+      availableSf: z.number(),
+      askingNnnEq: NullableNum,
+      rentBasis: RentBasis,
+      confidence: ObservationConfidence,
+      costarDom: z.number().int().nullable(),
+    }),
+  ),
+  events: z.array(ListingEventRow),
+});
+export type HistoryResponse = z.infer<typeof HistoryResponse>;
 ```
 
-- [ ] **Step 4: Write the shipped config**
-
-`exportRowCap` 2000 is provisional; the controller re-checks it against a real CoStar export (Task 99). `oraProperties` starts empty; the controller fills it (Task 99).
+- [ ] **Step 4: Write the shipped config** — `config/lease-market.json`. Columbus is the only enabled market (A17 validation gate); the controller enables others after Gabriel signs off. `exportRowCap` is provisional (Task 99).
 
 ```json
 {
@@ -327,19 +530,20 @@ export type SignalsResponse = z.infer<typeof SignalsResponse>;
   "mirrorRowLevel": true,
   "ownerScreenModulePath": "~/.claude/skills/county-parcel-screen/scripts/institutional_owners.py",
   "markets": [
-    { "id": "columbus", "label": "Columbus", "tier": "established", "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
-    { "id": "kansas-city", "label": "Kansas City", "tier": "established", "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
-    { "id": "baltimore", "label": "Baltimore", "tier": "established", "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
-    { "id": "eastern-shore-md", "label": "Eastern Shore MD", "tier": "established", "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
-    { "id": "cincinnati", "label": "Cincinnati", "tier": "entry", "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
-    { "id": "indianapolis", "label": "Indianapolis", "tier": "entry", "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
-    { "id": "madison", "label": "Madison", "tier": "entry", "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
-    { "id": "grand-rapids", "label": "Grand Rapids", "tier": "entry", "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
-    { "id": "richmond", "label": "Richmond", "tier": "entry", "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
-    { "id": "des-moines", "label": "Des Moines", "tier": "entry", "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
-    { "id": "louisville", "label": "Louisville", "tier": "entry", "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } }
+    { "id": "columbus", "label": "Columbus", "tier": "established", "enabled": true, "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
+    { "id": "kansas-city", "label": "Kansas City", "tier": "established", "enabled": false, "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
+    { "id": "baltimore", "label": "Baltimore", "tier": "established", "enabled": false, "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
+    { "id": "eastern-shore-md", "label": "Eastern Shore MD", "tier": "established", "enabled": false, "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
+    { "id": "cincinnati", "label": "Cincinnati", "tier": "entry", "enabled": false, "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
+    { "id": "indianapolis", "label": "Indianapolis", "tier": "entry", "enabled": false, "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
+    { "id": "madison", "label": "Madison", "tier": "entry", "enabled": false, "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
+    { "id": "grand-rapids", "label": "Grand Rapids", "tier": "entry", "enabled": false, "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
+    { "id": "richmond", "label": "Richmond", "tier": "entry", "enabled": false, "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
+    { "id": "des-moines", "label": "Des Moines", "tier": "entry", "enabled": false, "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
+    { "id": "louisville", "label": "Louisville", "tier": "entry", "enabled": false, "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } }
   ],
   "oraProperties": [],
+  "similarityWeights": { "location": 30, "size": 25, "clearHeight": 15, "age": 10, "loading": 10, "office": 10 },
   "thresholds": {
     "benchmarkMinN": 5,
     "belowMarketMinN": 10,
@@ -355,22 +559,25 @@ export type SignalsResponse = z.infer<typeof SignalsResponse>;
     "positioningBandPct": 0.1,
     "rangeMaxSpread": 0.2,
     "monthlyValueCeiling": 3,
+    "rentMinPsfYr": 1,
+    "rentMaxPsfYr": 60,
+    "quotedOpexMinN": 5,
     "exportMinRowRatio": 0.7,
     "exportRowCap": 2000,
     "freshnessDays": 35,
-    "flexOfficeSplitPct": 40
+    "flexOfficeSplitPct": 40,
+    "similarityMinScore": 60,
+    "similarityTopK": 15,
+    "similarityMinComps": 8,
+    "similarityHighComps": 15,
+    "radarMinScore": 50,
+    "radarPushScore": 70,
+    "withdrawnLookbackDays": 90,
+    "sfChangePct": 0.05
   }
 }
 ```
 
-- [ ] **Step 5: Run tests + typecheck**
+- [ ] **Step 5:** `npx vitest run tests/unit/lease-market-contract.test.ts && npm run typecheck` — Expected: PASS / clean.
 
-Run: `npx vitest run tests/unit/lease-market-contract.test.ts && npm run typecheck`
-Expected: PASS; typecheck clean.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add src/contracts/lease-market.ts config/lease-market.json tests/unit/lease-market-contract.test.ts
-git commit -F <message-file>   # "feat(contracts): lease market contracts and market config"
-```
+- [ ] **Step 6: Commit** — `git add src/contracts/lease-market.ts config/lease-market.json tests/unit/lease-market-contract.test.ts` ("feat(contracts): lease market contracts and config").

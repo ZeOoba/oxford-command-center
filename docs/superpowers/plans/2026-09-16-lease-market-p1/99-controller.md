@@ -1,34 +1,27 @@
 ### Task 99: Controller-only steps (Opus 5 session — never dispatched to an implementer)
 
-These need judgment, Gabriel's inputs, or cross-repo/governance authority.
+**99.1 — Before Task 01: governance declaration**
+- [ ] `architecture/status.json` entry `lease-market-intel`: agent_role "Engineering (Claude Code, Opus 5 controller + Sonnet 5 implementers) — Gabriel-directed in-turn 2026-09-16"; status `in_progress`; `review_needed: true`; review_detail names every architect-owned touch — `server/warehouse/migrations/029_lease_market.sql`, `src/contracts/lease-market.ts` (new), `src/contracts/lease-forecast.ts` (provenance enum), `package.json` (2 scripts), `architecture/database-schema.md`, `architecture/status.json`, `architecture/ownership.json` — and records that Gabriel approved the design, spec rev 3 and the instruction to implement in-turn (same pattern as convert-scripts-mjs-to-ts). Add the worktree to `architecture/ownership.json` in that file's existing shape. `npm run governance` passes; commit these two files alone.
 
-**99.1 — Before Task 01: architecture declaration (architect-owned files)**
-- [ ] Add an `architecture/status.json` entry `lease-market-intel` (schema per the file's `_schema`): `agent_role` "Engineering (Claude Code, Opus 5 controller + Sonnet 5 implementers) — Gabriel-directed in-turn 2026-09-16"; `status` `in_progress`; `review_needed: true`; `review_detail` naming every architect-owned touch: `server/warehouse/migrations/029_lease_market.sql`, `src/contracts/lease-market.ts` (new), `src/contracts/lease-forecast.ts` (provenance enum), `package.json` (2 scripts), `architecture/database-schema.md`, `architecture/status.json`; plus "Gabriel approved the design, spec rev 2, and this plan in-turn — this entry is the committed declaration for concurrent sessions (same pattern as convert-scripts-mjs-to-ts)". Only proceed once Gabriel has approved the plan in-turn.
-- [ ] `npm run governance` passes; commit the entry alone.
+**99.2 — Execution order and reviews**
+- [ ] Dispatch order: 01 → 02 → 04 → 03 → 05 → 06 → 07 → 08 → 09 → 10 → 11 → 12 → 13 → 14 → 15 → 16 (04 before 03: normalize imports `medianOf`).
+- [ ] After each implementer task: Opus 5 review (spec compliance, then code quality); fix before the next dispatch. Renew the claim (`claim_work.py renew lease-market-intel`) at least every 90 minutes.
 
-**99.2 — Between tasks**
-- [ ] After each implementer task: Opus 5 task review (spec compliance, then code quality) per superpowers:subagent-driven-development; fix findings before the next dispatch.
-- [ ] Run `python ~/.claude/hooks/lib/claim_work.py renew lease-market-intel` at least every 90 minutes.
+**99.3 — Verification + adversarial pass**
+- [ ] Full `npm run gate` green in the worktree (`warehouse:verify` uses a tmpdir; `warehouse:drift` reads the live warehouse read-only).
+- [ ] Fable 5.1 REFUTE pass (read-only agent, `model: fable`) over `src/analytics/lease-market/*`, `server/warehouse/lease-market/{ingest,compute,positioning,feed}.ts`, the `marketRentGaps` change and the API redaction — attack rent-text parsing (totals, base+expense, bounds), basis conversion and opex resolution, eligibility, cell rollup, similarity scoring and fallback, confidence labels, below-market and stale rules, radar gates/score/indicative gap, event generation, two-strike removal, feed precedence, row-level redaction. Fix confirmed findings with tests; re-run the gate.
+- [ ] Final commit carries `Refute-Reviewed: Fable 5.1 adversarial pass <date> — <n> findings, <m> fixed` (required by `scripts/check-refute-required.ts`).
+- [ ] Browser check: `preview_start` the command center from this worktree against a TEMP warehouse seeded with test fixtures (never the live `data/warehouse/finance.sqlite`); open Lease Market; confirm KPI row, all five tabs, rent curve, radar decision round-trip, history drawer; no console errors; stop the server.
 
-**99.3 — Header map from real CoStar samples (blocked on Gabriel's exports)**
-- [ ] Read the sample files in `OneDrive - Oxford Capital Partners/Claude_Workspace/lease-market-intake/costar/` (read-only). Record the real header row verbatim.
-- [ ] Fill `config/lease-market.costar-headers.json`: every `fields.*` label copied exactly; `subtypeMap`, `buildingStatusMap`, `rentBasisMap`, `subleaseValues` from the DISTINCT values present in the sample; `rentPeriodDefault` only if the export's rent column is unambiguously annual; `status: "verified"`.
-- [ ] Fill each market's `costarMarketNames` from the sample's market column values.
-- [ ] Re-check `thresholds.exportRowCap` against CoStar's actual export row limit as observed (a sample that stops at a round number is the tell); adjust.
-- [ ] Ingest the samples into a TEMP warehouse (`WAREHOUSE_DB=<tmp>`), inspect `skipped` reasons and the rent-basis mix (quoted share), and report them to Gabriel before touching `data/warehouse/finance.sqlite`.
+**99.4 — Land**
+- [ ] Push `feat/lease-market-intel`; open the PR (body: files, tests, deferred items, the Refute trailer; ends with the Claude Code attribution line). Flip the status.json entry to `review_needed` with the PR link. Do not merge on bot checks — migrations + contracts need a real review verdict.
+- [ ] Release the claim.
 
-**99.4 — ORA property map**
-- [ ] From the live snapshot (`/api/snapshot` or the rent roll), list each distinct `Lease.propertyKey` with Vacant units. For each, fill an `oraProperties` entry: `marketId`, `submarket` (from the ORA listing row in the CoStar sample, never guessed), `subtype`, `officePct`, `typicalUnitSf`, `leaseBasis` (from the lease form — confirm with Gabriel where unknown; `UNKNOWN` blocks the feed by design), `addressNorms` via `splitAddress(...)`.
-- [ ] Unknown values stay out; the property then appears under "Not yet mapped" rather than with fabricated inputs.
+**99.5 — Go-live with real data (blocked on Gabriel's CoStar exports; A17 Columbus-first gate)**
+- [ ] Read the sample exports in `Claude_Workspace/lease-market-intake/costar/` (read-only). Record the header row verbatim.
+- [ ] Fill `config/lease-market.costar-headers.json` from the real headers and the DISTINCT values in the sample (`subtypeMap`, `buildingStatusMap`, `rentBasisMap`, `subleaseValues`, `rentPeriodDefault` only if unambiguous); set `verified`. Fill Columbus `costarMarketNames`. Check `exportRowCap` against an observed export ceiling.
+- [ ] Ingest into a TEMP warehouse; report to Gabriel: rows, skipped reasons, quoted share, rejected rents, coordinate coverage, the Columbus rent curve, radar top 10 with score parts, and Rent Position for mapped vacancies. **Gabriel ratifies the ontology maps and the radar output before enabling any other market.**
+- [ ] ORA property map: for each rent-roll `propertyKey` with vacant units, fill `oraProperties` (market, submarket from the ORA CoStar row, subtype, typicalUnitSf, leaseBasis from the lease form — ask Gabriel where unknown; `UNKNOWN` blocks the feed by design, addressNorms via `splitAddress`). Never guess a value; unmapped properties show as "not yet mapped".
+- [ ] Then ingest into the live warehouse with `npm run lease-market:ingest` + `npm run lease-market:compute`.
 
-**99.5 — Verification + adversarial pass**
-- [ ] Full `npm run gate` green in the worktree.
-- [ ] Fable 5.1 REFUTE pass (read-only agent, pinned `model: fable`) over: `src/analytics/lease-market/*`, `server/warehouse/lease-market/{ingest,compute,positioning,feed}.ts`, and the `marketRentGaps` change — attack: rent-basis conversion, eligibility, rollup order, below-market / stale / candidate thresholds, removal state machine, feed precedence, redaction. Fix confirmed findings; re-run gate.
-- [ ] Final commit carries a trailer line `Refute-Reviewed: Fable 5.1 adversarial pass <date> — <n> findings, <m> fixed` (required by `scripts/check-refute-required.ts` for `src/analytics/` and `server/warehouse/` changes).
-- [ ] Browser check: `preview_start` the command center from the worktree, open the Lease Market module with a temp warehouse seeded from the samples; screenshot freshness, distribution, positioning, signals; confirm no console errors. Stop the server afterwards.
-
-**99.6 — Land**
-- [ ] Flip the status.json entry to `review_needed` with the PR link; push `feat/lease-market-intel`; open the PR (body ends with the Claude Code attribution line). A blast-radius-adjacent PR (migrations + contracts) needs a real review verdict before merge — do not merge on bot checks.
-- [ ] Release the claim: `python ~/.claude/hooks/lib/claim_work.py release lease-market-intel`.
-
-**Deferred to later plans (not P1):** P2 CoStar Analytics + Lease Comps history into `market_series`, broker points via `market-monitor`, ORA signed rents, history + new-vs-active charts, warehouse-actual opex · P3 alert-email intake, `ora-lease-listings-intake` + `ora-lease-market-digest` tasks via `register-scheduled-task`, export reminders, LoopNet Silver activity, `lease-market-monitor` skill, signal dismissal · P4 web sweep.
+**Deferred (own plans):** P2 executed comps with grades A–D and net effective rent (A5), derived monthly series incl. same-listing change (A12), CoStar Analytics history, leased-vs-withdrawn classification, map (D1), pricing elasticity (D2) · P3 alert + broker email intake (A15), weekly three-lane digest + threshold pushes (A16), export reminders, Silver activity, `lease-market-monitor` skill with NL query recipes over `lm_v_*` views · P4 web sweep · P5 hedonic model (D3).

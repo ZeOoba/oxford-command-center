@@ -1,0 +1,647 @@
+### Task 10: Compute — market state, comparables, signals, radar, feed, KPIs, freshness, data quality, changes
+
+**Files:**
+- Create: `server/warehouse/lease-market/compute.ts`
+- Test: `tests/unit/lease-market-compute.test.ts`
+
+**Interfaces:**
+- Consumes: Task 01 tables + `lm_v_listing_metrics`; Tasks 02–06 pure modules; Task 09 `latestCompleteLanding`.
+- Produces:
+  - `interface PropertyState { propertyId; marketId; addressDisplay; submarket; subtype; buildingStatus; buildingSf; yearBuilt; clearHeightFt; docks; driveIns; officePct; lat; lon; ownerName; ownerType; oraPropertyKey }`
+  - `interface SpaceState extends SpaceHistory { suiteNorm: string; property: PropertyState; sizeBand: SizeBand|null; officeStratum: OfficeStratum; originTier: OriginTier; latestEligible: boolean; latestConfidence: 'high'|'low'; latestRejected: boolean; brokerName: string|null; listingUrl: string|null }`
+  - `interface MarketState { asOf: string; properties: Map<number, PropertyState>; spaces: SpaceState[]; benchRows: BenchRow[]; candidates: CompCandidate[]; cellFor: (t: CellTarget) => ComputedCell }`
+  - `loadMarketState(db, config, asOf): MarketState` — spaces = `active`, `missing_once`, and `removed` with `removed_at` ≥ asOf − `withdrawnLookbackDays`; `benchRows`/`candidates` from active/missing_once, non-ORA, with a size band (candidates additionally eligible with a rent)
+  - `isActive(s: SpaceState): boolean`
+  - `profileOf(s: SpaceState): SpaceProfile`
+  - `comparablesForSpace(state, s, config): ResolvedComparables | null` (null when no size band)
+  - `oraSubject(p: OraPropertyConfig, state, availableSf, t): { profile: SpaceProfile; matchedPropertyId: number|null; target: CellTarget|null }` — config values first where the config sets them, else the matched `lm_property` (`ora_property_key`)
+  - `staleThresholdsByMarket(db, config, asOf): Map<string, number>` · `ownerScreenOkByMarket(db, config): Map<string, boolean>` · `withheldCandidateMarkets(db, config): WithheldMarket[]`
+  - `propertyVacancyShares(state): Map<number, number|null>` (Σ active non-sublease available ÷ building SF)
+  - `ownerPropertyCounts(state): Map<string, number>` (distinct properties per upper-cased trimmed owner, active spaces only)
+  - `interface RadarEntry { property: PropertyState; result: RadarResult; ownerListingCount: number; brokerName: string|null }`
+  - `buildRadar(state, config, thresholds, screenOk, compsFor: (s: SpaceState) => ResolvedComparables|null): RadarEntry[]` (non-ORA properties with ≥ 1 active space)
+  - `interface ComputeResult { signals: number; byKind: Record<string, number>; radarCandidates: number; feedRows: number; withheldMarkets: string[] }`
+  - `runCompute(db, config, asOf): ComputeResult` — one transaction: replaces all `lm_signal` and `lm_market_rent_feed` rows; never touches `lm_radar_decision`
+  - `marketFreshness(db, config, asOf): MarketFreshness[]` · `marketDataQuality(db, config, state): MarketDataQuality[]` · `domBins(state, asOf)` · `leaseMarketKpis(db, config, state, asOf): LeaseMarketKpis` · `latestExportEvents(db, config): ListingEventRow[]`
+
+**Radar evidence keys** (persisted in `evidence_json`; Task 14 maps them back to `RadarCandidate`): `address, subtype, buildingSf, part_dom, part_reductions, part_belowMarket, part_vacancy, part_buyBoxFit, part_owner, vacancyShare, maxEffectiveDom, reductionCount, cumulativeReductionPct, bestGapPct, comparableMedian, indicativeRentGapUsd, indicativeRentGapLabel ("gross, vacant space only — not NOI"), ownerName, ownerType, ownerListingCount, brokerName, gateFailures ("" when none)`. Radar severity = `high` if score ≥ `radarPushScore`, else `watch`.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/unit/lease-market-compute.test.ts
+import { describe, it, expect } from 'vitest';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { openWarehouse } from '../../server/warehouse/db';
+import { ingestCostarListingsFile } from '../../server/warehouse/lease-market/ingest';
+import {
+  domBins, latestExportEvents, leaseMarketKpis, loadMarketState, marketDataQuality, marketFreshness, runCompute,
+} from '../../server/warehouse/lease-market/compute';
+import { stubScreen, testConfig, testHeaderMap, writeCostarFixture, type FixtureListing } from './lease-market-fixtures';
+
+// 12 identical warehouse spaces (20,000 SF in 40,000 SF buildings, same coordinates and physicals) + one ORA space.
+// For the $6.00 space, its similarity comps are the other 11: median 9.40, P25 8.90 => below market; radar 55.
+const RENTS = [5.5, 6.0, 8.6, 8.8, 9.0, 9.2, 9.4, 9.6, 9.8, 10.0, 10.2, 10.4];
+function listings(): FixtureListing[] {
+  const rows: FixtureListing[] = RENTS.map((rent, i) => ({
+    id: `C${i}`, address: `${100 + i} Industrial Pkwy`, sf: 20000, rentLow: rent, owner: rent === 5.5 ? 'PROLOGIS FUND LP' : 'SMITH FAMILY LLC',
+  }));
+  rows.push({ address: '1100 Rarig Ave', suite: 'B', sf: 8000, rentLow: 12, owner: 'OXFORD RARIG LLC' });
+  return rows;
+}
+async function seeded(screenAvailable = true) {
+  const dir = mkdtempSync(join(tmpdir(), 'lm-compute-'));
+  const db = openWarehouse(join(dir, 't.sqlite'));
+  const config = testConfig();
+  const r = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-15.xlsx', listings()), {
+    config, headerMap: testHeaderMap(), rawDir: join(dir, 'raw'), now: () => '2026-02-16T00:00:00Z',
+    screen: (names) => ({ ...stubScreen(names), available: screenAvailable }),
+  });
+  expect(r.status).toBe('ingested');
+  return { db, config };
+}
+const evidenceOf = (db: ReturnType<typeof openWarehouse>, kind: string) =>
+  db.prepare('SELECT s.score, s.severity, s.confidence, s.comp_basis, s.evidence_json, p.address_display FROM lm_signal s JOIN lm_property p ON p.id = s.property_id WHERE s.kind = ?').all(kind) as Array<{ score: number | null; severity: string; confidence: string | null; comp_basis: string | null; evidence_json: string; address_display: string }>;
+
+describe('loadMarketState', () => {
+  it('keeps ORA spaces out of benchmarks and comparable candidates', async () => {
+    const { db, config } = await seeded();
+    const s = loadMarketState(db, config, '2026-03-01');
+    expect(s.spaces).toHaveLength(13);
+    expect(s.benchRows).toHaveLength(12);
+    expect(s.candidates).toHaveLength(12);
+    expect(s.spaces.find((x) => x.property.oraPropertyKey === '1100 Rarig')?.isOraOwned).toBe(true);
+    expect(s.spaces.every((x) => x.isNewInLatestExport)).toBe(true);
+  });
+});
+
+describe('runCompute', () => {
+  it('persists similarity-based below-market signals, one radar candidate, and the feed', async () => {
+    const { db, config } = await seeded();
+    const r = runCompute(db, config, '2026-03-01');
+    expect(r.byKind).toEqual({ new_listing: 12, below_market: 2, radar_candidate: 1 });
+    expect(r).toMatchObject({ signals: 15, radarCandidates: 1, feedRows: 1, withheldMarkets: [] });
+
+    const below = evidenceOf(db, 'below_market');
+    expect(below.every((b) => b.comp_basis === 'similarity' && b.confidence === 'MEDIUM')).toBe(true);
+
+    const [radar] = evidenceOf(db, 'radar_candidate');
+    expect(radar!.address_display).toBe('101 Industrial Pkwy');
+    expect(radar!.score).toBe(55);
+    expect(radar!.severity).toBe('watch');
+    const ev = JSON.parse(radar!.evidence_json) as Record<string, unknown>;
+    expect(ev).toMatchObject({ part_dom: 0, part_reductions: 0, part_belowMarket: 25, part_vacancy: 15, part_buyBoxFit: 10, part_owner: 5, ownerType: 'private', ownerListingCount: 11, indicativeRentGapLabel: 'gross, vacant space only — not NOI', gateFailures: '' });
+    expect(ev.comparableMedian as number).toBeCloseTo(9.4);
+    expect(ev.indicativeRentGapUsd as number).toBeCloseTo(68000);
+
+    const feed = db.prepare('SELECT * FROM lm_market_rent_feed').all() as Array<Record<string, unknown>>;
+    expect(feed).toHaveLength(1);
+    expect(feed[0]).toMatchObject({ ora_property_key: '1100 Rarig', comp_basis: 'similarity', confidence: 'MEDIUM', n: 12, computed_at: '2026-03-01' });
+    expect(feed[0]!.asking_nnn_eq as number).toBeCloseTo(9.3);
+  });
+
+  it('replaces signals on re-run and never touches radar decisions', async () => {
+    const { db, config } = await seeded();
+    db.prepare(`INSERT INTO lm_radar_decision (property_id, decided_at, decision, note) VALUES (1, '2026-03-01', 'investigate', 'call broker')`).run();
+    runCompute(db, config, '2026-03-01');
+    runCompute(db, config, '2026-03-01');
+    expect((db.prepare('SELECT COUNT(*) AS n FROM lm_signal').get() as { n: number }).n).toBe(15);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM lm_radar_decision').get() as { n: number }).n).toBe(1);
+  });
+
+  it('withholds radar candidates when the owner screen was unavailable', async () => {
+    const { db, config } = await seeded(false);
+    const r = runCompute(db, config, '2026-03-01');
+    expect(r.byKind.radar_candidate).toBeUndefined();
+    expect(r.withheldMarkets).toEqual(['columbus']);
+  });
+
+  it('skips the feed for non-NNN ORA properties', async () => {
+    const { db, config } = await seeded();
+    const mg = testConfig({ oraProperties: config.oraProperties.map((p) => ({ ...p, leaseBasis: 'MG' as const })) });
+    expect(runCompute(db, mg, '2026-03-01').feedRows).toBe(0);
+  });
+});
+
+describe('read models', () => {
+  it('freshness, data quality, DOM bins, KPIs and latest-export changes', async () => {
+    const { db, config } = await seeded();
+    runCompute(db, config, '2026-03-01');
+    const state = loadMarketState(db, config, '2026-03-01');
+
+    const fresh = marketFreshness(db, config, '2026-03-01');
+    expect(fresh.find((f) => f.marketId === 'columbus')).toMatchObject({ enabled: true, lastCompleteDate: '2026-02-15', lastCompleteness: 'complete', stale: false });
+    expect(fresh.find((f) => f.marketId === 'madison')).toMatchObject({ lastCompleteDate: null, stale: true });
+    expect(marketFreshness(db, config, '2026-04-01').find((f) => f.marketId === 'columbus')?.stale).toBe(true);
+
+    expect(marketDataQuality(db, config, state).find((q) => q.marketId === 'columbus')).toEqual({
+      marketId: 'columbus', activeSpaces: 13, lastExportRows: 13, lastExportSkipped: 0, quotedShare: 1, coordsShare: 1, lowConfidenceShare: 0, rejectedRents: 0,
+    });
+    expect(domBins(state, '2026-03-01')).toEqual([
+      { marketId: 'columbus', bins: [{ label: '0-90d', count: 12 }, { label: '90-180d', count: 0 }, { label: '180-365d', count: 0 }, { label: '365d+', count: 0 }] },
+    ]);
+    expect(leaseMarketKpis(db, config, state, '2026-03-01')).toEqual({ marketsFresh: 1, marketsEnabled: 2, activeSpaces: 13, newInLatest: 13, priceCutsInLatest: 0, stale: 0, radarCandidates: 1 });
+    const events = latestExportEvents(db, config);
+    expect(events).toHaveLength(13);
+    expect(events.every((e) => e.kind === 'new' && e.marketId === 'columbus' && e.eventDate === '2026-02-15')).toBe(true);
+  });
+});
+```
+
+- [ ] **Step 2:** `npx vitest run tests/unit/lease-market-compute.test.ts` — Expected: FAIL.
+
+- [ ] **Step 3: Write compute.ts**
+
+```ts
+// server/warehouse/lease-market/compute.ts
+//
+// Lease Market Intelligence — loads current properties/spaces, builds cells and similarity comparables,
+// persists space signals + radar candidates + the market-rent feed, and serves read models
+// (spec rev 3 §3.5–3.10, §4). Financial-decision source: refute pass required.
+import type { WarehouseDb } from '../db';
+import type {
+  BuildingStatus, DomBin, LeaseMarketConfig, LeaseMarketKpis, ListingEventKind, ListingEventRow, ListingStatus, LmSubtype,
+  MarketDataQuality, MarketFreshness, OfficeStratum, OraPropertyConfig, OriginTier, OwnerType, RentBasis, SizeBand, WithheldMarket,
+} from '../../../src/contracts/lease-market';
+import { addDays, daysBetween, isBenchmarkEligible, officeStratumFor, sizeBandFor } from '../../../src/analytics/lease-market/normalize';
+import { cellIndex, type BenchRow, type CellTarget, type ComputedCell } from '../../../src/analytics/lease-market/benchmarks';
+import { resolveComparables, type CompCandidate, type ResolvedComparables, type SpaceProfile } from '../../../src/analytics/lease-market/similarity';
+import {
+  completedDomBaseline, effectiveDom, spaceSignals, staleThresholdDays,
+  type ObservationPoint, type SignalDraft, type SpaceHistory,
+} from '../../../src/analytics/lease-market/signals';
+import { scoreRadar, type RadarResult } from '../../../src/analytics/lease-market/radar';
+import { latestCompleteLanding } from './ingest';
+
+export const RENT_GAP_LABEL = 'gross, vacant space only — not NOI';
+
+export interface PropertyState {
+  propertyId: number; marketId: string; addressDisplay: string; submarket: string | null; subtype: LmSubtype;
+  buildingStatus: BuildingStatus; buildingSf: number | null; yearBuilt: number | null; clearHeightFt: number | null;
+  docks: number | null; driveIns: number | null; officePct: number | null; lat: number | null; lon: number | null;
+  ownerName: string | null; ownerType: OwnerType; oraPropertyKey: string | null;
+}
+
+export interface SpaceState extends SpaceHistory {
+  suiteNorm: string;
+  property: PropertyState;
+  sizeBand: SizeBand | null;
+  officeStratum: OfficeStratum;
+  originTier: OriginTier;
+  latestEligible: boolean;
+  latestConfidence: 'high' | 'low';
+  latestRejected: boolean;
+  brokerName: string | null;
+  listingUrl: string | null;
+}
+
+export interface MarketState {
+  asOf: string;
+  properties: Map<number, PropertyState>;
+  spaces: SpaceState[];
+  benchRows: BenchRow[];
+  candidates: CompCandidate[];
+  cellFor: (t: CellTarget) => ComputedCell;
+}
+
+export function isActive(s: Pick<SpaceState, 'status'>): boolean {
+  return s.status === 'active' || s.status === 'missing_once';
+}
+
+interface PropertyRow {
+  id: number; market_id: string; address_display: string; submarket: string | null; subtype: LmSubtype; building_status: BuildingStatus;
+  building_sf: number | null; year_built: number | null; clear_height_ft: number | null; docks: number | null; drive_ins: number | null;
+  office_pct: number | null; lat: number | null; lon: number | null; owner_name: string | null; owner_type: OwnerType; ora_property_key: string | null;
+}
+interface SpaceRow {
+  id: number; property_id: number; suite_norm: string; first_seen: string; first_landing_id: number; costar_date_on_market: string | null;
+  status: ListingStatus; removed_at: string | null; origin_tier: OriginTier; broker_name: string | null; listing_url: string | null;
+  original_asking: number | null; reduction_count: number; cumulative_reduction_pct: number | null;
+}
+interface ObservationRow {
+  listing_id: number; observed_at: string; available_sf: number; asking_nnn_eq: number | null; rent_low: number | null; rent_basis: RentBasis;
+  is_sublease: number; costar_dom: number | null; confidence: 'high' | 'low'; rejected_reason: string | null;
+}
+
+function latestCompleteIds(db: WarehouseDb, config: LeaseMarketConfig): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const m of config.markets) {
+    const l = latestCompleteLanding(db, m.id);
+    if (l) out.set(m.id, l.id);
+  }
+  return out;
+}
+
+export function loadMarketState(db: WarehouseDb, config: LeaseMarketConfig, asOf: string): MarketState {
+  const t = config.thresholds;
+  const properties = new Map<number, PropertyState>();
+  for (const p of db.prepare('SELECT * FROM lm_property').all() as PropertyRow[]) {
+    properties.set(p.id, {
+      propertyId: p.id, marketId: p.market_id, addressDisplay: p.address_display, submarket: p.submarket, subtype: p.subtype,
+      buildingStatus: p.building_status, buildingSf: p.building_sf, yearBuilt: p.year_built, clearHeightFt: p.clear_height_ft,
+      docks: p.docks, driveIns: p.drive_ins, officePct: p.office_pct, lat: p.lat, lon: p.lon, ownerName: p.owner_name,
+      ownerType: p.owner_type, oraPropertyKey: p.ora_property_key,
+    });
+  }
+
+  const removedSince = addDays(asOf, -t.withdrawnLookbackDays);
+  const filter = `(l.status IN ('active', 'missing_once') OR (l.status = 'removed' AND l.removed_at >= @removedSince))`;
+  const spaceRows = db
+    .prepare(
+      `SELECT l.id, l.property_id, l.suite_norm, l.first_seen, l.first_landing_id, l.costar_date_on_market, l.status, l.removed_at,
+              l.origin_tier, l.broker_name, l.listing_url, m.original_asking, m.reduction_count, m.cumulative_reduction_pct
+       FROM lm_listing l JOIN lm_v_listing_metrics m ON m.listing_id = l.id WHERE ${filter} ORDER BY l.id`,
+    )
+    .all({ removedSince }) as SpaceRow[];
+  const obsRows = db
+    .prepare(
+      `SELECT o.listing_id, o.observed_at, o.available_sf, o.asking_nnn_eq, o.rent_low, o.rent_basis, o.is_sublease, o.costar_dom, o.confidence, o.rejected_reason
+       FROM lm_observation o JOIN lm_listing l ON l.id = o.listing_id WHERE ${filter} ORDER BY o.listing_id, o.observed_at, o.id`,
+    )
+    .all({ removedSince }) as ObservationRow[];
+  const byListing = new Map<number, ObservationRow[]>();
+  for (const o of obsRows) {
+    const list = byListing.get(o.listing_id) ?? [];
+    list.push(o);
+    byListing.set(o.listing_id, list);
+  }
+
+  const latestIds = latestCompleteIds(db, config);
+  const cutIds = new Set<number>();
+  if (latestIds.size > 0) {
+    const ids = [...latestIds.values()];
+    const rows = db
+      .prepare(`SELECT DISTINCT listing_id FROM lm_listing_event WHERE kind = 'price_cut' AND landing_id IN (${ids.map(() => '?').join(',')})`)
+      .all(...ids) as Array<{ listing_id: number }>;
+    for (const r of rows) cutIds.add(r.listing_id);
+  }
+
+  const spaces: SpaceState[] = [];
+  const benchRows: BenchRow[] = [];
+  const candidates: CompCandidate[] = [];
+  for (const row of spaceRows) {
+    const property = properties.get(row.property_id);
+    const history = byListing.get(row.id) ?? [];
+    if (!property || history.length === 0) continue;
+    const observations: ObservationPoint[] = history.map((o) => ({
+      observedAt: o.observed_at, availableSf: o.available_sf, askingNnnEq: o.asking_nnn_eq, rentLow: o.rent_low, costarDom: o.costar_dom,
+      isSublease: o.is_sublease === 1,
+      eligible: isBenchmarkEligible(
+        { confidence: o.confidence, effectiveBasis: o.rent_basis, isSublease: o.is_sublease === 1, originTier: row.origin_tier,
+          buildingStatus: property.buildingStatus, askingNnnEq: o.asking_nnn_eq, buildingSf: property.buildingSf },
+        t.benchmarkMaxBuildingSf,
+      ),
+    }));
+    const latestRow = history[history.length - 1]!;
+    const latest = observations[observations.length - 1]!;
+    const sizeBand = sizeBandFor(latest.availableSf);
+    const officeStratum = officeStratumFor(property.subtype, property.officePct, t.flexOfficeSplitPct);
+    const isOraOwned = property.oraPropertyKey !== null;
+    const space: SpaceState = {
+      listingId: row.id, propertyId: property.propertyId, marketId: property.marketId,
+      addressDisplay: row.suite_norm ? `${property.addressDisplay} Ste ${row.suite_norm}` : property.addressDisplay,
+      buildingStatus: property.buildingStatus, isOraOwned, status: row.status, removedAt: row.removed_at, firstSeen: row.first_seen,
+      costarDateOnMarket: row.costar_date_on_market, isNewInLatestExport: row.first_landing_id === latestIds.get(property.marketId),
+      observations, priceCutInLatestExport: cutIds.has(row.id), reductionCount: row.reduction_count, originalAsking: row.original_asking,
+      cumulativeReductionPct: row.cumulative_reduction_pct, suiteNorm: row.suite_norm, property, sizeBand, officeStratum,
+      originTier: row.origin_tier, latestEligible: latest.eligible, latestConfidence: latestRow.confidence,
+      latestRejected: latestRow.rejected_reason !== null, brokerName: row.broker_name, listingUrl: row.listing_url,
+    };
+    spaces.push(space);
+    if (!isActive(space) || isOraOwned || sizeBand === null) continue;
+    benchRows.push({
+      listingId: row.id, marketId: property.marketId, submarket: property.submarket, subtype: property.subtype, sizeBand, officeStratum,
+      askingNnnEq: latest.askingNnnEq, eligible: latest.eligible, clearHeightFt: property.clearHeightFt, yearBuilt: property.yearBuilt, docks: property.docks,
+    });
+    if (latest.eligible && latest.askingNnnEq !== null) {
+      candidates.push({ ...profileOf(space), listingId: row.id, propertyId: property.propertyId, askingNnnEq: latest.askingNnnEq, addressDisplay: space.addressDisplay });
+    }
+  }
+
+  return { asOf, properties, spaces, benchRows, candidates, cellFor: cellIndex(benchRows, { minN: t.benchmarkMinN, lowCoverageShare: t.lowCoverageQuotedShare }) };
+}
+
+export function profileOf(s: SpaceState): SpaceProfile {
+  const p = s.property;
+  return {
+    marketId: p.marketId, submarket: p.submarket, subtype: p.subtype, lat: p.lat, lon: p.lon,
+    availableSf: s.observations[s.observations.length - 1]!.availableSf, clearHeightFt: p.clearHeightFt, yearBuilt: p.yearBuilt,
+    docks: p.docks, driveIns: p.driveIns, officePct: p.officePct,
+  };
+}
+
+export function comparablesForSpace(state: MarketState, s: SpaceState, config: LeaseMarketConfig): ResolvedComparables | null {
+  if (s.sizeBand === null) return null;
+  const cell = state.cellFor({ marketId: s.marketId, submarket: s.property.submarket, subtype: s.property.subtype, sizeBand: s.sizeBand, officeStratum: s.officeStratum });
+  return resolveComparables(profileOf(s), s.propertyId, state.candidates, cell, config.similarityWeights, config.thresholds);
+}
+
+export function oraSubject(
+  p: OraPropertyConfig,
+  state: MarketState,
+  availableSf: number,
+  t: LeaseMarketConfig['thresholds'],
+): { profile: SpaceProfile; matchedPropertyId: number | null; target: CellTarget | null } {
+  const matched = [...state.properties.values()].find((x) => x.oraPropertyKey === p.propertyKey) ?? null;
+  const profile: SpaceProfile = {
+    marketId: p.marketId,
+    submarket: p.submarket ?? matched?.submarket ?? null,
+    subtype: p.subtype,
+    lat: p.lat ?? matched?.lat ?? null,
+    lon: p.lon ?? matched?.lon ?? null,
+    availableSf,
+    clearHeightFt: p.clearHeightFt ?? matched?.clearHeightFt ?? null,
+    yearBuilt: p.yearBuilt ?? matched?.yearBuilt ?? null,
+    docks: p.docks ?? matched?.docks ?? null,
+    driveIns: p.driveIns ?? matched?.driveIns ?? null,
+    officePct: p.officePct ?? matched?.officePct ?? null,
+  };
+  const band = sizeBandFor(availableSf);
+  const target = band === null ? null : { marketId: p.marketId, submarket: profile.submarket, subtype: p.subtype, sizeBand: band, officeStratum: officeStratumFor(p.subtype, profile.officePct, t.flexOfficeSplitPct) };
+  return { profile, matchedPropertyId: matched?.propertyId ?? null, target };
+}
+
+export function staleThresholdsByMarket(db: WarehouseDb, config: LeaseMarketConfig, asOf: string): Map<string, number> {
+  const rows = db
+    .prepare(
+      `SELECT p.market_id, l.first_seen, l.costar_date_on_market, l.removed_at FROM lm_listing l JOIN lm_property p ON p.id = l.property_id
+       WHERE l.status = 'removed' AND l.origin_tier = 'T1' AND l.removed_at >= ?`,
+    )
+    .all(addDays(asOf, -365)) as Array<{ market_id: string; first_seen: string; costar_date_on_market: string | null; removed_at: string }>;
+  const doms = new Map<string, number[]>();
+  for (const r of rows) {
+    const list = doms.get(r.market_id) ?? [];
+    list.push(effectiveDom({ firstSeen: r.first_seen, costarDateOnMarket: r.costar_date_on_market }, r.removed_at));
+    doms.set(r.market_id, list);
+  }
+  return new Map(config.markets.map((m) => [m.id, staleThresholdDays(completedDomBaseline(doms.get(m.id) ?? [], config.thresholds.completedDomMinN), m.tier, config.thresholds)]));
+}
+
+export function ownerScreenOkByMarket(db: WarehouseDb, config: LeaseMarketConfig): Map<string, boolean> {
+  return new Map(config.markets.map((m) => [m.id, latestCompleteLanding(db, m.id)?.owner_screen_ok === 1]));
+}
+
+export function withheldCandidateMarkets(db: WarehouseDb, config: LeaseMarketConfig): WithheldMarket[] {
+  return config.markets.flatMap((m) => {
+    const c = latestCompleteLanding(db, m.id);
+    return c && c.owner_screen_ok !== 1
+      ? [{ marketId: m.id, reason: 'owner screen unavailable on the latest complete export; acquisition candidates withheld' }]
+      : [];
+  });
+}
+
+export function propertyVacancyShares(state: MarketState): Map<number, number | null> {
+  const sums = new Map<number, number>();
+  for (const s of state.spaces) {
+    if (!isActive(s)) continue;
+    const latest = s.observations[s.observations.length - 1]!;
+    if (latest.isSublease) continue;
+    sums.set(s.propertyId, (sums.get(s.propertyId) ?? 0) + latest.availableSf);
+  }
+  const out = new Map<number, number | null>();
+  for (const [propertyId, sum] of sums) {
+    const sf = state.properties.get(propertyId)?.buildingSf ?? null;
+    out.set(propertyId, sf !== null && sf > 0 ? sum / sf : null);
+  }
+  return out;
+}
+
+export function ownerPropertyCounts(state: MarketState): Map<string, number> {
+  const owners = new Map<string, Set<number>>();
+  for (const s of state.spaces) {
+    if (!isActive(s) || !s.property.ownerName) continue;
+    const key = s.property.ownerName.trim().toUpperCase();
+    const set = owners.get(key) ?? new Set<number>();
+    set.add(s.propertyId);
+    owners.set(key, set);
+  }
+  return new Map([...owners.entries()].map(([k, v]) => [k, v.size]));
+}
+
+export interface RadarEntry {
+  property: PropertyState;
+  result: RadarResult;
+  ownerListingCount: number;
+  brokerName: string | null;
+}
+
+export function buildRadar(
+  state: MarketState,
+  config: LeaseMarketConfig,
+  thresholds: Map<string, number>,
+  screenOk: Map<string, boolean>,
+  compsFor: (s: SpaceState) => ResolvedComparables | null,
+): RadarEntry[] {
+  const owners = ownerPropertyCounts(state);
+  const byProperty = new Map<number, SpaceState[]>();
+  for (const s of state.spaces) {
+    if (!isActive(s) || s.isOraOwned) continue;
+    const list = byProperty.get(s.propertyId) ?? [];
+    list.push(s);
+    byProperty.set(s.propertyId, list);
+  }
+  const out: RadarEntry[] = [];
+  for (const [propertyId, spaces] of byProperty) {
+    const property = state.properties.get(propertyId)!;
+    const threshold = thresholds.get(property.marketId);
+    if (threshold === undefined) continue;
+    const result = scoreRadar(
+      {
+        propertyId, buildingSf: property.buildingSf, buildingStatus: property.buildingStatus, subtype: property.subtype,
+        ownerType: property.ownerType, isOraOwned: property.oraPropertyKey !== null,
+        spaces: spaces.map((s) => {
+          const latest = s.observations[s.observations.length - 1]!;
+          const c = compsFor(s);
+          return {
+            listingId: s.listingId, availableSf: latest.availableSf, isSublease: latest.isSublease, effectiveDom: effectiveDom(s, state.asOf),
+            reductionCount: s.reductionCount, cumulativeReductionPct: s.cumulativeReductionPct, askingNnnEq: latest.askingNnnEq,
+            eligible: latest.eligible, comparableMedian: c?.median ?? null, comparableConfidence: c?.confidence ?? 'LOW',
+          };
+        }),
+      },
+      { staleThresholdDays: threshold, ownerScreenAvailable: screenOk.get(property.marketId) === true, thresholds: config.thresholds },
+    );
+    const ownerListingCount = property.ownerName ? (owners.get(property.ownerName.trim().toUpperCase()) ?? 1) : 0;
+    out.push({ property, result, ownerListingCount, brokerName: spaces.find((s) => s.brokerName)?.brokerName ?? null });
+  }
+  return out;
+}
+
+export interface ComputeResult {
+  signals: number;
+  byKind: Record<string, number>;
+  radarCandidates: number;
+  feedRows: number;
+  withheldMarkets: string[];
+}
+
+export function runCompute(db: WarehouseDb, config: LeaseMarketConfig, asOf: string): ComputeResult {
+  const t = config.thresholds;
+  const state = loadMarketState(db, config, asOf);
+  const thresholds = staleThresholdsByMarket(db, config, asOf);
+  const screenOk = ownerScreenOkByMarket(db, config);
+  const vacancy = propertyVacancyShares(state);
+  const cache = new Map<number, ResolvedComparables | null>();
+  const compsFor = (s: SpaceState) => {
+    if (!cache.has(s.listingId)) cache.set(s.listingId, comparablesForSpace(state, s, config));
+    return cache.get(s.listingId) ?? null;
+  };
+
+  const drafts: SignalDraft[] = [];
+  for (const s of state.spaces) {
+    const threshold = thresholds.get(s.marketId);
+    if (threshold === undefined) continue;
+    drafts.push(...spaceSignals(s, { asOf, staleThresholdDays: threshold, propertyVacancyShare: vacancy.get(s.propertyId) ?? null, comparables: isActive(s) ? compsFor(s) : null, thresholds: t }));
+  }
+
+  const radar = buildRadar(state, config, thresholds, screenOk, compsFor).filter((e) => e.result.isCandidate);
+  for (const e of radar) {
+    const r = e.result;
+    drafts.push({
+      propertyId: e.property.propertyId, listingId: null, kind: 'radar_candidate', severity: r.score >= t.radarPushScore ? 'high' : 'watch',
+      score: r.score, confidence: r.confidence, compBasis: null, cellKey: null,
+      evidence: {
+        address: e.property.addressDisplay, subtype: e.property.subtype, buildingSf: e.property.buildingSf,
+        part_dom: r.parts.dom, part_reductions: r.parts.reductions, part_belowMarket: r.parts.belowMarket, part_vacancy: r.parts.vacancy,
+        part_buyBoxFit: r.parts.buyBoxFit, part_owner: r.parts.owner, vacancyShare: r.vacancyShare, maxEffectiveDom: r.maxEffectiveDom,
+        reductionCount: r.reductionCount, cumulativeReductionPct: r.cumulativeReductionPct, bestGapPct: r.bestGapPct,
+        comparableMedian: r.comparableMedian, indicativeRentGapUsd: r.indicativeRentGapUsd, indicativeRentGapLabel: RENT_GAP_LABEL,
+        ownerName: e.property.ownerName, ownerType: e.property.ownerType, ownerListingCount: e.ownerListingCount, brokerName: e.brokerName,
+        gateFailures: r.gateFailures.join('; '),
+      },
+    });
+  }
+
+  const feed: Array<{ key: string; value: number; basis: string; confidence: string; cellKey: string | null; n: number }> = [];
+  for (const p of config.oraProperties) {
+    if (p.leaseBasis !== 'NNN') continue;
+    const { profile, matchedPropertyId, target } = oraSubject(p, state, p.typicalUnitSf, t);
+    if (target === null) continue;
+    const c = resolveComparables(profile, matchedPropertyId, state.candidates, state.cellFor(target), config.similarityWeights, t);
+    if (c.median === null || c.confidence === 'LOW') continue;
+    feed.push({ key: p.propertyKey, value: c.median, basis: c.basis, confidence: c.confidence, cellKey: c.cellKey, n: c.n });
+  }
+
+  db.transaction(() => {
+    db.prepare('DELETE FROM lm_signal').run();
+    const insertSignal = db.prepare(
+      `INSERT INTO lm_signal (property_id, listing_id, kind, severity, score, confidence, comp_basis, cell_key, computed_at, evidence_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const d of drafts) {
+      insertSignal.run(d.propertyId, d.listingId, d.kind, d.severity, d.score, d.confidence, d.compBasis, d.cellKey, asOf, JSON.stringify(d.evidence));
+    }
+    db.prepare('DELETE FROM lm_market_rent_feed').run();
+    const insertFeed = db.prepare(
+      `INSERT INTO lm_market_rent_feed (ora_property_key, asking_nnn_eq, comp_basis, confidence, cell_key, n, computed_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const f of feed) insertFeed.run(f.key, f.value, f.basis, f.confidence, f.cellKey, f.n, asOf);
+  })();
+
+  const byKind: Record<string, number> = {};
+  for (const d of drafts) byKind[d.kind] = (byKind[d.kind] ?? 0) + 1;
+  return { signals: drafts.length, byKind, radarCandidates: radar.length, feedRows: feed.length, withheldMarkets: withheldCandidateMarkets(db, config).map((w) => w.marketId) };
+}
+
+// ── Read models ────────────────────────────────────────────────────────────────
+export function marketFreshness(db: WarehouseDb, config: LeaseMarketConfig, asOf: string): MarketFreshness[] {
+  const latestStmt = db.prepare(
+    `SELECT observed_at, completeness, partial_reason FROM lm_landing
+     WHERE source = 'costar_listings' AND market_id = ? AND parse_status = 'ok' ORDER BY observed_at DESC, id DESC LIMIT 1`,
+  );
+  return config.markets.map((m) => {
+    const last = latestStmt.get(m.id) as { observed_at: string; completeness: 'complete' | 'partial'; partial_reason: string | null } | undefined;
+    const complete = latestCompleteLanding(db, m.id);
+    const stale = !complete || daysBetween(complete.observed_at, asOf) > config.thresholds.freshnessDays || last?.completeness === 'partial';
+    return {
+      marketId: m.id, label: m.label, enabled: m.enabled, lastLandingDate: last?.observed_at ?? null, lastCompleteDate: complete?.observed_at ?? null,
+      lastCompleteness: last?.completeness ?? null, partialReason: last?.partial_reason ?? null, stale,
+    };
+  });
+}
+
+export function marketDataQuality(db: WarehouseDb, config: LeaseMarketConfig, state: MarketState): MarketDataQuality[] {
+  const lastStmt = db.prepare(
+    `SELECT row_count, skipped_count FROM lm_landing WHERE source = 'costar_listings' AND market_id = ? AND parse_status = 'ok' ORDER BY observed_at DESC, id DESC LIMIT 1`,
+  );
+  return config.markets.map((m) => {
+    const active = state.spaces.filter((s) => s.marketId === m.id && isActive(s));
+    const last = lastStmt.get(m.id) as { row_count: number; skipped_count: number } | undefined;
+    const n = active.length;
+    const share = (count: number) => (n === 0 ? 0 : count / n);
+    return {
+      marketId: m.id,
+      activeSpaces: n,
+      lastExportRows: last?.row_count ?? 0,
+      lastExportSkipped: last?.skipped_count ?? 0,
+      quotedShare: share(active.filter((s) => s.latestEligible).length),
+      coordsShare: share(active.filter((s) => s.property.lat !== null && s.property.lon !== null).length),
+      lowConfidenceShare: share(active.filter((s) => s.latestConfidence === 'low').length),
+      rejectedRents: active.filter((s) => s.latestRejected).length,
+    };
+  });
+}
+
+const DOM_BINS: ReadonlyArray<{ label: string; min: number; max: number }> = [
+  { label: '0-90d', min: 0, max: 90 },
+  { label: '90-180d', min: 90, max: 180 },
+  { label: '180-365d', min: 180, max: 365 },
+  { label: '365d+', min: 365, max: Number.POSITIVE_INFINITY },
+];
+
+export function domBins(state: MarketState, asOf: string): Array<{ marketId: string; bins: DomBin[] }> {
+  const byMarket = new Map<string, number[]>();
+  for (const s of state.spaces) {
+    if (!isActive(s) || s.isOraOwned || s.originTier !== 'T1') continue;
+    const list = byMarket.get(s.marketId) ?? [];
+    list.push(effectiveDom(s, asOf));
+    byMarket.set(s.marketId, list);
+  }
+  return [...byMarket.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([marketId, doms]) => ({ marketId, bins: DOM_BINS.map((b) => ({ label: b.label, count: doms.filter((d) => d >= b.min && d < b.max).length })) }));
+}
+
+function countLatestEvents(db: WarehouseDb, config: LeaseMarketConfig, kind: ListingEventKind): number {
+  const ids = [...latestCompleteIds(db, config).values()];
+  if (ids.length === 0) return 0;
+  return (db.prepare(`SELECT COUNT(*) AS n FROM lm_listing_event WHERE kind = ? AND landing_id IN (${ids.map(() => '?').join(',')})`).get(kind, ...ids) as { n: number }).n;
+}
+
+export function leaseMarketKpis(db: WarehouseDb, config: LeaseMarketConfig, state: MarketState, asOf: string): LeaseMarketKpis {
+  const fresh = marketFreshness(db, config, asOf);
+  const signalCount = (kind: string) => (db.prepare('SELECT COUNT(*) AS n FROM lm_signal WHERE kind = ?').get(kind) as { n: number }).n;
+  return {
+    marketsFresh: fresh.filter((f) => f.enabled && !f.stale).length,
+    marketsEnabled: config.markets.filter((m) => m.enabled).length,
+    activeSpaces: state.spaces.filter(isActive).length,
+    newInLatest: countLatestEvents(db, config, 'new'),
+    priceCutsInLatest: countLatestEvents(db, config, 'price_cut'),
+    stale: signalCount('stale'),
+    radarCandidates: signalCount('radar_candidate'),
+  };
+}
+
+export function latestExportEvents(db: WarehouseDb, config: LeaseMarketConfig): ListingEventRow[] {
+  const ids = [...latestCompleteIds(db, config).values()];
+  if (ids.length === 0) return [];
+  const rows = db
+    .prepare(
+      `SELECT e.id, e.listing_id, l.property_id, p.market_id, p.address_display, l.suite_norm, e.kind, e.event_date, e.prev_value, e.new_value
+       FROM lm_listing_event e JOIN lm_listing l ON l.id = e.listing_id JOIN lm_property p ON p.id = l.property_id
+       WHERE e.landing_id IN (${ids.map(() => '?').join(',')}) ORDER BY p.market_id, e.kind, e.id`,
+    )
+    .all(...ids) as Array<{ id: number; listing_id: number; property_id: number; market_id: string; address_display: string; suite_norm: string; kind: ListingEventKind; event_date: string; prev_value: number | null; new_value: number | null }>;
+  return rows.map((r) => ({
+    id: r.id, listingId: r.listing_id, propertyId: r.property_id, marketId: r.market_id,
+    address: r.suite_norm ? `${r.address_display} Ste ${r.suite_norm}` : r.address_display,
+    kind: r.kind, eventDate: r.event_date, prevValue: r.prev_value, newValue: r.new_value,
+  }));
+}
+```
+
+- [ ] **Step 4:** `npx vitest run tests/unit/lease-market-compute.test.ts tests/unit/lease-market-ingest.test.ts && npm run typecheck && npx eslint server/warehouse/lease-market tests/unit/lease-market-compute.test.ts --max-warnings 0` — Expected: PASS / clean. If better-sqlite3 rejects the named `@removedSince` binding shared by two statements, bind it positionally in each.
+
+- [ ] **Step 5: Commit** — `git add server/warehouse/lease-market/compute.ts tests/unit/lease-market-compute.test.ts` ("feat(warehouse): lease market compute — comparables, signals, radar, feed, read models").

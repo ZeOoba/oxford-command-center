@@ -1,4 +1,10 @@
-### Task 11: CLI — ingest and compute
+### Task 12: CLI — ingest and compute
+
+> **Plan rev 2 deltas (authoritative):**
+> - Dependencies renumbered: config/ingest = Task 09, owner screen = Task 08, compute = Task 10.
+> - `ingest` output line uses the rev 2 `IngestResult` fields: `+${r.insertedSpaces} ~${r.updatedSpaces} props+${r.newProperties} skip=${r.skipped} missing=${r.markedMissing} removed=${r.markedRemoved} events=${JSON.stringify(Object.fromEntries(Object.entries(r.events).filter(([, n]) => n > 0)))}`.
+> - `compute` output line: `signals=${r.signals} ${JSON.stringify(r.byKind)} radar=${r.radarCandidates} feed=${r.feedRows}` plus the withheld suffix.
+> - Smoke-run expected output: `0 file(s), 0 failed.` then `signals=0 {} radar=0 feed=0`.
 
 **Files:**
 - Create: `scripts/lease-market.ts`
