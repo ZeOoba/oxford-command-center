@@ -1,5 +1,7 @@
 ### Task 04: Benchmarks — quantiles, cell rollup, percentile (pure)
 
+> **Plan rev 2:** unchanged from rev 1. Implement this task BEFORE Task 03 (normalize imports `medianOf`).
+
 **Files:**
 - Create: `src/analytics/lease-market/benchmarks.ts`
 - Test: `tests/unit/lease-market-benchmarks.test.ts`

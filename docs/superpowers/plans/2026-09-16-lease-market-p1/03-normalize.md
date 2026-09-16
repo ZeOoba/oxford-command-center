@@ -1,24 +1,23 @@
-### Task 03: Normalization (pure)
+### Task 03: Normalization (pure) — rent text with totals and base+expense quotes, bounds, opex estimate
 
 **Files:**
 - Create: `src/analytics/lease-market/normalize.ts`
 - Test: `tests/unit/lease-market-normalize.test.ts`
 
-**Interfaces:**
-- Consumes (Task 02): `RentBasis`, `SizeBand`, `SIZE_BANDS`, `LmSubtype`, `OfficeStratum`, `BuildingStatus`, `OriginTier`, `OpexComponent`, `LmThresholds` types from `src/contracts/lease-market.ts`.
-- Produces:
-  - `daysBetween(fromIsoDate: string, toIsoDate: string): number` (whole days, UTC dates)
-  - `addDays(isoDate: string, days: number): string` (YYYY-MM-DD)
-  - `normalizeSuite(raw: string | null | undefined): string` ('' when none)
-  - `splitAddress(rawAddress: string, rawSuite: string | null): { addressNorm: string; suiteNorm: string }`
-  - `sizeBandFor(sf: number): SizeBand | null`
-  - `officeStratumFor(subtype: LmSubtype, officePct: number | null, splitPct: number): OfficeStratum`
-  - `interface ParsedRentText { rentLow: number | null; rentHigh: number | null; rentPeriod: 'yr' | 'mo' | null; basis: RentBasis | null; withheld: boolean }` and `parseRentText(text: string): ParsedRentText`
-  - `interface RentInput { rentLow: number | null; rentHigh: number | null; rentPeriod: 'yr' | 'mo' | null; rentBasis: RentBasis }`
-  - `interface OpexInput { tax: number; ins: number; cam: number }`
-  - `interface PricedObservation { askingPsfYr: number | null; effectiveBasis: RentBasis; askingNnnEq: number | null; opexEstPsf: number | null; confidence: 'high' | 'low' }`
-  - `priceObservation(input: RentInput, opex: OpexInput | null, mgLandlordPays: readonly OpexComponent[], t: Pick<LmThresholds, 'rangeMaxSpread' | 'monthlyValueCeiling'>): PricedObservation`
-  - `interface EligibilityInput { confidence: 'high' | 'low'; effectiveBasis: RentBasis; isSublease: boolean; originTier: OriginTier; buildingStatus: BuildingStatus; askingNnnEq: number | null; buildingSf: number | null }` and `isBenchmarkEligible(o: EligibilityInput, maxBuildingSf: number): boolean`
+**Depends on:** Task 02 contracts. Task 04's `medianOf` is imported — **implement Task 04 first if it does not exist yet** (the controller dispatches 04 before 03 in practice; the numbering follows the pipeline order).
+
+**Interfaces (Produces):**
+- `daysBetween(fromIsoDate, toIsoDate): number` · `addDays(isoDate, days): string`
+- `normalizeSuite(raw): string` · `splitAddress(rawAddress, rawSuite): { addressNorm; suiteNorm }`
+- `sizeBandFor(sf): SizeBand | null` · `officeStratumFor(subtype, officePct, splitPct): OfficeStratum`
+- `interface ParsedRentText { rentLow; rentHigh; rentPeriod: 'yr'|'mo'|null; basis: RentBasis|null; withheld: boolean; isTotal: boolean; opexQuoted: number|null; ambiguous: boolean }` · `parseRentText(text): ParsedRentText`
+- `interface RentInput { rentLow; rentHigh; rentPeriod; rentBasis; rentIsTotal: boolean; availableSf: number }`
+- `interface OpexEstimate { tax: number|null; ins: number|null; cam: number|null; total: number; source: string }`
+- `interface PricedObservation { askingPsfYr; effectiveBasis; askingNnnEq; opexEstPsf; opexSource: string|null; confidence: 'high'|'low'; rejectedReason: string|null }`
+- `type PricingThresholds = Pick<LmThresholds, 'rangeMaxSpread'|'monthlyValueCeiling'|'rentMinPsfYr'|'rentMaxPsfYr'>`
+- `priceObservation(input: RentInput, opex: OpexEstimate|null, mgLandlordPays: readonly OpexComponent[], t: PricingThresholds): PricedObservation`
+- `opexFromDefaults(d: OpexDefaults|null): OpexEstimate|null` · `opexFromQuotedMedian(values: readonly number[], minN: number): OpexEstimate|null` · `resolveOpex(defaults, quotedValues, minN): OpexEstimate|null` (defaults ▸ quoted median ▸ null)
+- `interface EligibilityInput { confidence; effectiveBasis; isSublease; originTier; buildingStatus; askingNnnEq; buildingSf }` · `isBenchmarkEligible(o, maxBuildingSf): boolean`
 
 - [ ] **Step 1: Write the failing test**
 
@@ -26,12 +25,15 @@
 // tests/unit/lease-market-normalize.test.ts
 import { describe, it, expect } from 'vitest';
 import {
-  addDays, daysBetween, isBenchmarkEligible, normalizeSuite, officeStratumFor, parseRentText,
-  priceObservation, sizeBandFor, splitAddress, type EligibilityInput,
+  addDays, daysBetween, isBenchmarkEligible, normalizeSuite, officeStratumFor, opexFromDefaults, opexFromQuotedMedian,
+  parseRentText, priceObservation, resolveOpex, sizeBandFor, splitAddress,
+  type EligibilityInput, type OpexEstimate, type RentInput,
 } from '../../src/analytics/lease-market/normalize';
 
-const T = { rangeMaxSpread: 0.2, monthlyValueCeiling: 3 };
-const OPEX = { tax: 1, ins: 0.25, cam: 0.5 };
+const T = { rangeMaxSpread: 0.2, monthlyValueCeiling: 3, rentMinPsfYr: 1, rentMaxPsfYr: 60 };
+const OPEX: OpexEstimate = { tax: 1, ins: 0.25, cam: 0.5, total: 1.75, source: 'test' };
+const input = (patch: Partial<RentInput>): RentInput => ({ rentLow: 8.5, rentHigh: null, rentPeriod: 'yr', rentBasis: 'NNN', rentIsTotal: false, availableSf: 10000, ...patch });
+const price = (patch: Partial<RentInput>, opex: OpexEstimate | null = OPEX) => priceObservation(input(patch), opex, ['tax', 'ins'], T);
 
 describe('dates', () => {
   it('counts whole days and shifts dates', () => {
@@ -42,15 +44,11 @@ describe('dates', () => {
 });
 
 describe('addresses', () => {
-  it('abbreviates suffixes and directionals and splits embedded suites', () => {
+  it('abbreviates suffixes/directionals and splits embedded suites', () => {
     expect(splitAddress('1100 Rarig Avenue, Suite 200', null)).toEqual({ addressNorm: '1100 RARIG AVE', suiteNorm: '200' });
     expect(splitAddress('3540 East 5th Ave.', 'Ste. B')).toEqual({ addressNorm: '3540 E 5TH AVE', suiteNorm: 'B' });
     expect(splitAddress('55 New Plant Ct #104', null)).toEqual({ addressNorm: '55 NEW PLANT CT', suiteNorm: '104' });
-  });
-  it('does not treat a street-name word as a unit designator', () => {
     expect(splitAddress('100 Unit Road', null)).toEqual({ addressNorm: '100 UNIT RD', suiteNorm: '' });
-  });
-  it('explicit suite wins over an embedded one', () => {
     expect(splitAddress('9 Main St Suite 5', 'Unit 7')).toEqual({ addressNorm: '9 MAIN ST', suiteNorm: '7' });
   });
   it('normalizes suites', () => {
@@ -60,15 +58,9 @@ describe('addresses', () => {
   });
 });
 
-describe('size bands and strata', () => {
+describe('bands and strata', () => {
   it('bands on the boundaries', () => {
-    expect(sizeBandFor(4999)).toBe('<5K');
-    expect(sizeBandFor(5000)).toBe('5-15K');
-    expect(sizeBandFor(49999)).toBe('30-50K');
-    expect(sizeBandFor(50000)).toBe('50-80K');
-    expect(sizeBandFor(80000)).toBe('50-80K');
-    expect(sizeBandFor(80001)).toBeNull();
-    expect(sizeBandFor(0)).toBeNull();
+    expect([4999, 5000, 49999, 50000, 80000, 80001, 0].map(sizeBandFor)).toEqual(['<5K', '5-15K', '30-50K', '50-80K', '50-80K', null, null]);
   });
   it('stratifies only flex with a known office share', () => {
     expect(officeStratumFor('warehouse', 50, 40)).toBe('all');
@@ -79,66 +71,79 @@ describe('size bands and strata', () => {
 });
 
 describe('parseRentText', () => {
-  it('reads single yearly NNN quotes', () => {
-    expect(parseRentText('$8.50/SF/YR NNN')).toEqual({ rentLow: 8.5, rentHigh: 8.5, rentPeriod: 'yr', basis: 'NNN', withheld: false });
+  const base = { withheld: false, isTotal: false, opexQuoted: null, ambiguous: false };
+  it('single yearly NNN, ranges, monthly', () => {
+    expect(parseRentText('$8.50/SF/YR NNN')).toEqual({ ...base, rentLow: 8.5, rentHigh: 8.5, rentPeriod: 'yr', basis: 'NNN' });
+    expect(parseRentText('$8.00 - $10.00 /SF/YR Modified Gross')).toEqual({ ...base, rentLow: 8, rentHigh: 10, rentPeriod: 'yr', basis: 'MG' });
+    expect(parseRentText('$0.75/SF/MO IG')).toEqual({ ...base, rentLow: 0.75, rentHigh: 0.75, rentPeriod: 'mo', basis: 'IG' });
+    expect(parseRentText('$9.25 Industrial Gross')).toEqual({ ...base, rentLow: 9.25, rentHigh: 9.25, rentPeriod: null, basis: 'IG' });
   });
-  it('reads ranges and modified gross', () => {
-    expect(parseRentText('$8.00 - $10.00 /SF/YR Modified Gross')).toEqual({ rentLow: 8, rentHigh: 10, rentPeriod: 'yr', basis: 'MG', withheld: false });
+  it('base + quoted expenses', () => {
+    expect(parseRentText('$7.25/SF + $2.50 NNN')).toEqual({ ...base, rentLow: 7.25, rentHigh: 7.25, rentPeriod: null, basis: 'NNN', opexQuoted: 2.5 });
+    expect(parseRentText('$6.50/SF/YR + $1.95 CAM/TAX/INS')).toMatchObject({ rentLow: 6.5, basis: 'NNN', opexQuoted: 1.95, isTotal: false });
   });
-  it('reads monthly and industrial gross', () => {
-    expect(parseRentText('$0.75/SF/MO IG')).toEqual({ rentLow: 0.75, rentHigh: 0.75, rentPeriod: 'mo', basis: 'IG', withheld: false });
-    expect(parseRentText('$9.25 Industrial Gross')).toEqual({ rentLow: 9.25, rentHigh: 9.25, rentPeriod: null, basis: 'IG', withheld: false });
+  it('total-dollar quotes', () => {
+    expect(parseRentText('$12,000/month + expenses')).toEqual({ ...base, rentLow: 12000, rentHigh: 12000, rentPeriod: 'mo', basis: 'NNN', isTotal: true });
+    expect(parseRentText('$1,250/MO')).toMatchObject({ rentLow: 1250, rentPeriod: 'mo', isTotal: true });
+    expect(parseRentText('$950/mo')).toMatchObject({ rentLow: 950, isTotal: true });
+    expect(parseRentText('$120,000/YR NNN')).toMatchObject({ rentLow: 120000, rentPeriod: 'yr', basis: 'NNN', isTotal: true });
   });
-  it('treats withheld / negotiable / blank as withheld', () => {
-    expect(parseRentText('Withheld').withheld).toBe(true);
-    expect(parseRentText('Call for pricing').withheld).toBe(true);
-    expect(parseRentText('').withheld).toBe(true);
+  it('flags ambiguous no-unit amounts', () => {
+    expect(parseRentText('$150')).toMatchObject({ ambiguous: true, isTotal: false });
   });
-  it('reads thousands separators without splitting numbers', () => {
-    expect(parseRentText('$12000/YR').rentLow).toBe(12000);
-    expect(parseRentText('$1,250/MO').rentLow).toBe(1250);
+  it('withheld phrases and blanks', () => {
+    for (const s of ['Withheld', 'Call for pricing', 'Negotiable', '']) expect(parseRentText(s).withheld).toBe(true);
   });
 });
 
 describe('priceObservation', () => {
-  const p = (rentLow: number | null, rentHigh: number | null, rentPeriod: 'yr' | 'mo' | null, rentBasis: Parameters<typeof priceObservation>[0]['rentBasis'], opex = OPEX as typeof OPEX | null) =>
-    priceObservation({ rentLow, rentHigh, rentPeriod, rentBasis }, opex, ['tax', 'ins'], T);
+  it('NNN yearly passes through at high confidence', () => {
+    expect(price({})).toEqual({ askingPsfYr: 8.5, effectiveBasis: 'NNN', askingNnnEq: 8.5, opexEstPsf: null, opexSource: null, confidence: 'high', rejectedReason: null });
+  });
+  it('monthly annualizes; inferred monthly is low confidence; >= 3.00 unstated is yearly high', () => {
+    expect(price({ rentLow: 0.75, rentPeriod: 'mo' })).toMatchObject({ askingNnnEq: 9, confidence: 'high' });
+    expect(price({ rentLow: 0.75, rentPeriod: null })).toMatchObject({ askingNnnEq: 9, confidence: 'low' });
+    expect(price({ rentLow: 7, rentPeriod: null })).toMatchObject({ askingNnnEq: 7, confidence: 'high' });
+  });
+  it('ranges: wide => UNKNOWN with reason; narrow => midpoint; inverted bounds swap', () => {
+    expect(price({ rentLow: 8, rentHigh: 10 })).toMatchObject({ effectiveBasis: 'UNKNOWN', askingNnnEq: null, rejectedReason: expect.stringMatching(/spread/) });
+    expect(price({ rentLow: 9, rentHigh: 10 }).askingNnnEq).toBeCloseTo(9.5);
+    expect(price({ rentLow: 10, rentHigh: 9 }).askingNnnEq).toBeCloseTo(9.5);
+  });
+  it('totals convert with available SF and need a period', () => {
+    expect(price({ rentLow: 12000, rentPeriod: 'mo', rentIsTotal: true, availableSf: 16000 })).toMatchObject({ askingNnnEq: 9, confidence: 'high' });
+    expect(price({ rentLow: 120000, rentPeriod: 'yr', rentIsTotal: true, availableSf: 12000 }).askingNnnEq).toBeCloseTo(10);
+    expect(price({ rentLow: 12000, rentPeriod: null, rentIsTotal: true })).toMatchObject({ effectiveBasis: 'UNKNOWN', rejectedReason: expect.stringMatching(/period/) });
+  });
+  it('rejects out-of-bounds asking rents (the "$12,000/mo NNN" per-SF defect)', () => {
+    expect(price({ rentLow: 12000, rentPeriod: 'mo', rentIsTotal: false })).toMatchObject({ effectiveBasis: 'UNKNOWN', askingNnnEq: null, rejectedReason: expect.stringMatching(/outside/) });
+    expect(price({ rentLow: 0.5, rentPeriod: 'yr' })).toMatchObject({ effectiveBasis: 'UNKNOWN' });
+  });
+  it('gross subtracts the opex total; MG subtracts only configured components', () => {
+    expect(price({ rentLow: 12, rentBasis: 'GROSS' })).toEqual({ askingPsfYr: 12, effectiveBasis: 'GROSS', askingNnnEq: 10.25, opexEstPsf: 1.75, opexSource: 'test', confidence: 'low', rejectedReason: null });
+    expect(price({ rentLow: 11, rentBasis: 'MG' })).toMatchObject({ askingNnnEq: 9.75, opexEstPsf: 1.25, confidence: 'low' });
+  });
+  it('MG cannot convert with a total-only (quoted median) opex estimate; gross can', () => {
+    const quoted: OpexEstimate = { tax: null, ins: null, cam: null, total: 2, source: 'quoted-market-median n=6' };
+    expect(price({ rentLow: 11, rentBasis: 'MG' }, quoted).askingNnnEq).toBeNull();
+    expect(price({ rentLow: 11, rentBasis: 'GROSS' }, quoted)).toMatchObject({ askingNnnEq: 9, opexSource: 'quoted-market-median n=6' });
+  });
+  it('no opex => no NNN equivalent; withheld and missing carry nothing', () => {
+    expect(price({ rentLow: 11, rentBasis: 'MG' }, null).askingNnnEq).toBeNull();
+    expect(price({ rentBasis: 'WITHHELD' }).askingPsfYr).toBeNull();
+    expect(price({ rentLow: null }).effectiveBasis).toBe('WITHHELD');
+  });
+});
 
-  it('NNN yearly is high confidence and unchanged', () => {
-    expect(p(8.5, 8.5, 'yr', 'NNN')).toEqual({ askingPsfYr: 8.5, effectiveBasis: 'NNN', askingNnnEq: 8.5, opexEstPsf: null, confidence: 'high' });
-  });
-  it('NNN monthly annualizes at high confidence', () => {
-    const r = p(0.75, 0.75, 'mo', 'NNN');
-    expect(r.askingNnnEq).toBeCloseTo(9);
-    expect(r.confidence).toBe('high');
-  });
-  it('no period with a sub-3.00 value is monthly at low confidence', () => {
-    const r = p(0.75, null, null, 'NNN');
-    expect(r.askingPsfYr).toBeCloseTo(9);
-    expect(r.confidence).toBe('low');
-  });
-  it('no period with a value >= 3.00 is yearly at high confidence', () => {
-    expect(p(7, null, null, 'NNN').confidence).toBe('high');
-  });
-  it('a range wider than 20% becomes UNKNOWN', () => {
-    expect(p(8, 10, 'yr', 'NNN')).toEqual({ askingPsfYr: null, effectiveBasis: 'UNKNOWN', askingNnnEq: null, opexEstPsf: null, confidence: 'low' });
-  });
-  it('a narrow range uses the midpoint and swaps inverted bounds', () => {
-    expect(p(9, 10, 'yr', 'NNN').askingNnnEq).toBeCloseTo(9.5);
-    expect(p(10, 9, 'yr', 'NNN').askingNnnEq).toBeCloseTo(9.5);
-  });
-  it('gross subtracts tax+ins+cam at low confidence', () => {
-    expect(p(12, 12, 'yr', 'GROSS')).toEqual({ askingPsfYr: 12, effectiveBasis: 'GROSS', askingNnnEq: 10.25, opexEstPsf: 1.75, confidence: 'low' });
-  });
-  it('MG subtracts only the configured landlord-paid components', () => {
-    expect(p(11, 11, 'yr', 'MG')).toEqual({ askingPsfYr: 11, effectiveBasis: 'MG', askingNnnEq: 9.75, opexEstPsf: 1.25, confidence: 'low' });
-  });
-  it('MG with no opex default has no NNN equivalent', () => {
-    expect(p(11, 11, 'yr', 'MG', null).askingNnnEq).toBeNull();
-  });
-  it('withheld and missing rents carry nothing', () => {
-    expect(p(8, 8, 'yr', 'WITHHELD').askingPsfYr).toBeNull();
-    expect(p(null, null, 'yr', 'NNN').effectiveBasis).toBe('WITHHELD');
+describe('opex estimates', () => {
+  it('defaults win over quoted medians; quoted medians need n', () => {
+    const d = { tax: 1, ins: 0.2, cam: 0.3, source: 'broker', asOf: '2026-01-01' };
+    expect(opexFromDefaults(d)).toEqual({ tax: 1, ins: 0.2, cam: 0.3, total: 1.5, source: 'config: broker (2026-01-01)' });
+    expect(opexFromQuotedMedian([2, 2.5, 3, 1.5], 5)).toBeNull();
+    expect(opexFromQuotedMedian([2, 2.5, 3, 1.5, 2.2], 5)).toEqual({ tax: null, ins: null, cam: null, total: 2.2, source: 'quoted-market-median n=5' });
+    expect(resolveOpex(d, [2, 2.5, 3, 1.5, 2.2], 5)?.total).toBe(1.5);
+    expect(resolveOpex(null, [2, 2.5, 3, 1.5, 2.2], 5)?.total).toBe(2.2);
+    expect(resolveOpex(null, [], 5)).toBeNull();
   });
 });
 
@@ -156,30 +161,28 @@ describe('isBenchmarkEligible', () => {
     ['proposed building', { buildingStatus: 'proposed' as const }],
     ['no rent', { askingNnnEq: null }],
     ['building too large', { buildingSf: 90000 }],
-  ])('rejects %s', (_label, patch) => {
+  ])('rejects %s', (_l, patch) => {
     expect(isBenchmarkEligible({ ...base, ...patch }, 80000)).toBe(false);
   });
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
-
-Run: `npx vitest run tests/unit/lease-market-normalize.test.ts`
-Expected: FAIL — cannot resolve `normalize`.
+- [ ] **Step 2:** `npx vitest run tests/unit/lease-market-normalize.test.ts` — Expected: FAIL.
 
 - [ ] **Step 3: Write the implementation**
 
 ```ts
 // src/analytics/lease-market/normalize.ts
 //
-// Lease Market Intelligence — pure normalization (spec §3.3). No I/O.
-// Every rule here decides whether a listing enters a benchmark, so each has a boundary test in
-// tests/unit/lease-market-normalize.test.ts. Financial-decision source: changes need a refute pass.
+// Lease Market Intelligence — pure normalization (spec rev 3 §3.3). No I/O.
+// Every rule here decides whether a quote enters a benchmark; each has a boundary test.
+// Financial-decision source: refute pass required.
 import {
   SIZE_BANDS,
-  type BuildingStatus, type LmSubtype, type LmThresholds, type OfficeStratum, type OpexComponent,
+  type BuildingStatus, type LmSubtype, type LmThresholds, type OfficeStratum, type OpexComponent, type OpexDefaults,
   type OriginTier, type RentBasis, type SizeBand,
 } from '../../contracts/lease-market';
+import { medianOf } from './benchmarks';
 
 const DAY_MS = 86_400_000;
 
@@ -201,23 +204,27 @@ const DIRECTIONAL: Readonly<Record<string, string>> = {
 };
 const UNIT_TOKENS: ReadonlySet<string> = new Set(['SUITE', 'STE', 'UNIT', 'BLDG', '#']);
 
+function tokens(raw: string): string[] {
+  return raw.toUpperCase().replace(/#/g, ' # ').replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+}
+
 export function normalizeSuite(raw: string | null | undefined): string {
   if (!raw) return '';
-  const parts = raw.toUpperCase().replace(/#/g, ' # ').replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  const parts = tokens(raw);
   while (parts.length > 0 && UNIT_TOKENS.has(parts[0]!)) parts.shift();
   return parts.join('');
 }
 
 export function splitAddress(rawAddress: string, rawSuite: string | null): { addressNorm: string; suiteNorm: string } {
-  const tokens = rawAddress.toUpperCase().replace(/#/g, ' # ').replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
+  const parts = tokens(rawAddress);
   let embeddedSuite: string | null = null;
   // A unit designator needs a house number and a street name before it, and a value after it.
-  const unitIdx = tokens.findIndex((t, i) => i >= 2 && i < tokens.length - 1 && UNIT_TOKENS.has(t));
+  const unitIdx = parts.findIndex((t, i) => i >= 2 && i < parts.length - 1 && UNIT_TOKENS.has(t));
   if (unitIdx >= 0) {
-    embeddedSuite = tokens.slice(unitIdx).join(' ');
-    tokens.length = unitIdx;
+    embeddedSuite = parts.slice(unitIdx).join(' ');
+    parts.length = unitIdx;
   }
-  const addressNorm = tokens.map((t) => STREET_SUFFIX[t] ?? DIRECTIONAL[t] ?? t).join(' ');
+  const addressNorm = parts.map((t) => STREET_SUFFIX[t] ?? DIRECTIONAL[t] ?? t).join(' ');
   return { addressNorm, suiteNorm: normalizeSuite(rawSuite ?? embeddedSuite) };
 }
 
@@ -244,28 +251,80 @@ export interface ParsedRentText {
   rentPeriod: 'yr' | 'mo' | null;
   basis: RentBasis | null;
   withheld: boolean;
+  isTotal: boolean;
+  opexQuoted: number | null;
+  ambiguous: boolean;
+}
+
+const WITHHELD_RE = /withheld|negotiable|upon request|\bcall\b|\btbd\b|n\/a/i;
+const NUM_RE = /(\d+(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)/g;
+const EXPENSE_RE = /\b(NNN|CAM|TICAM|opex|op\s*ex|expenses|nets?)\b/i;
+const PER_SF_RE = /\/\s*(?:SF|sq\.?\s*ft\.?)\b|\bpsf\b|per\s+(?:SF|sq\.?\s*ft|square\s+foot)/i;
+
+function numbersIn(s: string): number[] {
+  return [...s.matchAll(NUM_RE)].map((m) => Number(m[1]!.replace(/,/g, ''))).filter((n) => Number.isFinite(n) && n > 0);
+}
+
+function basisIn(s: string): RentBasis | null {
+  if (/\bNNN\b|triple\s+net/i.test(s)) return 'NNN';
+  if (/\bMG\b|modified\s+gross/i.test(s)) return 'MG';
+  if (/\bIG\b|industrial\s+gross/i.test(s)) return 'IG';
+  if (/\bFSG?\b|full\s+service/i.test(s)) return 'FSG';
+  if (/\bgross\b/i.test(s)) return 'GROSS';
+  return null;
 }
 
 export function parseRentText(text: string): ParsedRentText {
   const t = text.trim();
-  const withheld: ParsedRentText = { rentLow: null, rentHigh: null, rentPeriod: null, basis: null, withheld: true };
-  if (!t || /withheld|negotiable|upon request|\bcall\b|\btbd\b|n\/a/i.test(t)) return withheld;
-  const nums = [...t.matchAll(/(\d+(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)/g)]
-    .map((m) => Number(m[1]!.replace(/,/g, '')))
-    .filter((n) => Number.isFinite(n) && n > 0);
-  if (nums.length === 0) return withheld;
-  const rentPeriod = /\/\s*(mo|month)\b|per\s+month|monthly/i.test(t)
-    ? 'mo'
-    : /\/\s*(yr|year)\b|per\s+year|annual/i.test(t)
-      ? 'yr'
-      : null;
+  const withheld: ParsedRentText = { rentLow: null, rentHigh: null, rentPeriod: null, basis: null, withheld: true, isTotal: false, opexQuoted: null, ambiguous: false };
+  if (!t || WITHHELD_RE.test(t)) return withheld;
+
+  // "$7.25/SF + $2.50 NNN" / "$12,000/month + expenses": base rent + expense add-on => NNN base, quoted opex.
+  let basePart = t;
+  let opexQuoted: number | null = null;
   let basis: RentBasis | null = null;
-  if (/\bNNN\b|triple\s+net/i.test(t)) basis = 'NNN';
-  else if (/\bMG\b|modified\s+gross/i.test(t)) basis = 'MG';
-  else if (/\bIG\b|industrial\s+gross/i.test(t)) basis = 'IG';
-  else if (/\bFSG?\b|full\s+service/i.test(t)) basis = 'FSG';
-  else if (/\bgross\b/i.test(t)) basis = 'GROSS';
-  return { rentLow: nums[0]!, rentHigh: nums.length > 1 ? nums[1]! : nums[0]!, rentPeriod, basis, withheld: false };
+  const plusIdx = t.indexOf('+');
+  if (plusIdx >= 0 && EXPENSE_RE.test(t.slice(plusIdx + 1))) {
+    basePart = t.slice(0, plusIdx);
+    opexQuoted = numbersIn(t.slice(plusIdx + 1))[0] ?? null;
+    basis = 'NNN';
+  }
+
+  const nums = numbersIn(basePart);
+  if (nums.length === 0) return withheld;
+  const rentLow = nums[0]!;
+  const rentHigh = nums.length > 1 ? nums[1]! : nums[0]!;
+  const rentPeriod = /\/\s*(mo|month)\b|per\s+month|monthly/i.test(t) ? 'mo' : /\/\s*(yr|year)\b|per\s+year|annual/i.test(t) ? 'yr' : null;
+  if (basis === null) basis = basisIn(t);
+
+  const perSf = PER_SF_RE.test(t);
+  const maxVal = Math.max(rentLow, rentHigh);
+  const isTotal = !perSf && (maxVal >= 1000 || (rentPeriod === 'mo' && maxVal >= 50));
+  const ambiguous = !perSf && !isTotal && maxVal >= 60;
+  return { rentLow, rentHigh, rentPeriod, basis, withheld: false, isTotal, opexQuoted, ambiguous };
+}
+
+// ── Opex estimate ────────────────────────────────────────────────────────────
+export interface OpexEstimate {
+  tax: number | null;
+  ins: number | null;
+  cam: number | null;
+  total: number;
+  source: string;
+}
+
+export function opexFromDefaults(d: OpexDefaults | null): OpexEstimate | null {
+  return d ? { tax: d.tax, ins: d.ins, cam: d.cam, total: d.tax + d.ins + d.cam, source: `config: ${d.source} (${d.asOf})` } : null;
+}
+
+export function opexFromQuotedMedian(values: readonly number[], minN: number): OpexEstimate | null {
+  if (values.length < minN) return null;
+  const total = medianOf(values);
+  return total === null ? null : { tax: null, ins: null, cam: null, total, source: `quoted-market-median n=${values.length}` };
+}
+
+export function resolveOpex(defaults: OpexDefaults | null, quotedValues: readonly number[], minN: number): OpexEstimate | null {
+  return opexFromDefaults(defaults) ?? opexFromQuotedMedian(quotedValues, minN);
 }
 
 // ── Pricing ──────────────────────────────────────────────────────────────────
@@ -274,56 +333,88 @@ export interface RentInput {
   rentHigh: number | null;
   rentPeriod: 'yr' | 'mo' | null;
   rentBasis: RentBasis;
+  rentIsTotal: boolean;
+  availableSf: number;
 }
-export interface OpexInput { tax: number; ins: number; cam: number }
+
 export interface PricedObservation {
   askingPsfYr: number | null;
   effectiveBasis: RentBasis;
   askingNnnEq: number | null;
   opexEstPsf: number | null;
+  opexSource: string | null;
   confidence: 'high' | 'low';
+  rejectedReason: string | null;
 }
 
-const GROSS_COMPONENTS: readonly OpexComponent[] = ['tax', 'ins', 'cam'];
+export type PricingThresholds = Pick<LmThresholds, 'rangeMaxSpread' | 'monthlyValueCeiling' | 'rentMinPsfYr' | 'rentMaxPsfYr'>;
 
 export function priceObservation(
   input: RentInput,
-  opex: OpexInput | null,
+  opex: OpexEstimate | null,
   mgLandlordPays: readonly OpexComponent[],
-  t: Pick<LmThresholds, 'rangeMaxSpread' | 'monthlyValueCeiling'>,
+  t: PricingThresholds,
 ): PricedObservation {
-  const none = (basis: RentBasis): PricedObservation => ({ askingPsfYr: null, effectiveBasis: basis, askingNnnEq: null, opexEstPsf: null, confidence: 'low' });
+  const none = (basis: RentBasis, reason: string | null = null): PricedObservation => ({
+    askingPsfYr: null, effectiveBasis: basis, askingNnnEq: null, opexEstPsf: null, opexSource: null, confidence: 'low', rejectedReason: reason,
+  });
   if (input.rentBasis === 'WITHHELD' || input.rentBasis === 'UNKNOWN') return none(input.rentBasis);
 
   let low = input.rentLow ?? input.rentHigh;
   let high = input.rentHigh ?? input.rentLow;
   if (low === null || high === null) return none('WITHHELD');
   if (high < low) [low, high] = [high, low];
-  if (low <= 0) return none('UNKNOWN');
-  if ((high - low) / low > t.rangeMaxSpread) return none('UNKNOWN');
-
+  if (low <= 0) return none('UNKNOWN', 'non-positive rent');
+  const spread = (high - low) / low;
+  if (spread > t.rangeMaxSpread) return none('UNKNOWN', `range spread ${(spread * 100).toFixed(0)}% > ${(t.rangeMaxSpread * 100).toFixed(0)}%`);
   const mid = (low + high) / 2;
-  let askingPsfYr = mid;
+
+  let askingPsfYr: number;
   let periodInferred = false;
-  if (input.rentPeriod === 'mo') askingPsfYr = mid * 12;
-  else if (input.rentPeriod === null && mid < t.monthlyValueCeiling) {
+  if (input.rentIsTotal) {
+    if (input.rentPeriod === null) return none('UNKNOWN', 'total amount without a period');
+    if (!(input.availableSf > 0)) return none('UNKNOWN', 'total amount without available SF');
+    askingPsfYr = (input.rentPeriod === 'mo' ? mid * 12 : mid) / input.availableSf;
+  } else if (input.rentPeriod === 'mo') {
+    askingPsfYr = mid * 12;
+  } else if (input.rentPeriod === 'yr') {
+    askingPsfYr = mid;
+  } else if (mid < t.monthlyValueCeiling) {
     askingPsfYr = mid * 12;
     periodInferred = true;
+  } else {
+    askingPsfYr = mid;
+  }
+
+  const outOfBounds = (v: number) => v < t.rentMinPsfYr || v > t.rentMaxPsfYr;
+  if (outOfBounds(askingPsfYr)) {
+    return none('UNKNOWN', `asking $${askingPsfYr.toFixed(2)}/SF/yr outside $${t.rentMinPsfYr}-$${t.rentMaxPsfYr}`);
   }
 
   if (input.rentBasis === 'NNN') {
-    return { askingPsfYr, effectiveBasis: 'NNN', askingNnnEq: askingPsfYr, opexEstPsf: null, confidence: periodInferred ? 'low' : 'high' };
+    return { askingPsfYr, effectiveBasis: 'NNN', askingNnnEq: askingPsfYr, opexEstPsf: null, opexSource: null, confidence: periodInferred ? 'low' : 'high', rejectedReason: null };
   }
-  const components = input.rentBasis === 'MG' || input.rentBasis === 'IG' ? mgLandlordPays : GROSS_COMPONENTS;
-  if (opex === null) {
-    return { askingPsfYr, effectiveBasis: input.rentBasis, askingNnnEq: null, opexEstPsf: null, confidence: 'low' };
+
+  let estimate: number | null = null;
+  if (opex) {
+    if (input.rentBasis === 'GROSS' || input.rentBasis === 'FSG') {
+      estimate = opex.total;
+    } else {
+      const parts = mgLandlordPays.map((c) => opex[c]);
+      estimate = parts.every((p) => p !== null) ? parts.reduce<number>((sum, p) => sum + (p as number), 0) : null;
+    }
   }
-  const opexEstPsf = components.reduce((sum, c) => sum + opex[c], 0);
-  const nnn = askingPsfYr - opexEstPsf;
-  return { askingPsfYr, effectiveBasis: input.rentBasis, askingNnnEq: nnn > 0 ? nnn : null, opexEstPsf, confidence: 'low' };
+  if (estimate === null || opex === null) {
+    return { askingPsfYr, effectiveBasis: input.rentBasis, askingNnnEq: null, opexEstPsf: null, opexSource: null, confidence: 'low', rejectedReason: null };
+  }
+  const nnn = askingPsfYr - estimate;
+  if (outOfBounds(nnn)) {
+    return { askingPsfYr, effectiveBasis: input.rentBasis, askingNnnEq: null, opexEstPsf: estimate, opexSource: opex.source, confidence: 'low', rejectedReason: `NNN-equivalent $${nnn.toFixed(2)} outside bounds` };
+  }
+  return { askingPsfYr, effectiveBasis: input.rentBasis, askingNnnEq: nnn, opexEstPsf: estimate, opexSource: opex.source, confidence: 'low', rejectedReason: null };
 }
 
-// ── Benchmark eligibility (spec §3.3) ────────────────────────────────────────
+// ── Benchmark eligibility ────────────────────────────────────────────────────
 export interface EligibilityInput {
   confidence: 'high' | 'low';
   effectiveBasis: RentBasis;
@@ -348,14 +439,6 @@ export function isBenchmarkEligible(o: EligibilityInput, maxBuildingSf: number):
 }
 ```
 
-- [ ] **Step 4: Run tests, typecheck, lint**
+- [ ] **Step 4:** `npx vitest run tests/unit/lease-market-normalize.test.ts && npm run typecheck && npx eslint src/analytics/lease-market tests/unit/lease-market-normalize.test.ts --max-warnings 0` — Expected: PASS / clean.
 
-Run: `npx vitest run tests/unit/lease-market-normalize.test.ts && npm run typecheck && npx eslint src/analytics/lease-market tests/unit/lease-market-normalize.test.ts --max-warnings 0`
-Expected: all PASS / clean.
-
-- [ ] **Step 5: Commit**
-
-```bash
-git add src/analytics/lease-market/normalize.ts tests/unit/lease-market-normalize.test.ts
-git commit -F <message-file>   # "feat(analytics): lease market normalization"
-```
+- [ ] **Step 5: Commit** — `git add src/analytics/lease-market/normalize.ts tests/unit/lease-market-normalize.test.ts` ("feat(analytics): lease market normalization with totals, expense quotes and bounds").

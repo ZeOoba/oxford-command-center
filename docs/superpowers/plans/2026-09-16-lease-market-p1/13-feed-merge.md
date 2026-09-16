@@ -1,4 +1,9 @@
-### Task 12: Market-rent feed → lease-forecast (manual overlay always wins)
+### Task 13: Market-rent feed → lease-forecast (manual overlay always wins)
+
+> **Plan rev 2 deltas (authoritative):**
+> - `lm_market_rent_feed` now has `comp_basis` and `confidence` and no `quoted_share`. In the feed test, insert: `INSERT INTO lm_market_rent_feed (ora_property_key, asking_nnn_eq, comp_basis, confidence, cell_key, n, computed_at) VALUES ('1100 Rarig', 9.3, 'similarity', 'MEDIUM', 'k', 12, '2026-03-01')`.
+> - Compute (Task 10) never writes LOW-confidence rows, so `loadMarketRentFeed` needs no confidence filter; keep it a plain read.
+> - The `(asking)` chip suffix in the leasing UI stays; add the confidence to the chip tooltip only if the leasing module already renders tooltips (do not build a new tooltip for this).
 
 **Files:**
 - Create: `server/warehouse/lease-market/feed.ts`

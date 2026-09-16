@@ -1,4 +1,6 @@
-### Task 07: Owner-screen bridge (institutional / never-call / affiliated)
+### Task 08: Owner-screen bridge (institutional / never-call / affiliated)
+
+> **Plan rev 2:** unchanged except numbering — "Task 02/06" references mean Task 02 (contracts) and Task 07 (parser + fixtures). The fixtures file already exists from Task 07; append `stubScreen` to it.
 
 **Files:**
 - Create: `scripts/lease-market-owner-screen.py`
