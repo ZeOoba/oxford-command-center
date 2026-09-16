@@ -1,33 +1,34 @@
-# Lease Market Intelligence — Design (rev 2)
+# Lease Market Intelligence — Design (rev 3)
 
-- **Status:** Design approved by Gabriel 2026-09-16 (monthly CoStar export cadence; row-level mirror). Rev 2 folds in the Fable 5.1 pre-mortem (§9 adjudication log).
+- **Status:** Design approved by Gabriel 2026-09-16 (monthly CoStar export cadence; row-level mirror). Rev 2 folded in the Fable 5.1 pre-mortem (§11). Rev 3 folds in the ChatGPT cross-examination (`2026-09-16-lease-market-crossexam-chatgpt.md`; adoption ids A1–A17 cited inline) and Gabriel's in-turn instruction to implement all adopted improvements.
 - **Lane:** L3 `/build` (overlaps L6 `market-monitor` / `acquisition-underwriting`; extends, never duplicates).
-- **Surfaces:** `oxford-command-center` (engine + dashboard) · `ora-skills` (one skill, P3) · CC/MCP fleet (two tasks, P3).
-- **Models:** design Opus 5 · pre-mortem Fable 5.1 · implementation Sonnet 5 (Gabriel's instruction) · task review Opus 5 · mandatory Fable REFUTE on normalization / benchmark / signal / feed modules before merge.
+- **Surfaces:** `oxford-command-center` (engine + dashboard) · `ora-skills` (one skill, P3) · CC/MCP fleet (two tasks, P3). Operator layer is Claude (Cowork/Code/fleet) — not a second agent platform (cross-exam R1).
+- **Models:** design Opus 5 · pre-mortem Fable 5.1 · implementation Sonnet 5 · task review Opus 5 · mandatory Fable REFUTE on normalization / similarity / signals / radar / feed before merge.
 
-## 1. Goals
+## 1. Goals — the five standing questions (A–E, cross-exam §1)
 
-| # | Goal | Success test |
+| # | Question | Success test |
 |---|---|---|
-| G1 | Track for-lease listings matching ORA's portfolio submarkets and buy-box across all target markets | Every in-scope row of a complete CoStar export is ingested, deduplicated, and visible after one ingest run |
-| G2 | Historical, current, and new-listing lease rates with charts on real data | Dashboard shows sourced quarterly history, current distribution, and new-vs-active medians per market; every point traces to a source row |
-| G3 | Keep ORA's own listings within market | Each vacant ORA suite shows percentile + gap % vs. its cell with n and coverage; ±10% band flagged |
-| G4 | Surface acquisition targets from stale / below-market listings | Candidate list where each row carries the evidence to decide in < 2 min |
+| A | What's newly available (and what changed)? | Changes tab lists every new / cut / increase / removed / returned space from the latest complete export per market |
+| B | What is the market actually asking? | Rent curve + benchmarks per market with n, coverage, confidence on every figure |
+| C | How has asking rent changed? | P1: per-space event history; P2: derived monthly series + CoStar Analytics history |
+| D | How does Oxford compare? | Every vacant ORA unit shows low/P25/median/P75/high of its comparable set, gap %, confidence, recommendation, and hygiene flags |
+| E | Where is there an investment opportunity? | Acquisition Radar ranks eligible properties by a transparent 100-point score with every component and gate visible, plus a decision log |
 
-**Non-goals:** maps (`submarket-spatial-analysis`) · automated promotion into Deal Sourcing Log or outreach · sale listings (`deal-flow-triage`) · any automated access to CoStar Suite or LoopNet pages.
+**Non-goals:** automated outreach or promotion (manual) · sale listings (`deal-flow-triage`) · automated CoStar/LoopNet access or third-party LoopNet data APIs (R4) · NOI claims from asking rents (R5) · emerging-market discovery (R7, `market-monitor`) · photos (R8).
 
 ## 2. Data sources (trust-ordered)
 
-| Tier | Source | Mechanism | Cadence | Enters benchmarks? | Can mark removed? |
+| Tier | Source | Mechanism | Cadence | In benchmarks? | Can remove? |
 |---|---|---|---|---|---|
-| T1 | CoStar Suite lease-listing export, one saved search per market, **space-level** rows | Human export → `OneDrive…/Claude_Workspace/lease-market-intake/costar/` | Monthly | Yes (NNN / derivable only) | Yes (complete exports only, §3.4) |
-| T1 | CoStar Analytics asking-rent history · Lease Comps | Human export, same folder | One-time backfill, then quarterly | History series · signed-rent series | n/a |
-| T2 | Alert emails (CoStar, LoopNet, Crexi, brokers) | Weekday task, M365 read-only by sender, LLM → JSON schema → validator; dedup by Message-ID; catch-up window capped 14 days | Weekdays (P3) | **No** | **No** — expire 60 days unless confirmed by an export |
-| T3 | Broker quarterly reports | `market-monitor` quarterly pass writes `market_series` points | Quarterly (P2) | History overlay only | n/a |
-| T4 | ORA rent roll (Vacant rows) + warehouse opex + LoopNet Silver activity | Warehouse join; Silver export to `lease-market-intake/loopnet-silver/` | Monthly (Silver P3) | No (ORA is the subject, not the comp set) | n/a |
-| T5 | Web sweep | Weekly research pass, URL-cited | Weekly (P4) | **No** | **No** — same 60-day expiry as T2 |
+| T1 | CoStar Suite lease-listing export, one saved search per market, space-level rows | Human export → `Claude_Workspace/lease-market-intake/costar/` | Monthly | Yes (eligible rows) | Yes (complete exports, two strikes) |
+| T1 | CoStar Analytics history · CoStar Lease Comps | Human export | Backfill, then quarterly (P2) | History / executed comps | n/a |
+| T2 | Portal alert emails + broker availability emails (A15) | M365 read-only by sender; LLM → schema → validator; Message-ID dedup | Weekdays (P3) | No | No — expire 60 days |
+| T3 | Broker quarterly reports | `market-monitor` writes `market_series` | Quarterly (P2) | History overlay | n/a |
+| T4 | ORA rent roll, ORA executed leases (TI, free rent), LoopNet Silver activity | Warehouse join; Silver export | Monthly | ORA executed = grade A comps (P2) | n/a |
+| T5 | Web sweep | Weekly research, URL-cited | Weekly (P4) | No | No — expire 60 days |
 
-CoStar/LoopNet terms prohibit robots/scrapers: data enters only via human exports or their own alert emails. DOM derives from CoStar `date on market` (with the reset guard in §3.5), so monthly cadence keeps DOM accurate; rent-cut detection lags ≤ 1 month.
+**Validation gate (A17):** Columbus is ingested first; Gabriel reviews rent curve, radar top 10 and positioning, and ratifies the subtype / status / rent-basis maps (the ontology) before other markets are enabled.
 
 ## 3. Engine
 
@@ -35,116 +36,147 @@ CoStar/LoopNet terms prohibit robots/scrapers: data enters only via human export
 
 ```
 intake → lm_landing (sha256 / Message-ID dedup, immutable file copy)
-  → parse [CoStar: header-map config, deterministic; email/web: LLM JSON → zod validator]
-  → canonical row (CanonicalListingRow — the only shape downstream code sees)
-  → normalize (address, suite, subtype, size band, rent range/period/basis → NNN-eq)
-  → resolve identity (CoStar property ID + suite ▸ address_norm + suite_norm)
-  → lm_listing + lm_observation
-  → export completeness → removal state machine
-  → benchmarks (cells, coverage, n-gated rollup) → signals → surfaces
+  → parse [CoStar: header map, deterministic | email/web: LLM JSON → zod]
+  → CanonicalListingRow
+  → normalize (address, suite, subtype, size band, rent text incl. totals and base+expense, bounds, NNN-eq)
+  → resolve identity: PROPERTY (CoStar property id ▸ address_norm) → SPACE (property + suite_norm)   (A1)
+  → lm_property + lm_listing + lm_observation + lm_listing_event                                    (A2)
+  → completeness → two-strike removal state machine
+  → benchmarks (cells) + similarity comp sets (A4) + confidence (A6)
+  → space signals + property radar score (A9) → surfaces
 ```
 
-The CoStar header map (`config/lease-market.costar-headers.json`) is the ONLY component that depends on real CoStar column labels. It is filled from Gabriel-supplied sample exports; all other code and tests run on `CanonicalListingRow` fixtures.
+### 3.2 Storage — migration 029 (additive)
 
-### 3.2 Storage — additive migrations (next free number at write time; 029+ on this branch)
-
-- `lm_landing(id, source[costar_listings|costar_history|costar_lease_comps|alert_email|web|silver], source_ref, sha256, market, received_at, file_path, row_count, header_fingerprint, completeness[complete|partial|n/a], parse_status[ok|failed], parse_error)` — UNIQUE(sha256), UNIQUE(source, source_ref) where source_ref = Message-ID or file name
-- `lm_listing(id, costar_property_id, address_norm, suite_norm, address_display, city, state, market, submarket, subtype[warehouse|flex], building_status[existing|proposed|under_construction|unknown], building_sf, year_built, clear_height_ft, docks, drive_ins, office_pct, owner_name, owner_type[institutional|affiliated|private|unknown], is_ora_owned, ora_property_key, first_seen, last_seen, costar_date_on_market, status[active|missing_once|removed|expired], removed_at, origin_tier)` — UNIQUE(address_norm, suite_norm)
-- `lm_observation(id, listing_id, landing_id, observed_at, available_sf, min_divisible_sf, rent_low, rent_high, rent_period[yr|mo], rent_basis[NNN|MG|IG|GROSS|FSG|UNKNOWN|WITHHELD], is_sublease, asking_nnn_eq, opex_est_psf, opex_source, costar_dom, confidence[high|low])` — UNIQUE(listing_id, landing_id)
-- `lm_signal(id, listing_id, ora_property_key, kind, severity, computed_at, evidence_json, cell_key, dismissed_at)`
-- `lm_market_rent_feed(ora_property_key PK, asking_nnn_eq, cell_key, n, quoted_share, computed_at)`
-- `lm_ora_listing_activity(ora_property_key, suite_norm, period_month, views, leads, source)` — P3
-- **History reuses `market_series`** (migration 013/017): `cluster` = config market id, `metric` ∈ {`asking_nnn_psf`, `signed_nnn_psf`, `vacancy_pct`}, `source` ∈ {`costar-analytics`, `costar-lease-comps`, `broker-<firm>`, `ora-warehouse`}, subtype/submarket in `source_detail`.
+- `lm_landing` — as rev 2 (partial unique sha256 where ok; partial unique Message-ID for emails; `owner_screen_ok`; completeness + reason).
+- `lm_property` (A1) — `id, costar_property_id, address_norm UNIQUE, address_display, city, state, zip, lat, lon, market_id, submarket, subtype{warehouse,flex}, building_status, building_sf, year_built, clear_height_ft, docks, drive_ins, office_pct, owner_name, owner_type, ora_property_key, first_seen, last_seen`.
+- `lm_listing` (space) — `id, property_id FK, suite_norm, first_seen, last_seen, first_landing_id, costar_date_on_market (earliest seen), status{active,missing_once,removed,expired}, removed_at, origin_tier, broker_name, broker_company, listing_url, description` · UNIQUE(property_id, suite_norm).
+- `lm_observation` — rev 2 columns + `rent_is_total`, `opex_quoted_psf`, `source_row`, `rejected_reason`.
+- `lm_listing_event` (A2) — `listing_id, landing_id, event_date, kind{new,returned,price_cut,price_increase,sf_change,dom_reset,missing,removed}, prev_value, new_value`.
+- `lm_signal` — `property_id NOT NULL, listing_id NULL, kind{new_listing,stale,rent_cut,below_market,withdrawn_after_stale,radar_candidate}, severity, score, confidence, comp_basis{similarity,cell}, cell_key, computed_at, evidence_json` — fully replaced per compute run.
+- `lm_market_rent_feed` — rev 2 + `confidence`, `comp_basis`.
+- `lm_radar_decision` (A14) — `property_id FK, decided_at, decision{investigate,monitor,pass,pursued,loi,closed}, note` — append-only, never replaced.
+- Read-only views for agents (cross-exam §2 small): `lm_v_current_spaces`, `lm_v_listing_metrics` (original / current / min asking, reduction count, cumulative reduction %, first/last seen), `lm_v_radar`.
+- History reuses `market_series` (P2).
 
 ### 3.3 Normalization
 
-- **Range:** `rent_low/rent_high`; use midpoint only if (high − low)/low ≤ 20%, else basis → UNKNOWN for benchmark purposes.
-- **Period:** explicit `/mo` ⇒ ×12. No explicit period and value < 3.00 with a basis present ⇒ treat as monthly ×12 and set confidence low; otherwise yearly.
-- **Basis → NNN-eq:** NNN ⇒ as-is, confidence high. GROSS/FSG ⇒ asking − opex_est (tax+ins+CAM), confidence low. MG/IG ⇒ asking − Σ(components listed in config `mgLandlordPays[market]`, default `['tax','ins']`), confidence low. opex_est resolution: ORA warehouse actual $/SF same market ▸ config `opexDefaults[market][subtype]` ▸ null (⇒ `asking_nnn_eq` null).
-- **Benchmark eligibility:** confidence high (NNN) · not sublease · not UNKNOWN/WITHHELD · origin tier T1 · building_status existing. Low-confidence rows render in charts as hollow markers but never enter P25/median or `below_market`.
-- **Subtype:** CoStar type/secondary type → {warehouse, flex} via header-map config; unmapped ⇒ hard fail naming the value. Flex cells split by `office_pct ≥ 40` when office_pct present.
-- **Size band** on available SF (min_divisible when a row is property-level): `<5K · 5–15K · 15–30K · 30–50K · 50–80K`.
-- **Scope config** (`config/lease-market.json`): markets (id, CoStar market name, tier established|entry), building SF ≤ 80K benchmark universe, ≤ 50K candidate eligibility, thresholds (§3.6), `exportRowCap`, `mgLandlordPays`, `opexDefaults`, `mirrorRowLevel`, and **per ORA property** `{propertyKey, market, submarket, subtype, buildingSf, clearHeightFt, leaseBasis[NNN|MG|GROSS|UNKNOWN]}` — ORA's `Property.market` enum is too coarse to cell-key, so positioning is null for a property missing here.
-- **Identity:** address normalization (USPS suffix + directional abbreviations, unit designators split into suite); CoStar property ID + suite wins when present.
+- **Rent text (A3):** single value, range, `/SF/mo` vs `/SF/yr`; **totals** (no `/SF` token and value ≥ 1,000, or explicit `/mo`/`per month` total ≥ 50 without `/SF`) ⇒ `rentIsTotal`, converted with available SF; **base + expenses** (`$7.25/SF + $2.50 NNN|CAM|opex|expenses|nets`) ⇒ base as NNN rent, add-on as `opex_quoted_psf`; `+ expenses` without a number ⇒ NNN with no quoted opex; withheld phrases ⇒ WITHHELD; ambiguous (no `/SF`, 60 ≤ value < 1,000, no period) ⇒ UNKNOWN.
+- **Range:** midpoint only if spread ≤ 20%, else UNKNOWN. **Period:** explicit wins; none and value < 3.00 ⇒ monthly, low confidence.
+- **Bounds (A3):** asking or NNN-eq outside **$1.00–$60.00/SF/yr** ⇒ UNKNOWN with `rejected_reason`.
+- **Basis → NNN-eq:** NNN as-is (high confidence unless period inferred). GROSS/FSG ⇒ asking − opex total. MG/IG ⇒ asking − Σ `mgLandlordPays` components (requires component-level opex). Opex resolution: config `opexDefaults` components ▸ **market quoted-opex median** (NNN observations with `opex_quoted_psf`, same market + subtype, trailing 12 months incl. current file, n ≥ 5; total only — usable for GROSS/FSG, not MG/IG) ▸ null.
+- **Benchmark eligibility:** high confidence · NNN · not sublease · T1 · existing · rent present · building SF ≤ 80K or unknown · not ORA-owned.
+- **Cells:** market × submarket × subtype{warehouse, flex} × size band (+ office stratum ≥40% for flex); rollup: widen band ▸ market level ▸ null; n ≥ 5; quoted share and low coverage (< 0.5) on every figure.
+- **Identity:** property by CoStar property id ▸ address_norm; space by property + suite_norm.
 
-### 3.4 Export completeness and removal
+### 3.4 Export completeness and removal — unchanged from rev 2
 
-A CoStar listing export for market M is **complete** iff: header fingerprint equals M's last complete export (or it is the first) · row_count < `exportRowCap` · row_count ≥ 0.7 × last complete row_count. Otherwise **partial**: ingest observations, no state transitions to missing/removed, freshness banner amber with the reason.
+Complete ⇔ header fingerprint unchanged · rows < cap · rows ≥ 0.7 × prior complete · export date after prior. Partial ⇒ observations and events only. Two consecutive complete exports without a space ⇒ `removed` (outcome unknown).
 
-State machine per T1 listing on each complete export of its market: present ⇒ `active`; absent once ⇒ `missing_once`; absent on the next complete export ⇒ `removed` (outcome unknown — never "leased"). T2/T5 listings: `expired` after 60 days without export confirmation. A header-fingerprint change hard-fails the ingest with the diff (fix = header-map update, then re-ingest).
+### 3.5 Events (A2)
 
-### 3.5 Benchmarks
+Ingest writes: `new` (first sighting) · `returned` (was removed) · `price_cut` / `price_increase` (asking NNN-eq, else rent_low, changed by > $0.005) · `sf_change` (available SF changed ≥ 5%) · `dom_reset` (CoStar DOM decreased) · `missing` · `removed`.
 
-- **Cell:** `market × submarket × subtype × size_band` (+ office stratum for flex).
-- **Stats:** median, P25, P75, `n` (eligible rows), `total_n` (all active rows in cell), `quoted_share = n/total_n`.
-- **Rollup order** until n ≥ 5: widen size band one step (both sides) ▸ drop submarket (market level) ▸ null. Every figure displays the final cell key, n, and quoted share.
-- **Low coverage:** quoted_share < 0.5 ⇒ `LOW-COVERAGE` tag; ORA percentile phrased "among quoted (n of total_n)".
-- **DOM:** `effective_dom = max(costar_dom, today − first_seen)`, matched on address_norm+suite_norm across CoStar IDs; a CoStar DOM decrease vs. prior observation sets `dom_reset` and keeps the older clock.
-- **Completed-DOM baseline:** median effective_dom at removal of listings removed in trailing 12 months, per market, n ≥ 10; else fixed fallback (established 180, entry 270).
+### 3.6 Comparable sets (A4) and confidence (A6)
 
-### 3.6 Signals (thresholds in config)
+**Similarity score (0–100), transparent, per candidate space vs. subject** — hard mismatch (different market or subtype) ⇒ excluded. Components (missing data on either side ⇒ half credit, reported as `unknown`):
+
+| Component | Weight | Full credit | Zero credit |
+|---|---|---|---|
+| Location | 30 | both coords, ≤ 2 mi (linear to 0 at 15 mi); no coords ⇒ same non-null submarket 0.7, else 0.3 | ≥ 15 mi |
+| Size | 25 | available-SF ratio ≥ 0.8 | ratio ≤ 0.3 |
+| Clear height | 15 | Δ ≤ 2 ft | Δ ≥ 12 ft |
+| Age | 10 | Δ ≤ 5 yrs | Δ ≥ 35 yrs |
+| Loading | 10 | dock parity 0.5 + drive-in parity 0.5 | — |
+| Office share | 10 | Δ ≤ 10 pts | Δ ≥ 50 pts |
+
+Comp set = benchmark-eligible spaces, excluding the subject property and ORA-owned properties, score ≥ 60, top 15 by score (ties: higher score, then lower listing id). **Sufficient** ⇔ ≥ 8 comps; otherwise the rev 2 cell is used (`comp_basis='cell'`). Stats: low, P25, median, P75, high (unweighted, auditable).
+
+**Confidence:** HIGH ⇔ similarity basis with ≥ 15 comps and cell not low coverage · MEDIUM ⇔ similarity with 8–14 comps, or cell basis with n ≥ 10, not market-level, not low coverage · LOW otherwise. (P2 adds: HIGH also requires ≥ 1 grade A/B executed comp within 18 months once executed comps exist for the market.)
+
+### 3.7 Space signals
 
 | Kind | Rule |
 |---|---|
-| `new_listing` | first sighting in the latest complete export (or T2/T5 first sighting in P3+), in scope |
-| `stale` | effective_dom ≥ max(180, 1.5 × completed-DOM baseline); building_status existing |
-| `rent_cut` | asking_nnn_eq or rent_low decreased vs. prior observation of the same listing |
-| `below_market` | eligible row · cell n ≥ 10 · cell not market-level rollup · not LOW-COVERAGE · asking_nnn_eq ≤ P25 **and** ≤ 0.85 × median. Evidence includes clear height, year built, loading vs. cell medians |
-| `ora_positioning` | per ORA Vacant rent-roll unit whose property is in config: ORA asking from its matched CoStar listing (is_ora_owned) ▸ null. Percentile + gap %; `above` > +10%, `below` < −10%; carries effective_dom and (P3) Silver views/leads |
-| `acq_candidate` | ≥ 2 of {stale, rent_cut, vacancy_share ≥ 30%, below_market} · building_sf ≤ 50K · building_status existing · not sublease · owner_type ≠ institutional · owner not on never-call floor · not ORA-owned. Evidence: vacancy share, `owner_listing_count` (same owner across current exports), building status, DOM source + dom_reset, cell n + coverage. Affiliated owners flagged, not dropped |
+| `new_listing` | first landing is the market's latest complete export |
+| `stale` | existing building · effective DOM ≥ stale threshold (`max(180, 1.5 × completed-DOM baseline)`, fallback 180 / 270 by tier); `effective_dom = max(own clock, earliest CoStar date)`; severity high if the space had a price cut or property vacancy share ≥ 30% |
+| `rent_cut` | a `price_cut` event in the latest complete export of the market; evidence: original, previous, current asking, reduction count, cumulative % |
+| `below_market` | eligible space · comparable set confidence ≥ MEDIUM · asking ≤ comparable P25 **and** ≤ 0.85 × comparable median |
+| `withdrawn_after_stale` (A10) | space removed within the last 90 days whose effective DOM at removal ≥ stale threshold — severity info ("monitor; outcome unknown") |
 
-Owner screening reads, never writes: `county-parcel-screen/scripts/institutional_owners.py` alias table (ported to a JSON export consumed by TS) and `data/pipeline-guard.local.json` never-call floor (absent file ⇒ candidate list withheld with a banner, fail-closed). Promotion to `verified-deal-recon` / `owner-outreach` is Gabriel's manual action.
+ORA-owned properties emit no market signals (they appear in positioning).
 
-### 3.7 Market-rent feed (replaces writing into the overlay)
+### 3.8 Acquisition Radar (A9)
 
-`lm_market_rent_feed` holds, per ORA propertyKey whose config `leaseBasis = NNN`, the cell median NNN-eq with n and quoted share. `lease-forecast-api.ts` merges `{...feed, ...overlay.marketRents}` at read time — manual overlay values win by construction, the feed never touches `overlay.json`. `MarketRentGap.provenance` gains `'derived-asking'` for feed-sourced values. Properties with MG/GROSS/UNKNOWN basis get no feed value (gap stays `absent`). UI labels feed values "asking".
+**Gates (all required):** owner screen available for the market · owner type ∉ {institutional, never_call, unknown} · not ORA-owned · building SF known and ≤ 50,000 · building existing · ≥ 1 active non-sublease space.
 
-## 4. Dashboard — "Lease Market" module (group Market, id `lease-market`)
+**Score (0–100, every component shown):**
 
-1. **Freshness banner** — last complete export per market; amber if partial or > 35 days; benchmarks behind it tagged STALE.
-2. **Current distribution** — per-market strip plot of asking NNN-eq (eligible solid, low-confidence hollow), P25/median/P75 ticks, ORA listings highlighted.
-3. **ORA positioning table** — unit, SF, ORA asking, cell median, percentile, gap %, DOM, cell key · n · coverage.
-4. **Signals table** — kind/market/severity filters, evidence drawer, dismiss (internal).
-5. **DOM histogram** per market (P1) · **Rent history** line (P2) · **New vs. active** medians (P2).
+| Component | Max | Rule |
+|---|---|---|
+| Days on market | 25 | max effective DOM ÷ stale threshold: < 0.75 ⇒ 0 · < 1.0 ⇒ 10 · < 1.5 ⇒ 18 · ≥ 1.5 ⇒ 25 |
+| Rent reductions | 20 | max over spaces: ≥ 2 cuts ⇒ 12, 1 cut ⇒ 6; plus cumulative reduction ≥ 10% ⇒ +8, ≥ 5% ⇒ +4; cap 20 |
+| Below comparable median | 25 | best space gap vs. its comparable median, confidence ≥ MEDIUM: ≤ −25% ⇒ 25 · ≤ −15% ⇒ 18 · ≤ −10% ⇒ 10 |
+| Building vacancy share | 15 | Σ active non-sublease available SF ÷ building SF: ≥ 50% ⇒ 15 · ≥ 30% ⇒ 10 · ≥ 15% ⇒ 5 |
+| Buy-box fit | 10 | building 10,000–50,000 SF ⇒ 6 (< 10,000 ⇒ 3) + warehouse 4 / flex 3 |
+| Owner | 5 | private ⇒ 5 · verify or affiliated ⇒ 2 |
 
-New chart primitives (visx, `src/charts/theme.ts` tokens): `StripPlot`, `Histogram`, `MultiLineChart`. Mirror: routes added explicitly to `scripts/bake-warehouse.ts`; `mirrorRowLevel` (default **true** per Gabriel's approved design) — false bakes aggregates only.
+Candidate ⇔ gates pass and score ≥ `radarMinScore` (50). Evidence: score parts, gates, vacancy share, reductions timeline, owner name/type/listing count, broker, **indicative rent gap** = (comparable median − asking) × available SF for the best space, labeled "gross, vacant space only — not NOI" (R5). Decisions append to `lm_radar_decision`; the latest decision shows beside each candidate. Pursue ⇒ `verified-deal-recon` (manual).
 
-## 5. Automation (P3; registered only via `register-scheduled-task`, CC/MCP fleet)
+### 3.9 Oxford Rent Position (A7) and listing hygiene (A8)
 
-- `ora-lease-listings-intake` — weekdays: ingest new files in the intake folders; read alert emails by sender (read-only), extract, validate, ingest. Nonzero exit on failure.
-- `ora-lease-market-digest` — Mondays: recompute; send digest to `ggoldberg@oxfordra.net` only via `_shared/send-via-outlook.ps1` **only if** a new landing exists since the last digest. On the first business day of each month, and again at day 35 for any market still unexported, send an internal export-reminder email naming the markets.
+Per vacant rent-roll unit whose property is configured: subject = config property (+ physicals from its matched `lm_property` when present) at the unit's SF; comparable set per §3.6; output low/P25/median/P75/high, n, basis, confidence, ORA asking (from the matched ORA space), percentile, gap %, band (±10%), estimated market asking range (P25–P75), deterministic recommendation, top comps (address when row-level allowed, SF, asking, score), effective DOM, broker/URL/date listed. Flags: `not_listed` (vacant unit, no ORA space in CoStar) and, separately, `listed_but_leased` (active ORA space in CoStar with no matching vacant unit in the rent roll).
 
-## 6. Skill — `lease-market-monitor` (ora-skills, P3)
+### 3.10 Market-rent feed
 
-Intake setup (CoStar saved-search spec per market, required export columns, alert senders), signal interpretation, hand-offs (`verified-deal-recon`, `owner-outreach`, `acquisition-underwriting` COMPS mode reads cell benchmarks first), CoStar data-handling rule. Tie-break: market-level narrative stays in `market-monitor`; listing-level tracking lives here.
+Per configured ORA property with `leaseBasis = NNN`: comparable median at `typicalUnitSf` (similarity ▸ cell), written with n, basis, confidence; LOW confidence or low coverage ⇒ no value. Merged under manual `overlay.marketRents` at read time (`derived-asking` provenance).
+
+## 4. Dashboard — "Lease Market" module
+
+**KPI row (A13):** markets fresh / total · active spaces · new in latest exports · price cuts · stale · radar candidates.
+**Tabs:** *Portfolio* (Rent Position table, hygiene flags, expandable comps) · *Market Rents* (RentCurve scatter — log available SF vs. NNN-eq, solid quoted / hollow converted / ORA highlighted (A11); DOM histogram; benchmark table) · *Acquisition Radar* (ranked candidates with score breakdown, gates, decision buttons; withdrawn-after-stale monitor list) · *Changes* (events from latest exports) · *Data Quality* (freshness per market, rows, skipped, quoted share, coordinate coverage, low-confidence share).
+**Space history drawer:** observations + events timeline (live server only).
+Mirror: summary, positioning, radar, signals, changes baked (optional routes); `mirrorRowLevel=false` strips addresses, owners, brokers, URLs.
+
+## 5. Automation (P3; `register-scheduled-task`, CC/MCP fleet)
+
+- `ora-lease-listings-intake` (weekdays): intake files; portal + broker emails (A15) → T2 rows; nonzero exit on failure.
+- `ora-lease-market-digest` (Mondays, only if a new landing exists): one email, three sections — Leasing · Portfolio · Acquisition (A16); immediate push only for a new radar candidate ≥ 70 or an ORA vacancy crossing ±10%; export reminders on the first business day and at day 35.
+
+## 6. Skill — `lease-market-monitor` (P3)
+
+Intake setup, signal and radar interpretation, natural-language query recipes over the `lm_v_*` views, hand-offs (`verified-deal-recon`, `owner-outreach`, COMPS mode), CoStar data rule, tie-breaks (market narrative → `market-monitor`; sale OMs → `deal-flow-triage`).
 
 ## 7. Error handling
 
-One transaction per landing (no partial inserts) · unknown header / unmapped subtype ⇒ hard fail naming the value · schema-failing LLM rows rejected and listed in the run log · duplicate sha256 or Message-ID ⇒ no-op · cell null after full rollup ⇒ benchmark null + reason, signals suppressed · missing never-call floor ⇒ candidates withheld · scripts exit nonzero on failure.
+One transaction per landing · unknown header / unmapped value ⇒ hard fail naming it · out-of-bounds rent ⇒ UNKNOWN + reason (row kept) · schema-failing LLM rows rejected · duplicates no-op · thin comparables ⇒ LOW confidence, signals that need MEDIUM suppressed · missing owner screen ⇒ radar withheld (fail closed) · scripts exit nonzero on failure.
 
-## 8. Testing and phasing
+## 8. Testing
 
-Unit tests per normalization rule, stats, rollup, completeness, removal state machine, DOM reset, each signal at its threshold boundaries, feed merge precedence. Integration: temp warehouse, two sequential monthly exports ⇒ DOM, rent cut, missing_once → removed, partial-export no-op, signals, feed. Fixtures: canonical rows; CoStar header-map fixtures only from real sample headers.
+Unit tests for every normalization rule (incl. totals, base+expense, bounds), similarity components and selection, confidence, events, radar gates and each score band, positioning recommendation and hygiene flags, feed precedence. Integration: two sequential exports ⇒ events, removal, signals, radar, feed, API. Fixtures use TEST header labels; production header map only from real samples.
+
+## 9. Phasing
 
 | Phase | Scope |
 |---|---|
-| **P1** | Migrations · config · canonical row + normalization · CoStar listings parser (header map pending samples) · identity · completeness/removal · benchmarks · signals (new, stale, rent_cut, below_market, ora_positioning, acq_candidate) · feed + lease-forecast merge · API · module (banner, distribution, positioning, signals, DOM) · mirror routes |
-| **P2** | CoStar Analytics + Lease Comps ingest into `market_series` · broker points from `market-monitor` · ORA signed rents · history + new-vs-active charts |
-| **P3** | Alert-email intake · two scheduled tasks · digest + export reminders · Silver activity · `lease-market-monitor` skill |
-| **P4** | Web sweep (T5, non-benchmark, 60-day expiry) |
-
-## 9. Pre-mortem adjudication log (Fable 5.1, 2026-09-16)
-
-Accepted: F1 lease-basis gating of the feed · F2 feed table + read-time merge instead of overlay writes · F3 MG/IG excluded from benchmarks · F4 coverage/quoted share · F5 completeness + two-strike removal + header fingerprint · F6 completed-DOM baseline · F7 DOM reset guard · F8 ranges/period/sublease/min-divisible · F9 ≥2-of candidate rule + building status + owner listing count · F10 size-band-first rollup, below_market n ≥ 10, no market-level firing · F11 T2/T5 never benchmark, 60-day expiry, Message-ID dedup · F13 reuse `market_series` · F14 per-ORA-property config.
-Modified: F12 — reminder via internal email (pre-authorized routing) rather than Outlook task objects.
-Rejected: F15 default `mirrorRowLevel=false` — Gabriel explicitly chose row-level; flag retained, flip is config-only. Cut of web sweep — Gabriel explicitly requested it; kept as P4 with non-benchmark / no-removal constraints.
-Cuts accepted: `light_mfg` subtype · 7-day new-listing rule · `lm_rent_series` · unconditional weekly digest.
+| **P1** | Migration 029 · config · normalization (A3) · property/space identity (A1) · events (A2) · completeness/removal · cells · similarity + confidence (A4, A6) · space signals + withdrawn (A10) · radar score + decisions (A9, A14) · Rent Position + hygiene (A7, A8) · feed · API · module with KPI row, tabs, RentCurve, history drawer (A11, A13) · agent views · Columbus-first gate (A17) |
+| **P2** | `lm_lease_comp` executed comps, grades A–D, net effective rent (A5) · derived monthly series incl. same-listing change (A12) · CoStar Analytics history · broker points · leased-vs-withdrawn classification · history charts · map decision (D1) · pricing elasticity once data allows (D2) |
+| **P3** | Alert + broker email intake (A15) · digest with three lanes + threshold pushes (A16) · export reminders · Silver activity · skill with NL query recipes |
+| **P4** | Web sweep (T5) |
+| **P5** | Hedonic rent model once ≥ 200 graded comps per market (D3) |
 
 ## 10. Risks
 
 | Risk | Mitigation |
 |---|---|
-| CoStar column labels unknown | Header map is the sole dependency; filled from Gabriel's sample exports; hard-fail on drift |
-| CoStar per-seat license vs. mirror viewers | [SPECULATIVE] Gabriel's call; `mirrorRowLevel` flip is config-only |
-| Multi-writer repo | Worktree `feat/lease-market-intel`; claim `lease-market-intel`; `architecture/status.json` entry with review_needed listing architect-owned files (migrations, `src/contracts/lease-market.ts` + `lease-forecast.ts` provenance enum, `package.json` scripts); sub-router registration via `sub-routers.ts`, not `server/index.ts` |
-| Asking ≠ achieved | "asking" labels; signed rents plotted separately (P2) |
+| CoStar column labels unknown | Header map from real samples only; hard fail on drift; Columbus-first review |
+| Similarity weights wrong for a submarket | Weights and thresholds in config; comps listed for audit; cell fallback; Fable REFUTE |
+| Radar score over-weights one trigger | Gates + component caps + decision log calibration (A14) |
+| CoStar per-seat license vs. mirror viewers | `mirrorRowLevel` config flip, strips addresses/owners/brokers/URLs |
+| Multi-writer repo | Worktree + claim + `architecture/status.json` declaration; sub-router registration only |
+| Asking ≠ achieved | Labels everywhere; executed comps graded separately (P2) |
+
+## 11. Adjudication logs
+
+**Fable 5.1 pre-mortem (rev 2):** accepted F1–F11, F13, F14; modified F12; rejected F15 (Gabriel chose row-level) and the web-sweep cut; cuts accepted: `light_mfg`, 7-day new rule, `lm_rent_series`, unconditional weekly digest.
+**ChatGPT cross-examination (rev 3):** adopted A1–A17; rejected R1–R9; deferred D1–D4. Full reasoning: `2026-09-16-lease-market-crossexam-chatgpt.md`.
