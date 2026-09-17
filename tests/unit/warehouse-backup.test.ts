@@ -63,7 +63,8 @@ describe('encryptFile / decryptFile', () => {
     writeFileSync(src, Buffer.from('payload'));
     encryptFile(src, join(dir, 'c.enc'), key);
     const bytes = readFileSync(join(dir, 'c.enc'));
-    bytes[bytes.length - 1] ^= 0xff;
+    const last = bytes.length - 1;
+    bytes.writeUInt8(bytes.readUInt8(last) ^ 0xff, last);
     writeFileSync(join(dir, 'c.enc'), bytes);
     expect(() => decryptFile(join(dir, 'c.enc'), join(dir, 'out.bin'), key)).toThrow();
   });
