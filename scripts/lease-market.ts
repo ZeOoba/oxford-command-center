@@ -82,7 +82,9 @@ export function parseArgs(argv: string[]): CliArgs {
     if (token === flagName) {
       if (value !== undefined) return { command: 'invalid', message: USAGE }; // repeated flag
       const next = rest[i + 1];
-      if (next === undefined || next.startsWith('--')) return { command: 'invalid', message: USAGE };
+      // Empty string (space form, e.g. `--dir ""`) is never a valid value -- same treatment as the
+      // already-rejected empty `--flag=` form below.
+      if (next === undefined || next === '' || next.startsWith('--')) return { command: 'invalid', message: USAGE };
       value = next;
       i += 2;
       continue;
@@ -124,20 +126,30 @@ export async function ingest(dir: string): Promise<number> {
           now: () => new Date().toISOString(),
           screen: (names) => screenOwners(names, config.ownerScreenModulePath),
         });
-        if (r.status === 'failed') failures++;
         const events = JSON.stringify(Object.fromEntries(Object.entries(r.events).filter(([, n]) => n > 0)));
-        console.log(
+        const line =
           `${r.status.padEnd(9)} ${f} market=${r.marketId ?? '?'} ${r.completeness ?? '-'} +${r.insertedSpaces} ~${r.updatedSpaces} props+${r.newProperties} skip=${r.skipped} missing=${r.markedMissing} removed=${r.markedRemoved} events=${events}` +
-            (r.partialReason ? ` | partial: ${r.partialReason}` : '') +
-            (r.error ? ` | ERROR: ${r.error}` : ''),
-        );
+          (r.partialReason ? ` | partial: ${r.partialReason}` : '') +
+          (r.error ? ` | ERROR: ${r.error}` : '');
+        // A returned (not thrown) 'failed' result is a real per-file failure -- route it to
+        // console.error like every other failure line in this loop, not console.log.
+        if (r.status === 'failed') {
+          failures++;
+          console.error(line);
+        } else {
+          console.log(line);
+        }
       } catch (e) {
         // A thrown (not caught-and-reported) ingest failure is unexpected — stop the loop rather
         // than risk ingesting later files out of order against a landing history that skipped one.
         failures++;
         const message = e instanceof Error ? e.message : String(e);
-        // CostarParseError is an expected, already-descriptive failure mode -- no stack needed.
-        // Anything else is unexpected, so append the stack for debuggability.
+        // ingestCostarListingsFile already catches CostarParseError internally (ingest.ts) and
+        // returns a status:'failed' result instead of throwing -- so a thrown CostarParseError
+        // should never actually reach this catch; only genuinely unexpected errors do. The
+        // instanceof check below is defensive belt-and-suspenders: if a CostarParseError somehow DID
+        // reach here, it's still an expected, already-descriptive failure mode and needs no stack;
+        // anything else gets the stack appended for debuggability.
         const stack = !(e instanceof CostarParseError) && e instanceof Error && e.stack ? `\n${e.stack}` : '';
         console.error(`failed ${f} | ERROR: ${message}${stack}`);
         break;
