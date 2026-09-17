@@ -86,7 +86,21 @@ export interface ParsedRentText {
 
 const WITHHELD_RE = /\bwithheld\b|(?<!non-)\bnegotiable\b|upon request|\bcall\b|\btbd\b|(?:^|\s)n\/a(?:\s|$)/i;
 const NUM_RE = /(\d+(?:,\d{3})+(?:\.\d+)?|\d*\.\d+|\d+)/g;
-const EXPENSE_RE = /\b(NNN|CAM|TICAM|opex|op\s*ex|expenses|nets?)\b/i;
+// Fix round 6: ONE shared token list for (a) EXPENSE_RE — whether a "+" is treated as an add-on split
+// point at all, (b) CANONICAL_RE's add-on grammar shape, and (c) isFullExpenseAddon's full-vs-partial
+// semantic check — so the three can never silently drift apart again. Round 5 widened the grammar to
+// accept TAX/INS as add-on tokens but never widened EXPENSE_RE to match, so a bare "+ TAX"/"+ INS" (or
+// one following an explicit MG/IG head) never even reached the partial-add-on/addonContradiction
+// checks — `addon` stayed null, and the canonical grammar (which DID recognize the shape post round 5)
+// raised no objection either. A full-expense FORM is one of FULL_FORM_ADDON_TOKENS on its own, or ALL
+// of COMPONENT_ADDON_TOKENS present as a "/"-separated chain (any order) — see isFullExpenseAddon.
+const FULL_FORM_ADDON_TOKENS = ['NNN', 'TICAM', 'nets?', 'expenses', 'opex'] as const;
+const COMPONENT_ADDON_TOKENS = ['CAM', 'TAX', 'INS'] as const;
+const ALL_ADDON_TOKENS = [...FULL_FORM_ADDON_TOKENS, ...COMPONENT_ADDON_TOKENS];
+// EXPENSE_RE additionally tolerates a spaced "op ex" — broader on purpose, since its only job is
+// deciding whether to ATTEMPT the add-on split; isFullExpenseAddon (built from the same shared list,
+// but strict — no spaced "op ex") makes the final full-vs-partial call once split.
+const EXPENSE_RE = new RegExp(String.raw`\b(?:${ALL_ADDON_TOKENS.join('|')})\b|\bop\s*ex\b`, 'i');
 const PER_SF_RE = /\/\s*(?:SF|sq\.?\s*ft\.?)\b|\bpsf\b|per\s+(?:SF|sq\.?\s*ft|square\s+foot)/i;
 const MO_RE = /\/\s*(mo|month)\b|per\s+month|\bmonthly\b/i;
 const YR_RE = /\/\s*(yr|year|annum)\b|per\s+(year|annum)/i;
@@ -120,10 +134,13 @@ const AMT = String.raw`\$?\s*(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)`;
 const UNIT = String.raw`(?:\s*\/\s*(?:SF|sq\.?\s*ft\.?)|\s*psf)?`;
 const PER = String.raw`(?:\s*\/\s*(?:yr|year|mo|month)|\s*per\s+(?:year|month|annum))?`;
 const BASIS_WORD = String.raw`(?:NNN|triple\s+net|MG|modified\s+gross|IG|industrial\s+gross|FSG?|full\s+service(?:\s+gross)?|gross)`;
-// Any of these expense tokens, in any order, "/"-separated (fix round 5: "+ INS/TAX/CAM" is exactly
-// as canonical as "+ CAM/TAX/INS" — the grammar only recognizes the SHAPE of an expense add-on;
-// whether it names a full-expense FORM is a separate semantic check, isFullExpenseAddon below).
-const ADDON_TOKEN = String.raw`(?:NNN|CAM|TICAM|opex|expenses|nets?|TAX|INS)`;
+// Any of ALL_ADDON_TOKENS (the shared list above), in any order, "/"-separated (fix round 5: "+
+// INS/TAX/CAM" is exactly as canonical as "+ CAM/TAX/INS" — the grammar only recognizes the SHAPE of
+// an expense add-on; whether it names a full-expense FORM is isFullExpenseAddon's separate semantic
+// check below, built from the SAME token list — fix round 6 — deliberately NOT space-separated and
+// NOT tolerant of a spaced "op ex": the grammar is strict on both, so isFullExpenseAddon must be too,
+// or the two silently disagree on what counts as clean (round 5's exact defect).
+const ADDON_TOKEN = String.raw`(?:${ALL_ADDON_TOKENS.join('|')})`;
 const ADDON_WORD = String.raw`${ADDON_TOKEN}(?:\s*\/\s*${ADDON_TOKEN})*`;
 // Group 1 = the first (base) amount; group 2 = the optional range high-end amount (present only when
 // the range clause matched). Both — and only these two — are capturing, so the parsed values can be
@@ -225,16 +242,27 @@ function firstRentCandidateIndex(s: string, hasDollarSign: boolean): number | nu
 
 // An expense add-on resolves the base rent's basis to NNN only when it names a full-expense FORM —
 // controller decision (fix round 5, market convention, conservative per the safety-over-yield rule):
-// NNN/TICAM/nets(net)/expenses/opex(op ex) name the whole pass-through on their own; CAM alone (or
-// CAM plus only one of TAX/INS) is a PARTIAL component and must not be read as "the tenant pays
-// everything" — that's a real, market-common defect class, not a hypothetical.
-const FULL_EXPENSE_FORM_RE = /\bNNN\b|\bTICAM\b|\bnets?\b|\bexpenses\b|\bop\s*ex\b/i;
+// a FULL_FORM_ADDON_TOKENS word on its own, OR all of COMPONENT_ADDON_TOKENS (CAM/TAX/INS) present as
+// a "/"-separated chain, any order — the SAME shape CANONICAL_RE's ADDON_WORD recognizes, built from
+// the SAME shared token list above. CAM alone (or CAM plus only one of TAX/INS, or the three given
+// space-separated rather than "/"-separated) is a PARTIAL component and must not be read as "the
+// tenant pays everything" — a real, market-common defect class, not a hypothetical. Fix round 6:
+// deliberately strict (no spaced "op ex", no space-separated CAM/TAX/INS) to match the grammar exactly
+// — a looser check here than the grammar accepts is exactly how round 5's gate hole happened.
+const FULL_FORM_ADDON_RE = new RegExp(String.raw`\b(?:${FULL_FORM_ADDON_TOKENS.join('|')})\b`, 'i');
+// A "/"-separated run of CAM/TAX/INS tokens — mirrors ADDON_WORD's own component-chain shape, so a
+// chain is "full" here iff the grammar would also recognize it as covering all three components.
+const COMPONENT_CHAIN_RE = new RegExp(
+  String.raw`\b(?:${COMPONENT_ADDON_TOKENS.join('|')})(?:\s*\/\s*(?:${COMPONENT_ADDON_TOKENS.join('|')}))*\b`,
+  'gi',
+);
 function isFullExpenseAddon(addon: string): boolean {
-  if (FULL_EXPENSE_FORM_RE.test(addon)) return true;
-  const hasCam = /\bCAM\b/i.test(addon);
-  const hasTax = /\bTAX\b/i.test(addon);
-  const hasIns = /\bINS\b/i.test(addon);
-  return hasCam && hasTax && hasIns;
+  if (FULL_FORM_ADDON_RE.test(addon)) return true;
+  for (const chain of addon.matchAll(COMPONENT_CHAIN_RE)) {
+    const seen = chain[0]!.toUpperCase().split('/').map((s) => s.trim());
+    if (COMPONENT_ADDON_TOKENS.every((token) => seen.includes(token))) return true;
+  }
+  return false;
 }
 
 // Add-on opex derivation from the expense text after a "+" (rule 7). Returns null when the
@@ -410,7 +438,11 @@ export function parseRentText(text: string): ParsedRentText {
       ambiguous = true;
     }
   }
-  const opexQuoted = addon !== null ? addonOpexValue(addon) : null;
+  // Fix round 6: a PARTIAL add-on's figure (e.g. bare "CAM") is not total opex — reporting it as
+  // opexQuoted would feed a market quoted-opex estimate as if it covered tax+insurance+CAM together,
+  // when it covers only one component. This applies regardless of what `basis` ended up being (even
+  // when an explicit head NNN keeps `basis: 'NNN'` despite the add-on being partial).
+  const opexQuoted = addon !== null && isFullExpenseAddon(addon) ? addonOpexValue(addon) : null;
   return { rentLow, rentHigh, rentPeriod, basis, withheld: false, isTotal, opexQuoted, ambiguous };
 }
 

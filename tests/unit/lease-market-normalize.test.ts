@@ -92,7 +92,9 @@ describe('parseRentText', () => {
     const r = parseRentText('$7.25/SF/YR + $0.21/SF/MO CAM');
     expect(r.rentPeriod).toBe('yr');
     expect(r.rentLow).toBe(7.25);
-    expect(r.opexQuoted).toBeCloseTo(2.52);
+    // Fix round 6: "CAM" alone is a PARTIAL add-on — its figure is not TOTAL opex, so opexQuoted must
+    // be null (was: 2.52, computed as if a bare-CAM figure were the whole opex estimate).
+    expect(r.opexQuoted).toBeNull();
   });
   it('ranges require a separator between the two numbers', () => {
     expect(parseRentText('$8.00/SF/YR - $10.00/SF/YR')).toMatchObject({ rentLow: 8, rentHigh: 10 });
@@ -308,6 +310,56 @@ describe('parseRentText', () => {
   it('add-on opex ceiling rejects a value at exactly 30 (was: only > 30)', () => {
     // $2.50/SF/MO annualized is exactly 30.00 — must be rejected, not accepted at the boundary.
     expect(parseRentText('$7.25/SF/YR + $2.50/SF/MO NNN').opexQuoted).toBeNull();
+  });
+
+  // Fix round 6 (sixth re-review): round 5 widened CANONICAL_RE's ADDON_WORD to accept TAX/INS as
+  // add-on tokens (so a differently-ordered full form like "+ INS/TAX/CAM" would still be canonical),
+  // but never widened EXPENSE_RE — the SEPARATE gate that decides whether a "+" is even treated as an
+  // add-on split point at all. A bare "+ TAX" or "+ INS" addon (or one following an explicit MG/IG
+  // head) never reached the partial-add-on/addonContradiction checks: `addon` stayed null, the base
+  // rent parsed clean, and the canonical grammar — which DID recognize "+ TAX" as a syntactically
+  // valid add-on shape post round-5 — raised no objection either. A real gate hole, not hypothetical.
+  describe('TAX/INS-led add-ons reach the partial-add-on guard (fix round 6)', () => {
+    it.each([
+      '$6.50/SF/YR + TAX',
+      '$6.50/SF/YR + INS',
+      '$6.50/SF/YR + TAX/INS',
+      '$6.50/SF/YR + CAM/INS',
+      '$1.50/SF/MO + $0.25 TAX',
+    ])('%s: a TAX/INS-led (or CAM+INS, missing TAX) partial add-on is ambiguous', (s) => {
+      expect(parseRentText(s).ambiguous).toBe(true);
+    });
+    it.each([
+      ['$6.50/SF/YR MG + TAX', 'MG'],
+      ['$6.50/SF/YR IG + TAX/INS', 'IG'],
+    ] as const)('%s: an explicit head basis contradicted by any add-on (including TAX/INS-led) is ambiguous', (s, expectedBasis) => {
+      const r = parseRentText(s);
+      expect(r.ambiguous).toBe(true);
+      expect(r.basis).toBe(expectedBasis);
+    });
+    // Regression: nothing previously clean-and-correct is affected by widening EXPENSE_RE — full
+    // forms (already reachable via CAM/NNN/etc.) still resolve to NNN, and a plain no-addon quote is
+    // untouched (EXPENSE_RE only gates the add-on SPLIT decision, never runs at all without a "+").
+    it.each([
+      ['$6.50/SF/YR + TICAM', 'NNN'],
+      ['$6.50/SF/YR + CAM/TAX/INS', 'NNN'],
+      ['$6.50/SF/YR + INS/TAX/CAM', 'NNN'],
+      ['$6.50/SF/YR + NNN', 'NNN'],
+    ] as const)('%s: still resolves to %s and stays clean', (s, expectedBasis) => {
+      const r = parseRentText(s);
+      expect(r.basis).toBe(expectedBasis);
+      expect(r.ambiguous).toBe(false);
+    });
+    it('a plain quote with no add-on at all is unaffected', () => {
+      expect(parseRentText('$8.50/SF/YR NNN')).toMatchObject({ rentLow: 8.5, rentHigh: 8.5, basis: 'NNN', ambiguous: false });
+    });
+  });
+
+  it('a partial add-on figure is never reported as opexQuoted, even alongside an explicit head NNN (fix round 6)', () => {
+    // The round-5 carve-out (an explicit head NNN is not degraded by a partial add-on) is ratified for
+    // `basis`, but the add-on's own figure still isn't TOTAL opex when the add-on is partial — CAM
+    // alone covers only one component, not tax+insurance+CAM together.
+    expect(parseRentText('$6.50/SF/YR NNN + $1.00/SF/YR CAM')).toMatchObject({ basis: 'NNN', opexQuoted: null });
   });
 });
 
