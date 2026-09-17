@@ -8,7 +8,7 @@ import { scaleLinear, scaleLog } from '@visx/scale';
 import { AxisBottom, AxisLeft } from '@visx/axis';
 import { useMeasure } from '@/lib/useMeasure';
 import { AXIS_TICK, GRID_STROKE } from './theme';
-import { curveDomains, curveTickValues, sizeBands, type CurveDatum } from './rent-curve-layout';
+import { curveDomains, curveTickValues, sizeBands, validCurvePoints, type CurveDatum } from './rent-curve-layout';
 
 interface Props {
   points: CurveDatum[];
@@ -22,8 +22,11 @@ const sfFormat = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}K` : String
 export function RentCurve({ points, height = 300, valueFormat = defaultFormat }: Props) {
   const [ref, width] = useMeasure<HTMLDivElement>();
   const [hover, setHover] = useState<{ point: CurveDatum; left: number; top: number } | null>(null);
-  const domains = useMemo(() => curveDomains(points), [points]);
-  const bands = useMemo(() => sizeBands(points), [points]);
+  // Filtered once here — feeds the circles, the aria-label count, and (redundantly-but-harmlessly,
+  // since curveDomains/sizeBands filter internally too) the domains and bands below.
+  const validPoints = useMemo(() => validCurvePoints(points), [points]);
+  const domains = useMemo(() => curveDomains(validPoints), [validPoints]);
+  const bands = useMemo(() => sizeBands(validPoints), [validPoints]);
 
   if (!domains) {
     return (
@@ -41,12 +44,12 @@ export function RentCurve({ points, height = 300, valueFormat = defaultFormat }:
   const clampX = (sf: number) => x(Math.min(domains.x[1], Math.max(domains.x[0], sf)));
   const tickValues = curveTickValues(domains.x);
   // Highlighted (ORA) points render last so their dots sit on top of the general cloud.
-  const orderedPoints = [...points].sort((a, b) => Number(a.highlight) - Number(b.highlight));
+  const orderedPoints = [...validPoints].sort((a, b) => Number(a.highlight) - Number(b.highlight));
 
   return (
     <div ref={ref} style={{ width: '100%', position: 'relative' }}>
       {width > 0 && (
-        <svg width={width} height={height} role="img" aria-label={`Asking rent by available square feet, ${points.length} listings`}>
+        <svg width={width} height={height} role="img" aria-label={`Asking rent by available square feet, ${validPoints.length} listings`}>
           <Group left={margin.left} top={margin.top}>
             {y.ticks(5).map((t) => (
               <line key={`g${t}`} x1={0} x2={iw} y1={y(t)} y2={y(t)} stroke={GRID_STROKE} />
