@@ -4,11 +4,13 @@
 // default, tab switching, and explicit empty states. Seeds a QueryClient directly (no fetch mocks)
 // following the market-module-smoke.test.tsx / rent-curve.test.tsx pattern.
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LeaseMarketModule } from '../../src/modules/lease-market/LeaseMarketModule';
 import { LEASE_MARKET_KEYS } from '../../src/modules/lease-market/hooks';
-import type { ChangesResponse, LeaseMarketSummaryResponse, PositioningResponse, RadarResponse, SignalsResponse } from '../../src/contracts/lease-market';
+import { ORA_JSON_MUTATION_HEADERS } from '../../src/contracts/client-header';
+import { __resetWarehouseMirrorCache } from '../../src/lib/warehouse-mirror';
+import type { ChangesResponse, HistoryResponse, LeaseMarketSummaryResponse, PositioningResponse, RadarResponse, SignalsResponse } from '../../src/contracts/lease-market';
 
 // jsdom doesn't ship ResizeObserver; the Market Rents tab mounts RentCurve/BarChart, whose
 // useMeasure hook requires it (same pattern as rent-curve.test.tsx / market-module-smoke.test.tsx).
@@ -16,12 +18,17 @@ import type { ChangesResponse, LeaseMarketSummaryResponse, PositioningResponse, 
 // the `width > 0` render branch (the empty-state text asserted here renders regardless of width).
 beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
+  // loadWarehouseMirror() memoizes its result at module scope; reset it per test so a mock `fetch`
+  // stubbed by an earlier test in this file can never leak its resolved mirror envelope forward.
+  __resetWarehouseMirrorCache();
 });
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
+
+const LIVE_PROBE_KEY = ['warehouse', 'live-probe'];
 
 const SUMMARY: LeaseMarketSummaryResponse = {
   asOf: '2026-03-01', rowLevel: true,
@@ -53,13 +60,16 @@ const RADAR: RadarResponse = {
 const SIGNALS: SignalsResponse = { asOf: '2026-03-01', candidatesWithheld: [], signals: [] };
 const CHANGES: ChangesResponse = { asOf: '2026-03-01', events: [{ id: 1, listingId: 2, propertyId: 2, marketId: 'columbus', address: '101 Industrial Pkwy', kind: 'price_cut', eventDate: '2026-02-15', prevValue: 6.5, newValue: 6 }] };
 
-function renderWith(summary = SUMMARY, positioning = POSITIONING, radar = RADAR, signals = SIGNALS, changes = CHANGES) {
+function renderWith(summary = SUMMARY, positioning = POSITIONING, radar = RADAR, signals = SIGNALS, changes = CHANGES, live = true) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
   qc.setQueryData(LEASE_MARKET_KEYS.summary, summary);
   qc.setQueryData(LEASE_MARKET_KEYS.positioning, positioning);
   qc.setQueryData(LEASE_MARKET_KEYS.radar, radar);
   qc.setQueryData(LEASE_MARKET_KEYS.signals, signals);
   qc.setQueryData(LEASE_MARKET_KEYS.changes, changes);
+  // useWarehouseLive() reads this key; seeding it avoids an unmocked, uncontrolled live-probe
+  // fetch firing on every render (the mirror-write-gating tests below seed it explicitly).
+  qc.setQueryData(LIVE_PROBE_KEY, live);
   return render(<QueryClientProvider client={qc}><LeaseMarketModule /></QueryClientProvider>);
 }
 
@@ -101,5 +111,96 @@ describe('LeaseMarketModule', () => {
     expect(screen.getByText('No quoted asking rents yet.')).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: 'Acquisition Radar' }));
     expect(screen.getByText('No radar candidates.')).toBeTruthy();
+  });
+
+  it('hides the radar decision buttons when the live warehouse probe is false, shows them when true', () => {
+    const notLive = renderWith(SUMMARY, POSITIONING, RADAR, SIGNALS, CHANGES, false);
+    fireEvent.click(screen.getByRole('tab', { name: 'Acquisition Radar' }));
+    expect(screen.getByText('101 Industrial Pkwy')).toBeTruthy(); // the table itself still renders
+    expect(screen.queryByRole('button', { name: 'Investigate' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Monitor' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Pass' })).toBeNull();
+    notLive.unmount();
+
+    renderWith(SUMMARY, POSITIONING, RADAR, SIGNALS, CHANGES, true);
+    fireEvent.click(screen.getByRole('tab', { name: 'Acquisition Radar' }));
+    expect(screen.getByRole('button', { name: 'Investigate' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Monitor' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Pass' })).toBeTruthy();
+  });
+
+  it('renders the top-level "Loading…" state before the summary query resolves', () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    qc.setQueryData(LIVE_PROBE_KEY, false);
+    // Never-resolving fetch keeps the summary query in its initial "pending" (isLoading) state for
+    // the lifetime of this synchronous assertion — no data or live-probe seeded for `summary`.
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
+    render(<QueryClientProvider client={qc}><LeaseMarketModule /></QueryClientProvider>);
+    expect(screen.getByText('Loading…')).toBeTruthy();
+  });
+
+  it('renders "Not available on this mirror." when the summary read is warehouse-unavailable', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
+    qc.setQueryData(LIVE_PROBE_KEY, false);
+    // A rejected fetch (offline / mirror absent) is exactly what fetchJson wraps into
+    // WarehouseUnavailableError; loadWarehouseMirror's own fetch('/warehouse.json') hits the same
+    // stub and fails closed to null, so fetchParsedOrMirror re-throws the unavailable error.
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    render(<QueryClientProvider client={qc}><LeaseMarketModule /></QueryClientProvider>);
+    // The lease-market hooks spread the shared QUERY_OPTS (retry: 1), so this query retries once
+    // with a backoff delay before settling into its error state — give it more than the default
+    // findByText timeout to clear that retry.
+    expect(await screen.findByText('Not available on this mirror.', {}, { timeout: 5000 })).toBeTruthy();
+  });
+
+  it('clicking a Changes-tab event row opens the history drawer, which closes again on tab switch', async () => {
+    const history: HistoryResponse = {
+      listingId: 2,
+      address: '101 Industrial Pkwy',
+      observations: [{ observedAt: '2026-02-15', availableSf: 20000, askingNnnEq: 6, rentBasis: 'NNN', confidence: 'high', costarDom: 31 }],
+      events: [{ id: 1, listingId: 2, propertyId: 2, marketId: 'columbus', address: '101 Industrial Pkwy', kind: 'new', eventDate: '2026-02-15', prevValue: null, newValue: null }],
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes('/lease-market/history/2')) {
+        return new Response(JSON.stringify(history), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error(`unexpected fetch in this test: ${url}`);
+    }));
+    renderWith();
+    fireEvent.click(screen.getByRole('tab', { name: 'Changes' }));
+    fireEvent.click(screen.getByText('$6.50 → $6.00')); // the event row (onRowClick bubbles from the cell)
+    expect(await screen.findByText(/Space history — 101 Industrial Pkwy/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Portfolio' }));
+    expect(screen.queryByText(/Space history/)).toBeNull();
+  });
+
+  it('POSTs the right body with ORA_JSON_MUTATION_HEADERS, disables the buttons while pending, and shows the error on failure', async () => {
+    let resolveFetch!: (r: Response) => void;
+    const pending = new Promise<Response>((resolve) => { resolveFetch = resolve; });
+    const fetchMock = vi.fn((input: string | URL, init?: RequestInit) => {
+      expect(String(input)).toBe('/api/warehouse/lease-market/radar/decision');
+      expect(init?.method).toBe('POST');
+      expect(init?.headers).toMatchObject(ORA_JSON_MUTATION_HEADERS);
+      expect(JSON.parse(init!.body as string)).toEqual({ propertyId: 2, decision: 'investigate', note: null });
+      return pending;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    renderWith(SUMMARY, POSITIONING, RADAR, SIGNALS, CHANGES, true);
+    fireEvent.click(screen.getByRole('tab', { name: 'Acquisition Radar' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Investigate' }));
+
+    // Still in flight: the decision buttons are disabled (not merely hidden). isPending flips a
+    // tick after mutate() (TanStack Query's internal dispatch), so poll rather than assert bare.
+    // (No jest-dom matchers in this codebase — check the DOM `disabled` property directly.)
+    await waitFor(() => expect((screen.getByRole('button', { name: 'Investigate' }) as HTMLButtonElement).disabled).toBe(true));
+    expect((screen.getByRole('button', { name: 'Monitor' }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole('button', { name: 'Pass' }) as HTMLButtonElement).disabled).toBe(true);
+
+    resolveFetch(new Response(JSON.stringify({ error: 'call the broker first' }), { status: 400, headers: { 'content-type': 'application/json' } }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/call the broker first/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -50,7 +50,10 @@ export function useLeaseMarketHistory(listingId: number | null) {
 
 export async function postRadarDecision(input: RadarDecisionInput) {
   const res = await fetch(`${BASE}/radar/decision`, { method: 'POST', headers: ORA_JSON_MUTATION_HEADERS, body: JSON.stringify(input) });
-  if (!res.ok) throw new Error(`Radar decision failed (${res.status})`);
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(body?.error ? `Radar decision failed (${res.status}): ${body.error}` : `Radar decision failed (${res.status})`);
+  }
   return RadarDecisionResponse.parse(await res.json());
 }
 
@@ -70,8 +73,10 @@ export function fmtPsf(v: number | null | undefined): string {
 }
 export function fmtPct(v: number | null | undefined, signed = true): string {
   if (v === null || v === undefined) return '—';
-  const pct = (v * 100).toFixed(0);
-  return signed && v > 0 ? `+${pct}%` : `${pct}%`;
+  const pct = Math.round(v * 100);
+  // A value that rounds to 0 (including tiny negatives, which Math.round can leave as -0) must
+  // read as a plain "0%" — never "+0%" or "-0%".
+  return signed && pct > 0 ? `+${pct}%` : `${pct}%`;
 }
 export function fmtSf(v: number | null | undefined): string {
   return v === null || v === undefined ? '—' : `${Math.round(v).toLocaleString('en-US')} SF`;

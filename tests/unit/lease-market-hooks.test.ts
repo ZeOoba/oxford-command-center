@@ -2,8 +2,9 @@
 //
 // Pure display-helper coverage for src/modules/lease-market/hooks.ts (Task 16, spec rev 3 §4).
 // Query hooks themselves are exercised indirectly via the module smoke test (seeded QueryClient).
-import { describe, it, expect } from 'vitest';
-import { curvePointsFor, eventSummary, evidenceSummary, fmtPct, fmtUsd, radarWhy } from '../../src/modules/lease-market/hooks';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { curvePointsFor, eventSummary, evidenceSummary, fmtPct, fmtUsd, postRadarDecision, radarWhy } from '../../src/modules/lease-market/hooks';
+import { ORA_JSON_MUTATION_HEADERS } from '../../src/contracts/client-header';
 import type { CurvePoint, ListingEventRow, RadarCandidate, SignalRow } from '../../src/contracts/lease-market';
 
 const sig = (kind: SignalRow['kind'], evidence: SignalRow['evidence']): SignalRow => ({
@@ -24,6 +25,12 @@ describe('lease-market display helpers', () => {
     expect(fmtPct(null)).toBe('—');
     expect(fmtUsd(68000)).toBe('$68,000');
     expect(fmtUsd(null)).toBe('—');
+  });
+
+  it('renders a value that rounds to 0% with no sign', () => {
+    expect(fmtPct(0)).toBe('0%');
+    expect(fmtPct(0.001)).toBe('0%');
+    expect(fmtPct(-0.001)).toBe('0%');
   });
 
   it('summarizes evidence per signal kind', () => {
@@ -49,5 +56,33 @@ describe('lease-market display helpers', () => {
     expect(eventSummary(ev({ kind: 'dom_reset', prevValue: 92, newValue: 12 }))).toBe('CoStar DOM 92d → 12d');
     expect(eventSummary(ev({ kind: 'new', newValue: null }))).toBe('rent withheld');
     expect(eventSummary(ev({ kind: 'removed' }))).toBe('absent from two consecutive complete exports — outcome unknown');
+  });
+
+  describe('postRadarDecision', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('POSTs the decision to the right URL with ORA_JSON_MUTATION_HEADERS and the input as the JSON body', async () => {
+      const fetchMock = vi.fn(async (_input: string | URL, _init?: RequestInit) => new Response(JSON.stringify({ ok: true, id: 7 }), { status: 200, headers: { 'content-type': 'application/json' } }));
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await postRadarDecision({ propertyId: 2, decision: 'investigate', note: 'call broker' });
+      expect(result).toEqual({ ok: true, id: 7 });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0]!;
+      expect(url).toBe('/api/warehouse/lease-market/radar/decision');
+      expect(init).toMatchObject({ method: 'POST', headers: ORA_JSON_MUTATION_HEADERS });
+      expect(JSON.parse(init!.body as string)).toEqual({ propertyId: 2, decision: 'investigate', note: 'call broker' });
+    });
+
+    it('includes the server {error} body in the thrown message on failure', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'unknown property' }), { status: 404, headers: { 'content-type': 'application/json' } })));
+      await expect(postRadarDecision({ propertyId: 99999, decision: 'pass', note: null })).rejects.toThrow('Radar decision failed (404): unknown property');
+    });
+
+    it('falls back to a bare status message when the failure body has no {error}', async () => {
+      vi.stubGlobal('fetch', vi.fn(async () => new Response('not json', { status: 500 })));
+      await expect(postRadarDecision({ propertyId: 2, decision: 'pass', note: null })).rejects.toThrow('Radar decision failed (500)');
+    });
   });
 });
