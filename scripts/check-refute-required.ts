@@ -76,6 +76,13 @@ const FINANCIAL_CONTRACT_PATHS: ReadonlySet<string> = new Set([
   // if a capital-decision path ever branches on its parsed fields — re-evaluate on next sweep).
   'src/contracts/capital.ts',
   'src/contracts/capital-allocation.ts',
+  // Fix round 1 (Task 14 review, 2026-09-17): lease-market.ts carries LmThresholds — the
+  // benchmark-n / similarity / radar-score / stale / withdrawn-lookback governor thresholds — plus
+  // CellBenchmark and ComparableStats, consumed directly by the radar score and comparable-set math
+  // in src/analytics/lease-market/{benchmarks,similarity,signals,radar}.ts. Same inclusion
+  // criterion as loan.ts/debt.ts/capital.ts above: a silently dropped or renamed field desyncs the
+  // contract from the governor math it types.
+  'src/contracts/lease-market.ts',
 ]);
 
 /** True when a changed path holds financial-decision SOURCE (not a test / doc / json fixture). */

@@ -19,6 +19,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { warehouseRoutes } from '../server/warehouse/api';
 import { WAREHOUSE_SUB_ROUTERS } from '../server/warehouse/sub-routers';
+import { leaseMarketApi } from '../server/warehouse/lease-market-api';
 import { openWarehouse } from '../server/warehouse/db';
 import type { WarehouseDb } from '../server/warehouse/db';
 import { serverPort } from '../server/config';
@@ -45,11 +46,23 @@ export type RouteResolver = (routerPath: string) => Promise<{ status: number; js
  *  That left the identical 404 gap latent for the other 7 sub-routers, and duplicated the '/brain'
  *  mount-path literal across two files. Now builds the dispatch table from the shared
  *  WAREHOUSE_SUB_ROUTERS list — checked longest-prefix-first so '/insurance/analysis' and
- *  '/insurance/loss' don't collide — with any unmatched path falling through to the base app. */
-export function inProcessResolver(db: WarehouseDb): RouteResolver {
+ *  '/insurance/loss' don't collide — with any unmatched path falling through to the base app.
+ *
+ *  Fix round 1, item 1 (bake-scoped redaction): `/lease-market` is special-cased to build its own
+ *  router instance directly (instead of the shared factory) so `leaseMarketRowLevel` can override
+ *  `config.mirrorRowLevel` for this ONE bake-time instance — config/lease-market.json ships
+ *  mirrorRowLevel:true (ratified for the private, Access-gated mirror) and must stay that way; the
+ *  redacted/public-safe bake forces false here instead of touching the shipped config. Kept local to
+ *  this one prefix rather than generalizing WAREHOUSE_SUB_ROUTERS's factory signature — every other
+ *  sub-router has no bake-time redaction concept to override. */
+export function inProcessResolver(db: WarehouseDb, opts: { leaseMarketRowLevel?: boolean } = {}): RouteResolver {
   const app = warehouseRoutes(() => db);
   const subApps = WAREHOUSE_SUB_ROUTERS
-    .map(({ prefix, factory }) => ({ prefix, app: factory(() => db) }))
+    .map(({ prefix, factory }) =>
+      prefix === '/lease-market'
+        ? { prefix, app: leaseMarketApi(() => db, { rowLevel: opts.leaseMarketRowLevel }) }
+        : { prefix, app: factory(() => db) },
+    )
     .sort((a, b) => b.prefix.length - a.prefix.length);
   return async (routerPath) => {
     const sub = subApps.find((s) => routerPath === s.prefix || routerPath.startsWith(`${s.prefix}/`));
@@ -151,6 +164,14 @@ export function warehouseEndpointPlan(metrics: MetricRow[], leaseRunIds: string[
 export interface BuildOpts {
   now: number;
   warehouseSource: WarehouseSource;
+  /**
+   * Fix round 1, item 1 (bake-scoped redaction). `false` omits every `/lease-market/*` route from
+   * the plan entirely — used only on the httpResolver (live-server) path during a redacted bake,
+   * since an already-running server's mounted router config cannot be overridden per bake request
+   * over HTTP (unlike inProcessResolver's `leaseMarketRowLevel`, which controls redaction directly
+   * on that path instead). Omitted/true ⇒ unchanged from Task 14 (routes planned as usual).
+   */
+  includeLeaseMarket?: boolean;
 }
 
 /**
@@ -181,7 +202,9 @@ export async function buildWarehouseEnvelope(
   // typed EMPTY projection for a no-terms property — a 200, so it bakes).
   const leaseRunIds = [...new Set([...rollupIds, ...metrics.map((m) => m.propertyId)])];
 
-  const plan = warehouseEndpointPlan(metrics, leaseRunIds);
+  const plan = warehouseEndpointPlan(metrics, leaseRunIds).filter(
+    (routerPath) => opts.includeLeaseMarket !== false || !routerPath.startsWith('/lease-market/'),
+  );
   const required = REQUIRED_ROUTES;
   const endpoints: Record<string, unknown> = {};
   for (const routerPath of plan) {
@@ -221,28 +244,43 @@ export interface BakeResult { path: string; warehouseSource: WarehouseSource; co
 /**
  * Orchestrate the bake: prefer a running Brain Server; else checkpoint + read the local DB. Writes
  * public/warehouse.json. The ONLY DB mutation is a WAL checkpoint (no DDL, no data write).
+ *
+ * `includeConfidential` (fix round 1, item 1) mirrors bake-mirror.ts's own
+ * `MIRROR_INCLUDE_CONFIDENTIAL` flag (that script is this function's one caller, and now threads its
+ * own `includeConfidential` local through here) — `public/warehouse.json` lands in the SAME `public/`
+ * directory as `snapshot.json`, so it must respect the SAME redacted-vs-confidential boundary or a
+ * "redacted" deploy would still ship full row-level CoStar data. Defaults to `false` (safe/redacted)
+ * when omitted, matching this module's own "a public deploy must always run in the default
+ * (redacted) mode" policy.
  */
-export async function bakeWarehouseJson(opts: { now?: number } = {}): Promise<BakeResult> {
+export async function bakeWarehouseJson(opts: { now?: number; includeConfidential?: boolean } = {}): Promise<BakeResult> {
   const now = opts.now ?? Date.now();
+  const includeConfidential = opts.includeConfidential ?? false;
   const baseUrl = process.env.BRAIN_BAKE_SOURCE_URL ?? `http://127.0.0.1:${serverPort()}`;
 
   let resolver: RouteResolver;
   let warehouseSource: WarehouseSource;
   let db: WarehouseDb | null = null;
+  let includeLeaseMarket = true;
 
   if (await brainServerUp(baseUrl)) {
     resolver = httpResolver(baseUrl);
     warehouseSource = 'live-server';
+    // Can't override an already-mounted live-server router's mirrorRowLevel per bake request over
+    // HTTP — exclude the lease-market routes entirely from a redacted bake rather than risk a
+    // row-level leak (see BuildOpts.includeLeaseMarket).
+    includeLeaseMarket = includeConfidential;
   } else {
     const dbPath = process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
     db = openWarehouse(dbPath);
     db.pragma('wal_checkpoint(TRUNCATE)'); // flush WAL → committed DB so the read can't lag the server
-    resolver = inProcessResolver(db);
+    // Full control on this path: bake the routes either way, but force rowLevel false when redacted.
+    resolver = inProcessResolver(db, { leaseMarketRowLevel: includeConfidential ? undefined : false });
     warehouseSource = 'checkpoint-read';
   }
 
   try {
-    const env = await buildWarehouseEnvelope(resolver, { now, warehouseSource });
+    const env = await buildWarehouseEnvelope(resolver, { now, warehouseSource, includeLeaseMarket });
     const pub = join(process.cwd(), 'public');
     mkdirSync(pub, { recursive: true });
     const outPath = join(pub, 'warehouse.json');
