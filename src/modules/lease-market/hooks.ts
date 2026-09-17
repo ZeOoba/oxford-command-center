@@ -9,6 +9,7 @@ import {
   ChangesResponse, HistoryResponse, LeaseMarketSummaryResponse, PositioningResponse, RadarDecisionResponse, RadarResponse, SignalsResponse,
   type ConfidenceLabel, type CurvePoint, type EvidenceValue, type ListingEventKind, type ListingEventRow, type PositioningBand,
   type RadarCandidate, type RadarDecisionInput, type RadarDecisionKind, type SignalKind, type SignalRow, type SignalSeverity,
+  type SimilarityComponent,
 } from '@contracts/lease-market';
 import type { CurveDatum } from '@/charts/rent-curve-layout';
 import type { BadgeTone } from '@/primitives/Badge';
@@ -154,6 +155,15 @@ export function radarWhy(c: RadarCandidate): string {
   if (p.buyBoxFit > 0) bits.push(`buy-box (+${p.buyBoxFit})`);
   if (p.owner > 0) bits.push(`owner ${c.ownerType} (+${p.owner})`);
   return bits.join(' · ');
+}
+
+// R3 (deferred UI-fix round): human labels for ResolvedComparables.unknown / ComparableStats.unknown,
+// so a MEDIUM/LOW confidence caused by missing subject/comp data is explainable in the UI.
+export const SIMILARITY_LABELS: Record<SimilarityComponent, string> = {
+  location: 'location', size: 'size', clearHeight: 'clear height', age: 'age', loading: 'loading', office: 'office',
+};
+export function unknownLabel(unknown: readonly SimilarityComponent[]): string {
+  return unknown.length === 0 ? '' : `unknown: ${unknown.map((c) => SIMILARITY_LABELS[c]).join(', ')}`;
 }
 
 export function eventSummary(e: ListingEventRow): string {

@@ -3,7 +3,7 @@
 // Pure display-helper coverage for src/modules/lease-market/hooks.ts (Task 16, spec rev 3 §4).
 // Query hooks themselves are exercised indirectly via the module smoke test (seeded QueryClient).
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { curvePointsFor, eventSummary, evidenceSummary, fmtPct, fmtUsd, postRadarDecision, radarWhy } from '../../src/modules/lease-market/hooks';
+import { curvePointsFor, eventSummary, evidenceSummary, fmtPct, fmtUsd, postRadarDecision, radarWhy, unknownLabel } from '../../src/modules/lease-market/hooks';
 import { ORA_JSON_MUTATION_HEADERS } from '../../src/contracts/client-header';
 import type { CurvePoint, ListingEventRow, RadarCandidate, SignalRow } from '../../src/contracts/lease-market';
 
@@ -56,6 +56,12 @@ describe('lease-market display helpers', () => {
     expect(eventSummary(ev({ kind: 'dom_reset', prevValue: 92, newValue: 12 }))).toBe('CoStar DOM 92d → 12d');
     expect(eventSummary(ev({ kind: 'new', newValue: null }))).toBe('rent withheld');
     expect(eventSummary(ev({ kind: 'removed' }))).toBe('absent from two consecutive complete exports — outcome unknown');
+  });
+
+  it('labels unknown similarity components for display (R3)', () => {
+    expect(unknownLabel([])).toBe('');
+    expect(unknownLabel(['location', 'clearHeight'])).toBe('unknown: location, clear height');
+    expect(unknownLabel(['size', 'age', 'loading', 'office'])).toBe('unknown: size, age, loading, office');
   });
 
   describe('postRadarDecision', () => {
