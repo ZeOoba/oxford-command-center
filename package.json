@@ -30,6 +30,8 @@
     "warehouse:verify": "tsx scripts/warehouse-verify.ts",
     "warehouse:drift": "tsx scripts/warehouse-live-drift-check.ts",
     "warehouse:import-loss-runs": "tsx scripts/import-insurance-data.ts",
+    "lease-market:ingest": "tsx scripts/lease-market.ts ingest",
+    "lease-market:compute": "tsx scripts/lease-market.ts compute",
     "worktree": "tsx scripts/safe-worktree.ts",
     "check:bundle": "tsx scripts/check-bundle.ts",
     "check:dev-css": "tsx scripts/check-dev-css.ts",
