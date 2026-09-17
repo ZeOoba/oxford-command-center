@@ -8,8 +8,8 @@ import { ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
 import {
   ChangesResponse, HistoryResponse, LeaseMarketSummaryResponse, PositioningResponse, RadarDecisionResponse, RadarResponse, SignalsResponse,
   type ConfidenceLabel, type CurvePoint, type EvidenceValue, type ListingEventKind, type ListingEventRow, type PositioningBand,
-  type RadarCandidate, type RadarDecisionInput, type RadarDecisionKind, type SignalKind, type SignalRow, type SignalSeverity,
-  type SimilarityComponent,
+  type PositioningRowSource, type RadarCandidate, type RadarDecisionInput, type RadarDecisionKind, type SignalKind, type SignalRow,
+  type SignalSeverity, type SimilarityComponent,
 } from '@contracts/lease-market';
 import type { CurveDatum } from '@/charts/rent-curve-layout';
 import type { BadgeTone } from '@/primitives/Badge';
@@ -116,6 +116,16 @@ export function bandTone(band: PositioningBand): BadgeTone {
 }
 export function bandLabel(band: PositioningBand): string {
   return band === 'above' ? 'Above market' : band === 'below' ? 'Below market' : band === 'in_band' ? 'In range' : 'No ORA asking';
+}
+
+// Go-live change (2026-09-17): PositioningRow.source tells Gabriel whether a Rent Position row came
+// from an ORA-owned CoStar listing (what CoStar says we're marketing) or a matched rent-roll vacancy
+// (what our rent roll says is empty) — see the contract's own doc comment on PositioningRowSource.
+export function sourceLabel(source: PositioningRowSource): string {
+  return source === 'listing' ? 'CoStar listing' : 'Rent-roll vacancy';
+}
+export function sourceTone(source: PositioningRowSource): BadgeTone {
+  return source === 'listing' ? 'gold' : 'purple';
 }
 export function severityTone(s: SignalSeverity): BadgeTone {
   return s === 'high' ? 'red' : s === 'watch' ? 'amber' : 'neutral';

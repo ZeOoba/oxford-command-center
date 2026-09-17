@@ -45,7 +45,7 @@ const POSITIONING: PositioningResponse = {
     propertyKey: '1100 Rarig', unit: 'B', sf: 8000, oraAskingNnnEq: 12,
     stats: { basis: 'similarity', n: 12, low: 5.5, p25: 8.75, median: 9.3, p75: 10, high: 10.4, confidence: 'MEDIUM', cellKey: null, unknown: [] },
     comps: [], percentile: 1, gapPct: 0.29, band: 'above', recommendation: 'Asking is 29% above the comparable median ($9.30); comparable range $8.75–$10.00.',
-    flags: [], effectiveDom: 45,
+    flags: [], effectiveDom: 45, source: 'rent-roll',
   }],
 };
 const RADAR: RadarResponse = {
@@ -190,7 +190,7 @@ describe('LeaseMarketModule', () => {
       SIGNALS,
       { ...CHANGES, events: [] },
     );
-    expect(screen.getByText('No vacant ORA units mapped to a comparable set.')).toBeTruthy();
+    expect(screen.getByText('No ORA space currently listed in CoStar or vacant in the rent roll.')).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: 'Market Rents' }));
     expect(screen.getByText('No quoted asking rents yet.')).toBeTruthy();
     fireEvent.click(screen.getByRole('tab', { name: 'Acquisition Radar' }));
@@ -292,5 +292,34 @@ describe('LeaseMarketModule', () => {
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toMatch(/call the broker first/);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Go-live change (2026-09-17): Rent Position rows now carry a `source` telling Gabriel whether the
+  // row came from an ORA-owned CoStar listing or a matched rent-roll vacancy.
+  it('shows the Source column for both a listing-sourced and a rent-roll-sourced Rent Position row', () => {
+    renderWith(SUMMARY, {
+      ...POSITIONING,
+      rows: [
+        POSITIONING.rows[0]!, // source: 'rent-roll'
+        {
+          propertyKey: 'Banwick', unit: '2802', sf: 1500, oraAskingNnnEq: 13.2,
+          stats: { basis: 'similarity', n: 8, low: 10, p25: 11, median: 12, p75: 13, high: 14, confidence: 'MEDIUM', cellKey: null, unknown: [] },
+          comps: [], percentile: 0.9, gapPct: 0.1, band: 'in_band', recommendation: 'Within the comparable range ($11.00–$13.00).',
+          flags: [], effectiveDom: 30, source: 'listing',
+        },
+      ],
+    });
+    expect(screen.getAllByText('Rent-roll vacancy')).toHaveLength(1);
+    expect(screen.getAllByText('CoStar listing')).toHaveLength(1);
+    expect(screen.getByText('Banwick')).toBeTruthy();
+  });
+
+  it('reworded the listed-but-not-vacant caption to describe a data inconsistency, not the routine case', () => {
+    renderWith(SUMMARY, {
+      ...POSITIONING,
+      listedButLeased: [{ propertyKey: '1100 Rarig', listingId: 501, suite: 'Z', askingNnnEq: 9.5, effectiveDom: 60, address: '1100 Rarig Ave' }],
+    });
+    expect(screen.getByText('Listed in CoStar with no Rent Position row (data inconsistency)')).toBeTruthy();
+    expect(screen.queryByText('Listed in CoStar but not vacant in the rent roll')).toBeNull();
   });
 });
