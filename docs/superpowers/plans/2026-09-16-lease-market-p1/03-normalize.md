@@ -458,3 +458,17 @@ Task review found that a misread rent quote could silently enter an NNN benchmar
 9. Range-spread rejection uses a `+1e-9` epsilon so a spread exactly at `rangeMaxSpread` passes.
 10. MG/IG-to-NNN conversion now requires all three opex components (tax/ins/cam) to be non-null before attributing landlord-paid components — a quoted-median-only estimate (all components null) can no longer vacuously "convert" via an empty `mgLandlordPays` list.
 11. `splitAddress`: a blank/whitespace `rawSuite` no longer shadows an embedded suite parsed from the address.
+
+### Adversarial-review addendum (same commit, discovered during the mandatory independent Fable review — 2 more rounds, 3 total)
+
+The independent reviewer found 4 further regressions the literal rules above still permitted (each verified against concrete inputs, not hypothetical) and asked for guard-level fixes plus test coverage before approving:
+
+13. **Period conflict.** If the rent "head" (rule 5) matches both a monthly and a yearly period marker (e.g. an explicit `/YR` alongside a bare "monthly" elsewhere in the head), `rentPeriod` is now `null` and `ambiguous: true` instead of monthly silently winning.
+14. **Basis conflict.** `basisTokensIn()` collects every distinct basis token in the head (not just the first, priority-ordered one `basisIn` returned); more than one distinct token (e.g. "MG NNN") sets `ambiguous: true`. A lookbehind keeps "Modified Gross"/"Industrial Gross"/"Full Service (Gross)" from self-conflicting against the bare "gross" they contain.
+15. **Tail conflict.** Text truncated out of the head by rule 5's cut (e.g. a parenthetical "(monthly)") is checked for a period marker that contradicts, or supplies where the head lacks, one; either way that sets `ambiguous: true` rather than silently losing the signal. A same-period tail (e.g. ", CAM $3.50" or "w/ $2.50/SF/YR CAM") does not falsely trip this.
+16. **`$`-anchored rent candidate.** When the text quotes a `$`, the first rent-number candidate (m1) must itself be immediately preceded by `$` — an unrelated bare integer ("5+ year term", "2nd floor") is no longer mistaken for the rent. The second range figure (m2) is not required to repeat the `$` (short forms like "$12-14/SF/YR" only carry one) — it is accepted as a range high-end via the full range grammar if it is itself `$`-anchored, otherwise only via a bare separator with no intervening unit/basis token, so a trailing CAM figure or escalation % still cannot become a false range.
+17. **Range separator admits a basis word.** `RANGE_SEP_RE` now also accepts an NNN/MG/IG/FSG/gross token between the two `$`-anchored range figures (e.g. "$8.00/SF/YR NNN - $10.00/SF/YR NNN"), so such quotes are correctly recognized as a range and go through the ordinary spread gate instead of silently collapsing to the low figure.
+
+Two notes carried forward, not blockers for this diff:
+- Rules 13–15's protection is only realized once the ingestion layer (`07-costar-parser.md`) maps `parsed.ambiguous` to `rentBasis: 'UNKNOWN'` as planned — `priceObservation`'s signature does not take `ambiguous` directly (frozen per this task's "keep every existing exported signature" instruction), so this file can only compute and expose the flag, not enforce it end-to-end.
+- Low-severity, out of scope: `opexQuoted`'s add-on-period detection only looks at the add-on text itself, not the base rent's period, so a monthly base with a bare per-SF add-on figure can be under-scaled. Only feeds the always-low-confidence GROSS/FSG opex path, never benchmark-eligible.
