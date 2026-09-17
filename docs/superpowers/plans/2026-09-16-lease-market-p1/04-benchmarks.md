@@ -322,3 +322,7 @@ Expected: PASS / clean.
 git add src/analytics/lease-market/benchmarks.ts tests/unit/lease-market-benchmarks.test.ts
 git commit -F <message-file>   # "feat(analytics): lease market cell benchmarks with n-gated rollup"
 ```
+
+## Review fixes (plan rev 2.1)
+
+12. `cellIndex`'s memo key now uses the `' '` escape as the null-submarket sentinel (not a literal space), so a target with a real submarket string of `' '` no longer collides with — and returns the wrong cached cell for — a null-submarket target.

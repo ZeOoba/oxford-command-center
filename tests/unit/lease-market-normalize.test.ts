@@ -70,6 +70,66 @@ describe('parseRentText', () => {
   it('withheld phrases and blanks', () => {
     for (const s of ['Withheld', 'Call for pricing', 'Negotiable', '']) expect(parseRentText(s).withheld).toBe(true);
   });
+
+  // Fix round 1 (task review): add-on split, range separator gating, head-only period/basis,
+  // non-negotiable/non-negotiable-adjacent quotes are not withheld, $.75 support.
+  it('MG/IG + add-on is ambiguous (contradictory quote); NNN stated or unstated + add-on is NNN', () => {
+    expect(parseRentText('$7.00/SF/YR Modified Gross + CAM')).toMatchObject({ rentLow: 7, basis: 'MG', ambiguous: true });
+    expect(parseRentText('$6.00/SF/YR IG + $1.10 CAM')).toMatchObject({ basis: 'IG', ambiguous: true });
+  });
+  it('trailing numbers after the rent (CAM figure, escalation, range separator) are ignored/handled correctly', () => {
+    expect(parseRentText('$4.00/SF/YR NNN, CAM $3.50')).toMatchObject({ rentLow: 4, rentHigh: 4, rentPeriod: 'yr', basis: 'NNN', ambiguous: false });
+    expect(parseRentText('$3.25/SF/YR NNN w/ 3% annual increases')).toMatchObject({ rentLow: 3.25, rentHigh: 3.25, rentPeriod: 'yr' });
+    expect(parseRentText('$2.75/SF NNN, 3% annual escalations')).toMatchObject({ rentLow: 2.75, rentHigh: 2.75, rentPeriod: null });
+  });
+  it('add-on opex quoted value derivation', () => {
+    expect(parseRentText('$12,000/month + $1,500 CAM')).toMatchObject({ rentLow: 12000, rentPeriod: 'mo', isTotal: true, opexQuoted: null, basis: 'NNN' });
+    const r = parseRentText('$7.25/SF/YR + $0.21/SF/MO CAM');
+    expect(r.rentPeriod).toBe('yr');
+    expect(r.rentLow).toBe(7.25);
+    expect(r.opexQuoted).toBeCloseTo(2.52);
+  });
+  it('ranges require a separator between the two numbers', () => {
+    expect(parseRentText('$8.00/SF/YR - $10.00/SF/YR')).toMatchObject({ rentLow: 8, rentHigh: 10 });
+    expect(parseRentText('$8.00 to $10.00 NNN')).toMatchObject({ rentLow: 8, rentHigh: 10, basis: 'NNN' });
+  });
+  it('non-negotiable quotes and slash-annual quotes are not withheld; bare "Call ..." still is', () => {
+    expect(parseRentText('$8.50/SF/YR NNN (non-negotiable)')).toMatchObject({ withheld: false, rentLow: 8.5 });
+    expect(parseRentText('$8.50/SF NNN/Annual')).toMatchObject({ withheld: false, rentLow: 8.5 });
+    expect(parseRentText('Call 614-555-1212')).toMatchObject({ withheld: true });
+  });
+  it('supports numbers with no leading zero', () => {
+    expect(parseRentText('$.75/SF/MO NNN')).toMatchObject({ rentLow: 0.75, rentPeriod: 'mo' });
+  });
+
+  // Fix round 1, adversarial-review follow-up: a head stating two contradictory basis tokens, or a
+  // head/tail split that hides or contradicts the true period, must flag ambiguous rather than
+  // silently pass through as a clean high-confidence NNN quote.
+  it('two distinct basis tokens in the head are flagged ambiguous', () => {
+    expect(parseRentText('$8.50/SF/YR MG NNN')).toMatchObject({ ambiguous: true, rentLow: 8.5, basis: 'NNN' });
+  });
+  it('a period stated only in the truncated tail is flagged ambiguous, not silently dropped', () => {
+    expect(parseRentText('$3.25/SF NNN (monthly)')).toMatchObject({ ambiguous: true, rentLow: 3.25, rentPeriod: null });
+  });
+  it('a bare "monthly" elsewhere in the text conflicting with an explicit head period is ambiguous, not silently overridden', () => {
+    expect(parseRentText('$4.00/SF/YR NNN - monthly payments of $1,667')).toMatchObject({ ambiguous: true, rentLow: 4, rentHigh: 4 });
+  });
+  it('a range with a basis word between the two $-anchored figures is still recognized as a range', () => {
+    expect(parseRentText('$8.00/SF/YR NNN - $10.00/SF/YR NNN')).toMatchObject({ rentLow: 8, rentHigh: 10, ambiguous: false });
+  });
+  it('a bare number before an unrelated "+" (not the rent) is withheld, not mistaken for the rent', () => {
+    expect(parseRentText('5+ year term at $4.00/SF NNN').withheld).toBe(true);
+  });
+  it('a bare number elsewhere in the text (not $-anchored) does not shadow the real $-anchored rent', () => {
+    expect(parseRentText('2nd floor $8.50/SF/YR NNN')).toMatchObject({ rentLow: 8.5, rentHigh: 8.5, ambiguous: false });
+  });
+  it('a short "$12-14/SF/YR" range (only the low figure carries a "$") still parses as a range', () => {
+    expect(parseRentText('$12-14/SF/YR NNN')).toMatchObject({ rentLow: 12, rentHigh: 14 });
+  });
+  it('a same-period tail after the head-cut does not falsely trip the tail-conflict guard', () => {
+    expect(parseRentText('$8.50/SF/YR NNN, CAM $3.50').ambiguous).toBe(false);
+    expect(parseRentText('$8.50/SF/YR NNN w/ $2.50/SF/YR CAM').ambiguous).toBe(false);
+  });
 });
 
 describe('priceObservation', () => {
@@ -108,6 +168,49 @@ describe('priceObservation', () => {
     expect(price({ rentLow: 11, rentBasis: 'MG' }, null).askingNnnEq).toBeNull();
     expect(price({ rentBasis: 'WITHHELD' }).askingPsfYr).toBeNull();
     expect(price({ rentLow: null }).effectiveBasis).toBe('WITHHELD');
+  });
+
+  // Fix round 1 (task review): non-numeric bounds, exact-spread boundary, and component-level
+  // MG/IG opex gating (a quoted-median-only estimate can't convert MG/IG even with an empty mgLandlordPays list).
+  it('non-finite low/high reject as UNKNOWN', () => {
+    expect(price({ rentLow: NaN })).toMatchObject({ effectiveBasis: 'UNKNOWN', askingNnnEq: null });
+  });
+  it('exactly the max spread passes (not rejected)', () => {
+    expect(price({ rentLow: 4.1, rentHigh: 4.92 })).toMatchObject({ effectiveBasis: 'NNN' });
+    expect(price({ rentLow: 4.1, rentHigh: 4.92 }).askingNnnEq).toBeCloseTo(4.51);
+  });
+  it('MG cannot convert with a component-level-null opex estimate even with an empty mgLandlordPays list', () => {
+    const quoted: OpexEstimate = { tax: null, ins: null, cam: null, total: 2, source: 'q' };
+    const input: RentInput = { rentLow: 11, rentHigh: null, rentPeriod: 'yr', rentBasis: 'MG', rentIsTotal: false, availableSf: 10000 };
+    expect(priceObservation(input, quoted, [], T).askingNnnEq).toBeNull();
+  });
+  it('sub-ceiling unstated period is low confidence; at-ceiling unstated period is yearly high confidence', () => {
+    const r1 = price({ rentLow: 2.99, rentPeriod: null });
+    expect(r1.confidence).toBe('low');
+    expect(r1.askingNnnEq).toBeCloseTo(35.88);
+    expect(price({ rentLow: 3, rentPeriod: null })).toMatchObject({ askingNnnEq: 3, confidence: 'high' });
+  });
+});
+
+describe('splitAddress — empty rawSuite override', () => {
+  it('does not let a blank rawSuite hide an embedded suite', () => {
+    expect(splitAddress('9 Main St Suite 5', '')).toEqual({ addressNorm: '9 MAIN ST', suiteNorm: '5' });
+  });
+});
+
+describe('sizeBandFor — boundary spot checks', () => {
+  it('lands each boundary in the correct band', () => {
+    expect(sizeBandFor(14999)).toBe('5-15K');
+    expect(sizeBandFor(15000)).toBe('15-30K');
+    expect(sizeBandFor(29999)).toBe('15-30K');
+    expect(sizeBandFor(30000)).toBe('30-50K');
+  });
+});
+
+describe('isBenchmarkEligible — 80K building', () => {
+  it('accepts a building exactly at the max SF', () => {
+    const base: EligibilityInput = { confidence: 'high', effectiveBasis: 'NNN', isSublease: false, originTier: 'T1', buildingStatus: 'existing', askingNnnEq: 8, buildingSf: 40000 };
+    expect(isBenchmarkEligible({ ...base, buildingSf: 80000 }, 80000)).toBe(true);
   });
 });
 
