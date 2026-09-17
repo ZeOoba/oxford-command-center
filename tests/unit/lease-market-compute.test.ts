@@ -59,6 +59,9 @@ describe('runCompute', () => {
     expect(radar!.address_display).toBe('101 Industrial Pkwy');
     expect(radar!.score).toBe(55);
     expect(radar!.severity).toBe('watch');
+    // Minor fix (controller decision): the radar signal's comp_basis column records the best-gap
+    // space's comparables basis, not a hardcoded null.
+    expect(radar!.comp_basis).toBe('similarity');
     const ev = JSON.parse(radar!.evidence_json) as Record<string, unknown>;
     expect(ev).toMatchObject({ part_dom: 0, part_reductions: 0, part_belowMarket: 25, part_vacancy: 15, part_buyBoxFit: 10, part_owner: 5, ownerType: 'private', ownerListingCount: 11, indicativeRentGapLabel: 'gross, vacant space only — not NOI', gateFailures: '' });
     expect(ev.comparableMedian as number).toBeCloseTo(9.4);
@@ -110,7 +113,9 @@ describe('read models', () => {
     expect(domBins(state, '2026-03-01')).toEqual([
       { marketId: 'columbus', bins: [{ label: '0-90d', count: 12 }, { label: '90-180d', count: 0 }, { label: '180-365d', count: 0 }, { label: '365d+', count: 0 }] },
     ]);
-    expect(leaseMarketKpis(db, config, state, '2026-03-01')).toEqual({ marketsFresh: 1, marketsEnabled: 2, activeSpaces: 13, newInLatest: 13, priceCutsInLatest: 0, stale: 0, radarCandidates: 1 });
+    // newInLatest excludes ORA's own space (fix round 2, requirement 6): 12 of the 13 'new' events are
+    // market comps; activeSpaces stays 13 (it's an inventory count, ORA included — see compute.ts).
+    expect(leaseMarketKpis(db, config, state, '2026-03-01')).toEqual({ marketsFresh: 1, marketsEnabled: 2, activeSpaces: 13, newInLatest: 12, priceCutsInLatest: 0, stale: 0, radarCandidates: 1 });
     const events = latestExportEvents(db, config);
     expect(events).toHaveLength(13);
     expect(events.every((e) => e.kind === 'new' && e.marketId === 'columbus' && e.eventDate === '2026-02-15')).toBe(true);
