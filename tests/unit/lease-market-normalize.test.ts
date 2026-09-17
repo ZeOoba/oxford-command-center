@@ -117,8 +117,11 @@ describe('parseRentText', () => {
   it('a range with a basis word between the two $-anchored figures is still recognized as a range', () => {
     expect(parseRentText('$8.00/SF/YR NNN - $10.00/SF/YR NNN')).toMatchObject({ rentLow: 8, rentHigh: 10, ambiguous: false });
   });
-  it('a bare number before an unrelated "+" (not the rent) is withheld, not mistaken for the rent', () => {
-    expect(parseRentText('5+ year term at $4.00/SF NNN').withheld).toBe(true);
+  it('a "+" before the first rent figure is a term-length marker, not an add-on split point; the $-anchored rent is still found', () => {
+    // Fix round 2: previously this data-loss-via-premature-split case was pinned withheld:true
+    // (the "+" split carved off "5" as basePart and lost the real "$4.00" into the discarded addon).
+    // Rule: the add-on split only fires on a "+" that occurs AFTER the first rent figure.
+    expect(parseRentText('5+ year term at $4.00/SF NNN')).toMatchObject({ withheld: false, rentLow: 4, basis: 'NNN' });
   });
   it('a bare number elsewhere in the text (not $-anchored) does not shadow the real $-anchored rent', () => {
     expect(parseRentText('2nd floor $8.50/SF/YR NNN')).toMatchObject({ rentLow: 8.5, rentHigh: 8.5, ambiguous: false });
@@ -129,6 +132,27 @@ describe('parseRentText', () => {
   it('a same-period tail after the head-cut does not falsely trip the tail-conflict guard', () => {
     expect(parseRentText('$8.50/SF/YR NNN, CAM $3.50').ambiguous).toBe(false);
     expect(parseRentText('$8.50/SF/YR NNN w/ $2.50/SF/YR CAM').ambiguous).toBe(false);
+  });
+
+  // Fix round 2 (second re-review): a later $-anchored figure must not silently be promoted over an
+  // earlier plausible-looking rent figure that has no "$" of its own; percentages are never rent or
+  // add-on candidates; a basis stated only after the head cut is still picked up.
+  it('an earlier unanchored number that looks like the rent is not shadowed by a later $-anchored figure (e.g. a CAM estimate)', () => {
+    const a = parseRentText('8.50/SF/YR NNN, $2.10 CAM');
+    expect(a.ambiguous).toBe(true);
+    expect(a.rentLow).not.toBe(2.1);
+    const b = parseRentText('Asking 8.50 NNN; CAM est. $2.10/SF/YR');
+    expect(b.ambiguous).toBe(true);
+    expect(b.rentLow).not.toBe(2.1);
+  });
+  it('a number immediately followed by "%" is never a rent or add-on candidate', () => {
+    expect(parseRentText('$3.25 - 3% bumps NNN')).toMatchObject({ rentLow: 3.25, rentHigh: 3.25 });
+    expect(parseRentText('$4.00 - 3.75% bumps /SF/YR NNN')).toMatchObject({ rentLow: 4, rentHigh: 4 });
+    expect(parseRentText('$6.00/SF/YR NNN + 15% admin fee on CAM').opexQuoted).toBeNull();
+  });
+  it('a basis stated only after the head cut is still picked up, not lost', () => {
+    expect(parseRentText('$8.50/SF/YR, NNN')).toMatchObject({ basis: 'NNN', ambiguous: false });
+    expect(parseRentText('$8.50 /SF/YR (NNN)')).toMatchObject({ basis: 'NNN', ambiguous: false });
   });
 });
 

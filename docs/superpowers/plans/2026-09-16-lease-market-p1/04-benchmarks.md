@@ -295,7 +295,7 @@ export function computeCell(target: CellTarget, rows: readonly BenchRow[], p: Be
 export function cellIndex(rows: readonly BenchRow[], p: BenchmarkParams): (target: CellTarget) => ComputedCell {
   const memo = new Map<string, ComputedCell>();
   return (target) => {
-    const key = [target.marketId, target.submarket ?? ' ', target.subtype, target.sizeBand, target.officeStratum].join('|');
+    const key = [target.marketId, target.submarket ?? '\u0000', target.subtype, target.sizeBand, target.officeStratum].join('|');
     let cell = memo.get(key);
     if (!cell) {
       cell = computeCell(target, rows, p);
@@ -325,4 +325,4 @@ git commit -F <message-file>   # "feat(analytics): lease market cell benchmarks 
 
 ## Review fixes (plan rev 2.1)
 
-12. `cellIndex`'s memo key now uses the `' '` escape as the null-submarket sentinel (not a literal space), so a target with a real submarket string of `' '` no longer collides with — and returns the wrong cached cell for — a null-submarket target.
+12. `cellIndex`'s memo key now uses the `'\u0000'` escape as the null-submarket sentinel (not a literal space), so a target with a real submarket string of `' '` no longer collides with — and returns the wrong cached cell for — a null-submarket target.

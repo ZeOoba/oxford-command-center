@@ -117,7 +117,10 @@ interface NumMatch {
 function numberMatches(s: string): NumMatch[] {
   return [...s.matchAll(NUM_RE)]
     .map((m) => ({ value: Number(m[0].replace(/,/g, '')), index: m.index ?? 0, end: (m.index ?? 0) + m[0].length }))
-    .filter((n) => Number.isFinite(n.value) && n.value > 0);
+    .filter((n) => Number.isFinite(n.value) && n.value > 0)
+    // A percentage figure (a rent bump, escalation, or admin-fee percentage) is never itself a rent
+    // or add-on-opex candidate.
+    .filter((n) => !/^\s*%/.test(s.slice(n.end)));
 }
 
 // All distinct basis tokens found in s, in the same priority order basisIn used to return the first
@@ -151,6 +154,30 @@ function isDollarAnchored(s: string, index: number): boolean {
   return i >= 0 && s[i] === '$';
 }
 
+// True when an un-anchored number plausibly IS the rent (so a later $-anchored figure — e.g. a
+// CAM/expense estimate quoted with its own "$" — must not silently be promoted over it). A number
+// glued to a letter ("2nd") or a "+" ("5+ year") is a floor/ordinal/term-length marker, never a
+// rent figure, regardless of its value or what follows.
+function looksLikeRentFigure(s: string, num: NumMatch, boundaryIndex: number): boolean {
+  const nextChar = s[num.end] ?? '';
+  if (/[a-zA-Z]/.test(nextChar) || nextChar === '+') return false;
+  if (num.value >= 1 && num.value <= 60) return true;
+  const following = s.slice(num.end, boundaryIndex);
+  return PER_SF_RE.test(following) || MO_RE.test(following) || YR_RE.test(following) || basisTokensIn(following).length > 0;
+}
+
+// The first plausible rent-figure position in s (rule 4): when the text quotes a "$", this is the
+// first $-anchored number; otherwise the first number, period. Used to gate the add-on "+" split —
+// a "+" before this point ("5+ year term at $4.00/SF NNN") is a term-length marker, not an add-on
+// separator, and must not carve the real rent figure off into the discarded addon text.
+function firstRentCandidateIndex(s: string, hasDollarSign: boolean): number | null {
+  const nums = numberMatches(s);
+  if (nums.length === 0) return null;
+  if (!hasDollarSign) return nums[0]!.index;
+  const anchored = nums.find((n) => isDollarAnchored(s, n.index));
+  return anchored ? anchored.index : null;
+}
+
 // Add-on opex derivation from the expense text after a "+" (rule 7). Returns null when the
 // figure isn't plausibly a per-SF/monthly opex add-on (e.g. a bare total-dollar CAM amount).
 function addonOpexValue(addon: string): number | null {
@@ -179,22 +206,43 @@ export function parseRentText(text: string): ParsedRentText {
 
   // "$7.25/SF + $2.50 NNN" / "$12,000/month + expenses": base rent + expense add-on => NNN base
   // (unless the base rent itself states a contradictory MG/IG/GROSS/FSG basis), quoted opex.
+  // The "+" must occur AFTER the first rent figure — "5+ year term at $4.00/SF NNN" is a
+  // term-length marker, not an add-on separator, and must not carve the real rent figure off into
+  // the discarded addon text.
   let basePart = t;
   let addon: string | null = null;
   const plusIdx = t.indexOf('+');
-  if (plusIdx >= 0 && EXPENSE_RE.test(t.slice(plusIdx + 1))) {
-    basePart = t.slice(0, plusIdx);
-    addon = t.slice(plusIdx + 1);
+  if (plusIdx >= 0) {
+    const firstRentIdx = firstRentCandidateIndex(t, hasDollar);
+    if (firstRentIdx !== null && plusIdx > firstRentIdx && EXPENSE_RE.test(t.slice(plusIdx + 1))) {
+      basePart = t.slice(0, plusIdx);
+      addon = t.slice(plusIdx + 1);
+    }
   }
 
   const allNums = numberMatches(basePart);
-  // When the text quotes a dollar figure, the FIRST rent candidate must itself be $-anchored — an
-  // unrelated bare integer ("5+ year term", "2nd floor") must not be mistaken for the rent. The
-  // second (range-high) figure is not required to repeat the "$" (short forms like "$12-14/SF/YR"
-  // only carry one) — it just needs a plausible range gap to the first figure; see below.
-  const anchoredNums = hasDollar ? allNums.filter((n) => isDollarAnchored(basePart, n.index)) : allNums;
-  if (anchoredNums.length === 0) return withheld;
-  const m1 = anchoredNums[0]!;
+  // When the text quotes a dollar figure, the rent candidate is normally the FIRST $-anchored
+  // number — an unrelated bare integer ("5+ year term", "2nd floor") must not be mistaken for the
+  // rent. But if an EARLIER un-anchored number plausibly looks like the rent itself (e.g. a base
+  // rent quoted with no "$", followed later by a "$"-anchored CAM/expense estimate), don't silently
+  // promote the later $ figure over it — keep the earlier number and flag the parse as suspect.
+  let m1: NumMatch;
+  let earlyUnanchoredAmbiguous = false;
+  if (hasDollar) {
+    const firstAnchoredIdx = allNums.findIndex((n) => isDollarAnchored(basePart, n.index));
+    const first = allNums[0];
+    if (first !== undefined && firstAnchoredIdx > 0 && looksLikeRentFigure(basePart, first, allNums[firstAnchoredIdx]!.index)) {
+      m1 = first;
+      earlyUnanchoredAmbiguous = true;
+    } else if (firstAnchoredIdx >= 0) {
+      m1 = allNums[firstAnchoredIdx]!;
+    } else {
+      return withheld;
+    }
+  } else {
+    if (allNums.length === 0) return withheld;
+    m1 = allNums[0]!;
+  }
   const m2 = allNums[allNums.indexOf(m1) + 1] ?? null;
   const gap = m2 !== null ? basePart.slice(m1.end, m2.index) : '';
   // An un-anchored m2 only counts as a range high-end on a BARE separator (no unit/basis token in
@@ -215,9 +263,15 @@ export function parseRentText(text: string): ParsedRentText {
   const tailPeriod = MO_RE.test(tail) ? 'mo' : YR_RE.test(tail) ? 'yr' : null;
   const tailConflict = tailPeriod !== null && tailPeriod !== rentPeriod;
 
-  const statedTokens = basisTokensIn(head);
-  const stated = statedTokens[0] ?? null;
-  const basisConflict = statedTokens.length > 1;
+  // The basis may be stated only after the head cut ("$8.50/SF/YR, NNN") — fall back to the tail
+  // when the head states none. When both state a basis and they disagree, that's a genuine conflict.
+  const headTokens = basisTokensIn(head);
+  const headStated = headTokens[0] ?? null;
+  const tailTokens = basisTokensIn(tail);
+  const tailStated = tailTokens[0] ?? null;
+  const stated = headStated ?? tailStated;
+  const basisConflict = headTokens.length > 1;
+  const crossBasisConflict = headStated !== null && tailStated !== null && headStated !== tailStated;
   let basis: RentBasis | null;
   let addonContradiction = false;
   if (addon !== null) {
@@ -235,7 +289,13 @@ export function parseRentText(text: string): ParsedRentText {
   const maxVal = Math.max(rentLow, rentHigh);
   const isTotal = !perSf && (maxVal >= 1000 || (rentPeriod === 'mo' && maxVal >= 50));
   const ambiguous =
-    addonContradiction || basisConflict || periodConflict || tailConflict || (!perSf && !isTotal && maxVal >= 60);
+    addonContradiction ||
+    basisConflict ||
+    crossBasisConflict ||
+    periodConflict ||
+    tailConflict ||
+    earlyUnanchoredAmbiguous ||
+    (!perSf && !isTotal && maxVal >= 60);
   const opexQuoted = addon !== null ? addonOpexValue(addon) : null;
   return { rentLow, rentHigh, rentPeriod, basis, withheld: false, isTotal, opexQuoted, ambiguous };
 }
