@@ -12,7 +12,7 @@ import { loadEnvFile } from '../server/load-env';
 
 loadEnvFile();
 
-import { mkdirSync, readdirSync, rmSync, writeFileSync, statSync } from 'node:fs';
+import { mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import {
@@ -22,6 +22,7 @@ import {
   verifySnapshot,
   encryptFile,
   selectSnapshotsToDelete,
+  writeManifest,
 } from '../server/warehouse/backup';
 
 const dbPath =
@@ -33,8 +34,11 @@ function stamp(d: Date): string {
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}`;
 }
 
+const BUSY_TIMEOUT_MS = Number(process.env.WAREHOUSE_BUSY_TIMEOUT_MS) || 15_000;
+
 function allTables(path: string): string[] {
   const db = new Database(path, { readonly: true });
+  db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
   try {
     return (
       db
@@ -60,7 +64,7 @@ async function main(): Promise<void> {
   // it would silently apply that branch's unmerged migration to the live warehouse. This is a
   // plain handle — the backup only reads, and WAL lets it run alongside the dev server.
   const db = new Database(dbPath);
-  db.pragma(`busy_timeout = ${Number(process.env.WAREHOUSE_BUSY_TIMEOUT_MS) || 15_000}`);
+  db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
   try {
     await snapshotWarehouse(db, plainPath);
   } finally {
@@ -75,37 +79,39 @@ async function main(): Promise<void> {
     for (const suffix of ['', '-wal', '-shm']) rmSync(`${plainPath}${suffix}`, { force: true });
   };
 
-  const tables = allTables(dbPath);
-  const result = verifySnapshot(plainPath, tableCounts(dbPath, tables));
-  if (!result.ok) {
-    removePlaintext();
-    console.error(
-      `BACKUP FAILED — integrity=${result.integrity} mismatches=${result.mismatches.join('; ')}`,
-    );
-    process.exit(1);
+  // Everything from here to a successful encrypt runs under `finally`. Any throw in between —
+  // a table name the identifier allowlist rejects, SQLITE_BUSY on a count, a disk error during
+  // encrypt — previously propagated straight to process.exit(1) with the UNENCRYPTED warehouse
+  // still on disk. BACKUP_DIR is a OneDrive path, so that plaintext then syncs to the cloud.
+  let result: ReturnType<typeof verifySnapshot>;
+  let tables: string[];
+  try {
+    tables = allTables(dbPath);
+    result = verifySnapshot(plainPath, tableCounts(dbPath, tables));
+    if (!result.ok) {
+      console.error(
+        `BACKUP FAILED — integrity=${result.integrity} mismatches=${result.mismatches.join('; ')}`,
+      );
+      process.exitCode = 1;
+      return;
+    }
+    encryptFile(plainPath, encPath, key);
+  } finally {
+    removePlaintext(); // never leave an unencrypted copy behind, on ANY path
   }
-
-  encryptFile(plainPath, encPath, key);
-  removePlaintext(); // never leave an unencrypted copy behind
 
   for (const doomed of selectSnapshotsToDelete(readdirSync(backupDir), now)) {
     rmSync(join(backupDir, doomed), { force: true });
   }
 
-  writeFileSync(
-    join(backupDir, 'manifest.json'),
-    JSON.stringify(
-      {
-        latest: encPath,
-        at: now.toISOString(),
-        bytes: statSync(encPath).size,
-        tables: tables.length,
-        counts: result.counts,
-      },
-      null,
-      2,
-    ),
-  );
+  writeManifest(backupDir, {
+    latest: `finance-${stamp(now)}.sqlite.enc`,
+    at: now.toISOString(),
+    bytes: statSync(encPath).size,
+    tables: tables.length,
+    counts: result.counts,
+  });
+
   console.log(`backup ok → ${encPath} (${tables.length} tables, integrity ${result.integrity})`);
 }
 
