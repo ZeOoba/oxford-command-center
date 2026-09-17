@@ -92,7 +92,7 @@
       "branch": "feat/lease-market-intel",
       "agent_role": "Engineering (Claude Code, Opus 5 controller + Sonnet 5 implementers)",
       "owner": "Claude Code session 5e58f532 (Gabriel-authorized in-turn 2026-09-16)",
-      "active_pr": null,
+      "active_pr": "https://github.com/ZeOoba/oxford-command-center/pull/330",
       "modules_owned": ["lease-market"],
       "files_owned": ["server/warehouse/migrations/029_lease_market.sql", "server/warehouse/lease-market/**", "server/warehouse/lease-market-api.ts", "src/analytics/lease-market/**", "src/contracts/lease-market.ts", "src/charts/RentCurve.tsx", "src/charts/rent-curve-layout.ts", "src/modules/lease-market/**", "scripts/lease-market.ts", "scripts/lease-market-owner-screen.py", "config/lease-market.json", "config/lease-market.costar-headers.json", "tests/unit/lease-market-*", "tests/unit/migration-029-lease-market.test.ts", "tests/unit/rent-curve.test.tsx"]
     }
