@@ -14,12 +14,25 @@ const baseRow = {
 };
 
 describe('lease-market contracts', () => {
-  it('the shipped config parses with spec rev 3 thresholds and no fabricated opex', () => {
+  it('the shipped config parses with spec rev 3 thresholds and only attributed opex', () => {
     const cfg = LeaseMarketConfig.parse(shipped);
     expect(cfg.markets.map((m) => m.id)).toContain('columbus');
     expect(cfg.thresholds).toMatchObject({ belowMarketMedianRatio: 0.85, benchmarkMinN: 5, similarityMinScore: 60, similarityTopK: 15, similarityMinComps: 8, similarityHighComps: 15, radarMinScore: 50, rentMinPsfYr: 1, rentMaxPsfYr: 60 });
     expect(Object.values(cfg.similarityWeights).reduce((a, b) => a + b, 0)).toBe(100);
-    for (const m of cfg.markets) expect(m.opexDefaults).toEqual({ warehouse: null, flex: null });
+    // Opex defaults are what convert an MG/gross quote to an NNN-equivalent, so a wrong one moves
+    // every converted comp. The invariant is NOT "there are none" — Columbus now carries a set
+    // Gabriel ratified — it is that a set may never be anonymous: each one must name where it came
+    // from and as of when, and a market with no ratified figure stays null rather than inheriting a
+    // neighbour's. A future market that fills these must state its own source.
+    for (const m of cfg.markets) {
+      for (const sub of ['warehouse', 'flex'] as const) {
+        const d = m.opexDefaults[sub];
+        if (d === null) continue;
+        expect(d.source.trim().length, `${m.id}/${sub} opex default must name its source`).toBeGreaterThan(0);
+        expect(d.asOf, `${m.id}/${sub} opex default must carry an asOf date`).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      }
+    }
+    expect(cfg.markets.filter((m) => m.opexDefaults.flex !== null).map((m) => m.id)).toEqual(['columbus']);
   });
 
   it('rejects weights that do not sum to 100, unknown ORA markets, and duplicate markets', () => {
