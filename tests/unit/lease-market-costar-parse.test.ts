@@ -116,6 +116,43 @@ describe('parseCostarListingsFile', () => {
     expect(r.rows[0]).toMatchObject({ rentBasis: 'UNKNOWN' });
   });
 
+  it('an ambiguous free-text quote nulls the add-on opex, even when one was parsed', async () => {
+    // '$4.00/SF/YR NNN, CAM $3.50 + $1.20 CAM' — the string named in the follow-up request — is
+    // flagged ambiguous:true with a non-null opexQuoted (1.2) by parseRentText at this HEAD
+    // (verified directly before writing this test): the leading "NNN, CAM $3.50" reads as a stated
+    // basis before the add-on split, contradicting the add-on's own implied NNN. That parsed 1.2
+    // add-on must not reach the row once the quote is ambiguous.
+    const base = testHeaderMap();
+    const map = testHeaderMap({ fields: { ...base.fields, rentText: 'Rent Low', rentLow: null, rentHigh: null, rentBasis: null } });
+    const f = await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 1000, rentLow: '$4.00/SF/YR NNN, CAM $3.50 + $1.20 CAM', rentType: null }]);
+    const r = await parseCostarListingsFile(f, map);
+    expect(r.rows[0]).toMatchObject({ rentBasis: 'UNKNOWN', opexQuotedPsf: null });
+  });
+
+  it('basis precedence: mapped column vs. text-parsed basis agree, disagree, or text states none', async () => {
+    const d = dir();
+    const base = testHeaderMap();
+    const map = testHeaderMap({ fields: { ...base.fields, rentText: 'Rent Low', rentLow: null, rentHigh: null } });
+
+    const agree = await parseCostarListingsFile(
+      await writeCostarFixture(d, 'agree.xlsx', [{ address: '1 Main St', sf: 1000, rentLow: '$8.50/SF/YR NNN', rentType: 'NNN' }]),
+      map,
+    );
+    expect(agree.rows[0]).toMatchObject({ rentBasis: 'NNN' });
+
+    const disagree = await parseCostarListingsFile(
+      await writeCostarFixture(d, 'disagree.xlsx', [{ address: '1 Main St', sf: 1000, rentLow: '$8.50/SF/YR NNN', rentType: 'MG' }]),
+      map,
+    );
+    expect(disagree.rows[0]).toMatchObject({ rentBasis: 'UNKNOWN' });
+
+    const textNoBasis = await parseCostarListingsFile(
+      await writeCostarFixture(d, 'text-no-basis.xlsx', [{ address: '1 Main St', sf: 1000, rentLow: '$8.50/SF/YR', rentType: 'NNN' }]),
+      map,
+    );
+    expect(textNoBasis.rows[0]).toMatchObject({ rentBasis: 'NNN' });
+  });
+
   it('reads a hyperlink cell for listingUrl (falls back to cellText for a plain-text URL column)', async () => {
     const wb = new ExcelJS.Workbook();
     const ws = wb.addWorksheet('Listings');
