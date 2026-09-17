@@ -145,9 +145,9 @@ export const TEST_THRESHOLDS: LmThresholds = {
 };
 
 export function stubScreen(names: string[]): OwnerScreenResult {
+  const unique = [...new Set(names.map((n) => n.trim()).filter(Boolean))];
   const types = new Map<string, OwnerType>();
-  for (const raw of names) {
-    const n = raw.trim();
+  for (const n of unique) {
     const upper = n.toUpperCase();
     types.set(n, upper.includes('PROLOGIS') ? 'institutional' : upper.includes('OXFORD') ? 'affiliated' : 'private');
   }
