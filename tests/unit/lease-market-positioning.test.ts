@@ -240,6 +240,59 @@ describe('computePositioning', () => {
     expect(row.recommendation).toMatch(/^Within the comparable range \(/);
   });
 
+  // Row-level (computePositioning, not the unit-level recommendationFor helper) counterpart to
+  // "treats nominally-exact 10% gaps as in_band despite floating-point division noise" -- the
+  // comparable median here is REAL (derived from similarity comps via quantileSorted), not a
+  // hand-supplied literal, so this also exercises that gapPct's roundedGap guard survives the full
+  // resolveComparables pipeline, not just a hand-constructed ResolvedComparables. 6.5 and 7.5 are
+  // both exactly binary-representable, so their average (the median, at n=10) is exactly 7.00 --
+  // (7.70 - 7.00) / 7.00 is 0.10000000000000003 in raw floating point, which a naive `> 0.1` compare
+  // would misclassify as 'above' the 10% band.
+  it('treats a row-level nominally-exact 10% gap (median 7.00, asking 7.70) as in_band, not above', async () => {
+    const { dir, db } = await newDb();
+    const config = testConfig();
+    const comps: FixtureListing[] = [5, 5.5, 6, 6.25, 6.5, 7.5, 7.75, 8, 8.5, 9].map((rent, i) => ({ id: `E${i}`, address: `${500 + i} Edge Dr`, sf: 8000, rentLow: rent }));
+    const ora: FixtureListing = { address: '1100 Rarig Ave', suite: 'B', sf: 8000, rentLow: 7.7, owner: 'OXFORD RARIG LLC' };
+    await ingestInto(db, dir, config, 'columbus', '2026-02-15', [...comps, ora]);
+    const s = loadMarketState(db, config, '2026-03-01');
+    const r = computePositioning([{ propertyKey: '1100 Rarig', unit: 'B', sf: 8000 }], config, s, true);
+    const row = r.rows[0]!;
+    expect(row.stats!.median).toBe(7);
+    expect(row.oraAskingNnnEq).toBe(7.7);
+    expect(row.band).toBe('in_band');
+    expect(row.recommendation).toMatch(/^Within the comparable range \(/);
+  });
+
+  // Mirror of "scopes ORA matching to the configured market and breaks exact-suite ties by lowest
+  // listingId" above, but with the two buildings' fixture-insertion order (and therefore listingId
+  // order) REVERSED relative to their address's alphabetical order -- building B (1200 Rarig,
+  // alphabetically LATER) is inserted first here and so gets the LOWER listingId. This proves the
+  // winner is chosen by listingId, not by address string order or array (Map.find) iteration order
+  // coincidentally lining up with listingId order, which the original test alone couldn't rule out
+  // (there, the lower-listingId building also happened to sort first alphabetically and be
+  // inserted first).
+  it('breaks exact-suite ties by lowest listingId even when insertion/address order favors the other building', async () => {
+    const { dir, db } = await newDb();
+    const config = testConfig({
+      oraProperties: [
+        {
+          propertyKey: '1100 Rarig', marketId: 'columbus', submarket: 'East', subtype: 'warehouse', officePct: null, typicalUnitSf: 8000,
+          leaseBasis: 'NNN', addressNorms: ['1100 RARIG AVE', '1200 RARIG AVE'], lat: null, lon: null, clearHeightFt: null, yearBuilt: null, docks: null, driveIns: null,
+        },
+      ],
+    });
+    const buildingA: FixtureListing = { address: '1100 Rarig Ave', suite: 'A', sf: 8000, rentLow: 9, owner: 'OXFORD RARIG LLC' };
+    const buildingB: FixtureListing = { address: '1200 Rarig Ave', suite: 'A', sf: 8000, rentLow: 9.5, owner: 'OXFORD RARIG LLC' };
+    // Building B inserted FIRST -> gets the lower listingId, despite sorting after building A
+    // alphabetically by address.
+    await ingestInto(db, dir, config, 'columbus', '2026-02-15', [...TEN_COMPS, buildingB, buildingA]);
+    const s = loadMarketState(db, config, '2026-03-01');
+    const r = computePositioning([{ propertyKey: '1100 Rarig', unit: 'A', sf: 8000 }], config, s, true);
+    // Building B (rent 9.5) has the lower listingId here, so it must win the exact-suite tie --
+    // NOT building A (rent 9), even though A sorts first alphabetically by address.
+    expect(r.rows[0]!.oraAskingNnnEq).toBe(9.5);
+  });
+
   it('reports no comparables for a unit whose size falls outside every size band', async () => {
     const { config, s } = await state();
     const r = computePositioning([{ propertyKey: '1100 Rarig', unit: 'Suite B', sf: 90000 }], config, s, true);

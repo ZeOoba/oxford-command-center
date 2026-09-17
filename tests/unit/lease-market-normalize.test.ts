@@ -281,9 +281,12 @@ describe('parseRentText', () => {
 
   // Fix round 5 (fifth re-review, controller convention decision — market convention, conservative
   // per the plan's safety-over-yield rule): an expense add-on resolves the basis to NNN only when it
-  // names a full-expense form (NNN, TICAM, nets/net, expenses, opex/op ex, or CAM together with BOTH
-  // TAX and INS). A partial add-on ("+ CAM" alone, "+ CAM/TAX", "+ CAM/INS", "+ TAX" alone) keeps the
-  // parsed rentLow/rentHigh but resolves basis to null and flags ambiguous — never a silent NNN.
+  // names a full-expense form (NNN, TICAM, nets/net, expenses, opex, or CAM/TAX/INS together as a
+  // "/"-separated chain). A partial add-on ("+ CAM" alone, "+ CAM/TAX") keeps the parsed
+  // rentLow/rentHigh but resolves basis to null and flags ambiguous — never a silent NNN. (A
+  // TAX/INS-LED partial add-on, e.g. "+ TAX" or "+ CAM/INS" alone, needed a further round-6 fix
+  // before it could even reach this check at all — see the "TAX/INS-led add-ons" describe block
+  // below, which is where those specific cases are pinned, not here.)
   describe('partial expense add-on guard', () => {
     it.each([
       '$6.50/SF/YR + CAM',
@@ -353,6 +356,21 @@ describe('parseRentText', () => {
     it('a plain quote with no add-on at all is unaffected', () => {
       expect(parseRentText('$8.50/SF/YR NNN')).toMatchObject({ rentLow: 8.5, rentHigh: 8.5, basis: 'NNN', ambiguous: false });
     });
+  });
+
+  it('a space-separated "CAM TAX INS" (not the grammar\'s own "/" separator) is a partial add-on, not a full form', () => {
+    // isFullExpenseAddon's component chain check (COMPONENT_CHAIN_RE) only recognizes a "/"-separated
+    // run as covering all three components; three independently-matched, space-separated tokens never
+    // collapse into one chain, so this must resolve the same as any other partial add-on: basis null,
+    // ambiguous, rentLow unaffected.
+    expect(parseRentText('$6.50/SF/YR + CAM TAX INS')).toMatchObject({ rentLow: 6.5, basis: null, ambiguous: true });
+  });
+
+  it('a spaced "op ex" add-on is a partial (non-full-form) add-on despite EXPENSE_RE\'s split tolerance for it', () => {
+    // EXPENSE_RE deliberately tolerates a spaced "op ex" so the "+" is still treated as an add-on
+    // split point, but isFullExpenseAddon's FULL_FORM_ADDON_RE only matches the bare "opex" (no
+    // space) -- "op ex" must not silently resolve to NNN.
+    expect(parseRentText('$6.50/SF/YR + op ex')).toMatchObject({ rentLow: 6.5, basis: null, ambiguous: true });
   });
 
   it('a partial add-on figure is never reported as opexQuoted, even alongside an explicit head NNN (fix round 6)', () => {
