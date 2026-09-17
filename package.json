@@ -34,6 +34,7 @@
     "lease-market:compute": "tsx scripts/lease-market.ts compute",
     "backup": "tsx scripts/warehouse-backup.ts",
     "backup:verify": "tsx scripts/warehouse-restore-verify.ts",
+    "xref:seed": "tsx scripts/seed-entity-xref.ts",
     "worktree": "tsx scripts/safe-worktree.ts",
     "check:bundle": "tsx scripts/check-bundle.ts",
     "check:dev-css": "tsx scripts/check-dev-css.ts",
