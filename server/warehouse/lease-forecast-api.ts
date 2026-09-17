@@ -17,11 +17,13 @@
 //   400 on Zod parse failure of the POST body.
 //   500 on unexpected engine errors.
 //
-// Market rents (fix round 1 ruling A): the lease-market feed (server/warehouse/lease-market/feed.ts)
-// is READ-ONLY INFORMATIONAL CONTEXT for /forecast and /narrative's marketRentGaps display — it is
-// NEVER merged into the marketRents passed to rentForecast. POST /rent-forecast's renew_at_market
-// projects NOI, and an asking-rent × SF figure must never be presented as NOI (global constraint) —
-// so that route uses ONLY the manual overlay marketRents, exactly as before the feed existed.
+// Market rents (fix round 1 ruling A; fix round 2 ruling 6): the lease-market feed
+// (server/warehouse/lease-market/feed.ts) is READ-ONLY INFORMATIONAL CONTEXT for /forecast's
+// marketRentGaps display ONLY — it is NEVER merged into the marketRents passed to rentForecast
+// (POST /rent-forecast's renew_at_market projects NOI, and an asking-rent × SF figure must never be
+// presented as NOI), and GET /narrative no longer reads it at all (the AI narrative should describe
+// only real, human-confirmed market intel, not an automated asking-rent feed); marketRentGaps' own
+// provenance !== 'derived-asking' filter on topGaps stays as defense regardless.
 //
 // Confidentiality: routes emit derived signals + rent-roll figures for owned assets only.
 // No confidential-deal data is in scope for this module.
@@ -82,11 +84,11 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
   }
 
   /**
-   * Lease-market feed read through ONE guarded helper, used by every route that consumes it
-   * (GET /forecast, GET /narrative — never POST /rent-forecast, see the header note above).
-   * {} on ANY failure (warehouse unavailable, or a read error against an available warehouse) —
-   * the feed is optional context, never a hard dependency, so a feed-read failure must not 500
-   * a route that would otherwise succeed.
+   * Lease-market feed read through ONE guarded helper, used by GET /forecast ONLY (fix round 2
+   * ruling 6 dropped it from GET /narrative; POST /rent-forecast never used it, see the header
+   * note above). {} on ANY failure (warehouse unavailable, or a read error against an available
+   * warehouse) — the feed is optional context, never a hard dependency, so a feed-read failure
+   * must not 500 a route that would otherwise succeed.
    */
   function feedOrEmpty(): Record<string, number> {
     try {
@@ -247,8 +249,11 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
       const marketRents = (snapshot as typeof snapshot & { marketRents?: Record<string, number> }).marketRents ?? {};
       const arrears = snapshot.tenantArrears ?? {};
 
+      // Fix round 2 ruling 6: /narrative does NOT read the lease-market feed at all (manual overlay
+      // marketRents only) -- the AI narrative should describe only real, human-confirmed market
+      // intel, never an automated asking-rent feed.
       const signals = renewalSignals(leases, refDate, snapshot.renewalStages, arrears);
-      const marketGapsAll = marketRentGaps(leases, marketRents, feedOrEmpty());
+      const marketGapsAll = marketRentGaps(leases, marketRents);
 
       const likelyCt    = signals.filter((s) => s.likelihood === 'likely').length;
       const uncertainCt = signals.filter((s) => s.likelihood === 'uncertain').length;
@@ -261,8 +266,11 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
 
       // Anonymize propertyKey → ordinal label before sending to AI (invariant 7: no raw
       // owned-asset identifiers egress to the external API; only aggregated/ordinal data).
-      // derived-asking (lease-market feed) gaps are excluded (fix round 1 ruling B): the AI
-      // narrative must never describe an asking-rent-derived gap as a market gap.
+      // derived-asking (lease-market feed) gaps are excluded (fix round 1 ruling B) as DEFENSE IN
+      // DEPTH: marketGapsAll above is built from marketRentGaps(leases, marketRents) with no
+      // feedRents argument (ruling 6), so no gap here should ever actually carry 'derived-asking'
+      // provenance -- but if that ever changes, the AI narrative must still never describe an
+      // asking-rent-derived gap as a market gap.
       const topGaps = marketGapsAll
         .filter((g) => g.gapPsf !== null && g.provenance !== 'derived-asking')
         .sort((a, b) => Math.abs(b.gapPsf ?? 0) - Math.abs(a.gapPsf ?? 0))

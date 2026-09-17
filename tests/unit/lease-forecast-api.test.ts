@@ -18,6 +18,7 @@ import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { LeaseForecastResponse, RentForecastResponse, LeaseNarrativeResponse } from '@contracts/lease-forecast';
 import type { PortfolioSnapshot, Property, Lease } from '@contracts/index';
+import type * as FeedModule from '../../server/warehouse/lease-market/feed';
 
 vi.mock('../../server/brain', () => ({
   brain: { getSnapshot: vi.fn() },
@@ -30,6 +31,17 @@ vi.mock('../../server/ai/narrative', () => ({
 import { composeLeaseNarrative } from '../../server/ai/narrative';
 const mockComposeLeaseNarrative = vi.mocked(composeLeaseNarrative);
 const mockGetSnapshot = vi.mocked(brain.getSnapshot);
+
+// Spy-wrapped (not stubbed) around the REAL implementation, so every route's behavior is unchanged --
+// this exists solely so the ruling-6 test below can assert /narrative never CALLS it, distinguishing
+// "never reads the feed" from "reads it but filters the result" (both would otherwise look identical
+// from the response body alone).
+vi.mock('../../server/warehouse/lease-market/feed', async (importOriginal) => {
+  const actual = await importOriginal<typeof FeedModule>();
+  return { ...actual, loadMarketRentFeed: vi.fn(actual.loadMarketRentFeed) };
+});
+import { loadMarketRentFeed } from '../../server/warehouse/lease-market/feed';
+const mockLoadMarketRentFeed = vi.mocked(loadMarketRentFeed);
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────────────────
 
@@ -192,16 +204,19 @@ describe('GET /forecast', () => {
     db.exec('DROP TABLE lm_market_rent_feed');
     mockGetSnapshot.mockReturnValue(snap({ leases: [mkLease({ id: 'l1' })] }));
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const app = makeApp(db);
-    const res = await app.request('/forecast');
-    expect(res.status).toBe(200);
-    const parsed = LeaseForecastResponse.safeParse(await res.json());
-    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
-    if (parsed.success) {
-      expect(parsed.data.marketGaps.every((g) => g.provenance !== 'derived-asking')).toBe(true);
+    try {
+      const app = makeApp(db);
+      const res = await app.request('/forecast');
+      expect(res.status).toBe(200);
+      const parsed = LeaseForecastResponse.safeParse(await res.json());
+      expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.marketGaps.every((g) => g.provenance !== 'derived-asking')).toBe(true);
+      }
+      expect(warnSpy).toHaveBeenCalledWith('[lease-forecast-api] lease-market feed unavailable:', expect.stringContaining('lm_market_rent_feed'));
+    } finally {
+      warnSpy.mockRestore();
     }
-    expect(warnSpy).toHaveBeenCalledWith('[lease-forecast-api] lease-market feed unavailable:', expect.stringContaining('lm_market_rent_feed'));
-    warnSpy.mockRestore();
   });
 });
 
@@ -389,12 +404,15 @@ describe('GET /narrative', () => {
     expect(JSON.stringify(sentInput)).not.toContain('Real Sounding Property Name');
   });
 
-  it('IMPORTANT (fix round 1 ruling B): excludes derived-asking (lease-market feed) gaps from topGaps sent to the AI composer', async () => {
+  it('fix round 2 ruling 6: does not read the lease-market feed at all -- a feed row present with no manual override has ZERO effect on topGaps sent to the AI composer', async () => {
     process.env.ANTHROPIC_API_KEY = 'fixture-key-not-real';
     mockComposeLeaseNarrative.mockResolvedValue({ narrative: null, degraded: true });
     const db = freshDb();
-    // Only a feed row exists for this property -- no overlay.marketRents entry -- so the ONLY gap
-    // marketRentGaps can produce for this lease is provenance 'derived-asking'.
+    // A feed row exists for this property -- no overlay.marketRents entry -- but /narrative never
+    // calls loadMarketRentFeed/feedOrEmpty at all, so this row must be invisible to it: the lease's
+    // gap resolves 'absent' (not 'derived-asking'), which the defensive derived-asking filter would
+    // ALSO have excluded -- this test locks the "never reads the feed" behavior itself, not just the
+    // filter (fix round 1 ruling B's filter stays as defense-in-depth, per the header note above).
     db.prepare(
       `INSERT INTO lm_market_rent_feed (ora_property_key, asking_nnn_eq, comp_basis, confidence, cell_key, n, computed_at) VALUES (?, 15, 'similarity', 'MEDIUM', 'k', 12, '2026-03-01')`,
     ).run('Fixture Property One');
@@ -405,7 +423,8 @@ describe('GET /narrative', () => {
 
     expect(mockComposeLeaseNarrative).toHaveBeenCalledTimes(1);
     const sentInput = mockComposeLeaseNarrative.mock.calls[0]![0] as { topGaps: unknown[] };
-    // The AI must never describe an asking-rent-derived gap as a market gap.
     expect(sentInput.topGaps).toHaveLength(0);
+    // The discriminating assertion: loadMarketRentFeed itself is never invoked by /narrative.
+    expect(mockLoadMarketRentFeed).not.toHaveBeenCalled();
   });
 });
