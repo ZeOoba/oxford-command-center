@@ -53,6 +53,15 @@ export function isActive(s: Pick<SpaceState, 'status'>): boolean {
   return s.status === 'active' || s.status === 'missing_once';
 }
 
+// R2: the owner screen's own ORA-SELF verdict (ownerType === 'affiliated') is a second, independent way
+// a property is ORA's own — not just a configured ora_property_key match. A listing whose owner is
+// verdicted 'affiliated' but whose address isn't (yet, or ever) in config.oraProperties.addressNorms
+// must still be excluded everywhere isOraOwned gates comps/benchmarks/signals/radar eligibility, or it
+// can rank as an acquisition candidate against ORA itself.
+function isOraOwnedProperty(p: Pick<PropertyState, 'oraPropertyKey' | 'ownerType'>): boolean {
+  return p.oraPropertyKey !== null || p.ownerType === 'affiliated';
+}
+
 interface PropertyRow {
   id: number; market_id: string; address_display: string; submarket: string | null; subtype: LmSubtype; building_status: BuildingStatus;
   building_sf: number | null; year_built: number | null; clear_height_ft: number | null; docks: number | null; drive_ins: number | null;
@@ -88,6 +97,43 @@ function latestExportLandingIds(db: WarehouseDb, config: LeaseMarketConfig): Map
       .prepare(`SELECT id FROM lm_landing WHERE source = 'costar_listings' AND market_id = ? AND parse_status = 'ok' AND observed_at > ?`)
       .all(m.id, prior?.observed_at ?? '') as Array<{ id: number }>;
     out.set(m.id, new Set(rows.map((r) => r.id)));
+  }
+  return out;
+}
+
+// R10: the subset of the window above that excludes a landing which arrived BACK-DATED — i.e. a
+// landing whose own observed_at is EARLIER than a complete landing that was already on file (a smaller
+// `id`, so already ingested) at the time it landed. A legitimate sandwiched partial (dated and INSERTED
+// strictly between two complete exports, in that same order — the ordinary "a thin export happened,
+// then next month's full export came in" case, exercised by lease-market-compute-reviewfixes.test.ts)
+// is NOT back-dated by this definition and stays eligible: at the moment it was ingested, no LATER-dated
+// complete landing existed yet to contradict it. Only a landing that arrives AFTER a complete export
+// that already postdates it (out-of-order arrival) is excluded — its brand-new spaces were never
+// confirmed by the most current complete picture, so they must not read as "new in the latest export"
+// (isNewInLatestExport, and the 'new' event count in countLatestEvents/leaseMarketKpis). This is a
+// purely structural, id-vs-date check — never a comparison against the market's CURRENT latest complete
+// landing, which would also (wrongly) exclude the ordinary sandwiched-partial case once a later complete
+// export lands.
+function newEligibleLandingIds(db: WarehouseDb, config: LeaseMarketConfig): Map<string, Set<number>> {
+  const window = latestExportLandingIds(db, config);
+  const out = new Map<string, Set<number>>();
+  for (const [marketId, ids] of window) {
+    if (ids.size === 0) {
+      out.set(marketId, new Set());
+      continue;
+    }
+    const rows = db
+      .prepare(
+        `SELECT L.id FROM lm_landing L
+         WHERE L.id IN (${[...ids].map(() => '?').join(',')})
+           AND NOT EXISTS (
+             SELECT 1 FROM lm_landing L2
+             WHERE L2.source = 'costar_listings' AND L2.market_id = L.market_id AND L2.parse_status = 'ok' AND L2.completeness = 'complete'
+               AND L2.id < L.id AND L2.observed_at > L.observed_at
+           )`,
+      )
+      .all(...ids) as Array<{ id: number }>;
+    out.set(marketId, new Set(rows.map((r) => r.id)));
   }
   return out;
 }
@@ -130,6 +176,7 @@ export function loadMarketState(db: WarehouseDb, config: LeaseMarketConfig, asOf
   }
 
   const windowIds = latestExportLandingIds(db, config);
+  const newEligibleIds = newEligibleLandingIds(db, config);
   const cutIds = new Set<number>();
   const windowIdList = [...windowIds.values()].flatMap((s) => [...s]);
   if (windowIdList.length > 0) {
@@ -159,12 +206,12 @@ export function loadMarketState(db: WarehouseDb, config: LeaseMarketConfig, asOf
     const latest = observations[observations.length - 1]!;
     const sizeBand = sizeBandFor(latest.availableSf);
     const officeStratum = officeStratumFor(property.subtype, property.officePct, t.flexOfficeSplitPct);
-    const isOraOwned = property.oraPropertyKey !== null;
+    const isOraOwned = isOraOwnedProperty(property);
     const space: SpaceState = {
       listingId: row.id, propertyId: property.propertyId, marketId: property.marketId,
       addressDisplay: row.suite_norm ? `${property.addressDisplay} Ste ${row.suite_norm}` : property.addressDisplay,
       buildingStatus: property.buildingStatus, isOraOwned, status: row.status, removedAt: row.removed_at, firstSeen: row.first_seen,
-      costarDateOnMarket: row.costar_date_on_market, isNewInLatestExport: windowIds.get(property.marketId)?.has(row.first_landing_id) ?? false,
+      costarDateOnMarket: row.costar_date_on_market, isNewInLatestExport: newEligibleIds.get(property.marketId)?.has(row.first_landing_id) ?? false,
       observations, priceCutInLatestExport: cutIds.has(row.id), reductionCount: row.reduction_count, originalAsking: row.original_asking,
       cumulativeReductionPct: row.cumulative_reduction_pct, suiteNorm: row.suite_norm, property, sizeBand, officeStratum,
       originTier: row.origin_tier, latestEligible: latest.eligible, latestConfidence: latestRow.confidence,
@@ -337,7 +384,7 @@ export function buildRadar(
     const result = scoreRadar(
       {
         propertyId, buildingSf: property.buildingSf, buildingStatus: property.buildingStatus, subtype: property.subtype,
-        ownerType: property.ownerType, isOraOwned: property.oraPropertyKey !== null,
+        ownerType: property.ownerType, isOraOwned: isOraOwnedProperty(property),
         spaces: spaces.map((s) => {
           const latest = s.observations[s.observations.length - 1]!;
           const c = compsFor(s);
@@ -380,6 +427,34 @@ export interface ComputeResult {
 export function runCompute(db: WarehouseDb, config: LeaseMarketConfig, asOf: string): ComputeResult {
   const body = (): ComputeResult => {
     const t = config.thresholds;
+
+    // R16: with an EMPTY config.oraProperties (the shipped default), the entire ORA-exclusion layer is
+    // inert — none of ORA's own buildings carry a configured addressNorms match, so they enter
+    // benchmarks, comps, DOM bins and the radar exactly like any other property (Gabriel's own building
+    // could rank as an acquisition candidate against comparables that include itself). This can't be
+    // silently correct — warn loudly, every run, until the list is filled in.
+    if (config.oraProperties.length === 0) {
+      console.warn(
+        '[lease-market] config.oraProperties is empty: the ORA-exclusion layer is inert — ORA\'s own buildings will enter benchmarks, comparable sets, signals and the acquisition radar (and could themselves surface as a candidate) until oraProperties is filled in.',
+      );
+    }
+
+    // R13: ora_property_key is otherwise stamped at ingest time only. If config/lease-market.json's
+    // oraProperties list is filled in (or corrected) AFTER properties have already been ingested — the
+    // documented go-live order — those existing lm_property rows would stay unflagged (and so
+    // unexcluded from comps/benchmarks/signals/radar) until their NEXT export. Re-apply addressNorms
+    // here, at the start of every compute run, idempotently, inside the same transaction runCompute
+    // already uses, so loadMarketState below sees the corrected flags immediately.
+    const restampOraKey = db.prepare(
+      `UPDATE lm_property SET ora_property_key = @key
+       WHERE market_id = @marketId AND address_norm = @addressNorm AND (ora_property_key IS NULL OR ora_property_key != @key)`,
+    );
+    for (const p of config.oraProperties) {
+      for (const addressNorm of p.addressNorms) {
+        restampOraKey.run({ key: p.propertyKey, marketId: p.marketId, addressNorm });
+      }
+    }
+
     const state = loadMarketState(db, config, asOf);
     const thresholds = staleThresholdsByMarket(db, config, asOf);
     const screenOk = ownerScreenOkByMarket(db, config);
@@ -530,8 +605,11 @@ export function domBins(state: MarketState, asOf: string): Array<{ marketId: str
 
 // excludeOra (fix round 2, requirement 6): the KPI counts are a read on MARKET activity — ORA's own
 // listing surfacing in the same CoStar export is not a market signal and must not inflate them.
+// R10: 'new' events use the newEligible set (excludes a back-dated first sighting), never the broader
+// window used by every other event kind — see newEligibleLandingIds' own comment.
 function countLatestEvents(db: WarehouseDb, config: LeaseMarketConfig, kind: ListingEventKind, excludeOra: boolean): number {
-  const ids = [...latestExportLandingIds(db, config).values()].flatMap((s) => [...s]);
+  const idsMap = kind === 'new' ? newEligibleLandingIds(db, config) : latestExportLandingIds(db, config);
+  const ids = [...idsMap.values()].flatMap((s) => [...s]);
   if (ids.length === 0) return 0;
   const oraFilter = excludeOra ? 'AND p.ora_property_key IS NULL' : '';
   return (

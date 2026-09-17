@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -119,5 +119,111 @@ describe('read models', () => {
     const events = latestExportEvents(db, config);
     expect(events).toHaveLength(13);
     expect(events.every((e) => e.kind === 'new' && e.marketId === 'columbus' && e.eventDate === '2026-02-15')).toBe(true);
+  });
+});
+
+// ── REFUTE fix round (warehouse: R2, R10, R13, R16) ─────────────────────────
+
+describe('R2 — ORA-self owner excluded even when unmapped to any configured address', () => {
+  it('excludes an affiliated-owner listing from candidates, benchmarks, signals and radar', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lm-compute-r2-'));
+    const db = openWarehouse(join(dir, 't.sqlite'));
+    const config = testConfig();
+    const rows: FixtureListing[] = [
+      // ORA's own listing at an address NOT in oraProperties.addressNorms ('1100 RARIG AVE') — the
+      // owner screen still correctly verdicts it 'affiliated' (ORA-SELF), but ora_property_key stays
+      // null since no config entry matches this address.
+      { address: '1100-1120 Rarig Ave', suite: 'B', sf: 8000, rentLow: 5.0, owner: 'OXFORD RARIG LLC' },
+      ...Array.from({ length: 10 }, (_, i) => ({ id: `M${i}`, address: `${i + 1} Market St`, sf: 8000, rentLow: 9.0 })),
+    ];
+    const r0 = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', rows), {
+      config, headerMap: testHeaderMap(), rawDir: join(dir, 'raw'), now: () => '2026-01-02T00:00:00Z', screen: stubScreen,
+    });
+    expect(r0.status).toBe('ingested');
+    const row = db.prepare("SELECT owner_type, ora_property_key FROM lm_property WHERE address_norm = '1100-1120 RARIG AVE'").get();
+    expect(row).toEqual({ owner_type: 'affiliated', ora_property_key: null });
+
+    const state = loadMarketState(db, config, '2026-02-01');
+    const oraSelf = state.spaces.find((s) => s.property.addressDisplay === '1100-1120 Rarig Ave');
+    expect(oraSelf).toBeDefined();
+    expect(oraSelf?.isOraOwned).toBe(true);
+    expect(state.candidates.some((c) => c.listingId === oraSelf?.listingId)).toBe(false);
+    expect(state.benchRows.some((b) => b.listingId === oraSelf?.listingId)).toBe(false);
+
+    runCompute(db, config, '2026-02-01');
+    const signalsOnSelf = db.prepare('SELECT s.kind FROM lm_signal s JOIN lm_property p ON p.id = s.property_id WHERE p.address_norm = ?').all('1100-1120 RARIG AVE');
+    expect(signalsOnSelf).toEqual([]); // no new_listing / stale / below_market / radar_candidate signal
+  });
+});
+
+describe('R10 — back-dated first sighting excluded from "new in latest export"', () => {
+  it('a space whose first sighting predates the latest complete landing is not new-in-latest, in either the signal or the KPI', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lm-compute-r10-'));
+    const db = openWarehouse(join(dir, 't.sqlite'));
+    const config = testConfig();
+    const deps = { config, headerMap: testHeaderMap(), rawDir: join(dir, 'raw'), now: () => '2026-09-17T00:00:00Z', screen: stubScreen };
+    const base: FixtureListing[] = Array.from({ length: 5 }, (_, i) => ({ id: `B${i}`, address: `${i + 1} Base St`, sf: 8000, rentLow: 9.0 }));
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', base), deps);
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-03-01.xlsx', base), deps);
+    const feb = await ingestCostarListingsFile(
+      db,
+      await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [...base, { id: 'N1', address: '99 New Rd', sf: 8000, rentLow: 9.0 }]),
+      deps,
+    );
+    expect(feb.completeness).toBe('partial');
+
+    const state = loadMarketState(db, config, '2026-09-17');
+    expect(state.spaces.find((s) => s.property.addressDisplay === '99 New Rd')?.isNewInLatestExport).toBe(false);
+
+    const r = runCompute(db, config, '2026-09-17');
+    expect(r.byKind.new_listing ?? 0).toBe(0);
+
+    const kpis = leaseMarketKpis(db, config, state, '2026-09-17');
+    expect(kpis.newInLatest).toBe(0);
+  });
+});
+
+describe('R13 — ora_property_key is re-applied idempotently at every compute run', () => {
+  it('flags and excludes an existing property once oraProperties is filled in after ingest', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lm-compute-r13-'));
+    const db = openWarehouse(join(dir, 't.sqlite'));
+    const bare = testConfig({ oraProperties: [] });
+    const rows: FixtureListing[] = [
+      // A non-affiliated owner name, so any exclusion below is caused ONLY by the ora_property_key
+      // re-stamp (R13), not by the ownerType === 'affiliated' path (R2).
+      { address: '1100 Rarig Ave', suite: 'B', sf: 8000, rentLow: 12, owner: 'SMITH FAMILY LLC' },
+      ...RENTS.map((rent, i) => ({ id: `C${i}`, address: `${100 + i} Industrial Pkwy`, sf: 20000, rentLow: rent })),
+    ];
+    const r0 = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-15.xlsx', rows), {
+      config: bare, headerMap: testHeaderMap(), rawDir: join(dir, 'raw'), now: () => '2026-02-16T00:00:00Z', screen: stubScreen,
+    });
+    expect(r0.status).toBe('ingested');
+    expect((db.prepare("SELECT ora_property_key FROM lm_property WHERE address_norm = '1100 RARIG AVE'").get() as { ora_property_key: string | null }).ora_property_key).toBeNull();
+
+    const filled = testConfig(); // has the '1100 Rarig' oraProperties entry (addressNorms: ['1100 RARIG AVE'])
+    runCompute(db, filled, '2026-03-01');
+    expect((db.prepare("SELECT ora_property_key FROM lm_property WHERE address_norm = '1100 RARIG AVE'").get() as { ora_property_key: string | null }).ora_property_key).toBe('1100 Rarig');
+
+    const state = loadMarketState(db, filled, '2026-03-01');
+    const rarig = state.spaces.find((s) => s.property.addressDisplay === '1100 Rarig Ave');
+    expect(rarig?.isOraOwned).toBe(true);
+    expect(state.candidates.some((c) => c.listingId === rarig?.listingId)).toBe(false);
+
+    // Idempotent: running compute again with the same config does not error or double-apply.
+    expect(() => runCompute(db, filled, '2026-03-02')).not.toThrow();
+    expect((db.prepare("SELECT ora_property_key FROM lm_property WHERE address_norm = '1100 RARIG AVE'").get() as { ora_property_key: string | null }).ora_property_key).toBe('1100 Rarig');
+  });
+});
+
+describe('R16 — loud warning when config.oraProperties is empty', () => {
+  it('warns naming the consequence when oraProperties is empty, and does not warn when it is populated', async () => {
+    const { db, config } = await seeded();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    runCompute(db, testConfig({ oraProperties: [] }), '2026-03-01');
+    expect(warnSpy.mock.calls.some((c) => String(c[0]).includes('[lease-market]') && String(c[0]).toLowerCase().includes('oraproperties'))).toBe(true);
+    warnSpy.mockClear();
+    runCompute(db, config, '2026-03-01'); // config has a populated oraProperties list
+    expect(warnSpy.mock.calls.some((c) => String(c[0]).toLowerCase().includes('oraproperties'))).toBe(false);
+    warnSpy.mockRestore();
   });
 });
