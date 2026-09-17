@@ -166,12 +166,17 @@ export function renewalSignals(
 
 // ── marketRentGaps ────────────────────────────────────────────────────────────
 /**
- * Compute market-rent gap for each lease. Market rents are overlay-supplied:
- * Record<propertyKey|leaseId, number> — $/SF PSF.
+ * Compute market-rent gap for each lease. `marketRents` is the user-supplied manual overlay:
+ * Record<propertyKey|leaseId, number> — $/SF PSF. `feedRents` (optional) is the lease-market
+ * asking-rent feed (server/warehouse/lease-market/feed.ts), Record<propertyKey, number>, used
+ * ONLY as an informational fallback for THIS display — never merged into rentForecast's NOI math.
  *
- * Lookup order: leaseId first, then propertyKey. If no market rent → absent (not fabricated).
+ * Lookup order: manual leaseId ▸ manual propertyKey ▸ feed propertyKey. A non-positive/invalid
+ * value at any step is treated as missing and falls through to the next step. If nothing resolves
+ * → absent (not fabricated).
  * gapPsf = marketPsf - currentRentPsf (positive = market above in-place = upside)
  * underMarket = gapPsf > 0 (market > in-place)
+ * provenance = 'derived' when a manual value resolved it, 'derived-asking' when only the feed did.
  */
 export function marketRentGaps(
   leases: Lease[],

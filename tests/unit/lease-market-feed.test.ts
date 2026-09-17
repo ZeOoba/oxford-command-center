@@ -1,10 +1,11 @@
 // tests/unit/lease-market-feed.test.ts
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openWarehouse } from '../../server/warehouse/db';
-import { loadMarketRentFeed, mergeMarketRents } from '../../server/warehouse/lease-market/feed';
+import type { WarehouseDb } from '../../server/warehouse/db';
+import { loadMarketRentFeed } from '../../server/warehouse/lease-market/feed';
 import { marketRentGaps } from '../../src/analytics/lease-forecast';
 import type { Lease } from '../../src/contracts/lease';
 
@@ -34,14 +35,32 @@ describe('marketRentGaps with a feed', () => {
   });
 });
 
-describe('feed loading and merge', () => {
-  it('loads the feed table and lets manual values win on merge', () => {
-    const db = openWarehouse(join(mkdtempSync(join(tmpdir(), 'lm-feed-')), 't.sqlite'));
+describe('feed loading', () => {
+  let db: WarehouseDb | undefined;
+
+  afterEach(() => {
+    db?.close();
+    db = undefined;
+  });
+
+  it('loads the feed table, keyed by ORA property key', () => {
+    db = openWarehouse(join(mkdtempSync(join(tmpdir(), 'lm-feed-')), 't.sqlite'));
     db.prepare(
       `INSERT INTO lm_market_rent_feed (ora_property_key, asking_nnn_eq, comp_basis, confidence, cell_key, n, computed_at) VALUES ('1100 Rarig', 9.3, 'similarity', 'MEDIUM', 'k', 12, '2026-03-01')`,
     ).run();
+    expect(loadMarketRentFeed(db)).toEqual({ '1100 Rarig': 9.3 });
+  });
+
+  it('excludes LOW-confidence rows (defense in depth; compute never persists them, but the read guards anyway)', () => {
+    db = openWarehouse(join(mkdtempSync(join(tmpdir(), 'lm-feed-')), 't.sqlite'));
+    db.prepare(
+      `INSERT INTO lm_market_rent_feed (ora_property_key, asking_nnn_eq, comp_basis, confidence, cell_key, n, computed_at) VALUES ('1100 Rarig', 9.3, 'similarity', 'MEDIUM', 'k', 12, '2026-03-01')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO lm_market_rent_feed (ora_property_key, asking_nnn_eq, comp_basis, confidence, cell_key, n, computed_at) VALUES ('Low Confidence Property', 20, 'cell', 'LOW', 'k2', 3, '2026-03-01')`,
+    ).run();
     const feed = loadMarketRentFeed(db);
     expect(feed).toEqual({ '1100 Rarig': 9.3 });
-    expect(mergeMarketRents(feed, { '1100 Rarig': 11, L9: 7 })).toEqual({ '1100 Rarig': 11, L9: 7 });
+    expect(feed).not.toHaveProperty('Low Confidence Property');
   });
 });

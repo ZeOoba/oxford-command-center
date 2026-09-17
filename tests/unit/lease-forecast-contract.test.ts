@@ -232,6 +232,20 @@ describe('MarketRentGap', () => {
       gapAnnualUsd: null, underMarket: false, provenance: 'unknown',
     })).toThrow();
   });
+  it('accepts provenance derived-asking (lease-market asking-rent feed fallback)', () => {
+    const out = MarketRentGap.parse({
+      leaseId: 'l1',
+      tenantName: 'Acme',
+      propertyKey: 'Prop One',
+      currentRentPsf: 7.5,
+      marketRentPsf: 9.3,
+      gapPsf: 1.8,
+      gapAnnualUsd: 14400,
+      underMarket: true,
+      provenance: 'derived-asking',
+    });
+    expect(out.provenance).toBe('derived-asking');
+  });
 });
 
 // ── ExpiryBucketSummary ───────────────────────────────────────────────────────

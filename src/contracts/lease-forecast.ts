@@ -75,13 +75,16 @@ export const RentForecastResult = z.object({
 export type RentForecastResult = z.infer<typeof RentForecastResult>;
 
 // ── Market-rent gap (extends existing MarkToMarket to the lease grain) ────────
-// Uses user-supplied market rents from overlay (NO external API — overlay pattern only).
+// Primary source: user-supplied market rents from overlay.marketRents (NO external API). Fallback:
+// the lease-market asking-rent feed (server/warehouse/lease-market/feed.ts) — an informational-only
+// gap display source, tagged provenance 'derived-asking'; never used as an NOI input (see
+// server/warehouse/lease-forecast-api.ts's header note and rentForecast, which never receives it).
 export const MarketRentGap = z.object({
   leaseId: z.string(),
   tenantName: z.string(),
   propertyKey: z.string(),
   currentRentPsf: z.number().nullable(),
-  marketRentPsf: z.number().nullable(),            // from overlay.marketRents; null if unset
+  marketRentPsf: z.number().nullable(),            // overlay.marketRents, else the lease-market feed; null if unset
   gapPsf: z.number().nullable(),                   // market - current
   gapAnnualUsd: z.number().nullable(),             // gapPsf * sf
   underMarket: z.boolean(),                        // current < market AND both present
