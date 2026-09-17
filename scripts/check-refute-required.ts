@@ -28,6 +28,10 @@ export const DELIVERY_ONLY_PATHS: ReadonlySet<string> = new Set([
   // Phase 3 W1: pure route-plumbing/dispatch; no financial math (math lives in
   // src/analytics/lease-forecast.ts and server/warehouse/lease-velocity.ts).
   'server/warehouse/lease-forecast-api.ts',
+  // Lease Market Intelligence P1 Task 14: pure route plumbing (math lives in
+  // src/analytics/lease-market/* and server/warehouse/lease-market/*, which stay refute-required
+  // via the broad server/warehouse/ prefix).
+  'server/warehouse/lease-market-api.ts',
   // Phase 5: pure route-plumbing; financial math lives in capital-allocation.ts + market-intel.ts.
   'server/warehouse/capital-allocation-api.ts',
   // Phase 5 W4: pure property-registration write; no financial math.
@@ -72,11 +76,36 @@ const FINANCIAL_CONTRACT_PATHS: ReadonlySet<string> = new Set([
   // if a capital-decision path ever branches on its parsed fields — re-evaluate on next sweep).
   'src/contracts/capital.ts',
   'src/contracts/capital-allocation.ts',
+  // Fix round 1 (Task 14 review, 2026-09-17): lease-market.ts carries LmThresholds — the
+  // benchmark-n / similarity / radar-score / stale / withdrawn-lookback governor thresholds — plus
+  // CellBenchmark and ComparableStats, consumed directly by the radar score and comparable-set math
+  // in src/analytics/lease-market/{benchmarks,similarity,signals,radar}.ts. Same inclusion
+  // criterion as loan.ts/debt.ts/capital.ts above: a silently dropped or renamed field desyncs the
+  // contract from the governor math it types.
+  'src/contracts/lease-market.ts',
+]);
+
+// Financial CONFIG files (2026-09-17, Task 14 whole-branch review, promoted Minor — Finding 2):
+// the blanket `.json` exclusion below exempted config/lease-market.json, which holds
+// radarMinScore(50) / radarPushScore(70) / belowMarketMedianRatio(0.85) / benchmarkMinN(5) /
+// similarityMinComps(8) / candidateMaxBuildingSf(50000 — the buy-box SF cap): governor-adjacent
+// thresholds consumed directly by the radar/comparable-set math in src/analytics/lease-market/*,
+// while src/contracts/lease-market.ts — which merely TYPES them — was already in
+// FINANCIAL_CONTRACT_PATHS above. This is the fourth occurrence of the scope-staleness mode this
+// file's own history warns about (src/contracts 2026-07-24, server/workbook 2026-08-11,
+// server/sources 2026-08-12): each time, a broad, easy-to-miss exclusion (there, a whole
+// directory; here, every `.json`) quietly exempted a financial file. Fixed the same way those
+// were: a narrow, explicit allow-list entry, mirroring FINANCIAL_CONTRACT_PATHS, rather than
+// flipping the blanket `.json` rule — that would sweep in unrelated non-financial configs (e.g.
+// config/lease-market.costar-headers.json, a column-label map with no governor math).
+const FINANCIAL_CONFIG_PATHS: ReadonlySet<string> = new Set([
+  'config/lease-market.json',
 ]);
 
 /** True when a changed path holds financial-decision SOURCE (not a test / doc / json fixture). */
 export function isFinancialSourcePath(p: string): boolean {
   const path = p.replace(/\\/g, '/');
+  if (FINANCIAL_CONFIG_PATHS.has(path)) return true;
   if (/\.(test|spec)\.(ts|tsx)$/.test(path) || path.endsWith('.md') || path.endsWith('.json')) return false;
   if (DELIVERY_ONLY_PATHS.has(path)) return false;
   return (

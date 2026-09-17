@@ -13,6 +13,7 @@ import type { Hono } from 'hono';
 import type { WarehouseDb } from './db';
 import { debtApi } from './debt-api';
 import { leaseForecastApi } from './lease-forecast-api';
+import { leaseMarketApi } from './lease-market-api';
 import { capitalAllocationApi } from './capital-allocation-api';
 import { insuranceAnalysisApi } from './insurance-analysis-api';
 import { insuranceLossApi } from './insurance-loss-api';
@@ -33,6 +34,7 @@ export interface WarehouseSubRouter {
 export const WAREHOUSE_SUB_ROUTERS: WarehouseSubRouter[] = [
   { prefix: '/debt', factory: debtApi },
   { prefix: '/leasing', factory: leaseForecastApi },
+  { prefix: '/lease-market', factory: leaseMarketApi },
   { prefix: '/capital', factory: capitalAllocationApi },
   { prefix: '/insurance/analysis', factory: insuranceAnalysisApi },
   { prefix: '/insurance/loss', factory: insuranceLossApi },

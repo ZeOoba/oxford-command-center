@@ -166,18 +166,26 @@ export function renewalSignals(
 
 // ── marketRentGaps ────────────────────────────────────────────────────────────
 /**
- * Compute market-rent gap for each lease. Market rents are overlay-supplied:
- * Record<propertyKey|leaseId, number> — $/SF PSF.
+ * Compute market-rent gap for each lease. `marketRents` is the user-supplied manual overlay:
+ * Record<propertyKey|leaseId, number> — $/SF PSF. `feedRents` (optional) is the lease-market
+ * asking-rent feed (server/warehouse/lease-market/feed.ts), Record<propertyKey, number>, used
+ * ONLY as an informational fallback for THIS display — never merged into rentForecast's NOI math.
  *
- * Lookup order: leaseId first, then propertyKey. If no market rent → absent (not fabricated).
+ * Lookup order: manual leaseId ▸ manual propertyKey ▸ feed propertyKey. A non-positive/invalid
+ * value at any step is treated as missing and falls through to the next step. If nothing resolves
+ * → absent (not fabricated).
  * gapPsf = marketPsf - currentRentPsf (positive = market above in-place = upside)
  * underMarket = gapPsf > 0 (market > in-place)
+ * provenance = 'derived' when a manual value resolved it, 'derived-asking' when only the feed did.
  */
 export function marketRentGaps(
   leases: Lease[],
   marketRents: Record<string, number>,
+  feedRents: Record<string, number> = {},
 ): MarketRentGap[] {
   const out: MarketRentGap[] = [];
+  const valid = (v: number | undefined): number | null =>
+    typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
 
   for (const l of leases) {
     // Derive current PSF — prefer rentPerSf if available, else compute from annualRent/sf
@@ -187,12 +195,10 @@ export function marketRentGaps(
       return null;
     })();
 
-    // Market rent lookup: leaseId first, then propertyKey
-    const rawMarket = marketRents[l.id] ?? marketRents[l.propertyKey];
-    const marketRentPsf: number | null =
-      typeof rawMarket === 'number' && Number.isFinite(rawMarket) && rawMarket > 0
-        ? rawMarket
-        : null;
+    // Market rent lookup: manual leaseId ▸ manual propertyKey ▸ lease-market feed (propertyKey).
+    const manual = valid(marketRents[l.id]) ?? valid(marketRents[l.propertyKey]);
+    const fromFeed = manual === null ? valid(feedRents[l.propertyKey]) : null;
+    const marketRentPsf: number | null = manual ?? fromFeed;
 
     if (marketRentPsf === null) {
       // No market rent — return absent record (do not skip to preserve visibility)
@@ -223,7 +229,7 @@ export function marketRentGaps(
       gapPsf,
       gapAnnualUsd,
       underMarket,
-      provenance: 'derived',
+      provenance: manual !== null ? 'derived' : 'derived-asking',
     });
   }
 

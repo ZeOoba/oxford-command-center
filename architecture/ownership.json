@@ -86,6 +86,15 @@
       "files_prohibited": ["server/warehouse/migrations/**", "src/analytics/engine.ts", "config/**"],
       "status": "active",
       "notes": "Architect-owned touches (contracts x2 new, server/index.ts one mount line, CLAUDE.md §3 line) Gabriel-authorized in-turn 2026-07-09; declared review_needed in status.json entry p4c-c2-placeholder-buildout. Spec: docs/superpowers/specs/2026-07-09-p4c-c2-placeholder-buildout-design.md"
+    },
+    "lease-market-intel": {
+      "path": "C:/Users/Owner/oxford-command-center/.claude/worktrees/lease-market-intel",
+      "branch": "feat/lease-market-intel",
+      "agent_role": "Engineering (Claude Code, Opus 5 controller + Sonnet 5 implementers)",
+      "owner": "Claude Code session 5e58f532 (Gabriel-authorized in-turn 2026-09-16)",
+      "active_pr": "https://github.com/ZeOoba/oxford-command-center/pull/330",
+      "modules_owned": ["lease-market"],
+      "files_owned": ["server/warehouse/migrations/029_lease_market.sql", "server/warehouse/lease-market/**", "server/warehouse/lease-market-api.ts", "src/analytics/lease-market/**", "src/contracts/lease-market.ts", "src/charts/RentCurve.tsx", "src/charts/rent-curve-layout.ts", "src/modules/lease-market/**", "scripts/lease-market.ts", "scripts/lease-market-owner-screen.py", "config/lease-market.json", "config/lease-market.costar-headers.json", "tests/unit/lease-market-*", "tests/unit/migration-029-lease-market.test.ts", "tests/unit/rent-curve.test.tsx"]
     }
   },
 

@@ -54,6 +54,7 @@ const ProspectDemandModule = lazy(() => import('@/modules/intel/ProspectDemandMo
 const InsightsModule = lazy(() => import('@/modules/insights/InsightsModule').then((m) => ({ default: m.InsightsModule })));
 const TaxesModule = lazy(() => import('@/modules/taxes/TaxesModule').then((m) => ({ default: m.TaxesModule })));
 const CommandBrainModule = lazy(() => import('@/modules/command-brain/CommandBrainModule').then((m) => ({ default: m.CommandBrainModule })));
+const LeaseMarketModule = lazy(() => import('@/modules/lease-market/LeaseMarketModule').then((m) => ({ default: m.LeaseMarketModule })));
 
 export type ModuleGroup = 'Command' | 'Assets' | 'Capital' | 'Market';
 
@@ -90,6 +91,7 @@ export const MODULES: ModuleDef[] = [
   { id: 'insurance', label: 'Insurance', icon: ShieldCheck, group: 'Capital', Component: InsuranceModule },
   { id: 'taxes', label: 'Taxes', icon: Receipt, group: 'Capital', Component: TaxesModule },
   { id: 'market', label: 'Market', icon: LineChart, group: 'Market', Component: MarketModule },
+  { id: 'lease-market', label: 'Lease Market', icon: Building2, group: 'Market', Component: LeaseMarketModule },
   { id: 'documents', label: 'Documents', icon: FileSearch, group: 'Market', Component: DocumentsModule },
   { id: 'health', label: 'System Health', icon: Activity, group: 'Market', Component: HealthModule },
 ];

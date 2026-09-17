@@ -105,6 +105,45 @@ describe('check-refute-required — financial-source classification', () => {
   it('flags src/contracts/common.ts — the Market enum keys the RCT denominator', () => {
     expect(isFinancialSourcePath('src/contracts/common.ts')).toBe(true);
   });
+
+  // Fix round 1, item 6 (Task 14 review): src/contracts/lease-market.ts carries LmThresholds (the
+  // benchmark/similarity/radar governor thresholds) and CellBenchmark/ComparableStats — fields
+  // consumed directly by the radar score and comparable-set math in
+  // src/analytics/lease-market/{benchmarks,similarity,signals,radar}.ts. A silent field drop/rename
+  // there would desync the contract from the math it types, the same governor-adjacent risk that put
+  // loan.ts/debt.ts/capital.ts on this list.
+  it('flags src/contracts/lease-market.ts — LmThresholds/CellBenchmark type the radar and comparable-set governor math', () => {
+    expect(isFinancialSourcePath('src/contracts/lease-market.ts')).toBe(true);
+  });
+
+  // Broad-prefix coverage (server/warehouse/, src/analytics/) already reaches these — asserted
+  // explicitly so a future DELIVERY_ONLY_PATHS or prefix change can't silently exempt them.
+  it('reaches lease-market math files via the existing broad prefixes', () => {
+    expect(isFinancialSourcePath('server/warehouse/lease-market/compute.ts')).toBe(true);
+    expect(isFinancialSourcePath('src/analytics/lease-market/radar.ts')).toBe(true);
+  });
+});
+
+describe('check-refute-required — financial config allowlist (whole-branch review Finding 2)', () => {
+  // 2026-09-17 (Task 14 whole-branch review, promoted Minor): the blanket `.json` exclusion in
+  // isFinancialSourcePath exempted config/lease-market.json, which holds radarMinScore(50) /
+  // radarPushScore(70) / belowMarketMedianRatio(0.85) / benchmarkMinN(5) / similarityMinComps(8) /
+  // candidateMaxBuildingSf(50000 — the buy-box SF cap): governor-adjacent thresholds consumed
+  // directly by the radar/comparable-set math in src/analytics/lease-market/*, while the contract
+  // that merely TYPES them (src/contracts/lease-market.ts) was already flagged financial above.
+  // This is the fourth occurrence of the scope-staleness mode this file's history already warns
+  // about (src/contracts 2026-07-24, server/workbook 2026-08-11, server/sources 2026-08-12) — a
+  // narrow, explicit allow-list entry (FINANCIAL_CONFIG_PATHS), matching the established
+  // FINANCIAL_CONTRACT_PATHS pattern, rather than flipping the blanket `.json` rule, which would
+  // sweep in unrelated non-financial configs.
+  it('flags config/lease-market.json (incl. Windows separators)', () => {
+    expect(isFinancialSourcePath('config/lease-market.json')).toBe(true);
+    expect(isFinancialSourcePath('config\\lease-market.json')).toBe(true);
+  });
+  it('leaves an unrelated config json exempt — the blanket .json rule still applies elsewhere', () => {
+    expect(isFinancialSourcePath('config/lease-market.costar-headers.json')).toBe(false);
+    expect(isFinancialSourcePath('architecture/status.json')).toBe(false);
+  });
 });
 
 describe('check-refute-required — delivery-only allowlist', () => {
@@ -114,6 +153,8 @@ describe('check-refute-required — delivery-only allowlist', () => {
     expect(isFinancialSourcePath('server/warehouse/actions.ts')).toBe(false);
     // Phase 3 W1: lease-forecast-api.ts is pure route-plumbing (no math)
     expect(isFinancialSourcePath('server/warehouse/lease-forecast-api.ts')).toBe(false);
+    // Lease Market Intelligence P1 Task 14: lease-market-api.ts is pure route-plumbing (no math)
+    expect(isFinancialSourcePath('server/warehouse/lease-market-api.ts')).toBe(false);
     // Windows separators normalize before set lookup
     expect(isFinancialSourcePath('server\\warehouse\\api.ts')).toBe(false);
   });
@@ -126,11 +167,12 @@ describe('check-refute-required — delivery-only allowlist', () => {
     expect(isFinancialSourcePath('server/warehouse/lease-velocity.ts')).toBe(true);
   });
   it('exposes the delivery-only allowlist with the expected membership', () => {
-    expect(DELIVERY_ONLY_PATHS.size).toBe(10);
+    expect(DELIVERY_ONLY_PATHS.size).toBe(11);
     expect(DELIVERY_ONLY_PATHS.has('server/warehouse/api.ts')).toBe(true);
     expect(DELIVERY_ONLY_PATHS.has('server/warehouse/debt-api.ts')).toBe(true);
     expect(DELIVERY_ONLY_PATHS.has('server/warehouse/actions.ts')).toBe(true);
     expect(DELIVERY_ONLY_PATHS.has('server/warehouse/lease-forecast-api.ts')).toBe(true);
+    expect(DELIVERY_ONLY_PATHS.has('server/warehouse/lease-market-api.ts')).toBe(true);
     expect(DELIVERY_ONLY_PATHS.has('server/warehouse/capital-allocation-api.ts')).toBe(true);
     expect(DELIVERY_ONLY_PATHS.has('server/warehouse/property-onboarding.ts')).toBe(true);
     // server/sources/ subtractions, added with the prefix 2026-08-12: transport and indexing
