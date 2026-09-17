@@ -370,6 +370,63 @@ describe('computePositioning', () => {
     expect(row.stats!.confidence).toBe('LOW');
   });
 
+  // ── I-2: R9's building-designator normalization broke rent-roll<->CoStar matching for multi-
+  // building complexes — a rent-roll unit "A" stays "A", but the R9-normalized CoStar suite for
+  // building 1's "A" is "B1-A", so the exact match failed, the unit rendered "Not listed" with a null
+  // asking, AND the same space simultaneously showed up in "Listed in CoStar but not vacant in the rent
+  // roll" — a double mis-report of the same real space. ──────────────────────────────────────────
+  describe('building-designator matching (I-2)', () => {
+    it('matches a rent-roll unit "A" against a CoStar suite "B1-A"', async () => {
+      const { dir, db } = await newDb();
+      const config = testConfig();
+      const bldg1A: FixtureListing = { address: '1100 Rarig Ave Bldg 1', suite: 'A', sf: 8000, rentLow: 9, owner: 'OXFORD RARIG LLC' };
+      await ingestInto(db, dir, config, 'columbus', '2026-02-15', [...TEN_COMPS, bldg1A]);
+      const s = loadMarketState(db, config, '2026-03-01');
+      const r = computePositioning([{ propertyKey: '1100 Rarig', unit: 'A', sf: 8000 }], config, s, true);
+      expect(r.rows[0]).toMatchObject({ unit: 'A', flags: [], oraAskingNnnEq: 9 });
+      expect(r.listedButLeased).toEqual([]);
+    });
+
+    it('does not cross-match two rent-roll units against two buildings sharing a suite letter; the tie resolves deterministically to the lowest listingId', async () => {
+      const { dir, db } = await newDb();
+      const config = testConfig();
+      const bldg1A: FixtureListing = { address: '1100 Rarig Ave Bldg 1', suite: 'A', sf: 8000, rentLow: 9, owner: 'OXFORD RARIG LLC' };
+      const bldg2A: FixtureListing = { address: '1100 Rarig Ave Bldg 2', suite: 'A', sf: 8000, rentLow: 9.5, owner: 'OXFORD RARIG LLC' };
+      // Inserted in order -> bldg1A gets the lower listingId.
+      await ingestInto(db, dir, config, 'columbus', '2026-02-15', [...TEN_COMPS, bldg1A, bldg2A]);
+      const s = loadMarketState(db, config, '2026-03-01');
+      const r = computePositioning(
+        [{ propertyKey: '1100 Rarig', unit: 'A', sf: 8000 }, { propertyKey: '1100 Rarig', unit: 'B', sf: 8000 }],
+        config, s, true,
+      );
+      const rowA = r.rows[0]!;
+      const rowB = r.rows[1]!;
+      // Both "B1-A" and "B2-A" strip to "A"; the lower listingId (building 1, inserted first) wins.
+      expect(rowA.flags).toEqual([]);
+      expect(rowA.oraAskingNnnEq).toBe(9);
+      // Unit "B" (a literal suite named "B", not building B) must not cross-match building 2's space —
+      // neither CoStar suite strips to "B".
+      expect(rowB.flags).toEqual(['not_listed']);
+      expect(rowB.oraAskingNnnEq).toBeNull();
+      // Building 2's space is genuinely unmatched — it reports exactly once, as listed-but-not-vacant,
+      // never silently dropped and never double-counted.
+      expect(r.listedButLeased).toHaveLength(1);
+      expect(r.listedButLeased[0]).toMatchObject({ suite: 'B2-A' });
+    });
+
+    it('reports a genuinely unmatched building-suite space once in listed-but-not-vacant, not as a duplicated "not listed"', async () => {
+      const { dir, db } = await newDb();
+      const config = testConfig();
+      const bldg1Z: FixtureListing = { address: '1100 Rarig Ave Bldg 1', suite: 'Z', sf: 8000, rentLow: 9, owner: 'OXFORD RARIG LLC' };
+      await ingestInto(db, dir, config, 'columbus', '2026-02-15', [...TEN_COMPS, bldg1Z]);
+      const s = loadMarketState(db, config, '2026-03-01');
+      const r = computePositioning([{ propertyKey: '1100 Rarig', unit: 'A', sf: 8000 }], config, s, true);
+      expect(r.rows[0]).toMatchObject({ unit: 'A', flags: ['not_listed'], oraAskingNnnEq: null });
+      expect(r.listedButLeased).toHaveLength(1);
+      expect(r.listedButLeased[0]).toMatchObject({ suite: 'B1-Z' });
+    });
+  });
+
   it('caps comps at 15 even when more comparables are available', async () => {
     const { dir, db } = await newDb();
     const config = testConfig();

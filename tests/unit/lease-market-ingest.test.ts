@@ -548,6 +548,35 @@ describe('ingestCostarListingsFile', () => {
     expect(eventsFor(db, '1 CONFIDENCE WAY').map((e) => (e as { kind: string }).kind)).toEqual(['new']);
   });
 
+  // ── M-3: a real cut suppressed by a confidence flip must not vanish silently ─────────────────
+  it('warns when a genuine price change is suppressed by a same-pair confidence flip (M-3)', async () => {
+    const { dir, db, deps } = setup();
+    const base = testHeaderMap();
+    const headerMap = testHeaderMap({ fields: { ...base.fields, rentText: 'Rent Low', rentLow: null, rentHigh: null } });
+    // Same narrative as the R4 test above (30 -> 9, confidence low -> high) — that pair genuinely
+    // differs in value, which is exactly the case R4's own suppression can't tell apart from a phantom
+    // move.
+    const inferred: FixtureListing = { address: '2 Warn Way', sf: 10000, rentLow: '$2.50', rentType: 'NNN' };
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', [inferred]), { ...deps, headerMap });
+    const explicit: FixtureListing = { address: '2 Warn Way', sf: 10000, rentLow: '$9.00/SF/YR', rentType: 'NNN' };
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [explicit]), { ...deps, headerMap });
+    expect(warnSpy.mock.calls.some((c) => String(c[0]).includes('[lease-market]') && String(c[0]).toLowerCase().includes('confidence flipped'))).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it('does not warn about an ordinary same-confidence price cut', async () => {
+    const { dir, db, deps } = setup();
+    const l1: FixtureListing = { address: '3 Normal St', sf: 10000, rentLow: 10, rentType: 'NNN' };
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', [l1]), deps);
+    const l2: FixtureListing = { address: '3 Normal St', sf: 10000, rentLow: 8, rentType: 'NNN' };
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [l2]), deps);
+    expect(r.events).toMatchObject({ price_cut: 1 });
+    expect(warnSpy.mock.calls.some((c) => String(c[0]).toLowerCase().includes('confidence flipped'))).toBe(false);
+    warnSpy.mockRestore();
+  });
+
   it('a total quote compares the raw total, not asking_psf_yr — an SF change alone never fires a phantom price event, either direction (R5)', async () => {
     const { dir, db, deps } = setup();
     const base = testHeaderMap();
