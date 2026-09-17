@@ -142,6 +142,10 @@ describe('parseArgs', () => {
     expect(parseArgs(['ingest', '--dir='])).toMatchObject({ command: 'invalid' });
   });
 
+  it('ingest with --dir "" (space form, empty string value) is invalid', () => {
+    expect(parseArgs(['ingest', '--dir', ''])).toMatchObject({ command: 'invalid' });
+  });
+
   it('compute with no --as-of', () => {
     expect(parseArgs(['compute'])).toEqual({ command: 'compute', asOf: undefined });
   });
@@ -184,6 +188,10 @@ describe('parseArgs', () => {
 
   it('compute with --as-of= empty value is invalid', () => {
     expect(parseArgs(['compute', '--as-of='])).toMatchObject({ command: 'invalid' });
+  });
+
+  it('compute with --as-of "" (space form, empty string value) is invalid', () => {
+    expect(parseArgs(['compute', '--as-of', ''])).toMatchObject({ command: 'invalid' });
   });
 
   it('unknown command is invalid', () => {
@@ -253,6 +261,47 @@ describe('ingest() per-file failure handling', () => {
     }
 
     expect(errorLogs).toEqual(['failed costar-listings_columbus_2026-01-01.xlsx | ERROR: bad header map']);
+  });
+
+  it('a returned status:"failed" result (not thrown) prints via console.error, not console.log, and exits 1', async () => {
+    const dir = mkTmp();
+    writeFileSync(join(dir, 'costar-listings_columbus_2026-01-01.xlsx'), 'x');
+
+    const mocked = vi.mocked(ingestCostarListingsFile);
+    mocked.mockReset();
+    mocked.mockResolvedValueOnce({
+      file: 'costar-listings_columbus_2026-01-01.xlsx', status: 'failed', landingId: 1, marketId: 'columbus',
+      exportDate: '2026-01-01', completeness: null, partialReason: null, insertedSpaces: 0, updatedSpaces: 0,
+      newProperties: 0, skipped: 0, markedMissing: 0, markedRemoved: 0,
+      events: { new: 0, returned: 0, price_cut: 0, price_increase: 0, sf_change: 0, dom_reset: 0, missing: 0, removed: 0 },
+      error: 'market column contradicts file name',
+    });
+
+    const errorLogs: unknown[] = [];
+    const plainLogs: unknown[] = [];
+    const errSpy = vi.spyOn(console, 'error').mockImplementation((msg?: unknown) => {
+      errorLogs.push(msg);
+    });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((msg?: unknown) => {
+      plainLogs.push(msg);
+    });
+    let code: number;
+    try {
+      code = await ingest(dir);
+    } finally {
+      errSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+
+    expect(code).toBe(1);
+    // The per-file result line for a 'failed' status goes to console.error, never console.log.
+    expect(errorLogs).toHaveLength(1);
+    expect(String(errorLogs[0])).toContain('failed');
+    expect(String(errorLogs[0])).toContain('costar-listings_columbus_2026-01-01.xlsx');
+    expect(String(errorLogs[0])).toContain('market column contradicts file name');
+    expect(plainLogs.some((l) => String(l).includes('costar-listings_columbus_2026-01-01.xlsx'))).toBe(false);
+    // The trailing summary line still goes to console.log.
+    expect(plainLogs).toEqual(['1 file(s), 1 failed.']);
   });
 
   it('reports 0 not-attempted when every discovered file is attempted (no early stop)', async () => {
