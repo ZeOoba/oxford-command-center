@@ -7,11 +7,28 @@
 // Usage: runMigrations(db) — called once in openWarehouse() before any other operation.
 // Idempotent: already-applied migrations are skipped.
 import { readdirSync, readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { join, dirname, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Database } from 'better-sqlite3';
 
 const MIGRATIONS_DIR = join(dirname(fileURLToPath(import.meta.url)), 'migrations');
+
+/** Who is applying this migration. WAREHOUSE_ACTOR lets a scheduled task or CI name itself;
+ *  otherwise the entry script plus pid, which is enough to tell a backup from a bake from a dev
+ *  server. Recorded because an unattributed schema change on the live warehouse cost two sessions
+ *  an investigation that ended in "unknown" (see migration 031). */
+export function migrationActor(env: NodeJS.ProcessEnv = process.env): string {
+  const tag = env.WAREHOUSE_ACTOR?.trim();
+  if (tag) return tag;
+  const entry = process.argv[1] ? basename(process.argv[1]) : 'unknown';
+  return `${entry} pid=${process.pid}`;
+}
+
+function hasAppliedByColumn(db: Database): boolean {
+  return (db.pragma('table_info(_migrations)') as Array<{ name: string }>).some(
+    (c) => c.name === 'applied_by',
+  );
+}
 
 const CREATE_MIGRATIONS_TABLE = `
 CREATE TABLE IF NOT EXISTS _migrations (
@@ -47,19 +64,26 @@ export function runMigrations(db: Database): void {
     throw new Error(`Cannot read migrations directory: ${MIGRATIONS_DIR}`);
   }
 
-  const insertMigration = db.prepare(
-    'INSERT INTO _migrations (filename) VALUES (?)',
-  );
+  const actor = migrationActor();
 
   for (const filename of files) {
     if (applied.has(filename)) continue;
 
     const sql = readFileSync(join(MIGRATIONS_DIR, filename), 'utf8');
 
-    // Apply the migration and record it in a single transaction
+    // Apply the migration and record it in a single transaction. The column check is INSIDE the
+    // loop and after exec() on purpose: migration 031 is the one that adds applied_by, so it must
+    // be able to stamp itself. Before 031 the column does not exist and the insert omits it.
     db.transaction(() => {
       db.exec(sql);
-      insertMigration.run(filename);
+      if (hasAppliedByColumn(db)) {
+        db.prepare('INSERT INTO _migrations (filename, applied_by) VALUES (?, ?)').run(
+          filename,
+          actor,
+        );
+      } else {
+        db.prepare('INSERT INTO _migrations (filename) VALUES (?)').run(filename);
+      }
     })();
   }
 }
