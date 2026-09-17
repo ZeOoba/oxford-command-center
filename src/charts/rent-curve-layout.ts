@@ -26,20 +26,43 @@ const BAND_EDGES = [0, 5000, 15000, 30000, 50000, 80000] as const;
 // Candidate log-axis tick values (decade multiples of 1/2/5). d3's default log-scale ticks emit
 // every 1-9 multiple per decade, which overlaps at chart widths this component actually renders
 // at — this fixed, sparse candidate set (filtered to the live domain) replaces that.
-const LOG_TICK_CANDIDATES = [500, 1000, 2000, 5000, 10000, 20000, 50000, 100000] as const;
+const LOG_TICK_CANDIDATES = [500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000] as const;
 
-/** Filters the fixed log-tick candidate set down to the ones inside `domain`. */
+function roundToSigFigs(n: number, figs: number): number {
+  return n === 0 ? 0 : Number(n.toPrecision(figs));
+}
+
+/**
+ * Filters the fixed log-tick candidate set down to the ones inside `domain`. A narrow domain
+ * (e.g. a size band that's all one SF magnitude) can leave fewer than 2 candidates inside it,
+ * which would render a bare or single-tick axis — fall back to 3 values evenly spaced in log
+ * space between the domain ends in that case.
+ */
 export function curveTickValues(domain: readonly [number, number]): number[] {
   const [lo, hi] = domain;
-  return LOG_TICK_CANDIDATES.filter((t) => t >= lo && t <= hi);
+  const inRange = LOG_TICK_CANDIDATES.filter((t) => t >= lo && t <= hi);
+  if (inRange.length >= 2) return inRange;
+  const logLo = Math.log10(lo);
+  const logHi = Math.log10(hi);
+  const step = (logHi - logLo) / 2;
+  return [0, 1, 2].map((i) => roundToSigFigs(10 ** (logLo + step * i), 2));
 }
 
 function finitePositiveSf(p: CurveDatum): boolean {
   return p.sf > 0 && Number.isFinite(p.sf) && Number.isFinite(p.value);
 }
 
+/**
+ * The single source of truth for "is this point plottable" — sf > 0 and finite, value finite.
+ * `curveDomains` and `sizeBands` both filter through this, and `RentCurve` uses it once (via
+ * `useMemo`) to derive the circles, the aria-label count, and the domains/bands it renders.
+ */
+export function validCurvePoints(points: readonly CurveDatum[]): CurveDatum[] {
+  return points.filter(finitePositiveSf);
+}
+
 export function curveDomains(points: readonly CurveDatum[]): { x: [number, number]; y: [number, number] } | null {
-  const valid = points.filter(finitePositiveSf);
+  const valid = validCurvePoints(points);
   if (valid.length === 0) return null;
   const sfs = valid.map((p) => p.sf);
   const values = valid.map((p) => p.value);
@@ -58,7 +81,7 @@ export function curveDomains(points: readonly CurveDatum[]): { x: [number, numbe
 }
 
 export function sizeBands(points: readonly CurveDatum[], minN = 5): CurveBand[] {
-  const valid = points.filter(finitePositiveSf);
+  const valid = validCurvePoints(points);
   const out: CurveBand[] = [];
   for (let i = 0; i < BAND_EDGES.length - 1; i++) {
     const lo = BAND_EDGES[i]!;
