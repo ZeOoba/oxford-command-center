@@ -88,16 +88,16 @@ describe('listIntakeFiles', () => {
   });
 
   it('uses the LOCAL calendar date for the mtime fallback, not the UTC date — early-morning case (00:30), catches the bug east of UTC too', () => {
-    // 2026-06-15 00:30 in LOCAL time. On a host EAST of UTC this is still 2026-06-14 in UTC, so a
-    // UTC-based fallback would roll BACKWARD a day relative to the named 2026-06-15 export below
-    // (no tie, chronological order puts the named file first); the local-date fallback ties on
-    // 2026-06-15 and the name tie-break ('E' < 'c') puts Export.csv first, regardless of host offset.
+    // 2026-06-15 00:30 in LOCAL time, against a named export dated 2026-06-14. The local-date
+    // fallback puts Export.csv one day AFTER the named file, so the named file sorts first. On a
+    // host east of UTC the buggy UTC fallback rolls back to 2026-06-14, which ties, and the
+    // code-point name tie-break ('E' < 'c') would put Export.csv first — failing this assertion.
     const dir = mkTmp();
-    writeFileSync(join(dir, 'costar-listings_columbus_2026-06-15.xlsx'), 'x');
+    writeFileSync(join(dir, 'costar-listings_columbus_2026-06-14.xlsx'), 'x');
     writeFileSync(join(dir, 'Export.csv'), 'x');
     const earlyLocal = new Date(2026, 5, 15, 0, 30);
     utimesSync(join(dir, 'Export.csv'), earlyLocal, earlyLocal);
-    expect(listIntakeFiles(dir)).toEqual(['Export.csv', 'costar-listings_columbus_2026-06-15.xlsx']);
+    expect(listIntakeFiles(dir)).toEqual(['costar-listings_columbus_2026-06-14.xlsx', 'Export.csv']);
   });
 });
 
