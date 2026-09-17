@@ -1,7 +1,14 @@
 # System of Record Matrix
 
-**Status:** PROPOSED — awaiting ratification.
-**Ratified by Gabriel:** ( pending — date and initials go here )
+**Status:** RATIFIED — binding.
+**Ratified by Gabriel:** 2026-09-17 — GG
+
+Ratification makes the rules below binding on new work: an analytic that reads a mirror, or a
+second store added for an entity that already has one, is now a defect to be fixed rather than a
+judgement call. It does **not** retroactively condemn existing code — where today's behaviour
+disagrees with this matrix, the disagreement is a tracked item, not an emergency. It also does not
+resolve open decision 2 below — CoStar retention and derivation rights are still unconfirmed, and
+`lm_observation` stays license-bound until they are answered in writing.
 
 One system of record per entity. Every other store holding the same entity is a **mirror**: it
 may be read, but a disagreement is resolved in favour of the system of record, and a mirror is
