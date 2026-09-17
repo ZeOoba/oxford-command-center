@@ -95,7 +95,11 @@ describe('lease-market API', () => {
     const res = await app.request('/summary');
     expect(res.status).toBe(200);
     const body = LeaseMarketSummaryResponse.parse(await json(res));
-    expect(body.kpis).toEqual({ marketsFresh: 1, marketsEnabled: 2, activeSpaces: 13, newInLatest: 13, priceCutsInLatest: 0, stale: 0, radarCandidates: 1 });
+    // newInLatest is 12, not 13 (fixture has 13 rows total): compute.ts (d83cc05) deliberately
+    // excludes the ORA-owned space (1100 Rarig Ave Ste B) from the "new" KPI count — an ORA listing
+    // appearing in a CoStar export isn't a market "new listing" signal the same way a third-party
+    // one is, so it's counted in activeSpaces/curve but not newInLatest.
+    expect(body.kpis).toEqual({ marketsFresh: 1, marketsEnabled: 2, activeSpaces: 13, newInLatest: 12, priceCutsInLatest: 0, stale: 0, radarCandidates: 1 });
     expect(body.curve).toHaveLength(13);
     expect(body.curve.filter((p) => p.isOra)).toHaveLength(1);
     expect(body.curve.every((p) => p.address !== null)).toBe(true);
