@@ -17,6 +17,8 @@
 //   400 on Zod parse failure of the POST body.
 //   500 on unexpected engine errors.
 //
+// Market rents: manual overlay values merged over the lease-market feed (server/warehouse/lease-market/feed.ts); manual always wins.
+//
 // Confidentiality: routes emit derived signals + rent-roll figures for owned assets only.
 // No confidential-deal data is in scope for this module.
 import { Hono } from 'hono';
@@ -28,6 +30,7 @@ import {
   bucketExpiry,
 } from '../../src/analytics/lease-forecast';
 import { leasingVelocity } from './lease-velocity';
+import { loadMarketRentFeed, mergeMarketRents } from './lease-market/feed';
 import { referenceDate } from '../config';
 import {
   RentForecastInput,
@@ -74,6 +77,15 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
     return Promise.resolve(handler(db));
   }
 
+  /** Lease-market feed; {} when the warehouse is unavailable (feed is optional context, never a hard dependency). */
+  function feedOrEmpty(): Record<string, number> {
+    try {
+      return loadMarketRentFeed(getDb());
+    } catch {
+      return {};
+    }
+  }
+
   // ── GET /forecast ──────────────────────────────────────────────────────────
   //
   // Returns renewal signals, leasing velocity, market-rent gaps, and expiry-bucket totals.
@@ -100,7 +112,7 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
 
         const signals = renewalSignals(leases, refDate, snapshot.renewalStages, arrears);
         const velocity = leasingVelocity(db, snapshot.properties);
-        const marketGapsAll = marketRentGaps(leases, marketRents);
+        const marketGapsAll = marketRentGaps(leases, marketRents, loadMarketRentFeed(db));
 
         // Expiry bucket totals
         const ALL_BUCKETS = ['0-6m', '6-12m', '12-24m', '24m+', 'expired', 'unknown'] as const;
@@ -181,13 +193,14 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
       const leases = snapshot.leases;
       const marketRents = (snapshot as typeof snapshot & { marketRents?: Record<string, number> }).marketRents ?? {};
 
+      const mergedRents = mergeMarketRents(feedOrEmpty(), marketRents);
       const results = [];
       for (const scenario of scenarios) {
         const inputResult = RentForecastInput.safeParse({ scenario, horizonMonths, vacancyPct });
         if (!inputResult.success) {
           return c.json({ error: `Invalid input: ${inputResult.error.message}` }, 400);
         }
-        results.push(rentForecast(leases, refDate, inputResult.data, marketRents));
+        results.push(rentForecast(leases, refDate, inputResult.data, mergedRents));
       }
 
       const response = RentForecastResponse.parse({ asOf, results });
@@ -222,7 +235,7 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
       const arrears = snapshot.tenantArrears ?? {};
 
       const signals = renewalSignals(leases, refDate, snapshot.renewalStages, arrears);
-      const marketGapsAll = marketRentGaps(leases, marketRents);
+      const marketGapsAll = marketRentGaps(leases, marketRents, feedOrEmpty());
 
       const likelyCt    = signals.filter((s) => s.likelihood === 'likely').length;
       const uncertainCt = signals.filter((s) => s.likelihood === 'uncertain').length;
