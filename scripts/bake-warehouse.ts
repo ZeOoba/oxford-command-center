@@ -101,6 +101,7 @@ const FIXED_ROUTES = [
   '/analytics/growth', '/analytics/anomalies', '/analytics/lease-run',
   '/calibration/log', '/calibration/pending', '/calibration/report',
   '/brain/report',
+  '/lease-market/summary', '/lease-market/positioning', '/lease-market/radar', '/lease-market/signals', '/lease-market/changes',
 ] as const;
 
 /** Routes whose failure hard-aborts the whole bake (fail LOUD — a broken bake DB, never a
@@ -113,7 +114,8 @@ const FIXED_ROUTES = [
  *  entire mirror down with it. A brain-report failure now just omits that one endpoint from
  *  warehouse.json (the Brain view reads as offline, same as before this route was wired in)
  *  instead of failing every other view too. */
-const REQUIRED_ROUTES = new Set<string>(FIXED_ROUTES.filter((r) => r !== '/brain/report'));
+// Lease-market routes are optional: no CoStar export yet, or no snapshot in the bake process, must not block the mirror.
+const REQUIRED_ROUTES = new Set<string>(FIXED_ROUTES.filter((r) => r !== '/brain/report' && !r.startsWith('/lease-market/')));
 
 export function warehouseEndpointPlan(metrics: MetricRow[], leaseRunIds: string[]): string[] {
   const fixed = [...FIXED_ROUTES];
