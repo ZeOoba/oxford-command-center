@@ -124,6 +124,28 @@ describe('check-refute-required — financial-source classification', () => {
   });
 });
 
+describe('check-refute-required — financial config allowlist (whole-branch review Finding 2)', () => {
+  // 2026-09-17 (Task 14 whole-branch review, promoted Minor): the blanket `.json` exclusion in
+  // isFinancialSourcePath exempted config/lease-market.json, which holds radarMinScore(50) /
+  // radarPushScore(70) / belowMarketMedianRatio(0.85) / benchmarkMinN(5) / similarityMinComps(8) /
+  // candidateMaxBuildingSf(50000 — the buy-box SF cap): governor-adjacent thresholds consumed
+  // directly by the radar/comparable-set math in src/analytics/lease-market/*, while the contract
+  // that merely TYPES them (src/contracts/lease-market.ts) was already flagged financial above.
+  // This is the fourth occurrence of the scope-staleness mode this file's history already warns
+  // about (src/contracts 2026-07-24, server/workbook 2026-08-11, server/sources 2026-08-12) — a
+  // narrow, explicit allow-list entry (FINANCIAL_CONFIG_PATHS), matching the established
+  // FINANCIAL_CONTRACT_PATHS pattern, rather than flipping the blanket `.json` rule, which would
+  // sweep in unrelated non-financial configs.
+  it('flags config/lease-market.json (incl. Windows separators)', () => {
+    expect(isFinancialSourcePath('config/lease-market.json')).toBe(true);
+    expect(isFinancialSourcePath('config\\lease-market.json')).toBe(true);
+  });
+  it('leaves an unrelated config json exempt — the blanket .json rule still applies elsewhere', () => {
+    expect(isFinancialSourcePath('config/lease-market.costar-headers.json')).toBe(false);
+    expect(isFinancialSourcePath('architecture/status.json')).toBe(false);
+  });
+});
+
 describe('check-refute-required — delivery-only allowlist', () => {
   it('treats delivery-only warehouse routing files as non-financial', () => {
     expect(isFinancialSourcePath('server/warehouse/api.ts')).toBe(false);
