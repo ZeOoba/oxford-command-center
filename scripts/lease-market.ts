@@ -12,6 +12,7 @@ import { openWarehouse } from '../server/warehouse/db';
 import { referenceDate } from '../server/config';
 import { loadCostarHeaderMap, loadLeaseMarketConfig } from '../server/warehouse/lease-market/config';
 import { ingestCostarListingsFile, localDateString, parseListingFileName } from '../server/warehouse/lease-market/ingest';
+import { CostarParseError } from '../server/warehouse/lease-market/costar-parse';
 import { screenOwners } from '../server/warehouse/lease-market/owner-screen';
 import { runCompute } from '../server/warehouse/lease-market/compute';
 
@@ -59,9 +60,12 @@ export type CliArgs =
   | { command: 'invalid'; message: string };
 
 /**
- * Pure argument parser — no I/O, no process.exit. `argv` is `process.argv.slice(2)`.
- * A flag present without a value (last arg, or immediately followed by another `--flag`) is
- * invalid — it must never silently fall back to a default (e.g. DEFAULT_INTAKE for --dir).
+ * Strict pure argument parser — no I/O, no process.exit. `argv` is `process.argv.slice(2)`. Walks
+ * every token after the command ONE AT A TIME; each command accepts only its own flag (`ingest`
+ * accepts `--dir`, `compute` accepts `--as-of`), in either `--flag value` or `--flag=value` form.
+ * `invalid` (never a silent fallback, e.g. to DEFAULT_INTAKE) on: an unknown token, a stray
+ * positional, the other command's flag, a repeated flag, an empty `--flag=` value, or a flag
+ * immediately followed by another `--token` instead of a value.
  */
 export function parseArgs(argv: string[]): CliArgs {
   const [command, ...rest] = argv;
@@ -70,17 +74,32 @@ export function parseArgs(argv: string[]): CliArgs {
   }
 
   const flagName = command === 'ingest' ? '--dir' : '--as-of';
-  const idx = rest.indexOf(flagName);
+  const flagEq = `${flagName}=`;
   let value: string | undefined;
-  if (idx >= 0) {
-    const next = rest[idx + 1];
-    if (next === undefined || next.startsWith('--')) {
-      return { command: 'invalid', message: USAGE };
+  let i = 0;
+  while (i < rest.length) {
+    const token = rest[i]!;
+    if (token === flagName) {
+      if (value !== undefined) return { command: 'invalid', message: USAGE }; // repeated flag
+      const next = rest[i + 1];
+      if (next === undefined || next.startsWith('--')) return { command: 'invalid', message: USAGE };
+      value = next;
+      i += 2;
+      continue;
     }
-    value = next;
+    if (token.startsWith(flagEq)) {
+      if (value !== undefined) return { command: 'invalid', message: USAGE }; // repeated flag
+      const v = token.slice(flagEq.length);
+      if (v === '') return { command: 'invalid', message: USAGE }; // empty --flag= value
+      value = v;
+      i += 1;
+      continue;
+    }
+    // Unknown token: a stray positional, the other command's flag, or a misspelled flag.
+    return { command: 'invalid', message: USAGE };
   }
 
-  if (command === 'compute' && value !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !isValidIsoDate(value))) {
+  if (command === 'compute' && value !== undefined && !isValidIsoDate(value)) {
     return { command: 'invalid', message: USAGE };
   }
 
@@ -93,8 +112,10 @@ export async function ingest(dir: string): Promise<number> {
   const files = listIntakeFiles(dir);
   const db = openWarehouse(DB_PATH);
   let failures = 0;
+  let attempted = 0;
   try {
     for (const f of files) {
+      attempted++;
       try {
         const r = await ingestCostarListingsFile(db, join(dir, f), {
           config,
@@ -114,14 +135,19 @@ export async function ingest(dir: string): Promise<number> {
         // A thrown (not caught-and-reported) ingest failure is unexpected — stop the loop rather
         // than risk ingesting later files out of order against a landing history that skipped one.
         failures++;
-        console.log(`failed ${f} | ERROR: ${e instanceof Error ? e.message : String(e)}`);
+        const message = e instanceof Error ? e.message : String(e);
+        // CostarParseError is an expected, already-descriptive failure mode -- no stack needed.
+        // Anything else is unexpected, so append the stack for debuggability.
+        const stack = !(e instanceof CostarParseError) && e instanceof Error && e.stack ? `\n${e.stack}` : '';
+        console.error(`failed ${f} | ERROR: ${message}${stack}`);
         break;
       }
     }
   } finally {
     db.close();
   }
-  console.log(`${files.length} file(s), ${failures} failed.`);
+  const notAttempted = files.length - attempted;
+  console.log(`${files.length} file(s), ${failures} failed${notAttempted > 0 ? `, ${notAttempted} not attempted` : ''}.`);
   return failures > 0 ? 1 : 0;
 }
 
