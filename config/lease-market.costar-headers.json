@@ -11,7 +11,7 @@
     "yearBuilt": null, "clearHeightFt": null, "docks": null, "driveIns": null, "officePct": null, "ownerName": null,
     "availableSf": null, "minDivisibleSf": null, "rentLow": null, "rentHigh": null, "rentText": null, "rentBasis": null,
     "spaceType": null, "dateOnMarket": null, "zip": null, "lat": null, "lon": null, "brokerName": null,
-    "brokerCompany": null, "listingUrl": null, "description": null, "timeOnMarketText": null
+    "brokerCompany": null, "listingUrl": null, "description": null, "timeOnMarketText": null, "availableSfMax": null
   },
   "subtypeMap": {},
   "buildingStatusMap": {},
