@@ -9,6 +9,8 @@ import { medianOf } from './benchmarks';
 import { daysBetween } from './normalize';
 import type { ResolvedComparables } from './similarity';
 
+const EPS = 1e-9;
+
 export interface ObservationPoint {
   observedAt: string;
   availableSf: number;
@@ -108,11 +110,15 @@ export function spaceSignals(h: SpaceHistory, ctx: SpaceSignalContext): SignalDr
   if (h.status !== 'active' && h.status !== 'missing_once') return [];
 
   const dom = effectiveDom(h, ctx.asOf);
+  // domSource: whichever clock actually produced the effective DOM (the CoStar clock only wins ties/exceeds).
+  const ownDays = daysBetween(h.firstSeen, ctx.asOf);
+  const costarDays = h.costarDateOnMarket ? daysBetween(h.costarDateOnMarket, ctx.asOf) : null;
+  const domSource: EvidenceValue = costarDays !== null && costarDays >= ownDays ? 'costar_date_on_market' : 'first_seen';
   const base: Record<string, EvidenceValue> = {
     address: h.addressDisplay,
     effectiveDom: dom,
     domReset: domReset(h.observations),
-    domSource: h.costarDateOnMarket ? 'costar_date_on_market' : 'first_seen',
+    domSource,
     availableSf: latest.availableSf,
     askingNnnEq: latest.askingNnnEq,
     propertyVacancyShare: ctx.propertyVacancyShare,
@@ -127,13 +133,13 @@ export function spaceSignals(h: SpaceHistory, ctx: SpaceSignalContext): SignalDr
     });
   }
   if (h.buildingStatus === 'existing' && dom >= ctx.staleThresholdDays) {
-    const high = h.reductionCount > 0 || (ctx.propertyVacancyShare !== null && ctx.propertyVacancyShare >= t.vacancyShareMin);
+    const high = h.reductionCount > 0 || (ctx.propertyVacancyShare !== null && ctx.propertyVacancyShare >= t.vacancyShareMin - EPS);
     push('stale', high ? 'high' : 'watch', { ...base, staleThresholdDays: ctx.staleThresholdDays, reductionCount: h.reductionCount });
   }
   if (
     latest.eligible && latest.askingNnnEq !== null && c !== null && c.confidence !== 'LOW' &&
     c.median !== null && c.p25 !== null &&
-    latest.askingNnnEq <= c.p25 && latest.askingNnnEq <= t.belowMarketMedianRatio * c.median
+    latest.askingNnnEq <= c.p25 + EPS && latest.askingNnnEq <= t.belowMarketMedianRatio * c.median + EPS
   ) {
     push('below_market', 'watch', {
       ...base, comparableMedian: c.median, comparableP25: c.p25, comparableN: c.n, basis: c.basis,

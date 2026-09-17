@@ -78,4 +78,102 @@ describe('scoreRadar', () => {
     expect(r.vacancyShare).toBeCloseTo(0.4);
     expect(r.parts.vacancy).toBe(10);
   });
+
+  // ── Fix round 1: float tolerance regressions ──────────────────────────────
+  it('reductions: depth band fires at exactly -0.1 despite floating-point rounding (EPS)', () => {
+    // 9/10 - 1 = -0.09999999999999998 in IEEE 754 double precision; must still clear the -0.1 depth band.
+    const parts = scoreRadar(prop({ spaces: [sp({ reductionCount: 1, cumulativeReductionPct: 9 / 10 - 1 })] }), ctx).parts;
+    expect(parts.reductions).toBe(14); // 6 (count=1) + 8 (depth <= -0.1)
+  });
+  it('reductions: depth band at -0.05 from a division artifact still resolves to the shallow band', () => {
+    // 19/20 - 1 = -0.050000000000000044 in IEEE 754 double precision.
+    const parts = scoreRadar(prop({ spaces: [sp({ reductionCount: 0, cumulativeReductionPct: 19 / 20 - 1 })] }), ctx).parts;
+    expect(parts.reductions).toBe(4); // 0 (count=0) + 4 (depth <= -0.05)
+  });
+  it('below market: gap fires at exactly the -0.15 band despite floating-point rounding (EPS)', () => {
+    // (7.65 - 9) / 9 = -0.14999999999999997 in IEEE 754 double precision; must still clear the -0.15 band.
+    const parts = scoreRadar(prop({ spaces: [sp({ askingNnnEq: 7.65, comparableMedian: 9, comparableConfidence: 'MEDIUM' })] }), ctx).parts;
+    expect(parts.belowMarket).toBe(18);
+  });
+
+  // ── Fix round 1: decision-rule pins ───────────────────────────────────────
+  it('radar candidate threshold: score exactly 50 is a candidate, exactly 49 is not', () => {
+    // Shared parts: dom=25 (effectiveDom 300 >= 1.5x180), reductions=0, belowMarket=0 (askingNnnEq null),
+    // vacancy=10 (10,000 / 30,000 = 0.333), owner=5 (private). Only subtype differs:
+    //   warehouse -> buyBoxFit = 6 (size, 10-50K) + 4 (warehouse) = 10 -> total 25+10+10+5 = 50
+    //   flex      -> buyBoxFit = 6 (size, 10-50K) + 3 (flex)      =  9 -> total 25+10+9+5  = 49
+    const base = sp({ effectiveDom: 300, reductionCount: 0, cumulativeReductionPct: 0, askingNnnEq: null, comparableMedian: null, availableSf: 10000 });
+    const at50 = scoreRadar(prop({ buildingSf: 30000, subtype: 'warehouse', ownerType: 'private', spaces: [base] }), ctx);
+    expect(at50.score).toBe(50);
+    expect(at50.isCandidate).toBe(true);
+    const at49 = scoreRadar(prop({ buildingSf: 30000, subtype: 'flex', ownerType: 'private', spaces: [base] }), ctx);
+    expect(at49.score).toBe(49);
+    expect(at49.isCandidate).toBe(false);
+  });
+
+  it('best-gap across spaces: the most negative gap wins; subleases and LOW-confidence gaps are ignored', () => {
+    const r = scoreRadar(prop({
+      spaces: [
+        sp({ listingId: 1, availableSf: 8000, askingNnnEq: 8.8, comparableMedian: 10, comparableConfidence: 'MEDIUM' }), // gap ~ -0.12
+        sp({ listingId: 2, availableSf: 10000, askingNnnEq: 7.0, comparableMedian: 10, comparableConfidence: 'MEDIUM' }), // gap -0.30 (best)
+        sp({ listingId: 3, availableSf: 9000, askingNnnEq: 5, comparableMedian: 10, comparableConfidence: 'MEDIUM', isSublease: true }), // ignored: sublease
+        sp({ listingId: 4, availableSf: 9000, askingNnnEq: 5, comparableMedian: 10, comparableConfidence: 'LOW' }), // ignored: LOW confidence
+      ],
+    }), ctx);
+    expect(r.bestGapPct).toBeCloseTo(-0.3, 5);
+    expect(r.parts.belowMarket).toBe(25);
+    expect(r.indicativeRentGapUsd).toBeCloseTo(30000); // (10 - 7.0) * 10000, from the -0.30 space
+  });
+
+  it('confidence ranks to the highest among live spaces when no best-gap space exists', () => {
+    const r = scoreRadar(prop({
+      spaces: [
+        sp({ listingId: 1, comparableConfidence: 'LOW', askingNnnEq: null }),
+        sp({ listingId: 2, comparableConfidence: 'HIGH', askingNnnEq: null }),
+        sp({ listingId: 3, comparableConfidence: 'MEDIUM', askingNnnEq: null }),
+      ],
+    }), ctx);
+    expect(r.confidence).toBe('HIGH');
+    expect(r.comparableMedian).toBeNull(); // no best-gap space -> comparableMedian falls to null, not a fallback find
+  });
+
+  it('vacancy share is reported raw (unclamped) while points clamp at 1', () => {
+    const r = scoreRadar(prop({ buildingSf: 30000, spaces: [sp({ availableSf: 40000 })] }), ctx);
+    expect(r.parts.vacancy).toBe(15);
+    expect(r.vacancyShare).toBeCloseTo(1.333, 3);
+  });
+
+  it('buy-box size points at both boundaries (10K and 50K) and affiliated owner points', () => {
+    expect(scoreRadar(prop({ buildingSf: 10000 }), ctx).parts.buyBoxFit).toBe(10); // size 6 + warehouse 4
+    expect(scoreRadar(prop({ buildingSf: 50000 }), ctx).parts.buyBoxFit).toBe(10); // size 6 + warehouse 4
+    expect(scoreRadar(prop({ ownerType: 'affiliated' }), ctx).parts.owner).toBe(2);
+  });
+
+  // ── Fix round 1: NaN guards ────────────────────────────────────────────────
+  it('a non-finite effective DOM does not crash scoring and yields dom=0', () => {
+    const r = scoreRadar(prop({ spaces: [sp({ effectiveDom: Number.POSITIVE_INFINITY })] }), ctx);
+    expect(r.parts.dom).toBe(0);
+    expect(Number.isFinite(r.score)).toBe(true);
+  });
+  it('skips a space with a non-finite askingNnnEq when selecting the best gap', () => {
+    const r = scoreRadar(prop({
+      spaces: [
+        sp({ listingId: 1, askingNnnEq: Number.NaN, comparableMedian: 10 }),
+        sp({ listingId: 2, askingNnnEq: 7.5, comparableMedian: 10 }), // gap -0.25
+      ],
+    }), ctx);
+    expect(r.parts.belowMarket).toBe(25);
+    expect(r.bestGapPct).toBeCloseTo(-0.25, 5);
+  });
+
+  // ── Fix round 1: buildingSf <= 0 treated as unknown ───────────────────────
+  it('buildingSf <= 0 is treated as unknown: gated, size points 0, vacancyShare null', () => {
+    for (const buildingSf of [0, -500]) {
+      const r = scoreRadar(prop({ buildingSf }), ctx);
+      expect(r.eligible).toBe(false);
+      expect(r.gateFailures.join('; ')).toMatch(/building SF unknown/);
+      expect(r.vacancyShare).toBeNull();
+      expect(r.parts.buyBoxFit).toBe(4); // 0 size points + warehouse subtype 4
+    }
+  });
 });
