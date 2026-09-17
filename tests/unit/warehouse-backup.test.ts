@@ -11,6 +11,7 @@ import {
   snapshotWarehouse,
   tableCounts,
   verifySnapshot,
+  selectSnapshotsToDelete,
 } from '../../server/warehouse/backup';
 
 const KEY_HEX = 'a'.repeat(64);
@@ -109,5 +110,33 @@ describe('snapshotWarehouse + verifySnapshot', () => {
     expect(result.ok).toBe(false);
     expect(result.mismatches[0]).toMatch(/property_master.*expected 99.*got 0/);
     db.close();
+  });
+});
+
+describe('selectSnapshotsToDelete', () => {
+  const name = (iso: string) => `finance-${iso}.sqlite.enc`;
+  const now = new Date('2026-09-17T03:00:00Z');
+
+  it('keeps every snapshot inside the daily window', () => {
+    const names = [name('2026-09-17T0300'), name('2026-09-16T0300'), name('2026-09-10T0300')];
+    expect(selectSnapshotsToDelete(names, now, 14, 8)).toEqual([]);
+  });
+
+  it('keeps one per ISO week outside the daily window', () => {
+    const names = [
+      name('2026-08-03T0300'), // Mon, week 32
+      name('2026-08-05T0300'), // Wed, week 32 — same week, older kept, this one dropped
+      name('2026-08-10T0300'), // Mon, week 33
+    ];
+    expect(selectSnapshotsToDelete(names, now, 14, 8)).toEqual([name('2026-08-05T0300')]);
+  });
+
+  it('drops weekly snapshots beyond the weekly window', () => {
+    const names = [name('2026-01-05T0300'), name('2026-09-14T0300')];
+    expect(selectSnapshotsToDelete(names, now, 14, 8)).toEqual([name('2026-01-05T0300')]);
+  });
+
+  it('ignores files that do not match the snapshot naming convention', () => {
+    expect(selectSnapshotsToDelete(['notes.txt', 'finance.sqlite'], now, 14, 8)).toEqual([]);
   });
 });

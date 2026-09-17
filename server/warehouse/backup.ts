@@ -115,3 +115,51 @@ export function verifySnapshot(
     .map(([t, n]) => `${t}: expected ${n}, got ${counts[t]}`);
   return { ok: integrity === 'ok' && mismatches.length === 0, integrity, counts, mismatches };
 }
+
+const SNAPSHOT_RE = /^finance-(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})\.sqlite\.enc$/;
+
+function snapshotDate(name: string): Date | null {
+  const m = SNAPSHOT_RE.exec(name);
+  if (!m) return null;
+  return new Date(Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!));
+}
+
+/** ISO-week key (year + week number), so "one per week" survives year boundaries. */
+function isoWeekKey(d: Date): string {
+  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const day = t.getUTCDay() || 7;
+  t.setUTCDate(t.getUTCDate() + 4 - day);
+  const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((t.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
+  return `${t.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+/** Keep every snapshot inside `keepDaily` days; outside it keep the OLDEST snapshot of each
+ *  ISO week for `keepWeekly` weeks; delete the rest. Returns names to delete. */
+export function selectSnapshotsToDelete(
+  names: string[],
+  now: Date,
+  keepDaily = 14,
+  keepWeekly = 8,
+): string[] {
+  const dailyCutoff = now.getTime() - keepDaily * 86_400_000;
+  const weeklyCutoff = now.getTime() - (keepDaily + keepWeekly * 7) * 86_400_000;
+  const dated = names
+    .map((n) => ({ name: n, at: snapshotDate(n) }))
+    .filter((x): x is { name: string; at: Date } => x.at !== null)
+    .sort((a, b) => a.at.getTime() - b.at.getTime());
+
+  const keptWeeks = new Set<string>();
+  const doomed: string[] = [];
+  for (const { name, at } of dated) {
+    if (at.getTime() >= dailyCutoff) continue;
+    if (at.getTime() < weeklyCutoff) {
+      doomed.push(name);
+      continue;
+    }
+    const wk = isoWeekKey(at);
+    if (keptWeeks.has(wk)) doomed.push(name);
+    else keptWeeks.add(wk);
+  }
+  return doomed;
+}
