@@ -254,10 +254,18 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
       // map.rentPeriodDefault, which applies only to the numeric rentLow/rentHigh columns.
       rentPeriod = parsed.rentPeriod;
       rentIsTotal = parsed.isTotal;
-      opexQuotedPsf = parsed.opexQuoted;
+      // An ambiguous quote's parsed add-on opex is exactly as suspect as its basis/rent figures — it
+      // must never feed the market quoted-opex median.
+      opexQuotedPsf = parsed.ambiguous ? null : parsed.opexQuoted;
       if (parsed.withheld) rentBasis = 'WITHHELD';
       else if (parsed.ambiguous) rentBasis = 'UNKNOWN';
-      else if (!basisText && parsed.basis) rentBasis = parsed.basis;
+      else if (parsed.basis) {
+        if (!basisText) rentBasis = parsed.basis;
+        // Both a mapped rentBasis column value and a text-parsed basis exist: agreement keeps the
+        // (already column-mapped) rentBasis as-is; disagreement is a contradiction between two
+        // independent inputs and must never be silently resolved by picking one — UNKNOWN instead.
+        else if (rentBasis !== parsed.basis) rentBasis = 'UNKNOWN';
+      }
     }
     // No unconditional-UNKNOWN guard needed here: parseRentText only ever sets `ambiguous` (and thus
     // rentBasis='UNKNOWN' above) alongside a non-null rentLow, so whenever both are null this line's
