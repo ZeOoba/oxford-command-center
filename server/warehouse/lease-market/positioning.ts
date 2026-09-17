@@ -10,7 +10,7 @@ import { normalizeSuite } from '../../../src/analytics/lease-market/normalize';
 import { midRankPercentile } from '../../../src/analytics/lease-market/benchmarks';
 import { resolveComparables, type ResolvedComparables } from '../../../src/analytics/lease-market/similarity';
 import { effectiveDom } from '../../../src/analytics/lease-market/signals';
-import { comparablesForSpace, isActive, oraSubject, type MarketState, type SpaceState } from './compute';
+import { comparablesForOraSpace, isActive, matchesOraOwnerName, oraSubject, type MarketState, type SpaceState } from './compute';
 
 export interface VacantUnit {
   propertyKey: string;
@@ -132,7 +132,12 @@ export function computePositioning(
   // so a fallback can never steal a space another unit of the same property matches exactly.
   const unitMatch: Array<SpaceState | undefined> = new Array(units.length).fill(undefined);
   for (const [key, indices] of unitPropertyIndices) {
-    const candidates = oraSpaces.get(key) ?? [];
+    // M1: a tenant subletting ORA's own space is a tenant-exit signal, not space ORA itself is
+    // marketing — it must never satisfy a vacant rent-roll unit's match (exact-suite, building-stripped,
+    // or the only-space fallback below), or a real vacancy would silently price against a sublease
+    // instead of getting the 'not_listed' signal it should. Excluded from the candidate pool up front so
+    // every match step below (and the only-space-count check) sees the space as if it weren't there.
+    const candidates = (oraSpaces.get(key) ?? []).filter((s) => !s.observations[s.observations.length - 1]!.isSublease);
     const assigned = new Set<number>();
     for (const i of indices) {
       const suite = unitSuite[i]!;
@@ -183,6 +188,7 @@ export function computePositioning(
   const matchedSpaceIds = new Set<number>();
   const vacantSuites = new Map<string, Set<string>>();
   const rows: PositioningRow[] = [];
+  const hygieneFlags: ListingHygieneFlag[] = [];
 
   units.forEach((u, i) => {
     const p = props.get(u.propertyKey);
@@ -248,13 +254,45 @@ export function computePositioning(
   // rowSpaceIds tracks every listingId that now has a row (either source) so listedButLeased below
   // can never re-report one of them.
   const rowSpaceIds = new Set(matchedSpaceIds);
+  // H2: flags at most once per matched lm_property row (a key like 'Zettler' can span more than one
+  // addressNorm/property row) when config.subtype disagrees with what CoStar itself reports for that
+  // building — Gabriel should see that CoStar classifies a building differently than ORA's own config
+  // does, even though comparablesForOraSpace below now makes the config's classification win either way.
+  const flaggedSubtypeMismatch = new Set<number>();
   for (const [key, spaces] of oraSpaces) {
+    const p = props.get(key)!;
     for (const space of spaces) {
       if (rowSpaceIds.has(space.listingId)) continue;
       rowSpaceIds.add(space.listingId);
 
+      if (!flaggedSubtypeMismatch.has(space.propertyId) && space.property.subtype !== p.subtype) {
+        flaggedSubtypeMismatch.add(space.propertyId);
+        hygieneFlags.push({
+          listingId: space.listingId,
+          marketId: space.marketId,
+          address: rowLevel ? space.property.addressDisplay : null,
+          reason: `CoStar classifies this building as subtype '${space.property.subtype}' but config.oraProperties maps it as '${p.subtype}' — verify which is correct`,
+        });
+      }
+
       const latest = space.observations[space.observations.length - 1]!;
-      const stats = comparablesForSpace(state, space, config);
+
+      // M1: a tenant subletting ORA's own space is a tenant-exit signal, not space ORA is marketing —
+      // it must never become a positioning row (which would otherwise read "ORA listing found in CoStar
+      // but its asking rent is withheld", implying ORA itself withheld an ask it never quoted). Routed
+      // to the hygiene surface instead; rowSpaceIds already marks it covered so the defensive
+      // listedButLeased loop below never re-reports it either.
+      if (latest.isSublease) {
+        hygieneFlags.push({
+          listingId: space.listingId,
+          marketId: space.marketId,
+          address: rowLevel ? space.addressDisplay : null,
+          reason: 'tenant sublease — a tenant is subletting this ORA-owned space (a tenant-exit signal), not ORA\'s own asking rent',
+        });
+        continue;
+      }
+
+      const stats = comparablesForOraSpace(state, space, p, config);
       const asking = latest.askingNnnEq;
       const percentile = asking !== null && stats && stats.values.length > 0 ? midRankPercentile(asking, stats.values) : null;
       const gapPct = asking !== null && stats && stats.median !== null && stats.median > 0 ? roundedGap(asking, stats.median) : null;
@@ -309,16 +347,18 @@ export function computePositioning(
     }
   }
 
-  // Deferred R2: a listing whose owner screens as ORA-self (compute.ts isOraOwnedProperty's
-  // `ownerType === 'affiliated'` branch) is excluded from comps/benchmarks/radar everywhere, but when
-  // its address isn't in config.oraProperties.addressNorms it has no oraPropertyKey and so can never
-  // become a PositioningRow or a listedButLeased entry (both keyed off configured oraProperties) —
-  // without its own surface, it's an ORA-owned listing with no hygiene visibility at all. state.spaces
-  // is already ordered by listing id (loadMarketState's `ORDER BY l.id`), so this list is deterministic.
-  const hygieneFlags: ListingHygieneFlag[] = [];
+  // Deferred R2 / M2: a listing whose owner screens as ORA-self (compute.ts isOraOwnedProperty's
+  // `ownerType === 'affiliated'` branch) — OR whose owner name matches config.oraOwnerNamePatterns,
+  // screen-independently (M2: the screen can be unavailable, leaving owner_type stuck at 'unknown'
+  // forever) — is excluded from comps/benchmarks/radar everywhere, but when its address isn't in
+  // config.oraProperties.addressNorms it has no oraPropertyKey and so can never become a PositioningRow
+  // or a listedButLeased entry (both keyed off configured oraProperties) — without its own surface, it's
+  // an ORA-owned listing with no hygiene visibility at all. state.spaces is already ordered by listing id
+  // (loadMarketState's `ORDER BY l.id`), so this list is deterministic.
   for (const s of state.spaces) {
     if (!isActive(s)) continue;
-    if (s.property.ownerType === 'affiliated' && s.property.oraPropertyKey === null) {
+    if (s.property.oraPropertyKey !== null) continue;
+    if (s.property.ownerType === 'affiliated' || matchesOraOwnerName(s.property.ownerName, config.oraOwnerNamePatterns)) {
       hygieneFlags.push({
         listingId: s.listingId,
         marketId: s.marketId,

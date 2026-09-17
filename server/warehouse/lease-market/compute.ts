@@ -58,8 +58,22 @@ export function isActive(s: Pick<SpaceState, 'status'>): boolean {
 // verdicted 'affiliated' but whose address isn't (yet, or ever) in config.oraProperties.addressNorms
 // must still be excluded everywhere isOraOwned gates comps/benchmarks/signals/radar eligibility, or it
 // can rank as an acquisition candidate against ORA itself.
-function isOraOwnedProperty(p: Pick<PropertyState, 'oraPropertyKey' | 'ownerType'>): boolean {
-  return p.oraPropertyKey !== null || p.ownerType === 'affiliated';
+//
+// M2: the owner screen (R2's ownerType verdict) is a Python bridge that can be UNAVAILABLE — when it is,
+// ownerType stays 'unknown' forever (ingest.ts's `screen.available ? ... : 'unknown'`), so an ORA-owned
+// address that was never manually mapped into config.oraProperties has NO screen-independent way to be
+// recognized as ORA's own; it enters benchmarks/comps/candidates as an ordinary third-party listing with
+// no hygiene flag at all (only the radar's screenOk gate withholds it, and only from the radar). A
+// config-driven name check closes that gap: config.oraOwnerNamePatterns is matched case-insensitively,
+// as a substring, against the CoStar-reported owner name, independent of whether the screen ran.
+export function matchesOraOwnerName(ownerName: string | null, patterns: readonly string[]): boolean {
+  if (ownerName === null || patterns.length === 0) return false;
+  const norm = ownerName.trim().toUpperCase();
+  return patterns.some((pat) => pat.trim() !== '' && norm.includes(pat.trim().toUpperCase()));
+}
+
+function isOraOwnedProperty(p: Pick<PropertyState, 'oraPropertyKey' | 'ownerType' | 'ownerName'>, oraOwnerNamePatterns: readonly string[]): boolean {
+  return p.oraPropertyKey !== null || p.ownerType === 'affiliated' || matchesOraOwnerName(p.ownerName, oraOwnerNamePatterns);
 }
 
 interface PropertyRow {
@@ -206,7 +220,7 @@ export function loadMarketState(db: WarehouseDb, config: LeaseMarketConfig, asOf
     const latest = observations[observations.length - 1]!;
     const sizeBand = sizeBandFor(latest.availableSf);
     const officeStratum = officeStratumFor(property.subtype, property.officePct, t.flexOfficeSplitPct);
-    const isOraOwned = isOraOwnedProperty(property);
+    const isOraOwned = isOraOwnedProperty(property, config.oraOwnerNamePatterns);
     const space: SpaceState = {
       listingId: row.id, propertyId: property.propertyId, marketId: property.marketId,
       addressDisplay: row.suite_norm ? `${property.addressDisplay} Ste ${row.suite_norm}` : property.addressDisplay,
@@ -254,17 +268,22 @@ export function comparablesForSpace(state: MarketState, s: SpaceState, config: L
   return resolveComparables(profileOf(s), s.propertyId, partition, cell, config.similarityWeights, config.thresholds);
 }
 
-export function oraSubject(
+// H2: config values (subtype/submarket/officePct/clearHeight/yearBuilt/lat/lon/docks/driveIns) win over
+// the matched, CoStar-derived lm_property row — shared by BOTH oraSubject (the rent-roll/feed path,
+// below) and oraSubjectForSpace (the listing-sourced Rent Position path, positioning.ts) so the two can
+// never resolve a different benchmark cell for the same ORA building. Before this refactor,
+// positioning.ts's listing-sourced rows built their comp profile straight from the matched lm_property
+// row (comparablesForSpace -> profileOf), bypassing the config override entirely: CoStar carries 1100
+// Rarig and Zettler as Industrial|Warehouse (lm_property.subtype = 'warehouse') while config declares
+// both 'flex', so the listing path priced against the warehouse cell's median while the feed/rent-roll
+// path (already config-driven) priced against the flex cell — same building, two different benchmark
+// cells depending on which code path produced the row.
+function applyOraOverride(
   p: OraPropertyConfig,
-  state: MarketState,
+  matched: Pick<PropertyState, 'submarket' | 'lat' | 'lon' | 'clearHeightFt' | 'yearBuilt' | 'docks' | 'driveIns' | 'officePct'> | null,
   availableSf: number,
   t: LeaseMarketConfig['thresholds'],
-): { profile: SpaceProfile; matchedPropertyId: number | null; target: CellTarget | null } {
-  // Market-filtered and deterministic (fix round 2, requirement 2): identity_key keying (Task 09) makes
-  // it possible for more than one lm_property row to carry the same ora_property_key (e.g. an
-  // unadopted duplicate at the same address, or — defensively — a stale cross-market collision); the
-  // correct match is the lowest-id row IN THIS PROPERTY'S OWN MARKET, never a same-keyed row elsewhere.
-  const matched = [...state.properties.values()].find((x) => x.oraPropertyKey === p.propertyKey && x.marketId === p.marketId) ?? null;
+): { profile: SpaceProfile; target: CellTarget | null } {
   const profile: SpaceProfile = {
     marketId: p.marketId,
     submarket: p.submarket ?? matched?.submarket ?? null,
@@ -280,7 +299,48 @@ export function oraSubject(
   };
   const band = sizeBandFor(availableSf);
   const target = band === null ? null : { marketId: p.marketId, submarket: profile.submarket, subtype: p.subtype, sizeBand: band, officeStratum: officeStratumFor(p.subtype, profile.officePct, t.flexOfficeSplitPct) };
+  return { profile, target };
+}
+
+export function oraSubject(
+  p: OraPropertyConfig,
+  state: MarketState,
+  availableSf: number,
+  t: LeaseMarketConfig['thresholds'],
+): { profile: SpaceProfile; matchedPropertyId: number | null; target: CellTarget | null } {
+  // Market-filtered and deterministic (fix round 2, requirement 2): identity_key keying (Task 09) makes
+  // it possible for more than one lm_property row to carry the same ora_property_key (e.g. an
+  // unadopted duplicate at the same address, or — defensively — a stale cross-market collision); the
+  // correct match is the lowest-id row IN THIS PROPERTY'S OWN MARKET, never a same-keyed row elsewhere.
+  const matched = [...state.properties.values()].find((x) => x.oraPropertyKey === p.propertyKey && x.marketId === p.marketId) ?? null;
+  const { profile, target } = applyOraOverride(p, matched, availableSf, t);
   return { profile, matchedPropertyId: matched?.propertyId ?? null, target };
+}
+
+// H2: the listing-sourced Rent Position path's counterpart to oraSubject above — same config-override
+// composition (applyOraOverride), but keyed off a SPECIFIC already-matched ORA space (space.property IS
+// the matched lm_property row, since the space's own oraPropertyKey already equals p.propertyKey — no
+// separate market-scoped search is needed) and priced at that space's OWN reported available SF, never
+// config.typicalUnitSf or a rent-roll unit's SF.
+export function oraSubjectForSpace(
+  p: OraPropertyConfig,
+  space: SpaceState,
+  t: LeaseMarketConfig['thresholds'],
+): { profile: SpaceProfile; matchedPropertyId: number; target: CellTarget | null } {
+  const availableSf = space.observations[space.observations.length - 1]!.availableSf;
+  const { profile, target } = applyOraOverride(p, space.property, availableSf, t);
+  return { profile, matchedPropertyId: space.propertyId, target };
+}
+
+// H2: end-to-end counterpart to comparablesForSpace, for an ORA-owned space — resolves comparables
+// against the CONFIG-OVERRIDDEN subject profile (oraSubjectForSpace) instead of the space's raw
+// CoStar-derived profile (profileOf), so a listing-sourced Rent Position row lands in the same benchmark
+// cell oraSubject/the feed would compute for the same building.
+export function comparablesForOraSpace(state: MarketState, space: SpaceState, p: OraPropertyConfig, config: LeaseMarketConfig): ResolvedComparables | null {
+  const { profile, matchedPropertyId, target } = oraSubjectForSpace(p, space, config.thresholds);
+  if (target === null) return null;
+  const partition = candidatesInPartition(state, p.marketId, p.subtype);
+  return resolveComparables(profile, matchedPropertyId, partition, state.cellFor(target), config.similarityWeights, config.thresholds);
 }
 
 export function staleThresholdsByMarket(db: WarehouseDb, config: LeaseMarketConfig, asOf: string): Map<string, number> {
@@ -291,15 +351,22 @@ export function staleThresholdsByMarket(db: WarehouseDb, config: LeaseMarketConf
   // everywhere else — `p.ora_property_key IS NULL` alone missed an ORA-owned listing at an address that
   // was never mapped into config.oraProperties (ora_property_key stays null even though the owner
   // screen correctly verdicted it 'affiliated'), letting it contaminate the stale-DOM baseline.
+  //
+  // M2: the SQL-level owner_type filter only catches a listing the screen actually ran on. owner_name is
+  // fetched alongside so a config.oraOwnerNamePatterns match (matchesOraOwnerName below) can exclude an
+  // ORA-owned listing the screen never verdicted (unavailable, or genuinely never run) too — the same
+  // gap that let Heritage Dr's owner "Oxford Realty" contaminate benchmarks/comps when the screen was
+  // down.
   const rows = db
     .prepare(
-      `SELECT p.market_id, l.first_seen, l.costar_date_on_market, l.removed_at FROM lm_listing l JOIN lm_property p ON p.id = l.property_id
+      `SELECT p.market_id, p.owner_name, l.first_seen, l.costar_date_on_market, l.removed_at FROM lm_listing l JOIN lm_property p ON p.id = l.property_id
        WHERE l.status = 'removed' AND l.origin_tier = 'T1' AND p.ora_property_key IS NULL AND p.owner_type <> 'affiliated'
          AND l.removed_at >= ? AND l.removed_at <= ?`,
     )
-    .all(addDays(asOf, -365), asOf) as Array<{ market_id: string; first_seen: string; costar_date_on_market: string | null; removed_at: string }>;
+    .all(addDays(asOf, -365), asOf) as Array<{ market_id: string; owner_name: string | null; first_seen: string; costar_date_on_market: string | null; removed_at: string }>;
   const doms = new Map<string, number[]>();
   for (const r of rows) {
+    if (matchesOraOwnerName(r.owner_name, config.oraOwnerNamePatterns)) continue;
     const list = doms.get(r.market_id) ?? [];
     list.push(effectiveDom({ firstSeen: r.first_seen, costarDateOnMarket: r.costar_date_on_market }, r.removed_at));
     doms.set(r.market_id, list);
@@ -389,7 +456,7 @@ export function buildRadar(
     const result = scoreRadar(
       {
         propertyId, buildingSf: property.buildingSf, buildingStatus: property.buildingStatus, subtype: property.subtype,
-        ownerType: property.ownerType, isOraOwned: isOraOwnedProperty(property),
+        ownerType: property.ownerType, isOraOwned: isOraOwnedProperty(property, config.oraOwnerNamePatterns),
         spaces: spaces.map((s) => {
           const latest = s.observations[s.observations.length - 1]!;
           const c = compsFor(s);
@@ -655,17 +722,26 @@ function countLatestEvents(db: WarehouseDb, config: LeaseMarketConfig, kind: Lis
   const idsMap = kind === 'new' ? newEligibleLandingIds(db, config) : latestExportLandingIds(db, config);
   const ids = [...idsMap.values()].flatMap((s) => [...s]);
   if (ids.length === 0) return 0;
+  if (!excludeOra) {
+    return (
+      db
+        .prepare(`SELECT COUNT(*) AS n FROM lm_listing_event e WHERE e.kind = ? AND e.landing_id IN (${ids.map(() => '?').join(',')})`)
+        .get(kind, ...ids) as { n: number }
+    ).n;
+  }
   // I-3: same gap as staleThresholdsByMarket above — `p.ora_property_key IS NULL` alone let an
   // affiliated-owner (ORA-SELF) listing at an unmapped address inflate newInLatest/priceCutsInLatest.
-  const oraFilter = excludeOra ? "AND p.ora_property_key IS NULL AND p.owner_type <> 'affiliated'" : '';
-  return (
-    db
-      .prepare(
-        `SELECT COUNT(*) AS n FROM lm_listing_event e JOIN lm_listing l ON l.id = e.listing_id JOIN lm_property p ON p.id = l.property_id
-         WHERE e.kind = ? AND e.landing_id IN (${ids.map(() => '?').join(',')}) ${oraFilter}`,
-      )
-      .get(kind, ...ids) as { n: number }
-  ).n;
+  // M2: owner_name is fetched alongside so a config.oraOwnerNamePatterns match (matchesOraOwnerName) can
+  // also exclude an ORA-owned listing the screen never verdicted — a case a parameterized SQL LIKE can't
+  // cleanly express for an arbitrary pattern list, so the ora_property_key/owner_type-filtered rows are
+  // fetched and the name check is applied (and counted) in JS instead of a single SQL COUNT(*).
+  const rows = db
+    .prepare(
+      `SELECT p.owner_name FROM lm_listing_event e JOIN lm_listing l ON l.id = e.listing_id JOIN lm_property p ON p.id = l.property_id
+       WHERE e.kind = ? AND e.landing_id IN (${ids.map(() => '?').join(',')}) AND p.ora_property_key IS NULL AND p.owner_type <> 'affiliated'`,
+    )
+    .all(kind, ...ids) as Array<{ owner_name: string | null }>;
+  return rows.filter((r) => !matchesOraOwnerName(r.owner_name, config.oraOwnerNamePatterns)).length;
 }
 
 export function leaseMarketKpis(db: WarehouseDb, config: LeaseMarketConfig, state: MarketState, asOf: string): LeaseMarketKpis {

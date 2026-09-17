@@ -182,6 +182,13 @@ export const LeaseMarketConfig = z
     ownerScreenModulePath: z.string().min(1),
     markets: z.array(LmMarketConfig).min(1),
     oraProperties: z.array(OraPropertyConfig),
+    // M2: case-insensitive substring patterns matched against CoStar's reported owner name — a
+    // screen-independent way to recognize an ORA-owned property (compute.ts matchesOraOwnerName),
+    // treated as ORA-owned everywhere isOraOwnedProperty gates benchmarks/comps/candidates/signals/
+    // radar/the stale-DOM baseline/KPI counts, even when the python owner screen is unavailable and
+    // owner_type never resolves past 'unknown'. Defaulted to [] so an existing config file that omits
+    // it still parses (the ORA-exclusion layer degrades to the pre-M2 behavior, not a parse failure).
+    oraOwnerNamePatterns: z.array(z.string().min(1)).default([]),
     similarityWeights: SimilarityWeights,
     thresholds: LmThresholds,
   })
