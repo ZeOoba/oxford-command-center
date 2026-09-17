@@ -32,6 +32,31 @@ describe('addresses', () => {
     expect(normalizeSuite('# 104')).toBe('104');
     expect(normalizeSuite(null)).toBe('');
   });
+
+  // R9: BLDG is a building designator, not an ordinary suite unit token — two different buildings on
+  // the same street (or a building vs. an unrelated suite) must not collapse to the same identity.
+  describe('BLDG stays distinguishing (R9)', () => {
+    it('two different buildings with the SAME explicit suite stay distinct', () => {
+      expect(splitAddress('1100 Rarig Ave Bldg 1', 'A')).toEqual({ addressNorm: '1100 RARIG AVE', suiteNorm: 'B1-A' });
+      expect(splitAddress('1100 Rarig Ave Bldg 2', 'A')).toEqual({ addressNorm: '1100 RARIG AVE', suiteNorm: 'B2-A' });
+    });
+    it('an embedded "Bldg 2" (no explicit suite) does not collide with an explicit "Ste 2" on the plain address', () => {
+      const bldg = splitAddress('1100 Rarig Ave Bldg 2', null);
+      const ste = splitAddress('1100 Rarig Ave', 'Suite 2');
+      expect(bldg).toEqual({ addressNorm: '1100 RARIG AVE', suiteNorm: 'B2' });
+      expect(ste).toEqual({ addressNorm: '1100 RARIG AVE', suiteNorm: '2' });
+      expect(bldg.suiteNorm).not.toBe(ste.suiteNorm);
+    });
+    it('normalizeSuite folds a building token into a "B<n>-<suite>" form directly, regardless of order', () => {
+      expect(normalizeSuite('Bldg 2 Ste A')).toBe('B2-A');
+      expect(normalizeSuite('Ste A Bldg 2')).toBe('B2-A');
+      expect(normalizeSuite('Bldg 2')).toBe('B2');
+    });
+    it('the property (address-only) identity is unaffected by the building designator', () => {
+      expect(splitAddress('1100 Rarig Ave Bldg 1', null).addressNorm).toBe('1100 RARIG AVE');
+      expect(splitAddress('1100 Rarig Ave Bldg 2', null).addressNorm).toBe('1100 RARIG AVE');
+    });
+  });
 });
 
 describe('bands and strata', () => {
@@ -69,6 +94,21 @@ describe('parseRentText', () => {
   });
   it('withheld phrases and blanks', () => {
     for (const s of ['Withheld', 'Call for pricing', 'Negotiable', '']) expect(parseRentText(s).withheld).toBe(true);
+  });
+
+  // R7: a "/mo" amount with no "/SF" token is neither a trustworthy total (below the total threshold)
+  // nor a trustworthy per-SF rate — it must be ambiguous, never silently priced as per-SF (the
+  // "$4.50/MO NNN" => $54.00/SF/yr defect).
+  describe('a /mo amount with no /SF token below the total threshold is ambiguous, not per-SF (R7)', () => {
+    it('"$4.50/MO NNN" is ambiguous', () => {
+      expect(parseRentText('$4.50/MO NNN')).toMatchObject({ rentLow: 4.5, rentPeriod: 'mo', isTotal: false, ambiguous: true });
+    });
+    it('"$2,500/MO NNN" stays a total (unchanged, at/above the threshold)', () => {
+      expect(parseRentText('$2,500/MO NNN')).toMatchObject({ rentLow: 2500, rentPeriod: 'mo', isTotal: true, ambiguous: false });
+    });
+    it('"$0.60/SF/MO" stays per-SF (unchanged — it carries its own /SF token)', () => {
+      expect(parseRentText('$0.60/SF/MO')).toMatchObject({ rentLow: 0.6, rentPeriod: 'mo', isTotal: false, ambiguous: false });
+    });
   });
 
   // Fix round 1 (task review): add-on split, range separator gating, head-only period/basis,
@@ -379,6 +419,25 @@ describe('parseRentText', () => {
     // alone covers only one component, not tax+insurance+CAM together.
     expect(parseRentText('$6.50/SF/YR NNN + $1.00/SF/YR CAM')).toMatchObject({ basis: 'NNN', opexQuoted: null });
   });
+
+  // R6: a period-less expense add-on must inherit the base rent's OWN period — "$0.60/SF/MO + $0.20
+  // NNN" is a monthly add-on figure riding on a monthly head, not a bare annual one.
+  describe('add-on period inheritance (R6)', () => {
+    it('a MO head: a period-less add-on inherits monthly and annualizes (0.20 => 2.40, not 0.20)', () => {
+      expect(parseRentText('$0.60/SF/MO + $0.20 NNN').opexQuoted).toBeCloseTo(2.4);
+    });
+    it('a YR head: a period-less add-on stays unscaled (unchanged)', () => {
+      expect(parseRentText('$7.20/SF/YR + $2.40 NNN').opexQuoted).toBeCloseTo(2.4);
+    });
+    it('an add-on that states its OWN period is authoritative and does not inherit', () => {
+      // Explicit "/SF/MO" on the add-on itself, riding a YR head — still annualizes via its own stated period.
+      expect(parseRentText('$8.50/SF/YR + $0.20/SF/MO NNN').opexQuoted).toBeCloseTo(2.4);
+    });
+    it('an inherited-monthly add-on still respects the >= 30 ceiling after scaling', () => {
+      // 2.50 * 12 = 30.00 exactly — must still be rejected at the boundary (fix round 5's ceiling rule).
+      expect(parseRentText('$0.60/SF/MO + $2.50/SF NNN').opexQuoted).toBeNull();
+    });
+  });
 });
 
 describe('priceObservation', () => {
@@ -438,6 +497,18 @@ describe('priceObservation', () => {
     expect(r1.confidence).toBe('low');
     expect(r1.askingNnnEq).toBeCloseTo(35.88);
     expect(price({ rentLow: 3, rentPeriod: null })).toMatchObject({ askingNnnEq: 3, confidence: 'high' });
+  });
+
+  // R15: CoStar's blank-rentHigh sentinel is a numeric 0, not a null — a 0 on either side must be
+  // treated as "not stated" (null) BEFORE the low/high swap, not as a real $0 that makes the quote
+  // "non-positive" once it becomes the low side of the swap.
+  it('a numeric rentHigh of 0 (CoStar blank-high sentinel) is treated as null, not a real $0 (R15)', () => {
+    expect(price({ rentLow: 8.5, rentHigh: 0 })).toMatchObject({ askingNnnEq: 8.5, effectiveBasis: 'NNN', rejectedReason: null });
+    // Symmetric: a 0 rentLow with a real rentHigh is treated the same way.
+    expect(price({ rentLow: 0, rentHigh: 8.5 })).toMatchObject({ askingNnnEq: 8.5, effectiveBasis: 'NNN', rejectedReason: null });
+    // A genuine non-positive quote (both sides missing/zero) is still rejected as WITHHELD, not
+    // silently priced.
+    expect(price({ rentLow: 0, rentHigh: 0 }).effectiveBasis).toBe('WITHHELD');
   });
 });
 
