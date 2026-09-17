@@ -60,6 +60,9 @@ run/
 # Pre-migration/pre-rebaseline snapshot backups — machine-local, never committed (2026-07-26)
 data/_backup/
 data/ar-dryrun/
+# Encrypted warehouse snapshots + manifest from `npm run backup` (2026-09-17). Encrypted or not,
+# firm data never enters git; the real destination is an off-machine BACKUP_DIR.
+data/backups/
 # Generated from scripts/prepush-confidential-scan.mjs's own JSDoc by `npm run typecheck`'s
 # pretypecheck step (tsconfig.confidential-scan-types.json) — never hand-edit, never commit.
 # See OI-206 in ~/.claude memory for why this replaced a hand-maintained sibling .d.mts.

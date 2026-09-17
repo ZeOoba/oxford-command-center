@@ -23,6 +23,26 @@ export type WarehouseDb = Database.Database;
 // inherits this. Tunable via WAREHOUSE_BUSY_TIMEOUT_MS for unusually long ingests.
 const BUSY_TIMEOUT_MS = Number(process.env.WAREHOUSE_BUSY_TIMEOUT_MS) || 15_000;
 
+/**
+ * Read-only handle on an EXISTING warehouse. Use this from any script that only reads.
+ *
+ * Why this exists: openWarehouse() below runs pending migrations as a side effect. A script that
+ * merely reads the live warehouse therefore writes its branch's schema into it — and because
+ * runMigrations tracks migrations by FILENAME with no checksum, that database is thereafter
+ * recorded as having applied the file and will never receive later edits to it. The corruption is
+ * silent and not fixed by re-running.
+ *
+ * Unlike openWarehouse this does not mkdir or create the file: opening a path that does not exist
+ * throws (SQLITE_CANTOPEN) rather than silently producing an empty database, which is the correct
+ * behaviour for a reader. Proven pattern — scripts/warehouse-live-drift-check.ts has opened the
+ * live DB this way since the drift check shipped.
+ */
+export function openWarehouseReadOnly(path: string): WarehouseDb {
+  const db = new Database(path, { readonly: true });
+  db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
+  return db;
+}
+
 export function openWarehouse(path: string): WarehouseDb {
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path);
