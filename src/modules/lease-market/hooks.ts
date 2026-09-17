@@ -49,7 +49,8 @@ export function useLeaseMarketHistory(listingId: number | null) {
 }
 
 export async function postRadarDecision(input: RadarDecisionInput) {
-  const res = await fetch(`${BASE}/radar/decision`, { method: 'POST', headers: ORA_JSON_MUTATION_HEADERS, body: JSON.stringify(input) });
+  // Fix round 2, item 4: literal path (not `${BASE}/...`) so check-write-schema-drift.ts's static scanner can match this caller.
+  const res = await fetch('/api/warehouse/lease-market/radar/decision', { method: 'POST', headers: ORA_JSON_MUTATION_HEADERS, body: JSON.stringify(input) });
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { error?: string } | null;
     throw new Error(body?.error ? `Radar decision failed (${res.status}): ${body.error}` : `Radar decision failed (${res.status})`);

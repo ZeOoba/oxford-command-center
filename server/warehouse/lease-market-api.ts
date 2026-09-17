@@ -101,14 +101,32 @@ export function leaseMarketApi(getDb: () => WarehouseDb, deps: LeaseMarketApiDep
       .all() as SignalDbRow[];
   }
 
-  function toSignalRow(r: SignalDbRow, rowLevel: boolean): SignalRow {
-    const evidence = JSON.parse(r.evidence_json) as Record<string, EvidenceValue>;
+  // Fix round 2, item 2: `evidence_json` is a TEXT column populated by the compute engine, not a
+  // guaranteed-valid-JSON invariant enforced by the DB — a corrupt/truncated row must not 500 the
+  // whole /radar or /signals response. Returns null (and logs) instead of throwing; both call sites
+  // drop the null via flatMap.
+  function toSignalRow(r: SignalDbRow, rowLevel: boolean): SignalRow | null {
+    let evidence: Record<string, EvidenceValue>;
+    try {
+      evidence = JSON.parse(r.evidence_json) as Record<string, EvidenceValue>;
+    } catch (e) {
+      console.warn(`[lease-market-api] signal ${r.id} (property ${r.property_id}) skipped: unparseable evidence_json (${e instanceof Error ? e.message : String(e)})`);
+      return null;
+    }
     if (!rowLevel) for (const k of REDACTED_EVIDENCE_KEYS) delete evidence[k];
     const address = r.suite_norm ? `${r.address_display} Ste ${r.suite_norm}` : r.address_display;
     return {
       id: r.id, propertyId: r.property_id, listingId: r.listing_id, marketId: r.market_id, address: rowLevel ? address : null, kind: r.kind,
       severity: r.severity, score: r.score, confidence: r.confidence, compBasis: r.comp_basis, cellKey: r.cell_key, computedAt: r.computed_at, evidence,
     };
+  }
+
+  /** flatMap-friendly wrapper: [] on a corrupt row, [row] otherwise. */
+  function toSignalRows(rows: SignalDbRow[], rowLevel: boolean): SignalRow[] {
+    return rows.flatMap((r) => {
+      const s = toSignalRow(r, rowLevel);
+      return s ? [s] : [];
+    });
   }
 
   app.get('/summary', () =>
@@ -184,7 +202,16 @@ export function leaseMarketApi(getDb: () => WarehouseDb, deps: LeaseMarketApiDep
             console.warn(`[lease-market-api] radar candidate property ${r.property_id} skipped: invalid/missing confidence (${JSON.stringify(r.confidence)})`);
             return [];
           }
-          const e = JSON.parse(r.evidence_json) as Record<string, EvidenceValue>;
+          // Fix round 2, item 2: same corrupt-row guard as toSignalRow, applied here since the radar
+          // candidate mapping reads evidence_json directly (it needs the raw part_* keys, not a
+          // SignalRow) rather than going through toSignalRow.
+          let e: Record<string, EvidenceValue>;
+          try {
+            e = JSON.parse(r.evidence_json) as Record<string, EvidenceValue>;
+          } catch (err) {
+            console.warn(`[lease-market-api] radar candidate property ${r.property_id} skipped: unparseable evidence_json (${err instanceof Error ? err.message : String(err)})`);
+            return [];
+          }
           const parts: Record<string, number> = {};
           for (const key of RADAR_SCORE_PARTS) {
             const v = num(e[key]);
@@ -221,7 +248,7 @@ export function leaseMarketApi(getDb: () => WarehouseDb, deps: LeaseMarketApiDep
           } satisfies RadarCandidate];
         })
         .sort((a, b) => b.score - a.score || a.propertyId - b.propertyId);
-      const monitor = readSignals(db, "s.kind = 'withdrawn_after_stale'").map((r) => toSignalRow(r, rowLevel));
+      const monitor = toSignalRows(readSignals(db, "s.kind = 'withdrawn_after_stale'"), rowLevel);
       return json(200, RadarResponse.parse({ asOf: referenceDate(), candidatesWithheld: withheldCandidateMarkets(db, config), candidates, monitor }));
     }),
   );
@@ -251,7 +278,7 @@ export function leaseMarketApi(getDb: () => WarehouseDb, deps: LeaseMarketApiDep
       json(200, SignalsResponse.parse({
         asOf: referenceDate(),
         candidatesWithheld: withheldCandidateMarkets(db, config),
-        signals: readSignals(db, "s.kind <> 'radar_candidate' AND s.kind <> 'withdrawn_after_stale'").map((r) => toSignalRow(r, effectiveRowLevel(config))),
+        signals: toSignalRows(readSignals(db, "s.kind <> 'radar_candidate' AND s.kind <> 'withdrawn_after_stale'"), effectiveRowLevel(config)),
       })),
     ),
   );

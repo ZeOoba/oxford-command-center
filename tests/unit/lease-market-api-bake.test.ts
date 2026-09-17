@@ -12,8 +12,9 @@ import { join } from 'node:path';
 import { openWarehouse, type WarehouseDb } from '../../server/warehouse/db';
 import { ingestCostarListingsFile } from '../../server/warehouse/lease-market/ingest';
 import { runCompute } from '../../server/warehouse/lease-market/compute';
-import { inProcessResolver, buildWarehouseEnvelope } from '../../scripts/bake-warehouse';
+import { inProcessResolver, buildWarehouseEnvelope, leaseMarketBakeMode } from '../../scripts/bake-warehouse';
 import { LeaseMarketSummaryResponse } from '../../src/contracts/lease-market';
+import { WAREHOUSE_SUB_ROUTERS } from '../../server/warehouse/sub-routers';
 import { stubScreen, testConfig, testHeaderMap, writeCostarFixture, type FixtureListing } from './lease-market-fixtures';
 
 const openDbs: WarehouseDb[] = [];
@@ -83,5 +84,31 @@ describe('bake-warehouse — lease-market redacted-bake confidentiality boundary
     const resolver = inProcessResolver(db);
     const env = await buildWarehouseEnvelope(resolver, { now: Date.parse('2026-03-02T00:00:00.000Z'), warehouseSource: 'checkpoint-read' });
     expect(env.endpoints['/api/warehouse/lease-market/summary']).toBeDefined();
+  });
+});
+
+// Fix round 2, item 1(a): the includeConfidential -> { leaseMarketRowLevel, includeLeaseMarket }
+// mapping extracted out of bakeWarehouseJson into a small pure function, tested directly without a
+// DB, HTTP server, or filesystem write.
+describe('leaseMarketBakeMode (fix round 2, item 1a)', () => {
+  it('redacted (includeConfidential=false): rowLevel forced false on the in-process path; routes excluded on the http path', () => {
+    expect(leaseMarketBakeMode(false)).toEqual({ leaseMarketRowLevel: false, includeLeaseMarket: false });
+  });
+
+  it('private (includeConfidential=true): rowLevel override undefined (falls through to config) on the in-process path; routes included on the http path', () => {
+    expect(leaseMarketBakeMode(true)).toEqual({ leaseMarketRowLevel: undefined, includeLeaseMarket: true });
+  });
+});
+
+// Fix round 2, item 3: bake-warehouse.ts's inProcessResolver hardcodes the string literal
+// '/lease-market' to special-case this one prefix for bake-scoped redaction (see its doc comment's
+// CROSS-REFERENCE note). This regression-guards the other half of that coupling: the prefix must
+// still exist in WAREHOUSE_SUB_ROUTERS (server/warehouse/sub-routers.ts), the single source of truth
+// both server/index.ts and this resolver mount from — if it's ever renamed there without updating the
+// literal, the special case silently stops firing (see the CROSS-REFERENCE comment for the failure
+// mode: the shared factory() branch would take over with no rowLevel override).
+describe('bake-warehouse — /lease-market special-case prefix stays registered (fix round 2, item 3)', () => {
+  it('WAREHOUSE_SUB_ROUTERS still has a "/lease-market" prefix entry', () => {
+    expect(WAREHOUSE_SUB_ROUTERS.some((r) => r.prefix === '/lease-market')).toBe(true);
   });
 });
