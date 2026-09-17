@@ -34,10 +34,13 @@ function space(db: Database.Database, propertyId: number, landingId: number, sui
   );
 }
 function observe(db: Database.Database, listingId: number, landingId: number, date: string, asking: number | null) {
+  // NNN basis: asking_psf_yr and asking_nnn_eq are the same figure (no opex adjustment applies), so
+  // both are set here to keep this helper's existing NNN-eq-based callers meaningful under the R1 fix
+  // (cumulative_reduction_pct is now derived from asking_psf_yr, not asking_nnn_eq).
   db.prepare(
-    `INSERT INTO lm_observation (listing_id, landing_id, observed_at, available_sf, rent_basis, is_sublease, rent_is_total, asking_nnn_eq, confidence)
-     VALUES (?, ?, ?, 10000, 'NNN', 0, 0, ?, 'high')`,
-  ).run(listingId, landingId, date, asking);
+    `INSERT INTO lm_observation (listing_id, landing_id, observed_at, available_sf, rent_basis, is_sublease, rent_is_total, asking_psf_yr, asking_nnn_eq, confidence)
+     VALUES (?, ?, ?, 10000, 'NNN', 0, 0, ?, ?, 'high')`,
+  ).run(listingId, landingId, date, asking, asking);
 }
 
 describe('migration 029 — lease market', () => {
@@ -113,5 +116,48 @@ describe('migration 029 — lease market', () => {
     const m = db.prepare('SELECT * FROM lm_v_listing_metrics WHERE listing_id = ?').get(s) as Record<string, number | string>;
     expect(m).toMatchObject({ original_asking: 9.5, current_asking: 8.5, min_asking: 8.5, reduction_count: 2, first_observed: '2026-01-01', last_observed: '2026-03-01' });
     expect(m.cumulative_reduction_pct as number).toBeCloseTo(-0.10526, 4);
+  });
+
+  // R1: cumulative_reduction_pct must be basis-matched to asking_psf_yr (the same basis price_cut/
+  // price_increase events use), never asking_nnn_eq — an NNN-eq change driven purely by a shifting
+  // market quoted-opex estimate is not a real price move, and must not register as a "reduction" for a
+  // listing that had zero recorded price_cut events.
+  it('cumulative_reduction_pct is basis-matched to asking_psf_yr and null with zero recorded cuts (R1)', () => {
+    const db = makeDb();
+    const l1 = landing(db, 'r1a');
+    const l2 = landing(db, 'r1b');
+    const s = space(db, property(db, '5 PSF ST'), l1, '');
+    // GROSS listing: the raw asking rent (asking_psf_yr) never moves, but asking_nnn_eq drifts down
+    // purely because the market quoted-opex median moved between the two exports — no price_cut event
+    // is ever recorded for it (reduction_count stays 0).
+    db.prepare(
+      `INSERT INTO lm_observation (listing_id, landing_id, observed_at, available_sf, rent_basis, is_sublease, rent_is_total, asking_psf_yr, asking_nnn_eq, confidence)
+       VALUES (?, ?, '2026-01-01', 10000, 'GROSS', 0, 0, 10, 8, 'low')`,
+    ).run(s, l1);
+    db.prepare(
+      `INSERT INTO lm_observation (listing_id, landing_id, observed_at, available_sf, rent_basis, is_sublease, rent_is_total, asking_psf_yr, asking_nnn_eq, confidence)
+       VALUES (?, ?, '2026-02-01', 10000, 'GROSS', 0, 0, 10, 6.5, 'low')`,
+    ).run(s, l2);
+    const m = db.prepare('SELECT reduction_count, cumulative_reduction_pct FROM lm_v_listing_metrics WHERE listing_id = ?').get(s);
+    expect(m).toEqual({ reduction_count: 0, cumulative_reduction_pct: null });
+  });
+
+  it('cumulative_reduction_pct reflects a real psf_yr cut even when asking_nnn_eq moves by a different amount', () => {
+    const db = makeDb();
+    const l1 = landing(db, 'r1c');
+    const l2 = landing(db, 'r1d');
+    const s = space(db, property(db, '6 PSF ST'), l1, '');
+    db.prepare(
+      `INSERT INTO lm_observation (listing_id, landing_id, observed_at, available_sf, rent_basis, is_sublease, rent_is_total, asking_psf_yr, asking_nnn_eq, confidence)
+       VALUES (?, ?, '2026-01-01', 10000, 'GROSS', 0, 0, 10, 8, 'low')`,
+    ).run(s, l1);
+    db.prepare(
+      `INSERT INTO lm_observation (listing_id, landing_id, observed_at, available_sf, rent_basis, is_sublease, rent_is_total, asking_psf_yr, asking_nnn_eq, confidence)
+       VALUES (?, ?, '2026-02-01', 10000, 'GROSS', 0, 0, 9, 8.5, 'low')`,
+    ).run(s, l2);
+    db.prepare(`INSERT INTO lm_listing_event (listing_id, landing_id, event_date, kind, prev_value, new_value) VALUES (?, ?, '2026-02-01', 'price_cut', 10, 9)`).run(s, l2);
+    const m = db.prepare('SELECT reduction_count, cumulative_reduction_pct FROM lm_v_listing_metrics WHERE listing_id = ?').get(s) as { reduction_count: number; cumulative_reduction_pct: number };
+    expect(m.reduction_count).toBe(1);
+    expect(m.cumulative_reduction_pct).toBeCloseTo(-0.1, 4); // 9/10 - 1, NOT 8.5/8 - 1 (+0.0625)
   });
 });
