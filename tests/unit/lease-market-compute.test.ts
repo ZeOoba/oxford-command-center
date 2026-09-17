@@ -284,3 +284,72 @@ describe('R16 — loud warning when config.oraProperties is empty', () => {
     warnSpy.mockRestore();
   });
 });
+
+// ── M2 (refute round 2) — screen-independent ORA-owner-name check ──────────
+// 9017-9019 Heritage Dr is real ORA property (owner "Oxford Realty") deliberately left OUT of
+// config.oraProperties. It is excluded from benchmarks/comps only via the python owner screen's
+// 'affiliated' verdict; when the screen is unavailable, owner_type stays 'unknown' forever and the
+// listing enters comps/benchmarks as an ordinary third-party comp with no hygiene visibility at all.
+describe('M2 — config.oraOwnerNamePatterns excludes an ORA-owned property even when the owner screen is unavailable', () => {
+  it('keeps a pattern-matched owner out of candidates/benchRows/isOraOwned when owner_type stays unknown', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lm-compute-m2-'));
+    const db = openWarehouse(join(dir, 't.sqlite'));
+    const config = testConfig({ oraOwnerNamePatterns: ['Oxford Realty'] });
+    const rows: FixtureListing[] = [
+      { address: '9017-9019 Heritage Dr', city: 'Plain City', sf: 5888, rentLow: 7.5, owner: 'Oxford Realty' },
+      ...RENTS.map((rent, i) => ({ id: `C${i}`, address: `${100 + i} Industrial Pkwy`, sf: 20000, rentLow: rent })),
+    ];
+    const r0 = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-15.xlsx', rows), {
+      // screen unavailable => ingest.ts leaves a brand-new property's owner_type at 'unknown', never
+      // 'affiliated', regardless of what a real screen would have said about this owner name.
+      config, headerMap: testHeaderMap(), rawDir: join(dir, 'raw'), now: () => '2026-02-16T00:00:00Z',
+      screen: (names) => ({ ...stubScreen(names), available: false }),
+    });
+    expect(r0.status).toBe('ingested');
+    const propRow = db.prepare("SELECT owner_type, ora_property_key FROM lm_property WHERE address_norm = '9017-9019 HERITAGE DR'").get();
+    expect(propRow).toEqual({ owner_type: 'unknown', ora_property_key: null });
+
+    const state = loadMarketState(db, config, '2026-03-01');
+    const heritage = state.spaces.find((s) => s.property.addressDisplay === '9017-9019 Heritage Dr');
+    expect(heritage).toBeDefined();
+    // Screen-independent: isOraOwned is true purely off the name pattern, despite owner_type='unknown'.
+    expect(heritage?.isOraOwned).toBe(true);
+    expect(state.candidates.some((c) => c.listingId === heritage?.listingId)).toBe(false);
+    expect(state.benchRows.some((b) => b.listingId === heritage?.listingId)).toBe(false);
+
+    // Without the pattern configured, the same listing DOES leak into comps/benchmarks (proves the gap
+    // this fix closes, not just that Heritage Dr happens to be excluded some other way).
+    const bareConfig = testConfig({ oraOwnerNamePatterns: [] });
+    const bareState = loadMarketState(db, bareConfig, '2026-03-01');
+    const bareHeritage = bareState.spaces.find((s) => s.property.addressDisplay === '9017-9019 Heritage Dr');
+    expect(bareHeritage?.isOraOwned).toBe(false);
+    expect(bareState.candidates.some((c) => c.listingId === bareHeritage?.listingId)).toBe(true);
+
+    // The pattern match also excludes it from runCompute's signals (no new_listing/stale/radar for it).
+    runCompute(db, config, '2026-03-01');
+    const signalsOnHeritage = db
+      .prepare('SELECT s.kind FROM lm_signal s JOIN lm_property p ON p.id = s.property_id WHERE p.address_norm = ?')
+      .all('9017-9019 HERITAGE DR');
+    expect(signalsOnHeritage).toEqual([]);
+  });
+
+  it('excludes a pattern-matched owner from the stale-DOM baseline and the newInLatest/priceCutsInLatest KPI counts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lm-compute-m2-kpi-'));
+    const db = openWarehouse(join(dir, 't.sqlite'));
+    const config = testConfig({ oraOwnerNamePatterns: ['Oxford Realty'] });
+    const deps = {
+      config, headerMap: testHeaderMap(), rawDir: join(dir, 'raw'), now: () => '2026-09-17T00:00:00Z',
+      screen: (names: string[]) => ({ ...stubScreen(names), available: false }),
+    };
+    const base: FixtureListing[] = [
+      { address: '9017-9019 Heritage Dr', city: 'Plain City', sf: 5888, rentLow: 7.5, owner: 'Oxford Realty' },
+      ...Array.from({ length: 5 }, (_, i) => ({ id: `B${i}`, address: `${i + 1} Base St`, sf: 8000, rentLow: 9.0 })),
+    ];
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-09-17.xlsx', base), deps);
+    const state = loadMarketState(db, config, '2026-09-17');
+    const kpis = leaseMarketKpis(db, config, state, '2026-09-17');
+    // 5 market comps 'new', not 6 -- Heritage Dr's own 'new' event must not inflate newInLatest despite
+    // owner_type being stuck at 'unknown'.
+    expect(kpis.newInLatest).toBe(5);
+  });
+});
