@@ -43,18 +43,36 @@ describe('addresses', () => {
     it('an embedded "Bldg 2" (no explicit suite) does not collide with an explicit "Ste 2" on the plain address', () => {
       const bldg = splitAddress('1100 Rarig Ave Bldg 2', null);
       const ste = splitAddress('1100 Rarig Ave', 'Suite 2');
-      expect(bldg).toEqual({ addressNorm: '1100 RARIG AVE', suiteNorm: 'B2' });
+      // M-4: a building-only designator (no explicit suite) normalizes with a trailing dash ('B2-'),
+      // not the bare 'B2' it used to be — see the M-4 describe block below for why.
+      expect(bldg).toEqual({ addressNorm: '1100 RARIG AVE', suiteNorm: 'B2-' });
       expect(ste).toEqual({ addressNorm: '1100 RARIG AVE', suiteNorm: '2' });
       expect(bldg.suiteNorm).not.toBe(ste.suiteNorm);
     });
     it('normalizeSuite folds a building token into a "B<n>-<suite>" form directly, regardless of order', () => {
       expect(normalizeSuite('Bldg 2 Ste A')).toBe('B2-A');
       expect(normalizeSuite('Ste A Bldg 2')).toBe('B2-A');
-      expect(normalizeSuite('Bldg 2')).toBe('B2');
+      // M-4: building-only (no suite) now normalizes to 'B2-', not 'B2' — see below.
+      expect(normalizeSuite('Bldg 2')).toBe('B2-');
     });
     it('the property (address-only) identity is unaffected by the building designator', () => {
       expect(splitAddress('1100 Rarig Ave Bldg 1', null).addressNorm).toBe('1100 RARIG AVE');
       expect(splitAddress('1100 Rarig Ave Bldg 2', null).addressNorm).toBe('1100 RARIG AVE');
+    });
+  });
+
+  // M-4: a building-only designator ("Building A", "Bldg B") is form-identical to a bare suite token
+  // once letters are concatenated — normalizeSuite('Building A') and the literal suite "BA" both used
+  // to collapse to 'BA', so a rent-roll unit literally named "BA" could silently match a completely
+  // different building's designator-only listing. Pinned here so the collision can never come back
+  // silently.
+  describe('a letter-valued building designator with no suite is unambiguous (M-4)', () => {
+    it('does not collide with a bare suite that looks the same once concatenated', () => {
+      const building = normalizeSuite('Building A');
+      const bareSuite = normalizeSuite('BA');
+      expect(building).toBe('BA-');
+      expect(bareSuite).toBe('BA');
+      expect(building).not.toBe(bareSuite);
     });
   });
 });

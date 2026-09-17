@@ -61,7 +61,13 @@ export function normalizeSuite(raw: string | null | undefined): string {
   while (parts.length > 0 && SUITE_TOKENS.has(parts[0]!)) parts.shift();
   const suite = parts.join('');
   if (building === null) return suite;
-  return suite ? `B${building}-${suite}` : `B${building}`;
+  // M-4: a building designator with NO explicit suite ("Building A", "Bldg 2") must stay unambiguous
+  // from a plain suite token that happens to look the same once concatenated -- normalizeSuite('Building
+  // A') and the literal bare suite "BA" both used to collapse to 'BA'. A trailing dash can never be
+  // produced by an ordinary suite token (SUITE_TOKENS are stripped, not retained, and parts.join('')
+  // never itself appends a trailing '-'), so 'B<designator>-' unambiguously means "building only, no
+  // suite" while 'B<designator>-<suite>' keeps its existing, already-tested meaning.
+  return suite ? `B${building}-${suite}` : `B${building}-`;
 }
 
 export function splitAddress(rawAddress: string, rawSuite: string | null): { addressNorm: string; suiteNorm: string } {
@@ -82,7 +88,8 @@ export function splitAddress(rawAddress: string, rawSuite: string | null): { add
   // was also given -- previously the rawSuite branch discarded the embedded building entirely, so
   // "Bldg 1"+"A" and "Bldg 2"+"A" both normalized to the same suiteNorm "A".
   if (embeddedBuilding === null) return { addressNorm, suiteNorm };
-  return { addressNorm, suiteNorm: suiteNorm ? `B${embeddedBuilding}-${suiteNorm}` : `B${embeddedBuilding}` };
+  // M-4: mirrors normalizeSuite's own trailing-dash disambiguation for the building-only case.
+  return { addressNorm, suiteNorm: suiteNorm ? `B${embeddedBuilding}-${suiteNorm}` : `B${embeddedBuilding}-` };
 }
 
 // ── Cells ────────────────────────────────────────────────────────────────────

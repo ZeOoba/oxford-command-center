@@ -163,6 +163,11 @@ export const LmThresholds = z.object({
   similarityTopK: z.number().int().positive(),
   similarityMinComps: z.number().int().positive(),
   similarityHighComps: z.number().int().positive(),
+  // M-2: governor-shaped constants formerly hardcoded in similarity.ts — the per-property comp cap
+  // (R8) and the count of unknown SUBJECT components that caps confidence at LOW (I-1) — moved into
+  // config so they're changeable/auditable the same way every other lease-market threshold is.
+  similarityPerPropertyCap: z.number().int().positive(),
+  similarityUnknownLowCap: z.number().int().positive(),
   radarMinScore: z.number().min(0).max(100),
   radarPushScore: z.number().min(0).max(100),
   withdrawnLookbackDays: z.number().int().positive(),
@@ -211,6 +216,14 @@ export const LeaseMarketConfig = z
     }
     if (c.thresholds.similarityTopK < c.thresholds.similarityHighComps) {
       ctx.addIssue({ code: 'custom', message: 'similarityTopK must be >= similarityHighComps' });
+    }
+    if (c.thresholds.similarityPerPropertyCap > c.thresholds.similarityTopK) {
+      ctx.addIssue({ code: 'custom', message: 'similarityPerPropertyCap must be <= similarityTopK' });
+    }
+    // There are exactly 6 SimilarityComponent values (location/size/clearHeight/age/loading/office) —
+    // a cap above that count could never actually trigger.
+    if (c.thresholds.similarityUnknownLowCap > 6) {
+      ctx.addIssue({ code: 'custom', message: 'similarityUnknownLowCap must be <= 6 (there are only 6 similarity components)' });
     }
   });
 export type LeaseMarketConfig = z.infer<typeof LeaseMarketConfig>;

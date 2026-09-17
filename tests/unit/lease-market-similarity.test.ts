@@ -8,6 +8,7 @@ import type { LmThresholds, SimilarityWeights } from '../../src/contracts/lease-
 const W: SimilarityWeights = { location: 30, size: 25, clearHeight: 15, age: 10, loading: 10, office: 10 };
 const T = {
   similarityMinScore: 60, similarityTopK: 15, similarityMinComps: 8, similarityHighComps: 15, belowMarketMinN: 10,
+  similarityPerPropertyCap: 3, similarityUnknownLowCap: 3,
 } as LmThresholds;
 
 const subject: SpaceProfile = {
@@ -141,6 +142,35 @@ describe('resolveComparables', () => {
     it('an all-known comp set is unaffected (unchanged HIGH at n=15, empty unknown)', () => {
       const comps = Array.from({ length: 16 }, (_, i) => cand({ askingNnnEq: (80 + i) / 10 }));
       const r = resolveComparables(subject, null, comps, cell({}), W, T);
+      expect(r.confidence).toBe('HIGH');
+      expect(r.unknown).toEqual([]);
+    });
+
+    // I-1: a fully-populated subject must not be capped down just because its comps are each
+    // individually missing a DIFFERENT field. Before the fix, resolveComparables unioned every
+    // per-comp `unknown` list -- 3 comps missing location + 3 missing clearHeight + 3 missing age + 3
+    // missing loading + 3 missing office union to all 5 components, capping a fully-known subject at
+    // LOW. On real CoStar data (15 comps, each thin on some different field is the NORMAL case) that
+    // silently killed below_market signals, zeroed the radar's belowMarket points, and dropped the
+    // property from the market-rent feed.
+    it('a fully-populated subject is not capped by comps that are each missing a different field (I-1)', () => {
+      const group = (field: 'location' | 'clearHeight' | 'age' | 'loading' | 'office', n: number): CompCandidate => {
+        const base = cand({ listingId: n, propertyId: 4000 + n, askingNnnEq: 9 });
+        if (field === 'location') return { ...base, lat: null, lon: null, submarket: null };
+        if (field === 'clearHeight') return { ...base, clearHeightFt: null };
+        if (field === 'age') return { ...base, yearBuilt: null };
+        if (field === 'loading') return { ...base, docks: null, driveIns: null };
+        return { ...base, officePct: null };
+      };
+      const comps = [
+        ...Array.from({ length: 3 }, (_, i) => group('location', i + 1)),
+        ...Array.from({ length: 3 }, (_, i) => group('clearHeight', i + 4)),
+        ...Array.from({ length: 3 }, (_, i) => group('age', i + 7)),
+        ...Array.from({ length: 3 }, (_, i) => group('loading', i + 10)),
+        ...Array.from({ length: 3 }, (_, i) => group('office', i + 13)),
+      ];
+      const r = resolveComparables(subject, null, comps, null, W, T);
+      expect(r.n).toBe(15);
       expect(r.confidence).toBe('HIGH');
       expect(r.unknown).toEqual([]);
     });
