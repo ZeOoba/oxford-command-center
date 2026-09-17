@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { openWarehouse } from '../../server/warehouse/db';
 import { ingestCostarListingsFile } from '../../server/warehouse/lease-market/ingest';
 import {
-  domBins, latestExportEvents, leaseMarketKpis, loadMarketState, marketDataQuality, marketFreshness, runCompute,
+  domBins, lastComputedAt, latestExportEvents, leaseMarketKpis, loadMarketState, marketDataQuality, marketFreshness, runCompute,
 } from '../../server/warehouse/lease-market/compute';
 import { stubScreen, testConfig, testHeaderMap, writeCostarFixture, type FixtureListing } from './lease-market-fixtures';
 
@@ -93,6 +93,20 @@ describe('runCompute', () => {
     const { db, config } = await seeded();
     const mg = testConfig({ oraProperties: config.oraProperties.map((p) => ({ ...p, leaseBasis: 'MG' as const })) });
     expect(runCompute(db, mg, '2026-03-01').feedRows).toBe(0);
+  });
+});
+
+// Whole-branch review finding I3: /summary's asOf is always referenceDate(), never the last compute
+// run -- an operator who ingests without running compute would see no indication compute never ran.
+describe('lastComputedAt', () => {
+  it('is null before compute has ever run, and MAX(computed_at) after', async () => {
+    const { db, config } = await seeded();
+    expect(lastComputedAt(db)).toBeNull();
+    runCompute(db, config, '2026-03-01');
+    expect(lastComputedAt(db)).toBe('2026-03-01');
+    // A later run at a different asOf updates it (lm_signal is fully replaced each run).
+    runCompute(db, config, '2026-03-08');
+    expect(lastComputedAt(db)).toBe('2026-03-08');
   });
 });
 

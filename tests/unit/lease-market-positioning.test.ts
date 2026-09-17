@@ -72,7 +72,7 @@ describe('computePositioning', () => {
     const { config, s } = await state();
     const r = computePositioning([{ propertyKey: '1100 Rarig', unit: 'Suite B', sf: 8000 }], config, s, true);
     const row = r.rows[0]!;
-    expect(row).toMatchObject({ propertyKey: '1100 Rarig', unit: 'Suite B', oraAskingNnnEq: 11.5, band: 'above', flags: [], brokerName: 'Lee Lister', listingUrl: 'https://example.test/rarig-b', dateListed: '2026-01-15', effectiveDom: 45 });
+    expect(row).toMatchObject({ propertyKey: '1100 Rarig', unit: 'Suite B', oraAskingNnnEq: 11.5, band: 'above', flags: [], effectiveDom: 45 });
     expect(row.stats).toMatchObject({ basis: 'similarity', n: 10, confidence: 'MEDIUM', low: 8, high: 11 });
     expect(row.stats!.median).toBeCloseTo(9.625);
     expect(row.gapPct).toBeCloseTo(11.5 / 9.625 - 1);
@@ -95,7 +95,6 @@ describe('computePositioning', () => {
     const { config, s } = await state();
     const r = computePositioning([{ propertyKey: '1100 Rarig', unit: 'B', sf: 8000 }, { propertyKey: 'Sepich', unit: '1', sf: 2000 }, { propertyKey: 'Sepich', unit: '2', sf: 2000 }], config, s, false);
     expect(r.unconfiguredPropertyKeys).toEqual(['Sepich']);
-    expect(r.rows[0]).toMatchObject({ brokerName: null, listingUrl: null });
     expect(r.rows[0]!.comps.every((c) => c.address === null)).toBe(true);
   });
 
@@ -175,7 +174,9 @@ describe('computePositioning', () => {
     await ingestInto(db, dir, config, 'columbus', '2026-02-15', [...TEN_COMPS, ora]);
     const s = loadMarketState(db, config, '2026-03-01');
     const r = computePositioning([{ propertyKey: '1100 Rarig', unit: 'B', sf: 8000 }], config, s, true);
-    expect(r.rows[0]).toMatchObject({ flags: [], oraAskingNnnEq: null, oraListingId: expect.any(Number) });
+    // flags: [] (not 'not_listed') is the matched signal now that oraListingId has been removed from
+    // the wire (whole-branch review finding 6 — no UI consumer read it).
+    expect(r.rows[0]).toMatchObject({ flags: [], oraAskingNnnEq: null });
     expect(r.rows[0]!.recommendation).toMatch(/^ORA listing found in CoStar but its asking rent is withheld or not normalizable\./);
   });
 
@@ -313,6 +314,60 @@ describe('computePositioning', () => {
     const r = computePositioning([{ propertyKey: '1100 Rarig', unit: 'D', sf: 5000 }], config, s, false);
     expect(r.listedButLeased.length).toBeGreaterThan(0);
     expect(r.listedButLeased.every((l) => l.address === null)).toBe(true);
+  });
+
+  // Deferred R2: an owner-screened ORA-self listing (ownerType 'affiliated') at an address NOT in
+  // config.oraProperties.addressNorms has no oraPropertyKey, so it can never become a PositioningRow
+  // or a listedButLeased entry — it needs its own hygiene surface.
+  it('flags an ORA-self-owned listing at an unmapped address as a hygiene issue, redacted when rowLevel is false', async () => {
+    const { config, s } = await state([{ address: '500 Unmapped Ave', sf: 6000, rentLow: 9, owner: 'OXFORD UNLISTED HOLDINGS LLC' }]);
+    const trueLevel = computePositioning([], config, s, true);
+    expect(trueLevel.hygieneFlags).toHaveLength(1);
+    expect(trueLevel.hygieneFlags[0]).toMatchObject({
+      address: '500 Unmapped Ave',
+      reason: 'CoStar shows an ORA-owned listing at an address that is not mapped — add it to oraProperties',
+    });
+    expect(trueLevel.hygieneFlags[0]!.marketId).toBe('columbus');
+
+    const redacted = computePositioning([], config, s, false);
+    expect(redacted.hygieneFlags).toHaveLength(1);
+    expect(redacted.hygieneFlags[0]!.address).toBeNull();
+  });
+
+  it('does not flag a listing whose owner is not affiliated, or an ORA listing that IS mapped', async () => {
+    const { config, s } = await state();
+    const r = computePositioning([], config, s, true);
+    // The default fixture's only ORA-owned listing (1100 Rarig Ave, owner OXFORD RARIG LLC) is
+    // correctly mapped via config.oraProperties.addressNorms — must not be flagged.
+    expect(r.hygieneFlags).toEqual([]);
+  });
+
+  // R3 (deferred UI-fix round): resolveComparables' `unknown` union is threaded onto stats so a
+  // MEDIUM/LOW confidence caused by missing subject data is explainable, not just asserted.
+  it('surfaces resolveComparables.unknown on row stats when the ORA subject has missing physical fields', async () => {
+    const { dir, db } = await newDb();
+    const config = testConfig({
+      oraProperties: [
+        {
+          propertyKey: '1100 Rarig', marketId: 'columbus', submarket: null, subtype: 'warehouse', officePct: null, typicalUnitSf: 8000,
+          leaseBasis: 'NNN', addressNorms: ['1100 RARIG AVE'], lat: null, lon: null, clearHeightFt: null, yearBuilt: null, docks: null, driveIns: null,
+        },
+      ],
+    });
+    // The ORA listing's own ingested property row carries no physical data either, so oraSubject's
+    // `p.field ?? matched?.field ?? null` fallback stays null on both sides, not just the config.
+    const ora: FixtureListing = {
+      address: '1100 Rarig Ave', suite: 'B', sf: 8000, rentLow: 11.5, owner: 'OXFORD RARIG LLC',
+      submarket: null, lat: null, lon: null, clear: null, yearBuilt: null, docks: null, driveIns: null,
+    };
+    await ingestInto(db, dir, config, 'columbus', '2026-02-15', [...TEN_COMPS, ora]);
+    const s = loadMarketState(db, config, '2026-03-01');
+    const r = computePositioning([{ propertyKey: '1100 Rarig', unit: 'B', sf: 8000 }], config, s, true);
+    const row = r.rows[0]!;
+    expect(row.stats!.unknown.length).toBeGreaterThanOrEqual(3);
+    expect(row.stats!.unknown).toEqual(expect.arrayContaining(['location', 'clearHeight']));
+    // 3+ unknown components caps confidence at LOW regardless of comp count (similarity.ts REFUTE R3).
+    expect(row.stats!.confidence).toBe('LOW');
   });
 
   it('caps comps at 15 even when more comparables are available', async () => {
