@@ -383,9 +383,11 @@ export function LeaseMarketModule() {
         As of {data.asOf}{data.lastComputedAt !== null ? ` · last computed ${data.lastComputedAt}` : ''} · asking rents, NNN-equivalent $/SF/yr · CoStar-derived, internal use only
       </p>
       {/* I3 (whole-branch review): ingest without compute leaves Radar empty and KPIs zeroed with no
-          explanation — say so plainly and name the command. */}
+          explanation — say so plainly and name the command. M-1: lastComputedAt is now the max of two
+          tables (see compute.ts), but a run that wrote to neither (zero active spaces, zero configured
+          comps) is still indistinguishable from "never run" — the wording below covers both. */}
       {data.lastComputedAt === null && (
-        <p className="text-2xs" style={{ color: 'var(--color-warn)' }}>Compute has not been run yet — Market Rents and Changes may show ingested data with no Radar or KPI signals. Run `npm run lease-market:compute`.</p>
+        <p className="text-2xs" style={{ color: 'var(--color-warn)' }}>Compute has not been run yet, or the last run produced no signals — Market Rents and Changes may show ingested data with no Radar or KPI signals. Run `npm run lease-market:compute`.</p>
       )}
       {/* rowLevel (whole-branch review item 5): explains why rows on a redacted mirror read "Property 123". */}
       {!data.rowLevel && (

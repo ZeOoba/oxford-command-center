@@ -596,6 +596,20 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
         if (before !== null && after !== null) {
           if (after < before - CENT) event(listingId, 'price_cut', before, after);
           else if (after > before + CENT) event(listingId, 'price_increase', before, after);
+        } else if (sameBasis && !sameConfidence && !prevRejected && !currRejected) {
+          // M-3: R4's confidence-flip suppression is deliberate (comparing observations derived under
+          // different interpretation confidence can be a phantom move) but it is also the one case
+          // where a GENUINE cut/increase can vanish from reduction_count and the Changes tab without a
+          // trace — warn when the pair is otherwise comparable (same basis, neither rejected) and the
+          // underlying quoted value actually differs, so a real cut doesn't just disappear silently.
+          const primaryDiffers = bothTotal
+            ? prev.rent_low !== null && row.rentLow !== null && prev.rent_low !== row.rentLow
+            : neitherTotal && prev.asking_psf_yr !== null && priced.askingPsfYr !== null && prev.asking_psf_yr !== priced.askingPsfYr;
+          if (primaryDiffers) {
+            console.warn(
+              `[lease-market] listing ${listingId}: a price change was suppressed because confidence flipped (${prev.confidence} -> ${priced.confidence}) between comparable observations — reduction_count and the Changes tab will not reflect it.`,
+            );
+          }
         }
         if (prev.available_sf > 0 && Math.abs(row.availableSf - prev.available_sf) / prev.available_sf >= t.sfChangePct) {
           event(listingId, 'sf_change', prev.available_sf, row.availableSf);

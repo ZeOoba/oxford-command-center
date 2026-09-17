@@ -277,14 +277,14 @@ describe('stale-threshold baseline (requirement 5)', () => {
         .run(ref, `sha-${ref}`, marketId, observedAt, observedAt).lastInsertRowid,
     );
   }
-  function insertProperty(db: WarehouseDb, opts: { identityKey: string; marketId: string; oraKey: string | null }): number {
+  function insertProperty(db: WarehouseDb, opts: { identityKey: string; marketId: string; oraKey: string | null; ownerType?: string }): number {
     return Number(
       db
         .prepare(
           `INSERT INTO lm_property (identity_key, address_norm, address_display, city_norm, market_id, subtype, building_status, owner_type, ora_property_key, first_seen, last_seen)
-           VALUES (?, ?, ?, '', ?, 'warehouse', 'existing', 'unknown', ?, '2025-01-01', '2025-01-01')`,
+           VALUES (?, ?, ?, '', ?, 'warehouse', 'existing', ?, ?, '2025-01-01', '2025-01-01')`,
         )
-        .run(opts.identityKey, opts.identityKey, opts.identityKey, opts.marketId, opts.oraKey).lastInsertRowid,
+        .run(opts.identityKey, opts.identityKey, opts.identityKey, opts.marketId, opts.ownerType ?? 'unknown', opts.oraKey).lastInsertRowid,
     );
   }
   function insertRemovedListing(
@@ -346,6 +346,72 @@ describe('stale-threshold baseline (requirement 5)', () => {
 
     const thresholds = staleThresholdsByMarket(db, config, asOf);
     expect(thresholds.get('columbus')).toBe(450);
+  });
+
+  // ── I-3: R2 (ORA-SELF exclusion) was not fully closed here — this gate still tested only
+  // `p.ora_property_key IS NULL`, so an affiliated-owner listing at an address never mapped into
+  // oraProperties (ora_property_key stays null) still contaminated the baseline. ──────────────────
+  it('excludes an affiliated-owner (ORA-SELF) removed listing with no configured key too (I-3)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lm-fix-i3-stale-'));
+    const db = openWarehouse(join(dir, 't.sqlite'));
+    const config = testConfig();
+    const asOf = '2026-06-01';
+    const removedAt = '2026-03-01';
+    const landingId = insertLanding(db, 'columbus', removedAt, 'i3-landing');
+
+    // 9 legitimate comparables, all DOM=300 -- one short of completedDomMinN (10) on their own.
+    Array.from({ length: 9 }).forEach((_, i) => {
+      const propertyId = insertProperty(db, { identityKey: `i3-valid-${i}`, marketId: 'columbus', oraKey: null, ownerType: 'private' });
+      insertRemovedListing(db, { propertyId, landingId, suiteNorm: `V${i}`, firstSeen: addDaysStr(removedAt, -300), removedAt });
+    });
+
+    // A 10th, affiliated-owner (ORA-SELF) removed listing whose address was never mapped into
+    // config.oraProperties -- ora_property_key stays null, but the owner screen still correctly
+    // verdicted it 'affiliated'. The pre-fix query (`ora_property_key IS NULL` only) counted this as
+    // the 10th legitimate comparable, clearing completedDomMinN and producing a real (contaminated)
+    // baseline of 300 -> threshold max(180, round(1.5*300)) = 450.
+    const affiliatedPropertyId = insertProperty(db, { identityKey: 'ora-self-unmapped', marketId: 'columbus', oraKey: null, ownerType: 'affiliated' });
+    insertRemovedListing(db, { propertyId: affiliatedPropertyId, landingId, suiteNorm: 'SELF', firstSeen: addDaysStr(removedAt, -10), removedAt });
+
+    const thresholds = staleThresholdsByMarket(db, config, asOf);
+    // Fixed: only 9 legitimate rows remain (< completedDomMinN 10) -> baseline is null -> falls back to
+    // staleFallbackDays.established (180), not the contaminated 450.
+    expect(thresholds.get('columbus')).toBe(180);
+  });
+});
+
+// ── I-3: countLatestEvents' ORA filter has the same gap as the stale baseline above ────────────────
+describe('countLatestEvents excludes affiliated-owner (ORA-SELF) listings with no configured key (I-3)', () => {
+  it('excludes a self-owned unmapped listing\'s "new" event from newInLatest', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lm-fix-i3-events-new-'));
+    const db = openWarehouse(join(dir, 't.sqlite'));
+    const config = testConfig();
+    const comps: FixtureListing[] = Array.from({ length: 10 }, (_, i) => ({ id: `E${i}`, address: `${700 + i} Events Pkwy`, sf: 20000, rentLow: 9, owner: 'SMITH FAMILY LLC' }));
+    // ORA-affiliated listing at an address NOT in oraProperties.addressNorms -- ora_property_key stays
+    // null, but the owner screen still verdicts it 'affiliated'.
+    const selfListing: FixtureListing = { address: '9000 Unmapped Self Dr', sf: 8000, rentLow: 5, owner: 'OXFORD SELF HOLDINGS LLC' };
+    await ingestFixture(db, dir, 'costar-listings_columbus_2026-01-05.xlsx', [...comps, selfListing], '2026-01-05');
+
+    const state = loadMarketState(db, config, '2026-02-01');
+    const kpis = leaseMarketKpis(db, config, state, '2026-02-01');
+    // 11 total 'new' events on the latest export (10 comps + 1 self listing); newInLatest must exclude
+    // the self listing the same way it already excludes a correctly-mapped ORA listing.
+    expect(kpis.newInLatest).toBe(10);
+  });
+
+  it('excludes a self-owned unmapped listing\'s price cut from priceCutsInLatest', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lm-fix-i3-events-cut-'));
+    const db = openWarehouse(join(dir, 't.sqlite'));
+    const config = testConfig();
+    const comps: FixtureListing[] = Array.from({ length: 10 }, (_, i) => ({ id: `F${i}`, address: `${800 + i} Fixed Pkwy`, sf: 20000, rentLow: 9, owner: 'SMITH FAMILY LLC' }));
+    const selfV1: FixtureListing = { address: '9100 Unmapped Self Dr', sf: 8000, rentLow: 6, owner: 'OXFORD SELF HOLDINGS LLC' };
+    await ingestFixture(db, dir, 'costar-listings_columbus_2026-01-05.xlsx', [...comps, selfV1], '2026-01-05');
+    const selfV2: FixtureListing = { ...selfV1, rentLow: 4 }; // a real cut
+    await ingestFixture(db, dir, 'costar-listings_columbus_2026-02-05.xlsx', [...comps, selfV2], '2026-02-05');
+
+    const state = loadMarketState(db, config, '2026-03-01');
+    const kpis = leaseMarketKpis(db, config, state, '2026-03-01');
+    expect(kpis.priceCutsInLatest).toBe(0);
   });
 });
 

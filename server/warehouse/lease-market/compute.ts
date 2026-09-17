@@ -287,10 +287,15 @@ export function staleThresholdsByMarket(db: WarehouseDb, config: LeaseMarketConf
   // Fix round 2, requirement 5: the baseline is a point-in-time statistic as of asOf — a removal dated
   // AFTER asOf must not leak into it (removed_at <= asOf), and ORA's own removed spaces are not market
   // comparables (p.ora_property_key IS NULL).
+  // I-3: excludes an affiliated-owner (ORA-SELF) listing the same way isOraOwnedProperty does
+  // everywhere else — `p.ora_property_key IS NULL` alone missed an ORA-owned listing at an address that
+  // was never mapped into config.oraProperties (ora_property_key stays null even though the owner
+  // screen correctly verdicted it 'affiliated'), letting it contaminate the stale-DOM baseline.
   const rows = db
     .prepare(
       `SELECT p.market_id, l.first_seen, l.costar_date_on_market, l.removed_at FROM lm_listing l JOIN lm_property p ON p.id = l.property_id
-       WHERE l.status = 'removed' AND l.origin_tier = 'T1' AND p.ora_property_key IS NULL AND l.removed_at >= ? AND l.removed_at <= ?`,
+       WHERE l.status = 'removed' AND l.origin_tier = 'T1' AND p.ora_property_key IS NULL AND p.owner_type <> 'affiliated'
+         AND l.removed_at >= ? AND l.removed_at <= ?`,
     )
     .all(addDays(asOf, -365), asOf) as Array<{ market_id: string; first_seen: string; costar_date_on_market: string | null; removed_at: string }>;
   const doms = new Map<string, number[]>();
@@ -520,6 +525,19 @@ export function runCompute(db: WarehouseDb, config: LeaseMarketConfig, asOf: str
       feed.push({ key: p.propertyKey, value: c.median, basis: c.basis, confidence: c.confidence, cellKey: c.cellKey, n: c.n });
     }
 
+    // I-1 safety net: config.oraProperties is filled in but not a single one cleared the confidence
+    // floor for the feed — the most likely cause is that no comp set reached the confidence floor
+    // (every configured property's comparables landed at LOW confidence, or below the
+    // similarity/cell n minimums). This can't be silently correct either — `lm_market_rent_feed` and
+    // the Rent Position views will show nothing for these properties until comps improve or the
+    // config's own physical/location fields fill in enough to let the subject-driven confidence cap
+    // clear.
+    if (config.oraProperties.length > 0 && feed.length === 0) {
+      console.warn(
+        '[lease-market] runCompute wrote zero lm_market_rent_feed rows even though config.oraProperties is non-empty: no comp set reached the confidence floor for any configured property (LOW confidence, or below the similarity/cell minimums) — the market-rent feed and Rent Position views will show nothing until comps improve.',
+      );
+    }
+
     db.prepare('DELETE FROM lm_signal').run();
     const insertSignal = db.prepare(
       `INSERT INTO lm_signal (property_id, listing_id, kind, severity, score, confidence, comp_basis, cell_key, computed_at, evidence_json)
@@ -548,10 +566,26 @@ export function runCompute(db: WarehouseDb, config: LeaseMarketConfig, asOf: str
 // Whole-branch review finding I3: the last time runCompute actually ran, distinct from `asOf`
 // (referenceDate(), the wall-clock "as of" bound used everywhere else) — lets the API/UI tell an
 // operator who ingested but never ran compute apart from one whose data is simply current. lm_signal
-// is fully replaced (DELETE + reinsert) on every compute run, so MAX(computed_at) is exactly the last
-// run's timestamp; null when the table is empty (compute has never run, or ran with zero signals).
+// and lm_market_rent_feed are BOTH fully replaced (DELETE + reinsert) on every compute run, so the max
+// of their two computed_at columns is exactly the last run's timestamp.
+//
+// M-1: reading lm_signal alone read a real compute run as "never run" whenever that run happened to
+// produce zero signals but did still write feed rows (or vice versa) — there is no separate run-marker
+// row in the schema (029_lease_market.sql has no such table, and this fix does not add a migration for
+// one), so the max of the two existing computed_at columns is the best available answer; it is still
+// null in the one residual case neither table can rule out — a run that wrote to NEITHER table (e.g.
+// zero active spaces and zero configured comps) — which is why the UI wording below is phrased to cover
+// "ran, produced nothing" as well as "never ran".
 export function lastComputedAt(db: WarehouseDb): string | null {
-  const row = db.prepare('SELECT MAX(computed_at) AS t FROM lm_signal').get() as { t: string | null };
+  const row = db
+    .prepare(
+      `SELECT MAX(t) AS t FROM (
+         SELECT MAX(computed_at) AS t FROM lm_signal
+         UNION ALL
+         SELECT MAX(computed_at) AS t FROM lm_market_rent_feed
+       )`,
+    )
+    .get() as { t: string | null };
   return row.t ?? null;
 }
 
@@ -621,7 +655,9 @@ function countLatestEvents(db: WarehouseDb, config: LeaseMarketConfig, kind: Lis
   const idsMap = kind === 'new' ? newEligibleLandingIds(db, config) : latestExportLandingIds(db, config);
   const ids = [...idsMap.values()].flatMap((s) => [...s]);
   if (ids.length === 0) return 0;
-  const oraFilter = excludeOra ? 'AND p.ora_property_key IS NULL' : '';
+  // I-3: same gap as staleThresholdsByMarket above — `p.ora_property_key IS NULL` alone let an
+  // affiliated-owner (ORA-SELF) listing at an unmapped address inflate newInLatest/priceCutsInLatest.
+  const oraFilter = excludeOra ? "AND p.ora_property_key IS NULL AND p.owner_type <> 'affiliated'" : '';
   return (
     db
       .prepare(

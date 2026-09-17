@@ -229,6 +229,49 @@ describe('R13 — ora_property_key is re-applied idempotently at every compute r
   });
 });
 
+describe('I-1 safety net — zero feed rows written despite configured oraProperties', () => {
+  it('warns naming the likely cause when no comp set reached the confidence floor', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lm-compute-i1-'));
+    const db = openWarehouse(join(dir, 't.sqlite'));
+    const config = testConfig();
+    // The ORA space alone, with no market comps at all -- resolveComparables can never clear the
+    // confidence floor, so the feed loop's `c.confidence === 'LOW'` skip fires for every configured
+    // property and feedRows stays 0.
+    const rows: FixtureListing[] = [{ address: '1100 Rarig Ave', suite: 'B', sf: 8000, rentLow: 12, owner: 'OXFORD RARIG LLC' }];
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-15.xlsx', rows), {
+      config, headerMap: testHeaderMap(), rawDir: join(dir, 'raw'), now: () => '2026-02-16T00:00:00Z', screen: stubScreen,
+    });
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = runCompute(db, config, '2026-03-01');
+    expect(r.feedRows).toBe(0);
+    expect(warnSpy.mock.calls.some((c) => String(c[0]).includes('[lease-market]') && String(c[0]).toLowerCase().includes('zero lm_market_rent_feed'))).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it('does not warn when the feed has rows', async () => {
+    const { db, config } = await seeded();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = runCompute(db, config, '2026-03-01');
+    expect(r.feedRows).toBeGreaterThan(0);
+    expect(warnSpy.mock.calls.some((c) => String(c[0]).toLowerCase().includes('zero lm_market_rent_feed'))).toBe(false);
+    warnSpy.mockRestore();
+  });
+});
+
+describe('M-1 — lastComputedAt is the max across lm_signal and lm_market_rent_feed', () => {
+  it('falls back to lm_market_rent_feed when lm_signal is empty', async () => {
+    const { db } = await seeded();
+    expect(lastComputedAt(db)).toBeNull();
+    // Simulate a compute run that produced zero lm_signal rows but did persist a feed row (e.g. every
+    // space failed the signal gates but a comp set still cleared the confidence floor for the feed).
+    // Reading lm_signal alone (the pre-fix behaviour) would still report null here.
+    db.prepare(
+      `INSERT INTO lm_market_rent_feed (ora_property_key, asking_nnn_eq, comp_basis, confidence, cell_key, n, computed_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run('1100 Rarig', 9.3, 'similarity', 'MEDIUM', null, 12, '2026-03-05');
+    expect(lastComputedAt(db)).toBe('2026-03-05');
+  });
+});
+
 describe('R16 — loud warning when config.oraProperties is empty', () => {
   it('warns naming the consequence when oraProperties is empty, and does not warn when it is populated', async () => {
     const { db, config } = await seeded();

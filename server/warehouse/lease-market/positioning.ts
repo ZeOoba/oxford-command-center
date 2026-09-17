@@ -17,6 +17,15 @@ export interface VacantUnit {
 
 const money = (v: number | null) => (v === null ? '—' : `$${v.toFixed(2)}`);
 
+// I-2: strips a leading R9 building designator ("B1-", "B2-", ...) from a CoStar-side suiteNorm, for
+// the building-stripped match step below. Returns null when suiteNorm carries no building prefix at
+// all — a bare suite ("A") must never be treated as if stripping it produced itself, or step 2 would
+// just re-run the exact-match step 1 and call it a "building-stripped" match.
+function stripBuildingPrefix(suiteNorm: string): string | null {
+  const stripped = suiteNorm.replace(/^B[0-9A-Z]+-/, '');
+  return stripped === suiteNorm ? null : stripped;
+}
+
 // Rounds a fractional gap to 9 decimal places so a nominally-exact ratio (e.g. 7.70/7.00 - 1 = 0.10)
 // that floating-point division turns into 0.10000000000000003 doesn't spuriously cross a band edge.
 function roundedGap(asking: number, median: number): number {
@@ -108,6 +117,27 @@ export function computePositioning(
       const suite = unitSuite[i]!;
       if (suite === '') continue;
       const match = candidates.find((s) => s.suiteNorm === suite);
+      if (match) {
+        unitMatch[i] = match;
+        assigned.add(match.listingId);
+      }
+    }
+    // I-2: building-stripped comparison. R9's building-designator normalization means a CoStar suite
+    // in a multi-building complex reads "B1-A", while the rent roll (which doesn't track buildings)
+    // just says "A" — the exact match above can never see them as the same space. Only a candidate
+    // whose suiteNorm actually CARRIES a building prefix is eligible here (stripBuildingPrefix returns
+    // null otherwise), so this step can never re-match a plain suite that step 1 already ruled out.
+    // Tie rule (deterministic, matches the exact-match tie-break elsewhere in this file): when more
+    // than one building's stripped suite matches the same unit (e.g. "B1-A" and "B2-A" both strip to
+    // "A"), the lowest listingId wins, and units are resolved in their given order so one candidate can
+    // never satisfy two different units.
+    for (const i of indices) {
+      if (unitMatch[i]) continue;
+      const suite = unitSuite[i]!;
+      if (suite === '') continue;
+      const match = candidates
+        .filter((s) => !assigned.has(s.listingId) && stripBuildingPrefix(s.suiteNorm) === suite)
+        .sort((a, b) => a.listingId - b.listingId)[0];
       if (match) {
         unitMatch[i] = match;
         assigned.add(match.listingId);
