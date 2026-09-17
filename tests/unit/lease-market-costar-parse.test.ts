@@ -129,6 +129,23 @@ describe('parseCostarListingsFile', () => {
     expect(r.rows[0]).toMatchObject({ rentBasis: 'UNKNOWN', opexQuotedPsf: null });
   });
 
+  it('a performance-guard-capped free-text quote (rentLow/rentHigh both null) stays UNKNOWN, not WITHHELD', async () => {
+    // parseRentText's own >200-char-after-collapse performance guard (fix round 4) returns
+    // rentLow: null, rentHigh: null, ambiguous: true, withheld: false. Round 5 fixes a bug where the
+    // parser's blanket "both rentLow/rentHigh null => WITHHELD" fallback clobbered that ambiguity-
+    // driven UNKNOWN back to WITHHELD — WITHHELD means "no quote at all," a stronger and different
+    // claim than "a quote existed but was too long to trust."
+    const prefix = '$8.50/SF/YR NNN ';
+    const longRentText = prefix + 'x'.repeat(250 - prefix.length);
+    expect(longRentText.length).toBe(250);
+    expect(longRentText.startsWith('$8.50/SF/YR NNN')).toBe(true);
+    const base = testHeaderMap();
+    const map = testHeaderMap({ fields: { ...base.fields, rentText: 'Rent Low', rentLow: null, rentHigh: null, rentBasis: null } });
+    const f = await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 1000, rentLow: longRentText, rentType: null }]);
+    const r = await parseCostarListingsFile(f, map);
+    expect(r.rows[0]).toMatchObject({ rentBasis: 'UNKNOWN', rentLow: null, rentHigh: null });
+  });
+
   it('basis precedence: mapped column vs. text-parsed basis agree, disagree, or text states none', async () => {
     const d = dir();
     const base = testHeaderMap();

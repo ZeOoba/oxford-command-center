@@ -242,6 +242,11 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
     let rentPeriod = map.rentPeriodDefault;
     let rentIsTotal = false;
     let opexQuotedPsf: number | null = null;
+    // Tracks whether parseRentText itself already resolved this row to an ambiguous (UNKNOWN) quote —
+    // including the performance-guard-capped case, which returns rentLow/rentHigh both null alongside
+    // ambiguous: true. The WITHHELD fallback below must not clobber that UNKNOWN with WITHHELD just
+    // because rentLow/rentHigh both happen to be null.
+    let textAmbiguous = false;
     if (idx.rentLow !== null) {
       rentLow = parseNumber(get('rentLow'));
       rentHigh = idx.rentHigh !== null ? parseNumber(get('rentHigh')) : null;
@@ -257,6 +262,7 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
       // An ambiguous quote's parsed add-on opex is exactly as suspect as its basis/rent figures — it
       // must never feed the market quoted-opex median.
       opexQuotedPsf = parsed.ambiguous ? null : parsed.opexQuoted;
+      textAmbiguous = parsed.ambiguous;
       if (parsed.withheld) rentBasis = 'WITHHELD';
       else if (parsed.ambiguous) rentBasis = 'UNKNOWN';
       else if (parsed.basis) {
@@ -267,10 +273,11 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
         else if (rentBasis !== parsed.basis) rentBasis = 'UNKNOWN';
       }
     }
-    // No unconditional-UNKNOWN guard needed here: parseRentText only ever sets `ambiguous` (and thus
-    // rentBasis='UNKNOWN' above) alongside a non-null rentLow, so whenever both are null this line's
-    // own condition already excludes the ambiguous case — it never clobbers an ambiguity-driven UNKNOWN.
-    if (rentLow === null && rentHigh === null) rentBasis = 'WITHHELD';
+    // A text-parsed ambiguous quote (including parseRentText's own performance-guard-capped result,
+    // which returns rentLow/rentHigh both null alongside ambiguous: true) already set rentBasis to
+    // UNKNOWN above and must stay UNKNOWN — WITHHELD means "no quote at all," which is a different,
+    // stronger claim than "a quote existed but couldn't be trusted." Guard against clobbering it.
+    if (rentLow === null && rentHigh === null && !textAmbiguous) rentBasis = 'WITHHELD';
 
     const market = get('market');
     if (market) marketNames.add(market);
