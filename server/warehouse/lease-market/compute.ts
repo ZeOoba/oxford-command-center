@@ -68,11 +68,26 @@ interface ObservationRow {
   is_sublease: number; costar_dom: number | null; confidence: 'high' | 'low'; rejected_reason: string | null;
 }
 
-function latestCompleteIds(db: WarehouseDb, config: LeaseMarketConfig): Map<string, number> {
-  const out = new Map<string, number>();
+// The window of landings that count as "the latest export" for isNewInLatestExport / event-count
+// purposes (fix round 2, requirement 1): every ok landing (complete OR partial) strictly after the
+// SECOND-latest COMPLETE landing's observed_at, so a partial landing sandwiched between two complete
+// exports is not lost — its events still count as part of "the latest export". Markets with fewer than
+// one complete landing have no window at all (nothing is "the latest export" yet); markets with exactly
+// one complete landing (no prior baseline) get every ok landing up to and including it.
+function latestExportLandingIds(db: WarehouseDb, config: LeaseMarketConfig): Map<string, Set<number>> {
+  const out = new Map<string, Set<number>>();
   for (const m of config.markets) {
-    const l = latestCompleteLanding(db, m.id);
-    if (l) out.set(m.id, l.id);
+    if (!latestCompleteLanding(db, m.id)) continue;
+    const prior = db
+      .prepare(
+        `SELECT observed_at FROM lm_landing WHERE source = 'costar_listings' AND market_id = ? AND parse_status = 'ok' AND completeness = 'complete'
+         ORDER BY observed_at DESC, id DESC LIMIT 1 OFFSET 1`,
+      )
+      .get(m.id) as { observed_at: string } | undefined;
+    const rows = db
+      .prepare(`SELECT id FROM lm_landing WHERE source = 'costar_listings' AND market_id = ? AND parse_status = 'ok' AND observed_at > ?`)
+      .all(m.id, prior?.observed_at ?? '') as Array<{ id: number }>;
+    out.set(m.id, new Set(rows.map((r) => r.id)));
   }
   return out;
 }
@@ -80,7 +95,10 @@ function latestCompleteIds(db: WarehouseDb, config: LeaseMarketConfig): Map<stri
 export function loadMarketState(db: WarehouseDb, config: LeaseMarketConfig, asOf: string): MarketState {
   const t = config.thresholds;
   const properties = new Map<number, PropertyState>();
-  for (const p of db.prepare('SELECT * FROM lm_property').all() as PropertyRow[]) {
+  // ORDER BY id (fix round 2, requirement 2): the iteration order of this Map feeds oraSubject's
+  // lowest-id-wins tie-break deterministically — without an explicit order, SQLite's row order for a
+  // plain SELECT is unspecified.
+  for (const p of db.prepare('SELECT * FROM lm_property ORDER BY id').all() as PropertyRow[]) {
     properties.set(p.id, {
       propertyId: p.id, marketId: p.market_id, addressDisplay: p.address_display, submarket: p.submarket, subtype: p.subtype,
       buildingStatus: p.building_status, buildingSf: p.building_sf, yearBuilt: p.year_built, clearHeightFt: p.clear_height_ft,
@@ -111,13 +129,13 @@ export function loadMarketState(db: WarehouseDb, config: LeaseMarketConfig, asOf
     byListing.set(o.listing_id, list);
   }
 
-  const latestIds = latestCompleteIds(db, config);
+  const windowIds = latestExportLandingIds(db, config);
   const cutIds = new Set<number>();
-  if (latestIds.size > 0) {
-    const ids = [...latestIds.values()];
+  const windowIdList = [...windowIds.values()].flatMap((s) => [...s]);
+  if (windowIdList.length > 0) {
     const rows = db
-      .prepare(`SELECT DISTINCT listing_id FROM lm_listing_event WHERE kind = 'price_cut' AND landing_id IN (${ids.map(() => '?').join(',')})`)
-      .all(...ids) as Array<{ listing_id: number }>;
+      .prepare(`SELECT DISTINCT listing_id FROM lm_listing_event WHERE kind = 'price_cut' AND landing_id IN (${windowIdList.map(() => '?').join(',')})`)
+      .all(...windowIdList) as Array<{ listing_id: number }>;
     for (const r of rows) cutIds.add(r.listing_id);
   }
 
@@ -146,7 +164,7 @@ export function loadMarketState(db: WarehouseDb, config: LeaseMarketConfig, asOf
       listingId: row.id, propertyId: property.propertyId, marketId: property.marketId,
       addressDisplay: row.suite_norm ? `${property.addressDisplay} Ste ${row.suite_norm}` : property.addressDisplay,
       buildingStatus: property.buildingStatus, isOraOwned, status: row.status, removedAt: row.removed_at, firstSeen: row.first_seen,
-      costarDateOnMarket: row.costar_date_on_market, isNewInLatestExport: row.first_landing_id === latestIds.get(property.marketId),
+      costarDateOnMarket: row.costar_date_on_market, isNewInLatestExport: windowIds.get(property.marketId)?.has(row.first_landing_id) ?? false,
       observations, priceCutInLatestExport: cutIds.has(row.id), reductionCount: row.reduction_count, originalAsking: row.original_asking,
       cumulativeReductionPct: row.cumulative_reduction_pct, suiteNorm: row.suite_norm, property, sizeBand, officeStratum,
       originTier: row.origin_tier, latestEligible: latest.eligible, latestConfidence: latestRow.confidence,
@@ -175,10 +193,18 @@ export function profileOf(s: SpaceState): SpaceProfile {
   };
 }
 
+// Candidates are partitioned by market|subtype before similarity resolution (fix round 2, requirement 3)
+// rather than relying solely on scoreSimilarity's own per-pair market/subtype check — defense in depth
+// against cross-market comp leakage, and cheaper than scoring every other market's rows per space.
+function candidatesInPartition(state: MarketState, marketId: string, subtype: LmSubtype): CompCandidate[] {
+  return state.candidates.filter((c) => c.marketId === marketId && c.subtype === subtype);
+}
+
 export function comparablesForSpace(state: MarketState, s: SpaceState, config: LeaseMarketConfig): ResolvedComparables | null {
   if (s.sizeBand === null) return null;
   const cell = state.cellFor({ marketId: s.marketId, submarket: s.property.submarket, subtype: s.property.subtype, sizeBand: s.sizeBand, officeStratum: s.officeStratum });
-  return resolveComparables(profileOf(s), s.propertyId, state.candidates, cell, config.similarityWeights, config.thresholds);
+  const partition = candidatesInPartition(state, s.marketId, s.property.subtype);
+  return resolveComparables(profileOf(s), s.propertyId, partition, cell, config.similarityWeights, config.thresholds);
 }
 
 export function oraSubject(
@@ -187,7 +213,11 @@ export function oraSubject(
   availableSf: number,
   t: LeaseMarketConfig['thresholds'],
 ): { profile: SpaceProfile; matchedPropertyId: number | null; target: CellTarget | null } {
-  const matched = [...state.properties.values()].find((x) => x.oraPropertyKey === p.propertyKey) ?? null;
+  // Market-filtered and deterministic (fix round 2, requirement 2): identity_key keying (Task 09) makes
+  // it possible for more than one lm_property row to carry the same ora_property_key (e.g. an
+  // unadopted duplicate at the same address, or — defensively — a stale cross-market collision); the
+  // correct match is the lowest-id row IN THIS PROPERTY'S OWN MARKET, never a same-keyed row elsewhere.
+  const matched = [...state.properties.values()].find((x) => x.oraPropertyKey === p.propertyKey && x.marketId === p.marketId) ?? null;
   const profile: SpaceProfile = {
     marketId: p.marketId,
     submarket: p.submarket ?? matched?.submarket ?? null,
@@ -207,12 +237,15 @@ export function oraSubject(
 }
 
 export function staleThresholdsByMarket(db: WarehouseDb, config: LeaseMarketConfig, asOf: string): Map<string, number> {
+  // Fix round 2, requirement 5: the baseline is a point-in-time statistic as of asOf — a removal dated
+  // AFTER asOf must not leak into it (removed_at <= asOf), and ORA's own removed spaces are not market
+  // comparables (p.ora_property_key IS NULL).
   const rows = db
     .prepare(
       `SELECT p.market_id, l.first_seen, l.costar_date_on_market, l.removed_at FROM lm_listing l JOIN lm_property p ON p.id = l.property_id
-       WHERE l.status = 'removed' AND l.origin_tier = 'T1' AND l.removed_at >= ?`,
+       WHERE l.status = 'removed' AND l.origin_tier = 'T1' AND p.ora_property_key IS NULL AND l.removed_at >= ? AND l.removed_at <= ?`,
     )
-    .all(addDays(asOf, -365)) as Array<{ market_id: string; first_seen: string; costar_date_on_market: string | null; removed_at: string }>;
+    .all(addDays(asOf, -365), asOf) as Array<{ market_id: string; first_seen: string; costar_date_on_market: string | null; removed_at: string }>;
   const doms = new Map<string, number[]>();
   for (const r of rows) {
     const list = doms.get(r.market_id) ?? [];
@@ -320,54 +353,70 @@ export interface ComputeResult {
   withheldMarkets: string[];
 }
 
+// Fix round 2, requirement 4: the ENTIRE compute — reading current state through writing the new
+// signal/feed set — runs inside one IMMEDIATE transaction. Immediate mode takes SQLite's write lock at
+// BEGIN (not on the first write), so a concurrent reader on another connection sees either the fully
+// pre-run signal/feed set or the fully post-run one, never a half-written mix, and nothing else can
+// interleave a write between the read-side computation and the delete+insert (which, before this fix,
+// were two separate steps only the second of which was transactional).
 export function runCompute(db: WarehouseDb, config: LeaseMarketConfig, asOf: string): ComputeResult {
-  const t = config.thresholds;
-  const state = loadMarketState(db, config, asOf);
-  const thresholds = staleThresholdsByMarket(db, config, asOf);
-  const screenOk = ownerScreenOkByMarket(db, config);
-  const vacancy = propertyVacancyShares(state);
-  const cache = new Map<number, ResolvedComparables | null>();
-  const compsFor = (s: SpaceState) => {
-    if (!cache.has(s.listingId)) cache.set(s.listingId, comparablesForSpace(state, s, config));
-    return cache.get(s.listingId) ?? null;
-  };
+  const body = (): ComputeResult => {
+    const t = config.thresholds;
+    const state = loadMarketState(db, config, asOf);
+    const thresholds = staleThresholdsByMarket(db, config, asOf);
+    const screenOk = ownerScreenOkByMarket(db, config);
+    const vacancy = propertyVacancyShares(state);
+    const cache = new Map<number, ResolvedComparables | null>();
+    const compsFor = (s: SpaceState) => {
+      if (!cache.has(s.listingId)) cache.set(s.listingId, comparablesForSpace(state, s, config));
+      return cache.get(s.listingId) ?? null;
+    };
 
-  const drafts: SignalDraft[] = [];
-  for (const s of state.spaces) {
-    const threshold = thresholds.get(s.marketId);
-    if (threshold === undefined) continue;
-    drafts.push(...spaceSignals(s, { asOf, staleThresholdDays: threshold, propertyVacancyShare: vacancy.get(s.propertyId) ?? null, comparables: isActive(s) ? compsFor(s) : null, thresholds: t }));
-  }
+    const drafts: SignalDraft[] = [];
+    for (const s of state.spaces) {
+      const threshold = thresholds.get(s.marketId);
+      if (threshold === undefined) continue;
+      drafts.push(...spaceSignals(s, { asOf, staleThresholdDays: threshold, propertyVacancyShare: vacancy.get(s.propertyId) ?? null, comparables: isActive(s) ? compsFor(s) : null, thresholds: t }));
+    }
 
-  const radar = buildRadar(state, config, thresholds, screenOk, compsFor).filter((e) => e.result.isCandidate);
-  for (const e of radar) {
-    const r = e.result;
-    drafts.push({
-      propertyId: e.property.propertyId, listingId: null, kind: 'radar_candidate', severity: r.score >= t.radarPushScore ? 'high' : 'watch',
-      score: r.score, confidence: r.confidence, compBasis: null, cellKey: null,
-      evidence: {
-        address: e.property.addressDisplay, subtype: e.property.subtype, buildingSf: e.property.buildingSf,
-        part_dom: r.parts.dom, part_reductions: r.parts.reductions, part_belowMarket: r.parts.belowMarket, part_vacancy: r.parts.vacancy,
-        part_buyBoxFit: r.parts.buyBoxFit, part_owner: r.parts.owner, vacancyShare: r.vacancyShare, maxEffectiveDom: r.maxEffectiveDom,
-        reductionCount: r.reductionCount, cumulativeReductionPct: r.cumulativeReductionPct, bestGapPct: r.bestGapPct,
-        comparableMedian: r.comparableMedian, indicativeRentGapUsd: r.indicativeRentGapUsd, indicativeRentGapLabel: RENT_GAP_LABEL,
-        ownerName: e.property.ownerName, ownerType: e.property.ownerType, ownerListingCount: e.ownerListingCount, brokerName: e.brokerName,
-        gateFailures: r.gateFailures.join('; '),
-      },
-    });
-  }
+    const radar = buildRadar(state, config, thresholds, screenOk, compsFor).filter((e) => e.result.isCandidate);
+    for (const e of radar) {
+      const r = e.result;
+      // Minor fix (controller decision): record the best-gap space's comp basis on the signal row.
+      // RadarResult doesn't expose which listing produced comparableMedian/confidence directly (radar.ts
+      // is out of scope for this round), so the best space is recovered here by matching the same
+      // (median, confidence) pair scoreRadar picked among this property's live, non-ORA spaces.
+      const liveSpaces = state.spaces.filter((s) => s.propertyId === e.property.propertyId && isActive(s) && !s.observations[s.observations.length - 1]!.isSublease);
+      const bestSpace = liveSpaces.find((s) => {
+        const c = compsFor(s);
+        return c !== null && c.median === r.comparableMedian && c.confidence === r.confidence;
+      });
+      drafts.push({
+        propertyId: e.property.propertyId, listingId: null, kind: 'radar_candidate', severity: r.score >= t.radarPushScore ? 'high' : 'watch',
+        score: r.score, confidence: r.confidence, compBasis: bestSpace ? (compsFor(bestSpace)?.basis ?? null) : null, cellKey: null,
+        evidence: {
+          address: e.property.addressDisplay, subtype: e.property.subtype, buildingSf: e.property.buildingSf,
+          part_dom: r.parts.dom, part_reductions: r.parts.reductions, part_belowMarket: r.parts.belowMarket, part_vacancy: r.parts.vacancy,
+          part_buyBoxFit: r.parts.buyBoxFit, part_owner: r.parts.owner, vacancyShare: r.vacancyShare, maxEffectiveDom: r.maxEffectiveDom,
+          reductionCount: r.reductionCount, cumulativeReductionPct: r.cumulativeReductionPct, bestGapPct: r.bestGapPct,
+          comparableMedian: r.comparableMedian, indicativeRentGapUsd: r.indicativeRentGapUsd, indicativeRentGapLabel: RENT_GAP_LABEL,
+          ownerName: e.property.ownerName, ownerType: e.property.ownerType, ownerListingCount: e.ownerListingCount, brokerName: e.brokerName,
+          gateFailures: r.gateFailures.join('; '),
+        },
+      });
+    }
 
-  const feed: Array<{ key: string; value: number; basis: string; confidence: string; cellKey: string | null; n: number }> = [];
-  for (const p of config.oraProperties) {
-    if (p.leaseBasis !== 'NNN') continue;
-    const { profile, matchedPropertyId, target } = oraSubject(p, state, p.typicalUnitSf, t);
-    if (target === null) continue;
-    const c = resolveComparables(profile, matchedPropertyId, state.candidates, state.cellFor(target), config.similarityWeights, t);
-    if (c.median === null || c.confidence === 'LOW') continue;
-    feed.push({ key: p.propertyKey, value: c.median, basis: c.basis, confidence: c.confidence, cellKey: c.cellKey, n: c.n });
-  }
+    const feed: Array<{ key: string; value: number; basis: string; confidence: string; cellKey: string | null; n: number }> = [];
+    for (const p of config.oraProperties) {
+      if (p.leaseBasis !== 'NNN') continue;
+      const { profile, matchedPropertyId, target } = oraSubject(p, state, p.typicalUnitSf, t);
+      if (target === null) continue;
+      const partition = candidatesInPartition(state, p.marketId, p.subtype);
+      const c = resolveComparables(profile, matchedPropertyId, partition, state.cellFor(target), config.similarityWeights, t);
+      if (c.median === null || c.confidence === 'LOW') continue;
+      feed.push({ key: p.propertyKey, value: c.median, basis: c.basis, confidence: c.confidence, cellKey: c.cellKey, n: c.n });
+    }
 
-  db.transaction(() => {
     db.prepare('DELETE FROM lm_signal').run();
     const insertSignal = db.prepare(
       `INSERT INTO lm_signal (property_id, listing_id, kind, severity, score, confidence, comp_basis, cell_key, computed_at, evidence_json)
@@ -381,11 +430,15 @@ export function runCompute(db: WarehouseDb, config: LeaseMarketConfig, asOf: str
       `INSERT INTO lm_market_rent_feed (ora_property_key, asking_nnn_eq, comp_basis, confidence, cell_key, n, computed_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
     );
     for (const f of feed) insertFeed.run(f.key, f.value, f.basis, f.confidence, f.cellKey, f.n, asOf);
-  })();
 
-  const byKind: Record<string, number> = {};
-  for (const d of drafts) byKind[d.kind] = (byKind[d.kind] ?? 0) + 1;
-  return { signals: drafts.length, byKind, radarCandidates: radar.length, feedRows: feed.length, withheldMarkets: withheldCandidateMarkets(db, config).map((w) => w.marketId) };
+    const byKind: Record<string, number> = {};
+    for (const d of drafts) byKind[d.kind] = (byKind[d.kind] ?? 0) + 1;
+    // withheldCandidateMarkets reads lm_landing only, so computing it here (inside the same immediate
+    // transaction as everything above) is redundant for correctness but keeps the whole result — and
+    // every read it's built from — inside one atomic, consistent snapshot.
+    return { signals: drafts.length, byKind, radarCandidates: radar.length, feedRows: feed.length, withheldMarkets: withheldCandidateMarkets(db, config).map((w) => w.marketId) };
+  };
+  return db.transaction(body).immediate();
 }
 
 // ── Read models ────────────────────────────────────────────────────────────────
@@ -447,10 +500,20 @@ export function domBins(state: MarketState, asOf: string): Array<{ marketId: str
     .map(([marketId, doms]) => ({ marketId, bins: DOM_BINS.map((b) => ({ label: b.label, count: doms.filter((d) => d >= b.min && d < b.max).length })) }));
 }
 
-function countLatestEvents(db: WarehouseDb, config: LeaseMarketConfig, kind: ListingEventKind): number {
-  const ids = [...latestCompleteIds(db, config).values()];
+// excludeOra (fix round 2, requirement 6): the KPI counts are a read on MARKET activity — ORA's own
+// listing surfacing in the same CoStar export is not a market signal and must not inflate them.
+function countLatestEvents(db: WarehouseDb, config: LeaseMarketConfig, kind: ListingEventKind, excludeOra: boolean): number {
+  const ids = [...latestExportLandingIds(db, config).values()].flatMap((s) => [...s]);
   if (ids.length === 0) return 0;
-  return (db.prepare(`SELECT COUNT(*) AS n FROM lm_listing_event WHERE kind = ? AND landing_id IN (${ids.map(() => '?').join(',')})`).get(kind, ...ids) as { n: number }).n;
+  const oraFilter = excludeOra ? 'AND p.ora_property_key IS NULL' : '';
+  return (
+    db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM lm_listing_event e JOIN lm_listing l ON l.id = e.listing_id JOIN lm_property p ON p.id = l.property_id
+         WHERE e.kind = ? AND e.landing_id IN (${ids.map(() => '?').join(',')}) ${oraFilter}`,
+      )
+      .get(kind, ...ids) as { n: number }
+  ).n;
 }
 
 export function leaseMarketKpis(db: WarehouseDb, config: LeaseMarketConfig, state: MarketState, asOf: string): LeaseMarketKpis {
@@ -459,16 +522,18 @@ export function leaseMarketKpis(db: WarehouseDb, config: LeaseMarketConfig, stat
   return {
     marketsFresh: fresh.filter((f) => f.enabled && !f.stale).length,
     marketsEnabled: config.markets.filter((m) => m.enabled).length,
+    // activeSpaces intentionally INCLUDES ORA's own active spaces (fix round 2, requirement 6) — it's an
+    // inventory count of everything currently tracked, not a market-activity signal like the two below.
     activeSpaces: state.spaces.filter(isActive).length,
-    newInLatest: countLatestEvents(db, config, 'new'),
-    priceCutsInLatest: countLatestEvents(db, config, 'price_cut'),
+    newInLatest: countLatestEvents(db, config, 'new', true),
+    priceCutsInLatest: countLatestEvents(db, config, 'price_cut', true),
     stale: signalCount('stale'),
     radarCandidates: signalCount('radar_candidate'),
   };
 }
 
 export function latestExportEvents(db: WarehouseDb, config: LeaseMarketConfig): ListingEventRow[] {
-  const ids = [...latestCompleteIds(db, config).values()];
+  const ids = [...latestExportLandingIds(db, config).values()].flatMap((s) => [...s]);
   if (ids.length === 0) return [];
   const rows = db
     .prepare(
