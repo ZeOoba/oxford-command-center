@@ -143,6 +143,14 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
   }
   const exportDate = fromName?.exportDate ?? localDateString(statSync(filePath).mtime);
 
+  // A landing dated more than 1 day after deps.now() is almost certainly a bad file-name date or a
+  // clock skew on the source machine — fail closed rather than let a future-dated export poison the
+  // completeness/removal-sweep ordering for every subsequent real file.
+  const maxAllowedDate = addDays(deps.now().slice(0, 10), 1);
+  if (exportDate > maxAllowedDate) {
+    return fail(fromName?.marketId ?? null, exportDate, `export date ${exportDate} is more than 1 day after ${deps.now().slice(0, 10)} (deps.now())`);
+  }
+
   let parsed: ParsedCostarExport;
   try {
     parsed = await parseCostarListingsFile(filePath, deps.headerMap);
@@ -208,6 +216,10 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
     reasons.push(`header set changed vs landing #${priorOk.id} (mapped columns verified by parser)`);
   }
   const complete = reasons.length === 0;
+  // A partial sighting clears a `missing_once` strike only when this export is dated after the true
+  // latest COMPLETE landing — a partial that lands out of order (dated before the complete export that
+  // set the strike) must not undo it, even though it may postdate the space's own last_seen.
+  const clearsMissingOnce = !priorComplete || exportDate > priorComplete.observed_at;
 
   const screen = deps.screen(parsed.rows.flatMap((r) => (r.ownerName ? [r.ownerName] : [])));
 
@@ -265,6 +277,9 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
   const events = emptyEvents();
   const counts = { insertedSpaces: 0, updatedSpaces: 0, newProperties: 0, skipped: parsed.skipped.length, markedMissing: 0, markedRemoved: 0 };
   let landingId = 0;
+  let marketMismatchSkipped = 0;
+  let marketMismatchNote: string | null = null;
+  let resultPartialReason: string | null = complete ? null : reasons.join('; ');
 
   db.transaction(() => {
     landingId = Number(
@@ -282,6 +297,12 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
     );
     const findLowestPropertyByAddress = db.prepare(
       'SELECT id, identity_key FROM lm_property WHERE market_id = ? AND city_norm = ? AND address_norm = ? ORDER BY id LIMIT 1',
+    );
+    // Reverse of the city-backfill adoption above: a blank-city no-id row adopts the SOLE existing
+    // non-blank-city property at this market+address (ambiguous when more than one exists, so it is
+    // left alone and a new blank-city property is inserted as before).
+    const findNonBlankCityProperties = db.prepare(
+      "SELECT id, identity_key FROM lm_property WHERE market_id = ? AND address_norm = ? AND city_norm != '' ORDER BY id",
     );
     const insertProperty = db.prepare(
       `INSERT INTO lm_property (costar_property_id, identity_key, address_norm, address_display, city, city_norm, state, zip, lat, lon, market_id, submarket, subtype,
@@ -333,7 +354,7 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
     // protocol a removed/expired space needs to return.
     const updateSpaceComplete = db.prepare(`UPDATE lm_listing SET status = 'active', removed_at = NULL, ${spaceUpdateColumns} WHERE id = @id`);
     const updateSpacePartial = db.prepare(
-      `UPDATE lm_listing SET status = CASE WHEN status = 'missing_once' THEN 'active' ELSE status END, ${spaceUpdateColumns} WHERE id = @id`,
+      `UPDATE lm_listing SET status = CASE WHEN status = 'missing_once' AND @clearMissing = 1 THEN 'active' ELSE status END, ${spaceUpdateColumns} WHERE id = @id`,
     );
     const previousObservation = db.prepare(
       `SELECT asking_nnn_eq, asking_psf_yr, rent_basis, rent_period, rent_is_total, rent_low, available_sf, costar_dom, rejected_reason
@@ -380,11 +401,17 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
         const byKey = findPropertyByIdentityKey.get(`costar:${row.costarPropertyId}`) as { id: number; market_id: string; identity_key: string } | undefined;
         if (byKey && byKey.market_id !== marketId) {
           counts.skipped++; // market_mismatch: this CoStar id already belongs to a different market's property
+          marketMismatchSkipped++;
           continue;
         }
         propertyHit = byKey;
         if (!propertyHit) {
-          const adoptable = findAdoptableProperty.get(marketId, cityNorm, addressNorm) as { id: number; identity_key: string } | undefined;
+          let adoptable = findAdoptableProperty.get(marketId, cityNorm, addressNorm) as { id: number; identity_key: string } | undefined;
+          // Same bridge as the no-id path: an exact-city miss retries against a stored blank city_norm
+          // rather than forking a second property for the same building.
+          if (!adoptable && cityNorm !== '') {
+            adoptable = findAdoptableProperty.get(marketId, '', addressNorm) as { id: number; identity_key: string } | undefined;
+          }
           if (adoptable) {
             propertyHit = adoptable;
             adopting = true;
@@ -397,6 +424,11 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
           if (blankCity) {
             propertyHit = blankCity;
             cityBackfill = true;
+          }
+        } else if (!propertyHit && cityNorm === '') {
+          const candidates = findNonBlankCityProperties.all(marketId, addressNorm) as Array<{ id: number; identity_key: string }>;
+          if (candidates.length === 1) {
+            propertyHit = candidates[0];
           }
         }
       }
@@ -433,7 +465,7 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
         : undefined;
       const spaceFields = {
         seen: exportDate, dateOnMarket: row.costarDateOnMarket, brokerName: row.brokerName, brokerCompany: row.brokerCompany,
-        listingUrl: row.listingUrl, description: row.description, landingId,
+        listingUrl: row.listingUrl, description: row.description, landingId, clearMissing: clearsMissingOnce ? 1 : 0,
       };
       let listingId: number;
       if (spaceHit) {
@@ -506,7 +538,14 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
       }
     }
 
-    db.prepare('UPDATE lm_landing SET skipped_count = ? WHERE id = ?').run(counts.skipped, landingId);
+    if (marketMismatchSkipped > 0) {
+      // market_mismatch skips are discovered mid-file, after the initial completeness reasons were
+      // already computed and inserted — fold this note into partial_reason (whether or not the export
+      // is otherwise complete) so it survives on the landing row, not just in this call's return value.
+      marketMismatchNote = `market_mismatch: ${marketMismatchSkipped} row(s) skipped (CoStar id belongs to a different market)`;
+      resultPartialReason = resultPartialReason ? `${resultPartialReason}; ${marketMismatchNote}` : marketMismatchNote;
+    }
+    db.prepare('UPDATE lm_landing SET skipped_count = ?, partial_reason = ? WHERE id = ?').run(counts.skipped, resultPartialReason, landingId);
 
     if (complete) {
       const tracked = db
@@ -532,9 +571,14 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
     }
   })();
 
+  if (marketMismatchNote) {
+    // Warned once per file (not per row) so a large batch of cross-market rows doesn't flood the log.
+    console.warn(`[lease-market ingest] ${file}: ${marketMismatchNote}`);
+  }
+
   return {
     ...result, status: 'ingested', landingId, marketId, exportDate,
-    completeness: complete ? 'complete' : 'partial', partialReason: complete ? null : reasons.join('; '),
+    completeness: complete ? 'complete' : 'partial', partialReason: resultPartialReason,
     ...counts, events,
   };
 }
