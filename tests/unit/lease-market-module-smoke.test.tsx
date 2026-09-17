@@ -31,7 +31,7 @@ afterEach(() => {
 const LIVE_PROBE_KEY = ['warehouse', 'live-probe'];
 
 const SUMMARY: LeaseMarketSummaryResponse = {
-  asOf: '2026-03-01', rowLevel: true,
+  asOf: '2026-03-01', rowLevel: true, lastComputedAt: '2026-03-01',
   kpis: { marketsFresh: 1, marketsEnabled: 1, activeSpaces: 13, newInLatest: 13, priceCutsInLatest: 2, stale: 3, radarCandidates: 1 },
   freshness: [{ marketId: 'columbus', label: 'Columbus', enabled: true, lastLandingDate: '2026-02-15', lastCompleteDate: '2026-02-15', lastCompleteness: 'complete', partialReason: null, stale: false }],
   dataQuality: [{ marketId: 'columbus', activeSpaces: 13, lastExportRows: 13, lastExportSkipped: 0, quotedShare: 0.8, coordsShare: 1, lowConfidenceShare: 0.1, rejectedRents: 0 }],
@@ -40,12 +40,12 @@ const SUMMARY: LeaseMarketSummaryResponse = {
   domByMarket: [{ marketId: 'columbus', bins: [{ label: '0-90d', count: 5 }, { label: '90-180d', count: 0 }, { label: '180-365d', count: 0 }, { label: '365d+', count: 0 }] }],
 };
 const POSITIONING: PositioningResponse = {
-  asOf: '2026-03-01', unconfiguredPropertyKeys: ['Sepich'], listedButLeased: [],
+  asOf: '2026-03-01', unconfiguredPropertyKeys: ['Sepich'], listedButLeased: [], hygieneFlags: [],
   rows: [{
-    propertyKey: '1100 Rarig', unit: 'B', sf: 8000, oraListingId: 13, oraAskingNnnEq: 12,
-    stats: { basis: 'similarity', n: 12, low: 5.5, p25: 8.75, median: 9.3, p75: 10, high: 10.4, confidence: 'MEDIUM', cellKey: null },
+    propertyKey: '1100 Rarig', unit: 'B', sf: 8000, oraAskingNnnEq: 12,
+    stats: { basis: 'similarity', n: 12, low: 5.5, p25: 8.75, median: 9.3, p75: 10, high: 10.4, confidence: 'MEDIUM', cellKey: null, unknown: [] },
     comps: [], percentile: 1, gapPct: 0.29, band: 'above', recommendation: 'Asking is 29% above the comparable median ($9.30); comparable range $8.75–$10.00.',
-    flags: [], effectiveDom: 45, brokerName: null, listingUrl: null, dateListed: '2026-01-15',
+    flags: [], effectiveDom: 45,
   }],
 };
 const RADAR: RadarResponse = {
@@ -82,6 +82,65 @@ describe('LeaseMarketModule', () => {
     expect(screen.getByText(/29% above the comparable median/)).toBeTruthy();
     expect(screen.getByText(/Not yet mapped to a comparable set: Sepich/)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/NaN/);
+  });
+
+  it('shows the last-computed timestamp when compute has run, and a plain notice naming the command when it has not', () => {
+    renderWith();
+    expect(screen.getByText(/last computed 2026-03-01/)).toBeTruthy();
+    expect(screen.queryByText(/lease-market:compute/)).toBeNull();
+
+    renderWith({ ...SUMMARY, lastComputedAt: null });
+    expect(screen.getByText(/compute has not been run/i)).toBeTruthy();
+    expect(screen.getByText(/npm run lease-market:compute/)).toBeTruthy();
+  });
+
+  it('shows a plain notice that row-level identifiers are hidden when rowLevel is false', () => {
+    renderWith();
+    expect(screen.queryByText(/hidden on this mirror/)).toBeNull();
+
+    renderWith({ ...SUMMARY, rowLevel: false });
+    expect(screen.getByText(/hidden on this mirror/)).toBeTruthy();
+    expect(screen.getByText(/Property 123/)).toBeTruthy();
+  });
+
+  it('surfaces the ComparableStats.unknown components and full low-high range on a Portfolio row', () => {
+    renderWith({
+      ...SUMMARY,
+    }, {
+      ...POSITIONING,
+      rows: [{ ...POSITIONING.rows[0]!, stats: { ...POSITIONING.rows[0]!.stats!, unknown: ['location', 'clearHeight'] } }],
+    });
+    expect(screen.getByText('$5.50–$10.40')).toBeTruthy(); // full low-high range
+    expect(screen.getByText(/unknown: location, clear height/)).toBeTruthy();
+  });
+
+  it('renders ORA-self-owned-but-unmapped listing hygiene flags in the Portfolio tab', () => {
+    renderWith(SUMMARY, {
+      ...POSITIONING,
+      hygieneFlags: [{ listingId: 99, marketId: 'columbus', address: '500 Unmapped Ave', reason: 'CoStar shows an ORA-owned listing at an address that is not mapped — add it to oraProperties' }],
+    });
+    expect(screen.getByText('500 Unmapped Ave')).toBeTruthy();
+    expect(screen.getByText(/not mapped — add it to oraProperties/)).toBeTruthy();
+  });
+
+  it('shows the export freshness lastLandingDate/lastCompleteness and the benchmark quotedShare', () => {
+    renderWith({
+      ...SUMMARY,
+      freshness: [{ marketId: 'columbus', label: 'Columbus', enabled: true, lastLandingDate: '2026-02-20', lastCompleteDate: '2026-02-15', lastCompleteness: 'partial', partialReason: 'export row count below floor', stale: false }],
+      benchmarks: [{ cellKey: 'columbus|warehouse|5-15K|all', marketId: 'columbus', submarket: null, subtype: 'warehouse', sizeBand: '5-15K', officeStratum: 'all', rolledUp: 'none', n: 8, totalN: 10, quotedShare: 0.8, p25: 8, median: 9, p75: 10, lowCoverage: false }],
+    });
+    fireEvent.click(screen.getByRole('tab', { name: 'Data Quality' }));
+    expect(screen.getByText('2026-02-20')).toBeTruthy();
+    expect(screen.getByText('partial')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: 'Market Rents' }));
+    expect(screen.getByText('80%')).toBeTruthy();
+  });
+
+  it('shows the candidatesWithheld banner on the Changes tab signals table', () => {
+    renderWith(SUMMARY, POSITIONING, RADAR, { ...SIGNALS, candidatesWithheld: [{ marketId: 'madison', reason: 'owner screen unavailable on the latest complete export; acquisition candidates withheld' }] });
+    fireEvent.click(screen.getByRole('tab', { name: 'Changes' }));
+    expect(screen.getByText(/madison/)).toBeTruthy();
+    expect(screen.getByText(/owner screen unavailable/)).toBeTruthy();
   });
 
   it('re-clicking the selected Portfolio row toggles the comparables panel closed', () => {

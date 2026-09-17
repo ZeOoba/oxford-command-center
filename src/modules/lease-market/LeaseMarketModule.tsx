@@ -10,11 +10,12 @@ import { BarChart } from '@/charts/BarChart';
 import { RentCurve } from '@/charts/RentCurve';
 import { isWarehouseUnavailable, useWarehouseLive } from '../intel/hooks';
 import type {
-  CellBenchmark, CompRow, ListedButLeased, ListingEventRow, MarketDataQuality, MarketFreshness, PositioningRow, RadarCandidate, SignalRow,
+  CellBenchmark, CompRow, ListedButLeased, ListingEventRow, ListingHygieneFlag, MarketDataQuality, MarketFreshness, PositioningRow,
+  RadarCandidate, SignalRow,
 } from '@contracts/lease-market';
 import {
   DECISION_LABELS, EVENT_LABELS, KIND_LABELS, bandLabel, bandTone, confidenceTone, curvePointsFor, eventSummary, evidenceSummary, fmtPct,
-  fmtPsf, fmtSf, fmtUsd, radarWhy, severityTone, useLeaseMarketChanges, useLeaseMarketHistory, useLeaseMarketPositioning,
+  fmtPsf, fmtSf, fmtUsd, radarWhy, severityTone, unknownLabel, useLeaseMarketChanges, useLeaseMarketHistory, useLeaseMarketPositioning,
   useLeaseMarketRadar, useLeaseMarketSignals, useLeaseMarketSummary, useRadarDecision,
 } from './hooks';
 
@@ -53,11 +54,26 @@ const positionCols: Column<PositioningRow>[] = [
   { key: 'sf', header: 'SF', align: 'right', render: (r) => r.sf.toLocaleString('en-US'), sortValue: (r) => r.sf },
   { key: 'asking', header: 'ORA asking', align: 'right', render: (r) => fmtPsf(r.oraAskingNnnEq), sortValue: (r) => r.oraAskingNnnEq },
   { key: 'median', header: 'Comp median', align: 'right', render: (r) => fmtPsf(r.stats?.median), sortValue: (r) => r.stats?.median ?? null },
-  { key: 'range', header: 'Range', render: (r) => (r.stats ? `${fmtPsf(r.stats.p25)}–${fmtPsf(r.stats.p75)}` : '—') },
+  { key: 'range', header: 'Range (P25–P75)', render: (r) => (r.stats ? `${fmtPsf(r.stats.p25)}–${fmtPsf(r.stats.p75)}` : '—') },
+  // ComparableStats.low/high (whole-branch review item 5): the full comp spread, not just P25–P75.
+  { key: 'spread', header: 'Full range', render: (r) => (r.stats ? `${fmtPsf(r.stats.low)}–${fmtPsf(r.stats.high)}` : '—') },
   { key: 'pctl', header: 'Pctl', align: 'right', render: (r) => (r.percentile === null ? '—' : `${Math.round(r.percentile * 100)}th`), sortValue: (r) => r.percentile },
   { key: 'gap', header: 'Gap', align: 'right', render: (r) => fmtPct(r.gapPct), sortValue: (r) => r.gapPct },
   { key: 'band', header: 'Position', render: (r) => <Badge tone={bandTone(r.band)}>{bandLabel(r.band)}</Badge>, sortValue: (r) => r.band },
-  { key: 'conf', header: 'Confidence', render: (r) => (r.stats ? <Badge tone={confidenceTone(r.stats.confidence)}>{`${r.stats.confidence} · ${r.stats.basis} · n ${r.stats.n}`}</Badge> : '—') },
+  {
+    key: 'conf',
+    header: 'Confidence',
+    render: (r) =>
+      r.stats ? (
+        <div className="flex flex-col gap-0.5">
+          <Badge tone={confidenceTone(r.stats.confidence)}>{`${r.stats.confidence} · ${r.stats.basis} · n ${r.stats.n}`}</Badge>
+          {/* R3 (deferred UI-fix round): explains a MEDIUM/LOW confidence caused by missing subject/comp data. */}
+          {r.stats.unknown.length > 0 && <span className="text-2xs" style={MUTED}>{unknownLabel(r.stats.unknown)}</span>}
+        </div>
+      ) : (
+        '—'
+      ),
+  },
   { key: 'dom', header: 'DOM', align: 'right', render: (r) => (r.effectiveDom === null ? '—' : `${r.effectiveDom}d`), sortValue: (r) => r.effectiveDom },
   { key: 'flags', header: 'Flags', render: (r) => (r.flags.includes('not_listed') ? <Badge tone="red">Not listed</Badge> : '') },
   { key: 'rec', header: 'Recommendation', render: (r) => <span className="text-2xs">{r.recommendation}</span> },
@@ -76,6 +92,14 @@ const leasedCols: Column<ListedButLeased>[] = [
   { key: 'suite', header: 'Suite', render: (l) => l.suite || '—' },
   { key: 'asking', header: 'Asking', align: 'right', render: (l) => fmtPsf(l.askingNnnEq) },
   { key: 'dom', header: 'DOM', align: 'right', render: (l) => `${l.effectiveDom}d` },
+];
+
+// Deferred R2: a listing whose owner screens as ORA-self but whose address is not mapped in
+// config.oraProperties — the Portfolio tab's existing listing-hygiene surface.
+const hygieneCols: Column<ListingHygieneFlag>[] = [
+  { key: 'address', header: 'Address', render: (h) => h.address ?? `Space ${h.listingId}` },
+  { key: 'market', header: 'Market', render: (h) => h.marketId },
+  { key: 'reason', header: 'Issue', render: (h) => <span className="text-2xs">{h.reason}</span> },
 ];
 
 function PortfolioTab({ onHistory }: { onHistory: (id: number) => void }) {
@@ -114,6 +138,14 @@ function PortfolioTab({ onHistory }: { onHistory: (id: number) => void }) {
           </div>
         </Card>
       )}
+      {q.data.hygieneFlags.length > 0 && (
+        <Card>
+          <CardHeader title="Listing hygiene" />
+          <div className="p-4">
+            <DataTable columns={hygieneCols} rows={q.data.hygieneFlags} getRowId={(h) => String(h.listingId)} onRowClick={(h) => onHistory(h.listingId)} />
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
@@ -122,6 +154,8 @@ function PortfolioTab({ onHistory }: { onHistory: (id: number) => void }) {
 const benchCols: Column<CellBenchmark>[] = [
   { key: 'cell', header: 'Cell', render: (b) => <span className="text-2xs">{b.cellKey}</span>, sortValue: (b) => b.cellKey },
   { key: 'n', header: 'Quoted / total', align: 'right', render: (b) => `${b.n} / ${b.totalN}`, sortValue: (b) => b.n },
+  // CellBenchmark.quotedShare (whole-branch review item 5): the quoted share as a percentage, not just the raw n/totalN counts.
+  { key: 'quotedShare', header: 'Quoted share', align: 'right', render: (b) => fmtPct(b.quotedShare, false), sortValue: (b) => b.quotedShare },
   { key: 'p25', header: 'P25', align: 'right', render: (b) => fmtPsf(b.p25) },
   { key: 'median', header: 'Median', align: 'right', render: (b) => fmtPsf(b.median), sortValue: (b) => b.median },
   { key: 'p75', header: 'P75', align: 'right', render: (b) => fmtPsf(b.p75) },
@@ -232,6 +266,10 @@ function ChangesTab({ onHistory }: { onHistory: (id: number) => void }) {
       <Card>
         <CardHeader title="Signals" />
         <div className="p-4">
+          {/* SignalsResponse.candidatesWithheld (whole-branch review item 5): the same withheld banner the Radar tab shows. */}
+          {(signals.data?.candidatesWithheld ?? []).map((w) => (
+            <p key={w.marketId} className="mb-2 text-2xs" style={{ color: 'var(--color-warn)' }}>{w.marketId}: {w.reason}</p>
+          ))}
           {signals.isLoading ? <Note>Loading…</Note> : !signals.data ? <Note>{unavailable(signals.error)}</Note> : signals.data.signals.length === 0 ? <Note>No signals.</Note> : (
             <DataTable columns={signalCols} rows={signals.data.signals} getRowId={(s) => String(s.id)} onRowClick={(s) => s.listingId !== null && onHistory(s.listingId)} />
           )}
@@ -245,6 +283,11 @@ function ChangesTab({ onHistory }: { onHistory: (id: number) => void }) {
 const freshnessCols: Column<MarketFreshness>[] = [
   { key: 'market', header: 'Market', render: (f) => f.label },
   { key: 'enabled', header: 'Enabled', render: (f) => (f.enabled ? 'yes' : 'no') },
+  // MarketFreshness.lastLandingDate/lastCompleteness (whole-branch review item 5): the most recent
+  // landing may be a PARTIAL export more recent than the last COMPLETE one below — surface both so a
+  // market whose newest landing is partial shows that date and state, not just the complete-only view.
+  { key: 'lastLanding', header: 'Last landing', render: (f) => f.lastLandingDate ?? 'none' },
+  { key: 'completeness', header: 'Landing state', render: (f) => f.lastCompleteness ?? '—' },
   { key: 'last', header: 'Last complete export', render: (f) => f.lastCompleteDate ?? 'none' },
   { key: 'state', header: 'Status', render: (f) => <Badge tone={f.stale ? 'amber' : 'green'}>{f.stale ? 'stale' : 'fresh'}</Badge> },
   { key: 'reason', header: 'Partial reason', render: (f) => f.partialReason ?? '' },
@@ -336,7 +379,18 @@ export function LeaseMarketModule() {
           </Card>
         ))}
       </div>
-      <p className="text-2xs" style={MUTED}>As of {data.asOf} · asking rents, NNN-equivalent $/SF/yr · CoStar-derived, internal use only</p>
+      <p className="text-2xs" style={MUTED}>
+        As of {data.asOf}{data.lastComputedAt !== null ? ` · last computed ${data.lastComputedAt}` : ''} · asking rents, NNN-equivalent $/SF/yr · CoStar-derived, internal use only
+      </p>
+      {/* I3 (whole-branch review): ingest without compute leaves Radar empty and KPIs zeroed with no
+          explanation — say so plainly and name the command. */}
+      {data.lastComputedAt === null && (
+        <p className="text-2xs" style={{ color: 'var(--color-warn)' }}>Compute has not been run yet — Market Rents and Changes may show ingested data with no Radar or KPI signals. Run `npm run lease-market:compute`.</p>
+      )}
+      {/* rowLevel (whole-branch review item 5): explains why rows on a redacted mirror read "Property 123". */}
+      {!data.rowLevel && (
+        <p className="text-2xs" style={MUTED}>Addresses, owners and brokers are hidden on this mirror — this is why rows read &quot;Property 123&quot;.</p>
+      )}
 
       <div role="tablist" className="flex flex-wrap gap-1">
         {TABS.map((t) => (
