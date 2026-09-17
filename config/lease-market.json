@@ -3,7 +3,7 @@
   "mirrorRowLevel": true,
   "ownerScreenModulePath": "~/.claude/skills/county-parcel-screen/scripts/institutional_owners.py",
   "markets": [
-    { "id": "columbus", "label": "Columbus", "tier": "established", "enabled": true, "costarMarketNames": ["Columbus, OH"], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
+    { "id": "columbus", "label": "Columbus", "tier": "established", "enabled": true, "costarMarketNames": ["Columbus, OH"], "mgLandlordPays": ["tax", "ins", "cam"], "opexDefaults": { "warehouse": { "tax": 1.3, "ins": 0.25, "cam": 1.95, "source": "Gabriel ratified 2026-09-17 - flat $3.50/SF total; MG treated as a gross lease (landlord pays all three components). Split follows ORA 2025 Columbus P&L proportions.", "asOf": "2026-09-17" }, "flex": { "tax": 1.3, "ins": 0.25, "cam": 1.95, "source": "Gabriel ratified 2026-09-17 - flat $3.50/SF total; MG treated as a gross lease (landlord pays all three components). Split follows ORA 2025 Columbus P&L proportions.", "asOf": "2026-09-17" } } },
     { "id": "kansas-city", "label": "Kansas City", "tier": "established", "enabled": false, "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
     { "id": "baltimore", "label": "Baltimore", "tier": "established", "enabled": false, "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
     { "id": "eastern-shore-md", "label": "Eastern Shore MD", "tier": "established", "enabled": false, "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
@@ -15,6 +15,7 @@
     { "id": "des-moines", "label": "Des Moines", "tier": "entry", "enabled": false, "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } },
     { "id": "louisville", "label": "Louisville", "tier": "entry", "enabled": false, "costarMarketNames": [], "mgLandlordPays": ["tax", "ins"], "opexDefaults": { "warehouse": null, "flex": null } }
   ],
+  "oraOwnerNamePatterns": ["Oxford Realty", "Oxford Realty Advisors"],
   "oraProperties": [
     { "propertyKey": "1100 Rarig", "marketId": "columbus", "submarket": "Airport", "subtype": "flex", "officePct": null, "typicalUnitSf": 1500, "leaseBasis": "UNKNOWN", "addressNorms": ["1100 RARIG AVE"], "lat": null, "lon": null, "clearHeightFt": null, "yearBuilt": 1978, "docks": null, "driveIns": null },
     { "propertyKey": "Banwick", "marketId": "columbus", "submarket": "I-70 East Corridor", "subtype": "flex", "officePct": null, "typicalUnitSf": 1500, "leaseBasis": "UNKNOWN", "addressNorms": ["2800-2826 BANWICK RD"], "lat": null, "lon": null, "clearHeightFt": null, "yearBuilt": 1981, "docks": null, "driveIns": null },
