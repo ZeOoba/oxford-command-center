@@ -30,6 +30,24 @@ describe('lease-market contracts', () => {
     expect(LeaseMarketConfig.safeParse({ ...cfg, markets: [cfg.markets[0], cfg.markets[0]] }).success).toBe(false);
   });
 
+  it('rejects duplicate oraProperties propertyKeys (a config error the positioning market filter would otherwise silently hide)', () => {
+    const cfg = LeaseMarketConfig.parse(shipped);
+    const marketId = cfg.markets[0]!.id;
+    const ora = { propertyKey: 'X', marketId, submarket: null, subtype: 'warehouse', officePct: null, typicalUnitSf: 5000, leaseBasis: 'NNN', addressNorms: ['1 MAIN ST'], lat: null, lon: null, clearHeightFt: null, yearBuilt: null, docks: null, driveIns: null };
+    expect(LeaseMarketConfig.safeParse({ ...cfg, oraProperties: [ora] }).success).toBe(true);
+    expect(LeaseMarketConfig.safeParse({ ...cfg, oraProperties: [ora, { ...ora, submarket: 'other' }] }).success).toBe(false);
+  });
+
+  it('rejects inverted threshold orderings: radarMinScore <= radarPushScore, similarityMinComps <= similarityHighComps, candidateMaxBuildingSf <= benchmarkMaxBuildingSf, similarityTopK >= similarityHighComps', () => {
+    const cfg = LeaseMarketConfig.parse(shipped);
+    expect(LeaseMarketConfig.safeParse({ ...cfg, thresholds: { ...cfg.thresholds, radarMinScore: cfg.thresholds.radarPushScore + 1 } }).success).toBe(false);
+    expect(LeaseMarketConfig.safeParse({ ...cfg, thresholds: { ...cfg.thresholds, radarMinScore: cfg.thresholds.radarPushScore } }).success).toBe(true);
+    expect(LeaseMarketConfig.safeParse({ ...cfg, thresholds: { ...cfg.thresholds, similarityMinComps: cfg.thresholds.similarityHighComps + 1 } }).success).toBe(false);
+    expect(LeaseMarketConfig.safeParse({ ...cfg, thresholds: { ...cfg.thresholds, candidateMaxBuildingSf: cfg.thresholds.benchmarkMaxBuildingSf + 1 } }).success).toBe(false);
+    expect(LeaseMarketConfig.safeParse({ ...cfg, thresholds: { ...cfg.thresholds, similarityTopK: cfg.thresholds.similarityHighComps - 1 } }).success).toBe(false);
+    expect(LeaseMarketConfig.safeParse({ ...cfg, thresholds: { ...cfg.thresholds, similarityTopK: cfg.thresholds.similarityHighComps } }).success).toBe(true);
+  });
+
   it('size bands are ordered', () => {
     expect(SIZE_BANDS).toEqual(['<5K', '5-15K', '15-30K', '30-50K', '50-80K']);
   });
