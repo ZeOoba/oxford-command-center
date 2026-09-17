@@ -4,6 +4,7 @@
   "sheetName": null,
   "headerRow": 1,
   "rentPeriodDefault": null,
+  "officePctIsFraction": false,
   "fields": {
     "costarPropertyId": null, "address": null, "suite": null, "city": null, "state": null, "market": null,
     "submarket": null, "propertyType": null, "secondaryType": null, "buildingStatus": null, "buildingSf": null,

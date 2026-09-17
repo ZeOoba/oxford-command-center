@@ -22,6 +22,11 @@ export const CostarHeaderMap = z.object({
   sheetName: z.string().nullable(),
   headerRow: z.number().int().positive(),
   rentPeriodDefault: z.enum(['yr', 'mo']).nullable(),
+  // R12: whether the officePct column stores a fraction (e.g. 0.25 meaning 25%) rather than already
+  // being in percentage points. Optional (defaults false, i.e. NOT fractional) so an existing header
+  // map missing this field keeps parsePercent's plain-percentage-points behavior rather than silently
+  // reinterpreting values via a value-magnitude guess.
+  officePctIsFraction: z.boolean().optional(),
   fields: z.object({
     costarPropertyId: Col, address: Col, suite: Col, city: Col, state: Col, market: Col, submarket: Col,
     propertyType: Col, secondaryType: Col, buildingStatus: Col, buildingSf: Col, yearBuilt: Col, clearHeightFt: Col,
@@ -114,13 +119,17 @@ export function parseClearHeight(text: string): number | null {
 }
 
 // A "%"-suffixed value is already stated in percentage points ("1%" => 1, not 100). Otherwise, a bare
-// fraction in (0, 1] is assumed to be a fraction of whole (=> ×100); any other bare number is already
-// in percentage points.
-export function parsePercent(text: string): number | null {
+// number is converted to percentage points (x100) ONLY when the header map says this column is
+// fractional (`isFraction`) — R12: a value-magnitude heuristic ("a bare number in (0,1] must be a
+// fraction") previously multiplied a genuine "1%" office share (stored as the bare number 1) by 100,
+// silently turning 1% office into 100%. There is no way to distinguish "1" meaning 1% from "1" meaning
+// a 1/100 fraction by value alone — only the export's own column semantics (declared once, per export
+// layout, in the header map) can say which it is.
+export function parsePercent(text: string, isFraction: boolean = false): number | null {
   const t = text.trim();
   if (t.endsWith('%')) return parseNumber(t.slice(0, -1));
   const n = parseNumber(t);
-  return n === null ? null : n > 0 && n <= 1 ? n * 100 : n;
+  return n === null ? null : isFraction ? n * 100 : n;
 }
 
 // ExcelJS represents a hyperlinked cell as { text, hyperlink }. Returns the URL, or null when the cell
@@ -157,6 +166,16 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
     if (!map.fields[f]) throw new CostarParseError(`header map field "${f}" is required`);
   }
   if (!map.fields.rentText && !map.fields.rentLow) throw new CostarParseError('header map needs fields.rentText or fields.rentLow');
+  // R4: a numeric fields.rentLow/rentHigh column carries no unit of its own -- rentPeriodDefault is the
+  // ONLY thing that says whether its figures are annual or monthly (unlike rentText, which states its
+  // own period or falls back to the monthlyValueCeiling heuristic per row). Mapping rentLow with
+  // rentPeriodDefault left null would silently read a monthly rate as annual — hard-fail here, before
+  // any row is read, rather than mis-price every listing in the export.
+  if (map.fields.rentLow && map.rentPeriodDefault === null) {
+    throw new CostarParseError(
+      'header map maps fields.rentLow but rentPeriodDefault is null — a numeric rent column has no period of its own; set rentPeriodDefault to "yr" or "mo"',
+    );
+  }
 
   const wb = new ExcelJS.Workbook();
   const ext = extname(filePath).toLowerCase();
@@ -282,7 +301,7 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
     const market = get('market');
     if (market) marketNames.add(market);
 
-    const officePct = parsePercent(get('officePct'));
+    const officePct = parsePercent(get('officePct'), map.officePctIsFraction ?? false);
     const listingUrlIdx = idx.listingUrl;
     const listingUrlRaw = listingUrlIdx === null ? null : row.getCell(listingUrlIdx).value;
 

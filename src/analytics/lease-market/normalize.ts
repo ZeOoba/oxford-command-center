@@ -28,24 +28,48 @@ const STREET_SUFFIX: Readonly<Record<string, string>> = {
 const DIRECTIONAL: Readonly<Record<string, string>> = {
   NORTH: 'N', SOUTH: 'S', EAST: 'E', WEST: 'W', NORTHEAST: 'NE', NORTHWEST: 'NW', SOUTHEAST: 'SE', SOUTHWEST: 'SW',
 };
-const UNIT_TOKENS: ReadonlySet<string> = new Set(['SUITE', 'STE', 'UNIT', 'BLDG', '#']);
+// R9: a building designator (BLDG) is NOT an ordinary suite unit token -- "1100 Rarig Ave Bldg 1" and
+// "...Bldg 2" are two physically distinct buildings on the same street address and must stay
+// distinguishable in identity, even when a separate, ordinary suite ("Ste A") is also given. Keeping
+// BLDG in the general UNIT_TOKENS set (as it was) meant it was either silently discarded (when a
+// rawSuite was also supplied -- see splitAddress below) or collapsed into the SAME normalized form as
+// an ordinary suite token (normalizeSuite('Bldg 2') === normalizeSuite('Ste 2') === '2'), so two
+// different buildings -- or a building and an unrelated suite -- could land on one property/space row.
+const SUITE_TOKENS: ReadonlySet<string> = new Set(['SUITE', 'STE', 'UNIT', '#']);
+const BLDG_TOKENS: ReadonlySet<string> = new Set(['BLDG', 'BUILDING']);
 
 function tokens(raw: string): string[] {
   return raw.toUpperCase().replace(/#/g, ' # ').replace(/[.,]/g, ' ').replace(/\s+/g, ' ').trim().split(' ').filter(Boolean);
 }
 
+// Extracts a BLDG/BUILDING designator's value from a token list (wherever it sits -- before or after
+// an ordinary suite token) and returns the remaining tokens alongside it, so callers can fold the
+// building value into the suite identity instead of discarding it. `minIndex` mirrors the ordinary
+// unit-token guard below (a designator needs a house number and street name before it when scanning a
+// full address) -- callers scanning a bare suite string (which has no house number) pass 0.
+function extractBuilding(parts: string[], minIndex = 0): { building: string | null; rest: string[] } {
+  const idx = parts.findIndex((t, i) => i >= minIndex && i + 1 < parts.length && BLDG_TOKENS.has(t));
+  if (idx < 0) return { building: null, rest: parts };
+  const rest = [...parts.slice(0, idx), ...parts.slice(idx + 2)];
+  return { building: parts[idx + 1]!, rest };
+}
+
 export function normalizeSuite(raw: string | null | undefined): string {
   if (!raw) return '';
-  const parts = tokens(raw);
-  while (parts.length > 0 && UNIT_TOKENS.has(parts[0]!)) parts.shift();
-  return parts.join('');
+  const { building, rest } = extractBuilding(tokens(raw));
+  const parts = rest;
+  while (parts.length > 0 && SUITE_TOKENS.has(parts[0]!)) parts.shift();
+  const suite = parts.join('');
+  if (building === null) return suite;
+  return suite ? `B${building}-${suite}` : `B${building}`;
 }
 
 export function splitAddress(rawAddress: string, rawSuite: string | null): { addressNorm: string; suiteNorm: string } {
-  const parts = tokens(rawAddress);
+  const { building: embeddedBuilding, rest: afterBuilding } = extractBuilding(tokens(rawAddress), 2);
+  const parts = afterBuilding;
   let embeddedSuite: string | null = null;
   // A unit designator needs a house number and a street name before it, and a value after it.
-  const unitIdx = parts.findIndex((t, i) => i >= 2 && i < parts.length - 1 && UNIT_TOKENS.has(t));
+  const unitIdx = parts.findIndex((t, i) => i >= 2 && i < parts.length - 1 && SUITE_TOKENS.has(t));
   if (unitIdx >= 0) {
     embeddedSuite = parts.slice(unitIdx).join(' ');
     parts.length = unitIdx;
@@ -53,7 +77,12 @@ export function splitAddress(rawAddress: string, rawSuite: string | null): { add
   const addressNorm = parts.map((t) => STREET_SUFFIX[t] ?? DIRECTIONAL[t] ?? t).join(' ');
   // A blank/whitespace rawSuite must not shadow an embedded suite parsed from the address itself.
   const suiteSource = rawSuite !== null && rawSuite.trim() !== '' ? rawSuite : embeddedSuite;
-  return { addressNorm, suiteNorm: normalizeSuite(suiteSource) };
+  const suiteNorm = normalizeSuite(suiteSource);
+  // The building designator (if any) is ALWAYS folded into suiteNorm, even when a separate rawSuite
+  // was also given -- previously the rawSuite branch discarded the embedded building entirely, so
+  // "Bldg 1"+"A" and "Bldg 2"+"A" both normalized to the same suiteNorm "A".
+  if (embeddedBuilding === null) return { addressNorm, suiteNorm };
+  return { addressNorm, suiteNorm: suiteNorm ? `B${embeddedBuilding}-${suiteNorm}` : `B${embeddedBuilding}` };
 }
 
 // ── Cells ────────────────────────────────────────────────────────────────────
@@ -267,16 +296,29 @@ function isFullExpenseAddon(addon: string): boolean {
 
 // Add-on opex derivation from the expense text after a "+" (rule 7). Returns null when the
 // figure isn't plausibly a per-SF/monthly opex add-on (e.g. a bare total-dollar CAM amount).
-function addonOpexValue(addon: string): number | null {
+// R6: an add-on that states no period of its own inherits the BASE rent's period (`headPeriod`) --
+// "$0.60/SF/MO + $0.20 NNN" is a monthly add-on figure just like the head it rides on, not a bare
+// annual one; annualizing it only when the add-on independently states "/MO" (and never otherwise)
+// silently understated it by 12x whenever the head itself was monthly.
+function addonOpexValue(addon: string, headPeriod: 'yr' | 'mo' | null): number | null {
   const n = numberMatches(addon)[0]?.value ?? null;
   if (n === null) return null;
-  const addonMonthly = MO_RE.test(addon);
+  const addonStatesMonthly = MO_RE.test(addon);
+  const addonStatesYearly = YR_RE.test(addon);
   const addonPerSf = PER_SF_RE.test(addon);
+  // R6: a period-less add-on inherits the base rent's own stated period -- an add-on that states its
+  // OWN period (explicit "/MO"/"/YR") is authoritative and never inherits.
+  const inheritedMonthly = !addonStatesMonthly && !addonStatesYearly && headPeriod === 'mo';
+  const addonMonthly = addonStatesMonthly || inheritedMonthly;
   let value: number | null;
   if (addonPerSf) {
     value = addonMonthly ? n * 12 : n;
-  } else if (!addonMonthly && n < 30) {
-    value = n;
+  } else if (addonStatesMonthly) {
+    // Same "no /SF token, stated monthly" ambiguity rule 7 applies to the base rent for: a bare
+    // monthly dollar figure with no per-SF marker of its own is not trustworthy as a per-SF estimate.
+    value = null;
+  } else if (n < 30) {
+    value = inheritedMonthly ? n * 12 : n;
   } else {
     value = null;
   }
@@ -408,7 +450,14 @@ export function parseRentText(text: string): ParsedRentText {
 
   const perSf = PER_SF_RE.test(head);
   const maxVal = Math.max(rentLow, rentHigh);
-  const isTotal = !perSf && (maxVal >= 1000 || (rentPeriod === 'mo' && maxVal >= 50));
+  // R7: MONTHLY_TOTAL_THRESHOLD is the boundary between "this monthly figure is plausibly a per-SF
+  // rate" and "this is almost certainly a total monthly dollar amount" -- a /mo figure at or above it
+  // is treated as a total (unchanged); below it, a /mo figure with NO /SF token of its own is neither
+  // a trustworthy total NOR a trustworthy per-SF rate -- it must be ambiguous, not silently priced as
+  // per-SF (the "$4.50/MO NNN" => $54.00/SF/yr defect).
+  const MONTHLY_TOTAL_THRESHOLD = 50;
+  const isTotal = !perSf && (maxVal >= 1000 || (rentPeriod === 'mo' && maxVal >= MONTHLY_TOTAL_THRESHOLD));
+  const monthlyNoSfBelowThreshold = !perSf && rentPeriod === 'mo' && !isTotal;
   let ambiguous =
     addonContradiction ||
     basisConflict ||
@@ -418,6 +467,7 @@ export function parseRentText(text: string): ParsedRentText {
     periodConflict ||
     tailConflict ||
     earlyUnanchoredAmbiguous ||
+    monthlyNoSfBelowThreshold ||
     (!perSf && !isTotal && maxVal >= 60);
   // Structural safety gate, applied last: a free-text quote is benchmark-grade only if the WHOLE
   // string matches the strict canonical grammar above — everything else is ambiguous, regardless of
@@ -442,7 +492,7 @@ export function parseRentText(text: string): ParsedRentText {
   // opexQuoted would feed a market quoted-opex estimate as if it covered tax+insurance+CAM together,
   // when it covers only one component. This applies regardless of what `basis` ended up being (even
   // when an explicit head NNN keeps `basis: 'NNN'` despite the add-on being partial).
-  const opexQuoted = addon !== null && isFullExpenseAddon(addon) ? addonOpexValue(addon) : null;
+  const opexQuoted = addon !== null && isFullExpenseAddon(addon) ? addonOpexValue(addon, rentPeriod) : null;
   return { rentLow, rentHigh, rentPeriod, basis, withheld: false, isTotal, opexQuoted, ambiguous };
 }
 
@@ -502,8 +552,14 @@ export function priceObservation(
   });
   if (input.rentBasis === 'WITHHELD' || input.rentBasis === 'UNKNOWN') return none(input.rentBasis);
 
-  let low = input.rentLow ?? input.rentHigh;
-  let high = input.rentHigh ?? input.rentLow;
+  // R15: CoStar uses a bare 0 as a "no high stated" sentinel on a numeric rentHigh column (and,
+  // symmetrically, could on rentLow) -- treat a 0 on EITHER side as null (not a real $0 quote) BEFORE
+  // falling back to the other side and swapping, so "rentLow 8.50, rentHigh 0" resolves to a clean
+  // single-sided $8.50 quote instead of swapping to low=0 and being rejected as "non-positive rent".
+  const rentLow0 = input.rentLow === 0 ? null : input.rentLow;
+  const rentHigh0 = input.rentHigh === 0 ? null : input.rentHigh;
+  let low = rentLow0 ?? rentHigh0;
+  let high = rentHigh0 ?? rentLow0;
   if (low === null || high === null) return none('WITHHELD');
   if (!Number.isFinite(low) || !Number.isFinite(high)) return none('UNKNOWN', 'non-numeric rent');
   if (high < low) [low, high] = [high, low];

@@ -34,9 +34,28 @@ describe('parseCostarListingsFile', () => {
     await expect(parseCostarListingsFile(f, testHeaderMap({ status: 'pending-sample' }))).rejects.toThrow(/pending-sample/);
   });
 
+  // R4: a numeric fields.rentLow column has no unit of its own -- rentPeriodDefault is the ONLY thing
+  // that says whether its figures are annual or monthly. A verified map that maps rentLow but leaves
+  // rentPeriodDefault null would silently read a monthly rate as annual (e.g. $3.00/SF/MO ingested as
+  // $3.00/SF/YR), so this must hard-fail at header-map validation time, before any row is read.
+  it('hard-fails when fields.rentLow is mapped but rentPeriodDefault is null (R4)', async () => {
+    const f = await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 1000, rentLow: 3.0 }]);
+    await expect(parseCostarListingsFile(f, testHeaderMap({ rentPeriodDefault: null }))).rejects.toThrow(/rentPeriodDefault/);
+  });
+
+  it('does not hard-fail on a null rentPeriodDefault when fields.rentLow is itself unmapped (free-text rentText only)', async () => {
+    const base = testHeaderMap();
+    const map = testHeaderMap({ rentPeriodDefault: null, fields: { ...base.fields, rentText: 'Rent Low', rentLow: null, rentHigh: null, rentBasis: null } });
+    const f = await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 1000, rentLow: '$9.00/SF/YR NNN', rentType: null }]);
+    await expect(parseCostarListingsFile(f, map)).resolves.toBeTruthy();
+  });
+
   it('maps rows to canonical listings, including location and broker, and skips rows without SF', async () => {
     const f = await writeCostarFixture(dir(), 'a.xlsx', [
-      { id: 'C1', address: '10 Alpha Rd', suite: 'Suite 100', sf: 12000, rentLow: 8.5, rentType: 'NNN', officePct: 0.25, dateOnMarket: new Date(Date.UTC(2025, 10, 1)), url: 'https://example.test/1' },
+      // R12: officePct is already in percentage points (25, not the fraction 0.25) — the default
+      // header map has no officePctIsFraction flag, so a bare number is no longer ×100'd by a
+      // value-magnitude guess. A fractional-source export is covered separately below.
+      { id: 'C1', address: '10 Alpha Rd', suite: 'Suite 100', sf: 12000, rentLow: 8.5, rentType: 'NNN', officePct: 25, dateOnMarket: new Date(Date.UTC(2025, 10, 1)), url: 'https://example.test/1' },
       { id: 'C2', address: '20 Beta Dr', type: 'Flex', sf: 3000, rentLow: null, rentType: null, spaceUse: 'Sublet', lat: null, lon: null },
       { address: '30 Gamma Way', sf: 0 },
     ]);
@@ -52,6 +71,21 @@ describe('parseCostarListingsFile', () => {
       brokerName: 'Pat Broker', brokerCompany: 'Acme Realty', listingUrl: 'https://example.test/1', description: null, sourceRow: 2,
     });
     expect(r.rows[1]).toMatchObject({ costarPropertyId: 'C2', subtype: 'flex', rentBasis: 'WITHHELD', isSublease: true, lat: null, lon: null, sourceRow: 3 });
+  });
+
+  it('officePct: no value-magnitude guess by default (R12) — a raw "1" stays 1%, not 100%', async () => {
+    // The exact regression named in the fix request: a genuine 1% office share, stored by CoStar as
+    // the bare number 1, was previously multiplied ×100 into 100% because 1 falls in the old
+    // heuristic's (0,1] "must be a fraction" range. With no header-map flag set, it must not convert.
+    const f = await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 1000, officePct: 1 }]);
+    const r = await parseCostarListingsFile(f, testHeaderMap());
+    expect(r.rows[0]).toMatchObject({ officePct: 1 });
+  });
+
+  it('officePct: converts ×100 only when the header map declares the column fractional (R12)', async () => {
+    const f = await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 1000, officePct: 0.5 }]);
+    const r = await parseCostarListingsFile(f, testHeaderMap({ officePctIsFraction: true }));
+    expect(r.rows[0]).toMatchObject({ officePct: 50 });
   });
 
   it('hard-fails on a missing mapped column and on unmapped values', async () => {
@@ -222,11 +256,22 @@ describe('parseCostarListingsFile', () => {
     expect(parseClearHeight('garbage')).toBeNull();
   });
 
-  it('parsePercent treats a %-suffix as points and a bare fraction as ×100', () => {
+  it('parsePercent: a %-suffix is always points; a bare number is points UNLESS the header map says the column is fractional (R12)', () => {
+    // A "%"-suffixed value is unambiguous regardless of isFraction.
     expect(parsePercent('25%')).toBe(25);
     expect(parsePercent('1%')).toBe(1);
-    expect(parsePercent('0.25')).toBe(25);
+    expect(parsePercent('1%', true)).toBe(1);
+    // R12: no value-magnitude heuristic left — a bare number stays in points by default (isFraction
+    // omitted/false). Previously a bare "1" (meaning 1%) was silently ×100'd into 100 because it fell
+    // in (0,1]; that defect is exactly what this default-false behavior closes.
+    expect(parsePercent('1')).toBe(1);
+    expect(parsePercent('0.5')).toBe(0.5);
+    expect(parsePercent('0.25')).toBe(0.25);
     expect(parsePercent('40')).toBe(40);
+    // isFraction: true explicitly opts a column into the ×100 conversion.
+    expect(parsePercent('0.25', true)).toBe(25);
+    expect(parsePercent('0.5', true)).toBe(50);
+    expect(parsePercent('1', true)).toBe(100);
   });
 
   it('parseCoordinate rejects zero and out-of-range values', () => {
