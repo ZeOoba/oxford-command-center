@@ -140,10 +140,14 @@ export function computeCell(target: CellTarget, rows: readonly BenchRow[], p: Be
   return last!;
 }
 
+// Sentinel for a null submarket in the memo key — an escape character, never a value a real
+// submarket string (including one that happens to be literally " ") could collide with.
+const NULL_SUBMARKET_KEY = '\u0000';
+
 export function cellIndex(rows: readonly BenchRow[], p: BenchmarkParams): (target: CellTarget) => ComputedCell {
   const memo = new Map<string, ComputedCell>();
   return (target) => {
-    const key = [target.marketId, target.submarket ?? ' ', target.subtype, target.sizeBand, target.officeStratum].join('|');
+    const key = [target.marketId, target.submarket ?? NULL_SUBMARKET_KEY, target.subtype, target.sizeBand, target.officeStratum].join('|');
     let cell = memo.get(key);
     if (!cell) {
       cell = computeCell(target, rows, p);

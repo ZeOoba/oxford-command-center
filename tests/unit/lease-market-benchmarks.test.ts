@@ -113,3 +113,40 @@ describe('cellIndex / toCellBenchmark', () => {
     expect(pub.median).toBe(8);
   });
 });
+
+// Fix round 1 (task review): empty-rows shape, edge-band-widening cellKey/rolledUp, and the
+// null-submarket memo-key sentinel (must be an escape, not a literal space, so a real submarket
+// string of a single space doesn't collide with the "no submarket" target).
+describe('computeCell — empty input', () => {
+  it('returns a fully-empty cell shape for an empty row set', () => {
+    const c = computeCell(TARGET, [], P);
+    expect(c).toMatchObject({ n: 0, totalN: 0, quotedShare: 0, lowCoverage: true, median: null });
+  });
+});
+
+describe('computeCell — edge size band widening', () => {
+  it('widens a <5K target band into just the two adjacent bands (no band below it)', () => {
+    const edgeTarget: CellTarget = { ...TARGET, sizeBand: '<5K' };
+    const rows = [
+      ...[6, 7, 8].map((v) => row({ askingNnnEq: v, sizeBand: '<5K' })),
+      ...[9, 10].map((v) => row({ askingNnnEq: v, sizeBand: '5-15K' })),
+    ];
+    const c = computeCell(edgeTarget, rows, P);
+    expect(c.rolledUp).toBe('size_band');
+    expect(c.cellKey).toContain('<5K~5-15K');
+  });
+});
+
+describe('cellIndex — null-submarket memo sentinel', () => {
+  it('does not collide a literal " " submarket with a null-submarket target', () => {
+    const rows = [
+      ...[6, 7, 8, 9, 10].map((v) => row({ askingNnnEq: v, submarket: ' ' })),
+      ...[11, 12, 13].map((v) => row({ askingNnnEq: v, submarket: 'Other' })),
+    ];
+    const idx = cellIndex(rows, P);
+    const spaceCell = idx({ ...TARGET, submarket: ' ' });
+    const nullCell = idx({ ...TARGET, submarket: null });
+    expect(spaceCell).not.toBe(nullCell);
+    expect(spaceCell.n).not.toBe(nullCell.n);
+  });
+});

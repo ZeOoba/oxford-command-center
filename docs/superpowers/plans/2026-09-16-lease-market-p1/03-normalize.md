@@ -442,3 +442,19 @@ export function isBenchmarkEligible(o: EligibilityInput, maxBuildingSf: number):
 - [ ] **Step 4:** `npx vitest run tests/unit/lease-market-normalize.test.ts && npm run typecheck && npx eslint src/analytics/lease-market tests/unit/lease-market-normalize.test.ts --max-warnings 0` — Expected: PASS / clean.
 
 - [ ] **Step 5: Commit** — `git add src/analytics/lease-market/normalize.ts tests/unit/lease-market-normalize.test.ts` ("feat(analytics): lease market normalization with totals, expense quotes and bounds").
+
+## Review fixes (plan rev 2.1)
+
+Task review found that a misread rent quote could silently enter an NNN benchmark at high confidence. Fixes applied to `parseRentText` and `priceObservation` (existing exported signatures unchanged):
+
+1. `NUM_RE` now captures match position, not just value, and supports leading-dot amounts (`$.75`).
+2. Withheld = blank, OR no rent number found, OR `WITHHELD_RE` matches AND the text has no `$`; `WITHHELD_RE` updated so "non-negotiable" and slash-annual quotes aren't misread as withheld.
+3. Base rent and an expense add-on (`+ ... NNN/CAM/...`) are now split and parsed separately.
+4. A second number is only treated as a range high-end when a real range separator (`-`/`–`/`—`/`to`) sits between the two numbers — a trailing CAM figure or escalation % no longer becomes a false range or false rent value.
+5. Period/per-SF/total detection now runs on the rent "head" (base rent text up to the first `,`/`;`/`(`/` w/`/` with `) only, not the whole string — trailing escalation clauses no longer leak into basis/period detection.
+6. Basis precedence: an add-on with no stated basis or a stated NNN basis resolves to NNN; an add-on with a stated MG/IG/GROSS/FSG basis is flagged `ambiguous: true` (contradictory quote) instead of silently accepted.
+7. Add-on opex value (`opexQuoted`) is derived from the add-on text alone, distinguishing per-SF/monthly figures from bare total-dollar CAM amounts (which now correctly return `null`).
+8. `priceObservation` rejects non-finite (`NaN`/`Infinity`) low/high as `UNKNOWN` instead of propagating `NaN` into `askingNnnEq`.
+9. Range-spread rejection uses a `+1e-9` epsilon so a spread exactly at `rangeMaxSpread` passes.
+10. MG/IG-to-NNN conversion now requires all three opex components (tax/ins/cam) to be non-null before attributing landlord-paid components — a quoted-median-only estimate (all components null) can no longer vacuously "convert" via an empty `mgLandlordPays` list.
+11. `splitAddress`: a blank/whitespace `rawSuite` no longer shadows an embedded suite parsed from the address.
