@@ -4,8 +4,9 @@
 // headers. The production map (config/lease-market.costar-headers.json) is filled from real exports.
 import ExcelJS from 'exceljs';
 import { join } from 'node:path';
-import type { LeaseMarketConfig, LmThresholds } from '../../src/contracts/lease-market';
+import type { LeaseMarketConfig, LmThresholds, OwnerType } from '../../src/contracts/lease-market';
 import type { CostarHeaderMap } from '../../server/warehouse/lease-market/costar-parse';
+import type { OwnerScreenResult } from '../../server/warehouse/lease-market/owner-screen';
 
 export const TEST_HEADERS = [
   'Property ID', 'Address', 'Suite', 'City', 'State', 'Market', 'Submarket', 'Type', 'Secondary Type', 'Status',
@@ -142,6 +143,16 @@ export const TEST_THRESHOLDS: LmThresholds = {
   withdrawnLookbackDays: 90,
   sfChangePct: 0.05,
 };
+
+export function stubScreen(names: string[]): OwnerScreenResult {
+  const types = new Map<string, OwnerType>();
+  for (const raw of names) {
+    const n = raw.trim();
+    const upper = n.toUpperCase();
+    types.set(n, upper.includes('PROLOGIS') ? 'institutional' : upper.includes('OXFORD') ? 'affiliated' : 'private');
+  }
+  return { available: true, guardOk: true, types, error: null };
+}
 
 export function testConfig(patch: Partial<LeaseMarketConfig> = {}): LeaseMarketConfig {
   return {
