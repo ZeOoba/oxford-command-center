@@ -138,6 +138,8 @@ export const TEST_THRESHOLDS: LmThresholds = {
   similarityTopK: 15,
   similarityMinComps: 8,
   similarityHighComps: 15,
+  similarityPerPropertyCap: 3,
+  similarityUnknownLowCap: 3,
   radarMinScore: 50,
   radarPushScore: 70,
   withdrawnLookbackDays: 90,

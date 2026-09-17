@@ -108,7 +108,7 @@ export function scoreSimilarity(subject: SpaceProfile, candidate: SpaceProfile, 
 // R8: a single dominant property (e.g. several identical vacant suites in one building) must not be
 // able to fill the comp set and drag the median toward its own asking rent -- cap how many comps any
 // one propertyId can contribute BEFORE the global top-K cut, keeping that property's highest scorers.
-const PER_PROPERTY_COMP_CAP = 3;
+// M-2: the cap value itself now lives in config (thresholds.similarityPerPropertyCap), not hardcoded.
 const byScoreThenListingId = (a: ScoredComp, b: ScoredComp) => b.similarity.score - a.similarity.score || a.candidate.listingId - b.candidate.listingId;
 
 export function selectComps(
@@ -116,7 +116,7 @@ export function selectComps(
   excludePropertyId: number | null,
   candidates: readonly CompCandidate[],
   w: SimilarityWeights,
-  t: Pick<LmThresholds, 'similarityMinScore' | 'similarityTopK' | 'similarityMinComps'>,
+  t: Pick<LmThresholds, 'similarityMinScore' | 'similarityTopK' | 'similarityMinComps' | 'similarityPerPropertyCap'>,
 ): { comps: ScoredComp[]; sufficient: boolean } {
   const scored = candidates
     .filter((c) => c.propertyId !== excludePropertyId)
@@ -130,9 +130,27 @@ export function selectComps(
     if (list) list.push(sc);
     else byProperty.set(sc.candidate.propertyId, [sc]);
   }
-  const capped = [...byProperty.values()].flatMap((list) => list.sort(byScoreThenListingId).slice(0, PER_PROPERTY_COMP_CAP));
+  const capped = [...byProperty.values()].flatMap((list) => list.sort(byScoreThenListingId).slice(0, t.similarityPerPropertyCap));
   const comps = capped.sort(byScoreThenListingId).slice(0, t.similarityTopK);
   return { comps, sufficient: comps.length >= t.similarityMinComps };
+}
+
+// I-1: the confidence cap must be driven by what the SUBJECT itself cannot locate or compare, not by
+// which candidate happened to be missing which field. A fully-populated subject can be matched against
+// 15 comps that are each individually missing a DIFFERENT field (a realistic CoStar-data spread), and
+// every one of those pairwise gaps still earns its ordinary 0.5-credit partial score in scoreSimilarity
+// (top-K selection behaviour is unchanged) -- but none of them reflect anything uncertain about the
+// SUBJECT, so none of them may cap the subject's own confidence. Only size is never "unknown": a
+// SpaceProfile always carries a concrete availableSf.
+export function subjectUnknownComponents(subject: SpaceProfile): SimilarityComponent[] {
+  const unknown: SimilarityComponent[] = [];
+  const hasCoords = subject.lat !== null && subject.lon !== null;
+  if (!hasCoords && subject.submarket === null) unknown.push('location');
+  if (subject.clearHeightFt === null) unknown.push('clearHeight');
+  if (subject.yearBuilt === null) unknown.push('age');
+  if (subject.officePct === null) unknown.push('office');
+  if (subject.docks === null || subject.driveIns === null) unknown.push('loading');
+  return unknown.sort();
 }
 
 export interface ResolvedComparables {
@@ -147,8 +165,10 @@ export interface ResolvedComparables {
   confidence: ConfidenceLabel;
   cellKey: string | null;
   comps: ScoredComp[];
-  // R3: the union of components that were unknown (missing on the subject and/or a comp) across the
-  // selected comp set, sorted for determinism. Empty on the cell/null-fallback bases, which carry no
+  // I-1 (was R3): the SUBJECT's own unknown components (see subjectUnknownComponents), sorted for
+  // determinism -- NOT a union of whatever individual comps happened to be missing (that read a fully-
+  // populated subject as LOW confidence whenever its 15 comps were each thin on a different field; see
+  // the I-1 fix note on resolveComparables). Empty on the cell/null-fallback bases, which carry no
   // per-component similarity data. Exposed so the UI and evidence can show WHY confidence was capped.
   unknown: SimilarityComponent[];
 }
@@ -177,15 +197,17 @@ export function resolveComparables(
   const cellKey = cell?.cellKey ?? null;
   if (selection.sufficient) {
     const n = selection.comps.length;
-    // R3: an unknown component isn't a neutral 0.5 credit for confidence purposes -- it means the
-    // similarity claim is partly a guess. Union every component that was unknown on ANY selected comp
-    // (in practice this is almost always driven by the subject's own missing fields, which recur
-    // identically across every comp pairing) and cap confidence accordingly: 3+ unknown components
-    // caps at LOW regardless of comp count; location alone caps at HIGH down to MEDIUM. These caps
-    // apply on top of the ordinary n/low-coverage computation, never loosen it.
-    const unknown = [...new Set(selection.comps.flatMap((c) => c.similarity.unknown))].sort();
+    // I-1 (was R3): an unknown component isn't a neutral 0.5 credit for confidence purposes -- it
+    // means the similarity claim is partly a guess. But it is a guess about the SUBJECT, not about
+    // whichever comps happened to be thin on data -- a fully-populated subject compared against 15
+    // comps that each individually lack a DIFFERENT field is still a HIGH-confidence read on the
+    // subject; only the subject's OWN missing fields (subjectUnknownComponents) may cap its confidence.
+    // similarityUnknownLowCap+ unknown components caps at LOW regardless of comp count; location alone
+    // caps HIGH down to MEDIUM. These caps apply on top of the ordinary n/low-coverage computation,
+    // never loosen it.
+    const unknown = subjectUnknownComponents(subject);
     const baseConfidence: ConfidenceLabel = n >= t.similarityHighComps && !(cell?.lowCoverage ?? false) ? 'HIGH' : 'MEDIUM';
-    const confidence: ConfidenceLabel = unknown.length >= 3 ? 'LOW' : unknown.includes('location') ? 'MEDIUM' : baseConfidence;
+    const confidence: ConfidenceLabel = unknown.length >= t.similarityUnknownLowCap ? 'LOW' : unknown.includes('location') ? 'MEDIUM' : baseConfidence;
     return { basis: 'similarity', n, ...statsOf(selection.comps.map((c) => c.candidate.askingNnnEq)), confidence, cellKey, comps: selection.comps, unknown };
   }
   if (cell && cell.median !== null) {
