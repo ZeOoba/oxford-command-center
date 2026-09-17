@@ -2,13 +2,13 @@
 //
 // Lease Market Intelligence UI (spec rev 3 §4): KPI row + Portfolio · Market Rents · Acquisition Radar ·
 // Changes · Data Quality. All rents are ASKING rents on an NNN-equivalent basis. Degrades on the static mirror.
-import { useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { BarChart } from '@/charts/BarChart';
 import { RentCurve } from '@/charts/RentCurve';
-import { isWarehouseUnavailable } from '../intel/hooks';
+import { isWarehouseUnavailable, useWarehouseLive } from '../intel/hooks';
 import type {
   CellBenchmark, CompRow, ListedButLeased, ListingEventRow, MarketDataQuality, MarketFreshness, PositioningRow, RadarCandidate, SignalRow,
 } from '@contracts/lease-market';
@@ -82,7 +82,7 @@ function PortfolioTab({ onHistory }: { onHistory: (id: number) => void }) {
   const q = useLeaseMarketPositioning();
   const [selected, setSelected] = useState<string | null>(null);
   if (q.isLoading) return <Note>Loading…</Note>;
-  if (!q.data) return <Note>{q.error ? unavailable(q.error) : 'Positioning unavailable (needs the live rent roll).'}</Note>;
+  if (!q.data) return <Note>{unavailable(q.error)}</Note>;
   const rowId = (r: PositioningRow) => `${r.propertyKey}|${r.unit ?? ''}`;
   const active = q.data.rows.find((r) => rowId(r) === selected) ?? null;
   return (
@@ -93,7 +93,7 @@ function PortfolioTab({ onHistory }: { onHistory: (id: number) => void }) {
           {q.data.rows.length === 0 ? (
             <Note>No vacant ORA units mapped to a comparable set.</Note>
           ) : (
-            <DataTable columns={positionCols} rows={q.data.rows} getRowId={rowId} onRowClick={(r) => setSelected(rowId(r))} initialSort={{ key: 'gap', dir: 'desc' }} minWidth={1200} />
+            <DataTable columns={positionCols} rows={q.data.rows} getRowId={rowId} onRowClick={(r) => setSelected((prev) => (prev === rowId(r) ? null : rowId(r)))} initialSort={{ key: 'gap', dir: 'desc' }} minWidth={1200} />
           )}
           {q.data.unconfiguredPropertyKeys.length > 0 && <Note>Not yet mapped to a comparable set: {q.data.unconfiguredPropertyKeys.join(', ')}</Note>}
         </div>
@@ -132,6 +132,10 @@ const benchCols: Column<CellBenchmark>[] = [
 function RadarTab({ onHistory }: { onHistory: (id: number) => void }) {
   const q = useLeaseMarketRadar();
   const decide = useRadarDecision();
+  // Decisions are a server WRITE; on the baked mirror they have no edge home → hide the column
+  // entirely (not just disable it) until the live Brain Server is confirmed reachable (Phase 1b
+  // pattern — see DataQualityView/MappingsView/LeaseRunView for the same live-gated column).
+  const live = useWarehouseLive();
   if (q.isLoading) return <Note>Loading…</Note>;
   if (!q.data) return <Note>{unavailable(q.error)}</Note>;
   const cols: Column<RadarCandidate>[] = [
@@ -145,29 +149,31 @@ function RadarTab({ onHistory }: { onHistory: (id: number) => void }) {
     { key: 'owner', header: 'Owner', render: (c) => `${c.ownerName ?? '—'} (${c.ownerType}, ${c.ownerListingCount} listed)` },
     { key: 'broker', header: 'Broker', render: (c) => c.brokerName ?? '—' },
     { key: 'decision', header: 'Decision', render: (c) => (c.latestDecision ? `${DECISION_LABELS[c.latestDecision.decision]} · ${c.latestDecision.decidedAt.slice(0, 10)}` : '—') },
-    {
-      key: 'actions',
-      header: '',
-      render: (c) => (
-        <div className="flex gap-1">
-          {(['investigate', 'monitor', 'pass'] as const).map((d) => (
-            <button
-              key={d}
-              type="button"
-              className="rounded-[var(--radius-sm)] px-2 py-0.5 text-2xs"
-              style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
-              disabled={decide.isPending}
-              onClick={(e) => {
-                e.stopPropagation();
-                decide.mutate({ propertyId: c.propertyId, decision: d, note: null });
-              }}
-            >
-              {DECISION_LABELS[d]}
-            </button>
-          ))}
-        </div>
-      ),
-    },
+    ...(live
+      ? ([{
+          key: 'actions',
+          header: '',
+          render: (c) => (
+            <div className="flex gap-1">
+              {(['investigate', 'monitor', 'pass'] as const).map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  className="rounded-[var(--radius-sm)] px-2 py-0.5 text-2xs"
+                  style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+                  disabled={decide.isPending}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    decide.mutate({ propertyId: c.propertyId, decision: d, note: null });
+                  }}
+                >
+                  {DECISION_LABELS[d]}
+                </button>
+              ))}
+            </div>
+          ),
+        }] as Column<RadarCandidate>[])
+      : []),
   ];
   const monitorCols: Column<SignalRow>[] = [
     { key: 'space', header: 'Space', render: (s) => s.address ?? `Space ${s.listingId ?? ''}` },
@@ -183,7 +189,7 @@ function RadarTab({ onHistory }: { onHistory: (id: number) => void }) {
         <CardHeader title="Acquisition Radar — ranked candidates" trailing={<span className="text-2xs" style={MUTED}>Indicative rent gap = gross, vacant space only — not NOI.</span>} />
         <div className="p-4">
           {q.data.candidates.length === 0 ? <Note>No radar candidates.</Note> : <DataTable columns={cols} rows={q.data.candidates} getRowId={(c) => String(c.propertyId)} minWidth={1300} />}
-          {decide.isError && <p className="mt-2 text-2xs" style={{ color: 'var(--color-warn)' }}>{decide.error instanceof Error ? decide.error.message : 'Decision failed'}</p>}
+          {decide.isError && <p role="alert" className="mt-2 text-2xs" style={{ color: 'var(--color-warn)' }}>{decide.error instanceof Error ? decide.error.message : 'Decision failed'}</p>}
         </div>
       </Card>
       <Card>
@@ -256,25 +262,32 @@ const qualityCols: Column<MarketDataQuality>[] = [
 // ── History drawer ────────────────────────────────────────────────────────────
 function HistoryDrawer({ listingId, onClose }: { listingId: number; onClose: () => void }) {
   const q = useLeaseMarketHistory(listingId);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // jsdom (unit tests) doesn't implement scrollIntoView — guard so the drawer still opens there.
+    if (typeof ref.current?.scrollIntoView === 'function') ref.current.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [listingId]);
   return (
-    <Card>
-      <CardHeader
-        title={`Space history — ${q.data?.address ?? `space ${listingId}`}`}
-        trailing={<button type="button" className="text-2xs" style={MUTED} onClick={onClose}>Close</button>}
-      />
-      <div className="p-4">
-        {q.isLoading ? <Note>Loading…</Note> : !q.data ? <Note>{unavailable(q.error)}</Note> : (
-          <ul className="text-2xs" style={{ color: 'var(--text-secondary)' }}>
-            {q.data.observations.map((o) => (
-              <li key={o.observedAt}>{o.observedAt} · {fmtSf(o.availableSf)} · {fmtPsf(o.askingNnnEq)} {o.rentBasis} ({o.confidence}){o.costarDom !== null ? ` · CoStar DOM ${o.costarDom}d` : ''}</li>
-            ))}
-            {q.data.events.map((e) => (
-              <li key={`e${e.id}`}>{e.eventDate} · {EVENT_LABELS[e.kind]} · {eventSummary(e)}</li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </Card>
+    <div ref={ref}>
+      <Card>
+        <CardHeader
+          title={`Space history — ${q.data?.address ?? `space ${listingId}`}`}
+          trailing={<button type="button" className="text-2xs" style={MUTED} onClick={onClose}>Close</button>}
+        />
+        <div className="p-4">
+          {q.isLoading ? <Note>Loading…</Note> : !q.data ? <Note>{unavailable(q.error)}</Note> : (
+            <ul className="text-2xs" style={{ color: 'var(--text-secondary)' }}>
+              {q.data.observations.map((o, i) => (
+                <li key={`${i}-${o.observedAt}`}>{o.observedAt} · {fmtSf(o.availableSf)} · {fmtPsf(o.askingNnnEq)} {o.rentBasis} ({o.confidence}){o.costarDom !== null ? ` · CoStar DOM ${o.costarDom}d` : ''}</li>
+              ))}
+              {q.data.events.map((e) => (
+                <li key={`e${e.id}`}>{e.eventDate} · {EVENT_LABELS[e.kind]} · {eventSummary(e)}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Card>
+    </div>
   );
 }
 
@@ -290,7 +303,7 @@ export function LeaseMarketModule() {
     selectedMarket ?? data?.freshness.find((f) => f.enabled && f.lastCompleteDate !== null)?.marketId ?? data?.freshness.find((f) => f.enabled)?.marketId ?? null;
   const points = useMemo(() => (data && marketId ? curvePointsFor(data.curve, marketId) : []), [data, marketId]);
 
-  if (summary.isLoading) return <div className="p-6"><Note>Loading lease market…</Note></div>;
+  if (summary.isLoading) return <div className="p-6"><Note>Loading…</Note></div>;
   if (!data) return <Card><div className="p-6"><Note>{unavailable(summary.error)}</Note></div></Card>;
 
   const k = data.kpis;
@@ -304,6 +317,12 @@ export function LeaseMarketModule() {
   ];
   const dom = data.domByMarket.find((d) => d.marketId === marketId);
   const marketLabel = data.freshness.find((f) => f.marketId === marketId)?.label ?? '—';
+  const marketBenchmarks = data.benchmarks.filter((b) => b.marketId === marketId);
+
+  const changeTab = (t: Tab) => {
+    setTab(t);
+    setHistoryId(null); // the drawer is scoped to whichever tab opened it — close it on tab switch
+  };
 
   return (
     <div className="flex flex-col gap-4">
@@ -321,7 +340,7 @@ export function LeaseMarketModule() {
 
       <div role="tablist" className="flex flex-wrap gap-1">
         {TABS.map((t) => (
-          <Toggle key={t} role="tab" active={tab === t} onClick={() => setTab(t)}>{t}</Toggle>
+          <Toggle key={t} role="tab" active={tab === t} onClick={() => changeTab(t)}>{t}</Toggle>
         ))}
       </div>
 
@@ -345,7 +364,7 @@ export function LeaseMarketModule() {
           <Card>
             <CardHeader title="Benchmark cells" />
             <div className="p-4">
-              {data.benchmarks.length === 0 ? <Note>No benchmark cells yet.</Note> : <DataTable columns={benchCols} rows={data.benchmarks.filter((b) => b.marketId === marketId)} getRowId={(b) => b.cellKey} />}
+              {marketBenchmarks.length === 0 ? <Note>No benchmark cells yet.</Note> : <DataTable columns={benchCols} rows={marketBenchmarks} getRowId={(b) => b.cellKey} />}
             </div>
           </Card>
         </div>
