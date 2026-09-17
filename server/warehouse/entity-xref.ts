@@ -103,13 +103,18 @@ export function unmatchedReport(db: WarehouseDb, entityType: EntityType): Unmatc
 // which is why the one-to-one-in-both-directions rule below is the whole safety story.
 
 /** Why a row was not linked. Each is a human action, not an error. */
-export type ProposalReason = 'no_config_link' | 'ambiguous_address' | 'no_address_match';
+export type ProposalReason =
+  | 'ora_owned_unmapped'
+  | 'no_config_link'
+  | 'ambiguous_address'
+  | 'no_address_match';
 
 export interface XrefProposal {
   lmPropertyId: number;
   marketId: string;
   addressNorm: string;
   oraPropertyKey: string | null;
+  ownerType: string;
   candidateCanonicalIds: string[];
   reason: ProposalReason;
 }
@@ -125,6 +130,7 @@ interface LmPropertyRow {
   market_id: string;
   address_norm: string;
   ora_property_key: string | null;
+  owner_type: string;
 }
 
 function tableExists(db: WarehouseDb, name: string): boolean {
@@ -159,7 +165,7 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
   }
 
   const lmRows = db
-    .prepare('SELECT id, market_id, address_norm, ora_property_key FROM lm_property')
+    .prepare('SELECT id, market_id, address_norm, ora_property_key, owner_type FROM lm_property')
     .all() as LmPropertyRow[];
 
   // The reverse direction: two listings at one address must not both claim the same property.
@@ -181,6 +187,7 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
       marketId: r.market_id,
       addressNorm: r.address_norm,
       oraPropertyKey: r.ora_property_key,
+      ownerType: r.owner_type,
     };
 
     if (candidates.length === 0) {
@@ -198,8 +205,16 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
 
     const canonicalId = candidates[0]!;
     if (r.ora_property_key === null) {
-      // Unambiguous, but no human has blessed it. Propose; do not link.
-      proposed.push({ ...base, candidateCanonicalIds: [canonicalId], reason: 'no_config_link' });
+      // A null ora_property_key does NOT mean "not ORA". The key is stamped only where a listing's
+      // address matches an addressNorms entry, so the config always lags reality —
+      // lm_property.owner_type = 'affiliated' is the independent owner-name verdict, and the
+      // lease-market compute treats it as ORA-owned everywhere the key gates. Reporting these as
+      // ordinary unmatched listings would hide ORA buildings in a pile of third-party comps.
+      proposed.push({
+        ...base,
+        candidateCanonicalIds: [canonicalId],
+        reason: r.owner_type === 'affiliated' ? 'ora_owned_unmapped' : 'no_config_link',
+      });
       continue;
     }
 
