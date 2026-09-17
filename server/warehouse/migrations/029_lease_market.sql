@@ -179,11 +179,19 @@ SELECT
   (SELECT COUNT(*) FROM lm_listing_event e WHERE e.listing_id = l.id AND e.kind = 'price_cut') AS reduction_count,
   (SELECT MIN(o.observed_at) FROM lm_observation o WHERE o.listing_id = l.id) AS first_observed,
   (SELECT MAX(o.observed_at) FROM lm_observation o WHERE o.listing_id = l.id) AS last_observed,
+  -- REFUTE R1: basis-matched to asking_psf_yr, the SAME basis price_cut/price_increase events use --
+  -- NEVER asking_nnn_eq, which moves whenever the market's quoted-opex median moves even though the
+  -- listing's own asking rent never changed (a GROSS listing with an unchanged rent must not read as a
+  -- "reduction" just because the opex estimate feeding its NNN-equivalent drifted). Also NULL whenever
+  -- reduction_count = 0 -- a listing that has never had a recorded price_cut event must not carry a
+  -- nonzero "cumulative reduction" from opex drift, a single-observation self-ratio, or any other
+  -- incidental movement in the raw figure.
   CASE
-    WHEN (SELECT o.asking_nnn_eq FROM lm_observation o WHERE o.listing_id = l.id AND o.asking_nnn_eq IS NOT NULL ORDER BY o.observed_at ASC, o.id ASC LIMIT 1) IS NULL
-      OR (SELECT o.asking_nnn_eq FROM lm_observation o WHERE o.listing_id = l.id ORDER BY o.observed_at DESC, o.id DESC LIMIT 1) IS NULL THEN NULL
-    ELSE (SELECT o.asking_nnn_eq FROM lm_observation o WHERE o.listing_id = l.id ORDER BY o.observed_at DESC, o.id DESC LIMIT 1)
-       / (SELECT o.asking_nnn_eq FROM lm_observation o WHERE o.listing_id = l.id AND o.asking_nnn_eq IS NOT NULL ORDER BY o.observed_at ASC, o.id ASC LIMIT 1) - 1.0
+    WHEN (SELECT COUNT(*) FROM lm_listing_event e WHERE e.listing_id = l.id AND e.kind = 'price_cut') = 0 THEN NULL
+    WHEN (SELECT o.asking_psf_yr FROM lm_observation o WHERE o.listing_id = l.id AND o.asking_psf_yr IS NOT NULL ORDER BY o.observed_at ASC, o.id ASC LIMIT 1) IS NULL
+      OR (SELECT o.asking_psf_yr FROM lm_observation o WHERE o.listing_id = l.id ORDER BY o.observed_at DESC, o.id DESC LIMIT 1) IS NULL THEN NULL
+    ELSE (SELECT o.asking_psf_yr FROM lm_observation o WHERE o.listing_id = l.id ORDER BY o.observed_at DESC, o.id DESC LIMIT 1)
+       / (SELECT o.asking_psf_yr FROM lm_observation o WHERE o.listing_id = l.id AND o.asking_psf_yr IS NOT NULL ORDER BY o.observed_at ASC, o.id ASC LIMIT 1) - 1.0
   END AS cumulative_reduction_pct
 FROM lm_listing l;
 
