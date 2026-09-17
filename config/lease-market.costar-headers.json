@@ -1,0 +1,20 @@
+{
+  "status": "pending-sample",
+  "note": "Fill every non-null column label from a REAL CoStar Suite lease-listing export header row (Task 99). Leave a field null only if the export has no such column. The parser refuses to run until status is \"verified\". Never guess labels.",
+  "sheetName": null,
+  "headerRow": 1,
+  "rentPeriodDefault": null,
+  "officePctIsFraction": false,
+  "fields": {
+    "costarPropertyId": null, "address": null, "suite": null, "city": null, "state": null, "market": null,
+    "submarket": null, "propertyType": null, "secondaryType": null, "buildingStatus": null, "buildingSf": null,
+    "yearBuilt": null, "clearHeightFt": null, "docks": null, "driveIns": null, "officePct": null, "ownerName": null,
+    "availableSf": null, "minDivisibleSf": null, "rentLow": null, "rentHigh": null, "rentText": null, "rentBasis": null,
+    "spaceType": null, "dateOnMarket": null, "zip": null, "lat": null, "lon": null, "brokerName": null,
+    "brokerCompany": null, "listingUrl": null, "description": null
+  },
+  "subtypeMap": {},
+  "buildingStatusMap": {},
+  "rentBasisMap": {},
+  "subleaseValues": []
+}

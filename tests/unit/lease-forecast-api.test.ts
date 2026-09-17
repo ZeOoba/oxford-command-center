@@ -18,6 +18,7 @@ import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { LeaseForecastResponse, RentForecastResponse, LeaseNarrativeResponse } from '@contracts/lease-forecast';
 import type { PortfolioSnapshot, Property, Lease } from '@contracts/index';
+import type * as FeedModule from '../../server/warehouse/lease-market/feed';
 
 vi.mock('../../server/brain', () => ({
   brain: { getSnapshot: vi.fn() },
@@ -30,6 +31,17 @@ vi.mock('../../server/ai/narrative', () => ({
 import { composeLeaseNarrative } from '../../server/ai/narrative';
 const mockComposeLeaseNarrative = vi.mocked(composeLeaseNarrative);
 const mockGetSnapshot = vi.mocked(brain.getSnapshot);
+
+// Spy-wrapped (not stubbed) around the REAL implementation, so every route's behavior is unchanged --
+// this exists solely so the ruling-6 test below can assert /narrative never CALLS it, distinguishing
+// "never reads the feed" from "reads it but filters the result" (both would otherwise look identical
+// from the response body alone).
+vi.mock('../../server/warehouse/lease-market/feed', async (importOriginal) => {
+  const actual = await importOriginal<typeof FeedModule>();
+  return { ...actual, loadMarketRentFeed: vi.fn(actual.loadMarketRentFeed) };
+});
+import { loadMarketRentFeed } from '../../server/warehouse/lease-market/feed';
+const mockLoadMarketRentFeed = vi.mocked(loadMarketRentFeed);
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────────────────
 
@@ -184,6 +196,28 @@ describe('GET /forecast', () => {
       expect(parsed.data.asOf).toBe(ASOF);
     }
   });
+
+  it('C: does not 500 when the lease-market feed read fails on an otherwise-available warehouse -- degrades to marketGaps without derived-asking rows', async () => {
+    const db = freshDb();
+    // lm_market_rent_feed exists (migration ran) but drop it so loadMarketRentFeed's query throws --
+    // simulating a feed-read error distinct from "warehouse unavailable" (getDb() itself still succeeds).
+    db.exec('DROP TABLE lm_market_rent_feed');
+    mockGetSnapshot.mockReturnValue(snap({ leases: [mkLease({ id: 'l1' })] }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const app = makeApp(db);
+      const res = await app.request('/forecast');
+      expect(res.status).toBe(200);
+      const parsed = LeaseForecastResponse.safeParse(await res.json());
+      expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+      if (parsed.success) {
+        expect(parsed.data.marketGaps.every((g) => g.provenance !== 'derived-asking')).toBe(true);
+      }
+      expect(warnSpy).toHaveBeenCalledWith('[lease-forecast-api] lease-market feed unavailable:', expect.stringContaining('lm_market_rent_feed'));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 });
 
 // ── GET /velocity ─────────────────────────────────────────────────────────────────────────
@@ -274,6 +308,33 @@ describe('POST /rent-forecast', () => {
     expect(body.error).toMatch(/Invalid input/);
   });
 
+  it('CRITICAL (fix round 1 ruling A): never uses the lease-market asking-rent feed for the renew_at_market NOI projection — manual overlay marketRents only', async () => {
+    const db = freshDb();
+    // A feed row for the fixture lease's property, well above its in-place rentPerSf (1.2), so if
+    // it leaked into rentForecast's market lookup the delta/NOI impact would be large and nonzero.
+    db.prepare(
+      `INSERT INTO lm_market_rent_feed (ora_property_key, asking_nnn_eq, comp_basis, confidence, cell_key, n, computed_at) VALUES (?, 50, 'similarity', 'MEDIUM', 'k', 12, '2026-03-01')`,
+    ).run('Fixture Property One');
+    // No overlay.marketRents entry for this lease/property — only the feed has a figure.
+    mockGetSnapshot.mockReturnValue(snap({ leases: [mkLease({ id: 'l1', monthsToExpiry: 3, annualRent: 12000, sf: 10000 })] }));
+    const app = makeApp(db);
+    const res = await app.request('/rent-forecast', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ scenarios: ['renew_at_market'] }),
+    });
+    expect(res.status).toBe(200);
+    const parsed = RentForecastResponse.safeParse(await res.json());
+    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+    if (parsed.success) {
+      const result = parsed.data.results[0]!;
+      // The asking rent never gets in -- the lease is held at current, not reset to the $50/SF feed figure.
+      expect(result.deltaUsd).toBe(0);
+      expect(result.noiImpactAnnualUsd).toBe(0);
+      expect(result.assumptions.join(' | ')).toContain('no market rent in overlay');
+    }
+  });
+
   it('honors an explicit single-scenario request', async () => {
     mockGetSnapshot.mockReturnValue(snap({ leases: [mkLease({ id: 'l1' })] }));
     const app = makeApp(freshDb());
@@ -341,5 +402,29 @@ describe('GET /narrative', () => {
       expect(gap.propertyKey).toMatch(/^gap-\d+$/);
     }
     expect(JSON.stringify(sentInput)).not.toContain('Real Sounding Property Name');
+  });
+
+  it('fix round 2 ruling 6: does not read the lease-market feed at all -- a feed row present with no manual override has ZERO effect on topGaps sent to the AI composer', async () => {
+    process.env.ANTHROPIC_API_KEY = 'fixture-key-not-real';
+    mockComposeLeaseNarrative.mockResolvedValue({ narrative: null, degraded: true });
+    const db = freshDb();
+    // A feed row exists for this property -- no overlay.marketRents entry -- but /narrative never
+    // calls loadMarketRentFeed/feedOrEmpty at all, so this row must be invisible to it: the lease's
+    // gap resolves 'absent' (not 'derived-asking'), which the defensive derived-asking filter would
+    // ALSO have excluded -- this test locks the "never reads the feed" behavior itself, not just the
+    // filter (fix round 1 ruling B's filter stays as defense-in-depth, per the header note above).
+    db.prepare(
+      `INSERT INTO lm_market_rent_feed (ora_property_key, asking_nnn_eq, comp_basis, confidence, cell_key, n, computed_at) VALUES (?, 15, 'similarity', 'MEDIUM', 'k', 12, '2026-03-01')`,
+    ).run('Fixture Property One');
+    mockGetSnapshot.mockReturnValue(snap({ leases: [mkLease({ id: 'l1', rentPerSf: 10 })] }));
+    const app = makeApp(db);
+    const res = await app.request('/narrative');
+    expect(res.status).toBe(200);
+
+    expect(mockComposeLeaseNarrative).toHaveBeenCalledTimes(1);
+    const sentInput = mockComposeLeaseNarrative.mock.calls[0]![0] as { topGaps: unknown[] };
+    expect(sentInput.topGaps).toHaveLength(0);
+    // The discriminating assertion: loadMarketRentFeed itself is never invoked by /narrative.
+    expect(mockLoadMarketRentFeed).not.toHaveBeenCalled();
   });
 });

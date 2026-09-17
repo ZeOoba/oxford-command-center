@@ -91,10 +91,11 @@ export function buildGapMap(gaps: MarketRentGap[]): Map<string, MarketRentGap> {
  *   - provenance 'absent' or null gapPsf → '—'
  *   - underMarket → '↓ {gap}/SF'
  *   - at or above market → '↑ {|gap|}/SF'
+ *   - provenance 'derived-asking' (lease-market feed, no manual override) → suffixed ' (asking)'
  */
 export function gapChipLabel(gap: MarketRentGap): string {
   if (gap.provenance === 'absent' || gap.gapPsf === null) return '—';
   const abs = Math.abs(gap.gapPsf);
-  if (gap.underMarket) return `↓ ${abs.toFixed(2)}/SF`;
-  return `↑ ${abs.toFixed(2)}/SF`;
+  const label = gap.underMarket ? `↓ ${abs.toFixed(2)}/SF` : `↑ ${abs.toFixed(2)}/SF`;
+  return gap.provenance === 'derived-asking' ? `${label} (asking)` : label;
 }
