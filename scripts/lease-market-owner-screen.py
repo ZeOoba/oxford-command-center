@@ -5,8 +5,9 @@ argv[1]: path to institutional_owners.py
 stdin:   JSON array of owner names (UTF-8)
 stdout:  {"guardOk": bool, "types": {name: owner_type}}
 owner_type: never_call | affiliated | institutional | verify | private
-guardOk is False when the module could not read its never-call guard file (it then screens
-ORA-self patterns only) -- the caller must fail closed on that.
+guardOk requires _GUARD_RAW to be a dict with a list 'never_call_patterns' (an empty list is a
+valid, healthy guard) AND a truthy module-level ORA_SELF. A guard file the module could not read,
+or any other structurally broken guard, yields guardOk False -- the caller must fail closed on that.
 Never prints matched counterparty names or patterns.
 """
 import importlib.util
@@ -24,7 +25,11 @@ def main() -> None:
         raise SystemExit('cannot load owner-screen module')
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    guard_ok = bool(getattr(mod, '_GUARD_RAW', {}))
+    guard_ok = (
+        isinstance(getattr(mod, '_GUARD_RAW', None), dict)
+        and isinstance(mod._GUARD_RAW.get('never_call_patterns'), list)
+        and bool(getattr(mod, 'ORA_SELF', None))
+    )
     types = {}
     for name in names:
         nc, _ = mod.ora_never_call(name)
