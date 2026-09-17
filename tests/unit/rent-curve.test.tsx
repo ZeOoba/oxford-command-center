@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import { RentCurve } from '../../src/charts/RentCurve';
-import { curveDomains, curveTickValues, sizeBands, validCurvePoints, type CurveDatum } from '../../src/charts/rent-curve-layout';
+import { curveDomains, curveTickValues, sfFormat, sizeBands, validCurvePoints, type CurveDatum } from '../../src/charts/rent-curve-layout';
 
 // jsdom doesn't ship ResizeObserver; RentCurve's useMeasure hook requires it (same pattern as
 // grader-view.test.tsx / market-module-smoke.test.tsx). No-op stub — doesn't drive width, so it's
@@ -135,6 +135,37 @@ describe('rent curve layout', () => {
     const mixed = [pt(1, 8000, 10), { ...pt(2, NaN, 5) }, { ...pt(3, 8000, Infinity) }, pt(4, 0, 5)];
     expect(validCurvePoints(mixed).map((p) => p.id)).toEqual(['1']);
   });
+
+  it('sfFormat: sub-1K integer, 1K-10K one-decimal thousands, >=10K whole thousands', () => {
+    expect(sfFormat(800)).toBe('800');
+    expect(sfFormat(1800)).toBe('1.8K');
+    expect(sfFormat(2000)).toBe('2.0K');
+    expect(sfFormat(2200)).toBe('2.2K');
+    expect(sfFormat(12000)).toBe('12K');
+  });
+
+  it('curveTickValues drops duplicate-labeled ticks (unique sfFormat labels, >= 2 ticks)', () => {
+    const domains: [number, number][] = [
+      [1800, 2200],
+      [2700, 3630],
+      [5544, 6776],
+    ];
+    for (const d of domains) {
+      const labels = curveTickValues(d).map(sfFormat);
+      expect(new Set(labels).size).toBe(labels.length);
+      expect(labels.length).toBeGreaterThanOrEqual(2);
+    }
+  });
+
+  it('curveTickValues fallback ticks stay within the domain (ceil/floor endpoints + clamped middle)', () => {
+    const d: [number, number] = [5544, 6776];
+    const ticks = curveTickValues(d);
+    expect(ticks.length).toBeGreaterThanOrEqual(2);
+    for (const t of ticks) {
+      expect(t).toBeGreaterThanOrEqual(d[0]);
+      expect(t).toBeLessThanOrEqual(d[1]);
+    }
+  });
 });
 
 describe('RentCurve', () => {
@@ -171,10 +202,14 @@ describe('RentCurve', () => {
     vi.stubGlobal('ResizeObserver', ImmediateResizeObserver);
 
     const points: CurveDatum[] = [
+      // Highlighted point placed FIRST -- if RentCurve stopped sorting highlighted points last,
+      // this would be the first rendered <circle>, not the last, and the r="5" assertion below
+      // would fail against the wrong element. Ordering it last in the input would let that
+      // regression slip through undetected.
+      { id: 'ora', sf: 60000, value: 14, solid: true, highlight: true, label: 'ORA space' }, // 1 highlighted
       ...[8, 9, 10, 11, 12, 13].map((v, i) => pt(i, 20000 + i * 100, v)), // 6 solid, 15-30K
       ...[8, 9, 10, 11, 12].map((v, i) => pt(20 + i, 35000 + i * 100, v)), // 5 solid, 30-50K
       pt(30, 25000, 10.5, false), // 1 hollow (converted) point
-      { id: 'ora', sf: 60000, value: 14, solid: true, highlight: true, label: 'ORA space' }, // 1 highlighted
     ];
     expect(points).toHaveLength(13);
 

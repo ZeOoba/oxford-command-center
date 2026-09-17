@@ -8,7 +8,7 @@ import { scaleLinear, scaleLog } from '@visx/scale';
 import { AxisBottom, AxisLeft } from '@visx/axis';
 import { useMeasure } from '@/lib/useMeasure';
 import { AXIS_TICK, GRID_STROKE } from './theme';
-import { curveDomains, curveTickValues, sizeBands, validCurvePoints, type CurveDatum } from './rent-curve-layout';
+import { curveDomains, curveTickValues, sfFormat, sizeBands, validCurvePoints, type CurveDatum } from './rent-curve-layout';
 
 interface Props {
   points: CurveDatum[];
@@ -17,7 +17,6 @@ interface Props {
 }
 
 const defaultFormat = (n: number) => `$${n.toFixed(2)}`;
-const sfFormat = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}K` : String(Math.round(n)));
 
 export function RentCurve({ points, height = 300, valueFormat = defaultFormat }: Props) {
   const [ref, width] = useMeasure<HTMLDivElement>();
