@@ -1,6 +1,6 @@
 // tests/unit/lease-market-ingest.test.ts
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openWarehouse, type WarehouseDb } from '../../server/warehouse/db';
@@ -223,16 +223,16 @@ describe('ingestCostarListingsFile', () => {
     expect((db.prepare("SELECT COUNT(*) AS n FROM lm_observation o JOIN lm_listing l ON l.id = o.listing_id JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '10 ALPHA RD'").get() as { n: number }).n).toBe(3);
   });
 
-  it('first_seen lowers when a back-dated file predates it', async () => {
+  it('first_seen lowers when a back-dated file predates it, and first_landing_id follows', async () => {
     const { dir, db, deps } = setup();
     const zeta: FixtureListing = { address: '1 Zeta Ct', sf: 9000 };
-    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [zeta]), deps);
+    const l1 = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [zeta]), deps);
     await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-03-01.xlsx', [zeta]), deps);
-    const before = db.prepare("SELECT l.first_seen AS listingFirstSeen, p.first_seen AS propertyFirstSeen FROM lm_listing l JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '1 ZETA CT'").get();
-    expect(before).toEqual({ listingFirstSeen: '2026-02-01', propertyFirstSeen: '2026-02-01' });
-    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-15.xlsx', [zeta]), deps);
-    const after = db.prepare("SELECT l.first_seen AS listingFirstSeen, p.first_seen AS propertyFirstSeen FROM lm_listing l JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '1 ZETA CT'").get();
-    expect(after).toEqual({ listingFirstSeen: '2026-01-15', propertyFirstSeen: '2026-01-15' });
+    const before = db.prepare("SELECT l.first_seen AS listingFirstSeen, p.first_seen AS propertyFirstSeen, l.first_landing_id AS firstLandingId FROM lm_listing l JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '1 ZETA CT'").get();
+    expect(before).toEqual({ listingFirstSeen: '2026-02-01', propertyFirstSeen: '2026-02-01', firstLandingId: l1.landingId });
+    const l3 = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-15.xlsx', [zeta]), deps);
+    const after = db.prepare("SELECT l.first_seen AS listingFirstSeen, p.first_seen AS propertyFirstSeen, l.first_landing_id AS firstLandingId FROM lm_listing l JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '1 ZETA CT'").get();
+    expect(after).toEqual({ listingFirstSeen: '2026-01-15', propertyFirstSeen: '2026-01-15', firstLandingId: l3.landingId });
   });
 
   it('two different CoStar ids at the same address create two properties', async () => {
@@ -296,7 +296,10 @@ describe('ingestCostarListingsFile', () => {
     const { dir, db, deps } = setup();
     await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', FOUR), deps);
     expect((db.prepare("SELECT owner_type FROM lm_property WHERE address_norm = '20 BETA DR'").get() as { owner_type: string }).owner_type).toBe('institutional');
-    const down = { ...deps, screen: (names: string[]) => ({ ...stubScreen(names), available: false }) };
+    // A REAL down screen returns no resolved types at all (empty Map) — if the update path failed to
+    // gate on `available`, this would overwrite owner_type with 'unknown', not merely re-write the
+    // same value back.
+    const down = { ...deps, screen: () => ({ available: false, guardOk: false, types: new Map(), error: 'down' }) };
     await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', FOUR), down);
     expect((db.prepare("SELECT owner_type FROM lm_property WHERE address_norm = '20 BETA DR'").get() as { owner_type: string }).owner_type).toBe('institutional');
   });
@@ -311,10 +314,24 @@ describe('ingestCostarListingsFile', () => {
   it('falls back to the local mtime date when the file name has no date convention', async () => {
     const { dir, db, deps } = setup();
     const f = await writeCostarFixture(dir, 'Export.xlsx', [{ address: '5 Lake St', sf: 3000, market: 'Madison' }]);
+    // 23:30 LOCAL time: in any negative-UTC-offset zone (all US zones) this rolls into the next UTC
+    // calendar day, so the old UTC-based `mtime.toISOString().slice(0,10)` formula would date the file
+    // one day later than the correct local date.
+    const target = new Date(2026, 5, 14, 23, 30, 0);
+    utimesSync(f, target, target);
     const r = await ingestCostarListingsFile(db, f, deps);
-    const now = new Date();
-    const local = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    const local = `${target.getFullYear()}-${String(target.getMonth() + 1).padStart(2, '0')}-${String(target.getDate()).padStart(2, '0')}`;
+    const utcOfSameInstant = target.toISOString().slice(0, 10);
     expect(r.exportDate).toBe(local);
+    if (utcOfSameInstant !== local) {
+      // This machine's local offset crosses midnight at 23:30 local — the old (UTC) formula would have
+      // produced `utcOfSameInstant` instead, so this assertion distinguishes old vs new behavior.
+      expect(r.exportDate).not.toBe(utcOfSameInstant);
+    }
+    // Else: this machine's local zone doesn't cross a day boundary at 23:30 (e.g. it runs at UTC, or an
+    // offset that keeps 23:30 local same-day in UTC) — local and UTC coincide here, so this run cannot
+    // distinguish old vs new behavior by date value alone. The `r.exportDate === local` assertion above
+    // still correctly pins the LOCAL-date contract either way.
   });
 
   it('a file-name market that contradicts the market column fails the landing', async () => {
@@ -322,5 +339,111 @@ describe('ingestCostarListingsFile', () => {
     const f = await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', [{ address: '5 Lake St', sf: 3000, market: 'Madison' }]);
     const r = await ingestCostarListingsFile(db, f, deps);
     expect(r).toMatchObject({ status: 'failed', error: expect.stringMatching(/file name market columbus contradicts market column madison/) });
+  });
+
+  // ── Fix round 2 ──────────────────────────────────────────────────────────
+
+  it('a no-id row with a blank city later matches by address, backfilling city_norm and the addr: key', async () => {
+    const { dir, db, deps } = setup();
+    const cityless = testHeaderMap({ fields: { ...testHeaderMap().fields, city: null } });
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', [{ address: '10 Alpha Rd', sf: 12000 }]), { ...deps, headerMap: cityless });
+    const blank = db.prepare("SELECT city_norm, identity_key FROM lm_property WHERE address_norm = '10 ALPHA RD'").get() as { city_norm: string; identity_key: string };
+    expect(blank).toEqual({ city_norm: '', identity_key: 'addr:columbus||10 ALPHA RD' });
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [{ address: '10 Alpha Rd', sf: 12000, city: 'Columbus' }]), deps);
+    const count = (db.prepare("SELECT COUNT(*) AS n FROM lm_property WHERE address_norm = '10 ALPHA RD'").get() as { n: number }).n;
+    expect(count).toBe(1);
+    const after = db.prepare("SELECT city_norm, identity_key FROM lm_property WHERE address_norm = '10 ALPHA RD'").get() as { city_norm: string; identity_key: string };
+    expect(after).toEqual({ city_norm: 'COLUMBUS', identity_key: 'addr:columbus|COLUMBUS|10 ALPHA RD' });
+  });
+
+  it('a different city at the same address is a different property (documented behavior)', async () => {
+    const { dir, db, deps } = setup();
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', [{ address: '10 Alpha Rd', sf: 12000, city: 'Columbus' }]), deps);
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [{ address: '10 Alpha Rd', sf: 12000, city: 'Worthington' }]), deps);
+    const count = (db.prepare("SELECT COUNT(*) AS n FROM lm_property WHERE address_norm = '10 ALPHA RD'").get() as { n: number }).n;
+    expect(count).toBe(2);
+  });
+
+  it('a back-dated complete-shaped export stays partial when a later landing already exists (no resurrection, no strikes)', async () => {
+    const { dir, db, deps } = setup();
+    const extra: FixtureListing = { address: '40 Delta Pkwy', sf: 5000 };
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', FOUR), deps);
+    const noBeta = FOUR.filter((l) => l.id !== 'C2');
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [...noBeta, extra]), deps);
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-03-01.xlsx', [...noBeta, extra]), deps);
+    expect(spaceStatus(db, '20 BETA DR')).toBe('removed');
+    // A thin (partial) export dated AFTER the removal, then a complete-shaped file dated BEFORE it.
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-04-01.xlsx', [FOUR[0]!]), deps);
+    const r = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-03-15.xlsx', FOUR), deps);
+    expect(r.completeness).toBe('partial');
+    expect(r.markedMissing).toBe(0);
+    expect(r.markedRemoved).toBe(0);
+    expect(spaceStatus(db, '20 BETA DR')).toBe('removed');
+    expect(eventsFor(db, '20 BETA DR').map((e) => (e as { kind: string }).kind)).toEqual(['new', 'missing', 'removed']);
+  });
+
+  it('the opex exclusion/dedupe key is property identity + suite, not address|suite', async () => {
+    const config = testConfig();
+    config.markets = config.markets.map((m) => ({ ...m, opexDefaults: { warehouse: null, flex: null } }));
+    const base = testHeaderMap();
+    const headerMap = testHeaderMap({ fields: { ...base.fields, rentText: 'Rent Low', rentLow: null, rentHigh: null, rentBasis: null } });
+    const { dir, db, deps } = setup({ config, headerMap });
+    // A and B share the SAME address+suite text but are two DIFFERENT properties (two CoStar ids). An
+    // address|suite exclusion key would conflate them; an identity_key-based key must not.
+    const a: FixtureListing = { id: 'PA', address: '1 Twin St', sf: 10000, rentLow: '$7.00/SF/YR + $1.80 NNN', rentType: null };
+    const b1: FixtureListing = { id: 'PB', address: '1 Twin St', sf: 10000, rentLow: '$7.00/SF/YR + $1.90 NNN', rentType: null };
+    const c: FixtureListing = { address: '2 Solo St', sf: 10000, rentLow: '$7.00/SF/YR + $2.00 NNN', rentType: null };
+    const d: FixtureListing = { address: '3 Solo St', sf: 10000, rentLow: '$7.00/SF/YR + $2.10 NNN', rentType: null };
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', [a, b1, c, d]), deps);
+    // File 2: B reappears (its current value should be used instead of its prior one, but A/C/D's prior
+    // values must still count) plus a 5th comp and the GROSS listing needing conversion.
+    const b2: FixtureListing = { id: 'PB', address: '1 Twin St', sf: 10000, rentLow: '$7.00/SF/YR + $1.90 NNN', rentType: null };
+    const e: FixtureListing = { address: '4 Solo St', sf: 10000, rentLow: '$7.00/SF/YR + $2.20 NNN', rentType: null };
+    const gross: FixtureListing = { address: '99 Gross Way', sf: 10000, rentLow: '$11.00/SF/YR Gross', rentType: null };
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [b2, e, gross]), deps);
+    // n = A(1.80) + C(2.00) + D(2.10) [prior, correctly NOT excluded] + B(1.90) + E(2.20) [current] = 5
+    // => median 2.00 => converts. Under an address|suite key, A's AND B's prior quotes would both be
+    // wrongly excluded (same address text as B's current row), leaving n = 4 => no conversion.
+    expect(db.prepare("SELECT o.rent_basis, o.asking_nnn_eq, o.opex_est_psf, o.opex_source FROM lm_observation o JOIN lm_listing l ON l.id = o.listing_id JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '99 GROSS WAY'").get())
+      .toEqual({ rent_basis: 'GROSS', asking_nnn_eq: 9, opex_est_psf: 2, opex_source: 'quoted-market-median n=5' });
+  });
+
+  it('a CoStar id already used by a different market is skipped, not attached cross-market', async () => {
+    const { dir, db, deps } = setup();
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', [{ id: 'X1', address: '10 Alpha Rd', sf: 12000 }]), deps);
+    const r = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_madison_2026-01-01.xlsx', [{ id: 'X1', address: '5 Lake St', sf: 3000, market: 'Madison' }]), deps);
+    expect(r).toMatchObject({ status: 'ingested', completeness: 'complete', skipped: 1, insertedSpaces: 0, newProperties: 0 });
+    expect((db.prepare("SELECT COUNT(*) AS n FROM lm_property WHERE market_id = 'madison'").get() as { n: number }).n).toBe(0);
+    expect((db.prepare("SELECT market_id FROM lm_property WHERE costar_property_id = 'X1'").get() as { market_id: string }).market_id).toBe('columbus');
+  });
+
+  it('a sighting in a partial export clears missing_once back to active (removed spaces stay untouched)', async () => {
+    const { dir, db, deps } = setup();
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', FOUR), deps);
+    const noBeta = FOUR.filter((l) => l.id !== 'C2');
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [...noBeta, { address: '40 Delta Pkwy', sf: 5000 }]), deps);
+    expect(spaceStatus(db, '20 BETA DR')).toBe('missing_once');
+    const r = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-03-01.xlsx', [FOUR[1]!]), deps);
+    expect(r.completeness).toBe('partial');
+    expect(spaceStatus(db, '20 BETA DR')).toBe('active');
+    expect(eventsFor(db, '20 BETA DR').map((e) => (e as { kind: string }).kind)).toEqual(['new', 'missing']);
+  });
+
+  it('an expired space seen again on a complete export returns to active with a returned event', async () => {
+    const { dir, db, deps } = setup();
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', FOUR), deps);
+    db.prepare(
+      "UPDATE lm_listing SET status = 'expired' WHERE id = (SELECT l.id FROM lm_listing l JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '20 BETA DR')",
+    ).run();
+    const r = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', FOUR), deps);
+    expect(r.completeness).toBe('complete');
+    expect(spaceStatus(db, '20 BETA DR')).toBe('active');
+    expect(eventsFor(db, '20 BETA DR').map((e) => (e as { kind: string }).kind)).toEqual(['new', 'returned']);
+  });
+
+  it('the ORA property-config match requires the market (the same address in another market is not tagged ORA)', async () => {
+    const { dir, db, deps } = setup();
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_madison_2026-01-01.xlsx', [{ address: '1100 Rarig Avenue', sf: 8000, market: 'Madison' }]), deps);
+    expect((db.prepare("SELECT ora_property_key FROM lm_property WHERE address_norm = '1100 RARIG AVE' AND market_id = 'madison'").get() as { ora_property_key: string | null }).ora_property_key).toBeNull();
   });
 });
