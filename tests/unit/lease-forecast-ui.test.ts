@@ -176,4 +176,12 @@ describe('gapChipLabel', () => {
     const g = mkGap('x', { gapPsf: null, provenance: 'real', underMarket: false });
     expect(gapChipLabel(g)).toBe('—');
   });
+
+  it('derived-asking (lease-market feed, no manual override) → suffixed (asking)', () => {
+    const g = mkGap('x', { underMarket: true, gapPsf: 1.8, provenance: 'derived-asking' });
+    const label = gapChipLabel(g);
+    expect(label).toContain('↓');
+    expect(label).toContain('1.80');
+    expect(label.endsWith(' (asking)')).toBe(true);
+  });
 });

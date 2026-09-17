@@ -176,8 +176,11 @@ export function renewalSignals(
 export function marketRentGaps(
   leases: Lease[],
   marketRents: Record<string, number>,
+  feedRents: Record<string, number> = {},
 ): MarketRentGap[] {
   const out: MarketRentGap[] = [];
+  const valid = (v: number | undefined): number | null =>
+    typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : null;
 
   for (const l of leases) {
     // Derive current PSF — prefer rentPerSf if available, else compute from annualRent/sf
@@ -187,12 +190,10 @@ export function marketRentGaps(
       return null;
     })();
 
-    // Market rent lookup: leaseId first, then propertyKey
-    const rawMarket = marketRents[l.id] ?? marketRents[l.propertyKey];
-    const marketRentPsf: number | null =
-      typeof rawMarket === 'number' && Number.isFinite(rawMarket) && rawMarket > 0
-        ? rawMarket
-        : null;
+    // Market rent lookup: manual leaseId ▸ manual propertyKey ▸ lease-market feed (propertyKey).
+    const manual = valid(marketRents[l.id]) ?? valid(marketRents[l.propertyKey]);
+    const fromFeed = manual === null ? valid(feedRents[l.propertyKey]) : null;
+    const marketRentPsf: number | null = manual ?? fromFeed;
 
     if (marketRentPsf === null) {
       // No market rent — return absent record (do not skip to preserve visibility)
@@ -223,7 +224,7 @@ export function marketRentGaps(
       gapPsf,
       gapAnnualUsd,
       underMarket,
-      provenance: 'derived',
+      provenance: manual !== null ? 'derived' : 'derived-asking',
     });
   }
 

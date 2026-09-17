@@ -85,7 +85,7 @@ export const MarketRentGap = z.object({
   gapPsf: z.number().nullable(),                   // market - current
   gapAnnualUsd: z.number().nullable(),             // gapPsf * sf
   underMarket: z.boolean(),                        // current < market AND both present
-  provenance: z.enum(['real', 'derived', 'absent']),
+  provenance: z.enum(['real', 'derived', 'derived-asking', 'absent']), // derived-asking = lease-market feed (asking NNN-eq cell median)
 });
 export type MarketRentGap = z.infer<typeof MarketRentGap>;
 
