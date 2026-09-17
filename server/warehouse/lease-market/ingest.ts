@@ -146,6 +146,9 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
   // A landing dated more than 1 day after deps.now() is almost certainly a bad file-name date or a
   // clock skew on the source machine — fail closed rather than let a future-dated export poison the
   // completeness/removal-sweep ordering for every subsequent real file.
+  // Clock bases differ on purpose: exportDate is a LOCAL calendar date (file name, or mtime via
+  // localDateString) while deps.now() is UTC. The 1-day tolerance absorbs that offset in both
+  // directions (max real offsets -12h/+14h), so it covers skew AND the local-vs-UTC gap.
   const maxAllowedDate = addDays(deps.now().slice(0, 10), 1);
   if (exportDate > maxAllowedDate) {
     return fail(fromName?.marketId ?? null, exportDate, `export date ${exportDate} is more than 1 day after ${deps.now().slice(0, 10)} (deps.now())`);
