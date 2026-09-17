@@ -17,18 +17,40 @@ export interface VacantUnit {
 
 const money = (v: number | null) => (v === null ? '—' : `$${v.toFixed(2)}`);
 
-export function recommendationFor(input: { asking: number | null; stats: ResolvedComparables | null; bandPct: number }): string {
+// Rounds a fractional gap to 9 decimal places so a nominally-exact ratio (e.g. 7.70/7.00 - 1 = 0.10)
+// that floating-point division turns into 0.10000000000000003 doesn't spuriously cross a band edge.
+function roundedGap(asking: number, median: number): number {
+  return Math.round(((asking - median) / median) * 1e9) / 1e9;
+}
+
+// Prints the gap as a whole percent, EXCEPT when that rounded whole number equals the band
+// threshold itself — printing plain "10%" for a 10.4% gap that is (correctly) outside a 10% band
+// would read as a contradiction ("10%" looks like the boundary, not past it), so that one case gets
+// one decimal of precision instead.
+function percentText(gap: number, bandPct: number): string {
+  const pctAbs = Math.abs(gap) * 100;
+  const roundedInt = Math.round(pctAbs);
+  const thresholdPct = Math.round(bandPct * 100);
+  return roundedInt === thresholdPct ? `${pctAbs.toFixed(1)}%` : `${roundedInt}%`;
+}
+
+export function recommendationFor(input: { asking: number | null; matched: boolean; stats: ResolvedComparables | null; bandPct: number }): string {
   const s = input.stats;
   if (!s || s.median === null) return 'No comparable asking rents yet for this size and type.';
   const range = `${money(s.p25)}–${money(s.p75)}`;
-  if (input.asking === null) return `No ORA asking rent found in CoStar — confirm the unit is being marketed. Comparable range ${range}.`;
-  const gap = (input.asking - s.median) / s.median;
-  const pct = Math.round(Math.abs(gap) * 100);
+  if (input.asking === null) {
+    return input.matched
+      ? `ORA listing found in CoStar but its asking rent is withheld or not normalizable. Comparable range ${range}.`
+      : `No ORA asking rent found in CoStar — confirm the unit is being marketed. Comparable range ${range}.`;
+  }
+  // Guarded consistently with gapPct in computePositioning: a non-positive median can't support a
+  // reliable directional gap, so fall straight to the neutral "within range" wording.
+  const gap = s.median > 0 ? roundedGap(input.asking, s.median) : 0;
   const sentence =
     gap > input.bandPct
-      ? `Asking is ${pct}% above the comparable median (${money(s.median)}); comparable range ${range}.`
+      ? `Asking is ${percentText(gap, input.bandPct)} above the comparable median (${money(s.median)}); comparable range ${range}.`
       : gap < -input.bandPct
-        ? `Asking is ${pct}% below the comparable median (${money(s.median)}); room to move toward ${money(s.p25)}–${money(s.median)}.`
+        ? `Asking is ${percentText(gap, input.bandPct)} below the comparable median (${money(s.median)}); room to move toward ${money(s.p25)}–${money(s.median)}.`
         : `Within the comparable range (${range}).`;
   return s.confidence === 'LOW' ? `Thin comparable set (n=${s.n}) — indicative only. ${sentence}` : sentence;
 }
@@ -41,44 +63,98 @@ export function computePositioning(
 ): { rows: PositioningRow[]; unconfiguredPropertyKeys: string[]; listedButLeased: ListedButLeased[] } {
   const t = config.thresholds;
   const props = new Map(config.oraProperties.map((p) => [p.propertyKey, p]));
+
+  // ORA spaces per property key, scoped to the market the config declares for that key. Ingest
+  // assigns oraPropertyKey purely by address match (server/warehouse/lease-market/ingest.ts), with
+  // no market check, so a mis-filed export could tag a same-address-labelled row in another market
+  // to this key — that must never enter matching here. Sorted by listingId ascending so an
+  // exact-suite tie across multiple buildings sharing one key (a legitimate multi-building portfolio
+  // under one ORA key) resolves deterministically to the lowest listingId.
   const oraSpaces = new Map<string, SpaceState[]>();
   for (const s of state.spaces) {
     const key = s.property.oraPropertyKey;
-    if (key === null || !isActive(s) || !props.has(key)) continue;
+    if (key === null || !isActive(s)) continue;
+    const p = props.get(key);
+    if (!p || p.marketId !== s.marketId) continue;
     const list = oraSpaces.get(key) ?? [];
     list.push(s);
     oraSpaces.set(key, list);
   }
+  for (const list of oraSpaces.values()) list.sort((a, b) => a.listingId - b.listingId);
 
   const unconfigured = new Set<string>();
+  const unitSuite: string[] = units.map((u) => normalizeSuite(u.unit));
+  const unitPropertyIndices = new Map<string, number[]>();
+  units.forEach((u, i) => {
+    if (!props.has(u.propertyKey)) {
+      unconfigured.add(u.propertyKey);
+      return;
+    }
+    const list = unitPropertyIndices.get(u.propertyKey) ?? [];
+    list.push(i);
+    unitPropertyIndices.set(u.propertyKey, list);
+  });
+
+  // Exact-suite matches are resolved first, across every unit of a property, before any fallback —
+  // so a fallback can never steal a space another unit of the same property matches exactly.
+  const unitMatch: Array<SpaceState | undefined> = new Array(units.length).fill(undefined);
+  for (const [key, indices] of unitPropertyIndices) {
+    const candidates = oraSpaces.get(key) ?? [];
+    const assigned = new Set<number>();
+    for (const i of indices) {
+      const suite = unitSuite[i]!;
+      if (suite === '') continue;
+      const match = candidates.find((s) => s.suiteNorm === suite);
+      if (match) {
+        unitMatch[i] = match;
+        assigned.add(match.listingId);
+      }
+    }
+    // The "only ORA space" fallback applies only when there is exactly one active ORA space for the
+    // property AND either the vacant unit's suite or that space's own suite is blank — and only when
+    // that space isn't already claimed by an exact match on another unit of the same property.
+    if (candidates.length === 1) {
+      const only = candidates[0]!;
+      for (const i of indices) {
+        if (unitMatch[i]) continue;
+        const suite = unitSuite[i]!;
+        if ((suite === '' || only.suiteNorm === '') && !assigned.has(only.listingId)) {
+          unitMatch[i] = only;
+          assigned.add(only.listingId);
+        }
+      }
+    }
+  }
+
   const matchedSpaceIds = new Set<number>();
   const vacantSuites = new Map<string, Set<string>>();
   const rows: PositioningRow[] = [];
 
-  for (const u of units) {
+  units.forEach((u, i) => {
     const p = props.get(u.propertyKey);
-    if (!p) {
-      unconfigured.add(u.propertyKey);
-      continue;
+    if (!p) return; // unconfigured — already recorded above, no row.
+    const suite = unitSuite[i]!;
+    // A blank vacant-unit suite must never stand in for "matches any blank-suite listing" when
+    // computing listedButLeased below — only track genuinely-stated suites there.
+    if (suite !== '') {
+      const suites = vacantSuites.get(p.propertyKey) ?? new Set<string>();
+      suites.add(suite);
+      vacantSuites.set(p.propertyKey, suites);
     }
-    const suite = normalizeSuite(u.unit);
-    const suites = vacantSuites.get(p.propertyKey) ?? new Set<string>();
-    suites.add(suite);
-    vacantSuites.set(p.propertyKey, suites);
 
-    const sf = u.sf > 0 ? u.sf : p.typicalUnitSf;
+    const usedTypicalSf = !(u.sf > 0);
+    const sf = usedTypicalSf ? p.typicalUnitSf : u.sf;
     const { profile, matchedPropertyId, target } = oraSubject(p, state, sf, t);
     const stats = target
       ? resolveComparables(profile, matchedPropertyId, state.candidates, state.cellFor(target), config.similarityWeights, t)
       : null;
 
-    const candidates = oraSpaces.get(p.propertyKey) ?? [];
-    const match = (suite !== '' ? candidates.find((s) => s.suiteNorm === suite) : undefined) ?? (candidates.length === 1 ? candidates[0] : undefined);
+    const match = unitMatch[i];
     if (match) matchedSpaceIds.add(match.listingId);
-    const asking = match ? (match.observations[match.observations.length - 1]!.askingNnnEq ?? null) : null;
+    const asking = match ? match.observations[match.observations.length - 1]!.askingNnnEq : null;
 
     const percentile = asking !== null && stats && stats.values.length > 0 ? midRankPercentile(asking, stats.values) : null;
-    const gapPct = asking !== null && stats && stats.median !== null && stats.median > 0 ? (asking - stats.median) / stats.median : null;
+    const gapPct = asking !== null && stats && stats.median !== null && stats.median > 0 ? roundedGap(asking, stats.median) : null;
     const band: PositioningRow['band'] =
       gapPct === null ? 'unknown' : gapPct > t.positioningBandPct ? 'above' : gapPct < -t.positioningBandPct ? 'below' : 'in_band';
     const comps: CompRow[] = (stats?.comps ?? []).slice(0, 15).map((c) => ({
@@ -90,6 +166,9 @@ export function computePositioning(
       score: Math.round(c.similarity.score),
       distanceMi: c.similarity.distanceMi === null ? null : Math.round(c.similarity.distanceMi * 10) / 10,
     }));
+
+    const baseRecommendation = recommendationFor({ asking, matched: match !== undefined, stats, bandPct: t.positioningBandPct });
+    const recommendation = usedTypicalSf ? `SF not stated in the rent roll; analysed at ${p.typicalUnitSf} SF. ${baseRecommendation}` : baseRecommendation;
 
     rows.push({
       propertyKey: u.propertyKey,
@@ -104,14 +183,14 @@ export function computePositioning(
       percentile,
       gapPct,
       band,
-      recommendation: recommendationFor({ asking, stats, bandPct: t.positioningBandPct }),
+      recommendation,
       flags: match ? [] : ['not_listed'],
       effectiveDom: match ? effectiveDom(match, state.asOf) : null,
       brokerName: rowLevel ? (match?.brokerName ?? null) : null,
       listingUrl: rowLevel ? (match?.listingUrl ?? null) : null,
       dateListed: match ? (match.costarDateOnMarket ?? match.firstSeen) : null,
     });
-  }
+  });
 
   const listedButLeased: ListedButLeased[] = [];
   for (const [key, spaces] of oraSpaces) {
