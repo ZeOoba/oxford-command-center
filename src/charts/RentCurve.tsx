@@ -8,7 +8,7 @@ import { scaleLinear, scaleLog } from '@visx/scale';
 import { AxisBottom, AxisLeft } from '@visx/axis';
 import { useMeasure } from '@/lib/useMeasure';
 import { AXIS_TICK, GRID_STROKE } from './theme';
-import { curveDomains, sizeBands, type CurveDatum } from './rent-curve-layout';
+import { curveDomains, curveTickValues, sizeBands, type CurveDatum } from './rent-curve-layout';
 
 interface Props {
   points: CurveDatum[];
@@ -35,15 +35,18 @@ export function RentCurve({ points, height = 300, valueFormat = defaultFormat }:
 
   const margin = { top: 12, right: 16, bottom: 32, left: 52 };
   const iw = Math.max(0, width - margin.left - margin.right);
-  const ih = height - margin.top - margin.bottom;
+  const ih = Math.max(0, height - margin.top - margin.bottom);
   const x = scaleLog<number>({ domain: domains.x, range: [0, iw] });
   const y = scaleLinear<number>({ domain: domains.y, range: [ih, 0] });
   const clampX = (sf: number) => x(Math.min(domains.x[1], Math.max(domains.x[0], sf)));
+  const tickValues = curveTickValues(domains.x);
+  // Highlighted (ORA) points render last so their dots sit on top of the general cloud.
+  const orderedPoints = [...points].sort((a, b) => Number(a.highlight) - Number(b.highlight));
 
   return (
     <div ref={ref} style={{ width: '100%', position: 'relative' }}>
       {width > 0 && (
-        <svg width={width} height={height} role="img" aria-label="Asking rent by available square feet">
+        <svg width={width} height={height} role="img" aria-label={`Asking rent by available square feet, ${points.length} listings`}>
           <Group left={margin.left} top={margin.top}>
             {y.ticks(5).map((t) => (
               <line key={`g${t}`} x1={0} x2={iw} y1={y(t)} y2={y(t)} stroke={GRID_STROKE} />
@@ -58,7 +61,7 @@ export function RentCurve({ points, height = 300, valueFormat = defaultFormat }:
                 </g>
               );
             })}
-            {points.map((p) => {
+            {orderedPoints.map((p) => {
               const cx = clampX(p.sf);
               const cy = y(p.value);
               const color = p.highlight ? 'var(--color-warn)' : 'var(--color-info)';
@@ -78,7 +81,7 @@ export function RentCurve({ points, height = 300, valueFormat = defaultFormat }:
               );
             })}
             <AxisLeft scale={y} numTicks={5} hideAxisLine hideTicks tickFormat={(v) => valueFormat(Number(v))} tickLabelProps={() => ({ ...AXIS_TICK, textAnchor: 'end', dx: '-0.4em', dy: '0.3em' })} />
-            <AxisBottom top={ih} scale={x} numTicks={6} hideAxisLine hideTicks tickFormat={(v) => sfFormat(Number(v))} tickLabelProps={() => ({ ...AXIS_TICK, textAnchor: 'middle', dy: '0.5em' })} />
+            <AxisBottom top={ih} scale={x} tickValues={tickValues} hideAxisLine hideTicks tickFormat={(v) => sfFormat(Number(v))} tickLabelProps={() => ({ ...AXIS_TICK, textAnchor: 'middle', dy: '0.5em' })} />
           </Group>
         </svg>
       )}
