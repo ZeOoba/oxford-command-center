@@ -84,6 +84,31 @@ describe('LeaseMarketModule', () => {
     expect(document.body.textContent).not.toMatch(/NaN/);
   });
 
+  it('re-clicking the selected Portfolio row toggles the comparables panel closed', () => {
+    renderWith();
+    expect(screen.queryByText(/Comparables — 1100 Rarig/)).toBeNull();
+    fireEvent.click(screen.getByText('1100 Rarig'));
+    expect(screen.getByText(/Comparables — 1100 Rarig/)).toBeTruthy();
+    fireEvent.click(screen.getByText('1100 Rarig'));
+    expect(screen.queryByText(/Comparables — 1100 Rarig/)).toBeNull();
+  });
+
+  it('filters the Market Rents benchmark table to the selected market, showing the empty state when only OTHER markets have benchmark cells', () => {
+    const summaryWithOtherMarketBenchmarks: LeaseMarketSummaryResponse = {
+      ...SUMMARY,
+      benchmarks: [{
+        cellKey: 'madison|warehouse|5-15K|all', marketId: 'madison', submarket: null, subtype: 'warehouse', sizeBand: '5-15K',
+        officeStratum: 'all', rolledUp: 'none', n: 6, totalN: 6, quotedShare: 1, p25: 8, median: 9, p75: 10, lowCoverage: false,
+      }],
+    };
+    renderWith(summaryWithOtherMarketBenchmarks);
+    fireEvent.click(screen.getByRole('tab', { name: 'Market Rents' }));
+    // data.benchmarks is non-empty overall (one Madison cell), but the selected market is Columbus --
+    // the per-market filter must still show the empty state, not an empty table.
+    expect(screen.getByText('No benchmark cells yet.')).toBeTruthy();
+    expect(screen.queryByText('madison|warehouse|5-15K|all')).toBeNull();
+  });
+
   it('switches to the radar, changes and data-quality tabs', () => {
     renderWith();
     fireEvent.click(screen.getByRole('tab', { name: 'Acquisition Radar' }));
@@ -179,13 +204,12 @@ describe('LeaseMarketModule', () => {
   it('POSTs the right body with ORA_JSON_MUTATION_HEADERS, disables the buttons while pending, and shows the error on failure', async () => {
     let resolveFetch!: (r: Response) => void;
     const pending = new Promise<Response>((resolve) => { resolveFetch = resolve; });
-    const fetchMock = vi.fn((input: string | URL, init?: RequestInit) => {
-      expect(String(input)).toBe('/api/warehouse/lease-market/radar/decision');
-      expect(init?.method).toBe('POST');
-      expect(init?.headers).toMatchObject(ORA_JSON_MUTATION_HEADERS);
-      expect(JSON.parse(init!.body as string)).toEqual({ propertyId: 2, decision: 'investigate', note: null });
-      return pending;
-    });
+    // The mock body only returns the pending promise -- it makes no assertions itself. A `throw`/
+    // `expect` failure raised INSIDE a mock implementation surfaces as a rejected fetch() call in the
+    // component under test (swallowed by whatever catches the mutation's promise) rather than as a
+    // normal test failure, which makes the real cause hard to find. Capture the call args instead and
+    // assert on them below, in the test body proper.
+    const fetchMock = vi.fn((_input: string | URL, _init?: RequestInit) => pending);
     vi.stubGlobal('fetch', fetchMock);
     renderWith(SUMMARY, POSITIONING, RADAR, SIGNALS, CHANGES, true);
     fireEvent.click(screen.getByRole('tab', { name: 'Acquisition Radar' }));
@@ -197,6 +221,13 @@ describe('LeaseMarketModule', () => {
     await waitFor(() => expect((screen.getByRole('button', { name: 'Investigate' }) as HTMLButtonElement).disabled).toBe(true));
     expect((screen.getByRole('button', { name: 'Monitor' }) as HTMLButtonElement).disabled).toBe(true);
     expect((screen.getByRole('button', { name: 'Pass' }) as HTMLButtonElement).disabled).toBe(true);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [input, init] = fetchMock.mock.calls[0]!;
+    expect(String(input)).toBe('/api/warehouse/lease-market/radar/decision');
+    expect(init?.method).toBe('POST');
+    expect(init?.headers).toMatchObject(ORA_JSON_MUTATION_HEADERS);
+    expect(JSON.parse(init!.body as string)).toEqual({ propertyId: 2, decision: 'investigate', note: null });
 
     resolveFetch(new Response(JSON.stringify({ error: 'call the broker first' }), { status: 400, headers: { 'content-type': 'application/json' } }));
     const alert = await screen.findByRole('alert');

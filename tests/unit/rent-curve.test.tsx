@@ -157,6 +157,15 @@ describe('rent curve layout', () => {
     }
   });
 
+  it('pins the fallback ticks for a single sf=1112 point to [1100, 1200]', () => {
+    // sf=1112 -> x domain [1000.8, 1223.2] (0.9x floor / 1.1x ceiling). No LOG_TICK_CANDIDATES value
+    // (500/1000/2000/...) falls inside that narrow band, so this exercises the 3-value fallback path,
+    // whose ceil/floor-to-2-sig-figs endpoints round to 1100/1200 and whose midpoint (~1106) dedupes
+    // against the 1100 endpoint's "1.1K" label, leaving exactly these two ticks.
+    const d = curveDomains([pt(1, 1112, 9)])!;
+    expect(curveTickValues(d.x)).toEqual([1100, 1200]);
+  });
+
   it('curveTickValues fallback ticks stay within the domain (ceil/floor endpoints + clamped middle)', () => {
     const d: [number, number] = [5544, 6776];
     const ticks = curveTickValues(d);
@@ -233,5 +242,25 @@ describe('RentCurve', () => {
     // At least 2 x-axis tick labels (distinguished from the $-formatted y-axis labels).
     const xAxisLabels = Array.from(container.querySelectorAll('text')).filter((t) => /^\d+K?$/.test(t.textContent ?? ''));
     expect(xAxisLabels.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('renders decimal-thousands x-axis tick labels (e.g. "1.8K") for a low-SF domain', async () => {
+    vi.stubGlobal('ResizeObserver', ImmediateResizeObserver);
+
+    // sfFormat renders 1,000-9,999 SF as one decimal of thousands ("1.8K", "2.2K") -- a plain
+    // `/^\d+K?$/` label regex (no decimal point) would silently fail to count these, which is
+    // exactly the shape of tick label this test pins down.
+    const points: CurveDatum[] = [pt(1, 1500, 8), pt(2, 2200, 9), pt(3, 3600, 10)];
+
+    const { container } = render(<RentCurve points={points} />);
+
+    await waitFor(() => {
+      expect(container.querySelectorAll('circle')).toHaveLength(3);
+    });
+    // Widened to accept an optional one-decimal-place thousands label ("1.8K"), not just a bare
+    // integer ("18K") -- sfFormat's own 1K-10K branch always emits one decimal.
+    const xAxisLabels = Array.from(container.querySelectorAll('text')).filter((t) => /^\d+(\.\d)?K?$/.test(t.textContent ?? ''));
+    expect(xAxisLabels.length).toBeGreaterThanOrEqual(2);
+    expect(xAxisLabels.some((t) => /^\d+\.\dK$/.test(t.textContent ?? ''))).toBe(true);
   });
 });

@@ -65,11 +65,14 @@ export function computePositioning(
   const props = new Map(config.oraProperties.map((p) => [p.propertyKey, p]));
 
   // ORA spaces per property key, scoped to the market the config declares for that key. Ingest
-  // assigns oraPropertyKey purely by address match (server/warehouse/lease-market/ingest.ts), with
-  // no market check, so a mis-filed export could tag a same-address-labelled row in another market
-  // to this key — that must never enter matching here. Sorted by listingId ascending so an
-  // exact-suite tie across multiple buildings sharing one key (a legitimate multi-building portfolio
-  // under one ORA key) resolves deterministically to the lowest listingId.
+  // (server/warehouse/lease-market/ingest.ts) already scopes its own address match to the SAME
+  // market (`p.addressNorms.includes(addressNorm) && p.marketId === marketId`), so a current ingest
+  // run cannot itself produce a cross-market oraPropertyKey — but this is still a defensive
+  // re-check, not a dead one: legacy/manually-edited rows (a pre-market-scoping ingest, or a manual
+  // correction to lm_property.ora_property_key) can carry a stale cross-market key that today's
+  // ingest logic would never produce, and that must never enter matching here. Sorted by listingId
+  // ascending so an exact-suite tie across multiple buildings sharing one key (a legitimate
+  // multi-building portfolio under one ORA key) resolves deterministically to the lowest listingId.
   const oraSpaces = new Map<string, SpaceState[]>();
   for (const s of state.spaces) {
     const key = s.property.oraPropertyKey;
