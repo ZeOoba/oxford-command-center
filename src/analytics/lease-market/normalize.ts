@@ -121,10 +121,33 @@ const UNIT = String.raw`(?:\s*\/\s*(?:SF|sq\.?\s*ft\.?)|\s*psf)?`;
 const PER = String.raw`(?:\s*\/\s*(?:yr|year|mo|month)|\s*per\s+(?:year|month|annum))?`;
 const BASIS_WORD = String.raw`(?:NNN|triple\s+net|MG|modified\s+gross|IG|industrial\s+gross|FSG?|full\s+service(?:\s+gross)?|gross)`;
 const ADDON_WORD = String.raw`(?:NNN|CAM|TICAM|opex|expenses|nets?)(?:\s*\/\s*(?:TAX|INS|CAM))*`;
+// Group 1 = the first (base) amount; group 2 = the optional range high-end amount (present only when
+// the range clause matched). Both — and only these two — are capturing, so the parsed values can be
+// cross-checked against the parser's own rentLow/rentHigh below (fix round 4): a match on the whole
+// string is not by itself proof the parser extracted the same numbers the grammar just recognized.
+// The basis-word parenthesis is balanced (either both "(" and ")" or neither — never one without the
+// other), so a truncated/malformed "(NNN" no longer slips through as if it were clean.
 const CANONICAL_RE = new RegExp(
-  String.raw`^\s*(?:asking\s*:?\s*)?${AMT}${UNIT}${PER}(?:\s*(?:-|–|—|to)\s*${AMT}${UNIT}${PER})?(?:\s*,?\s*\(?${BASIS_WORD}\)?)?(?:\s*\+\s*(?:${AMT}${UNIT}${PER}\s*)?${ADDON_WORD})?\s*\.?\s*$`,
+  String.raw`^\s*(?:asking\s*:?\s*)?(${AMT})${UNIT}${PER}(?:\s*(?:-|–|—|to)\s*(${AMT})${UNIT}${PER})?(?:\s*,?\s*(?:\(${BASIS_WORD}\)|${BASIS_WORD}))?(?:\s*\+\s*(?:${AMT}${UNIT}${PER}\s*)?${ADDON_WORD})?\s*\.?\s*$`,
   'i',
 );
+
+// Parses a captured CANONICAL_RE amount the same way numberMatches does: strip "$"/commas/whitespace,
+// leaving a plain numeric string Number() parses correctly including a leading-decimal form (".75").
+function parseCapturedAmount(s: string): number {
+  return Number(s.replace(/[$,\s]/g, ''));
+}
+
+const CLOSE_ENOUGH = 1e-9;
+function closeEnough(a: number, b: number): boolean {
+  return Math.abs(a - b) < CLOSE_ENOUGH;
+}
+
+// Performance guard (fix round 4): a pathological run of whitespace or an otherwise very long string
+// must never be run through CANONICAL_RE's alternation-heavy grammar at full length — collapse first
+// (cheap, linear), then refuse anything still long after that rather than parse it at all.
+const WHITESPACE_RUN_RE = /\s+/g;
+const MAX_PARSEABLE_LENGTH = 200;
 
 interface NumMatch {
   value: number;
@@ -215,7 +238,15 @@ function addonOpexValue(addon: string): number | null {
 }
 
 export function parseRentText(text: string): ParsedRentText {
-  const t = text.trim();
+  // Collapse internal whitespace runs first (cheap, linear) so pathological whitespace padding can't
+  // inflate what reaches the regex pipeline below; a still-long string after that (not just padding)
+  // is refused outright — never run through the full heuristic/grammar pipeline — and marked
+  // ambiguous rather than silently withheld, so a downstream consumer can't mistake "too long to
+  // trust" for "no quote".
+  const t = text.trim().replace(WHITESPACE_RUN_RE, ' ');
+  if (t.length > MAX_PARSEABLE_LENGTH) {
+    return { rentLow: null, rentHigh: null, rentPeriod: null, basis: null, withheld: false, isTotal: false, opexQuoted: null, ambiguous: true };
+  }
   const withheld: ParsedRentText = { rentLow: null, rentHigh: null, rentPeriod: null, basis: null, withheld: true, isTotal: false, opexQuoted: null, ambiguous: false };
   if (!t) return withheld;
   const hasDollar = t.includes('$');
@@ -327,7 +358,22 @@ export function parseRentText(text: string): ParsedRentText {
   // Structural safety gate, applied last: a free-text quote is benchmark-grade only if the WHOLE
   // string matches the strict canonical grammar above — everything else is ambiguous, regardless of
   // what the heuristics above concluded. This is additive, not a replacement for them.
-  ambiguous = ambiguous || !CANONICAL_RE.test(t);
+  const canonMatch = CANONICAL_RE.exec(t);
+  if (canonMatch === null) {
+    ambiguous = true;
+  } else {
+    // A grammar match alone is not proof the parser extracted the same numbers the grammar just
+    // recognized — the parser's own range detector uses a narrower, independently-maintained unit/
+    // period grammar (rules 4/16/17) that can miss a range form this grammar accepts (bare "psf",
+    // "per year", an unanchored range high-end). Cross-checking the captured amounts against
+    // rentLow/rentHigh makes the two impossible to silently disagree: any mismatch is ambiguous.
+    const amt1 = parseCapturedAmount(canonMatch[1]!);
+    const rangeCapture = canonMatch[2];
+    const expectedHigh = rangeCapture !== undefined ? parseCapturedAmount(rangeCapture) : amt1;
+    if (!closeEnough(amt1, rentLow) || !closeEnough(expectedHigh, rentHigh)) {
+      ambiguous = true;
+    }
+  }
   const opexQuoted = addon !== null ? addonOpexValue(addon) : null;
   return { rentLow, rentHigh, rentPeriod, basis, withheld: false, isTotal, opexQuoted, ambiguous };
 }

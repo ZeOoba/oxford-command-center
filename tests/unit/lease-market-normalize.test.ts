@@ -173,12 +173,19 @@ describe('parseRentText', () => {
   // WHOLE string matches a strict canonical grammar; everything else is ambiguous. The heuristics
   // below remain as defence in depth (correct rentLow/basis/etc. even when the gate also flags
   // ambiguous), per two further reviewer findings.
-  it('looksLikeRentFigure scans ALL unanchored numbers before the first $ figure, not just the first one', () => {
-    // "2nd" (an ordinal, excluded) precedes "8.50" (the true rent) which precedes the $-anchored
-    // "$2.10" (a CAM estimate) — the earliest QUALIFYING unanchored number must still be found.
-    const c = parseRentText('2nd floor, 8.50/SF/YR NNN, $2.10 CAM');
+  // An excluded prefix (ordinal, "Bldg 2B" unit code, "5+" term-length marker) precedes "8.50" (the
+  // true rent) which precedes a $-anchored CAM estimate — the earliest QUALIFYING unanchored number
+  // must still be found ahead of the $-anchored decoy, every time, regardless of the prefix shape.
+  it.each([
+    '2nd floor, 8.50/SF/YR NNN, $2.10 CAM',
+    '1st fl 8.50/SF/YR NNN; CAM $2.10',
+    'Bldg 2B 8.50/SF/YR NNN $2.10 CAM',
+    '3rd-floor 8.50/SF/YR NNN $2.10 CAM',
+    '5+ yr term, 8.50/SF/YR NNN, $2.10/SF CAM',
+  ])('looksLikeRentFigure finds the earliest qualifying candidate ahead of a $-anchored decoy: %s', (s) => {
+    const c = parseRentText(s);
     expect(c.ambiguous).toBe(true);
-    expect(c.rentLow).not.toBe(2.1);
+    expect(c.rentLow).toBe(8.5);
   });
   it('a tail basis is used only when the tail has exactly one basis token and no "$" figure; otherwise ambiguous', () => {
     expect(parseRentText('$10.50/SF/YR (Gross), NNN est. $2.25')).toMatchObject({ ambiguous: true });
@@ -190,21 +197,24 @@ describe('parseRentText', () => {
 
   describe('canonical grammar gate', () => {
     it.each([
-      '$8.50/SF/YR NNN',
-      '$8.00 - $10.00 /SF/YR Modified Gross',
-      '$0.75/SF/MO IG',
-      '$9.25 Industrial Gross',
-      '$7.25/SF + $2.50 NNN',
-      '$6.50/SF/YR + $1.95 CAM/TAX/INS',
-      '$12,000/month + expenses',
-      '$8.00 to $10.00 NNN',
-      '$8.00/SF/YR - $10.00/SF/YR',
-      '$8.50/SF/YR, NNN',
-      '$8.50 /SF/YR (NNN)',
-      '$.75/SF/MO NNN',
-      'Asking: $9.00/SF/YR NNN',
-    ])('%s is canonical => not ambiguous (on this ground alone)', (s) => {
-      expect(parseRentText(s).ambiguous).toBe(false);
+      ['$8.50/SF/YR NNN', 8.5, 8.5],
+      ['$8.00 - $10.00 /SF/YR Modified Gross', 8, 10],
+      ['$0.75/SF/MO IG', 0.75, 0.75],
+      ['$9.25 Industrial Gross', 9.25, 9.25],
+      ['$7.25/SF + $2.50 NNN', 7.25, 7.25],
+      ['$6.50/SF/YR + $1.95 CAM/TAX/INS', 6.5, 6.5],
+      ['$12,000/month + expenses', 12000, 12000],
+      ['$8.00 to $10.00 NNN', 8, 10],
+      ['$8.00/SF/YR - $10.00/SF/YR', 8, 10],
+      ['$8.50/SF/YR, NNN', 8.5, 8.5],
+      ['$8.50 /SF/YR (NNN)', 8.5, 8.5],
+      ['$.75/SF/MO NNN', 0.75, 0.75],
+      ['Asking: $9.00/SF/YR NNN', 9, 9],
+    ] as const)('%s is canonical => not ambiguous, rentLow %d, rentHigh %d', (s, low, high) => {
+      const r = parseRentText(s);
+      expect(r.ambiguous).toBe(false);
+      expect(r.rentLow).toBe(low);
+      expect(r.rentHigh).toBe(high);
     });
     it.each([
       '$4.00/SF/YR NNN, CAM $3.50',
@@ -214,6 +224,54 @@ describe('parseRentText', () => {
       '1st fl 8.50/SF/YR NNN; CAM $2.10',
     ])('%s is non-canonical => ambiguous', (s) => {
       expect(parseRentText(s).ambiguous).toBe(true);
+    });
+
+    // Fix round 4 (fourth re-review): the gate matched the WHOLE string but trusted the parser's
+    // rentLow/rentHigh blindly, even where the parser's own range detector fails to recognize a range
+    // form the gate's own grammar accepts (e.g. bare "psf" units, an unanchored range high-end, or
+    // "per year"/"to" spellings the internal RANGE_SEP_RE grammar doesn't cover). Every one of these
+    // is a genuine range whose true rentHigh differs from rentLow — the parser currently (still) only
+    // returns the low figure for each, so the cross-check must catch the mismatch and flag ambiguous.
+    it.each([
+      '$8.00 psf - $10.00 psf NNN',
+      '$8.00/SF/YR - 10.00/SF/YR NNN',
+      '$8 psf to $9.50 psf NNN',
+      '$8.00/yr - $10.00/yr NNN',
+      '$8.00 per year - $10.00 per year NNN',
+      '8 psf - 10 psf NNN',
+      '$0.70/mo - $0.90/mo NNN',
+      '$8.00/SF/YR - 8.50/SF/YR NNN',
+    ])('the gate no longer trusts a range form the parser silently drops to a single figure: %s', (s) => {
+      expect(parseRentText(s).ambiguous).toBe(true);
+    });
+
+    it('an unbalanced parenthesis around the basis word is not canonical', () => {
+      expect(parseRentText('$8.50/SF/YR (NNN').ambiguous).toBe(true);
+    });
+    it('a balanced parenthesis around the basis word is still canonical', () => {
+      expect(parseRentText('$8.50/SF/YR (NNN)').ambiguous).toBe(false);
+    });
+  });
+
+  describe('performance guard', () => {
+    it('a pathological run of whitespace is collapsed and refused quickly, not run through the full pipeline', () => {
+      const started = performance.now();
+      const r = parseRentText('$8' + ' '.repeat(50000) + 'x');
+      const elapsedMs = performance.now() - started;
+      expect(elapsedMs).toBeLessThan(200);
+      expect(r.ambiguous).toBe(true);
+    });
+    it('a genuinely long (non-whitespace-padded) string over 200 chars is refused before any parsing runs', () => {
+      // Exercises the length cap directly, distinct from an ordinary non-canonical mismatch: a normal
+      // non-canonical string still runs the full heuristic pipeline and reports a best-effort rentLow
+      // (e.g. "$8.50/SF/YR NNN (non-negotiable)" still finds rentLow 8.5); the length-capped path skips
+      // the pipeline entirely, so rentLow stays null even though the string clearly starts with a rent.
+      const long = '$8.50/SF/YR NNN ' + 'x'.repeat(200);
+      expect(long.length).toBeGreaterThan(200);
+      const r = parseRentText(long);
+      expect(r.ambiguous).toBe(true);
+      expect(r.withheld).toBe(false);
+      expect(r.rentLow).toBeNull();
     });
   });
 });
