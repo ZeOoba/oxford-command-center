@@ -178,12 +178,35 @@ export const LeaseMarketConfig = z
   .superRefine((c, ctx) => {
     const ids = new Set(c.markets.map((m) => m.id));
     if (ids.size !== c.markets.length) ctx.addIssue({ code: 'custom', message: 'duplicate market id in markets[]' });
+    // Duplicate propertyKeys are a config error the positioning market filter would otherwise
+    // silently hide: server/warehouse/lease-market/positioning.ts builds `new Map(config.oraProperties
+    // .map((p) => [p.propertyKey, p]))`, so a second entry with the same key just overwrites the
+    // first with no error -- catch the collision here instead, at config-load time.
+    const propertyKeys = new Set<string>();
     for (const p of c.oraProperties) {
+      if (propertyKeys.has(p.propertyKey)) {
+        ctx.addIssue({ code: 'custom', message: `duplicate oraProperties propertyKey "${p.propertyKey}"` });
+      }
+      propertyKeys.add(p.propertyKey);
       if (!ids.has(p.marketId)) ctx.addIssue({ code: 'custom', message: `oraProperties["${p.propertyKey}"].marketId "${p.marketId}" is not a configured market` });
     }
     const sum = Object.values(c.similarityWeights).reduce((a, b) => a + b, 0);
     if (Math.abs(sum - 100) > 1e-9) ctx.addIssue({ code: 'custom', message: `similarityWeights must sum to 100 (got ${sum})` });
     if (c.thresholds.rentMinPsfYr >= c.thresholds.rentMaxPsfYr) ctx.addIssue({ code: 'custom', message: 'rentMinPsfYr must be < rentMaxPsfYr' });
+    // Ordering checks between related thresholds -- each pair is meaningless (or silently
+    // self-defeating downstream) if inverted.
+    if (c.thresholds.radarMinScore > c.thresholds.radarPushScore) {
+      ctx.addIssue({ code: 'custom', message: 'radarMinScore must be <= radarPushScore' });
+    }
+    if (c.thresholds.similarityMinComps > c.thresholds.similarityHighComps) {
+      ctx.addIssue({ code: 'custom', message: 'similarityMinComps must be <= similarityHighComps' });
+    }
+    if (c.thresholds.candidateMaxBuildingSf > c.thresholds.benchmarkMaxBuildingSf) {
+      ctx.addIssue({ code: 'custom', message: 'candidateMaxBuildingSf must be <= benchmarkMaxBuildingSf' });
+    }
+    if (c.thresholds.similarityTopK < c.thresholds.similarityHighComps) {
+      ctx.addIssue({ code: 'custom', message: 'similarityTopK must be >= similarityHighComps' });
+    }
   });
 export type LeaseMarketConfig = z.infer<typeof LeaseMarketConfig>;
 
