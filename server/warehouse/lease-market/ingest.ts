@@ -90,15 +90,20 @@ export function latestCompleteLanding(db: WarehouseDb, marketId: string): Comple
 
 interface OkLanding {
   id: number;
+  observed_at: string;
   header_fingerprint: string | null;
 }
 
-// Latest landing regardless of completeness (complete OR partial) — used ONLY for the header-fingerprint
-// comparison, so a header change never locks a market out: it degrades the export to partial instead.
+// Latest landing regardless of completeness (complete OR partial) — used for the header-fingerprint
+// comparison (a header change never locks a market out: it degrades the export to partial instead) AND
+// for the date-after check (fix round 2 requirement 2): an export is complete only when it is dated
+// after the TRUE latest landing, not just the latest COMPLETE one — otherwise a back-dated,
+// complete-shaped file sandwiched before a more recent partial landing would wrongly apply status
+// changes and the removal sweep using stale, out-of-order data.
 function latestOkLanding(db: WarehouseDb, marketId: string): OkLanding | undefined {
   return db
     .prepare(
-      `SELECT id, header_fingerprint FROM lm_landing
+      `SELECT id, observed_at, header_fingerprint FROM lm_landing
        WHERE source = 'costar_listings' AND market_id = ? AND parse_status = 'ok'
        ORDER BY observed_at DESC, id DESC LIMIT 1`,
     )
@@ -193,8 +198,8 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
   if (priorComplete && parsed.rowCount < t.exportMinRowRatio * priorComplete.row_count) {
     reasons.push(`row count ${parsed.rowCount} < ${t.exportMinRowRatio} x prior ${priorComplete.row_count}`);
   }
-  if (priorComplete && exportDate <= priorComplete.observed_at) {
-    reasons.push(`export date ${exportDate} not after last complete export ${priorComplete.observed_at}`);
+  if (priorOk && exportDate <= priorOk.observed_at) {
+    reasons.push(`export date ${exportDate} not after last landing ${priorOk.observed_at}`);
   }
   // A header change never locks the market out: it degrades this export to partial (the parser has
   // already verified every mapped column resolved), and the NEXT export with the same new header
@@ -213,16 +218,21 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
   // Quoted-opex median input: at most ONE value per listing. Prior listings contribute only their
   // latest quoted-opex observation strictly before this export's date within the trailing 365 days,
   // and only when that listing is NOT also present in this file (its current-file value is added
-  // below instead, so a listing quoted across many prior exports never inflates n).
+  // below instead, so a listing quoted across many prior exports never inflates n). The exclusion/dedupe
+  // key is PROPERTY IDENTITY (identity_key, i.e. costar:<id> or addr:<market>|<city>|<address>) + suite
+  // — not raw address|suite, which would conflate two distinct properties that merely share the same
+  // street address text (two CoStar ids, or a stale vs. adopted addr: key at the same address).
+  const identityKeyFor = (costarPropertyId: string | null, cityForKey: string, addressForKey: string): string =>
+    costarPropertyId ? `costar:${costarPropertyId}` : `addr:${marketId}|${cityForKey}|${addressForKey}`;
   const currentPairs = new Set(
     parsed.rows.map((r) => {
       const { addressNorm, suiteNorm } = splitAddress(r.address, r.suite);
-      return `${addressNorm}|${suiteNorm}`;
+      return `${identityKeyFor(r.costarPropertyId, cityNormOf(r.city), addressNorm)}|${suiteNorm}`;
     }),
   );
   const quotedRows = db
     .prepare(
-      `SELECT p.subtype AS subtype, o.opex_quoted_psf AS v, p.address_norm AS addressNorm, l.suite_norm AS suiteNorm
+      `SELECT p.subtype AS subtype, o.opex_quoted_psf AS v, p.identity_key AS identityKey, l.suite_norm AS suiteNorm
        FROM lm_observation o
        JOIN lm_listing l ON l.id = o.listing_id JOIN lm_property p ON p.id = l.property_id
        WHERE p.market_id = ? AND o.opex_quoted_psf IS NOT NULL AND o.observed_at >= ? AND o.observed_at < ?
@@ -232,17 +242,17 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
            ORDER BY o2.observed_at DESC, o2.id DESC LIMIT 1
          )`,
     )
-    .all(marketId, addDays(exportDate, -365), exportDate, exportDate) as Array<{ subtype: LmSubtype; v: number; addressNorm: string; suiteNorm: string }>;
+    .all(marketId, addDays(exportDate, -365), exportDate, exportDate) as Array<{ subtype: LmSubtype; v: number; identityKey: string; suiteNorm: string }>;
   const quoted: Record<LmSubtype, number[]> = { warehouse: [], flex: [] };
   for (const q of quotedRows) {
-    if (currentPairs.has(`${q.addressNorm}|${q.suiteNorm}`)) continue;
+    if (currentPairs.has(`${q.identityKey}|${q.suiteNorm}`)) continue;
     quoted[q.subtype].push(q.v);
   }
   const seenOpexPairs = new Set<string>();
   for (const r of parsed.rows) {
     if (r.opexQuotedPsf === null) continue;
     const { addressNorm, suiteNorm } = splitAddress(r.address, r.suite);
-    const key = `${addressNorm}|${suiteNorm}`;
+    const key = `${identityKeyFor(r.costarPropertyId, cityNormOf(r.city), addressNorm)}|${suiteNorm}`;
     if (seenOpexPairs.has(key)) continue;
     seenOpexPairs.add(key);
     quoted[r.subtype].push(r.opexQuotedPsf);
@@ -266,12 +276,12 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
         complete ? 'complete' : 'partial', complete ? null : reasons.join('; '), screen.available ? 1 : 0).lastInsertRowid,
     );
 
-    const findPropertyByIdentityKey = db.prepare('SELECT id FROM lm_property WHERE identity_key = ?');
+    const findPropertyByIdentityKey = db.prepare('SELECT id, market_id, identity_key FROM lm_property WHERE identity_key = ?');
     const findAdoptableProperty = db.prepare(
-      'SELECT id FROM lm_property WHERE market_id = ? AND city_norm = ? AND address_norm = ? AND costar_property_id IS NULL ORDER BY id LIMIT 1',
+      'SELECT id, identity_key FROM lm_property WHERE market_id = ? AND city_norm = ? AND address_norm = ? AND costar_property_id IS NULL ORDER BY id LIMIT 1',
     );
     const findLowestPropertyByAddress = db.prepare(
-      'SELECT id FROM lm_property WHERE market_id = ? AND city_norm = ? AND address_norm = ? ORDER BY id LIMIT 1',
+      'SELECT id, identity_key FROM lm_property WHERE market_id = ? AND city_norm = ? AND address_norm = ? ORDER BY id LIMIT 1',
     );
     const insertProperty = db.prepare(
       `INSERT INTO lm_property (costar_property_id, identity_key, address_norm, address_display, city, city_norm, state, zip, lat, lon, market_id, submarket, subtype,
@@ -292,6 +302,9 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
          drive_ins = COALESCE(@driveIns, drive_ins), office_pct = COALESCE(@officePct, office_pct),
          owner_name = COALESCE(@ownerName, owner_name),
          owner_type = CASE WHEN @screenAvailable = 0 THEN owner_type WHEN @ownerName IS NULL THEN owner_type ELSE @ownerType END,
+         -- A blank stored city_norm is backfilled once a row supplies one; a non-empty city_norm is
+         -- never rewritten — a genuinely different city at the same address is a different building.
+         city_norm = CASE WHEN city_norm = '' THEN @cityNorm ELSE city_norm END,
          ora_property_key = COALESCE(@oraPropertyKey, ora_property_key),
          first_seen = MIN(first_seen, @seen),
          last_seen = MAX(last_seen, @seen)
@@ -305,16 +318,23 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
     );
     const spaceUpdateColumns = `
          first_seen = MIN(first_seen, @seen),
+         -- If this file's date lowers first_seen (a back-dated re-export), first_landing_id follows it
+         -- to the landing that actually supplied the earliest sighting.
+         first_landing_id = CASE WHEN @seen < first_seen THEN @landingId ELSE first_landing_id END,
          last_seen = MAX(last_seen, @seen),
          costar_date_on_market = CASE WHEN costar_date_on_market IS NULL THEN @dateOnMarket WHEN @dateOnMarket IS NULL THEN costar_date_on_market
                                       ELSE MIN(costar_date_on_market, @dateOnMarket) END,
          origin_tier = 'T1',
          broker_name = COALESCE(@brokerName, broker_name), broker_company = COALESCE(@brokerCompany, broker_company),
          listing_url = COALESCE(@listingUrl, listing_url), description = COALESCE(@description, description)`;
-    // Status changes (active + removed_at cleared) happen only on COMPLETE exports — a partial export
-    // must not resurrect a removed/expired space or paper over a missing_once space as active again.
+    // Status changes (active + removed_at cleared, and the two-strike 'removed'/'expired' recovery)
+    // happen only on COMPLETE exports. A PARTIAL export still clears missing_once -> active — a sighting
+    // is positive evidence the space is still there, distinct from the stronger two-consecutive-complete
+    // protocol a removed/expired space needs to return.
     const updateSpaceComplete = db.prepare(`UPDATE lm_listing SET status = 'active', removed_at = NULL, ${spaceUpdateColumns} WHERE id = @id`);
-    const updateSpacePartial = db.prepare(`UPDATE lm_listing SET ${spaceUpdateColumns} WHERE id = @id`);
+    const updateSpacePartial = db.prepare(
+      `UPDATE lm_listing SET status = CASE WHEN status = 'missing_once' THEN 'active' ELSE status END, ${spaceUpdateColumns} WHERE id = @id`,
+    );
     const previousObservation = db.prepare(
       `SELECT asking_nnn_eq, asking_psf_yr, rent_basis, rent_period, rent_is_total, rent_low, available_sf, costar_dom, rejected_reason
        FROM lm_observation WHERE listing_id = ? AND observed_at < ? ORDER BY observed_at DESC, id DESC LIMIT 1`,
@@ -344,23 +364,41 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
         oraPropertyKey: oraProperty?.propertyKey ?? null, seen: exportDate,
       };
 
-      // Property identity (fix round 1, requirement 4): (i) a CoStar id present is looked up by
-      // identity_key 'costar:<id>'; if not found, an existing address-matched property with no CoStar
-      // id yet is ADOPTED (its costar id + identity_key are set) rather than creating a duplicate.
-      // (ii) no CoStar id: the lowest-id property already at this market+city+address, else a new one.
-      let propertyHit: { id: number } | undefined;
+      // Property identity (fix round 1, requirement 4; fix round 2, requirement 1 + 6): (i) a CoStar id
+      // present is looked up by identity_key 'costar:<id>' — SCOPED to this ingest's market: a match
+      // belonging to a DIFFERENT market is a data anomaly (a reused/duplicated CoStar id), so the row is
+      // skipped rather than cross-attached. If no market-matching hit, an existing address-matched
+      // property with no CoStar id yet is ADOPTED (its costar id + identity_key are set) rather than
+      // creating a duplicate. (ii) no CoStar id: the lowest-id property already at this market+city+
+      // address; if the row's city is blank OR that exact-city lookup misses, fall back to a
+      // market+address match whose stored city_norm is blank (adopting it, and backfilling its addr:
+      // identity_key to include the now-known city) rather than forking a second property.
+      let propertyHit: { id: number; identity_key: string } | undefined;
       let adopting = false;
+      let cityBackfill = false;
       if (row.costarPropertyId) {
-        propertyHit = findPropertyByIdentityKey.get(`costar:${row.costarPropertyId}`) as { id: number } | undefined;
+        const byKey = findPropertyByIdentityKey.get(`costar:${row.costarPropertyId}`) as { id: number; market_id: string; identity_key: string } | undefined;
+        if (byKey && byKey.market_id !== marketId) {
+          counts.skipped++; // market_mismatch: this CoStar id already belongs to a different market's property
+          continue;
+        }
+        propertyHit = byKey;
         if (!propertyHit) {
-          const adoptable = findAdoptableProperty.get(marketId, cityNorm, addressNorm) as { id: number } | undefined;
+          const adoptable = findAdoptableProperty.get(marketId, cityNorm, addressNorm) as { id: number; identity_key: string } | undefined;
           if (adoptable) {
             propertyHit = adoptable;
             adopting = true;
           }
         }
       } else {
-        propertyHit = findLowestPropertyByAddress.get(marketId, cityNorm, addressNorm) as { id: number } | undefined;
+        propertyHit = findLowestPropertyByAddress.get(marketId, cityNorm, addressNorm) as { id: number; identity_key: string } | undefined;
+        if (!propertyHit && cityNorm !== '') {
+          const blankCity = findLowestPropertyByAddress.get(marketId, '', addressNorm) as { id: number; identity_key: string } | undefined;
+          if (blankCity) {
+            propertyHit = blankCity;
+            cityBackfill = true;
+          }
+        }
       }
 
       let propertyId: number;
@@ -382,8 +420,10 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
       }
 
       if (propertyHit) {
-        const identityKey = adopting ? `costar:${row.costarPropertyId}` : null;
-        updateProperty.run({ ...commonPropertyFields, id: propertyHit.id, identityKey, screenAvailable: screen.available ? 1 : 0 });
+        let identityKey: string | null = null;
+        if (adopting) identityKey = `costar:${row.costarPropertyId}`;
+        else if (cityBackfill && propertyHit.identity_key.startsWith('addr:')) identityKey = `addr:${marketId}|${cityNorm}|${addressNorm}`;
+        updateProperty.run({ ...commonPropertyFields, id: propertyHit.id, identityKey, cityNorm, screenAvailable: screen.available ? 1 : 0 });
       }
 
       const prev = spaceHit
@@ -393,7 +433,7 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
         : undefined;
       const spaceFields = {
         seen: exportDate, dateOnMarket: row.costarDateOnMarket, brokerName: row.brokerName, brokerCompany: row.brokerCompany,
-        listingUrl: row.listingUrl, description: row.description,
+        listingUrl: row.listingUrl, description: row.description, landingId,
       };
       let listingId: number;
       if (spaceHit) {
@@ -402,7 +442,7 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
         listingId = spaceHit.id;
         counts.updatedSpaces++;
       } else {
-        listingId = Number(insertSpace.run({ ...spaceFields, propertyId, suiteNorm, landingId }).lastInsertRowid);
+        listingId = Number(insertSpace.run({ ...spaceFields, propertyId, suiteNorm }).lastInsertRowid);
         counts.insertedSpaces++;
       }
       seenSpaces.add(listingId);
