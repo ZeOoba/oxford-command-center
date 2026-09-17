@@ -91,14 +91,17 @@ function addLmProperty(
   addressNorm: string,
   oraPropertyKey: string | null,
   ownerType = 'unknown',
+  cityNorm = '',
 ): void {
   db.prepare(
     `INSERT INTO lm_property (id, identity_key, address_norm, address_display, city_norm, market_id,
                               subtype, building_status, ora_property_key, owner_type, first_seen, last_seen)
-     VALUES (?, ?, ?, ?, '', ?, 'warehouse', 'existing', ?, ?, '2026-09-01', '2026-09-01')`,
+     VALUES (?, ?, ?, ?, ?, ?, 'warehouse', 'existing', ?, ?, '2026-09-01', '2026-09-01')`,
   ).run(
-    id, `addr:${marketId}|x|${addressNorm}:${id}`, addressNorm, addressNorm, marketId,
-    oraPropertyKey, ownerType,
+    // identity_key is UNIQUE and unread by the seeder; the id keeps fixtures distinct where a
+    // real duplicate address would instead be distinguished by a costar: key.
+    id, `addr:${marketId}|${cityNorm}|${addressNorm}#${id}`, addressNorm, addressNorm, cityNorm,
+    marketId, oraPropertyKey, ownerType,
   );
 }
 
@@ -239,5 +242,92 @@ describe('seedFromLeaseMarket — ORA-owned but unmapped', () => {
     const result = seedFromLeaseMarket(db);
     expect(result.linked).toBe(1);
     expect(canonicalIdFor(db, 'workbook', 'property', 'Zettler')).toBe('prop-zettler');
+  });
+});
+
+describe('seedFromLeaseMarket — defects found by adversarial review', () => {
+  it('refuses to fuse two buildings that share an address in different municipalities', () => {
+    // The reviewer's case: 'columbus' is a METRO market spanning dozens of municipalities, and
+    // property_master has no city column. Both sides are unique on market+address, so both
+    // one-to-one guards passed and two different buildings were permanently fused.
+    const db = makeDb();
+    addProperty(db, '100-commerce-dr-columbus-oh', '100 Commerce Dr');
+    addLmProperty(db, 30, 'columbus', '100 COMMERCE DR', 'Commerce', 'unknown', 'westerville');
+
+    const result = seedFromLeaseMarket(db);
+    expect(result.linked).toBe(0);
+    expect(result.proposed[0]!.reason).toBe('city_unverifiable');
+  });
+
+  it('links when the canonical slug confirms the city', () => {
+    const db = makeDb();
+    addProperty(db, '100-commerce-dr-westerville-oh', '100 Commerce Dr');
+    addLmProperty(db, 31, 'columbus', '100 COMMERCE DR', 'Commerce', 'unknown', 'westerville');
+    expect(seedFromLeaseMarket(db).linked).toBe(1);
+  });
+
+  it('reports loudly when property_master carries no usable address data', () => {
+    // Production reality on 2026-09-17: all 14 rows have a NULL address, so every listing would
+    // have reported no_address_match and looked like "no ORA buildings matched" rather than a bug.
+    const db = makeDb();
+    db.prepare(
+      `INSERT INTO property_master (id, name, financial_mode, ownership_pct, ownership_status)
+       VALUES ('prop-1','No Address','pnl',1.0,'active')`,
+    ).run();
+    addLmProperty(db, 32, 'columbus', '500 MAIN ST', 'Main');
+
+    const result = seedFromLeaseMarket(db);
+    expect(result.linked).toBe(0);
+    expect(result.skipped[0]).toMatch(/no usable address data.*1 rows, 0 with a non-empty address/);
+  });
+
+  it('does not treat an empty ora_property_key as a config blessing', () => {
+    const db = makeDb();
+    addProperty(db, 'prop-1', '500 Main St');
+    addLmProperty(db, 33, 'columbus', '500 MAIN ST', '   ');
+    const result = seedFromLeaseMarket(db);
+    expect(result.linked).toBe(0);
+    expect((db.prepare('SELECT COUNT(*) AS n FROM entity_xref').get() as { n: number }).n).toBe(0);
+  });
+
+  it('leaves no orphan half when the workbook link conflicts', () => {
+    // The pair must be atomic: previously lease_market committed and workbook threw, so the row
+    // was reported skipped while half of it was already in the table.
+    const db = makeDb();
+    addProperty(db, 'prop-a', '2012 Zettler Rd');
+    addProperty(db, 'prop-b', '2002 Zettler Rd');
+    addLmProperty(db, 34, 'columbus', '2012 ZETTLER RD', 'Zettler');
+    addLmProperty(db, 35, 'columbus', '2002 ZETTLER RD', 'Zettler');
+
+    const result = seedFromLeaseMarket(db);
+    expect(result.linked).toBe(1);
+    expect(result.skipped).toHaveLength(1);
+    // the refused row must have written NOTHING, not just no workbook row
+    expect(canonicalIdFor(db, 'lease_market', 'property', '35')).toBeNull();
+    expect((db.prepare('SELECT COUNT(*) AS n FROM entity_xref').get() as { n: number }).n).toBe(2);
+  });
+
+  it('counts the reverse direction through the same normalization', () => {
+    // Two listings for one building whose stored norms differ only in case/whitespace must still
+    // trip the ambiguity guard, not land in separate buckets and link.
+    const db = makeDb();
+    addProperty(db, 'prop-1', '500 Main St');
+    addLmProperty(db, 36, 'columbus', '500 MAIN ST', 'Main');
+    addLmProperty(db, 37, 'columbus', '500  main st ', 'Main');
+
+    const result = seedFromLeaseMarket(db);
+    expect(result.linked).toBe(0);
+    expect(result.proposed.every((p) => p.reason === 'ambiguous_address')).toBe(true);
+  });
+
+  it('records auto-derived links as exact_address, not manual', () => {
+    const db = makeDb();
+    addProperty(db, 'prop-1', '500 Main St');
+    addLmProperty(db, 38, 'columbus', '500 MAIN ST', 'Main');
+    expect(seedFromLeaseMarket(db).linked).toBe(1);
+    const m = db.prepare('SELECT DISTINCT match_method FROM entity_xref').all() as Array<{
+      match_method: string;
+    }>;
+    expect(m.map((r) => r.match_method)).toEqual(['exact_address']);
   });
 });

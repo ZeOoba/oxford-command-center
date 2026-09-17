@@ -133,11 +133,30 @@ describe('selectSnapshotsToDelete', () => {
   });
 
   it('drops weekly snapshots beyond the weekly window', () => {
-    const names = [name('2026-01-05T0300'), name('2026-09-14T0300')];
+    // Three snapshots, not two: with only two the MIN_SNAPSHOTS_KEPT floor would spare the old
+    // one, and this test is about the weekly window, not the floor (which has its own tests).
+    const names = [name('2026-01-05T0300'), name('2026-09-14T0300'), name('2026-09-16T0300')];
     expect(selectSnapshotsToDelete(names, now, 14, 8)).toEqual([name('2026-01-05T0300')]);
   });
 
   it('ignores files that do not match the snapshot naming convention', () => {
     expect(selectSnapshotsToDelete(['notes.txt', 'finance.sqlite'], now, 14, 8)).toEqual([]);
+  });
+});
+
+describe('selectSnapshotsToDelete — retention floor', () => {
+  const name = (iso: string) => `finance-${iso}.sqlite.enc`;
+  const now = new Date('2026-09-17T03:00:00Z');
+
+  it('never deletes the only snapshot, however old', () => {
+    expect(selectSnapshotsToDelete([name('2020-01-05T0300')], now, 14, 8)).toEqual([]);
+  });
+
+  it('keeps the floor when every snapshot is beyond every window', () => {
+    const names = [name('2020-01-05T0300'), name('2020-02-05T0300'), name('2020-03-05T0300')];
+    const doomed = selectSnapshotsToDelete(names, now, 14, 8);
+    expect(names.length - doomed.length).toBe(2);
+    // the survivors are the NEWEST two
+    expect(doomed).toEqual([name('2020-01-05T0300')]);
   });
 });

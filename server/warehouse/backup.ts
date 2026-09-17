@@ -8,7 +8,8 @@
 // installed on this machine (verified 2026-09-17), and a backup that depends on a binary
 // nobody installed is a backup that does not run.
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { readFileSync, writeFileSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, statSync, renameSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import type { WarehouseDb } from './db';
 
@@ -134,8 +135,13 @@ function isoWeekKey(d: Date): string {
   return `${t.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
 }
 
+/** Never prune below this many snapshots, whatever the windows say. A retention policy that can
+ *  return every name is one bad clock or one long outage away from deleting the last backup. */
+export const MIN_SNAPSHOTS_KEPT = 2;
+
 /** Keep every snapshot inside `keepDaily` days; outside it keep the OLDEST snapshot of each
- *  ISO week for `keepWeekly` weeks; delete the rest. Returns names to delete. */
+ *  ISO week for `keepWeekly` weeks; delete the rest — but never leave fewer than
+ *  MIN_SNAPSHOTS_KEPT behind. Returns names to delete. */
 export function selectSnapshotsToDelete(
   names: string[],
   now: Date,
@@ -161,5 +167,47 @@ export function selectSnapshotsToDelete(
     if (keptWeeks.has(wk)) doomed.push(name);
     else keptWeeks.add(wk);
   }
+
+  // Give back the NEWEST of the doomed until the floor is satisfied. Deleting every snapshot
+  // because they are all old is the one outcome a backup system must never produce.
+  const survivors = dated.length - doomed.length;
+  if (survivors < MIN_SNAPSHOTS_KEPT) {
+    const reprieve = Math.min(MIN_SNAPSHOTS_KEPT - survivors, doomed.length);
+    const doomedNewestFirst = [...doomed].sort().reverse();
+    const spared = new Set(doomedNewestFirst.slice(0, reprieve));
+    return doomed.filter((n) => !spared.has(n));
+  }
   return doomed;
+}
+
+
+// ---------------------------------------------------------------------------
+// Manifest. `latest` is a BASENAME, rejoined against the backup directory by the reader: storing
+// an absolute path made the manifest depend on the cwd a relative BACKUP_DIR was resolved from,
+// and moving the backup directory silently broke the drill.
+
+export interface BackupManifest {
+  latest: string;
+  at: string;
+  bytes: number;
+  tables: number;
+  counts: Record<string, number>;
+}
+
+/** Write-temp-then-rename. writeFileSync truncates in place, so a crash mid-write left invalid
+ *  JSON and the drill died at JSON.parse even though good backups were sitting beside it. */
+export function writeManifest(backupDir: string, manifest: BackupManifest): void {
+  const finalPath = join(backupDir, 'manifest.json');
+  const tmpPath = `${finalPath}.tmp`;
+  writeFileSync(tmpPath, JSON.stringify(manifest, null, 2));
+  renameSync(tmpPath, finalPath); // atomic on the same filesystem
+}
+
+/** Newest snapshot by filename, or null. The fallback when the manifest is missing or corrupt —
+ *  an unreadable manifest must not mean "no backups", because the backups are still there. */
+export function newestSnapshot(backupDir: string): string | null {
+  const names = readdirSync(backupDir)
+    .filter((n) => SNAPSHOT_RE.test(n))
+    .sort();
+  return names.length > 0 ? names[names.length - 1]! : null;
 }

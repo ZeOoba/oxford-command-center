@@ -104,6 +104,7 @@ export function unmatchedReport(db: WarehouseDb, entityType: EntityType): Unmatc
 
 /** Why a row was not linked. Each is a human action, not an error. */
 export type ProposalReason =
+  | 'city_unverifiable'
   | 'ora_owned_unmapped'
   | 'no_config_link'
   | 'ambiguous_address'
@@ -129,18 +130,36 @@ interface LmPropertyRow {
   id: number;
   market_id: string;
   address_norm: string;
+  city_norm: string;
   ora_property_key: string | null;
   owner_type: string;
 }
 
+/** The warehouse has no city column. The canonical id is a slug that usually ENDS with the city
+ *  and state (`1100-rarig-ave-columbus-oh`), so it is the only city evidence available — and it
+ *  is evidence, not a parser: a slug that is not an address (`sepich-portfolio-columbus-oh-8-props`)
+ *  simply fails to confirm, which is the safe direction. */
+function canConfirmCity(cityNorm: string, canonicalId: string): boolean {
+  const city = cityNorm.trim().toLowerCase().replace(/\s+/g, '-');
+  return city !== '' && canonicalId.toLowerCase().includes(`-${city}-`);
+}
+
 function tableExists(db: WarehouseDb, name: string): boolean {
   return (
-    db.prepare("SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name = ?").get(name) !==
-    undefined
+    db
+      .prepare("SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name = ?")
+      .get(name) !== undefined
   );
 }
 
 const marketKey = (market: string | null): string => (market ?? '').trim().toLowerCase();
+
+/** BOTH sides of every comparison go through this. Building the forward index from splitAddress
+ *  output while counting the reverse direction on raw address_norm let case/whitespace variants
+ *  land in different buckets, so the "two listings must not claim one property" guard silently
+ *  passed. One function, both directions. */
+const addressKey = (market: string | null, addressNorm: string): string =>
+  `${marketKey(market)}|${addressNorm.trim().toUpperCase().replace(/\s+/g, ' ')}`;
 
 /**
  * Mirror config-blessed lease-market links into entity_xref; report everything else.
@@ -153,6 +172,7 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
 
   // Index warehouse properties by market + normalized address, using the lease-market module's
   // OWN normalizer on both sides so the two can never drift apart (see the header note).
+  const skipped: string[] = [];
   const byAddress = new Map<string, string[]>();
   const properties = db
     .prepare('SELECT id, market, address FROM property_master WHERE address IS NOT NULL')
@@ -160,27 +180,40 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
   for (const p of properties) {
     const { addressNorm } = splitAddress(p.address, null);
     if (!addressNorm) continue;
-    const key = `${marketKey(p.market)}|${addressNorm}`;
+    const key = addressKey(p.market, addressNorm);
     byAddress.set(key, [...(byAddress.get(key) ?? []), p.id]);
   }
 
+  // A market like 'Columbus OH' spans dozens of municipalities, so market+address alone is NOT a
+  // building-unique key. property_master carries no city column at all (001_initial.sql), which
+  // is why this is reported rather than silently matched on the coarse key.
+  if (byAddress.size === 0) {
+    const total = (db.prepare('SELECT COUNT(*) AS n FROM property_master').get() as { n: number })
+      .n;
+    skipped.push(
+      `property_master has no usable address data (${total} rows, ${properties.length} with a ` +
+        `non-empty address) — the crosswalk cannot match anything until addresses are populated`,
+    );
+  }
+
   const lmRows = db
-    .prepare('SELECT id, market_id, address_norm, ora_property_key, owner_type FROM lm_property')
+    .prepare(
+      'SELECT id, market_id, address_norm, city_norm, ora_property_key, owner_type FROM lm_property',
+    )
     .all() as LmPropertyRow[];
 
   // The reverse direction: two listings at one address must not both claim the same property.
   const lmPerKey = new Map<string, number>();
   for (const r of lmRows) {
-    const key = `${marketKey(r.market_id)}|${r.address_norm}`;
+    const key = addressKey(r.market_id, r.address_norm);
     lmPerKey.set(key, (lmPerKey.get(key) ?? 0) + 1);
   }
 
   let linked = 0;
   const proposed: XrefProposal[] = [];
-  const skipped: string[] = [];
 
   for (const r of lmRows) {
-    const key = `${marketKey(r.market_id)}|${r.address_norm}`;
+    const key = addressKey(r.market_id, r.address_norm);
     const candidates = byAddress.get(key) ?? [];
     const base = {
       lmPropertyId: r.id,
@@ -204,7 +237,18 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
     }
 
     const canonicalId = candidates[0]!;
-    if (r.ora_property_key === null) {
+    // Not `=== null`: the column is plain TEXT with no non-empty CHECK, and an empty or
+    // whitespace key would write a junk crosswalk row that then poisons the namespace for every
+    // later row through the repoint guard.
+    // The lm row knows its municipality; the warehouse side does not. Rather than fuse two
+    // different buildings that share a street address in one metro, refuse and report.
+    if (r.city_norm.trim() !== '' && !canConfirmCity(r.city_norm, canonicalId)) {
+      proposed.push({ ...base, candidateCanonicalIds: [canonicalId], reason: 'city_unverifiable' });
+      continue;
+    }
+
+    const blessedKey = r.ora_property_key?.trim();
+    if (!blessedKey) {
       // A null ora_property_key does NOT mean "not ORA". The key is stamped only where a listing's
       // address matches an addressNorms entry, so the config always lags reality —
       // lm_property.owner_type = 'affiliated' is the independent owner-name verdict, and the
@@ -219,20 +263,28 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
     }
 
     try {
-      linkEntity(db, {
-        entityType: 'property',
-        canonicalId,
-        system: 'lease_market',
-        externalId: String(r.id),
-        matchMethod: 'manual',
-      });
-      linkEntity(db, {
-        entityType: 'property',
-        canonicalId,
-        system: 'workbook',
-        externalId: r.ora_property_key,
-        matchMethod: 'manual',
-      });
+      // Atomic as a PAIR. Writing lease_market first and then failing on workbook left an orphan
+      // half committed while the run reported the row as skipped — so the two directions
+      // disagreed and the operator's report said nothing was written.
+      db.transaction(() => {
+        linkEntity(db, {
+          entityType: 'property',
+          canonicalId,
+          system: 'lease_market',
+          externalId: String(r.id),
+          // Not 'manual': no human performed THIS link. The config blessing is human, the address
+          // resolution is not, and an auditor asking "which links did a person make" must not get
+          // auto-generated rows back.
+          matchMethod: 'exact_address',
+        });
+        linkEntity(db, {
+          entityType: 'property',
+          canonicalId,
+          system: 'workbook',
+          externalId: blessedKey,
+          matchMethod: 'exact_address',
+        });
+      })();
       linked += 1;
     } catch (err) {
       // A conflicting pre-existing link is a human decision to reconcile, not a reason to abort
