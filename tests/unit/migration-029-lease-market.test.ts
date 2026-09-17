@@ -17,12 +17,12 @@ function landing(db: Database.Database, sha: string, status: 'ok' | 'failed' = '
     ).run(sha, status === 'ok' ? 'complete' : 'n/a', status).lastInsertRowid,
   );
 }
-function property(db: Database.Database, addressNorm: string): number {
+function property(db: Database.Database, addressNorm: string, identityKey = `addr:${addressNorm}`): number {
   return Number(
     db.prepare(
-      `INSERT INTO lm_property (address_norm, address_display, market_id, subtype, building_status, first_seen, last_seen)
-       VALUES (?, 'x', 'columbus', 'warehouse', 'existing', '2026-01-01', '2026-01-01')`,
-    ).run(addressNorm).lastInsertRowid,
+      `INSERT INTO lm_property (identity_key, address_norm, address_display, market_id, subtype, building_status, first_seen, last_seen)
+       VALUES (?, ?, 'x', 'columbus', 'warehouse', 'existing', '2026-01-01', '2026-01-01')`,
+    ).run(identityKey, addressNorm).lastInsertRowid,
   );
 }
 function space(db: Database.Database, propertyId: number, landingId: number, suite: string): number {
@@ -57,11 +57,15 @@ describe('migration 029 — lease market', () => {
     expect(() => landing(db, 'abc', 'ok')).toThrow(/UNIQUE/);
   });
 
-  it('keys properties by address and spaces by property + suite', () => {
+  it('keys properties by identity_key (same address allowed with different keys) and spaces by property + suite', () => {
     const db = makeDb();
     const l = landing(db, 's1');
-    const p = property(db, '1100 RARIG AVE');
-    expect(() => property(db, '1100 RARIG AVE')).toThrow(/UNIQUE/);
+    const p = property(db, '1100 RARIG AVE', 'addr:columbus|COLUMBUS|1100 RARIG AVE');
+    // Same street address, different identity_key (e.g. a second CoStar-id-keyed property at the same
+    // address, or the same address in a different market) — allowed since address_norm is no longer UNIQUE.
+    expect(() => property(db, '1100 RARIG AVE', 'costar:C1')).not.toThrow();
+    // Same identity_key is still rejected.
+    expect(() => property(db, '9 OTHER ST', 'addr:columbus|COLUMBUS|1100 RARIG AVE')).toThrow(/UNIQUE/);
     space(db, p, l, 'B');
     space(db, p, l, '');
     expect(() => space(db, p, l, 'B')).toThrow(/UNIQUE/);

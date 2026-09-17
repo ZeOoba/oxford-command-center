@@ -28,9 +28,14 @@ CREATE INDEX IF NOT EXISTS ix_lm_landing_market ON lm_landing (source, market_id
 CREATE TABLE IF NOT EXISTS lm_property (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
   costar_property_id TEXT,
-  address_norm       TEXT NOT NULL UNIQUE,
+  -- 'costar:<id>' when a CoStar property id is present, else 'addr:<market_id>|<city_norm>|<address_norm>'.
+  -- address_norm is NOT unique on its own: the same street address can legitimately be two properties
+  -- (two different CoStar ids, or the same address in two different markets).
+  identity_key       TEXT NOT NULL UNIQUE,
+  address_norm       TEXT NOT NULL,
   address_display    TEXT NOT NULL,
   city               TEXT,
+  city_norm          TEXT NOT NULL DEFAULT '',
   state              TEXT,
   zip                TEXT,
   lat                REAL CHECK (lat IS NULL OR (lat BETWEEN -90 AND 90)),
@@ -53,6 +58,7 @@ CREATE TABLE IF NOT EXISTS lm_property (
 );
 CREATE INDEX IF NOT EXISTS ix_lm_property_costar ON lm_property (costar_property_id);
 CREATE INDEX IF NOT EXISTS ix_lm_property_market ON lm_property (market_id);
+CREATE INDEX IF NOT EXISTS ix_lm_property_identity ON lm_property (market_id, city_norm, address_norm);
 
 CREATE TABLE IF NOT EXISTS lm_listing (
   id                    INTEGER PRIMARY KEY AUTOINCREMENT,
