@@ -51,6 +51,21 @@ function insertSignal(
   ).run(row.propertyId, row.listingId, row.kind, row.severity, row.score, row.confidence, JSON.stringify(row.evidence));
 }
 
+/** Fix round 2, item 2: same shape as insertSignal but takes a raw (possibly invalid-JSON) evidence
+ *  string, bypassing JSON.stringify — used to construct a corrupt lm_signal.evidence_json row. */
+function insertRawEvidenceSignal(
+  db: WarehouseDb,
+  row: {
+    propertyId: number; listingId: number | null; kind: string; severity: string; score: number | null;
+    confidence: 'HIGH' | 'MEDIUM' | 'LOW' | null; evidenceJson: string;
+  },
+): void {
+  db.prepare(
+    `INSERT INTO lm_signal (property_id, listing_id, kind, severity, score, confidence, comp_basis, cell_key, computed_at, evidence_json)
+     VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, '2026-03-01', ?)`,
+  ).run(row.propertyId, row.listingId, row.kind, row.severity, row.score, row.confidence, row.evidenceJson);
+}
+
 function listingByAddressNorm(db: WarehouseDb, addressNorm: string): { listingId: number; propertyId: number } {
   return db
     .prepare('SELECT l.id AS listingId, l.property_id AS propertyId FROM lm_listing l JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = ?')
@@ -336,6 +351,131 @@ describe('lease-market API — radar evidence guards', () => {
 
       expect(warnSpy.mock.calls.length).toBeGreaterThanOrEqual(3);
       expect(warnSpy.mock.calls.every((args) => args.some((a) => String(a).includes('[lease-market-api]')))).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+});
+
+// Fix round 2, item 1(b): the WHOLE-BODY OVERRIDE mechanism (LeaseMarketApiDeps.rowLevel), exercised
+// across ALL 6 GET routes, not just /summary (the existing "LeaseMarketApiDeps.rowLevel override"
+// block above only checks /summary's curve). config.mirrorRowLevel is pinned to `true` in every case
+// here (the ratified value for the PRIVATE, Access-gated mirror) — only the override varies — so a
+// pass here proves the override, not the config default, is what's gating redaction.
+//
+// Not driven through scripts/bake-warehouse.ts's `inProcessResolver` (the mechanism the bake itself
+// uses): that resolver has no seam to inject a test `getSnapshot`, and /positioning 503s without one
+// (liveSnapshot() dynamically imports server/brain.ts, which has no snapshot loaded in a unit-test
+// process) — routing all 6 assertions through a 503 would make the /positioning leg of this test
+// vacuous. Built directly against `leaseMarketApi(..., { rowLevel, getSnapshot })` instead — the
+// exact same deps.rowLevel override inProcessResolver's own '/lease-market' special case passes
+// through under the hood, just invoked without the resolver's HTTP-shaped wrapper.
+describe('lease-market API — whole-body rowLevel override across all 6 GET routes (fix round 2, item 1b)', () => {
+  const OVERRIDE_URL = 'https://costar.example.test/listing/rarig-b-override';
+  const OVERRIDE_SECRETS = ['101 Industrial Pkwy', '1100 Rarig Ave', 'SMITH FAMILY LLC', 'Pat Broker', OVERRIDE_URL, '102 Industrial Pkwy'];
+
+  async function runOverride(rowLevelOverride: boolean | undefined) {
+    // config always says mirrorRowLevel:true — the override is what's under test, not the config default.
+    const config = testConfig({ mirrorRowLevel: true });
+    const db = await seeded(config, { oraListingUrl: OVERRIDE_URL });
+    const { listingId, propertyId } = listingByAddressNorm(db, '102 INDUSTRIAL PKWY');
+    insertSignal(db, {
+      propertyId, listingId, kind: 'withdrawn_after_stale', severity: 'info', score: null, confidence: null,
+      evidence: { address: '102 Industrial Pkwy', removedAt: '2026-02-20', domAtRemoval: 220, staleThresholdDays: 180, lastAskingNnnEq: 6.5, availableSf: 20000, outcome: 'unknown' },
+    });
+    const app = leaseMarketApi(() => db, {
+      loadConfig: () => config, getSnapshot: async () => snapshot, now: () => '2026-03-02T09:00:00Z', rowLevel: rowLevelOverride,
+    });
+    const summary = LeaseMarketSummaryResponse.parse(await json(await app.request('/summary')));
+    const positioning = PositioningResponse.parse(await json(await app.request('/positioning')));
+    const radar = RadarResponse.parse(await json(await app.request('/radar')));
+    const signals = SignalsResponse.parse(await json(await app.request('/signals')));
+    const changes = ChangesResponse.parse(await json(await app.request('/changes')));
+    const listingRow = db.prepare("SELECT l.id FROM lm_listing l JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '101 INDUSTRIAL PKWY'").get() as { id: number };
+    const history = HistoryResponse.parse(await json(await app.request(`/history/${listingRow.id}`)));
+    return { summary, positioning, radar, signals, changes, history };
+  }
+
+  it('rowLevel: undefined (no override) falls through to config.mirrorRowLevel=true — every secret present (proves the negative check below is not vacuous)', async () => {
+    const { summary, positioning, radar, signals, changes, history } = await runOverride(undefined);
+    expect(radar.candidates.length).toBeGreaterThan(0);
+    expect(radar.monitor.length).toBeGreaterThan(0);
+    expect(signals.signals.length).toBeGreaterThan(0);
+    expect(changes.events.length).toBeGreaterThan(0);
+    expect(summary.curve.length).toBeGreaterThan(0);
+    const blob = JSON.stringify({ summary, positioning, radar, signals, changes, history });
+    for (const secret of OVERRIDE_SECRETS) expect(blob, `expected no-override payload to contain "${secret}"`).toContain(secret);
+  });
+
+  it('rowLevel: false OVERRIDES config.mirrorRowLevel=true — every secret stripped from all 6 GET routes', async () => {
+    const { summary, positioning, radar, signals, changes, history } = await runOverride(false);
+    expect(summary.rowLevel).toBe(false);
+    expect(radar.candidates.length).toBeGreaterThan(0);
+    expect(radar.monitor.length).toBeGreaterThan(0);
+    expect(signals.signals.length).toBeGreaterThan(0);
+    expect(changes.events.length).toBeGreaterThan(0);
+    expect(summary.curve.length).toBeGreaterThan(0);
+    const blob = JSON.stringify({ summary, positioning, radar, signals, changes, history });
+    for (const secret of OVERRIDE_SECRETS) expect(blob, `expected overridden payload to NOT contain "${secret}"`).not.toContain(secret);
+  });
+});
+
+// Fix round 2, item 2: an unparseable evidence_json must be SKIPPED (logged), never a 500 for the
+// whole endpoint. Covers both consumers: the /radar route's own inline JSON.parse (radar_candidate
+// evidence) and toSignalRow (used by /radar's `monitor` array AND by /signals).
+describe('lease-market API — corrupt evidence_json is skipped, not a 500 (fix round 2, item 2)', () => {
+  it('GET /radar: a radar_candidate row with unparseable evidence_json is skipped with a warning; the endpoint still returns 200 with the well-formed candidate intact', async () => {
+    const { app, db } = await appFor();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const p103 = listingByAddressNorm(db, '103 INDUSTRIAL PKWY').propertyId;
+      insertRawEvidenceSignal(db, { propertyId: p103, listingId: null, kind: 'radar_candidate', severity: 'watch', score: 60, confidence: 'MEDIUM', evidenceJson: '{not valid json' });
+
+      const res = await app.request('/radar');
+      expect(res.status).toBe(200);
+      const radar = RadarResponse.parse(await json(res));
+      expect(radar.candidates.map((c) => c.propertyId)).not.toContain(p103);
+      expect(radar.candidates).toHaveLength(1);
+      expect(radar.candidates[0]!.address).toBe('101 Industrial Pkwy');
+      expect(warnSpy.mock.calls.some((args) => args.some((a) => String(a).includes('[lease-market-api]')) && args.some((a) => String(a).includes(String(p103))))).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('GET /radar: a withdrawn_after_stale row (toSignalRow, the `monitor` array) with unparseable evidence_json is skipped with a warning; endpoint still returns 200', async () => {
+    const { app, db } = await appFor();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const { listingId, propertyId } = listingByAddressNorm(db, '102 INDUSTRIAL PKWY');
+      insertRawEvidenceSignal(db, { propertyId, listingId, kind: 'withdrawn_after_stale', severity: 'info', score: null, confidence: null, evidenceJson: 'not json at all' });
+
+      const res = await app.request('/radar');
+      expect(res.status).toBe(200);
+      const radar = RadarResponse.parse(await json(res));
+      expect(radar.monitor.some((s) => s.propertyId === propertyId)).toBe(false);
+      expect(warnSpy.mock.calls.some((args) => args.some((a) => String(a).includes('[lease-market-api]')))).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('GET /signals: a non-radar signal (toSignalRow) with unparseable evidence_json is skipped with a warning; endpoint still returns 200 with the other signals intact', async () => {
+    const { app, db } = await appFor();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const before = SignalsResponse.parse(await json(await app.request('/signals')));
+      expect(before.signals.length).toBeGreaterThan(0); // non-vacuous baseline
+
+      const { listingId, propertyId } = listingByAddressNorm(db, '103 INDUSTRIAL PKWY');
+      insertRawEvidenceSignal(db, { propertyId, listingId, kind: 'stale', severity: 'watch', score: null, confidence: null, evidenceJson: '{"broken": ' });
+
+      const res = await app.request('/signals');
+      expect(res.status).toBe(200);
+      const after = SignalsResponse.parse(await json(res));
+      expect(after.signals.length).toBe(before.signals.length); // corrupt row excluded, not counted
+      expect(after.signals.some((s) => s.propertyId === propertyId && s.kind === 'stale')).toBe(false);
+      expect(warnSpy.mock.calls.some((args) => args.some((a) => String(a).includes('[lease-market-api]')))).toBe(true);
     } finally {
       warnSpy.mockRestore();
     }

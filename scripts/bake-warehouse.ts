@@ -54,7 +54,16 @@ export type RouteResolver = (routerPath: string) => Promise<{ status: number; js
  *  mirrorRowLevel:true (ratified for the private, Access-gated mirror) and must stay that way; the
  *  redacted/public-safe bake forces false here instead of touching the shipped config. Kept local to
  *  this one prefix rather than generalizing WAREHOUSE_SUB_ROUTERS's factory signature — every other
- *  sub-router has no bake-time redaction concept to override. */
+ *  sub-router has no bake-time redaction concept to override.
+ *
+ *  CROSS-REFERENCE (fix round 2, item 3): the `'/lease-market'` string literal below must match the
+ *  `prefix` field of the `/lease-market` entry in server/warehouse/sub-routers.ts's
+ *  WAREHOUSE_SUB_ROUTERS list verbatim — if that prefix is ever renamed there without updating this
+ *  literal, this special case silently stops firing and the shared `factory(() => db)` branch takes
+ *  over instead, which builds a leaseMarketApi() instance with NO `rowLevel` override (i.e. a
+ *  "redacted" bake would silently stop redacting lease-market data). Regression-guarded by
+ *  tests/unit/lease-market-api-bake.test.ts ("WAREHOUSE_SUB_ROUTERS still has a '/lease-market'
+ *  prefix entry"). */
 export function inProcessResolver(db: WarehouseDb, opts: { leaseMarketRowLevel?: boolean } = {}): RouteResolver {
   const app = warehouseRoutes(() => db);
   const subApps = WAREHOUSE_SUB_ROUTERS
@@ -253,10 +262,38 @@ export interface BakeResult { path: string; warehouseSource: WarehouseSource; co
  * when omitted, matching this module's own "a public deploy must always run in the default
  * (redacted) mode" policy.
  */
+export interface LeaseMarketBakeMode {
+  /** Passed as inProcessResolver's `opts.leaseMarketRowLevel` — overrides `config.mirrorRowLevel`
+   *  on that ONE bake-time router instance. `undefined` ⇒ no override, falls through to config
+   *  (private/ratified mode); `false` ⇒ forced redaction regardless of config (redacted mode). */
+  leaseMarketRowLevel: boolean | undefined;
+  /** Passed as BuildOpts.includeLeaseMarket — the httpResolver/live-server path's answer, since it
+   *  cannot override an already-mounted router's config per request over HTTP (see BuildOpts doc
+   *  comment): `false` excludes every `/lease-market/*` route from the plan entirely in redacted
+   *  mode; `true` includes them (the in-process path always includes them too, redacting via
+   *  `leaseMarketRowLevel` instead — this flag only gates the http path). */
+  includeLeaseMarket: boolean;
+}
+
+/**
+ * Fix round 2, item 1(a): pure `includeConfidential` → lease-market bake-mode mapping, extracted out
+ * of `bakeWarehouseJson` so the redacted-vs-private decision can be unit-tested directly (no
+ * warehouse DB, no HTTP server, no filesystem write). This is the ONE place that decides both bake
+ * paths' lease-market behavior — `bakeWarehouseJson` just wires the two fields to the resolver it
+ * picked. See `LeaseMarketBakeMode` field docs for exactly what each value does on each path.
+ */
+export function leaseMarketBakeMode(includeConfidential: boolean): LeaseMarketBakeMode {
+  return {
+    leaseMarketRowLevel: includeConfidential ? undefined : false,
+    includeLeaseMarket: includeConfidential,
+  };
+}
+
 export async function bakeWarehouseJson(opts: { now?: number; includeConfidential?: boolean } = {}): Promise<BakeResult> {
   const now = opts.now ?? Date.now();
   const includeConfidential = opts.includeConfidential ?? false;
   const baseUrl = process.env.BRAIN_BAKE_SOURCE_URL ?? `http://127.0.0.1:${serverPort()}`;
+  const { leaseMarketRowLevel, includeLeaseMarket: includeLeaseMarketHttp } = leaseMarketBakeMode(includeConfidential);
 
   let resolver: RouteResolver;
   let warehouseSource: WarehouseSource;
@@ -269,13 +306,13 @@ export async function bakeWarehouseJson(opts: { now?: number; includeConfidentia
     // Can't override an already-mounted live-server router's mirrorRowLevel per bake request over
     // HTTP — exclude the lease-market routes entirely from a redacted bake rather than risk a
     // row-level leak (see BuildOpts.includeLeaseMarket).
-    includeLeaseMarket = includeConfidential;
+    includeLeaseMarket = includeLeaseMarketHttp;
   } else {
     const dbPath = process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
     db = openWarehouse(dbPath);
     db.pragma('wal_checkpoint(TRUNCATE)'); // flush WAL → committed DB so the read can't lag the server
     // Full control on this path: bake the routes either way, but force rowLevel false when redacted.
-    resolver = inProcessResolver(db, { leaseMarketRowLevel: includeConfidential ? undefined : false });
+    resolver = inProcessResolver(db, { leaseMarketRowLevel });
     warehouseSource = 'checkpoint-read';
   }
 
