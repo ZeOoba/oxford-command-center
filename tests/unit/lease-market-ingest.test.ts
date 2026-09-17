@@ -94,10 +94,22 @@ describe('ingestCostarListingsFile', () => {
     expect((await ingestCostarListingsFile(capped.db, await writeCostarFixture(capped.dir, 'costar-listings_columbus_2026-01-01.xlsx', FOUR), capped.deps)).partialReason).toMatch(/export cap 4/);
   });
 
-  it('fails on header change, disabled market, and pending map; retries after the fix', async () => {
+  it('a header change degrades to partial (no lockout); the same new header can go complete again', async () => {
     const { dir, db, deps } = setup();
     await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', FOUR), deps);
-    expect(await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', FOUR, { extraHeader: 'Notes' }), deps)).toMatchObject({ status: 'failed', error: expect.stringMatching(/header set changed/) });
+    const changed = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', FOUR, { extraHeader: 'Notes' }), deps);
+    expect(changed).toMatchObject({ status: 'ingested', completeness: 'partial', markedMissing: 0, markedRemoved: 0 });
+    expect(changed.partialReason).toMatch(/header set changed vs landing #\d+ \(mapped columns verified by parser\)/);
+    expect(spaceStatus(db, '20 BETA DR')).toBe('active');
+    const noBeta = FOUR.filter((l) => l.id !== 'C2');
+    const r3 = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-03-01.xlsx', [...noBeta, { address: '40 Delta Pkwy', sf: 5000 }], { extraHeader: 'Notes' }), deps);
+    expect(r3).toMatchObject({ status: 'ingested', completeness: 'complete', markedMissing: 1 });
+    expect(spaceStatus(db, '20 BETA DR')).toBe('missing_once');
+  });
+
+  it('fails on disabled market and pending map; retries after the fix', async () => {
+    const { dir, db, deps } = setup();
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', FOUR), deps);
     const disabled = testConfig();
     disabled.markets = disabled.markets.map((m) => (m.id === 'madison' ? { ...m, enabled: false } : m));
     const mad = await writeCostarFixture(dir, 'costar-listings_madison_2026-01-01.xlsx', [{ address: '5 Lake St', sf: 3000, market: 'Madison' }]);
@@ -136,5 +148,179 @@ describe('ingestCostarListingsFile', () => {
     const { dir, db, deps } = setup();
     await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', [{ address: '1 Big Num St', sf: 16000, rentLow: 12000 }]), deps);
     expect(db.prepare('SELECT rent_basis, asking_nnn_eq, rejected_reason FROM lm_observation').get()).toEqual({ rent_basis: 'UNKNOWN', asking_nnn_eq: null, rejected_reason: expect.stringMatching(/outside/) });
+  });
+
+  // ── Fix round 1 ──────────────────────────────────────────────────────────
+
+  it('does not fire a price event when NNN-eq drifts only because the opex median moved (opex-drift guard)', async () => {
+    const config = testConfig();
+    config.markets = config.markets.map((m) => ({ ...m, opexDefaults: { warehouse: null, flex: null } }));
+    const base = testHeaderMap();
+    const headerMap = testHeaderMap({ fields: { ...base.fields, rentText: 'Rent Low', rentLow: null, rentHigh: null, rentBasis: null } });
+    const { dir, db, deps } = setup({ config, headerMap });
+    const gross: FixtureListing = { address: '99 Gross Way', sf: 10000, rentLow: '$11.00/SF/YR Gross', rentType: null };
+    const comps1: FixtureListing[] = [1.8, 1.9, 2.0, 2.1, 2.2].map((opex, i) => ({ address: `${i + 1} Opex Ln`, sf: 10000, rentLow: `$7.00/SF/YR + $${opex.toFixed(2)} NNN`, rentType: null }));
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', [...comps1, gross]), deps);
+    const first = db.prepare("SELECT asking_nnn_eq FROM lm_observation o JOIN lm_listing l ON l.id = o.listing_id JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '99 GROSS WAY'").get() as { asking_nnn_eq: number };
+    const comps2: FixtureListing[] = [3.8, 3.9, 4.0, 4.1, 4.2].map((opex, i) => ({ address: `${i + 1} Opex Ln`, sf: 10000, rentLow: `$7.00/SF/YR + $${opex.toFixed(2)} NNN`, rentType: null }));
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [...comps2, gross]), deps);
+    const second = db.prepare("SELECT asking_nnn_eq FROM lm_observation o JOIN lm_listing l ON l.id = o.listing_id JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '99 GROSS WAY' ORDER BY o.observed_at DESC LIMIT 1").get() as { asking_nnn_eq: number };
+    expect(second.asking_nnn_eq).not.toBe(first.asking_nnn_eq); // the median genuinely moved
+    expect(eventsFor(db, '99 GROSS WAY').map((e) => (e as { kind: string }).kind)).toEqual(['new']); // no price_cut/price_increase
+  });
+
+  it('quoted opex counts at most once per listing across many prior exports', async () => {
+    const config = testConfig();
+    config.markets = config.markets.map((m) => ({ ...m, opexDefaults: { warehouse: null, flex: null } }));
+    const base = testHeaderMap();
+    const headerMap = testHeaderMap({ fields: { ...base.fields, rentText: 'Rent Low', rentLow: null, rentHigh: null, rentBasis: null } });
+    const { dir, db, deps } = setup({ config, headerMap });
+    const opexQuotes = [1.8, 1.9, 2.0, 2.1, 2.2];
+    for (let i = 0; i < opexQuotes.length; i++) {
+      const listing: FixtureListing = { address: '1 Opex Ln', sf: 10000, rentLow: `$7.00/SF/YR + $${opexQuotes[i]!.toFixed(2)} NNN`, rentType: null };
+      await ingestCostarListingsFile(db, await writeCostarFixture(dir, `costar-listings_columbus_2026-0${i + 1}-01.xlsx`, [listing]), deps);
+    }
+    const gross: FixtureListing = { address: '99 Gross Way', sf: 10000, rentLow: '$11.00/SF/YR Gross', rentType: null };
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-06-01.xlsx', [gross]), deps);
+    expect(db.prepare("SELECT rent_basis, asking_nnn_eq, opex_est_psf, opex_source, confidence FROM lm_observation o JOIN lm_listing l ON l.id = o.listing_id JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '99 GROSS WAY'").get())
+      .toEqual({ rent_basis: 'GROSS', asking_nnn_eq: null, opex_est_psf: null, opex_source: null, confidence: 'low' });
+  });
+
+  it('does not fire a price event when the previous observation was rejected', async () => {
+    const { dir, db, deps } = setup();
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', [{ address: '1 Big Num St', sf: 16000, rentLow: 12000 }]), deps);
+    const r = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [{ address: '1 Big Num St', sf: 16000, rentLow: 8.5 }]), deps);
+    expect(r.events).toMatchObject({ price_cut: 0, price_increase: 0 });
+    expect(eventsFor(db, '1 BIG NUM ST').map((e) => (e as { kind: string }).kind)).toEqual(['new']);
+  });
+
+  it('a partial export after removal keeps the space removed and emits no returned event', async () => {
+    const { dir, db, deps } = setup();
+    const extra: FixtureListing = { address: '40 Delta Pkwy', sf: 5000 };
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', FOUR), deps);
+    const noBeta = FOUR.filter((l) => l.id !== 'C2');
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [...noBeta, extra]), deps);
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-03-01.xlsx', [...noBeta, extra]), deps);
+    expect(spaceStatus(db, '20 BETA DR')).toBe('removed');
+    const r = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-04-01.xlsx', [FOUR[1]!]), deps);
+    expect(r.completeness).toBe('partial');
+    expect(spaceStatus(db, '20 BETA DR')).toBe('removed');
+    expect(eventsFor(db, '20 BETA DR').map((e) => (e as { kind: string }).kind)).toEqual(['new', 'missing', 'removed']);
+  });
+
+  it('a back-dated (or same-day) re-export writes the observation but emits no events', async () => {
+    const { dir, db, deps } = setup();
+    const alpha1: FixtureListing = { address: '10 Alpha Rd', sf: 12000, rentLow: 8.5, dateOnMarket: '2025-10-01' };
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', [alpha1]), deps);
+    const alpha2: FixtureListing = { address: '10 Alpha Rd', sf: 12000, rentLow: 7.5, dateOnMarket: '2026-02-15' };
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-03-01.xlsx', [alpha2]), deps);
+    const before = eventsFor(db, '10 ALPHA RD');
+    expect(before.map((e) => (e as { kind: string }).kind)).toEqual(['new', 'price_cut', 'dom_reset']);
+    // Back-dated: this file's export date (2026-02-01) is before the space's last_seen (2026-03-01).
+    const alpha3: FixtureListing = { address: '10 Alpha Rd', sf: 12000, rentLow: 8.5, dateOnMarket: '2026-02-15' };
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [alpha3]), deps);
+    expect(eventsFor(db, '10 ALPHA RD')).toEqual(before);
+    expect((db.prepare("SELECT COUNT(*) AS n FROM lm_observation o JOIN lm_listing l ON l.id = o.listing_id JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '10 ALPHA RD'").get() as { n: number }).n).toBe(3);
+  });
+
+  it('first_seen lowers when a back-dated file predates it', async () => {
+    const { dir, db, deps } = setup();
+    const zeta: FixtureListing = { address: '1 Zeta Ct', sf: 9000 };
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [zeta]), deps);
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-03-01.xlsx', [zeta]), deps);
+    const before = db.prepare("SELECT l.first_seen AS listingFirstSeen, p.first_seen AS propertyFirstSeen FROM lm_listing l JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '1 ZETA CT'").get();
+    expect(before).toEqual({ listingFirstSeen: '2026-02-01', propertyFirstSeen: '2026-02-01' });
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-15.xlsx', [zeta]), deps);
+    const after = db.prepare("SELECT l.first_seen AS listingFirstSeen, p.first_seen AS propertyFirstSeen FROM lm_listing l JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '1 ZETA CT'").get();
+    expect(after).toEqual({ listingFirstSeen: '2026-01-15', propertyFirstSeen: '2026-01-15' });
+  });
+
+  it('two different CoStar ids at the same address create two properties', async () => {
+    const { dir, db, deps } = setup();
+    const rows: FixtureListing[] = [
+      { id: 'X1', address: '10 Alpha Rd', sf: 5000 },
+      { id: 'X2', address: '10 Alpha Rd', sf: 5000 },
+    ];
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', rows), deps);
+    const props = db.prepare("SELECT costar_property_id FROM lm_property WHERE address_norm = '10 ALPHA RD' ORDER BY id").all();
+    expect(props).toEqual([{ costar_property_id: 'X1' }, { costar_property_id: 'X2' }]);
+  });
+
+  it('the same address in two markets is two properties; a complete export of one market never marks the other missing', async () => {
+    const { dir, db, deps } = setup();
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', [{ address: '10 Alpha Rd', sf: 5000 }]), deps);
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_madison_2026-01-01.xlsx', [{ address: '10 Alpha Rd', sf: 5000, market: 'Madison' }]), deps);
+    const props = db.prepare("SELECT market_id FROM lm_property WHERE address_norm = '10 ALPHA RD' ORDER BY market_id").all();
+    expect(props).toEqual([{ market_id: 'columbus' }, { market_id: 'madison' }]);
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [{ address: '1 Zeta Ct', sf: 9000 }]), deps);
+    const columbusAlpha = db.prepare("SELECT l.status FROM lm_listing l JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '10 ALPHA RD' AND p.market_id = 'columbus'").get() as { status: string };
+    const madisonAlpha = db.prepare("SELECT l.status FROM lm_listing l JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '10 ALPHA RD' AND p.market_id = 'madison'").get() as { status: string };
+    expect(columbusAlpha.status).toBe('missing_once');
+    expect(madisonAlpha.status).toBe('active');
+  });
+
+  it('a no-id row later seen with a CoStar id adopts into the same property', async () => {
+    const { dir, db, deps } = setup();
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', [{ address: '10 Alpha Rd', sf: 12000 }]), deps);
+    const before = db.prepare("SELECT COUNT(*) AS n FROM lm_property WHERE address_norm = '10 ALPHA RD'").get() as { n: number };
+    expect(before.n).toBe(1);
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [{ id: 'X9', address: '10 Alpha Rd', sf: 12000 }]), deps);
+    const rows = db.prepare("SELECT costar_property_id, identity_key FROM lm_property WHERE address_norm = '10 ALPHA RD'").all();
+    expect(rows).toEqual([{ costar_property_id: 'X9', identity_key: 'costar:X9' }]);
+  });
+
+  it('updates lm_landing.skipped_count to the final total (parser skips + in-file duplicates)', async () => {
+    const { dir, db, deps } = setup();
+    const rows: FixtureListing[] = [
+      ...FOUR,
+      { address: '10 Alpha Rd', sf: 12000, rentLow: 8.5, dateOnMarket: '2025-10-01' }, // duplicate of C1
+      { address: '0 Zero SF Ln', sf: 0 }, // parser skip: available SF missing/zero
+    ];
+    const r = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', rows), deps);
+    expect(r.skipped).toBe(2);
+    expect((db.prepare('SELECT skipped_count FROM lm_landing WHERE id = ?').get(r.landingId) as { skipped_count: number }).skipped_count).toBe(2);
+  });
+
+  it('a duplicate space row in the same file does not overwrite the property (e.g. building_sf)', async () => {
+    const { dir, db, deps } = setup();
+    const rows: FixtureListing[] = [
+      { address: '10 Alpha Rd', sf: 12000, rba: 8000 },
+      { address: '10 Alpha Rd', sf: 12000, rba: 99999 },
+    ];
+    const r = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', rows), deps);
+    expect(r.skipped).toBe(1);
+    expect((db.prepare("SELECT building_sf FROM lm_property WHERE address_norm = '10 ALPHA RD'").get() as { building_sf: number }).building_sf).toBe(8000);
+  });
+
+  it('never overwrites an existing property owner_type when the screen is unavailable', async () => {
+    const { dir, db, deps } = setup();
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', FOUR), deps);
+    expect((db.prepare("SELECT owner_type FROM lm_property WHERE address_norm = '20 BETA DR'").get() as { owner_type: string }).owner_type).toBe('institutional');
+    const down = { ...deps, screen: (names: string[]) => ({ ...stubScreen(names), available: false }) };
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', FOUR), down);
+    expect((db.prepare("SELECT owner_type FROM lm_property WHERE address_norm = '20 BETA DR'").get() as { owner_type: string }).owner_type).toBe('institutional');
+  });
+
+  it('an invalid calendar date in the file name fails the landing', async () => {
+    const { dir, db, deps } = setup();
+    const f = await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-30.xlsx', [{ address: '5 Lake St', sf: 3000 }]);
+    const r = await ingestCostarListingsFile(db, f, deps);
+    expect(r).toMatchObject({ status: 'failed', error: 'invalid export date in file name' });
+  });
+
+  it('falls back to the local mtime date when the file name has no date convention', async () => {
+    const { dir, db, deps } = setup();
+    const f = await writeCostarFixture(dir, 'Export.xlsx', [{ address: '5 Lake St', sf: 3000, market: 'Madison' }]);
+    const r = await ingestCostarListingsFile(db, f, deps);
+    const now = new Date();
+    const local = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+    expect(r.exportDate).toBe(local);
+  });
+
+  it('a file-name market that contradicts the market column fails the landing', async () => {
+    const { dir, db, deps } = setup();
+    const f = await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', [{ address: '5 Lake St', sf: 3000, market: 'Madison' }]);
+    const r = await ingestCostarListingsFile(db, f, deps);
+    expect(r).toMatchObject({ status: 'failed', error: expect.stringMatching(/file name market columbus contradicts market column madison/) });
   });
 });
