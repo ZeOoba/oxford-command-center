@@ -3,15 +3,17 @@
 // Lease Market Intelligence — Hono sub-router mounted at /api/warehouse/lease-market (sub-routers.ts).
 // Routes: GET /summary · /positioning · /radar · /signals · /changes · /history/:listingId · POST /radar/decision.
 // Pure route plumbing (math in src/analytics/lease-market/* and server/warehouse/lease-market/*); listed in
-// DELIVERY_ONLY_PATHS. CoStar-derived rows are internal-only; config.mirrorRowLevel=false redacts identifiers.
+// DELIVERY_ONLY_PATHS. CoStar-derived rows are internal-only; redaction (address/ownerName/brokerName
+// stripped) applies whenever the effective row-level flag is false — LeaseMarketApiDeps.rowLevel
+// when set, else config.mirrorRowLevel (see effectiveRowLevel() below and its deps.rowLevel doc comment).
 import { Hono } from 'hono';
 import type { WarehouseDb } from './db';
 import { referenceDate } from '../config';
 import {
   ChangesResponse, HistoryResponse, LeaseMarketSummaryResponse, PositioningResponse, RadarDecisionInput, RadarDecisionResponse,
   RadarResponse, SignalsResponse,
-  type CellBenchmark, type CurvePoint, type EvidenceValue, type LeaseMarketConfig, type ListingEventKind, type RadarCandidate,
-  type RadarDecisionKind, type SignalRow,
+  type CellBenchmark, type ConfidenceLabel, type CurvePoint, type EvidenceValue, type LeaseMarketConfig, type ListingEventKind,
+  type RadarCandidate, type RadarDecisionKind, type SignalRow,
 } from '../../src/contracts/lease-market';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import { toCellBenchmark } from '../../src/analytics/lease-market/benchmarks';
@@ -25,6 +27,15 @@ export interface LeaseMarketApiDeps {
   loadConfig?: () => LeaseMarketConfig;
   getSnapshot?: () => Promise<PortfolioSnapshot | null>;
   now?: () => string;
+  /**
+   * Fix round 1 (bake-scoped redaction): overrides `config.mirrorRowLevel` for every route on this
+   * router instance when set. `config/lease-market.json` ships `mirrorRowLevel: true` (ratified for
+   * the PRIVATE, Access-gated mirror) and stays that way — this override exists so the redacted/
+   * public-safe Fat-Mirror bake (scripts/bake-warehouse.ts's inProcessResolver) can force `false` on
+   * an in-process router instance without touching the shipped config. Omitted ⇒ falls through to
+   * `config.mirrorRowLevel` exactly as before this override existed.
+   */
+  rowLevel?: boolean;
 }
 
 async function liveSnapshot(): Promise<PortfolioSnapshot | null> {
@@ -49,19 +60,26 @@ export function leaseMarketApi(getDb: () => WarehouseDb, deps: LeaseMarketApiDep
   const loadConfig = deps.loadConfig ?? (() => loadLeaseMarketConfig());
   const getSnapshot = deps.getSnapshot ?? liveSnapshot;
   const now = deps.now ?? (() => new Date().toISOString());
+  // Fix round 1, item 1: the single point every route reads redaction policy through — deps.rowLevel
+  // overrides config.mirrorRowLevel when set (see LeaseMarketApiDeps.rowLevel doc comment).
+  const effectiveRowLevel = (config: LeaseMarketConfig): boolean => deps.rowLevel ?? config.mirrorRowLevel;
 
   async function guarded(handler: (db: WarehouseDb, config: LeaseMarketConfig) => Response | Promise<Response>): Promise<Response> {
     let db: WarehouseDb;
     try {
       db = getDb();
-    } catch {
+    } catch (e) {
+      // Fix round 1, item 4: log the real cause server-side; the body stays the generic sentinel.
+      console.error('[lease-market-api] warehouse unavailable:', e instanceof Error ? e.message : String(e));
       return json(503, { error: 'warehouse unavailable' });
     }
     let config: LeaseMarketConfig;
     try {
       config = loadConfig();
     } catch (e) {
-      return json(500, { error: `lease-market config invalid: ${e instanceof Error ? e.message : String(e)}` });
+      // Fix round 1, item 3: log the real cause server-side; the body never echoes e.message.
+      console.error('[lease-market-api] config load failed:', e instanceof Error ? e.message : String(e));
+      return json(500, { error: 'invalid lease-market config' });
     }
     try {
       return await handler(db, config);
@@ -109,13 +127,13 @@ export function leaseMarketApi(getDb: () => WarehouseDb, deps: LeaseMarketApiDep
         if (latest.askingNnnEq !== null) {
           curve.push({
             listingId: s.listingId, propertyId: s.propertyId, marketId: s.marketId, subtype: s.property.subtype, availableSf: latest.availableSf,
-            askingNnnEq: latest.askingNnnEq, solid: s.latestEligible, isOra: s.isOraOwned, address: config.mirrorRowLevel ? s.addressDisplay : null,
+            askingNnnEq: latest.askingNnnEq, solid: s.latestEligible, isOra: s.isOraOwned, address: effectiveRowLevel(config) ? s.addressDisplay : null,
           });
         }
       }
       return json(200, LeaseMarketSummaryResponse.parse({
         asOf,
-        rowLevel: config.mirrorRowLevel,
+        rowLevel: effectiveRowLevel(config),
         kpis: leaseMarketKpis(db, config, state, asOf),
         freshness: marketFreshness(db, config, asOf),
         dataQuality: marketDataQuality(db, config, state),
@@ -133,13 +151,16 @@ export function leaseMarketApi(getDb: () => WarehouseDb, deps: LeaseMarketApiDep
       const asOf = referenceDate();
       const state = loadMarketState(db, config, asOf);
       const units = snapshot.leases.filter((l) => l.status === 'Vacant').map((l) => ({ propertyKey: l.propertyKey, unit: l.unit, sf: l.sf }));
-      return json(200, PositioningResponse.parse({ asOf, ...computePositioning(units, config, state, config.mirrorRowLevel) }));
+      return json(200, PositioningResponse.parse({ asOf, ...computePositioning(units, config, state, effectiveRowLevel(config)) }));
     }),
   );
 
+  const RADAR_SCORE_PARTS = ['part_dom', 'part_reductions', 'part_belowMarket', 'part_vacancy', 'part_buyBoxFit', 'part_owner'] as const;
+  const isConfidenceLabel = (v: unknown): v is ConfidenceLabel => v === 'HIGH' || v === 'MEDIUM' || v === 'LOW';
+
   app.get('/radar', () =>
     guarded((db, config) => {
-      const rowLevel = config.mirrorRowLevel;
+      const rowLevel = effectiveRowLevel(config);
       const decisions = new Map<number, { decision: RadarDecisionKind; decidedAt: string; note: string | null }>();
       const decisionRows = db
         .prepare('SELECT property_id, decision, decided_at, note FROM lm_radar_decision ORDER BY decided_at ASC, id ASC')
@@ -148,21 +169,43 @@ export function leaseMarketApi(getDb: () => WarehouseDb, deps: LeaseMarketApiDep
 
       const num = (v: EvidenceValue | undefined): number | null => (typeof v === 'number' ? v : null);
       const str = (v: EvidenceValue | undefined): string | null => (typeof v === 'string' ? v : null);
+      // Fix round 1, item 5: a radar_candidate row missing a finite score, a valid confidence label,
+      // or any of the 6 part_* score components is a corrupt/incomplete compute row — it is SKIPPED
+      // (logged) rather than silently defaulted to 0/LOW, which would misrepresent it as a real,
+      // low-scoring lead instead of surfacing the data-quality problem.
       const candidates: RadarCandidate[] = readSignals(db, "s.kind = 'radar_candidate'")
-        .map((r) => {
+        .flatMap((r): RadarCandidate[] => {
+          const score = r.score;
+          if (score === null || !Number.isFinite(score)) {
+            console.warn(`[lease-market-api] radar candidate property ${r.property_id} skipped: non-finite score (${JSON.stringify(score)})`);
+            return [];
+          }
+          if (!isConfidenceLabel(r.confidence)) {
+            console.warn(`[lease-market-api] radar candidate property ${r.property_id} skipped: invalid/missing confidence (${JSON.stringify(r.confidence)})`);
+            return [];
+          }
           const e = JSON.parse(r.evidence_json) as Record<string, EvidenceValue>;
-          return {
+          const parts: Record<string, number> = {};
+          for (const key of RADAR_SCORE_PARTS) {
+            const v = num(e[key]);
+            if (v === null) {
+              console.warn(`[lease-market-api] radar candidate property ${r.property_id} skipped: missing/invalid evidence.${key}`);
+              return [];
+            }
+            parts[key] = v;
+          }
+          return [{
             propertyId: r.property_id,
             marketId: r.market_id,
             address: rowLevel ? r.address_display : null,
             subtype: e.subtype === 'flex' ? 'flex' : 'warehouse',
             buildingSf: num(e.buildingSf),
-            score: r.score ?? 0,
+            score,
             parts: {
-              dom: num(e.part_dom) ?? 0, reductions: num(e.part_reductions) ?? 0, belowMarket: num(e.part_belowMarket) ?? 0,
-              vacancy: num(e.part_vacancy) ?? 0, buyBoxFit: num(e.part_buyBoxFit) ?? 0, owner: num(e.part_owner) ?? 0,
+              dom: parts.part_dom!, reductions: parts.part_reductions!, belowMarket: parts.part_belowMarket!,
+              vacancy: parts.part_vacancy!, buyBoxFit: parts.part_buyBoxFit!, owner: parts.part_owner!,
             },
-            confidence: r.confidence ?? 'LOW',
+            confidence: r.confidence,
             vacancyShare: num(e.vacancyShare),
             maxEffectiveDom: num(e.maxEffectiveDom) ?? 0,
             reductionCount: num(e.reductionCount) ?? 0,
@@ -175,7 +218,7 @@ export function leaseMarketApi(getDb: () => WarehouseDb, deps: LeaseMarketApiDep
             ownerListingCount: num(e.ownerListingCount) ?? 0,
             brokerName: rowLevel ? str(e.brokerName) : null,
             latestDecision: decisions.get(r.property_id) ?? null,
-          } satisfies RadarCandidate;
+          } satisfies RadarCandidate];
         })
         .sort((a, b) => b.score - a.score || a.propertyId - b.propertyId);
       const monitor = readSignals(db, "s.kind = 'withdrawn_after_stale'").map((r) => toSignalRow(r, rowLevel));
@@ -208,7 +251,7 @@ export function leaseMarketApi(getDb: () => WarehouseDb, deps: LeaseMarketApiDep
       json(200, SignalsResponse.parse({
         asOf: referenceDate(),
         candidatesWithheld: withheldCandidateMarkets(db, config),
-        signals: readSignals(db, "s.kind <> 'radar_candidate' AND s.kind <> 'withdrawn_after_stale'").map((r) => toSignalRow(r, config.mirrorRowLevel)),
+        signals: readSignals(db, "s.kind <> 'radar_candidate' AND s.kind <> 'withdrawn_after_stale'").map((r) => toSignalRow(r, effectiveRowLevel(config))),
       })),
     ),
   );
@@ -217,7 +260,7 @@ export function leaseMarketApi(getDb: () => WarehouseDb, deps: LeaseMarketApiDep
     guarded((db, config) =>
       json(200, ChangesResponse.parse({
         asOf: referenceDate(),
-        events: latestExportEvents(db, config).map((e) => (config.mirrorRowLevel ? e : { ...e, address: null })),
+        events: latestExportEvents(db, config).map((e) => (effectiveRowLevel(config) ? e : { ...e, address: null })),
       })),
     ),
   );
@@ -227,9 +270,9 @@ export function leaseMarketApi(getDb: () => WarehouseDb, deps: LeaseMarketApiDep
       const listingId = Number(c.req.param('listingId'));
       const listing = db
         .prepare('SELECT l.id, l.suite_norm, p.id AS property_id, p.market_id, p.address_display FROM lm_listing l JOIN lm_property p ON p.id = l.property_id WHERE l.id = ?')
-        .get(Number.isInteger(listingId) ? listingId : -1) as { id: number; suite_norm: string; property_id: number; market_id: string; address_display: string } | undefined;
+        .get(Number.isInteger(listingId) ? listingId : -1) as { id: number; suite_norm: string | null; property_id: number; market_id: string; address_display: string } | undefined;
       if (!listing) return json(404, { error: 'unknown listing' });
-      const address = config.mirrorRowLevel ? (listing.suite_norm ? `${listing.address_display} Ste ${listing.suite_norm}` : listing.address_display) : null;
+      const address = effectiveRowLevel(config) ? (listing.suite_norm ? `${listing.address_display} Ste ${listing.suite_norm}` : listing.address_display) : null;
       const observations = (db
         .prepare('SELECT observed_at, available_sf, asking_nnn_eq, rent_basis, confidence, costar_dom FROM lm_observation WHERE listing_id = ? ORDER BY observed_at, id')
         .all(listing.id) as Array<{ observed_at: string; available_sf: number; asking_nnn_eq: number | null; rent_basis: HistoryResponse['observations'][number]['rentBasis']; confidence: 'high' | 'low'; costar_dom: number | null }>)

@@ -304,7 +304,10 @@ async function main() {
   // warehouse deps (better-sqlite3, the api.ts router) out of the snapshot-only path entirely.
   if (shouldBakeWarehouse(process.argv, process.env)) {
     const { bakeWarehouseJson } = await import('./bake-warehouse');
-    const r = await bakeWarehouseJson();
+    // Fix round 1, item 1: public/warehouse.json lands in the SAME public/ directory as
+    // snapshot.json, so it must respect the SAME includeConfidential boundary — otherwise a
+    // "redacted" deploy would still ship full row-level lease-market (CoStar) data.
+    const r = await bakeWarehouseJson({ includeConfidential });
     console.log(`✓ Baked public/warehouse.json (${r.count} endpoints, source: ${r.warehouseSource})`);
   }
 }

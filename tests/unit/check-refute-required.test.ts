@@ -105,6 +105,23 @@ describe('check-refute-required — financial-source classification', () => {
   it('flags src/contracts/common.ts — the Market enum keys the RCT denominator', () => {
     expect(isFinancialSourcePath('src/contracts/common.ts')).toBe(true);
   });
+
+  // Fix round 1, item 6 (Task 14 review): src/contracts/lease-market.ts carries LmThresholds (the
+  // benchmark/similarity/radar governor thresholds) and CellBenchmark/ComparableStats — fields
+  // consumed directly by the radar score and comparable-set math in
+  // src/analytics/lease-market/{benchmarks,similarity,signals,radar}.ts. A silent field drop/rename
+  // there would desync the contract from the math it types, the same governor-adjacent risk that put
+  // loan.ts/debt.ts/capital.ts on this list.
+  it('flags src/contracts/lease-market.ts — LmThresholds/CellBenchmark type the radar and comparable-set governor math', () => {
+    expect(isFinancialSourcePath('src/contracts/lease-market.ts')).toBe(true);
+  });
+
+  // Broad-prefix coverage (server/warehouse/, src/analytics/) already reaches these — asserted
+  // explicitly so a future DELIVERY_ONLY_PATHS or prefix change can't silently exempt them.
+  it('reaches lease-market math files via the existing broad prefixes', () => {
+    expect(isFinancialSourcePath('server/warehouse/lease-market/compute.ts')).toBe(true);
+    expect(isFinancialSourcePath('src/analytics/lease-market/radar.ts')).toBe(true);
+  });
 });
 
 describe('check-refute-required — delivery-only allowlist', () => {
