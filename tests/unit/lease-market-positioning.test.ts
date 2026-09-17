@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openWarehouse, type WarehouseDb } from '../../server/warehouse/db';
 import { ingestCostarListingsFile } from '../../server/warehouse/lease-market/ingest';
-import { loadMarketState } from '../../server/warehouse/lease-market/compute';
+import { loadMarketState, oraSubject } from '../../server/warehouse/lease-market/compute';
 import { computePositioning, recommendationFor } from '../../server/warehouse/lease-market/positioning';
 import type { LeaseMarketConfig } from '../../src/contracts/lease-market';
 import type { ResolvedComparables } from '../../src/analytics/lease-market/similarity';
@@ -544,20 +544,28 @@ describe("Gabriel's go-live decision — Rent Position sourced from real ORA CoS
     expect(zettlerNnn).toMatchObject({ sf: 5000, oraAskingNnnEq: 9, source: 'listing', flags: [] });
     expect(zettlerMg!.oraAskingNnnEq).not.toBe(zettlerNnn!.oraAskingNnnEq);
 
-    // Rule 5: the sublet with no quoted rent still produces a row — null asking, never fabricated, and
-    // a recommendation that says the rent isn't quoted rather than computing a gap from nothing.
-    const sublet = rowFor('3875-3883 E Livingston', null);
-    expect(sublet).toMatchObject({ sf: 7525, oraAskingNnnEq: null, source: 'listing', flags: [] });
-    expect(sublet!.recommendation).toMatch(/withheld or not normalizable/);
+    // M1: a TENANT subletting ORA's building (Lease Type = Sublet) is a tenant-exit signal, not ORA's
+    // own marketed ask — it must never produce a Rent Position row (which would otherwise misread as
+    // "ORA listing found in CoStar but its asking rent is withheld", implying ORA itself withheld a
+    // rent it never quoted). It surfaces only via hygieneFlags.
+    expect(r.rows.some((row) => row.propertyKey === '3875-3883 E Livingston')).toBe(false);
 
     // Heritage Dr is deliberately unmapped — it must never appear as a Rent Position row...
     expect(r.rows.some((row) => row.propertyKey === '9017-9019 Heritage Dr')).toBe(false);
-    // ...but it must not silently vanish either: it surfaces through the existing hygiene-flag surface.
-    expect(r.hygieneFlags).toHaveLength(1);
-    expect(r.hygieneFlags[0]).toMatchObject({
-      address: '9017-9019 Heritage Dr',
-      reason: 'CoStar shows an ORA-owned listing at an address that is not mapped — add it to oraProperties',
-    });
+    // ...but neither it nor the Livingston sublet silently vanishes — both surface through hygieneFlags.
+    expect(r.hygieneFlags).toHaveLength(2);
+    expect(r.hygieneFlags).toContainEqual(
+      expect.objectContaining({
+        address: '9017-9019 Heritage Dr',
+        reason: 'CoStar shows an ORA-owned listing at an address that is not mapped — add it to oraProperties',
+      }),
+    );
+    // Concurrent H3 fix (ingest.ts, out of this task's scope): a blank-suite Sublet row is stored with
+    // a distinct 'SUBLET' suite marker (not '') so it never collides with a same-address Direct
+    // listing — addressDisplay reflects that marker.
+    expect(r.hygieneFlags).toContainEqual(
+      expect.objectContaining({ address: '3887 E Livingston Ave Ste SUBLET', reason: expect.stringMatching(/tenant sublease/) }),
+    );
 
     // With zero rent-roll vacancies, every mapped active ORA listing already has its own row above —
     // "listed but not vacant" must not resurrect the old inverted behaviour.
@@ -572,5 +580,163 @@ describe("Gabriel's go-live decision — Rent Position sourced from real ORA CoS
     expect(listingRows.length).toBeGreaterThan(0);
     expect(listingRows.every((row) => row.comps.every((c) => c.address === null))).toBe(true);
     expect(r.hygieneFlags[0]!.address).toBeNull();
+  });
+});
+
+// ── H2 (refute round 2) — the listing-sourced and rent-roll/feed-sourced subject profiles must resolve
+// the SAME benchmark cell for the same ORA building. Real disagreement: CoStar carries 1100 Rarig as
+// Industrial|Warehouse (lm_property.subtype = 'warehouse', the TEST_HEADERS/testHeaderMap default) while
+// config.oraProperties declares it 'flex' — exactly the real 1100 Rarig / Zettler disagreement. ────────
+describe('H2 — unified subject profile across the listing and rent-roll/feed paths', () => {
+  function flexConfig(): LeaseMarketConfig {
+    return testConfig({
+      oraProperties: [
+        {
+          propertyKey: '1100 Rarig', marketId: 'columbus', submarket: 'East', subtype: 'flex', officePct: null, typicalUnitSf: 8000,
+          leaseBasis: 'NNN', addressNorms: ['1100 RARIG AVE'], lat: null, lon: null, clearHeightFt: null, yearBuilt: null, docks: null, driveIns: null,
+        },
+      ],
+    });
+  }
+
+  it('prices a listing-sourced row against the CONFIG subtype cell, not the CoStar-derived subtype, and matches oraSubject exactly', async () => {
+    const { dir, db } = await newDb();
+    const config = flexConfig();
+    // Default fixture type/secondary ('Industrial'/'Warehouse') maps via subtypeMap 'Industrial|*' ->
+    // 'warehouse', so lm_property.subtype ends up 'warehouse' while config says 'flex'.
+    const ora: FixtureListing = { address: '1100 Rarig Ave', suite: 'B', sf: 8000, rentLow: 11.5, owner: 'OXFORD RARIG LLC' };
+    await ingestInto(db, dir, config, 'columbus', '2026-02-15', [...TEN_COMPS, ora]);
+    const s = loadMarketState(db, config, '2026-03-01');
+    const space = s.spaces.find((sp) => sp.property.oraPropertyKey === '1100 Rarig')!;
+    expect(space.property.subtype).toBe('warehouse'); // confirms the real disagreement exists in this fixture
+
+    const r = computePositioning([], config, s, true);
+    const row = r.rows.find((row) => row.propertyKey === '1100 Rarig')!;
+    expect(row.source).toBe('listing');
+    expect(row.stats!.cellKey).toContain('flex'); // must use config's subtype, never CoStar's 'warehouse'
+    expect(row.stats!.cellKey).not.toContain('warehouse');
+
+    // The rent-roll/feed path (oraSubject) must resolve the identical cell for the same building.
+    const { target } = oraSubject(config.oraProperties[0]!, s, 8000, config.thresholds);
+    expect(target).not.toBeNull();
+    const feedCell = s.cellFor(target!);
+    expect(feedCell.cellKey).toBe(row.stats!.cellKey);
+  });
+
+  it('flags the subtype disagreement by name, once per property, without suppressing the listing row', async () => {
+    const { dir, db } = await newDb();
+    const config = flexConfig();
+    const ora: FixtureListing = { address: '1100 Rarig Ave', suite: 'B', sf: 8000, rentLow: 11.5, owner: 'OXFORD RARIG LLC' };
+    await ingestInto(db, dir, config, 'columbus', '2026-02-15', [...TEN_COMPS, ora]);
+    const s = loadMarketState(db, config, '2026-03-01');
+    const r = computePositioning([], config, s, true);
+
+    expect(r.rows.some((row) => row.propertyKey === '1100 Rarig')).toBe(true); // still gets its row
+    const flag = r.hygieneFlags.find((f) => f.reason.includes('subtype'));
+    expect(flag).toBeDefined();
+    expect(flag!.reason).toContain("'warehouse'");
+    expect(flag!.reason).toContain("'flex'");
+    expect(flag!.address).toBe('1100 Rarig Ave');
+  });
+
+  it('does not flag a subtype disagreement when config and CoStar agree', async () => {
+    const { config, s } = await state(); // default fixture: config subtype 'warehouse', CoStar Industrial|Warehouse -> 'warehouse'
+    const r = computePositioning([], config, s, true);
+    expect(r.hygieneFlags.some((f) => f.reason.includes('subtype'))).toBe(false);
+  });
+});
+
+// ── M1 (refute round 2) — a tenant subletting ORA's own space must never be priced as ORA's own ask. ──
+describe('M1 — a tenant sublease of ORA space is routed to hygiene, never a positioning row', () => {
+  it('excludes a sublease space from positioning rows and from matching a vacant rent-roll unit, but keeps the genuine-withheld-rent row for a real ORA listing', async () => {
+    const { dir, db } = await newDb();
+    const config = testConfig();
+    const sublease: FixtureListing = { address: '1100 Rarig Ave', suite: 'C', sf: 6000, owner: 'OXFORD RARIG LLC', spaceUse: 'Sublet', rentLow: null };
+    const genuineWithheld: FixtureListing = { address: '1100 Rarig Ave', suite: 'B', sf: 8000, owner: 'OXFORD RARIG LLC', rentLow: 'Negotiable' };
+    await ingestInto(db, dir, config, 'columbus', '2026-02-15', [...TEN_COMPS, sublease, genuineWithheld]);
+    const s = loadMarketState(db, config, '2026-03-01');
+    const subleaseSpace = s.spaces.find((sp) => sp.suiteNorm === 'C')!;
+    expect(subleaseSpace.observations.at(-1)!.isSublease).toBe(true);
+
+    // No rent roll at all: the sublease must never surface as its own listing row.
+    const r = computePositioning([], config, s, true);
+    expect(r.rows.some((row) => row.unit === 'C')).toBe(false);
+    expect(r.hygieneFlags).toContainEqual(
+      expect.objectContaining({ listingId: subleaseSpace.listingId, reason: expect.stringMatching(/tenant sublease/) }),
+    );
+    // The genuine withheld-rent listing (suite B, not a sublease) still gets its own row, unaffected.
+    const rowB = r.rows.find((row) => row.unit === 'B')!;
+    expect(rowB).toBeDefined();
+    expect(rowB.oraAskingNnnEq).toBeNull();
+    expect(rowB.recommendation).toMatch(/^ORA listing found in CoStar but its asking rent is withheld/);
+
+    // A vacant rent-roll unit for suite C must not silently match the sublease space either — it should
+    // read 'not_listed', not price against a tenant's own sublease ask.
+    const r2 = computePositioning([{ propertyKey: '1100 Rarig', unit: 'C', sf: 6000 }], config, s, true);
+    const rowC = r2.rows.find((row) => row.propertyKey === '1100 Rarig' && row.unit === 'C')!;
+    expect(rowC.flags).toEqual(['not_listed']);
+    expect(rowC.oraAskingNnnEq).toBeNull();
+    expect(r2.listedButLeased).toEqual([]);
+  });
+
+  it('falls back to the genuinely-only non-sublease ORA space, skipping a sublease when counting "only one space"', async () => {
+    const { dir, db } = await newDb();
+    const config = testConfig();
+    // Two ORA spaces total, but one is a sublease -- the "only ORA space" fallback (for a blank-suite
+    // vacant unit) must treat the non-sublease space as the only ELIGIBLE one.
+    const sublease: FixtureListing = { address: '1100 Rarig Ave', suite: 'C', sf: 6000, owner: 'OXFORD RARIG LLC', spaceUse: 'Sublet', rentLow: null };
+    const onlyReal: FixtureListing = { address: '1100 Rarig Ave', sf: 8000, rentLow: 11.5, owner: 'OXFORD RARIG LLC' }; // no suite
+    await ingestInto(db, dir, config, 'columbus', '2026-02-15', [...TEN_COMPS, sublease, onlyReal]);
+    const s = loadMarketState(db, config, '2026-03-01');
+    const r = computePositioning([{ propertyKey: '1100 Rarig', unit: 'A', sf: 8000 }], config, s, true);
+    expect(r.rows[0]).toMatchObject({ flags: [], oraAskingNnnEq: 11.5 });
+  });
+});
+
+// ── M2 (refute round 2) — positioning-layer coverage: the config-driven ORA-owner-name check reaches
+// the hygiene surface even when the address is unmapped and the owner screen never ran. ──────────────
+describe('M2 — config-driven ORA-owner-name check surfaces a hygiene flag independent of the owner screen', () => {
+  it('flags a pattern-matched owner at an unmapped address, and does not flag an unrelated third-party owner', async () => {
+    const { dir, db } = await newDb();
+    const config = testConfig({ oraOwnerNamePatterns: ['Oxford Realty'] });
+    const heritage: FixtureListing = { address: '9017-9019 Heritage Dr', city: 'Plain City', sf: 5888, rentLow: 7.5, owner: 'Oxford Realty' };
+    const thirdParty: FixtureListing = { address: '123 Someone Else Dr', sf: 6000, rentLow: 8, owner: 'Smith Family LLC' };
+    // Screen unavailable: owner_type stays 'unknown' on both new properties, regardless of owner name.
+    const r0 = await ingestCostarListingsFile(
+      db,
+      await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-15.xlsx', [...TEN_COMPS, heritage, thirdParty]),
+      { config, headerMap: testHeaderMap(), rawDir: join(dir, 'raw'), now: () => '2026-02-16T00:00:00Z', screen: (names) => ({ ...stubScreen(names), available: false }) },
+    );
+    expect(r0.status).toBe('ingested');
+    const s = loadMarketState(db, config, '2026-03-01');
+    const r = computePositioning([], config, s, true);
+
+    const heritageSpace = s.spaces.find((sp) => sp.property.addressDisplay === '9017-9019 Heritage Dr')!;
+    expect(r.hygieneFlags).toContainEqual(
+      expect.objectContaining({
+        listingId: heritageSpace.listingId,
+        address: '9017-9019 Heritage Dr',
+        reason: 'CoStar shows an ORA-owned listing at an address that is not mapped — add it to oraProperties',
+      }),
+    );
+    // Never in a positioning row (unmapped -- no propertyKey to key a row off).
+    expect(r.rows.some((row) => row.propertyKey === '9017-9019 Heritage Dr')).toBe(false);
+    // The unrelated third-party owner must not be flagged.
+    const thirdPartySpace = s.spaces.find((sp) => sp.property.addressDisplay === '123 Someone Else Dr');
+    expect(r.hygieneFlags.some((f) => f.listingId === thirdPartySpace?.listingId)).toBe(false);
+  });
+
+  it('does not flag anything when oraOwnerNamePatterns is empty (the default), even for the same owner name', async () => {
+    const { dir, db } = await newDb();
+    const config = testConfig({ oraOwnerNamePatterns: [] });
+    const heritage: FixtureListing = { address: '9017-9019 Heritage Dr', city: 'Plain City', sf: 5888, rentLow: 7.5, owner: 'Oxford Realty' };
+    await ingestCostarListingsFile(
+      db,
+      await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-15.xlsx', [...TEN_COMPS, heritage]),
+      { config, headerMap: testHeaderMap(), rawDir: join(dir, 'raw'), now: () => '2026-02-16T00:00:00Z', screen: (names) => ({ ...stubScreen(names), available: false }) },
+    );
+    const s = loadMarketState(db, config, '2026-03-01');
+    const r = computePositioning([], config, s, true);
+    expect(r.hygieneFlags).toEqual([]);
   });
 });
