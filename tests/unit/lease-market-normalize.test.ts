@@ -86,7 +86,9 @@ describe('parseRentText', () => {
     expect(parseRentText('$2.75/SF NNN, 3% annual escalations')).toMatchObject({ rentLow: 2.75, rentHigh: 2.75, rentPeriod: null });
   });
   it('add-on opex quoted value derivation', () => {
-    expect(parseRentText('$12,000/month + $1,500 CAM')).toMatchObject({ rentLow: 12000, rentPeriod: 'mo', isTotal: true, opexQuoted: null, basis: 'NNN' });
+    // Fix round 5: "+ CAM" (bare CAM, no TAX/INS) is a PARTIAL expense add-on — it no longer resolves
+    // the basis to NNN (was: basis 'NNN'). rentLow/rentPeriod/isTotal/opexQuoted are unaffected.
+    expect(parseRentText('$12,000/month + $1,500 CAM')).toMatchObject({ rentLow: 12000, rentPeriod: 'mo', isTotal: true, opexQuoted: null, basis: null, ambiguous: true });
     const r = parseRentText('$7.25/SF/YR + $0.21/SF/MO CAM');
     expect(r.rentPeriod).toBe('yr');
     expect(r.rentLow).toBe(7.25);
@@ -273,6 +275,39 @@ describe('parseRentText', () => {
       expect(r.withheld).toBe(false);
       expect(r.rentLow).toBeNull();
     });
+  });
+
+  // Fix round 5 (fifth re-review, controller convention decision — market convention, conservative
+  // per the plan's safety-over-yield rule): an expense add-on resolves the basis to NNN only when it
+  // names a full-expense form (NNN, TICAM, nets/net, expenses, opex/op ex, or CAM together with BOTH
+  // TAX and INS). A partial add-on ("+ CAM" alone, "+ CAM/TAX", "+ CAM/INS", "+ TAX" alone) keeps the
+  // parsed rentLow/rentHigh but resolves basis to null and flags ambiguous — never a silent NNN.
+  describe('partial expense add-on guard', () => {
+    it.each([
+      '$6.50/SF/YR + CAM',
+      '$6.50/SF/YR + CAM/TAX',
+    ])('%s: a partial add-on does not resolve to NNN', (s) => {
+      const r = parseRentText(s);
+      expect(r.ambiguous).toBe(true);
+      expect(r.basis).toBeNull();
+      expect(r.rentLow).toBe(6.5);
+    });
+    it.each([
+      '$6.50/SF/YR + TICAM',
+      '$6.50/SF/YR + CAM/TAX/INS',
+      '$6.50/SF/YR + INS/TAX/CAM',
+      '$6.50/SF/YR + NNN',
+      '$12,000/month + expenses',
+    ])('%s: a full-expense-form add-on still resolves to NNN', (s) => {
+      const r = parseRentText(s);
+      expect(r.basis).toBe('NNN');
+      expect(r.ambiguous).toBe(false);
+    });
+  });
+
+  it('add-on opex ceiling rejects a value at exactly 30 (was: only > 30)', () => {
+    // $2.50/SF/MO annualized is exactly 30.00 — must be rejected, not accepted at the boundary.
+    expect(parseRentText('$7.25/SF/YR + $2.50/SF/MO NNN').opexQuoted).toBeNull();
   });
 });
 

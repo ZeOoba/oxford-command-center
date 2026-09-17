@@ -120,7 +120,11 @@ const AMT = String.raw`\$?\s*(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)`;
 const UNIT = String.raw`(?:\s*\/\s*(?:SF|sq\.?\s*ft\.?)|\s*psf)?`;
 const PER = String.raw`(?:\s*\/\s*(?:yr|year|mo|month)|\s*per\s+(?:year|month|annum))?`;
 const BASIS_WORD = String.raw`(?:NNN|triple\s+net|MG|modified\s+gross|IG|industrial\s+gross|FSG?|full\s+service(?:\s+gross)?|gross)`;
-const ADDON_WORD = String.raw`(?:NNN|CAM|TICAM|opex|expenses|nets?)(?:\s*\/\s*(?:TAX|INS|CAM))*`;
+// Any of these expense tokens, in any order, "/"-separated (fix round 5: "+ INS/TAX/CAM" is exactly
+// as canonical as "+ CAM/TAX/INS" — the grammar only recognizes the SHAPE of an expense add-on;
+// whether it names a full-expense FORM is a separate semantic check, isFullExpenseAddon below).
+const ADDON_TOKEN = String.raw`(?:NNN|CAM|TICAM|opex|expenses|nets?|TAX|INS)`;
+const ADDON_WORD = String.raw`${ADDON_TOKEN}(?:\s*\/\s*${ADDON_TOKEN})*`;
 // Group 1 = the first (base) amount; group 2 = the optional range high-end amount (present only when
 // the range clause matched). Both — and only these two — are capturing, so the parsed values can be
 // cross-checked against the parser's own rentLow/rentHigh below (fix round 4): a match on the whole
@@ -219,6 +223,20 @@ function firstRentCandidateIndex(s: string, hasDollarSign: boolean): number | nu
   return anchored ? anchored.index : null;
 }
 
+// An expense add-on resolves the base rent's basis to NNN only when it names a full-expense FORM —
+// controller decision (fix round 5, market convention, conservative per the safety-over-yield rule):
+// NNN/TICAM/nets(net)/expenses/opex(op ex) name the whole pass-through on their own; CAM alone (or
+// CAM plus only one of TAX/INS) is a PARTIAL component and must not be read as "the tenant pays
+// everything" — that's a real, market-common defect class, not a hypothetical.
+const FULL_EXPENSE_FORM_RE = /\bNNN\b|\bTICAM\b|\bnets?\b|\bexpenses\b|\bop\s*ex\b/i;
+function isFullExpenseAddon(addon: string): boolean {
+  if (FULL_EXPENSE_FORM_RE.test(addon)) return true;
+  const hasCam = /\bCAM\b/i.test(addon);
+  const hasTax = /\bTAX\b/i.test(addon);
+  const hasIns = /\bINS\b/i.test(addon);
+  return hasCam && hasTax && hasIns;
+}
+
 // Add-on opex derivation from the expense text after a "+" (rule 7). Returns null when the
 // figure isn't plausibly a per-SF/monthly opex add-on (e.g. a bare total-dollar CAM amount).
 function addonOpexValue(addon: string): number | null {
@@ -234,7 +252,9 @@ function addonOpexValue(addon: string): number | null {
   } else {
     value = null;
   }
-  return value !== null && value > 30 ? null : value;
+  // Fix round 5: reject AT the ceiling too (was: only strictly above it) — an add-on annualizing to
+  // exactly $30/SF/yr is exactly as implausible as one just over it.
+  return value !== null && value >= 30 ? null : value;
 }
 
 export function parseRentText(text: string): ParsedRentText {
@@ -332,8 +352,23 @@ export function parseRentText(text: string): ParsedRentText {
   const tailBasisRejected = headStated === null && tailTokens.length > 0 && !tailUsable;
   let basis: RentBasis | null;
   let addonContradiction = false;
+  let partialExpenseAddon = false;
   if (addon !== null) {
-    if (stated === null || stated === 'NNN') {
+    if (stated === null) {
+      // The add-on is the ONLY thing resolving the basis here — it must name a full-expense form
+      // (fix round 5) to be trusted as NNN; a partial one ("+ CAM" alone) keeps the parsed amounts
+      // but leaves basis unresolved and flags the parse as suspect, rather than silently assuming
+      // the tenant pays everything.
+      if (isFullExpenseAddon(addon)) {
+        basis = 'NNN';
+      } else {
+        basis = null;
+        partialExpenseAddon = true;
+      }
+    } else if (stated === 'NNN') {
+      // The head/tail already independently confirmed NNN — the add-on is supplementary detail
+      // about what's covered, not what's resolving the basis, so a partial add-on here doesn't
+      // degrade an already-explicit statement.
       basis = 'NNN';
     } else {
       basis = stated;
@@ -351,6 +386,7 @@ export function parseRentText(text: string): ParsedRentText {
     basisConflict ||
     crossBasisConflict ||
     tailBasisRejected ||
+    partialExpenseAddon ||
     periodConflict ||
     tailConflict ||
     earlyUnanchoredAmbiguous ||
