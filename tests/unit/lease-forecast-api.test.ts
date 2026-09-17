@@ -184,6 +184,25 @@ describe('GET /forecast', () => {
       expect(parsed.data.asOf).toBe(ASOF);
     }
   });
+
+  it('C: does not 500 when the lease-market feed read fails on an otherwise-available warehouse -- degrades to marketGaps without derived-asking rows', async () => {
+    const db = freshDb();
+    // lm_market_rent_feed exists (migration ran) but drop it so loadMarketRentFeed's query throws --
+    // simulating a feed-read error distinct from "warehouse unavailable" (getDb() itself still succeeds).
+    db.exec('DROP TABLE lm_market_rent_feed');
+    mockGetSnapshot.mockReturnValue(snap({ leases: [mkLease({ id: 'l1' })] }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const app = makeApp(db);
+    const res = await app.request('/forecast');
+    expect(res.status).toBe(200);
+    const parsed = LeaseForecastResponse.safeParse(await res.json());
+    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.marketGaps.every((g) => g.provenance !== 'derived-asking')).toBe(true);
+    }
+    expect(warnSpy).toHaveBeenCalledWith('[lease-forecast-api] lease-market feed unavailable:', expect.stringContaining('lm_market_rent_feed'));
+    warnSpy.mockRestore();
+  });
 });
 
 // ── GET /velocity ─────────────────────────────────────────────────────────────────────────
@@ -274,6 +293,33 @@ describe('POST /rent-forecast', () => {
     expect(body.error).toMatch(/Invalid input/);
   });
 
+  it('CRITICAL (fix round 1 ruling A): never uses the lease-market asking-rent feed for the renew_at_market NOI projection — manual overlay marketRents only', async () => {
+    const db = freshDb();
+    // A feed row for the fixture lease's property, well above its in-place rentPerSf (1.2), so if
+    // it leaked into rentForecast's market lookup the delta/NOI impact would be large and nonzero.
+    db.prepare(
+      `INSERT INTO lm_market_rent_feed (ora_property_key, asking_nnn_eq, comp_basis, confidence, cell_key, n, computed_at) VALUES (?, 50, 'similarity', 'MEDIUM', 'k', 12, '2026-03-01')`,
+    ).run('Fixture Property One');
+    // No overlay.marketRents entry for this lease/property — only the feed has a figure.
+    mockGetSnapshot.mockReturnValue(snap({ leases: [mkLease({ id: 'l1', monthsToExpiry: 3, annualRent: 12000, sf: 10000 })] }));
+    const app = makeApp(db);
+    const res = await app.request('/rent-forecast', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ scenarios: ['renew_at_market'] }),
+    });
+    expect(res.status).toBe(200);
+    const parsed = RentForecastResponse.safeParse(await res.json());
+    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+    if (parsed.success) {
+      const result = parsed.data.results[0]!;
+      // The asking rent never gets in -- the lease is held at current, not reset to the $50/SF feed figure.
+      expect(result.deltaUsd).toBe(0);
+      expect(result.noiImpactAnnualUsd).toBe(0);
+      expect(result.assumptions.join(' | ')).toContain('no market rent in overlay');
+    }
+  });
+
   it('honors an explicit single-scenario request', async () => {
     mockGetSnapshot.mockReturnValue(snap({ leases: [mkLease({ id: 'l1' })] }));
     const app = makeApp(freshDb());
@@ -341,5 +387,25 @@ describe('GET /narrative', () => {
       expect(gap.propertyKey).toMatch(/^gap-\d+$/);
     }
     expect(JSON.stringify(sentInput)).not.toContain('Real Sounding Property Name');
+  });
+
+  it('IMPORTANT (fix round 1 ruling B): excludes derived-asking (lease-market feed) gaps from topGaps sent to the AI composer', async () => {
+    process.env.ANTHROPIC_API_KEY = 'fixture-key-not-real';
+    mockComposeLeaseNarrative.mockResolvedValue({ narrative: null, degraded: true });
+    const db = freshDb();
+    // Only a feed row exists for this property -- no overlay.marketRents entry -- so the ONLY gap
+    // marketRentGaps can produce for this lease is provenance 'derived-asking'.
+    db.prepare(
+      `INSERT INTO lm_market_rent_feed (ora_property_key, asking_nnn_eq, comp_basis, confidence, cell_key, n, computed_at) VALUES (?, 15, 'similarity', 'MEDIUM', 'k', 12, '2026-03-01')`,
+    ).run('Fixture Property One');
+    mockGetSnapshot.mockReturnValue(snap({ leases: [mkLease({ id: 'l1', rentPerSf: 10 })] }));
+    const app = makeApp(db);
+    const res = await app.request('/narrative');
+    expect(res.status).toBe(200);
+
+    expect(mockComposeLeaseNarrative).toHaveBeenCalledTimes(1);
+    const sentInput = mockComposeLeaseNarrative.mock.calls[0]![0] as { topGaps: unknown[] };
+    // The AI must never describe an asking-rent-derived gap as a market gap.
+    expect(sentInput.topGaps).toHaveLength(0);
   });
 });

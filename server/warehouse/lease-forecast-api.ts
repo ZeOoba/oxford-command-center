@@ -17,7 +17,11 @@
 //   400 on Zod parse failure of the POST body.
 //   500 on unexpected engine errors.
 //
-// Market rents: manual overlay values merged over the lease-market feed (server/warehouse/lease-market/feed.ts); manual always wins.
+// Market rents (fix round 1 ruling A): the lease-market feed (server/warehouse/lease-market/feed.ts)
+// is READ-ONLY INFORMATIONAL CONTEXT for /forecast and /narrative's marketRentGaps display — it is
+// NEVER merged into the marketRents passed to rentForecast. POST /rent-forecast's renew_at_market
+// projects NOI, and an asking-rent × SF figure must never be presented as NOI (global constraint) —
+// so that route uses ONLY the manual overlay marketRents, exactly as before the feed existed.
 //
 // Confidentiality: routes emit derived signals + rent-roll figures for owned assets only.
 // No confidential-deal data is in scope for this module.
@@ -30,7 +34,7 @@ import {
   bucketExpiry,
 } from '../../src/analytics/lease-forecast';
 import { leasingVelocity } from './lease-velocity';
-import { loadMarketRentFeed, mergeMarketRents } from './lease-market/feed';
+import { loadMarketRentFeed } from './lease-market/feed';
 import { referenceDate } from '../config';
 import {
   RentForecastInput,
@@ -77,11 +81,18 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
     return Promise.resolve(handler(db));
   }
 
-  /** Lease-market feed; {} when the warehouse is unavailable (feed is optional context, never a hard dependency). */
+  /**
+   * Lease-market feed read through ONE guarded helper, used by every route that consumes it
+   * (GET /forecast, GET /narrative — never POST /rent-forecast, see the header note above).
+   * {} on ANY failure (warehouse unavailable, or a read error against an available warehouse) —
+   * the feed is optional context, never a hard dependency, so a feed-read failure must not 500
+   * a route that would otherwise succeed.
+   */
   function feedOrEmpty(): Record<string, number> {
     try {
       return loadMarketRentFeed(getDb());
-    } catch {
+    } catch (err) {
+      console.warn('[lease-forecast-api] lease-market feed unavailable:', err instanceof Error ? err.message : String(err));
       return {};
     }
   }
@@ -112,7 +123,7 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
 
         const signals = renewalSignals(leases, refDate, snapshot.renewalStages, arrears);
         const velocity = leasingVelocity(db, snapshot.properties);
-        const marketGapsAll = marketRentGaps(leases, marketRents, loadMarketRentFeed(db));
+        const marketGapsAll = marketRentGaps(leases, marketRents, feedOrEmpty());
 
         // Expiry bucket totals
         const ALL_BUCKETS = ['0-6m', '6-12m', '12-24m', '24m+', 'expired', 'unknown'] as const;
@@ -193,14 +204,16 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
       const leases = snapshot.leases;
       const marketRents = (snapshot as typeof snapshot & { marketRents?: Record<string, number> }).marketRents ?? {};
 
-      const mergedRents = mergeMarketRents(feedOrEmpty(), marketRents);
+      // CRITICAL (fix round 1 ruling A): manual overlay marketRents ONLY -- never the lease-market
+      // feed. renew_at_market drives an NOI projection, and the global constraint "never present an
+      // asking-rent × SF figure as NOI" overrides any convenience of merging the feed in here.
       const results = [];
       for (const scenario of scenarios) {
         const inputResult = RentForecastInput.safeParse({ scenario, horizonMonths, vacancyPct });
         if (!inputResult.success) {
           return c.json({ error: `Invalid input: ${inputResult.error.message}` }, 400);
         }
-        results.push(rentForecast(leases, refDate, inputResult.data, mergedRents));
+        results.push(rentForecast(leases, refDate, inputResult.data, marketRents));
       }
 
       const response = RentForecastResponse.parse({ asOf, results });
@@ -248,8 +261,10 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
 
       // Anonymize propertyKey → ordinal label before sending to AI (invariant 7: no raw
       // owned-asset identifiers egress to the external API; only aggregated/ordinal data).
+      // derived-asking (lease-market feed) gaps are excluded (fix round 1 ruling B): the AI
+      // narrative must never describe an asking-rent-derived gap as a market gap.
       const topGaps = marketGapsAll
-        .filter((g) => g.gapPsf !== null)
+        .filter((g) => g.gapPsf !== null && g.provenance !== 'derived-asking')
         .sort((a, b) => Math.abs(b.gapPsf ?? 0) - Math.abs(a.gapPsf ?? 0))
         .slice(0, 5)
         .map((g, i) => ({ propertyKey: `gap-${i + 1}`, gapPsf: g.gapPsf!, underMarket: g.underMarket }));
