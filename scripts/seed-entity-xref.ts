@@ -44,9 +44,23 @@ function main(): void {
 
     console.log(`${write ? 'WROTE' : 'DRY RUN'} — ${result.linked} propert${result.linked === 1 ? 'y' : 'ies'} linked (entity_xref had ${before} rows)`);
 
-    if (result.proposed.length > 0) {
-      console.log(`\n${result.proposed.length} listing(s) not linked:`);
-      for (const p of result.proposed) {
+    // Surfaced first and separately: these are ORA's OWN buildings that the address map has not
+    // caught up with. A null ora_property_key does not mean "not ORA" — owner_type is the
+    // independent owner-name verdict, and burying these among third-party comps hides them.
+    const oraUnmapped = result.proposed.filter((p) => p.reason === 'ora_owned_unmapped');
+    if (oraUnmapped.length > 0) {
+      console.log(`\n⚠ ${oraUnmapped.length} ORA-OWNED listing(s) missing from config oraProperties:`);
+      for (const p of oraUnmapped) {
+        console.log(`  lm_property ${p.lmPropertyId}  ${p.marketId}  ${p.addressNorm}  owner_type=${p.ownerType}`);
+        console.log(`    likely ORA property: ${p.candidateCanonicalIds.join(', ') || '(no warehouse match)'}`);
+      }
+      console.log('  These are ORA buildings, not comps. Add each to config/lease-market.json oraProperties.');
+    }
+
+    const others = result.proposed.filter((p) => p.reason !== 'ora_owned_unmapped');
+    if (others.length > 0) {
+      console.log(`\n${others.length} listing(s) not linked:`);
+      for (const p of others) {
         const candidates = p.candidateCanonicalIds.join(', ') || '(none)';
         console.log(`  lm_property ${p.lmPropertyId}  ${p.marketId}  ${p.addressNorm}`);
         console.log(`    reason=${p.reason}  candidates=${candidates}  ora_property_key=${p.oraPropertyKey ?? 'null'}`);

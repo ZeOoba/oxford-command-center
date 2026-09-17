@@ -90,12 +90,16 @@ function addLmProperty(
   marketId: string,
   addressNorm: string,
   oraPropertyKey: string | null,
+  ownerType = 'unknown',
 ): void {
   db.prepare(
     `INSERT INTO lm_property (id, identity_key, address_norm, address_display, city_norm, market_id,
-                              subtype, building_status, ora_property_key, first_seen, last_seen)
-     VALUES (?, ?, ?, ?, '', ?, 'warehouse', 'existing', ?, '2026-09-01', '2026-09-01')`,
-  ).run(id, `addr:${marketId}|x|${addressNorm}:${id}`, addressNorm, addressNorm, marketId, oraPropertyKey);
+                              subtype, building_status, ora_property_key, owner_type, first_seen, last_seen)
+     VALUES (?, ?, ?, ?, '', ?, 'warehouse', 'existing', ?, ?, '2026-09-01', '2026-09-01')`,
+  ).run(
+    id, `addr:${marketId}|x|${addressNorm}:${id}`, addressNorm, addressNorm, marketId,
+    oraPropertyKey, ownerType,
+  );
 }
 
 function addProperty(
@@ -187,5 +191,53 @@ describe('seedFromLeaseMarket', () => {
     addProperty(db, 'prop-1', '1100 Rarig Ave Bldg 1');
     addLmProperty(db, 13, 'columbus', '1100 RARIG AVE', 'Rarig');
     expect(seedFromLeaseMarket(db).linked).toBe(1);
+  });
+});
+
+describe('seedFromLeaseMarket — ORA-owned but unmapped', () => {
+  it('flags an affiliated owner with no config key as ORA-owned, not third-party', () => {
+    // The lease-market session's case: CoStar carries an ORA-owned building whose address is not
+    // in config addressNorms, so ora_property_key stays null. owner_type is the independent
+    // owner-NAME verdict. Reporting it as an ordinary unmatched comp would hide an ORA building.
+    const db = makeDb();
+    addProperty(db, 'prop-heritage', '9017 Heritage Dr');
+    addLmProperty(db, 20, 'columbus', '9017 HERITAGE DR', null, 'affiliated');
+
+    const result = seedFromLeaseMarket(db);
+    expect(result.linked).toBe(0);
+    expect(result.proposed[0]!.reason).toBe('ora_owned_unmapped');
+    expect(result.proposed[0]!.ownerType).toBe('affiliated');
+  });
+
+  it('still reports a genuine third-party listing as no_config_link', () => {
+    const db = makeDb();
+    addProperty(db, 'prop-1', '500 Main St');
+    addLmProperty(db, 21, 'columbus', '500 MAIN ST', null, 'private');
+    expect(seedFromLeaseMarket(db).proposed[0]!.reason).toBe('no_config_link');
+  });
+
+  it('refuses to repoint one rent-roll key at a second property and reports it', () => {
+    // addressNorms is many-addresses-to-one-key (Zettler carries two). If those addresses resolve
+    // to DIFFERENT warehouse properties the key cannot mean both, so the second is refused rather
+    // than silently overwriting the first.
+    const db = makeDb();
+    addProperty(db, 'prop-zettler-a', '2012 Zettler Rd');
+    addProperty(db, 'prop-zettler-b', '2002 Zettler Rd');
+    addLmProperty(db, 22, 'columbus', '2012 ZETTLER RD', 'Zettler');
+    addLmProperty(db, 23, 'columbus', '2002 ZETTLER RD', 'Zettler');
+
+    const result = seedFromLeaseMarket(db);
+    expect(result.linked).toBe(1);
+    expect(result.skipped).toHaveLength(1);
+    expect(result.skipped[0]).toMatch(/already linked to prop-zettler-a/);
+  });
+
+  it('links both listings when one key maps to one property at two addresses', () => {
+    const db = makeDb();
+    addProperty(db, 'prop-zettler', '2012 Zettler Rd');
+    addLmProperty(db, 24, 'columbus', '2012 ZETTLER RD', 'Zettler');
+    const result = seedFromLeaseMarket(db);
+    expect(result.linked).toBe(1);
+    expect(canonicalIdFor(db, 'workbook', 'property', 'Zettler')).toBe('prop-zettler');
   });
 });
