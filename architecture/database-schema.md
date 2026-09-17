@@ -226,7 +226,7 @@ Spec: `docs/superpowers/specs/2026-09-16-lease-market-intelligence-design.md` (r
 | Table / view | Grain | Notes |
 |---|---|---|
 | `lm_landing` | intake file / email | immutable; sha256 unique among ok parses; completeness drives removal; `owner_screen_ok` gates the radar |
-| `lm_property` | building | identity: CoStar property id ▸ address_norm; owner, coordinates, physicals; `ora_property_key` when configured |
+| `lm_property` | building | identity: `identity_key` = `costar:<id>` when a CoStar id is present else `addr:<market_id>\|<city_norm>\|<address_norm>` (UNIQUE); `address_norm` is NOT unique on its own — the same street address can be 2 properties (two CoStar ids, or the same address in two markets); owner, coordinates, physicals; `ora_property_key` when configured (market-scoped match) |
 | `lm_listing` | space | UNIQUE(property_id, suite_norm); two-strike removal; earliest CoStar date on market kept; broker / URL |
 | `lm_observation` | space × landing | effective `rent_basis`; `asking_nnn_eq` null when not derivable or out of bounds (`rejected_reason`); quoted opex |
 | `lm_listing_event` | change | new / returned / price_cut / price_increase / sf_change / dom_reset / missing / removed |
