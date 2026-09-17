@@ -232,5 +232,5 @@ Spec: `docs/superpowers/specs/2026-09-16-lease-market-intelligence-design.md` (r
 | `lm_listing_event` | change | new / returned / price_cut / price_increase / sf_change / dom_reset / missing / removed |
 | `lm_signal` | derived | replaced on each `npm run lease-market:compute` |
 | `lm_market_rent_feed` | ORA property | comparable median asking NNN-eq; merged under manual `overlay.marketRents` |
-| `lm_radar_decision` | decision | append-only; calibration of the radar score |
+| `lm_radar_decision` | decision | append-only, DB-enforced (`BEFORE UPDATE`/`BEFORE DELETE` triggers `RAISE(ABORT)`); calibration of the radar score |
 | `lm_v_current_spaces`, `lm_v_listing_metrics`, `lm_v_radar` | views | read-only agent query surface |
