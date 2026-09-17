@@ -153,6 +153,22 @@ CREATE TABLE IF NOT EXISTS lm_radar_decision (
 );
 CREATE INDEX IF NOT EXISTS ix_lm_radar_decision_property ON lm_radar_decision (property_id, decided_at);
 
+-- Enforced append-only: a correction is a new row, never a mutation of a past decision (calibration
+-- of the radar score depends on the decision log being an immutable audit trail). No code in this
+-- codebase UPDATEs or DELETEs lm_radar_decision (verified via grep before adding these); this is a
+-- defense-in-depth DB-level gate, not a workaround for an existing write path.
+CREATE TRIGGER IF NOT EXISTS trg_lm_radar_decision_no_update
+BEFORE UPDATE ON lm_radar_decision
+BEGIN
+  SELECT RAISE(ABORT, 'lm_radar_decision is append-only: UPDATE is not permitted');
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_lm_radar_decision_no_delete
+BEFORE DELETE ON lm_radar_decision
+BEGIN
+  SELECT RAISE(ABORT, 'lm_radar_decision is append-only: DELETE is not permitted');
+END;
+
 -- ── Read-only agent views (P3 skill queries these; never write through them) ────────────────
 CREATE VIEW IF NOT EXISTS lm_v_listing_metrics AS
 SELECT

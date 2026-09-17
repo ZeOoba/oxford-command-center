@@ -85,6 +85,19 @@ describe('migration 029 — lease market', () => {
     expect(() => db.prepare(`INSERT INTO lm_radar_decision (property_id, decided_at, decision) VALUES (1, '2026-01-01', 'buy')`).run()).toThrow(/CHECK/);
   });
 
+  it('enforces lm_radar_decision as append-only (no UPDATE, no DELETE)', () => {
+    const db = makeDb();
+    const info = db
+      .prepare(`INSERT INTO lm_radar_decision (property_id, decided_at, decision, note) VALUES (1, '2026-01-01', 'investigate', 'call broker')`)
+      .run();
+    const id = Number(info.lastInsertRowid);
+    expect(() => db.prepare(`UPDATE lm_radar_decision SET decision = 'pass' WHERE id = ?`).run(id)).toThrow(/append-only/i);
+    expect(() => db.prepare(`DELETE FROM lm_radar_decision WHERE id = ?`).run(id)).toThrow(/append-only/i);
+    // The row survives both attempts untouched — corrections are new rows, not mutations.
+    expect(db.prepare('SELECT decision FROM lm_radar_decision WHERE id = ?').get(id)).toEqual({ decision: 'investigate' });
+    expect((db.prepare('SELECT COUNT(*) AS n FROM lm_radar_decision').get() as { n: number }).n).toBe(1);
+  });
+
   it('lm_v_listing_metrics reports original, current, minimum asking and cuts', () => {
     const db = makeDb();
     const l1 = landing(db, 'a');
