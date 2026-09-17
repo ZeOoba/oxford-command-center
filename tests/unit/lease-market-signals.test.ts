@@ -81,4 +81,57 @@ describe('spaceSignals', () => {
     expect(spaceSignals({ ...removed, removedAt: '2025-11-01' }, ctx())).toEqual([]); // outside 90 days
     expect(spaceSignals({ ...removed, firstSeen: '2026-01-01' }, ctx())).toEqual([]); // DOM 45 at removal
   });
+
+  // ── Fix round 1: float tolerance ──────────────────────────────────────────
+  it('below market needs BOTH the P25 leg and the median-ratio leg (P25 leg can fail alone)', () => {
+    // p25 7.0, median 10 -> 0.85*median = 8.5. asking 7.5 clears the median leg but fails p25.
+    const s = space({ observations: [obs({ askingNnnEq: 7.5 })] });
+    expect(kinds(s, ctx({ comparables: comps({ p25: 7.0, median: 10 }) }))).toEqual([]);
+  });
+  it('below market fires at exactly 0.85x median despite floating-point rounding (EPS)', () => {
+    // 0.85 * 9 = 7.6499999999999995 in IEEE 754 double precision; asking === 7.65 must still qualify.
+    const s = space({ observations: [obs({ askingNnnEq: 7.65 })] });
+    expect(kinds(s, ctx({ comparables: comps({ p25: 8.2, median: 9 }) }))).toEqual(['below_market']);
+  });
+
+  // ── Fix round 1: decision-rule pins ───────────────────────────────────────
+  it('missing_once behaves like active for stale detection', () => {
+    const old = { firstSeen: '2026-01-01', costarDateOnMarket: '2025-06-01', status: 'missing_once' as const };
+    expect(spaceSignals(space(old), ctx())[0]).toMatchObject({ kind: 'stale' });
+  });
+  it('expired status emits no signals', () => {
+    expect(spaceSignals(space({ status: 'expired', isNewInLatestExport: true }), ctx())).toEqual([]);
+  });
+  it('withdrawn: a removedAt after asOf emits nothing', () => {
+    const removed = space({ status: 'removed', removedAt: '2026-04-01', firstSeen: '2025-01-01', costarDateOnMarket: null });
+    expect(spaceSignals(removed, ctx())).toEqual([]);
+  });
+  it('withdrawn: fires exactly at the 90-day lookback boundary', () => {
+    // removedAt is exactly 90 days before asOf; domAtRemoval (334) clears the 180-day stale threshold.
+    const removed = space({ status: 'removed', removedAt: '2025-12-01', firstSeen: '2025-01-01', costarDateOnMarket: null });
+    expect(spaceSignals(removed, ctx())).toEqual([expect.objectContaining({ kind: 'withdrawn_after_stale' })]);
+  });
+  it('stale fires exactly at the effective-DOM threshold', () => {
+    // firstSeen is exactly 180 days before asOf; staleThresholdDays defaults to 180.
+    const s = space({ firstSeen: '2025-09-02', costarDateOnMarket: null });
+    expect(kinds(s, ctx())).toEqual(['stale']);
+  });
+  it('below market: comparables with median null emits nothing', () => {
+    const s = space({ observations: [obs({ askingNnnEq: 7.5 })] });
+    expect(kinds(s, ctx({ comparables: comps({ median: null }) }))).toEqual([]);
+  });
+  it('comparables null: drafts still carry confidence/compBasis/cellKey as null', () => {
+    const [s] = spaceSignals(space({ isNewInLatestExport: true }), ctx({ comparables: null }));
+    expect(s).toMatchObject({ confidence: null, compBasis: null, cellKey: null });
+  });
+
+  // ── Fix round 1: domSource minor fix ──────────────────────────────────────
+  it('domSource reflects whichever clock actually produced the effective DOM', () => {
+    // own clock (424d) beats the CoStar clock (14d) -> first_seen drove the effective DOM.
+    const ownDrove = space({ firstSeen: '2025-01-01', costarDateOnMarket: '2026-02-15', isNewInLatestExport: true });
+    expect(spaceSignals(ownDrove, ctx())[0]!.evidence.domSource).toBe('first_seen');
+    // CoStar clock (424d) >= own clock (14d) -> costar_date_on_market drove the effective DOM.
+    const costarDrove = space({ firstSeen: '2026-02-15', costarDateOnMarket: '2025-01-01', isNewInLatestExport: true });
+    expect(spaceSignals(costarDrove, ctx())[0]!.evidence.domSource).toBe('costar_date_on_market');
+  });
 });
