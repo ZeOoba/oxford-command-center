@@ -78,7 +78,10 @@ describe('parseRentText', () => {
     expect(parseRentText('$6.00/SF/YR IG + $1.10 CAM')).toMatchObject({ basis: 'IG', ambiguous: true });
   });
   it('trailing numbers after the rent (CAM figure, escalation, range separator) are ignored/handled correctly', () => {
-    expect(parseRentText('$4.00/SF/YR NNN, CAM $3.50')).toMatchObject({ rentLow: 4, rentHigh: 4, rentPeriod: 'yr', basis: 'NNN', ambiguous: false });
+    // Fix round 3: this string is not canonical-grammar (a comma-separated trailing "CAM $3.50" with
+    // no "+" isn't the addon grammar) — the structural gate now flags it ambiguous regardless of the
+    // otherwise-correct rentLow/rentHigh/basis heuristic result.
+    expect(parseRentText('$4.00/SF/YR NNN, CAM $3.50')).toMatchObject({ rentLow: 4, rentHigh: 4, rentPeriod: 'yr', basis: 'NNN', ambiguous: true });
     expect(parseRentText('$3.25/SF/YR NNN w/ 3% annual increases')).toMatchObject({ rentLow: 3.25, rentHigh: 3.25, rentPeriod: 'yr' });
     expect(parseRentText('$2.75/SF NNN, 3% annual escalations')).toMatchObject({ rentLow: 2.75, rentHigh: 2.75, rentPeriod: null });
   });
@@ -115,7 +118,10 @@ describe('parseRentText', () => {
     expect(parseRentText('$4.00/SF/YR NNN - monthly payments of $1,667')).toMatchObject({ ambiguous: true, rentLow: 4, rentHigh: 4 });
   });
   it('a range with a basis word between the two $-anchored figures is still recognized as a range', () => {
-    expect(parseRentText('$8.00/SF/YR NNN - $10.00/SF/YR NNN')).toMatchObject({ rentLow: 8, rentHigh: 10, ambiguous: false });
+    // Fix round 3: repeating the basis word on both range figures is not canonical grammar (the
+    // grammar allows exactly one basis clause, positioned after the range) — rentLow/rentHigh stay
+    // correct via the range heuristic, but the structural gate now flags this ambiguous too.
+    expect(parseRentText('$8.00/SF/YR NNN - $10.00/SF/YR NNN')).toMatchObject({ rentLow: 8, rentHigh: 10, ambiguous: true });
   });
   it('a "+" before the first rent figure is a term-length marker, not an add-on split point; the $-anchored rent is still found', () => {
     // Fix round 2: previously this data-loss-via-premature-split case was pinned withheld:true
@@ -124,14 +130,21 @@ describe('parseRentText', () => {
     expect(parseRentText('5+ year term at $4.00/SF NNN')).toMatchObject({ withheld: false, rentLow: 4, basis: 'NNN' });
   });
   it('a bare number elsewhere in the text (not $-anchored) does not shadow the real $-anchored rent', () => {
-    expect(parseRentText('2nd floor $8.50/SF/YR NNN')).toMatchObject({ rentLow: 8.5, rentHigh: 8.5, ambiguous: false });
+    // Fix round 3: "2nd floor ..." is a leading narrative fragment the canonical grammar doesn't
+    // admit — rentLow/rentHigh stay correct via the letter-exclusion heuristic, but the structural
+    // gate now flags this ambiguous too.
+    expect(parseRentText('2nd floor $8.50/SF/YR NNN')).toMatchObject({ rentLow: 8.5, rentHigh: 8.5, ambiguous: true });
   });
   it('a short "$12-14/SF/YR" range (only the low figure carries a "$") still parses as a range', () => {
     expect(parseRentText('$12-14/SF/YR NNN')).toMatchObject({ rentLow: 12, rentHigh: 14 });
   });
-  it('a same-period tail after the head-cut does not falsely trip the tail-conflict guard', () => {
-    expect(parseRentText('$8.50/SF/YR NNN, CAM $3.50').ambiguous).toBe(false);
-    expect(parseRentText('$8.50/SF/YR NNN w/ $2.50/SF/YR CAM').ambiguous).toBe(false);
+  it('a same-period tail after the head-cut does not falsely trip the tail-conflict guard (though the structural gate now flags both non-canonical anyway)', () => {
+    // Fix round 3: neither string matches the canonical grammar (a comma/", w/" trailing clause with
+    // no "+" isn't the addon grammar), so both are now ambiguous via the structural gate — the
+    // tail-conflict heuristic itself still correctly does NOT independently trip on either (verified
+    // via the "not caused by tailConflict" comment below), it's the gate doing the flagging here.
+    expect(parseRentText('$8.50/SF/YR NNN, CAM $3.50').ambiguous).toBe(true);
+    expect(parseRentText('$8.50/SF/YR NNN w/ $2.50/SF/YR CAM').ambiguous).toBe(true);
   });
 
   // Fix round 2 (second re-review): a later $-anchored figure must not silently be promoted over an
@@ -140,7 +153,7 @@ describe('parseRentText', () => {
   it('an earlier unanchored number that looks like the rent is not shadowed by a later $-anchored figure (e.g. a CAM estimate)', () => {
     const a = parseRentText('8.50/SF/YR NNN, $2.10 CAM');
     expect(a.ambiguous).toBe(true);
-    expect(a.rentLow).not.toBe(2.1);
+    expect(a.rentLow).toBe(8.5);
     const b = parseRentText('Asking 8.50 NNN; CAM est. $2.10/SF/YR');
     expect(b.ambiguous).toBe(true);
     expect(b.rentLow).not.toBe(2.1);
@@ -153,6 +166,55 @@ describe('parseRentText', () => {
   it('a basis stated only after the head cut is still picked up, not lost', () => {
     expect(parseRentText('$8.50/SF/YR, NNN')).toMatchObject({ basis: 'NNN', ambiguous: false });
     expect(parseRentText('$8.50 /SF/YR (NNN)')).toMatchObject({ basis: 'NNN', ambiguous: false });
+  });
+
+  // Fix round 3 (third re-review): a structural canonical-grammar gate closes the whole class of
+  // heuristic-parsing wrong-number paths at once — free-text quotes are benchmark-grade only when the
+  // WHOLE string matches a strict canonical grammar; everything else is ambiguous. The heuristics
+  // below remain as defence in depth (correct rentLow/basis/etc. even when the gate also flags
+  // ambiguous), per two further reviewer findings.
+  it('looksLikeRentFigure scans ALL unanchored numbers before the first $ figure, not just the first one', () => {
+    // "2nd" (an ordinal, excluded) precedes "8.50" (the true rent) which precedes the $-anchored
+    // "$2.10" (a CAM estimate) — the earliest QUALIFYING unanchored number must still be found.
+    const c = parseRentText('2nd floor, 8.50/SF/YR NNN, $2.10 CAM');
+    expect(c.ambiguous).toBe(true);
+    expect(c.rentLow).not.toBe(2.1);
+  });
+  it('a tail basis is used only when the tail has exactly one basis token and no "$" figure; otherwise ambiguous', () => {
+    expect(parseRentText('$10.50/SF/YR (Gross), NNN est. $2.25')).toMatchObject({ ambiguous: true });
+    expect(parseRentText('$10.50/SF/YR, gross; NNN equivalent $8.25')).toMatchObject({ ambiguous: true });
+  });
+  it('spelled-out percentages ("percent"/"pct") are excluded the same as a literal "%"', () => {
+    expect(parseRentText('$3.25 - 3 percent bumps NNN')).toMatchObject({ rentHigh: 3.25 });
+  });
+
+  describe('canonical grammar gate', () => {
+    it.each([
+      '$8.50/SF/YR NNN',
+      '$8.00 - $10.00 /SF/YR Modified Gross',
+      '$0.75/SF/MO IG',
+      '$9.25 Industrial Gross',
+      '$7.25/SF + $2.50 NNN',
+      '$6.50/SF/YR + $1.95 CAM/TAX/INS',
+      '$12,000/month + expenses',
+      '$8.00 to $10.00 NNN',
+      '$8.00/SF/YR - $10.00/SF/YR',
+      '$8.50/SF/YR, NNN',
+      '$8.50 /SF/YR (NNN)',
+      '$.75/SF/MO NNN',
+      'Asking: $9.00/SF/YR NNN',
+    ])('%s is canonical => not ambiguous (on this ground alone)', (s) => {
+      expect(parseRentText(s).ambiguous).toBe(false);
+    });
+    it.each([
+      '$4.00/SF/YR NNN, CAM $3.50',
+      '$3.25/SF/YR NNN w/ 3% annual increases',
+      '$8.50/SF/YR NNN (non-negotiable)',
+      '5+ year term at $4.00/SF NNN',
+      '1st fl 8.50/SF/YR NNN; CAM $2.10',
+    ])('%s is non-canonical => ambiguous', (s) => {
+      expect(parseRentText(s).ambiguous).toBe(true);
+    });
   });
 });
 
