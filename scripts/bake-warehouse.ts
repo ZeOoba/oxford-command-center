@@ -174,11 +174,15 @@ export interface BuildOpts {
   now: number;
   warehouseSource: WarehouseSource;
   /**
-   * Fix round 1, item 1 (bake-scoped redaction). `false` omits every `/lease-market/*` route from
-   * the plan entirely — used only on the httpResolver (live-server) path during a redacted bake,
-   * since an already-running server's mounted router config cannot be overridden per bake request
-   * over HTTP (unlike inProcessResolver's `leaseMarketRowLevel`, which controls redaction directly
-   * on that path instead). Omitted/true ⇒ unchanged from Task 14 (routes planned as usual).
+   * Fix round 1, item 1 (bake-scoped redaction); wiring corrected fix round 3 (whole-branch review,
+   * Finding 1 — confidentiality asymmetry, 2026-09-17). `false` omits every `/lease-market/*` route
+   * from the plan entirely, applied UNIFORMLY on both resolver paths — bakeWarehouseJson derives
+   * this from `includeConfidential` via `leaseMarketBakeMode` and passes the SAME value regardless
+   * of whether the resolver is the checkpoint-read/in-process path or the httpResolver/live-server
+   * path. Previously this field only reached the http path; the in-process path always planned the
+   * routes unconditionally (redacting row-level fields via `leaseMarketRowLevel`, but still baking
+   * the endpoints themselves) — that asymmetry is the bug this fix closes. Omitted/true ⇒ routes
+   * planned as usual (unchanged from Task 14).
    */
   includeLeaseMarket?: boolean;
 }
@@ -265,13 +269,18 @@ export interface BakeResult { path: string; warehouseSource: WarehouseSource; co
 export interface LeaseMarketBakeMode {
   /** Passed as inProcessResolver's `opts.leaseMarketRowLevel` — overrides `config.mirrorRowLevel`
    *  on that ONE bake-time router instance. `undefined` ⇒ no override, falls through to config
-   *  (private/ratified mode); `false` ⇒ forced redaction regardless of config (redacted mode). */
+   *  (private/ratified mode); `false` ⇒ forced redaction regardless of config (redacted mode). Kept
+   *  as DEFENCE IN DEPTH alongside `includeLeaseMarket` below: even if a future change re-plans the
+   *  `/lease-market/*` routes on the in-process path in redacted mode, row-level fields still
+   *  redact rather than leaking raw CoStar data. */
   leaseMarketRowLevel: boolean | undefined;
-  /** Passed as BuildOpts.includeLeaseMarket — the httpResolver/live-server path's answer, since it
-   *  cannot override an already-mounted router's config per request over HTTP (see BuildOpts doc
-   *  comment): `false` excludes every `/lease-market/*` route from the plan entirely in redacted
-   *  mode; `true` includes them (the in-process path always includes them too, redacting via
-   *  `leaseMarketRowLevel` instead — this flag only gates the http path). */
+  /** Passed as BuildOpts.includeLeaseMarket and applied UNIFORMLY to BOTH resolver paths (fix round
+   *  3, whole-branch review Finding 1 — confidentiality asymmetry, 2026-09-17): `false` excludes
+   *  every `/lease-market/*` route from the plan entirely in redacted mode, on the
+   *  checkpoint-read/in-process path AND the httpResolver/live-server path alike; `true` includes
+   *  them on both. Previously this field only reached the http path — the in-process/checkpoint-read
+   *  path (the unattended, server-down bake) always planned the routes regardless of this value,
+   *  which is the asymmetry this fix closes. */
   includeLeaseMarket: boolean;
 }
 
@@ -293,20 +302,25 @@ export async function bakeWarehouseJson(opts: { now?: number; includeConfidentia
   const now = opts.now ?? Date.now();
   const includeConfidential = opts.includeConfidential ?? false;
   const baseUrl = process.env.BRAIN_BAKE_SOURCE_URL ?? `http://127.0.0.1:${serverPort()}`;
-  const { leaseMarketRowLevel, includeLeaseMarket: includeLeaseMarketHttp } = leaseMarketBakeMode(includeConfidential);
+  // FIX round 3 (whole-branch review, Finding 1 — confidentiality asymmetry, 2026-09-17):
+  // `includeLeaseMarket` now derives directly from `includeConfidential` via `leaseMarketBakeMode`
+  // and is applied to BOTH resolver paths below, unconditionally. Previously it was initialised
+  // `true` and only reassigned inside the `brainServerUp()` branch, so the checkpoint-read path
+  // (brain server down — the unattended scheduled-bake case) always kept the `true` initializer
+  // regardless of `includeConfidential`: a redacted bake still PLANNED every `/lease-market/*` route
+  // on that path and baked all five endpoints — merely row-level-redacted via `leaseMarketRowLevel`,
+  // not omitted — into public/warehouse.json, a non-Access-gated artifact. Both paths must omit the
+  // routes entirely in redacted mode; `leaseMarketRowLevel` stays wired to the in-process resolver
+  // as defence in depth for any future regression that re-plans the routes there.
+  const { leaseMarketRowLevel, includeLeaseMarket } = leaseMarketBakeMode(includeConfidential);
 
   let resolver: RouteResolver;
   let warehouseSource: WarehouseSource;
   let db: WarehouseDb | null = null;
-  let includeLeaseMarket = true;
 
   if (await brainServerUp(baseUrl)) {
     resolver = httpResolver(baseUrl);
     warehouseSource = 'live-server';
-    // Can't override an already-mounted live-server router's mirrorRowLevel per bake request over
-    // HTTP — exclude the lease-market routes entirely from a redacted bake rather than risk a
-    // row-level leak (see BuildOpts.includeLeaseMarket).
-    includeLeaseMarket = includeLeaseMarketHttp;
   } else {
     const dbPath = process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
     db = openWarehouse(dbPath);
