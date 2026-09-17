@@ -112,6 +112,10 @@ function latestOkLanding(db: WarehouseDb, marketId: string): OkLanding | undefin
 
 const EVENT_KINDS: readonly ListingEventKind[] = ['new', 'returned', 'price_cut', 'price_increase', 'sf_change', 'dom_reset', 'missing', 'removed'];
 const CENT = 0.005;
+// R11: CoStar's own UI has historically defaulted its "export to Excel" action to a handful of round
+// row caps — a row count landing exactly on one of these is suspicious even when it doesn't match
+// today's configured exportRowCap.
+const ROUND_EXPORT_CAPS: readonly number[] = [500, 1000, 2500, 5000, 10000];
 
 function emptyEvents(): Record<ListingEventKind, number> {
   return Object.fromEntries(EVENT_KINDS.map((k) => [k, 0])) as Record<ListingEventKind, number>;
@@ -202,6 +206,12 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
 
   const priorComplete = latestCompleteLanding(db, marketId);
   const priorOk = latestOkLanding(db, marketId);
+  // R10: a space FIRST sighted in a landing dated before the market's already-known latest complete
+  // landing arrived out of order — the more current complete picture never showed it. It must not start
+  // life as a confirmed 'active' space; it starts 'missing_once' instead (the same status an existing
+  // space gets when a complete export doesn't see it), and its first-sighting 'new' event is excluded
+  // from "new in the latest export" reporting (compute.ts).
+  const backDatedFirstSighting = priorComplete !== undefined && exportDate < priorComplete.observed_at;
 
   const t = deps.config.thresholds;
   const reasons: string[] = [];
@@ -224,7 +234,32 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
   // set the strike) must not undo it, even though it may postdate the space's own last_seen.
   const clearsMissingOnce = !priorComplete || exportDate > priorComplete.observed_at;
 
+  // R11: exportRowCap is a provisional, operator-configured guess at what CoStar actually caps an
+  // export at. A landing whose row count exactly equals it is already forced partial above; a row count
+  // landing on one of CoStar's own well-known round export caps is ALSO worth a loud warning even when
+  // it doesn't match the currently configured cap — either shape can mean an export was silently
+  // truncated, and mass false "missing"/"removed" status changes on the next complete export would
+  // otherwise follow silently.
+  const atConfiguredCap = parsed.rowCount >= t.exportRowCap;
+  const roundCapHit = ROUND_EXPORT_CAPS.find((c) => c === parsed.rowCount) ?? null;
+  if (atConfiguredCap || roundCapHit !== null) {
+    console.warn(
+      `[lease-market ingest] ${file}: row count ${parsed.rowCount} ${
+        atConfiguredCap ? `is at/over the configured export cap ${t.exportRowCap}` : `matches a common CoStar export cap (${roundCapHit})`
+      } — verify this export was not silently truncated`,
+    );
+  }
+  const roundCapNote =
+    roundCapHit !== null && !atConfiguredCap ? `row count ${parsed.rowCount} matches a common CoStar export cap (${roundCapHit})` : null;
+
   const screen = deps.screen(parsed.rows.flatMap((r) => (r.ownerName ? [r.ownerName] : [])));
+  // R17: never logs or persists the flagged owner NAME — only the error text (owner-screen.ts's error
+  // strings are always static/operational, e.g. "guard file unreadable" or a stripped exception
+  // message, never derived from a name). A failing screen (missing Python, an unreadable never-call
+  // guard file, invalid script output) otherwise leaves only the opaque owner_screen_ok = 0 flag, which
+  // by itself gives an operator no way to tell "the screen script itself is broken" from "conditions
+  // genuinely gate every candidate".
+  const screenErrorNote = screen.error !== null ? `owner_screen_error: ${screen.error}` : null;
 
   mkdirSync(deps.rawDir, { recursive: true });
   const rawPath = join(deps.rawDir, `${sha}${extname(filePath).toLowerCase()}`);
@@ -282,7 +317,8 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
   let landingId = 0;
   let marketMismatchSkipped = 0;
   let marketMismatchNote: string | null = null;
-  let resultPartialReason: string | null = complete ? null : reasons.join('; ');
+  let resultPartialReason: string | null =
+    [complete ? null : reasons.join('; '), roundCapNote, screenErrorNote].filter((n): n is string => n !== null && n !== '').join('; ') || null;
 
   db.transaction(() => {
     landingId = Number(
@@ -338,7 +374,7 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
     const insertSpace = db.prepare(
       `INSERT INTO lm_listing (property_id, suite_norm, first_seen, last_seen, first_landing_id, costar_date_on_market, status, origin_tier,
          broker_name, broker_company, listing_url, description)
-       VALUES (@propertyId, @suiteNorm, @seen, @seen, @landingId, @dateOnMarket, 'active', 'T1', @brokerName, @brokerCompany, @listingUrl, @description)`,
+       VALUES (@propertyId, @suiteNorm, @seen, @seen, @landingId, @dateOnMarket, @status, 'T1', @brokerName, @brokerCompany, @listingUrl, @description)`,
     );
     const spaceUpdateColumns = `
          first_seen = MIN(first_seen, @seen),
@@ -360,7 +396,7 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
       `UPDATE lm_listing SET status = CASE WHEN status = 'missing_once' AND @clearMissing = 1 THEN 'active' ELSE status END, ${spaceUpdateColumns} WHERE id = @id`,
     );
     const previousObservation = db.prepare(
-      `SELECT asking_nnn_eq, asking_psf_yr, rent_basis, rent_period, rent_is_total, rent_low, available_sf, costar_dom, rejected_reason
+      `SELECT asking_nnn_eq, asking_psf_yr, rent_basis, rent_period, rent_is_total, rent_low, available_sf, costar_dom, rejected_reason, confidence
        FROM lm_observation WHERE listing_id = ? AND observed_at < ? ORDER BY observed_at DESC, id DESC LIMIT 1`,
     );
     const insertObservation = db.prepare(
@@ -463,12 +499,18 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
 
       const prev = spaceHit
         ? (previousObservation.get(spaceHit.id, exportDate) as
-            | { asking_nnn_eq: number | null; asking_psf_yr: number | null; rent_basis: RentBasis; rent_period: 'yr' | 'mo' | null; rent_is_total: number; rent_low: number | null; available_sf: number; costar_dom: number | null; rejected_reason: string | null }
+            | {
+                asking_nnn_eq: number | null; asking_psf_yr: number | null; rent_basis: RentBasis; rent_period: 'yr' | 'mo' | null;
+                rent_is_total: number; rent_low: number | null; available_sf: number; costar_dom: number | null; rejected_reason: string | null;
+                confidence: 'high' | 'low';
+              }
             | undefined)
         : undefined;
       const spaceFields = {
         seen: exportDate, dateOnMarket: row.costarDateOnMarket, brokerName: row.brokerName, brokerCompany: row.brokerCompany,
         listingUrl: row.listingUrl, description: row.description, landingId, clearMissing: clearsMissingOnce ? 1 : 0,
+        // R10: only meaningful for a brand-new space (the update statements never reference @status).
+        status: backDatedFirstSighting ? 'missing_once' : 'active',
       };
       let listingId: number;
       if (spaceHit) {
@@ -514,22 +556,43 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
         const prevRejected = prev.rejected_reason !== null;
         const currRejected = priced.rejectedReason !== null;
         const sameBasis = prev.rent_basis === priced.effectiveBasis;
-        if (sameBasis && !prevRejected && !currRejected && prev.asking_psf_yr !== null && priced.askingPsfYr !== null) {
-          // Primary comparison: the raw asking $/SF/yr figure, never the NNN-equivalent — an
-          // NNN-eq change driven purely by a shifting opex estimate (market-median drift) is not a
-          // real price move.
-          before = prev.asking_psf_yr;
-          after = priced.askingPsfYr;
-        } else if (
-          sameBasis &&
-          prev.rent_period === row.rentPeriod &&
-          prev.rent_is_total === 0 && !row.rentIsTotal &&
-          !prevRejected && !currRejected &&
-          prev.rent_low !== null && row.rentLow !== null
-        ) {
-          before = prev.rent_low;
-          after = row.rentLow;
+        // R4: a confidence-level change (high<->low) means the two observations were derived under
+        // different interpretation confidence (e.g. an explicit vs. an inferred rent period, or a
+        // basis that only sometimes needs an opex estimate) and are not safely comparable for a price
+        // event — comparing them raw can produce a huge phantom price move.
+        const sameConfidence = prev.confidence === priced.confidence;
+        const prevIsTotal = prev.rent_is_total === 1;
+        const bothTotal = prevIsTotal && row.rentIsTotal;
+        const neitherTotal = !prevIsTotal && !row.rentIsTotal;
+        if (bothTotal) {
+          // R5: a total quote ("$2,500/MO NNN") is compared on the RAW TOTAL, never asking_psf_yr — a
+          // total's $/SF/yr figure is total ÷ available SF, so an SF change alone (with the quoted
+          // total unchanged) would otherwise register as a phantom price_cut/price_increase. sf_change
+          // below still fires for the real SF move.
+          if (sameBasis && sameConfidence && prev.rent_period === row.rentPeriod && !prevRejected && !currRejected && prev.rent_low !== null && row.rentLow !== null) {
+            before = prev.rent_low;
+            after = row.rentLow;
+          }
+        } else if (neitherTotal) {
+          if (sameBasis && sameConfidence && !prevRejected && !currRejected && prev.asking_psf_yr !== null && priced.askingPsfYr !== null) {
+            // Primary comparison: the raw asking $/SF/yr figure, never the NNN-equivalent — an
+            // NNN-eq change driven purely by a shifting opex estimate (market-median drift) is not a
+            // real price move.
+            before = prev.asking_psf_yr;
+            after = priced.askingPsfYr;
+          } else if (
+            sameBasis && sameConfidence &&
+            prev.rent_period === row.rentPeriod &&
+            !prevRejected && !currRejected &&
+            prev.rent_low !== null && row.rentLow !== null
+          ) {
+            before = prev.rent_low;
+            after = row.rentLow;
+          }
         }
+        // A mixed total-ness (one observation total, the other per-unit) is not a comparable pair
+        // either way — neither branch above fires, so no price event, same as any other non-comparable
+        // case (mismatched basis, confidence, or a rejected observation).
         if (before !== null && after !== null) {
           if (after < before - CENT) event(listingId, 'price_cut', before, after);
           else if (after > before + CENT) event(listingId, 'price_increase', before, after);

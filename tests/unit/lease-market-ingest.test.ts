@@ -520,4 +520,91 @@ describe('ingestCostarListingsFile', () => {
     const r = await ingestCostarListingsFile(db, f, deps);
     expect(r.status).toBe('ingested');
   });
+
+  // ── REFUTE fix round (warehouse: R4, R5, R10, R11, R17) ─────────────────
+
+  it('suppresses a price event when confidence changes (high<->low), even under the same basis (R4)', async () => {
+    const { dir, db, deps } = setup();
+    const base = testHeaderMap();
+    const headerMap = testHeaderMap({ fields: { ...base.fields, rentText: 'Rent Low', rentLow: null, rentHigh: null } });
+    // First observation: a bare, unit-less amount below monthlyValueCeiling ($3.00) infers a MONTHLY
+    // rate (period-inferred => confidence 'low'): $2.50 -> $30.00/SF/yr.
+    const inferred: FixtureListing = { address: '1 Confidence Way', sf: 10000, rentLow: '$2.50', rentType: 'NNN' };
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', [inferred]), { ...deps, headerMap });
+    const first = db.prepare(
+      "SELECT asking_psf_yr, confidence FROM lm_observation o JOIN lm_listing l ON l.id = o.listing_id JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '1 CONFIDENCE WAY'",
+    ).get();
+    expect(first).toEqual({ asking_psf_yr: 30, confidence: 'low' });
+    // Second observation: an EXPLICIT annual rate (confidence 'high'). Same effective basis (NNN), but a
+    // different confidence level -- comparing 30.00 to 9.00 raw would otherwise read as a huge phantom
+    // price_cut, when the two figures were never derived under comparable interpretation confidence.
+    const explicit: FixtureListing = { address: '1 Confidence Way', sf: 10000, rentLow: '$9.00/SF/YR', rentType: 'NNN' };
+    const r = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [explicit]), { ...deps, headerMap });
+    const second = db.prepare(
+      "SELECT asking_psf_yr, confidence FROM lm_observation o JOIN lm_listing l ON l.id = o.listing_id JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '1 CONFIDENCE WAY' ORDER BY o.observed_at DESC LIMIT 1",
+    ).get();
+    expect(second).toEqual({ asking_psf_yr: 9, confidence: 'high' });
+    expect(r.events).toMatchObject({ price_cut: 0, price_increase: 0 });
+    expect(eventsFor(db, '1 CONFIDENCE WAY').map((e) => (e as { kind: string }).kind)).toEqual(['new']);
+  });
+
+  it('a total quote compares the raw total, not asking_psf_yr — an SF change alone never fires a phantom price event, either direction (R5)', async () => {
+    const { dir, db, deps } = setup();
+    const base = testHeaderMap();
+    const headerMap = testHeaderMap({ fields: { ...base.fields, rentText: 'Rent Low', rentLow: null, rentHigh: null } });
+    const l = (sf: number, total = '$2,500/MO'): FixtureListing[] => [{ address: '9 Total Ct', sf, rentLow: total, rentType: 'NNN' }];
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', l(5000)), { ...deps, headerMap });
+    // SF shrinks 20% (well over sfChangePct); the quoted total is unchanged.
+    const shrink = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', l(4000)), { ...deps, headerMap });
+    expect(shrink.events).toMatchObject({ price_cut: 0, price_increase: 0, sf_change: 1 });
+    // SF grows back; still unchanged total.
+    const grow = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-03-01.xlsx', l(6000)), { ...deps, headerMap });
+    expect(grow.events).toMatchObject({ price_cut: 0, price_increase: 0, sf_change: 1 });
+    // A genuine cut to the quoted total still fires as a real price_cut.
+    const cut = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-04-01.xlsx', l(6000, '$2,200/MO')), { ...deps, headerMap });
+    expect(cut.events).toMatchObject({ price_cut: 1, price_increase: 0, sf_change: 0 });
+    expect(eventsFor(db, '9 TOTAL CT').map((e) => (e as { kind: string }).kind)).toEqual(['new', 'sf_change', 'sf_change', 'price_cut']);
+  });
+
+  it('a space whose first sighting is a landing dated before the latest complete landing starts missing_once, not active (R10)', async () => {
+    const { dir, db, deps } = setup();
+    const base: FixtureListing[] = Array.from({ length: 5 }, (_, i) => ({ id: `B${i}`, address: `${i + 1} Base St`, sf: 8000, rentLow: 9.0 }));
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', base), deps); // T1 complete
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-03-01.xlsx', base), deps); // T2 complete (latest)
+    // A back-dated file lands out of order: dated between T1 and T2, but arrives after both. It carries
+    // a brand-new space (N1) that the more current T2 complete export never saw.
+    const feb = await ingestCostarListingsFile(
+      db,
+      await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [...base, { id: 'N1', address: '99 New Rd', sf: 8000, rentLow: 9.0 }]),
+      deps,
+    );
+    expect(feb.completeness).toBe('partial');
+    expect(feb.events.new).toBe(1);
+    expect(spaceStatus(db, '99 NEW RD')).toBe('missing_once');
+  });
+
+  it('warns and notes when a row count lands on a common CoStar export cap, without forcing partial (R11)', async () => {
+    const { dir, db, deps } = setup({ config: testConfig({ thresholds: { ...testConfig().thresholds, exportRowCap: 999999 } }) });
+    const rows: FixtureListing[] = Array.from({ length: 500 }, (_, i) => ({ address: `${i + 1} Round Cap Rd`, sf: 5000 + i }));
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', rows), deps);
+    expect(r.completeness).toBe('complete'); // not the configured cap -> still complete
+    expect(r.partialReason).toMatch(/row count 500 matches a common CoStar export cap \(500\)/);
+    expect((db.prepare('SELECT partial_reason FROM lm_landing WHERE id = ?').get(r.landingId) as { partial_reason: string | null }).partial_reason).toBe(r.partialReason);
+    expect(warnSpy.mock.calls.some((c) => String(c[0]).includes('matches a common CoStar export cap (500)'))).toBe(true);
+    warnSpy.mockRestore();
+  });
+
+  it('never persists or logs an owner name for a failing owner screen, only the error text (R17)', async () => {
+    const { dir, db, deps } = setup({
+      screen: () => ({ available: false, guardOk: false, types: new Map(), error: 'never-call guard file unreadable (screen degraded to ORA-self only)' }),
+    });
+    const rows: FixtureListing[] = [{ address: '1 Secret Owner Rd', sf: 5000, owner: 'SUPER SECRET HOLDCO LLC' }];
+    const r = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', rows), deps);
+    expect(r.partialReason).toContain('owner_screen_error: never-call guard file unreadable (screen degraded to ORA-self only)');
+    expect(r.partialReason).not.toContain('SUPER SECRET HOLDCO');
+    const stored = (db.prepare('SELECT partial_reason FROM lm_landing WHERE id = ?').get(r.landingId) as { partial_reason: string | null }).partial_reason;
+    expect(stored).toBe(r.partialReason);
+    expect(stored).not.toContain('SUPER SECRET HOLDCO');
+  });
 });
