@@ -28,6 +28,10 @@ export const DELIVERY_ONLY_PATHS: ReadonlySet<string> = new Set([
   // Phase 3 W1: pure route-plumbing/dispatch; no financial math (math lives in
   // src/analytics/lease-forecast.ts and server/warehouse/lease-velocity.ts).
   'server/warehouse/lease-forecast-api.ts',
+  // Lease Market Intelligence P1 Task 14: pure route plumbing (math lives in
+  // src/analytics/lease-market/* and server/warehouse/lease-market/*, which stay refute-required
+  // via the broad server/warehouse/ prefix).
+  'server/warehouse/lease-market-api.ts',
   // Phase 5: pure route-plumbing; financial math lives in capital-allocation.ts + market-intel.ts.
   'server/warehouse/capital-allocation-api.ts',
   // Phase 5 W4: pure property-registration write; no financial math.

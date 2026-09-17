@@ -114,6 +114,8 @@ describe('check-refute-required — delivery-only allowlist', () => {
     expect(isFinancialSourcePath('server/warehouse/actions.ts')).toBe(false);
     // Phase 3 W1: lease-forecast-api.ts is pure route-plumbing (no math)
     expect(isFinancialSourcePath('server/warehouse/lease-forecast-api.ts')).toBe(false);
+    // Lease Market Intelligence P1 Task 14: lease-market-api.ts is pure route-plumbing (no math)
+    expect(isFinancialSourcePath('server/warehouse/lease-market-api.ts')).toBe(false);
     // Windows separators normalize before set lookup
     expect(isFinancialSourcePath('server\\warehouse\\api.ts')).toBe(false);
   });
@@ -126,11 +128,12 @@ describe('check-refute-required — delivery-only allowlist', () => {
     expect(isFinancialSourcePath('server/warehouse/lease-velocity.ts')).toBe(true);
   });
   it('exposes the delivery-only allowlist with the expected membership', () => {
-    expect(DELIVERY_ONLY_PATHS.size).toBe(10);
+    expect(DELIVERY_ONLY_PATHS.size).toBe(11);
     expect(DELIVERY_ONLY_PATHS.has('server/warehouse/api.ts')).toBe(true);
     expect(DELIVERY_ONLY_PATHS.has('server/warehouse/debt-api.ts')).toBe(true);
     expect(DELIVERY_ONLY_PATHS.has('server/warehouse/actions.ts')).toBe(true);
     expect(DELIVERY_ONLY_PATHS.has('server/warehouse/lease-forecast-api.ts')).toBe(true);
+    expect(DELIVERY_ONLY_PATHS.has('server/warehouse/lease-market-api.ts')).toBe(true);
     expect(DELIVERY_ONLY_PATHS.has('server/warehouse/capital-allocation-api.ts')).toBe(true);
     expect(DELIVERY_ONLY_PATHS.has('server/warehouse/property-onboarding.ts')).toBe(true);
     // server/sources/ subtractions, added with the prefix 2026-08-12: transport and indexing
