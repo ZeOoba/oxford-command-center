@@ -1,39 +1,93 @@
 // scripts/lease-market.ts
 //
-// Lease Market Intelligence CLI (spec §3).
+// Lease Market Intelligence CLI (spec §3; fix round 1).
 //   tsx scripts/lease-market.ts ingest [--dir <path>]          ingest every CoStar listings export in the intake folder, oldest first
 //   tsx scripts/lease-market.ts compute [--as-of YYYY-MM-DD]   recompute signals + market-rent feed
 // Exit 1 when any file fails to ingest or compute throws; 2 on bad usage.
 import { readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { extname, join } from 'node:path';
+import { dirname, extname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { openWarehouse } from '../server/warehouse/db';
 import { referenceDate } from '../server/config';
 import { loadCostarHeaderMap, loadLeaseMarketConfig } from '../server/warehouse/lease-market/config';
-import { ingestCostarListingsFile, parseListingFileName } from '../server/warehouse/lease-market/ingest';
+import { ingestCostarListingsFile, localDateString, parseListingFileName } from '../server/warehouse/lease-market/ingest';
 import { screenOwners } from '../server/warehouse/lease-market/owner-screen';
 import { runCompute } from '../server/warehouse/lease-market/compute';
 
-const DB_PATH = process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
-const RAW_DIR = join(process.cwd(), 'data', 'lease-market', 'raw');
+// Repo-relative defaults are resolved from THIS FILE's location, never process.cwd() — the CLI
+// must behave identically regardless of which directory it was launched from.
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = join(SCRIPT_DIR, '..');
+const DB_PATH = process.env.WAREHOUSE_DB ?? join(REPO_ROOT, 'data', 'warehouse', 'finance.sqlite');
+const RAW_DIR = join(REPO_ROOT, 'data', 'lease-market', 'raw');
 const DEFAULT_INTAKE =
   process.env.LEASE_MARKET_INTAKE ?? join(homedir(), 'OneDrive - Oxford Capital Partners', 'Claude_Workspace', 'lease-market-intake', 'costar');
+
+const USAGE = 'usage: tsx scripts/lease-market.ts <ingest [--dir <path>] | compute [--as-of YYYY-MM-DD]>';
+
+// Plain code-point comparison — never localeCompare, which is locale/case-sensitivity dependent
+// and would reorder exports non-deterministically across machines.
+function codePointCompare(a: string, b: string): number {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
 
 export function listIntakeFiles(dir: string): string[] {
   return readdirSync(dir)
     .filter((f) => ['.xlsx', '.csv'].includes(extname(f).toLowerCase()) && !f.startsWith('~$'))
-    .map((f) => ({ f, date: parseListingFileName(f)?.exportDate ?? statSync(join(dir, f)).mtime.toISOString().slice(0, 10) }))
-    .sort((a, b) => a.date.localeCompare(b.date) || a.f.localeCompare(b.f))
+    .map((f) => ({ f, date: parseListingFileName(f)?.exportDate ?? localDateString(statSync(join(dir, f)).mtime) }))
+    .sort((a, b) => codePointCompare(a.date, b.date) || codePointCompare(a.f, b.f))
     .map((x) => x.f);
 }
 
-function argValue(name: string): string | undefined {
-  const i = process.argv.indexOf(name);
-  return i >= 0 ? process.argv[i + 1] : undefined;
+// A real calendar date, not just digits matching YYYY-MM-DD (rejects e.g. 2026-02-30).
+// Mirrors ingest.ts's own isValidIsoDate; kept local rather than exported/shared since ingest.ts
+// is a shared, concurrently-edited file and only its localDateString export was authorized here.
+function isValidIsoDate(s: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return false;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
 }
 
-async function ingest(): Promise<number> {
-  const dir = argValue('--dir') ?? DEFAULT_INTAKE;
+export type CliArgs =
+  | { command: 'ingest'; dir: string | undefined }
+  | { command: 'compute'; asOf: string | undefined }
+  | { command: 'invalid'; message: string };
+
+/**
+ * Pure argument parser — no I/O, no process.exit. `argv` is `process.argv.slice(2)`.
+ * A flag present without a value (last arg, or immediately followed by another `--flag`) is
+ * invalid — it must never silently fall back to a default (e.g. DEFAULT_INTAKE for --dir).
+ */
+export function parseArgs(argv: string[]): CliArgs {
+  const [command, ...rest] = argv;
+  if (command !== 'ingest' && command !== 'compute') {
+    return { command: 'invalid', message: USAGE };
+  }
+
+  const flagName = command === 'ingest' ? '--dir' : '--as-of';
+  const idx = rest.indexOf(flagName);
+  let value: string | undefined;
+  if (idx >= 0) {
+    const next = rest[idx + 1];
+    if (next === undefined || next.startsWith('--')) {
+      return { command: 'invalid', message: USAGE };
+    }
+    value = next;
+  }
+
+  if (command === 'compute' && value !== undefined && (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !isValidIsoDate(value))) {
+    return { command: 'invalid', message: USAGE };
+  }
+
+  return command === 'ingest' ? { command: 'ingest', dir: value } : { command: 'compute', asOf: value };
+}
+
+export async function ingest(dir: string): Promise<number> {
   const config = loadLeaseMarketConfig();
   const headerMap = loadCostarHeaderMap();
   const files = listIntakeFiles(dir);
@@ -41,20 +95,28 @@ async function ingest(): Promise<number> {
   let failures = 0;
   try {
     for (const f of files) {
-      const r = await ingestCostarListingsFile(db, join(dir, f), {
-        config,
-        headerMap,
-        rawDir: RAW_DIR,
-        now: () => new Date().toISOString(),
-        screen: (names) => screenOwners(names, config.ownerScreenModulePath),
-      });
-      if (r.status === 'failed') failures++;
-      const events = JSON.stringify(Object.fromEntries(Object.entries(r.events).filter(([, n]) => n > 0)));
-      console.log(
-        `${r.status.padEnd(9)} ${f} market=${r.marketId ?? '?'} ${r.completeness ?? '-'} +${r.insertedSpaces} ~${r.updatedSpaces} props+${r.newProperties} skip=${r.skipped} missing=${r.markedMissing} removed=${r.markedRemoved} events=${events}` +
-          (r.partialReason ? ` | partial: ${r.partialReason}` : '') +
-          (r.error ? ` | ERROR: ${r.error}` : ''),
-      );
+      try {
+        const r = await ingestCostarListingsFile(db, join(dir, f), {
+          config,
+          headerMap,
+          rawDir: RAW_DIR,
+          now: () => new Date().toISOString(),
+          screen: (names) => screenOwners(names, config.ownerScreenModulePath),
+        });
+        if (r.status === 'failed') failures++;
+        const events = JSON.stringify(Object.fromEntries(Object.entries(r.events).filter(([, n]) => n > 0)));
+        console.log(
+          `${r.status.padEnd(9)} ${f} market=${r.marketId ?? '?'} ${r.completeness ?? '-'} +${r.insertedSpaces} ~${r.updatedSpaces} props+${r.newProperties} skip=${r.skipped} missing=${r.markedMissing} removed=${r.markedRemoved} events=${events}` +
+            (r.partialReason ? ` | partial: ${r.partialReason}` : '') +
+            (r.error ? ` | ERROR: ${r.error}` : ''),
+        );
+      } catch (e) {
+        // A thrown (not caught-and-reported) ingest failure is unexpected — stop the loop rather
+        // than risk ingesting later files out of order against a landing history that skipped one.
+        failures++;
+        console.log(`failed ${f} | ERROR: ${e instanceof Error ? e.message : String(e)}`);
+        break;
+      }
     }
   } finally {
     db.close();
@@ -63,11 +125,11 @@ async function ingest(): Promise<number> {
   return failures > 0 ? 1 : 0;
 }
 
-function compute(): number {
+function compute(asOf: string): number {
   const config = loadLeaseMarketConfig();
   const db = openWarehouse(DB_PATH);
   try {
-    const r = runCompute(db, config, argValue('--as-of') ?? referenceDate());
+    const r = runCompute(db, config, asOf);
     console.log(
       `signals=${r.signals} ${JSON.stringify(r.byKind)} radar=${r.radarCandidates} feed=${r.feedRows}` +
         (r.withheldMarkets.length ? ` | candidates withheld: ${r.withheldMarkets.join(', ')}` : ''),
@@ -79,12 +141,16 @@ function compute(): number {
 }
 
 async function main(): Promise<void> {
-  const cmd = process.argv[2];
-  if (cmd === 'ingest') process.exitCode = await ingest();
-  else if (cmd === 'compute') process.exitCode = compute();
-  else {
-    console.error('usage: tsx scripts/lease-market.ts <ingest [--dir <path>] | compute [--as-of YYYY-MM-DD]>');
+  const parsed = parseArgs(process.argv.slice(2));
+  if (parsed.command === 'invalid') {
+    console.error(parsed.message);
     process.exitCode = 2;
+    return;
+  }
+  if (parsed.command === 'ingest') {
+    process.exitCode = await ingest(parsed.dir ?? DEFAULT_INTAKE);
+  } else {
+    process.exitCode = compute(parsed.asOf ?? referenceDate());
   }
 }
 
