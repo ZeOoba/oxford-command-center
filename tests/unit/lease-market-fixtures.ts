@@ -12,7 +12,7 @@ export const TEST_HEADERS = [
   'Property ID', 'Address', 'Suite', 'City', 'State', 'Market', 'Submarket', 'Type', 'Secondary Type', 'Status',
   'RBA', 'Year Built', 'Clear Height', 'Docks', 'Drive Ins', 'Office %', 'Owner', 'SF Available', 'Rent Low',
   'Rent High', 'Rent Type', 'Space Use', 'Date On Market', 'Zip', 'Latitude', 'Longitude', 'Leasing Broker',
-  'Leasing Company', 'Listing URL', 'Time On Market',
+  'Leasing Company', 'Listing URL', 'Time On Market', 'Max SF Available',
 ] as const;
 
 export interface FixtureListing {
@@ -46,6 +46,7 @@ export interface FixtureListing {
   brokerCompany?: string | null;
   url?: string | null;
   timeOnMarket?: string | null;
+  sfMax?: number | null;
 }
 
 function pick<K extends keyof FixtureListing>(l: FixtureListing, key: K, fallback: FixtureListing[K]): FixtureListing[K] {
@@ -60,7 +61,7 @@ function rowValues(l: FixtureListing): unknown[] {
     pick(l, 'driveIns', 1), pick(l, 'officePct', null), pick(l, 'owner', 'SMITH FAMILY LLC'), l.sf, pick(l, 'rentLow', 9),
     pick(l, 'rentHigh', null), pick(l, 'rentType', 'NNN'), pick(l, 'spaceUse', 'Direct'), pick(l, 'dateOnMarket', '2026-01-15'),
     pick(l, 'zip', '43219'), pick(l, 'lat', 39.99), pick(l, 'lon', -82.93), pick(l, 'broker', 'Pat Broker'),
-    pick(l, 'brokerCompany', 'Acme Realty'), pick(l, 'url', null), pick(l, 'timeOnMarket', null),
+    pick(l, 'brokerCompany', 'Acme Realty'), pick(l, 'url', null), pick(l, 'timeOnMarket', null), pick(l, 'sfMax', null),
   ];
 }
 
@@ -103,7 +104,7 @@ export function testHeaderMap(patch: Partial<CostarHeaderMap> = {}): CostarHeade
       ownerName: 'Owner', availableSf: 'SF Available', minDivisibleSf: null, rentLow: 'Rent Low', rentHigh: 'Rent High',
       rentText: null, rentBasis: 'Rent Type', spaceType: 'Space Use', dateOnMarket: 'Date On Market', zip: 'Zip',
       lat: 'Latitude', lon: 'Longitude', brokerName: 'Leasing Broker', brokerCompany: 'Leasing Company',
-      listingUrl: 'Listing URL', description: null, timeOnMarketText: null,
+      listingUrl: 'Listing URL', description: null, timeOnMarketText: null, availableSfMax: null,
     },
     subtypeMap: { 'Industrial|*': 'warehouse', 'Flex|*': 'flex' },
     buildingStatusMap: { Existing: 'existing', Proposed: 'proposed', 'Under Construction': 'under_construction' },

@@ -35,8 +35,9 @@ export const CostarHeaderMap = z.object({
     zip: Col, lat: Col, lon: Col, brokerName: Col, brokerCompany: Col, listingUrl: Col, description: Col,
     // timeOnMarketText: a DURATION string ("3 Months 12 Days") some CoStar exports carry instead of an
     // actual on-market date. Converted to costarDateOnMarket by subtracting from the export date — see
-    // parseTimeOnMarketDuration/timeOnMarketTextToDate below.
-    timeOnMarketText: Col,
+    // parseTimeOnMarketDuration/timeOnMarketTextToDate below. availableSfMax: a separate "max available
+    // SF" column paired with `availableSf` holding the MIN — see the max-else-min fallback below.
+    timeOnMarketText: Col, availableSfMax: Col,
   }),
   subtypeMap: z.record(z.string(), LmSubtype), // key "PropertyType|SecondaryType" or "PropertyType|*"
   buildingStatusMap: z.record(z.string(), BuildingStatus),
@@ -344,11 +345,28 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
       rentBasis = mapped;
     }
 
-    const availableSf = parseNumber(get('availableSf'));
+    // availableSf: max-else-min fallback. `fields.availableSf` is the required column (populated on
+    // every row in the real export); `fields.availableSfMax` is an optional paired column that is
+    // blank on divisible spaces quoting only a minimum. Mapping availableSf to a Max-only column would
+    // silently drop every row where Max is blank; mapping to Min alone would bin every divisible space
+    // at its smallest unit. Take max ?? min. When availableSfMax is unmapped (null), behavior is
+    // byte-for-byte the same as before this field existed. A non-positive Max is treated as absent.
+    const availableSfMinRaw = parseNumber(get('availableSf'));
+    const availableSfMaxParsed = idx.availableSfMax !== null ? parseNumber(get('availableSfMax')) : null;
+    const availableSfMaxRaw = availableSfMaxParsed !== null && availableSfMaxParsed > 0 ? availableSfMaxParsed : null;
+    const availableSf = availableSfMaxRaw ?? availableSfMinRaw;
     if (availableSf === null || availableSf <= 0) {
       skipped.push({ rowNumber: r, reason: 'available SF missing, zero or unparseable' });
       continue;
     }
+    // minDivisibleSf: an explicitly mapped minDivisibleSf column always wins (unchanged priority). Only
+    // when availableSfMax is mapped AND no distinct minDivisibleSf column is mapped does the min side of
+    // the max/min pair carry forward as minDivisibleSf — otherwise it would be lost once availableSf
+    // itself resolves to the max.
+    const minDivisibleSfDirect = idx.minDivisibleSf !== null ? parseNumber(get('minDivisibleSf')) : null;
+    const minDivisibleSfFromPair =
+      idx.availableSfMax !== null && availableSfMinRaw !== null && availableSfMinRaw > 0 ? availableSfMinRaw : null;
+    const minDivisibleSf = minDivisibleSfDirect ?? minDivisibleSfFromPair;
 
     let rentLow: number | null = null;
     let rentHigh: number | null = null;
@@ -430,7 +448,7 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
       officePct,
       ownerName: nullIfEmpty(get('ownerName')),
       availableSf,
-      minDivisibleSf: parseNumber(get('minDivisibleSf')),
+      minDivisibleSf,
       rentLow,
       rentHigh,
       rentPeriod,

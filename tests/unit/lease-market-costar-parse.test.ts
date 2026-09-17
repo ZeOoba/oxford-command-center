@@ -214,7 +214,7 @@ describe('parseCostarListingsFile', () => {
       'Year Built': 1990, 'Clear Height': 20, Docks: 2, 'Drive Ins': 1, 'Office %': null, Owner: 'SMITH FAMILY LLC',
       'SF Available': 1000, 'Rent Low': 9, 'Rent High': null, 'Rent Type': 'NNN', 'Space Use': 'Direct',
       'Date On Market': '2026-01-15', Zip: '43219', Latitude: 39.99, Longitude: -82.93, 'Leasing Broker': 'Pat Broker',
-      'Leasing Company': 'Acme Realty', 'Listing URL': null, 'Time On Market': null,
+      'Leasing Company': 'Acme Realty', 'Listing URL': null, 'Time On Market': null, 'Max SF Available': null,
     };
     const row = ws.addRow(TEST_HEADERS.map((h) => values[h] ?? null));
     const urlCol = TEST_HEADERS.indexOf('Listing URL') + 1;
@@ -414,6 +414,53 @@ describe('parseCostarListingsFile', () => {
       const f = await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 1000, timeOnMarket: '0 Days' }]);
       const r = await parseCostarListingsFile(f, map); // no exportDate argument
       expect(r.rows[0]!.costarDateOnMarket).toBe(new Date().toISOString().slice(0, 10));
+    });
+  });
+
+  describe('availableSf max-else-min fallback (availableSfMax paired with the required availableSf/min column)', () => {
+    it('unchanged behavior when availableSfMax is unmapped: availableSf is whatever the single mapped column holds', async () => {
+      const f = await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 12000 }]);
+      const r = await parseCostarListingsFile(f, testHeaderMap());
+      expect(r.rows[0]).toMatchObject({ availableSf: 12000, minDivisibleSf: null });
+    });
+
+    it('takes Max when populated, and carries the Min forward as minDivisibleSf', async () => {
+      const base = testHeaderMap();
+      const map = testHeaderMap({ fields: { ...base.fields, availableSfMax: 'Max SF Available' } });
+      const f = await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 5000, sfMax: 20000 }]);
+      const r = await parseCostarListingsFile(f, map);
+      expect(r.rows[0]).toMatchObject({ availableSf: 20000, minDivisibleSf: 5000 });
+    });
+
+    it('falls back to Min when Max is blank on that row, without dropping the row', async () => {
+      const base = testHeaderMap();
+      const map = testHeaderMap({ fields: { ...base.fields, availableSfMax: 'Max SF Available' } });
+      const f = await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 8000, sfMax: null }]);
+      const r = await parseCostarListingsFile(f, map);
+      expect(r.rows[0]).toMatchObject({ availableSf: 8000, minDivisibleSf: 8000 });
+    });
+
+    it('a distinct, separately-mapped minDivisibleSf column wins over the max/min pair fallback', async () => {
+      const base = testHeaderMap();
+      // Reuses the "Rent High" column as a stand-in numeric column for minDivisibleSf — only the
+      // priority rule (explicit mapping beats the derived max/min pair fallback) is under test here,
+      // not the semantics of any particular CoStar column.
+      const map = testHeaderMap({
+        fields: { ...base.fields, availableSfMax: 'Max SF Available', minDivisibleSf: 'Rent High' },
+      });
+      const f = await writeCostarFixture(dir(), 'a.xlsx', [
+        { address: '1 Main St', sf: 5000, sfMax: 20000, rentHigh: 2500 },
+      ]);
+      const r = await parseCostarListingsFile(f, map);
+      expect(r.rows[0]).toMatchObject({ availableSf: 20000, minDivisibleSf: 2500 });
+    });
+
+    it('still skips the row when both Min and Max are missing/zero', async () => {
+      const base = testHeaderMap();
+      const map = testHeaderMap({ fields: { ...base.fields, availableSfMax: 'Max SF Available' } });
+      const f = await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 0, sfMax: null }]);
+      const r = await parseCostarListingsFile(f, map);
+      expect(r.skipped).toEqual([{ rowNumber: 2, reason: 'available SF missing, zero or unparseable' }]);
     });
   });
 });
