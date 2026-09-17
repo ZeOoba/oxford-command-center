@@ -239,6 +239,24 @@ describe('parseCostarListingsFile', () => {
     expect(r.skipped).toEqual([{ rowNumber: 2, reason: 'available SF missing, zero or unparseable' }]);
   });
 
+  // R14: a blank Address must be counted as skipped (with a clear reason), not silently dropped —
+  // previously it was neither in `skipped` nor in `rowCount`, so the completeness ratio
+  // (exportMinRowRatio) and the Data Quality tab's lastExportSkipped both understated the real loss.
+  it('a blank Address cell is skipped with a clear reason, and counted in rowCount', async () => {
+    const f = await writeCostarFixture(dir(), 'blank-address.xlsx', [
+      { address: 'placeholder', sf: 1000 }, // row 2 — its address cell is blanked below
+      { address: '2 Main St', sf: 2000 },
+    ]);
+    await patchDataCell(f, 'Address', '');
+    const r = await parseCostarListingsFile(f, testHeaderMap());
+    expect(r.skipped).toEqual([{ rowNumber: 2, reason: 'address missing or blank' }]);
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0]!.address).toBe('2 Main St');
+    // rowCount = rows.length + skipped.length: the blank-address row must be counted, not dropped
+    // silently as though it never existed in the export.
+    expect(r.rowCount).toBe(2);
+  });
+
   it('parseNumber strips $/commas/units and rejects ranges and parenthetical negatives', () => {
     expect(parseNumber('2,000 - 5,000')).toBeNull();
     expect(parseNumber('(5)')).toBeNull();

@@ -42,6 +42,11 @@ export const PositioningBand = z.enum(['above', 'in_band', 'below', 'unknown']);
 export type PositioningBand = z.infer<typeof PositioningBand>;
 export const EvidenceValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);
 export type EvidenceValue = z.infer<typeof EvidenceValue>;
+// Mirrors src/analytics/lease-market/similarity.ts's SimilarityComponent union — the set of similarity
+// components that can go into ResolvedComparables.unknown (deferred UI-fix round: surfaced on
+// ComparableStats so a MEDIUM/LOW confidence caused by missing subject/comp data is explainable).
+export const SimilarityComponent = z.enum(['location', 'size', 'clearHeight', 'age', 'loading', 'office']);
+export type SimilarityComponent = z.infer<typeof SimilarityComponent>;
 
 const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -241,6 +246,10 @@ export const ComparableStats = z.object({
   high: NullableNum,
   confidence: ConfidenceLabel,
   cellKey: z.string().nullable(),
+  // Deferred UI-fix round: threaded from similarity.ts's ResolvedComparables.unknown (empty on the
+  // cell/null-fallback bases, which carry no per-component data) so the UI can explain a confidence
+  // cap ("unknown: location, clear height") instead of leaving it unexplained.
+  unknown: z.array(SimilarityComponent),
 });
 export type ComparableStats = z.infer<typeof ComparableStats>;
 
@@ -323,6 +332,11 @@ export type LeaseMarketKpis = z.infer<typeof LeaseMarketKpis>;
 export const LeaseMarketSummaryResponse = z.object({
   asOf: z.string(),
   rowLevel: z.boolean(),
+  // Whole-branch review finding I3: asOf is always referenceDate(), never the last compute run — an
+  // operator who ingests without running compute would otherwise see populated Market Rents/Changes
+  // (ingest-only reads) next to an empty Radar and zeroed stale/radarCandidates KPIs with no
+  // explanation. MAX(computed_at) from lm_signal; null when compute has never run.
+  lastComputedAt: z.string().nullable(),
   kpis: LeaseMarketKpis,
   freshness: z.array(MarketFreshness),
   dataQuality: z.array(MarketDataQuality),
@@ -337,7 +351,6 @@ export const PositioningRow = z.object({
   propertyKey: z.string(),
   unit: z.string().nullable(),
   sf: z.number().nonnegative(),
-  oraListingId: z.number().int().nullable(),
   oraAskingNnnEq: NullableNum,
   stats: ComparableStats.nullable(),
   comps: z.array(CompRow),
@@ -347,11 +360,24 @@ export const PositioningRow = z.object({
   recommendation: z.string(),
   flags: z.array(z.enum(['not_listed'])),
   effectiveDom: z.number().int().nullable(),
-  brokerName: z.string().nullable(),
-  listingUrl: z.string().nullable(),
-  dateListed: z.string().nullable(),
 });
 export type PositioningRow = z.infer<typeof PositioningRow>;
+
+// Whole-branch review finding 6: oraListingId/brokerName/listingUrl/dateListed were removed from
+// PositioningRow above — grep confirmed no consumer (src/ or server/) rendered or read them; they put
+// a CoStar broker name on the wire for no benefit. See deferred-ui-fix-report.md.
+
+// Deferred R2: a listing whose owner screens as ORA-self (ownerType === 'affiliated') but whose
+// address is NOT in config.oraProperties.addressNorms — the ORA-exclusion layer still excludes it from
+// comps/benchmarks/radar (compute.ts isOraOwnedProperty), but it can never appear as a PositioningRow
+// (those are keyed off configured oraProperties), so it needs its own hygiene surface.
+export const ListingHygieneFlag = z.object({
+  listingId: z.number().int(),
+  marketId: z.string(),
+  address: z.string().nullable(),
+  reason: z.string(),
+});
+export type ListingHygieneFlag = z.infer<typeof ListingHygieneFlag>;
 
 export const ListedButLeased = z.object({
   propertyKey: z.string(),
@@ -368,6 +394,7 @@ export const PositioningResponse = z.object({
   unconfiguredPropertyKeys: z.array(z.string()),
   rows: z.array(PositioningRow),
   listedButLeased: z.array(ListedButLeased),
+  hygieneFlags: z.array(ListingHygieneFlag),
 });
 export type PositioningResponse = z.infer<typeof PositioningResponse>;
 

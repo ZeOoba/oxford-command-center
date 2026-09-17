@@ -226,8 +226,14 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
       const i = idx[f];
       return i === null ? '' : cellText(row.getCell(i).value);
     };
+    // R14: a blank Address is not silently dropped — it must be counted as skipped (and so in
+    // rowCount) so the completeness ratio (exportMinRowRatio) and the Data Quality tab's
+    // lastExportSkipped both reflect the real loss instead of understating it.
     const address = get('address');
-    if (!address) continue;
+    if (!address) {
+      skipped.push({ rowNumber: r, reason: 'address missing or blank' });
+      continue;
+    }
 
     const pt = get('propertyType');
     const st = get('secondaryType');

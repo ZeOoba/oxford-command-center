@@ -19,7 +19,8 @@ import type { PortfolioSnapshot } from '../../src/contracts/index';
 import { toCellBenchmark } from '../../src/analytics/lease-market/benchmarks';
 import { loadLeaseMarketConfig } from './lease-market/config';
 import {
-  domBins, isActive, latestExportEvents, leaseMarketKpis, loadMarketState, marketDataQuality, marketFreshness, withheldCandidateMarkets,
+  domBins, isActive, lastComputedAt, latestExportEvents, leaseMarketKpis, loadMarketState, marketDataQuality, marketFreshness,
+  withheldCandidateMarkets,
 } from './lease-market/compute';
 import { computePositioning } from './lease-market/positioning';
 
@@ -152,6 +153,7 @@ export function leaseMarketApi(getDb: () => WarehouseDb, deps: LeaseMarketApiDep
       return json(200, LeaseMarketSummaryResponse.parse({
         asOf,
         rowLevel: effectiveRowLevel(config),
+        lastComputedAt: lastComputedAt(db),
         kpis: leaseMarketKpis(db, config, state, asOf),
         freshness: marketFreshness(db, config, asOf),
         dataQuality: marketDataQuality(db, config, state),
@@ -175,6 +177,11 @@ export function leaseMarketApi(getDb: () => WarehouseDb, deps: LeaseMarketApiDep
 
   const RADAR_SCORE_PARTS = ['part_dom', 'part_reductions', 'part_belowMarket', 'part_vacancy', 'part_buyBoxFit', 'part_owner'] as const;
   const isConfidenceLabel = (v: unknown): v is ConfidenceLabel => v === 'HIGH' || v === 'MEDIUM' || v === 'LOW';
+  // Whole-branch review finding, subtype coercion: a corrupt/missing evidence.subtype used to fall
+  // through to `e.subtype === 'flex' ? 'flex' : 'warehouse'` — silently mislabeling every other
+  // invalid value (including a genuinely missing key) as 'warehouse', inconsistent with every other
+  // missing evidence key above/below, which is skipped-and-warned. Same skip-and-warn treatment here.
+  const isLmSubtype = (v: unknown): v is 'flex' | 'warehouse' => v === 'flex' || v === 'warehouse';
 
   app.get('/radar', () =>
     guarded((db, config) => {
@@ -212,6 +219,10 @@ export function leaseMarketApi(getDb: () => WarehouseDb, deps: LeaseMarketApiDep
             console.warn(`[lease-market-api] radar candidate property ${r.property_id} skipped: unparseable evidence_json (${err instanceof Error ? err.message : String(err)})`);
             return [];
           }
+          if (!isLmSubtype(e.subtype)) {
+            console.warn(`[lease-market-api] radar candidate property ${r.property_id} skipped: missing/invalid evidence.subtype (${JSON.stringify(e.subtype)})`);
+            return [];
+          }
           const parts: Record<string, number> = {};
           for (const key of RADAR_SCORE_PARTS) {
             const v = num(e[key]);
@@ -225,7 +236,7 @@ export function leaseMarketApi(getDb: () => WarehouseDb, deps: LeaseMarketApiDep
             propertyId: r.property_id,
             marketId: r.market_id,
             address: rowLevel ? r.address_display : null,
-            subtype: e.subtype === 'flex' ? 'flex' : 'warehouse',
+            subtype: e.subtype,
             buildingSf: num(e.buildingSf),
             score,
             parts: {

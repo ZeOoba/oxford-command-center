@@ -2,7 +2,7 @@
 //
 // Lease Market Intelligence — Oxford Rent Position and listing hygiene (spec rev 3 §3.9, cross-exam A7/A8).
 // Pure over MarketState; the API supplies vacant units from the live rent-roll snapshot.
-import type { CompRow, LeaseMarketConfig, ListedButLeased, PositioningRow } from '../../../src/contracts/lease-market';
+import type { CompRow, LeaseMarketConfig, ListedButLeased, ListingHygieneFlag, PositioningRow } from '../../../src/contracts/lease-market';
 import { normalizeSuite } from '../../../src/analytics/lease-market/normalize';
 import { midRankPercentile } from '../../../src/analytics/lease-market/benchmarks';
 import { resolveComparables, type ResolvedComparables } from '../../../src/analytics/lease-market/similarity';
@@ -60,7 +60,7 @@ export function computePositioning(
   config: LeaseMarketConfig,
   state: MarketState,
   rowLevel: boolean,
-): { rows: PositioningRow[]; unconfiguredPropertyKeys: string[]; listedButLeased: ListedButLeased[] } {
+): { rows: PositioningRow[]; unconfiguredPropertyKeys: string[]; listedButLeased: ListedButLeased[]; hygieneFlags: ListingHygieneFlag[] } {
   const t = config.thresholds;
   const props = new Map(config.oraProperties.map((p) => [p.propertyKey, p]));
 
@@ -177,10 +177,12 @@ export function computePositioning(
       propertyKey: u.propertyKey,
       unit: u.unit,
       sf: u.sf,
-      oraListingId: match?.listingId ?? null,
       oraAskingNnnEq: asking,
       stats: stats
-        ? { basis: stats.basis, n: stats.n, low: stats.low, p25: stats.p25, median: stats.median, p75: stats.p75, high: stats.high, confidence: stats.confidence, cellKey: stats.cellKey }
+        ? {
+            basis: stats.basis, n: stats.n, low: stats.low, p25: stats.p25, median: stats.median, p75: stats.p75, high: stats.high,
+            confidence: stats.confidence, cellKey: stats.cellKey, unknown: stats.unknown,
+          }
         : null,
       comps,
       percentile,
@@ -189,9 +191,6 @@ export function computePositioning(
       recommendation,
       flags: match ? [] : ['not_listed'],
       effectiveDom: match ? effectiveDom(match, state.asOf) : null,
-      brokerName: rowLevel ? (match?.brokerName ?? null) : null,
-      listingUrl: rowLevel ? (match?.listingUrl ?? null) : null,
-      dateListed: match ? (match.costarDateOnMarket ?? match.firstSeen) : null,
     });
   });
 
@@ -211,5 +210,24 @@ export function computePositioning(
     }
   }
 
-  return { rows, unconfiguredPropertyKeys: [...unconfigured].sort(), listedButLeased };
+  // Deferred R2: a listing whose owner screens as ORA-self (compute.ts isOraOwnedProperty's
+  // `ownerType === 'affiliated'` branch) is excluded from comps/benchmarks/radar everywhere, but when
+  // its address isn't in config.oraProperties.addressNorms it has no oraPropertyKey and so can never
+  // become a PositioningRow or a listedButLeased entry (both keyed off configured oraProperties) —
+  // without its own surface, it's an ORA-owned listing with no hygiene visibility at all. state.spaces
+  // is already ordered by listing id (loadMarketState's `ORDER BY l.id`), so this list is deterministic.
+  const hygieneFlags: ListingHygieneFlag[] = [];
+  for (const s of state.spaces) {
+    if (!isActive(s)) continue;
+    if (s.property.ownerType === 'affiliated' && s.property.oraPropertyKey === null) {
+      hygieneFlags.push({
+        listingId: s.listingId,
+        marketId: s.marketId,
+        address: rowLevel ? s.addressDisplay : null,
+        reason: 'CoStar shows an ORA-owned listing at an address that is not mapped — add it to oraProperties',
+      });
+    }
+  }
+
+  return { rows, unconfiguredPropertyKeys: [...unconfigured].sort(), listedButLeased, hygieneFlags };
 }

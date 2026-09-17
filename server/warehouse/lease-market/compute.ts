@@ -545,6 +545,16 @@ export function runCompute(db: WarehouseDb, config: LeaseMarketConfig, asOf: str
 }
 
 // ── Read models ────────────────────────────────────────────────────────────────
+// Whole-branch review finding I3: the last time runCompute actually ran, distinct from `asOf`
+// (referenceDate(), the wall-clock "as of" bound used everywhere else) — lets the API/UI tell an
+// operator who ingested but never ran compute apart from one whose data is simply current. lm_signal
+// is fully replaced (DELETE + reinsert) on every compute run, so MAX(computed_at) is exactly the last
+// run's timestamp; null when the table is empty (compute has never run, or ran with zero signals).
+export function lastComputedAt(db: WarehouseDb): string | null {
+  const row = db.prepare('SELECT MAX(computed_at) AS t FROM lm_signal').get() as { t: string | null };
+  return row.t ?? null;
+}
+
 export function marketFreshness(db: WarehouseDb, config: LeaseMarketConfig, asOf: string): MarketFreshness[] {
   const latestStmt = db.prepare(
     `SELECT observed_at, completeness, partial_reason FROM lm_landing

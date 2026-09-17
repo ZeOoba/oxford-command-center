@@ -110,6 +110,10 @@ describe('lease-market API', () => {
     const res = await app.request('/summary');
     expect(res.status).toBe(200);
     const body = LeaseMarketSummaryResponse.parse(await json(res));
+    // Deferred UI-fix round (whole-branch review I3): lastComputedAt is the last runCompute asOf
+    // (MAX(computed_at) from lm_signal), not referenceDate()/asOf — appFor()'s seeded() fixture runs
+    // compute at '2026-03-01'.
+    expect(body.lastComputedAt).toBe('2026-03-01');
     // newInLatest is 12, not 13 (fixture has 13 rows total): compute.ts (d83cc05) deliberately
     // excludes the ORA-owned space (1100 Rarig Ave Ste B) from the "new" KPI count — an ORA listing
     // appearing in a CoStar export isn't a market "new listing" signal the same way a third-party
@@ -129,6 +133,25 @@ describe('lease-market API', () => {
     expect(body.rows[0]).toMatchObject({ propertyKey: '1100 Rarig', oraAskingNnnEq: 12, band: 'above', flags: [] });
     expect(body.rows[0]!.stats).toMatchObject({ basis: 'similarity', confidence: 'MEDIUM', n: 12 });
     expect(body.listedButLeased).toEqual([]);
+    // No ORA-self-but-unmapped listing seeded here -> no hygiene flags (positive-case coverage of
+    // this array is in lease-market-positioning.test.ts).
+    expect(body.hygieneFlags).toEqual([]);
+  });
+
+  // Deferred UI-fix round (whole-branch review I3): a warehouse that has been ingested but never
+  // compute'd must report lastComputedAt: null, not silently omit the distinction from asOf.
+  it('GET /summary: lastComputedAt is null when compute has never run', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lm-api-nocompute-'));
+    openDirs.push(dir);
+    const db = openWarehouse(join(dir, 't.sqlite'));
+    openDbs.push(db);
+    const config = testConfig();
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-15.xlsx', [{ address: '1 Main St', sf: 10000, rentLow: 8 }]), {
+      config, headerMap: testHeaderMap(), rawDir: join(dir, 'raw'), now: () => '2026-02-16T00:00:00Z', screen: stubScreen,
+    });
+    const app = leaseMarketApi(() => db, { loadConfig: () => config, getSnapshot: async () => snapshot, now: () => '2026-03-02T09:00:00Z' });
+    const body = LeaseMarketSummaryResponse.parse(await json(await app.request('/summary')));
+    expect(body.lastComputedAt).toBeNull();
   });
 
   it('GET /radar ranks candidates and shows the latest decision; POST records decisions', async () => {
@@ -255,8 +278,11 @@ describe('lease-market API — LeaseMarketApiDeps.rowLevel override', () => {
 // same-fixture rowLevel=true run proving those secrets are genuinely present in the payload (so the
 // redacted-mode assertion isn't vacuously true).
 describe('lease-market API — redaction boundary hardening (mirrorRowLevel=false)', () => {
+  // Whole-branch review finding 6: PositioningRow.listingUrl was removed (dead payload, no UI
+  // consumer) — a listing URL never travels on the wire at all now, so it's dropped from SECRETS
+  // rather than kept as a vacuous "always redacted because always absent" assertion.
   const ORA_URL = 'https://costar.example.test/listing/rarig-b';
-  const SECRETS = ['101 Industrial Pkwy', '1100 Rarig Ave', 'SMITH FAMILY LLC', 'Pat Broker', ORA_URL, '102 Industrial Pkwy'];
+  const SECRETS = ['101 Industrial Pkwy', '1100 Rarig Ave', 'SMITH FAMILY LLC', 'Pat Broker', '102 Industrial Pkwy'];
 
   async function runFor(rowLevel: boolean) {
     const config = testConfig({ mirrorRowLevel: rowLevel });
@@ -315,7 +341,8 @@ describe('lease-market API — redaction boundary hardening (mirrorRowLevel=fals
     expect(radar.monitor.every((s) => s.address === null && !('address' in s.evidence))).toBe(true);
     expect(signals.signals.every((s) => s.address === null && !('address' in s.evidence) && !('ownerName' in s.evidence) && !('brokerName' in s.evidence))).toBe(true);
     expect(changes.events.every((e) => e.address === null)).toBe(true);
-    expect(positioning.rows.every((r) => r.listingUrl === null)).toBe(true);
+    expect(positioning.rows.every((r) => r.comps.every((c) => c.address === null))).toBe(true);
+    expect(positioning.hygieneFlags.every((h) => h.address === null)).toBe(true);
   });
 });
 
@@ -355,6 +382,37 @@ describe('lease-market API — radar evidence guards', () => {
       warnSpy.mockRestore();
     }
   });
+
+  // Whole-branch review finding: a corrupt/missing evidence.subtype used to silently coerce to
+  // 'warehouse' (`e.subtype === 'flex' ? 'flex' : 'warehouse'`), inconsistent with the skip-and-warn
+  // treatment every other missing evidence key gets above. A candidate with a bad subtype must be
+  // skipped and warned, never mislabeled as a real 'warehouse' candidate.
+  it('skips a radar_candidate row with a missing/invalid evidence.subtype and logs a warning', async () => {
+    const { app, db } = await appFor();
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const validParts = { part_dom: 10, part_reductions: 0, part_belowMarket: 20, part_vacancy: 10, part_buyBoxFit: 10, part_owner: 5 };
+      const p106 = listingByAddressNorm(db, '106 INDUSTRIAL PKWY').propertyId;
+      const p107 = listingByAddressNorm(db, '107 INDUSTRIAL PKWY').propertyId;
+
+      // Missing subtype key entirely.
+      insertSignal(db, { propertyId: p106, listingId: null, kind: 'radar_candidate', severity: 'watch', score: 60, confidence: 'MEDIUM', evidence: { buildingSf: 20000, ...validParts } });
+      // Invalid subtype value (neither 'flex' nor 'warehouse') — the old code would have silently
+      // coerced this to 'warehouse'.
+      insertSignal(db, { propertyId: p107, listingId: null, kind: 'radar_candidate', severity: 'watch', score: 60, confidence: 'MEDIUM', evidence: { subtype: 'office', buildingSf: 20000, ...validParts } });
+
+      const radar = RadarResponse.parse(await json(await app.request('/radar')));
+      const candidatePropertyIds = radar.candidates.map((c) => c.propertyId);
+      expect(candidatePropertyIds).not.toContain(p106);
+      expect(candidatePropertyIds).not.toContain(p107);
+      expect(radar.candidates).toHaveLength(1);
+      expect(radar.candidates[0]!.address).toBe('101 Industrial Pkwy');
+
+      expect(warnSpy.mock.calls.some((args) => args.some((a) => String(a).includes('evidence.subtype')))).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 });
 
 // Fix round 2, item 1(b): the WHOLE-BODY OVERRIDE mechanism (LeaseMarketApiDeps.rowLevel), exercised
@@ -372,7 +430,9 @@ describe('lease-market API — radar evidence guards', () => {
 // through under the hood, just invoked without the resolver's HTTP-shaped wrapper.
 describe('lease-market API — whole-body rowLevel override across all 6 GET routes (fix round 2, item 1b)', () => {
   const OVERRIDE_URL = 'https://costar.example.test/listing/rarig-b-override';
-  const OVERRIDE_SECRETS = ['101 Industrial Pkwy', '1100 Rarig Ave', 'SMITH FAMILY LLC', 'Pat Broker', OVERRIDE_URL, '102 Industrial Pkwy'];
+  // See the SECRETS comment above — PositioningRow.listingUrl is gone, so OVERRIDE_URL no longer
+  // appears on the wire anywhere and is dropped from this list.
+  const OVERRIDE_SECRETS = ['101 Industrial Pkwy', '1100 Rarig Ave', 'SMITH FAMILY LLC', 'Pat Broker', '102 Industrial Pkwy'];
 
   async function runOverride(rowLevelOverride: boolean | undefined) {
     // config always says mirrorRowLevel:true — the override is what's under test, not the config default.
