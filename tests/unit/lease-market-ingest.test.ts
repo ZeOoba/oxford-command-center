@@ -636,4 +636,115 @@ describe('ingestCostarListingsFile', () => {
     expect(stored).toBe(r.partialReason);
     expect(stored).not.toContain('SUPER SECRET HOLDCO');
   });
+
+  // H3: keying a space purely on (property, suite_norm) collapses two genuinely different blank-suite
+  // listings — most commonly a Direct listing and a Sublet listing of the same address, quoted
+  // separately by two different brokers — into one lm_listing row. Whichever row happened to land
+  // first in the export "won" the blank suite_norm and the other silently vanished (not even counted
+  // with a reason), and a reordered re-export could flip which one survived. Fixed by folding Lease
+  // Type into the identity for the blank-suite case only (spaceIdentityOf in ingest.ts) — see the
+  // real 400 E Wilson Bridge Rd / 648 Clymer Rd rows from the first production export below.
+  describe('H3: blank-suite space identity folds in Lease Type (Direct vs Sublet)', () => {
+    it('400 E Wilson Bridge Rd: a blank-suite Sublet listing and a blank-suite Direct listing at the same address both survive as distinct spaces', async () => {
+      const { dir, db, deps } = setup();
+      const rows: FixtureListing[] = [
+        { address: '400 E Wilson Bridge Rd', sf: 14632, rentLow: 5.84, rentType: 'NNN', spaceUse: 'Sublet' },
+        { address: '400 E Wilson Bridge Rd', sf: 3420, rentLow: 9, rentType: 'NNN', spaceUse: 'Direct' },
+      ];
+      const r = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', rows), deps);
+      expect(r).toMatchObject({ insertedSpaces: 2, skipped: 0 });
+      const listings = db
+        .prepare("SELECT suite_norm FROM lm_listing l JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '400 E WILSON BRIDGE RD' ORDER BY suite_norm")
+        .all();
+      // Direct keeps the unchanged blank suite_norm (the common case, byte-for-byte unaffected);
+      // Sublet gets the distinct marker — both rows survive instead of one silently dropping.
+      expect(listings).toEqual([{ suite_norm: '' }, { suite_norm: 'SUBLET' }]);
+    });
+
+    it('648 Clymer Rd: two blank-suite Direct listings at the same address still collapse (indistinguishable) — but the loss is now reported with a "duplicate space" reason', async () => {
+      const { dir, db, deps } = setup();
+      const rows: FixtureListing[] = [
+        { address: '648 Clymer Rd', sf: 215, rentLow: 10, rentType: 'NNN', spaceUse: 'Direct' }, // kept
+        { address: '648 Clymer Rd', sf: 11700, rentLow: 7.5, rentType: 'NNN', spaceUse: 'Direct' }, // dropped — the real $7.50 NNN comp
+      ];
+      const r = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', rows), deps);
+      expect(r).toMatchObject({ insertedSpaces: 1, skipped: 1 });
+      expect(r.partialReason).toMatch(/duplicate space: 1 row\(s\) skipped/);
+      const stored = (db.prepare('SELECT partial_reason FROM lm_landing WHERE id = ?').get(r.landingId) as { partial_reason: string | null }).partial_reason;
+      expect(stored).toContain('duplicate space');
+      // The kept observation is the FIRST row's ($10, 215 SF) — unchanged first-wins behavior for a
+      // true duplicate; only the reason for the loss is new, not which row wins.
+      expect(
+        db.prepare("SELECT o.rent_low FROM lm_observation o JOIN lm_listing l ON l.id = o.listing_id JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = '648 CLYMER RD'").get(),
+      ).toEqual({ rent_low: 10 });
+    });
+
+    it('the Direct/Sublet split is deterministic on Lease Type, not on which row appears first in the file — a reordered re-export still updates the SAME two spaces', async () => {
+      const { dir, db, deps } = setup();
+      const forward: FixtureListing[] = [
+        { address: '77 Order Test Rd', sf: 5000, rentLow: 6, rentType: 'NNN', spaceUse: 'Sublet' },
+        { address: '77 Order Test Rd', sf: 8000, rentLow: 9, rentType: 'NNN', spaceUse: 'Direct' },
+      ];
+      const r1 = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', forward), deps);
+      expect(r1).toMatchObject({ insertedSpaces: 2, updatedSpaces: 0, skipped: 0 });
+
+      const reversed: FixtureListing[] = [
+        { address: '77 Order Test Rd', sf: 8200, rentLow: 9.25, rentType: 'NNN', spaceUse: 'Direct' }, // Direct listed FIRST this time
+        { address: '77 Order Test Rd', sf: 5100, rentLow: 6.1, rentType: 'NNN', spaceUse: 'Sublet' },
+      ];
+      const r2 = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', reversed), deps);
+      expect(r2).toMatchObject({ insertedSpaces: 0, updatedSpaces: 2, skipped: 0 });
+    });
+  });
+
+  // L1: month-end-clamped duration arithmetic ("Time on Market" free text, converted via
+  // timeOnMarketTextToDate) can derive a slightly EARLIER on-market date from a LATER export than an
+  // earlier export derived — nothing about the listing changed. The naive "any backward dip fires
+  // dom_reset" + "costar_date_on_market = MIN(...) pins the earliest-ever derivation forever" combo
+  // then produces a false dom_reset and pins a too-early date through every later export. Real pair
+  // from the finding: "1 Month 30 Days" on 2026-03-30 derives 2026-01-29; "2 Months" on 2026-03-31
+  // (one calendar day later) derives 2026-01-31 — a 1-day backward wobble in costar_dom (60 -> 59)
+  // with nothing else different. An explicit dateOnMarket column is unchanged (see the existing "keeps
+  // the earliest CoStar date" test above, which uses the default explicit-column setup and passes
+  // unmodified against this fix).
+  describe('L1: duration-derived costar_date_on_market tolerates a small backward wobble; prefers the latest derivation over MIN', () => {
+    function durationDeps(dir: string): IngestDeps {
+      const base = testHeaderMap();
+      return {
+        config: testConfig(),
+        headerMap: testHeaderMap({ fields: { ...base.fields, dateOnMarket: null, timeOnMarketText: 'Time On Market' } }),
+        rawDir: join(dir, 'raw'),
+        now: () => '2026-12-31T00:00:00Z',
+        screen: stubScreen,
+      };
+    }
+    const domOf = (db: WarehouseDb, address: string) =>
+      db.prepare("SELECT costar_date_on_market FROM lm_listing l JOIN lm_property p ON p.id = l.property_id WHERE p.address_norm = ?").get(address);
+
+    it('the real 03-30/03-31 pair: a 1-day wobble does not fire dom_reset, and costar_date_on_market follows the LATEST derivation, not MIN', async () => {
+      const { dir, db } = setup();
+      const deps = durationDeps(dir);
+      const rows1: FixtureListing[] = [{ address: '1 Wobble Rd', sf: 8000, rentLow: 9, timeOnMarket: '1 Month 30 Days' }];
+      await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-03-30.xlsx', rows1), deps);
+      expect(domOf(db, '1 WOBBLE RD')).toEqual({ costar_date_on_market: '2026-01-29' });
+
+      const rows2: FixtureListing[] = [{ address: '1 Wobble Rd', sf: 8000, rentLow: 9, timeOnMarket: '2 Months' }];
+      const r2 = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-03-31.xlsx', rows2), deps);
+      expect(r2.events.dom_reset).toBe(0); // costar_dom 60 -> 59: a 1-day dip, tolerated
+      expect(eventsFor(db, '1 WOBBLE RD').map((e) => (e as { kind: string }).kind)).not.toContain('dom_reset');
+      // Prefers the LATEST derivation (2026-01-31) over MIN(2026-01-29, 2026-01-31) = 2026-01-29.
+      expect(domOf(db, '1 WOBBLE RD')).toEqual({ costar_date_on_market: '2026-01-31' });
+    });
+
+    it('a genuine reset (a dip past the 3-day wobble tolerance) still fires dom_reset even in duration-derived mode', async () => {
+      const { dir, db } = setup();
+      const deps = durationDeps(dir);
+      const rows1: FixtureListing[] = [{ address: '2 Genuine Reset Rd', sf: 8000, rentLow: 9, timeOnMarket: '6 Months' }];
+      await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', rows1), deps);
+      // A fresh, much-shorter duration on the next export: the space was genuinely re-listed.
+      const rows2: FixtureListing[] = [{ address: '2 Genuine Reset Rd', sf: 8000, rentLow: 9, timeOnMarket: '5 Days' }];
+      const r2 = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', rows2), deps);
+      expect(r2.events.dom_reset).toBe(1);
+    });
+  });
 });

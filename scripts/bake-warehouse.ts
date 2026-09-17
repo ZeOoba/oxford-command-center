@@ -20,7 +20,7 @@ import { join } from 'node:path';
 import { warehouseRoutes } from '../server/warehouse/api';
 import { WAREHOUSE_SUB_ROUTERS } from '../server/warehouse/sub-routers';
 import { leaseMarketApi } from '../server/warehouse/lease-market-api';
-import { openWarehouse } from '../server/warehouse/db';
+import Database from 'better-sqlite3';
 import type { WarehouseDb } from '../server/warehouse/db';
 import { serverPort } from '../server/config';
 import { NumericMetricKey } from '../src/contracts/warehouse';
@@ -323,7 +323,32 @@ export async function bakeWarehouseJson(opts: { now?: number; includeConfidentia
     warehouseSource = 'live-server';
   } else {
     const dbPath = process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
-    db = openWarehouse(dbPath);
+    // Deliberately NOT openWarehouse(): that runs pending migrations, and this path is unattended
+    // (the hourly mirror deploy). Run from a feature branch it would apply that branch's unmerged
+    // migration to the LIVE warehouse — and because runMigrations keys off the file name with no
+    // checksum, the live DB would then record it as applied and never receive later edits to it.
+    // The bake only reads, so it opens the file directly. It still needs a read-WRITE handle
+    // because wal_checkpoint(TRUNCATE) cannot run on a read-only connection.
+    //
+    // M4: `new Database(dbPath)` with no options silently CREATES an empty file when dbPath doesn't
+    // exist. The bake would then fail downstream (buildWarehouseEnvelope's required-route checks),
+    // but that empty file stays on disk — and the next time ANYTHING opens it through openWarehouse()
+    // (a normal server start, a normal bake retry), runMigrations sees a valid-but-empty SQLite file
+    // and migrates it into a valid, EMPTY warehouse. Every later bake against that path then silently
+    // "succeeds" with a real (empty) mirror and no error at all — the 0-byte-file failure mode
+    // disappears into a permanently-empty one instead of ever surfacing. `fileMustExist: true` (as
+    // scripts/bake-mirror.ts already does for its own governor read) makes better-sqlite3 throw
+    // immediately instead of creating anything, and the catch below turns that into one clear,
+    // actionable bake failure.
+    try {
+      db = new Database(dbPath, { fileMustExist: true });
+    } catch (err) {
+      throw new Error(
+        `warehouse bake failed: no database at ${dbPath} — refusing to create an empty warehouse ` +
+          `(${err instanceof Error ? err.message : String(err)})`,
+      );
+    }
+    db.pragma(`busy_timeout = ${Number(process.env.WAREHOUSE_BUSY_TIMEOUT_MS) || 15_000}`);
     db.pragma('wal_checkpoint(TRUNCATE)'); // flush WAL → committed DB so the read can't lag the server
     // Full control on this path: bake the routes either way, but force rowLevel false when redacted.
     resolver = inProcessResolver(db, { leaseMarketRowLevel });
