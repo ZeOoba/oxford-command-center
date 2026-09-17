@@ -3,20 +3,31 @@
 // Task 10 (lease-market compute) review fix round — regression coverage for each reviewer finding.
 // Kept separate from lease-market-compute.test.ts (which Task 10's own report already covers end to
 // end) so each fix gets its own narrowly-scoped, easy-to-audit scenario.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import type { LeaseMarketConfig } from '../../src/contracts/lease-market';
+import { resolveComparables } from '../../src/analytics/lease-market/similarity';
 import { openWarehouse, type WarehouseDb } from '../../server/warehouse/db';
 import { ingestCostarListingsFile } from '../../server/warehouse/lease-market/ingest';
 import {
-  comparablesForSpace, isActive, latestExportEvents, loadMarketState, oraSubject, runCompute, staleThresholdsByMarket,
-  type ComputeResult,
+  comparablesForSpace, isActive, latestExportEvents, leaseMarketKpis, loadMarketState, oraSubject, runCompute, staleThresholdsByMarket,
+  withheldCandidateMarkets, type ComputeResult,
 } from '../../server/warehouse/lease-market/compute';
-import { stubScreen, testConfig, testHeaderMap, writeCostarFixture, type FixtureListing } from './lease-market-fixtures';
+import { stubScreen, testConfig, testHeaderMap, writeCostarFixture, TEST_THRESHOLDS, type FixtureListing } from './lease-market-fixtures';
 
 async function ingestFixture(db: WarehouseDb, dir: string, fileName: string, listings: FixtureListing[], observedAt: string) {
   const config = testConfig();
+  return ingestCostarListingsFile(db, await writeCostarFixture(dir, fileName, listings), {
+    config, headerMap: testHeaderMap(), rawDir: join(dir, 'raw'), now: () => `${observedAt}T00:00:00Z`, screen: (names) => stubScreen(names),
+  });
+}
+
+// Like ingestFixture, but takes an explicit config — ingestFixture always builds its own default
+// testConfig() internally, so a test that needs a non-default threshold (e.g. a tiny exportRowCap to
+// force a partial landing) can't use it.
+async function ingestFixtureWithConfig(db: WarehouseDb, dir: string, fileName: string, listings: FixtureListing[], observedAt: string, config: LeaseMarketConfig) {
   return ingestCostarListingsFile(db, await writeCostarFixture(dir, fileName, listings), {
     config, headerMap: testHeaderMap(), rawDir: join(dir, 'raw'), now: () => `${observedAt}T00:00:00Z`, screen: (names) => stubScreen(names),
   });
@@ -60,6 +71,85 @@ describe('latest-export event window (requirement 1)', () => {
     const state = loadMarketState(db, config, '2026-02-01');
     const bravo = state.spaces.find((s) => s.addressDisplay === '999 Bravo Way');
     expect(bravo?.isNewInLatestExport).toBe(true);
+  });
+});
+
+// ── Fix round 2, requirement 1 (second half) + requirement 5 pinning: a market whose only landing is
+// partial (never complete) is withheld and has no "latest export" event window ─────────────────────
+describe('a market with only a partial landing is withheld and has no event window (requirement 1 + 5)', () => {
+  async function seededPartialOnly() {
+    const dir = mkdtempSync(join(tmpdir(), 'lm-fix-partialonly-'));
+    const db = openWarehouse(join(dir, 't.sqlite'));
+    // A tiny exportRowCap forces the FIRST-ever landing for columbus to be partial (row-count-at-cap) —
+    // this market never has a complete landing, unlike the sandwiched-partial scenario in requirement 1's
+    // first test above.
+    const config = testConfig({ thresholds: { ...TEST_THRESHOLDS, exportRowCap: 3 } });
+    const listings: FixtureListing[] = Array.from({ length: 5 }, (_, i) => ({
+      id: `WH${i}`, address: `${600 + i} Withheld Ave`, sf: 20000, rentLow: 9, owner: 'SMITH FAMILY LLC',
+    }));
+    const r = await ingestFixtureWithConfig(db, dir, 'costar-listings_columbus_2026-01-05.xlsx', listings, '2026-01-05', config);
+    expect(r.completeness).toBe('partial');
+    return { db, config };
+  }
+
+  it('lists the market in withheldMarkets (from runCompute and withheldCandidateMarkets directly), never a never-ingested market', async () => {
+    const { db, config } = await seededPartialOnly();
+    // Spaces from the partial landing are still loaded into market state.
+    const state = loadMarketState(db, config, '2026-02-01');
+    expect(state.spaces).toHaveLength(5);
+
+    expect(withheldCandidateMarkets(db, config)).toEqual([
+      { marketId: 'columbus', reason: 'no complete export yet; acquisition candidates withheld' },
+    ]);
+    // Madison, with zero landings ever, is never reported as withheld — nothing to withhold yet.
+    const result = runCompute(db, config, '2026-02-01');
+    expect(result.withheldMarkets).toEqual(['columbus']);
+    expect(result.byKind.radar_candidate).toBeUndefined();
+  });
+
+  it('flags every space isNewInLatestExport: false, and the newInLatest/priceCutsInLatest KPIs are 0', async () => {
+    const { db, config } = await seededPartialOnly();
+    const state = loadMarketState(db, config, '2026-02-01');
+    expect(state.spaces.every((s) => s.isNewInLatestExport === false)).toBe(true);
+
+    const kpis = leaseMarketKpis(db, config, state, '2026-02-01');
+    expect(kpis.newInLatest).toBe(0);
+    expect(kpis.priceCutsInLatest).toBe(0);
+
+    // latestExportEvents itself also has no window for this market (there is no "latest export" until
+    // a complete landing exists), independent of the newInLatest KPI's own exclusion logic.
+    expect(latestExportEvents(db, config)).toHaveLength(0);
+  });
+});
+
+// ── Fix round 2, requirement 2 (minor #2): radar comp_basis recovery is only attempted when scoreRadar
+// actually found a usable comparable (comparableMedian !== null) ────────────────────────────────────
+describe('radar comp_basis is null, not a spuriously-matched value, when comparableMedian is null (requirement 2)', () => {
+  it('a lone property in its market — no comps anywhere — surfaces on radar with comp_basis null', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lm-fix-compbasis-'));
+    const db = openWarehouse(join(dir, 't.sqlite'));
+    const config = testConfig();
+    // Sole active space in the whole Columbus market: n=1 bench row everywhere (< benchmarkMinN 5) so
+    // its own comparables resolve to { median: null, confidence: 'LOW', basis: 'cell' } — the SAME
+    // shape the old code matched on (c.median === null && c.confidence === 'LOW') to wrongly recover a
+    // comp basis, even though scoreRadar's own comparableMedian for this property is null (no space
+    // qualified). Long DOM + high vacancy + buy-box fit + private owner alone clears radarMinScore (50)
+    // without any belowMarket points, so it's still a candidate.
+    const listings: FixtureListing[] = [{ id: 'CB0', address: '950 Lonewolf Ave', sf: 20000, rentLow: 9, owner: 'SMITH FAMILY LLC', dateOnMarket: '2025-01-01' }];
+    await ingestFixture(db, dir, 'costar-listings_columbus_2026-01-05.xlsx', listings, '2026-01-05');
+
+    const r = runCompute(db, config, '2026-03-01');
+    expect(r.byKind.radar_candidate).toBe(1);
+
+    const row = db.prepare(`SELECT score, comp_basis, evidence_json FROM lm_signal WHERE kind = 'radar_candidate'`).get() as {
+      score: number;
+      comp_basis: string | null;
+      evidence_json: string;
+    };
+    expect(row.score).toBe(55);
+    expect(row.comp_basis).toBeNull();
+    const ev = JSON.parse(row.evidence_json) as Record<string, unknown>;
+    expect(ev.comparableMedian).toBeNull();
   });
 });
 
@@ -155,6 +245,24 @@ describe('runCompute atomicity (requirement 4)', () => {
     expect(transactionCalls).toBe(1);
     expect(immediateUsed).toBe(true);
   });
+
+  it('proves the read side actually runs inside the transaction: db.inTransaction is true during the lm_property select', async () => {
+    const { db, config } = await seededSmall();
+    const originalPrepare = db.prepare.bind(db);
+    let sawInTransactionDuringRead: boolean | undefined;
+    const prepareSpy = vi.spyOn(db, 'prepare').mockImplementation(((sql: string) => {
+      if (sawInTransactionDuringRead === undefined && sql.includes('FROM lm_property')) {
+        sawInTransactionDuringRead = db.inTransaction;
+      }
+      return originalPrepare(sql);
+    }) as typeof db.prepare);
+
+    expect(db.inTransaction).toBe(false); // sanity: not already inside a transaction before the call
+    runCompute(db, config, '2026-03-01');
+
+    expect(sawInTransactionDuringRead).toBe(true);
+    prepareSpy.mockRestore();
+  });
 });
 
 // ── Fix round 2, requirement 5: stale-baseline n >= 10, ORA and future removals excluded ──────────
@@ -220,11 +328,30 @@ describe('stale-threshold baseline (requirement 5)', () => {
     const thresholds = staleThresholdsByMarket(db, config, asOf);
     expect(thresholds.get('columbus')).toBe(300);
   });
+
+  it('includes a removal whose removed_at exactly equals asOf — the boundary is inclusive (requirement 7)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lm-fix-baseline-boundary-'));
+    const db = openWarehouse(join(dir, 't.sqlite'));
+    const config = testConfig();
+    const asOf = '2026-06-01';
+    const landingId = insertLanding(db, 'columbus', asOf, 'boundary-landing');
+
+    // 10 removals dated EXACTLY on asOf, all at DOM=300 -> baseline median 300 -> threshold
+    // max(180, round(1.5*300)) = 450. If the query wrongly excluded removed_at == asOf, n would drop to
+    // 0 (< completedDomMinN 10), baseline would be null, and the threshold would fall back to 180.
+    Array.from({ length: 10 }).forEach((_, i) => {
+      const propertyId = insertProperty(db, { identityKey: `boundary-${i}`, marketId: 'columbus', oraKey: null });
+      insertRemovedListing(db, { propertyId, landingId, suiteNorm: `B${i}`, firstSeen: addDaysStr(asOf, -300), removedAt: asOf });
+    });
+
+    const thresholds = staleThresholdsByMarket(db, config, asOf);
+    expect(thresholds.get('columbus')).toBe(450);
+  });
 });
 
 // ── Fix round 2, requirement 7: additional coverage ───────────────────────────────────────────────
 describe('feed skips LOW-confidence comparables (requirement 7)', () => {
-  it('does not publish a market-rent feed row when the resolved comparables are LOW confidence', async () => {
+  it('does not publish a market-rent feed row when the resolved comparables are LOW confidence — and this fixture discriminates the two skip reasons (median !== null, confidence LOW)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'lm-fix-feedlow-'));
     const db = openWarehouse(join(dir, 't.sqlite'));
     const config = testConfig({
@@ -235,12 +362,23 @@ describe('feed skips LOW-confidence comparables (requirement 7)', () => {
         },
       ],
     });
-    // Only 2 Madison comps: below similarityMinComps (8) and belowMarketMinN (10) -> cell confidence LOW.
-    const listings: FixtureListing[] = [
-      { id: 'SP0', address: '990 Sparse Ave', sf: 20000, rentLow: 9, owner: 'SMITH FAMILY LLC', market: 'Madison', city: 'Madison' },
-      { id: 'SP1', address: '991 Sparse Ave', sf: 20000, rentLow: 9.5, owner: 'SMITH FAMILY LLC', market: 'Madison', city: 'Madison' },
-    ];
+    // 5 Madison comps: meets benchmarkMinN (5), so the cell resolves an actual median — but the ORA
+    // subject's target submarket is null (no matched lm_property row and the config sets none), so
+    // computeCell only ever attempts rolledUp: 'market', which forces confidence to LOW regardless of n
+    // or coverage. This fixture must hit the "median present, confidence LOW" skip branch specifically —
+    // not the "no comps at all, median null" branch a too-small fixture would exercise instead.
+    const listings: FixtureListing[] = [9.0, 9.2, 9.4, 9.6, 9.8].map((rentLow, i) => ({
+      id: `SP${i}`, address: `${990 + i} Sparse Ave`, sf: 20000, rentLow, owner: 'SMITH FAMILY LLC', market: 'Madison', city: 'Madison',
+    }));
     await ingestFixture(db, dir, 'costar-listings_madison_2026-01-05.xlsx', listings, '2026-01-05');
+
+    const state = loadMarketState(db, config, '2026-02-01');
+    const { profile, matchedPropertyId, target } = oraSubject(config.oraProperties[0]!, state, config.oraProperties[0]!.typicalUnitSf, config.thresholds);
+    expect(target).not.toBeNull();
+    const c = resolveComparables(profile, matchedPropertyId, state.candidates, state.cellFor(target!), config.similarityWeights, config.thresholds);
+    expect(c.median).not.toBeNull();
+    expect(c.median).toBeCloseTo(9.4);
+    expect(c.confidence).toBe('LOW');
 
     const r = runCompute(db, config, '2026-02-01');
     expect(r.feedRows).toBe(0);

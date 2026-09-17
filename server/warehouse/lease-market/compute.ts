@@ -259,12 +259,23 @@ export function ownerScreenOkByMarket(db: WarehouseDb, config: LeaseMarketConfig
   return new Map(config.markets.map((m) => [m.id, latestCompleteLanding(db, m.id)?.owner_screen_ok === 1]));
 }
 
+// Fix round 2, requirement 1 (second half): built from the SAME screenOk map buildRadar's gate reads
+// (ownerScreenOkByMarket) — not just "has a complete landing whose screen failed" — so every market the
+// radar gate actually withholds candidates for is reported here too, including a market that has only
+// ever landed a PARTIAL export (no complete landing yet means ownerScreenOkByMarket is false for it,
+// and buildRadar's gate withholds it exactly the same way). Restricted to markets with at least one
+// parse_status='ok' landing (complete or partial) so a never-ingested market is never reported as
+// withheld — there is nothing to withhold yet.
 export function withheldCandidateMarkets(db: WarehouseDb, config: LeaseMarketConfig): WithheldMarket[] {
+  const screenOk = ownerScreenOkByMarket(db, config);
+  const hasOkLanding = db.prepare(`SELECT 1 FROM lm_landing WHERE source = 'costar_listings' AND market_id = ? AND parse_status = 'ok' LIMIT 1`);
   return config.markets.flatMap((m) => {
-    const c = latestCompleteLanding(db, m.id);
-    return c && c.owner_screen_ok !== 1
-      ? [{ marketId: m.id, reason: 'owner screen unavailable on the latest complete export; acquisition candidates withheld' }]
-      : [];
+    if (screenOk.get(m.id) === true) return [];
+    if (!hasOkLanding.get(m.id)) return [];
+    const reason = latestCompleteLanding(db, m.id)
+      ? 'owner screen unavailable on the latest complete export; acquisition candidates withheld'
+      : 'no complete export yet; acquisition candidates withheld';
+    return [{ marketId: m.id, reason }];
   });
 }
 
@@ -359,6 +370,13 @@ export interface ComputeResult {
 // pre-run signal/feed set or the fully post-run one, never a half-written mix, and nothing else can
 // interleave a write between the read-side computation and the delete+insert (which, before this fix,
 // were two separate steps only the second of which was transactional).
+//
+// Fix round 2, requirement 7: `asOf` is a POINT-IN-TIME bound on the stale-baseline query only
+// (staleThresholdsByMarket excludes any removal dated after asOf, and effectiveDom's own "now" is asOf
+// throughout). It does not make this a historical replay — `loadMarketState`, the feed, and radar all
+// read the CURRENT live warehouse rows (current status, current observations) regardless of `asOf`. A
+// backdated `asOf` recomputes signals/feed against today's data with yesterday's stale-threshold
+// baseline; it is not a supported way to reconstruct what compute would have produced on that date.
 export function runCompute(db: WarehouseDb, config: LeaseMarketConfig, asOf: string): ComputeResult {
   const body = (): ComputeResult => {
     const t = config.thresholds;
@@ -386,11 +404,21 @@ export function runCompute(db: WarehouseDb, config: LeaseMarketConfig, asOf: str
       // RadarResult doesn't expose which listing produced comparableMedian/confidence directly (radar.ts
       // is out of scope for this round), so the best space is recovered here by matching the same
       // (median, confidence) pair scoreRadar picked among this property's live, non-ORA spaces.
+      //
+      // Fix round 2, requirement 2 (minor #2): only attempt that recovery when r.comparableMedian is
+      // non-null. scoreRadar sets comparableMedian to null whenever NO live space had a usable
+      // (non-LOW-confidence) comparable — in that case every remaining live space's own resolveComparables
+      // result can independently be `{ median: null, confidence: 'LOW' }` too (the "no comps at all"
+      // fallback), which would otherwise satisfy `c.median === null && c.confidence === r.confidence`
+      // and wrongly attribute a comp basis (e.g. 'cell') to a candidate whose score used no comp basis.
       const liveSpaces = state.spaces.filter((s) => s.propertyId === e.property.propertyId && isActive(s) && !s.observations[s.observations.length - 1]!.isSublease);
-      const bestSpace = liveSpaces.find((s) => {
-        const c = compsFor(s);
-        return c !== null && c.median === r.comparableMedian && c.confidence === r.confidence;
-      });
+      const bestSpace =
+        r.comparableMedian === null
+          ? undefined
+          : liveSpaces.find((s) => {
+              const c = compsFor(s);
+              return c !== null && c.median === r.comparableMedian && c.confidence === r.confidence;
+            });
       drafts.push({
         propertyId: e.property.propertyId, listingId: null, kind: 'radar_candidate', severity: r.score >= t.radarPushScore ? 'high' : 'watch',
         score: r.score, confidence: r.confidence, compBasis: bestSpace ? (compsFor(bestSpace)?.basis ?? null) : null, cellKey: null,
@@ -525,6 +553,8 @@ export function leaseMarketKpis(db: WarehouseDb, config: LeaseMarketConfig, stat
     // activeSpaces intentionally INCLUDES ORA's own active spaces (fix round 2, requirement 6) — it's an
     // inventory count of everything currently tracked, not a market-activity signal like the two below.
     activeSpaces: state.spaces.filter(isActive).length,
+    // newInLatest/priceCutsInLatest EXCLUDE ORA's own events (excludeOra: true below) — the opposite of
+    // latestExportEvents, which deliberately includes them (see its own JSDoc). Fix round 2, requirement 6.
     newInLatest: countLatestEvents(db, config, 'new', true),
     priceCutsInLatest: countLatestEvents(db, config, 'price_cut', true),
     stale: signalCount('stale'),
@@ -532,6 +562,11 @@ export function leaseMarketKpis(db: WarehouseDb, config: LeaseMarketConfig, stat
   };
 }
 
+// Fix round 2, requirement 6: intentionally INCLUDES ORA's own listing events. This is the full audit
+// trail of everything that changed in "the latest export" window (see latestExportLandingIds), for an
+// operator who wants to see the complete picture including ORA's own listings — unlike
+// leaseMarketKpis' newInLatest/priceCutsInLatest below, which are a MARKET-ACTIVITY signal and
+// deliberately exclude ORA's own events via countLatestEvents(..., excludeOra: true).
 export function latestExportEvents(db: WarehouseDb, config: LeaseMarketConfig): ListingEventRow[] {
   const ids = [...latestExportLandingIds(db, config).values()].flatMap((s) => [...s]);
   if (ids.length === 0) return [];
