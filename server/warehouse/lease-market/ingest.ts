@@ -160,7 +160,7 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
 
   let parsed: ParsedCostarExport;
   try {
-    parsed = await parseCostarListingsFile(filePath, deps.headerMap);
+    parsed = await parseCostarListingsFile(filePath, deps.headerMap, exportDate);
   } catch (e) {
     if (e instanceof CostarParseError) return fail(fromName?.marketId ?? null, exportDate, e.message);
     throw e;

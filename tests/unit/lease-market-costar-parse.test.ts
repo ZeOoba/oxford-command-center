@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CostarHeaderMap, cellHyperlink, cellText, parseClearHeight, parseCoordinate, parseCostarListingsFile, parseNumber,
-  parsePercent,
+  parsePercent, parseTimeOnMarketDuration, timeOnMarketTextToDate,
 } from '../../server/warehouse/lease-market/costar-parse';
 import { TEST_HEADERS, testHeaderMap, writeCostarFixture } from './lease-market-fixtures';
 
@@ -214,7 +214,7 @@ describe('parseCostarListingsFile', () => {
       'Year Built': 1990, 'Clear Height': 20, Docks: 2, 'Drive Ins': 1, 'Office %': null, Owner: 'SMITH FAMILY LLC',
       'SF Available': 1000, 'Rent Low': 9, 'Rent High': null, 'Rent Type': 'NNN', 'Space Use': 'Direct',
       'Date On Market': '2026-01-15', Zip: '43219', Latitude: 39.99, Longitude: -82.93, 'Leasing Broker': 'Pat Broker',
-      'Leasing Company': 'Acme Realty', 'Listing URL': null,
+      'Leasing Company': 'Acme Realty', 'Listing URL': null, 'Time On Market': null,
     };
     const row = ws.addRow(TEST_HEADERS.map((h) => values[h] ?? null));
     const urlCol = TEST_HEADERS.indexOf('Listing URL') + 1;
@@ -315,5 +315,105 @@ describe('parseCostarListingsFile', () => {
       expect(shipped.fields.availableSf).not.toBeNull();
       expect(shipped.fields.rentText !== null || shipped.fields.rentLow !== null).toBe(true);
     }
+  });
+
+  describe('parseTimeOnMarketDuration / timeOnMarketTextToDate ("Time on Market" duration -> costarDateOnMarket)', () => {
+    it('parses every observed shape (unit words in descending-magnitude order, case-insensitive, singular or plural)', () => {
+      expect(parseTimeOnMarketDuration('3 Months 12 Days')).toEqual({ years: 0, months: 3, days: 12 });
+      expect(parseTimeOnMarketDuration('1 Year 2 Months')).toEqual({ years: 1, months: 2, days: 0 });
+      expect(parseTimeOnMarketDuration('2 Years 3 Months')).toEqual({ years: 2, months: 3, days: 0 });
+      expect(parseTimeOnMarketDuration('45 Days')).toEqual({ years: 0, months: 0, days: 45 });
+      expect(parseTimeOnMarketDuration('1 Month 5 Days')).toEqual({ years: 0, months: 1, days: 5 });
+      expect(parseTimeOnMarketDuration('4 Years')).toEqual({ years: 4, months: 0, days: 0 });
+      expect(parseTimeOnMarketDuration('1 Year')).toEqual({ years: 1, months: 0, days: 0 });
+      expect(parseTimeOnMarketDuration('6 Months 1 Day')).toEqual({ years: 0, months: 6, days: 1 });
+      expect(parseTimeOnMarketDuration('7 Months')).toEqual({ years: 0, months: 7, days: 0 });
+      expect(parseTimeOnMarketDuration('3 Years 1 Month')).toEqual({ years: 3, months: 1, days: 0 });
+      expect(parseTimeOnMarketDuration('1 Month')).toEqual({ years: 0, months: 1, days: 0 });
+      expect(parseTimeOnMarketDuration('1 Year 1 Month')).toEqual({ years: 1, months: 1, days: 0 });
+      // case-insensitive
+      expect(parseTimeOnMarketDuration('3 MONTHS 12 DAYS')).toEqual({ years: 0, months: 3, days: 12 });
+      expect(parseTimeOnMarketDuration('3 months 12 days')).toEqual({ years: 0, months: 3, days: 12 });
+    });
+
+    it('rejects ascending or repeated unit order, unrecognized units, and unparseable/blank text', () => {
+      expect(parseTimeOnMarketDuration('12 Days 3 Months')).toBeNull(); // ascending — never guess
+      expect(parseTimeOnMarketDuration('1 Month 1 Month')).toBeNull(); // repeated unit
+      expect(parseTimeOnMarketDuration('3 Months 1 Year')).toBeNull(); // ascending (months before years)
+      expect(parseTimeOnMarketDuration('3 Fortnights')).toBeNull(); // unrecognized unit
+      expect(parseTimeOnMarketDuration('~3 Months')).toBeNull(); // stray leading character
+      expect(parseTimeOnMarketDuration('3 Months and 12 Days')).toBeNull(); // stray "and"
+      expect(parseTimeOnMarketDuration('')).toBeNull();
+      expect(parseTimeOnMarketDuration('   ')).toBeNull();
+      expect(parseTimeOnMarketDuration('N/A')).toBeNull();
+    });
+
+    it('converts a duration to a date via whole-month arithmetic, clamped to a valid calendar date', () => {
+      // 1 month back from Mar 31 -> Feb 28 (2026 is not a leap year), never rolls forward into March.
+      expect(timeOnMarketTextToDate('1 Month', '2026-03-31')).toBe('2026-02-28');
+      // Straightforward case spanning a year boundary.
+      expect(timeOnMarketTextToDate('2 Months', '2026-01-15')).toBe('2025-11-15');
+      // Years + months combined, then days subtracted after the month-clamped date.
+      expect(timeOnMarketTextToDate('1 Year 2 Months', '2026-09-17')).toBe('2025-07-17');
+      expect(timeOnMarketTextToDate('3 Months 12 Days', '2026-09-17')).toBe('2026-06-05');
+      // Zero-duration resolves to exactly the export date (the upper bound is inclusive).
+      expect(timeOnMarketTextToDate('0 Days', '2026-09-17')).toBe('2026-09-17');
+    });
+
+    it('bounds the result: rejects a duration resolving before 1990-01-01, accepts one landing exactly on it', () => {
+      expect(timeOnMarketTextToDate('40 Years', '2026-09-17')).toBeNull(); // resolves to 1986-09-17 — before 1990
+      expect(timeOnMarketTextToDate('37 Years', '2026-09-17')).toBeNull(); // resolves to 1989-09-17 — before 1990
+      expect(timeOnMarketTextToDate('36 Years', '2026-09-17')).toBe('1990-09-17'); // on-or-after the floor: kept
+      expect(timeOnMarketTextToDate('36 Years 8 Months 16 Days', '2026-09-17')).toBe('1990-01-01'); // exactly the floor
+      expect(timeOnMarketTextToDate('1 Day', '2026-09-17')).toBe('2026-09-16');
+    });
+
+    it('yields null, never a throw, for blank/unparseable duration text or a malformed export date', () => {
+      expect(timeOnMarketTextToDate('', '2026-09-17')).toBeNull();
+      expect(timeOnMarketTextToDate('garbage', '2026-09-17')).toBeNull();
+      expect(timeOnMarketTextToDate('3 Months', 'not-a-date')).toBeNull();
+      expect(() => timeOnMarketTextToDate('garbage', 'not-a-date')).not.toThrow();
+    });
+
+    it('parses a real row: timeOnMarketText feeds costarDateOnMarket when dateOnMarket is unmapped', async () => {
+      const base = testHeaderMap();
+      const map = testHeaderMap({
+        fields: { ...base.fields, dateOnMarket: null, timeOnMarketText: 'Time On Market' },
+      });
+      const f = await writeCostarFixture(dir(), 'a.xlsx', [
+        { address: '1 Main St', sf: 1000, timeOnMarket: '3 Months 12 Days' },
+        { address: '2 Main St', sf: 1000, timeOnMarket: null },
+        { address: '3 Main St', sf: 1000, timeOnMarket: 'garbage' },
+      ]);
+      const r = await parseCostarListingsFile(f, map, '2026-09-17');
+      expect(r.rows[0]).toMatchObject({ costarDateOnMarket: '2026-06-05' });
+      expect(r.rows[1]).toMatchObject({ costarDateOnMarket: null });
+      expect(r.rows[2]).toMatchObject({ costarDateOnMarket: null });
+    });
+
+    it('an explicit dateOnMarket column wins over timeOnMarketText when both are mapped (per header-map field, not per-row)', async () => {
+      const base = testHeaderMap();
+      // Both dateOnMarket ("Date On Market") and timeOnMarketText ("Time On Market") mapped: the
+      // explicit date column is authoritative and timeOnMarketText is never consulted, even on a row
+      // where the explicit column is blank and timeOnMarketText carries a perfectly good duration.
+      const map = testHeaderMap({
+        fields: { ...base.fields, dateOnMarket: 'Date On Market', timeOnMarketText: 'Time On Market' },
+      });
+      const f = await writeCostarFixture(dir(), 'a.xlsx', [
+        { address: '1 Main St', sf: 1000, dateOnMarket: '2025-01-01', timeOnMarket: '3 Months 12 Days' },
+        { address: '2 Main St', sf: 1000, dateOnMarket: null, timeOnMarket: '3 Months 12 Days' },
+      ]);
+      const r = await parseCostarListingsFile(f, map, '2026-09-17');
+      expect(r.rows[0]).toMatchObject({ costarDateOnMarket: '2025-01-01' }); // explicit column wins, not '2026-06-05'
+      expect(r.rows[1]).toMatchObject({ costarDateOnMarket: null }); // explicit column mapped but blank -> null, no duration fallback
+    });
+
+    it('defaults the export date to today when the caller (e.g. a bare unit test) does not pass one', async () => {
+      const base = testHeaderMap();
+      const map = testHeaderMap({ fields: { ...base.fields, dateOnMarket: null, timeOnMarketText: 'Time On Market' } });
+      const f = await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 1000, timeOnMarket: '0 Days' }]);
+      const r = await parseCostarListingsFile(f, map); // no exportDate argument
+      expect(r.rows[0]!.costarDateOnMarket).toBe(new Date().toISOString().slice(0, 10));
+    });
   });
 });
