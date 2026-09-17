@@ -1,5 +1,5 @@
 // tests/unit/lease-market-ingest.test.ts
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,7 +10,10 @@ import { stubScreen, testConfig, testHeaderMap, writeCostarFixture, type Fixture
 function setup(deps: Partial<IngestDeps> = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'lm-ingest-'));
   const db: WarehouseDb = openWarehouse(join(dir, 'test.sqlite'));
-  const full: IngestDeps = { config: testConfig(), headerMap: testHeaderMap(), rawDir: join(dir, 'raw'), now: () => '2026-03-02T00:00:00Z', screen: stubScreen, ...deps };
+  // Far beyond every export date used by a test that doesn't override `now` itself (the latest is
+  // 2026-06-01) — the A4 future-date-landing check (deps.now() + 1 day) must never trip on these
+  // multi-export narratives, which only care about the export dates marching forward, not about "now".
+  const full: IngestDeps = { config: testConfig(), headerMap: testHeaderMap(), rawDir: join(dir, 'raw'), now: () => '2026-12-31T00:00:00Z', screen: stubScreen, ...deps };
   return { dir, db, deps: full };
 }
 const FOUR: FixtureListing[] = [
@@ -445,5 +448,76 @@ describe('ingestCostarListingsFile', () => {
     const { dir, db, deps } = setup();
     await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_madison_2026-01-01.xlsx', [{ address: '1100 Rarig Avenue', sf: 8000, market: 'Madison' }]), deps);
     expect((db.prepare("SELECT ora_property_key FROM lm_property WHERE address_norm = '1100 RARIG AVE' AND market_id = 'madison'").get() as { ora_property_key: string | null }).ora_property_key).toBeNull();
+  });
+
+  // ── Final triage round (spec §A) ────────────────────────────────────────
+
+  it('a CoStar-id row with a known city adopts an existing blank-city property when the exact-city match misses (A1 forward)', async () => {
+    const { dir, db, deps } = setup();
+    const cityless = testHeaderMap({ fields: { ...testHeaderMap().fields, city: null } });
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', [{ address: '10 Alpha Rd', sf: 12000 }]), { ...deps, headerMap: cityless });
+    const before = db.prepare("SELECT costar_property_id, city_norm, identity_key FROM lm_property WHERE address_norm = '10 ALPHA RD'").get();
+    expect(before).toEqual({ costar_property_id: null, city_norm: '', identity_key: 'addr:columbus||10 ALPHA RD' });
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [{ id: 'X9', address: '10 Alpha Rd', sf: 12000, city: 'Columbus' }]), deps);
+    const count = (db.prepare("SELECT COUNT(*) AS n FROM lm_property WHERE address_norm = '10 ALPHA RD'").get() as { n: number }).n;
+    expect(count).toBe(1);
+    const after = db.prepare("SELECT costar_property_id, city_norm, identity_key FROM lm_property WHERE address_norm = '10 ALPHA RD'").get();
+    expect(after).toEqual({ costar_property_id: 'X9', city_norm: 'COLUMBUS', identity_key: 'costar:X9' });
+  });
+
+  it('a blank-city no-id row adopts the sole existing non-blank-city property at that address (A1 reverse)', async () => {
+    const { dir, db, deps } = setup();
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', [{ address: '10 Alpha Rd', sf: 12000, city: 'Columbus' }]), deps);
+    const before = db.prepare("SELECT city_norm, identity_key FROM lm_property WHERE address_norm = '10 ALPHA RD'").get();
+    expect(before).toEqual({ city_norm: 'COLUMBUS', identity_key: 'addr:columbus|COLUMBUS|10 ALPHA RD' });
+    const cityless = testHeaderMap({ fields: { ...testHeaderMap().fields, city: null } });
+    // building_sf is sourced from RBA (not the "sf"/available-SF fixture field) — set it explicitly so
+    // it distinguishes "the adopted property was updated" from "a stray second property was inserted".
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [{ address: '10 Alpha Rd', sf: 15000, rba: 55000 }]), { ...deps, headerMap: cityless });
+    const count = (db.prepare("SELECT COUNT(*) AS n FROM lm_property WHERE address_norm = '10 ALPHA RD'").get() as { n: number }).n;
+    expect(count).toBe(1);
+    const after = db.prepare("SELECT building_sf, city_norm, identity_key FROM lm_property WHERE address_norm = '10 ALPHA RD'").get();
+    expect(after).toEqual({ building_sf: 55000, city_norm: 'COLUMBUS', identity_key: 'addr:columbus|COLUMBUS|10 ALPHA RD' });
+  });
+
+  it('a back-dated partial (dated before the last complete landing) never clears a missing_once strike (A2)', async () => {
+    const { dir, db, deps } = setup();
+    const extra: FixtureListing = { address: '40 Delta Pkwy', sf: 5000 };
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', FOUR), deps); // T1 complete, Beta active
+    const noBeta = FOUR.filter((l) => l.id !== 'C2');
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-02-01.xlsx', [...noBeta, extra]), deps); // T2 complete, Beta -> missing_once
+    expect(spaceStatus(db, '20 BETA DR')).toBe('missing_once');
+    // Delivered out of order: dated BEFORE T2 (the latest complete landing) even though it lands after it.
+    const r = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-15.xlsx', [FOUR[1]!]), deps);
+    expect(r.completeness).toBe('partial');
+    expect(spaceStatus(db, '20 BETA DR')).toBe('missing_once');
+  });
+
+  it('records a market_mismatch skip reason on the landing and warns once with the count (A3)', async () => {
+    const { dir, db, deps } = setup();
+    await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_columbus_2026-01-01.xlsx', [{ id: 'X1', address: '10 Alpha Rd', sf: 12000 }]), deps);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const r = await ingestCostarListingsFile(db, await writeCostarFixture(dir, 'costar-listings_madison_2026-01-01.xlsx', [{ id: 'X1', address: '5 Lake St', sf: 3000, market: 'Madison' }]), deps);
+    expect(r.skipped).toBe(1);
+    expect(r.partialReason).toMatch(/market_mismatch: 1 row\(s\) skipped/);
+    expect((db.prepare('SELECT partial_reason FROM lm_landing WHERE id = ?').get(r.landingId) as { partial_reason: string | null }).partial_reason).toBe(r.partialReason);
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0]![0]).toMatch(/market_mismatch: 1 row\(s\) skipped/);
+    warnSpy.mockRestore();
+  });
+
+  it('a landing dated more than 1 day after deps.now() fails without writing rows (A4)', async () => {
+    const { dir, db, deps } = setup({ now: () => '2026-03-02T00:00:00Z' });
+    const f = await writeCostarFixture(dir, 'costar-listings_columbus_2026-03-04.xlsx', [{ address: '5 Lake St', sf: 3000 }]);
+    const r = await ingestCostarListingsFile(db, f, deps);
+    expect(r).toMatchObject({ status: 'failed', error: expect.stringMatching(/more than 1 day after 2026-03-02/) });
+    expect((db.prepare('SELECT COUNT(*) AS n FROM lm_property').get() as { n: number }).n).toBe(0);
+  });
+
+  it('a landing dated exactly 1 day after deps.now() is not rejected by the future-date check (A4 boundary)', async () => {
+    const { dir, db, deps } = setup({ now: () => '2026-03-02T00:00:00Z' });
+    const f = await writeCostarFixture(dir, 'costar-listings_columbus_2026-03-03.xlsx', [{ address: '5 Lake St', sf: 3000 }]);
+    const r = await ingestCostarListingsFile(db, f, deps);
+    expect(r.status).toBe('ingested');
   });
 });
