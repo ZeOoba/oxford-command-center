@@ -22,8 +22,9 @@
 // marketRentGaps display ONLY — it is NEVER merged into the marketRents passed to rentForecast
 // (POST /rent-forecast's renew_at_market projects NOI, and an asking-rent × SF figure must never be
 // presented as NOI), and GET /narrative no longer reads it at all (the AI narrative should describe
-// only real, human-confirmed market intel, not an automated asking-rent feed); marketRentGaps' own
-// provenance !== 'derived-asking' filter on topGaps stays as defense regardless.
+// only real, human-confirmed market intel, not an automated asking-rent feed); the /narrative
+// handler below (not marketRentGaps itself) also filters topGaps on provenance !== 'derived-asking'
+// as defense in depth, regardless.
 //
 // Confidentiality: routes emit derived signals + rent-roll figures for owned assets only.
 // No confidential-deal data is in scope for this module.
