@@ -54,3 +54,59 @@
 ## Dispatch
 
 `Dispatch: subagent-driven · sonnet (implementers, per Gabriel) / opus (task reviews) / fable (REFUTE: Tasks 03, 05, 06, 09, 10, 11, 13) — code-heavy, 16 sequential tasks, financial math.` Order: 01 → 16 linear; 99 controller-only.
+
+## Post-review changes (adversarial pass + whole-branch review, 2026-09-17)
+
+These supersede the per-task briefs where they disagree. The briefs are left intact as the record of
+what was built; this section is the record of what changed after it was built.
+
+**Rent parsing (03).** A partial expense add-on (`+ CAM`, `+ CAM/TAX`, `+ TAX`, `+ INS`) is ambiguous:
+only a full-expense form (NNN, TICAM, nets, expenses, opex, or CAM with both TAX and INS) resolves the
+basis to NNN. An explicit head NNN keeps its basis alongside a partial add-on, but the add-on's figure
+is never taken as total opex. A period-less add-on inherits the head's period. A `/mo` figure with no
+`/SF` token below the total-quote threshold is ambiguous, not per-SF. A `0` on either side of a numeric
+rent pair is treated as blank before the low/high swap.
+
+**Identity (03/09).** `normalizeSuite` keeps a building designator (`Bldg 2` + `A` ⇒ `B2-A`);
+`addressNorm` is unchanged, so `oraProperties.addressNorms` matching is unaffected. Ingest adopts a
+same-address property whose stored `city_norm` is blank in both directions, and skips a CoStar id that
+already belongs to another market. A landing dated more than a day after `now()` fails closed.
+
+**Completeness (09).** An export is complete only when it also postdates every prior ok landing; a
+back-dated file is treated as partial. A space first sighted in a back-dated landing starts
+`missing_once`. A row count at the configured cap lands partial; a round CoStar-looking count warns.
+
+**Comparables (05).** Confidence is capped by the SUBJECT's own unknown components — MEDIUM when
+location is unknown, LOW at `thresholds.similarityUnknownLowCap` or more. At most
+`thresholds.similarityPerPropertyCap` comps come from one property, applied before the n-gates, so a
+single dominant building degrades to the cell basis rather than dragging the median.
+
+**ORA exclusion (10/11).** An owner that screens as ORA-self (`owner_type = 'affiliated'`) is excluded
+everywhere `ora_property_key` is, including the stale-DOM baseline and the latest-export KPIs, and
+surfaces a hygiene flag telling the operator to map the address. `oraProperties` is re-stamped onto
+existing rows at the start of every compute, and an empty `oraProperties` warns loudly.
+
+**Radar (01/06).** `cumulative_reduction_pct` is derived from `asking_psf_yr`, the same basis as
+`price_cut` events, and is null at zero reductions — opex-median drift can no longer score reduction
+points. Withheld markets are reported from the same screen gate the radar uses.
+
+**Mirror (14).** The redacted (public-safe) bake omits every `/lease-market/*` route on BOTH resolver
+paths. Row-level CoStar detail remains on the private Access-gated mirror only (Gabriel's ratification).
+
+**Governors (02/14).** `config/lease-market.json` is now refute-gated like the financial source files.
+
+## Known limitations at merge
+
+- `oraProperties` ships empty and the header map ships `pending-sample`: the CLI fails closed with an
+  actionable message until both are filled (Task 99.5).
+- Correct an applied migration with the NEXT number, never in place — migrations are tracked by
+  filename with no checksum, so an edit to 029 will not reach a database that already applied it.
+- Do not run `npm run lease-market:ingest` or `:compute` against the live warehouse before this merges:
+  both open the warehouse through `openWarehouse`, which applies this branch's unmerged migration.
+- The private mirror must be re-baked, not merely redeployed: new required response fields
+  (`lastComputedAt`, `unknown`, `hygieneFlags`) fail schema parse against a mirror baked before this PR.
+- A rent roll carries no building, so a vacant unit "A" at a property with `B1-A` and `B2-A` listed
+  binds to the lowest listing id; the other space still surfaces as listed-but-not-vacant.
+- The history drawer is live-only (not baked on either mirror), and `/positioning` is not baked on the
+  checkpoint-read path.
+- `lm_radar_decision` is append-only by trigger: a future backfill must `DROP TRIGGER` first.
