@@ -69,6 +69,17 @@ describe('selectComps', () => {
     expect([...scores].sort((a, b) => b - a)).toEqual(scores);
     expect(selectComps(subject, null, good.slice(0, 7), W, T).sufficient).toBe(false);
   });
+
+  // R8: nine identical suites in one building must not be able to fill (and dominate) the comp set.
+  it('caps a single dominant property at 3 comps, keeping its highest scorers', () => {
+    const sister = (n: number): CompCandidate => ({ ...subject, listingId: n, propertyId: 900, askingNnnEq: 4.0, addressDisplay: `sister ${n}` });
+    const other = (n: number): CompCandidate => ({ ...subject, listingId: 100 + n, propertyId: 1000 + n, askingNnnEq: 8.0, addressDisplay: `other ${n}` });
+    const candidates = [...Array.from({ length: 9 }, (_, i) => sister(i + 1)), ...Array.from({ length: 6 }, (_, i) => other(i + 1))];
+    const sel = selectComps(subject, null, candidates, W, T);
+    expect(sel.comps.filter((c) => c.candidate.propertyId === 900)).toHaveLength(3);
+    expect(sel.comps).toHaveLength(9); // 3 capped sister suites + 6 distinct-property others
+    expect(sel.sufficient).toBe(true);
+  });
 });
 
 describe('resolveComparables', () => {
@@ -97,5 +108,52 @@ describe('resolveComparables', () => {
   it('is LOW with null stats when nothing is available', () => {
     expect(resolveComparables(subject, null, [], null, W, T)).toMatchObject({ basis: 'cell', n: 0, median: null, confidence: 'LOW', cellKey: null });
     expect(resolveComparables(subject, null, [], cell({ median: null, p25: null, p75: null, values: [], n: 3 }), W, T)).toMatchObject({ n: 3, median: null, confidence: 'LOW' });
+  });
+
+  // R3: an unknown component is a guess, not free evidence — confidence must be capped down from
+  // whatever the raw n/coverage computation would otherwise give.
+  describe('confidence is capped by unknown components (R3)', () => {
+    const noLocSubject: SpaceProfile = { ...subject, lat: null, lon: null, submarket: null };
+    const noLocCand = (n: number): CompCandidate => ({
+      ...subject, lat: null, lon: null, submarket: null, listingId: n, propertyId: 2000 + n, askingNnnEq: 9, addressDisplay: 'x',
+    });
+
+    it('caps at MEDIUM when only location is unknown, even at n=15', () => {
+      const comps = Array.from({ length: 16 }, (_, i) => noLocCand(i + 1));
+      const r = resolveComparables(noLocSubject, null, comps, null, W, T);
+      expect(r.n).toBe(15);
+      expect(r.confidence).toBe('MEDIUM');
+      expect(r.unknown).toEqual(['location']);
+    });
+
+    it('caps at LOW when 3 or more components are unknown', () => {
+      const blankSubject: SpaceProfile = {
+        ...subject, lat: null, lon: null, submarket: null, clearHeightFt: null, yearBuilt: null, docks: null, driveIns: null, officePct: null,
+      };
+      const blankCand = (n: number): CompCandidate => ({ ...blankSubject, listingId: n, propertyId: 3000 + n, askingNnnEq: 9, addressDisplay: 'x' });
+      const comps = Array.from({ length: 16 }, (_, i) => blankCand(i + 1));
+      const r = resolveComparables(blankSubject, null, comps, null, W, T);
+      expect(r.n).toBe(15);
+      expect(r.confidence).toBe('LOW');
+      expect(r.unknown.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it('an all-known comp set is unaffected (unchanged HIGH at n=15, empty unknown)', () => {
+      const comps = Array.from({ length: 16 }, (_, i) => cand({ askingNnnEq: (80 + i) / 10 }));
+      const r = resolveComparables(subject, null, comps, cell({}), W, T);
+      expect(r.confidence).toBe('HIGH');
+      expect(r.unknown).toEqual([]);
+    });
+  });
+
+  // R8: with the dominant property capped to 3 comps, the median is driven by the other six buildings.
+  it('a per-property-capped comp set is driven by the six non-dominant buildings, not the nine sister suites', () => {
+    const sister = (n: number): CompCandidate => ({ ...subject, listingId: n, propertyId: 900, askingNnnEq: 4.0, addressDisplay: `sister ${n}` });
+    const other = (n: number): CompCandidate => ({ ...subject, listingId: 100 + n, propertyId: 1000 + n, askingNnnEq: 8.0, addressDisplay: `other ${n}` });
+    const candidates = [...Array.from({ length: 9 }, (_, i) => sister(i + 1)), ...Array.from({ length: 6 }, (_, i) => other(i + 1))];
+    const r = resolveComparables(subject, null, candidates, null, W, T);
+    expect(r.basis).toBe('similarity');
+    expect(r.comps.filter((c) => c.candidate.propertyId === 900)).toHaveLength(3);
+    expect(r.median).toBe(8);
   });
 });

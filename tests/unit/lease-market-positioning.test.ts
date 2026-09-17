@@ -12,7 +12,10 @@ import type { ResolvedComparables } from '../../src/analytics/lease-market/simil
 import { stubScreen, testConfig, testHeaderMap, writeCostarFixture, type FixtureListing } from './lease-market-fixtures';
 
 const stats = (patch: Partial<ResolvedComparables> = {}): ResolvedComparables => ({
-  basis: 'similarity', n: 12, low: 7, p25: 9, median: 10, p75: 11, high: 12, values: [8, 9, 10, 11, 12], confidence: 'MEDIUM', cellKey: null, comps: [], ...patch,
+  basis: 'similarity', n: 12, low: 7, p25: 9, median: 10, p75: 11, high: 12, values: [8, 9, 10, 11, 12], confidence: 'MEDIUM', cellKey: null, comps: [],
+  // R3: similarity.ts's ResolvedComparables now carries the union of unknown components that drove the
+  // confidence cap; this mock fixture has none unless a test patches it in.
+  unknown: [], ...patch,
 });
 
 describe('recommendationFor', () => {
