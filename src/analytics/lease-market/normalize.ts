@@ -108,6 +108,24 @@ const BARE_GROSS_RE = /(?<!modified\s)(?<!industrial\s)(?<!service\s)\bgross\b/i
 // and an unrelated bare number elsewhere in the text (a term length, a CAM %) does not.
 const BARE_RANGE_SEP_RE = /^\s*(?:-|–|—|to)\s*$/i;
 
+// Structural safety gate (fix round 3, controller design decision): two review rounds found
+// high-confidence wrong-number paths through heuristic parsing that chasing individual strings would
+// not close as a class ("2nd floor, 8.50/SF/YR NNN, $2.10 CAM" => 2.10; "$10.50/SF/YR (Gross), NNN
+// est. $2.25" => NNN). A free-text quote is benchmark-grade only if it EXACTLY matches this canonical
+// grammar — amount[/unit][/period][ range][ basis][ + expenses] — end to end; everything else is
+// ambiguous, regardless of what the heuristics above computed. The heuristics remain as defence in
+// depth (still produce the best-effort rentLow/basis/etc.), but this gate is the final word on
+// whether that result is trusted for a benchmark.
+const AMT = String.raw`\$?\s*(?:(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?|\.\d+)`;
+const UNIT = String.raw`(?:\s*\/\s*(?:SF|sq\.?\s*ft\.?)|\s*psf)?`;
+const PER = String.raw`(?:\s*\/\s*(?:yr|year|mo|month)|\s*per\s+(?:year|month|annum))?`;
+const BASIS_WORD = String.raw`(?:NNN|triple\s+net|MG|modified\s+gross|IG|industrial\s+gross|FSG?|full\s+service(?:\s+gross)?|gross)`;
+const ADDON_WORD = String.raw`(?:NNN|CAM|TICAM|opex|expenses|nets?)(?:\s*\/\s*(?:TAX|INS|CAM))*`;
+const CANONICAL_RE = new RegExp(
+  String.raw`^\s*(?:asking\s*:?\s*)?${AMT}${UNIT}${PER}(?:\s*(?:-|–|—|to)\s*${AMT}${UNIT}${PER})?(?:\s*,?\s*\(?${BASIS_WORD}\)?)?(?:\s*\+\s*(?:${AMT}${UNIT}${PER}\s*)?${ADDON_WORD})?\s*\.?\s*$`,
+  'i',
+);
+
 interface NumMatch {
   value: number;
   index: number;
@@ -118,9 +136,9 @@ function numberMatches(s: string): NumMatch[] {
   return [...s.matchAll(NUM_RE)]
     .map((m) => ({ value: Number(m[0].replace(/,/g, '')), index: m.index ?? 0, end: (m.index ?? 0) + m[0].length }))
     .filter((n) => Number.isFinite(n.value) && n.value > 0)
-    // A percentage figure (a rent bump, escalation, or admin-fee percentage) is never itself a rent
-    // or add-on-opex candidate.
-    .filter((n) => !/^\s*%/.test(s.slice(n.end)));
+    // A percentage figure (a rent bump, escalation, or admin-fee percentage — spelled out as
+    // "percent"/"pct" or given as a literal "%") is never itself a rent or add-on-opex candidate.
+    .filter((n) => !/^\s*(?:%|percent\b|pct\b)/i.test(s.slice(n.end)));
 }
 
 // All distinct basis tokens found in s, in the same priority order basisIn used to return the first
@@ -230,9 +248,13 @@ export function parseRentText(text: string): ParsedRentText {
   let earlyUnanchoredAmbiguous = false;
   if (hasDollar) {
     const firstAnchoredIdx = allNums.findIndex((n) => isDollarAnchored(basePart, n.index));
-    const first = allNums[0];
-    if (first !== undefined && firstAnchoredIdx > 0 && looksLikeRentFigure(basePart, first, allNums[firstAnchoredIdx]!.index)) {
-      m1 = first;
+    // Scan ALL unanchored numbers before the first $-anchored one (not just the very first number
+    // overall) — an excluded ordinal/floor number ("2nd") earlier in the text must not stop a later,
+    // genuinely rent-like unanchored number ("8.50") from being found.
+    const unanchoredBeforeAnchor = firstAnchoredIdx > 0 ? allNums.slice(0, firstAnchoredIdx) : [];
+    const earlyMatch = unanchoredBeforeAnchor.find((n) => looksLikeRentFigure(basePart, n, allNums[firstAnchoredIdx]!.index));
+    if (earlyMatch !== undefined) {
+      m1 = earlyMatch;
       earlyUnanchoredAmbiguous = true;
     } else if (firstAnchoredIdx >= 0) {
       m1 = allNums[firstAnchoredIdx]!;
@@ -264,14 +286,19 @@ export function parseRentText(text: string): ParsedRentText {
   const tailConflict = tailPeriod !== null && tailPeriod !== rentPeriod;
 
   // The basis may be stated only after the head cut ("$8.50/SF/YR, NNN") — fall back to the tail
-  // when the head states none. When both state a basis and they disagree, that's a genuine conflict.
+  // when the head states none, but ONLY when the tail states exactly one basis token and quotes no
+  // "$" figure of its own (a tail with a second dollar amount, e.g. "(Gross), NNN est. $2.25", is
+  // likely a separate expense clause, not a clean basis restatement, and a tail with two distinct
+  // basis words is itself internally ambiguous) — otherwise this is a genuine conflict, not a fallback.
   const headTokens = basisTokensIn(head);
   const headStated = headTokens[0] ?? null;
   const tailTokens = basisTokensIn(tail);
-  const tailStated = tailTokens[0] ?? null;
+  const tailUsable = tailTokens.length === 1 && !tail.includes('$');
+  const tailStated = tailUsable ? tailTokens[0]! : null;
   const stated = headStated ?? tailStated;
   const basisConflict = headTokens.length > 1;
   const crossBasisConflict = headStated !== null && tailStated !== null && headStated !== tailStated;
+  const tailBasisRejected = headStated === null && tailTokens.length > 0 && !tailUsable;
   let basis: RentBasis | null;
   let addonContradiction = false;
   if (addon !== null) {
@@ -288,14 +315,19 @@ export function parseRentText(text: string): ParsedRentText {
   const perSf = PER_SF_RE.test(head);
   const maxVal = Math.max(rentLow, rentHigh);
   const isTotal = !perSf && (maxVal >= 1000 || (rentPeriod === 'mo' && maxVal >= 50));
-  const ambiguous =
+  let ambiguous =
     addonContradiction ||
     basisConflict ||
     crossBasisConflict ||
+    tailBasisRejected ||
     periodConflict ||
     tailConflict ||
     earlyUnanchoredAmbiguous ||
     (!perSf && !isTotal && maxVal >= 60);
+  // Structural safety gate, applied last: a free-text quote is benchmark-grade only if the WHOLE
+  // string matches the strict canonical grammar above — everything else is ambiguous, regardless of
+  // what the heuristics above concluded. This is additive, not a replacement for them.
+  ambiguous = ambiguous || !CANONICAL_RE.test(t);
   const opexQuoted = addon !== null ? addonOpexValue(addon) : null;
   return { rentLow, rentHigh, rentPeriod, basis, withheld: false, isTotal, opexQuoted, ambiguous };
 }
