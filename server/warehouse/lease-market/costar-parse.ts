@@ -70,9 +70,15 @@ export function cellText(value: unknown): string {
   return String(value).trim();
 }
 
+// Strips a leading "$", thousands commas, and a trailing unit word (sf/ft/feet), then accepts ONLY a
+// plain signed decimal — anything left over (a range "2,000 - 5,000", a parenthesized "(5)", stray
+// text) is rejected as null rather than silently coerced by Number()'s permissive parsing.
+const UNIT_SUFFIX_RE = /\s*(?:sf|ft|feet)\s*$/i;
+const NUMBER_RE = /^-?(?:\d+\.?\d*|\.\d+)$/;
+
 export function parseNumber(text: string): number | null {
-  const cleaned = text.replace(/[^0-9.-]/g, '');
-  if (cleaned === '' || cleaned === '-' || cleaned === '.') return null;
+  const cleaned = text.replace(/\$/g, '').replace(/,/g, '').trim().replace(UNIT_SUFFIX_RE, '').trim();
+  if (!NUMBER_RE.test(cleaned)) return null;
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
 }
@@ -84,11 +90,47 @@ export function parseIsoDate(text: string): string | null {
   return Number.isNaN(t) ? null : new Date(t).toISOString().slice(0, 10);
 }
 
-// A coordinate of exactly 0 is CoStar's "unknown" sentinel, not the Gulf of Guinea — reject it along
-// with anything outside the valid range for the axis (lat: ±90, lon: ±180).
+// A coordinate of 0 is treated as missing — CoStar uses it as an "unknown" sentinel rather than a
+// real Gulf-of-Guinea reading — reject it along with anything outside the valid range for the axis
+// (lat: ±90, lon: ±180).
 export function parseCoordinate(text: string, limit: number): number | null {
   const n = parseNumber(text);
   return n === null || Math.abs(n) > limit || n === 0 ? null : n;
+}
+
+// Feet-inches notation ("24'0\"", "24' 6\"", "24'") or a plain number/unit string ("24 ft", "24").
+const FEET_INCHES_RE = /^(\d+(?:\.\d+)?)\s*'\s*(?:(\d+(?:\.\d+)?)\s*")?\s*$/;
+
+export function parseClearHeight(text: string): number | null {
+  const t = text.trim();
+  if (!t) return null;
+  const m = FEET_INCHES_RE.exec(t);
+  if (m) {
+    const feet = Number(m[1]!);
+    const inches = m[2] !== undefined ? Number(m[2]) : 0;
+    return Number.isFinite(feet) && Number.isFinite(inches) ? feet + inches / 12 : null;
+  }
+  return parseNumber(t);
+}
+
+// A "%"-suffixed value is already stated in percentage points ("1%" => 1, not 100). Otherwise, a bare
+// fraction in (0, 1] is assumed to be a fraction of whole (=> ×100); any other bare number is already
+// in percentage points.
+export function parsePercent(text: string): number | null {
+  const t = text.trim();
+  if (t.endsWith('%')) return parseNumber(t.slice(0, -1));
+  const n = parseNumber(t);
+  return n === null ? null : n > 0 && n <= 1 ? n * 100 : n;
+}
+
+// ExcelJS represents a hyperlinked cell as { text, hyperlink }. Returns the URL, or null when the cell
+// isn't a hyperlink (callers fall back to cellText for a plain-text URL column).
+export function cellHyperlink(value: unknown): string | null {
+  if (value !== null && typeof value === 'object' && 'hyperlink' in value) {
+    const h = (value as { hyperlink?: unknown }).hyperlink;
+    return typeof h === 'string' && h !== '' ? h : null;
+  }
+  return null;
 }
 
 function lookupCI<T>(record: Record<string, T>, key: string): T | undefined {
@@ -130,10 +172,13 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
   if (!sheet) throw new CostarParseError(`worksheet "${map.sheetName ?? '#1'}" not found`);
 
   const colIndex = new Map<string, number>();
+  const labelCounts = new Map<string, number>();
   const headerRow = sheet.getRow(map.headerRow);
   headerRow.eachCell({ includeEmpty: false }, (cell, colNumber) => {
     const label = cellText(cell.value);
-    if (label && !colIndex.has(label)) colIndex.set(label, colNumber);
+    if (!label) return;
+    labelCounts.set(label, (labelCounts.get(label) ?? 0) + 1);
+    if (!colIndex.has(label)) colIndex.set(label, colNumber);
   });
   const headerFingerprint = createHash('sha256').update([...colIndex.keys()].sort().join('\n')).digest('hex');
 
@@ -142,6 +187,9 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
     if (column === null) {
       idx[field] = null;
       continue;
+    }
+    if ((labelCounts.get(column) ?? 0) > 1) {
+      throw new CostarParseError(`export has a duplicate header column "${column}" (mapped to ${field}) — CoStar export headers must be unique`);
     }
     const i = colIndex.get(column);
     if (i === undefined) throw new CostarParseError(`export is missing column "${column}" (mapped to ${field})`);
@@ -185,7 +233,7 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
 
     const availableSf = parseNumber(get('availableSf'));
     if (availableSf === null || availableSf <= 0) {
-      skipped.push({ rowNumber: r, reason: 'available SF missing or zero' });
+      skipped.push({ rowNumber: r, reason: 'available SF missing, zero or unparseable' });
       continue;
     }
 
@@ -202,7 +250,9 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
       const parsed = parseRentText(get('rentText'));
       rentLow = parsed.rentLow;
       rentHigh = parsed.rentHigh;
-      if (parsed.rentPeriod) rentPeriod = parsed.rentPeriod;
+      // The free-text quote states its own period (or none) — it must never silently inherit
+      // map.rentPeriodDefault, which applies only to the numeric rentLow/rentHigh columns.
+      rentPeriod = parsed.rentPeriod;
       rentIsTotal = parsed.isTotal;
       opexQuotedPsf = parsed.opexQuoted;
       if (parsed.withheld) rentBasis = 'WITHHELD';
@@ -217,8 +267,9 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
     const market = get('market');
     if (market) marketNames.add(market);
 
-    const officeRaw = parseNumber(get('officePct'));
-    const officePct = officeRaw !== null && officeRaw > 0 && officeRaw <= 1 ? officeRaw * 100 : officeRaw;
+    const officePct = parsePercent(get('officePct'));
+    const listingUrlIdx = idx.listingUrl;
+    const listingUrlRaw = listingUrlIdx === null ? null : row.getCell(listingUrlIdx).value;
 
     const candidate = {
       costarPropertyId: nullIfEmpty(get('costarPropertyId')),
@@ -234,7 +285,7 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
       buildingStatus,
       buildingSf: parseNumber(get('buildingSf')),
       yearBuilt: toInt(get('yearBuilt')),
-      clearHeightFt: parseNumber(get('clearHeightFt')),
+      clearHeightFt: parseClearHeight(get('clearHeightFt')),
       docks: toInt(get('docks')),
       driveIns: toInt(get('driveIns')),
       officePct,
@@ -251,7 +302,7 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
       costarDateOnMarket: parseIsoDate(get('dateOnMarket')),
       brokerName: nullIfEmpty(get('brokerName')),
       brokerCompany: nullIfEmpty(get('brokerCompany')),
-      listingUrl: nullIfEmpty(get('listingUrl')),
+      listingUrl: nullIfEmpty(cellHyperlink(listingUrlRaw) ?? get('listingUrl')),
       description: nullIfEmpty(get('description'))?.slice(0, 4000) ?? null,
       sourceRow: r,
     };
