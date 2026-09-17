@@ -105,6 +105,12 @@ export function scoreSimilarity(subject: SpaceProfile, candidate: SpaceProfile, 
   return { score, parts, unknown, distanceMi };
 }
 
+// R8: a single dominant property (e.g. several identical vacant suites in one building) must not be
+// able to fill the comp set and drag the median toward its own asking rent -- cap how many comps any
+// one propertyId can contribute BEFORE the global top-K cut, keeping that property's highest scorers.
+const PER_PROPERTY_COMP_CAP = 3;
+const byScoreThenListingId = (a: ScoredComp, b: ScoredComp) => b.similarity.score - a.similarity.score || a.candidate.listingId - b.candidate.listingId;
+
 export function selectComps(
   subject: SpaceProfile,
   excludePropertyId: number | null,
@@ -112,14 +118,20 @@ export function selectComps(
   w: SimilarityWeights,
   t: Pick<LmThresholds, 'similarityMinScore' | 'similarityTopK' | 'similarityMinComps'>,
 ): { comps: ScoredComp[]; sufficient: boolean } {
-  const comps = candidates
+  const scored = candidates
     .filter((c) => c.propertyId !== excludePropertyId)
     .flatMap((c) => {
       const similarity = scoreSimilarity(subject, c, w);
       return similarity && similarity.score >= t.similarityMinScore ? [{ candidate: c, similarity }] : [];
-    })
-    .sort((a, b) => b.similarity.score - a.similarity.score || a.candidate.listingId - b.candidate.listingId)
-    .slice(0, t.similarityTopK);
+    });
+  const byProperty = new Map<number, ScoredComp[]>();
+  for (const sc of scored) {
+    const list = byProperty.get(sc.candidate.propertyId);
+    if (list) list.push(sc);
+    else byProperty.set(sc.candidate.propertyId, [sc]);
+  }
+  const capped = [...byProperty.values()].flatMap((list) => list.sort(byScoreThenListingId).slice(0, PER_PROPERTY_COMP_CAP));
+  const comps = capped.sort(byScoreThenListingId).slice(0, t.similarityTopK);
   return { comps, sufficient: comps.length >= t.similarityMinComps };
 }
 
@@ -135,6 +147,10 @@ export interface ResolvedComparables {
   confidence: ConfidenceLabel;
   cellKey: string | null;
   comps: ScoredComp[];
+  // R3: the union of components that were unknown (missing on the subject and/or a comp) across the
+  // selected comp set, sorted for determinism. Empty on the cell/null-fallback bases, which carry no
+  // per-component similarity data. Exposed so the UI and evidence can show WHY confidence was capped.
+  unknown: SimilarityComponent[];
 }
 
 function statsOf(values: readonly number[]) {
@@ -161,12 +177,20 @@ export function resolveComparables(
   const cellKey = cell?.cellKey ?? null;
   if (selection.sufficient) {
     const n = selection.comps.length;
-    const confidence: ConfidenceLabel = n >= t.similarityHighComps && !(cell?.lowCoverage ?? false) ? 'HIGH' : 'MEDIUM';
-    return { basis: 'similarity', n, ...statsOf(selection.comps.map((c) => c.candidate.askingNnnEq)), confidence, cellKey, comps: selection.comps };
+    // R3: an unknown component isn't a neutral 0.5 credit for confidence purposes -- it means the
+    // similarity claim is partly a guess. Union every component that was unknown on ANY selected comp
+    // (in practice this is almost always driven by the subject's own missing fields, which recur
+    // identically across every comp pairing) and cap confidence accordingly: 3+ unknown components
+    // caps at LOW regardless of comp count; location alone caps at HIGH down to MEDIUM. These caps
+    // apply on top of the ordinary n/low-coverage computation, never loosen it.
+    const unknown = [...new Set(selection.comps.flatMap((c) => c.similarity.unknown))].sort();
+    const baseConfidence: ConfidenceLabel = n >= t.similarityHighComps && !(cell?.lowCoverage ?? false) ? 'HIGH' : 'MEDIUM';
+    const confidence: ConfidenceLabel = unknown.length >= 3 ? 'LOW' : unknown.includes('location') ? 'MEDIUM' : baseConfidence;
+    return { basis: 'similarity', n, ...statsOf(selection.comps.map((c) => c.candidate.askingNnnEq)), confidence, cellKey, comps: selection.comps, unknown };
   }
   if (cell && cell.median !== null) {
     const confidence: ConfidenceLabel = cell.n >= t.belowMarketMinN && cell.rolledUp !== 'market' && !cell.lowCoverage ? 'MEDIUM' : 'LOW';
-    return { basis: 'cell', n: cell.n, ...statsOf(cell.values), confidence, cellKey, comps: [] };
+    return { basis: 'cell', n: cell.n, ...statsOf(cell.values), confidence, cellKey, comps: [], unknown: [] };
   }
-  return { basis: 'cell', n: cell?.n ?? 0, values: [], low: null, p25: null, median: null, p75: null, high: null, confidence: 'LOW', cellKey, comps: [] };
+  return { basis: 'cell', n: cell?.n ?? 0, values: [], low: null, p25: null, median: null, p75: null, high: null, confidence: 'LOW', cellKey, comps: [], unknown: [] };
 }

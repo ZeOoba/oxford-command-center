@@ -23,7 +23,10 @@ const space = (patch: Partial<SpaceHistory> = {}): SpaceHistory => ({
   observations: [obs()], priceCutInLatestExport: false, reductionCount: 0, originalAsking: 9, cumulativeReductionPct: 0, ...patch,
 });
 const comps = (patch: Partial<ResolvedComparables> = {}): ResolvedComparables => ({
-  basis: 'similarity', n: 12, low: 7, p25: 8.2, median: 9, p75: 10, high: 11, values: [], confidence: 'MEDIUM', cellKey: 'k', comps: [], ...patch,
+  basis: 'similarity', n: 12, low: 7, p25: 8.2, median: 9, p75: 10, high: 11, values: [], confidence: 'MEDIUM', cellKey: 'k', comps: [],
+  // R3: similarity.ts's ResolvedComparables now carries the union of unknown components that drove the
+  // confidence cap; this mock fixture has none unless a test patches it in.
+  unknown: [], ...patch,
 });
 const ctx = (patch: Partial<SpaceSignalContext> = {}): SpaceSignalContext => ({ asOf: '2026-03-01', staleThresholdDays: 180, propertyVacancyShare: 0.1, comparables: comps(), thresholds: T, ...patch });
 const kinds = (h: SpaceHistory, c: SpaceSignalContext) => spaceSignals(h, c).map((s) => s.kind).sort();
