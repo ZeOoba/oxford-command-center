@@ -37,9 +37,20 @@ export const CostarHeaderMap = z.object({
     // actual on-market date. Converted to costarDateOnMarket by subtracting from the export date — see
     // parseTimeOnMarketDuration/timeOnMarketTextToDate below. availableSfMax: a separate "max available
     // SF" column paired with `availableSf` holding the MIN — see the max-else-min fallback below.
-    timeOnMarketText: Col, availableSfMax: Col,
+    // buildingContigSf ("Building Contig SF"): the largest physically CONTIGUOUS block within a
+    // multi-space listing row. availableSfMax is the property's TOTAL available SF across every
+    // (possibly non-contiguous) space CoStar rolled into that one row — not the size of any single
+    // space — so banding/sizing off it alone mis-bands (or drops, once it exceeds the top band) a
+    // multi-space row. See the contig-else-max-else-min fallback below.
+    timeOnMarketText: Col, availableSfMax: Col, buildingContigSf: Col,
   }),
   subtypeMap: z.record(z.string(), LmSubtype), // key "PropertyType|SecondaryType" or "PropertyType|*"
+  // Property types that are deliberately OUT OF SCOPE for ORA's buy box (office-, retail- and
+  // specialty-primary listings). Same key grammar as subtypeMap. A listed type is counted as a
+  // skipped row with a reason — visible in Data Quality and in the completeness ratio — instead of
+  // aborting the file. An UNLISTED, unmapped type still throws: a CoStar type nobody has classified
+  // must be a decision, never a silent omission. Optional so an existing header map keeps working.
+  skipPropertyTypes: z.array(z.string()).optional(),
   buildingStatusMap: z.record(z.string(), BuildingStatus),
   rentBasisMap: z.record(z.string(), RentBasis),
   subleaseValues: z.array(z.string()),
@@ -326,8 +337,38 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
 
     const pt = get('propertyType');
     const st = get('secondaryType');
-    const subtype = lookupCI(map.subtypeMap, `${pt}|${st}`) ?? lookupCI(map.subtypeMap, `${pt}|*`);
-    if (!subtype) throw new CostarParseError(`row ${r}: unmapped property type "${pt}|${st}" — add it to subtypeMap`);
+    const skipKeys = map.skipPropertyTypes ?? [];
+    const skipSet = Object.fromEntries(skipKeys.map((k) => [k, true]));
+    // M3: EXACT keys always beat WILDCARD keys, regardless of which of the two maps (subtypeMap vs.
+    // skipPropertyTypes) either one lives in — an exact skipPropertyTypes entry (e.g.
+    // "Industrial|Truck Terminal") must win over subtypeMap's broad "Industrial|*" wildcard, not the
+    // other way around. Checking subtypeMap's wildcard before ever consulting skipPropertyTypes (the
+    // prior order) meant a skip-listed secondary type under a wildcarded primary type could never
+    // actually be skipped — the wildcard always resolved first and skipPropertyTypes only ever fired
+    // for a primary type with NO wildcard mapping at all (which is all the pre-existing Office/Retail/
+    // Specialty entries are). Only once neither exact key hits does either wildcard get consulted.
+    const exactSubtype = lookupCI(map.subtypeMap, `${pt}|${st}`);
+    const exactSkip = lookupCI(skipSet, `${pt}|${st}`);
+    let subtype: LmSubtype | undefined;
+    if (exactSubtype) {
+      subtype = exactSubtype;
+    } else if (exactSkip) {
+      skipped.push({ rowNumber: r, reason: `property type "${pt}|${st}" is out of scope` });
+      continue;
+    } else {
+      const wildcardSubtype = lookupCI(map.subtypeMap, `${pt}|*`);
+      const wildcardSkip = lookupCI(skipSet, `${pt}|*`);
+      if (wildcardSubtype) {
+        subtype = wildcardSubtype;
+      } else if (wildcardSkip) {
+        skipped.push({ rowNumber: r, reason: `property type "${pt}|${st}" is out of scope` });
+        continue;
+      } else {
+        throw new CostarParseError(
+          `row ${r}: unmapped property type "${pt}|${st}" — add it to subtypeMap, or to skipPropertyTypes if it is out of scope`,
+        );
+      }
+    }
 
     let buildingStatus: BuildingStatusT = 'unknown';
     const statusText = get('buildingStatus');
@@ -345,16 +386,23 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
       rentBasis = mapped;
     }
 
-    // availableSf: max-else-min fallback. `fields.availableSf` is the required column (populated on
-    // every row in the real export); `fields.availableSfMax` is an optional paired column that is
-    // blank on divisible spaces quoting only a minimum. Mapping availableSf to a Max-only column would
-    // silently drop every row where Max is blank; mapping to Min alone would bin every divisible space
-    // at its smallest unit. Take max ?? min. When availableSfMax is unmapped (null), behavior is
-    // byte-for-byte the same as before this field existed. A non-positive Max is treated as absent.
+    // availableSf: contig-else-max-else-min fallback (H1). `fields.availableSf` is the required column
+    // (populated on every row in the real export); `fields.availableSfMax` is an optional paired
+    // column that is blank on divisible spaces quoting only a minimum; `fields.buildingContigSf` is an
+    // optional paired column holding the largest CONTIGUOUS block within that row's (possibly
+    // multi-space, non-contiguous) total. Max Avail is the property's aggregate across every space in
+    // the row, not one space's size — sizing/banding off it alone mis-bands a multi-space row into a
+    // band above where its actual largest leasable block belongs (or drops it from every band once the
+    // aggregate exceeds the top one, even though the largest contiguous block is comfortably in scope).
+    // Contig wins when present and positive; otherwise max ?? min, unchanged from before this field
+    // existed. When buildingContigSf is unmapped (null), behavior is byte-for-byte the same as before
+    // this field existed. A non-positive Contig or Max is treated as absent.
     const availableSfMinRaw = parseNumber(get('availableSf'));
     const availableSfMaxParsed = idx.availableSfMax !== null ? parseNumber(get('availableSfMax')) : null;
     const availableSfMaxRaw = availableSfMaxParsed !== null && availableSfMaxParsed > 0 ? availableSfMaxParsed : null;
-    const availableSf = availableSfMaxRaw ?? availableSfMinRaw;
+    const buildingContigSfParsed = idx.buildingContigSf !== null ? parseNumber(get('buildingContigSf')) : null;
+    const buildingContigSfRaw = buildingContigSfParsed !== null && buildingContigSfParsed > 0 ? buildingContigSfParsed : null;
+    const availableSf = buildingContigSfRaw ?? availableSfMaxRaw ?? availableSfMinRaw;
     if (availableSf === null || availableSf <= 0) {
       skipped.push({ rowNumber: r, reason: 'available SF missing, zero or unparseable' });
       continue;

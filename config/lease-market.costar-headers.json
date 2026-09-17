@@ -25,6 +25,7 @@
     "ownerName": "True Owner",
     "availableSf": "Min Avail Size SF",
     "availableSfMax": "Max Avail Size SF",
+    "buildingContigSf": "Building Contig SF",
     "minDivisibleSf": "Min Avail Size SF",
     "rentLow": "Rent/SF/year Min",
     "rentHigh": "Rent/SF/year Max",
@@ -76,5 +77,16 @@
     "Full Service & Triple Net": "UNKNOWN",
     "Full Service & Modified Gross": "UNKNOWN"
   },
+  "skipPropertyTypes": [
+    "Office|*",
+    "Retail|*",
+    "Specialty|*",
+    "Office & Retail|*",
+    "Office & Flex|*",
+    "Industrial|Truck Terminal",
+    "Industrial|Refrigeration/Cold Storage",
+    "Industrial|Showroom",
+    "Industrial|Food Processing"
+  ],
   "subleaseValues": ["Sublet"]
 }

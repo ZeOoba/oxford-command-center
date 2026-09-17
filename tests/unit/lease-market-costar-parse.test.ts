@@ -215,6 +215,7 @@ describe('parseCostarListingsFile', () => {
       'SF Available': 1000, 'Rent Low': 9, 'Rent High': null, 'Rent Type': 'NNN', 'Space Use': 'Direct',
       'Date On Market': '2026-01-15', Zip: '43219', Latitude: 39.99, Longitude: -82.93, 'Leasing Broker': 'Pat Broker',
       'Leasing Company': 'Acme Realty', 'Listing URL': null, 'Time On Market': null, 'Max SF Available': null,
+      'Contig SF Available': null,
     };
     const row = ws.addRow(TEST_HEADERS.map((h) => values[h] ?? null));
     const urlCol = TEST_HEADERS.indexOf('Listing URL') + 1;
@@ -461,6 +462,174 @@ describe('parseCostarListingsFile', () => {
       const f = await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 0, sfMax: null }]);
       const r = await parseCostarListingsFile(f, map);
       expect(r.skipped).toEqual([{ rowNumber: 2, reason: 'available SF missing, zero or unparseable' }]);
+    });
+  });
+
+  // H1: `Max Avail Size SF` is the property's TOTAL available SF across every (possibly
+  // non-contiguous) space CoStar rolled into one row, not one space's size — 73 in-scope rows in the
+  // first real export have Max > `Building Contig SF`, mis-banding 31 of them (one of which drops out
+  // of every band entirely, since it lands over benchmarkMaxBuildingSf). `Building Contig SF` is
+  // present in the export but was unmapped. Fixed by mapping it and preferring it: contig ?? max ??
+  // min. Tests use the three real rows named in the fix request.
+  describe('availableSf: buildingContigSf wins over the max-else-min fallback (H1)', () => {
+    it('22 N 1st St: Max 47,000 (band 30-50K) vs Building Contig SF 20,000 (band 15-30K) — contig wins', async () => {
+      const base = testHeaderMap();
+      const map = testHeaderMap({ fields: { ...base.fields, availableSfMax: 'Max SF Available', buildingContigSf: 'Contig SF Available' } });
+      const f = await writeCostarFixture(dir(), 'a.xlsx', [
+        { address: '22 N 1st St', type: 'Flex', secondary: 'Light Distribution', sf: 3500, sfMax: 47000, contigSf: 20000, rentLow: 8.25, rentType: 'NNN' },
+      ]);
+      const r = await parseCostarListingsFile(f, map);
+      expect(r.rows[0]).toMatchObject({ availableSf: 20000, minDivisibleSf: 3500 });
+    });
+
+    it('2781 Westbelt Dr: Max 100,333 (over benchmarkMaxBuildingSf, drops out of every band) vs Building Contig SF 70,333 (band 50-80K) — contig wins and brings it back into scope', async () => {
+      const base = testHeaderMap();
+      const map = testHeaderMap({ fields: { ...base.fields, availableSfMax: 'Max SF Available', buildingContigSf: 'Contig SF Available' } });
+      const f = await writeCostarFixture(dir(), 'a.xlsx', [
+        { address: '2781 Westbelt Dr', sf: 30000, sfMax: 100333, contigSf: 70333, rentLow: null, rentType: null },
+      ]);
+      const r = await parseCostarListingsFile(f, map);
+      expect(r.rows[0]).toMatchObject({ availableSf: 70333, minDivisibleSf: 30000 });
+    });
+
+    it('651 Lakeview Plaza Blvd: Max 8,394 (band 5-15K) vs Building Contig SF 4,949 (band <5K), NNN $10 quoted — contig wins', async () => {
+      const base = testHeaderMap();
+      const map = testHeaderMap({ fields: { ...base.fields, availableSfMax: 'Max SF Available', buildingContigSf: 'Contig SF Available' } });
+      const f = await writeCostarFixture(dir(), 'a.xlsx', [
+        { address: '651 Lakeview Plaza Blvd', type: 'Flex', secondary: 'Light Manufacturing', sf: 3445, sfMax: 8394, contigSf: 4949, rentLow: 10, rentType: 'NNN' },
+      ]);
+      const r = await parseCostarListingsFile(f, map);
+      expect(r.rows[0]).toMatchObject({ availableSf: 4949, minDivisibleSf: 3445, rentLow: 10, rentBasis: 'NNN' });
+    });
+
+    it('falls back to Max when Contig is blank on that row, without dropping the row', async () => {
+      const base = testHeaderMap();
+      const map = testHeaderMap({ fields: { ...base.fields, availableSfMax: 'Max SF Available', buildingContigSf: 'Contig SF Available' } });
+      const f = await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 5000, sfMax: 20000, contigSf: null }]);
+      const r = await parseCostarListingsFile(f, map);
+      expect(r.rows[0]).toMatchObject({ availableSf: 20000 });
+    });
+
+    it('a non-positive Contig is treated as absent, falling back to Max', async () => {
+      const base = testHeaderMap();
+      const map = testHeaderMap({ fields: { ...base.fields, availableSfMax: 'Max SF Available', buildingContigSf: 'Contig SF Available' } });
+      const f = await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 5000, sfMax: 20000, contigSf: 0 }]);
+      const r = await parseCostarListingsFile(f, map);
+      expect(r.rows[0]).toMatchObject({ availableSf: 20000 });
+    });
+
+    it('unmapped buildingContigSf (field left null): unchanged max-else-min behavior, byte-for-byte', async () => {
+      const base = testHeaderMap();
+      const map = testHeaderMap({ fields: { ...base.fields, availableSfMax: 'Max SF Available' } }); // buildingContigSf left null
+      const f = await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 5000, sfMax: 20000 }]);
+      const r = await parseCostarListingsFile(f, map);
+      expect(r.rows[0]).toMatchObject({ availableSf: 20000 });
+    });
+  });
+
+  // C1: the working tree already carried skipPropertyTypes (the header-map schema field, the
+  // skip-not-throw branch at the subtype lookup) and the real Office/Retail/Specialty entries in
+  // config/lease-market.costar-headers.json, uncommitted, with no test coverage — without it the real
+  // export throws on row 5 (an "Office|" row) and ingests 0 of 386 rows. These tests cover the
+  // behavior directly against the real production combos.
+  describe('skipPropertyTypes (C1): a listed out-of-scope type is skipped with a reason, not thrown', () => {
+    it('real CoStar combos (Office|, Retail|Freestanding, Specialty|Airplane Hangar, Office & Flex|Light Distribution & Medical) are counted in skipped with a reason and in rowCount — never thrown', async () => {
+      const base = testHeaderMap();
+      const map = testHeaderMap({
+        skipPropertyTypes: ['Office|*', 'Retail|*', 'Specialty|*', 'Office & Retail|*', 'Office & Flex|*'],
+      });
+      expect(map.fields).toEqual(base.fields); // sanity: patch above didn't disturb fields
+      const f = await writeCostarFixture(dir(), 'a.xlsx', [
+        { address: '1 Office Row', sf: 1000, type: 'Office', secondary: '' },
+        { address: '2 Retail Row', sf: 2000, type: 'Retail', secondary: 'Freestanding' },
+        { address: '3 Specialty Row', sf: 3000, type: 'Specialty', secondary: 'Airplane Hangar' },
+        { address: '4 Office Flex Row', sf: 4000, type: 'Office & Flex', secondary: 'Light Distribution & Medical' },
+        { address: '5 Warehouse Row', sf: 5000 }, // default Industrial|Warehouse — mapped normally, not skipped
+      ]);
+      const r = await parseCostarListingsFile(f, map);
+      expect(r.skipped).toEqual([
+        { rowNumber: 2, reason: 'property type "Office|" is out of scope' },
+        { rowNumber: 3, reason: 'property type "Retail|Freestanding" is out of scope' },
+        { rowNumber: 4, reason: 'property type "Specialty|Airplane Hangar" is out of scope' },
+        { rowNumber: 5, reason: 'property type "Office & Flex|Light Distribution & Medical" is out of scope' },
+      ]);
+      expect(r.rows).toHaveLength(1);
+      expect(r.rows[0]).toMatchObject({ address: '5 Warehouse Row', subtype: 'warehouse' });
+      // rowCount = rows.length + skipped.length: the skip-listed rows are counted, not dropped as
+      // though they never existed in the export (Data Quality / exportMinRowRatio depend on this).
+      expect(r.rowCount).toBe(5);
+    });
+
+    it('matching is case-insensitive on both the property-type text and the configured skip key', async () => {
+      const map = testHeaderMap({ skipPropertyTypes: ['office|*'] }); // lower-case key
+      const f = await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 1000, type: 'OFFICE', secondary: 'Anything' }]); // upper-case value
+      const r = await parseCostarListingsFile(f, map);
+      expect(r.skipped).toEqual([{ rowNumber: 2, reason: 'property type "OFFICE|Anything" is out of scope' }]);
+      expect(r.rows).toHaveLength(0);
+    });
+
+    it('an exact (non-wildcard) skip key matches only that secondary type — a different secondary under the same primary still throws', async () => {
+      const map = testHeaderMap({ skipPropertyTypes: ['Retail|Freestanding'] }); // exact key, no wildcard
+      const f = await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 1000, type: 'Retail', secondary: 'Freestanding' }]);
+      const r = await parseCostarListingsFile(f, map);
+      expect(r.skipped).toEqual([{ rowNumber: 2, reason: 'property type "Retail|Freestanding" is out of scope' }]);
+
+      const d = dir();
+      await expect(
+        parseCostarListingsFile(
+          await writeCostarFixture(d, 'b.xlsx', [{ address: '1 Main St', sf: 1000, type: 'Retail', secondary: 'Strip Center' }]),
+          map,
+        ),
+      ).rejects.toThrow(/unmapped property type "Retail\|Strip Center"/);
+    });
+
+    it('an unlisted, unmapped type still throws with the improved message even when skipPropertyTypes is configured', async () => {
+      const map = testHeaderMap({ skipPropertyTypes: ['Office|*'] });
+      await expect(
+        parseCostarListingsFile(await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 1000, type: 'Storage' }]), map),
+      ).rejects.toThrow(/unmapped property type "Storage\|Warehouse" — add it to subtypeMap, or to skipPropertyTypes if it is out of scope/);
+    });
+
+    it('omitted skipPropertyTypes (undefined) behaves exactly as before this field existed — every unmapped type throws', async () => {
+      const map = testHeaderMap(); // no skipPropertyTypes
+      expect(map.skipPropertyTypes).toBeUndefined();
+      await expect(
+        parseCostarListingsFile(await writeCostarFixture(dir(), 'a.xlsx', [{ address: '1 Main St', sf: 1000, type: 'Office' }]), map),
+      ).rejects.toThrow(/unmapped property type "Office\|Warehouse"/);
+    });
+  });
+
+  // M3: Industrial|* and Flex|* are broad wildcards in subtypeMap — a specialist-stock secondary type
+  // (a truck terminal, cold storage, a showroom, food processing) still falls through the wildcard into
+  // 'warehouse' unless it is EXPLICITLY skip-listed. The exact skip key must win over the wildcard
+  // subtype mapping, not the other way around — this is the real row (1000 E 5th Ave, $15.00 NNN,
+  // 22,890 SF) whose $15 asking would otherwise land in the 15-30K warehouse cell alongside a ~$10
+  // median for genuine warehouse stock.
+  describe('M3: an exact skipPropertyTypes key wins over the Industrial|*/Flex|* wildcard subtype mapping', () => {
+    it('"Industrial|Truck Terminal" is skipped even though "Industrial|*" is mapped to warehouse in subtypeMap', async () => {
+      const map = testHeaderMap({ skipPropertyTypes: ['Industrial|Truck Terminal'] }); // subtypeMap keeps testHeaderMap()'s 'Industrial|*': 'warehouse'
+      const f = await writeCostarFixture(dir(), 'a.xlsx', [
+        { address: '1000 E 5th Ave', sf: 22890, type: 'Industrial', secondary: 'Truck Terminal', rentLow: 15, rentType: 'NNN' },
+        { address: '2 Warehouse Row', sf: 22000, type: 'Industrial', secondary: 'Distribution', rentLow: 10, rentType: 'NNN' },
+      ]);
+      const r = await parseCostarListingsFile(f, map);
+      expect(r.skipped).toEqual([{ rowNumber: 2, reason: 'property type "Industrial|Truck Terminal" is out of scope' }]);
+      expect(r.rows).toHaveLength(1);
+      expect(r.rows[0]).toMatchObject({ address: '2 Warehouse Row', subtype: 'warehouse' });
+    });
+
+    it('the shipped header map skip-lists all four M3 specialist-stock secondary types under Industrial, not Flex|Showroom', async () => {
+      const shipped = CostarHeaderMap.parse(JSON.parse(readFileSync(join(process.cwd(), 'config', 'lease-market.costar-headers.json'), 'utf8')));
+      const skip = shipped.skipPropertyTypes ?? [];
+      expect(skip).toEqual(
+        expect.arrayContaining(['Industrial|Truck Terminal', 'Industrial|Refrigeration/Cold Storage', 'Industrial|Showroom', 'Industrial|Food Processing']),
+      );
+      // Flex|Showroom is deliberately NOT skip-listed: under CoStar's own taxonomy it is marketed as
+      // Flex stock (Primary Property Type "Flex", alongside Light Distribution/Light Manufacturing/R&D
+      // in the same real export), not a pure showroom — it lands in the flex subtype's cells, not the
+      // warehouse cells the M3 contamination finding was about, and there is no evidence in the real
+      // export of it distorting a flex benchmark the way the Industrial secondary types distort warehouse.
+      expect(skip).not.toContain('Flex|Showroom');
     });
   });
 });
