@@ -24,12 +24,18 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path -Parent $PSScriptRoot
 $script = Join-Path $repo 'scripts\deploy-mirror.ps1'
+# Get-MirrorTaskArguments lives in lib/mirror-task-action.ps1 (shared with
+# register-mirror-task.smoke-test.ps1) -- see that file for the 2026-09-16 -> 09-18
+# incident (no window style on this action's launch meant every hourly/06:45 fire opened a
+# focus-stealing console on the interactive desktop, which then got closed mid-run) that
+# motivated -WindowStyle Hidden.
+. (Join-Path $PSScriptRoot 'lib\mirror-task-action.ps1')
 # Prefer PowerShell 7 (pwsh) for the task action; fall back to Windows PowerShell.
 # (Avoid the PS7-only ?. operator so this script also parses under Windows PowerShell 5.1.)
 $pwshCmd = Get-Command pwsh -ErrorAction SilentlyContinue
 $pwsh = if ($pwshCmd) { $pwshCmd.Source } else { (Get-Command powershell).Source }
 
-$action   = New-ScheduledTaskAction -Execute $pwsh -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$script`"" -WorkingDirectory $repo
+$action   = New-ScheduledTaskAction -Execute $pwsh -Argument (Get-MirrorTaskArguments -ScriptPath $script) -WorkingDirectory $repo
 # Run regardless of power state — a laptop won't always be on AC at 06:45, and the default
 # DisallowStartIfOnBatteries/StopIfGoingOnBatteries would silently queue/kill the brief.
 # -WakeToRun: this machine is S0 Modern Standby and sleeps overnight. Without it the hourly
