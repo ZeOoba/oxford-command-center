@@ -3,7 +3,9 @@
 // Pure display-helper coverage for src/modules/lease-market/hooks.ts (Task 16, spec rev 3 §4).
 // Query hooks themselves are exercised indirectly via the module smoke test (seeded QueryClient).
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { curvePointsFor, eventSummary, evidenceSummary, fmtPct, fmtUsd, postRadarDecision, radarWhy, unknownLabel } from '../../src/modules/lease-market/hooks';
+import {
+  curvePointsFor, eventSummary, evidenceSummary, fmtPct, fmtUsd, postRadarDecision, radarWhy, sourceLabel, sourceTone, unknownLabel,
+} from '../../src/modules/lease-market/hooks';
 import { ORA_JSON_MUTATION_HEADERS } from '../../src/contracts/client-header';
 import type { CurvePoint, ListingEventRow, RadarCandidate, SignalRow } from '../../src/contracts/lease-market';
 
@@ -62,6 +64,14 @@ describe('lease-market display helpers', () => {
     expect(unknownLabel([])).toBe('');
     expect(unknownLabel(['location', 'clearHeight'])).toBe('unknown: location, clear height');
     expect(unknownLabel(['size', 'age', 'loading', 'office'])).toBe('unknown: size, age, loading, office');
+  });
+
+  // Go-live change (2026-09-17): PositioningRow.source distinguishes a CoStar-listing-driven Rent
+  // Position row from a rent-roll-vacancy-driven one.
+  it('labels and tones a PositioningRow.source', () => {
+    expect(sourceLabel('listing')).toBe('CoStar listing');
+    expect(sourceLabel('rent-roll')).toBe('Rent-roll vacancy');
+    expect(sourceTone('listing')).not.toBe(sourceTone('rent-roll'));
   });
 
   describe('postRadarDecision', () => {

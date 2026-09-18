@@ -15,8 +15,8 @@ import type {
 } from '@contracts/lease-market';
 import {
   DECISION_LABELS, EVENT_LABELS, KIND_LABELS, bandLabel, bandTone, confidenceTone, curvePointsFor, eventSummary, evidenceSummary, fmtPct,
-  fmtPsf, fmtSf, fmtUsd, radarWhy, severityTone, unknownLabel, useLeaseMarketChanges, useLeaseMarketHistory, useLeaseMarketPositioning,
-  useLeaseMarketRadar, useLeaseMarketSignals, useLeaseMarketSummary, useRadarDecision,
+  fmtPsf, fmtSf, fmtUsd, radarWhy, severityTone, sourceLabel, sourceTone, unknownLabel, useLeaseMarketChanges, useLeaseMarketHistory,
+  useLeaseMarketPositioning, useLeaseMarketRadar, useLeaseMarketSignals, useLeaseMarketSummary, useRadarDecision,
 } from './hooks';
 
 const MUTED = { color: 'var(--text-tertiary)' } as const;
@@ -51,6 +51,15 @@ function unavailable(error: unknown): string {
 const positionCols: Column<PositioningRow>[] = [
   { key: 'property', header: 'Property', render: (r) => <span style={{ fontWeight: 600 }}>{r.propertyKey}</span>, sortValue: (r) => r.propertyKey },
   { key: 'unit', header: 'Unit', render: (r) => r.unit ?? '—' },
+  {
+    key: 'source',
+    header: 'Source',
+    // Go-live change (2026-09-17): tells Gabriel "this is what CoStar says we're marketing" (a listing
+    // row) apart from "this is what our rent roll says is empty" (a rent-roll row) — see
+    // PositioningRowSource's contract doc comment.
+    render: (r) => <Badge tone={sourceTone(r.source)}>{sourceLabel(r.source)}</Badge>,
+    sortValue: (r) => r.source,
+  },
   { key: 'sf', header: 'SF', align: 'right', render: (r) => r.sf.toLocaleString('en-US'), sortValue: (r) => r.sf },
   { key: 'asking', header: 'ORA asking', align: 'right', render: (r) => fmtPsf(r.oraAskingNnnEq), sortValue: (r) => r.oraAskingNnnEq },
   { key: 'median', header: 'Comp median', align: 'right', render: (r) => fmtPsf(r.stats?.median), sortValue: (r) => r.stats?.median ?? null },
@@ -112,10 +121,13 @@ function PortfolioTab({ onHistory }: { onHistory: (id: number) => void }) {
   return (
     <div className="flex flex-col gap-4">
       <Card>
-        <CardHeader title="Oxford Rent Position — vacant units vs. comparable asking rents" />
+        {/* Go-live change (2026-09-17): Rent Position now sources ORA available space primarily from
+            ORA-owned CoStar listings (the real rent roll carries no vacant rows) — a rent-roll vacancy
+            that matches a listing still wins and keeps its row; see the Source column. */}
+        <CardHeader title="Oxford Rent Position — ORA marketed & vacant space vs. comparable asking rents" />
         <div className="p-4">
           {q.data.rows.length === 0 ? (
-            <Note>No vacant ORA units mapped to a comparable set.</Note>
+            <Note>No ORA space currently listed in CoStar or vacant in the rent roll.</Note>
           ) : (
             <DataTable columns={positionCols} rows={q.data.rows} getRowId={rowId} onRowClick={(r) => setSelected((prev) => (prev === rowId(r) ? null : rowId(r)))} initialSort={{ key: 'gap', dir: 'desc' }} minWidth={1200} />
           )}
@@ -132,7 +144,11 @@ function PortfolioTab({ onHistory }: { onHistory: (id: number) => void }) {
       )}
       {q.data.listedButLeased.length > 0 && (
         <Card>
-          <CardHeader title="Listed in CoStar but not vacant in the rent roll" />
+          {/* Go-live change (2026-09-17): every active, mapped ORA listing now gets its own Rent
+              Position row above (source "CoStar listing"), so this should be empty in ordinary
+              operation — a non-empty list here is a genuine data inconsistency worth investigating,
+              not the routine "listed but not vacant" case it used to report. */}
+          <CardHeader title="Listed in CoStar with no Rent Position row (data inconsistency)" />
           <div className="p-4">
             <DataTable columns={leasedCols} rows={q.data.listedButLeased} getRowId={(l) => String(l.listingId)} onRowClick={(l) => onHistory(l.listingId)} />
           </div>

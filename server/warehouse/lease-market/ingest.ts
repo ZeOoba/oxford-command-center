@@ -70,6 +70,40 @@ function cityNormOf(city: string | null): string {
   return (city ?? '').trim().toUpperCase();
 }
 
+// H3: space identity for the blank-suite case. When the CoStar row carries no suite text at all
+// (suiteNorm === ''), two rows at the same address can still be genuinely different spaces — most
+// commonly a Direct listing and a Sublet listing of the same (or overlapping) area, quoted separately
+// by two different brokers. Keying purely on (property, suite_norm) collapses them into one lm_listing
+// row: whichever row landed first in THIS export "won" the blank suite_norm and the other silently
+// vanished — a real ORA-relevant comp (or, worse, the only direct-space listing at a property the
+// radar gates on "no direct space") disappearing with no trace in Data Quality, and order-dependent
+// (a reordered re-export could flip which one survives).
+//
+// Fix: fold Lease Type (row.isSublease) into the identity for the blank-suite case only. A blank-suite
+// DIRECT space keeps the unchanged '' suite_norm — this is the overwhelmingly common case (this export
+// has no dedicated Suite column mapped at all), so single-listing properties are byte-for-byte
+// unaffected: same suite_norm, same display, same cross-export matching as before this fix. A
+// blank-suite SUBLET space gets a distinct, stable marker instead. The rule is deterministic on
+// isSublease alone, never on which row happened to appear first in the file, so it can never flap
+// between exports the way the collapse it replaces did.
+//
+// Floor was also named in the fix request as a second identity signal. It could not be threaded
+// through: CanonicalListingRow (src/contracts/lease-market.ts) has no floor field, and that contract
+// file is off-limits to this fix (a concurrent session owns it). The real production export never
+// needed it anyway — every genuinely-different pair this fix was written against (a Direct/Sublet pair
+// at the same blank-suite address) also happens to share the same Floor value, so Lease Type alone
+// resolves every real collision the first production export produced.
+//
+// Two blank-suite spaces that share BOTH the blank suite and the same Lease Type (the true
+// same-suite-same-type duplicate case — a handful of genuinely re-listed/duplicated CoStar rows in the
+// first production export) still collide here, by design: they are indistinguishable with the fields
+// available. The caller reports that collision via a 'duplicate space' skip reason instead of the
+// bare, unexplained skip count this replaces.
+const BLANK_SUITE_SUBLET_MARKER = 'SUBLET';
+function spaceIdentityOf(suiteNorm: string, isSublease: boolean): string {
+  return suiteNorm === '' && isSublease ? BLANK_SUITE_SUBLET_MARKER : suiteNorm;
+}
+
 export interface CompleteLanding {
   id: number;
   observed_at: string;
@@ -112,6 +146,10 @@ function latestOkLanding(db: WarehouseDb, marketId: string): OkLanding | undefin
 
 const EVENT_KINDS: readonly ListingEventKind[] = ['new', 'returned', 'price_cut', 'price_increase', 'sf_change', 'dom_reset', 'missing', 'removed'];
 const CENT = 0.005;
+// L1: a duration-derived on-market date's wobble (see isDurationDerived above) never spans more than a
+// few days in practice (month-end clamping shifts by at most the difference between a 28/29/30/31-day
+// month) — 3 days covers every real shape observed and is well under any plausible genuine reset.
+const DOM_RESET_WOBBLE_TOLERANCE_DAYS = 3;
 // R11: CoStar's own UI has historically defaulted its "export to Excel" action to a handful of round
 // row caps — a row count landing exactly on one of these is suspicious even when it doesn't match
 // today's configured exportRowCap.
@@ -160,7 +198,7 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
 
   let parsed: ParsedCostarExport;
   try {
-    parsed = await parseCostarListingsFile(filePath, deps.headerMap);
+    parsed = await parseCostarListingsFile(filePath, deps.headerMap, exportDate);
   } catch (e) {
     if (e instanceof CostarParseError) return fail(fromName?.marketId ?? null, exportDate, e.message);
     throw e;
@@ -277,7 +315,10 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
   const currentPairs = new Set(
     parsed.rows.map((r) => {
       const { addressNorm, suiteNorm } = splitAddress(r.address, r.suite);
-      return `${identityKeyFor(r.costarPropertyId, cityNormOf(r.city), addressNorm)}|${suiteNorm}`;
+      // H3: matches the stored lm_listing.suite_norm this file's rows will resolve to (see
+      // spaceIdentityOf) — not the raw suiteNorm — so a blank-suite Sublet row's prior-quote exclusion
+      // check lines up with the space it will actually be attached to.
+      return `${identityKeyFor(r.costarPropertyId, cityNormOf(r.city), addressNorm)}|${spaceIdentityOf(suiteNorm, r.isSublease)}`;
     }),
   );
   const quotedRows = db
@@ -302,7 +343,7 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
   for (const r of parsed.rows) {
     if (r.opexQuotedPsf === null) continue;
     const { addressNorm, suiteNorm } = splitAddress(r.address, r.suite);
-    const key = `${identityKeyFor(r.costarPropertyId, cityNormOf(r.city), addressNorm)}|${suiteNorm}`;
+    const key = `${identityKeyFor(r.costarPropertyId, cityNormOf(r.city), addressNorm)}|${spaceIdentityOf(suiteNorm, r.isSublease)}`;
     if (seenOpexPairs.has(key)) continue;
     seenOpexPairs.add(key);
     quoted[r.subtype].push(r.opexQuotedPsf);
@@ -317,6 +358,7 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
   let landingId = 0;
   let marketMismatchSkipped = 0;
   let marketMismatchNote: string | null = null;
+  let duplicateSpaceSkipped = 0;
   let resultPartialReason: string | null =
     [complete ? null : reasons.join('; '), roundCapNote, screenErrorNote].filter((n): n is string => n !== null && n !== '').join('; ') || null;
 
@@ -376,14 +418,32 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
          broker_name, broker_company, listing_url, description)
        VALUES (@propertyId, @suiteNorm, @seen, @seen, @landingId, @dateOnMarket, @status, 'T1', @brokerName, @brokerCompany, @listingUrl, @description)`,
     );
+    // L1: costar_date_on_market for a DURATION-derived export ("Time on Market" free text, converted via
+    // timeOnMarketTextToDate) can wobble a few days between two exports even though nothing about the
+    // listing changed — month-end-clamped subtraction can derive a slightly EARLIER date on a LATER
+    // export (see spaceUpdateColumns below and the dom_reset guard further down for the concrete
+    // 03-30/03-31 pair this was found on). This is a property of the WHOLE file (the header map picks
+    // exactly one of an explicit dateOnMarket column or timeOnMarketText, never a per-row choice), so it
+    // is resolved once here rather than per row.
+    const isDurationDerived = deps.headerMap.fields.dateOnMarket === null && deps.headerMap.fields.timeOnMarketText !== null;
     const spaceUpdateColumns = `
          first_seen = MIN(first_seen, @seen),
          -- If this file's date lowers first_seen (a back-dated re-export), first_landing_id follows it
          -- to the landing that actually supplied the earliest sighting.
          first_landing_id = CASE WHEN @seen < first_seen THEN @landingId ELSE first_landing_id END,
          last_seen = MAX(last_seen, @seen),
-         costar_date_on_market = CASE WHEN costar_date_on_market IS NULL THEN @dateOnMarket WHEN @dateOnMarket IS NULL THEN costar_date_on_market
-                                      ELSE MIN(costar_date_on_market, @dateOnMarket) END,
+         ${
+           isDurationDerived
+             ? // L1: prefer the LATEST export's own derivation over the all-time MIN — a duration-derived
+               // date is a re-estimate every export, not a fact that only ever gets more certain, so
+               // pinning to whatever the earliest wobble happened to produce is wrong. Falls back to the
+               // stored value only when this row's derivation is itself null.
+               `costar_date_on_market = CASE WHEN @dateOnMarket IS NULL THEN costar_date_on_market ELSE @dateOnMarket END,`
+             : // Unchanged for an explicit dateOnMarket column: a real "date first listed" only ever gets
+               // more certain, so the all-time MIN is correct and a genuine dip should still dom_reset.
+               `costar_date_on_market = CASE WHEN costar_date_on_market IS NULL THEN @dateOnMarket WHEN @dateOnMarket IS NULL THEN costar_date_on_market
+                                            ELSE MIN(costar_date_on_market, @dateOnMarket) END,`
+         }
          origin_tier = 'T1',
          broker_name = COALESCE(@brokerName, broker_name), broker_company = COALESCE(@brokerCompany, broker_company),
          listing_url = COALESCE(@listingUrl, listing_url), description = COALESCE(@description, description)`;
@@ -413,6 +473,8 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
     const seenSpaces = new Set<number>();
     for (const row of parsed.rows) {
       const { addressNorm, suiteNorm } = splitAddress(row.address, row.suite);
+      // H3: the identity actually used to look up/store this space — see spaceIdentityOf.
+      const spaceIdentity = spaceIdentityOf(suiteNorm, row.isSublease);
       const cityNorm = cityNormOf(row.city);
       const oraProperty = deps.config.oraProperties.find((p) => p.addressNorms.includes(addressNorm) && p.marketId === marketId);
       const commonPropertyFields = {
@@ -483,10 +545,14 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
 
       // Duplicate-space check happens BEFORE any property UPDATE (fix round 1, requirement 7): a
       // second row for an already-seen space in this file must not overwrite the property's physical
-      // fields with a possibly-blank/different duplicate value.
-      const spaceHit = findSpace.get(propertyId, suiteNorm) as { id: number; status: string; last_seen: string } | undefined;
+      // fields with a possibly-blank/different duplicate value. Looked up (and, below, stored) by
+      // spaceIdentity rather than the raw suiteNorm — see spaceIdentityOf (H3).
+      const spaceHit = findSpace.get(propertyId, spaceIdentity) as { id: number; status: string; last_seen: string } | undefined;
       if (spaceHit && seenSpaces.has(spaceHit.id)) {
+        // H3: still the same (property, spaceIdentity) — genuinely indistinguishable with the fields
+        // available (same suite, same Lease Type). Counted as before, now with a visible reason.
         counts.skipped++;
+        duplicateSpaceSkipped++;
         continue;
       }
 
@@ -519,7 +585,7 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
         listingId = spaceHit.id;
         counts.updatedSpaces++;
       } else {
-        listingId = Number(insertSpace.run({ ...spaceFields, propertyId, suiteNorm }).lastInsertRowid);
+        listingId = Number(insertSpace.run({ ...spaceFields, propertyId, suiteNorm: spaceIdentity }).lastInsertRowid);
         counts.insertedSpaces++;
       }
       seenSpaces.add(listingId);
@@ -614,10 +680,27 @@ export async function ingestCostarListingsFile(db: WarehouseDb, filePath: string
         if (prev.available_sf > 0 && Math.abs(row.availableSf - prev.available_sf) / prev.available_sf >= t.sfChangePct) {
           event(listingId, 'sf_change', prev.available_sf, row.availableSf);
         }
-        if (prev.costar_dom !== null && costarDom !== null && costarDom < prev.costar_dom) event(listingId, 'dom_reset', prev.costar_dom, costarDom);
+        if (prev.costar_dom !== null && costarDom !== null) {
+          const dip = prev.costar_dom - costarDom;
+          // L1: for a duration-derived date, ignore a backward wobble of <= 3 days (see
+          // isDurationDerived / DOM_RESET_WOBBLE_TOLERANCE_DAYS above) — a genuine reset (the listing
+          // was actually re-listed) is a far bigger dip than a re-derivation's month-end rounding noise.
+          // An explicit dateOnMarket column is unchanged: any backward dip still fires (real data,
+          // never a re-estimate).
+          const fires = isDurationDerived ? dip > DOM_RESET_WOBBLE_TOLERANCE_DAYS : dip > 0;
+          if (fires) event(listingId, 'dom_reset', prev.costar_dom, costarDom);
+        }
       }
     }
 
+    if (duplicateSpaceSkipped > 0) {
+      // H3: same fold pattern as market_mismatch below — discovered mid-file, after the initial
+      // completeness reasons were already computed, so it must be appended here (not gate `complete`,
+      // matching market_mismatch's precedent) to survive on the landing row and be visible in Data
+      // Quality instead of an unexplained bump in skipped_count.
+      const duplicateSpaceNote = `duplicate space: ${duplicateSpaceSkipped} row(s) skipped (same address, suite and lease type already ingested from this export)`;
+      resultPartialReason = resultPartialReason ? `${resultPartialReason}; ${duplicateSpaceNote}` : duplicateSpaceNote;
+    }
     if (marketMismatchSkipped > 0) {
       // market_mismatch skips are discovered mid-file, after the initial completeness reasons were
       // already computed and inserted — fold this note into partial_reason (whether or not the export

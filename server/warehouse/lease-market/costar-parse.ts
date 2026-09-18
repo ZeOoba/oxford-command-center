@@ -33,8 +33,24 @@ export const CostarHeaderMap = z.object({
     docks: Col, driveIns: Col, officePct: Col, ownerName: Col, availableSf: Col, minDivisibleSf: Col, rentLow: Col,
     rentHigh: Col, rentText: Col, rentBasis: Col, spaceType: Col, dateOnMarket: Col,
     zip: Col, lat: Col, lon: Col, brokerName: Col, brokerCompany: Col, listingUrl: Col, description: Col,
+    // timeOnMarketText: a DURATION string ("3 Months 12 Days") some CoStar exports carry instead of an
+    // actual on-market date. Converted to costarDateOnMarket by subtracting from the export date — see
+    // parseTimeOnMarketDuration/timeOnMarketTextToDate below. availableSfMax: a separate "max available
+    // SF" column paired with `availableSf` holding the MIN — see the max-else-min fallback below.
+    // buildingContigSf ("Building Contig SF"): the largest physically CONTIGUOUS block within a
+    // multi-space listing row. availableSfMax is the property's TOTAL available SF across every
+    // (possibly non-contiguous) space CoStar rolled into that one row — not the size of any single
+    // space — so banding/sizing off it alone mis-bands (or drops, once it exceeds the top band) a
+    // multi-space row. See the contig-else-max-else-min fallback below.
+    timeOnMarketText: Col, availableSfMax: Col, buildingContigSf: Col,
   }),
   subtypeMap: z.record(z.string(), LmSubtype), // key "PropertyType|SecondaryType" or "PropertyType|*"
+  // Property types that are deliberately OUT OF SCOPE for ORA's buy box (office-, retail- and
+  // specialty-primary listings). Same key grammar as subtypeMap. A listed type is counted as a
+  // skipped row with a reason — visible in Data Quality and in the completeness ratio — instead of
+  // aborting the file. An UNLISTED, unmapped type still throws: a CoStar type nobody has classified
+  // must be a decision, never a silent omission. Optional so an existing header map keeps working.
+  skipPropertyTypes: z.array(z.string()).optional(),
   buildingStatusMap: z.record(z.string(), BuildingStatus),
   rentBasisMap: z.record(z.string(), RentBasis),
   subleaseValues: z.array(z.string()),
@@ -93,6 +109,86 @@ export function parseIsoDate(text: string): string | null {
   if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
   const t = Date.parse(text);
   return Number.isNaN(t) ? null : new Date(t).toISOString().slice(0, 10);
+}
+
+// A CoStar "Time on Market" DURATION string ("3 Months 12 Days"), not a date. Parsed case-insensitively;
+// singular/plural accepted for every unit. Units may appear in any combination but ONLY in strictly
+// descending magnitude (years, then months, then days) — every real value observed in the first
+// production export takes this form. An ascending or repeated-unit order ("12 Days 3 Months",
+// "3 Months 1 Month") is a shape we have never seen and must be rejected, not guessed at. Any leftover
+// text after matching known unit tokens (stray punctuation, an unrecognized unit) also rejects the
+// whole string — the caller reports blank/unparseable input as a null date, never a throw and never a
+// best-effort guess, because this date drives days-on-market and the acquisition radar's stale signal.
+const DURATION_TOKEN_RE = /(\d+)\s*(years?|months?|days?)/gi;
+const DURATION_UNIT_KIND: Readonly<Record<string, 'years' | 'months' | 'days'>> = {
+  year: 'years', years: 'years', month: 'months', months: 'months', day: 'days', days: 'days',
+};
+const DURATION_UNIT_RANK: Readonly<Record<'years' | 'months' | 'days', number>> = { years: 3, months: 2, days: 1 };
+
+export interface CalendarDuration { years: number; months: number; days: number }
+
+export function parseTimeOnMarketDuration(text: string): CalendarDuration | null {
+  const t = text.trim();
+  if (!t) return null;
+  const matches = [...t.matchAll(DURATION_TOKEN_RE)];
+  if (matches.length === 0) return null;
+  // Reject any input where the recognized tokens don't reconstruct the full string (normalized on
+  // whitespace) — a stray character or an unrecognized unit word must fail closed, not be ignored.
+  const reconstructed = matches.map((m) => `${m[1]} ${m[2]}`).join(' ');
+  if (reconstructed.toLowerCase() !== t.replace(/\s+/g, ' ').toLowerCase()) return null;
+
+  const duration: CalendarDuration = { years: 0, months: 0, days: 0 };
+  let lastRank = Number.POSITIVE_INFINITY;
+  const seen = new Set<'years' | 'months' | 'days'>();
+  for (const m of matches) {
+    const kind = DURATION_UNIT_KIND[m[2]!.toLowerCase()]!;
+    if (seen.has(kind)) return null; // repeated unit
+    seen.add(kind);
+    const rank = DURATION_UNIT_RANK[kind];
+    if (rank >= lastRank) return null; // not strictly descending magnitude
+    lastRank = rank;
+    const n = Number(m[1]);
+    if (!Number.isFinite(n)) return null;
+    duration[kind] = n;
+  }
+  return duration;
+}
+
+// Subtracts a calendar duration from an ISO date using WHOLE-MONTH arithmetic: years and months are
+// subtracted first as calendar months (clamped to the last valid day of the resulting month — e.g.
+// Mar 31 minus 1 month lands on Feb 28/29, never rolls into March), THEN days are subtracted as a plain
+// day count (which may cross month/year boundaries freely, since it no longer needs clamping).
+function subtractCalendarDuration(isoDate: string, duration: CalendarDuration): string | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate);
+  if (!m) return null;
+  const year = Number(m[1]);
+  const month = Number(m[2]); // 1-based
+  const day = Number(m[3]);
+  const totalMonthsBack = duration.years * 12 + duration.months;
+  const monthIndex = (year * 12 + (month - 1)) - totalMonthsBack; // months since year 0, 0-based month
+  const targetYear = Math.floor(monthIndex / 12);
+  const targetMonth0 = ((monthIndex % 12) + 12) % 12; // 0-based, always in [0, 11]
+  const daysInTargetMonth = new Date(Date.UTC(targetYear, targetMonth0 + 1, 0)).getUTCDate();
+  const clampedDay = Math.min(day, daysInTargetMonth);
+  const dt = new Date(Date.UTC(targetYear, targetMonth0, clampedDay));
+  dt.setUTCDate(dt.getUTCDate() - duration.days);
+  return dt.toISOString().slice(0, 10);
+}
+
+const DURATION_MIN_DATE = '1990-01-01';
+
+// Converts a "Time on Market" duration string to the listing's on-market date by subtracting it from
+// the export date. Bounded: a resolved date before 1990-01-01 or after the export date itself is
+// rejected as null rather than trusted — this date feeds days-on-market, the stale signal, and radar
+// scoring, so an out-of-bounds result is a wrong acquisition signal, not a display quirk.
+export function timeOnMarketTextToDate(text: string, exportDateIso: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(exportDateIso)) return null;
+  const duration = parseTimeOnMarketDuration(text);
+  if (duration === null) return null;
+  const resolved = subtractCalendarDuration(exportDateIso, duration);
+  if (resolved === null) return null;
+  if (resolved < DURATION_MIN_DATE || resolved > exportDateIso) return null;
+  return resolved;
 }
 
 // A coordinate of 0 is treated as missing — CoStar uses it as an "unknown" sentinel rather than a
@@ -156,12 +252,16 @@ function nullIfEmpty(s: string): string | null {
   return s === '' ? null : s;
 }
 
-export async function parseCostarListingsFile(filePath: string, map: CostarHeaderMap): Promise<ParsedCostarExport> {
+// `exportDate` (ISO yyyy-mm-dd) is the anchor a mapped `timeOnMarketText` duration is subtracted from.
+// Ingest always passes its own already-resolved export date (file name or mtime); it defaults to
+// today (UTC) only for callers — tests, mainly — that never map timeOnMarketText and so never read it.
+export async function parseCostarListingsFile(filePath: string, map: CostarHeaderMap, exportDate?: string): Promise<ParsedCostarExport> {
   if (map.status !== 'verified') {
     throw new CostarParseError(
       'config/lease-market.costar-headers.json is still "pending-sample": fill every column from a real CoStar export header row and set status "verified" before ingesting.',
     );
   }
+  const effectiveExportDate = exportDate ?? new Date().toISOString().slice(0, 10);
   for (const f of ['address', 'propertyType', 'availableSf'] as const) {
     if (!map.fields[f]) throw new CostarParseError(`header map field "${f}" is required`);
   }
@@ -237,8 +337,38 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
 
     const pt = get('propertyType');
     const st = get('secondaryType');
-    const subtype = lookupCI(map.subtypeMap, `${pt}|${st}`) ?? lookupCI(map.subtypeMap, `${pt}|*`);
-    if (!subtype) throw new CostarParseError(`row ${r}: unmapped property type "${pt}|${st}" — add it to subtypeMap`);
+    const skipKeys = map.skipPropertyTypes ?? [];
+    const skipSet = Object.fromEntries(skipKeys.map((k) => [k, true]));
+    // M3: EXACT keys always beat WILDCARD keys, regardless of which of the two maps (subtypeMap vs.
+    // skipPropertyTypes) either one lives in — an exact skipPropertyTypes entry (e.g.
+    // "Industrial|Truck Terminal") must win over subtypeMap's broad "Industrial|*" wildcard, not the
+    // other way around. Checking subtypeMap's wildcard before ever consulting skipPropertyTypes (the
+    // prior order) meant a skip-listed secondary type under a wildcarded primary type could never
+    // actually be skipped — the wildcard always resolved first and skipPropertyTypes only ever fired
+    // for a primary type with NO wildcard mapping at all (which is all the pre-existing Office/Retail/
+    // Specialty entries are). Only once neither exact key hits does either wildcard get consulted.
+    const exactSubtype = lookupCI(map.subtypeMap, `${pt}|${st}`);
+    const exactSkip = lookupCI(skipSet, `${pt}|${st}`);
+    let subtype: LmSubtype | undefined;
+    if (exactSubtype) {
+      subtype = exactSubtype;
+    } else if (exactSkip) {
+      skipped.push({ rowNumber: r, reason: `property type "${pt}|${st}" is out of scope` });
+      continue;
+    } else {
+      const wildcardSubtype = lookupCI(map.subtypeMap, `${pt}|*`);
+      const wildcardSkip = lookupCI(skipSet, `${pt}|*`);
+      if (wildcardSubtype) {
+        subtype = wildcardSubtype;
+      } else if (wildcardSkip) {
+        skipped.push({ rowNumber: r, reason: `property type "${pt}|${st}" is out of scope` });
+        continue;
+      } else {
+        throw new CostarParseError(
+          `row ${r}: unmapped property type "${pt}|${st}" — add it to subtypeMap, or to skipPropertyTypes if it is out of scope`,
+        );
+      }
+    }
 
     let buildingStatus: BuildingStatusT = 'unknown';
     const statusText = get('buildingStatus');
@@ -256,11 +386,35 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
       rentBasis = mapped;
     }
 
-    const availableSf = parseNumber(get('availableSf'));
+    // availableSf: contig-else-max-else-min fallback (H1). `fields.availableSf` is the required column
+    // (populated on every row in the real export); `fields.availableSfMax` is an optional paired
+    // column that is blank on divisible spaces quoting only a minimum; `fields.buildingContigSf` is an
+    // optional paired column holding the largest CONTIGUOUS block within that row's (possibly
+    // multi-space, non-contiguous) total. Max Avail is the property's aggregate across every space in
+    // the row, not one space's size — sizing/banding off it alone mis-bands a multi-space row into a
+    // band above where its actual largest leasable block belongs (or drops it from every band once the
+    // aggregate exceeds the top one, even though the largest contiguous block is comfortably in scope).
+    // Contig wins when present and positive; otherwise max ?? min, unchanged from before this field
+    // existed. When buildingContigSf is unmapped (null), behavior is byte-for-byte the same as before
+    // this field existed. A non-positive Contig or Max is treated as absent.
+    const availableSfMinRaw = parseNumber(get('availableSf'));
+    const availableSfMaxParsed = idx.availableSfMax !== null ? parseNumber(get('availableSfMax')) : null;
+    const availableSfMaxRaw = availableSfMaxParsed !== null && availableSfMaxParsed > 0 ? availableSfMaxParsed : null;
+    const buildingContigSfParsed = idx.buildingContigSf !== null ? parseNumber(get('buildingContigSf')) : null;
+    const buildingContigSfRaw = buildingContigSfParsed !== null && buildingContigSfParsed > 0 ? buildingContigSfParsed : null;
+    const availableSf = buildingContigSfRaw ?? availableSfMaxRaw ?? availableSfMinRaw;
     if (availableSf === null || availableSf <= 0) {
       skipped.push({ rowNumber: r, reason: 'available SF missing, zero or unparseable' });
       continue;
     }
+    // minDivisibleSf: an explicitly mapped minDivisibleSf column always wins (unchanged priority). Only
+    // when availableSfMax is mapped AND no distinct minDivisibleSf column is mapped does the min side of
+    // the max/min pair carry forward as minDivisibleSf — otherwise it would be lost once availableSf
+    // itself resolves to the max.
+    const minDivisibleSfDirect = idx.minDivisibleSf !== null ? parseNumber(get('minDivisibleSf')) : null;
+    const minDivisibleSfFromPair =
+      idx.availableSfMax !== null && availableSfMinRaw !== null && availableSfMinRaw > 0 ? availableSfMinRaw : null;
+    const minDivisibleSf = minDivisibleSfDirect ?? minDivisibleSfFromPair;
 
     let rentLow: number | null = null;
     let rentHigh: number | null = null;
@@ -311,6 +465,17 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
     const listingUrlIdx = idx.listingUrl;
     const listingUrlRaw = listingUrlIdx === null ? null : row.getCell(listingUrlIdx).value;
 
+    // costarDateOnMarket: a mapped, explicit `dateOnMarket` column always wins over `timeOnMarketText` —
+    // per-row, not just when both happen to be populated. Only when the header map itself leaves
+    // dateOnMarket unmapped does a mapped timeOnMarketText duration get converted (via the export date)
+    // into the on-market date. A blank or unparseable value on either path yields null, never a throw.
+    const costarDateOnMarket =
+      idx.dateOnMarket !== null
+        ? parseIsoDate(get('dateOnMarket'))
+        : idx.timeOnMarketText !== null
+          ? timeOnMarketTextToDate(get('timeOnMarketText'), effectiveExportDate)
+          : null;
+
     const candidate = {
       costarPropertyId: nullIfEmpty(get('costarPropertyId')),
       address,
@@ -331,7 +496,7 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
       officePct,
       ownerName: nullIfEmpty(get('ownerName')),
       availableSf,
-      minDivisibleSf: parseNumber(get('minDivisibleSf')),
+      minDivisibleSf,
       rentLow,
       rentHigh,
       rentPeriod,
@@ -339,7 +504,7 @@ export async function parseCostarListingsFile(filePath: string, map: CostarHeade
       rentBasis,
       opexQuotedPsf,
       isSublease: subleaseSet.has(get('spaceType').toLowerCase()),
-      costarDateOnMarket: parseIsoDate(get('dateOnMarket')),
+      costarDateOnMarket,
       brokerName: nullIfEmpty(get('brokerName')),
       brokerCompany: nullIfEmpty(get('brokerCompany')),
       listingUrl: nullIfEmpty(cellHyperlink(listingUrlRaw) ?? get('listingUrl')),
