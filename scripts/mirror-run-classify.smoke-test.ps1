@@ -71,15 +71,19 @@ $expectedRepoRoot = Split-Path -Parent $PSScriptRoot
 # Bounded wait (see BOUNDED WAIT note in the header comment): waits at most $TimeoutSeconds, then
 # kills the whole process tree and returns TimedOut = $true instead of blocking forever.
 #
-# 240s, not a tighter figure: measured directly against this machine's real
-# Microsoft-Windows-TaskScheduler/Operational log (2026-09-18), a single Get-WinEvent call the
-# classifier makes -- with NOTHING wrong, no hang -- took 76.98s to return 3108 events over a
-# 7-day window, even though the log file itself is small (wevtutil: 10MB cap, ~19.5k records).
-# That is a legitimate-but-slow duration, not a hang, and a tighter bound would turn ordinary runs
-# into false FAILs. This IS itself a live latent risk for the production caller
-# (ora-command-center-mirror-drift-check invokes mirror-run-classify.ps1 directly, no bound of its
-# own) -- flagged separately, out of scope for this test-hygiene fix. 240s stays far below the
-# 17.8-minute hang this replaces while giving 3x headroom over the slowest normal run observed.
+# 600s, not a tighter figure: the classifier makes FOUR live event-log queries, not one --
+# TaskScheduler/Operational over a 7-day window, two System-log queries in a +/-5min band, and one
+# System-log query spanning RunStartedAt..now (unbounded width) -- plus Get-ScheduledTaskInfo and
+# three git calls. Timing one call in isolation understates the whole run: a single
+# Get-WinEvent against the 7-day window measured 76.98s alone (2026-09-18, nothing wrong, no
+# hang), but two independent END-TO-END runs of the real classifier on this same machine, same
+# day, measured 187s and 215s. A bound sized off the one-call figure (a first version of this fix
+# used 240s) leaves only ~1.1-1.3x headroom over an ordinary run and false-FAILs on exactly the
+# variance this comment documents. 600s gives ~3x headroom over the slowest whole-run timing
+# observed while staying far below the 17.8-minute hang this replaces. The underlying slowness is
+# itself a live latent risk for the production caller (ora-command-center-mirror-drift-check
+# invokes mirror-run-classify.ps1 directly, no bound of its own) -- flagged separately, out of
+# scope for this test-hygiene fix.
 # Uses [System.Diagnostics.Process]::Start directly rather than Start-Process -PassThru: verified
 # by hand (2026-09-18) that Start-Process -PassThru + -RedirectStandardOutput/-Error, WITHOUT
 # -Wait, returns a process object whose ExitCode reads back as an empty string even after the
@@ -91,7 +95,7 @@ $expectedRepoRoot = Split-Path -Parent $PSScriptRoot
 # ReadToEndAsync BEFORE WaitForExit, matching the standard .NET redirect pattern -- reading
 # synchronously after WaitForExit can deadlock once either pipe's OS buffer fills.
 function Invoke-Classifier {
-  param([string[]]$ExtraArgs = @(), [string]$ScriptPath = $classifier, [int]$TimeoutSeconds = 240)
+  param([string[]]$ExtraArgs = @(), [string]$ScriptPath = $classifier, [int]$TimeoutSeconds = 600)
   $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + $ExtraArgs
   $quote  = { param($s) '"' + ($s -replace '"', '""') + '"' }
   $psi = New-Object System.Diagnostics.ProcessStartInfo
@@ -112,11 +116,22 @@ function Invoke-Classifier {
     # any grandchild powershell.exe the child spawned still running past this test).
     & cmd.exe '/s', '/c', "taskkill /T /F /PID $($proc.Id) >nul 2>&1" | Out-Null
     [void]$proc.WaitForExit(10000)
+  } else {
+    # MSDN: when output/error are redirected asynchronously, the bounded WaitForExit(Int32)
+    # overload can return before the redirected stream reads have actually finished; the
+    # parameterless overload blocks until they drain. Safe to call unconditionally here because
+    # the process has already exited -- it cannot reintroduce an unbounded wait.
+    $proc.WaitForExit()
   }
+  # Task.IsCompleted is also true for Faulted/Canceled, and .Result on a faulted task rethrows
+  # through this script's $ErrorActionPreference = 'Stop' (e.g. a broken-pipe IOException if the
+  # timeout's taskkill force-closed the write end mid-read). Gate on RanToCompletion so a faulted
+  # read degrades to empty text the same way a still-pending one already does, instead of crashing
+  # the whole suite before the FAIL summary can print.
   [pscustomobject]@{
     ExitCode = if ($timedOut) { $null } else { $proc.ExitCode }
-    Stdout   = if ($stdoutTask.IsCompleted) { $stdoutTask.Result } else { '' }
-    Stderr   = if ($stderrTask.IsCompleted) { $stderrTask.Result } else { '' }
+    Stdout   = if ($stdoutTask.Status -eq 'RanToCompletion') { $stdoutTask.Result } else { '' }
+    Stderr   = if ($stderrTask.Status -eq 'RanToCompletion') { $stderrTask.Result } else { '' }
     TimedOut = $timedOut
   }
 }
