@@ -171,6 +171,15 @@
       "review_needed": false,
       "review_detail": "Shared-infra single-writer claim per CLAUDE.md S2 -- vitest.config.ts is cross-cutting (governs all 277 test files). No competing claim present at time of write: no worktree entry was in_progress or review_needed. MERGED via PR #322 (squash 3eb859a, 2026-09-07); the claim is released and vitest.config.ts is free for the next writer. Superseded PR #319 was closed unmerged.",
       "last_updated": "2026-09-07T17:50:00Z"
+    },
+    "record-spine": {
+      "agent_role": "Engineering (Claude Code, Opus 5) -- Gabriel-directed 2026-09-17, Track 1 of the 90-day plan",
+      "phase": "Record Spine foundations (docs/superpowers/plans/2026-09-17-record-spine-foundations.md): encrypted warehouse snapshot + restore drill, migration 030 (entity_xref, documents, lease_facts, obligations, deal_decisions, agent_runs, append-only audit_log), system-of-record matrix, entity crosswalk. Additive only -- no existing table or column is altered.",
+      "status": "in_progress",
+      "blocked_by": null,
+      "review_needed": true,
+      "review_detail": "Architect-owned surfaces claimed: package.json (adds scripts backup, backup:verify, xref:seed -- no dependency or existing-script change), server/warehouse/migrations/ (adds 030_record_spine.sql only; 029 belongs to feat/lease-market-intel and is untouched), server/warehouse/db.ts (adds ONE additive export, openWarehouseReadOnly; openWarehouse itself is not modified), and server/warehouse/migrate.ts + migration 031 (records applied_by on _migrations; Gabriel approved in-turn 2026-09-17 after an unattributed schema change on the live warehouse could not be traced by two sessions). Gabriel approved the db.ts helper in-turn 2026-09-17 after an audit found three callers that open the live warehouse and run migrations as a side effect. scripts/bake-warehouse.ts is NOT touched -- it needs a write handle for wal_checkpoint(TRUNCATE) and is the mirror-redaction authority owned by the lease-market session. Shared-infra claim per CLAUDE.md S2: .gitignore (+1 pattern, data/backups/, so encrypted snapshots and their manifest can never be committed). No competing claim was present at time of write. Gabriel directed this plan's execution in-turn on 2026-09-17, which is the authorization for both. Coordination: the lease-market session holds feat/lease-market-intel; Task 6 imports its splitAddress from src/analytics/lease-market/normalize.ts and is BLOCKED on that merge -- this branch neither edits that file nor bakes to the Cloudflare mirror.",
+      "last_updated": "2026-09-17T14:45:00Z"
     }
   },
   "phase-4-steps-5-7-8-9": {

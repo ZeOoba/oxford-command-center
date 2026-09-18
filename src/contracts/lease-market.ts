@@ -182,6 +182,13 @@ export const LeaseMarketConfig = z
     ownerScreenModulePath: z.string().min(1),
     markets: z.array(LmMarketConfig).min(1),
     oraProperties: z.array(OraPropertyConfig),
+    // M2: case-insensitive substring patterns matched against CoStar's reported owner name — a
+    // screen-independent way to recognize an ORA-owned property (compute.ts matchesOraOwnerName),
+    // treated as ORA-owned everywhere isOraOwnedProperty gates benchmarks/comps/candidates/signals/
+    // radar/the stale-DOM baseline/KPI counts, even when the python owner screen is unavailable and
+    // owner_type never resolves past 'unknown'. Defaulted to [] so an existing config file that omits
+    // it still parses (the ORA-exclusion layer degrades to the pre-M2 behavior, not a parse failure).
+    oraOwnerNamePatterns: z.array(z.string().min(1)).default([]),
     similarityWeights: SimilarityWeights,
     thresholds: LmThresholds,
   })
@@ -360,6 +367,14 @@ export const LeaseMarketSummaryResponse = z.object({
 export type LeaseMarketSummaryResponse = z.infer<typeof LeaseMarketSummaryResponse>;
 
 // ── /positioning ──────────────────────────────────────────────────────────────
+// Go-live change (2026-09-17, Gabriel): the real rent roll carries zero vacant rows, so Rent Position
+// now sources ORA available space primarily from ORA-owned CoStar listings ('listing'), priced against
+// comparables using the listing's own asking rent; a rent-roll vacancy that matches a listing keeps
+// today's row instead ('rent-roll') so the two are never duplicated. `source` lets the UI tell "this is
+// what CoStar says we're marketing" from "this is what our rent roll says is empty" apart.
+export const PositioningRowSource = z.enum(['listing', 'rent-roll']);
+export type PositioningRowSource = z.infer<typeof PositioningRowSource>;
+
 export const PositioningRow = z.object({
   propertyKey: z.string(),
   unit: z.string().nullable(),
@@ -373,6 +388,7 @@ export const PositioningRow = z.object({
   recommendation: z.string(),
   flags: z.array(z.enum(['not_listed'])),
   effectiveDom: z.number().int().nullable(),
+  source: PositioningRowSource,
 });
 export type PositioningRow = z.infer<typeof PositioningRow>;
 
@@ -392,6 +408,11 @@ export const ListingHygieneFlag = z.object({
 });
 export type ListingHygieneFlag = z.infer<typeof ListingHygieneFlag>;
 
+// Go-live change (2026-09-17): since every active, config-mapped ORA listing now produces its own
+// PositioningRow (source 'listing') when no rent-roll vacancy claims it, this array should be empty in
+// ordinary operation — it is kept only as a defensive surface for a listing that is genuinely
+// inconsistent (present in config.oraProperties' market scope but, for some reason, never covered by
+// either a matched vacant row or its own listing row). See positioning.ts's rowSpaceIds guard.
 export const ListedButLeased = z.object({
   propertyKey: z.string(),
   listingId: z.number().int(),
