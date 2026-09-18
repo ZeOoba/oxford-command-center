@@ -30,23 +30,20 @@ import { fmtUsdCompact } from '@analytics/index';
 const RANKING_DISCLAIMER =
   'Proposed weights — tunable by Gabriel; NOT a financial governor. Ratification of these values is a RED (human event).';
 
+// Anatomy matches KpiStat.tsx's non-interactive Card exactly (July visual-parity pass dropped
+// KpiStat's left accent bar; this local stat block had drifted and kept its own — see IA
+// decongestion Phase 1 plan residual (b)). No accentColor prop — KpiStat's own accentColor only
+// ever colors its sparkline, and SpineSplitStat has none, so there is nothing left for it to do.
 function SpineSplitStat({
   label,
   totals,
-  accentColor,
 }: {
   label: string;
   totals: TierTotal[];
-  accentColor: string;
 }) {
   return (
-    <Card className="relative overflow-hidden">
-      <span
-        aria-hidden
-        className="absolute left-0 top-0 h-full w-[3px]"
-        style={{ background: accentColor, opacity: 0.85 }}
-      />
-      <div className="flex flex-col gap-2 px-4 pt-3.5 pb-3.5 pl-5">
+    <Card className="overflow-hidden">
+      <div className="flex flex-col gap-2 px-4 pt-3.5 pb-3.5">
         <div
           className="num text-2xs font-semibold uppercase"
           style={{ letterSpacing: '0.12em', color: 'var(--text-tertiary)' }}
@@ -153,12 +150,8 @@ export function InsightsModule() {
         />
 
         <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-3">
-          <SpineSplitStat label="Risk Impact" totals={summary.riskImpactBySpine} accentColor="var(--color-neg)" />
-          <SpineSplitStat
-            label="Monitor Impact"
-            totals={summary.monitorImpactBySpine}
-            accentColor="var(--color-info)"
-          />
+          <SpineSplitStat label="Risk Impact" totals={summary.riskImpactBySpine} />
+          <SpineSplitStat label="Monitor Impact" totals={summary.monitorImpactBySpine} />
           <KpiStat label="Open Insights" value={summary.count} format={(n) => (n === null ? '—' : String(n))} />
         </div>
 
