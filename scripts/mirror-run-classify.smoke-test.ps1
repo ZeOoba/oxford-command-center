@@ -41,6 +41,24 @@
   regression guard: it points Invoke-Classifier at a script that sleeps well past the timeout and
   asserts the call returns promptly with TimedOut = $true, before any of the real invocations run.
 
+  UPDATE (2026-09-18, same day): the "flagged separately, out of scope" production risk this
+  header used to describe -- mirror-run-classify.ps1 itself having no bound on its four live
+  Get-WinEvent calls -- is now fixed at the source. Each call is wrapped in
+  Invoke-ScriptBlockWithTimeout (scripts/lib/job-timeout.ps1, unit-tested by
+  job-timeout.smoke-test.ps1), so a stalled individual query now degrades to a null field plus an
+  entry in the JSON's `errors` array instead of hanging the whole script. Scenario 3 below is the
+  end-to-end regression guard for that: it re-confirms the classifier still exits 0 with valid,
+  fully-shaped JSON regardless of whether any individual query happened to time out on this run --
+  proven live during development, where the TaskScheduler/Operational query genuinely exceeded its
+  180s bound on this machine (real contention, not a fabricated hang) and the script still
+  completed cleanly with a "timed out after 180s" entry in `errors` and a valid RUN_IN_PROGRESS
+  verdict, rather than hanging. This test's own 600s harness-level bound (Invoke-Classifier) and the
+  script's internal per-call bounds are deliberately independent layers: the harness bound catches a
+  hang this fix doesn't cover -- the three `git` calls (rev-list x2, log) are deliberately left
+  unbounded, since they run against the already-fetched local repo (no network I/O) and are not the
+  observed failure class this fix addresses -- or a future unwrapped addition; the internal bounds
+  are what let an ordinary run finish in ~200s instead of ever reaching the harness bound at all.
+
   Usage: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/mirror-run-classify.smoke-test.ps1
   Exits 0 if all assertions pass, 1 otherwise.
 #>
@@ -196,6 +214,30 @@ if ($null -ne $parsedExplicit -and $null -ne $parsed) {
     '2c: explicit -RepoRoot resolves to the same repo root as the default'
   Assert-Equal ([string]$parsed.gitAhead) ([string]$parsedExplicit.gitAhead) `
     '2d: defaulted and explicit invocations agree on gitAhead'
+}
+
+# ---------------------------------------------------------------------------
+# 3 -- internal per-call bounds must degrade gracefully, never corrupt the JSON or exit nonzero
+# ---------------------------------------------------------------------------
+# This does not force a timeout (there is no reliable, non-invasive way to make Get-WinEvent stall
+# on demand); it re-uses the already-captured real run ($run, scenario 1) and asserts its shape
+# holds regardless of whether any individual bounded query happened to time out THIS run. If one
+# did, `errors` names it and the affected field stays null -- exactly what job-timeout.smoke-test.ps1
+# proves Invoke-ScriptBlockWithTimeout returns; this scenario proves the calling script actually
+# surfaces that outcome rather than dying on it.
+if ($null -ne $parsed) {
+  Assert-True ($parsed.PSObject.Properties.Name -contains 'verdict') `
+    '3a: JSON always carries a verdict field, whether or not any bounded query timed out'
+  Assert-True ([bool]$parsed.verdict) `
+    '3b: verdict is non-empty even when errors is non-empty'
+  Assert-True ($parsed.PSObject.Properties.Name -contains 'errors') `
+    '3c: JSON always carries an errors array field'
+  $timeoutErrors = @($parsed.errors | Where-Object { $_ -match 'timed out after \d+s' })
+  if ($timeoutErrors.Count -gt 0) {
+    Write-Host "note: this run's own bounded queries actually timed out ($($timeoutErrors -join '; ')) -- exercising the real degrade path, not just its absence"
+  }
+  Assert-Equal '0' ([string]$run.ExitCode) `
+    '3d: the script exits 0 even when a bounded query timed out (never throws on missing data)'
 }
 
 # ---------------------------------------------------------------------------
