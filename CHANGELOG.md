@@ -11,6 +11,48 @@
 > maintenance, the un-narrated span is PR #95–#219 (excluding #200, narrated below); when you add
 > an entry, refresh this note's coverage line in the same commit so the note itself never goes stale.
 
+## IA decongestion Phase 0 — shared Tabs / SegmentedControl / useTabParam primitives (2026-09-18)
+
+Root cause: 7 modules (acquisitions, taxes, market, insurance, intel, calibration, debt) hand-roll
+the same non-ARIA pill-button tab pattern copied from `DebtModule.tsx`, none of them deep-linkable
+and diverging visually from the design handoff's underline-strip tab contract
+(`design_handoff_ora_command_center/app/ora.css:328`). Plan:
+`docs/superpowers/plans/2026-09-18-ia-decongestion-tabs.md`. This is Phase 0 (primitives only) —
+no module was retrofitted in this PR; that is Phase 1.
+
+- **`src/primitives/Tabs.tsx`** (new) — wraps `react-aria-components` `Tabs`/`TabList`/`Tab`
+  (locked 1.18.0) for the W3C APG keyboard pattern (`keyboardActivation: 'automatic' | 'manual'`,
+  no hand-rolled key handling). Underline-strip visual ported from the design handoff using this
+  repo's existing token names (`--border-subtle`, `--accent`, `--text-primary/secondary/tertiary`)
+  via RAC's `isSelected`/`isHovered` render props (inline style), matching the conditional-style
+  convention already used for tab state in `IntelModule.tsx` and reduced-motion gating in
+  `TierBoard.tsx`/`Sidebar.tsx`. Props: `tabs: {id,label,badge?:{count,tone},group?}[]`,
+  `selectedKey`, `onSelectionChange`, `keyboardActivation`, `aria-label`, and `children` for the
+  caller's own `<TabPanel id="...">` elements (RAC's normal composition — full control over
+  `shouldForceMount`/lazy panel data stays with the caller). Badge caps at `99+`, renders nothing
+  at count 0. A `group` change between adjacent tabs renders as a divider (left border on the tab
+  that starts the new group) rather than a wrapping `<span>` — RAC's `TabList` collection walker
+  only recognizes direct `Tab` children, so a wrapper element silently empties the tablist (learned
+  the hard way while writing the unit tests; see the in-file comment).
+- **`src/primitives/SegmentedControl.tsx`** (new) — level-2 "same data, different view" switch (R5:
+  no nested tabs). Wraps RAC `RadioGroup`/`Radio` for real `radiogroup`/`radio` semantics and
+  roving-tabindex arrow-key selection. `.seg` bordered-group look ported from the handoff; active
+  segment fills `--accent` with `--text-on-accent`. Controlled `value`/`onChange`, `aria-label`
+  required.
+- **`src/lib/useTabParam.ts`** (new) — `useTabParam(keys, defaultKey, paramName='tab')` puts the
+  selected tab in `?tab=` via `useSearchParams`, mirroring `UiProvider.tsx`'s `setScenario` pattern
+  (functional update copying `prev`, `{replace:true}`) so `?tab=` composes cleanly with `?scenario=`
+  and any other param. Unknown/missing value falls back to `defaultKey` without writing the URL on
+  mount; setting the default key removes the param (clean default-tab URLs).
+- **Tests:** `tests/unit/tabs.test.tsx`, `tests/unit/segmented-control.test.tsx`,
+  `tests/unit/use-tab-param.test.tsx` — roles/aria-selected, automatic vs. manual keyboard
+  activation, badge cap/zero-hide, group divider, `SegmentedControl` selection + accessible name +
+  arrow-key roving, `useTabParam` default/valid/invalid param, `?scenario=` preservation, REPLACE
+  (not PUSH) navigation type, default-key param removal. No unit-test axe helper exists in this repo
+  (only `@axe-core/playwright` for e2e) — axe coverage deferred to Phase 1's e2e specs per the plan.
+- **Deferred (Phase 1+):** retrofitting the 7 hand-rolled-pill modules onto `Tabs`/`useTabParam`,
+  tabbing the zero-tab overloaded modules, `ModuleHeader` pattern, 3-theme contrast screenshots.
+
 ## Stable lease ids + overlay-write hardening (2026-07-24)
 
 Root cause: `server/workbook/parse.ts` built every `Lease.id` by appending the literal Excel
