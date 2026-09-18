@@ -76,11 +76,13 @@ flowchart TB
     MODULES --> SHELL
     BRAIN --> SHELL
 
-    WATCH -. nightly bake .-> BAKE --> BUILD --> PAGES
+    WINTASK(["Windows Task Scheduler (off-fleet)\n'ORA Command Center - Mirror Deploy'\nhourly + daily 06:45 ET\nscripts/deploy-mirror.ps1, from a\nhard-reset sibling worktree"])
+    WINTASK -. hourly bake .-> BAKE --> BUILD --> PAGES
+    PARSE -. "parseWorkbook() called directly —\nthe bake does NOT need a running Brain Server" .-> BAKE
     FUNC -.-> PAGES
-    CI -. every push/PR .-> BUILD
+    CI -. push to main + every PR .-> BUILD
 ```
-<!-- diagram-verified: 2026-08-21 -->
+<!-- diagram-verified: 2026-09-18 -->
 
 **Two data spines, by design** (documented in `architecture/system-overview.md`):
 
@@ -156,7 +158,8 @@ Scripts, pulled directly from `package.json`:
 | `npm run gate` | Full local gate: governance → typecheck → lint → check:dev-css → test → reconcile → warehouse:verify → warehouse:drift |
 | `npm run gate:ci` | The CI-safe subset (no workbook access): typecheck → lint → check:dev-css → test → build → check:bundle |
 
-CI (`.github/workflows/ci.yml`) runs `npm run gate:ci` on every push/PR, plus a separate
+CI (`.github/workflows/ci.yml`) runs `npm run gate:ci` on every push to `main` and every PR
+(a push to a non-`main` branch with no open PR runs nothing), plus a separate
 `refute-required` job on PRs that enforces the Refute-Reviewed trailer for financial-decision
 diffs.
 
