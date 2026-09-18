@@ -5,6 +5,18 @@ import { tmpdir } from 'node:os';
 
 import { execFileSync } from 'node:child_process';
 
+// The module below is plain .mjs on purpose (the raw .git/hooks/pre-push script invokes it
+// with no npm context). Its types come from a GENERATED sibling .d.mts, emitted from that
+// script's own JSDoc by `npm run typecheck`'s `pretypecheck` step and gitignored by design --
+// see the "//" note in tsconfig.confidential-scan-types.json for why a hand-maintained
+// declaration was removed (it drifted from the exports twice, OI-206).
+//
+// So typecheck with `npm run typecheck`, NOT a bare `npx tsc`: bare tsc skips the npm
+// pre-script, the declaration is absent on a fresh clone, and this import degrades to `any`
+// -- which cascades into implicit-any `h` params and an "unused @ts-expect-error" below.
+// Those errors mean the generator did not run. They do NOT mean this file needs annotating,
+// and the @ts-expect-error in the "non-array input" test is load-bearing: it asserts the
+// scanner rejects null at the type level. Do not delete it to silence a cascade.
 import {
   scanDiffForConfidential,
   scanDiffForContextTerms,
