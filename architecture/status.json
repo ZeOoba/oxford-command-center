@@ -19,6 +19,15 @@
     "last_updated": "2026-06-21T23:30:00Z"
   },
   "worktrees": {
+    "calendar-36mo": {
+      "agent_role": "Engineering (Claude Code) — Gabriel-directed in-turn 2026-09-18",
+      "phase": "CalendarModule: add a 36-month horizon band. Touches src/modules/calendar/CalendarModule.tsx and adds tests/unit/calendar-module-horizon.test.tsx (the module's first render-level test). src/brain/critical-dates.ts is NOT modified — portfolioCriticalDates already took horizonMonths as a parameter. Motivation: at a 2026-09-18 run-date basis the 12-month horizon showed only 25.8% of annual rent; 84 tenants and $4.06M (74.2%) fell outside it, including the largest tenant by rent at 469 days out.",
+      "status": "in_progress",
+      "blocked_by": null,
+      "review_needed": false,
+      "review_detail": "Local adversarial review passed (pr-review-toolkit:code-reviewer, opus): no correctness defect in the production change; 4 Important findings on claim-accuracy and test adequacy, all fixed in-branch before PR. No Architect-owned file touched.",
+      "last_updated": "2026-09-18T18:00:00Z"
+    },
     "main": {
       "agent_role": "Lead Architect",
       "phase": "Lead Architect — synthesis/triage (no active branch work)",
