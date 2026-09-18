@@ -45,7 +45,28 @@ const fieldStyle: CSSProperties = {
 };
 
 type TypeFilter = CalendarEventType | 'all';
-type WindowFilter = '90d' | '12mo';
+type WindowFilter = '90d' | '12mo' | '36mo';
+
+// Events are fetched once at the WIDEST band and narrowed client-side, so switching bands costs
+// no recompute. Note the top band therefore cannot exclude anything by construction — it is the
+// fetch horizon restated. Keep them derived from FETCH_HORIZON_MONTHS so they cannot drift apart;
+// if a future band is ever narrower than the fetch, it becomes load-bearing and needs its own case.
+//
+// 36 months rather than 12: measured against data/snapshots/portfolio.json at a 2026-09-18
+// run-date basis (the basis this component actually uses — NOT the snapshot's precomputed
+// monthsToExpiry field, which sits ~2 weeks forward and yields flattering numbers), over the 132
+// leases carrying rent and an end date. A 12-month horizon shows 48 of them and 25.8% of annual
+// rent; 84 tenants and $4.06M (74.2%) fall outside it, including the single largest tenant by
+// rent, 469 days out. A 36-month band shows 110 tenants and 67.9% of rent. Beyond roughly three
+// years the list stops being an operating calendar and becomes a planning document.
+const FETCH_HORIZON_MONTHS = 36;
+// critical-dates.ts converts months at 30.4375 d/mo; mirror its 12-month cut exactly.
+const TWELVE_MONTH_DAYS = Math.round(12 * 30.4375);
+const BAND_MAX_DAYS: Record<WindowFilter, number> = {
+  '90d': 90,
+  '12mo': TWELVE_MONTH_DAYS,
+  '36mo': Math.round(FETCH_HORIZON_MONTHS * 30.4375),
+};
 
 export function CalendarModule() {
   const { data } = useSnapshot();
@@ -53,16 +74,25 @@ export function CalendarModule() {
   const [type, setType] = useState<TypeFilter>('all');
   const [horizon, setHorizon] = useState<WindowFilter>('12mo');
 
-  // The KPI strip always reflects the full 12-month horizon; the window filter only narrows the list.
-  // Day-counts are relative to the browser's current date (run-date basis, 2026-07-12), NOT the
-  // frozen workbook data date — so "in Nd" and overdue/holdover classification stay current.
+  // Day-counts are relative to the browser's current date (run-date basis), NOT the frozen
+  // workbook data date — so "in Nd" and overdue/holdover classification stay current.
   const allEvents = useMemo(
-    () => (data ? portfolioCriticalDates(data.snapshot, 12, new Date().toISOString().slice(0, 10)) : []),
+    () =>
+      data
+        ? portfolioCriticalDates(data.snapshot, FETCH_HORIZON_MONTHS, new Date().toISOString().slice(0, 10))
+        : [],
     [data],
   );
-  const kpis = useMemo(() => criticalDateKpis(allEvents), [allEvents]);
+  // The KPI strip is pinned to twelve months in EVERY band — `criticalDateKpis` reports
+  // `next12mo` as simply however many events it was handed, so feeding it the full 36-month set
+  // would relabel a 36-month count as "Next 12 Months". The window filter widens the list only;
+  // it must never restate a portfolio metric. Enforced by tests/unit/calendar-module-horizon.test.tsx.
+  const kpis = useMemo(
+    () => criticalDateKpis(allEvents.filter((e) => e.daysToDate <= TWELVE_MONTH_DAYS)),
+    [allEvents],
+  );
   const filtered = useMemo(() => {
-    let rows = horizon === '90d' ? allEvents.filter((e) => e.daysToDate <= 90) : allEvents;
+    let rows = allEvents.filter((e) => e.daysToDate <= BAND_MAX_DAYS[horizon]);
     if (type !== 'all') rows = rows.filter((e) => e.type === type);
     return rows;
   }, [allEvents, horizon, type]);
@@ -107,6 +137,7 @@ export function CalendarModule() {
           <select aria-label="Filter by window" value={horizon} onChange={(e) => setHorizon(e.target.value as WindowFilter)} className={fieldCls} style={fieldStyle}>
             <option value="12mo">Next 12 months</option>
             <option value="90d">Next 90 days</option>
+            <option value="36mo">Next 36 months</option>
           </select>
         </div>
 
