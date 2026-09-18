@@ -19,6 +19,26 @@
   PS 5.1-compatible. Never throws on missing data -- an unreadable input becomes a null
   field and, where it matters, an INDETERMINATE verdict. "Can't verify" must never render
   as "confirmed healthy".
+
+  BOUNDED QUERIES (2026-09-18): the caller (ora-command-center-mirror-drift-check SKILL.md step 4)
+  invokes this script directly with no timeout of its own -- unlike "ORA Command Center - Mirror
+  Deploy" (deploy-mirror.ps1), which sits under the native task's PT30M ExecutionTimeLimit, this
+  script's caller is a Claude scheduled-task step with no equivalent enforced bound. Its five live
+  system-state calls (Get-ScheduledTaskInfo, four Get-WinEvent queries) are therefore the ONLY
+  thing standing between a stalled call and an unbounded hang of that step. Evidence: a single
+  Get-WinEvent against the TaskScheduler/Operational log measured 76.98s under completely normal
+  conditions (3108 events, 7-day window), and two independent end-to-end runs of this classifier
+  measured 187s and 215s the same day -- Get-WinEvent -FilterHashtable is intrinsically slow
+  against this log/provider combination even when nothing is wrong, and the log wraps frequently
+  (no retention, 10MB cap) while this machine enters Modern Standby ~20x/day, both plausible
+  contributors to worse variance. Each call below is wrapped in
+  Invoke-ScriptBlockWithTimeout (lib/job-timeout.ps1) -- the in-process analogue of
+  lib/native-timeout.ps1's Invoke-NativeCommandWithTimeout, since these are cmdlet calls on this
+  process's own thread, not external processes a taskkill /T could reap. A timeout is reported
+  through the same $result.errors / null-field path as any other read failure, preserving "never
+  throws on missing data": a stall becomes an INDETERMINATE-leaning gap in the output, never a
+  hang. Regression guard: job-timeout.smoke-test.ps1 (the shared primitive) and scenario 3 in
+  mirror-run-classify.smoke-test.ps1 (this script's own end-to-end bound).
 #>
 [CmdletBinding()]
 param(
@@ -28,6 +48,18 @@ param(
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'lib\deploy-beacon.ps1')
+. (Join-Path $PSScriptRoot 'lib\job-timeout.ps1')
+
+# Per-call bounds for the live system-state queries below (see BOUNDED QUERIES note above for the
+# measured evidence). $TaskSchedulerLogTimeoutSeconds is wider than the others because it alone
+# scans the full 7-day TaskScheduler/Operational window (the 76.98s single-call measurement); the
+# System-log queries below it filter a narrow +/-5 minute (or bounded suspension) window and have
+# not been observed anywhere near as slow, but get real headroom rather than a guess. If every
+# single one of these timed out, the script would still terminate in
+# ~(60 + 180 + 90*3) = 510s (~8.5min) -- bounded, not fast, but never unbounded.
+$ScheduledTaskInfoTimeoutSeconds = 60
+$TaskSchedulerLogTimeoutSeconds  = 180
+$EventLogWindowTimeoutSeconds    = 90
 
 # Resolve the repo root HERE, in the body -- never as a param-block default. Param defaults are
 # evaluated before $PSScriptRoot is populated under `powershell -File`, so the previous
@@ -78,10 +110,21 @@ $result = [ordered]@{
 # --- 1) Native task info -----------------------------------------------------------------
 $info = $null
 try {
-  $info = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction Stop
-  $result.lastRunTime    = $info.LastRunTime.ToString('o')
-  $result.lastTaskResult = [long]$info.LastTaskResult
-  $result.nextRunTime    = if ($info.NextRunTime) { $info.NextRunTime.ToString('o') } else { $null }
+  $infoResult = Invoke-ScriptBlockWithTimeout -TimeoutSeconds $ScheduledTaskInfoTimeoutSeconds `
+    -ArgumentList @($TaskName) -ScriptBlock {
+      param($TaskName)
+      Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction Stop
+    }
+  if ($infoResult.TimedOut) {
+    $result.errors += "Get-ScheduledTaskInfo timed out after ${ScheduledTaskInfoTimeoutSeconds}s"
+  } elseif (-not $infoResult.Success) {
+    $result.errors += "Get-ScheduledTaskInfo failed: $($infoResult.ErrorMessage)"
+  } else {
+    $info = $infoResult.Value
+    $result.lastRunTime    = $info.LastRunTime.ToString('o')
+    $result.lastTaskResult = [long]$info.LastTaskResult
+    $result.nextRunTime    = if ($info.NextRunTime) { $info.NextRunTime.ToString('o') } else { $null }
+  }
 } catch {
   $result.errors += "Get-ScheduledTaskInfo failed: $($_.Exception.Message)"
 }
@@ -98,21 +141,32 @@ try {
 # Notion row -- a foreign end time there reads as this run's.
 $runEndedAt = $null
 try {
-  $completions = @(Get-WinEvent -FilterHashtable @{
-    LogName   = 'Microsoft-Windows-TaskScheduler/Operational'
-    Id        = 201
-    StartTime = (Get-Date).AddDays(-7)
-  } -ErrorAction Stop | Where-Object { $_.Message -like "*$TaskName*" })
+  $completionsResult = Invoke-ScriptBlockWithTimeout -TimeoutSeconds $TaskSchedulerLogTimeoutSeconds `
+    -ArgumentList @($TaskName) -ScriptBlock {
+      param($TaskName)
+      @(Get-WinEvent -FilterHashtable @{
+        LogName   = 'Microsoft-Windows-TaskScheduler/Operational'
+        Id        = 201
+        StartTime = (Get-Date).AddDays(-7)
+      } -ErrorAction Stop | Where-Object { $_.Message -like "*$TaskName*" })
+    }
 
-  $completion = if ($info -and $info.LastRunTime) {
-    Select-RunCompletionEvent -Events $completions -RunStartedAt $info.LastRunTime
+  if ($completionsResult.TimedOut) {
+    $result.errors += "Task Scheduler completion-event lookup timed out after ${TaskSchedulerLogTimeoutSeconds}s"
+  } elseif (-not $completionsResult.Success) {
+    $result.errors += "Task Scheduler completion-event lookup failed: $($completionsResult.ErrorMessage)"
   } else {
-    # No LastRunTime to test ownership against; fall back to the newest, as before.
-    $completions | Select-Object -First 1
-  }
-  if ($completion) {
-    $runEndedAt = $completion.TimeCreated
-    $result.runEndedAt = $runEndedAt.ToString('o')
+    $completions = @($completionsResult.Value)
+    $completion = if ($info -and $info.LastRunTime) {
+      Select-RunCompletionEvent -Events $completions -RunStartedAt $info.LastRunTime
+    } else {
+      # No LastRunTime to test ownership against; fall back to the newest, as before.
+      $completions | Select-Object -First 1
+    }
+    if ($completion) {
+      $runEndedAt = $completion.TimeCreated
+      $result.runEndedAt = $runEndedAt.ToString('o')
+    }
   }
 } catch {
   $result.errors += "Task Scheduler completion-event lookup failed: $($_.Exception.Message)"
@@ -122,26 +176,36 @@ try {
 $envEvents = @()
 if ($runEndedAt) {
   try {
-    $raw = Get-WinEvent -FilterHashtable @{
-      LogName   = 'System'
-      Id        = @($EnvEventLabels.Keys)
-      StartTime = $runEndedAt.AddMinutes(-5)
-      EndTime   = $runEndedAt.AddMinutes(5)
-    } -ErrorAction Stop
-    foreach ($e in $raw) {
-      $envEvents += [pscustomobject]@{
-        TimeCreated = $e.TimeCreated
-        Id          = $e.Id
-        Label       = $EnvEventLabels[[int]$e.Id]
+    $powerResult = Invoke-ScriptBlockWithTimeout -TimeoutSeconds $EventLogWindowTimeoutSeconds `
+      -ArgumentList @($runEndedAt, @($EnvEventLabels.Keys)) -ScriptBlock {
+        param($RunEndedAt, $Ids)
+        Get-WinEvent -FilterHashtable @{
+          LogName   = 'System'
+          Id        = $Ids
+          StartTime = $RunEndedAt.AddMinutes(-5)
+          EndTime   = $RunEndedAt.AddMinutes(5)
+        } -ErrorAction Stop
+      }
+    if ($powerResult.TimedOut) {
+      $result.errors += "System event lookup timed out after ${EventLogWindowTimeoutSeconds}s"
+    } elseif (-not $powerResult.Success) {
+      # A genuinely empty window throws "No events were found" on PS 5.1 -- that is a normal
+      # result (it is exactly what the 2026-08-01 13:01 unexplained kill looked like), NOT an
+      # error, so it must not be recorded as one or the verdict would read as unreliable.
+      if ($powerResult.ErrorMessage -notmatch 'No events were found') {
+        $result.errors += "System event lookup failed: $($powerResult.ErrorMessage)"
+      }
+    } else {
+      foreach ($e in @($powerResult.Value)) {
+        $envEvents += [pscustomobject]@{
+          TimeCreated = $e.TimeCreated
+          Id          = $e.Id
+          Label       = $EnvEventLabels[[int]$e.Id]
+        }
       }
     }
   } catch {
-    # A genuinely empty window throws "No events were found" on PS 5.1 -- that is a normal
-    # result (it is exactly what the 2026-08-01 13:01 unexplained kill looked like), NOT an
-    # error, so it must not be recorded as one or the verdict would read as unreliable.
-    if ($_.Exception.Message -notmatch 'No events were found') {
-      $result.errors += "System event lookup failed: $($_.Exception.Message)"
-    }
+    $result.errors += "System event lookup failed: $($_.Exception.Message)"
   }
 
   # SESSION-class events (2026-09-05). Queried SEPARATELY from the power ids above and scoped
@@ -163,26 +227,37 @@ if ($runEndedAt) {
   # found', so it lands in $result.errors and this whole block yields nothing -- failing toward
   # ALARM, which is the safe direction.
   try {
-    $rawSession = Get-WinEvent -FilterHashtable @{
-      LogName      = 'System'
-      ProviderName = @(Get-MirrorSessionEventProviders)
-      Id           = @(Get-MirrorSessionEventIds)
-      StartTime    = $runEndedAt.AddMinutes(-5)
-      EndTime      = $runEndedAt.AddMinutes(5)
-    } -ErrorAction Stop
-    foreach ($e in $rawSession) {
-      $label = Get-MirrorSessionEventLabel -ProviderName $e.ProviderName -Id ([int]$e.Id)
-      if (-not $label) { continue }
-      $envEvents += [pscustomobject]@{
-        TimeCreated = $e.TimeCreated
-        Id          = $e.Id
-        Label       = $label
+    $sessionResult = Invoke-ScriptBlockWithTimeout -TimeoutSeconds $EventLogWindowTimeoutSeconds `
+      -ArgumentList @($runEndedAt, @(Get-MirrorSessionEventProviders), @(Get-MirrorSessionEventIds)) `
+      -ScriptBlock {
+        param($RunEndedAt, $Providers, $Ids)
+        Get-WinEvent -FilterHashtable @{
+          LogName      = 'System'
+          ProviderName = $Providers
+          Id           = $Ids
+          StartTime    = $RunEndedAt.AddMinutes(-5)
+          EndTime      = $RunEndedAt.AddMinutes(5)
+        } -ErrorAction Stop
+      }
+    if ($sessionResult.TimedOut) {
+      $result.errors += "Session event lookup timed out after ${EventLogWindowTimeoutSeconds}s"
+    } elseif (-not $sessionResult.Success) {
+      if ($sessionResult.ErrorMessage -notmatch 'No events were found') {
+        $result.errors += "Session event lookup failed: $($sessionResult.ErrorMessage)"
+      }
+    } else {
+      foreach ($e in @($sessionResult.Value)) {
+        $label = Get-MirrorSessionEventLabel -ProviderName $e.ProviderName -Id ([int]$e.Id)
+        if (-not $label) { continue }
+        $envEvents += [pscustomobject]@{
+          TimeCreated = $e.TimeCreated
+          Id          = $e.Id
+          Label       = $label
+        }
       }
     }
   } catch {
-    if ($_.Exception.Message -notmatch 'No events were found') {
-      $result.errors += "Session event lookup failed: $($_.Exception.Message)"
-    }
+    $result.errors += "Session event lookup failed: $($_.Exception.Message)"
   }
 }
 
@@ -266,29 +341,47 @@ if ($info -and $info.LastRunTime) {
     $windowStart = $info.LastRunTime
     $now         = Get-Date
     if ($windowStart -lt $now) {
-      $sleepEvents = @(Get-WinEvent -FilterHashtable @{
-        LogName   = 'System'
-        Id        = @(506, 507)
-        StartTime = $windowStart
-        EndTime   = $now
-      } -ErrorAction SilentlyContinue | Sort-Object TimeCreated)
-
-      $suspended = [timespan]::Zero
-      $sleepFrom = $null
-      foreach ($e in $sleepEvents) {
-        if ($e.Id -eq 506) {
-          # Keep the FIRST 506 of a run of them; a repeated 506 without an intervening 507 is
-          # the same suspension being re-announced, not a second one.
-          if ($null -eq $sleepFrom) { $sleepFrom = $e.TimeCreated }
-        } elseif ($e.Id -eq 507 -and $null -ne $sleepFrom) {
-          $suspended += ($e.TimeCreated - $sleepFrom)
-          $sleepFrom = $null
+      # This window's width is RunStartedAt -> now, i.e. it GROWS with how long the run has been
+      # in flight -- unbounded in principle for a wedged run, which is exactly the case this
+      # figure exists to detect. $EventLogWindowTimeoutSeconds bounds the QUERY regardless of how
+      # wide that window gets; a timed-out query still yields suspendedMinutes = 0 (the same
+      # "missing figure means 0" fallback the comment above already documents for any other
+      # read failure), not a hang.
+      $sleepResult = Invoke-ScriptBlockWithTimeout -TimeoutSeconds $EventLogWindowTimeoutSeconds `
+        -ArgumentList @($windowStart, $now) -ScriptBlock {
+          param($WindowStart, $Now)
+          @(Get-WinEvent -FilterHashtable @{
+            LogName   = 'System'
+            Id        = @(506, 507)
+            StartTime = $WindowStart
+            EndTime   = $Now
+          } -ErrorAction SilentlyContinue | Sort-Object TimeCreated)
         }
-      }
-      # Still suspended at check time -- the interval has not closed yet.
-      if ($null -ne $sleepFrom) { $suspended += ($now - $sleepFrom) }
 
-      $result.suspendedMinutes = [math]::Round($suspended.TotalMinutes, 1)
+      if ($sleepResult.TimedOut) {
+        $result.errors += "Modern Standby suspension lookup timed out after ${EventLogWindowTimeoutSeconds}s"
+      } elseif (-not $sleepResult.Success) {
+        $result.errors += "Modern Standby suspension lookup failed: $($sleepResult.ErrorMessage)"
+      } else {
+        $sleepEvents = @($sleepResult.Value)
+
+        $suspended = [timespan]::Zero
+        $sleepFrom = $null
+        foreach ($e in $sleepEvents) {
+          if ($e.Id -eq 506) {
+            # Keep the FIRST 506 of a run of them; a repeated 506 without an intervening 507 is
+            # the same suspension being re-announced, not a second one.
+            if ($null -eq $sleepFrom) { $sleepFrom = $e.TimeCreated }
+          } elseif ($e.Id -eq 507 -and $null -ne $sleepFrom) {
+            $suspended += ($e.TimeCreated - $sleepFrom)
+            $sleepFrom = $null
+          }
+        }
+        # Still suspended at check time -- the interval has not closed yet.
+        if ($null -ne $sleepFrom) { $suspended += ($now - $sleepFrom) }
+
+        $result.suspendedMinutes = [math]::Round($suspended.TotalMinutes, 1)
+      }
     }
   } catch {
     $result.errors += "Modern Standby suspension lookup failed: $($_.Exception.Message)"
