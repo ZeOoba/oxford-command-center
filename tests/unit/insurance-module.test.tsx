@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import type { InsuranceAnalysisReport, PolicyEconomics } from '../../src/contracts/insurance-analysis';
 import type { InsurancePolicy } from '../../src/contracts/insurance';
 import type { InsuranceLossReport, PropertyEal, DeductibleReview, RebidPipelineItem } from '../../src/contracts/insurance-loss';
@@ -217,9 +218,11 @@ function kpiSublabelFor(label: string): string {
 describe('InsuranceModule KPIs', () => {
   it('renders real numbers computed from the mocked analysis report', () => {
     render(
-      <QueryClientProvider client={seededClient(sufficientReport())}>
-        <InsuranceModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(sufficientReport())}>
+          <InsuranceModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
     expect(kpiValueFor('Annual Premium')).toBe('$200K');
     expect(kpiValueFor('Rate vs Benchmark')).toBe('$0.45');
@@ -229,9 +232,11 @@ describe('InsuranceModule KPIs', () => {
 
   it('shows an insufficient-cohort state instead of a numeric benchmark when benchmark.sufficient is false', () => {
     render(
-      <QueryClientProvider client={seededClient(insufficientReport())}>
-        <InsuranceModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(insufficientReport())}>
+          <InsuranceModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
     expect(kpiValueFor('Rate vs Benchmark')).toBe('—');
     expect(kpiSublabelFor('Rate vs Benchmark')).toMatch(/insufficient cohort — n=3/);
@@ -241,9 +246,11 @@ describe('InsuranceModule KPIs', () => {
 describe('InsuranceModule tabs', () => {
   it('renders three tab pills including Self-Insure & Bids', () => {
     render(
-      <QueryClientProvider client={seededClient(sufficientReport())}>
-        <InsuranceModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(sufficientReport())}>
+          <InsuranceModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
     expect(screen.getByText('Savings Board')).toBeTruthy();
     expect(screen.getByText('Policy Register')).toBeTruthy();
@@ -252,9 +259,11 @@ describe('InsuranceModule tabs', () => {
 
   it('renders SelfInsureView content when the Self-Insure & Bids tab is selected', () => {
     render(
-      <QueryClientProvider client={seededClient(sufficientReport(), [], lossReport())}>
-        <InsuranceModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(sufficientReport(), [], lossReport())}>
+          <InsuranceModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
     fireEvent.click(screen.getByText('Self-Insure & Bids'));
     expect(screen.getByText('Expected Annual Loss by Property')).toBeTruthy();
@@ -336,9 +345,11 @@ describe('UI copy doctrine — never "savings" for excessPremiumVsMedian', () =>
 
   it('labels the KPI "Premium Above Median" — not "Savings" or "Identified Savings"', () => {
     render(
-      <QueryClientProvider client={seededClient(sufficientReport())}>
-        <InsuranceModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(sufficientReport())}>
+          <InsuranceModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
     expect(screen.getByText('Premium Above Median')).toBeTruthy();
     expect(screen.queryByText(/identified savings/i)).toBeNull();
@@ -357,14 +368,16 @@ describe('UI copy doctrine — never "savings" for excessPremiumVsMedian', () =>
 describe('Policy Register tab', () => {
   it('still renders the pre-existing policy table content after switching tabs', () => {
     render(
-      <QueryClientProvider
-        client={seededClient(sufficientReport(), [
-          insurancePolicy(),
-          insurancePolicy({ id: 'ins-2', property: 'Second Property LLC', premium: 15_000, status: 'Renew Now', daysToExpiry: 20 }),
-        ])}
-      >
-        <InsuranceModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider
+          client={seededClient(sufficientReport(), [
+            insurancePolicy(),
+            insurancePolicy({ id: 'ins-2', property: 'Second Property LLC', premium: 15_000, status: 'Renew Now', daysToExpiry: 20 }),
+          ])}
+        >
+          <InsuranceModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     fireEvent.click(screen.getByText('Policy Register'));
@@ -379,9 +392,11 @@ describe('Policy Register tab', () => {
 
   it('defaults to the Savings Board tab on first render', () => {
     render(
-      <QueryClientProvider client={seededClient(sufficientReport(), [insurancePolicy()])}>
-        <InsuranceModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(sufficientReport(), [insurancePolicy()])}>
+          <InsuranceModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
     expect(screen.getByText('Re-bid — above book median')).toBeTruthy();
     expect(screen.queryByText('Policy Tracker')).toBeNull();

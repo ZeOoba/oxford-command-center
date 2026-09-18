@@ -7,6 +7,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import { CalibrationModule } from '../../src/modules/calibration/CalibrationModule';
 import { ReportView } from '../../src/modules/calibration/ReportView';
 import { CALIBRATION_KEYS } from '../../src/modules/calibration/hooks';
@@ -30,9 +31,11 @@ function seededClient(report: CalibrationReportResponse): QueryClient {
 
 function renderWith(qc: QueryClient) {
   return render(
-    <QueryClientProvider client={qc}>
-      <CalibrationModule />
-    </QueryClientProvider>,
+    <MemoryRouter>
+      <QueryClientProvider client={qc}>
+        <CalibrationModule />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 

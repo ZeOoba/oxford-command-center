@@ -8,6 +8,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import type { MacroSnapshot } from '../../src/contracts/index';
 import { MarketModule } from '../../src/modules/market/MarketModule';
 
@@ -65,9 +66,11 @@ function dashOnly(content: string, node: Element | null): boolean {
 describe('MarketModule — null DGS10 UI path', () => {
   it('shows the em-dash sentinel for the 10Y when MacroIndicator.value is null, with no 0.00% or "null" leak (no crash)', () => {
     const { container } = render(
-      <QueryClientProvider client={seededClient(macroWithNullDgs10())}>
-        <MarketModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(macroWithNullDgs10())}>
+          <MarketModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
     // KpiStat (value path) and Acquisition Lens 10Y Row (value path) BOTH render '—' on null.
     // Two standalone-em-dash nodes minimum (the spread row also dashes since wtdCap is null here).
@@ -93,9 +96,11 @@ describe('MarketModule — null DGS10 UI path', () => {
     const live = macroWithNullDgs10();
     live.indicators = live.indicators.map((i) => (i.id === 'DGS10' ? { ...i, value: 4.47 } : i));
     const { container } = render(
-      <QueryClientProvider client={seededClient(live)}>
-        <MarketModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(live)}>
+          <MarketModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
     const bodyText = container.textContent ?? '';
     // The 10Y appears in the KpiStat AND the Acquisition Lens — at least one occurrence proves the
@@ -114,9 +119,11 @@ describe('MarketModule — null DGS10 UI path', () => {
     const stale = macroWithNullDgs10();
     stale.indicators = stale.indicators.map((i) => (i.id === 'DGS10' ? { ...i, value: 0 } : i));
     const { container } = render(
-      <QueryClientProvider client={seededClient(stale)}>
-        <MarketModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(stale)}>
+          <MarketModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
     const bodyText = container.textContent ?? '';
     expect(bodyText).not.toMatch(/0\.00\s*%/); // no false 10Y reading

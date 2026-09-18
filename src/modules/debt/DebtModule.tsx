@@ -6,9 +6,9 @@
 //   Positions  — existing view: KPI stats, balloon watch, maturity bar chart, all loan table.
 //   Scorecard  — NEW: per-property debt score table (ScorecardView) + maturity ladder (LadderView).
 //
-// The tab state is local (not in the URL) — the Debt module is a sidebar entry with no sub-routing.
+// The tab state lives in the URL (`?tab=`) via useTabParam (IA decongestion Phase 1).
 // No changes to module registry (id: 'debt' already registered in shell/modules.tsx).
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { useSnapshot, useAnalytics } from '@/data/queries';
 import { useUi } from '@/brain/ui-context';
@@ -17,9 +17,10 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
+import { Tabs, TabPanel } from '@/primitives/Tabs';
 import { BarChart } from '@/charts/BarChart';
 import { BarList } from '@/charts/BarList';
-import { cn } from '@/lib/cn';
+import { useTabParam } from '@/lib/useTabParam';
 import type { Loan } from '@contracts/index';
 import { ScorecardView } from './ScorecardView';
 import { LadderView } from './LadderView';
@@ -28,6 +29,7 @@ const dirTone = (d: Loan['direction']): BadgeTone => (d === 'borrower' ? 'amber'
 const dirLabel = (d: Loan['direction']) => (d === 'borrower' ? 'We pay' : d === 'lender' ? 'We receive' : 'Internal');
 
 type Tab = 'positions' | 'scorecard';
+const TAB_KEYS: readonly Tab[] = ['positions', 'scorecard'];
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'positions', label: 'Positions' },
   { id: 'scorecard', label: 'Scorecard' },
@@ -200,55 +202,28 @@ function PositionsView() {
 }
 
 export function DebtModule() {
-  const [tab, setTab] = useState<Tab>('positions');
+  const [tab, setTab] = useTabParam<Tab>(TAB_KEYS, 'positions');
 
   return (
     <div className="flex flex-col gap-4">
       <Card>
-        <CardHeader
-          title="Debt"
-          trailing={
-            <div className="flex items-center gap-1">
-              {TABS.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  className={cn(
-                    'num rounded-full px-2.5 py-0.5 text-2xs font-semibold uppercase transition-colors',
-                    tab === t.id ? 'cursor-default' : 'cursor-pointer',
-                  )}
-                  style={
-                    tab === t.id
-                      ? {
-                          background: 'color-mix(in oklab, var(--accent) 16%, transparent)',
-                          color: 'var(--text-accent)',
-                          border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)',
-                          letterSpacing: '0.06em',
-                        }
-                      : {
-                          background: 'transparent',
-                          color: 'var(--text-tertiary)',
-                          border: '1px solid transparent',
-                          letterSpacing: '0.06em',
-                        }
-                  }
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          }
-        />
+        <CardHeader title="Debt" />
       </Card>
 
-      {tab === 'positions' ? (
-        <PositionsView />
-      ) : (
-        <div className="flex flex-col gap-4">
-          <ScorecardView />
-          <LadderView />
-        </div>
-      )}
+      {/* keyboardActivation="manual" — the Scorecard tab mounts ScorecardView/LadderView, which
+          fire fresh useDebtScores()/useDebtMaturity() warehouse queries on mount, so arrowing
+          through the strip shouldn't fan out queries (plan R9). */}
+      <Tabs tabs={TABS} selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} keyboardActivation="manual" aria-label="Debt views">
+        <TabPanel id="positions">
+          <PositionsView />
+        </TabPanel>
+        <TabPanel id="scorecard">
+          <div className="flex flex-col gap-4">
+            <ScorecardView />
+            <LadderView />
+          </div>
+        </TabPanel>
+      </Tabs>
     </div>
   );
 }

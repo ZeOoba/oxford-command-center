@@ -15,6 +15,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import type { Deal, CompSet } from '../../src/contracts/index';
 import type { CapitalAllocationReport } from '../../src/contracts/capital-allocation';
 import { MarketModule } from '../../src/modules/market/MarketModule';
@@ -260,9 +261,11 @@ describe('MarketModule — Comps tab mounting', () => {
     qc.setQueryData(['warehouse', 'capital-allocation', 'report'], capitalAllocationReport());
 
     render(
-      <QueryClientProvider client={qc}>
-        <MarketModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <MarketModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     // Default tab shows no Comps-only content yet.

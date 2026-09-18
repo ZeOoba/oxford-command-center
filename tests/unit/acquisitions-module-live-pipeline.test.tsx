@@ -6,6 +6,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import type { Deal } from '../../src/contracts/deal';
 import { AcquisitionsModule } from '../../src/modules/acquisitions/AcquisitionsModule';
 
@@ -51,9 +52,11 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 describe('AcquisitionsModule — live Notion pipeline (item-3)', () => {
   it('does NOT render the amber seed-pipeline badge', () => {
     render(
-      <QueryClientProvider client={seededClient(DEALS)}>
-        <AcquisitionsModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(DEALS)}>
+          <AcquisitionsModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
     expect(screen.queryByText(/seed pipeline/i)).toBeNull();
     expect(screen.queryByText(/hubspot.*notion sync pending/i)).toBeNull();
@@ -61,9 +64,11 @@ describe('AcquisitionsModule — live Notion pipeline (item-3)', () => {
 
   it('renders a Sync from Notion button', () => {
     render(
-      <QueryClientProvider client={seededClient(DEALS)}>
-        <AcquisitionsModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(DEALS)}>
+          <AcquisitionsModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
     expect(screen.getByRole('button', { name: /sync from notion/i })).toBeTruthy();
   });
@@ -78,9 +83,11 @@ describe('AcquisitionsModule — live Notion pipeline (item-3)', () => {
     }));
 
     render(
-      <QueryClientProvider client={seededClient(DEALS)}>
-        <AcquisitionsModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(DEALS)}>
+          <AcquisitionsModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     const btn = screen.getByRole('button', { name: /sync from notion/i });
@@ -95,9 +102,11 @@ describe('AcquisitionsModule — live Notion pipeline (item-3)', () => {
 
   it('shows sync result after successful sync', async () => {
     render(
-      <QueryClientProvider client={seededClient(DEALS)}>
-        <AcquisitionsModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(DEALS)}>
+          <AcquisitionsModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     const btn = screen.getByRole('button', { name: /sync from notion/i });
@@ -119,9 +128,11 @@ describe('AcquisitionsModule — live Notion pipeline (item-3)', () => {
     }));
 
     render(
-      <QueryClientProvider client={seededClient(DEALS)}>
-        <AcquisitionsModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(DEALS)}>
+          <AcquisitionsModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     const btn = screen.getByRole('button', { name: /sync from notion/i });
