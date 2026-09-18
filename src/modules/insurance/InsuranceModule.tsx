@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 import { useSnapshot } from '@/data/queries';
 import { useUi } from '@/brain/ui-context';
 import { fmtUsd, fmtUsdCompact, fmtDate, fmtNum } from '@analytics/index';
@@ -6,7 +6,8 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
-import { cn } from '@/lib/cn';
+import { Tabs, TabPanel } from '@/primitives/Tabs';
+import { useTabParam } from '@/lib/useTabParam';
 import type { InsurancePolicy, InsuranceStatus } from '@contracts/index';
 import { useInsuranceAnalysis, computeInsuranceKpis, fmtRatePer100 } from './hooks';
 import { SavingsBoard } from './SavingsBoard';
@@ -24,6 +25,7 @@ const daysTone = (d: number | null): BadgeTone => {
 };
 
 type Tab = 'savings' | 'register' | 'selfinsure';
+const TAB_KEYS: readonly Tab[] = ['savings', 'register', 'selfinsure'];
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'savings', label: 'Savings Board' },
   { id: 'register', label: 'Policy Register' },
@@ -71,7 +73,7 @@ function PolicyRegisterView() {
 }
 
 export function InsuranceModule() {
-  const [tab, setTab] = useState<Tab>('savings');
+  const [tab, setTab] = useTabParam<Tab>(TAB_KEYS, 'savings');
   const { data: report } = useInsuranceAnalysis();
   const kpis = computeInsuranceKpis(report);
 
@@ -91,43 +93,23 @@ export function InsuranceModule() {
       </div>
 
       <Card>
-        <CardHeader
-          title="Insurance"
-          trailing={
-            <div className="flex items-center gap-1">
-              {TABS.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  className={cn(
-                    'num rounded-full px-2.5 py-0.5 text-2xs font-semibold uppercase transition-colors',
-                    tab === t.id ? 'cursor-default' : 'cursor-pointer',
-                  )}
-                  style={
-                    tab === t.id
-                      ? {
-                          background: 'color-mix(in oklab, var(--accent) 16%, transparent)',
-                          color: 'var(--text-accent)',
-                          border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)',
-                          letterSpacing: '0.06em',
-                        }
-                      : {
-                          background: 'transparent',
-                          color: 'var(--text-tertiary)',
-                          border: '1px solid transparent',
-                          letterSpacing: '0.06em',
-                        }
-                  }
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          }
-        />
+        <CardHeader title="Insurance" />
       </Card>
 
-      {tab === 'savings' ? <SavingsBoard /> : tab === 'register' ? <PolicyRegisterView /> : <SelfInsureView />}
+      {/* keyboardActivation="manual" — the Self-Insure & Bids tab mounts SelfInsureView, which
+          fires a fresh useInsuranceLoss() warehouse query on mount, so arrowing through the
+          strip shouldn't fan out queries (plan R9). */}
+      <Tabs tabs={TABS} selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} keyboardActivation="manual" aria-label="Insurance views">
+        <TabPanel id="savings">
+          <SavingsBoard />
+        </TabPanel>
+        <TabPanel id="register">
+          <PolicyRegisterView />
+        </TabPanel>
+        <TabPanel id="selfinsure">
+          <SelfInsureView />
+        </TabPanel>
+      </Tabs>
     </div>
   );
 }

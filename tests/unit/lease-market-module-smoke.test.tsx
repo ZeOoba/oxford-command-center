@@ -6,6 +6,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import { LeaseMarketModule } from '../../src/modules/lease-market/LeaseMarketModule';
 import { LEASE_MARKET_KEYS } from '../../src/modules/lease-market/hooks';
 import { ORA_JSON_MUTATION_HEADERS } from '../../src/contracts/client-header';
@@ -70,7 +71,7 @@ function renderWith(summary = SUMMARY, positioning = POSITIONING, radar = RADAR,
   // useWarehouseLive() reads this key; seeding it avoids an unmocked, uncontrolled live-probe
   // fetch firing on every render (the mirror-write-gating tests below seed it explicitly).
   qc.setQueryData(LIVE_PROBE_KEY, live);
-  return render(<QueryClientProvider client={qc}><LeaseMarketModule /></QueryClientProvider>);
+  return render(<MemoryRouter><QueryClientProvider client={qc}><LeaseMarketModule /></QueryClientProvider></MemoryRouter>);
 }
 
 describe('LeaseMarketModule', () => {
@@ -219,7 +220,7 @@ describe('LeaseMarketModule', () => {
     // Never-resolving fetch keeps the summary query in its initial "pending" (isLoading) state for
     // the lifetime of this synchronous assertion — no data or live-probe seeded for `summary`.
     vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})));
-    render(<QueryClientProvider client={qc}><LeaseMarketModule /></QueryClientProvider>);
+    render(<MemoryRouter><QueryClientProvider client={qc}><LeaseMarketModule /></QueryClientProvider></MemoryRouter>);
     expect(screen.getByText('Loading…')).toBeTruthy();
   });
 
@@ -230,7 +231,7 @@ describe('LeaseMarketModule', () => {
     // WarehouseUnavailableError; loadWarehouseMirror's own fetch('/warehouse.json') hits the same
     // stub and fails closed to null, so fetchParsedOrMirror re-throws the unavailable error.
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
-    render(<QueryClientProvider client={qc}><LeaseMarketModule /></QueryClientProvider>);
+    render(<MemoryRouter><QueryClientProvider client={qc}><LeaseMarketModule /></QueryClientProvider></MemoryRouter>);
     // The lease-market hooks spread the shared QUERY_OPTS (retry: 1), so this query retries once
     // with a backoff delay before settling into its error state — give it more than the default
     // findByText timeout to clear that retry.

@@ -13,7 +13,8 @@ import { Gauge } from 'lucide-react';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
-import { cn } from '@/lib/cn';
+import { Tabs, TabPanel } from '@/primitives/Tabs';
+import { useTabParam } from '@/lib/useTabParam';
 import { isWarehouseUnavailable, useWarehouseLive, useWarehouseFreshness } from '../intel/hooks';
 import { useCalibrationLog, useCalibrationPending, useCalibrationReport, type CalibrationLogRow } from './hooks';
 import { ReportView } from './ReportView';
@@ -22,6 +23,7 @@ import { LogView } from './LogView';
 import { ResolveDialog } from './ResolveDialog';
 
 type Tab = 'report' | 'pending' | 'log';
+const TAB_KEYS: readonly Tab[] = ['report', 'pending', 'log'];
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'report', label: 'Report' },
   { id: 'pending', label: 'Pending' },
@@ -29,7 +31,7 @@ const TABS: Array<{ id: Tab; label: string }> = [
 ];
 
 export function CalibrationModule() {
-  const [tab, setTab] = useState<Tab>('report');
+  const [tab, setTab] = useTabParam<Tab>(TAB_KEYS, 'report');
   const [resolving, setResolving] = useState<CalibrationLogRow | null>(null);
 
   const report = useCalibrationReport();
@@ -66,27 +68,11 @@ export function CalibrationModule() {
         <CardHeader
           title="Score-vs-Outcome Calibration"
           trailing={
-            <div className="flex items-center gap-1.5">
-              {!live && (
-                <Badge tone="neutral">
-                  {`Computed from snapshot${freshness.detail ? ` · ${freshness.detail}` : ''}`}
-                </Badge>
-              )}
-              {TABS.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  className={cn('num rounded-full px-2.5 py-0.5 text-2xs font-semibold uppercase transition-colors', tab === t.id ? 'cursor-default' : 'cursor-pointer')}
-                  style={
-                    tab === t.id
-                      ? { background: 'color-mix(in oklab, var(--accent) 16%, transparent)', color: 'var(--text-accent)', border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)', letterSpacing: '0.06em' }
-                      : { background: 'transparent', color: 'var(--text-tertiary)', border: '1px solid transparent', letterSpacing: '0.06em' }
-                  }
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
+            !live && (
+              <Badge tone="neutral">
+                {`Computed from snapshot${freshness.detail ? ` · ${freshness.detail}` : ''}`}
+              </Badge>
+            )
           }
         />
         <div className="px-4 py-2.5 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
@@ -99,12 +85,18 @@ export function CalibrationModule() {
 
       {loading ? (
         <Skeleton style={{ height: 220 }} />
-      ) : tab === 'report' ? (
-        <ReportView report={report.data} />
-      ) : tab === 'pending' ? (
-        <PendingView rows={pending.data ?? []} onResolve={setResolving} canResolve={live} />
       ) : (
-        <LogView rows={log.data ?? []} />
+        <Tabs tabs={TABS} selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} aria-label="Calibration views">
+          <TabPanel id="report">
+            <ReportView report={report.data} />
+          </TabPanel>
+          <TabPanel id="pending">
+            <PendingView rows={pending.data ?? []} onResolve={setResolving} canResolve={live} />
+          </TabPanel>
+          <TabPanel id="log">
+            <LogView rows={log.data ?? []} />
+          </TabPanel>
+        </Tabs>
       )}
     </div>
   );

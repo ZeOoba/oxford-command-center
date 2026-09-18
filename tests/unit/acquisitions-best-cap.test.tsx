@@ -10,6 +10,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import type { Deal } from '../../src/contracts/deal';
 import { AcquisitionsModule } from '../../src/modules/acquisitions/AcquisitionsModule';
 
@@ -54,9 +55,11 @@ describe('AcquisitionsModule — Best Active Cap KPI (TA-1)', () => {
     ];
 
     render(
-      <QueryClientProvider client={seededClient(deals)}>
-        <AcquisitionsModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(deals)}>
+          <AcquisitionsModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     // Scope to the "Best Active Cap" KpiStat cell so the DataTable cap column
@@ -78,9 +81,11 @@ describe('AcquisitionsModule — Best Active Cap KPI (TA-1)', () => {
     ];
 
     render(
-      <QueryClientProvider client={seededClient(deals)}>
-        <AcquisitionsModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(deals)}>
+          <AcquisitionsModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     // With no active deals, bestCap = Math.max(0, ...[]) = 0 → renders '—', not '0.00%'.

@@ -23,6 +23,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import {
   sumIdentifiedOpportunityUsd,
   computePortfolioEffectiveRate,
@@ -670,9 +671,11 @@ describe('TaxesModule KPIs', () => {
     }));
 
     render(
-      <QueryClientProvider client={qc}>
-        <TaxesModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <TaxesModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     expect(screen.getByText('Identified Opportunity')).toBeTruthy();
@@ -696,9 +699,11 @@ describe('TaxesModule KPIs', () => {
     }));
 
     render(
-      <QueryClientProvider client={qc}>
-        <TaxesModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <TaxesModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     expect(screen.getByText(/varies by property/i)).toBeTruthy();
@@ -720,9 +725,11 @@ describe('TaxesModule tabs (P4c / C2)', () => {
     qc.setQueryData(TAX_KEYS.analysis, makeReport());
 
     render(
-      <QueryClientProvider client={qc}>
-        <TaxesModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <TaxesModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     expect(screen.getByText('Strategy Board')).toBeTruthy();
@@ -738,9 +745,11 @@ describe('TaxesModule tabs (P4c / C2)', () => {
     qc.setQueryData(TAX_STRATEGY_KEY, makeStrategyReport());
 
     render(
-      <QueryClientProvider client={qc}>
-        <TaxesModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <TaxesModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     fireEvent.click(screen.getByText('Filed Returns'));
@@ -755,9 +764,11 @@ describe('TaxesModule tabs (P4c / C2)', () => {
     qc.setQueryData(TAX_STRATEGY_KEY, makeStrategyReport());
 
     render(
-      <QueryClientProvider client={qc}>
-        <TaxesModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <TaxesModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     expect(screen.getByText('Depreciation & Cost-Seg')).toBeTruthy();
@@ -780,9 +791,11 @@ describe('TaxesModule tabs (P4c / C2)', () => {
     // TAX_STRATEGY_KEY intentionally NOT seeded.
 
     const { container } = render(
-      <QueryClientProvider client={qc}>
-        <TaxesModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <TaxesModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     fireEvent.click(screen.getByText('Filed Returns'));
@@ -804,9 +817,11 @@ describe('TaxesModule tabs (P4c / C2)', () => {
     // TAX_STRATEGY_KEY intentionally NOT seeded.
 
     render(
-      <QueryClientProvider client={qc}>
-        <TaxesModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <TaxesModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     fireEvent.click(screen.getByText('Filed Returns'));
