@@ -27,6 +27,38 @@
   This repo has no Pester/.Tests.ps1 convention for PowerShell (same as
   deploy-beacon.smoke-test.ps1), so this is a plain run-by-hand assertion script.
 
+  BOUNDED WAIT (incident, 2026-09-18): the real classifier this test shells out to
+  (mirror-run-classify.ps1) makes several live Get-WinEvent/Get-ScheduledTaskInfo calls against
+  the real Task Scheduler and System event logs, with no bound of its own -- same defect class as
+  the 2026-07-29 `npx wrangler` stall documented in lib/native-timeout.ps1 ("the real defect is
+  not the stall; it is that the script had no bound of its own"). Invoke-Classifier previously ran
+  the child under Start-Process -Wait with NO timeout, so a stalled log query hung this test
+  indefinitely -- observed: 17.8+ minutes wall-clock, 1.9s CPU (idle wait on a blocking call, not a
+  deadlock; the process was still responding). It was manually killed rather than diagnosed.
+  Invoke-Classifier now waits under a caller-supplied bound and kills the whole process tree on
+  overrun, the same tree-kill convention as Invoke-NativeCommandWithTimeout, so a hang here becomes
+  a loud, bounded assertion failure instead of an unbounded hang. Scenario 0 below is the
+  regression guard: it points Invoke-Classifier at a script that sleeps well past the timeout and
+  asserts the call returns promptly with TimedOut = $true, before any of the real invocations run.
+
+  UPDATE (2026-09-18, same day): the "flagged separately, out of scope" production risk this
+  header used to describe -- mirror-run-classify.ps1 itself having no bound on its four live
+  Get-WinEvent calls -- is now fixed at the source. Each call is wrapped in
+  Invoke-ScriptBlockWithTimeout (scripts/lib/job-timeout.ps1, unit-tested by
+  job-timeout.smoke-test.ps1), so a stalled individual query now degrades to a null field plus an
+  entry in the JSON's `errors` array instead of hanging the whole script. Scenario 3 below is the
+  end-to-end regression guard for that: it re-confirms the classifier still exits 0 with valid,
+  fully-shaped JSON regardless of whether any individual query happened to time out on this run --
+  proven live during development, where the TaskScheduler/Operational query genuinely exceeded its
+  180s bound on this machine (real contention, not a fabricated hang) and the script still
+  completed cleanly with a "timed out after 180s" entry in `errors` and a valid RUN_IN_PROGRESS
+  verdict, rather than hanging. This test's own 600s harness-level bound (Invoke-Classifier) and the
+  script's internal per-call bounds are deliberately independent layers: the harness bound catches a
+  hang this fix doesn't cover -- the three `git` calls (rev-list x2, log) are deliberately left
+  unbounded, since they run against the already-fetched local repo (no network I/O) and are not the
+  observed failure class this fix addresses -- or a future unwrapped addition; the internal bounds
+  are what let an ordinary run finish in ~200s instead of ever reaching the harness bound at all.
+
   Usage: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/mirror-run-classify.smoke-test.ps1
   Exits 0 if all assertions pass, 1 otherwise.
 #>
@@ -53,33 +85,97 @@ $expectedRepoRoot = Split-Path -Parent $PSScriptRoot
 
 # Invoke the way the SKILL.md documents: -File, no -RepoRoot. Capture stdout and stderr
 # separately so a param-binding failure is visible as itself rather than as unparseable JSON.
+#
+# Bounded wait (see BOUNDED WAIT note in the header comment): waits at most $TimeoutSeconds, then
+# kills the whole process tree and returns TimedOut = $true instead of blocking forever.
+#
+# 600s, not a tighter figure: the classifier makes FOUR live event-log queries, not one --
+# TaskScheduler/Operational over a 7-day window, two System-log queries in a +/-5min band, and one
+# System-log query spanning RunStartedAt..now (unbounded width) -- plus Get-ScheduledTaskInfo and
+# three git calls. Timing one call in isolation understates the whole run: a single
+# Get-WinEvent against the 7-day window measured 76.98s alone (2026-09-18, nothing wrong, no
+# hang), but two independent END-TO-END runs of the real classifier on this same machine, same
+# day, measured 187s and 215s. A bound sized off the one-call figure (a first version of this fix
+# used 240s) leaves only ~1.1-1.3x headroom over an ordinary run and false-FAILs on exactly the
+# variance this comment documents. 600s gives ~3x headroom over the slowest whole-run timing
+# observed while staying far below the 17.8-minute hang this replaces. The underlying slowness is
+# itself a live latent risk for the production caller (ora-command-center-mirror-drift-check
+# invokes mirror-run-classify.ps1 directly, no bound of its own) -- flagged separately, out of
+# scope for this test-hygiene fix.
+# Uses [System.Diagnostics.Process]::Start directly rather than Start-Process -PassThru: verified
+# by hand (2026-09-18) that Start-Process -PassThru + -RedirectStandardOutput/-Error, WITHOUT
+# -Wait, returns a process object whose ExitCode reads back as an empty string even after the
+# child has genuinely exited and WaitForExit(ms) returned $true (Refresh() does not fix it
+# either) -- a real PowerShell quirk, distinct from the hang this rewrite fixes, that a first
+# version of this bound-wait change ran into (1c/2a false-failed with "expected '0', got ''"
+# although the classifier itself exited 0). Raw Process + ProcessStartInfo does not have this
+# problem and is the same primitive lib/native-timeout.ps1 already uses. Streams are read via
+# ReadToEndAsync BEFORE WaitForExit, matching the standard .NET redirect pattern -- reading
+# synchronously after WaitForExit can deadlock once either pipe's OS buffer fills.
 function Invoke-Classifier {
-  param([string[]]$ExtraArgs = @())
-  $stdoutFile = [System.IO.Path]::GetTempFileName()
-  $stderrFile = [System.IO.Path]::GetTempFileName()
-  try {
-    $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $classifier) + $ExtraArgs
-    $p = Start-Process -FilePath 'powershell.exe' -ArgumentList $psArgs `
-                       -NoNewWindow -Wait -PassThru `
-                       -RedirectStandardOutput $stdoutFile -RedirectStandardError $stderrFile
-    # Coerce to [string] deliberately: Get-Content -Raw on an EMPTY file returns $null, and
-    # `$null -notmatch 'x'` evaluates to an empty Object[] (PowerShell applies collection
-    # filtering semantics to $null), not $true -- which blows up Assert-True's [bool] cast in
-    # exactly the clean-stderr case this test is supposed to pass on. '' -notmatch 'x' is $true.
-    [pscustomobject]@{
-      ExitCode = $p.ExitCode
-      Stdout   = [string](Get-Content -Raw -Path $stdoutFile -ErrorAction SilentlyContinue)
-      Stderr   = [string](Get-Content -Raw -Path $stderrFile -ErrorAction SilentlyContinue)
-    }
-  } finally {
-    Remove-Item $stdoutFile, $stderrFile -Force -ErrorAction SilentlyContinue
+  param([string[]]$ExtraArgs = @(), [string]$ScriptPath = $classifier, [int]$TimeoutSeconds = 600)
+  $psArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath) + $ExtraArgs
+  $quote  = { param($s) '"' + ($s -replace '"', '""') + '"' }
+  $psi = New-Object System.Diagnostics.ProcessStartInfo
+  $psi.FileName               = 'powershell.exe'
+  $psi.Arguments              = ($psArgs | ForEach-Object { & $quote $_ }) -join ' '
+  $psi.UseShellExecute        = $false
+  $psi.CreateNoWindow         = $true
+  $psi.RedirectStandardOutput = $true
+  $psi.RedirectStandardError  = $true
+
+  $proc = [System.Diagnostics.Process]::Start($psi)
+  $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+  $stderrTask = $proc.StandardError.ReadToEndAsync()
+  $timedOut = -not $proc.WaitForExit($TimeoutSeconds * 1000)
+  if ($timedOut) {
+    # Overran the bound -- reap the whole tree (same convention as
+    # lib/native-timeout.ps1's Invoke-NativeCommandWithTimeout: a plain Stop-Process would leave
+    # any grandchild powershell.exe the child spawned still running past this test).
+    & cmd.exe '/s', '/c', "taskkill /T /F /PID $($proc.Id) >nul 2>&1" | Out-Null
+    [void]$proc.WaitForExit(10000)
+  } else {
+    # MSDN: when output/error are redirected asynchronously, the bounded WaitForExit(Int32)
+    # overload can return before the redirected stream reads have actually finished; the
+    # parameterless overload blocks until they drain. Safe to call unconditionally here because
+    # the process has already exited -- it cannot reintroduce an unbounded wait.
+    $proc.WaitForExit()
   }
+  # Task.IsCompleted is also true for Faulted/Canceled, and .Result on a faulted task rethrows
+  # through this script's $ErrorActionPreference = 'Stop' (e.g. a broken-pipe IOException if the
+  # timeout's taskkill force-closed the write end mid-read). Gate on RanToCompletion so a faulted
+  # read degrades to empty text the same way a still-pending one already does, instead of crashing
+  # the whole suite before the FAIL summary can print.
+  [pscustomobject]@{
+    ExitCode = if ($timedOut) { $null } else { $proc.ExitCode }
+    Stdout   = if ($stdoutTask.Status -eq 'RanToCompletion') { $stdoutTask.Result } else { '' }
+    Stderr   = if ($stderrTask.Status -eq 'RanToCompletion') { $stderrTask.Result } else { '' }
+    TimedOut = $timedOut
+  }
+}
+
+# ---------------------------------------------------------------------------
+# 0 -- the bound itself: a genuine hang must return promptly, not block forever
+# ---------------------------------------------------------------------------
+$hangHarness = Join-Path ([System.IO.Path]::GetTempPath()) "mirror-run-classify-hang-$([guid]::NewGuid()).ps1"
+'Start-Sleep -Seconds 120' | Out-File -FilePath $hangHarness -Encoding ascii
+try {
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  $hangRun = Invoke-Classifier -ScriptPath $hangHarness -TimeoutSeconds 3
+  $sw.Stop()
+  Assert-True ($hangRun.TimedOut -eq $true) `
+    '0a: a hung classifier is reported as TimedOut rather than blocked on forever'
+  Assert-True ($sw.Elapsed.TotalSeconds -lt 30) `
+    "0b: a hung classifier returns near its bound, not after the child's full runtime (took $([int]$sw.Elapsed.TotalSeconds)s)"
+} finally {
+  Remove-Item $hangHarness -Force -ErrorAction SilentlyContinue
 }
 
 # ---------------------------------------------------------------------------
 # 1 -- the regression: -File with no -RepoRoot must resolve, not die
 # ---------------------------------------------------------------------------
 $run = Invoke-Classifier
+Assert-True ($run.TimedOut -eq $false) '1z: -File with no -RepoRoot completes within the bound (does not hang)'
 
 Assert-True ($run.Stderr -notmatch 'Cannot bind argument to parameter') `
   '1a: -File with no -RepoRoot does not fail param binding (the 2026-08-04 regression)'
@@ -105,6 +201,7 @@ if ($null -ne $parsed) {
 # 2 -- the explicit-argument path must keep working (it was the manual workaround)
 # ---------------------------------------------------------------------------
 $runExplicit = Invoke-Classifier -ExtraArgs @('-RepoRoot', $expectedRepoRoot)
+Assert-True ($runExplicit.TimedOut -eq $false) '2z: explicit -RepoRoot completes within the bound (does not hang)'
 Assert-Equal '0' ([string]$runExplicit.ExitCode) '2a: explicit -RepoRoot still exits 0'
 
 $parsedExplicit = $null
@@ -117,6 +214,30 @@ if ($null -ne $parsedExplicit -and $null -ne $parsed) {
     '2c: explicit -RepoRoot resolves to the same repo root as the default'
   Assert-Equal ([string]$parsed.gitAhead) ([string]$parsedExplicit.gitAhead) `
     '2d: defaulted and explicit invocations agree on gitAhead'
+}
+
+# ---------------------------------------------------------------------------
+# 3 -- internal per-call bounds must degrade gracefully, never corrupt the JSON or exit nonzero
+# ---------------------------------------------------------------------------
+# This does not force a timeout (there is no reliable, non-invasive way to make Get-WinEvent stall
+# on demand); it re-uses the already-captured real run ($run, scenario 1) and asserts its shape
+# holds regardless of whether any individual bounded query happened to time out THIS run. If one
+# did, `errors` names it and the affected field stays null -- exactly what job-timeout.smoke-test.ps1
+# proves Invoke-ScriptBlockWithTimeout returns; this scenario proves the calling script actually
+# surfaces that outcome rather than dying on it.
+if ($null -ne $parsed) {
+  Assert-True ($parsed.PSObject.Properties.Name -contains 'verdict') `
+    '3a: JSON always carries a verdict field, whether or not any bounded query timed out'
+  Assert-True ([bool]$parsed.verdict) `
+    '3b: verdict is non-empty even when errors is non-empty'
+  Assert-True ($parsed.PSObject.Properties.Name -contains 'errors') `
+    '3c: JSON always carries an errors array field'
+  $timeoutErrors = @($parsed.errors | Where-Object { $_ -match 'timed out after \d+s' })
+  if ($timeoutErrors.Count -gt 0) {
+    Write-Host "note: this run's own bounded queries actually timed out ($($timeoutErrors -join '; ')) -- exercising the real degrade path, not just its absence"
+  }
+  Assert-Equal '0' ([string]$run.ExitCode) `
+    '3d: the script exits 0 even when a bounded query timed out (never throws on missing data)'
 }
 
 # ---------------------------------------------------------------------------
