@@ -9,24 +9,24 @@ import {
   ShieldCheck,
   LineChart,
   CheckSquare,
-  Bell,
-  CalendarDays,
-  RefreshCw,
   Contact,
   Activity,
-  FileSearch,
   Briefcase,
   Scale,
   Database,
-  Gauge,
   TrendingUp,
   Radar,
   Coins,
   Lightbulb,
   Receipt,
   BrainCircuit,
+  BarChart3,
   type LucideIcon,
 } from 'lucide-react';
+import { INTEL_TABS } from '@/modules/intel/tabs';
+import { DATA_TABS } from '@/modules/data/tabs';
+import { WORKLIST_TABS } from '@/modules/worklist/tabs';
+import type { ModuleTabDef } from './tab-types';
 
 // Each module is its own code-split chunk — only the active one loads.
 const OverviewModule = lazy(() => import('@/modules/overview/OverviewModule').then((m) => ({ default: m.OverviewModule })));
@@ -37,17 +37,13 @@ const DebtModule = lazy(() => import('@/modules/debt/DebtModule').then((m) => ({
 const CashModule = lazy(() => import('@/modules/cash/CashModule').then((m) => ({ default: m.CashModule })));
 const InsuranceModule = lazy(() => import('@/modules/insurance/InsuranceModule').then((m) => ({ default: m.InsuranceModule })));
 const MarketModule = lazy(() => import('@/modules/market/MarketModule').then((m) => ({ default: m.MarketModule })));
-const TasksModule = lazy(() => import('@/modules/tasks/TasksModule').then((m) => ({ default: m.TasksModule })));
-const AlertsModule = lazy(() => import('@/modules/alerts/AlertsModule').then((m) => ({ default: m.AlertsModule })));
-const CalendarModule = lazy(() => import('@/modules/calendar/CalendarModule').then((m) => ({ default: m.CalendarModule })));
-const RenewalsModule = lazy(() => import('@/modules/renewals/RenewalsModule').then((m) => ({ default: m.RenewalsModule })));
 const TenantsModule = lazy(() => import('@/modules/tenants/TenantsModule').then((m) => ({ default: m.TenantsModule })));
 const HealthModule = lazy(() => import('@/modules/health/HealthModule').then((m) => ({ default: m.HealthModule })));
-const DocumentsModule = lazy(() => import('@/modules/documents/DocumentsModule').then((m) => ({ default: m.DocumentsModule })));
 const PrincipalModule = lazy(() => import('@/modules/principal/PrincipalModule').then((m) => ({ default: m.PrincipalModule })));
 const CloseModule = lazy(() => import('@/modules/close/CloseModule').then((m) => ({ default: m.CloseModule })));
 const IntelModule = lazy(() => import('@/modules/intel/IntelModule').then((m) => ({ default: m.IntelModule })));
-const CalibrationModule = lazy(() => import('@/modules/calibration/CalibrationModule').then((m) => ({ default: m.CalibrationModule })));
+const WorklistModule = lazy(() => import('@/modules/worklist/WorklistModule').then((m) => ({ default: m.WorklistModule })));
+const DataModule = lazy(() => import('@/modules/data/DataModule').then((m) => ({ default: m.DataModule })));
 const LeaseForecastModule = lazy(() => import('@/modules/leasing/LeaseForecastModule').then((m) => ({ default: m.LeaseForecastModule })));
 const CapitalModule = lazy(() => import('@/modules/capital/CapitalModule').then((m) => ({ default: m.CapitalModule })));
 const ProspectDemandModule = lazy(() => import('@/modules/intel/ProspectDemandModule').then((m) => ({ default: m.ProspectDemandModule })));
@@ -56,7 +52,7 @@ const TaxesModule = lazy(() => import('@/modules/taxes/TaxesModule').then((m) =>
 const CommandBrainModule = lazy(() => import('@/modules/command-brain/CommandBrainModule').then((m) => ({ default: m.CommandBrainModule })));
 const LeaseMarketModule = lazy(() => import('@/modules/lease-market/LeaseMarketModule').then((m) => ({ default: m.LeaseMarketModule })));
 
-export type ModuleGroup = 'Command' | 'Assets' | 'Capital' | 'Market';
+export type ModuleGroup = 'Command' | 'Assets' | 'Capital' | 'Market' | 'System';
 
 export interface ModuleDef {
   id: string;
@@ -64,6 +60,12 @@ export interface ModuleDef {
   icon: LucideIcon;
   group: ModuleGroup;
   Component: ComponentType;
+  /** Two-level registry (IA decongestion Phase 4a): the destination's tabs (`?tab=<id>`). Indexed by
+   *  the command palette as "Destination > Tab". Max 5 (`MAX_TABS_PER_DESTINATION`). */
+  tabs?: readonly ModuleTabDef[];
+  /** False keeps the module routable (URL + palette) but off the sidebar rail (System Health —
+   *  surfaced as a TopBar status dot). Default true. */
+  rail?: boolean;
 }
 
 /** The module registry — drop a new entry here and it appears in the rail. */
@@ -71,15 +73,12 @@ export const MODULES: ModuleDef[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard, group: 'Command', Component: OverviewModule },
   { id: 'principal', label: 'Principal Home', icon: Briefcase, group: 'Command', Component: PrincipalModule },
   { id: 'pipeline', label: 'Acquisitions', icon: Target, group: 'Command', Component: AcquisitionsModule },
-  { id: 'tasks', label: 'Tasks', icon: CheckSquare, group: 'Command', Component: TasksModule },
-  { id: 'alerts', label: 'Alerts', icon: Bell, group: 'Command', Component: AlertsModule },
-  { id: 'calendar', label: 'Calendar', icon: CalendarDays, group: 'Command', Component: CalendarModule },
-  { id: 'renewals', label: 'Renewals', icon: RefreshCw, group: 'Command', Component: RenewalsModule },
+  { id: 'worklist', label: 'Worklist', icon: CheckSquare, group: 'Command', Component: WorklistModule, tabs: WORKLIST_TABS },
   { id: 'insights', label: 'Insights', icon: Lightbulb, group: 'Command', Component: InsightsModule },
   { id: 'command-brain', label: 'Command Brain', icon: BrainCircuit, group: 'Command', Component: CommandBrainModule },
   { id: 'portfolio', label: 'Portfolio', icon: Building2, group: 'Assets', Component: PortfolioModule },
-  { id: 'intel', label: 'Property Financials', icon: Database, group: 'Assets', Component: IntelModule },
-  { id: 'calibration', label: 'Calibration', icon: Gauge, group: 'Assets', Component: CalibrationModule },
+  // Financials — module id stays `intel` so /intel/:propertyId deep links + MODULE_PRIMARY_TYPE keep working.
+  { id: 'intel', label: 'Financials', icon: BarChart3, group: 'Assets', Component: IntelModule, tabs: INTEL_TABS },
   { id: 'leases', label: 'Leases', icon: FileText, group: 'Assets', Component: LeasesModule },
   { id: 'leasing', label: 'Leasing', icon: TrendingUp, group: 'Assets', Component: LeaseForecastModule },
   { id: 'prospect-demand', label: 'Demand Signals', icon: Radar, group: 'Assets', Component: ProspectDemandModule },
@@ -92,8 +91,9 @@ export const MODULES: ModuleDef[] = [
   { id: 'taxes', label: 'Taxes', icon: Receipt, group: 'Capital', Component: TaxesModule },
   { id: 'market', label: 'Market', icon: LineChart, group: 'Market', Component: MarketModule },
   { id: 'lease-market', label: 'Lease Market', icon: Building2, group: 'Market', Component: LeaseMarketModule },
-  { id: 'documents', label: 'Documents', icon: FileSearch, group: 'Market', Component: DocumentsModule },
-  { id: 'health', label: 'System Health', icon: Activity, group: 'Market', Component: HealthModule },
+  { id: 'data', label: 'Data', icon: Database, group: 'System', Component: DataModule, tabs: DATA_TABS },
+  // System Health left the rail in Phase 4a — it is a TopBar status dot; /health still resolves.
+  { id: 'health', label: 'System Health', icon: Activity, group: 'System', Component: HealthModule, rail: false },
 ];
 
-export const MODULE_GROUPS: ModuleGroup[] = ['Command', 'Assets', 'Capital', 'Market'];
+export const MODULE_GROUPS: ModuleGroup[] = ['Command', 'Assets', 'Capital', 'Market', 'System'];

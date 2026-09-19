@@ -4,7 +4,7 @@ import type { ScenarioName } from '@contracts/index';
 import { MODULES } from '@/shell/modules';
 import { UiContext, type EntityRef } from './ui-context';
 import type { DraftRequest } from './draft';
-import { parseRoute, entityPath, intelPropertyPath } from './routing';
+import { parseRoute, entityPath, intelPropertyPath, resolveLegacyRoute } from './routing';
 
 const MODULE_IDS = MODULES.map((m) => m.id);
 const SCENARIOS: ScenarioName[] = ['Base', 'Upside', 'Downside'];
@@ -32,7 +32,22 @@ export function UiProvider({ children }: { children: ReactNode }) {
     : 'Base';
   const search = location.search; // preserve ?scenario across module/drawer navigations
 
-  const setActiveModule = useCallback((id: string) => navigate(`/${id}${search}`), [navigate, search]);
+  // A legacy (absorbed) id — e.g. the AlertBell's 'alerts' — routes to its destination + tab.
+  const setActiveModule = useCallback(
+    (id: string) => navigate(resolveLegacyRoute(`/${id}`, search) ?? `/${id}${search}`),
+    [navigate, search],
+  );
+  // Palette "Destination > Tab" entries: `/<dest>?tab=<id>`, keeping ?scenario/?still and dropping
+  // any stale ?view= (an inner SegmentedControl param belongs to the previous tab).
+  const openTab = useCallback(
+    (moduleId: string, tabId: string) => {
+      const params = new URLSearchParams(search);
+      params.delete('view');
+      params.set('tab', tabId);
+      navigate(`/${moduleId}?${params.toString()}`);
+    },
+    [navigate, search],
+  );
   const openEntity = useCallback((ref: EntityRef) => navigate(`${entityPath(ref)}${search}`), [navigate, search]);
   // Intel deep link (PFI Phase B.3 item 5) — navigates to `/intel/:propertyId`, which focuses the
   // intel Property tab WITHOUT opening the global EntityDrawer (intel has no MODULE_PRIMARY_TYPE).
@@ -93,6 +108,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
     () => ({
       activeModuleId,
       setActiveModule,
+      openTab,
       paletteOpen,
       openPalette,
       closePalette,
@@ -112,7 +128,7 @@ export function UiProvider({ children }: { children: ReactNode }) {
       openDraft,
       closeDraft,
     }),
-    [activeModuleId, setActiveModule, paletteOpen, openPalette, closePalette, togglePalette, selected, openEntity, closeEntity, intelPropertyId, openIntelProperty, aiOpen, openAi, closeAi, toggleAi, scenario, setScenario, draft, openDraft, closeDraft],
+    [activeModuleId, setActiveModule, openTab, paletteOpen, openPalette, closePalette, togglePalette, selected, openEntity, closeEntity, intelPropertyId, openIntelProperty, aiOpen, openAi, closeAi, toggleAi, scenario, setScenario, draft, openDraft, closeDraft],
   );
 
   return <UiContext.Provider value={value}>{children}</UiContext.Provider>;

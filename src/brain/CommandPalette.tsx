@@ -75,6 +75,26 @@ export function CommandPalette() {
                     })}
                   </Command.Group>
 
+                  {/* "Destination > Tab" — the safety valve for every module absorbed into a destination:
+                      each stays findable by its legacy name (tab label + aliases). */}
+                  <Command.Group heading="Tabs">
+                    {MODULES.flatMap((m) =>
+                      (m.tabs ?? []).map((t) => (
+                        <Command.Item
+                          key={`${m.id}:${t.id}`}
+                          value={`go ${m.label} ${t.label} ${(t.aliases ?? []).join(' ')} tab`}
+                          onSelect={() => {
+                            ui.openTab(m.id, t.id);
+                            ui.closePalette();
+                          }}
+                        >
+                          <m.icon size={15} style={{ color: 'var(--accent)' }} />
+                          <span style={{ color: 'inherit' }}>{m.label} &rsaquo; {t.label}</span>
+                        </Command.Item>
+                      )),
+                    )}
+                  </Command.Group>
+
                   <Command.Group heading="Actions">
                     <Command.Item value="refresh data reload workbook" onSelect={() => { refresh(); ui.closePalette(); }}>
                       <RefreshCw size={15} style={{ color: 'var(--accent)' }} />
