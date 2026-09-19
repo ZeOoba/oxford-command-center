@@ -29,7 +29,8 @@ test('scenario switch recomputes the portfolio', async ({ page }) => {
 test('leases module shows the rent roll', async ({ page }) => {
   await page.goto('/?still=1');
   await page.getByRole('button', { name: 'Leases' }).click();
-  await expect(page.getByText('Rent Roll')).toBeVisible();
+  // exact:true — the default tab strip now also carries a "Rent roll" label (different case).
+  await expect(page.getByText('Rent Roll', { exact: true })).toBeVisible();
   await expect(page.getByText(/Eurosort/).first()).toBeVisible();
 });
 

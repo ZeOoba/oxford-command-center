@@ -7,19 +7,22 @@ import { Skeleton } from '@/primitives/Skeleton';
 import { Tabs, TabPanel } from '@/primitives/Tabs';
 import { AreaChart } from '@/charts/AreaChart';
 import { useTabParam } from '@/lib/useTabParam';
+import { FORCE_MOUNT_PANEL } from '@/lib/forceMountPanel';
 import { useMarketIntel } from './hooks';
 import { MarketScorecard } from './MarketScorecard';
 import { CompsView } from './CompsView';
 
-type MarketTab = 'macro' | 'comps';
-const MARKET_TAB_KEYS: readonly MarketTab[] = ['macro', 'comps'];
+type MarketTab = 'macro' | 'scorecards' | 'comps';
+const MARKET_TAB_KEYS: readonly MarketTab[] = ['macro', 'scorecards', 'comps'];
 const MARKET_TABS: Array<{ id: MarketTab; label: string }> = [
   { id: 'macro', label: 'Macro' },
+  { id: 'scorecards', label: 'Scorecards' },
   { id: 'comps', label: 'Comps' },
 ];
 
-// Tab shell — hosts the pre-existing FRED macro dashboard (MacroView, unchanged) alongside the
-// Comps tab (task 7.3). Tab state lives in the URL (`?tab=`) via useTabParam.
+// Tab shell — hosts the FRED macro dashboard (MacroView: badge + KPIs + 10Y + Acquisition Lens,
+// a same-glance group), the Market Intelligence scorecards, and the Comps tab (task 7.3). Tab
+// state lives in the URL (`?tab=`) via useTabParam.
 export function MarketModule() {
   const [tab, setTab] = useTabParam<MarketTab>(MARKET_TAB_KEYS, 'macro');
 
@@ -31,10 +34,14 @@ export function MarketModule() {
 
       {/* keyboardActivation="manual" — the Comps tab mounts CompsView, which fires a fresh
           useCapitalAllocationReport() warehouse query on mount, so arrowing through the strip
-          shouldn't fan out queries (plan R9). */}
+          shouldn't fan out queries (plan R9). The macro / scorecards panels are force-mounted
+          (they were one scroll before the split, so useMarketIntel already fired on mount). */}
       <Tabs tabs={MARKET_TABS} selectedKey={tab} onSelectionChange={(k) => setTab(k as MarketTab)} keyboardActivation="manual" aria-label="Market views">
-        <TabPanel id="macro">
+        <TabPanel id="macro" {...FORCE_MOUNT_PANEL}>
           <MacroView />
+        </TabPanel>
+        <TabPanel id="scorecards" {...FORCE_MOUNT_PANEL}>
+          <MarketIntelSection />
         </TabPanel>
         <TabPanel id="comps">
           <CompsView />
@@ -119,12 +126,13 @@ function MacroView() {
           </div>
         </Card>
       </div>
-      {/* Phase 5 W3 — Market intelligence scorecard per cluster */}
-      <MarketIntelSection />
     </div>
   );
 }
 
+// Phase 5 W3 — Market intelligence scorecard per cluster. Lives on its own tab, so the two
+// no-data branches that used to render nothing (a blank gap in the Macro scroll) now render an
+// explanatory empty state instead (R7 — a tab is never left blank).
 function MarketIntelSection() {
   const { data: signals, isLoading, error } = useMarketIntel();
 
@@ -134,8 +142,16 @@ function MarketIntelSection() {
     </div>
   );
 
-  if (error || !signals) return null;
-  if (signals.length === 0) return null;
+  if (error || !signals || signals.length === 0) return (
+    <Card>
+      <CardHeader title="Market Intelligence" trailing={<Badge tone="amber">Advisory</Badge>} />
+      <div className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-tertiary)' }}>
+        {error || !signals
+          ? 'Market intelligence scorecards are unavailable right now — they load from the warehouse on the local Brain Server.'
+          : 'No market intelligence scorecards yet — none of the tracked markets has a computed signal.'}
+      </div>
+    </Card>
+  );
 
   return (
     <div>

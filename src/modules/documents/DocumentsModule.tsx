@@ -3,6 +3,9 @@ import { FileSearch, Sparkles } from 'lucide-react';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
+import { Tabs, TabPanel } from '@/primitives/Tabs';
+import { useTabParam } from '@/lib/useTabParam';
+import { FORCE_MOUNT_PANEL } from '@/lib/forceMountPanel';
 import { fmtNum } from '@analytics/index';
 import { useUi } from '@/brain/ui-context';
 import { useDocSearch } from '@/data/documents';
@@ -15,6 +18,13 @@ interface DocStatus {
   docs: Array<{ name: string; chunks: number }>;
 }
 
+type DocTab = 'search' | 'corpus';
+const DOC_TAB_KEYS: readonly DocTab[] = ['search', 'corpus'];
+const DOC_TABS: Array<{ id: DocTab; label: string }> = [
+  { id: 'search', label: 'Search' },
+  { id: 'corpus', label: 'Corpus' },
+];
+
 /**
  * Documents (Phase 6) — lease/PSA/OM corpus the agent searches (RAG). Indexing runs on the local
  * Brain Server only; the read-only mirror has no document index. Search itself is via the Ask panel
@@ -22,6 +32,7 @@ interface DocStatus {
  */
 export function DocumentsModule() {
   const ui = useUi();
+  const [tab, setTab] = useTabParam<DocTab>(DOC_TAB_KEYS, 'search');
   const [status, setStatus] = useState<DocStatus | null>(null);
   const [offline, setOffline] = useState(false);
 
@@ -50,46 +61,56 @@ export function DocumentsModule() {
         <KpiStat label="Search" value={null} format={() => 'In-app + Ask'} sublabel="cited answers" />
       </div>
 
-      <DocSearch />
+      {/* Both panels are force-mounted so the search query / folder filter / results survive a tab
+          round-trip (they were one scroll before the split). The corpus fetch lives in this
+          component's effect, so no tab fires its own query — automatic keyboard activation. */}
+      <Tabs tabs={DOC_TABS} selectedKey={tab} onSelectionChange={(k) => setTab(k as DocTab)} aria-label="Document views">
+        <TabPanel id="search" {...FORCE_MOUNT_PANEL}>
+          <div className="flex flex-col gap-4">
+            <DocSearch />
 
-      <Card>
-        <CardHeader
-          title="Document Corpus"
-          trailing={
-            offline ? <Badge tone="neutral">Mirror — read-only</Badge> : status?.configured ? <Badge tone="green">Indexed</Badge> : <Badge tone="amber">Not configured</Badge>
-          }
-        />
-        {offline ? (
-          <Hint>Document search runs on the local Brain Server, not the read-only mirror.</Hint>
-        ) : !status ? (
-          <Hint>Checking the document index…</Hint>
-        ) : !status.configured ? (
-          <Hint>
-            No documents folder configured. Set <code className="num">DOCUMENTS_DIR</code> on the Brain Server (point it at your
-            OneDrive folder), allowlist folders via <code className="num">DOCUMENTS_INCLUDE_DIRS</code>, then run{' '}
-            <code className="num">npm run index:docs</code>.
-          </Hint>
-        ) : status.documents === 0 ? (
-          <Hint>Folder configured ({status.dir}) but no supported documents (.pdf/.txt/.md) found.</Hint>
-        ) : (
-          <ul className="flex flex-col">
-            {status.docs.map((d) => (
-              <li key={d.name} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm" style={{ borderTop: '1px solid var(--border-subtle)' }}>
-                <span className="truncate" style={{ color: 'var(--text-secondary)' }}>{d.name}</span>
-                <span className="num shrink-0 text-2xs" style={{ color: 'var(--text-tertiary)' }}>{d.chunks} passages</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-
-      <button
-        onClick={ui.openAi}
-        className="flex items-center justify-center gap-2 rounded-[var(--radius-md)] px-4 py-3 text-sm font-semibold"
-        style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--text-accent)' }}
-      >
-        <Sparkles size={15} /> Ask a document question
-      </button>
+            <button
+              onClick={ui.openAi}
+              className="flex items-center justify-center gap-2 rounded-[var(--radius-md)] px-4 py-3 text-sm font-semibold"
+              style={{ background: 'var(--accent-quiet)', border: '1px solid color-mix(in oklab, var(--accent) 35%, transparent)', color: 'var(--text-accent)' }}
+            >
+              <Sparkles size={15} /> Ask a document question
+            </button>
+          </div>
+        </TabPanel>
+        <TabPanel id="corpus" {...FORCE_MOUNT_PANEL}>
+          <Card>
+            <CardHeader
+              title="Document Corpus"
+              trailing={
+                offline ? <Badge tone="neutral">Mirror — read-only</Badge> : status?.configured ? <Badge tone="green">Indexed</Badge> : <Badge tone="amber">Not configured</Badge>
+              }
+            />
+            {offline ? (
+              <Hint>Document search runs on the local Brain Server, not the read-only mirror.</Hint>
+            ) : !status ? (
+              <Hint>Checking the document index…</Hint>
+            ) : !status.configured ? (
+              <Hint>
+                No documents folder configured. Set <code className="num">DOCUMENTS_DIR</code> on the Brain Server (point it at your
+                OneDrive folder), allowlist folders via <code className="num">DOCUMENTS_INCLUDE_DIRS</code>, then run{' '}
+                <code className="num">npm run index:docs</code>.
+              </Hint>
+            ) : status.documents === 0 ? (
+              <Hint>Folder configured ({status.dir}) but no supported documents (.pdf/.txt/.md) found.</Hint>
+            ) : (
+              <ul className="flex flex-col">
+                {status.docs.map((d) => (
+                  <li key={d.name} className="flex items-center justify-between gap-3 px-4 py-2.5 text-sm" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                    <span className="truncate" style={{ color: 'var(--text-secondary)' }}>{d.name}</span>
+                    <span className="num shrink-0 text-2xs" style={{ color: 'var(--text-tertiary)' }}>{d.chunks} passages</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </Card>
+        </TabPanel>
+      </Tabs>
     </div>
   );
 }
