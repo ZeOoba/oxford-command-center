@@ -13,6 +13,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import { CommandBrainModule } from '../../src/modules/command-brain/CommandBrainModule';
 import { MemoryBoard } from '../../src/modules/command-brain/MemoryBoard';
 import { TrackRecordList } from '../../src/modules/command-brain/TrackRecordList';
@@ -109,13 +110,18 @@ function seededClient(report: BrainReport): QueryClient {
   return qc;
 }
 
-function renderModule(report: BrainReport) {
+// useTabParam needs a Router context. `entry` deep-links a tab (`?tab=`), default = Track record.
+function renderModule(report: BrainReport, entry = '/command-brain') {
   return render(
-    <QueryClientProvider client={seededClient(report)}>
-      <CommandBrainModule />
-    </QueryClientProvider>,
+    <MemoryRouter initialEntries={[entry]}>
+      <QueryClientProvider client={seededClient(report)}>
+        <CommandBrainModule />
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
+
+const clickTab = (name: RegExp) => fireEvent.click(screen.getByRole('tab', { name }));
 
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({}), { status: 500 })));
@@ -244,15 +250,18 @@ describe('CommandBrainModule — fully empty report renders honest empty states,
     expect(document.body.textContent).not.toMatch(/0\.00\s*%/);
     expect(document.body.textContent).not.toMatch(/NaN/);
 
-    // Every section's honest empty state.
+    // Every section's honest empty state (each tab is selected in turn — R7: empty tabs still render).
     expect(screen.getByText(/no scoreable months yet/i)).toBeTruthy();
     expect(
       screen.getByText('No resolved verdicts yet — first outcomes accumulate as acquisitions/allocations/appeals resolve'),
     ).toBeTruthy();
+    clickTab(/^Feedback/);
     expect(screen.getByText('No open questions to act on right now.')).toBeTruthy();
     expect(screen.getByText('No open questions right now.')).toBeTruthy();
-    expect(screen.getByText('No scoring-config changes recorded yet.')).toBeTruthy();
+    clickTab(/^Memory/);
     expect(screen.getAllByText('Clear')).toHaveLength(3);
+    clickTab(/^Versions/);
+    expect(screen.getByText('No scoring-config changes recorded yet.')).toBeTruthy();
 
     // The real zero counts (watchedSignals/recalibrations/resolvedTotal) are honest literal data,
     // not fabricated — but no 'partial' vocabulary should ever leak in, empty or not.
@@ -277,7 +286,7 @@ describe('CommandBrainModule — Feedback Accept/Dismiss', () => {
       }),
     );
 
-    renderModule(POPULATED_REPORT);
+    renderModule(POPULATED_REPORT, '/command-brain?tab=feedback');
     const dataQualityQuestion = POPULATED_REPORT.openQuestions[0]!;
     const expectedSubjectId = openQuestionSubjectId(dataQualityQuestion);
     const expectedSubjectKind = openQuestionSubjectKind(dataQualityQuestion.kind);
@@ -306,7 +315,7 @@ describe('CommandBrainModule — Feedback Accept/Dismiss', () => {
       }),
     );
 
-    renderModule(POPULATED_REPORT);
+    renderModule(POPULATED_REPORT, '/command-brain?tab=feedback');
     const dormantQuestion = POPULATED_REPORT.openQuestions[1]!;
     const expectedSubjectId = openQuestionSubjectId(dormantQuestion);
     const expectedSubjectKind = openQuestionSubjectKind(dormantQuestion.kind);
@@ -330,3 +339,60 @@ describe('openQuestionSubjectId — stability', () => {
   });
 });
 
+
+describe('CommandBrainModule — Phase 2 tab structure', () => {
+  it('lands on Track record: KPI strip + accuracy + track record visible, content of other tabs not rendered', () => {
+    renderModule(POPULATED_REPORT);
+    expect(screen.getByRole('tab', { name: /^Track record/ }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('Flag Accuracy Over Time')).toBeTruthy();
+    expect(screen.getByText('Hit')).toBeTruthy();
+    expect(screen.queryByText('Version Log')).toBeNull();
+    expect(screen.queryByText('Open Questions')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Accept' })).toBeNull();
+    // R2: disclaimer + KPI strip are above the strip, visible regardless of tab.
+    expect(screen.getByText(/nothing here is invented/)).toBeTruthy();
+    expect(screen.getByText('Signals Watched')).toBeTruthy();
+  });
+
+  it('every moved section is reachable by clicking its tab (nothing lost)', () => {
+    renderModule(POPULATED_REPORT);
+    clickTab(/^Feedback/);
+    expect(screen.getAllByRole('button', { name: 'Accept' })).toHaveLength(2);
+    expect(screen.getByText('Open Questions')).toBeTruthy();
+    expect(screen.queryByText('Flag Accuracy Over Time')).toBeNull();
+    clickTab(/^Memory/);
+    expect(screen.getByText('DC Metro — 85%')).toBeTruthy();
+    clickTab(/^Versions/);
+    expect(screen.getByText('Version Log')).toBeTruthy();
+    expect(screen.getByText('INTEL_CONFIG weights ratified (Option B)')).toBeTruthy();
+    clickTab(/^Track record/);
+    expect(screen.getByText('Flag Accuracy Over Time')).toBeTruthy();
+  });
+
+  it('deep-links a non-default tab via ?tab=', () => {
+    renderModule(POPULATED_REPORT, '/command-brain?tab=versions');
+    expect(screen.getByRole('tab', { name: /^Versions/ }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('Version Log')).toBeTruthy();
+    expect(screen.queryByText('Flag Accuracy Over Time')).toBeNull();
+  });
+
+  it('falls back to Track record for an unknown ?tab= value', () => {
+    renderModule(POPULATED_REPORT, '/command-brain?tab=bogus');
+    expect(screen.getByRole('tab', { name: /^Track record/ }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it('renders the Open Questions section exactly once, and it keeps the wouldClose line the Feedback rows omit', () => {
+    renderModule(POPULATED_REPORT, '/command-brain?tab=feedback');
+    expect(screen.getAllByText('Open Questions')).toHaveLength(1);
+    expect(screen.getByText('→ Import the missing AR-aging files')).toBeTruthy();
+    expect(screen.getByText('→ Re-run the anomaly detector after the next import')).toBeTruthy();
+  });
+
+  it('Feedback tab carries the open-question count badge, and no badge at 0', () => {
+    renderModule(POPULATED_REPORT);
+    expect(screen.getByRole('tab', { name: 'Feedback 2' })).toBeTruthy();
+    cleanup();
+    renderModule(EMPTY_REPORT);
+    expect(screen.getByRole('tab', { name: 'Feedback' })).toBeTruthy();
+  });
+});

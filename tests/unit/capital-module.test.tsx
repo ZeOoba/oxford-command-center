@@ -17,6 +17,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import { ToastProvider } from '../../src/primitives/Toast';
 import { CapitalModule } from '../../src/modules/capital/CapitalModule';
 import type { CapitalAllocationResponse } from '../../src/contracts/capital';
@@ -207,13 +208,16 @@ function seededClient(): QueryClient {
   return qc;
 }
 
-function renderModule() {
+// useTabParam needs a Router context. `entry` deep-links a tab (`?tab=`); default = Allocation.
+function renderModule(entry = '/capital', qc: QueryClient = seededClient()) {
   return render(
-    <QueryClientProvider client={seededClient()}>
-      <ToastProvider>
-        <CapitalModule />
-      </ToastProvider>
-    </QueryClientProvider>,
+    <MemoryRouter initialEntries={[entry]}>
+      <QueryClientProvider client={qc}>
+        <ToastProvider>
+          <CapitalModule />
+        </ToastProvider>
+      </QueryClientProvider>
+    </MemoryRouter>,
   );
 }
 
@@ -259,13 +263,7 @@ describe('CapitalModule — IC Memo export (folded in from CapitalAllocationModu
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
     qc.setQueryData(['warehouse', 'capital', 'allocation'], allocationResponse());
     qc.setQueryData(['warehouse', 'capital-allocation', 'report'], { ...capitalAllocationReport(), entries: [] });
-    render(
-      <QueryClientProvider client={qc}>
-        <ToastProvider>
-          <CapitalModule />
-        </ToastProvider>
-      </QueryClientProvider>,
-    );
+    renderModule('/capital', qc);
     const link = screen.getByText('Export IC Memo').closest('a')!;
     expect(link.getAttribute('aria-disabled')).toBe('true');
     expect(link.getAttribute('href')).toBeNull();
@@ -316,13 +314,7 @@ describe('CapitalModule / AllocationCard — round 8 fresh-sweep: debt-book trus
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
     qc.setQueryData(['warehouse', 'capital', 'allocation'], allocationResponseWithTrustIssues());
     qc.setQueryData(['warehouse', 'capital-allocation', 'report'], capitalAllocationReport());
-    return render(
-      <QueryClientProvider client={qc}>
-        <ToastProvider>
-          <CapitalModule />
-        </ToastProvider>
-      </QueryClientProvider>,
-    );
+    return renderModule('/capital', qc);
   }
 
   it('shows a "book not trusted" badge and the debtBook dataQuality text for a degraded verdict', () => {
@@ -349,5 +341,70 @@ describe('CapitalModule / AllocationCard — round 8 fresh-sweep: debt-book trus
     expect(screen.queryByText('book not trusted')).toBeNull();
     expect(screen.queryByText('book not loaded')).toBeNull();
     expect(screen.queryByText(/on untrusted book/)).toBeNull();
+  });
+});
+
+describe('CapitalModule — Phase 2 tab structure (Allocation · Pipeline)', () => {
+  function clientWithPipeline(): QueryClient {
+    const qc = seededClient();
+    const base = allocationResponse();
+    qc.setQueryData(['warehouse', 'capital', 'allocation'], {
+      ...base,
+      portfolio: {
+        ...base.portfolio,
+        pipeline: [
+          { candidateId: 'cand-1', address: '500 Commerce Dr', market: null, composite: 81.4, tier: 'T1', leveredIrr: 0.153, basisDiscountPct: 0.12 },
+        ],
+      },
+    });
+    return qc;
+  }
+
+  it('lands on Allocation: cards + cap-rate table + IC-memo/Notion buttons + footnote visible; Buy Pipeline not rendered', () => {
+    renderModule('/capital', clientWithPipeline());
+    expect(screen.getByRole('tab', { name: 'Allocation' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getAllByText('Prop One').length).toBeGreaterThan(0);
+    expect(screen.getByText('Market Cap-Rate Positioning')).toBeTruthy();
+    expect(screen.getByText('Export IC Memo')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Sync capital decisions to Notion' })).toBeTruthy();
+    expect(screen.getByText(/Implied cap = Spine-A NOI/)).toBeTruthy();
+    expect(screen.queryByText('Buy Pipeline')).toBeNull();
+    expect(screen.queryByText('500 Commerce Dr')).toBeNull();
+  });
+
+  it('keeps each verdict beside its implied-cap-rate columns in the same tab (R1 same-glance pair)', () => {
+    renderModule();
+    // Verdict card (AllocationCard) and the cap-rate table row for the same property are co-resident.
+    expect(screen.getByText('Market Cap-Rate Positioning')).toBeTruthy();
+    expect(screen.getByText('7.2%')).toBeTruthy();
+    expect(screen.getAllByText('Prop One').length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('Pipeline tab is reachable and holds the Buy Pipeline (nothing lost); allocation content is unmounted', () => {
+    renderModule('/capital', clientWithPipeline());
+    fireEvent.click(screen.getByRole('tab', { name: 'Pipeline' }));
+    expect(screen.getByText('Buy Pipeline')).toBeTruthy();
+    expect(screen.getByText('500 Commerce Dr')).toBeTruthy();
+    expect(screen.getByText('1 candidates')).toBeTruthy();
+    expect(screen.queryByText('Market Cap-Rate Positioning')).toBeNull();
+  });
+
+  it('keeps the banner/headline strip above the tabs on every tab (R2)', () => {
+    renderModule('/capital?tab=pipeline', clientWithPipeline());
+    expect(screen.getByText('Capital Allocation')).toBeTruthy();
+    expect(screen.getByText('Hold 1')).toBeTruthy();
+  });
+
+  it('deep-links the Pipeline tab via ?tab=', () => {
+    renderModule('/capital?tab=pipeline', clientWithPipeline());
+    expect(screen.getByRole('tab', { name: 'Pipeline' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByText('500 Commerce Dr')).toBeTruthy();
+  });
+
+  it('an empty pipeline still renders the Pipeline tab with an explanatory empty state (R7)', () => {
+    renderModule('/capital?tab=pipeline');
+    expect(screen.getByRole('tab', { name: 'Pipeline' })).toBeTruthy();
+    expect(screen.getByText('Buy Pipeline')).toBeTruthy();
+    expect(screen.getByText(/No T1\/T2 buy candidates/)).toBeTruthy();
   });
 });
