@@ -201,7 +201,7 @@ export function CommandBrainModule() {
       <TabPanel id="feedback">
       <div className="flex flex-col gap-4">
       <Card>
-        <CardHeader title="Feedback"trailing={<Badge tone="neutral">display-only</Badge>} />
+        <CardHeader title="Feedback" trailing={<Badge tone="neutral">display-only</Badge>} />
         <div className="px-4 pt-2 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
           Reuses the open questions below as the actionable feed — this report carries no separate
           ranked-insights feed. Accepting or dismissing records a decision; it never changes a score.
