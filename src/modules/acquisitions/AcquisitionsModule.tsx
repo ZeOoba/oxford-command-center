@@ -7,8 +7,9 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
+import { Tabs, TabPanel } from '@/primitives/Tabs';
 import { BarList } from '@/charts/BarList';
-import { cn } from '@/lib/cn';
+import { useTabParam } from '@/lib/useTabParam';
 import type { Deal, DealStage } from '@contracts/index';
 import { ORA_CLIENT_HEADERS } from '@contracts/client-header';
 import { AcquisitionWorkbench } from './AcquisitionWorkbench';
@@ -19,10 +20,8 @@ import { useQueryClient } from '@tanstack/react-query';
 
 const STAGE_ORDER: DealStage[] = ['Sourcing', 'Candidate', 'LOI/PSA', 'Due Diligence', 'Refinance', 'Closing', 'Closed', 'Dead'];
 
-// This module had no internal tab-switcher until the Grader was added; the segmented-button style
-// below is lifted verbatim from the established in-repo pattern (src/modules/debt/DebtModule.tsx)
-// rather than inventing a new one.
 type AcqTab = 'pipeline' | 'grader';
+const ACQ_TAB_KEYS: readonly AcqTab[] = ['pipeline', 'grader'];
 const ACQ_TABS: Array<{ id: AcqTab; label: string }> = [
   { id: 'pipeline', label: 'Pipeline' },
   { id: 'grader', label: 'Grader' },
@@ -51,7 +50,7 @@ export function AcquisitionsModule() {
   const [scoreDealId, setScoreDealId] = useState<string>('');
   const [sync, setSync] = useState<SyncState>({ phase: 'idle' });
   const [hubspotSync, setHubspotSync] = useState<SyncState>({ phase: 'idle' });
-  const [acqTab, setAcqTab] = useState<AcqTab>('pipeline');
+  const [acqTab, setAcqTab] = useTabParam<AcqTab>(ACQ_TAB_KEYS, 'pipeline');
 
   async function handleNotionSync() {
     setSync({ phase: 'syncing' });
@@ -134,36 +133,6 @@ export function AcquisitionsModule() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-1">
-          {ACQ_TABS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setAcqTab(t.id)}
-              className={cn(
-                'num rounded-full px-2.5 py-0.5 text-2xs font-semibold uppercase transition-colors',
-                acqTab === t.id ? 'cursor-default' : 'cursor-pointer',
-              )}
-              style={
-                acqTab === t.id
-                  ? {
-                      background: 'color-mix(in oklab, var(--accent) 16%, transparent)',
-                      color: 'var(--text-accent)',
-                      border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)',
-                      letterSpacing: '0.06em',
-                    }
-                  : {
-                      background: 'transparent',
-                      color: 'var(--text-tertiary)',
-                      border: '1px solid transparent',
-                      letterSpacing: '0.06em',
-                    }
-              }
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
         <button
           type="button"
           onClick={() => { void handleNotionSync(); }}
@@ -238,56 +207,62 @@ export function AcquisitionsModule() {
         )}
       </div>
 
-      {acqTab === 'pipeline' ? (
-        <>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            <KpiStat label="Active Deals" value={active.length} format={fmtNum} accentColor="var(--accent)" sublabel={`${deals.length} total`} />
-            <KpiStat label="Closing Now" value={deals.filter((d) => d.stage === 'Closing').length} format={fmtNum} accentColor="var(--color-neg)" />
-            <KpiStat label="Best Active Cap" value={bestCap === 0 ? null : bestCap * 100} format={(n) => (n === null ? '—' : `${n.toFixed(2)}%`)} accentColor="var(--color-pos)" />
-            <KpiStat label="Pipeline SF" value={pipelineSf} format={fmtSf} accentColor="var(--color-info)" />
-          </div>
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[320px_1fr]">
+      {/* keyboardActivation="manual" — the Grader tab mounts PipelineTierBoard, which fires a
+          fresh useAcqIntel() warehouse query on mount, so arrowing through the strip shouldn't
+          fan out queries (plan R9). */}
+      <Tabs tabs={ACQ_TABS} selectedKey={acqTab} onSelectionChange={(k) => setAcqTab(k as AcqTab)} keyboardActivation="manual" aria-label="Acquisitions views">
+        <TabPanel id="pipeline">
+          <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+              <KpiStat label="Active Deals" value={active.length} format={fmtNum} accentColor="var(--accent)" sublabel={`${deals.length} total`} />
+              <KpiStat label="Closing Now" value={deals.filter((d) => d.stage === 'Closing').length} format={fmtNum} accentColor="var(--color-neg)" />
+              <KpiStat label="Best Active Cap" value={bestCap === 0 ? null : bestCap * 100} format={(n) => (n === null ? '—' : `${n.toFixed(2)}%`)} accentColor="var(--color-pos)" />
+              <KpiStat label="Pipeline SF" value={pipelineSf} format={fmtSf} accentColor="var(--color-info)" />
+            </div>
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[320px_1fr]">
+              <Card>
+                <CardHeader title="Pipeline by Stage" />
+                <div className="p-3">
+                  <BarList items={stageCounts.map((s) => ({ label: s.label, value: s.value, display: String(s.value) }))} />
+                </div>
+              </Card>
+              <Card>
+                <CardHeader title="Active Deals" trailing={<Badge tone="gold">{deals.length} deals</Badge>} />
+                <DataTable columns={cols} rows={deals} getRowId={(d) => d.id} onRowClick={(d) => ui.openEntity({ type: 'deal', id: d.id })} initialSort={{ key: 'stage', dir: 'asc' }} />
+              </Card>
+            </div>
+
             <Card>
-              <CardHeader title="Pipeline by Stage" />
+              <CardHeader title="Acquisition Workbench" trailing={<Badge tone="gold">Oxford Acquisition Score · live</Badge>} />
+              <div className="flex items-center gap-2 px-3 pt-3">
+                <span className="text-2xs uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>Prefill from</span>
+                <select
+                  className="rounded-[var(--radius-sm)] px-2 py-1 text-xs num"
+                  style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', color: 'var(--text-primary)' }}
+                  value={scoreDealId}
+                  onChange={(e) => setScoreDealId(e.target.value)}
+                >
+                  <option value="">— blank deal —</option>
+                  {deals.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
+              </div>
               <div className="p-3">
-                <BarList items={stageCounts.map((s) => ({ label: s.label, value: s.value, display: String(s.value) }))} />
+                <AcquisitionWorkbench
+                  deal={scoreDeal}
+                  savedInput={scoreDeal ? data.snapshot.acquisitionInputs[scoreDeal.id] ?? null : null}
+                />
               </div>
             </Card>
-            <Card>
-              <CardHeader title="Active Deals" trailing={<Badge tone="gold">{deals.length} deals</Badge>} />
-              <DataTable columns={cols} rows={deals} getRowId={(d) => d.id} onRowClick={(d) => ui.openEntity({ type: 'deal', id: d.id })} initialSort={{ key: 'stage', dir: 'asc' }} />
-            </Card>
+            <AcquisitionsIntel />
           </div>
-
-          <Card>
-            <CardHeader title="Acquisition Workbench" trailing={<Badge tone="gold">Oxford Acquisition Score · live</Badge>} />
-            <div className="flex items-center gap-2 px-3 pt-3">
-              <span className="text-2xs uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>Prefill from</span>
-              <select
-                className="rounded-[var(--radius-sm)] px-2 py-1 text-xs num"
-                style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', color: 'var(--text-primary)' }}
-                value={scoreDealId}
-                onChange={(e) => setScoreDealId(e.target.value)}
-              >
-                <option value="">— blank deal —</option>
-                {deals.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-              </select>
-            </div>
-            <div className="p-3">
-              <AcquisitionWorkbench
-                deal={scoreDeal}
-                savedInput={scoreDeal ? data.snapshot.acquisitionInputs[scoreDeal.id] ?? null : null}
-              />
-            </div>
-          </Card>
-          <AcquisitionsIntel />
-        </>
-      ) : (
-        <>
-          <GraderView />
-          <PipelineTierBoard />
-        </>
-      )}
+        </TabPanel>
+        <TabPanel id="grader">
+          <div className="flex flex-col gap-4">
+            <GraderView />
+            <PipelineTierBoard />
+          </div>
+        </TabPanel>
+      </Tabs>
     </div>
   );
 }

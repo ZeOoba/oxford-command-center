@@ -6,8 +6,11 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { DataTable, type Column } from '@/primitives/DataTable';
+import { Tabs, TabPanel } from '@/primitives/Tabs';
+import { SegmentedControl } from '@/primitives/SegmentedControl';
 import { BarChart } from '@/charts/BarChart';
 import { RentCurve } from '@/charts/RentCurve';
+import { useTabParam } from '@/lib/useTabParam';
 import { isWarehouseUnavailable, useWarehouseLive } from '../intel/hooks';
 import type {
   CellBenchmark, CompRow, ListedButLeased, ListingEventRow, ListingHygieneFlag, MarketDataQuality, MarketFreshness, PositioningRow,
@@ -20,24 +23,16 @@ import {
 } from './hooks';
 
 const MUTED = { color: 'var(--text-tertiary)' } as const;
-const TABS = ['Portfolio', 'Market Rents', 'Acquisition Radar', 'Changes', 'Data Quality'] as const;
-type Tab = (typeof TABS)[number];
 
-function Toggle({ active, onClick, children, role }: { active: boolean; onClick: () => void; children: ReactNode; role?: 'tab' }) {
-  return (
-    <button
-      type="button"
-      role={role}
-      aria-selected={role === 'tab' ? active : undefined}
-      aria-pressed={role === 'tab' ? undefined : active}
-      onClick={onClick}
-      className="rounded-[var(--radius-sm)] px-2 py-1 text-2xs"
-      style={{ border: `1px solid ${active ? 'var(--accent)' : 'var(--border-subtle)'}`, color: 'var(--text-secondary)' }}
-    >
-      {children}
-    </button>
-  );
-}
+type Tab = 'portfolio' | 'market-rents' | 'radar' | 'changes' | 'data-quality';
+const TAB_KEYS: readonly Tab[] = ['portfolio', 'market-rents', 'radar', 'changes', 'data-quality'];
+const TABS: Array<{ id: Tab; label: string }> = [
+  { id: 'portfolio', label: 'Portfolio' },
+  { id: 'market-rents', label: 'Market Rents' },
+  { id: 'radar', label: 'Acquisition Radar' },
+  { id: 'changes', label: 'Changes' },
+  { id: 'data-quality', label: 'Data Quality' },
+];
 
 function Note({ children }: { children: ReactNode }) {
   return <p className="text-2xs" style={MUTED}>{children}</p>;
@@ -353,7 +348,7 @@ function HistoryDrawer({ listingId, onClose }: { listingId: number; onClose: () 
 // ── Module ────────────────────────────────────────────────────────────────────
 export function LeaseMarketModule() {
   const summary = useLeaseMarketSummary();
-  const [tab, setTab] = useState<Tab>('Portfolio');
+  const [tab, setTab] = useTabParam<Tab>(TAB_KEYS, 'portfolio');
   const [selectedMarket, setSelectedMarket] = useState<string | null>(null);
   const [historyId, setHistoryId] = useState<number | null>(null);
 
@@ -410,53 +405,60 @@ export function LeaseMarketModule() {
         <p className="text-2xs" style={MUTED}>Addresses, owners and brokers are hidden on this mirror — this is why rows read &quot;Property 123&quot;.</p>
       )}
 
-      <div role="tablist" className="flex flex-wrap gap-1">
-        {TABS.map((t) => (
-          <Toggle key={t} role="tab" active={tab === t} onClick={() => changeTab(t)}>{t}</Toggle>
-        ))}
-      </div>
+      {/* keyboardActivation="manual" — every tab here mounts a view with its own fresh
+          useLeaseMarket*() warehouse query on mount (Portfolio/Radar/Changes), so arrowing
+          through the strip shouldn't fan out queries (plan R9). */}
+      <Tabs tabs={TABS} selectedKey={tab} onSelectionChange={(k) => changeTab(k as Tab)} keyboardActivation="manual" aria-label="Lease market views">
+        <TabPanel id="portfolio">
+          <PortfolioTab onHistory={setHistoryId} />
+        </TabPanel>
 
-      {tab === 'Portfolio' && <PortfolioTab onHistory={setHistoryId} />}
-
-      {tab === 'Market Rents' && (
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-wrap gap-1">
-            {data.freshness.filter((f) => f.enabled).map((f) => (
-              <Toggle key={f.marketId} active={f.marketId === marketId} onClick={() => setSelectedMarket(f.marketId)}>{f.label}</Toggle>
-            ))}
+        <TabPanel id="market-rents">
+          <div className="flex flex-col gap-4">
+            {/* R5 — level-2 "same data, different view" switch, not a navigation tab. */}
+            <SegmentedControl
+              aria-label="Market"
+              options={data.freshness.filter((f) => f.enabled).map((f) => ({ value: f.marketId, label: f.label }))}
+              value={marketId ?? ''}
+              onChange={(v) => setSelectedMarket(v)}
+            />
+            <Card>
+              <CardHeader title={`Asking rent vs. available SF — ${marketLabel}`} trailing={<span className="text-2xs" style={MUTED}>● quoted NNN · ○ converted · gold = ORA · band P25–P75 per size band (n ≥ 5)</span>} />
+              <div className="p-4"><RentCurve points={points} /></div>
+            </Card>
+            <Card>
+              <CardHeader title={`Days on market — ${marketLabel}`} />
+              <div className="p-4">{dom ? <BarChart data={dom.bins.map((b) => ({ label: b.label, value: b.count }))} /> : <Note>No listings yet.</Note>}</div>
+            </Card>
+            <Card>
+              <CardHeader title="Benchmark cells" />
+              <div className="p-4">
+                {marketBenchmarks.length === 0 ? <Note>No benchmark cells yet.</Note> : <DataTable columns={benchCols} rows={marketBenchmarks} getRowId={(b) => b.cellKey} />}
+              </div>
+            </Card>
           </div>
-          <Card>
-            <CardHeader title={`Asking rent vs. available SF — ${marketLabel}`} trailing={<span className="text-2xs" style={MUTED}>● quoted NNN · ○ converted · gold = ORA · band P25–P75 per size band (n ≥ 5)</span>} />
-            <div className="p-4"><RentCurve points={points} /></div>
-          </Card>
-          <Card>
-            <CardHeader title={`Days on market — ${marketLabel}`} />
-            <div className="p-4">{dom ? <BarChart data={dom.bins.map((b) => ({ label: b.label, value: b.count }))} /> : <Note>No listings yet.</Note>}</div>
-          </Card>
-          <Card>
-            <CardHeader title="Benchmark cells" />
-            <div className="p-4">
-              {marketBenchmarks.length === 0 ? <Note>No benchmark cells yet.</Note> : <DataTable columns={benchCols} rows={marketBenchmarks} getRowId={(b) => b.cellKey} />}
-            </div>
-          </Card>
-        </div>
-      )}
+        </TabPanel>
 
-      {tab === 'Acquisition Radar' && <RadarTab onHistory={setHistoryId} />}
-      {tab === 'Changes' && <ChangesTab onHistory={setHistoryId} />}
+        <TabPanel id="radar">
+          <RadarTab onHistory={setHistoryId} />
+        </TabPanel>
+        <TabPanel id="changes">
+          <ChangesTab onHistory={setHistoryId} />
+        </TabPanel>
 
-      {tab === 'Data Quality' && (
-        <div className="flex flex-col gap-4">
-          <Card>
-            <CardHeader title="Export freshness" />
-            <div className="p-4"><DataTable columns={freshnessCols} rows={data.freshness} getRowId={(f) => f.marketId} /></div>
-          </Card>
-          <Card>
-            <CardHeader title="Data quality" />
-            <div className="p-4"><DataTable columns={qualityCols} rows={data.dataQuality} getRowId={(q) => q.marketId} /></div>
-          </Card>
-        </div>
-      )}
+        <TabPanel id="data-quality">
+          <div className="flex flex-col gap-4">
+            <Card>
+              <CardHeader title="Export freshness" />
+              <div className="p-4"><DataTable columns={freshnessCols} rows={data.freshness} getRowId={(f) => f.marketId} /></div>
+            </Card>
+            <Card>
+              <CardHeader title="Data quality" />
+              <div className="p-4"><DataTable columns={qualityCols} rows={data.dataQuality} getRowId={(q) => q.marketId} /></div>
+            </Card>
+          </div>
+        </TabPanel>
+      </Tabs>
 
       {historyId !== null && <HistoryDrawer listingId={historyId} onClose={() => setHistoryId(null)} />}
     </div>
