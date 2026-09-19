@@ -17,13 +17,13 @@
 // fallback scoped to useTaxStrategy() (see below) since that hook's result gates ONLY that tab
 // and the Strategy Board's optional third tier — never the whole module the way useTaxAnalysis
 // does.
-import { useState } from 'react';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
+import { Tabs, TabPanel } from '@/primitives/Tabs';
 import { fmtUsdCompact, fmtPct, fmtNum } from '@analytics/index';
-import { cn } from '@/lib/cn';
+import { useTabParam } from '@/lib/useTabParam';
 import { isWarehouseUnavailable } from '../intel/hooks';
 import {
   useTaxAnalysis,
@@ -37,6 +37,7 @@ import { AssessmentsTable } from './AssessmentsTable';
 import { FiledReturnsTable } from './FiledReturnsTable';
 
 type Tab = 'strategy' | 'assessments' | 'returns';
+const TAB_KEYS: readonly Tab[] = ['strategy', 'assessments', 'returns'];
 const TABS: Array<{ id: Tab; label: string }> = [
   { id: 'strategy', label: 'Strategy Board' },
   { id: 'assessments', label: 'Assessments & Appeals' },
@@ -44,7 +45,7 @@ const TABS: Array<{ id: Tab; label: string }> = [
 ];
 
 export function TaxesModule() {
-  const [tab, setTab] = useState<Tab>('strategy');
+  const [tab, setTab] = useTabParam<Tab>(TAB_KEYS, 'strategy');
   const { data: report, isLoading, error } = useTaxAnalysis();
   const { data: strategyReport, isLoading: strategyLoading } = useTaxStrategy();
 
@@ -87,40 +88,7 @@ export function TaxesModule() {
   return (
     <div className="flex flex-col gap-4">
       <Card>
-        <CardHeader
-          title="Taxes"
-          trailing={
-            <div className="flex items-center gap-1">
-              {TABS.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  className={cn(
-                    'num rounded-full px-2.5 py-0.5 text-2xs font-semibold uppercase transition-colors',
-                    tab === t.id ? 'cursor-default' : 'cursor-pointer',
-                  )}
-                  style={
-                    tab === t.id
-                      ? {
-                          background: 'color-mix(in oklab, var(--accent) 16%, transparent)',
-                          color: 'var(--text-accent)',
-                          border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)',
-                          letterSpacing: '0.06em',
-                        }
-                      : {
-                          background: 'transparent',
-                          color: 'var(--text-tertiary)',
-                          border: '1px solid transparent',
-                          letterSpacing: '0.06em',
-                        }
-                  }
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          }
-        />
+        <CardHeader title="Taxes" />
       </Card>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -156,22 +124,28 @@ export function TaxesModule() {
         />
       </div>
 
-      {tab === 'strategy' ? (
-        <StrategyBoard opportunities={report.opportunities} strategyReport={strategyReport} />
-      ) : tab === 'assessments' ? (
-        <AssessmentsTable report={report} />
-      ) : strategyReport ? (
-        <FiledReturnsTable report={strategyReport} />
-      ) : strategyLoading ? (
-        <Skeleton style={{ height: 200 }} />
-      ) : (
-        <Card>
-          <CardHeader title="Filed Returns" trailing={<Badge tone="neutral">offline</Badge>} />
-          <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-secondary)' }}>
-            Filed-return metadata requires the live brain server.
-          </div>
-        </Card>
-      )}
+      <Tabs tabs={TABS} selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} aria-label="Taxes views">
+        <TabPanel id="strategy">
+          <StrategyBoard opportunities={report.opportunities} strategyReport={strategyReport} />
+        </TabPanel>
+        <TabPanel id="assessments">
+          <AssessmentsTable report={report} />
+        </TabPanel>
+        <TabPanel id="returns">
+          {strategyReport ? (
+            <FiledReturnsTable report={strategyReport} />
+          ) : strategyLoading ? (
+            <Skeleton style={{ height: 200 }} />
+          ) : (
+            <Card>
+              <CardHeader title="Filed Returns" trailing={<Badge tone="neutral">offline</Badge>} />
+              <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                Filed-return metadata requires the live brain server.
+              </div>
+            </Card>
+          )}
+        </TabPanel>
+      </Tabs>
     </div>
   );
 }

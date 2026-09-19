@@ -19,13 +19,14 @@
 // 'overview' NOI matrix now lives inside Benchmarks.
 // On the static mirror the /api/warehouse routes are absent, so the hooks surface
 // `isUnavailable` and the whole module degrades to one informational Card.
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Database } from 'lucide-react';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
-import { cn } from '@/lib/cn';
+import { Tabs, TabPanel } from '@/primitives/Tabs';
+import { useTabParam } from '@/lib/useTabParam';
 import { useUi } from '@/brain/ui-context';
 import {
   useWarehouseImports,
@@ -52,6 +53,8 @@ import { LeaseRunView } from './LeaseRunView';
 type Tab = 'ownership' | 'property' | 'lease-run' | 'benchmarks' | 'managers' | 'imports' | 'quality' | 'mappings';
 type TabGroup = 'intelligence' | 'data-ops';
 
+const TAB_KEYS: readonly Tab[] = ['ownership', 'property', 'lease-run', 'benchmarks', 'managers', 'imports', 'quality', 'mappings'];
+
 const TABS: Array<{ id: Tab; label: string; group: TabGroup }> = [
   { id: 'ownership', label: 'Ownership', group: 'intelligence' },
   { id: 'property', label: 'Property', group: 'intelligence' },
@@ -69,11 +72,19 @@ const DATA_OPS_TABS: ReadonlySet<Tab> = new Set<Tab>(['imports', 'quality', 'map
 
 export function IntelModule() {
   // Selection is URL-driven (PFI Phase B.3 item 5): `/intel/:propertyId` focuses the Property
-  // tab and is a shareable deep link, distinct from the global `/portfolio/:id` drawer.
+  // tab and is a shareable deep link, distinct from the global `/portfolio/:id` drawer. The tab
+  // itself also lives in the URL via `?tab=` (IA decongestion Phase 1) — the two params compose
+  // (`/intel/:propertyId?tab=...`). `defaultInitialTabRef` locks in, at mount only, whether this
+  // load landed on a deep link: that becomes the `?tab=` fallback default forever after, so (a)
+  // a deep-linked property tab shows immediately with no flash of Ownership, and (b) if the
+  // property id later clears (e.g. closing back to bare /intel) an implicit (never explicitly
+  // chosen) Property tab does NOT auto-revert to Ownership — matching the pre-Phase-1 local
+  // useState behavior, which never reset `tab` on id-clear either.
   const ui = useUi();
-  const [tab, setTab] = useState<Tab>(ui.intelPropertyId ? 'property' : 'ownership');
+  const defaultInitialTabRef = useRef<Tab>(ui.intelPropertyId ? 'property' : 'ownership');
+  const [tab, setTab] = useTabParam<Tab>(TAB_KEYS, defaultInitialTabRef.current);
   // Ownership → Property navigation: push the property to the URL (shareable), which focuses the
-  // Property tab via the effect below.
+  // Property tab via the explicit call below (and the effect, for links that bypass this fn).
   const openProperty = (id: string) => {
     ui.openIntelProperty(id);
     setTab('property');
@@ -81,6 +92,7 @@ export function IntelModule() {
   // A deep link or any chip/tile/row click that changes the URL property lands on the Property tab.
   useEffect(() => {
     if (ui.intelPropertyId) setTab('property');
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fires only on propertyId change, matching pre-Phase-1 behavior
   }, [ui.intelPropertyId]);
   const imports = useWarehouseImports();
   const issues = useWarehouseIssues();
@@ -131,52 +143,11 @@ export function IntelModule() {
         <CardHeader
           title="Property Financial Intelligence"
           trailing={
-            <div className="flex items-center gap-1.5">
-              {!live && (
-                <Badge tone="neutral">
-                  {`Computed from snapshot${freshness.detail ? ` · ${freshness.detail}` : ''}`}
-                </Badge>
-              )}
-              {TABS.map((t, i) => {
-                // A subtle divider before the first data-ops tab separates the intelligence
-                // layer from the data-warehouse layer (IA clarity; tokens only).
-                const prev = TABS[i - 1];
-                const startsDataOps = t.group === 'data-ops' && prev?.group === 'intelligence';
-                return (
-                  <span key={t.id} className="flex items-center gap-1.5">
-                    {startsDataOps && (
-                      <span
-                        aria-hidden
-                        className="mx-1 h-3.5 w-px"
-                        style={{ background: 'var(--border-strong)', opacity: 0.6 }}
-                      />
-                    )}
-                    <button
-                      onClick={() => setTab(t.id)}
-                      className={cn(
-                        'num rounded-full px-2.5 py-0.5 text-2xs font-semibold uppercase transition-colors',
-                        tab === t.id ? 'cursor-default' : 'cursor-pointer',
-                      )}
-                      style={
-                        tab === t.id
-                          ? { background: 'color-mix(in oklab, var(--accent) 16%, transparent)', color: 'var(--text-accent)', border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)', letterSpacing: '0.06em' }
-                          : {
-                              background: 'transparent',
-                              color: 'var(--text-tertiary)',
-                              border: '1px solid transparent',
-                              letterSpacing: '0.06em',
-                              // The data-ops tabs read one notch quieter than the intelligence
-                              // tabs so the intelligence layer leads visually.
-                              opacity: t.group === 'data-ops' ? 0.82 : 1,
-                            }
-                      }
-                    >
-                      {t.label}
-                    </button>
-                  </span>
-                );
-              })}
-            </div>
+            !live && (
+              <Badge tone="neutral">
+                {`Computed from snapshot${freshness.detail ? ` · ${freshness.detail}` : ''}`}
+              </Badge>
+            )
           }
         />
         {/* The portfolio data-ops KPI band anchors the data-warehouse tabs only; each
@@ -232,27 +203,42 @@ export function IntelModule() {
         <div className="grid grid-cols-1 gap-3">
           <Skeleton style={{ height: 220 }} />
         </div>
-      ) : tab === 'ownership' ? (
-        <OwnershipView onOpenProperty={openProperty} period={effectivePeriod} periodLabel={periodLabel} />
-      ) : tab === 'property' ? (
-        <PropertyIntelView
-          propertyId={ui.intelPropertyId}
-          onSelectProperty={ui.openIntelProperty}
-          period={effectivePeriod}
-          periodLabel={periodLabel}
-        />
-      ) : tab === 'lease-run' ? (
-        <LeaseRunView propertyId={ui.intelPropertyId} />
-      ) : tab === 'benchmarks' ? (
-        <BenchmarksView onOpenProperty={openProperty} period={effectivePeriod} periodLabel={periodLabel} />
-      ) : tab === 'managers' ? (
-        <ManagersView />
-      ) : tab === 'imports' ? (
-        <ImportsView imports={imports.data ?? []} />
-      ) : tab === 'quality' ? (
-        <DataQualityView issues={issues.data ?? []} />
       ) : (
-        <MappingsView imports={imports.data ?? []} />
+        // keyboardActivation="manual" — every tab here except Ownership mounts a view that fires
+        // its own fresh warehouse/analytics query on mount (PropertyIntelView, LeaseRunView,
+        // BenchmarksView, ManagersView, Imports/DataQuality/Mappings), so arrowing through the
+        // strip shouldn't fan out queries (plan R9).
+        <Tabs tabs={TABS} selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} keyboardActivation="manual" aria-label="Property Financial Intelligence views">
+          <TabPanel id="ownership">
+            <OwnershipView onOpenProperty={openProperty} period={effectivePeriod} periodLabel={periodLabel} />
+          </TabPanel>
+          <TabPanel id="property">
+            <PropertyIntelView
+              propertyId={ui.intelPropertyId}
+              onSelectProperty={ui.openIntelProperty}
+              period={effectivePeriod}
+              periodLabel={periodLabel}
+            />
+          </TabPanel>
+          <TabPanel id="lease-run">
+            <LeaseRunView propertyId={ui.intelPropertyId} />
+          </TabPanel>
+          <TabPanel id="benchmarks">
+            <BenchmarksView onOpenProperty={openProperty} period={effectivePeriod} periodLabel={periodLabel} />
+          </TabPanel>
+          <TabPanel id="managers">
+            <ManagersView />
+          </TabPanel>
+          <TabPanel id="imports">
+            <ImportsView imports={imports.data ?? []} />
+          </TabPanel>
+          <TabPanel id="quality">
+            <DataQualityView issues={issues.data ?? []} />
+          </TabPanel>
+          <TabPanel id="mappings">
+            <MappingsView imports={imports.data ?? []} />
+          </TabPanel>
+        </Tabs>
       )}
     </div>
   );

@@ -1,67 +1,45 @@
-import { useState } from 'react';
 import { useMacro, useAnalytics } from '@/data/queries';
 import { fmtPct } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
+import { Tabs, TabPanel } from '@/primitives/Tabs';
 import { AreaChart } from '@/charts/AreaChart';
-import { cn } from '@/lib/cn';
+import { useTabParam } from '@/lib/useTabParam';
 import { useMarketIntel } from './hooks';
 import { MarketScorecard } from './MarketScorecard';
 import { CompsView } from './CompsView';
 
 type MarketTab = 'macro' | 'comps';
+const MARKET_TAB_KEYS: readonly MarketTab[] = ['macro', 'comps'];
 const MARKET_TABS: Array<{ id: MarketTab; label: string }> = [
   { id: 'macro', label: 'Macro' },
   { id: 'comps', label: 'Comps' },
 ];
 
 // Tab shell — hosts the pre-existing FRED macro dashboard (MacroView, unchanged) alongside the
-// new Comps tab (task 7.3). Tab state is local (not in the URL), mirroring src/modules/debt/DebtModule.tsx.
+// Comps tab (task 7.3). Tab state lives in the URL (`?tab=`) via useTabParam.
 export function MarketModule() {
-  const [tab, setTab] = useState<MarketTab>('macro');
+  const [tab, setTab] = useTabParam<MarketTab>(MARKET_TAB_KEYS, 'macro');
 
   return (
     <div className="flex flex-col gap-4">
       <Card>
-        <CardHeader
-          title="Market"
-          trailing={
-            <div className="flex items-center gap-1">
-              {MARKET_TABS.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => setTab(t.id)}
-                  className={cn(
-                    'num rounded-full px-2.5 py-0.5 text-2xs font-semibold uppercase transition-colors',
-                    tab === t.id ? 'cursor-default' : 'cursor-pointer',
-                  )}
-                  style={
-                    tab === t.id
-                      ? {
-                          background: 'color-mix(in oklab, var(--accent) 16%, transparent)',
-                          color: 'var(--text-accent)',
-                          border: '1px solid color-mix(in oklab, var(--accent) 45%, transparent)',
-                          letterSpacing: '0.06em',
-                        }
-                      : {
-                          background: 'transparent',
-                          color: 'var(--text-tertiary)',
-                          border: '1px solid transparent',
-                          letterSpacing: '0.06em',
-                        }
-                  }
-                >
-                  {t.label}
-                </button>
-              ))}
-            </div>
-          }
-        />
+        <CardHeader title="Market" />
       </Card>
 
-      {tab === 'macro' ? <MacroView /> : <CompsView />}
+      {/* keyboardActivation="manual" — the Comps tab mounts CompsView, which fires a fresh
+          useCapitalAllocationReport() warehouse query on mount, so arrowing through the strip
+          shouldn't fan out queries (plan R9). */}
+      <Tabs tabs={MARKET_TABS} selectedKey={tab} onSelectionChange={(k) => setTab(k as MarketTab)} keyboardActivation="manual" aria-label="Market views">
+        <TabPanel id="macro">
+          <MacroView />
+        </TabPanel>
+        <TabPanel id="comps">
+          <CompsView />
+        </TabPanel>
+      </Tabs>
     </div>
   );
 }
