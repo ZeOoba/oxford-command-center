@@ -2,11 +2,13 @@
 //
 // Phase 3 W2 — Leasing Intelligence UI.
 //
-// Four-section layout:
-//   A. Expiry Bucket Cards — 4 cards (0-6m / 6-12m / 12-24m / 24m+)
-//   B. Rent Forecast Scenario Toggle — scenario selector + POST mutation
-//   C. Leasing Velocity Table — per-property time-to-lease
-//   D. Market-Rent Editor — inline form to set/clear per-property market rents
+// Layout (IA decongestion Phase 2 — tab state in the URL via useTabParam):
+//   Above the tabs (R2): A. Expiry Bucket Cards — 4 cards (0-6m / 6-12m / 12-24m / 24m+)
+//   Rollover     — C. Leasing Velocity Table (per-property time-to-lease)
+//   Forecast     — B. Rent Forecast scenario selector + POST mutation, with E. the AI leasing
+//                  narrative beneath it (deliberately NOT its own tab — the Leasing destination
+//                  will later absorb Rent Roll / Tenants tabs under a <=5-tab cap)
+//   Market rents — D. Market-Rent Editor — inline form to set/clear per-property market rents
 //
 // All warehouse-dependent sections degrade gracefully on the static mirror.
 import { useState, useRef } from 'react';
@@ -22,6 +24,9 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { Button } from '@/primitives/Button';
 import { DataTable, type Column } from '@/primitives/DataTable';
+import { Tabs, TabPanel } from '@/primitives/Tabs';
+import { SegmentedControl } from '@/primitives/SegmentedControl';
+import { useTabParam } from '@/lib/useTabParam';
 import type { RentScenario, RentForecastResult, LeasingVelocity, LeaseNarrativeResponse as LeaseNarrative } from '@contracts/lease-forecast';
 import { RentForecastResponse, LeaseNarrativeResponse } from '@contracts/lease-forecast';
 
@@ -66,6 +71,21 @@ async function fetchRentForecast(
   if (!parsed.success) throw new Error('Invalid rent forecast response payload');
   return parsed.data.results[0] ?? null;
 }
+
+// ── Tabs ───────────────────────────────────────────────────────────────────────
+
+type Tab = 'rollover' | 'forecast' | 'market-rents';
+const TAB_KEYS: readonly Tab[] = ['rollover', 'forecast', 'market-rents'];
+const TABS: Array<{ id: Tab; label: string }> = [
+  { id: 'rollover', label: 'Rollover' },
+  { id: 'forecast', label: 'Forecast' },
+  { id: 'market-rents', label: 'Market rents' },
+];
+
+const SCENARIO_OPTIONS = (['renew_at_current', 'renew_at_market', 'vacancy_haircut'] as RentScenario[]).map((s) => ({
+  value: s,
+  label: SCENARIO_LABELS[s],
+}));
 
 // ── Velocity table ─────────────────────────────────────────────────────────────
 
@@ -253,6 +273,7 @@ async function fetchLeaseNarrative(): Promise<LeaseNarrative> {
 export function LeaseForecastModule() {
   const { data, error } = useLeaseForecast();
   const { data: snapshotData } = useSnapshot();
+  const [tab, setTab] = useTabParam<Tab>(TAB_KEYS, 'rollover');
 
   const [scenario, setScenario] = useState<RentScenario>('renew_at_current');
   const [vacancyPct, setVacancyPct] = useState(0.1);
@@ -322,6 +343,12 @@ export function LeaseForecastModule() {
         })}
       </div>
 
+      {/* keyboardActivation="automatic": every panel reads data already fetched at module top level
+          (useLeaseForecast / useSnapshot); the forecast + narrative mutations only fire on an explicit
+          button press, never on tab selection. */}
+      <Tabs tabs={TABS} selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} keyboardActivation="automatic" aria-label="Leasing views">
+      <TabPanel id="forecast">
+      <div className="flex flex-col gap-4">
       {/* Section B — Rent Forecast Scenario */}
       <Card>
         <CardHeader
@@ -333,24 +360,13 @@ export function LeaseForecastModule() {
           }
         />
         <div className="flex flex-col gap-4 p-4">
-          {/* Scenario picker */}
-          <div className="flex flex-wrap gap-2">
-            {(['renew_at_current', 'renew_at_market', 'vacancy_haircut'] as RentScenario[]).map((s) => (
-              <button
-                key={s}
-                onClick={() => setScenario(s)}
-                className="rounded-[var(--radius-sm)] px-3 py-1 text-2xs font-medium transition-colors"
-                style={{
-                  background: scenario === s ? 'var(--accent)' : 'var(--surface-overlay)',
-                  color: scenario === s ? 'var(--surface-base)' : 'var(--text-secondary)',
-                  border: '1px solid var(--border-subtle)',
-                }}
-                aria-pressed={scenario === s}
-              >
-                {SCENARIO_LABELS[s]}
-              </button>
-            ))}
-          </div>
+          {/* Scenario picker — R5 level-2 switch (local state, no side effects until Run). */}
+          <SegmentedControl
+            aria-label="Rent forecast scenario"
+            options={SCENARIO_OPTIONS}
+            value={scenario}
+            onChange={setScenario}
+          />
 
           {/* Vacancy pct slider — only for vacancy_haircut */}
           {scenario === 'vacancy_haircut' && (
@@ -442,28 +458,7 @@ export function LeaseForecastModule() {
         </div>
       </Card>
 
-      {/* Section C — Leasing Velocity */}
-      <Card>
-        <CardHeader title="Leasing Velocity" />
-        {velocity.length === 0 ? (
-          <div className="px-4 py-8 text-center text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-            No leasing event history yet — populate lease_events to enable velocity tracking.
-          </div>
-        ) : (
-          <DataTable
-            columns={velocityCols}
-            rows={velocity}
-            getRowId={(v) => v.propertyId}
-            initialSort={{ key: 'median', dir: 'asc' }}
-            maxHeight={360}
-          />
-        )}
-      </Card>
-
-      {/* Section D — Market-Rent Editor */}
-      <MarketRentEditor marketRents={marketRents} />
-
-      {/* Section E — AI Leasing Narrative */}
+      {/* Section E — AI Leasing Narrative (rendered beneath the forecast, same tab) */}
       <Card>
         <CardHeader
           title="AI Leasing Narrative"
@@ -522,6 +517,36 @@ export function LeaseForecastModule() {
           )}
         </div>
       </Card>
+      </div>
+      </TabPanel>
+
+      <TabPanel id="rollover">
+      {/* Section C — Leasing Velocity */}
+      <Card>
+        <CardHeader title="Leasing Velocity" />
+        {velocity.length === 0 ? (
+          <div className="px-4 py-8 text-center text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+            No leasing event history yet — populate lease_events to enable velocity tracking.
+          </div>
+        ) : (
+          <DataTable
+            columns={velocityCols}
+            rows={velocity}
+            getRowId={(v) => v.propertyId}
+            initialSort={{ key: 'median', dir: 'asc' }}
+            maxHeight={360}
+          />
+        )}
+      </Card>
+
+      </TabPanel>
+
+      <TabPanel id="market-rents">
+      {/* Section D — Market-Rent Editor */}
+      <MarketRentEditor marketRents={marketRents} />
+      </TabPanel>
+      </Tabs>
+
     </div>
   );
 }
