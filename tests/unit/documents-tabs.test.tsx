@@ -1,15 +1,21 @@
 // tests/unit/documents-tabs.test.tsx
 //
-// IA decongestion Phase 3 — the single-scroll Documents module is tabbed: Search · Corpus. The KPI
-// strip stays above the strip (R2). Both panels are force-mounted so the semantic-search query,
-// folder filter and results survive a tab round-trip. The "mirror is read-only" / "brain server
-// unavailable" hints are unchanged.
+// IA decongestion Phase 3/4a — Documents has two views, Search · Corpus. Since Phase 4a it is a tab
+// of the Data destination, which owns the tab strip, so the inner switch is a SegmentedControl on
+// `?view=` (rule R5: no nested tab strips). The KPI strip stays above the switch (R2). Both views
+// stay mounted (the inactive one is `hidden`) so the semantic-search query, folder filter and
+// results survive a view round-trip. The "mirror is read-only" / "brain server unavailable" hints
+// are unchanged.
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { DocumentsModule } from '../../src/modules/documents/DocumentsModule';
-import { inactivePanelIsHiddenByClass, isInInactivePanel, selectTab, tabIsSelected } from './tab-test-utils';
+
+/** A view is hidden when it sits inside a `hidden` container. */
+const isHidden = (el: Element) => el.closest('[hidden]') !== null;
+const selectView = (name: string) => fireEvent.click(screen.getByRole('radio', { name }));
+const viewIsSelected = (name: string) => (screen.getByRole('radio', { name }) as HTMLInputElement).checked;
 
 const STATUS = {
   configured: true,
@@ -45,46 +51,48 @@ function renderDocs(entry = '/') {
 beforeEach(() => stubFetch('live'));
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-describe('DocumentsModule — Phase 3 tabs', () => {
+describe('DocumentsModule — Search/Corpus views', () => {
   it('Search is the default tab, with the query box and the Ask CTA visible', () => {
     renderDocs();
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Search', 'Corpus']);
-    expect(tabIsSelected('Search')).toBe(true);
-    expect(isInInactivePanel(screen.getByLabelText('Semantic document search'))).toBe(false);
-    expect(isInInactivePanel(screen.getByRole('button', { name: /ask a document question/i }))).toBe(false);
+    expect(screen.queryAllByRole('tab')).toHaveLength(0); // R5: no nested tab strip
+    expect(screen.getAllByRole('radio').map((r) => (r as HTMLInputElement).value)).toEqual(['search', 'corpus']);
+    expect(viewIsSelected('Search')).toBe(true);
+    expect(isHidden(screen.getByLabelText('Semantic document search'))).toBe(false);
+    expect(isHidden(screen.getByRole('button', { name: /ask a document question/i }))).toBe(false);
   });
 
-  it('keeps the KPI strip above the tab strip on every tab', () => {
-    renderDocs('/?tab=corpus');
-    expect(screen.getByText('Documents Indexed').closest('[role="tabpanel"]')).toBeNull();
-    expect(isInInactivePanel(screen.getByText('Documents Indexed'))).toBe(false);
+  it('keeps the KPI strip above the switch on every view', () => {
+    renderDocs('/?view=corpus');
+    expect(isHidden(screen.getByText('Documents Indexed'))).toBe(false);
   });
 
-  it('the Corpus list is hidden until its tab is selected, then reachable', async () => {
+  it('the Corpus list is hidden until its view is selected, then reachable', async () => {
     renderDocs();
     const heading = screen.getByText('Document Corpus');
-    expect(isInInactivePanel(heading)).toBe(true);
-    expect(inactivePanelIsHiddenByClass(heading)).toBe(true);
-    expect(isInInactivePanel(screen.getByText('Semantic Search'))).toBe(false);
-    selectTab('Corpus');
-    expect(isInInactivePanel(heading)).toBe(false);
+    expect(isHidden(heading)).toBe(true);
+    expect(isHidden(screen.getByText('Semantic Search'))).toBe(false);
+    selectView('Corpus');
+    expect(isHidden(heading)).toBe(false);
     expect(await screen.findByText('lease-a.pdf')).toBeTruthy();
-    expect(isInInactivePanel(screen.getByText('lease-a.pdf'))).toBe(false);
-    expect(isInInactivePanel(screen.getByText('Semantic Search'))).toBe(true);
+    expect(isHidden(screen.getByText('lease-a.pdf'))).toBe(false);
+    expect(isHidden(screen.getByText('Semantic Search'))).toBe(true);
   });
 
-  it('?tab=corpus deep-links to Corpus; an unknown tab falls back to Search', () => {
-    renderDocs('/?tab=corpus');
-    expect(tabIsSelected('Corpus')).toBe(true);
-    expect(isInInactivePanel(screen.getByText('Document Corpus'))).toBe(false);
+  it('?view=corpus deep-links to Corpus; an unknown view falls back to Search; the outer ?tab= is ignored', () => {
+    renderDocs('/?view=corpus');
+    expect(viewIsSelected('Corpus')).toBe(true);
+    expect(isHidden(screen.getByText('Document Corpus'))).toBe(false);
     cleanup();
-    renderDocs('/?tab=bogus');
-    expect(tabIsSelected('Search')).toBe(true);
+    renderDocs('/?view=bogus');
+    expect(viewIsSelected('Search')).toBe(true);
+    cleanup();
+    renderDocs('/?tab=documents'); // the Data destination's own tab param must not drive the inner switch
+    expect(viewIsSelected('Search')).toBe(true);
   });
 
   it('keeps the mirror-safe fallback hint on the Corpus tab when the Brain Server is unreachable', async () => {
     stubFetch('offline');
-    renderDocs('/?tab=corpus');
+    renderDocs('/?view=corpus');
     expect(await screen.findByText(/runs on the local Brain Server, not the read-only mirror/)).toBeTruthy();
     expect(screen.getByText('Mirror — read-only')).toBeTruthy();
   });
@@ -96,8 +104,8 @@ describe('DocumentsModule — Phase 3 tabs', () => {
     fireEvent.click(screen.getByRole('button', { name: 'REDACTED-659' })); // folder chip → filters to that folder
     expect(screen.queryByText('Widgets/psa.pdf')).toBeNull();
 
-    selectTab('Corpus');
-    selectTab('Search');
+    selectView('Corpus');
+    selectView('Search');
 
     expect((screen.getByLabelText('Semantic document search') as HTMLInputElement).value).toBe('renewal option');
     expect(screen.getByText('REDACTED-659/lease.pdf')).toBeTruthy();

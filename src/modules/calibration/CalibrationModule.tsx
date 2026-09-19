@@ -1,6 +1,9 @@
 // src/modules/calibration/CalibrationModule.tsx
 //
-// The /calibration view — the 40-year feedback loop made visible. Three tabs:
+// The Calibration surface (a tab of the Data destination since IA decongestion Phase 4a; /calibration
+// is a legacy alias) — the 40-year feedback loop made visible. Three views, switched by a
+// SegmentedControl on `?view=` (rule R5: the Data destination already owns the tab strip, so no
+// nested tabs):
 //   Report   · the §4 aggregate (per-kind hit-rate + Wilson CI + treatment-adjusted + bias) — DEFAULT
 //   Pending  · the due-but-unresolved queue + manual resolution (the only calibration write)
 //   Log      · the full verdict ledger (every prediction + its blessed outcome)
@@ -13,7 +16,7 @@ import { Gauge } from 'lucide-react';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
-import { Tabs, TabPanel } from '@/primitives/Tabs';
+import { SegmentedControl } from '@/primitives/SegmentedControl';
 import { useTabParam } from '@/lib/useTabParam';
 import { isWarehouseUnavailable, useWarehouseLive, useWarehouseFreshness } from '../intel/hooks';
 import { useCalibrationLog, useCalibrationPending, useCalibrationReport, type CalibrationLogRow } from './hooks';
@@ -22,16 +25,16 @@ import { PendingView } from './PendingView';
 import { LogView } from './LogView';
 import { ResolveDialog } from './ResolveDialog';
 
-type Tab = 'report' | 'pending' | 'log';
-const TAB_KEYS: readonly Tab[] = ['report', 'pending', 'log'];
-const TABS: Array<{ id: Tab; label: string }> = [
-  { id: 'report', label: 'Report' },
-  { id: 'pending', label: 'Pending' },
-  { id: 'log', label: 'Log' },
+type View = 'report' | 'pending' | 'log';
+const VIEW_KEYS: readonly View[] = ['report', 'pending', 'log'];
+const VIEWS: Array<{ value: View; label: string }> = [
+  { value: 'report', label: 'Report' },
+  { value: 'pending', label: 'Pending' },
+  { value: 'log', label: 'Log' },
 ];
 
 export function CalibrationModule() {
-  const [tab, setTab] = useTabParam<Tab>(TAB_KEYS, 'report');
+  const [view, setView] = useTabParam<View>(VIEW_KEYS, 'report', 'view');
   const [resolving, setResolving] = useState<CalibrationLogRow | null>(null);
 
   const report = useCalibrationReport();
@@ -86,17 +89,12 @@ export function CalibrationModule() {
       {loading ? (
         <Skeleton style={{ height: 220 }} />
       ) : (
-        <Tabs tabs={TABS} selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} aria-label="Calibration views">
-          <TabPanel id="report">
-            <ReportView report={report.data} />
-          </TabPanel>
-          <TabPanel id="pending">
-            <PendingView rows={pending.data ?? []} onResolve={setResolving} canResolve={live} />
-          </TabPanel>
-          <TabPanel id="log">
-            <LogView rows={log.data ?? []} />
-          </TabPanel>
-        </Tabs>
+        <div className="flex flex-col gap-3">
+          <SegmentedControl options={VIEWS} value={view} onChange={setView} aria-label="Calibration views" />
+          {view === 'report' && <ReportView report={report.data} />}
+          {view === 'pending' && <PendingView rows={pending.data ?? []} onResolve={setResolving} canResolve={live} />}
+          {view === 'log' && <LogView rows={log.data ?? []} />}
+        </div>
       )}
     </div>
   );
