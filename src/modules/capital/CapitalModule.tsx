@@ -11,6 +11,15 @@
 //      shape than panel 1, joined only by propertyId for display purposes).
 //   3. Pipeline — T1/T2 candidates from portfolio.pipeline.
 // Top: HurdleRateBanner (visible while hurdle rate is proposed).
+//
+// IA decongestion Phase 2 — tab state in the URL via useTabParam. Above the strip (R2): the
+// HurdleRateBanner and the headline verdict-count / untrusted-book strip. Tabs:
+//   Allocation — panels 1 + 2 (each verdict stays beside its implied-cap-rate columns; R1) and the
+//                cap-rate methodology footnote. IC-memo export + Notion sync stay in panel 2's header.
+//   Pipeline   — panel 3 (Buy Pipeline).
+// Deliberately 2 tabs: the Capital destination is planned to become Allocation · Capacity · Debt ·
+// Cash · Close, so Buy Pipeline will later merge into a Capacity tab. Every panel reads data already
+// fetched at module top level → keyboardActivation "automatic".
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { FileDown, UploadCloud } from 'lucide-react';
 import type { AllocationAction } from '@contracts/capital';
@@ -23,11 +32,20 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { Button } from '@/primitives/Button';
 import { Skeleton } from '@/primitives/Skeleton';
+import { Tabs, TabPanel } from '@/primitives/Tabs';
+import { useTabParam } from '@/lib/useTabParam';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { useToast } from '@/primitives/toast-context';
 import { useCapitalAllocation, actionLabel, actionColor, actionFillColor } from './hooks';
 import { AllocationCard } from './AllocationCard';
 import { HurdleRateBanner } from './HurdleRateBanner';
+
+type Tab = 'allocation' | 'pipeline';
+const TAB_KEYS: readonly Tab[] = ['allocation', 'pipeline'];
+const TABS: Array<{ id: Tab; label: string }> = [
+  { id: 'allocation', label: 'Allocation' },
+  { id: 'pipeline', label: 'Pipeline' },
+];
 
 function fmtPct(n: number | null): string {
   if (n === null) return '—';
@@ -199,6 +217,7 @@ export function CapitalModule() {
   const { data, isLoading, error } = useCapitalAllocation();
   const { data: report, isLoading: reportLoading, error: reportError } = useCapitalAllocationReport();
   const { toast } = useToast();
+  const [tab, setTab] = useTabParam<Tab>(TAB_KEYS, 'allocation');
   const notionSync = useMutation({
     mutationFn: postCapitalNotionSync,
     onSuccess: (r) => {
@@ -272,6 +291,9 @@ export function CapitalModule() {
         />
       </Card>
 
+      <Tabs tabs={TABS} selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} keyboardActivation="automatic" aria-label="Capital views">
+      <TabPanel id="allocation">
+      <div className="flex flex-col gap-4">
       {/* Portfolio allocation list */}
       <div className="flex flex-col gap-3">
         {portfolio.verdicts.length === 0 ? (
@@ -343,8 +365,34 @@ export function CapitalModule() {
         )}
       </Card>
 
+      {/* Cap-rate methodology footnote */}
+      <div className="px-1 pb-1">
+        <p className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+          Implied cap = Spine-A NOI ÷ Oxford-share workbook value; “vs Mkt” and Cap Band compare
+          against external market benchmarks
+          {bench && (!bench.available || bench.source === 'unavailable')
+            ? ' (benchmarks unavailable — cap columns blank).'
+            : bench?.source === 'seed'
+            ? ' (seeded snapshot — set a live feed for FRED-backed bands).'
+            : ' (live feed).'}{' '}
+          Cap Band is a discrete position (below / at / above market), not a continuous percentile,
+          and is diagnostic only — it does not affect the priority score or capital action in
+          either engine above.
+        </p>
+      </div>
+      </div>
+      </TabPanel>
+
+      <TabPanel id="pipeline">
       {/* Pipeline candidates */}
-      {portfolio.pipeline.length > 0 && (
+      {portfolio.pipeline.length === 0 ? (
+        <Card>
+          <CardHeader title="Buy Pipeline" trailing={<Badge tone="neutral">0 candidates</Badge>} />
+          <div style={{ padding: 20, color: 'var(--text-secondary)', fontSize: 13 }}>
+            No T1/T2 buy candidates in the pipeline right now.
+          </div>
+        </Card>
+      ) : (
         <Card>
           <CardHeader title="Buy Pipeline" trailing={<Badge tone="neutral">{portfolio.pipeline.length} candidates</Badge>} />
           <div style={{ padding: '8px 0' }}>
@@ -376,22 +424,8 @@ export function CapitalModule() {
           </div>
         </Card>
       )}
-
-      {/* Cap-rate methodology footnote */}
-      <div className="px-1 pb-1">
-        <p className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-          Implied cap = Spine-A NOI ÷ Oxford-share workbook value; “vs Mkt” and Cap Band compare
-          against external market benchmarks
-          {bench && (!bench.available || bench.source === 'unavailable')
-            ? ' (benchmarks unavailable — cap columns blank).'
-            : bench?.source === 'seed'
-            ? ' (seeded snapshot — set a live feed for FRED-backed bands).'
-            : ' (live feed).'}{' '}
-          Cap Band is a discrete position (below / at / above market), not a continuous percentile,
-          and is diagnostic only — it does not affect the priority score or capital action in
-          either engine above.
-        </p>
-      </div>
+      </TabPanel>
+      </Tabs>
     </div>
   );
 }
