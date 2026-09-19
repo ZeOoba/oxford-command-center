@@ -10,6 +10,7 @@ import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { Tabs, TabPanel } from '@/primitives/Tabs';
 import { BarList } from '@/charts/BarList';
 import { useTabParam } from '@/lib/useTabParam';
+import { FORCE_MOUNT_PANEL } from '@/lib/forceMountPanel';
 import type { Deal, DealStage } from '@contracts/index';
 import { ORA_CLIENT_HEADERS } from '@contracts/client-header';
 import { AcquisitionWorkbench } from './AcquisitionWorkbench';
@@ -20,10 +21,12 @@ import { useQueryClient } from '@tanstack/react-query';
 
 const STAGE_ORDER: DealStage[] = ['Sourcing', 'Candidate', 'LOI/PSA', 'Due Diligence', 'Refinance', 'Closing', 'Closed', 'Dead'];
 
-type AcqTab = 'pipeline' | 'grader';
-const ACQ_TAB_KEYS: readonly AcqTab[] = ['pipeline', 'grader'];
+type AcqTab = 'pipeline' | 'workbench' | 'sourcing' | 'grader';
+const ACQ_TAB_KEYS: readonly AcqTab[] = ['pipeline', 'workbench', 'sourcing', 'grader'];
 const ACQ_TABS: Array<{ id: AcqTab; label: string }> = [
   { id: 'pipeline', label: 'Pipeline' },
+  { id: 'workbench', label: 'Workbench' },
+  { id: 'sourcing', label: 'Sourcing' },
   { id: 'grader', label: 'Grader' },
 ];
 const STAGE_TONE: Record<DealStage, BadgeTone> = {
@@ -207,54 +210,58 @@ export function AcquisitionsModule() {
         )}
       </div>
 
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <KpiStat label="Active Deals" value={active.length} format={fmtNum} accentColor="var(--accent)" sublabel={`${deals.length} total`} />
+        <KpiStat label="Closing Now" value={deals.filter((d) => d.stage === 'Closing').length} format={fmtNum} accentColor="var(--color-neg)" />
+        <KpiStat label="Best Active Cap" value={bestCap === 0 ? null : bestCap * 100} format={(n) => (n === null ? '—' : `${n.toFixed(2)}%`)} accentColor="var(--color-pos)" />
+        <KpiStat label="Pipeline SF" value={pipelineSf} format={fmtSf} accentColor="var(--color-info)" />
+      </div>
+
       {/* keyboardActivation="manual" — the Grader tab mounts PipelineTierBoard, which fires a
           fresh useAcqIntel() warehouse query on mount, so arrowing through the strip shouldn't
-          fan out queries (plan R9). */}
+          fan out queries (plan R9). The pipeline / workbench / sourcing panels are force-mounted
+          (they all mounted together before the split), so the Workbench form draft, the prefill
+          selection, the Sourcing filters and the Active Deals sort survive a tab round-trip. */}
       <Tabs tabs={ACQ_TABS} selectedKey={acqTab} onSelectionChange={(k) => setAcqTab(k as AcqTab)} keyboardActivation="manual" aria-label="Acquisitions views">
-        <TabPanel id="pipeline">
-          <div className="flex flex-col gap-4">
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-              <KpiStat label="Active Deals" value={active.length} format={fmtNum} accentColor="var(--accent)" sublabel={`${deals.length} total`} />
-              <KpiStat label="Closing Now" value={deals.filter((d) => d.stage === 'Closing').length} format={fmtNum} accentColor="var(--color-neg)" />
-              <KpiStat label="Best Active Cap" value={bestCap === 0 ? null : bestCap * 100} format={(n) => (n === null ? '—' : `${n.toFixed(2)}%`)} accentColor="var(--color-pos)" />
-              <KpiStat label="Pipeline SF" value={pipelineSf} format={fmtSf} accentColor="var(--color-info)" />
-            </div>
-            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[320px_1fr]">
-              <Card>
-                <CardHeader title="Pipeline by Stage" />
-                <div className="p-3">
-                  <BarList items={stageCounts.map((s) => ({ label: s.label, value: s.value, display: String(s.value) }))} />
-                </div>
-              </Card>
-              <Card>
-                <CardHeader title="Active Deals" trailing={<Badge tone="gold">{deals.length} deals</Badge>} />
-                <DataTable columns={cols} rows={deals} getRowId={(d) => d.id} onRowClick={(d) => ui.openEntity({ type: 'deal', id: d.id })} initialSort={{ key: 'stage', dir: 'asc' }} />
-              </Card>
-            </div>
-
+        <TabPanel id="pipeline" {...FORCE_MOUNT_PANEL}>
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[320px_1fr]">
             <Card>
-              <CardHeader title="Acquisition Workbench" trailing={<Badge tone="gold">Oxford Acquisition Score · live</Badge>} />
-              <div className="flex items-center gap-2 px-3 pt-3">
-                <span className="text-2xs uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>Prefill from</span>
-                <select
-                  className="rounded-[var(--radius-sm)] px-2 py-1 text-xs num"
-                  style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', color: 'var(--text-primary)' }}
-                  value={scoreDealId}
-                  onChange={(e) => setScoreDealId(e.target.value)}
-                >
-                  <option value="">— blank deal —</option>
-                  {deals.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-                </select>
-              </div>
+              <CardHeader title="Pipeline by Stage" />
               <div className="p-3">
-                <AcquisitionWorkbench
-                  deal={scoreDeal}
-                  savedInput={scoreDeal ? data.snapshot.acquisitionInputs[scoreDeal.id] ?? null : null}
-                />
+                <BarList items={stageCounts.map((s) => ({ label: s.label, value: s.value, display: String(s.value) }))} />
               </div>
             </Card>
-            <AcquisitionsIntel />
+            <Card>
+              <CardHeader title="Active Deals" trailing={<Badge tone="gold">{deals.length} deals</Badge>} />
+              <DataTable columns={cols} rows={deals} getRowId={(d) => d.id} onRowClick={(d) => ui.openEntity({ type: 'deal', id: d.id })} initialSort={{ key: 'stage', dir: 'asc' }} />
+            </Card>
           </div>
+        </TabPanel>
+        <TabPanel id="workbench" {...FORCE_MOUNT_PANEL}>
+          <Card>
+            <CardHeader title="Acquisition Workbench" trailing={<Badge tone="gold">Oxford Acquisition Score · live</Badge>} />
+            <div className="flex items-center gap-2 px-3 pt-3">
+              <span className="text-2xs uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>Prefill from</span>
+              <select
+                className="rounded-[var(--radius-sm)] px-2 py-1 text-xs num"
+                style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-strong)', color: 'var(--text-primary)' }}
+                value={scoreDealId}
+                onChange={(e) => setScoreDealId(e.target.value)}
+              >
+                <option value="">— blank deal —</option>
+                {deals.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </div>
+            <div className="p-3">
+              <AcquisitionWorkbench
+                deal={scoreDeal}
+                savedInput={scoreDeal ? data.snapshot.acquisitionInputs[scoreDeal.id] ?? null : null}
+              />
+            </div>
+          </Card>
+        </TabPanel>
+        <TabPanel id="sourcing" {...FORCE_MOUNT_PANEL}>
+          <AcquisitionsIntel />
         </TabPanel>
         <TabPanel id="grader">
           <div className="flex flex-col gap-4">
