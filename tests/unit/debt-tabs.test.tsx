@@ -7,6 +7,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
+import type * as Queries from '../../src/data/queries';
 import { inactivePanelIsHiddenByClass, isInInactivePanel, selectTab, tabIsSelected } from './tab-test-utils';
 
 const LOANS = [
@@ -15,7 +16,7 @@ const LOANS = [
 ];
 
 vi.mock('../../src/data/queries', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../src/data/queries')>();
+  const actual = await importOriginal<typeof Queries>();
   return {
     ...actual,
     useSnapshot: () => ({ data: { snapshot: { loans: LOANS } } }),
