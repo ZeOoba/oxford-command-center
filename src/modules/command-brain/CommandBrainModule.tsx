@@ -19,6 +19,8 @@ import { Button } from '@/primitives/Button';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Skeleton } from '@/primitives/Skeleton';
 import { Sparkline } from '@/charts/Sparkline';
+import { Tabs, TabPanel, type TabSpec } from '@/primitives/Tabs';
+import { useTabParam } from '@/lib/useTabParam';
 import { useToast } from '@/primitives/toast-context';
 import {
   accuracySegments,
@@ -97,8 +99,15 @@ function FeedbackRow({ q }: { q: OpenQuestion }) {
   );
 }
 
+// Tab state lives in the URL (`?tab=`) via useTabParam (IA decongestion Phase 2). The disclaimer card
+// and KPI strip stay ABOVE the strip (R2 — true for every tab). All panels read the one
+// already-fetched BrainReport, so no tab fires a query of its own → automatic keyboard activation.
+type Tab = 'track-record' | 'feedback' | 'memory' | 'versions';
+const TAB_KEYS: readonly Tab[] = ['track-record', 'feedback', 'memory', 'versions'];
+
 export function CommandBrainModule() {
   const report = useBrainReport();
+  const [tab, setTab] = useTabParam<Tab>(TAB_KEYS, 'track-record');
 
   if (isWarehouseUnavailable(report.error)) {
     return (
@@ -123,6 +132,14 @@ export function CommandBrainModule() {
   const r = report.data;
   const segments = accuracySegments(r.accuracySeries);
   const scoreableMonths = segments.reduce((n, s) => n + s.length, 0);
+  // R4: open questions are the actionable feed in the Feedback tab — surface the count on the label
+  // so it survives tabbing. Neutral: the count is workload, not severity.
+  const tabs: TabSpec[] = [
+    { id: 'track-record', label: 'Track record' },
+    { id: 'feedback', label: 'Feedback', badge: { count: r.openQuestions.length, tone: 'neutral' } },
+    { id: 'memory', label: 'Memory' },
+    { id: 'versions', label: 'Versions' },
+  ];
 
   return (
     <div className="flex flex-col gap-4">
@@ -154,6 +171,9 @@ export function CommandBrainModule() {
         <KpiStat label="Resolved Outcomes" value={r.resolvedTotal} format={fmtCount} accentColor="var(--color-accent2)" />
       </div>
 
+      <Tabs tabs={tabs} selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} keyboardActivation="automatic" aria-label="Command brain views">
+      <TabPanel id="track-record">
+      <div className="flex flex-col gap-4">
       <Card>
         <CardHeader
           title="Flag Accuracy Over Time"
@@ -175,9 +195,13 @@ export function CommandBrainModule() {
       </Card>
 
       <TrackRecordList entries={r.trackRecord} />
+      </div>
+      </TabPanel>
 
+      <TabPanel id="feedback">
+      <div className="flex flex-col gap-4">
       <Card>
-        <CardHeader title="Feedback" trailing={<Badge tone="neutral">display-only</Badge>} />
+        <CardHeader title="Feedback"trailing={<Badge tone="neutral">display-only</Badge>} />
         <div className="px-4 pt-2 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
           Reuses the open questions below as the actionable feed — this report carries no separate
           ranked-insights feed. Accepting or dismissing records a decision; it never changes a score.
@@ -195,8 +219,8 @@ export function CommandBrainModule() {
         )}
       </Card>
 
-      <MemoryBoard confidenceByMarket={r.confidenceByMarket} confidenceByManager={r.confidenceByManager} />
-
+      {/* Kept alongside the Feedback list, NOT deleted as a duplicate (R8 check): the two render the same
+          openQuestions array but this one carries the `→ wouldClose` line the Feedback row omits. */}
       <Card>
         <CardHeader title="Open Questions" trailing={<Badge tone="neutral">what would sharpen it</Badge>} />
         {r.openQuestions.length === 0 ? (
@@ -211,7 +235,14 @@ export function CommandBrainModule() {
           </div>
         )}
       </Card>
+      </div>
+      </TabPanel>
 
+      <TabPanel id="memory">
+        <MemoryBoard confidenceByMarket={r.confidenceByMarket} confidenceByManager={r.confidenceByManager} />
+      </TabPanel>
+
+      <TabPanel id="versions">
       <Card>
         <CardHeader
           title="Version Log"
@@ -237,6 +268,8 @@ export function CommandBrainModule() {
           </div>
         )}
       </Card>
+      </TabPanel>
+      </Tabs>
     </div>
   );
 }
