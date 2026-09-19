@@ -9,6 +9,7 @@ vi.mock('../../src/shell/ThemeToggle', () => ({ ThemeToggle: () => <div data-tes
 vi.mock('../../src/shell/DensityToggle', () => ({ DensityToggle: () => <div data-testid="density" /> }));
 vi.mock('../../src/primitives/StatusPill', () => ({ StatusPill: () => <div data-testid="status" /> }));
 vi.mock('../../src/shell/AlertBell', () => ({ AlertBell: () => <div data-testid="alert-bell" /> }));
+vi.mock('../../src/shell/HealthDot', () => ({ HealthDot: () => <div data-testid="health-dot" /> }));
 
 import { TopBar } from '../../src/shell/TopBar';
 

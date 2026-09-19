@@ -10,6 +10,7 @@ import { ViewToggle } from './ViewToggle';
 import { ThemeToggle } from './ThemeToggle';
 import { DensityToggle } from './DensityToggle';
 import { AlertBell } from './AlertBell';
+import { HealthDot } from './HealthDot';
 
 export function TopBar({ title, asOf, onOpenSearch, onOpenNav, navOpen }: { title: string; asOf: string; onOpenSearch?: () => void; onOpenNav?: () => void; navOpen?: boolean }) {
   const { refresh, refreshing } = useBrain();
@@ -80,6 +81,7 @@ export function TopBar({ title, asOf, onOpenSearch, onOpenNav, navOpen }: { titl
         <ViewToggle />
         <div className="hidden lg:contents"><ScenarioSwitch /></div>
         <StatusPill />
+        <HealthDot />
 
         <button
           onClick={refresh}
