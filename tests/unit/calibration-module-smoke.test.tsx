@@ -5,7 +5,7 @@
 // an explicit "no resolved outcomes yet" state. We seed a local TanStack QueryClient cache with the
 // CALIBRATION_KEYS so the hooks resolve from cache with NO network and NO module mocking.
 import { describe, it, expect, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { CalibrationModule } from '../../src/modules/calibration/CalibrationModule';
@@ -29,9 +29,9 @@ function seededClient(report: CalibrationReportResponse): QueryClient {
   return qc;
 }
 
-function renderWith(qc: QueryClient) {
+function renderWith(qc: QueryClient, entry = '/') {
   return render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={[entry]}>
       <QueryClientProvider client={qc}>
         <CalibrationModule />
       </QueryClientProvider>
@@ -58,6 +58,23 @@ describe('CalibrationModule — empty data (the normal Phase-2 state)', () => {
     );
     expect(screen.getByText(/no resolved outcomes yet/i)).toBeTruthy();
     expect(document.body.textContent).not.toMatch(/NaN/);
+  });
+});
+
+describe('CalibrationModule — inner switch is a SegmentedControl on ?view= (IA Phase 4a, R5)', () => {
+  it('renders no tab strip (the Data destination owns it) and defaults to Report', () => {
+    renderWith(seededClient(EMPTY_REPORT));
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+    expect(screen.getAllByRole('radio').map((r) => (r as HTMLInputElement).value)).toEqual(['report', 'pending', 'log']);
+    expect((screen.getByRole('radio', { name: 'Report' }) as HTMLInputElement).checked).toBe(true);
+  });
+
+  it('?view=log deep-links; the outer ?tab= param is ignored; switching views works', () => {
+    renderWith(seededClient(EMPTY_REPORT), '/?tab=calibration&view=log');
+    expect((screen.getByRole('radio', { name: 'Log' }) as HTMLInputElement).checked).toBe(true);
+    expect(screen.queryByText(/no resolved outcomes yet/i)).toBeNull();
+    fireEvent.click(screen.getByRole('radio', { name: 'Report' }));
+    expect(screen.getByText(/no resolved outcomes yet/i)).toBeTruthy();
   });
 });
 
