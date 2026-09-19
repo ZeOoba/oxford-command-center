@@ -2,7 +2,7 @@ import { motion } from 'framer-motion';
 import { useEffect } from 'react';
 import { PanelLeftClose, PanelLeft } from 'lucide-react';
 import { type ModuleDef } from './modules';
-import { orderedModules } from './module-order';
+import { railModules } from './module-order';
 import { useViewProfile } from '@/brain/view-profile';
 import { cn } from '@/lib/cn';
 
@@ -17,7 +17,7 @@ interface Props {
 
 export function Sidebar({ activeId, onSelect, collapsed, onToggle, mobileOpen, onMobileClose }: Props) {
   const { profile } = useViewProfile();
-  const ordered = orderedModules(profile);
+  const ordered = railModules(profile);
   const groups = [...new Set(ordered.map((m) => m.group))];
   const width = mobileOpen ? 212 : collapsed ? 60 : 212;
   const handleSelect = (id: string) => {
