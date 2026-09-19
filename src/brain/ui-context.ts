@@ -12,6 +12,9 @@ export interface EntityRef {
 export interface UiState {
   activeModuleId: string;
   setActiveModule: (id: string) => void;
+  /** Navigate to a destination's tab (`/<moduleId>?tab=<tabId>`) — used by the palette's
+   *  "Destination > Tab" entries. */
+  openTab: (moduleId: string, tabId: string) => void;
   paletteOpen: boolean;
   openPalette: () => void;
   closePalette: () => void;
@@ -38,6 +41,7 @@ export interface UiState {
 export const UiContext = createContext<UiState>({
   activeModuleId: 'overview',
   setActiveModule: () => {},
+  openTab: () => {},
   paletteOpen: false,
   openPalette: () => {},
   closePalette: () => {},

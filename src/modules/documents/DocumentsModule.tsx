@@ -3,9 +3,8 @@ import { FileSearch, Sparkles } from 'lucide-react';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
-import { Tabs, TabPanel } from '@/primitives/Tabs';
+import { SegmentedControl } from '@/primitives/SegmentedControl';
 import { useTabParam } from '@/lib/useTabParam';
-import { FORCE_MOUNT_PANEL } from '@/lib/forceMountPanel';
 import { fmtNum } from '@analytics/index';
 import { useUi } from '@/brain/ui-context';
 import { useDocSearch } from '@/data/documents';
@@ -18,11 +17,13 @@ interface DocStatus {
   docs: Array<{ name: string; chunks: number }>;
 }
 
-type DocTab = 'search' | 'corpus';
-const DOC_TAB_KEYS: readonly DocTab[] = ['search', 'corpus'];
-const DOC_TABS: Array<{ id: DocTab; label: string }> = [
-  { id: 'search', label: 'Search' },
-  { id: 'corpus', label: 'Corpus' },
+// Inner Search/Corpus switch — a SegmentedControl on `?view=` (R5: the Data destination that hosts
+// this module owns the tab strip, so no nested tabs).
+type DocView = 'search' | 'corpus';
+const DOC_VIEW_KEYS: readonly DocView[] = ['search', 'corpus'];
+const DOC_VIEWS: Array<{ value: DocView; label: string }> = [
+  { value: 'search', label: 'Search' },
+  { value: 'corpus', label: 'Corpus' },
 ];
 
 /**
@@ -32,7 +33,7 @@ const DOC_TABS: Array<{ id: DocTab; label: string }> = [
  */
 export function DocumentsModule() {
   const ui = useUi();
-  const [tab, setTab] = useTabParam<DocTab>(DOC_TAB_KEYS, 'search');
+  const [view, setView] = useTabParam<DocView>(DOC_VIEW_KEYS, 'search', 'view');
   const [status, setStatus] = useState<DocStatus | null>(null);
   const [offline, setOffline] = useState(false);
 
@@ -61,11 +62,12 @@ export function DocumentsModule() {
         <KpiStat label="Search" value={null} format={() => 'In-app + Ask'} sublabel="cited answers" />
       </div>
 
-      {/* Both panels are force-mounted so the search query / folder filter / results survive a tab
-          round-trip (they were one scroll before the split). The corpus fetch lives in this
-          component's effect, so no tab fires its own query — automatic keyboard activation. */}
-      <Tabs tabs={DOC_TABS} selectedKey={tab} onSelectionChange={(k) => setTab(k as DocTab)} aria-label="Document views">
-        <TabPanel id="search" {...FORCE_MOUNT_PANEL}>
+      {/* Both panels stay mounted (the inactive one is `hidden`) so the search query / folder filter /
+          results survive a view round-trip. The corpus fetch lives in this component's effect, so no
+          view fires its own query. */}
+      <SegmentedControl options={DOC_VIEWS} value={view} onChange={setView} aria-label="Document views" />
+      <div className="flex flex-col gap-4">
+        <div hidden={view !== 'search'} data-view="search">
           <div className="flex flex-col gap-4">
             <DocSearch />
 
@@ -77,8 +79,8 @@ export function DocumentsModule() {
               <Sparkles size={15} /> Ask a document question
             </button>
           </div>
-        </TabPanel>
-        <TabPanel id="corpus" {...FORCE_MOUNT_PANEL}>
+        </div>
+        <div hidden={view !== 'corpus'} data-view="corpus">
           <Card>
             <CardHeader
               title="Document Corpus"
@@ -109,8 +111,8 @@ export function DocumentsModule() {
               </ul>
             )}
           </Card>
-        </TabPanel>
-      </Tabs>
+        </div>
+      </div>
     </div>
   );
 }

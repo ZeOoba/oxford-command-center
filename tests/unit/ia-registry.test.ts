@@ -1,0 +1,188 @@
+// IA decongestion Phase 4a — the two-level registry: legacy-id resolution, alias redirects, the
+// max-tabs house rule, and rail composition. (Component-level destination tests live in
+// worklist-destination / data-destination / financials-tabs.)
+import { describe, it, expect, vi } from 'vitest';
+
+// The registry imports the Worklist alerts-badge hook, which reaches the data layer. It is never
+// invoked in these registry-shape tests.
+vi.mock('../../src/shell/tab-badges', () => ({ useAlertsTabBadge: () => undefined }));
+
+import { MODULES } from '../../src/shell/modules';
+import { railModules, orderedModules, MODULE_ORDER, PROFILE_HOME } from '../../src/shell/module-order';
+import { MAX_TABS_PER_DESTINATION, tabCapViolation, warnIfTooManyTabs, type ModuleTabDef } from '../../src/shell/tab-types';
+import {
+  LEGACY_ALIASES,
+  parseRoute,
+  resolveLegacyRoute,
+  DEFAULT_MODULE,
+  MODULE_PRIMARY_TYPE,
+  HOME_MODULE,
+} from '../../src/brain/routing';
+
+/** Every module id that existed on origin/main's MODULES before Phase 4a (26). */
+const LEGACY_MODULE_IDS = [
+  'overview', 'principal', 'pipeline', 'tasks', 'alerts', 'calendar', 'renewals', 'insights', 'command-brain',
+  'portfolio', 'intel', 'calibration', 'leases', 'leasing', 'prospect-demand', 'tenants',
+  'capital', 'debt', 'cash', 'close', 'insurance', 'taxes',
+  'market', 'lease-market', 'documents', 'health',
+] as const;
+
+const IDS = MODULES.map((m) => m.id);
+const byId = (id: string) => MODULES.find((m) => m.id === id);
+
+describe('legacy module ids (26) all resolve to a live destination + tab', () => {
+  it('there are exactly 26 legacy ids in the fixture', () => {
+    expect(new Set(LEGACY_MODULE_IDS).size).toBe(26);
+  });
+
+  for (const id of LEGACY_MODULE_IDS) {
+    it(`/${id} resolves`, () => {
+      const direct = byId(id);
+      if (direct) {
+        // Surviving module: known, no redirect needed.
+        expect(parseRoute(`/${id}`, IDS)).toMatchObject({ moduleId: id, known: true });
+        expect(resolveLegacyRoute(`/${id}`, '')).toBeNull();
+        return;
+      }
+      // Absorbed module: the alias table names a registered destination and one of ITS tabs.
+      const alias = LEGACY_ALIASES[id];
+      expect(alias, `${id} is neither registered nor aliased`).toBeDefined();
+      const dest = byId(alias!.destination);
+      expect(dest, `alias destination ${alias!.destination} is not registered`).toBeDefined();
+      expect(dest!.tabs?.some((t) => t.id === alias!.tab), `${alias!.destination} has no tab ${alias!.tab}`).toBe(true);
+      // First render (before the redirect lands) already shows the destination.
+      expect(parseRoute(`/${id}`, IDS)).toMatchObject({ moduleId: alias!.destination, known: true });
+      expect(resolveLegacyRoute(`/${id}`, '')).toBe(`/${alias!.destination}?tab=${alias!.tab}`);
+    });
+  }
+
+  it('an alias never shadows a registered module id', () => {
+    for (const id of Object.keys(LEGACY_ALIASES)) expect(IDS).not.toContain(id);
+  });
+});
+
+describe('resolveLegacyRoute', () => {
+  it('maps the ratified examples', () => {
+    expect(resolveLegacyRoute('/tasks', '')).toBe('/worklist?tab=today');
+    expect(resolveLegacyRoute('/alerts', '')).toBe('/worklist?tab=alerts');
+    expect(resolveLegacyRoute('/calibration', '')).toBe('/data?tab=calibration');
+    expect(resolveLegacyRoute('/documents', '')).toBe('/data?tab=documents');
+  });
+
+  it('preserves ?scenario= and ?still= (and any other param)', () => {
+    const to = resolveLegacyRoute('/alerts', '?scenario=Downside&still=1&x=y')!;
+    const q = new URLSearchParams(to.split('?')[1]);
+    expect(to.startsWith('/worklist?')).toBe(true);
+    expect(q.get('tab')).toBe('alerts');
+    expect(q.get('scenario')).toBe('Downside');
+    expect(q.get('still')).toBe('1');
+    expect(q.get('x')).toBe('y');
+  });
+
+  it('turns a legacy inner ?tab= into ?view= (calibration + documents)', () => {
+    expect(resolveLegacyRoute('/calibration', '?tab=pending')).toBe('/data?tab=calibration&view=pending');
+    expect(resolveLegacyRoute('/documents', '?tab=corpus&still=1')).toBe('/data?tab=documents&still=1&view=corpus');
+  });
+
+  it("redirects Intel's departed data-ops tabs to Data, leaving intelligence tabs alone", () => {
+    expect(resolveLegacyRoute('/intel', '?tab=imports')).toBe('/data?tab=imports');
+    expect(resolveLegacyRoute('/intel', '?tab=quality&scenario=Upside')).toBe('/data?tab=quality&scenario=Upside');
+    expect(resolveLegacyRoute('/intel', '?tab=mappings')).toBe('/data?tab=mappings');
+    expect(resolveLegacyRoute('/intel', '?tab=benchmarks')).toBeNull();
+    expect(resolveLegacyRoute('/intel/9050-red-branch', '')).toBeNull();
+  });
+
+  it('canonical destination URLs and unknown paths do not redirect', () => {
+    expect(resolveLegacyRoute('/worklist', '?tab=alerts')).toBeNull();
+    expect(resolveLegacyRoute('/data', '')).toBeNull();
+    expect(resolveLegacyRoute('/nope', '')).toBeNull();
+    expect(resolveLegacyRoute('/', '')).toBeNull();
+  });
+});
+
+describe('every existing entity deep link still works', () => {
+  it('MODULE_PRIMARY_TYPE / HOME_MODULE only point at registered modules', () => {
+    for (const id of Object.keys(MODULE_PRIMARY_TYPE)) expect(IDS).toContain(id);
+    for (const id of Object.values(HOME_MODULE)) expect(IDS).toContain(id);
+  });
+
+  it('entity + intel deep links parse against the real registry', () => {
+    expect(parseRoute('/portfolio/9050-red-branch', IDS).selected).toEqual({ type: 'property', id: '9050-red-branch' });
+    expect(parseRoute('/debt/borrower-restoration', IDS).selected).toEqual({ type: 'loan', id: 'borrower-restoration' });
+    expect(parseRoute('/leases/x', IDS).selected).toEqual({ type: 'lease', id: 'x' });
+    expect(parseRoute('/intel/9050-red-branch', IDS)).toMatchObject({ moduleId: 'intel', intelPropertyId: '9050-red-branch', selected: null });
+    // /health still resolves although it left the rail.
+    expect(parseRoute('/health', IDS)).toMatchObject({ moduleId: 'health', known: true });
+  });
+
+  it('an unregistered destination does not resolve an alias (fails closed to the default)', () => {
+    expect(parseRoute('/alerts', ['overview'])).toMatchObject({ moduleId: DEFAULT_MODULE, known: false });
+  });
+});
+
+describe('house rule: max 5 tabs per destination', () => {
+  it('no registered destination exceeds the cap', () => {
+    for (const m of MODULES) {
+      expect(tabCapViolation(m.id, m.tabs), m.id).toBeNull();
+      expect((m.tabs ?? []).length).toBeLessThanOrEqual(MAX_TABS_PER_DESTINATION);
+    }
+  });
+
+  it('flags a 6-tab destination', () => {
+    const six: ModuleTabDef[] = Array.from({ length: 6 }, (_, i) => ({ id: `t${i}`, label: `T${i}` }));
+    expect(tabCapViolation('x', six)).toMatch(/6 tabs/);
+    expect(tabCapViolation('x', six.slice(0, 5))).toBeNull();
+    expect(tabCapViolation('x', undefined)).toBeNull();
+  });
+
+  it('dev-warns (console.warn) for an over-cap destination and stays silent within the cap', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const six: ModuleTabDef[] = Array.from({ length: 6 }, (_, i) => ({ id: `t${i}`, label: `T${i}` }));
+    warnIfTooManyTabs('big', six.slice(0, 5));
+    expect(warn).not.toHaveBeenCalled();
+    warnIfTooManyTabs('big', six);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0]![0])).toMatch(/"big" declares 6 tabs/);
+    warn.mockRestore();
+  });
+
+  it('tab ids are unique within a destination', () => {
+    for (const m of MODULES) {
+      const ids = (m.tabs ?? []).map((t) => t.id);
+      expect(new Set(ids).size, m.id).toBe(ids.length);
+    }
+  });
+});
+
+describe('rail composition', () => {
+  it('Phase 4a destinations are registered; absorbed ids are not', () => {
+    for (const id of ['worklist', 'data', 'intel', 'health']) expect(IDS).toContain(id);
+    for (const id of ['tasks', 'alerts', 'calendar', 'renewals', 'calibration', 'documents']) expect(IDS).not.toContain(id);
+    expect(byId('intel')!.label).toBe('Financials');
+    expect(byId('worklist')!.tabs!.map((t) => t.id)).toEqual(['today', 'alerts', 'calendar', 'renewals']);
+    expect(byId('data')!.tabs!.map((t) => t.id)).toEqual(['imports', 'quality', 'mappings', 'calibration', 'documents']);
+    expect(byId('intel')!.tabs!.map((t) => t.id)).toEqual(['ownership', 'property', 'lease-run', 'benchmarks', 'managers']);
+  });
+
+  for (const profile of ['acquisitions', 'principal'] as const) {
+    it(`${profile}: System Health is off the rail but every other module still shows`, () => {
+      const rail = railModules(profile).map((m) => m.id);
+      expect(rail).not.toContain('health');
+      expect(rail).toEqual(expect.arrayContaining(IDS.filter((id) => id !== 'health')));
+      expect(orderedModules(profile).map((m) => m.id)).toContain('health'); // still registered/routable
+    });
+
+    it(`${profile}: the order list names only registered ids and lands on a resolvable route`, () => {
+      for (const id of MODULE_ORDER[profile]) expect(IDS, id).toContain(id);
+      expect(IDS).toContain(PROFILE_HOME[profile]);
+      expect(MODULE_ORDER[profile]).toContain('worklist');
+      expect(MODULE_ORDER[profile]).toContain('data');
+    });
+  }
+
+  it('every rail group has at least one item (no empty group labels)', () => {
+    const rail = railModules('acquisitions');
+    const groups = new Set(rail.map((m) => m.group));
+    expect([...groups].sort()).toEqual(['Assets', 'Capital', 'Command', 'Market', 'System']);
+  });
+});
