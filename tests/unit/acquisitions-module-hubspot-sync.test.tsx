@@ -8,6 +8,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MemoryRouter } from 'react-router-dom';
 import type { Deal } from '../../src/contracts/deal';
 import { AcquisitionsModule } from '../../src/modules/acquisitions/AcquisitionsModule';
 
@@ -51,9 +52,11 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 describe('AcquisitionsModule — Sync from HubSpot button (closes the missing-trigger gap)', () => {
   it('renders a Sync from HubSpot button', () => {
     render(
-      <QueryClientProvider client={seededClient(DEALS)}>
-        <AcquisitionsModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(DEALS)}>
+          <AcquisitionsModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
     expect(screen.getByRole('button', { name: /sync from hubspot/i })).toBeTruthy();
   });
@@ -68,9 +71,11 @@ describe('AcquisitionsModule — Sync from HubSpot button (closes the missing-tr
     }));
 
     render(
-      <QueryClientProvider client={seededClient(DEALS)}>
-        <AcquisitionsModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(DEALS)}>
+          <AcquisitionsModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     const btn = screen.getByRole('button', { name: /sync from hubspot/i });
@@ -85,9 +90,11 @@ describe('AcquisitionsModule — Sync from HubSpot button (closes the missing-tr
 
   it('shows sync result after a successful sync', async () => {
     render(
-      <QueryClientProvider client={seededClient(DEALS)}>
-        <AcquisitionsModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(DEALS)}>
+          <AcquisitionsModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     const btn = screen.getByRole('button', { name: /sync from hubspot/i });
@@ -108,9 +115,11 @@ describe('AcquisitionsModule — Sync from HubSpot button (closes the missing-tr
     }));
 
     render(
-      <QueryClientProvider client={seededClient(DEALS)}>
-        <AcquisitionsModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(DEALS)}>
+          <AcquisitionsModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
 
     const btn = screen.getByRole('button', { name: /sync from hubspot/i });
@@ -124,9 +133,11 @@ describe('AcquisitionsModule — Sync from HubSpot button (closes the missing-tr
 
   it('triggering HubSpot sync does not touch Notion sync state (no state collision)', async () => {
     render(
-      <QueryClientProvider client={seededClient(DEALS)}>
-        <AcquisitionsModule />
-      </QueryClientProvider>,
+      <MemoryRouter>
+        <QueryClientProvider client={seededClient(DEALS)}>
+          <AcquisitionsModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
     );
     const hubspotBtn = screen.getByRole('button', { name: /sync from hubspot/i });
     const notionBtn = screen.getByRole('button', { name: /sync from notion/i });
