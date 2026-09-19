@@ -72,6 +72,7 @@ function uiValue(setActiveModule: (id: string) => void): UiState {
   return {
     activeModuleId: 'overview',
     setActiveModule,
+    openTab: () => {},
     paletteOpen: false,
     openPalette: () => {},
     closePalette: () => {},

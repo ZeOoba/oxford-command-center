@@ -1,11 +1,12 @@
 import { Suspense, useState } from 'react';
-import { Navigate, useParams } from 'react-router-dom';
+import { Navigate, useLocation, useParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { MODULES } from './modules';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { useSnapshot } from '@/data/queries';
 import { useUi } from '@/brain/ui-context';
+import { resolveLegacyRoute } from '@/brain/routing';
 import { CommandPalette } from '@/brain/CommandPalette';
 import { EntityDrawer } from '@/brain/EntityDrawer';
 import { DraftPanel } from '@/brain/DraftPanel';
@@ -21,7 +22,9 @@ const TITLES: Record<string, string> = {
   overview: 'Command Overview',
   pipeline: 'Acquisitions Pipeline',
   portfolio: 'Portfolio Health',
-  intel: 'Property Financial Intelligence',
+  intel: 'Financials',
+  worklist: 'Worklist',
+  data: 'Data',
   leases: 'Leases & Renewals',
   debt: 'Debt & Maturities',
   cash: 'Cash & Treasury',
@@ -62,12 +65,18 @@ function FilterBarWithSlice({ properties }: { properties: Property[] }) {
 export function AppShell() {
   const ui = useUi();
   const { moduleId } = useParams();
+  const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const snap = useSnapshot();
   const data = snap.data;
   const active = MODULES.find((m) => m.id === ui.activeModuleId) ?? MODULES[0]!;
   const Active = active.Component;
+
+  // A legacy (absorbed) module id or tab → its destination + tab, other params preserved. `replace`
+  // so the back button isn't trapped on the alias.
+  const legacyTo = resolveLegacyRoute(location.pathname, location.search);
+  if (legacyTo) return <Navigate to={legacyTo} replace />;
 
   // Unknown module path → normalize the URL to the default view.
   if (moduleId && !MODULES.some((m) => m.id === moduleId)) {
