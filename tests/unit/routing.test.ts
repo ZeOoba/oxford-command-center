@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { parseRoute, entityPath, intelPropertyPath, HOME_MODULE, MODULE_PRIMARY_TYPE } from '../../src/brain/routing';
+import { parseRoute, entityPath, intelPropertyPath, HOME_MODULE, HOME_TAB, MODULE_PRIMARY_TYPE, TAB_PRIMARY_TYPE } from '../../src/brain/routing';
 import type { EntityType } from '../../src/brain/ui-context';
 
-const MODS = ['overview', 'pipeline', 'tasks', 'portfolio', 'leases', 'debt', 'cash', 'insurance', 'market'];
+const MODS = ['overview', 'pipeline', 'tasks', 'portfolio', 'leases', 'capital', 'insurance', 'market'];
 const MODS_INTEL = [...MODS, 'intel'];
 
 describe('parseRoute', () => {
@@ -13,7 +13,7 @@ describe('parseRoute', () => {
   });
 
   it('resolves a module path with no entity', () => {
-    expect(parseRoute('/debt', MODS)).toEqual({ moduleId: 'debt', known: true, selected: null, intelPropertyId: null });
+    expect(parseRoute('/capital', MODS)).toEqual({ moduleId: 'capital', known: true, selected: null, intelPropertyId: null });
   });
 
   it('resolves a deep-linked entity to a typed selection (drawer)', () => {
@@ -23,7 +23,7 @@ describe('parseRoute', () => {
       selected: { type: 'property', id: '9050-red-branch' },
       intelPropertyId: null,
     });
-    expect(parseRoute('/debt/REDACTED-702', MODS).selected).toEqual({ type: 'loan', id: 'REDACTED-702' });
+    expect(parseRoute('/capital/REDACTED-702', MODS, 'debt').selected).toEqual({ type: 'loan', id: 'REDACTED-702' });
   });
 
   it('ignores an entity segment for modules without a primary entity', () => {
@@ -69,7 +69,7 @@ describe('intelPropertyPath', () => {
 describe('entityPath / HOME_MODULE', () => {
   it('builds the shareable path for each entity type', () => {
     expect(entityPath({ type: 'property', id: 'p1' })).toBe('/portfolio/p1');
-    expect(entityPath({ type: 'loan', id: 'l1' })).toBe('/debt/l1');
+    expect(entityPath({ type: 'loan', id: 'l1' })).toBe('/capital/l1');
     expect(entityPath({ type: 'counterparty', id: 'cp-1' })).toBe('/overview/cp-1');
   });
 
@@ -79,7 +79,10 @@ describe('entityPath / HOME_MODULE', () => {
     const skip = new Set<EntityType>(['counterparty']);
     for (const [type, mod] of Object.entries(HOME_MODULE)) {
       if (skip.has(type as EntityType)) continue;
-      expect(MODULE_PRIMARY_TYPE[mod]).toBe(type as EntityType);
+      // Multi-drawer destinations (Capital) resolve the type through their home tab instead.
+      const homeTab = HOME_TAB[type as EntityType];
+      const resolved = homeTab ? TAB_PRIMARY_TYPE[mod]?.[homeTab] : MODULE_PRIMARY_TYPE[mod];
+      expect(resolved).toBe(type as EntityType);
     }
   });
 });

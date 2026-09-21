@@ -164,6 +164,22 @@ describe('rail composition', () => {
     expect(byId('intel')!.tabs!.map((t) => t.id)).toEqual(['ownership', 'property', 'lease-run', 'benchmarks', 'managers']);
   });
 
+  it('PR-B: Capital is a 5-tab destination; debt/cash/close are absorbed', () => {
+    expect(byId('capital')!.tabs!.map((t) => t.id)).toEqual(['allocation', 'pipeline', 'debt', 'cash', 'close']);
+    for (const id of ['debt', 'cash', 'close']) expect(IDS).not.toContain(id);
+    expect(resolveLegacyRoute('/debt', '?tab=scorecard')).toBe('/capital?tab=debt&view=scorecard');
+    expect(resolveLegacyRoute('/debt/REDACTED-702', '')).toBe('/capital/REDACTED-702?tab=debt');
+    expect(resolveLegacyRoute('/cash/acct-1', '?scenario=Downside')).toBe('/capital/acct-1?scenario=Downside&tab=cash');
+    expect(resolveLegacyRoute('/close', '')).toBe('/capital?tab=close');
+  });
+
+  it('the loan and cash drawers resolve inside Capital', () => {
+    expect(parseRoute('/capital/l1', IDS, 'debt').selected).toEqual({ type: 'loan', id: 'l1' });
+    expect(parseRoute('/capital/a1', IDS, 'cash').selected).toEqual({ type: 'cashEntity', id: 'a1' });
+    expect(parseRoute('/debt/l1', IDS).selected).toEqual({ type: 'loan', id: 'l1' }); // first-render alias
+    expect(parseRoute('/cash/a1', IDS).selected).toEqual({ type: 'cashEntity', id: 'a1' }); // first-render alias
+  });
+
   for (const profile of ['acquisitions', 'principal'] as const) {
     it(`${profile}: System Health is off the rail but every other module still shows`, () => {
       const rail = railModules(profile).map((m) => m.id);

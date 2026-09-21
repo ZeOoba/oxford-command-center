@@ -22,9 +22,9 @@ describe('module-order', () => {
   });
 
   it('principal profile ranks the principal home first and capital ahead of assets', () => {
-    const registry = [mod('portfolio', 'Assets'), mod('cash', 'Capital'), mod('principal', 'Command'), mod('overview', 'Command')];
+    const registry = [mod('portfolio', 'Assets'), mod('capital', 'Capital'), mod('principal', 'Command'), mod('overview', 'Command')];
     const ids = orderedModules('principal', registry).map((m) => m.id);
     expect(ids[0]).toBe('principal');
-    expect(ids.indexOf('cash')).toBeLessThan(ids.indexOf('portfolio'));
+    expect(ids.indexOf('capital')).toBeLessThan(ids.indexOf('portfolio'));
   });
 });

@@ -4,15 +4,12 @@ import {
   Target,
   Building2,
   FileText,
-  Landmark,
-  Wallet,
   ShieldCheck,
   LineChart,
   CheckSquare,
   Contact,
   Activity,
   Briefcase,
-  Scale,
   Database,
   TrendingUp,
   Radar,
@@ -26,6 +23,7 @@ import {
 import { INTEL_TABS } from '@/modules/intel/tabs';
 import { DATA_TABS } from '@/modules/data/tabs';
 import { WORKLIST_TABS } from '@/modules/worklist/tabs';
+import { CAPITAL_TABS } from '@/modules/capital/tabs';
 import type { ModuleTabDef } from './tab-types';
 
 // Each module is its own code-split chunk — only the active one loads.
@@ -33,14 +31,11 @@ const OverviewModule = lazy(() => import('@/modules/overview/OverviewModule').th
 const AcquisitionsModule = lazy(() => import('@/modules/acquisitions/AcquisitionsModule').then((m) => ({ default: m.AcquisitionsModule })));
 const PortfolioModule = lazy(() => import('@/modules/portfolio/PortfolioModule').then((m) => ({ default: m.PortfolioModule })));
 const LeasesModule = lazy(() => import('@/modules/leases/LeasesModule').then((m) => ({ default: m.LeasesModule })));
-const DebtModule = lazy(() => import('@/modules/debt/DebtModule').then((m) => ({ default: m.DebtModule })));
-const CashModule = lazy(() => import('@/modules/cash/CashModule').then((m) => ({ default: m.CashModule })));
 const InsuranceModule = lazy(() => import('@/modules/insurance/InsuranceModule').then((m) => ({ default: m.InsuranceModule })));
 const MarketModule = lazy(() => import('@/modules/market/MarketModule').then((m) => ({ default: m.MarketModule })));
 const TenantsModule = lazy(() => import('@/modules/tenants/TenantsModule').then((m) => ({ default: m.TenantsModule })));
 const HealthModule = lazy(() => import('@/modules/health/HealthModule').then((m) => ({ default: m.HealthModule })));
 const PrincipalModule = lazy(() => import('@/modules/principal/PrincipalModule').then((m) => ({ default: m.PrincipalModule })));
-const CloseModule = lazy(() => import('@/modules/close/CloseModule').then((m) => ({ default: m.CloseModule })));
 const IntelModule = lazy(() => import('@/modules/intel/IntelModule').then((m) => ({ default: m.IntelModule })));
 const WorklistModule = lazy(() => import('@/modules/worklist/WorklistModule').then((m) => ({ default: m.WorklistModule })));
 const DataModule = lazy(() => import('@/modules/data/DataModule').then((m) => ({ default: m.DataModule })));
@@ -83,10 +78,7 @@ export const MODULES: ModuleDef[] = [
   { id: 'leasing', label: 'Leasing', icon: TrendingUp, group: 'Assets', Component: LeaseForecastModule },
   { id: 'prospect-demand', label: 'Demand Signals', icon: Radar, group: 'Assets', Component: ProspectDemandModule },
   { id: 'tenants', label: 'Tenants', icon: Contact, group: 'Assets', Component: TenantsModule },
-  { id: 'capital', label: 'Capital', icon: Coins, group: 'Capital', Component: CapitalModule },
-  { id: 'debt', label: 'Debt', icon: Landmark, group: 'Capital', Component: DebtModule },
-  { id: 'cash', label: 'Cash', icon: Wallet, group: 'Capital', Component: CashModule },
-  { id: 'close', label: 'Monthly Close', icon: Scale, group: 'Capital', Component: CloseModule },
+  { id: 'capital', label: 'Capital', icon: Coins, group: 'Capital', Component: CapitalModule, tabs: CAPITAL_TABS },
   { id: 'insurance', label: 'Insurance', icon: ShieldCheck, group: 'Capital', Component: InsuranceModule },
   { id: 'taxes', label: 'Taxes', icon: Receipt, group: 'Capital', Component: TaxesModule },
   { id: 'market', label: 'Market', icon: LineChart, group: 'Market', Component: MarketModule },

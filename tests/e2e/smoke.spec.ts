@@ -43,3 +43,38 @@ test('entity drill-through opens and closes with Escape', async ({ page }) => {
   await page.keyboard.press('Escape');
   await expect(page.getByText('Square Feet')).not.toBeVisible();
 });
+
+// --- Capital destination (IA decongestion Phase 4b): Debt / Cash / Close absorbed as Capital tabs ---
+// Legacy module ids stay valid URLs and redirect (replace) to /capital?tab=<x>, preserving other params.
+
+test('legacy /debt lands on Capital > Debt with the Positions view selected', async ({ page }) => {
+  await page.goto('/debt?still=1');
+  await expect(page).toHaveURL(/\/capital\?.*tab=debt/);
+  const positions = page.getByRole('radio', { name: 'Positions' });
+  await expect(positions).toBeVisible();
+  await expect(positions).toBeChecked();
+});
+
+test('legacy /debt?tab=scorecard maps its inner tab to the ?view= segmented control', async ({ page }) => {
+  await page.goto('/debt?tab=scorecard&still=1');
+  await expect(page).toHaveURL(/\/capital\?/);
+  const params = new URL(page.url()).searchParams;
+  expect(params.get('tab')).toBe('debt');
+  expect(params.get('view')).toBe('scorecard');
+  await expect(page.getByRole('radio', { name: 'Scorecard' })).toBeChecked();
+});
+
+for (const key of ['cash', 'close'] as const) {
+  test(`legacy /${key} lands on the Capital ${key} tab`, async ({ page }) => {
+    await page.goto(`/${key}?still=1`);
+    await expect(page).toHaveURL(new RegExp(`/capital[?].*tab=${key}`));
+    const label = key === 'cash' ? 'Cash' : 'Close';
+    await expect(page.getByRole('tab', { name: label, exact: true })).toHaveAttribute('aria-selected', 'true');
+  });
+}
+
+test('Capital exposes its five tabs in order', async ({ page }) => {
+  await page.goto('/capital?still=1');
+  const tabs = page.getByRole('tablist', { name: 'Capital views' }).getByRole('tab');
+  await expect(tabs).toHaveText(['Allocation', 'Pipeline', 'Debt', 'Cash', 'Close']);
+});

@@ -1,25 +1,26 @@
 // src/modules/capital/CapitalModule.tsx
 //
-// Phase 5 W2 — Capital Allocation capstone module.
-// Panels:
-//   1. Portfolio Allocation — ranked AllocationCard list across all assets
-//      (buildPortfolioAllocation → GET /api/warehouse/capital/allocate).
-//   2. Market Cap-Rate Positioning — implied cap rate vs external market benchmarks +
-//      IC Memo export + Notion writeback (buildCapitalAllocationReport →
-//      GET /api/warehouse/capital-allocation). Folded in from the now-deleted
-//      CapitalAllocationModule.tsx (see below — this is a DIFFERENT engine and data
-//      shape than panel 1, joined only by propertyId for display purposes).
-//   3. Pipeline — T1/T2 candidates from portfolio.pipeline.
-// Top: HurdleRateBanner (visible while hurdle rate is proposed).
+// Phase 5 W2 — Capital Allocation capstone module; IA decongestion Phase 4b — the Capital destination.
+// Five tabs, in the URL via useTabParam (`?tab=`; default Allocation). See ./tabs.ts for the declaration.
+//   Allocation — ranked AllocationCards across all assets (buildPortfolioAllocation →
+//                GET /api/warehouse/capital/allocate) with, beside them, Market Cap-Rate Positioning
+//                (implied cap rate vs external benchmarks + IC Memo export + Notion writeback;
+//                buildCapitalAllocationReport → GET /api/warehouse/capital-allocation — a DIFFERENT
+//                engine and data shape, joined only by propertyId for display; folded in from the
+//                now-deleted CapitalAllocationModule.tsx) and the cap-rate methodology footnote (R1).
+//   Pipeline   — T1/T2 candidates from portfolio.pipeline (replaced by a Capacity tab when the
+//                deployable-capacity plan lands; Capital stays at 5 tabs).
+//   Debt · Cash · Close — the absorbed DebtModule / CashModule / CloseModule, lazy-mounted per tab.
+// Above the strip (R2) — Allocation/Pipeline only: the HurdleRateBanner and the headline verdict-count /
+// untrusted-book strip. They are about allocation, so they are hidden on Debt/Cash/Close.
 //
-// IA decongestion Phase 2 — tab state in the URL via useTabParam. Above the strip (R2): the
-// HurdleRateBanner and the headline verdict-count / untrusted-book strip. Tabs:
-//   Allocation — panels 1 + 2 (each verdict stays beside its implied-cap-rate columns; R1) and the
-//                cap-rate methodology footnote. IC-memo export + Notion sync stay in panel 2's header.
-//   Pipeline   — panel 3 (Buy Pipeline).
-// Deliberately 2 tabs: the Capital destination is planned to become Allocation · Capacity · Debt ·
-// Cash · Close, so Buy Pipeline will later merge into a Capacity tab. Every panel reads data already
-// fetched at module top level → keyboardActivation "automatic".
+// Rule G: the loading / warehouse-offline gate belongs to the two warehouse-backed panels (Allocation,
+// Pipeline) ONLY. Debt, Cash and Close read the snapshot and work on the static mirror, so a 503 from the
+// capital warehouse routes must never blank them — there is no whole-module early return here.
+// keyboardActivation "manual": the Debt/Cash/Close tabs mount their own queries, so arrowing across the
+// strip must not fire them.
+import { lazy, Suspense } from 'react';
+import type { ReactNode } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { FileDown, UploadCloud } from 'lucide-react';
 import type { AllocationAction } from '@contracts/capital';
@@ -33,19 +34,20 @@ import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { Button } from '@/primitives/Button';
 import { Skeleton } from '@/primitives/Skeleton';
 import { Tabs, TabPanel } from '@/primitives/Tabs';
-import { useTabParam } from '@/lib/useTabParam';
+import { useTabParam, CLEAR_VIEW } from '@/lib/useTabParam';
+import { ModuleLoading } from '@/shell/ModuleFallback';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { useToast } from '@/primitives/toast-context';
 import { useCapitalAllocation, actionLabel, actionColor, actionFillColor } from './hooks';
 import { AllocationCard } from './AllocationCard';
 import { HurdleRateBanner } from './HurdleRateBanner';
+import { CAPITAL_TABS, CAPITAL_TAB_KEYS, CAPITAL_ALLOCATION_TABS, type CapitalTab } from './tabs';
 
-type Tab = 'allocation' | 'pipeline';
-const TAB_KEYS: readonly Tab[] = ['allocation', 'pipeline'];
-const TABS: Array<{ id: Tab; label: string }> = [
-  { id: 'allocation', label: 'Allocation' },
-  { id: 'pipeline', label: 'Pipeline' },
-];
+const TAB_SPECS = CAPITAL_TABS.map(({ id, label }) => ({ id, label }));
+const DebtModule = lazy(() => import('../debt/DebtModule').then((m) => ({ default: m.DebtModule })));
+const CashModule = lazy(() => import('../cash/CashModule').then((m) => ({ default: m.CashModule })));
+const CloseModule = lazy(() => import('../close/CloseModule').then((m) => ({ default: m.CloseModule })));
+type CapitalData = NonNullable<ReturnType<typeof useCapitalAllocation>['data']>;
 
 function fmtPct(n: number | null): string {
   if (n === null) return '—';
@@ -213,47 +215,13 @@ function ExportIcMemoButton({ disabled }: { disabled: boolean }) {
   );
 }
 
-export function CapitalModule() {
-  const { data, isLoading, error } = useCapitalAllocation();
-  const { data: report, isLoading: reportLoading, error: reportError } = useCapitalAllocationReport();
-  const { toast } = useToast();
-  const [tab, setTab] = useTabParam<Tab>(TAB_KEYS, 'allocation');
-  const notionSync = useMutation({
-    mutationFn: postCapitalNotionSync,
-    onSuccess: (r) => {
-      const errCount = r.errors.length;
-      toast({
-        tone: errCount > 0 ? 'info' : 'success',
-        title: `Synced ${r.synced} to Notion`,
-        description: `${r.skipped} skipped${errCount > 0 ? ` · ${errCount} error${errCount > 1 ? 's' : ''}` : ''}`,
-      });
-    },
-    onError: (e) =>
-      toast({
-        tone: 'error',
-        title: 'Notion sync failed',
-        description: e instanceof Error ? e.message : String(e),
-      }),
-  });
-
-  if (isLoading) return (
-    <div className="flex flex-col gap-4">
-      {[1, 2, 3].map(i => <Skeleton key={i} style={{ height: 80, borderRadius: 8 }} />)}
-    </div>
-  );
-
-  if (error || !data) return (
-    <Card>
-      <div style={{ padding: 20, color: 'var(--text-secondary)', fontSize: 13 }}>
-        Capital allocation data unavailable — warehouse may be offline.
-      </div>
-    </Card>
-  );
-
+/**
+ * Above-the-strip header (R2): advisory hurdle-rate banner + headline verdict-count / untrusted-book
+ * strip. Rendered by CapitalModule only on the Allocation/Pipeline tabs and only once data has loaded.
+ */
+function AllocationHeader({ data }: { data: CapitalData }) {
   const { portfolio, hurdleRate } = data;
   const actionEntries = Object.entries(portfolio.actionCounts) as Array<[string, number]>;
-  const capEntries = report?.entries ?? [];
-  const bench = report?.marketBenchmarks;
   // Round 8 fresh-sweep: actionCounts silently absorbs withheld-because-distrusted verdicts into
   // whatever action they collapsed to (usually 'hold') with no indication anything was withheld.
   // 'buy' is excluded — bookTrust:'unknown' there is a "not applicable" placeholder, not distrust
@@ -263,7 +231,7 @@ export function CapitalModule() {
   ).length;
 
   return (
-    <div className="flex flex-col gap-4">
+    <>
       {/* Advisory banner — shown while hurdle rate is proposed */}
       <HurdleRateBanner hurdleRate={hurdleRate} />
 
@@ -290,9 +258,59 @@ export function CapitalModule() {
           }
         />
       </Card>
+    </>
+  );
+}
 
-      <Tabs tabs={TABS} selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} keyboardActivation="automatic" aria-label="Capital views">
+export function CapitalModule() {
+  const { data, isLoading, error } = useCapitalAllocation();
+  const { data: report, isLoading: reportLoading, error: reportError } = useCapitalAllocationReport();
+  const { toast } = useToast();
+  const [tab, setTab] = useTabParam<CapitalTab>(CAPITAL_TAB_KEYS, 'allocation', 'tab', CLEAR_VIEW);
+  const notionSync = useMutation({
+    mutationFn: postCapitalNotionSync,
+    onSuccess: (r) => {
+      const errCount = r.errors.length;
+      toast({
+        tone: errCount > 0 ? 'info' : 'success',
+        title: `Synced ${r.synced} to Notion`,
+        description: `${r.skipped} skipped${errCount > 0 ? ` · ${errCount} error${errCount > 1 ? 's' : ''}` : ''}`,
+      });
+    },
+    onError: (e) =>
+      toast({
+        tone: 'error',
+        title: 'Notion sync failed',
+        description: e instanceof Error ? e.message : String(e),
+      }),
+  });
+
+  /** Rule G: the loading / offline gate belongs to the two warehouse-backed panels only. */
+  // Single source of truth for "capital data is usable": TanStack v5 retains stale `data` when a
+  // refetch fails, so `data` alone is not proof the query is healthy. Header and panels share this.
+  const usable = !isLoading && !error && data ? data : null;
+  const gated = (render: (d: CapitalData) => ReactNode) =>
+    isLoading ? (
+      <div className="flex flex-col gap-4">
+        {[1, 2, 3].map(i => <Skeleton key={i} style={{ height: 80, borderRadius: 8 }} />)}
+      </div>
+    ) : !usable ? (
+      <Card>
+        <div style={{ padding: 20, color: 'var(--text-secondary)', fontSize: 13 }}>
+          Capital allocation data unavailable — warehouse may be offline.
+        </div>
+      </Card>
+    ) : render(usable);
+
+  const capEntries = report?.entries ?? [];
+  const bench = report?.marketBenchmarks;
+
+  return (
+    <div className="flex flex-col gap-4">
+      {usable && CAPITAL_ALLOCATION_TABS.has(tab) && <AllocationHeader data={usable} />}
+      <Tabs tabs={TAB_SPECS} selectedKey={tab} onSelectionChange={(k) => setTab(k as CapitalTab)} keyboardActivation="manual" aria-label="Capital views">
       <TabPanel id="allocation">
+      {gated(({ portfolio, hurdleRate }) => (
       <div className="flex flex-col gap-4">
       {/* Portfolio allocation list */}
       <div className="flex flex-col gap-3">
@@ -381,9 +399,12 @@ export function CapitalModule() {
         </p>
       </div>
       </div>
+      ))}
       </TabPanel>
 
       <TabPanel id="pipeline">
+      {gated(({ portfolio }) => (
+      <>
       {/* Pipeline candidates */}
       {portfolio.pipeline.length === 0 ? (
         <Card>
@@ -424,7 +445,13 @@ export function CapitalModule() {
           </div>
         </Card>
       )}
+      </>
+      ))}
       </TabPanel>
+
+      <TabPanel id="debt"><Suspense fallback={<ModuleLoading />}><DebtModule /></Suspense></TabPanel>
+      <TabPanel id="cash"><Suspense fallback={<ModuleLoading />}><CashModule /></Suspense></TabPanel>
+      <TabPanel id="close"><Suspense fallback={<ModuleLoading />}><CloseModule /></Suspense></TabPanel>
       </Tabs>
     </div>
   );
