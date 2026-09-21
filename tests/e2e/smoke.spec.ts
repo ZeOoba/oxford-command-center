@@ -152,3 +152,58 @@ test('Leasing defaults to the Rollover tab', async ({ page }) => {
   await page.goto('/leasing?still=1');
   await expect(page.getByRole('tab', { name: 'Rollover', exact: true })).toHaveAttribute('aria-selected', 'true');
 });
+
+// --- Brain destination (IA decongestion Phase 4e): Principal Home + Insights + Versions absorbed as Brain tabs ---
+// Digest and Insights are snapshot-backed; Track record / Feedback / Memory sit behind the warehouse-backed report gate,
+// so only durable, gate-independent things (URL params, tab strip) are asserted here.
+
+test('principal profile lands on Brain > Digest', async ({ page }) => {
+  // Registered before goto so ViewProfileProvider reads it on first load (an explicit stored choice wins over whoami).
+  await page.addInitScript(() => localStorage.setItem('ora-view', 'principal'));
+  await page.goto('/?still=1');
+  await expect(page).toHaveURL(/\/command-brain/, { timeout: 15_000 });
+  expect(new URL(page.url()).pathname).toBe('/command-brain');
+  await expect(page.getByRole('tab', { name: 'Digest', exact: true })).toHaveAttribute('aria-selected', 'true', { timeout: 15_000 });
+});
+
+test('acquisitions profile (default) still lands on Pipeline', async ({ page }) => {
+  await page.goto('/?still=1');
+  await expect(page).toHaveURL(/\/pipeline/, { timeout: 15_000 });
+  expect(new URL(page.url()).pathname).toBe('/pipeline');
+});
+
+test('legacy /principal lands on Brain > Digest', async ({ page }) => {
+  await page.goto('/principal?still=1');
+  await expect(page).toHaveURL(/\/command-brain\?/, { timeout: 15_000 });
+  expect(new URL(page.url()).searchParams.get('tab')).toBe('digest');
+  await expect(page.getByRole('tab', { name: 'Digest', exact: true })).toHaveAttribute('aria-selected', 'true', { timeout: 15_000 });
+});
+
+test('legacy /insights lands on Brain > Insights', async ({ page }) => {
+  await page.goto('/insights?still=1');
+  await expect(page).toHaveURL(/\/command-brain\?/, { timeout: 15_000 });
+  expect(new URL(page.url()).searchParams.get('tab')).toBe('insights');
+  await expect(page.getByRole('tab', { name: 'Insights', exact: true })).toHaveAttribute('aria-selected', 'true', { timeout: 15_000 });
+});
+
+test('legacy /command-brain?tab=versions lands on Brain > Memory with view=versions', async ({ page }) => {
+  await page.goto('/command-brain?tab=versions&still=1');
+  await expect(page).toHaveURL(/\/command-brain\?/, { timeout: 15_000 });
+  const params = new URL(page.url()).searchParams;
+  expect(params.get('tab')).toBe('memory');
+  expect(params.get('view')).toBe('versions');
+  // The Versions radio lives in the Memory panel, behind the warehouse-backed report gate (offline card, no
+  // radiogroup when the warehouse is unavailable) — so only the URL params are asserted here.
+});
+
+test('Brain exposes its five tabs in order', async ({ page }) => {
+  await page.goto('/command-brain?still=1');
+  const tabs = page.getByRole('tablist', { name: 'Brain views' }).getByRole('tab');
+  // Feedback may carry an open-questions count badge suffix, so match by regex.
+  await expect(tabs).toHaveText([/^Digest$/, /^Insights$/, /^Track record$/, /^Feedback\d*$/, /^Memory$/]);
+});
+
+test('Brain defaults to the Digest tab', async ({ page }) => {
+  await page.goto('/command-brain?still=1');
+  await expect(page.getByRole('tab', { name: 'Digest', exact: true })).toHaveAttribute('aria-selected', 'true', { timeout: 15_000 });
+});
