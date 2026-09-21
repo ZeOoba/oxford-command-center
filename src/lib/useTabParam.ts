@@ -43,7 +43,10 @@ export function useTabParam<K extends string>(
           const next = new URLSearchParams(prev);
           if (key === defaultKey) next.delete(paramName);
           else next.set(paramName, key);
-          for (const p of clearOnChange) next.delete(p);
+          // Never clear the param we just wrote: a list that happens to name `paramName` (a shared
+          // CLEAR_* constant reused on an inner `view` strip) would otherwise silently drop the
+          // selection and snap back to `defaultKey`.
+          for (const p of clearOnChange) if (p !== paramName) next.delete(p);
           return next;
         },
         { replace: true },

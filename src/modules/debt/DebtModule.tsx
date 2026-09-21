@@ -12,7 +12,8 @@
 //                 warehouse spine — deliberately NOT merged with the Maturities chart).
 //
 // Only the selected view is mounted, so Scorecard's warehouse queries fire only when it is chosen.
-// No changes to module registry (id: 'debt' already registered in shell/modules.tsx).
+// Not a registry entry of its own: 'debt' was absorbed into the Capital destination in Phase 4b and
+// survives only as a LEGACY_ALIASES row (src/brain/routing.ts) -> /capital?tab=debt.
 import { useMemo } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { useSnapshot, useAnalytics } from '@/data/queries';
