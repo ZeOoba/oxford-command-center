@@ -270,3 +270,28 @@ describe('rail composition', () => {
     expect([...groups].sort()).toEqual(['Assets', 'Capital', 'Command', 'Market', 'System']);
   });
 });
+
+describe('final rail (IA decongestion Phase 4 complete)', () => {
+  const RAIL = ['overview', 'pipeline', 'worklist', 'command-brain', 'portfolio', 'intel', 'leasing', 'capital', 'obligations', 'market', 'lease-market', 'data'];
+  for (const profile of ['acquisitions', 'principal'] as const) {
+    it(`${profile}: exactly the 12 ratified destinations, none empty, none over 5 tabs`, () => {
+      const rail = railModules(profile);
+      expect(rail.map((m) => m.id).sort()).toEqual([...RAIL].sort());
+      for (const m of rail) expect((m.tabs ?? []).length, m.id).toBeLessThanOrEqual(MAX_TABS_PER_DESTINATION);
+    });
+    it(`${profile}: MODULE_ORDER lists every rail id (nothing relies on the append-unlisted fallback)`, () => {
+      for (const id of RAIL) expect(MODULE_ORDER[profile], id).toContain(id);
+    });
+  }
+  it('rail groups are Command(4) / Assets(3) / Capital(2) / Market(2) / System(1)', () => {
+    const counts: Record<string, number> = {};
+    for (const m of railModules('acquisitions')) counts[m.group] = (counts[m.group] ?? 0) + 1;
+    expect(counts).toEqual({ Command: 4, Assets: 3, Capital: 2, Market: 2, System: 1 });
+  });
+  it('every legacy id (26) still resolves to one of the 12 (or Health)', () => {
+    for (const id of LEGACY_MODULE_IDS) {
+      const target = byId(id)?.id ?? LEGACY_ALIASES[id]?.destination;
+      expect([...RAIL, 'health'], id).toContain(target);
+    }
+  });
+});
