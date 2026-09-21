@@ -286,25 +286,28 @@ export function CapitalModule() {
   });
 
   /** Rule G: the loading / offline gate belongs to the two warehouse-backed panels only. */
+  // Single source of truth for "capital data is usable": TanStack v5 retains stale `data` when a
+  // refetch fails, so `data` alone is not proof the query is healthy. Header and panels share this.
+  const usable = !isLoading && !error && data ? data : null;
   const gated = (render: (d: CapitalData) => ReactNode) =>
     isLoading ? (
       <div className="flex flex-col gap-4">
         {[1, 2, 3].map(i => <Skeleton key={i} style={{ height: 80, borderRadius: 8 }} />)}
       </div>
-    ) : error || !data ? (
+    ) : !usable ? (
       <Card>
         <div style={{ padding: 20, color: 'var(--text-secondary)', fontSize: 13 }}>
           Capital allocation data unavailable — warehouse may be offline.
         </div>
       </Card>
-    ) : render(data);
+    ) : render(usable);
 
   const capEntries = report?.entries ?? [];
   const bench = report?.marketBenchmarks;
 
   return (
     <div className="flex flex-col gap-4">
-      {data && CAPITAL_ALLOCATION_TABS.has(tab) && <AllocationHeader data={data} />}
+      {usable && CAPITAL_ALLOCATION_TABS.has(tab) && <AllocationHeader data={usable} />}
       <Tabs tabs={TAB_SPECS} selectedKey={tab} onSelectionChange={(k) => setTab(k as CapitalTab)} keyboardActivation="manual" aria-label="Capital views">
       <TabPanel id="allocation">
       {gated(({ portfolio, hurdleRate }) => (

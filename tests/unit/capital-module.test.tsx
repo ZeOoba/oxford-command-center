@@ -448,6 +448,23 @@ describe('CapitalModule — Phase 4b destination (Allocation · Pipeline · Debt
     expect(screen.getByRole('tab', { name: 'Debt' })).toBeTruthy(); // the strip is still there
   });
 
+  it('a failed refetch that retains stale data hides the verdict-count strip alongside the unavailable card', async () => {
+    const qc = seededClient();
+    renderModule('/capital', qc);
+    // Precondition: good data is rendered.
+    expect(screen.getByText('Hold 1')).toBeTruthy();
+    expect(screen.getByText('Capital Allocation')).toBeTruthy();
+    // Server goes down; window-refocus style refetch fails. TanStack v5 keeps the old data.
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
+    void qc.refetchQueries({ queryKey: ['warehouse', 'capital', 'allocation'] });
+    await waitFor(() => expect(qc.getQueryState(['warehouse', 'capital', 'allocation'])?.status).toBe('error'), { timeout: 5000 });
+    // Non-vacuous: data is still retained while status is 'error'.
+    expect(qc.getQueryState(['warehouse', 'capital', 'allocation'])?.data).toBeTruthy();
+    expect(await screen.findByText(/Capital allocation data unavailable/, undefined, { timeout: 5000 })).toBeTruthy();
+    expect(screen.queryByText('Hold 1')).toBeNull();
+    expect(screen.queryByText('Capital Allocation')).toBeNull();
+  });
+
   it('R2 (revised): the verdict-count strip sits above the strip on Allocation/Pipeline only', () => {
     renderModule('/capital?tab=pipeline');
     expect(screen.getByText('Capital Allocation')).toBeTruthy();
