@@ -21,7 +21,7 @@
 //
 // Invoke: `npx tsx scripts/calibration-snapshot.ts [--task <taskId>] [--db <path>] [--json]`
 import { join } from 'node:path';
-import { openWarehouse } from '../server/warehouse/db';
+import { openWarehouseNoMigrate } from '../server/warehouse/db';
 import type { WarehouseDb } from '../server/warehouse/db';
 import { detectAnomalies } from '../server/warehouse/anomalies';
 import {
@@ -157,7 +157,7 @@ function main(argv: string[]): number {
   const dbPath = args.db ?? defaultDbPath();
   let db: WarehouseDb;
   try {
-    db = openWarehouse(dbPath);
+    db = openWarehouseNoMigrate(dbPath);
   } catch (e) {
     // A cold/mirror env may lack the sqlite file — surface it but exit non-fatally (the task logs + emails).
     console.error(`cannot open warehouse at ${dbPath}: ${e instanceof Error ? e.message : String(e)}`);

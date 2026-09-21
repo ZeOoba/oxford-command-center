@@ -99,10 +99,28 @@ const FINANCIAL_CONTRACT_PATHS: ReadonlySet<string> = new Set([
 // exemption a reviewed, visible decision rather than an omission.
 export const NON_FINANCIAL_CONFIG_PATHS: ReadonlySet<string> = new Set<string>();
 
+// Financial DATA .json outside config/ (2026-09-21 refute round, same failure mode): the blanket `.json`
+// exclusion below also exempted (a) the PFI account-mapping seed -- 339 GL accounts mapped to
+// normalized_category / `excluded`, i.e. what counts as revenue vs opex in NOI, read by warehouse-backfill,
+// warehouse-verify and warehouse-live-drift-check -- and (b) any `.json` sitting inside a financial source
+// directory (server/warehouse/om-extract-fields.json is the OM price/SF extraction spec). Directories are
+// a prefix (fail closed); the one out-of-tree data file is named.
+const FINANCIAL_JSON_PREFIXES: readonly string[] = [
+  'server/warehouse/',
+  'server/workbook/',
+  'src/analytics/',
+];
+const FINANCIAL_DATA_PATHS: ReadonlySet<string> = new Set([
+  'docs/superpowers/specs/2026-06-12-pfi-account-mapping-seed.json',
+]);
+
 /** True when a changed path holds financial-decision SOURCE (not a test / doc / json fixture). */
 export function isFinancialSourcePath(p: string): boolean {
   const path = p.replace(/\\/g, '/');
   if (path.startsWith('config/') && path.endsWith('.json') && !NON_FINANCIAL_CONFIG_PATHS.has(path)) {
+    return true;
+  }
+  if (path.endsWith('.json') && (FINANCIAL_DATA_PATHS.has(path) || FINANCIAL_JSON_PREFIXES.some((pre) => path.startsWith(pre)))) {
     return true;
   }
   if (/\.(test|spec)\.(ts|tsx)$/.test(path) || path.endsWith('.md') || path.endsWith('.json')) return false;

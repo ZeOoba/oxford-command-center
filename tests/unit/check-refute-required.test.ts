@@ -157,7 +157,14 @@ describe('check-refute-required — financial config prefix (weekly sweep 2026-0
     // Adding to this set is a reviewed decision. If you are here to add a config, justify it.
     expect(NON_FINANCIAL_CONFIG_PATHS.size).toBe(0);
   });
+  it('flags financial DATA json outside config/: the account-mapping seed and json inside financial source dirs', () => {
+    expect(isFinancialSourcePath('docs/superpowers/specs/2026-06-12-pfi-account-mapping-seed.json')).toBe(true);
+    expect(isFinancialSourcePath('server/warehouse/om-extract-fields.json')).toBe(true);
+    expect(isFinancialSourcePath('server/workbook/some-table.json')).toBe(true);
+    expect(isFinancialSourcePath('src/analytics/some-thresholds.json')).toBe(true);
+  });
   it('still exempts .json outside config/ — the blanket rule applies elsewhere', () => {
+    expect(isFinancialSourcePath('docs/superpowers/specs/some-other-spec.json')).toBe(false);
     expect(isFinancialSourcePath('architecture/status.json')).toBe(false);
     expect(isFinancialSourcePath('data/snapshots/portfolio.json')).toBe(false);
   });

@@ -16,7 +16,11 @@ import { join, relative } from 'node:path';
 
 const root = process.cwd();
 
-/** Reviewed migrating call sites. Every entry must say why a schema change from it is acceptable. */
+/** Reviewed migrating call sites. Every entry must say why a schema change from it is acceptable.
+ *  Anything that runs UNATTENDED (a scheduled task, the bake) belongs on openWarehouseNoMigrate /
+ *  openWarehouseReadOnly instead -- scripts/calibration-snapshot.ts and scripts/debt-scores-snapshot.ts
+ *  were moved off this list for exactly that reason (the quarterly ora-calibration-snapshot task runs
+ *  the former unattended). */
 const ALLOWED_MIGRATING_OPENS: Record<string, string> = {
   'server/index.ts': 'The dev server on main is the SANCTIONED migrator of the live warehouse.',
   'scripts/warehouse-backfill.ts':
@@ -24,12 +28,10 @@ const ALLOWED_MIGRATING_OPENS: Record<string, string> = {
   'scripts/warehouse-verify.ts': 'Opens fresh sqlite files in os.tmpdir() only — never the live DB.',
   'scripts/warehouse-live-drift-check.ts':
     'Migrates a fresh tmpdir DB to compare against; the live DB is opened read-only.',
-  'scripts/calibration-refit.ts': 'Writer: persists calibration fits; needs the current schema.',
-  'scripts/calibration-snapshot.ts': 'Writer: persists calibration snapshots.',
-  'scripts/debt-scores-snapshot.ts': 'Writer: persists debt score snapshots.',
-  'scripts/debt-snapshot-backfill.ts': 'Writer: deliberate operator backfill of debt snapshots.',
-  'scripts/import-assessments.ts': 'Writer: deliberate operator import (npm run import:assessments).',
-  'scripts/import-insurance-data.ts': 'Writer: deliberate operator import of loss runs.',
+  'scripts/calibration-refit.ts': 'Deliberate operator command (a refit is run by hand); a schema change from it is intended.',
+  'scripts/debt-snapshot-backfill.ts': 'Deliberate operator backfill run by hand; a schema change from it is intended.',
+  'scripts/import-assessments.ts': 'Deliberate operator import (npm run import:assessments) run by hand.',
+  'scripts/import-insurance-data.ts': 'Deliberate operator import of loss runs, run by hand.',
 };
 
 const NEWLINE = /\r?\n/;
@@ -81,6 +83,8 @@ describe('openWarehouse() call sites (weekly sweep 2026-09-21)', () => {
       'server/brief/run.ts',
       'scripts/seed-entity-xref.ts',
       'scripts/lease-market.ts',
+      'scripts/calibration-snapshot.ts',
+      'scripts/debt-scores-snapshot.ts',
       'scripts/warehouse-backup.ts',
       'scripts/bake-warehouse.ts',
     ]) {

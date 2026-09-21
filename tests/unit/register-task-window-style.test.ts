@@ -28,8 +28,11 @@ describe('scheduled-task registration scripts hide the console window', () => {
 
   it.each(registerScripts)('%s builds a hidden-window action', (file) => {
     const text = readFileSync(join(scriptsDir, file), 'utf8');
-    // Ignore comment lines so a doc mention of -WindowStyle cannot satisfy the check.
+    // Ignore comments so a doc mention of -WindowStyle cannot satisfy the check: strip <# ... #> block
+    // comments (every register script opens with one) BEFORE dropping `#` line comments -- otherwise a
+    // header that merely documents the flag lets a script with no window style pass.
     const code = text
+      .replace(/<#[\s\S]*?#>/g, '')
       .split(/\r?\n/)
       .filter((l) => !/^\s*#/.test(l))
       .join('\n');
@@ -43,6 +46,17 @@ describe('scheduled-task registration scripts hide the console window', () => {
       usesHelper || literal,
       `${file}: the task action must include -WindowStyle Hidden before -File`,
     ).toBe(true);
+  });
+
+  it('a window-style mention inside a <# #> header does not satisfy the check (self-test of the scan)', () => {
+    const strip = (t: string) =>
+      t
+        .replace(/<#[\s\S]*?#>/g, '')
+        .split(/\r?\n/)
+        .filter((l) => !/^\s*#/.test(l))
+        .join('\n');
+    const fake = '<#\n New-ScheduledTaskAction -Argument "-WindowStyle Hidden -File x"\n#>\n$a = New-ScheduledTaskAction -Execute pwsh -Argument "-File x"';
+    expect(/-WindowStyle\s+Hidden[^\n]*-File/.test(strip(fake))).toBe(false);
   });
 
   it('the shared helper still emits -WindowStyle Hidden before -File', () => {
