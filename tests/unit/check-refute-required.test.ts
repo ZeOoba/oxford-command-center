@@ -163,6 +163,15 @@ describe('check-refute-required — financial config prefix (weekly sweep 2026-0
     expect(isFinancialSourcePath('server/workbook/some-table.json')).toBe(true);
     expect(isFinancialSourcePath('src/analytics/some-thresholds.json')).toBe(true);
   });
+  it('exempts the self-labelled placeholder fixtures (Gabriel, 2026-09-21) but nothing else beside them', () => {
+    for (const f of ['dec-pages', 'depreciable-basis', 'filed-returns', 'loss-runs']) {
+      expect(isFinancialSourcePath(`server/warehouse/placeholders/${f}.placeholder.json`)).toBe(false);
+      expect(isFinancialSourcePath(`server\\warehouse\\placeholders\\${f}.placeholder.json`)).toBe(false);
+    }
+    // a sibling json in the same directory tree is still financial
+    expect(isFinancialSourcePath('server/warehouse/om-extract-fields.json')).toBe(true);
+    expect(isFinancialSourcePath('server/warehouse/placeholders-real/x.json')).toBe(true);
+  });
   it('still exempts .json outside config/ — the blanket rule applies elsewhere', () => {
     expect(isFinancialSourcePath('docs/superpowers/specs/some-other-spec.json')).toBe(false);
     expect(isFinancialSourcePath('architecture/status.json')).toBe(false);

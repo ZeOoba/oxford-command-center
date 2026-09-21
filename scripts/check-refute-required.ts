@@ -110,6 +110,11 @@ const FINANCIAL_JSON_PREFIXES: readonly string[] = [
   'server/workbook/',
   'src/analytics/',
 ];
+// Subtracted from the prefixes above (Gabriel, 2026-09-21): server/warehouse/placeholders/*.placeholder.json are
+// self-labelled PLACEHOLDER stand-ins for broker/assessor data (docs/placeholder-data.md), overridden
+// automatically once real rows exist -- not live governor inputs. Without this every edit demanded a refute
+// trailer, which trains people to reach for Refute-Skip.
+const NON_FINANCIAL_JSON_PREFIXES: readonly string[] = ['server/warehouse/placeholders/'];
 const FINANCIAL_DATA_PATHS: ReadonlySet<string> = new Set([
   'docs/superpowers/specs/2026-06-12-pfi-account-mapping-seed.json',
 ]);
@@ -120,7 +125,11 @@ export function isFinancialSourcePath(p: string): boolean {
   if (path.startsWith('config/') && path.endsWith('.json') && !NON_FINANCIAL_CONFIG_PATHS.has(path)) {
     return true;
   }
-  if (path.endsWith('.json') && (FINANCIAL_DATA_PATHS.has(path) || FINANCIAL_JSON_PREFIXES.some((pre) => path.startsWith(pre)))) {
+  if (
+    path.endsWith('.json') &&
+    !NON_FINANCIAL_JSON_PREFIXES.some((pre) => path.startsWith(pre)) &&
+    (FINANCIAL_DATA_PATHS.has(path) || FINANCIAL_JSON_PREFIXES.some((pre) => path.startsWith(pre)))
+  ) {
     return true;
   }
   if (/\.(test|spec)\.(ts|tsx)$/.test(path) || path.endsWith('.md') || path.endsWith('.json')) return false;
