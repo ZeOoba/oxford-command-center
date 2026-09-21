@@ -129,6 +129,27 @@ export function runSnapshot(db: WarehouseDb, opts: SnapshotOptions): SnapshotSum
 }
 
 // ── CLI ──────────────────────────────────────────────────────────────────────────────────────
+/**
+ * The summary printed when the warehouse cannot be opened (missing file, or BEHIND the schema now that this
+ * writer no longer migrates). The scheduled task parses stdout JSON and emails on `ok:false`, and its
+ * contract says the script never throws -- so an exit-1 with stderr only matched neither branch and the
+ * quarter's verdict log was skipped without an email.
+ */
+export function openFailureSummary(dbPath: string, err: unknown): SnapshotSummary {
+  const reason = err instanceof Error ? err.message : String(err);
+  return {
+    ok: false,
+    resolved: 0,
+    scanned: 0,
+    due: 0,
+    verdictsWritten: 0,
+    verdictsSkipped: 0,
+    errors: 1,
+    inputsVersion: null,
+    note: `cannot open warehouse at ${dbPath}: ${reason}`,
+  };
+}
+
 export function parseArgs(argv: string[]): { task: string; db?: string; json: boolean } {
   const out: { task: string; db?: string; json: boolean } = { task: 'ora-calibration-snapshot', json: false };
   for (let i = 0; i < argv.length; i++) {
@@ -160,7 +181,9 @@ function main(argv: string[]): number {
     db = openWarehouseNoMigrate(dbPath);
   } catch (e) {
     // A cold/mirror env may lack the sqlite file — surface it but exit non-fatally (the task logs + emails).
-    console.error(`cannot open warehouse at ${dbPath}: ${e instanceof Error ? e.message : String(e)}`);
+    const failed = openFailureSummary(dbPath, e);
+    console.error(failed.note);
+    if (args.json) console.log(JSON.stringify(failed, null, 2)); // keep the ok:false JSON contract
     return 1;
   }
   const summary = runSnapshot(db, { taskId: args.task });
