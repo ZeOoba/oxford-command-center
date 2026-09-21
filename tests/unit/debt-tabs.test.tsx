@@ -1,14 +1,14 @@
 // tests/unit/debt-tabs.test.tsx
 //
-// IA decongestion Phase 3 — Positions is split: Positions · Maturities · Scorecard. The KPI strip and
-// the balloon-watch banner sit above the strip (R2). Positions / Maturities are force-mounted (loan
-// table sort survives a tab round-trip); Scorecard stays lazy (fires its own warehouse queries).
+// IA decongestion Phase 4b (rule R5) — Debt is the "Debt" tab of the Capital destination, so
+// DebtModule's own strip is a SegmentedControl on `?view=` (Positions · Maturities · Scorecard), never
+// a nested tab strip. The KPI strip and the balloon-watch banner sit above the switch (R2). Only the
+// selected view is mounted (Scorecard fires its own warehouse queries, so it must stay lazy).
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
 import type * as Queries from '../../src/data/queries';
-import { inactivePanelIsHiddenByClass, isInInactivePanel, selectTab, tabIsSelected } from './tab-test-utils';
 
 const LOANS = [
   { id: 'l1', name: 'Alpha Loan', counterparty: 'Bank A', direction: 'borrower', absBalance: 1_000_000, rate: 0.06, isDemand: false, maturity: '2027-01-01', monthsToMaturity: 12, ltv: 0.5, balloon: true, status: 'Active' },
@@ -37,12 +37,23 @@ vi.mock('../../src/data/queries', async (importOriginal) => {
   };
 });
 
-// ScorecardView / LadderView fire their own warehouse queries; stub them so this test pins tab
+// ScorecardView / LadderView fire their own warehouse queries; stub them so this test pins view
 // mounting behaviour only (their internals are unchanged by the split).
 vi.mock('../../src/modules/debt/ScorecardView', () => ({ ScorecardView: () => <div>SCORECARD-STUB</div> }));
 vi.mock('../../src/modules/debt/LadderView', () => ({ LadderView: () => <div>LADDER-STUB</div> }));
 
 import { DebtModule } from '../../src/modules/debt/DebtModule';
+
+function LocationProbe() {
+  const location = useLocation();
+  const navType = useNavigationType();
+  return (
+    <>
+      <span data-testid="search">{location.search}</span>
+      <span data-testid="nav-type">{navType}</span>
+    </>
+  );
+}
 
 function renderDebt(entry = '/') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -50,6 +61,7 @@ function renderDebt(entry = '/') {
     <MemoryRouter initialEntries={[entry]}>
       <QueryClientProvider client={qc}>
         <DebtModule />
+        <LocationProbe />
       </QueryClientProvider>
     </MemoryRouter>,
   );
@@ -61,13 +73,23 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-describe('DebtModule — Phase 3 tab split', () => {
-  it('renders three tabs, Positions selected by default with the loan table visible', () => {
+const radioChecked = (name: string) => (screen.getByRole('radio', { name }) as HTMLInputElement).checked;
+
+describe('DebtModule — inner switch is a SegmentedControl on ?view= (IA Phase 4b, R5)', () => {
+  it('renders a "Debt views" radiogroup with Positions · Maturities · Scorecard and no tab strip', () => {
     renderDebt();
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Positions', 'Maturities', 'Scorecard']);
-    expect(tabIsSelected('Positions')).toBe(true);
-    expect(isInInactivePanel(screen.getByText('All Loan Positions'))).toBe(false);
+    expect(screen.getByRole('radiogroup', { name: 'Debt views' })).toBeTruthy();
+    expect(screen.getAllByRole('radio').map((r) => r.closest('label')?.textContent)).toEqual(['Positions', 'Maturities', 'Scorecard']);
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+  });
+
+  it('defaults to Positions with the loan table visible and the other views unmounted', () => {
+    renderDebt();
+    expect(radioChecked('Positions')).toBe(true);
+    expect(screen.getByText('All Loan Positions')).toBeTruthy();
     expect(screen.getByText('Alpha Loan')).toBeTruthy();
+    expect(screen.queryByText('Capital Composition')).toBeNull();
+    expect(screen.queryByText('SCORECARD-STUB')).toBeNull();
   });
 
   it('R1: the loan table keeps Rate / Maturity / Mos / LTV together in one header row', () => {
@@ -77,52 +99,59 @@ describe('DebtModule — Phase 3 tab split', () => {
     for (const col of ['Rate', 'Maturity', 'Mos', 'LTV']) expect(headers).toContain(col);
   });
 
-  it('keeps the KPI strip and the balloon-watch banner above the strip on every tab', () => {
-    renderDebt('/?tab=scorecard');
-    expect(isInInactivePanel(screen.getByText('External Debt'))).toBe(false);
-    expect(isInInactivePanel(screen.getByText('Balloon watch'))).toBe(false);
-    // Balloon banner is no longer inside any panel.
-    expect(screen.getByText('Balloon watch').closest('[role="tabpanel"]')).toBeNull();
-    expect(screen.getByText('External Debt').closest('[role="tabpanel"]')).toBeNull();
+  it('keeps the KPI strip and the balloon-watch banner above the switch on every view', () => {
+    renderDebt('/?view=scorecard');
+    expect(screen.getByText('External Debt')).toBeTruthy();
+    expect(screen.getByText('Balloon watch')).toBeTruthy();
+    expect(screen.getByText(/Alpha Loan — \$1,000,000 due/)).toBeTruthy();
   });
 
-  it('Maturities content is hidden until its tab is selected, then reachable', () => {
-    renderDebt();
-    const ladder = screen.getByText('Maturity Ladder');
-    const comp = screen.getByText('Capital Composition');
-    expect(isInInactivePanel(ladder)).toBe(true);
-    expect(inactivePanelIsHiddenByClass(comp)).toBe(true);
-    selectTab('Maturities');
-    expect(isInInactivePanel(ladder)).toBe(false);
-    expect(isInInactivePanel(comp)).toBe(false);
-    expect(isInInactivePanel(screen.getByText('All Loan Positions'))).toBe(true);
-  });
-
-  it('Scorecard stays lazy: its content is not rendered until the tab is selected', async () => {
-    renderDebt();
+  it('?view=maturities deep-links: ladder + composition render, positions and scorecard do not', () => {
+    renderDebt('/?view=maturities');
+    expect(radioChecked('Maturities')).toBe(true);
+    expect(screen.getByText('Maturity Ladder')).toBeTruthy();
+    expect(screen.getByText('Capital Composition')).toBeTruthy();
+    expect(screen.queryByText('All Loan Positions')).toBeNull();
     expect(screen.queryByText('SCORECARD-STUB')).toBeNull();
-    selectTab('Scorecard');
-    expect(await screen.findByText('SCORECARD-STUB')).toBeTruthy();
   });
 
-  it.each([
-    ['maturities', 'Capital Composition'],
-    ['scorecard', 'SCORECARD-STUB'],
-  ])('?tab=%s deep-links to that tab', async (key, marker) => {
-    renderDebt(`/?tab=${key}`);
-    expect(screen.getByRole('tab', { name: new RegExp(`^${key}$`, 'i') }).getAttribute('aria-selected')).toBe('true');
-    expect(isInInactivePanel(await screen.findByText(marker))).toBe(false);
+  it('?view=scorecard deep-links: scorecard + ladder mocks render, positions and maturities do not', () => {
+    renderDebt('/?view=scorecard');
+    expect(radioChecked('Scorecard')).toBe(true);
+    expect(screen.getByText('SCORECARD-STUB')).toBeTruthy();
+    expect(screen.getByText('LADDER-STUB')).toBeTruthy();
+    expect(screen.queryByText('All Loan Positions')).toBeNull();
+    expect(screen.queryByText('Capital Composition')).toBeNull();
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
   });
 
-  it('state survives a tab round-trip: the loan-table sort', () => {
+  it('selecting a radio writes ?view= with replace semantics; the default view removes it', () => {
     renderDebt();
-    const rate = () => screen.getByRole('columnheader', { name: 'Rate' });
-    expect(rate().getAttribute('aria-sort')).toBe('none');
-    fireEvent.click(rate());
-    expect(rate().getAttribute('aria-sort')).toBe('descending');
-    selectTab('Maturities');
-    selectTab('Scorecard');
-    selectTab('Positions');
-    expect(rate().getAttribute('aria-sort')).toBe('descending');
+    expect(screen.getByTestId('search').textContent).toBe('');
+    fireEvent.click(screen.getByRole('radio', { name: 'Scorecard' }));
+    expect(screen.getByTestId('search').textContent).toBe('?view=scorecard');
+    expect(screen.getByTestId('nav-type').textContent).toBe('REPLACE');
+    expect(screen.getByText('SCORECARD-STUB')).toBeTruthy();
+    fireEvent.click(screen.getByRole('radio', { name: 'Maturities' }));
+    expect(screen.getByTestId('search').textContent).toBe('?view=maturities');
+    expect(screen.getByText('Capital Composition')).toBeTruthy();
+    fireEvent.click(screen.getByRole('radio', { name: 'Positions' }));
+    expect(screen.getByTestId('search').textContent).toBe('');
+    expect(screen.getByText('All Loan Positions')).toBeTruthy();
+  });
+
+  it('preserves other query params (scenario, the destination ?tab=) when switching views', () => {
+    renderDebt('/?tab=debt&scenario=downside');
+    fireEvent.click(screen.getByRole('radio', { name: 'Maturities' }));
+    const params = new URLSearchParams(screen.getByTestId('search').textContent ?? '');
+    expect(params.get('view')).toBe('maturities');
+    expect(params.get('scenario')).toBe('downside');
+    expect(params.get('tab')).toBe('debt');
+  });
+
+  it('the outer ?tab= param does not select a view (only ?view= does)', () => {
+    renderDebt('/?tab=scorecard');
+    expect(radioChecked('Positions')).toBe(true);
+    expect(screen.queryByText('SCORECARD-STUB')).toBeNull();
   });
 });

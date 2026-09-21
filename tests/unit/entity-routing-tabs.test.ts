@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseRoute, entityHref } from '../../src/brain/routing';
+import { parseRoute, entityHref, entityPath, TAB_PRIMARY_TYPE, HOME_TAB, HOME_MODULE } from '../../src/brain/routing';
 import type { EntityType } from '../../src/brain/ui-context';
 
 const IDS = ['capital', 'pipeline', 'portfolio', 'worklist', 'overview'];
@@ -41,3 +41,56 @@ describe('entityHref', () => {
     expect(entityHref({ type: 'property', id: 'a/b' }, '', 'overview', HOMES)).toBe('/portfolio/a%2Fb');
   });
 });
+
+describe('real routing constants (Capital PR-B)', () => {
+  it('TAB_PRIMARY_TYPE / HOME_TAB / HOME_MODULE route loans and cash entities into Capital', () => {
+    expect(TAB_PRIMARY_TYPE.capital).toEqual({ debt: 'loan', cash: 'cashEntity' });
+    expect(HOME_TAB).toEqual({ loan: 'debt', cashEntity: 'cash' });
+    expect(HOME_MODULE.loan).toBe('capital');
+    expect(HOME_MODULE.cashEntity).toBe('capital');
+    expect(entityPath({ type: 'loan', id: 'l1' })).toBe('/capital/l1');
+  });
+  it('entityHref with the real constants lands cross-module jumps on the right Capital tab', () => {
+    expect(entityHref({ type: 'loan', id: 'l1' }, '?tab=alerts&view=x&scenario=Downside', 'worklist')).toBe('/capital/l1?scenario=Downside&tab=debt');
+    expect(entityHref({ type: 'cashEntity', id: 'a1' }, '', 'overview')).toBe('/capital/a1?tab=cash');
+  });
+});
+
+describe('entityHref — same-module jump onto a tab that does not host the entity type', () => {
+  it('a loan opened from a Capital tab that hosts no loan drawer lands on Debt', () => {
+    expect(entityHref({ type: 'loan', id: 'l1' }, '?tab=allocation', 'capital')).toBe('/capital/l1?tab=debt');
+    expect(entityHref({ type: 'loan', id: 'l1' }, '?tab=pipeline', 'capital')).toBe('/capital/l1?tab=debt');
+    expect(entityHref({ type: 'loan', id: 'l1' }, '?tab=close', 'capital')).toBe('/capital/l1?tab=debt');
+  });
+  it('a loan opened from Cash flips to Debt and drops the stale view', () => {
+    expect(entityHref({ type: 'loan', id: 'l1' }, '?tab=cash&view=x', 'capital')).toBe('/capital/l1?tab=debt');
+  });
+  it('a cash entity opened from Debt flips to Cash and drops the stale view', () => {
+    expect(entityHref({ type: 'cashEntity', id: 'a1' }, '?tab=debt&view=scorecard', 'capital')).toBe('/capital/a1?tab=cash');
+  });
+  it('a loan opened from Debt keeps tab and view', () => {
+    expect(entityHref({ type: 'loan', id: 'l1' }, '?tab=debt&view=scorecard', 'capital')).toBe('/capital/l1?tab=debt&view=scorecard');
+  });
+  it('other params (scenario) survive the flip', () => {
+    expect(entityHref({ type: 'loan', id: 'l1' }, '?scenario=Downside&tab=cash&view=x', 'capital')).toBe('/capital/l1?scenario=Downside&tab=debt');
+  });
+  it('a single-type module hosts its entity on every tab, so it never flips (injected fixtures)', () => {
+    const homes = {
+      module: { ...HOMES.module, lease: 'leasing' } as Record<EntityType, string>,
+      tab: { lease: 'rent-roll' } as Partial<Record<EntityType, string>>,
+      moduleTypes: { leasing: 'lease' } as Partial<Record<string, EntityType>>,
+      tabTypes: {} as Record<string, Record<string, EntityType>>,
+    };
+    expect(entityHref({ type: 'lease', id: 'x1' }, '?tab=tenants&view=v', 'leasing', homes)).toBe('/leasing/x1?tab=tenants&view=v');
+  });
+  it('a tab-typed fixture flips when the current tab hosts a different type', () => {
+    const homes = {
+      module: HOMES.module,
+      tab: HOMES.tab,
+      moduleTypes: {} as Partial<Record<string, EntityType>>,
+      tabTypes: { capital: { debt: 'loan', cash: 'cashEntity' } } as Record<string, Record<string, EntityType>>,
+    };
+    expect(entityHref({ type: 'loan', id: 'l1' }, '?tab=cash', 'capital', homes)).toBe('/capital/l1?tab=debt');
+  });
+});
+

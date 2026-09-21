@@ -1,15 +1,17 @@
 // src/modules/debt/DebtModule.tsx
 //
-// Phase 2 Step 6 — extended with a "Scorecard" tab alongside the existing loan positions view.
+// The Debt surface (the "Debt" tab of the Capital destination since IA decongestion Phase 4b; /debt
+// is a legacy alias). Capital owns the tab strip, so the three views here are switched by a
+// SegmentedControl on `?view=` (rule R5: no nested tab strips) via useTabParam.
 //
-// Above the tabs (R2): KPI stats + balloon-watch banner.
-// Tabs:
-//   Positions   — the all-loans table (DSCR-adjacent LTV / maturity columns stay together, R1).
+// Above the switch (R2): KPI stats + balloon-watch banner.
+// Views:
+//   Positions   — the all-loans table (DSCR-adjacent LTV / maturity columns stay together, R1). DEFAULT.
 //   Maturities  — the Spine-A maturity ladder bar chart + Capital Composition.
 //   Scorecard   — per-property debt score table (ScorecardView) + maturity ladder (LadderView,
 //                 warehouse spine — deliberately NOT merged with the Maturities chart).
 //
-// The tab state lives in the URL (`?tab=`) via useTabParam (IA decongestion Phase 1).
+// Only the selected view is mounted, so Scorecard's warehouse queries fire only when it is chosen.
 // No changes to module registry (id: 'debt' already registered in shell/modules.tsx).
 import { useMemo } from 'react';
 import { AlertCircle } from 'lucide-react';
@@ -20,11 +22,10 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
-import { Tabs, TabPanel } from '@/primitives/Tabs';
+import { SegmentedControl } from '@/primitives/SegmentedControl';
 import { BarChart } from '@/charts/BarChart';
 import { BarList } from '@/charts/BarList';
 import { useTabParam } from '@/lib/useTabParam';
-import { FORCE_MOUNT_PANEL } from '@/lib/forceMountPanel';
 import type { Loan } from '@contracts/index';
 import { ScorecardView } from './ScorecardView';
 import { LadderView } from './LadderView';
@@ -32,12 +33,12 @@ import { LadderView } from './LadderView';
 const dirTone = (d: Loan['direction']): BadgeTone => (d === 'borrower' ? 'amber' : d === 'lender' ? 'blue' : 'neutral');
 const dirLabel = (d: Loan['direction']) => (d === 'borrower' ? 'We pay' : d === 'lender' ? 'We receive' : 'Internal');
 
-type Tab = 'positions' | 'maturities' | 'scorecard';
-const TAB_KEYS: readonly Tab[] = ['positions', 'maturities', 'scorecard'];
-const TABS: Array<{ id: Tab; label: string }> = [
-  { id: 'positions', label: 'Positions' },
-  { id: 'maturities', label: 'Maturities' },
-  { id: 'scorecard', label: 'Scorecard' },
+type View = 'positions' | 'maturities' | 'scorecard';
+const VIEW_KEYS: readonly View[] = ['positions', 'maturities', 'scorecard'];
+const VIEWS: Array<{ value: View; label: string }> = [
+  { value: 'positions', label: 'Positions' },
+  { value: 'maturities', label: 'Maturities' },
+  { value: 'scorecard', label: 'Scorecard' },
 ];
 
 function PositionsView() {
@@ -131,8 +132,8 @@ function PositionsView() {
   );
 }
 
-/** R2 — the KPI strip and the balloon-watch banner are true for every tab, so they render above
- *  the tab strip (rendered once from DebtModule). */
+/** R2 — the KPI strip and the balloon-watch banner are true for every view, so they render above
+ *  the view switch (rendered once from DebtModule). */
 function DebtSummary() {
   const { data } = useSnapshot();
   const { analytics } = useAnalytics();
@@ -227,35 +228,22 @@ function MaturitiesView() {
 }
 
 export function DebtModule() {
-  const [tab, setTab] = useTabParam<Tab>(TAB_KEYS, 'positions');
+  const [view, setView] = useTabParam<View>(VIEW_KEYS, 'positions', 'view');
 
   return (
     <div className="flex flex-col gap-4">
-      <Card>
-        <CardHeader title="Debt" />
-      </Card>
-
       <DebtSummary />
 
-      {/* keyboardActivation="manual" — the Scorecard tab mounts ScorecardView/LadderView, which
-          fire fresh useDebtScores()/useDebtMaturity() warehouse queries on mount, so arrowing
-          through the strip shouldn't fan out queries (plan R9). The positions / maturities panels
-          are force-mounted (they were one scroll before the split; no queries of their own), so
-          the loan-table sort survives a tab round-trip. */}
-      <Tabs tabs={TABS} selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} keyboardActivation="manual" aria-label="Debt views">
-        <TabPanel id="positions" {...FORCE_MOUNT_PANEL}>
-          <PositionsView />
-        </TabPanel>
-        <TabPanel id="maturities" {...FORCE_MOUNT_PANEL}>
-          <MaturitiesView />
-        </TabPanel>
-        <TabPanel id="scorecard">
-          <div className="flex flex-col gap-4">
-            <ScorecardView />
-            <LadderView />
-          </div>
-        </TabPanel>
-      </Tabs>
+      <SegmentedControl options={VIEWS} value={view} onChange={setView} aria-label="Debt views" />
+
+      {view === 'positions' && <PositionsView />}
+      {view === 'maturities' && <MaturitiesView />}
+      {view === 'scorecard' && (
+        <div className="flex flex-col gap-4">
+          <ScorecardView />
+          <LadderView />
+        </div>
+      )}
     </div>
   );
 }
