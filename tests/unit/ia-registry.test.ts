@@ -226,6 +226,25 @@ describe('rail composition', () => {
     expect(MODULE_ORDER.principal.indexOf('leasing')).toBe(MODULE_ORDER.principal.indexOf('intel') + 1);
   });
 
+  it('PR-E: Brain = Digest · Insights · Track record · Feedback · Memory; Versions became a Memory view', () => {
+    expect(byId('command-brain')!.tabs!.map((t) => t.id)).toEqual(['digest', 'insights', 'track-record', 'feedback', 'memory']);
+    expect(byId('command-brain')!.label).toBe('Brain');
+    for (const id of ['principal', 'insights']) expect(IDS).not.toContain(id);
+    expect(resolveLegacyRoute('/principal', '')).toBe('/command-brain?tab=digest');
+    expect(resolveLegacyRoute('/insights', '')).toBe('/command-brain?tab=insights');
+    expect(resolveLegacyRoute('/command-brain', '?tab=versions')).toBe('/command-brain?tab=memory&view=versions');
+    // every other param survives the moved-tab redirect; a canonical Memory URL does not redirect
+    expect(resolveLegacyRoute('/command-brain', '?tab=versions&scenario=Upside')).toBe('/command-brain?tab=memory&scenario=Upside&view=versions');
+    expect(resolveLegacyRoute('/command-brain', '?tab=memory')).toBeNull();
+    expect(resolveLegacyRoute('/command-brain', '?tab=memory&view=versions')).toBeNull();
+    expect(parseRoute('/principal', IDS)).toMatchObject({ moduleId: 'command-brain', known: true }); // first-render alias
+    expect(PROFILE_HOME.principal).toBe('command-brain');
+    for (const profile of ['acquisitions', 'principal'] as const) {
+      expect(MODULE_ORDER[profile]).toContain('command-brain');
+      expect(MODULE_ORDER[profile]).not.toContain('principal');
+    }
+  });
+
   for (const profile of ['acquisitions', 'principal'] as const) {
     it(`${profile}: System Health is off the rail but every other module still shows`, () => {
       const rail = railModules(profile).map((m) => m.id);

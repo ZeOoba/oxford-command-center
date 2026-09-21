@@ -7,11 +7,9 @@ import {
   LineChart,
   CheckSquare,
   Activity,
-  Briefcase,
   Database,
   TrendingUp,
   Coins,
-  Lightbulb,
   BrainCircuit,
   BarChart3,
   type LucideIcon,
@@ -23,6 +21,7 @@ import { CAPITAL_TABS } from '@/modules/capital/tabs';
 import { MARKET_TABS } from '@/modules/market/tabs';
 import { OBLIGATIONS_TABS } from '@/modules/obligations/tabs';
 import { LEASING_TABS } from '@/modules/leasing/tabs';
+import { BRAIN_TABS } from '@/modules/command-brain/tabs';
 import type { ModuleTabDef } from './tab-types';
 
 // Each module is its own code-split chunk — only the active one loads.
@@ -32,13 +31,11 @@ const PortfolioModule = lazy(() => import('@/modules/portfolio/PortfolioModule')
 const ObligationsModule = lazy(() => import('@/modules/obligations/ObligationsModule').then((m) => ({ default: m.ObligationsModule })));
 const MarketModule = lazy(() => import('@/modules/market/MarketModule').then((m) => ({ default: m.MarketModule })));
 const HealthModule = lazy(() => import('@/modules/health/HealthModule').then((m) => ({ default: m.HealthModule })));
-const PrincipalModule = lazy(() => import('@/modules/principal/PrincipalModule').then((m) => ({ default: m.PrincipalModule })));
 const IntelModule = lazy(() => import('@/modules/intel/IntelModule').then((m) => ({ default: m.IntelModule })));
 const WorklistModule = lazy(() => import('@/modules/worklist/WorklistModule').then((m) => ({ default: m.WorklistModule })));
 const DataModule = lazy(() => import('@/modules/data/DataModule').then((m) => ({ default: m.DataModule })));
 const LeaseForecastModule = lazy(() => import('@/modules/leasing/LeaseForecastModule').then((m) => ({ default: m.LeaseForecastModule })));
 const CapitalModule = lazy(() => import('@/modules/capital/CapitalModule').then((m) => ({ default: m.CapitalModule })));
-const InsightsModule = lazy(() => import('@/modules/insights/InsightsModule').then((m) => ({ default: m.InsightsModule })));
 const CommandBrainModule = lazy(() => import('@/modules/command-brain/CommandBrainModule').then((m) => ({ default: m.CommandBrainModule })));
 const LeaseMarketModule = lazy(() => import('@/modules/lease-market/LeaseMarketModule').then((m) => ({ default: m.LeaseMarketModule })));
 
@@ -61,11 +58,9 @@ export interface ModuleDef {
 /** The module registry — drop a new entry here and it appears in the rail. */
 export const MODULES: ModuleDef[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard, group: 'Command', Component: OverviewModule },
-  { id: 'principal', label: 'Principal Home', icon: Briefcase, group: 'Command', Component: PrincipalModule },
   { id: 'pipeline', label: 'Acquisitions', icon: Target, group: 'Command', Component: AcquisitionsModule },
   { id: 'worklist', label: 'Worklist', icon: CheckSquare, group: 'Command', Component: WorklistModule, tabs: WORKLIST_TABS },
-  { id: 'insights', label: 'Insights', icon: Lightbulb, group: 'Command', Component: InsightsModule },
-  { id: 'command-brain', label: 'Command Brain', icon: BrainCircuit, group: 'Command', Component: CommandBrainModule },
+  { id: 'command-brain', label: 'Brain', icon: BrainCircuit, group: 'Command', Component: CommandBrainModule, tabs: BRAIN_TABS },
   { id: 'portfolio', label: 'Portfolio', icon: Building2, group: 'Assets', Component: PortfolioModule },
   // Financials — module id stays `intel` so /intel/:propertyId deep links + MODULE_PRIMARY_TYPE keep working.
   { id: 'intel', label: 'Financials', icon: BarChart3, group: 'Assets', Component: IntelModule, tabs: INTEL_TABS },
