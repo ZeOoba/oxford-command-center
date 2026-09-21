@@ -47,4 +47,13 @@ $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd 
 $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 10:40am
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Force -Description 'Off-fleet redundant classifier + alert for ORA Command Center - Mirror Deploy (OI-197 fix (a)). Runs independently of the CC/MCP fleet so classification survives a fleet pause. See open-items-tracker.md#OI-197.'
+# Read the trigger back. The live task was found firing MONDAY ONLY (DaysOfWeek=2) although this script
+# asks for Monday-Friday (62): an action-only Set-ScheduledTask update had preserved a stale trigger, so the
+# off-fleet layer covered 1 day in 5 of the window it exists to cover. Fail loudly instead of trusting Force.
+$weekdays = 62 # Mon=2 Tue=4 Wed=8 Thu=16 Fri=32
+$registered = Get-ScheduledTask -TaskName $TaskName
+$mask = [int]($registered.Triggers | Select-Object -First 1).DaysOfWeek
+if ($mask -ne $weekdays) {
+  throw "Registered '$TaskName' but its trigger DaysOfWeek mask is $mask, expected $weekdays (Mon-Fri)."
+}
 Write-Host "Registered '$TaskName': weekday 10:40 AM ET -> $script"
