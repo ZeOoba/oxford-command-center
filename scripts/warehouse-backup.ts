@@ -14,8 +14,9 @@ loadEnvFile();
 
 import { mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import Database from 'better-sqlite3';
+import { openWarehouseReadOnly } from '../server/warehouse/db';
 import {
+  listTables,
   loadBackupKey,
   snapshotWarehouse,
   tableCounts,
@@ -34,27 +35,8 @@ function stamp(d: Date): string {
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}`;
 }
 
-const BUSY_TIMEOUT_MS = Number(process.env.WAREHOUSE_BUSY_TIMEOUT_MS) || 15_000;
-
-function allTables(path: string): string[] {
-  const db = new Database(path, { readonly: true });
-  db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
-  try {
-    return (
-      db
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-        .all() as Array<{ name: string }>
-    )
-      .map((r) => r.name)
-      .sort();
-  } finally {
-    db.close();
-  }
-}
-
 async function main(): Promise<void> {
   const key = loadBackupKey();
-  mkdirSync(backupDir, { recursive: true });
   const now = new Date();
   const plainPath = join(backupDir, `finance-${stamp(now)}.sqlite`);
   const encPath = `${plainPath}.enc`;
@@ -62,9 +44,27 @@ async function main(): Promise<void> {
   // Deliberately NOT openWarehouse(): that helper runs pending migrations, and a backup job
   // must never mutate the schema of the database it is protecting. Run from a feature branch
   // it would silently apply that branch's unmerged migration to the live warehouse. This is a
-  // plain handle — the backup only reads, and WAL lets it run alongside the dev server.
-  const db = new Database(dbPath);
-  db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
+  // read-only handle — the backup only reads, and WAL lets it run alongside the dev server.
+  // openWarehouseReadOnly (not a bare `new Database(dbPath)`) is load-bearing: the bare form
+  // CREATES an empty database when the file is missing (WAREHOUSE_DB typo, unmounted OneDrive
+  // path, deleted file), and the job then reported "backup ok (0 tables)" with exit 0 while
+  // nothing was being protected — and the restore drill passed against that empty snapshot too.
+  // The read-only open throws SQLITE_CANTOPEN instead; the guard below turns that into one clear
+  // failure and the 0-table floor catches a file that exists but holds no schema.
+  let db: ReturnType<typeof openWarehouseReadOnly>;
+  try {
+    db = openWarehouseReadOnly(dbPath);
+  } catch (err) {
+    console.error(
+      `BACKUP FAILED — cannot open the warehouse at ${dbPath} (${(err as Error).message}). ` +
+        `Nothing was created; check WAREHOUSE_DB.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+  // Only now, with a readable source in hand, create the destination: a failed open leaves nothing
+  // behind (no backup directory, no plaintext).
+  mkdirSync(backupDir, { recursive: true });
   try {
     await snapshotWarehouse(db, plainPath);
   } finally {
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
   let result: ReturnType<typeof verifySnapshot>;
   let tables: string[];
   try {
-    tables = allTables(dbPath);
+    tables = listTables(dbPath);
     result = verifySnapshot(plainPath, tableCounts(dbPath, tables));
     if (!result.ok) {
       console.error(

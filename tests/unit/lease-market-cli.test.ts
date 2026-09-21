@@ -9,7 +9,10 @@ import type * as IngestModule from '../../server/warehouse/lease-market/ingest';
 // per-file-failure tests below never touch disk beyond the throwaway intake dir, and never risk
 // resolving to the real data/warehouse/finance.sqlite.
 vi.mock('../../server/warehouse/db', () => ({
+  // The CLI opens via openWarehouseNoMigrate (2026-09-21 sweep — it must never migrate the live
+  // warehouse). openWarehouse stays mocked so a regression back to it is still harmless here.
   openWarehouse: vi.fn(() => ({ close: vi.fn() })),
+  openWarehouseNoMigrate: vi.fn(() => ({ close: vi.fn() })),
 }));
 vi.mock('../../server/warehouse/lease-market/ingest', async (importOriginal) => {
   const actual = await importOriginal<typeof IngestModule>();

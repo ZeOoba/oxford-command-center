@@ -9,23 +9,25 @@
  * rest. It never invents a link from an address match alone — promote a proposal by adding the
  * property to `oraProperties`, then re-run.
  *
- * ⚠ Opens the warehouse read-write, which applies pending migrations. Do not run it against the
- * live warehouse from an unmerged branch (see server/warehouse/db.ts openWarehouseReadOnly).
+ * Opens the warehouse read-write but WITHOUT applying migrations (openWarehouseNoMigrate): a
+ * warehouse that is behind this code is a hard error, so running this from an unmerged branch can
+ * never change the live schema. The report-only run rolls its transaction back and writes nothing.
  */
 import { loadEnvFile } from '../server/load-env';
 
 loadEnvFile();
 
 import { join } from 'node:path';
-import { openWarehouse } from '../server/warehouse/db';
-import { seedFromLeaseMarket, unmatchedReport } from '../server/warehouse/entity-xref';
+import { openWarehouseNoMigrate } from '../server/warehouse/db';
+import { marketStatesFromConfig, seedFromLeaseMarket, unmatchedReport } from '../server/warehouse/entity-xref';
+import { loadLeaseMarketConfig } from '../server/warehouse/lease-market/config';
 
 const dbPath =
   process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
 const write = process.argv.includes('--write');
 
 function main(): void {
-  const db = openWarehouse(dbPath);
+  const db = openWarehouseNoMigrate(dbPath);
   try {
     const before = (db.prepare('SELECT COUNT(*) AS n FROM entity_xref').get() as { n: number }).n;
 
@@ -33,7 +35,7 @@ function main(): void {
     // thing in a transaction and roll it back unless --write was passed.
     let result = { linked: 0, proposed: [] as ReturnType<typeof seedFromLeaseMarket>['proposed'], skipped: [] as string[] };
     const run = db.transaction(() => {
-      result = seedFromLeaseMarket(db);
+      result = seedFromLeaseMarket(db, { marketStates: marketStatesFromConfig(loadLeaseMarketConfig().markets) });
       if (!write) throw new Error('__DRY_RUN__');
     });
     try {

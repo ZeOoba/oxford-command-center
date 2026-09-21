@@ -108,6 +108,7 @@ export type ProposalReason =
   | 'ora_owned_unmapped'
   | 'no_config_link'
   | 'ambiguous_address'
+  | 'state_unverifiable'
   | 'no_address_match';
 
 export interface XrefProposal {
@@ -131,6 +132,7 @@ interface LmPropertyRow {
   market_id: string;
   address_norm: string;
   city_norm: string;
+  state: string | null;
   ora_property_key: string | null;
   owner_type: string;
 }
@@ -154,18 +156,179 @@ function tableExists(db: WarehouseDb, name: string): boolean {
 
 const marketKey = (market: string | null): string => (market ?? '').trim().toLowerCase();
 
+const NON_ALNUM_RUN = /[^a-z0-9]+/g;
+const EDGE_DASHES = /^-+|-+$/g;
+// A trailing two-letter state token set off by a space or comma: 'Columbus OH', 'Kansas City, MO'.
+// Requires the separator, so a hyphenated region such as 'Mid-Atlantic' is left intact.
+const TRAILING_STATE = /[,\s]+[A-Za-z]{2}$/;
+
+const marketSlug = (label: string): string =>
+  label.toLowerCase().replace(NON_ALNUM_RUN, '-').replace(EDGE_DASHES, '');
+
+/**
+ * The lease-market ids a warehouse `property_master.market` label could denote.
+ *
+ * The two id spaces use different vocabularies and never agreed: property_master says 'Columbus OH',
+ * 'Kansas City MO', 'Mid-Atlantic' (display labels, seeded in property-master.ts) while
+ * lm_property.market_id says 'columbus', 'kansas-city', 'eastern-shore-md' (config/lease-market.json
+ * ids). Comparing them through a case-fold alone meant 'columbus oh' never equalled 'columbus', so in
+ * production EVERY listing fell to 'no_address_match' — even a config-blessed one with an exact address
+ * match — while the tests passed because their fixtures wrote the market as 'Columbus'. Two candidates
+ * because the state suffix is sometimes part of the id ('eastern-shore-md') and sometimes not
+ * ('columbus'); the property is indexed under both and only ever matches the listing's own market_id.
+ * A region label that names several lease-market ids ('Mid-Atlantic' spans baltimore and
+ * eastern-shore-md) resolves to none, which reports as unmatched — the safe direction.
+ */
+export function marketIdCandidates(label: string | null): string[] {
+  return marketCandidates(label).map((c) => c.id);
+}
+
+interface MarketCandidate {
+  id: string;
+  /** Set when this id was reached by DROPPING a trailing state token ('oh' for 'Columbus OH'). */
+  state: string | null;
+}
+
+function marketCandidates(label: string | null): MarketCandidate[] {
+  const trimmed = (label ?? '').trim();
+  if (trimmed === '') return [{ id: '', state: null }];
+  const full = marketSlug(trimmed);
+  const stateMatch = TRAILING_STATE.exec(trimmed);
+  const stripped = marketSlug(trimmed.replace(TRAILING_STATE, ''));
+  const out: MarketCandidate[] = [];
+  if (full !== '') out.push({ id: full, state: null });
+  if (stripped !== '' && stripped !== full) {
+    out.push({ id: stripped, state: stateMatch ? marketSlug(stateMatch[0]) : null });
+  }
+  return out;
+}
+
+/**
+ * Dropping the state makes 'Columbus OH' and 'Columbus IN' (or 'Richmond VA' / 'Richmond IN') collapse
+ * onto ONE lease-market id, and the address + city guards cannot tell them apart. So a property indexed
+ * under a state-stripped id is only a candidate for a listing whose own `lm_property.state` equals the
+ * state that was dropped; a listing with no state cannot confirm it and stays unmatched -- the safe
+ * direction ("a wrong auto-link is worse than an unmatched row").
+ */
+const stateMatches = (lmState: string | null, required: string | null): boolean =>
+  required === null || (lmState !== null && lmState === required);
+
+const STATE_CODE_BY_NAME: Readonly<Record<string, string>> = {
+  'alabama': 'al',
+  'alaska': 'ak',
+  'arizona': 'az',
+  'arkansas': 'ar',
+  'california': 'ca',
+  'colorado': 'co',
+  'connecticut': 'ct',
+  'delaware': 'de',
+  'district of columbia': 'dc',
+  'florida': 'fl',
+  'georgia': 'ga',
+  'hawaii': 'hi',
+  'idaho': 'id',
+  'illinois': 'il',
+  'indiana': 'in',
+  'iowa': 'ia',
+  'kansas': 'ks',
+  'kentucky': 'ky',
+  'louisiana': 'la',
+  'maine': 'me',
+  'maryland': 'md',
+  'massachusetts': 'ma',
+  'michigan': 'mi',
+  'minnesota': 'mn',
+  'mississippi': 'ms',
+  'missouri': 'mo',
+  'montana': 'mt',
+  'nebraska': 'ne',
+  'nevada': 'nv',
+  'new hampshire': 'nh',
+  'new jersey': 'nj',
+  'new mexico': 'nm',
+  'new york': 'ny',
+  'north carolina': 'nc',
+  'north dakota': 'nd',
+  'ohio': 'oh',
+  'oklahoma': 'ok',
+  'oregon': 'or',
+  'pennsylvania': 'pa',
+  'rhode island': 'ri',
+  'south carolina': 'sc',
+  'south dakota': 'sd',
+  'tennessee': 'tn',
+  'texas': 'tx',
+  'utah': 'ut',
+  'vermont': 'vt',
+  'virginia': 'va',
+  'washington': 'wa',
+  'west virginia': 'wv',
+  'wisconsin': 'wi',
+  'wyoming': 'wy',
+};
+
+type ListingState =
+  | { kind: 'code'; code: string } //   a state we can name: 'OH', ' oh ', 'Ohio', 'Columbus, IN'
+  | { kind: 'absent' } //               NULL / blank: nothing was stated, the configured market may speak
+  | { kind: 'unreadable' }; //          stated, but not something we can read: never overridden by config
+
+/**
+ * Read `lm_property.state` for what it SAYS. Falling back to the configured market's state is only
+ * right when the listing said nothing: treating any non-two-letter text as "unknown" let 'Indiana',
+ * 'Kentucky' or 'Columbus, IN' be overridden by the market's Ohio and link the Ohio building -- the
+ * exact Columbus OH / Columbus IN collision this guard exists to prevent.
+ */
+function readListingState(s: string | null): ListingState {
+  const t = (s ?? '').trim();
+  if (t === '') return { kind: 'absent' };
+  if (/^[A-Za-z]{2}$/.test(t)) return { kind: 'code', code: t.toLowerCase() };
+  const byName = STATE_CODE_BY_NAME[t.toLowerCase().replace(/\s+/g, ' ')];
+  if (byName) return { kind: 'code', code: byName };
+  const cityState = /,\s*([A-Za-z]{2})$/.exec(t);
+  if (cityState) return { kind: 'code', code: cityState[1]!.toLowerCase() };
+  return { kind: 'unreadable' };
+}
+
+/**
+ * market id -> two-letter state, from config/lease-market.json `markets[].costarMarketNames`
+ * ('Columbus, OH' -> columbus: 'oh'). lm_property.state is NULL for every row the shipped CoStar header
+ * map produces (its `state` column is unmapped), so the listing's own state cannot be the evidence in
+ * production; the configured market is. A market whose names carry more than one state, or none, is
+ * left out and its state-stripped matches stay unverifiable.
+ */
+export function marketStatesFromConfig(
+  markets: ReadonlyArray<{ id: string; costarMarketNames: readonly string[] }>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const m of markets) {
+    const states = new Set(
+      m.costarMarketNames
+        .map((n) => /,\s*([A-Za-z]{2})\s*$/.exec(n.trim())?.[1]?.toLowerCase())
+        .filter((s): s is string => s !== undefined),
+    );
+    if (states.size === 1) out[m.id] = [...states][0]!;
+  }
+  return out;
+}
+
+export interface SeedOptions {
+  /** market id -> state; consulted when a listing's own `state` is NULL (see marketStatesFromConfig). */
+  marketStates?: Readonly<Record<string, string>>;
+}
+
 /** BOTH sides of every comparison go through this. Building the forward index from splitAddress
  *  output while counting the reverse direction on raw address_norm let case/whitespace variants
  *  land in different buckets, so the "two listings must not claim one property" guard silently
- *  passed. One function, both directions. */
-const addressKey = (market: string | null, addressNorm: string): string =>
-  `${marketKey(market)}|${addressNorm.trim().toUpperCase().replace(/\s+/g, ' ')}`;
+ *  passed. One function, both directions. `marketId` is an already-resolved lease-market id. */
+const addressKey = (marketId: string, addressNorm: string): string =>
+  `${marketId}|${addressNorm.trim().toUpperCase().replace(/\s+/g, ' ')}`;
 
 /**
  * Mirror config-blessed lease-market links into entity_xref; report everything else.
  * Feature-detects `lm_property` so it is safe to run before migration 029 has been applied.
  */
-export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
+export function seedFromLeaseMarket(db: WarehouseDb, opts: SeedOptions = {}): SeedResult {
+  const marketStates = opts.marketStates ?? {};
   if (!tableExists(db, 'lm_property')) {
     return { linked: 0, proposed: [], skipped: ['lm_property table absent'] };
   }
@@ -173,15 +336,17 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
   // Index warehouse properties by market + normalized address, using the lease-market module's
   // OWN normalizer on both sides so the two can never drift apart (see the header note).
   const skipped: string[] = [];
-  const byAddress = new Map<string, string[]>();
+  const byAddress = new Map<string, Array<{ id: string; state: string | null }>>();
   const properties = db
     .prepare('SELECT id, market, address FROM property_master WHERE address IS NOT NULL')
     .all() as Array<{ id: string; market: string | null; address: string }>;
   for (const p of properties) {
     const { addressNorm } = splitAddress(p.address, null);
     if (!addressNorm) continue;
-    const key = addressKey(p.market, addressNorm);
-    byAddress.set(key, [...(byAddress.get(key) ?? []), p.id]);
+    for (const { id: marketId, state } of marketCandidates(p.market)) {
+      const key = addressKey(marketId, addressNorm);
+      byAddress.set(key, [...(byAddress.get(key) ?? []), { id: p.id, state }]);
+    }
   }
 
   // A market like 'Columbus OH' spans dozens of municipalities, so market+address alone is NOT a
@@ -198,14 +363,14 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
 
   const lmRows = db
     .prepare(
-      'SELECT id, market_id, address_norm, city_norm, ora_property_key, owner_type FROM lm_property',
+      'SELECT id, market_id, address_norm, city_norm, state, ora_property_key, owner_type FROM lm_property',
     )
     .all() as LmPropertyRow[];
 
   // The reverse direction: two listings at one address must not both claim the same property.
   const lmPerKey = new Map<string, number>();
   for (const r of lmRows) {
-    const key = addressKey(r.market_id, r.address_norm);
+    const key = addressKey(marketKey(r.market_id), r.address_norm);
     lmPerKey.set(key, (lmPerKey.get(key) ?? 0) + 1);
   }
 
@@ -213,8 +378,7 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
   const proposed: XrefProposal[] = [];
 
   for (const r of lmRows) {
-    const key = addressKey(r.market_id, r.address_norm);
-    const candidates = byAddress.get(key) ?? [];
+    const key = addressKey(marketKey(r.market_id), r.address_norm);
     const base = {
       lmPropertyId: r.id,
       marketId: r.market_id,
@@ -222,7 +386,23 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
       oraPropertyKey: r.ora_property_key,
       ownerType: r.owner_type,
     };
-
+    const entries = byAddress.get(key) ?? [];
+    // The listing's own state, else the configured market's. Unknown while some candidate was reached by
+    // dropping a state is NOT "no match": surface it with the candidates listed for a human.
+    const stated = readListingState(r.state);
+    const lmState =
+      stated.kind === 'code' ? stated.code : stated.kind === 'absent' ? (marketStates[marketKey(r.market_id)] ?? null) : null;
+    if (entries.length > 0 && lmState === null && entries.some((e) => e.state !== null)) {
+      proposed.push({
+        ...base,
+        candidateCanonicalIds: [...new Set(entries.map((e) => e.id))].sort(),
+        reason: 'state_unverifiable',
+      });
+      continue;
+    }
+    const candidates = [
+      ...new Set(entries.filter((e) => stateMatches(lmState, e.state)).map((e) => e.id)),
+    ];
     if (candidates.length === 0) {
       proposed.push({ ...base, candidateCanonicalIds: [], reason: 'no_address_match' });
       continue;
