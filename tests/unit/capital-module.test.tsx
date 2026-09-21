@@ -23,6 +23,11 @@ import { CapitalModule } from '../../src/modules/capital/CapitalModule';
 import type { CapitalAllocationResponse } from '../../src/contracts/capital';
 import type { CapitalAllocationReport } from '../../src/contracts/capital-allocation';
 
+// The three absorbed modules are mocked so this suite stays about Capital (each has its own suite).
+vi.mock('../../src/modules/debt/DebtModule', () => ({ DebtModule: () => <div>debt-panel</div> }));
+vi.mock('../../src/modules/cash/CashModule', () => ({ CashModule: () => <div>cash-panel</div> }));
+vi.mock('../../src/modules/close/CloseModule', () => ({ CloseModule: () => <div>close-panel</div> }));
+
 function allocationResponse(): CapitalAllocationResponse {
   return {
     asOf: '2026-07-06',
@@ -344,7 +349,7 @@ describe('CapitalModule / AllocationCard — round 8 fresh-sweep: debt-book trus
   });
 });
 
-describe('CapitalModule — Phase 2 tab structure (Allocation · Pipeline)', () => {
+describe('CapitalModule — Allocation / Pipeline tab structure', () => {
   function clientWithPipeline(): QueryClient {
     const qc = seededClient();
     const base = allocationResponse();
@@ -389,12 +394,6 @@ describe('CapitalModule — Phase 2 tab structure (Allocation · Pipeline)', () 
     expect(screen.queryByText('Market Cap-Rate Positioning')).toBeNull();
   });
 
-  it('keeps the banner/headline strip above the tabs on every tab (R2)', () => {
-    renderModule('/capital?tab=pipeline', clientWithPipeline());
-    expect(screen.getByText('Capital Allocation')).toBeTruthy();
-    expect(screen.getByText('Hold 1')).toBeTruthy();
-  });
-
   it('deep-links the Pipeline tab via ?tab=', () => {
     renderModule('/capital?tab=pipeline', clientWithPipeline());
     expect(screen.getByRole('tab', { name: 'Pipeline' }).getAttribute('aria-selected')).toBe('true');
@@ -406,5 +405,59 @@ describe('CapitalModule — Phase 2 tab structure (Allocation · Pipeline)', () 
     expect(screen.getByRole('tab', { name: 'Pipeline' })).toBeTruthy();
     expect(screen.getByText('Buy Pipeline')).toBeTruthy();
     expect(screen.getByText(/No T1\/T2 buy candidates/)).toBeTruthy();
+  });
+});
+
+describe('CapitalModule — Phase 4b destination (Allocation · Pipeline · Debt · Cash · Close)', () => {
+  it('shows five tabs in order, Allocation default', () => {
+    renderModule();
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Allocation', 'Pipeline', 'Debt', 'Cash', 'Close']);
+    expect(screen.getByRole('tab', { name: 'Allocation' }).getAttribute('aria-selected')).toBe('true');
+  });
+
+  it.each([['debt', 'debt-panel'], ['cash', 'cash-panel'], ['close', 'close-panel']])('?tab=%s mounts %s', async (id, text) => {
+    renderModule(`/capital?tab=${id}`);
+    expect(await screen.findByText(text)).toBeTruthy();
+    expect(screen.queryByText('Market Cap-Rate Positioning')).toBeNull();
+  });
+
+  it('Rule G: Debt/Cash/Close stay usable while capital queries load and after they FAIL', async () => {
+    // Real failure path: every fetch (allocation, report, mirror) returns 503 -> WarehouseUnavailableError
+    // -> useCapitalAllocation ends in status 'error'. (QUERY_OPTS retry:1 means the error lands ~1s in.)
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderModule('/capital?tab=debt', qc);
+    // While the capital query is still loading (no data yet) the tab panel is already usable.
+    expect(await screen.findByText('debt-panel')).toBeTruthy();
+    // ...and once the query has actually errored it still is.
+    await waitFor(() => expect(qc.getQueryState(['warehouse', 'capital', 'allocation'])?.status).toBe('error'), { timeout: 5000 });
+    expect(screen.getByText('debt-panel')).toBeTruthy();
+    expect(screen.queryByText(/Capital allocation data unavailable/)).toBeNull();
+    for (const id of ['cash', 'close']) {
+      fireEvent.click(screen.getByRole('tab', { name: id === 'cash' ? 'Cash' : 'Close' }));
+      expect(await screen.findByText(`${id}-panel`)).toBeTruthy();
+    }
+  });
+
+  it('the Allocation tab shows the unavailable card (not a dead page) when capital data is missing', async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
+    renderModule('/capital', qc);
+    expect(await screen.findByText(/Capital allocation data unavailable/, undefined, { timeout: 5000 })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Debt' })).toBeTruthy(); // the strip is still there
+  });
+
+  it('R2 (revised): the verdict-count strip sits above the strip on Allocation/Pipeline only', () => {
+    renderModule('/capital?tab=pipeline');
+    expect(screen.getByText('Capital Allocation')).toBeTruthy();
+    expect(screen.getByText('Hold 1')).toBeTruthy();
+  });
+
+  it('the verdict-count strip is absent on Debt (it is about allocation, not loans)', async () => {
+    renderModule('/capital?tab=debt');
+    await screen.findByText('debt-panel');
+    expect(screen.queryByText('Hold 1')).toBeNull();
+    expect(screen.queryByText('Capital Allocation')).toBeNull();
   });
 });
