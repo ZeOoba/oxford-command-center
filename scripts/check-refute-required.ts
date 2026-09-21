@@ -85,27 +85,26 @@ const FINANCIAL_CONTRACT_PATHS: ReadonlySet<string> = new Set([
   'src/contracts/lease-market.ts',
 ]);
 
-// Financial CONFIG files (2026-09-17, Task 14 whole-branch review, promoted Minor — Finding 2):
-// the blanket `.json` exclusion below exempted config/lease-market.json, which holds
-// radarMinScore(50) / radarPushScore(70) / belowMarketMedianRatio(0.85) / benchmarkMinN(5) /
-// similarityMinComps(8) / candidateMaxBuildingSf(50000 — the buy-box SF cap): governor-adjacent
-// thresholds consumed directly by the radar/comparable-set math in src/analytics/lease-market/*,
-// while src/contracts/lease-market.ts — which merely TYPES them — was already in
-// FINANCIAL_CONTRACT_PATHS above. This is the fourth occurrence of the scope-staleness mode this
-// file's own history warns about (src/contracts 2026-07-24, server/workbook 2026-08-11,
-// server/sources 2026-08-12): each time, a broad, easy-to-miss exclusion (there, a whole
-// directory; here, every `.json`) quietly exempted a financial file. Fixed the same way those
-// were: a narrow, explicit allow-list entry, mirroring FINANCIAL_CONTRACT_PATHS, rather than
-// flipping the blanket `.json` rule — that would sweep in unrelated non-financial configs (e.g.
-// config/lease-market.costar-headers.json, a column-label map with no governor math).
-const FINANCIAL_CONFIG_PATHS: ReadonlySet<string> = new Set([
-  'config/lease-market.json',
-]);
+// Financial CONFIG (2026-09-21, weekly sweep — fifth occurrence of the scope-staleness mode): every
+// `.json` under config/ is financial-decision input. The 2026-09-17 fix enumerated ONE file
+// (lease-market.json) and, in its own comment, exempted config/lease-market.costar-headers.json as
+// "a column-label map with no governor math" — but that file's rentPeriodDefault and rentBasisMap
+// drive the x12 rent-period conversion and the NNN/MG/IG basis classification of every ingested
+// rent (costar-parse.ts / normalize.ts), so a one-token edit repriced every listing with no
+// attestation demanded. The enumeration also still missed replacement-cost.v3.json (RCT v03, the
+// ratified basis denominator) and acquisition-ruleset.v1.json (the 0.65/0.90 basis floors).
+// Per the doctrine this file's history keeps re-learning — an enumeration goes stale silently, a
+// prefix fails closed — config/ is now a prefix, not a list. A genuinely non-financial config would
+// have to be subtracted explicitly in NON_FINANCIAL_CONFIG_PATHS (empty today), which makes the
+// exemption a reviewed, visible decision rather than an omission.
+export const NON_FINANCIAL_CONFIG_PATHS: ReadonlySet<string> = new Set<string>();
 
 /** True when a changed path holds financial-decision SOURCE (not a test / doc / json fixture). */
 export function isFinancialSourcePath(p: string): boolean {
   const path = p.replace(/\\/g, '/');
-  if (FINANCIAL_CONFIG_PATHS.has(path)) return true;
+  if (path.startsWith('config/') && path.endsWith('.json') && !NON_FINANCIAL_CONFIG_PATHS.has(path)) {
+    return true;
+  }
   if (/\.(test|spec)\.(ts|tsx)$/.test(path) || path.endsWith('.md') || path.endsWith('.json')) return false;
   if (DELIVERY_ONLY_PATHS.has(path)) return false;
   return (
