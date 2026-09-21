@@ -24,16 +24,26 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$TaskName = 'ORA Mirror Deploy Classifier'
+  [string]$TaskName = 'ORA Mirror Deploy Classifier',
+  # The checkout the task should run FROM. Defaults to the checkout this script lives in; pass the
+  # main checkout explicitly when registering from a worktree or an unmerged branch, otherwise the
+  # task would be pointed at a path that is deleted with the worktree.
+  [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot)
 )
 
 $ErrorActionPreference = 'Stop'
-$repo = Split-Path -Parent $PSScriptRoot
+$repo = $RepoRoot
 $script = Join-Path $repo 'scripts\mirror-classify-offfleet.ps1'
 $pwshCmd = Get-Command pwsh -ErrorAction SilentlyContinue
 $pwsh = if ($pwshCmd) { $pwshCmd.Source } else { (Get-Command powershell).Source }
 
-$action = New-ScheduledTaskAction -Execute $pwsh -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$script`"" -WorkingDirectory $repo
+# Get-MirrorTaskArguments (lib/mirror-task-action.ps1, shared with register-mirror-task.ps1) adds
+# -WindowStyle Hidden. This action was missed by the 2026-09-18 fix (#338): it kept launching a
+# visible, focus-stealing console on the interactive desktop, and the live task's LastTaskResult was
+# 3221225786 (0xC000013A, console closed) -- the exact signature #338 diagnosed on the Mirror Deploy
+# task. Both tasks run with the interactive token, so the same closed-window kill applies.
+. (Join-Path $PSScriptRoot 'lib\mirror-task-action.ps1')
+$action = New-ScheduledTaskAction -Execute $pwsh -Argument (Get-MirrorTaskArguments -ScriptPath $script) -WorkingDirectory $repo
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -WakeToRun -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
 
 # Weekday 10:40 AM ET -- matches ora-command-center-mirror-drift-check's own cadence
@@ -41,4 +51,13 @@ $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd 
 $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At 10:40am
 
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Force -Description 'Off-fleet redundant classifier + alert for ORA Command Center - Mirror Deploy (OI-197 fix (a)). Runs independently of the CC/MCP fleet so classification survives a fleet pause. See open-items-tracker.md#OI-197.'
+# Read the trigger back. The live task was found firing MONDAY ONLY (DaysOfWeek=2) although this script
+# asks for Monday-Friday (62): an action-only Set-ScheduledTask update had preserved a stale trigger, so the
+# off-fleet layer covered 1 day in 5 of the window it exists to cover. Fail loudly instead of trusting Force.
+$weekdays = 62 # Mon=2 Tue=4 Wed=8 Thu=16 Fri=32
+$registered = Get-ScheduledTask -TaskName $TaskName
+$mask = [int]($registered.Triggers | Select-Object -First 1).DaysOfWeek
+if ($mask -ne $weekdays) {
+  throw "Registered '$TaskName' but its trigger DaysOfWeek mask is $mask, expected $weekdays (Mon-Fri)."
+}
 Write-Host "Registered '$TaskName': weekday 10:40 AM ET -> $script"

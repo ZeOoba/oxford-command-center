@@ -38,6 +38,38 @@ CREATE TABLE IF NOT EXISTS _migrations (
 )
 `;
 
+/** Migration filenames in numeric order (001_ before 002_ before 010_). */
+function listMigrationFiles(): string[] {
+  try {
+    return readdirSync(MIGRATIONS_DIR)
+      .filter((f) => f.endsWith('.sql'))
+      .sort((a, b) => {
+        const numA = parseInt(a.split('_')[0] ?? '0', 10);
+        const numB = parseInt(b.split('_')[0] ?? '0', 10);
+        return numA - numB;
+      });
+  } catch {
+    throw new Error(`Cannot read migrations directory: ${MIGRATIONS_DIR}`);
+  }
+}
+
+/**
+ * Migrations this code carries that the database has not applied. PURE READ: unlike
+ * runMigrations it never creates `_migrations`, so it is safe on a handle whose only job is to
+ * decide whether it may proceed (see openWarehouseNoMigrate in db.ts).
+ */
+export function pendingMigrations(db: Database): string[] {
+  const hasTable =
+    db.prepare("SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='_migrations'").get() !==
+    undefined;
+  const applied = new Set(
+    hasTable
+      ? (db.prepare('SELECT filename FROM _migrations').all() as { filename: string }[]).map((r) => r.filename)
+      : [],
+  );
+  return listMigrationFiles().filter((f) => !applied.has(f));
+}
+
 /** Apply all unapplied .sql migrations from the migrations/ directory, in numeric order. */
 export function runMigrations(db: Database): void {
   // Ensure the tracking table exists first
@@ -50,19 +82,7 @@ export function runMigrations(db: Database): void {
     ),
   );
 
-  // Read and sort migration files numerically (001_ before 002_ before 010_)
-  let files: string[];
-  try {
-    files = readdirSync(MIGRATIONS_DIR)
-      .filter((f) => f.endsWith('.sql'))
-      .sort((a, b) => {
-        const numA = parseInt(a.split('_')[0] ?? '0', 10);
-        const numB = parseInt(b.split('_')[0] ?? '0', 10);
-        return numA - numB;
-      });
-  } catch {
-    throw new Error(`Cannot read migrations directory: ${MIGRATIONS_DIR}`);
-  }
+  const files = listMigrationFiles();
 
   const actor = migrationActor();
 

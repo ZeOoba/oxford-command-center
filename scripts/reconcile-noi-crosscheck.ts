@@ -18,7 +18,7 @@ import { join } from 'node:path';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath } from '../server/config';
 import { parseWorkbook } from '../server/workbook/parse';
-import { openWarehouse } from '../server/warehouse/db';
+import { openWarehouseReadOnly } from '../server/warehouse/db';
 import { reconcileNoiABFromDb, DEFAULT_TOLERANCE, type NoiReconciliationRow } from '../server/warehouse/reconcile-noi';
 
 loadEnvFile();
@@ -50,7 +50,9 @@ async function main() {
   console.log(`→ Reading workbook: ${workbookPath()}`);
   const { snapshot } = await parseWorkbook(workbookPath());
 
-  const db = openWarehouse(warehousePath);
+  // Pure reader: a read-only handle never applies migrations to the live warehouse (openWarehouse
+  // did, silently, from whatever branch this ran on — see server/warehouse/db.ts).
+  const db = openWarehouseReadOnly(warehousePath);
   let rows: NoiReconciliationRow[];
   try {
     rows = reconcileNoiABFromDb(db, snapshot, DEFAULT_TOLERANCE);
