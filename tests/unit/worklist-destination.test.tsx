@@ -80,6 +80,28 @@ describe('Worklist destination', () => {
     expect(new URLSearchParams(screen.getByTestId('loc').textContent!.split('?')[1]).has('tab')).toBe(false);
   });
 
+  it('Rule H: switching tabs clears a leaked ?view= (shared Destination behaviour), keeping other params', async () => {
+    renderWorklist('/worklist?tab=alerts&view=pending&scenario=Downside');
+    await screen.findByText('alerts-panel');
+    // Precondition: the probe really sees the seeded view param, so the assertions below can't pass vacuously.
+    expect(new URLSearchParams(screen.getByTestId('loc').textContent!.split('?')[1]).get('view')).toBe('pending');
+    fireEvent.click(screen.getByRole('tab', { name: 'Calendar' }));
+    expect(await screen.findByText('calendar-panel')).toBeTruthy();
+    let q = new URLSearchParams(screen.getByTestId('loc').textContent!.split('?')[1]);
+    expect(q.get('tab')).toBe('calendar');
+    expect(q.has('view')).toBe(false);
+    expect(q.get('scenario')).toBe('Downside');
+    // Also when returning to the default tab (the `tab` param itself is dropped).
+    cleanup();
+    renderWorklist('/worklist?tab=alerts&view=pending');
+    await screen.findByText('alerts-panel');
+    fireEvent.click(screen.getByRole('tab', { name: 'Today' }));
+    expect(await screen.findByText('tasks-panel')).toBeTruthy();
+    q = new URLSearchParams(screen.getByTestId('loc').textContent!.split('?')[1]);
+    expect(q.has('tab')).toBe(false);
+    expect(q.has('view')).toBe(false);
+  });
+
   it('shows no badge on Alerts when nothing is critical/warning (R7: the tab itself is never hidden)', () => {
     renderWorklist();
     expect(screen.getByRole('tab', { name: 'Alerts' }).textContent).toBe('Alerts');
