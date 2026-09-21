@@ -11,10 +11,9 @@ import { KpiStat } from '@/primitives/KpiStat';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { Button } from '@/primitives/Button';
-import { Tabs, TabPanel } from '@/primitives/Tabs';
+import { SegmentedControl } from '@/primitives/SegmentedControl';
 import { BarChart } from '@/charts/BarChart';
 import { useTabParam } from '@/lib/useTabParam';
-import { FORCE_MOUNT_PANEL } from '@/lib/forceMountPanel';
 import { downloadCsv } from '@/lib/export';
 import type { Lease, LeaseStatus } from '@contracts/index';
 
@@ -40,8 +39,15 @@ const EXPIRY_LABEL: Record<ExpiryFilter, string> = {
   holdover: 'Holdover (expired)',
 };
 
-type LeaseTab = 'rent-roll' | 'rollover';
-const LEASE_TAB_KEYS: readonly LeaseTab[] = ['rent-roll', 'rollover'];
+// Inner switch (R5: the Leasing destination owns the tab strip). The `rollover` key is kept so the old
+// `/leases?tab=rollover` deep links (rewritten to `?view=rollover`) keep working; it is the critical-dates
+// timeline — notice deadlines, expirations, escalations — hence the "Critical dates" label.
+type LeaseView = 'rent-roll' | 'rollover';
+const LEASE_VIEW_KEYS: readonly LeaseView[] = ['rent-roll', 'rollover'];
+const LEASE_VIEWS: ReadonlyArray<{ value: LeaseView; label: string }> = [
+  { value: 'rent-roll', label: 'Rent roll' },
+  { value: 'rollover', label: 'Critical dates' },
+];
 
 const fieldCls = 'num h-8 rounded-[var(--radius-sm)] px-2.5 text-2xs outline-none';
 const fieldStyle: CSSProperties = {
@@ -54,7 +60,7 @@ export function LeasesModule() {
   const { data } = useSnapshot();
   const { analytics } = useAnalytics();
   const ui = useUi();
-  const [tab, setTab] = useTabParam<LeaseTab>(LEASE_TAB_KEYS, 'rent-roll');
+  const [view, setView] = useTabParam<LeaseView>(LEASE_VIEW_KEYS, 'rent-roll', 'view');
 
   // Market rent gaps from leasing forecast (warehouse-dependent; degrades gracefully)
   const { data: forecast } = useLeaseForecast();
@@ -179,118 +185,109 @@ export function LeasesModule() {
         <KpiStat label="Holding Over" value={rar.expiredRent} format={fmtUsdCompact} accentColor="var(--color-neg)" sublabel="expired" />
       </div>
 
-      {/* Both panels are force-mounted so the rent-roll search / filters / sort (and the Critical
-          Dates sort) survive a tab round-trip. No queries of their own, so automatic keyboard
-          activation. The overdue-holdover count rides on the Rollover tab label (R4) because that
-          tab is non-default. */}
-      <Tabs
-        tabs={[
-          { id: 'rent-roll', label: 'Rent roll' },
-          { id: 'rollover', label: 'Rollover', badge: { count: cdOverdue, tone: 'red' } },
-        ]}
-        selectedKey={tab} onSelectionChange={(k) => setTab(k as LeaseTab)} aria-label="Lease views">
-        <TabPanel id="rent-roll" {...FORCE_MOUNT_PANEL}>
+      <SegmentedControl options={LEASE_VIEWS} value={view} onChange={setView} aria-label="Lease views" />
+
+      {view === 'rent-roll' && (
+        <Card>
+          <CardHeader
+            title="Rent Roll"
+            trailing={
+              <div className="flex items-center gap-2">
+                <Badge tone="gold">{isFiltered ? `${filtered.length} of ${leases.length}` : `${leases.length} tenants`}</Badge>
+                <Button size="sm" variant="subtle" onPress={exportRentRoll} isDisabled={filtered.length === 0} aria-label="Export rent roll to CSV">
+                  <Download size={13} /> Export
+                </Button>
+              </div>
+            }
+          />
+
+          <div className="flex flex-wrap items-center gap-2 px-4 py-2.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+            <div className="relative w-full sm:w-auto">
+              <Search size={13} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2" style={{ color: 'var(--text-tertiary)' }} />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search tenant or property…"
+                aria-label="Search leases"
+                className={`${fieldCls} w-full pl-7 sm:w-56`}
+                style={fieldStyle}
+              />
+            </div>
+
+            <select aria-label="Filter by status" value={status} onChange={(e) => setStatus(e.target.value as LeaseStatus | 'all')} className={fieldCls} style={fieldStyle}>
+              <option value="all">All statuses</option>
+              {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+
+            <select aria-label="Filter by property" value={property} onChange={(e) => setProperty(e.target.value)} className={`${fieldCls} w-full sm:w-auto sm:max-w-44`} style={fieldStyle}>
+              <option value="all">All properties</option>
+              {properties.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
+
+            <select aria-label="Filter by expiry window" value={expiry} onChange={(e) => setExpiry(e.target.value as ExpiryFilter)} className={fieldCls} style={fieldStyle}>
+              {(Object.keys(EXPIRY_LABEL) as ExpiryFilter[]).map((k) => <option key={k} value={k}>{EXPIRY_LABEL[k]}</option>)}
+            </select>
+
+            {isFiltered && (
+              <>
+                <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>{fmtUsdCompact(filteredRent)}/yr</span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onPress={() => { setQuery(''); setStatus('all'); setProperty('all'); setExpiry('all'); }}
+                  aria-label="Clear all filters"
+                >
+                  Clear
+                </Button>
+              </>
+            )}
+          </div>
+
+          <DataTable columns={cols} rows={filtered} getRowId={(l) => l.id} onRowClick={(l) => ui.openEntity({ type: 'lease', id: l.id })} initialSort={{ key: 'rent', dir: 'desc' }} maxHeight={520} />
+        </Card>
+      )}
+      {view === 'rollover' && (
+        <div className="flex flex-col gap-4">
+          <Card>
+            <CardHeader title="Lease Rollover Schedule" trailing={<Badge tone="neutral">rent expiring</Badge>} />
+            <div className="px-3 pb-2 pt-3">
+              <BarChart data={analytics.rollover.map((b) => ({ label: b.period, value: b.expiringRent }))} valueFormat={fmtUsdCompact} height={230} color="var(--color-info)" />
+            </div>
+          </Card>
+
           <Card>
             <CardHeader
-              title="Rent Roll"
+              title="Critical Dates"
               trailing={
                 <div className="flex items-center gap-2">
-                  <Badge tone="gold">{isFiltered ? `${filtered.length} of ${leases.length}` : `${leases.length} tenants`}</Badge>
-                  <Button size="sm" variant="subtle" onPress={exportRentRoll} isDisabled={filtered.length === 0} aria-label="Export rent roll to CSV">
-                    <Download size={13} /> Export
-                  </Button>
+                  {cdOverdue > 0 && <Badge tone="red">{cdOverdue} overdue</Badge>}
+                  <Badge tone="neutral">{analytics.criticalDates.length} items</Badge>
                 </div>
               }
             />
-
-            <div className="flex flex-wrap items-center gap-2 px-4 py-2.5" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-              <div className="relative w-full sm:w-auto">
-                <Search size={13} className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2" style={{ color: 'var(--text-tertiary)' }} />
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search tenant or property…"
-                  aria-label="Search leases"
-                  className={`${fieldCls} w-full pl-7 sm:w-56`}
-                  style={fieldStyle}
+            <div className="flex items-center gap-1.5 px-4 pt-2 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+              <CalendarClock size={12} />
+              <span>Overdue holdovers + next 12 months · notice deadlines assume a 90-day window (estimated)</span>
+            </div>
+            {analytics.criticalDates.length > 0 ? (
+              <div className="pt-2">
+                <DataTable
+                  columns={cdCols}
+                  rows={analytics.criticalDates}
+                  getRowId={(c) => c.id}
+                  onRowClick={(c) => ui.openEntity({ type: 'lease', id: c.leaseId })}
+                  initialSort={{ key: 'when', dir: 'asc' }}
+                  maxHeight={360}
                 />
               </div>
-
-              <select aria-label="Filter by status" value={status} onChange={(e) => setStatus(e.target.value as LeaseStatus | 'all')} className={fieldCls} style={fieldStyle}>
-                <option value="all">All statuses</option>
-                {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
-              </select>
-
-              <select aria-label="Filter by property" value={property} onChange={(e) => setProperty(e.target.value)} className={`${fieldCls} w-full sm:w-auto sm:max-w-44`} style={fieldStyle}>
-                <option value="all">All properties</option>
-                {properties.map((p) => <option key={p} value={p}>{p}</option>)}
-              </select>
-
-              <select aria-label="Filter by expiry window" value={expiry} onChange={(e) => setExpiry(e.target.value as ExpiryFilter)} className={fieldCls} style={fieldStyle}>
-                {(Object.keys(EXPIRY_LABEL) as ExpiryFilter[]).map((k) => <option key={k} value={k}>{EXPIRY_LABEL[k]}</option>)}
-              </select>
-
-              {isFiltered && (
-                <>
-                  <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>{fmtUsdCompact(filteredRent)}/yr</span>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onPress={() => { setQuery(''); setStatus('all'); setProperty('all'); setExpiry('all'); }}
-                    aria-label="Clear all filters"
-                  >
-                    Clear
-                  </Button>
-                </>
-              )}
-            </div>
-
-            <DataTable columns={cols} rows={filtered} getRowId={(l) => l.id} onRowClick={(l) => ui.openEntity({ type: 'lease', id: l.id })} initialSort={{ key: 'rent', dir: 'desc' }} maxHeight={520} />
+            ) : (
+              <div className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-tertiary)' }}>
+                No notice deadlines, expirations or escalations in the next 12 months.
+              </div>
+            )}
           </Card>
-        </TabPanel>
-        <TabPanel id="rollover" {...FORCE_MOUNT_PANEL}>
-          <div className="flex flex-col gap-4">
-            <Card>
-              <CardHeader title="Lease Rollover Schedule" trailing={<Badge tone="neutral">rent expiring</Badge>} />
-              <div className="px-3 pb-2 pt-3">
-                <BarChart data={analytics.rollover.map((b) => ({ label: b.period, value: b.expiringRent }))} valueFormat={fmtUsdCompact} height={230} color="var(--color-info)" />
-              </div>
-            </Card>
-
-            <Card>
-              <CardHeader
-                title="Critical Dates"
-                trailing={
-                  <div className="flex items-center gap-2">
-                    {cdOverdue > 0 && <Badge tone="red">{cdOverdue} overdue</Badge>}
-                    <Badge tone="neutral">{analytics.criticalDates.length} items</Badge>
-                  </div>
-                }
-              />
-              <div className="flex items-center gap-1.5 px-4 pt-2 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-                <CalendarClock size={12} />
-                <span>Overdue holdovers + next 12 months · notice deadlines assume a 90-day window (estimated)</span>
-              </div>
-              {analytics.criticalDates.length > 0 ? (
-                <div className="pt-2">
-                  <DataTable
-                    columns={cdCols}
-                    rows={analytics.criticalDates}
-                    getRowId={(c) => c.id}
-                    onRowClick={(c) => ui.openEntity({ type: 'lease', id: c.leaseId })}
-                    initialSort={{ key: 'when', dir: 'asc' }}
-                    maxHeight={360}
-                  />
-                </div>
-              ) : (
-                <div className="px-4 py-8 text-center text-sm" style={{ color: 'var(--text-tertiary)' }}>
-                  No notice deadlines, expirations or escalations in the next 12 months.
-                </div>
-              )}
-            </Card>
-          </div>
-        </TabPanel>
-      </Tabs>
+        </div>
+      )}
     </div>
   );
 }

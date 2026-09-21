@@ -1,15 +1,16 @@
 // tests/unit/leases-tabs.test.tsx
 //
-// IA decongestion Phase 3 — the single-scroll Leases module is tabbed: Rent roll (default) ·
-// Rollover. The KPI strip stays above the strip (R2). Both panels are force-mounted so the rent-roll
-// search / filters / sort survive a tab round-trip. The Rollover chart reads `analytics.rollover`
-// (portfolio-wide), NOT the rent-roll's filtered rows, so the split loses no linkage (R1).
+// IA decongestion Phase 4d — Leases is absorbed into the Leasing destination (Rent roll tab). Its own
+// two-way strip (Rent roll · Rollover) can no longer be a tab strip (R5: no nested tab strips), so it
+// is a SegmentedControl on `?view=` — "Rent roll" (default) · "Critical dates" (key `rollover`, so old
+// `/leases?tab=rollover` deep links keep working). The KPI strip stays above the switch (R2). The
+// Rollover chart reads `analytics.rollover` (portfolio-wide), NOT the rent-roll's filtered rows, so the
+// split loses no linkage (R1). Filter state lives in the module, so it survives a view round-trip.
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import type * as Queries from '../../src/data/queries';
-import { inactivePanelIsHiddenByClass, isInInactivePanel, selectTab, tabIsSelected } from './tab-test-utils';
 
 const LEASES = [
   { id: 'a', company: 'Eurosort', tenantName: 'Eurosort', propertyKey: 'P1', unit: '1', sf: 10000, annualRent: 100_000, rentPerSf: 10, leaseStart: '2020-01-01', leaseEnd: '2027-01-01', monthsToExpiry: 12, escalationPct: 0.03, status: 'Active' },
@@ -40,16 +41,25 @@ vi.mock('../../src/data/queries', async (importOriginal) => {
 
 import { LeasesModule } from '../../src/modules/leases/LeasesModule';
 
+function LocationProbe() {
+  const loc = useLocation();
+  return <div data-testid="loc">{loc.search}</div>;
+}
+
 function renderLeases(entry = '/') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <MemoryRouter initialEntries={[entry]}>
       <QueryClientProvider client={qc}>
         <LeasesModule />
+        <LocationProbe />
       </QueryClientProvider>
     </MemoryRouter>,
   );
 }
+
+const search = () => screen.getByTestId('loc').textContent;
+const radio = (name: string) => screen.getByRole('radio', { name }) as HTMLInputElement;
 
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
@@ -57,69 +67,85 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-describe('LeasesModule — Phase 3 tabs', () => {
-  it('Rent roll is the default tab, visible with no tab click (keeps the e2e specs valid)', () => {
+describe('LeasesModule — Rent roll / Critical dates SegmentedControl (R5)', () => {
+  it('is a radiogroup named "Lease views" with Rent roll + Critical dates, and no nested tab strip', () => {
     renderLeases();
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Rent roll', 'Rollover1']);
-    expect(tabIsSelected('Rent roll')).toBe(true);
-    expect(isInInactivePanel(screen.getByText('Rent Roll'))).toBe(false);
-    // Eurosort also appears in the (hidden) Rollover tab's Critical Dates; one match must be visible.
-    expect(screen.getAllByText('Eurosort').some((el) => !isInInactivePanel(el))).toBe(true);
+    expect(screen.getByRole('radiogroup', { name: 'Lease views' })).toBeTruthy();
+    expect(screen.getAllByRole('radio').map((r) => r.closest('label')?.textContent)).toEqual(['Rent roll', 'Critical dates']);
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+    expect(screen.queryAllByRole('tablist')).toHaveLength(0);
+  });
+
+  it('Rent roll is the default view, visible with no click (keeps the e2e specs valid)', () => {
+    renderLeases();
+    expect(radio('Rent roll').checked).toBe(true);
+    expect(radio('Critical dates').checked).toBe(false);
+    expect(screen.getByText('Rent Roll')).toBeTruthy();
+    expect(screen.getAllByText('Eurosort').length).toBeGreaterThan(0);
     // the sortable, labeled rent-roll table header the a11y spec looks for
     expect(document.querySelector('th[aria-sort]')).not.toBeNull();
-    expect(isInInactivePanel(document.querySelector('th[aria-sort]')!)).toBe(false);
+    // the other view is not rendered
+    expect(screen.queryByText('Lease Rollover Schedule')).toBeNull();
+    expect(screen.queryByText('Critical Dates')).toBeNull();
   });
 
-  it('keeps the KPI strip above the tab strip on every tab', () => {
-    renderLeases('/?tab=rollover');
-    expect(screen.getByText('WALT').closest('[role="tabpanel"]')).toBeNull();
-    expect(isInInactivePanel(screen.getByText('WALT'))).toBe(false);
-  });
-
-  it('Rollover and Critical Dates are hidden until the Rollover tab is selected, then reachable', () => {
+  it('keeps the KPI strip above the switch on both views (R2)', () => {
     renderLeases();
-    const chart = screen.getByText('Lease Rollover Schedule');
-    const dates = screen.getByText('Critical Dates');
-    expect(isInInactivePanel(chart)).toBe(true);
-    expect(inactivePanelIsHiddenByClass(dates)).toBe(true);
-    selectTab(/^Rollover/);
-    expect(isInInactivePanel(chart)).toBe(false);
-    expect(isInInactivePanel(dates)).toBe(false);
-    expect(isInInactivePanel(screen.getByText('Rent Roll'))).toBe(true);
-  });
-
-  it('R4: the overdue-holdover count rides on the non-default Rollover tab label', () => {
-    renderLeases();
-    // exactly one of the two critical dates is overdue (daysToDate < 0)
-    expect(screen.getByRole('tab', { name: /^Rollover/ }).textContent).toBe('Rollover1');
-  });
-
-  it('?tab=rollover deep-links to the Rollover tab; an unknown tab falls back to Rent roll', () => {
-    renderLeases('/?tab=rollover');
-    expect(tabIsSelected(/^Rollover/)).toBe(true);
-    expect(isInInactivePanel(screen.getByText('Lease Rollover Schedule'))).toBe(false);
+    expect(screen.getByText('WALT')).toBeTruthy();
+    expect(screen.getByText('Holding Over')).toBeTruthy();
     cleanup();
-    renderLeases('/?tab=bogus');
-    expect(tabIsSelected('Rent roll')).toBe(true);
+    renderLeases('/?view=rollover');
+    expect(screen.getByText('WALT')).toBeTruthy();
+    expect(screen.getByText('Holding Over')).toBeTruthy();
   });
 
-  it('state survives a tab round-trip: rent-roll search, status filter and column sort', () => {
-    renderLeases();
-    const search = screen.getByLabelText('Search leases') as HTMLInputElement;
-    fireEvent.change(search, { target: { value: 'Euro' } });
-    const status = screen.getByLabelText('Filter by status') as HTMLSelectElement;
-    fireEvent.change(status, { target: { value: 'Active' } });
-    const rentHeader = () => screen.getAllByRole('columnheader', { name: 'Annual Rent' })[0]!;
-    fireEvent.click(rentHeader()); // initialSort is rent desc → toggles to asc
-    const sortBefore = rentHeader().getAttribute('aria-sort');
-    expect(sortBefore).toBe('ascending');
+  it('?view=rollover deep-links to Critical dates (chart + dates table); an unknown view falls back to Rent roll', () => {
+    renderLeases('/?view=rollover');
+    expect(radio('Critical dates').checked).toBe(true);
+    expect(screen.getByText('Lease Rollover Schedule')).toBeTruthy();
+    expect(screen.getByText('Critical Dates')).toBeTruthy();
+    expect(screen.queryByText('Rent Roll')).toBeNull();
+    cleanup();
+    renderLeases('/?view=bogus');
+    expect(radio('Rent roll').checked).toBe(true);
+  });
 
-    selectTab(/^Rollover/);
-    selectTab('Rent roll');
+  it('R1: the Critical Dates card carries the overdue count (one of the two dates is overdue)', () => {
+    renderLeases('/?view=rollover');
+    expect(screen.getByText('1 overdue')).toBeTruthy();
+    expect(screen.getByText('2 items')).toBeTruthy();
+  });
+
+  it('clicking Critical dates writes ?view=rollover; clicking Rent roll (the default) removes it', () => {
+    renderLeases('/?scenario=Downside');
+    expect(search()).toBe('?scenario=Downside');
+    fireEvent.click(radio('Critical dates'));
+    expect(new URLSearchParams(search()!).get('view')).toBe('rollover');
+    expect(new URLSearchParams(search()!).get('scenario')).toBe('Downside');
+    expect(screen.getByText('Lease Rollover Schedule')).toBeTruthy();
+    fireEvent.click(radio('Rent roll'));
+    expect(new URLSearchParams(search()!).has('view')).toBe(false);
+    expect(new URLSearchParams(search()!).get('scenario')).toBe('Downside');
+    expect(screen.getByText('Rent Roll')).toBeTruthy();
+  });
+
+  it('never touches ?tab= (owned by the Leasing destination strip)', () => {
+    renderLeases('/?tab=rent-roll');
+    fireEvent.click(radio('Critical dates'));
+    expect(new URLSearchParams(search()!).get('tab')).toBe('rent-roll');
+  });
+
+  it('rent-roll search and status filter survive a view round-trip', () => {
+    renderLeases();
+    fireEvent.change(screen.getByLabelText('Search leases'), { target: { value: 'Euro' } });
+    fireEvent.change(screen.getByLabelText('Filter by status'), { target: { value: 'Active' } });
+    expect(screen.getByText('1 of 2')).toBeTruthy();
+
+    fireEvent.click(radio('Critical dates'));
+    fireEvent.click(radio('Rent roll'));
 
     expect((screen.getByLabelText('Search leases') as HTMLInputElement).value).toBe('Euro');
     expect((screen.getByLabelText('Filter by status') as HTMLSelectElement).value).toBe('Active');
-    expect(rentHeader().getAttribute('aria-sort')).toBe('ascending');
     expect(screen.getByText('1 of 2')).toBeTruthy();
   });
 });
