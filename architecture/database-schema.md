@@ -233,4 +233,4 @@ Spec: `docs/superpowers/specs/2026-09-16-lease-market-intelligence-design.md` (r
 | `lm_signal` | derived | replaced on each `npm run lease-market:compute` |
 | `lm_market_rent_feed` | ORA property | comparable median asking NNN-eq; merged under manual `overlay.marketRents` |
 | `lm_radar_decision` | decision | append-only, DB-enforced (`BEFORE UPDATE`/`BEFORE DELETE` triggers `RAISE(ABORT)`); calibration of the radar score |
-| `lm_v_current_spaces`, `lm_v_listing_metrics`, `lm_v_radar` | views | read-only agent query surface |
+| `lm_v_current_spaces`, `lm_v_listing_metrics`, `lm_v_radar` | views | read-only agent query surface. `lm_v_listing_metrics.cumulative_reduction_pct` is the compounded `new_value/prev_value` of the recorded `price_cut`/`price_increase` events (migration 032, replacing 029's first-vs-latest `asking_psf_yr` ratio, which folded sf/basis/total changes into a "reduction"); NULL when no `price_cut` was recorded |
