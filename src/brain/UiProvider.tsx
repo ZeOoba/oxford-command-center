@@ -4,7 +4,7 @@ import type { ScenarioName } from '@contracts/index';
 import { MODULES } from '@/shell/modules';
 import { UiContext, type EntityRef } from './ui-context';
 import type { DraftRequest } from './draft';
-import { parseRoute, entityPath, intelPropertyPath, resolveLegacyRoute } from './routing';
+import { parseRoute, entityHref, intelPropertyPath, resolveLegacyRoute } from './routing';
 
 const MODULE_IDS = MODULES.map((m) => m.id);
 const SCENARIOS: ScenarioName[] = ['Base', 'Upside', 'Downside'];
@@ -19,10 +19,12 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  // Module + open drawer + intel deep-link are derived from the path (stable per pathname).
+  // Module + open drawer + intel deep-link are derived from the path; `?tab=` disambiguates the
+  // drawer type on multi-drawer destinations (TAB_PRIMARY_TYPE).
+  const tabParam = searchParams.get('tab');
   const { moduleId: activeModuleId, selected, intelPropertyId } = useMemo(
-    () => parseRoute(location.pathname, MODULE_IDS),
-    [location.pathname],
+    () => parseRoute(location.pathname, MODULE_IDS, tabParam),
+    [location.pathname, tabParam],
   );
 
   // Scenario is a query param so it survives refresh and rides along on navigations.
@@ -48,7 +50,10 @@ export function UiProvider({ children }: { children: ReactNode }) {
     },
     [navigate, search],
   );
-  const openEntity = useCallback((ref: EntityRef) => navigate(`${entityPath(ref)}${search}`), [navigate, search]);
+  const openEntity = useCallback(
+    (ref: EntityRef) => navigate(entityHref(ref, search, activeModuleId)),
+    [navigate, search, activeModuleId],
+  );
   // Intel deep link (PFI Phase B.3 item 5) — navigates to `/intel/:propertyId`, which focuses the
   // intel Property tab WITHOUT opening the global EntityDrawer (intel has no MODULE_PRIMARY_TYPE).
   const openIntelProperty = useCallback(
