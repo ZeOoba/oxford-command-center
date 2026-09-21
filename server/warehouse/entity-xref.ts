@@ -154,12 +154,42 @@ function tableExists(db: WarehouseDb, name: string): boolean {
 
 const marketKey = (market: string | null): string => (market ?? '').trim().toLowerCase();
 
+const NON_ALNUM_RUN = /[^a-z0-9]+/g;
+const EDGE_DASHES = /^-+|-+$/g;
+// A trailing two-letter state token set off by a space or comma: 'Columbus OH', 'Kansas City, MO'.
+// Requires the separator, so a hyphenated region such as 'Mid-Atlantic' is left intact.
+const TRAILING_STATE = /[,\s]+[A-Za-z]{2}$/;
+
+const marketSlug = (label: string): string =>
+  label.toLowerCase().replace(NON_ALNUM_RUN, '-').replace(EDGE_DASHES, '');
+
+/**
+ * The lease-market ids a warehouse `property_master.market` label could denote.
+ *
+ * The two id spaces use different vocabularies and never agreed: property_master says 'Columbus OH',
+ * 'Kansas City MO', 'Mid-Atlantic' (display labels, seeded in property-master.ts) while
+ * lm_property.market_id says 'columbus', 'kansas-city', 'eastern-shore-md' (config/lease-market.json
+ * ids). Comparing them through a case-fold alone meant 'columbus oh' never equalled 'columbus', so in
+ * production EVERY listing fell to 'no_address_match' — even a config-blessed one with an exact address
+ * match — while the tests passed because their fixtures wrote the market as 'Columbus'. Two candidates
+ * because the state suffix is sometimes part of the id ('eastern-shore-md') and sometimes not
+ * ('columbus'); the property is indexed under both and only ever matches the listing's own market_id.
+ * A region label that names several lease-market ids ('Mid-Atlantic' spans baltimore and
+ * eastern-shore-md) resolves to none, which reports as unmatched — the safe direction.
+ */
+export function marketIdCandidates(label: string | null): string[] {
+  const trimmed = (label ?? '').trim();
+  if (trimmed === '') return [''];
+  const candidates = [marketSlug(trimmed), marketSlug(trimmed.replace(TRAILING_STATE, ''))];
+  return [...new Set(candidates.filter((c) => c !== ''))];
+}
+
 /** BOTH sides of every comparison go through this. Building the forward index from splitAddress
  *  output while counting the reverse direction on raw address_norm let case/whitespace variants
  *  land in different buckets, so the "two listings must not claim one property" guard silently
- *  passed. One function, both directions. */
-const addressKey = (market: string | null, addressNorm: string): string =>
-  `${marketKey(market)}|${addressNorm.trim().toUpperCase().replace(/\s+/g, ' ')}`;
+ *  passed. One function, both directions. `marketId` is an already-resolved lease-market id. */
+const addressKey = (marketId: string, addressNorm: string): string =>
+  `${marketId}|${addressNorm.trim().toUpperCase().replace(/\s+/g, ' ')}`;
 
 /**
  * Mirror config-blessed lease-market links into entity_xref; report everything else.
@@ -180,8 +210,10 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
   for (const p of properties) {
     const { addressNorm } = splitAddress(p.address, null);
     if (!addressNorm) continue;
-    const key = addressKey(p.market, addressNorm);
-    byAddress.set(key, [...(byAddress.get(key) ?? []), p.id]);
+    for (const marketId of marketIdCandidates(p.market)) {
+      const key = addressKey(marketId, addressNorm);
+      byAddress.set(key, [...(byAddress.get(key) ?? []), p.id]);
+    }
   }
 
   // A market like 'Columbus OH' spans dozens of municipalities, so market+address alone is NOT a
@@ -205,7 +237,7 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
   // The reverse direction: two listings at one address must not both claim the same property.
   const lmPerKey = new Map<string, number>();
   for (const r of lmRows) {
-    const key = addressKey(r.market_id, r.address_norm);
+    const key = addressKey(marketKey(r.market_id), r.address_norm);
     lmPerKey.set(key, (lmPerKey.get(key) ?? 0) + 1);
   }
 
@@ -213,7 +245,7 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
   const proposed: XrefProposal[] = [];
 
   for (const r of lmRows) {
-    const key = addressKey(r.market_id, r.address_norm);
+    const key = addressKey(marketKey(r.market_id), r.address_norm);
     const candidates = byAddress.get(key) ?? [];
     const base = {
       lmPropertyId: r.id,
