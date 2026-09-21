@@ -116,7 +116,7 @@ export async function runBrief(
       severity: 'warning',
       category: 'data',
       title: 'Insurance alerts unavailable this run',
-      detail: `The warehouse could not be read for insurance conditions (${reason}). Expiry and drift alerts were skipped, not cleared.`,
+      detail: `The warehouse could not be read for insurance conditions (${reason}). Expiry and drift alerts were not evaluated this run.`,
       impactAnnualUsd: null,
       spine: 'B',
       provenance: 'absent',

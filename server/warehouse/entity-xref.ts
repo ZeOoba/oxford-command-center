@@ -108,6 +108,7 @@ export type ProposalReason =
   | 'ora_owned_unmapped'
   | 'no_config_link'
   | 'ambiguous_address'
+  | 'state_unverifiable'
   | 'no_address_match';
 
 export interface XrefProposal {
@@ -210,7 +211,42 @@ function marketCandidates(label: string | null): MarketCandidate[] {
  * direction ("a wrong auto-link is worse than an unmatched row").
  */
 const stateMatches = (lmState: string | null, required: string | null): boolean =>
-  required === null || (lmState !== null && lmState.trim().toLowerCase() === required);
+  required === null || (lmState !== null && lmState === required);
+
+/** A listing's own state, but only when it is a two-letter code ('OH', ' oh '). 'Ohio', a zip, or
+ *  'OH-Franklin' would otherwise REFUSE a valid match while the address agreed; they count as unknown
+ *  and fall back to the configured market's state instead. */
+const twoLetterState = (s: string | null): string | null => {
+  const t = (s ?? '').trim();
+  return /^[A-Za-z]{2}$/.test(t) ? t.toLowerCase() : null;
+};
+
+/**
+ * market id -> two-letter state, from config/lease-market.json `markets[].costarMarketNames`
+ * ('Columbus, OH' -> columbus: 'oh'). lm_property.state is NULL for every row the shipped CoStar header
+ * map produces (its `state` column is unmapped), so the listing's own state cannot be the evidence in
+ * production; the configured market is. A market whose names carry more than one state, or none, is
+ * left out and its state-stripped matches stay unverifiable.
+ */
+export function marketStatesFromConfig(
+  markets: ReadonlyArray<{ id: string; costarMarketNames: readonly string[] }>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const m of markets) {
+    const states = new Set(
+      m.costarMarketNames
+        .map((n) => /,\s*([A-Za-z]{2})\s*$/.exec(n.trim())?.[1]?.toLowerCase())
+        .filter((s): s is string => s !== undefined),
+    );
+    if (states.size === 1) out[m.id] = [...states][0]!;
+  }
+  return out;
+}
+
+export interface SeedOptions {
+  /** market id -> state; consulted when a listing's own `state` is NULL (see marketStatesFromConfig). */
+  marketStates?: Readonly<Record<string, string>>;
+}
 
 /** BOTH sides of every comparison go through this. Building the forward index from splitAddress
  *  output while counting the reverse direction on raw address_norm let case/whitespace variants
@@ -223,7 +259,8 @@ const addressKey = (marketId: string, addressNorm: string): string =>
  * Mirror config-blessed lease-market links into entity_xref; report everything else.
  * Feature-detects `lm_property` so it is safe to run before migration 029 has been applied.
  */
-export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
+export function seedFromLeaseMarket(db: WarehouseDb, opts: SeedOptions = {}): SeedResult {
+  const marketStates = opts.marketStates ?? {};
   if (!tableExists(db, 'lm_property')) {
     return { linked: 0, proposed: [], skipped: ['lm_property table absent'] };
   }
@@ -274,11 +311,6 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
 
   for (const r of lmRows) {
     const key = addressKey(marketKey(r.market_id), r.address_norm);
-    const candidates = [
-      ...new Set(
-        (byAddress.get(key) ?? []).filter((e) => stateMatches(r.state, e.state)).map((e) => e.id),
-      ),
-    ];
     const base = {
       lmPropertyId: r.id,
       marketId: r.market_id,
@@ -286,7 +318,21 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
       oraPropertyKey: r.ora_property_key,
       ownerType: r.owner_type,
     };
-
+    const entries = byAddress.get(key) ?? [];
+    // The listing's own state, else the configured market's. Unknown while some candidate was reached by
+    // dropping a state is NOT "no match": surface it with the candidates listed for a human.
+    const lmState = twoLetterState(r.state) ?? marketStates[marketKey(r.market_id)] ?? null;
+    if (entries.length > 0 && lmState === null && entries.some((e) => e.state !== null)) {
+      proposed.push({
+        ...base,
+        candidateCanonicalIds: [...new Set(entries.map((e) => e.id))].sort(),
+        reason: 'state_unverifiable',
+      });
+      continue;
+    }
+    const candidates = [
+      ...new Set(entries.filter((e) => stateMatches(lmState, e.state)).map((e) => e.id)),
+    ];
     if (candidates.length === 0) {
       proposed.push({ ...base, candidateCanonicalIds: [], reason: 'no_address_match' });
       continue;
