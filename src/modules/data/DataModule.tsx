@@ -15,7 +15,7 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
 import { Tabs, TabPanel } from '@/primitives/Tabs';
-import { useTabParam } from '@/lib/useTabParam';
+import { useTabParam, CLEAR_VIEW } from '@/lib/useTabParam';
 import { ModuleLoading } from '@/shell/ModuleFallback';
 import { warnIfTooManyTabs } from '@/shell/tab-types';
 import {
@@ -55,7 +55,7 @@ function WarehouseOfflineCard({ what }: { what: string }) {
 
 export function DataModule() {
   warnIfTooManyTabs('data', DATA_TABS);
-  const [tab, setTab] = useTabParam<DataTab>(DATA_TAB_KEYS, 'imports');
+  const [tab, setTab] = useTabParam<DataTab>(DATA_TAB_KEYS, 'imports', 'tab', CLEAR_VIEW);
   const imports = useWarehouseImports();
   const issues = useWarehouseIssues();
   const noi = useNoiMatrix();

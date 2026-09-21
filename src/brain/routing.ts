@@ -28,6 +28,17 @@ export const HOME_MODULE: Record<EntityType, string> = {
 };
 
 /**
+ * Multi-drawer destinations: which entity type `/:moduleId/:id` selects, keyed by `?tab=`
+ * (Capital hosts loans on Debt and cash entities on Cash). Single-type modules stay in
+ * MODULE_PRIMARY_TYPE and ignore the tab. Populated per destination PR (IA decongestion Phase 4).
+ */
+export const TAB_PRIMARY_TYPE: Readonly<Record<string, Readonly<Record<string, EntityType>>>> = {};
+
+/** The tab an entity's drawer route lands on when its home module is a multi-tab destination and
+ *  the jump comes from ANOTHER module. Same-module jumps keep the user's current tab. */
+export const HOME_TAB: Readonly<Partial<Record<EntityType, string>>> = {};
+
+/**
  * Legacy-module alias table (IA decongestion Phase 4a). A module id that was absorbed into a
  * two-level destination stays a valid URL: `/alerts` → `/worklist?tab=alerts`. The tab is carried
  * in `?tab=` (built by `useTabParam`), NOT a path segment — segment 2 is the entity id
@@ -111,18 +122,27 @@ export interface RouteState {
 }
 
 /** Parse a pathname (e.g. "/debt/REDACTED-702") into module + selected entity. */
-export function parseRoute(pathname: string, knownModuleIds: readonly string[]): RouteState {
+export function parseRoute(
+  pathname: string,
+  knownModuleIds: readonly string[],
+  tab: string | null = null,
+  tabTypes: Readonly<Record<string, Readonly<Record<string, EntityType>>>> = TAB_PRIMARY_TYPE,
+): RouteState {
   const segs = pathname.split('/').filter(Boolean);
   const first = segs[0];
   // A legacy id resolves to its destination so the very first render (before AppShell's replace
   // redirect lands) already shows the right module — but only when the destination is registered.
-  const legacyDest = first ? LEGACY_ALIASES[first]?.destination : undefined;
+  const legacyAlias = first ? LEGACY_ALIASES[first] : undefined;
+  const legacyDest = legacyAlias?.destination;
   const direct = !!first && knownModuleIds.includes(first);
   const viaAlias = !direct && !!legacyDest && knownModuleIds.includes(legacyDest);
   const known = direct || viaAlias;
   const moduleId = direct ? first! : viaAlias ? legacyDest! : DEFAULT_MODULE;
+  // First render of `/debt/l1` (before AppShell's replace-redirect adds ?tab=debt): the alias row
+  // already knows the tab, so the drawer opens without a flash.
+  const effectiveTab = tab ?? (viaAlias ? legacyAlias!.tab : null);
   const entityId = segs[1] ? decodeURIComponent(segs[1]) : null;
-  const type = MODULE_PRIMARY_TYPE[moduleId];
+  const type = (effectiveTab ? tabTypes[moduleId]?.[effectiveTab] : undefined) ?? MODULE_PRIMARY_TYPE[moduleId];
   const selected: EntityRef | null = entityId && type ? { type, id: entityId } : null;
   const intelPropertyId = moduleId === 'intel' && entityId ? entityId : null;
   return { moduleId, known, selected, intelPropertyId };
@@ -131,6 +151,29 @@ export function parseRoute(pathname: string, knownModuleIds: readonly string[]):
 /** The shareable path for an entity — its home module + id. */
 export function entityPath(ref: EntityRef): string {
   return `/${HOME_MODULE[ref.type]}/${encodeURIComponent(ref.id)}`;
+}
+
+/**
+ * The full drawer URL for an entity, given the current query string and the module the click came
+ * from. Cross-module: drop `tab`/`view` (they belong to the page being left — with shared tab ids a
+ * stale one is valid-but-wrong) and land on the entity's home tab. Same-module: leave tab/view
+ * untouched — the drawer is an overlay on the page the user is already on.
+ */
+export function entityHref(
+  ref: EntityRef,
+  search: string,
+  fromModuleId: string,
+  homes: { module: Record<EntityType, string>; tab: Partial<Record<EntityType, string>> } = { module: HOME_MODULE, tab: HOME_TAB },
+): string {
+  const params = new URLSearchParams(search);
+  if (homes.module[ref.type] !== fromModuleId) {
+    params.delete('tab');
+    params.delete('view');
+    const homeTab = homes.tab[ref.type];
+    if (homeTab) params.set('tab', homeTab);
+  }
+  const qs = params.toString();
+  return `/${homes.module[ref.type]}/${encodeURIComponent(ref.id)}${qs ? `?${qs}` : ''}`;
 }
 
 /** The shareable path for an intel deep link (PFI Phase B.3 item 5) — `/intel/:propertyId`.

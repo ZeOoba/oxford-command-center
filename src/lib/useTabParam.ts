@@ -7,6 +7,10 @@
 import { useCallback, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 
+/** Params owned by an inner SegmentedControl — a destination clears them when its tab changes. */
+export const CLEAR_VIEW: readonly string[] = ['view'];
+const NONE: readonly string[] = [];
+
 /**
  * `useTabParam(['positions', 'scorecard'], 'positions')` reads/writes `?tab=` (or a custom
  * `paramName`). An unknown or missing value falls back to `defaultKey` WITHOUT writing the URL
@@ -14,11 +18,15 @@ import { useSearchParams } from 'react-router-dom';
  * Setting the default key REMOVES the param, keeping default-tab URLs clean; setting any other
  * key writes it with `replace: true` (a tab switch shouldn't grow browser history) while
  * preserving every other param (`scenario`, `still`, ...) already on the URL.
+ *
+ * `clearOnChange` names sibling params to delete whenever the tab changes (Rule H: a `?view=`
+ * owned by an inner SegmentedControl must not leak into the next tab). Default: none.
  */
 export function useTabParam<K extends string>(
   keys: readonly K[],
   defaultKey: K,
   paramName = 'tab',
+  clearOnChange: readonly string[] = NONE,
 ): [K, (key: K) => void] {
   const [searchParams, setSearchParams] = useSearchParams();
 
@@ -35,12 +43,13 @@ export function useTabParam<K extends string>(
           const next = new URLSearchParams(prev);
           if (key === defaultKey) next.delete(paramName);
           else next.set(paramName, key);
+          for (const p of clearOnChange) next.delete(p);
           return next;
         },
         { replace: true },
       );
     },
-    [setSearchParams, defaultKey, paramName],
+    [setSearchParams, defaultKey, paramName, clearOnChange],
   );
 
   return [current, setKey];
