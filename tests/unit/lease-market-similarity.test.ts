@@ -168,10 +168,10 @@ describe('selectComps — order independence', () => {
     const rents = selectComps(subject, null, sisters, W, NO_SPLIT_T).comps
       .map((c) => c.candidate.askingNnnEq)
       .sort((a, b) => a - b);
-    expect(rents).toEqual([5, 7, 9]); // stratum midpoints; the old rent-ascending tie-break kept [4, 5, 6]
+    expect(rents).toEqual([4, 6, 8]); // stratum midpoints, half-even at the exact .5s; the old rent-ascending tie-break kept [4, 5, 6]
   });
 
-  it('an anomalous sister-suite ask is not guaranteed a seat (reviewer: [8 x9, 30] kept [8, 8, 30])', () => {
+  it('an anomalous sister-suite ask is not guaranteed a seat in a 10-suite building (reviewer: [8 x9, 30] kept [8, 8, 30])', () => {
     const sisters = [...Array.from({ length: 9 }, () => 8), 30].map((r, i) =>
       cand({ listingId: 800 + i, propertyId: 901, askingNnnEq: r, addressDisplay: 'Anomaly Ave' }),
     );
@@ -188,6 +188,60 @@ describe('selectComps — order independence', () => {
       return selectComps(subject, null, cs, W, { ...T, similarityTopK: 1, similarityMinScore: 0 }).comps[0]!.candidate.docks;
     });
     expect(chosen[0]).toBe(chosen[1]);
+    expect(chosen[0]).toBe(2); // lower docks first: the direction is pinned, not just determinism
+  });
+
+  it('resolveComparables returns an identical median for every permutation (the reviewer repro)', () => {
+    const base = tied();
+    const medians = new Set<number | null>();
+    for (let seed = 1; seed <= 25; seed++) {
+      const permuted = shuffled(base, seed).map((c, i) => ({ ...c, listingId: 100 + i }));
+      medians.add(resolveComparables(subject, null, permuted, null, W, T).median);
+    }
+    expect([...medians]).toHaveLength(1);
+  });
+
+  it('still ranks a genuinely better comp ahead of a worse one (data key first)', () => {
+    const near = cand({ listingId: 900, propertyId: 8001, askingNnnEq: 20, addressDisplay: 'Z' });
+    const farther = cand({ listingId: 1, propertyId: 8002, askingNnnEq: 3, addressDisplay: 'A', lat: 39.99, lon: -82.9 });
+    const sel = selectComps(subject, null, [farther, near], W, { ...T, similarityTopK: 1 });
+    expect(sel.comps.map((c) => c.candidate.listingId)).toEqual([900]); // closer wins despite the higher listingId
+  });
+
+  it('an unknown distance ranks after a known one', () => {
+    const known = cand({ listingId: 901, propertyId: 8003, askingNnnEq: 9, addressDisplay: 'K' });
+    const unknown = cand({ listingId: 2, propertyId: 8004, askingNnnEq: 9, addressDisplay: 'A', lat: null, lon: null, submarket: 'East' });
+    const sel = selectComps(subject, null, [unknown, known], W, { ...T, similarityTopK: 2, similarityMinScore: 0 });
+    expect(sel.comps[0]!.candidate.listingId).toBe(901);
+  });
+
+  it('a single seat over an even-sized tied group does not always take the upper middle (half-even rounding)', () => {
+    let above = 0;
+    let total = 0;
+    for (let n = 2; n <= 40; n += 2) {
+      const group = Array.from({ length: n }, (_, i) =>
+        cand({ listingId: 1000 + i, propertyId: 9100 + i, askingNnnEq: 5 + i, addressDisplay: `G${i} Rd` }),
+      );
+      const rent = selectComps(subject, null, group, W, { ...T, similarityTopK: 1 }).comps[0]!.candidate.askingNnnEq;
+      const lowerMiddle = 5 + n / 2 - 1;
+      total += 1;
+      if (rent > lowerMiddle) above += 1;
+    }
+    // half-up rounding gave 20/20; half-even alternates
+    expect(above / total).toBeGreaterThan(0.3);
+    expect(above / total).toBeLessThan(0.7);
+  });
+
+  it('cap-3 bound on the anomaly protection: dropped from 7 tied suites up, can hold a seat in a 4-6 suite building', () => {
+    const keeps30 = (n: number) => {
+      const rents = [...Array.from({ length: n - 1 }, () => 8), 30];
+      const sisters = rents.map((r, i) => cand({ listingId: 600 + i, propertyId: 950 + n, askingNnnEq: r, addressDisplay: `Bound${n} Ave` }));
+      return selectComps(subject, null, sisters, W, NO_SPLIT_T).comps.some((c) => c.candidate.askingNnnEq === 30);
+    };
+    expect(keeps30(7)).toBe(false);
+    expect(keeps30(10)).toBe(false);
+    // documented behavior, not a guarantee: small buildings can still carry the outlier
+    expect([keeps30(4), keeps30(5), keeps30(6)].some(Boolean)).toBe(true);
   });
 
   it('sister suites identical on every field are capped deterministically whatever the order', () => {

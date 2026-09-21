@@ -224,6 +224,23 @@ describe('seedFromLeaseMarket — production market labels (weekly sweep 2026-09
     expect(result.proposed[0]!.reason).toBe('no_address_match');
   });
 
+  it("a non-two-letter lm state ('Ohio', a zip) counts as unknown and falls back to the config state instead of refusing", () => {
+    const marketStates = marketStatesFromConfig([{ id: 'columbus', costarMarketNames: ['Columbus, OH'] }]);
+    for (const [i, bad] of ['Ohio', '43219', 'OH-Franklin'].entries()) {
+      const db = makeDb();
+      addProperty(db, '1100-rarig-ave-columbus-oh', '1100 Rarig Ave', 'Columbus OH');
+      addLmProperty(db, 40 + i, 'columbus', '1100 RARIG AVE', 'Rarig', 'unknown', '', bad);
+      expect(seedFromLeaseMarket(db, { marketStates }).linked).toBe(1);
+    }
+  });
+
+  it("a two-letter state with stray case/whitespace still matches ('  oh ')", () => {
+    const db = makeDb();
+    addProperty(db, '1100-rarig-ave-columbus-oh', '1100 Rarig Ave', 'Columbus OH');
+    addLmProperty(db, 50, 'columbus', '1100 RARIG AVE', 'Rarig', 'unknown', '', '  oh ');
+    expect(seedFromLeaseMarket(db).linked).toBe(1);
+  });
+
   it('marketStatesFromConfig skips markets with no state or with several', () => {
     expect(
       marketStatesFromConfig([
