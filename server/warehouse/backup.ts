@@ -114,6 +114,14 @@ export function verifySnapshot(
   const mismatches = Object.entries(expected)
     .filter(([t, n]) => counts[t] !== n)
     .map(([t, n]) => `${t}: expected ${n}, got ${counts[t]}`);
+  // Fail closed on an empty baseline. With no expected tables the comparison above is vacuously
+  // true, so an EMPTY database (a missing source file that got created on open, or a manifest
+  // recording tables:0) verified as "ok" — the backup job reported success and the restore drill
+  // passed against it, while nothing was actually protected. A warehouse always has its schema
+  // tables, so zero of them is never a healthy backup.
+  if (Object.keys(expected).length === 0) {
+    mismatches.push('no tables in the source/manifest — an empty snapshot cannot be certified');
+  }
   return { ok: integrity === 'ok' && mismatches.length === 0, integrity, counts, mismatches };
 }
 

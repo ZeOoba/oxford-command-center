@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { runMigrations } from '../../server/warehouse/migrate';
+import { openWarehouseReadOnly } from '../../server/warehouse/db';
 import {
   loadBackupKey,
   encryptFile,
@@ -112,6 +114,64 @@ describe('snapshotWarehouse + verifySnapshot', () => {
     expect(result.mismatches[0]).toMatch(/property_master.*expected 99.*got 0/);
     db.close();
   });
+});
+
+describe('empty-baseline fail-closed (weekly sweep 2026-09-21, HIGH)', () => {
+  it('verifySnapshot refuses to certify a snapshot when the baseline has zero tables', async () => {
+    // A missing source file used to become an EMPTY database on open, so expected = {} and the
+    // comparison was vacuously true: "backup ok (0 tables)", exit 0, and the restore drill passed.
+    const live = join(dir, 'empty.sqlite');
+    new Database(live).close();
+    const snap = join(dir, 'empty-snap.sqlite');
+    const db = openWarehouseReadOnly(live);
+    await snapshotWarehouse(db, snap);
+    db.close();
+    const result = verifySnapshot(snap, {});
+    expect(result.integrity).toBe('ok');
+    expect(result.ok).toBe(false);
+    expect(result.mismatches.join(' ')).toMatch(/no tables/);
+  });
+
+  it('snapshotWarehouse works from a read-only handle (the handle the backup job now uses)', async () => {
+    const live = join(dir, 'finance.sqlite');
+    const rw = new Database(live);
+    runMigrations(rw);
+    rw.prepare(
+      `INSERT INTO property_master (id, name, financial_mode, ownership_pct, ownership_status)
+       VALUES ('p1', 'Test Property', 'pnl', 1.0, 'active')`,
+    ).run();
+    rw.close();
+
+    const ro = openWarehouseReadOnly(live);
+    const snap = join(dir, 'snap.sqlite');
+    await snapshotWarehouse(ro, snap);
+    ro.close();
+    expect(verifySnapshot(snap, tableCounts(live, ['property_master'])).ok).toBe(true);
+  });
+
+  it('the backup script exits non-zero and creates NOTHING when WAREHOUSE_DB does not exist', () => {
+    const missing = join(dir, 'nested-dir-exists');
+    // Directory present, file absent: the exact reproduction from the sweep. (A bare
+    // `new Database(path)` creates a 0-byte file here.)
+    rmSync(missing, { recursive: true, force: true });
+    const backupDir = join(dir, 'backups');
+    const dbPath = join(dir, 'finance.sqlite'); // dir exists, file does not
+    expect(existsSync(dbPath)).toBe(false);
+
+    const r = spawnSync(process.execPath, ['--import', 'tsx', 'scripts/warehouse-backup.ts'], {
+      cwd: process.cwd(),
+      env: { ...process.env, WAREHOUSE_DB: dbPath, BACKUP_DIR: backupDir, BACKUP_KEY_HEX: KEY_HEX },
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+
+    expect(r.status).toBe(1);
+    expect(r.stderr + r.stdout).toMatch(/BACKUP FAILED/);
+    expect(r.stdout).not.toMatch(/backup ok/);
+    expect(existsSync(dbPath)).toBe(false); // no empty database was conjured
+    expect(existsSync(join(backupDir, 'manifest.json'))).toBe(false);
+    expect(readdirSync(backupDir).filter((n) => n.endsWith('.enc'))).toEqual([]);
+  }, 90_000);
 });
 
 describe('selectSnapshotsToDelete', () => {
