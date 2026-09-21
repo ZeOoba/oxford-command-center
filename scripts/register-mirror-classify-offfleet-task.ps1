@@ -33,7 +33,13 @@ $script = Join-Path $repo 'scripts\mirror-classify-offfleet.ps1'
 $pwshCmd = Get-Command pwsh -ErrorAction SilentlyContinue
 $pwsh = if ($pwshCmd) { $pwshCmd.Source } else { (Get-Command powershell).Source }
 
-$action = New-ScheduledTaskAction -Execute $pwsh -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$script`"" -WorkingDirectory $repo
+# Get-MirrorTaskArguments (lib/mirror-task-action.ps1, shared with register-mirror-task.ps1) adds
+# -WindowStyle Hidden. This action was missed by the 2026-09-18 fix (#338): it kept launching a
+# visible, focus-stealing console on the interactive desktop, and the live task's LastTaskResult was
+# 3221225786 (0xC000013A, console closed) -- the exact signature #338 diagnosed on the Mirror Deploy
+# task. Both tasks run with the interactive token, so the same closed-window kill applies.
+. (Join-Path $PSScriptRoot 'lib\mirror-task-action.ps1')
+$action = New-ScheduledTaskAction -Execute $pwsh -Argument (Get-MirrorTaskArguments -ScriptPath $script) -WorkingDirectory $repo
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopOnIdleEnd -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -WakeToRun -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
 
 # Weekday 10:40 AM ET -- matches ora-command-center-mirror-drift-check's own cadence
