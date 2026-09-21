@@ -204,6 +204,23 @@ describe('Brain destination - Feedback badge (R4)', () => {
   });
 });
 
+describe('Brain destination - Feedback badge vs gate share one predicate (retained data + failed refetch)', () => {
+  it('drops the badge when a REFETCH fails with data retained, matching the Feedback panel offline card', async () => {
+    const { qc } = renderModule('/command-brain?tab=feedback');
+    expect(screen.getByRole('tab', { name: 'Feedback 2' })).toBeTruthy(); // first load succeeded (seeded)
+
+    // Server goes away, then a refocus/refetch: react-query v5 keeps `data` and sets `error`.
+    void qc.invalidateQueries({ queryKey: BRAIN_KEYS.report });
+    await reportFailed(qc);
+    const state = qc.getQueryState(BRAIN_KEYS.report);
+    expect(state?.status).toBe('error');
+    expect(state?.data).toBeTruthy(); // precondition: data retained, so this cannot pass vacuously
+
+    expect(await screen.findByText(/requires the live brain server/, undefined, SETTLE)).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Feedback' })).toBeTruthy(); // exactly 'Feedback' - no count
+  });
+});
+
 describe('Brain destination - Memory views (Versions became a view)', () => {
   it('Memory has a "Memory views" radiogroup: Memory · Versions, defaulting to the confidence board', () => {
     renderModule('/command-brain?tab=memory');

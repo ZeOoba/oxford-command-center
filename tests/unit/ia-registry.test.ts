@@ -234,7 +234,10 @@ describe('rail composition', () => {
     expect(resolveLegacyRoute('/insights', '')).toBe('/command-brain?tab=insights');
     expect(resolveLegacyRoute('/command-brain', '?tab=versions')).toBe('/command-brain?tab=memory&view=versions');
     // every other param survives the moved-tab redirect; a canonical Memory URL does not redirect
-    expect(resolveLegacyRoute('/command-brain', '?tab=versions&scenario=Upside')).toBe('/command-brain?tab=memory&scenario=Upside&view=versions');
+    const moved = resolveLegacyRoute('/command-brain', '?tab=versions&scenario=Upside');
+    const [movedPath, movedQuery] = (moved ?? '').split('?');
+    expect(movedPath).toBe('/command-brain');
+    expect([...new URLSearchParams(movedQuery).entries()].sort()).toEqual([['scenario', 'Upside'], ['tab', 'memory'], ['view', 'versions']]);
     expect(resolveLegacyRoute('/command-brain', '?tab=memory')).toBeNull();
     expect(resolveLegacyRoute('/command-brain', '?tab=memory&view=versions')).toBeNull();
     expect(parseRoute('/principal', IDS)).toMatchObject({ moduleId: 'command-brain', known: true }); // first-render alias

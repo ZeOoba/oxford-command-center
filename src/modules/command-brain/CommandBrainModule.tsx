@@ -25,7 +25,7 @@ import { lazy, Suspense } from 'react';
 import { Tabs, TabPanel, type TabSpec } from '@/primitives/Tabs';
 import { useTabParam, CLEAR_VIEW } from '@/lib/useTabParam';
 import { ModuleLoading } from '@/shell/ModuleFallback';
-import { useBrainReport } from './hooks';
+import { isWarehouseUnavailable, useBrainReport } from './hooks';
 import { ReportGate } from './ReportGate';
 import { TrackRecordPanel, FeedbackPanel, MemoryPanel } from './BrainPanels';
 import { BRAIN_TABS, BRAIN_TAB_KEYS, type BrainTab } from './tabs';
@@ -38,7 +38,9 @@ export function CommandBrainModule() {
   const report = useBrainReport(); // shared query — only feeds the R4 badge
   // R4: open questions are the actionable feed in the Feedback tab — surface the count on the label
   // so it survives tabbing. Neutral: the count is workload, not severity.
-  const openCount = report.data?.openQuestions.length ?? 0;
+  // Same error-first predicate as <ReportGate>: react-query v5 retains `data` when a REFETCH fails, so a
+  // data-only read would show a count while the Feedback panel shows the offline card.
+  const openCount = isWarehouseUnavailable(report.error) ? 0 : report.data?.openQuestions.length ?? 0;
   const specs: TabSpec[] = BRAIN_TABS.map((t) =>
     t.id === 'feedback' && openCount > 0
       ? { id: t.id, label: t.label, badge: { count: openCount, tone: 'neutral' } }
