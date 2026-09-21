@@ -159,24 +159,46 @@ export function entityPath(ref: EntityRef): string {
 /**
  * The full drawer URL for an entity, given the current query string and the module the click came
  * from. Cross-module: drop `tab`/`view` (they belong to the page being left — with shared tab ids a
- * stale one is valid-but-wrong) and land on the entity's home tab. Same-module: leave tab/view
- * untouched — the drawer is an overlay on the page the user is already on.
+ * stale one is valid-but-wrong) and land on the entity's home tab. Same-module: keep `tab`/`view`
+ * UNCHANGED when the current tab already hosts the entity's drawer (a single-type module hosts it on
+ * every tab; a multi-drawer destination hosts it only on its declared tab). Otherwise — e.g. a loan
+ * opened from Capital's Cash or Allocation tab, where no loan drawer would open — switch to the
+ * entity's home tab and drop `view`. Types with no home tab are left alone.
  */
 export function entityHref(
   ref: EntityRef,
   search: string,
   fromModuleId: string,
-  homes: { module: Record<EntityType, string>; tab: Partial<Record<EntityType, string>> } = { module: HOME_MODULE, tab: HOME_TAB },
+  homes: {
+    module: Record<EntityType, string>;
+    tab: Partial<Record<EntityType, string>>;
+    /** Defaults to the real TAB_PRIMARY_TYPE (fixture injection for tests). */
+    tabTypes?: Readonly<Record<string, Readonly<Record<string, EntityType>>>>;
+    /** Defaults to the real MODULE_PRIMARY_TYPE (fixture injection for tests). */
+    moduleTypes?: Readonly<Partial<Record<string, EntityType>>>;
+  } = { module: HOME_MODULE, tab: HOME_TAB },
 ): string {
   const params = new URLSearchParams(search);
-  if (homes.module[ref.type] !== fromModuleId) {
+  const homeModule = homes.module[ref.type];
+  const homeTab = homes.tab[ref.type];
+  if (homeModule !== fromModuleId) {
     params.delete('tab');
     params.delete('view');
-    const homeTab = homes.tab[ref.type];
     if (homeTab) params.set('tab', homeTab);
+  } else if (homeTab) {
+    const currentTab = params.get('tab');
+    const tabTypes = homes.tabTypes ?? TAB_PRIMARY_TYPE;
+    const moduleTypes = homes.moduleTypes ?? MODULE_PRIMARY_TYPE;
+    const hosted =
+      (currentTab != null && tabTypes[homeModule]?.[currentTab] === ref.type) ||
+      moduleTypes[homeModule] === ref.type;
+    if (!hosted) {
+      params.delete('view');
+      params.set('tab', homeTab);
+    }
   }
   const qs = params.toString();
-  return `/${homes.module[ref.type]}/${encodeURIComponent(ref.id)}${qs ? `?${qs}` : ''}`;
+  return `/${homeModule}/${encodeURIComponent(ref.id)}${qs ? `?${qs}` : ''}`;
 }
 
 /** The shareable path for an intel deep link (PFI Phase B.3 item 5) — `/intel/:propertyId`.

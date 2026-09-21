@@ -55,3 +55,42 @@ describe('real routing constants (Capital PR-B)', () => {
     expect(entityHref({ type: 'cashEntity', id: 'a1' }, '', 'overview')).toBe('/capital/a1?tab=cash');
   });
 });
+
+describe('entityHref — same-module jump onto a tab that does not host the entity type', () => {
+  it('a loan opened from a Capital tab that hosts no loan drawer lands on Debt', () => {
+    expect(entityHref({ type: 'loan', id: 'l1' }, '?tab=allocation', 'capital')).toBe('/capital/l1?tab=debt');
+    expect(entityHref({ type: 'loan', id: 'l1' }, '?tab=pipeline', 'capital')).toBe('/capital/l1?tab=debt');
+    expect(entityHref({ type: 'loan', id: 'l1' }, '?tab=close', 'capital')).toBe('/capital/l1?tab=debt');
+  });
+  it('a loan opened from Cash flips to Debt and drops the stale view', () => {
+    expect(entityHref({ type: 'loan', id: 'l1' }, '?tab=cash&view=x', 'capital')).toBe('/capital/l1?tab=debt');
+  });
+  it('a cash entity opened from Debt flips to Cash and drops the stale view', () => {
+    expect(entityHref({ type: 'cashEntity', id: 'a1' }, '?tab=debt&view=scorecard', 'capital')).toBe('/capital/a1?tab=cash');
+  });
+  it('a loan opened from Debt keeps tab and view', () => {
+    expect(entityHref({ type: 'loan', id: 'l1' }, '?tab=debt&view=scorecard', 'capital')).toBe('/capital/l1?tab=debt&view=scorecard');
+  });
+  it('other params (scenario) survive the flip', () => {
+    expect(entityHref({ type: 'loan', id: 'l1' }, '?scenario=Downside&tab=cash&view=x', 'capital')).toBe('/capital/l1?scenario=Downside&tab=debt');
+  });
+  it('a single-type module hosts its entity on every tab, so it never flips (injected fixtures)', () => {
+    const homes = {
+      module: { ...HOMES.module, lease: 'leasing' } as Record<EntityType, string>,
+      tab: { lease: 'rent-roll' } as Partial<Record<EntityType, string>>,
+      moduleTypes: { leasing: 'lease' } as Partial<Record<string, EntityType>>,
+      tabTypes: {} as Record<string, Record<string, EntityType>>,
+    };
+    expect(entityHref({ type: 'lease', id: 'x1' }, '?tab=tenants&view=v', 'leasing', homes)).toBe('/leasing/x1?tab=tenants&view=v');
+  });
+  it('a tab-typed fixture flips when the current tab hosts a different type', () => {
+    const homes = {
+      module: HOMES.module,
+      tab: HOMES.tab,
+      moduleTypes: {} as Partial<Record<string, EntityType>>,
+      tabTypes: { capital: { debt: 'loan', cash: 'cashEntity' } } as Record<string, Record<string, EntityType>>,
+    };
+    expect(entityHref({ type: 'loan', id: 'l1' }, '?tab=cash', 'capital', homes)).toBe('/capital/l1?tab=debt');
+  });
+});
+

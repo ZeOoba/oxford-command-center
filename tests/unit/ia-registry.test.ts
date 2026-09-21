@@ -177,6 +177,7 @@ describe('rail composition', () => {
     expect(parseRoute('/capital/l1', IDS, 'debt').selected).toEqual({ type: 'loan', id: 'l1' });
     expect(parseRoute('/capital/a1', IDS, 'cash').selected).toEqual({ type: 'cashEntity', id: 'a1' });
     expect(parseRoute('/debt/l1', IDS).selected).toEqual({ type: 'loan', id: 'l1' }); // first-render alias
+    expect(parseRoute('/cash/a1', IDS).selected).toEqual({ type: 'cashEntity', id: 'a1' }); // first-render alias
   });
 
   for (const profile of ['acquisitions', 'principal'] as const) {
