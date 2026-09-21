@@ -5,7 +5,12 @@ import { describe, it, expect, vi } from 'vitest';
 
 // The registry imports the Worklist alerts-badge hook, which reaches the data layer. It is never
 // invoked in these registry-shape tests.
-vi.mock('../../src/shell/tab-badges', () => ({ useAlertsTabBadge: () => undefined, useCriticalDatesTabBadge: () => undefined }));
+vi.mock('../../src/shell/tab-badges', () => ({
+  useAlertsTabBadge: () => undefined,
+  useCriticalDatesTabBadge: () => undefined,
+  useTabBadges: (tabs: ReadonlyArray<unknown>) => tabs.map(() => undefined),
+  useTabSpecs: (tabs: ReadonlyArray<{ id: string; label: string }>) => tabs.map((t) => ({ id: t.id, label: t.label })),
+}));
 
 import { MODULES } from '../../src/shell/modules';
 import { TITLES } from '../../src/shell/titles';
