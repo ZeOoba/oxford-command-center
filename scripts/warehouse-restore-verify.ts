@@ -19,6 +19,8 @@ import {
   decryptFile,
   verifySnapshot,
   newestSnapshot,
+  listTables,
+  tableCounts,
   type BackupManifest,
 } from '../server/warehouse/backup';
 
@@ -55,7 +57,12 @@ function main(): void {
   const restored = join(work, 'restored.sqlite');
   try {
     decryptFile(join(backupDir, snapshotName), restored, loadBackupKey());
-    const result = verifySnapshot(restored, manifest?.counts ?? {});
+    // No manifest: derive the baseline from the restored file's own tables so integrity is still
+    // checked and an EMPTY snapshot still fails closed (verifySnapshot rejects an empty baseline).
+    // The age check below then fails on `Infinity` for the right reason (no manifest), instead of
+    // this line reporting a full snapshot as "empty".
+    const expected = manifest?.counts ?? tableCounts(restored, listTables(restored));
+    const result = verifySnapshot(restored, expected);
     const secs = ((Date.now() - started) / 1000).toFixed(1);
 
     if (!result.ok) {

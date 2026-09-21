@@ -81,7 +81,7 @@ describe('unmatchedReport', () => {
   });
 });
 
-import { seedFromLeaseMarket } from '../../server/warehouse/entity-xref';
+import { marketIdCandidates, marketStatesFromConfig, seedFromLeaseMarket } from '../../server/warehouse/entity-xref';
 
 /** Real migration-029 lm_property, not a stub — 029 is on main as of 2026-09-17. */
 function addLmProperty(
@@ -92,15 +92,16 @@ function addLmProperty(
   oraPropertyKey: string | null,
   ownerType = 'unknown',
   cityNorm = '',
+  state: string | null = null,
 ): void {
   db.prepare(
-    `INSERT INTO lm_property (id, identity_key, address_norm, address_display, city_norm, market_id,
+    `INSERT INTO lm_property (id, identity_key, address_norm, address_display, city_norm, state, market_id,
                               subtype, building_status, ora_property_key, owner_type, first_seen, last_seen)
-     VALUES (?, ?, ?, ?, ?, ?, 'warehouse', 'existing', ?, ?, '2026-09-01', '2026-09-01')`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'warehouse', 'existing', ?, ?, '2026-09-01', '2026-09-01')`,
   ).run(
     // identity_key is UNIQUE and unread by the seeder; the id keeps fixtures distinct where a
     // real duplicate address would instead be distinguished by a costar: key.
-    id, `addr:${marketId}|${cityNorm}|${addressNorm}#${id}`, addressNorm, addressNorm, cityNorm,
+    id, `addr:${marketId}|${cityNorm}|${addressNorm}#${id}`, addressNorm, addressNorm, cityNorm, state,
     marketId, oraPropertyKey, ownerType,
   );
 }
@@ -116,6 +117,200 @@ function addProperty(
      VALUES (?, ?, 'pnl', 1.0, 'active', ?, ?)`,
   ).run(id, `Property ${id}`, address, market);
 }
+
+describe('marketIdCandidates', () => {
+  it('maps the production property_master labels onto lease-market ids', () => {
+    expect(marketIdCandidates('Columbus OH')).toContain('columbus');
+    expect(marketIdCandidates('Columbus, OH')).toContain('columbus');
+    expect(marketIdCandidates('Kansas City MO')).toContain('kansas-city');
+    // the state suffix is part of this id, so the full slug must be a candidate too
+    expect(marketIdCandidates('Eastern Shore MD')).toContain('eastern-shore-md');
+    expect(marketIdCandidates('Columbus')).toEqual(['columbus']);
+  });
+
+  it('leaves a hyphenated region intact — it names no single lease-market id', () => {
+    expect(marketIdCandidates('Mid-Atlantic')).toEqual(['mid-atlantic']);
+  });
+
+  it('keeps an empty label distinct rather than inventing a market', () => {
+    expect(marketIdCandidates(null)).toEqual(['']);
+    expect(marketIdCandidates('  ')).toEqual(['']);
+  });
+});
+
+describe('seedFromLeaseMarket — production market labels (weekly sweep 2026-09-21)', () => {
+  // property_master.market is 'Columbus OH' in production; lm_property.market_id is 'columbus'. The
+  // fixtures elsewhere in this file write 'Columbus', which is why the seeder passed every test while
+  // linking nothing in production.
+  it("links a 'Columbus OH' property to a 'columbus' listing", () => {
+    const db = makeDb();
+    addProperty(db, '1100-rarig-ave-columbus-oh', '1100 Rarig Ave.', 'Columbus OH');
+    addLmProperty(db, 7, 'columbus', '1100 RARIG AVE', 'Rarig', 'unknown', '', 'OH');
+
+    const result = seedFromLeaseMarket(db);
+    expect(result.linked).toBe(1);
+    expect(result.proposed).toEqual([]);
+    expect(canonicalIdFor(db, 'lease_market', 'property', '7')).toBe('1100-rarig-ave-columbus-oh');
+  });
+
+  it("links 'Kansas City MO' to 'kansas-city' and keeps the state suffix where the id has it", () => {
+    const db = makeDb();
+    addProperty(db, '900-main-st-kansas-city-mo', '900 Main St', 'Kansas City MO');
+    addProperty(db, '12-shore-rd-easton-md', '12 Shore Rd', 'Eastern Shore MD');
+    addLmProperty(db, 21, 'kansas-city', '900 MAIN ST', 'KC', 'unknown', '', 'MO');
+    addLmProperty(db, 22, 'eastern-shore-md', '12 SHORE RD', 'ES', 'unknown', '', 'MD');
+
+    const result = seedFromLeaseMarket(db);
+    expect(result.linked).toBe(2);
+    expect(canonicalIdFor(db, 'lease_market', 'property', '21')).toBe('900-main-st-kansas-city-mo');
+    expect(canonicalIdFor(db, 'lease_market', 'property', '22')).toBe('12-shore-rd-easton-md');
+  });
+
+  it('still refuses across markets: Columbus OH does not match a kansas-city listing', () => {
+    const db = makeDb();
+    addProperty(db, 'prop-oh', '500 Main St', 'Columbus OH');
+    addLmProperty(db, 23, 'kansas-city', '500 MAIN ST', 'Main', 'unknown', '', 'MO');
+
+    const result = seedFromLeaseMarket(db);
+    expect(result.linked).toBe(0);
+    expect(result.proposed[0]!.reason).toBe('no_address_match');
+  });
+
+  it("does NOT link a 'Columbus IN' property to a 'columbus' listing stated as OH", () => {
+    // 'Columbus OH' and 'Columbus IN' both collapse to the lm id 'columbus'; the city guard only checks
+    // the city. Without the state check this linked the Indiana building to the Ohio market listing.
+    const db = makeDb();
+    addProperty(db, '100-main-st-columbus-in', '100 Main St', 'Columbus IN');
+    addLmProperty(db, 26, 'columbus', '100 MAIN ST', 'Main', 'unknown', 'Columbus', 'OH');
+    const result = seedFromLeaseMarket(db);
+    expect(result.linked).toBe(0);
+    expect(result.proposed[0]!.reason).toBe('no_address_match');
+  });
+
+  it("does not link 'Richmond IN' to a 'richmond' listing in another state, even with an empty listing city", () => {
+    const db = makeDb();
+    addProperty(db, '77-oak-ave-richmond-in', '77 Oak Ave', 'Richmond IN');
+    addLmProperty(db, 27, 'richmond', '77 OAK AVE', 'Oak', 'unknown', '', 'VA');
+    expect(seedFromLeaseMarket(db).linked).toBe(0);
+  });
+
+  it('a listing with NO state (the shipped CoStar header map leaves it NULL) is surfaced as state_unverifiable, not lost', () => {
+    const db = makeDb();
+    addProperty(db, '1100-rarig-ave-columbus-oh', '1100 Rarig Ave', 'Columbus OH');
+    addLmProperty(db, 28, 'columbus', '1100 RARIG AVE', 'Rarig'); // state null, as in production
+    const result = seedFromLeaseMarket(db);
+    expect(result.linked).toBe(0);
+    expect(result.proposed[0]!.reason).toBe('state_unverifiable');
+    expect(result.proposed[0]!.candidateCanonicalIds).toEqual(['1100-rarig-ave-columbus-oh']);
+  });
+
+  it('links in PRODUCTION shape: null lm_property.state, market state taken from config costarMarketNames', () => {
+    const db = makeDb();
+    addProperty(db, '1100-rarig-ave-columbus-oh', '1100 Rarig Ave', 'Columbus OH');
+    addLmProperty(db, 30, 'columbus', '1100 RARIG AVE', 'Rarig'); // state null
+    const marketStates = marketStatesFromConfig([{ id: 'columbus', costarMarketNames: ['Columbus, OH'] }]);
+    const result = seedFromLeaseMarket(db, { marketStates });
+    expect(result.linked).toBe(1);
+    expect(canonicalIdFor(db, 'lease_market', 'property', '30')).toBe('1100-rarig-ave-columbus-oh');
+  });
+
+  it("the configured market state still refuses a different-state twin: 'Columbus IN' is not linked to columbus/OH", () => {
+    const db = makeDb();
+    addProperty(db, '100-main-st-columbus-in', '100 Main St', 'Columbus IN');
+    addLmProperty(db, 31, 'columbus', '100 MAIN ST', 'Main', 'unknown', 'Columbus'); // state null
+    const marketStates = marketStatesFromConfig([{ id: 'columbus', costarMarketNames: ['Columbus, OH'] }]);
+    const result = seedFromLeaseMarket(db, { marketStates });
+    expect(result.linked).toBe(0);
+    expect(result.proposed[0]!.reason).toBe('no_address_match');
+  });
+
+  it("a state written as a full name is read ('Ohio' -> oh) and links with or without a config state", () => {
+    for (const marketStates of [undefined, marketStatesFromConfig([{ id: 'columbus', costarMarketNames: ['Columbus, OH'] }])]) {
+      const db = makeDb();
+      addProperty(db, '1100-rarig-ave-columbus-oh', '1100 Rarig Ave', 'Columbus OH');
+      addLmProperty(db, 40, 'columbus', '1100 RARIG AVE', 'Rarig', 'unknown', '', 'Ohio');
+      expect(seedFromLeaseMarket(db, { marketStates }).linked).toBe(1);
+    }
+  });
+
+  it("an unreadable stated state (a zip, 'OH-Franklin') is NOT overridden by config: it is surfaced as state_unverifiable", () => {
+    const marketStates = marketStatesFromConfig([{ id: 'columbus', costarMarketNames: ['Columbus, OH'] }]);
+    for (const [i, bad] of ['43219', 'OH-Franklin', 'Ohioo'].entries()) {
+      const db = makeDb();
+      addProperty(db, '1100-rarig-ave-columbus-oh', '1100 Rarig Ave', 'Columbus OH');
+      addLmProperty(db, 41 + i, 'columbus', '1100 RARIG AVE', 'Rarig', 'unknown', '', bad);
+      const result = seedFromLeaseMarket(db, { marketStates });
+      expect(result.linked).toBe(0);
+      expect(result.proposed[0]!.reason).toBe('state_unverifiable');
+    }
+  });
+
+  it("a DIFFERENT state stated in any form never falls back to the config's Ohio (reviewer: 'Indiana' linked the Ohio twin)", () => {
+    const marketStates = marketStatesFromConfig([{ id: 'columbus', costarMarketNames: ['Columbus, OH'] }]);
+    const link = (state: string) => {
+      const db = makeDb();
+      addProperty(db, '1100-rarig-ave-columbus-oh', '1100 Rarig Ave', 'Columbus OH');
+      addProperty(db, '1100-rarig-ave-columbus-in', '1100 Rarig Ave', 'Columbus IN');
+      addLmProperty(db, 60, 'columbus', '1100 RARIG AVE', 'Rarig', 'unknown', '', state);
+      seedFromLeaseMarket(db, { marketStates });
+      return canonicalIdFor(db, 'lease_market', 'property', '60');
+    };
+    expect(link('Indiana')).toBe('1100-rarig-ave-columbus-in');
+    expect(link('IN')).toBe('1100-rarig-ave-columbus-in');
+    expect(link('Columbus, IN')).toBe('1100-rarig-ave-columbus-in');
+    expect(link('Kentucky')).toBeNull(); // neither twin is in KY: refused, and NOT linked to Ohio
+    expect(link('Ohio')).toBe('1100-rarig-ave-columbus-oh');
+  });
+
+  it("a two-letter state with stray case/whitespace still matches ('  oh ')", () => {
+    const db = makeDb();
+    addProperty(db, '1100-rarig-ave-columbus-oh', '1100 Rarig Ave', 'Columbus OH');
+    addLmProperty(db, 50, 'columbus', '1100 RARIG AVE', 'Rarig', 'unknown', '', '  oh ');
+    expect(seedFromLeaseMarket(db).linked).toBe(1);
+  });
+
+  it('marketStatesFromConfig skips markets with no state or with several', () => {
+    expect(
+      marketStatesFromConfig([
+        { id: 'columbus', costarMarketNames: ['Columbus, OH'] },
+        { id: 'kansas-city', costarMarketNames: [] },
+        { id: 'split', costarMarketNames: ['Kansas City, MO', 'Kansas City, KS'] },
+        { id: 'trim', costarMarketNames: ['  Madison, wi  '] },
+      ]),
+    ).toEqual({ columbus: 'oh', trim: 'wi' });
+  });
+
+  it("links 'Columbus IN' to a listing that says IN, and 'Columbus OH' does not claim it", () => {
+    const db = makeDb();
+    addProperty(db, '100-main-st-columbus-in', '100 Main St', 'Columbus IN');
+    addProperty(db, '100-main-st-columbus-oh', '100 Main St', 'Columbus OH');
+    addLmProperty(db, 29, 'columbus', '100 MAIN ST', 'Main', 'unknown', 'Columbus', 'IN');
+    const result = seedFromLeaseMarket(db);
+    expect(result.linked).toBe(1);
+    expect(canonicalIdFor(db, 'lease_market', 'property', '29')).toBe('100-main-st-columbus-in');
+  });
+
+  it("reports (does not guess) for a region label like 'Mid-Atlantic'", () => {
+    const db = makeDb();
+    addProperty(db, 'prop-md', '29000 Information Ln', 'Mid-Atlantic');
+    addLmProperty(db, 24, 'baltimore', '29000 INFORMATION LN', 'Info');
+
+    const result = seedFromLeaseMarket(db);
+    expect(result.linked).toBe(0);
+    expect(result.proposed[0]!.reason).toBe('no_address_match');
+  });
+
+  it("two labels for one market ('Columbus OH' and 'Columbus') at one address stay ambiguous", () => {
+    const db = makeDb();
+    addProperty(db, '500-main-street-columbus-oh', '500 Main Street', 'Columbus OH');
+    addProperty(db, 'prop-b', '500 Main St', 'Columbus');
+    addLmProperty(db, 25, 'columbus', '500 MAIN ST', 'Main', 'unknown', '', 'OH');
+
+    const result = seedFromLeaseMarket(db);
+    expect(result.linked).toBe(0);
+    expect(result.proposed[0]!.reason).toBe('ambiguous_address');
+  });
+});
 
 describe('seedFromLeaseMarket', () => {
   it('skips cleanly when the lease-market tables are absent', () => {
