@@ -13,12 +13,48 @@
 // never a savings claim either.
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
+import { Skeleton } from '@/primitives/Skeleton';
 import { TierBoard } from '@/primitives/TierBoard';
+import { isWarehouseUnavailable } from '../intel/hooks';
 import { useInsuranceAnalysis, useInsuranceLoss, buildSavingsTiers, buildOptimizeTier, benchmarkSublabel } from './hooks';
 
 export function SavingsBoard() {
-  const { data: report } = useInsuranceAnalysis();
+  const { data: report, isLoading, error } = useInsuranceAnalysis();
   const { data: lossReport } = useInsuranceLoss();
+
+  // Rule G: Savings Board is Insurance's DEFAULT view, so on the static mirror (analysis route 503s)
+  // a bare `return null` left the whole panel blank under four "—" KPI tiles, with no explanation —
+  // while the sibling Taxes tab and Self-Insure & Bids view both say why. Same three states, same
+  // copy shape as taxes/TaxesModule.tsx and ./SelfInsureView.tsx.
+  if (isLoading) return <Skeleton style={{ height: 320 }} />;
+
+  if (isWarehouseUnavailable(error)) {
+    return (
+      <Card>
+        <CardHeader title="Savings Board" trailing={<Badge tone="neutral">offline</Badge>} />
+        <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
+          <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+            Re-bid analysis requires the live brain server.
+          </div>
+          <div className="text-2xs" style={{ color: 'var(--text-tertiary)', maxWidth: 420 }}>
+            Re-bid candidates, the renewal watch and the own-book rate benchmark are computed from the
+            warehouse policy snapshot. This deployed mirror does not include the live warehouse.
+          </div>
+        </div>
+      </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card>
+        <CardHeader title="Savings Board" trailing={<Badge tone="red">error</Badge>} />
+        <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-neg)' }}>
+          {error instanceof Error ? error.message : 'Failed to load the insurance analysis.'}
+        </div>
+      </Card>
+    );
+  }
 
   if (!report) return null;
 
