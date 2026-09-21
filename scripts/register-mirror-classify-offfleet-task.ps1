@@ -24,11 +24,15 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$TaskName = 'ORA Mirror Deploy Classifier'
+  [string]$TaskName = 'ORA Mirror Deploy Classifier',
+  # The checkout the task should run FROM. Defaults to the checkout this script lives in; pass the
+  # main checkout explicitly when registering from a worktree or an unmerged branch, otherwise the
+  # task would be pointed at a path that is deleted with the worktree.
+  [string]$RepoRoot = (Split-Path -Parent $PSScriptRoot)
 )
 
 $ErrorActionPreference = 'Stop'
-$repo = Split-Path -Parent $PSScriptRoot
+$repo = $RepoRoot
 $script = Join-Path $repo 'scripts\mirror-classify-offfleet.ps1'
 $pwshCmd = Get-Command pwsh -ErrorAction SilentlyContinue
 $pwsh = if ($pwshCmd) { $pwshCmd.Source } else { (Get-Command powershell).Source }
