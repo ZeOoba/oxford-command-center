@@ -16,6 +16,7 @@ import { mkdirSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { openWarehouseReadOnly } from '../server/warehouse/db';
 import {
+  listTables,
   loadBackupKey,
   snapshotWarehouse,
   tableCounts,
@@ -34,24 +35,8 @@ function stamp(d: Date): string {
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}T${p(d.getUTCHours())}${p(d.getUTCMinutes())}`;
 }
 
-function allTables(path: string): string[] {
-  const db = openWarehouseReadOnly(path);
-  try {
-    return (
-      db
-        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-        .all() as Array<{ name: string }>
-    )
-      .map((r) => r.name)
-      .sort();
-  } finally {
-    db.close();
-  }
-}
-
 async function main(): Promise<void> {
   const key = loadBackupKey();
-  mkdirSync(backupDir, { recursive: true });
   const now = new Date();
   const plainPath = join(backupDir, `finance-${stamp(now)}.sqlite`);
   const encPath = `${plainPath}.enc`;
@@ -77,6 +62,9 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
+  // Only now, with a readable source in hand, create the destination: a failed open leaves nothing
+  // behind (no backup directory, no plaintext).
+  mkdirSync(backupDir, { recursive: true });
   try {
     await snapshotWarehouse(db, plainPath);
   } finally {
@@ -98,7 +86,7 @@ async function main(): Promise<void> {
   let result: ReturnType<typeof verifySnapshot>;
   let tables: string[];
   try {
-    tables = allTables(dbPath);
+    tables = listTables(dbPath);
     result = verifySnapshot(plainPath, tableCounts(dbPath, tables));
     if (!result.ok) {
       console.error(

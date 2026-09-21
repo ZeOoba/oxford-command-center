@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { mkdtempSync } from 'node:fs';
+import Database from 'better-sqlite3';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
@@ -143,5 +144,45 @@ describe('runBrief — failed alert sends are not recorded as alerted', () => {
     });
     expect(ours(second)).toHaveLength(1);
     expect(ours(second)[0]).toContain('PropBBB');
+  });
+});
+
+describe('runBrief — a warehouse that cannot be read for insurance is not a silent skip (refute round 2026-09-21)', () => {
+  it('surfaces a warning in the brief and leaves the file unmigrated when the schema is behind', async () => {
+    const d = dir();
+    const dbPath = join(d, 'stale.sqlite');
+    const seed = new Database(dbPath);
+    seed.exec('CREATE TABLE unrelated (a INTEGER)'); // exists, but no insurance tables: "behind the schema"
+    seed.close();
+    const prev = process.env['WAREHOUSE_DB'];
+    process.env['WAREHOUSE_DB'] = dbPath;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const bodies: string[] = [];
+    let warnCalls: string[] = [];
+    try {
+      const res = await runBrief(baseSnap(), {
+        statePath: join(d, 'state.json'),
+        now: new Date('2026-07-09T11:00:00Z'), // brief gate open
+        send: async (email) => {
+          bodies.push(email.html);
+          return { ok: true, via: 'com' };
+        },
+      });
+      expect(res.briefSent).toBe(true);
+    } finally {
+      warnCalls = warn.mock.calls.map((c) => String(c[0])); // mockRestore() clears them
+      warn.mockRestore();
+      if (prev === undefined) delete process.env['WAREHOUSE_DB'];
+      else process.env['WAREHOUSE_DB'] = prev;
+    }
+    expect(warnCalls.some((m) => m.includes('insurance conditions unavailable'))).toBe(true);
+    expect(bodies.join(' | ')).toContain('Insurance alerts unavailable');
+    // The read-only open must not have migrated the stale file into a full schema.
+    const probe = new Database(dbPath, { readonly: true });
+    try {
+      expect(probe.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table'").get()).toEqual({ n: 1 }); // still only the seeded table
+    } finally {
+      probe.close();
+    }
   });
 });

@@ -170,8 +170,36 @@ describe('empty-baseline fail-closed (weekly sweep 2026-09-21, HIGH)', () => {
     expect(r.stdout).not.toMatch(/backup ok/);
     expect(existsSync(dbPath)).toBe(false); // no empty database was conjured
     expect(existsSync(join(backupDir, 'manifest.json'))).toBe(false);
-    expect(readdirSync(backupDir).filter((n) => n.endsWith('.enc'))).toEqual([]);
+    expect(existsSync(backupDir)).toBe(false); // a failed open creates nothing at all, not even the directory
   }, 90_000);
+});
+
+describe('restore drill without a manifest (refute round)', () => {
+  const run = (script: string, env: Record<string, string>) =>
+    spawnSync(process.execPath, ['--import', 'tsx', script], {
+      cwd: process.cwd(),
+      env: { ...process.env, ...env, BACKUP_KEY_HEX: KEY_HEX },
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+
+  it('names the missing manifest, not an "empty snapshot", when the backup itself is full', () => {
+    const dbPath = join(dir, 'finance.sqlite');
+    const seed = new Database(dbPath);
+    runMigrations(seed);
+    seed.close();
+    const backupDir = join(dir, 'backups');
+
+    const b = run('scripts/warehouse-backup.ts', { WAREHOUSE_DB: dbPath, BACKUP_DIR: backupDir });
+    expect(b.status).toBe(0);
+    rmSync(join(backupDir, 'manifest.json'));
+
+    const r = run('scripts/warehouse-restore-verify.ts', { BACKUP_DIR: backupDir });
+    expect(r.status).toBe(1); // no manifest -> age unknowable -> still fails, as before this branch
+    const out = r.stderr + r.stdout;
+    expect(out).not.toMatch(/empty snapshot cannot be certified/);
+    expect(out).toMatch(/manifest.*missing|old|Infinity|not running/i);
+  }, 120_000);
 });
 
 describe('selectSnapshotsToDelete', () => {

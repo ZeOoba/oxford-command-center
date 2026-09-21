@@ -21,6 +21,14 @@
 --
 -- Semantics kept from 029: NULL whenever reduction_count = 0 (a listing with no recorded price_cut carries no
 -- cumulative reduction, e.g. from opex drift); a net figure -- a later price_increase offsets earlier cuts.
+-- Also NULL (unknown, NOT zero) if no recorded event carries a usable positive value pair, e.g. a corrupt
+-- price_cut with new_value = 0: reduction_count still counts the event, the depth is honestly unavailable.
+--
+-- LOWER BOUND, by design: when ingest suppresses a genuine price event because two observations were not
+-- comparable (a confidence flip logs a warning, no event), that step is absent from the chain, so the figure
+-- under-reports rather than over-reports (10 -> 8 suppressed -> 7.5 recorded reads -0.0625, not -0.25).
+-- Under-reporting a cut is the safe direction for a radar that scores distress; the phantom over-report this
+-- migration removes was not. It equals the old first/latest ratio only when every consecutive pair compared.
 --
 -- Views only, no data touched. 029 is deliberately NOT edited: runMigrations records applied files by NAME with
 -- no checksum, so an edited 029 would never reach a database that already applied it. lm_v_current_spaces selects
