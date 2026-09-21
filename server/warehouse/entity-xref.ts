@@ -211,7 +211,15 @@ function marketCandidates(label: string | null): MarketCandidate[] {
  * direction ("a wrong auto-link is worse than an unmatched row").
  */
 const stateMatches = (lmState: string | null, required: string | null): boolean =>
-  required === null || (lmState !== null && lmState.trim().toLowerCase() === required);
+  required === null || (lmState !== null && lmState === required);
+
+/** A listing's own state, but only when it is a two-letter code ('OH', ' oh '). 'Ohio', a zip, or
+ *  'OH-Franklin' would otherwise REFUSE a valid match while the address agreed; they count as unknown
+ *  and fall back to the configured market's state instead. */
+const twoLetterState = (s: string | null): string | null => {
+  const t = (s ?? '').trim();
+  return /^[A-Za-z]{2}$/.test(t) ? t.toLowerCase() : null;
+};
 
 /**
  * market id -> two-letter state, from config/lease-market.json `markets[].costarMarketNames`
@@ -313,7 +321,7 @@ export function seedFromLeaseMarket(db: WarehouseDb, opts: SeedOptions = {}): Se
     const entries = byAddress.get(key) ?? [];
     // The listing's own state, else the configured market's. Unknown while some candidate was reached by
     // dropping a state is NOT "no match": surface it with the candidates listed for a human.
-    const lmState = r.state?.trim() ? r.state : (marketStates[marketKey(r.market_id)] ?? null);
+    const lmState = twoLetterState(r.state) ?? marketStates[marketKey(r.market_id)] ?? null;
     if (entries.length > 0 && lmState === null && entries.some((e) => e.state !== null)) {
       proposed.push({
         ...base,

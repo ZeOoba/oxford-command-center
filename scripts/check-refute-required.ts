@@ -114,7 +114,7 @@ const FINANCIAL_JSON_PREFIXES: readonly string[] = [
 // self-labelled PLACEHOLDER stand-ins for broker/assessor data (docs/placeholder-data.md), overridden
 // automatically once real rows exist -- not live governor inputs. Without this every edit demanded a refute
 // trailer, which trains people to reach for Refute-Skip.
-const NON_FINANCIAL_JSON_PREFIXES: readonly string[] = ['server/warehouse/placeholders/'];
+const NON_FINANCIAL_JSON_PATTERN = /^server\/warehouse\/placeholders\/[^/]+\.placeholder\.json$/;
 const FINANCIAL_DATA_PATHS: ReadonlySet<string> = new Set([
   'docs/superpowers/specs/2026-06-12-pfi-account-mapping-seed.json',
 ]);
@@ -127,7 +127,7 @@ export function isFinancialSourcePath(p: string): boolean {
   }
   if (
     path.endsWith('.json') &&
-    !NON_FINANCIAL_JSON_PREFIXES.some((pre) => path.startsWith(pre)) &&
+    !NON_FINANCIAL_JSON_PATTERN.test(path) &&
     (FINANCIAL_DATA_PATHS.has(path) || FINANCIAL_JSON_PREFIXES.some((pre) => path.startsWith(pre)))
   ) {
     return true;

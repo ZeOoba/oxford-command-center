@@ -171,6 +171,9 @@ describe('check-refute-required — financial config prefix (weekly sweep 2026-0
     // a sibling json in the same directory tree is still financial
     expect(isFinancialSourcePath('server/warehouse/om-extract-fields.json')).toBe(true);
     expect(isFinancialSourcePath('server/warehouse/placeholders-real/x.json')).toBe(true);
+    // only the *.placeholder.json fixtures directly in the folder: a future non-placeholder json is NOT exempt
+    expect(isFinancialSourcePath('server/warehouse/placeholders/anything.json')).toBe(true);
+    expect(isFinancialSourcePath('server/warehouse/placeholders/sub/deep.placeholder.json')).toBe(true);
   });
   it('still exempts .json outside config/ — the blanket rule applies elsewhere', () => {
     expect(isFinancialSourcePath('docs/superpowers/specs/some-other-spec.json')).toBe(false);
