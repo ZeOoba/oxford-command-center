@@ -67,6 +67,7 @@ export const LEGACY_ALIASES: Readonly<Record<string, LegacyAlias>> = {
   close: { destination: 'capital', tab: 'close' },
   insurance: { destination: 'obligations', tab: 'insurance', innerViews: ['savings', 'register', 'selfinsure'] },
   taxes: { destination: 'obligations', tab: 'taxes', innerViews: ['strategy', 'assessments', 'returns'] },
+  'prospect-demand': { destination: 'market', tab: 'demand' },
 };
 
 /** Tabs that LEFT a surviving module for another destination (Intel's data-ops tabs → Data).

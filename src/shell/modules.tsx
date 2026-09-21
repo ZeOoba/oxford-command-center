@@ -12,7 +12,6 @@ import {
   Briefcase,
   Database,
   TrendingUp,
-  Radar,
   Coins,
   Lightbulb,
   BrainCircuit,
@@ -23,6 +22,7 @@ import { INTEL_TABS } from '@/modules/intel/tabs';
 import { DATA_TABS } from '@/modules/data/tabs';
 import { WORKLIST_TABS } from '@/modules/worklist/tabs';
 import { CAPITAL_TABS } from '@/modules/capital/tabs';
+import { MARKET_TABS } from '@/modules/market/tabs';
 import { OBLIGATIONS_TABS } from '@/modules/obligations/tabs';
 import type { ModuleTabDef } from './tab-types';
 
@@ -41,7 +41,6 @@ const WorklistModule = lazy(() => import('@/modules/worklist/WorklistModule').th
 const DataModule = lazy(() => import('@/modules/data/DataModule').then((m) => ({ default: m.DataModule })));
 const LeaseForecastModule = lazy(() => import('@/modules/leasing/LeaseForecastModule').then((m) => ({ default: m.LeaseForecastModule })));
 const CapitalModule = lazy(() => import('@/modules/capital/CapitalModule').then((m) => ({ default: m.CapitalModule })));
-const ProspectDemandModule = lazy(() => import('@/modules/intel/ProspectDemandModule').then((m) => ({ default: m.ProspectDemandModule })));
 const InsightsModule = lazy(() => import('@/modules/insights/InsightsModule').then((m) => ({ default: m.InsightsModule })));
 const CommandBrainModule = lazy(() => import('@/modules/command-brain/CommandBrainModule').then((m) => ({ default: m.CommandBrainModule })));
 const LeaseMarketModule = lazy(() => import('@/modules/lease-market/LeaseMarketModule').then((m) => ({ default: m.LeaseMarketModule })));
@@ -75,11 +74,10 @@ export const MODULES: ModuleDef[] = [
   { id: 'intel', label: 'Financials', icon: BarChart3, group: 'Assets', Component: IntelModule, tabs: INTEL_TABS },
   { id: 'leases', label: 'Leases', icon: FileText, group: 'Assets', Component: LeasesModule },
   { id: 'leasing', label: 'Leasing', icon: TrendingUp, group: 'Assets', Component: LeaseForecastModule },
-  { id: 'prospect-demand', label: 'Demand Signals', icon: Radar, group: 'Assets', Component: ProspectDemandModule },
   { id: 'tenants', label: 'Tenants', icon: Contact, group: 'Assets', Component: TenantsModule },
   { id: 'capital', label: 'Capital', icon: Coins, group: 'Capital', Component: CapitalModule, tabs: CAPITAL_TABS },
   { id: 'obligations', label: 'Obligations', icon: ShieldCheck, group: 'Capital', Component: ObligationsModule, tabs: OBLIGATIONS_TABS },
-  { id: 'market', label: 'Market', icon: LineChart, group: 'Market', Component: MarketModule },
+  { id: 'market', label: 'Market', icon: LineChart, group: 'Market', Component: MarketModule, tabs: MARKET_TABS },
   { id: 'lease-market', label: 'Lease Market', icon: Building2, group: 'Market', Component: LeaseMarketModule },
   { id: 'data', label: 'Data', icon: Database, group: 'System', Component: DataModule, tabs: DATA_TABS },
   // System Health left the rail in Phase 4a — it is a TopBar status dot; /health still resolves.
