@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { isFinancialSourcePath, hasRefuteApproval, DELIVERY_ONLY_PATHS } from '../../scripts/check-refute-required';
+import {
+  isFinancialSourcePath,
+  hasRefuteApproval,
+  DELIVERY_ONLY_PATHS,
+  NON_FINANCIAL_CONFIG_PATHS,
+} from '../../scripts/check-refute-required';
 
 describe('check-refute-required — financial-source classification', () => {
   it('flags financial-decision source (incl. Windows separators)', () => {
@@ -124,25 +129,44 @@ describe('check-refute-required — financial-source classification', () => {
   });
 });
 
-describe('check-refute-required — financial config allowlist (whole-branch review Finding 2)', () => {
-  // 2026-09-17 (Task 14 whole-branch review, promoted Minor): the blanket `.json` exclusion in
-  // isFinancialSourcePath exempted config/lease-market.json, which holds radarMinScore(50) /
-  // radarPushScore(70) / belowMarketMedianRatio(0.85) / benchmarkMinN(5) / similarityMinComps(8) /
-  // candidateMaxBuildingSf(50000 — the buy-box SF cap): governor-adjacent thresholds consumed
-  // directly by the radar/comparable-set math in src/analytics/lease-market/*, while the contract
-  // that merely TYPES them (src/contracts/lease-market.ts) was already flagged financial above.
-  // This is the fourth occurrence of the scope-staleness mode this file's history already warns
-  // about (src/contracts 2026-07-24, server/workbook 2026-08-11, server/sources 2026-08-12) — a
-  // narrow, explicit allow-list entry (FINANCIAL_CONFIG_PATHS), matching the established
-  // FINANCIAL_CONTRACT_PATHS pattern, rather than flipping the blanket `.json` rule, which would
-  // sweep in unrelated non-financial configs.
-  it('flags config/lease-market.json (incl. Windows separators)', () => {
-    expect(isFinancialSourcePath('config/lease-market.json')).toBe(true);
-    expect(isFinancialSourcePath('config\\lease-market.json')).toBe(true);
+describe('check-refute-required — financial config prefix (weekly sweep 2026-09-21)', () => {
+  // 2026-09-17 enumerated config/lease-market.json only and explicitly exempted
+  // config/lease-market.costar-headers.json as "no governor math" — but that file's
+  // rentPeriodDefault / rentBasisMap drive the x12 rent-period conversion and NNN/MG/IG basis
+  // classification of every ingested rent. replacement-cost.v3.json (RCT v03) and
+  // acquisition-ruleset.v1.json (0.65/0.90 basis floors) were also uncovered. config/ is now a
+  // fail-closed prefix: every .json under it is financial unless explicitly subtracted.
+  it.each([
+    'config/lease-market.json',
+    'config/lease-market.costar-headers.json',
+    'config/replacement-cost.v3.json',
+    'config/acquisition-ruleset.v1.json',
+    'config/acquisition-ruleset.v1.proposed.json',
+    'config/archive/acquisition-ruleset.v1.0.0.json',
+  ])('flags %s', (p) => {
+    expect(isFinancialSourcePath(p)).toBe(true);
   });
-  it('leaves an unrelated config json exempt — the blanket .json rule still applies elsewhere', () => {
-    expect(isFinancialSourcePath('config/lease-market.costar-headers.json')).toBe(false);
+  it('flags a config file added later without anyone remembering to enumerate it', () => {
+    expect(isFinancialSourcePath('config/some-future-thresholds.json')).toBe(true);
+  });
+  it('normalizes Windows separators', () => {
+    expect(isFinancialSourcePath('config\\lease-market.costar-headers.json')).toBe(true);
+    expect(isFinancialSourcePath('config\\replacement-cost.v3.json')).toBe(true);
+  });
+  it('keeps the non-financial subtraction list empty and visible', () => {
+    // Adding to this set is a reviewed decision. If you are here to add a config, justify it.
+    expect(NON_FINANCIAL_CONFIG_PATHS.size).toBe(0);
+  });
+  it('flags financial DATA json outside config/: the account-mapping seed and json inside financial source dirs', () => {
+    expect(isFinancialSourcePath('docs/superpowers/specs/2026-06-12-pfi-account-mapping-seed.json')).toBe(true);
+    expect(isFinancialSourcePath('server/warehouse/om-extract-fields.json')).toBe(true);
+    expect(isFinancialSourcePath('server/workbook/some-table.json')).toBe(true);
+    expect(isFinancialSourcePath('src/analytics/some-thresholds.json')).toBe(true);
+  });
+  it('still exempts .json outside config/ — the blanket rule applies elsewhere', () => {
+    expect(isFinancialSourcePath('docs/superpowers/specs/some-other-spec.json')).toBe(false);
     expect(isFinancialSourcePath('architecture/status.json')).toBe(false);
+    expect(isFinancialSourcePath('data/snapshots/portfolio.json')).toBe(false);
   });
 });
 

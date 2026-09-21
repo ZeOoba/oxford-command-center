@@ -11,7 +11,7 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { readFileSync, writeFileSync, statSync, renameSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
-import type { WarehouseDb } from './db';
+import { openWarehouseReadOnly, type WarehouseDb } from './db';
 
 const MAGIC = Buffer.from('ORAB1');
 const IV_BYTES = 12;
@@ -82,6 +82,22 @@ export async function snapshotWarehouse(db: WarehouseDb, destPath: string): Prom
   await db.backup(destPath);
 }
 
+/** User tables of a database, sorted; read-only handle. */
+export function listTables(dbPath: string): string[] {
+  const db = openWarehouseReadOnly(dbPath); // carries the busy_timeout a live WAL warehouse needs
+  try {
+    return (
+      db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+        .all() as Array<{ name: string }>
+    )
+      .map((r) => r.name)
+      .sort();
+  } finally {
+    db.close();
+  }
+}
+
 export function tableCounts(dbPath: string, tables: string[]): Record<string, number> {
   const db = new Database(dbPath, { readonly: true });
   try {
@@ -114,6 +130,14 @@ export function verifySnapshot(
   const mismatches = Object.entries(expected)
     .filter(([t, n]) => counts[t] !== n)
     .map(([t, n]) => `${t}: expected ${n}, got ${counts[t]}`);
+  // Fail closed on an empty baseline. With no expected tables the comparison above is vacuously
+  // true, so an EMPTY database (a missing source file that got created on open, or a manifest
+  // recording tables:0) verified as "ok" — the backup job reported success and the restore drill
+  // passed against it, while nothing was actually protected. A warehouse always has its schema
+  // tables, so zero of them is never a healthy backup.
+  if (Object.keys(expected).length === 0) {
+    mismatches.push('no tables in the source/manifest — an empty snapshot cannot be certified');
+  }
   return { ok: integrity === 'ok' && mismatches.length === 0, integrity, counts, mismatches };
 }
 

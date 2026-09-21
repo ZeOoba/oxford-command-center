@@ -2,7 +2,7 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { runMigrations } from './migrate';
+import { pendingMigrations, runMigrations } from './migrate';
 
 export type WarehouseDb = Database.Database;
 
@@ -41,6 +41,43 @@ export function openWarehouseReadOnly(path: string): WarehouseDb {
   const db = new Database(path, { readonly: true });
   db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
   return db;
+}
+
+/**
+ * Read-WRITE handle on an EXISTING, CURRENT warehouse that will NOT apply migrations.
+ *
+ * For scripts that legitimately write (a CLI ingest, the crosswalk seeder) but must never be the
+ * thing that changes the schema of the live warehouse. openWarehouse() migrates as a side effect, so
+ * a writer run from a feature branch applied that branch's unmerged migration to the live database
+ * and recorded it by filename — after which later edits to the file never applied (the 2026-09-17
+ * incident: the unattended bake migrated live to 030/031 this way). Here a database that is behind
+ * this code is a hard error, not a silent upgrade: the dev server on main (server/index.ts) is the
+ * sanctioned migrator.
+ *
+ * Like openWarehouseReadOnly it does not mkdir or create the file.
+ */
+export function openWarehouseNoMigrate(path: string): WarehouseDb {
+  const db = new Database(path, { fileMustExist: true });
+  try {
+    db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
+    // Decide BEFORE any write-ish pragma: `journal_mode = WAL` rewrites the file header (and creates
+    // -wal/-shm sidecars) on a DELETE-journal database, so setting it first meant a handle that
+    // refuses to open still changed the file. A refusal must leave the database untouched.
+    const pending = pendingMigrations(db);
+    if (pending.length > 0) {
+      throw new Error(
+        `warehouse at ${path} is ${pending.length} migration(s) behind this code ` +
+          `(${pending.join(', ')}) — refusing to apply them from a script. Start the dev server on ` +
+          `main (or run npm run warehouse:backfill) to migrate it deliberately.`,
+      );
+    }
+    db.pragma('journal_mode = WAL');
+    db.pragma('foreign_keys = ON');
+    return db;
+  } catch (err) {
+    db.close();
+    throw err;
+  }
 }
 
 export function openWarehouse(path: string): WarehouseDb {
