@@ -39,6 +39,20 @@ describe('CommandPalette — tab entries', () => {
     }
   });
 
+  it('indexes the two in-module strips registered last (Acquisitions, Lease Market)', () => {
+    render(<CommandPalette />);
+    for (const label of ['Acquisitions › Workbench', 'Acquisitions › Sourcing', 'Acquisitions › Grader',
+      'Lease Market › Acquisition Radar', 'Lease Market › Data Quality']) {
+      expect(screen.getByText(label)).toBeTruthy();
+    }
+  });
+
+  it('selecting an Acquisitions tab entry navigates to /pipeline?tab=<id>', () => {
+    render(<CommandPalette />);
+    fireEvent.click(screen.getByText('Acquisitions › Grader'));
+    expect(openTab).toHaveBeenCalledWith('pipeline', 'grader');
+  });
+
   it('selecting an entry navigates to the destination tab and closes the palette', () => {
     render(<CommandPalette />);
     fireEvent.click(screen.getByText('Data › Calibration'));

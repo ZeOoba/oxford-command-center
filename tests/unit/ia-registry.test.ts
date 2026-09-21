@@ -302,6 +302,53 @@ describe('final rail (IA decongestion Phase 4 complete)', () => {
   });
 });
 
+// Final whole-branch review (FIX 5): Acquisitions and Lease Market render in-module tab strips but
+// never declared them as `ModuleDef.tabs`, so the palette had no "Destination > Tab" entries for
+// them and the max-5 cap guard above never saw lease-market (which is AT the cap). This table is
+// the exhaustive registry lock: every rail destination is either listed here with its exact tab ids
+// or named in TABLESS.
+describe('every rail destination declares its tab strip in the registry', () => {
+  const DESTINATION_TABS: Record<string, readonly string[]> = {
+    pipeline: ['pipeline', 'workbench', 'sourcing', 'grader'],
+    worklist: ['today', 'alerts', 'calendar', 'renewals'],
+    'command-brain': ['digest', 'insights', 'track-record', 'feedback', 'memory'],
+    intel: ['ownership', 'property', 'lease-run', 'benchmarks', 'managers'],
+    leasing: ['rollover', 'rent-roll', 'forecast', 'market-rents', 'tenants'],
+    capital: ['allocation', 'pipeline', 'debt', 'cash', 'close'],
+    obligations: ['insurance', 'taxes'],
+    market: ['macro', 'scorecards', 'comps', 'demand'],
+    'lease-market': ['portfolio', 'market-rents', 'radar', 'changes', 'data-quality'],
+    data: ['imports', 'quality', 'mappings', 'calibration', 'documents'],
+  };
+  /** The only rail destinations that legitimately render no strip. */
+  const TABLESS = ['overview', 'portfolio'];
+
+  it('the 12 rail destinations split exactly into the tabbed ones and the two tabless ones', () => {
+    expect(railModules('acquisitions').map((m) => m.id).sort()).toEqual(
+      [...Object.keys(DESTINATION_TABS), ...TABLESS].sort(),
+    );
+  });
+
+  for (const [id, ids] of Object.entries(DESTINATION_TABS)) {
+    it(`${id} declares [${ids.join(', ')}] — in order, unique, within the cap`, () => {
+      const tabs = byId(id)?.tabs;
+      expect(tabs?.map((t) => t.id), id).toEqual([...ids]);
+      expect(new Set(ids).size, id).toBe(ids.length);
+      expect(tabCapViolation(id, tabs), id).toBeNull();
+      // Every declared tab carries a non-empty label (the palette indexes "Destination > Tab").
+      for (const t of tabs ?? []) expect(t.label.length, `${id}.${t.id}`).toBeGreaterThan(0);
+    });
+  }
+
+  for (const id of TABLESS) {
+    it(`${id} declares no tabs`, () => expect(byId(id)?.tabs).toBeUndefined());
+  }
+
+  it('lease-market sits AT the cap — the guard now actually sees it', () => {
+    expect(byId('lease-market')!.tabs).toHaveLength(MAX_TABS_PER_DESTINATION);
+  });
+});
+
 describe('TopBar page titles (src/shell/titles.ts)', () => {
   it('every TITLES key is a registered module id (no stale absorbed-module titles)', () => {
     for (const key of Object.keys(TITLES)) expect(IDS, key).toContain(key);
