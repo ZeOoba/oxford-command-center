@@ -200,6 +200,32 @@ describe('rail composition', () => {
     expect(resolveLegacyRoute('/prospect-demand', '')).toBe('/market?tab=demand');
   });
 
+  it('PR-D: Leasing = Rollover · Rent roll · Forecast · Market rents · Tenants; leases/tenants are absorbed', () => {
+    expect(byId('leasing')!.tabs!.map((t) => t.id)).toEqual(['rollover', 'rent-roll', 'forecast', 'market-rents', 'tenants']);
+    expect(byId('leasing')!.label).toBe('Leasing');
+    for (const id of ['leases', 'tenants']) expect(IDS).not.toContain(id);
+    expect(resolveLegacyRoute('/leases', '')).toBe('/leasing?tab=rent-roll');
+    expect(resolveLegacyRoute('/leases', '?tab=rollover')).toBe('/leasing?tab=rent-roll&view=rollover');
+    expect(resolveLegacyRoute('/leases', '?tab=rent-roll')).toBe('/leasing?tab=rent-roll&view=rent-roll');
+    expect(resolveLegacyRoute('/leases/lease-9', '')).toBe('/leasing/lease-9?tab=rent-roll');
+    expect(resolveLegacyRoute('/leases', '?scenario=Downside')).toBe('/leasing?scenario=Downside&tab=rent-roll');
+    expect(resolveLegacyRoute('/tenants', '')).toBe('/leasing?tab=tenants');
+    expect(parseRoute('/leasing/lease-9', IDS, 'tenants').selected).toEqual({ type: 'lease', id: 'lease-9' });
+    expect(parseRoute('/leases/lease-9', IDS).selected).toEqual({ type: 'lease', id: 'lease-9' }); // first-render alias
+    // the surviving /leasing URL (bare or tabbed) does not redirect
+    expect(resolveLegacyRoute('/leasing', '?tab=forecast')).toBeNull();
+  });
+
+  it('PR-D: the rail lists Leasing exactly where Leases stood, and no profile still names the old ids', () => {
+    for (const profile of ['acquisitions', 'principal'] as const) {
+      expect(MODULE_ORDER[profile]).toContain('leasing');
+      expect(MODULE_ORDER[profile]).not.toContain('leases');
+      expect(MODULE_ORDER[profile]).not.toContain('tenants');
+    }
+    expect(MODULE_ORDER.acquisitions.indexOf('leasing')).toBe(MODULE_ORDER.acquisitions.indexOf('intel') + 1);
+    expect(MODULE_ORDER.principal.indexOf('leasing')).toBe(MODULE_ORDER.principal.indexOf('intel') + 1);
+  });
+
   for (const profile of ['acquisitions', 'principal'] as const) {
     it(`${profile}: System Health is off the rail but every other module still shows`, () => {
       const rail = railModules(profile).map((m) => m.id);
