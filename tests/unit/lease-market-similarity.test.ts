@@ -83,6 +83,98 @@ describe('selectComps', () => {
   });
 });
 
+// Weekly sweep 2026-09-21 (determinism lens): comp selection broke score ties on the AUTOINCREMENT listingId,
+// i.e. the row order of the CoStar export, so the same candidates in a different sort produced a different
+// comp median (8.50 vs 11.00 in the reviewer's repro), flipping the radar score, below_market and the feed.
+describe('selectComps — order independence', () => {
+  // Small deterministic PRNG so the permutations are reproducible.
+  const shuffled = <T,>(xs: readonly T[], seed: number): T[] => {
+    const out = [...xs];
+    let s = seed;
+    for (let i = out.length - 1; i > 0; i--) {
+      s = (s * 1664525 + 1013904223) % 4294967296;
+      const j = s % (i + 1);
+      [out[i], out[j]] = [out[j]!, out[i]!];
+    }
+    return out;
+  };
+  /** 20 comps, every one IDENTICAL to the subject on every scored field (all tie at score 100, distance 0,
+   *  same size), each in its own property with its own rent. K = 15 cuts straight through the tie. */
+  const tied = (): CompCandidate[] =>
+    Array.from({ length: 20 }, (_, i) =>
+      cand({ listingId: 500 + i, propertyId: 7000 + i, askingNnnEq: 5 + i, addressDisplay: `${100 + i} Tie Rd` }),
+    );
+  const NO_SPLIT_T = { ...T, similarityPerPropertyCap: 3 };
+
+  it('picks the same comps and the same median whatever order the rows arrive in', () => {
+    const base = tied();
+    const reference = selectComps(subject, null, base, W, NO_SPLIT_T);
+    const refIds = reference.comps.map((c) => c.candidate.listingId).sort((a, b) => a - b);
+    for (let seed = 1; seed <= 25; seed++) {
+      // Re-issue listingIds in the permuted order too: that is what a different export sort does.
+      const permuted = shuffled(base, seed).map((c, i) => ({ ...c, listingId: 9000 + i }));
+      const sel = selectComps(subject, null, permuted, W, NO_SPLIT_T);
+      const rents = sel.comps.map((c) => c.candidate.askingNnnEq).sort((a, b) => a - b);
+      expect(rents).toEqual(reference.comps.map((c) => c.candidate.askingNnnEq).sort((a, b) => a - b));
+    }
+    expect(refIds.length).toBeGreaterThan(0);
+  });
+
+  it('still honours the top-K cap when a tie straddles the cut', () => {
+    const sel = selectComps(subject, null, tied(), W, NO_SPLIT_T);
+    expect(sel.comps).toHaveLength(15); // 20 tie on the data key; K = 15 seats, none decided by row order
+  });
+
+  it('resolves a boundary tie by proximity to the tied group median, not toward cheap comps', () => {
+    const rents = selectComps(subject, null, tied(), W, NO_SPLIT_T)
+      .comps.map((c) => c.candidate.askingNnnEq)
+      .sort((a, b) => a - b);
+    // Group rents 5..24 (median 14.5): the 15 nearest are 7..21, so the kept median stays within half a
+    // dollar of the group's. A rent-ascending key would have kept 5..19 (median 12).
+    const keptMedian = rents[Math.floor(rents.length / 2)]!;
+    expect(Math.abs(keptMedian - 14.5)).toBeLessThanOrEqual(0.5);
+    expect(rents[0]).toBeGreaterThan(5);
+    expect(Math.max(...rents)).toBeGreaterThan(19);
+  });
+
+  it('resolveComparables returns an identical median for every permutation (the reviewer repro)', () => {
+    const base = tied();
+    const medians = new Set<number | null>();
+    for (let seed = 1; seed <= 25; seed++) {
+      const permuted = shuffled(base, seed).map((c, i) => ({ ...c, listingId: 100 + i }));
+      medians.add(resolveComparables(subject, null, permuted, null, W, T).median);
+    }
+    expect([...medians]).toHaveLength(1);
+  });
+
+  it('still ranks a genuinely better comp ahead of a worse one (data key first)', () => {
+    const near = cand({ listingId: 900, propertyId: 8001, askingNnnEq: 20, addressDisplay: 'Z' });
+    const farther = cand({ listingId: 1, propertyId: 8002, askingNnnEq: 3, addressDisplay: 'A', lat: 39.99, lon: -82.9 });
+    const sel = selectComps(subject, null, [farther, near], W, { ...T, similarityTopK: 1 });
+    expect(sel.comps.map((c) => c.candidate.listingId)).toEqual([900]); // closer wins despite the higher listingId
+  });
+
+  it('an unknown distance ranks after a known one', () => {
+    const known = cand({ listingId: 901, propertyId: 8003, askingNnnEq: 9, addressDisplay: 'K' });
+    const unknown = cand({ listingId: 2, propertyId: 8004, askingNnnEq: 9, addressDisplay: 'A', lat: null, lon: null, submarket: 'East' });
+    const sel = selectComps(subject, null, [unknown, known], W, { ...T, similarityTopK: 2, similarityMinScore: 0 });
+    expect(sel.comps[0]!.candidate.listingId).toBe(901);
+  });
+
+  it('sister suites identical on every field are capped deterministically whatever the order', () => {
+    const sisters = Array.from({ length: 6 }, (_, i) =>
+      cand({ listingId: 700 + i, propertyId: 900, askingNnnEq: 4 + i, addressDisplay: 'One Building Ave' }),
+    );
+    const key = (cs: CompCandidate[]) =>
+      selectComps(subject, null, cs, W, NO_SPLIT_T).comps.map((c) => c.candidate.askingNnnEq).sort((a, b) => a - b);
+    const ref = key(sisters);
+    expect(ref).toHaveLength(3);
+    for (let seed = 1; seed <= 15; seed++) {
+      expect(key(shuffled(sisters, seed).map((c, i) => ({ ...c, listingId: 50 + i })))).toEqual(ref);
+    }
+  });
+});
+
 describe('resolveComparables', () => {
   const cell = (patch: Partial<ComputedCell>): ComputedCell => ({
     cellKey: 'k', marketId: 'columbus', submarket: 'East', subtype: 'warehouse', sizeBand: '5-15K', officeStratum: 'all',
