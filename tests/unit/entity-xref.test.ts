@@ -81,7 +81,7 @@ describe('unmatchedReport', () => {
   });
 });
 
-import { marketIdCandidates, seedFromLeaseMarket } from '../../server/warehouse/entity-xref';
+import { marketIdCandidates, marketStatesFromConfig, seedFromLeaseMarket } from '../../server/warehouse/entity-xref';
 
 /** Real migration-029 lm_property, not a stub — 029 is on main as of 2026-09-17. */
 function addLmProperty(
@@ -194,13 +194,45 @@ describe('seedFromLeaseMarket — production market labels (weekly sweep 2026-09
     expect(seedFromLeaseMarket(db).linked).toBe(0);
   });
 
-  it('a listing that states no state cannot confirm a state-stripped match, so it stays unmatched', () => {
+  it('a listing with NO state (the shipped CoStar header map leaves it NULL) is surfaced as state_unverifiable, not lost', () => {
     const db = makeDb();
     addProperty(db, '1100-rarig-ave-columbus-oh', '1100 Rarig Ave', 'Columbus OH');
-    addLmProperty(db, 28, 'columbus', '1100 RARIG AVE', 'Rarig'); // state null
+    addLmProperty(db, 28, 'columbus', '1100 RARIG AVE', 'Rarig'); // state null, as in production
     const result = seedFromLeaseMarket(db);
     expect(result.linked).toBe(0);
+    expect(result.proposed[0]!.reason).toBe('state_unverifiable');
+    expect(result.proposed[0]!.candidateCanonicalIds).toEqual(['1100-rarig-ave-columbus-oh']);
+  });
+
+  it('links in PRODUCTION shape: null lm_property.state, market state taken from config costarMarketNames', () => {
+    const db = makeDb();
+    addProperty(db, '1100-rarig-ave-columbus-oh', '1100 Rarig Ave', 'Columbus OH');
+    addLmProperty(db, 30, 'columbus', '1100 RARIG AVE', 'Rarig'); // state null
+    const marketStates = marketStatesFromConfig([{ id: 'columbus', costarMarketNames: ['Columbus, OH'] }]);
+    const result = seedFromLeaseMarket(db, { marketStates });
+    expect(result.linked).toBe(1);
+    expect(canonicalIdFor(db, 'lease_market', 'property', '30')).toBe('1100-rarig-ave-columbus-oh');
+  });
+
+  it("the configured market state still refuses a different-state twin: 'Columbus IN' is not linked to columbus/OH", () => {
+    const db = makeDb();
+    addProperty(db, '100-main-st-columbus-in', '100 Main St', 'Columbus IN');
+    addLmProperty(db, 31, 'columbus', '100 MAIN ST', 'Main', 'unknown', 'Columbus'); // state null
+    const marketStates = marketStatesFromConfig([{ id: 'columbus', costarMarketNames: ['Columbus, OH'] }]);
+    const result = seedFromLeaseMarket(db, { marketStates });
+    expect(result.linked).toBe(0);
     expect(result.proposed[0]!.reason).toBe('no_address_match');
+  });
+
+  it('marketStatesFromConfig skips markets with no state or with several', () => {
+    expect(
+      marketStatesFromConfig([
+        { id: 'columbus', costarMarketNames: ['Columbus, OH'] },
+        { id: 'kansas-city', costarMarketNames: [] },
+        { id: 'split', costarMarketNames: ['Kansas City, MO', 'Kansas City, KS'] },
+        { id: 'trim', costarMarketNames: ['  Madison, wi  '] },
+      ]),
+    ).toEqual({ columbus: 'oh', trim: 'wi' });
   });
 
   it("links 'Columbus IN' to a listing that says IN, and 'Columbus OH' does not claim it", () => {
