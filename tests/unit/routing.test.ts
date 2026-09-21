@@ -79,9 +79,11 @@ describe('entityPath / HOME_MODULE', () => {
     const skip = new Set<EntityType>(['counterparty']);
     for (const [type, mod] of Object.entries(HOME_MODULE)) {
       if (skip.has(type as EntityType)) continue;
-      // Multi-drawer destinations (Capital) resolve the type through their home tab instead.
+      // Multi-drawer destinations (Capital) resolve the type through their home tab; single-type
+      // destinations (Obligations: insurance on every tab) fall through to MODULE_PRIMARY_TYPE even
+      // when they carry a home tab.
       const homeTab = HOME_TAB[type as EntityType];
-      const resolved = homeTab ? TAB_PRIMARY_TYPE[mod]?.[homeTab] : MODULE_PRIMARY_TYPE[mod];
+      const resolved = (homeTab ? TAB_PRIMARY_TYPE[mod]?.[homeTab] : undefined) ?? MODULE_PRIMARY_TYPE[mod];
       expect(resolved).toBe(type as EntityType);
     }
   });

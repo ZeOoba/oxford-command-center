@@ -6,7 +6,7 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { DataTable, type Column } from '@/primitives/DataTable';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
-import { Tabs, TabPanel } from '@/primitives/Tabs';
+import { SegmentedControl } from '@/primitives/SegmentedControl';
 import { useTabParam } from '@/lib/useTabParam';
 import type { InsurancePolicy, InsuranceStatus } from '@contracts/index';
 import { useInsuranceAnalysis, computeInsuranceKpis, fmtRatePer100 } from './hooks';
@@ -24,12 +24,12 @@ const daysTone = (d: number | null): BadgeTone => {
   return 'neutral';
 };
 
-type Tab = 'savings' | 'register' | 'selfinsure';
-const TAB_KEYS: readonly Tab[] = ['savings', 'register', 'selfinsure'];
-const TABS: Array<{ id: Tab; label: string }> = [
-  { id: 'savings', label: 'Savings Board' },
-  { id: 'register', label: 'Policy Register' },
-  { id: 'selfinsure', label: 'Self-Insure & Bids' },
+type View = 'savings' | 'register' | 'selfinsure';
+const VIEW_KEYS: readonly View[] = ['savings', 'register', 'selfinsure'];
+const VIEWS: Array<{ value: View; label: string }> = [
+  { value: 'savings', label: 'Savings Board' },
+  { value: 'register', label: 'Policy Register' },
+  { value: 'selfinsure', label: 'Self-Insure & Bids' },
 ];
 
 function PolicyRegisterView() {
@@ -73,7 +73,7 @@ function PolicyRegisterView() {
 }
 
 export function InsuranceModule() {
-  const [tab, setTab] = useTabParam<Tab>(TAB_KEYS, 'savings');
+  const [view, setView] = useTabParam<View>(VIEW_KEYS, 'savings', 'view');
   const { data: report } = useInsuranceAnalysis();
   const kpis = computeInsuranceKpis(report);
 
@@ -92,24 +92,15 @@ export function InsuranceModule() {
         <KpiStat label="Renewals ≤90d" value={kpis.renewalsWithin90} format={fmtNum} accentColor="var(--color-accent2)" />
       </div>
 
-      <Card>
-        <CardHeader title="Insurance" />
-      </Card>
+      {/* Only the selected view is mounted — the Self-Insure & Bids view fires a fresh
+          useInsuranceLoss() warehouse query on mount, so nothing fans out until it is chosen
+          (plan R9). Insurance is a tab of the Obligations destination, so its own switch is a
+          SegmentedControl on ?view= (R5: no nested tab strips). */}
+      <SegmentedControl options={VIEWS} value={view} onChange={setView} aria-label="Insurance views" />
 
-      {/* keyboardActivation="manual" — the Self-Insure & Bids tab mounts SelfInsureView, which
-          fires a fresh useInsuranceLoss() warehouse query on mount, so arrowing through the
-          strip shouldn't fan out queries (plan R9). */}
-      <Tabs tabs={TABS} selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} keyboardActivation="manual" aria-label="Insurance views">
-        <TabPanel id="savings">
-          <SavingsBoard />
-        </TabPanel>
-        <TabPanel id="register">
-          <PolicyRegisterView />
-        </TabPanel>
-        <TabPanel id="selfinsure">
-          <SelfInsureView />
-        </TabPanel>
-      </Tabs>
+      {view === 'savings' && <SavingsBoard />}
+      {view === 'register' && <PolicyRegisterView />}
+      {view === 'selfinsure' && <SelfInsureView />}
     </div>
   );
 }

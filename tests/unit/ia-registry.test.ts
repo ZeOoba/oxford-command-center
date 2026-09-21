@@ -180,6 +180,20 @@ describe('rail composition', () => {
     expect(parseRoute('/cash/a1', IDS).selected).toEqual({ type: 'cashEntity', id: 'a1' }); // first-render alias
   });
 
+  it('PR-C: Obligations = Insurance · Taxes; insurance/taxes are absorbed', () => {
+    expect(byId('obligations')!.tabs!.map((t) => t.id)).toEqual(['insurance', 'taxes']);
+    expect(byId('obligations')!.group).toBe('Capital');
+    for (const id of ['insurance', 'taxes']) expect(IDS).not.toContain(id);
+    expect(resolveLegacyRoute('/insurance', '?tab=selfinsure')).toBe('/obligations?tab=insurance&view=selfinsure');
+    expect(resolveLegacyRoute('/insurance', '')).toBe('/obligations?tab=insurance');
+    expect(resolveLegacyRoute('/insurance/pol-1', '')).toBe('/obligations/pol-1?tab=insurance');
+    expect(resolveLegacyRoute('/taxes', '?tab=returns')).toBe('/obligations?tab=taxes&view=returns');
+    expect(resolveLegacyRoute('/taxes', '?scenario=Downside')).toBe('/obligations?scenario=Downside&tab=taxes');
+    expect(parseRoute('/obligations/pol-1', IDS, 'insurance').selected).toEqual({ type: 'insurance', id: 'pol-1' });
+    expect(parseRoute('/obligations/pol-1', IDS, 'taxes').selected).toEqual({ type: 'insurance', id: 'pol-1' }); // single-type: every tab hosts it
+    expect(parseRoute('/insurance/pol-1', IDS).selected).toEqual({ type: 'insurance', id: 'pol-1' }); // first-render alias
+  });
+
   for (const profile of ['acquisitions', 'principal'] as const) {
     it(`${profile}: System Health is off the rail but every other module still shows`, () => {
       const rail = railModules(profile).map((m) => m.id);
