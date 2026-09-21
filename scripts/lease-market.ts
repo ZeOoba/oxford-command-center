@@ -8,7 +8,7 @@ import { readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { openWarehouse } from '../server/warehouse/db';
+import { openWarehouseNoMigrate } from '../server/warehouse/db';
 import { referenceDate } from '../server/config';
 import { loadCostarHeaderMap, loadLeaseMarketConfig } from '../server/warehouse/lease-market/config';
 import { ingestCostarListingsFile, localDateString, parseListingFileName } from '../server/warehouse/lease-market/ingest';
@@ -112,7 +112,10 @@ export async function ingest(dir: string): Promise<number> {
   const config = loadLeaseMarketConfig();
   const headerMap = loadCostarHeaderMap();
   const files = listIntakeFiles(dir);
-  const db = openWarehouse(DB_PATH);
+  // NoMigrate (2026-09-21 sweep): this CLI is scheduled/unattended and writes lm_* tables, but must
+  // never be the thing that migrates the live warehouse — run from a feature branch, openWarehouse
+  // applied that branch's unmerged migration and recorded it by filename (the 09-17 incident).
+  const db = openWarehouseNoMigrate(DB_PATH);
   let failures = 0;
   let attempted = 0;
   try {
@@ -165,7 +168,7 @@ export async function ingest(dir: string): Promise<number> {
 
 function compute(asOf: string): number {
   const config = loadLeaseMarketConfig();
-  const db = openWarehouse(DB_PATH);
+  const db = openWarehouseNoMigrate(DB_PATH);
   try {
     const r = runCompute(db, config, asOf);
     console.log(
