@@ -119,18 +119,23 @@ export function scoreSimilarity(subject: SpaceProfile, candidate: SpaceProfile, 
 //
 // Two layers, both functions of the DATA only:
 //   * RANK (compareScoredComps): finer unrounded score, then closeness, then size fit -- the "data key" --
-//     then address, rent, and listingId as a last resort between otherwise identical candidates.
-//   * BOUNDARY (selectComps): when the data key ties across the top-K cut, the tie is resolved by which tied
-//     comps sit CLOSEST TO THE TIED GROUP'S OWN MEDIAN RENT. Cutting inside a tie on address/rent/listingId
-//     would still be arbitrary -- and a plain rent key would systematically keep the cheapest comps and drag
-//     the comp median down. Median-proximity is a function of the tied set alone and pulls the median in
-//     neither direction (only an exact rent pair equidistant from the median falls to the lower rent).
+//     then address, rent, every remaining candidate field, and the surrogate ids last.
+//   * CUT (cutAtTopK, used for the global top-K AND the per-property cap): when the data key ties across the
+//     cut, the tied group is sorted by rent and the seats are filled at EVENLY SPACED RANKS through it
+//     (lowest, ..., highest). Cutting inside a tie on address/rent/listingId is arbitrary or -- with a rent
+//     key -- biased toward cheap comps; "closest to the group median" was tried and rejected because it
+//     compresses the range (biases p25 up / p75 down, and a plurality can win every seat). Rank-stratified
+//     selection keeps the tied group's own median AND its spread, and is a function of the tied set alone.
 const SCORE_EPS = 1e-9;
 const cmpNumber = (a: number, b: number): number => (a < b ? -1 : a > b ? 1 : 0);
 const cmpText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0); // code-unit, locale-independent
 /** Closer is better; an unknown distance ranks after every known one. */
 const cmpDistance = (a: number | null, b: number | null): number =>
   a === null ? (b === null ? 0 : 1) : b === null ? -1 : cmpNumber(a, b);
+/** Unknown (null) sorts after every known value. */
+const cmpNullable = (a: number | null, b: number | null): number => cmpDistance(a, b);
+const cmpNullableText = (a: string | null, b: string | null): number =>
+  a === null ? (b === null ? 0 : 1) : b === null ? -1 : cmpText(a, b);
 const rawScore = (sc: ScoredComp): number =>
   Math.round(Object.values(sc.similarity.parts).reduce((a, b) => a + b, 0) / SCORE_EPS);
 
@@ -152,13 +157,26 @@ function compareScoredComps(subject: SpaceProfile): (a: ScoredComp, b: ScoredCom
     byData(a, b) ||
     cmpText(a.candidate.addressDisplay, b.candidate.addressDisplay) ||
     cmpNumber(a.candidate.askingNnnEq, b.candidate.askingNnnEq) ||
+    // Every remaining scored/physical field, so two candidates that differ in ANY of them rank the same
+    // whatever order they arrived in. Only candidates identical on all of these reach the surrogate ids.
+    cmpNumber(a.candidate.availableSf, b.candidate.availableSf) ||
+    cmpNullable(a.candidate.clearHeightFt, b.candidate.clearHeightFt) ||
+    cmpNullable(a.candidate.yearBuilt, b.candidate.yearBuilt) ||
+    cmpNullable(a.candidate.docks, b.candidate.docks) ||
+    cmpNullable(a.candidate.driveIns, b.candidate.driveIns) ||
+    cmpNullable(a.candidate.officePct, b.candidate.officePct) ||
+    cmpNullableText(a.candidate.submarket, b.candidate.submarket) ||
+    cmpNullable(a.candidate.lat, b.candidate.lat) ||
+    cmpNullable(a.candidate.lon, b.candidate.lon) ||
+    cmpNumber(a.candidate.propertyId, b.candidate.propertyId) ||
     cmpNumber(a.candidate.listingId, b.candidate.listingId);
 }
 
 /**
- * Top-K cut that never decides membership by row order. `ranked` is sorted by a refinement of the data
- * key, so candidates tied on it with the K-th are one contiguous run [lo, hi). Everything strictly ahead
- * of the run is kept; the run supplies the remaining seats, chosen by closeness to the run's median rent.
+ * Cut `ranked` (sorted by byRank) to `k` seats without letting row order decide who is in. `ranked` is
+ * sorted by a refinement of the data key, so candidates tied on it with the K-th are one contiguous run
+ * [lo, hi). Everything strictly ahead of the run is kept; the run supplies the remaining seats at evenly
+ * spaced ranks of its rent-sorted order, so the tied group's median and spread both survive the cut.
  */
 function cutAtTopK(
   ranked: ScoredComp[],
@@ -175,17 +193,17 @@ function cutAtTopK(
   while (hi < ranked.length && byData(ranked[hi]!, boundary) === 0) hi += 1;
   if (hi === k) return ranked.slice(0, k); // no tie straddles the cut
 
-  const group = ranked.slice(lo, hi);
-  const median = quantileSorted(group.map((c) => c.candidate.askingNnnEq).sort(cmpNumber), 0.5) ?? 0;
+  const byRent = ranked
+    .slice(lo, hi)
+    .sort((a, b) => cmpNumber(a.candidate.askingNnnEq, b.candidate.askingNnnEq) || byRank(a, b));
   const seats = k - lo;
-  const chosen = [...group]
-    .sort(
-      (a, b) =>
-        cmpNumber(Math.abs(a.candidate.askingNnnEq - median), Math.abs(b.candidate.askingNnnEq - median)) ||
-        byRank(a, b),
-    )
-    .slice(0, seats);
-  return [...ranked.slice(0, lo), ...chosen].sort(byRank);
+  // n > seats here, so with seats >= 2 the spacing (n-1)/(seats-1) exceeds 1 and the rounded ranks are
+  // distinct; a single seat takes the middle of the group.
+  const picks =
+    seats === 1
+      ? [Math.floor((byRent.length - 1) / 2)]
+      : Array.from({ length: seats }, (_, i) => Math.round((i * (byRent.length - 1)) / (seats - 1)));
+  return [...ranked.slice(0, lo), ...picks.map((i) => byRent[i]!)].sort(byRank);
 }
 
 export function selectComps(
@@ -209,11 +227,11 @@ export function selectComps(
     if (list) list.push(sc);
     else byProperty.set(sc.candidate.propertyId, [sc]);
   }
-  // The per-property cap IS a deliberate cut inside a group of near-identical suites (R8), so unlike the
-  // global cut below it cannot keep every tie. Order-independence still holds (the rank is a function of
-  // the data); among suites identical on every field but rent it keeps the lowest asks -- confined to one
-  // building's own contribution of at most similarityPerPropertyCap comps.
-  const capped = [...byProperty.values()].flatMap((list) => list.sort(byRank).slice(0, t.similarityPerPropertyCap));
+  // R8 cap, through the same order-independent cut as the global top-K: suites that tie on every scored
+  // field are sampled at evenly spaced rent ranks instead of always keeping the lowest asks.
+  const capped = [...byProperty.values()].flatMap((list) =>
+    cutAtTopK(list.sort(byRank), t.similarityPerPropertyCap, byData, byRank),
+  );
   const ranked = capped.sort(byRank);
   const comps = cutAtTopK(ranked, t.similarityTopK, byData, byRank);
   return { comps, sufficient: comps.length >= t.similarityMinComps };
