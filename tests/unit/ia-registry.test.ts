@@ -8,6 +8,7 @@ import { describe, it, expect, vi } from 'vitest';
 vi.mock('../../src/shell/tab-badges', () => ({ useAlertsTabBadge: () => undefined, useCriticalDatesTabBadge: () => undefined }));
 
 import { MODULES } from '../../src/shell/modules';
+import { TITLES } from '../../src/shell/titles';
 import { railModules, orderedModules, MODULE_ORDER, PROFILE_HOME } from '../../src/shell/module-order';
 import { MAX_TABS_PER_DESTINATION, tabCapViolation, warnIfTooManyTabs, type ModuleTabDef } from '../../src/shell/tab-types';
 import {
@@ -293,5 +294,18 @@ describe('final rail (IA decongestion Phase 4 complete)', () => {
       const target = byId(id)?.id ?? LEGACY_ALIASES[id]?.destination;
       expect([...RAIL, 'health'], id).toContain(target);
     }
+  });
+});
+
+describe('TopBar page titles (src/shell/titles.ts)', () => {
+  it('every TITLES key is a registered module id (no stale absorbed-module titles)', () => {
+    for (const key of Object.keys(TITLES)) expect(IDS, key).toContain(key);
+  });
+  it('the merged destinations carry their ratified page titles; Overview is unchanged', () => {
+    expect(TITLES.overview).toBe('Command Overview');
+    expect(TITLES.capital).toBe('Capital & Treasury');
+    expect(TITLES.leasing).toBe('Leasing & Tenants');
+    expect(TITLES.obligations).toBe('Insurance & Taxes');
+    expect(TITLES['command-brain']).toBe('Brain');
   });
 });
