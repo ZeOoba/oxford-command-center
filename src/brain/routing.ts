@@ -10,8 +10,6 @@ export const DEFAULT_MODULE = 'overview';
 export const MODULE_PRIMARY_TYPE: Partial<Record<string, EntityType>> = {
   portfolio: 'property',
   leases: 'lease',
-  debt: 'loan',
-  cash: 'cashEntity',
   insurance: 'insurance',
   pipeline: 'deal',
 };
@@ -20,8 +18,8 @@ export const MODULE_PRIMARY_TYPE: Partial<Record<string, EntityType>> = {
 export const HOME_MODULE: Record<EntityType, string> = {
   property: 'portfolio',
   lease: 'leases',
-  loan: 'debt',
-  cashEntity: 'cash',
+  loan: 'capital',
+  cashEntity: 'capital',
   insurance: 'insurance',
   counterparty: 'overview',
   deal: 'pipeline',
@@ -32,11 +30,13 @@ export const HOME_MODULE: Record<EntityType, string> = {
  * (Capital hosts loans on Debt and cash entities on Cash). Single-type modules stay in
  * MODULE_PRIMARY_TYPE and ignore the tab. Populated per destination PR (IA decongestion Phase 4).
  */
-export const TAB_PRIMARY_TYPE: Readonly<Record<string, Readonly<Record<string, EntityType>>>> = {};
+export const TAB_PRIMARY_TYPE: Readonly<Record<string, Readonly<Record<string, EntityType>>>> = {
+  capital: { debt: 'loan', cash: 'cashEntity' },
+};
 
 /** The tab an entity's drawer route lands on when its home module is a multi-tab destination and
  *  the jump comes from ANOTHER module. Same-module jumps keep the user's current tab. */
-export const HOME_TAB: Readonly<Partial<Record<EntityType, string>>> = {};
+export const HOME_TAB: Readonly<Partial<Record<EntityType, string>>> = { loan: 'debt', cashEntity: 'cash' };
 
 /**
  * Legacy-module alias table (IA decongestion Phase 4a). A module id that was absorbed into a
@@ -62,6 +62,9 @@ export const LEGACY_ALIASES: Readonly<Record<string, LegacyAlias>> = {
   renewals: { destination: 'worklist', tab: 'renewals' },
   calibration: { destination: 'data', tab: 'calibration', innerViews: ['report', 'pending', 'log'] },
   documents: { destination: 'data', tab: 'documents', innerViews: ['search', 'corpus'] },
+  debt: { destination: 'capital', tab: 'debt', innerViews: ['positions', 'maturities', 'scorecard'] },
+  cash: { destination: 'capital', tab: 'cash' },
+  close: { destination: 'capital', tab: 'close' },
 };
 
 /** Tabs that LEFT a surviving module for another destination (Intel's data-ops tabs → Data).

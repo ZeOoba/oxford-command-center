@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseRoute, entityHref } from '../../src/brain/routing';
+import { parseRoute, entityHref, entityPath, TAB_PRIMARY_TYPE, HOME_TAB, HOME_MODULE } from '../../src/brain/routing';
 import type { EntityType } from '../../src/brain/ui-context';
 
 const IDS = ['capital', 'pipeline', 'portfolio', 'worklist', 'overview'];
@@ -39,5 +39,19 @@ describe('entityHref', () => {
   });
   it('ids are URL-encoded', () => {
     expect(entityHref({ type: 'property', id: 'a/b' }, '', 'overview', HOMES)).toBe('/portfolio/a%2Fb');
+  });
+});
+
+describe('real routing constants (Capital PR-B)', () => {
+  it('TAB_PRIMARY_TYPE / HOME_TAB / HOME_MODULE route loans and cash entities into Capital', () => {
+    expect(TAB_PRIMARY_TYPE.capital).toEqual({ debt: 'loan', cash: 'cashEntity' });
+    expect(HOME_TAB).toEqual({ loan: 'debt', cashEntity: 'cash' });
+    expect(HOME_MODULE.loan).toBe('capital');
+    expect(HOME_MODULE.cashEntity).toBe('capital');
+    expect(entityPath({ type: 'loan', id: 'l1' })).toBe('/capital/l1');
+  });
+  it('entityHref with the real constants lands cross-module jumps on the right Capital tab', () => {
+    expect(entityHref({ type: 'loan', id: 'l1' }, '?tab=alerts&view=x&scenario=Downside', 'worklist')).toBe('/capital/l1?scenario=Downside&tab=debt');
+    expect(entityHref({ type: 'cashEntity', id: 'a1' }, '', 'overview')).toBe('/capital/a1?tab=cash');
   });
 });
