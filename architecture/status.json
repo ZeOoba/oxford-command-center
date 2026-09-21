@@ -22,11 +22,11 @@
     "sweep-2026-09-21": {
           "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-09-21",
           "phase": "Weekly financial-code sweep 2026-09-21 fixes (wf_32e5a654-845): backup fail-closed + read-only open; refute gate covers config/*.json; off-fleet classifier task hidden window; readers/CLIs stop migrating the live warehouse (openWarehouseNoMigrate + pendingMigrations, call-site guard test); entity-xref market-label resolution; NEW migration 032 (lm_v_listing_metrics.cumulative_reduction_pct from the price-event chain); order-independent comp selection. Plan: docs/superpowers/plans/2026-09-21-weekly-sweep-fixes.md",
-          "status": "in_progress",
+          "status": "merged",
           "blocked_by": null,
           "review_needed": false,
-          "review_detail": "Architect-owned files touched with Gabriel's in-turn direction (2026-09-21): server/warehouse/db.ts (adds openWarehouseNoMigrate), server/warehouse/migrate.ts (adds pendingMigrations; runMigrations unchanged), server/warehouse/migrations/032_*.sql (view-only, additive; 029 NOT edited). No contract, package.json or server/index.ts change.",
-          "last_updated": "2026-09-21T18:34:16Z"
+          "review_detail": "MERGED via PR #347 (6f68fe4), #348 (82975d9) and #349 (refute rounds 3-5). Architect-owned files touched with Gabriel's in-turn direction (2026-09-21): server/warehouse/db.ts (openWarehouseNoMigrate), server/warehouse/migrate.ts (pendingMigrations), server/warehouse/migrations/032_lm_cumulative_reduction_event_chain.sql (views only; 029 not edited). Migration 032 applied to the live warehouse 2026-09-21 16:05 ET. Worktree removed post-merge.",
+          "last_updated": "2026-09-21T20:48:12Z"
     },
     "calendar-36mo": {
       "agent_role": "Engineering (Claude Code) — Gabriel-directed in-turn 2026-09-18",
