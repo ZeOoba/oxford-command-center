@@ -209,7 +209,10 @@ describe('selectComps — order independence', () => {
   });
 
   it('an unknown distance ranks after a known one', () => {
-    const known = cand({ listingId: 901, propertyId: 8003, askingNnnEq: 9, addressDisplay: 'K' });
+    // Scores must TIE so only cmpDistance can decide (the unknown-distance candidate gets 0.7 submarket
+    // credit = 21 of 30 points; the known one loses exactly 9 points via a 32-year age gap: 0.1 x 10).
+    // A test where the raw scores differ is decided by score and never reaches the distance comparator.
+    const known = cand({ listingId: 901, propertyId: 8003, askingNnnEq: 9, addressDisplay: 'K', yearBuilt: subject.yearBuilt! - 32 });
     const unknown = cand({ listingId: 2, propertyId: 8004, askingNnnEq: 9, addressDisplay: 'A', lat: null, lon: null, submarket: 'East' });
     const sel = selectComps(subject, null, [unknown, known], W, { ...T, similarityTopK: 2, similarityMinScore: 0 });
     expect(sel.comps[0]!.candidate.listingId).toBe(901);
@@ -232,16 +235,18 @@ describe('selectComps — order independence', () => {
     expect(above / total).toBeLessThan(0.7);
   });
 
-  it('cap-3 bound on the anomaly protection: dropped from 7 tied suites up, can hold a seat in a 4-6 suite building', () => {
-    const keeps30 = (n: number) => {
-      const rents = [...Array.from({ length: n - 1 }, () => 8), 30];
+  it('cap-3 bound on the anomaly protection is ASYMMETRIC (half-even picks 0,2,4 at n=6)', () => {
+    const keeps = (n: number, outlier: number) => {
+      const rents = [...Array.from({ length: n - 1 }, () => 8), outlier];
       const sisters = rents.map((r, i) => cand({ listingId: 600 + i, propertyId: 950 + n, askingNnnEq: r, addressDisplay: `Bound${n} Ave` }));
-      return selectComps(subject, null, sisters, W, NO_SPLIT_T).comps.some((c) => c.candidate.askingNnnEq === 30);
+      return selectComps(subject, null, sisters, W, NO_SPLIT_T).comps.some((c) => c.candidate.askingNnnEq === outlier);
     };
-    expect(keeps30(7)).toBe(false);
-    expect(keeps30(10)).toBe(false);
-    // documented behavior, not a guarantee: small buildings can still carry the outlier
-    expect([keeps30(4), keeps30(5), keeps30(6)].some(Boolean)).toBe(true);
+    // A HIGH outlier ($30) holds a seat in a 4-5 suite building and is dropped from 6 suites up.
+    expect([4, 5].every((n) => keeps(n, 30))).toBe(true);
+    expect([6, 7, 10].some((n) => keeps(n, 30))).toBe(false);
+    // A LOW outlier ($2) holds a seat in a 4-6 suite building and is dropped from 7 suites up.
+    expect([4, 5, 6].every((n) => keeps(n, 2))).toBe(true);
+    expect([7, 10].some((n) => keeps(n, 2))).toBe(false);
   });
 
   it('sister suites identical on every field are capped deterministically whatever the order', () => {
