@@ -94,8 +94,11 @@ export function InsuranceModule() {
 
       {/* Only the selected view is mounted — the Self-Insure & Bids view fires a fresh
           useInsuranceLoss() warehouse query on mount, so nothing fans out until it is chosen
-          (plan R9). Insurance is a tab of the Obligations destination, so its own switch is a
-          SegmentedControl on ?view= (R5: no nested tab strips). */}
+          (plan R9). Tradeoff: SegmentedControl is a react-aria RadioGroup where arrow-key roving
+          SELECTS, so arrowing across segments mounts each view in turn (the old
+          keyboardActivation="manual" guard is not preserved); mouse and deep-link use load only
+          the chosen view. Insurance is a tab of the Obligations destination, so its own switch
+          is a SegmentedControl on ?view= (R5: no nested tab strips). */}
       <SegmentedControl options={VIEWS} value={view} onChange={setView} aria-label="Insurance views" />
 
       {view === 'savings' && <SavingsBoard />}

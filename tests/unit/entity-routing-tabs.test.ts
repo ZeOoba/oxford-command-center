@@ -45,7 +45,7 @@ describe('entityHref', () => {
 describe('real routing constants (Capital PR-B)', () => {
   it('TAB_PRIMARY_TYPE / HOME_TAB / HOME_MODULE route loans and cash entities into Capital', () => {
     expect(TAB_PRIMARY_TYPE.capital).toEqual({ debt: 'loan', cash: 'cashEntity' });
-    expect(HOME_TAB).toMatchObject({ loan: 'debt', cashEntity: 'cash' });
+    expect(HOME_TAB).toEqual({ loan: 'debt', cashEntity: 'cash', insurance: 'insurance' });
     expect(HOME_MODULE.loan).toBe('capital');
     expect(HOME_MODULE.cashEntity).toBe('capital');
     expect(entityPath({ type: 'loan', id: 'l1' })).toBe('/capital/l1');
