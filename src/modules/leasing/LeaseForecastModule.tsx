@@ -30,10 +30,11 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { Button } from '@/primitives/Button';
 import { DataTable, type Column } from '@/primitives/DataTable';
-import { Tabs, TabPanel } from '@/primitives/Tabs';
+import { Tabs, TabPanel, type TabSpec } from '@/primitives/Tabs';
 import { SegmentedControl } from '@/primitives/SegmentedControl';
 import { useTabParam, CLEAR_VIEW } from '@/lib/useTabParam';
 import { ModuleLoading } from '@/shell/ModuleFallback';
+import { useTabBadges } from '@/shell/tab-badges';
 import { LEASING_TABS, LEASING_TAB_KEYS, LEASING_FORECAST_TABS, type LeasingTab } from './tabs';
 import type { RentScenario, RentForecastResult, LeasingVelocity, LeaseNarrativeResponse as LeaseNarrative } from '@contracts/lease-forecast';
 import { RentForecastResponse, LeaseNarrativeResponse } from '@contracts/lease-forecast';
@@ -82,7 +83,6 @@ async function fetchRentForecast(
 
 // ── Tabs ───────────────────────────────────────────────────────────────────────
 
-const TAB_SPECS = LEASING_TABS.map(({ id, label }) => ({ id, label }));
 const LeasesModule = lazy(() => import('../leases/LeasesModule').then((m) => ({ default: m.LeasesModule })));
 const TenantsModule = lazy(() => import('../tenants/TenantsModule').then((m) => ({ default: m.TenantsModule })));
 
@@ -278,6 +278,13 @@ export function LeaseForecastModule() {
   const { data, error } = useLeaseForecast();
   const { data: snapshotData } = useSnapshot();
   const [tab, setTab] = useTabParam<LeasingTab>(LEASING_TAB_KEYS, 'rollover', 'tab', CLEAR_VIEW);
+  // R4: severity badges (Rent roll = overdue critical dates). LEASING_TABS is a module-level constant, so the
+  // badge hooks run in a stable order. The badge lives on the destination tab, not the inner SegmentedControl.
+  const badges = useTabBadges(LEASING_TABS);
+  const tabSpecs: TabSpec[] = LEASING_TABS.map((t, i) => {
+    const badge = badges[i];
+    return badge ? { id: t.id, label: t.label, badge } : { id: t.id, label: t.label };
+  });
 
   const [scenario, setScenario] = useState<RentScenario>('renew_at_current');
   const [vacancyPct, setVacancyPct] = useState(0.1);
@@ -351,7 +358,7 @@ export function LeaseForecastModule() {
       {/* keyboardActivation="manual": the Rent roll / Tenants panels mount their own queries, so arrowing
           across the strip must not fire them. The forecast + narrative mutations only fire on an explicit
           button press, never on tab selection. */}
-      <Tabs tabs={TAB_SPECS} selectedKey={tab} onSelectionChange={(k) => setTab(k as LeasingTab)} keyboardActivation="manual" aria-label="Leasing views">
+      <Tabs tabs={tabSpecs} selectedKey={tab} onSelectionChange={(k) => setTab(k as LeasingTab)} keyboardActivation="manual" aria-label="Leasing views">
       <TabPanel id="forecast">
       {forecastOffline ? offlineCard : (
         <div className="flex flex-col gap-4">

@@ -10,7 +10,7 @@ vi.mock('../../src/brain/ui-context', () => ({
 }));
 vi.mock('../../src/data/queries', () => ({ useSnapshot: () => ({ data: undefined }) }));
 vi.mock('../../src/data/brain-context', () => ({ useBrain: () => ({ refresh: vi.fn() }) }));
-vi.mock('../../src/shell/tab-badges', () => ({ useAlertsTabBadge: () => undefined }));
+vi.mock('../../src/shell/tab-badges', () => ({ useAlertsTabBadge: () => undefined, useCriticalDatesTabBadge: () => undefined }));
 
 import { CommandPalette } from '../../src/brain/CommandPalette';
 

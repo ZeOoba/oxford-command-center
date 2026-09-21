@@ -10,14 +10,21 @@
 // The forecast + snapshot queries are seeded into the QueryClient cache (network-free) except in the
 // Rule-G cases, which drive the REAL useLeaseForecast hook into WarehouseUnavailableError via a 503 fetch.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { LeaseForecastModule } from '../../src/modules/leasing/LeaseForecastModule';
 import { LEASING_KEYS } from '../../src/modules/leasing/hooks';
 import { SNAPSHOT_KEY } from '../../src/data/queries';
 import type { LeaseForecastResponse } from '../../src/contracts/lease-forecast';
+import type * as Queries from '../../src/data/queries';
 
+// The Rent roll tab badge (R4) reads useAnalytics; the seeded snapshot here is a stub too thin for buildAnalytics.
+// The badge itself is covered in lease-forecast-module.test.tsx.
+vi.mock('../../src/data/queries', async (importOriginal) => {
+  const actual = await importOriginal<typeof Queries>();
+  return { ...actual, useAnalytics: () => ({ isLoading: false, isError: false, analytics: { criticalDates: [] } }) };
+});
 vi.mock('../../src/modules/leases/LeasesModule', () => ({ LeasesModule: () => <div>leases-panel</div> }));
 vi.mock('../../src/modules/tenants/TenantsModule', () => ({ TenantsModule: () => <div>tenants-panel</div> }));
 
@@ -43,14 +50,17 @@ function renderModule(entry = '/leasing', { seeded = true }: { seeded?: boolean 
     qc.setQueryData(LEASING_KEYS.forecast, FORECAST);
     qc.setQueryData(SNAPSHOT_KEY, { snapshot: { marketRents: { 'rarig-ave': 8.5 } } });
   }
-  return render(
-    <MemoryRouter initialEntries={[entry]}>
-      <QueryClientProvider client={qc}>
-        <LeaseForecastModule />
-        <LocationProbe />
-      </QueryClientProvider>
-    </MemoryRouter>,
-  );
+  return {
+    qc,
+    ...render(
+      <MemoryRouter initialEntries={[entry]}>
+        <QueryClientProvider client={qc}>
+          <LeaseForecastModule />
+          <LocationProbe />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    ),
+  };
 }
 
 const clickTab = (name: string) => fireEvent.click(screen.getByRole('tab', { name }));
@@ -170,10 +180,10 @@ describe('Leasing destination — Rule G: a 503 forecast route must not blank Re
 
   it('a cold deep link straight onto Rent roll never shows the forecast offline gate', async () => {
     stub503();
-    renderModule('/leasing?tab=rent-roll', { seeded: false });
+    const { qc } = renderModule('/leasing?tab=rent-roll', { seeded: false });
     expect(await screen.findByText('leases-panel')).toBeTruthy();
-    // give the failed forecast query time to settle, then confirm the gate never appeared
-    await new Promise((r) => setTimeout(r, 1500));
+    // wait for the failed forecast query to actually settle (no fixed sleep), then confirm the gate never appeared
+    await waitFor(() => expect(qc.getQueryState(LEASING_KEYS.forecast)?.status).toBe('error'), { timeout: 4000 });
     expect(screen.getByText('leases-panel')).toBeTruthy();
     expect(screen.queryByText('Leasing Intelligence Unavailable')).toBeNull();
   }, 10_000);
