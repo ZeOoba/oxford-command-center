@@ -125,16 +125,62 @@ describe('selectComps — order independence', () => {
     expect(sel.comps).toHaveLength(15); // 20 tie on the data key; K = 15 seats, none decided by row order
   });
 
-  it('resolves a boundary tie by proximity to the tied group median, not toward cheap comps', () => {
+  it('keeps the tied group range and median: seats are spread over rent ranks, not the cheapest or the middle', () => {
     const rents = selectComps(subject, null, tied(), W, NO_SPLIT_T)
       .comps.map((c) => c.candidate.askingNnnEq)
       .sort((a, b) => a - b);
-    // Group rents 5..24 (median 14.5): the 15 nearest are 7..21, so the kept median stays within half a
-    // dollar of the group's. A rent-ascending key would have kept 5..19 (median 12).
-    const keptMedian = rents[Math.floor(rents.length / 2)]!;
-    expect(Math.abs(keptMedian - 14.5)).toBeLessThanOrEqual(0.5);
-    expect(rents[0]).toBeGreaterThan(5);
-    expect(Math.max(...rents)).toBeGreaterThan(19);
+    // Group rents 5..24 (median 14.5). A rent-ascending key would keep 5..19 (median 12); median-proximity
+    // would keep 7..21 and compress the spread. Rank-stratified keeps both ends.
+    expect(rents[0]).toBe(5);
+    expect(Math.max(...rents)).toBe(24);
+    expect(Math.abs(rents[Math.floor(rents.length / 2)]! - 14.5)).toBeLessThanOrEqual(1);
+  });
+
+  it('a bimodal tied group keeps BOTH modes instead of letting one street name win every seat', () => {
+    // 5 @ $8 and 5 @ $12, all tied on the data key; 4 seats at the cut. Median-proximity returned
+    // [8,8,8,8] (address ordering decided the equidistant pairs).
+    const group = [
+      ...Array.from({ length: 5 }, (_, i) => cand({ listingId: 300 + i, propertyId: 6000 + i, askingNnnEq: 8, addressDisplay: `A${i} Low St` })),
+      ...Array.from({ length: 5 }, (_, i) => cand({ listingId: 310 + i, propertyId: 6100 + i, askingNnnEq: 12, addressDisplay: `Z${i} High St` })),
+    ];
+    const rents = selectComps(subject, null, group, W, { ...T, similarityTopK: 4 }).comps
+      .map((c) => c.candidate.askingNnnEq)
+      .sort((a, b) => a - b);
+    expect(rents).toEqual([8, 8, 12, 12]);
+  });
+
+  it('a plurality does not win every seat (6 @ $12 + 4 @ $8, 4 seats)', () => {
+    const group = [
+      ...Array.from({ length: 6 }, (_, i) => cand({ listingId: 320 + i, propertyId: 6200 + i, askingNnnEq: 12, addressDisplay: `H${i} St` })),
+      ...Array.from({ length: 4 }, (_, i) => cand({ listingId: 330 + i, propertyId: 6300 + i, askingNnnEq: 8, addressDisplay: `L${i} St` })),
+    ];
+    const rents = selectComps(subject, null, group, W, { ...T, similarityTopK: 4 }).comps
+      .map((c) => c.candidate.askingNnnEq)
+      .sort((a, b) => a - b);
+    expect(rents).toEqual([8, 8, 12, 12]);
+  });
+
+  it('the per-property cap samples identical sister suites across the rent range, not the cheapest', () => {
+    const sisters = Array.from({ length: 6 }, (_, i) =>
+      cand({ listingId: 700 + i, propertyId: 900, askingNnnEq: 4 + i, addressDisplay: 'One Building Ave' }),
+    );
+    const rents = selectComps(subject, null, sisters, W, NO_SPLIT_T).comps
+      .map((c) => c.candidate.askingNnnEq)
+      .sort((a, b) => a - b);
+    expect(rents).toHaveLength(3);
+    expect(rents[0]).toBe(4);
+    expect(rents[2]).toBe(9); // the old rent-ascending tie-break kept [4, 5, 6]
+  });
+
+  it('breaks a full tie on the remaining DATA fields, not on listingId (docks 2 vs 3, everything else equal)', () => {
+    const mk = (listingId: number, docks: number): CompCandidate =>
+      cand({ listingId, propertyId: 5000 + listingId, askingNnnEq: 9, addressDisplay: 'Same Ave', docks });
+    for (const order of [[2, 3], [3, 2]] as const) {
+      // reissue listingIds in arrival order, as a different export sort would
+      const cs = order.map((docks, i) => mk(10 + i, docks));
+      const sel = selectComps(subject, null, cs, W, { ...T, similarityTopK: 1, similarityMinScore: 0 });
+      expect(sel.comps[0]!.candidate.docks).toBe(2); // lower docks first, regardless of listingId
+    }
   });
 
   it('resolveComparables returns an identical median for every permutation (the reviewer repro)', () => {
@@ -185,8 +231,11 @@ describe('resolveComparables', () => {
   it('uses similarity when sufficient, with HIGH confidence at 15 comps', () => {
     const comps = Array.from({ length: 16 }, (_, i) => cand({ askingNnnEq: (80 + i) / 10 }));
     const r = resolveComparables(subject, null, comps, cell({}), W, T);
-    expect(r).toMatchObject({ basis: 'similarity', n: 15, confidence: 'HIGH', low: 8, high: 9.4 });
-    expect(r.median).toBeCloseTo(8.7);
+    // 16 candidates all tie on the data key, K = 15: the cut samples evenly spaced rent ranks, so the
+    // group's full range survives (this used to drop the highest LISTING ID, i.e. 9.5 and the top of the
+    // range, purely because of row order) and one interior comp (8.7) is the one left out.
+    expect(r).toMatchObject({ basis: 'similarity', n: 15, confidence: 'HIGH', low: 8, high: 9.5 });
+    expect(r.median).toBeCloseTo(8.8);
   });
   it('MEDIUM with 8-14 similarity comps; HIGH blocked by low coverage', () => {
     expect(resolveComparables(subject, null, Array.from({ length: 9 }, () => cand()), cell({}), W, T).confidence).toBe('MEDIUM');
