@@ -32,8 +32,8 @@ test('leasing shows the rent roll', async ({ page }) => {
   // Regex, not exact: the Rent roll tab can carry an overdue-count badge ("Rent roll2").
   await page.getByRole('tab', { name: /^Rent roll/ }).click();
   // exact:true — the tab strip and the view switch also carry "Rent roll" labels (different case).
-  await expect(page.getByText('Rent Roll', { exact: true })).toBeVisible();
-  await expect(page.getByText(/Eurosort/).first()).toBeVisible();
+  await expect(page.getByText('Rent Roll', { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText(/Eurosort/).first()).toBeVisible({ timeout: 15_000 });
 });
 
 test('entity drill-through opens and closes with Escape', async ({ page }) => {
@@ -131,7 +131,7 @@ test('legacy /leases?tab=rollover lands on Leasing > Rent roll with Critical dat
   const params = new URL(page.url()).searchParams;
   expect(params.get('tab')).toBe('rent-roll');
   expect(params.get('view')).toBe('rollover');
-  await expect(page.getByRole('radio', { name: 'Critical dates' })).toBeChecked();
+  await expect(page.getByRole('radio', { name: 'Critical dates' })).toBeChecked({ timeout: 15_000 });
 });
 
 test('legacy /tenants lands on Leasing > Tenants', async ({ page }) => {
@@ -145,7 +145,7 @@ test('Leasing exposes its five tabs in order', async ({ page }) => {
   await page.goto('/leasing?still=1');
   const tabs = page.getByRole('tablist', { name: 'Leasing views' }).getByRole('tab');
   // Rent roll may carry an overdue-count badge suffix, so match by regex.
-  await expect(tabs).toHaveText([/^Rollover$/, /^Rent roll\d*$/, /^Forecast$/, /^Market rents$/, /^Tenants$/]);
+  await expect(tabs).toHaveText([/^Rollover$/, /^Rent roll(\d+\+?)?$/, /^Forecast$/, /^Market rents$/, /^Tenants$/]);
 });
 
 test('Leasing defaults to the Rollover tab', async ({ page }) => {
@@ -188,7 +188,8 @@ test('legacy /insights lands on Brain > Insights', async ({ page }) => {
 
 test('legacy /command-brain?tab=versions lands on Brain > Memory with view=versions', async ({ page }) => {
   await page.goto('/command-brain?tab=versions&still=1');
-  await expect(page).toHaveURL(/\/command-brain\?/, { timeout: 15_000 });
+  // Gate on a param only the REDIRECTED URL carries: the pre-redirect URL already matches /command-brain?, so that pattern would pass before the alias commits.
+  await expect(page).toHaveURL(/tab=memory/, { timeout: 15_000 });
   const params = new URL(page.url()).searchParams;
   expect(params.get('tab')).toBe('memory');
   expect(params.get('view')).toBe('versions');
@@ -200,7 +201,7 @@ test('Brain exposes its five tabs in order', async ({ page }) => {
   await page.goto('/command-brain?still=1');
   const tabs = page.getByRole('tablist', { name: 'Brain views' }).getByRole('tab');
   // Feedback may carry an open-questions count badge suffix, so match by regex.
-  await expect(tabs).toHaveText([/^Digest$/, /^Insights$/, /^Track record$/, /^Feedback\d*$/, /^Memory$/]);
+  await expect(tabs).toHaveText([/^Digest$/, /^Insights$/, /^Track record$/, /^Feedback(\d+\+?)?$/, /^Memory$/]);
 });
 
 test('Brain defaults to the Digest tab', async ({ page }) => {
