@@ -131,6 +131,7 @@ interface LmPropertyRow {
   market_id: string;
   address_norm: string;
   city_norm: string;
+  state: string | null;
   ora_property_key: string | null;
   owner_type: string;
 }
@@ -178,11 +179,38 @@ const marketSlug = (label: string): string =>
  * eastern-shore-md) resolves to none, which reports as unmatched — the safe direction.
  */
 export function marketIdCandidates(label: string | null): string[] {
-  const trimmed = (label ?? '').trim();
-  if (trimmed === '') return [''];
-  const candidates = [marketSlug(trimmed), marketSlug(trimmed.replace(TRAILING_STATE, ''))];
-  return [...new Set(candidates.filter((c) => c !== ''))];
+  return marketCandidates(label).map((c) => c.id);
 }
+
+interface MarketCandidate {
+  id: string;
+  /** Set when this id was reached by DROPPING a trailing state token ('oh' for 'Columbus OH'). */
+  state: string | null;
+}
+
+function marketCandidates(label: string | null): MarketCandidate[] {
+  const trimmed = (label ?? '').trim();
+  if (trimmed === '') return [{ id: '', state: null }];
+  const full = marketSlug(trimmed);
+  const stateMatch = TRAILING_STATE.exec(trimmed);
+  const stripped = marketSlug(trimmed.replace(TRAILING_STATE, ''));
+  const out: MarketCandidate[] = [];
+  if (full !== '') out.push({ id: full, state: null });
+  if (stripped !== '' && stripped !== full) {
+    out.push({ id: stripped, state: stateMatch ? marketSlug(stateMatch[0]) : null });
+  }
+  return out;
+}
+
+/**
+ * Dropping the state makes 'Columbus OH' and 'Columbus IN' (or 'Richmond VA' / 'Richmond IN') collapse
+ * onto ONE lease-market id, and the address + city guards cannot tell them apart. So a property indexed
+ * under a state-stripped id is only a candidate for a listing whose own `lm_property.state` equals the
+ * state that was dropped; a listing with no state cannot confirm it and stays unmatched -- the safe
+ * direction ("a wrong auto-link is worse than an unmatched row").
+ */
+const stateMatches = (lmState: string | null, required: string | null): boolean =>
+  required === null || (lmState !== null && lmState.trim().toLowerCase() === required);
 
 /** BOTH sides of every comparison go through this. Building the forward index from splitAddress
  *  output while counting the reverse direction on raw address_norm let case/whitespace variants
@@ -203,16 +231,16 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
   // Index warehouse properties by market + normalized address, using the lease-market module's
   // OWN normalizer on both sides so the two can never drift apart (see the header note).
   const skipped: string[] = [];
-  const byAddress = new Map<string, string[]>();
+  const byAddress = new Map<string, Array<{ id: string; state: string | null }>>();
   const properties = db
     .prepare('SELECT id, market, address FROM property_master WHERE address IS NOT NULL')
     .all() as Array<{ id: string; market: string | null; address: string }>;
   for (const p of properties) {
     const { addressNorm } = splitAddress(p.address, null);
     if (!addressNorm) continue;
-    for (const marketId of marketIdCandidates(p.market)) {
+    for (const { id: marketId, state } of marketCandidates(p.market)) {
       const key = addressKey(marketId, addressNorm);
-      byAddress.set(key, [...(byAddress.get(key) ?? []), p.id]);
+      byAddress.set(key, [...(byAddress.get(key) ?? []), { id: p.id, state }]);
     }
   }
 
@@ -230,7 +258,7 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
 
   const lmRows = db
     .prepare(
-      'SELECT id, market_id, address_norm, city_norm, ora_property_key, owner_type FROM lm_property',
+      'SELECT id, market_id, address_norm, city_norm, state, ora_property_key, owner_type FROM lm_property',
     )
     .all() as LmPropertyRow[];
 
@@ -246,7 +274,11 @@ export function seedFromLeaseMarket(db: WarehouseDb): SeedResult {
 
   for (const r of lmRows) {
     const key = addressKey(marketKey(r.market_id), r.address_norm);
-    const candidates = byAddress.get(key) ?? [];
+    const candidates = [
+      ...new Set(
+        (byAddress.get(key) ?? []).filter((e) => stateMatches(r.state, e.state)).map((e) => e.id),
+      ),
+    ];
     const base = {
       lmPropertyId: r.id,
       marketId: r.market_id,
