@@ -125,14 +125,15 @@ describe('selectComps — order independence', () => {
     expect(sel.comps).toHaveLength(15); // 20 tie on the data key; K = 15 seats, none decided by row order
   });
 
-  it('keeps the tied group range and median: seats are spread over rent ranks, not the cheapest or the middle', () => {
+  it('keeps the tied group median and spread: seats are stratum midpoints over rent ranks, not the cheapest', () => {
     const rents = selectComps(subject, null, tied(), W, NO_SPLIT_T)
       .comps.map((c) => c.candidate.askingNnnEq)
       .sort((a, b) => a - b);
     // Group rents 5..24 (median 14.5). A rent-ascending key would keep 5..19 (median 12); median-proximity
-    // would keep 7..21 and compress the spread. Rank-stratified keeps both ends.
-    expect(rents[0]).toBe(5);
-    expect(Math.max(...rents)).toBe(24);
+    // would keep 7..21 and compress the spread. Stratum midpoints keep the median and the spread without
+    // pinning the extremes.
+    expect(rents[0]).toBeLessThanOrEqual(7);
+    expect(Math.max(...rents)).toBeGreaterThanOrEqual(22);
     expect(Math.abs(rents[Math.floor(rents.length / 2)]! - 14.5)).toBeLessThanOrEqual(1);
   });
 
@@ -167,20 +168,27 @@ describe('selectComps — order independence', () => {
     const rents = selectComps(subject, null, sisters, W, NO_SPLIT_T).comps
       .map((c) => c.candidate.askingNnnEq)
       .sort((a, b) => a - b);
-    expect(rents).toHaveLength(3);
-    expect(rents[0]).toBe(4);
-    expect(rents[2]).toBe(9); // the old rent-ascending tie-break kept [4, 5, 6]
+    expect(rents).toEqual([4, 6, 8]); // stratum midpoints, half-even at the exact .5s; the old rent-ascending tie-break kept [4, 5, 6]
   });
 
-  it('breaks a full tie on the remaining DATA fields, not on listingId (docks 2 vs 3, everything else equal)', () => {
+  it('an anomalous sister-suite ask is not guaranteed a seat in a 10-suite building (reviewer: [8 x9, 30] kept [8, 8, 30])', () => {
+    const sisters = [...Array.from({ length: 9 }, () => 8), 30].map((r, i) =>
+      cand({ listingId: 800 + i, propertyId: 901, askingNnnEq: r, addressDisplay: 'Anomaly Ave' }),
+    );
+    const rents = selectComps(subject, null, sisters, W, NO_SPLIT_T).comps.map((c) => c.candidate.askingNnnEq);
+    expect(rents).toEqual([8, 8, 8]);
+  });
+
+  it('resolves a full tie on the remaining DATA fields (docks 2 vs 3), never on arrival order', () => {
     const mk = (listingId: number, docks: number): CompCandidate =>
       cand({ listingId, propertyId: 5000 + listingId, askingNnnEq: 9, addressDisplay: 'Same Ave', docks });
-    for (const order of [[2, 3], [3, 2]] as const) {
+    const chosen = ([[2, 3], [3, 2]] as const).map((order) => {
       // reissue listingIds in arrival order, as a different export sort would
       const cs = order.map((docks, i) => mk(10 + i, docks));
-      const sel = selectComps(subject, null, cs, W, { ...T, similarityTopK: 1, similarityMinScore: 0 });
-      expect(sel.comps[0]!.candidate.docks).toBe(2); // lower docks first, regardless of listingId
-    }
+      return selectComps(subject, null, cs, W, { ...T, similarityTopK: 1, similarityMinScore: 0 }).comps[0]!.candidate.docks;
+    });
+    expect(chosen[0]).toBe(chosen[1]);
+    expect(chosen[0]).toBe(2); // lower docks first: the direction is pinned, not just determinism
   });
 
   it('resolveComparables returns an identical median for every permutation (the reviewer repro)', () => {
@@ -205,6 +213,35 @@ describe('selectComps — order independence', () => {
     const unknown = cand({ listingId: 2, propertyId: 8004, askingNnnEq: 9, addressDisplay: 'A', lat: null, lon: null, submarket: 'East' });
     const sel = selectComps(subject, null, [unknown, known], W, { ...T, similarityTopK: 2, similarityMinScore: 0 });
     expect(sel.comps[0]!.candidate.listingId).toBe(901);
+  });
+
+  it('a single seat over an even-sized tied group does not always take the upper middle (half-even rounding)', () => {
+    let above = 0;
+    let total = 0;
+    for (let n = 2; n <= 40; n += 2) {
+      const group = Array.from({ length: n }, (_, i) =>
+        cand({ listingId: 1000 + i, propertyId: 9100 + i, askingNnnEq: 5 + i, addressDisplay: `G${i} Rd` }),
+      );
+      const rent = selectComps(subject, null, group, W, { ...T, similarityTopK: 1 }).comps[0]!.candidate.askingNnnEq;
+      const lowerMiddle = 5 + n / 2 - 1;
+      total += 1;
+      if (rent > lowerMiddle) above += 1;
+    }
+    // half-up rounding gave 20/20; half-even alternates
+    expect(above / total).toBeGreaterThan(0.3);
+    expect(above / total).toBeLessThan(0.7);
+  });
+
+  it('cap-3 bound on the anomaly protection: dropped from 7 tied suites up, can hold a seat in a 4-6 suite building', () => {
+    const keeps30 = (n: number) => {
+      const rents = [...Array.from({ length: n - 1 }, () => 8), 30];
+      const sisters = rents.map((r, i) => cand({ listingId: 600 + i, propertyId: 950 + n, askingNnnEq: r, addressDisplay: `Bound${n} Ave` }));
+      return selectComps(subject, null, sisters, W, NO_SPLIT_T).comps.some((c) => c.candidate.askingNnnEq === 30);
+    };
+    expect(keeps30(7)).toBe(false);
+    expect(keeps30(10)).toBe(false);
+    // documented behavior, not a guarantee: small buildings can still carry the outlier
+    expect([keeps30(4), keeps30(5), keeps30(6)].some(Boolean)).toBe(true);
   });
 
   it('sister suites identical on every field are capped deterministically whatever the order', () => {

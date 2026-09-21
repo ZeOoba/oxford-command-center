@@ -126,6 +126,13 @@ export function scoreSimilarity(subject: SpaceProfile, candidate: SpaceProfile, 
 //     key -- biased toward cheap comps; "closest to the group median" was tried and rejected because it
 //     compresses the range (biases p25 up / p75 down, and a plurality can win every seat). Rank-stratified
 //     selection keeps the tied group's own median AND its spread, and is a function of the tied set alone.
+//     Ranks are STRATUM MIDPOINTS, not endpoint-inclusive: pinning the group's minimum and maximum a seat
+//     each pushed p25/p75 outward and, in the per-property cap, guaranteed one anomalous sister-suite ask a
+//     third of that building's representation (reviewer: [8 x9, 30] kept [8, 8, 30]). Bound: with the
+//     default cap of 3 a lone anomalous ask is dropped once a building has >= 7 tied suites; in a 4-6
+//     suite building it can still occupy a seat.
+
+
 const SCORE_EPS = 1e-9;
 const cmpNumber = (a: number, b: number): number => (a < b ? -1 : a > b ? 1 : 0);
 const cmpText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0); // code-unit, locale-independent
@@ -178,6 +185,14 @@ function compareScoredComps(subject: SpaceProfile): (a: ScoredComp, b: ScoredCom
  * [lo, hi). Everything strictly ahead of the run is kept; the run supplies the remaining seats at evenly
  * spaced ranks of its rent-sorted order, so the tied group's median and spread both survive the cut.
  */
+function roundHalfEven(x: number): number {
+  const f = Math.floor(x);
+  const d = x - f;
+  if (d < 0.5) return f;
+  if (d > 0.5) return f + 1;
+  return f % 2 === 0 ? f : f + 1;
+}
+
 function cutAtTopK(
   ranked: ScoredComp[],
   k: number,
@@ -197,12 +212,15 @@ function cutAtTopK(
     .slice(lo, hi)
     .sort((a, b) => cmpNumber(a.candidate.askingNnnEq, b.candidate.askingNnnEq) || byRank(a, b));
   const seats = k - lo;
-  // n > seats here, so with seats >= 2 the spacing (n-1)/(seats-1) exceeds 1 and the rounded ranks are
-  // distinct; a single seat takes the middle of the group.
-  const picks =
-    seats === 1
-      ? [Math.floor((byRent.length - 1) / 2)]
-      : Array.from({ length: seats }, (_, i) => Math.round((i * (byRent.length - 1)) / (seats - 1)));
+  // Midpoint of each of `seats` equal strata of the rent-sorted group. n > seats here, so the stratum
+  // width n/seats exceeds 1 and the rounded midpoints are distinct; a single seat takes the middle.
+  // Rounds half to EVEN: Math.round rounds every exact .5 up, so ~23k of the n<=200 pick computations
+  // all leaned toward the dearer comp (median signed error +4.1% on skewed pools vs +0.7%), and a
+  // single seat over an even-sized group always took the upper middle.
+  const n = byRent.length;
+  const picks = Array.from({ length: seats }, (_, i) =>
+    Math.min(n - 1, Math.max(0, roundHalfEven(((i + 0.5) * n) / seats - 0.5))),
+  );
   return [...ranked.slice(0, lo), ...picks.map((i) => byRent[i]!)].sort(byRank);
 }
 

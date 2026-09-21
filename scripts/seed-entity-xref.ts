@@ -19,7 +19,8 @@ loadEnvFile();
 
 import { join } from 'node:path';
 import { openWarehouseNoMigrate } from '../server/warehouse/db';
-import { seedFromLeaseMarket, unmatchedReport } from '../server/warehouse/entity-xref';
+import { marketStatesFromConfig, seedFromLeaseMarket, unmatchedReport } from '../server/warehouse/entity-xref';
+import { loadLeaseMarketConfig } from '../server/warehouse/lease-market/config';
 
 const dbPath =
   process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
@@ -34,7 +35,7 @@ function main(): void {
     // thing in a transaction and roll it back unless --write was passed.
     let result = { linked: 0, proposed: [] as ReturnType<typeof seedFromLeaseMarket>['proposed'], skipped: [] as string[] };
     const run = db.transaction(() => {
-      result = seedFromLeaseMarket(db);
+      result = seedFromLeaseMarket(db, { marketStates: marketStatesFromConfig(loadLeaseMarketConfig().markets) });
       if (!write) throw new Error('__DRY_RUN__');
     });
     try {
