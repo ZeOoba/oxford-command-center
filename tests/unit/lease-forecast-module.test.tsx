@@ -1,9 +1,11 @@
 // tests/unit/lease-forecast-module.test.tsx
 //
-// Render coverage for the tabbed Leasing (LeaseForecastModule) — IA decongestion Phase 2.
-// Layout under test: expiry-bucket cards ABOVE the strip (R2); Rollover (velocity) · Forecast
-// (rent-forecast scenario + AI narrative beneath it) · Market rents (editor). The forecast query and
-// the snapshot are seeded straight into the QueryClient cache so the render is network-free.
+// Render coverage for the forecast-backed tabs of the Leasing destination (LeaseForecastModule) — IA
+// decongestion Phase 2, extended in Phase 4d. Layout under test: expiry-bucket cards ABOVE the strip
+// (R2, forecast-backed tabs only); Rollover (velocity) · Forecast (rent-forecast scenario + AI narrative
+// beneath it) · Market rents (editor). The destination strip / absorbed panels / Rule G live in
+// leasing-destination.test.tsx. The forecast query and the snapshot are seeded straight into the
+// QueryClient cache so the render is network-free.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -61,7 +63,7 @@ describe('LeaseForecastModule — tab structure', () => {
     expect(screen.queryByLabelText('Property key for market rent')).toBeNull();
   });
 
-  it('keeps the expiry-bucket cards above the strip on every tab (R2)', () => {
+  it('keeps the expiry-bucket cards above the strip on the forecast-backed tabs (R2)', () => {
     renderModule();
     expect(screen.getByText('0–6 Months')).toBeTruthy();
     expect(screen.getByText('7')).toBeTruthy();
@@ -98,9 +100,9 @@ describe('LeaseForecastModule — tab structure', () => {
 
   it('shows no count badge on any tab (no severity-bearing item lives off the default tab)', () => {
     renderModule();
-    expect(screen.getByRole('tab', { name: 'Rollover' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Forecast' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Market rents' })).toBeTruthy();
+    for (const name of ['Rollover', 'Rent roll', 'Forecast', 'Market rents', 'Tenants']) {
+      expect(screen.getByRole('tab', { name }).textContent).toBe(name);
+    }
   });
 });
 
