@@ -224,14 +224,42 @@ describe('seedFromLeaseMarket — production market labels (weekly sweep 2026-09
     expect(result.proposed[0]!.reason).toBe('no_address_match');
   });
 
-  it("a non-two-letter lm state ('Ohio', a zip) counts as unknown and falls back to the config state instead of refusing", () => {
-    const marketStates = marketStatesFromConfig([{ id: 'columbus', costarMarketNames: ['Columbus, OH'] }]);
-    for (const [i, bad] of ['Ohio', '43219', 'OH-Franklin'].entries()) {
+  it("a state written as a full name is read ('Ohio' -> oh) and links with or without a config state", () => {
+    for (const marketStates of [undefined, marketStatesFromConfig([{ id: 'columbus', costarMarketNames: ['Columbus, OH'] }])]) {
       const db = makeDb();
       addProperty(db, '1100-rarig-ave-columbus-oh', '1100 Rarig Ave', 'Columbus OH');
-      addLmProperty(db, 40 + i, 'columbus', '1100 RARIG AVE', 'Rarig', 'unknown', '', bad);
+      addLmProperty(db, 40, 'columbus', '1100 RARIG AVE', 'Rarig', 'unknown', '', 'Ohio');
       expect(seedFromLeaseMarket(db, { marketStates }).linked).toBe(1);
     }
+  });
+
+  it("an unreadable stated state (a zip, 'OH-Franklin') is NOT overridden by config: it is surfaced as state_unverifiable", () => {
+    const marketStates = marketStatesFromConfig([{ id: 'columbus', costarMarketNames: ['Columbus, OH'] }]);
+    for (const [i, bad] of ['43219', 'OH-Franklin', 'Ohioo'].entries()) {
+      const db = makeDb();
+      addProperty(db, '1100-rarig-ave-columbus-oh', '1100 Rarig Ave', 'Columbus OH');
+      addLmProperty(db, 41 + i, 'columbus', '1100 RARIG AVE', 'Rarig', 'unknown', '', bad);
+      const result = seedFromLeaseMarket(db, { marketStates });
+      expect(result.linked).toBe(0);
+      expect(result.proposed[0]!.reason).toBe('state_unverifiable');
+    }
+  });
+
+  it("a DIFFERENT state stated in any form never falls back to the config's Ohio (reviewer: 'Indiana' linked the Ohio twin)", () => {
+    const marketStates = marketStatesFromConfig([{ id: 'columbus', costarMarketNames: ['Columbus, OH'] }]);
+    const link = (state: string) => {
+      const db = makeDb();
+      addProperty(db, '1100-rarig-ave-columbus-oh', '1100 Rarig Ave', 'Columbus OH');
+      addProperty(db, '1100-rarig-ave-columbus-in', '1100 Rarig Ave', 'Columbus IN');
+      addLmProperty(db, 60, 'columbus', '1100 RARIG AVE', 'Rarig', 'unknown', '', state);
+      seedFromLeaseMarket(db, { marketStates });
+      return canonicalIdFor(db, 'lease_market', 'property', '60');
+    };
+    expect(link('Indiana')).toBe('1100-rarig-ave-columbus-in');
+    expect(link('IN')).toBe('1100-rarig-ave-columbus-in');
+    expect(link('Columbus, IN')).toBe('1100-rarig-ave-columbus-in');
+    expect(link('Kentucky')).toBeNull(); // neither twin is in KY: refused, and NOT linked to Ohio
+    expect(link('Ohio')).toBe('1100-rarig-ave-columbus-oh');
   });
 
   it("a two-letter state with stray case/whitespace still matches ('  oh ')", () => {

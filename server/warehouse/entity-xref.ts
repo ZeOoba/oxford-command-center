@@ -213,13 +213,81 @@ function marketCandidates(label: string | null): MarketCandidate[] {
 const stateMatches = (lmState: string | null, required: string | null): boolean =>
   required === null || (lmState !== null && lmState === required);
 
-/** A listing's own state, but only when it is a two-letter code ('OH', ' oh '). 'Ohio', a zip, or
- *  'OH-Franklin' would otherwise REFUSE a valid match while the address agreed; they count as unknown
- *  and fall back to the configured market's state instead. */
-const twoLetterState = (s: string | null): string | null => {
-  const t = (s ?? '').trim();
-  return /^[A-Za-z]{2}$/.test(t) ? t.toLowerCase() : null;
+const STATE_CODE_BY_NAME: Readonly<Record<string, string>> = {
+  'alabama': 'al',
+  'alaska': 'ak',
+  'arizona': 'az',
+  'arkansas': 'ar',
+  'california': 'ca',
+  'colorado': 'co',
+  'connecticut': 'ct',
+  'delaware': 'de',
+  'district of columbia': 'dc',
+  'florida': 'fl',
+  'georgia': 'ga',
+  'hawaii': 'hi',
+  'idaho': 'id',
+  'illinois': 'il',
+  'indiana': 'in',
+  'iowa': 'ia',
+  'kansas': 'ks',
+  'kentucky': 'ky',
+  'louisiana': 'la',
+  'maine': 'me',
+  'maryland': 'md',
+  'massachusetts': 'ma',
+  'michigan': 'mi',
+  'minnesota': 'mn',
+  'mississippi': 'ms',
+  'missouri': 'mo',
+  'montana': 'mt',
+  'nebraska': 'ne',
+  'nevada': 'nv',
+  'new hampshire': 'nh',
+  'new jersey': 'nj',
+  'new mexico': 'nm',
+  'new york': 'ny',
+  'north carolina': 'nc',
+  'north dakota': 'nd',
+  'ohio': 'oh',
+  'oklahoma': 'ok',
+  'oregon': 'or',
+  'pennsylvania': 'pa',
+  'rhode island': 'ri',
+  'south carolina': 'sc',
+  'south dakota': 'sd',
+  'tennessee': 'tn',
+  'texas': 'tx',
+  'utah': 'ut',
+  'vermont': 'vt',
+  'virginia': 'va',
+  'washington': 'wa',
+  'west virginia': 'wv',
+  'wisconsin': 'wi',
+  'wyoming': 'wy',
 };
+
+type ListingState =
+  | { kind: 'code'; code: string } //   a state we can name: 'OH', ' oh ', 'Ohio', 'Columbus, IN'
+  | { kind: 'absent' } //               NULL / blank: nothing was stated, the configured market may speak
+  | { kind: 'unreadable' }; //          stated, but not something we can read: never overridden by config
+
+/**
+ * Read `lm_property.state` for what it SAYS. Falling back to the configured market's state is only
+ * right when the listing said nothing: treating any non-two-letter text as "unknown" let 'Indiana',
+ * 'Kentucky' or 'Columbus, IN' be overridden by the market's Ohio and link the Ohio building -- the
+ * exact Columbus OH / Columbus IN collision this guard exists to prevent.
+ */
+function readListingState(s: string | null): ListingState {
+  const t = (s ?? '').trim();
+  if (t === '') return { kind: 'absent' };
+  if (/^[A-Za-z]{2}$/.test(t)) return { kind: 'code', code: t.toLowerCase() };
+  const byName = STATE_CODE_BY_NAME[t.toLowerCase().replace(/\s+/g, ' ')];
+  if (byName) return { kind: 'code', code: byName };
+  const cityState = /,\s*([A-Za-z]{2})$/.exec(t);
+  if (cityState) return { kind: 'code', code: cityState[1]!.toLowerCase() };
+  return { kind: 'unreadable' };
+}
 
 /**
  * market id -> two-letter state, from config/lease-market.json `markets[].costarMarketNames`
@@ -321,7 +389,9 @@ export function seedFromLeaseMarket(db: WarehouseDb, opts: SeedOptions = {}): Se
     const entries = byAddress.get(key) ?? [];
     // The listing's own state, else the configured market's. Unknown while some candidate was reached by
     // dropping a state is NOT "no match": surface it with the candidates listed for a human.
-    const lmState = twoLetterState(r.state) ?? marketStates[marketKey(r.market_id)] ?? null;
+    const stated = readListingState(r.state);
+    const lmState =
+      stated.kind === 'code' ? stated.code : stated.kind === 'absent' ? (marketStates[marketKey(r.market_id)] ?? null) : null;
     if (entries.length > 0 && lmState === null && entries.some((e) => e.state !== null)) {
       proposed.push({
         ...base,
