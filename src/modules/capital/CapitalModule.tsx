@@ -302,8 +302,14 @@ export function CapitalModule() {
       </Card>
     ) : render(usable);
 
-  const capEntries = report?.entries ?? [];
-  const bench = report?.marketBenchmarks;
+  // Rule G corollary: the Market Cap-Rate card's header (Export/Notion enablement, the benchmark
+  // provenance badge) and its methodology footnote summarise the SAME panel as the card body, so
+  // they must share the body's predicate. TanStack v5 retains stale `data` when a refetch fails,
+  // so `report` alone would leave "Cap benchmarks: live" + an enabled Export above an
+  // "unavailable" body. Mirrors `usable` above.
+  const reportUsable = !reportLoading && !reportError && report ? report : null;
+  const capEntries = reportUsable?.entries ?? [];
+  const bench = reportUsable?.marketBenchmarks;
 
   return (
     <div className="flex flex-col gap-4">
@@ -364,7 +370,7 @@ export function CapitalModule() {
           <div style={{ padding: 16 }}>
             <Skeleton style={{ height: 120, borderRadius: 8 }} />
           </div>
-        ) : reportError || !report ? (
+        ) : !reportUsable ? (
           <div style={{ padding: 20, color: 'var(--text-secondary)', fontSize: 13 }}>
             Cap-rate positioning unavailable — warehouse capital-allocation report offline.
           </div>
@@ -388,7 +394,7 @@ export function CapitalModule() {
         <p className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
           Implied cap = Spine-A NOI ÷ Oxford-share workbook value; “vs Mkt” and Cap Band compare
           against external market benchmarks
-          {bench && (!bench.available || bench.source === 'unavailable')
+          {!bench || !bench.available || bench.source === 'unavailable'
             ? ' (benchmarks unavailable — cap columns blank).'
             : bench?.source === 'seed'
             ? ' (seeded snapshot — set a live feed for FRED-backed bands).'
