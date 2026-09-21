@@ -128,9 +128,9 @@ export function scoreSimilarity(subject: SpaceProfile, candidate: SpaceProfile, 
 //     selection keeps the tied group's own median AND its spread, and is a function of the tied set alone.
 //     Ranks are STRATUM MIDPOINTS, not endpoint-inclusive: pinning the group's minimum and maximum a seat
 //     each pushed p25/p75 outward and, in the per-property cap, guaranteed one anomalous sister-suite ask a
-//     third of that building's representation (reviewer: [8 x9, 30] kept [8, 8, 30]). Bound: with the
-//     default cap of 3 a lone anomalous ask is dropped once a building has >= 7 tied suites; in a 4-6
-//     suite building it can still occupy a seat.
+//     third of that building's representation (reviewer: [8 x9, 30] kept [8, 8, 30]). Bound (cap 3, half-even
+//     midpoints pick ranks 0,2,4 of 6): a lone HIGH outlier is dropped from 6 tied suites up, a lone LOW
+//     outlier from 7 up; in smaller buildings it can still occupy a seat.
 
 
 const SCORE_EPS = 1e-9;
