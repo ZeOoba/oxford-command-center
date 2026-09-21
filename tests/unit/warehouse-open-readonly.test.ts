@@ -4,7 +4,7 @@ import Database from 'better-sqlite3';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openWarehouse, openWarehouseNoMigrate, openWarehouseReadOnly } from '../../server/warehouse/db';
-import { pendingMigrations } from '../../server/warehouse/migrate';
+import { pendingMigrations, runMigrations } from '../../server/warehouse/migrate';
 
 let dir: string;
 
@@ -125,6 +125,31 @@ describe('openWarehouseNoMigrate (weekly sweep 2026-09-21)', () => {
     } finally {
       raw.close();
     }
+  });
+});
+
+describe('openWarehouseNoMigrate — a refusal touches nothing (refute round)', () => {
+  it('leaves a DELETE-journal database that is behind the code in DELETE mode, with no WAL sidecars', () => {
+    const path = join(dir, 'delete-mode.sqlite');
+    const seed = new Database(path); // default journal_mode = delete
+    runMigrations(seed);
+    const newest = (
+      seed.prepare('SELECT filename FROM _migrations ORDER BY id DESC LIMIT 1').get() as { filename: string }
+    ).filename;
+    seed.prepare('DELETE FROM _migrations WHERE filename = ?').run(newest);
+    expect(seed.pragma('journal_mode', { simple: true })).toBe('delete');
+    seed.close();
+
+    expect(() => openWarehouseNoMigrate(path)).toThrow(/behind this code/);
+
+    const probe = new Database(path, { readonly: true });
+    try {
+      expect(probe.pragma('journal_mode', { simple: true })).toBe('delete'); // refusal must not flip to WAL
+    } finally {
+      probe.close();
+    }
+    expect(existsSync(`${path}-wal`)).toBe(false);
+    expect(existsSync(`${path}-shm`)).toBe(false);
   });
 });
 

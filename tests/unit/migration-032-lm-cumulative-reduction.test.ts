@@ -146,6 +146,28 @@ describe('migration 032 — cumulative_reduction_pct from the price-event chain'
     expect(metrics(db, s)).toEqual({ reduction_count: 0, cumulative_reduction_pct: null });
   });
 
+  it('is NULL (unknown, not zero) when the only price_cut has no usable value pair', () => {
+    const db = makeDb();
+    const [l1, l2] = [landing(db), landing(db)];
+    const s = listing(db, l1);
+    observe(db, s, l1, '2026-01-01', { basis: 'NNN', total: false, low: 10, sf: 10000, psfYr: 10 });
+    observe(db, s, l2, '2026-02-01', { basis: 'NNN', total: false, low: 9, sf: 10000, psfYr: 9 });
+    event(db, s, l2, '2026-02-01', 'price_cut', 10, 0); // corrupt: new_value = 0
+    // The event still counts (029 semantics) but its depth is honestly unavailable, never 0 or an error.
+    expect(metrics(db, s)).toEqual({ reduction_count: 1, cumulative_reduction_pct: null });
+  });
+
+  it('is a lower bound when ingest suppressed a real price event (documented trade-off)', () => {
+    const db = makeDb();
+    const [l1, l2, l3] = [landing(db), landing(db), landing(db)];
+    const s = listing(db, l1);
+    observe(db, s, l1, '2026-01-01', { basis: 'NNN', total: false, low: 10, sf: 10000, psfYr: 10 });
+    observe(db, s, l2, '2026-02-01', { basis: 'NNN', total: false, low: 8, sf: 10000, psfYr: 8 }); // no event: confidence flip
+    observe(db, s, l3, '2026-03-01', { basis: 'NNN', total: false, low: 7.5, sf: 10000, psfYr: 7.5 });
+    event(db, s, l3, '2026-03-01', 'price_cut', 8, 7.5);
+    expect(metrics(db, s).cumulative_reduction_pct).toBeCloseTo(-0.0625, 10); // under-reports; old view said -0.25
+  });
+
   it('is unaffected by row insertion order of events (a product is commutative)', () => {
     const a = makeDb();
     const b = makeDb();

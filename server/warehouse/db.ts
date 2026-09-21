@@ -60,8 +60,9 @@ export function openWarehouseNoMigrate(path: string): WarehouseDb {
   const db = new Database(path, { fileMustExist: true });
   try {
     db.pragma(`busy_timeout = ${BUSY_TIMEOUT_MS}`);
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
+    // Decide BEFORE any write-ish pragma: `journal_mode = WAL` rewrites the file header (and creates
+    // -wal/-shm sidecars) on a DELETE-journal database, so setting it first meant a handle that
+    // refuses to open still changed the file. A refusal must leave the database untouched.
     const pending = pendingMigrations(db);
     if (pending.length > 0) {
       throw new Error(
@@ -70,6 +71,8 @@ export function openWarehouseNoMigrate(path: string): WarehouseDb {
           `main (or run npm run warehouse:backfill) to migrate it deliberately.`,
       );
     }
+    db.pragma('journal_mode = WAL');
+    db.pragma('foreign_keys = ON');
     return db;
   } catch (err) {
     db.close();

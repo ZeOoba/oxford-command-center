@@ -103,8 +103,24 @@ export async function runBrief(
         wdb.close();
       }
     }
-  } catch {
-    // Fail-open: warehouse unavailable (mirror, fresh worktree, etc.) → skip.
+  } catch (err) {
+    // Fail-open: warehouse unavailable (mirror, fresh worktree, stale schema, etc.) → skip the
+    // insurance alerts, but NOT silently. Since the read-only open (2026-09-21) a warehouse that is
+    // behind the schema throws here instead of being migrated by the brief, and a bare catch would
+    // let insurance-expiry criticals age out through the clear-streaks with no evidence. A warning
+    // insight rides the existing digest / Ops Hub path (no new channel, no alert email).
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(`brief: insurance conditions unavailable — ${reason}`);
+    insights.push({
+      id: 'brief-insurance-conditions-unavailable',
+      severity: 'warning',
+      category: 'data',
+      title: 'Insurance alerts unavailable this run',
+      detail: `The warehouse could not be read for insurance conditions (${reason}). Expiry and drift alerts were skipped, not cleared.`,
+      impactAnnualUsd: null,
+      spine: 'B',
+      provenance: 'absent',
+    });
   }
 
   const criticalIds = insights.filter((i) => i.severity === 'critical').map((i) => i.id);
