@@ -7,7 +7,7 @@ import { evaluateConditions, extractDgs5MarketRate } from '../../src/analytics/c
 import { loadState, saveState, diffCriticalAlerts, shouldSendBrief, etNow, type AlertState } from './state';
 import { renderBrief, renderAlert, type Email } from './render';
 import { sendEmail, type SendResult } from './send';
-import { openWarehouse } from '../warehouse/db';
+import { openWarehouseReadOnly } from '../warehouse/db';
 import { insuranceConditions, insuranceWarehouseDriftConditions, fetchCurrentInsuranceRows } from '../warehouse/insurance-conditions';
 import { DAY_MS } from '../warehouse/time-constants';
 import { referenceDate, WORKBOOK_AS_OF } from '../config';
@@ -72,14 +72,17 @@ export async function runBrief(
   // ── Warehouse-backed insurance conditions (Phase 5) ───────────────────────
   // Guarded: any warehouse-open or read failure silently skips insurance alerts
   // so the brief never fails because the warehouse is absent on a mirror.
-  // existsSync guard prevents openWarehouse from creating an empty DB on fresh
-  // worktrees/mirrors (which would cause warehouse:drift to fail on a schema-only file).
+  // Read-only open (2026-09-21 sweep): this path only reads, and openWarehouse applied pending
+  // migrations to the live warehouse as a side effect. A stale schema now throws into the fail-open
+  // catch below (insurance alerts skipped) instead of being migrated by the brief; the dev server on
+  // main is the sanctioned migrator. The existsSync guard is kept: it skips cleanly on fresh
+  // worktrees/mirrors where no warehouse exists at all.
   // The DB is opened locally and closed in the finally block.
   try {
     const warehousePath =
       process.env['WAREHOUSE_DB'] ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
     if (existsSync(warehousePath)) {
-      const wdb = openWarehouse(warehousePath);
+      const wdb = openWarehouseReadOnly(warehousePath);
       try {
         // Fetched ONCE and shared with both conditions below (2026-08-21 fix) — they used to
         // each run their own full property_insurance_policies scan + collapseToCurrentTerm pass
@@ -100,8 +103,24 @@ export async function runBrief(
         wdb.close();
       }
     }
-  } catch {
-    // Fail-open: warehouse unavailable (mirror, fresh worktree, etc.) → skip.
+  } catch (err) {
+    // Fail-open: warehouse unavailable (mirror, fresh worktree, stale schema, etc.) → skip the
+    // insurance alerts, but NOT silently. Since the read-only open (2026-09-21) a warehouse that is
+    // behind the schema throws here instead of being migrated by the brief, and a bare catch would
+    // let insurance-expiry criticals age out through the clear-streaks with no evidence. A warning
+    // insight rides the existing digest / Ops Hub path (no new channel, no alert email).
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(`brief: insurance conditions unavailable — ${reason}`);
+    insights.push({
+      id: 'brief-insurance-conditions-unavailable',
+      severity: 'warning',
+      category: 'data',
+      title: 'Insurance alerts unavailable this run',
+      detail: `The warehouse could not be read for insurance conditions (${reason}). Expiry and drift alerts were not evaluated this run.`,
+      impactAnnualUsd: null,
+      spine: 'B',
+      provenance: 'absent',
+    });
   }
 
   const criticalIds = insights.filter((i) => i.severity === 'critical').map((i) => i.id);
