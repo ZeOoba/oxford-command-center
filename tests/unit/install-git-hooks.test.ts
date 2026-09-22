@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-import { WRAPPER } from '../../scripts/install-git-hooks';
+import { WRAPPER, COMMIT_MSG_WRAPPER } from '../../scripts/install-git-hooks';
 
 // Regression coverage for the bug an adversarial review caught before this landed (2026-08-16):
 // the pre-push wrapper originally `exec`d the advisory-only NOI cross-check script as its last
@@ -102,6 +102,66 @@ describe('install-git-hooks WRAPPER template — live shell behavior', () => {
       writeFileSync(join(scriptsDir, 'prepush-confidential-scan.mjs'), 'process.exit(1);\n'); // scanner FAILS
       writeFileSync(join(scriptsDir, 'prepush-noi-crosscheck.mjs'), 'process.exit(0);\n');
       expect(runHook(hookPath)).not.toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// Regression coverage for the new commit-msg guard (commitmsg-trailer-guard.mjs): a malformed
+// AI Co-Authored-By trailer should be caught at commit time, cheaper than at push time.
+describe('install-git-hooks COMMIT_MSG_WRAPPER template — structural invariants', () => {
+  it('invokes the commit-msg trailer guard, blocking on a non-zero exit', () => {
+    expect(COMMIT_MSG_WRAPPER).toMatch(/prepush-noi-crosscheck|commitmsg-trailer-guard\.mjs" "\$1" \|\| exit 1/);
+  });
+
+  it('passes through the commit-msg file argument git provides', () => {
+    expect(COMMIT_MSG_WRAPPER).toMatch(/commitmsg-trailer-guard\.mjs"\s+"\$1"/);
+  });
+});
+
+describe('install-git-hooks COMMIT_MSG_WRAPPER template — live shell behavior', () => {
+  let dir: string;
+  let scriptsDir: string;
+
+  function setupFixtureRepo() {
+    dir = mkdtempSync(join(tmpdir(), 'install-git-hooks-commitmsg-test-'));
+    scriptsDir = join(dir, 'scripts');
+    mkdirSync(scriptsDir);
+    execSync('git init -q', { cwd: dir });
+    const hookPath = join(dir, 'commit-msg');
+    writeFileSync(hookPath, COMMIT_MSG_WRAPPER, { mode: 0o755 });
+    return hookPath;
+  }
+
+  function runHook(hookPath: string, msgFile: string): number {
+    try {
+      execSync(`sh "${hookPath}" "${msgFile}"`, { cwd: dir, stdio: 'pipe' });
+      return 0;
+    } catch (e) {
+      return (e as { status?: number | null }).status ?? 1;
+    }
+  }
+
+  it('blocks when the guard script exits non-zero', () => {
+    const hookPath = setupFixtureRepo();
+    const msgFile = join(dir, 'MSG');
+    try {
+      writeFileSync(msgFile, 'bad message');
+      writeFileSync(join(scriptsDir, 'commitmsg-trailer-guard.mjs'), 'process.exit(1);\n');
+      expect(runHook(hookPath, msgFile)).not.toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('passes when the guard script exits zero', () => {
+    const hookPath = setupFixtureRepo();
+    const msgFile = join(dir, 'MSG');
+    try {
+      writeFileSync(msgFile, 'good message');
+      writeFileSync(join(scriptsDir, 'commitmsg-trailer-guard.mjs'), 'process.exit(0);\n');
+      expect(runHook(hookPath, msgFile)).toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
