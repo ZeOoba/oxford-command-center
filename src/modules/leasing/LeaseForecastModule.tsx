@@ -2,16 +2,22 @@
 //
 // Phase 3 W2 — Leasing Intelligence UI.
 //
-// Layout (IA decongestion Phase 2 — tab state in the URL via useTabParam):
-//   Above the tabs (R2): A. Expiry Bucket Cards — 4 cards (0-6m / 6-12m / 12-24m / 24m+)
+// Layout (IA decongestion Phase 4d — the Leasing destination; tab state in the URL via useTabParam,
+// `?tab=`, default Rollover; see ./tabs.ts). Five tabs, this module owns the strip:
+//   Above the strip (R2): A. Expiry Bucket Cards — 4 cards (0-6m / 6-12m / 12-24m / 24m+), shown ONLY
+//                on the forecast-backed tabs (Rollover / Forecast / Market rents)
 //   Rollover     — C. Leasing Velocity Table (per-property time-to-lease)
-//   Forecast     — B. Rent Forecast scenario selector + POST mutation, with E. the AI leasing
-//                  narrative beneath it (deliberately NOT its own tab — the Leasing destination
-//                  will later absorb Rent Roll / Tenants tabs under a <=5-tab cap)
+//   Rent roll    — the absorbed LeasesModule (rent roll + critical dates), lazy-mounted
+//   Forecast     — B. Rent Forecast scenario selector + POST mutation, with E. the AI leasing narrative
+//                  beneath it (deliberately NOT its own tab — the destination is capped at 5 tabs)
 //   Market rents — D. Market-Rent Editor — inline form to set/clear per-property market rents
+//   Tenants      — the absorbed TenantsModule, lazy-mounted
 //
-// All warehouse-dependent sections degrade gracefully on the static mirror.
-import { useState, useRef } from 'react';
+// Rule G: the warehouse-offline gate belongs to the forecast-backed tabs ONLY. Rent roll and Tenants
+// read the snapshot and work on the static mirror, so a 503 from the leasing-forecast route must never
+// blank them — there is no whole-module early return here. The bucket-card visibility and the offline
+// gate derive from ONE condition (`forecastScoped` / `forecastOffline` below).
+import { lazy, Suspense, useState, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, TrendingUp, TrendingDown, Pencil } from 'lucide-react';
 import { useLeaseForecast, BUCKET_DISPLAY_ORDER } from './hooks';
@@ -24,9 +30,12 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { Button } from '@/primitives/Button';
 import { DataTable, type Column } from '@/primitives/DataTable';
-import { Tabs, TabPanel } from '@/primitives/Tabs';
+import { Tabs, TabPanel, type TabSpec } from '@/primitives/Tabs';
 import { SegmentedControl } from '@/primitives/SegmentedControl';
-import { useTabParam } from '@/lib/useTabParam';
+import { useTabParam, CLEAR_VIEW } from '@/lib/useTabParam';
+import { ModuleLoading } from '@/shell/ModuleFallback';
+import { useTabBadges } from '@/shell/tab-badges';
+import { LEASING_TABS, LEASING_TAB_KEYS, LEASING_FORECAST_TABS, type LeasingTab } from './tabs';
 import type { RentScenario, RentForecastResult, LeasingVelocity, LeaseNarrativeResponse as LeaseNarrative } from '@contracts/lease-forecast';
 import { RentForecastResponse, LeaseNarrativeResponse } from '@contracts/lease-forecast';
 
@@ -74,13 +83,8 @@ async function fetchRentForecast(
 
 // ── Tabs ───────────────────────────────────────────────────────────────────────
 
-type Tab = 'rollover' | 'forecast' | 'market-rents';
-const TAB_KEYS: readonly Tab[] = ['rollover', 'forecast', 'market-rents'];
-const TABS: Array<{ id: Tab; label: string }> = [
-  { id: 'rollover', label: 'Rollover' },
-  { id: 'forecast', label: 'Forecast' },
-  { id: 'market-rents', label: 'Market rents' },
-];
+const LeasesModule = lazy(() => import('../leases/LeasesModule').then((m) => ({ default: m.LeasesModule })));
+const TenantsModule = lazy(() => import('../tenants/TenantsModule').then((m) => ({ default: m.TenantsModule })));
 
 const SCENARIO_OPTIONS = (['renew_at_current', 'renew_at_market', 'vacancy_haircut'] as RentScenario[]).map((s) => ({
   value: s,
@@ -273,7 +277,14 @@ async function fetchLeaseNarrative(): Promise<LeaseNarrative> {
 export function LeaseForecastModule() {
   const { data, error } = useLeaseForecast();
   const { data: snapshotData } = useSnapshot();
-  const [tab, setTab] = useTabParam<Tab>(TAB_KEYS, 'rollover');
+  const [tab, setTab] = useTabParam<LeasingTab>(LEASING_TAB_KEYS, 'rollover', 'tab', CLEAR_VIEW);
+  // R4: severity badges (Rent roll = overdue critical dates). LEASING_TABS is a module-level constant, so the
+  // badge hooks run in a stable order. The badge lives on the destination tab, not the inner SegmentedControl.
+  const badges = useTabBadges(LEASING_TABS);
+  const tabSpecs: TabSpec[] = LEASING_TABS.map((t, i) => {
+    const badge = badges[i];
+    return badge ? { id: t.id, label: t.label, badge } : { id: t.id, label: t.label };
+  });
 
   const [scenario, setScenario] = useState<RentScenario>('renew_at_current');
   const [vacancyPct, setVacancyPct] = useState(0.1);
@@ -286,39 +297,39 @@ export function LeaseForecastModule() {
     mutationFn: fetchLeaseNarrative,
   });
 
-  // Graceful warehouse degradation (show market-rent editor even when warehouse is down)
+  // Graceful warehouse degradation (Rule G). ONE condition drives both the bucket cards and the offline
+  // gate: they only apply on the forecast-backed tabs; Rent roll / Tenants are never gated.
   const warehouseDown = isWarehouseUnavailable(error);
+  const forecastScoped = LEASING_FORECAST_TABS.has(tab);
+  const forecastOffline = forecastScoped && warehouseDown;
+  const showBuckets = forecastScoped && !forecastOffline;
   const marketRents = snapshotData?.snapshot.marketRents ?? {};
 
   const buckets = data?.bucketTotals ?? [];
   const velocity = data?.velocity ?? [];
   const forecast = rentMutation.data ?? null;
 
-  if (warehouseDown) {
-    return (
-      <div className="flex flex-col gap-4">
-        <Card>
-          <div className="px-6 py-10 text-center" style={{ color: 'var(--text-tertiary)' }}>
-            <TrendingUp size={28} className="mx-auto mb-3 opacity-40" />
-            <div className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
-              Leasing Intelligence Unavailable
-            </div>
-            <div className="mt-1 text-2xs">
-              Warehouse routes are not reachable on the static mirror. Run the local brain server to
-              enable leasing forecasts, velocity tracking, and rent gap analysis.
-            </div>
-          </div>
-        </Card>
-        {/* Market-rent editor is available even on the mirror (writes go to overlay) */}
-        <MarketRentEditor marketRents={marketRents} />
+  // The offline card for a forecast-backed panel (the market-rent editor below it stays usable: its
+  // writes go to the overlay, not the warehouse).
+  const offlineCard = (
+    <Card>
+      <div className="px-6 py-10 text-center" style={{ color: 'var(--text-tertiary)' }}>
+        <TrendingUp size={28} className="mx-auto mb-3 opacity-40" />
+        <div className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
+          Leasing Intelligence Unavailable
+        </div>
+        <div className="mt-1 text-2xs">
+          Warehouse routes are not reachable on the static mirror. Run the local brain server to
+          enable leasing forecasts, velocity tracking, and rent gap analysis.
+        </div>
       </div>
-    );
-  }
+    </Card>
+  );
 
-  // ── Section A: Expiry Bucket Cards ──────────────────────────────────────────
   return (
     <div className="flex flex-col gap-4">
-      {/* Section A — Expiry Bucket Cards */}
+      {/* Section A — Expiry Bucket Cards (forecast-backed tabs only; R2 above the strip) */}
+      {showBuckets && (
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {DISPLAY_BUCKETS.map((bucket) => {
           const b = buckets.find((x) => x.bucket === bucket);
@@ -342,209 +353,219 @@ export function LeaseForecastModule() {
           );
         })}
       </div>
+      )}
 
-      {/* keyboardActivation="automatic": every panel reads data already fetched at module top level
-          (useLeaseForecast / useSnapshot); the forecast + narrative mutations only fire on an explicit
+      {/* keyboardActivation="manual": the Rent roll / Tenants panels mount their own queries, so arrowing
+          across the strip must not fire them. The forecast + narrative mutations only fire on an explicit
           button press, never on tab selection. */}
-      <Tabs tabs={TABS} selectedKey={tab} onSelectionChange={(k) => setTab(k as Tab)} keyboardActivation="automatic" aria-label="Leasing views">
+      <Tabs tabs={tabSpecs} selectedKey={tab} onSelectionChange={(k) => setTab(k as LeasingTab)} keyboardActivation="manual" aria-label="Leasing views">
       <TabPanel id="forecast">
-      <div className="flex flex-col gap-4">
-      {/* Section B — Rent Forecast Scenario */}
-      <Card>
-        <CardHeader
-          title="Rent Forecast"
-          trailing={
-            <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-              Spine A · workbook basis
-            </span>
-          }
-        />
-        <div className="flex flex-col gap-4 p-4">
-          {/* Scenario picker — R5 level-2 switch (local state, no side effects until Run). */}
-          <SegmentedControl
-            aria-label="Rent forecast scenario"
-            options={SCENARIO_OPTIONS}
-            value={scenario}
-            onChange={setScenario}
+      {forecastOffline ? offlineCard : (
+        <div className="flex flex-col gap-4">
+        {/* Section B — Rent Forecast Scenario */}
+        <Card>
+          <CardHeader
+            title="Rent Forecast"
+            trailing={
+              <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+                Spine A · workbook basis
+              </span>
+            }
           />
+          <div className="flex flex-col gap-4 p-4">
+            {/* Scenario picker — R5 level-2 switch (local state, no side effects until Run). */}
+            <SegmentedControl
+              aria-label="Rent forecast scenario"
+              options={SCENARIO_OPTIONS}
+              value={scenario}
+              onChange={setScenario}
+            />
 
-          {/* Vacancy pct slider — only for vacancy_haircut */}
-          {scenario === 'vacancy_haircut' && (
-            <div className="flex items-center gap-3">
-              <label className="num text-2xs" style={{ color: 'var(--text-secondary)', minWidth: 80 }}>
-                Vacancy {Math.round(vacancyPct * 100)}%
-              </label>
-              <input
-                type="range"
-                min={0}
-                max={0.5}
-                step={0.01}
-                value={vacancyPct}
-                onChange={(e) => setVacancyPct(Number(e.target.value))}
-                className="w-40"
-                aria-label="Vacancy percentage"
-              />
+            {/* Vacancy pct slider — only for vacancy_haircut */}
+            {scenario === 'vacancy_haircut' && (
+              <div className="flex items-center gap-3">
+                <label className="num text-2xs" style={{ color: 'var(--text-secondary)', minWidth: 80 }}>
+                  Vacancy {Math.round(vacancyPct * 100)}%
+                </label>
+                <input
+                  type="range"
+                  min={0}
+                  max={0.5}
+                  step={0.01}
+                  value={vacancyPct}
+                  onChange={(e) => setVacancyPct(Number(e.target.value))}
+                  className="w-40"
+                  aria-label="Vacancy percentage"
+                />
+              </div>
+            )}
+
+            {/* Run button */}
+            <div>
+              <Button
+                size="sm"
+                variant="subtle"
+                onPress={() => rentMutation.mutate()}
+                isDisabled={rentMutation.isPending}
+                aria-label="Run rent forecast"
+              >
+                Run Forecast <ArrowRight size={12} />
+              </Button>
             </div>
-          )}
 
-          {/* Run button */}
-          <div>
+            {/* Result */}
+            {forecast && (
+              <div className="flex flex-col gap-3">
+                <div className="flex flex-wrap items-center gap-6">
+                  <div>
+                    <div className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>In-Place</div>
+                    <div className="num text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      {fmtUsdCompact(forecast.inPlaceAnnualRent)}
+                    </div>
+                  </div>
+                  <ArrowRight size={16} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
+                  <div>
+                    <div className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>Projected</div>
+                    <div className="num text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      {fmtUsdCompact(forecast.projectedAnnualRent)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>NOI Impact</div>
+                    <div
+                      className="num text-lg font-semibold flex items-center gap-1"
+                      style={{ color: forecast.noiImpactAnnualUsd >= 0 ? 'var(--text-pos)' : 'var(--text-neg)' }}
+                    >
+                      {forecast.noiImpactAnnualUsd >= 0 ? (
+                        <TrendingUp size={14} />
+                      ) : (
+                        <TrendingDown size={14} />
+                      )}
+                      {fmtUsdCompact(Math.abs(forecast.noiImpactAnnualUsd))}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>Expiring in Horizon</div>
+                    <div className="num text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      {fmtUsdCompact(forecast.expiringRentInHorizon)}
+                    </div>
+                  </div>
+                </div>
+                {forecast.assumptions.length > 0 && (
+                  <ul className="mt-1 flex flex-col gap-0.5">
+                    {forecast.assumptions.map((a, i) => (
+                      <li key={i} className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+                        · {a}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            {rentMutation.isError && (
+              <div className="text-2xs" style={{ color: 'var(--text-neg)' }}>
+                Forecast unavailable — warehouse not reachable.
+              </div>
+            )}
+          </div>
+        </Card>
+
+        {/* Section E — AI Leasing Narrative (rendered beneath the forecast, same tab) */}
+        <Card>
+          <CardHeader
+            title="AI Leasing Narrative"
+            trailing={
+              <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+                Haiku 4.5 · fail-open
+              </span>
+            }
+          />
+          <div className="flex flex-col gap-3 p-4">
             <Button
               size="sm"
               variant="subtle"
-              onPress={() => rentMutation.mutate()}
-              isDisabled={rentMutation.isPending}
-              aria-label="Run rent forecast"
+              onPress={() => narrativeMutation.mutate()}
+              isDisabled={narrativeMutation.isPending}
+              aria-label="Generate leasing narrative"
             >
-              Run Forecast <ArrowRight size={12} />
+              Generate Leasing Narrative <ArrowRight size={12} />
             </Button>
-          </div>
 
-          {/* Result */}
-          {forecast && (
-            <div className="flex flex-col gap-3">
-              <div className="flex flex-wrap items-center gap-6">
-                <div>
-                  <div className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>In-Place</div>
-                  <div className="num text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
-                    {fmtUsdCompact(forecast.inPlaceAnnualRent)}
-                  </div>
-                </div>
-                <ArrowRight size={16} style={{ color: 'var(--text-tertiary)', flexShrink: 0 }} />
-                <div>
-                  <div className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>Projected</div>
-                  <div className="num text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
-                    {fmtUsdCompact(forecast.projectedAnnualRent)}
-                  </div>
-                </div>
-                <div>
-                  <div className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>NOI Impact</div>
-                  <div
-                    className="num text-lg font-semibold flex items-center gap-1"
-                    style={{ color: forecast.noiImpactAnnualUsd >= 0 ? 'var(--text-pos)' : 'var(--text-neg)' }}
-                  >
-                    {forecast.noiImpactAnnualUsd >= 0 ? (
-                      <TrendingUp size={14} />
-                    ) : (
-                      <TrendingDown size={14} />
-                    )}
-                    {fmtUsdCompact(Math.abs(forecast.noiImpactAnnualUsd))}
-                  </div>
-                </div>
-                <div>
-                  <div className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>Expiring in Horizon</div>
-                  <div className="num text-lg font-semibold" style={{ color: 'var(--text-primary)' }}>
-                    {fmtUsdCompact(forecast.expiringRentInHorizon)}
-                  </div>
-                </div>
+            {narrativeMutation.isError && (
+              <div className="text-2xs" style={{ color: 'var(--text-neg)' }}>
+                Narrative unavailable — brain server not reachable.
               </div>
-              {forecast.assumptions.length > 0 && (
-                <ul className="mt-1 flex flex-col gap-0.5">
-                  {forecast.assumptions.map((a, i) => (
-                    <li key={i} className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-                      · {a}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
+            )}
 
-          {rentMutation.isError && (
-            <div className="text-2xs" style={{ color: 'var(--text-neg)' }}>
-              Forecast unavailable — warehouse not reachable.
-            </div>
-          )}
-        </div>
-      </Card>
-
-      {/* Section E — AI Leasing Narrative (rendered beneath the forecast, same tab) */}
-      <Card>
-        <CardHeader
-          title="AI Leasing Narrative"
-          trailing={
-            <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-              Haiku 4.5 · fail-open
-            </span>
-          }
-        />
-        <div className="flex flex-col gap-3 p-4">
-          <Button
-            size="sm"
-            variant="subtle"
-            onPress={() => narrativeMutation.mutate()}
-            isDisabled={narrativeMutation.isPending}
-            aria-label="Generate leasing narrative"
-          >
-            Generate Leasing Narrative <ArrowRight size={12} />
-          </Button>
-
-          {narrativeMutation.isError && (
-            <div className="text-2xs" style={{ color: 'var(--text-neg)' }}>
-              Narrative unavailable — brain server not reachable.
-            </div>
-          )}
-
-          {narrativeMutation.data && (
-            <>
-              {narrativeMutation.data.degraded ? (
-                <div className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-                  Narrative unavailable — AI key not configured.
-                </div>
-              ) : narrativeMutation.data.narrative ? (
-                <div className="flex flex-col gap-2">
-                  <div className="flex items-center gap-2">
-                    <Badge tone="amber">AI Generated</Badge>
+            {narrativeMutation.data && (
+              <>
+                {narrativeMutation.data.degraded ? (
+                  <div className="text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+                    Narrative unavailable — AI key not configured.
                   </div>
-                  <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>
-                    {narrativeMutation.data.narrative.headline}
-                  </p>
-                  <p className="text-2xs" style={{ color: 'var(--text-secondary)' }}>
-                    {narrativeMutation.data.narrative.summary}
-                  </p>
-                  {narrativeMutation.data.narrative.bullets.length > 0 && (
-                    <ul className="list-disc pl-5 space-y-1">
-                      {narrativeMutation.data.narrative.bullets.map((bullet, i) => (
-                        <li key={i} className="text-2xs" style={{ color: 'var(--text-secondary)' }}>
-                          {bullet}
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              ) : null}
-            </>
-          )}
+                ) : narrativeMutation.data.narrative ? (
+                  <div className="flex flex-col gap-2">
+                    <div className="flex items-center gap-2">
+                      <Badge tone="amber">AI Generated</Badge>
+                    </div>
+                    <p className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>
+                      {narrativeMutation.data.narrative.headline}
+                    </p>
+                    <p className="text-2xs" style={{ color: 'var(--text-secondary)' }}>
+                      {narrativeMutation.data.narrative.summary}
+                    </p>
+                    {narrativeMutation.data.narrative.bullets.length > 0 && (
+                      <ul className="list-disc pl-5 space-y-1">
+                        {narrativeMutation.data.narrative.bullets.map((bullet, i) => (
+                          <li key={i} className="text-2xs" style={{ color: 'var(--text-secondary)' }}>
+                            {bullet}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                ) : null}
+              </>
+            )}
+          </div>
+        </Card>
         </div>
-      </Card>
-      </div>
+      )}
       </TabPanel>
 
-      <TabPanel id="rollover">
       {/* Section C — Leasing Velocity */}
-      <Card>
-        <CardHeader title="Leasing Velocity" />
-        {velocity.length === 0 ? (
-          <div className="px-4 py-8 text-center text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-            No leasing event history yet — populate lease_events to enable velocity tracking.
-          </div>
-        ) : (
-          <DataTable
-            columns={velocityCols}
-            rows={velocity}
-            getRowId={(v) => v.propertyId}
-            initialSort={{ key: 'median', dir: 'asc' }}
-            maxHeight={360}
-          />
-        )}
-      </Card>
-
+      <TabPanel id="rollover">
+      {forecastOffline ? offlineCard : (
+        <Card>
+          <CardHeader title="Leasing Velocity" />
+          {velocity.length === 0 ? (
+            <div className="px-4 py-8 text-center text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+              No leasing event history yet — populate lease_events to enable velocity tracking.
+            </div>
+          ) : (
+            <DataTable
+              columns={velocityCols}
+              rows={velocity}
+              getRowId={(v) => v.propertyId}
+              initialSort={{ key: 'median', dir: 'asc' }}
+              maxHeight={360}
+            />
+          )}
+        </Card>
+      )}
       </TabPanel>
 
       <TabPanel id="market-rents">
-      {/* Section D — Market-Rent Editor */}
+      <div className="flex flex-col gap-4">
+      {forecastOffline && offlineCard}
+      {/* Section D — Market-Rent Editor (available even on the mirror: writes go to the overlay) */}
       <MarketRentEditor marketRents={marketRents} />
+      </div>
       </TabPanel>
+
+      <TabPanel id="rent-roll"><Suspense fallback={<ModuleLoading />}><LeasesModule /></Suspense></TabPanel>
+      <TabPanel id="tenants"><Suspense fallback={<ModuleLoading />}><TenantsModule /></Suspense></TabPanel>
       </Tabs>
 
     </div>

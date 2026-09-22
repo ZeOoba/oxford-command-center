@@ -13,7 +13,8 @@ test('overview has no serious/critical axe violations', async ({ page }) => {
 
 test('leases table is keyboard-sortable and labeled', async ({ page }) => {
   await page.goto('/?still=1');
-  await page.getByRole('button', { name: 'Leases' }).click();
+  await page.getByRole('button', { name: 'Leasing' }).click();
+  await page.getByRole('tab', { name: /^Rent roll/ }).click();
   const header = page.locator('th[aria-sort]').first();
   await expect(header).toBeVisible();
 });

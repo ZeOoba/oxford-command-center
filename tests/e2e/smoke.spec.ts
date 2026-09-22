@@ -26,10 +26,12 @@ test('scenario switch recomputes the portfolio', async ({ page }) => {
   await expect(page.getByText('$51.1M')).toBeVisible();
 });
 
-test('leases module shows the rent roll', async ({ page }) => {
+test('leasing shows the rent roll', async ({ page }) => {
   await page.goto('/?still=1');
-  await page.getByRole('button', { name: 'Leases' }).click();
-  // exact:true — the default tab strip now also carries a "Rent roll" label (different case).
+  await page.getByRole('button', { name: 'Leasing' }).click();
+  // Regex, not exact: the Rent roll tab can carry an overdue-count badge ("Rent roll2").
+  await page.getByRole('tab', { name: /^Rent roll/ }).click();
+  // exact:true — the tab strip and the view switch also carry "Rent roll" labels (different case).
   await expect(page.getByText('Rent Roll', { exact: true })).toBeVisible();
   await expect(page.getByText(/Eurosort/).first()).toBeVisible();
 });
@@ -118,4 +120,35 @@ test('Market exposes its four tabs in order', async ({ page }) => {
   await page.goto('/market?still=1');
   const tabs = page.getByRole('tablist', { name: 'Market views' }).getByRole('tab');
   await expect(tabs).toHaveText(['Macro', 'Scorecards', 'Comps', 'Demand']);
+});
+
+// --- Leasing destination (IA decongestion Phase 4d): Leases + Tenants absorbed as Leasing tabs ---
+// The old Leases rail item and /leases, /tenants URLs alias into it; the module's own strip becomes ?view=.
+
+test('legacy /leases?tab=rollover lands on Leasing > Rent roll with Critical dates selected', async ({ page }) => {
+  await page.goto('/leases?tab=rollover&still=1');
+  await expect(page).toHaveURL(/\/leasing\?/);
+  const params = new URL(page.url()).searchParams;
+  expect(params.get('tab')).toBe('rent-roll');
+  expect(params.get('view')).toBe('rollover');
+  await expect(page.getByRole('radio', { name: 'Critical dates' })).toBeChecked();
+});
+
+test('legacy /tenants lands on Leasing > Tenants', async ({ page }) => {
+  await page.goto('/tenants?still=1');
+  await expect(page).toHaveURL(/\/leasing\?/);
+  expect(new URL(page.url()).searchParams.get('tab')).toBe('tenants');
+  await expect(page.getByRole('tab', { name: 'Tenants', exact: true })).toHaveAttribute('aria-selected', 'true');
+});
+
+test('Leasing exposes its five tabs in order', async ({ page }) => {
+  await page.goto('/leasing?still=1');
+  const tabs = page.getByRole('tablist', { name: 'Leasing views' }).getByRole('tab');
+  // Rent roll may carry an overdue-count badge suffix, so match by regex.
+  await expect(tabs).toHaveText([/^Rollover$/, /^Rent roll\d*$/, /^Forecast$/, /^Market rents$/, /^Tenants$/]);
+});
+
+test('Leasing defaults to the Rollover tab', async ({ page }) => {
+  await page.goto('/leasing?still=1');
+  await expect(page.getByRole('tab', { name: 'Rollover', exact: true })).toHaveAttribute('aria-selected', 'true');
 });

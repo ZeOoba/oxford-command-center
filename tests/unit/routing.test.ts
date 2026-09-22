@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { parseRoute, entityPath, intelPropertyPath, HOME_MODULE, HOME_TAB, MODULE_PRIMARY_TYPE, TAB_PRIMARY_TYPE } from '../../src/brain/routing';
 import type { EntityType } from '../../src/brain/ui-context';
 
-const MODS = ['overview', 'pipeline', 'tasks', 'portfolio', 'leases', 'capital', 'insurance', 'market'];
+const MODS = ['overview', 'pipeline', 'tasks', 'portfolio', 'leasing', 'capital', 'insurance', 'market'];
 const MODS_INTEL = [...MODS, 'intel'];
 
 describe('parseRoute', () => {
@@ -32,7 +32,7 @@ describe('parseRoute', () => {
   });
 
   it('round-trips id encoding', () => {
-    const r = parseRoute('/leases/3540%20e%205th', MODS);
+    const r = parseRoute('/leasing/3540%20e%205th', MODS);
     expect(r.selected).toEqual({ type: 'lease', id: '3540 e 5th' });
   });
 });
@@ -70,6 +70,7 @@ describe('entityPath / HOME_MODULE', () => {
   it('builds the shareable path for each entity type', () => {
     expect(entityPath({ type: 'property', id: 'p1' })).toBe('/portfolio/p1');
     expect(entityPath({ type: 'loan', id: 'l1' })).toBe('/capital/l1');
+    expect(entityPath({ type: 'lease', id: 'lease-9' })).toBe('/leasing/lease-9');
     expect(entityPath({ type: 'counterparty', id: 'cp-1' })).toBe('/overview/cp-1');
   });
 
