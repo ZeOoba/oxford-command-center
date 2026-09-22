@@ -348,6 +348,116 @@ describe('L-A9: renewalSignals — defensive coercion', () => {
   });
 });
 
+// ── L-A10: renewalSignals — AR staleness is judged per record, bands 3/4 only ──
+// The collections block in conditions.ts already refuses to grade a lease on a stale
+// tenantArrears record (PR #360). renewalSignals() consumes the SAME map for band 3
+// ("material arrears → at-risk") and band 4 ("current on rent → likely") and, until now,
+// read it with no freshness awareness at all — a 40-day-old $0 balance was presented as
+// "current on rent" and a 40-day-old $6k balance as a live delinquency. Same definition of
+// stale as the collections gate: 'asOfDate' present AND (null / unparseable / older than
+// arStalenessMaxDays as of `asOf`). Bands 1/2/5/6 are structural and never change.
+describe('L-A10: renewalSignals — stale AR record cannot drive bands 3/4', () => {
+  const asOfMs = new Date(ASOF).getTime();
+  const staleDate = new Date(asOfMs - (ALERT_THRESHOLDS.arStalenessMaxDays + 5) * 86_400_000);
+  const freshDate = new Date(asOfMs - 1 * 86_400_000);
+  const material = ALERT_ARREARS_MATERIAL + 100;
+
+  // Band-3 candidate: short tenure, ≤12m, no stage — only the arrears figure can make it at-risk.
+  const band3Lease = mkLease({
+    id: 'b3', leaseEnd: isoOffset(ASOF, 8), monthsToExpiry: 8, leaseStart: '2025-01-01',
+    annualRent: 36000, status: 'Active',
+  });
+  // Band-4 candidate: 36m+ tenure, ≤12m, no stage — only "arrears == 0" can make it likely.
+  const band4Lease = mkLease({
+    id: 'b4', leaseStart: '2022-06-21', leaseEnd: isoOffset(ASOF, 9), monthsToExpiry: 9,
+    annualRent: 60000, status: 'Active',
+  });
+
+  it('stale material balance → NOT at-risk by arrears; falls through with a stale note', () => {
+    const arrears = { b3: { d30: material, d60: 0, d90: 0, d90plus: 0, asOfDate: staleDate } };
+    const s = renewalSignals([band3Lease], ASOF, {}, arrears).find((x) => x.leaseId === 'b3')!;
+    expect(s.likelihood).toBe('uncertain');
+    expect(s.rationale).not.toMatch(/Material arrears/);
+    expect(s.rationale).toMatch(/AR record stale/i);
+    expect(s.arrearsUsd).toBe(material); // shape unchanged — figure still reported, just not graded
+  });
+
+  it('null-asOfDate material balance → NOT at-risk by arrears (Track-B ran, no date = stale)', () => {
+    const arrears = { b3: { d30: material, d60: 0, d90: 0, d90plus: 0, asOfDate: null } };
+    const s = renewalSignals([band3Lease], ASOF, {}, arrears).find((x) => x.leaseId === 'b3')!;
+    expect(s.likelihood).toBe('uncertain');
+    expect(s.rationale).toMatch(/AR record stale/i);
+  });
+
+  it('stale $0 balance → NOT "current on rent" likely; falls to band 5 (≤6m) or uncertain', () => {
+    const arrears = { b4: { d30: 0, d60: 0, d90: 0, d90plus: 0, asOfDate: staleDate } };
+    const s = renewalSignals([band4Lease], ASOF, {}, arrears).find((x) => x.leaseId === 'b4')!;
+    expect(s.likelihood).toBe('uncertain'); // 9m to expiry → band 5 does not apply
+    expect(s.rationale).not.toMatch(/current on rent/);
+    expect(s.rationale).toMatch(/AR record stale/i);
+  });
+
+  it('stale record still lets band 5 (≤6m, no stage) assert at-risk — structural bands untouched', () => {
+    const lease = mkLease({ id: 'b5', leaseStart: '2022-06-21', leaseEnd: isoOffset(ASOF, 4), monthsToExpiry: 4 });
+    const arrears = { b5: { d30: 0, d60: 0, d90: 0, d90plus: 0, asOfDate: staleDate } };
+    const s = renewalSignals([lease], ASOF, {}, arrears).find((x) => x.leaseId === 'b5')!;
+    expect(s.likelihood).toBe('at-risk');
+    expect(s.rationale).toMatch(/≤6m to expiry/);
+    expect(s.rationale).toMatch(/AR record stale/i);
+  });
+
+  it('stale record never overrides bands 1/2 (LOI in hand → likely; holdover → lapsing)', () => {
+    const loi = mkLease({ id: 'b1', leaseEnd: isoOffset(ASOF, 2), monthsToExpiry: 2 });
+    const hold = mkLease({ id: 'b2', leaseEnd: isoOffset(ASOF, -3), monthsToExpiry: -3, status: 'Active' });
+    const arrears = {
+      b1: { d30: material, d60: 0, d90: 0, d90plus: 0, asOfDate: staleDate },
+      b2: { d30: material, d60: 0, d90: 0, d90plus: 0, asOfDate: staleDate },
+    };
+    const out = renewalSignals([loi, hold], ASOF, { b1: 'LOI' }, arrears);
+    expect(out.find((x) => x.leaseId === 'b1')!.likelihood).toBe('likely');
+    expect(out.find((x) => x.leaseId === 'b1')!.rationale).toBe('Renewal LOI in hand');
+    expect(out.find((x) => x.leaseId === 'b2')!.likelihood).toBe('lapsing');
+  });
+
+  it('per lease: a stale sibling does not change a fresh lease\'s at-risk or likely call', () => {
+    const arrears = {
+      b3: { d30: material, d60: 0, d90: 0, d90plus: 0, asOfDate: freshDate },
+      b4: { d30: 0, d60: 0, d90: 0, d90plus: 0, asOfDate: freshDate },
+      other: { d30: material, d60: 0, d90: 0, d90plus: 0, asOfDate: staleDate },
+    };
+    const otherLease = mkLease({ id: 'other', leaseEnd: isoOffset(ASOF, 8), monthsToExpiry: 8, leaseStart: '2025-01-01' });
+    const alone = renewalSignals([band3Lease, band4Lease], ASOF, {}, { b3: arrears.b3, b4: arrears.b4 });
+    const withStale = renewalSignals([band3Lease, band4Lease, otherLease], ASOF, {}, arrears);
+    expect(withStale.find((x) => x.leaseId === 'b3')).toEqual(alone.find((x) => x.leaseId === 'b3'));
+    expect(withStale.find((x) => x.leaseId === 'b4')).toEqual(alone.find((x) => x.leaseId === 'b4'));
+    expect(withStale.find((x) => x.leaseId === 'b3')!.likelihood).toBe('at-risk');
+    expect(withStale.find((x) => x.leaseId === 'b4')!.likelihood).toBe('likely');
+    expect(withStale.find((x) => x.leaseId === 'other')!.likelihood).toBe('uncertain');
+  });
+
+  it('regression: fresh, boundary-fresh, legacy (unstamped) and absent records behave exactly as before', () => {
+    const boundary = new Date(asOfMs - ALERT_THRESHOLDS.arStalenessMaxDays * 86_400_000);
+    const cases: Array<[string, Record<string, unknown> | undefined]> = [
+      ['fresh', { asOfDate: freshDate }],
+      ['boundary', { asOfDate: boundary }],
+      ['legacy', {}],
+    ];
+    for (const [label, stamp] of cases) {
+      const b3 = renewalSignals([band3Lease], ASOF, {}, { b3: { d30: material, d60: 0, d90: 0, d90plus: 0, ...stamp } })[0]!;
+      expect(b3.likelihood, `${label} band 3`).toBe('at-risk');
+      expect(b3.rationale, `${label} band 3`).toBe(`Material arrears (${material.toFixed(0)}) with ≤12m to expiry`);
+      const b4 = renewalSignals([band4Lease], ASOF, {}, { b4: { d30: 0, d60: 0, d90: 0, d90plus: 0, ...stamp } })[0]!;
+      expect(b4.likelihood, `${label} band 4`).toBe('likely');
+      expect(b4.rationale, `${label} band 4`).toMatch(/current on rent, expiring soon$/);
+    }
+    // Absent record → arrearsUsd 0 → band 4 exactly as today, no stale note anywhere.
+    const absent = renewalSignals([band4Lease, band3Lease], ASOF, {}, {});
+    expect(absent.find((x) => x.leaseId === 'b4')!.likelihood).toBe('likely');
+    expect(absent.find((x) => x.leaseId === 'b3')!.likelihood).toBe('uncertain');
+    expect(absent.every((x) => !/stale/i.test(x.rationale))).toBe(true);
+  });
+});
+
 // ── Regression: calendar-month truncation in rentForecast ────────────────────
 // Verifies that a lease which expired earlier in the current calendar month (leaseEnd < asOf,
 // but differenceInCalendarMonths returns 0) is NOT counted in expiringRentInHorizon.
