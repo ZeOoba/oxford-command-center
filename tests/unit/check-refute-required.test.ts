@@ -182,6 +182,67 @@ describe('check-refute-required — financial config prefix (weekly sweep 2026-0
   });
 });
 
+describe('check-refute-required — AR delinquency subsystem (sweep 2026-09-22)', () => {
+  // 2026-09-22: the SIXTH occurrence of the scope-staleness mode. server/ar/** — tenant-name →
+  // Lease.id matching, confidence partitioning, latest-as-of resolution, dropped-lease clears — is
+  // what decides WHICH lease a delinquency balance attaches to, and scripts/ar-import-headless.ts
+  // writes those balances (tenantArrears / arBalances) into the overlay and snapshot unattended.
+  // Against a real diff touching match-tenant.ts + ar-import-headless.ts, `check:refute --strict`
+  // reported "no financial-decision source files changed". The weekly sweep's own SKILL.md has
+  // listed `server/ar/**, scripts/ar-import-headless.ts, scripts/seed-ar-mappings.ts` in scope
+  // since 2026-08-17; the gate that is supposed to enforce that sweep never did. Same remedy as
+  // workbook/sources: a directory prefix (fails closed on new files) plus the named scripts.
+  it('flags server/ar/ — the attribution matchers, the mapping cache, and the arrears resolvers', () => {
+    expect(isFinancialSourcePath('server/ar/match-tenant.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/ar/partition-confidence.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/ar/mapping-cache.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/ar/resolve-latest.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/ar/resolve-by-unit.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/ar/clear-dropped-leases.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/ar/derive-ar-balances.ts')).toBe(true);
+    // the report parsers turn PDF/xlsx text into per-tenant balances — figures, not plumbing
+    expect(isFinancialSourcePath('server/ar/ar-aging.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/ar/rent-manager-delinquency.ts')).toBe(true);
+    // a file added to the directory later is in scope by default
+    expect(isFinancialSourcePath('server/ar/some-future-matcher.ts')).toBe(true);
+    expect(isFinancialSourcePath('server\\ar\\match-tenant.ts')).toBe(true);
+  });
+  it('flags the AR writer scripts: the headless feed and the hand-confirmed mapping seed', () => {
+    expect(isFinancialSourcePath('scripts/ar-import-headless.ts')).toBe(true);
+    // seed-ar-mappings.ts hardcodes human-ruled tenant→lease attributions and writes them into the
+    // cache; editing which lease a name resolves to is the same decision class as the matcher.
+    expect(isFinancialSourcePath('scripts/seed-ar-mappings.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts\\ar-import-headless.ts')).toBe(true);
+    // Refute pass: the interactive importer holds its own `autoAccept` attribution threshold and
+    // writes cache entries + arrears; the sweep SKILL.md's scope list omits it — same stale-enumeration
+    // mode as everything above.
+    expect(isFinancialSourcePath('scripts/ar-import.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts\\ar-import.ts')).toBe(true);
+  });
+  it('treats a .json inside server/ar/ as financial data, like the other financial source dirs', () => {
+    expect(isFinancialSourcePath('server/ar/tenant-aliases.json')).toBe(true);
+    expect(isFinancialSourcePath('server\\ar\\property-headers.json')).toBe(true);
+  });
+  it('still ignores AR tests', () => {
+    expect(isFinancialSourcePath('tests/unit/mapping-cache.test.ts')).toBe(false);
+    expect(isFinancialSourcePath('server/ar/match-tenant.test.ts')).toBe(false);
+  });
+  // Same 2026-09-21 failure mode, missed for two files: the blanket `.json` exemption also covered
+  // data/ar-mapping-cache.json (persistent tenant-name → Lease.id map incl. durable human SKIP
+  // rulings — it governs which delinquency rows auto-attribute without review) and data/overlay.json
+  // (the canonical mutation store the headless feed writes arrears into). overlay.json is gitignored,
+  // so the entry is defense-in-depth against a force-add; the cache IS tracked and PR-committed.
+  it('flags the AR mapping cache and the overlay store — top-level data/ json the blanket rule exempted', () => {
+    expect(isFinancialSourcePath('data/ar-mapping-cache.json')).toBe(true);
+    expect(isFinancialSourcePath('data/overlay.json')).toBe(true);
+    expect(isFinancialSourcePath('data\\ar-mapping-cache.json')).toBe(true);
+  });
+  it('does not widen to the rest of data/ — the snapshot and review queue stay exempt', () => {
+    expect(isFinancialSourcePath('data/snapshots/portfolio.json')).toBe(false);
+    expect(isFinancialSourcePath('data/ar/review-queue.json')).toBe(false);
+  });
+});
+
 describe('check-refute-required — delivery-only allowlist', () => {
   it('treats delivery-only warehouse routing files as non-financial', () => {
     expect(isFinancialSourcePath('server/warehouse/api.ts')).toBe(false);
