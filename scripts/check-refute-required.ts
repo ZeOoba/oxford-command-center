@@ -6,6 +6,11 @@
 // attesting that the refute-financial-change adversarial pass ran on it. Turns the written doctrine
 // into a mechanical check so it cannot silently lapse.
 //
+// SCOPE MODEL (2026-09-22, Gabriel): server/ and scripts/ are DEFAULT-DENY — every path under them
+// is financial-decision source unless it is named in NON_FINANCIAL_ROOT_PATHS with a justification.
+// Everything outside those two roots is still an explicit allow-list (src/analytics/, the contract
+// and seed files, config/ json). See DEFAULT_DENY_ROOTS below for why.
+//
 // Default mode WARNS and exits 0 (local dev — never blocks WIP). `--strict` EXITS 1 on a violation
 // (wired into CI for PRs; also usable from /ship). Fails OPEN on any git/tooling gap.
 //
@@ -106,13 +111,15 @@ export const NON_FINANCIAL_CONFIG_PATHS: ReadonlySet<string> = new Set<string>()
 // directory (server/warehouse/om-extract-fields.json is the OM price/SF extraction spec). Directories are
 // a prefix (fail closed); the one out-of-tree data file is named.
 const FINANCIAL_JSON_PREFIXES: readonly string[] = [
-  'server/warehouse/',
-  'server/workbook/',
+  // 2026-09-22 refute of the default-deny change: server/ is now a default-deny root for SOURCE, so
+  // a .json under it is financial by the same rule that added server/ar/ (a weights table under
+  // server/insights/ or a benchmark table under server/macro/ would otherwise slip through the
+  // blanket .json exemption, which runs before the root rule). Subsumes the former server/warehouse/,
+  // server/workbook/ and server/ar/ entries; tests pin each. scripts/ is deliberately NOT here:
+  // scripts/data/*.json is an ingest receipt nothing reads back (see the test), and the only
+  // tracked .json under scripts/ today is that file.
+  'server/',
   'src/analytics/',
-  // 2026-09-22 refute pass: server/ar/ became a financial source directory in the same change, so
-  // per the rule above a .json inside it (an alias table, a property-header map) is financial too.
-  // None exists today — this is the fail-closed default, not a response to a file.
-  'server/ar/',
 ];
 // Subtracted from the prefixes above (Gabriel, 2026-09-21): server/warehouse/placeholders/*.placeholder.json are
 // self-labelled PLACEHOLDER stand-ins for broker/assessor data (docs/placeholder-data.md), overridden
@@ -137,6 +144,111 @@ const FINANCIAL_DATA_PATHS: ReadonlySet<string> = new Set([
   'data/overlay.json',
 ]);
 
+// DEFAULT-DENY ROOTS (2026-09-22, Gabriel — after the SIXTH occurrence of the scope-staleness mode).
+// Every incident this file records has the same shape: a financial subsystem landed in a directory
+// the allow-list had not been told about, and the gate reported "no financial-decision source files
+// changed" until someone noticed and patched the list —
+//   2026-07-24  src/contracts (the LTV-bound episode)
+//   2026-08-11  server/workbook/   (three DSCR-denominator commits merged unattested)
+//   2026-08-12  server/sources/    (the Deal-ID joiner + confidential default, whole branch silent)
+//   2026-08-17  AR data files      (the sweep's own path list went stale)
+//   2026-09-21  config/ + data json (the blanket .json rule)
+//   2026-09-22  server/ar/** + the AR writer scripts
+// An allow-list defaults every unlisted path to NOT financial — the unsafe direction. For the two
+// roots that produced every source-file incident, the default is now inverted: a path under
+// server/ or scripts/ IS financial-decision source unless it is explicitly named below. The old
+// prefixes (server/warehouse/, server/workbook/, server/sources/, server/ar/) and named scripts
+// (ar-import-headless.ts, seed-ar-mappings.ts, ar-import.ts) are subsumed by the root rule and are
+// pinned by tests so folding them here never narrowed coverage. DELIVERY_ONLY_PATHS still applies
+// (it is checked first), so the reviewed subtractions inside server/warehouse/ and server/sources/
+// are unchanged. .test/.spec/.md and the .json rules stay ahead of this rule, as before.
+export const DEFAULT_DENY_ROOTS: readonly string[] = ['server/', 'scripts/'];
+
+// Reviewed NON-financial exemptions under the default-deny roots — the inverse of the old model:
+// instead of listing what is exempt from a matched prefix, this lists what is exempt from the root
+// itself. A path may appear here only if ALL of the following held on reading it (2026-09-22 survey
+// of every file under both roots): (a) it holds no financial figure, threshold, mapping, ranking or
+// writer and computes none; (b) it is not an input boundary (parser / extractor) or output boundary
+// (route with logic, publisher, writer) for one; (c) it is not Hard-Invariant-3 gate wiring or the
+// warehouse's access boundary — a silent weakening there exposes every figure at once, so
+// access-authz.ts, host-guard.ts, cors-policy.ts, rate-limit.ts, briefing/confidential.ts,
+// prepush-confidential-scan.mjs, install-git-hooks.ts, prepare-hooks.mjs, deploy-mirror.ps1
+// (MIRROR_INCLUDE_CONFIDENTIAL=1 + the Access-gate probe) and lib/deploy-alert.ps1 (decides whether
+// the GATE CHECK FAILED alert is suppressible) all stay IN scope; and (d) history shows it
+// edited in non-financial PRs, so the entry removes a real false positive, not a hypothetical one.
+// Deliberately file-level, never a directory: a new file beside an exempt one is IN scope until
+// someone reads it and adds it here. Doubt resolves toward "financial" (governance-check.ts stays in
+// for its governor-literal scan; server/lib/pdf-text.ts for being the PDF input boundary, the same
+// reasoning that kept server/ar/pdf-extract.ts; brief/render.ts for its top-exposure selection).
+export const NON_FINANCIAL_ROOT_PATHS: ReadonlySet<string> = new Set([
+  // ── server/ ──
+  // .env KEY=VALUE loader with override-on-empty; resolves the file relative to itself. No figure.
+  'server/load-env.ts',
+  // Outlook COM transport for the daily brief + the data/outbox fallback. Recipients (routing canon)
+  // and content are decided in brief/run.ts; this is transport in the graph-auth.ts sense.
+  'server/brief/send.ts',
+  // Attachment-filename sanitizer for a streamed briefing (ORA_Briefing_<Subject>_<YYYYMMDD>.pdf).
+  'server/briefing/filename.ts',
+  // ORA Style Guide tokens + brand-font registration for the PDF, and the dependency-free WOFF1 -> TTF
+  // decoder it uses. Pure presentation.
+  'server/briefing/theme.ts',
+  'server/briefing/woff-to-ttf.ts',
+  // Pure BriefingModel -> PDF renderer: every figure and string is read off the model the composer
+  // built (compose.ts stays in scope). Same reasoning as server/warehouse/ic-memo.ts above.
+  'server/briefing/pdf.tsx',
+  // ── scripts/ — dev tooling that never touches a figure ──
+  // Bundle-size gate over dist/assets after `vite build`.
+  'scripts/check-bundle.ts',
+  // Dev-mode CSS parse gate (regression guard for PR #194).
+  'scripts/check-dev-css.ts',
+  // Static analysis over route / Zod / migration SOURCE TEXT (form-field vs column drift). Reads no
+  // figure, opens no database; a regression makes a dev gate quieter, not a number wrong.
+  'scripts/check-write-schema-drift.ts',
+  // `--require` preload that reports a tsx-watch startup stall.
+  'scripts/dev-watchdog.cjs',
+  // `pregate` node_modules self-heal (`npm ci` when sentinels are missing).
+  'scripts/ensure-deps.mjs',
+  // Resumable document-embedding driver over server/sources/documents.ts, which is itself
+  // delivery-only above.
+  'scripts/index-docs.ts',
+  // Junction-safe git-worktree add/remove/prune helper.
+  'scripts/safe-worktree.ts',
+  // ── scripts/ — Windows scheduled-task and mirror-deploy ops helpers ──
+  // The historical false-positive class: 17 merged PRs (#172 … #341) touched only these files and
+  // decided no figure. deploy-mirror.ps1 itself is NOT here (see (c) above); its helpers are.
+  // Read-only classifier of the last Mirror Deploy run (beacon + Task Scheduler log -> JSON), and
+  // the off-fleet alerting wrapper that calls it from a native task.
+  'scripts/mirror-run-classify.ps1',
+  'scripts/mirror-classify-offfleet.ps1',
+  // One-shot Windows scheduled-task registrars (triggers, window style, WakeToRun).
+  'scripts/register-brain-server-task.ps1',
+  'scripts/register-mirror-classify-offfleet-task.ps1',
+  'scripts/register-mirror-task.ps1',
+  // Loops index-docs.ts until every chunk is embedded.
+  'scripts/reindex-loop.ps1',
+  // Hidden-window launcher / process-tree killer for the local dev server.
+  'scripts/start-brain-server.ps1',
+  'scripts/stop-brain-server.ps1',
+  // scripts/lib/: shared PowerShell helpers dot-sourced by deploy-mirror.ps1 and the classifier —
+  // cmd.exe argument guard, run-completion beacon, isolated build root, git-fetch capture,
+  // in-process and native-command timeouts, task-action argument builder.
+  // deploy-alert.ps1 is deliberately NOT here (2026-09-22 refute pass): Test-SuppressibleReason and
+  // the -Critical guard in Send-DeployFailureAlert decide whether a GATE CHECK FAILED alert — "a
+  // confidential bake may be publicly reachable" — can be suppressed. That is the same
+  // Hard-Invariant-3 wiring that keeps deploy-mirror.ps1 in scope (criterion (c)); a one-token
+  // edit to the '^(GATE CHECK|GIT AUTH FAILURE)' regex silences the exposure alert.
+  'scripts/lib/cmd-arg-guard.ps1',
+  'scripts/lib/deploy-beacon.ps1',
+  'scripts/lib/deploy-buildroot.ps1',
+  'scripts/lib/git-capture.ps1',
+  'scripts/lib/job-timeout.ps1',
+  'scripts/lib/mirror-task-action.ps1',
+  'scripts/lib/native-timeout.ps1',
+]);
+// PowerShell smoke tests are test scaffolding (the .test/.spec rule above only knows .ts/.tsx).
+// Scoped to scripts/ and scripts/lib/ directly — a deeper or differently-suffixed file is in scope.
+const NON_FINANCIAL_ROOT_PATTERNS: readonly RegExp[] = [/^scripts\/(?:lib\/)?[^/]+\.smoke-test\.ps1$/];
+
 /** True when a changed path holds financial-decision SOURCE (not a test / doc / json fixture). */
 export function isFinancialSourcePath(p: string): boolean {
   const path = p.replace(/\\/g, '/');
@@ -152,52 +264,23 @@ export function isFinancialSourcePath(p: string): boolean {
   }
   if (/\.(test|spec)\.(ts|tsx)$/.test(path) || path.endsWith('.md') || path.endsWith('.json')) return false;
   if (DELIVERY_ONLY_PATHS.has(path)) return false;
+  // Default-deny roots: in scope unless explicitly exempted. This branch subsumes the retired
+  // explicit entries — server/warehouse/, server/workbook/ (2026-08-11: parse.ts and
+  // debt-service-crosscheck.ts sit in the annualDebtService chain feeding the DSCR verdict; commits
+  // 9ab137d, 59d1995, b9a58c2 merged unattested), server/sources/ (2026-08-12: the seed<->Notion
+  // joiner decides which price / cap rate / IRR lands on which deal and which rows keep the
+  // fail-closed confidential default), server/ar/ (2026-09-22: which lease a delinquency attaches
+  // to; pdf-extract.ts deliberately NOT subtracted — it is the input boundary of every PDF balance),
+  // server/overlay.ts, and the three AR writer scripts (ar-import-headless.ts writes arrears into
+  // overlay + snapshot unattended; seed-ar-mappings.ts hardcodes tenant->lease rulings; ar-import.ts
+  // carries its own inline `autoAccept` attribution threshold). Full narratives: git history of this
+  // file (d230096, 6f68fe4) and tests/unit/check-refute-required.test.ts.
+  if (DEFAULT_DENY_ROOTS.some((root) => path.startsWith(root))) {
+    return !(NON_FINANCIAL_ROOT_PATHS.has(path) || NON_FINANCIAL_ROOT_PATTERNS.some((re) => re.test(path)));
+  }
+  // Outside the default-deny roots the model is still an explicit allow-list.
   return (
     path.startsWith('src/analytics/') ||
-    path.startsWith('server/warehouse/') ||
-    // server/workbook/ added 2026-08-11 after the weekly integrity sweep found it uncovered.
-    // parse.ts produces the loans/NOI/debt-service snapshot and debt-service-crosscheck.ts audits
-    // the next-12-month figure; BOTH sit in the annualDebtService chain feeding debt-scoring.ts
-    // (the DSCR verdict) and src/analytics/engine.ts. Three commits touching the DSCR denominator
-    // (9ab137d, 59d1995, b9a58c2) merged without this gate ever requiring a refute trailer.
-    // Second occurrence of the scope-staleness mode — 2026-07-24 was the first, one directory
-    // over — so prefer a broad directory prefix and subtract via DELIVERY_ONLY_PATHS above.
-    path.startsWith('server/workbook/') ||
-    // server/sources/ added 2026-08-12 — the THIRD occurrence of this scope-staleness mode, after
-    // src/contracts (2026-07-24) and server/workbook (2026-08-11). The Deal-ID join redesign
-    // rewrote the seed<->Notion joiner, which decides which live price / cap rate / IRR / lender
-    // lands on which deal record AND which rows keep the fail-closed confidential default — and
-    // this gate reported "no financial-decision source files changed" for the entire branch.
-    // quickbooks.ts and notion-tenants.ts sit on the same prefix and carry cash and rent figures.
-    // Broad prefix with subtractions above, per the doctrine the workbook entry established: an
-    // enumeration goes stale silently, a prefix fails closed.
-    path.startsWith('server/sources/') ||
-    // server/ar/ added 2026-09-22 — the SIXTH occurrence of the scope-staleness mode (contracts
-    // 2026-07-24, workbook 2026-08-11, sources 2026-08-12, config/ + data json 2026-09-21). The AR
-    // delinquency subsystem decides WHICH lease a tenant's balance attaches to (match-tenant.ts,
-    // partition-confidence.ts, resolve-by-unit.ts), which of two agings wins (resolve-latest.ts),
-    // when a persisted balance is retracted (clear-dropped-leases.ts), and what the daily brief's
-    // collections alerts read (derive-ar-balances.ts). The weekly sweep's SKILL.md has carried
-    // `server/ar/**` in scope since 2026-08-17; this gate — the thing that enforces that sweep —
-    // reported "no financial-decision source files changed" for a diff touching match-tenant.ts.
-    // Silent mis-attribution of a delinquency is the subsystem's own stated worst failure mode.
-    // Broad prefix, per the doctrine every entry above re-learned. No DELIVERY_ONLY subtraction:
-    // pdf-extract.ts is a subprocess boundary, but it is the INPUT boundary of every PDF balance
-    // the parsers see — not transport plumbing in the graph-auth.ts sense.
-    path.startsWith('server/ar/') ||
-    // The two AR WRITER scripts (named, not a scripts/ prefix — most of scripts/ is tooling):
-    // ar-import-headless.ts writes tenantArrears/arBalances into overlay + snapshot unattended;
-    // seed-ar-mappings.ts hardcodes human-ruled tenant→lease attributions and writes them into the
-    // cache, the same decision class as the matcher it bypasses.
-    path === 'scripts/ar-import-headless.ts' ||
-    path === 'scripts/seed-ar-mappings.ts' ||
-    // Refute pass on the 2026-09-22 fix: the INTERACTIVE importer carries its own inline copy of
-    // the auto-attribution threshold (`autoAccept` = exact, or high-confidence with >=2 tokens,
-    // unambiguous) — the headless feed's partition-confidence.ts explicitly "mirrors the interactive
-    // script's autoAccept rule". It writes cache entries and POSTs tenantArrears through the server.
-    // A one-token widening of that threshold auto-attributes balances no human reviewed. Omitted by
-    // the sweep SKILL.md's scope list too — the same stale enumeration this entry's siblings fix.
-    path === 'scripts/ar-import.ts' ||
     // The seed pipeline: source of truth for Deal.confidential AND the fallback deal set a Notion
     // outage publishes. A wrong edit here is a Hard-Invariant-3 exposure, not a fixture change.
     path === 'src/data/seed-deals.ts' ||
@@ -206,8 +289,7 @@ export function isFinancialSourcePath(p: string): boolean {
     path === 'src/brain/anomaly-insights.ts' ||
     path === 'src/brain/principal-digest.ts' ||
     // Priced against RCT v03, the ratified basis denominator — a governor-adjacent constant table.
-    path === 'src/brain/replacement-cost.ts' ||
-    path === 'server/overlay.ts'
+    path === 'src/brain/replacement-cost.ts'
   );
 }
 
