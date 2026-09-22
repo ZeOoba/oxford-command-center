@@ -153,6 +153,44 @@ describe('resolveByUnit', () => {
     expect(r.leaseId).toBeNull();
   });
 
+  // 2026-09-14 sweep, Fix A: the live-hit filter used `status !== 'Expired'` only. A 'Vacant'
+  // record and an Active lease carrying annualRent === 0 (a roster placeholder that bills nothing
+  // -- real row: Evans Gymnastics, 2207 Northwood A15, $REDACTED-AMT AR) both counted as LIVE and took
+  // a clean 'exact' unit hit with no human review. The shared isDeadLease predicate now gates the
+  // live set; the dead-sibling downgrade (PR #302's re-let hole) applies to every dead status.
+  it('does NOT treat an Active lease with annualRent 0 as a live candidate -- routes to review (Fix A)', () => {
+    const roster: UnitLease[] = [{ id: 'L-A15-EVANS', unit: 'A15', propertyId: 'northwood', status: 'Active', annualRent: 0 }];
+    const r = resolveByUnit({ unit: 'A15', property: 'nbc-a', d30: REDACTED-AMT, d30plus: REDACTED-AMT }, roster, 'northwood');
+    expect(r).toEqual({ leaseId: null, confidence: 'none', ambiguous: false });
+  });
+
+  it('does NOT treat a Vacant record as a live candidate (Fix A)', () => {
+    const roster: UnitLease[] = [{ id: 'L-A9-VACANT', unit: 'A9', propertyId: 'northwood', status: 'Vacant', annualRent: 0 }];
+    const r = resolveByUnit({ unit: 'A9', property: 'nbc-a', d30: 1, d30plus: 0 }, roster, 'northwood');
+    expect(r).toEqual({ leaseId: null, confidence: 'none', ambiguous: false });
+  });
+
+  it('a zero-rent Active sibling on a re-let unit downgrades the live match to ambiguous, exactly like an Expired sibling (Fix A)', () => {
+    const roster: UnitLease[] = [
+      { id: 'L-A15-OLD', unit: 'A15', propertyId: 'northwood', status: 'Active', annualRent: 0 },
+      { id: 'L-A15-NEW', unit: 'A15', propertyId: 'northwood', status: 'Active', annualRent: 14400 },
+    ];
+    const r = resolveByUnit({ unit: 'A15', property: 'nbc-a', d30: 1, d30plus: 0 }, roster, 'northwood');
+    expect(r).toEqual({ leaseId: null, confidence: 'none', ambiguous: true });
+  });
+
+  it('regression (Fix A): a live Active lease with positive rent, alone on its unit, still resolves exact', () => {
+    const roster: UnitLease[] = [{ id: 'L-A4-LIVE', unit: 'A4', propertyId: 'northwood', status: 'Active', annualRent: 25500 }];
+    const r = resolveByUnit({ unit: '4A', property: 'nbc-a', d30: 1, d30plus: 0 }, roster, 'northwood');
+    expect(r).toEqual({ leaseId: 'L-A4-LIVE', confidence: 'exact', ambiguous: false });
+  });
+
+  it('regression (Fix A): a roster with no annualRent projection keeps the status-only behaviour', () => {
+    // Callers that never populate annualRent (the pre-existing LEASES fixture above) are unchanged.
+    const r = resolveByUnit({ unit: '4A', property: 'nbc-a', d30: 1, d30plus: 0 }, LEASES, 'northwood');
+    expect(r).toEqual({ leaseId: 'L-A4', confidence: 'exact', ambiguous: false });
+  });
+
   it('flags ambiguity and refuses to pick when two leases resolve to the same canonical unit', () => {
     const dupes: UnitLease[] = [
       { id: 'A', unit: '7A', propertyId: 'northwood' },
