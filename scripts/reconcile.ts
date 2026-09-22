@@ -1,5 +1,6 @@
 import ExcelJS from 'exceljs';
 import { parseWorkbook } from '../server/workbook/parse';
+import { checkCashInvariants } from '../server/reconcile-runtime';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath } from '../server/config';
 
@@ -110,6 +111,21 @@ async function main() {
     console.log(
       `${pass ? '✓ PASS' : '✗ FAIL'}  ${c.label.padEnd(42)} exp ${Math.round(c.expected).toLocaleString()} · got ${Math.round(c.actual).toLocaleString()} · Δ ${diff.toFixed(2)}${c.note ? ` (${c.note})` : ''}`,
     );
+  }
+
+  // Date-aware cash invariants (2026-09-14 sweep). The "Cash history latest = current total" row
+  // above is value-only and PASSES on the exact failure it should catch: a history slot clobbered
+  // with the current total agrees with the headline because it was clobbered (found live: cash.asOf
+  // 2026-09-10 over a history ending 2026-07-10, July's total bit-identical to September's). These
+  // are boolean assertions, not expected/actual/tol rows, so they print as their own block. Shared
+  // with checkSnapshot via checkCashInvariants -- one detector, not a copy that can drift; the
+  // workbook re-read above is for the dollar totals, and these are about the parsed history array.
+  // Only 'error' (cash.asOf later than generatedAt -- structurally impossible) fails the gate; the
+  // rest print as WARN and never block, per the report-don't-refuse rule for plausible events.
+  for (const f of checkCashInvariants(snapshot)) {
+    const isError = f.severity === 'error';
+    if (isError) failed++;
+    console.log(`${isError ? '✗ FAIL' : '⚠ WARN'}  ${`Cash: ${f.field}`.padEnd(42)} ${f.issue}`);
   }
 
   // Count floor (non-zero, not exact-match): a parse that silently emptied a sheet must still
