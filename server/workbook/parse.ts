@@ -861,6 +861,27 @@ function parseLeases(
         severity: 'warn',
       });
     }
+    const resolvedAnnualRent = annualRent ?? (monthlyRent ?? 0) * 12;
+    // A LIVE tenancy at $0 rent needs a human (2026-09-07 refresh, commit 85dfecf, found by the
+    // 2026-09-14 financial-code sweep): three retained rows went from real rent to $0 in one
+    // scheduled run, and nothing in the pipeline said so -- the count floor saw no add/remove, the
+    // drift check compared ids and leaseEnd only, and the Σannual-vs-workbook-total gate PASSED
+    // because the workbook itself carried the zeroed cells. Two of the three were 'Expired'
+    // (expected to carry stale/zero rent -- a vacated suite), so this is gated to Active and
+    // Expiring Soon only: there, $0 is either a real vacancy nobody re-statused or a zeroed cell,
+    // and both are worth a line. 'warn', never a refusal or a throw -- a genuine rent zero-out is a
+    // legitimate business event, and the reader judges. The aggregate lens on the same shape is
+    // scripts/lease-snapshot-drift-check.ts's rentChanged bucket (prior vs current, across
+    // snapshots); this row flag is what reaches the live Brain refresh path, which never diffs.
+    if (resolvedAnnualRent === 0 && (status === 'Active' || status === 'Expiring Soon')) {
+      rowFlags.push({
+        entity: id,
+        field: 'annualRent',
+        issue: `zero rent on a retained lease still marked "${status}" (end ${leaseEnd ?? '—'}) — confirm the suite is vacant or on notice; if the tenancy is live, the rent-roll cell was zeroed`,
+        rawValue: String(row(ws, r, 13) ?? ''),
+        severity: 'warn',
+      });
+    }
     const lease: Lease = {
       id,
       propertyKey,
@@ -876,7 +897,7 @@ function parseLeases(
       escalationDate: isoOrNull(row(ws, r, 10), rowFlags, id, 'escalationDate'),
       escalationPct: num(row(ws, r, 11)),
       status,
-      annualRent: annualRent ?? (monthlyRent ?? 0) * 12,
+      annualRent: resolvedAnnualRent,
       monthsToExpiry: leaseEnd ? differenceInCalendarMonths(parseISO(leaseEnd), asOf) : null,
       flags: [],
     };
@@ -998,6 +1019,16 @@ function parseLoans(ws: Worksheet, flags: DataQualityFlag[]): Loan[] {
 
 // ── cash (Cash Balances) ──────────────────────────────────────────────────────
 /**
+ * A dollar move as a fraction of the balance it is measured against, or null when that balance is
+ * missing or <= 0 (no meaningful base -- and the sign would invert). See the deltaPct comment in
+ * parseCash for the live incident.
+ */
+function pctOfBase(dollar: number | null, base: number | null): number | null {
+  if (dollar === null || base === null || base <= 0) return null;
+  return dollar / base;
+}
+
+/**
  * @param fallbackAsOf Provenance fallback when the sheet carries no parseable "As of" dateline
  *   (the resolved workbook dateline, itself falling back to WORKBOOK_AS_OF — OI-023). The Cash
  *   Balances dateline is data-derived (MAX of the Cash Data date row) and can legitimately sit
@@ -1025,19 +1056,32 @@ function parseCash(ws: Worksheet, flags: DataQualityFlag[], fallbackAsOf: string
       }
       const arrow = String(row(ws, r, 13) ?? '');
       const trend = arrow.includes('↑') ? 'up' : arrow.includes('↓') ? 'down' : 'flat';
+      const priorBalance = num(row(ws, r, 3));
+      const deltaDollar = num(row(ws, r, 4));
+      const bal12moAgo = num(row(ws, r, 9));
+      const growth12Dollar = num(row(ws, r, 10));
       entities.push({
         entity,
         id: slug(entity),
         currentBalance: num(row(ws, r, 2)) ?? 0,
-        priorBalance: num(row(ws, r, 3)),
-        deltaDollar: num(row(ws, r, 4)),
-        deltaPct: num(row(ws, r, 5)),
+        priorBalance,
+        deltaDollar,
+        // Cols 5 and 11 (the workbook's own Δ% and 12-mo Δ% cells) are deliberately NOT read. They
+        // divide by the prior / 12-month-ago balance as-is, so when that balance is NEGATIVE (an
+        // overdrawn operating account, a start-up entity) the cell's sign inverts against its own
+        // dollar figure -- found live 2026-09-14: deltaDollar -1,698 served beside deltaPct +4.1%,
+        // growth12Dollar +2,064 beside growth12Pct -1186%, and the UI colours the percent green or
+        // red on its own sign. Recomputed here from the dollar move and the balance it is measured
+        // against; a denominator <= 0 or missing yields null -- "verified null over a wrong-signed
+        // number" -- because a percent of a negative or zero base has no meaning a reader can act on.
+        // checkCashInvariants (server/reconcile-runtime.ts) is the backstop over the snapshot itself.
+        deltaPct: pctOfBase(deltaDollar, priorBalance),
         avg3: num(row(ws, r, 6)),
         minAllTime: num(row(ws, r, 7)),
         maxAllTime: num(row(ws, r, 8)),
-        bal12moAgo: num(row(ws, r, 9)),
-        growth12Dollar: num(row(ws, r, 10)),
-        growth12Pct: num(row(ws, r, 11)),
+        bal12moAgo,
+        growth12Dollar,
+        growth12Pct: pctOfBase(growth12Dollar, bal12moAgo),
         pctOfPortfolio: num(row(ws, r, 12)),
         trend,
         flags: [],
@@ -1095,6 +1139,25 @@ function parseCash(ws: Worksheet, flags: DataQualityFlag[], fallbackAsOf: string
       entity: 'cash',
       field: 'asOf',
       issue: `no parseable "As of" dateline on the Cash Balances sheet — provenance falls back to ${fallbackAsOf}`,
+      severity: 'warn',
+    });
+  }
+  // The dateline is documented as data-derived (MAX of the Cash Data date row -- see the
+  // @param note above), so it must never sit LATER than the last history row this same function
+  // just read. Found live 2026-09-14: the sheet said "As of September 10, 2026" while its history
+  // matrix stopped at 2026-07-10 -- the 08-10 and 09-10 rows were never entered, and the July
+  // slot carried September's total. That mismatch is exactly what let a September as-of coexist
+  // with a July-ending history through every downstream check. Detection only: the as-of stays
+  // the sheet's own dateline (the OI-023 provenance rule) and the missing rows are a workbook
+  // problem for a human -- nothing here backfills or invents a history point. ISO strings compare
+  // lexically as dates.
+  const latestHistoryDate = history.reduce<string | null>((max, h) => (max === null || h.date > max ? h.date : max), null);
+  if (ownAsOf && latestHistoryDate && ownAsOf > latestHistoryDate) {
+    flags.push({
+      entity: 'cash',
+      field: 'asOf',
+      issue: `Cash Balances "As of" ${ownAsOf} is later than the last Cash Data history row ${latestHistoryDate} — the history matrix is missing the rows between (the dateline should be the MAX of the date row, not ahead of it)`,
+      rawValue: ownAsOf,
       severity: 'warn',
     });
   }
