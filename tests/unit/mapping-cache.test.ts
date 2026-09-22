@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { writeFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadCache, saveCache, cacheKey, type MappingCache } from '../../server/ar/mapping-cache';
+import {
+  loadCache,
+  saveCache,
+  cacheKey,
+  validateMappingCache,
+  type MappingCache,
+} from '../../server/ar/mapping-cache';
 
 let tmpDir: string;
 beforeEach(() => {
@@ -58,5 +64,84 @@ describe('saveCache', () => {
     const cache: MappingCache = { entries: { 'echo credit': 'SKIP' }, savedAt: '' };
     await saveCache(cache);
     expect(loadCache().entries['echo credit']).toBe('SKIP');
+  });
+});
+
+// 2026-09-22 (weekly sweep, finding 6): the cache is git-tracked and hand-editable, and a cache hit
+// bypasses name matching entirely — so a non-SKIP entry whose lease id no longer exists in the roster
+// is a silent write-to-nowhere waiting to happen (the headless feed routes it to review at import
+// time, but nothing checked the committed file itself). validateMappingCache is the pure referential
+// check: it FLAGS, it never throws, and it never blocks a load — the flag is a DataQualityFlag so
+// scripts/reconcile.ts and any caller can surface it through the existing data-quality channel.
+describe('validateMappingCache', () => {
+  const roster = new Set(['l-acme-001', 'l-bravo', 'l-expired-007']);
+
+  it('returns no flags when every non-SKIP entry resolves to a lease id in the roster', () => {
+    const cache: MappingCache = {
+      entries: { 'acme industrial': 'l-acme-001', 'bravo tenant': 'l-bravo', 'echo credit': 'SKIP' },
+      savedAt: '',
+    };
+    expect(validateMappingCache(cache, roster)).toEqual([]);
+  });
+
+  it('flags a dangling lease-id target as a warn-severity DataQualityFlag, never throws', () => {
+    const cache: MappingCache = {
+      entries: { 'acme industrial': 'l-acme-001', 'ghost tenant': 'l-vacated-999' },
+      savedAt: '',
+    };
+    const flags = validateMappingCache(cache, roster);
+    expect(flags).toHaveLength(1);
+    expect(flags[0]).toMatchObject({
+      entity: 'ar-mapping-cache',
+      field: 'ghost tenant',
+      rawValue: 'l-vacated-999',
+      severity: 'warn',
+      issue: expect.stringMatching(/l-vacated-999/),
+    });
+  });
+
+  it('never flags SKIP — a durable human ruling is not a lease id', () => {
+    const cache: MappingCache = { entries: { 'echo credit': 'SKIP' }, savedAt: '' };
+    expect(validateMappingCache(cache, new Set())).toEqual([]);
+  });
+
+  it('accepts an Expired lease id — the roster is the FULL leases array, matching allLeaseIds', () => {
+    const cache: MappingCache = { entries: { 'old tenant': 'l-expired-007' }, savedAt: '' };
+    expect(validateMappingCache(cache, roster)).toEqual([]);
+  });
+
+  it('flags every dangling entry, one flag per entry, in cache order', () => {
+    const cache: MappingCache = {
+      entries: { a: 'l-dead-1', b: 'l-bravo', c: 'l-dead-2' },
+      savedAt: '',
+    };
+    expect(validateMappingCache(cache, roster).map((f) => f.field)).toEqual(['a', 'c']);
+  });
+
+  it('checks own entries only — an inherited key is not a cache mapping', () => {
+    const entries = Object.create({ inherited: 'l-dead-proto' }) as Record<string, string>;
+    entries['acme industrial'] = 'l-acme-001';
+    expect(validateMappingCache({ entries, savedAt: '' }, roster)).toEqual([]);
+  });
+
+  it('flags a malformed entries shape instead of throwing (loadCache only guards unparseable JSON)', () => {
+    const malformed = { entries: null, savedAt: '' } as unknown as MappingCache;
+    const flags = validateMappingCache(malformed, roster);
+    expect(flags).toHaveLength(1);
+    expect(flags[0]).toMatchObject({ entity: 'ar-mapping-cache', field: 'entries', severity: 'error' });
+  });
+
+  // 2026-09-22 refute pass: `String(v)` throws on a null-prototype object and on a throwing
+  // toString, so the never-throws contract was only true for JSON.parse-shaped input. Not reachable
+  // from a committed file, but the contract is stated unconditionally.
+  it('never throws even when a value cannot be stringified — it still reports the entry', () => {
+    const entries = {
+      'null proto': Object.create(null) as unknown,
+      'throwing toString': { toString: () => { throw new Error('boom'); } },
+      ok: 'l-acme-001',
+    } as unknown as Record<string, string>;
+    const flags = validateMappingCache({ entries, savedAt: '' }, roster);
+    expect(flags.map((f) => f.field)).toEqual(['null proto', 'throwing toString']);
+    expect(flags.every((f) => f.severity === 'warn' && typeof f.rawValue === 'string')).toBe(true);
   });
 });
