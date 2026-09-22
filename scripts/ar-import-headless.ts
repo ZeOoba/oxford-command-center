@@ -109,6 +109,12 @@ export interface QueuedReview extends ArReviewRow {
   /** The report's as-of date (ISO). With `unit`, `sourceFile` and the bucket sum it identifies ONE
    *  real-world source row across parse shapes -- see sourceRowKey. */
   asOfDate?: string | null;
+  /** The resolved portfolio property id (BUCKETED_PROPERTY_HEADERS), or null when the header did not
+   *  map. Part of the source-row identity: a multi-property export lists several buildings, and one
+   *  building's 'C4' is not another's (refute of Fix B, 2026-09-22 -- without this, an UNMAPPED
+   *  building's row that happened to share unit tokens and cents with a mapped building's write in
+   *  the same file was silently dropped from the queue instead of surfacing its header). */
+  propertyId?: string | null;
   /** The unit label exactly as the export printed it (annotation included), e.g. 'C 4 (storage)'. */
   unit?: string | null;
   /** Who the lease roster puts at this unit, ANY status ('REDACTED-486 [Expired]'), joined with
@@ -262,28 +268,34 @@ function asOfKey(asOf: Date | string | null | undefined): string {
  *  uses -- so the export's annotated 'C 4 (storage)' and the roster's 'C4' key identically. Found
  *  live: the review queue held "C 4 (storage)" / $0.38 / 8.21.2026 while arBalances already
  *  carried that exact row attributed to the C4 lease, because the queue's legacy dedup key
- *  compares the RAW label. Returns null when there is no unit identity to key on (missing, blank,
- *  or annotation-only label) -- such a row can never be proven a duplicate, so it is never dropped. */
+ *  compares the RAW label. The resolved property id is part of the identity too (refute of Fix B,
+ *  2026-09-22): a Format B export lists several buildings, and a unit label is only unique WITHIN
+ *  one, so 'C4' at a mapped building and 'C4' at an unmapped one (same file, same cents) are two
+ *  rows. Returns null when there is no identity to key on (missing, blank, or annotation-only
+ *  label; or an unresolved property, which no write can ever carry) -- such a row can never be
+ *  proven a duplicate, so it is never dropped. */
 export function sourceRowKey(
   sourceFile: string,
   asOfDate: Date | string | null | undefined,
+  propertyId: string | null | undefined,
   unit: string | null | undefined,
   amount: number,
 ): string | null {
+  if (propertyId === null || propertyId === undefined || propertyId === '') return null;
   if (unit === null || unit === undefined || unit.trim() === '') return null;
   const tokens = [...expandUnitTokens(unit)].filter((t) => t !== '').sort();
   if (tokens.length === 0) return null;
   // Same to-the-cent idiom as merge-buckets.ts / delinquency-transactional.ts: float-order noise
   // in a bucket sum must not split one source row into two identities.
   const cents = (Math.round(amount * 100) / 100).toFixed(2);
-  return `${sourceFile}::${asOfKey(asOfDate)}::${tokens.join('+')}::${cents}`;
+  return `${sourceFile}::${asOfKey(asOfDate)}::${propertyId}::${tokens.join('+')}::${cents}`;
 }
 
 /** sourceRowKey for a queued row -- null for a name-matched row (no unit / as-of identity) or a
  *  pre-Fix-B Format B row persisted before those fields existed. */
 function reviewSourceRowKey(r: QueuedReview): string | null {
-  if (r.unit === undefined || r.asOfDate === undefined) return null;
-  return sourceRowKey(r.sourceFile, r.asOfDate, r.unit, r.d30 + r.d60 + r.d90 + r.d90plus);
+  if (r.unit === undefined || r.asOfDate === undefined || r.propertyId === undefined) return null;
+  return sourceRowKey(r.sourceFile, r.asOfDate, r.propertyId, r.unit, r.d30 + r.d60 + r.d90 + r.d90plus);
 }
 
 /** Build the review-queue row for a Format B (unit-only) row that did not resolve. Pure -- the
@@ -336,6 +348,7 @@ export function buildBucketedReviewRow(args: {
     sourceFile,
     queuedAt,
     asOfDate: asOfDate === null ? null : asOfDate.toISOString(),
+    propertyId,
     unit: row.unit,
     candidateTenant,
     candidateLeaseIds: candidates.map((c) => c.id),
@@ -355,15 +368,16 @@ export function dropReviewsAlreadyAttributed(
   writes: ReadonlyArray<{ leaseId: string; arrears: TenantArrears }>,
   unitLeases: readonly UnitLease[],
 ): { kept: QueuedReview[]; dropped: QueuedReview[] } {
-  const unitById = new Map(unitLeases.map((l) => [l.id, l.unit] as const));
+  const placeById = new Map(unitLeases.map((l) => [l.id, { unit: l.unit, propertyId: l.propertyId }] as const));
   const attributed = new Set<string>();
   for (const w of writes) {
-    const unit = unitById.get(w.leaseId);
-    if (unit === undefined || !w.arrears.sourceFile) continue;
+    const place = placeById.get(w.leaseId);
+    if (place === undefined || !w.arrears.sourceFile) continue;
     const key = sourceRowKey(
       w.arrears.sourceFile,
       w.arrears.asOfDate ?? null,
-      unit,
+      place.propertyId,
+      place.unit,
       w.arrears.d30 + w.arrears.d60 + w.arrears.d90 + w.arrears.d90plus,
     );
     if (key !== null) attributed.add(key);
