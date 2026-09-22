@@ -193,11 +193,11 @@
     "ia-p4": {
       "agent_role": "Engineering (Claude Code) — Gabriel-directed in-turn 2026-09-21",
       "phase": "IA decongestion rest of Phase 4 (rail 21→12): PR-A plumbing, PR-B Capital, PR-C Obligations+Market, PR-D Leasing, PR-E Brain, PR-F finalize. Plan: docs/superpowers/plans/2026-09-21-ia-decongestion-phase4-rest.md. Touches src/brain/routing.ts, src/shell/*, src/modules/{capital,debt,insurance,taxes,market,leasing,leases,command-brain,obligations}. No Architect-owned file except this status entry.",
-      "status": "in_progress",
+      "status": "merged",
       "blocked_by": null,
       "review_needed": false,
-      "review_detail": null,
-      "last_updated": "2026-09-21T12:00:00Z"
+      "review_detail": "MERGED via PRs #350 (plumbing) → #351 (Capital) → #352 (Obligations + Market Demand) → #353 (Leasing) → #354 (Brain) → #355 (finalize + whole-stack review fixes), squash-merged in order 2026-09-22. Worktree .claude/worktrees/ia-p4 removed post-merge (node_modules junction rmdir'd first); all six feat/ia-p4-* branches deleted locally and on origin.",
+      "last_updated": "2026-09-22T14:05:00Z"
     }
   },
   "phase-4-steps-5-7-8-9": {
