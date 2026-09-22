@@ -78,3 +78,44 @@ test('Capital exposes its five tabs in order', async ({ page }) => {
   const tabs = page.getByRole('tablist', { name: 'Capital views' }).getByRole('tab');
   await expect(tabs).toHaveText(['Allocation', 'Pipeline', 'Debt', 'Cash', 'Close']);
 });
+
+// --- Obligations + Market absorption (IA decongestion Phase 4c) ---
+// Insurance/Taxes fold into Obligations; the standalone Demand Signals module becomes Market > Demand.
+// Aliases redirect (replace) and map a legacy inner tab to the destination's ?view= segmented control.
+
+test('legacy /insurance?tab=selfinsure lands on Obligations > Insurance with Self-Insure selected', async ({ page }) => {
+  await page.goto('/insurance?tab=selfinsure&still=1');
+  await expect(page).toHaveURL(/\/obligations\?/);
+  const params = new URL(page.url()).searchParams;
+  expect(params.get('tab')).toBe('insurance');
+  expect(params.get('view')).toBe('selfinsure');
+  await expect(page.getByRole('radio', { name: 'Self-Insure & Bids' })).toBeChecked();
+});
+
+test('legacy /taxes?tab=returns lands on Obligations > Taxes with Filed Returns selected', async ({ page }) => {
+  await page.goto('/taxes?tab=returns&still=1');
+  await expect(page).toHaveURL(/\/obligations\?/);
+  const params = new URL(page.url()).searchParams;
+  expect(params.get('tab')).toBe('taxes');
+  expect(params.get('view')).toBe('returns');
+  // No radio assertion: the Taxes view switch renders only after the warehouse-backed useTaxAnalysis succeeds, so the URL is the durable assertion.
+});
+
+test('legacy /prospect-demand lands on Market > Demand', async ({ page }) => {
+  await page.goto('/prospect-demand?still=1');
+  await expect(page).toHaveURL(/\/market\?/);
+  expect(new URL(page.url()).searchParams.get('tab')).toBe('demand');
+  await expect(page.getByRole('tab', { name: 'Demand', exact: true })).toHaveAttribute('aria-selected', 'true');
+});
+
+test('Obligations exposes its two tabs in order', async ({ page }) => {
+  await page.goto('/obligations?still=1');
+  const tabs = page.getByRole('tablist', { name: 'Obligations views' }).getByRole('tab');
+  await expect(tabs).toHaveText(['Insurance', 'Taxes']);
+});
+
+test('Market exposes its four tabs in order', async ({ page }) => {
+  await page.goto('/market?still=1');
+  const tabs = page.getByRole('tablist', { name: 'Market views' }).getByRole('tab');
+  await expect(tabs).toHaveText(['Macro', 'Scorecards', 'Comps', 'Demand']);
+});

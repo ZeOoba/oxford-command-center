@@ -1,3 +1,4 @@
+import { lazy, Suspense } from 'react';
 import { useMacro, useAnalytics } from '@/data/queries';
 import { fmtPct } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
@@ -6,25 +7,24 @@ import { Badge } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
 import { Tabs, TabPanel } from '@/primitives/Tabs';
 import { AreaChart } from '@/charts/AreaChart';
-import { useTabParam } from '@/lib/useTabParam';
+import { useTabParam, CLEAR_VIEW } from '@/lib/useTabParam';
+import { ModuleLoading } from '@/shell/ModuleFallback';
 import { FORCE_MOUNT_PANEL } from '@/lib/forceMountPanel';
 import { useMarketIntel } from './hooks';
 import { MarketScorecard } from './MarketScorecard';
 import { CompsView } from './CompsView';
+import { MARKET_TABS, MARKET_TAB_KEYS, type MarketTab } from './tabs';
 
-type MarketTab = 'macro' | 'scorecards' | 'comps';
-const MARKET_TAB_KEYS: readonly MarketTab[] = ['macro', 'scorecards', 'comps'];
-const MARKET_TABS: Array<{ id: MarketTab; label: string }> = [
-  { id: 'macro', label: 'Macro' },
-  { id: 'scorecards', label: 'Scorecards' },
-  { id: 'comps', label: 'Comps' },
-];
+const ProspectDemandModule = lazy(() => import('../intel/ProspectDemandModule').then((m) => ({ default: m.ProspectDemandModule })));
+
+const MARKET_TAB_SPECS = MARKET_TABS.map(({ id, label }) => ({ id, label }));
 
 // Tab shell — hosts the FRED macro dashboard (MacroView: badge + KPIs + 10Y + Acquisition Lens,
-// a same-glance group), the Market Intelligence scorecards, and the Comps tab (task 7.3). Tab
-// state lives in the URL (`?tab=`) via useTabParam.
+// a same-glance group), the Market Intelligence scorecards, the Comps tab (task 7.3) and Demand
+// (the former standalone Demand Signals module, Phase 4c). Tab state lives in the URL (`?tab=`)
+// via useTabParam; a tab change clears `?view=` (Rule H).
 export function MarketModule() {
-  const [tab, setTab] = useTabParam<MarketTab>(MARKET_TAB_KEYS, 'macro');
+  const [tab, setTab] = useTabParam<MarketTab>(MARKET_TAB_KEYS, 'macro', 'tab', CLEAR_VIEW);
 
   return (
     <div className="flex flex-col gap-4">
@@ -32,11 +32,11 @@ export function MarketModule() {
         <CardHeader title="Market" />
       </Card>
 
-      {/* keyboardActivation="manual" — the Comps tab mounts CompsView, which fires a fresh
-          useCapitalAllocationReport() warehouse query on mount, so arrowing through the strip
+      {/* keyboardActivation="manual" — the Comps and Demand tabs mount their own warehouse queries
+          (useCapitalAllocationReport / useProspectDemand) on mount, so arrowing through the strip
           shouldn't fan out queries (plan R9). The macro / scorecards panels are force-mounted
           (they were one scroll before the split, so useMarketIntel already fired on mount). */}
-      <Tabs tabs={MARKET_TABS} selectedKey={tab} onSelectionChange={(k) => setTab(k as MarketTab)} keyboardActivation="manual" aria-label="Market views">
+      <Tabs tabs={MARKET_TAB_SPECS} selectedKey={tab} onSelectionChange={(k) => setTab(k as MarketTab)} keyboardActivation="manual" aria-label="Market views">
         <TabPanel id="macro" {...FORCE_MOUNT_PANEL}>
           <MacroView />
         </TabPanel>
@@ -45,6 +45,11 @@ export function MarketModule() {
         </TabPanel>
         <TabPanel id="comps">
           <CompsView />
+        </TabPanel>
+        <TabPanel id="demand">
+          <Suspense fallback={<ModuleLoading />}>
+            <ProspectDemandModule />
+          </Suspense>
         </TabPanel>
       </Tabs>
     </div>
