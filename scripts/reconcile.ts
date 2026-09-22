@@ -3,6 +3,7 @@ import { parseWorkbook } from '../server/workbook/parse';
 import { checkCashInvariants } from '../server/reconcile-runtime';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath } from '../server/config';
+import { loadCache, validateMappingCache } from '../server/ar/mapping-cache';
 
 loadEnvFile();
 
@@ -165,6 +166,18 @@ async function main() {
   const edgesOk = danglingEdges === 0;
   if (!edgesOk) failed++;
   console.log(`${edgesOk ? '✓ PASS' : '✗ FAIL'}  ${'Counterparty edges resolve'.padEnd(42)} ${danglingEdges} dangling`);
+
+  // AR mapping-cache referential integrity (2026-09-22 weekly sweep, finding 6): every non-SKIP
+  // value in data/ar-mapping-cache.json must resolve to a lease id in the roster. Same shape as the
+  // counterparty-edge check above — a cache entry is an edge from a tenant name to a lease, and a
+  // dangling one silently demotes a previously human-confirmed attribution to "needs review". The
+  // roster is the FULL leases array (Expired included), matching the importers' allLeaseIds.
+  const leaseIds = new Set(snapshot.leases.map((l) => l.id));
+  const cacheFlags = validateMappingCache(loadCache(), leaseIds);
+  const cacheOk = cacheFlags.length === 0;
+  if (!cacheOk) failed++;
+  console.log(`${cacheOk ? '✓ PASS' : '✗ FAIL'}  ${'AR mapping cache resolves'.padEnd(42)} ${cacheFlags.length} dangling`);
+  for (const f of cacheFlags) console.log(`         ${f.field} → ${f.rawValue}: ${f.issue}`);
 
   const peopleSeeded = snapshot.counterparties.filter((c) => c.source === 'memory').length;
   const peopleOk = peopleSeeded >= 4;

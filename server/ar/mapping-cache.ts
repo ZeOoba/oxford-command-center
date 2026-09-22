@@ -15,6 +15,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import type { DataQualityFlag } from '../../src/contracts/common';
 
 const DEFAULT_PATH = join(process.cwd(), 'data', 'ar-mapping-cache.json');
 
@@ -46,6 +47,66 @@ export function loadCache(): MappingCache {
     /* corrupt or missing → start fresh */
   }
   return { entries: {}, savedAt: new Date().toISOString() };
+}
+
+/**
+ * Referential integrity of the cache against a lease roster (2026-09-22 weekly sweep, finding 6).
+ *
+ * Every non-'SKIP' value must be a lease id that exists in `knownLeaseIds` — the FULL snapshot
+ * `leases` array, Expired included, i.e. the same wider roster `allLeaseIds` that validates a
+ * manually-typed id (a human ruling may deliberately target a dead lease; see
+ * parse-snapshot-for-import.ts). A dangling target means a name that USED to auto-attribute now
+ * silently cannot: partition-confidence.ts routes the hit to review at import time, but nothing
+ * checked the committed file itself, and this file is git-tracked and hand-edited.
+ *
+ * Pure and non-throwing by contract: it FLAGS (DataQualityFlag, the repo's channel for a bad source
+ * value) and never blocks a load — loadCache() stays a bare read so its callers (ar-import.ts,
+ * ar-import-headless.ts, seed-ar-mappings.ts) keep working on a stale cache exactly as before.
+ * A companion function rather than a widened loadCache() return: saveCache spreads the cache back
+ * to disk, so a flags field on MappingCache would be persisted into the JSON. Consumed by
+ * scripts/reconcile.ts (gate) — wire it into the importers' logs as a follow-up.
+ */
+export function validateMappingCache(cache: MappingCache, knownLeaseIds: ReadonlySet<string>): DataQualityFlag[] {
+  const entries: unknown = cache?.entries;
+  if (entries === null || typeof entries !== 'object' || Array.isArray(entries)) {
+    return [
+      {
+        entity: 'ar-mapping-cache',
+        field: 'entries',
+        issue: `entries is ${entries === null ? 'null' : Array.isArray(entries) ? 'an array' : typeof entries}, expected an object map — every cache lookup will fail`,
+        rawValue: safeString(entries),
+        severity: 'error',
+      },
+    ];
+  }
+  const flags: DataQualityFlag[] = [];
+  // Own keys only — same Object.hasOwn discipline every lookup site in the AR subsystem applies.
+  for (const [key, leaseId] of Object.entries(entries as Record<string, unknown>)) {
+    if (leaseId === 'SKIP') continue;
+    if (typeof leaseId === 'string' && knownLeaseIds.has(leaseId)) continue;
+    const shown = safeString(leaseId);
+    flags.push({
+      entity: 'ar-mapping-cache',
+      field: key,
+      issue: `maps to lease id '${shown}' which is not in the lease roster — the cached attribution is dangling (lease removed/renamed?) and will route to review instead of writing`,
+      rawValue: shown,
+      severity: 'warn',
+    });
+  }
+  return flags;
+}
+
+/** `String(v)` is not total: a null-prototype object or a throwing `toString` makes it throw, which
+ *  would break validateMappingCache's never-throws contract on the one path meant to REPORT a bad
+ *  value (2026-09-22 refute pass — unreachable from JSON.parse output, but the contract is stated
+ *  unconditionally, so it holds unconditionally). */
+function safeString(v: unknown): string {
+  if (typeof v === 'string') return v;
+  try {
+    return String(v);
+  } catch {
+    return Object.prototype.toString.call(v);
+  }
 }
 
 export async function saveCache(cache: MappingCache): Promise<void> {
