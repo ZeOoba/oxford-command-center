@@ -16,7 +16,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { parseArgs, runSnapshot } from '../../scripts/calibration-snapshot';
+import { openFailureSummary, parseArgs, runSnapshot } from '../../scripts/calibration-snapshot';
 import { approveImport } from '../../server/warehouse/actions';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
@@ -166,5 +166,20 @@ describe('runSnapshot — fail-open (the scheduler must never crash)', () => {
     // A data_quality_issues row records the failure (observability).
     const dq = (db.prepare("SELECT COUNT(*) AS c FROM data_quality_issues WHERE kind LIKE 'calibration-%'").get() as { c: number }).c;
     expect(dq).toBeGreaterThan(0);
+  });
+});
+
+describe('open failure keeps the --json contract (refute round)', () => {
+  it('reports ok:false with the reason so the scheduled task emails instead of silently skipping', () => {
+    const s = openFailureSummary('C:/x/finance.sqlite', new Error('warehouse is 1 migration(s) behind this code (032_x.sql)'));
+    expect(s.ok).toBe(false);
+    expect(s.errors).toBe(1);
+    expect(s.inputsVersion).toBeNull();
+    expect(s.note).toContain('cannot open warehouse at C:/x/finance.sqlite');
+    expect(s.note).toContain('1 migration(s) behind');
+    // The exact shape the task parses:
+    expect(Object.keys(s).sort()).toEqual(
+      ['due', 'errors', 'inputsVersion', 'note', 'ok', 'resolved', 'scanned', 'verdictsSkipped', 'verdictsWritten'].sort(),
+    );
   });
 });
