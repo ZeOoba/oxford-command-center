@@ -10,7 +10,7 @@
 //
 // Usage: npx tsx scripts/debt-scores-snapshot.ts [--db <path>] [--snapshot-date YYYY-MM-DD]
 import { join } from 'node:path';
-import { openWarehouse } from '../server/warehouse/db';
+import { openWarehouseNoMigrate } from '../server/warehouse/db';
 import type { WarehouseDb } from '../server/warehouse/db';
 import { scoreDebtPositionsWithTrust } from '../server/warehouse/debt-scoring';
 import { persistDebtScores } from '../server/warehouse/debt-scores-persistence';
@@ -54,7 +54,7 @@ export async function main(argv: string[]): Promise<number> {
 
   let db: WarehouseDb;
   try {
-    db = openWarehouse(dbPath);
+    db = openWarehouseNoMigrate(dbPath);
   } catch (e) {
     console.error(`cannot open warehouse at ${dbPath}: ${e instanceof Error ? e.message : String(e)}`);
     return 1;
