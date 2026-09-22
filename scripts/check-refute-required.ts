@@ -111,13 +111,15 @@ export const NON_FINANCIAL_CONFIG_PATHS: ReadonlySet<string> = new Set<string>()
 // directory (server/warehouse/om-extract-fields.json is the OM price/SF extraction spec). Directories are
 // a prefix (fail closed); the one out-of-tree data file is named.
 const FINANCIAL_JSON_PREFIXES: readonly string[] = [
-  'server/warehouse/',
-  'server/workbook/',
+  // 2026-09-22 refute of the default-deny change: server/ is now a default-deny root for SOURCE, so
+  // a .json under it is financial by the same rule that added server/ar/ (a weights table under
+  // server/insights/ or a benchmark table under server/macro/ would otherwise slip through the
+  // blanket .json exemption, which runs before the root rule). Subsumes the former server/warehouse/,
+  // server/workbook/ and server/ar/ entries; tests pin each. scripts/ is deliberately NOT here:
+  // scripts/data/*.json is an ingest receipt nothing reads back (see the test), and the only
+  // tracked .json under scripts/ today is that file.
+  'server/',
   'src/analytics/',
-  // 2026-09-22 refute pass: server/ar/ became a financial source directory in the same change, so
-  // per the rule above a .json inside it (an alias table, a property-header map) is financial too.
-  // None exists today — this is the fail-closed default, not a response to a file.
-  'server/ar/',
 ];
 // Subtracted from the prefixes above (Gabriel, 2026-09-21): server/warehouse/placeholders/*.placeholder.json are
 // self-labelled PLACEHOLDER stand-ins for broker/assessor data (docs/placeholder-data.md), overridden
@@ -170,8 +172,9 @@ export const DEFAULT_DENY_ROOTS: readonly string[] = ['server/', 'scripts/'];
 // (route with logic, publisher, writer) for one; (c) it is not Hard-Invariant-3 gate wiring or the
 // warehouse's access boundary — a silent weakening there exposes every figure at once, so
 // access-authz.ts, host-guard.ts, cors-policy.ts, rate-limit.ts, briefing/confidential.ts,
-// prepush-confidential-scan.mjs, install-git-hooks.ts, prepare-hooks.mjs and deploy-mirror.ps1
-// (MIRROR_INCLUDE_CONFIDENTIAL=1 + the Access-gate probe) all stay IN scope; and (d) history shows it
+// prepush-confidential-scan.mjs, install-git-hooks.ts, prepare-hooks.mjs, deploy-mirror.ps1
+// (MIRROR_INCLUDE_CONFIDENTIAL=1 + the Access-gate probe) and lib/deploy-alert.ps1 (decides whether
+// the GATE CHECK FAILED alert is suppressible) all stay IN scope; and (d) history shows it
 // edited in non-financial PRs, so the entry removes a real false positive, not a hypothetical one.
 // Deliberately file-level, never a directory: a new file beside an exempt one is IN scope until
 // someone reads it and adds it here. Doubt resolves toward "financial" (governance-check.ts stays in
@@ -227,10 +230,14 @@ export const NON_FINANCIAL_ROOT_PATHS: ReadonlySet<string> = new Set([
   'scripts/start-brain-server.ps1',
   'scripts/stop-brain-server.ps1',
   // scripts/lib/: shared PowerShell helpers dot-sourced by deploy-mirror.ps1 and the classifier —
-  // cmd.exe argument guard, failure-alert sender, run-completion beacon, isolated build root,
-  // git-fetch capture, in-process and native-command timeouts, task-action argument builder.
+  // cmd.exe argument guard, run-completion beacon, isolated build root, git-fetch capture,
+  // in-process and native-command timeouts, task-action argument builder.
+  // deploy-alert.ps1 is deliberately NOT here (2026-09-22 refute pass): Test-SuppressibleReason and
+  // the -Critical guard in Send-DeployFailureAlert decide whether a GATE CHECK FAILED alert — "a
+  // confidential bake may be publicly reachable" — can be suppressed. That is the same
+  // Hard-Invariant-3 wiring that keeps deploy-mirror.ps1 in scope (criterion (c)); a one-token
+  // edit to the '^(GATE CHECK|GIT AUTH FAILURE)' regex silences the exposure alert.
   'scripts/lib/cmd-arg-guard.ps1',
-  'scripts/lib/deploy-alert.ps1',
   'scripts/lib/deploy-beacon.ps1',
   'scripts/lib/deploy-buildroot.ps1',
   'scripts/lib/git-capture.ps1',
