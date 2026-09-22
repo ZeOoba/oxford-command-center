@@ -213,6 +213,15 @@ describe('check-refute-required — AR delinquency subsystem (sweep 2026-09-22)'
     // cache; editing which lease a name resolves to is the same decision class as the matcher.
     expect(isFinancialSourcePath('scripts/seed-ar-mappings.ts')).toBe(true);
     expect(isFinancialSourcePath('scripts\\ar-import-headless.ts')).toBe(true);
+    // Refute pass: the interactive importer holds its own `autoAccept` attribution threshold and
+    // writes cache entries + arrears; the sweep SKILL.md's scope list omits it — same stale-enumeration
+    // mode as everything above.
+    expect(isFinancialSourcePath('scripts/ar-import.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts\\ar-import.ts')).toBe(true);
+  });
+  it('treats a .json inside server/ar/ as financial data, like the other financial source dirs', () => {
+    expect(isFinancialSourcePath('server/ar/tenant-aliases.json')).toBe(true);
+    expect(isFinancialSourcePath('server\\ar\\property-headers.json')).toBe(true);
   });
   it('still ignores AR tests', () => {
     expect(isFinancialSourcePath('tests/unit/mapping-cache.test.ts')).toBe(false);

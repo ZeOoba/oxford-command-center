@@ -74,7 +74,7 @@ export function validateMappingCache(cache: MappingCache, knownLeaseIds: Readonl
         entity: 'ar-mapping-cache',
         field: 'entries',
         issue: `entries is ${entries === null ? 'null' : Array.isArray(entries) ? 'an array' : typeof entries}, expected an object map — every cache lookup will fail`,
-        rawValue: String(entries),
+        rawValue: safeString(entries),
         severity: 'error',
       },
     ];
@@ -84,15 +84,29 @@ export function validateMappingCache(cache: MappingCache, knownLeaseIds: Readonl
   for (const [key, leaseId] of Object.entries(entries as Record<string, unknown>)) {
     if (leaseId === 'SKIP') continue;
     if (typeof leaseId === 'string' && knownLeaseIds.has(leaseId)) continue;
+    const shown = safeString(leaseId);
     flags.push({
       entity: 'ar-mapping-cache',
       field: key,
-      issue: `maps to lease id '${String(leaseId)}' which is not in the lease roster — the cached attribution is dangling (lease removed/renamed?) and will route to review instead of writing`,
-      rawValue: String(leaseId),
+      issue: `maps to lease id '${shown}' which is not in the lease roster — the cached attribution is dangling (lease removed/renamed?) and will route to review instead of writing`,
+      rawValue: shown,
       severity: 'warn',
     });
   }
   return flags;
+}
+
+/** `String(v)` is not total: a null-prototype object or a throwing `toString` makes it throw, which
+ *  would break validateMappingCache's never-throws contract on the one path meant to REPORT a bad
+ *  value (2026-09-22 refute pass — unreachable from JSON.parse output, but the contract is stated
+ *  unconditionally, so it holds unconditionally). */
+function safeString(v: unknown): string {
+  if (typeof v === 'string') return v;
+  try {
+    return String(v);
+  } catch {
+    return Object.prototype.toString.call(v);
+  }
 }
 
 export async function saveCache(cache: MappingCache): Promise<void> {

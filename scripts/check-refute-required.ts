@@ -109,6 +109,10 @@ const FINANCIAL_JSON_PREFIXES: readonly string[] = [
   'server/warehouse/',
   'server/workbook/',
   'src/analytics/',
+  // 2026-09-22 refute pass: server/ar/ became a financial source directory in the same change, so
+  // per the rule above a .json inside it (an alias table, a property-header map) is financial too.
+  // None exists today — this is the fail-closed default, not a response to a file.
+  'server/ar/',
 ];
 // Subtracted from the prefixes above (Gabriel, 2026-09-21): server/warehouse/placeholders/*.placeholder.json are
 // self-labelled PLACEHOLDER stand-ins for broker/assessor data (docs/placeholder-data.md), overridden
@@ -187,6 +191,13 @@ export function isFinancialSourcePath(p: string): boolean {
     // cache, the same decision class as the matcher it bypasses.
     path === 'scripts/ar-import-headless.ts' ||
     path === 'scripts/seed-ar-mappings.ts' ||
+    // Refute pass on the 2026-09-22 fix: the INTERACTIVE importer carries its own inline copy of
+    // the auto-attribution threshold (`autoAccept` = exact, or high-confidence with >=2 tokens,
+    // unambiguous) — the headless feed's partition-confidence.ts explicitly "mirrors the interactive
+    // script's autoAccept rule". It writes cache entries and POSTs tenantArrears through the server.
+    // A one-token widening of that threshold auto-attributes balances no human reviewed. Omitted by
+    // the sweep SKILL.md's scope list too — the same stale enumeration this entry's siblings fix.
+    path === 'scripts/ar-import.ts' ||
     // The seed pipeline: source of truth for Deal.confidential AND the fallback deal set a Notion
     // outage publishes. A wrong edit here is a Hard-Invariant-3 exposure, not a fixture change.
     path === 'src/data/seed-deals.ts' ||
