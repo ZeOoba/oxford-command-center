@@ -6,7 +6,7 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import type { MacroSnapshot } from '../../src/contracts/index';
 import { inactivePanelIsHiddenByClass, isInInactivePanel, selectTab, tabIsSelected } from './tab-test-utils';
 
@@ -20,6 +20,8 @@ vi.mock('../../src/modules/market/MarketScorecard', () => ({
   MarketScorecard: ({ signal }: { signal: { cluster: string } }) => <div>SCORECARD-{signal.cluster}</div>,
 }));
 vi.mock('../../src/modules/market/CompsView', () => ({ CompsView: () => <div>COMPS-STUB</div> }));
+// Demand (ProspectDemandModule) mounts its own warehouse query — stubbed; the real module is lazy-loaded.
+vi.mock('../../src/modules/intel/ProspectDemandModule', () => ({ ProspectDemandModule: () => <div>DEMAND-STUB</div> }));
 
 import { MarketModule } from '../../src/modules/market/MarketModule';
 
@@ -36,6 +38,11 @@ const MACRO: MacroSnapshot = {
   tenYearHistory: [{ date: '2026-04-01', value: 4.32 }, { date: '2026-05-01', value: 4.48 }],
 };
 
+function LocationProbe() {
+  const loc = useLocation();
+  return <div data-testid="loc">{loc.search}</div>;
+}
+
 function renderMarket(entry = '/') {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
   qc.setQueryData(['macro'], MACRO);
@@ -43,6 +50,7 @@ function renderMarket(entry = '/') {
     <MemoryRouter initialEntries={[entry]}>
       <QueryClientProvider client={qc}>
         <MarketModule />
+        <LocationProbe />
       </QueryClientProvider>
     </MemoryRouter>,
   );
@@ -56,9 +64,9 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('MarketModule — Phase 3 tab split', () => {
-  it('renders three tabs, Macro selected by default', () => {
+  it('renders four tabs, Macro selected by default', () => {
     renderMarket();
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Macro', 'Scorecards', 'Comps']);
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Macro', 'Scorecards', 'Comps', 'Demand']);
     expect(tabIsSelected('Macro')).toBe(true);
   });
 
@@ -87,6 +95,21 @@ describe('MarketModule — Phase 3 tab split', () => {
     expect(screen.queryByText('COMPS-STUB')).toBeNull();
     selectTab('Comps');
     expect(screen.getByText('COMPS-STUB')).toBeTruthy();
+  });
+
+  it('PR-C: Demand stays lazy (no warehouse query on mount) and mounts the Demand Signals module on select', async () => {
+    renderMarket();
+    expect(screen.queryByText('DEMAND-STUB')).toBeNull();
+    selectTab('Demand');
+    expect(await screen.findByText('DEMAND-STUB')).toBeTruthy();
+    expect(tabIsSelected('Demand')).toBe(true);
+    expect(screen.getByTestId('loc').textContent).toBe('?tab=demand');
+  });
+
+  it('PR-C: ?tab=demand deep-links to the Demand tab', async () => {
+    renderMarket('/?tab=demand');
+    expect(await screen.findByText('DEMAND-STUB')).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /^demand$/i }).getAttribute('aria-selected')).toBe('true');
   });
 
   it.each([

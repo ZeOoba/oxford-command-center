@@ -19,11 +19,11 @@
 //   6. TaxesModule now threads a SECOND hook — useTaxStrategy() — down as props (RESOLVED
 //      data-flow: TaxesModule owns both queries, StrategyBoard/FiledReturnsTable stay prop-only,
 //      matching the existing useTaxAnalysis()-at-the-module-level pattern exactly). Renders
-//      THREE tab pills now, including "Filed Returns".
+//      THREE views now (a SegmentedControl on ?view= since IA Phase 4c), including "Filed Returns".
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
 import {
   sumIdentifiedOpportunityUsd,
   computePortfolioEffectiveRate,
@@ -710,34 +710,118 @@ describe('TaxesModule KPIs', () => {
   });
 });
 
-// ── TaxesModule tabs (P4c / C2, Task 10) — three pills, Filed Returns wired to useTaxStrategy ──
+// ── TaxesModule inner switch (IA decongestion Phase 4c, R5) — Taxes is the "Taxes" tab of the
+// Obligations destination, so its own strip is a SegmentedControl on `?view=` (Strategy Board ·
+// Assessments & Appeals · Filed Returns), never a nested tab strip. Filed Returns is still wired to
+// useTaxStrategy (P4c / C2, Task 10).
 
-describe('TaxesModule tabs (P4c / C2)', () => {
+function LocationProbe() {
+  const location = useLocation();
+  const navType = useNavigationType();
+  return (
+    <>
+      <span data-testid="search">{location.search}</span>
+      <span data-testid="nav-type">{navType}</span>
+    </>
+  );
+}
+
+function renderTaxes(qc: QueryClient, entry = '/') {
+  return render(
+    <MemoryRouter initialEntries={[entry]}>
+      <QueryClientProvider client={qc}>
+        <TaxesModule />
+        <LocationProbe />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+}
+
+const radioChecked = (name: string) => (screen.getByRole('radio', { name }) as HTMLInputElement).checked;
+
+describe('TaxesModule inner switch (SegmentedControl on ?view=)', () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
   });
 
-  it('renders three tab pills including "Filed Returns"', () => {
+  function seeded(): QueryClient {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
-
     const qc = seededClient();
     qc.setQueryData(TAX_KEYS.analysis, makeReport());
+    qc.setQueryData(TAX_STRATEGY_KEY, makeStrategyReport());
+    return qc;
+  }
 
-    render(
-      <MemoryRouter>
-        <QueryClientProvider client={qc}>
-          <TaxesModule />
-        </QueryClientProvider>
-      </MemoryRouter>,
-    );
-
-    expect(screen.getByText('Strategy Board')).toBeTruthy();
-    expect(screen.getByText('Assessments & Appeals')).toBeTruthy();
-    expect(screen.getByText('Filed Returns')).toBeTruthy();
+  it('renders a "Taxes views" radiogroup with the three existing labels and no tab strip', () => {
+    renderTaxes(seeded());
+    expect(screen.getByRole('radiogroup', { name: 'Taxes views' })).toBeTruthy();
+    expect(screen.getAllByRole('radio').map((r) => r.closest('label')?.textContent)).toEqual([
+      'Strategy Board',
+      'Assessments & Appeals',
+      'Filed Returns',
+    ]);
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
   });
 
-  it('renders FiledReturnsTable content when the Filed Returns tab is selected and useTaxStrategy resolves', () => {
+  it('defaults to Strategy Board and mounts only that view', () => {
+    renderTaxes(seeded());
+    expect(radioChecked('Strategy Board')).toBe(true);
+    expect(screen.getByText('Depreciation & Cost-Seg')).toBeTruthy();
+    expect(screen.queryByText('PLACEHOLDER — Entity A LLC')).toBeNull();
+  });
+
+  it('keeps the KPI strip above the switch on every view', () => {
+    renderTaxes(seeded(), '/?view=returns');
+    expect(screen.getByText('Annual Property Tax')).toBeTruthy();
+    expect(screen.getByText('Identified Opportunity')).toBeTruthy();
+    expect(screen.getByText('Appeals in Flight')).toBeTruthy();
+  });
+
+  it('?view=returns deep-links to Filed Returns', () => {
+    renderTaxes(seeded(), '/?view=returns');
+    expect(radioChecked('Filed Returns')).toBe(true);
+    expect(screen.getByText('PLACEHOLDER — Entity A LLC')).toBeTruthy();
+    expect(screen.queryByText('Depreciation & Cost-Seg')).toBeNull();
+  });
+
+  it('?view=assessments deep-links to Assessments & Appeals', () => {
+    renderTaxes(seeded(), '/?view=assessments');
+    expect(radioChecked('Assessments & Appeals')).toBe(true);
+    expect(screen.queryByText('Depreciation & Cost-Seg')).toBeNull();
+    expect(screen.queryByText('PLACEHOLDER — Entity A LLC')).toBeNull();
+  });
+
+  it('the outer ?tab= param does not select a view (only ?view= does)', () => {
+    renderTaxes(seeded(), '/?tab=returns');
+    expect(radioChecked('Strategy Board')).toBe(true);
+  });
+
+  it('selecting a radio writes ?view= with replace; the default view removes it; other params survive', () => {
+    renderTaxes(seeded(), '/?tab=taxes&scenario=Downside');
+    fireEvent.click(screen.getByRole('radio', { name: 'Filed Returns' }));
+    let params = new URLSearchParams(screen.getByTestId('search').textContent ?? '');
+    expect(params.get('view')).toBe('returns');
+    expect(params.get('tab')).toBe('taxes');
+    expect(params.get('scenario')).toBe('Downside');
+    expect(screen.getByTestId('nav-type').textContent).toBe('REPLACE');
+    fireEvent.click(screen.getByRole('radio', { name: 'Strategy Board' }));
+    params = new URLSearchParams(screen.getByTestId('search').textContent ?? '');
+    expect(params.has('view')).toBe(false);
+    expect(params.get('tab')).toBe('taxes');
+    expect(params.get('scenario')).toBe('Downside');
+  });
+});
+
+// ── TaxesModule Filed Returns view (P4c / C2, Task 10) — wired to useTaxStrategy ──
+
+describe('TaxesModule Filed Returns view (P4c / C2)', () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it('renders FiledReturnsTable content when the Filed Returns view is selected and useTaxStrategy resolves', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
 
     const qc = seededClient();
@@ -752,11 +836,11 @@ describe('TaxesModule tabs (P4c / C2)', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByText('Filed Returns'));
+    fireEvent.click(screen.getByRole('radio', { name: 'Filed Returns' }));
     expect(screen.getByText('PLACEHOLDER — Entity A LLC')).toBeTruthy();
   });
 
-  it('renders the Depreciation & Cost-Seg tier on the Strategy Board tab once useTaxStrategy resolves', () => {
+  it('renders the Depreciation & Cost-Seg tier on the Strategy Board view once useTaxStrategy resolves', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
 
     const qc = seededClient();
@@ -780,7 +864,7 @@ describe('TaxesModule tabs (P4c / C2)', () => {
   // TAX_KEYS.analysis) previously had no test coverage. TAX_STRATEGY_KEY is deliberately left
   // unseeded in both tests below so useTaxStrategy() actually runs its queryFn against the
   // stubbed fetch, mirroring insurance-module.test.tsx's offline-card pattern.
-  it('renders a loading Skeleton in the Filed Returns tab while useTaxStrategy is still loading', () => {
+  it('renders a loading Skeleton in the Filed Returns view while useTaxStrategy is still loading', () => {
     // A fetch that never resolves keeps useTaxStrategy() pending (isLoading true, data
     // undefined) for the lifetime of the test — the Filed Returns tab must show its own Skeleton
     // fallback (height: 200), not the resolved table or the offline card.
@@ -798,14 +882,14 @@ describe('TaxesModule tabs (P4c / C2)', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByText('Filed Returns'));
+    fireEvent.click(screen.getByRole('radio', { name: 'Filed Returns' }));
 
     expect(screen.queryByText('PLACEHOLDER — Entity A LLC')).toBeNull();
     expect(screen.queryByText(/Filed-return metadata requires the live brain server/i)).toBeNull();
     expect(container.querySelector('[style*="200px"]')).toBeTruthy();
   });
 
-  it('renders the offline Card in the Filed Returns tab when useTaxStrategy errors with WarehouseUnavailableError', async () => {
+  it('renders the offline Card in the Filed Returns view when useTaxStrategy errors with WarehouseUnavailableError', async () => {
     // useTaxStrategy hard-codes retry: 1 via QUERY_OPTS (a per-query option, which always wins
     // over the QueryClient's own defaultOptions) — the default ~1s retry backoff means the error
     // state can take a little over 1s to settle, hence the extended waitFor timeout below
@@ -824,7 +908,7 @@ describe('TaxesModule tabs (P4c / C2)', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByText('Filed Returns'));
+    fireEvent.click(screen.getByRole('radio', { name: 'Filed Returns' }));
 
     await waitFor(
       () => {

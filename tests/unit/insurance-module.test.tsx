@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
 import type { InsuranceAnalysisReport, PolicyEconomics } from '../../src/contracts/insurance-analysis';
 import type { InsurancePolicy } from '../../src/contracts/insurance';
 import type { InsuranceLossReport, PropertyEal, DeductibleReview, RebidPipelineItem } from '../../src/contracts/insurance-loss';
@@ -243,30 +243,96 @@ describe('InsuranceModule KPIs', () => {
   });
 });
 
-describe('InsuranceModule tabs', () => {
-  it('renders three tab pills including Self-Insure & Bids', () => {
-    render(
-      <MemoryRouter>
-        <QueryClientProvider client={seededClient(sufficientReport())}>
-          <InsuranceModule />
-        </QueryClientProvider>
-      </MemoryRouter>,
-    );
-    expect(screen.getByText('Savings Board')).toBeTruthy();
-    expect(screen.getByText('Policy Register')).toBeTruthy();
-    expect(screen.getByText('Self-Insure & Bids')).toBeTruthy();
+// IA decongestion Phase 4c (rule R5) — Insurance is the "Insurance" tab of the Obligations
+// destination, so its own strip is a SegmentedControl on `?view=`, never a nested tab strip.
+function LocationProbe() {
+  const location = useLocation();
+  const navType = useNavigationType();
+  return (
+    <>
+      <span data-testid="search">{location.search}</span>
+      <span data-testid="nav-type">{navType}</span>
+    </>
+  );
+}
+
+function renderInsurance(entry = '/', client: QueryClient = seededClient(sufficientReport(), [insurancePolicy()], lossReport())) {
+  return render(
+    <MemoryRouter initialEntries={[entry]}>
+      <QueryClientProvider client={client}>
+        <InsuranceModule />
+        <LocationProbe />
+      </QueryClientProvider>
+    </MemoryRouter>,
+  );
+}
+
+const radioChecked = (name: string) => (screen.getByRole('radio', { name }) as HTMLInputElement).checked;
+
+describe('InsuranceModule inner switch (SegmentedControl on ?view=)', () => {
+  it('renders an "Insurance views" radiogroup with the three existing labels and no tab strip', () => {
+    renderInsurance();
+    expect(screen.getByRole('radiogroup', { name: 'Insurance views' })).toBeTruthy();
+    expect(screen.getAllByRole('radio').map((r) => r.closest('label')?.textContent)).toEqual([
+      'Savings Board',
+      'Policy Register',
+      'Self-Insure & Bids',
+    ]);
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
   });
 
-  it('renders SelfInsureView content when the Self-Insure & Bids tab is selected', () => {
-    render(
-      <MemoryRouter>
-        <QueryClientProvider client={seededClient(sufficientReport(), [], lossReport())}>
-          <InsuranceModule />
-        </QueryClientProvider>
-      </MemoryRouter>,
-    );
-    fireEvent.click(screen.getByText('Self-Insure & Bids'));
+  it('defaults to Savings Board and mounts only that view', () => {
+    renderInsurance();
+    expect(radioChecked('Savings Board')).toBe(true);
+    expect(screen.getByText('Re-bid — above book median')).toBeTruthy();
+    expect(screen.queryByText('Policy Tracker')).toBeNull();
+    expect(screen.queryByText('Expected Annual Loss by Property')).toBeNull();
+  });
+
+  it('keeps the KPI strip above the switch on every view', () => {
+    renderInsurance('/?view=register');
+    expect(screen.getByText('Annual Premium')).toBeTruthy();
+    expect(screen.getByText('Renewals ≤90d')).toBeTruthy();
+  });
+
+  it('?view=register deep-links to the Policy Register', () => {
+    renderInsurance('/?view=register');
+    expect(radioChecked('Policy Register')).toBe(true);
+    expect(screen.getByText('Policy Tracker')).toBeTruthy();
+    expect(screen.queryByText('Re-bid — above book median')).toBeNull();
+  });
+
+  it('?view=selfinsure deep-links to Self-Insure & Bids', () => {
+    renderInsurance('/?view=selfinsure');
+    expect(radioChecked('Self-Insure & Bids')).toBe(true);
     expect(screen.getByText('Expected Annual Loss by Property')).toBeTruthy();
+    expect(screen.queryByText('Policy Tracker')).toBeNull();
+  });
+
+  it('the outer ?tab= param does not select a view (only ?view= does)', () => {
+    renderInsurance('/?tab=selfinsure');
+    expect(radioChecked('Savings Board')).toBe(true);
+  });
+
+  it('renders SelfInsureView content when Self-Insure & Bids is selected', () => {
+    renderInsurance();
+    fireEvent.click(screen.getByRole('radio', { name: 'Self-Insure & Bids' }));
+    expect(screen.getByText('Expected Annual Loss by Property')).toBeTruthy();
+  });
+
+  it('selecting a radio writes ?view= with replace; the default view removes it; other params survive', () => {
+    renderInsurance('/?tab=insurance&scenario=Downside');
+    fireEvent.click(screen.getByRole('radio', { name: 'Policy Register' }));
+    let params = new URLSearchParams(screen.getByTestId('search').textContent ?? '');
+    expect(params.get('view')).toBe('register');
+    expect(params.get('tab')).toBe('insurance');
+    expect(params.get('scenario')).toBe('Downside');
+    expect(screen.getByTestId('nav-type').textContent).toBe('REPLACE');
+    fireEvent.click(screen.getByRole('radio', { name: 'Savings Board' }));
+    params = new URLSearchParams(screen.getByTestId('search').textContent ?? '');
+    expect(params.has('view')).toBe(false);
+    expect(params.get('tab')).toBe('insurance');
+    expect(params.get('scenario')).toBe('Downside');
   });
 });
 
@@ -366,7 +432,7 @@ describe('UI copy doctrine — never "savings" for excessPremiumVsMedian', () =>
 });
 
 describe('Policy Register tab', () => {
-  it('still renders the pre-existing policy table content after switching tabs', () => {
+  it('still renders the pre-existing policy table content after switching views', () => {
     render(
       <MemoryRouter>
         <QueryClientProvider
@@ -380,7 +446,7 @@ describe('Policy Register tab', () => {
       </MemoryRouter>,
     );
 
-    fireEvent.click(screen.getByText('Policy Register'));
+    fireEvent.click(screen.getByRole('radio', { name: 'Policy Register' }));
 
     expect(screen.getByText('Policy Tracker')).toBeTruthy();
     expect(screen.getByText('2 policies')).toBeTruthy();
@@ -390,7 +456,7 @@ describe('Policy Register tab', () => {
     expect(screen.getByText('Renew Now')).toBeTruthy();
   });
 
-  it('defaults to the Savings Board tab on first render', () => {
+  it('defaults to the Savings Board view on first render', () => {
     render(
       <MemoryRouter>
         <QueryClientProvider client={seededClient(sufficientReport(), [insurancePolicy()])}>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseRoute, entityHref, entityPath, TAB_PRIMARY_TYPE, HOME_TAB, HOME_MODULE } from '../../src/brain/routing';
+import { parseRoute, entityHref, entityPath, TAB_PRIMARY_TYPE, HOME_TAB, HOME_MODULE, MODULE_PRIMARY_TYPE } from '../../src/brain/routing';
 import type { EntityType } from '../../src/brain/ui-context';
 
 const IDS = ['capital', 'pipeline', 'portfolio', 'worklist', 'overview'];
@@ -45,7 +45,7 @@ describe('entityHref', () => {
 describe('real routing constants (Capital PR-B)', () => {
   it('TAB_PRIMARY_TYPE / HOME_TAB / HOME_MODULE route loans and cash entities into Capital', () => {
     expect(TAB_PRIMARY_TYPE.capital).toEqual({ debt: 'loan', cash: 'cashEntity' });
-    expect(HOME_TAB).toEqual({ loan: 'debt', cashEntity: 'cash' });
+    expect(HOME_TAB).toEqual({ loan: 'debt', cashEntity: 'cash', insurance: 'insurance' });
     expect(HOME_MODULE.loan).toBe('capital');
     expect(HOME_MODULE.cashEntity).toBe('capital');
     expect(entityPath({ type: 'loan', id: 'l1' })).toBe('/capital/l1');
@@ -53,6 +53,26 @@ describe('real routing constants (Capital PR-B)', () => {
   it('entityHref with the real constants lands cross-module jumps on the right Capital tab', () => {
     expect(entityHref({ type: 'loan', id: 'l1' }, '?tab=alerts&view=x&scenario=Downside', 'worklist')).toBe('/capital/l1?scenario=Downside&tab=debt');
     expect(entityHref({ type: 'cashEntity', id: 'a1' }, '', 'overview')).toBe('/capital/a1?tab=cash');
+  });
+});
+
+describe('real routing constants (Obligations PR-C)', () => {
+  it('the insurance drawer lives in Obligations (single type => resolves on every Obligations tab)', () => {
+    expect(MODULE_PRIMARY_TYPE.obligations).toBe('insurance');
+    expect(MODULE_PRIMARY_TYPE.insurance).toBeUndefined();
+    expect(HOME_MODULE.insurance).toBe('obligations');
+    expect(HOME_TAB.insurance).toBe('insurance');
+    expect(entityPath({ type: 'insurance', id: 'pol-1' })).toBe('/obligations/pol-1');
+  });
+  it('cross-module jump lands on the Insurance tab (Calendar -> policy drawer)', () => {
+    expect(entityHref({ type: 'insurance', id: 'pol-1' }, '?tab=calendar', 'worklist')).toBe('/obligations/pol-1?tab=insurance');
+  });
+  it('same-module jump keeps the Taxes tab: Obligations hosts the insurance drawer on every tab', () => {
+    expect(entityHref({ type: 'insurance', id: 'pol-1' }, '?tab=taxes', 'obligations')).toBe('/obligations/pol-1?tab=taxes');
+    expect(entityHref({ type: 'insurance', id: 'pol-1' }, '?tab=insurance&view=register', 'obligations')).toBe('/obligations/pol-1?tab=insurance&view=register');
+  });
+  it('the drawer resolves on a Taxes-tab URL with the real constants', () => {
+    expect(parseRoute('/obligations/pol-1', ['obligations'], 'taxes').selected).toEqual({ type: 'insurance', id: 'pol-1' });
   });
 });
 
