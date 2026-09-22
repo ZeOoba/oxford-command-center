@@ -81,12 +81,13 @@ import { extractPdfText } from '../server/ar/pdf-extract';
 import { parseArAging, isGarbageExtraction, extractAsOfDateFromFilename, type ArAgingRow } from '../server/ar/ar-aging';
 import { detectRentManagerDelinquencyDetail, parseRentManagerWorksheet, type SubtotalMismatch } from '../server/ar/rent-manager-delinquency';
 import { detectDelinquencyTransactional, parseDelinquencyTransactional } from '../server/ar/delinquency-transactional';
-import { detectDelinquencyBucketed, parseDelinquencyBucketed } from '../server/ar/delinquency-bucketed';
-import { resolveByUnit, type UnitLease } from '../server/ar/resolve-by-unit';
+import { detectDelinquencyBucketed, parseDelinquencyBucketed, type BucketedUnitRow } from '../server/ar/delinquency-bucketed';
+import { resolveByUnit, unitCandidates, expandUnitTokens, type UnitLease, type UnitResolution } from '../server/ar/resolve-by-unit';
+import { isDeadLease } from '../server/ar/lease-liveness';
 import { partitionArRows, type ArReviewRow } from '../server/ar/partition-confidence';
 import { resolveLatestArrears, filterAgainstPersisted } from '../server/ar/resolve-latest';
 import { applyWritesAndClears, type SweepReportInfo } from '../server/ar/clear-dropped-leases';
-import { loadCache, saveCache } from '../server/ar/mapping-cache';
+import { loadCache, saveCache, cacheKey } from '../server/ar/mapping-cache';
 import { loadOverlay, saveOverlay, overlayPath, evaluateOverlayPrecondition } from '../server/overlay';
 import { deriveArBalances } from '../server/ar/derive-ar-balances';
 import { SNAPSHOT_PATH } from '../server/config';
@@ -99,29 +100,57 @@ const PROCESSED = join(AR_ROOT, 'processed');
 const FAILED = join(AR_ROOT, 'failed');
 const REVIEW_QUEUE = join(AR_ROOT, 'review-queue.json');
 
-interface QueuedReview extends ArReviewRow {
+export interface QueuedReview extends ArReviewRow {
   sourceFile: string;
   queuedAt: string;
+  // ---- Format B (unit-only) rows ONLY -- absent on name-matched rows (2026-09-14 sweep, Fix B).
+  // A Format B row carries no tenant name, so the fields below give the queue what the name path
+  // gets for free: a stable identity for the source row, and a hint at who it is.
+  /** The report's as-of date (ISO). With `unit`, `sourceFile` and the bucket sum it identifies ONE
+   *  real-world source row across parse shapes -- see sourceRowKey. */
+  asOfDate?: string | null;
+  /** The resolved portfolio property id (BUCKETED_PROPERTY_HEADERS), or null when the header did not
+   *  map. Part of the source-row identity: a multi-property export lists several buildings, and one
+   *  building's 'C4' is not another's (refute of Fix B, 2026-09-22 -- without this, an UNMAPPED
+   *  building's row that happened to share unit tokens and cents with a mapped building's write in
+   *  the same file was silently dropped from the queue instead of surfacing its header). */
+  propertyId?: string | null;
+  /** The unit label exactly as the export printed it (annotation included), e.g. 'C 4 (storage)'. */
+  unit?: string | null;
+  /** Who the lease roster puts at this unit, ANY status ('REDACTED-486 [Expired]'), joined with
+   *  ' | ' when several -- DISPLAY ONLY. Never a matching input. */
+  candidateTenant?: string | null;
+  candidateLeaseIds?: string[];
+  /** The mapping cache's standing ruling for the candidate name(s), e.g. 'REDACTED-486 → SKIP'
+   *  -- surfaced so a durable name-keyed human decision is VISIBLE from a unit-keyed row. Never
+   *  auto-applied: a SKIP ruled on a name-matched row has different provenance than this one. */
+  candidateCacheRuling?: string | null;
 }
 
-/** Read {id, tenantName, company} for every lease from the persisted snapshot, EXCLUDING any lease
- *  whose status is 'Expired'. An exact tenant-name hit against a dead lease auto-writes at 'exact'
- *  confidence with no human review (matchTenantToLease has no status awareness) -- the 2026-08-24
- *  integrity-sweep incident: a human SKIP ruling on an Expired lease's residual delinquency
- *  (REDACTED-197, "no current occupant") was silently reversed the next time this
- *  loader fed that same dead lease back into the matcher. Dropping Expired leases from the candidate
- *  pool entirely means a current-period export naming a vacated tenant can no longer auto-attribute --
- *  it falls through to 'none' confidence and lands in the review queue instead, which is the correct
- *  place for a human to re-confirm a SKIP or re-attribute to whatever now occupies the unit. */
+/** Read {id, tenantName, company} for every lease from the persisted snapshot, EXCLUDING any DEAD
+ *  lease (server/ar/lease-liveness.ts's isDeadLease: status 'Expired' or 'Vacant', or annualRent 0).
+ *  An exact tenant-name hit against a dead lease auto-writes at 'exact' confidence with no human
+ *  review (matchTenantToLease has no status awareness) -- the 2026-08-24 integrity-sweep incident:
+ *  a human SKIP ruling on an Expired lease's residual delinquency (REDACTED-197,
+ *  "no current occupant") was silently reversed the next time this loader fed that same dead lease
+ *  back into the matcher. Dropping dead leases from the candidate pool entirely means a
+ *  current-period export naming a vacated tenant can no longer auto-attribute -- it falls through
+ *  to 'none' confidence and lands in the review queue instead, which is the correct place for a
+ *  human to re-confirm a SKIP or re-attribute to whatever now occupies the unit.
+ *
+ *  Widened from Expired-only on 2026-09-14 (weekly financial-code sweep, Fix A): an Active lease
+ *  carrying $0 rent (REDACTED-348 #202, Evans Gymnastics A15 -- roster placeholders that
+ *  bill nothing) and a 'Vacant' record were still live candidates here. The predicate is shared
+ *  with resolveByUnit so the two fresh-match pools cannot drift apart again. */
 export function loadLeasesFromSnapshot(): LeaseLite[] {
   if (!existsSync(SNAPSHOT_PATH)) {
     throw new Error(`Snapshot not found at ${SNAPSHOT_PATH} — run a Brain refresh first (npm run dev).`);
   }
   const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')) as {
-    leases?: Array<{ id: string; tenantName: string; company: string | null; status?: string | null }>;
+    leases?: Array<{ id: string; tenantName: string; company: string | null; status?: string | null; annualRent?: number | null }>;
   };
   return (snap.leases ?? [])
-    .filter((l) => l.status !== 'Expired')
+    .filter((l) => !isDeadLease(l))
     .map((l) => ({ id: l.id, tenantName: l.tenantName, company: l.company ?? null }));
 }
 
@@ -131,7 +160,11 @@ export function loadLeasesFromSnapshot(): LeaseLite[] {
  *  lease), but a PREVIOUSLY human-CONFIRMED cache mapping to an Expired lease is a different,
  *  already-trusted decision -- excluding those ids too made partitionArRows' `leaseIds.has(cached)`
  *  check reject live, confirmed mappings as "lease removed/vacated", silently freezing real arrears
- *  behind a resolver-less review queue. */
+ *  behind a resolver-less review queue.
+ *
+ *  DELIBERATELY NOT narrowed by isDeadLease (2026-09-14 sweep, Fix A): the same reasoning applies
+ *  verbatim to the wider dead set -- the real cache entry "REDACTED-348" maps to a lease
+ *  that is Active with $0 rent, and that confirmed mapping must keep writing. */
 export function loadAllLeaseIdsFromSnapshot(): Set<string> {
   const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')) as { leases?: Array<{ id: string }> };
   return new Set((snap.leases ?? []).map((l) => l.id));
@@ -151,12 +184,24 @@ export function loadAllLeaseIdsFromSnapshot(): Set<string> {
  * auto-write of the vacated tenant's arrears onto the NEW tenant's lease, with no tenant name in a
  * Format B row to catch the swap. resolveByUnit (server/ar/resolve-by-unit.ts) now does the
  * Expired-aware filtering itself, INSIDE resolution, so it can detect exactly this "Expired sibling
- * on the same unit" case and downgrade to review instead. */
+ * on the same unit" case and downgrade to review instead.
+ *
+ * Also carries annualRent (2026-09-14 sweep, Fix A -- resolveByUnit's live-hit filter now uses the
+ * shared isDeadLease predicate, which needs it to see a zero-rent Active placeholder as dead) and
+ * tenantName (Fix B -- so a Format B row that lands in the review queue can name who the roster
+ * says is at that unit, since the row itself carries no tenant name). */
 export function loadUnitLeasesFromSnapshot(): UnitLease[] {
   const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')) as {
-    leases?: Array<{ id: string; unit: string | null; propertyId: string; status?: string | null }>;
+    leases?: Array<{ id: string; unit: string | null; propertyId: string; status?: string | null; annualRent?: number | null; tenantName?: string | null }>;
   };
-  return (snap.leases ?? []).map((l) => ({ id: l.id, unit: l.unit, propertyId: l.propertyId, status: l.status ?? null }));
+  return (snap.leases ?? []).map((l) => ({
+    id: l.id,
+    unit: l.unit,
+    propertyId: l.propertyId,
+    status: l.status ?? null,
+    annualRent: l.annualRent ?? null,
+    tenantName: l.tenantName ?? null,
+  }));
 }
 
 // Format B's group-header text -> portfolio.json property id. EXPLICIT table, not a fuzzy/substring
@@ -207,6 +252,166 @@ function backupCorruptQueue(reason: string): void {
   }
 }
 
+/** A date key for source-row identity: the calendar day (UTC) for a Date or any parseable string,
+ *  the raw string when unparseable, 'undated' when absent. Tolerates the two shapes an as-of date
+ *  has in this script -- a Date in-run (extractAsOfDateFromFilename) and an ISO string once
+ *  round-tripped through JSON (a persisted queue row). */
+function asOfKey(asOf: Date | string | null | undefined): string {
+  if (asOf === null || asOf === undefined) return 'undated';
+  const d = asOf instanceof Date ? asOf : new Date(asOf);
+  return Number.isNaN(d.getTime()) ? String(asOf) : d.toISOString().slice(0, 10);
+}
+
+/** Identity of ONE real-world source row, independent of how it was parsed (2026-09-14 sweep,
+ *  Fix B): (sourceFile, as-of day, CANONICAL unit tokens, amount to the cent). The unit is
+ *  canonicalized through resolve-by-unit.ts's expandUnitTokens -- the same normalizer resolution
+ *  uses -- so the export's annotated 'C 4 (storage)' and the roster's 'C4' key identically. Found
+ *  live: the review queue held "C 4 (storage)" / $0.38 / 8.21.2026 while arBalances already
+ *  carried that exact row attributed to the C4 lease, because the queue's legacy dedup key
+ *  compares the RAW label. The resolved property id is part of the identity too (refute of Fix B,
+ *  2026-09-22): a Format B export lists several buildings, and a unit label is only unique WITHIN
+ *  one, so 'C4' at a mapped building and 'C4' at an unmapped one (same file, same cents) are two
+ *  rows. Returns null when there is no identity to key on (missing, blank, or annotation-only
+ *  label; or an unresolved property, which no write can ever carry) -- such a row can never be
+ *  proven a duplicate, so it is never dropped. */
+export function sourceRowKey(
+  sourceFile: string,
+  asOfDate: Date | string | null | undefined,
+  propertyId: string | null | undefined,
+  unit: string | null | undefined,
+  amount: number,
+): string | null {
+  if (propertyId === null || propertyId === undefined || propertyId === '') return null;
+  if (unit === null || unit === undefined || unit.trim() === '') return null;
+  const tokens = [...expandUnitTokens(unit)].filter((t) => t !== '').sort();
+  if (tokens.length === 0) return null;
+  // Same to-the-cent idiom as merge-buckets.ts / delinquency-transactional.ts: float-order noise
+  // in a bucket sum must not split one source row into two identities.
+  const cents = (Math.round(amount * 100) / 100).toFixed(2);
+  return `${sourceFile}::${asOfKey(asOfDate)}::${propertyId}::${tokens.join('+')}::${cents}`;
+}
+
+/** sourceRowKey for a queued row -- null for a name-matched row (no unit / as-of identity) or a
+ *  pre-Fix-B Format B row persisted before those fields existed. */
+function reviewSourceRowKey(r: QueuedReview): string | null {
+  if (r.unit === undefined || r.asOfDate === undefined || r.propertyId === undefined) return null;
+  return sourceRowKey(r.sourceFile, r.asOfDate, r.propertyId, r.unit, r.d30 + r.d60 + r.d90 + r.d90plus);
+}
+
+/** Build the review-queue row for a Format B (unit-only) row that did not resolve. Pure -- the
+ *  reason text is exactly what the inline branch produced before (2026-09-14 sweep, Fix B lifted
+ *  it out so it can be unit-tested), plus the source-row identity fields and the roster candidate:
+ *  Format B carries NO tenant name, so a durable name-keyed SKIP ruling in the mapping cache
+ *  (real: "REDACTED-486": "SKIP") was invisible from the queue. The candidate is whoever the
+ *  roster puts at that unit at ANY status -- a dead lease is precisely the case a human needs to
+ *  see -- and the cache's ruling for that name is shown beside it. DISPLAY ONLY: the row stays a
+ *  'none'-confidence review with no proposal; nothing here auto-applies a SKIP or a mapping. */
+export function buildBucketedReviewRow(args: {
+  row: BucketedUnitRow;
+  res: UnitResolution;
+  propertyId: string | null;
+  unitLeases: readonly UnitLease[];
+  cacheEntries: Readonly<Record<string, string>>;
+  sourceFile: string;
+  asOfDate: Date | null;
+  queuedAt: string;
+}): QueuedReview {
+  const { row, res, propertyId, unitLeases, cacheEntries, sourceFile, asOfDate, queuedAt } = args;
+  const reason =
+    propertyId === null
+      ? `property header not in the known-property table: '${row.property ?? '(none)'}' — add it to BUCKETED_PROPERTY_HEADERS once confirmed against a real property id`
+      : res.ambiguous
+        ? `unit '${row.unit}' matches more than one lease at this property — needs a human look`
+        : `unit '${row.unit}' has no exact match at this property (may be part of a larger merged lease — never auto-attributed on a partial overlap)`;
+  const candidates = unitCandidates(row, unitLeases, propertyId);
+  const candidateTenant = candidates.map((c) => `${c.tenantName ?? '(unnamed)'} [${c.status ?? 'unknown status'}]`).join(' | ') || null;
+  // Object.hasOwn, not `in`/index -- same hygiene as partitionArRows: a name that normalizes to
+  // 'constructor' must read undefined, not an inherited Object.prototype member.
+  const rulings = candidates.flatMap((c) => {
+    if (!c.tenantName) return [];
+    const key = cacheKey(c.tenantName);
+    const ruling = Object.hasOwn(cacheEntries, key) ? cacheEntries[key] : undefined;
+    return ruling === undefined ? [] : [`${key} → ${ruling}`];
+  });
+  return {
+    tenant: `${row.property ?? 'unknown property'} / ${row.unit}`,
+    property: row.property,
+    d30: row.d30,
+    d60: 0,
+    d90: 0,
+    d90plus: row.d30plus,
+    proposedLeaseId: null,
+    proposedCandidate: null,
+    confidence: 'none',
+    ambiguous: res.ambiguous,
+    reason,
+    sourceFile,
+    queuedAt,
+    asOfDate: asOfDate === null ? null : asOfDate.toISOString(),
+    propertyId,
+    unit: row.unit,
+    candidateTenant,
+    candidateLeaseIds: candidates.map((c) => c.id),
+    candidateCacheRuling: rulings.join(' | ') || null,
+  };
+}
+
+/** Drop review rows that duplicate a source row THIS SWEEP already attributed (2026-09-14 sweep,
+ *  Fix B). A write is keyed exactly like a Format B review row -- (sourceFile, as-of, the written
+ *  lease's roster unit, bucket sum) -- so a row that reached the overlay through one parse shape
+ *  is not also queued for a human through another. Only rows carrying a source-row identity (Format
+ *  B) are ever dropped; name-matched review rows and writes to a lease the roster cannot place on
+ *  a unit pass through untouched. Order-independent by construction: it runs over the whole
+ *  sweep's writes after every file has been parsed, not file-by-file. */
+export function dropReviewsAlreadyAttributed(
+  reviews: readonly QueuedReview[],
+  writes: ReadonlyArray<{ leaseId: string; arrears: TenantArrears }>,
+  unitLeases: readonly UnitLease[],
+): { kept: QueuedReview[]; dropped: QueuedReview[] } {
+  const placeById = new Map(unitLeases.map((l) => [l.id, { unit: l.unit, propertyId: l.propertyId }] as const));
+  const attributed = new Set<string>();
+  for (const w of writes) {
+    const place = placeById.get(w.leaseId);
+    if (place === undefined || !w.arrears.sourceFile) continue;
+    const key = sourceRowKey(
+      w.arrears.sourceFile,
+      w.arrears.asOfDate ?? null,
+      place.propertyId,
+      place.unit,
+      w.arrears.d30 + w.arrears.d60 + w.arrears.d90 + w.arrears.d90plus,
+    );
+    if (key !== null) attributed.add(key);
+  }
+  const kept: QueuedReview[] = [];
+  const dropped: QueuedReview[] = [];
+  for (const r of reviews) {
+    const key = reviewSourceRowKey(r);
+    (key !== null && attributed.has(key) ? dropped : kept).push(r);
+  }
+  return { kept, dropped };
+}
+
+/** The queue-append dedup (lifted out of appendReviewQueue, 2026-09-14 sweep, Fix B). Two keys,
+ *  either of which marks an incoming row as already queued:
+ *   - legacy (proposedLeaseId ?? tenant, sourceFile, reason) -- refute round 4/medium's rule,
+ *     unchanged: the same still-unresolved conflict re-queued by a repeat sweep.
+ *   - source-row (sourceRowKey via unit / as-of / amount) -- so a Format B row re-queued under a
+ *     DIFFERENT label or reason ('C 4 (storage)' vs 'C4'; 'no exact match' vs 'ambiguous' after a
+ *     roster change) is still recognised as the same source row.
+ *  Deliberately NOT applied within the incoming batch: the legacy key ignores amount, so a
+ *  within-batch dedup would silently drop the second of two genuine rows one export carries for a
+ *  single unit. Two files never collide anyway (sourceFile is in both keys). */
+export function dedupReviewsAgainstQueue(existing: readonly QueuedReview[], rows: readonly QueuedReview[]): QueuedReview[] {
+  const legacyKey = (r: QueuedReview) => `${r.proposedLeaseId ?? r.tenant}::${r.sourceFile}::${r.reason}`;
+  const existingLegacy = new Set(existing.map(legacyKey));
+  const existingSource = new Set(existing.map(reviewSourceRowKey).filter((k): k is string => k !== null));
+  return rows.filter((r) => {
+    if (existingLegacy.has(legacyKey(r))) return false;
+    const sk = reviewSourceRowKey(r);
+    return sk === null || !existingSource.has(sk);
+  });
+}
+
 function appendReviewQueue(rows: QueuedReview[]): void {
   if (rows.length === 0) return;
   let existing: QueuedReview[] = [];
@@ -236,10 +441,9 @@ function appendReviewQueue(rows: QueuedReview[]): void {
   // IDENTICAL row every subsequent sweep with no dedup — a daily schedule turns one unresolved
   // conflict into an ever-growing pile of duplicates, degrading the queue a human is meant to work
   // from. Dedup on (proposedLeaseId, sourceFile, reason): the same lease + same contributing file(s)
-  // + same reason text is the same still-unresolved conflict, not a new one.
-  const key = (r: QueuedReview) => `${r.proposedLeaseId ?? r.tenant}::${r.sourceFile}::${r.reason}`;
-  const existingKeys = new Set(existing.map(key));
-  const dedupedNew = rows.filter((r) => !existingKeys.has(key(r)));
+  // + same reason text is the same still-unresolved conflict, not a new one. Plus, since the
+  // 2026-09-14 sweep (Fix B), on source-row identity for Format B rows — see dedupReviewsAgainstQueue.
+  const dedupedNew = dedupReviewsAgainstQueue(existing, rows);
   mkdirSync(dirname(REVIEW_QUEUE), { recursive: true });
   // Atomic write (temp file + rename): a crash mid-write must never leave REVIEW_QUEUE itself
   // truncated, or the NEXT sweep's read above would treat it as corrupt and re-trigger the same loss.
@@ -324,7 +528,7 @@ async function main(): Promise<void> {
   // hit by more than one report in this sweep is resolved to the LATEST as-of (resolveLatestArrears)
   // — NEVER summed, or the same unpaid balance appearing on two consecutive agings would double-count.
   const allWrites: Array<{ leaseId: string; arrears: TenantArrears; tenant: string }> = [];
-  const allReviews: QueuedReview[] = [];
+  let allReviews: QueuedReview[] = [];
   const processed: string[] = [];
   const pdfBySourceFile = new Map<string, string>(); // basename -> full path, for the ambiguousTies handling below
   // Every report successfully parsed this sweep (source file + as-of date), regardless of how many
@@ -397,27 +601,12 @@ async function main(): Promise<void> {
             });
             autoCount++;
           } else {
-            const reason =
-              propertyId === null
-                ? `property header not in the known-property table: '${row.property ?? '(none)'}' — add it to BUCKETED_PROPERTY_HEADERS once confirmed against a real property id`
-                : res.ambiguous
-                  ? `unit '${row.unit}' matches more than one lease at this property — needs a human look`
-                  : `unit '${row.unit}' has no exact match at this property (may be part of a larger merged lease — never auto-attributed on a partial overlap)`;
-            allReviews.push({
-              tenant: label,
-              property: row.property,
-              d30: row.d30,
-              d60: 0,
-              d90: 0,
-              d90plus: row.d30plus,
-              proposedLeaseId: null,
-              proposedCandidate: null,
-              confidence: 'none',
-              ambiguous: res.ambiguous,
-              reason,
-              sourceFile,
-              queuedAt: nowIso,
-            });
+            // Reason text, source-row identity, and the roster candidate (who the roster says is
+            // at this unit, any status, plus the mapping cache's ruling on that name) all come
+            // from buildBucketedReviewRow — display aids for the human; nothing auto-applies.
+            allReviews.push(
+              buildBucketedReviewRow({ row, res, propertyId, unitLeases, cacheEntries: cache.entries, sourceFile, asOfDate, queuedAt: nowIso }),
+            );
             reviewCount++;
           }
         }
@@ -513,6 +702,20 @@ async function main(): Promise<void> {
     // exempt its whole series from clearing forever. Only a genuine review row counts.
     sweepReportInfos.push({ sourceFile, asOfDate, hadUnresolvedRow: part.review.length > 0 });
     console.log(`  ✓ ${sourceFile} [${format}] — ${part.write.length} auto · ${part.review.length} review · ${part.skipped} skip`);
+  }
+
+  // 2026-09-14 sweep, Fix B: a Format B review row that is the SAME source row (file · as-of · unit
+  // · amount) as something this sweep already attributed is not also queued for a human. Runs over
+  // the whole sweep's writes, after every file is parsed, so the outcome does not depend on inbox
+  // order. The per-file `hadUnresolvedRow` above was computed BEFORE this drop and is left as-is on
+  // purpose — it errs toward NOT clearing that series this sweep (fail closed), which is the safe
+  // direction for clear-dropped-leases.
+  const attributedDedup = dropReviewsAlreadyAttributed(allReviews, allWrites, unitLeases);
+  if (attributedDedup.dropped.length > 0) {
+    console.log(
+      `  ℹ ${attributedDedup.dropped.length} review row(s) not queued — the same source row was already attributed this sweep: ${attributedDedup.dropped.map((r) => r.tenant).join('; ')}`,
+    );
+    allReviews = attributedDedup.kept;
   }
 
   // Multi-unit rows within ONE report were already summed upstream (partition → mergeByLease). Across
