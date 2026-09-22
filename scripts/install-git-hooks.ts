@@ -41,6 +41,49 @@ fi
 exit 0
 `;
 
+// Exported for the same reason as WRAPPER (see above) -- installs the commit-msg trailer guard
+// (scripts/commitmsg-trailer-guard.mjs), added to catch a malformed AI Co-Authored-By trailer at
+// commit time instead of at push time. Unlike the pre-push NOI stage, this stage IS blocking (a
+// non-zero exit fails the commit) -- that is the entire point: a blocked local commit is free to
+// retry, unlike a pushed one that needs history rewritten. Git passes the commit-msg file path as
+// $1; forwarded through verbatim. Missing/absent script (an older worktree checkout) must not
+// break `git commit`, hence the same -f guard pattern as the pre-push NOI stage.
+export const COMMIT_MSG_WRAPPER = `#!/bin/sh
+# Managed by scripts/install-git-hooks.ts.
+# Commit-msg trailer guard: blocks a malformed/incorrect AI Co-Authored-By trailer (fail-closed).
+# .git/hooks is the common dir shared by every worktree; a checkout that predates this file (or
+# lacks it for any other reason) must still allow commits, hence the -f guard.
+root="$(git rev-parse --show-toplevel)"
+if [ -f "$root/scripts/commitmsg-trailer-guard.mjs" ]; then
+  node "$root/scripts/commitmsg-trailer-guard.mjs" "$1" || exit 1
+fi
+exit 0
+`;
+
+function installHook(hooksDir: string, hookName: string, contents: string): void {
+  const hookPath = join(hooksDir, hookName);
+  const existing = existsSync(hookPath) ? readFileSync(hookPath, 'utf8') : null;
+
+  if (existing === contents) {
+    console.log(`[install-git-hooks] ${hookName} hook already up to date: ${hookPath}`);
+  } else {
+    writeFileSync(hookPath, contents, 'utf8');
+    console.log(
+      existing === null
+        ? `[install-git-hooks] installed ${hookName} hook: ${hookPath}`
+        : `[install-git-hooks] updated ${hookName} hook: ${hookPath}`,
+    );
+  }
+
+  try {
+    chmodSync(hookPath, 0o755);
+  } catch (err) {
+    // chmod is a no-op / may fail on some Windows filesystems; the sh wrapper still runs under
+    // Git for Windows. Don't fail the install over it.
+    console.warn(`[install-git-hooks] chmod skipped: ${(err as Error)?.message ?? err}`);
+  }
+}
+
 function main(): void {
   let hooksDir: string;
   let toplevel: string;
@@ -60,27 +103,8 @@ function main(): void {
     console.log(`[install-git-hooks] created hooks dir: ${hooksDir}`);
   }
 
-  const hookPath = join(hooksDir, 'pre-push');
-  const existing = existsSync(hookPath) ? readFileSync(hookPath, 'utf8') : null;
-
-  if (existing === WRAPPER) {
-    console.log(`[install-git-hooks] pre-push hook already up to date: ${hookPath}`);
-  } else {
-    writeFileSync(hookPath, WRAPPER, 'utf8');
-    console.log(
-      existing === null
-        ? `[install-git-hooks] installed pre-push hook: ${hookPath}`
-        : `[install-git-hooks] updated pre-push hook: ${hookPath}`,
-    );
-  }
-
-  try {
-    chmodSync(hookPath, 0o755);
-  } catch (err) {
-    // chmod is a no-op / may fail on some Windows filesystems; the sh wrapper still runs under
-    // Git for Windows. Don't fail the install over it.
-    console.warn(`[install-git-hooks] chmod skipped: ${(err as Error)?.message ?? err}`);
-  }
+  installHook(hooksDir, 'pre-push', WRAPPER);
+  installHook(hooksDir, 'commit-msg', COMMIT_MSG_WRAPPER);
 }
 
 main();
