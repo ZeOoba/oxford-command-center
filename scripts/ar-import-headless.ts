@@ -83,6 +83,7 @@ import { detectRentManagerDelinquencyDetail, parseRentManagerWorksheet, type Sub
 import { detectDelinquencyTransactional, parseDelinquencyTransactional } from '../server/ar/delinquency-transactional';
 import { detectDelinquencyBucketed, parseDelinquencyBucketed } from '../server/ar/delinquency-bucketed';
 import { resolveByUnit, type UnitLease } from '../server/ar/resolve-by-unit';
+import { isDeadLease } from '../server/ar/lease-liveness';
 import { partitionArRows, type ArReviewRow } from '../server/ar/partition-confidence';
 import { resolveLatestArrears, filterAgainstPersisted } from '../server/ar/resolve-latest';
 import { applyWritesAndClears, type SweepReportInfo } from '../server/ar/clear-dropped-leases';
@@ -104,24 +105,30 @@ interface QueuedReview extends ArReviewRow {
   queuedAt: string;
 }
 
-/** Read {id, tenantName, company} for every lease from the persisted snapshot, EXCLUDING any lease
- *  whose status is 'Expired'. An exact tenant-name hit against a dead lease auto-writes at 'exact'
- *  confidence with no human review (matchTenantToLease has no status awareness) -- the 2026-08-24
- *  integrity-sweep incident: a human SKIP ruling on an Expired lease's residual delinquency
- *  (2207-northwood-c4-anibal-morales, "no current occupant") was silently reversed the next time this
- *  loader fed that same dead lease back into the matcher. Dropping Expired leases from the candidate
- *  pool entirely means a current-period export naming a vacated tenant can no longer auto-attribute --
- *  it falls through to 'none' confidence and lands in the review queue instead, which is the correct
- *  place for a human to re-confirm a SKIP or re-attribute to whatever now occupies the unit. */
+/** Read {id, tenantName, company} for every lease from the persisted snapshot, EXCLUDING any DEAD
+ *  lease (server/ar/lease-liveness.ts's isDeadLease: status 'Expired' or 'Vacant', or annualRent 0).
+ *  An exact tenant-name hit against a dead lease auto-writes at 'exact' confidence with no human
+ *  review (matchTenantToLease has no status awareness) -- the 2026-08-24 integrity-sweep incident:
+ *  a human SKIP ruling on an Expired lease's residual delinquency (2207-northwood-c4-anibal-morales,
+ *  "no current occupant") was silently reversed the next time this loader fed that same dead lease
+ *  back into the matcher. Dropping dead leases from the candidate pool entirely means a
+ *  current-period export naming a vacated tenant can no longer auto-attribute -- it falls through
+ *  to 'none' confidence and lands in the review queue instead, which is the correct place for a
+ *  human to re-confirm a SKIP or re-attribute to whatever now occupies the unit.
+ *
+ *  Widened from Expired-only on 2026-09-14 (weekly financial-code sweep, Fix A): an Active lease
+ *  carrying $0 rent (Tyson Consulting Group #202, Evans Gymnastics A15 -- roster placeholders that
+ *  bill nothing) and a 'Vacant' record were still live candidates here. The predicate is shared
+ *  with resolveByUnit so the two fresh-match pools cannot drift apart again. */
 export function loadLeasesFromSnapshot(): LeaseLite[] {
   if (!existsSync(SNAPSHOT_PATH)) {
     throw new Error(`Snapshot not found at ${SNAPSHOT_PATH} — run a Brain refresh first (npm run dev).`);
   }
   const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')) as {
-    leases?: Array<{ id: string; tenantName: string; company: string | null; status?: string | null }>;
+    leases?: Array<{ id: string; tenantName: string; company: string | null; status?: string | null; annualRent?: number | null }>;
   };
   return (snap.leases ?? [])
-    .filter((l) => l.status !== 'Expired')
+    .filter((l) => !isDeadLease(l))
     .map((l) => ({ id: l.id, tenantName: l.tenantName, company: l.company ?? null }));
 }
 
@@ -131,7 +138,11 @@ export function loadLeasesFromSnapshot(): LeaseLite[] {
  *  lease), but a PREVIOUSLY human-CONFIRMED cache mapping to an Expired lease is a different,
  *  already-trusted decision -- excluding those ids too made partitionArRows' `leaseIds.has(cached)`
  *  check reject live, confirmed mappings as "lease removed/vacated", silently freezing real arrears
- *  behind a resolver-less review queue. */
+ *  behind a resolver-less review queue.
+ *
+ *  DELIBERATELY NOT narrowed by isDeadLease (2026-09-14 sweep, Fix A): the same reasoning applies
+ *  verbatim to the wider dead set -- the real cache entry "tyson consulting group" maps to a lease
+ *  that is Active with $0 rent, and that confirmed mapping must keep writing. */
 export function loadAllLeaseIdsFromSnapshot(): Set<string> {
   const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')) as { leases?: Array<{ id: string }> };
   return new Set((snap.leases ?? []).map((l) => l.id));
@@ -151,12 +162,24 @@ export function loadAllLeaseIdsFromSnapshot(): Set<string> {
  * auto-write of the vacated tenant's arrears onto the NEW tenant's lease, with no tenant name in a
  * Format B row to catch the swap. resolveByUnit (server/ar/resolve-by-unit.ts) now does the
  * Expired-aware filtering itself, INSIDE resolution, so it can detect exactly this "Expired sibling
- * on the same unit" case and downgrade to review instead. */
+ * on the same unit" case and downgrade to review instead.
+ *
+ * Also carries annualRent (2026-09-14 sweep, Fix A -- resolveByUnit's live-hit filter now uses the
+ * shared isDeadLease predicate, which needs it to see a zero-rent Active placeholder as dead) and
+ * tenantName (Fix B -- so a Format B row that lands in the review queue can name who the roster
+ * says is at that unit, since the row itself carries no tenant name). */
 export function loadUnitLeasesFromSnapshot(): UnitLease[] {
   const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')) as {
-    leases?: Array<{ id: string; unit: string | null; propertyId: string; status?: string | null }>;
+    leases?: Array<{ id: string; unit: string | null; propertyId: string; status?: string | null; annualRent?: number | null; tenantName?: string | null }>;
   };
-  return (snap.leases ?? []).map((l) => ({ id: l.id, unit: l.unit, propertyId: l.propertyId, status: l.status ?? null }));
+  return (snap.leases ?? []).map((l) => ({
+    id: l.id,
+    unit: l.unit,
+    propertyId: l.propertyId,
+    status: l.status ?? null,
+    annualRent: l.annualRent ?? null,
+    tenantName: l.tenantName ?? null,
+  }));
 }
 
 // Format B's group-header text -> portfolio.json property id. EXPLICIT table, not a fuzzy/substring
