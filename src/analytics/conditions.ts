@@ -582,82 +582,106 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   // is false for NaN, silently SUPPRESSING a real delinquency — the worst direction for a
   // collections monitor. num() enforces the .default(0) intent for any non-finite bucket.
   //
-  // Staleness gate: when ANY tenantArrears record is present but its asOfDate is null or older than
-  // arStalenessMaxDays, the collection condition degrades to a single info-level stale-ar data
-  // insight. No per-lease arrears alerts fire — stale data would produce misleading severity signals.
+  // Staleness gate — PER RECORD, for the lease that record belongs to (2026-09-22). A tenantArrears
+  // record whose asOfDate is null or older than arStalenessMaxDays is not evaluated: its buckets
+  // would produce a misleading severity signal, so THAT lease's alert is withheld for this run and
+  // the record is counted in one aggregate info-level `ar-stale` notice below. Every other lease's
+  // record is judged on its own asOfDate and evaluates exactly as if the stale one did not exist.
+  //
+  // This used to be all-or-nothing: one stale record set a single boolean that short-circuited the
+  // whole per-lease loop, blinding the entire portfolio's collections alerting. Under the widened
+  // dead-lease guard (PR #357) a zero-rent-but-Active lease carrying a real balance can no longer
+  // auto-refresh on re-feed, so its record WILL age past the threshold — and under the old gate that
+  // one legitimately-parked record would have suppressed every unrelated, fresh, currently-accruing
+  // 60+ critical in the book. Blast radius of a stale record is now exactly one lease.
+  //
+  // Freshness metadata (only Track-B-imported records carry the asOfDate field at all):
+  //   undefined = pre-Track-B / manually-entered record = no freshness metadata = evaluate normally.
+  //   null      = Track-B ran, couldn't derive a date     = stale.
+  //   Date      = Track-B record; age > arStalenessMaxDays = stale (unparseable date = stale).
   // When no records exist at all, nothing fires (absence ≠ staleness).
   const arrears = s.tenantArrears ?? {};
-  const arEntries = Object.values(arrears);
-  // Staleness gate: only records that went through the Track-B import pipeline carry the asOfDate
-  // field. Legacy/manually-entered records omit it entirely (undefined). Check staleness only when
-  // at least one record has the field present, indicating it came through the stamped path.
-  // undefined = pre-Track-B record = no freshness metadata = skip gate, evaluate normally.
-  // null = Track-B ran, couldn't derive a date = treat as stale.
-  // Date = Track-B record; check age against arStalenessMaxDays.
-  // ALL stamped entries are evaluated — a single stale record in a mixed snapshot suppresses alerts.
-  const stampedEntries = arEntries.filter((r) => 'asOfDate' in r);
-  let skipArEval = false;
-  if (stampedEntries.length > 0) {
-    const staleAges = stampedEntries.map((r) => {
-      const asOfMs = r.asOfDate ? new Date(r.asOfDate).getTime() : null;
-      if (asOfMs === null || !Number.isFinite(asOfMs)) return null;
-      return Math.floor((now - asOfMs) / DAY_MS);
-    });
-    const hasStale = staleAges.some((age) => age === null || age > T.arStalenessMaxDays);
-    if (hasStale) {
-      skipArEval = true;
-      const finiteDays = staleAges.filter((d): d is number => d !== null);
-      const worstAge = finiteDays.length > 0 ? Math.max(...finiteDays) : null;
-      const detail = staleAges.some((d) => d === null)
-        ? 'AR data: no import on record — run the QB AR export and import to enable collections monitoring.'
-        : `AR data: last import was ${worstAge} days ago — refresh QB export to enable collections monitoring.`;
-      out.push({
-        id: 'ar-stale', severity: 'info', category: 'data',
-        title: 'AR data stale — collections monitoring inactive',
-        detail,
-        impactAnnualUsd: null, spine: 'B', provenance: 'absent',
-      });
-    }
-  }
+  /** Age in whole days for a stamped record; null = no usable date (stale). */
+  const arAgeDays = (r: { asOfDate?: Date | null }): number | null => {
+    const asOfMs = r.asOfDate ? new Date(r.asOfDate).getTime() : null;
+    if (asOfMs === null || !Number.isFinite(asOfMs)) return null;
+    return Math.floor((now - asOfMs) / DAY_MS);
+  };
+  const isArStale = (r: { asOfDate?: Date | null }): boolean => {
+    if (!('asOfDate' in r)) return false;
+    const age = arAgeDays(r);
+    return age === null || age > T.arStalenessMaxDays;
+  };
   // Each bucket goes through the SHARED coerceNonNegMoney (src/lib/money) — the exact same coercer
   // the overlay load boundary uses (parseArrears/coerceBudgets) — so the load path and this rule
   // agree on one coercion, ending the prior string/number asymmetry. A non-finite/missing bucket → 0
   // (no NaN-drop of a real balance), and a NEGATIVE bucket (an AR credit/prepayment) → 0 so it cannot
   // net DOWN the displayed total or drive `total <= 0` and suppress a genuine over-60 critical
   // (refute F3/edges). over60 is therefore always ≥ 0, so `total <= 0` skips only an all-zero record.
-  if (!skipArEval) {
-    const num = coerceNonNegMoney;
-    for (const l of s.leases) {
-      const ar = arrears[l.id];
-      if (!ar) continue;
-      // Aging buckets (src/contracts/quickbooks.ts): d30=1–30, d60=31–60, d90=61–90, d90plus=90+.
-      // CRITICAL fires ONLY on dollars genuinely 60+ days past due (d90 + d90plus). The d30/d60 dollars
-      // are ≤60 days late — routine collections follow-up — and fold into the under-60 material WARNING
-      // tier. (refute F2: do NOT escalate a 31–60-day-late tenant to the critical 60+ tier.)
-      const over60 = num(ar.d90) + num(ar.d90plus);
-      const under60 = num(ar.d30) + num(ar.d60);
-      const total = under60 + over60;
-      if (total <= 0) continue;
-      const who = l.company ?? l.tenantName;
-      const where = `${l.propertyKey}${l.unit ? ` ${l.unit}` : ''}`;
-      if (over60 > 0) {
-        out.push({
-          id: `arrears-${l.id}`, severity: 'critical', category: 'collections',
-          title: `Tenant 60+ days past due — ${who}`,
-          detail: `${where} · ${fmtUsd(over60)} is 60+ days past due (${fmtUsd(total)} total outstanding). Pursue collection.`,
-          metric: fmtUsd(total), entityType: 'lease', entityId: l.id,
-          impactAnnualUsd: total, spine: 'A', provenance: 'real',
-        });
-      } else if (total >= T.arrearsMaterialUsd) {
-        out.push({
-          id: `arrears-${l.id}`, severity: 'warning', category: 'collections',
-          title: `Receivable outstanding — ${who}`,
-          detail: `${where} · ${fmtUsd(total)} past due (under 60 days). Monitor for payment.`,
-          metric: fmtUsd(total), entityType: 'lease', entityId: l.id,
-          impactAnnualUsd: total, spine: 'A', provenance: 'real',
-        });
-      }
+  const num = coerceNonNegMoney;
+  for (const l of s.leases) {
+    const ar = arrears[l.id];
+    if (!ar) continue;
+    // Per-lease staleness: withhold THIS lease's alert only. Nothing here touches any other lease.
+    if (isArStale(ar)) continue;
+    // Aging buckets (src/contracts/quickbooks.ts): d30=1–30, d60=31–60, d90=61–90, d90plus=90+.
+    // CRITICAL fires ONLY on dollars genuinely 60+ days past due (d90 + d90plus). The d30/d60 dollars
+    // are ≤60 days late — routine collections follow-up — and fold into the under-60 material WARNING
+    // tier. (refute F2: do NOT escalate a 31–60-day-late tenant to the critical 60+ tier.)
+    const over60 = num(ar.d90) + num(ar.d90plus);
+    const under60 = num(ar.d30) + num(ar.d60);
+    const total = under60 + over60;
+    if (total <= 0) continue;
+    const who = l.company ?? l.tenantName;
+    const where = `${l.propertyKey}${l.unit ? ` ${l.unit}` : ''}`;
+    if (over60 > 0) {
+      out.push({
+        id: `arrears-${l.id}`, severity: 'critical', category: 'collections',
+        title: `Tenant 60+ days past due — ${who}`,
+        detail: `${where} · ${fmtUsd(over60)} is 60+ days past due (${fmtUsd(total)} total outstanding). Pursue collection.`,
+        metric: fmtUsd(total), entityType: 'lease', entityId: l.id,
+        impactAnnualUsd: total, spine: 'A', provenance: 'real',
+      });
+    } else if (total >= T.arrearsMaterialUsd) {
+      out.push({
+        id: `arrears-${l.id}`, severity: 'warning', category: 'collections',
+        title: `Receivable outstanding — ${who}`,
+        detail: `${where} · ${fmtUsd(total)} past due (under 60 days). Monitor for payment.`,
+        metric: fmtUsd(total), entityType: 'lease', entityId: l.id,
+        impactAnnualUsd: total, spine: 'A', provenance: 'real',
+      });
     }
+  }
+  // Aggregate stale-AR notice — ONE portfolio-level data insight (same shape as `workbook-stale`),
+  // counted over every stamped record (including any orphan record with no matching lease, which is
+  // still a stale import worth refreshing) and naming the leases whose monitoring is degraded. It
+  // reports; it never suppresses — the per-lease `continue` above is the only gate.
+  const stampedEntries = Object.entries(arrears).filter(([, r]) => 'asOfDate' in r);
+  const staleEntries = stampedEntries.filter(([, r]) => isArStale(r));
+  if (staleEntries.length > 0) {
+    const staleAges = staleEntries.map(([, r]) => arAgeDays(r));
+    const finiteDays = staleAges.filter((d): d is number => d !== null);
+    const worstAge = finiteDays.length > 0 ? Math.max(...finiteDays) : null;
+    const leaseById = new Map(s.leases.map((l) => [l.id, l]));
+    const affected = staleEntries.map(([id]) => {
+      const l = leaseById.get(id);
+      return l ? `${l.company ?? l.tenantName} (${l.propertyKey}${l.unit ? ` ${l.unit}` : ''})` : `unmatched record ${id}`;
+    });
+    const MAX_NAMED = 6;
+    const named = affected.slice(0, MAX_NAMED).join(', ')
+      + (affected.length > MAX_NAMED ? `, +${affected.length - MAX_NAMED} more` : '');
+    const n = staleEntries.length;
+    const m = stampedEntries.length;
+    const worst = staleAges.some((d) => d === null)
+      ? `${staleAges.filter((d) => d === null).length} with no import on record${worstAge !== null ? `, oldest import ${worstAge} days ago` : ''}`
+      : `oldest import ${worstAge} days ago`;
+    out.push({
+      id: 'ar-stale', severity: 'info', category: 'data',
+      title: `AR data stale for ${n} of ${m} ${m === 1 ? 'record' : 'records'} — collections monitoring degraded for ${n === 1 ? 'that lease' : 'those leases'} only`,
+      detail: `AR data: ${n} of ${m} imported AR records are stale (${worst}) — collections monitoring is withheld for ${named}; every other lease is still evaluated on its own fresh record. Refresh the QB AR export to restore.`,
+      metric: `${n}/${m}`,
+      impactAnnualUsd: null, spine: 'B', provenance: 'absent',
+    });
   }
 
   // ── Revenue concentration (tenant > 15% of portfolio NOI) ───────────────────
