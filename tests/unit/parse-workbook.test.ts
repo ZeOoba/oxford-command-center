@@ -455,6 +455,62 @@ describe('parseWorkbook — real ingestion path (synthetic fixture, no mocks)', 
     expect(snapshot.leases.reduce((sum, l) => sum + (l.annualRent ?? 0), 0)).toBe(96000);
   });
 
+  // Regression: 2026-09-07 (commit 85dfecf, found by the 2026-09-14 financial-code sweep). Three
+  // retained rent-roll rows parsed to annualRent 0 in one scheduled refresh -- two 'Expired', one
+  // still 'Active' with four months of term. The Active one is the parse-time signal: an Expired
+  // or Vacant row legitimately carries stale/zero rent, but a live tenancy at $0 is either a real
+  // vacancy nobody re-statused or a zeroed cell, and both need a human. Advisory only: a genuine
+  // rent zero-out must never be refused, only surfaced.
+  it('flags (warn) a $0-rent lease that is still Active or Expiring Soon, stays silent for Expired/Vacant, and never refuses the parse', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'parse-workbook-test-'));
+    const file = join(dir, 'fixture-zero-rent-active.xlsx');
+
+    const wb = new ExcelJS.Workbook();
+    const props = wb.addWorksheet('Property NOI');
+    props.addRow([1, PROPERTY_NAME, 'Industrial', 50000, 3, 0.92]);
+
+    const rentRoll = wb.addWorksheet('Master Tenant Rent Roll');
+    // Control: a normally-rented Active lease raises nothing.
+    rentRoll.addRow([PROPERTY_NAME, 'Fixture Tenant Co', 'Suite 100', 'Fixture Tenant Co', 10000, 8000, 9.6, new Date('2022-01-01'), new Date('2027-01-01'), null, null, 'Active', 96000]);
+    // The incident row: Active, four months of term left, monthly AND annual rent both zeroed.
+    rentRoll.addRow([PROPERTY_NAME, 'Fixture Consulting Group', 'Suite 202', 'Fixture Consulting Group', 1500, 0, null, new Date('2021-02-01'), new Date('2027-01-31'), null, 0.03, 'Active', 0]);
+    // Same defect on an Expiring Soon row -- still a live tenancy, still flagged.
+    rentRoll.addRow([PROPERTY_NAME, 'Fixture Expiring Co', 'Suite 203', 'Fixture Expiring Co', 1500, 0, null, new Date('2021-02-01'), new Date('2026-11-30'), null, null, 'Expiring Soon', 0]);
+    // The two Expired rows from the same refresh: expected to carry $0, must NOT be flagged.
+    rentRoll.addRow([PROPERTY_NAME, 'Fixture Countertops LLC', 'Suite 2000', 'Fixture Countertops LLC', 11160, 0, null, new Date('2016-05-01'), new Date('2026-07-31'), null, 0.03, 'Expired', 0]);
+    rentRoll.addRow([PROPERTY_NAME, 'Fixture Tint Co', 'Suite 2004', 'Fixture Tint Co', 1850, 0, null, new Date('2019-09-01'), new Date('2026-08-31'), null, 0.03, 'Expired', 0]);
+    // A Vacant row at $0 is the normal state of an empty suite.
+    rentRoll.addRow([PROPERTY_NAME, 'Vacant', 'Suite 300', null, 2000, 0, null, null, null, null, null, 'Vacant', 0]);
+
+    wb.addWorksheet('Loan Index');
+    wb.addWorksheet('Cash Balances');
+    wb.addWorksheet('Insurance Renewals');
+    wb.addWorksheet('Monthly Checklist');
+    wb.addWorksheet('Assumptions');
+    await wb.xlsx.writeFile(file);
+
+    // Never a refusal: the parse resolves, and every row is still a lease with its $0 intact.
+    const { snapshot, flags } = await parseWorkbook(file);
+    expect(snapshot.leases).toHaveLength(6);
+    expect(snapshot.leases.filter((l) => l.annualRent === 0)).toHaveLength(5);
+
+    const zeroRentFlags = flags.filter((f) => f.field === 'annualRent');
+    const activeId = snapshot.leases.find((l) => l.tenantName === 'Fixture Consulting Group')!.id;
+    const expiringId = snapshot.leases.find((l) => l.tenantName === 'Fixture Expiring Co')!.id;
+    expect(zeroRentFlags.map((f) => f.entity).sort()).toEqual([activeId, expiringId].sort());
+    expect(zeroRentFlags.every((f) => f.severity === 'warn')).toBe(true);
+    // The reason must tell a human what to confirm, not just that a number is zero.
+    expect(zeroRentFlags[0]!.issue).toMatch(/vacan/i);
+    expect(zeroRentFlags[0]!.issue).toMatch(/notice/i);
+    expect(zeroRentFlags[0]!.issue).toMatch(/Active/);
+
+    // Expired / Vacant / normally-rented rows raise nothing.
+    const quietIds = snapshot.leases
+      .filter((l) => !['Fixture Consulting Group', 'Fixture Expiring Co'].includes(l.tenantName))
+      .map((l) => l.id);
+    expect(flags.filter((f) => quietIds.includes(f.entity) && f.field === 'annualRent')).toEqual([]);
+  });
+
   // Defence in depth for the regression above. The banner terminator is text-matched, so it stops
   // working the moment someone retitles the block. A property key is never a date in any valid
   // roster row, so reject that at the type level too -- str() stringifies a Date rather than
