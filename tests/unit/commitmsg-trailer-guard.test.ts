@@ -34,6 +34,18 @@ describe('findAiCoAuthorLines', () => {
     expect(findAiCoAuthorLines(msg)).toEqual([]);
   });
 
+  it('ignores a real human co-author coincidentally named Claude (domain, not name, decides)', () => {
+    // The 2026-09-22 adversarial-review false positive this was fixed for: a name-substring test
+    // would have flagged this as an AI trailer to validate, blocking a legitimate human commit.
+    const msg = 'fix: real fix\n\nCo-Authored-By: Claude Martinez <cmartinez@example.com>';
+    expect(findAiCoAuthorLines(msg)).toEqual([]);
+  });
+
+  it('ignores a Co-Authored-By line with no parseable <email> (fail-open, not a guess)', () => {
+    const msg = 'chore: x\n\nCo-authored-by: Claude Sonnet 5';
+    expect(findAiCoAuthorLines(msg)).toEqual([]);
+  });
+
   it('ignores an unrelated trailer line', () => {
     const msg = 'chore: x\n\nRefute-Reviewed: adversarial pass by a Claude Fable 5.1 subagent, all green.';
     expect(findAiCoAuthorLines(msg)).toEqual([]);
@@ -84,11 +96,30 @@ describe('validateAiTrailers', () => {
     expect(result.offending).toEqual(['Co-Authored-By: Claude 5 Sonnet <noreply@anthropic.com>']);
   });
 
-  it('blocks a trailer with the wrong email domain', () => {
+  it('still blocks a wrong model NAME at the right (anthropic.com) domain -- domain test only decides whether to validate, not whether it matches', () => {
+    const result = validateAiTrailers(
+      'fix: thing\n\nCo-Authored-By: Definitely Not A Real Model <noreply@anthropic.com>\n',
+    );
+    expect(result.ok).toBe(false);
+    expect(result.offending).toEqual(['Co-Authored-By: Definitely Not A Real Model <noreply@anthropic.com>']);
+  });
+
+  it('passes a real human co-author coincidentally named Claude at an unrelated domain (the false positive found in adversarial review)', () => {
+    const result = validateAiTrailers(
+      'fix: real fix\n\nCo-Authored-By: Claude Martinez <cmartinez@example.com>\n',
+    );
+    expect(result.ok).toBe(true);
+    expect(result.offending).toEqual([]);
+  });
+
+  it('passes a trailer at a domain that merely contains "anthropic" but is not exactly anthropic.com (domain must match exactly, not as a substring)', () => {
     const result = validateAiTrailers(
       'fix: thing\n\nCo-Authored-By: Claude Sonnet 5 <noreply@anthropic.example.com>\n',
     );
-    expect(result.ok).toBe(false);
+    // Not exactly @anthropic.com -> not treated as an AI trailer at all -> passes through
+    // untouched, same as any other co-author whose email domain doesn't match.
+    expect(result.ok).toBe(true);
+    expect(result.offending).toEqual([]);
   });
 
   it('is exact-match (whitespace-sensitive) against the allowlist', () => {
