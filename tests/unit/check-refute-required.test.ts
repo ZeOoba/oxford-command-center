@@ -4,6 +4,8 @@ import {
   hasRefuteApproval,
   DELIVERY_ONLY_PATHS,
   NON_FINANCIAL_CONFIG_PATHS,
+  DEFAULT_DENY_ROOTS,
+  NON_FINANCIAL_ROOT_PATHS,
 } from '../../scripts/check-refute-required';
 
 describe('check-refute-required — financial-source classification', () => {
@@ -240,6 +242,224 @@ describe('check-refute-required — AR delinquency subsystem (sweep 2026-09-22)'
   it('does not widen to the rest of data/ — the snapshot and review queue stay exempt', () => {
     expect(isFinancialSourcePath('data/snapshots/portfolio.json')).toBe(false);
     expect(isFinancialSourcePath('data/ar/review-queue.json')).toBe(false);
+  });
+});
+
+describe('check-refute-required — default-deny roots server/ and scripts/ (Gabriel, 2026-09-22)', () => {
+  // Six times by the identical mechanism (contracts 2026-07-24, workbook 2026-08-11, sources
+  // 2026-08-12, AR data 2026-08-17, config/data json 2026-09-21, server/ar + writer scripts
+  // 2026-09-22) a financial subsystem landed in a directory the allow-list had not been told about,
+  // and this gate said "no financial-decision source files changed" until someone noticed. An
+  // allow-list defaults every unlisted path to NOT financial — the unsafe direction. server/ and
+  // scripts/ are now DEFAULT-DENY: every path under them is financial-decision source unless it is
+  // named in NON_FINANCIAL_ROOT_PATHS with a justification. The cases below are files that exist on
+  // main today, hold financial decisions, and were NOT reached by any prefix or name before this.
+  it('flags top-level server/ files no prefix ever reached', () => {
+    // brain.ts orchestrates the snapshot: which QuickBooks block wins, when persist() declines.
+    expect(isFinancialSourcePath('server/brain.ts')).toBe(true);
+    // reconcile-runtime.ts holds the NOI / rent / cash invariants and the 1% unresolved-rent share.
+    expect(isFinancialSourcePath('server/reconcile-runtime.ts')).toBe(true);
+    // anomaly-floor.ts is the refusal threshold on every lease-set write.
+    expect(isFinancialSourcePath('server/anomaly-floor.ts')).toBe(true);
+    // config.ts holds WORKBOOK_AS_OF / referenceDate — the run-date basis for WALT and day-counts.
+    expect(isFinancialSourcePath('server/config.ts')).toBe(true);
+    // index.ts is the write surface: noi-budget, tenant-arrears, market-rent, acquisition-input.
+    expect(isFinancialSourcePath('server/index.ts')).toBe(true);
+    expect(isFinancialSourcePath('server\\brain.ts')).toBe(true);
+  });
+  it('flags server/ subdirectories no prefix ever reached', () => {
+    // insights/: the ranking weights and the honesty constants (MIN_PAIRS) behind every insight.
+    expect(isFinancialSourcePath('server/insights/rank.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/insights/stats.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/insights/generators/cf-hurdle-drag.ts')).toBe(true);
+    // macro/: the DGS5 market rate conditions.ts reads, and the cap-rate benchmark bands.
+    expect(isFinancialSourcePath('server/macro/fred.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/macro/market-benchmarks.ts')).toBe(true);
+    // brief/: the collections alerts' confirm-clear lifecycle and the daily-brief conditions run.
+    expect(isFinancialSourcePath('server/brief/run.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/brief/state.ts')).toBe(true);
+    // briefing/compose.ts selects which engine figures a briefing carries; confidential.ts is the
+    // Hard-Invariant-3 scanner behind it.
+    expect(isFinancialSourcePath('server/briefing/compose.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/briefing/confidential.ts')).toBe(true);
+    // notion/capital-writeback.ts persists capitalAction + priorityScore into the Property Register.
+    expect(isFinancialSourcePath('server/notion/capital-writeback.ts')).toBe(true);
+    // reconcile/: the workbook-vs-Notion lease reconciliation.
+    expect(isFinancialSourcePath('server/reconcile/lease-source-reconciliation.ts')).toBe(true);
+    // ai/: the tools that decide which figures the agent quotes, and the comps egress guard.
+    expect(isFinancialSourcePath('server/ai/tools.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/ai/comps.ts')).toBe(true);
+    // lib/pdf-text.ts is the input boundary of every PDF figure — same reasoning that kept
+    // server/ar/pdf-extract.ts in scope.
+    expect(isFinancialSourcePath('server/lib/pdf-text.ts')).toBe(true);
+    // alerts/store.ts persists which collections/DSCR alerts are acknowledged or snoozed.
+    expect(isFinancialSourcePath('server/alerts/store.ts')).toBe(true);
+  });
+  it('flags the warehouse access boundary — a silent weakening exposes every figure at once', () => {
+    expect(isFinancialSourcePath('server/access-authz.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/host-guard.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/cors-policy.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/rate-limit.ts')).toBe(true);
+  });
+  it('flags scripts/ writers and gates that were never named', () => {
+    // extract-workbook.ts and lease-snapshot-drift-check.ts WRITE data/snapshots/portfolio.json.
+    expect(isFinancialSourcePath('scripts/extract-workbook.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts/lease-snapshot-drift-check.ts')).toBe(true);
+    // bake-mirror.ts / bake-warehouse.ts publish the snapshot and computed route payloads externally.
+    expect(isFinancialSourcePath('scripts/bake-mirror.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts/bake-warehouse.ts')).toBe(true);
+    // debt-scores-snapshot.ts persists DSCR verdicts; debt-snapshot-backfill.ts writes debt_positions.
+    expect(isFinancialSourcePath('scripts/debt-scores-snapshot.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts/debt-snapshot-backfill.ts')).toBe(true);
+    // calibration-refit.ts proposes health weights; calibration-snapshot.ts logs verdicts.
+    expect(isFinancialSourcePath('scripts/calibration-refit.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts/calibration-snapshot.ts')).toBe(true);
+    // importers write premiums / tax assessments into the warehouse.
+    expect(isFinancialSourcePath('scripts/import-insurance-data.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts/import-assessments.ts')).toBe(true);
+    // the workbook / warehouse / NOI reconciliation gates and the lease-market CLI.
+    expect(isFinancialSourcePath('scripts/reconcile.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts/reconcile-noi-crosscheck.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts/warehouse-verify.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts/warehouse-backfill.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts/lease-market.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts/migrate-lease-overlay-ids.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts\\extract-workbook.ts')).toBe(true);
+  });
+  it('flags scripts/ files in other languages — the root is what matters, not the extension', () => {
+    // The owner-screen bridge classifies which owners may be called (fail-closed guard).
+    expect(isFinancialSourcePath('scripts/lease-market-owner-screen.py')).toBe(true);
+    // deploy-mirror.ps1 sets MIRROR_INCLUDE_CONFIDENTIAL=1 and owns the Access-gate probe that keeps
+    // a confidential bake from being left publicly reachable — Hard-Invariant-3 wiring.
+    expect(isFinancialSourcePath('scripts/deploy-mirror.ps1')).toBe(true);
+    // The pre-push confidentiality scanner and the installer that decides whether it blocks.
+    expect(isFinancialSourcePath('scripts/prepush-confidential-scan.mjs')).toBe(true);
+    expect(isFinancialSourcePath('scripts/install-git-hooks.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts/prepare-hooks.mjs')).toBe(true);
+    expect(isFinancialSourcePath('scripts/prepush-noi-crosscheck.mjs')).toBe(true);
+    // governance-check.ts carries checkGovernorLiteralCoupling — the DSCR/LTV literal-drift guard.
+    expect(isFinancialSourcePath('scripts/governance-check.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts/check-snapshot-freshness.ts')).toBe(true);
+  });
+  it('flags this gate itself — the file that defines the financial scope is in that scope', () => {
+    expect(isFinancialSourcePath('scripts/check-refute-required.ts')).toBe(true);
+  });
+  it('flags a subsystem added later without anyone remembering to enumerate it', () => {
+    // The seventh occurrence cannot happen by this mechanism: an unlisted directory is IN scope.
+    expect(isFinancialSourcePath('server/some-future-subsystem/engine.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/new-top-level-file.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts/some-future-writer.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts/lib/some-future-helper.ps1')).toBe(true);
+    expect(isFinancialSourcePath('scripts/new-dir/anything.mjs')).toBe(true);
+  });
+  it('still reaches every path the retired explicit prefixes and names covered', () => {
+    // These were the six patched-in entries. Under default-deny they are reached by the root; this
+    // pins that folding the prefixes into the root never narrowed coverage.
+    expect(isFinancialSourcePath('server/warehouse/scores.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/workbook/parse.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/sources/notion-deals.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/ar/match-tenant.ts')).toBe(true);
+    expect(isFinancialSourcePath('server/overlay.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts/ar-import-headless.ts')).toBe(true);
+    expect(isFinancialSourcePath('scripts/seed-ar-mappings.ts')).toBe(true);
+    // ar-import.ts is reached by the root — the weekly sweep SKILL.md no longer needs to name it.
+    expect(isFinancialSourcePath('scripts/ar-import.ts')).toBe(true);
+  });
+  it('keeps the test / doc / json rules ahead of the root rule', () => {
+    expect(isFinancialSourcePath('server/brain.test.ts')).toBe(false);
+    expect(isFinancialSourcePath('server/insights/rank.spec.ts')).toBe(false);
+    expect(isFinancialSourcePath('server/warehouse/debt-maturity.DESIGN.md')).toBe(false);
+    expect(isFinancialSourcePath('scripts/README.md')).toBe(false);
+    // scripts/data/*.json is an ingest receipt nothing reads back (import-insurance-data.ts writes
+    // it); the blanket .json rule still applies outside the FINANCIAL_JSON_PREFIXES — unchanged.
+    expect(isFinancialSourcePath('scripts/data/2026-08-22-insurance-premium-history.json')).toBe(false);
+  });
+  it('keeps the DELIVERY_ONLY_PATHS subtractions ahead of the root rule', () => {
+    expect(isFinancialSourcePath('server/warehouse/api.ts')).toBe(false);
+    expect(isFinancialSourcePath('server/sources/graph-auth.ts')).toBe(false);
+  });
+  it('exposes the two roots so a future edit cannot silently drop one', () => {
+    expect([...DEFAULT_DENY_ROOTS]).toEqual(['server/', 'scripts/']);
+  });
+});
+
+describe('check-refute-required — reviewed non-financial exemptions under the default-deny roots', () => {
+  // Every entry below was read (2026-09-22 survey) and exempted for a stated reason; each holds no
+  // financial figure, threshold, mapping or writer, is not an input/output boundary for one, and is
+  // not Hard-Invariant-3 gate wiring. Adding to this set is a reviewed decision — justify it inline
+  // in NON_FINANCIAL_ROOT_PATHS, then add the path here with the same reason.
+  it('exempts server/ plumbing that carries no figure', () => {
+    // .env KEY=VALUE loader with override-on-empty.
+    expect(isFinancialSourcePath('server/load-env.ts')).toBe(false);
+    // Outlook COM transport + data/outbox fallback; recipients and content are decided in run.ts.
+    expect(isFinancialSourcePath('server/brief/send.ts')).toBe(false);
+    // attachment-filename sanitizer.
+    expect(isFinancialSourcePath('server/briefing/filename.ts')).toBe(false);
+    // brand tokens + font registration, and the WOFF1 -> TTF decoder behind it.
+    expect(isFinancialSourcePath('server/briefing/theme.ts')).toBe(false);
+    expect(isFinancialSourcePath('server/briefing/woff-to-ttf.ts')).toBe(false);
+    // pure BriefingModel -> PDF renderer; every figure is read off the model (ic-memo.ts precedent).
+    expect(isFinancialSourcePath('server/briefing/pdf.tsx')).toBe(false);
+    expect(isFinancialSourcePath('server\\briefing\\pdf.tsx')).toBe(false);
+  });
+  it('exempts scripts/ dev tooling that never touches a figure', () => {
+    // bundle-size gate, dev-CSS parse gate, dev-server startup watchdog, npm-ci self-heal.
+    expect(isFinancialSourcePath('scripts/check-bundle.ts')).toBe(false);
+    expect(isFinancialSourcePath('scripts/check-dev-css.ts')).toBe(false);
+    expect(isFinancialSourcePath('scripts/dev-watchdog.cjs')).toBe(false);
+    expect(isFinancialSourcePath('scripts/ensure-deps.mjs')).toBe(false);
+    // static analysis over route/migration/Zod source text — reads no figure, writes no table.
+    expect(isFinancialSourcePath('scripts/check-write-schema-drift.ts')).toBe(false);
+    // document-embedding driver (server/sources/documents.ts is already delivery-only).
+    expect(isFinancialSourcePath('scripts/index-docs.ts')).toBe(false);
+    // git-worktree helper.
+    expect(isFinancialSourcePath('scripts/safe-worktree.ts')).toBe(false);
+  });
+  it('exempts the Windows scheduled-task and mirror-deploy ops helpers (the historical false-positive class)', () => {
+    // 17 ops PRs (#172 … #341) touched only these; none decided a figure. deploy-mirror.ps1 itself
+    // stays IN scope (confidential bake flag + Access-gate probe) — only its helpers are exempt.
+    for (const p of [
+      'scripts/mirror-run-classify.ps1',
+      'scripts/mirror-classify-offfleet.ps1',
+      'scripts/register-brain-server-task.ps1',
+      'scripts/register-mirror-classify-offfleet-task.ps1',
+      'scripts/register-mirror-task.ps1',
+      'scripts/reindex-loop.ps1',
+      'scripts/start-brain-server.ps1',
+      'scripts/stop-brain-server.ps1',
+      'scripts/lib/cmd-arg-guard.ps1',
+      'scripts/lib/deploy-alert.ps1',
+      'scripts/lib/deploy-beacon.ps1',
+      'scripts/lib/deploy-buildroot.ps1',
+      'scripts/lib/git-capture.ps1',
+      'scripts/lib/job-timeout.ps1',
+      'scripts/lib/mirror-task-action.ps1',
+      'scripts/lib/native-timeout.ps1',
+    ]) {
+      expect(isFinancialSourcePath(p), p).toBe(false);
+      expect(isFinancialSourcePath(p.replace(/\//g, '\\')), p).toBe(false);
+    }
+  });
+  it('exempts PowerShell smoke tests as test scaffolding, in scripts/ and scripts/lib/ only', () => {
+    expect(isFinancialSourcePath('scripts/deploy-beacon.smoke-test.ps1')).toBe(false);
+    expect(isFinancialSourcePath('scripts/mirror-run-classify.smoke-test.ps1')).toBe(false);
+    expect(isFinancialSourcePath('scripts/lib/fake-mailer.smoke-test.ps1')).toBe(false);
+    expect(isFinancialSourcePath('scripts\\job-timeout.smoke-test.ps1')).toBe(false);
+    // a future smoke test is still a test …
+    expect(isFinancialSourcePath('scripts/some-future.smoke-test.ps1')).toBe(false);
+    // … but the suffix alone does not exempt a file outside those two folders or a non-ps1.
+    expect(isFinancialSourcePath('scripts/deep/nested.smoke-test.ps1')).toBe(true);
+    expect(isFinancialSourcePath('scripts/something.smoke-test.ts')).toBe(true);
+  });
+  it('exposes the exemption set with the expected membership so a silent widening is visible', () => {
+    expect(NON_FINANCIAL_ROOT_PATHS.size).toBe(29);
+    for (const p of NON_FINANCIAL_ROOT_PATHS) {
+      expect(p.startsWith('server/') || p.startsWith('scripts/'), p).toBe(true);
+      expect(isFinancialSourcePath(p), p).toBe(false);
+    }
+    // No entry may name a path that a narrower, already-reviewed rule keeps in scope.
+    expect(NON_FINANCIAL_ROOT_PATHS.has('scripts/deploy-mirror.ps1')).toBe(false);
+    expect(NON_FINANCIAL_ROOT_PATHS.has('scripts/check-refute-required.ts')).toBe(false);
   });
 });
 
