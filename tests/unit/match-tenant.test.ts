@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { matchTenantToLease, normalizeTokens, type LeaseLite } from '../../server/ar/match-tenant';
+import { partitionArRows } from '../../server/ar/partition-confidence';
 
 const leases: LeaseLite[] = [
   { id: 'l-acme', tenantName: 'Acme Industrial', company: 'Acme Industrial, LLC' },
@@ -180,6 +183,119 @@ describe('matchTenantToLease', () => {
     for (const leases of [roster, [...roster].reverse()]) {
       const m = matchTenantToLease('Hobart', leases);
       expect(m.ambiguous).toBe(true);
+    }
+  });
+});
+
+// 2026-09-14 weekly financial-code sweep, Fix C: tie-break determinism. `ambiguous` (topCount > 1)
+// was already order-independent -- a tie between two different leases is flagged whatever order
+// the roster arrives in, and both consumers (partitionArRows, scripts/ar-import.ts) require
+// `!ambiguous` to auto-write, so this was never a safety hole. What WAS order-dependent is which
+// candidate got REPORTED alongside `ambiguous: true`: `best` (leaseId / candidate / exact, hence
+// `confidence`) was whichever tied lease the loop met first, so the same report name produced a
+// different review-queue row ("exact -> 401-sunburst..." vs "high -> 29000-information-lane...")
+// depending on snapshot array order. The fix is a secondary tie-break to the lexicographically
+// smaller leaseId for the REPORTED best only -- the exact-vs-subset rule (PR #320) and the
+// ambiguity computation are untouched, and a tie can never stop being flagged.
+describe('matchTenantToLease — tie-break determinism against the REAL lease roster (Fix C)', () => {
+  // Real regression guard: load the committed snapshot's roster, not a hand-built fixture. Read
+  // directly by path -- tests/setup.ts redirects SNAPSHOT_PATH to a tmp sandbox for WRITERS; this
+  // is a read of tracked repo content and never writes.
+  const snapshot = JSON.parse(readFileSync(join(process.cwd(), 'data', 'snapshots', 'portfolio.json'), 'utf8')) as {
+    leases: Array<{ id: string; tenantName: string; company: string | null }>;
+  };
+  const roster: LeaseLite[] = snapshot.leases.map((l) => ({ id: l.id, tenantName: l.tenantName, company: l.company ?? null }));
+
+  // Deterministic PRNG (mulberry32) + Fisher-Yates so the shuffles are reproducible from the seed.
+  function seededShuffle<T>(items: readonly T[], seed: number): T[] {
+    let a = seed >>> 0;
+    const rand = () => {
+      a = (a + 0x6d2b79f5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const out = [...items];
+    for (let i = out.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [out[i], out[j]] = [out[j]!, out[i]!];
+    }
+    return out;
+  }
+
+  const orderings = (): Array<[string, LeaseLite[]]> => [
+    ['forward', roster],
+    ['reversed', [...roster].reverse()],
+    ...[1, 2, 3, 4, 5].map((seed): [string, LeaseLite[]] => [`shuffle seed ${seed}`, seededShuffle(roster, seed)]),
+  ];
+
+  it('the real roster carries the two tie pairs this guard depends on (fails loudly if the snapshot drifts)', () => {
+    const lagana = roster.filter((l) => l.tenantName === 'Brett Lagana');
+    expect(lagana.length).toBeGreaterThanOrEqual(2);
+    expect(roster.some((l) => l.company === 'THE BAY AREA CORPORATION')).toBe(true);
+    expect(roster.some((l) => l.company === 'Bay Area Exteriors LLC')).toBe(true);
+  });
+
+  for (const name of ['Brett Lagana', 'THE BAY AREA CORPORATION', 'Bay Area Exteriors LLC']) {
+    it(`"${name}": forward, reversed, and five seeded shuffles of the roster return DEEP-EQUAL results`, () => {
+      const reference = matchTenantToLease(name, roster);
+      for (const [label, ordered] of orderings()) {
+        expect(matchTenantToLease(name, ordered), label).toEqual(reference);
+      }
+    });
+  }
+
+  it('"Brett Lagana" (two leases, identical tenantName) is ambiguous and reports the smaller leaseId in every order', () => {
+    const ids = roster.filter((l) => l.tenantName === 'Brett Lagana').map((l) => l.id).sort();
+    for (const [label, ordered] of orderings()) {
+      const m = matchTenantToLease('Brett Lagana', ordered);
+      expect(m.ambiguous, label).toBe(true);
+      expect(m.leaseId, label).toBe(ids[0]);
+    }
+  });
+
+  it('"THE BAY AREA CORPORATION" stays ambiguous (exact vs 1.0-subset, PR #320) and still routes to review in every order', () => {
+    for (const [label, ordered] of orderings()) {
+      const m = matchTenantToLease('THE BAY AREA CORPORATION', ordered);
+      expect(m.ambiguous, label).toBe(true);
+      const p = partitionArRows([{ tenant: 'THE BAY AREA CORPORATION', property: null, d30: 1, d60: 0, d90: 0, d90plus: 0 }], ordered);
+      expect(p.write, label).toEqual([]);
+      expect(p.review, label).toHaveLength(1);
+    }
+  });
+
+  it('synthetic: tied candidates report the lexicographically smaller leaseId as best, whichever is met first', () => {
+    const a: LeaseLite = { id: 'l-aaa', tenantName: 'Summit Storage', company: null };
+    const z: LeaseLite = { id: 'l-zzz', tenantName: 'Summit Storage', company: null };
+    for (const leases of [[a, z], [z, a]]) {
+      const m = matchTenantToLease('Summit Storage', leases);
+      expect(m).toEqual({ leaseId: 'l-aaa', confidence: 'exact', score: 1, candidate: 'Summit Storage', ambiguous: true });
+    }
+  });
+
+  it('synthetic: the tie-break carries the winning candidate\'s own exact flag (confidence follows the reported lease, deterministically)', () => {
+    // 'l-a' is a 1.0 SUBSET match (not exact), 'l-b' is the exact match. Smaller id wins the
+    // REPORT ('l-a', confidence 'high'), and the tie is still flagged -- exact does NOT dominate.
+    const subset: LeaseLite = { id: 'l-a', tenantName: 'Hobart Service', company: null };
+    const exact: LeaseLite = { id: 'l-b', tenantName: 'Hobart', company: null };
+    for (const leases of [[subset, exact], [exact, subset]]) {
+      const m = matchTenantToLease('Hobart', leases);
+      expect(m).toEqual({ leaseId: 'l-a', confidence: 'high', score: 1, candidate: 'Hobart Service', ambiguous: true });
+    }
+  });
+
+  it('synthetic: a strictly better later candidate still wins outright and clears the tie (tie-break never overrides a real winner)', () => {
+    // Neither smaller-id candidate reaches 1.0 ('Delta Widgets' = 0.5, 'Delta Force Holdings
+    // Group' = 2/3) -- NOT a subset tie like 'Delta Force LLC' would be. Only 'l-z' is exact.
+    const roster2: LeaseLite[] = [
+      { id: 'l-a', tenantName: 'Delta Widgets', company: null },
+      { id: 'l-b', tenantName: 'Delta Force Holdings Group', company: null },
+      { id: 'l-z', tenantName: 'Delta Force Services', company: null },
+    ];
+    for (const leases of [roster2, [...roster2].reverse()]) {
+      const m = matchTenantToLease('Delta Force Services', leases);
+      expect(m).toEqual({ leaseId: 'l-z', confidence: 'exact', score: 1, candidate: 'Delta Force Services', ambiguous: false });
     }
   });
 });
