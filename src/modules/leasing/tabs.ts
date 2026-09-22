@@ -1,5 +1,6 @@
-// Leasing destination tab declaration (IA decongestion Phase 4d). React-free so the registry and the
-// palette can index tabs without importing LeaseForecastModule's chunk. Leases (as "Rent roll") and
+// Leasing destination tab declaration (IA decongestion Phase 4d). JSX-free / no module-chunk imports,
+// so the registry and the palette can index tabs without pulling LeaseForecastModule's chunk into the
+// entry bundle (the R4 badge hook below reaches only the shared data layer). Leases (as "Rent roll") and
 // Tenants are absorbed here; Rollover · Forecast · Market rents are the original Leasing Intelligence
 // tabs. Rollover is the default (first) tab — a 140-row rent roll is not a landing view.
 import { useCriticalDatesTabBadge } from '@/shell/tab-badges';

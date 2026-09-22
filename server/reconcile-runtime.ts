@@ -37,6 +37,86 @@ export function hasReconciliationError(flags: readonly DataQualityFlag[]): boole
   return flags.some((f) => f.severity === 'error' && f.entity === 'reconciliation');
 }
 
+// Absolute-dollar rounding tolerance shared by every cash check in this file (float noise between
+// the workbook's summary cells and its own history matrix), matching the totalCash check below.
+const CASH_TOLERANCE = 2;
+
+/**
+ * Date-aware and value-level cash invariants (2026-09-14 financial-code sweep). Exported on its
+ * own, and called from checkSnapshot below, because scripts/reconcile.ts (the workbook-backed CI
+ * gate) prints these as its own PASS/WARN/FAIL rows -- it re-reads the workbook for the dollar
+ * totals it cross-checks, but these assertions are about the SNAPSHOT's own history array and
+ * entity fields, which only exist parsed, so a second implementation there would just be a copy
+ * that can drift. One detector, two reachable call sites (same doctrine as findDuplicateDealRows).
+ *
+ * What it closes, found live in the committed snapshot:
+ *  - cash.asOf read 2026-09-10 while cash.history's last row was 2026-07-10, and that July slot's
+ *    total was bit-identical to the September headline -- a clobbered history slot. The only
+ *    history check then in force ("latest point = current total") PASSED on exactly that shape,
+ *    because the clobber is what made them equal. The two missing rows (08-10, 09-10) are a
+ *    workbook problem for a human; nothing here backfills them.
+ *  - two entities carried a percent whose sign contradicted its own dollar figure (deltaDollar
+ *    -1,698 beside deltaPct +4.1%; growth12Dollar +2,064 beside growth12Pct -1186%), because the
+ *    workbook's percent cell divides by a NEGATIVE prior/12-month balance. parse.ts now recomputes
+ *    both and emits null over a wrong-signed number; this is the backstop over whatever actually
+ *    sits on the snapshot (a legacy bake, a hand-edit, a future parser regression).
+ *  - an entity's maxAllTime sat below its own currentBalance (a stale summary cell). Warn only --
+ *    recomputing min/max from the history matrix was ruled out of scope for this fix.
+ *
+ * Severity: 'error' ONLY for cash.asOf later than meta.generatedAt, which is a structural
+ * impossibility (data cannot be as-of a date after the snapshot that carries it was built), never a
+ * business event. Everything else is 'warn' -- each has a legitimate, if unlikely, explanation, and
+ * the house style (see server/anomaly-floor.ts) is to report a plausible business event, not refuse it.
+ * Null-tolerant on every field: legacy fixtures and older bakes may lack history, asOf, or meta.
+ */
+export function checkCashInvariants(s: Pick<PortfolioSnapshot, 'cash' | 'meta'>): DataQualityFlag[] {
+  const flags: DataQualityFlag[] = [];
+  const flag = (field: string, issue: string, severity: DataQualityFlag['severity'] = 'warn') =>
+    flags.push({ entity: 'reconciliation', field, issue, severity });
+
+  // generatedAt is a full ISO timestamp; asOf may be a bare YYYY-MM-DD. Compare on the date portion
+  // only, so a bare date is never read as "midnight, before the timestamp on the same day".
+  const asOf = s.cash?.asOf;
+  const generatedAt = s.meta?.generatedAt;
+  if (asOf && generatedAt && asOf.slice(0, 10) > generatedAt.slice(0, 10)) {
+    flag('cash.asOf', `cash as-of ${asOf.slice(0, 10)} is later than the snapshot's own generatedAt ${generatedAt.slice(0, 10)}`, 'error');
+  }
+
+  const history = s.cash?.history ?? [];
+  const latest = history.at(-1);
+  if (asOf && latest?.date !== undefined && latest.date !== asOf) {
+    flag('cash.history.date', `latest history row is dated ${latest.date} but cash as-of is ${asOf} — the history matrix is missing the rows between, or the as-of dateline outran it`);
+  }
+  for (let i = 1; i < history.length; i++) {
+    const prev = history[i - 1]!;
+    const cur = history[i]!;
+    if (prev.total === cur.total) {
+      flag('cash.history.total', `history rows ${prev.date} and ${cur.date} carry the identical total ${Math.round(cur.total)} — a clobbered slot reads exactly like this`);
+    }
+  }
+
+  for (const e of s.cash?.entities ?? []) {
+    // A dollar move and its own percent must not point in opposite directions. A zero on either side
+    // has no sign to disagree with, and a null percent is the parser's "verified null" -- both silent.
+    const signMismatch = (dollar: number | null | undefined, pct: number | null | undefined) =>
+      dollar != null && pct != null && dollar !== 0 && pct !== 0 && Math.sign(dollar) !== Math.sign(pct);
+    if (signMismatch(e.deltaDollar, e.deltaPct)) {
+      flag('cash.entities.deltaPct', `${e.id}: deltaDollar ${Math.round(e.deltaDollar!)} and deltaPct ${e.deltaPct} disagree in sign`);
+    }
+    if (signMismatch(e.growth12Dollar, e.growth12Pct)) {
+      flag('cash.entities.growth12Pct', `${e.id}: growth12Dollar ${Math.round(e.growth12Dollar!)} and growth12Pct ${e.growth12Pct} disagree in sign`);
+    }
+    if (e.maxAllTime != null && e.maxAllTime < e.currentBalance - CASH_TOLERANCE) {
+      flag('cash.entities.maxAllTime', `${e.id}: maxAllTime ${Math.round(e.maxAllTime)} is below the current balance ${Math.round(e.currentBalance)} — the all-time summary cell is stale`);
+    }
+    if (e.minAllTime != null && e.minAllTime > e.currentBalance + CASH_TOLERANCE) {
+      flag('cash.entities.minAllTime', `${e.id}: minAllTime ${Math.round(e.minAllTime)} is above the current balance ${Math.round(e.currentBalance)} — the all-time summary cell is stale`);
+    }
+  }
+
+  return flags;
+}
+
 export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
   const flags: DataQualityFlag[] = [];
   const flag = (field: string, issue: string, severity: DataQualityFlag['severity'] = 'error') =>
@@ -44,7 +124,7 @@ export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
 
   // Cash total must equal the sum of entity balances.
   const cashSum = sum(s.cash.entities.map((e) => e.currentBalance));
-  if (Math.abs(cashSum - s.cash.totalCash) > 2) {
+  if (Math.abs(cashSum - s.cash.totalCash) > CASH_TOLERANCE) {
     flag('cash.totalCash', `total ${Math.round(s.cash.totalCash)} ≠ Σ entities ${Math.round(cashSum)}`);
   }
 
@@ -58,12 +138,16 @@ export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
   // Cash history's own latest snapshot must agree with the current total (a stale/misordered
   // history array would otherwise show a chart that silently disagrees with the headline number).
   const cashHistoryLatest = s.cash.history?.at(-1)?.total;
-  if (cashHistoryLatest !== undefined && Math.abs(cashHistoryLatest - s.cash.totalCash) > 2) {
+  if (cashHistoryLatest !== undefined && Math.abs(cashHistoryLatest - s.cash.totalCash) > CASH_TOLERANCE) {
     flag(
       'cash.history',
       `latest history point ${Math.round(cashHistoryLatest)} ≠ current total ${Math.round(s.cash.totalCash)}`,
     );
   }
+  // The check above is value-only and is satisfied by the exact failure it should catch: a history
+  // slot clobbered with the current total agrees with the headline BECAUSE it was clobbered. The
+  // date-aware and per-entity companions live in checkCashInvariants (see its doc comment).
+  flags.push(...checkCashInvariants(s));
 
   // Derived totals must agree with the workbook's own declared "Portfolio Total" row (per-field:
   // null means the workbook had no such row, e.g. a legacy fixture -- skip rather than false-flag).
