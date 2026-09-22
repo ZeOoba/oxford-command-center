@@ -243,6 +243,122 @@ describe('checkSnapshot — runtime reconciliation', () => {
     });
   });
 
+  // 2026-09-14 financial-code sweep: the committed snapshot carried cash.asOf = 2026-09-10 over a
+  // history array whose last row was 2026-07-10, with the July slot's total bit-identical to the
+  // September headline -- a clobbered slot, and the ONLY cash-history check here ("latest point =
+  // current total") read that as a pass. Date-aware invariants close it. Detection only: the missing
+  // 08-10 / 09-10 rows are a workbook problem for a human, never backfilled here.
+  describe('cash — date-aware history invariants', () => {
+    const cashWith = (over: Record<string, unknown>) => ({
+      asOf: '2026-07-10',
+      totalCash: 500,
+      entities: [{ id: 'e1', currentBalance: 500 }],
+      history: [
+        { date: '2026-06-10', total: 400 },
+        { date: '2026-07-10', total: 500 },
+      ],
+      ...over,
+    });
+
+    it('is silent for a history that ends on cash.asOf with distinct consecutive totals', () => {
+      const flags = checkSnapshot(base({ meta: { generatedAt: '2026-07-14T14:23:48.819Z' }, cash: cashWith({}) }));
+      expect(flags.filter((f) => f.field.startsWith('cash.'))).toEqual([]);
+    });
+
+    it('flags cash.asOf later than meta.generatedAt (error) — a structural impossibility, not a business event', () => {
+      const flags = checkSnapshot(base({ meta: { generatedAt: '2026-09-14T14:23:48.819Z' }, cash: cashWith({ asOf: '2026-09-15', history: [{ date: '2026-09-15', total: 500 }] }) }));
+      const f = flags.find((x) => x.field === 'cash.asOf');
+      expect(f).toBeDefined();
+      expect(f!.severity).toBe('error');
+      expect(f!.issue).toContain('2026-09-15');
+      expect(f!.issue).toContain('2026-09-14');
+    });
+
+    it('compares asOf to generatedAt on the DATE portion — a bare date on the same day as a later-in-the-day timestamp is fine', () => {
+      const flags = checkSnapshot(base({ meta: { generatedAt: '2026-09-14T00:00:01.000Z' }, cash: cashWith({ asOf: '2026-09-14', history: [{ date: '2026-09-14', total: 500 }] }) }));
+      expect(flags.some((f) => f.field === 'cash.asOf')).toBe(false);
+    });
+
+    it('flags (warn) a history whose latest date is not cash.asOf — the September asOf over a July-ending history', () => {
+      const flags = checkSnapshot(base({ meta: { generatedAt: '2026-09-14T14:23:48.819Z' }, cash: cashWith({ asOf: '2026-09-10' }) }));
+      const f = flags.find((x) => x.field === 'cash.history.date');
+      expect(f).toBeDefined();
+      expect(f!.severity).toBe('warn');
+      expect(f!.issue).toContain('2026-07-10');
+      expect(f!.issue).toContain('2026-09-10');
+    });
+
+    it('flags (warn) two consecutive history entries with identical totals — the clobbered-slot signature', () => {
+      const flags = checkSnapshot(base({
+        meta: { generatedAt: '2026-07-14T14:23:48.819Z' },
+        cash: cashWith({ history: [{ date: '2026-05-10', total: 300 }, { date: '2026-06-10', total: 500 }, { date: '2026-07-10', total: 500 }] }),
+      }));
+      const f = flags.find((x) => x.field === 'cash.history.total');
+      expect(f).toBeDefined();
+      expect(f!.severity).toBe('warn');
+      expect(f!.issue).toContain('2026-06-10');
+      expect(f!.issue).toContain('2026-07-10');
+    });
+
+    it('does not run the date checks when the snapshot carries no history / asOf / meta (legacy fixture)', () => {
+      expect(checkSnapshot(base()).filter((f) => f.field.startsWith('cash.'))).toEqual([]);
+    });
+  });
+
+  // 2026-09-14 sweep: two live entities carried a percent whose sign contradicted its own dollar
+  // figure (deltaDollar -1,698 with deltaPct +4.1%; growth12Dollar +2,064 with growth12Pct -1186%)
+  // because the workbook's own percent cell divides by a NEGATIVE prior balance. parse.ts now
+  // recomputes both and emits null over a wrong-signed number; this is the self-consistency
+  // backstop over whatever is actually on the snapshot (committed file, legacy bake, hand-edit).
+  describe('cash — entity self-consistency (dollar vs percent sign, all-time min/max vs current)', () => {
+    const entity = (over: Record<string, unknown>) => ({
+      id: 'e1', currentBalance: 500, priorBalance: null, deltaDollar: null, deltaPct: null,
+      minAllTime: null, maxAllTime: null, bal12moAgo: null, growth12Dollar: null, growth12Pct: null,
+      ...over,
+    });
+    const snapWith = (e: Record<string, unknown>) => base({ cash: { totalCash: 500, entities: [entity(e)] } });
+
+    it('flags (warn) an entity whose deltaDollar and deltaPct disagree in sign', () => {
+      const flags = checkSnapshot(snapWith({ deltaDollar: -1698.4, deltaPct: 0.0413 }));
+      const f = flags.find((x) => x.field === 'cash.entities.deltaPct');
+      expect(f).toBeDefined();
+      expect(f!.severity).toBe('warn');
+      expect(f!.issue).toContain('e1');
+    });
+
+    it('flags (warn) an entity whose growth12Dollar and growth12Pct disagree in sign', () => {
+      const flags = checkSnapshot(snapWith({ growth12Dollar: 2064.165, growth12Pct: -11.863 }));
+      const f = flags.find((x) => x.field === 'cash.entities.growth12Pct');
+      expect(f).toBeDefined();
+      expect(f!.severity).toBe('warn');
+    });
+
+    it('is silent when the signs agree, when either side is null, or when the dollar move is exactly zero', () => {
+      expect(checkSnapshot(snapWith({ deltaDollar: 416.9, deltaPct: 0.0503 })).filter((f) => f.field.startsWith('cash.entities'))).toEqual([]);
+      expect(checkSnapshot(snapWith({ deltaDollar: -416.9, deltaPct: null })).filter((f) => f.field.startsWith('cash.entities'))).toEqual([]);
+      expect(checkSnapshot(snapWith({ deltaDollar: 0, deltaPct: 0 })).filter((f) => f.field.startsWith('cash.entities'))).toEqual([]);
+    });
+
+    it('flags (warn) maxAllTime below the current balance — a stale workbook cell, found live', () => {
+      const flags = checkSnapshot(snapWith({ currentBalance: 500, maxAllTime: 450 }));
+      const f = flags.find((x) => x.field === 'cash.entities.maxAllTime');
+      expect(f).toBeDefined();
+      expect(f!.severity).toBe('warn');
+      expect(f!.issue).toContain('450');
+      expect(f!.issue).toContain('500');
+    });
+
+    it('flags (warn) minAllTime above the current balance', () => {
+      const flags = checkSnapshot(snapWith({ currentBalance: 500, minAllTime: 600 }));
+      expect(flags.some((f) => f.field === 'cash.entities.minAllTime' && f.severity === 'warn')).toBe(true);
+    });
+
+    it('is silent when min ≤ current ≤ max, and within the $2 rounding tolerance the other cash checks use', () => {
+      expect(checkSnapshot(snapWith({ currentBalance: 500, minAllTime: 100, maxAllTime: 500 })).filter((f) => f.field.startsWith('cash.entities'))).toEqual([]);
+      expect(checkSnapshot(snapWith({ currentBalance: 500.9, minAllTime: 100, maxAllTime: 500 })).filter((f) => f.field.startsWith('cash.entities'))).toEqual([]);
+    });
+  });
+
   it('passes when property NOI/value and annual rent all agree with the workbook Portfolio Total', () => {
     const flags = checkSnapshot(
       base({

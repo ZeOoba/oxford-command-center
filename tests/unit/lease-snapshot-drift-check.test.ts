@@ -43,8 +43,29 @@ function lease(over: Partial<DriftLeaseView> & { id: string }): DriftLeaseView {
     unit: '2802',
     leaseEnd: '2027-04-30',
     annualRent: 120_000,
+    status: 'Active',
+    monthsToExpiry: 7,
     ...over,
   };
+}
+
+/**
+ * The 2026-09-07 rent zero-out (commit 85dfecf, found by the 2026-09-14 financial-code sweep):
+ * three RETAINED lease ids went from real rent to annualRent 0 in one scheduled refresh -- two
+ * already 'Expired' (a tint shop and a countertop fabricator), one still 'Active' with four months
+ * of term left (a consulting tenant). Synthetic names, real shape: the STATUS + rent-to-zero
+ * transition is the signal. Nothing was added or removed, so the count floor saw a clean run; no
+ * leaseEnd moved, so the date-change bucket saw nothing; and Σannual still tied to the workbook's
+ * own Portfolio Total (the workbook itself had zeroed the cells), so the dollar gate passed.
+ */
+function rentZeroOutIncident(): { previous: DriftLeaseView[]; current: DriftLeaseView[] } {
+  const previous = [
+    lease({ id: 'zettler-2000-2002-fixture-countertops-llc', unit: '2000-2002', company: 'Fixture Countertops LLC', status: 'Expired', leaseEnd: '2026-07-31', monthsToExpiry: -2, annualRent: 89_952 }),
+    lease({ id: 'zettler-2004-fixture-tint-co', unit: '2004', company: 'Fixture Tint Co', status: 'Expired', leaseEnd: '2026-08-31', monthsToExpiry: -1, annualRent: 22_200 }),
+    lease({ id: 'information-lane-202-fixture-consulting-group', propertyKey: '29000 Information Lane', unit: '202', company: 'Fixture Consulting Group', status: 'Active', leaseEnd: '2027-01-31', monthsToExpiry: 4, annualRent: 18_777.96 }),
+  ];
+  const current = previous.map((l) => ({ ...l, annualRent: 0 }));
+  return { previous, current };
 }
 
 describe('businessKey', () => {
@@ -221,6 +242,86 @@ describe('computeDrift — existing id-based behavior is preserved', () => {
     expect(drift.genuinelyNew).toHaveLength(0);
     expect(drift.genuinelyRemoved).toHaveLength(0);
     expect(drift.ambiguous).toHaveLength(0);
+    expect(drift.rentChanged).toHaveLength(0);
+  });
+});
+
+// Regression cover for the 2026-09-07 rent zero-out -- see rentZeroOutIncident() above. Before this
+// bucket existed, computeDrift compared ids and leaseEnd only: a retained lease whose annualRent
+// went to $0 produced NO line in any report, on any writer path. This is REPORT-only, like the
+// leaseEnd-change bucket: a genuine vacancy zeroes rent too, so refusing here would block real edits.
+describe('computeDrift — rentChanged (the 2026-09-07 rent zero-out shape)', () => {
+  it('reports every retained (id-matched) lease whose rent went to $0, carrying the prior value -- while every other bucket stays empty', () => {
+    const { previous, current } = rentZeroOutIncident();
+
+    const drift = computeDrift(previous, current);
+
+    // The blind spot, stated directly: the pre-existing buckets all read this as a clean run.
+    expect(drift.removedIds).toHaveLength(0);
+    expect(drift.newIds).toHaveLength(0);
+    expect(drift.changedDates).toHaveLength(0);
+    expect(drift.rekeyed).toHaveLength(0);
+
+    expect(drift.rentChanged).toHaveLength(3);
+    expect(drift.rentChanged.map((r) => r.kind)).toEqual(['to-zero', 'to-zero', 'to-zero']);
+    const active = drift.rentChanged.find((r) => r.current.status === 'Active')!;
+    expect(active.previous.annualRent).toBeCloseTo(18_777.96);
+    expect(active.current.annualRent).toBe(0);
+    expect(drift.rentChanged.filter((r) => r.current.status === 'Expired')).toHaveLength(2);
+  });
+
+  it('also catches a to-$0 move hidden underneath a re-key (business-key paired), not just id-matched leases', () => {
+    const previous = [lease({ id: 'banwick-2802-105', company: 'Fixture Consulting Group', annualRent: 18_777.96 })];
+    const current = [lease({ id: 'banwick-2802-fixture-consulting-group', company: 'Fixture Consulting Group', annualRent: 0 })];
+
+    const drift = computeDrift(previous, current);
+
+    expect(drift.rekeyed).toHaveLength(1);
+    expect(drift.rentChanged).toHaveLength(1);
+    expect(drift.rentChanged[0]!.kind).toBe('to-zero');
+    expect(drift.rentChanged[0]!.previous.id).toBe('banwick-2802-105');
+    expect(drift.rentChanged[0]!.current.id).toBe('banwick-2802-fixture-consulting-group');
+  });
+
+  it('reports a from-$0 move (a vacant suite re-let) as its own kind', () => {
+    const previous = [lease({ id: 'id-1', company: 'Acme LLC', status: 'Vacant', annualRent: 0 })];
+    const current = [lease({ id: 'id-1', company: 'Acme LLC', status: 'Active', annualRent: 60_000 })];
+
+    const drift = computeDrift(previous, current);
+
+    expect(drift.rentChanged).toHaveLength(1);
+    expect(drift.rentChanged[0]!.kind).toBe('from-zero');
+  });
+
+  it('ignores a routine escalation but reports a move beyond the 25% materiality threshold', () => {
+    // 3% is an ordinary annual bump and must not turn every anniversary into "drift worth a look";
+    // a 40% drop on a retained lease is not an escalation and needs a human.
+    const previous = [
+      lease({ id: 'escalated', company: 'Escalated LLC', annualRent: 100_000 }),
+      lease({ id: 'halved', unit: '2804', company: 'Halved LLC', annualRent: 100_000 }),
+    ];
+    const current = [
+      lease({ id: 'escalated', company: 'Escalated LLC', annualRent: 103_000 }),
+      lease({ id: 'halved', unit: '2804', company: 'Halved LLC', annualRent: 60_000 }),
+    ];
+
+    const drift = computeDrift(previous, current);
+
+    expect(drift.rentChanged.map((r) => r.current.id)).toEqual(['halved']);
+    expect(drift.rentChanged[0]!.kind).toBe('material');
+  });
+
+  it('treats exactly 25% as NOT material -- the threshold trips on >25%, matching the anomaly floor', () => {
+    const previous = [lease({ id: 'id-1', company: 'Acme LLC', annualRent: 100_000 })];
+    const current = [lease({ id: 'id-1', company: 'Acme LLC', annualRent: 125_000 })];
+
+    expect(computeDrift(previous, current).rentChanged).toHaveLength(0);
+  });
+
+  it('does not report a $0 -> $0 lease (a suite that stayed vacant is not a change)', () => {
+    const leases = [lease({ id: 'id-1', company: 'Acme LLC', status: 'Vacant', annualRent: 0 })];
+
+    expect(computeDrift(leases, leases).rentChanged).toHaveLength(0);
   });
 });
 
@@ -606,6 +707,59 @@ describe('formatDriftReport', () => {
     const report = formatDriftReport(drift, previous, current);
 
     expect(report.hasDrift).toBe(false);
+  });
+
+  it('surfaces each zeroed-rent retained lease with its status, vacancy context and prior -> current rent -- the 2026-09-07 incident shape; reports, never refuses', () => {
+    const { previous, current } = rentZeroOutIncident();
+    const drift = computeDrift(previous, current);
+
+    // The blind spot, confirmed directly rather than by inference: the count floor lets this
+    // write through with no warning at all.
+    const floor = expectAllowed(evaluateAnomalyFloor(previous, current, drift.removedIds, '/tmp/portfolio.json', false));
+    expect(floor.warning).toBeUndefined();
+
+    const report = formatDriftReport(drift, previous, current);
+
+    expect(report.hasDrift).toBe(true);
+    expect(report.lines.some((l) => /Rent changes on retained leases \(3\)/.test(l))).toBe(true);
+
+    // The one that matters most: still Active, four months of term left, rent now $0. A reader
+    // must see the status and the term context on the same line as the dollar move.
+    const activeLine = report.lines.find((l) => l.includes('Fixture Consulting Group'));
+    expect(activeLine).toBeDefined();
+    expect(activeLine).toMatch(/Active/);
+    expect(activeLine).toMatch(/2027-01-31/);
+    expect(activeLine).toMatch(/4 mo/);
+    expect(activeLine).toMatch(/\$18,778 -> \$0/);
+
+    // The Expired pair are plausibly correct zero-outs (a vacated suite) -- still listed, with the
+    // status that explains them, so the reader judges rather than the script.
+    const expiredLine = report.lines.find((l) => l.includes('Fixture Countertops LLC'));
+    expect(expiredLine).toMatch(/Expired/);
+    expect(expiredLine).toMatch(/\$89,952 -> \$0/);
+  });
+
+  it('shows the id change alongside a rent change that was paired across a re-key', () => {
+    const previous = [lease({ id: 'banwick-2802-105', company: 'Fixture Consulting Group', annualRent: 18_777.96 })];
+    const current = [lease({ id: 'banwick-2802-fixture-consulting-group', company: 'Fixture Consulting Group', annualRent: 0 })];
+    const drift = computeDrift(previous, current);
+
+    const report = formatDriftReport(drift, previous, current);
+
+    expect(report.hasDrift).toBe(true);
+    expect(report.lines.some((l) => /\$18,778 -> \$0/.test(l))).toBe(true);
+    expect(report.lines.some((l) => l.includes('banwick-2802-105 -> banwick-2802-fixture-consulting-group'))).toBe(true);
+  });
+
+  it('a rent change alone (no id or date change) is still drift worth a look, not a clean run', () => {
+    const previous = [lease({ id: 'id-1', company: 'Acme LLC', annualRent: 100_000 })];
+    const current = [lease({ id: 'id-1', company: 'Acme LLC', annualRent: 0 })];
+    const drift = computeDrift(previous, current);
+
+    const report = formatDriftReport(drift, previous, current);
+
+    expect(report.hasDrift).toBe(true);
+    expect(report.lines[0]).toMatch(/Lease drift detected/);
   });
 });
 
