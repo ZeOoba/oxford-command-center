@@ -109,6 +109,10 @@ const FINANCIAL_JSON_PREFIXES: readonly string[] = [
   'server/warehouse/',
   'server/workbook/',
   'src/analytics/',
+  // 2026-09-22 refute pass: server/ar/ became a financial source directory in the same change, so
+  // per the rule above a .json inside it (an alias table, a property-header map) is financial too.
+  // None exists today — this is the fail-closed default, not a response to a file.
+  'server/ar/',
 ];
 // Subtracted from the prefixes above (Gabriel, 2026-09-21): server/warehouse/placeholders/*.placeholder.json are
 // self-labelled PLACEHOLDER stand-ins for broker/assessor data (docs/placeholder-data.md), overridden
@@ -117,6 +121,20 @@ const FINANCIAL_JSON_PREFIXES: readonly string[] = [
 const NON_FINANCIAL_JSON_PATTERN = /^server\/warehouse\/placeholders\/[^/]+\.placeholder\.json$/;
 const FINANCIAL_DATA_PATHS: ReadonlySet<string> = new Set([
   'docs/superpowers/specs/2026-06-12-pfi-account-mapping-seed.json',
+  // 2026-09-22 (weekly sweep, finding 6): the 2026-09-21 round above closed the blanket-`.json` hole
+  // for warehouse/workbook/analytics and ONE seed file, and missed these two — the same failure mode
+  // one day later. ar-mapping-cache.json is the persistent tenant-name → Lease.id map the AR feed
+  // consults BEFORE any name matching (a cache hit skips review entirely) and it carries durable
+  // human SKIP rulings; a one-line edit re-attributes a delinquency balance to a different lease
+  // with no attestation demanded. overlay.json is the canonical mutation store the headless feed
+  // writes arrears into. It is gitignored (.gitignore), so this entry is defense-in-depth against a
+  // force-add — the cache IS tracked and PR-committed, and is the live gap. Named individually, not
+  // as a `data/` prefix: data/snapshots/portfolio.json is re-baked and auto-committed by the
+  // snapshot-refresh fleet, and data/ar/review-queue.json is a report surface nothing reads back —
+  // a prefix would demand a trailer on every scheduled bake (see the placeholder subtraction above
+  // for what that trains people to do).
+  'data/ar-mapping-cache.json',
+  'data/overlay.json',
 ]);
 
 /** True when a changed path holds financial-decision SOURCE (not a test / doc / json fixture). */
@@ -154,6 +172,32 @@ export function isFinancialSourcePath(p: string): boolean {
     // Broad prefix with subtractions above, per the doctrine the workbook entry established: an
     // enumeration goes stale silently, a prefix fails closed.
     path.startsWith('server/sources/') ||
+    // server/ar/ added 2026-09-22 — the SIXTH occurrence of the scope-staleness mode (contracts
+    // 2026-07-24, workbook 2026-08-11, sources 2026-08-12, config/ + data json 2026-09-21). The AR
+    // delinquency subsystem decides WHICH lease a tenant's balance attaches to (match-tenant.ts,
+    // partition-confidence.ts, resolve-by-unit.ts), which of two agings wins (resolve-latest.ts),
+    // when a persisted balance is retracted (clear-dropped-leases.ts), and what the daily brief's
+    // collections alerts read (derive-ar-balances.ts). The weekly sweep's SKILL.md has carried
+    // `server/ar/**` in scope since 2026-08-17; this gate — the thing that enforces that sweep —
+    // reported "no financial-decision source files changed" for a diff touching match-tenant.ts.
+    // Silent mis-attribution of a delinquency is the subsystem's own stated worst failure mode.
+    // Broad prefix, per the doctrine every entry above re-learned. No DELIVERY_ONLY subtraction:
+    // pdf-extract.ts is a subprocess boundary, but it is the INPUT boundary of every PDF balance
+    // the parsers see — not transport plumbing in the graph-auth.ts sense.
+    path.startsWith('server/ar/') ||
+    // The two AR WRITER scripts (named, not a scripts/ prefix — most of scripts/ is tooling):
+    // ar-import-headless.ts writes tenantArrears/arBalances into overlay + snapshot unattended;
+    // seed-ar-mappings.ts hardcodes human-ruled tenant→lease attributions and writes them into the
+    // cache, the same decision class as the matcher it bypasses.
+    path === 'scripts/ar-import-headless.ts' ||
+    path === 'scripts/seed-ar-mappings.ts' ||
+    // Refute pass on the 2026-09-22 fix: the INTERACTIVE importer carries its own inline copy of
+    // the auto-attribution threshold (`autoAccept` = exact, or high-confidence with >=2 tokens,
+    // unambiguous) — the headless feed's partition-confidence.ts explicitly "mirrors the interactive
+    // script's autoAccept rule". It writes cache entries and POSTs tenantArrears through the server.
+    // A one-token widening of that threshold auto-attributes balances no human reviewed. Omitted by
+    // the sweep SKILL.md's scope list too — the same stale enumeration this entry's siblings fix.
+    path === 'scripts/ar-import.ts' ||
     // The seed pipeline: source of truth for Deal.confidential AND the fallback deal set a Notion
     // outage publishes. A wrong edit here is a Hard-Invariant-3 exposure, not a fixture change.
     path === 'src/data/seed-deals.ts' ||
