@@ -3,8 +3,8 @@
 // Regenerates data/snapshots/portfolio.json from the live workbook (same as `npm run extract`),
 // then diffs the NEW lease set against what was there immediately before, reporting any lease
 // whose id, leaseEnd, or (to/from $0 or >25%) annualRent changed. Run on a schedule so
-// portfolio.json never goes stale for longer
-// than the schedule's own interval, independent of whether the interactive dev/prod server is
+// portfolio.json never goes stale for longer than the schedule's own interval, independent of
+// whether the interactive dev/prod server is
 // running (which is the actual root cause of the staleness this script exists to close --
 // see docs/superpowers/plans/2026-07-24-lease-id-integrity-fix-plan.md).
 //
