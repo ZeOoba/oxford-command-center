@@ -861,6 +861,27 @@ function parseLeases(
         severity: 'warn',
       });
     }
+    const resolvedAnnualRent = annualRent ?? (monthlyRent ?? 0) * 12;
+    // A LIVE tenancy at $0 rent needs a human (2026-09-07 refresh, commit 85dfecf, found by the
+    // 2026-09-14 financial-code sweep): three retained rows went from real rent to $0 in one
+    // scheduled run, and nothing in the pipeline said so -- the count floor saw no add/remove, the
+    // drift check compared ids and leaseEnd only, and the Σannual-vs-workbook-total gate PASSED
+    // because the workbook itself carried the zeroed cells. Two of the three were 'Expired'
+    // (expected to carry stale/zero rent -- a vacated suite), so this is gated to Active and
+    // Expiring Soon only: there, $0 is either a real vacancy nobody re-statused or a zeroed cell,
+    // and both are worth a line. 'warn', never a refusal or a throw -- a genuine rent zero-out is a
+    // legitimate business event, and the reader judges. The aggregate lens on the same shape is
+    // scripts/lease-snapshot-drift-check.ts's rentChanged bucket (prior vs current, across
+    // snapshots); this row flag is what reaches the live Brain refresh path, which never diffs.
+    if (resolvedAnnualRent === 0 && (status === 'Active' || status === 'Expiring Soon')) {
+      rowFlags.push({
+        entity: id,
+        field: 'annualRent',
+        issue: `zero rent on a retained lease still marked "${status}" (end ${leaseEnd ?? '—'}) — confirm the suite is vacant or on notice; if the tenancy is live, the rent-roll cell was zeroed`,
+        rawValue: String(row(ws, r, 13) ?? ''),
+        severity: 'warn',
+      });
+    }
     const lease: Lease = {
       id,
       propertyKey,
@@ -876,7 +897,7 @@ function parseLeases(
       escalationDate: isoOrNull(row(ws, r, 10), rowFlags, id, 'escalationDate'),
       escalationPct: num(row(ws, r, 11)),
       status,
-      annualRent: annualRent ?? (monthlyRent ?? 0) * 12,
+      annualRent: resolvedAnnualRent,
       monthsToExpiry: leaseEnd ? differenceInCalendarMonths(parseISO(leaseEnd), asOf) : null,
       flags: [],
     };

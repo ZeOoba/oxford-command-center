@@ -2,7 +2,8 @@
 //
 // Regenerates data/snapshots/portfolio.json from the live workbook (same as `npm run extract`),
 // then diffs the NEW lease set against what was there immediately before, reporting any lease
-// whose id or leaseEnd changed. Run on a schedule so portfolio.json never goes stale for longer
+// whose id, leaseEnd, or (to/from $0 or >25%) annualRent changed. Run on a schedule so
+// portfolio.json never goes stale for longer
 // than the schedule's own interval, independent of whether the interactive dev/prod server is
 // running (which is the actual root cause of the staleness this script exists to close --
 // see docs/superpowers/plans/2026-07-24-lease-id-integrity-fix-plan.md).
@@ -16,7 +17,7 @@
 // Usage: npx tsx scripts/lease-snapshot-drift-check.ts
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { PortfolioSnapshot } from '../src/contracts/index';
+import type { LeaseStatus, PortfolioSnapshot } from '../src/contracts/index';
 import { parseWorkbook } from '../server/workbook/parse';
 import type { M365TasksDegradation } from '../server/sources/m365-tasks';
 import { loadEnvFile } from '../server/load-env';
@@ -39,6 +40,11 @@ export interface DriftLeaseView {
   unit: string | null;
   leaseEnd: string | null;
   annualRent: number;
+  /** Vacancy context for the rent-change report (2026-09-07 incident, see RENT_CHANGE_MATERIAL_FRACTION).
+   *  The Lease contract carries no explicit notice-to-vacate field, so status + leaseEnd +
+   *  monthsToExpiry are all the context a reader gets alongside a rent move. */
+  status: LeaseStatus;
+  monthsToExpiry: number | null;
 }
 
 /** A previous lease and a current lease that are the same real-world tenancy under different ids. */
@@ -52,6 +58,25 @@ export interface RekeyedLease {
 /** A business key that maps to more than one lease on either side -- reported, never paired. */
 export interface AmbiguousKey { key: string; previousCount: number; currentCount: number; }
 
+/**
+ * Materiality for the rentChanged bucket: a retained lease's annualRent moving by MORE than this
+ * fraction of its previous value is reported; at or under it is not. 25% deliberately mirrors the
+ * anomaly floor's >25%-removed threshold (server/anomaly-floor.ts) rather than inventing a second
+ * number: a routine 2-4% escalation or a modest renewal bump never trips it, a halving/doubling
+ * does. A move to or from exactly $0 is ALWAYS reported regardless of this fraction -- that is the
+ * incident shape, and $0 has no meaningful relative size.
+ */
+export const RENT_CHANGE_MATERIAL_FRACTION = 0.25;
+
+export type RentChangeKind = 'to-zero' | 'from-zero' | 'material';
+
+/** A retained tenancy (id-matched, or paired across a re-key) whose annualRent moved -- see rentChangeKind. */
+export interface RentChange {
+  previous: DriftLeaseView;
+  current: DriftLeaseView;
+  kind: RentChangeKind;
+}
+
 export interface DriftResult {
   /** Raw id-level diff. `removedIds` is what the anomaly floor is computed from -- see main(). */
   newIds: DriftLeaseView[];
@@ -63,6 +88,30 @@ export interface DriftResult {
   genuinelyNew: DriftLeaseView[];
   genuinelyRemoved: DriftLeaseView[];
   ambiguous: AmbiguousKey[];
+  /** annualRent moves on RETAINED tenancies (id-matched AND re-keyed pairs) -- to/from $0, or by
+   *  more than RENT_CHANGE_MATERIAL_FRACTION. Report-only, like changedDates: never a refusal input. */
+  rentChanged: RentChange[];
+}
+
+/**
+ * Why a retained lease's rent move is reportable, or null when it is not.
+ *
+ * Added 2026-09-14 (weekly financial-code sweep) for the 2026-09-07 refresh (commit 85dfecf) in
+ * which three RETAINED lease ids went from real rent to annualRent 0 -- two already 'Expired', one
+ * still 'Active' with four months of term -- and no report anywhere carried a line about it. Every
+ * existing guard was structurally blind to that shape: the count floor saw nothing added or removed,
+ * the leaseEnd bucket saw no date move, and evaluateReconciliationGate's Σannual-vs-workbook-total
+ * check PASSED because the workbook itself had zeroed the cells, so parsed and declared totals still
+ * agreed. This bucket is the value-level companion to changedDates, and like it, it only reports:
+ * a genuine vacancy zeroes rent too, and refusing would block real, wanted edits.
+ */
+export function rentChangeKind(previous: DriftLeaseView, current: DriftLeaseView): RentChangeKind | null {
+  const prev = previous.annualRent;
+  const cur = current.annualRent;
+  if (prev === cur) return null;
+  if (cur === 0) return 'to-zero';
+  if (prev === 0) return 'from-zero';
+  return Math.abs(cur - prev) / Math.abs(prev) > RENT_CHANGE_MATERIAL_FRACTION ? 'material' : null;
 }
 
 /** Trim, collapse internal runs of whitespace, lowercase. Keeps cosmetic workbook edits
@@ -169,6 +218,22 @@ export function computeDrift(previous: DriftLeaseView[], current: DriftLeaseView
 
   const genuinelyRemoved = removedIds.filter((l) => !pairedPrevIds.has(l.id));
 
+  // Rent moves on RETAINED tenancies: id-matched leases first, then the pairs the business-key
+  // pass just established -- the same two populations the leaseEnd comparison covers (changedDates
+  // + rekeyed[].leaseEndChanged), so a rent zero-out hidden under an id-scheme migration is seen
+  // exactly as one under a stable id is. See rentChangeKind for the incident this closes.
+  const rentChanged: RentChange[] = [];
+  for (const cur of current) {
+    const prev = prevById.get(cur.id);
+    if (!prev) continue;
+    const kind = rentChangeKind(prev, cur);
+    if (kind) rentChanged.push({ previous: prev, current: cur, kind });
+  }
+  for (const r of rekeyed) {
+    const kind = rentChangeKind(r.previous, r.current);
+    if (kind) rentChanged.push({ previous: r.previous, current: r.current, kind });
+  }
+
   return {
     newIds,
     removedIds,
@@ -177,6 +242,7 @@ export function computeDrift(previous: DriftLeaseView[], current: DriftLeaseView
     genuinelyNew,
     genuinelyRemoved,
     ambiguous: [...ambiguousByKey.values()],
+    rentChanged,
   };
 }
 
@@ -385,7 +451,7 @@ export function evaluateReconciliationGate(
 }
 
 export interface DriftReportResult {
-  /** True when anything in `drift` is worth a human's attention (new/removed/re-keyed/date-changed). */
+  /** True when anything in `drift` is worth a human's attention (new/removed/re-keyed/date-changed/rent-changed). */
   hasDrift: boolean;
   /** Plain lines, ready to console.log() or join('\n') for a Notion post -- no trailing newlines. */
   lines: string[];
@@ -423,14 +489,30 @@ export function formatDriftReport(
   }
 
   const prevById = new Map(previous.map((l) => [l.id, l]));
-  const { removedIds, newIds, changedDates, rekeyed, genuinelyNew, genuinelyRemoved, ambiguous } = drift;
-  if (newIds.length === 0 && changedDates.length === 0 && removedIds.length === 0) {
+  const { removedIds, newIds, changedDates, rekeyed, genuinelyNew, genuinelyRemoved, ambiguous, rentChanged } = drift;
+  if (newIds.length === 0 && changedDates.length === 0 && removedIds.length === 0 && rentChanged.length === 0) {
     return { hasDrift: false, lines: [`✓ No lease drift. portfolio.json regenerated (${current.length} leases).`] };
   }
 
   const label = (l: DriftLeaseView) => `${l.propertyKey}${l.unit ? ` ${l.unit}` : ''} | ${l.company ?? l.tenantName}`;
+  const usd = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`;
   const lines: string[] = [`⚠ Lease drift detected — portfolio.json regenerated (${current.length} leases).`];
 
+  if (rentChanged.length) {
+    // First, above the date changes: a rent zero-out on a retained lease is the shape no other
+    // guard sees (see rentChangeKind), and the 2026-09-07 refresh dropped $130,930 of annualized
+    // rent this way with no line anywhere. Each row carries the lease's status and its term context
+    // (leaseEnd + monthsToExpiry -- the Lease contract has no notice field) next to the prior and
+    // current rent, so a reader can tell "Expired, vacated, $0 is right" from "Active with four
+    // months left, $0 is a zeroed cell" without opening the workbook.
+    lines.push('', `Rent changes on retained leases (${rentChanged.length}) — to/from $0, or >${RENT_CHANGE_MATERIAL_FRACTION * 100}% move:`);
+    for (const r of rentChanged) {
+      const c = r.current;
+      const term = `end ${c.leaseEnd ?? '—'}${c.monthsToExpiry !== null ? ` (${c.monthsToExpiry} mo)` : ''}`;
+      lines.push(`  ${label(c)} | ${c.status} | ${term} | ${usd(r.previous.annualRent)} -> ${usd(c.annualRent)}`);
+      if (r.previous.id !== c.id) lines.push(`    id: ${r.previous.id} -> ${c.id}`);
+    }
+  }
   if (changedDates.length) {
     lines.push('', `Lease end date changes (${changedDates.length}):`);
     for (const l of changedDates) {
