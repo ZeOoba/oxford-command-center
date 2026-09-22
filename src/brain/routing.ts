@@ -9,7 +9,7 @@ export const DEFAULT_MODULE = 'overview';
  */
 export const MODULE_PRIMARY_TYPE: Partial<Record<string, EntityType>> = {
   portfolio: 'property',
-  leases: 'lease',
+  leasing: 'lease',
   obligations: 'insurance',
   pipeline: 'deal',
 };
@@ -17,7 +17,7 @@ export const MODULE_PRIMARY_TYPE: Partial<Record<string, EntityType>> = {
 /** Where each entity type's detail drawer lives (inverse of MODULE_PRIMARY_TYPE). */
 export const HOME_MODULE: Record<EntityType, string> = {
   property: 'portfolio',
-  lease: 'leases',
+  lease: 'leasing',
   loan: 'capital',
   cashEntity: 'capital',
   insurance: 'obligations',
@@ -36,7 +36,7 @@ export const TAB_PRIMARY_TYPE: Readonly<Record<string, Readonly<Record<string, E
 
 /** The tab an entity's drawer route lands on when its home module is a multi-tab destination and
  *  the jump comes from ANOTHER module. Same-module jumps keep the user's current tab. */
-export const HOME_TAB: Readonly<Partial<Record<EntityType, string>>> = { loan: 'debt', cashEntity: 'cash', insurance: 'insurance' };
+export const HOME_TAB: Readonly<Partial<Record<EntityType, string>>> = { loan: 'debt', cashEntity: 'cash', insurance: 'insurance', lease: 'rent-roll' };
 
 /**
  * Legacy-module alias table (IA decongestion Phase 4a). A module id that was absorbed into a
@@ -68,6 +68,8 @@ export const LEGACY_ALIASES: Readonly<Record<string, LegacyAlias>> = {
   insurance: { destination: 'obligations', tab: 'insurance', innerViews: ['savings', 'register', 'selfinsure'] },
   taxes: { destination: 'obligations', tab: 'taxes', innerViews: ['strategy', 'assessments', 'returns'] },
   'prospect-demand': { destination: 'market', tab: 'demand' },
+  leases: { destination: 'leasing', tab: 'rent-roll', innerViews: ['rent-roll', 'rollover'] },
+  tenants: { destination: 'leasing', tab: 'tenants' },
 };
 
 /** Tabs that LEFT a surviving module for another destination (Intel's data-ops tabs → Data).

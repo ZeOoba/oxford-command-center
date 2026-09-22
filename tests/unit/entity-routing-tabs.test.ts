@@ -45,7 +45,7 @@ describe('entityHref', () => {
 describe('real routing constants (Capital PR-B)', () => {
   it('TAB_PRIMARY_TYPE / HOME_TAB / HOME_MODULE route loans and cash entities into Capital', () => {
     expect(TAB_PRIMARY_TYPE.capital).toEqual({ debt: 'loan', cash: 'cashEntity' });
-    expect(HOME_TAB).toEqual({ loan: 'debt', cashEntity: 'cash', insurance: 'insurance' });
+    expect(HOME_TAB).toEqual({ loan: 'debt', cashEntity: 'cash', insurance: 'insurance', lease: 'rent-roll' });
     expect(HOME_MODULE.loan).toBe('capital');
     expect(HOME_MODULE.cashEntity).toBe('capital');
     expect(entityPath({ type: 'loan', id: 'l1' })).toBe('/capital/l1');
@@ -73,6 +73,32 @@ describe('real routing constants (Obligations PR-C)', () => {
   });
   it('the drawer resolves on a Taxes-tab URL with the real constants', () => {
     expect(parseRoute('/obligations/pol-1', ['obligations'], 'taxes').selected).toEqual({ type: 'insurance', id: 'pol-1' });
+  });
+});
+
+describe('real routing constants (Leasing PR-D)', () => {
+  it('the lease drawer lives in Leasing (single type => resolves on every Leasing tab)', () => {
+    expect(MODULE_PRIMARY_TYPE.leasing).toBe('lease');
+    expect(MODULE_PRIMARY_TYPE.leases).toBeUndefined();
+    expect(HOME_MODULE.lease).toBe('leasing');
+    expect(HOME_TAB.lease).toBe('rent-roll');
+    expect(entityPath({ type: 'lease', id: 'lease-9' })).toBe('/leasing/lease-9');
+  });
+  it('first render of the legacy /leases/:id alias already selects the lease (before the redirect lands)', () => {
+    expect(parseRoute('/leases/lease-9', ['leasing']).selected).toEqual({ type: 'lease', id: 'lease-9' });
+  });
+  it('the drawer resolves on any Leasing tab, including Tenants (module-wide type)', () => {
+    for (const tab of ['rollover', 'rent-roll', 'forecast', 'market-rents', 'tenants']) {
+      expect(parseRoute('/leasing/lease-9', ['leasing'], tab).selected).toEqual({ type: 'lease', id: 'lease-9' });
+    }
+  });
+  it('cross-module jump lands on the Rent roll tab (Calendar -> lease drawer)', () => {
+    expect(entityHref({ type: 'lease', id: 'lease-9' }, '?tab=calendar', 'worklist')).toBe('/leasing/lease-9?tab=rent-roll');
+  });
+  it('same-module jump never flips the tab: Tenants -> lease drawer stays on Tenants', () => {
+    expect(entityHref({ type: 'lease', id: 'lease-9' }, '?tab=tenants', 'leasing')).toBe('/leasing/lease-9?tab=tenants');
+    expect(entityHref({ type: 'lease', id: 'lease-9' }, '?tab=rollover', 'leasing')).toBe('/leasing/lease-9?tab=rollover');
+    expect(entityHref({ type: 'lease', id: 'lease-9' }, '?tab=rent-roll&view=rollover', 'leasing')).toBe('/leasing/lease-9?tab=rent-roll&view=rollover');
   });
 });
 
