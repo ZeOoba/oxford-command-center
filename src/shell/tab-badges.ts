@@ -4,6 +4,9 @@
 // TopBar AlertBell ALREADY fetch (react-query dedupes) — no new request is introduced.
 import { useAlertView } from '@/data/alerts';
 import { useAnalytics } from '@/data/queries';
+// Type-only — erased at build time, so the entry chunk (which reaches this file through the
+// registry's `tabs.ts` imports) never pulls in react-aria's Tabs.
+import type { TabSpec } from '@/primitives/Tabs';
 import type { ModuleTabDef, TabBadge } from './tab-types';
 
 /** Worklist > Alerts: critical count in red when any critical alert is visible, else the
@@ -29,4 +32,21 @@ export function useCriticalDatesTabBadge(): TabBadge | undefined {
  *  the hook call order is stable across renders. */
 export function useTabBadges(tabs: readonly ModuleTabDef[]): Array<TabBadge | undefined> {
   return tabs.map((t) => (t.useBadge ? t.useBadge() : undefined));
+}
+
+/**
+ * The ONE mapping from a registry tab declaration to the `<Tabs>` spec — id + label, plus `badge`
+ * only when the tab declares a `useBadge` that returns one. Every destination that renders a strip
+ * must use this: a hand-rolled `tabs.map(({ id, label }) => ({ id, label }))` silently drops any
+ * declared badge, which is exactly how Capital/Market/Data/Financials lost theirs.
+ *
+ * Same constraint as `useTabBadges`: `tabs` must be a module-level constant so the hook call order
+ * inside it stays stable across renders.
+ */
+export function useTabSpecs(tabs: readonly ModuleTabDef[]): TabSpec[] {
+  const badges = useTabBadges(tabs);
+  return tabs.map((t, i) => {
+    const badge = badges[i];
+    return badge ? { id: t.id, label: t.label, badge } : { id: t.id, label: t.label };
+  });
 }

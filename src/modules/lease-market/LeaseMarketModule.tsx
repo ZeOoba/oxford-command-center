@@ -11,6 +11,10 @@ import { SegmentedControl } from '@/primitives/SegmentedControl';
 import { BarChart } from '@/charts/BarChart';
 import { RentCurve } from '@/charts/RentCurve';
 import { useTabParam } from '@/lib/useTabParam';
+import { useTabSpecs } from '@/shell/tab-badges';
+// Single source for the strip — also what the registry (`src/shell/modules.tsx`) and the command
+// palette index as "Lease Market > Tab".
+import { LEASE_MARKET_TABS, LEASE_MARKET_TAB_KEYS, type LeaseMarketTab } from './tabs';
 import { isWarehouseUnavailable, useWarehouseLive } from '../intel/hooks';
 import type {
   CellBenchmark, CompRow, ListedButLeased, ListingEventRow, ListingHygieneFlag, MarketDataQuality, MarketFreshness, PositioningRow,
@@ -24,15 +28,6 @@ import {
 
 const MUTED = { color: 'var(--text-tertiary)' } as const;
 
-type Tab = 'portfolio' | 'market-rents' | 'radar' | 'changes' | 'data-quality';
-const TAB_KEYS: readonly Tab[] = ['portfolio', 'market-rents', 'radar', 'changes', 'data-quality'];
-const TABS: Array<{ id: Tab; label: string }> = [
-  { id: 'portfolio', label: 'Portfolio' },
-  { id: 'market-rents', label: 'Market Rents' },
-  { id: 'radar', label: 'Acquisition Radar' },
-  { id: 'changes', label: 'Changes' },
-  { id: 'data-quality', label: 'Data Quality' },
-];
 
 function Note({ children }: { children: ReactNode }) {
   return <p className="text-2xs" style={MUTED}>{children}</p>;
@@ -348,7 +343,8 @@ function HistoryDrawer({ listingId, onClose }: { listingId: number; onClose: () 
 // ── Module ────────────────────────────────────────────────────────────────────
 export function LeaseMarketModule() {
   const summary = useLeaseMarketSummary();
-  const [tab, setTab] = useTabParam<Tab>(TAB_KEYS, 'portfolio');
+  const [tab, setTab] = useTabParam<LeaseMarketTab>(LEASE_MARKET_TAB_KEYS, 'portfolio');
+  const tabSpecs = useTabSpecs(LEASE_MARKET_TABS);
   const [selectedMarket, setSelectedMarket] = useState<string | null>(null);
   const [historyId, setHistoryId] = useState<number | null>(null);
 
@@ -373,7 +369,7 @@ export function LeaseMarketModule() {
   const marketLabel = data.freshness.find((f) => f.marketId === marketId)?.label ?? '—';
   const marketBenchmarks = data.benchmarks.filter((b) => b.marketId === marketId);
 
-  const changeTab = (t: Tab) => {
+  const changeTab = (t: LeaseMarketTab) => {
     setTab(t);
     setHistoryId(null); // the drawer is scoped to whichever tab opened it — close it on tab switch
   };
@@ -408,7 +404,7 @@ export function LeaseMarketModule() {
       {/* keyboardActivation="manual" — every tab here mounts a view with its own fresh
           useLeaseMarket*() warehouse query on mount (Portfolio/Radar/Changes), so arrowing
           through the strip shouldn't fan out queries (plan R9). */}
-      <Tabs tabs={TABS} selectedKey={tab} onSelectionChange={(k) => changeTab(k as Tab)} keyboardActivation="manual" aria-label="Lease market views">
+      <Tabs tabs={tabSpecs} selectedKey={tab} onSelectionChange={(k) => changeTab(k as LeaseMarketTab)} keyboardActivation="manual" aria-label="Lease market views">
         <TabPanel id="portfolio">
           <PortfolioTab onHistory={setHistoryId} />
         </TabPanel>
