@@ -332,6 +332,12 @@ describe('check-refute-required — default-deny roots server/ and scripts/ (Gab
     // deploy-mirror.ps1 sets MIRROR_INCLUDE_CONFIDENTIAL=1 and owns the Access-gate probe that keeps
     // a confidential bake from being left publicly reachable — Hard-Invariant-3 wiring.
     expect(isFinancialSourcePath('scripts/deploy-mirror.ps1')).toBe(true);
+    // lib/deploy-alert.ps1 (refute pass, 2026-09-22): Test-SuppressibleReason + the -Critical guard
+    // decide whether the GATE CHECK FAILED (confidential bake publicly reachable) alert can be
+    // suppressed — the same Hard-Invariant-3 wiring that keeps deploy-mirror.ps1 in scope. Its
+    // sibling helpers (beacon, buildroot, timeouts) stay exempt.
+    expect(isFinancialSourcePath('scripts/lib/deploy-alert.ps1')).toBe(true);
+    expect(NON_FINANCIAL_ROOT_PATHS.has('scripts/lib/deploy-alert.ps1')).toBe(false);
     // The pre-push confidentiality scanner and the installer that decides whether it blocks.
     expect(isFinancialSourcePath('scripts/prepush-confidential-scan.mjs')).toBe(true);
     expect(isFinancialSourcePath('scripts/install-git-hooks.ts')).toBe(true);
@@ -373,6 +379,16 @@ describe('check-refute-required — default-deny roots server/ and scripts/ (Gab
     // scripts/data/*.json is an ingest receipt nothing reads back (import-insurance-data.ts writes
     // it); the blanket .json rule still applies outside the FINANCIAL_JSON_PREFIXES — unchanged.
     expect(isFinancialSourcePath('scripts/data/2026-08-22-insurance-premium-history.json')).toBe(false);
+    // …but a .json ANYWHERE under server/ is financial data (refute pass, 2026-09-22): the header's
+    // "every path under server/ is financial" was untrue for a weights or benchmark table dropped
+    // beside the source that reads it, because the blanket .json exemption runs before the root
+    // rule. FINANCIAL_JSON_PREFIXES now carries 'server/' (subsuming warehouse/workbook/ar).
+    expect(isFinancialSourcePath('server/insights/weights.json')).toBe(true);
+    expect(isFinancialSourcePath('server/macro/benchmarks.json')).toBe(true);
+    expect(isFinancialSourcePath('server/some-future-subsystem/table.json')).toBe(true);
+    expect(isFinancialSourcePath('server\\macro\\benchmarks.json')).toBe(true);
+    // The reviewed placeholder subtraction is unchanged.
+    expect(isFinancialSourcePath('server/warehouse/placeholders/loss-runs.placeholder.json')).toBe(false);
   });
   it('keeps the DELIVERY_ONLY_PATHS subtractions ahead of the root rule', () => {
     expect(isFinancialSourcePath('server/warehouse/api.ts')).toBe(false);
@@ -428,7 +444,6 @@ describe('check-refute-required — reviewed non-financial exemptions under the 
       'scripts/start-brain-server.ps1',
       'scripts/stop-brain-server.ps1',
       'scripts/lib/cmd-arg-guard.ps1',
-      'scripts/lib/deploy-alert.ps1',
       'scripts/lib/deploy-beacon.ps1',
       'scripts/lib/deploy-buildroot.ps1',
       'scripts/lib/git-capture.ps1',
@@ -452,7 +467,7 @@ describe('check-refute-required — reviewed non-financial exemptions under the 
     expect(isFinancialSourcePath('scripts/something.smoke-test.ts')).toBe(true);
   });
   it('exposes the exemption set with the expected membership so a silent widening is visible', () => {
-    expect(NON_FINANCIAL_ROOT_PATHS.size).toBe(29);
+    expect(NON_FINANCIAL_ROOT_PATHS.size).toBe(28);
     for (const p of NON_FINANCIAL_ROOT_PATHS) {
       expect(p.startsWith('server/') || p.startsWith('scripts/'), p).toBe(true);
       expect(isFinancialSourcePath(p), p).toBe(false);
