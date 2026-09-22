@@ -35,7 +35,9 @@ export const TAB_PRIMARY_TYPE: Readonly<Record<string, Readonly<Record<string, E
 };
 
 /** The tab an entity's drawer route lands on when its home module is a multi-tab destination and
- *  the jump comes from ANOTHER module. Same-module jumps keep the user's current tab. */
+ *  the jump comes from ANOTHER module. A same-module jump keeps the current tab when that tab
+ *  already hosts the entity type, and otherwise switches to the home tab (dropping `view`) — see
+ *  `entityHref`'s docblock, which is the authority. */
 export const HOME_TAB: Readonly<Partial<Record<EntityType, string>>> = { loan: 'debt', cashEntity: 'cash', insurance: 'insurance', lease: 'rent-roll' };
 
 /**

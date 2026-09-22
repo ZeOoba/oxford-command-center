@@ -38,8 +38,7 @@ import { ManagersView } from './ManagersView';
 import { LeaseRunView } from './LeaseRunView';
 import { INTEL_TABS, INTEL_TAB_KEYS, type IntelTab } from './tabs';
 import { warnIfTooManyTabs } from '@/shell/tab-types';
-
-const INTEL_TAB_SPECS = INTEL_TABS.map(({ id, label }) => ({ id, label }));
+import { useTabSpecs } from '@/shell/tab-badges';
 
 export function IntelModule() {
   // Selection is URL-driven (PFI Phase B.3 item 5): `/intel/:propertyId` focuses the Property
@@ -55,6 +54,8 @@ export function IntelModule() {
   const ui = useUi();
   const defaultInitialTabRef = useRef<IntelTab>(ui.intelPropertyId ? 'property' : 'ownership');
   const [tab, setTab] = useTabParam<IntelTab>(INTEL_TAB_KEYS, defaultInitialTabRef.current);
+  // R4: badges declared on INTEL_TABS reach the strip (useTabSpecs is the one mapping).
+  const tabSpecs = useTabSpecs(INTEL_TABS);
   // Ownership → Property navigation: push the property to the URL (shareable), which focuses the
   // Property tab via the explicit call below (and the effect, for links that bypass this fn).
   const openProperty = (id: string) => {
@@ -163,7 +164,7 @@ export function IntelModule() {
         // its own fresh warehouse/analytics query on mount (PropertyIntelView, LeaseRunView,
         // BenchmarksView, ManagersView), so arrowing through the
         // strip shouldn't fan out queries (plan R9).
-        <Tabs tabs={INTEL_TAB_SPECS} selectedKey={tab} onSelectionChange={(k) => setTab(k as IntelTab)} keyboardActivation="manual" aria-label="Property Financial Intelligence views">
+        <Tabs tabs={tabSpecs} selectedKey={tab} onSelectionChange={(k) => setTab(k as IntelTab)} keyboardActivation="manual" aria-label="Property Financial Intelligence views">
           <TabPanel id="ownership">
             <OwnershipView onOpenProperty={openProperty} period={effectivePeriod} periodLabel={periodLabel} />
           </TabPanel>

@@ -256,6 +256,37 @@ describe('CapitalModule — market cap-rate positioning (folded in from CapitalA
   });
 });
 
+describe('CapitalModule — cap-rate report card: header and body share ONE predicate', () => {
+  const REPORT_KEY = ['warehouse', 'capital-allocation', 'report'];
+
+  it('a failed report refetch that retains stale data takes the live badge, the enabled Export and the "(live feed)" footnote down with the body', async () => {
+    const qc = seededClient();
+    renderModule('/capital', qc);
+    // Precondition (non-vacuous): the healthy report is fully rendered.
+    expect(screen.getByText('Cap benchmarks: live')).toBeTruthy();
+    expect(screen.getByText('Export IC Memo').closest('a')!.getAttribute('aria-disabled')).toBe('false');
+    expect(screen.getByText(/\(live feed\)/)).toBeTruthy();
+    expect(screen.queryByText(/Cap-rate positioning unavailable/)).toBeNull();
+
+    // Server goes down; a window-refocus style refetch fails. TanStack v5 keeps the old data.
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 503 })));
+    void qc.refetchQueries({ queryKey: REPORT_KEY });
+    await waitFor(() => expect(qc.getQueryState(REPORT_KEY)?.status).toBe('error'), { timeout: 5000 });
+    // Non-vacuous: data is still retained while status is 'error' — this is the divergence window.
+    expect(qc.getQueryState(REPORT_KEY)?.data).toBeTruthy();
+
+    // Body says unavailable...
+    expect(await screen.findByText(/Cap-rate positioning unavailable/, undefined, { timeout: 5000 })).toBeTruthy();
+    // ...and so must every header/footnote element that summarises the same panel.
+    expect(screen.queryByText('Cap benchmarks: live')).toBeNull();
+    expect(screen.getByText('Export IC Memo').closest('a')!.getAttribute('aria-disabled')).toBe('true');
+    expect(screen.queryByText(/\(live feed\)/)).toBeNull();
+    expect(screen.getByText(/benchmarks unavailable — cap columns blank/)).toBeTruthy();
+    // The Notion writeback is gated on the same predicate.
+    expect((screen.getByRole('button', { name: 'Sync capital decisions to Notion' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
 describe('CapitalModule — IC Memo export (folded in from CapitalAllocationModule)', () => {
   it('renders an enabled export link pointing at the ic-memo route when entries exist', () => {
     renderModule();

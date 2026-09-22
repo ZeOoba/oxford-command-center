@@ -32,6 +32,7 @@
 
 > **As-executed numbering (2026-09-19) — THIS list governs; it supersedes §2b's "Merged sequence" numbering, which reused the numbers differently and was never what shipped.**
 > P0 primitives ✅ #337 · P1 retrofit 8 tab strips ✅ #340 · P2 tab command-brain / leasing / capital — #342 (open, CI running at time of writing) · **P3 split the overloaded default tabs: pipeline, debt, market, leases, documents (the "Phase 3" table below)** · P4 rail consolidation (the handoff's destinations: Intel 8→5 + `data` destination, `worklist`, Capital composition + legacy-route alias table, Leasing/Brain/Market/Obligations; §2b corrections apply) · P5 Overview curation.
+> **P4 (rail 21 → 12) — built 2026-09-21** on stacked branches `feat/ia-p4-a…f` (not yet merged); see `2026-09-21-ia-decongestion-phase4-rest.md` ("Execution record") for the as-built deviations. Only P5 (Overview curation) and the §2 Phase-5 follow-ons remain.
 > P3 must stay forward-compatible with P4: every split below is designed so a module that later becomes a tab of a bigger destination can turn its tab strip into a `SegmentedControl` (never a second tab strip) without changing its panels.
 
 ### Phase 0 — Primitives (1 PR, no module behavior change)

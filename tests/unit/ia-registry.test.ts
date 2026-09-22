@@ -5,9 +5,15 @@ import { describe, it, expect, vi } from 'vitest';
 
 // The registry imports the Worklist alerts-badge hook, which reaches the data layer. It is never
 // invoked in these registry-shape tests.
-vi.mock('../../src/shell/tab-badges', () => ({ useAlertsTabBadge: () => undefined, useCriticalDatesTabBadge: () => undefined }));
+vi.mock('../../src/shell/tab-badges', () => ({
+  useAlertsTabBadge: () => undefined,
+  useCriticalDatesTabBadge: () => undefined,
+  useTabBadges: (tabs: ReadonlyArray<unknown>) => tabs.map(() => undefined),
+  useTabSpecs: (tabs: ReadonlyArray<{ id: string; label: string }>) => tabs.map((t) => ({ id: t.id, label: t.label })),
+}));
 
 import { MODULES } from '../../src/shell/modules';
+import { TITLES } from '../../src/shell/titles';
 import { railModules, orderedModules, MODULE_ORDER, PROFILE_HOME } from '../../src/shell/module-order';
 import { MAX_TABS_PER_DESTINATION, tabCapViolation, warnIfTooManyTabs, type ModuleTabDef } from '../../src/shell/tab-types';
 import {
@@ -268,5 +274,90 @@ describe('rail composition', () => {
     const rail = railModules('acquisitions');
     const groups = new Set(rail.map((m) => m.group));
     expect([...groups].sort()).toEqual(['Assets', 'Capital', 'Command', 'Market', 'System']);
+  });
+});
+
+describe('final rail (IA decongestion Phase 4 complete)', () => {
+  const RAIL = ['overview', 'pipeline', 'worklist', 'command-brain', 'portfolio', 'intel', 'leasing', 'capital', 'obligations', 'market', 'lease-market', 'data'];
+  for (const profile of ['acquisitions', 'principal'] as const) {
+    it(`${profile}: exactly the 12 ratified destinations, none empty, none over 5 tabs`, () => {
+      const rail = railModules(profile);
+      expect(rail.map((m) => m.id).sort()).toEqual([...RAIL].sort());
+      for (const m of rail) expect((m.tabs ?? []).length, m.id).toBeLessThanOrEqual(MAX_TABS_PER_DESTINATION);
+    });
+    it(`${profile}: MODULE_ORDER lists every rail id (nothing relies on the append-unlisted fallback)`, () => {
+      for (const id of RAIL) expect(MODULE_ORDER[profile], id).toContain(id);
+    });
+  }
+  it('rail groups are Command(4) / Assets(3) / Capital(2) / Market(2) / System(1)', () => {
+    const counts: Record<string, number> = {};
+    for (const m of railModules('acquisitions')) counts[m.group] = (counts[m.group] ?? 0) + 1;
+    expect(counts).toEqual({ Command: 4, Assets: 3, Capital: 2, Market: 2, System: 1 });
+  });
+  it('every legacy id (26) still resolves to one of the 12 (or Health)', () => {
+    for (const id of LEGACY_MODULE_IDS) {
+      const target = byId(id)?.id ?? LEGACY_ALIASES[id]?.destination;
+      expect([...RAIL, 'health'], id).toContain(target);
+    }
+  });
+});
+
+// Final whole-branch review (FIX 5): Acquisitions and Lease Market render in-module tab strips but
+// never declared them as `ModuleDef.tabs`, so the palette had no "Destination > Tab" entries for
+// them and the max-5 cap guard above never saw lease-market (which is AT the cap). This table is
+// the exhaustive registry lock: every rail destination is either listed here with its exact tab ids
+// or named in TABLESS.
+describe('every rail destination declares its tab strip in the registry', () => {
+  const DESTINATION_TABS: Record<string, readonly string[]> = {
+    pipeline: ['pipeline', 'workbench', 'sourcing', 'grader'],
+    worklist: ['today', 'alerts', 'calendar', 'renewals'],
+    'command-brain': ['digest', 'insights', 'track-record', 'feedback', 'memory'],
+    intel: ['ownership', 'property', 'lease-run', 'benchmarks', 'managers'],
+    leasing: ['rollover', 'rent-roll', 'forecast', 'market-rents', 'tenants'],
+    capital: ['allocation', 'pipeline', 'debt', 'cash', 'close'],
+    obligations: ['insurance', 'taxes'],
+    market: ['macro', 'scorecards', 'comps', 'demand'],
+    'lease-market': ['portfolio', 'market-rents', 'radar', 'changes', 'data-quality'],
+    data: ['imports', 'quality', 'mappings', 'calibration', 'documents'],
+  };
+  /** The only rail destinations that legitimately render no strip. */
+  const TABLESS = ['overview', 'portfolio'];
+
+  it('the 12 rail destinations split exactly into the tabbed ones and the two tabless ones', () => {
+    expect(railModules('acquisitions').map((m) => m.id).sort()).toEqual(
+      [...Object.keys(DESTINATION_TABS), ...TABLESS].sort(),
+    );
+  });
+
+  for (const [id, ids] of Object.entries(DESTINATION_TABS)) {
+    it(`${id} declares [${ids.join(', ')}] — in order, unique, within the cap`, () => {
+      const tabs = byId(id)?.tabs;
+      expect(tabs?.map((t) => t.id), id).toEqual([...ids]);
+      expect(new Set(ids).size, id).toBe(ids.length);
+      expect(tabCapViolation(id, tabs), id).toBeNull();
+      // Every declared tab carries a non-empty label (the palette indexes "Destination > Tab").
+      for (const t of tabs ?? []) expect(t.label.length, `${id}.${t.id}`).toBeGreaterThan(0);
+    });
+  }
+
+  for (const id of TABLESS) {
+    it(`${id} declares no tabs`, () => expect(byId(id)?.tabs).toBeUndefined());
+  }
+
+  it('lease-market sits AT the cap — the guard now actually sees it', () => {
+    expect(byId('lease-market')!.tabs).toHaveLength(MAX_TABS_PER_DESTINATION);
+  });
+});
+
+describe('TopBar page titles (src/shell/titles.ts)', () => {
+  it('every TITLES key is a registered module id (no stale absorbed-module titles)', () => {
+    for (const key of Object.keys(TITLES)) expect(IDS, key).toContain(key);
+  });
+  it('the merged destinations carry their ratified page titles; Overview is unchanged', () => {
+    expect(TITLES.overview).toBe('Command Overview');
+    expect(TITLES.capital).toBe('Capital & Treasury');
+    expect(TITLES.leasing).toBe('Leasing & Tenants');
+    expect(TITLES.obligations).toBe('Insurance & Taxes');
+    expect(TITLES['command-brain']).toBe('Brain');
   });
 });

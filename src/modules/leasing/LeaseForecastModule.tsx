@@ -30,11 +30,11 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { Button } from '@/primitives/Button';
 import { DataTable, type Column } from '@/primitives/DataTable';
-import { Tabs, TabPanel, type TabSpec } from '@/primitives/Tabs';
+import { Tabs, TabPanel } from '@/primitives/Tabs';
 import { SegmentedControl } from '@/primitives/SegmentedControl';
 import { useTabParam, CLEAR_VIEW } from '@/lib/useTabParam';
 import { ModuleLoading } from '@/shell/ModuleFallback';
-import { useTabBadges } from '@/shell/tab-badges';
+import { useTabSpecs } from '@/shell/tab-badges';
 import { LEASING_TABS, LEASING_TAB_KEYS, LEASING_FORECAST_TABS, type LeasingTab } from './tabs';
 import type { RentScenario, RentForecastResult, LeasingVelocity, LeaseNarrativeResponse as LeaseNarrative } from '@contracts/lease-forecast';
 import { RentForecastResponse, LeaseNarrativeResponse } from '@contracts/lease-forecast';
@@ -280,11 +280,7 @@ export function LeaseForecastModule() {
   const [tab, setTab] = useTabParam<LeasingTab>(LEASING_TAB_KEYS, 'rollover', 'tab', CLEAR_VIEW);
   // R4: severity badges (Rent roll = overdue critical dates). LEASING_TABS is a module-level constant, so the
   // badge hooks run in a stable order. The badge lives on the destination tab, not the inner SegmentedControl.
-  const badges = useTabBadges(LEASING_TABS);
-  const tabSpecs: TabSpec[] = LEASING_TABS.map((t, i) => {
-    const badge = badges[i];
-    return badge ? { id: t.id, label: t.label, badge } : { id: t.id, label: t.label };
-  });
+  const tabSpecs = useTabSpecs(LEASING_TABS);
 
   const [scenario, setScenario] = useState<RentScenario>('renew_at_current');
   const [vacancyPct, setVacancyPct] = useState(0.1);
