@@ -101,18 +101,6 @@ describe('evaluateConditions — stale-ar degradation', () => {
     expect(out.some((i) => i.id === 'arrears-l1')).toBe(false);
   });
 
-  it('mixed stamped records (one fresh, one stale) still degrade to ar-stale', () => {
-    const fresh = new Date(NOW - 1 * 86_400_000);
-    const stale = new Date(NOW - 40 * 86_400_000);
-    const lease2: Lease = { ...baseLease, id: 'l2' };
-    const out = evaluateConditions(snap({
-      leases: [baseLease, lease2],
-      tenantArrears: { l1: arrearsWithAsOf(fresh), l2: arrearsWithAsOf(stale) },
-    }), opts);
-    expect(out.filter((i) => i.id === 'ar-stale')).toHaveLength(1);
-    expect(out.some((i) => i.id === 'arrears-l1')).toBe(false);
-  });
-
   it('stale-ar fires once even with multiple leases all having stale asOfDate', () => {
     const staleDate = new Date(NOW - 40 * 86_400_000);
     const lease2: Lease = { ...baseLease, id: 'l2' };
@@ -125,5 +113,115 @@ describe('evaluateConditions — stale-ar degradation', () => {
     }), opts);
     const staleInsights = out.filter((i) => i.id === 'ar-stale');
     expect(staleInsights).toHaveLength(1);
+    expect(staleInsights[0]?.detail).toMatch(/2 of 2/);
+  });
+});
+
+// ── Per-lease staleness (2026-09-22) ─────────────────────────────────────────
+// The gate used to be ALL-OR-NOTHING: one stale record set a single skipArEval boolean that
+// suppressed every lease's collections alert in the portfolio. Under the widened dead-lease guard
+// (PR #357) a zero-rent-but-Active lease with a real balance can no longer auto-refresh, so its
+// record WILL cross arStalenessMaxDays — and, under the old gate, would blind every other lease's
+// fresh 60+ critical. Staleness must be judged per record, for the lease it belongs to, only.
+describe('evaluateConditions — stale-ar is judged PER LEASE, never portfolio-wide', () => {
+  const fresh = new Date(NOW - 1 * 86_400_000);
+  const stale = new Date(NOW - 40 * 86_400_000);
+  const lease2: Lease = { ...baseLease, id: 'l2', tenantName: 'Tenant B', company: 'Beta LLC', propertyKey: 'Prop B' };
+  // A fresh, currently-accruing 60+ delinquency — the alert that must never be suppressed.
+  const freshCritical: TenantArrears = { d30: 0, d60: 0, d90: 3000, d90plus: 0, asOfDate: fresh, sourceFile: null };
+
+  it('one stale record elsewhere in the portfolio does NOT suppress a fresh lease\'s 60+ critical', () => {
+    const out = evaluateConditions(snap({
+      leases: [baseLease, lease2],
+      tenantArrears: { l1: freshCritical, l2: arrearsWithAsOf(stale) },
+    }), opts);
+    const l1 = out.find((i) => i.id === 'arrears-l1');
+    expect(l1).toBeDefined();
+    expect(l1?.severity).toBe('critical');
+    // The stale lease itself is skipped — no severity alert built on stale buckets.
+    expect(out.some((i) => i.id === 'arrears-l2')).toBe(false);
+    // The aggregate notice still fires, exactly once.
+    expect(out.filter((i) => i.id === 'ar-stale')).toHaveLength(1);
+  });
+
+  it('regression: a fresh lease\'s alert is byte-identical with or without a stale sibling', () => {
+    const alone = evaluateConditions(snap({
+      leases: [baseLease],
+      tenantArrears: { l1: freshCritical },
+    }), opts).find((i) => i.id === 'arrears-l1');
+    const withStaleSibling = evaluateConditions(snap({
+      leases: [baseLease, lease2],
+      tenantArrears: { l1: freshCritical, l2: arrearsWithAsOf(stale) },
+    }), opts).find((i) => i.id === 'arrears-l1');
+    expect(alone).toBeDefined();
+    expect(withStaleSibling).toEqual(alone);
+  });
+
+  it('a fresh material under-60 warning also survives a stale sibling (same severity, same message)', () => {
+    const alone = evaluateConditions(snap({
+      leases: [baseLease],
+      tenantArrears: { l1: arrearsWithAsOf(fresh) },
+    }), opts).find((i) => i.id === 'arrears-l1');
+    const withStaleSibling = evaluateConditions(snap({
+      leases: [baseLease, lease2],
+      tenantArrears: { l1: arrearsWithAsOf(fresh), l2: arrearsWithAsOf(stale) },
+    }), opts).find((i) => i.id === 'arrears-l1');
+    expect(alone?.severity).toBe('warning');
+    expect(withStaleSibling).toEqual(alone);
+  });
+
+  it('a null-asOfDate record suppresses only its own lease', () => {
+    const out = evaluateConditions(snap({
+      leases: [baseLease, lease2],
+      tenantArrears: { l1: freshCritical, l2: arrearsWithAsOf(null) },
+    }), opts);
+    expect(out.find((i) => i.id === 'arrears-l1')?.severity).toBe('critical');
+    expect(out.some((i) => i.id === 'arrears-l2')).toBe(false);
+    expect(out.find((i) => i.id === 'ar-stale')?.detail).toMatch(/no import on record/i);
+  });
+
+  it('a legacy (unstamped) record still evaluates normally next to a stale stamped one', () => {
+    const out = evaluateConditions(snap({
+      leases: [baseLease, lease2],
+      tenantArrears: { l1: arrearsWithAsOf(undefined), l2: arrearsWithAsOf(stale) },
+    }), opts);
+    expect(out.find((i) => i.id === 'arrears-l1')?.severity).toBe('warning');
+    expect(out.some((i) => i.id === 'arrears-l2')).toBe(false);
+  });
+
+  it('a lease with NO record produces nothing, even when another lease\'s record is stale', () => {
+    const out = evaluateConditions(snap({
+      leases: [baseLease, lease2],
+      tenantArrears: { l2: arrearsWithAsOf(stale) },
+    }), opts);
+    expect(out.some((i) => i.id === 'arrears-l1')).toBe(false);
+    expect(out.some((i) => i.id === 'arrears-l2')).toBe(false);
+    expect(out.filter((i) => i.id === 'ar-stale')).toHaveLength(1);
+  });
+
+  it('the aggregate ar-stale notice reports the stale count, worst age and affected leases — not a blackout', () => {
+    const out = evaluateConditions(snap({
+      leases: [baseLease, lease2],
+      tenantArrears: { l1: freshCritical, l2: arrearsWithAsOf(stale) },
+    }), opts);
+    const notice = out.find((i) => i.id === 'ar-stale');
+    expect(notice?.severity).toBe('info');
+    expect(notice?.category).toBe('data');
+    expect(notice?.metric).toBe('1/2');
+    expect(notice?.detail).toMatch(/1 of 2/);
+    expect(notice?.detail).toMatch(/40 days ago/);
+    expect(notice?.detail).toContain('Beta LLC');
+    expect(notice?.detail).not.toContain('Acme Co');
+    expect(notice?.title).not.toMatch(/inactive/i);
+  });
+
+  it('no ar-stale notice when every stamped record is fresh', () => {
+    const out = evaluateConditions(snap({
+      leases: [baseLease, lease2],
+      tenantArrears: { l1: freshCritical, l2: arrearsWithAsOf(fresh) },
+    }), opts);
+    expect(out.some((i) => i.id === 'ar-stale')).toBe(false);
+    expect(out.find((i) => i.id === 'arrears-l1')?.severity).toBe('critical');
+    expect(out.find((i) => i.id === 'arrears-l2')?.severity).toBe('warning');
   });
 });
