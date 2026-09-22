@@ -2,7 +2,7 @@
 // Pure functions over PortfolioSnapshot + overlay-derived inputs. No DB. Spine A.
 // Mirrors engine.ts style — no side effects, no I/O.
 import type { Lease } from '@contracts/index';
-import { ALERT_THRESHOLDS } from './conditions';
+import { ALERT_THRESHOLDS, isArStale } from './conditions';
 import type {
   ExpiryBucket,
   RenewalSignal,
@@ -62,12 +62,20 @@ export function bucketExpiry(monthsToExpiry: number | null, leaseEnd: string | n
  *   4. tenureMonths ≥ 36 AND arrearsUsd == 0 AND monthsToExpiry ≤ 12      → 'likely'
  *   5. monthsToExpiry ≤ 6 AND renewalStage ∈ {null,'Expiring'}            → 'at-risk'
  *   6. otherwise                                                            → 'uncertain'
+ *
+ * AR staleness (2026-09-22): bands 3 and 4 are the only bands that grade a lease on its
+ * tenantArrears dollars, and both are freshness claims — "material arrears" and "current on
+ * rent" mean nothing if the record is weeks old. A lease whose OWN record is stale by the
+ * collections gate's definition (conditions.ts isArStale, judged as of `asOf`) skips bands 3
+ * and 4 and lands on 5/6 with a rationale note. Per lease only: a stale sibling changes nothing
+ * for any other lease. Bands 1/2/5/6 are structural and ignore arrears entirely. The reported
+ * arrearsUsd is still the record's sum (shape unchanged) — it is simply not graded on.
  */
 export function renewalSignals(
   leases: Lease[],
   asOf: string,
   renewalStages: Record<string, unknown>,
-  arrears: Record<string, { d30?: unknown; d60?: unknown; d90?: unknown; d90plus?: unknown }>,
+  arrears: Record<string, { d30?: unknown; d60?: unknown; d90?: unknown; d90plus?: unknown; asOfDate?: Date | null }>,
 ): RenewalSignal[] {
   const asOfMs = new Date(asOf).getTime();
   const out: RenewalSignal[] = [];
@@ -89,6 +97,9 @@ export function renewalSignals(
       ? coerceNonNegMoney(ar.d30) + coerceNonNegMoney(ar.d60) +
         coerceNonNegMoney(ar.d90) + coerceNonNegMoney(ar.d90plus)
       : 0;
+    // Stale record (present, stamped, undated/too old as of asOf) → bands 3/4 must not fire on it.
+    const arStale = ar ? isArStale(ar, asOfMs) : false;
+    const STALE_NOTE = ' (AR record stale — arrears not assessed)';
 
     // monthToMonth: leaseEnd in the past AND status is not 'Expired' (holdover tenancy)
     const leaseEndMs = l.leaseEnd ? new Date(l.leaseEnd).getTime() : null;
@@ -122,12 +133,14 @@ export function renewalSignals(
         ? 'Lease end passed — holdover/month-to-month, no renewal stage'
         : 'Month-to-month exposure — no fixed end date';
     } else if (
+      !arStale &&
       arrearsUsd >= ALERT_THRESHOLDS.arrearsMaterialUsd &&
       mte !== null && mte <= 12
     ) {
       likelihood = 'at-risk';
       rationale = `Material arrears (${arrearsUsd.toFixed(0)}) with ≤12m to expiry`;
     } else if (
+      !arStale &&
       tenureMonths !== null && tenureMonths >= 36 &&
       arrearsUsd === 0 &&
       mte !== null && mte <= 12
@@ -136,10 +149,10 @@ export function renewalSignals(
       rationale = `Long-term tenant (${Math.round(tenureMonths)}m tenure), current on rent, expiring soon`;
     } else if (mte !== null && mte <= 6 && (stage === null || stage === 'Expiring')) {
       likelihood = 'at-risk';
-      rationale = `≤6m to expiry with no renewal activity`;
+      rationale = `≤6m to expiry with no renewal activity${arStale ? STALE_NOTE : ''}`;
     } else {
       likelihood = 'uncertain';
-      rationale = 'Insufficient signals to assess renewal probability';
+      rationale = `Insufficient signals to assess renewal probability${arStale ? STALE_NOTE : ''}`;
     }
 
     out.push({

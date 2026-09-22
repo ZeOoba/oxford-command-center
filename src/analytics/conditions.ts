@@ -601,17 +601,8 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   //   Date      = Track-B record; age > arStalenessMaxDays = stale (unparseable date = stale).
   // When no records exist at all, nothing fires (absence ≠ staleness).
   const arrears = s.tenantArrears ?? {};
-  /** Age in whole days for a stamped record; null = no usable date (stale). */
-  const arAgeDays = (r: { asOfDate?: Date | null }): number | null => {
-    const asOfMs = r.asOfDate ? new Date(r.asOfDate).getTime() : null;
-    if (asOfMs === null || !Number.isFinite(asOfMs)) return null;
-    return Math.floor((now - asOfMs) / DAY_MS);
-  };
-  const isArStale = (r: { asOfDate?: Date | null }): boolean => {
-    if (!('asOfDate' in r)) return false;
-    const age = arAgeDays(r);
-    return age === null || age > T.arStalenessMaxDays;
-  };
+  // Staleness helpers are module-level exports (arAgeDays / isArStale, below the function) so
+  // renewalSignals() in lease-forecast.ts judges the same record by the same definition.
   // Each bucket goes through the SHARED coerceNonNegMoney (src/lib/money) — the exact same coercer
   // the overlay load boundary uses (parseArrears/coerceBudgets) — so the load path and this rule
   // agree on one coercion, ending the prior string/number asymmetry. A non-finite/missing bucket → 0
@@ -623,7 +614,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
     const ar = arrears[l.id];
     if (!ar) continue;
     // Per-lease staleness: withhold THIS lease's alert only. Nothing here touches any other lease.
-    if (isArStale(ar)) continue;
+    if (isArStale(ar, now)) continue;
     // Aging buckets (src/contracts/quickbooks.ts): d30=1–30, d60=31–60, d90=61–90, d90plus=90+.
     // CRITICAL fires ONLY on dollars genuinely 60+ days past due (d90 + d90plus). The d30/d60 dollars
     // are ≤60 days late — routine collections follow-up — and fold into the under-60 material WARNING
@@ -657,9 +648,9 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   // still a stale import worth refreshing) and naming the leases whose monitoring is degraded. It
   // reports; it never suppresses — the per-lease `continue` above is the only gate.
   const stampedEntries = Object.entries(arrears).filter(([, r]) => 'asOfDate' in r);
-  const staleEntries = stampedEntries.filter(([, r]) => isArStale(r));
+  const staleEntries = stampedEntries.filter(([, r]) => isArStale(r, now));
   if (staleEntries.length > 0) {
-    const staleAges = staleEntries.map(([, r]) => arAgeDays(r));
+    const staleAges = staleEntries.map(([, r]) => arAgeDays(r, now));
     const finiteDays = staleAges.filter((d): d is number => d !== null);
     const worstAge = finiteDays.length > 0 ? Math.max(...finiteDays) : null;
     const leaseById = new Map(s.leases.map((l) => [l.id, l]));
@@ -862,6 +853,25 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
     // used in capital-allocation.ts and insurance-conditions.ts.
     return a.id.localeCompare(b.id);
   });
+}
+
+
+// ── AR record staleness (shared by the collections gate above and renewalSignals()) ───────
+// One definition, two consumers. Only Track-B-imported tenantArrears records carry the asOfDate
+// field at all: undefined (field absent) = legacy/manual record with no freshness metadata =
+// never stale; null = Track-B ran and could not derive a date = stale; a Date = stale once its
+// age as of `now` exceeds ALERT_THRESHOLDS.arStalenessMaxDays (unparseable date = stale).
+/** Age in whole days of a stamped record as of `now` (epoch ms); null = no usable date. */
+export function arAgeDays(r: { asOfDate?: Date | null }, now: number): number | null {
+  const asOfMs = r.asOfDate ? new Date(r.asOfDate).getTime() : null;
+  if (asOfMs === null || !Number.isFinite(asOfMs)) return null;
+  return Math.floor((now - asOfMs) / DAY_MS);
+}
+/** True when a stamped record is too old (or undated) to grade a lease on. Unstamped → false. */
+export function isArStale(r: { asOfDate?: Date | null }, now: number): boolean {
+  if (!('asOfDate' in r)) return false;
+  const age = arAgeDays(r, now);
+  return age === null || age > ALERT_THRESHOLDS.arStalenessMaxDays;
 }
 
 /**
