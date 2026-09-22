@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { PortfolioSnapshot, Lease, TenantArrears } from '@contracts/index';
 import { evaluateConditions } from '@analytics/index';
+import { arAgeDays, isArStale, ALERT_THRESHOLDS } from '@analytics/conditions';
 
 const ASOF = '2026-06-20';
 const NOW = Date.parse('2026-06-20T12:00:00.000Z');
@@ -223,5 +224,55 @@ describe('evaluateConditions — stale-ar is judged PER LEASE, never portfolio-w
     expect(out.some((i) => i.id === 'ar-stale')).toBe(false);
     expect(out.find((i) => i.id === 'arrears-l1')?.severity).toBe('critical');
     expect(out.find((i) => i.id === 'arrears-l2')?.severity).toBe('warning');
+  });
+});
+
+// ── Hoisted helpers (2026-09-22) ──────────────────────────────────────────────
+// arAgeDays/isArStale were closures inside evaluateConditions; renewalSignals() needs the same
+// definition, so they are module-level exports taking (record, now). The pinned-output test
+// below was written BEFORE the hoist and must pass unchanged after it.
+describe('arAgeDays / isArStale — exported helpers match the in-loop gate', () => {
+  const max = ALERT_THRESHOLDS.arStalenessMaxDays;
+  it('legacy record (no asOfDate field) is never stale', () => {
+    expect(isArStale({ d30: 1 } as TenantArrears, NOW)).toBe(false);
+  });
+  it('null asOfDate → age null → stale', () => {
+    expect(arAgeDays({ asOfDate: null }, NOW)).toBeNull();
+    expect(isArStale({ asOfDate: null }, NOW)).toBe(true);
+  });
+  it('unparseable date → stale', () => {
+    expect(isArStale({ asOfDate: new Date('not-a-date') }, NOW)).toBe(true);
+  });
+  it('boundary: exactly max days → fresh; max+1 → stale', () => {
+    expect(arAgeDays({ asOfDate: new Date(NOW - max * 86_400_000) }, NOW)).toBe(max);
+    expect(isArStale({ asOfDate: new Date(NOW - max * 86_400_000) }, NOW)).toBe(false);
+    expect(isArStale({ asOfDate: new Date(NOW - (max + 1) * 86_400_000) }, NOW)).toBe(true);
+  });
+});
+
+describe('evaluateConditions — pinned collections output across the helper hoist', () => {
+  it('mixed fresh/stale/legacy/absent fixture yields the exact same collections + ar-stale insights', () => {
+    const fresh = new Date(NOW - 2 * 86_400_000);
+    const stale = new Date(NOW - 50 * 86_400_000);
+    const leases: Lease[] = [
+      baseLease,
+      { ...baseLease, id: 'l2', company: 'Beta LLC', propertyKey: 'Prop B' },
+      { ...baseLease, id: 'l3', company: 'Gamma LLC', propertyKey: 'Prop C' },
+      { ...baseLease, id: 'l4', company: 'Delta LLC', propertyKey: 'Prop D' },
+    ];
+    const out = evaluateConditions(snap({
+      leases,
+      tenantArrears: {
+        l1: { d30: 0, d60: 0, d90: 3000, d90plus: 0, asOfDate: fresh, sourceFile: null },
+        l2: { d30: 8000, d60: 0, d90: 0, d90plus: 0, asOfDate: stale, sourceFile: null },
+        l3: { d30: 8000, d60: 0, d90: 0, d90plus: 0, sourceFile: null },
+      },
+    }), opts).filter((i) => i.category === 'collections' || i.id === 'ar-stale');
+    expect(out.map((i) => [i.id, i.severity, i.title, i.detail, i.metric ?? null])).toEqual([
+      ['arrears-l1', 'critical', 'Tenant 60+ days past due — Acme Co', 'Prop A · $3,000 is 60+ days past due ($3,000 total outstanding). Pursue collection.', '$3,000'],
+      ['arrears-l3', 'warning', 'Receivable outstanding — Gamma LLC', 'Prop C · $8,000 past due (under 60 days). Monitor for payment.', '$8,000'],
+      ['ar-stale', 'info', 'AR data stale for 1 of 2 records — collections monitoring degraded for that lease only',
+        'AR data: 1 of 2 imported AR records are stale (oldest import 50 days ago) — collections monitoring is withheld for Beta LLC (Prop B); every other lease is still evaluated on its own fresh record. Refresh the QB AR export to restore.', '1/2'],
+    ]);
   });
 });
