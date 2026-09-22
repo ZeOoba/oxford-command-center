@@ -3,14 +3,14 @@ import type { ViewProfile } from '@/brain/view-profile';
 
 /** Rail order per profile (flat module-id lists). Capital ahead of Assets for the principal. */
 export const MODULE_ORDER: Record<ViewProfile, string[]> = {
-  acquisitions: ['overview', 'pipeline', 'worklist', 'principal', 'portfolio', 'intel', 'leasing', 'capital', 'obligations', 'market', 'data', 'health'],
-  principal: ['principal', 'overview', 'worklist', 'capital', 'obligations', 'portfolio', 'intel', 'leasing', 'market', 'pipeline', 'data', 'health'],
+  acquisitions: ['overview', 'pipeline', 'worklist', 'command-brain', 'portfolio', 'intel', 'leasing', 'capital', 'obligations', 'market', 'data', 'health'],
+  principal: ['command-brain', 'overview', 'worklist', 'capital', 'obligations', 'portfolio', 'intel', 'leasing', 'market', 'pipeline', 'data', 'health'],
 };
 
 /** Where each profile lands from `/`. */
 export const PROFILE_HOME: Record<ViewProfile, string> = {
   acquisitions: 'pipeline',
-  principal: 'principal',
+  principal: 'command-brain',
 };
 
 /** Registry sorted by the profile's order; unlisted ids append at the end (never disappear). */

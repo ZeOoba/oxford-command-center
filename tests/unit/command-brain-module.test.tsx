@@ -1,6 +1,8 @@
 // tests/unit/command-brain-module.test.tsx
 //
-// Render + pure-function coverage for the Command Brain module (Phase 5a.2 UI). Pins down the
+// Render + pure-function coverage for the Command Brain module (Phase 5a.2 UI; tab structure per IA decongestion
+// Phase 4e — Digest · Insights · Track record · Feedback · Memory, with Versions a Memory view; the destination-level
+// behaviors — Digest default, Rule G, R2, Rule H — live in brain-destination.test.tsx). Pins down the
 // honesty-doctrine requirements from the brief:
 //   - KPI values render exactly from the mocked report (no fabrication, no NaN).
 //   - The accuracy sparkline shows a GAP for a null-hitRate month, never a coerced zero.
@@ -15,6 +17,10 @@ import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/re
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import { CommandBrainModule } from '../../src/modules/command-brain/CommandBrainModule';
+
+// Digest / Insights are lazy panels with their own suites; this file exercises the report-backed tabs.
+vi.mock('../../src/modules/principal/PrincipalModule', () => ({ PrincipalModule: () => <div>digest-panel</div> }));
+vi.mock('../../src/modules/insights/InsightsModule', () => ({ InsightsModule: () => <div>insights-panel</div> }));
 import { MemoryBoard } from '../../src/modules/command-brain/MemoryBoard';
 import { TrackRecordList } from '../../src/modules/command-brain/TrackRecordList';
 import {
@@ -110,8 +116,10 @@ function seededClient(report: BrainReport): QueryClient {
   return qc;
 }
 
-// useTabParam needs a Router context. `entry` deep-links a tab (`?tab=`), default = Track record.
-function renderModule(report: BrainReport, entry = '/command-brain') {
+// useTabParam needs a Router context. `entry` deep-links a tab (`?tab=`); the helper defaults to Track record
+// (the destination's own default is Digest — pinned in brain-destination.test.tsx) so the KPI/track-record
+// assertions below read the report-backed panel they were written for.
+function renderModule(report: BrainReport, entry = '/command-brain?tab=track-record') {
   return render(
     <MemoryRouter initialEntries={[entry]}>
       <QueryClientProvider client={seededClient(report)}>
@@ -260,7 +268,7 @@ describe('CommandBrainModule — fully empty report renders honest empty states,
     expect(screen.getByText('No open questions right now.')).toBeTruthy();
     clickTab(/^Memory/);
     expect(screen.getAllByText('Clear')).toHaveLength(3);
-    clickTab(/^Versions/);
+    fireEvent.click(screen.getByRole('radio', { name: 'Versions' }));
     expect(screen.getByText('No scoring-config changes recorded yet.')).toBeTruthy();
 
     // The real zero counts (watchedSignals/recalibrations/resolvedTotal) are honest literal data,
@@ -340,8 +348,8 @@ describe('openQuestionSubjectId — stability', () => {
 });
 
 
-describe('CommandBrainModule — Phase 2 tab structure', () => {
-  it('lands on Track record: KPI strip + accuracy + track record visible, content of other tabs not rendered', () => {
+describe('CommandBrainModule — tab structure', () => {
+  it('Track record: KPI strip + accuracy + track record visible, content of other tabs not rendered', () => {
     renderModule(POPULATED_REPORT);
     expect(screen.getByRole('tab', { name: /^Track record/ }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByText('Flag Accuracy Over Time')).toBeTruthy();
@@ -349,7 +357,7 @@ describe('CommandBrainModule — Phase 2 tab structure', () => {
     expect(screen.queryByText('Version Log')).toBeNull();
     expect(screen.queryByText('Open Questions')).toBeNull();
     expect(screen.queryByRole('button', { name: 'Accept' })).toBeNull();
-    // R2: disclaimer + KPI strip are above the strip, visible regardless of tab.
+    // R2: the disclaimer + KPI strip sit inside every report-backed panel (ReportGate).
     expect(screen.getByText(/nothing here is invented/)).toBeTruthy();
     expect(screen.getByText('Signals Watched')).toBeTruthy();
   });
@@ -362,23 +370,23 @@ describe('CommandBrainModule — Phase 2 tab structure', () => {
     expect(screen.queryByText('Flag Accuracy Over Time')).toBeNull();
     clickTab(/^Memory/);
     expect(screen.getByText('DC Metro — 85%')).toBeTruthy();
-    clickTab(/^Versions/);
+    fireEvent.click(screen.getByRole('radio', { name: 'Versions' }));
     expect(screen.getByText('Version Log')).toBeTruthy();
     expect(screen.getByText('INTEL_CONFIG weights ratified (Option B)')).toBeTruthy();
     clickTab(/^Track record/);
     expect(screen.getByText('Flag Accuracy Over Time')).toBeTruthy();
   });
 
-  it('deep-links a non-default tab via ?tab=', () => {
-    renderModule(POPULATED_REPORT, '/command-brain?tab=versions');
-    expect(screen.getByRole('tab', { name: /^Versions/ }).getAttribute('aria-selected')).toBe('true');
+  it('deep-links the Versions view of Memory via ?tab=memory&view=versions', () => {
+    renderModule(POPULATED_REPORT, '/command-brain?tab=memory&view=versions');
+    expect(screen.getByRole('tab', { name: /^Memory/ }).getAttribute('aria-selected')).toBe('true');
     expect(screen.getByText('Version Log')).toBeTruthy();
     expect(screen.queryByText('Flag Accuracy Over Time')).toBeNull();
   });
 
-  it('falls back to Track record for an unknown ?tab= value', () => {
+  it('falls back to Digest (the destination default) for an unknown ?tab= value', () => {
     renderModule(POPULATED_REPORT, '/command-brain?tab=bogus');
-    expect(screen.getByRole('tab', { name: /^Track record/ }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: /^Digest/ }).getAttribute('aria-selected')).toBe('true');
   });
 
   it('renders the Open Questions section exactly once, and it keeps the wouldClose line the Feedback rows omit', () => {

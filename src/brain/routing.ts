@@ -70,15 +70,21 @@ export const LEGACY_ALIASES: Readonly<Record<string, LegacyAlias>> = {
   'prospect-demand': { destination: 'market', tab: 'demand' },
   leases: { destination: 'leasing', tab: 'rent-roll', innerViews: ['rent-roll', 'rollover'] },
   tenants: { destination: 'leasing', tab: 'tenants' },
+  principal: { destination: 'command-brain', tab: 'digest' },
+  insights: { destination: 'command-brain', tab: 'insights' },
 };
 
-/** Tabs that LEFT a surviving module for another destination (Intel's data-ops tabs → Data).
+/** Tabs that LEFT a surviving module for another destination (Intel's data-ops tabs → Data) or became a
+ *  view of another tab (Brain's Versions → Memory `?view=versions`; `view` is set when present).
  *  `/intel?tab=imports` must not silently fall back to Ownership. */
-export const LEGACY_TAB_ALIASES: Readonly<Record<string, Readonly<Record<string, { destination: string; tab: string }>>>> = {
+export const LEGACY_TAB_ALIASES: Readonly<Record<string, Readonly<Record<string, { destination: string; tab: string; view?: string }>>>> = {
   intel: {
     imports: { destination: 'data', tab: 'imports' },
     quality: { destination: 'data', tab: 'quality' },
     mappings: { destination: 'data', tab: 'mappings' },
+  },
+  'command-brain': {
+    versions: { destination: 'command-brain', tab: 'memory', view: 'versions' },
   },
 };
 
@@ -109,6 +115,7 @@ export function resolveLegacyRoute(pathname: string, search: string): string | n
   const moved = tabAliases && legacyTab ? tabAliases[legacyTab] : undefined;
   if (moved) {
     params.set('tab', moved.tab);
+    if (moved.view) params.set('view', moved.view);
     const qs = params.toString();
     return `/${moved.destination}${qs ? `?${qs}` : ''}`;
   }
