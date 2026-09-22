@@ -71,36 +71,42 @@ function buildStorageRow(cacheEntries: Record<string, string> = {}): QueuedRevie
 
 describe('sourceRowKey -- identity of ONE real-world source row across the two parse shapes', () => {
   it('keys the annotated "C 4 (storage)" and the plain "C4" to the SAME source row', () => {
-    expect(sourceRowKey(SOURCE_FILE, AS_OF, 'C 4 (storage)', 0.38)).toBe(sourceRowKey(SOURCE_FILE, AS_OF, 'C4', 0.38));
+    expect(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C 4 (storage)', 0.38)).toBe(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C4', 0.38));
   });
 
   it('accepts the as-of date as a Date, an ISO string, or a bare YYYY-MM-DD (persisted vs in-run shapes)', () => {
-    const fromDate = sourceRowKey(SOURCE_FILE, AS_OF, 'C4', 0.38);
-    expect(sourceRowKey(SOURCE_FILE, '2026-08-21T00:00:00.000Z', 'C4', 0.38)).toBe(fromDate);
-    expect(sourceRowKey(SOURCE_FILE, '2026-08-21', 'C4', 0.38)).toBe(fromDate);
+    const fromDate = sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C4', 0.38);
+    expect(sourceRowKey(SOURCE_FILE, '2026-08-21T00:00:00.000Z', NORTHWOOD, 'C4', 0.38)).toBe(fromDate);
+    expect(sourceRowKey(SOURCE_FILE, '2026-08-21', NORTHWOOD, 'C4', 0.38)).toBe(fromDate);
   });
 
-  it('a different amount, file, date, or unit is a DIFFERENT source row', () => {
-    const base = sourceRowKey(SOURCE_FILE, AS_OF, 'C4', 0.38);
-    expect(sourceRowKey(SOURCE_FILE, AS_OF, 'C4', 0.39)).not.toBe(base);
-    expect(sourceRowKey('2203-2207 Northwood Delinquency 8.28.2026.xlsx', AS_OF, 'C4', 0.38)).not.toBe(base);
-    expect(sourceRowKey(SOURCE_FILE, new Date('2026-08-28T00:00:00.000Z'), 'C4', 0.38)).not.toBe(base);
-    expect(sourceRowKey(SOURCE_FILE, AS_OF, 'C5', 0.38)).not.toBe(base);
+  it('a different amount, file, date, property, or unit is a DIFFERENT source row', () => {
+    const base = sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C4', 0.38);
+    expect(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C4', 0.39)).not.toBe(base);
+    expect(sourceRowKey('2203-2207 Northwood Delinquency 8.28.2026.xlsx', AS_OF, NORTHWOOD, 'C4', 0.38)).not.toBe(base);
+    expect(sourceRowKey(SOURCE_FILE, new Date('2026-08-28T00:00:00.000Z'), NORTHWOOD, 'C4', 0.38)).not.toBe(base);
+    expect(sourceRowKey(SOURCE_FILE, AS_OF, 'some-other-property', 'C4', 0.38)).not.toBe(base);
+    expect(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C5', 0.38)).not.toBe(base);
   });
 
   it('rounds the amount to the cent so float-order noise cannot split one row into two', () => {
-    expect(sourceRowKey(SOURCE_FILE, AS_OF, 'C4', 0.1 + 0.2)).toBe(sourceRowKey(SOURCE_FILE, AS_OF, 'C4', 0.3));
+    expect(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C4', 0.1 + 0.2)).toBe(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C4', 0.3));
   });
 
   it('an undated row still keys (as "undated") -- but never matches a dated one', () => {
-    expect(sourceRowKey(SOURCE_FILE, null, 'C4', 0.38)).not.toBeNull();
-    expect(sourceRowKey(SOURCE_FILE, null, 'C4', 0.38)).not.toBe(sourceRowKey(SOURCE_FILE, AS_OF, 'C4', 0.38));
+    expect(sourceRowKey(SOURCE_FILE, null, NORTHWOOD, 'C4', 0.38)).not.toBeNull();
+    expect(sourceRowKey(SOURCE_FILE, null, NORTHWOOD, 'C4', 0.38)).not.toBe(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, 'C4', 0.38));
   });
 
   it('returns null when there is no unit identity to key on (missing, blank, or annotation-only label)', () => {
-    expect(sourceRowKey(SOURCE_FILE, AS_OF, null, 0.38)).toBeNull();
-    expect(sourceRowKey(SOURCE_FILE, AS_OF, undefined, 0.38)).toBeNull();
-    expect(sourceRowKey(SOURCE_FILE, AS_OF, '(storage)', 0.38)).toBeNull();
+    expect(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, null, 0.38)).toBeNull();
+    expect(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, undefined, 0.38)).toBeNull();
+    expect(sourceRowKey(SOURCE_FILE, AS_OF, NORTHWOOD, '(storage)', 0.38)).toBeNull();
+  });
+
+  it('returns null for an unresolved property (refute 2026-09-22): no write ever carries one, so such a row can never be proven a duplicate', () => {
+    expect(sourceRowKey(SOURCE_FILE, AS_OF, null, 'C4', 0.38)).toBeNull();
+    expect(sourceRowKey(SOURCE_FILE, AS_OF, undefined, 'C4', 0.38)).toBeNull();
   });
 });
 
@@ -124,10 +130,11 @@ describe('buildBucketedReviewRow -- a Format B review row carries its source-row
     expect(r.reason).toMatch(/no exact match at this property/);
   });
 
-  it('carries the raw unit label and the as-of date so the queue can be keyed by source row', () => {
+  it('carries the raw unit label, the as-of date, and the resolved property id so the queue can be keyed by source row', () => {
     const r = buildStorageRow();
     expect(r.unit).toBe('C 4 (storage)');
     expect(r.asOfDate).toBe('2026-08-21T00:00:00.000Z');
+    expect(r.propertyId).toBe(NORTHWOOD);
   });
 
   it('names who the roster puts at that unit -- including a DEAD lease -- so a human can see who it probably is', () => {
@@ -297,6 +304,38 @@ describe('dropReviewsAlreadyAttributed -- a source row attributed THIS RUN is no
     const ghost = { ...attributedWrite, leaseId: 'lease-not-in-roster' };
     expect(dropReviewsAlreadyAttributed([review], [ghost], ROSTER).kept).toEqual([review]);
   });
+
+  it('refute 2026-09-22: an UNMAPPED-property row is never dropped by a mapped-property write that coincides on file / as-of / unit tokens / cents', () => {
+    // A Format B export lists several buildings. A fourth header not yet in BUCKETED_PROPERTY_HEADERS
+    // must surface as a review row carrying the "add it to the table" reason; a recurring
+    // finance-charge amount ($0.38) on the same unit label at a mapped building in the same file
+    // must not make it vanish. Before the property joined the key, this row was silently dropped.
+    const live: UnitLease = { id: 'nw-c4-live', unit: 'C4', propertyId: NORTHWOOD, status: 'Active', annualRent: 9000, tenantName: 'Live C4 LLC' };
+    const roster: UnitLease[] = [live];
+    const unmapped: BucketedUnitRow = { unit: 'C 4', property: 'nbc-d - 9999 Unknown Building', d30: 0.38, d30plus: 0 };
+    const review = buildBucketedReviewRow({
+      row: unmapped,
+      res: resolveByUnit(unmapped, roster, null),
+      propertyId: null,
+      unitLeases: roster,
+      cacheEntries: {},
+      sourceFile: SOURCE_FILE,
+      asOfDate: AS_OF,
+      queuedAt: NOW,
+    });
+    expect(review.reason).toMatch(/BUCKETED_PROPERTY_HEADERS/);
+    const write = { ...attributedWrite, leaseId: 'nw-c4-live' };
+    const { kept, dropped } = dropReviewsAlreadyAttributed([review], [write], roster);
+    expect(kept).toEqual([review]);
+    expect(dropped).toEqual([]);
+  });
+
+  it('refute 2026-09-22: a write at a DIFFERENT property with the same unit label and cents is not this row either', () => {
+    const elsewhere: UnitLease = { id: 'other-c4', unit: 'C4', propertyId: 'some-other-property', status: 'Active', annualRent: 9000, tenantName: 'Other C4' };
+    const review = buildStorageRow();
+    const write = { ...attributedWrite, leaseId: 'other-c4' };
+    expect(dropReviewsAlreadyAttributed([review], [write], [...ROSTER, elsewhere]).kept).toEqual([review]);
+  });
 });
 
 describe('dedupReviewsAgainstQueue -- the pre-existing queue is checked by source-row identity too', () => {
@@ -365,6 +404,21 @@ describe('dedupReviewsAgainstQueue -- the pre-existing queue is checked by sourc
       row,
       res: resolveByUnit(row, ROSTER, NORTHWOOD),
       propertyId: NORTHWOOD,
+      unitLeases: ROSTER,
+      cacheEntries: {},
+      sourceFile: SOURCE_FILE,
+      asOfDate: AS_OF,
+      queuedAt: NOW,
+    });
+    expect(dedupReviewsAgainstQueue([buildStorageRow()], [incoming])).toEqual([incoming]);
+  });
+
+  it('refute 2026-09-22: a queued row at one property does not dedup an unmapped-property row with the same unit label and cents', () => {
+    const unmapped: BucketedUnitRow = { unit: 'C4', property: 'nbc-d - 9999 Unknown Building', d30: 0.38, d30plus: 0 };
+    const incoming = buildBucketedReviewRow({
+      row: unmapped,
+      res: resolveByUnit(unmapped, ROSTER, null),
+      propertyId: null,
       unitLeases: ROSTER,
       cacheEntries: {},
       sourceFile: SOURCE_FILE,
