@@ -32,14 +32,23 @@
 //      would silently retarget the row onto a real but DIFFERENT unit (C4, or nothing at all).
 
 import type { BucketedUnitRow } from './delinquency-bucketed';
+import { isDeadLease } from './lease-liveness';
 
 export interface UnitLease {
   id: string;
   unit: string | null;
   propertyId: string;
-  /** Optional -- when present and 'Expired', resolveByUnit uses it to detect a re-let unit (see
-   *  that function's doc). Callers that never populate it get the pre-2026-08-24 behavior. */
+  /** Optional -- when present and dead per isDeadLease ('Expired' / 'Vacant'), resolveByUnit uses
+   *  it to detect a re-let unit (see that function's doc). Callers that never populate it get the
+   *  pre-2026-08-24 behavior. */
   status?: string | null;
+  /** Optional -- annualRent === 0 also makes a lease dead per isDeadLease (2026-09-14 sweep, Fix
+   *  A: a zero-rent Active placeholder is not a billing tenant). Absent/null = unknown = not dead. */
+  annualRent?: number | null;
+  /** Optional -- the roster's tenant name, surfaced by unitCandidates() so a Format B row that
+   *  lands in the review queue can say who the roster puts at that unit (the row itself carries no
+   *  name). Never used for matching: Format B resolution stays unit-only. */
+  tenantName?: string | null;
 }
 
 export interface UnitResolution {
@@ -143,6 +152,14 @@ function setsEqual(a: Set<string>, b: Set<string>): boolean {
  * (Format B rows carry no tenant name to cross-check against). Filtering status INSIDE this
  * function instead means an Expired sibling on the same unit still downgrades the match to
  * ambiguous/review, closing both holes at once.
+ *
+ * "Dead" widened from Expired-only to the shared isDeadLease predicate on 2026-09-14 (weekly
+ * financial-code sweep, Fix A): a 'Vacant' record and an Active lease with annualRent 0 (real row:
+ * Evans Gymnastics, 2207 Northwood A15, $1,824.01 AR -- a placeholder that bills nothing) were
+ * still counted as LIVE here and took a clean 'exact' hit with no review. Both the single-hit
+ * refusal and the dead-sibling downgrade now apply to every dead status, and the same predicate
+ * gates the name-matcher's roster (scripts/ar-import-headless.ts loadLeasesFromSnapshot) so the two
+ * fresh-match pools cannot drift apart again.
  */
 export function resolveByUnit(
   row: BucketedUnitRow,
@@ -153,21 +170,38 @@ export function resolveByUnit(
   // property's '4A' collect another property's '4A' — the Columbus-vs-Salisbury collision class.
   if (propertyId === null) return { leaseId: null, confidence: 'none', ambiguous: false };
 
-  const target = expandUnitTokens(row.unit);
-  if (target.size === 0) return { leaseId: null, confidence: 'none', ambiguous: false };
-
-  const hits = leases.filter(
-    (l) => l.propertyId === propertyId && l.unit !== null && setsEqual(expandUnitTokens(l.unit), target),
-  );
-  const liveHits = hits.filter((l) => l.status !== 'Expired');
-  const hasExpiredSibling = liveHits.length < hits.length;
+  const hits = unitCandidates(row, leases, propertyId);
+  const liveHits = hits.filter((l) => !isDeadLease(l));
+  const hasDeadSibling = liveHits.length < hits.length;
 
   if (liveHits.length === 1) {
     // A dead lease shares this unit -- possible re-let. Never silently attribute the (possibly
     // vacated tenant's) delinquency to whichever lease happens to be live; a human must confirm.
-    if (hasExpiredSibling) return { leaseId: null, confidence: 'none', ambiguous: true };
+    if (hasDeadSibling) return { leaseId: null, confidence: 'none', ambiguous: true };
     return { leaseId: liveHits[0]?.id ?? null, confidence: 'exact', ambiguous: false };
   }
   if (liveHits.length > 1) return { leaseId: null, confidence: 'none', ambiguous: true };
   return { leaseId: null, confidence: 'none', ambiguous: false };
+}
+
+/**
+ * Every lease at `propertyId` whose unit label set-equals the row's, REGARDLESS of status or rent
+ * -- the raw hit set resolveByUnit filters for liveness. Exported (2026-09-14 sweep, Fix B) so the
+ * headless importer can name who the roster puts at a unit when a Format B row lands in the review
+ * queue: the row carries no tenant name, so without this a durable name-keyed SKIP ruling in the
+ * mapping cache (e.g. "anibal morales": "SKIP") is invisible to a human reading the queue. It is a
+ * DISPLAY aid only -- never a matching input; Format B resolution stays unit-only and set-exact.
+ * Returns [] for an unresolved property or an annotation-only label, mirroring resolveByUnit.
+ */
+export function unitCandidates(
+  row: BucketedUnitRow,
+  leases: readonly UnitLease[],
+  propertyId: string | null,
+): UnitLease[] {
+  if (propertyId === null) return [];
+  const target = expandUnitTokens(row.unit);
+  if (target.size === 0) return [];
+  return leases.filter(
+    (l) => l.propertyId === propertyId && l.unit !== null && setsEqual(expandUnitTokens(l.unit), target),
+  );
 }

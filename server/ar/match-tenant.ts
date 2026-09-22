@@ -116,6 +116,19 @@ export function matchTenantToLease(reportName: string, leases: ReadonlyArray<Lea
   // CORPORATION" vs "Bay Area Exteriors LLC"). Bounding `overlap()` to [0,1] above is sufficient on
   // its own: a non-exact candidate can now at most TIE an exact match (never exceed it), and a tie
   // between two different leases already sets `ambiguous` below, which blocks any unattended write.
+  //
+  // Secondary tie-break (2026-09-14 weekly financial-code sweep, Fix C -- REPORTING ONLY): when a
+  // DIFFERENT lease ties `best` within epsilon, the reported `best` becomes whichever of the two has
+  // the lexicographically smaller leaseId. Before this, `best` was simply the tied lease the loop
+  // met first, so the same report name produced a different review-queue row (leaseId, candidate
+  // label, and -- because `exact` rides along -- `confidence`) depending on the order of the
+  // snapshot's leases array: real roster, "THE BAY AREA CORPORATION" reported as "exact ->
+  // 401-sunburst..." forward and "high -> 29000-information-lane..." reversed. This changes NOTHING
+  // about WHICH ties are flagged: `topCount` still increments on every different-lease tie and is
+  // never reset by the swap, so `ambiguous` (topCount > 1) is exactly what it was, and both
+  // consumers (partition-confidence.ts, scripts/ar-import.ts) require `!ambiguous` to auto-write.
+  // The winner's OWN `exact` flag is carried, deliberately -- reporting the smaller id with the
+  // other candidate's flag would be a lie about that candidate. Still not "exact dominates".
   let best = { leaseId: null as string | null, score: 0, candidate: null as string | null, exact: false };
   let topCount = 0;
   for (const l of leases) {
@@ -130,6 +143,7 @@ export function matchTenantToLease(reportName: string, leases: ReadonlyArray<Lea
         topCount = 1;
       } else if (Math.abs(score - best.score) <= 1e-9 && best.leaseId !== null && l.id !== best.leaseId) {
         topCount++;
+        if (l.id < best.leaseId) best = { leaseId: l.id, score, candidate: field, exact };
       }
     }
   }

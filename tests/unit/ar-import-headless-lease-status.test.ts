@@ -22,10 +22,15 @@ function writeFixtureSnapshot(): void {
     snapshotPath,
     JSON.stringify({
       leases: [
-        { id: 'active-lease-1', tenantName: 'Active Tenant Co', company: 'Active Tenant Co', status: 'Active', unit: 'A1', propertyId: 'prop-a' },
-        { id: 'expiring-soon-lease-1', tenantName: 'Soon Gone LLC', company: 'Soon Gone LLC', status: 'Expiring Soon', unit: 'A2', propertyId: 'prop-a' },
-        { id: '2207-northwood-c4-anibal-morales', tenantName: 'Anibal Morales', company: 'Anibal Morales', status: 'Expired', unit: 'C4', propertyId: 'prop-a' },
-        { id: 'unknown-status-lease-1', tenantName: 'Mystery Tenant', company: null, status: 'Unknown', unit: 'A3', propertyId: 'prop-a' },
+        { id: 'active-lease-1', tenantName: 'Active Tenant Co', company: 'Active Tenant Co', status: 'Active', annualRent: 25500, unit: 'A1', propertyId: 'prop-a' },
+        { id: 'expiring-soon-lease-1', tenantName: 'Soon Gone LLC', company: 'Soon Gone LLC', status: 'Expiring Soon', annualRent: 13992, unit: 'A2', propertyId: 'prop-a' },
+        { id: '2207-northwood-c4-anibal-morales', tenantName: 'Anibal Morales', company: 'Anibal Morales', status: 'Expired', annualRent: 4788, unit: 'C4', propertyId: 'prop-a' },
+        { id: 'unknown-status-lease-1', tenantName: 'Mystery Tenant', company: null, status: 'Unknown', annualRent: 100, unit: 'A3', propertyId: 'prop-a' },
+        // 2026-09-14 sweep, Fix A: the two real zero-rent-but-Active rows plus a Vacant placeholder.
+        // Shaped like the live snapshot records (tenantName is the person, company is the entity).
+        { id: '29000-information-lane-202-tyson-consulting-group', tenantName: 'Dru Tyson', company: 'Tyson Consulting Group', status: 'Active', annualRent: 0, unit: '202', propertyId: 'prop-b' },
+        { id: '2207-northwood-a15-evans-gymnastics-and-dance-llc', tenantName: 'Christena  Evans', company: 'Evans Gymnastics and Dance LLC', status: 'Active', annualRent: 0, unit: 'A15', propertyId: 'prop-a' },
+        { id: 'vacant-lease-1', tenantName: 'VACANT', company: null, status: 'Vacant', annualRent: 0, unit: 'A9', propertyId: 'prop-a' },
       ],
     }),
   );
@@ -64,6 +69,121 @@ describe('loadLeasesFromSnapshot excludes Expired leases from the auto-match can
   });
 });
 
+// 2026-09-14 weekly financial-code sweep, Fix A: the Expired-only guard was too narrow. An Active
+// lease carrying annualRent === 0 (a roster placeholder that bills nothing -- real rows: Tyson
+// Consulting Group, 29000 Information Lane #202; Evans Gymnastics, 2207 Northwood A15) and a
+// 'Vacant' record both passed as live fresh-match candidates, so an export naming either could
+// auto-attribute to a lease that is not a billing tenant with zero human review. The shared
+// predicate isDeadLease (server/ar/lease-liveness.ts) now gates BOTH fresh-match pools -- this
+// loader and resolveByUnit's live-hit set -- and nothing else (see the loadAllLeaseIdsFromSnapshot
+// tests below for the roster that must stay wide).
+describe('loadLeasesFromSnapshot excludes Vacant and zero-rent-Active leases from the fresh-match pool (Fix A)', () => {
+  beforeEach(() => {
+    writeFixtureSnapshot();
+  });
+
+  it('drops an Active lease whose annualRent is 0 (Tyson Consulting Group, Evans Gymnastics)', async () => {
+    vi.resetModules();
+    const { loadLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
+    const ids = loadLeasesFromSnapshot().map((l) => l.id);
+    expect(ids).not.toContain('29000-information-lane-202-tyson-consulting-group');
+    expect(ids).not.toContain('2207-northwood-a15-evans-gymnastics-and-dance-llc');
+  });
+
+  it('drops a Vacant lease', async () => {
+    vi.resetModules();
+    const { loadLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
+    expect(loadLeasesFromSnapshot().map((l) => l.id)).not.toContain('vacant-lease-1');
+  });
+
+  it('end-to-end: "Tyson Consulting Group" no longer fresh-matches -- none confidence, routes to review', async () => {
+    vi.resetModules();
+    const { loadLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
+    const { matchTenantToLease } = await import('../../server/ar/match-tenant');
+    const match = matchTenantToLease('Tyson Consulting Group', loadLeasesFromSnapshot());
+    expect(match.leaseId).toBeNull();
+    expect(match.confidence).toBe('none');
+  });
+
+  it('end-to-end: "Evans Gymnastics and Dance LLC" no longer fresh-matches by name either', async () => {
+    vi.resetModules();
+    const { loadLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
+    const { matchTenantToLease } = await import('../../server/ar/match-tenant');
+    const match = matchTenantToLease('Evans Gymnastics and Dance LLC', loadLeasesFromSnapshot());
+    expect(match.leaseId).toBeNull();
+    expect(match.confidence).toBe('none');
+  });
+
+  it('end-to-end: partitionArRows routes the Tyson row to review, never to write (no cache entry)', async () => {
+    vi.resetModules();
+    const { loadLeasesFromSnapshot, loadAllLeaseIdsFromSnapshot } = await import('../../scripts/ar-import-headless');
+    const { partitionArRows } = await import('../../server/ar/partition-confidence');
+    const rows = [{ tenant: 'Tyson Consulting Group', property: null, d30: 1932.97, d60: 1892.97, d90: 1892.97, d90plus: 344.18 }];
+    const p = partitionArRows(rows, loadLeasesFromSnapshot(), {}, loadAllLeaseIdsFromSnapshot());
+    expect(p.write).toEqual([]);
+    expect(p.review).toHaveLength(1);
+    expect(p.review[0]!.proposedLeaseId).toBeNull();
+  });
+
+  it('regression: a live Active, non-zero-rent lease is completely unaffected (still exact, still auto-writes)', async () => {
+    vi.resetModules();
+    const { loadLeasesFromSnapshot, loadAllLeaseIdsFromSnapshot } = await import('../../scripts/ar-import-headless');
+    const { matchTenantToLease } = await import('../../server/ar/match-tenant');
+    const { partitionArRows } = await import('../../server/ar/partition-confidence');
+    const leases = loadLeasesFromSnapshot();
+    const match = matchTenantToLease('Active Tenant Co', leases);
+    expect(match).toMatchObject({ leaseId: 'active-lease-1', confidence: 'exact', ambiguous: false });
+    const p = partitionArRows(
+      [{ tenant: 'Active Tenant Co', property: null, d30: 100, d60: 0, d90: 0, d90plus: 0 }],
+      leases,
+      {},
+      loadAllLeaseIdsFromSnapshot(),
+    );
+    expect(p.write.map((w) => w.leaseId)).toEqual(['active-lease-1']);
+    expect(p.review).toEqual([]);
+  });
+});
+
+describe('loadAllLeaseIdsFromSnapshot stays DELIBERATELY wide -- every lease id, dead or not (PR #302 invariant)', () => {
+  // partitionArRows' cache-hit validation must keep recognising a previously human-CONFIRMED mapping
+  // to a now-dead lease as still valid, not "lease removed". Narrowing this roster was a real
+  // regression once (PR #302 review: $9,596.90 + $13,019.92 of live arrears froze). Fix A must not
+  // touch it: the real cache entry "tyson consulting group" -> 29000-information-lane-202-... is
+  // exactly such a confirmed mapping to a lease that is now dead under the wider predicate.
+  beforeEach(() => {
+    writeFixtureSnapshot();
+  });
+
+  it('includes Expired, Vacant, and zero-rent-Active ids alongside the live ones', async () => {
+    vi.resetModules();
+    const { loadAllLeaseIdsFromSnapshot } = await import('../../scripts/ar-import-headless');
+    const ids = loadAllLeaseIdsFromSnapshot();
+    for (const id of [
+      'active-lease-1',
+      'expiring-soon-lease-1',
+      '2207-northwood-c4-anibal-morales',
+      'unknown-status-lease-1',
+      '29000-information-lane-202-tyson-consulting-group',
+      '2207-northwood-a15-evans-gymnastics-and-dance-llc',
+      'vacant-lease-1',
+    ]) {
+      expect(ids.has(id)).toBe(true);
+    }
+  });
+
+  it('end-to-end: a confirmed cache mapping to the (now dead) Tyson lease still writes -- unchanged', async () => {
+    vi.resetModules();
+    const { loadLeasesFromSnapshot, loadAllLeaseIdsFromSnapshot } = await import('../../scripts/ar-import-headless');
+    const { partitionArRows } = await import('../../server/ar/partition-confidence');
+    const { cacheKey } = await import('../../server/ar/mapping-cache');
+    const cache = { [cacheKey('Tyson Consulting Group')]: '29000-information-lane-202-tyson-consulting-group' };
+    const rows = [{ tenant: 'Tyson Consulting Group', property: null, d30: 1932.97, d60: 0, d90: 0, d90plus: 0 }];
+    const p = partitionArRows(rows, loadLeasesFromSnapshot(), cache, loadAllLeaseIdsFromSnapshot());
+    expect(p.write.map((w) => w.leaseId)).toEqual(['29000-information-lane-202-tyson-consulting-group']);
+    expect(p.review).toEqual([]);
+  });
+});
+
 describe('loadUnitLeasesFromSnapshot + resolveByUnit: Expired leases are visible to resolution, not silently pre-filtered', () => {
   // PR #302 review finding (Qodo): an EARLIER version of this fix excluded Expired leases in the
   // LOADER, mirroring the name-based path -- but that opened an adjacent hole on a re-let unit (see
@@ -82,6 +202,42 @@ describe('loadUnitLeasesFromSnapshot + resolveByUnit: Expired leases are visible
     expect(morales).toBeDefined();
     expect(morales?.status).toBe('Expired');
   }); // slow: first dynamic import of this module graph is transform-heavy
+
+  it('carries annualRent and tenantName so resolveByUnit can apply the shared dead-lease predicate and name a candidate', async () => {
+    vi.resetModules();
+    const { loadUnitLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
+    const evans = loadUnitLeasesFromSnapshot().find((l) => l.id === '2207-northwood-a15-evans-gymnastics-and-dance-llc');
+    expect(evans).toMatchObject({ unit: 'A15', status: 'Active', annualRent: 0, tenantName: 'Christena  Evans' });
+  });
+
+  it('end-to-end (Fix A): Evans Gymnastics, unit A15, Active but $0 rent -> NOT auto-attributed; falls to review', async () => {
+    // Real row: $1,824.01 of AR at 2207 Northwood A15. The only lease on that unit is Active with
+    // annualRent 0 -- not a billing tenant. Before Fix A this was a clean 'exact' unit hit and an
+    // unattended write.
+    vi.resetModules();
+    const { loadUnitLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
+    const { resolveByUnit } = await import('../../server/ar/resolve-by-unit');
+    const res = resolveByUnit({ unit: 'A15', property: 'prop-a', d30: 810.26, d30plus: 1013.75 }, loadUnitLeasesFromSnapshot(), 'prop-a');
+    expect(res.leaseId).toBeNull();
+    expect(res.confidence).toBe('none');
+  });
+
+  it('end-to-end (Fix A): a Vacant record on a unit is not a live candidate either', async () => {
+    vi.resetModules();
+    const { loadUnitLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
+    const { resolveByUnit } = await import('../../server/ar/resolve-by-unit');
+    const res = resolveByUnit({ unit: 'A9', property: 'prop-a', d30: 50, d30plus: 0 }, loadUnitLeasesFromSnapshot(), 'prop-a');
+    expect(res.leaseId).toBeNull();
+    expect(res.confidence).toBe('none');
+  });
+
+  it('regression (Fix A): a live Active, non-zero-rent lease on its own unit still resolves exact', async () => {
+    vi.resetModules();
+    const { loadUnitLeasesFromSnapshot } = await import('../../scripts/ar-import-headless');
+    const { resolveByUnit } = await import('../../server/ar/resolve-by-unit');
+    const res = resolveByUnit({ unit: 'A1', property: 'prop-a', d30: 50, d30plus: 0 }, loadUnitLeasesFromSnapshot(), 'prop-a');
+    expect(res).toEqual({ leaseId: 'active-lease-1', confidence: 'exact', ambiguous: false });
+  });
 
   it('end-to-end: resolveByUnit still refuses to auto-attribute unit C4 when Expired is the ONLY lease there', async () => {
     vi.resetModules();
