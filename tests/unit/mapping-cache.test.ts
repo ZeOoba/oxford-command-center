@@ -130,4 +130,18 @@ describe('validateMappingCache', () => {
     expect(flags).toHaveLength(1);
     expect(flags[0]).toMatchObject({ entity: 'ar-mapping-cache', field: 'entries', severity: 'error' });
   });
+
+  // 2026-09-22 refute pass: `String(v)` throws on a null-prototype object and on a throwing
+  // toString, so the never-throws contract was only true for JSON.parse-shaped input. Not reachable
+  // from a committed file, but the contract is stated unconditionally.
+  it('never throws even when a value cannot be stringified — it still reports the entry', () => {
+    const entries = {
+      'null proto': Object.create(null) as unknown,
+      'throwing toString': { toString: () => { throw new Error('boom'); } },
+      ok: 'l-acme-001',
+    } as unknown as Record<string, string>;
+    const flags = validateMappingCache({ entries, savedAt: '' }, roster);
+    expect(flags.map((f) => f.field)).toEqual(['null proto', 'throwing toString']);
+    expect(flags.every((f) => f.severity === 'warn' && typeof f.rawValue === 'string')).toBe(true);
+  });
 });
