@@ -2,6 +2,7 @@ import { Suspense, useState } from 'react';
 import { Navigate, useLocation, useParams } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { MODULES } from './modules';
+import { TITLES } from './titles';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 import { useSnapshot } from '@/data/queries';
@@ -17,24 +18,6 @@ import { StaleBanner } from './StaleBanner';
 import { PortfolioFilterProvider, filterProperties, usePortfolioFilter } from './PortfolioFilterContext';
 import { PortfolioFilterBar } from './PortfolioFilterBar';
 import type { Property } from '@contracts/index';
-
-const TITLES: Record<string, string> = {
-  overview: 'Command Overview',
-  pipeline: 'Acquisitions Pipeline',
-  portfolio: 'Portfolio Health',
-  intel: 'Financials',
-  worklist: 'Worklist',
-  data: 'Data',
-  leases: 'Leases & Renewals',
-  debt: 'Debt & Maturities',
-  cash: 'Cash & Treasury',
-  insurance: 'Insurance Renewals',
-  market: 'Market & Macro',
-  tasks: 'Tasks & Checklist',
-  documents: 'Documents',
-  health: 'System Health',
-  principal: 'Principal Home',
-};
 
 // `Property` (Spine A / `PortfolioSnapshot.properties`) carries no per-property manager
 // attribution today — that lives only in the Spine B warehouse (see

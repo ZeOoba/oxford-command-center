@@ -36,6 +36,17 @@ describe('useTabParam clearOnChange', () => {
     expect(q.has('tab')).toBe(false);
     expect(q.has('view')).toBe(false);
   });
+  it('never deletes the param it just set, even when clearOnChange names it', () => {
+    // A caller passing a list that happens to include its own paramName (e.g. a shared
+    // CLEAR_* constant reused on a `view` strip) would otherwise silently reset to the default.
+    go(['view', 'tab']);
+    fireEvent.click(screen.getByText('to-b'));
+    const q = new URLSearchParams(screen.getByTestId('loc').textContent!);
+    expect(q.get('tab')).toBe('b');
+    expect(screen.getByTestId('tab').textContent).toBe('b');
+    expect(q.has('view')).toBe(false);
+  });
+
   it('is a no-op when no clear list is given (existing behaviour)', () => {
     go();
     fireEvent.click(screen.getByText('to-b'));

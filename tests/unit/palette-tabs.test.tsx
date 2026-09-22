@@ -10,7 +10,12 @@ vi.mock('../../src/brain/ui-context', () => ({
 }));
 vi.mock('../../src/data/queries', () => ({ useSnapshot: () => ({ data: undefined }) }));
 vi.mock('../../src/data/brain-context', () => ({ useBrain: () => ({ refresh: vi.fn() }) }));
-vi.mock('../../src/shell/tab-badges', () => ({ useAlertsTabBadge: () => undefined, useCriticalDatesTabBadge: () => undefined }));
+vi.mock('../../src/shell/tab-badges', () => ({
+  useAlertsTabBadge: () => undefined,
+  useCriticalDatesTabBadge: () => undefined,
+  useTabBadges: (tabs: ReadonlyArray<unknown>) => tabs.map(() => undefined),
+  useTabSpecs: (tabs: ReadonlyArray<{ id: string; label: string }>) => tabs.map((t) => ({ id: t.id, label: t.label })),
+}));
 
 import { CommandPalette } from '../../src/brain/CommandPalette';
 
@@ -32,6 +37,20 @@ describe('CommandPalette — tab entries', () => {
       'Financials › Ownership', 'Financials › Lease Run']) {
       expect(screen.getByText(label)).toBeTruthy();
     }
+  });
+
+  it('indexes the two in-module strips registered last (Acquisitions, Lease Market)', () => {
+    render(<CommandPalette />);
+    for (const label of ['Acquisitions › Workbench', 'Acquisitions › Sourcing', 'Acquisitions › Grader',
+      'Lease Market › Acquisition Radar', 'Lease Market › Data Quality']) {
+      expect(screen.getByText(label)).toBeTruthy();
+    }
+  });
+
+  it('selecting an Acquisitions tab entry navigates to /pipeline?tab=<id>', () => {
+    render(<CommandPalette />);
+    fireEvent.click(screen.getByText('Acquisitions › Grader'));
+    expect(openTab).toHaveBeenCalledWith('pipeline', 'grader');
   });
 
   it('selecting an entry navigates to the destination tab and closes the palette', () => {

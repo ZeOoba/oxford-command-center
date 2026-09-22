@@ -22,10 +22,10 @@
 // keyboardActivation "manual": Digest and Insights mount their own queries, so arrowing across the strip
 // must not fire them. Rule H: a tab switch clears `?view=` (owned by Memory's inner SegmentedControl).
 import { lazy, Suspense } from 'react';
-import { Tabs, TabPanel, type TabSpec } from '@/primitives/Tabs';
+import { Tabs, TabPanel } from '@/primitives/Tabs';
 import { useTabParam, CLEAR_VIEW } from '@/lib/useTabParam';
 import { ModuleLoading } from '@/shell/ModuleFallback';
-import { isWarehouseUnavailable, useBrainReport } from './hooks';
+import { useTabSpecs } from '@/shell/tab-badges';
 import { ReportGate } from './ReportGate';
 import { TrackRecordPanel, FeedbackPanel, MemoryPanel } from './BrainPanels';
 import { BRAIN_TABS, BRAIN_TAB_KEYS, type BrainTab } from './tabs';
@@ -35,17 +35,10 @@ const InsightsModule = lazy(() => import('../insights/InsightsModule').then((m) 
 
 export function CommandBrainModule() {
   const [tab, setTab] = useTabParam<BrainTab>(BRAIN_TAB_KEYS, 'digest', 'tab', CLEAR_VIEW);
-  const report = useBrainReport(); // shared query — only feeds the R4 badge
-  // R4: open questions are the actionable feed in the Feedback tab — surface the count on the label
-  // so it survives tabbing. Neutral: the count is workload, not severity.
-  // Same error-first predicate as <ReportGate>: react-query v5 retains `data` when a REFETCH fails, so a
-  // data-only read would show a count while the Feedback panel shows the offline card.
-  const openCount = isWarehouseUnavailable(report.error) ? 0 : report.data?.openQuestions.length ?? 0;
-  const specs: TabSpec[] = BRAIN_TABS.map((t) =>
-    t.id === 'feedback' && openCount > 0
-      ? { id: t.id, label: t.label, badge: { count: openCount, tone: 'neutral' } }
-      : { id: t.id, label: t.label },
-  );
+  // R4: the Feedback open-question badge is DECLARED on BRAIN_TABS (`useBadge`) like every other
+  // destination's, so `useTabSpecs` resolves it — no hand-rolled spec map here. Its hook shares
+  // <ReportGate>'s error-first predicate and the same (deduped) query; see ./tabs.ts.
+  const specs = useTabSpecs(BRAIN_TABS);
 
   return (
     <Tabs tabs={specs} selectedKey={tab} onSelectionChange={(k) => setTab(k as BrainTab)} keyboardActivation="manual" aria-label="Brain views">

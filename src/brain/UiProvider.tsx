@@ -35,8 +35,22 @@ export function UiProvider({ children }: { children: ReactNode }) {
   const search = location.search; // preserve ?scenario across module/drawer navigations
 
   // A legacy (absorbed) id — e.g. the AlertBell's 'alerts' — routes to its destination + tab.
+  // Rule H: `setActiveModule` is handed a BARE module id (Sidebar, AlertBell, HealthDot, the
+  // overview `goTo` links, the palette's "Go to <module>"), so the `?tab=` and `?view=` already on
+  // the URL belong to the destination being LEFT — a stale tab id is often valid-but-wrong on the
+  // next destination (`pipeline` exists in both Capital and Acquisitions) and an inner `?view=`
+  // never survives a tab change. Strip both BEFORE resolving, so an alias row sets its own `tab`
+  // (and, for a real legacy inner tab, its own `view` — that path runs through AppShell's redirect
+  // on the full location.search, not here). `?scenario`/`?still`/anything else rides along.
   const setActiveModule = useCallback(
-    (id: string) => navigate(resolveLegacyRoute(`/${id}`, search) ?? `/${id}${search}`),
+    (id: string) => {
+      const params = new URLSearchParams(search);
+      params.delete('tab');
+      params.delete('view');
+      const stripped = params.toString();
+      const qs = stripped ? `?${stripped}` : '';
+      navigate(resolveLegacyRoute(`/${id}`, qs) ?? `/${id}${qs}`);
+    },
     [navigate, search],
   );
   // Palette "Destination > Tab" entries: `/<dest>?tab=<id>`, keeping ?scenario/?still and dropping

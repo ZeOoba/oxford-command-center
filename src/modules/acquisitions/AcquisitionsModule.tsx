@@ -10,6 +10,7 @@ import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { Tabs, TabPanel } from '@/primitives/Tabs';
 import { BarList } from '@/charts/BarList';
 import { useTabParam } from '@/lib/useTabParam';
+import { useTabSpecs } from '@/shell/tab-badges';
 import { FORCE_MOUNT_PANEL } from '@/lib/forceMountPanel';
 import type { Deal, DealStage } from '@contracts/index';
 import { ORA_CLIENT_HEADERS } from '@contracts/client-header';
@@ -17,18 +18,13 @@ import { AcquisitionWorkbench } from './AcquisitionWorkbench';
 import { AcquisitionsIntel } from './AcquisitionsIntel';
 import { GraderView } from './GraderView';
 import { PipelineTierBoard } from './PipelineTierBoard';
+// Single source for the strip — also what the registry (`src/shell/modules.tsx`) and the command
+// palette index as "Acquisitions > Tab".
+import { ACQUISITIONS_TABS, ACQUISITIONS_TAB_KEYS, type AcqTab } from './tabs';
 import { useQueryClient } from '@tanstack/react-query';
 
 const STAGE_ORDER: DealStage[] = ['Sourcing', 'Candidate', 'LOI/PSA', 'Due Diligence', 'Refinance', 'Closing', 'Closed', 'Dead'];
 
-type AcqTab = 'pipeline' | 'workbench' | 'sourcing' | 'grader';
-const ACQ_TAB_KEYS: readonly AcqTab[] = ['pipeline', 'workbench', 'sourcing', 'grader'];
-const ACQ_TABS: Array<{ id: AcqTab; label: string }> = [
-  { id: 'pipeline', label: 'Pipeline' },
-  { id: 'workbench', label: 'Workbench' },
-  { id: 'sourcing', label: 'Sourcing' },
-  { id: 'grader', label: 'Grader' },
-];
 const STAGE_TONE: Record<DealStage, BadgeTone> = {
   Sourcing: 'neutral',
   Candidate: 'neutral',
@@ -53,7 +49,8 @@ export function AcquisitionsModule() {
   const [scoreDealId, setScoreDealId] = useState<string>('');
   const [sync, setSync] = useState<SyncState>({ phase: 'idle' });
   const [hubspotSync, setHubspotSync] = useState<SyncState>({ phase: 'idle' });
-  const [acqTab, setAcqTab] = useTabParam<AcqTab>(ACQ_TAB_KEYS, 'pipeline');
+  const [acqTab, setAcqTab] = useTabParam<AcqTab>(ACQUISITIONS_TAB_KEYS, 'pipeline');
+  const acqTabSpecs = useTabSpecs(ACQUISITIONS_TABS);
 
   async function handleNotionSync() {
     setSync({ phase: 'syncing' });
@@ -222,7 +219,7 @@ export function AcquisitionsModule() {
           fan out queries (plan R9). The pipeline / workbench / sourcing panels are force-mounted
           (they all mounted together before the split), so the Workbench form draft, the prefill
           selection, the Sourcing filters and the Active Deals sort survive a tab round-trip. */}
-      <Tabs tabs={ACQ_TABS} selectedKey={acqTab} onSelectionChange={(k) => setAcqTab(k as AcqTab)} keyboardActivation="manual" aria-label="Acquisitions views">
+      <Tabs tabs={acqTabSpecs} selectedKey={acqTab} onSelectionChange={(k) => setAcqTab(k as AcqTab)} keyboardActivation="manual" aria-label="Acquisitions views">
         <TabPanel id="pipeline" {...FORCE_MOUNT_PANEL}>
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[320px_1fr]">
             <Card>
