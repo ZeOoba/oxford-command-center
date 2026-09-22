@@ -5,6 +5,7 @@ import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
 import type { InsuranceAnalysisReport, PolicyEconomics } from '../../src/contracts/insurance-analysis';
 import type { InsurancePolicy } from '../../src/contracts/insurance';
 import type { InsuranceLossReport, PropertyEal, DeductibleReview, RebidPipelineItem } from '../../src/contracts/insurance-loss';
+import { isWarehouseUnavailable } from '../../src/modules/intel/hooks';
 import { InsuranceModule } from '../../src/modules/insurance/InsuranceModule';
 import { SavingsBoard } from '../../src/modules/insurance/SavingsBoard';
 import { SelfInsureView } from '../../src/modules/insurance/SelfInsureView';
@@ -396,6 +397,58 @@ describe('SavingsBoard tiers', () => {
     );
     expect(screen.getByText(/insufficient cohort — n=3/)).toBeTruthy();
     expect(screen.getByText('own-book median — dispersion, not market rate')).toBeTruthy();
+  });
+});
+
+// Rule G: Insurance is a tab of the Obligations destination, and Savings Board is its DEFAULT
+// `?view=`. On the static mirror the analysis route 503s, so the view must explain itself the way
+// Taxes / Self-Insure & Bids do — not render nothing under four "—" KPI tiles.
+describe('SavingsBoard — offline treatment on the static mirror', () => {
+  /** A client with nothing seeded: the REAL useInsuranceAnalysis runs and fails on the stubbed fetch. */
+  const bareClient = () => new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+  it('renders an informational offline card instead of a blank view when the analysis is warehouse-unavailable', async () => {
+    const qc = bareClient();
+    const { container } = render(
+      <QueryClientProvider client={qc}>
+        <SavingsBoard />
+      </QueryClientProvider>,
+    );
+    // Non-vacuous precondition: the query really settled into WarehouseUnavailableError.
+    await waitFor(() => expect(qc.getQueryState(INSURANCE_ANALYSIS_KEY)?.status).toBe('error'), { timeout: 3000 });
+    expect(isWarehouseUnavailable(qc.getQueryState(INSURANCE_ANALYSIS_KEY)?.error)).toBe(true);
+
+    expect(await screen.findByText('Savings Board')).toBeTruthy();
+    expect(screen.getByText('offline')).toBeTruthy();
+    expect(screen.getByText(/Re-bid analysis requires the live brain server/)).toBeTruthy();
+    expect(container.textContent).not.toBe('');
+    // Still no fabricated board.
+    expect(screen.queryByRole('list', { name: 'Tier board' })).toBeNull();
+  });
+
+  it('shows a skeleton, not a blank panel, while the analysis is still loading', () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+    const { container } = render(
+      <QueryClientProvider client={bareClient()}>
+        <SavingsBoard />
+      </QueryClientProvider>,
+    );
+    expect(container.firstChild).not.toBeNull();
+    expect(screen.queryByText('offline')).toBeNull();
+  });
+
+  it('the four KPI dashes never stand alone as if they were data — the offline card explains them', async () => {
+    const qc = bareClient();
+    render(
+      <MemoryRouter>
+        <QueryClientProvider client={qc}>
+          <InsuranceModule />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(qc.getQueryState(INSURANCE_ANALYSIS_KEY)?.status).toBe('error'), { timeout: 3000 });
+    expect(kpiValueFor('Annual Premium')).toBe('—');
+    expect(await screen.findByText(/Re-bid analysis requires the live brain server/)).toBeTruthy();
   });
 });
 

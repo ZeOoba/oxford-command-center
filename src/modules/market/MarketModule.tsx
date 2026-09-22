@@ -8,6 +8,7 @@ import { Skeleton } from '@/primitives/Skeleton';
 import { Tabs, TabPanel } from '@/primitives/Tabs';
 import { AreaChart } from '@/charts/AreaChart';
 import { useTabParam, CLEAR_VIEW } from '@/lib/useTabParam';
+import { useTabSpecs } from '@/shell/tab-badges';
 import { ModuleLoading } from '@/shell/ModuleFallback';
 import { FORCE_MOUNT_PANEL } from '@/lib/forceMountPanel';
 import { useMarketIntel } from './hooks';
@@ -17,14 +18,14 @@ import { MARKET_TABS, MARKET_TAB_KEYS, type MarketTab } from './tabs';
 
 const ProspectDemandModule = lazy(() => import('../intel/ProspectDemandModule').then((m) => ({ default: m.ProspectDemandModule })));
 
-const MARKET_TAB_SPECS = MARKET_TABS.map(({ id, label }) => ({ id, label }));
-
 // Tab shell — hosts the FRED macro dashboard (MacroView: badge + KPIs + 10Y + Acquisition Lens,
 // a same-glance group), the Market Intelligence scorecards, the Comps tab (task 7.3) and Demand
 // (the former standalone Demand Signals module, Phase 4c). Tab state lives in the URL (`?tab=`)
 // via useTabParam; a tab change clears `?view=` (Rule H).
 export function MarketModule() {
   const [tab, setTab] = useTabParam<MarketTab>(MARKET_TAB_KEYS, 'macro', 'tab', CLEAR_VIEW);
+  // R4: badges declared on MARKET_TABS reach the strip (useTabSpecs is the one mapping).
+  const tabSpecs = useTabSpecs(MARKET_TABS);
 
   return (
     <div className="flex flex-col gap-4">
@@ -36,7 +37,7 @@ export function MarketModule() {
           (useCapitalAllocationReport / useProspectDemand) on mount, so arrowing through the strip
           shouldn't fan out queries (plan R9). The macro / scorecards panels are force-mounted
           (they were one scroll before the split, so useMarketIntel already fired on mount). */}
-      <Tabs tabs={MARKET_TAB_SPECS} selectedKey={tab} onSelectionChange={(k) => setTab(k as MarketTab)} keyboardActivation="manual" aria-label="Market views">
+      <Tabs tabs={tabSpecs} selectedKey={tab} onSelectionChange={(k) => setTab(k as MarketTab)} keyboardActivation="manual" aria-label="Market views">
         <TabPanel id="macro" {...FORCE_MOUNT_PANEL}>
           <MacroView />
         </TabPanel>

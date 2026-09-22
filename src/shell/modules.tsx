@@ -22,6 +22,8 @@ import { MARKET_TABS } from '@/modules/market/tabs';
 import { OBLIGATIONS_TABS } from '@/modules/obligations/tabs';
 import { LEASING_TABS } from '@/modules/leasing/tabs';
 import { BRAIN_TABS } from '@/modules/command-brain/tabs';
+import { ACQUISITIONS_TABS } from '@/modules/acquisitions/tabs';
+import { LEASE_MARKET_TABS } from '@/modules/lease-market/tabs';
 import type { ModuleTabDef } from './tab-types';
 
 // Each module is its own code-split chunk — only the active one loads.
@@ -58,7 +60,7 @@ export interface ModuleDef {
 /** The module registry — drop a new entry here and it appears in the rail. */
 export const MODULES: ModuleDef[] = [
   { id: 'overview', label: 'Overview', icon: LayoutDashboard, group: 'Command', Component: OverviewModule },
-  { id: 'pipeline', label: 'Acquisitions', icon: Target, group: 'Command', Component: AcquisitionsModule },
+  { id: 'pipeline', label: 'Acquisitions', icon: Target, group: 'Command', Component: AcquisitionsModule, tabs: ACQUISITIONS_TABS },
   { id: 'worklist', label: 'Worklist', icon: CheckSquare, group: 'Command', Component: WorklistModule, tabs: WORKLIST_TABS },
   { id: 'command-brain', label: 'Brain', icon: BrainCircuit, group: 'Command', Component: CommandBrainModule, tabs: BRAIN_TABS },
   { id: 'portfolio', label: 'Portfolio', icon: Building2, group: 'Assets', Component: PortfolioModule },
@@ -68,7 +70,7 @@ export const MODULES: ModuleDef[] = [
   { id: 'capital', label: 'Capital', icon: Coins, group: 'Capital', Component: CapitalModule, tabs: CAPITAL_TABS },
   { id: 'obligations', label: 'Obligations', icon: ShieldCheck, group: 'Capital', Component: ObligationsModule, tabs: OBLIGATIONS_TABS },
   { id: 'market', label: 'Market', icon: LineChart, group: 'Market', Component: MarketModule, tabs: MARKET_TABS },
-  { id: 'lease-market', label: 'Lease Market', icon: Building2, group: 'Market', Component: LeaseMarketModule },
+  { id: 'lease-market', label: 'Lease Market', icon: Building2, group: 'Market', Component: LeaseMarketModule, tabs: LEASE_MARKET_TABS },
   { id: 'data', label: 'Data', icon: Database, group: 'System', Component: DataModule, tabs: DATA_TABS },
   // System Health left the rail in Phase 4a — it is a TopBar status dot; /health still resolves.
   { id: 'health', label: 'System Health', icon: Activity, group: 'System', Component: HealthModule, rail: false },

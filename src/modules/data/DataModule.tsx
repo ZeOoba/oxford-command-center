@@ -18,6 +18,7 @@ import { Tabs, TabPanel } from '@/primitives/Tabs';
 import { useTabParam, CLEAR_VIEW } from '@/lib/useTabParam';
 import { ModuleLoading } from '@/shell/ModuleFallback';
 import { warnIfTooManyTabs } from '@/shell/tab-types';
+import { useTabSpecs } from '@/shell/tab-badges';
 import {
   useWarehouseImports,
   useWarehouseIssues,
@@ -35,8 +36,6 @@ import { DATA_TABS, DATA_TAB_KEYS, DATA_OPS_TABS, type DataTab } from './tabs';
 
 const CalibrationModule = lazy(() => import('../calibration/CalibrationModule').then((m) => ({ default: m.CalibrationModule })));
 const DocumentsModule = lazy(() => import('../documents/DocumentsModule').then((m) => ({ default: m.DocumentsModule })));
-
-const DATA_TAB_SPECS = DATA_TABS.map(({ id, label }) => ({ id, label }));
 
 function WarehouseOfflineCard({ what }: { what: string }) {
   return (
@@ -56,6 +55,8 @@ function WarehouseOfflineCard({ what }: { what: string }) {
 export function DataModule() {
   warnIfTooManyTabs('data', DATA_TABS);
   const [tab, setTab] = useTabParam<DataTab>(DATA_TAB_KEYS, 'imports', 'tab', CLEAR_VIEW);
+  // R4: badges declared on DATA_TABS reach the strip (useTabSpecs is the one mapping).
+  const tabSpecs = useTabSpecs(DATA_TABS);
   const imports = useWarehouseImports();
   const issues = useWarehouseIssues();
   const noi = useNoiMatrix();
@@ -97,7 +98,7 @@ export function DataModule() {
       </Card>
 
       {/* keyboardActivation="manual" — every panel fires its own queries on mount (plan R9). */}
-      <Tabs tabs={DATA_TAB_SPECS} selectedKey={tab} onSelectionChange={(k) => setTab(k as DataTab)} keyboardActivation="manual" aria-label="Data views">
+      <Tabs tabs={tabSpecs} selectedKey={tab} onSelectionChange={(k) => setTab(k as DataTab)} keyboardActivation="manual" aria-label="Data views">
         <TabPanel id="imports">
           {warehousePanel('Imports', () => <ImportsView imports={imports.data ?? []} />)}
         </TabPanel>
