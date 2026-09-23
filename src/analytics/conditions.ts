@@ -571,6 +571,31 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
     }
   }
 
+  // Expiry-family dedup (2026-09-23 review + refute wf_6cf7d109-520): ONE expiry insight per lease.
+  // The legacy lease block (`expiring-<id>`, `expired-<id>`) and the Phase 3 L-x producers
+  // (`lease-expiry-<id>` = L-1, `lease-lapsed-<id>` = L-2) each carry impactAnnualUsd = annualRent
+  // for the same lease, so wherever both fire totalsBySpine() summed that rent twice. The pairs:
+  //   • `expiring-`  + `lease-expiry-`  — 0–90d out, no advanced renewal stage
+  //   • `expired-`   + `lease-lapsed-`  — status 'Expired' holdover, leaseEnd past, stage ≠ Executed
+  //   • `expired-`   + `lease-expiry-`  — status 'Expired' but a FUTURE leaseEnd (data contradiction)
+  //   • `expiring-`  + `lease-lapsed-`  — day-0 sliver when referenceDate carries a time-of-day
+  // Rule: if any L-x expiry-family insight exists for a lease, drop that lease's legacy twin(s). The
+  // L-x one carries the richer renewal-signal message, and it is present by construction, so no lease
+  // ever loses its only signal; where no L-x fires (91–180d; Expired + Executed) the legacy one stands.
+  // Keyed on entityId, so this relies on lease ids being unique — parse.ts disambiguateLeaseIds()
+  // guarantees that for every parser-produced snapshot.
+  {
+    const LX_PREFIXES = ['lease-expiry-', 'lease-lapsed-'];
+    const LEGACY_PREFIXES = ['expiring-', 'expired-'];
+    const lxLeases = new Set(
+      out.filter((i) => LX_PREFIXES.some((p) => i.id.startsWith(p))).map((i) => i.entityId),
+    );
+    for (let i = out.length - 1; i >= 0; i--) {
+      const ins = out[i]!;
+      if (LEGACY_PREFIXES.some((p) => ins.id.startsWith(p)) && lxLeases.has(ins.entityId)) out.splice(i, 1);
+    }
+  }
+
   // ── Collections / AR aging (audit Fix #2) ───────────────────────────────────
   // Overlay-sourced per-lease arrears (snapshot.tenantArrears, keyed by Lease.id). 60+ days past
   // due is a critical collection signal; a material balance under 60 days is a warning to monitor.
