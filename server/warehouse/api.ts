@@ -206,6 +206,20 @@ function acqConfig(): { ok: true; ruleset: AcquisitionRuleset; rct: ReplacementC
 export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
   const app = new Hono();
 
+  // An uncaught handler error must reach the client as JSON: fetchJson() (src/modules/intel/hooks.ts)
+  // treats a non-JSON error body as "warehouse routes not present" and the UI then shows a false
+  // "Warehouse offline" (2026-09-23 review — the acq enum 500 read as offline). This only covers
+  // routes registered directly on THIS app instance (e.g. /acq/intel below). The
+  // WAREHOUSE_SUB_ROUTERS (debt/leasing/capital/insurance/tax/brain/insights — sub-routers.ts) are
+  // separate Hono() instances mounted as siblings of this app on the top-level app in
+  // server/index.ts, not nested inside it via this app's own .route() — an uncaught error in one of
+  // those still surfaces as the Hono default text/plain 500 (see warehouse-json-errors.test.ts's
+  // 'sub-router mounted like index.ts does' case; confirmed 2026-09-23, not fixed by this change).
+  app.onError((err, c) => {
+    console.error('[warehouse] route error:', err);
+    return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+  });
+
   // Resolve the warehouse per-request behind a guard: a missing sqlite file/dir on the
   // static mirror or a cold environment surfaces as 503, not a 500 or a crashed process.
   const withDb = (handler: (db: WarehouseDb) => Response | Promise<Response>) => {
