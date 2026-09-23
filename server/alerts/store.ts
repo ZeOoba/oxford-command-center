@@ -1,5 +1,6 @@
-import { mkdirSync, readFileSync, writeFileSync, renameSync, existsSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { renameSyncWithRetry } from '../lib/rename-retry';
 import { AlertInboxState, EMPTY_INBOX_STATE, type AlertActionInput } from '../../src/contracts/alerts';
 import { applyAlertAction } from '../../src/brain/alerts-view';
 
@@ -18,7 +19,7 @@ export function saveInboxState(state: AlertInboxState, path = DEFAULT_PATH): voi
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp`;
   writeFileSync(tmp, JSON.stringify(state, null, 2));
-  renameSync(tmp, path);
+  renameSyncWithRetry(tmp, path);
 }
 
 /** Load → apply → save. Returns the new state. */
