@@ -5,6 +5,7 @@ import type { DealStage, RenewalStage } from '../../src/contracts/index';
 import { AcquisitionInput } from '../../src/contracts/acquisition';
 import type { brain as BrainSingleton } from '../../server/brain';
 import type * as ReconcileRuntimeModule from '../../server/reconcile-runtime';
+import type * as RenameRetryModule from '../../server/lib/rename-retry';
 
 /**
  * Orchestration tests for the live Brain (server/brain.ts) — the in-memory single source of
@@ -99,6 +100,13 @@ vi.mock('../../src/brain/tenants', () => ({
 vi.mock('chokidar', () => ({
   watch: vi.fn(() => ({ on: vi.fn() })),
 }));
+
+// Pass-through spy: persist() must publish the mirror through the transient-lock rename retry
+// (the retry behaviour itself is covered in alerts-store.test.ts).
+vi.mock('../../server/lib/rename-retry', async (importOriginal) => {
+  const actual = await importOriginal<typeof RenameRetryModule>();
+  return { ...actual, renameSyncWithRetry: vi.fn(actual.renameSyncWithRetry) };
+});
 
 let brain: typeof BrainSingleton;
 
@@ -459,6 +467,12 @@ describe('Brain.refresh — anomaly floor', () => {
 });
 
 describe('Brain.persist', () => {
+  it('publishes the mirror through the transient-lock rename retry', async () => {
+    const { renameSyncWithRetry } = await import('../../server/lib/rename-retry');
+    await brain.refresh();
+    expect(vi.mocked(renameSyncWithRetry)).toHaveBeenCalledWith(expect.stringContaining('.tmp-'), h.snapshotPath);
+  });
+
   it('writes the mirror atomically -- no leftover tmp file after a successful refresh', async () => {
     await brain.refresh();
     const dir = dirname(h.snapshotPath);

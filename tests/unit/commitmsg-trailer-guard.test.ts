@@ -73,8 +73,9 @@ describe('ALLOWED_AI_TRAILERS', () => {
     expect(ALLOWED_AI_TRAILERS).toContain('Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>');
   });
 
-  it('contains the Opus 5.5 trailer needed for the 2026-09-23 review-fixes plan', () => {
+  it('contains the Opus 5.5 trailer that Claude Code sessions on Opus 5.5 emit', () => {
     expect(ALLOWED_AI_TRAILERS).toContain('Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>');
+    expect(validateAiTrailers('fix: x\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n').ok).toBe(true);
   });
 });
 
