@@ -207,13 +207,10 @@ function acqConfig(): { ok: true; ruleset: AcquisitionRuleset; rct: ReplacementC
 export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
   const app = new Hono();
 
-  // An uncaught handler error must reach the client as JSON — see json-errors.ts for why and
-  // for the shared handler definition. This `.onError()` only covers routes registered
-  // directly on THIS app instance (e.g. /acq/intel below). The WAREHOUSE_SUB_ROUTERS
-  // (debt/leasing/lease-market/capital/insurance ×2/tax/brain/insights — sub-routers.ts) are
-  // separate Hono() instances mounted as SIBLINGS of this app directly on server/index.ts's
-  // top-level app, not nested inside this app via its own .route() — each needs (and, via
-  // sub-routers.ts's withJsonErrors, has) the same handler applied to its own instance.
+  // An uncaught handler error must reach the client as JSON. This `.onError()` only covers
+  // routes registered directly on THIS app instance; the WAREHOUSE_SUB_ROUTERS are sibling
+  // instances that get the same handler via sub-routers.ts's withJsonErrors — see
+  // json-errors.ts for the shared handler and the why.
   app.onError(warehouseJsonError);
 
   // Resolve the warehouse per-request behind a guard: a missing sqlite file/dir on the

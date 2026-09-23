@@ -120,10 +120,16 @@ export function checkCashInvariants(s: Pick<PortfolioSnapshot, 'cash' | 'meta'>)
 const STALE_LEASE_ROW_DAYS = 365;
 
 /**
- * A lease row that is not marked Expired but ended more than a year ago is almost always a tenant
- * already retired in the Notion Tenant DB whose workbook row was never cleared (2026-09-23 review:
- * Adkins Towing / Anibal Morales, 752d past end, still inflating Calendar + Renewals). Warn so a human
- * fixes the workbook — nothing here edits or hides the row.
+ * Flags a workbook lease row whose status never got updated: any row NOT marked Expired whose
+ * leaseEnd passed more than STALE_LEASE_ROW_DAYS ago (as of meta.asOf). Such a row keeps inflating
+ * Calendar + Renewals long after the tenancy actually ended. Rows already marked Expired are skipped
+ * — the workbook is right about those. Warn so a human fixes the workbook; nothing here edits or
+ * hides the row.
+ *
+ * entity is 'lease', deliberately NOT 'reconciliation': src/analytics/conditions.ts fires a
+ * CRITICAL "Reconciliation failure" insight and HealthModule turns the Reconciliation badge red for
+ * ANY entity==='reconciliation' flag regardless of severity. This is a warn-level data-quality
+ * hint, so it belongs in the Data Quality card only (which lists every flag) — 2026-09-23 PR-1 review.
  */
 export function checkStaleLeaseRows(s: Pick<PortfolioSnapshot, 'leases' | 'meta'>): DataQualityFlag[] {
   const asOf = s.meta?.asOf;
@@ -132,10 +138,12 @@ export function checkStaleLeaseRows(s: Pick<PortfolioSnapshot, 'leases' | 'meta'
   const out: DataQualityFlag[] = [];
   for (const l of s.leases ?? []) {
     if (l.status === 'Expired' || !l.leaseEnd) continue;
-    const days = Math.round((asOfMs - Date.parse(l.leaseEnd)) / 86_400_000);
+    // Date-only on both sides: a time component on leaseEnd would otherwise shift the parsed
+    // instant relative to the date-only asOf and move the rounded day count by one.
+    const days = Math.round((asOfMs - Date.parse(l.leaseEnd.slice(0, 10))) / 86_400_000);
     if (days > STALE_LEASE_ROW_DAYS) {
       out.push({
-        entity: 'reconciliation',
+        entity: 'lease',
         field: `lease.${l.id}.leaseEnd`,
         issue: `${l.tenantName} ended ${l.leaseEnd} (${days}d ago) but is still "${l.status}" — retire the row in the workbook or record the renewal`,
         severity: 'warn',

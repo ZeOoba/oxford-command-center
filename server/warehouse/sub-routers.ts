@@ -28,13 +28,9 @@ export interface WarehouseSubRouter {
   factory: (getDb: () => WarehouseDb) => Hono;
 }
 
-/** Wrap a sub-router factory so its app gets the same uncaught-error → JSON 500 handler as
- *  warehouseRoutes() (json-errors.ts). Each sub-router below is mounted as a SIBLING Hono()
- *  instance directly on server/index.ts's top-level app (`app.route('/api/warehouse' + prefix,
- *  factory(getWarehouse))`), not nested inside warehouseRoutes()'s own app — so it does not
- *  inherit that app's `.onError()` and needs this applied to its own instance instead
- *  (2026-09-23 review: an uncaught error in any of these previously surfaced as Hono's default
- *  text/plain 500, which the client misreads as "warehouse routes not present"). */
+/** Wrap a sub-router factory so its app gets the shared uncaught-error → JSON 500 handler. Each
+ *  sub-router is a SIBLING Hono() instance of warehouseRoutes()'s app, so it does not inherit
+ *  that app's `.onError()` — see json-errors.ts for the full topology note. */
 function withJsonErrors(factory: (getDb: () => WarehouseDb) => Hono): (getDb: () => WarehouseDb) => Hono {
   return (getDb) => {
     const app = factory(getDb);
@@ -46,15 +42,28 @@ function withJsonErrors(factory: (getDb: () => WarehouseDb) => Hono): (getDb: ()
 /** Every warehouse sub-router mounted separately from the base warehouseRoutes() app. Order
  *  matters for prefix matching: the two '/insurance/...' entries must be matched before a
  *  hypothetical bare '/insurance' prefix would be (none exists today, but longest-prefix-first
- *  is what keeps prefix matching safe if one is ever added). */
-export const WAREHOUSE_SUB_ROUTERS: WarehouseSubRouter[] = [
-  { prefix: '/debt', factory: withJsonErrors(debtApi) },
-  { prefix: '/leasing', factory: withJsonErrors(leaseForecastApi) },
-  { prefix: '/lease-market', factory: withJsonErrors(leaseMarketApi) },
-  { prefix: '/capital', factory: withJsonErrors(capitalAllocationApi) },
-  { prefix: '/insurance/analysis', factory: withJsonErrors(insuranceAnalysisApi) },
-  { prefix: '/insurance/loss', factory: withJsonErrors(insuranceLossApi) },
-  { prefix: '/tax', factory: withJsonErrors(taxApi) },
-  { prefix: '/brain', factory: withJsonErrors(brainApi) },
-  { prefix: '/insights', factory: withJsonErrors(insightsApi) },
+ *  is what keeps prefix matching safe if one is ever added).
+ *
+ *  Keep each entry a literal `{ prefix: '...', factory: <bareImportedName> }`: scripts/
+ *  check-write-schema-drift.ts's buildMountPrefixMap() reads this file as TEXT and resolves each
+ *  sub-router's mount path from exactly that shape (tests/unit/sub-routers-mount-prefix.test.ts
+ *  guards it). Wrapping the factory inline (`factory: withJsonErrors(debtApi)`) blinded that
+ *  gate — 0 of 9 prefixes resolved, so the body-shape cross-check for those routers was silently
+ *  skipped with only a warning (2026-09-23 PR-1 review). The JSON-error wrapping is applied in
+ *  the exported map below instead. */
+const RAW_SUB_ROUTERS: WarehouseSubRouter[] = [
+  { prefix: '/debt', factory: debtApi },
+  { prefix: '/leasing', factory: leaseForecastApi },
+  { prefix: '/lease-market', factory: leaseMarketApi },
+  { prefix: '/capital', factory: capitalAllocationApi },
+  { prefix: '/insurance/analysis', factory: insuranceAnalysisApi },
+  { prefix: '/insurance/loss', factory: insuranceLossApi },
+  { prefix: '/tax', factory: taxApi },
+  { prefix: '/brain', factory: brainApi },
+  { prefix: '/insights', factory: insightsApi },
 ];
+
+export const WAREHOUSE_SUB_ROUTERS: WarehouseSubRouter[] = RAW_SUB_ROUTERS.map((e) => ({
+  ...e,
+  factory: withJsonErrors(e.factory),
+}));
