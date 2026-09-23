@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
-import { portfolioCriticalDates, criticalDateKpis } from '../../src/brain/critical-dates';
+import { portfolioCriticalDates, criticalDateKpis, type DatedEvent } from '../../src/brain/critical-dates';
 import { ALERT_THRESHOLDS } from '@analytics/index';
 
 const ASOF = '2026-06-04';
@@ -73,16 +73,24 @@ describe('portfolioCriticalDates', () => {
 });
 
 describe('criticalDateKpis', () => {
-  it('counts critical (<60d incl. overdue), warning (60–180d), this-quarter (<90d), and next-12mo total', () => {
+  it('counts overdue (<0d) separately, critical (0–59d), warning (60–180d), this-quarter (0–89d), and next-12mo total', () => {
     const events = portfolioCriticalDates(snap, 12);
     const k = criticalDateKpis(events);
-    // critical: L1(50), L2(-30 overdue), INS1(40), INS2(-10 overdue) = 4
-    expect(k.critical).toBe(4);
+    // overdue: L2(-30), INS2(-10) = 2
+    expect(k.overdue).toBe(2);
+    // critical: L1(50), INS1(40) = 2
+    expect(k.critical).toBe(2);
     // warning: esc-L3(~100), loan-LN1(~120) = 2
     expect(k.warning).toBe(2);
-    // this-quarter (<90d incl overdue): L1, L2, INS1, INS2 = 4
-    expect(k.thisQuarter).toBe(4);
+    // this-quarter (0–89d upcoming, excl. overdue): L1, INS1 = 2
+    expect(k.thisQuarter).toBe(2);
     expect(k.next12mo).toBe(events.length);
+  });
+
+  it('overdue events count as overdue, not critical', () => {
+    const ev = (daysToDate: number) => ({ daysToDate } as unknown as DatedEvent);
+    const k = criticalDateKpis([ev(-752), ev(-5), ev(10), ev(100), ev(300)]);
+    expect(k).toEqual({ overdue: 2, critical: 1, warning: 1, thisQuarter: 1, next12mo: 5 });
   });
 });
 
