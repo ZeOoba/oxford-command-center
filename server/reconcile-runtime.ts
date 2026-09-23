@@ -117,6 +117,34 @@ export function checkCashInvariants(s: Pick<PortfolioSnapshot, 'cash' | 'meta'>)
   return flags;
 }
 
+const STALE_LEASE_ROW_DAYS = 365;
+
+/**
+ * A lease row that is not marked Expired but ended more than a year ago is almost always a tenant
+ * already retired in the Notion Tenant DB whose workbook row was never cleared (2026-09-23 review:
+ * Adkins Towing / Anibal Morales, 752d past end, still inflating Calendar + Renewals). Warn so a human
+ * fixes the workbook — nothing here edits or hides the row.
+ */
+export function checkStaleLeaseRows(s: Pick<PortfolioSnapshot, 'leases' | 'meta'>): DataQualityFlag[] {
+  const asOf = s.meta?.asOf;
+  if (!asOf) return [];
+  const asOfMs = Date.parse(asOf.slice(0, 10));
+  const out: DataQualityFlag[] = [];
+  for (const l of s.leases ?? []) {
+    if (l.status === 'Expired' || !l.leaseEnd) continue;
+    const days = Math.round((asOfMs - Date.parse(l.leaseEnd)) / 86_400_000);
+    if (days > STALE_LEASE_ROW_DAYS) {
+      out.push({
+        entity: 'reconciliation',
+        field: `lease.${l.id}.leaseEnd`,
+        issue: `${l.tenantName} ended ${l.leaseEnd} (${days}d ago) but is still "${l.status}" — retire the row in the workbook or record the renewal`,
+        severity: 'warn',
+      });
+    }
+  }
+  return out;
+}
+
 export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
   const flags: DataQualityFlag[] = [];
   const flag = (field: string, issue: string, severity: DataQualityFlag['severity'] = 'error') =>
@@ -148,6 +176,7 @@ export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
   // slot clobbered with the current total agrees with the headline BECAUSE it was clobbered. The
   // date-aware and per-entity companions live in checkCashInvariants (see its doc comment).
   flags.push(...checkCashInvariants(s));
+  flags.push(...checkStaleLeaseRows(s));
 
   // Derived totals must agree with the workbook's own declared "Portfolio Total" row (per-field:
   // null means the workbook had no such row, e.g. a legacy fixture -- skip rather than false-flag).

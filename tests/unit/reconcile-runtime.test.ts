@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import type { PortfolioSnapshot } from '../../src/contracts/index';
-import { checkSnapshot } from '../../server/reconcile-runtime';
+import type { PortfolioSnapshot, Lease } from '../../src/contracts/index';
+import { checkSnapshot, checkStaleLeaseRows } from '../../server/reconcile-runtime';
 
 const base = (over: Partial<Record<string, unknown>> = {}): PortfolioSnapshot =>
   ({
@@ -368,5 +368,22 @@ describe('checkSnapshot — runtime reconciliation', () => {
       }),
     );
     expect(flags).toEqual([]);
+  });
+});
+
+describe('checkStaleLeaseRows', () => {
+  const meta = { asOf: '2026-09-23' } as PortfolioSnapshot['meta'];
+  const l = (o: Partial<Lease>) => ({ id: 'x', tenantName: 'T', status: 'Active', leaseEnd: null, ...o }) as Lease;
+  it('flags a non-Expired row whose leaseEnd passed > 365d ago (retired tenant still on the rent roll)', () => {
+    const flags = checkStaleLeaseRows({ meta, leases: [l({ id: 'adk', tenantName: 'Adkins Towing', leaseEnd: '2024-09-01' })] });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]).toMatchObject({ entity: 'reconciliation', field: 'lease.adk.leaseEnd', severity: 'warn' });
+    expect(flags[0]!.issue).toContain('Adkins Towing');
+  });
+  it('ignores recent holdovers and rows already marked Expired', () => {
+    expect(checkStaleLeaseRows({ meta, leases: [
+      l({ leaseEnd: '2026-06-30' }),
+      l({ status: 'Expired', leaseEnd: '2023-01-01' }),
+    ] })).toEqual([]);
   });
 });
