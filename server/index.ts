@@ -43,6 +43,7 @@ import { isAllowedOrigin } from './cors-policy';
 import { requestBoundary, allowedHosts, extraAllowedHostsFromEnv } from './host-guard';
 import { accessAuthz, accessAuthzOptionsFromEnv } from './access-authz';
 import { createRateLimiter, createConcurrencyLimiter } from './rate-limit';
+import { startServer } from './startup';
 
 const app = new Hono();
 // Request boundary (OI-050, see host-guard.ts) — the check that actually REJECTS a request: Host must
@@ -597,26 +598,17 @@ app.get('/sse', (c) =>
 );
 
 async function main() {
-  // Bind the port FIRST — nothing should delay the server from accepting connections.
-  // A slow or hanging workbook load (brain.refresh) previously blocked serve() from being called
-  // for 5+ minutes on a cold start. All degraded-mode guards are already in place: /api/snapshot
-  // 503s on null snapshot, warehouse opens lazily, /api/health stays live throughout.
-  serve({ fetch: app.fetch, port: serverPort(), hostname: '127.0.0.1' }, (info) => {
-    console.log(`◆ Oxford Brain Server — http://127.0.0.1:${info.port} (localhost only)`);
-    console.log(`  Workbook: ${brain.getState().workbookPath}`);
-  });
-  // Load the workbook and start watching in the background — a slow/hanging read must never
-  // block the port. /api/snapshot 503s gracefully until the refresh completes.
-  brain.refresh('startup')
-    .then(() => { brain.startWatching(); })
-    .catch((err) => {
-      console.error('⚠ Brain startup refresh failed — serving in degraded mode (snapshot 503 until workbook loads):', err);
-    });
-  // Warm the document RAG index in the BACKGROUND — a slow/hanging embedding-model load must never
-  // block the server from binding the port. The warehouse + workbook-backed UI (incl. the three
-  // server-only modules: acquisition scoring, PFI, calibration) do not depend on the doc index.
-  warmDocIndex().catch((err) => {
-    console.error('⚠ Document index warm-up failed (non-fatal):', err);
+  startServer({
+    listen: (onListening) => {
+      serve({ fetch: app.fetch, port: serverPort(), hostname: '127.0.0.1' }, (info) => {
+        onListening(info.port);
+        console.log(`  Workbook: ${brain.getState().workbookPath}`);
+      });
+    },
+    refresh: () => brain.refresh('startup').then(() => { brain.startWatching(); }),
+    warmDocs: () => warmDocIndex(),
+    log: (m) => console.log(m),
+    warn: (m, err) => console.error(m, err),
   });
 }
 
