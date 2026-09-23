@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useSnapshot, useAnalytics } from '@/data/queries';
+import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { useUi } from '@/brain/ui-context';
 import { fmtUsdCompact, fmtPct, fmtSf, fmtMultiple, fmtNum } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
@@ -11,6 +12,7 @@ import type { Property } from '@contracts/index';
 
 export function PortfolioModule() {
   const { data } = useSnapshot();
+  const gate = useSnapshotGate();
   const { analytics } = useAnalytics();
   const ui = useUi();
 
@@ -42,6 +44,7 @@ export function PortfolioModule() {
     },
   ], []);
 
+  if (gate) return gate;
   if (!data || !analytics) return null;
   const props = data.snapshot.properties;
   const k = analytics.kpis;

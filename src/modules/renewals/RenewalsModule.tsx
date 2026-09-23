@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Mail } from 'lucide-react';
 import { useSnapshot, SNAPSHOT_KEY } from '@/data/queries';
+import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { useUi } from '@/brain/ui-context';
 import { advanceRenewalStage } from '@/data/actions';
 import { fmtUsdCompact, fmtDate } from '@analytics/index';
@@ -24,6 +25,7 @@ const dayTone = (d: number | null): BadgeTone => (d === null ? 'neutral' : d < 0
 
 export function RenewalsModule() {
   const { data } = useSnapshot();
+  const gate = useSnapshotGate();
   const ui = useUi();
   const qc = useQueryClient();
   const advance = useMutation({
@@ -39,6 +41,7 @@ export function RenewalsModule() {
     () => (data ? renewalBoard(data.snapshot, new Date().toISOString().slice(0, 10)) : null),
     [data],
   );
+  if (gate) return gate;
   if (!data || !board) return null;
   const total = RENEWAL_STAGES.reduce((n, s) => n + board[s].length, 0);
 

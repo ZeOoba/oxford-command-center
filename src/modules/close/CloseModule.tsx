@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSnapshot, SNAPSHOT_KEY } from '@/data/queries';
+import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { saveNoiBudget } from '@/data/actions';
 import { fmtUsd, fmtUsdCompact, fmtPct } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
@@ -11,6 +12,7 @@ import { noiVariance, type NoiVarianceRow } from '@/brain/noi-variance';
 
 export function CloseModule() {
   const { data } = useSnapshot();
+  const gate = useSnapshotGate();
   const qc = useQueryClient();
   const budgetMut = useMutation({
     mutationFn: (v: { propertyId: string; amount: number }) => saveNoiBudget(v.propertyId, v.amount),
@@ -18,6 +20,7 @@ export function CloseModule() {
   });
   const v = useMemo(() => (data ? noiVariance(data.snapshot) : null), [data]);
   const [selected, setSelected] = useState<string | null>(null);
+  if (gate) return gate;
   if (!data || !v) return null;
   const qb = data.snapshot.quickbooks;
   const sel = selected ? data.snapshot.quickbooks?.properties.find((p) => p.propertyId === selected) ?? null : null;
