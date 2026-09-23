@@ -687,3 +687,8 @@ export async function docStatus(): Promise<{ configured: boolean; dir: string | 
   const { index, docs, builtAt } = await ensureIndex();
   return { configured: !!process.env.DOCUMENTS_DIR, dir: process.env.DOCUMENTS_DIR ?? null, documents: docs.length, chunks: index?.chunks.length ?? 0, engine: 'semantic (all-MiniLM-L6-v2 + sqlite-vec)', docs: docs.slice(0, 50), builtAt };
 }
+
+/** Build time of the loaded index, WITHOUT forcing a load (safe for /api/health). */
+export function docIndexBuiltAt(): string | null {
+  return cache?.builtAt ?? null;
+}

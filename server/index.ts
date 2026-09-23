@@ -19,7 +19,7 @@ import { loadGovernors, GOVERNOR_DEFAULTS } from './warehouse/governors';
 import { fetchDealComps } from './ai/comps';
 import { runAgent } from './ai/agent';
 import { scanForConfidential } from './briefing/confidential';
-import { searchDocuments, docStatus, warmDocIndex } from './sources/documents';
+import { searchDocuments, docStatus, warmDocIndex, docIndexBuiltAt } from './sources/documents';
 import { getMacro } from './macro/getMacro';
 import { serverPort } from './config';
 import { loadInboxState, runAlertAction } from './alerts/store';
@@ -44,6 +44,8 @@ import { requestBoundary, allowedHosts, extraAllowedHostsFromEnv } from './host-
 import { accessAuthz, accessAuthzOptionsFromEnv } from './access-authz';
 import { createRateLimiter, createConcurrencyLimiter } from './rate-limit';
 import { startServer } from './startup';
+import { assessFeeds } from './feed-freshness';
+import { lastComputedAt } from './warehouse/lease-market/compute';
 
 const app = new Hono();
 // Request boundary (OI-050, see host-guard.ts) — the check that actually REJECTS a request: Host must
@@ -264,6 +266,28 @@ app.get('/api/health', (c) => {
         failures: string[];
       })
     : null;
+  const snap = brain.getSnapshot();
+  const arDates = Object.values(snap?.tenantArrears ?? {})
+    .map((r) => (r.asOfDate ? r.asOfDate.toISOString() : null))
+    .filter((d): d is string => !!d)
+    .sort();
+  // existsSync-gated (same precedent as liveGovernors below): getWarehouse() would otherwise
+  // CREATE + migrate a stray DB as a side effect of a GET on cold/mirror machines.
+  let leaseMarketAt: string | null = null;
+  try {
+    const dbPath = process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
+    leaseMarketAt = existsSync(dbPath) ? lastComputedAt(getWarehouse()) : null;
+  } catch {
+    leaseMarketAt = null;
+  }
+  const feeds = assessFeeds({
+    snapshot: snap?.meta.generatedAt ?? null,
+    cashHistory: snap?.cash.history.at(-1)?.date ?? null,
+    ar: arDates[0] ?? null, // oldest stamped record — collections gating is per-lease
+    dailyBrief: briefHealth?.ranAt ?? null,
+    leaseMarket: leaseMarketAt,
+    docIndex: docIndexBuiltAt(),
+  }, Date.now());
   return c.json({
     ok: true,
     service: 'oxford-brain-server',
@@ -271,6 +295,7 @@ app.get('/api/health', (c) => {
     // Surface AI availability WITHOUT exposing the key (no silent fallbacks — System Health shows it).
     ai: { configured: !!process.env.ANTHROPIC_API_KEY, model: process.env.ANTHROPIC_MODEL ?? 'claude-opus-5' },
     brief: briefHealth,
+    feeds,
   });
 });
 
