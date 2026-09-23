@@ -6,6 +6,14 @@ import { fileURLToPath, URL } from 'node:url';
 
 const SERVER_PORT = process.env.BRAIN_SERVER_PORT ?? '8911';
 
+const normPath = (p: string) => p.replace(/\\/g, '/').toLowerCase();
+const ROOT = normPath(fileURLToPath(new URL('.', import.meta.url))).replace(/\/$/, '');
+const WATCH_IGNORED_DIRS = [`${ROOT}/data`, `${ROOT}/.claude`];
+const isRootIgnored = (p: string) => {
+  const n = normPath(p);
+  return WATCH_IGNORED_DIRS.some((d) => n === d || n.startsWith(`${d}/`));
+};
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -55,6 +63,11 @@ export default defineConfig({
   },
   server: {
     port: 5273,
+    // data/ is written by the Brain Server + scheduled jobs (snapshot mirror, AR import); src/ never
+    // imports it, but Vite's watcher still full-reloaded the page on every rewrite (2026-09-23 review).
+    // Root-anchored on purpose: a `**/data/**` glob also swallows src/data/, and `**/.claude/**`
+    // matches every file when the dev server itself runs from a .claude/worktrees/ checkout.
+    watch: { ignored: isRootIgnored },
     proxy: {
       '/api': { target: `http://localhost:${SERVER_PORT}`, changeOrigin: true },
       '/sse': { target: `http://localhost:${SERVER_PORT}`, changeOrigin: true, ws: false },
