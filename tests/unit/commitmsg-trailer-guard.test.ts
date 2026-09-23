@@ -72,6 +72,10 @@ describe('ALLOWED_AI_TRAILERS', () => {
   it('contains the Fable trailer also verified in this repo\'s real commit history', () => {
     expect(ALLOWED_AI_TRAILERS).toContain('Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>');
   });
+
+  it('contains the Opus 5.5 trailer needed for the 2026-09-23 review-fixes plan', () => {
+    expect(ALLOWED_AI_TRAILERS).toContain('Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>');
+  });
 });
 
 describe('validateAiTrailers', () => {
