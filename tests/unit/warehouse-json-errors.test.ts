@@ -2,6 +2,7 @@
 import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
 import { warehouseRoutes } from '../../server/warehouse/api';
+import { WAREHOUSE_SUB_ROUTERS } from '../../server/warehouse/sub-routers';
 import type { WarehouseDb } from '../../server/warehouse/db';
 
 describe('warehouse routes — uncaught handler errors', () => {
@@ -13,34 +14,29 @@ describe('warehouse routes — uncaught handler errors', () => {
     expect(await res.json()).toEqual({ error: 'boom' });
   });
 
-  // Named-risk check (controller notes, task-2-brief): server/index.ts mounts each
-  // WAREHOUSE_SUB_ROUTERS entry (server/warehouse/sub-routers.ts — debt/leasing/capital/
-  // insurance/tax/brain/insights) as a SIBLING of warehouseRoutes() on the top-level app:
-  //   app.route('/api/warehouse', warehouseRoutes(getWarehouse));
-  //   for (...) app.route(`/api/warehouse${prefix}`, factory(getWarehouse));
-  // A sub-router is its own Hono() instance, not a route nested inside warehouseRoutes()'s
-  // app, so the onError set on THAT app (added above) does not apply to it — only an
-  // onError set on the sub-router's own instance would. None of the sub-router factories
-  // currently call .onError(). This reproduces that exact topology with a synthetic
-  // sub-router (no import of, or change to, the real sub-router files) to prove the gap
-  // without relying on any one sub-router's internal try/catch choices.
-  it('does NOT cover a sub-router mounted the way server/index.ts mounts WAREHOUSE_SUB_ROUTERS (gap, not fixed by this task)', async () => {
-    const throwingDb = { prepare: () => { throw new Error('boom'); } } as unknown as WarehouseDb;
-    const getDb = () => throwingDb;
+  // Coverage for every WAREHOUSE_SUB_ROUTERS entry (server/warehouse/sub-routers.ts —
+  // debt/leasing/lease-market/capital/insurance ×2/tax/brain/insights). Each is its own
+  // Hono() instance mounted as a SIBLING of warehouseRoutes() directly on server/index.ts's
+  // top-level app, not nested inside warehouseRoutes()'s app — so warehouseRoutes()'s own
+  // `.onError()` does not cover it. sub-routers.ts's `withJsonErrors` wraps every factory so
+  // each sub-router's own app gets the same handler (json-errors.ts). This mounts each
+  // (already-wrapped) factory the same way server/index.ts does and proves the wrapping
+  // actually took effect for every entry, not just one.
+  describe.each(WAREHOUSE_SUB_ROUTERS)('sub-router $prefix', ({ prefix, factory }) => {
+    it('surfaces an uncaught handler error as JSON 500 too', async () => {
+      const throwingDb = { prepare: () => { throw new Error('boom'); } } as unknown as WarehouseDb;
+      const sub = factory(() => throwingDb);
+      sub.get('/__boom', () => {
+        throw new Error('boom');
+      });
 
-    const topLevelApp = new Hono(); // stand-in for server/index.ts's `app` (no onError set there).
-    topLevelApp.route('/api/warehouse', warehouseRoutes(getDb));
+      const topLevelApp = new Hono(); // stand-in for server/index.ts's `app`.
+      topLevelApp.route(`/api/warehouse${prefix}`, sub);
 
-    const syntheticSubRouter = new Hono(); // stand-in for one WAREHOUSE_SUB_ROUTERS factory.
-    syntheticSubRouter.get('/scores', () => {
-      throw new Error('boom');
+      const res = await topLevelApp.request(`/api/warehouse${prefix}/__boom`);
+      expect(res.status).toBe(500);
+      expect(res.headers.get('content-type') ?? '').toContain('application/json');
+      expect(await res.json()).toEqual({ error: 'boom' });
     });
-    topLevelApp.route('/api/warehouse/debt', syntheticSubRouter);
-
-    const res = await topLevelApp.request('/api/warehouse/debt/scores');
-    expect(res.status).toBe(500);
-    // This is the bug this task fixes for warehouseRoutes' OWN routes, still reproduced here:
-    // Hono's default error response is text/plain, not JSON.
-    expect(res.headers.get('content-type') ?? '').not.toContain('application/json');
   });
 });
