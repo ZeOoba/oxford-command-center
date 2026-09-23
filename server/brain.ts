@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { watch } from 'chokidar';
 import { PortfolioSnapshot, type BrainState, type DataQualityFlag, type Task, type DealStage, type RenewalStage, type CompSet, type AcquisitionInput, type TenantArrears, type QbActuals, type Property } from '../src/contracts/index';
@@ -10,6 +10,7 @@ import { checkSnapshot, hasReconciliationError } from './reconcile-runtime';
 import { SNAPSHOT_PATH, workbookPath, referenceDate } from './config';
 import { resolveQuickbooks, type ResolvedQuickbooks } from './sources/quickbooks';
 import { evaluateAnomalyFloor, loadPreviousLeaseIds } from './anomaly-floor';
+import { renameSyncWithRetry } from './lib/rename-retry';
 import { hasDealsPipelineFailure, type DealsDegradation } from './sources/notion-deals';
 import { hasM365TasksFailure, type M365TasksDegradation } from './sources/m365-tasks';
 
@@ -370,7 +371,8 @@ class Brain extends EventEmitter {
       // scripts/lease-snapshot-drift-check.ts, which write the same file.
       tmp = `${SNAPSHOT_PATH}.tmp-${process.pid}-${Date.now()}`;
       writeFileSync(tmp, JSON.stringify(snapshot, null, 2));
-      renameSync(tmp, SNAPSHOT_PATH);
+      // Retried on the Windows AV/indexer transient lock (EPERM/EBUSY/EACCES) -- see lib/rename-retry.
+      renameSyncWithRetry(tmp, SNAPSHOT_PATH);
     } catch (err) {
       // Mirror persistence is best-effort -- a write failure must not crash the live server or
       // block serving this.snapshot from memory -- but it must not be INVISIBLE either: a
