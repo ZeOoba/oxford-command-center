@@ -257,6 +257,31 @@ describe('CapitalModule — market cap-rate positioning (folded in from CapitalA
   });
 });
 
+describe('CapitalModule — cap-rate positioning scatter (I-5 gating, Minors yFormat)', () => {
+  it('hides the scatter card when fewer than 2 properties have both cap-rate fields (matches the Comps convention)', () => {
+    // Fixture default: only prop-1 has non-null impliedCapRate/capRateGap; prop-2 is null-out.
+    renderModule();
+    expect(screen.queryByText('Cap-rate positioning')).toBeNull();
+  });
+
+  it('shows the scatter card, with a "+" signed bps tooltip matching the table (fmtCapRateGap), once >= 2 properties qualify', () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
+    qc.setQueryData(['warehouse', 'capital', 'allocation'], allocationResponse());
+    const report = capitalAllocationReport();
+    qc.setQueryData(['warehouse', 'capital-allocation', 'report'], {
+      ...report,
+      entries: [report.entries[0]!, { ...report.entries[0]!, propertyId: 'prop-3', propertyName: 'Prop Three' }],
+    });
+    const { container } = renderModule('/capital', qc);
+    expect(screen.getByText('Cap-rate positioning')).toBeTruthy();
+    // capRateGap 0.008 -> table renders "+80 bps"; the scatter's per-point tooltip previously
+    // formatted the same value as "80 bps" (no sign) via its own ad hoc formatter.
+    const titles = [...container.querySelectorAll('circle title')].map((t) => t.textContent ?? '');
+    expect(titles.some((t) => t.includes('+80 bps'))).toBe(true);
+    expect(titles.some((t) => t.includes('80 bps') && !t.includes('+80 bps'))).toBe(false);
+  });
+});
+
 describe('CapitalModule — cap-rate report card: header and body share ONE predicate', () => {
   const REPORT_KEY = ['warehouse', 'capital-allocation', 'report'];
 

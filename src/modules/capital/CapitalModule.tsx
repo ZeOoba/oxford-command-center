@@ -314,6 +314,7 @@ export function CapitalModule() {
   const reportUsable = !reportLoading && !reportError && report ? report : null;
   const capEntries = reportUsable?.entries ?? [];
   const bench = reportUsable?.marketBenchmarks;
+  const capScatterPoints = allocationCapPoints(capEntries);
 
   return (
     <div className="flex flex-col gap-4">
@@ -341,16 +342,18 @@ export function CapitalModule() {
         )}
       </div>
 
-      {/* Cap-rate positioning scatter — display-only plot of the same capEntries rows below */}
-      {capEntries.length > 0 && (
+      {/* Cap-rate positioning scatter — display-only plot of the same capEntries rows below.
+          Gated on >= 2 plottable points (I-5), matching the Comps scatter's own convention
+          (CompsView.tsx) — a single point has no "positioning" to show. */}
+      {capScatterPoints.length >= 2 && (
         <Card>
           <CardHeader title="Cap-rate positioning" />
           <ScatterChart
-            points={allocationCapPoints(capEntries)}
+            points={capScatterPoints}
             xLabel="Implied cap"
             yLabel="vs market"
             xFormat={(n) => `${(n * 100).toFixed(1)}%`}
-            yFormat={(n) => `${Math.round(n * 10000)} bps`}
+            yFormat={fmtCapRateGap}
             yRef={0}
           />
         </Card>
