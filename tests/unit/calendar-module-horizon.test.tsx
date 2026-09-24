@@ -194,3 +194,21 @@ describe('CalendarModule horizon bands', () => {
     expect(screen.getByText('2 events')).toBeTruthy();
   });
 });
+
+// I-2/I-5: escalations carry the lease's full annualRent (same as its own expiry), so counting
+// them as "at stake" double-counted/inflated the total; retitled to make clear this is expiring
+// rent, not every dated lease event. I-5: the card must not render over an empty chart.
+describe('CalendarModule — "Annual rent expiring by month" card (I-2 retitle, I-5 empty-state)', () => {
+  it('shows the retitled card when lease-expiry events are present', () => {
+    renderCalendar();
+    expect(screen.getByText('Annual rent expiring by month')).toBeTruthy();
+    expect(screen.queryByText('Annual rent at stake by month')).toBeNull();
+  });
+
+  it('hides the card when the filtered window has no lease-expiry events', () => {
+    renderCalendar();
+    // Fixture has zero loans — filtering to loan-maturity empties the filtered set entirely.
+    fireEvent.change(screen.getByLabelText('Filter by event type'), { target: { value: 'loan-maturity' } });
+    expect(screen.queryByText('Annual rent expiring by month')).toBeNull();
+  });
+});

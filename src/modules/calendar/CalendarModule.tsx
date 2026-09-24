@@ -100,6 +100,7 @@ export function CalendarModule() {
     if (type !== 'all') rows = rows.filter((e) => e.type === type);
     return rows;
   }, [allEvents, horizon, type]);
+  const atStake = useMemo(() => monthlyAtStake(filtered), [filtered]);
 
   const groups = useMemo(() => {
     const m = new Map<string, DatedEvent[]>();
@@ -124,12 +125,14 @@ export function CalendarModule() {
         <KpiStat label="Next 12 Months" value={kpis.next12mo} format={(n) => String(n ?? 0)} accentColor="var(--accent)" />
       </div>
 
-      <Card>
-        <CardHeader title="Annual rent at stake by month" trailing={<Badge tone="neutral">upcoming · {horizon}</Badge>} />
-        <div className="px-3 pb-2 pt-3">
-          <BarChart data={monthlyAtStake(filtered)} valueFormat={fmtUsdCompact} height={180} color="var(--accent)" />
-        </div>
-      </Card>
+      {atStake.length > 0 && (
+        <Card>
+          <CardHeader title="Annual rent expiring by month" trailing={<Badge tone="neutral">upcoming · {horizon}</Badge>} />
+          <div className="px-3 pb-2 pt-3">
+            <BarChart data={atStake} valueFormat={fmtUsdCompact} height={180} color="var(--accent)" ariaLabel="Annual rent expiring by month" />
+          </div>
+        </Card>
+      )}
 
       <Card>
         <CardHeader
