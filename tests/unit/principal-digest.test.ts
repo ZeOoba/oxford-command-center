@@ -3,8 +3,9 @@ import type { PortfolioSnapshot } from '../../src/contracts/index';
 import type { Insight } from '../../src/analytics/types';
 import type { InsightCandidate } from '../../src/contracts/insights';
 import type { MergedInsight } from '../../src/modules/insights/insights.logic';
-import { mergeInsightSources } from '../../src/modules/insights/insights.logic';
+import { mergeInsightSources, buildTiers } from '../../src/modules/insights/insights.logic';
 import { principalDigest } from '../../src/brain/principal-digest';
+import { digestSummary } from '../../src/modules/principal/digest-summary';
 
 const mergedInsight = (o: Partial<MergedInsight> & Pick<MergedInsight, 'id' | 'severity'>): MergedInsight => ({
   spine: 'A', propertyId: null, title: 'T', detail: 'D', impactUsd: null, category: 'debt', advisoryOnly: true, ...o,
@@ -80,14 +81,33 @@ describe('principalDigest', () => {
     expect(digest[0]?.title).toBe('Richer warehouse candidate');
   });
 
-  // A critical warehouse ANOMALY (bridged separately via anomaliesToInsights, never part of
-  // mergeInsightSources' output) must not appear in `merged` and so must not move this count —
-  // the Insights board doesn't show anomalies either. PrincipalModule surfaces them on their own
-  // labelled line instead (see tests/unit/principal-module-render.test.tsx).
-  it('an anomaly-only critical (not part of the merged set) does not inflate the critical count', () => {
-    const merged = [mergedInsight({ id: 'w', severity: 'warning' })];
+  // Review follow-up: principalDigest previously kept `merged`'s own (arbitrary) order, so the
+  // Digest's top-3 could differ from the board's Critical tier, which is sorted by impactUsd desc
+  // (buildTiers -> sortByImpactDesc). Compares against buildTiers(merged) directly — the board's
+  // OWN output — never a second call to principalDigest, so this can't pass by both sides sharing
+  // the same bug.
+  it("digest's critical ordering (and top-3) matches buildTiers(merged)'s Critical tier exactly", () => {
+    const merged = [
+      mergedInsight({ id: 'c1', severity: 'critical', impactUsd: 100, title: 'C1' }),
+      mergedInsight({ id: 'c2', severity: 'critical', impactUsd: 900, title: 'C2' }),
+      mergedInsight({ id: 'c3', severity: 'critical', impactUsd: 50, title: 'C3' }),
+      mergedInsight({ id: 'c4', severity: 'critical', impactUsd: 500, title: 'C4' }),
+      mergedInsight({ id: 'w1', severity: 'warning', impactUsd: 10, title: 'W1' }),
+    ];
     const digest = principalDigest(snapshotWithDeals([]), merged);
-    expect(digest.filter((d) => d.rank === 0)).toHaveLength(0);
-    expect(digest.filter((d) => d.rank === 1)).toHaveLength(1);
+    const tiers = buildTiers(merged);
+    const boardCritical = tiers.find((t) => t.key === 'critical')!;
+    const boardPriority = tiers.find((t) => t.key === 'priority')!;
+
+    // Insertion order (c1,c2,c3,c4) is NOT impactUsd-descending order (c2=900,c4=500,c1=100,c3=50)
+    // — a re-implemented or absent sort would fail this.
+    const digestCriticalIds = digest.filter((d) => d.rank === 0).map((d) => d.id);
+    expect(digestCriticalIds).toEqual(boardCritical.items.map((i) => i.id));
+    expect(digestCriticalIds).toEqual(['c2', 'c4', 'c1', 'c3']);
+
+    const summary = digestSummary(digest);
+    expect(summary.critical).toBe(boardCritical.items.length);
+    expect(summary.review).toBe(boardPriority.items.length);
+    expect(summary.top.map((t) => t.id)).toEqual(boardCritical.items.slice(0, 3).map((i) => i.id));
   });
 });

@@ -247,7 +247,10 @@ export function totalsBySpine(items: MergedInsight[]): TierTotal[] {
   ];
 }
 
-function sortByImpactDesc(items: MergedInsight[]): MergedInsight[] {
+/** Exported so principalDigest (src/brain/principal-digest.ts) orders the Digest's critical/review
+ *  items EXACTLY the way the Insights board orders its tiers — no re-implemented sort that could
+ *  silently drift from this one. */
+export function sortByImpactDesc(items: MergedInsight[]): MergedInsight[] {
   return [...items].sort((a, b) => {
     if (a.impactUsd === null && b.impactUsd === null) return 0;
     if (a.impactUsd === null) return 1; // nulls last

@@ -1,5 +1,6 @@
 import type { PortfolioSnapshot } from '@contracts/index';
 import type { MergedInsight } from '@/modules/insights/insights.logic';
+import { sortByImpactDesc } from '@/modules/insights/insights.logic';
 
 export interface DigestItem {
   id: string;
@@ -26,6 +27,10 @@ const ATTENTION_STAGES = new Set(['LOI/PSA', 'Closing']);
  * show them either (`mergeInsightSources` never includes them), so folding them into this count
  * would reintroduce the same drift. They get their own labelled line on the Principal Home
  * (PrincipalModule) that links to Worklist › Alerts, where `useAlertView` already bridges them in.
+ *
+ * Ordering (review follow-up): critical/warning items are sorted by `sortByImpactDesc` — the
+ * SAME sort `buildTiers()` applies to the board's Critical/Priority tiers — so the Digest's top-3
+ * (digestSummary's `top`) is never a different top-3 than the board's Critical tier shows.
  */
 export function principalDigest(
   snapshot: PortfolioSnapshot,
@@ -33,10 +38,10 @@ export function principalDigest(
 ): DigestItem[] {
   const items: DigestItem[] = [];
 
-  for (const m of merged) {
-    if (m.severity === 'critical' || m.severity === 'warning') {
-      items.push({ id: m.id, kind: 'insight', rank: m.severity === 'critical' ? 0 : 1, title: m.title, detail: m.detail });
-    }
+  const critical = sortByImpactDesc(merged.filter((m) => m.severity === 'critical'));
+  const warning = sortByImpactDesc(merged.filter((m) => m.severity === 'warning'));
+  for (const m of [...critical, ...warning]) {
+    items.push({ id: m.id, kind: 'insight', rank: m.severity === 'critical' ? 0 : 1, title: m.title, detail: m.detail });
   }
   for (const d of snapshot.deals) {
     if (ATTENTION_STAGES.has(d.stage)) {

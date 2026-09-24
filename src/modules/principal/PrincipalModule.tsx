@@ -94,7 +94,7 @@ export function PrincipalModule() {
             style={{ borderTop: '1px solid var(--border-subtle)', color: 'var(--text-tertiary)' }}
           >
             <span>
-              {anomalyAttentionCount} warehouse anomal{anomalyAttentionCount === 1 ? 'y' : 'ies'} flagged — not counted above
+              {anomalyAttentionCount} ledger anomal{anomalyAttentionCount === 1 ? 'y' : 'ies'} flagged (tracked in Worklist › Alerts)
             </span>
             <button
               type="button"

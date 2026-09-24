@@ -200,7 +200,7 @@ describe('PrincipalModule render', () => {
   it('surfaces the bridged anomaly on its own labelled line, not folded into the count tiles, linking to Worklist › Alerts', () => {
     renderModule();
     const anomalyCount = expectedAnomalyCount();
-    expect(screen.getByText(`${anomalyCount} warehouse anomaly flagged — not counted above`)).toBeTruthy();
+    expect(screen.getByText(`${anomalyCount} ledger anomaly flagged (tracked in Worklist › Alerts)`)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Worklist › Alerts/ }));
     expect(openTab).toHaveBeenCalledWith('worklist', 'alerts');
   });
