@@ -19,6 +19,10 @@ export interface WidgetDef {
   title: string;
   span: 'full' | 'half';
   Component: ComponentType;
+  /** Whether a NEW/default layout shows this widget out of the box. Omitted/true = shown.
+   *  Only affects DEFAULT_WIDGET_ORDER — a saved layout that already includes the widget keeps it
+   *  (useWorkspaces normalizes a saved order against the current id set, not this flag). */
+  defaultOn?: boolean;
 }
 
 function KpiStripWidget() {
@@ -184,7 +188,7 @@ function ResultsBannerWidget() {
 // exports (its buildTiers groups by severity on purpose), so the sort/slice lives here as a
 // small presentation-only helper; the underlying merge + per-spine subtotal (totalsBySpine) are
 // still the shared, reused functions — only the top-N selection is new.
-const PRIORITY_ACTIONS_LIMIT = 6;
+const PRIORITY_ACTIONS_LIMIT = 5;
 
 function sortMergedByImpactDesc(items: MergedInsight[]): MergedInsight[] {
   return [...items].sort((a, b) => {
@@ -221,14 +225,34 @@ function PriorityActionsWidget() {
   const { data } = useSnapshot();
   const { analytics } = useAnalytics();
   const insightsQuery = useWarehouseInsights();
+  const ui = useUi();
   if (!data || !analytics) return null;
 
   const candidates = insightsQuery.data?.candidates ?? [];
   const { merged } = mergeInsightSources(analytics.insights, candidates, data.snapshot);
   const tier = buildPriorityActionsTier(merged, PRIORITY_ACTIONS_LIMIT);
 
-  // A single ranked tier — full width, one column, so the card doesn't render half-empty.
-  return <TierBoard tiers={[tier]} columns={1} />;
+  // A single ranked tier — full width, one column, so the card doesn't render half-empty. "See
+  // all" is the one link out to the full Insights tier board (Brain › Insights) — the ratified
+  // "one home per attention list" IA (global-constraints.md): Overview stays a compact top-5,
+  // the full board lives in one place. Navigates via useUi().openTab — the app's existing
+  // module+tab nav hook (used by the command palette's "Destination > Tab" entries) — rather than
+  // a react-router-dom <Link>, since 'insights' is a legacy-aliased tab id (routing.ts
+  // LEGACY_ALIASES) that resolves to /command-brain?tab=insights, and openTab already carries the
+  // current ?scenario/?still params the way a bare <Link to="..."> would not.
+  return (
+    <div className="flex flex-col gap-2">
+      <TierBoard tiers={[tier]} columns={1} />
+      <button
+        type="button"
+        onClick={() => ui.openTab('command-brain', 'insights')}
+        className="self-end text-2xs font-semibold"
+        style={{ color: 'var(--accent)' }}
+      >
+        See all {merged.length} insights →
+      </button>
+    </div>
+  );
 }
 
 // Reshaped to the same tier-board pattern as InsightsModule.tsx / ResultsBannerWidget /
@@ -267,7 +291,11 @@ export const OVERVIEW_WIDGETS: WidgetDef[] = [
   { id: 'priority-actions', title: 'Priority Actions', span: 'half', Component: PriorityActionsWidget },
   { id: 'cash-trend', title: 'Cash Trend', span: 'half', Component: CashTrendWidget },
   { id: 'lease-rollover', title: 'Lease Rollover', span: 'half', Component: LeaseRolloverWidget },
-  { id: 'insights', title: 'Insights & Alerts', span: 'full', Component: InsightsWidget },
+  { id: 'insights', title: 'Insights & Alerts', span: 'full', Component: InsightsWidget, defaultOn: false },
 ];
 
-export const DEFAULT_WIDGET_ORDER = OVERVIEW_WIDGETS.map((w) => w.id);
+/** New/default layouts (useWorkspaces' fallback + "Reset layout") show every widget except those
+ *  explicitly opted out via `defaultOn: false` — currently just the full Insights tier board,
+ *  whose "one home" is Brain › Insights (PriorityActionsWidget's "See all" link gets there). A
+ *  layout a user already saved with 'insights' visible keeps it; this only changes what's new. */
+export const DEFAULT_WIDGET_ORDER = OVERVIEW_WIDGETS.filter((w) => w.defaultOn !== false).map((w) => w.id);
