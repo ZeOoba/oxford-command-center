@@ -32,4 +32,17 @@ describe('Waterfall aria/title', () => {
     expect(svg.getAttribute('aria-label')).toBe('Rent bridge waterfall');
     expect(container.querySelector('title')?.textContent).toBe('Rent bridge: in-place to projected');
   });
+
+  // I-4: bar category labels get truncated at 12 chars in the axis text, so a per-bar <title>
+  // carries the full name — a fallback that stays readable for ANY future long category, not
+  // just the two forecast-bridge ones that were shortened to fit.
+  it('gives each bar a full-category <title> so future truncation stays readable', () => {
+    const longDrivers = [{ category: 'Extraordinarily Long Category Name', delta: 10 }];
+    const { container } = render(<Waterfall startValue={100} drivers={longDrivers} endValue={110} />);
+    const titles = [...container.querySelectorAll('title')].map((t) => t.textContent);
+    expect(titles).toContain('Extraordinarily Long Category Name');
+    // Start/End totals get one too, not just drivers.
+    expect(titles).toContain('Start');
+    expect(titles).toContain('End');
+  });
 });

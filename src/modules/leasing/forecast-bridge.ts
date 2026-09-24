@@ -23,8 +23,10 @@ export function forecastBridge(r: RentForecastResult) {
   return {
     startValue: r.inPlaceAnnualRent,
     drivers: [
-      { category: 'Rent rolling off', delta: rollingOff },
-      { category: 'Re-leased / renewed', delta: reLeased },
+      // I-4: categories renamed to fit Waterfall's 12-char axis-label cut ('Rent rolling off'
+      // and 'Re-leased / renewed' both exceeded it and got truncated mid-word).
+      { category: 'Rolling off', delta: rollingOff },
+      { category: 'Re-leased', delta: reLeased },
     ],
     endValue: r.projectedAnnualRent,
   };

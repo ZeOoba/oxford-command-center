@@ -136,6 +136,10 @@ export function Waterfall({
         const labelDisplay = b.label.length > 12 ? `${b.label.slice(0, 11)}…` : b.label;
         return (
           <g key={`${b.label}-${i}`}>
+            {/* Full category name — the x-axis label below truncates past 12 chars, so this
+                keeps any future long category (or a longer future label than today's two
+                Rolling off / Re-leased forecast-bridge drivers) readable on hover (I-4). */}
+            <title>{b.label}</title>
             <rect x={x} y={yTop} width={barW} height={h} rx={3} fill={fill} fillOpacity={b.kind === 'total' ? 0.95 : 0.82} />
             {/* signed value label above the bar's top edge */}
             <text
