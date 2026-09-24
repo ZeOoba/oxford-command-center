@@ -12,7 +12,10 @@ import type { RentForecastResult } from '@contracts/lease-forecast';
  * from `deltaUsd`, so start + Σdrivers = end holds by construction. The two agree whenever
  * `deltaUsd === projected − inPlace`; they differ only where the engine clamps `projectedAnnualRent`
  * at 0 but leaves `deltaUsd` unclamped (renew_at_market), and the bridge must land on the displayed
- * projected figure. `|| 0` normalizes the -0 that `-expiring` yields when nothing expires (engine idiom).
+ * projected figure. That divergence is unreachable while `Lease.annualRent >= 0` and
+ * `vacancyPct <= 1` hold, but the bridge is derived from the endpoints rather than from
+ * `deltaUsd` anyway, so closure doesn't depend on that invariant holding. `|| 0` normalizes the
+ * -0 that `-expiring` yields when nothing expires (engine idiom).
  */
 export function forecastBridge(r: RentForecastResult) {
   const rollingOff = -r.expiringRentInHorizon || 0;

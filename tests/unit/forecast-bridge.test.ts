@@ -59,7 +59,7 @@ describe('forecastBridge', () => {
     expect(closes(b)).toBe(true);
   });
 
-  it('closes on the engine\'s clamp divergence (projected clamped at 0 while deltaUsd stays unclamped)', () => {
+  it('closes even if deltaUsd disagrees with the endpoints (defensive)', () => {
     // renew_at_market returns projectedAnnualRent = max(0, projected) but deltaUsd from the unclamped
     // value; the bridge must still land on the displayed projected figure.
     const b = forecastBridge(result({ inPlaceAnnualRent: 100_000, projectedAnnualRent: 0, deltaUsd: -150_000, noiImpactAnnualUsd: -150_000, expiringRentInHorizon: 100_000 }));
