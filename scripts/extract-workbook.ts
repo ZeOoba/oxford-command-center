@@ -1,4 +1,5 @@
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { renameSyncWithRetry } from '../server/lib/rename-retry';
 import { dirname } from 'node:path';
 import { parseWorkbook } from '../server/workbook/parse';
 import { loadEnvFile } from '../server/load-env';
@@ -121,7 +122,8 @@ async function main() {
   // portfolio.json truncated for the next reader.
   const tmp = `${SNAPSHOT_PATH}.tmp-${process.pid}-${Date.now()}`;
   writeFileSync(tmp, JSON.stringify(enriched, null, 2));
-  renameSync(tmp, SNAPSHOT_PATH);
+  // Retried on the Windows AV/indexer transient lock (EPERM/EBUSY/EACCES) -- see server/lib/rename-retry.
+  renameSyncWithRetry(tmp, SNAPSHOT_PATH);
 
   const p = snapshot.properties;
   const noiTotal = p.reduce((s, x) => s + x.noi, 0);
