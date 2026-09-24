@@ -62,7 +62,7 @@ export function TaxesModule() {
           </div>
           <div className="text-2xs" style={{ color: 'var(--text-tertiary)', maxWidth: 420 }}>
             Assessments, appeals, and tax opportunities are computed from the warehouse ledger +
-            Spine A property snapshot. This deployed mirror does not include the live warehouse.
+            workbook property snapshot. This deployed mirror does not include the live warehouse.
           </div>
         </div>
       </Card>

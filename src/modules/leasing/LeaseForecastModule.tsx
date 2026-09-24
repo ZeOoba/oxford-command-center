@@ -364,7 +364,7 @@ export function LeaseForecastModule() {
             title="Rent Forecast"
             trailing={
               <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-                Spine A · workbook basis
+                Workbook basis
               </span>
             }
           />

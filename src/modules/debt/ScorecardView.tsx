@@ -114,7 +114,7 @@ export function ScorecardView() {
             Debt scoring requires the live brain server.
           </div>
           <div className="text-2xs" style={{ color: 'var(--text-tertiary)', maxWidth: 420 }}>
-            Scores are computed from the warehouse ledger + Spine A loan snapshot. This deployed
+            Scores are computed from the warehouse ledger + workbook loan snapshot. This deployed
             mirror does not include the live warehouse.
           </div>
         </div>

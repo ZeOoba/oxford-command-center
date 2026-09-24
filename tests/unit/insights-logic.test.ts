@@ -367,8 +367,8 @@ describe('buildTiers', () => {
     ]);
     const totals = tiers[0]?.totalsBySpine ?? [];
     expect(totals).toEqual([
-      { label: 'Spine A', totalUsd: 1000 },
-      { label: 'Spine B/cross', totalUsd: 2500 }, // B + cross combined under one non-A label, never folded into Spine A
+      { label: 'Workbook basis', totalUsd: 1000 },
+      { label: 'Ledger & combined basis', totalUsd: 2500 }, // B + cross combined under one non-A label, never folded into workbook basis
     ]);
   });
 
@@ -378,8 +378,8 @@ describe('buildTiers', () => {
     expect(priority).toBeDefined();
     expect(priority?.items).toEqual([]);
     expect(priority?.totalsBySpine).toEqual([
-      { label: 'Spine A', totalUsd: 0 },
-      { label: 'Spine B/cross', totalUsd: 0 },
+      { label: 'Workbook basis', totalUsd: 0 },
+      { label: 'Ledger & combined basis', totalUsd: 0 },
     ]);
   });
 
@@ -447,12 +447,12 @@ describe('buildSummary', () => {
       m({ id: 'c', severity: 'info', spine: 'A', impactUsd: 300 }),
     ]);
     expect(summary.riskImpactBySpine).toEqual([
-      { label: 'Spine A', totalUsd: 1000 },
-      { label: 'Spine B/cross', totalUsd: 2000 },
+      { label: 'Workbook basis', totalUsd: 1000 },
+      { label: 'Ledger & combined basis', totalUsd: 2000 },
     ]);
     expect(summary.monitorImpactBySpine).toEqual([
-      { label: 'Spine A', totalUsd: 300 },
-      { label: 'Spine B/cross', totalUsd: 0 },
+      { label: 'Workbook basis', totalUsd: 300 },
+      { label: 'Ledger & combined basis', totalUsd: 0 },
     ]);
     expect(summary.count).toBe(3);
   });

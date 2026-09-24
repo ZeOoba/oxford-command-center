@@ -241,8 +241,8 @@ export function totalsBySpine(items: MergedInsight[]): TierTotal[] {
     else spineBOrCross += m.impactUsd;
   }
   return [
-    { label: 'Spine A', totalUsd: spineA },
-    { label: 'Spine B/cross', totalUsd: spineBOrCross },
+    { label: 'Workbook basis', totalUsd: spineA },
+    { label: 'Ledger & combined basis', totalUsd: spineBOrCross },
   ];
 }
 

@@ -157,7 +157,7 @@ export function InsightsModule() {
 
         {warehouseUnavailable && (
           <div className="px-4 pb-3 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-            Warehouse candidates unavailable on this deployment — showing Spine A insights only.
+            Warehouse candidates unavailable on this deployment — showing workbook-based insights only.
           </div>
         )}
         {warehouseErrored && (
@@ -169,7 +169,7 @@ export function InsightsModule() {
         )}
         {supersededCount > 0 && (
           <div className="px-4 pb-3 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-            {supersededCount} Spine A insight{supersededCount === 1 ? '' : 's'} superseded by a richer warehouse
+            {supersededCount} workbook insight{supersededCount === 1 ? '' : 's'} superseded by a richer ledger
             candidate.
           </div>
         )}
