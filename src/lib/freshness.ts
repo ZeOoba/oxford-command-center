@@ -97,3 +97,10 @@ export function computeWarehouseFreshness(meta: WarehouseMirrorMeta | null, now 
     isStale: stale,
   };
 }
+
+/** The daily brief is due every morning; beyond 36h a "no failures" record is not "OK". */
+export const BRIEF_STALE_HOURS = 36;
+export function isBriefStale(ranAt: string, now = Date.now()): boolean {
+  const t = Date.parse(ranAt);
+  return !Number.isFinite(t) || now - t > BRIEF_STALE_HOURS * 3_600_000;
+}

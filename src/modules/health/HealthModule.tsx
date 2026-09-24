@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { CheckCircle2, AlertTriangle, XCircle, Info } from 'lucide-react';
 import { useSnapshot } from '@/data/queries';
 import { useBrain } from '@/data/brain-context';
-import { computeFreshness } from '@/lib/freshness';
+import { computeFreshness, isBriefStale } from '@/lib/freshness';
 import { relativeTime } from '@/lib/time';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
@@ -14,9 +14,20 @@ interface BriefHealth {
   failures: string[];
 }
 
+interface FeedFreshness {
+  id: string;
+  label: string;
+  lastAt: string | null;
+  ageDays: number | null;
+  maxAgeDays: number;
+  status: 'fresh' | 'stale' | 'missing';
+  fix: string;
+}
+
 interface HealthResponse {
   ai?: { configured: boolean; model: string };
   brief?: BriefHealth | null;
+  feeds?: FeedFreshness[];
 }
 type Tone = 'ok' | 'warn' | 'error' | 'info';
 
@@ -125,9 +136,10 @@ export function HealthModule() {
           <Card>
             {(() => {
               const b = health?.brief;
-              const briefBadgeTone: 'green' | 'red' | 'neutral' =
-                b == null ? 'neutral' : b.failures.length > 0 ? 'red' : 'green';
-              const briefBadgeLabel = b == null ? 'Not yet run' : b.failures.length > 0 ? 'Failures' : 'OK';
+              const stale = b != null && isBriefStale(b.ranAt);
+              const briefBadgeTone: 'green' | 'red' | 'amber' | 'neutral' =
+                b == null ? 'neutral' : b.failures.length > 0 ? 'red' : stale ? 'amber' : 'green';
+              const briefBadgeLabel = b == null ? 'Not yet run' : b.failures.length > 0 ? 'Failures' : stale ? 'Stale' : 'OK';
               return (
                 <>
                   <CardHeader title="Daily Brief" trailing={<Badge tone={briefBadgeTone}>{briefBadgeLabel}</Badge>} />
@@ -156,6 +168,29 @@ export function HealthModule() {
                 </>
               );
             })()}
+          </Card>
+        )}
+
+        {!healthErr && health?.feeds && (
+          <Card>
+            <CardHeader
+              title="Data Feeds"
+              trailing={<Badge tone={health.feeds.some((f) => f.status !== 'fresh') ? 'amber' : 'green'}>
+                {health.feeds.filter((f) => f.status !== 'fresh').length} need attention
+              </Badge>}
+            />
+            <ul className="flex flex-col">
+              {health.feeds.map((f) => (
+                <Row
+                  key={f.id}
+                  tone={f.status === 'fresh' ? 'ok' : f.status === 'missing' ? 'error' : 'warn'}
+                  label={f.label}
+                  value={f.status === 'fresh'
+                    ? `${f.ageDays}d old`
+                    : f.status === 'missing' ? `never — ${f.fix}` : `${f.ageDays}d old (max ${f.maxAgeDays}d) — ${f.fix}`}
+                />
+              ))}
+            </ul>
           </Card>
         )}
       </div>
