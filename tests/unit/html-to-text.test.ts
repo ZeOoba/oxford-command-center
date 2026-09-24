@@ -31,4 +31,10 @@ describe('htmlToText', () => {
     // A closed block followed by an unclosed one: both go.
     expect(htmlToText('<style>a{}</style><p>Hello</p><script>unclosed')).toBe('Hello');
   });
+
+  it('does not treat <header> (or other head-/style-/script-prefixed tags) as a block to strip', () => {
+    expect(htmlToText('<header><p>Hi Eric</p></header><p>Please renew the lease at 9620 by Friday.</p>'))
+      .toBe('Hi Eric Please renew the lease at 9620 by Friday.');
+    expect(htmlToText('<header>Hi</header><p>Body</p>')).toBe('Hi Body');
+  });
 });

@@ -14,9 +14,10 @@ function decodeCodePoint(cp: number, original: string): string {
 /** Plain text from an Outlook/Graph HTML body. The old tag-only regex kept <style> CSS and &nbsp;. */
 export function htmlToText(html: string): string {
   return html
-    .replace(/<(style|script|head)[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+    // \b: without it `<head` also matches `<header>` and the unclosed pass below eats the whole body.
+    .replace(/<(style|script|head)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
     // An UNCLOSED <style>/<script>/<head> (truncated body) is CSS/script/metadata to the end of the string.
-    .replace(/<(style|script|head)[^>]*>[\s\S]*$/gi, ' ')
+    .replace(/<(style|script|head)\b[^>]*>[\s\S]*$/gi, ' ')
     .replace(/<br\s*\/?>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
     .replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, (m, e: string) => {
