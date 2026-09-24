@@ -73,6 +73,8 @@
 // unit-test without the process.exit side effects — the bottom-of-file guard runs main() only when
 // executed directly (mirrors governance-check.ts).
 import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // Pure route-plumbing / dispatch files in server/warehouse/ that contain no financial math —
 // subtracted from the broad prefix. Fail-CLOSED elsewhere: any warehouse file NOT listed here
@@ -412,6 +414,9 @@ export const GIT_GLOBAL_ARGS: readonly string[] = [
 export const SHOW_ARGS: readonly string[] = [
   ...GIT_GLOBAL_ARGS,
   'show',
+  // --no-relative: a user's diff.relative=true, with the gate run from a subdirectory, would print
+  // paths relative to it (and drop the rest), so nothing would match a financial prefix.
+  '--no-relative',
   '-z',
   '--remerge-diff',
   '--root',
@@ -478,8 +483,17 @@ export function findUnattestedCommits(commits: readonly CommitRecord[]): Unattes
 
 export type GitRunner = (args: string[]) => string;
 
+/**
+ * Environment for every git call. GIT_GRAFT_FILE points at a path that does not exist, so a legacy
+ * `.git/info/grafts` file (which --no-replace-objects does NOT disable) cannot rewrite parents and
+ * hide a commit from the range.
+ */
+export function gitEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return { ...base, GIT_GRAFT_FILE: join(tmpdir(), 'check-refute-required.no-grafts') };
+}
+
 function git(args: string[]): string {
-  return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+  return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: gitEnv() });
 }
 
 /**
@@ -490,7 +504,9 @@ function git(args: string[]): string {
  * 256k paths overflows any buffer) switch the gate off for the whole range.
  */
 export function collectCommits(base: string, head = 'HEAD', run: GitRunner = git): CommitRecord[] {
-  const rows = run([...GIT_GLOBAL_ARGS, 'rev-list', '--parents', `${base}..${head}`])
+  // Trailing `--`: without it git also stats the range as a possible PATH, which fails on Windows in
+  // a deep working directory ("Filename too long") — now a fail-CLOSED violation, i.e. a false block.
+  const rows = run([...GIT_GLOBAL_ARGS, 'rev-list', '--parents', `${base}..${head}`, '--'])
     .split('\n')
     .map((s) => s.trim().split(/\s+/))
     .filter((r) => r[0]);
@@ -555,13 +571,14 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
   let baseSha: string;
   let headSha: string;
   try {
-    baseSha = shaOr(run(['rev-parse', '--verify', '--quiet', `${base}^{commit}`]), base);
+    // GIT_GLOBAL_ARGS here too: a replace ref on the head would otherwise resolve it to a decoy.
+    baseSha = shaOr(run([...GIT_GLOBAL_ARGS, 'rev-parse', '--verify', '--quiet', `${base}^{commit}`]), base);
   } catch (err) {
     // No usable base ref (not fetched, typo, fresh repo) — never block on a tooling gap.
     return { outcome: 'skip', message: `check:refute — skipped: base '${base}' does not resolve (${firstLine(err)}).` };
   }
   try {
-    headSha = shaOr(run(['rev-parse', '--verify', '--quiet', `${head}^{commit}`]), head);
+    headSha = shaOr(run([...GIT_GLOBAL_ARGS, 'rev-parse', '--verify', '--quiet', `${head}^{commit}`]), head);
   } catch (err) {
     // The default HEAD not resolving means a repo with no commits: a tooling gap. An EXPLICIT
     // --head that does not resolve is a caller error, and under --strict it must not pass.
@@ -596,7 +613,7 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
   // commit (which may be the one needing the trailer) instead of dropping it and replaying its conflicts.
   let rebaseOnto = base;
   try {
-    const mb = run(['merge-base', baseSha, headSha]).trim();
+    const mb = run([...GIT_GLOBAL_ARGS, 'merge-base', baseSha, headSha]).trim();
     if (/^[0-9a-f]{40,64}$/.test(mb)) rebaseOnto = mb;
   } catch {
     // Keep the ref; the reword still works when the ref has not moved.
@@ -620,15 +637,18 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
     "workflow on each, then add a trailer to THAT commit's message:",
     '    Refute-Reviewed: wf_<runId>        (or, with justification)  Refute-Skip: <reason>',
     'Substitute the real run id: the literal wf_<runId> placeholder is rejected.',
-    'HEAD: git commit --amend. An earlier commit, with no editor at all (POSIX shell / Git Bash):',
+    'HEAD: git commit --amend. An earlier commit: do it in your own worktree (git worktree add), never a',
+    'shared checkout, with no editor at all (POSIX shell / Git Bash):',
+    '    PRE=$(git rev-parse HEAD)                  (pin the tip: ORIG_HEAD is one slot another session can overwrite)',
     `    GIT_EDITOR="git interpret-trailers --in-place --trailer 'Refute-Reviewed: wf_<runId>'" git commit --fixup=reword:<sha>`,
     `    GIT_SEQUENCE_EDITOR=: git rebase -i --rebase-merges --autosquash ${rebaseOnto}${rebaseOnto === base ? '' : `    (merge-base of ${base} and ${head})`}`,
-    '    git diff --exit-code ORIG_HEAD HEAD        (MUST print nothing: a reword changes no content)',
+    '    git diff --exit-code "$PRE" HEAD           (MUST print nothing: a reword changes no content)',
     ...(commits.some((c) => c.merge)
       ? [
           'This range contains a merge commit: --rebase-merges RE-CREATES every merge after the reworded',
           'commit and silently drops its hand edits and conflict resolutions. If the diff above is not',
-          'empty, restore the branch with `git reset --hard ORIG_HEAD` and reword by hand instead.',
+          'empty, restore the branch with `git reset --keep "$PRE"` (never --hard, which also discards',
+          'uncommitted work) and reword by hand instead.',
         ]
       : []),
     `(checked range: ${base} (${baseSha.slice(0, 12)})..${head} (${headSha.slice(0, 12)}), merges read by --remerge-diff + -c)`,

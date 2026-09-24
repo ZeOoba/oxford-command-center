@@ -124,15 +124,24 @@ unattested `src/analytics/conditions.ts` change in its child.
   be read, which no trailer clears.
 - **Valid trailers:** a trailer needs a real value. A bare `Refute-Skip:` or the pasted placeholder
   does not count.
-- **Attesting an earlier commit:** reword it without an editor, in Git Bash:
-  `GIT_EDITOR="git interpret-trailers --in-place --trailer 'Refute-Reviewed: wf_<runId>'" git commit --fixup=reword:<sha>`,
-  then `GIT_SEQUENCE_EDITOR=: git rebase -i --rebase-merges --autosquash <merge-base sha>`. The gate
-  prints the resolved merge-base, because the base ref may have moved by the time you run it.
-  `--rebase-merges` keeps a merge commit in place, where a plain rebase would drop it and replay its
-  conflicts. It does re-create every merge after the reworded commit, though, and it drops their hand
-  edits and conflict resolutions without warning. So finish with `git diff --exit-code ORIG_HEAD HEAD`.
-  A pure reword changes no content, so this must print nothing. If it does print, run
-  `git reset --hard ORIG_HEAD` to restore the branch, then reword by hand.
+- **Attesting an earlier commit:** do this in your **own worktree** (`git worktree add`), never in a
+  shared checkout. The steps, in Git Bash, use no editor:
+  1. `PRE=$(git rev-parse HEAD)`
+  2. `GIT_EDITOR="git interpret-trailers --in-place --trailer 'Refute-Reviewed: wf_<runId>'" git commit --fixup=reword:<sha>`
+  3. `GIT_SEQUENCE_EDITOR=: git rebase -i --rebase-merges --autosquash <merge-base sha>`
+  4. `git diff --exit-code "$PRE" HEAD`
+
+  Notes on each step:
+  - The gate prints the resolved merge-base, because the base ref may have moved by the time you run
+    the recipe.
+  - `--rebase-merges` keeps a merge commit in place, where a plain rebase would drop it and replay its
+    conflicts. But it re-creates every merge after the reworded commit, and it drops their hand edits
+    and conflict resolutions without warning.
+  - A pure reword changes no content, so the final diff must print nothing. If it prints anything,
+    restore the branch with `git reset --keep "$PRE"` and reword by hand.
+  - Pin `PRE` yourself rather than relying on `ORIG_HEAD`, which is one slot per worktree. Another
+    session's `git reset` overwrites it, and the check then passes on a rebase that dropped a hand edit.
+  - Never recover with `reset --hard`, which also discards another session's uncommitted work.
 - **Squash merges:** `main` is squash-merged, so this check runs on the PR branch. CI passes
   `--head=<PR head sha>`, not GitHub's synthetic merge. **The squash commit message must carry the
   union of the branch's trailers** (one line per distinct `Refute-Reviewed`/`Refute-Skip`), because the

@@ -674,11 +674,11 @@
   },
   "blissful-tharp-76b4f3": {
     "agent_role": "Engineering (Claude Code, Opus 5.5) — Gabriel-directed in-turn 2026-09-23",
-    "phase": "Refute gate per-commit attestation: scripts/check-refute-required.ts attributes Refute-Reviewed/Skip trailers per commit (merges via --remerge-diff, octopus via first-parent, fail-closed unreadable commits, shallow/old-git skip) + tests; architecture/coding-standards.md doctrine text; .github/workflows/ci.yml refute-required job passes --head=<PR head sha>.",
+    "phase": "Refute gate per-commit attestation: scripts/check-refute-required.ts attributes Refute-Reviewed/Skip trailers per commit (two-parent merges via --remerge-diff UNION combined diff -c, octopus via first-parent, fail-closed unreadable commits and ranges, shallow/old-git skip, git >= 2.41) + tests; architecture/coding-standards.md doctrine text; .github/workflows/ci.yml refute-required job passes --head=<PR head sha>.",
     "status": "merged",
     "blocked_by": null,
     "review_needed": false,
-    "review_detail": "MERGED via PR #366 (squash). Flipped to merged in the PR's final commit so a later status.json conflict resolver (e.g. PR #364 appending cc-review-fixes after the same anchor) sees it as closed: KEEP BOTH ENTRIES when resolving. Shared-infra single-writer claim per CLAUDE.md §2 for .github/workflows/ci.yml (refute-required job, one run line + its comment). No competing claim present at time of write. Architect edits (coding-standards.md, this file) approved in-turn by Gabriel 2026-09-23. Four adversarial review rounds (Opus 5.5 subagent) plus a five-mandate adversarial merge gate on the pinned PR head; all confirmed findings fixed. Flip to merged post-PR.",
-    "last_updated": "2026-09-24T02:10:00Z"
+    "review_detail": "MERGED via PR #366 (squash). Flipped to merged in the PR's final commit so a later status.json conflict resolver sees it as closed: PRs #364 (cc-review-fixes) and #369 append after the same anchor, so KEEP BOTH ENTRIES when resolving. Shared-infra single-writer claim per CLAUDE.md section 2 for .github/workflows/ci.yml (refute-required job, one run line + its comment); no competing claim at time of write. Architect edits (coding-standards.md, this file) approved in-turn by Gabriel 2026-09-23/24. Four adversarial review rounds (Opus 5.5 subagent) plus three five-mandate adversarial merge-gate rounds on pinned heads; all confirmed findings fixed.",
+    "last_updated": "2026-09-24T14:45:00Z"
   }
 }
