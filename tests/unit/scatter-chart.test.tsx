@@ -19,4 +19,20 @@ describe('ScatterChart', () => {
     expect(container.querySelectorAll('circle')).toHaveLength(2);
     expect(container.querySelector('circle title')?.textContent).toContain('A');
   });
+
+  // I-1: axis labels (xLabel/yLabel) rendered with no labelProps, so visx fell back to its
+  // hardcoded #222 Arial default — invisible on the dark 'command' surface. They must carry the
+  // same theme token every tick label already uses (AXIS_TICK), just with the brighter
+  // text-secondary fill so the label reads as more prominent than its own ticks.
+  it('gives the x/y axis label text the shared theme token fill, not the visx #222 default', () => {
+    const { container } = render(<ScatterChart points={pts} xLabel="Implied cap" yLabel="vs market" xFormat={String} yFormat={String} />);
+    const labelEls = [...container.querySelectorAll('text')].filter(
+      (t) => t.textContent === 'Implied cap' || t.textContent === 'vs market',
+    );
+    expect(labelEls).toHaveLength(2);
+    for (const el of labelEls) {
+      expect(el.getAttribute('fill')).toBe('var(--text-secondary)');
+      expect(el.getAttribute('fill')).not.toBe('#222');
+    }
+  });
 });

@@ -2,7 +2,7 @@
 import { scaleLinear } from '@visx/scale';
 import { AxisBottom, AxisLeft } from '@visx/axis';
 import { Group } from '@visx/group';
-import { AXIS_TICK } from './theme';
+import { AXIS_TICK, AXIS_LABEL } from './theme';
 
 export interface ScatterPoint { id: string; x: number; y: number; label: string; tone?: 'pos' | 'neg' | 'neutral' }
 
@@ -18,7 +18,9 @@ export function scatterDomain(points: ScatterPoint[], pad = 0.1): { x: [number, 
 
 const TONE = { pos: 'var(--color-pos)', neg: 'var(--color-neg)', neutral: 'var(--accent)' } as const;
 const W = 640;
-const M = { top: 12, right: 16, bottom: 36, left: 56 };
+// left widened 56 -> 68 (I-1): the y-axis label needs to clear its own tick labels (e.g.
+// "-275 bps") before it starts, and 56px wasn't enough room for both.
+const M = { top: 12, right: 16, bottom: 40, left: 68 };
 
 export function ScatterChart({ points, xLabel, yLabel, xFormat, yFormat, height = 280, yRef }: {
   points: ScatterPoint[]; xLabel: string; yLabel: string;
@@ -40,9 +42,11 @@ export function ScatterChart({ points, xLabel, yLabel, xFormat, yFormat, height 
           </circle>
         ))}
         <AxisBottom top={height - M.bottom} scale={x} tickFormat={(v) => xFormat(Number(v))} numTicks={5} label={xLabel}
-          stroke="var(--border-subtle)" tickStroke="var(--border-subtle)" tickLabelProps={{ ...AXIS_TICK }} />
+          stroke="var(--border-subtle)" tickStroke="var(--border-subtle)" tickLabelProps={{ ...AXIS_TICK }}
+          labelProps={{ ...AXIS_LABEL }} labelOffset={12} />
         <AxisLeft left={M.left} scale={y} tickFormat={(v) => yFormat(Number(v))} numTicks={5} label={yLabel}
-          stroke="var(--border-subtle)" tickStroke="var(--border-subtle)" tickLabelProps={{ ...AXIS_TICK }} />
+          stroke="var(--border-subtle)" tickStroke="var(--border-subtle)" tickLabelProps={{ ...AXIS_TICK }}
+          labelProps={{ ...AXIS_LABEL }} labelOffset={44} />
       </Group>
     </svg>
   );
