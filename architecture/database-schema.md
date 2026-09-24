@@ -199,6 +199,25 @@ CREATE TABLE IF NOT EXISTS data_quality_issues (
 
 ---
 
+## Insurance tables — two different property keys
+
+The two insurance tables do **not** share a property key. Comparing them directly silently matches nothing.
+
+| Table | `property_id` holds | Source |
+|---|---|---|
+| `property_insurance_policies` (008) | raw **policy-line key**, `ins-<stem>-<line>` (e.g. `ins-9620state350-prop-hfd`). No FK. | policy register import |
+| `insurance_loss_events` (022) | `property_master.id` (FK) | broker loss runs |
+
+Rules:
+- **Resolve policy keys before any join or comparison.** Any join, filter or set-membership test between a policy row and a property_master id (loss events, snapshot properties, alerts) must first resolve the policy key with `resolveInsuranceProperty(key, masterNames).propertyId` (`server/warehouse/insurance-property-map.ts`). The resolver uses an explicit stem table: add a row there when a new insured location appears.
+- **Label-only stems resolve to `propertyId: null`.** A stem with no master row (e.g. `etcpoa`) is label-only. Treat it as covering no property; never fall back to matching the raw key.
+- **Current-term collapse groups on the raw key.** It groups on the raw key + `policy_type`, not the resolved id. One property can therefore carry several concurrent policies (9620 Raytown: Westchester + Hartford BOP), and each keeps its own `policyId`.
+- **Each loss event attaches to exactly one policy at its property.** The order is: `policy_ref` → the covering term → the most recently incepted policy (`server/warehouse/insurance-loss-analysis.ts`).
+
+Getting this wrong has shipped twice: raw keys in the UI (2026-09-23 review), and loss events that never attached plus an insurance-gap alert on every property (PR #380, 2026-09-24).
+
+---
+
 ## Planned Future Tables (do NOT create without architect approval)
 
 | Table | Phase | Purpose |
