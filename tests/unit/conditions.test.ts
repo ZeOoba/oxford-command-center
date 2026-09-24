@@ -246,6 +246,13 @@ describe('evaluateConditions — debt', () => {
     expect(out.find((i) => i.id === 'ltv-p1')?.severity).toBe('warning');
     expect(out.some((i) => i.id === 'ltv-governor-p1')).toBe(false);
   });
+  it('per-property LTV above the 40% aggregate governor is worded as informational, not a breach', () => {
+    const out = evaluateConditions(snap({ properties: [prop({ id: 'p1', name: '1100 Rarig', ltv: 0.457 })] }), opts);
+    const i = out.find((x) => x.id === 'ltv-governor-p1')!;
+    expect(i.severity).toBe('info');
+    expect(i.title).toBe('Property LTV above aggregate target — 1100 Rarig');
+    expect(i.detail).toContain('governor applies to the portfolio aggregate');
+  });
 });
 
 describe('evaluateConditions — leases', () => {
