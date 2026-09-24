@@ -152,7 +152,7 @@ function DebtSummary() {
           value={d.externalDebt}
           format={fmtUsdCompact}
           accentColor="var(--color-warn)"
-          sublabel={`${loans.filter((l) => l.direction === 'borrower').length} loans`}
+          sublabel={`loan schedule · ${loans.filter((l) => l.direction === 'borrower').length} borrower loans`}
         />
         <KpiStat
           label="Weighted Avg Rate"

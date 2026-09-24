@@ -1,4 +1,5 @@
 import type { PortfolioSnapshot, DataQualityFlag } from '../src/contracts/index';
+import { isInvestmentProperty } from '../src/analytics/property-basis';
 import { findDuplicateDealRows, keyDigest } from './sources/deal-name';
 
 
@@ -153,6 +154,46 @@ export function checkStaleLeaseRows(s: Pick<PortfolioSnapshot, 'leases' | 'meta'
   return out;
 }
 
+// Absolute-dollar tolerance for the debt-basis cross-check below. Two independently-typed workbook
+// figures for the same loan can differ by a few dollars of accrual timing; anything past this is a
+// share-basis difference or a loan present in one source and not the other.
+const DEBT_BASIS_TOLERANCE = 1000;
+
+/**
+ * Overview "Total Debt" sums property loanBalance over INVESTMENT rows (Property NOI sheet;
+ * engine.ts portfolioKpis filters through isInvestmentProperty). Capital › Debt "External Debt"
+ * sums borrower-direction loan absBalance (loan schedule; engine.ts debtSummary). They disagreed by
+ * ~$0.7M with no explanation on screen (2026-09-23 review). Surface the gap and name both figures;
+ * do not pick a winner and never touch either total.
+ *
+ * Same basis as the two surfaces it reconciles, by construction: the residence sits outside
+ * Overview Total Debt (ratified 2026-09-23), so its loanBalance is filtered out here too rather
+ * than read as an unexplained gap against the borrower-loan schedule.
+ *
+ * entity is 'debt', deliberately NOT 'reconciliation' — see checkStaleLeaseRows: any
+ * entity==='reconciliation' flag fires the CRITICAL "Reconciliation failure" insight and turns the
+ * Health badge red regardless of severity. This is a warn-level basis note for the Data Quality card.
+ */
+export function checkDebtBasis(s: Pick<PortfolioSnapshot, 'properties' | 'loans'>): DataQualityFlag[] {
+  const propertyDebt = sum((s.properties ?? []).filter(isInvestmentProperty).map((p) => p.loanBalance ?? 0));
+  const external = sum((s.loans ?? []).filter((l) => l.direction === 'borrower').map((l) => l.absBalance ?? 0));
+  // Integer cents: a float left-fold can differ by an ulp with row order, which must not flip the
+  // exact-$1,000 boundary (refute wf_fb49dbb9-c91).
+  const gapCents = Math.round(propertyDebt * 100) - Math.round(external * 100);
+  if (Math.abs(gapCents) <= DEBT_BASIS_TOLERANCE * 100) return [];
+  const usd = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`; // pinned: CI's ICU default may not group
+  return [{
+    entity: 'debt',
+    field: 'debt.basis',
+    issue:
+      `Overview Total Debt (Σ investment-property loan balances, Property NOI sheet) ` +
+      `${usd(propertyDebt)} vs Capital › Debt External Debt (Σ borrower loans, ` +
+      `loan schedule) ${usd(external)} — gap ${usd(Math.abs(gapCents) / 100)} ` +
+      `(share basis or a loan present in one source and not the other)`,
+    severity: 'warn',
+  }];
+}
+
 export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
   const flags: DataQualityFlag[] = [];
   const flag = (field: string, issue: string, severity: DataQualityFlag['severity'] = 'error') =>
@@ -185,6 +226,7 @@ export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
   // date-aware and per-entity companions live in checkCashInvariants (see its doc comment).
   flags.push(...checkCashInvariants(s));
   flags.push(...checkStaleLeaseRows(s));
+  flags.push(...checkDebtBasis(s));
 
   // Derived totals must agree with the workbook's own declared "Portfolio Total" row (per-field:
   // null means the workbook had no such row, e.g. a legacy fixture -- skip rather than false-flag).
