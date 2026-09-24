@@ -181,7 +181,7 @@ export function checkDebtBasis(s: Pick<PortfolioSnapshot, 'properties' | 'loans'
   // exact-$1,000 boundary (refute wf_fb49dbb9-c91).
   const gapCents = Math.round(propertyDebt * 100) - Math.round(external * 100);
   if (Math.abs(gapCents) <= DEBT_BASIS_TOLERANCE * 100) return [];
-  const usd = (n: number) => Math.round(n).toLocaleString('en-US'); // pinned: CI's ICU default may not group
+  const usd = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`; // pinned: CI's ICU default may not group
   return [{
     entity: 'debt',
     field: 'debt.basis',

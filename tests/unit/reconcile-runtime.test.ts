@@ -511,6 +511,6 @@ describe('checkDebtBasis — order-independent at the $1,000 boundary (refute wf
   it('prints en-US grouped figures regardless of the host locale', () => {
     const [f] = checkDebtBasis({ properties: [prop(11_300_000)], loans: [{ direction: 'borrower', absBalance: 10_600_000 }] } as never);
     expect(f!.issue).toContain('11,300,000');
-    expect(f!.issue).toContain('gap 700,000');
+    expect(f!.issue).toContain('gap $700,000');
   });
 });

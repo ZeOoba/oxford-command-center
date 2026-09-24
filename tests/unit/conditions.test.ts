@@ -250,7 +250,7 @@ describe('evaluateConditions — debt', () => {
     const out = evaluateConditions(snap({ properties: [prop({ id: 'p1', name: '1100 Rarig', ltv: 0.457 })] }), opts);
     const i = out.find((x) => x.id === 'ltv-governor-p1')!;
     expect(i.severity).toBe('info');
-    expect(i.title).toBe('Property LTV above aggregate target — 1100 Rarig');
+    expect(i.title).toBe('Property LTV above aggregate governor — 1100 Rarig');
     expect(i.detail).toContain('governor applies to the portfolio aggregate');
   });
 });
