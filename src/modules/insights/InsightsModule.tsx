@@ -131,7 +131,7 @@ export function InsightsModule() {
       <Card>
         <CardHeader title="Insights" trailing={<Badge tone="red">error</Badge>} />
         <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-neg)' }}>
-          Failed to load the portfolio snapshot — Spine-A insights are unavailable.
+          Failed to load the portfolio snapshot — Workbook insights are unavailable.
         </div>
       </Card>
     );

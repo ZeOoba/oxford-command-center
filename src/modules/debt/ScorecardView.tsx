@@ -11,6 +11,7 @@ import { DataTable, type Column } from '@/primitives/DataTable';
 import { fmtPct } from '@analytics/index';
 import { GOVERNOR_FALLBACK } from '@contracts/index';
 import { useSnapshot } from '@/data/queries';
+import { noiBasisLabel } from '@/lib/spine-label';
 import { isWarehouseUnavailable } from '../intel/hooks';
 import { useDebtScores, signalTone, signalLabel, bandTone } from './hooks';
 import type { DebtScore } from './hooks';
@@ -91,7 +92,7 @@ function buildColumns(dscrFloor: number): Column<DebtScore>[] {
   {
     key: 'noiBasis',
     header: 'NOI Period',
-    render: (row) => <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>{row.noiBasis}</span>,
+    render: (row) => <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>{noiBasisLabel(row.noiBasis)}</span>,
     sortValue: (row) => row.noiBasis,
   },
   ];
