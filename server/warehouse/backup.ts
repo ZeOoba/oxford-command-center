@@ -8,10 +8,11 @@
 // installed on this machine (verified 2026-09-17), and a backup that depends on a binary
 // nobody installed is a backup that does not run.
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
-import { readFileSync, writeFileSync, statSync, renameSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, statSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { openWarehouseReadOnly, type WarehouseDb } from './db';
+import { renameSyncWithRetry } from '../lib/rename-retry';
 
 const MAGIC = Buffer.from('ORAB1');
 const IV_BYTES = 12;
@@ -224,7 +225,8 @@ export function writeManifest(backupDir: string, manifest: BackupManifest): void
   const finalPath = join(backupDir, 'manifest.json');
   const tmpPath = `${finalPath}.tmp`;
   writeFileSync(tmpPath, JSON.stringify(manifest, null, 2));
-  renameSync(tmpPath, finalPath); // atomic on the same filesystem
+  // Atomic on the same filesystem; retried on the Windows AV/indexer transient lock -- see lib/rename-retry.
+  renameSyncWithRetry(tmpPath, finalPath);
 }
 
 /** Newest snapshot by filename, or null. The fallback when the manifest is missing or corrupt —

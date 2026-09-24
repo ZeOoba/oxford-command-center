@@ -111,8 +111,9 @@ export function CalendarModule() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiStat label="Critical (<60d)" value={kpis.critical} format={(n) => String(n ?? 0)} accentColor="var(--color-neg)" sublabel="incl. overdue" />
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+        <KpiStat label="Overdue / Holdover" value={kpis.overdue} format={(n) => String(n ?? 0)} accentColor="var(--color-neg)" sublabel="date passed" />
+        <KpiStat label="Critical (<60d)" value={kpis.critical} format={(n) => String(n ?? 0)} accentColor="var(--color-warn)" />
         <KpiStat label="Warning (<180d)" value={kpis.warning} format={(n) => String(n ?? 0)} accentColor="var(--color-warn)" />
         <KpiStat label="This Quarter" value={kpis.thisQuarter} format={(n) => String(n ?? 0)} accentColor="var(--color-info)" sublabel="next 90 days" />
         <KpiStat label="Next 12 Months" value={kpis.next12mo} format={(n) => String(n ?? 0)} accentColor="var(--accent)" />

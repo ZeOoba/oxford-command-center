@@ -392,3 +392,33 @@ describe('PATCH /acq/candidates/:id/status', () => {
     expect(res.status).toBe(400);
   });
 });
+
+// ── GET /acq/intel + /acq/candidates with a HubSpot-sourced row (2026-09-23 review, Task 1) ─
+
+describe('GET /acq/intel + /acq/candidates with a HubSpot-sourced row', () => {
+  function seedHubspotRow(db: WarehouseDb) {
+    db.prepare(`
+      INSERT INTO acq_candidates
+        (id, source, address, county, state, market, rentable_sf, year_built, owner_name, status, content_hash)
+      VALUES (?, 'hubspot-pipeline', ?, NULL, NULL, NULL, NULL, NULL, NULL, 'active', 'h1')
+    `).run('hubspot:123', 'REDACTED-116');
+  }
+
+  it('/acq/intel returns 200 and includes the row', async () => {
+    const db = freshDb();
+    seedHubspotRow(db);
+    const res = await makeApp(db).request('/acq/intel');
+    expect(res.status).toBe(200);
+    const body = AcqIntelResponse.parse(await res.json());
+    expect(body.rankedCandidates.some((c) => c.candidate.id === 'hubspot:123')).toBe(true);
+  });
+
+  it('/acq/candidates returns 200 and includes the row', async () => {
+    const db = freshDb();
+    seedHubspotRow(db);
+    const res = await makeApp(db).request('/acq/candidates');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { candidates: Array<{ id: string; source: string }> };
+    expect(body.candidates.find((c) => c.id === 'hubspot:123')?.source).toBe('hubspot-pipeline');
+  });
+});

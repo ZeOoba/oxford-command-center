@@ -5,7 +5,7 @@
 // public-safe/redacted bake mode must never carry CoStar row-level identifiers into
 // public/warehouse.json regardless of that config value — this is the confidentiality boundary the
 // Fat-Mirror bake (scripts/bake-warehouse.ts) must enforce independent of the router's own config.
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +16,17 @@ import { inProcessResolver, buildWarehouseEnvelope, leaseMarketBakeMode, bakeWar
 import { LeaseMarketSummaryResponse } from '../../src/contracts/lease-market';
 import { WAREHOUSE_SUB_ROUTERS } from '../../server/warehouse/sub-routers';
 import { stubScreen, testConfig, testHeaderMap, writeCostarFixture, type FixtureListing } from './lease-market-fixtures';
+
+// inProcessResolver builds leaseMarketApi() with no injected getSnapshot, so a bake that plans
+// /lease-market/positioning falls back to the live brain singleton. This suite never refreshes it,
+// so the real one always answered null (positioning 503s and the bake drops it). The stub returns
+// the same null without loading the rest of server/brain's graph: the workbook parser, date-fns
+// (304 files) and chokidar. exceljs is already loaded here by the CoStar fixtures. At 100% CPU,
+// a cold import of server/brain measured 13-289s, and date-fns alone ~30s.
+vi.mock('../../server/brain', () => ({
+  brain: { getSnapshot: vi.fn(() => null) },
+}));
+import { brain } from '../../server/brain';
 
 const openDbs: WarehouseDb[] = [];
 const openDirs: string[] = [];
@@ -83,9 +94,13 @@ describe('bake-warehouse — lease-market redacted-bake confidentiality boundary
 
   it('buildWarehouseEnvelope includes /lease-market/* endpoints by default (includeLeaseMarket omitted) — unchanged from Task 14', async () => {
     const db = await seededRatified();
+    vi.mocked(brain.getSnapshot).mockClear();
     const resolver = inProcessResolver(db);
     const env = await buildWarehouseEnvelope(resolver, { now: Date.parse('2026-03-02T00:00:00.000Z'), warehouseSource: 'checkpoint-read' });
     expect(env.endpoints['/api/warehouse/lease-market/summary']).toBeDefined();
+    // Guards that /lease-market/positioning's liveSnapshot() resolves to the stub above; if it
+    // didn't, the real server/brain import (and its load-time cost) would silently come back.
+    expect(brain.getSnapshot).toHaveBeenCalled();
   });
 });
 

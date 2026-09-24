@@ -27,6 +27,7 @@ import { ingestParcelScreenBatch } from './acq-ingest';
 import { syncNotionPipeline } from './acq-notion-sync';
 import { syncHubSpotPipeline } from './acq-hubspot-sync';
 import type { WarehouseDb } from './db';
+import { warehouseJsonError } from './json-errors';
 import { addMappingOverride, approveImport, rejectImport, resolveIssue } from './actions';
 import { getImportDetail, listImports, listIssues, noiMatrix } from './queries';
 import { detectAnomalies } from './anomalies';
@@ -205,6 +206,12 @@ function acqConfig(): { ok: true; ruleset: AcquisitionRuleset; rct: ReplacementC
  */
 export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
   const app = new Hono();
+
+  // An uncaught handler error must reach the client as JSON. This `.onError()` only covers
+  // routes registered directly on THIS app instance; the WAREHOUSE_SUB_ROUTERS are sibling
+  // instances that get the same handler via sub-routers.ts's withJsonErrors — see
+  // json-errors.ts for the shared handler and the why.
+  app.onError(warehouseJsonError);
 
   // Resolve the warehouse per-request behind a guard: a missing sqlite file/dir on the
   // static mirror or a cold environment surfaces as 503, not a 500 or a crashed process.

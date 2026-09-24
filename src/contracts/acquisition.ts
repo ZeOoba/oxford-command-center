@@ -392,7 +392,7 @@ export type AcquisitionScore = z.infer<typeof AcquisitionScore>;
 /** Row shape written to / read from acq_candidates. */
 export const AcqCandidateRow = z.object({
   id: z.string(),
-  source: z.enum(['parcel-screen', 'notion-pipeline', 'manual']),
+  source: z.enum(['parcel-screen', 'notion-pipeline', 'hubspot-pipeline', 'manual']),
   sourceBatchId: z.string().nullable(),
   address: z.string().nullable(),
   county: z.string().nullable(),
