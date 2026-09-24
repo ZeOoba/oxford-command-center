@@ -14,7 +14,7 @@
 // helper below that surfaces it labels it "premium above book median" — never "savings".
 import { useQuery } from '@tanstack/react-query';
 import { fetchParsedOrMirror, QUERY_OPTS } from '../intel/hooks';
-import { InsuranceAnalysisReport } from '@contracts/insurance-analysis';
+import { InsuranceAnalysisReport, PremiumHistoryReport } from '@contracts/insurance-analysis';
 import type { PolicyEconomics, RenewalBucket, BookBenchmark } from '@contracts/insurance-analysis';
 import { InsuranceLossReport } from '@contracts/insurance-loss';
 import type { DeductibleReview } from '@contracts/insurance-loss';
@@ -23,6 +23,7 @@ import type { Tier, TierItem } from '@/primitives/TierBoard';
 
 export const INSURANCE_ANALYSIS_KEY = ['warehouse', 'insurance', 'analysis'] as const;
 export const INSURANCE_LOSS_KEY = ['warehouse', 'insurance', 'loss'] as const;
+export const PREMIUM_HISTORY_KEY = ['warehouse', 'insurance', 'premium-history'] as const;
 
 /**
  * Insurance re-bid analysis report — re-bid candidates, renewal calendar, and the own-book
@@ -33,6 +34,19 @@ export function useInsuranceAnalysis() {
   return useQuery({
     queryKey: INSURANCE_ANALYSIS_KEY,
     queryFn: () => fetchParsedOrMirror('/api/warehouse/insurance/analysis', InsuranceAnalysisReport),
+    ...QUERY_OPTS,
+  });
+}
+
+/**
+ * Per-line premium terms + policy-year totals (Task 24's GET .../insurance/analysis/history).
+ * Same degrade-gracefully policy as useInsuranceAnalysis: WarehouseUnavailableError on the
+ * static mirror → PremiumHistoryCard renders its offline state instead of throwing.
+ */
+export function usePremiumHistory() {
+  return useQuery({
+    queryKey: PREMIUM_HISTORY_KEY,
+    queryFn: () => fetchParsedOrMirror('/api/warehouse/insurance/analysis/history', PremiumHistoryReport),
     ...QUERY_OPTS,
   });
 }
