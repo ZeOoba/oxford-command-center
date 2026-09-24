@@ -131,7 +131,7 @@ export function InsightsModule() {
       <Card>
         <CardHeader title="Insights" trailing={<Badge tone="red">error</Badge>} />
         <div className="px-4 py-6 text-sm" style={{ color: 'var(--text-neg)' }}>
-          Failed to load the portfolio snapshot — Spine-A insights are unavailable.
+          Failed to load the portfolio snapshot — Workbook insights are unavailable.
         </div>
       </Card>
     );
@@ -157,7 +157,7 @@ export function InsightsModule() {
 
         {warehouseUnavailable && (
           <div className="px-4 pb-3 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-            Warehouse candidates unavailable on this deployment — showing Spine A insights only.
+            Warehouse candidates unavailable on this deployment — showing workbook-based insights only.
           </div>
         )}
         {warehouseErrored && (
@@ -169,7 +169,7 @@ export function InsightsModule() {
         )}
         {supersededCount > 0 && (
           <div className="px-4 pb-3 text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-            {supersededCount} Spine A insight{supersededCount === 1 ? '' : 's'} superseded by a richer warehouse
+            {supersededCount} workbook insight{supersededCount === 1 ? '' : 's'} superseded by a richer ledger
             candidate.
           </div>
         )}

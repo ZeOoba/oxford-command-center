@@ -394,7 +394,7 @@ export function CapitalModule() {
       {/* Cap-rate methodology footnote */}
       <div className="px-1 pb-1">
         <p className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-          Implied cap = Spine-A NOI ÷ Oxford-share workbook value; “vs Mkt” and Cap Band compare
+          Implied cap = workbook NOI ÷ Oxford-share workbook value; “vs Mkt” and Cap Band compare
           against external market benchmarks
           {!bench || !bench.available || bench.source === 'unavailable'
             ? ' (benchmarks unavailable — cap columns blank).'

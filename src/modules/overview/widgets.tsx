@@ -10,6 +10,7 @@ import { BarChart } from '@/charts/BarChart';
 import { BarList } from '@/charts/BarList';
 import { AreaChart } from '@/charts/AreaChart';
 import { TierBoard, type Tier, type TierItem, type TierTotal } from '@/primitives/TierBoard';
+import { spineLabel } from '@/lib/spine-label';
 import { useWarehouseInsights } from '../insights/hooks';
 import { mergeInsightSources, buildSummary, buildTiers, totalsBySpine, type MergedInsight } from '../insights/insights.logic';
 
@@ -204,7 +205,7 @@ function buildPriorityActionsTier(merged: MergedInsight[], limit: number): Tier 
     impactKind: m.severity === 'info' ? 'info' : 'risk',
     title: m.title,
     detail: m.detail,
-    chips: [m.spine === 'A' ? 'Spine A' : m.spine === 'B' ? 'Spine B' : 'Cross-spine'],
+    chips: [spineLabel(m.spine)],
   }));
   return {
     key: 'priority-actions',

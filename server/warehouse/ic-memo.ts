@@ -341,13 +341,13 @@ function renderMethodology(portfolio: PortfolioAllocation): string {
       alongside debt signal, health band, attention band, and leasing forecast inputs.
     </p>
     <p>
-      Confidence (0–100%) reflects data completeness: confirmed = live Spine-A/B signals;
+      Confidence (0–100%) reflects data completeness: confirmed = live workbook and ledger signals;
       estimated = partial data; derived = model extrapolation. Em-dash (${DASH}) denotes
       an unavailable value — never zero-substituted.
     </p>
     <p>
-      All NOI figures are <strong>Spine A</strong> (ownership layer, from the master workbook
-      snapshot). They are <strong>not</strong> comparable with Spine-B warehouse-ledger analytics
+      All NOI figures are <strong>workbook basis</strong> (ownership layer, from the master workbook
+      snapshot). They are <strong>not</strong> comparable with ledger (warehouse) analytics
       and must never be aggregated against them without explicit basis-matching.
     </p>
     <p class="ic-note">Generated ${esc(portfolio.asOf)} from the Capital Allocation engine

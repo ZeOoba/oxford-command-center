@@ -22,6 +22,20 @@ const TEXT_COLOR: Record<Freshness['kind'], string> = {
   connecting: 'var(--text-tertiary)',
 };
 
+// Whether the detail ("baked 6h ago" / "updated 12s ago") stays inline at EVERY width. A bake age on
+// a static/stale mirror, or an offline state, is actionable — the reader needs it without hovering.
+// A healthy live/refreshing/connecting feed's detail is reassurance, so below 2xl it compacts to
+// screen-reader-only (never display:none, which left the 1280–1535px laptop band with a bare
+// "LIVE"/"STALE" and the age in a tooltip on a non-focusable div — 2026-09-23 review I-3).
+const DETAIL_ALWAYS_INLINE: Record<Freshness['kind'], boolean> = {
+  live: false,
+  refreshing: false,
+  connecting: false,
+  static: true,
+  stale: true,
+  offline: true,
+};
+
 export function StatusPill() {
   const { state } = useBrain();
   const f = computeFreshness(state, useNow());
@@ -53,7 +67,14 @@ export function StatusPill() {
       <span className="font-semibold uppercase" style={{ letterSpacing: '0.1em', color: textColor }}>
         {f.label}
       </span>
-      {f.detail && <span style={{ color: 'var(--text-tertiary)' }}>· {f.detail}</span>}
+      {f.detail && (
+        <span
+          className={DETAIL_ALWAYS_INLINE[f.kind] ? 'inline' : 'sr-only 2xl:not-sr-only 2xl:inline'}
+          style={{ color: 'var(--text-tertiary)' }}
+        >
+          · {f.detail}
+        </span>
+      )}
     </div>
   );
 }

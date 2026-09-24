@@ -35,6 +35,7 @@ import {
 } from '../../src/contracts/insurance-analysis';
 import { CalibrationVerdictSchema, type CalibrationVerdict } from '../../src/contracts/warehouse';
 import { logVerdicts, type LogVerdictsResult } from './calibration';
+import { resolveInsuranceProperty } from './insurance-property-map';
 
 // ── named thresholds (no bare literals in comparisons) ────────────────────────────────────────
 const MIN_COHORT_N = 5;
@@ -386,6 +387,12 @@ export function buildInsuranceAnalysis(db: WarehouseDb, asOf: string): Insurance
     )
     .all() as RawPolicyRow[];
 
+  const masterNames = new Map(
+    (db.prepare('SELECT id, name FROM property_master').all() as Array<{ id: string; name: string }>).map(
+      (r) => [r.id, r.name],
+    ),
+  );
+
   const deduped = collapseToCurrentTerm(dedupeLatest(raw));
 
   // Pass 1: everything EXCEPT excessPremiumVsMedian, which needs the benchmark computed first.
@@ -430,9 +437,25 @@ export function buildInsuranceAnalysis(db: WarehouseDb, asOf: string): Insurance
       }
     }
     const { bucket, daysToExpiry } = computeRenewal(r.expiration_date, asOf);
+    // DISPLAY ONLY: `property` is the human-readable name — a joined property_master name
+    // (non-empty) when property_id already IS a master id; otherwise the policy-line key
+    // ('ins-<stem>-<line>') resolves once via the stem map (pure lookup). An empty-string master
+    // name is treated as missing so a blank never renders.
+    //
+    // `propertyId` deliberately stays the RAW policy key. It is a financial join key, not a
+    // display field: insurance-loss-analysis.ts attaches loss events to policies on it and
+    // calibration keys rebid verdicts on it. Resolving it to the master id collapses concurrently
+    // in-force property policies at one property (9620 Raytown carries two) onto a single id,
+    // which makes the self-insure "primary" pick order-dependent and mis-splits the deductible.
+    // Resolving propertyId needs policy-term / policy_ref-aware loss attachment first — a
+    // separate follow-up. Until then downstream consumers see the same keys as before this file
+    // learned to resolve names.
+    const property = r.property_name
+      ? r.property_name
+      : resolveInsuranceProperty(r.property_id, masterNames).name;
     return {
       policyId: String(r.id),
-      property: r.property_name ?? r.property_id,
+      property,
       propertyId: r.property_id,
       carrier: r.insurer,
       policyType: r.policy_type,

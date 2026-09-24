@@ -11,6 +11,7 @@ import { DataTable, type Column } from '@/primitives/DataTable';
 import { fmtPct } from '@analytics/index';
 import { GOVERNOR_FALLBACK } from '@contracts/index';
 import { useSnapshot } from '@/data/queries';
+import { noiBasisLabel } from '@/lib/spine-label';
 import { isWarehouseUnavailable } from '../intel/hooks';
 import { useDebtScores, signalTone, signalLabel, bandTone } from './hooks';
 import type { DebtScore } from './hooks';
@@ -91,7 +92,7 @@ function buildColumns(dscrFloor: number): Column<DebtScore>[] {
   {
     key: 'noiBasis',
     header: 'NOI Period',
-    render: (row) => <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>{row.noiBasis}</span>,
+    render: (row) => <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>{noiBasisLabel(row.noiBasis)}</span>,
     sortValue: (row) => row.noiBasis,
   },
   ];
@@ -114,7 +115,7 @@ export function ScorecardView() {
             Debt scoring requires the live brain server.
           </div>
           <div className="text-2xs" style={{ color: 'var(--text-tertiary)', maxWidth: 420 }}>
-            Scores are computed from the warehouse ledger + Spine A loan snapshot. This deployed
+            Scores are computed from the warehouse ledger + workbook loan snapshot. This deployed
             mirror does not include the live warehouse.
           </div>
         </div>

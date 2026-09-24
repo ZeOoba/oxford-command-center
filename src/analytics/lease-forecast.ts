@@ -288,7 +288,7 @@ export function rentForecast(
   });
   const expiringRentInHorizon = expiringLeases.reduce((s, l) => s + l.annualRent, 0);
 
-  assumptions.push(`Basis: Spine A rent roll (workbook contractual rents)`);
+  assumptions.push(`Basis: workbook rent roll (contractual rents)`);
   assumptions.push(`Horizon: ${horizonMonths} months from ${asOf}`);
   assumptions.push(`Expiring leases in horizon: ${expiringLeases.length} leases, ${expiringRentInHorizon.toFixed(0)} annual rent`);
 
