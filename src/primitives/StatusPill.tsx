@@ -53,7 +53,7 @@ export function StatusPill() {
       <span className="font-semibold uppercase" style={{ letterSpacing: '0.1em', color: textColor }}>
         {f.label}
       </span>
-      {f.detail && <span style={{ color: 'var(--text-tertiary)' }}>· {f.detail}</span>}
+      {f.detail && <span className="hidden 2xl:inline" style={{ color: 'var(--text-tertiary)' }}>· {f.detail}</span>}
     </div>
   );
 }
