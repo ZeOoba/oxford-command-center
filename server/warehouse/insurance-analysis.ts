@@ -437,18 +437,26 @@ export function buildInsuranceAnalysis(db: WarehouseDb, asOf: string): Insurance
       }
     }
     const { bucket, daysToExpiry } = computeRenewal(r.expiration_date, asOf);
-    // ONE predicate decides both display fields: a joined property_master name (non-empty) means
-    // property_id already IS the master id; otherwise resolve the policy-line key once via the
-    // stem map (pure lookup). `?? r.property_id` keeps the raw key for non-'ins-' ids and for
-    // label-only stems, which have no master row to point at. An empty-string master name is
-    // treated as missing on BOTH fields — never a blank name paired with a resolved id.
-    const resolved = r.property_name
-      ? { propertyId: r.property_id, name: r.property_name }
-      : resolveInsuranceProperty(r.property_id, masterNames);
+    // DISPLAY ONLY: `property` is the human-readable name — a joined property_master name
+    // (non-empty) when property_id already IS a master id; otherwise the policy-line key
+    // ('ins-<stem>-<line>') resolves once via the stem map (pure lookup). An empty-string master
+    // name is treated as missing so a blank never renders.
+    //
+    // `propertyId` deliberately stays the RAW policy key. It is a financial join key, not a
+    // display field: insurance-loss-analysis.ts attaches loss events to policies on it and
+    // calibration keys rebid verdicts on it. Resolving it to the master id collapses concurrently
+    // in-force property policies at one property (9620 Raytown carries two) onto a single id,
+    // which makes the self-insure "primary" pick order-dependent and mis-splits the deductible.
+    // Resolving propertyId needs policy-term / policy_ref-aware loss attachment first — a
+    // separate follow-up. Until then downstream consumers see the same keys as before this file
+    // learned to resolve names.
+    const property = r.property_name
+      ? r.property_name
+      : resolveInsuranceProperty(r.property_id, masterNames).name;
     return {
       policyId: String(r.id),
-      property: resolved.name,
-      propertyId: resolved.propertyId ?? r.property_id,
+      property,
+      propertyId: r.property_id,
       carrier: r.insurer,
       policyType: r.policy_type,
       premium,
