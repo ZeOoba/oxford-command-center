@@ -35,6 +35,7 @@ import {
 } from '../../src/contracts/insurance-analysis';
 import { CalibrationVerdictSchema, type CalibrationVerdict } from '../../src/contracts/warehouse';
 import { logVerdicts, type LogVerdictsResult } from './calibration';
+import { resolveInsuranceProperty } from './insurance-property-map';
 
 // ── named thresholds (no bare literals in comparisons) ────────────────────────────────────────
 const MIN_COHORT_N = 5;
@@ -386,6 +387,12 @@ export function buildInsuranceAnalysis(db: WarehouseDb, asOf: string): Insurance
     )
     .all() as RawPolicyRow[];
 
+  const masterNames = new Map(
+    (db.prepare('SELECT id, name FROM property_master').all() as Array<{ id: string; name: string }>).map(
+      (r) => [r.id, r.name],
+    ),
+  );
+
   const deduped = collapseToCurrentTerm(dedupeLatest(raw));
 
   // Pass 1: everything EXCEPT excessPremiumVsMedian, which needs the benchmark computed first.
@@ -432,8 +439,8 @@ export function buildInsuranceAnalysis(db: WarehouseDb, asOf: string): Insurance
     const { bucket, daysToExpiry } = computeRenewal(r.expiration_date, asOf);
     return {
       policyId: String(r.id),
-      property: r.property_name ?? r.property_id,
-      propertyId: r.property_id,
+      property: r.property_name ?? resolveInsuranceProperty(r.property_id, masterNames).name,
+      propertyId: r.property_name ? r.property_id : (resolveInsuranceProperty(r.property_id, masterNames).propertyId ?? r.property_id),
       carrier: r.insurer,
       policyType: r.policy_type,
       premium,
