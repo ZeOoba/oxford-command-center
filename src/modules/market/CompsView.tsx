@@ -24,6 +24,8 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
 import { DataTable, type Column } from '@/primitives/DataTable';
+import { ScatterChart } from '@/charts/ScatterChart';
+import { saleCompPoints } from '../capital/cap-rate-scatter';
 
 // ── pure helpers (module scope — no derivation logic in component bodies) ──────────────────
 
@@ -166,6 +168,7 @@ function DealComps({ row }: { row: DealCompRow }) {
   const indexedSales = indexRows(compSet.saleComps, `${dealId}-sale`);
   const indexedRents = indexRows(compSet.rentComps, `${dealId}-rent`);
   const sourceCount = compSourceCount(compSet);
+  const salePoints = saleCompPoints(compSet.saleComps);
 
   return (
     <Card>
@@ -189,6 +192,17 @@ function DealComps({ row }: { row: DealCompRow }) {
           <div className="mb-1.5 text-2xs font-semibold uppercase" style={{ letterSpacing: '0.08em', color: 'var(--text-tertiary)' }}>
             Sale Comps ({compSet.saleComps.length})
           </div>
+          {salePoints.length >= 2 && (
+            <div className="mb-3">
+              <ScatterChart
+                points={salePoints}
+                xLabel="$/SF"
+                yLabel="Cap rate"
+                xFormat={(n) => `$${Math.round(n)}`}
+                yFormat={(n) => `${(n * 100).toFixed(1)}%`}
+              />
+            </div>
+          )}
           {indexedSales.length === 0 ? (
             <div className="text-xs" style={{ color: 'var(--text-tertiary)' }}>No sale comps captured.</div>
           ) : (

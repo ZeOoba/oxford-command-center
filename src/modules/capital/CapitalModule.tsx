@@ -43,6 +43,8 @@ import { useCapitalAllocation, actionLabel, actionColor, actionFillColor } from 
 import { AllocationCard } from './AllocationCard';
 import { HurdleRateBanner } from './HurdleRateBanner';
 import { CAPITAL_TABS, CAPITAL_TAB_KEYS, CAPITAL_ALLOCATION_TABS, type CapitalTab } from './tabs';
+import { ScatterChart } from '@/charts/ScatterChart';
+import { allocationCapPoints } from './cap-rate-scatter';
 
 const DebtModule = lazy(() => import('../debt/DebtModule').then((m) => ({ default: m.DebtModule })));
 const CashModule = lazy(() => import('../cash/CashModule').then((m) => ({ default: m.CashModule })));
@@ -312,6 +314,7 @@ export function CapitalModule() {
   const reportUsable = !reportLoading && !reportError && report ? report : null;
   const capEntries = reportUsable?.entries ?? [];
   const bench = reportUsable?.marketBenchmarks;
+  const capScatterPoints = allocationCapPoints(capEntries);
 
   return (
     <div className="flex flex-col gap-4">
@@ -338,6 +341,23 @@ export function CapitalModule() {
           ))
         )}
       </div>
+
+      {/* Cap-rate positioning scatter — display-only plot of the same capEntries rows below.
+          Gated on >= 2 plottable points (I-5), matching the Comps scatter's own convention
+          (CompsView.tsx) — a single point has no "positioning" to show. */}
+      {capScatterPoints.length >= 2 && (
+        <Card>
+          <CardHeader title="Cap-rate positioning" />
+          <ScatterChart
+            points={capScatterPoints}
+            xLabel="Implied cap"
+            yLabel="vs market"
+            xFormat={(n) => `${(n * 100).toFixed(1)}%`}
+            yFormat={fmtCapRateGap}
+            yRef={0}
+          />
+        </Card>
+      )}
 
       {/* Market Cap-Rate Positioning — folded in from CapitalAllocationModule.tsx */}
       <Card>

@@ -23,7 +23,7 @@ import type * as Queries from '../../src/data/queries';
 // The badge itself is covered in lease-forecast-module.test.tsx.
 vi.mock('../../src/data/queries', async (importOriginal) => {
   const actual = await importOriginal<typeof Queries>();
-  return { ...actual, useAnalytics: () => ({ isLoading: false, isError: false, analytics: { criticalDates: [] } }) };
+  return { ...actual, useAnalytics: () => ({ isLoading: false, isError: false, analytics: { criticalDates: [], rollover: [] } }) };
 });
 vi.mock('../../src/modules/leases/LeasesModule', () => ({ LeasesModule: () => <div>leases-panel</div> }));
 vi.mock('../../src/modules/tenants/TenantsModule', () => ({ TenantsModule: () => <div>tenants-panel</div> }));
@@ -70,6 +70,9 @@ const BUCKET = '0–6 Months';
 
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+  // Rollover tab now mounts RolloverChart (BarChart), which measures via ResizeObserver —
+  // jsdom has no native implementation (house pattern, see tests/unit/market-tabs.test.tsx).
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 });
 afterEach(() => {
   cleanup();

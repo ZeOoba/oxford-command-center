@@ -9,7 +9,7 @@ import Database from 'better-sqlite3';
 import { describe, expect, it } from 'vitest';
 import { runMigrations } from '../../server/warehouse/migrate';
 import type { WarehouseDb } from '../../server/warehouse/db';
-import { buildInsuranceAnalysis, logRebidVerdicts } from '../../server/warehouse/insurance-analysis';
+import { buildInsuranceAnalysis, collapseSameTermReissues, collapseToCurrentTerm, logRebidVerdicts, type CollapsibleInsuranceRow } from '../../server/warehouse/insurance-analysis';
 import { InsuranceAnalysisReport } from '../../src/contracts/insurance-analysis';
 
 const AS_OF = '2026-07-06';
@@ -1006,5 +1006,53 @@ describe('buildInsuranceAnalysis — policy-line keys resolve the DISPLAY name o
     expect(report.renewalCalendar.filter((p) => p.property === '9620 E State Route 350, Raytown MO')).toHaveLength(2);
     expect(report.renewalCalendar.find((p) => p.propertyId === 'p-plain-master')?.property).toBe('Plain Master Property');
     expect(report.renewalCalendar.find((p) => p.propertyId === 'p-no-master')?.property).toBe('p-no-master');
+  });
+});
+
+// ── collapseSameTermReissues — the same-term-ONLY reduction (2026-09-23 review, Task 24) ──────
+//
+// Shared with insurance-history.ts, which needs the engine's SAME-TERM REISSUE rule (shape b) and
+// winner pick but must NOT collapse sequential rollovers (shape a) — those ARE the history.
+describe('collapseSameTermReissues — same-term reissues only, rollovers and distinct terms survive', () => {
+  type R = CollapsibleInsuranceRow & { premium: number };
+  const r = (id: number, eff: string | null, exp: string | null, source: string, premium: number, extra: Partial<R> = {}): R => ({
+    id, property_id: 'ins-9620state350-gl', policy_number: `P-${id}`, effective_date: eff,
+    expiration_date: exp, policy_type: 'GL', source_date: source, premium, ...extra,
+  });
+
+  it('keeps the most recently CAPTURED row of an identical eff/exp pair (live 9620 State 350 shape)', () => {
+    const out = collapseSameTermReissues([
+      r(1, '2025-10-18', '2026-10-18', '2025-11-03', 2628),
+      r(2, '2025-10-18', '2026-10-18', '2026-02-10', 2576),
+    ]);
+    expect(out.map((x) => x.premium)).toEqual([2576]);
+  });
+
+  it('does NOT collapse a sequential rollover (old.exp === new.eff) or a shared policy_number across terms', () => {
+    const out = collapseSameTermReissues([
+      r(1, '2024-10-18', '2025-10-18', '2025-11-03', 2500),
+      r(2, '2025-10-18', '2026-10-18', '2026-02-10', 2576, { policy_number: 'P-1' }),
+    ]);
+    expect(out.map((x) => x.id).sort()).toEqual([1, 2]);
+  });
+
+  it('same effective_date but different expiration_date is two terms; undated rows pass through; other lines untouched', () => {
+    const out = collapseSameTermReissues([
+      r(1, '2025-01-01', '2025-07-01', '2026-01-01', 100),
+      r(2, '2025-01-01', '2026-01-01', '2026-01-01', 250),
+      r(3, null, null, '2026-01-01', 5),
+      r(4, '2025-01-01', '2026-01-01', '2026-01-01', 999, { property_id: 'ins-other-gl' }),
+    ]);
+    expect(out.map((x) => x.id).sort()).toEqual([1, 2, 3, 4]);
+  });
+
+  it('agrees with collapseToCurrentTerm on the winner when a group holds ONLY same-term rows (equal source_date → higher id)', () => {
+    const rows = [
+      r(1, '2025-10-18', '2026-10-18', '2026-01-01', 2628),
+      r(2, '2025-10-18', '2026-10-18', '2026-01-01', 2576),
+      r(3, '2025-10-18', '2026-10-18', '2025-06-01', 2700), // older capture, must lose
+    ];
+    expect(collapseSameTermReissues(rows).map((x) => x.id)).toEqual([2]);
+    expect(collapseToCurrentTerm(rows).map((x) => x.id)).toEqual([2]);
   });
 });

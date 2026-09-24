@@ -21,6 +21,9 @@ import { lazy, Suspense, useState, useRef } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, TrendingUp, TrendingDown, Pencil } from 'lucide-react';
 import { useLeaseForecast, BUCKET_DISPLAY_ORDER } from './hooks';
+import { RolloverChart } from './RolloverChart';
+import { forecastBridge } from './forecast-bridge';
+import { Waterfall } from '@/charts/Waterfall';
 import { isWarehouseUnavailable, WAREHOUSE_KEYS } from '../intel/hooks';
 import { useSnapshot, SNAPSHOT_KEY } from '@/data/queries';
 import { saveMarketRent } from '@/data/actions';
@@ -447,6 +450,19 @@ export function LeaseForecastModule() {
                     </div>
                   </div>
                 </div>
+                {/* Rent bridge: in-place → rolling off → re-leased → projected (closes by construction) */}
+                {(() => { const b = forecastBridge(forecast); return (
+                  <Waterfall
+                    startValue={b.startValue}
+                    drivers={b.drivers}
+                    endValue={b.endValue}
+                    startLabel="In-place"
+                    endLabel="Projected"
+                    height={220}
+                    ariaLabel="Rent bridge waterfall"
+                    title="Rent bridge: in-place to projected"
+                  />
+                ); })()}
                 {forecast.assumptions.length > 0 && (
                   <ul className="mt-1 flex flex-col gap-0.5">
                     {forecast.assumptions.map((a, i) => (
@@ -533,22 +549,25 @@ export function LeaseForecastModule() {
       {/* Section C — Leasing Velocity */}
       <TabPanel id="rollover">
       {forecastOffline ? offlineCard : (
-        <Card>
-          <CardHeader title="Leasing Velocity" />
-          {velocity.length === 0 ? (
-            <div className="px-4 py-8 text-center text-2xs" style={{ color: 'var(--text-tertiary)' }}>
-              No leasing event history yet — populate lease_events to enable velocity tracking.
-            </div>
-          ) : (
-            <DataTable
-              columns={velocityCols}
-              rows={velocity}
-              getRowId={(v) => v.propertyId}
-              initialSort={{ key: 'median', dir: 'asc' }}
-              maxHeight={360}
-            />
-          )}
-        </Card>
+        <div className="flex flex-col gap-4">
+          <RolloverChart height={260} />
+          <Card>
+            <CardHeader title="Leasing Velocity" />
+            {velocity.length === 0 ? (
+              <div className="px-4 py-8 text-center text-2xs" style={{ color: 'var(--text-tertiary)' }}>
+                No leasing event history yet — populate lease_events to enable velocity tracking.
+              </div>
+            ) : (
+              <DataTable
+                columns={velocityCols}
+                rows={velocity}
+                getRowId={(v) => v.propertyId}
+                initialSort={{ key: 'median', dir: 'asc' }}
+                maxHeight={360}
+              />
+            )}
+          </Card>
+        </div>
       )}
       </TabPanel>
 

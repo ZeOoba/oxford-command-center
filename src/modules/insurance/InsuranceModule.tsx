@@ -12,6 +12,7 @@ import type { InsurancePolicy, InsuranceStatus } from '@contracts/index';
 import { useInsuranceAnalysis, computeInsuranceKpis, fmtRatePer100 } from './hooks';
 import { SavingsBoard } from './SavingsBoard';
 import { SelfInsureView } from './SelfInsureView';
+import { PremiumHistoryCard } from './PremiumHistoryCard';
 
 const tone = (s: InsuranceStatus): BadgeTone =>
   s === 'Expired' || s === 'Cancelled' ? 'red' : s === 'Renew Now' || s === 'Renewing Soon' ? 'amber' : s === 'Current' ? 'green' : 'neutral';
@@ -65,10 +66,13 @@ function PolicyRegisterView() {
   const pol = data.snapshot.insurance;
 
   return (
-    <Card>
-      <CardHeader title="Policy Tracker" trailing={<Badge tone="gold">{pol.length} policies</Badge>} />
-      <DataTable columns={cols} rows={pol} getRowId={(p) => p.id} onRowClick={(p) => ui.openEntity({ type: 'insurance', id: p.id })} initialSort={{ key: 'days', dir: 'asc' }} maxHeight={520} />
-    </Card>
+    <div className="flex flex-col gap-4">
+      <PremiumHistoryCard />
+      <Card>
+        <CardHeader title="Policy Tracker" trailing={<Badge tone="gold">{pol.length} policies</Badge>} />
+        <DataTable columns={cols} rows={pol} getRowId={(p) => p.id} onRowClick={(p) => ui.openEntity({ type: 'insurance', id: p.id })} initialSort={{ key: 'days', dir: 'asc' }} maxHeight={520} />
+      </Card>
+    </div>
   );
 }
 

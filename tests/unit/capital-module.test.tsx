@@ -235,8 +235,9 @@ describe('CapitalModule — market cap-rate positioning (folded in from CapitalA
   it('renders impliedCapRate / capRateGap / capRatePercentile for a scored property', () => {
     renderModule();
     expect(screen.getByText('Market Cap-Rate Positioning')).toBeTruthy();
-    // impliedCapRate 0.072 → "7.2%"
-    expect(screen.getByText('7.2%')).toBeTruthy();
+    // impliedCapRate 0.072 → "7.2%" — the new cap-rate scatter's axis ticks can render the same
+    // formatted string, so assert presence (>=1) rather than a single unique match.
+    expect(screen.getAllByText('7.2%').length).toBeGreaterThanOrEqual(1);
     // capRateGap 0.008 → "+80 bps"
     expect(screen.getByText('+80 bps')).toBeTruthy();
     // capRatePercentile 'top' → Badge "Above mkt"
@@ -253,6 +254,31 @@ describe('CapitalModule — market cap-rate positioning (folded in from CapitalA
   it('shows a live cap-benchmark provenance badge when marketBenchmarks.source is fred', () => {
     renderModule();
     expect(screen.getByText('Cap benchmarks: live')).toBeTruthy();
+  });
+});
+
+describe('CapitalModule — cap-rate positioning scatter (I-5 gating, Minors yFormat)', () => {
+  it('hides the scatter card when fewer than 2 properties have both cap-rate fields (matches the Comps convention)', () => {
+    // Fixture default: only prop-1 has non-null impliedCapRate/capRateGap; prop-2 is null-out.
+    renderModule();
+    expect(screen.queryByText('Cap-rate positioning')).toBeNull();
+  });
+
+  it('shows the scatter card, with a "+" signed bps tooltip matching the table (fmtCapRateGap), once >= 2 properties qualify', () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
+    qc.setQueryData(['warehouse', 'capital', 'allocation'], allocationResponse());
+    const report = capitalAllocationReport();
+    qc.setQueryData(['warehouse', 'capital-allocation', 'report'], {
+      ...report,
+      entries: [report.entries[0]!, { ...report.entries[0]!, propertyId: 'prop-3', propertyName: 'Prop Three' }],
+    });
+    const { container } = renderModule('/capital', qc);
+    expect(screen.getByText('Cap-rate positioning')).toBeTruthy();
+    // capRateGap 0.008 -> table renders "+80 bps"; the scatter's per-point tooltip previously
+    // formatted the same value as "80 bps" (no sign) via its own ad hoc formatter.
+    const titles = [...container.querySelectorAll('circle title')].map((t) => t.textContent ?? '');
+    expect(titles.some((t) => t.includes('+80 bps'))).toBe(true);
+    expect(titles.some((t) => t.includes('80 bps') && !t.includes('+80 bps'))).toBe(false);
   });
 });
 
@@ -412,7 +438,8 @@ describe('CapitalModule — Allocation / Pipeline tab structure', () => {
     renderModule();
     // Verdict card (AllocationCard) and the cap-rate table row for the same property are co-resident.
     expect(screen.getByText('Market Cap-Rate Positioning')).toBeTruthy();
-    expect(screen.getByText('7.2%')).toBeTruthy();
+    // The cap-rate scatter's axis ticks can render the same formatted string as the table cell.
+    expect(screen.getAllByText('7.2%').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Prop One').length).toBeGreaterThanOrEqual(2);
   });
 
