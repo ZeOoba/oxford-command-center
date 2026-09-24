@@ -20,6 +20,16 @@
 // The existing Phase C determinism test (tests/unit/briefing.test.ts:243) compares extracted
 // TEXT for exactly this reason; this test follows that established, sound pattern. Content/text
 // identity is the correct expression of the spec's byte-identical non-regression intent.
+//
+// Render-once fixtures (2026-09-24): each subject has four distinct documents (no-arg, null,
+// undefined, and a real narrative). Every one is rendered and text-extracted at most once per file
+// and shared by the tests that assert on it (see render() / text() below). The tests used to
+// re-render the same documents: 18 renders and 13 extractions, now 8 and 8. A render costs
+// ~150-300ms CPU, but in a loaded `npm run gate` its wall time ran 40-300x that during
+// CPU-starvation bursts. That timed out "does not throw when narrative is provided (manager)" at
+// 60s on 2026-09-24, one render away from the previous test's identical call. Each fixture is
+// built lazily, so any single test still works alone (e.g. under `-t`). A renderer throw rejects
+// the memoized promise and fails every test that uses it.
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -89,142 +99,103 @@ const NARRATIVE: NarrativeBlock = {
   model: DEFAULT_MODEL,
 };
 
-// ── Content-identical non-regression — property ──────────────────────────────────────────────
+// ── Shared, lazily-built fixtures (read-only: nothing below writes to the warehouse) ─────────────
 
-describe('renderBriefingPdf — property model content-identical invariant (narrative absent)', () => {
-  it(
-    'extracted text is identical for no-arg, null, and undefined narrative',
-    async () => {
-      const db = seededDb();
-      const model = PropertyBriefingModel.parse(composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN }));
-      const noArg = (await pdfParse(await renderBriefingPdf(model))).text;
-      const nullArg = (await pdfParse(await renderBriefingPdf(model, null))).text;
-      const undefinedArg = (await pdfParse(await renderBriefingPdf(model, undefined))).text;
-      expect(noArg).toBe(nullArg);
-      expect(noArg).toBe(undefinedArg);
-    },
-  );
+type Subject = 'property' | 'manager';
+/** How the narrative argument is passed: omitted, explicit null, explicit undefined, or NARRATIVE. */
+type Variant = 'no-arg' | 'null' | 'undefined' | 'narrative';
 
-  it(
-    'the narrative section does not appear when narrative is absent',
-    async () => {
-      const db = seededDb();
-      const model = PropertyBriefingModel.parse(composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN }));
-      const { text } = await pdfParse(await renderBriefingPdf(model, null));
-      expect(text).not.toContain(NARRATIVE.headline);
-    },
-  );
-});
+let fixtureDb: WarehouseDb | undefined;
+const db = (): WarehouseDb => (fixtureDb ??= seededDb());
 
-// ── Content-identical non-regression — manager ───────────────────────────────────────────────
+const models = new Map<Subject, PropertyBriefingModel | ManagerBriefingModel>();
+function model(subject: Subject): PropertyBriefingModel | ManagerBriefingModel {
+  let m = models.get(subject);
+  if (!m) {
+    m =
+      subject === 'property'
+        ? PropertyBriefingModel.parse(composePropertyBriefing(db(), KRG_PROPS[0]!, { generatedDate: GEN }))
+        : ManagerBriefingModel.parse(composeManagerBriefing(db(), KRG_SLUG, { generatedDate: GEN }));
+    models.set(subject, m);
+  }
+  return m;
+}
 
-describe('renderBriefingPdf — manager model content-identical invariant (narrative absent)', () => {
-  it(
-    'extracted text is identical for no-arg, null, and undefined narrative',
-    async () => {
-      const db = seededDb();
-      const model = ManagerBriefingModel.parse(composeManagerBriefing(db, KRG_SLUG, { generatedDate: GEN }));
-      const noArg = (await pdfParse(await renderBriefingPdf(model))).text;
-      const nullArg = (await pdfParse(await renderBriefingPdf(model, null))).text;
-      const undefinedArg = (await pdfParse(await renderBriefingPdf(model, undefined))).text;
-      expect(noArg).toBe(nullArg);
-      expect(noArg).toBe(undefinedArg);
-    },
-  );
+const renders = new Map<string, Promise<Buffer>>();
+/** renderBriefingPdf for this subject/variant, called at most once per file. */
+function render(subject: Subject, variant: Variant): Promise<Buffer> {
+  const key = `${subject}:${variant}`;
+  let r = renders.get(key);
+  if (!r) {
+    const m = model(subject);
+    r =
+      variant === 'no-arg'
+        ? renderBriefingPdf(m)
+        : variant === 'null'
+          ? renderBriefingPdf(m, null)
+          : variant === 'undefined'
+            ? renderBriefingPdf(m, undefined)
+            : renderBriefingPdf(m, NARRATIVE);
+    renders.set(key, r);
+  }
+  return r;
+}
 
-  it(
-    'the narrative section does not appear when narrative is absent',
-    async () => {
-      const db = seededDb();
-      const model = ManagerBriefingModel.parse(composeManagerBriefing(db, KRG_SLUG, { generatedDate: GEN }));
-      const { text } = await pdfParse(await renderBriefingPdf(model, null));
-      expect(text).not.toContain(NARRATIVE.headline);
-    },
-  );
-});
+const texts = new Map<string, Promise<string>>();
+/** Extracted text of render(subject, variant), extracted at most once per file. */
+function text(subject: Subject, variant: Variant): Promise<string> {
+  const key = `${subject}:${variant}`;
+  let t = texts.get(key);
+  if (!t) {
+    t = render(subject, variant).then(async (bytes) => (await pdfParse(bytes)).text);
+    texts.set(key, t);
+  }
+  return t;
+}
 
-// ── With non-null narrative — property ───────────────────────────────────────────────────────
+// ── Content-identical non-regression — property and manager ─────────────────────────────────
 
-describe('renderBriefingPdf — with non-null narrative (property)', () => {
-  it(
-    'buffer is larger than the no-narrative buffer (the narrative section was added)',
-    async () => {
-      const db = seededDb();
-      const model = PropertyBriefingModel.parse(composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN }));
-      const withoutNarrative = await renderBriefingPdf(model, null);
-      const withNarrative = await renderBriefingPdf(model, NARRATIVE);
+for (const subject of ['property', 'manager'] as const) {
+  describe(`renderBriefingPdf — ${subject} model content-identical invariant (narrative absent)`, () => {
+    it('extracted text is identical for no-arg, null, and undefined narrative', async () => {
+      const noArg = await text(subject, 'no-arg');
+      expect(noArg).toBe(await text(subject, 'null'));
+      expect(noArg).toBe(await text(subject, 'undefined'));
+    });
+
+    it('the narrative section does not appear when narrative is absent', async () => {
+      expect(await text(subject, 'null')).not.toContain(NARRATIVE.headline);
+    });
+  });
+}
+
+// ── With non-null narrative — property and manager ───────────────────────────────────────────
+
+for (const subject of ['property', 'manager'] as const) {
+  describe(`renderBriefingPdf — with non-null narrative (${subject})`, () => {
+    it('buffer is larger than the no-narrative buffer (the narrative section was added)', async () => {
+      const withoutNarrative = await render(subject, 'null');
+      const withNarrative = await render(subject, 'narrative');
       expect(withNarrative.length).toBeGreaterThan(withoutNarrative.length);
-    },
-  );
+    });
 
-  it(
-    'narrative headline appears in extractable PDF text',
-    async () => {
-      const db = seededDb();
-      const model = PropertyBriefingModel.parse(composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN }));
-      const bytes = await renderBriefingPdf(model, NARRATIVE);
-      const { text } = await pdfParse(bytes);
+    it('narrative headline appears in extractable PDF text', async () => {
       // The headline must appear as real extractable text (not an image).
-      expect(text).toContain(NARRATIVE.headline);
-    },
-  );
+      expect(await text(subject, 'narrative')).toContain(NARRATIVE.headline);
+    });
 
-  it(
-    'does not throw when narrative is provided',
-    async () => {
-      const db = seededDb();
-      const model = PropertyBriefingModel.parse(composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN }));
-      await expect(renderBriefingPdf(model, NARRATIVE)).resolves.toBeInstanceOf(Buffer);
-    },
-  );
+    it('does not throw when narrative is provided', async () => {
+      await expect(render(subject, 'narrative')).resolves.toBeInstanceOf(Buffer);
+    });
 
-  it(
-    'narrative summary and bullets appear in extractable text (and not when absent)',
-    async () => {
-      const db = seededDb();
-      const model = PropertyBriefingModel.parse(composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN }));
-      const withText = (await pdfParse(await renderBriefingPdf(model, NARRATIVE))).text;
-      const withoutText = (await pdfParse(await renderBriefingPdf(model, null))).text;
+    it('narrative summary and bullets appear in extractable text (and not when absent)', async () => {
+      const withText = await text(subject, 'narrative');
+      const withoutText = await text(subject, 'null');
       // pdf-parse can drop inter-word spaces at line wraps; compare on space-stripped text.
       const flat = (s: string): string => s.replace(/\s+/g, '');
       expect(flat(withText)).toContain(flat(NARRATIVE.summary));
       expect(flat(withText)).toContain(flat(NARRATIVE.bullets[0]!));
       expect(flat(withoutText)).not.toContain(flat(NARRATIVE.summary));
-    },
-  );
-});
-
-// ── With non-null narrative — manager ────────────────────────────────────────────────────────
-
-describe('renderBriefingPdf — with non-null narrative (manager)', () => {
-  it(
-    'buffer is larger than the no-narrative buffer',
-    async () => {
-      const db = seededDb();
-      const model = ManagerBriefingModel.parse(composeManagerBriefing(db, KRG_SLUG, { generatedDate: GEN }));
-      const withoutNarrative = await renderBriefingPdf(model, null);
-      const withNarrative = await renderBriefingPdf(model, NARRATIVE);
-      expect(withNarrative.length).toBeGreaterThan(withoutNarrative.length);
-    },
-  );
-
-  it(
-    'narrative headline appears in extractable PDF text',
-    async () => {
-      const db = seededDb();
-      const model = ManagerBriefingModel.parse(composeManagerBriefing(db, KRG_SLUG, { generatedDate: GEN }));
-      const bytes = await renderBriefingPdf(model, NARRATIVE);
-      const { text } = await pdfParse(bytes);
-      expect(text).toContain(NARRATIVE.headline);
-    },
-  );
-
-  it(
-    'does not throw when narrative is provided',
-    async () => {
-      const db = seededDb();
-      const model = ManagerBriefingModel.parse(composeManagerBriefing(db, KRG_SLUG, { generatedDate: GEN }));
-      await expect(renderBriefingPdf(model, NARRATIVE)).resolves.toBeInstanceOf(Buffer);
-    },
-  );
-});
+    });
+  });
+}
