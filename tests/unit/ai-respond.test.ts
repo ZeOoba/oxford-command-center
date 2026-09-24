@@ -88,4 +88,17 @@ describe('respond — deterministic AI fallback', () => {
     expect(r.answer).toContain('Portfolio snapshot');
     expect(r.answer).toContain('2026-06-01');
   });
+
+  it('the summary names the residence as other holdings beside the investment value (ratified 2026-09-23)', () => {
+    // Refute finding: the investment-only value must never appear without the reconciling other-holdings
+    // figure — otherwise the answer disagrees with the workbook's Portfolio Total by the residence value.
+    const s = makeSnap();
+    const inv = s.properties[0]!;
+    s.properties.push({ ...inv, id: 'res', name: '9510 Persimmon Tree Rd, Potomac MD', type: 'Residence', sf: 6700, tenantCount: 1, oxfordValue: 2_000_000, noi: 0, loanBalance: 0, equityInvested: 900_000 });
+    const r = respond('give me the lay of the land', s);
+    expect(r.answer).toContain('Value $7.31M (Oxford share) · +$2.00M other holdings (residence)');
+    expect(r.answer).toContain('1 investment properties');
+    // No residence → no other-holdings clause.
+    expect(respond('give me the lay of the land', makeSnap()).answer).not.toContain('other holdings');
+  });
 });

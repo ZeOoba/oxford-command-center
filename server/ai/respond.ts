@@ -58,8 +58,11 @@ export function respond(question: string, s: PortfolioSnapshot): AiAskResponse {
   } else {
     sources.add('Property NOI');
     out.push(`Portfolio snapshot (as of ${s.meta.asOf}):`);
-    out.push(`• ${fmtNum(k.propertyCount.value)} properties, ${fmtNum(k.tenantCount.value)} tenants, ${fmtNum(k.totalSf.value)} SF.`);
-    out.push(`• Value ${fmtUsdCompact(k.value.value)} (Oxford share), NOI ${fmtUsdCompact(k.noi.value)}, weighted cap ${fmtPct(k.weightedCapRate.value)}.`);
+    out.push(`• ${fmtNum(k.propertyCount.value)} investment properties, ${fmtNum(k.tenantCount.value)} tenants, ${fmtNum(k.totalSf.value)} SF.`);
+    // Ratified 2026-09-23: investment value excludes the residence, which is REPORTED beside it as other
+    // holdings (never silently dropped — the workbook's own Portfolio Total includes it).
+    const other = k.otherHoldingsCount.value ? ` · +${fmtUsdCompact(k.otherHoldingsValue.value)} other holdings (residence)` : '';
+    out.push(`• Value ${fmtUsdCompact(k.value.value)} (Oxford share)${other}, NOI ${fmtUsdCompact(k.noi.value)}, weighted cap ${fmtPct(k.weightedCapRate.value)}.`);
     out.push(`• Debt ${fmtUsdCompact(k.totalDebt.value)} (LTV ${fmtPct(k.ltv.value)}), cash ${fmtUsdCompact(k.totalCash.value)}, WALT ${fmtYears(k.walt.value)}.`);
     out.push(`• ${a.insights.length} active alerts.`);
   }

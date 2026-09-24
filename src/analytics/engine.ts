@@ -9,6 +9,7 @@ import {
   type Confidence,
 } from '@contracts/index';
 import { evaluateConditions } from './conditions';
+import { isInvestmentProperty } from './property-basis';
 import type {
   AnalyticsBundle,
   CriticalDate,
@@ -42,6 +43,11 @@ export function applyScenario(s: PortfolioSnapshot, scenario: ScenarioName): Por
   if (scenario === 'Base') return s;
   const f = SCENARIO_PRESETS[scenario];
   const properties: Property[] = s.properties.map((p) => {
+    // Non-investment rows (the residence; ratified 2026-09-23) have no revenue and no cap-rate exposure,
+    // so a revenue / exit-cap shock cannot move them. Pass the row through untouched — otherwise the
+    // other-holdings figure would be scaled by revenueFactor/exitCapFactor with no economic basis and
+    // the residence would get a phantom scenario dscr/ltv recomputation (refute finding, 2026-09-23).
+    if (!isInvestmentProperty(p)) return p;
     const noi = p.noi * f.revenueFactor;
     const occPct = Math.max(0, Math.min(1, 1 - (1 - p.occPct) * f.vacancyFactor));
     const capRate = p.capRate !== null ? p.capRate * f.exitCapFactor : null;
@@ -70,7 +76,11 @@ export function portfolioKpis(
   scenario: ScenarioName = 'Base',
   referenceDate?: string,
 ): PortfolioKpis {
-  const p = s.properties;
+  // Ratified 2026-09-23 (Gabriel): the residence is not an investment asset — it diluted weighted cap
+  // (~24 bps) and occupancy. Solar stays in (income-producing). Residence is reported as "other holdings".
+  // The predicate lives in ./property-basis so every investment surface shares one basis.
+  const p = s.properties.filter(isInvestmentProperty);
+  const other = s.properties.filter((x) => !isInvestmentProperty(x));
   // Under a non-Base scenario, workbook figures are modeled — mark them derived.
   const sourced: Confidence = scenario === 'Base' ? 'confirmed' : 'derived';
   const tag = (src: string) => (scenario === 'Base' ? src : `${src} · Scenario: ${scenario}`);
@@ -97,6 +107,10 @@ export function portfolioKpis(
     walt: cell(walt(s.leases, referenceDate ?? s.meta.asOf), DERIVED, 'derived', {
       formula: 'rent-weighted remaining term, active leases',
     }),
+    // applyScenario passes non-investment rows through untouched, so this is a workbook figure in
+    // EVERY scenario — never tagged/derived (refute fix, 2026-09-23).
+    otherHoldingsValue: cell(sum(other.map((x) => x.oxfordValue)), 'Property NOI · Σ Oxford value (Residence)', 'confirmed'),
+    otherHoldingsCount: cell(other.length, 'Property NOI · Residence row count', 'confirmed'),
   };
 }
 
@@ -312,6 +326,9 @@ export function buildAnalytics(
   // `referenceDate` (undefined-preserving) so its default path keeps the baked-monthsToExpiry
   // behavior; a provided run date switches it to day-accurate leaseEnd math.
   const ref = referenceDate ?? s.meta.asOf;
+  // Market allocations sit beside the KPI headlines, so they share portfolioKpis' investment-only
+  // basis (ratified 2026-09-23): each series sums to kpis.value / totalSf / noi, never past it.
+  const investment = s.properties.filter(isInvestmentProperty);
   return {
     kpis: portfolioKpis(s, scenario, ref),
     leaseStatus: leaseStatusBreakdown(s.leases),
@@ -320,9 +337,9 @@ export function buildAnalytics(
     revenueAtRisk: revenueAtRisk(s.leases, referenceDate),
     topTenants: topTenants(s.leases),
     tenantHHI: tenantHHI(s.leases),
-    marketByNoi: marketAllocation(s.properties, 'noi'),
-    marketBySf: marketAllocation(s.properties, 'sf'),
-    marketByValue: marketAllocation(s.properties, 'value'),
+    marketByNoi: marketAllocation(investment, 'noi'),
+    marketBySf: marketAllocation(investment, 'sf'),
+    marketByValue: marketAllocation(investment, 'value'),
     debt: debtSummary(s.loans),
     // Thread the same reference date so the bundle is internally coherent: when a caller
     // (the brief) injects a run date, insight day-counts and criticalDates agree. Undefined
