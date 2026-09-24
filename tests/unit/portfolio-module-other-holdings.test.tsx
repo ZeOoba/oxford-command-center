@@ -78,16 +78,16 @@ function renderModule(s: PortfolioSnapshot) {
 }
 
 describe('PortfolioModule — Portfolio Value sublabel reports other holdings', () => {
-  it('shows "N investment properties · +$X other" when a residence row exists (same sublabel as the Overview strip)', () => {
+  it('shows the disclosure FIRST, then the correctly-pluralized count, when a residence row exists (same sublabel as the Overview strip)', () => {
     renderModule(snapshot([investment, residence]));
-    expect(screen.getByText('1 investment properties · +$2.00M other')).toBeTruthy();
+    expect(screen.getByText('+$2.00M other holdings · 1 investment property')).toBeTruthy();
     // The detail table still lists every row — that is a per-row surface, not a KPI.
     expect(screen.getByText('2 properties')).toBeTruthy();
   });
 
-  it('omits the other-holdings clause when there is no residence row', () => {
+  it('omits the other-holdings clause when there is no residence row, and pluralizes correctly', () => {
     renderModule(snapshot([investment]));
-    expect(screen.getByText('1 investment properties')).toBeTruthy();
-    expect(screen.queryByText(/other$/)).toBeNull();
+    expect(screen.getByText('1 investment property')).toBeTruthy();
+    expect(screen.queryByText(/other holdings/)).toBeNull();
   });
 });

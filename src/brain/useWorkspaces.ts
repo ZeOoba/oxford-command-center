@@ -12,8 +12,13 @@ interface Persisted {
 
 const KEY = 'ora-overview-workspaces';
 
-function load(allIds: string[], defaultHidden: string[]): Persisted {
-  const fallback: Persisted = { workspaces: { Default: { order: allIds, hidden: defaultHidden } }, active: 'Default' };
+/** A single stable, frozen reference for callers that pass no `defaultHidden` — an inline `[]`
+ *  default creates a NEW array identity on every call, which defeats the memoization below
+ *  (`activeCfg`/`mutate`/`resetActive` all depend on `defaultHidden` by reference). */
+const EMPTY_HIDDEN: readonly string[] = Object.freeze([]);
+
+function load(allIds: string[], defaultHidden: readonly string[]): Persisted {
+  const fallback: Persisted = { workspaces: { Default: { order: allIds, hidden: [...defaultHidden] } }, active: 'Default' };
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return fallback;
@@ -30,7 +35,7 @@ function load(allIds: string[], defaultHidden: string[]): Persisted {
  *  untouched. An id the persisted layout has never seen (new widget, or one that predates this
  *  layout) is appended to the order — and, if it's in `defaultHidden`, appended to `hidden` too —
  *  so it stays reachable via Edit layout instead of silently vanishing. */
-function normalize(cfg: WorkspaceConfig | undefined, allIds: string[], defaultHidden: string[]): WorkspaceConfig {
+function normalize(cfg: WorkspaceConfig | undefined, allIds: string[], defaultHidden: readonly string[]): WorkspaceConfig {
   const order = (cfg?.order ?? []).filter((id) => allIds.includes(id));
   const hidden = (cfg?.hidden ?? []).filter((id) => allIds.includes(id));
   for (const id of allIds) {
@@ -42,7 +47,7 @@ function normalize(cfg: WorkspaceConfig | undefined, allIds: string[], defaultHi
   return { order, hidden };
 }
 
-export function useWorkspaces(allIds: string[], defaultHidden: string[] = []) {
+export function useWorkspaces(allIds: string[], defaultHidden: readonly string[] = EMPTY_HIDDEN) {
   const [state, setState] = useState<Persisted>(() => load(allIds, defaultHidden));
   const [editMode, setEditMode] = useState(false);
 

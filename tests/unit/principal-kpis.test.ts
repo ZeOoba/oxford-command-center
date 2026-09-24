@@ -25,7 +25,11 @@ describe('principal Portfolio value KPI reports other holdings (ratified 2026-09
   it('carries the residence as a sublabel beside the investment-only headline when a residence row exists', () => {
     const pv = principalKpis(fixture({ count: 1, value: 2_000_000 })).find((x) => x.label === 'Portfolio value')!;
     expect(pv.value).toBe(59_597_565); // headline stays investment-only
-    expect(pv.sublabel).toBe('+$2.00M other holdings (residence)');
+    // I-1 (2026-09-23 review): now sourced from the shared otherHoldingsClause() helper
+    // (other-holdings.ts) so the $ wording matches the Overview/Portfolio tiles exactly — the
+    // "(residence)" suffix this used to hardcode is gone; the header title attribute now clarifies
+    // the term on hover instead.
+    expect(pv.sublabel).toBe('+$2.00M other holdings');
   });
 
   it('has no sublabel when there are no other holdings', () => {

@@ -5,13 +5,12 @@ import { Badge } from '@/primitives/Badge';
 import { useSnapshot, useAnalytics } from '@/data/queries';
 import { useAnomalies } from '@/modules/intel/analytics-hooks';
 import { useUi } from '@/brain/ui-context';
+import { fmtNum } from '@analytics/index';
 import { ModuleLoading } from '@/shell/ModuleFallback';
 import { principalDigest } from '@/brain/principal-digest';
 import { anomaliesToInsights } from '@/brain/anomaly-insights';
 import { principalKpis } from './principal-kpis';
 import { digestSummary } from './digest-summary';
-
-const fmtCount = (n: number | null) => (n === null ? '—' : String(n));
 
 export function PrincipalModule() {
   const { data } = useSnapshot();
@@ -46,9 +45,9 @@ export function PrincipalModule() {
         ) : (
           <div className="flex flex-col gap-3 p-4">
             <div className="grid grid-cols-3 gap-3">
-              <KpiStat label="Critical" value={summary.critical} format={fmtCount} accentColor="var(--color-neg)" />
-              <KpiStat label="Review" value={summary.review} format={fmtCount} accentColor="var(--color-warn)" />
-              <KpiStat label="Deals" value={summary.deals} format={fmtCount} accentColor="var(--accent)" />
+              <KpiStat label="Critical" value={summary.critical} format={fmtNum} accentColor="var(--color-neg)" />
+              <KpiStat label="Review" value={summary.review} format={fmtNum} accentColor="var(--color-warn)" />
+              <KpiStat label="Deals" value={summary.deals} format={fmtNum} accentColor="var(--accent)" />
             </div>
             {summary.top.length > 0 && (
               <ul className="flex flex-col">

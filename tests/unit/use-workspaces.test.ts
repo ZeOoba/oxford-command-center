@@ -131,4 +131,16 @@ describe('useWorkspaces defaultHidden (default-off-but-addable widgets)', () => 
     expect(result.current.hiddenIds).toEqual([]);
     expect(result.current.visibleOrder).toContain('alerts');
   });
+
+  it('(e) resetActive() restores defaultHidden — not empty — when a defaultHidden list was passed', () => {
+    const { result } = renderHook(() => useWorkspaces(IDS, ['alerts']));
+    // Un-hide the default-hidden widget and hide/reorder something else, so the pre-reset state
+    // disagrees with defaultHidden in every direction resetActive must undo.
+    act(() => result.current.show('alerts'));
+    act(() => result.current.hide('kpis'));
+    act(() => result.current.reorder('cash', 'leases'));
+    act(() => result.current.resetActive());
+    expect(result.current.visibleOrder).toEqual(['kpis', 'leases', 'cash']);
+    expect(result.current.hiddenIds).toEqual(['alerts']);
+  });
 });

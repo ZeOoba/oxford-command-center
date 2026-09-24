@@ -11,6 +11,7 @@ import { BarList } from '@/charts/BarList';
 import { AreaChart } from '@/charts/AreaChart';
 import { TierBoard, type Tier, type TierItem, type TierTotal } from '@/primitives/TierBoard';
 import { spineLabel } from '@/lib/spine-label';
+import { investmentPropertiesSublabel } from './other-holdings';
 import { useWarehouseInsights } from '../insights/hooks';
 import { mergeInsightSources, buildSummary, buildTiers, totalsBySpine, type MergedInsight } from '../insights/insights.logic';
 
@@ -42,7 +43,7 @@ function KpiStripWidget() {
   const goTo = (id: string) => () => ui.setActiveModule(id);
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-      <KpiStat label="Portfolio Value" value={k.value.value} format={fmtUsdCompact} prov={k.value.prov} sublabel={`${fmtNum(k.propertyCount.value)} investment properties${k.otherHoldingsCount.value ? ` · +${fmtUsdCompact(k.otherHoldingsValue.value)} other` : ''}`} onPress={goTo('portfolio')} />
+      <KpiStat label="Portfolio Value" value={k.value.value} format={fmtUsdCompact} prov={k.value.prov} sublabel={investmentPropertiesSublabel(k)} onPress={goTo('portfolio')} />
       <KpiStat label="Net Operating Income" value={k.noi.value} format={fmtUsdCompact} prov={k.noi.prov} sublabel={`${fmtPct(k.weightedCapRate.value)} wtd cap`} accentColor="var(--color-pos)" onPress={goTo('intel')} />
       <KpiStat label="Portfolio SF" value={k.totalSf.value} format={fmtSf} prov={k.totalSf.prov} sublabel={`${fmtNum(k.tenantCount.value)} tenants`} accentColor="var(--color-info)" onPress={goTo('portfolio')} />
       <KpiStat label="Occupancy" value={k.occupancy.value === null ? null : k.occupancy.value * 100} format={(n) => (n === null ? '—' : `${n.toFixed(1)}%`)} prov={k.occupancy.prov} sublabel="weighted by SF" accentColor="var(--color-pos)" onPress={goTo('leases')} />
@@ -247,14 +248,16 @@ function PriorityActionsWidget() {
   return (
     <div className="flex flex-col gap-2">
       <TierBoard tiers={[tier]} columns={1} />
-      <button
-        type="button"
-        onClick={() => ui.openTab('command-brain', 'insights')}
-        className="self-end text-2xs font-semibold"
-        style={{ color: 'var(--accent)' }}
-      >
-        See all {merged.length} insights →
-      </button>
+      {merged.length > 0 && (
+        <button
+          type="button"
+          onClick={() => ui.openTab('command-brain', 'insights')}
+          className="self-end text-2xs font-semibold"
+          style={{ color: 'var(--accent)' }}
+        >
+          See all {merged.length} insights →
+        </button>
+      )}
     </div>
   );
 }
@@ -305,6 +308,11 @@ export const OVERVIEW_WIDGETS: WidgetDef[] = [
  *  every widget id, `insights` included, or the id could never be re-added via Edit layout — see
  *  DEFAULT_HIDDEN_WIDGET_IDS below, which is what actually keeps it addable-but-hidden). */
 export const DEFAULT_WIDGET_ORDER = OVERVIEW_WIDGETS.filter((w) => w.defaultOn !== false).map((w) => w.id);
+
+/** Every widget id, as a single stable module-level reference — passed to useWorkspaces as
+ *  `allIds` so its memoized `activeCfg`/`visibleOrder` don't recompute on every OverviewModule
+ *  render just because `OVERVIEW_WIDGETS.map(...)` created a fresh array identity each time. */
+export const ALL_WIDGET_IDS = OVERVIEW_WIDGETS.map((w) => w.id);
 
 /** Ids that start hidden the first time a layout meets them, passed to useWorkspaces as
  *  `defaultHidden` alongside the FULL id list (OVERVIEW_WIDGETS.map((w) => w.id)) as `allIds`.
