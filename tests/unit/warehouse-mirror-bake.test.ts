@@ -13,7 +13,7 @@ import ExcelJS from 'exceljs';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, beforeAll, afterAll } from 'vitest';
+import { describe, expect, it, beforeAll, afterAll, vi } from 'vitest';
 import { warehouseRoutes } from '../../server/warehouse/api';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
@@ -29,6 +29,17 @@ import { BrainReport } from '../../src/contracts/brain-report';
 import { LeaseRunRollupResponse, LeaseRunProjectionEnvelope } from '../../src/contracts/lease-run';
 import { WAREHOUSE_MIRROR_SCHEMA_VERSION } from '../../src/lib/warehouse-mirror';
 import { buildWarehouseEnvelope, inProcessResolver } from '../../scripts/bake-warehouse';
+
+// The bake plans /lease-market/positioning, whose route falls back to the live brain singleton
+// (inProcessResolver injects no getSnapshot). This suite never refreshes it, so the real one always
+// answered null (positioning 503s and the bake drops it). The stub returns the same null without
+// loading the rest of server/brain's graph: the workbook parser, date-fns (304 files) and
+// chokidar. exceljs is already loaded here by the fixture writer. At 100% CPU, a cold import of
+// server/brain measured 13-289s, and date-fns alone ~30s. That import ran inside beforeAll.
+vi.mock('../../server/brain', () => ({
+  brain: { getSnapshot: vi.fn(() => null) },
+}));
+import { brain } from '../../server/brain';
 
 const RARIG = '1100-rarig-ave-columbus-oh';
 
@@ -92,6 +103,12 @@ describe('Fat Mirror bake — warehouse.json shape matches the server endpoints'
   });
 
   afterAll(() => db.close());
+
+  it('resolves /lease-market/positioning through the brain stub (null snapshot: 503, not baked)', () => {
+    // Guards that the stub intercepts; if it didn't, the real server/brain import would come back.
+    expect(brain.getSnapshot).toHaveBeenCalled();
+    expect(endpoints['/api/warehouse/lease-market/positioning']).toBeUndefined();
+  });
 
   it('bakes every required fixed PFI + calibration endpoint', () => {
     for (const k of [
