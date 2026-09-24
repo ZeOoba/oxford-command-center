@@ -68,13 +68,27 @@ interface Props {
   /** Optional axis-label overrides for the two totals (e.g. 'FY2024' / 'FY2025'). */
   startLabel?: string;
   endLabel?: string;
+  /** Accessible name for the chart's <svg>. Defaults to the original NOI-bridge string so
+   *  existing NOI consumers are unchanged; other bridges (e.g. rent) pass their own. */
+  ariaLabel?: string;
+  /** Visible <title> announced alongside ariaLabel. Defaults to the original NOI-bridge string. */
+  title?: string;
 }
 
 const colorFor = (kind: WaterfallBarKind): string =>
   kind === 'pos' ? 'var(--color-pos)' : kind === 'neg' ? 'var(--color-neg)' : 'var(--accent)';
 
 /** ΔNOI bridge: full-height start/end totals + signed driver bars. SVG, theme tokens only. */
-export function Waterfall({ startValue, drivers, endValue, height = 260, startLabel, endLabel }: Props) {
+export function Waterfall({
+  startValue,
+  drivers,
+  endValue,
+  height = 260,
+  startLabel,
+  endLabel,
+  ariaLabel = 'NOI driver waterfall',
+  title = 'ΔNOI driver bridge',
+}: Props) {
   const gid = useId().replace(/:/g, '');
 
   // Sparse-data guard (pre-mortem #2): with no drivers there is no bridge to draw.
@@ -109,8 +123,8 @@ export function Waterfall({ startValue, drivers, endValue, height = 260, startLa
   const barW = Math.min(56, slot * 0.62);
 
   return (
-    <svg width={width} height={height} role="img" aria-label="NOI driver waterfall" style={{ maxWidth: '100%' }}>
-      <title id={`wf-${gid}`}>ΔNOI driver bridge</title>
+    <svg width={width} height={height} role="img" aria-label={ariaLabel} style={{ maxWidth: '100%' }}>
+      <title id={`wf-${gid}`}>{title}</title>
       {bars.map((b, i) => {
         const cx = margin.left + slot * i + slot / 2;
         const x = cx - barW / 2;
@@ -122,6 +136,10 @@ export function Waterfall({ startValue, drivers, endValue, height = 260, startLa
         const labelDisplay = b.label.length > 12 ? `${b.label.slice(0, 11)}…` : b.label;
         return (
           <g key={`${b.label}-${i}`}>
+            {/* Full category name — the x-axis label below truncates past 12 chars, so this
+                keeps any future long category (or a longer future label than today's two
+                Rolling off / Re-leased forecast-bridge drivers) readable on hover (I-4). */}
+            <title>{b.label}</title>
             <rect x={x} y={yTop} width={barW} height={h} rx={3} fill={fill} fillOpacity={b.kind === 'total' ? 0.95 : 0.82} />
             {/* signed value label above the bar's top edge */}
             <text

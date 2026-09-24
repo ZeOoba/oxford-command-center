@@ -63,3 +63,19 @@ export const InsuranceAnalysisReport = z.object({
   advisoryOnly: z.literal(true),
 });
 export type InsuranceAnalysisReport = z.infer<typeof InsuranceAnalysisReport>;
+
+// ── Premium history ───────────────────────────────────────────────────────────
+/** GET /api/warehouse/insurance/analysis/history response (2026-09-23 review, Task 24).
+ *  Read-only display aggregation produced by server/warehouse/insurance-history.ts: per policy
+ *  LINE (`lineKey` = raw 'ins-<stem>-<line>' key; `property` is the resolved display name only)
+ *  the dated premium terms, plus policy-year totals summing each term exactly once. */
+export const PremiumHistoryReport = z.object({
+  byYear: z.array(z.object({ year: z.number().int(), premium: z.number().nonnegative(), lines: z.number().int().nonnegative() })),
+  lines: z.array(z.object({
+    lineKey: z.string(),
+    property: z.string(),
+    policyType: z.string(),
+    terms: z.array(z.object({ effectiveDate: z.string(), premium: z.number().nonnegative() })),
+  })),
+});
+export type PremiumHistoryReport = z.infer<typeof PremiumHistoryReport>;

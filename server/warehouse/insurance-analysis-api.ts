@@ -5,14 +5,18 @@
 // Routes:
 //   GET / — buildInsuranceAnalysis(asOf=today) + logRebidVerdicts (fail-open calibration logging),
 //           InsuranceAnalysisReport.parse'd before returning (H6 read boundary).
+//   GET /history — buildPremiumHistory over every property_insurance_policies row (per-line premium
+//           terms + policy-year totals), PremiumHistoryReport.parse'd. Read-only display data.
 //
-// Registration: server/index.ts mounts this at /api/warehouse/insurance (not this file's concern).
+// Registration: server/warehouse/sub-routers.ts mounts this at /api/warehouse/insurance/analysis
+// (wrapped in withJsonErrors, so uncaught errors return the shared JSON 500).
 // Pattern: mirrors debt-api.ts / capital-allocation-api.ts (Hono factory + withDb 503 guard).
 // This file holds NO financial math — the engine (insurance-analysis.ts) does.
 import { Hono } from 'hono';
 import type { WarehouseDb } from './db';
 import { buildInsuranceAnalysis, logRebidVerdicts } from './insurance-analysis';
-import { InsuranceAnalysisReport } from '../../src/contracts/insurance-analysis';
+import { buildPremiumHistory, type PremiumHistoryRow } from './insurance-history';
+import { InsuranceAnalysisReport, PremiumHistoryReport } from '../../src/contracts/insurance-analysis';
 
 /**
  * Creates the insurance-analysis Hono sub-router.
@@ -54,6 +58,20 @@ export function insuranceAnalysisApi(getDb: () => WarehouseDb): Hono {
         console.error('[insurance-analysis-api] / error:', err instanceof Error ? err.message : String(err));
         return c.json({ error: 'insurance analysis failed' }, 500);
       }
+    }),
+  );
+
+  // ── GET /history ───────────────────────────────────────────────────────────────────────
+  app.get('/history', (c) =>
+    withDb((db) => {
+      // id / policy_number / expiration_date / source_date feed the engine's same-term reissue
+      // collapse inside buildPremiumHistory (CollapsibleInsuranceRow shape).
+      const rows = db.prepare(
+        `SELECT id, property_id, policy_number, effective_date, expiration_date, policy_type, premium_annual, source_date
+           FROM property_insurance_policies`,
+      ).all() as PremiumHistoryRow[];
+      const masterNames = new Map((db.prepare('SELECT id, name FROM property_master').all() as Array<{ id: string; name: string }>).map((r) => [r.id, r.name]));
+      return c.json(PremiumHistoryReport.parse(buildPremiumHistory(rows, masterNames)));
     }),
   );
 

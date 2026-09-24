@@ -32,8 +32,10 @@ import {
   sumIdentifiedOpportunityUsd,
   computePortfolioEffectiveRate,
   countAppealsInFlight,
+  opportunityByProperty,
 } from './hooks';
 import { StrategyBoard } from './StrategyBoard';
+import { AssessmentHistoryCard } from './AssessmentHistoryCard';
 import { AssessmentsTable } from './AssessmentsTable';
 import { FiledReturnsTable } from './FiledReturnsTable';
 
@@ -85,6 +87,8 @@ export function TaxesModule() {
   const identifiedOpportunity = sumIdentifiedOpportunityUsd(report.opportunities);
   const effectiveRate = computePortfolioEffectiveRate(report.assessments);
   const appealsInFlight = countAppealsInFlight(report.appeals);
+  const opportunitiesByProperty = opportunityByProperty(report.opportunities);
+  const nameForProperty = (id: string) => opportunitiesByProperty.get(id)?.propertyName ?? id;
 
   return (
     <div className="flex flex-col gap-4">
@@ -124,7 +128,12 @@ export function TaxesModule() {
       <SegmentedControl options={VIEWS} value={view} onChange={setView} aria-label="Taxes views" />
 
       {view === 'strategy' && <StrategyBoard opportunities={report.opportunities} strategyReport={strategyReport} />}
-      {view === 'assessments' && <AssessmentsTable report={report} />}
+      {view === 'assessments' && (
+        <div className="flex flex-col gap-4">
+          <AssessmentHistoryCard assessments={report.assessments} nameFor={nameForProperty} />
+          <AssessmentsTable report={report} />
+        </div>
+      )}
       {view === 'returns' &&
         (strategyReport ? (
           <FiledReturnsTable report={strategyReport} />
