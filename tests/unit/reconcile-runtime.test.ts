@@ -498,3 +498,19 @@ describe('checkDebtBasis', () => {
     expect(flags.some((x) => x.severity === 'error')).toBe(false);
   });
 });
+
+describe('checkDebtBasis — order-independent at the $1,000 boundary (refute wf_fb49dbb9-c91)', () => {
+  const loans = [{ direction: 'borrower', absBalance: 0.3 }, { direction: 'borrower', absBalance: 0.6 }];
+  const prop = (loanBalance: number) => ({ type: 'Flex', loanBalance });
+  it('gives the same answer for every row order when the gap is exactly $1,000.00', () => {
+    const a = checkDebtBasis({ properties: [prop(1000.6), prop(0.1), prop(0.2)], loans } as never);
+    const b = checkDebtBasis({ properties: [prop(0.1), prop(0.2), prop(1000.6)], loans } as never);
+    expect(a).toEqual([]);
+    expect(b).toEqual([]);
+  });
+  it('prints en-US grouped figures regardless of the host locale', () => {
+    const [f] = checkDebtBasis({ properties: [prop(11_300_000)], loans: [{ direction: 'borrower', absBalance: 10_600_000 }] } as never);
+    expect(f!.issue).toContain('11,300,000');
+    expect(f!.issue).toContain('gap 700,000');
+  });
+});

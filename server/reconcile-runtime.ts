@@ -177,16 +177,19 @@ const DEBT_BASIS_TOLERANCE = 1000;
 export function checkDebtBasis(s: Pick<PortfolioSnapshot, 'properties' | 'loans'>): DataQualityFlag[] {
   const propertyDebt = sum((s.properties ?? []).filter(isInvestmentProperty).map((p) => p.loanBalance ?? 0));
   const external = sum((s.loans ?? []).filter((l) => l.direction === 'borrower').map((l) => l.absBalance ?? 0));
-  const gap = propertyDebt - external;
-  if (Math.abs(gap) <= DEBT_BASIS_TOLERANCE) return [];
+  // Integer cents: a float left-fold can differ by an ulp with row order, which must not flip the
+  // exact-$1,000 boundary (refute wf_fb49dbb9-c91).
+  const gapCents = Math.round(propertyDebt * 100) - Math.round(external * 100);
+  if (Math.abs(gapCents) <= DEBT_BASIS_TOLERANCE * 100) return [];
+  const usd = (n: number) => Math.round(n).toLocaleString('en-US'); // pinned: CI's ICU default may not group
   return [{
     entity: 'debt',
     field: 'debt.basis',
     issue:
       `Overview Total Debt (Σ investment-property loan balances, Property NOI sheet) ` +
-      `${Math.round(propertyDebt).toLocaleString()} vs Capital › Debt External Debt (Σ borrower loans, ` +
-      `loan schedule) ${Math.round(external).toLocaleString()} — gap ` +
-      `${Math.round(Math.abs(gap) / 1000).toLocaleString()}K (share basis or a loan present in one source and not the other)`,
+      `${usd(propertyDebt)} vs Capital › Debt External Debt (Σ borrower loans, ` +
+      `loan schedule) ${usd(external)} — gap ${usd(Math.abs(gapCents) / 100)} ` +
+      `(share basis or a loan present in one source and not the other)`,
     severity: 'warn',
   }];
 }
