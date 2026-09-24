@@ -17,6 +17,9 @@ interface Props {
   height?: number;
   color?: string;
   valueFormat?: (n: number) => string;
+  /** Accessible name for the chart's <svg>. Optional — omitted callers get no aria-label
+   *  (unchanged from before this prop existed), same opt-in pattern as Waterfall's ariaLabel. */
+  ariaLabel?: string;
 }
 
 interface HoverState {
@@ -26,7 +29,7 @@ interface HoverState {
 }
 
 /** Vertical bar chart — branded gradient bars, animated draw-in, hover tooltip. */
-export function BarChart({ data, height = 250, color = 'var(--accent)', valueFormat }: Props) {
+export function BarChart({ data, height = 250, color = 'var(--accent)', valueFormat, ariaLabel }: Props) {
   const [ref, width] = useMeasure<HTMLDivElement>();
   const [hover, setHover] = useState<HoverState | null>(null);
   const gid = useId().replace(/:/g, '');
@@ -41,7 +44,7 @@ export function BarChart({ data, height = 250, color = 'var(--accent)', valueFor
   return (
     <div ref={ref} style={{ width: '100%', position: 'relative' }}>
       {width > 0 && (
-        <svg width={width} height={height} role="img">
+        <svg width={width} height={height} role="img" aria-label={ariaLabel}>
           <LinearGradient id={`bar-${gid}`} from={color} to={color} fromOpacity={0.95} toOpacity={0.32} vertical />
           <Group left={margin.left} top={margin.top}>
             {data.map((d, i) => {
