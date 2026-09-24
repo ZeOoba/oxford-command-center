@@ -89,7 +89,9 @@ export function AcquisitionsIntel() {
       )}
 
       {!isLoading && error && !isWarehouseUnavailable(error) && !data && (
-        <p style={{ color: 'var(--text-tertiary)', fontSize: '0.875rem' }}>Unable to load acquisition intel right now.</p>
+        <p style={{ color: 'var(--text-tertiary)', fontSize: '0.875rem' }}>
+          Unable to load acquisition intel: {error instanceof Error ? error.message : 'unknown error'}
+        </p>
       )}
 
       {!isLoading && data && (

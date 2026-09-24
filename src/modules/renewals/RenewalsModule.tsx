@@ -10,6 +10,7 @@ import { renewalBoard, type RenewalCard } from '@/brain/renewals';
 import { RENEWAL_STAGES, nextRenewalStage, type RenewalStage } from '@contracts/index';
 import { useLeaseForecast, likelihoodTone, buildSignalMap } from '../leasing/hooks';
 import type { RenewalSignal } from '../leasing/hooks';
+import { dayLabel } from './day-label';
 
 const STAGE_TONE: Record<RenewalStage, BadgeTone> = {
   Expiring: 'red',
@@ -19,7 +20,6 @@ const STAGE_TONE: Record<RenewalStage, BadgeTone> = {
   Executed: 'green',
 };
 
-const dayLabel = (d: number | null) => (d === null ? '—' : d < 0 ? `${Math.abs(d)}d over` : `${d}d`);
 const dayTone = (d: number | null): BadgeTone => (d === null ? 'neutral' : d < 0 ? 'red' : d <= 30 ? 'amber' : 'neutral');
 
 export function RenewalsModule() {
