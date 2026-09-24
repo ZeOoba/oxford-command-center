@@ -35,11 +35,13 @@
 //   insurance-gap          — severity: warning
 //     Fires for every Property in snapshot.properties with NO matching row in
 //     property_insurance_policies (i.e. we have no policy on file at all).
-//     ⚠ CURRENTLY OVER-FIRES (verified 2026-08-11): the match is against the raw property_id
-//     column, which holds policy slugs, so it matches 0 of 14 properties and this warns on
-//     EVERY property regardless of actual coverage. Not fixed here — see the coveredIds
-//     comment below for why the two obvious joins are both unsafe. Warning severity only:
-//     these never generate an email, they only add noise to the brief digest.
+//     FIXED 2026-09-24: property_id holds policy-line keys ('ins-<stem>-<line>'), so matching
+//     the raw column covered 0 of 14 properties and this warned on EVERY property. Each key now
+//     resolves through insurance-property-map.ts's explicit stem table (resolveInsuranceProperty)
+//     to its property_master id; a key the table cannot place on a master row stays raw and
+//     covers nothing (no inferred attribution). A tenant's ACORD evidence-of-insurance row
+//     counts as coverage on file (Gabriel, 2026-09-24: NNN single-tenant buildings are insured by
+//     the tenant). Warning severity only: never emails.
 //     impactAnnualUsd = null (no policy → no known premium).
 //     provenance = 'absent' — the absence of data is the finding.
 //     spine = 'B'.
@@ -54,6 +56,7 @@ import type { PortfolioSnapshot } from '../../src/contracts/index';
 import type { Insight } from '../../src/analytics/types';
 import { DAY_MS } from './time-constants';
 import { collapseToCurrentTerm, type CollapsibleInsuranceRow } from './insurance-analysis';
+import { resolveInsuranceProperty } from './insurance-property-map';
 // BOUNDARY: policies expiring within this window (inclusive) → critical alert.
 const EXPIRY_ALERT_DAYS = 60;
 // BOUNDARY: a same-property/same-type policy pair with no shared policy_number and a non-overlapping
@@ -99,22 +102,34 @@ interface ResolvedOwner {
 }
 
 /**
+ * property_master id → name, for resolveInsuranceProperty. FAILS OPEN to an empty map:
+ * insuranceConditions runs inside run.ts's catch-all, where a throw drops EVERY insurance
+ * critical — an unreadable master table must degrade to raw-key behaviour, not silence alerts.
+ */
+function loadMasterNames(db: WarehouseDb): Map<string, string> {
+  try {
+    const rows = db.prepare('SELECT id, name FROM property_master').all() as Array<{ id: string; name: string }>;
+    return new Map(rows.map((r) => [r.id, r.name]));
+  } catch {
+    return new Map();
+  }
+}
+
+/**
  * Resolve a warehouse `property_id` into a human-readable LABEL for the alert subject.
  *
- * DISPLAY ONLY. This deliberately does not attempt to produce a property id: an exact name
- * join resolves 0 of 25 in production (see the coveredIds comment in insuranceConditions),
- * and inferring one by token matching mis-attributes 4 of 25 — a wrong property name in a
- * CRITICAL subject is worse than a raw slug. Labelling has no such hazard, because the
- * fallback chain never invents an attribution it doesn't have.
- *
- * The column holds POLICY-level slugs ("ins-fvc-pckg") in production, not property ids —
- * 25 rows, 25 distinct values, 0 matching a property id directly. Resolution runs:
- * direct property id → policy slug via `snapshot.insurance[]` (whose `.property` carries the
- * property's descriptive address) → give up and use the raw value. Every branch FAILS OPEN:
- * the alert always fires, because a policy we can't attribute is not a reason to go quiet
- * about it expiring.
+ * The column holds POLICY-level keys ("ins-fvc-pckg") in production, not property ids.
+ * Label resolution runs: direct property id → the stem table's property_master name (the same
+ * explicit, auditable map the Insurance module uses — never a token heuristic, which
+ * mis-attributed 4 of 25) → `snapshot.insurance[]`'s descriptive address → the stem table's
+ * label-only address → the raw value. Coverage comes from the live `snapshot.insurance[]` row
+ * whenever one exists. Every branch FAILS OPEN: the alert always fires, because a policy we
+ * can't attribute is not a reason to go quiet about it expiring.
  */
-function buildOwnerResolver(snapshot: PortfolioSnapshot): (rawId: string) => ResolvedOwner {
+function buildOwnerResolver(
+  snapshot: PortfolioSnapshot,
+  masterNames: ReadonlyMap<string, string>,
+): (rawId: string) => ResolvedOwner {
   const propertiesById = new Map(snapshot.properties.map((p) => [p.id, p]));
   // `?? []` guards a snapshot missing the key entirely: insuranceConditions runs inside
   // run.ts's catch-all, where any throw here silently drops EVERY insurance critical.
@@ -125,9 +140,13 @@ function buildOwnerResolver(snapshot: PortfolioSnapshot): (rawId: string) => Res
     if (direct) return { label: direct.name, coverage: null };
 
     const policy = policiesById.get(rawId);
-    if (policy) return { label: policy.property, coverage: policy.coverage };
+    const coverage = policy?.coverage ?? null;
+    const stem = resolveInsuranceProperty(rawId, masterNames);
+    if (stem.propertyId !== null) return { label: stem.name, coverage };
+    if (policy) return { label: policy.property, coverage };
 
-    return { label: rawId, coverage: null };
+    // Label-only stem address, or the raw value itself (resolveInsuranceProperty's last resort).
+    return { label: stem.name, coverage: null };
   };
 }
 
@@ -200,23 +219,19 @@ export function insuranceConditions(
   // drifting apart again.
   const currentRows = currentRowsOverride ?? fetchCurrentInsuranceRows(db);
 
-  const resolveOwner = buildOwnerResolver(snapshot);
+  const masterNames = loadMasterNames(db);
+  const resolveOwner = buildOwnerResolver(snapshot, masterNames);
 
-  // Set of raw property_id values that have at least one warehouse policy row (for gap check).
-  //
-  // KNOWN BROKEN, deliberately left unfixed here (2026-08-11): in production these are policy
-  // slugs, so this set never intersects `prop.id` and EVERY property is reported as having no
-  // policy on file. Resolving it needs a real slug->property mapping — the obvious fixes both
-  // fail: an exact name join matches 0 of 25 (the display names disagree on abbreviation and
-  // ZIP -- "55 New Plant Court, Owings Mills MD 21117" vs "55 New Plant Ct, Owings Mills MD"),
-  // and parse.ts's token matcher resolves 24 of 25 but MIS-ATTRIBUTES 4, because "columbus"
-  // matches whichever Columbus property comes first -- which would put a wrong property name
-  // into a CRITICAL alert. Deferred to its own change with an explicit, auditable mapping
-  // table and a fixture built from the real policy strings. These are warning-severity and
-  // never email, so the cost is brief noise, not a missed alert.
-  // Reads from currentRows, not a second raw fetch — collapseToCurrentTerm never drops a
-  // property_id (see fetchCurrentInsuranceRows' doc), so the value set is identical either way.
-  const coveredIds = new Set<string>(currentRows.map((r) => r.property_id));
+  // Property ids with at least one warehouse policy row (for the gap check). In production
+  // property_id holds policy-line keys ('ins-<stem>-<line>'), so each resolves through the
+  // explicit stem table (insurance-property-map.ts) to its property_master id; `?? r.property_id`
+  // keeps plain ids as-is, and a key the table cannot place on a master row stays raw and covers
+  // nothing — no inferred attribution (the token matcher the 2026-08-11 note rejected
+  // mis-attributed 4 of 25). Reads from currentRows, not a second raw fetch —
+  // collapseToCurrentTerm never drops a property_id (see fetchCurrentInsuranceRows' doc).
+  const coveredIds = new Set<string>(
+    currentRows.map((r) => resolveInsuranceProperty(r.property_id, masterNames).propertyId ?? r.property_id),
+  );
 
   // ── Condition 1: insurance-expiry-soon ──────────────────────────────────
   // Deduplicate by raw property_id VALUE, soonest-expiring row winning within a value. In
@@ -304,6 +319,10 @@ export function insuranceConditions(
   // surfaces the FIRST one as a review item rather than letting it silently double-count or
   // false-alarm: same property + same policy_type, no shared policy_number, non-overlapping, and
   // within GAPPED_ROLLOVER_WINDOW_DAYS of each other in either direction.
+  // "Same property" here is the RAW policy line (a.property_id), deliberately — this condition
+  // catches what collapseToCurrentTerm, which groups on the raw line, failed to merge; two
+  // different lines at one property (e.g. a carrier switch that opened a new line key) are
+  // distinct policies by that rule. Only the title resolves to the property name.
   for (let i = 0; i < currentRows.length; i++) {
     for (let j = i + 1; j < currentRows.length; j++) {
       const a = currentRows[i]!;
@@ -334,7 +353,7 @@ export function insuranceConditions(
           id: `ins-gapped-rollover-${pairId}`,
           severity: 'warning',
           category: 'insurance',
-          title: `Possible gapped policy rollover — ${a.property_id}`,
+          title: `Possible gapped policy rollover — ${resolveOwner(a.property_id).label}`,
           detail: `Two ${a.policy_type} policies at property_id "${a.property_id}" are ${gapDays} day(s) apart (one expires ${olderExpiry}, the other becomes effective ${newerEffective}) with no shared policy number — they were NOT merged as one rollover and both count toward premium/policy totals. Confirm whether this is a single renewal (fix the source dates or add the shared policy number) or two genuinely distinct policies.`,
           entityType: 'insurance',
           entityId: a.property_id,

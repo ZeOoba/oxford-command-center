@@ -911,3 +911,88 @@ describe('insuranceWarehouseDriftConditions', () => {
     ]);
   });
 });
+
+// ── insurance-gap + labelling resolve policy-line keys via the stem map (2026-09-24) ───────────
+//
+// property_insurance_policies.property_id holds policy-line keys ('ins-<stem>-<line>') in
+// production, so a coveredIds set built from the raw column never intersected snapshot property
+// ids and insurance-gap warned on EVERY property. coveredIds now resolves each key through
+// resolveInsuranceProperty (explicit, auditable stem table — not the token heuristic the old
+// comment rejected), falling back to the raw value for plain ids.
+describe('insuranceConditions — policy-line keys resolve via the stem map', () => {
+  let db: WarehouseDb;
+  let dbDir: string;
+
+  beforeEach(() => { const t = tmpDb(); db = t.db; dbDir = t.dir; });
+  afterEach(() => { db.close(); rmSync(dbDir, { recursive: true, force: true }); });
+
+  const RAYTOWN = '9620-e-state-route-350-raytown-mo';
+  function seedMaster(id: string, name: string): void {
+    db.prepare('INSERT INTO property_master (id, name) VALUES (?, ?)').run(id, name);
+  }
+  const gapIds = (insights: ReturnType<typeof insuranceConditions>) =>
+    insights.filter((i) => i.id.startsWith('ins-gap-')).map((i) => i.entityId);
+
+  it('a property covered only by policy-line keys is NOT reported as a gap', () => {
+    seedMaster(RAYTOWN, '9620 E State Route 350, Raytown MO');
+    insertPolicy(db, { propertyId: 'ins-9620state350-prop', expirationDate: addDays(AS_OF, 120), premiumAnnual: 6000, policyType: 'Property' });
+    insertPolicy(db, { propertyId: 'ins-9620state350-prop-hfd', expirationDate: addDays(AS_OF, 300), premiumAnnual: 5000, policyType: 'Property' });
+    const insights = insuranceConditions(db, makeSnap([RAYTOWN, 'prop-uninsured']), AS_OF);
+    expect(gapIds(insights)).toEqual(['prop-uninsured']);
+  });
+
+  it('a key whose stem has no property_master row does not cover anything (no fabricated attribution)', () => {
+    // No master row seeded: resolveInsuranceProperty returns propertyId null, the raw key is kept,
+    // and the raw key matches no snapshot property — the gap still fires.
+    insertPolicy(db, { propertyId: 'ins-9620state350-prop-hfd', expirationDate: addDays(AS_OF, 300), premiumAnnual: 5000 });
+    insertPolicy(db, { propertyId: 'ins-etcpoa-bcl', expirationDate: addDays(AS_OF, 300), premiumAnnual: 500 });
+    const insights = insuranceConditions(db, makeSnap([RAYTOWN]), AS_OF);
+    expect(gapIds(insights)).toEqual([RAYTOWN]);
+  });
+
+  it('expiry insight ids stay keyed on the raw policy key (alert-state continuity)', () => {
+    seedMaster(RAYTOWN, '9620 E State Route 350, Raytown MO');
+    insertPolicy(db, { propertyId: 'ins-9620state350-prop-hfd', expirationDate: addDays(AS_OF, 10), premiumAnnual: 5000, policyType: 'Property' });
+    const expiry = insuranceConditions(db, makeSnap([RAYTOWN]), AS_OF).filter((i) => i.id.startsWith('ins-expiry-'));
+    expect(expiry).toHaveLength(1);
+    expect(expiry[0]!.id).toBe('ins-expiry-ins-9620state350-prop-hfd');
+    expect(expiry[0]!.entityId).toBe('ins-9620state350-prop-hfd');
+  });
+
+  it('the alert subject uses the property_master name from the stem map, keeping the live coverage label', () => {
+    seedMaster(RAYTOWN, '9620 E State Route 350, Raytown MO');
+    insertPolicy(db, { propertyId: 'ins-9620state350-prop-hfd', expirationDate: addDays(AS_OF, 10), premiumAnnual: 5000, policyType: 'Property' });
+    const base = makeSnap([RAYTOWN]) as unknown as Record<string, unknown>;
+    const snap = {
+      ...base,
+      insurance: [
+        { id: 'ins-9620state350-prop-hfd', property: '9620 E. State Rt 350, Raytown MO 64138', coverage: 'Hartford Spectrum BOP', status: 'Current', premium: 0, flags: [] },
+      ],
+    } as unknown as PortfolioSnapshot;
+    const expiry = insuranceConditions(db, snap, AS_OF).filter((i) => i.id.startsWith('ins-expiry-'));
+    expect(expiry[0]!.title).toBe('Insurance expiring soon — 9620 E State Route 350, Raytown MO · Hartford Spectrum BOP');
+  });
+
+  it('a label-only stem with no snapshot entry is labelled from the stem table, not the raw key', () => {
+    insertPolicy(db, { propertyId: 'ins-etcpoa-bcl', expirationDate: addDays(AS_OF, 10), premiumAnnual: 500, policyType: 'BCL' });
+    const expiry = insuranceConditions(db, makeSnap([]), AS_OF).filter((i) => i.id.startsWith('ins-expiry-'));
+    expect(expiry[0]!.title).toBe('Insurance expiring soon — Airport Road, Easton MD (ETC POA) · BCL');
+  });
+
+  it('the gapped-rollover title names the property, not the raw policy-line key (grouping stays on the raw line)', () => {
+    seedMaster(RAYTOWN, '9620 E State Route 350, Raytown MO');
+    insertPolicy(db, { propertyId: 'ins-9620state350-prop', policyType: 'Property', policyNumber: 'P-OLD', effectiveDate: '2025-10-18', expirationDate: '2026-10-18', premiumAnnual: 6000 });
+    insertPolicy(db, { propertyId: 'ins-9620state350-prop', policyType: 'Property', policyNumber: 'P-NEW', effectiveDate: '2026-10-21', expirationDate: '2027-10-21', premiumAnnual: 6100 });
+    const gapped = insuranceConditions(db, makeSnap([RAYTOWN]), AS_OF).filter((i) => i.id.startsWith('ins-gapped-rollover-'));
+    expect(gapped).toHaveLength(1);
+    expect(gapped[0]!.title).toBe('Possible gapped policy rollover — 9620 E State Route 350, Raytown MO');
+    expect(gapped[0]!.entityId).toBe('ins-9620state350-prop');
+  });
+
+  it('a tenant ACORD evidence-of-insurance row counts as coverage on file (Gabriel, 2026-09-24)', () => {
+    seedMaster('7658-fishel-dr-n-dublin-oh', '7658 Fishel Dr N, Dublin OH');
+    insertPolicy(db, { propertyId: 'ins-7658fishel-acord28', policyType: 'Evidence of Property Insurance (ACORD 28)', expirationDate: addDays(AS_OF, 200), premiumAnnual: null });
+    expect(gapIds(insuranceConditions(db, makeSnap(['7658-fishel-dr-n-dublin-oh']), AS_OF))).toEqual([]);
+  });
+});
+

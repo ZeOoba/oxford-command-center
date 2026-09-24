@@ -36,6 +36,7 @@ import {
 import { CalibrationVerdictSchema, type CalibrationVerdict } from '../../src/contracts/warehouse';
 import { logVerdicts, type LogVerdictsResult } from './calibration';
 import { resolveInsuranceProperty } from './insurance-property-map';
+import { isPropertyLinePolicyType } from './insurance-policy-lines';
 
 // ── named thresholds (no bare literals in comparisons) ────────────────────────────────────────
 const MIN_COHORT_N = 5;
@@ -351,9 +352,7 @@ export function collapseSameTermReissues<T extends CollapsibleInsuranceRow>(rows
  * has a valid TIV + computable rate but still lands here — visibility instead of a guess. */
 function classifyCohort(policyType: string, tiv: number | null): InsuranceCohort {
   if (tiv === null || tiv <= 0) return 'excluded-null-tiv';
-  const t = policyType.toLowerCase();
-  if (t.includes('property') || t.includes('package') || t.includes('building')) return 'property-package';
-  return 'other';
+  return isPropertyLinePolicyType(policyType) ? 'property-package' : 'other';
 }
 
 /** premium per $100 of TIV; null when tiv is null/<=0 or premium<=0 (never a false-precision rate). */
@@ -484,26 +483,26 @@ export function buildInsuranceAnalysis(db: WarehouseDb, asOf: string): Insurance
       }
     }
     const { bucket, daysToExpiry } = computeRenewal(r.expiration_date, asOf);
-    // DISPLAY ONLY: `property` is the human-readable name — a joined property_master name
-    // (non-empty) when property_id already IS a master id; otherwise the policy-line key
-    // ('ins-<stem>-<line>') resolves once via the stem map (pure lookup). An empty-string master
-    // name is treated as missing so a blank never renders.
+    // ONE predicate decides both fields: a joined property_master name (non-empty) means
+    // property_id already IS the master id; otherwise the policy-line key ('ins-<stem>-<line>')
+    // resolves once via the stem map (pure lookup). `?? r.property_id` keeps the raw key for
+    // non-'ins-' ids and label-only stems, which have no master row to point at. An empty-string
+    // master name is treated as missing on BOTH fields — never a blank name paired with a
+    // resolved id.
     //
-    // `propertyId` deliberately stays the RAW policy key. It is a financial join key, not a
-    // display field: insurance-loss-analysis.ts attaches loss events to policies on it and
-    // calibration keys rebid verdicts on it. Resolving it to the master id collapses concurrently
-    // in-force property policies at one property (9620 Raytown carries two) onto a single id,
-    // which makes the self-insure "primary" pick order-dependent and mis-splits the deductible.
-    // Resolving propertyId needs policy-term / policy_ref-aware loss attachment first — a
-    // separate follow-up. Until then downstream consumers see the same keys as before this file
-    // learned to resolve names.
-    const property = r.property_name
-      ? r.property_name
-      : resolveInsuranceProperty(r.property_id, masterNames).name;
+    // `propertyId` is a financial join key: insurance-loss-analysis.ts matches loss events
+    // (insurance_loss_events.property_id = property_master id) against it. Two concurrently
+    // in-force policies at one property (9620 Raytown) resolve to the SAME id here and stay two
+    // distinct policies (distinct policyId; the current-term collapse above ran on the raw key) —
+    // the loss engine attaches each event to exactly one of them by term / policy_ref, so the
+    // shared id never double-counts or makes the attachment order-dependent.
+    const resolved = r.property_name
+      ? { propertyId: r.property_id, name: r.property_name }
+      : resolveInsuranceProperty(r.property_id, masterNames);
     return {
       policyId: String(r.id),
-      property,
-      propertyId: r.property_id,
+      property: resolved.name,
+      propertyId: resolved.propertyId ?? r.property_id,
       carrier: r.insurer,
       policyType: r.policy_type,
       premium,
@@ -640,8 +639,10 @@ function excessBand(excess: number): 'excess-gt-10k' | 'excess-2k-10k' | 'excess
  * is the wrong content to hash — see module header).
  *
  * subjectKind is 'property' (SubjectKind has no 'insurance'/'policy' member); subjectId is the
- * policy's propertyId (falling back to its display `property` string on the — currently
- * unreachable, since property_id is NOT NULL — case it is absent). Because several policies can
+ * policy's propertyId — the stem-resolved property_master id since 2026-09-24 (the raw policy-line
+ * key before; the live ledger held 0 insurance-rebid verdicts at the switch, so no history is
+ * split across the two key spaces) — falling back to its display `property` string on the
+ * currently unreachable (property_id is NOT NULL) case it is absent. Because several policies can
  * share one property, verdictSubkind carries the policyId so each policy gets its own dedup_key
  * (the same D3 collision class anomalies/verdictSubkind and reasons/subkey already guard against).
  */
