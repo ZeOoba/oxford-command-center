@@ -12,9 +12,11 @@ import { join } from 'node:path';
 import { openWarehouse, type WarehouseDb } from '../../server/warehouse/db';
 import { ingestCostarListingsFile } from '../../server/warehouse/lease-market/ingest';
 import { runCompute } from '../../server/warehouse/lease-market/compute';
+import { loadLeaseMarketConfig } from '../../server/warehouse/lease-market/config';
 import { inProcessResolver, buildWarehouseEnvelope, leaseMarketBakeMode, bakeWarehouseJson } from '../../scripts/bake-warehouse';
-import { LeaseMarketSummaryResponse } from '../../src/contracts/lease-market';
+import { LeaseMarketSummaryResponse, PositioningResponse } from '../../src/contracts/lease-market';
 import { WAREHOUSE_SUB_ROUTERS } from '../../server/warehouse/sub-routers';
+import type { PortfolioSnapshot } from '../../src/contracts/index';
 import { stubScreen, testConfig, testHeaderMap, writeCostarFixture, type FixtureListing } from './lease-market-fixtures';
 
 // inProcessResolver builds leaseMarketApi() with no injected getSnapshot, so a bake that plans
@@ -101,6 +103,85 @@ describe('bake-warehouse — lease-market redacted-bake confidentiality boundary
     // Guards that /lease-market/positioning's liveSnapshot() resolves to the stub above; if it
     // didn't, the real server/brain import (and its load-time cost) would silently come back.
     expect(brain.getSnapshot).toHaveBeenCalled();
+  });
+});
+
+// /lease-market/positioning through the bake's OWN resolver. lease-market-api.test.ts covers
+// positioning redaction at the router level, but could not drive it through inProcessResolver: that
+// resolver injects no getSnapshot, so positioning 503'd and its redaction leg was never exercised on
+// the bake path. The server/brain stub above is that seam — it hands positioning a snapshot with a
+// vacant unit at a property the SHIPPED config maps (inProcessResolver reads config/lease-market.json).
+describe('bake-warehouse — /lease-market/positioning redaction via inProcessResolver', () => {
+  const SECRETS = ['Confidential Way', 'SECRET OWNER LLC', 'Secret Broker'];
+  const RENTS = [8.6, 8.8, 9.0, 9.2, 9.4, 9.6, 9.8, 10.0, 10.2, 10.4, 10.6, 10.8];
+  const ORA_KEY = '1100 Rarig'; // any shipped oraProperties key works; the fixture derives the rest from it
+
+  /** seededRatified()'s single listing never reaches positioning's confidence floor, and
+   *  inProcessResolver reads the shipped config with no override seam, so this fixture is ingested
+   *  and computed under that SAME shipped config: a comp set in ORA_KEY's configured market,
+   *  submarket and subtype, sized like its typical unit. If that config changes enough to empty the
+   *  comp set, the positive control below fails; it does not pass vacuously. */
+  async function seededForShippedPositioning(): Promise<WarehouseDb> {
+    const dir = mkdtempSync(join(tmpdir(), 'lm-bake-pos-'));
+    openDirs.push(dir);
+    const db = openWarehouse(join(dir, 't.sqlite'));
+    openDbs.push(db);
+    const shipped = loadLeaseMarketConfig();
+    const ora = shipped.oraProperties.find((p) => p.propertyKey === ORA_KEY)!;
+    const market = shipped.markets.find((m) => m.id === ora.marketId)!.costarMarketNames[0]!;
+    const rows: FixtureListing[] = RENTS.map((rent, i) => ({
+      id: `P${i}`, address: `${900 + i} Confidential Way`, market, submarket: ora.submarket,
+      type: ora.subtype === 'flex' ? 'Flex' : 'Industrial', // testHeaderMap's subtypeMap
+      sf: ora.typicalUnitSf, rba: 20000, rentLow: rent, owner: 'SECRET OWNER LLC', broker: 'Secret Broker',
+    }));
+    const fixture = await writeCostarFixture(dir, `costar-listings_${ora.marketId}_2026-02-15.xlsx`, rows);
+    const ingest = await ingestCostarListingsFile(db, fixture, {
+      config: shipped, headerMap: testHeaderMap(), rawDir: join(dir, 'raw'), now: () => '2026-02-16T00:00:00Z', screen: stubScreen,
+    });
+    expect(ingest.status).toBe('ingested'); // config drift fails here, at the root cause
+    runCompute(db, shipped, '2026-03-01');
+    return db;
+  }
+  const snapshotWithVacancy = (sf: number) => ({
+    leases: [{
+      id: 'V1', propertyKey: ORA_KEY, propertyId: null, tenantName: 'VACANT', unit: 'B', company: null, sf,
+      monthlyRent: 0, rentPerSf: null, leaseStart: null, leaseEnd: null, escalationDate: null, escalationPct: null,
+      status: 'Vacant', annualRent: 0, monthsToExpiry: null, flags: [],
+    }],
+  });
+
+  afterEach(() => {
+    vi.mocked(brain.getSnapshot).mockReset(); // back to the file-level () => null
+  });
+
+  async function positioningVia(opts: { leaseMarketRowLevel?: boolean }) {
+    const db = await seededForShippedPositioning();
+    const unitSf = loadLeaseMarketConfig().oraProperties.find((p) => p.propertyKey === ORA_KEY)!.typicalUnitSf;
+    // Partial snapshot: positioning reads only leases[].status/propertyKey/unit/sf.
+    vi.mocked(brain.getSnapshot).mockReturnValue(snapshotWithVacancy(unitSf) as unknown as PortfolioSnapshot);
+    const res = await inProcessResolver(db, opts)('/lease-market/positioning');
+    expect(res.status).toBe(200);
+    return PositioningResponse.parse(res.json);
+  }
+
+  it('no override (shipped mirrorRowLevel:true): comps carry the fixture address (proves the redaction check below is not vacuous)', async () => {
+    const body = await positioningVia({});
+    expect(body.rows.length).toBeGreaterThan(0);
+    const comps = body.rows.flatMap((r) => r.comps);
+    expect(comps.length).toBeGreaterThan(0);
+    // The address fields (comps, hygieneFlags, listedButLeased) are positioning's only row-level
+    // identifiers; this fixture populates comps.
+    expect(comps.every((c) => c.address?.includes('Confidential Way'))).toBe(true);
+  });
+
+  it('leaseMarketRowLevel: false: same comps, every address nulled, no fixture identifier anywhere in the payload', async () => {
+    const body = await positioningVia({ leaseMarketRowLevel: false });
+    const comps = body.rows.flatMap((r) => r.comps);
+    expect(comps.length).toBeGreaterThan(0);
+    expect(comps.every((c) => c.address === null)).toBe(true);
+    expect(body.hygieneFlags.every((h) => h.address === null)).toBe(true);
+    const blob = JSON.stringify(body);
+    for (const secret of SECRETS) expect(blob, `expected redacted positioning to NOT contain "${secret}"`).not.toContain(secret);
   });
 });
 
