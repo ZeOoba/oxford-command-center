@@ -11,15 +11,70 @@
 // Everything outside those two roots is still an explicit allow-list (src/analytics/, the contract
 // and seed files, config/ json). See DEFAULT_DENY_ROOTS below for why.
 //
+// ATTESTATION IS PER COMMIT (2026-09-23). Every commit in base..HEAD whose OWN changed paths include
+// financial-decision source must carry the trailer in ITS OWN message. The gate used to diff the
+// whole range and search the concatenated `git log` blob, so one `Refute-Skip:` on any commit
+// attested every other commit in the range. Reproduced on fix/cc-review-2026-09-23: 4e2be44
+// (error-transport plumbing, justified Refute-Skip) let its child 588fa81 (src/analytics/conditions.ts
+// alert dedup, moving risk-$ totals, no trailer) pass `--strict --base=origin/main`. A later
+// commit's trailer does not cover an earlier commit either: reword the earlier commit to attest it.
+// Two consequences of that rule: a financial change plus its revert (net zero diff) needs a trailer
+// on both commits, and so does a PR that attests only its final commit.
+//
+// MERGE COMMITS (two parents) are read twice and the paths unioned. --remerge-diff lists the paths
+// where the recorded merge differs from git's own automatic re-merge: hand edits, and every text-file
+// conflict resolution, even one that keeps the first parent's side. A combined diff (-c) lists the
+// paths whose merged content differs from BOTH parents, which catches a clean merge that follows a
+// rename INTO a financial path (see COMBINED_SHOW_ARGS); as a consequence a catch-up merge that
+// combines both sides' changes to one financial file needs its own trailer. (A gitlink conflict resolved to the first
+// parent's value is not listed. That is harmless: it adds nothing beyond parent 1, which is checked
+// on its own.) The re-merge pins merge.renameLimit=0 / merge.renames / merge.directoryRenames so that
+// a user's local merge config cannot change which paths are listed. OCTOPUS merges (3+ parents) are
+// diffed against their first parent instead (see OCTOPUS_SHOW_ARGS). A clean merge lists nothing: a
+// catch-up merge of main into the branch that touches no file changed on both sides, for instance. (CI passes --head=<PR head sha>, so GitHub's
+// server-side synthetic refs/pull/N/merge commit is not in the range at all.) (The main-side commits a catch-up merge brings in are reachable from the base, so they are
+// outside base..HEAD. Nothing checks them here. They were checked, if at all, on their own PRs.) An
+// evil merge that edits financial source, or a conflict resolved inside a financial file, needs a
+// trailer on the merge commit itself. `--no-merges` would have skipped such merges outright; the
+// old range diff caught them. Attributes for that re-merge come from the empty tree
+// (--attr-source), never from the checked-out tree the PR controls: a committed `merge=union` would
+// otherwise make a real conflict re-merge cleanly. Requires git >= 2.41 (--attr-source,
+// --remerge-diff): an older git is probed for up front and the gate skips (fails open) instead of
+// reporting every commit as unreadable.
+//
+// SHALLOW CLONES are skipped (fail open, with a warning): a shallow boundary commit reads as a ROOT
+// commit, which silently hides every commit behind it and lists the whole tree as the boundary's
+// "changes". CI fetches full history (fetch-depth: 0). Replace refs (refs/replace/*) are ignored via
+// --no-replace-objects, so a local replace ref cannot substitute a commit's parents or content.
+//
+// PATHS are read NUL-delimited (-z), so paths git would C-quote (", \, control chars) still hit the
+// prefixes. --ignore-submodules=none keeps a committed `.gitmodules ignore = all` from hiding a
+// gitlink bump. --root lists a root commit's paths even under a user's log.showRoot=false.
+// --no-renames lists a rename as delete + add, so moving a file out of a financial path still names
+// the financial path.
+//
+// SQUASH-MERGE NOTE: main is squash-merged, so per-commit attribution applies to the PR BRANCH, which
+// is where CI (job refute-required, PR-only) runs it. The branch commits and their individual
+// trailers do not survive onto main. The squash commit message must therefore carry the UNION of the
+// branch's Refute-Reviewed/Refute-Skip trailers, one line per distinct trailer, so that main's
+// history still records what attested what. Nothing re-runs this gate on main.
+//
 // Default mode WARNS and exits 0 (local dev — never blocks WIP). `--strict` EXITS 1 on a violation
-// (wired into CI for PRs; also usable from /ship). Fails OPEN on any git/tooling gap.
+// (wired into CI for PRs; also usable from /ship). Fails OPEN only when the range cannot be verified
+// at all: the base does not resolve, --base is empty, the default HEAD does not resolve (no
+// commits), the clone is shallow, git < 2.41, or git itself is unusable. Everything after both ends
+// resolve fails CLOSED: an explicit --head that does not resolve, a range that cannot be listed, a
+// commit that cannot be read (see collectCommits: no trailer clears it).
 //
-// Usage: tsx scripts/check-refute-required.ts [--strict] [--base=<ref>]
-//   base defaults to $REFUTE_BASE, else 'origin/main'.
+// Usage: tsx scripts/check-refute-required.ts [--strict] [--base=<ref>] [--head=<ref>]
+//   base defaults to $REFUTE_BASE, else 'origin/main'; head defaults to HEAD.
 //
-// Exported functions are pure (no I/O) so they unit-test without the process.exit side effects —
-// the bottom-of-file guard runs main() only when executed directly (mirrors governance-check.ts).
+// Exported functions are pure, or take an injectable git runner (collectCommits / evaluate), so they
+// unit-test without the process.exit side effects — the bottom-of-file guard runs main() only when
+// executed directly (mirrors governance-check.ts).
 import { execFileSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // Pure route-plumbing / dispatch files in server/warehouse/ that contain no financial math —
 // subtracted from the broad prefix. Fail-CLOSED elsewhere: any warehouse file NOT listed here
@@ -293,58 +348,336 @@ export function isFinancialSourcePath(p: string): boolean {
   );
 }
 
-/** True when a refute attestation trailer appears anywhere in the commit-message blob. */
-export function hasRefuteApproval(messageBlob: string): boolean {
-  return /(^|\n)\s*Refute-(Reviewed|Skip):/i.test(messageBlob);
+/**
+ * True when a refute attestation trailer with a real value appears in a commit message. Pass ONE
+ * commit's message — a concatenated range blob is the defect this gate was fixed for (see the file
+ * header). A bare `Refute-Skip:` with no value, or the gate's own pasted hint line
+ * (`Refute-Reviewed: wf_<runId>` / `Refute-Skip: <reason>`), does not attest anything.
+ */
+export function hasRefuteApproval(message: string): boolean {
+  for (const m of message.matchAll(/(?:^|\n)[ \t]*Refute-(?:Reviewed|Skip):([^\n]*)/gi)) {
+    const value = (m[1] ?? '').trim();
+    if (value !== '' && !value.startsWith('wf_<runId>') && !value.startsWith('<reason>')) return true;
+  }
+  return false;
+}
+
+/**
+ * One commit's message and its OWN changed paths (not the range's). `readError` is set when the
+ * commit sits inside a range that resolved but could not itself be read: it cannot be verified, so it
+ * is a violation (fail CLOSED), not a skip.
+ */
+export interface CommitRecord {
+  sha: string;
+  message: string;
+  files: string[];
+  readError?: string;
+  /** Set (true) only on merge commits; drives the reword recipe's merge warning. */
+  merge?: true;
+}
+
+/** A commit that changed financial-decision source without attesting it in its own message, or could not be read. */
+export interface UnattestedCommit {
+  sha: string;
+  subject: string;
+  financial: string[];
+  readError?: string;
+}
+
+/**
+ * `git show` arguments for one commit, the sha appended last. See the file header for why each
+ * flag is here; -z makes the output: message, NUL (from %x00), NUL-terminated paths.
+ */
+/** git's well-known empty tree (SHA-1 object format). */
+export const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
+/**
+ * Global git options for every range read: ignore replace refs, and pin the merge settings the
+ * --remerge-diff re-merge consults, so that local config cannot change the answer.
+ */
+export const GIT_GLOBAL_ARGS: readonly string[] = [
+  '--no-replace-objects',
+  // Read attributes from the EMPTY TREE, not the checked-out tree. In CI the checkout is the PR's
+  // own tree, so a committed `.gitattributes` (not itself financial, so no trailer needed) could
+  // set `merge=union` on a financial path and make git's re-merge resolve a real conflict by
+  // itself, which --remerge-diff would then list as clean. Needs git >= 2.41 (the global
+  // --attr-source option shipped in 2.41; 2.40 only added `check-attr --source`).
+  `--attr-source=${EMPTY_TREE}`,
+  '-c',
+  'merge.renameLimit=0',
+  '-c',
+  'merge.renames=true',
+  '-c',
+  'merge.directoryRenames=conflict',
+];
+
+export const SHOW_ARGS: readonly string[] = [
+  ...GIT_GLOBAL_ARGS,
+  'show',
+  // --no-relative: a user's diff.relative=true, with the gate run from a subdirectory, would print
+  // paths relative to it (and drop the rest), so nothing would match a financial prefix.
+  '--no-relative',
+  '-z',
+  '--remerge-diff',
+  '--root',
+  '--no-renames',
+  '--ignore-submodules=none',
+  '--name-only',
+  '--format=%B%x00',
+];
+
+/**
+ * The same for an OCTOPUS merge (3+ parents): git skips --remerge-diff for those. It prints a warning
+ * in place of the path list, so they would pass as "no financial files". Instead they are diffed against their
+ * first parent — every path any merged-in branch brought, so over-inclusive by design (octopus merges
+ * are rare; a false positive costs one trailer).
+ */
+export const OCTOPUS_SHOW_ARGS: readonly string[] = SHOW_ARGS.map((a) =>
+  a === '--remerge-diff' ? '--diff-merges=first-parent' : a,
+);
+
+/**
+ * The second read for a TWO-parent merge: a combined diff (-c) lists every path whose merged
+ * content differs from BOTH parents. --remerge-diff alone misses a merge whose automatic re-merge
+ * follows a rename (or directory rename) INTO a financial path: main moves src/lib/x.ts to
+ * src/analytics/x.ts, the branch edits the old, non-financial path, and the clean merge carries
+ * that edit into financial source that no commit's own path list names. The union of the two reads
+ * is what the merge must attest. Cost, by design: a catch-up merge that combines both sides'
+ * changes to the same financial file needs a trailer too.
+ */
+export const COMBINED_SHOW_ARGS: readonly string[] = SHOW_ARGS.map((a) => (a === '--remerge-diff' ? '-c' : a));
+
+/**
+ * Parse `git show ${SHOW_ARGS} <sha>` output. The first NUL ends the message: without it, the only
+ * message / path-list boundary is a blank line, which messages also contain. Paths are split on NUL
+ * only — never trimmed — so a path with spaces or quote characters survives intact. Throws unless
+ * the output is exactly that shape — a missing message terminator, or anything after the last
+ * path terminator (the octopus remerge-diff warning was one) — so an unexpected shape is reported
+ * as an unreadable commit instead of being read as a harmless path.
+ */
+export function parseCommitShow(sha: string, raw: string): CommitRecord {
+  const nul = raw.indexOf('\0');
+  if (nul === -1) throw new Error(`unexpected git show output for ${sha} (no message terminator)`);
+  const rest = raw.slice(nul + 1).replace(/^\0*\n?/, '');
+  if (rest !== '' && !rest.endsWith('\0')) {
+    throw new Error(`unexpected git show output for ${sha} (unterminated path list: ${JSON.stringify(rest.slice(-80))})`);
+  }
+  const files = rest.split('\0').filter((p) => p !== '');
+  return { sha, message: raw.slice(0, nul), files };
+}
+
+/** Every commit whose own changed paths include financial source and whose own message has no trailer. */
+export function findUnattestedCommits(commits: readonly CommitRecord[]): UnattestedCommit[] {
+  const out: UnattestedCommit[] = [];
+  for (const c of commits) {
+    if (c.readError !== undefined) {
+      out.push({ sha: c.sha, subject: '(could not be read)', financial: [], readError: c.readError });
+      continue;
+    }
+    const financial = c.files.filter(isFinancialSourcePath);
+    if (financial.length === 0 || hasRefuteApproval(c.message)) continue;
+    out.push({ sha: c.sha, subject: c.message.split('\n')[0]?.trim() ?? '', financial });
+  }
+  return out;
+}
+
+export type GitRunner = (args: string[]) => string;
+
+/**
+ * Environment for every git call. GIT_GRAFT_FILE points at a path that does not exist, so a legacy
+ * `.git/info/grafts` file (which --no-replace-objects does NOT disable) cannot rewrite parents and
+ * hide a commit from the range.
+ */
+export function gitEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return { ...base, GIT_GRAFT_FILE: join(tmpdir(), 'check-refute-required.no-grafts') };
 }
 
 function git(args: string[]): string {
-  return execFileSync('git', args, { encoding: 'utf8' });
+  return execFileSync('git', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, env: gitEnv() });
+}
+
+/**
+ * Every commit in base..head (merges included), each with its own message and paths. Throws only
+ * when the RANGE cannot be resolved (the caller fails open). A commit inside a resolved range that
+ * cannot be read — git error, buffer overflow, unexpected output shape — comes back with
+ * `readError` set, because failing open there would let one crafted commit (a ~5 KiB tree listing
+ * 256k paths overflows any buffer) switch the gate off for the whole range.
+ */
+export function collectCommits(base: string, head = 'HEAD', run: GitRunner = git): CommitRecord[] {
+  // Trailing `--`: without it git also stats the range as a possible PATH, which fails on Windows in
+  // a deep working directory ("Filename too long") — now a fail-CLOSED violation, i.e. a false block.
+  const rows = run([...GIT_GLOBAL_ARGS, 'rev-list', '--parents', `${base}..${head}`, '--'])
+    .split('\n')
+    .map((s) => s.trim().split(/\s+/))
+    .filter((r) => r[0]);
+  return rows.map(([sha = '', ...parents]): CommitRecord => {
+    try {
+      if (parents.length > 2) return { ...parseCommitShow(sha, run([...OCTOPUS_SHOW_ARGS, sha])), merge: true };
+      const record = parseCommitShow(sha, run([...SHOW_ARGS, sha]));
+      if (parents.length < 2) return record;
+      const combined = parseCommitShow(sha, run([...COMBINED_SHOW_ARGS, sha]));
+      return { ...record, files: [...new Set([...record.files, ...combined.files])], merge: true };
+    } catch (err) {
+      return { sha, message: '', files: [], readError: (err as Error).message.split('\n')[0] ?? 'unknown error' };
+    }
+  });
+}
+
+/** ok: nothing to attest or all attested · skip: tooling gap, fail open · violation: see message. */
+export interface GateResult {
+  outcome: 'ok' | 'skip' | 'violation';
+  message: string;
+}
+
+/**
+ * A reason this checkout cannot be verified at all, or undefined. Unparseable probe output means
+ * "no known gap" (proceed); a probe that throws means git itself is unusable (skip).
+ */
+export function probeToolingGap(run: GitRunner): string | undefined {
+  try {
+    const v = /git version (\d+)\.(\d+)/.exec(run(['version']));
+    if (v && (Number(v[1]) < 2 || (Number(v[1]) === 2 && Number(v[2]) < 41))) {
+      return `git ${v[1]}.${v[2]} lacks --attr-source / --remerge-diff (needs >= 2.41)`;
+    }
+    if (run(['rev-parse', '--is-shallow-repository']).trim() === 'true') {
+      return 'shallow clone: a boundary commit reads as a root commit and hides every commit behind it (fetch full history, e.g. fetch-depth: 0)';
+    }
+  } catch (err) {
+    return `git unusable (${(err as Error).message.split('\n')[0]})`;
+  }
+  return undefined;
+}
+
+/** The whole gate minus process I/O; main() maps the outcome to a console stream and exit code. */
+export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): GateResult {
+  if (base.trim() === '') {
+    // `--base=` or REFUTE_BASE='' would otherwise read the empty range `..HEAD` and report OK.
+    return { outcome: 'skip', message: 'check:refute — skipped: empty base ref (pass --base=<ref>).' };
+  }
+  const gap = probeToolingGap(run);
+  if (gap !== undefined) return { outcome: 'skip', message: `check:refute — skipped: ${gap}.` };
+  // Resolve both ends BEFORE listing the range. Only a failure HERE is a tooling gap: once both
+  // ends resolve, a failure to list the range (e.g. `rev-list` output overflowing the buffer on a
+  // PR carrying ~830k commits) must not switch the gate off.
+  const firstLine = (err: unknown): string => (err as Error).message.split('\n')[0] ?? 'unknown error';
+  // Every later step uses the RESOLVED shas, never the names again: in a shared checkout another
+  // session can switch HEAD (or move a branch) between this check and the range read, and a
+  // re-resolved name would then read a range nobody verified. (Output that is not a sha falls back to
+  // the name; rev-parse --verify always prints one.)
+  const shaOr = (out: string, name: string): string => {
+    const sha = out.trim();
+    return /^[0-9a-f]{40,64}$/.test(sha) ? sha : name;
+  };
+  let baseSha: string;
+  let headSha: string;
+  try {
+    // GIT_GLOBAL_ARGS here too: a replace ref on the head would otherwise resolve it to a decoy.
+    baseSha = shaOr(run([...GIT_GLOBAL_ARGS, 'rev-parse', '--verify', '--quiet', `${base}^{commit}`]), base);
+  } catch (err) {
+    // No usable base ref (not fetched, typo, fresh repo) — never block on a tooling gap.
+    return { outcome: 'skip', message: `check:refute — skipped: base '${base}' does not resolve (${firstLine(err)}).` };
+  }
+  try {
+    headSha = shaOr(run([...GIT_GLOBAL_ARGS, 'rev-parse', '--verify', '--quiet', `${head}^{commit}`]), head);
+  } catch (err) {
+    // The default HEAD not resolving means a repo with no commits: a tooling gap. An EXPLICIT
+    // --head that does not resolve is a caller error, and under --strict it must not pass.
+    if (head === 'HEAD') return { outcome: 'skip', message: `check:refute — skipped: HEAD does not resolve (${firstLine(err)}).` };
+    return { outcome: 'violation', message: `check:refute — --head '${head}' does not resolve to a commit (${firstLine(err)}).` };
+  }
+  let commits: CommitRecord[];
+  try {
+    commits = collectCommits(baseSha, headSha, run);
+  } catch (err) {
+    return {
+      outcome: 'violation',
+      message: `check:refute — could not list the commits in the resolved range '${base}..${head}', so none can be verified (${firstLine(err)}).`,
+    };
+  }
+
+  const financialCommits = commits.filter((c) => c.readError !== undefined || c.files.some(isFinancialSourcePath));
+  if (financialCommits.length === 0) {
+    return { outcome: 'ok', message: 'check:refute — OK: no financial-decision source files changed in this range.' };
+  }
+  const unattested = findUnattestedCommits(commits);
+  if (unattested.length === 0) {
+    return {
+      outcome: 'ok',
+      message: `check:refute — OK: ${financialCommits.length} commit(s) change financial-decision source; each carries its own Refute-Reviewed/Skip trailer.`,
+    };
+  }
+  const unreadable = unattested.some((u) => u.readError !== undefined);
+  // The rebase target is the merge-base, not the base REF: the ref may move (another PR lands, a
+  // fetch) between this message and the reader running it, and a rebase onto the moved ref would
+  // replay the branch onto new main instead of rewording one message. --rebase-merges keeps a merge
+  // commit (which may be the one needing the trailer) instead of dropping it and replaying its conflicts.
+  let rebaseOnto = base;
+  try {
+    const mb = run([...GIT_GLOBAL_ARGS, 'merge-base', baseSha, headSha]).trim();
+    if (/^[0-9a-f]{40,64}$/.test(mb)) rebaseOnto = mb;
+  } catch {
+    // Keep the ref; the reword still works when the ref has not moved.
+  }
+  const message = [
+    `check:refute — ${unattested.length} of ${financialCommits.length} commit(s) changing financial-decision source are unattested${unreadable ? ' or unreadable' : ''}:`,
+    ...unattested.flatMap((u) => [
+      `  ${u.sha.slice(0, 7)} ${u.subject}`,
+      ...(u.readError !== undefined ? [`      unreadable, so unverifiable: ${u.readError}`] : []),
+      ...u.financial.map((f) => `      ${f}`),
+    ]),
+    '',
+    ...(unreadable
+      ? [
+          'An UNREADABLE commit cannot be cleared by any trailer: its content was never verified. Rewrite',
+          'it (split an oversized commit, recreate a malformed one) so that git show can read it.',
+          '',
+        ]
+      : []),
+    'A trailer on another commit in the range does not attest these. Run the refute-financial-change',
+    "workflow on each, then add a trailer to THAT commit's message:",
+    '    Refute-Reviewed: wf_<runId>        (or, with justification)  Refute-Skip: <reason>',
+    'Substitute the real run id: the literal wf_<runId> placeholder is rejected.',
+    'HEAD: git commit --amend. An earlier commit: do it in your own worktree (git worktree add), never a',
+    'shared checkout, with no editor at all (POSIX shell / Git Bash):',
+    '    PRE=$(git rev-parse HEAD)                  (pin the tip: ORIG_HEAD is one slot another session can overwrite)',
+    `    GIT_EDITOR="git interpret-trailers --in-place --trailer 'Refute-Reviewed: wf_<runId>'" git commit --fixup=reword:<sha>`,
+    `    GIT_SEQUENCE_EDITOR=: git rebase -i --rebase-merges --autosquash ${rebaseOnto}${rebaseOnto === base ? '' : `    (merge-base of ${base} and ${head})`}`,
+    '    git diff --exit-code "$PRE" HEAD           (MUST print nothing: a reword changes no content)',
+    ...(commits.some((c) => c.merge)
+      ? [
+          'This range contains a merge commit: --rebase-merges RE-CREATES every merge after the reworded',
+          'commit and silently drops its hand edits and conflict resolutions. If the diff above is not',
+          'empty, restore the branch with `git reset --keep "$PRE"` (never --hard, which also discards',
+          'uncommitted work) and reword by hand instead.',
+        ]
+      : []),
+    `(checked range: ${base} (${baseSha.slice(0, 12)})..${head} (${headSha.slice(0, 12)}), merges read by --remerge-diff + -c)`,
+  ].join('\n');
+  return { outcome: 'violation', message };
+}
+
+/** What main() prints and exits with; pure so the CLI contract CI depends on is unit-testable. */
+export interface CliResult {
+  stream: 'log' | 'warn' | 'error';
+  exitCode: 0 | 1;
+  message: string;
+}
+
+export function runCli(argv: readonly string[], env: NodeJS.ProcessEnv, run: GitRunner = git): CliResult {
+  const strict = argv.includes('--strict');
+  const base = argv.find((a) => a.startsWith('--base='))?.slice('--base='.length) ?? env.REFUTE_BASE ?? 'origin/main';
+  // --head lets CI name the PR head sha directly instead of its synthetic refs/pull/N/merge HEAD.
+  const head = argv.find((a) => a.startsWith('--head='))?.slice('--head='.length) || 'HEAD';
+  const result = evaluate(base, run, head);
+  if (result.outcome === 'ok') return { stream: 'log', exitCode: 0, message: result.message };
+  if (result.outcome === 'violation' && strict) return { stream: 'error', exitCode: 1, message: result.message };
+  return { stream: 'warn', exitCode: 0, message: result.message };
 }
 
 function main(): void {
-  const argv = process.argv.slice(2);
-  const strict = argv.includes('--strict');
-  const base =
-    argv.find((a) => a.startsWith('--base='))?.slice('--base='.length) ??
-    process.env.REFUTE_BASE ??
-    'origin/main';
-
-  let changed: string[];
-  let messageBlob: string;
-  try {
-    changed = git(['diff', '--name-only', `${base}...HEAD`]).split('\n').map((s) => s.trim()).filter(Boolean);
-    messageBlob = git(['log', `${base}..HEAD`, '--format=%B']);
-  } catch (err) {
-    // No usable base ref (shallow clone, detached HEAD, fresh repo) — never block on a tooling gap.
-    console.warn(`check:refute — skipped: could not diff against '${base}' (${(err as Error).message.split('\n')[0]}).`);
-    return;
-  }
-
-  const financial = changed.filter(isFinancialSourcePath);
-  if (financial.length === 0) {
-    console.log('check:refute — OK: no financial-decision source files changed in this range.');
-    return;
-  }
-  if (hasRefuteApproval(messageBlob)) {
-    console.log(`check:refute — OK: ${financial.length} financial file(s) changed; a Refute-Reviewed/Skip trailer is present.`);
-    return;
-  }
-
-  const msg = [
-    `check:refute — ${financial.length} financial-decision source file(s) changed WITHOUT a refute attestation:`,
-    ...financial.map((f) => `    ${f}`),
-    '',
-    'Run the refute-financial-change workflow on the change, then add a commit trailer:',
-    '    Refute-Reviewed: wf_<runId>        (or, with justification)  Refute-Skip: <reason>',
-    `(checked range: ${base}..HEAD)`,
-  ].join('\n');
-
-  if (strict) {
-    console.error(msg);
-    process.exit(1);
-  }
-  console.warn(msg);
+  const r = runCli(process.argv.slice(2), process.env);
+  console[r.stream](r.message);
+  if (r.exitCode !== 0) process.exit(r.exitCode);
 }
 
 if (process.argv[1] && process.argv[1].replace(/\\/g, '/').endsWith('check-refute-required.ts')) {

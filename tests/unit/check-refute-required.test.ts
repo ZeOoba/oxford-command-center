@@ -1,7 +1,23 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join, resolve } from 'node:path';
 import {
   isFinancialSourcePath,
   hasRefuteApproval,
+  findUnattestedCommits,
+  parseCommitShow,
+  collectCommits,
+  evaluate,
+  runCli,
+  gitEnv,
+  probeToolingGap,
+  SHOW_ARGS,
+  OCTOPUS_SHOW_ARGS,
+  GIT_GLOBAL_ARGS,
+  type CommitRecord,
+  type GitRunner,
   DELIVERY_ONLY_PATHS,
   NON_FINANCIAL_CONFIG_PATHS,
   DEFAULT_DENY_ROOTS,
@@ -517,7 +533,7 @@ describe('check-refute-required — delivery-only allowlist', () => {
 });
 
 describe('check-refute-required — trailer detection', () => {
-  it('detects Refute-Reviewed / Refute-Skip anywhere in the blob (case-insensitive)', () => {
+  it('detects Refute-Reviewed / Refute-Skip in a commit message (case-insensitive)', () => {
     expect(hasRefuteApproval('fix: x\n\nRefute-Reviewed: wf_abc123')).toBe(true);
     expect(hasRefuteApproval('chore\n\nRefute-Skip: docs-only adjustment')).toBe(true);
     expect(hasRefuteApproval('refute-reviewed: wf_x')).toBe(true);
@@ -526,4 +542,849 @@ describe('check-refute-required — trailer detection', () => {
     expect(hasRefuteApproval('fix: something\n\nCo-Authored-By: someone')).toBe(false);
     expect(hasRefuteApproval('')).toBe(false);
   });
+});
+
+// 2026-09-23: attestation is per COMMIT, not per range. The gate used to search the concatenated
+// `git log base..HEAD` blob, so one Refute-Skip anywhere attested every commit in the PR.
+describe('check-refute-required — trailer value', () => {
+  it('a trailer needs a real value on its own line', () => {
+    expect(hasRefuteApproval('fix\n\nRefute-Skip:\n')).toBe(false);
+    expect(hasRefuteApproval('fix\n\nRefute-Skip:   \n')).toBe(false);
+    expect(hasRefuteApproval('fix\n\nRefute-Skip:\nnot a value on the same line\n')).toBe(false);
+    expect(hasRefuteApproval('fix\n\n  Refute-Skip: indented is still a trailer\n')).toBe(true);
+  });
+  it('a trailer mentioned mid-line (subject or body prose) does not attest', () => {
+    expect(hasRefuteApproval('fix(analytics): stop honouring a stale Refute-Skip: marker in dedup\n')).toBe(false);
+    expect(hasRefuteApproval('fix: x\n\nWe used to accept Refute-Reviewed: anywhere in the body.\n')).toBe(false);
+  });
+
+  it("pasting the gate's own hint line does not attest", () => {
+    expect(
+      hasRefuteApproval('fix\n\n    Refute-Reviewed: wf_<runId>        (or, with justification)  Refute-Skip: <reason>\n'),
+    ).toBe(false);
+    expect(hasRefuteApproval('fix\n\nRefute-Skip: <reason>\n')).toBe(false);
+    // A second, real trailer in the same message still counts.
+    expect(hasRefuteApproval('fix\n\nRefute-Skip: <reason>\nRefute-Reviewed: wf_real1\n')).toBe(true);
+  });
+});
+
+describe('check-refute-required — per-commit attestation', () => {
+  const skipParent: CommitRecord = {
+    sha: '4e2be44000000000000000000000000000000000',
+    message:
+      'fix(warehouse): JSON error bodies for uncaught route errors\n\n' +
+      'Refute-Skip: error transport only — no financial computation, ranking, or threshold touched\n',
+    files: ['server/warehouse/sub-routers.ts', 'src/modules/sourcing/SourcingModule.tsx'],
+  };
+  const unattestedChild: CommitRecord = {
+    sha: '588fa81000000000000000000000000000000000',
+    message: 'fix(alerts): one expiry insight per lease — stop double-counting risk $\n',
+    files: ['src/analytics/conditions.ts', 'tests/unit/conditions.test.ts'],
+  };
+  const showOutput = (c: CommitRecord): string => `${c.message}\0\0\n${c.files.map((f) => `${f}\0`).join('')}`;
+
+  it('a Refute-Skip on the parent does NOT attest an unattested financial child (the 2026-09-23 repro)', () => {
+    // The old range-level check passed this range: the concatenated blob contains a trailer.
+    expect(hasRefuteApproval([skipParent, unattestedChild].map((c) => c.message).join('\n'))).toBe(true);
+    expect(findUnattestedCommits([skipParent, unattestedChild])).toEqual([
+      {
+        sha: unattestedChild.sha,
+        subject: 'fix(alerts): one expiry insight per lease — stop double-counting risk $',
+        financial: ['src/analytics/conditions.ts'],
+      },
+    ]);
+  });
+
+  it('order does not matter — a later trailer does not attest an earlier commit', () => {
+    expect(findUnattestedCommits([unattestedChild, skipParent]).map((u) => u.sha)).toEqual([unattestedChild.sha]);
+  });
+
+  it('passes when every financial commit carries its own trailer', () => {
+    const attestedChild = { ...unattestedChild, message: unattestedChild.message + '\nRefute-Reviewed: wf_abc123\n' };
+    expect(findUnattestedCommits([skipParent, attestedChild])).toEqual([]);
+  });
+
+  it('a commit with no financial source needs no trailer', () => {
+    const docsOnly: CommitRecord = { sha: 'd0c5', message: 'docs: x\n', files: ['README.md', 'tests/unit/a.test.ts'] };
+    expect(findUnattestedCommits([docsOnly])).toEqual([]);
+  });
+
+  it('parseCommitShow splits the -z output: message, NUL, NUL-terminated paths (never trimmed)', () => {
+    const raw = 'fix: x\n\nbody\n\nRefute-Skip: y\n\0\0\nsrc/analytics/conditions.ts\0 lead space.ts\0src/analytics/q"x.ts\0';
+    expect(parseCommitShow('abc', raw)).toEqual({
+      sha: 'abc',
+      message: 'fix: x\n\nbody\n\nRefute-Skip: y\n',
+      files: ['src/analytics/conditions.ts', ' lead space.ts', 'src/analytics/q"x.ts'],
+    });
+    // A clean merge under --remerge-diff: message and terminators, no paths.
+    expect(parseCommitShow('m', 'Merge x into y\n\0\0').files).toEqual([]);
+    // A trailer-looking path after the NUL is a path, not an attestation.
+    expect(parseCommitShow('e', 'chore\n\0\0\nRefute-Skip: evil.ts\0').message).toBe('chore\n');
+  });
+
+  it('parseCommitShow throws on output without the terminator', () => {
+    expect(() => parseCommitShow('abc', 'fix: x\n\nsrc/analytics/conditions.ts\n')).toThrow(/no message terminator/);
+  });
+
+  it('parseCommitShow throws on anything after the last path terminator (the octopus warning shape)', () => {
+    // git 2.55 on an octopus under --remerge-diff: the warning replaces the path list.
+    expect(() => parseCommitShow('o', 'octo\n\0\0diff: warning: Skipping remerge-diff for octopus merges.\n')).toThrow(
+      /unterminated path list/,
+    );
+    expect(() => parseCommitShow('o', 'x\n\0\0\nsrc/analytics/a.ts\0trailing')).toThrow(/unterminated path list/);
+  });
+
+  it('collectCommits reads an octopus (3+ parents) against its first parent', () => {
+    const calls: string[][] = [];
+    const run = (args: string[]): string => {
+      calls.push(args);
+      if (args.includes('rev-list')) return 'octo p1 p2 p3\n';
+      return 'octo\n\0\0\nsrc/analytics/a.ts\0';
+    };
+    expect(collectCommits('b', 'HEAD', run)[0]?.files).toEqual(['src/analytics/a.ts']);
+    expect(calls[1]).toEqual([...OCTOPUS_SHOW_ARGS, 'octo']);
+    expect(OCTOPUS_SHOW_ARGS).toContain('--diff-merges=first-parent');
+    expect(OCTOPUS_SHOW_ARGS).not.toContain('--remerge-diff');
+  });
+
+  it('a commit that cannot be read inside a resolved range is a VIOLATION, not a skip', () => {
+    // A ~5 KiB tree listing 256k paths overflows any output buffer; failing open there would let one
+    // crafted commit switch the gate off for the whole range.
+    const run = (args: string[]): string => {
+      if (args.includes('rev-list')) return `${skipParent.sha} b0\nbig0 b0\n`;
+      if (args[args.length - 1] === 'big0') throw new Error('spawnSync git ENOBUFS');
+      return showOutput(skipParent);
+    };
+    const r = evaluate('origin/main', run);
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain('are unattested or unreadable');
+    expect(r.message).toContain('cannot be cleared by any trailer');
+    expect(r.message).toContain('big0 (could not be read)');
+    expect(r.message).toContain('unreadable, so unverifiable: spawnSync git ENOBUFS');
+    expect(r.message).not.toContain('4e2be44');
+  });
+
+  it('collectCommits reads every commit in the range, merges included, with its own git show', () => {
+    const calls: string[][] = [];
+    const run = (args: string[]): string => {
+      calls.push(args);
+      if (args.includes('rev-list')) return `${unattestedChild.sha} ${skipParent.sha}\n${skipParent.sha} b0\n`;
+      const sha = args[args.length - 1];
+      const c = [skipParent, unattestedChild].find((x) => x.sha === sha);
+      if (!c) throw new Error(`unexpected sha ${sha}`);
+      return showOutput(c);
+    };
+    const commits = collectCommits('origin/main', 'HEAD', run);
+    // Trailing `--`: without it git also stats the range as a possible PATH, which fails on Windows
+    // in a deep working directory ("Filename too long") and would now fail the gate CLOSED.
+    expect(calls[0]).toEqual([...GIT_GLOBAL_ARGS, 'rev-list', '--parents', 'origin/main..HEAD', '--']);
+    expect(GIT_GLOBAL_ARGS).toContain('--no-replace-objects');
+    expect(GIT_GLOBAL_ARGS).toContain('merge.renameLimit=0');
+    expect(calls.slice(1)).toEqual([
+      [...SHOW_ARGS, unattestedChild.sha],
+      [...SHOW_ARGS, skipParent.sha],
+    ]);
+    expect(commits).toEqual([unattestedChild, skipParent]);
+  });
+
+  it('evaluate: violation names only the unattested commit; the remedy is in the message', () => {
+    const run = (args: string[]): string =>
+      args.includes('rev-list')
+        ? `${unattestedChild.sha} ${skipParent.sha}\n${skipParent.sha} b0\n`
+        : showOutput(args[args.length - 1] === skipParent.sha ? skipParent : unattestedChild);
+    const r = evaluate('origin/main', run);
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain('1 of 2 commit(s)');
+    expect(r.message).toContain('588fa81 fix(alerts)');
+    expect(r.message).toContain('src/analytics/conditions.ts');
+    expect(r.message).not.toContain('4e2be44');
+    expect(r.message).toContain('git interpret-trailers --in-place');
+    expect(r.message).toContain('git commit --fixup=reword:<sha>');
+    expect(r.message).toContain('GIT_SEQUENCE_EDITOR=: git rebase -i --rebase-merges --autosquash origin/main');
+  });
+
+  it('evaluate fails OPEN on a git failure and on an empty base', () => {
+    const boom = (): string => {
+      throw new Error("fatal: bad revision 'nope..HEAD'");
+    };
+    expect(evaluate('nope', boom)).toMatchObject({ outcome: 'skip' });
+    expect(evaluate('nope', boom).message).toContain('bad revision');
+    // `--base=` would otherwise read the empty range `..HEAD` and report OK without looking at anything.
+    const never = (): string => {
+      throw new Error('must not be called');
+    };
+    expect(evaluate('', never)).toMatchObject({ outcome: 'skip' });
+    expect(evaluate('  ', never)).toMatchObject({ outcome: 'skip' });
+  });
+
+  it('evaluate skips (fails open) on a shallow clone and on git < 2.41, before reading any commit', () => {
+    const probe = (version: string, shallow: string) => (args: string[]): string => {
+      if (args[0] === 'version') return version;
+      if (args[0] === 'rev-parse') return shallow;
+      throw new Error('commits must not be read');
+    };
+    // --attr-source shipped in git 2.41 (2.40 only added `check-attr --source`).
+    expect(evaluate('origin/main', probe('git version 2.40.4\n', 'false\n'))).toMatchObject({ outcome: 'skip' });
+    expect(evaluate('origin/main', probe('git version 2.40.4\n', 'false\n')).message).toContain('2.41');
+    expect(evaluate('origin/main', probe('git version 2.55.0.windows.2\n', 'true\n')).message).toContain('shallow clone');
+    expect(probeToolingGap(probe('git version 2.41.0\n', 'false\n'))).toBeUndefined();
+    expect(GIT_GLOBAL_ARGS.some((a) => a.startsWith('--attr-source='))).toBe(true);
+    expect(probeToolingGap(probe('git version 3.0.0\n', 'false\n'))).toBeUndefined();
+    expect(probeToolingGap(probe('git version 1.9.5\n', 'false\n'))).toContain('2.41');
+  });
+
+  it('evaluate: an unresolvable BASE skips; an unresolvable explicit --head, or a rev-list failure after the range resolved, is a violation', () => {
+    const runner =
+      (opts: { base?: boolean; head?: boolean; revList?: boolean }) =>
+      (args: string[]): string => {
+        if (args[0] === 'version') return 'git version 2.55.0\n';
+        if (args[0] === 'rev-parse' && args[1] === '--is-shallow-repository') return 'false\n';
+        if (args.includes('rev-parse')) {
+          const ref = args[args.length - 1] ?? '';
+          const ok = ref.startsWith('origin/main') ? opts.base !== false : opts.head !== false;
+          if (!ok) throw new Error(`fatal: Needed a single revision (${ref})`);
+          return 'f'.repeat(40) + '\n';
+        }
+        if (args.includes('rev-list')) {
+          // e.g. 830k commits: `rev-list --parents` output overflows maxBuffer.
+          if (opts.revList === false) throw new Error('spawnSync git ENOBUFS');
+          return '';
+        }
+        throw new Error(`unexpected ${args.join(' ')}`);
+      };
+    expect(evaluate('origin/main', runner({ base: false }))).toMatchObject({ outcome: 'skip' });
+    const badHead = evaluate('origin/main', runner({ head: false }), '588fa8l');
+    expect(badHead.outcome).toBe('violation');
+    expect(badHead.message).toContain('588fa8l');
+    // The default HEAD not resolving (a repo with no commits) is a tooling gap, not a violation.
+    expect(evaluate('origin/main', runner({ head: false }))).toMatchObject({ outcome: 'skip' });
+    const overflow = evaluate('origin/main', runner({ revList: false }));
+    expect(overflow.outcome).toBe('violation');
+    expect(overflow.message).toContain('ENOBUFS');
+    expect(evaluate('origin/main', runner({}))).toMatchObject({ outcome: 'ok' });
+  });
+
+  // A runner that answers every probe and range call, so an assertion cannot pass because some
+  // unrelated call threw (the earlier empty-base test used a throw-on-everything runner, which
+  // made probeToolingGap return "git unusable" -> skip even with the guard deleted).
+  const healthy =
+    (commits: CommitRecord[], fail: Record<string, string> = {}) =>
+    (args: string[]): string => {
+      if (args[0] === 'version') return 'git version 2.55.0\n';
+      if (args[0] === 'rev-parse' && args[1] === '--is-shallow-repository') return 'false\n';
+      if (args.includes('rev-parse')) return 'f'.repeat(40) + '\n';
+      if (args.includes('merge-base')) return 'e'.repeat(40) + '\n';
+      if (args.includes('rev-list')) return commits.map((c) => `${c.sha} p0\n`).join('');
+      const sha = args[args.length - 1] ?? '';
+      if (fail[sha] !== undefined) throw new Error(fail[sha]);
+      const c = commits.find((x) => x.sha === sha);
+      if (!c) throw new Error(`unexpected ${args.join(' ')}`);
+      return showOutput(c);
+    };
+
+  it('runCli: --head is honoured, --strict exits 1 on a violation, default mode warns and exits 0', () => {
+    const fin: CommitRecord = { sha: 'f1n', message: 'fin, no trailer\n', files: ['src/analytics/a.ts'] };
+    const seen: string[] = [];
+    const run = (args: string[]): string => {
+      if (args.includes('rev-parse') && args.includes('--verify')) seen.push(args[args.length - 1] ?? '');
+      return healthy([fin])(args);
+    };
+    const strict = runCli(['--strict', '--base=origin/main', '--head=abc123'], {}, run);
+    expect(strict).toMatchObject({ stream: 'error', exitCode: 1 });
+    expect(seen).toContain('abc123^{commit}');
+    expect(seen).not.toContain('HEAD^{commit}');
+    expect(runCli(['--base=origin/main'], {}, run)).toMatchObject({ stream: 'warn', exitCode: 0 });
+    // REFUTE_BASE is the default base; --base= (empty) skips instead of reading `..HEAD`.
+    seen.length = 0;
+    runCli([], { REFUTE_BASE: 'origin/release' }, run);
+    expect(seen).toContain('origin/release^{commit}');
+    expect(runCli(['--strict', '--base='], {}, run)).toMatchObject({ stream: 'warn', exitCode: 0 });
+    const docs: CommitRecord = { sha: 'd0c5', message: 'docs\n', files: ['README.md'] };
+    expect(runCli(['--strict'], {}, healthy([docs]))).toMatchObject({ stream: 'log', exitCode: 0 });
+  });
+
+  it('evaluate reads the range by the RESOLVED shas, never by re-resolving the names', () => {
+    const calls: string[][] = [];
+    const base = healthy([]);
+    const run = (args: string[]): string => {
+      calls.push(args);
+      if (args.includes('rev-parse') && args[args.length - 1] === 'HEAD^{commit}') return 'a'.repeat(40) + '\n';
+      if (args.includes('rev-parse') && args[args.length - 1] === 'origin/main^{commit}') return 'b'.repeat(40) + '\n';
+      return base(args);
+    };
+    evaluate('origin/main', run);
+    const revList = calls.find((a) => a.includes('rev-list'));
+    expect(revList).toContain(`${'b'.repeat(40)}..${'a'.repeat(40)}`);
+  });
+
+  it('evaluate: a probe that throws (git present, shallow check broken) skips, not proceeds', () => {
+    const fin: CommitRecord = { sha: 'f1n', message: 'fin, no trailer\n', files: ['src/analytics/a.ts'] };
+    const run = (args: string[]): string => {
+      if (args[0] === 'rev-parse' && args[1] === '--is-shallow-repository') throw new Error('fatal: broken repo');
+      return healthy([fin])(args);
+    };
+    const r = evaluate('origin/main', run);
+    expect(r.outcome).toBe('skip');
+    expect(r.message).toContain('git unusable');
+  });
+
+  it('evaluate: an empty base skips on the guard itself, not on a probe failure', () => {
+    const fin: CommitRecord = { sha: 'f1n', message: 'fin, no trailer\n', files: ['src/analytics/a.ts'] };
+    for (const empty of ['', '  ']) {
+      const r = evaluate(empty, healthy([fin]));
+      expect(r.outcome).toBe('skip');
+      expect(r.message).toContain('empty base ref');
+    }
+  });
+
+  it('evaluate: an unreadable commit is a violation even when nothing else in the range is financial', () => {
+    const docs: CommitRecord = { sha: 'd0c5', message: 'docs\n', files: ['README.md'] };
+    const big: CommitRecord = { sha: 'b1g0', message: '', files: [] };
+    const r = evaluate('origin/main', healthy([docs, big], { b1g0: 'spawnSync git ENOBUFS' }));
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain('b1g0 (could not be read)');
+    // Control: the same docs-only range without the unreadable commit is OK.
+    expect(evaluate('origin/main', healthy([docs]))).toMatchObject({ outcome: 'ok' });
+  });
+
+  it('evaluate: OK when nothing financial changed', () => {
+    const docs: CommitRecord = { sha: 'd0c5', message: 'docs\n', files: ['README.md'] };
+    const run = (args: string[]): string => (args.includes('rev-list') ? 'd0c5 b0\n' : showOutput(docs));
+    expect(evaluate('origin/main', run)).toMatchObject({ outcome: 'ok' });
+  });
+});
+
+// Real git, real SHOW_ARGS: the stub tests above only prove the parser agrees with itself. Every
+// scenario is built with plumbing (hash-object / update-index / commit-tree / merge-tree) into a
+// throwaway repo under os.tmpdir(), so paths NTFS cannot hold as files ('"', tab) still get
+// committed, and nothing touches this checkout. Isolated from the user's git config.
+describe('check-refute-required — integration against real git', () => {
+  let root = ''; // the mkdtemp result — the ONLY path afterAll may delete
+  let dir = '';
+  let env: NodeJS.ProcessEnv = {};
+  const g = (args: string[], input?: string): string =>
+    execFileSync('git', ['-c', 'core.protectNTFS=false', ...args], {
+      cwd: dir,
+      env,
+      encoding: 'utf8',
+      input,
+      maxBuffer: 16 * 1024 * 1024,
+    });
+  const run: GitRunner = (args) => g(args);
+  const lines = (n: number, edit?: [number, string]): string =>
+    Array.from({ length: n }, (_, i) => (edit && edit[0] === i ? edit[1] : `line ${i}`)).join('\n') + '\n';
+
+  type Entry = string | { gitlink: string } | null;
+  /** Commit `files` on top of parents[0] (or `fromTree`); null removes a path. Returns the sha. */
+  const mk = (parents: string[], files: Record<string, Entry>, msg: string, fromTree?: string): string => {
+    const tree = fromTree ?? (parents[0] ? `${parents[0]}^{tree}` : undefined);
+    if (tree) g(['read-tree', tree]);
+    else g(['read-tree', '--empty']);
+    for (const [path, entry] of Object.entries(files)) {
+      if (entry === null) g(['update-index', '--force-remove', '--', path]);
+      else if (typeof entry === 'string') {
+        const blob = g(['hash-object', '-w', '--stdin'], entry).trim();
+        g(['update-index', '--add', '--cacheinfo', `100644,${blob},${path}`]);
+      } else g(['update-index', '--add', '--cacheinfo', `160000,${entry.gitlink},${path}`]);
+    }
+    const written = g(['write-tree']).trim();
+    return g(['commit-tree', written, ...parents.flatMap((p) => ['-p', p]), '-m', msg]).trim();
+  };
+
+  let b0 = '';
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), 'refute-gate-it-'));
+    dir = root;
+    const emptyCfg = join(root, '.empty-gitconfig');
+    writeFileSync(emptyCfg, '');
+    // Strip every inherited GIT_* variable: under `git rebase --exec` or a pre-commit hook in a linked
+    // worktree, GIT_DIR / GIT_INDEX_FILE point at the REAL repo, and every g() call would rewrite
+    // that repo's index with these fixtures.
+    env = {
+      ...Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.toUpperCase().startsWith('GIT_'))),
+      GIT_CONFIG_GLOBAL: emptyCfg,
+      GIT_CONFIG_NOSYSTEM: '1',
+      GIT_AUTHOR_NAME: 't',
+      GIT_AUTHOR_EMAIL: 't@t',
+      GIT_COMMITTER_NAME: 't',
+      GIT_COMMITTER_EMAIL: 't@t',
+    };
+    g(['init', '-q', 'repo']);
+    dir = join(root, 'repo');
+    b0 = mk([], { 'src/analytics/a.ts': lines(12), 'README.md': 'r\n' }, 'root');
+  });
+  afterAll(() => {
+    // afterAll runs even when beforeAll throws. Delete only a non-empty mkdtemp result under
+    // tmpdir(), never a path derived from `dir`: '' + '..' would be the parent of the cwd.
+    if (!root || !resolve(root).startsWith(resolve(tmpdir())) || !basename(root).startsWith('refute-gate-it-')) return;
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch {
+      // Windows AV can hold a handle in tmpdir; a leftover temp dir is harmless.
+    }
+  });
+
+  it('skip-trailer parent + unattested financial child → violation on the child only', () => {
+    const parent = mk([b0], { 'server/x.ts': 'x\n' }, 'plumb\n\nRefute-Skip: error transport only');
+    const child = mk([parent], { 'src/analytics/a.ts': lines(12, [3, 'dedup']) }, 'fix(alerts): dedup');
+    const r = evaluate(b0, run, child);
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain(`${child.slice(0, 7)} fix(alerts): dedup`);
+    expect(r.message).not.toContain(parent.slice(0, 7));
+    // The same range with the child attested passes.
+    const fixed = mk([parent], { 'src/analytics/a.ts': lines(12, [3, 'dedup']) }, 'fix: dedup\n\nRefute-Reviewed: wf_1');
+    expect(evaluate(b0, run, fixed).outcome).toBe('ok');
+  }, 60_000);
+
+  it('a clean catch-up merge where the two sides touch DIFFERENT files needs no trailer', () => {
+    const mainSide = mk([b0], { 'src/analytics/a.ts': lines(12, [0, 'main']) }, 'main\n\nRefute-Reviewed: wf_m');
+    const prSide = mk([b0], { 'src/analytics/other.ts': 'pr\n' }, 'pr\n\nRefute-Reviewed: wf_p');
+    const tree = g(['merge-tree', '--write-tree', prSide, mainSide]).trim().split('\n')[0] ?? '';
+    const catchup = mk([prSide, mainSide], {}, 'Merge main into pr', tree);
+    expect(evaluate(mainSide, run, catchup)).toMatchObject({ outcome: 'ok' });
+  }, 60_000);
+
+  it('a clean merge that combines BOTH sides\' changes to one financial file needs its own trailer (documented cost)', () => {
+    const mainSide = mk([b0], { 'src/analytics/a.ts': lines(12, [0, 'main']) }, 'main\n\nRefute-Reviewed: wf_m');
+    const prSide = mk([b0], { 'src/analytics/a.ts': lines(12, [11, 'pr']) }, 'pr\n\nRefute-Reviewed: wf_p');
+    const tree = g(['merge-tree', '--write-tree', prSide, mainSide]).trim().split('\n')[0] ?? '';
+    const catchup = mk([prSide, mainSide], {}, 'Merge main into pr', tree);
+    const r = evaluate(mainSide, run, catchup);
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain(`${catchup.slice(0, 7)} Merge main into pr`);
+    const attested = mk([prSide, mainSide], {}, 'Merge main into pr\n\nRefute-Skip: catch-up merge, no hand edits', tree);
+    expect(evaluate(mainSide, run, attested)).toMatchObject({ outcome: 'ok' });
+  }, 60_000);
+
+  it('an evil merge that hand-edits financial source needs its own trailer (--no-merges skipped it)', () => {
+    const mainSide = mk([b0], { 'README.md': 'main\n' }, 'main docs');
+    const prSide = mk([b0], { 'docs/x.md': 'x\n' }, 'pr docs');
+    const tree = g(['merge-tree', '--write-tree', mainSide, prSide]).trim().split('\n')[0] ?? '';
+    const evil = mk([mainSide, prSide], { 'src/analytics/a.ts': lines(12, [5, 'evil']) }, 'Merge branch pr', tree);
+    const r = evaluate(mainSide, run, evil);
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain(`${evil.slice(0, 7)} Merge branch pr`);
+    expect(r.message).toContain('src/analytics/a.ts');
+  }, 60_000);
+
+  it('moving a file OUT of a financial path still names the financial path', () => {
+    const moved = mk([b0], { 'src/analytics/a.ts': null, 'docs/a.ts': lines(12) }, 'chore: move');
+    expect(evaluate(b0, run, moved).message).toContain('src/analytics/a.ts');
+  }, 60_000);
+
+  it('paths git would C-quote still match the financial prefixes', () => {
+    const q = mk([b0], { 'src/analytics/risk"calc.ts': 'x\n', 'src/analytics/tab\there.ts': 'y\n' }, 'feat: q');
+    const r = evaluate(b0, run, q);
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain('src/analytics/risk"calc.ts');
+    expect(r.message).toContain('src/analytics/tab\there.ts');
+  }, 60_000);
+
+  it('an octopus merge that hand-edits financial source is caught (git skips remerge-diff for it)', () => {
+    const a = mk([b0], { 'docs/a.md': 'a\n' }, 'a');
+    const b = mk([b0], { 'docs/b.md': 'b\n' }, 'b');
+    const c = mk([b0], { 'docs/c.md': 'c\n' }, 'c');
+    const clean = mk([a], { 'docs/b.md': 'b\n', 'docs/c.md': 'c\n' }, 'unused');
+    const octo = mk([a, b, c], { 'docs/b.md': 'b\n', 'docs/c.md': 'c\n', 'src/analytics/a.ts': lines(12, [7, 'octo']) }, 'Merge b, c', `${clean}^{tree}`);
+    const r = evaluate(a, run, octo);
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain(`${octo.slice(0, 7)} Merge b, c`);
+    expect(r.message).toContain('src/analytics/a.ts');
+  }, 60_000);
+
+  it('a shallow clone skips instead of silently checking only the boundary commit', () => {
+    const fin = mk([b0], { 'src/analytics/a.ts': lines(12, [2, 'fin']) }, 'fin, no trailer');
+    const tip = mk([fin], { 'README.md': 'tip\n' }, 'docs tip\n\nRefute-Skip: docs only');
+    g(['update-ref', 'refs/heads/shallow-src', tip]);
+    const clone = join(root, 'shallow');
+    g(['clone', '-q', '--depth', '1', '--branch', 'shallow-src', `file://${dir.replace(/\\/g, '/')}`, clone]);
+    const inClone: GitRunner = (args) =>
+      execFileSync('git', args, { cwd: clone, env, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+    const r = evaluate('HEAD~1', inClone);
+    expect(r.outcome).toBe('skip');
+    expect(r.message).toContain('shallow clone');
+    // The full repo, same range: the unattested commit is found.
+    expect(evaluate(b0, run, tip).message).toContain(`${fin.slice(0, 7)} fin, no trailer`);
+  }, 60_000);
+
+  it('the printed reword recipe rebases onto the merge-base sha, not a base ref that may have moved', () => {
+    const movedMain = mk([b0], { 'README.md': 'moved\n' }, 'main moved on');
+    const child = mk([b0], { 'src/analytics/a.ts': lines(12, [9, 'x']) }, 'fin, no trailer');
+    const r = evaluate(movedMain, run, child);
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain(`git rebase -i --rebase-merges --autosquash ${b0}`);
+    expect(r.message).not.toContain(`--autosquash ${movedMain}`);
+  }, 60_000);
+
+  it('a committed .gitattributes merge=union cannot make a conflict in financial source look clean', () => {
+    // The attack: attributes in the checked-out tree (the PR controls it in CI) make git's own
+    // re-merge resolve a real conflict, so --remerge-diff would list nothing.
+    const aSide = mk([b0], { 'src/analytics/a.ts': lines(12, [4, 'LTV_MAX = 0.41']) }, 'a\n\nRefute-Reviewed: wf_a');
+    const bSide = mk([b0], { 'src/analytics/a.ts': lines(12, [4, 'LTV_AGG = 0.40']), '.gitattributes': 'src/** merge=union\n' }, 'b\n\nRefute-Reviewed: wf_b');
+    const attrs = join(dir, '.gitattributes');
+    writeFileSync(attrs, 'src/** merge=union\n');
+    try {
+      // Parent order must match the merge-tree order, or the union's line order differs and the
+      // re-merge lists the path for the wrong reason.
+      const unionTree = g(['merge-tree', '--write-tree', bSide, aSide]).trim().split('\n')[0] ?? '';
+      const merge = mk([bSide, aSide], {}, 'Merge a into b', unionTree);
+      const r = evaluate(bSide, run, merge);
+      expect(r.outcome).toBe('violation');
+      expect(r.message).toContain(`${merge.slice(0, 7)} Merge a into b`);
+      expect(r.message).toContain('src/analytics/a.ts');
+    } finally {
+      rmSync(attrs, { force: true });
+    }
+  }, 60_000);
+
+  it('a root commit in the range is read even under log.showRoot=false (--root)', () => {
+    g(['config', 'log.showRoot', 'false']);
+    try {
+      const orphan = mk([], { 'src/analytics/z.ts': 'z\n' }, 'orphan root, no trailer');
+      const r = evaluate(b0, run, orphan);
+      expect(r.outcome).toBe('violation');
+      expect(r.message).toContain('src/analytics/z.ts');
+    } finally {
+      g(['config', '--unset', 'log.showRoot']);
+    }
+  }, 60_000);
+
+  it('a clean merge that carries an edit across a rename INTO a financial path needs its own trailer', () => {
+    // The 2026-09-23 merge-gate bypass: main moves src/lib/x.ts (NOT financial) to
+    // src/analytics/x.ts; the branch edits the old path. git's re-merge follows the rename, so
+    // --remerge-diff lists nothing, and the edit commit's own paths are non-financial. Only a path
+    // that differs from BOTH parents (a combined diff) shows the financial change the merge made.
+    const base = mk([b0], { 'src/lib/x.ts': lines(12) }, 'lib');
+    const moveMain = mk([base], { 'src/lib/x.ts': null, 'src/analytics/x.ts': lines(12) }, 'main: move\n\nRefute-Skip: pure file move, no content change');
+    const tweak = mk([base], { 'src/lib/x.ts': lines(12, [6, 'return 0.99']) }, 'tweak util');
+    const tree = g(['merge-tree', '--write-tree', tweak, moveMain]).trim().split('\n')[0] ?? '';
+    expect(g(['show', `${tree}:src/analytics/x.ts`])).toContain('return 0.99');
+    const merge = mk([tweak, moveMain], {}, 'Merge main into feature', tree);
+    const r = evaluate(moveMain, run, merge);
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain(`${merge.slice(0, 7)} Merge main into feature`);
+    expect(r.message).toContain('src/analytics/x.ts');
+  }, 60_000);
+
+  it('a directory rename that moves a new file INTO a financial path needs a trailer on the merge', () => {
+    const base = mk([b0], { 'src/lib/p.ts': lines(8), 'src/lib/q.ts': lines(9) }, 'lib dir');
+    const moveDir = mk(
+      [base],
+      { 'src/lib/p.ts': null, 'src/lib/q.ts': null, 'src/analytics/lib2/p.ts': lines(8), 'src/analytics/lib2/q.ts': lines(9) },
+      'main: move dir\n\nRefute-Skip: pure move',
+    );
+    const addNew = mk([base], { 'src/lib/new.ts': 'export const RATE = 0.99;\n' }, 'add new util');
+    let tree = '';
+    try {
+      tree = g(['merge-tree', '--write-tree', addNew, moveDir]);
+    } catch (err) {
+      tree = String((err as { stdout?: string }).stdout ?? '');
+    }
+    tree = tree.trim().split('\n')[0] ?? '';
+    expect(g(['ls-tree', '-r', '--name-only', tree])).toContain('src/analytics/lib2/new.ts');
+    const merge = mk([addNew, moveDir], {}, 'Merge main (dir move)', tree);
+    const r = evaluate(moveDir, run, merge);
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain('src/analytics/lib2/new.ts');
+  }, 60_000);
+
+  it('a local merge.renames=false / directoryRenames=false cannot add paths to a merge listing (pinned via -c)', () => {
+    // Financial rename on main + an edit on the branch: the catch-up merge is itself a violation
+    // (it combines both sides' changes). What the pin guarantees is WHICH paths are listed: an
+    // unpinned re-merge under renames=false would also report the old path as a modify/delete.
+    const mainR = mk([b0], { 'src/analytics/a.ts': null, 'src/analytics/b.ts': lines(12) }, 'main: rename\n\nRefute-Reviewed: wf_m');
+    const edit = mk([b0], { 'src/analytics/a.ts': lines(12, [1, 'edited']) }, 'edit\n\nRefute-Reviewed: wf_e');
+    const t1 = g(['merge-tree', '--write-tree', edit, mainR]).trim().split('\n')[0] ?? '';
+    const catchup = mk([edit, mainR], {}, 'Merge main into branch', t1);
+    const base2 = mk([b0], { 'src/analytics/d/x.ts': lines(8) }, 'dir\n\nRefute-Reviewed: wf_d');
+    const mainD = mk([base2], { 'src/analytics/d/x.ts': null, 'src/analytics/e/x.ts': lines(8) }, 'main: move dir\n\nRefute-Reviewed: wf_md');
+    const addY = mk([base2], { 'src/analytics/d/y.ts': 'y\n' }, 'add y\n\nRefute-Reviewed: wf_y');
+    // Git's default merge.directoryRenames=conflict reports a file-location conflict here (exit 1)
+    // but still writes the moved result tree on stdout's first line.
+    let t2 = '';
+    try {
+      t2 = g(['merge-tree', '--write-tree', addY, mainD]);
+    } catch (err) {
+      t2 = String((err as { stdout?: string }).stdout ?? '');
+    }
+    t2 = t2.trim().split('\n')[0] ?? '';
+    expect(g(['ls-tree', '-r', '--name-only', t2])).toContain('src/analytics/e/y.ts');
+    const catchupD = mk([addY, mainD], {}, 'Merge main (dir move) into branch', t2);
+    const check = (): void => {
+      const r1 = evaluate(mainR, run, catchup);
+      expect(r1.outcome).toBe('violation');
+      expect(r1.message).toContain('src/analytics/b.ts');
+      expect(r1.message).not.toContain('src/analytics/a.ts');
+      const r2 = evaluate(mainD, run, catchupD);
+      expect(r2.outcome).toBe('violation');
+      expect(r2.message).toContain('src/analytics/e/y.ts');
+      expect(r2.message).not.toContain('src/analytics/d/y.ts');
+    };
+    check();
+    g(['config', 'merge.renames', 'false']);
+    g(['config', 'merge.directoryRenames', 'false']);
+    try {
+      check();
+    } finally {
+      g(['config', '--unset', 'merge.renames']);
+      g(['config', '--unset', 'merge.directoryRenames']);
+    }
+  }, 60_000);
+
+  it('the reword recipe warns about later merges and demands a tree-unchanged check', () => {
+    const fin = mk([b0], { 'src/analytics/a.ts': lines(12, [8, 'fin']) }, 'fin, no trailer');
+    const other = mk([b0], { 'README.md': 'other\n' }, 'other');
+    const tree = g(['merge-tree', '--write-tree', fin, other]).trim().split('\n')[0] ?? '';
+    const later = mk([fin, other], {}, 'Merge other', tree);
+    const r = evaluate(b0, run, later);
+    expect(r.outcome).toBe('violation');
+    // The pre-rebase tip is PINNED to a variable, never ORIG_HEAD: ORIG_HEAD is one slot per
+    // worktree, so another session's `git reset` in a shared checkout overwrites it and the check
+    // passes on a rebase that dropped a merge's hand edit. Recovery is --keep, never --hard, which
+    // would destroy another session's uncommitted work.
+    expect(r.message).toContain('PRE=$(git rev-parse HEAD)');
+    expect(r.message).toContain('git diff --exit-code "$PRE" HEAD');
+    expect(r.message).toContain('git reset --keep "$PRE"');
+    expect(r.message).toContain('own worktree');
+    expect(r.message).not.toMatch(/git (diff|reset)[^\n]*ORIG_HEAD/);
+    expect(r.message).not.toMatch(/git reset --hard/);
+    expect(r.message).toContain('This range contains a merge commit');
+    // Without a merge in the range there is nothing to re-create, so no merge warning.
+    const r2 = evaluate(b0, run, fin);
+    expect(r2.message).toContain('git diff --exit-code "$PRE" HEAD');
+    expect(r2.message).not.toContain('This range contains a merge commit');
+  }, 60_000);
+
+  it('--head / --base naming a TREE (not a commit) do not resolve: head is a violation, base skips', () => {
+    const fin = mk([b0], { 'src/analytics/a.ts': lines(12, [3, 'tree-test']) }, 'fin, no trailer');
+    const tree = g(['rev-parse', `${b0}^{tree}`]).trim();
+    const badHead = evaluate(b0, run, tree);
+    expect(badHead.outcome).toBe('violation');
+    expect(badHead.message).toContain('does not resolve to a commit');
+    expect(evaluate(tree, run, fin)).toMatchObject({ outcome: 'skip' });
+  }, 60_000);
+
+  it('a local replace ref cannot swap an unattested financial commit for an attested decoy', () => {
+    const fin = mk([b0], { 'src/analytics/a.ts': lines(12, [5, 'replaced?']) }, 'fin, no trailer');
+    const decoy = mk([b0], { 'README.md': 'decoy\n' }, 'decoy\n\nRefute-Skip: docs only');
+    g(['replace', fin, decoy]);
+    try {
+      const r = evaluate(b0, run, fin);
+      expect(r.outcome).toBe('violation');
+      expect(r.message).toContain(`${fin.slice(0, 7)} fin, no trailer`);
+    } finally {
+      g(['replace', '-d', fin]);
+    }
+  }, 60_000);
+
+  it('a local merge.renameLimit cannot add paths to a merge listing (pinned renameLimit=0)', () => {
+    // Two INEXACT financial renames on main (exact renames ignore the limit) and an edit to one of
+    // the old paths on the branch. Under a local renameLimit=1 an unpinned re-merge gives up on
+    // rename detection and reports the old paths as modify/delete as well.
+    const r1 = mk([b0], { 'src/analytics/r1.ts': lines(20), 'src/analytics/r2.ts': lines(21) }, 'two files\n\nRefute-Reviewed: wf_2');
+    const mainR = mk(
+      [r1],
+      { 'src/analytics/r1.ts': null, 'src/analytics/r2.ts': null, 'src/analytics/s1.ts': lines(20, [19, 'moved1']), 'src/analytics/s2.ts': lines(21, [20, 'moved2']) },
+      'main: inexact renames\n\nRefute-Reviewed: wf_r',
+    );
+    const edit = mk([r1], { 'src/analytics/r1.ts': lines(20, [0, 'edited']) }, 'edit r1\n\nRefute-Reviewed: wf_e');
+    const tree = g(['merge-tree', '--write-tree', edit, mainR]).trim().split('\n')[0] ?? '';
+    const merge = mk([edit, mainR], {}, 'Merge main', tree);
+    const check = (): void => {
+      const r = evaluate(mainR, run, merge);
+      expect(r.message).not.toContain('src/analytics/r1.ts');
+      expect(r.message).not.toContain('src/analytics/r2.ts');
+    };
+    check();
+    g(['config', 'merge.renameLimit', '1']);
+    g(['config', 'diff.renameLimit', '1']);
+    try {
+      check();
+    } finally {
+      g(['config', '--unset', 'merge.renameLimit']);
+      g(['config', '--unset', 'diff.renameLimit']);
+    }
+  }, 60_000);
+
+  it('commits only on the BASE side are not the PR\'s (base..head, not base...head)', () => {
+    const baseMoved = mk([b0], { 'src/analytics/a.ts': lines(12, [2, 'main-only']) }, 'main fin, no trailer');
+    const head = mk([b0], { 'README.md': 'pr docs\n' }, 'pr docs');
+    expect(evaluate(baseMoved, run, head)).toMatchObject({ outcome: 'ok' });
+  }, 60_000);
+
+  it('an octopus is diffed against its FIRST parent: a financial file it brings in from another parent is listed', () => {
+    const p1 = mk([b0], { 'docs/p1.md': '1\n' }, 'p1');
+    const p2 = mk([b0], { 'src/analytics/fromB.ts': 'b\n' }, 'p2\n\nRefute-Reviewed: wf_p2');
+    const p3 = mk([b0], { 'docs/p3.md': '3\n' }, 'p3');
+    const combinedTree = mk([p1], { 'src/analytics/fromB.ts': 'b\n', 'docs/p3.md': '3\n' }, 'unused');
+    const octo = mk([p1, p2, p3], { 'src/analytics/fromB.ts': 'b\n', 'docs/p3.md': '3\n' }, 'Octopus, no trailer', `${combinedTree}^{tree}`);
+    const r = evaluate(p1, run, octo);
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain('src/analytics/fromB.ts');
+  }, 60_000);
+
+  it('a conflict in a financial file resolved VERBATIM to one side still needs a trailer on the merge', () => {
+    // The combined diff lists nothing here (the result equals one parent); only --remerge-diff sees
+    // that git's own re-merge would have left conflict markers. The real #364 / #369 catch-up shape.
+    const mainSide = mk([b0], { 'src/analytics/a.ts': lines(12, [4, 'main side']) }, 'main\n\nRefute-Reviewed: wf_m');
+    const prSide = mk([b0], { 'src/analytics/a.ts': lines(12, [4, 'pr side']) }, 'pr\n\nRefute-Reviewed: wf_p');
+    const takeMain = mk([prSide, mainSide], { 'src/analytics/a.ts': lines(12, [4, 'main side']) }, 'Merge main (took theirs)');
+    const r = evaluate(mainSide, run, takeMain);
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain(`${takeMain.slice(0, 7)} Merge main (took theirs)`);
+    expect(r.message).toContain('src/analytics/a.ts');
+  }, 60_000);
+
+  it('a replace ref that turns the HEAD commit into a tag of the base cannot resolve --head to a decoy', () => {
+    const fin = mk([b0], { 'src/analytics/a.ts': lines(12, [6, 'swap-head']) }, 'fin, no trailer');
+    const tag = g(['hash-object', '-t', 'tag', '-w', '--stdin'], `object ${b0}\ntype commit\ntag decoy\ntagger t <t@t> 0 +0000\n\nx\n`).trim();
+    g(['replace', '-f', fin, tag]);
+    try {
+      const r = evaluate(b0, run, fin);
+      expect(r.outcome).toBe('violation');
+      expect(r.message).toContain(`${fin.slice(0, 7)} fin, no trailer`);
+    } finally {
+      g(['replace', '-d', fin]);
+    }
+  }, 60_000);
+
+  it('a legacy .git/info/grafts file cannot rewrite parents (the production runner sets GIT_GRAFT_FILE)', () => {
+    const fin = mk([b0], { 'src/analytics/a.ts': lines(12, [7, 'grafted']) }, 'fin, no trailer');
+    const tip = mk([fin], { 'README.md': 'tip\n' }, 'docs tip');
+    const decoy = mk([], { 'README.md': 'decoy\n' }, 'decoy root');
+    const grafts = join(dir, '.git', 'info', 'grafts');
+    mkdirSync(join(dir, '.git', 'info'), { recursive: true });
+    writeFileSync(grafts, `${tip} ${decoy}\n`);
+    try {
+      // The production environment (gitEnv) on top of the isolated test environment.
+      const prodRun: GitRunner = (args) =>
+        execFileSync('git', args, { cwd: dir, env: gitEnv(env), encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+      const r = evaluate(b0, prodRun, tip);
+      expect(r.outcome).toBe('violation');
+      expect(r.message).toContain(`${fin.slice(0, 7)} fin, no trailer`);
+    } finally {
+      rmSync(grafts, { force: true });
+    }
+  }, 60_000);
+
+  it('a local diff.relative=true, run from a subdirectory, cannot strip the financial prefix (--no-relative)', () => {
+    const base = mk([b0], { 'src/lib/y.ts': 'y\n' }, 'lib y');
+    const moveIn = mk([base], { 'src/lib/y.ts': null, 'src/analytics/y.ts': 'y\n' }, 'move in, no trailer');
+    const sub = join(dir, 'src', 'lib');
+    mkdirSync(sub, { recursive: true });
+    g(['config', 'diff.relative', 'true']);
+    try {
+      const subRun: GitRunner = (args) =>
+        execFileSync('git', args, { cwd: sub, env, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+      const r = evaluate(base, subRun, moveIn);
+      expect(r.outcome).toBe('violation');
+      expect(r.message).toContain('src/analytics/y.ts');
+    } finally {
+      g(['config', '--unset', 'diff.relative']);
+    }
+  }, 60_000);
+
+  it('a merge that records its FIRST parent\'s tree (merge -s ours) silently reverting main\'s change needs a trailer', () => {
+    // The combined diff lists nothing (the result equals parent 1); only --remerge-diff shows that the
+    // automatic merge would have kept main's attested change. Squashed, this PR would revert it.
+    const mainSide = mk([b0], { 'src/analytics/a.ts': lines(12, [3, 'LTV_MAX = 0.40']) }, 'main\n\nRefute-Reviewed: wf_m');
+    const pr = mk([b0], { 'docs/x.md': 'x\n' }, 'pr docs');
+    const ours = mk([pr, mainSide], {}, 'Merge main into pr', `${pr}^{tree}`);
+    const r = evaluate(mainSide, run, ours);
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain(`${ours.slice(0, 7)} Merge main into pr`);
+    expect(r.message).toContain('src/analytics/a.ts');
+  }, 60_000);
+
+  it('.gitattributes merge=union whose result EQUALS parent 1 (modify vs delete) is still caught (--attr-source)', () => {
+    // Here -c lists nothing (result == parent 1), so only the attribute-free re-merge sees the conflict.
+    const aSide = mk([b0], { 'src/analytics/a.ts': lines(12).split('\n').filter((l) => l !== 'line 4').join('\n') }, 'main: drop line 4\n\nRefute-Reviewed: wf_a');
+    const bSide = mk([b0], { 'src/analytics/a.ts': lines(12, [4, 'line 4 modified']), '.gitattributes': 'src/** merge=union\n' }, 'b\n\nRefute-Reviewed: wf_b');
+    const attrs = join(dir, '.gitattributes');
+    writeFileSync(attrs, 'src/** merge=union\n');
+    try {
+      const unionTree = g(['merge-tree', '--write-tree', bSide, aSide]).trim().split('\n')[0] ?? '';
+      expect(unionTree).toBe(g(['rev-parse', `${bSide}^{tree}`]).trim());
+      const merge = mk([bSide, aSide], {}, 'Merge main into b', unionTree);
+      const r = evaluate(aSide, run, merge);
+      expect(r.outcome).toBe('violation');
+      expect(r.message).toContain('src/analytics/a.ts');
+    } finally {
+      rmSync(attrs, { force: true });
+    }
+  }, 60_000);
+
+  it('a replace ref that RE-PARENTS the tip onto the base cannot hide a commit from rev-list', () => {
+    const fin = mk([b0], { 'src/analytics/a.ts': lines(12, [9, 'hidden']) }, 'fin, no trailer');
+    const tip = mk([fin], { 'README.md': 'tip\n' }, 'docs tip');
+    const decoy = mk([b0], {}, 'docs tip', `${tip}^{tree}`);
+    g(['replace', tip, decoy]);
+    try {
+      const r = evaluate(b0, run, tip);
+      expect(r.outcome).toBe('violation');
+      expect(r.message).toContain(`${fin.slice(0, 7)} fin, no trailer`);
+    } finally {
+      g(['replace', '-d', tip]);
+    }
+  }, 60_000);
+
+  it('runCli against real git: --head overrides HEAD, REFUTE_BASE is the base, an empty --head= means HEAD', () => {
+    const docs = mk([b0], { 'README.md': 'cli docs\n' }, 'docs');
+    const fin = mk([b0], { 'src/analytics/a.ts': lines(12, [10, 'cli']) }, 'fin, no trailer');
+    g(['update-ref', 'HEAD', docs]);
+    expect(runCli(['--strict', `--base=${b0}`, `--head=${fin}`], {}, run)).toMatchObject({ exitCode: 1, stream: 'error' });
+    expect(runCli(['--strict', `--base=${b0}`], {}, run)).toMatchObject({ exitCode: 0, stream: 'log' });
+    expect(runCli(['--strict', `--base=${b0}`, '--head='], {}, run)).toMatchObject({ exitCode: 0, stream: 'log' });
+    g(['update-ref', 'HEAD', fin]);
+    // No origin/main in this repo: without REFUTE_BASE the base would not resolve and the gate skip.
+    expect(runCli(['--strict'], { REFUTE_BASE: b0 }, run)).toMatchObject({ exitCode: 1, stream: 'error' });
+  }, 60_000);
+
+  it('a base ref that MOVES mid-run: the range and the recipe use the shas resolved up front', () => {
+    const mainOld = mk([b0], { 'README.md': 'old main\n' }, 'main old');
+    const fin = mk([mainOld], { 'src/analytics/a.ts': lines(12, [11, 'race']) }, 'fin, no trailer');
+    g(['update-ref', 'refs/heads/rmain', mainOld]);
+    const racer: GitRunner = (args) => {
+      const out = run(args);
+      // Another session moves rmain onto the commit under test right after it is verified.
+      if (args.includes('rev-parse') && args[args.length - 1] === 'rmain^{commit}') g(['update-ref', 'refs/heads/rmain', fin]);
+      return out;
+    };
+    try {
+      const r = evaluate('rmain', racer, fin);
+      expect(r.outcome).toBe('violation');
+      expect(r.message).toContain(`${fin.slice(0, 7)} fin, no trailer`);
+      expect(r.message).toContain(`--autosquash ${mainOld}`);
+    } finally {
+      g(['update-ref', '-d', 'refs/heads/rmain']);
+    }
+  }, 60_000);
+
+  it('an octopus in the range turns on the reword recipe\'s merge warning', () => {
+    const fin = mk([b0], { 'src/analytics/a.ts': lines(12, [2, 'octo-warn']) }, 'fin, no trailer');
+    const q2 = mk([b0], { 'docs/q2.md': '2\n' }, 'q2');
+    const q3 = mk([b0], { 'docs/q3.md': '3\n' }, 'q3');
+    const octo = mk([fin, q2, q3], { 'docs/q2.md': '2\n', 'docs/q3.md': '3\n' }, 'Octopus of docs');
+    const r = evaluate(b0, run, octo);
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain(`${fin.slice(0, 7)} fin, no trailer`);
+    expect(r.message).toContain('This range contains a merge commit');
+  }, 60_000);
+
+  it('a path containing a NEWLINE still matches its financial prefix (split on NUL only)', () => {
+    const nl = mk([b0], { 'config/lease\nmarket.json': '{}\n' }, 'config with newline, no trailer');
+    const r = evaluate(b0, run, nl);
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain('config/lease\nmarket.json');
+  }, 60_000);
+
+  it('a gitlink bump is visible even when .gitmodules says ignore = all', () => {
+    const gitmodules = '[submodule "lib"]\n\tpath = src/analytics/lib\n\turl = ./lib\n\tignore = all\n';
+    const g1 = mk([b0], { '.gitmodules': gitmodules, 'src/analytics/lib': { gitlink: b0 } }, 'add lib\n\nRefute-Skip: vendoring');
+    const other = mk([b0], { 'README.md': 'o\n' }, 'other');
+    const g2 = mk([g1], { 'src/analytics/lib': { gitlink: other } }, 'bump lib');
+    const r = evaluate(g1, run, g2);
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain('src/analytics/lib');
+  }, 60_000);
 });
