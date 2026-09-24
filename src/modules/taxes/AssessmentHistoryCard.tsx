@@ -12,7 +12,7 @@ import { Sparkline } from '@/charts/Sparkline';
 import { Card, CardHeader } from '@/primitives/Card';
 import { fmtUsdCompact } from '@/analytics/format';
 import type { TaxAssessment } from '@contracts/tax';
-import { assessedSeries, taxByYear } from './assessment-history';
+import { assessedSeries, taxByYear, taxYearBars } from './assessment-history';
 
 export function AssessmentHistoryCard({
   assessments,
@@ -21,22 +21,31 @@ export function AssessmentHistoryCard({
   assessments: TaxAssessment[];
   nameFor: (id: string) => string;
 }) {
-  const bars = taxByYear(assessments);
-  if (bars.length === 0) return null;
+  const rows = taxByYear(assessments);
+  const series = assessedSeries(assessments);
+  // I-5: the convention is "no data at all -> render nothing" — NOT "no billed-tax bar ->
+  // render nothing". A property with only assessed values (no billed tax yet) still has a
+  // sparkline worth showing, and hiding the whole card silently dropped it.
+  if (rows.length === 0 && series.length === 0) return null;
+  const bars = taxYearBars(rows);
   return (
     <Card>
       <CardHeader title="Property Tax History" />
-      <div className="px-3 pb-2 pt-3">
-        <BarChart data={bars} valueFormat={fmtUsdCompact} height={200} color="var(--color-warn)" />
-      </div>
-      <ul className="grid grid-cols-1 gap-2 px-4 pb-4 md:grid-cols-2">
-        {assessedSeries(assessments).map((s) => (
-          <li key={s.propertyId} className="flex items-center justify-between gap-3 text-2xs">
-            <span style={{ color: 'var(--text-secondary)' }}>{nameFor(s.propertyId)} · assessed</span>
-            <Sparkline data={s.values} width={72} height={20} />
-          </li>
-        ))}
-      </ul>
+      {bars.length > 0 && (
+        <div className="px-3 pb-2 pt-3">
+          <BarChart data={bars} valueFormat={fmtUsdCompact} height={200} color="var(--color-warn)" ariaLabel="Property tax history by year" />
+        </div>
+      )}
+      {series.length > 0 && (
+        <ul className="grid grid-cols-1 gap-2 px-4 pb-4 md:grid-cols-2">
+          {series.map((s) => (
+            <li key={s.propertyId} className="flex items-center justify-between gap-3 text-2xs">
+              <span style={{ color: 'var(--text-secondary)' }}>{nameFor(s.propertyId)} · assessed</span>
+              <Sparkline data={s.values} width={72} height={20} />
+            </li>
+          ))}
+        </ul>
+      )}
     </Card>
   );
 }
