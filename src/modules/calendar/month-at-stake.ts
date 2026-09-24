@@ -2,9 +2,13 @@ import type { BarDatum } from '@/charts/BarChart';
 import type { DatedEvent } from '@/brain/critical-dates';
 
 /**
- * Sums upcoming (daysToDate >= 0) dollars at stake per month. Overdue/holdover dates are
- * excluded — this chart mirrors the Critical Dates list's future-facing framing, not the
- * separate Overdue/Holdover KPI.
+ * Sums upcoming (daysToDate >= 0) ANNUAL RENT at stake per month, LEASE events only
+ * (entityType 'lease' — lease-expiry + escalation). Loan maturities carry the loan balance (a
+ * stock) and insurance renewals carry the premium (a different flow than rent); mixing either
+ * into this total would sum incompatible bases, so this chart is rent-only — loan/insurance
+ * dates stay visible in the Critical Dates list below, just not in this sum. Overdue/holdover
+ * dates are excluded — this chart mirrors the Critical Dates list's future-facing framing, not
+ * the separate Overdue/Holdover KPI.
  *
  * One lease can carry two DatedEvents in the same month (e.g. an escalation notice and the
  * lease expiry both landing in the same monthKey), and both carry the lease's annualRent as
@@ -14,6 +18,7 @@ import type { DatedEvent } from '@/brain/critical-dates';
 export function monthlyAtStake(events: DatedEvent[]): BarDatum[] {
   const byMonth = new Map<string, Map<string, number>>();
   for (const e of events) {
+    if (e.entityType !== 'lease') continue;
     if (e.daysToDate < 0) continue;
     const seen = byMonth.get(e.monthKey) ?? new Map<string, number>();
     byMonth.set(e.monthKey, seen);

@@ -125,7 +125,7 @@ export function CalendarModule() {
       </div>
 
       <Card>
-        <CardHeader title="At Stake by Month" trailing={<Badge tone="neutral">upcoming · {horizon}</Badge>} />
+        <CardHeader title="Annual rent at stake by month" trailing={<Badge tone="neutral">upcoming · {horizon}</Badge>} />
         <div className="px-3 pb-2 pt-3">
           <BarChart data={monthlyAtStake(filtered)} valueFormat={fmtUsdCompact} height={180} color="var(--accent)" />
         </div>

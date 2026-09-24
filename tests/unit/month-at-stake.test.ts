@@ -6,7 +6,7 @@ const e = (
   amount: number | null,
   daysToDate: number,
   entityId = 'x',
-  entityType: 'lease' | 'loan' | 'insurance' = 'loan',
+  entityType: 'lease' | 'loan' | 'insurance' = 'lease',
 ) => ({ monthKey, amount, daysToDate, entityId, entityType }) as never;
 
 describe('monthlyAtStake', () => {
@@ -27,11 +27,15 @@ describe('monthlyAtStake', () => {
     expect(monthlyAtStake(events)).toEqual([{ label: 'Nov 26', value: 70000 }]);
   });
 
-  it('does not dedupe across different entity types that happen to share an id', () => {
+  it('excludes loan-maturity (entityType loan) and insurance-renewal (entityType insurance) events — only lease rent counts', () => {
+    // A loan balance is a stock and an insurance premium is a flow of a different kind than
+    // annual rent; mixing them into "$ at stake" sums incompatible bases. Only lease events
+    // (entityType 'lease') contribute — loans/insurance stay in the Critical Dates list below.
     const events = [
-      e('2026-11', 50000, 10, 'SAME-ID', 'lease'),
-      e('2026-11', 30000, 20, 'SAME-ID', 'loan'),
+      e('2026-11', 50000, 10, 'L-1', 'lease'),
+      e('2026-11', 900000, 15, 'LN-1', 'loan'), // loan-maturity balance — excluded
+      e('2026-11', 12000, 20, 'INS-1', 'insurance'), // insurance-renewal premium — excluded
     ];
-    expect(monthlyAtStake(events)).toEqual([{ label: 'Nov 26', value: 80000 }]);
+    expect(monthlyAtStake(events)).toEqual([{ label: 'Nov 26', value: 50000 }]);
   });
 });
