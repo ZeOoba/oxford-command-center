@@ -102,20 +102,23 @@ export function portfolioCriticalDates(
 }
 
 export interface CriticalDateKpis {
-  critical: number; // < 60d, incl. overdue
-  warning: number; // 60–180d
-  thisQuarter: number; // < 90d, incl. overdue
-  next12mo: number; // total in the horizon
+  overdue: number; // date already passed (holdover / lapsed renewals, expired policies)
+  critical: number; // 0–59d upcoming
+  warning: number; // 60–179d upcoming
+  thisQuarter: number; // 0–89d upcoming
+  next12mo: number; // total in the horizon (incl. overdue)
 }
 
 export function criticalDateKpis(events: DatedEvent[]): CriticalDateKpis {
+  let overdue = 0;
   let critical = 0;
   let warning = 0;
   let thisQuarter = 0;
   for (const e of events) {
+    if (e.daysToDate < 0) { overdue += 1; continue; }
     if (e.daysToDate < ALERT_THRESHOLDS.leaseCriticalDays) critical += 1;
     else if (e.daysToDate < ALERT_THRESHOLDS.leaseWarningDays) warning += 1;
     if (e.daysToDate < 90) thisQuarter += 1;
   }
-  return { critical, warning, thisQuarter, next12mo: events.length };
+  return { overdue, critical, warning, thisQuarter, next12mo: events.length };
 }

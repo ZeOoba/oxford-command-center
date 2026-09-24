@@ -153,8 +153,10 @@ describe('CalendarModule horizon bands', () => {
       expect(screen.queryByText('Holdover Metals')).toBeTruthy();
     }
     expect(screen.getByText('30d over')).toBeTruthy(); // rendered as overdue, not as "in 30d"
-    // Deliberately not asserting an exact count: that would couple this to ALERT_THRESHOLDS.
-    expect(kpiValue('Critical (<60d)')).not.toBe('0');
+    // Overdue holdovers are split out of "Critical (<60d)" into their own tile (Task 4) — assert
+    // the tile that actually counts them. Deliberately not asserting an exact count: that would
+    // couple this to ALERT_THRESHOLDS.
+    expect(kpiValue('Overdue / Holdover')).not.toBe('0');
   });
 
   // FAR (1381d) is excluded by the FETCH horizon, not by the band predicate: BAND_MAX_DAYS['36mo']
