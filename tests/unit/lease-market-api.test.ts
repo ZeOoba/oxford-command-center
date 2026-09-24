@@ -428,6 +428,8 @@ describe('lease-market API — radar evidence guards', () => {
 // vacuous. Built directly against `leaseMarketApi(..., { rowLevel, getSnapshot })` instead — the
 // exact same deps.rowLevel override inProcessResolver's own '/lease-market' special case passes
 // through under the hood, just invoked without the resolver's HTTP-shaped wrapper.
+// The resolver leg for /positioning IS now covered: lease-market-api-bake.test.ts stubs server/brain
+// to hand it a snapshot and drives inProcessResolver({ leaseMarketRowLevel: false }) end to end.
 describe('lease-market API — whole-body rowLevel override across all 6 GET routes (fix round 2, item 1b)', () => {
   const OVERRIDE_URL = 'https://costar.example.test/listing/rarig-b-override';
   // See the SECRETS comment above — PositioningRow.listingUrl is gone, so OVERRIDE_URL no longer
