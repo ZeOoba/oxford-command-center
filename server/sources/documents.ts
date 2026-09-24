@@ -602,7 +602,18 @@ function listFiles(
   return { files, truncated };
 }
 
-let cache: { index: VecIndex | null; docs: Array<{ name: string; chunks: number }>; builtAt: string } | null = null;
+// `fromDisk` distinguishes a real, persisted index (builtAt is a meaningful timestamp for freshness
+// reporting) from an in-memory fallback/empty index (builtAt is just "when this process stood up a
+// placeholder" and must never be reported as the index's actual build time — see docIndexBuiltAt).
+let cache: { index: VecIndex | null; docs: Array<{ name: string; chunks: number }>; builtAt: string; fromDisk: boolean } | null = null;
+
+/** Test-only: clear the module-level index cache so a test can start from a known-empty state.
+ * Closes any open sqlite handle first — otherwise a Windows temp-dir cleanup right after a
+ * disk-loaded-index test EPERMs on the still-open file. */
+export function resetDocCacheForTests(): void {
+  cache?.index?.close();
+  cache = null;
+}
 
 /**
  * List → extract → chunk the configured corpus (DOCUMENTS_DIR + include/exclude filters), applying
@@ -640,7 +651,7 @@ export async function buildDocIndex(embed: Embedder = realEmbedder): Promise<voi
   }
   const filterNote = process.env.DOCUMENTS_PATH_INCLUDE ? ` matching /${process.env.DOCUMENTS_PATH_INCLUDE}/i` : '';
   console.log(`[documents] indexed ${docs.length} documents (${chunks.length} chunks)${filterNote}`);
-  cache = { index: await buildIndex(chunks, embed), docs, builtAt: new Date().toISOString() };
+  cache = { index: await buildIndex(chunks, embed), docs, builtAt: new Date().toISOString(), fromDisk: false };
 }
 
 async function ensureIndex() {
@@ -648,7 +659,7 @@ async function ensureIndex() {
   const p = docIndexPath();
   if (existsSync(p)) {
     const { index, docs, builtAt } = loadDiskIndex(p);
-    cache = { index, docs, builtAt };
+    cache = { index, docs, builtAt, fromDisk: true };
     console.log(`[documents] loaded on-disk index — ${docs.length} documents, ${index.chunks.length} chunks (${p})`);
   } else {
     await buildDocIndex(); // in-memory fallback (empty when DOCUMENTS_DIR unset)
@@ -671,7 +682,7 @@ export async function warmDocIndex(): Promise<void> {
     console.warn(
       `[documents] no on-disk index at ${p} — run \`npm run index:docs\` to build it. Serving an EMPTY document index until then.`,
     );
-    cache = { index: await buildIndex([], realEmbedder), docs: [], builtAt: new Date().toISOString() };
+    cache = { index: await buildIndex([], realEmbedder), docs: [], builtAt: new Date().toISOString(), fromDisk: false };
   }
   // No DOCUMENTS_DIR → leave cache null; first request lazily builds an empty index (harmless).
 }
@@ -688,7 +699,10 @@ export async function docStatus(): Promise<{ configured: boolean; dir: string | 
   return { configured: !!process.env.DOCUMENTS_DIR, dir: process.env.DOCUMENTS_DIR ?? null, documents: docs.length, chunks: index?.chunks.length ?? 0, engine: 'semantic (all-MiniLM-L6-v2 + sqlite-vec)', docs: docs.slice(0, 50), builtAt };
 }
 
-/** Build time of the loaded index, WITHOUT forcing a load (safe for /api/health). */
+/** Build time of the loaded index, WITHOUT forcing a load (safe for /api/health). Only a
+ * disk-loaded index has a meaningful build time — an in-memory fallback/empty index stamps
+ * `builtAt` with "now" purely as a placeholder, which must never read as fresh (I-1, 2026-09-23
+ * review). */
 export function docIndexBuiltAt(): string | null {
-  return cache?.builtAt ?? null;
+  return cache?.fromDisk ? cache.builtAt : null;
 }
