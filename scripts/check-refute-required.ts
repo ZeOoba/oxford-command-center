@@ -21,21 +21,24 @@
 // Two consequences of that rule: a financial change plus its revert (net zero diff) needs a trailer
 // on both commits, and so does a PR that attests only its final commit.
 //
-// MERGE COMMITS (two parents) are read with --remerge-diff, which lists only the paths where the
-// recorded merge differs from git's own automatic re-merge: hand edits, and every text-file conflict
-// resolution, even one that keeps the first parent's side. (A gitlink conflict resolved to the first
+// MERGE COMMITS (two parents) are read twice and the paths unioned. --remerge-diff lists the paths
+// where the recorded merge differs from git's own automatic re-merge: hand edits, and every text-file
+// conflict resolution, even one that keeps the first parent's side. A combined diff (-c) lists the
+// paths whose merged content differs from BOTH parents, which catches a clean merge that follows a
+// rename INTO a financial path (see COMBINED_SHOW_ARGS); as a consequence a catch-up merge that
+// combines both sides' changes to one financial file needs its own trailer. (A gitlink conflict resolved to the first
 // parent's value is not listed. That is harmless: it adds nothing beyond parent 1, which is checked
 // on its own.) The re-merge pins merge.renameLimit=0 / merge.renames / merge.directoryRenames so that
 // a user's local merge config cannot change which paths are listed. OCTOPUS merges (3+ parents) are
 // diffed against their first parent instead (see OCTOPUS_SHOW_ARGS). A clean merge lists nothing: a
-// catch-up merge of main into the branch, for instance. (CI passes --head=<PR head sha>, so GitHub's
+// catch-up merge of main into the branch that touches no file changed on both sides, for instance. (CI passes --head=<PR head sha>, so GitHub's
 // server-side synthetic refs/pull/N/merge commit is not in the range at all.) (The main-side commits a catch-up merge brings in are reachable from the base, so they are
 // outside base..HEAD. Nothing checks them here. They were checked, if at all, on their own PRs.) An
 // evil merge that edits financial source, or a conflict resolved inside a financial file, needs a
 // trailer on the merge commit itself. `--no-merges` would have skipped such merges outright; the
 // old range diff caught them. Attributes for that re-merge come from the empty tree
 // (--attr-source), never from the checked-out tree the PR controls: a committed `merge=union` would
-// otherwise make a real conflict re-merge cleanly. Requires git >= 2.40 (--attr-source,
+// otherwise make a real conflict re-merge cleanly. Requires git >= 2.41 (--attr-source,
 // --remerge-diff): an older git is probed for up front and the gate skips (fails open) instead of
 // reporting every commit as unreadable.
 //
@@ -59,7 +62,7 @@
 // Default mode WARNS and exits 0 (local dev — never blocks WIP). `--strict` EXITS 1 on a violation
 // (wired into CI for PRs; also usable from /ship). Fails OPEN only when the range cannot be verified
 // at all: the base does not resolve, --base is empty, the default HEAD does not resolve (no
-// commits), the clone is shallow, git < 2.40, or git itself is unusable. Everything after both ends
+// commits), the clone is shallow, git < 2.41, or git itself is unusable. Everything after both ends
 // resolve fails CLOSED: an explicit --head that does not resolve, a range that cannot be listed, a
 // commit that cannot be read (see collectCommits: no trailer clears it).
 //
@@ -367,6 +370,8 @@ export interface CommitRecord {
   message: string;
   files: string[];
   readError?: string;
+  /** Set (true) only on merge commits; drives the reword recipe's merge warning. */
+  merge?: true;
 }
 
 /** A commit that changed financial-decision source without attesting it in its own message, or could not be read. */
@@ -393,7 +398,8 @@ export const GIT_GLOBAL_ARGS: readonly string[] = [
   // Read attributes from the EMPTY TREE, not the checked-out tree. In CI the checkout is the PR's
   // own tree, so a committed `.gitattributes` (not itself financial, so no trailer needed) could
   // set `merge=union` on a financial path and make git's re-merge resolve a real conflict by
-  // itself, which --remerge-diff would then list as clean. Needs git >= 2.40.
+  // itself, which --remerge-diff would then list as clean. Needs git >= 2.41 (the global
+  // --attr-source option shipped in 2.41; 2.40 only added `check-attr --source`).
   `--attr-source=${EMPTY_TREE}`,
   '-c',
   'merge.renameLimit=0',
@@ -424,6 +430,17 @@ export const SHOW_ARGS: readonly string[] = [
 export const OCTOPUS_SHOW_ARGS: readonly string[] = SHOW_ARGS.map((a) =>
   a === '--remerge-diff' ? '--diff-merges=first-parent' : a,
 );
+
+/**
+ * The second read for a TWO-parent merge: a combined diff (-c) lists every path whose merged
+ * content differs from BOTH parents. --remerge-diff alone misses a merge whose automatic re-merge
+ * follows a rename (or directory rename) INTO a financial path: main moves src/lib/x.ts to
+ * src/analytics/x.ts, the branch edits the old, non-financial path, and the clean merge carries
+ * that edit into financial source that no commit's own path list names. The union of the two reads
+ * is what the merge must attest. Cost, by design: a catch-up merge that combines both sides'
+ * changes to the same financial file needs a trailer too.
+ */
+export const COMBINED_SHOW_ARGS: readonly string[] = SHOW_ARGS.map((a) => (a === '--remerge-diff' ? '-c' : a));
 
 /**
  * Parse `git show ${SHOW_ARGS} <sha>` output. The first NUL ends the message: without it, the only
@@ -477,9 +494,13 @@ export function collectCommits(base: string, head = 'HEAD', run: GitRunner = git
     .split('\n')
     .map((s) => s.trim().split(/\s+/))
     .filter((r) => r[0]);
-  return rows.map(([sha = '', ...parents]) => {
+  return rows.map(([sha = '', ...parents]): CommitRecord => {
     try {
-      return parseCommitShow(sha, run([...(parents.length > 2 ? OCTOPUS_SHOW_ARGS : SHOW_ARGS), sha]));
+      if (parents.length > 2) return { ...parseCommitShow(sha, run([...OCTOPUS_SHOW_ARGS, sha])), merge: true };
+      const record = parseCommitShow(sha, run([...SHOW_ARGS, sha]));
+      if (parents.length < 2) return record;
+      const combined = parseCommitShow(sha, run([...COMBINED_SHOW_ARGS, sha]));
+      return { ...record, files: [...new Set([...record.files, ...combined.files])], merge: true };
     } catch (err) {
       return { sha, message: '', files: [], readError: (err as Error).message.split('\n')[0] ?? 'unknown error' };
     }
@@ -499,8 +520,8 @@ export interface GateResult {
 export function probeToolingGap(run: GitRunner): string | undefined {
   try {
     const v = /git version (\d+)\.(\d+)/.exec(run(['version']));
-    if (v && (Number(v[1]) < 2 || (Number(v[1]) === 2 && Number(v[2]) < 40))) {
-      return `git ${v[1]}.${v[2]} lacks --attr-source / --remerge-diff (needs >= 2.40)`;
+    if (v && (Number(v[1]) < 2 || (Number(v[1]) === 2 && Number(v[2]) < 41))) {
+      return `git ${v[1]}.${v[2]} lacks --attr-source / --remerge-diff (needs >= 2.41)`;
     }
     if (run(['rev-parse', '--is-shallow-repository']).trim() === 'true') {
       return 'shallow clone: a boundary commit reads as a root commit and hides every commit behind it (fetch full history, e.g. fetch-depth: 0)';
@@ -523,14 +544,24 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
   // ends resolve, a failure to list the range (e.g. `rev-list` output overflowing the buffer on a
   // PR carrying ~830k commits) must not switch the gate off.
   const firstLine = (err: unknown): string => (err as Error).message.split('\n')[0] ?? 'unknown error';
+  // Every later step uses the RESOLVED shas, never the names again: in a shared checkout another
+  // session can switch HEAD (or move a branch) between this check and the range read, and a
+  // re-resolved name would then read a range nobody verified. (Output that is not a sha falls back to
+  // the name; rev-parse --verify always prints one.)
+  const shaOr = (out: string, name: string): string => {
+    const sha = out.trim();
+    return /^[0-9a-f]{40,64}$/.test(sha) ? sha : name;
+  };
+  let baseSha: string;
+  let headSha: string;
   try {
-    run(['rev-parse', '--verify', '--quiet', `${base}^{commit}`]);
+    baseSha = shaOr(run(['rev-parse', '--verify', '--quiet', `${base}^{commit}`]), base);
   } catch (err) {
     // No usable base ref (not fetched, typo, fresh repo) — never block on a tooling gap.
     return { outcome: 'skip', message: `check:refute — skipped: base '${base}' does not resolve (${firstLine(err)}).` };
   }
   try {
-    run(['rev-parse', '--verify', '--quiet', `${head}^{commit}`]);
+    headSha = shaOr(run(['rev-parse', '--verify', '--quiet', `${head}^{commit}`]), head);
   } catch (err) {
     // The default HEAD not resolving means a repo with no commits: a tooling gap. An EXPLICIT
     // --head that does not resolve is a caller error, and under --strict it must not pass.
@@ -539,7 +570,7 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
   }
   let commits: CommitRecord[];
   try {
-    commits = collectCommits(base, head, run);
+    commits = collectCommits(baseSha, headSha, run);
   } catch (err) {
     return {
       outcome: 'violation',
@@ -565,7 +596,7 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
   // commit (which may be the one needing the trailer) instead of dropping it and replaying its conflicts.
   let rebaseOnto = base;
   try {
-    const mb = run(['merge-base', base, head]).trim();
+    const mb = run(['merge-base', baseSha, headSha]).trim();
     if (/^[0-9a-f]{40,64}$/.test(mb)) rebaseOnto = mb;
   } catch {
     // Keep the ref; the reword still works when the ref has not moved.
@@ -592,30 +623,41 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
     'HEAD: git commit --amend. An earlier commit, with no editor at all (POSIX shell / Git Bash):',
     `    GIT_EDITOR="git interpret-trailers --in-place --trailer 'Refute-Reviewed: wf_<runId>'" git commit --fixup=reword:<sha>`,
     `    GIT_SEQUENCE_EDITOR=: git rebase -i --rebase-merges --autosquash ${rebaseOnto}${rebaseOnto === base ? '' : `    (merge-base of ${base} and ${head})`}`,
-    `(checked range: ${base}..${head}, merge commits read by --remerge-diff)`,
+    '    git diff --exit-code ORIG_HEAD HEAD        (MUST print nothing: a reword changes no content)',
+    ...(commits.some((c) => c.merge)
+      ? [
+          'This range contains a merge commit: --rebase-merges RE-CREATES every merge after the reworded',
+          'commit and silently drops its hand edits and conflict resolutions. If the diff above is not',
+          'empty, restore the branch with `git reset --hard ORIG_HEAD` and reword by hand instead.',
+        ]
+      : []),
+    `(checked range: ${base} (${baseSha.slice(0, 12)})..${head} (${headSha.slice(0, 12)}), merges read by --remerge-diff + -c)`,
   ].join('\n');
   return { outcome: 'violation', message };
 }
 
-function main(): void {
-  const argv = process.argv.slice(2);
+/** What main() prints and exits with; pure so the CLI contract CI depends on is unit-testable. */
+export interface CliResult {
+  stream: 'log' | 'warn' | 'error';
+  exitCode: 0 | 1;
+  message: string;
+}
+
+export function runCli(argv: readonly string[], env: NodeJS.ProcessEnv, run: GitRunner = git): CliResult {
   const strict = argv.includes('--strict');
-  const base =
-    argv.find((a) => a.startsWith('--base='))?.slice('--base='.length) ??
-    process.env.REFUTE_BASE ??
-    'origin/main';
+  const base = argv.find((a) => a.startsWith('--base='))?.slice('--base='.length) ?? env.REFUTE_BASE ?? 'origin/main';
   // --head lets CI name the PR head sha directly instead of its synthetic refs/pull/N/merge HEAD.
   const head = argv.find((a) => a.startsWith('--head='))?.slice('--head='.length) || 'HEAD';
+  const result = evaluate(base, run, head);
+  if (result.outcome === 'ok') return { stream: 'log', exitCode: 0, message: result.message };
+  if (result.outcome === 'violation' && strict) return { stream: 'error', exitCode: 1, message: result.message };
+  return { stream: 'warn', exitCode: 0, message: result.message };
+}
 
-  const result = evaluate(base, undefined, head);
-  if (result.outcome === 'ok') {
-    console.log(result.message);
-  } else if (result.outcome === 'violation' && strict) {
-    console.error(result.message);
-    process.exit(1);
-  } else {
-    console.warn(result.message);
-  }
+function main(): void {
+  const r = runCli(process.argv.slice(2), process.env);
+  console[r.stream](r.message);
+  if (r.exitCode !== 0) process.exit(r.exitCode);
 }
 
 if (process.argv[1] && process.argv[1].replace(/\\/g, '/').endsWith('check-refute-required.ts')) {

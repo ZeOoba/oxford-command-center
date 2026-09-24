@@ -105,14 +105,21 @@ one commit never attests another, whether the other commit comes earlier or late
 search the whole range's concatenated log, so a single `Refute-Skip:` on a plumbing commit covered an
 unattested `src/analytics/conditions.ts` change in its child.
 
-- **Merge commits:** two-parent merges are read with `--remerge-diff`, so a clean merge needs no
-  trailer, for example a catch-up of `main`. A merge that hand-edits financial source, or resolves a
-  conflict inside a financial file, needs its own trailer. Octopus merges are diffed against their
-  first parent. The re-merge reads attributes from the empty tree, so a committed `.gitattributes`
-  such as `merge=union` cannot make a conflict re-merge cleanly.
+- **Merge commits:** a two-parent merge is read two ways, and the listed paths are combined:
+  - `--remerge-diff` lists hand edits and conflict resolutions.
+  - A combined diff (`-c`) lists every path whose merged content differs from **both** parents. This
+    catches a clean merge that carries an edit across a rename **into** a financial path.
+
+  A merge needs its own trailer when either list includes a financial path. That covers a merge
+  that hand-edits financial source, resolves a conflict inside a financial file, carries changes
+  across a rename into one, or combines both sides' changes to the same financial file. The last case
+  is the deliberate cost. A catch-up of `main` that touches no file changed on both sides needs
+  nothing. Octopus merges are diffed against their first parent. The re-merge reads attributes from
+  the empty tree, so a committed `.gitattributes` such as `merge=union` cannot make a conflict
+  re-merge cleanly.
 - **When the gate fails open (skips):** only when the range itself cannot be verified. That means
   the base does not resolve, `--base` is empty, the repo has no commits, the clone is shallow, git is
-  older than 2.40, or git is unusable. Once both ends resolve, everything fails closed. That covers
+  older than 2.41, or git is unusable. Once both ends resolve, everything fails closed. That covers
   an explicit `--head` that does not resolve, a range that cannot be listed, and a commit that cannot
   be read, which no trailer clears.
 - **Valid trailers:** a trailer needs a real value. A bare `Refute-Skip:` or the pasted placeholder
@@ -122,7 +129,10 @@ unattested `src/analytics/conditions.ts` change in its child.
   then `GIT_SEQUENCE_EDITOR=: git rebase -i --rebase-merges --autosquash <merge-base sha>`. The gate
   prints the resolved merge-base, because the base ref may have moved by the time you run it.
   `--rebase-merges` keeps a merge commit in place, where a plain rebase would drop it and replay its
-  conflicts.
+  conflicts. It does re-create every merge after the reworded commit, though, and it drops their hand
+  edits and conflict resolutions without warning. So finish with `git diff --exit-code ORIG_HEAD HEAD`.
+  A pure reword changes no content, so this must print nothing. If it does print, run
+  `git reset --hard ORIG_HEAD` to restore the branch, then reword by hand.
 - **Squash merges:** `main` is squash-merged, so this check runs on the PR branch. CI passes
   `--head=<PR head sha>`, not GitHub's synthetic merge. **The squash commit message must carry the
   union of the branch's trailers** (one line per distinct `Refute-Reviewed`/`Refute-Skip`), because the
