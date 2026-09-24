@@ -15,13 +15,14 @@
 // apart from "crashed before doing anything useful" using the exit code alone (Round-3 REFUTE).
 //
 // Usage: npx tsx scripts/lease-snapshot-drift-check.ts
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { LeaseStatus, PortfolioSnapshot } from '../src/contracts/index';
 import { parseWorkbook } from '../server/workbook/parse';
 import type { M365TasksDegradation } from '../server/sources/m365-tasks';
 import { loadEnvFile } from '../server/load-env';
 import { workbookPath, SNAPSHOT_PATH } from '../server/config';
+import { renameSyncWithRetry } from '../server/lib/rename-retry';
 import { loadOverlay, applyOverlay, overlayPath, evaluateOverlayPrecondition } from '../server/overlay';
 import { evaluateAnomalyFloor as evaluateAnomalyFloorCore } from '../server/anomaly-floor';
 import { checkSnapshot } from '../server/reconcile-runtime';
@@ -673,7 +674,8 @@ async function main() {
   // (the daily brief's collections section, server/brain.ts's loadFallback() after a server restart).
   const tmp = `${SNAPSHOT_PATH}.tmp-${process.pid}-${Date.now()}`;
   writeFileSync(tmp, JSON.stringify(enriched, null, 2));
-  renameSync(tmp, SNAPSHOT_PATH);
+  // Retried on the Windows AV/indexer transient lock (EPERM/EBUSY/EACCES) -- see server/lib/rename-retry.
+  renameSyncWithRetry(tmp, SNAPSHOT_PATH);
 
   const report = formatDriftReport(drift, previous, current);
   for (const line of report.lines) console.log(line);
