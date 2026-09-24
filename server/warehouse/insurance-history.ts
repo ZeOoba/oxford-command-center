@@ -4,6 +4,21 @@
 // for GET /api/warehouse/insurance/analysis/history — NOT consumed by any scoring, benchmark,
 // alert or calibration path. Rows stay keyed by the RAW policy-line key
 // ('ins-<stem>-<line>'); resolveInsuranceProperty supplies the display name only, never a re-key.
+//
+// Two deliberate divergences from server/warehouse/insurance-analysis.ts's own reduction
+// (buildInsuranceAnalysis), both accepted as history-display-only limits, not bugs:
+//   1. No dedupeLatest step — this builder calls collapseSameTermReissues directly on the raw
+//      rows and stops there (plus its own DUP_WINDOW_DAYS re-key filter below). The engine's
+//      dedupeLatest exists to pick one CURRENT row per line for a point-in-time snapshot; a
+//      history reader wants every surviving term across years, not just the latest one, so
+//      running dedupeLatest here would collapse the very renewal history this builder exists to
+//      show.
+//   2. A same-term reissue whose LATEST capture is unpriced/undated drops the whole term,
+//      including whatever priced premium an earlier (superseded) capture of that same term had.
+//      collapseSameTermReissues picks one winning row per term before this builder's own
+//      undated/unpriced/negative filter runs (see buildPremiumHistory's "Order of reductions"
+//      below), so an unpriced latest capture is never rescued by falling back to a priced
+//      earlier one — the term is simply absent from that policy year's total.
 import type { PremiumHistoryReport } from '../../src/contracts/insurance-analysis';
 import { collapseSameTermReissues, type CollapsibleInsuranceRow } from './insurance-analysis';
 import { resolveInsuranceProperty } from './insurance-property-map';

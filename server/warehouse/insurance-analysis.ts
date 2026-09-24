@@ -184,10 +184,12 @@ function dedupeLatest(rows: RawPolicyRow[]): RawPolicyRow[] {
  * case-insensitivity) so a label with incidental whitespace/case drift between terms still
  * collapses — the raw string would otherwise silently un-collapse a genuine rollover.
  *
- * This is the "current view" reduction only — every other row's data stays intact in the table
- * (no UI or feature deliberately reads OLD/superseded terms as a premium-history feature; grep
- * confirmed) for a future premium-history feature to read directly. NOTE (2026-08-17, adversarial
- * sweep): this claim covers intentional history-reading only — it does NOT mean every OTHER
+ * This is the "current view" reduction only — every other row's data stays intact in the table.
+ * server/warehouse/insurance-history.ts's buildPremiumHistory IS that premium-history reader
+ * (2026-09-23 review, Task 24): it calls this same collapseSameTermReissues function directly on
+ * the raw rows rather than re-deriving the same-term rule, so the two stay in lockstep by
+ * construction. NOTE (2026-08-17, adversarial sweep): this claim covers intentional
+ * history-reading only — it does NOT mean every OTHER
  * reader of this table already collapses to current-term correctly. insurance-conditions.ts's
  * expiry-soon condition turned out to read the raw, uncollapsed rows (not for history — by
  * omission) and has been fixed to call this same function; re-grep before trusting this claim
