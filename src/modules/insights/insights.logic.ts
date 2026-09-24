@@ -20,6 +20,7 @@ import type { InsightCandidate, InsightFamily } from '@contracts/insights';
 import type { PortfolioSnapshot } from '@contracts/index';
 import type { BadgeTone } from '@/primitives/Badge';
 import type { Tier, TierItem, TierTotal } from '@/primitives/TierBoard';
+import { spineLabel } from '@/lib/spine-label';
 
 // ── Merged shape ──────────────────────────────────────────────────────────────────────────
 
@@ -274,7 +275,7 @@ export function buildTiers(merged: MergedInsight[]): Tier[] {
       impactKind: severity === 'info' ? 'info' : 'risk',
       title: m.title,
       detail: m.detail,
-      chips: [m.spine === 'A' ? 'Spine A' : m.spine === 'B' ? 'Spine B' : 'Cross-spine'],
+      chips: [spineLabel(m.spine)],
     }));
 
     return {
