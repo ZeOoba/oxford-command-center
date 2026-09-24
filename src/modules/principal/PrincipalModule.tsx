@@ -4,6 +4,8 @@ import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
 import { useSnapshot, useAnalytics } from '@/data/queries';
 import { useAnomalies } from '@/modules/intel/analytics-hooks';
+import { useWarehouseInsights } from '@/modules/insights/hooks';
+import { mergeInsightSources } from '@/modules/insights/insights.logic';
 import { useUi } from '@/brain/ui-context';
 import { fmtNum } from '@analytics/index';
 import { ModuleLoading } from '@/shell/ModuleFallback';
@@ -16,18 +18,35 @@ export function PrincipalModule() {
   const { data } = useSnapshot();
   const { analytics } = useAnalytics();
   const ui = useUi();
-  // Fix #1: bridge warehouse anomalies into the attention digest. The query errors to [] on the
-  // static mirror / offline, so the digest degrades to snapshot conditions there.
+  // Same merge the Insights board renders (InsightsModule/widgets.tsx) — Spine-A insights +
+  // warehouse candidates, superseded Spine-A duplicates dropped — so the Digest's Critical/Review
+  // counts equal what "Open Insights →" actually shows (2026-09-23 review, gap #1).
+  const insightsQuery = useWarehouseInsights();
+  const candidates = useMemo(() => insightsQuery.data?.candidates ?? [], [insightsQuery.data]);
+  const merged = useMemo(
+    () => (data && analytics ? mergeInsightSources(analytics.insights, candidates, data.snapshot).merged : []),
+    [data, analytics, candidates],
+  );
+
+  // Warehouse anomalies get their OWN labelled line below, never folded into the merged set above
+  // — the Insights board doesn't show them, so counting them here would reintroduce the same
+  // count-vs-board drift the fix above removes. The query errors to [] on the static mirror /
+  // offline, so this line just disappears there.
   const anomalies = useAnomalies();
   const anomalyInsights = useMemo(() => {
     const nameById = new Map<string, string>();
     for (const p of data?.snapshot.properties ?? []) nameById.set(p.id, p.name);
     return anomaliesToInsights(anomalies.data ?? [], nameById);
   }, [anomalies.data, data]);
+  const anomalyAttentionCount = useMemo(
+    () => anomalyInsights.filter((i) => i.severity === 'critical' || i.severity === 'warning').length,
+    [anomalyInsights],
+  );
+
   if (!data || !analytics) return <ModuleLoading />;
 
   const kpis = principalKpis(analytics);
-  const digest = principalDigest(data.snapshot, analytics, anomalyInsights);
+  const digest = principalDigest(data.snapshot, merged);
   const summary = digestSummary(digest);
 
   return (
@@ -66,6 +85,24 @@ export function PrincipalModule() {
               style={{ color: 'var(--accent)' }}
             >
               Open Insights →
+            </button>
+          </div>
+        )}
+        {anomalyAttentionCount > 0 && (
+          <div
+            className="flex items-center justify-between gap-3 px-4 py-2.5 text-2xs"
+            style={{ borderTop: '1px solid var(--border-subtle)', color: 'var(--text-tertiary)' }}
+          >
+            <span>
+              {anomalyAttentionCount} warehouse anomal{anomalyAttentionCount === 1 ? 'y' : 'ies'} flagged — not counted above
+            </span>
+            <button
+              type="button"
+              onClick={() => ui.openTab('worklist', 'alerts')}
+              className="font-semibold"
+              style={{ color: 'var(--accent)' }}
+            >
+              Worklist › Alerts →
             </button>
           </div>
         )}

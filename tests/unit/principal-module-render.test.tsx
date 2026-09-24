@@ -17,9 +17,12 @@ import { render, screen, within, fireEvent, cleanup } from '@testing-library/rea
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { PortfolioSnapshot, Property } from '../../src/contracts/index';
 import type { AnomalyFlag } from '../../src/contracts/warehouse';
+import type { InsightCandidate } from '../../src/contracts/insights';
 import { buildAnalytics } from '../../src/analytics/engine';
 import { SNAPSHOT_KEY } from '../../src/data/queries';
 import { ANALYTICS_KEYS } from '../../src/modules/intel/analytics-hooks';
+import { INSIGHTS_KEYS } from '../../src/modules/insights/hooks';
+import { mergeInsightSources } from '../../src/modules/insights/insights.logic';
 import { UiContext, type UiState } from '../../src/brain/ui-context';
 import { principalDigest } from '../../src/brain/principal-digest';
 import { anomaliesToInsights } from '../../src/brain/anomaly-insights';
@@ -51,6 +54,25 @@ const criticalAnomaly: AnomalyFlag = {
   detail: 'NOI dropped 22% month-over-month', metricValue: -0.22,
 };
 
+// A warehouse-only critical candidate — no Spine-A insight exists for it in this fixture (no
+// loans/leases/insurance rows), so it exercises the "board shows a candidate the Digest must ALSO
+// show" half of gap #1, distinct from the dedup/superseded half covered in principal-digest.test.ts.
+const criticalCandidate: InsightCandidate = {
+  id: 'cf-hurdle-drag::p1',
+  family: 'CF',
+  generatorId: 'cf-hurdle-drag',
+  propertyId: 'p1',
+  spine: 'B',
+  attribution: { inputs: {} },
+  confidence: 0.9,
+  goal: 2,
+  materialityUsd: 42_000,
+  title: 'Hurdle rate drag — 29000 Information Lane',
+  discovery: 'Projected unlevered IRR trails the 8% hurdle.',
+  prov: { source: 'test', confidence: 'derived' },
+  advisoryOnly: true,
+};
+
 function snapshot(): PortfolioSnapshot {
   return {
     meta: { schemaVersion: '1.0.0', asOf: ASOF, generatedAt: `${ASOF}T00:00:00.000Z`, source: 'test', scenario: 'Base' },
@@ -70,6 +92,13 @@ function seededClient(s: PortfolioSnapshot): QueryClient {
   qc.setQueryData(SNAPSHOT_KEY, { snapshot: s, state: { status: 'fresh', source: 'workbook', lastUpdated: ASOF, lastError: null, workbookPath: 'test.xlsx', flagCount: 0 } });
   // useAnomalies' queryFn resolves to AnomalyFlag[] (r.anomalies unwrapped) — seed that shape directly.
   qc.setQueryData(ANALYTICS_KEYS.anomalies, [criticalAnomaly]);
+  // useWarehouseInsights' queryFn resolves to the parsed InsightReport envelope.
+  qc.setQueryData(INSIGHTS_KEYS.report, {
+    candidates: [criticalCandidate],
+    dataReadiness: [],
+    generatedAt: `${ASOF}T00:00:00.000Z`,
+    advisoryOnly: true,
+  });
   return qc;
 }
 
@@ -109,15 +138,24 @@ function renderModule() {
 }
 
 // Independently reproduces PrincipalModule's internal pipeline for the SAME fixture: same
-// snapshot, same scenario/run-date basis, same anomaly bridge — so the expected counts/top items
-// can never be a hand-guessed number that silently drifts from the real digest logic.
+// snapshot, same scenario/run-date basis, same mergeInsightSources() call the Insights board
+// itself makes — so the expected counts/top items can never be a hand-guessed number that
+// silently drifts from the real digest logic. The bridged anomaly is DELIBERATELY excluded from
+// this pipeline (2026-09-23 review, gap #1) — see expectedAnomalyCount() below for its own line.
 function expectedSummary() {
   const s = snapshot();
   const analytics = buildAnalytics(s, 'Base', ASOF);
+  const { merged } = mergeInsightSources(analytics.insights, [criticalCandidate], s);
+  const digest = principalDigest(s, merged);
+  return digestSummary(digest);
+}
+
+// The warehouse anomaly's own count — bridged separately, never folded into expectedSummary().
+function expectedAnomalyCount() {
+  const s = snapshot();
   const nameById = new Map(s.properties.map((p) => [p.id, p.name]));
   const anomalyInsights = anomaliesToInsights([criticalAnomaly], nameById);
-  const digest = principalDigest(s, analytics, anomalyInsights);
-  return digestSummary(digest);
+  return anomalyInsights.filter((i) => i.severity === 'critical' || i.severity === 'warning').length;
 }
 
 describe('PrincipalModule render', () => {
@@ -128,7 +166,8 @@ describe('PrincipalModule render', () => {
     expect(screen.getByText('Critical')).toBeTruthy();
     expect(screen.getByText('Review')).toBeTruthy();
     expect(screen.getByText('Deals')).toBeTruthy();
-    // Exactly one bridged critical anomaly and one Closing-stage deal in this fixture.
+    // Exactly one warehouse-only critical candidate and one Closing-stage deal in this fixture —
+    // the bridged critical ANOMALY is NOT in this count (gap #1: it isn't on the board either).
     expect(summary.critical).toBe(1);
     expect(summary.deals).toBe(1);
 
@@ -145,6 +184,25 @@ describe('PrincipalModule render', () => {
     for (const item of summary.top) {
       expect(screen.getByText(item.title)).toBeTruthy();
     }
+  });
+
+  it('an anomaly-only critical does not change the Digest critical count vs the board (gap #1)', () => {
+    renderModule();
+    const summary = expectedSummary();
+    const anomalyCount = expectedAnomalyCount();
+    expect(anomalyCount).toBe(1); // the fixture's bridged anomaly IS critical
+    // The rendered Critical tile equals the board's merged-set count, NOT board-count + anomalies.
+    const critTile = screen.getByText('Critical').closest('div')!.parentElement!;
+    expect(within(critTile).getByText(String(summary.critical))).toBeTruthy();
+    expect(within(critTile).queryByText(String(summary.critical + anomalyCount))).toBeNull();
+  });
+
+  it('surfaces the bridged anomaly on its own labelled line, not folded into the count tiles, linking to Worklist › Alerts', () => {
+    renderModule();
+    const anomalyCount = expectedAnomalyCount();
+    expect(screen.getByText(`${anomalyCount} warehouse anomaly flagged — not counted above`)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Worklist › Alerts/ }));
+    expect(openTab).toHaveBeenCalledWith('worklist', 'alerts');
   });
 
   it('"Open Insights" calls openTab(\'command-brain\', \'insights\')', () => {
