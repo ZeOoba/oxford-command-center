@@ -909,3 +909,52 @@ describe('buildInsuranceAnalysis — unclassified-cohort visibility (refute F1-M
     expect(count).toBe(1);
   });
 });
+
+describe('buildInsuranceAnalysis — policy-line keys resolve via resolveInsuranceProperty (2026-09-23 review)', () => {
+  // The LEFT JOIN in the SQL query is keyed on property_master.id === property_id, but insurance
+  // rows are keyed by policy line ('ins-<stem>-<line>'), which never matches a property_master.id
+  // directly. If the wiring at buildInsuranceAnalysis's resolveInsuranceProperty(...) call were
+  // reverted to the raw r.property_id (no resolution), these assertions fail — proving the wiring
+  // is load-bearing, not just the standalone resolveInsuranceProperty unit tests.
+  it('resolves a policy-line key to its property_master row via the stem map', () => {
+    const db = freshDb();
+    // No property_master row under the raw key 'ins-9620state350-prop-hfd' — only under the
+    // resolved id, mirroring how the real STEM_TO_MASTER table maps stems to master ids.
+    seedProperty(db, '9620-e-state-route-350-raytown-mo', '9620 E State Route 350, Raytown MO');
+    insertPolicy(db, {
+      propertyId: 'ins-9620state350-prop-hfd',
+      policyType: 'Property',
+      premiumAnnual: 5_000,
+      coverageTiv: 2_000_000,
+    });
+
+    const report = buildInsuranceAnalysis(db, AS_OF);
+
+    const policy = report.renewalCalendar.find((p) => p.propertyId === '9620-e-state-route-350-raytown-mo');
+    expect(policy).toBeDefined();
+    expect(policy?.property).toBe('9620 E State Route 350, Raytown MO');
+    expect(policy?.propertyId).toBe('9620-e-state-route-350-raytown-mo');
+  });
+
+  it('resolves a label-only stem (no property_master row at all) to its address label', () => {
+    const db = freshDb();
+    insertPolicy(db, {
+      propertyId: 'ins-etcpoa-bcl',
+      policyType: 'Boiler & Machinery',
+      premiumAnnual: 1_500,
+      coverageTiv: 500_000,
+    });
+
+    const report = buildInsuranceAnalysis(db, AS_OF);
+
+    const policy = report.renewalCalendar.find((p) => p.property === 'Airport Road, Easton MD (ETC POA)');
+    expect(policy).toBeDefined();
+    // NOTE (concern, see task-14 report): resolveInsuranceProperty itself returns propertyId: null
+    // for a recognized label-only stem (no property_master row exists to point at), but the
+    // caller's `?? r.property_id` fallback (deliberate since commit 0b09b30 — preserves the raw
+    // property_id for every non-'ins-' prefixed id used across the rest of this suite) turns that
+    // null back into the raw policy-line key. This assertion documents the wiring's ACTUAL,
+    // preserved behavior rather than resolveInsuranceProperty's in-isolation contract.
+    expect(policy?.propertyId).toBe('ins-etcpoa-bcl');
+  });
+});

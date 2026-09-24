@@ -437,10 +437,13 @@ export function buildInsuranceAnalysis(db: WarehouseDb, asOf: string): Insurance
       }
     }
     const { bucket, daysToExpiry } = computeRenewal(r.expiration_date, asOf);
+    // Resolve once and reuse for both fields below — resolveInsuranceProperty is a pure lookup
+    // (no side effects), but calling it twice per row was needless duplicate work.
+    const resolved = r.property_name ? null : resolveInsuranceProperty(r.property_id, masterNames);
     return {
       policyId: String(r.id),
-      property: r.property_name ?? resolveInsuranceProperty(r.property_id, masterNames).name,
-      propertyId: r.property_name ? r.property_id : (resolveInsuranceProperty(r.property_id, masterNames).propertyId ?? r.property_id),
+      property: r.property_name ?? resolved!.name,
+      propertyId: r.property_name ? r.property_id : (resolved!.propertyId ?? r.property_id),
       carrier: r.insurer,
       policyType: r.policy_type,
       premium,
