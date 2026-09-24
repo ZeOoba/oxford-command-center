@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import { useSnapshot } from '@/data/queries';
+import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { useUi } from '@/brain/ui-context';
 import { fmtUsd, fmtUsdCompact, fmtPct, fmtNum } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
@@ -12,6 +13,7 @@ import type { CashEntity } from '@contracts/index';
 
 export function CashModule() {
   const { data } = useSnapshot();
+  const gate = useSnapshotGate();
   const ui = useUi();
 
   const cols = useMemo((): Column<CashEntity>[] => [
@@ -35,6 +37,7 @@ export function CashModule() {
     },
   ], []);
 
+  if (gate) return gate;
   if (!data) return null;
   const cash = data.snapshot.cash;
   const series = cash.history.map((h) => ({ date: h.date, value: h.total }));

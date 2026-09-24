@@ -94,4 +94,16 @@ describe('fetchFredMacro — null observation must flow through as null (not 0)'
     expect(snap!.tenYearHistory.map((p) => p.date)).toEqual(['2026-04-01', '2026-06-01']);
     expect(snap!.tenYearHistory.every((p) => Number.isFinite(p.value))).toBe(true);
   });
+
+  it('live snapshot asOf is the fetch date, not the static WORKBOOK_AS_OF', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-23T15:00:00Z'));
+    vi.stubEnv('FRED_API_KEY', 'test-key');
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(JSON.stringify({ observations: [{ date: '2026-09-22', value: '4.10' }] }), { headers: { 'content-type': 'application/json' } })));
+    const snap = await fetchFredMacro();
+    expect(snap?.source).toBe('live-fred');
+    expect(snap?.asOf).toBe('2026-09-23');
+    vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.useRealTimers();
+  });
 });

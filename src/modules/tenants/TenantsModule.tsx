@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Mail } from 'lucide-react';
 import { useSnapshot, SNAPSHOT_KEY } from '@/data/queries';
+import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { useUi } from '@/brain/ui-context';
 import { saveTenantNote } from '@/data/actions';
 import { fmtUsd, fmtUsdCompact, fmtPct, fmtNum, fmtDate } from '@analytics/index';
@@ -29,6 +30,7 @@ function NoiBar({ pct, max }: { pct: number; max: number }) {
 
 export function TenantsModule() {
   const { data } = useSnapshot();
+  const gate = useSnapshotGate();
   const ui = useUi();
   const qc = useQueryClient();
   const noteMut = useMutation({
@@ -44,6 +46,7 @@ export function TenantsModule() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = cards.find((c) => c.id === selectedId) ?? null;
 
+  if (gate) return gate;
   if (!data) return null;
 
   const cols: Column<TenantScorecard>[] = [

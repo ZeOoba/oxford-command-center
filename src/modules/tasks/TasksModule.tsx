@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { useSnapshot, SNAPSHOT_KEY } from '@/data/queries';
+import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { useBrain } from '@/data/brain-context';
 import { computeFreshness } from '@/lib/freshness';
 import { createTask } from '@/data/actions';
@@ -23,6 +24,7 @@ const STATUS_META: Record<TaskStatus, { tone: BadgeTone; label: string }> = {
 
 export function TasksModule() {
   const { data } = useSnapshot();
+  const gate = useSnapshotGate();
   const { state } = useBrain();
   const qc = useQueryClient();
   const [label, setLabel] = useState('');
@@ -44,6 +46,7 @@ export function TasksModule() {
     }
   };
 
+  if (gate) return gate;
   if (!data) return null;
   const tasks = data.snapshot.tasks;
   const done = tasks.filter((t) => t.status === 'done').length;

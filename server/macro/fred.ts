@@ -1,5 +1,4 @@
 import type { MacroSnapshot, MacroSeriesPoint, MacroIndicator } from '../../src/contracts/index';
-import { WORKBOOK_AS_OF } from '../config';
 
 /**
  * Live FRED adapter. Activates when FRED_API_KEY is set; otherwise returns null
@@ -73,7 +72,9 @@ export async function fetchFredMacro(): Promise<MacroSnapshot | null> {
       change: null,
     });
     return {
-      asOf: WORKBOOK_AS_OF,
+      // The fetch date — WORKBOOK_AS_OF is the workbook data-month and made live FRED data read as
+      // three months stale in the UI (2026-09-23 review).
+      asOf: new Date().toISOString().slice(0, 10),
       source: 'live-fred',
       indicators: [
         ind('DGS10', '10Y Treasury', t10),

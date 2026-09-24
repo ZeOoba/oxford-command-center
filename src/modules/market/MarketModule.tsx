@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react';
 import { useMacro, useAnalytics } from '@/data/queries';
-import { fmtPct } from '@analytics/index';
+import { fmtPct, fmtDate } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
@@ -15,6 +15,7 @@ import { useMarketIntel } from './hooks';
 import { MarketScorecard } from './MarketScorecard';
 import { CompsView } from './CompsView';
 import { MARKET_TABS, MARKET_TAB_KEYS, type MarketTab } from './tabs';
+import { isLiveMacro } from './macro-badge';
 
 const ProspectDemandModule = lazy(() => import('../intel/ProspectDemandModule').then((m) => ({ default: m.ProspectDemandModule })));
 
@@ -83,8 +84,8 @@ function MacroView() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center gap-2">
-        <Badge tone={macro.source === 'fred' ? 'green' : 'amber'} dot>
-          {macro.source === 'fred' ? 'FRED · live' : 'FRED · snapshot (set FRED_API_KEY for live)'}
+        <Badge tone={isLiveMacro(macro.source) ? 'green' : 'amber'} dot>
+          {isLiveMacro(macro.source) ? `FRED · live · ${fmtDate(macro.asOf)}` : 'FRED · snapshot (set FRED_API_KEY for live)'}
         </Badge>
         <span className="num text-2xs uppercase" style={{ letterSpacing: '0.12em', color: 'var(--text-tertiary)' }}>
           Macro indicators
