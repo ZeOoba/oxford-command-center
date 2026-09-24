@@ -60,3 +60,10 @@ export function fmtMonths(n: number | null | undefined): string {
   if (n === null || n === undefined || !Number.isFinite(n)) return '—';
   return `${Math.round(n)} mo`;
 }
+
+/** Tenant tenure for renewal cards — the raw float leaked as "393.72484599589325 mo" (2026-09-23 review). */
+export function fmtTenure(months: number): string {
+  if (months < 1) return '<1 mo tenure';
+  if (months < 24) return `${Math.round(months)} mo tenure`;
+  return `${(months / 12).toFixed(1)} yr tenure`;
+}
