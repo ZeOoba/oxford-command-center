@@ -74,7 +74,7 @@
  *         see that as a real failure, not a silent no-op.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, renameSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync } from 'node:fs';
 import { join, basename, dirname } from 'node:path';
 import ExcelJS from 'exceljs';
 import { extractPdfText } from '../server/ar/pdf-extract';
@@ -90,6 +90,7 @@ import { applyWritesAndClears, type SweepReportInfo } from '../server/ar/clear-d
 import { loadCache, saveCache, cacheKey } from '../server/ar/mapping-cache';
 import { loadOverlay, saveOverlay, overlayPath, evaluateOverlayPrecondition } from '../server/overlay';
 import { deriveArBalances } from '../server/ar/derive-ar-balances';
+import { renameSyncWithRetry } from '../server/lib/rename-retry';
 import { SNAPSHOT_PATH } from '../server/config';
 import type { LeaseLite } from '../server/ar/match-tenant';
 import type { TenantArrears } from '../src/contracts/index';
@@ -225,7 +226,7 @@ function resolvePropertyId(header: string | null): string | null {
 }
 
 /** Patch the persisted snapshot's tenantArrears + recomputed arBalances in place (immediate 4c visibility). */
-function patchSnapshot(newArrears: Record<string, TenantArrears>): void {
+export function patchSnapshot(newArrears: Record<string, TenantArrears>): void {
   const snap = JSON.parse(readFileSync(SNAPSHOT_PATH, 'utf8')) as {
     leases?: unknown[];
     tenantArrears?: Record<string, TenantArrears>;
@@ -234,18 +235,20 @@ function patchSnapshot(newArrears: Record<string, TenantArrears>): void {
   snap.tenantArrears = { ...(snap.tenantArrears ?? {}), ...newArrears };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   snap.arBalances = deriveArBalances((snap.leases ?? []) as any, snap.tenantArrears);
+  // Every rename in this script goes through renameSyncWithRetry: Windows AV / indexer / OneDrive
+  // sync can briefly lock these files (EPERM/EBUSY/EACCES) -- see server/lib/rename-retry.ts.
   // Atomic write (temp file + rename), same pattern as saveOverlay/appendReviewQueue (refute round
   // 3/edges): portfolio.json is read by the daily brief's 4c and by this script's own
   // loadLeasesFromSnapshot on the next run — a crash mid-write must not leave it truncated.
   const tmp = `${SNAPSHOT_PATH}.tmp-${process.pid}`;
   writeFileSync(tmp, JSON.stringify(snap, null, 2));
-  renameSync(tmp, SNAPSHOT_PATH);
+  renameSyncWithRetry(tmp, SNAPSHOT_PATH);
 }
 
 function backupCorruptQueue(reason: string): void {
   const backup = REVIEW_QUEUE.replace(/\.json$/, `.corrupt-${Date.now()}.json`);
   try {
-    renameSync(REVIEW_QUEUE, backup);
+    renameSyncWithRetry(REVIEW_QUEUE, backup);
     console.error(`  ✗ ${basename(REVIEW_QUEUE)} ${reason} — backed up to ${basename(backup)}; starting a fresh queue. Recover pending reviews from the backup manually.`);
   } catch {
     console.error(`  ✗ ${basename(REVIEW_QUEUE)} ${reason} and could not be backed up — starting a fresh queue; pending reviews may be LOST.`);
@@ -412,7 +415,7 @@ export function dedupReviewsAgainstQueue(existing: readonly QueuedReview[], rows
   });
 }
 
-function appendReviewQueue(rows: QueuedReview[]): void {
+export function appendReviewQueue(rows: QueuedReview[]): void {
   if (rows.length === 0) return;
   let existing: QueuedReview[] = [];
   if (existsSync(REVIEW_QUEUE)) {
@@ -449,14 +452,14 @@ function appendReviewQueue(rows: QueuedReview[]): void {
   // truncated, or the NEXT sweep's read above would treat it as corrupt and re-trigger the same loss.
   const tmp = `${REVIEW_QUEUE}.tmp-${process.pid}`;
   writeFileSync(tmp, JSON.stringify([...existing, ...dedupedNew], null, 2));
-  renameSync(tmp, REVIEW_QUEUE);
+  renameSyncWithRetry(tmp, REVIEW_QUEUE);
 }
 
 /** Move a PDF into a sibling dir (processed/failed); leaves it in place if the move fails. */
-function moveInto(pdf: string, dest: string): void {
+export function moveInto(pdf: string, dest: string): void {
   mkdirSync(dest, { recursive: true });
   try {
-    renameSync(pdf, join(dest, basename(pdf)));
+    renameSyncWithRetry(pdf, join(dest, basename(pdf)));
   } catch {
     /* leave in place if the move fails */
   }

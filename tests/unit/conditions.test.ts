@@ -251,19 +251,50 @@ describe('evaluateConditions — debt', () => {
 describe('evaluateConditions — leases', () => {
   it('expiring < 60d is critical', () => {
     const out = evaluateConditions(snap({ leases: [lease({ leaseEnd: iso(59) })] }), opts);
-    expect(out.find((i) => i.id === 'expiring-l1')?.severity).toBe('critical');
+    expect(out.find((i) => i.id === 'lease-expiry-l1')?.severity).toBe('critical');
+    expect(out.some((i) => i.id === 'expiring-l1')).toBe(false);
   });
-  it('expiring 60–180d is warning', () => {
+  // Expiry-family ids for one lease: legacy (`expiring-`, `expired-`) and L-x (`lease-expiry-`, `lease-lapsed-`).
+  // Every pair carries impactAnnualUsd = annualRent, so exactly ONE may survive per lease.
+  const expiryFamilyIds = (out: ReturnType<typeof evaluateConditions>, leaseId = 'l1') =>
+    out.filter((i) => i.entityId === leaseId && /^(expiring|expired|lease-expiry|lease-lapsed)-/.test(i.id)).map((i) => i.id);
+
+  it('a lease ≤90d out with no renewal stage yields ONE expiry insight, not two', () => {
+    const out = evaluateConditions(snap({ leases: [lease({ leaseEnd: iso(38), annualRent: 38000 })] }), opts);
+    expect(expiryFamilyIds(out)).toEqual(['lease-expiry-l1']);
+  });
+  it('91–180d keeps the legacy warning (L-1 does not cover it)', () => {
     const out = evaluateConditions(snap({ leases: [lease({ leaseEnd: iso(120) })] }), opts);
     expect(out.find((i) => i.id === 'expiring-l1')?.severity).toBe('warning');
+    expect(out.some((i) => i.id === 'lease-expiry-l1')).toBe(false);
+  });
+  it('boundary: iso(90) is L-1 only; iso(91) is the legacy warning only', () => {
+    const at90 = evaluateConditions(snap({ leases: [lease({ leaseEnd: iso(90) })] }), opts);
+    expect(expiryFamilyIds(at90)).toEqual(['lease-expiry-l1']);
+    const at91 = evaluateConditions(snap({ leases: [lease({ leaseEnd: iso(91) })] }), opts);
+    expect(expiryFamilyIds(at91)).toEqual(['expiring-l1']);
+    expect(at91.find((i) => i.id === 'expiring-l1')?.severity).toBe('warning');
+  });
+  it('holdover (Expired + past leaseEnd, no Executed stage) yields ONE expiry insight: L-2, not also the legacy expired-', () => {
+    const out = evaluateConditions(snap({ leases: [lease({ status: 'Expired', leaseEnd: iso(-40), annualRent: 14808 })] }), opts);
+    expect(expiryFamilyIds(out)).toEqual(['lease-lapsed-l1']);
+  });
+  it('Expired status with a FUTURE leaseEnd (data contradiction) yields ONE expiry insight: L-1, not also expired-', () => {
+    const out = evaluateConditions(snap({ leases: [lease({ status: 'Expired', leaseEnd: iso(30) })] }), opts);
+    expect(expiryFamilyIds(out)).toEqual(['lease-expiry-l1']);
+  });
+  it('Expired + past leaseEnd + Executed stage: L-2 does not fire, so the legacy expired- survives (nothing to dedup against)', () => {
+    const out = evaluateConditions(snap({ leases: [lease({ status: 'Expired', leaseEnd: iso(-40) })], renewalStages: { l1: 'Executed' } }), opts);
+    expect(expiryFamilyIds(out)).toEqual(['expired-l1']);
   });
   it('expiring beyond 180d does not fire', () => {
     const out = evaluateConditions(snap({ leases: [lease({ leaseEnd: iso(181) })] }), opts);
     expect(out.some((i) => i.id === 'expiring-l1')).toBe(false);
   });
-  it('lease at exactly 60d is warning (not critical)', () => {
+  it('lease at exactly 60d is the single L-1 critical (legacy 60d warning boundary is inside the deduped window)', () => {
     const out = evaluateConditions(snap({ leases: [lease({ leaseEnd: iso(60) })] }), opts);
-    expect(out.find((i) => i.id === 'expiring-l1')?.severity).toBe('warning');
+    expect(out.find((i) => i.id === 'lease-expiry-l1')?.severity).toBe('critical');
+    expect(out.some((i) => i.id === 'expiring-l1')).toBe(false);
   });
   it('lease at exactly 180d still fires (warning)', () => {
     const out = evaluateConditions(snap({ leases: [lease({ leaseEnd: iso(180) })] }), opts);
@@ -275,7 +306,7 @@ describe('evaluateConditions — leases', () => {
   });
   it('still fires expiring when stage is Expiring (no action yet)', () => {
     const out = evaluateConditions(snap({ leases: [lease({ leaseEnd: iso(30) })], renewalStages: { l1: 'Expiring' } }), opts);
-    expect(out.some((i) => i.id === 'expiring-l1')).toBe(true);
+    expect(out.some((i) => i.id === 'lease-expiry-l1')).toBe(true);
   });
   it('holdover (status Expired) is a warning', () => {
     const out = evaluateConditions(snap({ leases: [lease({ status: 'Expired' })] }), opts);
@@ -710,10 +741,11 @@ describe('evaluateConditions — dollar ranking', () => {
     // Two expiring leases (same severity = warning), different annualRent.
     // SmallTenant ($20K) is inserted FIRST so insertion order favours it,
     // but dollar-rank must put BigTenant ($50K) first instead.
+    // 120d: the legacy `expiring-` warning survives only in the 91–180d window (≤90d is L-1's).
     const out = evaluateConditions(snap({
       leases: [
-        lease({ id: 'l1', company: 'SmallTenant', leaseEnd: iso(90), annualRent: 20000 }),
-        lease({ id: 'l2', company: 'BigTenant',   leaseEnd: iso(90), annualRent: 50000 }),
+        lease({ id: 'l1', company: 'SmallTenant', leaseEnd: iso(120), annualRent: 20000 }),
+        lease({ id: 'l2', company: 'BigTenant',   leaseEnd: iso(120), annualRent: 50000 }),
       ],
     }), opts);
     const l1idx = out.findIndex((i) => i.id === 'expiring-l1'); // $20K — inserted first
@@ -729,7 +761,7 @@ describe('evaluateConditions — dollar ranking', () => {
     // Dollar ranking must put the lease (numeric) before the balloon (null).
     const out = evaluateConditions(snap({
       loans:  [loan({ id: 'n1', balloon: true, maturity: iso(200) })],
-      leases: [lease({ id: 'l1', company: 'Tenant', leaseEnd: iso(90), annualRent: 20000 })],
+      leases: [lease({ id: 'l1', company: 'Tenant', leaseEnd: iso(120), annualRent: 20000 })], // 120d → legacy warning (≤90d is L-1's)
     }), opts);
     const balloonIdx = out.findIndex((i) => i.id === 'balloon-n1'); // null impact, warning — inserted first
     const leaseIdx   = out.findIndex((i) => i.id === 'expiring-l1'); // $20K impact, warning — inserted second
@@ -747,7 +779,7 @@ describe('evaluateConditions — dollar ranking', () => {
     // critical: reconciliation failure (null impact) must come before any warning
     // warning: large expiring lease ($1M/yr)
     const out = evaluateConditions(snap({
-      leases: [lease({ id: 'l1', company: 'BigTenant', leaseEnd: iso(90), annualRent: 1_000_000 })],
+      leases: [lease({ id: 'l1', company: 'BigTenant', leaseEnd: iso(120), annualRent: 1_000_000 })], // 120d → legacy warning (≤90d is L-1's)
       dataQuality: [{ entity: 'reconciliation', field: 'NOI total', issue: 'mismatch', severity: 'error' }],
     }), opts);
     const critIdx = out.findIndex((i) => i.id === 'reconcile-fail');

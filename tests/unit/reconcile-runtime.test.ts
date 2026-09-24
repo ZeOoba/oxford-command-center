@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import type { PortfolioSnapshot } from '../../src/contracts/index';
-import { checkSnapshot } from '../../server/reconcile-runtime';
+import type { PortfolioSnapshot, Lease } from '../../src/contracts/index';
+import { checkSnapshot, checkStaleLeaseRows } from '../../server/reconcile-runtime';
 
 const base = (over: Partial<Record<string, unknown>> = {}): PortfolioSnapshot =>
   ({
@@ -368,5 +368,43 @@ describe('checkSnapshot — runtime reconciliation', () => {
       }),
     );
     expect(flags).toEqual([]);
+  });
+});
+
+describe('checkStaleLeaseRows', () => {
+  const meta = { asOf: '2026-09-23' } as PortfolioSnapshot['meta'];
+  const l = (o: Partial<Lease>) => ({ id: 'x', tenantName: 'T', status: 'Active', leaseEnd: null, ...o }) as Lease;
+  it('flags a non-Expired row whose leaseEnd passed > 365d ago (workbook row whose status was never updated)', () => {
+    const flags = checkStaleLeaseRows({ meta, leases: [l({ id: 'st1', tenantName: 'Stale Co', leaseEnd: '2024-09-01' })] });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]).toMatchObject({ entity: 'lease', field: 'lease.st1.leaseEnd', severity: 'warn' });
+    expect(flags[0]!.issue).toContain('Stale Co');
+  });
+  it('is NOT a reconciliation-entity flag (would otherwise fire the CRITICAL "Reconciliation failure" insight)', () => {
+    const flags = checkStaleLeaseRows({ meta, leases: [l({ leaseEnd: '2024-09-01' })] });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.entity).not.toBe('reconciliation');
+  });
+  it('ignores recent holdovers and rows already marked Expired', () => {
+    expect(checkStaleLeaseRows({ meta, leases: [
+      l({ leaseEnd: '2026-06-30' }),
+      l({ status: 'Expired', leaseEnd: '2023-01-01' }),
+    ] })).toEqual([]);
+  });
+  it('ignores rows with no leaseEnd', () => {
+    expect(checkStaleLeaseRows({ meta, leases: [l({ leaseEnd: null })] })).toEqual([]);
+  });
+  it('threshold is strictly > 365 days: exactly 365 → no flag, 366 → flag', () => {
+    expect(checkStaleLeaseRows({ meta, leases: [l({ leaseEnd: '2025-09-23' })] })).toEqual([]);
+    expect(checkStaleLeaseRows({ meta, leases: [l({ leaseEnd: '2025-09-22' })] })).toHaveLength(1);
+  });
+  it('normalizes a leaseEnd carrying a time component to its date before comparing (matches asOf)', () => {
+    // 366 calendar days before asOf. Without the slice(0, 10) a local-time-of-day component shifts
+    // the parsed instant by up to a day relative to the date-only (UTC) asOf and can round to 365.
+    expect(checkStaleLeaseRows({ meta, leases: [l({ leaseEnd: '2025-09-22T12:00:00' })] })).toHaveLength(1);
+  });
+  it('returns [] when meta.asOf is missing (no reference date to measure from)', () => {
+    expect(checkStaleLeaseRows({ meta: {} as PortfolioSnapshot['meta'], leases: [l({ leaseEnd: '2020-01-01' })] })).toEqual([]);
+    expect(checkStaleLeaseRows({ meta: undefined as unknown as PortfolioSnapshot['meta'], leases: [l({ leaseEnd: '2020-01-01' })] })).toEqual([]);
   });
 });

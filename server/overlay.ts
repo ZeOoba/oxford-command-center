@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, writeFile, rename } from 'node:fs/promises';
+import { mkdir, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { z } from 'zod';
 import type { PortfolioSnapshot, DealStage, TenantArrears } from '../src/contracts/index';
@@ -7,6 +7,7 @@ import { Task, RenewalStage, CompSet, AcquisitionInput } from '../src/contracts/
 import type { LeaseRunAssumptions } from '../src/contracts/lease-run';
 import { coerceNonNegMoney } from '../src/lib/money';
 import { deriveArBalances } from './ar/derive-ar-balances';
+import { renameWithRetry } from './lib/rename-retry';
 
 /**
  * Write-back overlay (Phase 5). The master workbook is canonical and READ-ONLY, so user
@@ -361,10 +362,39 @@ export function loadOverlay(): Overlay {
   return { ...EMPTY_OVERLAY };
 }
 
-export async function saveOverlay(o: Overlay): Promise<boolean> {
+// Saves run one at a time, in call order. The rename below retries a transient lock for up to
+// ~200 ms; without this queue an older save still retrying could land on top of a newer one and both
+// would report true (refute 2026-09-23). Queued, a retrying save holds the next one back instead.
+let saveQueue: Promise<unknown> = Promise.resolve();
+
+export function saveOverlay(o: Overlay): Promise<boolean> {
+  const run = saveQueue.then(() => writeOverlay(o));
+  saveQueue = run;
+  return run;
+}
+
+/** Which file currently sits at `path` (null when absent). A publish by any writer is a rename onto
+ *  the path, so it changes the file id (ino), which is what carries this check: NTFS mtime moves per
+ *  timer tick, so an equal-size in-place overwrite inside one tick would not show. Every overlay.json
+ *  writer publishes by rename today; one that wrote in place would be invisible here. */
+async function fileIdentity(path: string): Promise<string | null> {
+  try {
+    const s = await stat(path, { bigint: true });
+    return `${s.ino}:${s.mtimeNs}:${s.size}`;
+  } catch {
+    return null;
+  }
+}
+
+async function writeOverlay(o: Overlay): Promise<boolean> {
   try {
     const path = overlayPath();
     await mkdir(dirname(path), { recursive: true });
+    // The queue above only orders saves inside this process; the headless AR feed is another
+    // process. If overlay.json changes while this save waits to retry a locked rename, another
+    // writer has published, so stand down (return false, as a failed single rename always did)
+    // rather than land this older write on top of it.
+    const before = await fileIdentity(path);
     // Atomic write (temp file + rename), not a direct writeFile: overlay.json is the canonical
     // mutation store for every write-back this module exposes (deal stages, tasks, notes, NOI
     // budgets, tenantArrears, ...). A crash/power-loss mid-write previously left it truncated, and
@@ -375,7 +405,9 @@ export async function saveOverlay(o: Overlay): Promise<boolean> {
     // one is fully in place; there is no truncated-in-between state to observe.
     const tmp = `${path}.tmp-${process.pid}-${Date.now()}`;
     await writeFile(tmp, JSON.stringify(o, null, 2));
-    await rename(tmp, path);
+    // Retried on the Windows AV/indexer/OneDrive transient lock (EPERM/EBUSY/EACCES) -- see
+    // lib/rename-retry. Exhausted or abandoned retries land in the catch below and return false.
+    await renameWithRetry(tmp, path, { shouldRetry: async () => (await fileIdentity(path)) === before });
     return true;
   } catch {
     return false;

@@ -20,6 +20,15 @@ vi.mock('../../server/macro/getMacro', () => ({
   }),
 }));
 
+// The /allocate route reads only `brain.getSnapshot()` (via a dynamic `import('../brain')`), and
+// this suite never calls brain.refresh(), so the real singleton always answered null here. Stubbed
+// the same way insights-api / lease-forecast-api / tax-analysis stub it for the same pattern. See
+// the beforeAll comment below for why loading the real module was the flake, not a budget problem.
+vi.mock('../../server/brain', () => ({
+  brain: { getSnapshot: vi.fn(() => null) },
+}));
+import { brain } from '../../server/brain';
+
 const openedDbs: ReturnType<typeof openWarehouse>[] = [];
 
 function freshDb() {
@@ -43,7 +52,7 @@ describe('capitalAllocationApi', () => {
   // a real module-load cost, not a bug in the route's own logic (confirmed: imports,
   // openWarehouse migrations, and seedPropertyMaster together cost ~126ms; the dynamic
   // import + snapshot lookup is the other ~1.1s+).
-  // Fix: pay that cost once here, in beforeAll (untimed setup), not inside a timed
+  // Fix (superseded 2026-09-23, see below): pay that cost once here, in beforeAll, not inside a timed
   // `it(...)`. This does not touch the route handler -- the dynamic-import pattern is
   // used identically in 5 other files (api.ts x3, insights-api.ts, lease-forecast-api.ts,
   // tax-api.ts) with no documented reason it must be dynamic rather than static, so
@@ -51,11 +60,20 @@ describe('capitalAllocationApi', () => {
   // Round 8 fresh-sweep (adversarial refute, MEDIUM — corroborated by two independent lenses):
   // the then-default 10s hook timeout intermittently expired under full-suite parallel-fork load
   // (2 of 3 full runs), skipping ALL tests in this file -- including R-5, the calibration-history
-  // regression gate for round 8's filterTrustedVerdicts fix. Explicit generous timeout so a loaded
-  // CI runner doesn't silently drop CI's only coverage of that gate.
+  // regression gate for round 8's filterTrustedVerdicts fix. Explicit generous timeout (60_000,
+  // removed 2026-09-23, see below) so a loaded CI runner doesn't silently drop that gate's coverage.
+  //
+  // 2026-09-23 (systematic-debugging): the 60s budget itself then timed out twice in `npm run gate`
+  // at 100% CPU. Cause: the real server/brain drags in server/workbook/parse.ts -> exceljs (450
+  // CJS files) + date-fns (304) + chokidar, none of which the route or these tests use (the route
+  // itself reaches only hono + zod). Cold under that load, `import('exceljs')` alone measured
+  // 85,983ms in plain node (1,304ms warm) -- a per-file open/AV-scan cost, so no fixed budget holds.
+  // Fix by cause: brain is stubbed above, and this hook now warms only the module under test, so
+  // the hook's cost is this route's own graph, not the workbook parser's. Hook budget is the global
+  // 60s hang guard (vitest.config.ts) -- deliberately no local override, which would shadow it.
   beforeAll(async () => {
-    await import('../../server/brain');
-  }, 60_000);
+    await import('../../server/warehouse/capital-allocation-api');
+  });
 
   afterEach(() => {
     for (const db of openedDbs) db.close();
@@ -72,6 +90,9 @@ describe('capitalAllocationApi', () => {
     expect(res.status).toBe(200);
     const body = CapitalAllocationResponse.parse(await res.json());
     expect(typeof body.hurdleRate.hurdleRatePct).toBe('number');
+    // Guards that the route's dynamic import resolves to the stub; if it didn't, the
+    // exceljs/date-fns/chokidar load (and the 60s hook flake) would silently come back.
+    expect(brain.getSnapshot).toHaveBeenCalledTimes(1);
   });
 
   it('R-2: GET /market → 200 with valid MarketIntelResponse', async () => {
