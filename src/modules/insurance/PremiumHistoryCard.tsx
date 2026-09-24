@@ -17,6 +17,7 @@ import { Sparkline } from '@/charts/Sparkline';
 import { fmtUsdCompact } from '@analytics/index';
 import { isWarehouseUnavailable } from '../intel/hooks';
 import { usePremiumHistory, PREMIUM_HISTORY_KEY } from './hooks';
+import { premiumHistoryBars } from './premium-history-chart-data';
 
 export { PREMIUM_HISTORY_KEY };
 
@@ -61,7 +62,7 @@ export function PremiumHistoryCard() {
     <Card>
       <CardHeader title="Premium History" trailing={<Badge tone="neutral">{multi.length} lines with renewal history</Badge>} />
       <div className="px-3 pb-2 pt-3">
-        <BarChart data={data.byYear.map((y) => ({ label: String(y.year), value: y.premium }))} valueFormat={fmtUsdCompact} height={200} />
+        <BarChart data={premiumHistoryBars(data.byYear)} valueFormat={fmtUsdCompact} height={200} ariaLabel="Premium history by policy year" />
       </div>
       <ul className="grid grid-cols-1 gap-2 px-4 pb-4 md:grid-cols-2">
         {multi.map((l) => {
