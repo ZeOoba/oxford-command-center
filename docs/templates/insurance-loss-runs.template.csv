@@ -3,4 +3,8 @@
 # (source='broker'). Ships empty — populates insurance_loss_events (migration 022) once the
 # broker loss runs arrive. property_id should match a property_master id; leave blank for a
 # portfolio-level or umbrella-policy loss that isn't attributable to a single property.
+# policy_ref = the policy number as printed on the dec page (matched case- and whitespace-insensitively
+# to property_insurance_policies.policy_number). cause drives attachment: bodily injury / slip-and-fall /
+# EPLI / employment-practices / suit / claimant causes, and bare "liability" with no named property
+# peril (water, wind, fire, ...), are never booked against a property deductible.
 property_id,policy_ref,loss_date,cause,gross_incurred,paid,reserve,source

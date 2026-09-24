@@ -7,7 +7,7 @@
 // resolver-output + PolicyEconomics types (Task 2 / insurance-analysis contract).
 // Every expected number is hand-computed in the comment above its assertion.
 import { describe, expect, it } from 'vitest';
-import { buildInsuranceLossReport, MIN_LOSS_YEARS, type LossAnalysisInputs } from '../../server/warehouse/insurance-loss-analysis';
+import { buildInsuranceLossReport, MIN_LOSS_YEARS, type LossAnalysisInputs, type PolicyTerm } from '../../server/warehouse/insurance-loss-analysis';
 import { InsuranceLossReport } from '../../src/contracts/insurance-loss';
 import type { PolicyEconomics } from '../../src/contracts/insurance-analysis';
 import type { DataSource, DecPageEntry, DecPagesResolved, LossEventRow, LossEventsResolved } from '../../server/warehouse/placeholder-data';
@@ -35,6 +35,14 @@ function mkEvent(id: string, propertyId: string, lossDate: string, grossIncurred
   return { id, propertyId, policyRef: null, lossDate, cause: null, grossIncurred, paid: null, reserve: null, source: 'loss-runs.placeholder.json' };
 }
 
+function mkRefEvent(id: string, propertyId: string, lossDate: string, grossIncurred: number, policyRef: string, cause: string | null = null): LossEventRow {
+  return { ...mkEvent(id, propertyId, lossDate, grossIncurred), policyRef, cause };
+}
+
+function termsOf(entries: Record<string, PolicyTerm>): ReadonlyMap<string, PolicyTerm> {
+  return new Map(Object.entries(entries));
+}
+
 function lossEvents(rows: LossEventRow[], source: DataSource = 'placeholder', droppedRows = 0): LossEventsResolved {
   return { rows, source, droppedRows };
 }
@@ -55,6 +63,7 @@ function inputs(over: Partial<LossAnalysisInputs>): LossAnalysisInputs {
     policies: [],
     decPages: { byPolicyId: new Map(), anyPlaceholder: false },
     lossEvents: { rows: [], source: 'placeholder', droppedRows: 0 },
+    policyTerms: new Map(),
     ...over,
   };
 }
@@ -119,14 +128,15 @@ describe('buildInsuranceLossReport', () => {
     expect(report.selfInsure.overLimitUsd).toBe(0);
   });
 
-  it('(c2) selfInsure counts a multi-policy property ONCE via its primary policy — no double-count', () => {
-    // Property P1 carries TWO property-package policies; the single event (gross 42,000) matches
-    // both review rows (per-policy reviews legitimately overlap):
-    //   policy '1': d=25,000, L=2M → retained min(42,000,25,000)=25,000; transferred 42,000−25,000=17,000
-    //   policy '2': d=10,000, L=2M → retained min(42,000,10,000)=10,000; transferred 42,000−10,000=32,000
-    // Primary = first by policyId ascending localeCompare → '1'.
-    // selfInsure must equal the PRIMARY's single-count split: retained 25,000 / transferred 17,000
-    // — NOT the Σ-over-reviews double-count (35,000 / 49,000).
+  it('(c2) each loss event is attached to exactly ONE policy — a multi-policy property never double-counts', () => {
+    // Property P1 carries TWO property-package policies with no term data on file (empty
+    // policyTerms). The single event (gross 42,000) is attached to exactly one of them — with no
+    // covering term the pick is most-recent effective date, then policyId ascending as the
+    // total-order tiebreak → '1'.
+    //   policy '1': d=25,000, L=2M → retained 25,000; transferred 17,000; eventsN 1
+    //   policy '2': d=10,000, L=2M → no events attached → all zeros; eventsN 0
+    // selfInsure = Σ over review rows (events are disjoint across rows) = 25,000 / 17,000 — never
+    // the double-count 35,000 / 49,000 of reviewing the same event against both policies.
     // premiumAnnualTotal = 10,000 + 8,000 = 18,000 (still Σ over ALL policies).
     const report = buildInsuranceLossReport(inputs({
       policies: [
@@ -139,12 +149,9 @@ describe('buildInsuranceLossReport', () => {
       }),
       lossEvents: lossEvents([mkEvent('e1', 'P1', '2024-01-01', 42000)]),
     }));
-    // per-policy review rows are unchanged: both exist, each with its own split
     expect(report.deductibleReviews).toHaveLength(2);
-    // sorted by retainedUsd desc → '1' (25,000) then '2' (10,000)
-    expect(report.deductibleReviews[0]).toMatchObject({ policyId: '1', retainedUsd: 25000, transferredUsd: 17000 });
-    expect(report.deductibleReviews[1]).toMatchObject({ policyId: '2', retainedUsd: 10000, transferredUsd: 32000 });
-    // portfolio sums are single-count via the primary policy
+    expect(report.deductibleReviews[0]).toMatchObject({ policyId: '1', eventsN: 1, retainedUsd: 25000, transferredUsd: 17000 });
+    expect(report.deductibleReviews[1]).toMatchObject({ policyId: '2', eventsN: 0, retainedUsd: 0, transferredUsd: 0, lossRatio: 0 });
     expect(report.selfInsure.retainedUsd).toBe(25000);
     expect(report.selfInsure.transferredUsd).toBe(17000);
     expect(report.selfInsure.overLimitUsd).toBe(0);
@@ -256,5 +263,317 @@ describe('buildInsuranceLossReport', () => {
     }));
     expect(report.eal[0]!.prov.source).toBe('insurance_loss_events');
     expect(report.lossDataSource).toBe('warehouse');
+  });
+});
+
+// ── Term / policy_ref-aware loss attachment (2026-09-24, refute wf_b8d4eadd-e31) ──────────────
+//
+// Live shape at 9620 E State Route 350, Raytown: two property-package policies in force at once,
+// both resolving to the same property_master id —
+//   1734 Westchester  2025-10-18 → 2026-10-18   (policy_number REDACTED-477)
+//   1735 Hartford BOP 2026-05-28 → 2027-05-28   (policy_number REDACTED-519)
+// Matching events by propertyId alone and picking a "primary" policy by lexicographic policyId
+// ('1734' < '1735') books a loss inside the Hartford term against the Westchester deductible.
+// Each event now attaches to the one policy whose term covers it.
+describe('buildInsuranceLossReport — term / policy_ref-aware loss attachment', () => {
+  const RAYTOWN = '9620-e-state-route-350-raytown-mo';
+  const WESTCHESTER = mkPolicy({ policyId: '1734', property: '9620 E State Route 350, Raytown MO', propertyId: RAYTOWN, premium: 6000 });
+  const HARTFORD = mkPolicy({ policyId: '1735', property: '9620 E State Route 350, Raytown MO', propertyId: RAYTOWN, premium: 5000 });
+  const TERMS = termsOf({
+    '1734': { policyNumber: 'REDACTED-477', lineNumbers: ['REDACTED-477'], effectiveDate: '2025-10-18', expirationDate: '2026-10-18' },
+    '1735': { policyNumber: 'REDACTED-584', lineNumbers: ['REDACTED-584'], effectiveDate: '2026-05-28', expirationDate: '2027-05-28' },
+  });
+  // Distinct deductibles so a wrong attachment is visible in the split.
+  const DECS = decPagesOf({
+    '1734': { deductible: 10000, coverageLimit: 2_000_000, source: 'warehouse' },
+    '1735': { deductible: 25000, coverageLimit: 2_000_000, source: 'warehouse' },
+  });
+
+  function run(policies: PolicyEconomics[], events: LossEventRow[]) {
+    return buildInsuranceLossReport(inputs({ policies, decPages: DECS, policyTerms: TERMS, lossEvents: lossEvents(events) }));
+  }
+  function review(r: ReturnType<typeof run>, policyId: string) {
+    const found = r.deductibleReviews.find((d) => d.policyId === policyId);
+    if (!found) throw new Error(`no review row for policy ${policyId}`);
+    return found;
+  }
+
+  it('overlapping terms: a 2026-07-04 loss (inside BOTH terms) uses the Hartford policy — the most recent effective date', () => {
+    // Hartford: d=25,000, L=2M, gross 42,000 → retained 25,000 / transferred 17,000
+    // lossRatio = 42,000 / 5,000 = 8.4 ; Westchester reviews nothing.
+    const r = run([WESTCHESTER, HARTFORD], [mkEvent('e1', RAYTOWN, '2026-07-04', 42000)]);
+    expect(review(r, '1735')).toMatchObject({ eventsN: 1, retainedUsd: 25000, transferredUsd: 17000, overLimitUsd: 0 });
+    expect(review(r, '1735').lossRatio).toBeCloseTo(8.4, 10);
+    expect(review(r, '1734')).toMatchObject({ eventsN: 0, retainedUsd: 0, transferredUsd: 0 });
+    expect(r.selfInsure).toMatchObject({ retainedUsd: 25000, transferredUsd: 17000, overLimitUsd: 0 });
+  });
+
+  it('the result is order-independent — reversing the policy and event arrays changes nothing', () => {
+    const events = [
+      mkEvent('e1', RAYTOWN, '2026-07-04', 42000),
+      mkEvent('e2', RAYTOWN, '2026-01-15', 8000),
+    ];
+    const a = run([WESTCHESTER, HARTFORD], events);
+    const b = run([HARTFORD, WESTCHESTER], [...events].reverse());
+    expect(b.deductibleReviews).toEqual(a.deductibleReviews);
+    expect(b.selfInsure).toEqual(a.selfInsure);
+  });
+
+  it('a loss covered ONLY by the older term attaches to it (2026-01-15 → Westchester)', () => {
+    // Westchester: d=10,000, gross 8,000 → retained 8,000 / transferred 0, below the deductible.
+    const r = run([WESTCHESTER, HARTFORD], [mkEvent('e1', RAYTOWN, '2026-01-15', 8000)]);
+    expect(review(r, '1734')).toMatchObject({ eventsN: 1, retainedUsd: 8000, transferredUsd: 0, lossesBelowDeductible: 1 });
+    expect(review(r, '1735')).toMatchObject({ eventsN: 0 });
+  });
+
+  it('term boundaries are inclusive on both ends', () => {
+    // 2027-05-28 = Hartford expiration (only Hartford covers); 2025-10-18 = Westchester effective
+    // (only Westchester covers).
+    const r = run([WESTCHESTER, HARTFORD], [
+      mkEvent('e1', RAYTOWN, '2027-05-28', 30000),
+      mkEvent('e2', RAYTOWN, '2025-10-18', 30000),
+    ]);
+    expect(review(r, '1735').eventsN).toBe(1);
+    expect(review(r, '1734').eventsN).toBe(1);
+  });
+
+  it('a policy_ref matching a policy_number wins over term recency', () => {
+    // 2026-07-04 is inside both terms (recency would pick Hartford) but the loss run names the
+    // Westchester policy: d=10,000, gross 42,000 → retained 10,000 / transferred 32,000.
+    const r = run([WESTCHESTER, HARTFORD], [mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'REDACTED-477')]);
+    expect(review(r, '1734')).toMatchObject({ eventsN: 1, retainedUsd: 10000, transferredUsd: 32000 });
+    expect(review(r, '1735').eventsN).toBe(0);
+  });
+
+  it('an unmatched policy_ref (the placeholder fixture uses "PLACEHOLDER") falls through to term attachment', () => {
+    const r = run([WESTCHESTER, HARTFORD], [mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'PLACEHOLDER')]);
+    expect(review(r, '1735').eventsN).toBe(1);
+    expect(review(r, '1734').eventsN).toBe(0);
+  });
+
+  it('a loss outside every current term falls back to the most recent effective date (Hartford)', () => {
+    // 2023-04-01 predates both current terms (prior terms are collapsed away upstream).
+    const r = run([WESTCHESTER, HARTFORD], [mkEvent('e1', RAYTOWN, '2023-04-01', 42000)]);
+    expect(review(r, '1735').eventsN).toBe(1);
+    expect(review(r, '1734').eventsN).toBe(0);
+  });
+
+  it('every event is booked exactly once: Σ review eventsN = attributable events, selfInsure = Σ review rows', () => {
+    const events = [
+      mkEvent('e1', RAYTOWN, '2026-07-04', 42000),
+      mkEvent('e2', RAYTOWN, '2026-01-15', 8000),
+      mkEvent('e3', RAYTOWN, '2023-04-01', 3000),
+      mkEvent('e4', RAYTOWN, '2027-01-01', 60000),
+    ];
+    const r = run([WESTCHESTER, HARTFORD], events);
+    expect(r.deductibleReviews.reduce((s, d) => s + d.eventsN, 0)).toBe(events.length);
+    expect(r.selfInsure.retainedUsd).toBe(r.deductibleReviews.reduce((s, d) => s + d.retainedUsd, 0));
+    expect(r.selfInsure.transferredUsd).toBe(r.deductibleReviews.reduce((s, d) => s + d.transferredUsd, 0));
+    // Hand check: Hartford gets e1 (42k), e3 (fallback, 3k), e4 (60k); Westchester gets e2 (8k).
+    //   Hartford d=25k:    retained 25k + 3k + 25k = 53k; transferred 17k + 0 + 35k = 52k
+    //   Westchester d=10k: retained 8k;                   transferred 0
+    expect(r.selfInsure.retainedUsd).toBe(61000);
+    expect(r.selfInsure.transferredUsd).toBe(52000);
+  });
+
+  it('events at a property with no reviewable property line stay in EAL but reach no deductible review', () => {
+    const gl = mkPolicy({ policyId: '1733', propertyId: RAYTOWN, cohort: 'other', policyType: 'General Liability (GL)' });
+    const r = run([gl], [mkEvent('e1', RAYTOWN, '2026-07-04', 42000)]);
+    expect(r.deductibleReviews).toHaveLength(0);
+    expect(r.eal).toHaveLength(1);
+    expect(r.selfInsure).toMatchObject({ retainedUsd: 0, transferredUsd: 0 });
+  });
+
+  // ── refute wf_f867be02-d49 regressions ──────────────────────────────────────────────────────
+
+  it('review eligibility ignores TIV: live-shaped TIV-less policies (cohort excluded-null-tiv) still attach and are reviewed', () => {
+    // All 30 live current terms carry null coverage_tiv → cohort 'excluded-null-tiv'. The review
+    // never uses TIV, so both 9620 property lines are still reviewed; 2026-07-04 → Hartford.
+    const w = { ...WESTCHESTER, cohort: 'excluded-null-tiv' as const, tiv: null };
+    const h = { ...HARTFORD, cohort: 'excluded-null-tiv' as const, tiv: null, policyType: 'Property (Hartford Spectrum BOP)' };
+    const r = run([w, h], [mkEvent('e1', RAYTOWN, '2026-07-04', 42000)]);
+    expect(r.deductibleReviews).toHaveLength(2);
+    expect(review(r, '1735')).toMatchObject({ eventsN: 1, retainedUsd: 25000, transferredUsd: 17000 });
+    expect(r.selfInsure).toMatchObject({ retainedUsd: 25000, transferredUsd: 17000 });
+  });
+
+  it('a loss naming a TIV-less policy by policy_ref books against THAT policy, never its TIV-bearing sibling', () => {
+    // Westchester has no TIV on its current capture; the loss run names it and the date sits only
+    // in its term. d=10,000, gross 42,000 → retained 10,000 / transferred 32,000 on 1734 — not
+    // 25,000 / 17,000 on Hartford.
+    const w = { ...WESTCHESTER, cohort: 'excluded-null-tiv' as const, tiv: null };
+    const r = run([w, HARTFORD], [mkRefEvent('e1', RAYTOWN, '2026-01-15', 42000, 'REDACTED-477')]);
+    expect(review(r, '1734')).toMatchObject({ eventsN: 1, retainedUsd: 10000, transferredUsd: 32000 });
+    expect(review(r, '1735').eventsN).toBe(0);
+    expect(r.selfInsure).toMatchObject({ retainedUsd: 10000, transferredUsd: 32000 });
+  });
+
+  it('a policy_ref naming a NON-property line at the property leaves the loss EAL-only (never moved onto a property deductible)', () => {
+    const gl = mkPolicy({ policyId: '1733', propertyId: RAYTOWN, cohort: 'other', policyType: 'General Liability (GL)' });
+    const terms = new Map<string, PolicyTerm>([...TERMS, ['1733', { policyNumber: 'REDACTED-446', lineNumbers: ['REDACTED-446'], effectiveDate: '2025-10-18', expirationDate: '2026-10-18' }]]);
+    const r = buildInsuranceLossReport(inputs({
+      policies: [gl, WESTCHESTER, HARTFORD],
+      decPages: DECS,
+      policyTerms: terms,
+      lossEvents: lossEvents([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'REDACTED-446')]),
+    }));
+    expect(r.deductibleReviews.map((d) => d.policyId).sort()).toEqual(['1734', '1735']); // GL gets no review row
+    expect(r.deductibleReviews.every((d) => d.eventsN === 0)).toBe(true);
+    expect(r.selfInsure).toMatchObject({ retainedUsd: 0, transferredUsd: 0 });
+    expect(r.eal[0]).toMatchObject({ propertyId: RAYTOWN, eventsN: 1, grossIncurredTotal: 42000 });
+  });
+
+  it('a tenant evidence-of-insurance certificate takes no attachment or review — its deductible is not ORA retention', () => {
+    const FISHEL = '7658-fishel-dr-n-dublin-oh';
+    const cert = mkPolicy({ policyId: '1753', propertyId: FISHEL, cohort: 'excluded-null-tiv', tiv: null, policyType: 'Evidence of Property Insurance (ACORD 28)' });
+    const r = buildInsuranceLossReport(inputs({
+      policies: [cert],
+      decPages: decPagesOf({ '1753': { deductible: 5000, coverageLimit: 2_000_000, source: 'warehouse' } }),
+      lossEvents: lossEvents([mkEvent('e1', FISHEL, '2026-03-01', 42000)]),
+    }));
+    expect(r.deductibleReviews).toHaveLength(0);
+    expect(r.selfInsure).toMatchObject({ retainedUsd: 0, transferredUsd: 0 });
+    expect(r.eal[0]).toMatchObject({ propertyId: FISHEL, grossIncurredTotal: 42000 });
+  });
+
+  it('per-policy sums are a function of the event SET — fractional amounts give identical output in any row order', () => {
+    // 0.1 + 0.2 + 0.3 = 0.6000000000000001 in row order but 0.6 reversed; accumulation is
+    // (lossDate, id)-sorted so both orders produce the same bits.
+    const events = [
+      mkEvent('f1', RAYTOWN, '2026-06-01', 0.1),
+      mkEvent('f2', RAYTOWN, '2026-06-02', 0.2),
+      mkEvent('f3', RAYTOWN, '2026-06-03', 0.3),
+    ];
+    const a = run([WESTCHESTER, HARTFORD], events);
+    const b = run([WESTCHESTER, HARTFORD], [...events].reverse());
+    expect(b.deductibleReviews).toEqual(a.deductibleReviews);
+    expect(b.selfInsure).toEqual(a.selfInsure);
+  });
+
+  // ── refute wf_9161a34b-7f0 regressions ──────────────────────────────────────────────────────
+
+  // Live Hartford Spectrum BOP at 9620: ONE policy number spans the property, GL, umbrella and
+  // EPLI lines.
+  const BOP = 'REDACTED-519';
+  const BOP_GL = mkPolicy({ policyId: '1736', propertyId: RAYTOWN, cohort: 'excluded-null-tiv', tiv: null, policyType: 'Business Liability / GL (in BOP)' });
+  const BOP_EPLI = mkPolicy({ policyId: '1738', propertyId: RAYTOWN, cohort: 'excluded-null-tiv', tiv: null, policyType: 'EPLI $25K (NEW — in bundled premium)' });
+  const BOP_TERMS = new Map<string, PolicyTerm>([
+    ...TERMS,
+    ['1736', { policyNumber: 'REDACTED-584', lineNumbers: ['REDACTED-584'], effectiveDate: '2026-05-28', expirationDate: '2027-05-28' }],
+    ['1738', { policyNumber: 'REDACTED-584', lineNumbers: ['REDACTED-584'], effectiveDate: '2026-05-28', expirationDate: '2027-05-28' }],
+  ]);
+  function runBop(events: LossEventRow[]) {
+    return buildInsuranceLossReport(inputs({
+      policies: [WESTCHESTER, HARTFORD, BOP_GL, BOP_EPLI], decPages: DECS, policyTerms: BOP_TERMS, lossEvents: lossEvents(events),
+    }));
+  }
+
+  it('a liability claim citing a bundled BOP number is EAL-only — never retained under the property deductible', () => {
+    const r = runBop([mkRefEvent('e1', RAYTOWN, '2026-07-04', 40000, BOP, 'liability - slip and fall')]);
+    expect(r.deductibleReviews.every((d) => d.eventsN === 0)).toBe(true);
+    expect(r.selfInsure).toMatchObject({ retainedUsd: 0, transferredUsd: 0 });
+    expect(r.eal[0]).toMatchObject({ propertyId: RAYTOWN, eventsN: 1, grossIncurredTotal: 40000 });
+  });
+
+  it('a first-party claim citing the same bundled BOP number books to the BOP property line', () => {
+    // Hartford d=25,000: gross 40,000 → retained 25,000 / transferred 15,000.
+    const r = runBop([mkRefEvent('e1', RAYTOWN, '2026-07-04', 40000, BOP, 'wind')]);
+    expect(review(r, '1735')).toMatchObject({ eventsN: 1, retainedUsd: 25000, transferredUsd: 15000 });
+    expect(review(r, '1734').eventsN).toBe(0);
+  });
+
+  it('a third-party cause with NO policy_ref is EAL-only too (e.g. the placeholder fixture\'s liability event)', () => {
+    const r = run([WESTCHESTER, HARTFORD], [{ ...mkEvent('e1', RAYTOWN, '2026-07-04', 30000), cause: 'liability' }]);
+    expect(r.deductibleReviews.every((d) => d.eventsN === 0)).toBe(true);
+    expect(r.selfInsure.retainedUsd).toBe(0);
+  });
+
+  it('policy_ref matches a superseded number on the same line and is normalized (case / whitespace)', () => {
+    // Live: row 1310 'REDACTED-600' was reissued as 1734 'REDACTED-477' (same term); only 1734
+    // survives the current-term collapse, so its line carries both numbers. 2026-07-04 is inside
+    // both terms — recency alone would pick Hartford.
+    const terms = new Map<string, PolicyTerm>([
+      ...TERMS,
+      ['1734', { policyNumber: 'REDACTED-477', lineNumbers: ['REDACTED-600', 'REDACTED-477'], effectiveDate: '2025-10-18', expirationDate: '2026-10-18' }],
+    ]);
+    const r = buildInsuranceLossReport(inputs({
+      policies: [WESTCHESTER, HARTFORD], decPages: DECS, policyTerms: terms,
+      lossEvents: lossEvents([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, '  REDACTED-600 ')]),
+    }));
+    expect(review(r, '1734')).toMatchObject({ eventsN: 1, retainedUsd: 10000, transferredUsd: 32000 });
+    expect(review(r, '1735').eventsN).toBe(0);
+  });
+
+  it('pre-term fallback is go-forward: a loss before every current term is reviewed under the newest policy\'s deductible', () => {
+    // Distinct deductibles pin the choice: Hartford (eff 2026-05-28, d=25,000) not Westchester
+    // (d=10,000). gross 42,000 → retained 25,000 / transferred 17,000.
+    const r = run([WESTCHESTER, HARTFORD], [mkEvent('e1', RAYTOWN, '2024-03-01', 42000)]);
+    expect(review(r, '1735')).toMatchObject({ eventsN: 1, retainedUsd: 25000, transferredUsd: 17000 });
+  });
+
+  it('EAL totals are a function of the event SET — fractional amounts give identical EAL in any row order', () => {
+    const events = [
+      mkEvent('f1', 'P-NOPOLICY', '2026-06-01', 0.1),
+      mkEvent('f2', 'P-NOPOLICY', '2026-06-01', 0.2),
+      mkEvent('f3', 'P-NOPOLICY', '2026-06-01', 0.3),
+    ];
+    const a = buildInsuranceLossReport(inputs({ lossEvents: lossEvents(events) }));
+    const b = buildInsuranceLossReport(inputs({ lossEvents: lossEvents([...events].reverse()) }));
+    expect(b.eal).toEqual(a.eal);
+  });
+
+  // ── refute wf_4af14459-c62 regressions ──────────────────────────────────────────────────────
+
+  it('an exact own-number ref wins over line aliases when one line carries two surviving policies', () => {
+    // Both policies sit on one raw line, so each carries the other's number as a line alias. The
+    // ref names Westchester exactly; recency alone (2026-07-04 inside both terms) would pick
+    // Hartford. d=10,000, gross 42,000 → retained 10,000 / transferred 32,000 on 1734.
+    const both = ['REDACTED-584', 'REDACTED-477'];
+    const terms = new Map<string, PolicyTerm>([
+      ['1734', { policyNumber: 'REDACTED-477', lineNumbers: both, effectiveDate: '2025-10-18', expirationDate: '2026-10-18' }],
+      ['1735', { policyNumber: 'REDACTED-584', lineNumbers: both, effectiveDate: '2026-05-28', expirationDate: '2027-05-28' }],
+    ]);
+    const r = buildInsuranceLossReport(inputs({
+      policies: [WESTCHESTER, HARTFORD], decPages: DECS, policyTerms: terms,
+      lossEvents: lossEvents([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'REDACTED-477')]),
+    }));
+    expect(review(r, '1734')).toMatchObject({ eventsN: 1, retainedUsd: 10000, transferredUsd: 32000 });
+    expect(review(r, '1735').eventsN).toBe(0);
+  });
+
+  it('policy_ref matching is whitespace-insensitive: "REDACTED-447" names Westchester', () => {
+    const r = run([WESTCHESTER, HARTFORD], [mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'REDACTED-572 - 002')]);
+    expect(review(r, '1734').eventsN).toBe(1);
+    expect(review(r, '1735').eventsN).toBe(0);
+  });
+
+  it.each([
+    ['Slip joint failure - water', false],
+    ['roof slip / membrane', false],
+    ['Property liability - water backup', false],
+    ['Water damage from tenant liability dispute', false],
+    ['wind', false],
+    ['liability', true],
+    ['liability - slip and fall', true],
+    ['Trip and fall - premises', true],
+    ['slip & fall in lobby', true],
+    ['Bodily injury claim', true],
+    ['EPLI - wrongful termination', true],
+    // refute wf_a4ae3c23-a46: hyphenated spelling + strong markers beat a named peril
+    ['slip-and-fall', true],
+    ['Trip-and-fall in lot', true],
+    ['Slip and fall on ice', true],
+    ['Claimant fell on snow/ice - bodily injury', true],
+    ['Bodily injury from roof collapse', true],
+    ['Fire liability suit', true],
+    ['Slip & fall - ice in lot - BI claim', true],
+  ])('cause %j → third-party %s', (cause, thirdParty) => {
+    const r = run([WESTCHESTER, HARTFORD], [{ ...mkEvent('e1', RAYTOWN, '2026-07-04', 42000), cause }]);
+    expect(review(r, '1735').eventsN).toBe(thirdParty ? 0 : 1);
+  });
+
+  it('EAL rows take the resolved property display name from the policy register', () => {
+    const r = run([WESTCHESTER, HARTFORD], [mkEvent('e1', RAYTOWN, '2026-07-04', 42000)]);
+    expect(r.eal[0]).toMatchObject({ propertyId: RAYTOWN, property: '9620 E State Route 350, Raytown MO' });
   });
 });

@@ -910,17 +910,16 @@ describe('buildInsuranceAnalysis — unclassified-cohort visibility (refute F1-M
   });
 });
 
-describe('buildInsuranceAnalysis — policy-line keys resolve the DISPLAY name only (2026-09-23 review)', () => {
+describe('buildInsuranceAnalysis — policy-line keys resolve to property_master ids via the stem map (2026-09-24)', () => {
   // The LEFT JOIN in the SQL query is keyed on property_master.id === property_id, but insurance
   // rows are keyed by policy line ('ins-<stem>-<line>'), which never matches a property_master.id
-  // directly. The stem map resolves the display NAME. `propertyId` deliberately stays the raw
-  // policy-line key: insurance-loss-analysis.ts attaches loss events on it and calibration keys
-  // rebid verdicts on it, and at 9620 Raytown two concurrently in-force property policies share one
-  // master id — resolving the id collapses them (order-dependent self-insure primary pick). Loss
-  // attachment by resolved id is a separate follow-up. If the name wiring were reverted to the raw
-  // r.property_id, the `property` assertions fail; if propertyId were resolved, the `propertyId`
-  // assertions fail — both directions are pinned.
-  it('resolves a policy-line key to its property_master NAME via the stem map, keeping the raw propertyId', () => {
+  // directly. The stem map resolves BOTH the display name and `propertyId`. Resolving the id is
+  // safe only because insurance-loss-analysis.ts attaches each loss event to exactly ONE policy by
+  // term / policy_ref (not by propertyId alone) — at 9620 Raytown two concurrently in-force
+  // property policies share one master id and must stay two distinct policies (distinct policyId).
+  // If the wiring were reverted to the raw r.property_id, both the `property` and `propertyId`
+  // assertions fail.
+  it('resolves a policy-line key to its property_master id AND name via the stem map', () => {
     const db = freshDb();
     // No property_master row under the raw key 'ins-9620state350-prop-hfd' — only under the
     // resolved id, mirroring how the real STEM_TO_MASTER table maps stems to master ids.
@@ -937,10 +936,10 @@ describe('buildInsuranceAnalysis — policy-line keys resolve the DISPLAY name o
     expect(report.renewalCalendar).toHaveLength(1);
     const policy = report.renewalCalendar[0]!;
     expect(policy.property).toBe('9620 E State Route 350, Raytown MO');
-    expect(policy.propertyId).toBe('ins-9620state350-prop-hfd');
+    expect(policy.propertyId).toBe('9620-e-state-route-350-raytown-mo');
   });
 
-  it('resolves a label-only stem (no property_master row at all) to its address label, keeping the raw propertyId', () => {
+  it('a label-only stem (no property_master row at all) resolves its address label and keeps the raw propertyId', () => {
     const db = freshDb();
     insertPolicy(db, {
       propertyId: 'ins-etcpoa-bcl',
@@ -953,16 +952,16 @@ describe('buildInsuranceAnalysis — policy-line keys resolve the DISPLAY name o
 
     const policy = report.renewalCalendar.find((p) => p.property === 'Airport Road, Easton MD (ETC POA)');
     expect(policy).toBeDefined();
-    // A label-only stem has no master row to point at; propertyId is the raw key like every other
-    // policy (the raw key is the rule, not a fallback).
+    // No master row to point at: resolveInsuranceProperty returns propertyId null and the caller's
+    // `?? r.property_id` keeps the raw key (never null, never a fabricated master id).
     expect(policy?.propertyId).toBe('ins-etcpoa-bcl');
   });
 
-  it('an empty-string property_master name is treated as missing for the display name; propertyId is still the raw key', () => {
+  it('an empty-string property_master name is treated as missing on BOTH fields (one predicate)', () => {
     const db = freshDb();
     // Degenerate master row under the raw policy key with a blank name: the LEFT JOIN yields
-    // property_name = '' (not null). The display name must fall through to the resolver rather
-    // than render blank; propertyId is unaffected either way.
+    // property_name = '' (not null). Both `property` and `propertyId` must fall through to the
+    // resolver together — never a blank display name paired with a resolved id, or vice versa.
     seedProperty(db, 'ins-9620state350-prop-hfd', '');
     seedProperty(db, '9620-e-state-route-350-raytown-mo', '9620 E State Route 350, Raytown MO');
     insertPolicy(db, {
@@ -977,33 +976,33 @@ describe('buildInsuranceAnalysis — policy-line keys resolve the DISPLAY name o
     expect(report.renewalCalendar).toHaveLength(1);
     const policy = report.renewalCalendar[0]!;
     expect(policy.property).toBe('9620 E State Route 350, Raytown MO');
-    expect(policy.propertyId).toBe('ins-9620state350-prop-hfd');
+    expect(policy.propertyId).toBe('9620-e-state-route-350-raytown-mo');
   });
 
-  it('propertyId equals the raw property_id for EVERY policy in a mixed book (ins- stems, label-only, plain ids)', () => {
-    // Old-vs-new equivalence: the loss engine, calibration and alerts consume `propertyId`. With
-    // the raw key on every row, their inputs are identical to the pre-resolution wiring regardless
-    // of how the display name resolved.
+  it('a mixed book resolves ins- stems, keeps label-only / plain ids raw, and never collapses two in-force 9620 policies', () => {
     const db = freshDb();
     seedProperty(db, '9620-e-state-route-350-raytown-mo', '9620 E State Route 350, Raytown MO');
     seedProperty(db, 'p-plain-master', 'Plain Master Property');
-    const rawIds = [
-      'ins-9620state350-prop-hfd',
-      'ins-9620state350-prop-selective',
-      'ins-etcpoa-bcl',
-      'p-plain-master',
-      'p-no-master',
-    ];
-    for (const id of rawIds) {
+    const rawToResolved: Record<string, string> = {
+      'ins-9620state350-prop': '9620-e-state-route-350-raytown-mo',
+      'ins-9620state350-prop-hfd': '9620-e-state-route-350-raytown-mo',
+      'ins-etcpoa-bcl': 'ins-etcpoa-bcl',
+      'p-plain-master': 'p-plain-master',
+      'p-no-master': 'p-no-master',
+    };
+    for (const id of Object.keys(rawToResolved)) {
       insertPolicy(db, { propertyId: id, policyType: 'Property', premiumAnnual: 5_000, coverageTiv: 2_000_000 });
     }
 
     const report = buildInsuranceAnalysis(db, AS_OF);
 
-    expect(report.renewalCalendar).toHaveLength(rawIds.length);
-    expect(report.renewalCalendar.map((p) => p.propertyId).sort()).toEqual([...rawIds].sort());
-    // Two in-force 9620 policies stay two distinct keys — never collapsed onto one master id.
-    expect(report.renewalCalendar.filter((p) => p.property === '9620 E State Route 350, Raytown MO')).toHaveLength(2);
+    expect(report.renewalCalendar).toHaveLength(5);
+    expect(report.renewalCalendar.map((p) => p.propertyId).sort()).toEqual(Object.values(rawToResolved).sort());
+    // Two in-force 9620 policies share one master id but stay two distinct policies (the
+    // current-term collapse runs on the RAW key, before resolution).
+    const at9620 = report.renewalCalendar.filter((p) => p.propertyId === '9620-e-state-route-350-raytown-mo');
+    expect(at9620).toHaveLength(2);
+    expect(new Set(at9620.map((p) => p.policyId)).size).toBe(2);
     expect(report.renewalCalendar.find((p) => p.propertyId === 'p-plain-master')?.property).toBe('Plain Master Property');
     expect(report.renewalCalendar.find((p) => p.propertyId === 'p-no-master')?.property).toBe('p-no-master');
   });

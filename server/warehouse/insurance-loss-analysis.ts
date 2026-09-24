@@ -17,11 +17,40 @@
 // placeholder discriminators (`lossDataSource`, `decPageDataSource`) declare, per report, whether
 // the loss runs / dec-page terms came from the warehouse or from placeholder fixtures.
 //
-// SELF-INSURE ROLL-UP IS PROPERTY-LEVEL (review finding, Task 4): selfInsure counts each
-// property's events once via its primary property-package policy — review rows may overlap when a
-// property has multiple policies (events are matched by propertyId, so each of that property's
-// policies legitimately reviews the same events against its own terms; summing review rows would
-// count those dollars once per policy).
+// REVIEW ELIGIBILITY IS A PROPERTY LINE, NOT THE RATE COHORT (2026-09-24, refute wf_f867be02-d49;
+// ratified by Gabriel): a policy takes loss attachment + a deductible review when its policy_type is
+// a first-party property line (property/package/building — insurance-policy-lines.ts) and it is not
+// a tenant's evidence-of-insurance certificate. coverage_tiv plays no part: the review math never
+// uses TIV, and gating on the TIV-based 'property-package' cohort hid every live policy (all 30
+// current terms carry null TIV) and let a TIV-less policy's loss fall onto its sibling.
+//
+// LOSS ATTACHMENT IS PER EVENT (2026-09-24, refute wf_b8d4eadd-e31): each loss event is attached
+// to exactly ONE eligible policy at its property — the policy whose policy_number matches the
+// event's policy_ref when there is one (a ref naming a NON-eligible policy at the property, e.g.
+// its GL line, leaves the event EAL-only rather than moving it onto a property deductible), else
+// the policy whose term [effective, expiration] covers the loss date, else (no term covers it) the
+// eligible policy with the most recent effective date. That last tier is a GO-FORWARD framing: a
+// loss that predates every current term (prior terms are collapsed away upstream) is reviewed
+// against the most recently incepted property policy — "what would we retain under the policy we
+// carry now" — not against the historical carrier's terms.
+//
+// Two more rules (refute wf_9161a34b-7f0):
+//   • A third-party cause (liability / bodily injury / employment practices — isThirdPartyLossCause)
+//     is never booked against a property deductible: the event stays EAL-only. This also covers a
+//     bundled BOP number shared by the property line and its liability lines.
+//   • policy_ref (normalizePolicyNumber'd — case- and whitespace-insensitive) matches a policy's OWN
+//     number first (PolicyTerm.policyNumber). Only when no policy at the property carries it as its
+//     own number does it fall back to the line aliases (PolicyTerm.lineNumbers — every number the
+//     same raw line + policy_type has carried, e.g. a same-term reissue's base number 'REDACTED-600'
+//     for the surviving 'REDACTED-477'). Own-first keeps an exact ref authoritative when one line
+//     carries two surviving policies (refute wf_4af14459-c62).
+// Ties break on the most recent effective date, then policyId, as a total order — so the
+// attachment never depends on input order. A property can carry several concurrently in-force
+// property policies (9620 Raytown: Westchester 2025-10-18→2026-10-18 and Hartford BOP
+// 2026-05-28→2027-05-28); matching by propertyId alone booked every event against every one of
+// them, and the old "primary = lowest policyId" roll-up then split a Hartford-term loss against
+// the Westchester deductible. Review rows are now disjoint, so the self-insure roll-up is a plain
+// Σ over them and counts each event exactly once.
 import {
   InsuranceLossReport,
   type PropertyEal,
@@ -33,6 +62,26 @@ import {
 } from '../../src/contracts/insurance-loss';
 import type { PolicyEconomics } from '../../src/contracts/insurance-analysis';
 import type { DecPagesResolved, LossEventRow, LossEventsResolved } from './placeholder-data';
+import { isPropertyLinePolicyType, isTenantEvidenceCertificate, isThirdPartyLossCause } from './insurance-policy-lines';
+
+/** Term identity of one policy, keyed in LossAnalysisInputs.policyTerms by PolicyEconomics.policyId.
+ *  PolicyEconomics (a wire contract) carries no term dates, so the caller supplies them. */
+export interface PolicyTerm {
+  /** This row's own policy number, normalizePolicyNumber'd; null when none is on file. */
+  policyNumber: string | null;
+  /** Every number this policy's LINE has carried (normalized) — its own plus any superseded /
+   *  reissued row's on the same line — consulted only when no policy owns the ref outright. */
+  lineNumbers: readonly string[];
+  effectiveDate: string | null;
+  expirationDate: string | null;
+}
+
+/** Canonical policy-number form for matching a loss run's policy_ref: upper-case with ALL
+ *  whitespace removed ('REDACTED-519' ≡ 'REDACTED-584'). Null for a missing/blank number. */
+export function normalizePolicyNumber(n: string | null | undefined): string | null {
+  const t = n?.replace(/\s+/g, '').toUpperCase();
+  return t ? t : null;
+}
 
 /** Minimum distinct observation years before an arithmetic-mean EAL is trustworthy. Below this the
  *  EAL is reported as indeterminate (null) rather than a false-precision figure over a thin window. */
@@ -46,6 +95,10 @@ export interface LossAnalysisInputs {
   decPages: DecPagesResolved;
   /** Task 2 loss-run resolver (warehouse-first, placeholder fallback). */
   lossEvents: LossEventsResolved;
+  /** Term identity per policyId — decides which policy a loss event attaches to. A policy with no
+   *  entry (or a null date) never "covers" a loss date; it can still receive an event through a
+   *  policy_ref match or the most-recent-effective fallback. */
+  policyTerms: ReadonlyMap<string, PolicyTerm>;
 }
 
 // ── small pure helpers ────────────────────────────────────────────────────────────────────────
@@ -85,6 +138,64 @@ function rebidStage(renewalBucket: string): RebidStage {
   return 'watch';
 }
 
+/** ISO date prefix ('YYYY-MM-DD'); null for a missing/blank value. Lexicographic order on this
+ *  prefix is chronological order. */
+function isoDay(dateStr: string | null | undefined): string | null {
+  const d = dateStr?.trim().slice(0, 10);
+  return d ? d : null;
+}
+
+/** Total order for picking among candidate policies: most recent effective date first (a policy
+ *  with no effective date sorts last), then policyId ascending. Never 0 for distinct policies, so
+ *  the pick is independent of input order. */
+function preferPolicy(a: PolicyEconomics, b: PolicyEconomics, terms: ReadonlyMap<string, PolicyTerm>): number {
+  const ea = isoDay(terms.get(a.policyId)?.effectiveDate) ?? '';
+  const eb = isoDay(terms.get(b.policyId)?.effectiveDate) ?? '';
+  if (ea !== eb) return ea > eb ? -1 : 1;
+  return a.policyId.localeCompare(b.policyId);
+}
+
+/** Takes loss attachment + a deductible review: an ORA first-party property line (see header). */
+function isReviewable(p: PolicyEconomics): boolean {
+  return isPropertyLinePolicyType(p.policyType) && !isTenantEvidenceCertificate(p.policyType);
+}
+
+/**
+ * The ONE policy a loss event is booked against, or undefined (EAL-only). A third-party cause is
+ * EAL-only outright. `atProperty` is every policy at the event's property (any line). A policy_ref
+ * matching a policy's own number (else a number its line carried) decides the pool outright: the matching reviewable
+ * policies, or — when it names only non-reviewable lines — no policy at all. Otherwise the pool is
+ * the reviewable policies, narrowed to those whose term covers the loss date (inclusive both ends)
+ * when any does. preferPolicy then picks within the pool.
+ */
+function attachEvent(
+  e: LossEventRow,
+  atProperty: readonly PolicyEconomics[],
+  terms: ReadonlyMap<string, PolicyTerm>,
+): PolicyEconomics | undefined {
+  if (isThirdPartyLossCause(e.cause)) return undefined;
+  let pool: readonly PolicyEconomics[] = atProperty.filter(isReviewable);
+  const ref = normalizePolicyNumber(e.policyRef);
+  if (ref !== null) {
+    const byOwn = atProperty.filter((p) => terms.get(p.policyId)?.policyNumber === ref);
+    const byRef = byOwn.length > 0
+      ? byOwn
+      : atProperty.filter((p) => terms.get(p.policyId)?.lineNumbers.includes(ref) ?? false);
+    if (byRef.length > 0) pool = byRef.filter(isReviewable);
+  }
+  const day = isoDay(e.lossDate);
+  if (day !== null) {
+    const covering = pool.filter((p) => {
+      const t = terms.get(p.policyId);
+      const eff = isoDay(t?.effectiveDate);
+      const exp = isoDay(t?.expirationDate);
+      return eff !== null && exp !== null && eff <= day && day <= exp;
+    });
+    if (covering.length > 0) pool = covering;
+  }
+  return [...pool].sort((a, b) => preferPolicy(a, b, terms))[0];
+}
+
 // ── the engine ────────────────────────────────────────────────────────────────────────────────
 
 interface EalAccum {
@@ -97,7 +208,7 @@ interface EalAccum {
  * output before returning (boundary discipline, mirrors buildInsuranceAnalysis).
  */
 export function buildInsuranceLossReport(input: LossAnalysisInputs): InsuranceLossReport {
-  const { asOf, policies, decPages, lossEvents } = input;
+  const { asOf, policies, decPages, lossEvents, policyTerms } = input;
 
   // observationYears = distinct calendar years across ALL loss events (0 when empty).
   const years = new Set<string>();
@@ -127,6 +238,11 @@ export function buildInsuranceLossReport(input: LossAnalysisInputs): InsuranceLo
     if (arr) arr.push(e);
     else eventsByProperty.set(e.propertyId, [e]);
   }
+  // (lossDate, id) order, so every float sum below (EAL and per-policy review) is a function of
+  // the event SET, not of the loss-run row order. Per-policy lists inherit this order.
+  for (const events of eventsByProperty.values()) {
+    events.sort((a, b) => a.lossDate.localeCompare(b.lossDate) || a.id.localeCompare(b.id));
+  }
 
   const lossSource = lossSourceLabel(lossEvents.source);
 
@@ -154,17 +270,37 @@ export function buildInsuranceLossReport(input: LossAnalysisInputs): InsuranceLo
     });
   }
 
-  // ── Deductible reviews (property-package policies only) ────────────────────────────────────
+  // ── Loss attachment: each event → at most one reviewable policy at its property ────────────
+  const policiesByProperty = new Map<string, PolicyEconomics[]>();
+  for (const p of policies) {
+    if (p.propertyId === null || p.propertyId === '') continue;
+    const arr = policiesByProperty.get(p.propertyId);
+    if (arr) arr.push(p);
+    else policiesByProperty.set(p.propertyId, [p]);
+  }
+  const eventsByPolicy = new Map<string, LossEventRow[]>();
+  for (const [propertyId, events] of eventsByProperty) {
+    const atProperty = policiesByProperty.get(propertyId) ?? [];
+    for (const e of events) {
+      const policy = attachEvent(e, atProperty, policyTerms);
+      if (policy === undefined) continue; // no reviewable policy for this event — EAL only
+      const arr = eventsByPolicy.get(policy.policyId);
+      if (arr) arr.push(e);
+      else eventsByPolicy.set(policy.policyId, [e]);
+    }
+  }
+
+  // ── Deductible reviews (reviewable property lines only) ────────────────────────────────────
   const deductibleReviews: DeductibleReview[] = [];
   for (const policy of policies) {
-    if (policy.cohort !== 'property-package') continue;
+    if (!isReviewable(policy)) continue;
 
     const decEntry = decPages.byPolicyId.get(policy.policyId);
     const deductible = decEntry?.deductible ?? null;
     const coverageLimit = decEntry?.coverageLimit ?? null;
     const decSource: LossDataSource = decEntry?.source ?? 'absent';
 
-    const matched = (policy.propertyId !== null ? eventsByProperty.get(policy.propertyId) : undefined) ?? [];
+    const matched = eventsByPolicy.get(policy.policyId) ?? [];
 
     let retainedUsd = 0;
     let transferredUsd = 0;
@@ -228,27 +364,14 @@ export function buildInsuranceLossReport(input: LossAnalysisInputs): InsuranceLo
   deductibleReviews.sort((a, b) => b.retainedUsd - a.retainedUsd || a.policyId.localeCompare(b.policyId));
   rebidPipeline.sort((a, b) => (b.excessPremiumVsMedian ?? 0) - (a.excessPremiumVsMedian ?? 0) || a.policyId.localeCompare(b.policyId));
 
-  // ── Self-insure roll-up (PROPERTY level — no double-count) ──────────────────────────────────
-  // Events are matched by propertyId, so a property carrying 2+ property-package policies repeats
-  // its events in each of those review rows; summing review rows would count those dollars once
-  // per policy. Instead, count each property's events exactly once via its PRIMARY policy's review
-  // row — primary = first by policyId ascending (localeCompare), deterministic. A review row with
-  // a null propertyId matches no events (all-zero sums) and is excluded without numeric effect.
-  const primaryReviewByProperty = new Map<string, DeductibleReview>();
-  for (const r of deductibleReviews) {
-    if (r.propertyId === null) continue;
-    const current = primaryReviewByProperty.get(r.propertyId);
-    if (current === undefined || r.policyId.localeCompare(current.policyId) < 0) {
-      primaryReviewByProperty.set(r.propertyId, r);
-    }
-  }
-  const primaryReviews = [...primaryReviewByProperty.values()];
-
+  // ── Self-insure roll-up (no double-count) ─────────────────────────────────────────────────
+  // Every event sits in at most one review row (attachEvent above), so Σ over review rows counts
+  // each event's dollars exactly once, against the terms of the policy it was attached to.
   const nonNullEals = eal.filter((e): e is PropertyEal & { ealAnnual: number } => e.ealAnnual !== null);
   const selfInsure: SelfInsureSplit = {
-    retainedUsd: primaryReviews.reduce((s, r) => s + r.retainedUsd, 0),
-    transferredUsd: primaryReviews.reduce((s, r) => s + r.transferredUsd, 0),
-    overLimitUsd: primaryReviews.reduce((s, r) => s + r.overLimitUsd, 0),
+    retainedUsd: deductibleReviews.reduce((s, r) => s + r.retainedUsd, 0),
+    transferredUsd: deductibleReviews.reduce((s, r) => s + r.transferredUsd, 0),
+    overLimitUsd: deductibleReviews.reduce((s, r) => s + r.overLimitUsd, 0),
     premiumAnnualTotal: policies.reduce((s, p) => s + p.premium, 0),
     portfolioEalAnnual: nonNullEals.length > 0 ? nonNullEals.reduce((s, e) => s + e.ealAnnual, 0) : null,
     observationYears,
