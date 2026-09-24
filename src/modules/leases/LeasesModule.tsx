@@ -2,6 +2,7 @@ import { useMemo, useState, type CSSProperties } from 'react';
 import Fuse from 'fuse.js';
 import { Search, Download, CalendarClock } from 'lucide-react';
 import { useSnapshot, useAnalytics } from '@/data/queries';
+import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { useUi } from '@/brain/ui-context';
 import { useLeaseForecast, gapChipLabel, buildGapMap } from '../leasing/hooks';
 import { fmtUsd, fmtUsdCompact, fmtPct, fmtNum, fmtYears, fmtDate, fmtMonths } from '@analytics/index';
@@ -58,6 +59,7 @@ const fieldStyle: CSSProperties = {
 
 export function LeasesModule() {
   const { data } = useSnapshot();
+  const gate = useSnapshotGate();
   const { analytics } = useAnalytics();
   const ui = useUi();
   const [view, setView] = useTabParam<LeaseView>(LEASE_VIEW_KEYS, 'rent-roll', 'view');
@@ -150,6 +152,7 @@ export function LeasesModule() {
     { key: 'rent', header: 'Rent', align: 'right', render: (c) => fmtUsdCompact(c.annualRent), sortValue: (c) => c.annualRent },
   ], []);
 
+  if (gate) return gate;
   if (!data || !analytics) return null;
 
   const totalRent = leases.reduce((s, l) => s + l.annualRent, 0);

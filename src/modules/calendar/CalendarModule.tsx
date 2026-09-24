@@ -1,6 +1,7 @@
 import { useMemo, useState, type CSSProperties } from 'react';
 import { CalendarClock } from 'lucide-react';
 import { useSnapshot } from '@/data/queries';
+import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { useUi } from '@/brain/ui-context';
 import { fmtUsdCompact, fmtDate } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
@@ -70,6 +71,7 @@ const BAND_MAX_DAYS: Record<WindowFilter, number> = {
 
 export function CalendarModule() {
   const { data } = useSnapshot();
+  const gate = useSnapshotGate();
   const ui = useUi();
   const [type, setType] = useState<TypeFilter>('all');
   const [horizon, setHorizon] = useState<WindowFilter>('12mo');
@@ -107,6 +109,7 @@ export function CalendarModule() {
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [filtered]);
 
+  if (gate) return gate;
   if (!data) return null;
 
   return (

@@ -19,7 +19,7 @@ import { loadGovernors, GOVERNOR_DEFAULTS } from './warehouse/governors';
 import { fetchDealComps } from './ai/comps';
 import { runAgent } from './ai/agent';
 import { scanForConfidential } from './briefing/confidential';
-import { searchDocuments, docStatus, warmDocIndex } from './sources/documents';
+import { searchDocuments, docStatus, warmDocIndex, docIndexBuiltAt } from './sources/documents';
 import { getMacro } from './macro/getMacro';
 import { serverPort } from './config';
 import { loadInboxState, runAlertAction } from './alerts/store';
@@ -43,6 +43,9 @@ import { isAllowedOrigin } from './cors-policy';
 import { requestBoundary, allowedHosts, extraAllowedHostsFromEnv } from './host-guard';
 import { accessAuthz, accessAuthzOptionsFromEnv } from './access-authz';
 import { createRateLimiter, createConcurrencyLimiter } from './rate-limit';
+import { startServer } from './startup';
+import { assessFeeds } from './feed-freshness';
+import { lastComputedAt } from './warehouse/lease-market/compute';
 
 const app = new Hono();
 // Request boundary (OI-050, see host-guard.ts) — the check that actually REJECTS a request: Host must
@@ -100,10 +103,10 @@ app.on('GET', '/api/documents/search', createRateLimiter({ capacity: 90, refillI
 // file, and the warehouse must never block the rest of the server from serving). The
 // getter throws on an unopenable path; warehouseRoutes catches that and returns 503.
 let _warehouse: WarehouseDb | null = null;
+const warehouseDbPath = () => process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
 function getWarehouse(): WarehouseDb {
   if (_warehouse) return _warehouse;
-  const path = process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
-  _warehouse = openWarehouse(path);
+  _warehouse = openWarehouse(warehouseDbPath());
   return _warehouse;
 }
 app.route('/api/warehouse', warehouseRoutes(getWarehouse));
@@ -254,15 +257,50 @@ brain.on('snapshot', (info: unknown) => {
   }
 });
 
+let briefHealthReadWarned = false;
 app.get('/api/health', (c) => {
-  const briefHealth = existsSync('data/brief-health.json')
-    ? (JSON.parse(readFileSync('data/brief-health.json', 'utf8')) as {
-        ranAt: string;
-        briefSent: boolean;
-        alertsSent: number;
-        failures: string[];
-      })
-    : null;
+  // M4 (2026-09-23 review): a torn read (the brief-refresh task writing the file concurrently)
+  // must not 500 the whole /api/health response — and the Data Feeds card with it. Fail closed to
+  // null (same "no run recorded yet" UI as the file never having existed), warn once rather than
+  // per request.
+  let briefHealth: { ranAt: string; briefSent: boolean; alertsSent: number; failures: string[] } | null = null;
+  try {
+    briefHealth = existsSync('data/brief-health.json')
+      ? (JSON.parse(readFileSync('data/brief-health.json', 'utf8')) as {
+          ranAt: string;
+          briefSent: boolean;
+          alertsSent: number;
+          failures: string[];
+        })
+      : null;
+  } catch (err) {
+    if (!briefHealthReadWarned) {
+      briefHealthReadWarned = true;
+      console.warn('[health] failed to read/parse data/brief-health.json — serving null:', err instanceof Error ? err.message : String(err));
+    }
+    briefHealth = null;
+  }
+  const snap = brain.getSnapshot();
+  const arDates = Object.values(snap?.tenantArrears ?? {})
+    .map((r) => (r.asOfDate ? r.asOfDate.toISOString() : null))
+    .filter((d): d is string => !!d)
+    .sort();
+  // existsSync-gated (same precedent as liveGovernors below): getWarehouse() would otherwise
+  // CREATE + migrate a stray DB as a side effect of a GET on cold/mirror machines.
+  let leaseMarketAt: string | null = null;
+  try {
+    leaseMarketAt = existsSync(warehouseDbPath()) ? lastComputedAt(getWarehouse()) : null;
+  } catch {
+    leaseMarketAt = null;
+  }
+  const feeds = assessFeeds({
+    snapshot: snap?.meta.generatedAt ?? null,
+    cashHistory: snap?.cash.history.at(-1)?.date ?? null,
+    ar: arDates[0] ?? null, // oldest stamped record — collections gating is per-lease
+    dailyBrief: briefHealth?.ranAt ?? null,
+    leaseMarket: leaseMarketAt,
+    docIndex: docIndexBuiltAt(),
+  }, Date.now());
   return c.json({
     ok: true,
     service: 'oxford-brain-server',
@@ -270,6 +308,7 @@ app.get('/api/health', (c) => {
     // Surface AI availability WITHOUT exposing the key (no silent fallbacks — System Health shows it).
     ai: { configured: !!process.env.ANTHROPIC_API_KEY, model: process.env.ANTHROPIC_MODEL ?? 'claude-opus-5' },
     brief: briefHealth,
+    feeds,
   });
 });
 
@@ -284,7 +323,7 @@ app.get('/api/health', (c) => {
 let governorFallbackWarned = false;
 function liveGovernors(): GovernorSet {
   try {
-    const dbPath = process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
+    const dbPath = warehouseDbPath();
     if (!existsSync(dbPath)) throw new Error(`warehouse absent at ${dbPath}`);
     const g = loadGovernors(getWarehouse());
     return { dscrFloor: g.dscrFloor, ltvCeiling: g.ltvCeiling, hurdleRatePct: g.hurdleRatePct, hurdleRateRatification: g.hurdleRateRatification, version: g.version, effectiveFrom: g.effectiveFrom };
@@ -597,26 +636,17 @@ app.get('/sse', (c) =>
 );
 
 async function main() {
-  // Bind the port FIRST — nothing should delay the server from accepting connections.
-  // A slow or hanging workbook load (brain.refresh) previously blocked serve() from being called
-  // for 5+ minutes on a cold start. All degraded-mode guards are already in place: /api/snapshot
-  // 503s on null snapshot, warehouse opens lazily, /api/health stays live throughout.
-  serve({ fetch: app.fetch, port: serverPort(), hostname: '127.0.0.1' }, (info) => {
-    console.log(`◆ Oxford Brain Server — http://127.0.0.1:${info.port} (localhost only)`);
-    console.log(`  Workbook: ${brain.getState().workbookPath}`);
-  });
-  // Load the workbook and start watching in the background — a slow/hanging read must never
-  // block the port. /api/snapshot 503s gracefully until the refresh completes.
-  brain.refresh('startup')
-    .then(() => { brain.startWatching(); })
-    .catch((err) => {
-      console.error('⚠ Brain startup refresh failed — serving in degraded mode (snapshot 503 until workbook loads):', err);
-    });
-  // Warm the document RAG index in the BACKGROUND — a slow/hanging embedding-model load must never
-  // block the server from binding the port. The warehouse + workbook-backed UI (incl. the three
-  // server-only modules: acquisition scoring, PFI, calibration) do not depend on the doc index.
-  warmDocIndex().catch((err) => {
-    console.error('⚠ Document index warm-up failed (non-fatal):', err);
+  startServer({
+    listen: (onListening) => {
+      serve({ fetch: app.fetch, port: serverPort(), hostname: '127.0.0.1' }, (info) => {
+        onListening(info.port);
+        console.log(`  Workbook: ${brain.getState().workbookPath}`);
+      });
+    },
+    refresh: () => brain.refresh('startup').then(() => { brain.startWatching(); }),
+    warmDocs: () => warmDocIndex(),
+    log: (m) => console.log(m),
+    warn: (m, err) => console.error(m, err),
   });
 }
 

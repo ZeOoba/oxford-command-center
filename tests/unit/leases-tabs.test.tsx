@@ -25,7 +25,7 @@ vi.mock('../../src/data/queries', async (importOriginal) => {
   const actual = await importOriginal<typeof Queries>();
   return {
     ...actual,
-    useSnapshot: () => ({ data: { snapshot: { leases: LEASES, meta: { asOf: '2026-09-01' } } } }),
+    useSnapshot: () => ({ data: { snapshot: { leases: LEASES, meta: { asOf: '2026-09-01' } } }, isLoading: false, isError: false, refetch: vi.fn() }),
     useAnalytics: () => ({
       isLoading: false,
       isError: false,
