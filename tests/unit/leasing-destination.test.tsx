@@ -23,7 +23,7 @@ import type * as Queries from '../../src/data/queries';
 // The badge itself is covered in lease-forecast-module.test.tsx.
 vi.mock('../../src/data/queries', async (importOriginal) => {
   const actual = await importOriginal<typeof Queries>();
-  return { ...actual, useAnalytics: () => ({ isLoading: false, isError: false, analytics: { criticalDates: [] } }) };
+  return { ...actual, useAnalytics: () => ({ isLoading: false, isError: false, analytics: { criticalDates: [], rollover: [] } }) };
 });
 vi.mock('../../src/modules/leases/LeasesModule', () => ({ LeasesModule: () => <div>leases-panel</div> }));
 vi.mock('../../src/modules/tenants/TenantsModule', () => ({ TenantsModule: () => <div>tenants-panel</div> }));

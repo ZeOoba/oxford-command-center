@@ -19,7 +19,7 @@ export function RolloverChart({ height = 230 }: { height?: number }) {
     <Card>
       <CardHeader title="Lease Rollover" trailing={<Badge tone="neutral">rent expiring by period</Badge>} />
       <div className="px-3 pb-2 pt-3">
-        <BarChart data={rolloverChartData(analytics.rollover ?? [])} valueFormat={fmtUsdCompact} height={height} color="var(--color-info)" />
+        <BarChart data={rolloverChartData(analytics.rollover)} valueFormat={fmtUsdCompact} height={height} color="var(--color-info)" />
       </div>
     </Card>
   );

@@ -23,7 +23,7 @@ vi.mock('../../src/data/queries', async (importOriginal) => {
   const actual = await importOriginal<typeof Queries>();
   return {
     ...actual,
-    useAnalytics: () => ({ isLoading: false, isError: false, analytics: { criticalDates: mockCriticalDates } }),
+    useAnalytics: () => ({ isLoading: false, isError: false, analytics: { criticalDates: mockCriticalDates, rollover: [] } }),
   };
 });
 
