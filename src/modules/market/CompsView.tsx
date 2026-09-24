@@ -168,6 +168,7 @@ function DealComps({ row }: { row: DealCompRow }) {
   const indexedSales = indexRows(compSet.saleComps, `${dealId}-sale`);
   const indexedRents = indexRows(compSet.rentComps, `${dealId}-rent`);
   const sourceCount = compSourceCount(compSet);
+  const salePoints = saleCompPoints(compSet.saleComps);
 
   return (
     <Card>
@@ -191,10 +192,10 @@ function DealComps({ row }: { row: DealCompRow }) {
           <div className="mb-1.5 text-2xs font-semibold uppercase" style={{ letterSpacing: '0.08em', color: 'var(--text-tertiary)' }}>
             Sale Comps ({compSet.saleComps.length})
           </div>
-          {saleCompPoints(compSet.saleComps).length >= 2 && (
+          {salePoints.length >= 2 && (
             <div className="mb-3">
               <ScatterChart
-                points={saleCompPoints(compSet.saleComps)}
+                points={salePoints}
                 xLabel="$/SF"
                 yLabel="Cap rate"
                 xFormat={(n) => `$${Math.round(n)}`}
