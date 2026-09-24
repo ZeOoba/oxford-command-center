@@ -1,6 +1,6 @@
 import type { PortfolioSnapshot } from '@contracts/index';
-import type { AnalyticsBundle } from '@analytics/index';
-import type { Insight } from '@analytics/types';
+import type { MergedInsight } from '@/modules/insights/insights.logic';
+import { sortByImpactDesc } from '@/modules/insights/insights.logic';
 
 export interface DigestItem {
   id: string;
@@ -12,21 +12,36 @@ export interface DigestItem {
 
 const ATTENTION_STAGES = new Set(['LOI/PSA', 'Closing']);
 
-/** Items needing a principal's eye: critical/warning insights + deals in LOI/PSA or Closing.
- *  `anomalyInsights` (strategic-audit Fix #1) carries the bridged warehouse anomalies so a
- *  warehouse-detected expense spike / NOI decline shows on the Principal Home, not just the Intel
- *  module. Defaulted to [] so snapshot-only callers (and the pure-function tests) are unaffected. */
+/**
+ * Items needing a principal's eye: critical/warning items from the SAME merged insight set the
+ * Insights board renders (`mergeInsightSources()` output — Spine-A insights + warehouse
+ * candidates, with superseded Spine-A duplicates already dropped) + deals in LOI/PSA or Closing.
+ *
+ * Ratified "one home per attention list" (2026-09-23 review, gap #1): the Digest is a COUNT
+ * SUMMARY of the Insights board, so its Critical/Review counts must equal what a click through
+ * "Open Insights →" actually shows. Before this fix the Digest instead counted raw
+ * `analytics.insights` (never deduped against a richer warehouse candidate) plus bridged
+ * warehouse anomalies — a number the board itself never displayed, so the two surfaces disagreed.
+ *
+ * Warehouse anomalies are deliberately EXCLUDED from `merged` here: the Insights board doesn't
+ * show them either (`mergeInsightSources` never includes them), so folding them into this count
+ * would reintroduce the same drift. They get their own labelled line on the Principal Home
+ * (PrincipalModule) that links to Worklist › Alerts, where `useAlertView` already bridges them in.
+ *
+ * Ordering (review follow-up): critical/warning items are sorted by `sortByImpactDesc` — the
+ * SAME sort `buildTiers()` applies to the board's Critical/Priority tiers — so the Digest's top-3
+ * (digestSummary's `top`) is never a different top-3 than the board's Critical tier shows.
+ */
 export function principalDigest(
   snapshot: PortfolioSnapshot,
-  analytics: AnalyticsBundle,
-  anomalyInsights: ReadonlyArray<Insight> = [],
+  merged: ReadonlyArray<MergedInsight>,
 ): DigestItem[] {
   const items: DigestItem[] = [];
 
-  for (const i of [...analytics.insights, ...anomalyInsights]) {
-    if (i.severity === 'critical' || i.severity === 'warning') {
-      items.push({ id: i.id, kind: 'insight', rank: i.severity === 'critical' ? 0 : 1, title: i.title, detail: i.detail });
-    }
+  const critical = sortByImpactDesc(merged.filter((m) => m.severity === 'critical'));
+  const warning = sortByImpactDesc(merged.filter((m) => m.severity === 'warning'));
+  for (const m of [...critical, ...warning]) {
+    items.push({ id: m.id, kind: 'insight', rank: m.severity === 'critical' ? 0 : 1, title: m.title, detail: m.detail });
   }
   for (const d of snapshot.deals) {
     if (ATTENTION_STAGES.has(d.stage)) {

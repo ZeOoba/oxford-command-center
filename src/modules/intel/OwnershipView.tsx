@@ -285,7 +285,7 @@ function BriefingHero({
   const topActions = actions.slice(0, 3);
   return (
     <Card accent>
-      <CardHeader title="Morning Briefing" trailing={<Badge tone="neutral">scored on latest full year</Badge>} />
+      <CardHeader title="Morning Briefing" trailing={<Badge tone="neutral">full-asset P&L ledger · latest FY</Badge>} />
       <div className="flex flex-col gap-4 px-4 py-3">
         <p className="text-base leading-relaxed" style={{ color: 'var(--text-primary)' }}>
           {verdict}

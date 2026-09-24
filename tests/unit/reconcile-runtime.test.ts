@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { PortfolioSnapshot, Lease } from '../../src/contracts/index';
-import { checkSnapshot, checkStaleLeaseRows } from '../../server/reconcile-runtime';
+import { evaluateConditions } from '../../src/analytics/conditions';
+import { checkSnapshot, checkStaleLeaseRows, checkDebtBasis } from '../../server/reconcile-runtime';
 
 const base = (over: Partial<Record<string, unknown>> = {}): PortfolioSnapshot =>
   ({
@@ -406,5 +407,110 @@ describe('checkStaleLeaseRows', () => {
   it('returns [] when meta.asOf is missing (no reference date to measure from)', () => {
     expect(checkStaleLeaseRows({ meta: {} as PortfolioSnapshot['meta'], leases: [l({ leaseEnd: '2020-01-01' })] })).toEqual([]);
     expect(checkStaleLeaseRows({ meta: undefined as unknown as PortfolioSnapshot['meta'], leases: [l({ leaseEnd: '2020-01-01' })] })).toEqual([]);
+  });
+});
+
+// 2026-09-23 review: Overview "Total Debt" (Σ investment-property loanBalance, Property NOI sheet)
+// and Capital › Debt "External Debt" (Σ borrower-loan absBalance, loan schedule) disagreed by
+// ~$0.7M with nothing on screen saying so. Warn-only: surfaces the gap, never picks a winner or
+// alters either total.
+describe('checkDebtBasis', () => {
+  it('flags when Overview total debt (Σ property loan balances) ≠ Capital external debt (Σ borrower loans)', () => {
+    const flags = checkDebtBasis({
+      properties: [{ loanBalance: 11_300_000 }] as never,
+      loans: [{ direction: 'borrower', absBalance: 10_600_000 }, { direction: 'internal', absBalance: 2_610_000 }] as never,
+    });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]).toMatchObject({ field: 'debt.basis', severity: 'warn' });
+    expect(flags[0]!.issue).toContain('700');
+  });
+  it('names both figures being compared, so the reader knows which two surfaces disagree', () => {
+    const flags = checkDebtBasis({
+      properties: [{ loanBalance: 11_300_000 }] as never,
+      loans: [{ direction: 'borrower', absBalance: 10_600_000 }] as never,
+    });
+    expect(flags[0]!.issue).toContain('11,300,000');
+    expect(flags[0]!.issue).toContain('10,600,000');
+    expect(flags[0]!.issue).toMatch(/Overview/);
+    expect(flags[0]!.issue).toMatch(/External Debt/);
+  });
+  it('silent within $1,000', () => {
+    expect(checkDebtBasis({ properties: [{ loanBalance: 100_500 }] as never, loans: [{ direction: 'borrower', absBalance: 100_000 }] as never })).toEqual([]);
+  });
+  it('threshold is strictly > $1,000: exactly 1,000 → silent, 1,001 → flag (either sign)', () => {
+    expect(checkDebtBasis({ properties: [{ loanBalance: 101_000 }] as never, loans: [{ direction: 'borrower', absBalance: 100_000 }] as never })).toEqual([]);
+    expect(checkDebtBasis({ properties: [{ loanBalance: 101_001 }] as never, loans: [{ direction: 'borrower', absBalance: 100_000 }] as never })).toHaveLength(1);
+    expect(checkDebtBasis({ properties: [{ loanBalance: 100_000 }] as never, loans: [{ direction: 'borrower', absBalance: 101_001 }] as never })).toHaveLength(1);
+  });
+  it('compares like with like: the residence is outside Overview Total Debt, so its loanBalance is outside this check too', () => {
+    // Overview's totalDebt sums loanBalance over isInvestmentProperty rows only (engine.ts
+    // portfolioKpis). A residence mortgage must not be read as an "unexplained" gap against the
+    // borrower-loan schedule.
+    expect(checkDebtBasis({
+      properties: [{ type: 'Flex', loanBalance: 500_000 }, { type: 'Residence', loanBalance: 900_000 }] as never,
+      loans: [{ direction: 'borrower', absBalance: 500_000 }] as never,
+    })).toEqual([]);
+  });
+  it('only borrower loans count on the loan-schedule side (lender / internal directions are not External Debt)', () => {
+    expect(checkDebtBasis({
+      properties: [{ loanBalance: 500_000 }] as never,
+      loans: [
+        { direction: 'borrower', absBalance: 500_000 },
+        { direction: 'lender', absBalance: 1_700_000 },
+        { direction: 'internal', absBalance: 2_900_000 },
+      ] as never,
+    })).toEqual([]);
+  });
+  it('tolerates missing arrays (legacy fixture)', () => {
+    expect(checkDebtBasis({ properties: undefined, loans: undefined } as never)).toEqual([]);
+  });
+  it('is NOT a reconciliation-entity flag and does NOT fire the CRITICAL "reconcile-fail" insight (PR-1 lesson)', () => {
+    const flags = checkDebtBasis({
+      properties: [{ loanBalance: 11_300_000 }] as never,
+      loans: [{ direction: 'borrower', absBalance: 10_600_000 }] as never,
+    });
+    expect(flags).toHaveLength(1);
+    expect(flags[0]!.entity).not.toBe('reconciliation');
+    // Prove it end-to-end through the insights engine, which treats ANY entity==='reconciliation'
+    // flag (whatever its severity) as a critical reconciliation failure.
+    const asOf = '2026-09-23';
+    const snap = {
+      meta: { schemaVersion: '1.0.0', asOf, generatedAt: '2026-09-23T00:00:00.000Z', source: 't', scenario: 'Base' },
+      assumptions: { activeScenario: 'Base', revenueFactor: 1, vacancyFactor: 1, exitCapFactor: 1, thresholds: { balloonAlertMonths: 18, concentrationYellow: 0.25, concentrationRed: 0.5 }, asOf },
+      properties: [], leases: [], loans: [], deals: [], insurance: [], tasks: [], counterparties: [],
+      renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, quickbooks: null,
+      cash: { asOf, totalCash: 0, activeEntities: 0, largestEntity: null, concentrationTopPct: null, cagr: null, entities: [], history: [] },
+      dataQuality: flags,
+    } as unknown as PortfolioSnapshot;
+    const insights = evaluateConditions(snap, { now: Date.parse('2026-09-23T12:00:00.000Z') });
+    expect(insights.some((i) => i.id === 'reconcile-fail')).toBe(false);
+    expect(insights.some((i) => i.severity === 'critical')).toBe(false);
+  });
+  it('is wired into checkSnapshot (fires on the full snapshot path) and stays warn there too', () => {
+    const flags = checkSnapshot(base({
+      properties: [{ id: 'p1', loanBalance: 11_300_000 }],
+      loans: [{ id: 'n1', direction: 'borrower', absBalance: 10_600_000 }],
+    }));
+    const f = flags.find((x) => x.field === 'debt.basis');
+    expect(f).toBeDefined();
+    expect(f!.severity).toBe('warn');
+    expect(f!.entity).not.toBe('reconciliation');
+    expect(flags.some((x) => x.severity === 'error')).toBe(false);
+  });
+});
+
+describe('checkDebtBasis — order-independent at the $1,000 boundary (refute wf_fb49dbb9-c91)', () => {
+  const loans = [{ direction: 'borrower', absBalance: 0.3 }, { direction: 'borrower', absBalance: 0.6 }];
+  const prop = (loanBalance: number) => ({ type: 'Flex', loanBalance });
+  it('gives the same answer for every row order when the gap is exactly $1,000.00', () => {
+    const a = checkDebtBasis({ properties: [prop(1000.6), prop(0.1), prop(0.2)], loans } as never);
+    const b = checkDebtBasis({ properties: [prop(0.1), prop(0.2), prop(1000.6)], loans } as never);
+    expect(a).toEqual([]);
+    expect(b).toEqual([]);
+  });
+  it('prints en-US grouped figures regardless of the host locale', () => {
+    const [f] = checkDebtBasis({ properties: [prop(11_300_000)], loans: [{ direction: 'borrower', absBalance: 10_600_000 }] } as never);
+    expect(f!.issue).toContain('11,300,000');
+    expect(f!.issue).toContain('gap $700,000');
   });
 });

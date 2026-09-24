@@ -379,8 +379,8 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       // an info-level signal so a governor deviation is visible without warning-noise on every levered property.
       out.push({
         id: `ltv-governor-${p.id}`, severity: 'info', category: 'debt',
-        title: `LTV above governor — ${p.name}`,
-        detail: `Loan-to-value is ${fmtPct(p.ltv)} — above the ${fmtPct(gov.ltvCeiling)} portfolio governor (LTV ≤ ${fmtPct(gov.ltvCeiling)}).`,
+        title: `Property LTV above aggregate governor — ${p.name}`,
+        detail: `Loan-to-value is ${fmtPct(p.ltv)}. The ${fmtPct(gov.ltvCeiling)} governor applies to the portfolio aggregate; this property is within the ${fmtPct(T.ltvCeiling)} per-property ceiling. Informational.`,
         metric: fmtPct(p.ltv), entityType: 'property', entityId: p.id,
         impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
