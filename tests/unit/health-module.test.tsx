@@ -1,7 +1,7 @@
 // I-2 (2026-09-23 review): HealthModule's /api/health fetch ran once on mount (effect deps []).
 // Opened during startup — port bound before refresh (Task 7) — snapshot/cash/AR/docIndex could
 // show a permanent "never" false alarm with no way to clear it short of a manual reload. The fix
-// re-fetches whenever the brain state's status/lastUpdated advance.
+// re-fetches whenever the brain state's status changes (not on lastUpdated-only write-backs).
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, cleanup, screen, waitFor } from '@testing-library/react';
 import type { BrainState } from '../../src/contracts/brain';
@@ -49,6 +49,20 @@ describe('HealthModule — /api/health re-fetch keyed on brain state (I-2)', () 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
     rerender(<HealthModule />); // same status/lastUpdated — must not trigger another fetch
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-fetch when only lastUpdated moves (a UI write-back, not a refresh)', async () => {
+    brain.state = fresh;
+    const fetchMock = fetchStub();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { rerender } = render(<HealthModule />);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    brain.state = { ...fresh, lastUpdated: '2026-09-23T12:05:00Z' }; // rederive() after e.g. setDealStage
+    rerender(<HealthModule />);
     await new Promise((r) => setTimeout(r, 20));
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });

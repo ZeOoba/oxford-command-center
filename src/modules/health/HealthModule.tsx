@@ -74,9 +74,9 @@ export function HealthModule() {
     // Re-fetch whenever the brain state changes (I-2, 2026-09-23 review): opened during startup —
     // port bound before refresh (Task 7) — the one-shot fetch on mount could permanently freeze
     // snapshot/cash/AR/docIndex on a "never" false alarm with no way to clear short of a manual
-    // reload. state.status/lastUpdated advance as the brain server actually refreshes, so keying
-    // the effect on them gets a fresh /api/health read each time there's something new to show.
-  }, [state?.status, state?.lastUpdated]);
+    // reload. Keyed on status only: a real refresh passes refreshing → fresh/error, while
+    // lastUpdated also bumps on every UI write-back (rederive) that changes no feed.
+  }, [state?.status]);
 
   const flags = data?.snapshot.dataQuality ?? [];
   const recon = flags.filter((x) => x.entity === 'reconciliation');
