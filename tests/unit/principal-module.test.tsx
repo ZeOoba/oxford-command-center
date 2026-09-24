@@ -4,7 +4,7 @@ import type { AnalyticsBundle } from '../../src/analytics/index';
 import { principalKpis } from '../../src/modules/principal/principal-kpis';
 
 function bundle(): { snapshot: PortfolioSnapshot; analytics: AnalyticsBundle } {
-  const analytics = { kpis: { noi: { value: REDACTED-AMT, prov: 'derived' }, value: { value: REDACTED-AMT, prov: 'derived' }, occupancy: { value: 0.94, prov: 'derived' }, totalCash: { value: REDACTED-AMT, prov: 'confirmed' } }, insights: [] } as unknown as AnalyticsBundle;
+  const analytics = { kpis: { noi: { value: REDACTED-AMT, prov: 'derived' }, value: { value: REDACTED-AMT, prov: 'derived' }, occupancy: { value: 0.94, prov: 'derived' }, totalCash: { value: REDACTED-AMT, prov: 'confirmed' }, propertyCount: { value: 14, prov: 'confirmed' }, otherHoldingsCount: { value: 0, prov: 'confirmed' }, otherHoldingsValue: { value: 0, prov: 'confirmed' } }, insights: [] } as unknown as AnalyticsBundle;
   const snapshot = { cash: { totalCash: REDACTED-AMT } } as unknown as PortfolioSnapshot;
   return { snapshot, analytics };
 }

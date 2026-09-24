@@ -15,12 +15,18 @@ import { useSnapshot, useAnalytics } from '@/data/queries';
 import { useWorkspaces } from '@/brain/useWorkspaces';
 import { Skeleton } from '@/primitives/Skeleton';
 import { Button } from '@/primitives/Button';
-import { OVERVIEW_WIDGETS, DEFAULT_WIDGET_ORDER, type WidgetDef } from './widgets';
+import { OVERVIEW_WIDGETS, ALL_WIDGET_IDS, DEFAULT_HIDDEN_WIDGET_IDS, type WidgetDef } from './widgets';
 
 export function OverviewModule() {
   const { data, isLoading, isError } = useSnapshot();
   const { analytics } = useAnalytics();
-  const ws = useWorkspaces(DEFAULT_WIDGET_ORDER);
+  // allIds must be every widget id (insights included) — not the filtered DEFAULT_WIDGET_ORDER —
+  // so a saved layout's own choice about 'insights' survives normalize() and it stays reachable
+  // via Edit layout even on a brand-new layout. DEFAULT_HIDDEN_WIDGET_IDS (currently ['insights'])
+  // is what actually keeps a new layout's Overview compact by default. ALL_WIDGET_IDS is the
+  // module-level constant (not an inline .map() here) so its identity is stable across renders —
+  // useWorkspaces' internal useMemo depends on it.
+  const ws = useWorkspaces(ALL_WIDGET_IDS, DEFAULT_HIDDEN_WIDGET_IDS);
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),

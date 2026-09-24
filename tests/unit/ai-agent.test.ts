@@ -45,6 +45,64 @@ describe('tool definitions + executors', () => {
     expect(r.refs).toEqual([{ type: 'loan', id: 'l1', label: 'REDACTED-306' }]);
   });
 
+  it('get_portfolio_summary market slices use the same investment-only basis as the headline value (residence excluded)', () => {
+    // Residence in a market of its own, with a non-zero NOI: if it leaked it would appear as a second
+    // slice and the slices would sum past `value`. Ratified 2026-09-23.
+    const s = makeSnap();
+    const inv = s.properties[0]!;
+    s.properties.push({ ...inv, id: 'res', name: '9510 Persimmon Tree Rd, Potomac MD', market: 'Kansas City MO', type: 'Residence', sf: 6700, tenantCount: 1, oxfordValue: 2_000_000, noi: 12_000, loanBalance: 0, equityInvested: 900_000 });
+    const d = runTool('get_portfolio_summary', s, {}).data as {
+      properties: number; value: string; noi: string;
+      valueByMarket: { market: string; value: string; pct: string }[];
+      noiByMarket: { market: string; noi: string; pct: string }[];
+    };
+    expect(d.properties).toBe(1);
+    expect(d.valueByMarket.map((m) => m.market)).toEqual(['Mid-Atlantic']);
+    expect(d.valueByMarket[0]!.value).toBe(d.value); // one market → the slice IS the headline
+    expect(d.valueByMarket[0]!.pct).toBe('100.0%');
+    expect(d.noiByMarket.map((m) => m.market)).toEqual(['Mid-Atlantic']);
+    expect(d.noiByMarket[0]!.noi).toBe(d.noi);
+  });
+
+  it('get_portfolio_summary reports the residence as other holdings beside the investment headline (never silently dropped)', () => {
+    // Refute finding (2026-09-23): the investment-only `value` disagrees with the workbook's own Portfolio
+    // Total by exactly the residence value; the AI must be handed the reconciling item, not left to guess.
+    const s = makeSnap();
+    const inv = s.properties[0]!;
+    s.properties.push({ ...inv, id: 'res', name: '9510 Persimmon Tree Rd, Potomac MD', market: 'Mid-Atlantic', type: 'Residence', sf: 6700, tenantCount: 1, oxfordValue: 2_000_000, noi: 0, loanBalance: 0, equityInvested: 900_000 });
+    const d = runTool('get_portfolio_summary', s, {}).data as { value: string; otherHoldingsValue?: string; otherHoldingsCount?: number; note: string };
+    expect(d.value).toBe('$7.31M');
+    expect(d.otherHoldingsValue).toBe('$2.00M');
+    expect(d.otherHoldingsCount).toBe(1);
+    expect(d.note).toMatch(/other holdings/i);
+    expect(d.note).toMatch(/\$2\.00M/);
+    // No residence → no other-holdings keys and no carve-out sentence (nothing to reconcile).
+    const none = runTool('get_portfolio_summary', makeSnap(), {}).data as { otherHoldingsValue?: string; otherHoldingsCount?: number; note: string };
+    expect(none.otherHoldingsValue).toBeUndefined();
+    expect(none.otherHoldingsCount).toBeUndefined();
+    expect(none.note).not.toMatch(/other holdings/i);
+  });
+
+  it('run_scenario reports the residence as UNshocked other holdings beside the shocked investment headline', () => {
+    // Refute finding: the residence has no revenue / cap-rate exposure, so a scenario cannot move it;
+    // the AI must see the same $2.00M in every scenario, disclosed beside the modeled investment value.
+    const s = makeSnap();
+    const inv = s.properties[0]!;
+    s.properties.push({ ...inv, id: 'res', name: '9510 Persimmon Tree Rd, Potomac MD', type: 'Residence', sf: 6700, tenantCount: 1, oxfordValue: 2_000_000, noi: 0, loanBalance: 0, equityInvested: 900_000 });
+    type Out = { scenario: string; value: string; otherHoldingsValue?: string; otherHoldingsCount?: number; note: string };
+    const base = runTool('run_scenario', s, { scenario: 'Base' }).data as Out;
+    const down = runTool('run_scenario', s, { scenario: 'Downside' }).data as Out;
+    expect(base.value).toBe('$7.31M');
+    expect(down.value).not.toBe(base.value); // investment headline IS shocked
+    expect(base.otherHoldingsValue).toBe('$2.00M');
+    expect(down.otherHoldingsValue).toBe('$2.00M'); // other holdings are NOT
+    expect(down.otherHoldingsCount).toBe(1);
+    expect(down.note).toMatch(/other holdings at \$2\.00M/);
+    const none = runTool('run_scenario', makeSnap(), { scenario: 'Downside' }).data as Out;
+    expect(none.otherHoldingsValue).toBeUndefined();
+    expect(none.note).toBe('Modeled — derived from scenario factors.');
+  });
+
   it('get_property matches by market and refs the property', () => {
     const r = runTool('get_property', makeSnap(), { query: 'easton' });
     expect(r.refs[0]).toEqual({ type: 'property', id: 'p1', label: '29000 Information Lane, Easton MD' });

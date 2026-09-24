@@ -83,7 +83,11 @@ export function KpiStat({
               </span>
             )}
             {deltaLabel && <span>{deltaLabel}</span>}
-            {sublabel && <span className="truncate">{sublabel}</span>}
+            {sublabel && (
+              <span className="truncate" title={typeof sublabel === 'string' ? sublabel : undefined}>
+                {sublabel}
+              </span>
+            )}
           </div>
         )}
       </div>

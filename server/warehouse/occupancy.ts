@@ -6,6 +6,7 @@
 // Source discipline: these are workbook-side (rent-roll derived) snapshots, not P&L.
 // The P&L warehouse pipeline (import_batches / ledger_entries) is income-statement only.
 import type { WarehouseDb } from './db';
+import { isInvestmentProperty } from '../../src/analytics/property-basis';
 
 export type OccupancySource = 'workbook' | 'rent-roll' | 'manual';
 
@@ -182,9 +183,9 @@ export function captureOccupancy(
   const captureDate = easternCalendarDay(snapshot.meta.generatedAt);
   if (!captureDate) return { recorded: 0, skipped: 0 }; // malformed timestamp — no-op
   // Residences (e.g. the Potomac home) carry no commercial occupancy and have no property_master
-  // row by design — exclude them so they are not flagged as roster-drift orphans (mirrors the
-  // residence exclusion in reconcile-noi).
-  const relevant = snapshot.properties.filter((p) => p.type !== 'Residence');
+  // row by design — exclude them so they are not flagged as roster-drift orphans. Shares the
+  // investment-basis predicate with portfolioKpis so the two exclusions cannot drift apart.
+  const relevant = snapshot.properties.filter(isInvestmentProperty);
   return recordOccupancyBatch(db, relevant, captureDate, 'workbook');
 }
 

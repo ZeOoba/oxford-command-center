@@ -404,6 +404,29 @@ describe('GET /narrative', () => {
     expect(JSON.stringify(sentInput)).not.toContain('Real Sounding Property Name');
   });
 
+  it('propertyCount sent to the AI composer counts investment properties only -- the residence is excluded (ratified 2026-09-23)', async () => {
+    // The leasing brief's headline count must match the KPI strip's investment-property count; the
+    // residence has no leases and is reported as "other holdings", never inside investment figures.
+    process.env.ANTHROPIC_API_KEY = 'fixture-key-not-real';
+    mockComposeLeaseNarrative.mockResolvedValue({ narrative: null, degraded: true });
+    mockGetSnapshot.mockReturnValue(
+      snap({
+        properties: [
+          { id: 'fixture-property-one', name: 'Fixture Property One', type: 'Flex' } as Property,
+          { id: '9510-persimmon-tree-rd-potomac-md', name: 'Residence', type: 'Residence' } as Property,
+        ],
+        leases: [mkLease({ id: 'l1' })],
+      }),
+    );
+    const app = makeApp(freshDb());
+    const res = await app.request('/narrative');
+    expect(res.status).toBe(200);
+
+    expect(mockComposeLeaseNarrative).toHaveBeenCalledTimes(1);
+    const sentInput = mockComposeLeaseNarrative.mock.calls[0]![0] as { propertyCount: number };
+    expect(sentInput.propertyCount).toBe(1);
+  });
+
   it('fix round 2 ruling 6: does not read the lease-market feed at all -- a feed row present with no manual override has ZERO effect on topGaps sent to the AI composer', async () => {
     process.env.ANTHROPIC_API_KEY = 'fixture-key-not-real';
     mockComposeLeaseNarrative.mockResolvedValue({ narrative: null, degraded: true });
