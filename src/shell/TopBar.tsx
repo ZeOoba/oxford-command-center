@@ -59,6 +59,7 @@ export function TopBar({ title, asOf, onOpenSearch, onOpenNav, navOpen }: { titl
       <div className="flex items-center gap-2 2xl:gap-2.5">
         <button
           onClick={onOpenSearch}
+          aria-label="Search"
           className="hidden items-center gap-2 rounded-[var(--radius-sm)] px-2.5 py-1.5 text-2xs md:flex"
           style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)', color: 'var(--text-tertiary)' }}
         >

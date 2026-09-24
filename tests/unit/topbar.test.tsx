@@ -23,6 +23,11 @@ describe('TopBar mobile controls', () => {
     expect(onOpenNav).toHaveBeenCalled();
   });
 
+  it('the search button is named "Search" for assistive tech, not its "⌘K" shortcut glyph (T17)', () => {
+    render(<TopBar title="Overview" asOf="" onOpenNav={vi.fn()} />);
+    expect(screen.getByRole('button', { name: 'Search' })).toBeTruthy();
+  });
+
   it('exposes a More button for secondary controls', () => {
     render(<TopBar title="Overview" asOf="" onOpenNav={vi.fn()} />);
     expect(screen.getByLabelText(/more controls/i)).toBeTruthy();

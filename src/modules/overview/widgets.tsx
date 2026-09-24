@@ -205,7 +205,7 @@ function buildPriorityActionsTier(merged: MergedInsight[], limit: number): Tier 
     impactKind: m.severity === 'info' ? 'info' : 'risk',
     title: m.title,
     detail: m.detail,
-    chips: [spineLabel(m.spine === 'A' ? 'A' : m.spine === 'B' ? 'B' : 'cross')],
+    chips: [spineLabel(m.spine)],
   }));
   return {
     key: 'priority-actions',

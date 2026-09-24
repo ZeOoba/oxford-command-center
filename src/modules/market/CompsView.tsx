@@ -165,6 +165,7 @@ function DealComps({ row }: { row: DealCompRow }) {
   const { compSet, dealName, dealId } = row;
   const indexedSales = indexRows(compSet.saleComps, `${dealId}-sale`);
   const indexedRents = indexRows(compSet.rentComps, `${dealId}-rent`);
+  const sourceCount = compSourceCount(compSet);
 
   return (
     <Card>
@@ -172,7 +173,7 @@ function DealComps({ row }: { row: DealCompRow }) {
         title={dealName}
         trailing={
           <div className="flex items-center gap-2">
-            <Badge tone="neutral">{compSourceCount(compSet)} source{compSourceCount(compSet) === 1 ? '' : 's'}</Badge>
+            <Badge tone="neutral">{sourceCount} source{sourceCount === 1 ? '' : 's'}</Badge>
             <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
               Sourced {fmtDate(compSet.sourcedAt.slice(0, 10))}
             </span>

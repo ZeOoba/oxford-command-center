@@ -162,6 +162,16 @@ describe('CompsView — Sale & Rent Comps section', () => {
     expect(screen.getByText('Orphan Deal 9')).toBeTruthy();
   });
 
+  it('shows "0 sources" (not "0 source") when a set has neither set-level sources nor comp rows (T15)', () => {
+    const deals = [makeDeal({ id: 'deal-0', name: 'Sourceless Deal', stage: 'Due Diligence' })];
+    render(
+      <QueryClientProvider client={seededClient({ deals, dealComps: { 'deal-0': makeCompSet() } })}>
+        <CompsView />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText('0 sources')).toBeTruthy();
+  });
+
   it('shows an honest empty state — not a blank screen — when dealComps is empty', () => {
     render(
       <QueryClientProvider client={seededClient({ deals: [], dealComps: {} })}>
