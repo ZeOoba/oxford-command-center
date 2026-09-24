@@ -452,7 +452,16 @@ export function LeaseForecastModule() {
                 </div>
                 {/* Rent bridge: in-place → rolling off → re-leased → projected (closes by construction) */}
                 {(() => { const b = forecastBridge(forecast); return (
-                  <Waterfall startValue={b.startValue} drivers={b.drivers} endValue={b.endValue} startLabel="In-place" endLabel="Projected" height={220} />
+                  <Waterfall
+                    startValue={b.startValue}
+                    drivers={b.drivers}
+                    endValue={b.endValue}
+                    startLabel="In-place"
+                    endLabel="Projected"
+                    height={220}
+                    ariaLabel="Rent bridge waterfall"
+                    title="Rent bridge: in-place to projected"
+                  />
                 ); })()}
                 {forecast.assumptions.length > 0 && (
                   <ul className="mt-1 flex flex-col gap-0.5">
