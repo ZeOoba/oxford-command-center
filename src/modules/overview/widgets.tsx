@@ -20,8 +20,12 @@ export interface WidgetDef {
   span: 'full' | 'half';
   Component: ComponentType;
   /** Whether a NEW/default layout shows this widget out of the box. Omitted/true = shown.
-   *  Only affects DEFAULT_WIDGET_ORDER — a saved layout that already includes the widget keeps it
-   *  (useWorkspaces normalizes a saved order against the current id set, not this flag). */
+   *  Feeds two things: DEFAULT_WIDGET_ORDER (the documented/tested "visible by default" subset)
+   *  and DEFAULT_HIDDEN_WIDGET_IDS, which OverviewModule passes to useWorkspaces as its
+   *  `defaultHidden` list. A `defaultOn: false` widget is still part of every layout's `order` —
+   *  it's addable via Edit layout — it just starts in `hidden`. A layout that has already made an
+   *  explicit visible/hidden choice for the id (its own saved order already contains it) keeps
+   *  that choice; this flag only decides what happens the FIRST time a layout meets the id. */
   defaultOn?: boolean;
 }
 
@@ -294,8 +298,17 @@ export const OVERVIEW_WIDGETS: WidgetDef[] = [
   { id: 'insights', title: 'Insights & Alerts', span: 'full', Component: InsightsWidget, defaultOn: false },
 ];
 
-/** New/default layouts (useWorkspaces' fallback + "Reset layout") show every widget except those
- *  explicitly opted out via `defaultOn: false` — currently just the full Insights tier board,
- *  whose "one home" is Brain › Insights (PriorityActionsWidget's "See all" link gets there). A
- *  layout a user already saved with 'insights' visible keeps it; this only changes what's new. */
+/** The subset of widgets a brand-new layout shows VISIBLE out of the box — every widget except
+ *  those opted out via `defaultOn: false` (currently just the full Insights tier board, whose
+ *  "one home" is Brain › Insights — PriorityActionsWidget's "See all" link gets there). This is
+ *  documentation/test surface only; it is NOT passed to useWorkspaces as `allIds` (that must be
+ *  every widget id, `insights` included, or the id could never be re-added via Edit layout — see
+ *  DEFAULT_HIDDEN_WIDGET_IDS below, which is what actually keeps it addable-but-hidden). */
 export const DEFAULT_WIDGET_ORDER = OVERVIEW_WIDGETS.filter((w) => w.defaultOn !== false).map((w) => w.id);
+
+/** Ids that start hidden the first time a layout meets them, passed to useWorkspaces as
+ *  `defaultHidden` alongside the FULL id list (OVERVIEW_WIDGETS.map((w) => w.id)) as `allIds`.
+ *  Keeping the widget in `allIds` (rather than filtering it out, as DEFAULT_WIDGET_ORDER does)
+ *  is what keeps it in every layout's `order` and reachable via Edit layout's "+ <widget>"
+ *  affordance — only `hidden` decides whether it's rendered. */
+export const DEFAULT_HIDDEN_WIDGET_IDS = OVERVIEW_WIDGETS.filter((w) => w.defaultOn === false).map((w) => w.id);

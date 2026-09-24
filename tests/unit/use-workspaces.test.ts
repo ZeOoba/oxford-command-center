@@ -87,3 +87,48 @@ describe('useWorkspaces', () => {
     expect(result.current.visibleOrder).toEqual(IDS);
   });
 });
+
+describe('useWorkspaces defaultHidden (default-off-but-addable widgets)', () => {
+  it('(a) fresh load: a defaultHidden id is in order but hidden, so it is addable via Edit layout', () => {
+    const { result } = renderHook(() => useWorkspaces(IDS, ['alerts']));
+    expect(result.current.hiddenIds).toEqual(['alerts']);
+    expect(result.current.visibleOrder).toEqual(['kpis', 'leases', 'cash']);
+    // still present in the underlying order — not stripped — so it can be un-hidden.
+    act(() => result.current.show('alerts'));
+    expect(result.current.visibleOrder).toEqual(IDS);
+  });
+
+  it('(b) a persisted layout that already has the defaultHidden id visible keeps it visible', () => {
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ workspaces: { Default: { order: IDS, hidden: [] } }, active: 'Default' }),
+    );
+    const { result } = renderHook(() => useWorkspaces(IDS, ['alerts']));
+    expect(result.current.hiddenIds).toEqual([]);
+    expect(result.current.visibleOrder).toEqual(IDS);
+  });
+
+  it('(c) a persisted layout from before the defaultHidden id existed gets it appended as hidden, not dropped', () => {
+    const oldIds = ['kpis', 'leases', 'cash']; // predates 'alerts'
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ workspaces: { Default: { order: oldIds, hidden: [] } }, active: 'Default' }),
+    );
+    const { result } = renderHook(() => useWorkspaces(IDS, ['alerts']));
+    expect(result.current.hiddenIds).toEqual(['alerts']);
+    expect(result.current.visibleOrder).toEqual(oldIds);
+  });
+
+  it('(d) a defaultHidden id appended as hidden can be unhidden and stays visible thereafter', () => {
+    const oldIds = ['kpis', 'leases', 'cash'];
+    localStorage.setItem(
+      KEY,
+      JSON.stringify({ workspaces: { Default: { order: oldIds, hidden: [] } }, active: 'Default' }),
+    );
+    const { result } = renderHook(() => useWorkspaces(IDS, ['alerts']));
+    expect(result.current.hiddenIds).toEqual(['alerts']);
+    act(() => result.current.show('alerts'));
+    expect(result.current.hiddenIds).toEqual([]);
+    expect(result.current.visibleOrder).toContain('alerts');
+  });
+});
