@@ -103,10 +103,10 @@ app.on('GET', '/api/documents/search', createRateLimiter({ capacity: 90, refillI
 // file, and the warehouse must never block the rest of the server from serving). The
 // getter throws on an unopenable path; warehouseRoutes catches that and returns 503.
 let _warehouse: WarehouseDb | null = null;
+const warehouseDbPath = () => process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
 function getWarehouse(): WarehouseDb {
   if (_warehouse) return _warehouse;
-  const path = process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
-  _warehouse = openWarehouse(path);
+  _warehouse = openWarehouse(warehouseDbPath());
   return _warehouse;
 }
 app.route('/api/warehouse', warehouseRoutes(getWarehouse));
@@ -275,8 +275,7 @@ app.get('/api/health', (c) => {
   // CREATE + migrate a stray DB as a side effect of a GET on cold/mirror machines.
   let leaseMarketAt: string | null = null;
   try {
-    const dbPath = process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
-    leaseMarketAt = existsSync(dbPath) ? lastComputedAt(getWarehouse()) : null;
+    leaseMarketAt = existsSync(warehouseDbPath()) ? lastComputedAt(getWarehouse()) : null;
   } catch {
     leaseMarketAt = null;
   }
@@ -310,7 +309,7 @@ app.get('/api/health', (c) => {
 let governorFallbackWarned = false;
 function liveGovernors(): GovernorSet {
   try {
-    const dbPath = process.env.WAREHOUSE_DB ?? join(process.cwd(), 'data', 'warehouse', 'finance.sqlite');
+    const dbPath = warehouseDbPath();
     if (!existsSync(dbPath)) throw new Error(`warehouse absent at ${dbPath}`);
     const g = loadGovernors(getWarehouse());
     return { dscrFloor: g.dscrFloor, ltvCeiling: g.ltvCeiling, hurdleRatePct: g.hurdleRatePct, hurdleRateRatification: g.hurdleRateRatification, version: g.version, effectiveFrom: g.effectiveFrom };
