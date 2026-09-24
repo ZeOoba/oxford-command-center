@@ -303,6 +303,44 @@ describe('buildAnalytics — Value by Market shows value, not NOI (Defect 3 regr
   });
 });
 
+describe('buildAnalytics — market allocations share the investment-only basis of the KPIs (ratified 2026-09-23)', () => {
+  // The residence sits in the largest market with a distinctive value/SF (and a non-zero NOI here,
+  // to prove the exclusion is by type, not by the live row's zero NOI). Every market series must
+  // sum to the matching KPI cell — a viewer must never see slices adding to more than the headline.
+  const s = snap({
+    properties: [
+      prop({ id: 'a', market: 'Columbus OH', noi: 100, oxfordValue: 1000, sf: 500 }),
+      prop({ id: 'b', market: 'Mid-Atlantic', noi: 50, oxfordValue: 3000, sf: 700 }),
+      prop({ id: 'res', market: 'Mid-Atlantic', type: 'Residence', noi: 7, oxfordValue: 2000, sf: 67 }),
+    ],
+  });
+  const a = buildAnalytics(s);
+  const total = (xs: { value: number }[]) => xs.reduce((x, m) => x + m.value, 0);
+
+  it('marketByValue sums to kpis.value (residence excluded from both)', () => {
+    expect(a.kpis.value.value).toBe(4000);
+    expect(total(a.marketByValue)).toBe(a.kpis.value.value);
+  });
+  it('marketBySf sums to kpis.totalSf', () => {
+    expect(a.kpis.totalSf.value).toBe(1200);
+    expect(total(a.marketBySf)).toBe(a.kpis.totalSf.value);
+  });
+  it('marketByNoi sums to kpis.noi', () => {
+    expect(a.kpis.noi.value).toBe(150);
+    expect(total(a.marketByNoi)).toBe(a.kpis.noi.value);
+  });
+  it('the residence market slice carries only the investment rows, and pcts still sum to 100%', () => {
+    expect(a.marketByValue.find((m) => m.market === 'Mid-Atlantic')?.value).toBe(3000);
+    expect(a.marketByValue.reduce((x, m) => x + m.pct, 0)).toBeCloseTo(1, 6);
+  });
+  it('holds under a shocked scenario too — slices and KPIs read the same applyScenario output', () => {
+    const d = buildAnalytics(s, 'Downside');
+    expect(d.kpis.value.value).not.toBe(a.kpis.value.value); // the shock actually moved value
+    expect(total(d.marketByValue)).toBeCloseTo(d.kpis.value.value!, 6);
+    expect(total(d.marketByNoi)).toBeCloseTo(d.kpis.noi.value!, 6);
+  });
+});
+
 describe('applyScenario', () => {
   const base = snap({ properties: [prop({ id: 'a', noi: 100, occPct: 0.9, capRate: 0.07, oxfordValue: 1000 })] });
   it('Base is identity', () => {

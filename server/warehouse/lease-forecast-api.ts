@@ -38,6 +38,7 @@ import {
 } from '../../src/analytics/lease-forecast';
 import { leasingVelocity } from './lease-velocity';
 import { loadMarketRentFeed } from './lease-market/feed';
+import { isInvestmentProperty } from '../../src/analytics/property-basis';
 import { referenceDate } from '../config';
 import {
   RentForecastInput,
@@ -280,7 +281,9 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
 
       const input = {
         asOf,
-        propertyCount: snapshot.properties.length,
+        // Investment-property count (ratified 2026-09-23) — matches the KPI strip; the residence
+        // carries no leases and is reported as "other holdings", never inside investment figures.
+        propertyCount: snapshot.properties.filter(isInvestmentProperty).length,
         signalSummary: { likelyCt, uncertainCt, atRiskCt, lapsingCt, nearTermExpiryRent: nearTermRent },
         topGaps,
         // slowLeasingProperties: intentionally empty — wiring from warehouse velocity deferred

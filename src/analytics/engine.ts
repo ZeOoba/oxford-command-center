@@ -9,6 +9,7 @@ import {
   type Confidence,
 } from '@contracts/index';
 import { evaluateConditions } from './conditions';
+import { isInvestmentProperty } from './property-basis';
 import type {
   AnalyticsBundle,
   CriticalDate,
@@ -72,8 +73,9 @@ export function portfolioKpis(
 ): PortfolioKpis {
   // Ratified 2026-09-23 (Gabriel): the residence is not an investment asset — it diluted weighted cap
   // (~24 bps) and occupancy. Solar stays in (income-producing). Residence is reported as "other holdings".
-  const p = s.properties.filter((x) => x.type !== 'Residence');
-  const other = s.properties.filter((x) => x.type === 'Residence');
+  // The predicate lives in ./property-basis so every investment surface shares one basis.
+  const p = s.properties.filter(isInvestmentProperty);
+  const other = s.properties.filter((x) => !isInvestmentProperty(x));
   // Under a non-Base scenario, workbook figures are modeled — mark them derived.
   const sourced: Confidence = scenario === 'Base' ? 'confirmed' : 'derived';
   const tag = (src: string) => (scenario === 'Base' ? src : `${src} · Scenario: ${scenario}`);
@@ -319,6 +321,9 @@ export function buildAnalytics(
   // `referenceDate` (undefined-preserving) so its default path keeps the baked-monthsToExpiry
   // behavior; a provided run date switches it to day-accurate leaseEnd math.
   const ref = referenceDate ?? s.meta.asOf;
+  // Market allocations sit beside the KPI headlines, so they share portfolioKpis' investment-only
+  // basis (ratified 2026-09-23): each series sums to kpis.value / totalSf / noi, never past it.
+  const investment = s.properties.filter(isInvestmentProperty);
   return {
     kpis: portfolioKpis(s, scenario, ref),
     leaseStatus: leaseStatusBreakdown(s.leases),
@@ -327,9 +332,9 @@ export function buildAnalytics(
     revenueAtRisk: revenueAtRisk(s.leases, referenceDate),
     topTenants: topTenants(s.leases),
     tenantHHI: tenantHHI(s.leases),
-    marketByNoi: marketAllocation(s.properties, 'noi'),
-    marketBySf: marketAllocation(s.properties, 'sf'),
-    marketByValue: marketAllocation(s.properties, 'value'),
+    marketByNoi: marketAllocation(investment, 'noi'),
+    marketBySf: marketAllocation(investment, 'sf'),
+    marketByValue: marketAllocation(investment, 'value'),
     debt: debtSummary(s.loans),
     // Thread the same reference date so the bundle is internally coherent: when a caller
     // (the brief) injects a run date, insight day-counts and criticalDates agree. Undefined

@@ -7,6 +7,7 @@ import {
   debtSummary,
 } from '../../src/analytics/engine';
 import { evaluateConditions } from '../../src/analytics/conditions';
+import { isInvestmentProperty } from '../../src/analytics/property-basis';
 import { fmtUsdCompact, fmtPct } from '../../src/analytics/format';
 import { referenceDate } from '../config';
 
@@ -194,6 +195,9 @@ const EXECUTORS: Record<ToolName, Exec> = {
     // WALT is a "years from now" figure → run-date basis (referenceDate), not the frozen
     // workbook data date. Other KPIs here are level metrics, unaffected by the reference.
     const k = portfolioKpis(s, s.meta.scenario, referenceDate());
+    // Same investment-only basis as the KPI cells above (ratified 2026-09-23): the market slices
+    // must sum to `value` / `noi`, not to a residence-inclusive total beside them.
+    const investment = s.properties.filter(isInvestmentProperty);
     return {
       data: {
         asOf: s.meta.asOf,
@@ -209,8 +213,8 @@ const EXECUTORS: Record<ToolName, Exec> = {
         totalDebt: fmtUsdCompact(k.totalDebt.value),
         totalCash: fmtUsdCompact(k.totalCash.value),
         waltYears: k.walt.value,
-        valueByMarket: marketAllocation(s.properties, 'value').map((m) => ({ market: m.market, value: fmtUsdCompact(m.value), pct: fmtPct(m.pct) })),
-        noiByMarket: marketAllocation(s.properties, 'noi').map((m) => ({ market: m.market, noi: fmtUsdCompact(m.value), pct: fmtPct(m.pct) })),
+        valueByMarket: marketAllocation(investment, 'value').map((m) => ({ market: m.market, value: fmtUsdCompact(m.value), pct: fmtPct(m.pct) })),
+        noiByMarket: marketAllocation(investment, 'noi').map((m) => ({ market: m.market, noi: fmtUsdCompact(m.value), pct: fmtPct(m.pct) })),
         note: 'Counts are investment assets (the "Sepich Portfolio" bundles 8 buildings as one row); SF is Oxford-share.',
       },
       refs: [],

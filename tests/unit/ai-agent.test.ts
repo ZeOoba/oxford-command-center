@@ -45,6 +45,25 @@ describe('tool definitions + executors', () => {
     expect(r.refs).toEqual([{ type: 'loan', id: 'l1', label: 'Restoration Church Trust' }]);
   });
 
+  it('get_portfolio_summary market slices use the same investment-only basis as the headline value (residence excluded)', () => {
+    // Residence in a market of its own, with a non-zero NOI: if it leaked it would appear as a second
+    // slice and the slices would sum past `value`. Ratified 2026-09-23.
+    const s = makeSnap();
+    const inv = s.properties[0]!;
+    s.properties.push({ ...inv, id: 'res', name: '9510 Persimmon Tree Rd, Potomac MD', market: 'Kansas City MO', type: 'Residence', sf: 6700, tenantCount: 1, oxfordValue: 2_000_000, noi: 12_000, loanBalance: 0, equityInvested: 900_000 });
+    const d = runTool('get_portfolio_summary', s, {}).data as {
+      properties: number; value: string; noi: string;
+      valueByMarket: { market: string; value: string; pct: string }[];
+      noiByMarket: { market: string; noi: string; pct: string }[];
+    };
+    expect(d.properties).toBe(1);
+    expect(d.valueByMarket.map((m) => m.market)).toEqual(['Mid-Atlantic']);
+    expect(d.valueByMarket[0]!.value).toBe(d.value); // one market → the slice IS the headline
+    expect(d.valueByMarket[0]!.pct).toBe('100.0%');
+    expect(d.noiByMarket.map((m) => m.market)).toEqual(['Mid-Atlantic']);
+    expect(d.noiByMarket[0]!.noi).toBe(d.noi);
+  });
+
   it('get_property matches by market and refs the property', () => {
     const r = runTool('get_property', makeSnap(), { query: 'easton' });
     expect(r.refs[0]).toEqual({ type: 'property', id: 'p1', label: '29000 Information Lane, Easton MD' });

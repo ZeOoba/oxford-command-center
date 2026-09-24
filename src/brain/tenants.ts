@@ -1,6 +1,7 @@
 import type { PortfolioSnapshot, Lease } from '../contracts/index';
 import { RENEWAL_STAGES, type RenewalStage } from '../contracts/renewal';
 import { slug } from '../contracts/common';
+import { isInvestmentProperty } from '../analytics/property-basis';
 import { DAY_MS } from '../../server/warehouse/time-constants';
 
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
@@ -55,13 +56,18 @@ interface Accum {
  *   established convention).
  */
 export function tenantScorecards(s: PortfolioSnapshot, referenceDate?: string): TenantScorecard[] {
-  const portfolioNoi = sum(s.properties.map((p) => p.noi));
+  // Investment-only basis (ratified 2026-09-23): tenant share is of investment NOI, the same basis
+  // as portfolioKpis. The residence contributes no NOI anywhere here — not to the fallback weight,
+  // and not via propNoi (a lease linked to it would fall to the rent-share fallback like any
+  // non-investment row), so pctNoi is always a share of investment NOI.
+  const investment = s.properties.filter(isInvestmentProperty);
+  const portfolioNoi = sum(investment.map((p) => p.noi));
   const totalRent = sum(s.leases.map((l) => l.annualRent));
   const margin = totalRent > 0 ? portfolioNoi / totalRent : 0; // NOI per $ rent (fallback weight)
 
   // Property NOI by id, and linked-rent per property (denominator for pro-rata allocation).
   const propNoi = new Map<string, number>();
-  for (const p of s.properties) propNoi.set(p.id, p.noi);
+  for (const p of investment) propNoi.set(p.id, p.noi);
   const propLinkedRent = new Map<string, number>();
   for (const l of s.leases) {
     if (l.propertyId !== null && propNoi.has(l.propertyId)) {

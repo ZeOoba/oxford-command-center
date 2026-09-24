@@ -57,6 +57,25 @@ describe('tenantScorecards', () => {
     expect(total).toBeCloseTo(1, 6);
   });
 
+  it('the residence is not in the portfolio-NOI denominator (investment basis, ratified 2026-09-23)', () => {
+    // The unlinked-lease fallback weight is portfolioNoi / totalRent. A residence row with NOI (zero
+    // in the live workbook, non-zero here to make the leak visible) must not inflate that weight —
+    // the tenant % column is share of INVESTMENT NOI, the same basis as every KPI headline.
+    const withResidence = {
+      ...snap,
+      properties: [...snap.properties, { id: 'RES', type: 'Residence', noi: 60000 }],
+    } as unknown as PortfolioSnapshot;
+    const cardsRes = tenantScorecards(withResidence);
+    const acmeRes = cardsRes.find((c) => c.id === 'acme-llc')!;
+    expect(acmeRes.pctNoi).toBeCloseTo(acme.pctNoi, 6);
+    expect(cardsRes.find((c) => c.id === 'gamma-co')!.pctNoi).toBeCloseTo(gamma.pctNoi, 6);
+    // Guard against a vacuous pass: on the all-rows basis Acme's unlinked lease would weigh
+    // 50k·(200k/190k) instead of 50k·(140k/190k), which moves its share by >2 pts.
+    const acmeAllRows = 70000 + 50000 * (200000 / 190000);
+    const totalAllRows = acmeAllRows + 30000 + 40000;
+    expect(Math.abs(acme.pctNoi - acmeAllRows / totalAllRows)).toBeGreaterThan(0.02);
+  });
+
   it('reports the soonest expiry and its days-to-expiry per tenant', () => {
     expect(acme.nextExpiry).toBe('2026-07-15'); // L4 sooner than L1
     expect(acme.daysToExpiry).toBeGreaterThan(0);
