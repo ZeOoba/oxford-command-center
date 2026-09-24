@@ -59,6 +59,9 @@ const clickTab = (name: string) => fireEvent.click(screen.getByRole('tab', { nam
 beforeEach(() => {
   mockCriticalDates = [];
   vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+  // Rollover tab now mounts RolloverChart (BarChart), which measures via ResizeObserver —
+  // jsdom has no native implementation (house pattern, see tests/unit/market-tabs.test.tsx).
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 });
 afterEach(() => {
   cleanup();

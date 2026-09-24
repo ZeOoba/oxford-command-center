@@ -8,6 +8,7 @@ import { KpiStat } from '@/primitives/KpiStat';
 import { Badge } from '@/primitives/Badge';
 import { BarChart } from '@/charts/BarChart';
 import { BarList } from '@/charts/BarList';
+import { RolloverChart } from '../leasing/RolloverChart';
 import { AreaChart } from '@/charts/AreaChart';
 import { TierBoard, type Tier, type TierItem, type TierTotal } from '@/primitives/TierBoard';
 import { spineLabel } from '@/lib/spine-label';
@@ -98,16 +99,7 @@ function CashTrendWidget() {
 }
 
 function LeaseRolloverWidget() {
-  const { analytics } = useAnalytics();
-  if (!analytics) return null;
-  return (
-    <Card>
-      <CardHeader title="Lease Rollover" trailing={<Badge tone="neutral">rent expiring</Badge>} />
-      <div className="px-3 pb-2 pt-3">
-        <BarChart data={analytics.rollover.map((b) => ({ label: b.period, value: b.expiringRent }))} valueFormat={fmtUsdCompact} height={230} color="var(--color-info)" />
-      </div>
-    </Card>
-  );
+  return <RolloverChart />;
 }
 
 // ── Results banner (reuses the P2 merged-insight feed's buildSummary) ──────────────────────
