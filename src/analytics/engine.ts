@@ -70,7 +70,10 @@ export function portfolioKpis(
   scenario: ScenarioName = 'Base',
   referenceDate?: string,
 ): PortfolioKpis {
-  const p = s.properties;
+  // Ratified 2026-09-23 (Gabriel): the residence is not an investment asset — it diluted weighted cap
+  // (~24 bps) and occupancy. Solar stays in (income-producing). Residence is reported as "other holdings".
+  const p = s.properties.filter((x) => x.type !== 'Residence');
+  const other = s.properties.filter((x) => x.type === 'Residence');
   // Under a non-Base scenario, workbook figures are modeled — mark them derived.
   const sourced: Confidence = scenario === 'Base' ? 'confirmed' : 'derived';
   const tag = (src: string) => (scenario === 'Base' ? src : `${src} · Scenario: ${scenario}`);
@@ -97,6 +100,10 @@ export function portfolioKpis(
     walt: cell(walt(s.leases, referenceDate ?? s.meta.asOf), DERIVED, 'derived', {
       formula: 'rent-weighted remaining term, active leases',
     }),
+    // applyScenario shocks the residence's oxfordValue too, so this cell follows the same
+    // scenario tag/confidence convention as `value` (independent review, 2026-09-23).
+    otherHoldingsValue: cell(sum(other.map((x) => x.oxfordValue)), tag('Property NOI · Σ Oxford value (Residence)'), sourced),
+    otherHoldingsCount: cell(other.length, 'Property NOI · Residence row count', 'confirmed'),
   };
 }
 

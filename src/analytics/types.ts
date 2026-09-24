@@ -46,6 +46,9 @@ export interface PortfolioKpis {
   totalDebt: Cell;
   totalCash: Cell;
   walt: Cell;
+  /** Non-investment holdings (the residence) — shown alongside, never inside, investment metrics. */
+  otherHoldingsValue: Cell;
+  otherHoldingsCount: Cell;
 }
 
 export interface RolloverBucket {

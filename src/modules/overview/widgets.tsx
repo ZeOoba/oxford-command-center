@@ -42,7 +42,7 @@ function KpiStripWidget() {
   const goTo = (id: string) => () => ui.setActiveModule(id);
   return (
     <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-      <KpiStat label="Portfolio Value" value={k.value.value} format={fmtUsdCompact} prov={k.value.prov} sublabel={`${fmtNum(k.propertyCount.value)} properties`} onPress={goTo('portfolio')} />
+      <KpiStat label="Portfolio Value" value={k.value.value} format={fmtUsdCompact} prov={k.value.prov} sublabel={`${fmtNum(k.propertyCount.value)} investment properties${k.otherHoldingsCount.value ? ` · +${fmtUsdCompact(k.otherHoldingsValue.value)} other` : ''}`} onPress={goTo('portfolio')} />
       <KpiStat label="Net Operating Income" value={k.noi.value} format={fmtUsdCompact} prov={k.noi.prov} sublabel={`${fmtPct(k.weightedCapRate.value)} wtd cap`} accentColor="var(--color-pos)" onPress={goTo('intel')} />
       <KpiStat label="Portfolio SF" value={k.totalSf.value} format={fmtSf} prov={k.totalSf.prov} sublabel={`${fmtNum(k.tenantCount.value)} tenants`} accentColor="var(--color-info)" onPress={goTo('portfolio')} />
       <KpiStat label="Occupancy" value={k.occupancy.value === null ? null : k.occupancy.value * 100} format={(n) => (n === null ? '—' : `${n.toFixed(1)}%`)} prov={k.occupancy.prov} sublabel="weighted by SF" accentColor="var(--color-pos)" onPress={goTo('leases')} />
