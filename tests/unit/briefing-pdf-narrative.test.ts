@@ -24,7 +24,7 @@
 // Render-once fixtures (2026-09-24): each subject has four distinct documents (no-arg, null,
 // undefined, and a real narrative). Every one is rendered and text-extracted at most once per file
 // and shared by the tests that assert on it (see render() / text() below). The tests used to
-// re-render the same documents: 18 renders and 13 extractions, now 8 and 8. A render costs
+// re-render the same documents: 18 renders and 12 extractions, now 8 and 8. A render costs
 // ~150-300ms CPU, but in a loaded `npm run gate` its wall time ran 40-300x that during
 // CPU-starvation bursts. That timed out "does not throw when narrative is provided (manager)" at
 // 60s on 2026-09-24, one render away from the previous test's identical call. Each fixture is

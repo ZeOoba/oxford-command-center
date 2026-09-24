@@ -10,9 +10,11 @@
 //    No API key in test env → narrative: null, degraded: true — still 200.
 //  • GET /briefing/manager/:slug/narrative → same for manager.
 //  • Unknown subject → 404 on both narrative routes.
-//  • GET /briefing/property/:slug.pdf?narrative=1 → 200 application/pdf (still a valid PDF
-//    even when no key → narrative null → plain PDF, content-identical to no-narrative path).
+//  • GET /briefing/property/:slug.pdf?narrative=1 → 200 application/pdf, streaming the renderer's
+//    bytes verbatim (no key → narrative null). Real %PDF- validity is briefing.test.ts's job.
 //  • GET /briefing/manager/:slug.pdf?narrative=1 → same.
+//  • ?narrative=1 is honoured: a composed narrative reaches the renderer; without the param the
+//    composer is never consulted and the renderer gets null.
 //  • The ?narrative=1 PDF is content-identical to the no-param PDF when no key is set: the route
 //    hands the renderer the SAME arguments (model, narrative null) on both paths, so the renderer
 //    cannot produce different output.
@@ -40,6 +42,15 @@ vi.mock('../../server/briefing/pdf', () => ({
   ),
 }));
 import { renderBriefingPdf } from '../../server/briefing/pdf';
+import type * as NarrativeModule from '../../server/ai/narrative';
+
+// composeNarrative stays REAL by default (the JSON routes' null/degraded contract is tested against
+// it). One test overrides a single call to prove ?narrative=1 threads a composed narrative through.
+vi.mock('../../server/ai/narrative', async (importOriginal) => {
+  const actual = await importOriginal<typeof NarrativeModule>();
+  return { ...actual, composeNarrative: vi.fn(actual.composeNarrative) };
+});
+import { composeNarrative, DEFAULT_MODEL } from '../../server/ai/narrative';
 import { warehouseRoutes } from '../../server/warehouse/api';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
@@ -51,6 +62,7 @@ import {
 } from '../../src/contracts/briefing';
 
 const renderSpy = vi.mocked(renderBriefingPdf);
+const composeSpy = vi.mocked(composeNarrative);
 
 /** Run `fn` with ANTHROPIC_API_KEY guaranteed unset, then restore it — so the no-key
  *  (null-narrative) branch is exercised deterministically and no real API call is ever made. */
@@ -114,6 +126,7 @@ function seededDb(): WarehouseDb {
 let priorKey: string | undefined;
 beforeEach(() => {
   renderSpy.mockClear();
+  composeSpy.mockClear();
   priorKey = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
 });
@@ -252,6 +265,32 @@ describe('GET /briefing/property/:slug.pdf?narrative=1', () => {
       expect(withParam.equals(plain)).toBe(true);
     });
   });
+});
+
+describe('?narrative=1 threads a composed narrative into the renderer', () => {
+  const SENTINEL = {
+    headline: 'Sentinel headline',
+    summary: 'Sentinel summary.',
+    bullets: ['Sentinel bullet'],
+    model: DEFAULT_MODEL,
+  };
+
+  for (const [kind, path] of [
+    ['property', `/briefing/property/${KRG_PROPS[0]!}`],
+    ['manager', `/briefing/manager/${KRG_SLUG}`],
+  ] as const) {
+    it(`${kind}: the composed narrative reaches the renderer; without the param it is never composed`, async () => {
+      const db = seededDb();
+      const app = warehouseRoutes(() => db);
+      composeSpy.mockResolvedValueOnce({ narrative: SENTINEL, degraded: false });
+      expect((await app.request(`${path}.pdf?narrative=1`)).status).toBe(200);
+      expect(renderSpy.mock.calls[0]![1]).toEqual(SENTINEL);
+
+      expect((await app.request(`${path}.pdf`)).status).toBe(200);
+      expect(composeSpy).toHaveBeenCalledTimes(1);
+      expect(renderSpy.mock.calls[1]![1]).toBeNull();
+    });
+  }
 });
 
 describe('GET /briefing/manager/:slug.pdf?narrative=1', () => {
