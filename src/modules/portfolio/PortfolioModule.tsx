@@ -52,7 +52,9 @@ export function PortfolioModule() {
   return (
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <KpiStat label="Portfolio Value" value={k.value.value} format={fmtUsdCompact} prov={k.value.prov} sublabel={`${fmtNum(k.propertyCount.value)} assets`} />
+        {/* Same sublabel as the Overview KPI strip (ratified 2026-09-23): the residence is excluded from the
+            investment value and reported beside it as other holdings — never silently dropped. */}
+        <KpiStat label="Portfolio Value" value={k.value.value} format={fmtUsdCompact} prov={k.value.prov} sublabel={`${fmtNum(k.propertyCount.value)} investment properties${k.otherHoldingsCount.value ? ` · +${fmtUsdCompact(k.otherHoldingsValue.value)} other` : ''}`} />
         <KpiStat label="Net Operating Income" value={k.noi.value} format={fmtUsdCompact} prov={k.noi.prov} accentColor="var(--color-pos)" />
         <KpiStat label="Portfolio SF" value={k.totalSf.value} format={fmtSf} prov={k.totalSf.prov} accentColor="var(--color-info)" />
         <KpiStat label="Weighted Cap Rate" value={k.weightedCapRate.value === null ? null : k.weightedCapRate.value * 100} format={(n) => (n === null ? '—' : `${n.toFixed(2)}%`)} prov={k.weightedCapRate.prov} accentColor="var(--color-accent2)" />

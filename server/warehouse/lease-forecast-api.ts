@@ -283,6 +283,9 @@ export function leaseForecastApi(getDb: () => WarehouseDb): Hono {
         asOf,
         // Investment-property count (ratified 2026-09-23) — matches the KPI strip; the residence
         // carries no leases and is reported as "other holdings", never inside investment figures.
+        // INTENDED live change 14 → 13 for the AI leasing composer (declared Task-20 scope). It knowingly
+        // diverges from capital-allocation.ts's all-rows propertyCount (14) until that ruling lands.
+        // Covered by tests/unit/lease-forecast-api.test.ts ("propertyCount ... residence is excluded").
         propertyCount: snapshot.properties.filter(isInvestmentProperty).length,
         signalSummary: { likelyCt, uncertainCt, atRiskCt, lapsingCt, nearTermExpiryRent: nearTermRent },
         topGaps,

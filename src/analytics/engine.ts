@@ -43,6 +43,11 @@ export function applyScenario(s: PortfolioSnapshot, scenario: ScenarioName): Por
   if (scenario === 'Base') return s;
   const f = SCENARIO_PRESETS[scenario];
   const properties: Property[] = s.properties.map((p) => {
+    // Non-investment rows (the residence; ratified 2026-09-23) have no revenue and no cap-rate exposure,
+    // so a revenue / exit-cap shock cannot move them. Pass the row through untouched — otherwise the
+    // other-holdings figure would be scaled by revenueFactor/exitCapFactor with no economic basis and
+    // the residence would get a phantom scenario dscr/ltv recomputation (refute finding, 2026-09-23).
+    if (!isInvestmentProperty(p)) return p;
     const noi = p.noi * f.revenueFactor;
     const occPct = Math.max(0, Math.min(1, 1 - (1 - p.occPct) * f.vacancyFactor));
     const capRate = p.capRate !== null ? p.capRate * f.exitCapFactor : null;
@@ -102,9 +107,9 @@ export function portfolioKpis(
     walt: cell(walt(s.leases, referenceDate ?? s.meta.asOf), DERIVED, 'derived', {
       formula: 'rent-weighted remaining term, active leases',
     }),
-    // applyScenario shocks the residence's oxfordValue too, so this cell follows the same
-    // scenario tag/confidence convention as `value` (independent review, 2026-09-23).
-    otherHoldingsValue: cell(sum(other.map((x) => x.oxfordValue)), tag('Property NOI · Σ Oxford value (Residence)'), sourced),
+    // applyScenario passes non-investment rows through untouched, so this is a workbook figure in
+    // EVERY scenario — never tagged/derived (refute fix, 2026-09-23).
+    otherHoldingsValue: cell(sum(other.map((x) => x.oxfordValue)), 'Property NOI · Σ Oxford value (Residence)', 'confirmed'),
     otherHoldingsCount: cell(other.length, 'Property NOI · Residence row count', 'confirmed'),
   };
 }

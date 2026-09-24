@@ -149,6 +149,11 @@ export async function runBrief(
 
     // Cell type has { value: number | null, prov } — no .display field.
     // Use formatters directly on .value.
+    // Ratified 2026-09-23: the value KPI is investment-only; the residence is reported beside it as
+    // other holdings so the emailed figure reconciles to the workbook's Portfolio Total.
+    const otherHoldings = a.kpis.otherHoldingsCount.value
+      ? ` · +${fmtUsdCompact(a.kpis.otherHoldingsValue.value)} other holdings (residence)`
+      : '';
     const r = await send(
       renderBrief({
         asOf: refDate,
@@ -160,7 +165,7 @@ export async function runBrief(
         dealCounts,
         kpis: {
           noi: fmtUsdCompact(a.kpis.noi.value),
-          value: fmtUsdCompact(a.kpis.value.value),
+          value: fmtUsdCompact(a.kpis.value.value) + otherHoldings,
           occupancy: fmtPct(a.kpis.occupancy.value),
           cash: fmtUsdCompact(snapshot.cash.totalCash),
           dscrSummary: dscrs.length ? `min ${Math.min(...dscrs).toFixed(2)}x` : '—',

@@ -35,7 +35,7 @@ export function PrincipalModule() {
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {kpis.map((k) => (
-          <KpiStat key={k.label} label={k.label} value={k.value} format={k.format} prov={k.prov} accentColor="var(--accent)" />
+          <KpiStat key={k.label} label={k.label} value={k.value} format={k.format} prov={k.prov} sublabel={k.sublabel} accentColor="var(--accent)" />
         ))}
       </div>
 

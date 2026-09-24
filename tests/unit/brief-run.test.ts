@@ -57,6 +57,42 @@ describe('runBrief', () => {
     expect(briefCalls[0]!.to).toEqual(['ggoldberg@oxfordra.net']);
   });
 
+  it('the Daily Brief value KPI names the residence as other holdings beside the investment value (ratified 2026-09-23)', async () => {
+    // Refute finding: the emailed brief printed the investment-only value with nothing reconciling it to
+    // the workbook's Portfolio Total (which includes the residence). Only when a residence row exists.
+    const statePath = join(dir(), 'state.json');
+    const snap = baseSnap();
+    const inv = {
+      id: 'p1', index: 1, name: '29000 Information Lane, Easton MD', address: '29000 Information Lane', city: null, state: null, market: 'Mid-Atlantic', type: 'Flex',
+      sf: 48000, tenantCount: 1, occPct: 1, acqDate: null, estValue100: 0, oxfordOwnPct: 1, oxfordValue: 7310000, grossIncome: 0, expenses: 0, noi: 511000, noiScenarioAdj: 511000,
+      debtService: 0, netCashFlow: 0, capRate: 0.07, dscr: 2.45, lender: 'Symetra', loanBalance: 2770000, ltv: 0.38, valuePerSf: null, rentPerSf: null, equityInvested: 1000000,
+      cashOnCash: null, holdYrs: null, encumbered: true, flags: [],
+    };
+    (snap.properties as unknown[]) = [
+      inv,
+      { ...inv, id: 'res', name: '9510 Persimmon Tree Rd, Potomac MD', type: 'Residence', sf: 6700, oxfordValue: 2_000_000, noi: 0, noiScenarioAdj: 0, capRate: null, dscr: null, lender: null, loanBalance: 0, ltv: null, equityInvested: 900_000, encumbered: false },
+    ];
+    const bodies: string[] = [];
+    const res = await runBrief(snap, {
+      statePath, now: new Date('2026-07-09T11:00:00Z'), // 07:00 ET — brief gate open
+      send: async (email) => { if (email.subject.includes('Daily Brief')) bodies.push(email.html); return { ok: true, via: 'com' }; },
+    });
+    expect(res.briefSent).toBe(true);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toContain('Value <strong>$7.31M · +$2.00M other holdings (residence)</strong>');
+
+    // Without a residence row the KPI is the bare investment value.
+    const snap2 = baseSnap();
+    (snap2.properties as unknown[]) = [inv];
+    const bodies2: string[] = [];
+    await runBrief(snap2, {
+      statePath: join(dir(), 'state.json'), now: new Date('2026-07-09T11:00:00Z'),
+      send: async (email) => { if (email.subject.includes('Daily Brief')) bodies2.push(email.html); return { ok: true, via: 'com' }; },
+    });
+    expect(bodies2[0]).toContain('Value <strong>$7.31M</strong>');
+    expect(bodies2[0]).not.toContain('other holdings');
+  });
+
   it('emits a same-day alert only for a newly-appeared critical item', async () => {
     const statePath = join(dir(), 'state.json');
     const snap = baseSnap();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { portfolioKpis } from '../../src/analytics/engine';
+import { applyScenario, portfolioKpis } from '../../src/analytics/engine';
 import type { PortfolioSnapshot, Property } from '../../src/contracts/index';
 
 const p = (o: Partial<Property>) => ({ id: 'x', name: 'x', sf: 0, occPct: 1, noi: 0, oxfordValue: 0, loanBalance: 0, equityInvested: 0, tenantCount: 0, type: 'Flex', ...o }) as Property;
@@ -33,11 +33,24 @@ describe('portfolioKpis — residence excluded from investment metrics', () => {
     expect(k.otherHoldingsCount.value).toBe(0);
   });
 
-  it('other-holdings value follows the scenario confidence convention (Base confirmed, shocked scenario derived)', () => {
-    // applyScenario scales every property's oxfordValue, the residence included — so under a non-Base
-    // scenario the cell is modeled, not a workbook figure, exactly like `value`.
-    expect(portfolioKpis(s, 'Base').otherHoldingsValue.prov.confidence).toBe('confirmed');
-    expect(portfolioKpis(s, 'Downside').otherHoldingsValue.prov.confidence).toBe('derived');
-    expect(portfolioKpis(s, 'Downside').otherHoldingsCount.prov.confidence).toBe('confirmed');
+  it('other holdings are never scenario-shocked: Upside/Downside otherHoldingsValue equals Base, tagged confirmed', () => {
+    // Refute finding (2026-09-23): a residence has no revenue and no cap-rate exposure, so a revenue /
+    // exit-cap shock cannot move its value. applyScenario leaves non-investment rows untouched and the
+    // cell stays a workbook figure ('confirmed') in every scenario.
+    const base = portfolioKpis(s, 'Base');
+    expect(base.otherHoldingsValue.value).toBe(2_000_000);
+    expect(base.otherHoldingsValue.prov.confidence).toBe('confirmed');
+    for (const sc of ['Upside', 'Downside'] as const) {
+      const shocked = applyScenario(s, sc);
+      const k = portfolioKpis(shocked, sc);
+      expect(k.otherHoldingsValue.value).toBe(2_000_000);
+      expect(k.otherHoldingsValue.prov.confidence).toBe('confirmed');
+      expect(k.otherHoldingsCount.prov.confidence).toBe('confirmed');
+      // The residence row is passed through by reference — no phantom dscr/ltv/value recomputation.
+      expect(shocked.properties.find((x) => x.id === 'res')).toBe(s.properties.find((x) => x.id === 'res'));
+      // Investment rows ARE still shocked (the fix must not neuter the scenario for real assets).
+      expect(k.value.value).not.toBe(base.value.value);
+      expect(k.value.prov.confidence).toBe('derived');
+    }
   });
 });

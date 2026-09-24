@@ -26,7 +26,7 @@ export interface TenantScorecard {
   leaseCount: number;
   sf: number;
   annualRent: number;
-  pctNoi: number; // 0..1 — tenant share of portfolio NOI (pro-rata within each property; rent-share fallback for unlinked leases), normalized so the column sums to 100%
+  pctNoi: number; // 0..1 — tenant share of INVESTMENT NOI (pro-rata within each investment property; 0 for leases on a non-investment property; rent-share fallback for unlinked leases), normalized so the column sums to 100%
   nextExpiry: string | null; // soonest leaseEnd ISO
   daysToExpiry: number | null;
   renewalStage: RenewalStage | null; // most-advanced stage across the tenant's leases
@@ -56,14 +56,20 @@ interface Accum {
  *   established convention).
  */
 export function tenantScorecards(s: PortfolioSnapshot, referenceDate?: string): TenantScorecard[] {
-  // Investment-only basis (ratified 2026-09-23): tenant share is of investment NOI, the same basis
-  // as portfolioKpis. The residence contributes no NOI anywhere here — not to the fallback weight,
-  // and not via propNoi (a lease linked to it would fall to the rent-share fallback like any
-  // non-investment row), so pctNoi is always a share of investment NOI.
+  // Basis (ratified 2026-09-23): pctNoi is each tenant's share of INVESTMENT NOI — the same basis as
+  // portfolioKpis. Three lease classes, decided by the property the lease links to:
+  //   • linked to an investment property      → pro-rata slice of that property's NOI by rent share;
+  //   • linked to a NON-investment property   → 0 (exactly as before the basis change). The residence's
+  //     NOI is outside the basis, so its tenant holds no share, is excluded from totalAllocNoi and never
+  //     reaches the concentration surface; its rent is likewise kept OUT of the fallback weight below,
+  //     so the numerator and denominator of `margin` are on one basis;
+  //   • genuinely unlinked (propertyId null / unknown id) → rent-share fallback, annualRent × margin.
   const investment = s.properties.filter(isInvestmentProperty);
+  const nonInvestmentIds = new Set(s.properties.filter((p) => !isInvestmentProperty(p)).map((p) => p.id));
+  const linksToNonInvestment = (l: Lease): boolean => l.propertyId !== null && nonInvestmentIds.has(l.propertyId);
   const portfolioNoi = sum(investment.map((p) => p.noi));
-  const totalRent = sum(s.leases.map((l) => l.annualRent));
-  const margin = totalRent > 0 ? portfolioNoi / totalRent : 0; // NOI per $ rent (fallback weight)
+  const totalRent = sum(s.leases.filter((l) => !linksToNonInvestment(l)).map((l) => l.annualRent));
+  const margin = totalRent > 0 ? portfolioNoi / totalRent : 0; // investment NOI per $ of investment/unlinked rent (fallback weight)
 
   // Property NOI by id, and linked-rent per property (denominator for pro-rata allocation).
   const propNoi = new Map<string, number>();
@@ -87,9 +93,11 @@ export function tenantScorecards(s: PortfolioSnapshot, referenceDate?: string): 
     const pid = l.propertyId;
     const pNoi = pid !== null ? propNoi.get(pid) : undefined;
     const pRent = pid !== null ? propLinkedRent.get(pid) : undefined;
-    const alloc = pid !== null && pNoi !== undefined && pRent !== undefined && pRent > 0
-      ? pNoi * (l.annualRent / pRent)
-      : l.annualRent * margin; // unlinked → rent-share fallback in NOI units
+    const alloc = linksToNonInvestment(l)
+      ? 0 // linked to a non-investment property (the residence) → no investment NOI, as before
+      : pid !== null && pNoi !== undefined && pRent !== undefined && pRent > 0
+        ? pNoi * (l.annualRent / pRent)
+        : l.annualRent * margin; // genuinely unlinked → rent-share fallback in NOI units
 
     acc.properties.add(l.propertyKey);
     acc.sf += l.sf;

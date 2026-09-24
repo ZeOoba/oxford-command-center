@@ -198,6 +198,11 @@ const EXECUTORS: Record<ToolName, Exec> = {
     // Same investment-only basis as the KPI cells above (ratified 2026-09-23): the market slices
     // must sum to `value` / `noi`, not to a residence-inclusive total beside them.
     const investment = s.properties.filter(isInvestmentProperty);
+    // "Report it as other holdings" is the other half of the 2026-09-23 ruling: wherever the investment
+    // headline appears, the residence must appear beside it — otherwise `value` disagrees with the
+    // workbook's own Portfolio Total by exactly the residence and the model has no reconciling item.
+    const otherCount = k.otherHoldingsCount.value ?? 0;
+    const otherValue = fmtUsdCompact(k.otherHoldingsValue.value);
     return {
       data: {
         asOf: s.meta.asOf,
@@ -215,7 +220,12 @@ const EXECUTORS: Record<ToolName, Exec> = {
         waltYears: k.walt.value,
         valueByMarket: marketAllocation(investment, 'value').map((m) => ({ market: m.market, value: fmtUsdCompact(m.value), pct: fmtPct(m.pct) })),
         noiByMarket: marketAllocation(investment, 'noi').map((m) => ({ market: m.market, noi: fmtUsdCompact(m.value), pct: fmtPct(m.pct) })),
-        note: 'Counts are investment assets (the "Sepich Portfolio" bundles 8 buildings as one row); SF is Oxford-share.',
+        ...(otherCount > 0 ? { otherHoldingsValue: otherValue, otherHoldingsCount: otherCount } : {}),
+        note:
+          'Counts are investment assets (the "Sepich Portfolio" bundles 8 buildings as one row); SF is Oxford-share.' +
+          (otherCount > 0
+            ? ` Value, NOI, SF and counts EXCLUDE ${otherCount} non-investment holding${otherCount === 1 ? '' : 's'} (the residence), carried separately as other holdings at ${otherValue}; the workbook's own Portfolio Total includes it.`
+            : ''),
       },
       refs: [],
     };
@@ -387,6 +397,10 @@ const EXECUTORS: Record<ToolName, Exec> = {
     const scenario = (asStr(input.scenario) || 'Base') as ScenarioName;
     const a = buildAnalytics(s, scenario, referenceDate());
     const k = a.kpis;
+    // Same disclosure as get_portfolio_summary (ratified 2026-09-23): the residence is never shocked and
+    // is reported beside the investment headline in every scenario.
+    const otherCount = k.otherHoldingsCount.value ?? 0;
+    const otherValue = fmtUsdCompact(k.otherHoldingsValue.value);
     return {
       data: {
         scenario,
@@ -394,7 +408,10 @@ const EXECUTORS: Record<ToolName, Exec> = {
         noi: fmtUsdCompact(k.noi.value),
         weightedCapRate: fmtPct(k.weightedCapRate.value),
         ltv: fmtPct(k.ltv.value),
-        note: scenario === 'Base' ? 'Workbook figures.' : 'Modeled — derived from scenario factors.',
+        ...(otherCount > 0 ? { otherHoldingsValue: otherValue, otherHoldingsCount: otherCount } : {}),
+        note:
+          (scenario === 'Base' ? 'Workbook figures.' : 'Modeled — derived from scenario factors.') +
+          (otherCount > 0 ? ` Value/NOI exclude ${otherCount} non-investment holding${otherCount === 1 ? '' : 's'} (the residence), carried unshocked as other holdings at ${otherValue}.` : ''),
       },
       refs: [],
     };

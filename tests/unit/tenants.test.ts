@@ -76,6 +76,40 @@ describe('tenantScorecards', () => {
     expect(Math.abs(acme.pctNoi - acmeAllRows / totalAllRows)).toBeGreaterThan(0.02);
   });
 
+  it('a lease linked to the residence contributes 0 NOI and never dilutes investment tenants (refute fix, 2026-09-23)', () => {
+    // Three lease classes: linked to an investment property (pro-rata), linked to a NON-investment
+    // property (→ 0, as before the basis change), genuinely unlinked (→ rent-share fallback). A
+    // residence-linked lease must NOT fall into the unlinked fallback — that would manufacture
+    // investment NOI for a home and shrink every real tenant's share.
+    const withHome = {
+      ...snap,
+      properties: [...snap.properties, { id: 'RES', type: 'Residence', noi: 0 }],
+      leases: [
+        ...snap.leases,
+        { id: 'L5', company: 'Home Tenant', tenantName: 'Home Tenant', propertyKey: '9510 PT', unit: null, propertyId: 'RES', sf: 6700, annualRent: 96000, leaseEnd: '2028-01-01', status: 'Active' },
+      ],
+    } as unknown as PortfolioSnapshot;
+    const cardsHome = tenantScorecards(withHome);
+    const home = cardsHome.find((c) => c.id === 'home-tenant')!;
+    expect(home).toBeDefined();
+    expect(home.pctNoi).toBe(0); // below conditions.ts's 15% concentration threshold by construction — never alerts
+    // Investment tenants' shares are byte-for-byte the baseline: neither the home's rent (fallback
+    // denominator) nor a phantom allocation (numerator) leaks in.
+    expect(cardsHome.find((c) => c.id === 'acme-llc')!.pctNoi).toBe(acme.pctNoi);
+    expect(cardsHome.find((c) => c.id === 'beta-inc')!.pctNoi).toBe(beta.pctNoi);
+    expect(cardsHome.find((c) => c.id === 'gamma-co')!.pctNoi).toBe(gamma.pctNoi);
+    const investmentTotal = cardsHome.filter((c) => c.id !== 'home-tenant').reduce((x, c) => x + c.pctNoi, 0);
+    expect(investmentTotal).toBeCloseTo(1, 6);
+    // Guard against a vacuous pass: the SAME lease genuinely unlinked (propertyId null) takes the
+    // rent-share fallback and holds a non-zero share — so "linked to a non-investment property" is a
+    // distinct branch, not a side effect of the fallback returning 0.
+    const withUnlinked = {
+      ...withHome,
+      leases: withHome.leases.map((l) => (l.id === 'L5' ? { ...l, propertyId: null } : l)),
+    } as unknown as PortfolioSnapshot;
+    expect(tenantScorecards(withUnlinked).find((c) => c.id === 'home-tenant')!.pctNoi).toBeGreaterThan(0);
+  });
+
   it('reports the soonest expiry and its days-to-expiry per tenant', () => {
     expect(acme.nextExpiry).toBe('2026-07-15'); // L4 sooner than L1
     expect(acme.daysToExpiry).toBeGreaterThan(0);
