@@ -22,6 +22,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, TrendingUp, TrendingDown, Pencil } from 'lucide-react';
 import { useLeaseForecast, BUCKET_DISPLAY_ORDER } from './hooks';
 import { RolloverChart } from './RolloverChart';
+import { forecastBridge } from './forecast-bridge';
+import { Waterfall } from '@/charts/Waterfall';
 import { isWarehouseUnavailable, WAREHOUSE_KEYS } from '../intel/hooks';
 import { useSnapshot, SNAPSHOT_KEY } from '@/data/queries';
 import { saveMarketRent } from '@/data/actions';
@@ -448,6 +450,10 @@ export function LeaseForecastModule() {
                     </div>
                   </div>
                 </div>
+                {/* Rent bridge: in-place → rolling off → re-leased → projected (closes by construction) */}
+                {(() => { const b = forecastBridge(forecast); return (
+                  <Waterfall startValue={b.startValue} drivers={b.drivers} endValue={b.endValue} startLabel="In-place" endLabel="Projected" height={220} />
+                ); })()}
                 {forecast.assumptions.length > 0 && (
                   <ul className="mt-1 flex flex-col gap-0.5">
                     {forecast.assumptions.map((a, i) => (
