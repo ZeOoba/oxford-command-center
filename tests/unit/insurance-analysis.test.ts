@@ -957,4 +957,26 @@ describe('buildInsuranceAnalysis — policy-line keys resolve via resolveInsuran
     // preserved behavior rather than resolveInsuranceProperty's in-isolation contract.
     expect(policy?.propertyId).toBe('ins-etcpoa-bcl');
   });
+
+  it('an empty-string property_master name is treated as missing on BOTH fields (one predicate, 2026-09-23 review I-1)', () => {
+    const db = freshDb();
+    // Degenerate master row under the raw policy key with a blank name: the LEFT JOIN yields
+    // property_name = '' (not null). Both `property` and `propertyId` must fall through to the
+    // resolver together — never a blank display name paired with a resolved id, or vice versa.
+    seedProperty(db, 'ins-9620state350-prop-hfd', '');
+    seedProperty(db, '9620-e-state-route-350-raytown-mo', '9620 E State Route 350, Raytown MO');
+    insertPolicy(db, {
+      propertyId: 'ins-9620state350-prop-hfd',
+      policyType: 'Property',
+      premiumAnnual: 5_000,
+      coverageTiv: 2_000_000,
+    });
+
+    const report = buildInsuranceAnalysis(db, AS_OF);
+
+    expect(report.renewalCalendar).toHaveLength(1);
+    const policy = report.renewalCalendar[0]!;
+    expect(policy.property).toBe('9620 E State Route 350, Raytown MO');
+    expect(policy.propertyId).toBe('9620-e-state-route-350-raytown-mo');
+  });
 });

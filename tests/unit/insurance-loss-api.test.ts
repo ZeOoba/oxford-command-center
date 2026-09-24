@@ -216,3 +216,75 @@ describe('GET /api/warehouse/insurance/loss', () => {
     expect(await res.json()).toEqual({ error: 'insurance loss analysis failed' });
   });
 });
+
+// ── Policy-line key → property_master id → loss-event attachment (2026-09-23 review I-1) ──────
+//
+// buildInsuranceAnalysis resolves an 'ins-<stem>-<line>' policy key to its property_master id
+// (T14). That resolution is FINANCIAL output for this route: buildInsuranceLossReport matches loss
+// events to policies by `policy.propertyId`, and loss events are keyed by property_master id. With
+// the pre-T14 wiring (propertyId = the raw policy-line key) nothing matched, so every deductible
+// review and the self-insure roll-up for a policy-line-keyed property read $0. This pins the
+// post-T14 behavior with hand-computed fixture math.
+describe('GET /api/warehouse/insurance/loss — policy-line keys attach their property\'s loss events', () => {
+  function insertLossEvent(db: WarehouseDb, f: { id: string; propertyId: string; lossDate: string; grossIncurred: number }): void {
+    db.prepare(
+      `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+       VALUES (?, ?, NULL, ?, 'hail', ?, NULL, NULL, 'test-fixture')`,
+    ).run(f.id, f.propertyId, f.lossDate, f.grossIncurred);
+  }
+
+  it('a policy keyed ins-9620state350-prop-hfd reviews the loss event recorded under 9620-e-state-route-350-raytown-mo', async () => {
+    const db = freshDb();
+    // property_master row exists ONLY under the resolved id — never under the raw policy key.
+    seedProperty(db, '9620-e-state-route-350-raytown-mo', '9620 E State Route 350, Raytown MO');
+    insertPolicy(db, {
+      propertyId: 'ins-9620state350-prop-hfd',
+      policyType: 'Property Package',
+      premiumAnnual: 5000,
+      coverageTiv: 1_000_000,
+      deductible: 25_000,
+      coverageLimit: 2_000_000,
+    });
+    // Loss runs carry property_master ids (FK), so the event lives under the resolved id.
+    insertLossEvent(db, { id: 'EVT-9620-1', propertyId: '9620-e-state-route-350-raytown-mo', lossDate: '2024-01-01', grossIncurred: 42_000 });
+
+    const res = await makeApp(db).request('/');
+    expect(res.status).toBe(200);
+    const parsed = InsuranceLossReport.safeParse(await res.json());
+    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+    if (!parsed.success) return;
+    const report = parsed.data;
+
+    // Warehouse-sourced loss runs (the table is non-empty), not the placeholder fixture.
+    expect(report.lossDataSource).toBe('warehouse');
+
+    // Deductible review — expected fixture math (d = 25,000; L = 2,000,000; gross = 42,000):
+    //   retained    = min(42,000, 25,000)                     = 25,000
+    //   transferred = max(0, min(42,000, 2,000,000) − 25,000) = 17,000
+    //   overLimit   = max(0, 42,000 − 2,000,000)              = 0
+    //   lossRatio   = 42,000 ÷ 5,000 premium                  = 8.4
+    expect(report.deductibleReviews).toHaveLength(1);
+    const review = report.deductibleReviews[0]!;
+    // The $ figures first — under the pre-T14 wiring these read 0 (no event matched the raw key).
+    expect(review.retainedUsd).toBe(25_000);
+    expect(review.transferredUsd).toBe(17_000);
+    expect(review.overLimitUsd).toBe(0);
+    expect(review.eventsN).toBe(1);
+    expect(review.lossesAboveDeductible).toBe(1);
+    expect(review.lossRatio).toBeCloseTo(8.4, 10);
+    expect(review.propertyId).toBe('9620-e-state-route-350-raytown-mo');
+    expect(review.property).toBe('9620 E State Route 350, Raytown MO');
+
+    // Self-insure roll-up counts that property once via its (only) policy.
+    expect(report.selfInsure.retainedUsd).toBe(25_000);
+    expect(report.selfInsure.transferredUsd).toBe(17_000);
+    expect(report.selfInsure.premiumAnnualTotal).toBe(5000);
+
+    // EAL row is named from the policy register (resolved name), not the bare id.
+    expect(report.eal).toHaveLength(1);
+    expect(report.eal[0]).toMatchObject({ propertyId: '9620-e-state-route-350-raytown-mo', property: '9620 E State Route 350, Raytown MO', eventsN: 1, grossIncurredTotal: 42_000 });
+
+    // Still never a calibration write from this route.
+    expect(calibrationVerdictCount(db)).toBe(0);
+  });
+});
