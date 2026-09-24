@@ -33,8 +33,11 @@
 // outside base..HEAD. Nothing checks them here. They were checked, if at all, on their own PRs.) An
 // evil merge that edits financial source, or a conflict resolved inside a financial file, needs a
 // trailer on the merge commit itself. `--no-merges` would have skipped such merges outright; the
-// old range diff caught them. Requires git >= 2.36 (--remerge-diff): an older git is probed for up
-// front and the gate skips (fails open) instead of reporting every commit as unreadable.
+// old range diff caught them. Attributes for that re-merge come from the empty tree
+// (--attr-source), never from the checked-out tree the PR controls: a committed `merge=union` would
+// otherwise make a real conflict re-merge cleanly. Requires git >= 2.40 (--attr-source,
+// --remerge-diff): an older git is probed for up front and the gate skips (fails open) instead of
+// reporting every commit as unreadable.
 //
 // SHALLOW CLONES are skipped (fail open, with a warning): a shallow boundary commit reads as a ROOT
 // commit, which silently hides every commit behind it and lists the whole tree as the boundary's
@@ -54,9 +57,11 @@
 // history still records what attested what. Nothing re-runs this gate on main.
 //
 // Default mode WARNS and exits 0 (local dev — never blocks WIP). `--strict` EXITS 1 on a violation
-// (wired into CI for PRs; also usable from /ship). Fails OPEN when the RANGE cannot be verified at all
-// (no base ref, empty --base, shallow clone, git < 2.36). A commit INSIDE a resolved range that
-// cannot be read is a violation instead (see collectCommits): no trailer clears it.
+// (wired into CI for PRs; also usable from /ship). Fails OPEN only when the range cannot be verified
+// at all: the base does not resolve, --base is empty, the default HEAD does not resolve (no
+// commits), the clone is shallow, git < 2.40, or git itself is unusable. Everything after both ends
+// resolve fails CLOSED: an explicit --head that does not resolve, a range that cannot be listed, a
+// commit that cannot be read (see collectCommits: no trailer clears it).
 //
 // Usage: tsx scripts/check-refute-required.ts [--strict] [--base=<ref>] [--head=<ref>]
 //   base defaults to $REFUTE_BASE, else 'origin/main'; head defaults to HEAD.
@@ -376,12 +381,20 @@ export interface UnattestedCommit {
  * `git show` arguments for one commit, the sha appended last. See the file header for why each
  * flag is here; -z makes the output: message, NUL (from %x00), NUL-terminated paths.
  */
+/** git's well-known empty tree (SHA-1 object format). */
+export const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+
 /**
  * Global git options for every range read: ignore replace refs, and pin the merge settings the
  * --remerge-diff re-merge consults, so that local config cannot change the answer.
  */
 export const GIT_GLOBAL_ARGS: readonly string[] = [
   '--no-replace-objects',
+  // Read attributes from the EMPTY TREE, not the checked-out tree. In CI the checkout is the PR's
+  // own tree, so a committed `.gitattributes` (not itself financial, so no trailer needed) could
+  // set `merge=union` on a financial path and make git's re-merge resolve a real conflict by
+  // itself, which --remerge-diff would then list as clean. Needs git >= 2.40.
+  `--attr-source=${EMPTY_TREE}`,
   '-c',
   'merge.renameLimit=0',
   '-c',
@@ -486,8 +499,8 @@ export interface GateResult {
 export function probeToolingGap(run: GitRunner): string | undefined {
   try {
     const v = /git version (\d+)\.(\d+)/.exec(run(['version']));
-    if (v && (Number(v[1]) < 2 || (Number(v[1]) === 2 && Number(v[2]) < 36))) {
-      return `git ${v[1]}.${v[2]} has no --remerge-diff (needs >= 2.36)`;
+    if (v && (Number(v[1]) < 2 || (Number(v[1]) === 2 && Number(v[2]) < 40))) {
+      return `git ${v[1]}.${v[2]} lacks --attr-source / --remerge-diff (needs >= 2.40)`;
     }
     if (run(['rev-parse', '--is-shallow-repository']).trim() === 'true') {
       return 'shallow clone: a boundary commit reads as a root commit and hides every commit behind it (fetch full history, e.g. fetch-depth: 0)';
@@ -506,14 +519,31 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
   }
   const gap = probeToolingGap(run);
   if (gap !== undefined) return { outcome: 'skip', message: `check:refute — skipped: ${gap}.` };
+  // Resolve both ends BEFORE listing the range. Only a failure HERE is a tooling gap: once both
+  // ends resolve, a failure to list the range (e.g. `rev-list` output overflowing the buffer on a
+  // PR carrying ~830k commits) must not switch the gate off.
+  const firstLine = (err: unknown): string => (err as Error).message.split('\n')[0] ?? 'unknown error';
+  try {
+    run(['rev-parse', '--verify', '--quiet', `${base}^{commit}`]);
+  } catch (err) {
+    // No usable base ref (not fetched, typo, fresh repo) — never block on a tooling gap.
+    return { outcome: 'skip', message: `check:refute — skipped: base '${base}' does not resolve (${firstLine(err)}).` };
+  }
+  try {
+    run(['rev-parse', '--verify', '--quiet', `${head}^{commit}`]);
+  } catch (err) {
+    // The default HEAD not resolving means a repo with no commits: a tooling gap. An EXPLICIT
+    // --head that does not resolve is a caller error, and under --strict it must not pass.
+    if (head === 'HEAD') return { outcome: 'skip', message: `check:refute — skipped: HEAD does not resolve (${firstLine(err)}).` };
+    return { outcome: 'violation', message: `check:refute — --head '${head}' does not resolve to a commit (${firstLine(err)}).` };
+  }
   let commits: CommitRecord[];
   try {
     commits = collectCommits(base, head, run);
   } catch (err) {
-    // No usable base ref (detached HEAD, fresh repo, unknown ref) — never block on a tooling gap.
     return {
-      outcome: 'skip',
-      message: `check:refute — skipped: could not read commits in '${base}..${head}' (${(err as Error).message.split('\n')[0]}).`,
+      outcome: 'violation',
+      message: `check:refute — could not list the commits in the resolved range '${base}..${head}', so none can be verified (${firstLine(err)}).`,
     };
   }
 
@@ -529,6 +559,17 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
     };
   }
   const unreadable = unattested.some((u) => u.readError !== undefined);
+  // The rebase target is the merge-base, not the base REF: the ref may move (another PR lands, a
+  // fetch) between this message and the reader running it, and a rebase onto the moved ref would
+  // replay the branch onto new main instead of rewording one message. --rebase-merges keeps a merge
+  // commit (which may be the one needing the trailer) instead of dropping it and replaying its conflicts.
+  let rebaseOnto = base;
+  try {
+    const mb = run(['merge-base', base, head]).trim();
+    if (/^[0-9a-f]{40,64}$/.test(mb)) rebaseOnto = mb;
+  } catch {
+    // Keep the ref; the reword still works when the ref has not moved.
+  }
   const message = [
     `check:refute — ${unattested.length} of ${financialCommits.length} commit(s) changing financial-decision source are unattested${unreadable ? ' or unreadable' : ''}:`,
     ...unattested.flatMap((u) => [
@@ -550,7 +591,7 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
     'Substitute the real run id: the literal wf_<runId> placeholder is rejected.',
     'HEAD: git commit --amend. An earlier commit, with no editor at all (POSIX shell / Git Bash):',
     `    GIT_EDITOR="git interpret-trailers --in-place --trailer 'Refute-Reviewed: wf_<runId>'" git commit --fixup=reword:<sha>`,
-    `    GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash ${base}`,
+    `    GIT_SEQUENCE_EDITOR=: git rebase -i --rebase-merges --autosquash ${rebaseOnto}${rebaseOnto === base ? '' : `    (merge-base of ${base} and ${head})`}`,
     `(checked range: ${base}..${head}, merge commits read by --remerge-diff)`,
   ].join('\n');
   return { outcome: 'violation', message };

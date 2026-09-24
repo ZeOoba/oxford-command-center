@@ -691,7 +691,7 @@ describe('check-refute-required — per-commit attestation', () => {
     expect(r.message).not.toContain('4e2be44');
     expect(r.message).toContain('git interpret-trailers --in-place');
     expect(r.message).toContain('git commit --fixup=reword:<sha>');
-    expect(r.message).toContain('GIT_SEQUENCE_EDITOR=: git rebase -i --autosquash origin/main');
+    expect(r.message).toContain('GIT_SEQUENCE_EDITOR=: git rebase -i --rebase-merges --autosquash origin/main');
   });
 
   it('evaluate fails OPEN on a git failure and on an empty base', () => {
@@ -708,17 +708,86 @@ describe('check-refute-required — per-commit attestation', () => {
     expect(evaluate('  ', never)).toMatchObject({ outcome: 'skip' });
   });
 
-  it('evaluate skips (fails open) on a shallow clone and on git < 2.36, before reading any commit', () => {
+  it('evaluate skips (fails open) on a shallow clone and on git < 2.40, before reading any commit', () => {
     const probe = (version: string, shallow: string) => (args: string[]): string => {
       if (args[0] === 'version') return version;
       if (args[0] === 'rev-parse') return shallow;
       throw new Error('commits must not be read');
     };
-    expect(evaluate('origin/main', probe('git version 2.35.1\n', 'false\n'))).toMatchObject({ outcome: 'skip' });
-    expect(evaluate('origin/main', probe('git version 2.35.1\n', 'false\n')).message).toContain('2.36');
+    expect(evaluate('origin/main', probe('git version 2.39.5\n', 'false\n'))).toMatchObject({ outcome: 'skip' });
+    expect(evaluate('origin/main', probe('git version 2.39.5\n', 'false\n')).message).toContain('2.40');
     expect(evaluate('origin/main', probe('git version 2.55.0.windows.2\n', 'true\n')).message).toContain('shallow clone');
-    expect(probeToolingGap(probe('git version 2.36.0\n', 'false\n'))).toBeUndefined();
+    expect(probeToolingGap(probe('git version 2.40.0\n', 'false\n'))).toBeUndefined();
+    expect(GIT_GLOBAL_ARGS.some((a) => a.startsWith('--attr-source='))).toBe(true);
     expect(probeToolingGap(probe('git version 3.0.0\n', 'false\n'))).toBeUndefined();
+  });
+
+  it('evaluate: an unresolvable BASE skips; an unresolvable explicit --head, or a rev-list failure after the range resolved, is a violation', () => {
+    const runner =
+      (opts: { base?: boolean; head?: boolean; revList?: boolean }) =>
+      (args: string[]): string => {
+        if (args[0] === 'version') return 'git version 2.55.0\n';
+        if (args[0] === 'rev-parse' && args[1] === '--is-shallow-repository') return 'false\n';
+        if (args[0] === 'rev-parse') {
+          const ref = args[args.length - 1] ?? '';
+          const ok = ref.startsWith('origin/main') ? opts.base !== false : opts.head !== false;
+          if (!ok) throw new Error(`fatal: Needed a single revision (${ref})`);
+          return 'f'.repeat(40) + '\n';
+        }
+        if (args.includes('rev-list')) {
+          // e.g. 830k commits: `rev-list --parents` output overflows maxBuffer.
+          if (opts.revList === false) throw new Error('spawnSync git ENOBUFS');
+          return '';
+        }
+        throw new Error(`unexpected ${args.join(' ')}`);
+      };
+    expect(evaluate('origin/main', runner({ base: false }))).toMatchObject({ outcome: 'skip' });
+    const badHead = evaluate('origin/main', runner({ head: false }), '588fa8l');
+    expect(badHead.outcome).toBe('violation');
+    expect(badHead.message).toContain('588fa8l');
+    // The default HEAD not resolving (a repo with no commits) is a tooling gap, not a violation.
+    expect(evaluate('origin/main', runner({ head: false }))).toMatchObject({ outcome: 'skip' });
+    const overflow = evaluate('origin/main', runner({ revList: false }));
+    expect(overflow.outcome).toBe('violation');
+    expect(overflow.message).toContain('ENOBUFS');
+    expect(evaluate('origin/main', runner({}))).toMatchObject({ outcome: 'ok' });
+  });
+
+  // A runner that answers every probe and range call, so an assertion cannot pass because some
+  // unrelated call threw (the earlier empty-base test used a throw-on-everything runner, which
+  // made probeToolingGap return "git unusable" -> skip even with the guard deleted).
+  const healthy =
+    (commits: CommitRecord[], fail: Record<string, string> = {}) =>
+    (args: string[]): string => {
+      if (args[0] === 'version') return 'git version 2.55.0\n';
+      if (args[0] === 'rev-parse' && args[1] === '--is-shallow-repository') return 'false\n';
+      if (args[0] === 'rev-parse') return 'f'.repeat(40) + '\n';
+      if (args[0] === 'merge-base') return 'e'.repeat(40) + '\n';
+      if (args.includes('rev-list')) return commits.map((c) => `${c.sha} p0\n`).join('');
+      const sha = args[args.length - 1] ?? '';
+      if (fail[sha] !== undefined) throw new Error(fail[sha]);
+      const c = commits.find((x) => x.sha === sha);
+      if (!c) throw new Error(`unexpected ${args.join(' ')}`);
+      return showOutput(c);
+    };
+
+  it('evaluate: an empty base skips on the guard itself, not on a probe failure', () => {
+    const fin: CommitRecord = { sha: 'f1n', message: 'fin, no trailer\n', files: ['src/analytics/a.ts'] };
+    for (const empty of ['', '  ']) {
+      const r = evaluate(empty, healthy([fin]));
+      expect(r.outcome).toBe('skip');
+      expect(r.message).toContain('empty base ref');
+    }
+  });
+
+  it('evaluate: an unreadable commit is a violation even when nothing else in the range is financial', () => {
+    const docs: CommitRecord = { sha: 'd0c5', message: 'docs\n', files: ['README.md'] };
+    const big: CommitRecord = { sha: 'b1g0', message: '', files: [] };
+    const r = evaluate('origin/main', healthy([docs, big], { b1g0: 'spawnSync git ENOBUFS' }));
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain('b1g0 (could not be read)');
+    // Control: the same docs-only range without the unreadable commit is OK.
+    expect(evaluate('origin/main', healthy([docs]))).toMatchObject({ outcome: 'ok' });
   });
 
   it('evaluate: OK when nothing financial changed', () => {
@@ -867,6 +936,85 @@ describe('check-refute-required — integration against real git', () => {
     expect(r.message).toContain('shallow clone');
     // The full repo, same range: the unattested commit is found.
     expect(evaluate(b0, run, tip).message).toContain(`${fin.slice(0, 7)} fin, no trailer`);
+  }, 60_000);
+
+  it('the printed reword recipe rebases onto the merge-base sha, not a base ref that may have moved', () => {
+    const movedMain = mk([b0], { 'README.md': 'moved\n' }, 'main moved on');
+    const child = mk([b0], { 'src/analytics/a.ts': lines(12, [9, 'x']) }, 'fin, no trailer');
+    const r = evaluate(movedMain, run, child);
+    expect(r.outcome).toBe('violation');
+    expect(r.message).toContain(`git rebase -i --rebase-merges --autosquash ${b0}`);
+    expect(r.message).not.toContain(`--autosquash ${movedMain}`);
+  }, 60_000);
+
+  it('a committed .gitattributes merge=union cannot make a conflict in financial source look clean', () => {
+    // The attack: attributes in the checked-out tree (the PR controls it in CI) make git's own
+    // re-merge resolve a real conflict, so --remerge-diff would list nothing.
+    const aSide = mk([b0], { 'src/analytics/a.ts': lines(12, [4, 'LTV_MAX = 0.41']) }, 'a\n\nRefute-Reviewed: wf_a');
+    const bSide = mk([b0], { 'src/analytics/a.ts': lines(12, [4, 'LTV_AGG = 0.40']), '.gitattributes': 'src/** merge=union\n' }, 'b\n\nRefute-Reviewed: wf_b');
+    const attrs = join(dir, '.gitattributes');
+    writeFileSync(attrs, 'src/** merge=union\n');
+    try {
+      // Parent order must match the merge-tree order, or the union's line order differs and the
+      // re-merge lists the path for the wrong reason.
+      const unionTree = g(['merge-tree', '--write-tree', bSide, aSide]).trim().split('\n')[0] ?? '';
+      const merge = mk([bSide, aSide], {}, 'Merge a into b', unionTree);
+      const r = evaluate(bSide, run, merge);
+      expect(r.outcome).toBe('violation');
+      expect(r.message).toContain(`${merge.slice(0, 7)} Merge a into b`);
+      expect(r.message).toContain('src/analytics/a.ts');
+    } finally {
+      rmSync(attrs, { force: true });
+    }
+  }, 60_000);
+
+  it('a root commit in the range is read even under log.showRoot=false (--root)', () => {
+    g(['config', 'log.showRoot', 'false']);
+    try {
+      const orphan = mk([], { 'src/analytics/z.ts': 'z\n' }, 'orphan root, no trailer');
+      const r = evaluate(b0, run, orphan);
+      expect(r.outcome).toBe('violation');
+      expect(r.message).toContain('src/analytics/z.ts');
+    } finally {
+      g(['config', '--unset', 'log.showRoot']);
+    }
+  }, 60_000);
+
+  it('clean rename catch-up merges stay clean under a local merge.renames=false / directoryRenames=false', () => {
+    // main renames a.ts -> b.ts; the branch edits a.ts. The recorded merge (built with git's
+    // defaults, as GitHub and a default-config author would) carries the edit into b.ts.
+    const mainR = mk([b0], { 'src/analytics/a.ts': null, 'src/analytics/b.ts': lines(12) }, 'main: rename\n\nRefute-Reviewed: wf_m');
+    const edit = mk([b0], { 'src/analytics/a.ts': lines(12, [1, 'edited']) }, 'edit\n\nRefute-Reviewed: wf_e');
+    const t1 = g(['merge-tree', '--write-tree', edit, mainR]).trim().split('\n')[0] ?? '';
+    const catchup = mk([edit, mainR], {}, 'Merge main into branch', t1);
+    // main moves a directory; the branch adds a file inside it.
+    const base2 = mk([b0], { 'src/analytics/d/x.ts': lines(8) }, 'dir\n\nRefute-Reviewed: wf_d');
+    const mainD = mk([base2], { 'src/analytics/d/x.ts': null, 'src/analytics/e/x.ts': lines(8) }, 'main: move dir\n\nRefute-Reviewed: wf_md');
+    const addY = mk([base2], { 'src/analytics/d/y.ts': 'y\n' }, 'add y\n\nRefute-Reviewed: wf_y');
+    // Git's default merge.directoryRenames=conflict reports a file-location conflict here (exit 1)
+    // but still writes the moved result tree on stdout's first line.
+    let t2 = '';
+    try {
+      t2 = g(['merge-tree', '--write-tree', addY, mainD]);
+    } catch (err) {
+      t2 = String((err as { stdout?: string }).stdout ?? '');
+    }
+    t2 = t2.trim().split('\n')[0] ?? '';
+    expect(g(['ls-tree', '-r', '--name-only', t2])).toContain('src/analytics/e/y.ts');
+    const catchupD = mk([addY, mainD], {}, 'Merge main (dir move) into branch', t2);
+    // Default config: both merges are clean.
+    expect(evaluate(mainR, run, catchup)).toMatchObject({ outcome: 'ok' });
+    expect(evaluate(mainD, run, catchupD)).toMatchObject({ outcome: 'ok' });
+    // A local config that would re-merge differently must not change the answer (pinned via -c).
+    g(['config', 'merge.renames', 'false']);
+    g(['config', 'merge.directoryRenames', 'false']);
+    try {
+      expect(evaluate(mainR, run, catchup)).toMatchObject({ outcome: 'ok' });
+      expect(evaluate(mainD, run, catchupD)).toMatchObject({ outcome: 'ok' });
+    } finally {
+      g(['config', '--unset', 'merge.renames']);
+      g(['config', '--unset', 'merge.directoryRenames']);
+    }
   }, 60_000);
 
   it('a gitlink bump is visible even when .gitmodules says ignore = all', () => {
