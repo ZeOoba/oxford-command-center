@@ -14,3 +14,12 @@ describe('basis labels', () => {
     expect(readFileSync('src/modules/debt/DebtModule.tsx', 'utf8')).toContain('loan schedule');
   });
 });
+
+describe('basis labels lead (KpiStat truncates from the end)', () => {
+  it('each basis clause is the start of its sublabel', () => {
+    const w = readFileSync('src/modules/overview/widgets.tsx', 'utf8');
+    expect(w).toContain('sublabel={`Oxford share · workbook · ');
+    expect(w).toContain('sublabel={`property loan balances · ');
+    expect(readFileSync('src/modules/debt/DebtModule.tsx', 'utf8')).toContain('sublabel={`loan schedule · ');
+  });
+});
