@@ -113,7 +113,7 @@ describe('buildPremiumHistory', () => {
     ]);
   });
 
-  it('same-term reissue with an equal capture date falls through to the higher id (engine tiebreak); a stale-captured row never wins on a later effective_date alone', () => {
+  it('same-term reissue with an equal capture date falls through to the higher id (engine tiebreak)', () => {
     const r = buildPremiumHistory([
       row('ins-9620state350-gl', 'GL', '2025-10-18', 2628, { id: 20, expiration_date: '2026-10-18', source_date: '2026-01-01' }),
       row('ins-9620state350-gl', 'GL', '2025-10-18', 2576, { id: 21, expiration_date: '2026-10-18', source_date: '2026-01-01' }),
