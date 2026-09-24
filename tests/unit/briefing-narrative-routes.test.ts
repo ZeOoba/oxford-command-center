@@ -13,14 +13,33 @@
 //  • GET /briefing/property/:slug.pdf?narrative=1 → 200 application/pdf (still a valid PDF
 //    even when no key → narrative null → plain PDF, content-identical to no-narrative path).
 //  • GET /briefing/manager/:slug.pdf?narrative=1 → same.
-//  • The ?narrative=1 PDF is CONTENT-identical (extracted text) to the no-param PDF when no key is
-//    set (no-narrative branch is exercised → renderBriefingPdf(model, null) === renderBriefingPdf(model)).
-//    Raw bytes are NOT compared — pdfkit embeds a non-deterministic /ID (see briefing.test.ts:243).
+//  • The ?narrative=1 PDF is content-identical to the no-param PDF when no key is set: the route
+//    hands the renderer the SAME arguments (model, narrative null) on both paths, so the renderer
+//    cannot produce different output.
+//
+// The renderer is stubbed here (2026-09-24). This file tests the ROUTE: status, headers, 404/503,
+// and how ?narrative=1 is threaded into renderBriefingPdf. It does not test what the renderer
+// draws. That is covered with real renders by briefing-pdf-narrative.test.ts (null / undefined /
+// no-arg give identical text; a narrative adds its section) and by briefing.test.ts's routes
+// block (the real .pdf route streams a real %PDF- body). Each real render was the whole cost of
+// these tests: ~150-300ms CPU, but 30-60s wall inside a loaded `npm run gate`. Under the
+// machine's CPU-starvation bursts a render's wall time ran 40-300x its CPU time. One real render
+// took this file's "manager .pdf returns 200" test to 60114ms under a 32-burner load reproduction,
+// and the gate on 2026-09-24 failed the same way. Recording the renderer's arguments is also a
+// sharper check of "content-identical" than comparing extracted text.
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { pdfToText } from '../../server/lib/pdf-text';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+
+vi.mock('../../server/briefing/pdf', () => ({
+  // Deterministic stand-in: a %PDF- header plus the arguments it was given, so a test can check
+  // that the route streamed the renderer's bytes verbatim.
+  renderBriefingPdf: vi.fn(async (model: unknown, narrative?: unknown) =>
+    Buffer.from(`%PDF-stub ${JSON.stringify({ model, narrative: narrative === undefined ? '<undefined>' : narrative })}`, 'latin1'),
+  ),
+}));
+import { renderBriefingPdf } from '../../server/briefing/pdf';
 import { warehouseRoutes } from '../../server/warehouse/api';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
@@ -31,7 +50,7 @@ import {
   NarrativeManagerBriefingModel,
 } from '../../src/contracts/briefing';
 
-const pdfParse = pdfToText;
+const renderSpy = vi.mocked(renderBriefingPdf);
 
 /** Run `fn` with ANTHROPIC_API_KEY guaranteed unset, then restore it — so the no-key
  *  (null-narrative) branch is exercised deterministically and no real API call is ever made. */
@@ -94,6 +113,7 @@ function seededDb(): WarehouseDb {
 // "no key → degraded" path is always exercised deterministically.
 let priorKey: string | undefined;
 beforeEach(() => {
+  renderSpy.mockClear();
   priorKey = process.env.ANTHROPIC_API_KEY;
   delete process.env.ANTHROPIC_API_KEY;
 });
@@ -201,7 +221,11 @@ describe('GET /briefing/property/:slug.pdf?narrative=1', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('application/pdf');
     const buf = Buffer.from(await res.arrayBuffer());
+    // The route streams exactly what the renderer returned, and the renderer got a null narrative.
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+    expect(buf.equals(await renderSpy.mock.results[0]!.value)).toBe(true);
     expect(buf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+    expect(renderSpy.mock.calls[0]![1]).toBeNull();
   });
 
   it('without ?narrative=1 is still unaffected (no-param path unchanged)', async () => {
@@ -210,6 +234,8 @@ describe('GET /briefing/property/:slug.pdf?narrative=1', () => {
     const res = await app.request(`/briefing/property/${KRG_PROPS[0]!}.pdf`);
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('application/pdf');
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+    expect(renderSpy.mock.calls[0]![1]).toBeNull();
   });
 
   it('?narrative=1 with no key yields content-identical PDF to no-param (null narrative → same render)', async () => {
@@ -218,9 +244,12 @@ describe('GET /briefing/property/:slug.pdf?narrative=1', () => {
       const app = warehouseRoutes(() => db);
       const plain = Buffer.from(await (await app.request(`/briefing/property/${KRG_PROPS[0]!}.pdf`)).arrayBuffer());
       const withParam = Buffer.from(await (await app.request(`/briefing/property/${KRG_PROPS[0]!}.pdf?narrative=1`)).arrayBuffer());
-      const plainText = (await pdfParse(plain)).text;
-      const withParamText = (await pdfParse(withParam)).text;
-      expect(plainText).toBe(withParamText);
+      // Same renderer arguments on both paths (model + a null narrative), hence the same PDF.
+      expect(renderSpy).toHaveBeenCalledTimes(2);
+      const [plainArgs, withParamArgs] = renderSpy.mock.calls;
+      expect(plainArgs![1]).toBeNull();
+      expect(withParamArgs).toEqual(plainArgs);
+      expect(withParam.equals(plain)).toBe(true);
     });
   });
 });
@@ -233,7 +262,10 @@ describe('GET /briefing/manager/:slug.pdf?narrative=1', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('application/pdf');
     const buf = Buffer.from(await res.arrayBuffer());
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+    expect(buf.equals(await renderSpy.mock.results[0]!.value)).toBe(true);
     expect(buf.subarray(0, 5).toString('latin1')).toBe('%PDF-');
+    expect(renderSpy.mock.calls[0]![1]).toBeNull();
   });
 
   it('?narrative=1 with no key yields content-identical PDF to no-param', async () => {
@@ -242,9 +274,12 @@ describe('GET /briefing/manager/:slug.pdf?narrative=1', () => {
       const app = warehouseRoutes(() => db);
       const plain = Buffer.from(await (await app.request(`/briefing/manager/${KRG_SLUG}.pdf`)).arrayBuffer());
       const withParam = Buffer.from(await (await app.request(`/briefing/manager/${KRG_SLUG}.pdf?narrative=1`)).arrayBuffer());
-      const plainText = (await pdfParse(plain)).text;
-      const withParamText = (await pdfParse(withParam)).text;
-      expect(plainText).toBe(withParamText);
+      // Same renderer arguments on both paths (model + a null narrative), hence the same PDF.
+      expect(renderSpy).toHaveBeenCalledTimes(2);
+      const [plainArgs, withParamArgs] = renderSpy.mock.calls;
+      expect(plainArgs![1]).toBeNull();
+      expect(withParamArgs).toEqual(plainArgs);
+      expect(withParam.equals(plain)).toBe(true);
     });
   });
 });
