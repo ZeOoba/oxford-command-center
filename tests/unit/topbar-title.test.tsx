@@ -23,6 +23,10 @@ describe('TopBar title', () => {
   it('the control cluster compacts below 2xl to leave the title its width', () => {
     expect(src).toContain('<span className="hidden 2xl:inline">Search…</span>');
     expect(src).toContain('<div className="flex items-center gap-2 2xl:gap-2.5">');
-    expect(readFileSync('src/primitives/StatusPill.tsx', 'utf8')).toContain('className="hidden 2xl:inline"');
+    // I-3: the live detail compacts to screen-reader-only below 2xl (never display:none — an
+    // actionable stale/static/offline detail stays inline at every width; see status-pill.test.tsx).
+    const pill = readFileSync('src/primitives/StatusPill.tsx', 'utf8');
+    expect(pill).toContain('sr-only 2xl:not-sr-only 2xl:inline');
+    expect(pill).not.toContain('className="hidden 2xl:inline"');
   });
 });
