@@ -26,9 +26,9 @@ jobs:
       - run: npm ci
       - run: npm run gate:ci
 
-  # Doctrine gate (architecture/coding-standards.md): a change to financial-decision source must
-  # carry a `Refute-Reviewed:`/`Refute-Skip:` commit trailer attesting the refute-financial-change
-  # adversarial pass ran. Separate job → shows as its own check; make it a REQUIRED check via branch
+  # Doctrine gate (architecture/coding-standards.md): every commit that changes financial-decision
+  # source must carry its OWN `Refute-Reviewed:`/`Refute-Skip:` trailer attesting the
+  # refute-financial-change adversarial pass ran (per commit, not per range — 2026-09-23). Separate job → shows as its own check; make it a REQUIRED check via branch
   # protection to hard-enforce (non-required by default). PR-only — it needs a base ref to diff.
   refute-required:
     if: github.event_name == 'pull_request'
@@ -43,4 +43,7 @@ jobs:
           cache: 'npm'
       - run: npm ci
       - run: git fetch --no-tags origin "${{ github.base_ref }}"
-      - run: npm run check:refute -- --strict --base="origin/${{ github.base_ref }}"
+      # --head = the PR head sha, not the synthetic refs/pull/N/merge HEAD: attestation is per commit,
+      # and that merge is built server-side by GitHub, so a local re-merge that disagrees with it would
+      # flag a commit nobody can reword.
+      - run: npm run check:refute -- --strict --base="origin/${{ github.base_ref }}" --head="${{ github.event.pull_request.head.sha }}"
