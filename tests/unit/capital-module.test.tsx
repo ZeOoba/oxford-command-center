@@ -403,7 +403,7 @@ describe('CapitalModule — Allocation / Pipeline tab structure', () => {
     expect(screen.getByText('Market Cap-Rate Positioning')).toBeTruthy();
     expect(screen.getByText('Export IC Memo')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Sync capital decisions to Notion' })).toBeTruthy();
-    expect(screen.getByText(/Implied cap = Spine-A NOI/)).toBeTruthy();
+    expect(screen.getByText(/Implied cap = workbook NOI/)).toBeTruthy();
     expect(screen.queryByText('Buy Pipeline')).toBeNull();
     expect(screen.queryByText('500 Commerce Dr')).toBeNull();
   });

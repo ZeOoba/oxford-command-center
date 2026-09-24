@@ -5,7 +5,7 @@ import { useSnapshot, SNAPSHOT_KEY } from '@/data/queries';
 import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { useUi } from '@/brain/ui-context';
 import { advanceRenewalStage } from '@/data/actions';
-import { fmtUsdCompact, fmtDate } from '@analytics/index';
+import { fmtUsdCompact, fmtDate, fmtTenure } from '@analytics/index';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { renewalBoard, type RenewalCard } from '@/brain/renewals';
 import { RENEWAL_STAGES, nextRenewalStage, type RenewalStage } from '@contracts/index';
@@ -116,7 +116,7 @@ function RenewalCardView({
           <Badge tone={likelihoodTone(signal.likelihood)}>{signal.likelihood}</Badge>
           {signal.tenureMonths !== null && (
             <span className="num text-[10px]" style={{ color: 'var(--text-tertiary)' }}>
-              {signal.tenureMonths} mo tenure
+              {fmtTenure(signal.tenureMonths)}
             </span>
           )}
         </div>

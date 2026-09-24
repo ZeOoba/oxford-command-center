@@ -1,5 +1,6 @@
 import type { DataQualityFlag, Task, TaskStatus } from '../../src/contracts/index';
 import { getGraphToken } from './graph-auth';
+import { htmlToText } from './html-to-text';
 
 /**
  * Microsoft 365 To-Do → Tasks (Phase 6). Pulls open To-Do tasks via Microsoft Graph and prepends
@@ -30,6 +31,11 @@ interface GraphTask {
 
 const slugId = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
 
+/** Outlook's "Flagged Emails" To-Do list mirrors flagged mail (incl. marketing) — not real tasks. */
+export function isTaskList(list: { wellknownListName?: string }): boolean {
+  return list.wellknownListName !== 'flaggedEmails';
+}
+
 /** Map a Graph To-Do task to our Task contract. Pure (exported for tests). */
 export function mapGraphTask(t: GraphTask, listName: string): Task | null {
   const label = (t.title ?? '').trim();
@@ -37,7 +43,7 @@ export function mapGraphTask(t: GraphTask, listName: string): Task | null {
   const due = t.dueDateTime?.dateTime ?? null;
   const overdue = !!due && new Date(due).getTime() < Date.now();
   const status: TaskStatus = t.status === 'completed' ? 'done' : overdue ? 'overdue' : 'pending';
-  const note = (t.body?.content ?? '').replace(/<[^>]+>/g, '').trim() || null;
+  const note = htmlToText(t.body?.content ?? '') || null;
   return {
     id: `m365-${slugId(t.id ?? label)}`,
     label,
@@ -144,7 +150,7 @@ export async function loadM365Tasks(): Promise<M365TasksLoad> {
   }
   try {
     const base = userBase();
-    const lists = await graphGet<{ value?: Array<{ id?: string; displayName?: string }> }>(`${base}/todo/lists?$top=10`, token);
+    const lists = await graphGet<{ value?: Array<{ id?: string; displayName?: string; wellknownListName?: string }> }>(`${base}/todo/lists?$top=10`, token);
     const listValues = (lists.value ?? []).slice(0, 10);
     if (!listValues.length) {
       // A configured token seeing ZERO To-Do lists is anomalous, not an empty inbox: every mailbox
@@ -156,6 +162,7 @@ export async function loadM365Tasks(): Promise<M365TasksLoad> {
     const out: Task[] = [];
     for (const list of listValues) {
       if (!list.id) continue;
+      if (!isTaskList(list)) continue;
       const tasks = await graphGet<{ value?: GraphTask[] }>(
         `${base}/todo/lists/${list.id}/tasks?$top=50&$filter=${encodeURIComponent("status ne 'completed'")}`,
         token,

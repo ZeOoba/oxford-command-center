@@ -276,7 +276,7 @@ function buildOpportunity(
   if (a.assessed_value === null) missingParts.push('assessed value');
   if (a.assessment_ratio === null) missingParts.push('assessment ratio');
   if (a.millage_rate === null) missingParts.push('millage rate');
-  if (fullAssetValue === null) missingParts.push('Spine-A indicated value');
+  if (fullAssetValue === null) missingParts.push('workbook-basis indicated value');
   const missingNote =
     missingParts.length > 0
       ? ` Missing: ${missingParts.join(', ')} — the affected $ figures are indeterminate, not guessed.`
@@ -295,8 +295,8 @@ function buildOpportunity(
 
   const basisNote =
     oxfordOwnPct !== null
-      ? `Full-asset assessment basis (assessed value ÷ assessment ratio vs. Spine-A 100%-basis indicated value); Oxford share = full-asset savings × ${fmtPct(oxfordOwnPct)} ownership.`
-      : 'Full-asset assessment basis (assessed value ÷ assessment ratio vs. Spine-A 100%-basis indicated value); Oxford ownership % unavailable — Oxford-share savings indeterminate.';
+      ? `Full-asset assessment basis (assessed value ÷ assessment ratio vs. workbook 100%-basis indicated value); Oxford share = full-asset savings × ${fmtPct(oxfordOwnPct)} ownership.`
+      : 'Full-asset assessment basis (assessed value ÷ assessment ratio vs. workbook 100%-basis indicated value); Oxford ownership % unavailable — Oxford-share savings indeterminate.';
 
   return TaxOpportunity.parse({
     propertyId: a.property_id,

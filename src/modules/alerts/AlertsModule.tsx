@@ -4,6 +4,7 @@ import { useUi, type UiState } from '../../brain/ui-context';
 import { insightToDraft } from '../../brain/draft';
 import type { InsightSeverity } from '../../analytics/types';
 import { TierBoard, type Tier, type TierItem, type TierItemAction } from '../../primitives/TierBoard';
+import { spineLabel } from '../../lib/spine-label';
 
 const SEV_COLOR: Record<InsightSeverity, string> = {
   critical: 'var(--text-neg)',
@@ -60,7 +61,7 @@ function toTierItem(item: AlertViewItem, rank: number, action: AlertAction, ui: 
     title: insight.title,
     detail: insight.detail,
     actions,
-    chips: [insight.spine === 'A' ? 'Spine A' : 'Spine B'],
+    chips: [spineLabel(insight.spine)],
     muted: item.read,
   };
 }

@@ -190,25 +190,25 @@ describe('ResultsBannerWidget', () => {
     renderWidget('results-banner');
 
     // Per-spine labels present (never a single blended figure).
-    expect(screen.getAllByText('Spine A').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Spine B/cross').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Workbook basis').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Ledger & combined basis').length).toBeGreaterThan(0);
 
-    // Risk Impact (critical+warning): expected Spine A = 80,000 + 5,000 = 85,000; Spine B/cross = 20,000.
+    // Risk Impact (critical+warning): expected workbook basis = 80,000 + 5,000 = 85,000; ledger & combined basis = 20,000.
     expect(expected.riskImpactBySpine).toEqual([
-      { label: 'Spine A', totalUsd: 85_000 },
-      { label: 'Spine B/cross', totalUsd: 20_000 },
+      { label: 'Workbook basis', totalUsd: 85_000 },
+      { label: 'Ledger & combined basis', totalUsd: 20_000 },
     ]);
     // Monitor Impact (info-only): only c-info-1, materialityUsd null -> 0 on both spines.
     expect(expected.monitorImpactBySpine).toEqual([
-      { label: 'Spine A', totalUsd: 0 },
-      { label: 'Spine B/cross', totalUsd: 0 },
+      { label: 'Workbook basis', totalUsd: 0 },
+      { label: 'Ledger & combined basis', totalUsd: 0 },
     ]);
     expect(expected.count).toBe(4);
 
     // The rendered banner must show exactly these independently-computed numbers (formatted the
     // same way the widget formats them, fmtUsdCompact) — proving no independent recomputation.
-    expect(screen.getByText('$85K')).toBeTruthy(); // Risk Impact · Spine A
-    expect(screen.getByText('$20K')).toBeTruthy(); // Risk Impact · Spine B/cross
+    expect(screen.getByText('$85K')).toBeTruthy(); // Risk Impact · workbook basis
+    expect(screen.getByText('$20K')).toBeTruthy(); // Risk Impact · ledger & combined basis
     expect(screen.getAllByText('$0').length).toBeGreaterThanOrEqual(2); // Monitor Impact · both spines
 
     // Plain count, never combined into the spine totals.
@@ -245,8 +245,8 @@ describe('PriorityActionsWidget', () => {
     expect(screen.getByText('#4')).toBeTruthy();
 
     // Per-spine chip present per item (never a combined-spine chip).
-    expect(screen.getAllByText('Spine A').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('Spine B').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Workbook').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Ledger').length).toBeGreaterThan(0);
   });
 
   it('caps at the configured top-N limit (4 candidates seeded, all within the 6-item cap, all render)', () => {

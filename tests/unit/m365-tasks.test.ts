@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Task } from '../../src/contracts/index';
-import { mapGraphTask, loadM365Tasks } from '../../server/sources/m365-tasks';
+import { mapGraphTask, loadM365Tasks, isTaskList } from '../../server/sources/m365-tasks';
 import { _resetGraphTokenCache } from '../../server/sources/graph-auth';
 
 describe('m365-tasks — Graph To-Do mapping', () => {
@@ -39,5 +39,11 @@ describe('m365-tasks — Graph To-Do mapping', () => {
     } finally {
       for (const k of keys) if (prev[k] !== undefined) process.env[k] = prev[k];
     }
+  });
+
+  it('skips Outlook’s Flagged Emails list (marketing blasts surfaced as tasks)', () => {
+    expect(isTaskList({ wellknownListName: 'flaggedEmails' })).toBe(false);
+    expect(isTaskList({ wellknownListName: 'defaultList' })).toBe(true);
+    expect(isTaskList({})).toBe(true);
   });
 });

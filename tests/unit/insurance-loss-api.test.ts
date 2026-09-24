@@ -216,3 +216,43 @@ describe('GET /api/warehouse/insurance/loss', () => {
     expect(await res.json()).toEqual({ error: 'insurance loss analysis failed' });
   });
 });
+
+// ── Policy-line keys: display name resolved, propertyId stays the raw key (2026-09-23 review I-1) ──
+//
+// buildInsuranceAnalysis resolves an 'ins-<stem>-<line>' policy key to a property_master DISPLAY
+// name only. `propertyId` deliberately stays the raw policy-line key: buildInsuranceLossReport
+// attaches loss events (keyed by property_master id) to policies by `policy.propertyId`, and at
+// 9620 Raytown two concurrently in-force property policies share one master id — resolving the
+// id there collapses them and makes the self-insure "primary" pick order-dependent. Loss
+// attachment by resolved id is DEFERRED to a follow-up that is policy-term/policy_ref aware. This
+// test pins display-only so the loss engine sees byte-identical keys to the pre-resolution wiring.
+describe('GET /api/warehouse/insurance/loss — policy-line keys resolve the name only', () => {
+  it('a policy keyed ins-9620state350-prop-hfd shows the master name but keeps the raw propertyId', async () => {
+    const db = freshDb();
+    // property_master row exists ONLY under the resolved id — never under the raw policy key.
+    seedProperty(db, '9620-e-state-route-350-raytown-mo', '9620 E State Route 350, Raytown MO');
+    insertPolicy(db, {
+      propertyId: 'ins-9620state350-prop-hfd',
+      policyType: 'Property Package',
+      premiumAnnual: 5000,
+      coverageTiv: 1_000_000,
+      deductible: 25_000,
+      coverageLimit: 2_000_000,
+    });
+
+    const res = await makeApp(db).request('/');
+    expect(res.status).toBe(200);
+    const parsed = InsuranceLossReport.safeParse(await res.json());
+    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+    if (!parsed.success) return;
+    const report = parsed.data;
+
+    expect(report.deductibleReviews).toHaveLength(1);
+    const review = report.deductibleReviews[0]!;
+    expect(review.property).toBe('9620 E State Route 350, Raytown MO');
+    expect(review.propertyId).toBe('ins-9620state350-prop-hfd');
+
+    // Still never a calibration write from this route.
+    expect(calibrationVerdictCount(db)).toBe(0);
+  });
+});

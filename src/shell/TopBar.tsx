@@ -50,20 +50,21 @@ export function TopBar({ title, asOf, onOpenSearch, onOpenNav, navOpen }: { titl
           {title}
         </h1>
         {asOf && (
-          <span className="num hidden whitespace-nowrap text-2xs uppercase lg:inline" style={{ letterSpacing: '0.12em', color: 'var(--text-tertiary)' }}>
+          <span className="num hidden min-w-0 shrink-[100] truncate text-2xs uppercase min-[1400px]:inline" style={{ letterSpacing: '0.12em', color: 'var(--text-tertiary)' }}>
             As of {fmtDate(asOf)}
           </span>
         )}
       </div>
 
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-center gap-2 2xl:gap-2.5">
         <button
           onClick={onOpenSearch}
+          aria-label="Search"
           className="hidden items-center gap-2 rounded-[var(--radius-sm)] px-2.5 py-1.5 text-2xs md:flex"
           style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)', color: 'var(--text-tertiary)' }}
         >
           <Search size={13} />
-          <span>Search…</span>
+          <span className="hidden 2xl:inline">Search…</span>
           <kbd className="num rounded px-1" style={{ background: 'var(--surface-base)', border: '1px solid var(--border-subtle)' }}>⌘K</kbd>
         </button>
 

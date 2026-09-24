@@ -127,7 +127,7 @@ export function AiPanel() {
                   <Sparkles size={22} />
                 </div>
                 <p className="mb-1 text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Ask about your portfolio</p>
-                <p className="mb-5 text-xs" style={{ color: 'var(--text-tertiary)' }}>Queries the live spine. Answers cite clickable sources.</p>
+                <p className="mb-5 text-xs" style={{ color: 'var(--text-tertiary)' }}>Queries the live workbook and ledger. Answers cite clickable sources.</p>
                 <div className="flex flex-col gap-2">
                   {SUGGESTIONS.map((s) => (
                     <button key={s} onClick={() => void send(s)} className="rounded-[var(--radius-sm)] px-3 py-2 text-left text-xs transition-colors" style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}>
