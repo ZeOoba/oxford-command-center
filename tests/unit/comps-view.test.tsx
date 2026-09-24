@@ -147,7 +147,7 @@ describe('CompsView — Sale & Rent Comps section', () => {
     expect(screen.getByText('Addr B')).toBeTruthy();
   });
 
-  it('falls back to the raw dealId when the deal record is missing from snapshot.deals (stale overlay entry)', () => {
+  it('falls back to a humanized dealId (never the raw slug) when the deal record is missing from snapshot.deals (stale overlay entry)', () => {
     const dealComps: Record<string, CompSet> = {
       'orphan-deal-9': makeCompSet({ saleComps: [{ address: 'Orphan Addr', market: null, sf: null, price: null, pricePerSf: null, capRate: null, date: null, source: 'src' }] }),
     };
@@ -158,7 +158,8 @@ describe('CompsView — Sale & Rent Comps section', () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getByText('orphan-deal-9')).toBeTruthy();
+    expect(screen.queryByText('orphan-deal-9')).toBeNull();
+    expect(screen.getByText('Orphan Deal 9')).toBeTruthy();
   });
 
   it('shows an honest empty state — not a blank screen — when dealComps is empty', () => {

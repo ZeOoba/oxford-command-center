@@ -19,6 +19,7 @@ import type { CapRatePercentile } from '@contracts/market-intelligence';
 import { fmtUsdCompact, fmtSf, fmtNum, fmtDate } from '@analytics/index';
 import { useSnapshot } from '@/data/queries';
 import { useCapitalAllocationReport } from './comps-hooks';
+import { compSourceCount, humanizeDealId } from './comps-display';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
@@ -86,7 +87,7 @@ function buildDealCompRows(deals: Deal[], dealComps: Record<string, CompSet>): D
   const nameById = new Map(deals.map((d) => [d.id, d.name]));
   return Object.entries(dealComps).map(([dealId, compSet]) => ({
     dealId,
-    dealName: nameById.get(dealId) ?? dealId,
+    dealName: nameById.get(dealId) ?? humanizeDealId(dealId),
     compSet,
   }));
 }
@@ -171,7 +172,7 @@ function DealComps({ row }: { row: DealCompRow }) {
         title={dealName}
         trailing={
           <div className="flex items-center gap-2">
-            <Badge tone="neutral">{compSet.sources.length} source{compSet.sources.length === 1 ? '' : 's'}</Badge>
+            <Badge tone="neutral">{compSourceCount(compSet)} source{compSourceCount(compSet) === 1 ? '' : 's'}</Badge>
             <span className="num text-2xs" style={{ color: 'var(--text-tertiary)' }}>
               Sourced {fmtDate(compSet.sourcedAt.slice(0, 10))}
             </span>
