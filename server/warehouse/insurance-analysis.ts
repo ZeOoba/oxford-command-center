@@ -220,13 +220,18 @@ type Dated<T extends CollapsibleInsuranceRow> = T & { effective_date: string };
 const hasEffectiveDate = <T extends CollapsibleInsuranceRow>(r: T): r is Dated<T> =>
   r.effective_date !== null;
 
+/** Shape (b) SAME-TERM REISSUE: identical effective_date AND expiration_date (null expiry compares
+ *  as ''). The one definition shared by sameLineage (current view) and collapseSameTermReissues
+ *  (history view). */
+function sameTerm<T extends CollapsibleInsuranceRow>(a: Dated<T>, b: Dated<T>): boolean {
+  return a.effective_date === b.effective_date && (a.expiration_date ?? '') === (b.expiration_date ?? '');
+}
+
 /** True when two dated rows are captures of the SAME policy lineage — see collapseToCurrentTerm's
  *  doc for the two real-data shapes this covers (sequential rollover, same-term reissue). */
 function sameLineage<T extends CollapsibleInsuranceRow>(a: Dated<T>, b: Dated<T>): boolean {
   if (a.policy_number !== null && a.policy_number === b.policy_number) return true;
-  if (a.effective_date === b.effective_date && (a.expiration_date ?? '') === (b.expiration_date ?? '')) {
-    return true;
-  }
+  if (sameTerm(a, b)) return true;
   // Exact adjacency only (not `<=` — see collapseToCurrentTerm's doc, "FIXED 2026-08-21"): a mere
   // non-overlap does not imply the same lineage, only a term boundary that lines up exactly does.
   if (a.expiration_date !== null && a.expiration_date === b.effective_date) return true;
@@ -290,6 +295,46 @@ export function collapseToCurrentTerm<T extends CollapsibleInsuranceRow>(rows: T
       out.push(winner);
     }
   }
+  return out;
+}
+
+/**
+ * The HISTORY-view sibling of collapseToCurrentTerm (2026-09-23 review, Task 24): collapse ONLY
+ * shape (b) same-term reissues — rows of one (property_id, normalized policy_type) group with
+ * identical effective_date + expiration_date — to their most recently captured row, via the same
+ * `sameTerm` predicate and the same `isMoreCurrent` winner rule the current view uses. Shape (a)
+ * sequential rollovers and shared-policy_number multi-year terms are deliberately NOT clustered:
+ * for a premium-history reader those prior terms ARE the history, so calling collapseToCurrentTerm
+ * there would erase it. Undated rows pass through untouched (same doctrine as the current view —
+ * they are never clustered on any signal). Output order: undated rows first, then one winner per
+ * term in first-seen group order — callers that need a total order sort afterwards.
+ *
+ * Motivating live case: 9620 State 350 GL/Property each hold two rows with eff/exp
+ * 2025-10-18/2026-10-18 and different premium/policy_number/source_date (a carrier renumbering);
+ * without this step the premium history counted both premiums in policy-year 2025.
+ */
+export function collapseSameTermReissues<T extends CollapsibleInsuranceRow>(rows: T[]): T[] {
+  const out: T[] = [];
+  // Same group key as collapseToCurrentTerm; within a group, one winner per sameTerm-equivalence
+  // class (sameTerm is an equivalence relation — equality on two fields — so a linear scan of
+  // the group's current winners is exact, no union-find needed).
+  const groups = new Map<string, Dated<T>[]>();
+  for (const r of rows) {
+    if (!hasEffectiveDate(r)) {
+      out.push(r);
+      continue;
+    }
+    const key = `${r.property_id}|${r.policy_type.trim().toLowerCase()}`;
+    const winners = groups.get(key);
+    if (!winners) {
+      groups.set(key, [r]);
+      continue;
+    }
+    const i = winners.findIndex((w) => sameTerm(w, r));
+    if (i === -1) winners.push(r);
+    else if (isMoreCurrent(r, winners[i]!)) winners[i] = r;
+  }
+  for (const winners of groups.values()) out.push(...winners);
   return out;
 }
 

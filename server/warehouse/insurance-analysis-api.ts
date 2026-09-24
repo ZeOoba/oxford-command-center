@@ -15,7 +15,7 @@
 import { Hono } from 'hono';
 import type { WarehouseDb } from './db';
 import { buildInsuranceAnalysis, logRebidVerdicts } from './insurance-analysis';
-import { buildPremiumHistory } from './insurance-history';
+import { buildPremiumHistory, type PremiumHistoryRow } from './insurance-history';
 import { InsuranceAnalysisReport, PremiumHistoryReport } from '../../src/contracts/insurance-analysis';
 
 /**
@@ -64,9 +64,12 @@ export function insuranceAnalysisApi(getDb: () => WarehouseDb): Hono {
   // ── GET /history ───────────────────────────────────────────────────────────────────────
   app.get('/history', (c) =>
     withDb((db) => {
+      // id / policy_number / expiration_date / source_date feed the engine's same-term reissue
+      // collapse inside buildPremiumHistory (CollapsibleInsuranceRow shape).
       const rows = db.prepare(
-        `SELECT property_id, policy_type, effective_date, premium_annual FROM property_insurance_policies`,
-      ).all() as Array<{ property_id: string; policy_type: string; effective_date: string | null; premium_annual: number | null }>;
+        `SELECT id, property_id, policy_number, effective_date, expiration_date, policy_type, premium_annual, source_date
+           FROM property_insurance_policies`,
+      ).all() as PremiumHistoryRow[];
       const masterNames = new Map((db.prepare('SELECT id, name FROM property_master').all() as Array<{ id: string; name: string }>).map((r) => [r.id, r.name]));
       return c.json(PremiumHistoryReport.parse(buildPremiumHistory(rows, masterNames)));
     }),
