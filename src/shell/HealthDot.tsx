@@ -1,8 +1,10 @@
 // TopBar system-health status dot (IA decongestion Phase 4a). System Health left the sidebar rail;
-// this is its surface. Reads the same sources HealthModule does (freshness from the brain state +
-// the snapshot's data-quality flags) — no new fetch — and opens /health on press.
+// this is its surface. Reads the same sources HealthModule does (freshness from the brain state,
+// the snapshot's data-quality flags, and the shared `/api/health` feeds[] query — 2026-09-23
+// review gap #2) and opens /health on press.
 import { useSnapshot } from '@/data/queries';
 import { useBrain } from '@/data/brain-context';
+import { useHealth } from '@/data/health';
 import { useUi } from '@/brain/ui-context';
 import { computeFreshness } from '@/lib/freshness';
 import { computeHealthSignal, type HealthTone } from '@/lib/healthSignal';
@@ -19,7 +21,9 @@ export function HealthDot() {
   const { data } = useSnapshot();
   const { state } = useBrain();
   const ui = useUi();
-  const signal = computeHealthSignal(computeFreshness(state, useNow()), data?.snapshot.dataQuality ?? []);
+  const healthQuery = useHealth();
+  const feeds = healthQuery.data?.feeds ?? [];
+  const signal = computeHealthSignal(computeFreshness(state, useNow()), data?.snapshot.dataQuality ?? [], feeds);
   const name = `System health: ${signal.label} — ${signal.detail}`;
   return (
     <button

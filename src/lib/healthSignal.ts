@@ -5,11 +5,15 @@
 // the same severity semantics as HealthModule: stale/offline data or an error-severity flag is an
 // error; warn flags are a warning; a connecting feed is neutral.
 //
-// NOT included: HealthModule's `/api/health` fetch (AI key configured, daily-brief run). That is a
-// module-local fetch with no shared hook; surfacing it here would add a new request to every page
-// load, so the dot's tooltip points at the full module instead.
+// Feed fold-in (2026-09-23 review, gap #2): the `/api/health` `feeds[]` (fresh/stale/missing per
+// feed) used to surface ONLY on the System Health module, which left the nav rail in IA
+// decongestion Phase 4a — so a silently-stale feed never reached the always-visible dot. `feeds` is
+// now a third input, shared with HealthModule via the `useHealth()` query (src/data/health.ts) so
+// there is one poll, not two uncoordinated ones. A stale/missing feed floors the tone at 'warn' but
+// NEVER downgrades an existing 'error' from freshness or a data-quality error flag.
 import type { DataQualityFlag } from '@contracts/index';
 import type { Freshness } from './freshness';
+import type { FeedHealth } from '../data/health';
 
 export type HealthTone = 'ok' | 'warn' | 'error' | 'neutral';
 
@@ -21,9 +25,16 @@ export interface HealthSignal {
   detail: string;
 }
 
-export function computeHealthSignal(freshness: Freshness, flags: readonly Pick<DataQualityFlag, 'severity'>[]): HealthSignal {
+export function computeHealthSignal(
+  freshness: Freshness,
+  flags: readonly Pick<DataQualityFlag, 'severity'>[],
+  feeds: readonly Pick<FeedHealth, 'status'>[] = [],
+): HealthSignal {
   const errors = flags.filter((f) => f.severity === 'error').length;
   const warns = flags.filter((f) => f.severity === 'warn').length;
+  // "missing" reads as stale for the dot — a feed that never ran and one that's merely overdue
+  // both mean the same thing at a glance: something needs a look.
+  const staleFeeds = feeds.filter((f) => f.status === 'stale' || f.status === 'missing').length;
 
   if (freshness.kind === 'offline' || freshness.kind === 'stale') {
     return { tone: 'error', label: 'Attention needed', detail: `Data ${freshness.label.toLowerCase()}${freshness.detail ? ` (${freshness.detail})` : ''}` };
@@ -33,6 +44,9 @@ export function computeHealthSignal(freshness: Freshness, flags: readonly Pick<D
   }
   if (warns > 0) {
     return { tone: 'warn', label: 'Warnings', detail: `${warns} data-quality warning${warns === 1 ? '' : 's'}` };
+  }
+  if (staleFeeds > 0) {
+    return { tone: 'warn', label: 'Warnings', detail: `${staleFeeds} feed${staleFeeds === 1 ? '' : 's'} stale` };
   }
   if (freshness.kind === 'connecting') {
     return { tone: 'neutral', label: 'Checking', detail: 'Connecting to the data source' };
