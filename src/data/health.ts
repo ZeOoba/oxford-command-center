@@ -51,8 +51,8 @@ async function fetchHealth(): Promise<HealthResponse> {
  * the new key's request is in flight, the PREVIOUS key's data keeps rendering instead of both
  * observers (HealthDot + HealthModule) seeing `undefined` — which would flash HealthDot to a false
  * "healthy" green (no feeds = no stale feeds) and drop HealthModule's Data Feeds card entirely.
- * Both observers share the same query key + queryFn, so this is still exactly one request in
- * flight per status, never two.
+ * Both observers share the same query key + queryFn, so concurrent observers never double-fetch;
+ * a newly mounted observer on already-stale data (e.g. opening System Health) still refetches once.
  */
 export function useHealth() {
   const { state } = useBrain();
@@ -61,6 +61,8 @@ export function useHealth() {
     queryFn: fetchHealth,
     staleTime: 0,
     placeholderData: keepPreviousData,
+    // staleTime 0 would otherwise refetch on every window focus; status changes + the backstop suffice.
+    refetchOnWindowFocus: false,
     refetchInterval: HEALTH_REFETCH_MS,
     retry: 1,
   });

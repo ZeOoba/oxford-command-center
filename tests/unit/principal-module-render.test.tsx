@@ -9,7 +9,7 @@
 // principalDigest/digestSummary/anomaliesToInsights pipeline) runs for real.
 //
 // Rather than hardcode expected counts, the test independently recomputes the SAME
-// buildAnalytics → principalDigest → digestSummary pipeline PrincipalModule runs internally (the
+// buildAnalytics → mergeInsightSources → principalDigest → digestSummary pipeline PrincipalModule runs internally (the
 // same "prove by construction" style as overview-banner.test.tsx's buildSummary() check) — so a
 // future change to the digest logic can't silently desync the assertions from the real behavior.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -200,7 +200,7 @@ describe('PrincipalModule render', () => {
   it('surfaces the bridged anomaly on its own labelled line, not folded into the count tiles, linking to Worklist › Alerts', () => {
     renderModule();
     const anomalyCount = expectedAnomalyCount();
-    expect(screen.getByText(`${anomalyCount} ledger anomaly flagged (tracked in Worklist › Alerts)`)).toBeTruthy();
+    expect(screen.getByText(`${anomalyCount} ledger anomaly flagged`)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: /Worklist › Alerts/ }));
     expect(openTab).toHaveBeenCalledWith('worklist', 'alerts');
   });
