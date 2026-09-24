@@ -55,6 +55,14 @@ describe('computeHealthSignal (same severity semantics as HealthModule)', () => 
     const s = computeHealthSignal(fresh('live', 'Live'), [{ severity: 'error' }], [{ status: 'missing' }]);
     expect(s.tone).toBe('error');
   });
+
+  // MINOR (review follow-up): a data-quality warning and a stale feed are independent signals —
+  // one must not silently win over the other in the detail text.
+  it('keeps BOTH reasons in the detail when data-quality warnings and stale feeds coexist', () => {
+    const s = computeHealthSignal(fresh('live', 'Live'), [{ severity: 'warn' }, { severity: 'warn' }], [{ status: 'stale' }]);
+    expect(s.tone).toBe('warn');
+    expect(s.detail).toBe('2 data-quality warnings · 1 feed stale');
+  });
 });
 
 const setActiveModule = vi.fn();

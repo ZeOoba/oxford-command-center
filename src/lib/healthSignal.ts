@@ -13,7 +13,7 @@
 // NEVER downgrades an existing 'error' from freshness or a data-quality error flag.
 import type { DataQualityFlag } from '@contracts/index';
 import type { Freshness } from './freshness';
-import type { FeedHealth } from '../data/health';
+import type { FeedHealth } from './feed-health';
 
 export type HealthTone = 'ok' | 'warn' | 'error' | 'neutral';
 
@@ -42,11 +42,14 @@ export function computeHealthSignal(
   if (errors > 0) {
     return { tone: 'error', label: 'Attention needed', detail: `${errors} data-quality error${errors === 1 ? '' : 's'}` };
   }
-  if (warns > 0) {
-    return { tone: 'warn', label: 'Warnings', detail: `${warns} data-quality warning${warns === 1 ? '' : 's'}` };
-  }
-  if (staleFeeds > 0) {
-    return { tone: 'warn', label: 'Warnings', detail: `${staleFeeds} feed${staleFeeds === 1 ? '' : 's'} stale` };
+  if (warns > 0 || staleFeeds > 0) {
+    // Both reasons can coexist (a data-quality warning and a stale feed are independent signals) —
+    // keep both in the detail rather than letting one silently win, joined in the same order the
+    // checks run: data-quality first, feed reason second.
+    const parts: string[] = [];
+    if (warns > 0) parts.push(`${warns} data-quality warning${warns === 1 ? '' : 's'}`);
+    if (staleFeeds > 0) parts.push(`${staleFeeds} feed${staleFeeds === 1 ? '' : 's'} stale`);
+    return { tone: 'warn', label: 'Warnings', detail: parts.join(' · ') };
   }
   if (freshness.kind === 'connecting') {
     return { tone: 'neutral', label: 'Checking', detail: 'Connecting to the data source' };

@@ -46,6 +46,7 @@ function renderHealth() {
 
 const idle: BrainState = { status: 'idle', source: 'none', lastUpdated: null, lastError: null, workbookPath: '', flagCount: 0 };
 const fresh: BrainState = { status: 'fresh', source: 'workbook', lastUpdated: '2026-09-23T12:00:00Z', lastError: null, workbookPath: '', flagCount: 0 };
+const refreshing: BrainState = { status: 'refreshing', source: 'workbook', lastUpdated: '2026-09-23T12:00:30Z', lastError: null, workbookPath: '', flagCount: 0 };
 
 describe('HealthModule — /api/health re-fetch keyed on brain state (I-2)', () => {
   it('re-fetches once the brain state advances past the initial mount', async () => {
@@ -87,6 +88,59 @@ describe('HealthModule — /api/health re-fetch keyed on brain state (I-2)', () 
     rerenderHealth();
     await new Promise((r) => setTimeout(r, 20));
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Review follow-up: `staleTime: 30_000` let a quick fresh -> refreshing -> fresh round-trip
+  // skip the third fetch entirely (the cached 'fresh' data from the FIRST fetch looked fresh
+  // enough), silently re-showing however-old feeds/brief data under a "just refreshed" status.
+  // `staleTime: 0` fixes it: every status transition, including a round-trip to one already
+  // seen, refetches.
+  it('re-fetches on a fresh -> refreshing -> fresh round-trip, not just on a status never seen before', async () => {
+    brain.state = fresh;
+    const fetchMock = fetchStub();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { rerenderHealth } = renderHealth();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    brain.state = refreshing;
+    rerenderHealth();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    brain.state = fresh; // round-trip back to a status already fetched once
+    rerenderHealth();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+  });
+
+  // Review follow-up: with no placeholderData, the moment the query key changes (any status
+  // change) both observers (HealthDot + HealthModule) briefly see `data === undefined` while the
+  // new key's fetch is in flight -- HealthDot would flash to a false "healthy" green (no feeds =
+  // no stale feeds) and HealthModule's Data Feeds card would vanish entirely. `placeholderData:
+  // keepPreviousData` keeps the PREVIOUS key's resolved data rendering until the new one resolves.
+  it('keeps rendering the previous feed row while a status-change refetch is in flight (placeholderData)', async () => {
+    brain.state = fresh;
+    const firstFeed = { id: 'snapshot', label: 'Workbook snapshot', lastAt: '2026-09-23T00:00:00Z', ageDays: 0, maxAgeDays: 2, status: 'stale' as const, fix: 'x' };
+    let resolveSecond!: (value: unknown) => void;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ feeds: [firstFeed] }) })
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveSecond = resolve; }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { rerenderHealth } = renderHealth();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await screen.findByText('Workbook snapshot'); // first feed row rendered
+
+    brain.state = refreshing; // new query key -> a second, still-unresolved fetch
+    rerenderHealth();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    // The second fetch hasn't resolved -- the FIRST feed row must still be showing, not gone
+    // (which is what `health === undefined` with no placeholderData would produce).
+    expect(screen.getByText('Workbook snapshot')).toBeTruthy();
+
+    resolveSecond({ ok: true, json: () => Promise.resolve({ feeds: [] }) });
+    await waitFor(() => expect(screen.queryByText('Workbook snapshot')).toBeNull());
   });
 });
 
