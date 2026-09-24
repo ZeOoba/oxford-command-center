@@ -257,15 +257,29 @@ brain.on('snapshot', (info: unknown) => {
   }
 });
 
+let briefHealthReadWarned = false;
 app.get('/api/health', (c) => {
-  const briefHealth = existsSync('data/brief-health.json')
-    ? (JSON.parse(readFileSync('data/brief-health.json', 'utf8')) as {
-        ranAt: string;
-        briefSent: boolean;
-        alertsSent: number;
-        failures: string[];
-      })
-    : null;
+  // M4 (2026-09-23 review): a torn read (the brief-refresh task writing the file concurrently)
+  // must not 500 the whole /api/health response — and the Data Feeds card with it. Fail closed to
+  // null (same "no run recorded yet" UI as the file never having existed), warn once rather than
+  // per request.
+  let briefHealth: { ranAt: string; briefSent: boolean; alertsSent: number; failures: string[] } | null = null;
+  try {
+    briefHealth = existsSync('data/brief-health.json')
+      ? (JSON.parse(readFileSync('data/brief-health.json', 'utf8')) as {
+          ranAt: string;
+          briefSent: boolean;
+          alertsSent: number;
+          failures: string[];
+        })
+      : null;
+  } catch (err) {
+    if (!briefHealthReadWarned) {
+      briefHealthReadWarned = true;
+      console.warn('[health] failed to read/parse data/brief-health.json — serving null:', err instanceof Error ? err.message : String(err));
+    }
+    briefHealth = null;
+  }
   const snap = brain.getSnapshot();
   const arDates = Object.values(snap?.tenantArrears ?? {})
     .map((r) => (r.asOfDate ? r.asOfDate.toISOString() : null))
