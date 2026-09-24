@@ -43,6 +43,8 @@ import { useCapitalAllocation, actionLabel, actionColor, actionFillColor } from 
 import { AllocationCard } from './AllocationCard';
 import { HurdleRateBanner } from './HurdleRateBanner';
 import { CAPITAL_TABS, CAPITAL_TAB_KEYS, CAPITAL_ALLOCATION_TABS, type CapitalTab } from './tabs';
+import { ScatterChart } from '@/charts/ScatterChart';
+import { allocationCapPoints } from './cap-rate-scatter';
 
 const DebtModule = lazy(() => import('../debt/DebtModule').then((m) => ({ default: m.DebtModule })));
 const CashModule = lazy(() => import('../cash/CashModule').then((m) => ({ default: m.CashModule })));
@@ -338,6 +340,21 @@ export function CapitalModule() {
           ))
         )}
       </div>
+
+      {/* Cap-rate positioning scatter — display-only plot of the same capEntries rows below */}
+      {capEntries.length > 0 && (
+        <Card>
+          <CardHeader title="Cap-rate positioning" />
+          <ScatterChart
+            points={allocationCapPoints(capEntries)}
+            xLabel="Implied cap"
+            yLabel="vs market"
+            xFormat={(n) => `${(n * 100).toFixed(1)}%`}
+            yFormat={(n) => `${Math.round(n * 10000)} bps`}
+            yRef={0}
+          />
+        </Card>
+      )}
 
       {/* Market Cap-Rate Positioning — folded in from CapitalAllocationModule.tsx */}
       <Card>

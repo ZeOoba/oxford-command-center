@@ -235,8 +235,9 @@ describe('CapitalModule — market cap-rate positioning (folded in from CapitalA
   it('renders impliedCapRate / capRateGap / capRatePercentile for a scored property', () => {
     renderModule();
     expect(screen.getByText('Market Cap-Rate Positioning')).toBeTruthy();
-    // impliedCapRate 0.072 → "7.2%"
-    expect(screen.getByText('7.2%')).toBeTruthy();
+    // impliedCapRate 0.072 → "7.2%" — the new cap-rate scatter's axis ticks can render the same
+    // formatted string, so assert presence (>=1) rather than a single unique match.
+    expect(screen.getAllByText('7.2%').length).toBeGreaterThanOrEqual(1);
     // capRateGap 0.008 → "+80 bps"
     expect(screen.getByText('+80 bps')).toBeTruthy();
     // capRatePercentile 'top' → Badge "Above mkt"
@@ -412,7 +413,8 @@ describe('CapitalModule — Allocation / Pipeline tab structure', () => {
     renderModule();
     // Verdict card (AllocationCard) and the cap-rate table row for the same property are co-resident.
     expect(screen.getByText('Market Cap-Rate Positioning')).toBeTruthy();
-    expect(screen.getByText('7.2%')).toBeTruthy();
+    // The cap-rate scatter's axis ticks can render the same formatted string as the table cell.
+    expect(screen.getAllByText('7.2%').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Prop One').length).toBeGreaterThanOrEqual(2);
   });
 
