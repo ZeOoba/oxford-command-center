@@ -22,7 +22,7 @@ import type { PremiumHistoryReport } from '@contracts/insurance-analysis';
 export function premiumHistoryBars(byYear: PremiumHistoryReport['byYear'], now: Date = new Date()): BarDatum[] {
   const currentYear = now.getUTCFullYear();
   return byYear.map((y) => ({
-    label: `${y.year}${y.year === currentYear ? ' (partial)' : ''} · ${y.lines} line${y.lines === 1 ? '' : 's'}`,
+    label: `${y.year}${y.year === currentYear ? '*' : ''} · ${y.lines}`, // ≤14 chars: BarChart truncates longer ticks
     value: y.premium,
   }));
 }

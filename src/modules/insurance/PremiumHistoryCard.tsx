@@ -63,6 +63,7 @@ export function PremiumHistoryCard() {
       <CardHeader title="Premium History" trailing={<Badge tone="neutral">{multi.length} lines with renewal history</Badge>} />
       <div className="px-3 pb-2 pt-3">
         <BarChart data={premiumHistoryBars(data.byYear)} valueFormat={fmtUsdCompact} height={200} ariaLabel="Premium history by policy year" />
+        <p className="px-1 pt-1 text-2xs" style={{ color: 'var(--text-tertiary)' }}>Policy year · lines with a term that year. * current year, partial.</p>
       </div>
       <ul className="grid grid-cols-1 gap-2 px-4 pb-4 md:grid-cols-2">
         {multi.map((l) => {

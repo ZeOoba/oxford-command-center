@@ -39,7 +39,7 @@ export function taxByYear(a: TaxAssessment[]): TaxYearBar[] {
 export function taxYearBars(rows: TaxYearBar[]): Array<{ label: string; value: number }> {
   const maxCount = rows.reduce((max, r) => Math.max(max, r.count), 0);
   return rows.map((r) => ({
-    label: `${r.label}${r.count < maxCount ? ' (partial)' : ''} · ${r.count} prop${r.count === 1 ? '' : 's'}`,
+    label: `${r.label}${r.count < maxCount ? '*' : ''} · ${r.count}`, // ≤14 chars: BarChart truncates longer ticks
     value: r.value,
   }));
 }

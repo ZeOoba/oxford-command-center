@@ -35,22 +35,22 @@ describe('tax history builders', () => {
     it('carries each row through with its property count appended to the label', () => {
       const rows = [{ label: '2024', value: 90, count: 2 }, { label: '2025', value: 150, count: 2 }];
       expect(taxYearBars(rows)).toEqual([
-        { label: '2024 · 2 props', value: 90 },
-        { label: '2025 · 2 props', value: 150 },
+        { label: '2024 · 2', value: 90 },
+        { label: '2025 · 2', value: 150 },
       ]);
     });
 
     it('marks a year with fewer contributing properties than the max as partial', () => {
       const rows = [{ label: '2024', value: 150, count: 1 }, { label: '2025', value: 200, count: 2 }];
       expect(taxYearBars(rows)).toEqual([
-        { label: '2024 (partial) · 1 prop', value: 150 },
-        { label: '2025 · 2 props', value: 200 },
+        { label: '2024* · 1', value: 150 },
+        { label: '2025 · 2', value: 200 },
       ]);
     });
 
     it('marks no year as partial when every year has the same property count', () => {
       const rows = [{ label: '2024', value: 90, count: 3 }, { label: '2025', value: 150, count: 3 }];
-      expect(taxYearBars(rows).every((b) => !b.label.includes('partial'))).toBe(true);
+      expect(taxYearBars(rows).every((b) => !b.label.includes('*'))).toBe(true);
     });
 
     it('returns an empty array for no rows', () => {

@@ -14,8 +14,8 @@ describe('premiumHistoryBars', () => {
       new Date('2020-01-01T00:00:00Z'), // neither year is "now" — nothing partial
     );
     expect(bars).toEqual([
-      { label: '2024 · 5 lines', value: 100 },
-      { label: '2025 · 1 line', value: 200 },
+      { label: '2024 · 5', value: 100 },
+      { label: '2025 · 1', value: 200 },
     ]);
   });
 
@@ -25,15 +25,15 @@ describe('premiumHistoryBars', () => {
       new Date('2026-09-24T00:00:00Z'),
     );
     expect(bars).toEqual([
-      { label: '2025 · 2 lines', value: 100 },
-      { label: '2026 (partial) · 1 line', value: 50 },
+      { label: '2025 · 2', value: 100 },
+      { label: '2026* · 1', value: 50 },
     ]);
   });
 
   it('defaults "now" to the real wall clock when not passed', () => {
     const thisYear = new Date().getFullYear();
     const bars = premiumHistoryBars([{ year: thisYear, premium: 10, lines: 1 }]);
-    expect(bars[0]!.label).toContain('(partial)');
+    expect(bars[0]!.label).toContain('*');
   });
 
   it('returns an empty array for no years', () => {

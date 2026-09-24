@@ -34,6 +34,7 @@ export function AssessmentHistoryCard({
       {bars.length > 0 && (
         <div className="px-3 pb-2 pt-3">
           <BarChart data={bars} valueFormat={fmtUsdCompact} height={200} color="var(--color-warn)" ariaLabel="Property tax history by year" />
+          <p className="px-1 pt-1 text-2xs" style={{ color: 'var(--text-tertiary)' }}>Tax year · properties billed. * fewer properties than the fullest year (partial).</p>
         </div>
       )}
       {series.length > 0 && (
