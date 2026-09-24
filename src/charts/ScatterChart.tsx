@@ -2,6 +2,7 @@
 import { scaleLinear } from '@visx/scale';
 import { AxisBottom, AxisLeft } from '@visx/axis';
 import { Group } from '@visx/group';
+import { AXIS_TICK } from './theme';
 
 export interface ScatterPoint { id: string; x: number; y: number; label: string; tone?: 'pos' | 'neg' | 'neutral' }
 
@@ -39,9 +40,9 @@ export function ScatterChart({ points, xLabel, yLabel, xFormat, yFormat, height 
           </circle>
         ))}
         <AxisBottom top={height - M.bottom} scale={x} tickFormat={(v) => xFormat(Number(v))} numTicks={5} label={xLabel}
-          stroke="var(--border-subtle)" tickStroke="var(--border-subtle)" tickLabelProps={{ fill: 'var(--text-tertiary)', fontSize: 10 }} />
+          stroke="var(--border-subtle)" tickStroke="var(--border-subtle)" tickLabelProps={{ ...AXIS_TICK }} />
         <AxisLeft left={M.left} scale={y} tickFormat={(v) => yFormat(Number(v))} numTicks={5} label={yLabel}
-          stroke="var(--border-subtle)" tickStroke="var(--border-subtle)" tickLabelProps={{ fill: 'var(--text-tertiary)', fontSize: 10 }} />
+          stroke="var(--border-subtle)" tickStroke="var(--border-subtle)" tickLabelProps={{ ...AXIS_TICK }} />
       </Group>
     </svg>
   );
