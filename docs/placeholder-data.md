@@ -30,6 +30,26 @@ Every fixture file carries a `_note` field stating its placeholder status and (w
 its swap path in-line — this table should stay consistent with those notes; if they drift, the
 fixture's `_note` is the more current source since it ships with the code.
 
+### Loss attachment and deductible-review eligibility (2026-09-24)
+
+How `buildInsuranceLossReport` (`server/warehouse/insurance-loss-analysis.ts`) books a loss event —
+applies identically to the placeholder fixture and to real imported loss runs:
+
+- **Eligible policies** are first-party property lines (policy_type contains property / package /
+  building — `server/warehouse/insurance-policy-lines.ts`), regardless of TIV, excluding tenant
+  evidence-of-insurance certificates (ACORD 25/28). Ratified by Gabriel 2026-09-24. TIV is required
+  only for the own-book rate benchmark. A tenant certificate still counts as coverage on file for the
+  insurance-gap alert.
+- **Each event attaches to exactly one eligible policy** at its property: `policy_ref` matching a
+  policy's own number, else any number its line has carried (upper-case, whitespace removed) → the
+  policy whose term covers `loss_date` → the most recently incepted policy (go-forward review of
+  losses that predate every current term). A `policy_ref` naming only non-property lines, or a
+  third-party cause leaves the event in EAL only — never booked against a property deductible.
+  Bodily/personal injury, slip- or trip-and-fall, EPLI, employment practices, a suit or a claimant
+  are always third-party; bare "liability" is third-party unless a property peril (water, wind,
+  fire, roof, ...) is also named.
+- The self-insure split is the plain sum of the (disjoint) per-policy review rows.
+
 ## 2. Honesty rails (non-negotiable)
 
 These are enforced in code, not just convention — see `src/contracts/insurance-loss.ts` and

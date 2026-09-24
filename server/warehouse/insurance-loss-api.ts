@@ -17,9 +17,9 @@
 // then id — NOT max effective_date; see collapseToCurrentTerm's own doc for why source_date is
 // the sound primary signal) — corrected 2026-08-21, this comment previously said "latest-
 // effective-date," which collapseToCurrentTerm's doc explicitly calls out and rejects as unsafe.
-// Either way, a rolled-over policy's prior term never reaches this route — deductibleReviews below
-// reviews each property's loss events exactly
-// once per (still-legitimate) distinct coverage, not once per stale duplicate term. No new
+// Either way, a rolled-over policy's prior term never reaches this route — the engine attaches
+// each loss event to exactly one (still-legitimate) current policy by term / policy_ref
+// (loadPolicyTerms below), never to a stale duplicate term. No new
 // exported helper is needed; `rebidCandidates` would be the WRONG field here (it's filtered to
 // excess>0 policies only).
 //
@@ -38,8 +38,47 @@ import { Hono } from 'hono';
 import type { WarehouseDb } from './db';
 import { buildInsuranceAnalysis } from './insurance-analysis';
 import { resolveDecPages, resolveLossEvents } from './placeholder-data';
-import { buildInsuranceLossReport } from './insurance-loss-analysis';
+import { buildInsuranceLossReport, normalizePolicyNumber, type PolicyTerm } from './insurance-loss-analysis';
 import { InsuranceLossReport } from '../../src/contracts/insurance-loss';
+
+/** Term identity per policy row, keyed String(id) = PolicyEconomics.policyId. The loss engine uses
+ *  it to attach each loss event to the one policy whose term / policy number covers it.
+ *  lineNumbers spans the row's whole LINE — every row sharing its raw property_id and policy_type
+ *  (trim + lowercase, the key collapseToCurrentTerm groups on) — so a loss run citing a superseded
+ *  or reissued number (live: 1310 'MMF17962784' → 1734 'MMF17962784-002') still names the surviving
+ *  current-term row. */
+function loadPolicyTerms(db: WarehouseDb): Map<string, PolicyTerm> {
+  const rows = db
+    .prepare('SELECT id, property_id, policy_type, policy_number, effective_date, expiration_date FROM property_insurance_policies')
+    .all() as Array<{
+      id: number;
+      property_id: string;
+      policy_type: string;
+      policy_number: string | null;
+      effective_date: string | null;
+      expiration_date: string | null;
+    }>;
+  const lineKey = (r: { property_id: string; policy_type: string }) => `${r.property_id}|${r.policy_type.trim().toLowerCase()}`;
+  const numbersByLine = new Map<string, Set<string>>();
+  for (const r of rows) {
+    const n = normalizePolicyNumber(r.policy_number);
+    if (n === null) continue;
+    const set = numbersByLine.get(lineKey(r));
+    if (set) set.add(n);
+    else numbersByLine.set(lineKey(r), new Set([n]));
+  }
+  return new Map(
+    rows.map((r) => [
+      String(r.id),
+      {
+        policyNumber: normalizePolicyNumber(r.policy_number),
+        lineNumbers: [...(numbersByLine.get(lineKey(r)) ?? [])].sort(),
+        effectiveDate: r.effective_date,
+        expirationDate: r.expiration_date,
+      },
+    ]),
+  );
+}
 
 /**
  * Creates the insurance-loss Hono sub-router.
@@ -77,6 +116,7 @@ export function insuranceLossApi(getDb: () => WarehouseDb): Hono {
             policies: base.renewalCalendar,
             decPages: resolveDecPages(db),
             lossEvents: resolveLossEvents(db),
+            policyTerms: loadPolicyTerms(db),
           }),
         );
         // No logVerdicts on this route — placeholder-tainted verdicts must never enter calibration

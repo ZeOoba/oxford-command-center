@@ -217,20 +217,28 @@ describe('GET /api/warehouse/insurance/loss', () => {
   });
 });
 
-// ── Policy-line keys: display name resolved, propertyId stays the raw key (2026-09-23 review I-1) ──
+// ── Policy-line keys resolve to property_master ids; loss events attach by term (2026-09-24) ──
 //
-// buildInsuranceAnalysis resolves an 'ins-<stem>-<line>' policy key to a property_master DISPLAY
-// name only. `propertyId` deliberately stays the raw policy-line key: buildInsuranceLossReport
-// attaches loss events (keyed by property_master id) to policies by `policy.propertyId`, and at
-// 9620 Raytown two concurrently in-force property policies share one master id — resolving the
-// id there collapses them and makes the self-insure "primary" pick order-dependent. Loss
-// attachment by resolved id is DEFERRED to a follow-up that is policy-term/policy_ref aware. This
-// test pins display-only so the loss engine sees byte-identical keys to the pre-resolution wiring.
-describe('GET /api/warehouse/insurance/loss — policy-line keys resolve the name only', () => {
-  it('a policy keyed ins-9620state350-prop-hfd shows the master name but keeps the raw propertyId', async () => {
+// property_insurance_policies.property_id holds policy-line keys ('ins-<stem>-<line>'), while
+// insurance_loss_events.property_id is a property_master id (FK). Before this fix nothing ever
+// matched, so every deductible review / self-insure line read $0. buildInsuranceAnalysis now
+// resolves propertyId via the stem map, and buildInsuranceLossReport attaches each event to the
+// ONE policy whose term covers its loss date (policy_ref match first) — so two concurrently
+// in-force policies at 9620 Raytown no longer make the attachment order-dependent.
+function insertLossEvent(db: WarehouseDb, f: { id: string; propertyId: string; lossDate: string; grossIncurred: number; policyRef?: string }): void {
+  db.prepare(
+    `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(f.id, f.propertyId, f.policyRef ?? null, f.lossDate, 'wind', f.grossIncurred, f.grossIncurred, 0, 'test-loss-run');
+}
+
+describe('GET /api/warehouse/insurance/loss — policy-line keys attach loss events', () => {
+  const RAYTOWN = '9620-e-state-route-350-raytown-mo';
+
+  it('a loss event under the master id reaches the ins-9620state350-prop-hfd policy: retained 25k / transferred 17k / lossRatio 8.4', async () => {
     const db = freshDb();
     // property_master row exists ONLY under the resolved id — never under the raw policy key.
-    seedProperty(db, '9620-e-state-route-350-raytown-mo', '9620 E State Route 350, Raytown MO');
+    seedProperty(db, RAYTOWN, '9620 E State Route 350, Raytown MO');
     insertPolicy(db, {
       propertyId: 'ins-9620state350-prop-hfd',
       policyType: 'Property Package',
@@ -238,7 +246,102 @@ describe('GET /api/warehouse/insurance/loss — policy-line keys resolve the nam
       coverageTiv: 1_000_000,
       deductible: 25_000,
       coverageLimit: 2_000_000,
+      effectiveDate: '2025-01-01',
+      expirationDate: '2027-01-01',
     });
+    insertLossEvent(db, { id: 'L1', propertyId: RAYTOWN, lossDate: '2026-03-01', grossIncurred: 42_000 });
+
+    const res = await makeApp(db).request('/');
+    expect(res.status).toBe(200);
+    const parsed = InsuranceLossReport.safeParse(await res.json());
+    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+    if (!parsed.success) return;
+    const report = parsed.data;
+
+    expect(report.lossDataSource).toBe('warehouse');
+    expect(report.deductibleReviews).toHaveLength(1);
+    const review = report.deductibleReviews[0]!;
+    expect(review.property).toBe('9620 E State Route 350, Raytown MO');
+    expect(review.propertyId).toBe(RAYTOWN);
+    // d=25,000, L=2M, gross 42,000 → retained 25,000 / transferred 17,000; 42,000 / 5,000 = 8.4
+    expect(review).toMatchObject({ eventsN: 1, retainedUsd: 25_000, transferredUsd: 17_000, overLimitUsd: 0 });
+    expect(review.lossRatio).toBeCloseTo(8.4, 10);
+    expect(report.selfInsure).toMatchObject({ retainedUsd: 25_000, transferredUsd: 17_000 });
+
+    // Still never a calibration write from this route.
+    expect(calibrationVerdictCount(db)).toBe(0);
+  });
+
+  it('overlapping 9620 terms: a 2026-07-04 loss uses the Hartford policy, not the lexicographically-first Westchester one', async () => {
+    const db = freshDb();
+    seedProperty(db, RAYTOWN, '9620 E State Route 350, Raytown MO');
+    // Live shape (policy ids 1734 / 1735): Westchester 2025-10-18 → 2026-10-18,
+    // Hartford BOP 2026-05-28 → 2027-05-28 — both in force on 2026-07-04. Westchester is inserted
+    // first so it gets the lower row id, i.e. it is the one a lexicographic "primary" pick chose.
+    insertPolicy(db, {
+      propertyId: 'ins-9620state350-prop',
+      policyType: 'Property',
+      policyNumber: 'MMF17962784-002',
+      effectiveDate: '2025-10-18',
+      expirationDate: '2026-10-18',
+      premiumAnnual: 6000,
+      coverageTiv: 1_000_000,
+      deductible: 10_000,
+      coverageLimit: 2_000_000,
+    });
+    insertPolicy(db, {
+      propertyId: 'ins-9620state350-prop-hfd',
+      policyType: 'Property (Hartford Spectrum BOP)',
+      policyNumber: '37 SBA CB6KKB',
+      effectiveDate: '2026-05-28',
+      expirationDate: '2027-05-28',
+      premiumAnnual: 5000,
+      coverageTiv: 1_000_000,
+      deductible: 25_000,
+      coverageLimit: 2_000_000,
+    });
+    insertLossEvent(db, { id: 'L1', propertyId: RAYTOWN, lossDate: '2026-07-04', grossIncurred: 42_000 });
+
+    const res = await makeApp(db).request('/');
+    expect(res.status).toBe(200);
+    const parsed = InsuranceLossReport.safeParse(await res.json());
+    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+    if (!parsed.success) return;
+    const report = parsed.data;
+
+    expect(report.deductibleReviews).toHaveLength(2);
+    const hartford = report.deductibleReviews.find((r) => r.deductible === 25_000)!;
+    const westchester = report.deductibleReviews.find((r) => r.deductible === 10_000)!;
+    expect(hartford).toMatchObject({ propertyId: RAYTOWN, eventsN: 1, retainedUsd: 25_000, transferredUsd: 17_000 });
+    expect(hartford.lossRatio).toBeCloseTo(8.4, 10);
+    expect(westchester).toMatchObject({ propertyId: RAYTOWN, eventsN: 0, retainedUsd: 0, transferredUsd: 0 });
+    // Counted once, against the Hartford terms — not 10k/32k (Westchester) and not both.
+    expect(report.selfInsure).toMatchObject({ retainedUsd: 25_000, transferredUsd: 17_000 });
+  });
+});
+
+describe('GET /api/warehouse/insurance/loss — live-shaped book with no TIV on any current term', () => {
+  it('property lines are reviewed without TIV; the tenant ACORD certificate and the GL line are not', async () => {
+    const db = freshDb();
+    seedProperty(db, '9620-e-state-route-350-raytown-mo', '9620 E State Route 350, Raytown MO');
+    seedProperty(db, '7658-fishel-dr-n-dublin-oh', '7658 Fishel Dr N, Dublin OH');
+    // coverageTiv 0 → the analysis engine's 'excluded-null-tiv' cohort (same branch as NULL; the
+    // fixture helper defaults a null TIV to 1,000,000).
+    insertPolicy(db, {
+      propertyId: 'ins-9620state350-prop-hfd', policyType: 'Property (Hartford Spectrum BOP)', policyNumber: '37 SBA CB6KKB',
+      effectiveDate: '2026-05-28', expirationDate: '2027-05-28', premiumAnnual: 5000, coverageTiv: 0,
+      deductible: 25_000, coverageLimit: 2_000_000,
+    });
+    insertPolicy(db, {
+      propertyId: 'ins-9620state350-gl', policyType: 'General Liability (GL)', policyNumber: 'GLWF18677015-001',
+      effectiveDate: '2025-10-18', expirationDate: '2026-10-18', premiumAnnual: 900, coverageTiv: 0,
+    });
+    insertPolicy(db, {
+      propertyId: 'ins-7658fishel-acord28', policyType: 'Evidence of Property Insurance (ACORD 28)',
+      effectiveDate: '2026-01-01', expirationDate: '2027-01-01', premiumAnnual: 0, coverageTiv: 0,
+    });
+    insertLossEvent(db, { id: 'L1', propertyId: '9620-e-state-route-350-raytown-mo', lossDate: '2026-07-04', grossIncurred: 42_000 });
+    insertLossEvent(db, { id: 'L2', propertyId: '7658-fishel-dr-n-dublin-oh', lossDate: '2026-03-01', grossIncurred: 8_000 });
 
     const res = await makeApp(db).request('/');
     expect(res.status).toBe(200);
@@ -248,11 +351,52 @@ describe('GET /api/warehouse/insurance/loss — policy-line keys resolve the nam
     const report = parsed.data;
 
     expect(report.deductibleReviews).toHaveLength(1);
-    const review = report.deductibleReviews[0]!;
-    expect(review.property).toBe('9620 E State Route 350, Raytown MO');
-    expect(review.propertyId).toBe('ins-9620state350-prop-hfd');
-
-    // Still never a calibration write from this route.
-    expect(calibrationVerdictCount(db)).toBe(0);
+    expect(report.deductibleReviews[0]).toMatchObject({
+      propertyId: '9620-e-state-route-350-raytown-mo', eventsN: 1, retainedUsd: 25_000, transferredUsd: 17_000,
+    });
+    expect(report.selfInsure).toMatchObject({ retainedUsd: 25_000, transferredUsd: 17_000 });
+    // The Fishel loss stays in EAL only.
+    expect(report.eal.map((e) => e.propertyId).sort()).toEqual(['7658-fishel-dr-n-dublin-oh', '9620-e-state-route-350-raytown-mo']);
   });
 });
+
+describe('GET /api/warehouse/insurance/loss — policy_ref resolves superseded numbers on the same line', () => {
+  it('a loss run citing the pre-reissue number (live 1310 → 1734 shape) books to the surviving Westchester row, not Hartford', async () => {
+    const db = freshDb();
+    const RAYTOWN = '9620-e-state-route-350-raytown-mo';
+    seedProperty(db, RAYTOWN, '9620 E State Route 350, Raytown MO');
+    // Same line + same term, reissued under a new number and captured later: the current-term
+    // collapse keeps only the -002 row.
+    insertPolicy(db, {
+      propertyId: 'ins-9620state350-prop', policyType: 'Property', policyNumber: 'MMF17962784',
+      effectiveDate: '2025-10-18', expirationDate: '2026-10-18', premiumAnnual: 6000, coverageTiv: 0,
+      deductible: 10_000, coverageLimit: 2_000_000, sourceDate: '2026-08-16',
+    });
+    insertPolicy(db, {
+      propertyId: 'ins-9620state350-prop', policyType: 'Property', policyNumber: 'MMF17962784-002',
+      effectiveDate: '2025-10-18', expirationDate: '2026-10-18', premiumAnnual: 6000, coverageTiv: 0,
+      deductible: 10_000, coverageLimit: 2_000_000, sourceDate: '2026-09-23',
+    });
+    insertPolicy(db, {
+      propertyId: 'ins-9620state350-prop-hfd', policyType: 'Property (Hartford Spectrum BOP)', policyNumber: '37 SBA CB6KKB',
+      effectiveDate: '2026-05-28', expirationDate: '2027-05-28', premiumAnnual: 5000, coverageTiv: 0,
+      deductible: 25_000, coverageLimit: 2_000_000,
+    });
+    insertLossEvent(db, { id: 'L1', propertyId: RAYTOWN, lossDate: '2026-07-01', grossIncurred: 40_000, policyRef: 'MMF17962784' });
+
+    const res = await makeApp(db).request('/');
+    expect(res.status).toBe(200);
+    const parsed = InsuranceLossReport.safeParse(await res.json());
+    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+    if (!parsed.success) return;
+    const report = parsed.data;
+
+    expect(report.deductibleReviews).toHaveLength(2); // the reissue collapsed to one Westchester row
+    const westchester = report.deductibleReviews.find((r) => r.deductible === 10_000)!;
+    const hartford = report.deductibleReviews.find((r) => r.deductible === 25_000)!;
+    // d=10,000: gross 40,000 → retained 10,000 / transferred 30,000.
+    expect(westchester).toMatchObject({ eventsN: 1, retainedUsd: 10_000, transferredUsd: 30_000 });
+    expect(hartford.eventsN).toBe(0);
+  });
+});
+
