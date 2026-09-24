@@ -97,6 +97,10 @@ beforeEach(() => {
     addEventListener() {}, removeEventListener() {},
     dispatchEvent: () => false,
   }));
+  // CalendarModule now mounts the "At Stake by Month" BarChart, which measures via
+  // ResizeObserver — jsdom ships none. Same no-op stub as the other chart-bearing module tests
+  // (see e.g. tests/unit/market-module-smoke.test.tsx, tests/unit/premium-history-card.test.tsx).
+  vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} });
 });
 
 afterEach(() => {

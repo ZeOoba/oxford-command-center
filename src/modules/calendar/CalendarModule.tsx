@@ -7,6 +7,8 @@ import { fmtUsdCompact, fmtDate } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
+import { BarChart } from '@/charts/BarChart';
+import { monthlyAtStake } from './month-at-stake';
 import {
   portfolioCriticalDates,
   criticalDateKpis,
@@ -121,6 +123,13 @@ export function CalendarModule() {
         <KpiStat label="This Quarter" value={kpis.thisQuarter} format={(n) => String(n ?? 0)} accentColor="var(--color-info)" sublabel="next 90 days" />
         <KpiStat label="Next 12 Months" value={kpis.next12mo} format={(n) => String(n ?? 0)} accentColor="var(--accent)" />
       </div>
+
+      <Card>
+        <CardHeader title="At Stake by Month" trailing={<Badge tone="neutral">upcoming · {horizon}</Badge>} />
+        <div className="px-3 pb-2 pt-3">
+          <BarChart data={monthlyAtStake(filtered)} valueFormat={fmtUsdCompact} height={180} color="var(--accent)" />
+        </div>
+      </Card>
 
       <Card>
         <CardHeader
