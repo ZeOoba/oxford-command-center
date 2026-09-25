@@ -716,5 +716,14 @@
     "review_needed": false,
     "detail": "Docs-only. Adds a section to architecture/database-schema.md: property_insurance_policies.property_id holds raw policy-line keys (ins-<stem>-<line>, no FK), and insurance_loss_events.property_id holds property_master ids. Every join must resolve via resolveInsuranceProperty. The current-term collapse groups on the raw key. Architect ack: Gabriel, in-turn 2026-09-24 (AskUserQuestion: 'Yes, add it via PR'), for architecture/database-schema.md + architecture/status.json.",
     "last_updated": "2026-09-24T18:05:00Z"
+  },
+  "cc-review-round2": {
+    "agent_role": "Lead Architect (delegated)",
+    "phase": "2026-09-24 command-center review round 2 (5 PRs)",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "detail": "Architect-owned touches: architecture/status.json (this claim); src/analytics/engine.ts (Task 2: affiliate notes excluded from totalDebt/ltv, DebtSummary third-party basis + affiliateDebt; Task 8: otherHoldingsEquity/otherHoldingsDebt cells) - ratified by Gabriel 2026-09-24; server/index.ts (Task 15: AR feed = newest import + stale-lease note). No src/contracts/** edits. Plan: docs/superpowers/plans/2026-09-24-command-center-review-round2.md. Architect ack: Gabriel, in-session 2026-09-25 (AskUserQuestion: Acknowledge all).",
+    "last_updated": "2026-09-25T00:00:00Z"
   }
 }
