@@ -129,6 +129,9 @@ describe('GET /api/warehouse/insurance/loss', () => {
       // At least one property's events were attributed (real data flowed through the pipeline).
       expect(parsed.data.eal.length).toBeGreaterThan(0);
       expect(parsed.data.deductibleReviews.length).toBe(2);
+      // The real fixture's policyRef is the 'PLACEHOLDER' sentinel (docs/placeholder-data.md):
+      // synthetic refs are never a "loss-run typo", so the data-quality list is empty here.
+      expect(parsed.data.unmatchedPolicyRefs).toEqual([]);
     }
 
     // The hard requirement: this route must never write to calibration_verdict, regardless of
@@ -201,6 +204,7 @@ describe('GET /api/warehouse/insurance/loss', () => {
       expect(parsed.data.eal).toEqual([]);
       expect(parsed.data.deductibleReviews).toEqual([]);
       expect(parsed.data.rebidPipeline).toEqual([]);
+      expect(parsed.data.unmatchedPolicyRefs).toEqual([]);
     }
     expect(calibrationVerdictCount(db)).toBe(0);
   });

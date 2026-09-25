@@ -49,6 +49,14 @@ applies identically to the placeholder fixture and to real imported loss runs:
   are always third-party; bare "liability" is third-party unless a property peril (water, wind,
   fire, roof, ...) is also named.
 - The self-insure split is the plain sum of the (disjoint) per-policy review rows.
+- **Unmatched policy refs (2026-09-24).** `InsuranceLossReport.unmatchedPolicyRefs` lists events
+  whose non-blank `policy_ref` names no policy (own number or line alias, any line) at their
+  property — a loss-run typo or a register gap. **Warehouse-only:** computed solely when
+  `lossDataSource` is `'warehouse'`; this fixture's `policyRef: "PLACEHOLDER"` sentinel is
+  synthetic, so a fixture-sourced report always carries `[]`. **Visibility only:** the ref is
+  ignored and attachment proceeds exactly as above; nothing in EAL, the reviews or the split
+  changes. Flagged **regardless of cause** — a third-party claim citing an unknown number is the
+  same data defect.
 
 ## 2. Honesty rails (non-negotiable)
 
@@ -83,7 +91,10 @@ These are enforced in code, not just convention — see `src/contracts/insurance
   `src/primitives/PlaceholderBanner.tsx` — an amber advisory banner ("PLACEHOLDER DATA — …")
   stating no figure on that surface is decision-grade. Gated on the report's `dataSource`
   field(s), not a static flag, so the banner disappears automatically the moment real data cuts
-  the surface over to `'warehouse'`.
+  the surface over to `'warehouse'`. The Self-Insure & Bids tab's separate amber
+  "UNMATCHED POLICY REFS" notice (`unmatchedPolicyRefsDetail` in `src/modules/insurance/hooks.ts`)
+  is **independent** of this banner — it is a warehouse-data signal, so it can appear without the
+  placeholder banner and never appears on fixture data.
 - **Fail-soft, never fail-loud, on the fixture path.** A missing or corrupt fixture file resolves
   to `source: 'absent'` with empty rows — never a thrown error. A malformed individual row (bad
   type, unknown `propertyId` not present in `property_master`) is skipped and counted in

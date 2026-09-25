@@ -20,7 +20,7 @@ import { TierBoard, type Tier, type TierItem } from '@/primitives/TierBoard';
 import { PlaceholderBanner } from '@/primitives/PlaceholderBanner';
 import { fmtUsdCompact, fmtNum, fmtPct } from '@analytics/index';
 import { isWarehouseUnavailable } from '../intel/hooks';
-import { useInsuranceLoss, isAnyPlaceholder, placeholderDetailInsurance } from './hooks';
+import { useInsuranceLoss, isAnyPlaceholder, placeholderDetailInsurance, unmatchedPolicyRefsDetail } from './hooks';
 import type {
   InsuranceLossReport,
   PropertyEal,
@@ -244,9 +244,14 @@ export function SelfInsureView() {
 
   if (!report) return null;
 
+  // Independent of the placeholder banner: an unmatched policy_ref is a real-data signal
+  // (loss-run typo / register gap) and must surface on warehouse-sourced reports too.
+  const unmatchedDetail = unmatchedPolicyRefsDetail(report);
+
   return (
     <div className="flex flex-col gap-4">
       {isAnyPlaceholder(report) && <PlaceholderBanner detail={placeholderDetailInsurance(report)} />}
+      {unmatchedDetail !== null && <PlaceholderBanner label="UNMATCHED POLICY REFS" detail={unmatchedDetail} />}
       <SplitBar split={report.selfInsure} />
       <EalTable eal={report.eal} />
       <DeductibleReviewTable reviews={report.deductibleReviews} />

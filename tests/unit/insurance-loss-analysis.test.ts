@@ -577,3 +577,183 @@ describe('buildInsuranceLossReport — term / policy_ref-aware loss attachment',
     expect(r.eal[0]).toMatchObject({ propertyId: RAYTOWN, property: '9620 E State Route 350, Raytown MO' });
   });
 });
+
+// ── Unmatched policy_ref visibility (2026-09-24) ─────────────────────────────────────────────
+//
+// A non-blank policy_ref that names NO policy at the event's property (own number or line alias,
+// across every line — not only reviewable ones) is silently ignored by attachEvent. The report now
+// lists those events in `unmatchedPolicyRefs` so a loss-run typo or a policy missing from
+// property_insurance_policies is visible. Visibility ONLY: attachment, EAL, reviews and the
+// self-insure roll-up are byte-for-byte what they were.
+describe('buildInsuranceLossReport — unmatchedPolicyRefs', () => {
+  const RAYTOWN = '9620-e-state-route-350-raytown-mo';
+  const RAYTOWN_NAME = '9620 E State Route 350, Raytown MO';
+  const FISHEL = '7658-fishel-dr-n-dublin-oh';
+  const WESTCHESTER = mkPolicy({ policyId: '1734', property: RAYTOWN_NAME, propertyId: RAYTOWN, premium: 6000 });
+  const HARTFORD = mkPolicy({ policyId: '1735', property: RAYTOWN_NAME, propertyId: RAYTOWN, premium: 5000 });
+  const GL = mkPolicy({ policyId: '1733', property: RAYTOWN_NAME, propertyId: RAYTOWN, cohort: 'other', policyType: 'General Liability (GL)' });
+  const FISHEL_POLICY = mkPolicy({ policyId: '1750', property: '7658 Fishel Dr N, Dublin OH', propertyId: FISHEL, premium: 4000 });
+  const TERMS = termsOf({
+    '1734': { policyNumber: 'MMF17962784-002', lineNumbers: ['MMF17962784', 'MMF17962784-002'], effectiveDate: '2025-10-18', expirationDate: '2026-10-18' },
+    '1735': { policyNumber: '37SBACB6KKB', lineNumbers: ['37SBACB6KKB'], effectiveDate: '2026-05-28', expirationDate: '2027-05-28' },
+    '1733': { policyNumber: 'GLWF18677015-001', lineNumbers: ['GLWF18677015-001'], effectiveDate: '2025-10-18', expirationDate: '2026-10-18' },
+    '1750': { policyNumber: 'FISHEL-PROP-1', lineNumbers: ['FISHEL-PROP-1'], effectiveDate: '2026-01-01', expirationDate: '2027-01-01' },
+  });
+  const DECS = decPagesOf({
+    '1734': { deductible: 10000, coverageLimit: 2_000_000, source: 'warehouse' },
+    '1735': { deductible: 25000, coverageLimit: 2_000_000, source: 'warehouse' },
+    '1750': { deductible: 5000, coverageLimit: 2_000_000, source: 'warehouse' },
+  });
+  const ALL = [GL, WESTCHESTER, HARTFORD, FISHEL_POLICY];
+
+  function run(events: LossEventRow[], policies: PolicyEconomics[] = ALL) {
+    return buildInsuranceLossReport(inputs({ policies, decPages: DECS, policyTerms: TERMS, lossEvents: lossEvents(events, 'warehouse') }));
+  }
+  function review(r: ReturnType<typeof run>, policyId: string) {
+    const found = r.deductibleReviews.find((d) => d.policyId === policyId);
+    if (!found) throw new Error(`no review row for policy ${policyId}`);
+    return found;
+  }
+
+  it('a ref matching nothing at the property is listed with the RAW ref, and the event still attaches by covering term', () => {
+    // 2026-07-04 sits inside both Raytown terms → recency picks Hartford, exactly as with no ref.
+    const raw = ' mmf-TYPO 17962784 ';
+    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, raw, 'wind')]);
+    expect(r.unmatchedPolicyRefs).toEqual([{
+      eventId: 'e1',
+      propertyId: RAYTOWN,
+      property: RAYTOWN_NAME,
+      policyRef: raw,
+      lossDate: '2026-07-04',
+      cause: 'wind',
+      grossIncurred: 42000,
+    }]);
+    expect(review(r, '1735')).toMatchObject({ eventsN: 1, retainedUsd: 25000, transferredUsd: 17000 });
+    expect(review(r, '1734').eventsN).toBe(0);
+  });
+
+  it('detection never changes attachment, EAL, reviews or the self-insure split (unmatched ref ≡ no ref)', () => {
+    const withRef = run([
+      mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'NOT-ON-FILE'),
+      mkRefEvent('e2', RAYTOWN, '2026-01-15', 8000, 'ALSO-NOT-ON-FILE'),
+      mkRefEvent('e3', RAYTOWN, '2023-04-01', 3000, 'NOPE'),
+    ]);
+    const without = run([
+      mkEvent('e1', RAYTOWN, '2026-07-04', 42000),
+      mkEvent('e2', RAYTOWN, '2026-01-15', 8000),
+      mkEvent('e3', RAYTOWN, '2023-04-01', 3000),
+    ]);
+    expect(withRef.unmatchedPolicyRefs).toHaveLength(3);
+    expect(without.unmatchedPolicyRefs).toEqual([]);
+    expect(withRef.deductibleReviews).toEqual(without.deductibleReviews);
+    expect(withRef.eal).toEqual(without.eal);
+    expect(withRef.selfInsure).toEqual(without.selfInsure);
+  });
+
+  it("a ref matching a policy's OWN number is not listed", () => {
+    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'MMF17962784-002')]);
+    expect(r.unmatchedPolicyRefs).toEqual([]);
+    expect(review(r, '1734').eventsN).toBe(1);
+  });
+
+  it('a ref matching only a lineNumbers alias (superseded number on the same line) is not listed', () => {
+    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'MMF17962784')]);
+    expect(r.unmatchedPolicyRefs).toEqual([]);
+    expect(review(r, '1734').eventsN).toBe(1);
+  });
+
+  it('a ref naming a NON-reviewable line at the property (GL) is not listed — it matched something', () => {
+    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'GLWF18677015-001')]);
+    expect(r.unmatchedPolicyRefs).toEqual([]);
+    expect(r.deductibleReviews.every((d) => d.eventsN === 0)).toBe(true); // EAL-only, unchanged
+  });
+
+  it('a third-party cause with an unmatched ref is still listed (attachEvent returns early; detection is separate)', () => {
+    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 40000, 'BOGUS-GL-NUMBER', 'liability - slip and fall')]);
+    expect(r.unmatchedPolicyRefs).toEqual([expect.objectContaining({ eventId: 'e1', policyRef: 'BOGUS-GL-NUMBER', cause: 'liability - slip and fall' })]);
+    expect(r.deductibleReviews.every((d) => d.eventsN === 0)).toBe(true);
+    expect(r.selfInsure).toMatchObject({ retainedUsd: 0, transferredUsd: 0 });
+  });
+
+  it('a null ref and a whitespace-only ref are not listed (they normalize to null)', () => {
+    const r = run([
+      mkEvent('e1', RAYTOWN, '2026-07-04', 42000),
+      mkRefEvent('e2', RAYTOWN, '2026-07-05', 1000, '   '),
+      mkRefEvent('e3', RAYTOWN, '2026-07-06', 1000, ''),
+    ]);
+    expect(r.unmatchedPolicyRefs).toEqual([]);
+  });
+
+  it('a ref that matches a policy at a DIFFERENT property only is listed', () => {
+    // FISHEL-PROP-1 is on file — but at Fishel, not Raytown.
+    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'FISHEL-PROP-1')]);
+    expect(r.unmatchedPolicyRefs.map((u) => [u.eventId, u.propertyId])).toEqual([['e1', RAYTOWN]]);
+    expect(review(r, '1735').eventsN).toBe(1); // still attached by covering term at Raytown
+  });
+
+  it('a property with zero policies plus a non-null ref is listed, with the id as display-name fallback', () => {
+    const r = run([mkRefEvent('e1', 'P-NOPOLICY', '2026-07-04', 500, 'ANY-REF')]);
+    expect(r.unmatchedPolicyRefs).toEqual([expect.objectContaining({ eventId: 'e1', propertyId: 'P-NOPOLICY', property: 'P-NOPOLICY', policyRef: 'ANY-REF' })]);
+    expect(r.deductibleReviews.every((d) => d.eventsN === 0)).toBe(true);
+  });
+
+  it('a blank-propertyId event is never listed (unattributable; already dropped from per-property grouping)', () => {
+    const r = run([mkRefEvent('e1', '', '2026-07-04', 42000, 'NOT-ON-FILE')]);
+    expect(r.unmatchedPolicyRefs).toEqual([]);
+    expect(r.eal).toEqual([]);
+  });
+
+  it('a case / whitespace variant of an existing number is not listed', () => {
+    const r = run([
+      mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'mmf 17962784 - 002'),
+      mkRefEvent('e2', RAYTOWN, '2026-07-05', 1000, '37 sba cb6kkb'),
+    ]);
+    expect(r.unmatchedPolicyRefs).toEqual([]);
+  });
+
+  it('ordering is a total order — (propertyId, lossDate, eventId) — independent of input row order', () => {
+    const events = [
+      mkRefEvent('z9', RAYTOWN, '2026-07-04', 100, 'X1'),
+      mkRefEvent('a1', RAYTOWN, '2026-07-04', 100, 'X2'),
+      mkRefEvent('m5', RAYTOWN, '2026-01-01', 100, 'X3'),
+      mkRefEvent('b2', FISHEL, '2026-12-31', 100, 'X4'),
+      mkRefEvent('c3', 'P-NOPOLICY', '2024-01-01', 100, 'X5'),
+    ];
+    const expected = [
+      [FISHEL, '2026-12-31', 'b2'],
+      [RAYTOWN, '2026-01-01', 'm5'],
+      [RAYTOWN, '2026-07-04', 'a1'],
+      [RAYTOWN, '2026-07-04', 'z9'],
+      ['P-NOPOLICY', '2024-01-01', 'c3'],
+    ];
+    const key = (r: ReturnType<typeof run>) => r.unmatchedPolicyRefs.map((u) => [u.propertyId, u.lossDate, u.eventId]);
+    expect(key(run(events))).toEqual(expected);
+    expect(key(run([...events].reverse()))).toEqual(expected);
+    expect(key(run([events[3]!, events[0]!, events[4]!, events[2]!, events[1]!]))).toEqual(expected);
+  });
+
+  it('the report with unmatched refs still Zod-parses', () => {
+    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'NOT-ON-FILE')]);
+    expect(() => InsuranceLossReport.parse(r)).not.toThrow();
+  });
+
+  // ── refute wf_dd1d6f45-da0 regressions ──────────────────────────────────────────────────────
+
+  it('fails closed: a blank event id (admitted by both loaders) with an unmatched ref is listed and the report still builds', () => {
+    const r = run([mkRefEvent('', RAYTOWN, '2026-07-04', 42000, 'NOT-ON-FILE')]);
+    expect(r.unmatchedPolicyRefs).toEqual([expect.objectContaining({ eventId: '', policyRef: 'NOT-ON-FILE' })]);
+    expect(review(r, '1735').eventsN).toBe(1);
+  });
+
+  it('is computed ONLY on warehouse loss runs — the same unmatched ref gives [] on placeholder / absent sources', () => {
+    const events = [mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'PLACEHOLDER')];
+    const build = (source: DataSource) =>
+      buildInsuranceLossReport(inputs({ policies: ALL, decPages: DECS, policyTerms: TERMS, lossEvents: lossEvents(events, source) }));
+    expect(build('warehouse').unmatchedPolicyRefs.map((u) => u.eventId)).toEqual(['e1']);
+    expect(build('placeholder').unmatchedPolicyRefs).toEqual([]);
+    expect(build('absent').unmatchedPolicyRefs).toEqual([]);
+    // attachment is identical across sources — the gate changes visibility only
+    expect(build('placeholder').deductibleReviews.map((d) => [d.policyId, d.eventsN]))
+      .toEqual(build('warehouse').deductibleReviews.map((d) => [d.policyId, d.eventsN]));
+  });
+});
