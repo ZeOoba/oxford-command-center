@@ -2,7 +2,7 @@ import type { PortfolioSnapshot, Lease } from '../contracts/index';
 import { RENEWAL_STAGES, type RenewalStage } from '../contracts/renewal';
 import { slug } from '../contracts/common';
 import { isInvestmentProperty } from '../analytics/property-basis';
-import { DAY_MS } from '../../server/warehouse/time-constants';
+import { DAY_MS } from '@/lib/time-constants';
 
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
   Math.round((new Date(isoTarget).getTime() - new Date(isoFrom).getTime()) / DAY_MS);

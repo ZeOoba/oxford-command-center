@@ -451,6 +451,22 @@ describe('isFresh — comp staleness (H7)', () => {
     expect(s.dataQuality.some((d) => d.field === 'marketFundamentalsAdj')).toBe(true);
   });
 
+  it('future-dated comp (sourced AFTER asAtUtc) is NOT fresh — fails closed, zeroes ± and fires the flag', () => {
+    // NOW = '2026-06-13T00:00:00Z'; a comp "sourced" 2 days later cannot be verified at that as-at.
+    const future = score(strongDeal({ ...WITH_ADJ, compSourcedAt: '2026-06-15T00:00:00Z', asAtUtc: NOW }));
+    const fresh = score(strongDeal({ ...WITH_ADJ, compSourcedAt: NOW, asAtUtc: NOW }));
+    expect(future.dataQuality.some((d) => d.field === 'marketFundamentalsAdj')).toBe(true);
+    expect(fresh.dataQuality.some((d) => d.field === 'marketFundamentalsAdj')).toBe(false);
+    // (No composite comparison: strongDeal already sits at the Cat 4 cap, so the ± is clamped out either way.)
+  });
+
+  it('a date-only asAtUtc compares as end-of-day: a same-day time-stamped comp stays fresh, next-day is not', () => {
+    const sameDay = score(strongDeal({ ...WITH_ADJ, compSourcedAt: '2026-06-13T15:30:00Z', asAtUtc: '2026-06-13' }));
+    const nextDay = score(strongDeal({ ...WITH_ADJ, compSourcedAt: '2026-06-14T00:00:01Z', asAtUtc: '2026-06-13' }));
+    expect(sameDay.dataQuality.some((d) => d.field === 'marketFundamentalsAdj')).toBe(false);
+    expect(nextDay.dataQuality.some((d) => d.field === 'marketFundamentalsAdj')).toBe(true);
+  });
+
   it('stale comp (100 days > 90-day window) fires marketFundamentalsAdj flag', () => {
     // NOW = '2026-06-13T00:00:00Z'; '2026-03-05T00:00:00Z' is 100 days prior → outside 90-day window
     const s = score(strongDeal({ ...WITH_ADJ, compSourcedAt: '2026-03-05T00:00:00Z', asAtUtc: NOW }));

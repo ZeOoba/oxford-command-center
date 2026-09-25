@@ -606,7 +606,13 @@ function mkSub(id: SubScore, points: number, maxPoints: number, confidence: Conf
 function isFresh(sourcedAt: string | null, asAt: string | null, windowDays: number): boolean {
   if (sourcedAt === null || asAt === null) return false;
   const src = Date.parse(sourcedAt);
-  const now = Date.parse(asAt);
+  // A date-only as-at ('2026-06-13') parses to 00:00Z; compare it as END of that UTC day so a comp
+  // time-stamped later the same day is not treated as future-dated (fail-closed applies to a later DAY).
+  const now = /^\d{4}-\d{2}-\d{2}$/.test(asAt) ? Date.parse(asAt) + 24 * 60 * 60 * 1000 - 1 : Date.parse(asAt);
   if (Number.isNaN(src) || Number.isNaN(now)) return false;
+  // A comp sourced AFTER the as-at date is unverifiable at that as-at (clock skew, a typo'd year, or a
+  // forward-dated import) — the freshness window is one-sided, so it must fail closed like null/NaN
+  // rather than pass because `now - src` is negative. (Audit 2026-09-25: fails-open finding.)
+  if (src > now) return false;
   return (now - src) <= windowDays * 24 * 60 * 60 * 1000;
 }

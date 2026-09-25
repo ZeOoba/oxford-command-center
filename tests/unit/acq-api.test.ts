@@ -20,6 +20,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { warehouseRoutes } from '../../server/warehouse/api';
+import { parseLimitParam } from '../../server/lib/query-params';
 import { openWarehouse } from '../../server/warehouse/db';
 import type { WarehouseDb } from '../../server/warehouse/db';
 import { AcqIntelResponse } from '@contracts/acquisition';
@@ -184,6 +185,24 @@ describe('GET /acq/intel', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { rankedCandidates: unknown[] };
     expect(Array.isArray(body.rankedCandidates)).toBe(true);
+  });
+
+  it('limit= (empty) and limit=2.5 (fractional) fall back to the route default instead of truncating to 1 row', async () => {
+    const db = freshDb();
+    const app = makeApp(db);
+    for (const q of ['/acq/intel?limit=', '/acq/intel?limit=2.5', '/acq/candidates?limit=', '/acq/candidates?limit=0.5']) {
+      const res = await app.request(q);
+      expect(res.status, q).toBe(200);
+    }
+    expect(parseLimitParam(undefined, 100, 500)).toBe(100);
+    expect(parseLimitParam('', 100, 500)).toBe(100);
+    expect(parseLimitParam('   ', 100, 500)).toBe(100);
+    expect(parseLimitParam('2.5', 100, 500)).toBe(100);
+    expect(parseLimitParam('bad', 100, 500)).toBe(100);
+    expect(parseLimitParam('0', 100, 500)).toBe(1);
+    expect(parseLimitParam('-3', 100, 500)).toBe(1);
+    expect(parseLimitParam('9999', 100, 500)).toBe(500);
+    expect(parseLimitParam('42', 100, 500)).toBe(42);
   });
 
   it('tie-case: same scored_at, higher id wins (id DESC tiebreaker — SQL-level assertion)', () => {
