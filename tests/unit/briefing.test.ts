@@ -19,10 +19,29 @@
 //  • brand-face health: every brand TTF/woff resolved (no silent Helvetica swap — adversarial #3).
 //  • per-PM roll-up totals managed properties correctly (adversarial #6).
 //  • routes: .pdf streams application/pdf with the right filename; JSON sibling Zod-parses; 503 / 404.
+//
+// Real-render budget (2026-09-24). A render costs ~125-580ms CPU (wall ≈ CPU at idle), but inside a
+// loaded `npm run gate` its wall time ran 38-60s, and the tests with the most renders on their path
+// timed out at 60s. The cost is per render, not per import: every import here is static and resolves
+// at collection, which testTimeout does not cover. So this file keeps every real render it needs and
+// no duplicates. The property direct render + its text are built once and shared (see
+// propertyRender()). Determinism does exactly one fresh render against that. The
+// property .pdf route keeps a REAL render: it is the suite's one real route→renderer→%PDF- check,
+// which briefing-narrative-routes.test.ts relies on. The manager .pdf route test swaps in a stub
+// for its single call. It checks route wiring, and the manager render is already covered for real
+// above. That is 4 real renders (was 6) and 3 extractions (was 4), with at most one render on any
+// test's path.
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type * as PdfModule from '../../server/briefing/pdf';
+
+// Pass-through spy: every call runs the REAL renderer unless a test swaps in a one-off stub.
+vi.mock('../../server/briefing/pdf', async (importOriginal) => {
+  const real = await importOriginal<typeof PdfModule>();
+  return { ...real, renderBriefingPdf: vi.fn(real.renderBriefingPdf) };
+});
 import { pdfToText } from '../../server/lib/pdf-text';
 import { warehouseRoutes } from '../../server/warehouse/api';
 import { openWarehouse } from '../../server/warehouse/db';
@@ -39,6 +58,7 @@ import { fmtUsd } from '../../src/analytics/format';
 import { PropertyBriefingModel, ManagerBriefingModel } from '../../src/contracts/briefing';
 
 const pdfParse = pdfToText;
+const renderSpy = vi.mocked(renderBriefingPdf);
 
 const GEN = '2026-06-14';
 // Two real seeded properties with a property_manager (Kohr Royer Griffith manages the Columbus 5).
@@ -88,6 +108,18 @@ function seededDb(): WarehouseDb {
     insertFy(db, id, '2025', 132000, 28000);
   }
   return db;
+}
+
+// The property briefing's direct render and its extracted text are each built once, lazily, so a
+// single test still runs alone under `-t`. Nothing here writes to the fixture warehouse.
+let propertyFixture: { model: PropertyBriefingModel; bytes: Promise<Buffer>; text: Promise<string> } | undefined;
+function propertyRender(): NonNullable<typeof propertyFixture> {
+  if (!propertyFixture) {
+    const model = PropertyBriefingModel.parse(composePropertyBriefing(seededDb(), KRG_PROPS[0]!, { generatedDate: GEN }));
+    const bytes = renderBriefingPdf(model);
+    propertyFixture = { model, bytes, text: bytes.then(async (b) => (await pdfParse(b)).text) };
+  }
+  return propertyFixture;
 }
 
 // SYNTHETIC confidential terms — the test never hardcodes a REAL active-deal identifier (the git
@@ -205,12 +237,9 @@ describe('composeManagerBriefing — per-PM roll-up', () => {
 
 describe('PDF render — extractable text layer (contract #1, adversarial #2)', () => {
   it('renders a property briefing whose key figures appear as EXTRACTABLE TEXT (not a flattened image)', async () => {
-    const db = seededDb();
-    const id = KRG_PROPS[0]!;
-    const model = PropertyBriefingModel.parse(composePropertyBriefing(db, id, { generatedDate: GEN }));
-    const bytes = await renderBriefingPdf(model);
-    expect(bytes.length).toBeGreaterThan(1000);
-    const { text } = await pdfParse(bytes);
+    const { model, bytes, text: extracted } = propertyRender();
+    expect((await bytes).length).toBeGreaterThan(1000);
+    const text = await extracted;
     const flat = text.replace(/\s+/g, ' ');
     const noSpace = text.replace(/\s+/g, '');
     // The masthead carries brand letter-spacing, so it extracts with inter-glyph spaces — assert it
@@ -237,9 +266,9 @@ describe('PDF render — extractable text layer (contract #1, adversarial #2)', 
 
 describe('determinism (contract #2 — same model → identical extracted text, no Date.now in renderer)', () => {
   it('two renders of the same model yield identical extracted text', async () => {
-    const db = seededDb();
-    const model = PropertyBriefingModel.parse(composePropertyBriefing(db, KRG_PROPS[0]!, { generatedDate: GEN }));
-    const t1 = (await pdfParse(await renderBriefingPdf(model))).text;
+    // First render is the shared fixture; the second is a fresh, independent render of the same model.
+    const { model, text } = propertyRender();
+    const t1 = await text;
     const t2 = (await pdfParse(await renderBriefingPdf(model))).text;
     expect(t1).toBe(t2);
   });
@@ -352,9 +381,20 @@ describe('routes — /api/warehouse/briefing/*', () => {
   it('manager .pdf + JSON sibling work', async () => {
     const db = seededDb();
     const app = warehouseRoutes(() => db);
+    // Route wiring only. The real manager render is covered by the extractable-text test above,
+    // and the property .pdf test is the real route→renderer check.
+    const stub = Buffer.from('%PDF-stub manager', 'latin1');
+    renderSpy.mockClear();
+    renderSpy.mockImplementationOnce(async () => stub);
     const pdf = await app.request(`/briefing/manager/${KRG_SLUG}.pdf`);
     expect(pdf.status).toBe(200);
     expect(pdf.headers.get('content-type')).toBe('application/pdf');
+    expect(pdf.headers.get('content-disposition')).toMatch(/attachment; filename="ORA_Briefing_.+_\d{8}\.pdf"/);
+    expect(Buffer.from(await pdf.arrayBuffer()).equals(stub)).toBe(true);
+    expect(renderSpy).toHaveBeenCalledTimes(1);
+    const [renderedModel, narrative] = renderSpy.mock.calls[0]!;
+    expect(managerSlug(ManagerBriefingModel.parse(renderedModel).subject.name)).toBe(KRG_SLUG);
+    expect(narrative).toBeNull();
     const json = await app.request(`/briefing/manager/${KRG_SLUG}`);
     const body = ManagerBriefingModel.parse(await json.json());
     expect(managerSlug(body.subject.name)).toBe(KRG_SLUG);
