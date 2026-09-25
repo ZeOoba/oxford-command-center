@@ -1,0 +1,125 @@
+import { describe, expect, it } from 'vitest';
+import {
+  AFFILIATE_LENDER_NAMES,
+  namesAffiliateLender,
+  isAffiliateNoteProperty,
+  isAffiliateBorrowerLoan,
+  investmentLoanBalance,
+  investmentLtv,
+  propertyLtvLabel,
+  affiliateNotesClause,
+  DEBT_BASIS_FIELD,
+  isDebtBasisFlag,
+} from '../../src/analytics/debt-basis';
+
+// Every lender / counterparty string below is copied verbatim from data/snapshots/portfolio.json
+// (asOf 2026-09-13) so the predicate is proven against the live workbook's actual spellings.
+describe('namesAffiliateLender — explicit Oxford lending-entity list, whole phrase, case-insensitive', () => {
+  it('ships exactly the ratified list (Q1)', () => {
+    expect(AFFILIATE_LENDER_NAMES).toEqual(['Oxford Capital']);
+  });
+  it.each([
+    ['Oxford Capital', true], // 1100 Rarig Property NOI row lender
+    ['oxford capital', true],
+    ['REDACTED-676', true], // "3883 from Oxford (50%)" borrower lender
+    ['REDACTED-026', true], // lender-direction note (name matches; direction rule excludes it)
+    ['Oxford Capital Partners', true], // an Oxford entity by name
+    ['REDACTED-077', false], // 29000 Information Lane — third party
+    ['Muirkirk Properties (REDACTED-655/REDACTED-672) — Oxford 50% share', false], // 9050 Red Branch — third party
+    ['REDACTED-030', false],
+    ['REDACTED-111', false],
+    ['Oxford Capitalist Fund', false], // no partial-word match after
+    ['NotOxford Capital', false], // no partial-word match before
+    ['REDACTED-672', false],
+    ['', false],
+  ])('%s → %s', (text, expected) => {
+    expect(namesAffiliateLender(text)).toBe(expected);
+  });
+  it('null / undefined → false', () => {
+    expect(namesAffiliateLender(null)).toBe(false);
+    expect(namesAffiliateLender(undefined)).toBe(false);
+  });
+});
+
+describe('isAffiliateNoteProperty — property row whose outstanding loan is owed to an Oxford lender', () => {
+  it('live 1100 Rarig row → true', () => {
+    expect(isAffiliateNoteProperty({ lender: 'Oxford Capital', loanBalance: REDACTED-AMT })).toBe(true);
+  });
+  it('affiliate lender name but nothing outstanding → false (no note to exclude)', () => {
+    expect(isAffiliateNoteProperty({ lender: 'Oxford Capital', loanBalance: 0 })).toBe(false);
+  });
+  it('third-party lender → false', () => {
+    expect(isAffiliateNoteProperty({ lender: 'REDACTED-672', loanBalance: REDACTED-AMT })).toBe(false);
+  });
+  it('no lender → false', () => {
+    expect(isAffiliateNoteProperty({ lender: null, loanBalance: 0 })).toBe(false);
+    expect(isAffiliateNoteProperty({})).toBe(false);
+  });
+});
+
+describe('isAffiliateBorrowerLoan — borrower direction only', () => {
+  const live3883 = {
+    direction: 'borrower',
+    lender: 'REDACTED-676',
+    counterparty: 'REDACTED-676',
+  };
+  it('live "3883 from Oxford (50%)" → true', () => {
+    expect(isAffiliateBorrowerLoan(live3883)).toBe(true);
+  });
+  it('matches on counterparty when lender is blank', () => {
+    expect(isAffiliateBorrowerLoan({ ...live3883, lender: null })).toBe(true);
+  });
+  it('a LENDER-direction note naming Oxford Capital is capital deployed, never an affiliate debt → false', () => {
+    expect(isAffiliateBorrowerLoan({ direction: 'lender', lender: null, counterparty: 'REDACTED-026' })).toBe(false);
+  });
+  it('internal-direction accrual → false (already outside External Debt)', () => {
+    expect(isAffiliateBorrowerLoan({ direction: 'internal', lender: null, counterparty: 'REDACTED-373' })).toBe(false);
+  });
+  it('third-party borrower → false', () => {
+    const easton = 'REDACTED-077';
+    expect(isAffiliateBorrowerLoan({ direction: 'borrower', lender: easton, counterparty: easton })).toBe(false);
+  });
+});
+
+describe('investment-basis helpers', () => {
+  const rarig = { lender: 'Oxford Capital', loanBalance: REDACTED-AMT, ltv: REDACTED-AMT };
+  const easton = { lender: 'REDACTED-672', loanBalance: REDACTED-AMT, ltv: REDACTED-AMT };
+  it('investmentLoanBalance zeroes an affiliate note and passes third-party debt through', () => {
+    expect(investmentLoanBalance(rarig)).toBe(0);
+    expect(investmentLoanBalance(easton)).toBe(REDACTED-AMT);
+    expect(investmentLoanBalance({ lender: null, loanBalance: null })).toBe(0);
+  });
+  it('investmentLtv is null for an affiliate note, raw ltv otherwise', () => {
+    expect(investmentLtv(rarig)).toBeNull();
+    expect(investmentLtv(easton)).toBe(REDACTED-AMT);
+  });
+  it('propertyLtvLabel names the exclusion instead of printing a number', () => {
+    expect(propertyLtvLabel(rarig)).toBe('affiliate note');
+    expect(propertyLtvLabel(easton)).toBe('39.0%');
+    expect(propertyLtvLabel({ lender: null, loanBalance: 0, ltv: null })).toBe('—');
+  });
+  it('affiliateNotesClause formats a disclosure clause, or nothing', () => {
+    expect(affiliateNotesClause(REDACTED-AMT)).toBe('+$1.10M affiliate notes');
+    expect(affiliateNotesClause(REDACTED-AMT)).toBe('+$385K affiliate notes');
+    expect(affiliateNotesClause(0)).toBe('');
+    expect(affiliateNotesClause(null)).toBe('');
+    expect(affiliateNotesClause(undefined)).toBe('');
+  });
+});
+
+describe('isDebtBasisFlag — anchored on the debt.basis field family (round-1 lesson b)', () => {
+  it.each([
+    [{ entity: 'debt', field: 'debt.basis' }, true],
+    [{ entity: 'debt', field: 'debt.basis.property.p1' }, true],
+    [{ entity: 'debt', field: 'debt.basis.loan.n1' }, true],
+    [{ entity: 'debt', field: 'debt.basisx' }, false],
+    [{ entity: 'debt', field: 'xdebt.basis' }, false],
+    [{ entity: 'reconciliation', field: 'debt.basis' }, false],
+    [{ entity: 'lease', field: 'lease.l1.leaseEnd' }, false],
+  ])('%o → %s', (flag, expected) => {
+    expect(isDebtBasisFlag(flag)).toBe(expected);
+  });
+  it('exports the field root', () => {
+    expect(DEBT_BASIS_FIELD).toBe('debt.basis');
+  });
+});
