@@ -11,7 +11,11 @@
 // lender-name list — not a fuzzy heuristic — matched against Property.lender (Property NOI col 19)
 // and a borrower loan's lender/counterparty (Loan Index col 3). Borrower direction ONLY: a
 // lender-direction note naming "(Oxford Capital)" is Oxford's own receivable (Capital Deployed).
-// The list is pending Gabriel's completeness confirmation (plan Q1); extend it here and nowhere else.
+// Q1 ratified complete 2026-09-26 (Gabriel): the list is ['Oxford Capital']; extend it here and nowhere else.
+// "Oxford Capital Partners" is the firm's own styling — a borrowing in the firm's name FROM a bank is
+// third-party debt, so that phrase is explicitly excluded. Whitespace (incl. NBSP / newlines) is
+// collapsed before matching. Known limit: a property row carries ONE lender string and is classified
+// whole — a row mixing third-party and affiliate debt is not split.
 import { fmtPct, fmtUsdCompact } from './format';
 
 /** Oxford lending entities. A note owed TO one of these BY an Oxford property is an affiliate note. */
@@ -19,21 +23,29 @@ export const AFFILIATE_LENDER_NAMES: readonly string[] = ['Oxford Capital'];
 
 const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // Whole phrase: the name must not be glued to a letter/digit on either side ("NotOxford Capital",
-// "Oxford Capitalist" do not match). No `g` flag, so `.test` carries no lastIndex state.
+// "Oxford Capitalist" do not match) and must not be followed by " Partners" (the firm's own name,
+// not a lender). Input is whitespace-normalized first, so a single space is the only separator the
+// pattern has to handle. No `g` flag, so `.test` carries no lastIndex state.
 const AFFILIATE_RE = new RegExp(
-  `(?:^|[^a-z0-9])(?:${AFFILIATE_LENDER_NAMES.map(escapeRe).join('|')})(?:[^a-z0-9]|$)`,
+  `(?:^|[^a-z0-9])(?:${AFFILIATE_LENDER_NAMES.map(escapeRe).join('|')})(?! partners(?:[^a-z0-9]|$))(?:[^a-z0-9]|$)`,
   'i',
 );
 
+/** Collapse any run of whitespace (space, NBSP, tab, newline) to one space and trim. */
+const normalizeWs = (s: string): string => s.replace(/\s+/g, ' ').trim();
+
 export function namesAffiliateLender(text: string | null | undefined): boolean {
-  return typeof text === 'string' && AFFILIATE_RE.test(text);
+  return typeof text === 'string' && AFFILIATE_RE.test(normalizeWs(text));
 }
 
 type DebtRow = { readonly lender?: string | null; readonly loanBalance?: number | null };
 
 /** A property row whose outstanding loan balance is owed to an Oxford affiliate lender. */
 export function isAffiliateNoteProperty(p: DebtRow): boolean {
-  return (p.loanBalance ?? 0) > 0 && namesAffiliateLender(p.lender);
+  const bal = p.loanBalance;
+  // Sign-agnostic: a negative affiliate balance is still an affiliate note. Only a zero / missing /
+  // non-finite balance means there is no note to exclude.
+  return typeof bal === 'number' && Number.isFinite(bal) && bal !== 0 && namesAffiliateLender(p.lender);
 }
 
 /** A BORROWER-direction loan-schedule row whose lender is an Oxford affiliate. */
