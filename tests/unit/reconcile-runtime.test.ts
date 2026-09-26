@@ -521,9 +521,42 @@ describe('checkDebtBasis — per-row, affiliate notes excluded on both sides (20
     expect(checkDebtBasis(debtSnap([prop], [b, a]))).toEqual([]);
   });
 
-  it('a loan collateralised by the residence is other-holdings debt: compared on neither side', () => {
+  it('a loan collateralised by the residence is counted in Capital › Debt External Debt but outside Overview Total Debt — disclosed, not silently dropped (refute wf_2b574580-61b)', () => {
     const resLoan: L = { id: 'b-res', name: 'Persimmon mortgage', direction: 'borrower', absBalance: 900_000, lender: 'Wells', counterparty: 'Wells', collateralProperty: '9510 Persimmon Tree Rd, Potomac MD' };
-    expect(checkDebtBasis(debtSnap([{ ...RESIDENCE, loanBalance: 900_000 }], [resLoan]))).toEqual([]);
+    expect(checkDebtBasis(debtSnap([{ ...RESIDENCE, loanBalance: 900_000 }], [resLoan]))).toEqual([{
+      entity: 'debt', field: 'debt.basis.loan.b-res', severity: 'warn',
+      issue: 'Persimmon mortgage: $900,000 on the loan schedule is counted in Capital › Debt External Debt but outside Overview Total Debt (other holding: 9510 Persimmon Tree Rd, Potomac MD)',
+    }]);
+  });
+
+  it('aggregate guard: rows each within tolerance but summing past it → no per-row flag, one root flag (refute wf_2b574580-61b)', () => {
+    const beta: P = { id: 'p-beta', name: 'Beta Flex', type: 'Flex', lender: 'Bank B', loanBalance: 200_999 };
+    const betaLoan: L = { id: 'b-beta', name: 'Beta Loan', direction: 'borrower', absBalance: 200_000, lender: 'Bank B', counterparty: 'Bank B', collateralProperty: 'Beta Flex' };
+    const flags = checkDebtBasis(debtSnap([{ ...EASTON, loanBalance: 2_761_610.91 }, beta], [EASTON_LOAN, betaLoan]));
+    expect(flags.map((f) => f.field)).toEqual(['debt.basis']);
+    expect(flags[0]).toMatchObject({ entity: 'debt', severity: 'warn' });
+    expect(flags[0]!.issue).toContain('$2,962,610');
+    expect(flags[0]!.issue).toContain('$2,960,612');
+    expect(flags[0]!.issue).toContain('gap $1,998');
+  });
+
+  it('aggregate guard is silent when the aggregate is within tolerance', () => {
+    const flags = checkDebtBasis(debtSnap([{ ...EASTON, loanBalance: 2_761_000 }], [EASTON_LOAN]));
+    expect(flags).toEqual([]);
+  });
+
+  it('duplicate loan ids among third-party loans are flagged once and excluded from the comparison, in either row order (refute wf_2b574580-61b)', () => {
+    const dupA: L = { ...EASTON_LOAN, id: 'dup', name: 'Dup A', absBalance: 2_000_000 };
+    const dupB: L = { ...EASTON_LOAN, id: 'dup', name: 'Dup B', absBalance: 760_611.91 };
+    const ab = checkDebtBasis(debtSnap([EASTON], [dupA, dupB]));
+    const ba = checkDebtBasis(debtSnap([EASTON], [dupB, dupA]));
+    expect(ab).toEqual(ba);
+    expect(ab.map((f) => f.field).sort()).toEqual(['debt.basis.loan.dup', 'debt.basis.property.p-easton']);
+    const dup = ab.find((f) => f.field === 'debt.basis.loan.dup')!;
+    expect(dup.issue).toBe('2 loan-schedule rows share id dup — not compared');
+    expect(dup.severity).toBe('warn');
+    const prop = ab.find((f) => f.field === 'debt.basis.property.p-easton')!;
+    expect(prop.issue).toContain('(no third-party loan attributed)');
   });
 
   it('lender and internal directions never count on the loan side', () => {
