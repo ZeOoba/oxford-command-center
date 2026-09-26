@@ -20,7 +20,7 @@ import type {
   RolloverBucket,
   TenantShare,
 } from './types';
-import { DAY_MS } from '../../server/warehouse/time-constants';
+import { DAY_MS } from '@/lib/time-constants';
 
 const DERIVED = 'Analytics engine (derived from Master Workbook)';
 const sum = (xs: number[]): number => xs.reduce((a, b) => a + b, 0);

@@ -67,6 +67,18 @@ describe('runMigrations', () => {
     expect(filenames).toEqual(sorted);
   });
 
+  it('applies same-prefix migrations in a deterministic (name) order — 017_market_series before 017_ratify', () => {
+    const db = makeMemoryDb();
+    runMigrations(db);
+    const rows = db.prepare('SELECT filename FROM _migrations ORDER BY id').all() as { filename: string }[];
+    const names = rows.map((r) => r.filename);
+    const a = names.indexOf('017_market_series_constraints.sql');
+    const b = names.indexOf('017_ratify_hurdle_rate.sql');
+    expect(a).toBeGreaterThanOrEqual(0);
+    expect(b).toBeGreaterThanOrEqual(0);
+    expect(a).toBeLessThan(b);
+  });
+
   it('does not double-apply if called concurrently on same db', () => {
     const db = makeMemoryDb();
     // Simulate two sequential calls (true concurrent access is not possible with a single Connection)
