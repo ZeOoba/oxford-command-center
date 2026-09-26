@@ -529,8 +529,8 @@ describe('ALERT_THRESHOLDS', () => {
     expect(ALERT_THRESHOLDS.cashConcentrationWarn).toBe(0.3);
   });
   it('pins the alert-specific (non-governor) thresholds; governor thresholds moved to the payload (I10)', () => {
-    expect(ALERT_THRESHOLDS.dscrFloor).toBe(1.1);
-    expect(ALERT_THRESHOLDS.ltvCeiling).toBe(0.65);
+    expect(ALERT_THRESHOLDS.dscrCriticalFloor).toBe(1.1);
+    expect(ALERT_THRESHOLDS.refiLtvCeilingPerProperty).toBe(0.65);
     // dscrWatch / ltvGovernor no longer live here: the governor boundaries ride the snapshot
     // payload (s.governors, warehouse-fresh) with GOVERNOR_FALLBACK for legacy snapshots.
     expect('dscrWatch' in ALERT_THRESHOLDS).toBe(false);
