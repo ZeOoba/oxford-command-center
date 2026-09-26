@@ -301,6 +301,40 @@ describe('checkSnapshot — runtime reconciliation', () => {
       expect(f!.issue).toContain('2026-07-10');
     });
 
+    // 2026-09-25: a 2026-07-10 row was keyed from estimates. The value-only gate check caught it only
+    // because the current balances were not rolled forward; had they been, it would have passed.
+    describe('estimated-row signature (round-number balances)', () => {
+      const june = { A: 181752.34, B: 4479008, C: 39262.31, D: 1592701.78, E: 211498.933, F: 17479.8 };
+      const row = (date: string, balances: Record<string, number>) => ({
+        date,
+        total: Object.values(balances).reduce((a, b) => a + b, 0),
+        balances,
+      });
+      const flagsFor = (latest: Record<string, number>) =>
+        checkSnapshot(base({ cash: cashWith({ history: [row('2026-06-10', june), row('2026-07-10', latest)] }) }))
+          .filter((f) => f.field === 'cash.history.estimated');
+
+      it('flags (warn) the live 2026-07-10 shape: most changed balances are whole multiples of $500', () => {
+        const f = flagsFor({ ...june, A: 220000, B: 4500000, C: 55000, D: 1500000, E: 212000 });
+        expect(f).toHaveLength(1);
+        expect(f[0]!.severity).toBe('warn');
+        expect(f[0]!.issue).toContain('2026-07-10');
+        expect(f[0]!.issue).toContain('5 of 5');
+      });
+
+      it('is silent for statement-style balances (cents, odd dollars), even when some entities are unchanged', () => {
+        expect(flagsFor({ ...june, A: 190313.07, B: 4481220, D: 1601877.12, E: 212004.5 })).toEqual([]);
+      });
+
+      it('is silent when only one or two changed balances happen to be round', () => {
+        expect(flagsFor({ ...june, A: 190000, B: 4481220.5, C: 40000, D: 1601877.12 })).toEqual([]);
+      });
+
+      it('is silent for history rows that carry no per-entity balances', () => {
+        expect(checkSnapshot(base({ cash: cashWith({}) })).some((f) => f.field === 'cash.history.estimated')).toBe(false);
+      });
+    });
+
     it('does not run the date checks when the snapshot carries no history / asOf / meta (legacy fixture)', () => {
       expect(checkSnapshot(base()).filter((f) => f.field.startsWith('cash.'))).toEqual([]);
     });
