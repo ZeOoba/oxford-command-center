@@ -11,7 +11,7 @@
 //     rate-reset events, confidentiality (no balance/rate/lender on the wire), superseded excluded
 //   buildRefiWindows — 12/24-month window boundaries, demand-note conservatism, unknown-maturity
 //     flagging, DSCR/LTV breach flags vs the REFERENCED governors (never new literals),
-//     65% refi ceiling drift-pinned to ALERT_THRESHOLDS.ltvCeiling
+//     65% refi ceiling drift-pinned to ALERT_THRESHOLDS.refiLtvCeilingPerProperty
 //   computePortfolioAggregateLtv — conservative-clearance semantics (overstated basis ⇒ a
 //     complete-coverage ≤40% is a true clearance; anything else is null/false, never fabricated)
 //   GET /timeline + GET /refi-windows — parse through the new Zod contracts
@@ -466,15 +466,15 @@ describe('buildRefiWindows', () => {
     expect(w!.refiCeilingBreach).toBe(false); // 0.45 ≤ 0.65 per-property refi ceiling
   });
 
-  it('65% refi ceiling: breach + headroom are computed from ALERT_THRESHOLDS.ltvCeiling (drift-pinned, no new literal)', () => {
-    expect(REFI_LTV_CEILING).toBe(ALERT_THRESHOLDS.ltvCeiling);
+  it('65% refi ceiling: breach + headroom are computed from ALERT_THRESHOLDS.refiLtvCeilingPerProperty (drift-pinned, no new literal)', () => {
+    expect(REFI_LTV_CEILING).toBe(ALERT_THRESHOLDS.refiLtvCeilingPerProperty);
     const db = freshDb();
     seedProperty(db, 'p1');
     seedLoan(db, { propertyId: 'p1', maturityDate: isoMonthsFromAsOf(18) });
-    const ltv = ALERT_THRESHOLDS.ltvCeiling + 0.05; // 0.70 under the current ratified 0.65
+    const ltv = ALERT_THRESHOLDS.refiLtvCeilingPerProperty + 0.05; // 0.70 under the current ratified 0.65
     const [w] = buildRefiWindows(db, [score({ propertyId: 'p1', ltv })], ASOF);
     expect(w!.refiCeilingBreach).toBe(true);
-    expect(w!.refiLtvHeadroom).toBeCloseTo(ALERT_THRESHOLDS.ltvCeiling - ltv, 10);
+    expect(w!.refiLtvHeadroom).toBeCloseTo(ALERT_THRESHOLDS.refiLtvCeilingPerProperty - ltv, 10);
     expect(w!.govLtvCeilingBreach).toBe(true);
   });
 
@@ -517,7 +517,7 @@ describe('buildRefiWindows', () => {
     seedLoan(db, { propertyId: 'p1', maturityDate: isoMonthsFromAsOf(18) });
     const [w] = buildRefiWindows(
       db,
-      [score({ propertyId: 'p1', ltv: ALERT_THRESHOLDS.ltvCeiling })],
+      [score({ propertyId: 'p1', ltv: ALERT_THRESHOLDS.refiLtvCeilingPerProperty })],
       ASOF,
     );
     expect(w!.refiCeilingBreach).toBe(false);
@@ -995,7 +995,7 @@ describe('debt API — GET /timeline and GET /refi-windows', () => {
     const governors = loadGovernors(db);
     expect(parsed.governors.dscrFloor).toBe(governors.dscrFloor);
     expect(parsed.governors.ltvCeilingAggregate).toBe(governors.ltvCeiling);
-    expect(parsed.governors.refiLtvCeilingPerProperty).toBe(ALERT_THRESHOLDS.ltvCeiling);
+    expect(parsed.governors.refiLtvCeilingPerProperty).toBe(ALERT_THRESHOLDS.refiLtvCeilingPerProperty);
     expect(parsed.windows.length).toBe(1);
     expect(parsed.aggregate.totalLoanCount).toBe(1);
   });
