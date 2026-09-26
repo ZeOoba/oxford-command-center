@@ -537,7 +537,20 @@ describe('checkDebtBasis — per-row, affiliate notes excluded on both sides (20
     expect(flags[0]).toMatchObject({ entity: 'debt', severity: 'warn' });
     expect(flags[0]!.issue).toContain('$2,962,610');
     expect(flags[0]!.issue).toContain('$2,960,612');
-    expect(flags[0]!.issue).toContain('gap $1,998');
+    expect(flags[0]!.issue).toContain('residual gap across rows within tolerance $1,998');
+  });
+
+  it('residual guard: a flagged row does not hide the sub-tolerance residue of the other rows (reviewer, Important)', () => {
+    const row = (i: number, extra: number): [P, L] => [
+      { id: `p-${i}`, name: `Row ${i}`, type: 'Flex', lender: 'Bank', loanBalance: 100_000 + extra },
+      { id: `b-${i}`, name: `Loan ${i}`, direction: 'borrower', absBalance: 100_000, lender: 'Bank', counterparty: 'Bank', collateralProperty: `Row ${i}` },
+    ];
+    const rows = [row(0, 5_000), row(1, 999), row(2, 999), row(3, 999)];
+    const flags = checkDebtBasis(debtSnap(rows.map((r) => r[0]), rows.map((r) => r[1])));
+    expect(flags.map((f) => f.field).sort()).toEqual(['debt.basis', 'debt.basis.property.p-0']);
+    const root = flags.find((f) => f.field === 'debt.basis')!;
+    expect(root.severity).toBe('warn');
+    expect(root.issue).toContain('residual gap across rows within tolerance $2,997');
   });
 
   it('aggregate guard is silent when the aggregate is within tolerance', () => {
@@ -553,7 +566,7 @@ describe('checkDebtBasis — per-row, affiliate notes excluded on both sides (20
     expect(ab).toEqual(ba);
     expect(ab.map((f) => f.field).sort()).toEqual(['debt.basis.loan.dup', 'debt.basis.property.p-easton']);
     const dup = ab.find((f) => f.field === 'debt.basis.loan.dup')!;
-    expect(dup.issue).toBe('2 loan-schedule rows share id dup — not compared');
+    expect(dup.issue).toBe('2 third-party loan-schedule rows share id dup — not compared');
     expect(dup.severity).toBe('warn');
     const prop = ab.find((f) => f.field === 'debt.basis.property.p-easton')!;
     expect(prop.issue).toContain('(no third-party loan attributed)');

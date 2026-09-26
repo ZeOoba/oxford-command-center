@@ -198,8 +198,9 @@ const DEBT_BASIS_TOLERANCE = 1000;
  * order-independent (refute wf_fb49dbb9-c91).
  *
  * Bound: the per-row tolerance can mask at most rows × tolerance of net gap; that residue is caught
- * in aggregate by one root flag (field exactly DEBT_BASIS_FIELD) when |Σ property − Σ schedule|
- * over investment rows exceeds the tolerance without any single row doing so.
+ * by one root flag (field exactly DEBT_BASIS_FIELD) when |Σ property − Σ schedule − Σ gaps already
+ * flagged per row| over investment rows exceeds the tolerance — a flagged row never hides the
+ * sub-tolerance residue of the others.
  *
  * Affiliate totals (ratified 2026-09-26): the property-row affiliate sum (PortfolioKpis.affiliateDebt)
  * and the loan-schedule affiliate sum (DebtSummary.affiliateDebt) come from different spines and
@@ -230,7 +231,7 @@ export function checkDebtBasis(s: Pick<PortfolioSnapshot, 'properties' | 'loans'
   for (const l of thirdPartyAll) idCount.set(l.id, (idCount.get(l.id) ?? 0) + 1);
   for (const [id, n] of [...idCount].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
     if (n < 2) continue;
-    flags.push({ entity: 'debt', field: `${DEBT_BASIS_FIELD}.loan.${id}`, issue: `${n} loan-schedule rows share id ${id} — not compared`, severity: 'warn' });
+    flags.push({ entity: 'debt', field: `${DEBT_BASIS_FIELD}.loan.${id}`, issue: `${n} third-party loan-schedule rows share id ${id} — not compared`, severity: 'warn' });
   }
   const thirdParty = thirdPartyAll.filter((l) => idCount.get(l.id) === 1);
   const { map, unresolved } = buildLoanPropertyMap(thirdParty, allProps, new Set(allProps.map((p) => p.id)));
@@ -259,7 +260,7 @@ export function checkDebtBasis(s: Pick<PortfolioSnapshot, 'properties' | 'loans'
 
   let sumPropCents = 0;
   let sumSchedCents = 0;
-  let rowFlagged = false;
+  let flaggedGapCents = 0; // signed Σ of gaps already named by a per-row flag
   for (const p of investment) {
     const propCents = cents(investmentLoanBalance(p));
     const schedCents = loanCents.get(p.id) ?? 0;
@@ -267,7 +268,7 @@ export function checkDebtBasis(s: Pick<PortfolioSnapshot, 'properties' | 'loans'
     sumSchedCents += schedCents;
     const gap = propCents - schedCents;
     if (Math.abs(gap) <= tol) continue;
-    rowFlagged = true;
+    flaggedGapCents += gap;
     const names = loanNames.get(p.id);
     flags.push({
       entity: 'debt',
@@ -290,17 +291,19 @@ export function checkDebtBasis(s: Pick<PortfolioSnapshot, 'properties' | 'loans'
     });
   }
 
-  // Aggregate guard: sub-tolerance residues across rows can add up past the tolerance. Only when no
-  // row was flagged — a flagged row already names the gap, and a second flag would double-count it.
+  // Residual guard: sub-tolerance residues across rows can add up past the tolerance, and a flagged
+  // row must not hide them — subtract the gaps already named per row and test what is left.
   const aggGap = sumPropCents - sumSchedCents;
-  if (!rowFlagged && Math.abs(aggGap) > tol) {
+  const residual = aggGap - flaggedGapCents;
+  if (Math.abs(residual) > tol) {
     flags.push({
       entity: 'debt',
       field: DEBT_BASIS_FIELD,
       issue:
         `Overview Total Debt (Σ investment-row loan balances, Property NOI sheet) ${usd(sumPropCents / 100)} vs ` +
-        `Σ attributed third-party loans (loan schedule) ${usd(sumSchedCents / 100)} — gap ${usd(Math.abs(aggGap) / 100)} ` +
-        `(no single row exceeds the ${usd(DEBT_BASIS_TOLERANCE)} per-row tolerance)`,
+        `Σ attributed third-party loans (loan schedule) ${usd(sumSchedCents / 100)} — ` +
+        `residual gap across rows within tolerance ${usd(Math.abs(residual) / 100)} ` +
+        `(each under the ${usd(DEBT_BASIS_TOLERANCE)} per-row tolerance; flagged rows excluded)`,
       severity: 'warn',
     });
   }
