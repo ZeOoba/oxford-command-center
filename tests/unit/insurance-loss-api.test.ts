@@ -401,6 +401,75 @@ describe('GET /api/warehouse/insurance/loss — NULL loss-event id with an unmat
   });
 });
 
+describe('GET /api/warehouse/insurance/loss — loosely-typed SQL text columns (only raw SQL can write them; the importer rejects them)', () => {
+  const RAYTOWN = '9620-e-state-route-350-raytown-mo';
+
+  function seedRaytownWithPolicy(db: WarehouseDb): void {
+    seedProperty(db, RAYTOWN, '9620 E State Route 350, Raytown MO');
+    insertPolicy(db, {
+      propertyId: 'ins-9620state350-prop-hfd',
+      policyType: 'Property Package',
+      policyNumber: '37SBACB6KKB',
+      premiumAnnual: 5000,
+      coverageTiv: 1_000_000,
+      deductible: 25_000,
+      coverageLimit: 2_000_000,
+      effectiveDate: '2025-01-01',
+      expirationDate: '2027-01-01',
+    });
+  }
+
+  async function expectContractValid200(db: WarehouseDb) {
+    const res = await makeApp(db).request('/');
+    expect(res.status).toBe(200);
+    const parsed = InsuranceLossReport.safeParse(await res.json());
+    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+    if (!parsed.success) throw new Error('unreachable');
+    expect(calibrationVerdictCount(db)).toBe(0);
+    return parsed.data;
+  }
+
+  it('F1: a BLOB policy_ref with a third-party cause still 200s (detection normalizes the ref before attachEvent\'s early return)', async () => {
+    const db = freshDb();
+    seedRaytownWithPolicy(db);
+    db.prepare(
+      `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+       VALUES ('B1', ?, X'41', '2026-03-01', 'bodily injury', 40000, 40000, 0, 'test-loss-run')`,
+    ).run(RAYTOWN);
+    const report = await expectContractValid200(db);
+    // A non-string ref is normalized to null at the loader: nothing to match, nothing to flag.
+    expect(report.unmatchedPolicyRefs).toEqual([]);
+    expect(report.lossDataSource).toBe('warehouse');
+  });
+
+  it('F2: a BLOB cause with an unmatched ref still 200s, listed with cause null', async () => {
+    const db = freshDb();
+    seedRaytownWithPolicy(db);
+    db.prepare(
+      `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+       VALUES ('B2', ?, 'NOPE', '2026-03-01', X'02', 42000, 42000, 0, 'test-loss-run')`,
+    ).run(RAYTOWN);
+    const report = await expectContractValid200(db);
+    expect(report.unmatchedPolicyRefs).toEqual([expect.objectContaining({ eventId: 'B2', policyRef: 'NOPE', cause: null })]);
+    // Attachment unaffected: covering term, d=25k on 42k.
+    expect(report.deductibleReviews[0]).toMatchObject({ eventsN: 1, retainedUsd: 25_000, transferredUsd: 17_000 });
+  });
+
+  it('F3: a BLOB loss_date (TEXT NOT NULL stores a BLOB as-is) still 200s — a single event, no sort needed to trip isoDay().trim()', async () => {
+    const db = freshDb();
+    seedRaytownWithPolicy(db);
+    db.prepare(
+      `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+       VALUES ('B3', ?, 'NOPE', X'323032362D30332D3031', 'wind', 42000, 42000, 0, 'test-loss-run')`,
+    ).run(RAYTOWN);
+    const report = await expectContractValid200(db);
+    // '' date: no calendar year → not an observation year; term narrowing skipped → most recent
+    // policy still attaches it; the unmatched entry carries lossDate ''.
+    expect(report.unmatchedPolicyRefs).toEqual([expect.objectContaining({ eventId: 'B3', policyRef: 'NOPE', lossDate: '' })]);
+    expect(report.deductibleReviews[0]).toMatchObject({ eventsN: 1, retainedUsd: 25_000, transferredUsd: 17_000 });
+  });
+});
+
 describe('GET /api/warehouse/insurance/loss — live-shaped book with no TIV on any current term', () => {
   it('property lines are reviewed without TIV; the tenant ACORD certificate and the GL line are not', async () => {
     const db = freshDb();

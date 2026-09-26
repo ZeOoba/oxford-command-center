@@ -115,8 +115,11 @@ Both run through `scripts/import-insurance-data.ts` (Task 11). Loss events use
 `UNIQUE(property_id, loss_date, cause, gross_incurred)` (migration 022), so re-running the same
 file is idempotent — a repeat run reports the rows as `ignored`, not duplicated. (SQLite admits
 NULL in that `TEXT PRIMARY KEY` — it has no `NOT NULL` — and NULL ids bypass the key check, but the
-importer rejects any non-string or blank `id` before insert, so only a raw SQL write can create one;
-`resolveLossEvents` coerces such an id to `''` for every reader.) Dec pages
+importer rejects any non-string or blank `id` before insert, so only a raw SQL write can create one.
+More generally the table's column types are affinities, not guarantees — a TEXT column, even
+`NOT NULL`, stores a BLOB as-is and the `gross_incurred` CHECK passes a BLOB — so no reader trusts
+them: `resolveLossEvents` is the single normalization point and coerces every column to the
+`LossEventRow` type, `''`/`null`/`0` for anything malformed.) Dec pages
 `UPDATE property_insurance_policies SET deductible = ?, coverage_limit = ?` per policy id, so a
 policy id not found in the table is counted `missing`, never thrown. Both accept an optional
 `--db <path>` override (defaults to `WAREHOUSE_DB` env or `data/warehouse/finance.sqlite`).

@@ -809,6 +809,28 @@ describe('buildInsuranceLossReport — unmatchedPolicyRefs', () => {
     expect(review(fwd, '1735').eventsN).toBe(3);
   });
 
+  it("G1: three '' ids, SAME cause, null ref, 0.1/0.2/0.3 — only the grossIncurred key separates them; eal and reviews equal forward vs reversed", () => {
+    // Every earlier key (lossDate, id, cause) ties and policyRef is null, so the per-property sort's
+    // grossIncurred comparator is the sole thing keeping 0.1+0.2+0.3 order-independent.
+    const events = [0.1, 0.2, 0.3].map((amt) => ({ ...mkEvent('', RAYTOWN, '2026-07-04', amt), cause: 'wind' }));
+    const fwd = run(events);
+    const rev = run([...events].reverse());
+    expect(rev.eal).toEqual(fwd.eal);
+    expect(rev.deductibleReviews).toEqual(fwd.deductibleReviews);
+    expect(review(fwd, '1735').eventsN).toBe(3);
+  });
+
+  it('G2: unmatched rows tying on every key before gross list gross ASCENDING, even when ref order disagrees', () => {
+    const events = [
+      mkRefEvent('', RAYTOWN, '2026-07-04', 300, 'AAA', 'wind'),
+      mkRefEvent('', RAYTOWN, '2026-07-04', 100, 'ZZZ', 'wind'),
+      mkRefEvent('', RAYTOWN, '2026-07-04', 200, 'MMM', 'wind'),
+    ];
+    const key = (r: ReturnType<typeof run>) => r.unmatchedPolicyRefs.map((u) => [u.grossIncurred, u.policyRef]);
+    expect(key(run(events))).toEqual([[100, 'ZZZ'], [200, 'MMM'], [300, 'AAA']]);
+    expect(key(run([...events].reverse()))).toEqual([[100, 'ZZZ'], [200, 'MMM'], [300, 'AAA']]);
+  });
+
   it('is computed ONLY on warehouse loss runs — the same unmatched ref gives [] on placeholder / absent sources', () => {
     const events = [mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'PLACEHOLDER')];
     const build = (source: DataSource) =>
