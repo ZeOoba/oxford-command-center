@@ -17,7 +17,8 @@ import { DealCompsActionInput } from '../src/contracts/index';
 import type { GovernorSet } from '../src/contracts/index';
 import { loadGovernors, GOVERNOR_DEFAULTS } from './warehouse/governors';
 import { fetchDealComps } from './ai/comps';
-import { runAgent } from './ai/agent';
+import { runAgent, sanitizeAgentInput } from './ai/agent';
+import { parseLimitParam } from './lib/query-params';
 import { scanForConfidential } from './briefing/confidential';
 import { searchDocuments, docStatus, warmDocIndex, docIndexBuiltAt } from './sources/documents';
 import { getMacro } from './macro/getMacro';
@@ -540,7 +541,7 @@ app.get('/api/documents', async (c) => c.json(await docStatus()));
 
 app.get('/api/documents/search', async (c) => {
   const q = c.req.query('q') ?? '';
-  const limit = Math.min(20, Math.max(1, Number(c.req.query('limit') ?? 8) || 8));
+  const limit = parseLimitParam(c.req.query('limit'), 8, 20);
   if (!q.trim()) return c.json({ hits: [] });
   const hits = await searchDocuments(q, limit);
   return c.json({ hits });
@@ -553,12 +554,15 @@ app.get('/api/documents/search', async (c) => {
  */
 app.post('/api/ai', (c) =>
   streamSSE(c, async (stream) => {
-    const body = (await c.req.json().catch(() => ({}))) as {
-      question?: string;
-      history?: Array<{ role: 'user' | 'assistant'; text: string }>;
-    };
-    const question = String(body.question ?? '');
-    const history = Array.isArray(body.history) ? body.history : [];
+    const body: unknown = await c.req.json().catch(() => ({}));
+    // Bound + validate the untrusted body (shared with the mirror's edge function): drops forged or
+    // malformed history turns and caps spend-bearing lengths before anything reaches the model.
+    const input = sanitizeAgentInput(body);
+    if (!input.ok) {
+      await stream.writeSSE({ event: 'error', data: JSON.stringify({ type: 'error', message: input.error }) });
+      return;
+    }
+    const { question, history } = input;
     const snapshot = brain.getSnapshot();
     if (!snapshot) {
       await stream.writeSSE({ event: 'error', data: JSON.stringify({ type: 'error', message: 'Data is still loading — try again in a moment.' }) });

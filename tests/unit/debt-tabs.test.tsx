@@ -92,6 +92,17 @@ describe('DebtModule — inner switch is a SegmentedControl on ?view= (IA Phase 
     expect(screen.queryByText('SCORECARD-STUB')).toBeNull();
   });
 
+  it('Positions leads with a verdict line (at-risk count + $) and sorts nearest maturity first', () => {
+    renderDebt();
+    // Alpha: borrower, balloon, 12 mos → at risk. Beta: 60 mos → not. Verdict names 1 of 2 and $1.0M.
+    const verdict = screen.getByTestId('debt-positions-verdict').textContent ?? '';
+    expect(verdict).toContain('1 of 2 positions need action');
+    expect(verdict).toContain('1 balloon');
+    const table = screen.getByText('All Loan Positions').closest('div')!.parentElement!;
+    const names = within(table).getAllByRole('row').map((r) => r.textContent ?? '').filter((t) => /Alpha Loan|Beta Loan/.test(t));
+    expect(names[0]).toContain('Alpha Loan'); // 12 mos sorts before 60 mos
+  });
+
   it('R1: the loan table keeps Rate / Maturity / Mos / LTV together in one header row', () => {
     renderDebt();
     const table = screen.getByText('All Loan Positions').closest('div')!.parentElement!;

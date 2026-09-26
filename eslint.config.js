@@ -26,4 +26,14 @@ export default tseslint.config(
       '@typescript-eslint/consistent-type-imports': 'error',
     },
   },
+  // Layering: the client bundle (src/**) must never reach into server/** — server modules pull in
+  // node builtins / better-sqlite3 and the dependency direction is server → src/contracts only.
+  {
+    files: ['src/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [{ group: ['**/server/**', '../server/*', '../../server/*'], message: 'src/** must not import from server/** — move the shared piece under src/lib or src/contracts.' }],
+      }],
+    },
+  },
 );

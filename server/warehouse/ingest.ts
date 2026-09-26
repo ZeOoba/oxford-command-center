@@ -142,9 +142,12 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
     // The expense side therefore foots per SECTION below: parse-side accumulation
     // closes each section at its top-level Total row, so each stated total is compared
     // at exactly the scope it covers.
-    if (stmt.totalIncome !== null && Math.abs(stmt.totalIncome - incomeSum) > FOOT_TOLERANCE) {
+    // Compared on ABSOLUTE values: `incomeSum` accumulates the ledger amount AFTER the outflow-convention
+    // sign flip above, while `stmt.totalIncome` is the report's raw stated figure (parse space). A
+    // negative-convention book would otherwise foot 2x off and raise a false mismatch on every import.
+    if (stmt.totalIncome !== null && Math.abs(Math.abs(stmt.totalIncome) - Math.abs(incomeSum)) > FOOT_TOLERANCE) {
       insIssue.run(importId, det.propertyId, 'foot-mismatch',
-        `income foot mismatch: report-stated total ${stmt.totalIncome} vs parsed income-side sum ${incomeSum} (delta ${(stmt.totalIncome - incomeSum).toFixed(2)})`, 'warn');
+        `income foot mismatch: report-stated total ${stmt.totalIncome} vs parsed income-side sum ${incomeSum} (|stated| ${Math.abs(stmt.totalIncome).toFixed(2)} vs |parsed| ${Math.abs(incomeSum).toFixed(2)})`, 'warn');
     }
     // Per-SECTION foot (both sides — the expense-side choke point): every section that
     // carries a report-stated total must tie to ITS OWN leaf sum. Compared in PARSE

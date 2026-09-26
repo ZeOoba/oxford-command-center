@@ -46,7 +46,9 @@ function listMigrationFiles(): string[] {
       .sort((a, b) => {
         const numA = parseInt(a.split('_')[0] ?? '0', 10);
         const numB = parseInt(b.split('_')[0] ?? '0', 10);
-        return numA - numB;
+        // Deterministic tie-break: two files can share a numeric prefix (017_market_series_constraints
+        // + 017_ratify_hurdle_rate both exist). Without it, order fell to readdir's filesystem order.
+        return numA - numB || a.localeCompare(b, 'en');
       });
   } catch {
     throw new Error(`Cannot read migrations directory: ${MIGRATIONS_DIR}`);
