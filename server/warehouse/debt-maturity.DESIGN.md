@@ -15,7 +15,7 @@ The 06-13 master plan named debt as a gap; Phase 2 (PRs #95–#101, merged ~2026
 | Rate type / next rate-reset | **No** — no columns, no contract fields | — |
 | Per-property DSCR/LTV vs governors | **Yes** | `scoreDebtPositions()` (`debt-scoring.ts`), ratified D1/D2/D3 + F1–F5 |
 | Refi-window flags (12/24-mo maturity windows) | **No** — buckets exist, no explicit window flags | — |
-| Per-property LTV vs the **65% refi ceiling** | **No** (warehouse side) | 65% lives only in `src/analytics/conditions.ts` `ALERT_THRESHOLDS.ltvCeiling` (Spine A alerts) |
+| Per-property LTV vs the **65% refi ceiling** | **No** (warehouse side) | 65% lives only in `src/analytics/conditions.ts` `ALERT_THRESHOLDS.refiLtvCeilingPerProperty` (Spine A alerts) |
 | Portfolio aggregate LTV vs the **40% governor** | **No** — existing code applies 0.40 per-property only | — |
 
 v1 therefore builds only the missing four rows above, reusing the existing engine for everything else.
@@ -23,7 +23,7 @@ v1 therefore builds only the missing four rows above, reusing the existing engin
 ## 2. Governor constants — referenced, never redefined
 
 - **DSCR 1.25 floor & LTV 0.40 ceiling:** `loadGovernors(db)` (`server/warehouse/governors.ts` → `capital-config.ts`, DB-backed with ratified compile-time fallback). No new literals.
-- **65% per-property refi ceiling:** imported as `ALERT_THRESHOLDS.ltvCeiling` from `src/analytics/conditions.ts` (the codebase's single existing definition; server→`src/analytics` imports are established precedent — `server/ai/tools.ts`, `server/brief/run.ts`). No new literal.
+- **65% per-property refi ceiling:** imported as `ALERT_THRESHOLDS.refiLtvCeilingPerProperty` from `src/analytics/conditions.ts` (the codebase's single existing definition; server→`src/analytics` imports are established precedent — `server/ai/tools.ts`, `server/brief/run.ts`). No new literal.
 - **12/24-month refi windows:** new v1 module constants (`REFI_WINDOW_MONTHS_NEAR = 12`, `REFI_WINDOW_MONTHS_FAR = 24`) — window definitions, not governors; no existing constant defines them. **RATIFIED by Gabriel 2026-07-19 ("approve as-is") on PR #222.**
 
 ## 3. New pieces
@@ -44,7 +44,7 @@ Both columns stay **NULL — confirmed 2026-07-19, not merely unmapped.** Direct
 - `buildRefiWindows(db, scores, asOf)` — per-property refi-window entries joining active loans with the already-computed `DebtScore[]` (no re-derivation of DSCR/LTV math):
   - `maturityWithin12mo` / `maturityWithin24mo` from the soonest **known** fresh months-to-maturity; a demand note forces both windows true (callable immediately > 12/24-mo urgency). **Nullable, not plain booleans (round 8 correction):** under a distrusted book (`bookTrust !== 'trusted'`), `/refi-windows` withholds these two fields to `null` alongside `soonestMaturityDate` / `monthsToSoonestMaturity`, since `buildRefiWindows`' maturity fields come from its own `activeLoans(db)` read, not the trust-aware scoring engine — see §3d.
   - `hasUnknownMaturity` surfaced explicitly (unknown ≠ far away, but also ≠ fabricated-near — flagged, not guessed);
-  - `dscr`, `ltv` passthrough from `DebtScore` (D1 convention); `dscrFloorBreach` / `govLtvCeilingBreach` vs `loadGovernors()`; `refiLtvHeadroom` / `refiCeilingBreach` vs the 65% `ALERT_THRESHOLDS.ltvCeiling`. Unknown inputs → `null` flags, never a cleared/false verdict (F1/F2 precedent: unknown is not clearance).
+  - `dscr`, `ltv` passthrough from `DebtScore` (D1 convention); `dscrFloorBreach` / `govLtvCeilingBreach` vs `loadGovernors()`; `refiLtvHeadroom` / `refiCeilingBreach` vs the 65% `ALERT_THRESHOLDS.refiLtvCeilingPerProperty`. Unknown inputs → `null` flags, never a cleared/false verdict (F1/F2 precedent: unknown is not clearance).
 - `computePortfolioAggregateLtv(db, governors)` — conservative aggregate vs the 40% governor:
   - Implied collateral value is derivable only for **single-active-loan properties with known ltv > 0** (balance ÷ ltv). Multi-loan properties are excluded — the workbook's per-loan LTV semantics for stacked loans are unconfirmed, and blending was already refute-rejected once (see C-2 note in `debt-scoring.ts`).
   - The denominator excludes unlevered-property value entirely (warehouse has no appraised values — `governors.ts` header), so this basis **overstates** LTV. Consequence: `complete`-coverage AND ≤ 40% ⇒ the true portfolio aggregate is also ≤ 40% (`clearedConservatively: true`). Anything else ⇒ `false`/`null` with an explanatory note — never a fabricated "breach" or "clear".

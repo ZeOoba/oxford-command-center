@@ -196,7 +196,7 @@ export const RefiWindowEntry = z.object({
   ltv: z.number().nullable(),
   /** vs the ratified LTV governor (capital_config ltv_ceiling). */
   govLtvCeilingBreach: z.boolean().nullable(),
-  /** vs the per-property refi ceiling (ALERT_THRESHOLDS.ltvCeiling). */
+  /** vs the per-property refi ceiling (ALERT_THRESHOLDS.refiLtvCeilingPerProperty). */
   refiLtvHeadroom: z.number().nullable(),
   refiCeilingBreach: z.boolean().nullable(),
 });
