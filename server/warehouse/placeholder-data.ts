@@ -58,7 +58,9 @@ export interface LossEventsResolved {
 }
 
 interface WarehouseLossEventRow {
-  id: string;
+  /** Migration 022 declares `id TEXT PRIMARY KEY` with no NOT NULL — SQLite admits NULL there
+   *  (any number of NULL rows in a non-INTEGER PRIMARY KEY), so the raw column is nullable. */
+  id: string | null;
   property_id: string | null;
   policy_ref: string | null;
   loss_date: string;
@@ -105,7 +107,10 @@ export function resolveLossEvents(db: WarehouseDb): LossEventsResolved {
       .all() as WarehouseLossEventRow[];
     return {
       rows: rows.map((r) => ({
-        id: r.id,
+        // Coerce NULL → '' at the SOURCE so every downstream reader (the loss engine's per-property
+        // content sort, the unmatchedPolicyRefs push + sort, the contract's z.string()) sees
+        // a string. The fixture parser already drops a non-string id; this is the warehouse analogue.
+        id: typeof r.id === 'string' ? r.id : '',
         propertyId: r.property_id ?? '',
         policyRef: r.policy_ref,
         lossDate: r.loss_date,

@@ -324,6 +324,83 @@ describe('GET /api/warehouse/insurance/loss — policy-line keys attach loss eve
   });
 });
 
+describe('GET /api/warehouse/insurance/loss — NULL loss-event id with an unmatched policy_ref', () => {
+  const RAYTOWN = '9620-e-state-route-350-raytown-mo';
+
+  it('still 200s: migration 022 declares id TEXT PRIMARY KEY without NOT NULL, so a NULL id row is listed as eventId \'\' rather than 500ing the report', async () => {
+    const db = freshDb();
+    seedProperty(db, RAYTOWN, '9620 E State Route 350, Raytown MO');
+    insertPolicy(db, {
+      propertyId: 'ins-9620state350-prop-hfd',
+      policyType: 'Property Package',
+      policyNumber: 'REDACTED-584',
+      premiumAnnual: 5000,
+      coverageTiv: 1_000_000,
+      deductible: 25_000,
+      coverageLimit: 2_000_000,
+      effectiveDate: '2025-01-01',
+      expirationDate: '2027-01-01',
+    });
+    // Raw INSERT with a NULL id — SQLite admits it (no NOT NULL on the TEXT PRIMARY KEY).
+    db.prepare(
+      `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+       VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(RAYTOWN, 'NOT-ON-FILE', '2026-03-01', 'wind', 42_000, 42_000, 0, 'test-loss-run');
+
+    const res = await makeApp(db).request('/');
+    expect(res.status).toBe(200);
+    const parsed = InsuranceLossReport.safeParse(await res.json());
+    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+    if (!parsed.success) return;
+    const report = parsed.data;
+
+    expect(report.lossDataSource).toBe('warehouse');
+    expect(report.unmatchedPolicyRefs).toEqual([expect.objectContaining({ eventId: '', propertyId: RAYTOWN, policyRef: 'NOT-ON-FILE' })]);
+    // Attachment unaffected: the event still books by covering term (d=25k on 42k).
+    expect(report.deductibleReviews).toHaveLength(1);
+    expect(report.deductibleReviews[0]).toMatchObject({ eventsN: 1, retainedUsd: 25_000, transferredUsd: 17_000 });
+    expect(calibrationVerdictCount(db)).toBe(0);
+  });
+
+  it('TWO NULL-id rows at one property with the SAME loss_date still 200 (refute wf_5326581d-04f: the per-property (lossDate, id) sort must not see null)', async () => {
+    const db = freshDb();
+    seedProperty(db, RAYTOWN, '9620 E State Route 350, Raytown MO');
+    insertPolicy(db, {
+      propertyId: 'ins-9620state350-prop-hfd',
+      policyType: 'Property Package',
+      policyNumber: 'REDACTED-584',
+      premiumAnnual: 5000,
+      coverageTiv: 1_000_000,
+      deductible: 25_000,
+      coverageLimit: 2_000_000,
+      effectiveDate: '2025-01-01',
+      expirationDate: '2027-01-01',
+    });
+    // SQLite allows any number of NULLs in a non-INTEGER PRIMARY KEY; the causes differ to satisfy
+    // the UNIQUE(property_id, loss_date, cause, gross_incurred) constraint.
+    const ins = db.prepare(
+      `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+       VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    ins.run(RAYTOWN, 'NOT-ON-FILE', '2026-03-01', 'wind', 42_000, 42_000, 0, 'test-loss-run');
+    ins.run(RAYTOWN, 'ALSO-NOT-ON-FILE', '2026-03-01', 'hail', 8_000, 8_000, 0, 'test-loss-run');
+
+    const res = await makeApp(db).request('/');
+    expect(res.status).toBe(200);
+    const parsed = InsuranceLossReport.safeParse(await res.json());
+    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+    if (!parsed.success) return;
+    const report = parsed.data;
+
+    // Content order, not insertion order: eventId ties on '' so the cause tiebreak decides — hail < wind.
+    expect(report.unmatchedPolicyRefs.map((u) => [u.eventId, u.policyRef, u.cause])).toEqual([['', 'ALSO-NOT-ON-FILE', 'hail'], ['', 'NOT-ON-FILE', 'wind']]);
+    // Attachment unaffected: both book against the one covering term — retained 25k + 8k, transferred 17k + 0.
+    expect(report.deductibleReviews).toHaveLength(1);
+    expect(report.deductibleReviews[0]).toMatchObject({ eventsN: 2, retainedUsd: 33_000, transferredUsd: 17_000 });
+    expect(calibrationVerdictCount(db)).toBe(0);
+  });
+});
+
 describe('GET /api/warehouse/insurance/loss — live-shaped book with no TIV on any current term', () => {
   it('property lines are reviewed without TIV; the tenant ACORD certificate and the GL line are not', async () => {
     const db = freshDb();
