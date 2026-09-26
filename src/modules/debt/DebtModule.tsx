@@ -42,6 +42,19 @@ const VIEWS: Array<{ value: View; label: string }> = [
   { value: 'scorecard', label: 'Scorecard' },
 ];
 
+/** Months-to-maturity horizon inside which a borrower position is "needs action" (matches the
+ *  balloon-warning window in src/analytics/conditions.ts: 365 days). Presentation only. */
+const ACTION_HORIZON_MONTHS = 12;
+
+/** Positions that need a decision now: we-pay loans maturing within the horizon (balloon or not —
+ *  `Loan.balloon` is structural, so it is NOT by itself an "act now" signal; a balloon 5 years out
+ *  is a maturity-ladder fact, not a verdict). */
+function atRiskLoans(loans: Loan[]): Loan[] {
+  return loans.filter(
+    (l) => l.direction === 'borrower' && l.monthsToMaturity !== null && l.monthsToMaturity <= ACTION_HORIZON_MONTHS,
+  );
+}
+
 function PositionsView() {
   const { data } = useSnapshot();
   const ui = useUi();
@@ -118,16 +131,32 @@ function PositionsView() {
 
   if (!data) return null;
   const loans = data.snapshot.loans;
+  const atRisk = atRiskLoans(loans);
+  const atRiskBalance = atRisk.reduce((n, l) => n + l.absBalance, 0);
+  const balloons = atRisk.filter((l) => l.balloon).length;
 
   return (
     <Card>
       <CardHeader title="All Loan Positions" trailing={<Badge tone="neutral">{loans.length} positions</Badge>} />
+      {/* Lead verdict — the default view must say what needs a decision, not just list balances. */}
+      <div
+        className="flex items-center gap-2 px-4 pb-3 text-sm"
+        style={{ color: atRisk.length > 0 ? 'var(--color-warn)' : 'var(--text-tertiary)' }}
+        data-testid="debt-positions-verdict"
+      >
+        <AlertCircle size={14} />
+        {atRisk.length > 0
+          ? `${atRisk.length} of ${loans.length} positions need action within ${ACTION_HORIZON_MONTHS} months — ${fmtUsdCompact(atRiskBalance)} outstanding` +
+            (balloons > 0 ? `, ${balloons} balloon${balloons === 1 ? '' : 's'}` : '') +
+            '. Sorted nearest maturity first.'
+          : `No borrower position balloons or matures within ${ACTION_HORIZON_MONTHS} months.`}
+      </div>
       <DataTable
         columns={cols}
         rows={loans}
         getRowId={(l) => l.id}
         onRowClick={(l) => ui.openEntity({ type: 'loan', id: l.id })}
-        initialSort={{ key: 'bal', dir: 'desc' }}
+        initialSort={{ key: 'mat', dir: 'asc' }}
       />
     </Card>
   );
@@ -143,6 +172,11 @@ function DebtSummary() {
   const loans = data.snapshot.loans;
   const d = analytics.debt;
   const balloons = loans.filter((l) => l.balloon);
+  // Provenance for the KPI strip: every figure is a Σ over the workbook loan schedule as-of the
+  // snapshot date — surfaced so the tiles carry the same source/confidence stamp as the rest of the app.
+  const asOf = data.snapshot.meta?.asOf;
+  const loanProv = (formula: string) =>
+    ({ source: 'Master Workbook › Loan schedule', confidence: 'derived', asOf, formula }) as const;
 
   return (
     <div className="flex flex-col gap-4">
@@ -153,17 +187,20 @@ function DebtSummary() {
           format={fmtUsdCompact}
           accentColor="var(--color-warn)"
           sublabel={`loan schedule · ${loans.filter((l) => l.direction === 'borrower').length} borrower loans`}
+          prov={loanProv('Σ |balance| over direction = borrower')}
         />
         <KpiStat
           label="Weighted Avg Rate"
           value={d.weightedAvgRate === null ? null : d.weightedAvgRate * 100}
           format={(n) => (n === null ? '—' : `${n.toFixed(2)}%`)}
+          prov={loanProv('Σ(rate · balance) / Σ balance, borrower loans with a rate')}
         />
         <KpiStat
           label="Annual Debt Service"
           value={d.annualDebtService}
           format={fmtUsdCompact}
           accentColor="var(--color-neg)"
+          prov={loanProv('Σ monthly payment × 12, borrower loans')}
         />
         <KpiStat
           label="Capital Deployed"
@@ -171,6 +208,7 @@ function DebtSummary() {
           format={fmtUsdCompact}
           accentColor="var(--color-info)"
           sublabel="we are lender"
+          prov={loanProv('Σ |balance| over direction = lender')}
         />
       </div>
 
