@@ -41,6 +41,10 @@ export function hasReconciliationError(flags: readonly DataQualityFlag[]): boole
 // Absolute-dollar rounding tolerance shared by every cash check in this file (float noise between
 // the workbook's summary cells and its own history matrix), matching the totalCash check below.
 const CASH_TOLERANCE = 2;
+// Estimated-history-row heuristic (see checkCashInvariants): at least this many changed balances,
+// and at least half of them, sitting on a whole multiple of this unit.
+const ESTIMATE_ROUND_UNIT = 500;
+const ESTIMATE_MIN_ROUND = 3;
 
 /**
  * Date-aware and value-level cash invariants (2026-09-14 financial-code sweep). Exported on its
@@ -93,6 +97,18 @@ export function checkCashInvariants(s: Pick<PortfolioSnapshot, 'cash' | 'meta'>)
     const cur = history[i]!;
     if (prev.total === cur.total) {
       flag('cash.history.total', `history rows ${prev.date} and ${cur.date} carry the identical total ${Math.round(cur.total)} — a clobbered slot reads exactly like this`);
+    }
+    // Estimated-row signature (2026-09-25): a 2026-07-10 row was keyed from estimates, most changed
+    // balances whole multiples of $500 (4,500,000 / 1,500,000 / 220,000 ...). Bank-statement balances
+    // almost never land there. Only CHANGED entities count: a dormant account carried forward is normal.
+    const prevBal = prev.balances;
+    const curBal = cur.balances;
+    if (prevBal && curBal) {
+      const changed = Object.keys(curBal).filter((k) => curBal[k] !== prevBal[k]);
+      const round = changed.filter((k) => curBal[k]! !== 0 && curBal[k]! % ESTIMATE_ROUND_UNIT === 0);
+      if (round.length >= ESTIMATE_MIN_ROUND && round.length * 2 >= changed.length) {
+        flag('cash.history.estimated', `history row ${cur.date}: ${round.length} of ${changed.length} changed balances are whole multiples of $${ESTIMATE_ROUND_UNIT} (${round.join(', ')}) — looks estimated, not statement balances`);
+      }
     }
   }
 
