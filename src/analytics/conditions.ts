@@ -14,11 +14,17 @@ const daysBetween = (isoTarget: string, isoFrom: string): number =>
 export const ALERT_THRESHOLDS = {
   balloonCriticalDays: 180,
   balloonWarningDays: 365,
-  dscrFloor: 1.1,
+  /** Per-property DSCR below which the alert is CRITICAL (lender-remedy territory). NOT the
+   *  1.25x capital governor — that rides the snapshot payload (s.governors). */
+  dscrCriticalFloor: 1.1,
   // dscrWatch / ltvGovernor intentionally ABSENT (I10): the ratified DSCR/LTV governor boundaries
   // ride the snapshot payload (s.governors, warehouse-fresh) — GOVERNOR_FALLBACK covers legacy
-  // payloads. Only genuinely alert-specific, non-governor thresholds live here.
-  ltvCeiling: 0.65,
+  // payloads. Only genuinely alert-specific, non-governor thresholds live here — and they carry
+  // alert-specific NAMES so they can never be mistaken for GovernorSet.dscrFloor / .ltvCeiling
+  // (renamed 2026-09-26; values unchanged).
+  /** Per-property refinance LTV ceiling (65%) — CLAUDE.md §Identity governors; distinct from the
+   *  40% AGGREGATE ceiling that is the capital governor. */
+  refiLtvCeilingPerProperty: 0.65,
   leaseCriticalDays: 60,
   leaseWarningDays: 180,
   insuranceRenewWarnDays: 30,
@@ -349,11 +355,11 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   }
 
   for (const p of s.properties) {
-    if (p.dscr !== null && p.dscr < T.dscrFloor) {
+    if (p.dscr !== null && p.dscr < T.dscrCriticalFloor) {
       out.push({
         id: `dscr-floor-${p.id}`, severity: 'critical', category: 'debt',
         title: `DSCR below floor — ${p.name}`,
-        detail: `Debt-service coverage is ${p.dscr.toFixed(2)}x (below ${T.dscrFloor.toFixed(2)}x floor). Lender-remedy risk — act now.`,
+        detail: `Debt-service coverage is ${p.dscr.toFixed(2)}x (below ${T.dscrCriticalFloor.toFixed(2)}x floor). Lender-remedy risk — act now.`,
         metric: `${p.dscr.toFixed(2)}x`, entityType: 'property', entityId: p.id,
         impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
@@ -366,11 +372,11 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
     }
-    if (p.ltv !== null && p.ltv > T.ltvCeiling) {
+    if (p.ltv !== null && p.ltv > T.refiLtvCeilingPerProperty) {
       out.push({
         id: `ltv-${p.id}`, severity: 'warning', category: 'debt',
         title: `LTV above 65% — ${p.name}`,
-        detail: `Loan-to-value is ${fmtPct(p.ltv)} (above the ${fmtPct(T.ltvCeiling)} ceiling).`,
+        detail: `Loan-to-value is ${fmtPct(p.ltv)} (above the ${fmtPct(T.refiLtvCeilingPerProperty)} ceiling).`,
         metric: fmtPct(p.ltv), entityType: 'property', entityId: p.id,
         impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
@@ -380,7 +386,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       out.push({
         id: `ltv-governor-${p.id}`, severity: 'info', category: 'debt',
         title: `Property LTV above aggregate governor — ${p.name}`,
-        detail: `Loan-to-value is ${fmtPct(p.ltv)}. The ${fmtPct(gov.ltvCeiling)} governor applies to the portfolio aggregate; this property is within the ${fmtPct(T.ltvCeiling)} per-property ceiling. Informational.`,
+        detail: `Loan-to-value is ${fmtPct(p.ltv)}. The ${fmtPct(gov.ltvCeiling)} governor applies to the portfolio aggregate; this property is within the ${fmtPct(T.refiLtvCeilingPerProperty)} per-property ceiling. Informational.`,
         metric: fmtPct(p.ltv), entityType: 'property', entityId: p.id,
         impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });

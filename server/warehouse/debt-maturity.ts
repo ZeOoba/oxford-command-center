@@ -10,7 +10,7 @@
 //
 // GOVERNOR CONSTANTS (Hard Invariant 4 — referenced, never redefined):
 //   DSCR floor / aggregate LTV ceiling → loadGovernors(db) (capital_config, ratified fallback)
-//   65% per-property refi ceiling      → ALERT_THRESHOLDS.ltvCeiling (src/analytics/conditions.ts,
+//   65% per-property refi ceiling      → ALERT_THRESHOLDS.refiLtvCeilingPerProperty (src/analytics/conditions.ts,
 //                                        the codebase's single existing definition)
 //
 // CONFIDENTIALITY: nothing returned here carries a balance, a rate VALUE, or a lender name —
@@ -45,8 +45,8 @@ export const REFI_WINDOW_MONTHS_NEAR = 12;
 export const REFI_WINDOW_MONTHS_FAR = 24;
 
 /** The per-property refi LTV ceiling — a REFERENCE to the single existing definition
- *  (ALERT_THRESHOLDS.ltvCeiling, currently 0.65), never a new literal. Drift-pinned in tests. */
-export const REFI_LTV_CEILING: number = ALERT_THRESHOLDS.ltvCeiling;
+ *  (ALERT_THRESHOLDS.refiLtvCeilingPerProperty, currently 0.65), never a new literal. Drift-pinned in tests. */
+export const REFI_LTV_CEILING: number = ALERT_THRESHOLDS.refiLtvCeilingPerProperty;
 
 /**
  * Floating-point tolerance for the aggregate-LTV governor comparison. NOT a governor value and

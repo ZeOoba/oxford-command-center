@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { openWarehouse } from '../../server/warehouse/db';
+import { GOVERNOR_FALLBACK, RATIFIED_GOVERNORS } from '@contracts/index';
 import {
   CAPITAL_CONFIG,
   appendCalibrationLog,
@@ -180,6 +181,21 @@ describe('writeCapitalConfig — governed mutation (hard-invariant enforcement +
       writeCapitalConfig(db, { ltvCeiling: 0.45, effectiveFrom: '2026-12-01' }, {}),
     ).toThrow(/ltv|0\.40|invariant/i);
     expect(loadCapitalConfig(db).version).toBe(1);
+  });
+
+  it('REFUSES (throws) an LTV ceiling of 0 — it would make the acquisition DSCR proxy Infinity and clear every deal', () => {
+    const db = freshDb();
+    expect(() => writeCapitalConfig(db, { ltvCeiling: 0, effectiveFrom: '2026-12-01' }, {})).toThrow(/> 0/);
+    expect(() => writeCapitalConfig(db, { ltvCeiling: -0.1, effectiveFrom: '2026-12-01' }, {})).toThrow();
+  });
+
+  it('CAPITAL_CONFIG and GOVERNOR_FALLBACK both derive from RATIFIED_GOVERNORS (single source, no literal copies)', () => {
+    expect(CAPITAL_CONFIG.dscrFloor).toBe(RATIFIED_GOVERNORS.dscrFloor);
+    expect(CAPITAL_CONFIG.ltvCeiling).toBe(RATIFIED_GOVERNORS.ltvCeiling);
+    expect(GOVERNOR_FALLBACK.dscrFloor).toBe(RATIFIED_GOVERNORS.dscrFloor);
+    expect(GOVERNOR_FALLBACK.ltvCeiling).toBe(RATIFIED_GOVERNORS.ltvCeiling);
+    expect(GOVERNOR_FALLBACK.version).toBe(RATIFIED_GOVERNORS.version);
+    expect(GOVERNOR_FALLBACK.effectiveFrom).toBe(RATIFIED_GOVERNORS.effectiveFrom);
   });
 
   it('ALLOWS tightening: DSCR floor 1.30 (higher than 1.25) and LTV 0.35 (lower than 0.40) are accepted', () => {

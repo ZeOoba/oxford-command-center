@@ -12,6 +12,7 @@
 //   Refi trigger: +150 bps | Payout: 0% (full reinvest, Gabriel confirmed)
 import type { WarehouseDb } from './db';
 import { HURDLE_RATE } from './intel-config';
+import { RATIFIED_GOVERNORS } from '../../src/contracts/governor-constants';
 
 export interface CapitalConfigRow {
   version: number;
@@ -34,11 +35,12 @@ export interface CapitalConfigRow {
 
 /** Compile-time ratified constants — authoritative live view (version 1, 2026-06-13). */
 export const CAPITAL_CONFIG = {
-  version: 1,
-  effectiveFrom: '2026-06-13',
-  // HARD INVARIANTS (CLAUDE.md §4 — never mutate without explicit permission)
-  dscrFloor: 1.25,
-  ltvCeiling: 0.40,
+  version: RATIFIED_GOVERNORS.version,
+  effectiveFrom: RATIFIED_GOVERNORS.effectiveFrom,
+  // HARD INVARIANTS (CLAUDE.md §4 — never mutate without explicit permission). Single source:
+  // src/contracts/governor-constants.ts — the client fallback and the edge bundle read the same object.
+  dscrFloor: RATIFIED_GOVERNORS.dscrFloor,
+  ltvCeiling: RATIFIED_GOVERNORS.ltvCeiling,
   // Governor set
   dispositionCapRate: 0.065,
   holdCapRate: 0.075,
@@ -184,11 +186,20 @@ export function writeCapitalConfig(
   };
 
   // (2) HARD INVARIANTS (CLAUDE.md §4) — never write a breaching set.
-  if (next.dscrFloor < 1.25) {
-    throw new Error(`capital-config: DSCR floor ${next.dscrFloor} below hard invariant 1.25 — refused`);
+  if (next.dscrFloor < RATIFIED_GOVERNORS.dscrFloor) {
+    throw new Error(`capital-config: DSCR floor ${next.dscrFloor} below hard invariant ${RATIFIED_GOVERNORS.dscrFloor} — refused`);
   }
-  if (next.ltvCeiling > 0.40) {
-    throw new Error(`capital-config: LTV ceiling ${next.ltvCeiling} above hard invariant 0.40 — refused`);
+  if (next.ltvCeiling > RATIFIED_GOVERNORS.ltvCeiling) {
+    throw new Error(`capital-config: LTV ceiling ${next.ltvCeiling} above hard invariant ${RATIFIED_GOVERNORS.ltvCeiling} — refused`);
+  }
+  // A zero (or non-finite) LTV ceiling is not "maximally tight" — it turns the acquisition DSCR
+  // proxy (stabilizedYoc / (ltvCeiling × debt constant)) into Infinity, which clears every deal.
+  // Refuse it here so a fat-finger can never be written; the proxy itself also fails closed.
+  if (!(Number.isFinite(next.ltvCeiling) && next.ltvCeiling > 0)) {
+    throw new Error(`capital-config: LTV ceiling ${next.ltvCeiling} must be a finite value > 0 — refused`);
+  }
+  if (!(Number.isFinite(next.dscrFloor) && next.dscrFloor > 0)) {
+    throw new Error(`capital-config: DSCR floor ${next.dscrFloor} must be a finite value > 0 — refused`);
   }
 
   // (2b) Sanity ceilings — catch a fat-finger before it silently locks out all acquisitions
