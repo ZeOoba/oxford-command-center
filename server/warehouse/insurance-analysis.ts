@@ -9,7 +9,10 @@
 // one rule a future edit to this file must never violate): the benchmark is an OWN-BOOK median,
 // never a market rate. `excessPremiumVsMedian` is dispersion, NOT a savings promise — no haircut
 // factors, no invented capture rates. Null-TIV policies are excluded from rate math but still
-// listed so the register stays complete.
+// listed so the register stays complete. EXPIRED terms (renewalBucket 'expired' — a Renewals row not
+// yet rolled to its successor) are likewise listed but kept out of the median, the excess and the
+// rebid verdicts (ruling 2026-09-24, Gabriel — "exclude + flag"; the parse flags the stale row): a
+// lapsed rate is not a rate the book can act on.
 //
 // COHORT CLASSIFIER (order matters — tiv is checked BEFORE policy_type):
 //   1. tiv null or <= 0        → 'excluded-null-tiv' (regardless of policy_type — a policy with no
@@ -23,7 +26,9 @@
 // acq-engine.ts persistAndLogScore — insurance policies are not ledger-derived, so the
 // ledger-fingerprint hash calibration.ts's computeInputsVersion(db) computes is the wrong content
 // to hash here; a digest of the current policy book is the right one) before calling the existing
-// logVerdicts() (fail-open).
+// logVerdicts() (fail-open). Verdicts and that digest are keyed on the policy's LOGICAL identity
+// (policyIdentity), never on the physical row id or source_date, so re-capturing an unchanged book
+// on a later day re-derives the same dedup_key (refute wf_fb9dddc7-3a3).
 import { createHash } from 'node:crypto';
 import type { WarehouseDb } from './db';
 import {
@@ -105,15 +110,23 @@ interface RawPolicyRow {
  * both survive. Residual risk: two distinct policies that coincidentally share ALL of those fields
  * would still collapse; there is no stronger identity available on this row shape.
  */
+type IdentityRow = Pick<
+  RawPolicyRow,
+  'property_id' | 'insurer' | 'policy_number' | 'effective_date' | 'expiration_date' | 'premium_annual' | 'coverage_tiv' | 'policy_type'
+>;
+
+/** A policy's logical identity. Fully-null keys fall back to content; identified keys use the
+ *  table's UNIQUE key. The literal 'null-key' segment keeps the two shapes from ever colliding. */
+function policyIdentity(r: IdentityRow): string {
+  return r.policy_number === null && r.effective_date === null
+    ? `${r.property_id}|null-key|${r.insurer}|${r.premium_annual ?? ''}|${r.coverage_tiv ?? ''}|${r.policy_type}|${r.expiration_date ?? ''}`
+    : `${r.property_id}|${r.policy_number ?? ''}|${r.effective_date ?? ''}`;
+}
+
 function dedupeLatest(rows: RawPolicyRow[]): RawPolicyRow[] {
   const byKey = new Map<string, RawPolicyRow>();
   for (const r of rows) {
-    // Fully-null keys dedupe on content; identified keys dedupe on identity. The literal
-    // 'null-key' segment keeps the two shapes from ever colliding with each other.
-    const key =
-      r.policy_number === null && r.effective_date === null
-        ? `${r.property_id}|null-key|${r.insurer}|${r.premium_annual ?? ''}|${r.coverage_tiv ?? ''}|${r.policy_type}|${r.expiration_date ?? ''}`
-        : `${r.property_id}|${r.policy_number ?? ''}|${r.effective_date ?? ''}`;
+    const key = policyIdentity(r);
     const existing = byKey.get(key);
     if (!existing) {
       byKey.set(key, r);
@@ -404,8 +417,9 @@ interface Draft {
   daysToExpiry: number | null;
 }
 
+/** In the benchmark cohort: a property-package rate on a term that has not expired. */
 function hasRate(d: Draft): d is Draft & { ratePer100Tiv: number } {
-  return d.cohort === 'property-package' && d.ratePer100Tiv !== null;
+  return d.cohort === 'property-package' && d.ratePer100Tiv !== null && d.renewalBucket !== 'expired';
 }
 
 function hasExcess(p: PolicyEconomics): p is PolicyEconomics & { excessPremiumVsMedian: number } {
@@ -535,7 +549,7 @@ export function buildInsuranceAnalysis(db: WarehouseDb, asOf: string): Insurance
     // every other cohort gets null and is thereby structurally excluded from rebidCandidates
     // (hasExcess) and from logRebidVerdicts.
     const excessPremiumVsMedian =
-      d.cohort === 'property-package'
+      hasRate(d)
         && benchmark.sufficient && benchmark.medianRatePer100Tiv !== null
         && d.ratePer100Tiv !== null && d.tiv !== null
         ? ((d.ratePer100Tiv - benchmark.medianRatePer100Tiv) / 100) * d.tiv
@@ -589,36 +603,27 @@ export function buildInsuranceAnalysis(db: WarehouseDb, asOf: string): Insurance
 
 // ── calibration hook ──────────────────────────────────────────────────────────────────────────
 
-interface FingerprintRow {
-  id: number;
-  property_id: string;
-  policy_number: string | null;
-  effective_date: string | null;
-  expiration_date: string | null;
-  premium_annual: number | null;
-  coverage_tiv: number | null;
-  policy_type: string;
-  source_date: string;
-}
-
 /** A deterministic digest of the current policy book — the content that must fork inputsVersion
  *  when the book changes (mirrors calibration.ts's classificationDigest, but over the insurance
- *  table instead of the ledger). */
+ *  table instead of the ledger). Content only, over the deduped book: a physical row id or a
+ *  capture's source_date is not a change to the book, and hashing either forked inputsVersion on
+ *  every workbook refresh (duplicate rebid verdicts — refute wf_fb9dddc7-3a3). */
 function policyBookFingerprint(db: WarehouseDb): string {
   const rows = db
     .prepare(
-      `SELECT id, property_id, policy_number, effective_date, expiration_date,
-              premium_annual, coverage_tiv, policy_type, source_date
-       FROM property_insurance_policies ORDER BY id`,
+      `SELECT id, property_id, NULL AS property_name, insurer, policy_number, effective_date,
+              expiration_date, premium_annual, coverage_tiv, policy_type, source_date
+       FROM property_insurance_policies`,
     )
-    .all() as FingerprintRow[];
-  const projection = rows
+    .all() as RawPolicyRow[];
+  const projection = dedupeLatest(rows)
     .map((r) =>
       [
-        r.id, r.property_id, r.policy_number ?? '', r.effective_date ?? '', r.expiration_date ?? '',
-        r.premium_annual ?? '', r.coverage_tiv ?? '', r.policy_type, r.source_date,
+        r.property_id, r.policy_number ?? '', r.effective_date ?? '', r.expiration_date ?? '',
+        r.premium_annual ?? '', r.coverage_tiv ?? '', r.policy_type,
       ].join(':'),
     )
+    .sort()
     .join('|');
   return sha16(projection);
 }
@@ -643,14 +648,25 @@ function excessBand(excess: number): 'excess-gt-10k' | 'excess-2k-10k' | 'excess
  * key before; the live ledger held 0 insurance-rebid verdicts at the switch, so no history is
  * split across the two key spaces) — falling back to its display `property` string on the
  * currently unreachable (property_id is NOT NULL) case it is absent. Because several policies can
- * share one property, verdictSubkind carries the policyId so each policy gets its own dedup_key
- * (the same D3 collision class anomalies/verdictSubkind and reasons/subkey already guard against).
+ * share one property, verdictSubkind carries the policy's logical identity (policyIdentity over the
+ * raw policy-line key — its UNIQUE key, not the row id) so each policy gets its own dedup_key (the
+ * same D3 collision class anomalies/verdictSubkind and reasons/subkey already guard against) and
+ * keeps it across captures.
  */
 export function logRebidVerdicts(db: WarehouseDb, report: InsuranceAnalysisReport): LogVerdictsResult {
   try {
     const asOfPeriod = report.asOf.slice(0, 4);
     const fingerprint = policyBookFingerprint(db);
     const inputsVersion = sha16(`insurance-analysis:${fingerprint}:${asOfPeriod}`);
+    const identityOf = db.prepare(
+      `SELECT property_id, insurer, policy_number, effective_date, expiration_date, premium_annual,
+              coverage_tiv, policy_type
+       FROM property_insurance_policies WHERE id = ?`,
+    );
+    const stableKey = (policyId: string): string => {
+      const row = identityOf.get(Number(policyId)) as IdentityRow | undefined;
+      return row ? policyIdentity(row) : policyId;
+    };
 
     // INSERT OR IGNORE keeps a re-run on an unchanged book (same fingerprint + asOfPeriod) idempotent.
     db.prepare(
@@ -672,7 +688,7 @@ export function logRebidVerdicts(db: WarehouseDb, report: InsuranceAnalysisRepor
           subjectKind: 'property',
           subjectId: p.propertyId ?? p.property,
           verdictKind: 'insurance-rebid',
-          verdictSubkind: p.policyId,
+          verdictSubkind: stableKey(p.policyId),
           verdictEngine: 'insurance-analysis',
           predictedBand: excessBand(p.excessPremiumVsMedian),
           predictedValue: p.excessPremiumVsMedian,

@@ -19,11 +19,66 @@ export type AgentEvent =
   | { type: 'done'; model: string; refs: EntityRefLite[] }
   | { type: 'error'; message: string };
 
+/** Hard caps on client-supplied conversation input, enforced at BOTH boundaries (server/index.ts
+ *  and functions/api/ai.ts) through sanitizeAgentInput below. They bound the spend of a single
+ *  Anthropic call — every history turn is re-sent on every model turn — and reject forged/oversized
+ *  turns before they can seed the context. (Audit 2026-09-25: unbounded-spend + forged-history.) */
+export const AGENT_INPUT_LIMITS = {
+  maxQuestionChars: 4_000,
+  maxHistoryTurns: 20,
+  maxHistoryTurnChars: 8_000,
+  maxHistoryTotalChars: 40_000,
+} as const;
+
+export type AgentHistoryTurn = { role: 'user' | 'assistant'; text: string };
+
+/**
+ * Validate + bound an untrusted `{ question, history }` request body. Runtime-agnostic (no Zod, no
+ * node builtins) so the Cloudflare Pages Function shares it byte-for-byte with the Brain Server.
+ *
+ *  - question: string, trimmed, non-empty, ≤ maxQuestionChars.
+ *  - history: array of well-formed turns only (role ∈ {user, assistant}, text a non-empty string ≤
+ *    maxHistoryTurnChars). Malformed entries are DROPPED (not coerced), the list is truncated to the
+ *    most recent maxHistoryTurns, and then trimmed from the oldest end until the total is within
+ *    maxHistoryTotalChars. Assistant turns are accepted — the UI legitimately replays them for
+ *    follow-ups — but only in this validated shape and never as tool_use/tool_result content, so a
+ *    client cannot inject a fabricated tool round-trip.
+ */
+export function sanitizeAgentInput(body: unknown): { ok: true; question: string; history: AgentHistoryTurn[] } | { ok: false; error: string } {
+  const b = (body && typeof body === 'object' ? body : {}) as { question?: unknown; history?: unknown };
+  const question = typeof b.question === 'string' ? b.question.trim() : '';
+  if (!question) return { ok: false, error: 'question is required' };
+  if (question.length > AGENT_INPUT_LIMITS.maxQuestionChars) {
+    return { ok: false, error: `question exceeds ${AGENT_INPUT_LIMITS.maxQuestionChars} characters` };
+  }
+  const raw = Array.isArray(b.history) ? b.history : [];
+  const wellFormed: AgentHistoryTurn[] = [];
+  for (const h of raw) {
+    if (!h || typeof h !== 'object') continue;
+    const { role, text } = h as { role?: unknown; text?: unknown };
+    if (role !== 'user' && role !== 'assistant') continue;
+    if (typeof text !== 'string') continue;
+    const t = text.trim();
+    if (!t || t.length > AGENT_INPUT_LIMITS.maxHistoryTurnChars) continue;
+    wellFormed.push({ role, text: t });
+  }
+  let history = wellFormed.slice(-AGENT_INPUT_LIMITS.maxHistoryTurns);
+  let total = history.reduce((n, h) => n + h.text.length, 0);
+  while (history.length > 0 && total > AGENT_INPUT_LIMITS.maxHistoryTotalChars) {
+    total -= history[0]!.text.length;
+    history = history.slice(1);
+  }
+  // Conversations start with the user: truncation (or a crafted body) can leave an assistant turn
+  // first — drop leading assistant turns so the model never sees an answer with no question.
+  while (history.length > 0 && history[0]!.role !== 'user') history = history.slice(1);
+  return { ok: true, question, history };
+}
+
 export interface AgentOptions {
   question: string;
   snapshot: PortfolioSnapshot;
   /** Prior turns for follow-ups: [{role:'user'|'assistant', text}]. */
-  history?: Array<{ role: 'user' | 'assistant'; text: string }>;
+  history?: AgentHistoryTurn[];
   apiKey?: string;
   model?: string;
   effort?: 'low' | 'medium' | 'high' | 'max';

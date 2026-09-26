@@ -1,6 +1,6 @@
 import type { Insight, InsightSeverity } from '../analytics/types';
 import type { AlertInboxState, AlertActionInput } from '../contracts/alerts';
-import { DAY_MS } from '../../server/warehouse/time-constants';
+import { DAY_MS } from '@/lib/time-constants';
 /** Higher rank = more severe. Escalation past the snoozed rank re-shows the alert. */
 const RANK: Record<InsightSeverity, number> = { critical: 3, warning: 2, info: 1 };
 /** Display order: critical first. */
