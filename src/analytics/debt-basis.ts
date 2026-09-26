@@ -57,6 +57,29 @@ export function isAffiliateBorrowerLoan(l: {
   return l.direction === 'borrower' && (namesAffiliateLender(l.lender) || namesAffiliateLender(l.counterparty));
 }
 
+/**
+ * A warehouse `debt_positions` row owed to an Oxford affiliate. Ratified 2026-09-26 (Gabriel):
+ * the warehouse debt path excludes these from the LTV governor basis (debt-scoring D1 LTV,
+ * debt-maturity aggregate LTV) by read-side filter; position views still list them, labeled.
+ * debt_positions holds BORROWER-direction rows only (writeDebtSnapshot filters on direction) and
+ * persists no counterparty column, so the predicate reads the stored `lender`; `loan_name` (free
+ * text) is consulted ONLY when no lender is stored at all — a third-party lender row whose name
+ * merely mentions an affiliate ("Refi of Oxford Capital note") stays third-party, exactly as
+ * isAffiliateBorrowerLoan classifies the workbook row (independent review 2026-09-26, major).
+ * Live stored string this must match: 'LAST Non / Oxford Capital — Oxford 50% share'.
+ * DSCR / debt-service treatment is an OPEN ruling — this predicate must not be applied there.
+ */
+export function isAffiliateDebtPosition(row: {
+  readonly lender?: string | null;
+  readonly loan_name?: string | null;
+}): boolean {
+  if (typeof row.lender === 'string' && row.lender.trim() !== '') return namesAffiliateLender(row.lender);
+  return namesAffiliateLender(row.loan_name);
+}
+
+/** Suffix appended to an affiliate position's loan name on position views (ladder / timeline). */
+export const AFFILIATE_POSITION_LABEL = '[affiliate note]';
+
 /** The property row's loan balance on the investment (third-party) basis: 0 for an affiliate note. */
 export function investmentLoanBalance(p: DebtRow): number {
   if (isAffiliateNoteProperty(p)) return 0;
