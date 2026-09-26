@@ -25,8 +25,9 @@ describe('InsuranceLossReport contract', () => {
 });
 
 // unmatchedPolicyRefs (2026-09-24): a data-quality list of loss events whose policy_ref names no
-// policy at their property. `.default([])` is load-bearing — the client also parses a previously
-// baked static mirror that never carried the field.
+// policy at their property. `.default([])` is load-bearing — a payload produced before the field
+// existed (a stale server process or a cached response) must still parse on a newer client. The
+// loss report is not in the baked mirror (scripts/bake-warehouse.ts FIXED_ROUTES).
 describe('InsuranceLossReport.unmatchedPolicyRefs', () => {
   const entry = {
     eventId: 'e1',
