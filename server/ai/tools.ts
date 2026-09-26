@@ -8,6 +8,7 @@ import {
 } from '../../src/analytics/engine';
 import { evaluateConditions } from '../../src/analytics/conditions';
 import { isInvestmentProperty } from '../../src/analytics/property-basis';
+import { isAffiliateNoteProperty, propertyLtvLabel } from '../../src/analytics/debt-basis';
 import { fmtUsdCompact, fmtPct } from '../../src/analytics/format';
 import { referenceDate } from '../config';
 
@@ -237,7 +238,7 @@ const EXECUTORS: Record<ToolName, Exec> = {
     return {
       data: matches.map((p) => ({
         name: p.name, market: p.market, type: p.type, sf: p.sf, occupancy: fmtPct(p.occPct),
-        noi: fmtUsdCompact(p.noi), capRate: fmtPct(p.capRate), dscr: p.dscr, ltv: fmtPct(p.ltv),
+        noi: fmtUsdCompact(p.noi), capRate: fmtPct(p.capRate), dscr: p.dscr, ltv: propertyLtvLabel(p), affiliateNote: isAffiliateNoteProperty(p),
         value: fmtUsdCompact(p.oxfordValue), lender: p.lender, tenants: p.tenantCount,
       })),
       refs: matches.map((p) => ({ type: 'property', id: p.id, label: p.name })),
