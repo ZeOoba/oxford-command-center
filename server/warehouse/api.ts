@@ -7,6 +7,7 @@
 // can supply a lazy singleton. If the getter throws (sqlite file/dir absent on a mirror
 // or cold environment) every route returns 503 {error:'warehouse unavailable'} — the
 // router never throws at mount and never crashes the server.
+import { parseLimitParam } from '../lib/query-params';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import { Classification, NumericMetricKey } from '../../src/contracts/warehouse';
@@ -204,6 +205,8 @@ function acqConfig(): { ok: true; ruleset: AcquisitionRuleset; rct: ReplacementC
  * @param getDb - Function to obtain the warehouse database instance
  * @returns A Hono app configured with warehouse routes
  */
+
+
 export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
   const app = new Hono();
 
@@ -611,8 +614,7 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       const statusParam = c.req.query('status') ?? 'active';
       const marketParam = c.req.query('market') ?? null;
       const verdictParam = c.req.query('verdict') ?? null;
-      const rawLimit = Number(c.req.query('limit'));
-      const limitParam = Number.isFinite(rawLimit) ? Math.min(Math.max(1, rawLimit), 500) : 100;
+      const limitParam = parseLimitParam(c.req.query('limit'), 100, 500);
 
       // Build candidate query with optional filters.
       const where: string[] = ['c.status = ?'];
@@ -728,8 +730,7 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
     withDb((db) => {
       const statusParam = c.req.query('status') ?? 'active';
       const marketParam = c.req.query('market') ?? null;
-      const rawLimitC = Number(c.req.query('limit'));
-      const limitParam = Number.isFinite(rawLimitC) ? Math.min(Math.max(1, rawLimitC), 1000) : 200;
+      const limitParam = parseLimitParam(c.req.query('limit'), 200, 1000);
 
       const where: string[] = ['status = ?'];
       const params: Array<string | number> = [statusParam];

@@ -451,6 +451,37 @@ export function checkStatusJson(root: string): GovernanceResult {
 }
 
 /** Run all checks, print results, and exit with appropriate code. */
+/**
+ * Migration prefixes must be unique — a shared numeric prefix makes apply order depend on a
+ * tie-break rather than the number, and two sessions can each mint "the next" number. The one
+ * pre-existing pair (017) is grandfathered: renaming an applied migration would re-apply it
+ * (`_migrations.filename` is the identity), so it stays as-is with migrate.ts's name tie-break.
+ */
+function checkMigrationPrefixUniqueness(root: string): { errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const dir = join(root, 'server', 'warehouse', 'migrations');
+  if (!existsSync(dir)) return { errors, warnings };
+  const grandfathered = new Set(['017']);
+  const byPrefix = new Map<string, string[]>();
+  for (const f of readdirSync(dir).filter((f) => f.endsWith('.sql'))) {
+    const prefix = f.split('_')[0] ?? '';
+    if (!/^\d{3}$/.test(prefix)) {
+      // migrate.ts orders by parseInt(prefix); a non-numeric prefix would make that comparator non-total.
+      errors.push(`MALFORMED migration filename ${f}: prefix must be exactly three digits (NNN_name.sql)`);
+      continue;
+    }
+    byPrefix.set(prefix, [...(byPrefix.get(prefix) ?? []), f]);
+  }
+  for (const [prefix, files] of byPrefix) {
+    if (files.length < 2) continue;
+    const msg = `DUPLICATE migration prefix ${prefix}: ${files.join(', ')} — allocate the next unused number`;
+    if (grandfathered.has(prefix)) warnings.push(`${msg} (grandfathered pair; ordered by name tie-break)`);
+    else errors.push(msg);
+  }
+  return { errors, warnings };
+}
+
 function main(): void {
   const root = resolve(process.cwd());
   let allErrors: string[] = [];
@@ -463,6 +494,7 @@ function main(): void {
     checkAcqGovernorCoupling(root),
     checkGovernorLiteralCoupling(root),
     checkStatusJson(root),
+    checkMigrationPrefixUniqueness(root),
   ];
 
   for (const result of checks) {
