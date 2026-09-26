@@ -36,6 +36,7 @@ import {
 } from '../../src/contracts/debt';
 import { z } from 'zod';
 import { Loan as LoanSchema } from '../../src/contracts/loan';
+import { RATIFIED_GOVERNORS } from '../../src/contracts/governor-constants';
 import type { Loan } from '../../src/contracts/loan';
 import {
   buildMaturityTimeline,
@@ -152,7 +153,7 @@ function toLoanSignal(ltv: number | null, rate: number | null): DebtSignal {
   const rateCollision =
     ltv !== null && rate !== null && Math.abs(ltv - rate) < RATE_LTV_COLLISION_EPSILON;
   if (rateCollision) return 'hold';
-  if (ltv !== null && ltv > 0.40) return 'governor-block';
+  if (ltv !== null && ltv > RATIFIED_GOVERNORS.ltvCeiling) return 'governor-block';
   return 'hold';
 }
 

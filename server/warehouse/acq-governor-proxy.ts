@@ -67,9 +67,22 @@ export function applyGovernorProxy(
   input: Pick<AcquisitionInput, 'stabilizedYoc'>,
   governors: GovernorProxyGovernors,
 ): GovernorProxyOutcome {
-  // DSCR proxy — indeterminate (null) when stabilizedYoc is absent.
+  // Governor sanity — FAIL CLOSED. ltvCeiling <= 0 (or non-finite either value) turns the proxy
+  // into Infinity / NaN: a zero ceiling cleared EVERY deal (Infinity >= floor) and NaN cleared none
+  // silently. Neither is a deal-data condition, so it is not "indeterminate": an invalid governor
+  // set demotes rather than passes. (Gabriel-approved 2026-09-26 from the 2026-09-25 audit.)
+  const governorsValid =
+    Number.isFinite(governors.ltvCeiling) && governors.ltvCeiling > 0 &&
+    Number.isFinite(governors.dscrFloor) && governors.dscrFloor > 0;
+
+  // DSCR proxy — indeterminate (null) when stabilizedYoc is absent AND the governors are valid.
   let governorDscrCleared: boolean | null = null;
-  if (input.stabilizedYoc !== null && input.stabilizedYoc !== undefined) {
+  if (!governorsValid) {
+    // Loud, so a persisted governor_dscr_cleared=0 from THIS path is distinguishable in the log
+    // from a genuine DSCR-proxy miss (the outcome shape is unchanged for persistence/edge parity).
+    console.warn(`[acq-governor-proxy] INVALID governor set (dscrFloor=${governors.dscrFloor}, ltvCeiling=${governors.ltvCeiling}) — failing closed (demote)`);
+    governorDscrCleared = false;
+  } else if (input.stabilizedYoc !== null && input.stabilizedYoc !== undefined) {
     const dscrProxy = input.stabilizedYoc / (governors.ltvCeiling * SCREENING_DEBT_CONSTANT);
     governorDscrCleared = dscrProxy >= governors.dscrFloor;
   }

@@ -63,6 +63,33 @@ describe('applyGovernorProxy — DSCR proxy', () => {
   });
 });
 
+describe('applyGovernorProxy — invalid governors FAIL CLOSED (audit 2026-09-25, approved 2026-09-26)', () => {
+  it('ltvCeiling = 0 demotes to PASS (previously Infinity cleared every deal)', () => {
+    const out = applyGovernorProxy({ verdict: 'PURSUE' }, { stabilizedYoc: 0.12 }, { dscrFloor: 1.25, ltvCeiling: 0 });
+    expect(out.governorDscrCleared).toBe(false);
+    expect(out.verdict).toBe('PASS');
+  });
+  it.each([
+    ['negative ltvCeiling', { dscrFloor: 1.25, ltvCeiling: -0.4 }],
+    ['NaN ltvCeiling', { dscrFloor: 1.25, ltvCeiling: Number.NaN }],
+    ['zero dscrFloor', { dscrFloor: 0, ltvCeiling: 0.4 }],
+    ['Infinity dscrFloor', { dscrFloor: Number.POSITIVE_INFINITY, ltvCeiling: 0.4 }],
+  ])('%s demotes to PASS even for a strong-yield deal', (_label, gov) => {
+    const out = applyGovernorProxy({ verdict: 'PURSUE' }, { stabilizedYoc: 0.5 }, gov);
+    expect(out.governorDscrCleared).toBe(false);
+    expect(out.verdict).toBe('PASS');
+  });
+  it('invalid governors demote even when stabilizedYoc is null (not "indeterminate" — a system condition)', () => {
+    const out = applyGovernorProxy({ verdict: 'WATCH' }, { stabilizedYoc: null }, { dscrFloor: 1.25, ltvCeiling: 0 });
+    expect(out.governorDscrCleared).toBe(false);
+    expect(out.verdict).toBe('PASS');
+  });
+  it('still never upgrades KILLED', () => {
+    const out = applyGovernorProxy({ verdict: 'KILLED' }, { stabilizedYoc: 0.5 }, { dscrFloor: 1.25, ltvCeiling: 0 });
+    expect(out.verdict).toBe('KILLED');
+  });
+});
+
 describe('applyGovernorProxy — LTV proxy is indeterminate at screen time', () => {
   it('returns governorLtvCleared = null and never demotes on LTV', () => {
     // A deal that the OLD bogus proxy (allInBasis/price ≤ 0.40) would have demoted: basis ≥ price.
