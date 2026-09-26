@@ -18,7 +18,8 @@ import { useMemo } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { useSnapshot, useAnalytics } from '@/data/queries';
 import { useUi } from '@/brain/ui-context';
-import { fmtUsd, fmtUsdCompact, fmtPct, fmtDate, fmtMonths } from '@analytics/index';
+import { fmtUsd, fmtUsdCompact, fmtPct, fmtDate, fmtMonths, isAffiliateBorrowerLoan } from '@analytics/index';
+import { externalDebtSublabel } from './debt-sublabels';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { DataTable, type Column } from '@/primitives/DataTable';
@@ -186,8 +187,8 @@ function DebtSummary() {
           value={d.externalDebt}
           format={fmtUsdCompact}
           accentColor="var(--color-warn)"
-          sublabel={`loan schedule · ${loans.filter((l) => l.direction === 'borrower').length} borrower loans`}
-          prov={loanProv('Σ |balance| over direction = borrower')}
+          sublabel={externalDebtSublabel(d, loans.filter((l) => l.direction === 'borrower' && !isAffiliateBorrowerLoan(l)).length)}
+          prov={loanProv('Σ |balance| over direction = borrower, affiliate notes excluded')}
         />
         <KpiStat
           label="Weighted Avg Rate"
@@ -256,6 +257,9 @@ function MaturitiesView() {
           <BarList
             items={[
               { label: 'External — we pay', value: d.externalDebt, display: fmtUsdCompact(d.externalDebt) },
+              ...(d.affiliateDebt > 0
+                ? [{ label: 'Affiliate notes — Oxford to Oxford', value: d.affiliateDebt, display: fmtUsdCompact(d.affiliateDebt) }]
+                : []),
               { label: 'Internal accrual', value: d.internalOutstanding, display: fmtUsdCompact(d.internalOutstanding) },
               { label: 'Deployed — we receive', value: d.lenderDeployed, display: fmtUsdCompact(d.lenderDeployed) },
             ]}
