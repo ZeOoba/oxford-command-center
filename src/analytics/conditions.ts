@@ -5,7 +5,7 @@ import type { Insight, InsightSeverity } from './types';
 import { tenantScorecards } from '@/brain/tenants';
 import { coerceNonNegMoney } from '@/lib/money';
 import { renewalSignals, marketRentGaps, bucketExpiry } from './lease-forecast';
-import { DAY_MS } from '../../server/warehouse/time-constants';
+import { DAY_MS } from '@/lib/time-constants';
 const HOUR_MS = 3_600_000;
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
   Math.round((new Date(isoTarget).getTime() - new Date(isoFrom).getTime()) / DAY_MS);

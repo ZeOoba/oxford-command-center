@@ -7,15 +7,7 @@ import { SegmentedControl } from '@/primitives/SegmentedControl';
 import { useTabParam } from '@/lib/useTabParam';
 import { fmtNum } from '@analytics/index';
 import { useUi } from '@/brain/ui-context';
-import { useDocSearch } from '@/data/documents';
-
-interface DocStatus {
-  configured: boolean;
-  dir: string | null;
-  documents: number;
-  chunks: number;
-  docs: Array<{ name: string; chunks: number }>;
-}
+import { useDocSearch, fetchDocStatus, type DocStatus } from '@/data/documents';
 
 // Inner Search/Corpus switch — a SegmentedControl on `?view=` (R5: the Data destination that hosts
 // this module owns the tab strip, so no nested tabs).
@@ -39,8 +31,7 @@ export function DocumentsModule() {
 
   useEffect(() => {
     let alive = true;
-    fetch('/api/documents')
-      .then((r) => (r.ok ? (r.json() as Promise<DocStatus>) : Promise.reject(new Error('no server'))))
+    fetchDocStatus()
       .then((j) => alive && setStatus(j))
       .catch(() => alive && setOffline(true));
     return () => {

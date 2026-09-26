@@ -22,11 +22,20 @@
     "cc-audit-governors": {
       "agent_role": "Engineering (Claude Code, Fable 5.1) — Gabriel-directed in-turn 2026-09-26",
       "phase": "cc-audit-army 2026-09-25 governor-surface items, EXPLICITLY APPROVED by Gabriel 2026-09-26 (Invariant 4 permission granted; values unchanged): (1) NEW src/contracts/governor-constants.ts RATIFIED_GOVERNORS as the single source — CAPITAL_CONFIG, GOVERNOR_FALLBACK (and via governors.ts the edge GOVERNOR_DEFAULTS) derive from it; (2) acq-governor-proxy.ts fails CLOSED on ltvCeiling/dscrFloor <= 0 or non-finite (was Infinity → cleared every deal) + writeCapitalConfig refuses such values; (3) ALERT_THRESHOLDS keys renamed dscrFloor→dscrCriticalFloor, ltvCeiling→refiLtvCeilingPerProperty across src/server/tests. Follow-up to PR #385.",
-      "status": "in_progress",
+      "status": "merged",
       "blocked_by": null,
-      "review_needed": true,
-      "review_detail": "Architect-owned src/contracts/ touched (new governor-constants.ts + GOVERNOR_FALLBACK derivation in index.ts; debt.ts comment) under Gabriel's explicit 2026-09-26 approval. Refute pass: wf_5b4af06c-01b.",
-      "last_updated": "2026-09-26T14:22:05Z"
+      "review_needed": false,
+      "review_detail": "MERGED via PR #386 (2026-09-26, squash). Architect-owned src/contracts/ touched (new governor-constants.ts + GOVERNOR_FALLBACK derivation) under Gabriel's explicit 2026-09-26 approval; governor values unchanged. Refute: wf_5b4af06c-01b; independent Fable review recorded. Worktree removed post-merge.",
+      "last_updated": "2026-09-26T14:50:00Z"
+    },
+    "cc-audit-fixes": {
+      "agent_role": "Engineering (Claude Code, Fable 5.1) — Gabriel-directed in-turn 2026-09-25",
+      "phase": "cc-audit-army 2026-09-25 remediation (wf_76d27d8c-2a4, 17 confirmed findings on main @ 1ac555d). Fixed: future-dated comp fails closed in isFresh (acquisition.ts); shared sanitizeAgentInput at both AI boundaries (server/index.ts + functions/api/ai.ts) + mirror per-identity rate limit + roster-free edge confidential scan (name + shortName); abs-value income foot (ingest.ts); parseLimitParam (server/lib/query-params.ts) on acq list routes + documents/search; DocStatus Zod contract (src/data/documents.ts); migrate.ts same-prefix tie-break + governance duplicate/malformed-prefix check; Debt Positions verdict line + maturity-first sort + KPI provenance; time-constants moved to src/lib with an eslint src→server import ban; dead _archive module moved to /archive. NOT applied: the audit's ingest overlap-supersede finding was a false positive (warehouse-metrics/backfill tests prove same-year YTD + full-year coexist by contract and resolve deterministically downstream). REPORT-ONLY (governor surface, Invariant 4 — awaiting Gabriel): ltvCeiling<=0 fail-closed in acq-governor-proxy.ts; governor literal consolidation; ALERT_THRESHOLDS key rename. Deferred: api.ts router split (collision risk with 15 live worktrees). Refute: wf_cf78f30d-1c8 (5 lenses; actionable findings applied, overlap-guard findings moot after revert).",
+      "status": "merged",
+      "blocked_by": null,
+      "review_needed": false,
+      "review_detail": "MERGED via PR #385 (0af1bb0, 2026-09-26). Architect-owned files touched with Gabriel's in-turn direction: server/index.ts (POST /api/ai body validation + documents/search limit parse; CORS untouched), server/warehouse/migrate.ts (sort tie-break), scripts/governance-check.ts (checkMigrationPrefixUniqueness). Governor items landed separately in PR #386. Worktree removed post-merge.",
+      "last_updated": "2026-09-26T14:50:00Z"
     },
     "sweep-2026-09-21": {
           "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-09-21",

@@ -12,7 +12,7 @@ import type {
   RenewalLikelihood,
 } from '@contracts/lease-forecast';
 import { coerceNonNegMoney } from '@/lib/money';
-import { DAY_MS, MONTH_MS } from '../../server/warehouse/time-constants';
+import { DAY_MS, MONTH_MS } from '@/lib/time-constants';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 /** Ratified 2026-06-21: VELOCITY_SLOW_DAYS = 60 days (updated from proposed 120). */
