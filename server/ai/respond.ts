@@ -3,6 +3,7 @@ import type { AiAskResponse } from '../../src/brain/ai/types';
 import { buildAnalytics } from '../../src/analytics/engine';
 import { fmtUsdCompact, fmtPct, fmtYears, fmtNum } from '../../src/analytics/format';
 import { referenceDate } from '../config';
+import { debtBasisNote, externalDebtSentence, portfolioLtvSentence } from './debt-basis-copy';
 
 /**
  * ── AI SEAM ───────────────────────────────────────────────────────────────────
@@ -37,7 +38,7 @@ export function respond(question: string, s: PortfolioSnapshot): AiAskResponse {
     const balloons = s.loans.filter((l) => l.balloon);
     out.push(balloons.length ? `${balloons.length} balloon(s) on the book:` : 'No balloon payments flagged.');
     balloons.forEach((l) => out.push(`• ${l.name} — ${fmtUsdCompact(l.absBalance)} due ${l.maturity ?? 'demand'} (${l.monthsToMaturity ?? '?'} mo).`));
-    out.push(`Weighted avg borrower rate: ${a.debt.weightedAvgRate !== null ? fmtPct(a.debt.weightedAvgRate, 2) : '—'}; annual debt service ${fmtUsdCompact(a.debt.annualDebtService)}.`);
+    out.push(`Weighted avg third-party borrower rate: ${a.debt.weightedAvgRate !== null ? fmtPct(a.debt.weightedAvgRate, 2) : '—'}; annual debt service ${fmtUsdCompact(a.debt.annualDebtService)} (loan schedule).`);
   } else if (has('lease', 'expir', 'renew', 'rollover', 'walt')) {
     sources.add('Master Tenant Rent Roll');
     out.push(`WALT is ${fmtYears(k.walt.value)} (rent-weighted). ${s.leases.length} leases, ${fmtUsdCompact(s.leases.reduce((x, l) => x + l.annualRent, 0))} annualized rent.`);
@@ -53,7 +54,13 @@ export function respond(question: string, s: PortfolioSnapshot): AiAskResponse {
     out.push(`Largest concentration: ${s.cash.largestEntity} at ${fmtPct(s.cash.concentrationTopPct)} of total.`);
   } else if (has('debt', 'loan', 'leverage', 'ltv')) {
     sources.add('Loan Index');
-    out.push(`External debt ${fmtUsdCompact(a.debt.externalDebt)} at ${a.debt.weightedAvgRate !== null ? fmtPct(a.debt.weightedAvgRate, 2) : '—'} weighted. Portfolio LTV ${fmtPct(k.ltv.value)}.`);
+    sources.add('Property NOI');
+    // One basis per sentence (item 13, 2026-09-24): External Debt is the loan schedule; LTV is the
+    // property loan balances. They are different sources — never quoted in one sentence.
+    out.push(externalDebtSentence(a.debt));
+    out.push(portfolioLtvSentence(k));
+    const note = debtBasisNote(s.dataQuality ?? []);
+    if (note) out.push(note);
     out.push(`Capital deployed as lender: ${fmtUsdCompact(a.debt.lenderDeployed)}; internal accrual ${fmtUsdCompact(a.debt.internalOutstanding)}.`);
   } else {
     sources.add('Property NOI');
@@ -63,7 +70,11 @@ export function respond(question: string, s: PortfolioSnapshot): AiAskResponse {
     // holdings (never silently dropped — the workbook's own Portfolio Total includes it).
     const other = k.otherHoldingsCount.value ? ` · +${fmtUsdCompact(k.otherHoldingsValue.value)} other holdings (residence)` : '';
     out.push(`• Value ${fmtUsdCompact(k.value.value)} (Oxford share)${other}, NOI ${fmtUsdCompact(k.noi.value)}, weighted cap ${fmtPct(k.weightedCapRate.value)}.`);
-    out.push(`• Debt ${fmtUsdCompact(k.totalDebt.value)} (LTV ${fmtPct(k.ltv.value)}), cash ${fmtUsdCompact(k.totalCash.value)}, WALT ${fmtYears(k.walt.value)}.`);
+    const aff = k.affiliateDebt.value ? ` · +${fmtUsdCompact(k.affiliateDebt.value)} affiliate notes excluded` : '';
+    out.push(`• Debt ${fmtUsdCompact(k.totalDebt.value)} (property loan balances; LTV ${fmtPct(k.ltv.value)})${aff}.`);
+    out.push(`• Cash ${fmtUsdCompact(k.totalCash.value)}, WALT ${fmtYears(k.walt.value)}.`);
+    const note = debtBasisNote(s.dataQuality ?? []);
+    if (note) out.push(`• ${note}`);
     out.push(`• ${a.insights.length} active alerts.`);
   }
 
