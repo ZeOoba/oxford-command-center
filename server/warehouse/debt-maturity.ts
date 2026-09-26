@@ -386,6 +386,17 @@ export function computePortfolioAggregateLtv(
   // are affiliate reaches emptyCohort — no verdict, never a clearance — and the note says why.
   const affiliateLoanCount = allActiveLoans.filter((l) => isAffiliateDebtPosition(l)).length;
   const loans = allActiveLoans.filter((l) => !isAffiliateDebtPosition(l));
+  // Fix round (refute wf_3f479f7e-1eb, medium): the rate/ltv collision signature is evidence
+  // about the SNAPSHOT's ltv column, not about one loan — an affiliate row that collides is
+  // still evidence the column drifted, so it is checked on every active row BEFORE the basis
+  // filter and forces complete=false / no verdict, exactly as a colliding third-party row does.
+  const affiliateRowCollided = allActiveLoans.some(
+    (l) =>
+      isAffiliateDebtPosition(l) &&
+      l.rate !== null &&
+      l.ltv !== null &&
+      Math.abs(l.ltv - l.rate) < RATE_LTV_COLLISION_EPSILON,
+  );
 
   const countByProperty = new Map<string, number>();
   for (const l of loans) {
@@ -440,7 +451,7 @@ export function computePortfolioAggregateLtv(
 
   const totalLoanCount = loans.length;
   const aggregateLtv = coveredImpliedValue > 0 ? coveredBalance / coveredImpliedValue : null;
-  const complete = coveredLoanCount === totalLoanCount; // vacuously true at zero debt
+  const complete = coveredLoanCount === totalLoanCount && !affiliateRowCollided; // vacuously true at zero debt
   const emptyCohort = totalLoanCount === 0;
 
   // Obs-3 (PR #233 residual #2, both adversarial reviews): when the shrinkage guard refused (or
@@ -510,7 +521,11 @@ export function computePortfolioAggregateLtv(
   // clearedConservatively states now gets its own sentence.
   const affiliateSuffix =
     affiliateLoanCount > 0
-      ? ` ${affiliateLoanCount} affiliate note${affiliateLoanCount === 1 ? '' : 's'} excluded from the LTV governor basis (ratified 2026-09-26).`
+      ? ` ${affiliateLoanCount} affiliate note${affiliateLoanCount === 1 ? '' : 's'} excluded from the LTV governor basis (ratified 2026-09-26).${
+          affiliateRowCollided
+            ? " An excluded affiliate row's ltv exactly collides with its own rate (workbook column-drift signature) — snapshot evidence, so no aggregate verdict is issued; fix the workbook ltv column mapping, then re-run snapshot."
+            : ''
+        }`
       : '';
   const baseNote = lastWriteRefused
     ? clearedConservatively === false

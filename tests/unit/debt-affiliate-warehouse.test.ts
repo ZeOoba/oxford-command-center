@@ -209,6 +209,19 @@ describe('computePortfolioAggregateLtv — affiliate notes out of the aggregate 
     expect(agg.note).toMatch(/affiliate/i);
   });
 
+  it('a colliding AFFILIATE row is snapshot evidence: complete=false, verdict null', () => {
+    const db = freshDb();
+    const a = seedProperty(db, 'prop-a');
+    const b = seedProperty(db, 'prop-b');
+    seedLoan(db, { propertyId: a, lender: REDACTED-707, balance: 2_000_000, rate: null, ltv: 0.3 });
+    seedLoan(db, { propertyId: b, lender: LIVE_AFFILIATE_LENDER, balance: 200_000, rate: 0.0625, ltv: 0.0625 });
+    const agg = computePortfolioAggregateLtv(db);
+    expect(agg.complete).toBe(false);
+    expect(agg.clearedConservatively).toBeNull();
+    expect(agg.note).toMatch(/collides/i);
+    expect(agg.note).toMatch(/affiliate/i);
+  });
+
   it('"Oxford / REDACTED-672…" and "Oxford Capital Partners (REDACTED-545 Bank)" stay in the basis', () => {
     const db = freshDb();
     seedLoan(db, { propertyId: seedProperty(db, 'prop-a'), lender: LIVE_REDACTED-672_LENDER, balance: 1_000_000, ltv: 0.4 });
@@ -243,7 +256,46 @@ describe('scoreDebtPositions — D1 LTV ignores affiliate rows; DSCR unchanged (
     // DSCR deliberately still counts the affiliate note's debt service (open ruling).
     expect(s!.dscr).toBeCloseTo(100_000 / 36_000, 6);
     expect(s!.signal).toBe('hold');
-    expect(s!.signalReason).toMatch(/LTV unknown/i);
+    // Fix round (refute wf_3f479f7e-1eb): NOT the "populate the workbook LTV column" errand —
+    // there is no third-party leverage to test, so the reason says so.
+    expect(s!.signalReason).toBe(
+      'LTV governor not applicable — only Oxford-affiliate debt on this property (excluded from the LTV basis, ratified 2026-09-26); DSCR still evaluated',
+    );
+    expect(s!.signalReason).not.toMatch(/LTV unknown|populat/i);
+  });
+
+  it('affiliate-only property with no warehouse NOI: dedicated reason, DSCR flagged unknown', () => {
+    const db = freshDb();
+    const b = seedProperty(db, 'prop-b');
+    seedLoan(db, { propertyId: b, lender: LIVE_AFFILIATE_LENDER, ltv: 0.9 });
+    const s = scoreDebtPositions(db, [], null, ASOF).find((x) => x.propertyId === b);
+    expect(s!.signal).toBe('hold');
+    expect(s!.signalReason).toBe(
+      'LTV governor not applicable — only Oxford-affiliate debt on this property (excluded from the LTV basis, ratified 2026-09-26); DSCR unknown (no warehouse NOI for this property)',
+    );
+  });
+
+  it('collision evidence on an AFFILIATE row still poisons the property D1 pick (snapshot column-drift)', () => {
+    const db = freshDb();
+    const p = seedProperty(db, 'prop-a');
+    seedLoan(db, { propertyId: p, lender: REDACTED-707, balance: 800_000, rate: null, ltv: 0.3 });
+    seedLoan(db, { propertyId: p, lender: LIVE_AFFILIATE_LENDER, balance: 200_000, rate: 0.0625, ltv: 0.0625 });
+    const s = scoreDebtPositions(db, [yearMetric(p, 200_000)], null, ASOF).find((x) => x.propertyId === p);
+    expect(s!.ltv).toBeNull();
+    expect(s!.signal).toBe('hold');
+    expect(s!.signalReason).toBe(
+      "Governor check incomplete — LTV rejected — ltv exactly collides with its own loan's rate (workbook column-drift signature); fix the workbook ltv column mapping, then re-run snapshot",
+    );
+  });
+
+  it('a colliding affiliate row still lets a measured third-party BREACH through (one-directional poisoning)', () => {
+    const db = freshDb();
+    const p = seedProperty(db, 'prop-a');
+    seedLoan(db, { propertyId: p, lender: REDACTED-707, balance: 800_000, rate: null, ltv: 0.55 });
+    seedLoan(db, { propertyId: p, lender: LIVE_AFFILIATE_LENDER, balance: 200_000, rate: 0.0625, ltv: 0.0625 });
+    const s = scoreDebtPositions(db, [yearMetric(p, 200_000)], null, ASOF).find((x) => x.propertyId === p);
+    expect(s!.ltv).toBeCloseTo(0.55, 6);
+    expect(s!.signal).toBe('governor-block');
   });
 
   it('a property with a third-party loan scores exactly as before', () => {
