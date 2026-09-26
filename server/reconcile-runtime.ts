@@ -1,6 +1,8 @@
 import type { PortfolioSnapshot, DataQualityFlag } from '../src/contracts/index';
 import { isInvestmentProperty } from '../src/analytics/property-basis';
 import { findDuplicateDealRows, keyDigest } from './sources/deal-name';
+import { DEBT_BASIS_FIELD, investmentLoanBalance, isAffiliateBorrowerLoan, isAffiliateNoteProperty } from '../src/analytics/debt-basis';
+import { buildLoanPropertyMap } from './warehouse/property-crosswalk';
 
 
 /**
@@ -170,44 +172,104 @@ export function checkStaleLeaseRows(s: Pick<PortfolioSnapshot, 'leases' | 'meta'
   return out;
 }
 
-// Absolute-dollar tolerance for the debt-basis cross-check below. Two independently-typed workbook
-// figures for the same loan can differ by a few dollars of accrual timing; anything past this is a
-// share-basis difference or a loan present in one source and not the other.
+// Absolute-dollar tolerance PER ROW for the debt-basis cross-check below. Two independently-typed
+// workbook figures for the same loan can differ by a few dollars of accrual timing; anything past
+// this is a share-basis difference or a loan present in one source and not the other.
 const DEBT_BASIS_TOLERANCE = 1000;
 
 /**
- * Overview "Total Debt" sums property loanBalance over INVESTMENT rows (Property NOI sheet;
- * engine.ts portfolioKpis filters through isInvestmentProperty). Capital › Debt "External Debt"
- * sums borrower-direction loan absBalance (loan schedule; engine.ts debtSummary). They disagreed by
- * ~$0.7M with no explanation on screen (2026-09-23 review). Surface the gap and name both figures;
- * do not pick a winner and never touch either total.
+ * Overview "Total Debt" (property loan balances, Property NOI sheet) vs Capital › Debt "External
+ * Debt" (third-party borrower loans, loan schedule), compared ROW BY ROW (item 14, 2026-09-24) so
+ * the Data Quality card names the property or loan that disagrees instead of one unexplained net
+ * gap (round 1 showed "$REDACTED-AMT" with no row to fix).
  *
- * Same basis as the two surfaces it reconciles, by construction: the residence sits outside
- * Overview Total Debt (ratified 2026-09-23), so its loanBalance is filtered out here too rather
- * than read as an unexplained gap against the borrower-loan schedule.
+ * Same basis as both surfaces, by construction:
+ *  - investment rows only (the residence is other holdings — isInvestmentProperty);
+ *  - Oxford-affiliate notes excluded on BOTH sides (src/analytics/debt-basis.ts — ratified
+ *    2026-09-24): a property row whose lender is an affiliate contributes 0, an affiliate
+ *    borrower loan is skipped; a loan collateralised by a non-investment row is other-holdings debt
+ *    and is compared on neither side.
+ * Loans are attributed with the SAME resolver the warehouse snapshot writer uses
+ * (buildLoanPropertyMap: exact normalized name → slug → alias; ambiguous/blank = unresolved, never
+ * guessed). Integer cents per loan so the $1,000 boundary is order-independent (refute
+ * wf_fb49dbb9-c91).
  *
- * entity is 'debt', deliberately NOT 'reconciliation' — see checkStaleLeaseRows: any
- * entity==='reconciliation' flag fires the CRITICAL "Reconciliation failure" insight and turns the
- * Health badge red regardless of severity. This is a warn-level basis note for the Data Quality card.
+ * Affiliate totals (ratified 2026-09-26): the property-row affiliate sum (PortfolioKpis.affiliateDebt)
+ * and the loan-schedule affiliate sum (DebtSummary.affiliateDebt) come from different spines and
+ * legitimately differ on live data (1100 Rarig's note to Oxford Capital sits only on the property
+ * row; "3883 from Oxford (50%)" sits only on the loan schedule). Both disclosures stay as built; the
+ * gap is surfaced as ONE extra warn flag (`debt.basis.affiliate`) past the same tolerance.
+ *
+ * entity is 'debt', deliberately NOT 'reconciliation' — see checkStaleLeaseRows: an
+ * entity==='reconciliation' flag is a reconciliation failure. These are warn-level basis notes; the
+ * Health Reconciliation card lists them via isDebtBasisFlag (src/modules/health/reconciliation-card.ts).
  */
 export function checkDebtBasis(s: Pick<PortfolioSnapshot, 'properties' | 'loans'>): DataQualityFlag[] {
-  const propertyDebt = sum((s.properties ?? []).filter(isInvestmentProperty).map((p) => p.loanBalance ?? 0));
-  const external = sum((s.loans ?? []).filter((l) => l.direction === 'borrower').map((l) => l.absBalance ?? 0));
-  // Integer cents: a float left-fold can differ by an ulp with row order, which must not flip the
-  // exact-$1,000 boundary (refute wf_fb49dbb9-c91).
-  const gapCents = Math.round(propertyDebt * 100) - Math.round(external * 100);
-  if (Math.abs(gapCents) <= DEBT_BASIS_TOLERANCE * 100) return [];
+  const allProps = s.properties ?? [];
+  const allLoans = s.loans ?? [];
+  const investment = allProps.filter(isInvestmentProperty);
+  const investmentIds = new Set(investment.map((p) => p.id));
+  const thirdParty = allLoans.filter((l) => l.direction === 'borrower' && !isAffiliateBorrowerLoan(l));
+  const { map, unresolved } = buildLoanPropertyMap(thirdParty, allProps, new Set(allProps.map((p) => p.id)));
+
+  const cents = (n: number): number => Math.round(n * 100);
+  const tol = DEBT_BASIS_TOLERANCE * 100;
   const usd = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`; // pinned: CI's ICU default may not group
-  return [{
-    entity: 'debt',
-    field: 'debt.basis',
-    issue:
-      `Overview Total Debt (Σ investment-property loan balances, Property NOI sheet) ` +
-      `${usd(propertyDebt)} vs Capital › Debt External Debt (Σ borrower loans, ` +
-      `loan schedule) ${usd(external)} — gap ${usd(Math.abs(gapCents) / 100)} ` +
-      `(share basis or a loan present in one source and not the other)`,
-    severity: 'warn',
-  }];
+
+  const loanCents = new Map<string, number>();
+  const loanNames = new Map<string, string[]>();
+  for (const l of thirdParty) {
+    const pid = map.get(l.id);
+    if (pid === undefined || !investmentIds.has(pid)) continue; // unresolved (below) or other-holdings collateral
+    loanCents.set(pid, (loanCents.get(pid) ?? 0) + cents(l.absBalance ?? 0));
+    loanNames.set(pid, [...(loanNames.get(pid) ?? []), l.name]);
+  }
+
+  const flags: DataQualityFlag[] = [];
+  for (const p of investment) {
+    const propCents = cents(investmentLoanBalance(p));
+    const schedCents = loanCents.get(p.id) ?? 0;
+    const gap = propCents - schedCents;
+    if (Math.abs(gap) <= tol) continue;
+    const names = loanNames.get(p.id);
+    flags.push({
+      entity: 'debt',
+      field: `${DEBT_BASIS_FIELD}.property.${p.id}`,
+      issue:
+        `${p.name}: Property NOI sheet loan balance ${usd(propCents / 100)} vs loan schedule ${usd(schedCents / 100)} ` +
+        `${names ? `(${names.join(', ')})` : '(no third-party loan attributed)'} — gap ${usd(Math.abs(gap) / 100)}`,
+      severity: 'warn',
+    });
+  }
+  const byId = new Map(thirdParty.map((l) => [l.id, l]));
+  for (const id of unresolved) {
+    const l = byId.get(id);
+    if (!l || cents(l.absBalance ?? 0) <= tol) continue;
+    flags.push({
+      entity: 'debt',
+      field: `${DEBT_BASIS_FIELD}.loan.${l.id}`,
+      issue: `${l.name}: ${usd(l.absBalance)} on the loan schedule is not attributed to any property row (collateral ${l.collateralProperty ? `"${l.collateralProperty}"` : 'blank'})`,
+      severity: 'warn',
+    });
+  }
+
+  // Affiliate totals, same sums as engine.ts portfolioKpis.affiliateDebt / debtSummary.affiliateDebt.
+  let affPropCents = 0;
+  for (const p of investment) if (isAffiliateNoteProperty(p)) affPropCents += cents(p.loanBalance ?? 0);
+  let affLoanCents = 0;
+  for (const l of allLoans) if (isAffiliateBorrowerLoan(l)) affLoanCents += cents(l.absBalance ?? 0);
+  const affGap = affPropCents - affLoanCents;
+  if (Math.abs(affGap) > tol) {
+    flags.push({
+      entity: 'debt',
+      field: `${DEBT_BASIS_FIELD}.affiliate`,
+      issue:
+        `Affiliate notes: Property NOI sheet ${usd(affPropCents / 100)} (rows with an Oxford-affiliate lender) ` +
+        `vs loan schedule ${usd(affLoanCents / 100)} (affiliate borrower loans) — gap ${usd(Math.abs(affGap) / 100)}`,
+      severity: 'warn',
+    });
+  }
+  return flags;
 }
 
 export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
