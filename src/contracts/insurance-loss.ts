@@ -22,7 +22,9 @@
 //
 // DATA QUALITY (2026-09-24): `unmatchedPolicyRefs` lists loss events whose policy_ref names no
 // policy on file at their property (a loss-run typo or a register gap). Visibility only — it never
-// changes attachment; `.default([])` keeps an older baked mirror without the field parseable.
+// changes attachment; `.default([])` keeps a payload produced before this field existed (a stale
+// server process, a cached response) parseable on a newer client. (This route is never baked:
+// it is absent from scripts/bake-warehouse.ts FIXED_ROUTES, so a mirror is not the reason.)
 // WAREHOUSE-ONLY: it is computed solely when `lossDataSource` is 'warehouse' — the placeholder
 // fixture's refs are the synthetic 'PLACEHOLDER' sentinel, never a typo, so it is [] otherwise.
 import { z } from 'zod';
@@ -124,8 +126,9 @@ export const InsuranceLossReport = z.object({
   lossDataSource: LossDataSource,
   decPageDataSource: LossDataSource, // 'placeholder' if ANY policy fell back to blanket values
   droppedFixtureRows: z.number().int().nonnegative(),
-  // `.default([])` is REQUIRED: the client also parses a previously baked static mirror
-  // (fetchParsedOrMirror / scripts/bake-warehouse.ts) that predates this field.
+  // `.default([])` is REQUIRED: a payload produced before this field existed (a stale server
+  // process still running older code, or a cached response) must still parse on a newer client.
+  // Not a bake concern — /insurance/loss is not in scripts/bake-warehouse.ts FIXED_ROUTES.
   unmatchedPolicyRefs: z.array(UnmatchedPolicyRef).default([]),
   eal: z.array(PropertyEal),
   deductibleReviews: z.array(DeductibleReview),
