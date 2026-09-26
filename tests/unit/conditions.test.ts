@@ -1034,3 +1034,18 @@ describe('evaluateConditions — insurance alert titles disambiguate co-located 
     expect(new Set(titles).size).toBe(2);
   });
 });
+
+describe('evaluateConditions — affiliate notes are outside per-property LTV (ratified 2026-09-24)', () => {
+  it('an Oxford-affiliate note (live 1100 Rarig shape) fires neither ltv-governor nor ltv', () => {
+    const out = evaluateConditions(snap({ properties: [prop({ id: 'p1', name: '1100 Rarig', lender: 'Oxford Capital', loanBalance: REDACTED-AMT, ltv: REDACTED-AMT })] }), opts);
+    expect(out.some((i) => i.id === 'ltv-governor-p1' || i.id === 'ltv-p1')).toBe(false);
+  });
+  it('an affiliate note at 70% LTV does not fire the 65% ceiling warning either', () => {
+    const out = evaluateConditions(snap({ properties: [prop({ id: 'p1', lender: 'Oxford Capital', loanBalance: 700_000, ltv: 0.7 })] }), opts);
+    expect(out.some((i) => i.id === 'ltv-p1')).toBe(false);
+  });
+  it('the same LTV on a third-party loan still fires the info governor insight (id unchanged)', () => {
+    const out = evaluateConditions(snap({ properties: [prop({ id: 'p1', name: '1100 Rarig', lender: 'REDACTED-545', loanBalance: REDACTED-AMT, ltv: REDACTED-AMT })] }), opts);
+    expect(out.find((i) => i.id === 'ltv-governor-p1')?.severity).toBe('info');
+  });
+});

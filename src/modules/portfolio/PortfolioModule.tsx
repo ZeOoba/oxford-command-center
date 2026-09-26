@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useSnapshot, useAnalytics } from '@/data/queries';
 import { useSnapshotGate } from '@/shell/SnapshotGate';
 import { useUi } from '@/brain/ui-context';
-import { fmtUsdCompact, fmtPct, fmtSf, fmtMultiple, fmtNum } from '@analytics/index';
+import { fmtUsdCompact, fmtPct, fmtSf, fmtMultiple, fmtNum, propertyLtvLabel, investmentLtv } from '@analytics/index';
 import { Card, CardHeader } from '@/primitives/Card';
 import { KpiStat } from '@/primitives/KpiStat';
 import { DataTable, type Column } from '@/primitives/DataTable';
@@ -35,7 +35,7 @@ export function PortfolioModule() {
     { key: 'noi', header: 'NOI', align: 'right', render: (p) => fmtUsdCompact(p.noi), sortValue: (p) => p.noi },
     { key: 'cap', header: 'Cap', align: 'right', render: (p) => fmtPct(p.capRate), sortValue: (p) => p.capRate ?? 0 },
     { key: 'dscr', header: 'DSCR', align: 'right', render: (p) => (p.dscr !== null ? fmtMultiple(p.dscr) : '—'), sortValue: (p) => p.dscr ?? 0 },
-    { key: 'ltv', header: 'LTV', align: 'right', render: (p) => fmtPct(p.ltv), sortValue: (p) => p.ltv ?? 0 },
+    { key: 'ltv', header: 'LTV', align: 'right', render: (p) => propertyLtvLabel(p), sortValue: (p) => investmentLtv(p) ?? 0 },
     { key: 'value', header: 'Value', align: 'right', render: (p) => fmtUsdCompact(p.oxfordValue), sortValue: (p) => p.oxfordValue },
     {
       key: 'lender',

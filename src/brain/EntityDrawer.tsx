@@ -12,6 +12,8 @@ import {
   fmtDate,
   fmtMultiple,
   fmtMonths,
+  propertyLtvLabel,
+  isAffiliateNoteProperty,
 } from '@analytics/index';
 import { useSnapshot, SNAPSHOT_KEY } from '@/data/queries';
 import { useBrain } from '@/data/brain-context';
@@ -297,8 +299,8 @@ function resolve(sel: EntityRef, s: PortfolioSnapshot): Content | null {
           { label: 'Oxford Value', value: fmtUsd(p.oxfordValue) },
           { label: 'Ownership', value: fmtPct(p.oxfordOwnPct) },
           { label: 'Loan Balance', value: fmtUsd(p.loanBalance) },
-          { label: 'LTV', value: fmtPct(p.ltv) },
-          { label: 'Lender', value: p.lender ?? '—' },
+          { label: 'LTV', value: propertyLtvLabel(p) },
+          { label: 'Lender', value: p.lender ? `${p.lender}${isAffiliateNoteProperty(p) ? ' (affiliate note — excluded from Total Debt)' : ''}` : '—' },
           { label: 'Equity Invested', value: fmtUsd(p.equityInvested) },
           { label: 'Cash-on-Cash', value: fmtPct(p.cashOnCash) },
           { label: 'Rent $/SF', value: p.rentPerSf !== null ? `$${p.rentPerSf.toFixed(2)}` : '—' },
