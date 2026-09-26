@@ -187,12 +187,19 @@ const DEBT_BASIS_TOLERANCE = 1000;
  *  - investment rows only (the residence is other holdings — isInvestmentProperty);
  *  - Oxford-affiliate notes excluded on BOTH sides (src/analytics/debt-basis.ts — ratified
  *    2026-09-24): a property row whose lender is an affiliate contributes 0, an affiliate
- *    borrower loan is skipped; a loan collateralised by a non-investment row is other-holdings debt
- *    and is compared on neither side.
+ *    borrower loan is skipped; a loan collateralised by a non-investment row (the residence) is
+ *    counted in Capital › Debt External Debt (engine.ts debtSummary sums every third-party borrower
+ *    loan) but NOT in Overview Total Debt — it is disclosed as its own `.loan.<id>` flag rather than
+ *    silently dropped (refute wf_2b574580-61b).
  * Loans are attributed with the SAME resolver the warehouse snapshot writer uses
  * (buildLoanPropertyMap: exact normalized name → slug → alias; ambiguous/blank = unresolved, never
- * guessed). Integer cents per loan so the $1,000 boundary is order-independent (refute
- * wf_fb49dbb9-c91).
+ * guessed). Loan-schedule rows sharing an id are flagged once and excluded from attribution, sums
+ * and the unresolved loop (no last-writer-wins). Integer cents per loan so the $1,000 boundary is
+ * order-independent (refute wf_fb49dbb9-c91).
+ *
+ * Bound: the per-row tolerance can mask at most rows × tolerance of net gap; that residue is caught
+ * in aggregate by one root flag (field exactly DEBT_BASIS_FIELD) when |Σ property − Σ schedule|
+ * over investment rows exceeds the tolerance without any single row doing so.
  *
  * Affiliate totals (ratified 2026-09-26): the property-row affiliate sum (PortfolioKpis.affiliateDebt)
  * and the loan-schedule affiliate sum (DebtSummary.affiliateDebt) come from different spines and
@@ -209,28 +216,58 @@ export function checkDebtBasis(s: Pick<PortfolioSnapshot, 'properties' | 'loans'
   const allLoans = s.loans ?? [];
   const investment = allProps.filter(isInvestmentProperty);
   const investmentIds = new Set(investment.map((p) => p.id));
-  const thirdParty = allLoans.filter((l) => l.direction === 'borrower' && !isAffiliateBorrowerLoan(l));
-  const { map, unresolved } = buildLoanPropertyMap(thirdParty, allProps, new Set(allProps.map((p) => p.id)));
+  const thirdPartyAll = allLoans.filter((l) => l.direction === 'borrower' && !isAffiliateBorrowerLoan(l));
 
   const cents = (n: number): number => Math.round(n * 100);
   const tol = DEBT_BASIS_TOLERANCE * 100;
   const usd = (n: number) => `$${Math.round(n).toLocaleString('en-US')}`; // pinned: CI's ICU default may not group
 
+  const flags: DataQualityFlag[] = [];
+
+  // Duplicate ids: buildLoanPropertyMap keys by loan id, so two rows sharing one would collapse to
+  // whichever came last. Flag once, exclude all rows carrying that id, keep the output order-free.
+  const idCount = new Map<string, number>();
+  for (const l of thirdPartyAll) idCount.set(l.id, (idCount.get(l.id) ?? 0) + 1);
+  for (const [id, n] of [...idCount].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    if (n < 2) continue;
+    flags.push({ entity: 'debt', field: `${DEBT_BASIS_FIELD}.loan.${id}`, issue: `${n} loan-schedule rows share id ${id} — not compared`, severity: 'warn' });
+  }
+  const thirdParty = thirdPartyAll.filter((l) => idCount.get(l.id) === 1);
+  const { map, unresolved } = buildLoanPropertyMap(thirdParty, allProps, new Set(allProps.map((p) => p.id)));
+  const propById = new Map(allProps.map((p) => [p.id, p]));
+
   const loanCents = new Map<string, number>();
   const loanNames = new Map<string, string[]>();
   for (const l of thirdParty) {
     const pid = map.get(l.id);
-    if (pid === undefined || !investmentIds.has(pid)) continue; // unresolved (below) or other-holdings collateral
+    if (pid === undefined) continue; // unresolved — listed below
+    if (!investmentIds.has(pid)) {
+      // Other-holdings collateral: inside External Debt, outside Overview Total Debt.
+      flags.push({
+        entity: 'debt',
+        field: `${DEBT_BASIS_FIELD}.loan.${l.id}`,
+        issue:
+          `${l.name}: ${usd(l.absBalance ?? 0)} on the loan schedule is counted in Capital › Debt External Debt ` +
+          `but outside Overview Total Debt (other holding: ${propById.get(pid)?.name ?? pid})`,
+        severity: 'warn',
+      });
+      continue;
+    }
     loanCents.set(pid, (loanCents.get(pid) ?? 0) + cents(l.absBalance ?? 0));
     loanNames.set(pid, [...(loanNames.get(pid) ?? []), l.name]);
   }
 
-  const flags: DataQualityFlag[] = [];
+  let sumPropCents = 0;
+  let sumSchedCents = 0;
+  let rowFlagged = false;
   for (const p of investment) {
     const propCents = cents(investmentLoanBalance(p));
     const schedCents = loanCents.get(p.id) ?? 0;
+    sumPropCents += propCents;
+    sumSchedCents += schedCents;
     const gap = propCents - schedCents;
     if (Math.abs(gap) <= tol) continue;
+    rowFlagged = true;
     const names = loanNames.get(p.id);
     flags.push({
       entity: 'debt',
@@ -249,6 +286,21 @@ export function checkDebtBasis(s: Pick<PortfolioSnapshot, 'properties' | 'loans'
       entity: 'debt',
       field: `${DEBT_BASIS_FIELD}.loan.${l.id}`,
       issue: `${l.name}: ${usd(l.absBalance)} on the loan schedule is not attributed to any property row (collateral ${l.collateralProperty ? `"${l.collateralProperty}"` : 'blank'})`,
+      severity: 'warn',
+    });
+  }
+
+  // Aggregate guard: sub-tolerance residues across rows can add up past the tolerance. Only when no
+  // row was flagged — a flagged row already names the gap, and a second flag would double-count it.
+  const aggGap = sumPropCents - sumSchedCents;
+  if (!rowFlagged && Math.abs(aggGap) > tol) {
+    flags.push({
+      entity: 'debt',
+      field: DEBT_BASIS_FIELD,
+      issue:
+        `Overview Total Debt (Σ investment-row loan balances, Property NOI sheet) ${usd(sumPropCents / 100)} vs ` +
+        `Σ attributed third-party loans (loan schedule) ${usd(sumSchedCents / 100)} — gap ${usd(Math.abs(aggGap) / 100)} ` +
+        `(no single row exceeds the ${usd(DEBT_BASIS_TOLERANCE)} per-row tolerance)`,
       severity: 'warn',
     });
   }
