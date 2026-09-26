@@ -735,7 +735,7 @@ describe('buildInsuranceLossReport — unmatchedPolicyRefs', () => {
     expect(r.unmatchedPolicyRefs).toEqual([]);
   });
 
-  it('ordering is a total order — (propertyId, lossDate, eventId) — independent of input row order', () => {
+  it('ordering is over content — (propertyId, lossDate, eventId, cause, grossIncurred, policyRef) — independent of input row order', () => {
     const events = [
       mkRefEvent('z9', RAYTOWN, '2026-07-04', 100, 'X1'),
       mkRefEvent('a1', RAYTOWN, '2026-07-04', 100, 'X2'),
