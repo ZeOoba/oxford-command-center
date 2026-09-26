@@ -9,6 +9,7 @@ import {
 import { evaluateConditions } from '../../src/analytics/conditions';
 import { isInvestmentProperty } from '../../src/analytics/property-basis';
 import { isAffiliateNoteProperty, propertyLtvLabel } from '../../src/analytics/debt-basis';
+import { TOTAL_DEBT_BASIS, EXTERNAL_DEBT_BASIS, debtBasisIssues } from './debt-basis-copy';
 import { fmtUsdCompact, fmtPct } from '../../src/analytics/format';
 import { referenceDate } from '../config';
 
@@ -217,6 +218,9 @@ const EXECUTORS: Record<ToolName, Exec> = {
         occupancy: fmtPct(k.occupancy.value),
         ltv: fmtPct(k.ltv.value),
         totalDebt: fmtUsdCompact(k.totalDebt.value),
+        totalDebtBasis: TOTAL_DEBT_BASIS,
+        ...(k.affiliateDebt.value ? { affiliateNotesExcluded: fmtUsdCompact(k.affiliateDebt.value) } : {}),
+        ...(debtBasisIssues(s.dataQuality ?? []).length ? { debtBasisFlags: debtBasisIssues(s.dataQuality ?? []) } : {}),
         totalCash: fmtUsdCompact(k.totalCash.value),
         waltYears: k.walt.value,
         valueByMarket: marketAllocation(investment, 'value').map((m) => ({ market: m.market, value: fmtUsdCompact(m.value), pct: fmtPct(m.pct) })),
@@ -277,6 +281,9 @@ const EXECUTORS: Record<ToolName, Exec> = {
     return {
       data: {
         externalDebt: fmtUsdCompact(d.externalDebt),
+        externalDebtBasis: EXTERNAL_DEBT_BASIS,
+        ...(d.affiliateDebt > 0 ? { affiliateNotesExcluded: fmtUsdCompact(d.affiliateDebt) } : {}),
+        ...(debtBasisIssues(s.dataQuality ?? []).length ? { debtBasisFlags: debtBasisIssues(s.dataQuality ?? []) } : {}),
         weightedAvgRate: fmtPct(d.weightedAvgRate, 2),
         annualDebtService: fmtUsdCompact(d.annualDebtService),
         loans: rows.map((l) => ({
