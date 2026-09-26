@@ -101,6 +101,10 @@ describe('investment-basis helpers', () => {
     expect(investmentLoanBalance(easton)).toBe(REDACTED-AMT);
     expect(investmentLoanBalance({ lender: null, loanBalance: null })).toBe(0);
   });
+  it('investmentLoanBalance coerces a non-finite balance to 0', () => {
+    expect(investmentLoanBalance({ lender: 'REDACTED-672', loanBalance: Number.POSITIVE_INFINITY })).toBe(0);
+    expect(investmentLoanBalance({ lender: 'REDACTED-672', loanBalance: Number.NaN })).toBe(0);
+  });
   it('investmentLtv is null for an affiliate note, raw ltv otherwise', () => {
     expect(investmentLtv(rarig)).toBeNull();
     expect(investmentLtv(easton)).toBe(REDACTED-AMT);
@@ -116,6 +120,11 @@ describe('investment-basis helpers', () => {
     expect(affiliateNotesClause(0)).toBe('');
     expect(affiliateNotesClause(null)).toBe('');
     expect(affiliateNotesClause(undefined)).toBe('');
+    expect(affiliateNotesClause(Number.NaN)).toBe('');
+  });
+  it('affiliateNotesClause discloses a negative total with its own minus sign, no "+" prefix', () => {
+    expect(affiliateNotesClause(-12_500)).toBe('-$13K affiliate notes');
+    expect(affiliateNotesClause(-REDACTED-AMT)).toBe('-$1.10M affiliate notes');
   });
 });
 

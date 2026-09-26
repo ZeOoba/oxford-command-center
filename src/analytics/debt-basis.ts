@@ -59,7 +59,9 @@ export function isAffiliateBorrowerLoan(l: {
 
 /** The property row's loan balance on the investment (third-party) basis: 0 for an affiliate note. */
 export function investmentLoanBalance(p: DebtRow): number {
-  return isAffiliateNoteProperty(p) ? 0 : (p.loanBalance ?? 0);
+  if (isAffiliateNoteProperty(p)) return 0;
+  const bal = p.loanBalance;
+  return typeof bal === 'number' && Number.isFinite(bal) ? bal : 0;
 }
 
 /** Per-property LTV on the investment basis: null when the row's only debt is an affiliate note. */
@@ -72,9 +74,14 @@ export function propertyLtvLabel(p: DebtRow & { readonly ltv: number | null }): 
   return isAffiliateNoteProperty(p) ? 'affiliate note' : fmtPct(p.ltv);
 }
 
-/** Disclosure clause for a debt headline, e.g. "+$1.10M affiliate notes"; '' when there are none. */
+/**
+ * Disclosure clause for a debt headline, e.g. "+$1.10M affiliate notes"; '' when there are none.
+ * Sign-symmetric: a negative total is still disclosed ("-$13K affiliate notes") — the '+' prefix is
+ * added only for a positive amount; otherwise fmtUsdCompact's own minus sign stands.
+ */
 export function affiliateNotesClause(amount: number | null | undefined): string {
-  return typeof amount === 'number' && amount > 0 ? `+${fmtUsdCompact(amount)} affiliate notes` : '';
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount === 0) return '';
+  return `${amount > 0 ? '+' : ''}${fmtUsdCompact(amount)} affiliate notes`;
 }
 
 /** Field root for the Overview-vs-Capital debt-basis data-quality flags (server/reconcile-runtime.ts). */
