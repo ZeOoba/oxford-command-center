@@ -23,7 +23,12 @@ describe('namesAffiliateLender — explicit Oxford lending-entity list, whole ph
     ['oxford capital', true],
     ['REDACTED-676', true], // "3883 from Oxford (50%)" borrower lender
     ['REDACTED-026', true], // lender-direction note (name matches; direction rule excludes it)
-    ['Oxford Capital Partners', true], // an Oxford entity by name
+    ['Oxford  Capital', true], // internal whitespace collapsed
+    ['Oxford\u00a0Capital', true], // NBSP collapsed
+    ['Oxford\nCapital', true], // newline collapsed
+    ['Oxford Capital Partners LLC (REDACTED-545 Bank)', false], // the firm's own styling borrowing from a bank = third party
+    ['OXFORD CAPITAL PARTNERS (REDACTED-672)', false],
+    ['Oxford Capital Partners', false],
     ['REDACTED-077', false], // 29000 Information Lane — third party
     ['Muirkirk Properties (REDACTED-655/REDACTED-672) — Oxford 50% share', false], // 9050 Red Branch — third party
     ['REDACTED-030', false],
@@ -47,6 +52,13 @@ describe('isAffiliateNoteProperty — property row whose outstanding loan is owe
   });
   it('affiliate lender name but nothing outstanding → false (no note to exclude)', () => {
     expect(isAffiliateNoteProperty({ lender: 'Oxford Capital', loanBalance: 0 })).toBe(false);
+  });
+  it('a negative affiliate balance is still an affiliate note', () => {
+    expect(isAffiliateNoteProperty({ lender: 'Oxford Capital', loanBalance: -12_500 })).toBe(true);
+  });
+  it('non-finite balance → false', () => {
+    expect(isAffiliateNoteProperty({ lender: 'Oxford Capital', loanBalance: Number.NaN })).toBe(false);
+    expect(isAffiliateNoteProperty({ lender: 'Oxford Capital', loanBalance: Number.POSITIVE_INFINITY })).toBe(false);
   });
   it('third-party lender → false', () => {
     expect(isAffiliateNoteProperty({ lender: 'REDACTED-672', loanBalance: REDACTED-AMT })).toBe(false);
