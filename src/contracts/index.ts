@@ -1,3 +1,5 @@
+import { RATIFIED_GOVERNORS } from './governor-constants';
+export { RATIFIED_GOVERNORS } from './governor-constants';
 import { z } from 'zod';
 import { DataQualityFlag, SCHEMA_VERSION } from './common';
 import { Property } from './property';
@@ -78,17 +80,17 @@ export type GovernorSet = z.infer<typeof GovernorSet>;
 
 /**
  * FALLBACK governor set for legacy snapshots that predate the server-attached payload (I10).
- * A guarded mirror of the server's compile-time ratified set — tests/unit/conditions.test.ts
- * drift-pins it to server/warehouse/capital-config.ts CAPITAL_CONFIG; never edit one without
- * the other (CLAUDE.md §4).
+ * Derived from RATIFIED_GOVERNORS (src/contracts/governor-constants.ts) — the same object the
+ * server's CAPITAL_CONFIG derives from, so the two cannot drift; tests/unit/conditions.test.ts
+ * still pins them to each other as a belt-and-braces check (CLAUDE.md §4).
  */
 export const GOVERNOR_FALLBACK: GovernorSet = {
-  dscrFloor: 1.25,
-  ltvCeiling: 0.40,
+  dscrFloor: RATIFIED_GOVERNORS.dscrFloor,
+  ltvCeiling: RATIFIED_GOVERNORS.ltvCeiling,
   hurdleRatePct: 0.08,
   hurdleRateRatification: 'ratified',
-  version: 1,
-  effectiveFrom: '2026-06-13',
+  version: RATIFIED_GOVERNORS.version,
+  effectiveFrom: RATIFIED_GOVERNORS.effectiveFrom,
 };
 
 export const PortfolioSnapshot = z.object({
