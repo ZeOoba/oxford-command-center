@@ -482,6 +482,30 @@ describe('buildInsuranceLossReport — term / policy_ref-aware loss attachment',
     expect(review(r, '1734').eventsN).toBe(0);
   });
 
+  it('a ref-matched pool is narrowed to REVIEWABLE lines before the tiebreak — a lower-id GL sharing the number never wins', () => {
+    // Mutation guard for attachEvent's `pool = byRef.filter(isReviewable)`: the runBop fixture
+    // passes on `pool = byRef` by coincidence, because preferPolicy's policyId tiebreak
+    // ('1735' < '1736' < '1738') happens to land on the property line. Here a GL line sharing
+    // the same own number sorts BEFORE the property line ('1700' < '1735') on an identical
+    // effective date, so an unfiltered pool would attach the wind loss to the GL row — which takes
+    // no review — and the event would vanish from every deductible review and the self-insure
+    // roll-up. Hartford d=25,000: gross 40,000 → retained 25,000 / transferred 15,000.
+    const bopGlLowId = mkPolicy({ policyId: '1700', propertyId: RAYTOWN, cohort: 'other', policyType: 'Business Liability / GL (in BOP)' });
+    const terms = new Map<string, PolicyTerm>([
+      ...TERMS,
+      ['1700', { policyNumber: 'REDACTED-584', lineNumbers: ['REDACTED-584'], effectiveDate: '2026-05-28', expirationDate: '2027-05-28' }],
+    ]);
+    const r = buildInsuranceLossReport(inputs({
+      policies: [bopGlLowId, WESTCHESTER, HARTFORD], decPages: DECS, policyTerms: terms,
+      lossEvents: lossEvents([mkRefEvent('e1', RAYTOWN, '2026-07-04', 40000, BOP, 'wind')], 'warehouse'),
+    }));
+    expect(r.deductibleReviews.map((d) => d.policyId).sort()).toEqual(['1734', '1735']); // GL gets no review row
+    expect(review(r, '1735')).toMatchObject({ eventsN: 1, retainedUsd: 25000, transferredUsd: 15000, overLimitUsd: 0 });
+    expect(review(r, '1734').eventsN).toBe(0);
+    expect(r.selfInsure).toMatchObject({ retainedUsd: 25000, transferredUsd: 15000, overLimitUsd: 0 });
+    expect(r.unmatchedPolicyRefs).toEqual([]);
+  });
+
   it('a third-party cause with NO policy_ref is EAL-only too (e.g. the placeholder fixture\'s liability event)', () => {
     const r = run([WESTCHESTER, HARTFORD], [{ ...mkEvent('e1', RAYTOWN, '2026-07-04', 30000), cause: 'liability' }]);
     expect(r.deductibleReviews.every((d) => d.eventsN === 0)).toBe(true);
