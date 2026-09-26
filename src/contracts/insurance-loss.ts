@@ -117,7 +117,7 @@ export const UnmatchedPolicyRef = z.object({
   policyRef: z.string().min(1),
   lossDate: z.string(),
   cause: z.string().nullable(),
-  grossIncurred: z.number().nonnegative(), // loader-guaranteed ≥ 0 (migration 022 CHECK + fixture parser)
+  grossIncurred: z.number().nonnegative(), // loader-guaranteed ≥ 0: resolveLossEvents coerces (the 022 CHECK does not stop a BLOB); the fixture parser drops
 });
 export type UnmatchedPolicyRef = z.infer<typeof UnmatchedPolicyRef>;
 

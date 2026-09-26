@@ -708,6 +708,13 @@ describe('unmatchedPolicyRefsDetail', () => {
     expect(detail).not.toContain('attached by loss date instead'); // untrue for a third-party cause
   });
 
+  it('G3: renders the RAW ref verbatim — lowercase, inner spaces and surrounding whitespace survive (the typo must stay legible)', () => {
+    const raw = ' mmf typo 1 ';
+    const detail = unmatchedPolicyRefsDetail(lossReport({ unmatchedPolicyRefs: [unmatchedRef({ policyRef: raw })] }));
+    expect(detail).toContain(`Test Property '${raw}' (2026-07-04)`);
+    expect(detail).not.toContain("'MMFTYPO1'");
+  });
+
   it('plural: two events read "2 loss events carry … their property" and list both in order', () => {
     const detail = unmatchedPolicyRefsDetail(lossReport({
       unmatchedPolicyRefs: [
