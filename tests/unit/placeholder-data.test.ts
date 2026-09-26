@@ -54,6 +54,21 @@ describe('resolveLossEvents cutover', () => {
     expect(r.rows).toHaveLength(1);
     expect(r.rows[0]?.grossIncurred).toBe(12345);
   });
+
+  it("NULL ids (migration 022's TEXT PRIMARY KEY lacks NOT NULL) are coerced to '' at the source, for every downstream reader", () => {
+    const db = freshDb();
+    const ins = db.prepare(
+      `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+       VALUES (NULL, '3540-e-5th-ave-columbus-oh', ?, '2025-01-01', ?, 100, 100, 0, 'broker-loss-run.xlsx')`,
+    );
+    // SQLite admits any number of NULLs in a non-INTEGER PRIMARY KEY; causes differ for UNIQUE.
+    ins.run('P-1', 'wind');
+    ins.run('P-2', 'hail');
+    const r = resolveLossEvents(db);
+    expect(r.source).toBe('warehouse');
+    expect(r.rows.map((e) => e.id)).toEqual(['', '']);
+    expect(r.rows.every((e) => typeof e.id === 'string')).toBe(true);
+  });
 });
 
 describe('resolveDecPages', () => {

@@ -65,8 +65,10 @@
 // wf_dd1d6f45-da0): the list is computed solely when lossEvents.source === 'warehouse'. The
 // placeholder fixture's every ref is the synthetic 'PLACEHOLDER' sentinel (docs/placeholder-data.md),
 // so on a fixture-sourced report the list is [] rather than a false "loss-run typo" per event.
-// A blank event id (both loaders admit '') is listed as-is — the contract keeps eventId display-only
-// so one blank id can never fail the engine's own parse and 500 the report.
+// A blank or NULL event id is listed as '' (both loaders admit ''; the SQL column admits NULL, which
+// resolveLossEvents coerces to '' before any reader sees it). '' can therefore repeat — eventId is a
+// display-only tiebreak, never a key — so one bad id can never fail the engine's own parse and 500
+// the report.
 import {
   InsuranceLossReport,
   type UnmatchedPolicyRef,
@@ -268,10 +270,24 @@ export function buildInsuranceLossReport(input: LossAnalysisInputs): InsuranceLo
     if (arr) arr.push(e);
     else eventsByProperty.set(e.propertyId, [e]);
   }
-  // (lossDate, id) order, so every float sum below (EAL and per-policy review) is a function of
-  // the event SET, not of the loss-run row order. Per-policy lists inherit this order.
+  // Ordered over CONTENT — (lossDate, id, cause, grossIncurred, policyRef) — so every float sum below
+  // (EAL and per-policy review) is a function of the event SET, not of the loss-run row order. id
+  // alone is not a key: '' repeats (blank ids; NULL ids coerced by resolveLossEvents), and SQLite's
+  // ORDER BY loss_date leaves ties unspecified — with non-dyadic amounts (0.1+0.2+0.3) the sum would
+  // then differ by input order (refute wf_45165937-d0b). Rows that still tie on every key carry the
+  // same grossIncurred, so their order cannot move a sum. It is NOT strictly total: NULL and ''
+  // cause/policyRef collapse, localeCompare treats ignorable code points as equal, and 022's UNIQUE
+  // treats NULLs as distinct — such ties only reorder the diagnostic list (refute wf_5289ba71-3ed).
+  // Per-policy lists inherit this order.
   for (const events of eventsByProperty.values()) {
-    events.sort((a, b) => a.lossDate.localeCompare(b.lossDate) || a.id.localeCompare(b.id));
+    events.sort(
+      (a, b) =>
+        a.lossDate.localeCompare(b.lossDate) ||
+        a.id.localeCompare(b.id) ||
+        (a.cause ?? '').localeCompare(b.cause ?? '') ||
+        a.grossIncurred - b.grossIncurred ||
+        (a.policyRef ?? '').localeCompare(b.policyRef ?? ''),
+    );
   }
 
   const lossSource = lossSourceLabel(lossEvents.source);
@@ -413,11 +429,20 @@ export function buildInsuranceLossReport(input: LossAnalysisInputs): InsuranceLo
   eal.sort((a, b) => b.grossIncurredTotal - a.grossIncurredTotal || a.propertyId.localeCompare(b.propertyId));
   deductibleReviews.sort((a, b) => b.retainedUsd - a.retainedUsd || a.policyId.localeCompare(b.policyId));
   rebidPipeline.sort((a, b) => (b.excessPremiumVsMedian ?? 0) - (a.excessPremiumVsMedian ?? 0) || a.policyId.localeCompare(b.policyId));
-  // (propertyId, lossDate, eventId) — a total order because detection runs only on warehouse
-  // rows, whose ids are the insurance_loss_events PRIMARY KEY (unique; a blank '' at most once),
-  // so the list never depends on loss-run row order.
+  // Ordered over CONTENT — (propertyId, lossDate, eventId, cause, grossIncurred, policyRef).
+  // eventId is a tiebreak, not a unique key: '' can repeat (blank ids, and NULL ids — SQLite allows
+  // many NULLs in a non-INTEGER PRIMARY KEY — which resolveLossEvents coerces to ''). For
+  // well-formed rows this fixes the list order; rows differing only by NULL-vs-'' cause or by
+  // collation-ignorable characters still tie and keep input order (display only; refute
+  // wf_5289ba71-3ed).
   unmatchedPolicyRefs.sort(
-    (a, b) => a.propertyId.localeCompare(b.propertyId) || a.lossDate.localeCompare(b.lossDate) || a.eventId.localeCompare(b.eventId),
+    (a, b) =>
+      a.propertyId.localeCompare(b.propertyId) ||
+      a.lossDate.localeCompare(b.lossDate) ||
+      a.eventId.localeCompare(b.eventId) ||
+      (a.cause ?? '').localeCompare(b.cause ?? '') ||
+      a.grossIncurred - b.grossIncurred ||
+      a.policyRef.localeCompare(b.policyRef),
   );
 
   // ── Self-insure roll-up (no double-count) ─────────────────────────────────────────────────

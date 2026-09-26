@@ -106,8 +106,10 @@ export type RebidPipelineItem = z.infer<typeof RebidPipelineItem>;
  *  cause) — this row only makes that visible. `policyRef` is the RAW loss-run value, not the
  *  normalized form, so the typo is legible; `property` uses the same display-name fallback as
  *  PropertyEal (register name, else the id). `eventId` is display-only and deliberately NOT
- *  min(1): both loss-event loaders admit id '', and the engine parses its own output — a
- *  stricter rule would 500 the whole loss report on one blank id (refute wf_dd1d6f45-da0). */
+ *  min(1): both loss-event loaders admit id '' (the warehouse mapper also coerces a NULL id —
+ *  migration 022's TEXT PRIMARY KEY lacks NOT NULL — to ''), so '' can repeat; it is a sort
+ *  tiebreak, not a unique key. The engine parses its own output — a stricter rule would 500 the
+ *  whole loss report on one blank id (refute wf_dd1d6f45-da0, wf_5326581d-04f). */
 export const UnmatchedPolicyRef = z.object({
   eventId: z.string(),
   propertyId: z.string().min(1),

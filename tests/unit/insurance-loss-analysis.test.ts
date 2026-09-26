@@ -769,6 +769,46 @@ describe('buildInsuranceLossReport — unmatchedPolicyRefs', () => {
     expect(review(r, '1735').eventsN).toBe(1);
   });
 
+  it("repeated '' ids (NULL ids coerced by resolveLossEvents) at one property and date are ALL listed, and attachment / EAL are unaffected", () => {
+    // The engine trusts `id: string` — NULL → '' coercion lives in resolveLossEvents (the warehouse
+    // mapper; the fixture parser drops non-string ids), so the honest engine-level input is what the
+    // resolver emits: several '' ids. Covers the per-property (lossDate, id) sort AND the
+    // unmatchedPolicyRefs sort, where eventId is a repeatable tiebreak, not a key.
+    const r = run([
+      mkRefEvent('', RAYTOWN, '2026-07-04', 42000, 'NOT-ON-FILE'),
+      mkRefEvent('', RAYTOWN, '2026-07-04', 8000, 'ALSO-NOT-ON-FILE', 'hail'),
+    ]);
+    expect(r.unmatchedPolicyRefs.map((u) => [u.eventId, u.policyRef])).toEqual([['', 'NOT-ON-FILE'], ['', 'ALSO-NOT-ON-FILE']]);
+    // Both attach by covering term → Hartford (d=25k): 25k + 8k retained, 17k + 0 transferred.
+    expect(review(r, '1735')).toMatchObject({ eventsN: 2, retainedUsd: 33000, transferredUsd: 17000 });
+    expect(review(r, '1734').eventsN).toBe(0);
+    const named = run([
+      mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'NOT-ON-FILE'),
+      mkRefEvent('e2', RAYTOWN, '2026-07-04', 8000, 'ALSO-NOT-ON-FILE', 'hail'),
+    ]);
+    expect(r.eal).toEqual(named.eal);
+    expect(r.deductibleReviews).toEqual(named.deductibleReviews);
+  });
+
+  it("three '' ids at one property/date with non-dyadic amounts (0.1/0.2/0.3): eal, reviews and unmatchedPolicyRefs are identical forward and reversed (refute wf_45165937-d0b)", () => {
+    // (lossDate, id) alone ties on repeated '' ids and falls back to the unspecified SQLite
+    // ORDER BY loss_date order; 0.1+0.2+0.3 ≠ 0.3+0.2+0.1 in IEEE-754, so the float sums and the
+    // unmatched list would both depend on row order. Migration 022's UNIQUE(property_id,
+    // loss_date, cause, gross_incurred) makes (cause, grossIncurred) a key for the tiebreak.
+    const events = [
+      mkRefEvent('', RAYTOWN, '2026-07-04', 0.1, 'REF-A', 'wind'),
+      mkRefEvent('', RAYTOWN, '2026-07-04', 0.2, 'REF-B', 'hail'),
+      mkRefEvent('', RAYTOWN, '2026-07-04', 0.3, 'REF-C', 'fire'),
+    ];
+    const fwd = run(events);
+    const rev = run([...events].reverse());
+    expect(rev.eal).toEqual(fwd.eal);
+    expect(rev.deductibleReviews).toEqual(fwd.deductibleReviews);
+    expect(rev.unmatchedPolicyRefs).toEqual(fwd.unmatchedPolicyRefs);
+    expect(fwd.unmatchedPolicyRefs.map((u) => u.policyRef)).toEqual(['REF-C', 'REF-B', 'REF-A']); // cause order: fire < hail < wind
+    expect(review(fwd, '1735').eventsN).toBe(3);
+  });
+
   it('is computed ONLY on warehouse loss runs — the same unmatched ref gives [] on placeholder / absent sources', () => {
     const events = [mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'PLACEHOLDER')];
     const build = (source: DataSource) =>
