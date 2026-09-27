@@ -59,7 +59,8 @@ export const ALERT_THRESHOLDS = {
   // 0.005 = 50 bps. A loan must exceed estimatedMarketRate + refiSpreadBps to fire.
   refiSpreadBps: 0.005,
   // Phase 3 — Lease forecast signal thresholds.
-  // expiryNoSignalDays: ≤90d expiry with no renewal stage advance triggers L-1.
+  // expiryNoSignalDays: ≤90d expiry with no renewal stage advance triggers L-1. Severity follows the
+  // single leaseCriticalDays line (ratified 2026-09-24): <60d critical, 60–90d warning.
   expiryNoSignalDays: 90,
   // marketRentGapWarnPct: current ≥10% below market triggers L-4 under-market signal.
   marketRentGapWarnPct: 0.10,
@@ -481,7 +482,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       ) {
         out.push({
           id: `lease-expiry-${signal.leaseId}`,
-          severity: 'critical',
+          severity: daysToExpiry < T.leaseCriticalDays ? 'critical' : 'warning',
           category: 'lease',
           title: `Expiring, no renewal signal — ${signal.tenantName}`,
           detail: `${signal.propertyKey}${signal.sf > 0 ? ` · ${signal.sf.toLocaleString()} SF` : ''} · expires in ${daysToExpiry}d · ${fmtUsdCompact(signal.annualRent)}/yr at risk. No renewal stage has advanced.`,

@@ -298,9 +298,9 @@ describe('evaluateConditions — leases', () => {
     const out = evaluateConditions(snap({ leases: [lease({ leaseEnd: iso(181) })] }), opts);
     expect(out.some((i) => i.id === 'expiring-l1')).toBe(false);
   });
-  it('lease at exactly 60d is the single L-1 critical (legacy 60d warning boundary is inside the deduped window)', () => {
+  it('lease at exactly 60d is the single L-1 WARNING — one <60d critical line everywhere (ratified 2026-09-24)', () => {
     const out = evaluateConditions(snap({ leases: [lease({ leaseEnd: iso(60) })] }), opts);
-    expect(out.find((i) => i.id === 'lease-expiry-l1')?.severity).toBe('critical');
+    expect(out.find((i) => i.id === 'lease-expiry-l1')?.severity).toBe('warning');
     expect(out.some((i) => i.id === 'expiring-l1')).toBe(false);
   });
   it('lease at exactly 180d still fires (warning)', () => {
