@@ -101,7 +101,6 @@ export class DocIndexClient {
       resolveReady = resolve;
       this.rejectReady = reject;
     });
-    const rejectReady = (err: Error): void => this.rejectReady?.(err);
     // Callers await `ready`; this only stops an early failure being reported as unhandled before one attaches.
     this.ready.catch(() => undefined);
     transport.onMessage((m) => {
@@ -118,7 +117,7 @@ export class DocIndexClient {
         case 'load-error': {
           const err = new Error(`doc index load failed: ${m.message}`);
           this.fail(err);
-          rejectReady?.(err);
+          this.rejectReady?.(err);
           break;
         }
         case 'knn-result':
@@ -129,14 +128,8 @@ export class DocIndexClient {
           break;
       }
     });
-    transport.onFailure((err) => {
-      // After close() the worker's 'exit' is the expected teardown, not a failure — stay silent.
-      if (this.closedValue) return;
-      const first = this.failure === null;
-      this.fail(err);
-      rejectReady?.(err);
-      if (first) this.onUnexpectedFailure?.(err); // a crash fires 'error' AND 'exit' — report once
-    });
+    // After close() the worker's 'exit' is the expected teardown, not a failure — stay silent.
+    transport.onFailure((err) => this.unexpectedFailure(err));
     transport.send({ type: 'load', dbPath });
   }
 
@@ -160,13 +153,15 @@ export class DocIndexClient {
 
   async knn(vector: Float32Array, limit: number): Promise<KnnRow[]> {
     await this.ready;
-    if (this.failure) throw this.failure;
+    if (this.failure) throw this.failure; // the first failure (crash, deadline, or close) is the cause worth surfacing
     if (this.closedValue) throw new Error('doc index client is closed');
     const id = this.nextId++;
     return new Promise<KnnRow[]>((resolve, reject) => {
       const timer = setTimeout(() => {
-        // A late answer for this id is dropped by settle() (no pending entry) — the client stays usable.
-        this.settle(id, (p) => p.reject(new Error(`doc index query timed out after ${this.knnTimeoutMs} ms (worker unresponsive)`)));
+        // A hung-but-alive worker is as dead as a crashed one: fail every in-flight query, report once
+        // (so documents.ts drops this client and respawns), and close. A late answer for this id is
+        // dropped by settle() — nothing is pending any more.
+        this.unexpectedFailure(new Error(`doc index query timed out after ${this.knnTimeoutMs} ms (worker unresponsive)`));
       }, this.knnTimeoutMs);
       timer.unref?.();
       this.pending.set(id, { resolve, reject, timer });
@@ -190,6 +185,17 @@ export class DocIndexClient {
     clearTimeout(p.timer);
     this.pending.delete(id);
     fn(p);
+  }
+
+  /** Worker crash/exit or knn deadline while open: reject everything, report ONCE (a crash fires 'error'
+   *  AND 'exit'), then close so the transport is torn down — this client is never reused. */
+  private unexpectedFailure(err: Error): void {
+    if (this.closedValue) return;
+    const first = this.failure === null;
+    this.fail(err);
+    this.rejectReady?.(err);
+    if (first) this.onUnexpectedFailure?.(err);
+    void this.close().catch(() => undefined);
   }
 
   private fail(err: Error): void {
