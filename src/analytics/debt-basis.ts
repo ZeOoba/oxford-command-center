@@ -12,6 +12,9 @@
 // and a borrower loan's lender/counterparty (Loan Index col 3). Borrower direction ONLY: a
 // lender-direction note naming "(Oxford Capital)" is Oxford's own receivable (Capital Deployed).
 // Q1 ratified complete 2026-09-26 (Gabriel): the list is ['Oxford Capital']; extend it here and nowhere else.
+// Split basis, ratified 2026-09-27 (Gabriel): affiliate notes are out of Total Debt and LTV (balance
+// basis) but their debt service STAYS in DSCR and debt service — it is real cash out of the property,
+// so DSCR remains conservative. Do not apply these predicates to debt-service or DSCR inputs.
 // "Oxford Capital Partners" is the firm's own styling — a borrowing in the firm's name FROM a bank is
 // third-party debt, so that phrase is explicitly excluded. Whitespace (incl. NBSP / newlines) is
 // collapsed before matching. Known limit: a property row carries ONE lender string and is classified
