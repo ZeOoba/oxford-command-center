@@ -624,6 +624,12 @@ type DocCache = {
 let cache: DocCache | null = null;
 let loading: { client: DocIndexClient; done: Promise<DocCache> } | null = null;
 
+/** After an unexpected worker failure (crash or knn deadline) searches reject FAST for this long before a
+ *  respawn is attempted — a wedged worker must not turn every request into a 30 s wait, and a crash loop
+ *  must not respawn per request. One log line per failure, not per rejected request. */
+export const DOC_INDEX_FAILURE_COOLDOWN_MS = 10_000;
+let failedAt: { at: number; message: string } | null = null;
+
 /** Worker thread by default; DOC_INDEX_WORKER=0 runs the same protocol in-process — the pre-2026-09-24
  *  main-thread behaviour, kept as the rollback switch. */
 function defaultDocIndexTransport(): DocIndexTransport {
@@ -645,6 +651,7 @@ export function resetDocCacheForTests(): void {
   if (loading) void loading.client.close().catch(() => undefined);
   cache = null;
   loading = null;
+  failedAt = null;
 }
 
 /**
@@ -693,7 +700,10 @@ function loadFromDisk(p: string): Promise<DocCache> {
     // An UNEXPECTED worker death (never the exit that follows close()) — drop the dead client so the next
     // request respawns rather than serving "worker exited" forever.
     onFailure: (err) => {
-      console.error(`[documents] doc-index worker failed — dropping the index; next request reloads: ${err.message}`);
+      console.error(
+        `[documents] doc-index worker failed — dropping the index; respawning after ${DOC_INDEX_FAILURE_COOLDOWN_MS / 1000}s cooldown: ${err.message}`,
+      );
+      failedAt = { at: Date.now(), message: err.message };
       if (cache?.client === client) cache = null;
       if (loading?.client === client) loading = null;
     },
@@ -718,7 +728,14 @@ function loadFromDisk(p: string): Promise<DocCache> {
 async function ensureIndex(): Promise<DocCache> {
   if (cache) return cache;
   const p = docIndexPath();
-  if (existsSync(p)) return loadFromDisk(p);
+  if (existsSync(p)) {
+    if (failedAt) {
+      const left = DOC_INDEX_FAILURE_COOLDOWN_MS - (Date.now() - failedAt.at);
+      if (left > 0) throw new Error(`doc index unavailable — worker failed (${failedAt.message}); cooling down ${Math.ceil(left / 1000)}s before respawn`);
+      failedAt = null;
+    }
+    return loadFromDisk(p);
+  }
   await buildDocIndex(); // in-memory fallback (empty when DOCUMENTS_DIR unset)
   return cache!;
 }

@@ -130,13 +130,14 @@ describe('DocIndexClient over the in-process transport (the vitest-reachable pat
     await expect(c.knn(new Float32Array([1, 0, 0]), 3)).rejects.toThrow(/doc index query timed out after 20 ms/);
   });
 
-  it('a late answer after the deadline is dropped, and the client still serves later queries', async () => {
+  it('a knn timeout is an unexpected failure: reported once, the client closes, a late answer is dropped', async () => {
     let onMsg: ((m: DocIndexResponse) => void) | null = null;
+    let closes = 0;
     const t: DocIndexTransport = {
       send: (msg) => {
         if (msg.type === 'load') setImmediate(() => onMsg?.({ type: 'loaded', info: { docs: [], chunkCount: 1, builtAt: 'x', dim: 3 } }));
         if (msg.type === 'knn' && msg.id === 1) setTimeout(() => onMsg?.({ type: 'knn-result', id: 1, rows: [] }), 60);
-        if (msg.type === 'knn' && msg.id === 2) setImmediate(() => onMsg?.({ type: 'knn-result', id: 2, rows: [] }));
+        if (msg.type === 'close') closes += 1;
       },
       onMessage: (cb) => {
         onMsg = cb;
@@ -144,12 +145,17 @@ describe('DocIndexClient over the in-process transport (the vitest-reachable pat
       onFailure: () => undefined,
       terminate: async () => undefined,
     };
-    const c = DocIndexClient.start('ignored', t, { knnTimeoutMs: 20 });
+    const failures: Error[] = [];
+    const c = DocIndexClient.start('ignored', t, { knnTimeoutMs: 20, onFailure: (e) => failures.push(e) });
     clients.push(c);
     await c.ready;
     await expect(c.knn(new Float32Array([1, 0, 0]), 3)).rejects.toThrow(/timed out/);
-    await expect(c.knn(new Float32Array([1, 0, 0]), 3)).resolves.toEqual([]);
+    expect(failures.map((e) => e.message)).toEqual(['doc index query timed out after 20 ms (worker unresponsive)']);
+    expect(c.closed).toBe(true);
+    expect(closes).toBe(1);
+    await expect(c.knn(new Float32Array([1, 0, 0]), 3)).rejects.toThrow(/timed out/); // closed: a hung client is never reused
     await new Promise((r) => setTimeout(r, 80)); // the stale id-1 answer arrives and must be ignored without throwing
+    expect(failures).toHaveLength(1);
   });
 
   it('the normal worker exit after close() is not reported as a failure', async () => {
