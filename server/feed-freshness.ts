@@ -1,4 +1,4 @@
-import { ALERT_THRESHOLDS } from '../src/analytics/conditions';
+import { ALERT_THRESHOLDS, isArStale } from '../src/analytics/conditions';
 
 export type FeedId = 'snapshot' | 'cashHistory' | 'ar' | 'dailyBrief' | 'leaseMarket' | 'docIndex';
 export type FeedStatus = 'fresh' | 'stale' | 'missing';
@@ -12,6 +12,8 @@ export interface FeedFreshness {
   maxAgeDays: number;
   status: FeedStatus;
   fix: string;
+  /** Optional disclosure shown before the age, e.g. "7 leases with stale AR". */
+  note?: string;
 }
 
 /** Per-feed staleness budget in days (2026-09-23 review found six feeds silently stale). */
@@ -35,7 +37,7 @@ const META: Record<FeedId, { label: string; fix: string }> = {
 
 const DAY_MS = 86_400_000;
 
-export function assessFeeds(input: FeedInputs, now: number): FeedFreshness[] {
+export function assessFeeds(input: FeedInputs, now: number, notes: Partial<Record<FeedId, string>> = {}): FeedFreshness[] {
   return (Object.keys(META) as FeedId[]).map((id) => {
     const lastAt = input[id];
     const t = lastAt ? Date.parse(lastAt) : NaN;
@@ -47,6 +49,35 @@ export function assessFeeds(input: FeedInputs, now: number): FeedFreshness[] {
     const ageDays = ok ? Math.floor(ageMs! / DAY_MS) : null;
     const maxAgeDays = FEED_MAX_AGE_DAYS[id];
     const status: FeedStatus = ageMs === null ? 'missing' : ageMs > maxAgeDays * DAY_MS ? 'stale' : 'fresh';
-    return { id, label: META[id].label, lastAt, ageDays, maxAgeDays, status, fix: META[id].fix };
+    const note = notes[id];
+    return { id, label: META[id].label, lastAt, ageDays, maxAgeDays, status, fix: META[id].fix, ...(note ? { note } : {}) };
   });
+}
+
+/**
+ * AR feed input (ratified 2026-09-24). Feed age = the NEWEST stamped AR import — "when did an import
+ * last land" — instead of the oldest record, which kept the row red for weeks after a fresh import
+ * because a handful of leases were simply absent from it. Those per-lease records still matter
+ * (collections gating withholds exactly their alerts), so they are counted with the SAME definition
+ * the gate uses (isArStale, src/analytics/conditions.ts) and surfaced as a note on the row.
+ * Records with no asOfDate FIELD are pre-Track-B/manual: neither dated nor stale (isArStale → false).
+ * Accepts Date or ISO string (in-memory Zod-coerced snapshot vs a JSON-loaded one).
+ */
+export function arFeedInput(
+  arrears: Readonly<Record<string, { asOfDate?: Date | string | null }>>,
+  now: number,
+): { lastAt: string | null; staleLeaseCount: number; note: string | undefined } {
+  let newest: number | null = null;
+  let stale = 0;
+  for (const r of Object.values(arrears)) {
+    if (!('asOfDate' in r)) continue;
+    const t = r.asOfDate ? new Date(r.asOfDate).getTime() : NaN;
+    if (Number.isFinite(t) && (newest === null || t > newest)) newest = t;
+    if (isArStale(r as { asOfDate?: Date | null }, now)) stale += 1;
+  }
+  return {
+    lastAt: newest === null ? null : new Date(newest).toISOString(),
+    staleLeaseCount: stale,
+    note: stale > 0 ? `${stale} lease${stale === 1 ? '' : 's'} with stale AR` : undefined,
+  };
 }

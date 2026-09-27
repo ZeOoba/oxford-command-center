@@ -15,4 +15,5 @@ export interface FeedHealth {
   maxAgeDays: number;
   status: FeedStatus;
   fix: string;
+  note?: string;
 }

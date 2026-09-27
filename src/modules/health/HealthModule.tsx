@@ -8,6 +8,7 @@ import { relativeTime } from '@/lib/time';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { reconciliationCardState } from './reconciliation-card';
+import { feedRowTone, feedRowValue, feedsBadge } from './feed-row';
 
 type Tone = 'ok' | 'warn' | 'error' | 'info';
 
@@ -143,36 +144,19 @@ export function HealthModule() {
           </Card>
         )}
 
-        {!healthErr && health?.feeds && (
-          <Card>
-            <CardHeader
-              title="Data Feeds"
-              trailing={<Badge tone={
-                // M5 (2026-09-23 review): missing outranks stale — a feed that's never run at all
-                // is worse than one that's merely overdue, and the badge tone must say so.
-                health.feeds.some((f) => f.status === 'missing')
-                  ? 'red'
-                  : health.feeds.some((f) => f.status === 'stale')
-                    ? 'amber'
-                    : 'green'
-              }>
-                {health.feeds.filter((f) => f.status !== 'fresh').length} need attention
-              </Badge>}
-            />
-            <ul className="flex flex-col">
-              {health.feeds.map((f) => (
-                <Row
-                  key={f.id}
-                  tone={f.status === 'fresh' ? 'ok' : f.status === 'missing' ? 'error' : 'warn'}
-                  label={f.label}
-                  value={f.status === 'fresh'
-                    ? `${f.ageDays}d old`
-                    : f.status === 'missing' ? `never — ${f.fix}` : `${f.ageDays}d old (max ${f.maxAgeDays}d) — ${f.fix}`}
-                />
-              ))}
-            </ul>
-          </Card>
-        )}
+        {!healthErr && health?.feeds && (() => {
+          const badge = feedsBadge(health.feeds);
+          return (
+            <Card>
+              <CardHeader title="Data Feeds" trailing={<Badge tone={badge.tone}>{badge.label}</Badge>} />
+              <ul className="flex flex-col">
+                {health.feeds.map((f) => (
+                  <Row key={f.id} tone={feedRowTone(f)} label={f.label} value={feedRowValue(f)} />
+                ))}
+              </ul>
+            </Card>
+          );
+        })()}
       </div>
     </div>
   );

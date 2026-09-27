@@ -45,7 +45,7 @@ import { requestBoundary, allowedHosts, extraAllowedHostsFromEnv } from './host-
 import { accessAuthz, accessAuthzOptionsFromEnv } from './access-authz';
 import { createRateLimiter, createConcurrencyLimiter } from './rate-limit';
 import { startServer } from './startup';
-import { assessFeeds } from './feed-freshness';
+import { assessFeeds, arFeedInput } from './feed-freshness';
 import { lastComputedAt } from './warehouse/lease-market/compute';
 
 const app = new Hono();
@@ -282,10 +282,6 @@ app.get('/api/health', (c) => {
     briefHealth = null;
   }
   const snap = brain.getSnapshot();
-  const arDates = Object.values(snap?.tenantArrears ?? {})
-    .map((r) => (r.asOfDate ? r.asOfDate.toISOString() : null))
-    .filter((d): d is string => !!d)
-    .sort();
   // existsSync-gated (same precedent as liveGovernors below): getWarehouse() would otherwise
   // CREATE + migrate a stray DB as a side effect of a GET on cold/mirror machines.
   let leaseMarketAt: string | null = null;
@@ -294,14 +290,17 @@ app.get('/api/health', (c) => {
   } catch {
     leaseMarketAt = null;
   }
+  const now = Date.now();
+  // AR (ratified 2026-09-24): age = the NEWEST stamped import; per-lease stale records are a note.
+  const ar = arFeedInput(snap?.tenantArrears ?? {}, now);
   const feeds = assessFeeds({
     snapshot: snap?.meta.generatedAt ?? null,
     cashHistory: snap?.cash.history.at(-1)?.date ?? null,
-    ar: arDates[0] ?? null, // oldest stamped record — collections gating is per-lease
+    ar: ar.lastAt,
     dailyBrief: briefHealth?.ranAt ?? null,
     leaseMarket: leaseMarketAt,
     docIndex: docIndexBuiltAt(),
-  }, Date.now());
+  }, now, ar.note ? { ar: ar.note } : {});
   return c.json({
     ok: true,
     service: 'oxford-brain-server',
