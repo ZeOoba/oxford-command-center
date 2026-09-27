@@ -26,6 +26,8 @@ import { SegmentedControl } from '@/primitives/SegmentedControl';
 import { fmtUsdCompact, fmtPct, fmtNum } from '@analytics/index';
 import { useTabParam } from '@/lib/useTabParam';
 import { isWarehouseUnavailable } from '../intel/hooks';
+import { EmptyState } from '@/primitives/EmptyState';
+import { EMPTY_COPY, isTaxAnalysisEmpty } from '@/lib/warehouse-empty';
 import {
   useTaxAnalysis,
   useTaxStrategy,
@@ -83,6 +85,7 @@ export function TaxesModule() {
   }
 
   if (!report) return null;
+  if (isTaxAnalysisEmpty(report)) return <EmptyState {...EMPTY_COPY.taxes} />;
 
   const identifiedOpportunity = sumIdentifiedOpportunityUsd(report.opportunities);
   const effectiveRate = computePortfolioEffectiveRate(report.assessments);

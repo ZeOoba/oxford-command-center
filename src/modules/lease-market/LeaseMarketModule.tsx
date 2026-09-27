@@ -16,6 +16,8 @@ import { useTabSpecs } from '@/shell/tab-badges';
 // palette index as "Lease Market > Tab".
 import { LEASE_MARKET_TABS, LEASE_MARKET_TAB_KEYS, type LeaseMarketTab } from './tabs';
 import { isWarehouseUnavailable, useWarehouseLive } from '../intel/hooks';
+import { EmptyState } from '@/primitives/EmptyState';
+import { EMPTY_COPY, isLeaseMarketEmpty } from '@/lib/warehouse-empty';
 import type {
   CellBenchmark, CompRow, ListedButLeased, ListingEventRow, ListingHygieneFlag, MarketDataQuality, MarketFreshness, PositioningRow,
   RadarCandidate, SignalRow,
@@ -355,6 +357,7 @@ export function LeaseMarketModule() {
 
   if (summary.isLoading) return <div className="p-6"><Note>Loading…</Note></div>;
   if (!data) return <Card><div className="p-6"><Note>{unavailable(summary.error)}</Note></div></Card>;
+  if (isLeaseMarketEmpty(data)) return <EmptyState {...EMPTY_COPY.leaseMarket} />;
 
   const k = data.kpis;
   const kpis: Array<[string, string]> = [

@@ -398,6 +398,18 @@ describe('SavingsBoard tiers', () => {
     expect(screen.getByText(/insufficient cohort — n=3/)).toBeTruthy();
     expect(screen.getByText('own-book median — dispersion, not market rate')).toBeTruthy();
   });
+
+  it('a loaded but EMPTY analysis (no policies in the warehouse) renders the empty state, not a blank board', () => {
+    const empty: InsuranceAnalysisReport = { ...insufficientReport(), premiumAnnualTotal: 0, policiesN: 0, tivKnownN: 0, rebidCandidates: [], renewalCalendar: [] };
+    render(
+      <QueryClientProvider client={seededClient(empty)}>
+        <SavingsBoard />
+      </QueryClientProvider>,
+    );
+    expect(screen.getByText('No insurance policies in the warehouse yet.')).toBeTruthy();
+    expect(screen.getByText('npx tsx scripts/import-insurance-data.ts --policies <policies.json>')).toBeTruthy();
+    expect(screen.queryByRole('list', { name: 'Tier board' })).toBeNull();
+  });
 });
 
 // Rule G: Insurance is a tab of the Obligations destination, and Savings Board is its DEFAULT
