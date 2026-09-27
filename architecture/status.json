@@ -19,6 +19,15 @@
     "last_updated": "2026-06-21T23:30:00Z"
   },
   "worktrees": {
+    "loss-unmatched-ref": {
+      "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-09-24",
+      "phase": "Insurance loss report: surface loss events whose non-null policy_ref matched no policy at their property (unmatchedPolicyRefs on InsuranceLossReport + insurance module detail note). Rebased onto main after PR #380 merged (f4bd505).",
+      "status": "in_progress",
+      "blocked_by": null,
+      "review_needed": true,
+      "review_detail": "Architect-owned src/contracts/insurance-loss.ts gains an unmatchedPolicyRefs array on InsuranceLossReport. Gabriel acked in-turn 2026-09-24 (AskUserQuestion: option (a) report list + UI note; flag regardless of loss cause).",
+      "last_updated": "2026-09-24T12:00:00Z"
+    },
     "cc-audit-governors": {
       "agent_role": "Engineering (Claude Code, Fable 5.1) — Gabriel-directed in-turn 2026-09-26",
       "phase": "cc-audit-army 2026-09-25 governor-surface items, EXPLICITLY APPROVED by Gabriel 2026-09-26 (Invariant 4 permission granted; values unchanged): (1) NEW src/contracts/governor-constants.ts RATIFIED_GOVERNORS as the single source — CAPITAL_CONFIG, GOVERNOR_FALLBACK (and via governors.ts the edge GOVERNOR_DEFAULTS) derive from it; (2) acq-governor-proxy.ts fails CLOSED on ltvCeiling/dscrFloor <= 0 or non-finite (was Infinity → cleared every deal) + writeCapitalConfig refuses such values; (3) ALERT_THRESHOLDS keys renamed dscrFloor→dscrCriticalFloor, ltvCeiling→refiLtvCeilingPerProperty across src/server/tests. Follow-up to PR #385.",

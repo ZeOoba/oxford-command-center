@@ -19,6 +19,14 @@
 // CALIBRATION WRITES ARE FORBIDDEN on placeholder inputs: nothing derived from placeholder loss
 // runs or dec pages may be persisted back into the warehouse or used to calibrate any benchmark —
 // this contract is advisory-only (`advisoryOnly: z.literal(true)`) and read-path exclusively.
+//
+// DATA QUALITY (2026-09-24): `unmatchedPolicyRefs` lists loss events whose policy_ref names no
+// policy on file at their property (a loss-run typo or a register gap). Visibility only — it never
+// changes attachment; `.default([])` keeps a payload produced before this field existed (a stale
+// server process, a cached response) parseable on a newer client. (This route is never baked:
+// it is absent from scripts/bake-warehouse.ts FIXED_ROUTES, so a mirror is not the reason.)
+// WAREHOUSE-ONLY: it is computed solely when `lossDataSource` is 'warehouse' — the placeholder
+// fixture's refs are the synthetic 'PLACEHOLDER' sentinel, never a typo, so it is [] otherwise.
 import { z } from 'zod';
 import { Provenance } from './common';
 
@@ -91,6 +99,28 @@ export const RebidPipelineItem = z.object({
 });
 export type RebidPipelineItem = z.infer<typeof RebidPipelineItem>;
 
+// ── Unmatched policy refs (data quality) ──────────────────────────────────────
+/** A loss event whose non-blank policy_ref matches neither any policy's own number nor any
+ *  number its line carried among ALL policies at the event's property (any line). The engine
+ *  ignored the ref and attached the event by loss date (or left it EAL-only for a third-party
+ *  cause) — this row only makes that visible. `policyRef` is the RAW loss-run value, not the
+ *  normalized form, so the typo is legible; `property` uses the same display-name fallback as
+ *  PropertyEal (register name, else the id). `eventId` is display-only and deliberately NOT
+ *  min(1): both loss-event loaders admit id '' (the warehouse mapper also coerces a NULL id —
+ *  migration 022's TEXT PRIMARY KEY lacks NOT NULL — to ''), so '' can repeat; it is a sort
+ *  tiebreak, not a unique key. The engine parses its own output — a stricter rule would 500 the
+ *  whole loss report on one blank id (refute wf_dd1d6f45-da0, wf_5326581d-04f). */
+export const UnmatchedPolicyRef = z.object({
+  eventId: z.string(),
+  propertyId: z.string().min(1),
+  property: z.string(),
+  policyRef: z.string().min(1),
+  lossDate: z.string(),
+  cause: z.string().nullable(),
+  grossIncurred: z.number().nonnegative(), // loader-guaranteed ≥ 0: resolveLossEvents coerces (the 022 CHECK does not stop a BLOB); the fixture parser drops
+});
+export type UnmatchedPolicyRef = z.infer<typeof UnmatchedPolicyRef>;
+
 // ── Report envelope ───────────────────────────────────────────────────────────
 /** GET /api/warehouse/insurance/loss response envelope (P4c). Advisory-only, read-path. */
 export const InsuranceLossReport = z.object({
@@ -98,6 +128,10 @@ export const InsuranceLossReport = z.object({
   lossDataSource: LossDataSource,
   decPageDataSource: LossDataSource, // 'placeholder' if ANY policy fell back to blanket values
   droppedFixtureRows: z.number().int().nonnegative(),
+  // `.default([])` is REQUIRED: a payload produced before this field existed (a stale server
+  // process still running older code, or a cached response) must still parse on a newer client.
+  // Not a bake concern — /insurance/loss is not in scripts/bake-warehouse.ts FIXED_ROUTES.
+  unmatchedPolicyRefs: z.array(UnmatchedPolicyRef).default([]),
   eal: z.array(PropertyEal),
   deductibleReviews: z.array(DeductibleReview),
   selfInsure: SelfInsureSplit,

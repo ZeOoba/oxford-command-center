@@ -222,6 +222,34 @@ export function placeholderDetailInsurance(report: InsuranceLossReport): string 
   return PLACEHOLDER_DETAIL_BASE;
 }
 
+/** How many unmatched-ref entries the notice spells out before collapsing to ", and K more". */
+const UNMATCHED_REF_LIST_MAX = 5;
+
+/**
+ * Data-quality notice detail for `report.unmatchedPolicyRefs` (loss events whose policy_ref names
+ * no policy on file at their property — see contracts/insurance-loss.ts). Null when there are
+ * none. Rendered INDEPENDENTLY of the placeholder banner: this matters most on real warehouse
+ * loss runs. The wording claims only that the ref was ignored — where each event then landed
+ * (covering term, most recent policy, or EAL-only) varies, so the notice does not say.
+ */
+export function unmatchedPolicyRefsDetail(report: InsuranceLossReport): string | null {
+  const refs = report.unmatchedPolicyRefs;
+  const n = refs.length;
+  if (n === 0) return null;
+  const head = n === 1
+    ? '1 loss event carries a policy number that matches no policy on file at its property'
+    : `${n} loss events carry a policy number that matches no policy on file at their property`;
+  const listed = refs
+    .slice(0, UNMATCHED_REF_LIST_MAX)
+    .map((u) => `${u.property} '${u.policyRef}' (${u.lossDate})`)
+    .join(', ');
+  const more = n > UNMATCHED_REF_LIST_MAX ? `, and ${n - UNMATCHED_REF_LIST_MAX} more` : '';
+  return (
+    `${head} — a loss-run typo or a policy missing from the register; the ref was ignored ` +
+    `when attaching the event to a policy: ${listed}${more}.`
+  );
+}
+
 function optimizeTierItem(d: DeductibleReview, rank: number, placeholder: boolean): TierItem {
   return {
     id: d.policyId,

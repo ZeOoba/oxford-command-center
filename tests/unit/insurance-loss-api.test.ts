@@ -129,6 +129,9 @@ describe('GET /api/warehouse/insurance/loss', () => {
       // At least one property's events were attributed (real data flowed through the pipeline).
       expect(parsed.data.eal.length).toBeGreaterThan(0);
       expect(parsed.data.deductibleReviews.length).toBe(2);
+      // The real fixture's policyRef is the 'PLACEHOLDER' sentinel (docs/placeholder-data.md):
+      // synthetic refs are never a "loss-run typo", so the data-quality list is empty here.
+      expect(parsed.data.unmatchedPolicyRefs).toEqual([]);
     }
 
     // The hard requirement: this route must never write to calibration_verdict, regardless of
@@ -201,6 +204,7 @@ describe('GET /api/warehouse/insurance/loss', () => {
       expect(parsed.data.eal).toEqual([]);
       expect(parsed.data.deductibleReviews).toEqual([]);
       expect(parsed.data.rebidPipeline).toEqual([]);
+      expect(parsed.data.unmatchedPolicyRefs).toEqual([]);
     }
     expect(calibrationVerdictCount(db)).toBe(0);
   });
@@ -317,6 +321,152 @@ describe('GET /api/warehouse/insurance/loss — policy-line keys attach loss eve
     expect(westchester).toMatchObject({ propertyId: RAYTOWN, eventsN: 0, retainedUsd: 0, transferredUsd: 0 });
     // Counted once, against the Hartford terms — not 10k/32k (Westchester) and not both.
     expect(report.selfInsure).toMatchObject({ retainedUsd: 25_000, transferredUsd: 17_000 });
+  });
+});
+
+describe('GET /api/warehouse/insurance/loss — NULL loss-event id with an unmatched policy_ref', () => {
+  const RAYTOWN = '9620-e-state-route-350-raytown-mo';
+
+  it('still 200s: migration 022 declares id TEXT PRIMARY KEY without NOT NULL, so a NULL id row is listed as eventId \'\' rather than 500ing the report', async () => {
+    const db = freshDb();
+    seedProperty(db, RAYTOWN, '9620 E State Route 350, Raytown MO');
+    insertPolicy(db, {
+      propertyId: 'ins-9620state350-prop-hfd',
+      policyType: 'Property Package',
+      policyNumber: 'REDACTED-584',
+      premiumAnnual: 5000,
+      coverageTiv: 1_000_000,
+      deductible: 25_000,
+      coverageLimit: 2_000_000,
+      effectiveDate: '2025-01-01',
+      expirationDate: '2027-01-01',
+    });
+    // Raw INSERT with a NULL id — SQLite admits it (no NOT NULL on the TEXT PRIMARY KEY).
+    db.prepare(
+      `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+       VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(RAYTOWN, 'NOT-ON-FILE', '2026-03-01', 'wind', 42_000, 42_000, 0, 'test-loss-run');
+
+    const res = await makeApp(db).request('/');
+    expect(res.status).toBe(200);
+    const parsed = InsuranceLossReport.safeParse(await res.json());
+    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+    if (!parsed.success) return;
+    const report = parsed.data;
+
+    expect(report.lossDataSource).toBe('warehouse');
+    expect(report.unmatchedPolicyRefs).toEqual([expect.objectContaining({ eventId: '', propertyId: RAYTOWN, policyRef: 'NOT-ON-FILE' })]);
+    // Attachment unaffected: the event still books by covering term (d=25k on 42k).
+    expect(report.deductibleReviews).toHaveLength(1);
+    expect(report.deductibleReviews[0]).toMatchObject({ eventsN: 1, retainedUsd: 25_000, transferredUsd: 17_000 });
+    expect(calibrationVerdictCount(db)).toBe(0);
+  });
+
+  it('TWO NULL-id rows at one property with the SAME loss_date still 200 (refute wf_5326581d-04f: the per-property (lossDate, id) sort must not see null)', async () => {
+    const db = freshDb();
+    seedProperty(db, RAYTOWN, '9620 E State Route 350, Raytown MO');
+    insertPolicy(db, {
+      propertyId: 'ins-9620state350-prop-hfd',
+      policyType: 'Property Package',
+      policyNumber: 'REDACTED-584',
+      premiumAnnual: 5000,
+      coverageTiv: 1_000_000,
+      deductible: 25_000,
+      coverageLimit: 2_000_000,
+      effectiveDate: '2025-01-01',
+      expirationDate: '2027-01-01',
+    });
+    // SQLite allows any number of NULLs in a non-INTEGER PRIMARY KEY; the causes differ to satisfy
+    // the UNIQUE(property_id, loss_date, cause, gross_incurred) constraint.
+    const ins = db.prepare(
+      `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+       VALUES (NULL, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    ins.run(RAYTOWN, 'NOT-ON-FILE', '2026-03-01', 'wind', 42_000, 42_000, 0, 'test-loss-run');
+    ins.run(RAYTOWN, 'ALSO-NOT-ON-FILE', '2026-03-01', 'hail', 8_000, 8_000, 0, 'test-loss-run');
+
+    const res = await makeApp(db).request('/');
+    expect(res.status).toBe(200);
+    const parsed = InsuranceLossReport.safeParse(await res.json());
+    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+    if (!parsed.success) return;
+    const report = parsed.data;
+
+    // Content order, not insertion order: eventId ties on '' so the cause tiebreak decides — hail < wind.
+    expect(report.unmatchedPolicyRefs.map((u) => [u.eventId, u.policyRef, u.cause])).toEqual([['', 'ALSO-NOT-ON-FILE', 'hail'], ['', 'NOT-ON-FILE', 'wind']]);
+    // Attachment unaffected: both book against the one covering term — retained 25k + 8k, transferred 17k + 0.
+    expect(report.deductibleReviews).toHaveLength(1);
+    expect(report.deductibleReviews[0]).toMatchObject({ eventsN: 2, retainedUsd: 33_000, transferredUsd: 17_000 });
+    expect(calibrationVerdictCount(db)).toBe(0);
+  });
+});
+
+describe('GET /api/warehouse/insurance/loss — loosely-typed SQL text columns (only raw SQL can write them; the importer rejects them)', () => {
+  const RAYTOWN = '9620-e-state-route-350-raytown-mo';
+
+  function seedRaytownWithPolicy(db: WarehouseDb): void {
+    seedProperty(db, RAYTOWN, '9620 E State Route 350, Raytown MO');
+    insertPolicy(db, {
+      propertyId: 'ins-9620state350-prop-hfd',
+      policyType: 'Property Package',
+      policyNumber: 'REDACTED-584',
+      premiumAnnual: 5000,
+      coverageTiv: 1_000_000,
+      deductible: 25_000,
+      coverageLimit: 2_000_000,
+      effectiveDate: '2025-01-01',
+      expirationDate: '2027-01-01',
+    });
+  }
+
+  async function expectContractValid200(db: WarehouseDb) {
+    const res = await makeApp(db).request('/');
+    expect(res.status).toBe(200);
+    const parsed = InsuranceLossReport.safeParse(await res.json());
+    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+    if (!parsed.success) throw new Error('unreachable');
+    expect(calibrationVerdictCount(db)).toBe(0);
+    return parsed.data;
+  }
+
+  it('F1: a BLOB policy_ref with a third-party cause still 200s (detection normalizes the ref before attachEvent\'s early return)', async () => {
+    const db = freshDb();
+    seedRaytownWithPolicy(db);
+    db.prepare(
+      `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+       VALUES ('B1', ?, X'41', '2026-03-01', 'bodily injury', 40000, 40000, 0, 'test-loss-run')`,
+    ).run(RAYTOWN);
+    const report = await expectContractValid200(db);
+    // A non-string ref is normalized to null at the loader: nothing to match, nothing to flag.
+    expect(report.unmatchedPolicyRefs).toEqual([]);
+    expect(report.lossDataSource).toBe('warehouse');
+  });
+
+  it('F2: a BLOB cause with an unmatched ref still 200s, listed with cause null', async () => {
+    const db = freshDb();
+    seedRaytownWithPolicy(db);
+    db.prepare(
+      `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+       VALUES ('B2', ?, 'NOPE', '2026-03-01', X'02', 42000, 42000, 0, 'test-loss-run')`,
+    ).run(RAYTOWN);
+    const report = await expectContractValid200(db);
+    expect(report.unmatchedPolicyRefs).toEqual([expect.objectContaining({ eventId: 'B2', policyRef: 'NOPE', cause: null })]);
+    // Attachment unaffected: covering term, d=25k on 42k.
+    expect(report.deductibleReviews[0]).toMatchObject({ eventsN: 1, retainedUsd: 25_000, transferredUsd: 17_000 });
+  });
+
+  it('F3: a BLOB loss_date (TEXT NOT NULL stores a BLOB as-is) still 200s — a single event, no sort needed to trip isoDay().trim()', async () => {
+    const db = freshDb();
+    seedRaytownWithPolicy(db);
+    db.prepare(
+      `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+       VALUES ('B3', ?, 'NOPE', X'323032362D30332D3031', 'wind', 42000, 42000, 0, 'test-loss-run')`,
+    ).run(RAYTOWN);
+    const report = await expectContractValid200(db);
+    // '' date: no calendar year → not an observation year; term narrowing skipped → most recent
+    // policy still attaches it; the unmatched entry carries lossDate ''.
+    expect(report.unmatchedPolicyRefs).toEqual([expect.objectContaining({ eventId: 'B3', policyRef: 'NOPE', lossDate: '' })]);
+    expect(report.deductibleReviews[0]).toMatchObject({ eventsN: 1, retainedUsd: 25_000, transferredUsd: 17_000 });
   });
 });
 

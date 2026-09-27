@@ -51,8 +51,27 @@
 // them, and the old "primary = lowest policyId" roll-up then split a Hartford-term loss against
 // the Westchester deductible. Review rows are now disjoint, so the self-insure roll-up is a plain
 // Σ over them and counts each event exactly once.
+//
+// UNMATCHED POLICY REFS ARE REPORTED, NEVER ACTED ON (2026-09-24): an event whose non-blank
+// policy_ref (normalized) matches neither any policy's own number nor any number its line carried,
+// across ALL policies at its property (any line — a ref naming the GL line is a match), is listed
+// in `unmatchedPolicyRefs` with the RAW ref. Zero policies at the property counts as unmatched. The
+// signal is visibility only: attachment still falls through to the covering term / most recent
+// policy exactly as before, and EAL, reviews and the self-insure split are untouched. It is flagged
+// REGARDLESS of cause — a third-party claim citing a number not on file is as much a loss-run typo
+// or register gap as a first-party one — so it is computed apart from attachEvent, which returns
+// early for third-party causes. Both paths share `policiesMatchingRef` so the definitions cannot
+// drift. Blank-propertyId events are unattributable and are not flagged. WAREHOUSE-ONLY (refute
+// wf_dd1d6f45-da0): the list is computed solely when lossEvents.source === 'warehouse'. The
+// placeholder fixture's every ref is the synthetic 'PLACEHOLDER' sentinel (docs/placeholder-data.md),
+// so on a fixture-sourced report the list is [] rather than a false "loss-run typo" per event.
+// A blank or NULL event id is listed as '' (both loaders admit ''; the SQL column admits NULL, which
+// resolveLossEvents coerces to '' before any reader sees it). '' can therefore repeat — eventId is a
+// display-only tiebreak, never a key — so one bad id can never fail the engine's own parse and 500
+// the report.
 import {
   InsuranceLossReport,
+  type UnmatchedPolicyRef,
   type PropertyEal,
   type DeductibleReview,
   type SelfInsureSplit,
@@ -161,6 +180,25 @@ function isReviewable(p: PolicyEconomics): boolean {
 }
 
 /**
+ * The policies (any line) at a property that a normalized policy_ref names: those whose OWN number
+ * is `ref`, else — only when none owns it — those whose line carried it (PolicyTerm.lineNumbers).
+ * Empty when the ref names nothing at the property. The SINGLE definition of "the ref matches",
+ * shared by attachEvent and the unmatched-ref detection so the two can never drift.
+ * Invariant: loadPolicyTerms (insurance-loss-api.ts) always includes a row's own number in its
+ * lineNumbers, so own ⊆ line — the own-first check exists for attachEvent's pool precedence, not
+ * for the emptiness test, which the line check alone decides.
+ */
+function policiesMatchingRef(
+  ref: string,
+  atProperty: readonly PolicyEconomics[],
+  terms: ReadonlyMap<string, PolicyTerm>,
+): readonly PolicyEconomics[] {
+  const byOwn = atProperty.filter((p) => terms.get(p.policyId)?.policyNumber === ref);
+  if (byOwn.length > 0) return byOwn;
+  return atProperty.filter((p) => terms.get(p.policyId)?.lineNumbers.includes(ref) ?? false);
+}
+
+/**
  * The ONE policy a loss event is booked against, or undefined (EAL-only). A third-party cause is
  * EAL-only outright. `atProperty` is every policy at the event's property (any line). A policy_ref
  * matching a policy's own number (else a number its line carried) decides the pool outright: the matching reviewable
@@ -177,10 +215,7 @@ function attachEvent(
   let pool: readonly PolicyEconomics[] = atProperty.filter(isReviewable);
   const ref = normalizePolicyNumber(e.policyRef);
   if (ref !== null) {
-    const byOwn = atProperty.filter((p) => terms.get(p.policyId)?.policyNumber === ref);
-    const byRef = byOwn.length > 0
-      ? byOwn
-      : atProperty.filter((p) => terms.get(p.policyId)?.lineNumbers.includes(ref) ?? false);
+    const byRef = policiesMatchingRef(ref, atProperty, terms);
     if (byRef.length > 0) pool = byRef.filter(isReviewable);
   }
   const day = isoDay(e.lossDate);
@@ -238,10 +273,24 @@ export function buildInsuranceLossReport(input: LossAnalysisInputs): InsuranceLo
     if (arr) arr.push(e);
     else eventsByProperty.set(e.propertyId, [e]);
   }
-  // (lossDate, id) order, so every float sum below (EAL and per-policy review) is a function of
-  // the event SET, not of the loss-run row order. Per-policy lists inherit this order.
+  // Ordered over CONTENT — (lossDate, id, cause, grossIncurred, policyRef) — so every float sum below
+  // (EAL and per-policy review) is a function of the event SET, not of the loss-run row order. id
+  // alone is not a key: '' repeats (blank ids; NULL ids coerced by resolveLossEvents), and SQLite's
+  // ORDER BY loss_date leaves ties unspecified — with non-dyadic amounts (0.1+0.2+0.3) the sum would
+  // then differ by input order (refute wf_45165937-d0b). Rows that still tie on every key carry the
+  // same grossIncurred, so their order cannot move a sum. It is NOT strictly total: NULL and ''
+  // cause/policyRef collapse, localeCompare treats ignorable code points as equal, and 022's UNIQUE
+  // treats NULLs as distinct — such ties only reorder the diagnostic list (refute wf_5289ba71-3ed).
+  // Per-policy lists inherit this order.
   for (const events of eventsByProperty.values()) {
-    events.sort((a, b) => a.lossDate.localeCompare(b.lossDate) || a.id.localeCompare(b.id));
+    events.sort(
+      (a, b) =>
+        a.lossDate.localeCompare(b.lossDate) ||
+        a.id.localeCompare(b.id) ||
+        (a.cause ?? '').localeCompare(b.cause ?? '') ||
+        a.grossIncurred - b.grossIncurred ||
+        (a.policyRef ?? '').localeCompare(b.policyRef ?? ''),
+    );
   }
 
   const lossSource = lossSourceLabel(lossEvents.source);
@@ -279,9 +328,29 @@ export function buildInsuranceLossReport(input: LossAnalysisInputs): InsuranceLo
     else policiesByProperty.set(p.propertyId, [p]);
   }
   const eventsByPolicy = new Map<string, LossEventRow[]>();
+  // Data-quality signal (see header): a non-blank ref naming nothing at the property. Computed
+  // apart from attachEvent's return value (which is undefined for a third-party cause before the
+  // ref is ever consulted) and never fed back into attachment. Iterating eventsByProperty means a
+  // blank-propertyId event — unattributable, already dropped above — is never flagged. Warehouse
+  // loss runs only: fixture refs are the synthetic 'PLACEHOLDER' sentinel, not typos (see header).
+  const detectUnmatched = lossEvents.source === 'warehouse';
+  const unmatchedPolicyRefs: UnmatchedPolicyRef[] = [];
   for (const [propertyId, events] of eventsByProperty) {
     const atProperty = policiesByProperty.get(propertyId) ?? [];
     for (const e of events) {
+      const rawRef = e.policyRef;
+      const ref = normalizePolicyNumber(rawRef);
+      if (detectUnmatched && rawRef !== null && ref !== null && policiesMatchingRef(ref, atProperty, policyTerms).length === 0) {
+        unmatchedPolicyRefs.push({
+          eventId: e.id,
+          propertyId,
+          property: nameById.get(propertyId) ?? propertyId,
+          policyRef: rawRef,
+          lossDate: e.lossDate,
+          cause: e.cause,
+          grossIncurred: e.grossIncurred,
+        });
+      }
       const policy = attachEvent(e, atProperty, policyTerms);
       if (policy === undefined) continue; // no reviewable policy for this event — EAL only
       const arr = eventsByPolicy.get(policy.policyId);
@@ -363,6 +432,21 @@ export function buildInsuranceLossReport(input: LossAnalysisInputs): InsuranceLo
   eal.sort((a, b) => b.grossIncurredTotal - a.grossIncurredTotal || a.propertyId.localeCompare(b.propertyId));
   deductibleReviews.sort((a, b) => b.retainedUsd - a.retainedUsd || a.policyId.localeCompare(b.policyId));
   rebidPipeline.sort((a, b) => (b.excessPremiumVsMedian ?? 0) - (a.excessPremiumVsMedian ?? 0) || a.policyId.localeCompare(b.policyId));
+  // Ordered over CONTENT — (propertyId, lossDate, eventId, cause, grossIncurred, policyRef).
+  // eventId is a tiebreak, not a unique key: '' can repeat (blank ids, and NULL ids — SQLite allows
+  // many NULLs in a non-INTEGER PRIMARY KEY — which resolveLossEvents coerces to ''). For
+  // well-formed rows this fixes the list order; rows differing only by NULL-vs-'' cause or by
+  // collation-ignorable characters still tie and keep input order (display only; refute
+  // wf_5289ba71-3ed).
+  unmatchedPolicyRefs.sort(
+    (a, b) =>
+      a.propertyId.localeCompare(b.propertyId) ||
+      a.lossDate.localeCompare(b.lossDate) ||
+      a.eventId.localeCompare(b.eventId) ||
+      (a.cause ?? '').localeCompare(b.cause ?? '') ||
+      a.grossIncurred - b.grossIncurred ||
+      a.policyRef.localeCompare(b.policyRef),
+  );
 
   // ── Self-insure roll-up (no double-count) ─────────────────────────────────────────────────
   // Every event sits in at most one review row (attachEvent above), so Σ over review rows counts
@@ -388,6 +472,7 @@ export function buildInsuranceLossReport(input: LossAnalysisInputs): InsuranceLo
     lossDataSource: lossEvents.source,
     decPageDataSource,
     droppedFixtureRows: lossEvents.droppedRows,
+    unmatchedPolicyRefs,
     eal,
     deductibleReviews,
     selfInsure,

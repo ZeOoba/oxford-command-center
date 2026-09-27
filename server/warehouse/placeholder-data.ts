@@ -57,17 +57,28 @@ export interface LossEventsResolved {
   droppedRows: number;
 }
 
+/** The raw SELECT shape. SQLite column types are affinities, not constraints: `id TEXT PRIMARY KEY`
+ *  has no NOT NULL (any number of NULLs), a TEXT column — NOT NULL or not — will store a BLOB or an
+ *  integer as-is, and `gross_incurred REAL CHECK (>= 0)` passes a BLOB or text (SQLite orders them
+ *  above every number). The importer rejects all of these, so only raw SQL creates them — but the
+ *  loader is the SINGLE place that normalizes them, so every downstream reader (engine sorts/sums,
+ *  isoDay/calendarYear, the contract's z.string()/z.number()) sees exactly the LossEventRow types.
+ *  No column is trusted: every one is `unknown` here. */
 interface WarehouseLossEventRow {
-  id: string;
-  property_id: string | null;
-  policy_ref: string | null;
-  loss_date: string;
-  cause: string | null;
-  gross_incurred: number | null;
-  paid: number | null;
-  reserve: number | null;
-  source: string;
+  id: unknown;
+  property_id: unknown;
+  policy_ref: unknown;
+  loss_date: unknown;
+  cause: unknown;
+  gross_incurred: unknown;
+  paid: unknown;
+  reserve: unknown;
+  source: unknown;
 }
+
+const strOrNull = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+const strOrBlank = (v: unknown): string => (typeof v === 'string' ? v : '');
+const finiteOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 /** Validate + map one loss-run fixture row. Returns null if the row is malformed. */
 function parseLossEventFixtureRow(raw: unknown): LossEventRow | null {
@@ -104,17 +115,30 @@ export function resolveLossEvents(db: WarehouseDb): LossEventsResolved {
       )
       .all() as WarehouseLossEventRow[];
     return {
-      rows: rows.map((r) => ({
-        id: r.id,
-        propertyId: r.property_id ?? '',
-        policyRef: r.policy_ref,
-        lossDate: r.loss_date,
-        cause: r.cause,
-        grossIncurred: r.gross_incurred ?? 0,
-        paid: r.paid,
-        reserve: r.reserve,
-        source: r.source,
-      })),
+      rows: rows.map((r) => {
+        // Normalize the loosely-typed columns here and nowhere else (see WarehouseLossEventRow).
+        // id/propertyId: '' for NULL or non-string (the engine treats '' propertyId as
+        // unattributable; '' id is a repeatable display tiebreak). lossDate/source: '' for
+        // non-string — calendarYear('') and isoDay('') both read "no date", so the event counts
+        // toward gross totals but not observation years, and term narrowing is skipped.
+        // policyRef/cause: null for non-string (nothing to match / no cause). gross: a NULL, BLOB, text, NaN or ±Infinity
+        // would either string-concatenate or poison every Σ, so it becomes 0 — the event is still
+        // COUNTED (eventsN, observation years) but contributes no dollars, the same semantics the
+        // NULL → 0 mapping always had. The fixture parser drops such rows instead; the warehouse
+        // path reports droppedRows 0 by design, so it degrades to 0 rather than dropping.
+        const gross = finiteOrNull(r.gross_incurred);
+        return {
+          id: strOrBlank(r.id),
+          propertyId: strOrBlank(r.property_id),
+          policyRef: strOrNull(r.policy_ref),
+          lossDate: strOrBlank(r.loss_date),
+          cause: strOrNull(r.cause),
+          grossIncurred: gross !== null && gross >= 0 ? gross : 0,
+          paid: finiteOrNull(r.paid), // read by nothing today; kept type-honest for whoever reads it next
+          reserve: finiteOrNull(r.reserve),
+          source: strOrBlank(r.source),
+        };
+      }),
       source: 'warehouse',
       droppedRows: 0,
     };

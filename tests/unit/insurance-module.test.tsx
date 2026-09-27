@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
 import type { InsuranceAnalysisReport, PolicyEconomics } from '../../src/contracts/insurance-analysis';
 import type { InsurancePolicy } from '../../src/contracts/insurance';
-import type { InsuranceLossReport, PropertyEal, DeductibleReview, RebidPipelineItem } from '../../src/contracts/insurance-loss';
+import type { InsuranceLossReport, PropertyEal, DeductibleReview, RebidPipelineItem, UnmatchedPolicyRef } from '../../src/contracts/insurance-loss';
 import { isWarehouseUnavailable } from '../../src/modules/intel/hooks';
 import { InsuranceModule } from '../../src/modules/insurance/InsuranceModule';
 import { SavingsBoard } from '../../src/modules/insurance/SavingsBoard';
@@ -16,6 +16,7 @@ import {
   buildOptimizeTier,
   isAnyPlaceholder,
   placeholderDetailInsurance,
+  unmatchedPolicyRefsDetail,
   computeInsuranceKpis,
   sumPremiumAboveMedian,
   countRenewalsWithin90,
@@ -161,6 +162,7 @@ function lossReport(overrides: Partial<InsuranceLossReport> = {}): InsuranceLoss
       observationYears: 5,
     },
     rebidPipeline: [rebidPipelineItem()],
+    unmatchedPolicyRefs: [],
     basisNote: 'Arithmetic roll-up of observed loss runs vs stated deductible/limit.',
     advisoryOnly: true,
     ...overrides,
@@ -672,5 +674,125 @@ describe('insurance loss hooks — pure helpers (P4c)', () => {
       lossReport({ lossDataSource: 'warehouse', decPageDataSource: 'warehouse' }),
     );
     expect(warehouseTier.items[0]?.chips).toBeUndefined();
+  });
+});
+
+// ── Unmatched policy refs (2026-09-24) — data-quality notice on Self-Insure & Bids ──────────
+//
+// Rendered INDEPENDENTLY of the placeholder banner: the placeholder banner only shows on fixture
+// data, while an unmatched policy_ref matters most on real warehouse loss runs.
+function unmatchedRef(overrides: Partial<UnmatchedPolicyRef> = {}): UnmatchedPolicyRef {
+  return {
+    eventId: 'e1',
+    propertyId: 'prop-1',
+    property: 'Test Property',
+    policyRef: 'MMF-TYPO-001',
+    lossDate: '2026-07-04',
+    cause: 'wind',
+    grossIncurred: 42_000,
+    ...overrides,
+  };
+}
+
+describe('unmatchedPolicyRefsDetail', () => {
+  it('is null when the list is empty', () => {
+    expect(unmatchedPolicyRefsDetail(lossReport())).toBeNull();
+    expect(unmatchedPolicyRefsDetail(lossReport({ unmatchedPolicyRefs: [] }))).toBeNull();
+  });
+
+  it('singular: one event reads "1 loss event carries … its property" and names the property, raw ref and loss date', () => {
+    const detail = unmatchedPolicyRefsDetail(lossReport({ unmatchedPolicyRefs: [unmatchedRef()] }));
+    expect(detail).toMatch(/^1 loss event carries a policy number that matches no policy on file at its property/);
+    expect(detail).toContain("Test Property 'MMF-TYPO-001' (2026-07-04)");
+    expect(detail).not.toContain('and 0 more');
+    expect(detail).not.toContain('attached by loss date instead'); // untrue for a third-party cause
+  });
+
+  it('G3: renders the RAW ref verbatim — lowercase, inner spaces and surrounding whitespace survive (the typo must stay legible)', () => {
+    const raw = ' mmf typo 1 ';
+    const detail = unmatchedPolicyRefsDetail(lossReport({ unmatchedPolicyRefs: [unmatchedRef({ policyRef: raw })] }));
+    expect(detail).toContain(`Test Property '${raw}' (2026-07-04)`);
+    expect(detail).not.toContain("'MMFTYPO1'");
+  });
+
+  it('plural: two events read "2 loss events carry … their property" and list both in order', () => {
+    const detail = unmatchedPolicyRefsDetail(lossReport({
+      unmatchedPolicyRefs: [
+        unmatchedRef(),
+        unmatchedRef({ eventId: 'e2', property: 'Other Property', policyRef: 'X-2', lossDate: '2026-08-01' }),
+      ],
+    }));
+    expect(detail).toMatch(/^2 loss events carry a policy number that matches no policy on file at their property/);
+    expect(detail).toContain("Test Property 'MMF-TYPO-001' (2026-07-04), Other Property 'X-2' (2026-08-01)");
+    expect(detail).not.toContain(' more');
+  });
+
+  it('lists at most 5 entries, then ", and K more"', () => {
+    const seven = Array.from({ length: 7 }, (_, i) => unmatchedRef({ eventId: `e${i + 1}`, policyRef: `REF-${i + 1}` }));
+    const detail = unmatchedPolicyRefsDetail(lossReport({ unmatchedPolicyRefs: seven })) ?? '';
+    expect(detail).toMatch(/^7 loss events carry/);
+    for (let i = 1; i <= 5; i += 1) expect(detail).toContain(`'REF-${i}'`);
+    expect(detail).not.toContain("'REF-6'");
+    expect(detail).not.toContain("'REF-7'");
+    expect(detail).toContain(', and 2 more');
+    const six = seven.slice(0, 6);
+    expect(unmatchedPolicyRefsDetail(lossReport({ unmatchedPolicyRefs: six }))).toContain(', and 1 more');
+    expect(unmatchedPolicyRefsDetail(lossReport({ unmatchedPolicyRefs: seven.slice(0, 5) }))).not.toContain(' more');
+  });
+});
+
+describe('SelfInsureView — unmatched policy refs notice', () => {
+  it('renders the notice on a warehouse-sourced (non-placeholder) report with an unmatched entry, with no placeholder banner', () => {
+    render(
+      <QueryClientProvider
+        client={seededClient(
+          sufficientReport(),
+          [],
+          lossReport({ lossDataSource: 'warehouse', decPageDataSource: 'warehouse', unmatchedPolicyRefs: [unmatchedRef()] }),
+        )}
+      >
+        <SelfInsureView />
+      </QueryClientProvider>,
+    );
+    const notices = screen.getAllByRole('status');
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.textContent).toContain('UNMATCHED POLICY REFS');
+    expect(notices[0]?.textContent).toContain("Test Property 'MMF-TYPO-001' (2026-07-04)");
+    expect(notices[0]?.textContent).not.toContain('PLACEHOLDER DATA');
+    expect(screen.getByText('Expected Annual Loss by Property')).toBeTruthy();
+  });
+
+  it('renders BOTH the placeholder banner and the notice on placeholder data with an unmatched entry', () => {
+    render(
+      <QueryClientProvider
+        client={seededClient(
+          sufficientReport(),
+          [],
+          lossReport({ lossDataSource: 'placeholder', unmatchedPolicyRefs: [unmatchedRef()] }),
+        )}
+      >
+        <SelfInsureView />
+      </QueryClientProvider>,
+    );
+    const text = screen.getAllByRole('status').map((n) => n.textContent ?? '');
+    expect(text).toHaveLength(2);
+    expect(text.some((t) => t.includes('PLACEHOLDER DATA'))).toBe(true);
+    expect(text.some((t) => t.includes('UNMATCHED POLICY REFS'))).toBe(true);
+  });
+
+  it('renders no notice when the list is empty', () => {
+    render(
+      <QueryClientProvider
+        client={seededClient(
+          sufficientReport(),
+          [],
+          lossReport({ lossDataSource: 'warehouse', decPageDataSource: 'warehouse', unmatchedPolicyRefs: [] }),
+        )}
+      >
+        <SelfInsureView />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByRole('status')).toBeNull();
+    expect(screen.queryByText(/UNMATCHED POLICY REFS/)).toBeNull();
   });
 });
