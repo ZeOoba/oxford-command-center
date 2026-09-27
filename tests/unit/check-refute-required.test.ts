@@ -586,6 +586,11 @@ describe('check-refute-required — Refute-Reviewed value', () => {
   it.each([
     'PENDING', 'pending', 'TODO', 'TBD', 'N/A', 'n.a.', 'none', '???', '---', 'yes', 'done', 'reviewed',
     '"TODO"', '(pending)', 'TODO​', '​PENDING', 'wf_pending', 'wf_------', 'wf_todotbd', 'wf_PENDING1',
+    // Merge-gate round 2: trailing punctuation, autocorrected dashes/ellipsis, Markdown emphasis.
+    'TODO?', 'TODO,', 'TODO;', 'pass', 'passed', '—', '–', '…', '*', '#', '**TODO**', '_TODO_',
+    // Unfilled template blanks, and the gate's own hint disguised by wrapping.
+    '<reviewer/run ref>', 'Fable 5.1 adversarial pass <date> — <n> findings, <m> fixed',
+    '"<reason>"', '[<reason>]', '​<reason>', 'reason',
   ])('rejects Refute-Reviewed: %j', (value) => {
     expect(hasRefuteApproval(`fix\n\nRefute-Reviewed: ${value}\n`)).toBe(false);
   });
@@ -612,7 +617,7 @@ describe('check-refute-required — Refute-Skip semantics unchanged', () => {
     expect(hasRefuteApproval('fix\n\nRefute-Skip: todo-list UI string only\n')).toBe(true);
   });
   it('a bare placeholder word is not a justification', () => {
-    for (const v of ['PENDING', 'TODO', 'TBD', 'n/a', 'n.a.', '"TODO"', 'TODO​']) {
+    for (const v of ['PENDING', 'TODO', 'TBD', 'n/a', 'n.a.', '"TODO"', 'TODO​', 'pass', 'TODO?', '"<reason>"']) {
       expect(hasRefuteApproval(`fix\n\nRefute-Skip: ${v}\n`)).toBe(false);
     }
   });
@@ -755,6 +760,22 @@ describe('check-refute-required — per-commit attestation', () => {
       [...SHOW_ARGS, skipParent.sha],
     ]);
     expect(commits).toEqual([unattestedChild, skipParent]);
+  });
+
+  it('evaluate: a rejected placeholder trailer is printed with its reason in the violation', () => {
+    const pending: CommitRecord = {
+      sha: 'c0ffee0000000000000000000000000000000000',
+      message: 'fix(analytics): tweak\n\nRefute-Reviewed: PENDING\n',
+      files: ['src/analytics/conditions.ts'],
+    };
+    const run = (args: string[]): string => (args.includes('rev-list') ? `${pending.sha} b0\n` : showOutput(pending));
+    const r = evaluate('origin/main', run);
+    expect(r.outcome).toBe('violation');
+    const lines = r.message.split('\n');
+    const rejectedAt = lines.findIndex((l) => l.includes('Refute-Reviewed: PENDING — rejected: placeholder'));
+    const pathAt = lines.findIndex((l) => l.trim() === 'src/analytics/conditions.ts');
+    expect(rejectedAt).toBeGreaterThan(-1);
+    expect(pathAt).toBeGreaterThan(rejectedAt);
   });
 
   it('evaluate: violation names only the unattested commit; the remedy is in the message', () => {

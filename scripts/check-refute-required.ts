@@ -364,13 +364,22 @@ export const REFUTE_RUN_ID = /^wf_[a-z0-9_-]{6,}$/;
  * "Refute-Skip: none of this is math" and "Refute-Skip: TODO-list UI string only" still pass.
  */
 const PLACEHOLDER_VALUE =
-  /^(?:pending|todo|tbd|tba|n[./]?a\.?|none|placeholder|wip|later|fixme|done|ok|yes|reviewed|passed?|x+|\?+|-+|\.+)[.!:]*$/i;
+  /^(?:pending|todo|tbd|tba|n[./]?a\.?|none|placeholder|wip|later|fixme|done|ok|yes|reviewed|pass(?:ed)?|reason|x+|\?+|[-–—]+|\.+|…+|\*+|#+)[.!:?,;]*$/i;
 
-/** Strip invisible format characters (zero-width space, BOM, bidi marks) and wrapping quotes/brackets. */
+/**
+ * An unfilled template blank anywhere in the value: `<date>`, `<reviewer/run ref>`, `<runId>`. Catches
+ * a template pasted without being filled in (e.g. "Fable 5.1 adversarial pass <date> — <n> findings").
+ */
+const UNFILLED_TEMPLATE = /<[A-Za-z][^<>\n]{0,40}>/;
+
+/** Strip invisible format characters (zero-width space, BOM, bidi marks) and wrapping quotes/brackets/Markdown emphasis. */
 function normalizeTrailerValue(value: string): string {
   let v = value.replace(/\p{Cf}/gu, '').trim();
   for (;;) {
-    const unwrapped = v.replace(/^(["'`‘’“”([{<])(.*)(["'`‘’“”)\]}>])$/su, '$2').trim();
+    const unwrapped = v
+      .replace(/^(["'`‘’“”([{<])(.*)(["'`‘’“”)\]}>])$/su, '$2')
+      .replace(/^(\*{1,2}|_{1,2})(.+)\1$/su, '$2')
+      .trim();
     if (unwrapped === v) return v;
     v = unwrapped;
   }
@@ -386,13 +395,18 @@ function refuteTrailers(message: string): Array<{ kind: 'reviewed' | 'skip'; val
 /**
  * Why one trailer does not attest, or null when it does. Both kinds accept any real value — a run
  * id, or prose describing the review / the skip justification — and reject: an empty value, the
- * gate's own pasted hint, a bare placeholder word (PENDING, TODO, TBD, N/A, ...), and a `wf_`
+ * gate's own pasted hint, an unfilled template blank (`<date>`), a bare placeholder word (PENDING,
+ * TODO, TBD, N/A, ..., with trailing punctuation), and a `wf_`
  * token that is not a real run id shape (`wf_pending`, `wf_------`: no digit, or bad characters).
  */
 function trailerRejection(value: string): string | null {
   if (value === '') return 'empty value';
-  if (value.startsWith('wf_<runId>') || value.startsWith('<reason>')) return "the gate's own placeholder, pasted verbatim";
   const norm = normalizeTrailerValue(value);
+  // Checked on the raw AND normalized value: normalization unwraps `"<reason>"` to `reason`.
+  if ([value, norm].some((v) => v.startsWith('wf_<runId>') || v.startsWith('<reason>'))) {
+    return "the gate's own placeholder, pasted verbatim";
+  }
+  if (UNFILLED_TEMPLATE.test(value)) return `unfilled template blank "${UNFILLED_TEMPLATE.exec(value)?.[0] ?? ''}"`;
   if (norm === '' || PLACEHOLDER_VALUE.test(norm)) return `placeholder "${value}" is not an attestation`;
   const first = norm.split(/\s+/)[0] ?? '';
   if (/^wf_/i.test(first) && !(REFUTE_RUN_ID.test(first.replace(/[,;.)]+$/, '')) && /\d/.test(first))) {
@@ -704,7 +718,8 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
     "workflow on each, then add a trailer to THAT commit's message:",
     '    Refute-Reviewed: wf_<runId>        (or, with justification)  Refute-Skip: <reason>',
     'Substitute the real run id (or describe the non-workflow review that ran). Placeholders are',
-    'rejected: wf_<runId>, PENDING, TODO, TBD, N/A, wf_pending. Not run yet? Run it, or Refute-Skip: <why>.',
+    'rejected: wf_<runId>, PENDING, TODO, TBD, N/A, wf_pending, unfilled <blanks>. Not run yet? Run it, or',
+    'Refute-Skip: with the real reason.',
     'HEAD: git commit --amend. An earlier commit: do it in your own worktree (git worktree add), never a',
     'shared checkout, with no editor at all (POSIX shell / Git Bash):',
     '    PRE=$(git rev-parse HEAD)                  (pin the tip: ORIG_HEAD is one slot another session can overwrite)',
