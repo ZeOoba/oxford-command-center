@@ -9,6 +9,15 @@
     "review_detail": "string | null — what architect approval is needed for",
     "last_updated": "ISO 8601 timestamp"
   },
+  "claude-md-doc-drift-2026-09-27": {
+    "agent_role": "Engineering (Claude Code) — Gabriel-directed in-turn 2026-09-27",
+    "phase": "Doc-only fix on CLAUDE.md: (1) §6 gate step list corrected from stale 7-step description to the actual 11-step package.json gate script (adds check:dev-css, check:schema-drift, reconcile:snapshot, reconcile:noi-crosscheck) with accurate per-step descriptions, verified directly against package.json and each script's own header comment; (2) §3 hurdle-rate Pending line corrected — hurdle rate is ratified in server/warehouse/intel-config.ts HURDLE_RATE (ratification: 'ratified', ratifiedBy Gabriel Goldberg, 2026-06-22) and migration 017_ratify_hurdle_rate.sql, not advisoryOnly as the doc claimed; the CapexIrrCalc.tsx comment is correctly noted as a deliberate dormant-banner guard, not stale; (3) header verified-date line updated to reflect this pass. No code touched — CLAUDE.md only. Gabriel requested this fix directly in-turn (formal review session, 2026-09-27), which is the architect authorization; .claude/overrides/architect-edit-ok created accordingly. Independent adversarial review (Opus 5.5) caught 3 factual defects (wrong check:dev-css/check:schema-drift descriptions, a false CapexIrrCalc staleness claim) and an unverifiable 'advisoryOnly verified' claim in the first draft — all fixed/qualified before commit.",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "review_detail": "Gabriel-authorized in-turn doc-drift fix. No competing claim on CLAUDE.md at time of write (preflight-shared-checkout.py CLEAR). §2 merge-history table is separately known-stale (HEAD is 19+ PRs ahead of the #168 row) but is out of scope for this pass — flagged, not fixed here. Flip to merged once this lands.",
+    "last_updated": "2026-09-27T00:00:00Z"
+  },
   "phase-5-cap-alloc": {
     "agent_role": "Analytics Agent + UX Agent — Claude Code Sonnet 4.6",
     "phase": "Phase 5 — Capital Allocation capstone (synthesis engine + CapitalAllocationModule UI + FRED macro context)",
