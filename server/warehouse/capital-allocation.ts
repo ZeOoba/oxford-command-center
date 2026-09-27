@@ -59,6 +59,7 @@ import { clamp } from './clamp';
 import { loadCapitalConfig } from './capital-config';
 import { loadGovernors } from './governors';
 import { renewalSignals, bucketExpiry } from '../../src/analytics/lease-forecast';
+import { isInvestmentProperty } from '../../src/analytics/property-basis';
 import { classifyCapRateBand, benchmarkKey } from '../../src/contracts/market-intelligence';
 import type { CapRateBenchmark, MarketBenchmarkSet } from '../../src/contracts/market-intelligence';
 import type { WarehouseDb } from './db';
@@ -1149,9 +1150,15 @@ export async function buildCapitalAllocationReport(
     }
   }
 
+  // Ratified 2026-09-24 (Gabriel): the residence is not an investment asset — no capital-allocation
+  // verdict, and because POST /capital-allocation/sync-notion writes exactly report.entries, no Notion
+  // Property Register write either (its existing Notion row is left untouched). Same predicate as every
+  // investment KPI (src/analytics/property-basis.ts).
+  const investmentProperties = snapshot.properties.filter(isInvestmentProperty);
+
   const entries: CapitalAllocationEntry[] = [];
 
-  for (const property of snapshot.properties) {
+  for (const property of investmentProperties) {
     const propScore = scoreByPropertyId.get(property.id);
     const debtScore = debtByPropertyId.get(property.id);
     const balloonMonths = balloonMonthsByProperty.get(property.id) ?? null;
@@ -1366,11 +1373,11 @@ export async function buildCapitalAllocationReport(
   const dispositionCount = entries.filter(
     (e) => e.capitalAction === 'disposition-candidate',
   ).length;
-  const portfolioNoi = snapshot.properties.reduce((sum, p) => sum + (p.noi ?? 0), 0);
+  const portfolioNoi = investmentProperties.reduce((sum, p) => sum + (p.noi ?? 0), 0);
 
   return {
     asOf,
-    propertyCount: snapshot.properties.length,
+    propertyCount: investmentProperties.length,
     entries,
     portfolioNoi,
     portfolioNoBasis: 'spine-a',
