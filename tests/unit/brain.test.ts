@@ -255,7 +255,8 @@ describe('Brain.persist — deals-degradation mirror guard', () => {
  *
  * M1: rederive() rebuilt from base+overlay WITHOUT re-running checkSnapshot, then persisted — so
  * after any UI write-back the rewritten mirror carried the same breached numbers with the
- * reconciliation flags ABSENT, which erases conditions.ts's 'reconcile-fail' critical condition.
+ * reconciliation flags ABSENT, which erases conditions.ts's 'reconcile-fail' critical condition
+ * (which, since the 2026-09-24 ruling, fires only on ERROR-severity reconciliation flags).
  * Breach intact, alarm gone. That also means H2's gate cannot fire on this path unless M1 is fixed
  * with it — they are one change, not two.
  */

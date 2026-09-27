@@ -815,12 +815,15 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   }
 
   // ── Data quality ────────────────────────────────────────────────────────────
-  const reconFlags = s.dataQuality.filter((f) => f.entity === 'reconciliation');
+  // Ratified 2026-09-24: the CRITICAL reconcile-fail insight (and its alert email) fires only on
+  // ERROR-severity reconciliation flags — a publish-blocking inconsistency (hasReconciliationError,
+  // server/reconcile-runtime.ts, uses the same test). Warn-level flags stay in System Health.
+  const reconFlags = s.dataQuality.filter((f) => f.entity === 'reconciliation' && f.severity === 'error');
   if (reconFlags.length > 0) {
     out.push({
       id: 'reconcile-fail', severity: 'critical', category: 'data',
       title: 'Reconciliation failure',
-      // The detail must not assert a CAUSE. This condition fires for every entity==='reconciliation'
+      // The detail must not assert a CAUSE. This condition fires for every error-severity entity==='reconciliation'
       // flag, and checkSnapshot emits several that have nothing to do with workbook totals — e.g.
       // duplicate property ids and near-duplicate deal names. Hardcoding "derived totals do not
       // match the workbook" sent operators to audit the workbook for a deal-naming collision

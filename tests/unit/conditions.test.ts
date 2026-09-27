@@ -492,6 +492,21 @@ describe('evaluateConditions — data quality & deals', () => {
     const out = evaluateConditions(snap({ dataQuality: [{ entity: 'p1', field: 'noi', issue: 'bad source', severity: 'warn' }] }), opts);
     expect(out.some((i) => i.id === 'reconcile-fail')).toBe(false);
   });
+  it('warn-only reconciliation flags do NOT fire reconcile-fail (ratified 2026-09-24)', () => {
+    const out = evaluateConditions(snap({ dataQuality: [{ entity: 'reconciliation', field: 'cash.history.date', issue: 'missing rows', severity: 'warn' }] }), opts);
+    expect(out.some((i) => i.id === 'reconcile-fail')).toBe(false);
+  });
+  it('mixed flags: reconcile-fail counts and names only the error-severity fields', () => {
+    const out = evaluateConditions(snap({ dataQuality: [
+      { entity: 'reconciliation', field: 'cash.history.date', issue: 'missing rows', severity: 'warn' },
+      { entity: 'reconciliation', field: 'properties.noi', issue: 'Σ NOI ≠ workbook', severity: 'error' },
+    ] }), opts);
+    const i = out.find((x) => x.id === 'reconcile-fail')!;
+    expect(i.severity).toBe('critical');
+    expect(i.metric).toBe('1');
+    expect(i.detail).toContain('(properties.noi)');
+    expect(i.detail).not.toContain('cash.history.date');
+  });
   it('workbook older than 48h is an info alert', () => {
     const stale = { ...snap(), meta: { schemaVersion: '1.0.0', asOf: ASOF, generatedAt: new Date(NOW - 49 * 3_600_000).toISOString(), source: 't', scenario: 'Base' } } as unknown as PortfolioSnapshot;
     const out = evaluateConditions(stale, opts);
