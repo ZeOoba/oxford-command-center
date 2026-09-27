@@ -567,17 +567,31 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       const CONCENTRATION_BUCKETS = ['0-6m', '6-12m'] as const;
       for (const bucket of CONCENTRATION_BUCKETS) {
         // Sum annual rent for leases in this bucket using bucketExpiry
-        const bucketRent = s.leases
-          .filter((l) => bucketExpiry(l.monthsToExpiry, l.leaseEnd, asOf) === bucket)
-          .reduce((sum, l) => sum + l.annualRent, 0);
+        const bucketLeases = s.leases.filter((l) => bucketExpiry(l.monthsToExpiry, l.leaseEnd, asOf) === bucket);
+        const bucketRent = bucketLeases.reduce((sum, l) => sum + l.annualRent, 0);
         const bucketPct = bucketRent / totalAnnualRent;
         if (bucketPct >= T.tenantNoiConcentrationInfo) {
+          // Refute wf_5c91e034-4fe: the "already counted" sentence is only true when at least one lease in
+          // the bucket carries a per-lease expiry-family insight (expiring-/expired-/lease-expiry-/
+          // lease-lapsed-). The 6-12m bucket is beyond every per-lease window, and a 0-6m lease with a
+          // renewal stage underway has its per-lease alert suppressed — that rent is then in NO Risk $
+          // figure (the ratified trade-off), and the detail must say so. Checked against `out` as built so
+          // far: every expiry-family producer runs above this block, and the dedup below only drops
+          // legacy twins whose L-x sibling remains, so presence here equals presence after dedup.
+          const bucketIds = new Set(bucketLeases.map((l) => l.id));
+          const coveredByPerLeaseAlert = out.some((i) => {
+            const m = /^(?:expiring|expired|lease-expiry|lease-lapsed)-(.+)$/.exec(i.id);
+            return m !== null && bucketIds.has(m[1]!);
+          });
+          const riskNote = coveredByPerLeaseAlert
+            ? 'That rent is already counted in the per-lease expiry alerts, so this alert adds nothing to Risk $.'
+            : 'This rent is outside the per-lease expiry alerts (beyond their window or renewal underway), so it is not in Risk $ — ratified 2026-09-24.';
           out.push({
             id: `rollover-concentration-${bucket}`,
             severity: 'warning',
             category: 'lease',
             title: `Concentrated rollover — ${bucket} bucket`,
-            detail: `${fmtPct(bucketPct)} of total annual rent (${fmtUsdCompact(bucketRent)}) expires in the ${bucket} window — above the ${fmtPct(T.tenantNoiConcentrationInfo)} concentration threshold. That rent is already counted in the per-lease expiry alerts, so this alert adds nothing to Risk $.`,
+            detail: `${fmtPct(bucketPct)} of total annual rent (${fmtUsdCompact(bucketRent)}) expires in the ${bucket} window — above the ${fmtPct(T.tenantNoiConcentrationInfo)} concentration threshold. ${riskNote}`,
             action: { label: 'Review', kind: 'review' },
             // Ratified 2026-09-24: a concentration signal, not a new exposure — the bucket's rent is the
             // same rent the per-lease expiry alerts (L-1 / expiring-) already carry, so it contributes $0
