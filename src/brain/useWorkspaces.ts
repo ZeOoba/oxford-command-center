@@ -10,7 +10,13 @@ interface Persisted {
   active: string;
 }
 
-const KEY = 'ora-overview-workspaces';
+/** Versioned storage key. Bumped 2026-09-24 (Gabriel ratified): the new default Overview layout (full
+ *  Insights tier board hidden) must apply to EVERYONE, so every layout saved under an older key is
+ *  DISCARDED — deliberately not migrated. For the next forced reset: bump the suffix and append the
+ *  current key to LEGACY_WORKSPACES_KEYS. */
+export const WORKSPACES_STORAGE_KEY = 'ora-overview-workspaces:v2';
+export const LEGACY_WORKSPACES_KEYS: readonly string[] = ['ora-overview-workspaces'];
+const KEY = WORKSPACES_STORAGE_KEY;
 
 /** A single stable, frozen reference for callers that pass no `defaultHidden` — an inline `[]`
  *  default creates a NEW array identity on every call, which defeats the memoization below
@@ -20,6 +26,8 @@ const EMPTY_HIDDEN: readonly string[] = Object.freeze([]);
 function load(allIds: string[], defaultHidden: readonly string[]): Persisted {
   const fallback: Persisted = { workspaces: { Default: { order: allIds, hidden: [...defaultHidden] } }, active: 'Default' };
   try {
+    // Idempotent (StrictMode may call the initializer twice): drop superseded layouts, never migrate.
+    for (const legacy of LEGACY_WORKSPACES_KEYS) localStorage.removeItem(legacy);
     const raw = localStorage.getItem(KEY);
     if (!raw) return fallback;
     const parsed = JSON.parse(raw) as Persisted;

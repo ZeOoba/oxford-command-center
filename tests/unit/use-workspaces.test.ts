@@ -1,8 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { act, renderHook } from '@testing-library/react';
-import { useWorkspaces } from '../../src/brain/useWorkspaces';
+import { useWorkspaces, WORKSPACES_STORAGE_KEY as KEY, LEGACY_WORKSPACES_KEYS } from '../../src/brain/useWorkspaces';
 
-const KEY = 'ora-overview-workspaces';
 const IDS = ['kpis', 'alerts', 'leases', 'cash'];
 
 beforeEach(() => {
@@ -142,5 +141,19 @@ describe('useWorkspaces defaultHidden (default-off-but-addable widgets)', () => 
     act(() => result.current.resetActive());
     expect(result.current.visibleOrder).toEqual(['kpis', 'leases', 'cash']);
     expect(result.current.hiddenIds).toEqual(['alerts']);
+  });
+
+  const LEGACY_IDS = ['kpis', 'insights'];
+  const LEGACY_HIDDEN = ['insights'];
+  it('discards a layout saved under the legacy key: the new default applies and the old key is removed (ratified 2026-09-24)', () => {
+    expect(KEY).toBe('ora-overview-workspaces:v2');
+    expect(LEGACY_WORKSPACES_KEYS).toEqual(['ora-overview-workspaces']);
+    // The pre-bump shape: a saved Default that SHOWS the Insights tier board.
+    localStorage.setItem('ora-overview-workspaces', JSON.stringify({ workspaces: { Default: { order: ['kpis', 'insights'], hidden: [] } }, active: 'Default' }));
+    const { result } = renderHook(() => useWorkspaces(LEGACY_IDS, LEGACY_HIDDEN));
+    expect(result.current.visibleOrder).toEqual(['kpis']);
+    expect(result.current.hiddenIds).toEqual(['insights']);
+    expect(localStorage.getItem('ora-overview-workspaces')).toBeNull();
+    expect(localStorage.getItem(KEY)).toContain('insights');
   });
 });
