@@ -172,7 +172,8 @@ class Brain extends EventEmitter {
     // Reconciliation is re-run here, not just in refresh(). Rebuilding from base+overlay and
     // persisting WITHOUT it meant every UI write-back rewrote the mirror carrying the same breached
     // numbers with the reconciliation flags ABSENT -- which erases conditions.ts's 'reconcile-fail'
-    // critical condition (it filters entity==='reconciliation'). Breach intact, alarm gone, and
+    // critical condition (entity==='reconciliation' AND severity==='error' fires reconcile-fail and blocks publish (hasReconciliationError); warn-level flags show only on the Data Quality and Reconciliation cards.).
+    // Breach intact, alarm gone, and
     // self-clearing on any deal-stage click. It also means the persist() gate below could not fire on
     // this path at all, so M1 and H2 are one change. `this.base` never carries rtFlags (it is the
     // pre-overlay parse result), so recomputing cannot double-add them.

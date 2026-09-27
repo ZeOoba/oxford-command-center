@@ -115,7 +115,9 @@ export function m365TasksDegradationFlag(degraded: M365TasksDegradation | null):
 /**
  * True when a snapshot's flags carry the data-losing M365 degradation above. Used by the live
  * server's mirror write (Brain.persist), a THIRD writer of portfolio.json whose own reconciliation
- * gate filters on `entity === 'reconciliation'` and so would not see this flag -- the same reason
+ * gate filters on entity==='reconciliation' AND severity==='error' (hasReconciliationError — that pair
+ * fires reconcile-fail and blocks publish; warn-level flags show only on the Data Quality and
+ * Reconciliation cards) and so would not see this flag -- the same reason
  * notion-deals needs its own hasDealsPipelineFailure.
  */
 export function hasM365TasksFailure(flags: readonly DataQualityFlag[]): boolean {
