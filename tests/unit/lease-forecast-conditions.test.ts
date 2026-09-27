@@ -52,9 +52,9 @@ function mkLease(o: Partial<Lease> & { id: string }): Lease {
 const opts = { now: NOW };
 
 // ── C-1: L-1 Expiring no renewal signal ──────────────────────────────────────
-describe('C-1: L-1 — expiring ≤90d, no stage → critical', () => {
-  it('≤90d expiry, no stage → exactly one L-1, critical, impactAnnualUsd=annualRent, spine:A, category:lease', () => {
-    const l = mkLease({ id: 'l1', leaseEnd: iso(60), monthsToExpiry: 2, annualRent: 24000 });
+describe('C-1: L-1 — expiring ≤90d, no stage → critical under 60d, warning 60–90d (ratified 2026-09-24)', () => {
+  it('<60d expiry, no stage → exactly one L-1, critical, impactAnnualUsd=annualRent, spine:A, category:lease', () => {
+    const l = mkLease({ id: 'l1', leaseEnd: iso(45), monthsToExpiry: 1.5, annualRent: 24000 });
     const out = evaluateConditions(snap({ leases: [l] }), opts);
     const ins = out.filter((i) => i.id === `lease-expiry-l1`);
     expect(ins).toHaveLength(1);
@@ -66,6 +66,18 @@ describe('C-1: L-1 — expiring ≤90d, no stage → critical', () => {
     expect(i.impactAnnualUsd).toBe(24000);
     expect(i.entityType).toBe('lease');
     expect(i.entityId).toBe('l1');
+  });
+
+  it.each([
+    [59, 'critical'],
+    [60, 'warning'],
+    [75, 'warning'],
+    [90, 'warning'],
+  ])('%id → %s (same id, impact unchanged)', (days, severity) => {
+    const l = mkLease({ id: 'l1', leaseEnd: iso(days), monthsToExpiry: days / 30, annualRent: 18000 });
+    const ins = evaluateConditions(snap({ leases: [l] }), opts).find((i) => i.id === 'lease-expiry-l1');
+    expect(ins?.severity).toBe(severity);
+    expect(ins?.impactAnnualUsd).toBe(18000);
   });
 
   it('exactly 90d (3 months) expiry, no stage → fires L-1', () => {
