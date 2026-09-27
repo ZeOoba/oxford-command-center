@@ -577,9 +577,12 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
             severity: 'warning',
             category: 'lease',
             title: `Concentrated rollover — ${bucket} bucket`,
-            detail: `${fmtPct(bucketPct)} of total annual rent (${fmtUsdCompact(bucketRent)}) expires in the ${bucket} window — above the ${fmtPct(T.tenantNoiConcentrationInfo)} concentration threshold.`,
+            detail: `${fmtPct(bucketPct)} of total annual rent (${fmtUsdCompact(bucketRent)}) expires in the ${bucket} window — above the ${fmtPct(T.tenantNoiConcentrationInfo)} concentration threshold. That rent is already counted in the per-lease expiry alerts, so this alert adds nothing to Risk $.`,
             action: { label: 'Review', kind: 'review' },
-            impactAnnualUsd: bucketRent,
+            // Ratified 2026-09-24: a concentration signal, not a new exposure — the bucket's rent is the
+            // same rent the per-lease expiry alerts (L-1 / expiring-) already carry, so it contributes $0
+            // to Risk $ (null is skipped by totalsBySpine). Still alerts; id unchanged.
+            impactAnnualUsd: null,
             spine: 'A',
             provenance: 'derived',
           });
