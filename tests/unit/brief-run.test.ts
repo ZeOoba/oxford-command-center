@@ -93,6 +93,30 @@ describe('runBrief', () => {
     expect(bodies2[0]).not.toContain('other holdings');
   });
 
+  it('the Daily Brief min-DSCR KPI sweeps investment properties only (ratified 2026-09-24)', async () => {
+    // Refute wf_0b7d1997-deb: a residence mortgage with the lowest DSCR must not become the emailed min.
+    const snap = baseSnap();
+    const inv = {
+      id: 'p1', index: 1, name: '29000 Information Lane, Easton MD', address: '29000 Information Lane', city: null, state: null, market: 'Mid-Atlantic', type: 'Flex',
+      sf: 48000, tenantCount: 1, occPct: 1, acqDate: null, estValue100: 0, oxfordOwnPct: 1, oxfordValue: 7310000, grossIncome: 0, expenses: 0, noi: 511000, noiScenarioAdj: 511000,
+      debtService: 0, netCashFlow: 0, capRate: 0.07, dscr: 2.45, lender: 'Symetra', loanBalance: 2770000, ltv: 0.38, valuePerSf: null, rentPerSf: null, equityInvested: 1000000,
+      cashOnCash: null, holdYrs: null, encumbered: true, flags: [],
+    };
+    (snap.properties as unknown[]) = [
+      inv,
+      { ...inv, id: 'p2', name: '1100 Rarig', dscr: 1.62 },
+      { ...inv, id: 'res', name: '9510 Persimmon Tree Rd, Potomac MD', type: 'Residence', sf: 6700, oxfordValue: 2_000_000, noi: 0, noiScenarioAdj: 0, capRate: null, dscr: 0.9, lender: 'Wells', loanBalance: 900_000, ltv: 0.45, equityInvested: 900_000 },
+    ];
+    const bodies: string[] = [];
+    await runBrief(snap, {
+      statePath: join(dir(), 'state.json'), now: new Date('2026-07-09T11:00:00Z'),
+      send: async (email) => { if (email.subject.includes('Daily Brief')) bodies.push(email.html); return { ok: true, via: 'com' }; },
+    });
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toContain('DSCR min 1.62x');
+    expect(bodies[0]).not.toContain('min 0.90x');
+  });
+
   it('emits a same-day alert only for a newly-appeared critical item', async () => {
     const statePath = join(dir(), 'state.json');
     const snap = baseSnap();
