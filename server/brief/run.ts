@@ -4,6 +4,7 @@ import type { PortfolioSnapshot, MacroSnapshot } from '../../src/contracts/index
 import { buildAnalytics } from '../../src/analytics/engine';
 import { fmtUsdCompact, fmtPct } from '../../src/analytics/format';
 import { evaluateConditions, extractDgs5MarketRate } from '../../src/analytics/conditions';
+import { isInvestmentProperty } from '../../src/analytics/property-basis';
 import { loadState, saveState, diffCriticalAlerts, shouldSendBrief, etNow, type AlertState } from './state';
 import { renderBrief, renderAlert, type Email } from './render';
 import { sendEmail, type SendResult } from './send';
@@ -143,7 +144,9 @@ export async function runBrief(
   let briefSent = false;
   if (shouldSendBrief(state, nowEt)) {
     const a = buildAnalytics(snapshot, 'Base', refDate);
-    const dscrs = snapshot.properties.map((p) => p.dscr).filter((d): d is number => d !== null);
+    // Ratified 2026-09-24: the min-DSCR KPI is an investment signal — the residence is excluded
+    // (same predicate as the per-property governor loop in src/analytics/conditions.ts).
+    const dscrs = snapshot.properties.filter(isInvestmentProperty).map((p) => p.dscr).filter((d): d is number => d !== null);
     const dealCounts = countByStage(snapshot);
     const criticalDates = upcomingDates(snapshot, a.criticalDates, refDate);
 
