@@ -4,6 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import type { PortfolioSnapshot, Property, Lease, Loan, InsurancePolicy, Deal } from '@contracts/index';
 import { evaluateConditions } from '@analytics/index';
+import { mergeInsightSources, buildSummary } from '../../src/modules/insights/insights.logic';
 
 // ── Fixtures (mirror conditions.test.ts pattern) ─────────────────────────────
 const ASOF = '2026-06-21';
@@ -198,7 +199,7 @@ describe('C-5: L-4 — suppressed when no market rent in overlay', () => {
 
 // ── C-6: L-5 concentrated rollover ───────────────────────────────────────────
 describe('C-6: L-5 — one bucket ≥15% of total annual rent → warning', () => {
-  it('0-6m bucket ≥15% of total → L-5 warning, impactAnnualUsd = bucket rent', () => {
+  it('0-6m bucket ≥15% of total → L-5 warning; impact is null ($0 to Risk $ — its rent is already in the per-lease expiry alerts)', () => {
     // Total rent: 100000. l1 expiring in 3m: 20000 = 20% → fires
     const l1 = mkLease({ id: 'l1', leaseEnd: iso(90), monthsToExpiry: 3, annualRent: 20000 });
     const l2 = mkLease({ id: 'l2', leaseEnd: iso(365), monthsToExpiry: 12, annualRent: 80000 });
@@ -208,7 +209,8 @@ describe('C-6: L-5 — one bucket ≥15% of total annual rent → warning', () =
     expect(ins!.severity).toBe('warning');
     expect(ins!.spine).toBe('A');
     expect(ins!.provenance).toBe('derived');
-    expect(ins!.impactAnnualUsd).toBe(20000);
+    expect(ins!.impactAnnualUsd).toBeNull();
+    expect(ins!.detail).toContain('$20K');
   });
 
   it('6-12m bucket ≥15% of total → L-5 warning', () => {
@@ -297,5 +299,18 @@ describe('L-3: monthToMonth (leaseEnd past, status Active) → info', () => {
     const l = mkLease({ id: 'l1', leaseEnd: iso(-30), monthsToExpiry: -1, annualRent: 18000, status: 'Expired' });
     const out = evaluateConditions(snap({ leases: [l] }), opts);
     expect(out.some((i) => i.id === 'lease-mtm-l1')).toBe(false);
+  });
+});
+
+describe('L-5 does not double-count Risk $ (ratified 2026-09-24)', () => {
+  it('Workbook-basis Risk $ equals the per-lease expiry impact alone', () => {
+    const l1 = mkLease({ id: 'l1', leaseEnd: iso(90), monthsToExpiry: 3, annualRent: 20000 });
+    const l2 = mkLease({ id: 'l2', leaseEnd: iso(365), monthsToExpiry: 12, annualRent: 80000 });
+    const s = snap({ leases: [l1, l2] });
+    const out = evaluateConditions(s, opts);
+    expect(out.some((i) => i.id === 'rollover-concentration-0-6m')).toBe(true); // still alerts
+    const { merged } = mergeInsightSources(out, [], s);
+    const workbook = buildSummary(merged).riskImpactBySpine.find((t) => t.label === 'Workbook basis')!;
+    expect(workbook.totalUsd).toBe(20000); // L-1 on l1 only; was 40000 with L-5 counted
   });
 });
