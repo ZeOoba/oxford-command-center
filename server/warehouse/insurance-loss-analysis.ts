@@ -184,6 +184,9 @@ function isReviewable(p: PolicyEconomics): boolean {
  * is `ref`, else — only when none owns it — those whose line carried it (PolicyTerm.lineNumbers).
  * Empty when the ref names nothing at the property. The SINGLE definition of "the ref matches",
  * shared by attachEvent and the unmatched-ref detection so the two can never drift.
+ * Invariant: loadPolicyTerms (insurance-loss-api.ts) always includes a row's own number in its
+ * lineNumbers, so own ⊆ line — the own-first check exists for attachEvent's pool precedence, not
+ * for the emptiness test, which the line check alone decides.
  */
 function policiesMatchingRef(
   ref: string,
