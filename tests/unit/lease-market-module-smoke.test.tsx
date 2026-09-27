@@ -323,4 +323,16 @@ describe('LeaseMarketModule', () => {
     expect(screen.getByText('Listed in CoStar with no Rent Position row (data inconsistency)')).toBeTruthy();
     expect(screen.queryByText('Listed in CoStar but not vacant in the rent roll')).toBeNull();
   });
+
+  it('never-ingested warehouse renders the empty state with the ingest+compute command', () => {
+    renderWith({
+      ...SUMMARY,
+      lastComputedAt: null,
+      kpis: { marketsFresh: 0, marketsEnabled: 1, activeSpaces: 0, newInLatest: 0, priceCutsInLatest: 0, stale: 0, radarCandidates: 0 },
+      freshness: [{ marketId: 'columbus', label: 'Columbus', enabled: true, lastLandingDate: null, lastCompleteDate: null, lastCompleteness: null, partialReason: null, stale: false }],
+      curve: [], domByMarket: [], benchmarks: [],
+    });
+    expect(screen.getByText('No CoStar exports have been ingested yet.')).toBeTruthy();
+    expect(screen.getByText('npm run lease-market:ingest && npm run lease-market:compute')).toBeTruthy();
+  });
 });

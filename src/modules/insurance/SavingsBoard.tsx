@@ -15,6 +15,8 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
 import { Skeleton } from '@/primitives/Skeleton';
 import { TierBoard } from '@/primitives/TierBoard';
+import { EmptyState } from '@/primitives/EmptyState';
+import { EMPTY_COPY, isInsuranceAnalysisEmpty } from '@/lib/warehouse-empty';
 import { isWarehouseUnavailable } from '../intel/hooks';
 import { useInsuranceAnalysis, useInsuranceLoss, buildSavingsTiers, buildOptimizeTier, benchmarkSublabel } from './hooks';
 
@@ -57,6 +59,7 @@ export function SavingsBoard() {
   }
 
   if (!report) return null;
+  if (isInsuranceAnalysisEmpty(report)) return <EmptyState {...EMPTY_COPY.insurance} />;
 
   const { benchmark } = report;
   const tiers = lossReport

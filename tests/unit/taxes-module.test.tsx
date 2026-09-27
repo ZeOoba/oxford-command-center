@@ -115,6 +115,9 @@ function makeReport(partial: Partial<TaxAnalysisReport> = {}): TaxAnalysisReport
   };
 }
 
+/** A report with SOME data — TaxesModule renders its KPI strip + views only when the warehouse is not empty. */
+const NON_EMPTY: Partial<TaxAnalysisReport> = { ledgerTaxAnnualUsd: 120_000 };
+
 // ── Tax STRATEGY fixture builders (P4c / C2 — Task 10) ──────────────────────────────────────
 
 function makeCostSegOpportunity(
@@ -748,7 +751,7 @@ describe('TaxesModule inner switch (SegmentedControl on ?view=)', () => {
   function seeded(): QueryClient {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
     const qc = seededClient();
-    qc.setQueryData(TAX_KEYS.analysis, makeReport());
+    qc.setQueryData(TAX_KEYS.analysis, makeReport(NON_EMPTY));
     qc.setQueryData(TAX_STRATEGY_KEY, makeStrategyReport());
     return qc;
   }
@@ -825,7 +828,7 @@ describe('TaxesModule Filed Returns view (P4c / C2)', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
 
     const qc = seededClient();
-    qc.setQueryData(TAX_KEYS.analysis, makeReport());
+    qc.setQueryData(TAX_KEYS.analysis, makeReport(NON_EMPTY));
     qc.setQueryData(TAX_STRATEGY_KEY, makeStrategyReport());
 
     render(
@@ -844,7 +847,7 @@ describe('TaxesModule Filed Returns view (P4c / C2)', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
 
     const qc = seededClient();
-    qc.setQueryData(TAX_KEYS.analysis, makeReport());
+    qc.setQueryData(TAX_KEYS.analysis, makeReport(NON_EMPTY));
     qc.setQueryData(TAX_STRATEGY_KEY, makeStrategyReport());
 
     render(
@@ -871,7 +874,7 @@ describe('TaxesModule Filed Returns view (P4c / C2)', () => {
     vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
 
     const qc = seededClient();
-    qc.setQueryData(TAX_KEYS.analysis, makeReport());
+    qc.setQueryData(TAX_KEYS.analysis, makeReport(NON_EMPTY));
     // TAX_STRATEGY_KEY intentionally NOT seeded.
 
     const { container } = render(
@@ -897,7 +900,7 @@ describe('TaxesModule Filed Returns view (P4c / C2)', () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
 
     const qc = seededClient();
-    qc.setQueryData(TAX_KEYS.analysis, makeReport());
+    qc.setQueryData(TAX_KEYS.analysis, makeReport(NON_EMPTY));
     // TAX_STRATEGY_KEY intentionally NOT seeded.
 
     render(
@@ -917,5 +920,19 @@ describe('TaxesModule Filed Returns view (P4c / C2)', () => {
       { timeout: 3000 },
     );
     expect(screen.getByText(/Filed-return metadata requires the live brain server/i)).toBeTruthy();
+  });
+});
+
+describe('TaxesModule — empty warehouse', () => {
+  afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+  it('a loaded but EMPTY tax analysis renders the empty state with the import command', () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+    const qc = seededClient();
+    qc.setQueryData(TAX_KEYS.analysis, makeReport());
+    qc.setQueryData(TAX_STRATEGY_KEY, makeStrategyReport());
+    renderTaxes(qc);
+    expect(screen.getByText('No property-tax data in the warehouse yet.')).toBeTruthy();
+    expect(screen.getByText('npx tsx scripts/import-assessments.ts <assessments.csv>')).toBeTruthy();
+    expect(screen.queryByRole('radiogroup', { name: 'Taxes views' })).toBeNull();
   });
 });
