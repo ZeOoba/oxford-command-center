@@ -717,6 +717,16 @@ function loadFromDisk(p: string): Promise<DocCache> {
     },
     (err: unknown) => {
       if (loading?.client === client) loading = null;
+      // A load-error (corrupt/missing schema) starts the same cooldown as a worker crash — otherwise every
+      // request spawns a fresh worker against a file that will fail the same way. One log line per failure;
+      // skipped when onFailure already recorded this client's death.
+      if (!failedAt || Date.now() - failedAt.at >= DOC_INDEX_FAILURE_COOLDOWN_MS) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(
+          `[documents] doc-index load failed — retrying after ${DOC_INDEX_FAILURE_COOLDOWN_MS / 1000}s cooldown: ${message}`,
+        );
+        failedAt = { at: Date.now(), message };
+      }
       void client.close().catch(() => undefined);
       throw err;
     },
