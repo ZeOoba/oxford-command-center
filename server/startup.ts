@@ -7,9 +7,10 @@ export interface StartupDeps {
 }
 
 /**
- * Bind first, then do heavy work one macrotask later. loadDiskIndex() is a synchronous better-sqlite3
- * + sqlite-vec read of a ~179 MB file; called in the same tick as serve() it held listen() for ~7 min
- * on a cold, AV-scanned start (2026-09-23 review), defeating the old "bind first" comment.
+ * Bind first, then do heavy work one macrotask later. The document index used to load synchronously on
+ * this thread (~179 MB better-sqlite3 + sqlite-vec read; ~7 min on a cold, AV-scanned start — 2026-09-23
+ * review). Since item 11 (2026-09-24) warmDocs() hands it to a worker thread (server/sources/
+ * doc-index-client.ts), so this deferral now only orders startup; it no longer has to absorb a stall.
  */
 export function startServer(d: StartupDeps): void {
   d.listen((port) => {
