@@ -249,6 +249,15 @@ describe('PortfolioFilterBar', () => {
     expect(market.value).toBe('all');
     expect(screen.queryByLabelText(/clear portfolio filter/i)).toBeNull();
   });
+
+  it('shows the readout even when unfiltered (13 investment · 1 other holding)', () => {
+    render(
+      <PortfolioFilterProvider>
+        <PortfolioFilterBar managers={[]} readout="13 investment · 1 other holding" />
+      </PortfolioFilterProvider>,
+    );
+    expect(screen.getByText('13 investment · 1 other holding')).toBeTruthy();
+  });
 });
 
 /**
