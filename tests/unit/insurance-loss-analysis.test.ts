@@ -482,6 +482,30 @@ describe('buildInsuranceLossReport — term / policy_ref-aware loss attachment',
     expect(review(r, '1734').eventsN).toBe(0);
   });
 
+  it('a ref-matched pool is narrowed to REVIEWABLE lines before the tiebreak — a lower-id GL sharing the number never wins', () => {
+    // Mutation guard for attachEvent's `pool = byRef.filter(isReviewable)`: the runBop fixture
+    // passes on `pool = byRef` by coincidence, because preferPolicy's policyId tiebreak
+    // ('1735' < '1736' < '1738') happens to land on the property line. Here a GL line sharing
+    // the same own number sorts BEFORE the property line ('1700' < '1735') on an identical
+    // effective date, so an unfiltered pool would attach the wind loss to the GL row — which takes
+    // no review — and the event would vanish from every deductible review and the self-insure
+    // roll-up. Hartford d=25,000: gross 40,000 → retained 25,000 / transferred 15,000.
+    const bopGlLowId = mkPolicy({ policyId: '1700', propertyId: RAYTOWN, cohort: 'other', policyType: 'Business Liability / GL (in BOP)' });
+    const terms = new Map<string, PolicyTerm>([
+      ...TERMS,
+      ['1700', { policyNumber: '37SBACB6KKB', lineNumbers: ['37SBACB6KKB'], effectiveDate: '2026-05-28', expirationDate: '2027-05-28' }],
+    ]);
+    const r = buildInsuranceLossReport(inputs({
+      policies: [bopGlLowId, WESTCHESTER, HARTFORD], decPages: DECS, policyTerms: terms,
+      lossEvents: lossEvents([mkRefEvent('e1', RAYTOWN, '2026-07-04', 40000, BOP, 'wind')], 'warehouse'),
+    }));
+    expect(r.deductibleReviews.map((d) => d.policyId).sort()).toEqual(['1734', '1735']); // GL gets no review row
+    expect(review(r, '1735')).toMatchObject({ eventsN: 1, retainedUsd: 25000, transferredUsd: 15000, overLimitUsd: 0 });
+    expect(review(r, '1734').eventsN).toBe(0);
+    expect(r.selfInsure).toMatchObject({ retainedUsd: 25000, transferredUsd: 15000, overLimitUsd: 0 });
+    expect(r.unmatchedPolicyRefs).toEqual([]);
+  });
+
   it('a third-party cause with NO policy_ref is EAL-only too (e.g. the placeholder fixture\'s liability event)', () => {
     const r = run([WESTCHESTER, HARTFORD], [{ ...mkEvent('e1', RAYTOWN, '2026-07-04', 30000), cause: 'liability' }]);
     expect(r.deductibleReviews.every((d) => d.eventsN === 0)).toBe(true);
@@ -575,5 +599,257 @@ describe('buildInsuranceLossReport — term / policy_ref-aware loss attachment',
   it('EAL rows take the resolved property display name from the policy register', () => {
     const r = run([WESTCHESTER, HARTFORD], [mkEvent('e1', RAYTOWN, '2026-07-04', 42000)]);
     expect(r.eal[0]).toMatchObject({ propertyId: RAYTOWN, property: '9620 E State Route 350, Raytown MO' });
+  });
+});
+
+// ── Unmatched policy_ref visibility (2026-09-24) ─────────────────────────────────────────────
+//
+// A non-blank policy_ref that names NO policy at the event's property (own number or line alias,
+// across every line — not only reviewable ones) is silently ignored by attachEvent. The report now
+// lists those events in `unmatchedPolicyRefs` so a loss-run typo or a policy missing from
+// property_insurance_policies is visible. Visibility ONLY: attachment, EAL, reviews and the
+// self-insure roll-up are byte-for-byte what they were.
+describe('buildInsuranceLossReport — unmatchedPolicyRefs', () => {
+  const RAYTOWN = '9620-e-state-route-350-raytown-mo';
+  const RAYTOWN_NAME = '9620 E State Route 350, Raytown MO';
+  const FISHEL = '7658-fishel-dr-n-dublin-oh';
+  const WESTCHESTER = mkPolicy({ policyId: '1734', property: RAYTOWN_NAME, propertyId: RAYTOWN, premium: 6000 });
+  const HARTFORD = mkPolicy({ policyId: '1735', property: RAYTOWN_NAME, propertyId: RAYTOWN, premium: 5000 });
+  const GL = mkPolicy({ policyId: '1733', property: RAYTOWN_NAME, propertyId: RAYTOWN, cohort: 'other', policyType: 'General Liability (GL)' });
+  const FISHEL_POLICY = mkPolicy({ policyId: '1750', property: '7658 Fishel Dr N, Dublin OH', propertyId: FISHEL, premium: 4000 });
+  const TERMS = termsOf({
+    '1734': { policyNumber: 'MMF17962784-002', lineNumbers: ['MMF17962784', 'MMF17962784-002'], effectiveDate: '2025-10-18', expirationDate: '2026-10-18' },
+    '1735': { policyNumber: '37SBACB6KKB', lineNumbers: ['37SBACB6KKB'], effectiveDate: '2026-05-28', expirationDate: '2027-05-28' },
+    '1733': { policyNumber: 'GLWF18677015-001', lineNumbers: ['GLWF18677015-001'], effectiveDate: '2025-10-18', expirationDate: '2026-10-18' },
+    '1750': { policyNumber: 'FISHEL-PROP-1', lineNumbers: ['FISHEL-PROP-1'], effectiveDate: '2026-01-01', expirationDate: '2027-01-01' },
+  });
+  const DECS = decPagesOf({
+    '1734': { deductible: 10000, coverageLimit: 2_000_000, source: 'warehouse' },
+    '1735': { deductible: 25000, coverageLimit: 2_000_000, source: 'warehouse' },
+    '1750': { deductible: 5000, coverageLimit: 2_000_000, source: 'warehouse' },
+  });
+  const ALL = [GL, WESTCHESTER, HARTFORD, FISHEL_POLICY];
+
+  function run(events: LossEventRow[], policies: PolicyEconomics[] = ALL) {
+    return buildInsuranceLossReport(inputs({ policies, decPages: DECS, policyTerms: TERMS, lossEvents: lossEvents(events, 'warehouse') }));
+  }
+  function review(r: ReturnType<typeof run>, policyId: string) {
+    const found = r.deductibleReviews.find((d) => d.policyId === policyId);
+    if (!found) throw new Error(`no review row for policy ${policyId}`);
+    return found;
+  }
+
+  it('a ref matching nothing at the property is listed with the RAW ref, and the event still attaches by covering term', () => {
+    // 2026-07-04 sits inside both Raytown terms → recency picks Hartford, exactly as with no ref.
+    const raw = ' mmf-TYPO 17962784 ';
+    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, raw, 'wind')]);
+    expect(r.unmatchedPolicyRefs).toEqual([{
+      eventId: 'e1',
+      propertyId: RAYTOWN,
+      property: RAYTOWN_NAME,
+      policyRef: raw,
+      lossDate: '2026-07-04',
+      cause: 'wind',
+      grossIncurred: 42000,
+    }]);
+    expect(review(r, '1735')).toMatchObject({ eventsN: 1, retainedUsd: 25000, transferredUsd: 17000 });
+    expect(review(r, '1734').eventsN).toBe(0);
+  });
+
+  it('detection never changes attachment, EAL, reviews or the self-insure split (unmatched ref ≡ no ref)', () => {
+    const withRef = run([
+      mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'NOT-ON-FILE'),
+      mkRefEvent('e2', RAYTOWN, '2026-01-15', 8000, 'ALSO-NOT-ON-FILE'),
+      mkRefEvent('e3', RAYTOWN, '2023-04-01', 3000, 'NOPE'),
+    ]);
+    const without = run([
+      mkEvent('e1', RAYTOWN, '2026-07-04', 42000),
+      mkEvent('e2', RAYTOWN, '2026-01-15', 8000),
+      mkEvent('e3', RAYTOWN, '2023-04-01', 3000),
+    ]);
+    expect(withRef.unmatchedPolicyRefs).toHaveLength(3);
+    expect(without.unmatchedPolicyRefs).toEqual([]);
+    expect(withRef.deductibleReviews).toEqual(without.deductibleReviews);
+    expect(withRef.eal).toEqual(without.eal);
+    expect(withRef.selfInsure).toEqual(without.selfInsure);
+  });
+
+  it("a ref matching a policy's OWN number is not listed", () => {
+    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'MMF17962784-002')]);
+    expect(r.unmatchedPolicyRefs).toEqual([]);
+    expect(review(r, '1734').eventsN).toBe(1);
+  });
+
+  it('a ref matching only a lineNumbers alias (superseded number on the same line) is not listed', () => {
+    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'MMF17962784')]);
+    expect(r.unmatchedPolicyRefs).toEqual([]);
+    expect(review(r, '1734').eventsN).toBe(1);
+  });
+
+  it('a ref naming a NON-reviewable line at the property (GL) is not listed — it matched something', () => {
+    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'GLWF18677015-001')]);
+    expect(r.unmatchedPolicyRefs).toEqual([]);
+    expect(r.deductibleReviews.every((d) => d.eventsN === 0)).toBe(true); // EAL-only, unchanged
+  });
+
+  it('a third-party cause with an unmatched ref is still listed (attachEvent returns early; detection is separate)', () => {
+    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 40000, 'BOGUS-GL-NUMBER', 'liability - slip and fall')]);
+    expect(r.unmatchedPolicyRefs).toEqual([expect.objectContaining({ eventId: 'e1', policyRef: 'BOGUS-GL-NUMBER', cause: 'liability - slip and fall' })]);
+    expect(r.deductibleReviews.every((d) => d.eventsN === 0)).toBe(true);
+    expect(r.selfInsure).toMatchObject({ retainedUsd: 0, transferredUsd: 0 });
+  });
+
+  it('a null ref and a whitespace-only ref are not listed (they normalize to null)', () => {
+    const r = run([
+      mkEvent('e1', RAYTOWN, '2026-07-04', 42000),
+      mkRefEvent('e2', RAYTOWN, '2026-07-05', 1000, '   '),
+      mkRefEvent('e3', RAYTOWN, '2026-07-06', 1000, ''),
+    ]);
+    expect(r.unmatchedPolicyRefs).toEqual([]);
+  });
+
+  it('a ref that matches a policy at a DIFFERENT property only is listed', () => {
+    // FISHEL-PROP-1 is on file — but at Fishel, not Raytown.
+    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'FISHEL-PROP-1')]);
+    expect(r.unmatchedPolicyRefs.map((u) => [u.eventId, u.propertyId])).toEqual([['e1', RAYTOWN]]);
+    expect(review(r, '1735').eventsN).toBe(1); // still attached by covering term at Raytown
+  });
+
+  it('a property with zero policies plus a non-null ref is listed, with the id as display-name fallback', () => {
+    const r = run([mkRefEvent('e1', 'P-NOPOLICY', '2026-07-04', 500, 'ANY-REF')]);
+    expect(r.unmatchedPolicyRefs).toEqual([expect.objectContaining({ eventId: 'e1', propertyId: 'P-NOPOLICY', property: 'P-NOPOLICY', policyRef: 'ANY-REF' })]);
+    expect(r.deductibleReviews.every((d) => d.eventsN === 0)).toBe(true);
+  });
+
+  it('a blank-propertyId event is never listed (unattributable; already dropped from per-property grouping)', () => {
+    const r = run([mkRefEvent('e1', '', '2026-07-04', 42000, 'NOT-ON-FILE')]);
+    expect(r.unmatchedPolicyRefs).toEqual([]);
+    expect(r.eal).toEqual([]);
+  });
+
+  it('a case / whitespace variant of an existing number is not listed', () => {
+    const r = run([
+      mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'mmf 17962784 - 002'),
+      mkRefEvent('e2', RAYTOWN, '2026-07-05', 1000, '37 sba cb6kkb'),
+    ]);
+    expect(r.unmatchedPolicyRefs).toEqual([]);
+  });
+
+  it('ordering is over content — (propertyId, lossDate, eventId, cause, grossIncurred, policyRef) — independent of input row order', () => {
+    const events = [
+      mkRefEvent('z9', RAYTOWN, '2026-07-04', 100, 'X1'),
+      mkRefEvent('a1', RAYTOWN, '2026-07-04', 100, 'X2'),
+      mkRefEvent('m5', RAYTOWN, '2026-01-01', 100, 'X3'),
+      mkRefEvent('b2', FISHEL, '2026-12-31', 100, 'X4'),
+      mkRefEvent('c3', 'P-NOPOLICY', '2024-01-01', 100, 'X5'),
+    ];
+    const expected = [
+      [FISHEL, '2026-12-31', 'b2'],
+      [RAYTOWN, '2026-01-01', 'm5'],
+      [RAYTOWN, '2026-07-04', 'a1'],
+      [RAYTOWN, '2026-07-04', 'z9'],
+      ['P-NOPOLICY', '2024-01-01', 'c3'],
+    ];
+    const key = (r: ReturnType<typeof run>) => r.unmatchedPolicyRefs.map((u) => [u.propertyId, u.lossDate, u.eventId]);
+    expect(key(run(events))).toEqual(expected);
+    expect(key(run([...events].reverse()))).toEqual(expected);
+    expect(key(run([events[3]!, events[0]!, events[4]!, events[2]!, events[1]!]))).toEqual(expected);
+  });
+
+  it('the report with unmatched refs still Zod-parses', () => {
+    const r = run([mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'NOT-ON-FILE')]);
+    expect(() => InsuranceLossReport.parse(r)).not.toThrow();
+  });
+
+  // ── refute wf_dd1d6f45-da0 regressions ──────────────────────────────────────────────────────
+
+  it('fails closed: a blank event id (admitted by both loaders) with an unmatched ref is listed and the report still builds', () => {
+    const r = run([mkRefEvent('', RAYTOWN, '2026-07-04', 42000, 'NOT-ON-FILE')]);
+    expect(r.unmatchedPolicyRefs).toEqual([expect.objectContaining({ eventId: '', policyRef: 'NOT-ON-FILE' })]);
+    expect(review(r, '1735').eventsN).toBe(1);
+  });
+
+  it("repeated '' ids (NULL ids coerced by resolveLossEvents) at one property and date are ALL listed, and attachment / EAL are unaffected", () => {
+    // The engine trusts `id: string` — NULL → '' coercion lives in resolveLossEvents (the warehouse
+    // mapper; the fixture parser drops non-string ids), so the honest engine-level input is what the
+    // resolver emits: several '' ids. Covers the per-property (lossDate, id) sort AND the
+    // unmatchedPolicyRefs sort, where eventId is a repeatable tiebreak, not a key.
+    const r = run([
+      mkRefEvent('', RAYTOWN, '2026-07-04', 42000, 'NOT-ON-FILE'),
+      mkRefEvent('', RAYTOWN, '2026-07-04', 8000, 'ALSO-NOT-ON-FILE', 'hail'),
+    ]);
+    expect(r.unmatchedPolicyRefs.map((u) => [u.eventId, u.policyRef])).toEqual([['', 'NOT-ON-FILE'], ['', 'ALSO-NOT-ON-FILE']]);
+    // Both attach by covering term → Hartford (d=25k): 25k + 8k retained, 17k + 0 transferred.
+    expect(review(r, '1735')).toMatchObject({ eventsN: 2, retainedUsd: 33000, transferredUsd: 17000 });
+    expect(review(r, '1734').eventsN).toBe(0);
+    const named = run([
+      mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'NOT-ON-FILE'),
+      mkRefEvent('e2', RAYTOWN, '2026-07-04', 8000, 'ALSO-NOT-ON-FILE', 'hail'),
+    ]);
+    expect(r.eal).toEqual(named.eal);
+    expect(r.deductibleReviews).toEqual(named.deductibleReviews);
+  });
+
+  it("three '' ids at one property/date with non-dyadic amounts (0.1/0.2/0.3): eal, reviews and unmatchedPolicyRefs are identical forward and reversed (refute wf_45165937-d0b)", () => {
+    // (lossDate, id) alone ties on repeated '' ids and falls back to the unspecified SQLite
+    // ORDER BY loss_date order; 0.1+0.2+0.3 ≠ 0.3+0.2+0.1 in IEEE-754, so the float sums and the
+    // unmatched list would both depend on row order. Migration 022's UNIQUE(property_id,
+    // loss_date, cause, gross_incurred) makes (cause, grossIncurred) a key for the tiebreak.
+    const events = [
+      mkRefEvent('', RAYTOWN, '2026-07-04', 0.1, 'REF-A', 'wind'),
+      mkRefEvent('', RAYTOWN, '2026-07-04', 0.2, 'REF-B', 'hail'),
+      mkRefEvent('', RAYTOWN, '2026-07-04', 0.3, 'REF-C', 'fire'),
+    ];
+    const fwd = run(events);
+    const rev = run([...events].reverse());
+    expect(rev.eal).toEqual(fwd.eal);
+    expect(rev.deductibleReviews).toEqual(fwd.deductibleReviews);
+    expect(rev.unmatchedPolicyRefs).toEqual(fwd.unmatchedPolicyRefs);
+    expect(fwd.unmatchedPolicyRefs.map((u) => u.policyRef)).toEqual(['REF-C', 'REF-B', 'REF-A']); // cause order: fire < hail < wind
+    expect(review(fwd, '1735').eventsN).toBe(3);
+  });
+
+  it("G1: three '' ids, SAME cause, null ref, 0.1/0.2/0.3 — only the grossIncurred key separates them; eal and reviews equal forward vs reversed", () => {
+    // Every earlier key (lossDate, id, cause) ties and policyRef is null, so the per-property sort's
+    // grossIncurred comparator is the sole thing keeping 0.1+0.2+0.3 order-independent.
+    const events = [0.1, 0.2, 0.3].map((amt) => ({ ...mkEvent('', RAYTOWN, '2026-07-04', amt), cause: 'wind' }));
+    const fwd = run(events);
+    const rev = run([...events].reverse());
+    expect(rev.eal).toEqual(fwd.eal);
+    expect(rev.deductibleReviews).toEqual(fwd.deductibleReviews);
+    expect(review(fwd, '1735').eventsN).toBe(3);
+  });
+
+  it('G2: unmatched rows tying on every key before gross list gross ASCENDING, even when ref order disagrees', () => {
+    const events = [
+      mkRefEvent('', RAYTOWN, '2026-07-04', 300, 'AAA', 'wind'),
+      mkRefEvent('', RAYTOWN, '2026-07-04', 100, 'ZZZ', 'wind'),
+      mkRefEvent('', RAYTOWN, '2026-07-04', 200, 'MMM', 'wind'),
+    ];
+    const key = (r: ReturnType<typeof run>) => r.unmatchedPolicyRefs.map((u) => [u.grossIncurred, u.policyRef]);
+    expect(key(run(events))).toEqual([[100, 'ZZZ'], [200, 'MMM'], [300, 'AAA']]);
+    expect(key(run([...events].reverse()))).toEqual([[100, 'ZZZ'], [200, 'MMM'], [300, 'AAA']]);
+  });
+
+  it('F-2: unmatched rows tying on every key before policyRef list policyRef ASCENDING (the last sort key, both input orders)', () => {
+    const events = [
+      mkRefEvent('', RAYTOWN, '2026-07-04', 100, 'ZZZ-REF'),
+      mkRefEvent('', RAYTOWN, '2026-07-04', 100, 'AAA-REF'),
+    ];
+    const refs = (r: ReturnType<typeof run>) => r.unmatchedPolicyRefs.map((u) => u.policyRef);
+    expect(refs(run(events))).toEqual(['AAA-REF', 'ZZZ-REF']);
+    expect(refs(run([...events].reverse()))).toEqual(['AAA-REF', 'ZZZ-REF']);
+  });
+
+  it('is computed ONLY on warehouse loss runs — the same unmatched ref gives [] on placeholder / absent sources', () => {
+    const events = [mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'PLACEHOLDER')];
+    const build = (source: DataSource) =>
+      buildInsuranceLossReport(inputs({ policies: ALL, decPages: DECS, policyTerms: TERMS, lossEvents: lossEvents(events, source) }));
+    expect(build('warehouse').unmatchedPolicyRefs.map((u) => u.eventId)).toEqual(['e1']);
+    expect(build('placeholder').unmatchedPolicyRefs).toEqual([]);
+    expect(build('absent').unmatchedPolicyRefs).toEqual([]);
+    // attachment is identical across sources — the gate changes visibility only
+    expect(build('placeholder').deductibleReviews.map((d) => [d.policyId, d.eventsN]))
+      .toEqual(build('warehouse').deductibleReviews.map((d) => [d.policyId, d.eventsN]));
   });
 });

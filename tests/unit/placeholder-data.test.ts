@@ -54,6 +54,64 @@ describe('resolveLossEvents cutover', () => {
     expect(r.rows).toHaveLength(1);
     expect(r.rows[0]?.grossIncurred).toBe(12345);
   });
+
+  it("NULL ids (migration 022's TEXT PRIMARY KEY lacks NOT NULL) are coerced to '' at the source, for every downstream reader", () => {
+    const db = freshDb();
+    const ins = db.prepare(
+      `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+       VALUES (NULL, '3540-e-5th-ave-columbus-oh', ?, '2025-01-01', ?, 100, 100, 0, 'broker-loss-run.xlsx')`,
+    );
+    // SQLite admits any number of NULLs in a non-INTEGER PRIMARY KEY; causes differ for UNIQUE.
+    ins.run('P-1', 'wind');
+    ins.run('P-2', 'hail');
+    const r = resolveLossEvents(db);
+    expect(r.source).toBe('warehouse');
+    expect(r.rows.map((e) => e.id)).toEqual(['', '']);
+    expect(r.rows.every((e) => typeof e.id === 'string')).toBe(true);
+  });
+
+  it('loosely-typed SQL columns are normalized ONCE, at the loader: BLOB/numeric policy_ref, cause, property_id come out string-or-null / string; gross a finite number ≥ 0', () => {
+    const db = freshDb();
+    // property_id is a REFERENCES column, so a BLOB there needs the FK check off; the loader must
+    // still yield '' (unattributable) rather than a Buffer. Every other column is written as SQLite
+    // stores it: affinity never coerces a BLOB, so only BLOBs reach the loader as non-strings in a
+    // TEXT column — a number written to a TEXT column (e.g. an integer cause) is stored as text.
+    db.pragma('foreign_keys = OFF');
+    const ins = db.prepare(
+      `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+       VALUES (?, ?, ?, '2025-01-01', ?, ?, ?, ?, 'raw-sql')`,
+    );
+    ins.run('R1', '3540-e-5th-ave-columbus-oh', Buffer.from([0x41]), Buffer.from([0x02]), 100, 100, 0);
+    ins.run('R2', Buffer.from([0x03]), 'P-2', 'hail', Buffer.from([0x04]), Buffer.from([0x05]), Buffer.from([0x06]));
+    // loss_date / source are TEXT NOT NULL, but NOT NULL does not stop a BLOB.
+    db.prepare(
+      `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+       VALUES ('R3', '3540-e-5th-ave-columbus-oh', NULL, ?, 'fire', 50, 50, 0, ?)`,
+    ).run(Buffer.from('2026-03-01'), Buffer.from([0x07]));
+    // ±Infinity is a legal SQLite REAL and +Infinity passes 022's `>= 0` CHECK; a NaN/Infinity would
+    // poison every Σ, so the finite guard (not just typeof) must hold.
+    db.prepare(
+      `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+       VALUES ('R4', '3540-e-5th-ave-columbus-oh', NULL, '2025-02-01', 'wind', ?, ?, ?, 'raw-sql')`,
+    ).run(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY);
+    const r = resolveLossEvents(db);
+    expect(r.source).toBe('warehouse');
+    const byId = new Map(r.rows.map((e) => [e.id, e]));
+    expect(byId.get('R1')).toMatchObject({ propertyId: '3540-e-5th-ave-columbus-oh', policyRef: null, cause: null, grossIncurred: 100, paid: 100, reserve: 0 });
+    // BLOB gross → 0 (event still counted, no dollars), BLOB paid/reserve → null, BLOB property → ''.
+    expect(byId.get('R2')).toMatchObject({ propertyId: '', policyRef: 'P-2', cause: 'hail', grossIncurred: 0, paid: null, reserve: null });
+    // BLOB loss_date / source → '' (the engine reads '' as "no date": no observation year, no term narrowing).
+    expect(byId.get('R3')).toMatchObject({ lossDate: '', source: '', cause: 'fire', grossIncurred: 50 });
+    expect(byId.get('R4')).toMatchObject({ grossIncurred: 0, paid: null, reserve: null });
+    for (const e of r.rows) {
+      expect(typeof e.lossDate).toBe('string');
+      expect(typeof e.source).toBe('string');
+      expect(typeof e.propertyId).toBe('string');
+      expect(e.policyRef === null || typeof e.policyRef === 'string').toBe(true);
+      expect(e.cause === null || typeof e.cause === 'string').toBe(true);
+      expect(Number.isFinite(e.grossIncurred) && e.grossIncurred >= 0).toBe(true);
+    }
+  });
 });
 
 describe('resolveDecPages', () => {
