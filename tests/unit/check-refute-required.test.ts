@@ -537,7 +537,7 @@ describe('check-refute-required — trailer detection', () => {
   it('detects Refute-Reviewed / Refute-Skip in a commit message (case-insensitive)', () => {
     expect(hasRefuteApproval('fix: x\n\nRefute-Reviewed: wf_abc123')).toBe(true);
     expect(hasRefuteApproval('chore\n\nRefute-Skip: docs-only adjustment')).toBe(true);
-    expect(hasRefuteApproval('refute-reviewed: wf_fixture-x')).toBe(true);
+    expect(hasRefuteApproval('refute-reviewed: wf_fixture0-x')).toBe(true);
   });
   it('returns false when no attestation trailer is present', () => {
     expect(hasRefuteApproval('fix: something\n\nCo-Authored-By: someone')).toBe(false);
@@ -565,33 +565,43 @@ describe('check-refute-required — trailer value', () => {
     ).toBe(false);
     expect(hasRefuteApproval('fix\n\nRefute-Skip: <reason>\n')).toBe(false);
     // A second, real trailer in the same message still counts.
-    expect(hasRefuteApproval('fix\n\nRefute-Skip: <reason>\nRefute-Reviewed: wf_fixture-real1\n')).toBe(true);
+    expect(hasRefuteApproval('fix\n\nRefute-Skip: <reason>\nRefute-Reviewed: wf_fixture0-real1\n')).toBe(true);
   });
 });
 
-// Refute-Reviewed must name a real run id: `Refute-Reviewed: PENDING` used to pass as if a refute ran.
-describe('check-refute-required — Refute-Reviewed run-id shape', () => {
-  it('accepts a real wf_ run id, with or without trailing prose', () => {
-    expect(hasRefuteApproval('fix\n\nRefute-Reviewed: wf_d10ede49-078\n')).toBe(true);
-    expect(
-      hasRefuteApproval('fix\n\nRefute-Reviewed: wf_c23f5fd8-ddf + 3 independent Opus adversarial passes\n'),
-    ).toBe(true);
+// `Refute-Reviewed: PENDING` used to pass as if a refute ran. Ratified 2026-09-27: prose records of a
+// non-workflow review stay valid; only placeholders and fake run ids are rejected.
+describe('check-refute-required — Refute-Reviewed value', () => {
+  it.each([
+    'wf_d10ede49-078',
+    'wf_c23f5fd8-ddf + 3 independent Opus adversarial passes',
+    'wf_e4c405d9-2ff wf_d8fd3fce-646',
+    'wf_refute-financial-change_m5',
+    'five-mandate adversarial merge gate (Opus 5.5 subagents, 2 rounds)',
+    'Fable 5.1 adversarial pass 2026-09-17 — 3 findings, 3 fixed',
+    'refute-financial-change x5 (wf_d0987dd9-c8c, wf_1a2b3c4d-5e6)',
+  ])('accepts Refute-Reviewed: %s', (value) => {
+    expect(hasRefuteApproval(`fix\n\nRefute-Reviewed: ${value}\n`)).toBe(true);
   });
-  it.each(['PENDING', 'pending', 'TODO', 'TBD', 'N/A', 'none', '???', 'wf_', 'wf_abc', 'wf_ABCDEF', 'abc123', 'yes', 'PENDING wf_d10ede49-078'])(
-    'rejects Refute-Reviewed: %s',
-    (value) => {
-      expect(hasRefuteApproval(`fix\n\nRefute-Reviewed: ${value}\n`)).toBe(false);
-    },
-  );
+  it.each([
+    'PENDING', 'pending', 'TODO', 'TBD', 'N/A', 'n.a.', 'none', '???', '---', 'yes', 'done', 'reviewed',
+    '"TODO"', '(pending)', 'TODO​', '​PENDING', 'wf_pending', 'wf_------', 'wf_todotbd', 'wf_PENDING1',
+  ])('rejects Refute-Reviewed: %j', (value) => {
+    expect(hasRefuteApproval(`fix\n\nRefute-Reviewed: ${value}\n`)).toBe(false);
+  });
   it('explains each rejection', () => {
     const [pending] = rejectedRefuteTrailers('fix\n\nRefute-Reviewed: PENDING\n');
     expect(pending).toMatch(/Refute-Reviewed: PENDING — rejected: placeholder/);
-    const [shape] = rejectedRefuteTrailers('fix\n\nRefute-Reviewed: abc123\n');
-    expect(shape).toMatch(/"abc123" is not a refute run id/);
+    const [fake] = rejectedRefuteTrailers('fix\n\nRefute-Reviewed: wf_pending\n');
+    expect(fake).toMatch(/"wf_pending" poses as a refute run id/);
     expect(rejectedRefuteTrailers('fix\n\nRefute-Reviewed: wf_d10ede49-078\n')).toEqual([]);
   });
   it('a placeholder Refute-Reviewed does not mask a valid Refute-Skip in the same message', () => {
     expect(hasRefuteApproval('fix\n\nRefute-Reviewed: TODO\nRefute-Skip: formatting only\n')).toBe(true);
+  });
+  it('CRLF messages behave the same', () => {
+    expect(hasRefuteApproval('fix\r\n\r\nRefute-Reviewed: wf_d10ede49-078\r\n')).toBe(true);
+    expect(hasRefuteApproval('fix\r\n\r\nRefute-Reviewed: PENDING\r\n')).toBe(false);
   });
 });
 
@@ -602,7 +612,7 @@ describe('check-refute-required — Refute-Skip semantics unchanged', () => {
     expect(hasRefuteApproval('fix\n\nRefute-Skip: todo-list UI string only\n')).toBe(true);
   });
   it('a bare placeholder word is not a justification', () => {
-    for (const v of ['PENDING', 'TODO', 'TBD', 'n/a']) {
+    for (const v of ['PENDING', 'TODO', 'TBD', 'n/a', 'n.a.', '"TODO"', 'TODO​']) {
       expect(hasRefuteApproval(`fix\n\nRefute-Skip: ${v}\n`)).toBe(false);
     }
   });
@@ -992,21 +1002,21 @@ describe('check-refute-required — integration against real git', () => {
     expect(r.message).toContain(`${child.slice(0, 7)} fix(alerts): dedup`);
     expect(r.message).not.toContain(parent.slice(0, 7));
     // The same range with the child attested passes.
-    const fixed = mk([parent], { 'src/analytics/a.ts': lines(12, [3, 'dedup']) }, 'fix: dedup\n\nRefute-Reviewed: wf_fixture-1');
+    const fixed = mk([parent], { 'src/analytics/a.ts': lines(12, [3, 'dedup']) }, 'fix: dedup\n\nRefute-Reviewed: wf_fixture0-1');
     expect(evaluate(b0, run, fixed).outcome).toBe('ok');
   }, 60_000);
 
   it('a clean catch-up merge where the two sides touch DIFFERENT files needs no trailer', () => {
-    const mainSide = mk([b0], { 'src/analytics/a.ts': lines(12, [0, 'main']) }, 'main\n\nRefute-Reviewed: wf_fixture-m');
-    const prSide = mk([b0], { 'src/analytics/other.ts': 'pr\n' }, 'pr\n\nRefute-Reviewed: wf_fixture-p');
+    const mainSide = mk([b0], { 'src/analytics/a.ts': lines(12, [0, 'main']) }, 'main\n\nRefute-Reviewed: wf_fixture0-m');
+    const prSide = mk([b0], { 'src/analytics/other.ts': 'pr\n' }, 'pr\n\nRefute-Reviewed: wf_fixture0-p');
     const tree = g(['merge-tree', '--write-tree', prSide, mainSide]).trim().split('\n')[0] ?? '';
     const catchup = mk([prSide, mainSide], {}, 'Merge main into pr', tree);
     expect(evaluate(mainSide, run, catchup)).toMatchObject({ outcome: 'ok' });
   }, 60_000);
 
   it('a clean merge that combines BOTH sides\' changes to one financial file needs its own trailer (documented cost)', () => {
-    const mainSide = mk([b0], { 'src/analytics/a.ts': lines(12, [0, 'main']) }, 'main\n\nRefute-Reviewed: wf_fixture-m');
-    const prSide = mk([b0], { 'src/analytics/a.ts': lines(12, [11, 'pr']) }, 'pr\n\nRefute-Reviewed: wf_fixture-p');
+    const mainSide = mk([b0], { 'src/analytics/a.ts': lines(12, [0, 'main']) }, 'main\n\nRefute-Reviewed: wf_fixture0-m');
+    const prSide = mk([b0], { 'src/analytics/a.ts': lines(12, [11, 'pr']) }, 'pr\n\nRefute-Reviewed: wf_fixture0-p');
     const tree = g(['merge-tree', '--write-tree', prSide, mainSide]).trim().split('\n')[0] ?? '';
     const catchup = mk([prSide, mainSide], {}, 'Merge main into pr', tree);
     const r = evaluate(mainSide, run, catchup);
@@ -1079,8 +1089,8 @@ describe('check-refute-required — integration against real git', () => {
   it('a committed .gitattributes merge=union cannot make a conflict in financial source look clean', () => {
     // The attack: attributes in the checked-out tree (the PR controls it in CI) make git's own
     // re-merge resolve a real conflict, so --remerge-diff would list nothing.
-    const aSide = mk([b0], { 'src/analytics/a.ts': lines(12, [4, 'LTV_MAX = 0.41']) }, 'a\n\nRefute-Reviewed: wf_fixture-a');
-    const bSide = mk([b0], { 'src/analytics/a.ts': lines(12, [4, 'LTV_AGG = 0.40']), '.gitattributes': 'src/** merge=union\n' }, 'b\n\nRefute-Reviewed: wf_fixture-b');
+    const aSide = mk([b0], { 'src/analytics/a.ts': lines(12, [4, 'LTV_MAX = 0.41']) }, 'a\n\nRefute-Reviewed: wf_fixture0-a');
+    const bSide = mk([b0], { 'src/analytics/a.ts': lines(12, [4, 'LTV_AGG = 0.40']), '.gitattributes': 'src/** merge=union\n' }, 'b\n\nRefute-Reviewed: wf_fixture0-b');
     const attrs = join(dir, '.gitattributes');
     writeFileSync(attrs, 'src/** merge=union\n');
     try {
@@ -1152,13 +1162,13 @@ describe('check-refute-required — integration against real git', () => {
     // Financial rename on main + an edit on the branch: the catch-up merge is itself a violation
     // (it combines both sides' changes). What the pin guarantees is WHICH paths are listed: an
     // unpinned re-merge under renames=false would also report the old path as a modify/delete.
-    const mainR = mk([b0], { 'src/analytics/a.ts': null, 'src/analytics/b.ts': lines(12) }, 'main: rename\n\nRefute-Reviewed: wf_fixture-m');
-    const edit = mk([b0], { 'src/analytics/a.ts': lines(12, [1, 'edited']) }, 'edit\n\nRefute-Reviewed: wf_fixture-e');
+    const mainR = mk([b0], { 'src/analytics/a.ts': null, 'src/analytics/b.ts': lines(12) }, 'main: rename\n\nRefute-Reviewed: wf_fixture0-m');
+    const edit = mk([b0], { 'src/analytics/a.ts': lines(12, [1, 'edited']) }, 'edit\n\nRefute-Reviewed: wf_fixture0-e');
     const t1 = g(['merge-tree', '--write-tree', edit, mainR]).trim().split('\n')[0] ?? '';
     const catchup = mk([edit, mainR], {}, 'Merge main into branch', t1);
-    const base2 = mk([b0], { 'src/analytics/d/x.ts': lines(8) }, 'dir\n\nRefute-Reviewed: wf_fixture-d');
-    const mainD = mk([base2], { 'src/analytics/d/x.ts': null, 'src/analytics/e/x.ts': lines(8) }, 'main: move dir\n\nRefute-Reviewed: wf_fixture-md');
-    const addY = mk([base2], { 'src/analytics/d/y.ts': 'y\n' }, 'add y\n\nRefute-Reviewed: wf_fixture-y');
+    const base2 = mk([b0], { 'src/analytics/d/x.ts': lines(8) }, 'dir\n\nRefute-Reviewed: wf_fixture0-d');
+    const mainD = mk([base2], { 'src/analytics/d/x.ts': null, 'src/analytics/e/x.ts': lines(8) }, 'main: move dir\n\nRefute-Reviewed: wf_fixture0-md');
+    const addY = mk([base2], { 'src/analytics/d/y.ts': 'y\n' }, 'add y\n\nRefute-Reviewed: wf_fixture0-y');
     // Git's default merge.directoryRenames=conflict reports a file-location conflict here (exit 1)
     // but still writes the moved result tree on stdout's first line.
     let t2 = '';
@@ -1241,13 +1251,13 @@ describe('check-refute-required — integration against real git', () => {
     // Two INEXACT financial renames on main (exact renames ignore the limit) and an edit to one of
     // the old paths on the branch. Under a local renameLimit=1 an unpinned re-merge gives up on
     // rename detection and reports the old paths as modify/delete as well.
-    const r1 = mk([b0], { 'src/analytics/r1.ts': lines(20), 'src/analytics/r2.ts': lines(21) }, 'two files\n\nRefute-Reviewed: wf_fixture-2');
+    const r1 = mk([b0], { 'src/analytics/r1.ts': lines(20), 'src/analytics/r2.ts': lines(21) }, 'two files\n\nRefute-Reviewed: wf_fixture0-2');
     const mainR = mk(
       [r1],
       { 'src/analytics/r1.ts': null, 'src/analytics/r2.ts': null, 'src/analytics/s1.ts': lines(20, [19, 'moved1']), 'src/analytics/s2.ts': lines(21, [20, 'moved2']) },
-      'main: inexact renames\n\nRefute-Reviewed: wf_fixture-r',
+      'main: inexact renames\n\nRefute-Reviewed: wf_fixture0-r',
     );
-    const edit = mk([r1], { 'src/analytics/r1.ts': lines(20, [0, 'edited']) }, 'edit r1\n\nRefute-Reviewed: wf_fixture-e');
+    const edit = mk([r1], { 'src/analytics/r1.ts': lines(20, [0, 'edited']) }, 'edit r1\n\nRefute-Reviewed: wf_fixture0-e');
     const tree = g(['merge-tree', '--write-tree', edit, mainR]).trim().split('\n')[0] ?? '';
     const merge = mk([edit, mainR], {}, 'Merge main', tree);
     const check = (): void => {
@@ -1274,7 +1284,7 @@ describe('check-refute-required — integration against real git', () => {
 
   it('an octopus is diffed against its FIRST parent: a financial file it brings in from another parent is listed', () => {
     const p1 = mk([b0], { 'docs/p1.md': '1\n' }, 'p1');
-    const p2 = mk([b0], { 'src/analytics/fromB.ts': 'b\n' }, 'p2\n\nRefute-Reviewed: wf_fixture-p2');
+    const p2 = mk([b0], { 'src/analytics/fromB.ts': 'b\n' }, 'p2\n\nRefute-Reviewed: wf_fixture0-p2');
     const p3 = mk([b0], { 'docs/p3.md': '3\n' }, 'p3');
     const combinedTree = mk([p1], { 'src/analytics/fromB.ts': 'b\n', 'docs/p3.md': '3\n' }, 'unused');
     const octo = mk([p1, p2, p3], { 'src/analytics/fromB.ts': 'b\n', 'docs/p3.md': '3\n' }, 'Octopus, no trailer', `${combinedTree}^{tree}`);
@@ -1286,8 +1296,8 @@ describe('check-refute-required — integration against real git', () => {
   it('a conflict in a financial file resolved VERBATIM to one side still needs a trailer on the merge', () => {
     // The combined diff lists nothing here (the result equals one parent); only --remerge-diff sees
     // that git's own re-merge would have left conflict markers. The real #364 / #369 catch-up shape.
-    const mainSide = mk([b0], { 'src/analytics/a.ts': lines(12, [4, 'main side']) }, 'main\n\nRefute-Reviewed: wf_fixture-m');
-    const prSide = mk([b0], { 'src/analytics/a.ts': lines(12, [4, 'pr side']) }, 'pr\n\nRefute-Reviewed: wf_fixture-p');
+    const mainSide = mk([b0], { 'src/analytics/a.ts': lines(12, [4, 'main side']) }, 'main\n\nRefute-Reviewed: wf_fixture0-m');
+    const prSide = mk([b0], { 'src/analytics/a.ts': lines(12, [4, 'pr side']) }, 'pr\n\nRefute-Reviewed: wf_fixture0-p');
     const takeMain = mk([prSide, mainSide], { 'src/analytics/a.ts': lines(12, [4, 'main side']) }, 'Merge main (took theirs)');
     const r = evaluate(mainSide, run, takeMain);
     expect(r.outcome).toBe('violation');
@@ -1347,7 +1357,7 @@ describe('check-refute-required — integration against real git', () => {
   it('a merge that records its FIRST parent\'s tree (merge -s ours) silently reverting main\'s change needs a trailer', () => {
     // The combined diff lists nothing (the result equals parent 1); only --remerge-diff shows that the
     // automatic merge would have kept main's attested change. Squashed, this PR would revert it.
-    const mainSide = mk([b0], { 'src/analytics/a.ts': lines(12, [3, 'LTV_MAX = 0.40']) }, 'main\n\nRefute-Reviewed: wf_fixture-m');
+    const mainSide = mk([b0], { 'src/analytics/a.ts': lines(12, [3, 'LTV_MAX = 0.40']) }, 'main\n\nRefute-Reviewed: wf_fixture0-m');
     const pr = mk([b0], { 'docs/x.md': 'x\n' }, 'pr docs');
     const ours = mk([pr, mainSide], {}, 'Merge main into pr', `${pr}^{tree}`);
     const r = evaluate(mainSide, run, ours);
@@ -1358,8 +1368,8 @@ describe('check-refute-required — integration against real git', () => {
 
   it('.gitattributes merge=union whose result EQUALS parent 1 (modify vs delete) is still caught (--attr-source)', () => {
     // Here -c lists nothing (result == parent 1), so only the attribute-free re-merge sees the conflict.
-    const aSide = mk([b0], { 'src/analytics/a.ts': lines(12).split('\n').filter((l) => l !== 'line 4').join('\n') }, 'main: drop line 4\n\nRefute-Reviewed: wf_fixture-a');
-    const bSide = mk([b0], { 'src/analytics/a.ts': lines(12, [4, 'line 4 modified']), '.gitattributes': 'src/** merge=union\n' }, 'b\n\nRefute-Reviewed: wf_fixture-b');
+    const aSide = mk([b0], { 'src/analytics/a.ts': lines(12).split('\n').filter((l) => l !== 'line 4').join('\n') }, 'main: drop line 4\n\nRefute-Reviewed: wf_fixture0-a');
+    const bSide = mk([b0], { 'src/analytics/a.ts': lines(12, [4, 'line 4 modified']), '.gitattributes': 'src/** merge=union\n' }, 'b\n\nRefute-Reviewed: wf_fixture0-b');
     const attrs = join(dir, '.gitattributes');
     writeFileSync(attrs, 'src/** merge=union\n');
     try {
