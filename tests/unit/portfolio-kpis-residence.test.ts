@@ -54,3 +54,20 @@ describe('portfolioKpis — residence excluded from investment metrics', () => {
     }
   });
 });
+
+describe('portfolioKpis — residence equity and debt are other holdings (ratified 2026-09-24)', () => {
+  const s = {
+    properties: [
+      p({ id: 'a', oxfordValue: 10_000_000, equityInvested: 1_000_000, loanBalance: 2_000_000, lender: 'Symetra' }),
+      p({ id: 'res', type: 'Residence', oxfordValue: 2_000_000, equityInvested: 900_000, loanBalance: 400_000, lender: 'Wells' }),
+    ],
+    leases: [], cash: { totalCash: 0, history: [] }, meta: { asOf: '2026-09-24' },
+  } as unknown as PortfolioSnapshot;
+  it('equityInvested and totalDebt stay investment-only; the residence is carried as other holdings', () => {
+    const k = portfolioKpis(s);
+    expect(k.equityInvested.value).toBe(1_000_000);
+    expect(k.otherHoldingsEquity.value).toBe(900_000);
+    expect(k.totalDebt.value).toBe(2_000_000);
+    expect(k.otherHoldingsDebt.value).toBe(400_000);
+  });
+});

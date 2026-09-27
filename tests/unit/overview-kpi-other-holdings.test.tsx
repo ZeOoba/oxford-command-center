@@ -83,4 +83,9 @@ describe('Overview KpiStripWidget — Portfolio Value sublabel reports other hol
     expect(screen.getByText('1 investment property')).toBeTruthy();
     expect(screen.queryByText(/other holdings/)).toBeNull();
   });
+
+  it('Equity Invested discloses the residence equity as other holdings (ratified 2026-09-24)', () => {
+    renderStrip(snapshot([investment, residence]));
+    expect(screen.getByText('+$900K other holdings')).toBeTruthy();
+  });
 });

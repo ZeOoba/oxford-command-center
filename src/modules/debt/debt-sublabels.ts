@@ -6,11 +6,19 @@
 // the ordering rule lives in one place and is unit-tested.
 import { affiliateNotesClause, fmtPct } from '@analytics/index';
 import type { DebtSummary, PortfolioKpis } from '@analytics/index';
+import { otherHoldingsDebtClause } from '../overview/other-holdings';
 
 const join = (parts: string[]): string => parts.filter((x) => x.length > 0).join(' · ');
 
-export function overviewTotalDebtSublabel(k: Pick<PortfolioKpis, 'ltv' | 'affiliateDebt'>): string {
-  return join([affiliateNotesClause(k.affiliateDebt.value), 'property loan balances', `${fmtPct(k.ltv.value)} LTV`]);
+export function overviewTotalDebtSublabel(
+  k: Pick<PortfolioKpis, 'ltv' | 'affiliateDebt' | 'otherHoldingsCount' | 'otherHoldingsDebt'>,
+): string {
+  return join([
+    otherHoldingsDebtClause(k),
+    affiliateNotesClause(k.affiliateDebt.value),
+    'property loan balances',
+    `${fmtPct(k.ltv.value)} LTV`,
+  ]);
 }
 
 export function externalDebtSublabel(d: Pick<DebtSummary, 'affiliateDebt'>, thirdPartyBorrowerCount: number): string {

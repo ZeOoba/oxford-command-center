@@ -3,7 +3,8 @@ import { overviewTotalDebtSublabel, externalDebtSublabel } from '../../src/modul
 import type { PortfolioKpis } from '../../src/analytics/index';
 
 const cell = (value: number | null) => ({ value, prov: { source: 't', confidence: 'derived' as const } });
-const k = (ltv: number, affiliate: number) => ({ ltv: cell(ltv), affiliateDebt: cell(affiliate) }) as unknown as PortfolioKpis;
+const k = (ltv: number, affiliate: number, otherDebt = 0) =>
+  ({ ltv: cell(ltv), affiliateDebt: cell(affiliate), otherHoldingsCount: cell(otherDebt ? 1 : 0), otherHoldingsDebt: cell(otherDebt) }) as unknown as PortfolioKpis;
 
 describe('overviewTotalDebtSublabel — disclosure, then basis, then metric', () => {
   it('live shape: affiliate clause leads', () => {
@@ -11,6 +12,9 @@ describe('overviewTotalDebtSublabel — disclosure, then basis, then metric', ()
   });
   it('no affiliate notes → basis leads', () => {
     expect(overviewTotalDebtSublabel(k(0.2, 0))).toBe('property loan balances · 20.0% LTV');
+  });
+  it('residence debt, when any, is disclosed first', () => {
+    expect(overviewTotalDebtSublabel(k(0.2, 1_095_582, 400_000))).toBe('+$400K other-holdings debt · +$1.10M affiliate notes · property loan balances · 20.0% LTV');
   });
 });
 

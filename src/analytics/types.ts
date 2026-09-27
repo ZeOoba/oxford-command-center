@@ -52,6 +52,9 @@ export interface PortfolioKpis {
   /** Non-investment holdings (the residence) — shown alongside, never inside, investment metrics. */
   otherHoldingsValue: Cell;
   otherHoldingsCount: Cell;
+  /** Residence equity / loan balance — disclosed beside Equity Invested / Total Debt (ratified 2026-09-24). */
+  otherHoldingsEquity: Cell;
+  otherHoldingsDebt: Cell;
 }
 
 export interface RolloverBucket {
