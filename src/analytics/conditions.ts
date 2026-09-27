@@ -6,6 +6,7 @@ import { tenantScorecards } from '@/brain/tenants';
 import { coerceNonNegMoney } from '@/lib/money';
 import { renewalSignals, marketRentGaps, bucketExpiry } from './lease-forecast';
 import { investmentLtv } from './debt-basis';
+import { isInvestmentProperty } from './property-basis';
 import { DAY_MS } from '@/lib/time-constants';
 const HOUR_MS = 3_600_000;
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
@@ -355,7 +356,10 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
     }
   }
 
-  for (const p of s.properties) {
+  // Ratified 2026-09-24 (Gabriel): per-property DSCR/LTV governor alerts are an INVESTMENT signal —
+  // the residence is excluded (a residence mortgage is disclosed as other-holdings debt on the Total
+  // Debt tile instead). Governor constants and insight ids unchanged.
+  for (const p of s.properties.filter(isInvestmentProperty)) {
     if (p.dscr !== null && p.dscr < T.dscrCriticalFloor) {
       out.push({
         id: `dscr-floor-${p.id}`, severity: 'critical', category: 'debt',
