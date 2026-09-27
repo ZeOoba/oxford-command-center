@@ -6,6 +6,8 @@ import { pipeline, type FeatureExtractionPipeline } from '@huggingface/transform
 import { pdfToText } from '../lib/pdf-text';
 import mammoth from 'mammoth';
 import ExcelJS from 'exceljs';
+import { DocIndexClient, inProcessDocIndexTransport, workerTransport, type DocIndexTransport } from './doc-index-client';
+import type { KnnRow } from './doc-index-protocol';
 
 /**
  * Document RAG (Phase 3 — semantic) — vector search over lease/PSA/OM text so the agent can
@@ -365,7 +367,7 @@ export async function embedMissing(
   }
 }
 
-/** Nearest-neighbor query → cited, scored passages (closest first). */
+/** Nearest-neighbor query over an IN-PROCESS index (in-memory fallback / tests) → cited, scored passages. */
 export async function queryIndex(index: VecIndex, query: string, embed: Embedder, limit = 5): Promise<DocHit[]> {
   const q = query.trim();
   if (!q || index.chunks.length === 0) return [];
@@ -374,19 +376,23 @@ export async function queryIndex(index: VecIndex, query: string, embed: Embedder
   const rows = index.db
     .prepare('SELECT rowid, distance FROM vec_chunks WHERE embedding MATCH ? ORDER BY distance LIMIT ?')
     .all(qv, limit) as Array<{ rowid: bigint | number; distance: number }>;
-  const hits: DocHit[] = [];
+  const knnRows: KnnRow[] = [];
   for (const r of rows) {
     const chunk = index.chunks[Number(r.rowid)];
-    if (!chunk) continue;
-    hits.push({
-      doc: chunk.docName,
-      snippet: condense(chunk.text, q),
-      score: 1 / (1 + r.distance), // distance→similarity (monotonic, 0..1)
-      docId: chunk.docId,
-      chunkIdx: chunk.idx,
-    });
+    if (chunk) knnRows.push({ chunk, distance: r.distance });
   }
-  return hits;
+  return shapeHits(knnRows, q);
+}
+
+/** KNN rows → cited, scored passages (closest first). Shared by the in-process and worker paths. */
+export function shapeHits(rows: readonly KnnRow[], query: string): DocHit[] {
+  return rows.map(({ chunk, distance }) => ({
+    doc: chunk.docName,
+    snippet: condense(chunk.text, query),
+    score: 1 / (1 + distance), // distance→similarity (monotonic, 0..1)
+    docId: chunk.docId,
+    chunkIdx: chunk.idx,
+  }));
 }
 
 // ── Real embedder (lazy singleton, transformers.js) ─────────────────────────────
@@ -605,14 +611,40 @@ function listFiles(
 // `fromDisk` distinguishes a real, persisted index (builtAt is a meaningful timestamp for freshness
 // reporting) from an in-memory fallback/empty index (builtAt is just "when this process stood up a
 // placeholder" and must never be reported as the index's actual build time — see docIndexBuiltAt).
-let cache: { index: VecIndex | null; docs: Array<{ name: string; chunks: number }>; builtAt: string; fromDisk: boolean } | null = null;
+// A disk index is served by a DocIndexClient (worker thread by default — item 11, 2026-09-24); an
+// in-memory fallback keeps a VecIndex on the main thread (it is empty or tiny by construction).
+type DocCache = {
+  index: VecIndex | null;
+  client: DocIndexClient | null;
+  docs: Array<{ name: string; chunks: number }>;
+  chunkCount: number;
+  builtAt: string;
+  fromDisk: boolean;
+};
+let cache: DocCache | null = null;
+let loading: { client: DocIndexClient; done: Promise<DocCache> } | null = null;
+
+/** Worker thread by default; DOC_INDEX_WORKER=0 runs the same protocol in-process — the pre-2026-09-24
+ *  main-thread behaviour, kept as the rollback switch. */
+function defaultDocIndexTransport(): DocIndexTransport {
+  return process.env.DOC_INDEX_WORKER === '0' ? inProcessDocIndexTransport() : workerTransport();
+}
+let transportFactory: () => DocIndexTransport = defaultDocIndexTransport;
+
+/** Test-only: inject the transport (vitest cannot spawn a .ts Worker); null restores the default. */
+export function setDocIndexTransportForTests(f: (() => DocIndexTransport) | null): void {
+  transportFactory = f ?? defaultDocIndexTransport;
+}
 
 /** Test-only: clear the module-level index cache so a test can start from a known-empty state.
- * Closes any open sqlite handle first — otherwise a Windows temp-dir cleanup right after a
- * disk-loaded-index test EPERMs on the still-open file. */
+ * Closes any open handle first — otherwise a Windows temp-dir cleanup right after a disk-loaded-index
+ * test EPERMs on the still-open file (the in-process transport releases it synchronously). */
 export function resetDocCacheForTests(): void {
   cache?.index?.close();
+  if (cache?.client) void cache.client.close().catch(() => undefined);
+  if (loading) void loading.client.close().catch(() => undefined);
   cache = null;
+  loading = null;
 }
 
 /**
@@ -651,26 +683,51 @@ export async function buildDocIndex(embed: Embedder = realEmbedder): Promise<voi
   }
   const filterNote = process.env.DOCUMENTS_PATH_INCLUDE ? ` matching /${process.env.DOCUMENTS_PATH_INCLUDE}/i` : '';
   console.log(`[documents] indexed ${docs.length} documents (${chunks.length} chunks)${filterNote}`);
-  cache = { index: await buildIndex(chunks, embed), docs, builtAt: new Date().toISOString(), fromDisk: false };
+  cache = { index: await buildIndex(chunks, embed), client: null, docs, chunkCount: chunks.length, builtAt: new Date().toISOString(), fromDisk: false };
 }
 
-async function ensureIndex() {
+/** One shared load per process; a failure is not cached, so the next caller retries. */
+function loadFromDisk(p: string): Promise<DocCache> {
+  if (loading) return loading.done;
+  const client = DocIndexClient.start(p, transportFactory(), {
+    // An UNEXPECTED worker death (never the exit that follows close()) — drop the dead client so the next
+    // request respawns rather than serving "worker exited" forever.
+    onFailure: (err) => {
+      console.error(`[documents] doc-index worker failed — dropping the index; next request reloads: ${err.message}`);
+      if (cache?.client === client) cache = null;
+      if (loading?.client === client) loading = null;
+    },
+  });
+  const done = client.ready.then(
+    (info) => {
+      cache = { index: null, client, docs: info.docs, chunkCount: info.chunkCount, builtAt: info.builtAt, fromDisk: true };
+      loading = null;
+      console.log(`[documents] loaded on-disk index — ${info.docs.length} documents, ${info.chunkCount} chunks (${p})`);
+      return cache;
+    },
+    (err: unknown) => {
+      if (loading?.client === client) loading = null;
+      void client.close().catch(() => undefined);
+      throw err;
+    },
+  );
+  loading = { client, done };
+  return done;
+}
+
+async function ensureIndex(): Promise<DocCache> {
   if (cache) return cache;
   const p = docIndexPath();
-  if (existsSync(p)) {
-    const { index, docs, builtAt } = loadDiskIndex(p);
-    cache = { index, docs, builtAt, fromDisk: true };
-    console.log(`[documents] loaded on-disk index — ${docs.length} documents, ${index.chunks.length} chunks (${p})`);
-  } else {
-    await buildDocIndex(); // in-memory fallback (empty when DOCUMENTS_DIR unset)
-  }
+  if (existsSync(p)) return loadFromDisk(p);
+  await buildDocIndex(); // in-memory fallback (empty when DOCUMENTS_DIR unset)
   return cache!;
 }
 
 /**
- * Startup warm-up. Loads the persisted on-disk index if present (fast, no embedding). If it's absent
- * but a corpus is configured, we deliberately do NOT build the full corpus in-process (that OOM-
- * crashes the box) — we log guidance to run `npm run index:docs` and serve an empty index.
+ * Startup warm-up. Loads the persisted on-disk index if present — in a worker thread (item 11), so the
+ * HTTP server keeps answering while a cold ~179 MB file loads. If it's absent but a corpus is configured,
+ * we deliberately do NOT build the full corpus in-process (that OOM-crashes the box) — we log guidance to
+ * run `npm run index:docs` and serve an empty index.
  */
 export async function warmDocIndex(): Promise<void> {
   const p = docIndexPath();
@@ -682,27 +739,35 @@ export async function warmDocIndex(): Promise<void> {
     console.warn(
       `[documents] no on-disk index at ${p} — run \`npm run index:docs\` to build it. Serving an EMPTY document index until then.`,
     );
-    cache = { index: await buildIndex([], realEmbedder), docs: [], builtAt: new Date().toISOString(), fromDisk: false };
+    cache = { index: await buildIndex([], realEmbedder), client: null, docs: [], chunkCount: 0, builtAt: new Date().toISOString(), fromDisk: false };
   }
   // No DOCUMENTS_DIR → leave cache null; first request lazily builds an empty index (harmless).
 }
 
-/** The injectable doc searcher handed to the agent (server only). */
-export async function searchDocuments(query: string, limit = 5): Promise<DocHit[]> {
-  const { index } = await ensureIndex();
-  if (!index) return [];
-  return queryIndex(index, query, realEmbedder, limit);
+/** The injectable doc searcher handed to the agent (server only). `embed` is injectable for tests. */
+export async function searchDocuments(query: string, limit = 5, embed: Embedder = realEmbedder): Promise<DocHit[]> {
+  const c = await ensureIndex();
+  if (c.client) {
+    const q = query.trim();
+    if (!q || c.chunkCount === 0) return [];
+    const [qv] = await embed([q]);
+    if (!qv) return [];
+    return shapeHits(await c.client.knn(qv, limit), q);
+  }
+  if (!c.index) return [];
+  return queryIndex(c.index, query, embed, limit);
 }
 
 export async function docStatus(): Promise<{ configured: boolean; dir: string | null; documents: number; chunks: number; engine: string; docs: Array<{ name: string; chunks: number }>; builtAt: string }> {
-  const { index, docs, builtAt } = await ensureIndex();
-  return { configured: !!process.env.DOCUMENTS_DIR, dir: process.env.DOCUMENTS_DIR ?? null, documents: docs.length, chunks: index?.chunks.length ?? 0, engine: 'semantic (all-MiniLM-L6-v2 + sqlite-vec)', docs: docs.slice(0, 50), builtAt };
+  const { docs, chunkCount, builtAt } = await ensureIndex();
+  return { configured: !!process.env.DOCUMENTS_DIR, dir: process.env.DOCUMENTS_DIR ?? null, documents: docs.length, chunks: chunkCount, engine: 'semantic (all-MiniLM-L6-v2 + sqlite-vec)', docs: docs.slice(0, 50), builtAt };
 }
 
-/** Build time of the loaded index, WITHOUT forcing a load (safe for /api/health). Only a
- * disk-loaded index has a meaningful build time — an in-memory fallback/empty index stamps
- * `builtAt` with "now" purely as a placeholder, which must never read as fresh (I-1, 2026-09-23
- * review). */
+/** Build time of the loaded index, WITHOUT forcing a load (safe for /api/health). Only a disk index has a
+ * meaningful build time — an in-memory fallback stamps `builtAt` with "now" as a placeholder, which must
+ * never read as fresh (I-1, 2026-09-23 review). While a disk load is in flight, the worker's `opened`
+ * message supplies it, so the Data Feeds row does not flash "never" during a cold start. */
 export function docIndexBuiltAt(): string | null {
-  return cache?.fromDisk ? cache.builtAt : null;
+  if (cache) return cache.fromDisk && cache.builtAt ? cache.builtAt : null;
+  return loading?.client.builtAt ?? null;
 }

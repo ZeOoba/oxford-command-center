@@ -110,4 +110,96 @@ describe('DocIndexClient over the in-process transport (the vitest-reachable pat
     await c.ready;
     await expect(c.knn(new Float32Array([1, 0, 0]), 3)).rejects.toThrow('doc-index worker exited (code 1)');
   });
+
+  it('a hung worker (alive, never answers) rejects knn at the per-request deadline instead of waiting forever', async () => {
+    let onMsg: ((m: DocIndexResponse) => void) | null = null;
+    const t: DocIndexTransport = {
+      send: (msg) => {
+        if (msg.type === 'load') setImmediate(() => onMsg?.({ type: 'loaded', info: { docs: [], chunkCount: 1, builtAt: 'x', dim: 3 } }));
+        // knn: swallowed — the worker is stuck, not dead, so no 'error'/'exit' ever fires
+      },
+      onMessage: (cb) => {
+        onMsg = cb;
+      },
+      onFailure: () => undefined,
+      terminate: async () => undefined,
+    };
+    const c = DocIndexClient.start('ignored', t, { knnTimeoutMs: 20 });
+    clients.push(c);
+    await c.ready;
+    await expect(c.knn(new Float32Array([1, 0, 0]), 3)).rejects.toThrow(/doc index query timed out after 20 ms/);
+  });
+
+  it('a late answer after the deadline is dropped, and the client still serves later queries', async () => {
+    let onMsg: ((m: DocIndexResponse) => void) | null = null;
+    const t: DocIndexTransport = {
+      send: (msg) => {
+        if (msg.type === 'load') setImmediate(() => onMsg?.({ type: 'loaded', info: { docs: [], chunkCount: 1, builtAt: 'x', dim: 3 } }));
+        if (msg.type === 'knn' && msg.id === 1) setTimeout(() => onMsg?.({ type: 'knn-result', id: 1, rows: [] }), 60);
+        if (msg.type === 'knn' && msg.id === 2) setImmediate(() => onMsg?.({ type: 'knn-result', id: 2, rows: [] }));
+      },
+      onMessage: (cb) => {
+        onMsg = cb;
+      },
+      onFailure: () => undefined,
+      terminate: async () => undefined,
+    };
+    const c = DocIndexClient.start('ignored', t, { knnTimeoutMs: 20 });
+    clients.push(c);
+    await c.ready;
+    await expect(c.knn(new Float32Array([1, 0, 0]), 3)).rejects.toThrow(/timed out/);
+    await expect(c.knn(new Float32Array([1, 0, 0]), 3)).resolves.toEqual([]);
+    await new Promise((r) => setTimeout(r, 80)); // the stale id-1 answer arrives and must be ignored without throwing
+  });
+
+  it('the normal worker exit after close() is not reported as a failure', async () => {
+    let onMsg: ((m: DocIndexResponse) => void) | null = null;
+    let onFail: ((e: Error) => void) | null = null;
+    const t: DocIndexTransport = {
+      send: (msg) => {
+        if (msg.type === 'load') setImmediate(() => onMsg?.({ type: 'loaded', info: { docs: [], chunkCount: 1, builtAt: 'x', dim: 3 } }));
+        if (msg.type === 'close') setImmediate(() => onFail?.(new Error('doc-index worker exited (code 0)')));
+      },
+      onMessage: (cb) => {
+        onMsg = cb;
+      },
+      onFailure: (cb) => {
+        onFail = cb;
+      },
+      terminate: async () => undefined,
+    };
+    const failures: Error[] = [];
+    const c = DocIndexClient.start('ignored', t, { onFailure: (e) => failures.push(e) });
+    await c.ready;
+    await c.close();
+    await new Promise((r) => setImmediate(r));
+    expect(failures).toEqual([]);
+    expect(c.closed).toBe(true);
+  });
+
+  it('an unexpected worker exit while open IS reported once', async () => {
+    let onMsg: ((m: DocIndexResponse) => void) | null = null;
+    let onFail: ((e: Error) => void) | null = null;
+    const t: DocIndexTransport = {
+      send: (msg) => {
+        if (msg.type === 'load') setImmediate(() => onMsg?.({ type: 'loaded', info: { docs: [], chunkCount: 1, builtAt: 'x', dim: 3 } }));
+      },
+      onMessage: (cb) => {
+        onMsg = cb;
+      },
+      onFailure: (cb) => {
+        onFail = cb;
+      },
+      terminate: async () => undefined,
+    };
+    const failures: Error[] = [];
+    const c = DocIndexClient.start('ignored', t, { onFailure: (e) => failures.push(e) });
+    clients.push(c);
+    await c.ready;
+    const fire = onFail as ((e: Error) => void) | null; // TS narrows the closure-assigned let to never
+    fire?.(new Error('doc-index worker exited (code 1)'));
+    fire?.(new Error('doc-index worker exited (code 1)')); // 'error' then 'exit' both fire on a crash
+    expect(failures.map((e) => e.message)).toEqual(['doc-index worker exited (code 1)']);
+    await expect(c.knn(new Float32Array([1, 0, 0]), 3)).rejects.toThrow(/exited \(code 1\)/);
+  });
 });

@@ -12,9 +12,11 @@ import {
   buildIndex,
   docIndexBuiltAt,
   resetDocCacheForTests,
+  setDocIndexTransportForTests,
   warmDocIndex,
   type Embedder,
 } from '../../server/sources/documents';
+import { inProcessDocIndexTransport } from '../../server/sources/doc-index-client';
 
 function restoreEnv(key: string, value: string | undefined): void {
   if (value === undefined) delete process.env[key];
@@ -29,6 +31,7 @@ describe('docIndexBuiltAt — only a disk-loaded index reports a build time (I-1
     restoreEnv('DOCUMENTS_DIR', prev.dir);
     restoreEnv('DOC_INDEX_PATH', prev.path);
     resetDocCacheForTests();
+    setDocIndexTransportForTests(null);
   });
 
   it('returns null when no index has been loaded or built', () => {
@@ -51,6 +54,7 @@ describe('docIndexBuiltAt — only a disk-loaded index reports a build time (I-1
 
   it('returns the real build time once a disk-persisted index is loaded into cache', async () => {
     resetDocCacheForTests();
+    setDocIndexTransportForTests(() => inProcessDocIndexTransport());
     const root = mkdtempSync(join(tmpdir(), 'docidx-disk-'));
     try {
       const dbPath = join(root, 'doc-index.sqlite');
