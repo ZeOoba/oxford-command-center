@@ -367,10 +367,13 @@ const PLACEHOLDER_VALUE =
   /^(?:pending|todo|tbd|tba|n[./]?a\.?|none|placeholder|wip|later|fixme|done|ok|yes|reviewed|pass(?:ed)?|reason|x+|\?+|[-–—]+|\.+|…+|\*+|#+)[.!:?,;]*$/i;
 
 /**
- * An unfilled template blank anywhere in the value: `<date>`, `<reviewer/run ref>`, `<runId>`. Catches
- * a template pasted without being filled in (e.g. "Fable 5.1 adversarial pass <date> — <n> findings").
+ * An unfilled template blank standing as its own word: `<date>`, `<reviewer/run ref>`, `<n> findings`.
+ * Catches a template pasted without being filled in ("Fable 5.1 adversarial pass <date> — <n> findings").
+ * Standalone only — start or whitespace before, end/whitespace/punctuation after — so prose that merely
+ * contains angle brackets still attests: `.tmp-<pid>-<ts>` (on main, #367), `Map<string>`,
+ * `a<b and c>d`, `<b>display-only</b>`. Emails and URLs (`@`, `://`) are never blanks.
  */
-const UNFILLED_TEMPLATE = /<[A-Za-z][^<>\n]{0,40}>/;
+const UNFILLED_TEMPLATE = /(?:^|\s)(<(?![^<>\n]*(?:@|:\/\/))[A-Za-z][^<>\n]{0,40}>)(?=$|[\s.,;:!?)\]—–-])/;
 
 /** Strip invisible format characters (zero-width space, BOM, bidi marks) and wrapping quotes/brackets/Markdown emphasis. */
 function normalizeTrailerValue(value: string): string {
@@ -402,15 +405,19 @@ function refuteTrailers(message: string): Array<{ kind: 'reviewed' | 'skip'; val
 function trailerRejection(value: string): string | null {
   if (value === '') return 'empty value';
   const norm = normalizeTrailerValue(value);
-  // Checked on the raw AND normalized value: normalization unwraps `"<reason>"` to `reason`.
+  // Checked on the raw AND normalized value: a WRAPPED hint (`"wf_<runId>"`, `(wf_<runId>)`) only
+  // starts with the hint once unwrapped, and its `<runId>` is not a standalone blank.
   if ([value, norm].some((v) => v.startsWith('wf_<runId>') || v.startsWith('<reason>'))) {
     return "the gate's own placeholder, pasted verbatim";
   }
-  if (UNFILLED_TEMPLATE.test(value)) return `unfilled template blank "${UNFILLED_TEMPLATE.exec(value)?.[0] ?? ''}"`;
+  // Raw value: normalization would unwrap a whole-value `<reviewer/run ref>` into plain words.
+  const blank = UNFILLED_TEMPLATE.exec(value)?.[1] ?? UNFILLED_TEMPLATE.exec(norm)?.[1];
+  if (blank !== undefined) return `unfilled template blank "${blank}"`;
   if (norm === '' || PLACEHOLDER_VALUE.test(norm)) return `placeholder "${value}" is not an attestation`;
-  const first = norm.split(/\s+/)[0] ?? '';
-  if (/^wf_/i.test(first) && !(REFUTE_RUN_ID.test(first.replace(/[,;.)]+$/, '')) && /\d/.test(first))) {
-    return `"${first}" poses as a refute run id but is not one (expected wf_<id> like wf_d10ede49-078)`;
+  // Only the id-shaped prefix of the first word: `wf_d10ede49-078: 0 findings` / `...078's` are real ids.
+  const id = /^wf_[A-Za-z0-9_-]*/i.exec(norm)?.[0];
+  if (id !== undefined && !(REFUTE_RUN_ID.test(id) && /\d/.test(id))) {
+    return `"${id}" poses as a refute run id but is not one (expected wf_<id> like wf_d10ede49-078)`;
   }
   return null;
 }

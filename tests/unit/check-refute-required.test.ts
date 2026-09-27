@@ -580,6 +580,19 @@ describe('check-refute-required — Refute-Reviewed value', () => {
     'five-mandate adversarial merge gate (Opus 5.5 subagents, 2 rounds)',
     'Fable 5.1 adversarial pass 2026-09-17 — 3 findings, 3 fixed',
     'refute-financial-change x5 (wf_d0987dd9-c8c, wf_1a2b3c4d-5e6)',
+    // Merge-gate round 3: prose that merely contains angle brackets is not an unfilled blank.
+    'adversarial pass — both CLIs leak their .tmp-<pid>-<ts> on an exhausted rename (#367)',
+    'Map<string> type-only change',
+    'Record<string, number> to ReadonlyMap',
+    'compares a<b and c>d only',
+    '<b>display-only</b> markup',
+    'reviewed by Gabriel <ggoldberg@oxfordra.net>',
+    'see <https://example.com/run/42> for the transcript',
+    // A real run id followed by punctuation is still a real run id.
+    'wf_d10ede49-078: 0 findings',
+    "wf_d10ede49-078's three lenses",
+    'wf_d10ede49-078/opus',
+    'wf_d10ede49-078! clean',
   ])('accepts Refute-Reviewed: %s', (value) => {
     expect(hasRefuteApproval(`fix\n\nRefute-Reviewed: ${value}\n`)).toBe(true);
   });
@@ -591,6 +604,8 @@ describe('check-refute-required — Refute-Reviewed value', () => {
     // Unfilled template blanks, and the gate's own hint disguised by wrapping.
     '<reviewer/run ref>', 'Fable 5.1 adversarial pass <date> — <n> findings, <m> fixed',
     '"<reason>"', '[<reason>]', '​<reason>', 'reason',
+    // Merge-gate round 3.
+    'ok', 'OK.', 'route-only — <file(s)> contain no financial math', 'wf_<id>', 'x <date> y',
   ])('rejects Refute-Reviewed: %j', (value) => {
     expect(hasRefuteApproval(`fix\n\nRefute-Reviewed: ${value}\n`)).toBe(false);
   });
@@ -600,6 +615,12 @@ describe('check-refute-required — Refute-Reviewed value', () => {
     const [fake] = rejectedRefuteTrailers('fix\n\nRefute-Reviewed: wf_pending\n');
     expect(fake).toMatch(/"wf_pending" poses as a refute run id/);
     expect(rejectedRefuteTrailers('fix\n\nRefute-Reviewed: wf_d10ede49-078\n')).toEqual([]);
+    // A wrapped hint is named as the gate's own hint (pins the normalized-value hint check).
+    for (const v of ['"wf_<runId>"', '(wf_<runId>)', '**wf_<runId>**']) {
+      expect(rejectedRefuteTrailers(`fix\n\nRefute-Reviewed: ${v}\n`)[0]).toMatch(/the gate's own placeholder/);
+    }
+    const [blank] = rejectedRefuteTrailers('fix\n\nRefute-Reviewed: pass <date> — <n> findings\n');
+    expect(blank).toMatch(/unfilled template blank "<date>"/);
   });
   it('a placeholder Refute-Reviewed does not mask a valid Refute-Skip in the same message', () => {
     expect(hasRefuteApproval('fix\n\nRefute-Reviewed: TODO\nRefute-Skip: formatting only\n')).toBe(true);
