@@ -2,7 +2,7 @@ import type { CSSProperties } from 'react';
 import type { Market } from '@contracts/index';
 import { PROPERTY_MARKETS, PropertyType } from '@contracts/index';
 import { Button } from '@/primitives/Button';
-import { usePortfolioFilter } from './PortfolioFilterContext';
+import { isPortfolioFiltered, usePortfolioFilter } from './PortfolioFilterContext';
 
 const fieldCls = 'num h-8 rounded-[var(--radius-sm)] px-2.5 text-2xs outline-none';
 const fieldStyle: CSSProperties = {
@@ -20,14 +20,14 @@ export interface PortfolioFilterBarProps {
   /** Distinct property-manager names, computed by the mounting component from its
    *  already-fetched data (see PortfolioFilterContext.tsx for why this may be empty). */
   managers: string[];
-  /** Display-only slice readout ("12 of 31 assets · $4.2M NOI"), computed by the
-   *  mounting component from already-fetched data — no new fetching here. */
-  slice?: { shown: number; total: number; noiUsd?: number };
+  /** Display-only readout ("13 investment · 1 other holding" / "3 of 13 investment · $0.6M NOI"),
+   *  computed by the mounting component (src/shell/filter-slice.ts) — rendered whenever present. */
+  readout?: string;
 }
 
-export function PortfolioFilterBar({ managers, slice }: PortfolioFilterBarProps) {
+export function PortfolioFilterBar({ managers, readout }: PortfolioFilterBarProps) {
   const { filter, setMarket, setType, setManager, clear } = usePortfolioFilter();
-  const isFiltered = filter.market !== 'all' || filter.propertyType !== 'all' || filter.manager !== 'all';
+  const isFiltered = isPortfolioFiltered(filter);
 
   return (
     <div
@@ -89,10 +89,9 @@ export function PortfolioFilterBar({ managers, slice }: PortfolioFilterBarProps)
         ))}
       </select>
 
-      {isFiltered && slice && (
+      {readout && (
         <span className="num ml-auto text-2xs" style={{ color: 'var(--text-secondary)' }}>
-          {slice.shown} of {slice.total} assets
-          {slice.noiUsd != null && ` · $${(slice.noiUsd / 1_000_000).toFixed(1)}M NOI`}
+          {readout}
         </span>
       )}
 

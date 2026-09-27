@@ -94,6 +94,11 @@ export function filterProperties<T extends PortfolioRow>(properties: T[], filter
   return properties.filter((row) => matchesFilter(row, filter));
 }
 
+/** True when any dimension is narrowed — shared by the bar's styling and the shell's readout. */
+export function isPortfolioFiltered(f: PortfolioFilterState): boolean {
+  return f.market !== 'all' || f.propertyType !== 'all' || f.manager !== 'all';
+}
+
 export interface PortfolioFilterApi {
   filter: PortfolioFilterState;
   setMarket: (market: Market | 'all') => void;

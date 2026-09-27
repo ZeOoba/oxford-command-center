@@ -15,8 +15,9 @@ import { AiPanel } from '@/brain/AiPanel';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ModuleLoading, ModuleError } from './ModuleFallback';
 import { StaleBanner } from './StaleBanner';
-import { PortfolioFilterProvider, filterProperties, usePortfolioFilter } from './PortfolioFilterContext';
+import { PortfolioFilterProvider, filterProperties, isPortfolioFiltered, usePortfolioFilter } from './PortfolioFilterContext';
 import { PortfolioFilterBar } from './PortfolioFilterBar';
+import { filterSliceReadout } from './filter-slice';
 import type { Property } from '@contracts/index';
 
 // `Property` (Spine A / `PortfolioSnapshot.properties`) carries no per-property manager
@@ -26,23 +27,14 @@ import type { Property } from '@contracts/index';
 const NO_MANAGERS: string[] = [];
 
 /**
- * Reads the active portfolio filter from context and derives the display-only slice
- * readout ("N of M assets · $X.XM NOI") from already-fetched snapshot rows — no new fetch.
- * Lives INSIDE PortfolioFilterProvider so it can consume the filter; AppShell renders the
- * provider itself and therefore cannot read the filter directly. Filtering reuses the
- * context's own `filterProperties` helper (`Property` satisfies `PortfolioRow`), so no
- * predicate logic is duplicated. NOI-per-property is already present on each row (`noi`,
- * Oxford share), so the summed figure needs no new analytics computation.
+ * Reads the active portfolio filter from context and derives the display-only readout (investment vs
+ * other-holdings counts, ratified 2026-09-24 — src/shell/filter-slice.ts) from already-fetched snapshot
+ * rows — no new fetch. Lives INSIDE PortfolioFilterProvider so it can consume the filter.
  */
 function FilterBarWithSlice({ properties }: { properties: Property[] }) {
   const { filter } = usePortfolioFilter();
-  const total = properties.length;
   const matched = filterProperties(properties, filter);
-  const slice =
-    total > 0
-      ? { shown: matched.length, total, noiUsd: matched.reduce((sum, p) => sum + p.noi, 0) }
-      : undefined;
-  return <PortfolioFilterBar managers={NO_MANAGERS} slice={slice} />;
+  return <PortfolioFilterBar managers={NO_MANAGERS} readout={filterSliceReadout(properties, matched, isPortfolioFiltered(filter))} />;
 }
 
 export function AppShell() {
