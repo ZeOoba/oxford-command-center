@@ -88,6 +88,12 @@ describe('resolveLossEvents cutover', () => {
       `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
        VALUES ('R3', '3540-e-5th-ave-columbus-oh', NULL, ?, 'fire', 50, 50, 0, ?)`,
     ).run(Buffer.from('2026-03-01'), Buffer.from([0x07]));
+    // ±Infinity is a legal SQLite REAL and +Infinity passes 022's `>= 0` CHECK; a NaN/Infinity would
+    // poison every Σ, so the finite guard (not just typeof) must hold.
+    db.prepare(
+      `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+       VALUES ('R4', '3540-e-5th-ave-columbus-oh', NULL, '2025-02-01', 'wind', ?, ?, ?, 'raw-sql')`,
+    ).run(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY);
     const r = resolveLossEvents(db);
     expect(r.source).toBe('warehouse');
     const byId = new Map(r.rows.map((e) => [e.id, e]));
@@ -96,6 +102,7 @@ describe('resolveLossEvents cutover', () => {
     expect(byId.get('R2')).toMatchObject({ propertyId: '', policyRef: 'P-2', cause: 'hail', grossIncurred: 0, paid: null, reserve: null });
     // BLOB loss_date / source → '' (the engine reads '' as "no date": no observation year, no term narrowing).
     expect(byId.get('R3')).toMatchObject({ lossDate: '', source: '', cause: 'fire', grossIncurred: 50 });
+    expect(byId.get('R4')).toMatchObject({ grossIncurred: 0, paid: null, reserve: null });
     for (const e of r.rows) {
       expect(typeof e.lossDate).toBe('string');
       expect(typeof e.source).toBe('string');

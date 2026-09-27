@@ -831,6 +831,16 @@ describe('buildInsuranceLossReport — unmatchedPolicyRefs', () => {
     expect(key(run([...events].reverse()))).toEqual([[100, 'ZZZ'], [200, 'MMM'], [300, 'AAA']]);
   });
 
+  it('F-2: unmatched rows tying on every key before policyRef list policyRef ASCENDING (the last sort key, both input orders)', () => {
+    const events = [
+      mkRefEvent('', RAYTOWN, '2026-07-04', 100, 'ZZZ-REF'),
+      mkRefEvent('', RAYTOWN, '2026-07-04', 100, 'AAA-REF'),
+    ];
+    const refs = (r: ReturnType<typeof run>) => r.unmatchedPolicyRefs.map((u) => u.policyRef);
+    expect(refs(run(events))).toEqual(['AAA-REF', 'ZZZ-REF']);
+    expect(refs(run([...events].reverse()))).toEqual(['AAA-REF', 'ZZZ-REF']);
+  });
+
   it('is computed ONLY on warehouse loss runs — the same unmatched ref gives [] on placeholder / absent sources', () => {
     const events = [mkRefEvent('e1', RAYTOWN, '2026-07-04', 42000, 'PLACEHOLDER')];
     const build = (source: DataSource) =>
