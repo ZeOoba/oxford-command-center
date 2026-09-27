@@ -4,6 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import type { PortfolioSnapshot, Property, Lease, Loan, InsurancePolicy, Deal } from '@contracts/index';
 import { evaluateConditions } from '@analytics/index';
+import { mergeInsightSources, buildSummary } from '../../src/modules/insights/insights.logic';
 
 // ── Fixtures (mirror conditions.test.ts pattern) ─────────────────────────────
 const ASOF = '2026-06-21';
@@ -52,9 +53,9 @@ function mkLease(o: Partial<Lease> & { id: string }): Lease {
 const opts = { now: NOW };
 
 // ── C-1: L-1 Expiring no renewal signal ──────────────────────────────────────
-describe('C-1: L-1 — expiring ≤90d, no stage → critical', () => {
-  it('≤90d expiry, no stage → exactly one L-1, critical, impactAnnualUsd=annualRent, spine:A, category:lease', () => {
-    const l = mkLease({ id: 'l1', leaseEnd: iso(60), monthsToExpiry: 2, annualRent: 24000 });
+describe('C-1: L-1 — expiring ≤90d, no stage → critical under 60d, warning 60–90d (ratified 2026-09-24)', () => {
+  it('<60d expiry, no stage → exactly one L-1, critical, impactAnnualUsd=annualRent, spine:A, category:lease', () => {
+    const l = mkLease({ id: 'l1', leaseEnd: iso(45), monthsToExpiry: 1.5, annualRent: 24000 });
     const out = evaluateConditions(snap({ leases: [l] }), opts);
     const ins = out.filter((i) => i.id === `lease-expiry-l1`);
     expect(ins).toHaveLength(1);
@@ -66,6 +67,18 @@ describe('C-1: L-1 — expiring ≤90d, no stage → critical', () => {
     expect(i.impactAnnualUsd).toBe(24000);
     expect(i.entityType).toBe('lease');
     expect(i.entityId).toBe('l1');
+  });
+
+  it.each([
+    [59, 'critical'],
+    [60, 'warning'],
+    [75, 'warning'],
+    [90, 'warning'],
+  ])('%id → %s (same id, impact unchanged)', (days, severity) => {
+    const l = mkLease({ id: 'l1', leaseEnd: iso(days), monthsToExpiry: days / 30, annualRent: 18000 });
+    const ins = evaluateConditions(snap({ leases: [l] }), opts).find((i) => i.id === 'lease-expiry-l1');
+    expect(ins?.severity).toBe(severity);
+    expect(ins?.impactAnnualUsd).toBe(18000);
   });
 
   it('exactly 90d (3 months) expiry, no stage → fires L-1', () => {
@@ -186,7 +199,7 @@ describe('C-5: L-4 — suppressed when no market rent in overlay', () => {
 
 // ── C-6: L-5 concentrated rollover ───────────────────────────────────────────
 describe('C-6: L-5 — one bucket ≥15% of total annual rent → warning', () => {
-  it('0-6m bucket ≥15% of total → L-5 warning, impactAnnualUsd = bucket rent', () => {
+  it('0-6m bucket ≥15% of total → L-5 warning; impact is null ($0 to Risk $ — its rent is already in the per-lease expiry alerts)', () => {
     // Total rent: 100000. l1 expiring in 3m: 20000 = 20% → fires
     const l1 = mkLease({ id: 'l1', leaseEnd: iso(90), monthsToExpiry: 3, annualRent: 20000 });
     const l2 = mkLease({ id: 'l2', leaseEnd: iso(365), monthsToExpiry: 12, annualRent: 80000 });
@@ -196,7 +209,8 @@ describe('C-6: L-5 — one bucket ≥15% of total annual rent → warning', () =
     expect(ins!.severity).toBe('warning');
     expect(ins!.spine).toBe('A');
     expect(ins!.provenance).toBe('derived');
-    expect(ins!.impactAnnualUsd).toBe(20000);
+    expect(ins!.impactAnnualUsd).toBeNull();
+    expect(ins!.detail).toContain('$20K');
   });
 
   it('6-12m bucket ≥15% of total → L-5 warning', () => {
@@ -285,5 +299,60 @@ describe('L-3: monthToMonth (leaseEnd past, status Active) → info', () => {
     const l = mkLease({ id: 'l1', leaseEnd: iso(-30), monthsToExpiry: -1, annualRent: 18000, status: 'Expired' });
     const out = evaluateConditions(snap({ leases: [l] }), opts);
     expect(out.some((i) => i.id === 'lease-mtm-l1')).toBe(false);
+  });
+});
+
+describe('L-5 does not double-count Risk $ (ratified 2026-09-24)', () => {
+  it('Workbook-basis Risk $ equals the per-lease expiry impact alone', () => {
+    const l1 = mkLease({ id: 'l1', leaseEnd: iso(90), monthsToExpiry: 3, annualRent: 20000 });
+    const l2 = mkLease({ id: 'l2', leaseEnd: iso(365), monthsToExpiry: 12, annualRent: 80000 });
+    const s = snap({ leases: [l1, l2] });
+    const out = evaluateConditions(s, opts);
+    expect(out.some((i) => i.id === 'rollover-concentration-0-6m')).toBe(true); // still alerts
+    const { merged } = mergeInsightSources(out, [], s);
+    const workbook = buildSummary(merged).riskImpactBySpine.find((t) => t.label === 'Workbook basis')!;
+    expect(workbook.totalUsd).toBe(20000); // L-1 on l1 only; was 40000 with L-5 counted
+  });
+});
+
+describe('L-5 detail is truthful about Risk $ coverage (refute wf_5c91e034-4fe)', () => {
+  const COVERED = 'That rent is already counted in the per-lease expiry alerts, so this alert adds nothing to Risk $.';
+  const UNCOVERED = 'This rent is outside the per-lease expiry alerts (beyond their window or renewal underway), so it is not in Risk $ — ratified 2026-09-24.';
+
+  it('0-6m lease with an L-1 alert → "already counted" wording', () => {
+    const l1 = mkLease({ id: 'l1', leaseEnd: iso(90), monthsToExpiry: 3, annualRent: 20000 });
+    const l2 = mkLease({ id: 'l2', leaseEnd: iso(365), monthsToExpiry: 12, annualRent: 80000 });
+    const out = evaluateConditions(snap({ leases: [l1, l2] }), opts);
+    expect(out.some((i) => i.id === 'lease-expiry-l1')).toBe(true);
+    const ins = out.find((i) => i.id === 'rollover-concentration-0-6m')!;
+    expect(ins.detail).toContain(COVERED);
+    expect(ins.detail).not.toContain(UNCOVERED);
+    expect(ins.impactAnnualUsd).toBeNull();
+  });
+
+  it('6-12m-only bucket (beyond every per-lease window) → "outside" wording, Risk $ 0', () => {
+    const l1 = mkLease({ id: 'l1', leaseEnd: iso(270), monthsToExpiry: 9, annualRent: 20000 });
+    const l2 = mkLease({ id: 'l2', leaseEnd: iso(900), monthsToExpiry: 30, annualRent: 80000 });
+    const s = snap({ leases: [l1, l2] });
+    const out = evaluateConditions(s, opts);
+    const ins = out.find((i) => i.id === 'rollover-concentration-6-12m')!;
+    expect(ins).toBeDefined();
+    expect(ins.detail).toContain(UNCOVERED);
+    expect(ins.detail).not.toContain(COVERED);
+    expect(ins.impactAnnualUsd).toBeNull();
+    const { merged } = mergeInsightSources(out, [], s);
+    const workbook = buildSummary(merged).riskImpactBySpine.find((t) => t.label === 'Workbook basis')!;
+    expect(workbook.totalUsd).toBe(0);
+  });
+
+  it('0-6m lease with a renewal stage underway (per-lease alert suppressed) → "outside" wording', () => {
+    const l1 = mkLease({ id: 'l1', leaseEnd: iso(90), monthsToExpiry: 3, annualRent: 20000 });
+    const l2 = mkLease({ id: 'l2', leaseEnd: iso(365), monthsToExpiry: 12, annualRent: 80000 });
+    const out = evaluateConditions(snap({ leases: [l1, l2], renewalStages: { l1: 'Negotiating' } }), opts);
+    expect(out.some((i) => /^(expiring|expired|lease-expiry|lease-lapsed)-l1$/.test(i.id))).toBe(false);
+    const ins = out.find((i) => i.id === 'rollover-concentration-0-6m')!;
+    expect(ins).toBeDefined();
+    expect(ins.detail).toContain(UNCOVERED);
+    expect(ins.impactAnnualUsd).toBeNull();
   });
 });

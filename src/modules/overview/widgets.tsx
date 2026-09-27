@@ -12,7 +12,7 @@ import { RolloverChart } from '../leasing/RolloverChart';
 import { AreaChart } from '@/charts/AreaChart';
 import { TierBoard, type Tier, type TierItem, type TierTotal } from '@/primitives/TierBoard';
 import { spineLabel } from '@/lib/spine-label';
-import { investmentPropertiesSublabel } from './other-holdings';
+import { investmentPropertiesSublabel, otherHoldingsEquityClause } from './other-holdings';
 import { overviewTotalDebtSublabel } from '../debt/debt-sublabels';
 import { useWarehouseInsights } from '../insights/hooks';
 import { mergeInsightSources, buildSummary, buildTiers, totalsBySpine, type MergedInsight } from '../insights/insights.logic';
@@ -51,7 +51,7 @@ function KpiStripWidget() {
       <KpiStat label="Occupancy" value={k.occupancy.value === null ? null : k.occupancy.value * 100} format={(n) => (n === null ? '—' : `${n.toFixed(1)}%`)} prov={k.occupancy.prov} sublabel="weighted by SF" accentColor="var(--color-pos)" onPress={goTo('leases')} />
       <KpiStat label="WALT" value={k.walt.value} format={fmtYears} prov={k.walt.prov} sublabel="rent-weighted" accentColor="var(--color-accent2)" onPress={goTo('leases')} />
       <KpiStat label="Total Debt" value={k.totalDebt.value} format={fmtUsdCompact} prov={k.totalDebt.prov} sublabel={overviewTotalDebtSublabel(k)} accentColor="var(--color-warn)" onPress={goTo('debt')} />
-      <KpiStat label="Equity Invested" value={k.equityInvested.value} format={fmtUsdCompact} prov={k.equityInvested.prov} accentColor="var(--accent)" />
+      <KpiStat label="Equity Invested" value={k.equityInvested.value} format={fmtUsdCompact} prov={k.equityInvested.prov} sublabel={otherHoldingsEquityClause(k) || undefined} accentColor="var(--accent)" />
       <KpiStat label="Total Cash" value={k.totalCash.value} format={fmtUsdCompact} prov={k.totalCash.prov} spark={cashSpark} delta={cashDelta} deltaLabel="MoM" sparkColor="var(--color-pos)" accentColor="var(--color-pos)" onPress={goTo('cash')} />
     </div>
   );

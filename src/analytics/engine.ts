@@ -116,6 +116,8 @@ export function portfolioKpis(
     // EVERY scenario — never tagged/derived (refute fix, 2026-09-23).
     otherHoldingsValue: cell(sum(other.map((x) => x.oxfordValue)), 'Property NOI · Σ Oxford value (Residence)', 'confirmed'),
     otherHoldingsCount: cell(other.length, 'Property NOI · Residence row count', 'confirmed'),
+    otherHoldingsEquity: cell(sum(other.map((x) => x.equityInvested)), 'Property NOI · Σ equity invested (Residence)', 'confirmed'),
+    otherHoldingsDebt: cell(sum(other.map((x) => x.loanBalance)), 'Property NOI · Σ loan balance (Residence)', 'confirmed'),
   };
 }
 

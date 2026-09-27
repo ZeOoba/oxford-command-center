@@ -145,10 +145,9 @@ const STALE_LEASE_ROW_DAYS = 365;
  * — the workbook is right about those. Warn so a human fixes the workbook; nothing here edits or
  * hides the row.
  *
- * entity is 'lease', deliberately NOT 'reconciliation': src/analytics/conditions.ts fires a
- * CRITICAL "Reconciliation failure" insight and HealthModule turns the Reconciliation badge red for
- * ANY entity==='reconciliation' flag regardless of severity. This is a warn-level data-quality
- * hint, so it belongs in the Data Quality card only (which lists every flag) — 2026-09-23 PR-1 review.
+ * entity is 'lease', deliberately NOT 'reconciliation': entity==='reconciliation' AND severity==='error' fires reconcile-fail and blocks publish (hasReconciliationError); warn-level flags show only on the Data Quality and Reconciliation cards.
+ * This is a warn-level data-quality hint, so it belongs in the Data Quality card only (which lists
+ * every flag) — 2026-09-23 PR-1 review; severity rule ratified 2026-09-24.
  */
 export function checkStaleLeaseRows(s: Pick<PortfolioSnapshot, 'leases' | 'meta'>): DataQualityFlag[] {
   const asOf = s.meta?.asOf;
@@ -208,8 +207,8 @@ const DEBT_BASIS_TOLERANCE = 1000;
  * row; "3883 from Oxford (50%)" sits only on the loan schedule). Both disclosures stay as built; the
  * gap is surfaced as ONE extra warn flag (`debt.basis.affiliate`) past the same tolerance.
  *
- * entity is 'debt', deliberately NOT 'reconciliation' — see checkStaleLeaseRows: an
- * entity==='reconciliation' flag is a reconciliation failure. These are warn-level basis notes; the
+ * entity is 'debt', deliberately NOT 'reconciliation' — see checkStaleLeaseRows: entity==='reconciliation' AND severity==='error' fires reconcile-fail and blocks publish (hasReconciliationError); warn-level flags show only on the Data Quality and Reconciliation cards.
+ * These are warn-level basis notes; the
  * Health Reconciliation card lists them via isDebtBasisFlag (src/modules/health/reconciliation-card.ts).
  */
 export function checkDebtBasis(s: Pick<PortfolioSnapshot, 'properties' | 'loans'>): DataQualityFlag[] {

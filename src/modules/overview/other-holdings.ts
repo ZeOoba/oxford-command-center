@@ -25,3 +25,22 @@ export function investmentPropertiesSublabel(k: PortfolioKpis): string {
   const clause = otherHoldingsClause(k);
   return clause ? `${clause} · ${count}` : count;
 }
+
+/** Equity Invested disclosure (ratified 2026-09-24): the headline stays investment-only; the
+ *  residence's equity is reported beside it, e.g. "+$900K other holdings" — or '' with none. */
+export function otherHoldingsEquityClause(k: Pick<PortfolioKpis, 'otherHoldingsCount' | 'otherHoldingsEquity'>): string {
+  return k.otherHoldingsCount.value ? signedClause(k.otherHoldingsEquity.value, 'other holdings') : '';
+}
+
+/** Total Debt disclosure for a residence mortgage (governor loop is investment-only — ratified
+ *  2026-09-24): "+$X other-holdings debt", or '' when the residence carries no loan balance. */
+export function otherHoldingsDebtClause(k: Pick<PortfolioKpis, 'otherHoldingsCount' | 'otherHoldingsDebt'>): string {
+  return k.otherHoldingsCount.value ? signedClause(k.otherHoldingsDebt.value, 'other-holdings debt') : '';
+}
+
+/** Sign-symmetric disclosure (mirrors affiliateNotesClause): '' unless finite and non-zero; '+' only
+ *  when positive — a negative figure keeps fmtUsdCompact's own minus (refute wf_fc63f5bf-8e7). */
+function signedClause(amount: number | null | undefined, suffix: string): string {
+  if (typeof amount !== 'number' || !Number.isFinite(amount) || amount === 0) return '';
+  return `${amount > 0 ? '+' : ''}${fmtUsdCompact(amount)} ${suffix}`;
+}

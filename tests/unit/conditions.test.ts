@@ -298,9 +298,9 @@ describe('evaluateConditions — leases', () => {
     const out = evaluateConditions(snap({ leases: [lease({ leaseEnd: iso(181) })] }), opts);
     expect(out.some((i) => i.id === 'expiring-l1')).toBe(false);
   });
-  it('lease at exactly 60d is the single L-1 critical (legacy 60d warning boundary is inside the deduped window)', () => {
+  it('lease at exactly 60d is the single L-1 WARNING — one <60d critical line everywhere (ratified 2026-09-24)', () => {
     const out = evaluateConditions(snap({ leases: [lease({ leaseEnd: iso(60) })] }), opts);
-    expect(out.find((i) => i.id === 'lease-expiry-l1')?.severity).toBe('critical');
+    expect(out.find((i) => i.id === 'lease-expiry-l1')?.severity).toBe('warning');
     expect(out.some((i) => i.id === 'expiring-l1')).toBe(false);
   });
   it('lease at exactly 180d still fires (warning)', () => {
@@ -491,6 +491,21 @@ describe('evaluateConditions — data quality & deals', () => {
   it('non-reconciliation flags do not fire the reconcile alert', () => {
     const out = evaluateConditions(snap({ dataQuality: [{ entity: 'p1', field: 'noi', issue: 'bad source', severity: 'warn' }] }), opts);
     expect(out.some((i) => i.id === 'reconcile-fail')).toBe(false);
+  });
+  it('warn-only reconciliation flags do NOT fire reconcile-fail (ratified 2026-09-24)', () => {
+    const out = evaluateConditions(snap({ dataQuality: [{ entity: 'reconciliation', field: 'cash.history.date', issue: 'missing rows', severity: 'warn' }] }), opts);
+    expect(out.some((i) => i.id === 'reconcile-fail')).toBe(false);
+  });
+  it('mixed flags: reconcile-fail counts and names only the error-severity fields', () => {
+    const out = evaluateConditions(snap({ dataQuality: [
+      { entity: 'reconciliation', field: 'cash.history.date', issue: 'missing rows', severity: 'warn' },
+      { entity: 'reconciliation', field: 'properties.noi', issue: 'Σ NOI ≠ workbook', severity: 'error' },
+    ] }), opts);
+    const i = out.find((x) => x.id === 'reconcile-fail')!;
+    expect(i.severity).toBe('critical');
+    expect(i.metric).toBe('1');
+    expect(i.detail).toContain('(properties.noi)');
+    expect(i.detail).not.toContain('cash.history.date');
   });
   it('workbook older than 48h is an info alert', () => {
     const stale = { ...snap(), meta: { schemaVersion: '1.0.0', asOf: ASOF, generatedAt: new Date(NOW - 49 * 3_600_000).toISOString(), source: 't', scenario: 'Base' } } as unknown as PortfolioSnapshot;
@@ -1047,5 +1062,17 @@ describe('evaluateConditions — affiliate notes are outside per-property LTV (r
   it('the same LTV on a third-party loan still fires the info governor insight (id unchanged)', () => {
     const out = evaluateConditions(snap({ properties: [prop({ id: 'p1', name: '1100 Rarig', lender: 'REDACTED-545', loanBalance: REDACTED-AMT, ltv: REDACTED-AMT })] }), opts);
     expect(out.find((i) => i.id === 'ltv-governor-p1')?.severity).toBe('info');
+  });
+});
+
+describe('evaluateConditions — governor loop runs on investment properties only (ratified 2026-09-24)', () => {
+  it('a residence row with a sub-floor DSCR and a 70% LTV fires no DSCR/LTV alert', () => {
+    const out = evaluateConditions(snap({ properties: [prop({ id: 'res', type: 'Residence', dscr: 0.9, lender: 'Wells', loanBalance: 900_000, ltv: 0.7 })] }), opts);
+    expect(out.filter((i) => i.entityId === 'res' && i.category === 'debt')).toEqual([]);
+  });
+  it('the same figures on an investment row still fire, ids unchanged', () => {
+    const out = evaluateConditions(snap({ properties: [prop({ id: 'p1', dscr: 0.9, lender: 'Wells', loanBalance: 900_000, ltv: 0.7 })] }), opts);
+    expect(out.find((i) => i.id === 'dscr-floor-p1')?.severity).toBe('critical');
+    expect(out.find((i) => i.id === 'ltv-p1')?.severity).toBe('warning');
   });
 });

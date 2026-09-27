@@ -6,6 +6,7 @@ import { tenantScorecards } from '@/brain/tenants';
 import { coerceNonNegMoney } from '@/lib/money';
 import { renewalSignals, marketRentGaps, bucketExpiry } from './lease-forecast';
 import { investmentLtv } from './debt-basis';
+import { isInvestmentProperty } from './property-basis';
 import { DAY_MS } from '@/lib/time-constants';
 const HOUR_MS = 3_600_000;
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
@@ -58,7 +59,8 @@ export const ALERT_THRESHOLDS = {
   // 0.005 = 50 bps. A loan must exceed estimatedMarketRate + refiSpreadBps to fire.
   refiSpreadBps: 0.005,
   // Phase 3 — Lease forecast signal thresholds.
-  // expiryNoSignalDays: ≤90d expiry with no renewal stage advance triggers L-1.
+  // expiryNoSignalDays: ≤90d expiry with no renewal stage advance triggers L-1. Severity follows the
+  // single leaseCriticalDays line (ratified 2026-09-24): <60d critical, 60–90d warning.
   expiryNoSignalDays: 90,
   // marketRentGapWarnPct: current ≥10% below market triggers L-4 under-market signal.
   marketRentGapWarnPct: 0.10,
@@ -355,7 +357,10 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
     }
   }
 
-  for (const p of s.properties) {
+  // Ratified 2026-09-24 (Gabriel): per-property DSCR/LTV governor alerts are an INVESTMENT signal —
+  // the residence is excluded (a residence mortgage is disclosed as other-holdings debt on the Total
+  // Debt tile instead). Governor constants and insight ids unchanged.
+  for (const p of s.properties.filter(isInvestmentProperty)) {
     if (p.dscr !== null && p.dscr < T.dscrCriticalFloor) {
       out.push({
         id: `dscr-floor-${p.id}`, severity: 'critical', category: 'debt',
@@ -477,7 +482,7 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       ) {
         out.push({
           id: `lease-expiry-${signal.leaseId}`,
-          severity: 'critical',
+          severity: daysToExpiry < T.leaseCriticalDays ? 'critical' : 'warning',
           category: 'lease',
           title: `Expiring, no renewal signal — ${signal.tenantName}`,
           detail: `${signal.propertyKey}${signal.sf > 0 ? ` · ${signal.sf.toLocaleString()} SF` : ''} · expires in ${daysToExpiry}d · ${fmtUsdCompact(signal.annualRent)}/yr at risk. No renewal stage has advanced.`,
@@ -562,19 +567,36 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
       const CONCENTRATION_BUCKETS = ['0-6m', '6-12m'] as const;
       for (const bucket of CONCENTRATION_BUCKETS) {
         // Sum annual rent for leases in this bucket using bucketExpiry
-        const bucketRent = s.leases
-          .filter((l) => bucketExpiry(l.monthsToExpiry, l.leaseEnd, asOf) === bucket)
-          .reduce((sum, l) => sum + l.annualRent, 0);
+        const bucketLeases = s.leases.filter((l) => bucketExpiry(l.monthsToExpiry, l.leaseEnd, asOf) === bucket);
+        const bucketRent = bucketLeases.reduce((sum, l) => sum + l.annualRent, 0);
         const bucketPct = bucketRent / totalAnnualRent;
         if (bucketPct >= T.tenantNoiConcentrationInfo) {
+          // Refute wf_5c91e034-4fe: the "already counted" sentence is only true when at least one lease in
+          // the bucket carries a per-lease expiry-family insight (expiring-/expired-/lease-expiry-/
+          // lease-lapsed-). The 6-12m bucket is beyond every per-lease window, and a 0-6m lease with a
+          // renewal stage underway has its per-lease alert suppressed — that rent is then in NO Risk $
+          // figure (the ratified trade-off), and the detail must say so. Checked against `out` as built so
+          // far: every expiry-family producer runs above this block, and the dedup below only drops
+          // legacy twins whose L-x sibling remains, so presence here equals presence after dedup.
+          const bucketIds = new Set(bucketLeases.map((l) => l.id));
+          const coveredByPerLeaseAlert = out.some((i) => {
+            const m = /^(?:expiring|expired|lease-expiry|lease-lapsed)-(.+)$/.exec(i.id);
+            return m !== null && bucketIds.has(m[1]!);
+          });
+          const riskNote = coveredByPerLeaseAlert
+            ? 'That rent is already counted in the per-lease expiry alerts, so this alert adds nothing to Risk $.'
+            : 'This rent is outside the per-lease expiry alerts (beyond their window or renewal underway), so it is not in Risk $ — ratified 2026-09-24.';
           out.push({
             id: `rollover-concentration-${bucket}`,
             severity: 'warning',
             category: 'lease',
             title: `Concentrated rollover — ${bucket} bucket`,
-            detail: `${fmtPct(bucketPct)} of total annual rent (${fmtUsdCompact(bucketRent)}) expires in the ${bucket} window — above the ${fmtPct(T.tenantNoiConcentrationInfo)} concentration threshold.`,
+            detail: `${fmtPct(bucketPct)} of total annual rent (${fmtUsdCompact(bucketRent)}) expires in the ${bucket} window — above the ${fmtPct(T.tenantNoiConcentrationInfo)} concentration threshold. ${riskNote}`,
             action: { label: 'Review', kind: 'review' },
-            impactAnnualUsd: bucketRent,
+            // Ratified 2026-09-24: a concentration signal, not a new exposure — the bucket's rent is the
+            // same rent the per-lease expiry alerts (L-1 / expiring-) already carry, so it contributes $0
+            // to Risk $ (null is skipped by totalsBySpine). Still alerts; id unchanged.
+            impactAnnualUsd: null,
             spine: 'A',
             provenance: 'derived',
           });
@@ -807,12 +829,15 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
   }
 
   // ── Data quality ────────────────────────────────────────────────────────────
-  const reconFlags = s.dataQuality.filter((f) => f.entity === 'reconciliation');
+  // Ratified 2026-09-24: the CRITICAL reconcile-fail insight (and its alert email) fires only on
+  // ERROR-severity reconciliation flags — a publish-blocking inconsistency (hasReconciliationError,
+  // server/reconcile-runtime.ts, uses the same test). Warn-level flags stay in System Health.
+  const reconFlags = s.dataQuality.filter((f) => f.entity === 'reconciliation' && f.severity === 'error');
   if (reconFlags.length > 0) {
     out.push({
       id: 'reconcile-fail', severity: 'critical', category: 'data',
       title: 'Reconciliation failure',
-      // The detail must not assert a CAUSE. This condition fires for every entity==='reconciliation'
+      // The detail must not assert a CAUSE. This condition fires for every error-severity entity==='reconciliation'
       // flag, and checkSnapshot emits several that have nothing to do with workbook totals — e.g.
       // duplicate property ids and near-duplicate deal names. Hardcoding "derived totals do not
       // match the workbook" sent operators to audit the workbook for a deal-naming collision
