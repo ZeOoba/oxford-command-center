@@ -24,7 +24,7 @@ describe('basis labels lead (KpiStat truncates from the end) — a disclosure cl
     expect(readFileSync('src/modules/overview/widgets.tsx', 'utf8')).toContain('sublabel={`Oxford share · workbook · ');
   });
   it('Total Debt: basis leads when there is nothing to disclose', () => {
-    const k = { ltv: cell(0.2), affiliateDebt: cell(0) } as unknown as PortfolioKpis;
+    const k = { ltv: cell(0.2), affiliateDebt: cell(0), otherHoldingsCount: cell(0), otherHoldingsDebt: cell(0) } as unknown as PortfolioKpis;
     expect(overviewTotalDebtSublabel(k).startsWith('property loan balances · ')).toBe(true);
   });
   it('External Debt: basis leads when there is nothing to disclose', () => {
