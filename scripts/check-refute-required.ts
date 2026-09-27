@@ -349,17 +349,56 @@ export function isFinancialSourcePath(p: string): boolean {
 }
 
 /**
+ * Shape of a real refute-financial-change run id (the Workflow tool's `wf_...` id). A
+ * `Refute-Reviewed:` value must START with one; trailing prose after whitespace is allowed (main
+ * carries `Refute-Reviewed: wf_c23f5fd8-ddf + 3 independent Opus adversarial passes`).
+ */
+export const REFUTE_RUN_ID = /^wf_[a-z0-9-]{6,}$/;
+
+/** A value that is ONLY a placeholder word. Whole-value match, so "Refute-Skip: none of this is math" still passes. */
+const PLACEHOLDER_VALUE = /^(?:pending|todo|tbd|tba|n\/?a|none|placeholder|wip|later|fixme|x+|\?+|-+)[.!:]*$/i;
+
+function refuteTrailers(message: string): Array<{ kind: 'reviewed' | 'skip'; value: string }> {
+  return [...message.matchAll(/(?:^|\n)[ \t]*Refute-(Reviewed|Skip):([^\n]*)/gi)].map((m) => ({
+    kind: (m[1] ?? '').toLowerCase() === 'reviewed' ? 'reviewed' : 'skip',
+    value: (m[2] ?? '').trim(),
+  }));
+}
+
+/**
+ * Why one trailer does not attest, or null when it does. `Refute-Reviewed:` must name a real run id
+ * (REFUTE_RUN_ID on its first token) — `PENDING`, `TODO`, `wf_<runId>` are not a run that happened.
+ * `Refute-Skip:` keeps its semantics: any non-empty justification except the pasted hint or a bare
+ * placeholder word.
+ */
+function trailerRejection(kind: 'reviewed' | 'skip', value: string): string | null {
+  if (value === '') return 'empty value';
+  if (value.startsWith('wf_<runId>') || value.startsWith('<reason>')) return "the gate's own placeholder, pasted verbatim";
+  if (PLACEHOLDER_VALUE.test(value)) return `placeholder "${value}" is not an attestation`;
+  if (kind === 'reviewed') {
+    const id = value.split(/\s+/)[0] ?? '';
+    if (!REFUTE_RUN_ID.test(id)) return `"${id}" is not a refute run id (expected wf_<id> matching ${REFUTE_RUN_ID.source})`;
+  }
+  return null;
+}
+
+/**
  * True when a refute attestation trailer with a real value appears in a commit message. Pass ONE
  * commit's message — a concatenated range blob is the defect this gate was fixed for (see the file
- * header). A bare `Refute-Skip:` with no value, or the gate's own pasted hint line
- * (`Refute-Reviewed: wf_<runId>` / `Refute-Skip: <reason>`), does not attest anything.
+ * header). A bare `Refute-Skip:` with no value, the gate's own pasted hint line
+ * (`Refute-Reviewed: wf_<runId>` / `Refute-Skip: <reason>`), a placeholder (PENDING/TODO/TBD), or a
+ * `Refute-Reviewed:` value that is not a run id, does not attest anything.
  */
 export function hasRefuteApproval(message: string): boolean {
-  for (const m of message.matchAll(/(?:^|\n)[ \t]*Refute-(?:Reviewed|Skip):([^\n]*)/gi)) {
-    const value = (m[1] ?? '').trim();
-    if (value !== '' && !value.startsWith('wf_<runId>') && !value.startsWith('<reason>')) return true;
-  }
-  return false;
+  return refuteTrailers(message).some((t) => trailerRejection(t.kind, t.value) === null);
+}
+
+/** Each trailer present in the message that was rejected, with the reason — for the gate's error output. */
+export function rejectedRefuteTrailers(message: string): string[] {
+  return refuteTrailers(message).flatMap((t) => {
+    const why = trailerRejection(t.kind, t.value);
+    return why === null ? [] : [`Refute-${t.kind === 'reviewed' ? 'Reviewed' : 'Skip'}: ${t.value} — rejected: ${why}`];
+  });
 }
 
 /**
@@ -382,6 +421,8 @@ export interface UnattestedCommit {
   subject: string;
   financial: string[];
   readError?: string;
+  /** Trailers the commit DID carry that were rejected (placeholder, non-run-id), with the reason. */
+  rejected?: string[];
 }
 
 /**
@@ -476,7 +517,13 @@ export function findUnattestedCommits(commits: readonly CommitRecord[]): Unattes
     }
     const financial = c.files.filter(isFinancialSourcePath);
     if (financial.length === 0 || hasRefuteApproval(c.message)) continue;
-    out.push({ sha: c.sha, subject: c.message.split('\n')[0]?.trim() ?? '', financial });
+    const rejected = rejectedRefuteTrailers(c.message);
+    out.push({
+      sha: c.sha,
+      subject: c.message.split('\n')[0]?.trim() ?? '',
+      financial,
+      ...(rejected.length > 0 ? { rejected } : {}),
+    });
   }
   return out;
 }
@@ -623,6 +670,7 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
     ...unattested.flatMap((u) => [
       `  ${u.sha.slice(0, 7)} ${u.subject}`,
       ...(u.readError !== undefined ? [`      unreadable, so unverifiable: ${u.readError}`] : []),
+      ...(u.rejected ?? []).map((r) => `      ${r}`),
       ...u.financial.map((f) => `      ${f}`),
     ]),
     '',
@@ -636,7 +684,8 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
     'A trailer on another commit in the range does not attest these. Run the refute-financial-change',
     "workflow on each, then add a trailer to THAT commit's message:",
     '    Refute-Reviewed: wf_<runId>        (or, with justification)  Refute-Skip: <reason>',
-    'Substitute the real run id: the literal wf_<runId> placeholder is rejected.',
+    'Substitute the real run id: Refute-Reviewed must match wf_[a-z0-9-]{6,} (a real refute run);',
+    'placeholders (wf_<runId>, PENDING, TODO, TBD) are rejected. Not run yet? Run it, or Refute-Skip: <why>.',
     'HEAD: git commit --amend. An earlier commit: do it in your own worktree (git worktree add), never a',
     'shared checkout, with no editor at all (POSIX shell / Git Bash):',
     '    PRE=$(git rev-parse HEAD)                  (pin the tip: ORIG_HEAD is one slot another session can overwrite)',
