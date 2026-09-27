@@ -1049,3 +1049,15 @@ describe('evaluateConditions — affiliate notes are outside per-property LTV (r
     expect(out.find((i) => i.id === 'ltv-governor-p1')?.severity).toBe('info');
   });
 });
+
+describe('evaluateConditions — governor loop runs on investment properties only (ratified 2026-09-24)', () => {
+  it('a residence row with a sub-floor DSCR and a 70% LTV fires no DSCR/LTV alert', () => {
+    const out = evaluateConditions(snap({ properties: [prop({ id: 'res', type: 'Residence', dscr: 0.9, lender: 'Wells', loanBalance: 900_000, ltv: 0.7 })] }), opts);
+    expect(out.filter((i) => i.entityId === 'res' && i.category === 'debt')).toEqual([]);
+  });
+  it('the same figures on an investment row still fire, ids unchanged', () => {
+    const out = evaluateConditions(snap({ properties: [prop({ id: 'p1', dscr: 0.9, lender: 'Wells', loanBalance: 900_000, ltv: 0.7 })] }), opts);
+    expect(out.find((i) => i.id === 'dscr-floor-p1')?.severity).toBe('critical');
+    expect(out.find((i) => i.id === 'ltv-p1')?.severity).toBe('warning');
+  });
+});
