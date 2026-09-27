@@ -3,7 +3,7 @@
 > **IF YOU ARE AN AGENT: READ THIS ENTIRE FILE BEFORE TOUCHING ANY FILE IN THIS REPO.**
 > This is not optional. This is not a formality. Skipping this file is the root cause of every architectural collision this project has experienced.
 
-**Maintained by:** Lead Architect · **Last verified:** 2026-06-21 (§2/§3 build-state rows and §6 gate step list refreshed 2026-07-06 to reflect the design-parity merge and the true 7-step gate; rest of file not re-audited)
+**Maintained by:** Lead Architect · **Last verified:** 2026-06-21 (§3 hurdle-rate line and §6 gate step list refreshed 2026-09-27 — the gate is actually 11 steps, not 7, and the hurdle rate is ratified, not advisory; §2's merge-history table is separately known-stale — verify against `git log` directly — and not re-audited in this pass)
 
 ---
 
@@ -51,7 +51,7 @@ These two spines have one critical defect: `Property.noi` (Spine A) and `warehou
 | Most recent merge to main | PR #168 (`3278a2c`) — design-parity Waves 2/3 (insurance/tax/brain engines + 6 UI modules) |
 | Recent merge history (newest first) | #168 → #155 (`a45ac30`, leasingRisk in IC memo — M6) → #129 (`5b81321`, ic-memo 501→live) → #117 (`6cd58ed`, Phase 5 Capital Allocation capstone) |
 | Open PRs | *(none)* |
-| Gate | governance + typecheck + lint + test + reconcile + warehouse:verify + warehouse:drift (7 steps — see §6) |
+| Gate | governance + typecheck + lint + check:dev-css + check:schema-drift + test + reconcile:snapshot + reconcile + reconcile:noi-crosscheck + warehouse:verify + warehouse:drift (11 steps — see §6; a separate `gate:ci` script runs a different subset for CI) |
 | Tests | 2253 vitest unit tests (independently re-verified 2026-07-06, after adding real coverage for parseWorkbook + lease-forecast-api + confidential.ts) |
 | Uncommitted changes | Gabriel actively co-develops this tree — varies constantly |
 
@@ -93,7 +93,7 @@ This is the single discipline that prevents the collision class this repo has al
 
 | Design Parity (PRs #161/#166/#168) | Design-parity implementation: tier-board primitives, insights wiring + module, Grader UX, insurance analysis engine + UI, command-brain module, taxes module + assessor-data template, capital orphan fold (CapitalAllocationModule folded into CapitalModule) | **Merged ✓** — PR #161 (plan) → #166 (Waves 0/1) → #168 (Waves 2/3); independently re-verified 2026-07-06 on post-merge main (typecheck/lint/governance/build clean, full suite matched PR #168's claimed 2224/2224 exactly at that point — see §2 for the current total after subsequent audit-fix test additions) |
 
-**Pending:** Hurdle rate ratification (8% unlevered IRR governor) pending Gabriel sign-off to upgrade from `advisoryOnly`. Phase 7 parity sweep MERGED via PR #169 (2026-07-06 — the previous version of this line was stale). P4c (insurance self-insure/deductible) and C2 tax refinements (cost-seg/filed-returns metadata) are BUILT on clearly-marked placeholder fixtures (docs/placeholder-data.md) pending real broker/assessor data — swap via warehouse:import-loss-runs; basis data needs a future migration. Next initiative TBD.
+**Pending:** ~~Hurdle rate ratification~~ — **RATIFIED.** The 8% unlevered IRR governor is ratified in code (`server/warehouse/intel-config.ts` `HURDLE_RATE`: `ratification: 'ratified'`, ratified by Gabriel Goldberg, 2026-06-22) and by migration `017_ratify_hurdle_rate.sql`, which seeds the same ratified state into `capital_config`. `advisoryOnly` on the capital-allocation verdict engine (`server/warehouse/capital-allocation.ts`) reads `config.hurdleRateRatification === 'proposed'` from the live DB row at runtime — so it resolves `false` on any warehouse that has migration 017 applied, but this was not re-verified against the live `data/warehouse/finance.sqlite` in this pass. `src/modules/intel/CapexIrrCalc.tsx`'s "not yet ratified" comment is a deliberate, still-correct guard comment for a dormant `isProposed` banner (it explicitly notes "Latent today — the live rate is ratified") — not stale, do not remove it. Phase 7 parity sweep MERGED via PR #169 (2026-07-06 — the previous version of this line was stale). P4c (insurance self-insure/deductible) and C2 tax refinements (cost-seg/filed-returns metadata) are BUILT on clearly-marked placeholder fixtures (docs/placeholder-data.md) pending real broker/assessor data — swap via warehouse:import-loss-runs; basis data needs a future migration. Next initiative TBD.
 
 ---
 
@@ -171,17 +171,26 @@ git worktree remove .claude/worktrees/<feature-name>
 **Every commit must leave `npm run gate` green.** The gate runs:
 
 ```
-governance  → validates CLAUDE.md + architecture files + OWNERSHIP.json + status.json
-typecheck   → tsc --noEmit (strict + noUncheckedIndexedAccess)
-lint        → eslint --max-warnings 0
-test        → vitest run (all unit tests)
-reconcile   → $0-tolerance workbook self-totals check
+governance   → validates CLAUDE.md + architecture files + OWNERSHIP.json + status.json
+typecheck    → tsc --noEmit (strict + noUncheckedIndexedAccess)
+lint         → eslint --max-warnings 0
+check:dev-css → boots the real dev-mode (vite dev) CSS pipeline against theme.css to catch
+                parse errors that production's Lightning CSS optimize() pass silently masks
+check:schema-drift → cross-references migration columns, a route's Zod request schema, and
+                the values actually bound into its INSERT/UPDATE, so a renamed/reordered field
+                that Zod silently strips or a column bound to the wrong field is caught directly
+test         → vitest run (all unit tests)
+reconcile:snapshot → validates the live snapshot against its own self-totals
+reconcile    → $0-tolerance workbook self-totals check
+reconcile:noi-crosscheck → Spine A vs Spine B NOI tie-out (server/warehouse/reconcile-noi.ts)
 warehouse:verify → fresh SQLite in tmpdir + 32 file ingest + assertions
 warehouse:drift  → compares the live warehouse against a fresh re-ingest, flags silent drift
 ```
 
-(This is the true 7-step `package.json` `gate` script — verify against it directly if this list
-and `package.json` ever disagree; this file is documentation, not the source of truth.)
+(This is the true 11-step `package.json` `gate` script as of 2026-09-27 — verify against it
+directly if this list and `package.json` ever disagree; this file is documentation, not the
+source of truth. A separate `gate:ci` script exists with a different step set — typecheck, lint,
+check:dev-css, test, reconcile:snapshot, build, check:bundle — used for CI, not local commits.)
 
 `warehouse:verify` uses `os.tmpdir()` — it never touches `data/warehouse/finance.sqlite`. Safe to run in any worktree.
 
