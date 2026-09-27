@@ -22,6 +22,7 @@ import { MONTH_MS } from './time-constants';
 // Module cycle with debt-maturity.ts (it imports effectiveMonthsToMaturity from here) —
 // safe: both cross-bindings are consumed only inside function bodies, never at module init.
 import { RATE_LTV_COLLISION_EPSILON } from './debt-maturity';
+import { isAffiliateDebtPosition } from '../../src/analytics/debt-basis';
 
 const DEBT_CONFIG = {
   fredSpreadBps: 200,          // D3: spread over 5-Year Treasury
@@ -47,6 +48,9 @@ interface DebtRow {
   id: string;
   property_id: string | null;
   loan_name: string;
+  /** INTERNAL ONLY — read solely for isAffiliateDebtPosition (D1 LTV exclusion, ratified
+   *  2026-09-26). Never assigned to any DebtScore field: lender names stay server-side. */
+  lender: string | null;
   current_balance: number;
   rate: number | null;
   monthly_pmt: number | null;
@@ -225,7 +229,7 @@ export function scoreDebtPositionsWithTrust(
   // matching the property's PK-declared recency ordering; zero behavior change when ids are
   // unique among active rows (the app's own actual state today).
   const getLoansForProperty = db.prepare<[string]>(
-    `SELECT id, property_id, loan_name, current_balance, rate,
+    `SELECT id, property_id, loan_name, lender, current_balance, rate,
             monthly_pmt, annual_interest, annual_principal,
             is_demand, maturity_date, months_to_maturity, snapshot_date, ltv, status
      FROM debt_positions
@@ -365,6 +369,22 @@ export function scoreDebtPositionsWithTrust(
     // measured breach because a sibling collided would trade a real Hard-Invariant-4 alarm
     // for data-quality caution in the wrong direction. Only a non-breaching (would-be
     // clearing) pick degrades to unknown.
+    //
+    // Affiliate exclusion (ratified 2026-09-26, Gabriel): an Oxford-to-Oxford note (lender names
+    // an affiliate — isAffiliateDebtPosition, the single predicate shared with debt-maturity's
+    // aggregate) is NOT third-party leverage and is skipped from the D1 pick. A property whose
+    // only active position is affiliate therefore has ltv = null (LTV governor not applicable —
+    // the same "unknown ⇒ hold, never clearance" path an unpopulated ltv takes), never a
+    // breach or a clearance minted off the affiliate note. LTV ONLY: the affiliate note still
+    // counts in annualDebtService / DSCR / debtYield / avgLoanRate above and below — its DSCR
+    // treatment is an OPEN ruling and is deliberately untouched here.
+    //
+    // Fix round (refute wf_3f479f7e-1eb, medium): the rate/ltv collision is evidence about the
+    // SNAPSHOT (the ltv column drifted), not about one loan — so it is evaluated on EVERY active
+    // row, affiliate included, BEFORE the affiliate exclusion. An affiliate row that collides
+    // still sets hasCollidedLtv (one-directional poisoning below unchanged); only a NON-colliding
+    // affiliate row is skipped from the pick.
+    const hasThirdPartyLoan = loans.some((loan) => !isAffiliateDebtPosition(loan));
     let ltv: number | null = null;
     let hasCollidedLtv = false;
     {
@@ -378,6 +398,7 @@ export function scoreDebtPositionsWithTrust(
           hasCollidedLtv = true;
           continue;
         }
+        if (isAffiliateDebtPosition(loan)) continue;
         if (loan.ltv !== null && loan.current_balance > maxBalance) {
           maxBalance = loan.current_balance;
           ltv = loan.ltv;
@@ -467,7 +488,21 @@ export function scoreDebtPositionsWithTrust(
       // non-collision branches keep their pre-change literals byte-identical.
       const collidedLtvText =
         "LTV rejected — ltv exactly collides with its own loan's rate (workbook column-drift signature); fix the workbook ltv column mapping, then re-run snapshot";
-      if (dscr === null && ltv === null) {
+      // Affiliate-only property (ratified 2026-09-26; fix round wf_3f479f7e-1eb): there is no
+      // third-party leverage to test, so the "populate the workbook LTV column" errand would be
+      // impossible and misleading. It is NOT routed to the no-debt branch: the affiliate note's
+      // debt service still feeds DSCR (open ruling), and a DSCR breach above still fires. Kept
+      // as 'hold' (not governorsClear) deliberately — clearing the LTV governor as "n/a" would
+      // let refi/cash-out actions key off the affiliate note's own rate. Collision evidence takes
+      // precedence: a colliding affiliate row is a snapshot defect and keeps the collided text.
+      const affiliateOnlyText =
+        'LTV governor not applicable — only Oxford-affiliate debt on this property (excluded from the LTV basis, ratified 2026-09-26)';
+      if (!hasThirdPartyLoan && !hasCollidedLtv) {
+        signalReason =
+          dscr === null
+            ? `${affiliateOnlyText}; DSCR unknown (no warehouse NOI for this property)`
+            : `${affiliateOnlyText}; DSCR still evaluated`;
+      } else if (dscr === null && ltv === null) {
         signalReason = hasCollidedLtv
           ? `Governor check skipped — DSCR unknown (no warehouse NOI for this property); ${collidedLtvText}`
           : 'Governor check skipped — DSCR unknown (no warehouse NOI for this property); LTV unknown at snapshot time. Re-run after populating both.';

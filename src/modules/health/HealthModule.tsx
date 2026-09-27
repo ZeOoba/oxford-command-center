@@ -7,6 +7,7 @@ import { computeFreshness, isBriefStale } from '@/lib/freshness';
 import { relativeTime } from '@/lib/time';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge } from '@/primitives/Badge';
+import { reconciliationCardState } from './reconciliation-card';
 
 type Tone = 'ok' | 'warn' | 'error' | 'info';
 
@@ -45,7 +46,7 @@ export function HealthModule() {
   const healthErr = healthQuery.isError;
 
   const flags = data?.snapshot.dataQuality ?? [];
-  const recon = flags.filter((x) => x.entity === 'reconciliation');
+  const recon = reconciliationCardState(flags);
   const errors = flags.filter((x) => x.severity === 'error');
   const warns = flags.filter((x) => x.severity === 'warn');
 
@@ -73,12 +74,12 @@ export function HealthModule() {
         </Card>
 
         <Card>
-          <CardHeader title="Reconciliation" trailing={<Badge tone={recon.length === 0 ? 'green' : 'red'}>{recon.length === 0 ? 'Consistent' : `${recon.length} issue${recon.length > 1 ? 's' : ''}`}</Badge>} />
+          <CardHeader title="Reconciliation" trailing={<Badge tone={recon.badgeTone}>{recon.badgeLabel}</Badge>} />
           <ul className="flex flex-col">
-            {recon.length === 0 ? (
+            {recon.rows.length === 0 ? (
               <Row tone="ok" label="Internal invariants" value="All checks pass" />
             ) : (
-              recon.map((r, i) => <Row key={i} tone={r.severity === 'error' ? 'error' : 'warn'} label={r.field} value={r.issue} />)
+              recon.rows.map((r, i) => <Row key={i} tone={r.severity === 'error' ? 'error' : 'warn'} label={r.field} value={r.issue} />)
             )}
           </ul>
         </Card>

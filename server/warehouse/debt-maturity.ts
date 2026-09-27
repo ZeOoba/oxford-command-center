@@ -28,6 +28,7 @@ import { readLastSnapshotRefusal } from './debt-snapshot';
 import { referenceDate } from '../config';
 import { MONTH_MS } from './time-constants';
 import { ALERT_THRESHOLDS } from '../../src/analytics/conditions';
+import { AFFILIATE_POSITION_LABEL, isAffiliateDebtPosition } from '../../src/analytics/debt-basis';
 import type {
   DebtScore,
   MaturityTimelineEvent,
@@ -105,6 +106,10 @@ interface ActiveLoanRow {
    *  a rate VALUE. Reading it internally to validate a DIFFERENT field (ltv) does not violate
    *  that contract as long as it stays internal — enforced by a dedicated test. */
   rate: number | null;
+  /** INTERNAL ONLY (2026-09-26 affiliate ruling) — consumed exclusively by
+   *  isAffiliateDebtPosition (aggregate-LTV exclusion + the position-view label). NEVER add
+   *  this to any return value in this file: no lender name crosses the boundary. */
+  lender: string | null;
 }
 
 /** All active debt_positions rows joined to property_master, deterministic order.
@@ -119,7 +124,7 @@ function activeLoans(db: WarehouseDb): ActiveLoanRow[] {
     .prepare(
       `SELECT d.id, d.property_id, p.name AS property_name, d.loan_name,
               d.current_balance, d.maturity_date, d.months_to_maturity, d.snapshot_date,
-              d.is_demand, d.balloon, d.ltv, d.rate_type, d.next_rate_reset, d.rate
+              d.is_demand, d.balloon, d.ltv, d.rate_type, d.next_rate_reset, d.rate, d.lender
        FROM debt_positions d
        LEFT JOIN property_master p ON p.id = d.property_id
        WHERE d.status = 'active'
@@ -154,7 +159,11 @@ export function buildMaturityTimeline(
   for (const row of activeLoans(db)) {
     const base = {
       loanId: row.id,
-      loanName: row.loan_name,
+      // Position view: an affiliate note is still LISTED (ratified 2026-09-26), labeled so the
+      // reader knows it sits outside the LTV governor basis. Label only — no lender string.
+      loanName: isAffiliateDebtPosition(row)
+        ? `${row.loan_name} ${AFFILIATE_POSITION_LABEL}`
+        : row.loan_name,
       propertyId: row.property_id,
       propertyName: row.property_name,
       balloon: row.balloon === 1,
@@ -363,10 +372,31 @@ export function computePortfolioAggregateLtv(
   // could commit a clean healing write BETWEEN them — pairing pre-heal frozen rows with a
   // freshly cleared marker and minting an unwithheld verdict from stale data (the exact class
   // the marker exists to prevent). Mirrors the write-side fix in writeDebtSnapshot.
-  const { loans, refusal } = db.transaction(() => ({
+  const { loans: allActiveLoans, refusal } = db.transaction(() => ({
     loans: activeLoans(db),
     refusal: readLastSnapshotRefusal(db),
   }))();
+
+  // Affiliate exclusion (ratified 2026-09-26, Gabriel): Oxford-to-Oxford notes are not
+  // third-party leverage and leave the aggregate governor basis ENTIRELY — numerator,
+  // denominator, sole-loan counting, totalLoanCount and coverage — via isAffiliateDebtPosition,
+  // the single predicate shared with debt-scoring's D1 pick. Dropped before the sole-loan count
+  // so a third-party loan sharing its property with an affiliate note is still "sole" (the
+  // affiliate note is not a second lien on the investment basis). A book whose only active rows
+  // are affiliate reaches emptyCohort — no verdict, never a clearance — and the note says why.
+  const affiliateLoanCount = allActiveLoans.filter((l) => isAffiliateDebtPosition(l)).length;
+  const loans = allActiveLoans.filter((l) => !isAffiliateDebtPosition(l));
+  // Fix round (refute wf_3f479f7e-1eb, medium): the rate/ltv collision signature is evidence
+  // about the SNAPSHOT's ltv column, not about one loan — an affiliate row that collides is
+  // still evidence the column drifted, so it is checked on every active row BEFORE the basis
+  // filter and forces complete=false / no verdict, exactly as a colliding third-party row does.
+  const affiliateRowCollided = allActiveLoans.some(
+    (l) =>
+      isAffiliateDebtPosition(l) &&
+      l.rate !== null &&
+      l.ltv !== null &&
+      Math.abs(l.ltv - l.rate) < RATE_LTV_COLLISION_EPSILON,
+  );
 
   const countByProperty = new Map<string, number>();
   for (const l of loans) {
@@ -421,7 +451,7 @@ export function computePortfolioAggregateLtv(
 
   const totalLoanCount = loans.length;
   const aggregateLtv = coveredImpliedValue > 0 ? coveredBalance / coveredImpliedValue : null;
-  const complete = coveredLoanCount === totalLoanCount; // vacuously true at zero debt
+  const complete = coveredLoanCount === totalLoanCount && !affiliateRowCollided; // vacuously true at zero debt
   const emptyCohort = totalLoanCount === 0;
 
   // Obs-3 (PR #233 residual #2, both adversarial reviews): when the shrinkage guard refused (or
@@ -489,7 +519,15 @@ export function computePortfolioAggregateLtv(
   // routed that null verdict into the ABOVE-CEILING wording — asserting a Hard-Invariant-4
   // breach-direction claim about a comparison that never ran. Never inferred: each of the three
   // clearedConservatively states now gets its own sentence.
-  const note = lastWriteRefused
+  const affiliateSuffix =
+    affiliateLoanCount > 0
+      ? ` ${affiliateLoanCount} affiliate note${affiliateLoanCount === 1 ? '' : 's'} excluded from the LTV governor basis (ratified 2026-09-26).${
+          affiliateRowCollided
+            ? " An excluded affiliate row's ltv exactly collides with its own rate (workbook column-drift signature) — snapshot evidence, so no aggregate verdict is issued; fix the workbook ltv column mapping, then re-run snapshot."
+            : ''
+        }`
+      : '';
+  const baseNote = lastWriteRefused
     ? clearedConservatively === false
       ? `BREACH (stale data) — the last trusted book was already above the aggregate ceiling on this conservative basis, AND the latest debt-snapshot write was REFUSED (${refusal!.refusedAt} UTC), so the book is frozen at that breaching state. The write failure does NOT clear the breach: resolve it (verify the workbook parse, or confirm the loss via allowEmptySupersede) and re-run the snapshot. Marker: ${refusal!.reason}`
       : refusal!.kind === 'degraded'
@@ -504,6 +542,9 @@ export function computePortfolioAggregateLtv(
         : clearedConservatively === false
           ? 'Complete coverage but above the aggregate ceiling on this conservative basis — NOT proof of a true breach (unlevered-property value, absent from the warehouse, would dilute it). Needs appraised values to resolve.'
           : 'Complete coverage but every covered loan carries a zero balance (e.g. undrawn revolvers only) — a degenerate snapshot with no leverage to compute an LTV over. No aggregate-ceiling comparison ran; this is not a breach claim in either direction.';
+  // Every pre-existing sentence above is byte-identical; the affiliate disclosure is only ever
+  // APPENDED, and only when an affiliate row was actually dropped from the basis.
+  const note = `${baseNote}${affiliateSuffix}`;
 
   return {
     aggregateLtv,

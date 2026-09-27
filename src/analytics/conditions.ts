@@ -5,6 +5,7 @@ import type { Insight, InsightSeverity } from './types';
 import { tenantScorecards } from '@/brain/tenants';
 import { coerceNonNegMoney } from '@/lib/money';
 import { renewalSignals, marketRentGaps, bucketExpiry } from './lease-forecast';
+import { investmentLtv } from './debt-basis';
 import { DAY_MS } from '@/lib/time-constants';
 const HOUR_MS = 3_600_000;
 const daysBetween = (isoTarget: string, isoFrom: string): number =>
@@ -372,22 +373,27 @@ export function evaluateConditions(s: PortfolioSnapshot, opts: EvaluateOpts = {}
         impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
     }
-    if (p.ltv !== null && p.ltv > T.refiLtvCeilingPerProperty) {
+    // Ratified 2026-09-24: per-property LTV is on the investment basis — a property whose only
+    // debt is an Oxford-affiliate note (src/analytics/debt-basis.ts) has no third-party LTV, so
+    // neither the 65% ceiling nor the 40% governor-deviation signal applies. Governor constants are
+    // unchanged; ids unchanged.
+    const ltv = investmentLtv(p);
+    if (ltv !== null && ltv > T.refiLtvCeilingPerProperty) {
       out.push({
         id: `ltv-${p.id}`, severity: 'warning', category: 'debt',
         title: `LTV above 65% — ${p.name}`,
-        detail: `Loan-to-value is ${fmtPct(p.ltv)} (above the ${fmtPct(T.refiLtvCeilingPerProperty)} ceiling).`,
-        metric: fmtPct(p.ltv), entityType: 'property', entityId: p.id,
+        detail: `Loan-to-value is ${fmtPct(ltv)} (above the ${fmtPct(T.refiLtvCeilingPerProperty)} ceiling).`,
+        metric: fmtPct(ltv), entityType: 'property', entityId: p.id,
         impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
-    } else if (p.ltv !== null && p.ltv > gov.ltvCeiling) {
+    } else if (ltv !== null && ltv > gov.ltvCeiling) {
       // B3 Option B: above the ratified LTV governor but within the operational ceiling —
       // an info-level signal so a governor deviation is visible without warning-noise on every levered property.
       out.push({
         id: `ltv-governor-${p.id}`, severity: 'info', category: 'debt',
         title: `Property LTV above aggregate governor — ${p.name}`,
-        detail: `Loan-to-value is ${fmtPct(p.ltv)}. The ${fmtPct(gov.ltvCeiling)} governor applies to the portfolio aggregate; this property is within the ${fmtPct(T.refiLtvCeilingPerProperty)} per-property ceiling. Informational.`,
-        metric: fmtPct(p.ltv), entityType: 'property', entityId: p.id,
+        detail: `Loan-to-value is ${fmtPct(ltv)}. The ${fmtPct(gov.ltvCeiling)} governor applies to the portfolio aggregate; this property is within the ${fmtPct(T.refiLtvCeilingPerProperty)} per-property ceiling. Informational.`,
+        metric: fmtPct(ltv), entityType: 'property', entityId: p.id,
         impactAnnualUsd: null, spine: 'B', provenance: 'absent',
       });
     }
