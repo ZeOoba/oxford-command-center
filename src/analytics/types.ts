@@ -44,6 +44,9 @@ export interface PortfolioKpis {
   propertyCount: Cell;
   tenantCount: Cell;
   totalDebt: Cell;
+  /** Σ property-row loan balances owed to an Oxford affiliate lender (src/analytics/debt-basis.ts) —
+   *  excluded from totalDebt / ltv and disclosed beside them (ratified 2026-09-24). */
+  affiliateDebt: Cell;
   totalCash: Cell;
   walt: Cell;
   /** Non-investment holdings (the residence) — shown alongside, never inside, investment metrics. */
@@ -96,11 +99,18 @@ export interface MaturityBucket {
 }
 
 export interface DebtSummary {
+  /** Σ THIRD-PARTY borrower loans (affiliate notes excluded — ratified 2026-09-24). */
   externalDebt: number;
+  /** Σ borrower loans owed to an Oxford affiliate lender — disclosed beside externalDebt. */
+  affiliateDebt: number;
+  affiliateCount: number;
   internalOutstanding: number;
   lenderDeployed: number;
+  /** Third-party borrower loans only (same basis as externalDebt). */
   annualDebtService: number;
+  /** Balance-weighted over third-party borrower loans only (same basis as externalDebt). */
   weightedAvgRate: number | null;
+  /** Position view: every borrower (incl. affiliate) + lender loan with its maturity bucket. */
   ladder: MaturityBucket[];
 }
 

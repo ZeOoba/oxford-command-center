@@ -35,6 +35,7 @@ import {
   type DebtSignal,
 } from '../../src/contracts/debt';
 import { z } from 'zod';
+import { AFFILIATE_POSITION_LABEL, isAffiliateDebtPosition } from '../../src/analytics/debt-basis';
 import { Loan as LoanSchema } from '../../src/contracts/loan';
 import { RATIFIED_GOVERNORS } from '../../src/contracts/governor-constants';
 import type { Loan } from '../../src/contracts/loan';
@@ -174,6 +175,9 @@ interface MaturityRow {
   /** INTERNAL ONLY — consumed exclusively by toLoanSignal's collision check, never returned
    *  in the response shape (CONFIDENTIALITY: raw loan terms never cross the route boundary). */
   rate: number | null;
+  /** INTERNAL ONLY — consumed exclusively by isAffiliateDebtPosition (affiliate label + LTV
+   *  governor-hint suppression, ratified 2026-09-26); never returned in the response shape. */
+  lender: string | null;
 }
 
 // ── Router factory ─────────────────────────────────────────────────────────────────────────
@@ -273,7 +277,8 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
             .prepare(
               `SELECT d.id, d.property_id, p.name AS property_name,
                       d.loan_name, d.current_balance, d.maturity_date,
-                      d.months_to_maturity, d.snapshot_date, d.balloon, d.is_demand, d.ltv, d.rate
+                      d.months_to_maturity, d.snapshot_date, d.balloon, d.is_demand, d.ltv, d.rate,
+                      d.lender
                FROM debt_positions d
                LEFT JOIN property_master p ON p.id = d.property_id
                WHERE d.status = 'active'
@@ -291,11 +296,16 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
         // also staleness-discounted on its stored-cell fallback — see L3 in debt-scoring.ts).
         const ladder: MaturityLadderEntry[] = rows.map((row) => {
           const monthsToMaturity = effectiveMonthsToMaturity(row, asOf);
+          // Affiliate ruling (2026-09-26): an Oxford-to-Oxford note stays ON the ladder (it is a
+          // real position with a real maturity) but is labeled, and its stored ltv is not an LTV-
+          // governor input — so it gets no 'governor-block' hint. Same predicate as debt-scoring
+          // D1 and computePortfolioAggregateLtv; lender string itself never leaves the server.
+          const affiliate = isAffiliateDebtPosition(row);
           return {
             propertyId: row.property_id ?? 'unknown',
             propertyName: row.property_name ?? row.property_id ?? 'Unknown',
             loanId: row.id,
-            loanName: row.loan_name,
+            loanName: affiliate ? `${row.loan_name} ${AFFILIATE_POSITION_LABEL}` : row.loan_name,
             currentBalance: row.current_balance,
             maturityDate: row.maturity_date,
             monthsToMaturity,
@@ -313,7 +323,7 @@ export function debtApi(getDb: () => WarehouseDb): Hono {
             // 'refused' precedent. Collapse only ever applies at the BOOK-LEVEL clearance
             // direction (bookTrust in the response), never by silencing a per-row breach the
             // data still supports.
-            signal: toLoanSignal(row.ltv, row.rate),
+            signal: toLoanSignal(affiliate ? null : row.ltv, row.rate),
           };
         });
 

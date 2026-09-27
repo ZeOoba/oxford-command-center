@@ -10,6 +10,7 @@ import {
 } from '@contracts/index';
 import { evaluateConditions } from './conditions';
 import { isInvestmentProperty } from './property-basis';
+import { investmentLoanBalance, isAffiliateNoteProperty, isAffiliateBorrowerLoan } from './debt-basis';
 import type {
   AnalyticsBundle,
   CriticalDate,
@@ -88,7 +89,10 @@ export function portfolioKpis(
   const occSf = sum(p.map((x) => x.sf * x.occPct));
   const noi = sum(p.map((x) => x.noi));
   const value = sum(p.map((x) => x.oxfordValue));
-  const debt = sum(p.map((x) => x.loanBalance));
+  // Ratified 2026-09-24 (Gabriel): Oxford-to-Oxford (affiliate) notes are excluded from Total Debt and
+  // the aggregate LTV and disclosed separately — the single rule lives in ./debt-basis.
+  const debt = sum(p.map(investmentLoanBalance));
+  const affiliateDebt = sum(p.filter(isAffiliateNoteProperty).map((x) => x.loanBalance));
   const equity = sum(p.map((x) => x.equityInvested));
   const tenants = sum(p.map((x) => x.tenantCount));
 
@@ -97,12 +101,13 @@ export function portfolioKpis(
     occupancy: cell(totalSf ? occSf / totalSf : null, DERIVED, 'derived', { formula: 'Σ(sf·occ)/Σsf' }),
     noi: cell(noi, tag('Property NOI · Σ NOI (Oxford)'), sourced),
     value: cell(value, tag('Property NOI · Σ Oxford value'), sourced),
-    ltv: cell(value ? debt / value : null, DERIVED, 'derived', { formula: 'Σ loan balance / Σ value' }),
+    ltv: cell(value ? debt / value : null, DERIVED, 'derived', { formula: 'Σ third-party loan balance / Σ value (affiliate notes excluded)' }),
     weightedCapRate: cell(value ? noi / value : null, DERIVED, 'derived', { formula: 'Σ NOI / Σ value' }),
     equityInvested: cell(equity, 'Property NOI · Σ equity invested', 'confirmed'),
     propertyCount: cell(p.length, 'Property NOI · row count', 'confirmed'),
     tenantCount: cell(tenants, 'Property NOI · Σ tenants', 'confirmed'),
-    totalDebt: cell(debt, 'Property NOI · Σ loan balance', 'confirmed'),
+    totalDebt: cell(debt, 'Property NOI · Σ loan balance (affiliate notes excluded)', 'confirmed'),
+    affiliateDebt: cell(affiliateDebt, 'Property NOI · Σ loan balance owed to an Oxford affiliate', 'confirmed'),
     totalCash: cell(s.cash.totalCash, 'Cash Balances · total', 'confirmed'),
     walt: cell(walt(s.leases, referenceDate ?? s.meta.asOf), DERIVED, 'derived', {
       formula: 'rent-weighted remaining term, active leases',
@@ -266,11 +271,16 @@ export function marketAllocation(properties: Property[], metric: 'noi' | 'sf' | 
 
 // ── Debt ──────────────────────────────────────────────────────────────────────
 export function debtSummary(loans: Loan[]): DebtSummary {
-  const borrowers = loans.filter((l) => l.direction === 'borrower');
+  const borrowersAll = loans.filter((l) => l.direction === 'borrower');
+  // Ratified 2026-09-24: External Debt and its rate/service figures are THIRD-PARTY only; affiliate
+  // (Oxford-to-Oxford) borrower notes are carried separately so Overview and Capital › Debt reconcile.
+  const affiliates = borrowersAll.filter(isAffiliateBorrowerLoan);
+  const borrowers = borrowersAll.filter((l) => !isAffiliateBorrowerLoan(l));
   const lenders = loans.filter((l) => l.direction === 'lender');
   const internal = loans.filter((l) => l.direction === 'internal');
 
   const externalDebt = sum(borrowers.map((l) => l.absBalance));
+  const affiliateDebt = sum(affiliates.map((l) => l.absBalance));
   const lenderDeployed = sum(lenders.map((l) => l.absBalance));
   const internalOutstanding = sum(internal.map((l) => l.absBalance));
   const annualDebtService = sum(borrowers.map((l) => (l.monthlyPmt ?? 0) * 12));
@@ -281,7 +291,7 @@ export function debtSummary(loans: Loan[]): DebtSummary {
 
   // Maturity ladder (borrowers + lenders with a real maturity; demand bucketed separately)
   const ladder = new Map<string, MaturityBucket>();
-  for (const l of [...borrowers, ...lenders]) {
+  for (const l of [...borrowersAll, ...lenders]) {
     const key = l.maturity ? String(new Date(l.maturity).getUTCFullYear()) : 'Demand';
     const b = ladder.get(key) ?? { period: key, balance: 0, count: 0, hasBalloon: false };
     b.balance += l.absBalance;
@@ -297,6 +307,8 @@ export function debtSummary(loans: Loan[]): DebtSummary {
 
   return {
     externalDebt,
+    affiliateDebt,
+    affiliateCount: affiliates.length,
     internalOutstanding,
     lenderDeployed,
     annualDebtService,
