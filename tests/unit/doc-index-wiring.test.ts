@@ -77,16 +77,21 @@ describe('documents.ts over DocIndexClient (item 11)', () => {
     expect(made).toHaveLength(1);
   });
 
-  it('a failed load rejects, is not cached, and the next call retries', async () => {
+  it('a failed load rejects, is not cached, and retries only after the cooldown', async () => {
     const root = mkdtempSync(join(tmpdir(), 'diwire-bad-')); roots.push(root);
     const bad = join(root, 'doc-index.sqlite');
     writeFileSync(bad, 'not a sqlite database');
     process.env.DOC_INDEX_PATH = bad;
     const made = counting();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
     await expect(warmDocIndex()).rejects.toThrow(/doc index load failed/);
+    await expect(warmDocIndex()).rejects.toThrow(/cooling down/);
+    expect(made).toHaveLength(1);
+    expect(docIndexBuiltAt()).toBeNull();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + DOC_INDEX_FAILURE_COOLDOWN_MS);
     await expect(warmDocIndex()).rejects.toThrow(/doc index load failed/);
     expect(made).toHaveLength(2);
-    expect(docIndexBuiltAt()).toBeNull();
   });
 
   it('DOC_INDEX_WORKER=0 (rollback switch) runs the same protocol in-process', async () => {
@@ -163,6 +168,41 @@ describe('documents.ts over DocIndexClient (item 11)', () => {
       expect(made[0]!.knnSends).toBe(1); // the hung client was never reused
       expect(hits[0]).toMatchObject({ doc: 'A.pdf', docId: 'a', score: 1 });
       expect(docIndexBuiltAt()).toBe('2026-01-01T00:00:00.000Z');
+    });
+
+    it('a load-error (corrupt index) also starts the cooldown — no worker spawned per request', async () => {
+      await diskIndexAtEnv();
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+      const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      let spawned = 0;
+      setDocIndexTransportForTests((): DocIndexTransport => {
+        spawned += 1;
+        let onMsg: ((m: DocIndexResponse) => void) | null = null;
+        return {
+          send: (msg) => {
+            if (msg.type === 'load') setImmediate(() => onMsg?.({ type: 'load-error', message: 'file is not a database' }));
+          },
+          onMessage: (cb) => {
+            onMsg = cb;
+          },
+          onFailure: () => undefined,
+          terminate: async () => undefined,
+        };
+      });
+
+      await expect(searchDocuments('renewal', 3, fakeEmbedder)).rejects.toThrow(/not a database/);
+      expect(spawned).toBe(1);
+      expect(errorLog).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(DOC_INDEX_FAILURE_COOLDOWN_MS - 1);
+      await expect(searchDocuments('renewal', 3, fakeEmbedder)).rejects.toThrow(/cooling down/);
+      await expect(docStatus()).rejects.toThrow(/cooling down/);
+      expect(spawned).toBe(1);
+      expect(errorLog).toHaveBeenCalledTimes(1);
+
+      vi.advanceTimersByTime(1);
+      await expect(searchDocuments('renewal', 3, fakeEmbedder)).rejects.toThrow(/not a database/);
+      expect(spawned).toBe(2);
     });
 
     it('DOC_INDEX_WORKER=0 in-process path is unaffected by the cooldown when nothing fails', async () => {
