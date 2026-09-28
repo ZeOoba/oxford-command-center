@@ -53,9 +53,11 @@ function loadPolicyTerms(db: WarehouseDb): Map<string, PolicyTerm> {
   // read as unknown and normalized with the same helpers as resolveLossEvents (non-string → null /
   // '') — a non-string number reads "no number"; a date whose leading YYYY-MM-DD is not a real
   // calendar day (incl. a numeric-as-text '1717200000.0') reads "no term date" (termDateOrNull).
-  // buildInsuranceAnalysis (run first on the same request) normalizes its own reads of this table
-  // (normalizePolicyRow). Still trusting types: insurance-conditions.ts fetchCurrentInsuranceRows and
-  // insurance-analysis-api.ts GET /history (a separate follow-up).
+  // This loader normalizes on its own (it needs only these six columns) and relies on isoDay's
+  // leading-10-character read for the term dates. The other readers of this table —
+  // buildInsuranceAnalysis (run first on the same request), insurance-conditions.ts
+  // fetchCurrentInsuranceRows and GET /history — go through insurance-analysis.ts's shared
+  // readPolicyBook, which canonicalizes term dates to that same leading YYYY-MM-DD.
   const rows = (
     db
       .prepare('SELECT id, property_id, policy_type, policy_number, effective_date, expiration_date FROM property_insurance_policies')
