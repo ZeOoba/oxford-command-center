@@ -25,7 +25,14 @@ import type { WarehouseDb } from './db';
 import { loadGovernors } from './governors';
 import type { Governors } from './governors';
 import { applyGovernorProxy, SCREENING_DEBT_CONSTANT } from './acq-governor-proxy';
-import { scoreAcquisition, computeInputsVersion, RATIFIED_RULESET_PATH, REPLACEMENT_COST_TABLE_PATH } from './acquisition';
+import {
+  scoreAcquisition,
+  computeInputsVersion,
+  assertProductionRuleset,
+  assertProductionRct,
+  RATIFIED_RULESET_PATH,
+  REPLACEMENT_COST_TABLE_PATH,
+} from './acquisition';
 import { logVerdicts } from './calibration';
 import { CalibrationVerdictSchema, CalibrationOutcomeSchema } from '../../src/contracts/warehouse';
 import type {
@@ -82,6 +89,13 @@ export async function persistAndLogScore(
   ruleset: AcquisitionRuleset,
   rct: ReplacementCostTable,
 ): Promise<PersistAndLogScoreResult> {
+  // 0. FAIL CLOSED (Invariant 4): a persisted score feeds the ranked pipeline, the capital BUY verdict
+  //    (capital-allocation.ts reads acq_scores with no advisory filter) and the 40-year calibration
+  //    record, so it may only be produced from the RATIFIED ruleset + RCT. Throws before any write.
+  //    This is the single persistence funnel, so it does not rely on every caller having checked.
+  assertProductionRuleset(ruleset);
+  assertProductionRct(rct);
+
   // 1. Compute the score (pure — no side effects).
   const score = scoreAcquisition(input, ruleset, { rct });
 
@@ -184,7 +198,10 @@ export async function persistAndLogScore(
   );
 
   let calibrationVerdictId: number | null = null;
-  try {
+  // Never log an ADVISORY score as a calibration prediction: the calibration record is only ever built
+  // from ratified verdicts. Defensive only: the assertions at the top of this function force
+  // advisoryOnly=false today, so this guards against a future engine condition, not a current one.
+  if (!advisoryOnly) try {
     const direction: 'up' | 'flat' | 'down' =
       finalVerdict === 'PURSUE' ? 'up' : finalVerdict === 'WATCH' ? 'flat' : 'down';
 
