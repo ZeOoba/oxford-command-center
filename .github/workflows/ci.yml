@@ -14,9 +14,17 @@ on:
     branches: [main]
   pull_request:
 
+# RUNNER TOGGLE (2026-09-28): both required jobs run on GitHub-hosted ubuntu-latest by default.
+# Setting the repo variable CI_RUNNER=self moves them to the self-hosted runner on Gabriel's
+# Windows laptop (labels: self-hosted, windows, ora-ci) — no billed Actions minutes. Added when
+# account billing stopped hosted jobs from starting. Job ids `gate` / `refute-required` are the
+# branch-protection required-check names: never rename them. While CI_RUNNER=self, CI only runs
+# while that laptop is on and the runner service is up; unset the variable to fall back.
+#   gh variable set CI_RUNNER --body self --repo ZeOoba/oxford-command-center
+#   gh variable delete CI_RUNNER --repo ZeOoba/oxford-command-center
 jobs:
   gate:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER == 'self' && fromJSON('["self-hosted","windows","ora-ci"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -32,7 +40,7 @@ jobs:
   # protection to hard-enforce (non-required by default). PR-only — it needs a base ref to diff.
   refute-required:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER == 'self' && fromJSON('["self-hosted","windows","ora-ci"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v5
         with:
