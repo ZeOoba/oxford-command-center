@@ -37,7 +37,7 @@
 import { Hono } from 'hono';
 import type { WarehouseDb } from './db';
 import { buildInsuranceAnalysis } from './insurance-analysis';
-import { resolveDecPages, resolveLossEvents } from './placeholder-data';
+import { resolveDecPages, resolveLossEvents, strOrBlank, strOrNull, termDateOrNull } from './placeholder-data';
 import { buildInsuranceLossReport, normalizePolicyNumber, type PolicyTerm } from './insurance-loss-analysis';
 import { InsuranceLossReport } from '../../src/contracts/insurance-loss';
 
@@ -48,16 +48,32 @@ import { InsuranceLossReport } from '../../src/contracts/insurance-loss';
  *  or reissued number (live: 1310 'REDACTED-600' → 1734 'REDACTED-477') still names the surviving
  *  current-term row. */
 function loadPolicyTerms(db: WarehouseDb): Map<string, PolicyTerm> {
-  const rows = db
-    .prepare('SELECT id, property_id, policy_type, policy_number, effective_date, expiration_date FROM property_insurance_policies')
-    .all() as Array<{
-      id: number;
-      property_id: string;
-      policy_type: string;
-      policy_number: string | null;
-      effective_date: string | null;
-      expiration_date: string | null;
-    }>;
+  // SQLite affinities are not constraints: raw SQL can leave a BLOB or a number in any TEXT column
+  // here, which would crash normalizePolicyNumber / isoDay / .trim(). Every column but the rowid is
+  // read as unknown and normalized with the same helpers as resolveLossEvents (non-string → null /
+  // '') — a non-string number reads "no number"; a date whose leading YYYY-MM-DD is not a real
+  // calendar day (incl. a numeric-as-text '1717200000.0') reads "no term date" (termDateOrNull).
+  // Scope: this hardens THIS read only — buildInsuranceAnalysis runs first on the same request and
+  // still reads property_insurance_policies with trusted types (a separate follow-up).
+  const rows = (
+    db
+      .prepare('SELECT id, property_id, policy_type, policy_number, effective_date, expiration_date FROM property_insurance_policies')
+      .all() as Array<{
+        id: number;
+        property_id: unknown;
+        policy_type: unknown;
+        policy_number: unknown;
+        effective_date: unknown;
+        expiration_date: unknown;
+      }>
+  ).map((r) => ({
+    id: r.id,
+    property_id: strOrBlank(r.property_id),
+    policy_type: strOrBlank(r.policy_type),
+    policy_number: strOrNull(r.policy_number),
+    effective_date: termDateOrNull(r.effective_date),
+    expiration_date: termDateOrNull(r.expiration_date),
+  }));
   const lineKey = (r: { property_id: string; policy_type: string }) => `${r.property_id}|${r.policy_type.trim().toLowerCase()}`;
   const numbersByLine = new Map<string, Set<string>>();
   for (const r of rows) {

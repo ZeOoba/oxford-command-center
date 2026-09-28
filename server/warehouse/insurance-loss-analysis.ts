@@ -472,6 +472,7 @@ export function buildInsuranceLossReport(input: LossAnalysisInputs): InsuranceLo
     lossDataSource: lossEvents.source,
     decPageDataSource,
     droppedFixtureRows: lossEvents.droppedRows,
+    coercedLossEventRows: lossEvents.coercedRows,
     unmatchedPolicyRefs,
     eal,
     deductibleReviews,

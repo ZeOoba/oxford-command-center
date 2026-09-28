@@ -241,12 +241,30 @@ export function unmatchedPolicyRefsDetail(report: InsuranceLossReport): string |
     : `${n} loss events carry a policy number that matches no policy on file at their property`;
   const listed = refs
     .slice(0, UNMATCHED_REF_LIST_MAX)
-    .map((u) => `${u.property} '${u.policyRef}' (${u.lossDate})`)
+    // A loader-rejected loss_date arrives as '' — render it, never an empty "()".
+    .map((u) => `${u.property} '${u.policyRef}' (${u.lossDate === '' ? 'no date' : u.lossDate})`)
     .join(', ');
   const more = n > UNMATCHED_REF_LIST_MAX ? `, and ${n - UNMATCHED_REF_LIST_MAX} more` : '';
   return (
     `${head} — a loss-run typo or a policy missing from the register; the ref was ignored ` +
     `when attaching the event to a policy: ${listed}${more}.`
+  );
+}
+
+/**
+ * Data-quality notice detail for `report.coercedLossEventRows` (warehouse loss rows the loader kept
+ * but had to coerce — see contracts/insurance-loss.ts). Null when there are none. Rendered
+ * independently of the placeholder banner, like the unmatched-ref notice.
+ */
+export function coercedLossRowsDetail(report: InsuranceLossReport): string | null {
+  const n = report.coercedLossEventRows;
+  if (n === 0) return null;
+  const rows = n === 1 ? '1 loss-run row had' : `${n} loss-run rows had`;
+  return (
+    `${rows} an unreadable loss date or gross amount in the warehouse — the date was treated as ` +
+    `unknown (the loss still counts, but its year is excluded from observation years) or the amount ` +
+    `as $0. Fix the row at the source; until then EAL can read high or turn indeterminate, and the ` +
+    `retained/transferred split can be understated.`
   );
 }
 
