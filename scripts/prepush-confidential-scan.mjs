@@ -79,7 +79,7 @@ function collectDealTerms(parsed, alwaysTerms, contextGroups) {
  * denylist (no context groups) when the roster is missing or unparseable.
  *
  * @param {string} [homeDirOverride] - test seam; defaults to os.homedir().
- * @returns {{alwaysTerms: string[], contextGroups: {dealKey: string, contextTerms: string[], requiresAny: string[]}[]}}
+ * @returns {{alwaysTerms: string[], contextGroups: {dealKey: string, contextTerms: string[], requiresAny: string[]}[], rosterOk: boolean, rosterDetail: string}}
  */
 export function loadTerms(homeDirOverride) {
   const home = homeDirOverride ?? homedir();
@@ -94,11 +94,51 @@ export function loadTerms(homeDirOverride) {
         ? `roster not found at ${rosterPath}`
         : `roster at ${rosterPath} is unparseable (${result.error?.message ?? result.error})`;
     console.warn(`[prepush-confidential-scan] WARN: ${detail} — scanning built-in denylist only.`);
-    return { alwaysTerms: dedupe(alwaysTerms), contextGroups };
+    return { alwaysTerms: dedupe(alwaysTerms), contextGroups, rosterOk: false, rosterDetail: detail };
   }
 
   collectDealTerms(result.data, alwaysTerms, contextGroups);
-  return { alwaysTerms: dedupe(alwaysTerms), contextGroups };
+  return { alwaysTerms: dedupe(alwaysTerms), contextGroups, rosterOk: true, rosterDetail: '' };
+}
+
+/**
+ * Invariant 3 fail-closed rule (cc-audit-army 2026-09-28, prepush-scan-fails-open): with no usable
+ * roster the scan degrades to a one-entry denylist, which is NOT protection for real deal names.
+ * Block the push unless the operator explicitly opts out for this push with
+ * PREPUSH_ALLOW_NO_ROSTER=1. Pure so it is unit-testable without process.exit.
+ *
+ * @param {boolean} rosterOk
+ * @param {Record<string, string|undefined>} env
+ * @returns {boolean} true = block the push
+ */
+export function shouldBlockOnMissingRoster(rosterOk, env) {
+  if (rosterOk) return false;
+  return env['PREPUSH_ALLOW_NO_ROSTER'] !== '1';
+}
+
+const EXPORT_EXT_RE = /\.(xlsx|xlsm|xls|pdf|docx|doc|csv)$/i;
+
+/**
+ * Binary files (xlsx/pdf/docx) are invisible to the text-line scan: `git diff` prints only
+ * "Binary files differ". Any binary ADDED or MODIFIED under data/ is firm/tenant data that the
+ * scan cannot inspect, so it blocks (deletions are fine). Parses `git diff --numstat`, where a
+ * binary file is reported as "-<TAB>-<TAB>path".
+ *
+ * @param {string} numstatText - output of `git diff --numstat --diff-filter=AM`
+ * @returns {string[]} binary paths under data/
+ */
+export function parseBinaryPathsUnderData(numstatText) {
+  const out = [];
+  for (const line of numstatText.split('\n')) {
+    const m = /^(-|\d+)\t(-|\d+)\t(.+)$/.exec(line.trimEnd());
+    if (!m || !m[3]) continue;
+    const path = m[3].replace(/\\/g, '/');
+    if (!path.startsWith('data/')) continue;
+    // Binary by git's own detection ("-<TAB>-"), OR an export/document extension: a CSV, or a small
+    // PDF with no NUL byte in its first 8 KB, is classified as text and would otherwise pass.
+    if ((m[1] === '-' && m[2] === '-') || EXPORT_EXT_RE.test(path)) out.push(m[3]);
+  }
+  return out;
 }
 
 function dedupe(arr) {
@@ -313,9 +353,22 @@ export function parseAddedLines(diffText) {
 const ZERO_SHA = /^0+$/;
 
 /** Resolve a base ref to diff a new branch against: origin/main if it exists, else the empty tree. */
-function baseForNewBranch() {
+/** @param {string} [localSha]
+ * @param {string} [cwd] - test seam; defaults to the process cwd. */
+export function baseForNewBranch(localSha, cwd) {
   try {
-    execFileSync('git', ['rev-parse', '--verify', '--quiet', 'origin/main'], { stdio: 'pipe' });
+    execFileSync('git', ['rev-parse', '--verify', '--quiet', 'origin/main'], { stdio: 'pipe', cwd });
+    // merge-base, NOT origin/main itself: a two-dot diff from origin/main reads everything main has
+    // since REMOVED as "added" on the branch, so after an untrack lands on main every older branch
+    // would false-block on the files main deleted.
+    if (localSha) {
+      try {
+        const mb = execFileSync('git', ['merge-base', 'origin/main', localSha], { encoding: 'utf8', stdio: 'pipe', cwd }).trim();
+        if (mb) return mb;
+      } catch {
+        // unrelated histories: fall through to origin/main
+      }
+    }
     return 'origin/main';
   } catch {
     // 4b825dc642cb6eb9a060e54bf8d69288fbee4904 is git's well-known empty-tree object.
@@ -324,7 +377,7 @@ function baseForNewBranch() {
 }
 
 function diffFor(remoteSha, localSha) {
-  const base = ZERO_SHA.test(remoteSha) ? baseForNewBranch() : remoteSha;
+  const base = ZERO_SHA.test(remoteSha) ? baseForNewBranch(localSha) : remoteSha;
   return execFileSync('git', ['diff', `${base}..${localSha}`], {
     encoding: 'utf8',
     maxBuffer: 64 * 1024 * 1024,
@@ -347,11 +400,41 @@ function blockOnHits(hits, header, formatHit, trailer) {
   process.exit(1);
 }
 
+/** @param {string} remoteSha
+ * @param {string} localSha
+ * @param {string} [cwd] - test seam; defaults to the process cwd.
+ * @returns {string[]} */
+export function binaryPathsFor(remoteSha, localSha, cwd) {
+  const base = ZERO_SHA.test(remoteSha) ? baseForNewBranch(localSha, cwd) : remoteSha;
+  // quotepath=off: a non-ASCII filename (en dash in an Excel export name) is otherwise emitted
+  // as a quoted "\342\200\223" string that fails the data/ prefix test. --no-renames: a binary
+  // moved into data/ with edits is otherwise status R and dropped by --diff-filter=AM.
+  const text = execFileSync('git', ['-c', 'core.quotepath=off', 'diff', '--numstat', '--no-renames', '--diff-filter=AM', `${base}..${localSha}`], {
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024,
+    cwd,
+  });
+  return parseBinaryPathsUnderData(text);
+}
+
 function main() {
-  const { alwaysTerms, contextGroups } = loadTerms();
+  const { alwaysTerms, contextGroups, rosterOk, rosterDetail } = loadTerms();
+  if (!rosterOk && process.env['PREPUSH_ALLOW_NO_ROSTER'] === '1') {
+    console.warn(`[prepush-confidential-scan] WARN: PREPUSH_ALLOW_NO_ROSTER=1 - roster gate BYPASSED for this push (${rosterDetail}).`);
+  }
+  if (shouldBlockOnMissingRoster(rosterOk, process.env)) {
+    console.error(
+      `\n✖  PUSH BLOCKED — the confidential-deal roster is unavailable (${rosterDetail}), so the ` +
+        'scan would cover only the built-in denylist and could miss real deal names (Invariant 3, ' +
+        'fail closed).\n\n   Restore ~/.claude/hooks/confidential-terms.json, or set ' +
+        'PREPUSH_ALLOW_NO_ROSTER=1 for this one push if you have verified it carries no deal data.\n',
+    );
+    process.exit(1);
+  }
   const stdin = readStdin();
   const allHits = [];
   const flagHits = [];
+  const binaryHits = [];
 
   for (const rawLine of stdin.split('\n')) {
     const line = rawLine.trim();
@@ -375,6 +458,21 @@ function main() {
     allHits.push(...scanDiffForConfidential(added, alwaysTerms));
     allHits.push(...scanDiffForContextTerms(added, contextGroups));
     flagHits.push(...scanDiffForConfidentialFlag(added));
+    try {
+      binaryHits.push(...binaryPathsFor(remoteSha ?? '', localSha));
+    } catch {
+      // Same fail-safe stance as the diff above: an infrastructure error must not brick a push.
+    }
+  }
+
+  if (binaryHits.length > 0) {
+    blockOnHits(
+      [...new Set(binaryHits)],
+      'binary file(s) added or modified under data/ that this text scan cannot inspect',
+      (p) => p,
+      'Tenant/firm exports (xlsx/pdf) must not be pushed. Gitignore the directory and untrack the ' +
+        'file (git rm --cached); decide any history purge with Gabriel.',
+    );
   }
 
   // Structural check: a `"confidential": true` payload is only ever legitimate FROM a repo

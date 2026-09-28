@@ -1,6 +1,7 @@
 // tests/unit/om-extract.test.ts
 import { describe, it, expect } from 'vitest';
-import { extractOmFields, buildOmExtractSchema } from '../../server/warehouse/om-extract';
+import { extractOmFields as extractOmFieldsReal, buildOmExtractSchema } from '../../server/warehouse/om-extract';
+import type { OmExtractOptions } from '../../server/warehouse/om-extract';
 import fieldsConfig from '../../server/warehouse/om-extract-fields.json';
 
 // Minimal real-shaped Anthropic response
@@ -37,6 +38,11 @@ const VALID_JSON = JSON.stringify({
   hasDock: 'yes',
   UNKNOWN_KEY: 'should-be-stripped',
 });
+
+// Existing cases predate the egress roster scan and need no machine-local roster: default the scan to
+// a no-hit stub. The fail-closed cases below pass their own confidentialScan explicitly.
+const extractOmFields = (buf: Buffer, o: OmExtractOptions) =>
+  extractOmFieldsReal(buf, { confidentialScan: () => null, ...o });
 
 describe('extractOmFields', () => {
   it('returns error when no API key', async () => {
@@ -289,5 +295,81 @@ describe('buildOmExtractSchema', () => {
     // ceiling (not the trigger point); this guard fails CI before a 17th manifest field
     // would silently produce an invalid request, discovered only via a live API failure.
     expect(Object.keys(schema.properties).length).toBeLessThanOrEqual(16);
+  });
+});
+
+describe('extractOmFields egress roster scan (blank-deal upload)', () => {
+  const pdfParseFn = async () => ({ text: 'Confidential OM for SyntheticCo Plaza, asking $1.0M' });
+
+  it('blocks a blank-deal upload whose text matches the roster, without calling the network', async () => {
+    let called = false;
+    const result = await extractOmFieldsReal(VALID_PDF_BUFFER, {
+      apiKey: 'k',
+      pdfParseFn,
+      confidentialScan: () => ({ dealLabel: 'Synthetic Deal' }),
+      fetchImpl: (async () => { called = true; return new Response('{}'); }) as unknown as typeof fetch,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.status).toBe(403);
+      expect(result.error).not.toContain('SyntheticCo');
+      expect(result.error).not.toContain('Synthetic Deal');
+    }
+    expect(called).toBe(false);
+  });
+
+  it('fails CLOSED (403, no network) when the roster scan throws (roster missing/unreadable)', async () => {
+    let called = false;
+    const result = await extractOmFieldsReal(VALID_PDF_BUFFER, {
+      apiKey: 'k',
+      pdfParseFn,
+      confidentialScan: () => { throw new Error('confidential-terms.json missing'); },
+      fetchImpl: (async () => { called = true; return new Response('{}'); }) as unknown as typeof fetch,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(403);
+    expect(called).toBe(false);
+  });
+
+  it('DEFAULT wiring (production path, no injected scan) blocks a roster match and never calls the network', async () => {
+    let called = false;
+    const result = await extractOmFieldsReal(VALID_PDF_BUFFER, {
+      apiKey: 'k',
+      pdfParseFn: async () => ({ text: 'OM narrative mentioning zzz-confidential-trigger-9f3a1c in the body' }),
+      fetchImpl: (async () => { called = true; return new Response('{}'); }) as unknown as typeof fetch,
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.status).toBe(403);
+    expect(called).toBe(false);
+  });
+
+  it('DEFAULT wiring fails CLOSED when the roster file is unreadable', async () => {
+    const saved = process.env.CONFIDENTIAL_TERMS_PATH;
+    process.env.CONFIDENTIAL_TERMS_PATH = 'C:/definitely/not/a/roster.json';
+    let called = false;
+    try {
+      const result = await extractOmFieldsReal(VALID_PDF_BUFFER, {
+        apiKey: 'k',
+        pdfParseFn: async () => ({ text: 'ordinary OM text' }),
+        fetchImpl: (async () => { called = true; return new Response('{}'); }) as unknown as typeof fetch,
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.status).toBe(403);
+      expect(called).toBe(false);
+    } finally {
+      if (saved === undefined) delete process.env.CONFIDENTIAL_TERMS_PATH;
+      else process.env.CONFIDENTIAL_TERMS_PATH = saved;
+    }
+  });
+
+  it('scans the exact text that would be sent (the truncated body)', async () => {
+    const seen: string[] = [];
+    await extractOmFieldsReal(VALID_PDF_BUFFER, {
+      apiKey: 'k',
+      pdfParseFn: async () => ({ text: 'x'.repeat(40_000) }),
+      confidentialScan: (t) => { seen.push(t); return { dealLabel: 'stop here' }; },
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.length).toBeLessThan(40_000);
   });
 });
