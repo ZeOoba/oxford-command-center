@@ -71,7 +71,7 @@ function codeVersion(): string {
 
 // ── raw row shape ──────────────────────────────────────────────────────────────────────────────
 
-interface RawPolicyRow {
+export interface RawPolicyRow {
   id: number;
   property_id: string;
   property_name: string | null;
@@ -83,9 +83,19 @@ interface RawPolicyRow {
   coverage_tiv: number | null;
   policy_type: string;
   source_date: string;
+  badDateColumns?: string[];
 }
 
 const finiteOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+/**
+ * A term date as the LEADING YYYY-MM-DD, or null. termDateOrNull accepts any value whose leading 10
+ * characters are a real calendar day but hands back the RAW string, and downstream date math is not
+ * uniform (the engine's isoDay slices 10 chars; the brief's daysBetween does `new Date(raw)`, which
+ * is NaN for '2026-10-15x' and a false drift for '...T00:00:00Z') - so the reader canonicalizes once
+ * here (refute wf_51e97c11-d63). Bare YYYY-MM-DD, the only thing either writer stores, is unchanged.
+ */
+const canonicalDateOrNull = (v: unknown): string | null => termDateOrNull(v)?.trim().slice(0, 10) ?? null;
 
 /**
  * SQLite affinities are not constraints: raw SQL can leave a BLOB in any TEXT column (an integer
@@ -105,12 +115,12 @@ function normalizePolicyRow(r: Record<string, unknown>): RawPolicyRow {
     property_name: strOrNull(r.property_name),
     insurer: strOrBlank(r.insurer),
     policy_number: strOrNull(r.policy_number),
-    effective_date: termDateOrNull(r.effective_date),
-    expiration_date: termDateOrNull(r.expiration_date),
+    effective_date: canonicalDateOrNull(r.effective_date),
+    expiration_date: canonicalDateOrNull(r.expiration_date),
     premium_annual: finiteOrNull(r.premium_annual),
     coverage_tiv: finiteOrNull(r.coverage_tiv),
     policy_type: strOrBlank(r.policy_type),
-    source_date: termDateOrNull(r.source_date) ?? '',
+    source_date: canonicalDateOrNull(r.source_date) ?? '',
   };
 }
 
@@ -129,30 +139,63 @@ const TERM_DATE_COLUMNS = ['effective_date', 'expiration_date', 'source_date'] a
 function badDateColumns(r: Record<string, unknown>): string[] {
   // Flagged on the importer's WHOLE-string rule (isIsoCalendarDate), stricter than termDateOrNull's
   // leading-10-chars read: both writers only ever store bare YYYY-MM-DD, so a '2026-01-01 ' or
-  // '…T00:00:00Z' is also a raw-SQL write — it normalizes as dated but can fail sameTerm/adjacency.
+  // '…T00:00:00Z' is also a raw-SQL write. Such a value is still READ (canonicalDateOrNull reduces it
+  // to its leading YYYY-MM-DD for every reader) and only FLAGGED; a value whose leading 10 characters
+  // are not a real day reads null (undated).
   return TERM_DATE_COLUMNS.filter((c) => {
     const v = r[c];
     return v !== null && v !== undefined && !(typeof v === 'string' && isIsoCalendarDate(v));
   });
 }
 
-/** Normalize every raw row; list the ones with a present-but-invalid date for flagging. */
-function readPolicyBook(rawRows: unknown[]): { book: RawPolicyRow[]; badDates: Array<{ row: RawPolicyRow; columns: string[] }> } {
+/**
+ * Normalize every raw row; list the ones with a present-but-invalid date for flagging. THE shared
+ * read path for property_insurance_policies: buildInsuranceAnalysis, policyBookFingerprint,
+ * insurance-conditions.ts fetchCurrentInsuranceRows and GET /history all go through it, so one
+ * corrupt row is read the same way by every reader. Only the engine flags (the brief's warehouse
+ * handle is read-only).
+ */
+export function readPolicyBook(rawRows: unknown[]): { book: RawPolicyRow[]; badDates: Array<{ row: RawPolicyRow; columns: string[] }> } {
   const book: RawPolicyRow[] = [];
   const badDates: Array<{ row: RawPolicyRow; columns: string[] }> = [];
   for (const raw of rawRows) {
     const r = raw as Record<string, unknown>;
     const row = normalizePolicyRow(r);
-    book.push(row);
     const columns = badDateColumns(r);
+    if (columns.length > 0) row.badDateColumns = columns;
+    book.push(row);
     if (columns.length > 0) badDates.push({ row, columns });
   }
   return { book, badDates };
 }
 
-/** One open 'insurance-policy-bad-date' flag per affected policy. Same once-per-open-flag guard and
- *  fail-open posture as the cohort-unclassified flag below: this runs on every GET. */
+/**
+ * One open 'insurance-policy-bad-date' flag per affected policy, and the flags of policies that are
+ * no longer affected are auto-resolved. Same once-per-open-flag guard and fail-open posture as the
+ * cohort-unclassified flag below: this runs on every GET.
+ *
+ * Lifecycle: a flag is keyed on `policy_id=N`. It resolves when N leaves the current bad set —
+ * because the value healed, OR because captureInsurance's UPDATE_POLICY advanced N to a new id (the
+ * stale flag would otherwise point at a dead row forever; a row that is still bad is re-flagged
+ * under its new id). A flag a human resolved WITHOUT fixing the value re-opens on the next pass:
+ * the value is still bad, so that is intended, not a leak. Other flag kinds are never touched.
+ */
 function flagBadDates(db: WarehouseDb, badDates: Array<{ row: RawPolicyRow; columns: string[] }>): void {
+  try {
+    const stillBad = new Set(badDates.map((b) => b.row.id));
+    const open = db
+      .prepare(`SELECT id, detail FROM data_quality_issues WHERE kind = 'insurance-policy-bad-date' AND status = 'open'`)
+      .all() as Array<{ id: number; detail: string }>;
+    const resolve = db.prepare(
+      `UPDATE data_quality_issues SET status = 'resolved', resolved_at = datetime('now') WHERE id = ?`,
+    );
+    for (const flag of open) {
+      const policyId = /^policy_id=(\d+) /.exec(flag.detail)?.[1];
+      if (policyId === undefined || !stillBad.has(Number(policyId))) resolve.run(flag.id);
+    }
+  } catch {
+    // best-effort — a sweep failure must never break the report.
+  }
   for (const { row, columns } of badDates) {
     try {
       const alreadyFlagged = db
@@ -324,6 +367,10 @@ export interface CollapsibleInsuranceRow {
   expiration_date: string | null;
   policy_type: string;
   source_date: string;
+  /** Set only by readPolicyBook, only when a date column held a PRESENT but invalid value. A
+   *  read-only marker for reporting (insurance-conditions.ts names the policy in the brief): no
+   *  ranking, dedupe or collapse code reads it. */
+  badDateColumns?: string[];
 }
 type Dated<T extends CollapsibleInsuranceRow> = T & { effective_date: string };
 const hasEffectiveDate = <T extends CollapsibleInsuranceRow>(r: T): r is Dated<T> =>
