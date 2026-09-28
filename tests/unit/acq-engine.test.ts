@@ -6,7 +6,7 @@
 // Spec: docs/superpowers/specs/2026-06-20-phase-4-acquisition-intelligence-engine-firm-pri.md §Step 3.
 //
 // Test strategy:
-//   1. proposedRuleset → advisoryOnly=true; advisory_only column = 1 in acq_scores.
+//   1. a non-ratified ruleset or RCT is REJECTED before any write (fail-closed, Invariant 4).
 //   2. LTV governor fail → stored verdict demoted to PASS; composite preserved.
 //   3. DSCR governor fail → stored verdict demoted to PASS.
 //   4. Both governors cleared + ratified ruleset → verdict matches scoreAcquisition output.
@@ -79,30 +79,43 @@ function freshDb(): WarehouseDb {
 
 // ── Tests ──────────────────────────────────────────────────────────────────────────────────
 
-describe('persistAndLogScore — advisory (proposed ruleset)', () => {
-  it('returns advisoryOnly=true when ruleset is proposed', async () => {
+describe('persistAndLogScore — FAIL CLOSED on a non-ratified ruleset or RCT (Invariant 4)', () => {
+  const rowCount = (db: WarehouseDb, table: string): number =>
+    (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+
+  it('rejects a proposed ruleset and writes NOTHING (no inputs, no score, no calibration verdict)', async () => {
     const db = freshDb();
     const candidateId = 'test-deal-advisory';
     seedCandidate(db, candidateId);
 
-    const proposed = proposedRuleset();
-    const { score } = await persistAndLogScore(db, candidateId, strongInput(), proposed, RCT);
+    await expect(persistAndLogScore(db, candidateId, strongInput(), proposedRuleset(), RCT)).rejects.toThrow(/not 'ratified'/);
 
-    expect(score.advisoryOnly).toBe(true);
+    expect(rowCount(db, 'acq_score_inputs')).toBe(0);
+    expect(rowCount(db, 'acq_scores')).toBe(0);
+    expect(rowCount(db, 'calibration_verdict')).toBe(0);
   });
 
-  it('stores advisory_only=1 in acq_scores when ruleset is proposed', async () => {
+  it('rejects an unratified RCT and writes nothing', async () => {
     const db = freshDb();
-    const candidateId = 'test-deal-advisory-store';
+    const candidateId = 'test-deal-unratified-rct';
+    seedCandidate(db, candidateId);
+    const proposedRct = { ...RCT, ratification: 'proposed' as const };
+
+    await expect(persistAndLogScore(db, candidateId, strongInput(), RATIFIED_RULESET, proposedRct)).rejects.toThrow(/not 'ratified'/);
+
+    expect(rowCount(db, 'acq_scores')).toBe(0);
+    expect(rowCount(db, 'calibration_verdict')).toBe(0);
+  });
+
+  it('rejects a ratified RCT with no provenance (ratifiedBy null)', async () => {
+    const db = freshDb();
+    const candidateId = 'test-deal-unsigned-rct';
     seedCandidate(db, candidateId);
 
-    const proposed = proposedRuleset();
-    await persistAndLogScore(db, candidateId, strongInput(), proposed, RCT);
-
-    const row = db.prepare('SELECT advisory_only FROM acq_scores WHERE candidate_id = ?')
-      .get(candidateId) as { advisory_only: number } | undefined;
-    expect(row).toBeDefined();
-    expect(row!.advisory_only).toBe(1);
+    await expect(
+      persistAndLogScore(db, candidateId, strongInput(), RATIFIED_RULESET, { ...RCT, ratifiedBy: null }),
+    ).rejects.toThrow(/provenance/);
+    expect(rowCount(db, 'acq_scores')).toBe(0);
   });
 });
 
