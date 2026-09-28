@@ -42,6 +42,7 @@ import { CalibrationVerdictSchema, type CalibrationVerdict } from '../../src/con
 import { logVerdicts, type LogVerdictsResult } from './calibration';
 import { resolveInsuranceProperty } from './insurance-property-map';
 import { isPropertyLinePolicyType } from './insurance-policy-lines';
+import { isIsoCalendarDate, strOrBlank, strOrNull, termDateOrNull } from './placeholder-data';
 
 // ── named thresholds (no bare literals in comparisons) ────────────────────────────────────────
 const MIN_COHORT_N = 5;
@@ -82,6 +83,98 @@ interface RawPolicyRow {
   coverage_tiv: number | null;
   policy_type: string;
   source_date: string;
+}
+
+const finiteOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+/**
+ * SQLite affinities are not constraints: raw SQL can leave a BLOB in any TEXT column (an integer
+ * is coerced to text by TEXT affinity; a numeric date survives as '1717200000'). Every non-rowid
+ * column is read as unknown and normalized here, once, with the loss loaders' helpers
+ * (placeholder-data.ts) — before this a BLOB policy_type threw in collapseToCurrentTerm's .trim()
+ * and 500ed both /insurance and /insurance/loss (refute wf_0ef2e213-4e2 follow-up). Non-string
+ * text → '' (keys) or null (optional fields); a date whose leading YYYY-MM-DD is not a real
+ * calendar day → null; source_date likewise, as ''; non-finite money → null. Valid rows pass
+ * through unchanged, so collapse ordering is unchanged for valid data. A PRESENT-but-invalid date
+ * is flagged, not recovered — see badDateColumns.
+ */
+function normalizePolicyRow(r: Record<string, unknown>): RawPolicyRow {
+  return {
+    id: r.id as number,
+    property_id: strOrBlank(r.property_id),
+    property_name: strOrNull(r.property_name),
+    insurer: strOrBlank(r.insurer),
+    policy_number: strOrNull(r.policy_number),
+    effective_date: termDateOrNull(r.effective_date),
+    expiration_date: termDateOrNull(r.expiration_date),
+    premium_annual: finiteOrNull(r.premium_annual),
+    coverage_tiv: finiteOrNull(r.coverage_tiv),
+    policy_type: strOrBlank(r.policy_type),
+    source_date: termDateOrNull(r.source_date) ?? '',
+  };
+}
+
+const TERM_DATE_COLUMNS = ['effective_date', 'expiration_date', 'source_date'] as const;
+
+/**
+ * The date columns of a raw row that hold a PRESENT but invalid value (NULL is a legitimate "not
+ * captured" and is not listed). Ruling (Gabriel, 2026-09-28): such a row stays in the book —
+ * excluding it would drop its loss events out of the deductible review — and is flagged once in
+ * data_quality_issues. Its term ranking is INDETERMINATE, deliberately not recovered: read as
+ * undated / oldest capture it can double-count a superseded term or let an expired term read
+ * current (refute wf_d23d3a9d-381), and every recovery rule tried (policy_number sibling drop,
+ * id-order fallback) mis-ranked some other shape (refute wf_269ac84f-c8d — id is not capture order
+ * for importer-updated rows). The flag is the tell; fixing the stored value restores the ranking.
+ */
+function badDateColumns(r: Record<string, unknown>): string[] {
+  // Flagged on the importer's WHOLE-string rule (isIsoCalendarDate), stricter than termDateOrNull's
+  // leading-10-chars read: both writers only ever store bare YYYY-MM-DD, so a '2026-01-01 ' or
+  // '…T00:00:00Z' is also a raw-SQL write — it normalizes as dated but can fail sameTerm/adjacency.
+  return TERM_DATE_COLUMNS.filter((c) => {
+    const v = r[c];
+    return v !== null && v !== undefined && !(typeof v === 'string' && isIsoCalendarDate(v));
+  });
+}
+
+/** Normalize every raw row; list the ones with a present-but-invalid date for flagging. */
+function readPolicyBook(rawRows: unknown[]): { book: RawPolicyRow[]; badDates: Array<{ row: RawPolicyRow; columns: string[] }> } {
+  const book: RawPolicyRow[] = [];
+  const badDates: Array<{ row: RawPolicyRow; columns: string[] }> = [];
+  for (const raw of rawRows) {
+    const r = raw as Record<string, unknown>;
+    const row = normalizePolicyRow(r);
+    book.push(row);
+    const columns = badDateColumns(r);
+    if (columns.length > 0) badDates.push({ row, columns });
+  }
+  return { book, badDates };
+}
+
+/** One open 'insurance-policy-bad-date' flag per affected policy. Same once-per-open-flag guard and
+ *  fail-open posture as the cohort-unclassified flag below: this runs on every GET. */
+function flagBadDates(db: WarehouseDb, badDates: Array<{ row: RawPolicyRow; columns: string[] }>): void {
+  for (const { row, columns } of badDates) {
+    try {
+      const alreadyFlagged = db
+        .prepare(
+          `SELECT 1 FROM data_quality_issues
+           WHERE kind = 'insurance-policy-bad-date' AND status = 'open' AND detail LIKE ? LIMIT 1`,
+        )
+        .get(`policy_id=${row.id} %`);
+      if (!alreadyFlagged) {
+        db.prepare(
+          `INSERT INTO data_quality_issues (property_id, kind, detail, severity)
+           VALUES (?, 'insurance-policy-bad-date', ?, 'warn')`,
+        ).run(
+          row.property_id || null,
+          `policy_id=${row.id} ${columns.join(', ')} is not a valid YYYY-MM-DD date (raw-SQL write — ` +
+            `the importer rejects it); the policy is kept but its term/capture date reads unknown until fixed`,
+        );
+      }
+    } catch {
+      // best-effort DQ flag — never let this break the report.
+    }
+  }
 }
 
 /**
@@ -436,16 +529,19 @@ function hasExcess(p: PolicyEconomics): p is PolicyEconomics & { excessPremiumVs
  * Zod-parses the result before returning (H6 boundary discipline, mirrors every other engine).
  */
 export function buildInsuranceAnalysis(db: WarehouseDb, asOf: string): InsuranceAnalysisReport {
-  const raw = db
-    .prepare(
-      `SELECT p.id, p.property_id, pm.name AS property_name, p.insurer, p.policy_number,
-              p.effective_date, p.expiration_date, p.premium_annual, p.coverage_tiv,
-              p.policy_type, p.source_date
-       FROM property_insurance_policies p
-       LEFT JOIN property_master pm ON pm.id = p.property_id
-       ORDER BY p.id`,
-    )
-    .all() as RawPolicyRow[];
+  const { book: raw, badDates } = readPolicyBook(
+    db
+      .prepare(
+        `SELECT p.id, p.property_id, pm.name AS property_name, p.insurer, p.policy_number,
+                p.effective_date, p.expiration_date, p.premium_annual, p.coverage_tiv,
+                p.policy_type, p.source_date
+         FROM property_insurance_policies p
+         LEFT JOIN property_master pm ON pm.id = p.property_id
+         ORDER BY p.id`,
+      )
+      .all(),
+  );
+  flagBadDates(db, badDates);
 
   const masterNames = new Map(
     (db.prepare('SELECT id, name FROM property_master').all() as Array<{ id: string; name: string }>).map(
@@ -609,13 +705,16 @@ export function buildInsuranceAnalysis(db: WarehouseDb, asOf: string): Insurance
  *  capture's source_date is not a change to the book, and hashing either forked inputsVersion on
  *  every workbook refresh (duplicate rebid verdicts — refute wf_fb9dddc7-3a3). */
 function policyBookFingerprint(db: WarehouseDb): string {
-  const rows = db
-    .prepare(
-      `SELECT id, property_id, NULL AS property_name, insurer, policy_number, effective_date,
-              expiration_date, premium_annual, coverage_tiv, policy_type, source_date
-       FROM property_insurance_policies`,
-    )
-    .all() as RawPolicyRow[];
+  // The same normalized book buildInsuranceAnalysis reports on.
+  const rows = readPolicyBook(
+    db
+      .prepare(
+        `SELECT id, property_id, NULL AS property_name, insurer, policy_number, effective_date,
+                expiration_date, premium_annual, coverage_tiv, policy_type, source_date
+         FROM property_insurance_policies`,
+      )
+      .all(),
+  ).book;
   const projection = dedupeLatest(rows)
     .map((r) =>
       [
@@ -664,8 +763,8 @@ export function logRebidVerdicts(db: WarehouseDb, report: InsuranceAnalysisRepor
        FROM property_insurance_policies WHERE id = ?`,
     );
     const stableKey = (policyId: string): string => {
-      const row = identityOf.get(Number(policyId)) as IdentityRow | undefined;
-      return row ? policyIdentity(row) : policyId;
+      const row = identityOf.get(Number(policyId)) as Record<string, unknown> | undefined;
+      return row ? policyIdentity(normalizePolicyRow({ ...row, id: Number(policyId) })) : policyId;
     };
 
     // INSERT OR IGNORE keeps a re-run on an unchanged book (same fingerprint + asOfPeriod) idempotent.
