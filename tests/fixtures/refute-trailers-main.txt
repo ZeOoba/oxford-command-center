@@ -1,0 +1,239 @@
+# Every distinct Refute-Reviewed/Refute-Skip trailer line on origin/main as of 2276211 (2026-09-27).
+# Pinned by tests/unit/check-refute-required.test.ts: a tightening of the refute gate must never
+# reject a trailer main already carries. Regenerate with:
+#   git log origin/main --format=%B | grep -iE '^[ \t]*Refute-(Reviewed|Skip):' | sed -E 's/^[ \t]+//' | sort -u
+Refute-Reviewed: 3-lens adversarial pass (buyable-filter-correctness,
+Refute-Reviewed: 3-lens adversarial pass (gating-correctness, undrivable-data-edge-cases,
+Refute-Reviewed: 3-lens adversarial pass (governor-consistency, double-emit-removal,
+Refute-Reviewed: 3-lens adversarial pass (median-and-formula-correctness,
+Refute-Reviewed: 3-lens adversarial pass (no-live-egress PASS, null-fallback PASS,
+Refute-Reviewed: 3-lens adversarial review (model fable, read-only subagents: db-open/backup/migration 032; comp selection/entity-xref; gate/task scripts/scope) on the full branch diff, round 1 - every real finding fixed in c083574, 4decd1d, 8edece7, b0b5286. A fourth reviewer on the post-round-1 delta was still running at push time; its findings will be posted on the PR. Not run through the refute-financial-change Workflow (no explicit workflow opt-in this session).
+Refute-Reviewed: C-1 sell guard — adversarial: disposition-candidate + healthBand=good
+Refute-Reviewed: CPIAUCSL scoring fix — .change (MoM rate) correct;
+Refute-Reviewed: Fable 5.1 adversarial pass 2026-09-17 against the real Columbus
+Refute-Reviewed: Fable 5.1 adversarial pass 2026-09-17 — 15 findings (0 critical,
+Refute-Reviewed: Opus 5.5 adversarial subagent, 4 rounds 2026-09-23 — round 1 1 blocker (merge-commit bypass) + 4 should-fix, round 2 2 blockers (octopus bypass, teardown rm of worktrees dir) + 2 should-fix, round 3 0 blockers + 3 should-fix, round 4 0 blockers / 0 should-fix; all blockers and should-fixes fixed, 3 local-only nits deferred
+Refute-Reviewed: adversarial 3-lens Opus pass; 2 findings:
+Refute-Reviewed: adversarial REFUTE pass 2026-08-14 - 9 findings (1 critical,
+Refute-Reviewed: adversarial REFUTE pass 2026-08-24 — 5 hypotheses (R4 occupancy, R5/R5b rent+id conservation, R6 AR attribution, R8 cross-property re-attribution), 0 defects; run inline, Workflow not operator-authorised this session; attests 1c7d17b
+Refute-Reviewed: adversarial REFUTE pass, review subagent aeb55305d91e74b3e (2026-08-11)
+Refute-Reviewed: adversarial fable review of b29e496 + 5f2646e (full diff, plus the surrounding anomaly-floor / checkSnapshot / computeDrift / parseLeases / parseCash / reconcile.ts code). Verified: no governor constant touched; no new refuse/throw path for a business event -- the single 'error' (cash.asOf date-portion later than meta.generatedAt UTC date) cannot fire from an ET dateline <= today, only from a pre-dated Cash Data row or a wrong clock, and self-heals as generatedAt advances; pctOfBase hand-checked on positive / negative / zero / missing denominators and a missing dollar figure (null, never a wrong-signed number); null/empty/singleton history, zero entities, zero leases, brand-new lease and 'Unknown' status all silent; 25% threshold is a separately declared constant, not shared with the anomaly floor. Differential against the committed snapshot: checkCashInvariants fires exactly the 3 warns hand-inspection predicts (history.date 07-10 vs asOf 09-10; livingston deltaPct sign; broadway growth12Pct sign) and 0 errors; the rentChanged bucket replays the real 2026-09-07 refresh (85dfecf~1 -> 85dfecf) as 3 to-zero rows (2 Expired, 1 Active) with every other bucket empty, and 0 rows on 85dfecf -> main. Live workbook `npm run reconcile` passes with one WARN (cash.history.date); the maxAllTime warn the commit message calls a live finding fires on neither the committed file nor today's workbook (logic is test-covered). All 21 new tests + the 1 tightened assertion FAIL against pristine origin/main (22 failures in a detached ddb2a04 worktree with only the test files overlaid). typecheck 0; vitest 338 files / 5113 tests pass. Judgment item left for Gabriel, not papered over: the committed snapshot has dataQuality 0 today and ora-cc-snapshot-refresh emails on any warn entry, so after merge the two live Active-$0 leases (evans-gymnastics, tyson-consulting) and the cash dateline will email every run until the workbook is corrected -- report-only, as designed, but persistent. Not run through the refute-financial-change Workflow.
+Refute-Reviewed: adversarial pass 2026-07-22 (session d22616ad) - TODAY()-cached stamp timing edges accepted+documented; full meta.asOf consumer sweep (warehouse captures key on generatedAt - verified); one real break found and fixed (brain.test.ts partial config mock); fallback-loudness and monthCol isolation test-locked. Findings detailed in the PR body.
+Refute-Reviewed: adversarial read-and-execute pass (Fable 5.1 subagent) on the full origin/main...fix/refute-default-deny-scope diff plus the whole gate file. Precedence order verified (config-json -> financial-json -> test/md/json exempt -> DELIVERY_ONLY -> root default-deny with subtraction -> outside allow-list); Windows separators normalised at the top of isFinancialSourcePath; NON_FINANCIAL_ROOT_PATHS is exact-match (Set.has) and the one pattern is anchored to scripts/ and scripts/lib/ only; src/analytics/, seed-deals, contracts and brain paths unchanged. Spot-checked 12 survey calls by reading the files: financial — deploy-mirror.ps1 (MIRROR_INCLUDE_CONFIDENTIAL=1 + the 302 Access-gate probe; RULED IN SCOPE, 16 commits / 1 trailered is the cost), prepush-noi-crosscheck.mjs (advisory harness; in scope is defensible, low value), server/config.ts, server/alerts/store.ts, scripts/check-snapshot-freshness.ts, scripts/seed-entity-xref.ts, server/sources/deal-name.ts; exempt — server/briefing/pdf.tsx (renders Figure.display strings, computes only SVG geometry; residual: column/label swaps are display-of-truth and still unguarded, same as ic-memo.ts), scripts/check-write-schema-drift.ts (static text analysis), server/brief/send.ts (transport), scripts/lib/mirror-task-action.ps1, scripts/index-docs.ts (residual: it is where reindexSafetyError's fail-closed guard is enforced, but documents.ts is already delivery-only on main). Independent first-parent replay of the last 60 origin/main commits with an old-vs-new harness: 15 commits change classification, 3 flip from clean to BLOCK — #328 (rate-limit + index.ts, subject-lined REFUTE MEDIUM, no trailer), #325 (HI-3 egress fix), and #313 (deploy-mirror.ps1 comment-only chore; NOT in the implementer's list of 3). Re-replayed after this commit: identical counts. Not fixed, follow-ups: a .d.ts/.d.mts under scripts/ is a pure-declaration false-positive class (none tracked today; prepush-confidential-scan.d.mts is gitignored); scripts/warehouse-backup.ts and warehouse-restore-verify.ts hold no figure and are in scope only by the root default (2 commits each, both trailered, so no live cost). typecheck 0; eslint clean on the touched files; vitest 342 files / 5247 tests green before the fix, 52/52 on the gate test after; check:refute --strict --base=origin/main demands a trailer for scripts/check-refute-required.ts itself. Not run through the refute-financial-change Workflow (no opt-in).
+Refute-Reviewed: adversarial read-and-execute pass by a Claude Fable 5.1 subagent with no knowledge of the implementation session, CONFIRMED CORRECT, no defects. Verified: (1) the diff is only the four rename swaps, the import swap, three exports and a comment; (2) each site's error contract is intact -- patchSnapshot/appendReviewQueue still throw on an exhausted lock, backupCorruptQueue and moveInto still take their same log/leave-in-place branches; the only delta is up to ~200 ms of synchronous blocking per locked rename; (3) retry is safe -- all four renames are same-directory or same-root by construction (tmp is ${path}.tmp-pid, the backup is a sibling, PROCESSED/FAILED derive from dirname(INBOX)), so there is no EXDEV path, and EXDEV is not in the retry set anyway; a same-volume MoveFileEx either succeeds or fails atomically, so a re-attempt cannot half-move, and re-attempting after a transient failure is idempotent; the backup name is fixed before the loop; an OneDrive lock longer than 200 ms fails exactly as on HEAD, just later; (4) exports do not affect the argv[1] entry guard, and no runtime importer of the script exists beyond the AR tests (overlay/repo-data-isolation/check-refute tests only grep the source and still pass); (5) mutation test: HEAD's script plus the three exports fails all 5 new tests, then restored with an identical git hash-object; (6) AR_INBOX is set before the script's path constants load, tests/setup.ts only defaults it when unset, SNAPSHOT_PATH resolves to the mocked config, so nothing can reach data/; forks+isolate means no env leak; (7) 5 AR/overlay/isolation files / 135 tests green, eslint and both tsconfigs clean. Out of scope, noted: test afterAll recursive rmSync has no maxRetries (same pattern in 28 other test files). Not run through the refute-financial-change Workflow (no opt-in).
+Refute-Reviewed: adversarial read-and-execute pass by a Claude Fable 5.1 subagent with no knowledge of the implementation session, CONFIRMED CORRECT, no defects. Verified: (1) the diff is only the import swaps, the three call swaps and comments; relative helper paths resolve from scripts/ and server/warehouse/ under tsconfig.node.json; no unused imports; (2) exit contracts unchanged -- an exhausted rename rethrows the original error into each CLI's main().catch (exit 3), 0/1/2 paths untouched, and writeManifest still propagates to warehouse-backup.ts; (3) retry safety -- each attempt repeats an identical same-volume rename (MoveFileEx atomic, so idempotent); snapshot temps are per-pid+timestamp, so the four portfolio.json writers (extract, drift-check, ar-import-headless, brain persist) never share a temp, and the retry widens the existing last-rename-wins window by at most 200 ms against multi-second CLI runs; the manifest's fixed .tmp was already unsafe for two concurrent backups and is not made worse; (4) the static guard, probed against 17 call forms, catches fs.renameSync(, spaced calls, calls after code on a line, multi-line call openers and CRLF lines, with path separators normalised; it misses only aliasing and a `renameSync\n(` split, neither present; false-positive modes are deterministic and fail loud, and none exist today; skipping .d.ts is correct; there is no node_modules under server/ or scripts/, and it runs in ~120 ms; (5) mutation check -- reverting each source file to HEAD in turn fails the guard naming exactly that file:line, and reverting backup.ts also fails the spy test; restored byte-exact; (6) 75/75 on warehouse-backup, lease-snapshot-drift-check and rename-retry-callsites; eslint and both tsconfigs clean. Out of scope, noted: overlay.ts saveOverlay's async rename is neither retried nor guarded (separate PR); both CLIs leak their .tmp-<pid>-<ts> on an exhausted rename (pre-existing; brain persist cleans its own). Not run through the refute-financial-change Workflow (no opt-in).
+Refute-Reviewed: adversarial read-and-execute review by a Claude Fable 5.1 subagent of the full origin/main...fix/ar-staleness-per-lease diff (a6a7f10), with no knowledge of the implementation session. CONFIRMED CORRECT, no defects. Independently verified: (1) isArStale/arAgeDays are an exact lift of the old per-record computation ('asOfDate' in r gate, null/unparseable -> stale, Math.floor day age, > 35 boundary, same `now`); (2) differential fuzz of 2000 random portfolios (1-6 leases, 30% with an orphan record; record kinds omitted/null/fresh/stale/boundary/garbage-string; negative and partial buckets) against origin/main's actual conditions.ts loaded as a sibling module, asserting 7 invariants -- new alert set is a superset of old, every new-only alert sits on a non-stale record, every stale record yields no alert, ar-stale presence is unchanged, output is byte-identical when nothing is stale, each fired payload equals old code's solo-lease output, and the N/M metric matches an independent count -- 0 violations; (3) 12 hand-built portfolios incl. the implementer's example (stale + fresh 60+ critical: old fired nothing, new fires the critical), all-stale, all-fresh (deep-equal to old), stale $0 record (still skipped, sibling unaffected), mixed ages 36/90/45 (worst=90, 3/4), stale and fresh orphans (counted in M, named 'unmatched record', never suppress), 35d / 35d+23h59m / 36d boundary (identical to old), garbage-string and explicit-undefined asOfDate (stale, no leak), ISO-string asOfDate, legacy record beside a stale orphan (old blacked it out, new evaluates it), 9 stale leases ('+3 more' truncation); (4) 7 of the branch's tests (6 new + the tightened '2 of 2' assertion) fail against origin/main's conditions.ts and pass on the branch; (5) own grep of src/ server/ functions/ scripts/ tests/ for 'ar-stale', 'collections monitoring inactive', 'AR data stale' and metric parsing: no consumer outside conditions.ts and its test (render.ts only escapes metric as text; brief/run.ts keys per-critical emails by id, and ar-stale is info) -- the 'no downstream consumer' claim holds; (6) governors untouched (GOVERNOR_FALLBACK 1.25/0.40, ltvCeiling 0.65; diff touches only the AR block and its test); (7) clean reruns: typecheck 0 errors across all three tsconfigs, vitest 342 files / 5238 tests green, eslint clean on both files, check:refute --strict --base=origin/main correctly demanded a trailer for conditions.ts. Cosmetic, left as-is: the notice title says 'that lease' when the single stale record is an orphan with no lease, and the detail's 'every other lease is still evaluated on its own fresh record' is vacuous when every record is stale. Pre-existing and untouched, noted only: renewalSignals() (L-1..L-5) still receives the raw tenantArrears map with no staleness filter, exactly as before this change. Not run through the refute-financial-change Workflow (no opt-in this session).
+Refute-Reviewed: adversarial read-and-execute review by a Claude Fable 5.1 subagent of the full origin/main...fix/renewal-signals-ar-staleness diff (b1ddbe8), with no knowledge of the implementation session. CONFIRMED CORRECT on both files, no defects requiring a code change. Independently verified: (1) the arAgeDays/isArStale hoist in conditions.ts is textually equivalent to the removed closures (same 'asOfDate' in r gate, null/unparseable -> stale, Math.floor day age, > ALERT_THRESHOLDS.arStalenessMaxDays boundary) and all three call sites inside evaluateConditions pass the identical `now`; the pinned mixed fresh/stale/legacy/absent collections fixture is unchanged; (2) in lease-forecast.ts the `!arStale` guard is applied to bands 3 and 4 only, bands 1/2/5/6 are untouched in the if/else-if chain, arStale = ar ? isArStale(ar, asOfMs) : false so an absent record is never stale-gated (bands 3/4 already required a record to fire or a $0 sum), and the output arrearsUsd is the same coerced bucket sum whether or not the record is stale -- real money owed is never zeroed or hidden; (3) re-derived both report examples from own fixtures: 48m tenure / 9m / no stage / $0 40d-old record likely -> uncertain with arrearsUsd 0; short tenure / 8m / $5,100 d30 40d-old record at-risk -> uncertain with arrearsUsd still 5100; (4) 14 own probes green: exactly-35d fresh, 35d+23h59m fresh (floor), 36d stale, null asOfDate stale, legacy (no key) with material balance at-risk with no note, explicit-undefined asOfDate key stale (matches conditions.ts), ISO-string asOfDate handled, band 5 with a stale $9k record still at-risk via band 5 with arrearsUsd intact, band 4 under stage Outreach fresh likely / stale uncertain, 5-lease mixed portfolio deep-equal to each lease's solo run (no cross-contamination); (5) downstream: capital-allocation.ts:1146 counts only 'at-risk' | 'lapsing', so a stale-gated lease moving to 'uncertain' is neutral (same as 'likely'), never scored worse; the only directional effect is a lease with a stale material balance no longer adds to its property's atRiskLikelihoodCount -- the intended semantics of not grading on stale data, noted not refuted; lease-forecast-api.ts narrative counts shift one bucket, RenewalsModule.tsx renders the enum unchanged; (6) 9 of the branch's new tests fail against origin/main's source (4 not-a-function on the hoisted exports, 5 L-A10 assertion failures at-risk/likely vs uncertain) and pass on the branch; (7) clean reruns: typecheck 0 errors across all three tsconfigs, vitest 342 files / 5250 tests green, eslint clean on all four touched files, `npx tsx scripts/check-refute-required.ts --strict --base=origin/main` correctly demanded a trailer for both src/analytics files (the implementer's npm-wrapped run reported the opposite; the direct invocation is authoritative). Found and NOT fixed (pre-existing basis choice in PR #360, out of scope for an attestation-only commit): the two consumers judge staleness against different instants on the same run -- evaluateConditions uses wall-clock `opts.now ?? Date.now()` while renewalSignals uses `new Date(referenceDate())` = UTC midnight of REPORT_DATE ?? today. Demonstrated with a record stamped 2026-08-17T20:00Z on run date 2026-09-22: renewalSignals grades it fresh (at-risk) all day, evaluateConditions grades it fresh at 00:00Z and stale at 21:00Z. Live divergence is bounded to one calendar day at the 35-day edge; under a REPORT_DATE pin it can be arbitrary. evaluateConditions' own header says only the workbook-stale check uses wall-clock now, so the consistent fix is to judge AR staleness as of `asOf` in conditions.ts (one line, plus the pinned 'oldest import 50 days ago' text in collections-stale-ar.test.ts becomes 49) -- recommended as a follow-up. Not run through the refute-financial-change Workflow (no opt-in this session).
+Refute-Reviewed: adversarial read-and-execute review by a Claude Fable 5.1 subagent of the full origin/main...fix/sweep-0914-ar-fixes diff (2c4fafc, f90cefc, 441c19d). Fix A and Fix C confirmed correct: a 301-name differential (271 roster tenantName/company + 40 real report names from data/ar/processed) across forward, reversed and ten seeded shuffles of the real roster found 0 order-dependent results for the new matcher (4 for the old), 0 names flipped from review/none into an auto-write by the narrowed pool, and exactly two leases newly excluded (Evans A15, Tyson 202 -- both Active/$0; no Vacant rows exist in the snapshot). loadAllLeaseIdsFromSnapshot is byte-identical to origin/main. Fix B had one real defect, fixed in the preceding commit: the source-row key carried no property, so an unmapped-building row coinciding on unit tokens and cents with a mapped-building write in the same file was silently dropped from the queue. 17 of the branch's new tests and the 3 new refute tests were each verified to fail against the code they target. Follow-up (not fixed, out of scope): server/ar/parse-snapshot-for-import.ts:57 still filters status !== 'Expired' only and projects no annualRent. Not run through the refute-financial-change Workflow (no opt-in); note check:refute does not classify server/ar/** or scripts/ar-import-headless.ts as financial-decision source.
+Refute-Reviewed: adversarial subagent pass 2026-07-16 (no wf_ runId — see PROVENANCE above); 4 of 6 attack lines refuted, fix amended accordingly
+Refute-Reviewed: adversarial-agent:a2b97a33504c8f26d
+Refute-Reviewed: adversarial-agent:claude-opus-4-8-2026-06-21
+Refute-Reviewed: agent_a8048ab267129ceba
+Refute-Reviewed: fable-agent-a65eb633d618865cb (independent zero-context adversarial pass; found the fail-open gap on unresolvable dealId, fixed via dealLookupFailed and re-verified)
+Refute-Reviewed: fifth read-only fable review (of the last round-3 fixes, commit c1afff3) found 1 medium + 2 low, all fixed in the preceding commit and each new test verified to FAIL against the bug it targets (old crosswalk code; a reversed-null distance mutant). A sixth review of this commit is being run before merge; not run through the refute-financial-change Workflow.
+Refute-Reviewed: five-mandate adversarial merge gate (Opus 5.5 subagents: correctness, race, test-validity, scope, blast-radius) on pinned 63b0f7a 2026-09-23 — 1 MEDIUM + 3 LOW code findings and 4 test-validity gaps confirmed and fixed here; full swarm re-runs on this head before merge
+Refute-Reviewed: five-mandate adversarial merge gate round 2 (Opus 5.5 subagents: correctness, race, test-validity, scope, blast-radius) on pinned 2a2fd9b 2026-09-23 — 1 HIGH + 1 MEDIUM + 2 LOW code findings and 10 surviving mutations confirmed and fixed here; round 3 re-runs the full swarm on this head before merge
+Refute-Reviewed: five-mandate adversarial merge gate round 3 (Opus 5.5 subagents: correctness, race, test-validity, scope, blast-radius) on pinned f85ea9b 2026-09-24 — 1 MEDIUM + 5 LOW code findings and 10 test-validity gaps confirmed and fixed here, 11/11 surviving mutants killed
+Refute-Reviewed: independent-opus-adversarial-pass (agent a007494b, 6-lens, verdict SURVIVES) — full refute-financial-change workflow deferred: 190MB-free box cannot run a multi-Opus fan-out
+Refute-Reviewed: inline-opus-refute-APPROVED
+Refute-Reviewed: manual 3-lens adversarial pass (gating-correctness,
+Refute-Reviewed: manual adversarial pass -- order-of-checks (floor vs
+Refute-Reviewed: opus-4.8-adversarial-3-lens-2026-06-20
+Refute-Reviewed: opus-4.8-adversarial-agent-2026-06-20
+Refute-Reviewed: opus-4.8-inline-a044354204a6ef5e5 (5 lenses: fail-closed cold-start,
+Refute-Reviewed: opus-4.8-inline-a8301096381fd192d (3 lenses: stale inflation,
+Refute-Reviewed: opus-inline-a7331a9e0c5c4feaa (4 lenses: sell false positive,
+Refute-Reviewed: read-only fable subagent reviews of the sweep branch across rounds 1-3 (all real findings fixed; round 3 = medium rounding bias, dropped tests, exemption breadth, state normalisation, fixed in the preceding commit). The fixes made AFTER round 3 (half-even rounding, restored tests, exemption regex, twoLetterState) were verified by tests plus a 24,000-trial order-independence fuzz but have not had a further adversarial pass. Not run through the refute-financial-change Workflow.
+Refute-Reviewed: read-only-then-fix adversarial pass (model fable) on the full branch diff — recomputed the dangling count, fuzzed the validator with 25 malformed shapes, verified every new test fails on origin/main, ran the gate against the branch itself. Findings 1-4 above fixed in this commit. Not run through the refute-financial-change Workflow (no explicit workflow opt-in this session).
+Refute-Reviewed: refute-financial-change (wf_2c887457-693), 1 real mutation-proven test-gap finding fixed, 1 confidentiality test-gap finding fixed, zero shipped defects
+Refute-Reviewed: refute-financial-change x3 all-Fable (wf_c47d11aa-990, wf_04e3f4be-054, wf_a572d07e-620); final round zero real defects
+Refute-Reviewed: refute-financial-change x5 (wf_d0987dd9-c8c, wf_495f341f-15e,
+Refute-Reviewed: refute-h4-easement-period-scope (verdict: PASS_WITH_CONCERNS —
+Refute-Reviewed: two adversarial read-and-execute passes by a Claude Fable 5.1 subagent with no knowledge of the implementation session, both CONFIRMED CORRECT. Pass 1 (store.ts version): loop verified at exactly 5 attempts with sleep only between attempts (persistent EPERM measured 241 ms); code-less Error and string throws rethrown on attempt 1; 4xEBUSY-then-success converges; the .tmp is fully written before the first attempt so no partial target is possible, and on exhaustion the target is untouched while the leftover .tmp is overwritten by the next write (covered by the existing stale-.tmp test); sole caller is POST /api/actions/alert via runAlertAction, already fully synchronous; Atomics.wait confirmed legal on the Node v24.18 main thread; EACCES still rethrown unmasked; 4 of 5 new tests fail on HEAD (the ENOENT guard passes, as expected); the `default`-patch claim was reproduced (without it the factory intercepted 0 calls); the pass-through mock keeps the existing atomic-write tests on the real rename. Its one nit (a null throw would TypeError on `.code`) is fixed in the helper with `?.code`. Pass 2 (extraction + brain.ts): the helper is identical apart from that fix; on Windows a rename onto a directory is EPERM, so the existing 'logs when the mirror write fails' test now retries (248 ms) and still passes with an unchanged log line and tmp cleanup; persist() callers refresh() and rederive() (every HTTP write-back) take the <=240 ms stall only on failure; vi.resetModules() leaves the spy shared with brain.ts, and the wiring test fails against HEAD's brain.ts; eslint on all 5 files and typecheck on all 3 tsconfigs exit 0. Noted, not fixed (pre-existing): cross-process writers share the fixed `${path}.tmp` name in store.ts; a per-write unique temp name would close it. Not run through the refute-financial-change Workflow (no opt-in).
+Refute-Reviewed: two adversarial read-and-execute passes by a Claude Fable 5.1 subagent with no knowledge of the implementation session. Pass 1 found DEFECTS: concurrent saves could reorder (probe: A then B 3 ms apart, A's rename hits one EPERM -> both true, final file = older A; HEAD: A false, final = newer B). It otherwise confirmed: the isRetryable refactor keeps the sync helper identical (5 attempts, same error object, null/undefined/string/code-less throws rethrown at once); the async helper fires timers at exactly 20/40/60/80 ms, rejects with the identical error, and leaves 0 timers and no unhandled rejections; mutations fail the right tests (a synchronous-sleep backoff fails exactly the event-loop test); tests/setup.ts pre-sandboxes OVERLAY_PATH and the test awaits before restoring, so data/overlay.json is unreachable. Pass 2 (after the queue + shouldRetry fix): CONFIRMED CORRECT. The same A/B probe now gives both true with final = newer B. The queue cannot wedge: a synchronous string throw, a null rejection and an mkdir failure each return false, and the next save still lands. Callers are unchanged (brain.ts:184 void, setLeaseRunAssumptions -> 500 on false, ar-import-headless.ts:837, migrate-lease-overlay-ids.ts:307); overlay 75/75, brain 34/34. The NTFS identity check was verified empirically: a temp+rename publish changes ino, an open read handle changes nothing, and absent-at-start plus another writer creating the file -> false with theirs kept. The check-to-retry TOCTOU is one stat, far smaller than HEAD's load-to-rename window. Mutations: bypassing the queue fails exactly the call-order test; ignoring shouldRetry fails exactly the cross-process test and the two helper tests. eslint and both tsconfigs clean. Its observation that ino (not mtimeNs, which moves per NTFS tick) carries the check is now a code comment. Pre-existing, out of scope: setLeaseRunAssumptions' loadOverlay() read-modify-write sits outside the queue, so two concurrent patches can still lose one (same as HEAD); the .tmp is left behind on abandon/exhaustion; a same-ms tmp-name collision is still possible cross-process. Not run through the refute-financial-change Workflow (no opt-in).
+Refute-Reviewed: wf_09458ba1-e01
+Refute-Reviewed: wf_140327f2-daa
+Refute-Reviewed: wf_16fa619f-8e4
+Refute-Reviewed: wf_2086e104-f2a
+Refute-Reviewed: wf_29ae00ad-db9
+Refute-Reviewed: wf_2b574580-61b
+Refute-Reviewed: wf_2c71b90c-4cf
+Refute-Reviewed: wf_2de7cc99-03f
+Refute-Reviewed: wf_2e034bc4-f86
+Refute-Reviewed: wf_2f51870c-4d9 wf_c0a4c2c9-506
+Refute-Reviewed: wf_3d29635a-922
+Refute-Reviewed: wf_3f479f7e-1eb
+Refute-Reviewed: wf_5289ba71-3ed
+Refute-Reviewed: wf_56806bbd-1b4
+Refute-Reviewed: wf_5ada370c-c17
+Refute-Reviewed: wf_5b4af06c-01b
+Refute-Reviewed: wf_5b65d5a4-7d7
+Refute-Reviewed: wf_6379c805-14b
+Refute-Reviewed: wf_6409e5ab-88e
+Refute-Reviewed: wf_6cf7d109-520
+Refute-Reviewed: wf_7bc5f1c9-c45
+Refute-Reviewed: wf_80769cd1-096
+Refute-Reviewed: wf_84a8d6b8-536
+Refute-Reviewed: wf_850e84c0-73b
+Refute-Reviewed: wf_91807128-af3
+Refute-Reviewed: wf_99067da3-2b0
+Refute-Reviewed: wf_a4ae3c23-a46
+Refute-Reviewed: wf_ab61f824-759
+Refute-Reviewed: wf_b133b214-c6f
+Refute-Reviewed: wf_b38eb421-deb
+Refute-Reviewed: wf_b55b4d9f-366
+Refute-Reviewed: wf_b8410252-041
+Refute-Reviewed: wf_b8d4eadd-e31
+Refute-Reviewed: wf_bac54169-6ca
+Refute-Reviewed: wf_be2b00ff-bab
+Refute-Reviewed: wf_c23f5fd8-ddf + 3 independent Opus adversarial passes (agents a71055cb, acfe4ead, ae0692c9)
+Refute-Reviewed: wf_c45ec0c4-0b1
+Refute-Reviewed: wf_c584b590-35a wf_6246f001-1fb
+Refute-Reviewed: wf_cc6da318-309
+Refute-Reviewed: wf_cf78f30d-1c8
+Refute-Reviewed: wf_cfb990a9-211
+Refute-Reviewed: wf_d10ede49-078
+Refute-Reviewed: wf_d1161cbc-8a7
+Refute-Reviewed: wf_d656ffc1-524
+Refute-Reviewed: wf_da4fa492-752
+Refute-Reviewed: wf_e4c405d9-2ff wf_d8fd3fce-646
+Refute-Reviewed: wf_e5c7092c-a22
+Refute-Reviewed: wf_f0cfcc19-9eb
+Refute-Reviewed: wf_f14cf227-ba4
+Refute-Reviewed: wf_fb49dbb9-c91
+Refute-Reviewed: wf_h1-dscr-governor-refute-20260622
+Refute-Reviewed: wf_refute-financial-change_m5 — single-attribution PASS, score-invariance PASS, decomposition PASS (governor-regression claim refuted: loadGovernors was never in this file at base SHA 35ed3ad)
+Refute-Skip: AI copy/labels only — every figure is an engine output changed and refuted in Tasks 2 and 5; no new financial math
+Refute-Skip: CI config + plan doc only — no financial math touched
+Refute-Skip: CR follow-up only — no financial-decision code changed (no math, no scoring, no NOI computation)
+Refute-Skip: DDL + verify assertions + templates — no financial computation
+Refute-Skip: G4 deduplicates alias map (identical entries, no logic change); G3 adds Zod startup validation (no financial value mutations)
+Refute-Skip: HTML-to-text sanitizer for M365 task notes; carries no deal or portfolio figures
+Refute-Skip: HTML-to-text sanitizer only; no financial computation
+Refute-Skip: Health card presentation only; no financial computation
+Refute-Skip: JSDoc docstrings only — server/warehouse/api.ts change is 6 lines of /** ... */ comments on existing briefing route handlers; no financial logic, no route signatures, no data paths modified.
+Refute-Skip: UI over the existing ratified acq-engine — no scoring change
+Refute-Skip: UI relocation of existing rendered fields — no computation changed
+Refute-Skip: UI sublabel copy only; no financial computation
+Refute-Skip: UI-exempt (spec §1 W2, §14); no financial math in these files.
+Refute-Skip: UI-exempt (spec §1 W3, §14); no financial math.
+Refute-Skip: UI-only prop addition to a chart primitive, no financial math touched.
+Refute-Skip: Zod schemas + nullable data passthrough — no financial computation
+Refute-Skip: additive nullable column (content_hash TEXT) + NULL-safe
+Refute-Skip: adds a warn-only data-quality flag; no figure, threshold, or ranking changes
+Refute-Skip: adds one exact-match string to a commit-message allow-list plus its test -- no figure, no financial computation, no data path. It cannot loosen the guard for any other trailer (it is still an exact-match Array.includes check); commitmsg-trailer-guard + install-git-hooks tests are 34/34 green, eslint and typecheck clean.
+Refute-Skip: adversarial review performed via direct multi-agent Agent-tool
+Refute-Skip: asOf date label only; indicator values and the cap-rate spread math are unchanged
+Refute-Skip: cap-rate and regional fields are diagnostic-only; priority score
+Refute-Skip: cap-rate overlay is display-layer diagnostic only — impliedCapRate /
+Refute-Skip: comment correction only — no logic change
+Refute-Skip: comment only; no code change
+Refute-Skip: comment-only change to server/warehouse/insurance-loss-analysis.ts (3 comment lines, no code); the rest is tests.
+Refute-Skip: comment/doc-only edit, verified by re-reading both diffs -- no line of executable logic changed in either file.
+Refute-Skip: commit-trailer allowlist + status/docs only; no financial code
+Refute-Skip: constant extraction — 86400000 (ms-per-day) is a fixed
+Refute-Skip: contract shape only
+Refute-Skip: contract-only tightening — no financial computation, no engine math
+Refute-Skip: contract-only — no financial computation, no engine math
+Refute-Skip: controller dispatches opus refute post-commit
+Refute-Skip: copy only — insight title and flag text; no condition, threshold, severity, id or total changed
+Refute-Skip: correctness-only fixes to mapping resolution; no new financial computation
+Refute-Skip: data migration only — no financial formula changed; promotes
+Refute-Skip: data plumbing only — resolvers select sources, no financial math
+Refute-Skip: debt-api.ts — transport-layer change only; no scoring math altered. getMacro→fetchFredMacro strictly reduces refi false-positive risk when FRED is unavailable.
+Refute-Skip: delivery mapping only — no financial math; direction/kind constants
+Refute-Skip: delivery-only route
+Refute-Skip: delivery-only route file; financial math in capital-allocation.ts
+Refute-Skip: delivery-only route — engine math refuted at PR
+Refute-Skip: dependency/tooling migration — no financial-decision logic touched (check:refute confirms)
+Refute-Skip: display alert derived from existing Loan fields; no capital-allocation engine math, governor constant, or NOI computation modified.
+Refute-Skip: display formatter (fmtTenure), title/label helpers and an aria-label; no figure computed here feeds a decision
+Refute-Skip: display formatter only
+Refute-Skip: display ordering + presentation over pre-existing impactAnnualUsd; no financial-decision math added or modified.
+Refute-Skip: display-name resolution only; premiums, cohorts, and benchmark math unchanged
+Refute-Skip: display-only addition; priority score formula byte-for-byte unchanged
+Refute-Skip: display-only macro context; priority score formula unchanged
+Refute-Skip: display-only placeholder surface
+Refute-Skip: display-only premium history; reuses the analysis engine's same-term rule, no scoring/benchmark consumer
+Refute-Skip: display-only primitive — no financial math
+Refute-Skip: display-only primitives and alert presentation — no financial computation
+Refute-Skip: docs-only + chore — no financial-decision source changed.
+Refute-Skip: docs-only change, no code or financial logic touched.
+Refute-Skip: docs-only — no financial-decision source changed.
+Refute-Skip: docs/bookkeeping-only change, no code or financial logic touched.
+Refute-Skip: document-search plumbing (documents.ts is refute-exempt; startup.ts is a comment) — no deal, financial or alert logic
+Refute-Skip: document-search transport plumbing and a diagnostic script — no deal, financial or alert logic
+Refute-Skip: document-search transport plumbing — no deal, financial or alert logic (documents.ts is already on the refute exemption list for the same reason)
+Refute-Skip: documentation only
+Refute-Skip: documentation only, no code change.
+Refute-Skip: error transport only — no financial computation, ranking, or threshold touched
+Refute-Skip: freshness/UI reporting only (a read-guard around a status
+Refute-Skip: freshness/UI reporting only, no financial computation.
+Refute-Skip: freshness/UI reporting only, no financial computation; this
+Refute-Skip: gate-regex compatibility + data-quality flag entity/comment; no financial computation, threshold, or insight logic changed
+Refute-Skip: governance gate addition — no financial computation changed
+Refute-Skip: governance gate fix — no financial computation changed
+Refute-Skip: governance metadata + design doc only - no financial math
+Refute-Skip: governance metadata + planning doc only — no financial math
+Refute-Skip: governance metadata only
+Refute-Skip: governance metadata only — no financial math
+Refute-Skip: ic-memo endpoint renders an already-computed CapitalAllocationReport to HTML; no financial formula, scoring, or NOI computation added
+Refute-Skip: ingest plumbing — validation only, no financial math
+Refute-Skip: inline adversarial pass on security-gate code (header-incapable request paths,
+Refute-Skip: insight copy only; severity, trigger, and governor constants unchanged
+Refute-Skip: label text only (server/ai/respond.ts), no computation change
+Refute-Skip: mechanical JSON-structure repair of a status-tracking file, no code or financial logic touched.
+Refute-Skip: mechanical enum-value correction in a status-tracking file, no code or financial logic touched.
+Refute-Skip: module registration only — no financial computation
+Refute-Skip: new prospect_demand_events table + manual-entry routes; no financial formula or scoring logic touched
+Refute-Skip: no code change — HALT escalation
+Refute-Skip: no financial computation, no governor constants — pure UI/component change.
+Refute-Skip: no financial-decision code in this PR (scoring engine is Step 4, separate PR).
+Refute-Skip: no financial-decision code in this branch, and an adversarial security pass was run on the parts that carry real risk.
+Refute-Skip: no financial-decision code touched.
+Refute-Skip: no financial-decision code.
+Refute-Skip: no financial-decision math — pure DDL + schema assertions
+Refute-Skip: noiPerSf null guard is a defensive type-coercion fix (null→0 and undefined→NaN), not a financial logic change — the division itself is unchanged.
+Refute-Skip: ops tooling only (PowerShell scripts + docs + gitignore); no application code or financial logic touched.
+Refute-Skip: path-resolution refactor only; identical expression, no financial computation touched
+Refute-Skip: performance fix only — call-once pattern, no logic or output change; DB call count reduction is the sole effect
+Refute-Skip: planning document only
+Refute-Skip: presentation over an already-refuted read-only route — no financial computation
+Refute-Skip: presentation over the already-refuted brain-report engine — no financial computation
+Refute-Skip: presentation over the already-refuted insurance-analysis engine — no financial computation
+Refute-Skip: presentation over the already-refuted tax-analysis engine — no financial computation
+Refute-Skip: presentation-only widget reusing existing, already-refuted
+Refute-Skip: property-onboarding.ts is pure property-registration write; no financial math
+Refute-Skip: pure Zod schema — no financial-decision math
+Refute-Skip: pure client-side filter predicate + context plumbing, no
+Refute-Skip: pure documentation fix — no code, no logic, no financial computation;
+Refute-Skip: pure render optimization — no behavior change, no financial
+Refute-Skip: read-only alert conditions surfacing existing warehouse data; no engine math, scoring, NOI, or capital-allocation logic.
+Refute-Skip: read-only display of already-computed, already-refuted
+Refute-Skip: read-only display of already-scored AcquisitionScore/
+Refute-Skip: read-only freshness reporting; no financial figure or threshold changed
+Refute-Skip: read-only historical aggregation for display; no scoring/benchmark path consumes it
+Refute-Skip: restoration of f951b40 (PR #121) — no new formula; identical logic to the adversarially-reviewed IC Memo + Capital Allocation synthesis engine
+Refute-Skip: route mounting only — no financial math
+Refute-Skip: route-only — insights-api.ts wires the existing generator+ranker, no financial math
+Refute-Skip: schema-only migration — no financial math.
+Refute-Skip: server/warehouse/debt-api.ts — HTTP transport layer only; contains no financial math, scoring logic, or governor enforcement. Calls adversarially-verified scoreDebtPositions() (PR #96) and buildMaturityLadder(), returns Zod-validated responses. No capital-allocation decisions originate here.
+Refute-Skip: server/warehouse/debt-scoring.ts — hasUnknownMaturity is a guard-tightening change only (makes cash-out signal strictly harder to fire, never easier). No scoring math, governor constants, or signal-priority logic changed from the adversarially-reviewed baseline (PR #96: Opus 4.8, 5 findings fixed). Change independently reviewed by CodeRabbit automated analysis.
+Refute-Skip: server/warehouse/insurance-analysis.ts's only change in this
+Refute-Skip: server/warehouse/lease-forecast-api.ts is delivery-only route
+Refute-Skip: startup ordering only — no financial computation touched
+Refute-Skip: status bookkeeping only; no code
+Refute-Skip: status claim + plan doc only; no code
+Refute-Skip: status-file housekeeping — no code or financial logic changed
+Refute-Skip: task-feed text cleanup; no financial data
+Refute-Skip: test + dedupe of a display-name lookup; no premium/cohort/benchmark math touched
+Refute-Skip: test-only change; adds three assertions over existing behaviour and
+Refute-Skip: the only financial-source-path file this PR touches is
+Refute-Skip: two independent fable-tier reviews already performed and recorded (see above); repo's own refute-financial-change Workflow not run from this environment
+Refute-Skip: types/tooling only, no financial or governor logic touched.
+Refute-Skip: user-facing label text and a display-only label mapper; no NOI, tax, or IC-memo figure or formula changed
+Refute-Skip: user-facing label text only; no forecast or insight computation changed
+Refute-Skip: utility extraction only — no logic change, both callers import the same function they previously defined locally
+Refute-Skip: utility extraction — no logic change, behavioral equivalence
+Refute-Skip: value unchanged (0.08 was the proposed and is now the ratified
+Refute-Skip: warn-only data-quality flag; no figure, threshold, governor, severity of an existing check, or gate verdict changes
