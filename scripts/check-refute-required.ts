@@ -349,17 +349,96 @@ export function isFinancialSourcePath(p: string): boolean {
 }
 
 /**
+ * Shape of a refute-financial-change Workflow run id (e.g. `wf_d10ede49-078`). NOT required:
+ * `Refute-Reviewed:` also accepts a prose record of a non-workflow review (subagent passes, the
+ * adversarial merge gate — main carries dozens, e.g. "five-mandate adversarial merge gate (Opus 5.5
+ * subagents ...)"). Ratified by Gabriel 2026-09-27: accept prose, reject only placeholders. What it
+ * IS used for: a first token that claims to be a run id (starts with `wf_`) must actually look like
+ * one — lowercase id characters and at least one digit — so `wf_pending` / `wf_------` cannot
+ * pose as a run. (`_` is allowed: main carries `wf_refute-financial-change_m5`.)
+ */
+export const REFUTE_RUN_ID = /^wf_[a-z0-9_-]{6,}$/;
+
+/**
+ * A value that is ONLY a placeholder word (after normalizeTrailerValue). Whole-value match, so
+ * "Refute-Skip: none of this is math" and "Refute-Skip: TODO-list UI string only" still pass.
+ */
+const PLACEHOLDER_VALUE =
+  /^(?:pending|todo|tbd|tba|n[./]?a\.?|none|placeholder|wip|later|fixme|done|ok|yes|reviewed|pass(?:ed)?|reason|x+|\?+|[-–—]+|\.+|…+|\*+|#+)[.!:?,;]*$/i;
+
+/**
+ * An unfilled template blank standing as its own word: `<date>`, `<reviewer/run ref>`, `<n> findings`.
+ * Catches a template pasted without being filled in ("Fable 5.1 adversarial pass <date> — <n> findings").
+ * Standalone only — start or whitespace before, end/whitespace/punctuation after — so prose that merely
+ * contains angle brackets still attests: `.tmp-<pid>-<ts>` (on main, #367), `Map<string>`,
+ * `a<b and c>d`, `<b>display-only</b>`. Emails and URLs (`@`, `://`) are never blanks.
+ */
+const UNFILLED_TEMPLATE = /(?:^|\s)(<(?![^<>\n]*(?:@|:\/\/))[A-Za-z][^<>\n]{0,40}>)(?=$|[\s.,;:!?)\]—–-])/;
+
+/** Strip invisible format characters (zero-width space, BOM, bidi marks) and wrapping quotes/brackets/Markdown emphasis. */
+function normalizeTrailerValue(value: string): string {
+  let v = value.replace(/\p{Cf}/gu, '').trim();
+  for (;;) {
+    const unwrapped = v
+      .replace(/^(["'`‘’“”([{<])(.*)(["'`‘’“”)\]}>])$/su, '$2')
+      .replace(/^(\*{1,2}|_{1,2})(.+)\1$/su, '$2')
+      .trim();
+    if (unwrapped === v) return v;
+    v = unwrapped;
+  }
+}
+
+function refuteTrailers(message: string): Array<{ kind: 'reviewed' | 'skip'; value: string }> {
+  return [...message.matchAll(/(?:^|\n)[ \t]*Refute-(Reviewed|Skip):([^\n]*)/gi)].map((m) => ({
+    kind: (m[1] ?? '').toLowerCase() === 'reviewed' ? 'reviewed' : 'skip',
+    value: (m[2] ?? '').trim(),
+  }));
+}
+
+/**
+ * Why one trailer does not attest, or null when it does. Both kinds accept any real value — a run
+ * id, or prose describing the review / the skip justification — and reject: an empty value, the
+ * gate's own pasted hint, an unfilled template blank (`<date>`), a bare placeholder word (PENDING,
+ * TODO, TBD, N/A, ..., with trailing punctuation), and a `wf_`
+ * token that is not a real run id shape (`wf_pending`, `wf_------`: no digit, or bad characters).
+ */
+function trailerRejection(value: string): string | null {
+  if (value === '') return 'empty value';
+  const norm = normalizeTrailerValue(value);
+  // Checked on the raw AND normalized value: a WRAPPED hint (`"wf_<runId>"`, `(wf_<runId>)`) only
+  // starts with the hint once unwrapped, and its `<runId>` is not a standalone blank.
+  if ([value, norm].some((v) => v.startsWith('wf_<runId>') || v.startsWith('<reason>'))) {
+    return "the gate's own placeholder, pasted verbatim";
+  }
+  // Raw value: normalization would unwrap a whole-value `<reviewer/run ref>` into plain words.
+  const blank = UNFILLED_TEMPLATE.exec(value)?.[1] ?? UNFILLED_TEMPLATE.exec(norm)?.[1];
+  if (blank !== undefined) return `unfilled template blank "${blank}"`;
+  if (norm === '' || PLACEHOLDER_VALUE.test(norm)) return `placeholder "${value}" is not an attestation`;
+  // Only the id-shaped prefix of the first word: `wf_d10ede49-078: 0 findings` / `...078's` are real ids.
+  const id = /^wf_[A-Za-z0-9_-]*/i.exec(norm)?.[0];
+  if (id !== undefined && !(REFUTE_RUN_ID.test(id) && /\d/.test(id))) {
+    return `"${id}" poses as a refute run id but is not one (expected wf_<id> like wf_d10ede49-078)`;
+  }
+  return null;
+}
+
+/**
  * True when a refute attestation trailer with a real value appears in a commit message. Pass ONE
  * commit's message — a concatenated range blob is the defect this gate was fixed for (see the file
- * header). A bare `Refute-Skip:` with no value, or the gate's own pasted hint line
- * (`Refute-Reviewed: wf_<runId>` / `Refute-Skip: <reason>`), does not attest anything.
+ * header). A bare `Refute-Skip:` with no value, the gate's own pasted hint line
+ * (`Refute-Reviewed: wf_<runId>` / `Refute-Skip: <reason>`), a bare placeholder (PENDING/TODO/TBD),
+ * or a fake run id (`wf_pending`) does not attest anything.
  */
 export function hasRefuteApproval(message: string): boolean {
-  for (const m of message.matchAll(/(?:^|\n)[ \t]*Refute-(?:Reviewed|Skip):([^\n]*)/gi)) {
-    const value = (m[1] ?? '').trim();
-    if (value !== '' && !value.startsWith('wf_<runId>') && !value.startsWith('<reason>')) return true;
-  }
-  return false;
+  return refuteTrailers(message).some((t) => trailerRejection(t.value) === null);
+}
+
+/** Each trailer present in the message that was rejected, with the reason — for the gate's error output. */
+export function rejectedRefuteTrailers(message: string): string[] {
+  return refuteTrailers(message).flatMap((t) => {
+    const why = trailerRejection(t.value);
+    return why === null ? [] : [`Refute-${t.kind === 'reviewed' ? 'Reviewed' : 'Skip'}: ${t.value} — rejected: ${why}`];
+  });
 }
 
 /**
@@ -382,6 +461,8 @@ export interface UnattestedCommit {
   subject: string;
   financial: string[];
   readError?: string;
+  /** Trailers the commit DID carry that were rejected (placeholder, non-run-id), with the reason. */
+  rejected?: string[];
 }
 
 /**
@@ -476,7 +557,13 @@ export function findUnattestedCommits(commits: readonly CommitRecord[]): Unattes
     }
     const financial = c.files.filter(isFinancialSourcePath);
     if (financial.length === 0 || hasRefuteApproval(c.message)) continue;
-    out.push({ sha: c.sha, subject: c.message.split('\n')[0]?.trim() ?? '', financial });
+    const rejected = rejectedRefuteTrailers(c.message);
+    out.push({
+      sha: c.sha,
+      subject: c.message.split('\n')[0]?.trim() ?? '',
+      financial,
+      ...(rejected.length > 0 ? { rejected } : {}),
+    });
   }
   return out;
 }
@@ -623,6 +710,7 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
     ...unattested.flatMap((u) => [
       `  ${u.sha.slice(0, 7)} ${u.subject}`,
       ...(u.readError !== undefined ? [`      unreadable, so unverifiable: ${u.readError}`] : []),
+      ...(u.rejected ?? []).map((r) => `      ${r}`),
       ...u.financial.map((f) => `      ${f}`),
     ]),
     '',
@@ -636,7 +724,9 @@ export function evaluate(base: string, run: GitRunner = git, head = 'HEAD'): Gat
     'A trailer on another commit in the range does not attest these. Run the refute-financial-change',
     "workflow on each, then add a trailer to THAT commit's message:",
     '    Refute-Reviewed: wf_<runId>        (or, with justification)  Refute-Skip: <reason>',
-    'Substitute the real run id: the literal wf_<runId> placeholder is rejected.',
+    'Substitute the real run id (or describe the non-workflow review that ran). Placeholders are',
+    'rejected: wf_<runId>, PENDING, TODO, TBD, N/A, wf_pending, unfilled <blanks>. Not run yet? Run it, or',
+    'Refute-Skip: with the real reason.',
     'HEAD: git commit --amend. An earlier commit: do it in your own worktree (git worktree add), never a',
     'shared checkout, with no editor at all (POSIX shell / Git Bash):',
     '    PRE=$(git rev-parse HEAD)                  (pin the tip: ORIG_HEAD is one slot another session can overwrite)',
