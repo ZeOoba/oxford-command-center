@@ -185,18 +185,20 @@ function parseId(raw: string): number | null {
   return Number.isSafeInteger(n) ? n : null;
 }
 
-// Acquisition scoring config (ratified ruleset + RCT) — loaded once, FAIL-CLOSED. A missing or
-// non-ratified config surfaces as 503, never a crash and never a live verdict on un-ratified math.
-let acqConfigCache: { ok: true; ruleset: AcquisitionRuleset; rct: ReplacementCostTable } | { ok: false; error: string } | null = null;
+// Acquisition scoring config (ratified ruleset + RCT) — FAIL-CLOSED. A missing or non-ratified
+// config surfaces as 503, never a crash and never a live verdict on un-ratified math. Only a
+// SUCCESSFUL load is cached: a cached failure would pin every scoring route at 503 until the server
+// restarts after one transient error (e.g. an OneDrive lock on the config file). A failure is
+// re-attempted on the next request; the load is two small JSON reads.
+let acqConfigCache: { ok: true; ruleset: AcquisitionRuleset; rct: ReplacementCostTable } | null = null;
 function acqConfig(): { ok: true; ruleset: AcquisitionRuleset; rct: ReplacementCostTable } | { ok: false; error: string } {
-  if (acqConfigCache === null) {
-    try {
-      acqConfigCache = { ok: true, ruleset: loadRatifiedRuleset(), rct: loadRatifiedRct() };
-    } catch (e) {
-      acqConfigCache = { ok: false, error: e instanceof Error ? e.message : String(e) };
-    }
+  if (acqConfigCache !== null) return acqConfigCache;
+  try {
+    acqConfigCache = { ok: true, ruleset: loadRatifiedRuleset(), rct: loadRatifiedRct() };
+    return acqConfigCache;
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
-  return acqConfigCache;
 }
 
 /**
@@ -585,7 +587,10 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
   //    surfaces (the shared-contract goal). Confidential-deal handling stays upstream of this route.
   app.post('/acquisition/score', async (c) => {
     const cfg = acqConfig();
-    if (!cfg.ok) return c.json({ error: 'acquisition engine unavailable', detail: cfg.error }, 503);
+    if (!cfg.ok) {
+      console.error(`[acquisition] ratified config unavailable: ${cfg.error}`);
+      return c.json({ error: 'acquisition engine unavailable' }, 503);
+    }
     const parsed = AcquisitionInput.safeParse(await c.req.json().catch(() => ({})));
     if (!parsed.success) return c.json({ error: 'invalid acquisition input', issues: parsed.error.issues }, 400);
     // Apply the SHARED governor proxy (acq-governor-proxy.ts) so this ad-hoc score matches the ranked
@@ -785,8 +790,11 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
 
   // POST /acq/score/:candidateId — run persistAndLogScore on a candidate.
   // Body: AcquisitionInput. Returns AcquisitionScore.
-  // Fail-closed: 503 if ruleset not ratified (advisory=false demanded) OR if missing.
-  // Advisory scores (proposed ruleset) are returned freely with advisoryOnly=true.
+  // FAIL-CLOSED, same as /acquisition/score: 503 when the RATIFIED ruleset + RCT cannot load. There is
+  // no fallback to a proposed ruleset — a persisted score feeds the ranked pipeline, the capital BUY
+  // verdict and the calibration record, so it must only ever be produced from ratified math
+  // (Invariant 4). persistAndLogScore re-asserts this itself. Error bodies are generic; detail is
+  // logged server-side only (a raw String(e) can carry filesystem paths).
   app.post('/acq/score/:candidateId', (c) =>
     withDb(async (db) => {
       const candidateId = c.req.param('candidateId');
@@ -799,31 +807,18 @@ export function warehouseRoutes(getDb: () => WarehouseDb): Hono {
       const inputParsed = AcquisitionInput.safeParse(await c.req.json().catch(() => ({})));
       if (!inputParsed.success) return c.json({ error: 'invalid acquisition input', issues: inputParsed.error.issues }, 400);
 
-      // Load ruleset + RCT. For scoring, we try the ratified path first.
-      // If not ratified, load the proposed path (advisory-only scores are allowed).
-      let ruleset: AcquisitionRuleset;
-      let rct: ReplacementCostTable;
-      try {
-        const cfg = acqConfig();
-        if (!cfg.ok) {
-          // acqConfig() fails when the ratified file is missing or non-ratified.
-          // Try loading the proposed ruleset so we can still return advisory scores.
-          const { loadRuleset, loadReplacementCostTable } = await import('./acquisition');
-          ruleset = loadRuleset('config/acquisition-ruleset.v1.proposed.json');
-          rct = loadReplacementCostTable();
-        } else {
-          ruleset = cfg.ruleset;
-          rct = cfg.rct;
-        }
-      } catch (e) {
-        return c.json({ error: 'acquisition engine unavailable', detail: String(e) }, 503);
+      const cfg = acqConfig();
+      if (!cfg.ok) {
+        console.error(`[acq/score] ratified config unavailable: ${cfg.error}`);
+        return c.json({ error: 'acquisition engine unavailable' }, 503);
       }
 
       try {
-        const result = await persistAndLogScore(db, candidateId, inputParsed.data, ruleset, rct);
+        const result = await persistAndLogScore(db, candidateId, inputParsed.data, cfg.ruleset, cfg.rct);
         return c.json({ score: result.score, calibrationVerdictId: result.calibrationVerdictId });
       } catch (e) {
-        return c.json({ error: 'scoring failed', detail: String(e) }, 500);
+        console.error(`[acq/score] scoring failed for ${candidateId}: ${e instanceof Error ? e.message : String(e)}`);
+        return c.json({ error: 'scoring failed' }, 500);
       }
     }),
   );

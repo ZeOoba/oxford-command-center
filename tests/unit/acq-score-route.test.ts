@@ -160,7 +160,9 @@ describe('POST /acq/score/:candidateId', () => {
     const app = await loadApp(db, 'ratified-missing-no-fallback');
     const res = await postScore(app, id, VALID_INPUT);
     expect(res.status).toBe(503);
-    expect(((await res.json()) as { error: string }).error).toBe('acquisition engine unavailable');
+    const body = (await res.json()) as { error: string; detail?: string };
+    expect(body.error).toBe('acquisition engine unavailable');
+    expect(body.detail).toBeUndefined(); // raw errors can carry filesystem paths: logged, never returned
     expect(count(db, 'acq_scores')).toBe(0);
     expect(count(db, 'calibration_verdict')).toBe(0);
   });
@@ -172,20 +174,60 @@ describe('POST /acq/score/:candidateId', () => {
     db.exec('DROP TABLE acq_score_inputs'); // force persistAndLogScore to throw
     const res = await postScore(app, id, VALID_INPUT);
     expect(res.status).toBe(500);
-    expect(((await res.json()) as { error: string }).error).toBe('scoring failed');
+    const body = (await res.json()) as { error: string; detail?: string };
+    expect(body.error).toBe('scoring failed');
+    expect(body.detail).toBeUndefined();
   });
 
-  // KNOWN DEFECT, pinned (cc-audit-army acq-score-proposed-fallback; fix owned by a follow-up).
-  // When the ratified config fails to load, the route falls back to a NON-ratified ruleset and STILL
-  // persists the score and logs it to calibration, instead of returning 503 like /acquisition/score.
-  // Today this returns 200, so the assertion below fails and `it.fails` passes. When the route is
-  // fixed to fail closed, this flips to a real failure and must be converted to a plain `it`.
-  it.fails('SHOULD 503 and persist nothing when the ratified config is unavailable, even if a fallback ruleset loads', async () => {
+  // Was the pinned KNOWN DEFECT (cc-audit-army acq-score-proposed-fallback): with the ratified config
+  // unavailable the route fell back to a non-ratified ruleset and still persisted the score and logged
+  // it to calibration. Now fails closed exactly like /acquisition/score.
+  it("503s and persists nothing when the ratified config is unavailable, EVEN IF a fallback ruleset would load", async () => {
     const db = freshDb();
     const id = seedCandidate(db);
     const app = await loadApp(db, 'ratified-missing-fallback-present');
     const res = await postScore(app, id, VALID_INPUT);
     expect(res.status).toBe(503);
     expect(count(db, 'acq_scores')).toBe(0);
+    expect(count(db, 'calibration_verdict')).toBe(0);
+  });
+
+  it('does NOT cache a config failure: the next request succeeds once the config loads again', async () => {
+    const db = freshDb();
+    const id = seedCandidate(db);
+    vi.resetModules();
+    let calls = 0;
+    vi.doMock(ACQ_MODULE, async () => {
+      const actual = await vi.importActual<typeof AcquisitionModule>(ACQ_MODULE);
+      return {
+        ...actual,
+        loadRatifiedRuleset: () => {
+          calls += 1;
+          if (calls === 1) throw new Error('EBUSY: transient OneDrive lock');
+          return actual.loadRatifiedRuleset();
+        },
+      };
+    });
+    const { warehouseRoutes } = await import('../../server/warehouse/api');
+    const app = warehouseRoutes(() => db);
+    expect((await postScore(app, id, VALID_INPUT)).status).toBe(503);
+    expect((await postScore(app, id, VALID_INPUT)).status).toBe(200);
+    expect(count(db, 'acq_scores')).toBe(1);
+  });
+});
+
+describe('POST /acquisition/score (sibling, stateless) — same fail-closed contract', () => {
+  it('503s with a generic body (no raw error detail) when the ratified config is unavailable', async () => {
+    const db = freshDb();
+    const app = await loadApp(db, 'ratified-missing-no-fallback');
+    const res = await app.request('/acquisition/score', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(VALID_INPUT),
+    });
+    expect(res.status).toBe(503);
+    const body = (await res.json()) as { error: string; detail?: string };
+    expect(body.error).toBe('acquisition engine unavailable');
+    expect(body.detail).toBeUndefined();
   });
 });

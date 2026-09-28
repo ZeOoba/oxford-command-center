@@ -145,9 +145,10 @@ describe('acquisition edge Function — fail-closed 503 WIRING (config init fail
       const mod = await import('../../functions/api/warehouse/acquisition/score');
       const res = await mod.onRequestPost(postCtx(STRONG_BASE));
       expect(res.status).toBe(503);
-      const body = (await res.json()) as { error?: string; score?: unknown };
+      const body = (await res.json()) as { error?: string; score?: unknown; detail?: unknown };
       expect(body.error).toMatch(/unavailable/);
       expect(body.score).toBeUndefined();
+      expect(body.detail).toBeUndefined(); // parity with the Brain Server routes: no raw config error
     } finally {
       vi.doUnmock(rulesetPath);
       vi.resetModules();
