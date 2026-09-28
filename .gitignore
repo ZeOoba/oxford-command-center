@@ -68,3 +68,9 @@ data/backups/
 # pretypecheck step (tsconfig.confidential-scan-types.json) — never hand-edit, never commit.
 # See OI-206 in ~/.claude memory for why this replaced a hand-maintained sibling .d.mts.
 scripts/prepush-confidential-scan.d.mts
+# AR working dirs: raw tenant delinquency exports (tenant names + arrears). Never committed
+# (cc-audit-army 2026-09-28) — data/ar/ar-mapping-cache.json and review-queue.json sit one level
+# up and stay tracked/untouched.
+data/ar/inbox/
+data/ar/processed/
+data/ar/failed/

@@ -239,8 +239,9 @@ describe('OI-225 layer 2 — injected pre-send scan on the agent egress', () => 
     await runAgent({
       question: 'any deadlines?', snapshot: makeSnap(), apiKey: 'test-key',
       emit: (e) => void events.push(e),
-      // Stand-in for server/briefing/confidential.ts's scanForConfidential. Trips on anything.
-      confidentialScan: () => ({ dealLabel: 'Confidential Deal' }),
+      // Stand-in for server/briefing/confidential.ts's scanForConfidential. Trips on TOOL results only
+      // (the question/history input scan passes {question, history}), so this pins the tool-result path.
+      confidentialScan: (v) => (v && typeof v === 'object' && 'question' in v ? null : { dealLabel: 'Confidential Deal' }),
     });
     vi.unstubAllGlobals();
 
@@ -252,6 +253,44 @@ describe('OI-225 layer 2 — injected pre-send scan on the agent egress', () => 
     expect(err!.message).toContain('Confidential Deal');
     expect(err!.message).not.toContain(SECRET_NAME);
     expect(events.some((e) => e.type === 'done')).toBe(false);
+  });
+
+  it('refuses BEFORE any request when the user question or history trips the scan (input egress)', async () => {
+    const fetchMock = vi.fn(async () => new Response(TURN_TEXT, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const seen: unknown[] = [];
+    const events: AgentEvent[] = [];
+    await runAgent({
+      question: 'summarize SyntheticDeal Plaza', snapshot: makeSnap(), apiKey: 'test-key',
+      history: [{ role: 'user', text: 'earlier turn' }, { role: 'assistant', text: 'SyntheticDeal answer' }],
+      emit: (e) => void events.push(e),
+      confidentialScan: (v) => { seen.push(v); return { dealLabel: 'Synthetic Deal' }; },
+    });
+    vi.unstubAllGlobals();
+    expect(fetchMock).not.toHaveBeenCalled();
+    // The scan saw BOTH the question and every history turn.
+    expect(JSON.stringify(seen[0])).toContain('SyntheticDeal Plaza');
+    expect(JSON.stringify(seen[0])).toContain('SyntheticDeal answer');
+    const err = events.find((e): e is Extract<AgentEvent, { type: 'error' }> => e.type === 'error');
+    expect(err!.message).toContain('Synthetic Deal');
+    expect(err!.message).not.toContain('SyntheticDeal Plaza');
+    expect(events.some((e) => e.type === 'done')).toBe(false);
+  });
+
+  it('fails CLOSED before any request when the input scan throws (roster unavailable)', async () => {
+    const fetchMock = vi.fn(async () => new Response(TURN_TEXT, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const events: AgentEvent[] = [];
+    await runAgent({
+      question: 'any deadlines?', snapshot: makeSnap(), apiKey: 'test-key',
+      emit: (e) => void events.push(e),
+      confidentialScan: () => { throw new Error('roster missing at C:/secret/path'); },
+    });
+    vi.unstubAllGlobals();
+    expect(fetchMock).not.toHaveBeenCalled();
+    const err = events.find((e): e is Extract<AgentEvent, { type: 'error' }> => e.type === 'error');
+    expect(err).toBeDefined();
+    expect(err!.message).not.toContain('C:/secret/path');
   });
 
   it('is a no-op when the scan finds nothing — the loop completes normally', async () => {
