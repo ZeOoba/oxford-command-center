@@ -20,6 +20,9 @@ on:
 # account billing stopped hosted jobs from starting. Job ids `gate` / `refute-required` are the
 # branch-protection required-check names: never rename them. While CI_RUNNER=self, CI only runs
 # while that laptop is on and the runner service is up; unset the variable to fall back.
+# `npm ci --include=dev`: the laptop runner's service environment made `npm ci` omit
+# devDependencies (404 of 643 packages, no tsx/vitest), so every script failed with
+# "'tsx' is not recognized". Explicit --include=dev is a no-op on ubuntu-latest.
 #   gh variable set CI_RUNNER --body self --repo ZeOoba/oxford-command-center
 #   gh variable delete CI_RUNNER --repo ZeOoba/oxford-command-center
 jobs:
@@ -31,7 +34,7 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
-      - run: npm ci
+      - run: npm ci --include=dev
       - run: npm run gate:ci
 
   # Doctrine gate (architecture/coding-standards.md): every commit that changes financial-decision
@@ -49,7 +52,7 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
-      - run: npm ci
+      - run: npm ci --include=dev
       - run: git fetch --no-tags origin "${{ github.base_ref }}"
       # --head = the PR head sha, not the synthetic refs/pull/N/merge HEAD: attestation is per commit,
       # and that merge is built server-side by GitHub, so a local re-merge that disagrees with it would
