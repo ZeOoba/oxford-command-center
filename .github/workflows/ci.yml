@@ -42,6 +42,17 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
+      # Windows runners only: tests spawn `sh` (bash-guard.test.ts, install-git-hooks.test.ts).
+      # GitHub-hosted Windows images put Git's shells on PATH; the laptop runner's service PATH has
+      # only Git's cmd dir, so they failed with "spawnSync sh ENOENT" / exit 1. Git's install root is
+      # derived from `git --exec-path` (<root>/mingw64/libexec/git-core), independent of which git.exe
+      # is first on PATH.
+      - if: runner.os == 'Windows'
+        run: |
+          $root = Resolve-Path (Join-Path (git --exec-path) '..\..\..')
+          $bin = Join-Path $root 'bin'
+          if (-not (Test-Path (Join-Path $bin 'sh.exe'))) { throw "sh.exe not found under $bin" }
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - run: npm ci --include=dev
       - run: npm run gate:ci
 
