@@ -14,16 +14,46 @@ on:
     branches: [main]
   pull_request:
 
+# RUNNER TOGGLE (2026-09-28): both required jobs run on GitHub-hosted ubuntu-latest by default.
+# Setting the repo variable CI_RUNNER=self moves them to the self-hosted runner on Gabriel's
+# Windows laptop (labels: self-hosted, windows, ora-ci) — no billed Actions minutes. Added when
+# account billing stopped hosted jobs from starting. Job ids `gate` / `refute-required` are the
+# branch-protection required-check names: never rename them. While CI_RUNNER=self, CI only runs
+# while that laptop is on and the runner service is up; unset the variable to fall back.
+# `npm ci --include=dev`: the laptop runner's service environment made `npm ci` omit
+# devDependencies (404 of 643 packages, no tsx/vitest), so every script failed with
+# "'tsx' is not recognized". Explicit --include=dev is a no-op on ubuntu-latest.
+# NODE_ENV cleared below: the root cause of both laptop-runner failures was NODE_ENV=production
+# in the runner service's environment — npm then omitted devDependencies, and Vitest failed all
+# 329 test files at load with "No such built-in module: node:" (reproduced locally with
+# NODE_ENV=production; passes with it empty). Empty lets each tool apply its own default: Vitest
+# sets `test`, `vite build` still builds production (verified: no dev React, bundle in budget).
+#   gh variable set CI_RUNNER --body self --repo ZeOoba/oxford-command-center
+#   gh variable delete CI_RUNNER --repo ZeOoba/oxford-command-center
+env:
+  NODE_ENV: ''
+
 jobs:
   gate:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER == 'self' && fromJSON('["self-hosted","windows","ora-ci"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
           cache: 'npm'
-      - run: npm ci
+      # Windows runners only: tests spawn `sh` (bash-guard.test.ts, install-git-hooks.test.ts).
+      # GitHub-hosted Windows images put Git's shells on PATH; the laptop runner's service PATH has
+      # only Git's cmd dir, so they failed with "spawnSync sh ENOENT" / exit 1. Git's install root is
+      # derived from `git --exec-path` (<root>/mingw64/libexec/git-core), independent of which git.exe
+      # is first on PATH.
+      - if: runner.os == 'Windows'
+        run: |
+          $root = Resolve-Path (Join-Path (git --exec-path) '..\..\..')
+          $bin = Join-Path $root 'bin'
+          if (-not (Test-Path (Join-Path $bin 'sh.exe'))) { throw "sh.exe not found under $bin" }
+          $bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - run: npm ci --include=dev
       - run: npm run gate:ci
 
   # Doctrine gate (architecture/coding-standards.md): every commit that changes financial-decision
@@ -32,7 +62,7 @@ jobs:
   # protection to hard-enforce (non-required by default). PR-only — it needs a base ref to diff.
   refute-required:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.CI_RUNNER == 'self' && fromJSON('["self-hosted","windows","ora-ci"]') || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -41,7 +71,7 @@ jobs:
         with:
           node-version: '24'
           cache: 'npm'
-      - run: npm ci
+      - run: npm ci --include=dev
       - run: git fetch --no-tags origin "${{ github.base_ref }}"
       # --head = the PR head sha, not the synthetic refs/pull/N/merge HEAD: attestation is per commit,
       # and that merge is built server-side by GitHub, so a local re-merge that disagrees with it would
