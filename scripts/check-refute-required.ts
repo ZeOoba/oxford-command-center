@@ -369,18 +369,23 @@ const PLACEHOLDER_VALUE =
 /**
  * An unfilled template blank standing as its own word: `<date>`, `<reviewer/run ref>`, `<n> findings`.
  * Catches a template pasted without being filled in ("Fable 5.1 adversarial pass <date> — <n> findings").
- * Standalone only — start or whitespace before, end/whitespace/punctuation after — so prose that merely
+ * Standalone only — start or whitespace before; end, whitespace or punctuation after (incl. `'s`, `/`,
+ * `%`, `+`, `#`: `<date>'s`, `<n>/5`) — so prose that merely
  * contains angle brackets still attests: `.tmp-<pid>-<ts>` (on main, #367), `Map<string>`,
  * `a<b and c>d`, `<b>display-only</b>`. Emails and URLs (`@`, `://`) are never blanks.
  */
-const UNFILLED_TEMPLATE = /(?:^|\s)(<(?![^<>\n]*(?:@|:\/\/))[A-Za-z][^<>\n]{0,40}>)(?=$|[\s.,;:!?)\]—–-])/;
+const UNFILLED_TEMPLATE = /(?:^|\s)(<(?![^<>\n]*(?:@|:\/\/))[A-Za-z][^<>\n]{0,40}>)(?=$|[\s.,;:!?)\]—–'’/%+#-])/;
 
-/** Strip invisible format characters (zero-width space, BOM, bidi marks) and wrapping quotes/brackets/Markdown emphasis. */
+/**
+ * Strip invisible format characters (zero-width space, BOM, bidi marks) and wrapping quotes/brackets/
+ * Markdown emphasis. Angle brackets are deliberately NOT a wrapper: `` `<run id>` `` must normalize to
+ * `<run id>` so the unfilled-blank check still sees it, not to the plain words `run id`.
+ */
 function normalizeTrailerValue(value: string): string {
   let v = value.replace(/\p{Cf}/gu, '').trim();
   for (;;) {
     const unwrapped = v
-      .replace(/^(["'`‘’“”([{<])(.*)(["'`‘’“”)\]}>])$/su, '$2')
+      .replace(/^(["'`‘’“”([{])(.*)(["'`‘’“”)\]}])$/su, '$2')
       .replace(/^(\*{1,2}|_{1,2})(.+)\1$/su, '$2')
       .trim();
     if (unwrapped === v) return v;
@@ -410,7 +415,8 @@ function trailerRejection(value: string): string | null {
   if ([value, norm].some((v) => v.startsWith('wf_<runId>') || v.startsWith('<reason>'))) {
     return "the gate's own placeholder, pasted verbatim";
   }
-  // Raw value: normalization would unwrap a whole-value `<reviewer/run ref>` into plain words.
+  // Normalized value too: a blank right after a stripped wrapper or invisible character
+  // (`"<date> — 0 findings"`, `**<date> pass**`, a zero-width space + `<date>`) has no whitespace before it raw.
   const blank = UNFILLED_TEMPLATE.exec(value)?.[1] ?? UNFILLED_TEMPLATE.exec(norm)?.[1];
   if (blank !== undefined) return `unfilled template blank "${blank}"`;
   if (norm === '' || PLACEHOLDER_VALUE.test(norm)) return `placeholder "${value}" is not an attestation`;
