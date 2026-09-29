@@ -1,5 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { diffCriticalAlerts, parseConfirmClearRuns, shouldSendBrief, etNow, type AlertState } from '../../server/brief/state';
+import { describe, it, expect, vi } from 'vitest';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { diffCriticalAlerts, loadState, loadStateChecked, saveState, parseConfirmClearRuns, shouldSendBrief, etNow, type AlertState } from '../../server/brief/state';
 
 const emptyState: AlertState = { alertedCriticalIds: [], clearStreaks: {}, lastBriefDate: null, dealStages: {} };
 
@@ -194,5 +197,71 @@ describe('parseConfirmClearRuns', () => {
     expect(r.nextClearStreaks['a']).toBe(1);
     const r2 = diffCriticalAlerts(['anchor'], { ...emptyState, alertedCriticalIds: r.nextAlerted, clearStreaks: r.nextClearStreaks }, Infinity);
     expect(r2.nextAlerted).not.toContain('a');
+  });
+});
+
+// -- Durable state file (cc-audit-army 2026-09-28, brief-state-nonatomic-reset-storm) -------------
+// A truncated/corrupt state file used to reset silently to an empty alerted set, so the next run
+// re-emailed EVERY open critical. saveState is now temp+rename, and a corrupt file is moved aside
+// and reported so the caller can suppress the flood.
+describe('alert state file durability', () => {
+  const tmpState = () => join(mkdtempSync(join(tmpdir(), 'brief-state-')), 'state.json');
+
+  it('a missing file is a normal first run: fresh state, not recovered', () => {
+    const r = loadStateChecked(tmpState());
+    expect(r.recovered).toBe(false);
+    expect(r.state.alertedCriticalIds).toEqual([]);
+  });
+
+  it('round-trips a saved state and leaves no .tmp behind (atomic write)', () => {
+    const p = tmpState();
+    saveState({ ...emptyState, alertedCriticalIds: ['a', 'b'] }, p);
+    expect(existsSync(`${p}.tmp`)).toBe(false);
+    const r = loadStateChecked(p);
+    expect(r.recovered).toBe(false);
+    expect(r.state.alertedCriticalIds).toEqual(['a', 'b']);
+  });
+
+  it('a truncated file is moved aside (evidence kept), reported as recovered, and starts fresh', () => {
+    const p = tmpState();
+    saveState({ ...emptyState, alertedCriticalIds: ['a', 'b'] }, p);
+    writeFileSync(p, readFileSync(p, 'utf8').slice(0, 20)); // simulate a torn write
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const r = loadStateChecked(p);
+    err.mockRestore();
+    expect(r.recovered).toBe(true);
+    expect(r.state.alertedCriticalIds).toEqual([]);
+    expect(existsSync(p)).toBe(false);
+    const aside = readdirSync(join(p, '..')).filter((f) => f.startsWith('state.json.corrupt-'));
+    expect(aside).toHaveLength(1);
+  });
+
+  it('valid JSON that is not an object (null) counts as corrupt and is quarantined', () => {
+    const p = tmpState();
+    writeFileSync(p, 'null');
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(loadStateChecked(p).recovered).toBe(true);
+    err.mockRestore();
+    expect(readdirSync(join(p, '..')).some((f) => f.startsWith('state.json.corrupt-'))).toBe(true);
+  });
+
+  it('a filesystem read error is NOT treated as corruption: the good file stays in place and the error propagates', () => {
+    const p = tmpState();
+    saveState({ ...emptyState, alertedCriticalIds: ['keep'] }, p);
+    // A directory at the path makes readFileSync throw EISDIR (a stand-in for EBUSY/EPERM): not a parse error.
+    const dirPath = join(mkdtempSync(join(tmpdir(), 'brief-state-dir-')), 'state.json');
+    mkdirSync(dirPath);
+    expect(() => loadStateChecked(dirPath)).toThrow();
+    expect(existsSync(dirPath)).toBe(true); // not moved aside
+    expect(readdirSync(join(dirPath, '..')).some((f) => f.includes('.corrupt-'))).toBe(false);
+    expect(loadStateChecked(p).state.alertedCriticalIds).toEqual(['keep']); // control: normal file unaffected
+  });
+
+  it('loadState keeps its old contract: corrupt -> fresh state', () => {
+    const p = tmpState();
+    writeFileSync(p, '{ nope');
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    expect(loadState(p).alertedCriticalIds).toEqual([]);
+    err.mockRestore();
   });
 });

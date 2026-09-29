@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import Database from 'better-sqlite3';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -32,6 +32,53 @@ describe('runBrief', () => {
     expect(brief).not.toContain('2026-06-04');
     const res2 = await runBrief(baseSnap(), { statePath, now: new Date('2026-07-09T15:00:00Z'), send: async () => ({ ok: true, via: 'com' }) });
     expect(res2.briefSent).toBe(false);
+  });
+
+  it('a CORRUPT state file does not re-email every open critical: suppressed once, then quiet, new criticals still alert', async () => {
+    const statePath = join(dir(), 'state.json');
+    writeFileSync(statePath, '{ "alertedCriticalIds": ["ins-critical-1"'); // torn write
+    const snap = baseSnap();
+    (snap.insurance as unknown[]) = [{ id: 'ins1', property: 'P', coverage: 'GL', carrier: 'C', expires: null, premium: 0, daysToExpiry: null, status: 'Cancelled', notes: null, flags: [] }];
+    const subjects: string[] = [];
+    const send = async (email: { subject: string }) => { subjects.push(email.subject); return { ok: true as const, via: 'com' as const }; };
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const r1 = await runBrief(snap, { statePath, now: new Date('2026-06-04T15:00:00Z'), send });
+    errSpy.mockRestore();
+    expect(r1.alertsSent).toBe(0); // flood suppressed
+    expect(subjects.some((s) => s.includes('CRITICAL'))).toBe(false);
+    expect(readdirSync(join(statePath, '..')).some((f) => f.startsWith('state.json.corrupt-'))).toBe(true);
+
+    // The open critical was recorded as alerted: a normal next run stays quiet...
+    const r2 = await runBrief(snap, { statePath, now: new Date('2026-06-04T16:00:00Z'), send });
+    expect(r2.alertsSent).toBe(0);
+    // ...but a genuinely NEW critical still alerts.
+    (snap.insurance as unknown[]) = [
+      ...(snap.insurance as unknown[]),
+      { id: 'ins2', property: 'Q', coverage: 'GL', carrier: 'C', expires: null, premium: 0, daysToExpiry: null, status: 'Cancelled', notes: null, flags: [] },
+    ];
+    const r3 = await runBrief(snap, { statePath, now: new Date('2026-06-04T17:00:00Z'), send });
+    expect(r3.alertsSent).toBe(1);
+  });
+
+  it('the recovery is persisted BEFORE the run can fail: a crash after a corrupt-state reset cannot bring the flood back', async () => {
+    const statePath = join(dir(), 'state.json');
+    writeFileSync(statePath, '{ torn');
+    const snap = baseSnap();
+    (snap.insurance as unknown[]) = [{ id: 'ins1', property: 'P', coverage: 'GL', carrier: 'C', expires: null, premium: 0, daysToExpiry: null, status: 'Cancelled', notes: null, flags: [] }];
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    // Brief gate open (07:00 ET) so the run goes on to render; make send throw to simulate a crash mid-run.
+    await expect(
+      runBrief(snap, { statePath, now: new Date('2026-06-04T11:00:00Z'), send: async () => { throw new Error('boom'); } }),
+    ).rejects.toThrow('boom');
+    errSpy.mockRestore();
+    // The next run must see a VALID state that already lists the open critical: no re-email.
+    const subjects: string[] = [];
+    const r = await runBrief(snap, {
+      statePath, now: new Date('2026-06-04T15:00:00Z'),
+      send: async (email) => { subjects.push(email.subject); return { ok: true, via: 'com' }; },
+    });
+    expect(r.alertsSent).toBe(0);
+    expect(subjects.some((sub) => sub.includes('CRITICAL'))).toBe(false);
   });
 
   it('routes alerts AND the brief to ggoldberg only (routing canon, ratified 2026-07-09)', async () => {
