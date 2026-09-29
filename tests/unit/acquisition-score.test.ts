@@ -1,7 +1,11 @@
 // tests/unit/acquisition-score.test.ts
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { AcquisitionInput } from '@contracts/acquisition';
-import { FIELD_GROUPS, buildInput, dealToForm, inputToForm } from '../../src/modules/acquisitions/acquisition-score';
+import { AcquisitionInput, ReplacementCostTable } from '@contracts/acquisition';
+import { RCT_V03 } from '../../src/brain/replacement-cost';
+import { scoreAcquisition, parseRuleset } from '../../server/warehouse/acquisition';
+import { FIELD_GROUPS, applyDealMarket, buildInput, dealToForm, inputToForm } from '../../src/modules/acquisitions/acquisition-score';
 
 describe('acquisition Workbench form mapping', () => {
   it('inputToForm → buildInput round-trips the key fields (persistence reload)', () => {
@@ -62,6 +66,73 @@ describe('RCT v03 hygiene — the Workbench form must not present the retired fl
     const texts = allSpecs.flatMap((s) => [s.label, s.hint ?? '', ...(s.options ?? []).map((o) => o.label)]);
     for (const t of texts) {
       expect(t, `stale flat-RCT figure in form text: "${t}"`).not.toMatch(/\$1(25|37\.50?|50)\s*\/\s*SF/);
+    }
+  });
+});
+
+// OI-356 (cc-audit-army 2026-09-28): no live UI path ever set AcquisitionInput.market, so every UI-scored
+// deal scored on the strictest firm-wide fallback (Kansas City LOW) while the deal drawer priced the deal by
+// its own market. The form now carries the market, so the engine and the drawer use the same denominator.
+describe('market plumbing: the deal form carries the market to the engine (OI-356)', () => {
+  const rct = ReplacementCostTable.parse(JSON.parse(readFileSync(resolve(process.cwd(), 'config/replacement-cost.v3.json'), 'utf8')));
+  const ruleset = parseRuleset(JSON.parse(readFileSync(resolve(process.cwd(), 'config/acquisition-ruleset.v1.json'), 'utf8')));
+  const deal = (market: string | null) => ({ sf: 60_000, estPrice: 3_000_000, irr: null, holdYrs: null, market } as never);
+  const scoreFor = (market: string | null) =>
+    scoreAcquisition(AcquisitionInput.parse({ ...buildInput(dealToForm(deal(market)), 'd'), allInBasis: 3_000_000, yearBuilt: 2000 }), ruleset, { rct });
+  const replacementFlags = (m: string | null) => scoreFor(m).dataQuality.filter((f) => f.field === 'replacementCost').map((f) => f.issue);
+
+  it('offers a Market select whose options are exactly the markets that have an RCT row', () => {
+    const spec = FIELD_GROUPS.flatMap((g) => g.fields).find((f) => f.key === 'market');
+    expect(spec?.kind).toBe('select');
+    expect((spec?.options ?? []).map((o) => o.value).sort()).toEqual(Object.keys(RCT_V03).sort());
+  });
+
+  it('dealToForm prefills a covered market and leaves an uncovered one blank (never guessed)', () => {
+    expect(dealToForm(deal('Cincinnati OH')).market).toBe('Cincinnati OH');
+    expect(dealToForm(deal('Toledo OH')).market).toBeUndefined();
+    expect(dealToForm(deal(null)).market).toBeUndefined();
+  });
+
+  it('buildInput emits the market and inputToForm round-trips it', () => {
+    const built = buildInput(dealToForm(deal('Louisville KY')), 'd');
+    expect(built.market).toBe('Louisville KY');
+    expect(inputToForm(AcquisitionInput.parse(built)).market).toBe('Louisville KY');
+  });
+
+  it('a SAVED input that predates the Market field picks the market up from the deal (would otherwise rescore on the fallback)', () => {
+    const saved = AcquisitionInput.parse({ dealId: 'd', price: 3_000_000, totalSf: 60_000 }); // no market stored
+    const form = applyDealMarket(inputToForm(saved), deal('Richmond VA'));
+    expect(form.market).toBe('Richmond VA');
+    expect(buildInput(form, 'd').market).toBe('Richmond VA');
+  });
+
+  it('applyDealMarket never overrides a market the underwriter chose, and ignores an uncovered deal market', () => {
+    expect(applyDealMarket({ market: 'Columbus OH' }, deal('Richmond VA')).market).toBe('Columbus OH');
+    expect(applyDealMarket({}, deal('Toledo OH')).market).toBeUndefined();
+    expect(applyDealMarket({}, null).market).toBeUndefined();
+  });
+
+  it('a stored market with no RCT row loads blank instead of a value the select cannot show', () => {
+    const saved = AcquisitionInput.parse({ dealId: 'd', market: 'Toledo OH' });
+    expect(inputToForm(saved).market).toBeUndefined();
+  });
+
+  it('every RCT market resolves to a per-market denominator through the REAL form -> engine path (no "not supplied" fallback flag)', () => {
+    for (const market of Object.keys(RCT_V03)) {
+      const msgs = replacementFlags(market).join(' | ');
+      expect(msgs, `${market} fell back to the firm-wide denominator`).not.toMatch(/not supplied|not in /);
+    }
+  });
+
+  it('a deal with no market still scores, on the strictest fallback, and says so', () => {
+    expect(replacementFlags(null).join(' ')).toMatch(/not supplied/);
+  });
+
+  it('proxy markets carry the DENOMINATOR-SENSITIVE flag, matching the drawer warning', () => {
+    for (const [market, entry] of Object.entries(RCT_V03)) {
+      const msgs = replacementFlags(market).join(' ');
+      if (entry?.proxy) expect(msgs, market).toMatch(/PROXY/);
+      else expect(msgs, market).not.toMatch(/PROXY/);
     }
   });
 });

@@ -36,7 +36,7 @@ export type Ratification = z.infer<typeof Ratification>;
  * The rctVersion is folded into inputsVersion, so bumping it correctly invalidates every score
  * cached under the old denominator. That is intended: those scores are stale, not merely old.
  */
-export const RCT_VERSION = 'replacement-cost.v3' as const;
+export const RCT_VERSION = 'replacement-cost.v3.1' as const;
 
 /** One market's all-in shallow-bay band. Basis floor and Basis score divide by `low`. */
 export const MarketRct = z.object({

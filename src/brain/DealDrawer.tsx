@@ -169,6 +169,12 @@ export function DealDrawer({
                               <Badge tone={rc.verdict === 'Clears basis floor' ? 'green' : 'red'}>{rc.verdict}</Badge>
                             </div>
                           )}
+                          {rc.proxy && (
+                            <div className="text-2xs pt-1" style={{ color: 'var(--warn, #b45309)' }}>
+                              [PROXY] denominator: this market's replacement cost is a neighbouring-metro stand-in (DENOMINATOR-SENSITIVE).
+                              A local insurance comp or GC quote is required before an LOI, regardless of how close to the floor this reads.
+                            </div>
+                          )}
                           {rc.vintageAssumed && (
                             <div className="text-2xs pt-1" style={{ color: 'var(--text-tertiary)' }}>
                               Year built unknown — strictest floor (1995) assumed. Confirm the vintage.

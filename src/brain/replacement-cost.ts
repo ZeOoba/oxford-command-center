@@ -36,17 +36,33 @@ export interface RctEntry {
 }
 
 /**
- * Keyed by the `Market` enum. That enum does not cover every ORA target market (no
- * Cincinnati / Madison / Grand Rapids / Richmond / Des Moines) and it carries markets ORA
- * has no RCT row for (Toledo, Cleveland). Anything absent here is NOT priced — we do not
- * invent a denominator. See `marketCovered`.
+ * Keyed by the `Market` enum. The enum also carries 'Toledo OH' / 'Cleveland MSA' / 'Other' /
+ * 'Unknown', which have no RCT row and are NOT priced — we do not invent a denominator. See
+ * `marketCovered`.
+ *
+ * This table is a hand-maintained mirror of `config/replacement-cost.v3.json` (the server
+ * engine's copy, both citing the `acquisition-underwriting` skill's RCT v03 table as the true
+ * authoritative source — SKILL.md: "There is now ONE denominator: RCT v03. If you find a
+ * second, it is a bug"). It previously covered only 4 of the then-9 ratified markets, silently
+ * showing "basis cannot be scored" in the deal drawer for 5 markets the server engine could
+ * already score — caught by cc-audit-army 2026-09-28 (OI-354), synced here to match the skill's
+ * current 10-market table (incl. Louisville KY, added to the skill 2026-08-11). A test in
+ * `tests/unit/replacement-cost-client-parity.test.ts` pins this object's keys and values to
+ * `config/replacement-cost.v3.json` so the two cannot silently re-diverge.
  */
 export const RCT_V03: Readonly<Partial<Record<Market, RctEntry>>> = {
   'Columbus OH': { low: 229.65, point: 255.16, high: 280.68, cwHardPsf: 130.51, proxy: false },
+  'Cincinnati OH': { low: 251.46, point: 279.4, high: 307.34, cwHardPsf: 143.15, proxy: false },
   'Kansas City MO': { low: 227.9, point: 253.22, high: 278.54, cwHardPsf: 129.94, proxy: false },
   'Indianapolis IN': { low: 253.83, point: 282.03, high: 310.24, cwHardPsf: 143.46, proxy: false },
   // Mid-Atlantic == ORA's Maryland / Baltimore–DC cluster; priced off the C&W Baltimore row.
   'Mid-Atlantic': { low: 232.97, point: 258.85, high: 284.74, cwHardPsf: 133.7, proxy: false },
+  'Madison WI': { low: 229.08, point: 254.53, high: 279.98, cwHardPsf: 130.05, proxy: true },
+  'Grand Rapids MI': { low: 253.11, point: 281.23, high: 309.36, cwHardPsf: 143.64, proxy: true },
+  'Richmond VA': { low: 232.97, point: 258.85, high: 284.74, cwHardPsf: 133.7, proxy: true },
+  'Des Moines IA': { low: 231.66, point: 257.4, high: 283.14, cwHardPsf: 131.46, proxy: true },
+  // SOURCED, not proxied (skill correction 2026-08-11) — present in the C&W 2025 guide directly.
+  'Louisville KY': { low: 237.07, point: 263.41, high: 289.75, cwHardPsf: 135.28, proxy: false },
 } as const;
 
 /**
