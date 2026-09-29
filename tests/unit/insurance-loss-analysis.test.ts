@@ -44,7 +44,7 @@ function termsOf(entries: Record<string, PolicyTerm>): ReadonlyMap<string, Polic
 }
 
 function lossEvents(rows: LossEventRow[], source: DataSource = 'placeholder', droppedRows = 0): LossEventsResolved {
-  return { rows, source, droppedRows };
+  return { rows, source, droppedRows, coercedRows: 0 };
 }
 
 function dec(source: DataSource): DecPageEntry {
@@ -62,7 +62,7 @@ function inputs(over: Partial<LossAnalysisInputs>): LossAnalysisInputs {
     asOf: '2026-07-09',
     policies: [],
     decPages: { byPolicyId: new Map(), anyPlaceholder: false },
-    lossEvents: { rows: [], source: 'placeholder', droppedRows: 0 },
+    lossEvents: { rows: [], source: 'placeholder', droppedRows: 0, coercedRows: 0 },
     policyTerms: new Map(),
     ...over,
   };

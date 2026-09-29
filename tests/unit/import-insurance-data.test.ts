@@ -841,3 +841,55 @@ describe('parseArgs', () => {
     expect(() => parseArgs(['--dec-pages'])).toThrow();
   });
 });
+
+describe('parseLossEventsPayload — one validity rule shared with the loader (refute wf_0ef2e213-4e2)', () => {
+  it.each(['2023-02-29', '2024-13-01', '2024-06-00'])('rejects the regex-valid but impossible calendar date %s (the loader would blank it)', (lossDate) => {
+    const { rows, rejected } = parseLossEventsPayload(
+      { events: [{ id: 'EVT-CAL', propertyId: 'prop-a', lossDate, grossIncurred: 1000 }] },
+      'test',
+    );
+    expect(rows).toHaveLength(0);
+    expect(rejected[0]!.reason).toMatch(/lossDate/);
+  });
+
+  it('accepts a real leap day', () => {
+    const { rows } = parseLossEventsPayload(
+      { events: [{ id: 'EVT-LEAP', propertyId: 'prop-a', lossDate: '2024-02-29', grossIncurred: 1000 }] },
+      'test',
+    );
+    expect(rows).toHaveLength(1);
+  });
+
+  it('rejects a grossIncurred above the loader ceiling (the loader would coerce it to $0)', () => {
+    const { rows, rejected } = parseLossEventsPayload(
+      { events: [{ id: 'EVT-HUGE', propertyId: 'prop-a', lossDate: '2024-05-01', grossIncurred: 2e12 }] },
+      'test',
+    );
+    expect(rows).toHaveLength(0);
+    expect(rejected[0]!.reason).toMatch(/grossIncurred/);
+  });
+});
+
+describe('parsePoliciesPayload — policy dates share the loader rule (refute wf_873d0a1e-5a6)', () => {
+  const base = {
+    propertyId: 'ins-3540fifth-pckg',
+    insurer: 'Erie Insurance',
+    policyNumber: 'Q61-0159747',
+    effectiveDate: '2024-01-20',
+    expirationDate: '2025-01-20',
+    premiumAnnual: 9478,
+    coverageTiv: 4393500,
+    policyType: 'Package (PCKG)',
+    sourceDate: '2026-08-17',
+  };
+
+  it.each([
+    ['effectiveDate', '2025-02-30'],
+    ['expirationDate', '2025-04-31'],
+    ['sourceDate', '2025-13-01'],
+  ])('rejects a regex-valid but impossible %s %s (loadPolicyTerms would null it and re-attach losses silently)', (field, value) => {
+    const { rows, rejected } = parsePoliciesPayload({ policies: [{ ...base, [field]: value }] }, 'd');
+    expect(rows).toEqual([]);
+    expect(rejected[0]!.reason).toMatch(new RegExp(field));
+  });
+});

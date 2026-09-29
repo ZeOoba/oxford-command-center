@@ -132,6 +132,15 @@ export const InsuranceLossReport = z.object({
   // process still running older code, or a cached response) must still parse on a newer client.
   // Not a bake concern — /insurance/loss is not in scripts/bake-warehouse.ts FIXED_ROUTES.
   unmatchedPolicyRefs: z.array(UnmatchedPolicyRef).default([]),
+  // DATA QUALITY (2026-09-27): warehouse loss-event rows KEPT with a value coerced away by the
+  // loader — a loss_date that is not a real ISO YYYY-MM-DD (→ no date: counted in eventsN/gross,
+  // not in observation years) or a present gross_incurred that is non-numeric, non-finite or above
+  // the $1T ceiling (→ $0). The importer shares the loader's rules (isIsoCalendarDate,
+  // MAX_LOSS_EVENT_USD) and rejects all of these, so new rows arrive only via raw SQL — but a row
+  // imported before 2026-09-27 under the old regex-only date rule (e.g. '2023-02-29') is counted too.
+  // Always 0 on the placeholder path (the fixture parser drops rows into droppedFixtureRows).
+  // `.default(0)` for the same stale-payload reason as unmatchedPolicyRefs.
+  coercedLossEventRows: z.number().int().nonnegative().default(0),
   eal: z.array(PropertyEal),
   deductibleReviews: z.array(DeductibleReview),
   selfInsure: SelfInsureSplit,

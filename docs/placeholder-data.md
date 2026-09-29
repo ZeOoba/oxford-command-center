@@ -94,7 +94,19 @@ These are enforced in code, not just convention — see `src/contracts/insurance
   the surface over to `'warehouse'`. The Self-Insure & Bids tab's separate amber
   "UNMATCHED POLICY REFS" notice (`unmatchedPolicyRefsDetail` in `src/modules/insurance/hooks.ts`)
   is **independent** of this banner — it is a warehouse-data signal, so it can appear without the
-  placeholder banner and never appears on fixture data.
+  placeholder banner and never appears on fixture data. Likewise the "UNREADABLE LOSS ROWS" notice
+  (`coercedLossRowsDetail`, 2026-09-27): `InsuranceLossReport.coercedLossEventRows` counts
+  warehouse loss rows the loader kept but coerced — a `loss_date` that is not a real ISO
+  `YYYY-MM-DD` day (→ no date: still in eventsN/gross, out of observation years) or a present
+  `gross_incurred` that is non-numeric, non-finite, negative or above `MAX_LOSS_EVENT_USD` ($1T)
+  (→ $0). Always `0` on fixture data. The importer, the warehouse loader and the fixture parser
+  share one rule set (`isIsoCalendarDate` / `MAX_LOSS_EVENT_USD` in `placeholder-data.ts`).
+  Dec-page `deductible`/`coverage_limit`: a NULL column (not yet captured) falls back to the
+  placeholder blanket as before; a PRESENT value that is unusable — not finite ≥ 0, or a deductible
+  above the limit (the importer's rejected shape) — reads `absent` (fully transferred), never the
+  blanket, because it is real data that failed validation, not "pending dec pages". The Master
+  Workbook writer drops a deductible > limit pair at capture with a `DataQualityFlag`
+  (`decPairOrFlag` in `server/workbook/parse.ts`); the fixture parser enforces the same rule.
 - **Fail-soft, never fail-loud, on the fixture path.** A missing or corrupt fixture file resolves
   to `source: 'absent'` with empty rows — never a thrown error. A malformed individual row (bad
   type, unknown `propertyId` not present in `property_master`) is skipped and counted in

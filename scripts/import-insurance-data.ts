@@ -67,6 +67,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { openWarehouse } from '../server/warehouse/db';
 import type { WarehouseDb } from '../server/warehouse/db';
+import { isIsoCalendarDate, MAX_LOSS_EVENT_USD } from '../server/warehouse/placeholder-data';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -150,14 +151,17 @@ export function parseLossEventsPayload(payload: unknown, defaultSource: string):
     // bogus "year", inflating observationYears past MIN_LOSS_YEARS and understating EAL. Reject the
     // row here (like negative grossIncurred below) rather than auto-detect alternate formats — a
     // human fixes the source file, exactly as import-assessments.ts rejects malformed rows.
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(lossDate)) {
-      rejected.push({ index, id, reason: `lossDate must be ISO YYYY-MM-DD, got '${lossDate}'` });
+    // isIsoCalendarDate is the loader's own rule (placeholder-data.ts): regex AND a real calendar
+    // day, so a row this importer accepts can never be blanked by resolveLossEvents.
+    if (!isIsoCalendarDate(lossDate)) {
+      rejected.push({ index, id, reason: `lossDate must be a real ISO YYYY-MM-DD date, got '${lossDate}'` });
       return;
     }
     // Matches placeholder-data.ts's parseLossEventFixtureRow precedent (Task 2): negative gross is
     // nonsensical loss data, rejected rather than let it flow into downstream loss-engine sums.
-    if (typeof grossIncurred !== 'number' || !Number.isFinite(grossIncurred) || grossIncurred < 0) {
-      rejected.push({ index, id, reason: `grossIncurred must be a nonnegative number, got '${String(grossIncurred)}'` });
+    // Upper bound = the loader's MAX_LOSS_EVENT_USD ceiling, so an accepted row is never coerced to $0.
+    if (typeof grossIncurred !== 'number' || !Number.isFinite(grossIncurred) || grossIncurred < 0 || grossIncurred > MAX_LOSS_EVENT_USD) {
+      rejected.push({ index, id, reason: `grossIncurred must be a nonnegative number no greater than ${MAX_LOSS_EVENT_USD}, got '${String(grossIncurred)}'` });
       return;
     }
 
@@ -408,7 +412,8 @@ export interface ParsePoliciesOutcome {
   rejected: RejectedRow[];
 }
 
-const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+// Policy dates use isIsoCalendarDate (placeholder-data.ts) — the same rule loadPolicyTerms applies via
+// termDateOrNull, so an accepted policy row can never have its term nulled by the loader.
 
 /**
  * Parse + validate the policies JSON payload. Pure — no DB, no I/O. Exported for tests.
@@ -449,12 +454,12 @@ export function parsePoliciesPayload(payload: unknown, defaultSource: string): P
       rejected.push({ index, id: propertyId, reason: 'missing or invalid "policyNumber"' });
       return;
     }
-    if (typeof effectiveDate !== 'string' || !ISO_DATE_RE.test(effectiveDate)) {
+    if (typeof effectiveDate !== 'string' || !isIsoCalendarDate(effectiveDate)) {
       rejected.push({ index, id: propertyId, reason: `effectiveDate must be ISO YYYY-MM-DD, got '${String(effectiveDate)}'` });
       return;
     }
     if (expirationDate !== undefined && expirationDate !== null
-      && (typeof expirationDate !== 'string' || !ISO_DATE_RE.test(expirationDate))) {
+      && (typeof expirationDate !== 'string' || !isIsoCalendarDate(expirationDate))) {
       rejected.push({ index, id: propertyId, reason: `expirationDate must be ISO YYYY-MM-DD when present, got '${String(expirationDate)}'` });
       return;
     }
@@ -475,7 +480,7 @@ export function parsePoliciesPayload(payload: unknown, defaultSource: string): P
     // insurance-analysis.ts's isMoreCurrent compares as a STRING (DESC) to rank a policy line's
     // current term. A non-ISO value (or a missing check, as this line originally had) would sort
     // unpredictably against real ISO dates and silently corrupt that ranking.
-    if (typeof sourceDate !== 'string' || !ISO_DATE_RE.test(sourceDate)) {
+    if (typeof sourceDate !== 'string' || !isIsoCalendarDate(sourceDate)) {
       rejected.push({ index, id: propertyId, reason: `sourceDate must be ISO YYYY-MM-DD, got '${String(sourceDate)}'` });
       return;
     }

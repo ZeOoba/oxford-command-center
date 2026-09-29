@@ -152,13 +152,35 @@ export function captureInsurance(db: WarehouseDb, policies: WarehouseInsurancePo
       // dq insert failure is best-effort
     }
   };
+  // deductible > coverage limit is the pair shape the dec-page importer rejects and the loss engine
+  // cannot partition (refute wf_de191779-d68). The workbook parser already drops it per ROW
+  // (decPairOrFlag), but this writer must not depend on its caller: a single capture carrying it
+  // writes neither value, and — because keep() merges per FIELD — two individually valid captures
+  // (one with only the limit, a later one with only the deductible) must not compose it either.
+  const pairIssue = (propertyId: string, where: string, d: number, limit: number): void =>
+    logOnce(
+      propertyId,
+      'insurance-decpage-pair-invalid',
+      `${where}: deductible ${d} exceeds coverage limit ${limit} — pair not written; correct the source (workbook cells or import-insurance-data --dec-pages)`,
+      'warn',
+    );
+  const incomingPair = (p: WarehouseInsurancePolicy, where: string): [number | null, number | null] => {
+    const d = p.deductible ?? null;
+    const limit = p.coverageLimit ?? null;
+    if (d !== null && limit !== null && d > limit) {
+      pairIssue(p.propertyId, where, d, limit);
+      return [null, null];
+    }
+    return [d, limit];
+  };
   const seen = new Set<string>();
   for (const p of policies) {
     try {
       if (!p.policyNumber || !p.effectiveDate) {
+        const [ded, limit] = incomingPair(p, `policy ${p.policyNumber ?? '(no number)'}`);
         insert.run(
           p.propertyId, p.insurer, p.policyNumber ?? null, p.effectiveDate ?? null, p.expirationDate ?? null,
-          p.premiumAnnual ?? null, p.coverageTiv ?? null, p.deductible ?? null, p.coverageLimit ?? null,
+          p.premiumAnnual ?? null, p.coverageTiv ?? null, ded, limit,
           p.policyType, p.source, p.sourceDate, p.ingestedBy,
         );
       } else {
@@ -175,9 +197,10 @@ export function captureInsurance(db: WarehouseDb, policies: WarehouseInsurancePo
         seen.add(key);
         const prior = findExisting.get(p.propertyId, p.policyNumber, p.effectiveDate) as ExistingPolicy | undefined;
         if (!prior) {
+          const [ded, limit] = incomingPair(p, `policy ${p.policyNumber} eff ${p.effectiveDate}`);
           insert.run(
             p.propertyId, p.insurer, p.policyNumber, p.effectiveDate, p.expirationDate ?? null,
-            p.premiumAnnual ?? null, p.coverageTiv ?? null, p.deductible ?? null, p.coverageLimit ?? null,
+            p.premiumAnnual ?? null, p.coverageTiv ?? null, ded, limit,
             p.policyType, p.source, p.sourceDate, p.ingestedBy,
           );
         } else {
@@ -198,13 +221,23 @@ export function captureInsurance(db: WarehouseDb, policies: WarehouseInsurancePo
           const tiv = decTiv
             ? keep('TIV', 'insurance-tiv-conflict', prior.coverage_tiv, p.coverageTiv ?? null)
             : p.coverageTiv ?? null;
+          // Validate the pair AFTER the per-field merge: an incoming d > limit pair is dropped
+          // outright, and a merge that would COMPOSE d > limit keeps the prior stored pair.
+          const [inDed, inLimit] = incomingPair(p, term);
+          let ded = keep('deductible', 'insurance-decpage-conflict', prior.deductible, inDed);
+          let limit = keep('coverage limit', 'insurance-decpage-conflict', prior.coverage_limit, inLimit);
+          if (ded !== null && limit !== null && ded > limit) {
+            pairIssue(p.propertyId, `${term} (merged across captures)`, ded, limit);
+            ded = prior.deductible;
+            limit = prior.coverage_limit;
+          }
           update.run(
             p.insurer,
             p.expirationDate ?? null,
             p.premiumAnnual ?? null,
             tiv,
-            keep('deductible', 'insurance-decpage-conflict', prior.deductible, p.deductible ?? null),
-            keep('coverage limit', 'insurance-decpage-conflict', prior.coverage_limit, p.coverageLimit ?? null),
+            ded,
+            limit,
             p.policyType,
             decTiv ? prior.source : p.source,
             p.sourceDate,
