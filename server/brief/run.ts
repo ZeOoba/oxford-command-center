@@ -4,7 +4,7 @@ import type { PortfolioSnapshot, MacroSnapshot } from '../../src/contracts/index
 import { buildAnalytics } from '../../src/analytics/engine';
 import { fmtUsdCompact, fmtPct } from '../../src/analytics/format';
 import { evaluateConditions, extractDgs5MarketRate } from '../../src/analytics/conditions';
-import { loadState, saveState, diffCriticalAlerts, shouldSendBrief, etNow, type AlertState } from './state';
+import { loadStateChecked, saveState, diffCriticalAlerts, shouldSendBrief, etNow, type AlertState } from './state';
 import { renderBrief, renderAlert, type Email } from './render';
 import { sendEmail, type SendResult } from './send';
 import { openWarehouseReadOnly } from '../warehouse/db';
@@ -43,7 +43,7 @@ export async function runBrief(
 ): Promise<{ briefSent: boolean; alertsSent: number }> {
   const now = deps.now ?? new Date();
   const send = deps.send ?? ((e: Email, to: string[]) => sendEmail(e, to));
-  const state: AlertState = loadState(deps.statePath);
+  const { state, recovered: stateRecovered }: { state: AlertState; recovered: boolean } = loadStateChecked(deps.statePath);
   const nowEt = etNow(now);
   // Day-count / "As of" reference = the RUN date (ET send date; REPORT_DATE-pinnable), NOT
   // snapshot.meta.asOf — the frozen workbook data date pinned the body dateline and every
@@ -130,7 +130,20 @@ export async function runBrief(
   const failures: string[] = [];
   // Ids whose send FAILED must not be persisted as alerted, or they are never retried.
   const failedToSend = new Set<string>();
-  for (const id of toAlert) {
+  // The alert state file was corrupt and had to be reset: every open critical looks "new", and
+  // emailing all of them would be a duplicate storm. Record them as alerted WITHOUT sending, and
+  // surface the event in the health record so it is visible. A critical that genuinely appears in a
+  // later run is still alerted normally.
+  if (stateRecovered) {
+    // Persist the recovery NOW. The corrupt file was already moved aside, so if anything below throws
+    // (analytics, render, a crash) before the normal save at the end of the run, the next run would find
+    // no file, look like a first run, and email every open critical: the storm this guards against.
+    saveState({ ...state, alertedCriticalIds: nextAlerted, clearStreaks: nextClearStreaks }, deps.statePath);
+    if (toAlert.length > 0) {
+      failures.push(`alert state file was corrupt and reset; suppressed ${toAlert.length} duplicate critical alert email(s) this run (a *.corrupt-* copy was kept next to the state file)`);
+    }
+  }
+  for (const id of stateRecovered ? [] : toAlert) {
     const ins = insights.find((i) => i.id === id)!;
     const r = await send(renderAlert(ins), ALERT_RECIPIENTS);
     if (r.ok) alertsSent++;

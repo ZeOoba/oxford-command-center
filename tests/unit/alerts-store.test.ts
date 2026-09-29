@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { rmSync, existsSync, writeFileSync, renameSync } from 'node:fs';
+import { rmSync, existsSync, writeFileSync, renameSync, readdirSync, readFileSync, mkdirSync } from 'node:fs';
 import type * as NodeFs from 'node:fs';
 import { loadInboxState, saveInboxState, runAlertAction } from '../../server/alerts/store';
 import { RENAME_MAX_ATTEMPTS } from '../../server/lib/rename-retry';
@@ -16,7 +16,10 @@ const realRenameSync = (await vi.importActual<typeof NodeFs>('node:fs')).renameS
 const mockRename = vi.mocked(renameSync);
 
 const TMP = 'data/__test-alert-inbox.json';
-afterEach(() => { if (existsSync(TMP)) rmSync(TMP); });
+const cleanCorruptCopies = () => {
+  for (const f of readdirSync('data')) if (f.startsWith('__test-alert-inbox.json.corrupt-')) rmSync(`data/${f}`);
+};
+afterEach(() => { if (existsSync(TMP)) rmSync(TMP, { recursive: true, force: true }); cleanCorruptCopies(); });
 
 describe('inbox store', () => {
   it('returns empty state when the file is absent', () => {
@@ -38,6 +41,35 @@ describe('inbox store', () => {
     saveInboxState({ read: ['x'], snoozed: {} }, TMP);
     writeFileSync(TMP, '{ not json');
     expect(loadInboxState(TMP)).toEqual({ read: [], snoozed: {} });
+  });
+
+  it('moves a corrupt file aside instead of leaving it to be overwritten by the next action', () => {
+    saveInboxState({ read: ['keep-me'], snoozed: {} }, TMP);
+    const good = readFileSync(TMP, 'utf8');
+    writeFileSync(TMP, good.slice(0, 15)); // torn write
+    expect(loadInboxState(TMP)).toEqual({ read: [], snoozed: {} });
+    expect(existsSync(TMP)).toBe(false); // original path freed, not silently reused
+    const copies = readdirSync('data').filter((f) => f.startsWith('__test-alert-inbox.json.corrupt-'));
+    expect(copies).toHaveLength(1);
+    expect(readFileSync(`data/${copies[0]}`, 'utf8')).toBe(good.slice(0, 15)); // the evidence, not an empty replacement
+  });
+
+  it('a filesystem read error is NOT treated as corruption: it propagates and nothing is moved aside', () => {
+    // A directory at the path makes readFileSync throw EISDIR (stand-in for a transient EBUSY/EPERM).
+    mkdirSync(TMP);
+    try {
+      expect(() => loadInboxState(TMP)).toThrow();
+      expect(existsSync(TMP)).toBe(true);
+      expect(readdirSync('data').some((f) => f.startsWith('__test-alert-inbox.json.corrupt-'))).toBe(false);
+    } finally {
+      rmSync(TMP, { recursive: true, force: true });
+    }
+  });
+
+  it('a schema-invalid (but valid JSON) file is also quarantined, not erased by the next save', () => {
+    writeFileSync(TMP, JSON.stringify({ read: 'not-an-array', snoozed: {} }));
+    expect(loadInboxState(TMP)).toEqual({ read: [], snoozed: {} });
+    expect(readdirSync('data').some((f) => f.startsWith('__test-alert-inbox.json.corrupt-'))).toBe(true);
   });
 });
 

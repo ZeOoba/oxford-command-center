@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { renameSyncWithRetry } from '../lib/rename-retry';
 
 export interface AlertState {
   alertedCriticalIds: string[];
@@ -38,24 +39,56 @@ export function parseConfirmClearRuns(raw: string | undefined): number {
 
 const CONFIRM_CLEAR_RUNS = parseConfirmClearRuns(process.env.ALERT_CONFIRM_CLEAR_RUNS);
 
-export function loadState(path = STATE_PATH): AlertState {
+const FRESH_STATE = (): AlertState => ({ alertedCriticalIds: [], clearStreaks: {}, lastBriefDate: null, dealStages: {} });
+
+/**
+ * Load the alert state and say whether it had to be RECOVERED from a corrupt file.
+ *
+ * A missing file is a normal first run (fresh state, recovered=false). An existing file that will not
+ * parse is different: silently resetting to an empty `alertedCriticalIds` makes the next run treat
+ * every open critical as new and re-email all of them (cc-audit-army 2026-09-28,
+ * brief-state-nonatomic-reset-storm). So a corrupt file is moved aside (never deleted — the evidence
+ * stays) and reported to the caller, which suppresses the per-critical emails for that run.
+ */
+export function loadStateChecked(path = STATE_PATH): { state: AlertState; recovered: boolean } {
+  if (!existsSync(path)) return { state: FRESH_STATE(), recovered: false };
   try {
-    if (existsSync(path)) {
-      const j = JSON.parse(readFileSync(path, 'utf8')) as Partial<AlertState>;
-      return {
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (typeof parsed !== 'object' || parsed === null) throw new SyntaxError('alert state is not a JSON object');
+    const j = parsed as Partial<AlertState>;
+    return {
+      state: {
         alertedCriticalIds: j.alertedCriticalIds ?? [],
         clearStreaks: j.clearStreaks ?? {},
         lastBriefDate: j.lastBriefDate ?? null,
         dealStages: j.dealStages ?? {},
-      };
-    }
-  } catch { /* corrupt → fresh state */ }
-  return { alertedCriticalIds: [], clearStreaks: {}, lastBriefDate: null, dealStages: {} };
+      },
+      recovered: false,
+    };
+  } catch (err) {
+    // Only genuine corruption is quarantined. A filesystem error (EBUSY/EPERM/EACCES while antivirus,
+    // the indexer or OneDrive holds the file) says nothing about the file's contents: moving a GOOD
+    // file aside would reset lastBriefDate and suppress that run's alerts. Fail loud instead.
+    if (!(err instanceof SyntaxError)) throw err;
+    const aside = `${path}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    try {
+      renameSyncWithRetry(path, aside);
+    } catch { /* could not move it aside: still report the recovery below */ }
+    console.error(`brief: alert state at ${path} is corrupt (${err instanceof Error ? err.message : String(err)}); moved to ${aside}, starting fresh with alert emails suppressed for this run`);
+    return { state: FRESH_STATE(), recovered: true };
+  }
 }
 
+export function loadState(path = STATE_PATH): AlertState {
+  return loadStateChecked(path).state;
+}
+
+/** Atomic (temp file + rename): a crash or lock mid-write can never leave a truncated state file. */
 export function saveState(state: AlertState, path = STATE_PATH): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(state, null, 2));
+  const tmp = `${path}.tmp`;
+  writeFileSync(tmp, JSON.stringify(state, null, 2));
+  renameSyncWithRetry(tmp, path);
 }
 
 /**

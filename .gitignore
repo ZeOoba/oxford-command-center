@@ -27,6 +27,8 @@ public/warehouse.json
 data/alert-state.json
 data/alert-state/
 data/alert-inbox.json
+# Quarantined copies of a corrupt alert-state / alert-inbox file (loadStateChecked, loadInboxState)
+data/*.corrupt-*
 data/__test-alert-inbox.json
 data/outbox/
 data/brief-health.json
