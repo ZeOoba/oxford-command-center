@@ -1,7 +1,9 @@
 // tests/unit/acquisition-contract.test.ts
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { stableStringify } from '../../server/warehouse/stable-stringify';
 import {
   AcquisitionInput,
   AcquisitionRuleset,
@@ -72,16 +74,16 @@ describe('acquisition ruleset contract (ratified v1)', () => {
     expect(rct.ratification).toBe('ratified');
     // Per-market, not flat. The old flat $125/$137.50/$150 had no market variation at all and sat
     // at roughly HALF true all-in shallow-bay replacement cost — which made ORA too STRICT.
-    expect(Object.keys(rct.markets).length).toBeGreaterThanOrEqual(9);
+    expect(Object.keys(rct.markets).length).toBeGreaterThanOrEqual(10);
     expect(rct.markets['Columbus OH']!.low).toBeCloseTo(229.65, 2);
     expect(rct.markets['Indianapolis IN']!.low).toBeCloseTo(253.83, 2);
   });
 
-  it('pins EVERY market row to the ratified RCT v03 table (acquisition-underwriting skill, 2026-07-14) — drift detector', () => {
+  it('pins EVERY market row to the ratified RCT v03 table (acquisition-underwriting skill, most recently updated 2026-08-11 — Louisville KY) — drift detector', () => {
     // AUTHORITATIVE COPY: "Replacement Cost Table (RCT v03)" in the acquisition-underwriting skill.
     // If this test fails, either the skill table was re-ratified (update these pins deliberately,
     // with the new ratification) or this config drifted (the config is the bug — fix the config).
-    // The parse test above pins only two LOWs; this pins all 27 dollar values + proxy flags, so a
+    // The parse test above pins only two LOWs; this pins all 40 dollar values + proxy flags, so a
     // partial edit of the Basis denominator can never slip through relational checks alone.
     const rct = ReplacementCostTable.parse(rctJson);
     expect(rct.ratifiedBy).toBe('Gabriel Goldberg');
@@ -96,6 +98,7 @@ describe('acquisition ruleset contract (ratified v1)', () => {
       'Grand Rapids MI': { low: 253.11, point: 281.23, high: 309.36, cwHardPsf: 143.64, proxy: true },  // PROXY: Detroit (weakest)
       'Richmond VA':     { low: 232.97, point: 258.85, high: 284.74, cwHardPsf: 133.70, proxy: true },  // PROXY: Baltimore
       'Des Moines IA':   { low: 231.66, point: 257.40, high: 283.14, cwHardPsf: 131.46, proxy: true },  // PROXY: Minneapolis
+      'Louisville KY':   { low: 237.07, point: 263.41, high: 289.75, cwHardPsf: 135.28, proxy: false }, // SOURCED (skill correction 2026-08-11) — added here 2026-09-28, OI-354
     };
     expect(Object.keys(rct.markets).sort()).toEqual(Object.keys(ratifiedTable).sort());
     for (const [name, want] of Object.entries(ratifiedTable)) {
@@ -139,5 +142,19 @@ describe('acquisition ruleset contract (ratified v1)', () => {
     expect(input.dockCount).toBe(4);
     expect(input.isPortfolio).toBe(false);
     expect(input.ddKnown).toEqual({});
+  });
+});
+
+// computeInputsVersion folds only the rctVersion STRING, not the table content, so editing a row without
+// bumping RCT_VERSION leaves every cached score keyed to the old denominator (found by the OI-354 refute:
+// Louisville KY was added to the table while the version stayed put). This pins content -> version.
+describe('RCT version pin: table content and RCT_VERSION must move together', () => {
+  const EXPECTED = { version: 'replacement-cost.v3.1', contentHash: '2e2681c5f62f0f3b' };
+  it('the markets + fallback content hash matches the value recorded for this RCT_VERSION', () => {
+    const hash = createHash('sha256').update(stableStringify({ markets: rctJson.markets, psf: rctJson.psf })).digest('hex').slice(0, 16);
+    expect(
+      { version: RCT_VERSION, contentHash: hash },
+      'RCT table content changed: bump RCT_VERSION (src/contracts/acquisition.ts AND config rctVersion) so cached scores re-key, then update EXPECTED here',
+    ).toEqual(EXPECTED);
   });
 });

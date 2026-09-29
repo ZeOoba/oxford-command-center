@@ -19,7 +19,7 @@ import type { AcquisitionScore } from '@contracts/acquisition';
 import { Card, CardHeader } from '@/primitives/Card';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import { GaugeRing, type GaugeRingProps } from '@/primitives/GaugeRing';
-import { FIELD_GROUPS, type FieldSpec, type FormState, buildInput } from './acquisition-score';
+import { FIELD_GROUPS, type FieldSpec, type FormState, buildInput, denominatorNotes } from './acquisition-score';
 import { OmImportDrawer } from './OmImportDrawer';
 import { useGradeAcquisition, isEngineUnavailable } from './grader-hooks';
 
@@ -184,6 +184,12 @@ function ScorecardPanel({ score }: { score: AcquisitionScore }) {
             {score.cappedAtT2 && <Badge tone="amber">Capped at T2</Badge>}
             {score.incompleteRuleset && <Badge tone="amber">Incomplete ruleset</Badge>}
           </div>
+        )}
+
+        {denominatorNotes(score).length > 0 && (
+          <ul className="flex flex-col gap-0.5 text-2xs" style={{ color: 'var(--warn, #b45309)' }}>
+            {denominatorNotes(score).map((n) => <li key={n}>! {n}</li>)}
+          </ul>
         )}
 
         <ChecklistSection title="Gates" rows={score.gates.map((g) => ({ key: g.id, ok: g.passed, detail: g.detail }))} />

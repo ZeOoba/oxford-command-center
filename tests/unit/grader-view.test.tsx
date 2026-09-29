@@ -175,6 +175,16 @@ describe('GraderView', () => {
     expect(body.price).toBe(2500000);
   });
 
+  it('shows the engine PROXY / DENOMINATOR-SENSITIVE note beside the graded verdict', async () => {
+    const proxyNote = "RCT row for 'Madison WI' is a [PROXY] from a neighbouring metro - DENOMINATOR-SENSITIVE: a local insurance comp or GC quote is required pre-LOI.";
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      score: makeScore({ dataQuality: [{ entity: 'x', field: 'replacementCost', issue: proxyNote, severity: 'warn' }] }),
+    }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    renderWithClient(<GraderView />);
+    fireEvent.click(screen.getByRole('button', { name: /^grade$/i }));
+    await waitFor(() => expect(screen.getByText(new RegExp('DENOMINATOR-SENSITIVE'))).toBeTruthy());
+  });
+
   it('renders gates and floors checklists as Pass/Fail/Indeterminate from the score', async () => {
     renderWithClient(<GraderView />);
     fireEvent.click(screen.getByRole('button', { name: /^grade$/i }));

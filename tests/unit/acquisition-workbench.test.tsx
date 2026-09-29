@@ -37,6 +37,15 @@ const mockScore: AcquisitionScore = {
 
 afterEach(() => cleanup());
 
+describe('AcquisitionWorkbench replacement-cost denominator notes (refute wf_f6699a8b-92b)', () => {
+  it('shows the engine PROXY / DENOMINATOR-SENSITIVE note next to the verdict, not only in the drawer', async () => {
+    const proxyNote = "RCT row for 'Grand Rapids MI' is a [PROXY] from a neighbouring metro - DENOMINATOR-SENSITIVE: a local insurance comp or GC quote is required pre-LOI.";
+    const scoreFn = vi.fn(async () => ({ ...mockScore, dataQuality: [{ entity: 'x', field: 'replacementCost', issue: proxyNote, severity: 'warn' as const }] }));
+    render(<AcquisitionWorkbench scoreFn={scoreFn} />);
+    await waitFor(() => expect(screen.getByText(proxyNote)).toBeTruthy());
+  });
+});
+
 describe('AcquisitionWorkbench (render smoke)', () => {
   it('renders the form and the live score from an injected scorer', async () => {
     const scoreFn = vi.fn(async () => mockScore);

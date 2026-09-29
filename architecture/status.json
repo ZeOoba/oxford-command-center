@@ -9,6 +9,15 @@
     "review_detail": "string | null — what architect approval is needed for",
     "last_updated": "ISO 8601 timestamp"
   },
+  "oi-354-356-rct-market-plumbing": {
+    "agent_role": "Engineering (Claude Code) - cc-audit-army findings OI-354 + OI-356, Gabriel-approved in-turn 2026-09-29",
+    "phase": "RCT v03 three-way sync (config + client + tests, Louisville KY added, 10 markets) + RCT_VERSION bump to replacement-cost.v3.1 (src/contracts/acquisition.ts + config rctVersion, so cached scores re-key) + Market select in the deal form / Grader (dealToForm carries deal.market) + DENOMINATOR-SENSITIVE warning for proxy markets in DealDrawer + a content-hash pin so table edits cannot skip the version bump. Also corrects the stale coverage comment in src/contracts/common.ts.",
+    "status": "review_needed",
+    "blocked_by": null,
+    "review_needed": true,
+    "review_detail": "Architect-owned surfaces touched: src/contracts/acquisition.ts (RCT_VERSION literal only) and src/contracts/common.ts (comment only). Gabriel placed the worktree-level architect-edit-ok sentinel in-turn 2026-09-29 after approving the version bump (AskUserQuestion 'Bump RCT_VERSION now', 2026-09-28) and the full RCT sync via PR. Governor-adjacent (Basis floor denominator, RCT v03 ratified 2026-07-14): ratified VALUES of every pre-existing row are unchanged; one row (Louisville KY) added from the skill's table. Opening as a PR for review; will not be merged by the author.",
+    "last_updated": "2026-09-29T00:00:00Z"
+  },
   "claude-md-doc-drift-2026-09-27": {
     "agent_role": "Engineering (Claude Code) — Gabriel-directed in-turn 2026-09-27",
     "phase": "Doc-only fix on CLAUDE.md: (1) §6 gate step list corrected from stale 7-step description to the actual 11-step package.json gate script (adds check:dev-css, check:schema-drift, reconcile:snapshot, reconcile:noi-crosscheck) with accurate per-step descriptions, verified directly against package.json and each script's own header comment; (2) §3 hurdle-rate Pending line corrected — hurdle rate is ratified in server/warehouse/intel-config.ts HURDLE_RATE (ratification: 'ratified', ratifiedBy Gabriel Goldberg, 2026-06-22) and migration 017_ratify_hurdle_rate.sql, not advisoryOnly as the doc claimed; the CapexIrrCalc.tsx comment is correctly noted as a deliberate dormant-banner guard, not stale; (3) header verified-date line updated to reflect this pass. No code touched — CLAUDE.md only. Gabriel requested this fix directly in-turn (formal review session, 2026-09-27), which is the architect authorization; .claude/overrides/architect-edit-ok created accordingly. Independent adversarial review (Opus 5.5) caught 3 factual defects (wrong check:dev-css/check:schema-drift descriptions, a false CapexIrrCalc staleness claim) and an unverifiable 'advisoryOnly verified' claim in the first draft — all fixed/qualified before commit.",
