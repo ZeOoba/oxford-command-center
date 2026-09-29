@@ -27,6 +27,15 @@
     "review_detail": "MERGED via PR #112. Capital Allocation capstone (synthesis engine + CapitalAllocationModule UI + FRED macro context); architect-owned src/contracts/capital-allocation.ts approved; DSCR defect fixed per adversarial refute feedback (decoupled from balloon presence). Worktree removed post-merge.",
     "last_updated": "2026-06-21T23:30:00Z"
   },
+  "ci-switchable-runner": {
+    "agent_role": "Lead Architect (delegated)",
+    "phase": "CI runner toggle — move required gate/refute-required off billed minutes",
+    "status": "in_progress",
+    "blocked_by": null,
+    "review_needed": false,
+    "detail": "Shared-infra claim on .github/workflows/ci.yml (Gabriel approved 2026-09-28): gate + refute-required choose runs-on from repo variable CI_RUNNER ('self' -> [self-hosted, windows, ora-ci] runner on Gabriel's laptop; unset -> ubuntu-latest, unchanged). Job ids unchanged so branch-protection required checks still match. Triggered by the Actions billing block (jobs not started since 2026-09-27 16:56).",
+    "last_updated": "2026-09-28T00:00:00Z"
+  },
   "worktrees": {
     "loss-unmatched-ref": {
       "agent_role": "Engineering (Claude Code) - Gabriel-directed in-turn 2026-09-24",
