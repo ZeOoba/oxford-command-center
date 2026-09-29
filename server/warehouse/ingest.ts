@@ -83,14 +83,44 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
   // its signed non-zero leaf SUM is negative — contra rows (tax refunds)
   // correctly invert with the side. Never silent: a 'sign-normalized' DQ info row is
   // written whenever a flip is applied.
+  //
+  // Decided from the SIGNED LEAF sums of stmt.sections, NOT a raw sum over stmt.accounts
+  // (fixed 2026-09-28, OI-355 / cc-audit-army + refute-financial-change wf_e7c0dd32-4ae): a raw
+  // account-level sum includes trailing rows under a lingering CLOSED section (Yardi
+  // financing/refinance rows that follow "TOTAL OPERATING EXPENSES" but stay tagged with that
+  // section — see the per-section foot comment below, "29000 Info Lane 2025"). One large trailing
+  // outflow can push that sum negative even though every real opex leaf is positive-convention,
+  // flipping real opex to the WRONG sign. Parse-side accumulation closes each section at its own
+  // Total row, so section leafSum excludes those trailing rows.
+  // Two things are deliberately EXCLUDED from this decision:
+  //  - sec.statedTotal: it carries the report's DISPLAY sign (QB/Rent-Manager print expense totals
+  //    negative over positive leaves — the foot check below compares abs() for that reason), which
+  //    is independent of how the LEAVES are booked, and the leaves are what get flipped.
+  //  - synthetic "<SIDE> (file total)" sections: they restate the real sections already summed
+  //    here, so counting them double-counts magnitude and re-imports the display sign.
+  // A residue within rounding of zero is "no flip": an IEEE artefact must not invert a whole side.
+  const SIGN_EPSILON = 0.005;
+  const undecidableSides: string[] = [];
   const flip: Record<'income' | 'expense', boolean> = { income: false, expense: false };
   for (const sideKey of ['income', 'expense'] as const) {
     let sum = 0;
-    for (const a of stmt.accounts) {
-      if (a.total === null || a.total === 0 || sectionSide(a.section) !== sideKey) continue;
-      sum += a.total;
+    for (const sec of stmt.sections) {
+      if (sec.name.endsWith('(file total)') || sectionSide(sec.name) !== sideKey) continue;
+      sum += sec.leafSum;
     }
-    flip[sideKey] = sum < 0;
+    flip[sideKey] = sum < -SIGN_EPSILON;
+    // Fail loud when the section-scoped decision is undecidable (in-scope leaves net to ~0, e.g. a
+    // section closed early by a stray Total row) while the side's tagged accounts are materially
+    // negative: the old account-sum rule would have flipped, this one cannot tell. Never silent.
+    if (!flip[sideKey] && Math.abs(sum) <= FOOT_TOLERANCE) {
+      let raw = 0;
+      for (const a of stmt.accounts) {
+        if (a.total !== null && sectionSide(a.section) === sideKey) raw += a.total;
+      }
+      if (raw < -FOOT_TOLERANCE) {
+        undecidableSides.push(`${sideKey}: section-scoped leaf sum ${sum.toFixed(2)} vs tagged-account sum ${raw.toFixed(2)}`);
+      }
+    }
   }
   const tx = db.transaction(() => {
     if (isReDerive) {
@@ -102,6 +132,10 @@ export async function ingestFile(db: WarehouseDb, filePath: string, opts: Ingest
       db.prepare(`UPDATE import_batches SET basis = ?, source_system = ?, period_start = ?, period_end = ?,
         period_grain = ?, confidence = ?, detect_notes = ?, parser_version = ? WHERE id = ?`)
         .run(stmt.basis, stmt.sourceSystem, periodStart, periodEnd, det.grain, det.confidence, detectNotes, PARSER_VERSION, importId);
+    }
+    for (const detail of undecidableSides) {
+      insIssue.run(importId, det.propertyId, 'sign-undecidable',
+        `sign convention undecidable — ${detail}; no flip applied, verify the ledger sign for this side`, 'warn');
     }
     for (const sideKey of ['income', 'expense'] as const) {
       if (flip[sideKey]) {

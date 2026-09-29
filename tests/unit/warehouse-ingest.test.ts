@@ -276,6 +276,191 @@ describe('ingest pipeline', () => {
     expect(foot).toHaveLength(0);
   });
 
+describe('sign-flip is section-scoped, not account-scoped (defect class: OI-355 / cc-audit-army 2026-09-28)', () => {
+  it('does not flip real opex when a large NEGATIVE trailing row sits under a lingering CLOSED section (Yardi financing rows)', async () => {
+    // Bug: the old flip decision summed every account.total tagged with a matching
+    // sectionSide, including trailing rows that stayed tagged with a section AFTER its
+    // own "TOTAL OPERATING EXPENSES" row closed it (Yardi exports commonly trail a
+    // refinance/mortgage-payoff row here — see warehouse-qb-excel.test.ts's
+    // "trailing account under a lingering section" fixture). A single large negative
+    // trailing row (-500000) could push that raw sum negative even though the section's
+    // own leaves (Insurance +12000) are genuinely positive-convention — flipping real
+    // opex to the wrong sign.
+    // Fixed: the flip now sums each real section's signed leafSum (statedTotal is
+    // display-signed and synthetic "(file total)" sections are restatements — both excluded),
+    // which drops trailing rows past a section's own Total row.
+    const dir = mkdtempSync(join(tmpdir(), 'wh-trailing-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, [
+      { account: 'Rental Revenue', code: null, normalized_category: 'Rental Revenue', classification: 'revenue' },
+      { account: 'Insurance Expense', code: null, normalized_category: 'Insurance', classification: 'opex' },
+      { account: 'Mortgage Interest', code: null, normalized_category: 'Debt Service', classification: 'excluded' },
+    ]);
+
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Report1');
+    const rows: Array<[string | null, string | null, string | null, number | null]> = [
+      ['Profit & Loss', null, null, null],
+      ['Property: 9620 State 350', null, null, null],
+      ['01/01/25 - 12/31/25  (accrual basis)', null, null, null],
+      [null, 'REVENUE', null, null],
+      [null, null, '    Rental Revenue', REDACTED-AMT],
+      [null, 'OPERATING EXPENSES', null, null],
+      [null, null, '    Insurance Expense', 12000],
+      [null, null, ' TOTAL OPERATING EXPENSES', 12000], // closes the section: statedTotal=12000
+      // trailing row: still tagged section='OPERATING EXPENSES' (no new header), but the
+      // section is already CLOSED — a real Yardi refinance/payoff row, large and negative.
+      [null, null, '    Mortgage Interest', -500000],
+    ];
+    for (const r of rows) ws.addRow(r);
+    const file = join(dir, 'P&L 2025 -- 9620 State 350.xlsx');
+    await wb.xlsx.writeFile(file);
+
+    const r = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-09-28T00:00:00Z' });
+    expect(r.status).toBe('committed');
+
+    const byName = new Map(
+      (db.prepare('SELECT raw_account, amount FROM ledger_entries WHERE is_active=1').all() as Array<{ raw_account: string; amount: number }>)
+        .map((x) => [x.raw_account, x.amount]),
+    );
+    // Insurance must stay positive: the section itself is positive-convention, and the
+    // flip decision must not be swayed by the trailing financing row outside its scope.
+    expect(byName.get('Insurance Expense')).toBe(12000);
+    expect(byName.get('Mortgage Interest')).toBe(-500000); // trailing row itself is untouched
+
+    const dq = db.prepare("SELECT kind FROM data_quality_issues WHERE kind='sign-normalized'").all();
+    expect(dq).toHaveLength(0); // no flip should have been applied at all
+
+    const noi = (db.prepare(`
+      SELECT SUM(CASE WHEN classification IN ('revenue','recovery','other-income') THEN amount
+                      WHEN classification = 'opex' THEN -amount ELSE 0 END) AS noi
+      FROM ledger_entries WHERE is_active = 1
+    `).get() as { noi: number }).noi;
+    expect(noi).toBe(467096.4); // REDACTED-AMT - 12000; the -500000 financing row is 'excluded', not opex
+  });
+
+  // refute-financial-change wf_e7c0dd32-4ae: the sign decision must come from booked LEAF values,
+  // never from a stated total's DISPLAY sign, and never from the synthetic "(file total)" restatement.
+  const SIGN_SEED = [
+    { account: 'Rent', code: null, normalized_category: 'Rental Revenue', classification: 'revenue' },
+    { account: 'HVAC Repair', code: null, normalized_category: 'Repairs & Maintenance', classification: 'opex' },
+    { account: 'Insurance Expense', code: null, normalized_category: 'Insurance', classification: 'opex' },
+    { account: 'Distribution to Owner', code: null, normalized_category: 'Distributions', classification: 'excluded' },
+  ];
+  type Row = [string | null, string | null, string | null, number | null];
+  async function ingestRows(rows: Row[]) {
+    const dir = mkdtempSync(join(tmpdir(), 'wh-signscope-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SIGN_SEED);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    const head: Row[] = [
+      ['Profit & Loss', null, null, null],
+      ['Property: 1100 Rarig Ave', null, null, null],
+      ['01/01/25 - 12/31/25  (cash basis)', null, null, null],
+    ];
+    for (const r of [...head, ...rows]) ws.addRow(r);
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await wb.xlsx.writeFile(file);
+    const res = await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-09-28T00:00:00Z' });
+    const amt = new Map(
+      (db.prepare('SELECT raw_account, amount FROM ledger_entries WHERE is_active=1').all() as Array<{ raw_account: string; amount: number }>)
+        .map((x) => [x.raw_account, x.amount]),
+    );
+    const flips = db.prepare("SELECT 1 FROM data_quality_issues WHERE kind='sign-normalized'").all().length;
+    return { res, amt, flips };
+  }
+
+  it('does NOT flip positive opex leaves under a display-NEGATIVE in-section "Total Expense" (QB/Rent-Manager display convention)', async () => {
+    const { amt, flips } = await ingestRows([
+      [null, 'INCOME', null, null],
+      [null, null, '          Rent', 100000],
+      [null, 'EXPENSE', null, null],
+      [null, null, '          Insurance Expense', 30000],
+      [null, null, '          HVAC Repair', 10000],
+      [null, null, '          Total Expense', -40000], // display sign, independent of leaf booking
+    ]);
+    expect(amt.get('Insurance Expense')).toBe(30000);
+    expect(amt.get('HVAC Repair')).toBe(10000);
+    expect(flips).toBe(0);
+  });
+
+  it('a stated total a cent off in the negative direction does not flip positive leaves (no cancellation artefact)', async () => {
+    const { amt, flips } = await ingestRows([
+      [null, 'INCOME', null, null],
+      [null, null, '          Rent', 100000],
+      [null, 'EXPENSE', null, null],
+      [null, null, '          HVAC Repair', 30000],
+      [null, null, '          Total Expense', -30000.01],
+    ]);
+    expect(amt.get('HVAC Repair')).toBe(30000);
+    expect(flips).toBe(0);
+  });
+
+  it('STILL flips genuinely negative-booked leaves even when the stated total is displayed POSITIVE', async () => {
+    const { amt, flips } = await ingestRows([
+      [null, 'INCOME', null, null],
+      [null, null, '          Rent', 100000],
+      [null, 'EXPENSE', null, null],
+      [null, null, '          Insurance Expense', -30000],
+      [null, null, '          HVAC Repair', -10000],
+      [null, null, '          Total Expense', 40000],
+    ]);
+    expect(amt.get('Insurance Expense')).toBe(30000);
+    expect(amt.get('HVAC Repair')).toBe(10000);
+    expect(flips).toBe(1);
+  });
+
+  it('warns (never silent) when the section closes before any leaf and the tagged accounts are materially negative', async () => {
+    // Section closed by a stray zero Total before its leaves: section-scoped sum is 0 (undecidable)
+    // while the tagged accounts net -40000. HEAD's raw sum would have flipped; we cannot tell, so we
+    // say so instead of silently committing an unflipped side.
+    const dir = mkdtempSync(join(tmpdir(), 'wh-undecidable-'));
+    const db = openWarehouse(join(dir, 'f.sqlite'));
+    seedPropertyMaster(db);
+    seedMappings(db, SIGN_SEED);
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet('Sheet1');
+    const rows: Row[] = [
+      ['Profit & Loss', null, null, null],
+      ['Property: 1100 Rarig Ave', null, null, null],
+      ['01/01/25 - 12/31/25  (cash basis)', null, null, null],
+      [null, 'INCOME', null, null],
+      [null, null, '          Rent', 100000],
+      [null, 'EXPENSE', null, null],
+      [null, null, '          Total Expense', 0],
+      [null, null, '          Insurance Expense', -30000],
+      [null, null, '          HVAC Repair', -10000],
+    ];
+    for (const r of rows) ws.addRow(r);
+    const file = join(dir, 'P&L 2025 -- 1100 Rarig.xlsx');
+    await wb.xlsx.writeFile(file);
+    await ingestFile(db, file, { rawDir: join(dir, 'raw'), importedAt: '2026-09-28T00:00:00Z' });
+    const und = db.prepare("SELECT severity FROM data_quality_issues WHERE kind='sign-undecidable'").all() as Array<{ severity: string }>;
+    expect(und).toHaveLength(1);
+    expect(und[0]!.severity).toBe('warn');
+  });
+
+  it('bare display-negative TOTAL|EXPENSE block does not cancel the real EXPENSE section and hand the decision to a NON OPERATING tail', async () => {
+    const { amt, flips } = await ingestRows([
+      [null, 'INCOME', null, null],
+      [null, null, '          Rent', 100000],
+      [null, 'EXPENSE', null, null],
+      [null, null, '          HVAC Repair', 5000],
+      [null, 'NON OPERATING EXPENSE', null, null],
+      [null, null, '          Distribution to Owner', -3000],
+      [null, 'TOTAL', null, null],
+      [null, null, 'INCOME', 100000],
+      [null, null, 'EXPENSE', -5000], // synthetic "EXPENSE (file total)" carries this display sign
+    ]);
+    expect(amt.get('HVAC Repair')).toBe(5000);
+    expect(amt.get('Distribution to Owner')).toBe(-3000);
+    expect(flips).toBe(0);
+  });
+});
+
 describe('parser-version re-ingest (self-healing backfill)', () => {
   it('re-derives a committed import IN PLACE when its parser_version is stale — no manual delete', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'wh-'));

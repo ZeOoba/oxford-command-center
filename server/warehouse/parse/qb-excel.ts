@@ -9,8 +9,12 @@ import { sectionSide } from '../mapping';
  * statement's basis / period / sourceSystem / accounts, so a backfill re-derives already-imported
  * (hash-identical) files in place instead of skipping them as duplicates (see ingest.ts restale path).
  * v1 = QB Desktop print-header + AppFolio report-type accounting-basis recovery (the 8-file gap close).
+ * v2 = ingest.ts sign-flip decision is section-scoped (OI-355): ledger AMOUNT derivation changed, so
+ *      any warehouse already stamped v1 under the old account-sum rule re-derives in place. That rule
+ *      wrongly flips 29000 Info Lane 2024/2025 on a fresh rebuild (the live warehouse is still at
+ *      parser_version 0, so it was never affected). Ingest-side derivation changes bump this too.
  */
-export const PARSER_VERSION = 1;
+export const PARSER_VERSION = 2;
 
 function cellText(v: ExcelJS.CellValue): string | null {
   if (v == null) return null;
