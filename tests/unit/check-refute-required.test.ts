@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import {
@@ -606,6 +606,11 @@ describe('check-refute-required — Refute-Reviewed value', () => {
     '"<reason>"', '[<reason>]', '​<reason>', 'reason',
     // Merge-gate round 3.
     'ok', 'OK.', 'route-only — <file(s)> contain no financial math', 'wf_<id>', 'x <date> y',
+    // Merge-gate round 4: wrapped whole-value blanks, a blank right after a wrapper / invisible
+    // character (normalized-value check), and blanks followed by 's / % + #.
+    '`<run id>`', '"<run id>"', "'<date>'", '[<date>]', '*<date>*', '**<reviewer/run ref>**', '(<reason for skip>)',
+    '"<date> — 0 findings"', '**<date> pass**', '​<date> pass',
+    "Fable pass <date>'s findings", 'scored <n>/5', '<n>% coverage', '<n>+ lenses', 'pass at <sha>#L1',
   ])('rejects Refute-Reviewed: %j', (value) => {
     expect(hasRefuteApproval(`fix\n\nRefute-Reviewed: ${value}\n`)).toBe(false);
   });
@@ -621,9 +626,21 @@ describe('check-refute-required — Refute-Reviewed value', () => {
     }
     const [blank] = rejectedRefuteTrailers('fix\n\nRefute-Reviewed: pass <date> — <n> findings\n');
     expect(blank).toMatch(/unfilled template blank "<date>"/);
+    // Only the normalized-value check can see this blank (a quote, not whitespace, precedes it raw).
+    const [wrapped] = rejectedRefuteTrailers('fix\n\nRefute-Reviewed: "<date> — 0 findings"\n');
+    expect(wrapped).toMatch(/unfilled template blank "<date>"/);
   });
   it('a placeholder Refute-Reviewed does not mask a valid Refute-Skip in the same message', () => {
     expect(hasRefuteApproval('fix\n\nRefute-Reviewed: TODO\nRefute-Skip: formatting only\n')).toBe(true);
+  });
+  // Every distinct trailer line on origin/main as of 2276211 (2026-09-27). A tightening of the rule
+  // must never reject what main already carries — round 3 caught exactly that (#367's `<pid>`).
+  it('every historical trailer line on main still attests', () => {
+    const fixture = readFileSync(resolve(__dirname, '../fixtures/refute-trailers-main.txt'), 'utf8');
+    const lines = fixture.split('\n').filter((l) => /^Refute-(?:Reviewed|Skip):/i.test(l));
+    expect(lines.length).toBeGreaterThan(200);
+    const rejected = lines.filter((l) => !hasRefuteApproval(`x\n\n${l}\n`));
+    expect(rejected).toEqual([]);
   });
   it('CRLF messages behave the same', () => {
     expect(hasRefuteApproval('fix\r\n\r\nRefute-Reviewed: wf_d10ede49-078\r\n')).toBe(true);
