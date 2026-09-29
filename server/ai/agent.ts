@@ -272,6 +272,30 @@ export async function runAgent(opts: AgentOptions): Promise<void> {
     { role: 'user' as const, content: question },
   ];
 
+  // Pre-send guard on the USER-SUPPLIED half of the payload (cc-audit-army 2026-09-28,
+  // ai-question-history-unscanned): the tool-result guard below only covers what tools return, but
+  // the question and the client-supplied history are also sent to the API verbatim. Scan them
+  // before the first request; a throwing scan (roster unavailable) fails CLOSED. Label only in the
+  // message, never the matched term.
+  if (opts.confidentialScan) {
+    let inputHit: { dealLabel: string } | null = null;
+    try {
+      inputHit = opts.confidentialScan({ question, history: history.map((h) => h.text) });
+    } catch {
+      await emit({ type: 'error', message: 'Refusing to send: the confidential-deal roster could not be checked. The request was stopped before reaching the API.' });
+      return;
+    }
+    if (inputHit) {
+      await emit({
+        type: 'error',
+        message:
+          `Refusing to send: the question or conversation history carries a confidential deal term (${inputHit.dealLabel}). ` +
+          `The request was stopped before reaching the API.`,
+      });
+      return;
+    }
+  }
+
   try {
     for (let turn = 0; turn < maxTurns; turn++) {
       const body = {

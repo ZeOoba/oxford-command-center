@@ -1,4 +1,5 @@
 // server/warehouse/om-extract.ts
+import { scanForConfidential } from '../briefing/confidential';
 import { pdfToText } from '../lib/pdf-text';
 import fieldsConfig from './om-extract-fields.json';
 
@@ -23,6 +24,13 @@ export interface OmExtractOptions {
   // server/briefing/confidential.ts's fail-closed doctrine for confidentiality gates. Distinct from
   // omitting dealConfidential entirely (no dealId at all — nothing to check against, safe to proceed).
   dealLookupFailed?: boolean;
+  // Roster scan of the extracted OM text BEFORE it is sent to Anthropic (cc-audit-army
+  // 2026-09-28, om-extract-flag-only-guard): the flags above only cover an upload tied to a known
+  // Deal, so a blank-deal upload of a confidential OM skipped every check. Returns a hit (deal
+  // label only, never the matched term) or null. Defaults to server/briefing/confidential.ts's
+  // scanForConfidential, which THROWS when the roster is unavailable; that fails CLOSED here.
+  // Injectable so unit tests need no machine-local roster.
+  confidentialScan?: (text: string) => { dealLabel: string } | null;
 }
 
 // Fields loaded from om-extract-fields.json — edit that file to add/tune fields without touching this module.
@@ -125,6 +133,26 @@ export async function extractOmFields(
 
   // Truncate to ~30 K chars (OMs are rarely longer as structured text)
   const body = text.length > 30_000 ? text.slice(0, 30_000) + '\n[truncated]' : text;
+
+  // Egress roster scan: exactly the text that will leave the machine. Fail closed on any error
+  // (missing/unparseable roster) — an unverifiable OM is not sent (Invariant 3).
+  try {
+    const hit = (opts.confidentialScan ?? scanForConfidential)(body);
+    if (hit) {
+      return {
+        ok: false,
+        error: 'OM extraction blocked — this document matches a confidential deal on the roster; sending it to the Anthropic API would leak the deal identity externally.',
+        status: 403,
+      };
+    }
+  } catch (err) {
+    console.error(`[om-extract] roster scan unavailable, OM blocked: ${err instanceof Error ? err.message : String(err)}`);
+    return {
+      ok: false,
+      error: 'Could not verify this OM against the confidential-deal roster (roster unavailable or unreadable) — refusing to send OM text externally until this can be confirmed.',
+      status: 403,
+    };
+  }
 
   const fieldManifest = EXTRACTABLE_FIELDS.map((f) => `- ${f.key}: ${f.desc}`).join('\n');
   const userPrompt = `Extract these fields from the OM text:\n${fieldManifest}\n\nOM TEXT:\n${body}`;

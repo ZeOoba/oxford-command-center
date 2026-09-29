@@ -25,6 +25,9 @@ import {
   currentRepoName,
   parseAddedLines,
   loadTerms,
+  shouldBlockOnMissingRoster,
+  parseBinaryPathsUnderData,
+  binaryPathsFor,
 } from '../../scripts/prepush-confidential-scan.mjs';
 
 // All terms below are SYNTHETIC. Never put a real deal name/figure in this file.
@@ -392,5 +395,126 @@ describe('prepush-confidential-scan / isRegisteredConfidentialRepo', () => {
     mkdirSync(claudeDir, { recursive: true });
     writeFileSync(join(claudeDir, 'confidential-repos.json'), JSON.stringify({ rule: 'no list here' }), 'utf8');
     expect(isRegisteredConfidentialRepo('oxford-command-center', tmpHome)).toBe(false);
+  });
+});
+
+describe('prepush-confidential-scan / fail-closed roster (cc-audit-army 2026-09-28)', () => {
+  it('loadTerms reports rosterOk=false when the roster is missing', () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'prepush-noroster-'));
+    try {
+      expect(loadTerms(tmpHome).rosterOk).toBe(false);
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it('loadTerms reports rosterOk=false on an unparseable roster and true on a valid one', () => {
+    const tmpHome = mkdtempSync(join(tmpdir(), 'prepush-roster-'));
+    try {
+      const hooksDir = join(tmpHome, '.claude', 'hooks');
+      mkdirSync(hooksDir, { recursive: true });
+      writeFileSync(join(hooksDir, 'confidential-terms.json'), '{ nope', 'utf8');
+      expect(loadTerms(tmpHome).rosterOk).toBe(false);
+      writeFileSync(join(hooksDir, 'confidential-terms.json'), JSON.stringify({ _meta: {} }), 'utf8');
+      expect(loadTerms(tmpHome).rosterOk).toBe(true);
+    } finally {
+      rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it('blocks when the roster is unavailable unless PREPUSH_ALLOW_NO_ROSTER=1 is set for the push', () => {
+    expect(shouldBlockOnMissingRoster(false, {})).toBe(true);
+    expect(shouldBlockOnMissingRoster(false, { PREPUSH_ALLOW_NO_ROSTER: '0' })).toBe(true);
+    expect(shouldBlockOnMissingRoster(false, { PREPUSH_ALLOW_NO_ROSTER: '1' })).toBe(false);
+    expect(shouldBlockOnMissingRoster(true, {})).toBe(false);
+  });
+});
+
+describe('prepush-confidential-scan / binary files under data/', () => {
+  it('flags binary (numstat "-<TAB>-") paths under data/ only', () => {
+    const numstat = [
+      '-\t-\tdata/ar/processed/aging-2026-09-01.xlsx',
+      '-\t-\tdocs/diagram.png',
+      '12\t3\tdata/snapshots/portfolio.json',
+      '-\t-\tdata/ar/failed/bad.pdf',
+    ].join('\n');
+    expect(parseBinaryPathsUnderData(numstat)).toEqual([
+      'data/ar/processed/aging-2026-09-01.xlsx',
+      'data/ar/failed/bad.pdf',
+    ]);
+  });
+
+  it('returns nothing for empty output', () => {
+    expect(parseBinaryPathsUnderData('')).toEqual([]);
+  });
+});
+
+describe('prepush-confidential-scan / binary scan against a real git repo', () => {
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync('git', ['-c', 'user.email=t@example.test', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' }).trim();
+  let repo: string;
+  const ZERO = '0000000000000000000000000000000000000000';
+  const bin = (n: number) => Buffer.from([0, 1, 2, 3, n]);
+
+  beforeEach(() => {
+    repo = mkdtempSync(join(tmpdir(), 'prepush-binrepo-'));
+    git(repo, 'init', '-q', '-b', 'main');
+    mkdirSync(join(repo, 'data', 'ar', 'processed'), { recursive: true });
+    writeFileSync(join(repo, 'data', 'ar', 'processed', 'old.xlsx'), bin(1));
+    writeFileSync(join(repo, 'README.md'), 'x\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'base');
+    git(repo, 'branch', 'older'); // a branch that predates the untrack
+    // main later untracks the export
+    git(repo, 'rm', '-q', 'data/ar/processed/old.xlsx');
+    git(repo, 'commit', '-qm', 'untrack');
+    git(repo, 'update-ref', 'refs/remotes/origin/main', git(repo, 'rev-parse', 'main'));
+  });
+  afterEach(() => rmSync(repo, { recursive: true, force: true }));
+
+  it('does not false-block an OLDER branch on files main has since removed (merge-base, not two-dot)', () => {
+    const sha = git(repo, 'rev-parse', 'older');
+    expect(binaryPathsFor(ZERO, sha, repo)).toEqual([]);
+  });
+
+  it('flags a binary added under data/ with a non-ASCII (en dash) name, unquoted', () => {
+    git(repo, 'checkout', '-q', '-b', 'feat', 'main');
+    mkdirSync(join(repo, 'data', 'ar', 'inbox'), { recursive: true });
+    writeFileSync(join(repo, 'data', 'ar', 'inbox', 'Rarig – Delinquency 7.15.xlsx'), bin(2));
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'add');
+    expect(binaryPathsFor(ZERO, git(repo, 'rev-parse', 'HEAD'), repo)).toEqual(['data/ar/inbox/Rarig – Delinquency 7.15.xlsx']);
+  });
+
+  it('flags a binary moved into data/ WITH edits (rename detection must not hide it)', () => {
+    git(repo, 'checkout', '-q', '-b', 'feat2', 'main');
+    writeFileSync(join(repo, 'report.xlsx'), Buffer.concat([bin(3), Buffer.alloc(200, 7)]));
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'add report outside data');
+    const outside = git(repo, 'rev-parse', 'HEAD');
+    mkdirSync(join(repo, 'data'), { recursive: true });
+    git(repo, 'mv', 'report.xlsx', 'data/report.xlsx');
+    writeFileSync(join(repo, 'data', 'report.xlsx'), Buffer.concat([bin(3), Buffer.alloc(200, 7), Buffer.from([9])]));
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'move into data with edit');
+    expect(binaryPathsFor(outside, git(repo, 'rev-parse', 'HEAD'), repo)).toEqual(['data/report.xlsx']);
+  });
+
+  it('flags a text-classified export (csv) under data/ and ignores a legit json', () => {
+    git(repo, 'checkout', '-q', '-b', 'feat3', 'main');
+    mkdirSync(join(repo, 'data'), { recursive: true });
+    writeFileSync(join(repo, 'data', 'tenants.csv'), 'name,arrears\nA,10\n');
+    writeFileSync(join(repo, 'data', 'ok.json'), '{"a":1}\n');
+    git(repo, 'add', '-A');
+    git(repo, 'commit', '-qm', 'add');
+    expect(binaryPathsFor(ZERO, git(repo, 'rev-parse', 'HEAD'), repo)).toEqual(['data/tenants.csv']);
+  });
+
+  it('does not block the deletion of a tracked binary', () => {
+    const before = git(repo, 'rev-parse', 'older');
+    git(repo, 'checkout', '-q', '-b', 'feat4', 'older');
+    git(repo, 'rm', '-q', 'data/ar/processed/old.xlsx');
+    git(repo, 'commit', '-qm', 'delete');
+    expect(binaryPathsFor(before, git(repo, 'rev-parse', 'HEAD'), repo)).toEqual([]);
   });
 });
