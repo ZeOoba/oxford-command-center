@@ -5,6 +5,7 @@ import { MemoryRouter, useLocation, useNavigationType } from 'react-router-dom';
 import type { InsuranceAnalysisReport, PolicyEconomics } from '../../src/contracts/insurance-analysis';
 import type { InsurancePolicy } from '../../src/contracts/insurance';
 import type { InsuranceLossReport, PropertyEal, DeductibleReview, RebidPipelineItem, UnmatchedPolicyRef } from '../../src/contracts/insurance-loss';
+import { InsuranceLossReport as InsuranceLossReportSchema } from '../../src/contracts/insurance-loss';
 import { isWarehouseUnavailable } from '../../src/modules/intel/hooks';
 import { InsuranceModule } from '../../src/modules/insurance/InsuranceModule';
 import { SavingsBoard } from '../../src/modules/insurance/SavingsBoard';
@@ -17,6 +18,7 @@ import {
   isAnyPlaceholder,
   placeholderDetailInsurance,
   unmatchedPolicyRefsDetail,
+  coercedLossRowsDetail,
   computeInsuranceKpis,
   sumPremiumAboveMedian,
   countRenewalsWithin90,
@@ -163,6 +165,7 @@ function lossReport(overrides: Partial<InsuranceLossReport> = {}): InsuranceLoss
     },
     rebidPipeline: [rebidPipelineItem()],
     unmatchedPolicyRefs: [],
+    coercedLossEventRows: 0,
     basisNote: 'Arithmetic roll-up of observed loss runs vs stated deductible/limit.',
     advisoryOnly: true,
     ...overrides,
@@ -738,6 +741,34 @@ describe('unmatchedPolicyRefsDetail', () => {
     const six = seven.slice(0, 6);
     expect(unmatchedPolicyRefsDetail(lossReport({ unmatchedPolicyRefs: six }))).toContain(', and 1 more');
     expect(unmatchedPolicyRefsDetail(lossReport({ unmatchedPolicyRefs: seven.slice(0, 5) }))).not.toContain(' more');
+  });
+
+  it('a loss event with no usable date renders "(no date)", never an empty "()"', () => {
+    const detail = unmatchedPolicyRefsDetail(lossReport({ unmatchedPolicyRefs: [unmatchedRef({ lossDate: '' })] }));
+    expect(detail).toContain("Test Property 'MMF-TYPO-001' (no date)");
+    expect(detail).not.toContain('()');
+  });
+});
+
+describe('coercedLossRowsDetail', () => {
+  it('is null when no loss-event row was coerced', () => {
+    expect(coercedLossRowsDetail(lossReport())).toBeNull();
+    expect(coercedLossRowsDetail(lossReport({ coercedLossEventRows: 0 }))).toBeNull();
+  });
+
+  it('singular and plural wording name what was dropped from the row', () => {
+    expect(coercedLossRowsDetail(lossReport({ coercedLossEventRows: 1 }))).toMatch(/^1 loss-run row had /);
+    expect(coercedLossRowsDetail(lossReport({ coercedLossEventRows: 3 }))).toMatch(/^3 loss-run rows had /);
+    // A dropped date keeps the dollars but loses the year: EAL can read HIGH or go indeterminate —
+    // the notice must not claim EAL is only ever understated.
+    const one = coercedLossRowsDetail(lossReport({ coercedLossEventRows: 1 }));
+    expect(one).toContain('EAL can read high or turn indeterminate');
+    expect(one).not.toContain('EAL and the retained/transferred split may be understated');
+  });
+
+  it('a payload from before the field existed parses to 0 (contract .default(0))', () => {
+    const { coercedLossEventRows: _omit, ...legacy } = lossReport();
+    expect(InsuranceLossReportSchema.parse(legacy).coercedLossEventRows).toBe(0);
   });
 });
 

@@ -550,3 +550,156 @@ describe('GET /api/warehouse/insurance/loss — policy_ref resolves superseded n
   });
 });
 
+
+describe('GET /api/warehouse/insurance/loss — #383 refute follow-ups: every loader column normalized (raw-SQL-only values)', () => {
+  const RAYTOWN = '9620-e-state-route-350-raytown-mo';
+  const POLICY_KEY = 'ins-9620state350-prop-hfd';
+
+  function seed(db: WarehouseDb): void {
+    seedProperty(db, RAYTOWN, '9620 E State Route 350, Raytown MO');
+    insertPolicy(db, {
+      propertyId: POLICY_KEY,
+      policyType: 'Property Package',
+      policyNumber: 'REDACTED-584',
+      premiumAnnual: 5000,
+      coverageTiv: 1_000_000,
+      deductible: 25_000,
+      coverageLimit: 2_000_000,
+      effectiveDate: '2025-01-01',
+      expirationDate: '2027-01-01',
+    });
+  }
+
+  function insertLoss(db: WarehouseDb, id: string, lossDateSql: string, grossSql: string, cause = 'wind'): void {
+    db.prepare(
+      `INSERT INTO insurance_loss_events (id, property_id, policy_ref, loss_date, cause, gross_incurred, paid, reserve, source)
+       VALUES (?, ?, 'REDACTED-584', ${lossDateSql}, ?, ${grossSql}, 0, 0, 'test-loss-run')`,
+    ).run(id, RAYTOWN, cause);
+  }
+
+  async function get200(db: WarehouseDb) {
+    const res = await makeApp(db).request('/');
+    const body: unknown = await res.json();
+    expect(res.status, JSON.stringify(body)).toBe(200);
+    const parsed = InsuranceLossReport.safeParse(body);
+    expect(parsed.success, JSON.stringify(parsed.success ? null : parsed.error.issues)).toBe(true);
+    if (!parsed.success) throw new Error('unreachable');
+    expect(calibrationVerdictCount(db)).toBe(0);
+    return parsed.data;
+  }
+
+  // ── 1. dec-page deductible / coverage_limit ─────────────────────────────────────────────
+  it.each([
+    ['a BLOB deductible', `deductible = X'3235'`],
+    ['a non-numeric text deductible', `deductible = 'abc'`],
+    ['an Infinity deductible', `deductible = 9e999`],
+    ['a BLOB coverage_limit', `coverage_limit = X'3130'`],
+    ['a negative coverage_limit', `coverage_limit = -5`],
+    ['a deductible above the coverage limit (the importer rejects d > limit)', `deductible = 3000000, coverage_limit = 2000000`],
+  ])('D: %s is unusable dec data — the policy reads absent (no placeholder blanket), and the split stays numeric', async (_label, set) => {
+    const db = freshDb();
+    seed(db);
+    db.exec(`UPDATE property_insurance_policies SET ${set}`);
+    insertLoss(db, 'L1', `'2026-03-01'`, '42000');
+    const report = await get200(db);
+    const review = report.deductibleReviews[0];
+    expect(review).toBeDefined();
+    // Present-but-unusable is NOT "pending dec pages": no placeholder blanket is substituted for a
+    // real captured value — the policy reads absent (fully transferred), never the $25K/$2M fixture.
+    expect(review?.decSource).toBe('absent');
+    expect(report.decPageDataSource).not.toBe('placeholder');
+    expect(Number.isFinite(review?.retainedUsd)).toBe(true);
+    expect(Number.isFinite(review?.transferredUsd)).toBe(true);
+    expect((review?.retainedUsd ?? 0) + (review?.transferredUsd ?? 0) + (review?.overLimitUsd ?? 0)).toBe(42_000);
+  });
+
+  // ── 2. loadPolicyTerms ──────────────────────────────────────────────────────────────────
+  it.each([
+    ['a BLOB effective_date', `effective_date = X'32303235'`],
+    ['a BLOB expiration_date', `expiration_date = X'32303237'`],
+    ['a BLOB policy_number', `policy_number = X'41'`],
+    ['an integer policy_number', `policy_number = 12345`],
+    ['a numeric effective_date (TEXT affinity stores 1717200000.0)', `effective_date = 1717200000.0`],
+    ['a US-format expiration_date', `expiration_date = '01/01/2027'`],
+  ])('T: %s on the policy row still 200s and still attaches the loss', async (_label, set) => {
+    const db = freshDb();
+    seed(db);
+    db.exec(`UPDATE property_insurance_policies SET ${set}`);
+    insertLoss(db, 'L1', `'2026-03-01'`, '42000');
+    const report = await get200(db);
+    expect(report.deductibleReviews[0]).toMatchObject({ eventsN: 1, retainedUsd: 25_000, transferredUsd: 17_000 });
+  });
+
+  // ── 3. loss_date must be ISO YYYY-MM-DD ─────────────────────────────────────────────────
+  it.each([
+    ['an epoch REAL (TEXT affinity stores 1717200000.0)', '1717200000.0'],
+    ['a YYYYMMDD REAL', '20240601.0'],
+    ['a US-format string', `'06/01/2024'`],
+    ['an impossible calendar date', `'2024-02-30'`],
+  ])('Y: %s mints no phantom observation year and is counted as coerced', async (_label, dateSql) => {
+    const db = freshDb();
+    seed(db);
+    insertLoss(db, 'GOOD', `'2026-03-01'`, '42000');
+    insertLoss(db, 'BAD', dateSql, '1000', 'hail');
+    const report = await get200(db);
+    expect(report.selfInsure.observationYears).toBe(1);
+    expect(report.coercedLossEventRows).toBe(1);
+    // Still counted toward the gross total — only the date is dropped.
+    expect(report.eal[0]).toMatchObject({ eventsN: 2, grossIncurredTotal: 43_000 });
+  });
+
+  // ── 4. coerced-row counter ──────────────────────────────────────────────────────────────
+  it('C: a BLOB / text gross_incurred is counted; a NULL gross (a legitimate "not yet valued") is not', async () => {
+    const db = freshDb();
+    seed(db);
+    insertLoss(db, 'OK', `'2026-03-01'`, '42000');
+    insertLoss(db, 'NUL', `'2026-03-02'`, 'NULL', 'hail');
+    insertLoss(db, 'BLB', `'2026-03-03'`, `X'3130'`, 'fire');
+    insertLoss(db, 'TXT', `'2026-03-04'`, `'lots'`, 'flood');
+    const report = await get200(db);
+    expect(report.coercedLossEventRows).toBe(2);
+    expect(report.eal[0]).toMatchObject({ eventsN: 4, grossIncurredTotal: 42_000 });
+  });
+
+  it('C: a clean warehouse book and the placeholder path both report 0', async () => {
+    const clean = freshDb();
+    seed(clean);
+    insertLoss(clean, 'OK', `'2026-03-01'`, '42000');
+    expect((await get200(clean)).coercedLossEventRows).toBe(0);
+    const empty = freshDb();
+    seed(empty);
+    const placeholder = await get200(empty);
+    expect(placeholder.lossDataSource).not.toBe('warehouse');
+    expect(placeholder.coercedLossEventRows).toBe(0);
+  });
+
+  // ── 5. gross_incurred upper bound ───────────────────────────────────────────────────────
+  it('G: two 1e308 rows at one property cannot sum to Infinity (which JSON-serializes as null and breaks the client parse)', async () => {
+    const db = freshDb();
+    seed(db);
+    insertLoss(db, 'H1', `'2025-03-01'`, '1e308');
+    insertLoss(db, 'H2', `'2026-03-01'`, '1e308', 'hail');
+    const report = await get200(db);
+    expect(Number.isFinite(report.eal[0]?.grossIncurredTotal)).toBe(true);
+    expect(Number.isFinite(report.selfInsure.transferredUsd)).toBe(true);
+    expect(report.coercedLossEventRows).toBe(2);
+  });
+});
+
+describe('GET /api/warehouse/insurance/loss — partial dec data still takes the placeholder blanket (unchanged)', () => {
+  it('a valid deductible beside a NULL coverage_limit is "not yet captured", not "unusable": decSource placeholder', async () => {
+    const db = freshDb();
+    seedProperty(db, '9620-e-state-route-350-raytown-mo', '9620 E State Route 350, Raytown MO');
+    insertPolicy(db, {
+      propertyId: 'ins-9620state350-prop-hfd',
+      policyType: 'Property Package',
+      policyNumber: 'REDACTED-584',
+      deductible: 25_000,
+      coverageLimit: null,
+    });
+    const res = await makeApp(db).request('/');
+    expect(res.status).toBe(200);
+    const report = InsuranceLossReport.parse(await res.json());
+    expect(report.deductibleReviews[0]?.decSource).toBe('placeholder');
+  });
+});

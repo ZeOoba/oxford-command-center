@@ -148,3 +148,40 @@ describe('property_insurance_policies schema — NOT NULL provenance triad', () 
     }).toThrow();
   });
 });
+
+describe('captureInsurance — deductible/limit pair guard at the writer (refute wf_de191779-d68)', () => {
+  const row = (db: WarehouseDb) =>
+    db.prepare('SELECT deductible, coverage_limit FROM property_insurance_policies WHERE property_id = ?').get('prop-001') as {
+      deductible: number | null;
+      coverage_limit: number | null;
+    };
+  const pairIssues = (db: WarehouseDb) =>
+    (db.prepare(`SELECT COUNT(*) AS c FROM data_quality_issues WHERE property_id = ? AND detail LIKE '%exceeds coverage limit%'`).get('prop-001') as { c: number }).c;
+
+  it.each([
+    ['limit first, then deductible', { coverageLimit: 2_000_000 }, { deductible: 5_000_000 }],
+    ['deductible first, then limit', { deductible: 5_000_000 }, { coverageLimit: 2_000_000 }],
+  ])('%s: two individually valid captures never MERGE into a d > limit pair — prior pair kept, warn logged', (_l, first, second) => {
+    const db = freshDb();
+    captureInsurance(db, [{ ...policy1, ...first }]);
+    const before = row(db);
+    captureInsurance(db, [{ ...policy1, ...second }]);
+    expect(row(db)).toEqual(before);
+    expect(pairIssues(db)).toBe(1);
+  });
+
+  it('a valid merge (d <= limit) still fills the missing field, no pair warning', () => {
+    const db = freshDb();
+    captureInsurance(db, [{ ...policy1, coverageLimit: 2_000_000 }]);
+    captureInsurance(db, [{ ...policy1, deductible: 25_000 }]);
+    expect(row(db)).toEqual({ deductible: 25_000, coverage_limit: 2_000_000 });
+    expect(pairIssues(db)).toBe(0);
+  });
+
+  it('a first INSERT carrying d > limit writes neither value and logs a warn (module contract does not rely on the caller)', () => {
+    const db = freshDb();
+    captureInsurance(db, [{ ...policy1, deductible: 5_000_000, coverageLimit: 2_000_000 }]);
+    expect(row(db)).toEqual({ deductible: null, coverage_limit: null });
+    expect(pairIssues(db)).toBe(1);
+  });
+});

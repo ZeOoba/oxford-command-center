@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   isoOrNull,
+  decPairOrFlag,
   inferMarket,
   inferType,
   statusFromSymbol,
@@ -291,5 +292,25 @@ describe('isTaskBannerRow — reject Monthly Checklist banner rows (Defect 9 reg
   });
   it('keeps a genuine task row', () => {
     expect(isTaskBannerRow('3540 E. 5th Ave — escrow review', 'Property Ops', 'Recurring')).toBe(false);
+  });
+});
+
+describe('decPairOrFlag — insurance deductible/limit pair (refute wf_bb6c1332-b90)', () => {
+  it('passes a valid pair (including d === limit and either side null) through unchanged, no flag', () => {
+    const flags: DataQualityFlag[] = [];
+    expect(decPairOrFlag(25_000, 2_000_000, flags, 'pol-1')).toEqual({ deductible: 25_000, coverageLimit: 2_000_000 });
+    expect(decPairOrFlag(50_000, 50_000, flags, 'pol-1')).toEqual({ deductible: 50_000, coverageLimit: 50_000 });
+    expect(decPairOrFlag(25_000, null, flags, 'pol-1')).toEqual({ deductible: 25_000, coverageLimit: null });
+    expect(decPairOrFlag(null, null, flags, 'pol-1')).toEqual({ deductible: null, coverageLimit: null });
+    expect(flags).toEqual([]);
+  });
+
+  it('a deductible above the limit (transposed cells) nulls BOTH and raises a warn flag — the importer rejects the same shape', () => {
+    const flags: DataQualityFlag[] = [];
+    expect(decPairOrFlag(2_000_000, 25_000, flags, 'pol-1')).toEqual({ deductible: null, coverageLimit: null });
+    expect(flags).toEqual([
+      expect.objectContaining({ entity: 'pol-1', field: 'deductible', severity: 'warn' }),
+    ]);
+    expect(flags[0]!.issue).toMatch(/exceeds coverage limit/);
   });
 });

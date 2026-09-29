@@ -87,6 +87,29 @@ export function isoOrNull(
   }
   return d.toISOString().slice(0, 10);
 }
+/** Insurance deductible / coverage-limit pair. deductible > limit (transposed cells, or a sublimit
+ *  typed in the limit column) is the shape the dec-page importer rejects: the loss engine's
+ *  retained/transferred/overLimit split only partitions gross when d ≤ limit. Null BOTH and flag it
+ *  LOUDLY rather than let it reach the warehouse — never guess which cell is wrong. */
+export function decPairOrFlag(
+  deductible: number | null,
+  coverageLimit: number | null,
+  flags: DataQualityFlag[],
+  entity: string,
+): { deductible: number | null; coverageLimit: number | null } {
+  if (deductible !== null && coverageLimit !== null && deductible > coverageLimit) {
+    flags.push({
+      entity,
+      field: 'deductible',
+      issue: `deductible exceeds coverage limit (${deductible} > ${coverageLimit}) — both ignored for this capture; correct the source cells`,
+      rawValue: `${deductible} / ${coverageLimit}`,
+      severity: 'warn',
+    });
+    return { deductible: null, coverageLimit: null };
+  }
+  return { deductible, coverageLimit };
+}
+
 function row(ws: Worksheet, r: number, c: number): unknown {
   return cv(ws.getRow(r).getCell(c).value);
 }
@@ -1204,8 +1227,7 @@ function parseInsurance(ws: Worksheet, flags: DataQualityFlag[]): InsurancePolic
       notes: str(row(ws, r, 13)),
       // Optional economics columns (D3 framework): absent columns → null, never invented.
       tiv: num(row(ws, r, 14)),
-      deductible: num(row(ws, r, 15)),
-      coverageLimit: num(row(ws, r, 16)),
+      ...decPairOrFlag(num(row(ws, r, 15)), num(row(ws, r, 16)), flags, slug(rowId)),
       flags: [],
     });
   }
