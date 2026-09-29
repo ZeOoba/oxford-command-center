@@ -23,8 +23,16 @@ on:
 # `npm ci --include=dev`: the laptop runner's service environment made `npm ci` omit
 # devDependencies (404 of 643 packages, no tsx/vitest), so every script failed with
 # "'tsx' is not recognized". Explicit --include=dev is a no-op on ubuntu-latest.
+# NODE_ENV cleared below: the root cause of both laptop-runner failures was NODE_ENV=production
+# in the runner service's environment — npm then omitted devDependencies, and Vitest failed all
+# 329 test files at load with "No such built-in module: node:" (reproduced locally with
+# NODE_ENV=production; passes with it empty). Empty lets each tool apply its own default: Vitest
+# sets `test`, `vite build` still builds production (verified: no dev React, bundle in budget).
 #   gh variable set CI_RUNNER --body self --repo ZeOoba/oxford-command-center
 #   gh variable delete CI_RUNNER --repo ZeOoba/oxford-command-center
+env:
+  NODE_ENV: ''
+
 jobs:
   gate:
     runs-on: ${{ vars.CI_RUNNER == 'self' && fromJSON('["self-hosted","windows","ora-ci"]') || 'ubuntu-latest' }}
