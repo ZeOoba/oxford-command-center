@@ -450,8 +450,14 @@ export function scoreAcquisition(
   // product fit: full unless office-heavy; null product ⇒ 0
   let productFitPts = 0;
   if (input.productType === null) flag('productType', 'product type unknown — product-fit sub-score 0');
-  else {
-    const office = input.officePct ?? 0;
+  else if (input.officePct === null) {
+    // Unknown office share ⇒ NEUTRAL half credit, flagged — the same rule as truck court and door counts
+    // above. It used to default to 0% office and earn FULL credit, so an unfilled field outscored a
+    // reported one (2026-09-30 audit). Mechanism fix only: no ratified weight or threshold changes.
+    productFitPts = s3.productFitPoints * 0.5;
+    flag('officePct', 'office percentage unknown — product-fit scored neutral (half credit)');
+  } else {
+    const office = input.officePct;
     productFitPts = s3.productFitPoints * (office > 0.30 ? clamp(1 - (office - 0.30) / 0.70, 0, 1) : 1);
   }
   // construction
@@ -502,7 +508,7 @@ export function scoreAcquisition(
 
   // ── Sub-scores (§2 lossless re-grouping) ──
   const basisInputsKnown = discount !== null && yoc !== null;
-  const assetInputsKnown = input.productType !== null && input.constructionType !== null && !incompleteRuleset;
+  const assetInputsKnown = input.productType !== null && input.constructionType !== null && input.officePct !== null && !incompleteRuleset;
   const riskInputsKnown = input.sellerMotivationScore !== null && (vacant || (input.inPlaceRentPsf !== null && input.marketRentPsf !== null));
   const marketConfidence: Confidence = estimatedAdjPts !== 0 ? 'estimated' : 'confirmed'; // adjacency is confirmed
   const subScores: SubScoreResult[] = [
