@@ -416,6 +416,18 @@ export function checkSnapshot(s: PortfolioSnapshot): DataQualityFlag[] {
     flag('properties.id', `duplicate property id(s): ${dupes.join(', ')}`);
   }
 
+  // Task.id is the React list key and the overlay row identity. Added 2026-09-30 after 56 M365 rows
+  // shared one id in the committed snapshot (truncated source id) with nothing to catch it.
+  // SEVERITY IS 'warn' UNTIL THE SNAPSHOT IS RE-BAKED: the committed data/snapshots/portfolio.json
+  // still carries the 56 colliding ids, and regenerating it needs live Graph. An 'error' here would
+  // turn reconcile:snapshot (and so the gate) red on merge. Flip to 'error' in the commit that
+  // lands the first snapshot written with hashed ids.
+  const taskIds = (s.tasks ?? []).map((t) => t.id);
+  if (new Set(taskIds).size !== taskIds.length) {
+    const dupes = [...new Set(taskIds.filter((id, i) => taskIds.indexOf(id) !== i))];
+    flag('tasks.id', `duplicate task id(s): ${dupes.join(', ')}`, 'warn');
+  }
+
   // Deal.notionDealId must not repeat — same shape as properties.id above, and cheap: Notion's
   // Unique ID cannot duplicate at the source, so a repeat here means the seed mirror, a merge
   // conflict, or a hand-edit is wrong, not that two live rows collided.
