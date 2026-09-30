@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { DataQualityFlag, Task, TaskStatus } from '../../src/contracts/index';
 import { getGraphToken } from './graph-auth';
 import { htmlToText } from './html-to-text';
@@ -29,7 +30,12 @@ interface GraphTask {
   body?: { content?: string };
 }
 
-const slugId = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
+/**
+ * Stable Task.id from the WHOLE source id. Graph To-Do ids share a long common mailbox/list prefix
+ * and differ only past character 60, so the previous slug-and-truncate collapsed all 56 live rows
+ * onto one id (found 2026-09-30). Hash the full string and truncate the HASH, never the source.
+ */
+const hashId = (s: string): string => createHash('sha256').update(s).digest('hex').slice(0, 32);
 
 /** Outlook's "Flagged Emails" To-Do list mirrors flagged mail (incl. marketing) — not real tasks. */
 export function isTaskList(list: { wellknownListName?: string }): boolean {
@@ -45,7 +51,7 @@ export function mapGraphTask(t: GraphTask, listName: string): Task | null {
   const status: TaskStatus = t.status === 'completed' ? 'done' : overdue ? 'overdue' : 'pending';
   const note = htmlToText(t.body?.content ?? '') || null;
   return {
-    id: `m365-${slugId(t.id ?? label)}`,
+    id: `m365-${hashId(t.id ?? label)}`,
     label,
     section: `Microsoft 365 · ${listName}`,
     role: null,
