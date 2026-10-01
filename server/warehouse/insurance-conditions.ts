@@ -55,7 +55,7 @@ import type { WarehouseDb } from './db';
 import type { PortfolioSnapshot } from '../../src/contracts/index';
 import type { Insight } from '../../src/analytics/types';
 import { DAY_MS } from './time-constants';
-import { collapseToCurrentTerm, type CollapsibleInsuranceRow } from './insurance-analysis';
+import { collapseToCurrentTerm, readPolicyBook, type CollapsibleInsuranceRow } from './insurance-analysis';
 import { resolveInsuranceProperty } from './insurance-property-map';
 // BOUNDARY: policies expiring within this window (inclusive) → critical alert.
 const EXPIRY_ALERT_DAYS = 60;
@@ -82,15 +82,22 @@ interface PolicyRow extends CollapsibleInsuranceRow {
  * collapsed set instead of a second raw fetch.
  */
 export function fetchCurrentInsuranceRows(db: WarehouseDb): PolicyRow[] {
-  const rows = db
-    .prepare(
-      `SELECT id, property_id, policy_number, effective_date, expiration_date,
-              premium_annual, policy_type, source_date
-       FROM property_insurance_policies
-       ORDER BY id`,
-    )
-    .all() as PolicyRow[];
-  return collapseToCurrentTerm(rows);
+  // Read through the shared normalizer: SQLite affinities are not constraints, and a raw-SQL BLOB in
+  // policy_type made collapseToCurrentTerm's .trim() throw, which runBrief's fail-open catch turned
+  // into "Insurance alerts unavailable" — skipping the expiry criticals (the email path) for the run.
+  // Read-only handle here (openWarehouseReadOnly), so this reader normalizes but never flags; the
+  // engine (GET /insurance) writes the bad-date data-quality flag.
+  const { book } = readPolicyBook(
+    db
+      .prepare(
+        `SELECT id, property_id, policy_number, effective_date, expiration_date,
+                premium_annual, policy_type, source_date
+         FROM property_insurance_policies
+         ORDER BY id`,
+      )
+      .all(),
+  );
+  return collapseToCurrentTerm<PolicyRow>(book);
 }
 
 /** What a warehouse `property_id` value actually points at, once resolved. */
@@ -281,6 +288,70 @@ export function insuranceConditions(
       entityId: rawId,
       action: { label: 'Review policy', kind: 'review' },
       impactAnnualUsd: candidate.premium,
+      spine: 'B',
+      provenance: 'real',
+    });
+  }
+
+  // ── Condition 1b: insurance-bad-date (visibility for the rows Condition 1 cannot evaluate) ────
+  // A present-but-invalid expiration_date / effective_date normalizes to null (readPolicyBook), so the
+  // expiry and rollover checks skip the row. Before normalization a raw string V8's Date could parse
+  // ('10/15/2026') still raised the expiry critical by accident; the ruling is "flag, don't recover",
+  // but the drop must not be silent — and this reader's handle is read-only, so it cannot write the
+  // data-quality flag the engine writes. Name the policy in the brief instead: one WARNING (digest path,
+  // no email) per property_id, keyed like Condition 1 so alert state does not churn on captures.
+  // source_date is deliberately not reported: no brief check depends on it.
+  // The claims made are exactly what normalization did (refute wf_9c0a7cb2-91b): a value that fails the
+  // importer-strict rule but whose leading YYYY-MM-DD is valid ('2026-08-04T00:00:00Z') is still read by
+  // Condition 1 — it normalizes non-null — so nothing was skipped and nothing is said; the engine's
+  // data-quality flag covers that format issue.
+  // AGGREGATED per property_id (refute wf_5db46698-d07): collapseToCurrentTerm puts undated rows
+  // (bad effective_date) first, so keeping the first qualifying row let a rollover-only bad row hide a
+  // sibling row whose expiry check was skipped — and its premium.
+  const label = (r: PolicyRow) => r.policy_number ?? `row ${r.id}`;
+  const badDateByProperty = new Map<string, { expiry: PolicyRow[]; rollover: PolicyRow[] }>();
+  for (const row of currentRows) {
+    const cols = row.badDateColumns ?? [];
+    const expirySkipped = cols.includes('expiration_date') && row.expiration_date === null;
+    const rolloverSkipped = cols.includes('effective_date') && row.effective_date === null;
+    if (!expirySkipped && !rolloverSkipped) continue;
+    const entry = badDateByProperty.get(row.property_id) ?? { expiry: [], rollover: [] };
+    if (expirySkipped) entry.expiry.push(row);
+    if (rolloverSkipped) entry.rollover.push(row);
+    badDateByProperty.set(row.property_id, entry);
+  }
+
+  for (const [rawId, { expiry, rollover }] of badDateByProperty) {
+    const owner = resolveOwner(rawId);
+    const affected = [...expiry, ...rollover];
+    // Order-independent: the sorted, distinct, non-empty policy types of the affected rows.
+    const affectedTypes = [...new Set(affected.map((r) => r.policy_type).filter(Boolean))].sort();
+    const coverage = owner.coverage ?? (affectedTypes.length > 0 ? affectedTypes.join(' / ') : null);
+    // Sorted, de-duplicated labels: the detail must not depend on row/collapse order.
+    const names = (rows: PolicyRow[]) => [...new Set(rows.map(label))].sort().join(', ');
+    const claims: string[] = [];
+    if (expiry.length > 0) {
+      claims.push(
+        `Policy ${names(expiry)}: expiration_date is not a valid YYYY-MM-DD date, so the expiry, gapped-rollover and warehouse-vs-workbook drift checks skip it — an expiry inside ${EXPIRY_ALERT_DAYS} days would NOT alert`,
+      );
+    }
+    if (rollover.length > 0) {
+      claims.push(`Policy ${names(rollover)}: effective_date is not a valid YYYY-MM-DD date, so the rollover and gapped-rollover checks skip it`);
+    }
+    // The premium rides the expiry critical when one exists for this property; otherwise it is the
+    // largest skipped-expiry premium (max, not sum: the brief takes the max impact, and a property's
+    // rows are terms of one line, not additive exposure).
+    const skippedPremiums = expiry.map((r) => coercePremium(r.premium_annual)).filter((n): n is number => n !== null);
+    out.push({
+      id: `ins-bad-date-${rawId}`,
+      severity: 'warning',
+      category: 'insurance',
+      title: `Insurance date unreadable — ${owner.label}${coverage ? ` · ${coverage}` : ''}`,
+      detail: `${claims.join('; ')}. Fix the stored value (see the insurance-policy-bad-date data-quality flag).`,
+      entityType: 'insurance',
+      entityId: rawId,
+      action: { label: 'Review policy', kind: 'review' },
+      impactAnnualUsd: expiry.length > 0 && !expiryMap.has(rawId) && skippedPremiums.length > 0 ? Math.max(...skippedPremiums) : null,
       spine: 'B',
       provenance: 'real',
     });
