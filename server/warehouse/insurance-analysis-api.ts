@@ -14,7 +14,7 @@
 // This file holds NO financial math — the engine (insurance-analysis.ts) does.
 import { Hono } from 'hono';
 import type { WarehouseDb } from './db';
-import { buildInsuranceAnalysis, logRebidVerdicts } from './insurance-analysis';
+import { buildInsuranceAnalysis, logRebidVerdicts, readPolicyBook } from './insurance-analysis';
 import { buildPremiumHistory, type PremiumHistoryRow } from './insurance-history';
 import { InsuranceAnalysisReport, PremiumHistoryReport } from '../../src/contracts/insurance-analysis';
 
@@ -66,10 +66,18 @@ export function insuranceAnalysisApi(getDb: () => WarehouseDb): Hono {
     withDb((db) => {
       // id / policy_number / expiration_date / source_date feed the engine's same-term reissue
       // collapse inside buildPremiumHistory (CollapsibleInsuranceRow shape).
-      const rows = db.prepare(
-        `SELECT id, property_id, policy_number, effective_date, expiration_date, policy_type, premium_annual, source_date
-           FROM property_insurance_policies`,
-      ).all() as PremiumHistoryRow[];
+      // Through the shared normalizer (a raw-SQL BLOB used to throw in collapseSameTermReissues and 500
+      // this route). Read-only display data: normalize only, no flagging — GET / owns the flag.
+      // A row whose effective_date is invalid (even year-parseable, e.g. '2025-13-01') reads undated and
+      // its premium leaves the policy-year totals here; the bad-date flag on GET / is the tell.
+      const rows: PremiumHistoryRow[] = readPolicyBook(
+        db
+          .prepare(
+            `SELECT id, property_id, policy_number, effective_date, expiration_date, policy_type, premium_annual, source_date
+               FROM property_insurance_policies`,
+          )
+          .all(),
+      ).book;
       const masterNames = new Map((db.prepare('SELECT id, name FROM property_master').all() as Array<{ id: string; name: string }>).map((r) => [r.id, r.name]));
       return c.json(PremiumHistoryReport.parse(buildPremiumHistory(rows, masterNames)));
     }),
