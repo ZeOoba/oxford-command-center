@@ -6,6 +6,7 @@
 // unavailability semantics (503 / non-JSON mirror → typed AcquisitionEngineUnavailable).
 import type { AcquisitionInput, AcquisitionScore } from '@contracts/acquisition';
 import type { Deal } from '@contracts/index';
+import { RCT_V03 } from '../../brain/replacement-cost';
 import { ORA_CLIENT_HEADERS, ORA_JSON_MUTATION_HEADERS } from '@contracts/client-header';
 
 export class AcquisitionEngineUnavailable extends Error {
@@ -63,9 +64,14 @@ const CONSTRUCTION = [
   { value: 'pemb', label: 'All-metal PEMB' }, { value: 'unknown', label: 'Unknown' },
 ];
 const CONFIDENCE = ['confirmed', 'estimated', 'derived'].map((v) => ({ value: v, label: v }));
+// Markets with a replacement-cost row (RCT v03). The engine divides the Basis floor/score by THIS market's
+// LOW; with no market it silently uses the strictest (cheapest-market) fallback, so the form must carry it
+// (OI-356: no live path used to send `market`, so every UI-scored deal scored on the fallback).
+const MARKET_OPTIONS = Object.keys(RCT_V03).map((m) => ({ value: m, label: m }));
 
 export const FIELD_GROUPS: readonly FieldGroup[] = [
   { title: 'Size & Price', fields: [
+    { key: 'market', label: 'Market (sets replacement cost)', kind: 'select', options: MARKET_OPTIONS, hint: 'blank = strictest fallback' },
     { key: 'price', label: 'Price', kind: 'usd' },
     { key: 'totalSf', label: 'Total gross SF', kind: 'num', hint: 'replacement-cost basis' },
     { key: 'maxBuildingSf', label: 'Largest building SF', kind: 'num', hint: '< 50,000 gate' },
@@ -127,8 +133,10 @@ const num = (v: string): number | null => {
 };
 
 /** Prefill the form from a pipeline Deal's known fields (the rest the underwriter fills in). */
-export function dealToForm(deal: Pick<Deal, 'sf' | 'estPrice' | 'irr' | 'holdYrs'>): FormState {
+export function dealToForm(deal: Pick<Deal, 'sf' | 'estPrice' | 'irr' | 'holdYrs'> & { market?: Deal['market'] | null }): FormState {
   const f: FormState = {};
+  // Only a market that has an RCT row is prefilled; anything else stays blank (strictest fallback), never guessed.
+  if (deal.market && Object.prototype.hasOwnProperty.call(RCT_V03, deal.market)) f.market = deal.market;
   if (deal.estPrice !== null) f.price = String(deal.estPrice);
   if (deal.sf !== null) { f.totalSf = String(deal.sf); f.maxBuildingSf = String(deal.sf); }
   if (deal.irr !== null) f.leveredIrr = String(Math.round(deal.irr * 1000) / 10); // decimal → %
@@ -198,6 +206,9 @@ export function inputToForm(input: AcquisitionInput): FormState {
       }
     }
   }
+  // A stored market with no RCT row (the save route accepts any string) cannot be shown by the select and
+  // would silently score on the fallback: load it blank rather than misleading the underwriter.
+  if (f.market !== undefined && !Object.prototype.hasOwnProperty.call(RCT_V03, f.market)) delete f.market;
   return f;
 }
 
@@ -253,4 +264,22 @@ export async function omExtractRequest(file: File, dealId?: string): Promise<OmE
   }
   if (!data.fields) throw new OmExtractError('Malformed extraction response.');
   return { fields: data.fields, fieldCount: data.fieldCount ?? 0, rawText: data.rawText, savedPath: data.savedPath };
+}
+
+/** Fill a still-blank Market from the pipeline deal (saved inputs predate the Market field, so
+ *  inputToForm alone leaves it empty and the deal would rescore on the strictest fallback). Never
+ *  overrides a market the underwriter already chose. */
+export function applyDealMarket(form: FormState, deal: (Pick<Deal, 'sf'> & { market?: Deal['market'] | null }) | null | undefined): FormState {
+  if (form.market || !deal?.market || !Object.prototype.hasOwnProperty.call(RCT_V03, deal.market)) return form;
+  return { ...form, market: deal.market };
+}
+
+/** The engine's replacement-cost DENOMINATOR notes (market not supplied / not priced -> strictest fallback;
+ *  [PROXY] -> DENOMINATOR-SENSITIVE, local quote pre-LOI). They live in score.dataQuality, which no panel
+ *  rendered, so with the Market select a verdict could flip to passing on a proxy denominator with nothing
+ *  on screen saying the skill's local-quote rule applies (refute wf_f6699a8b-92b). Surface them. */
+export function denominatorNotes(score: Pick<AcquisitionScore, 'dataQuality'>): string[] {
+  return score.dataQuality
+    .filter((d) => d.field === 'replacementCost' && /PROXY|not supplied|not in /.test(d.issue))
+    .map((d) => d.issue);
 }

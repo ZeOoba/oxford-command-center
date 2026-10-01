@@ -57,10 +57,10 @@ export type DataQualityFlag = z.infer<typeof DataQualityFlag>;
  * metros: 11 of 20 rows published market:'Other' to the mirror while their real metro was known and
  * recorded upstream. Adding a member is backward compatible for reading stored snapshots.
  *
- * NOT the same thing as being PRICED. src/brain/replacement-cost.ts's RCT_V03 covers only Columbus,
- * Kansas City, Indianapolis, and Mid-Atlantic; every other member (old and new) resolves
- * marketCovered:false and is not given a replacement-cost denominator. Naming a market here does not
- * invent a basis for it.
+ * NOT the same thing as being PRICED. Only markets with a row in config/replacement-cost.v3.json (mirrored
+ * by src/brain/replacement-cost.ts's RCT_V03, pinned by tests/unit/replacement-cost-client-parity.test.ts)
+ * get a replacement-cost denominator; every other member (Toledo OH, Cleveland MSA, Other, Unknown)
+ * resolves marketCovered:false. Naming a market here does not invent a basis for it.
  */
 export const Market = z.enum([
   'Columbus OH',

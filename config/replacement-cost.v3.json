@@ -1,6 +1,6 @@
 {
   "_comment": "RATIFIED Replacement-Cost Table v03 (RCT v03) — Gabriel, 2026-07-14, governor-level. Supersedes replacement-cost.v1.json, which was a FLAT firm-wide $125/$137.50/$150: no per-market variation at all, sitting at roughly HALF true all-in shallow-bay replacement cost. An understated replacement cost makes computed discounts too small, so deals fail the floor — the old table made ORA TOO STRICT and passed on deals that clear doctrine. The Basis floor and Basis score divide by this; rctVersion folds into inputsVersion, so bumping it correctly INVALIDATES every score cached under the old denominator (those scores are stale, not merely old). AUTHORITATIVE COPY: the acquisition-underwriting skill, 'Replacement Cost Table (RCT v03)'. If this file and that table disagree, THAT TABLE WINS and this file is the bug.",
-  "rctVersion": "replacement-cost.v3",
+  "rctVersion": "replacement-cost.v3.1",
   "ratification": "ratified",
   "ratifiedBy": "Gabriel Goldberg",
   "ratifiedDate": "2026-07-14",
@@ -74,6 +74,15 @@
       "high": 283.14,
       "cwHardPsf": 131.46,
       "proxy": true
+    },
+    "Louisville KY": {
+      "low": 237.07,
+      "point": 263.41,
+      "high": 289.75,
+      "cwHardPsf": 135.28,
+      "proxy": false
     }
-  }
+  },
+  "_v3_1_note": "rctVersion bumped v3 -> v3.1 on 2026-09-29 (OI-354, Gabriel in-turn). The table content changed (Louisville KY added, matching the skill's 2026-08-11 table) without a version change, and computeInputsVersion folds only the version STRING, so scores cached under the 9-market table (Louisville priced on the fallback) would never have been invalidated. The bump re-keys every cached acquisition score on purpose: those scores are stale, not merely old. Values of every pre-existing row are unchanged.",
+  "_louisville_note": "The skill added this row on 2026-08-11 (this file received it on 2026-09-29, OI-354), the same day as the skill's own correction (see acquisition-underwriting/references/market-and-cost-calibration-data.md, 'Louisville sourcing correction'). SOURCED, not proxied — present in the C&W 2025 guide (small-tier 2025 = $135.28/SF), reproduced from the same RCT v03 formula that built the other rows (refute-tested against all eight other source metros, matched every ratified POINT/LOW to the cent). This row was missing from this file until the cc-audit-army 2026-09-28 audit (OI-354) caught the drift — the skill's ratified table had already moved to 10 markets while this file stayed at 9."
 }

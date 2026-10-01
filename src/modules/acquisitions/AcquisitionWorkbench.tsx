@@ -12,7 +12,7 @@ import { Card, CardHeader } from '@/primitives/Card';
 import { Badge, type BadgeTone } from '@/primitives/Badge';
 import {
   FIELD_GROUPS, type FieldSpec, type FormState,
-  buildInput, dealToForm, inputToForm, isEngineUnavailable, saveDealInput, scoreDealRequest,
+  applyDealMarket, buildInput, denominatorNotes, dealToForm, inputToForm, isEngineUnavailable, saveDealInput, scoreDealRequest,
 } from './acquisition-score';
 import { OmImportDrawer } from './OmImportDrawer';
 
@@ -34,7 +34,7 @@ export function AcquisitionWorkbench({
   saveFn?: (input: Record<string, unknown>) => Promise<boolean>;
 }) {
   const dealId = deal?.id ?? 'workbench';
-  const [form, setForm] = useState<FormState>(() => (savedInput ? inputToForm(savedInput) : deal ? dealToForm(deal) : {}));
+  const [form, setForm] = useState<FormState>(() => (savedInput ? applyDealMarket(inputToForm(savedInput), deal) : deal ? dealToForm(deal) : {}));
   const [score, setScore] = useState<AcquisitionScore | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -51,7 +51,7 @@ export function AcquisitionWorkbench({
     const id = deal?.id ?? null;
     if (loadedFor.current === id) return;
     loadedFor.current = id;
-    setForm(savedInput ? inputToForm(savedInput) : deal ? dealToForm(deal) : {});
+    setForm(savedInput ? applyDealMarket(inputToForm(savedInput), deal) : deal ? dealToForm(deal) : {});
   }, [deal, savedInput]);
 
   const runScore = useCallback(async (f: FormState) => {
@@ -228,6 +228,7 @@ function ScorePanel({ score }: { score: AcquisitionScore }) {
       {score.advisoryOnly && <Banner tone="amber">Advisory only — not a ratified capital-allocation verdict.</Banner>}
       {score.incompleteRuleset && <Banner tone="amber">Ruleset incomplete — verdict capped.</Banner>}
       {score.cappedAtT2 && !score.advisoryOnly && !score.incompleteRuleset && <Banner tone="amber">Capped to WATCH (see reasons).</Banner>}
+      {denominatorNotes(score).map((n) => <Banner key={n} tone="amber">{n}</Banner>)}
 
       <div className="flex flex-col gap-1">
         {score.subScores.map((s) => (
