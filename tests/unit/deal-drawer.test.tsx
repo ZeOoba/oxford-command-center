@@ -274,3 +274,35 @@ describe('DealDrawer — Underwriting panel with an input but no persisted score
     expect(screen.queryAllByRole('img')).toHaveLength(0);
   });
 });
+
+// OI-354/356: the client drawer now prices every RCT market (was 4 of 10), and a PROXY market must carry the
+// skill's DENOMINATOR-SENSITIVE / local-quote-pre-LOI warning instead of a bare green/red verdict.
+describe('DealDrawer — Replacement Cost card (all RCT markets, proxy warning)', () => {
+  beforeEach(() => {
+    stubFetchWithIntel(makeIntelResponse([]));
+  });
+
+  it('prices a market the old 4-market client table could not (Cincinnati) and shows a verdict', async () => {
+    const deal = makeDeal({ id: 'd-cin', market: 'Cincinnati OH', sf: 40_000, estPrice: 3_000_000 });
+    renderDrawer('d-cin', makeSnapshot([deal], {}));
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    expect(screen.queryByText(/no RCT v03 row for this market/i)).toBeNull();
+    expect(screen.getByText(/Clears basis floor|Fails basis floor/)).toBeTruthy();
+    expect(screen.queryByText(/DENOMINATOR-SENSITIVE/)).toBeNull(); // Cincinnati is sourced, not a proxy
+  });
+
+  it('shows the DENOMINATOR-SENSITIVE / local-quote warning for a PROXY market (Madison)', async () => {
+    const deal = makeDeal({ id: 'd-mad', market: 'Madison WI', sf: 40_000, estPrice: 3_000_000 });
+    renderDrawer('d-mad', makeSnapshot([deal], {}));
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    expect(screen.getByText(/DENOMINATOR-SENSITIVE/)).toBeTruthy();
+    expect(screen.getByText(/insurance comp or GC quote is required before an LOI/i)).toBeTruthy();
+  });
+
+  it('still refuses to score an uncovered market (Toledo) rather than inventing a denominator', async () => {
+    const deal = makeDeal({ id: 'd-tol', market: 'Toledo OH', sf: 40_000, estPrice: 3_000_000 });
+    renderDrawer('d-tol', makeSnapshot([deal], {}));
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    expect(screen.getByText(/no RCT v03 row for this market/i)).toBeTruthy();
+  });
+});
