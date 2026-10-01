@@ -201,6 +201,37 @@ describe('STAGE 2 scorecard', () => {
   });
 });
 
+// 2026-09-30 audit: an unknown officePct was read as 0% office and earned FULL product-fit credit,
+// with no flag and no confidence downgrade. Every other unknown input scores neutral or zero and
+// says so (truck court, door counts). An unfilled field must never outscore a reported one.
+describe('unknown officePct scores neutral, not full credit', () => {
+  const PF = ratifiedJson.scoring.cat3.productFitPoints as number;
+  const asset = (d: ReturnType<typeof score>) => d.subScores.find((x) => x.id === 'asset')!;
+
+  it('scores half the product-fit points when officePct is null', () => {
+    const known = score(strongDeal({ officePct: 0.1 }));
+    const unknown = score(strongDeal({ officePct: null }));
+    expect(round(asset(known).points - asset(unknown).points)).toBe(round(PF * 0.5));
+  });
+  it('never outscores a reported low-office deal', () => {
+    expect(score(strongDeal({ officePct: null })).composite).toBeLessThan(score(strongDeal({ officePct: 0.1 })).composite);
+  });
+  it('raises an officePct data-quality flag', () => {
+    expect(score(strongDeal({ officePct: null })).dataQuality.some((d) => d.field === 'officePct')).toBe(true);
+    expect(score(strongDeal({ officePct: 0.1 })).dataQuality.some((d) => d.field === 'officePct')).toBe(false);
+  });
+  it('downgrades the asset sub-score confidence to estimated', () => {
+    expect(asset(score(strongDeal({ officePct: 0.1 }))).confidence).toBe('confirmed');
+    expect(asset(score(strongDeal({ officePct: null }))).confidence).toBe('estimated');
+  });
+  it('leaves office-heavy and known-office scoring unchanged', () => {
+    const heavy = score(strongDeal({ officePct: 0.65 }));
+    const light = score(strongDeal({ officePct: 0.3 }));
+    expect(asset(heavy).points).toBeLessThan(asset(light).points);
+    expect(heavy.dataQuality.some((d) => d.field === 'officePct')).toBe(false);
+  });
+});
+
 describe('Q3 — market-estimated cannot carry T1', () => {
   it('caps T1 → T2 when only the estimated market ± crosses 75 (entry cluster, ± lands)', () => {
     const s = score(strongDeal({
