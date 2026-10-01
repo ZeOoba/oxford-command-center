@@ -80,7 +80,9 @@ function json(data: unknown, status = 200): Response {
  */
 export async function onRequestPost(context: { request: Request }): Promise<Response> {
   if (cfgError !== null || CFG === null) {
-    return json({ error: 'acquisition engine unavailable', detail: cfgError ?? 'config not loaded' }, 503);
+    // Generic body, same as the Brain Server routes (a raw config error is logged, never returned).
+    console.error(`[acquisition/score] bundled ratified config unavailable: ${cfgError ?? 'config not loaded'}`);
+    return json({ error: 'acquisition engine unavailable' }, 503);
   }
   const parsed = AcquisitionInput.safeParse(await context.request.json().catch(() => ({})));
   if (!parsed.success) {
