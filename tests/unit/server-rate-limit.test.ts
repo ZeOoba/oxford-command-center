@@ -522,7 +522,7 @@ describe('OI-090 — limiter mounts in server/index.ts', () => {
 
   const boundaryMount = () => only(/^app\.use\(\s*['"`]\/api\/\*['"`]\s*,\s*boundary\s*\)/, 'the /api/* boundary mount');
   const corsMount = () => only(/^app\.use\(.*\bcors\s*\(/, 'the cors() mount');
-  const authzMount = () => only(/^app\.use\(.*accessAuthz\s*\(/, 'the accessAuthz mount');
+  const authzMount = () => only(/^app\.use\(\s*['"`]\/api\/\*['"`]\s*,\s*accessGate\s*\)/, 'the accessAuthz mount (the shared accessGate on /api/*)');
 
   it('mounts a fresh 10/min bucket AND a fresh max-3 gate on POST /api/ai, in that order', () => {
     const s = stmt('/api/ai');

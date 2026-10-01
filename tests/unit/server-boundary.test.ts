@@ -231,7 +231,8 @@ describe('OI-050 — requestBoundary mount order in server/index.ts', () => {
   const boundaryApiMount = () => lines(/^app\.use\(\s*['"`]\/api\/\*['"`]\s*,\s*boundary\s*\)/);
   const boundarySseMount = () => lines(/^app\.use\(\s*['"`]\/sse['"`]\s*,\s*boundary\s*\)/);
   const corsMount = () => lines(/^app\.use\(.*\bcors\s*\(/);
-  const authzMount = () => lines(/^app\.use\(.*accessAuthz\s*\(/);
+  // accessAuthz is built ONCE (`const accessGate = accessAuthz(...)`) and mounted on /api/* AND /sse.
+  const authzMount = () => lines(/^app\.use\(\s*['"`]\/api\/\*['"`]\s*,\s*accessGate\s*\)/);
   const apiRoutes = () => lines(/^app\.(route|get|post|put|patch|delete|all)\(\s*['"`]\/api/);
   const sseRoute = () => lines(/^app\.get\(\s*['"`]\/sse['"`]/);
 
