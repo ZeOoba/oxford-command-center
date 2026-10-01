@@ -48,11 +48,12 @@
   "ci-switchable-runner": {
     "agent_role": "Lead Architect (delegated)",
     "phase": "CI runner toggle — move required gate/refute-required off billed minutes",
-    "status": "in_progress",
+    "status": "merged",
     "blocked_by": null,
     "review_needed": false,
     "detail": "Shared-infra claim on .github/workflows/ci.yml (Gabriel approved 2026-09-28): gate + refute-required choose runs-on from repo variable CI_RUNNER ('self' -> [self-hosted, windows, ora-ci] runner on Gabriel's laptop; unset -> ubuntu-latest, unchanged). Job ids unchanged so branch-protection required checks still match. Triggered by the Actions billing block (jobs not started since 2026-09-27 16:56).",
-    "last_updated": "2026-09-28T00:00:00Z"
+    "review_detail": "MERGED via PR #399 (2026-09-29, CI_RUNNER toggle) and follow-up PR #409 (squash 605a218, 2026-10-01: ci.yml concurrency block cancelling superseded PR runs + scripts/ci-runner-preflight.ps1). Post-merge main CI run 36927115361 green. Claim on .github/workflows/ci.yml released.",
+    "last_updated": "2026-10-01T00:00:00Z"
   },
   "worktrees": {
     "loss-unmatched-ref": {
