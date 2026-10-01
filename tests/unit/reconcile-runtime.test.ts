@@ -59,6 +59,42 @@ describe('checkSnapshot — runtime reconciliation', () => {
     expect(flags.some((f) => f.field === 'properties.id' && f.severity === 'error' && /dup/.test(f.issue))).toBe(true);
   });
 
+  // Added 2026-09-30: Task.id had no uniqueness backstop, which let 56 M365 rows share one id
+  // unnoticed in the committed snapshot. Same shape as properties.id.
+  // Severity is 'warn' until the committed snapshot is re-baked with hashed ids (see the comment in
+  // checkSnapshot). When it flips to 'error', change this expectation in the same commit.
+  it('flags duplicate task ids (warn, pending re-bake) — the same backstop properties get', () => {
+    const flags = checkSnapshot(base({ tasks: [{ id: 'm365-dup' }, { id: 'm365-dup' }, { id: 'm365-ok' }] }));
+    expect(flags.some((f) => f.entity === 'tasks' && f.field === 'id' && f.severity === 'warn' && /m365-dup/.test(f.issue))).toBe(true);
+  });
+
+  // Independent review 2026-10-01: a reconciliation-entity flag fires the CRITICAL reconcile-fail alert
+  // email whatever its severity. A duplicate task id is a warn and must not page anyone.
+  it('the duplicate task id flag is not a reconciliation-entity flag and does not fire reconcile-fail', () => {
+    const snap = base({ tasks: [{ id: 'm365-dup' }, { id: 'm365-dup' }] });
+    const flags = checkSnapshot(snap);
+    const f = flags.find((x) => x.entity === 'tasks' && x.field === 'id');
+    expect(f).toBeDefined();
+    expect(f!.entity).not.toBe('reconciliation');
+    const asOf = '2026-10-01';
+    const full = {
+      meta: { schemaVersion: '1.0.0', asOf, generatedAt: '2026-10-01T00:00:00.000Z', source: 't', scenario: 'Base' },
+      assumptions: { activeScenario: 'Base', revenueFactor: 1, vacancyFactor: 1, exitCapFactor: 1, thresholds: { balloonAlertMonths: 18, concentrationYellow: 0.25, concentrationRed: 0.5 }, asOf },
+      properties: [], leases: [], loans: [], deals: [], insurance: [], tasks: [], counterparties: [],
+      renewalStages: {}, tenantNotes: {}, dealComps: {}, noiBudgets: {}, quickbooks: null,
+      cash: { asOf, totalCash: 0, activeEntities: 0, largestEntity: null, concentrationTopPct: null, cagr: null, entities: [], history: [] },
+      dataQuality: flags,
+    } as unknown as PortfolioSnapshot;
+    const insights = evaluateConditions(full, { now: Date.parse('2026-10-01T12:00:00.000Z') });
+    expect(insights.some((i) => i.id === 'reconcile-fail')).toBe(false);
+    expect(insights.some((i) => i.severity === 'critical')).toBe(false);
+  });
+
+  it('passes when all task ids are distinct', () => {
+    const flags = checkSnapshot(base({ tasks: [{ id: 'a' }, { id: 'b' }] }));
+    expect(flags.some((f) => f.entity === 'tasks' && f.field === 'id')).toBe(false);
+  });
+
   it('passes when all property ids are distinct', () => {
     const flags = checkSnapshot(base({ properties: [{ id: 'a' }, { id: 'b' }] }));
     expect(flags.some((f) => f.field === 'properties.id')).toBe(false);

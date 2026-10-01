@@ -11,12 +11,35 @@ describe('m365-tasks — Graph To-Do mapping', () => {
     );
     expect(t).not.toBeNull();
     expect(() => Task.parse(t)).not.toThrow();
-    expect(t!.id).toBe('m365-aamk-123');
+    expect(t!.id).toMatch(/^m365-[0-9a-f]{32}$/);
     expect(t!.section).toBe('Microsoft 365 · Acquisitions');
     expect(t!.type).toBe('M365 To-Do');
     expect(t!.dueDay).toBe('2030-12-01');
     expect(t!.status).toBe('pending'); // future due date
     expect(t!.notes).toBe('Get the updated certificate'); // HTML stripped
+  });
+
+  // 2026-09-30 audit: Graph To-Do ids share a long common prefix and differ only past character 60.
+  // slugId truncated to 60, so all 56 live M365 rows landed on ONE Task.id. The id must be derived
+  // from the WHOLE source id.
+  it('gives distinct ids to Graph ids that share a 60+ character prefix', () => {
+    const prefix = 'AAMkAGVlM2FhYTA0LWI4MDItNDYwNi1hNzczLWQ1ZWQ5ZDE5NjgzYgBGAAAA';
+    expect(prefix.length).toBeGreaterThanOrEqual(60);
+    const a = mapGraphTask({ id: `${prefix}AAA1`, title: 'Task A' }, 'To Do');
+    const b = mapGraphTask({ id: `${prefix}AAA2`, title: 'Task B' }, 'To Do');
+    expect(a!.id).not.toBe(b!.id);
+  });
+
+  it('gives the same id to the same Graph id on every call (stable across snapshot refreshes)', () => {
+    const one = mapGraphTask({ id: 'AAMk-stable', title: 'First title' }, 'To Do');
+    const two = mapGraphTask({ id: 'AAMk-stable', title: 'Renamed title' }, 'Other list');
+    expect(one!.id).toBe(two!.id);
+  });
+
+  it('keeps ids distinct for two id-less tasks with different titles', () => {
+    const a = mapGraphTask({ title: 'Call the lender' }, 'To Do');
+    const b = mapGraphTask({ title: 'Call the broker' }, 'To Do');
+    expect(a!.id).not.toBe(b!.id);
   });
 
   it('flags a past-due open task as overdue', () => {
