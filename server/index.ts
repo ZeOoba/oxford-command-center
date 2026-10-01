@@ -70,7 +70,14 @@ app.use('/api/*', cors({ origin: isAllowedOrigin }));
 // Mounted HERE, immediately after cors and BEFORE every app.route() below, so there is no route —
 // present or future — that can run its handler ahead of the check. Adding routes above this line
 // would silently exempt them.
-app.use('/api/*', accessAuthz(accessAuthzOptionsFromEnv(process.env)));
+//
+// /sse is OUTSIDE /api/* but streams the same confidential BrainState (workbookPath, lastError, data-quality
+// flags), so it is behind the SAME gate instance (shared JWKS cache) — cc-audit-army 2026-09-28,
+// sse-bypasses-access-authz. It was previously covered only by the host/origin boundary, which is not an
+// identity check once the tunnel makes loopback binding stop being the security boundary.
+const accessGate = accessAuthz(accessAuthzOptionsFromEnv(process.env));
+app.use('/api/*', accessGate);
+app.use('/sse', accessGate);
 
 // Consumption bounds (OI-090, OWASP LLM10 — see rate-limit.ts). The three routes below already cap
 // each request; these cap how OFTEN they may be started and, for the SSE agent loop, how many may be
