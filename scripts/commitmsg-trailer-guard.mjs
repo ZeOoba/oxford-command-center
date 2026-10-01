@@ -38,6 +38,8 @@ export const ALLOWED_AI_TRAILERS = [
   'Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>',
   // Added 2026-09-23: Claude Code sessions running on Opus 5.5 emit this exact line.
   'Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>',
+  // Added 2026-10-01: Claude Code sessions running on Sonnet 5.5 emit this exact line.
+  'Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>',
 ];
 
 // Case-insensitive on the trailer key ("Co-authored-by:" etc. -- git/GitHub both accept slight

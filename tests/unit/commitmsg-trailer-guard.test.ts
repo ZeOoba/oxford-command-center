@@ -77,6 +77,11 @@ describe('ALLOWED_AI_TRAILERS', () => {
     expect(ALLOWED_AI_TRAILERS).toContain('Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>');
     expect(validateAiTrailers('fix: x\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>\n').ok).toBe(true);
   });
+
+  it('contains the Sonnet 5.5 trailer that Claude Code sessions on Sonnet 5.5 emit', () => {
+    expect(ALLOWED_AI_TRAILERS).toContain('Co-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>');
+    expect(validateAiTrailers('fix: x\n\nCo-Authored-By: Claude Sonnet 5.5 <noreply@anthropic.com>\n').ok).toBe(true);
+  });
 });
 
 describe('validateAiTrailers', () => {
