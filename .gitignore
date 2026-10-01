@@ -47,6 +47,9 @@ data/reindex.log
 # Brain Server autostart runtime state (scripts/start-brain-server.ps1) — machine-local
 logs/
 run/
+# cc-audit-army / cc-eval-plan-premortem workflow scratch handoff (AUDIT-REPORT.md,
+# confirmed-findings.json) — regenerated per audit run, never committed
+_run/
 .superpowers/
 # Git worktrees (EnterWorktree / git worktree add) — never committed; node_modules inside these otherwise slows git status to a crawl
 .claude/worktrees/
