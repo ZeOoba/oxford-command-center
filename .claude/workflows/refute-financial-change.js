@@ -11,7 +11,12 @@
 //   repo: 'C:\\Users\\Owner\\oxford-command-center',         // optional; default below
 //   lenses: [ { label: 'noi', focus: 'NOI correctness & regression — ...' }, ... ],  // optional
 //   greenContext: 'The full gate is GREEN and behavior-preserving on the current corpus.',  // optional
+//   model: 'fable',          // optional: 'fable' (default) | 'opus'. Use 'opus' ONLY when Fable is unavailable
+//   fallbackModel: 'opus',   // optional: 'opus' (default) | null. Ignored when it equals `model`
 // }})
+// There is deliberately ONE script: a forked "-opus" copy drifted (47 lines, two versions in circulation).
+// The result records which models ran (`models`, `modelFloorMet`) so a Refute-Reviewed attestation is auditable:
+// modelFloorMet=false means the pass ran below the Fable floor and the commit message should say so.
 // args may also be a PLAIN STRING (treated as changeSet with the default lenses).
 
 export const meta = {
@@ -61,6 +66,16 @@ const lenses = (Array.isArray(A.lenses) && A.lenses.length)
 
 if (lenses.length > 4096) throw new Error('too many lenses')
 
+// Model selection. Only the two tiers this workflow has ever been validated on are accepted; anything
+// lower (sonnet/haiku/free text) throws rather than silently weakening a financial-code gate.
+const TIERS = ['fable', 'opus']
+const primaryModel = A.model ?? 'fable'
+if (!TIERS.includes(primaryModel)) throw new Error('model must be one of ' + TIERS.join(' | ') + ' (got ' + JSON.stringify(A.model) + ')')
+const fallbackModel = A.fallbackModel === undefined ? 'opus' : A.fallbackModel
+if (fallbackModel !== null && !TIERS.includes(fallbackModel)) throw new Error('fallbackModel must be one of ' + TIERS.join(' | ') + ' | null (got ' + JSON.stringify(A.fallbackModel) + ')')
+// A same-model "fallback" would just repeat the failed call, so it is skipped.
+const effectiveFallback = (fallbackModel && fallbackModel !== primaryModel) ? fallbackModel : null
+
 phase('Refute')
 
 const base =
@@ -74,10 +89,10 @@ const base =
 // (unchanged) — do not widen this fan-out until Fable's own ceiling is verified.
 const verdicts = await parallel(
   lenses.map((l) => async () => {
-    let v = await agent(base + l.focus, { label: 'refute:' + l.label, phase: 'Refute', model: 'fable', schema: VERDICT })
-    if (v === null) {
-      log(`Fable call failed for lens "${l.label}" — falling back to opus.`)
-      v = await agent(base + l.focus, { label: 'refute:' + l.label + ':opus-fallback', phase: 'Refute', model: 'opus', schema: VERDICT })
+    let v = await agent(base + l.focus, { label: 'refute:' + l.label, phase: 'Refute', model: primaryModel, schema: VERDICT })
+    if (v === null && effectiveFallback) {
+      log(`${primaryModel} call failed for lens "${l.label}" — falling back to ${effectiveFallback}.`)
+      v = await agent(base + l.focus, { label: 'refute:' + l.label + ':' + effectiveFallback + '-fallback', phase: 'Refute', model: effectiveFallback, schema: VERDICT })
     }
     return v
   }),
@@ -90,11 +105,15 @@ const order = { critical: 4, high: 3, medium: 2, low: 1, none: 0 }
 const worst = succeeded.reduce((m, v) => Math.max(m, order[v.maxSeverity] ?? 0), 0)
 
 if (allFailed) {
-  log(`All ${lenses.length} lenses failed (Fable and opus fallback both unavailable) — this is a TOOLING FAILURE, not a clean result. Do not report CLEAN.`)
+  log(`All ${lenses.length} lenses failed (${primaryModel}${effectiveFallback ? ' and ' + effectiveFallback + ' fallback' : ''} unavailable) — this is a TOOLING FAILURE, not a clean result. Do not report CLEAN.`)
 } else {
   log(real.length
     ? `${real.length}/${succeeded.length} lenses found a real defect; worst severity rank ${worst}. Fix before commit.`
     : `No real defect across ${succeeded.length}/${lenses.length} lenses. Clear to commit (still confirm the gate).`)
 }
 
-return { verdicts, anyRealDefect: real.length > 0, worstSeverityRank: worst, succeeded: succeeded.length, allFailed }
+return {
+  verdicts, anyRealDefect: real.length > 0, worstSeverityRank: worst, succeeded: succeeded.length, allFailed,
+  models: { primary: primaryModel, fallback: effectiveFallback },
+  modelFloorMet: primaryModel === 'fable',
+}
