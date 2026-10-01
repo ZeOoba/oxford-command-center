@@ -33,6 +33,14 @@ on:
 env:
   NODE_ENV: ''
 
+# CONCURRENCY (2026-09-29): one laptop runner serialises every job in the repo, so superseded PR
+# runs must not queue behind each other. A new push to a PR cancels that PR's in-flight run; pushes
+# to main are never cancelled (group is per-sha, so each main commit keeps its own run). Job ids gate / refute-required
+# are unchanged, so the required-check names are unaffected.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   gate:
     runs-on: ${{ vars.CI_RUNNER == 'self' && fromJSON('["self-hosted","windows","ora-ci"]') || 'ubuntu-latest' }}
