@@ -1,0 +1,331 @@
+// server/edge/pull-queue.ts
+//
+// Oxford Edge manual-pull queue (spec §5.3). Scope lists and cadences are CODE (versioned,
+// reviewable); the DB holds only the append-only edge_pull_log (migration 033). The 21 storage/IOS
+// scopes are derived from markets.json `type` when the dataset is available and fall back to the
+// frozen copy of the retired Morning Guide's list when it is not. VA and MI truck coverage is
+// automated (derived from markets.json), never a queue row. Labels, slugs, press feeds and truck
+// blockers are carried from the retired artifact (morning_guide.html, 2026-07-14).
+import type { WarehouseDb } from '../warehouse/db';
+import type {
+  EdgeMarket, EdgeOutsidePullScope, EdgePullItem, EdgePullKind, EdgePullLink, EdgePullQueueResponse,
+  EdgePullScopeState, EdgePullState, RecordPullRequest,
+} from '../../src/contracts/edge';
+import { BUY_BOX_TYPES } from './series';
+
+export interface EdgeBuyBoxScope {
+  id: string;
+  label: string;
+  slug: string;
+}
+
+/** Frozen copy of the artifact's 21-market storage/IOS list (ids from markets.json, labels/slugs
+ *  from the artifact). indianapolis_south uses the artifact's "Indianapolis, IN" storage slug. */
+export const EDGE_BUY_BOX_FALLBACK: readonly EdgeBuyBoxScope[] = [
+  { id: 'harrisburg', label: 'Harrisburg, PA', slug: 'harrisburg-pa' },
+  { id: 'lancaster', label: 'Lancaster, PA', slug: 'lancaster-pa' },
+  { id: 'york', label: 'York, PA', slug: 'york-pa' },
+  { id: 'allentown', label: 'Allentown, PA', slug: 'allentown-pa' },
+  { id: 'hagerstown', label: 'Hagerstown, MD', slug: 'hagerstown-md' },
+  { id: 'winchester', label: 'Winchester, VA', slug: 'winchester-va' },
+  { id: 'richmond', label: 'Richmond, VA', slug: 'richmond-va' },
+  { id: 'roanoke', label: 'Roanoke, VA', slug: 'roanoke-va' },
+  { id: 'columbus', label: 'Columbus, OH', slug: 'columbus-oh' },
+  { id: 'cincinnati', label: 'Cincinnati, OH', slug: 'cincinnati-oh' },
+  { id: 'dayton', label: 'Dayton, OH', slug: 'dayton-oh' },
+  { id: 'toledo', label: 'Toledo, OH', slug: 'toledo-oh' },
+  { id: 'fort_wayne', label: 'Fort Wayne, IN', slug: 'fort-wayne-in' },
+  { id: 'grand_rapids', label: 'Grand Rapids, MI', slug: 'grand-rapids-mi' },
+  { id: 'louisville', label: 'Louisville, KY', slug: 'louisville-ky' },
+  { id: 'kansas_city', label: 'Kansas City, MO', slug: 'kansas-city-mo' },
+  { id: 'madison', label: 'Madison, WI', slug: 'madison-wi' },
+  { id: 'des_moines', label: 'Des Moines, IA', slug: 'des-moines-ia' },
+  { id: 'lincoln', label: 'Lincoln, NE', slug: 'lincoln-ne' },
+  { id: 'omaha', label: 'Omaha, NE', slug: 'omaha-ne' },
+  { id: 'indianapolis_south', label: 'Indianapolis, IN', slug: 'indianapolis-in' },
+];
+
+export const MFG_INVEST_STATES = ['PA', 'MD', 'VA', 'WV', 'OH', 'IN', 'MI', 'KY', 'MO', 'KS', 'WI', 'IA', 'NE', 'IL', 'MN'] as const;
+export const TRUCK_STATES = ['OH', 'IN', 'WI', 'PA', 'MD', 'KY', 'MO', 'KS', 'IA', 'NE', 'WV', 'IL', 'MN'] as const;
+
+/** State economic-development press feeds (from the artifact). */
+export const MFG_INVEST_FEEDS: Readonly<Record<string, string>> = {
+  PA: 'https://dced.pa.gov/newsroom/',
+  MD: 'https://commerce.maryland.gov/media',
+  VA: 'https://www.vedp.org/news',
+  WV: 'https://westvirginia.gov/category/news/',
+  OH: 'https://www.jobsohio.com/newsroom',
+  IN: 'https://iedc.in.gov/media',
+  MI: 'https://www.michiganbusiness.org/press-releases/',
+  KY: 'https://ced.ky.gov/News',
+  MO: 'https://missouripartnership.com/news/',
+  KS: 'https://www.kansascommerce.gov/newsroom/',
+  WI: 'https://wedc.org/category/news/',
+  IA: 'https://www.iowaeda.com/newsroom/',
+  NE: 'https://opportunity.nebraska.gov/newsroom/',
+  IL: 'https://dceo.illinois.gov/aboutdceo/newsroom.html',
+  MN: 'https://mn.gov/deed/newscenter/',
+};
+
+const NOT_ATTEMPTED = 'Not attempted — out of scope for the 2026-07-14 pass (time-boxed to VA/MI/OH/IN/WI).';
+
+/** Per-state truck AADT blockers, carried in intent from the artifact. */
+export const TRUCK_BLOCKERS: Readonly<Record<string, string>> = {
+  OH: 'Dead endpoint — the gis.dot.state.oh.us TIMS ArcGIS server is decommissioned (every known path 404s). Needs a fresh search for where ODOT now publishes its traffic-count GIS layer.',
+  IN: "JS app only — INDOT's TCDS (tcds.indot.in.gov) is an interactive map, not a queryable REST endpoint. Check INDOT's open-data portal for a downloadable AADT shapefile/CSV.",
+  WI: "Usable but risky — live ArcGIS endpoints carry no truck-class breakdown and count segments on an irregular multi-year rotation; a naive year-over-year join would fabricate deltas. Verify each segment's count years first.",
+  PA: `${NOT_ATTEMPTED} PennDOT publishes open GIS traffic layers via PASDA — good first check.`,
+  MO: `${NOT_ATTEMPTED} MoDOT publishes open GIS traffic layers via MSDIS — good first check.`,
+  MD: NOT_ATTEMPTED,
+  KY: NOT_ATTEMPTED,
+  KS: NOT_ATTEMPTED,
+  IA: NOT_ATTEMPTED,
+  NE: NOT_ATTEMPTED,
+  WV: NOT_ATTEMPTED,
+  IL: NOT_ATTEMPTED,
+  MN: NOT_ATTEMPTED,
+};
+
+export interface EdgePullItemDef {
+  kind: EdgePullKind;
+  label: string;
+  cadenceDays: number;
+  cadenceLabel: string;
+  scopeType: 'market' | 'state';
+  why: string;
+  caveat: string;
+}
+
+export const PULL_ITEMS: Readonly<Record<EdgePullKind, EdgePullItemDef>> = {
+  storage: {
+    kind: 'storage',
+    label: 'Self-storage asking rates',
+    cadenceDays: 90,
+    cadenceLabel: 'Quarterly',
+    scopeType: 'market',
+    why: 'Storage rates are the space-scarcity proxy almost nobody in industrial underwriting tracks.',
+    caveat: "Today's rate only — record a baseline; growth accumulates from future pulls. StorageCafe/RentCafe keep no history, so 2021–2024 cannot be backfilled.",
+  },
+  ios: {
+    kind: 'ios',
+    label: 'IOS & contractor-yard listings',
+    cadenceDays: 90,
+    cadenceLabel: 'Quarterly',
+    scopeType: 'market',
+    why: 'Oxford buys IOS and almost nobody datasets it — a real edge if kept current.',
+    caveat: 'Crexi and LoopNet block scripted pulls (JS shell, no listing data); a manual per-market scan is the realistic cadence.',
+  },
+  mfgInvest: {
+    kind: 'mfgInvest',
+    label: 'Manufacturing investment announcements',
+    cadenceDays: 30,
+    cadenceLabel: 'Monthly',
+    scopeType: 'state',
+    why: 'Every plant drags 20–40 small suppliers behind it — the earliest, biggest-magnitude signal in the dataset.',
+    caveat: 'Unstructured press releases across 15 state economic-development sites; a QCEW manufacturing-employment proxy will not catch a plant until it reaches payroll data.',
+  },
+  truck: {
+    kind: 'truck',
+    label: 'Truck AADT',
+    cadenceDays: 365,
+    cadenceLabel: 'Annual',
+    scopeType: 'state',
+    why: 'Freight moving before jobs show up is the earliest demand signal there is.',
+    caveat: 'VA and MI are complete through the automated state-DOT pull; each remaining state has a specific blocker below.',
+  },
+};
+
+export const PULL_KIND_ORDER: readonly EdgePullKind[] = ['storage', 'ios', 'mfgInvest', 'truck'];
+
+const DAY_MS = 86_400_000;
+
+export function deriveBuyBoxIds(markets: readonly EdgeMarket[]): string[] {
+  if (markets.length === 0) return EDGE_BUY_BOX_FALLBACK.map((s) => s.id);
+  return markets.filter((m) => BUY_BOX_TYPES.has(m.type)).map((m) => m.id);
+}
+
+export function pullScopeKeys(kind: EdgePullKind, markets: readonly EdgeMarket[]): string[] {
+  if (kind === 'storage' || kind === 'ios') return deriveBuyBoxIds(markets);
+  if (kind === 'mfgInvest') return [...MFG_INVEST_STATES];
+  return [...TRUCK_STATES];
+}
+
+/** States with any non-null truck value in markets.json (VA + MI today). */
+export function automatedTruckStates(markets: readonly EdgeMarket[]): string[] {
+  const states = new Set<string>();
+  for (const m of markets) if (m.series.truck.values.some((v) => v !== null)) states.add(m.state);
+  return [...states].sort();
+}
+
+/** In-dataset states outside the artifact's pull scope (TN, ND, SD, DC today), listed in Data health. */
+export function computeOutsidePullScope(markets: readonly EdgeMarket[]): EdgeOutsidePullScope {
+  const datasetStates = [...new Set(markets.map((m) => m.state))].sort();
+  const automated = new Set(automatedTruckStates(markets));
+  const truckScope = new Set<string>(TRUCK_STATES);
+  const mfgScope = new Set<string>(MFG_INVEST_STATES);
+  return {
+    truck: datasetStates.filter((s) => !truckScope.has(s) && !automated.has(s)),
+    mfgInvest: datasetStates.filter((s) => !mfgScope.has(s)),
+  };
+}
+
+/** Server LOCAL calendar date (the "not in the future" rule is relative to server local date). */
+export function localIsoDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export function isRealIsoDate(s: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return false;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const dt = new Date(Date.UTC(y, mo - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === mo - 1 && dt.getUTCDate() === d;
+}
+
+export function scopeStateFor(
+  lastDoneOn: string | null,
+  cadenceDays: number,
+  today: string,
+): { state: EdgePullState; ageDays: number | null } {
+  if (lastDoneOn === null) return { state: 'open', ageDays: null };
+  const raw = Math.round((Date.parse(`${today}T00:00:00Z`) - Date.parse(`${lastDoneOn}T00:00:00Z`)) / DAY_MS);
+  const ageDays = Math.max(0, raw);
+  return { state: ageDays <= cadenceDays ? 'current' : 'due', ageDays };
+}
+
+export interface EdgePullLogRow {
+  id: number;
+  kind: EdgePullKind;
+  scopeKey: string;
+  doneOn: string;
+  note: string | null;
+}
+
+/** Latest non-voided row per (kind, scope), keyed `${kind}|${scopeKey}`. */
+export function readEdgePullLatest(db: WarehouseDb): Map<string, EdgePullLogRow> {
+  const rows = db
+    .prepare(
+      `SELECT id, pull_kind AS kind, scope_key AS scopeKey, done_on AS doneOn, note
+         FROM edge_pull_log
+        WHERE voided_at IS NULL
+        ORDER BY pull_kind, scope_key, done_on DESC, id DESC`,
+    )
+    .all() as EdgePullLogRow[];
+  const latest = new Map<string, EdgePullLogRow>();
+  for (const r of rows) {
+    const key = `${r.kind}|${r.scopeKey}`;
+    if (!latest.has(key)) latest.set(key, r);
+  }
+  return latest;
+}
+
+/** Append one log row. Binds exactly kind/scopeKey/doneOn/note → pull_kind/scope_key/done_on/note
+ *  (check:schema-drift cross-references these against RecordPullRequest). */
+export function recordEdgePull(db: WarehouseDb, input: RecordPullRequest, today: string = localIsoDate(new Date())): number {
+  if (!isRealIsoDate(input.doneOn)) throw new RangeError(`doneOn is not a real calendar date: ${input.doneOn}`);
+  if (input.doneOn > today) throw new RangeError(`doneOn ${input.doneOn} is in the future (server local date ${today})`);
+  const result = db
+    .prepare('INSERT INTO edge_pull_log (pull_kind, scope_key, done_on, note) VALUES (?, ?, ?, ?)')
+    .run(input.kind, input.scopeKey, input.doneOn, input.note ?? null);
+  return Number(result.lastInsertRowid);
+}
+
+export type VoidEdgePullResult =
+  | { status: 'voided'; kind: EdgePullKind }
+  | { status: 'already_voided'; kind: EdgePullKind }
+  | { status: 'not_found' };
+
+/** Undo = set voided_at. Rows are never removed (append-only; archive-not-remove rule). */
+export function voidEdgePull(db: WarehouseDb, id: number): VoidEdgePullResult {
+  const row = db
+    .prepare('SELECT pull_kind AS kind, voided_at AS voidedAt FROM edge_pull_log WHERE id = ?')
+    .get(id) as { kind: EdgePullKind; voidedAt: string | null } | undefined;
+  if (!row) return { status: 'not_found' };
+  if (row.voidedAt !== null) return { status: 'already_voided', kind: row.kind };
+  db.prepare("UPDATE edge_pull_log SET voided_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ? AND voided_at IS NULL").run(id);
+  return { status: 'voided', kind: row.kind };
+}
+
+function scopeLabelFor(kind: EdgePullKind, scopeKey: string, markets: readonly EdgeMarket[]): string {
+  if (kind === 'mfgInvest' || kind === 'truck') return scopeKey;
+  const frozen = EDGE_BUY_BOX_FALLBACK.find((s) => s.id === scopeKey);
+  if (frozen) return frozen.label;
+  const m = markets.find((x) => x.id === scopeKey);
+  return m ? `${m.name}, ${m.state}` : scopeKey;
+}
+
+function scopeLinks(kind: EdgePullKind, scopeKey: string): EdgePullLink[] {
+  if (kind === 'mfgInvest') {
+    const url = MFG_INVEST_FEEDS[scopeKey];
+    return url ? [{ label: 'Press feed', url }] : [];
+  }
+  if (kind === 'truck') return [];
+  const frozen = EDGE_BUY_BOX_FALLBACK.find((s) => s.id === scopeKey);
+  if (!frozen) return [];
+  if (kind === 'storage') {
+    return [
+      { label: 'StorageCafe', url: `https://www.storagecafe.com/self-storage-rates/${frozen.slug}/` },
+      { label: 'RentCafe', url: `https://www.rentcafe.com/self-storage/usa/${frozen.slug}/` },
+    ];
+  }
+  return [
+    {
+      label: 'Crexi',
+      url: `https://www.crexi.com/properties?filters=%7B%22types%22%3A%5B%22land%22%5D%7D&searchTerm=${encodeURIComponent(frozen.label)}`,
+    },
+    { label: 'LoopNet', url: `https://www.loopnet.com/search/land/${frozen.slug}/` },
+  ];
+}
+
+export function buildEdgePullItem(
+  kind: EdgePullKind,
+  markets: readonly EdgeMarket[],
+  latest: ReadonlyMap<string, EdgePullLogRow>,
+  today: string,
+): EdgePullItem {
+  const def = PULL_ITEMS[kind];
+  const scopes: EdgePullScopeState[] = pullScopeKeys(kind, markets).map((scopeKey) => {
+    const row = latest.get(`${kind}|${scopeKey}`) ?? null;
+    const { state, ageDays } = scopeStateFor(row?.doneOn ?? null, def.cadenceDays, today);
+    return {
+      scopeKey,
+      scopeLabel: scopeLabelFor(kind, scopeKey, markets),
+      state,
+      lastDoneOn: row?.doneOn ?? null,
+      lastNote: row?.note ?? null,
+      lastLogId: row?.id ?? null,
+      ageDays,
+      links: scopeLinks(kind, scopeKey),
+      blocker: kind === 'truck' ? (TRUCK_BLOCKERS[scopeKey] ?? null) : null,
+    };
+  });
+  return {
+    kind,
+    label: def.label,
+    cadenceDays: def.cadenceDays,
+    cadenceLabel: def.cadenceLabel,
+    scopeType: def.scopeType,
+    why: def.why,
+    caveat: def.caveat,
+    scopes,
+    counts: {
+      open: scopes.filter((s) => s.state === 'open').length,
+      due: scopes.filter((s) => s.state === 'due').length,
+      current: scopes.filter((s) => s.state === 'current').length,
+    },
+  };
+}
+
+export function buildEdgePullQueue(db: WarehouseDb, markets: readonly EdgeMarket[], today: string): EdgePullQueueResponse {
+  const latest = readEdgePullLatest(db);
+  return {
+    items: PULL_KIND_ORDER.map((kind) => buildEdgePullItem(kind, markets, latest, today)),
+    automatedCoverage: { truck: automatedTruckStates(markets) },
+    today,
+  };
+}
