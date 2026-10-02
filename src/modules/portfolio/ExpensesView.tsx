@@ -23,11 +23,11 @@ import {
   MixedBasisError,
   sameMonthLastYear,
   topMovers,
-  trailingAverage,
   varianceVsTrailing,
   type ExpenseMonthTotal,
 } from '@analytics/expense-trends';
 import {
+  completeMonthTotals,
   heatmapCells,
   heatmapColLabels,
   monthLabel,
@@ -236,11 +236,24 @@ export function ExpensesView() {
   const series = port.months;
   const byMonth = new Map(series.map((s) => [s.month, s]));
   const latestRow = byMonth.get(latest)!;
-  const prevRow = byMonth.get(addMonths(latest, -1));
-  const yoyRow = sameMonthLastYear(series, latest);
-  const t12 = trailingAverage(series, addMonths(latest, 1), WINDOW);
-  const mom = pctChange(latestRow.total, prevRow?.total);
-  const yoy = pctChange(latestRow.total, yoyRow?.total);
+  // Comparisons are like-for-like: only the entities contributing at `latest`, and only months in which
+  // EVERY one of them has data. A missing comparison month yields null (rendered as an em dash).
+  const kpiSet = scopeIds.filter((id) => !unavailable.includes(id) && points.some((p) => p.propertyId === id && p.month === latest));
+  const prevMonth = addMonths(latest, -1);
+  const yoyMonth = addMonths(latest, -12);
+  const t12Months = monthRange(addMonths(latest, -(WINDOW - 1)), latest);
+  const like = completeMonthTotals(points, kpiSet, [...new Set([prevMonth, yoyMonth, ...t12Months])]);
+  const latestTotal = like.get(latest) ?? latestRow.total;
+  const prevTotal = like.get(prevMonth);
+  const yoyTotal = like.get(yoyMonth);
+  const t12 = t12Months.every((m) => like.has(m)) ? t12Months.reduce((a, m) => a + like.get(m)!, 0) / WINDOW : null;
+  const mom = pctChange(latestTotal, prevTotal);
+  const yoy = pctChange(latestTotal, yoyTotal);
+  const NEEDS_SAME = 'needs the same entities for comparison';
+  const momNote = prevTotal !== undefined ? `vs ${monthLabel(prevMonth)} · higher is more spend` : byMonth.has(prevMonth) ? NEEDS_SAME : 'no prior month';
+  const yoyNote = yoyTotal !== undefined ? `vs ${monthLabel(yoyMonth)}` : byMonth.has(yoyMonth) ? NEEDS_SAME : 'no same month last year';
+  const t12Note =
+    t12 !== null ? `mean of 12 months to ${monthLabel(latest)}` : t12Months.every((m) => byMonth.has(m)) ? NEEDS_SAME : 'needs 12 consecutive months';
 
   const windowMonths = monthRange(addMonths(latest, -(WINDOW - 1)), latest);
   const inWindow = new Set(windowMonths);
@@ -314,20 +327,20 @@ export function ExpensesView() {
 
       <div data-testid="kpi-grid" className={kpiGrid}>
         <div className="flex flex-col gap-1">
-          <KpiStat label="Latest opex" value={latestRow.total} format={fmtUsdCompact} />
+          <KpiStat label="Latest opex" value={latestTotal} format={fmtUsdCompact} />
           <Caption>{latestLabel} · {isAll ? (partial ? 'loaded entities only' : 'all loaded entities') : scopeName}</Caption>
         </div>
         <div className="flex flex-col gap-1">
           <KpiStat label="MoM change" value={mom === null ? null : mom * 100} format={fmtPctTile} />
-          <Caption>{prevRow ? `vs ${monthLabel(addMonths(latest, -1))} · higher is more spend` : 'no prior month'}</Caption>
+          <Caption>{momNote}</Caption>
         </div>
         <div className="flex flex-col gap-1">
           <KpiStat label="YoY (same month)" value={yoy === null ? null : yoy * 100} format={fmtPctTile} />
-          <Caption>{yoyRow ? `vs ${monthLabel(addMonths(latest, -12))}` : 'no same month last year'}</Caption>
+          <Caption>{yoyNote}</Caption>
         </div>
         <div className="flex flex-col gap-1">
           <KpiStat label="Trailing-12 avg" value={t12} format={fmtUsdCompact} />
-          <Caption>{t12 === null ? 'needs 12 consecutive months' : `mean of 12 months to ${latestLabel}`}</Caption>
+          <Caption>{t12Note}</Caption>
         </div>
       </div>
       {feedLast !== null && feedLast > latest && (

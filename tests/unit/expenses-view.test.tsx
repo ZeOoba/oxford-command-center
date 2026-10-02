@@ -210,8 +210,9 @@ describe('ExpensesView KPI strip', () => {
     renderView();
     expect(within(tile('Latest opex')).getByText('$410')).toBeTruthy(); // 360 + 40 + 10
     expect(within(tile('MoM change')).getByText('+13.9%')).toBeTruthy(); // 50 / 360
-    expect(within(tile('YoY (same month)')).getByText('+17.1%')).toBeTruthy(); // 60 / 350
-    expect(within(tile('Trailing-12 avg')).getByText('$357')).toBeTruthy(); // 4280 / 12
+    // c (accrual) only has Jul-Sep: no like-for-like YoY or trailing-12 for the {a, b, c} set.
+    expect(within(tile('YoY (same month)')).getByText('—')).toBeTruthy();
+    expect(within(tile('Trailing-12 avg')).getByText('—')).toBeTruthy();
   });
 
   it('missing comparatives render an em dash, never 0', () => {
@@ -231,8 +232,8 @@ describe('ExpensesView KPI strip', () => {
 describe('ExpensesView KPI captions', () => {
   it('captions live beneath the KpiStat cards, never inside a card or a .truncate element', () => {
     renderView();
-    for (const re of [/^Sep '26 ·/, /vs Aug '26/, /vs Sep '25/, /mean of 12 months to Sep '26/]) {
-      outsideCards(within(screen.getByTestId('kpi-grid')).getByText(re));
+    for (const re of [/^Sep '26 ·/, /vs Aug '26/, /needs the same entities for comparison/]) {
+      for (const el of within(screen.getByTestId('kpi-grid')).getAllByText(re)) outsideCards(el);
     }
   });
 
@@ -459,5 +460,55 @@ describe('ExpensesView movers and ordering robustness', () => {
     renderView();
     expect(screen.getAllByTestId('spark-card').map((c) => c.getAttribute('data-property'))).toEqual(['a', 'b', 'c', 'd']);
     expect(attr('heatmap', 'data-rows')).toEqual(['Alpha Commons', 'Beta Park', 'Gamma Yard']);
+  });
+});
+
+describe('ExpensesView like-for-like KPI comparisons', () => {
+  const span = (from: string, to: string) => {
+    const out: string[] = [];
+    let [y, m] = from.split('-').map(Number) as [number, number];
+    for (;;) {
+      const k = `${y}-${String(m).padStart(2, '0')}`;
+      out.push(k);
+      if (k === to) return out;
+      m += 1;
+      if (m === 13) { m = 1; y += 1; }
+    }
+  };
+  const feedOf = (pts: ExpenseMonthPoint[]): ExpensesMonthlyResponse => ({ points: pts, coverage: { propertiesLoaded: 2, propertiesExpected: 2, firstMonth: '2024-09', lastMonth: LATEST } });
+  // A: 10,000/mo, 12,000 in 2026-09.
+  const aPts = () => span('2024-09', LATEST).map((m) => pt('a', m, 'Taxes', m === LATEST ? 12000 : 10000));
+  const bFrom = (from: string, skip: string[] = []) => span(from, LATEST).filter((m) => !skip.includes(m)).map((m) => pt('b', m, 'Taxes', 5000));
+
+  it('entity B entering only in the latest month: MoM, YoY and T12 are em dashes', () => {
+    setData(feedOf([...aPts(), ...bFrom(LATEST)]));
+    renderView();
+    expect(within(tile('Latest opex')).getByText('$17K')).toBeTruthy();
+    for (const label of ['MoM change', 'YoY (same month)', 'Trailing-12 avg']) expect(within(tile(label)).getByText('—')).toBeTruthy();
+    expect(screen.getAllByText(/needs the same entities for comparison/).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('with B present from 2024-09 the comparisons are real', () => {
+    setData(feedOf([...aPts(), ...bFrom('2024-09')]));
+    renderView();
+    expect(within(tile('MoM change')).getByText('+13.3%')).toBeTruthy(); // 17,000 vs 15,000
+    expect(within(tile('YoY (same month)')).getByText('+13.3%')).toBeTruthy();
+    expect(within(tile('Trailing-12 avg')).getByText('$15K')).toBeTruthy(); // (11 x 15,000 + 17,000) / 12 = 15,167
+  });
+
+  it('a one-month hole in B makes MoM across the hole and T12 em dashes but leaves YoY', () => {
+    setData(feedOf([...aPts(), ...bFrom('2024-09', ['2026-08'])]));
+    renderView();
+    expect(within(tile('MoM change')).getByText('—')).toBeTruthy();
+    expect(within(tile('Trailing-12 avg')).getByText('—')).toBeTruthy();
+    expect(within(tile('YoY (same month)')).getByText('+13.3%')).toBeTruthy();
+  });
+
+  it('a single entity is unaffected by the other entity entering late', () => {
+    setData(feedOf([...aPts(), ...bFrom(LATEST)]));
+    renderView();
+    fireEvent.change(screen.getByLabelText('Scope'), { target: { value: 'a' } });
+    expect(within(tile('MoM change')).getByText('+20.0%')).toBeTruthy(); // 12,000 vs 10,000
+    expect(within(tile('YoY (same month)')).getByText('+20.0%')).toBeTruthy();
   });
 });

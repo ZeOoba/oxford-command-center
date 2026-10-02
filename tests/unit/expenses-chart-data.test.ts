@@ -3,6 +3,7 @@ import type { ExpenseMonthPoint } from '@contracts/expenses-monthly';
 import { monthRange } from '../../src/analytics/portfolio-trends';
 import { type ExpenseMover, type ExpenseMonthTotal } from '../../src/analytics/expense-trends';
 import { EXPENSES_MONTHLY_KEY } from '../../src/modules/portfolio/expenses-hooks';
+import { completeMonthTotals } from '../../src/modules/portfolio/expenses-chart-data';
 import {
   heatmapCells,
   heatmapColLabels,
@@ -246,5 +247,14 @@ describe('moverLines', () => {
   it('falls back to the property id when the name is unknown, and preserves order', () => {
     const out = moverLines([mk({ propertyId: 'zzz' }), mk({ propertyId: 'p1', delta: 5, deltaPct: 0.05 })], { p1: 'Rarig' });
     expect(out).toEqual(['Utilities at zzz +$60 (+40.0%) vs trailing 12 mo', 'Utilities at Rarig +$5 (+5.0%) vs trailing 12 mo']);
+  });
+});
+
+describe('completeMonthTotals', () => {
+  const p = (propertyId: string, month: string, amount: number): ExpenseMonthPoint => ({ propertyId, month, category: 'Taxes', amount, basis: 'cash', sourceSystem: 'quickbooks' });
+  it('sums only months in which every id has data', () => {
+    const pts = [p('a', '2026-08', 10), p('a', '2026-09', 10), p('b', '2026-09', 5), p('c', '2026-09', 99)];
+    const m = completeMonthTotals(pts, ['a', 'b'], ['2026-08', '2026-09', '2026-10']);
+    expect([...m.entries()]).toEqual([['2026-09', 15]]);
   });
 });

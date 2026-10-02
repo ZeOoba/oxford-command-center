@@ -144,3 +144,25 @@ export function moverLines(movers: ExpenseMover[], propertyNames: Record<string,
     return `${m.category} at ${name} ${money}${pct} vs trailing 12 mo`;
   });
 }
+
+/**
+ * Like-for-like monthly totals: for each of `months`, the sum over `ids` — but ONLY when EVERY id has at
+ * least one point in that month. Months where any entity is missing are absent from the result, so a
+ * comparison never mixes different entity sets.
+ */
+export function completeMonthTotals(points: ExpenseMonthPoint[], ids: readonly string[], months: readonly MonthKey[]): Map<MonthKey, number> {
+  const want = new Set(ids);
+  const wanted = new Set(months);
+  const sums = new Map<MonthKey, number>();
+  const present = new Map<MonthKey, Set<string>>();
+  for (const p of points) {
+    if (!want.has(p.propertyId) || !wanted.has(p.month)) continue;
+    sums.set(p.month, (sums.get(p.month) ?? 0) + p.amount);
+    let s = present.get(p.month);
+    if (!s) present.set(p.month, (s = new Set()));
+    s.add(p.propertyId);
+  }
+  const out = new Map<MonthKey, number>();
+  for (const [m, total] of sums) if ((present.get(m)?.size ?? 0) === want.size) out.set(m, total);
+  return out;
+}
