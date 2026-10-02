@@ -28,7 +28,8 @@ import {
 import { BrainReport } from '../../src/contracts/brain-report';
 import { LeaseRunRollupResponse, LeaseRunProjectionEnvelope } from '../../src/contracts/lease-run';
 import { WAREHOUSE_MIRROR_SCHEMA_VERSION } from '../../src/lib/warehouse-mirror';
-import { buildWarehouseEnvelope, inProcessResolver } from '../../scripts/bake-warehouse';
+import { TrendsHistoryResponseSchema } from '../../src/contracts/trends';
+import { buildWarehouseEnvelope, inProcessResolver, warehouseEndpointPlan } from '../../scripts/bake-warehouse';
 
 // The bake plans /lease-market/positioning, whose route falls back to the live brain singleton
 // (inProcessResolver injects no getSnapshot). This suite never refreshes it, so the real one always
@@ -148,6 +149,37 @@ describe('Fat Mirror bake — warehouse.json shape matches the server endpoints'
     expect(env.endpoints['/api/warehouse/calibration/report']).toBeDefined();
     // The failed brain endpoint is simply omitted (a 500 is not required), not a thrown bake.
     expect(env.endpoints['/api/warehouse/brain/report']).toBeUndefined();
+  });
+
+  it('Portfolio Trends Wave 2: plans and bakes /analytics/trends/history (fixed path, parses with the contract)', () => {
+    expect(warehouseEndpointPlan([], [])).toContain('/analytics/trends/history');
+    const key = '/api/warehouse/analytics/trends/history';
+    expect(endpoints[key], `missing baked endpoint ${key}`).toBeDefined();
+    expect(() => TrendsHistoryResponseSchema.parse(endpoints[key])).not.toThrow();
+    // Empty points is the valid fresh-warehouse shape; a populated point parses too.
+    expect(() => TrendsHistoryResponseSchema.parse({ points: [] })).not.toThrow();
+    expect(() => TrendsHistoryResponseSchema.parse({
+      points: [{
+        propertyId: RARIG, month: '2026-09', capturedThrough: '2026-09-30', totalSf: 10000, leasedSf: 9000,
+        inPlaceRent: 90000, leaseCount: 3, occPct: 0.9, frozen: false,
+      }],
+    })).not.toThrow();
+  });
+
+  it('Portfolio Trends Wave 2: a /analytics/trends/history failure is NOT required — it omits that ' +
+    'one endpoint instead of aborting the bake (new in Wave 2, empty/absent on an older warehouse)', async () => {
+    const real = inProcessResolver(db);
+    const failing: typeof real = async (routerPath) =>
+      routerPath === '/analytics/trends/history' ? { status: 503, json: null } : real(routerPath);
+
+    const env = await buildWarehouseEnvelope(failing, {
+      now: Date.parse('2026-06-15T00:00:00.000Z'),
+      warehouseSource: 'checkpoint-read',
+    });
+
+    expect(env.endpoints['/api/warehouse/noi']).toBeDefined();
+    expect(env.endpoints['/api/warehouse/analytics/metrics']).toBeDefined();
+    expect(env.endpoints['/api/warehouse/analytics/trends/history']).toBeUndefined();
   });
 
   it('FIXED 2026-08-21 (adversarial review finding): inProcessResolver dispatches to sub-routers ' +
