@@ -206,9 +206,13 @@ function fromParsed(dir: string, p: ParsedDataset, now: Date, readError: string 
 
 export async function loadEdgeDataset(dir: string, now: Date, deps: EdgeFsDeps = NODE_EDGE_FS): Promise<EdgeLoadResult> {
   const file = join(dir, 'markets.json');
-  const lastGood = cache.get(dir) ?? null;
-  const serveLastGoodOr = (fallback: EdgeLoadResult, readError: string): EdgeLoadResult =>
-    lastGood ? fromParsed(dir, lastGood, now, readError) : fallback;
+  // Looked up at the moment of failure, never captured at request start: a concurrent request may have
+  // cached a newer dataset while this one slept on a retry backoff, and serving the older copy would regress.
+  const serveLastGoodOr = (fallback: EdgeLoadResult, readError: string): EdgeLoadResult => {
+    const current = cache.get(dir);
+    return current ? fromParsed(dir, current, now, readError) : fallback;
+  };
+  const lastGood = cache.get(dir) ?? null; // memo comparison only (fast path), valid at request start
 
   // stat -> read -> stat again: the cache key and freshness mtime are the POST-read stat, and a file
   // replaced mid-read (OneDrive sync) restarts the cycle so content and (mtime, size) always pair up.
@@ -284,7 +288,8 @@ export async function loadEdgeDataset(dir: string, now: Date, deps: EdgeFsDeps =
   // An empty market list is degraded when a last-good dataset has markets; with none it is `invalid`.
   if (markets.length === 0 && rejectedMarkets.length === 0) {
     const emptyMsg = 'markets.json contains no markets';
-    if (lastGood && lastGood.markets.length > 0) return fromParsed(dir, lastGood, now, `markets.json degraded: no markets`);
+    const current = cache.get(dir);
+    if (current && current.markets.length > 0) return fromParsed(dir, current, now, `markets.json degraded: no markets`);
     return emptyResult('invalid', dir, [emptyMsg]);
   }
 

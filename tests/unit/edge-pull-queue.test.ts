@@ -197,3 +197,26 @@ describe('recordEdgePull validation and append-only guarantees', () => {
     expect(truck?.counts).toEqual({ open: 12, due: 0, current: 1 });
   });
 });
+
+describe('fix-pass 3 — B7 pull-queue gaps', () => {
+  it('blockers appear only on truck scopes, never on other kinds even when the scope key collides', () => {
+    for (const kind of ['storage', 'ios', 'mfgInvest'] as const) {
+      const item = buildEdgePullItem(kind, [], new Map(), '2026-10-02');
+      expect(item.scopes.every((s) => s.blocker === null)).toBe(true);
+    }
+    // mfgInvest shares state keys (OH, PA) with TRUCK_BLOCKERS: a leak would surface here
+    const mfg = buildEdgePullItem('mfgInvest', [], new Map(), '2026-10-02');
+    expect(mfg.scopes.find((s) => s.scopeKey === 'OH')?.blocker).toBeNull();
+    expect(mfg.scopes.find((s) => s.scopeKey === 'PA')?.blocker).toBeNull();
+  });
+
+  it('ageDays is clamped at 0 for a legacy row dated in the future (inserted directly, bypassing the API guard)', () => {
+    const db = freshDb();
+    db.prepare("INSERT INTO edge_pull_log (pull_kind, scope_key, done_on) VALUES ('truck', 'OH', '2026-10-09')").run();
+    const q = buildEdgePullQueue(db, [], '2026-10-02');
+    const oh = q.items.find((i) => i.kind === 'truck')!.scopes.find((s) => s.scopeKey === 'OH')!;
+    expect(oh.ageDays).toBe(0);
+    expect(oh.state).toBe('current');
+    expect(scopeStateFor('2026-10-09', 365, '2026-10-02')).toEqual({ state: 'current', ageDays: 0 });
+  });
+});

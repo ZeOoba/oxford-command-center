@@ -524,3 +524,163 @@ describe('gate-fix F1 — non-finite sub numbers', () => {
     expect(r.rejectedMarkets[0]!.reason).toMatch(/^subs\./);
   });
 });
+
+describe('fix-pass 3 — A1 last-good is looked up at failure time', () => {
+  it('a slow request that started against an older cache serves the NEWER cached set when it fails', async () => {
+    const dir = 'mem://a1-interleave';
+    let mtime = 1;
+    let text = FIXTURE_TEXT;
+    let failNextRead = false;
+    let releaseSleep: () => void = () => {};
+    const gate = new Promise<void>((r) => { releaseSleep = r; });
+    let sleepingResolve: () => void = () => {};
+    const sleeping = new Promise<void>((r) => { sleepingResolve = r; });
+    const deps: EdgeFsDeps = {
+      stat: () => ({ mtimeMs: mtime, size: 1000 + mtime }), // size keyed on mtime only: text swaps never look like a replace
+      readFile: () => {
+        if (failNextRead) {
+          failNextRead = false;
+          throw errno('EBUSY');
+        }
+        return text;
+      },
+      sleep: async () => {
+        sleepingResolve();
+        await gate;
+      },
+    };
+    // cache = the "09-01" dataset (4 markets)
+    const first = await loadEdgeDataset(dir, NOW, deps);
+    expect(first.marketCount).toBe(4);
+
+    // request A starts against mtime 2, blocks on EBUSY backoff
+    mtime = 2;
+    text = withBrokenMarkets(2, 1); // the "09-20" dataset: 2 good markets
+    failNextRead = true;
+    const a = loadEdgeDataset(dir, NOW, deps);
+    await sleeping;
+
+    // request B loads and caches the 09-20 dataset while A sleeps
+    const b = await loadEdgeDataset(dir, NOW, deps);
+    expect(b.marketCount).toBe(2);
+
+    // the file turns invalid, A wakes and fails
+    text = '{ not json';
+    releaseSleep();
+    const r = await a;
+    expect(r.availability).toBe('ok');
+    expect(r.marketCount).toBe(2); // the newer cached set, not the 4-market one A started with
+    expect(r.readError).toBe('markets.json is not valid JSON');
+  });
+});
+
+describe('fix-pass 3 — B2/B3 loader invariants', () => {
+  it('B2: post-read stat differing from pre-read restarts the cycle even when the read succeeded', async () => {
+    const M1 = Date.parse('2026-09-01T12:00:00Z');
+    const M2 = Date.parse('2026-09-30T12:00:00Z');
+    const f1 = FIXTURE_TEXT;
+    const f2 = withBrokenMarkets(2, 0);
+    let cur = { text: f1, mtimeMs: M1 };
+    let statCalls = 0;
+    let reads = 0;
+    const deps: EdgeFsDeps = {
+      // call 1 = pre-stat (f1), call 2 = post-stat (already f2's), then stable f2
+      stat: () => {
+        statCalls += 1;
+        if (statCalls === 2) cur = { text: f2, mtimeMs: M2 };
+        return { mtimeMs: cur.mtimeMs, size: cur.text.length };
+      },
+      readFile: () => {
+        reads += 1;
+        return cur.text; // first read returns f1 text successfully
+      },
+      sleep: async () => {},
+    };
+    const r = await loadEdgeDataset('mem://b2-recheck', NOW, deps);
+    expect(reads).toBe(2); // the cycle restarted
+    expect(r.marketCount).toBe(2); // f2 content, not f1's 4 markets
+    expect(r.freshness?.fileMtime).toBe(new Date(M2).toISOString());
+  });
+
+  it('B3: a degraded load WITH survivors never overwrites last-good, even on a same-mtime reload', async () => {
+    const dir = 'mem://b3-survivors';
+    let mtime = 1;
+    let text = FIXTURE_TEXT;
+    const { deps } = fakeFs({ text: () => text, stat: () => ({ mtimeMs: mtime, size: text.length }) });
+    const first = await loadEdgeDataset(dir, NOW, deps);
+    expect(first.marketCount).toBe(4);
+    mtime = 2;
+    text = withBrokenMarkets(2, 3); // 60% rejected, 2 survivors
+    const later = new Date('2026-10-02T13:00:00Z');
+    const r = await loadEdgeDataset(dir, later, deps);
+    expect(r.marketCount).toBe(4);
+    expect(r.readError).toMatch(/^markets\.json degraded: 3 of 5/);
+    // same mtime/size reload: must still be degraded, still the original last-good
+    const again = await loadEdgeDataset(dir, later, deps);
+    expect(again.readError).not.toBeNull();
+    expect(again.marketCount).toBe(4);
+    expect(again.lastGoodLoadedAt).toBe(NOW.toISOString());
+  });
+});
+
+describe('fix-pass 3 — B7 loader gaps', () => {
+  it.each(['EPERM', 'EACCES'])('%s on read is retried like EBUSY', async (code) => {
+    let n = 0;
+    const { deps, calls } = fakeFs({
+      text: () => {
+        n += 1;
+        if (n === 1) throw errno(code);
+        return FIXTURE_TEXT;
+      },
+    });
+    const r = await loadEdgeDataset(`mem://retry-${code}`, NOW, deps);
+    expect(r.availability).toBe('ok');
+    expect(calls.sleeps).toEqual([250]);
+  });
+
+  it('memo key includes size: same mtime but different size re-reads', async () => {
+    let size = 100;
+    const { deps, calls } = fakeFs({ text: () => FIXTURE_TEXT, stat: () => ({ mtimeMs: 5, size }) });
+    await loadEdgeDataset('mem://memo-size', NOW, deps);
+    await loadEdgeDataset('mem://memo-size', NOW, deps);
+    expect(calls.read).toBe(1);
+    size = 101;
+    await loadEdgeDataset('mem://memo-size', NOW, deps);
+    expect(calls.read).toBe(2);
+  });
+
+  describe('strict meta', () => {
+    const mutate = (fn: (f: { meta: Record<string, unknown> }) => void): string => {
+      const f = JSON.parse(FIXTURE_TEXT) as { meta: Record<string, unknown> };
+      fn(f);
+      return JSON.stringify(f);
+    };
+
+    it('an unknown extra key in meta → invalid with a meta. issue', async () => {
+      const { deps } = fakeFs({ text: () => mutate((f) => { f.meta.surprise = 1; }) });
+      const r = await loadEdgeDataset('mem://strict-meta', NOW, deps);
+      expect(r.availability).toBe('invalid');
+      expect(r.issues[0]).toMatch(/^meta\./);
+    });
+
+    it('an unknown extra key in a fieldMeta entry → invalid with a meta. issue', async () => {
+      const { deps } = fakeFs({
+        text: () =>
+          mutate((f) => {
+            const fm = f.meta.fieldMeta as Record<string, Record<string, unknown>>;
+            fm.vac!.surprise = true;
+          }),
+      });
+      const r = await loadEdgeDataset('mem://strict-fieldmeta', NOW, deps);
+      expect(r.availability).toBe('invalid');
+      expect(r.issues[0]).toMatch(/^meta\./);
+    });
+
+    it('a malformed pulled string → invalid with a meta. issue', async () => {
+      const { deps } = fakeFs({ text: () => mutate((f) => { f.meta.pulled = 'July 14th'; }) });
+      const r = await loadEdgeDataset('mem://bad-pulled', NOW, deps);
+      expect(r.availability).toBe('invalid');
+      expect(r.issues.join(' ')).toMatch(/^meta\.pulled/);
+    });
+  });
+});

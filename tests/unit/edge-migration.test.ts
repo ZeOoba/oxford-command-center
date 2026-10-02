@@ -1,6 +1,8 @@
 // @vitest-environment node
 //
 // tests/unit/edge-migration.test.ts — migration 034 (spec §7). In-memory DB; never touches finance.sqlite.
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
 import { runMigrations } from '../../server/warehouse/migrate';
@@ -128,5 +130,54 @@ describe('migration 034 — edge_pull_log', () => {
     const before = (db.prepare('SELECT COUNT(*) AS n FROM _migrations').get() as { n: number }).n;
     runMigrations(db);
     expect((db.prepare('SELECT COUNT(*) AS n FROM _migrations').get() as { n: number }).n).toBe(before);
+  });
+});
+
+describe('migration 034 — void-only trigger covers every column (fix-pass 3 B4)', () => {
+  const MIGRATION_SQL = readFileSync(
+    join(__dirname, '..', '..', 'server', 'warehouse', 'migrations', '034_edge_pull_log.sql'), 'utf8',
+  );
+  const VOID = "voided_at = '2026-10-02T00:00:00Z'";
+  // For each protected column: a change to it that rides along with a legitimate void must abort.
+  const COLUMNS: Array<[string, string]> = [
+    ['id', 'id = id + 100'],
+    ['pull_kind', "pull_kind = 'ios'"],
+    ['scope_key', "scope_key = 'cincinnati'"],
+    ['done_on', "done_on = '2026-09-29'"],
+    ['note', "note = 'edited'"],
+    ['recorded_by', "recorded_by = 'someone-else'"],
+    ['created_at', "created_at = '2001-01-01T00:00:00Z'"],
+  ];
+
+  const seedLive = (db: Database.Database): number =>
+    Number(insert(db, 'storage', 'columbus', '2026-09-30', 'n').lastInsertRowid);
+
+  it.each(COLUMNS)('on a LIVE row, voiding AND changing %s aborts', (_c, assign) => {
+    const db = makeDb();
+    const id = seedLive(db);
+    expect(() => db.prepare(`UPDATE edge_pull_log SET ${VOID}, ${assign} WHERE id = ?`).run(id)).toThrow(/append-only/);
+    const row = db.prepare('SELECT voided_at FROM edge_pull_log').get() as { voided_at: string | null };
+    expect(row.voided_at).toBeNull(); // nothing leaked through
+  });
+
+  it('a plain void of a live row still works', () => {
+    const db = makeDb();
+    const id = seedLive(db);
+    db.prepare(`UPDATE edge_pull_log SET ${VOID} WHERE id = ?`).run(id);
+    expect((db.prepare('SELECT voided_at FROM edge_pull_log WHERE id = ?').get(id) as { voided_at: string | null }).voided_at).not.toBeNull();
+  });
+
+  // Negative control: the real SQL text with ONE `OR NEW.x IS NOT OLD.x` clause removed (an in-memory
+  // scratch copy; the real migration file is never touched) must NOT abort, proving the table-driven
+  // test above would catch that mutation for that column.
+  it.each(COLUMNS)('negative control: dropping the %s clause lets the same UPDATE through', (col, assign) => {
+    const clause = `OR NEW.${col} IS NOT OLD.${col}`;
+    expect(MIGRATION_SQL).toContain(clause);
+    const mutated = MIGRATION_SQL.replace(clause, 'OR 0');
+    expect(mutated).not.toBe(MIGRATION_SQL);
+    const db = new Database(':memory:');
+    db.exec(mutated);
+    const id = Number(insert(db, 'storage', 'columbus', '2026-09-30', 'n').lastInsertRowid);
+    expect(() => db.prepare(`UPDATE edge_pull_log SET ${VOID}, ${assign} WHERE id = ?`).run(id)).not.toThrow();
   });
 });
