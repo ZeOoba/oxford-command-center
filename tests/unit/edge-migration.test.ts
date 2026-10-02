@@ -70,6 +70,59 @@ describe('migration 034 — edge_pull_log', () => {
     expect(() => insert(db, 'ios', 'columbus', '2026-09-30')).not.toThrow();
   });
 
+  describe('append-only guards (gate-fix P1)', () => {
+    const seed = () => {
+      const db = makeDb();
+      const id = Number(insert(db, 'storage', 'columbus', '2026-09-30', 'n').lastInsertRowid);
+      return { db, id };
+    };
+    const voidSql = "UPDATE edge_pull_log SET voided_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?";
+
+    it.each([
+      ['done_on', "UPDATE edge_pull_log SET done_on = '2026-09-29' WHERE id = ?"],
+      ['note', "UPDATE edge_pull_log SET note = 'edited' WHERE id = ?"],
+      ['pull_kind', "UPDATE edge_pull_log SET pull_kind = 'ios' WHERE id = ?"],
+      ['scope_key', "UPDATE edge_pull_log SET scope_key = 'cincinnati' WHERE id = ?"],
+      ['id', 'UPDATE edge_pull_log SET id = id + 100 WHERE id = ?'],
+    ])('UPDATE of %s aborts', (_c, sql) => {
+      const { db, id } = seed();
+      expect(() => db.prepare(sql).run(id)).toThrow(/append-only/);
+    });
+
+    it('un-void and re-void abort; void plus another column aborts', () => {
+      const { db, id } = seed();
+      db.prepare(voidSql).run(id);
+      expect(() => db.prepare('UPDATE edge_pull_log SET voided_at = NULL WHERE id = ?').run(id)).toThrow(/append-only/);
+      expect(() => db.prepare(voidSql).run(id)).toThrow(/append-only/);
+      const { db: db2, id: id2 } = seed();
+      expect(() =>
+        db2.prepare("UPDATE edge_pull_log SET voided_at = '2026-10-02T00:00:00Z', note = 'x' WHERE id = ?").run(id2),
+      ).toThrow(/append-only/);
+    });
+
+    it('INSERT OR REPLACE over an existing id aborts and the original row survives', () => {
+      const { db, id } = seed();
+      expect(() =>
+        db
+          .prepare("INSERT OR REPLACE INTO edge_pull_log (id, pull_kind, scope_key, done_on) VALUES (?, 'ios', 'columbus', '2026-09-01')")
+          .run(id),
+      ).toThrow(/REPLACE is not permitted/);
+      const row = db.prepare('SELECT pull_kind, note FROM edge_pull_log WHERE id = ?').get(id) as { pull_kind: string; note: string };
+      expect(row).toEqual({ pull_kind: 'storage', note: 'n' });
+    });
+
+    it('plain INSERT, explicit fresh-id INSERT, and the one-way void still work; DELETE still aborts', () => {
+      const { db, id } = seed();
+      expect(() => insert(db, 'ios', 'columbus', '2026-09-30')).not.toThrow();
+      expect(() =>
+        db.prepare("INSERT INTO edge_pull_log (id, pull_kind, scope_key, done_on) VALUES (9999, 'truck', 'oh', '2026-09-30')").run(),
+      ).not.toThrow();
+      db.prepare(voidSql).run(id);
+      expect((db.prepare('SELECT voided_at FROM edge_pull_log WHERE id = ?').get(id) as { voided_at: string | null }).voided_at).not.toBeNull();
+      expect(() => db.prepare('DELETE FROM edge_pull_log WHERE id = ?').run(id)).toThrow(/append-only/);
+    });
+  });
+
   it('is idempotent — a second run does not re-apply', () => {
     const db = makeDb();
     const before = (db.prepare('SELECT COUNT(*) AS n FROM _migrations').get() as { n: number }).n;

@@ -30,3 +30,29 @@ BEFORE DELETE ON edge_pull_log
 BEGIN
   SELECT RAISE(ABORT, 'edge_pull_log is append-only: void with voided_at instead of deleting');
 END;
+
+-- Rows are immutable except for ONE one-way change: voided_at NULL -> timestamp. Any other UPDATE
+-- (rewriting history, un-voiding, re-voiding, renumbering) aborts. NULL-safe via IS NOT.
+CREATE TRIGGER IF NOT EXISTS trg_edge_pull_log_void_only
+BEFORE UPDATE ON edge_pull_log
+WHEN OLD.voided_at IS NOT NULL
+  OR NEW.voided_at IS NULL
+  OR NEW.id IS NOT OLD.id
+  OR NEW.pull_kind IS NOT OLD.pull_kind
+  OR NEW.scope_key IS NOT OLD.scope_key
+  OR NEW.done_on IS NOT OLD.done_on
+  OR NEW.note IS NOT OLD.note
+  OR NEW.recorded_by IS NOT OLD.recorded_by
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN
+  SELECT RAISE(ABORT, 'edge_pull_log is append-only: only a one-way void (voided_at) is permitted');
+END;
+
+-- INSERT OR REPLACE deletes the old row without firing the DELETE trigger (recursive_triggers is
+-- off), so an insert that reuses an existing id is refused explicitly.
+CREATE TRIGGER IF NOT EXISTS trg_edge_pull_log_no_replace
+BEFORE INSERT ON edge_pull_log
+WHEN NEW.id IS NOT NULL AND EXISTS (SELECT 1 FROM edge_pull_log WHERE id = NEW.id)
+BEGIN
+  SELECT RAISE(ABORT, 'edge_pull_log is append-only: REPLACE is not permitted');
+END;
