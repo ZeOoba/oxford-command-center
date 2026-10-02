@@ -49,6 +49,7 @@ export function useEdgePullQueue() {
 
 async function readPullItem(res: Response): Promise<EdgePullItem> {
   const payload = (await res.json().catch(() => ({}))) as unknown;
+  if (res.status >= 500) throw new Error('The server could not complete that request. Try again shortly.');
   if (!res.ok) {
     const err = (payload as { error?: unknown }).error;
     throw new Error(typeof err === 'string' ? err : `Edge pull update failed (${res.status})`);

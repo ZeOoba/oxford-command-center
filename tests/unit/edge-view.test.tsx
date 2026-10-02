@@ -32,7 +32,8 @@ const mkQueue = (opens: number[]): EdgePullQueueResponse => ({
   })),
 });
 const never = () => new Promise<Response>(() => {});
-const kpi = (label: string) => screen.getByText(label).parentElement!.parentElement!;
+/** The KPI tile (a Card root) that contains the label; independent of how deep the label is nested. */
+const kpi = (label: string) => screen.getByText(label).closest<HTMLElement>('.overflow-hidden')!;
 const empty = (availability: EdgeMarketsResponse['availability'], issues: string[] = []) =>
   mkMarketsResponse([], { availability, issues, freshness: null, coverage: [], marketCount: 0, dir: 'C:/edge/output' });
 
@@ -69,10 +70,12 @@ describe('EdgeView', () => {
 
   it('stale but not by age (clock skew / unreadable date) → reason line, no self-contradicting age claim', () => {
     const data = mkMarketsResponse(fourMarkets());
-    renderView({ ...data, freshness: { metaPulled: '2026-10-09', fileMtime: 'unknown', asOf: '2026-10-02', ageDays: 0, staleAfterDays: 7, stale: true } });
+    // Realistic edgeFreshness output for an unreadable mtime: asOf falls back to the valid pulled date.
+    renderView({ ...data, freshness: { metaPulled: '2026-09-30', fileMtime: 'unknown', asOf: '2026-09-30', ageDays: 2, staleAfterDays: 7, stale: true } });
     expect(screen.getByText('STALE')).toBeTruthy();
+    expect(screen.getByText('data pulled 2026-09-30')).toBeTruthy();
     expect(screen.getByText(/Date could not be verified \(file timestamp in the future or unreadable\) — treated as stale\./)).toBeTruthy();
-    expect(screen.queryByText(/0 days old/)).toBeNull();
+    expect(screen.queryByText(/2 days old/)).toBeNull();
   });
 
   it('readError with no freshness still shows the readError line', () => {

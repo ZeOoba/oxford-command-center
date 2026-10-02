@@ -33,6 +33,8 @@ function renderQueue({ live, seed = true }: { live: boolean; seed?: boolean }) {
   return render(<QueryClientProvider client={qc}><EdgePullQueue /></QueryClientProvider>);
 }
 
+/** Mutation POSTs only (the success path also refetches the queue with a GET). */
+const posts = () => vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'POST');
 const itemJson = () => new Response(JSON.stringify(QUEUE.items[0]), { status: 200, headers: { 'content-type': 'application/json' } });
 
 beforeEach(() => {
@@ -157,14 +159,83 @@ describe('EdgePullQueue', () => {
 
   it('renders an alert when the queue query fails (non-503) and an empty note for no items', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'boom' }), { status: 500, headers: { 'content-type': 'application/json' } })));
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     renderQueue({ live: false, seed: false });
-    expect((await screen.findByRole('alert', {}, { timeout: 5000 })).textContent).toContain('Unable to load the pull queue');
+    await vi.advanceTimersByTimeAsync(1500); // the hook retries a real failure once (default 1 s delay)
+    const alert = await screen.findByRole('alert');
+    vi.useRealTimers();
+    expect(alert.textContent).toBe('Unable to load the pull queue. Try again shortly.');
+    expect(alert.textContent).not.toContain('Could not save');
+    expect(alert.textContent).not.toContain('boom');
     cleanup();
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity, gcTime: Infinity } } });
     qc.setQueryData(EDGE_KEYS.pullQueue, { today: '2026-10-02', automatedCoverage: { truck: [] }, items: [] });
     qc.setQueryData(['warehouse', 'live-probe'], false);
     render(<QueryClientProvider client={qc}><EdgePullQueue /></QueryClientProvider>);
     expect(screen.getByText('No manual pulls are queued.')).toBeTruthy();
+  });
+
+  it('a future date shows an inline hint and keeps Save disabled', () => {
+    renderQueue({ live: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Columbus, OH done' }));
+    expect(screen.queryByText('The done date cannot be in the future.')).toBeNull();
+    fireEvent.change(screen.getByLabelText('Done on'), { target: { value: '2999-01-01' } });
+    expect(screen.getByText('The done date cannot be in the future.')).toBeTruthy();
+    expect((screen.getByRole('button', { name: 'Save' }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('Cancel clears a mutation error and closes the form', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'doneOn cannot be in the future' }), { status: 400, headers: { 'content-type': 'application/json' } })));
+    renderQueue({ live: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Columbus, OH done' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByRole('alert');
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    expect(screen.queryByLabelText('Done on')).toBeNull();
+  });
+
+  it('a 5xx body string is replaced by a generic message (no server internals rendered)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ error: 'disk I/O error at /data/finance.sqlite' }), { status: 500, headers: { 'content-type': 'application/json' } })));
+    renderQueue({ live: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Columbus, OH done' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toBe('The server could not complete that request. Try again shortly.');
+    expect(alert.textContent).not.toMatch(/disk|sqlite/i);
+  });
+
+  it('Enter-key submit (form submit event) posts once', async () => {
+    renderQueue({ live: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Columbus, OH done' }));
+    fireEvent.change(screen.getByLabelText('Done on'), { target: { value: '2026-09-30' } });
+    fireEvent.submit(screen.getByLabelText('Done on').closest('form')!);
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    expect(JSON.parse(String(posts()[0]![1]?.body))).toMatchObject({ scopeKey: 'columbus', doneOn: '2026-09-30' });
+  });
+
+  it('a second submit while the first is pending does not post again', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+    renderQueue({ live: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Columbus, OH done' }));
+    const form = screen.getByLabelText('Done on').closest('form')!;
+    fireEvent.submit(form);
+    await waitFor(() => expect(posts()).toHaveLength(1));
+    fireEvent.submit(form);
+    fireEvent.submit(form);
+    expect(posts()).toHaveLength(1);
+  });
+
+  it('the form resets after success: reopening starts from the default date and an empty note', async () => {
+    renderQueue({ live: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Columbus, OH done' }));
+    fireEvent.change(screen.getByLabelText('Done on'), { target: { value: '2026-09-01' } });
+    fireEvent.change(screen.getByLabelText('Note'), { target: { value: 'first note' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(screen.queryByLabelText('Done on')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: 'Mark Columbus, OH done' }));
+    expect((screen.getByLabelText('Done on') as HTMLInputElement).value).toBe(localIsoToday());
+    expect((screen.getByLabelText('Note') as HTMLTextAreaElement).value).toBe('');
   });
 
   it('shows a busy loading state before the queue arrives', () => {

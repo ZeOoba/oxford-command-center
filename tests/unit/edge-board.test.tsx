@@ -104,6 +104,7 @@ describe('EdgeRankingBoard', () => {
     expect(btn.type).toBe('button');
     expect(btn.tabIndex).toBe(0);
     expect(btn.getAttribute('aria-expanded')).toBe('false');
+    expect(btn.hasAttribute('aria-controls')).toBe(false);
     btn.focus();
     expect(document.activeElement).toBe(btn);
     fireEvent.click(btn);
@@ -158,12 +159,48 @@ describe('EdgeRankingBoard', () => {
     expect(screen.getByRole('button', { name: 'Show details for Cedar Rapids, IA' }).getAttribute('aria-expanded')).toBe('false');
   });
 
-  it('Pin buy-box is disabled unless the set is All', () => {
+  it('Pin buy-box is disabled (with an explanatory title) unless the set is All', () => {
     render(<Harness data={mkMarketsResponse(fourMarkets())} />);
     const pin = screen.getByLabelText('Pin buy-box') as HTMLInputElement;
     expect(pin.disabled).toBe(true);
+    expect(pin.title).toBe('Pinning applies only under the All set');
     fireEvent.click(screen.getByRole('radio', { name: 'All (4)' }));
     expect(pin.disabled).toBe(false);
+    expect(pin.title).toBe('');
+  });
+
+  it('pin on keeps buy-box markets above Auto; pin off lets the sort interleave them', () => {
+    // Cedar Rapids (auto) has the highest latest trades value (9.0, estimated).
+    render(<Harness data={mkMarketsResponse(fourMarkets())} />);
+    fireEvent.click(screen.getByRole('radio', { name: 'All (4)' }));
+    const names = () => bodyRows().map((r) => within(r).getAllByRole('cell')[0]!.textContent ?? '');
+    expect(names()[3]).toContain('Cedar Rapids, IA');
+    fireEvent.click(screen.getByLabelText('Pin buy-box'));
+    expect(names()[0]).toContain('Cedar Rapids, IA');
+    fireEvent.click(screen.getByLabelText('Pin buy-box'));
+    expect(names()[3]).toContain('Cedar Rapids, IA');
+  });
+
+  it('sort key and direction controls reorder the rows', () => {
+    render(<Harness data={mkMarketsResponse(fourMarkets())} />);
+    const names = () => bodyRows().map((r) => within(r).getAllByRole('cell')[0]!.textContent ?? '');
+    fireEvent.change(screen.getByLabelText('Sort board by'), { target: { value: 'name' } });
+    fireEvent.click(screen.getByRole('button', { name: /Sort direction: descending/ }));
+    expect(names()).toEqual([
+      expect.stringContaining('Columbus, OH'), expect.stringContaining('Indianapolis'), expect.stringContaining('Richmond, VA'),
+    ]);
+    fireEvent.click(screen.getByRole('button', { name: /Sort direction: ascending/ }));
+    expect(names()[0]).toContain('Richmond, VA');
+  });
+
+  it('aria-controls is present only on the expanded Details button', () => {
+    render(<Harness data={mkMarketsResponse(fourMarkets())} />);
+    const buttons = () => screen.getAllByRole('button', { name: /details for/i });
+    expect(buttons().every((b) => !b.hasAttribute('aria-controls'))).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Show details for Columbus, OH' }));
+    const withControls = buttons().filter((b) => b.hasAttribute('aria-controls'));
+    expect(withControls).toHaveLength(1);
+    expect(withControls[0]!.getAttribute('aria-label')).toBe('Show details for Columbus, OH');
   });
 
   it('sort direction button exposes its current direction', () => {

@@ -201,7 +201,7 @@ export function EdgeRankingBoard({ data, board, onBoardChange }: Props) {
             type="button"
             aria-label={`Show details for ${m.name}, ${m.state}`}
             aria-expanded={selectedId === m.id}
-            aria-controls={detailId}
+            aria-controls={selectedId === m.id ? detailId : undefined}
             onClick={(e) => { e.stopPropagation(); toggleSelected(m.id); }}
             style={DETAILS_BUTTON_STYLE}
           >
@@ -237,7 +237,13 @@ export function EdgeRankingBoard({ data, board, onBoardChange }: Props) {
       <div className="flex flex-wrap items-center gap-3 px-3 pt-3">
         <SegmentedControl aria-label="Market set" options={setOptions} value={board.set} onChange={changeSet} />
         <label className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
-          <input type="checkbox" checked={board.pinBuyBox} disabled={board.set !== 'all'} onChange={(e) => patch({ pinBuyBox: e.target.checked })} />
+          <input
+            type="checkbox"
+            checked={board.pinBuyBox}
+            disabled={board.set !== 'all'}
+            title={board.set !== 'all' ? 'Pinning applies only under the All set' : undefined}
+            onChange={(e) => patch({ pinBuyBox: e.target.checked })}
+          />
           Pin buy-box
         </label>
         <label className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--text-secondary)' }}>

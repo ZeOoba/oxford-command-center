@@ -127,6 +127,23 @@ describe('board model', () => {
     expect(ids(sortEdgeMarkets([a, b, c, d], { ...s, pinBuyBox: false, sortKey: 'name', sortDir: 'asc' }, TEST_YEARS))).toEqual(['a', 'b', 'c', 'd']);
   });
 
+  it('guide_only / null series sort LAST in both directions, never as 0 between negatives and positives', () => {
+    const neg = mkMarket('neg', 'Neg', 'OH', 'named', { trades: obs([-1, -1, -1, -1, -3]) });
+    const pos = mkMarket('pos', 'Pos', 'OH', 'named', { trades: obs([1, 1, 1, 1, 3]) });
+    const guide = mkMarket('guide', 'Guide', 'OH', 'named'); // all guide_only / null placeholder
+    const s = { ...EDGE_BOARD_DEFAULT_STATE, set: 'all' as const, pinBuyBox: false };
+    expect(ids(sortEdgeMarkets([guide, neg, pos], { ...s, sortDir: 'desc' }, TEST_YEARS))).toEqual(['pos', 'neg', 'guide']);
+    expect(ids(sortEdgeMarkets([guide, neg, pos], { ...s, sortDir: 'asc' }, TEST_YEARS))).toEqual(['neg', 'pos', 'guide']);
+  });
+
+  it('estimated / nowcast latest values participate in the sort as observed', () => {
+    const est = mkMarket('est', 'Est', 'OH', 'named', { trades: cell([1, 1, 1, 1, 8], ['actual', 'actual', 'actual', 'actual', 'estimated']) });
+    const now = mkMarket('now', 'Now', 'OH', 'named', { trades: cell([1, 1, 1, 1, 6], ['actual', 'actual', 'actual', 'actual', 'nowcast']) });
+    const act = mkMarket('act', 'Act', 'OH', 'named', { trades: obs([1, 1, 1, 1, 7]) });
+    const s = { ...EDGE_BOARD_DEFAULT_STATE, set: 'all' as const, pinBuyBox: false };
+    expect(ids(sortEdgeMarkets([now, act, est], s, TEST_YEARS))).toEqual(['est', 'act', 'now']);
+  });
+
   it('defaults to Buy-box, pinned, trades desc, no extra columns', () => {
     expect(EDGE_BOARD_DEFAULT_STATE).toEqual({ set: 'buybox', pinBuyBox: true, sortKey: 'trades', sortDir: 'desc', extraColumns: [] });
   });

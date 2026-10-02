@@ -95,8 +95,8 @@ function PullItemCard({
           </span>
         ) : (
           <span className="flex gap-2">
-            {s.links.filter((l) => isVettedLink(l.url)).map((l) => (
-              <a key={l.url} href={l.url} target="_blank" rel="noopener noreferrer" className="text-2xs" style={{ color: 'var(--text-accent)' }}>
+            {s.links.filter((l) => isVettedLink(l.url)).map((l, i) => (
+              <a key={`${l.label}-${i}`} href={l.url} target="_blank" rel="noopener noreferrer" className="text-2xs" style={{ color: 'var(--text-accent)' }}>
                 {l.label}
               </a>
             ))}
@@ -170,6 +170,11 @@ function PullItemCard({
               onChange={(e) => onDraftChange({ ...editing, note: e.target.value })}
               style={{ ...BUTTON, minWidth: '16rem' }}
             />
+            {editing.doneOn > localIsoToday() && (
+              <span id={`edge-pull-date-hint-${item.kind}`} role="alert" className="text-2xs" style={{ color: 'var(--text-neg)' }}>
+                The done date cannot be in the future.
+              </span>
+            )}
             <button type="submit" disabled={busy || editing.doneOn === '' || editing.doneOn > localIsoToday()} style={BUTTON}>Save</button>
             <button type="button" onClick={onCancel} style={BUTTON}>Cancel</button>
           </form>
@@ -208,7 +213,7 @@ export function EdgePullQueue() {
     return (
       <Card>
         <CardHeader title="Manual pull queue" />
-        <p role="alert" className="p-3" style={NOTE}>{`Unable to load the pull queue: ${safeMutationMessage(error)}`}</p>
+        <p role="alert" className="p-3" style={NOTE}>Unable to load the pull queue. Try again shortly.</p>
       </Card>
     );
   }
@@ -220,7 +225,8 @@ export function EdgePullQueue() {
     voidPull.mutate(scope.lastLogId);
   };
   const save = () => {
-    if (!draft) return;
+    // The Enter key submits the form even while Save is disabled-by-pending: guard here too.
+    if (!draft || record.isPending || voidPull.isPending) return;
     const note = draft.note.trim();
     voidPull.reset();
     record.mutate(
@@ -259,7 +265,11 @@ export function EdgePullQueue() {
           onUndo={undo}
           onDraftChange={setDraft}
           onSave={save}
-          onCancel={() => setDraft(null)}
+          onCancel={() => {
+            setDraft(null);
+            record.reset();
+            voidPull.reset();
+          }}
         />
       ))}
     </section>

@@ -127,7 +127,7 @@ export function DealDrawer({
                     <Row label="Status" value={deal.status ?? '—'} />
                   </CardBox>
 
-                  <CardBox title="Edge Market">
+                  <CardBox title="Edge Market" landmark>
                     <EdgeMarketReadout deal={deal} onNavigate={onClose} />
                   </CardBox>
 
@@ -297,12 +297,14 @@ function StageTrack({ stage }: { stage: DealStage }) {
   );
 }
 
-function CardBox({ title, children }: { title: string; children: React.ReactNode }) {
+function CardBox({ title, children, landmark = false }: { title: string; children: React.ReactNode; landmark?: boolean }) {
+  // Only cards that opt in are exposed as a labelled region; the rest keep their previous (div) markup.
+  const Tag = landmark ? 'section' : 'div';
   return (
-    <section aria-label={title} className="rounded-[var(--radius-md)] p-3" style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)' }}>
+    <Tag aria-label={landmark ? title : undefined} className="rounded-[var(--radius-md)] p-3" style={{ background: 'var(--surface-overlay)', border: '1px solid var(--border-subtle)' }}>
       <div className="mb-2 text-2xs font-semibold uppercase" style={{ letterSpacing: '0.1em', color: 'var(--text-tertiary)' }}>{title}</div>
       <div className="flex flex-col gap-0.5">{children}</div>
-    </section>
+    </Tag>
   );
 }
 

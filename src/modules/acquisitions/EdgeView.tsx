@@ -200,7 +200,6 @@ function EdgeBody({
               : queueState === 'error' ? 'queue unavailable'
                 : `across the ${EDGE_PULL_SERIES.size} manual pulls`
           }
-          accentColor={openPulls !== null && openPulls > 0 ? 'var(--color-warn)' : 'var(--color-pos)'}
         />
       </div>
       {data.rejectedMarkets.length > 0 && (
