@@ -35,12 +35,29 @@ export function heatmapColLabels(months: MonthKey[]): string[] {
   return months.map((m) => ABBR[Number(m.slice(5, 7)) - 1] ?? m.slice(5, 7));
 }
 
+/** Ids (sorted asc) among `propertyIds` whose own points carry BOTH bases. Ids with no points are not reported. */
+export function unavailablePropertyIds(points: ExpenseMonthPoint[], propertyIds: readonly string[]): string[] {
+  const ids = new Set(propertyIds);
+  const bases = new Map<string, Set<string>>();
+  for (const p of points) {
+    if (!ids.has(p.propertyId)) continue;
+    let b = bases.get(p.propertyId);
+    if (!b) bases.set(p.propertyId, (b = new Set()));
+    b.add(p.basis);
+  }
+  return [...bases.entries()]
+    .filter(([, b]) => b.size > 1)
+    .map(([id]) => id)
+    .sort();
+}
+
 /**
  * Top `n` categories by TRAILING-12 total (the 12 calendar months ending at the latest month present
  * for the supplied properties). Ties break by name asc. `Other` is NOT included; the caller appends it.
  */
 export function topCategories(points: ExpenseMonthPoint[], propertyIds: readonly string[], n = 5): string[] {
   const ids = new Set(propertyIds);
+  for (const id of unavailablePropertyIds(points, propertyIds)) ids.delete(id); // basis discipline
   const own = points.filter((p) => ids.has(p.propertyId));
   if (own.length === 0) return [];
   let latest = own[0]!.month;
@@ -82,7 +99,7 @@ export function overlayLastYear(series: ExpenseMonthTotal[], months: MonthKey[])
   const out: Array<{ label: string; value: number }> = [];
   for (const m of months) {
     const prior = sameMonthLastYear(series, m);
-    if (prior) out.push({ label: monthLabel(m), value: prior.total });
+    if (prior && Object.keys(prior.byCategory).length > 0) out.push({ label: monthLabel(m), value: prior.total });
   }
   return out;
 }
@@ -116,10 +133,14 @@ export function heatmapCells(
 export function moverLines(movers: ExpenseMover[], propertyNames: Record<string, string>): string[] {
   return movers.map((m) => {
     const name = propertyNames[m.propertyId] ?? m.propertyId;
-    const neg = m.delta < 0;
-    const money = `${neg ? MINUS : '+'}${fmtUsd(Math.abs(m.delta))}`;
-    const pct =
-      m.deltaPct === null ? '' : ` (${m.deltaPct < 0 ? MINUS : '+'}${fmtPct(Math.abs(m.deltaPct))})`;
+    // Sign the ROUNDED display value: never +$0 / -$0 / -0.0%.
+    const absUsd = fmtUsd(Math.abs(m.delta));
+    const money = absUsd === fmtUsd(0) ? absUsd : `${m.delta < 0 ? MINUS : '+'}${absUsd}`;
+    let pct = '';
+    if (m.deltaPct !== null) {
+      const absPct = fmtPct(Math.abs(m.deltaPct));
+      pct = ` (${absPct === fmtPct(0) ? absPct : `${m.deltaPct < 0 ? MINUS : '+'}${absPct}`})`;
+    }
     return `${m.category} at ${name} ${money}${pct} vs trailing 12 mo`;
   });
 }

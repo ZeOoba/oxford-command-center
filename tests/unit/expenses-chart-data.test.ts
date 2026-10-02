@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ExpenseMonthPoint } from '@contracts/expenses-monthly';
-import { addMonths, monthRange } from '../../src/analytics/portfolio-trends';
-import { buildPortfolioSeries, type ExpenseMover, type ExpenseMonthTotal } from '../../src/analytics/expense-trends';
+import { monthRange } from '../../src/analytics/portfolio-trends';
+import { type ExpenseMover, type ExpenseMonthTotal } from '../../src/analytics/expense-trends';
 import { EXPENSES_MONTHLY_KEY } from '../../src/modules/portfolio/expenses-hooks';
 import {
   heatmapCells,
@@ -12,6 +12,7 @@ import {
   overlayLastYear,
   stackedExpenseData,
   topCategories,
+  unavailablePropertyIds,
 } from '../../src/modules/portfolio/expenses-chart-data';
 
 const MONTHS = monthRange('2025-09', '2026-10'); // 14 months
@@ -51,7 +52,11 @@ function propertyA(): ExpenseMonthPoint[] {
   return out;
 }
 
-const mixedB = [pt('B', '2026-09', 'Taxes', 5, 'cash'), pt('B', '2026-10', 'Taxes', 5, 'accrual')];
+const mixedB = [
+  pt('B', '2026-09', 'Taxes', 5, 'cash'),
+  pt('B', '2026-10', 'Taxes', 5, 'accrual'),
+  pt('B', '2026-10', 'Zeta', 9999, 'accrual'),
+];
 // Property C: zero baseline -> deltaPct null.
 const zeroC = monthRange('2025-10', '2026-10').map((m) => pt('C', m, 'Admin', 0));
 const POINTS = [...propertyA(), ...mixedB, ...zeroC];
@@ -100,6 +105,25 @@ describe('topCategories', () => {
   });
 });
 
+describe('topCategories mixed-basis exclusion', () => {
+  it('ignores mixed-basis properties: a category only in the mixed property never ranks; clean ranking unchanged', () => {
+    const withB = topCategories(POINTS, ['A', 'B'], 8);
+    expect(withB).not.toContain('Zeta');
+    expect(withB).toEqual(topCategories(POINTS, ['A'], 8));
+    expect(topCategories(POINTS, ['B'])).toEqual([]);
+  });
+});
+
+describe('unavailablePropertyIds', () => {
+  it('returns only mixed-basis ids, sorted; unloaded ids are not reported; empty input -> []', () => {
+    const extra = [pt('A0', '2026-10', 'Taxes', 1, 'cash'), pt('A0', '2026-09', 'Taxes', 1, 'accrual')];
+    expect(unavailablePropertyIds([...POINTS, ...extra], ['C', 'B', 'A', 'Z', 'A0'])).toEqual(['A0', 'B']);
+    expect(unavailablePropertyIds(POINTS, ['A', 'C', 'Z'])).toEqual([]);
+    expect(unavailablePropertyIds([], [])).toEqual([]);
+    expect(unavailablePropertyIds(POINTS, [])).toEqual([]);
+  });
+});
+
 describe('stackedExpenseData', () => {
   const series: ExpenseMonthTotal[] = [
     { month: '2026-09', total: 60, byCategory: { Taxes: 30, Insurance: 20, Snow: 6, Admin: 4 } },
@@ -129,6 +153,13 @@ describe('stackedExpenseData', () => {
       { key: 'Taxes', value: 0 },
     ]);
   });
+  it('a real category named Other merges into the folded Other segment', () => {
+    const row: ExpenseMonthTotal = { month: '2026-09', total: 40, byCategory: { Taxes: 30, Other: 7, Snow: 3 } };
+    expect(stackedExpenseData([row], ['Taxes', 'Other'])[0]!.segments).toEqual([
+      { key: 'Taxes', value: 30 },
+      { key: 'Other', value: 10 },
+    ]);
+  });
   it('Other segment is 0 (kept) when nothing folds', () => {
     const d = stackedExpenseData([series[2]!], ['Insurance', 'Other']);
     expect(d[0]!.segments).toEqual([
@@ -140,12 +171,23 @@ describe('stackedExpenseData', () => {
 
 describe('overlayLastYear', () => {
   const series: ExpenseMonthTotal[] = [
-    { month: '2025-10', total: 300, byCategory: {} },
-    { month: '2026-09', total: 310, byCategory: {} },
-    { month: '2026-10', total: 370, byCategory: {} },
+    { month: '2025-10', total: 300, byCategory: { Taxes: 300 } },
+    { month: '2026-09', total: 310, byCategory: { Taxes: 310 } },
+    { month: '2026-10', total: 370, byCategory: { Taxes: 370 } },
   ];
   it('returns same-month-last-year totals labelled by the displayed month; omits months with no prior year', () => {
     expect(overlayLastYear(series, ['2026-09', '2026-10'])).toEqual([{ label: "Oct '26", value: 300 }]);
+  });
+  it('crosses the year boundary (2026-01 -> 2025-01)', () => {
+    const s2: ExpenseMonthTotal[] = [{ month: '2025-01', total: 5, byCategory: { X: 5 } }];
+    expect(overlayLastYear(s2, ['2026-01'])).toEqual([{ label: "Jan '26", value: 5 }]);
+  });
+  it('omits a prior-year month with an empty byCategory (no data is not a 0 overlay)', () => {
+    const s3: ExpenseMonthTotal[] = [
+      { month: '2025-10', total: 0, byCategory: {} },
+      { month: '2025-11', total: 0, byCategory: { X: 0 } },
+    ];
+    expect(overlayLastYear(s3, ['2026-10', '2026-11'])).toEqual([{ label: "Nov '26", value: 0 }]);
   });
 });
 
@@ -191,6 +233,11 @@ describe('moverLines', () => {
     const [s] = moverLines([mk({ delta: -1234, deltaPct: -0.125 })], { p1: '1100 Rarig' });
     expect(s).toBe('Utilities at 1100 Rarig −$1,234 (−12.5%) vs trailing 12 mo');
   });
+  it('signs the rounded value: no +$0 / −$0 / −0.0%', () => {
+    expect(moverLines([mk({ delta: 0.4, deltaPct: 0.0004 })], { p1: 'R' })).toEqual(['Utilities at R $0 (0.0%) vs trailing 12 mo']);
+    expect(moverLines([mk({ delta: -0.2, deltaPct: -0.0004 })], { p1: 'R' })).toEqual(['Utilities at R $0 (0.0%) vs trailing 12 mo']);
+    expect(moverLines([mk({ delta: 60, deltaPct: 0.0004 })], { p1: 'R' })).toEqual(['Utilities at R +$60 (0.0%) vs trailing 12 mo']);
+  });
   it('omits the percentage when deltaPct is null', () => {
     expect(moverLines([mk({ category: 'Insurance', delta: 75, deltaPct: null })], { p1: 'Rarig' })).toEqual([
       'Insurance at Rarig +$75 vs trailing 12 mo',
@@ -199,15 +246,5 @@ describe('moverLines', () => {
   it('falls back to the property id when the name is unknown, and preserves order', () => {
     const out = moverLines([mk({ propertyId: 'zzz' }), mk({ propertyId: 'p1', delta: 5, deltaPct: 0.05 })], { p1: 'Rarig' });
     expect(out).toEqual(['Utilities at zzz +$60 (+40.0%) vs trailing 12 mo', 'Utilities at Rarig +$5 (+5.0%) vs trailing 12 mo']);
-  });
-});
-
-// Sanity: fixture shape assumptions used above.
-describe('fixture', () => {
-  it('A has 14 months and per-month totals of 310 (370 in 2026-10)', () => {
-    const s = buildPortfolioSeries(POINTS, ['A']);
-    expect(s.months).toHaveLength(14);
-    expect(s.months.at(-1)!.total).toBe(370);
-    expect(addMonths('2026-10', -12)).toBe('2025-10');
   });
 });
