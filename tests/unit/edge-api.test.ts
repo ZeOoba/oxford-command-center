@@ -2,7 +2,7 @@
 //
 // tests/unit/edge-api.test.ts — in-process Hono (pattern: tests/unit/acq-api.test.ts). Fresh
 // openWarehouse() on a tmpdir path, all migrations applied — never touches finance.sqlite.
-import { copyFileSync, mkdtempSync, readFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -276,5 +276,42 @@ describe('mounting and mirror boundaries', () => {
     expect(start).toBeGreaterThan(-1);
     const block = src.slice(start, src.indexOf('];', start));
     expect(block).not.toContain('/edge');
+  });
+});
+
+describe('POST /pull-queue content-type (gate-fix P2)', () => {
+  it.each([
+    ['application/json', 200],
+    ['application/json; charset=utf-8', 200],
+    ['APPLICATION/JSON', 200],
+    ['text/plain; x=application/json', 400],
+    ['text/plain', 400],
+    [null, 400],
+  ])('content-type %s → %i (exact media type)', async (ct, status) => {
+    const db = freshDb();
+    const headers: Record<string, string> = ct === null ? {} : { 'content-type': ct };
+    const res = await makeApp(() => db).request('/pull-queue', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ kind: 'storage', scopeKey: 'columbus', doneOn: '2026-09-30' }),
+    });
+    expect(res.status).toBe(status);
+  });
+});
+
+describe('GET /markets — non-finite numbers (gate-fix F1)', () => {
+  it.each([
+    ['lat', (t: string) => t.replace(/"lat":\s*-?[\d.]+/, '"lat":1e999')],
+    ['series value', (t: string) => t.replace(/("vac":\s*\[[^\]]*?),\s*[\d.]+\s*\]/, '$1,1e999]')],
+  ])('%s of 1e999 is quarantined and the response parses with the client contract', async (_l, mutate) => {
+    const dir = mkdtempSync(join(tmpdir(), 'edge-api-inf-'));
+    const text = mutate(readFileSync(FIXTURE, 'utf8'));
+    expect(text).toContain('1e999');
+    writeFileSync(join(dir, 'markets.json'), text);
+    const res = await makeApp(noDb, dir).request('/markets');
+    expect(res.status).toBe(200);
+    const body = EdgeMarketsResponse.parse(await res.json());
+    expect(body.rejectedMarkets).toHaveLength(1);
+    expect(body.marketCount).toBe(3);
   });
 });

@@ -67,7 +67,7 @@ export function edgeApi(getDb: () => WarehouseDb, deps: EdgeApiDeps = {}): Hono 
 
   app.post('/pull-queue', (c) =>
     withDb(async (db) => {
-      if (!(c.req.header('content-type') ?? '').toLowerCase().includes('application/json')) {
+      if ((c.req.header('content-type') ?? '').split(';')[0]!.trim().toLowerCase() !== 'application/json') {
         return c.json({ error: 'content-type must be application/json' }, 400);
       }
       const parsed = RecordPullRequest.safeParse(await c.req.json().catch(() => ({})));

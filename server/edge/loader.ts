@@ -61,7 +61,7 @@ const RawEdgeFile = z.object({ meta: z.unknown(), markets: z.array(z.unknown()) 
 
 /** Raw market schema, parameterized by years.length so every series/status array must match it. */
 export function rawEdgeMarketSchema(yearCount: number) {
-  const values = z.array(z.number().nullable()).length(yearCount);
+  const values = z.array(z.number().finite().nullable()).length(yearCount);
   const statuses = z.array(EdgeStatus).length(yearCount);
   const seriesShape = Object.fromEntries(EDGE_SERIES.map((k) => [k, values])) as Record<EdgeSeriesKey, typeof values>;
   const statusShape = Object.fromEntries(EDGE_SERIES.map((k) => [k, statuses])) as Record<EdgeSeriesKey, typeof statuses>;
@@ -70,13 +70,17 @@ export function rawEdgeMarketSchema(yearCount: number) {
     name: z.string(),
     state: z.string().length(2),
     cbsa: z.string(),
-    lat: z.number(),
-    lon: z.number(),
+    lat: z.number().finite(),
+    lon: z.number().finite(),
     type: EdgeMarketType,
     trajectory: EdgeTrajectory.nullable(),
     // Known follow-up: EdgeSub is strict, so one bad sub quarantines its whole market (and RawEdgeMeta
     // is strict by design); deliberately left as is for now.
-    subs: z.array(EdgeSub),
+    subs: z.array(
+      EdgeSub.refine((sub) => Number.isFinite(sub.vac) && Number.isFinite(sub.rentGrowth) && Number.isFinite(sub.invKsf), {
+        message: 'non-finite number',
+      }),
+    ),
     status: z.object(statusShape),
     ...seriesShape,
   });
@@ -206,29 +210,41 @@ export async function loadEdgeDataset(dir: string, now: Date, deps: EdgeFsDeps =
   const serveLastGoodOr = (fallback: EdgeLoadResult, readError: string): EdgeLoadResult =>
     lastGood ? fromParsed(dir, lastGood, now, readError) : fallback;
 
-  let st: { mtimeMs: number; size: number };
-  try {
-    st = await withRetry(() => deps.stat(file), deps);
-  } catch (e) {
-    const code = errCode(e);
-    const msg = fsFailure('stat', e);
-    // OneDrive replace-on-sync can briefly show ENOENT: serve last-good if we have one.
-    if (code !== null && MISSING_CODES.has(code)) return serveLastGoodOr(emptyResult('missing', dir, []), msg);
-    return serveLastGoodOr(emptyResult('unreadable', dir, [msg]), msg);
-  }
+  // stat -> read -> stat again: the cache key and freshness mtime are the POST-read stat, and a file
+  // replaced mid-read (OneDrive sync) restarts the cycle so content and (mtime, size) always pair up.
+  let st: { mtimeMs: number; size: number } | null = null;
+  let text = '';
+  for (let cycle = 1; st === null; cycle++) {
+    let pre: { mtimeMs: number; size: number };
+    try {
+      pre = await withRetry(() => deps.stat(file), deps);
+    } catch (e) {
+      const code = errCode(e);
+      const msg = fsFailure('stat', e);
+      // OneDrive replace-on-sync can briefly show ENOENT: serve last-good if we have one.
+      if (code !== null && MISSING_CODES.has(code)) return serveLastGoodOr(emptyResult('missing', dir, []), msg);
+      return serveLastGoodOr(emptyResult('unreadable', dir, [msg]), msg);
+    }
 
-  if (lastGood && lastGood.mtimeMs === st.mtimeMs && lastGood.size === st.size) {
-    return fromParsed(dir, lastGood, now, null);
-  }
+    if (lastGood && lastGood.mtimeMs === pre.mtimeMs && lastGood.size === pre.size) {
+      return fromParsed(dir, lastGood, now, null);
+    }
 
-  let text: string;
-  try {
-    text = await withRetry(() => deps.readFile(file), deps);
-  } catch (e) {
-    const code = errCode(e);
-    const msg = fsFailure('read', e);
-    if (code !== null && MISSING_CODES.has(code)) return serveLastGoodOr(emptyResult('missing', dir, []), msg);
-    return serveLastGoodOr(emptyResult('unreadable', dir, [msg]), msg);
+    try {
+      text = await withRetry(() => deps.readFile(file), deps);
+      const post = await withRetry(() => deps.stat(file), deps);
+      if (post.mtimeMs === pre.mtimeMs && post.size === pre.size) st = post;
+    } catch (e) {
+      const code = errCode(e);
+      const msg = fsFailure('read', e);
+      if (code !== null && MISSING_CODES.has(code)) return serveLastGoodOr(emptyResult('missing', dir, []), msg);
+      return serveLastGoodOr(emptyResult('unreadable', dir, [msg]), msg);
+    }
+
+    if (st === null && cycle >= MAX_ATTEMPTS) {
+      const msg = 'markets.json changed while being read';
+      return serveLastGoodOr(emptyResult('unreadable', dir, [msg]), msg);
+    }
   }
 
   let json: unknown;
@@ -253,10 +269,16 @@ export async function loadEdgeDataset(dir: string, now: Date, deps: EdgeFsDeps =
   const schema = rawEdgeMarketSchema(meta.data.years.length);
   const markets: EdgeMarket[] = [];
   const rejectedMarkets: EdgeRejectedMarket[] = [];
+  const seenIds = new Set<string>();
   for (const rawMarket of fileShape.data.markets) {
     const parsed = schema.safeParse(rawMarket);
-    if (parsed.success) markets.push(toEdgeMarket(parsed.data));
-    else rejectedMarkets.push({ id: idOf(rawMarket), reason: formatIssues(parsed.error.issues, 3).join('; ') });
+    if (parsed.success) {
+      if (seenIds.has(parsed.data.id)) rejectedMarkets.push({ id: idOf(rawMarket), reason: 'duplicate id' });
+      else {
+        seenIds.add(parsed.data.id);
+        markets.push(toEdgeMarket(parsed.data));
+      }
+    } else rejectedMarkets.push({ id: idOf(rawMarket), reason: formatIssues(parsed.error.issues, 3).join('; ') });
   }
 
   // An empty market list is degraded when a last-good dataset has markets; with none it is `invalid`.

@@ -441,3 +441,86 @@ describe('loadEdgeDataset — empty list, id sanitizing, last-good edge cases (f
     expect(r.freshness!.ageDays).toBe(first.freshness!.ageDays + 10);
   });
 });
+
+describe('gate-fix F1 — non-finite numbers are quarantined', () => {
+  const withLat = (lat: string): string => {
+    const f = JSON.parse(FIXTURE_TEXT) as { markets: Array<{ lat: number }> };
+    const text = JSON.stringify(f);
+    return text.replace(`"lat":${JSON.stringify(f.markets[0]!.lat)}`, `"lat":${lat}`);
+  };
+
+  it('lat 1e999 quarantines that market only, with a sanitized reason', async () => {
+    const { deps } = fakeFs({ text: () => withLat('1e999') });
+    const r = await loadEdgeDataset('mem://inf-lat', NOW, deps);
+    expect(r.availability).toBe('ok');
+    expect(r.marketCount).toBe(3);
+    expect(r.rejectedMarkets).toHaveLength(1);
+    expect(r.rejectedMarkets[0]!.id).toBe('columbus');
+    expect(r.rejectedMarkets[0]!.reason).toMatch(/^lat: /);
+    expect(r.rejectedMarkets[0]!.reason).not.toContain('Infinity');
+  });
+
+  it('a series value 1e999 quarantines the market', async () => {
+    const f = JSON.parse(FIXTURE_TEXT) as { markets: Array<{ vac: Array<number | null> }> };
+    f.markets[0]!.vac[f.markets[0]!.vac.length - 1] = 7777.5;
+    const text = JSON.stringify(f).replace('7777.5', '1e999');
+    const { deps } = fakeFs({ text: () => text });
+    const r = await loadEdgeDataset('mem://inf-series', NOW, deps);
+    expect(r.marketCount).toBe(3);
+    expect(r.rejectedMarkets.map((x) => x.id)).toEqual(['columbus']);
+    expect(r.rejectedMarkets[0]!.reason).toMatch(/^vac\./);
+  });
+});
+
+describe('gate-fix F2 — duplicate market ids', () => {
+  it('first occurrence wins; later duplicate is rejected and not double-counted', async () => {
+    const f = JSON.parse(FIXTURE_TEXT) as { markets: unknown[] };
+    f.markets.push(f.markets[0]);
+    const { deps } = fakeFs({ text: () => JSON.stringify(f) });
+    const r = await loadEdgeDataset('mem://dup', NOW, deps);
+    expect(r.marketCount).toBe(4);
+    expect(r.markets.map((m) => m.id)).toEqual(['columbus', 'indianapolis_south', 'cedar_rapids', 'richmond']);
+    expect(r.rejectedMarkets).toEqual([{ id: 'columbus', reason: 'duplicate id' }]);
+  });
+});
+
+describe('gate-fix F3 — stat/read TOCTOU', () => {
+  it('file replaced between the pre-read stat and the read: keyed and timed by the post-read stat', async () => {
+    const M1 = Date.parse('2026-09-01T12:00:00Z');
+    const M2 = Date.parse('2026-09-30T12:00:00Z');
+    const f1 = FIXTURE_TEXT;
+    const f2 = FIXTURE_TEXT + '  ';
+    let cur = { text: f1, mtimeMs: M1 };
+    let reads = 0;
+    const deps: EdgeFsDeps = {
+      stat: () => ({ mtimeMs: cur.mtimeMs, size: cur.text.length }),
+      readFile: () => {
+        reads += 1;
+        if (reads === 1) {
+          cur = { text: f2, mtimeMs: M2 }; // replaced mid-flight
+          throw errno('EBUSY');
+        }
+        return cur.text;
+      },
+      sleep: async () => {},
+    };
+    const r = await loadEdgeDataset('mem://toctou', NOW, deps);
+    expect(r.freshness?.fileMtime).toBe(new Date(M2).toISOString());
+    const before = reads;
+    const again = await loadEdgeDataset('mem://toctou', NOW, deps);
+    expect(reads).toBe(before); // memo hit under the NEW (mtime,size)
+    expect(again.freshness?.fileMtime).toBe(new Date(M2).toISOString());
+  });
+});
+
+describe('gate-fix F1 — non-finite sub numbers', () => {
+  it('a sub with vac 1e999 quarantines the market', async () => {
+    const f = JSON.parse(FIXTURE_TEXT) as { markets: Array<{ subs: Array<{ vac: number }> }> };
+    const m = f.markets.find((x) => x.subs.length > 0)!;
+    m.subs[0]!.vac = 4242.5;
+    const { deps } = fakeFs({ text: () => JSON.stringify(f).replace('4242.5', '1e999') });
+    const r = await loadEdgeDataset('mem://inf-sub', NOW, deps);
+    expect(r.rejectedMarkets).toHaveLength(1);
+    expect(r.rejectedMarkets[0]!.reason).toMatch(/^subs\./);
+  });
+});
