@@ -114,7 +114,7 @@ EdgeView.tsx (tab) ─┬─ EdgeRankingBoard.tsx   (market board)
                     ├─ EdgeDataHealth (in EdgeView) + EdgePullQueue.tsx
                     └─ freshness banner
 src/brain/DealDrawer.tsx  ── EdgeMarketReadout (from EdgeView exports) ── resolveEdgeMarket(deal, markets)
-src/modules/acquisitions/RankedCandidateList.tsx ── Edge column via candidate.notionDealId → Deal → resolver
+src/modules/acquisitions/RankedCandidateList.tsx ── Edge column via candidate.notionDealId → Deal.id → resolver
 ```
 
 Spine placement: Edge is a **third, read-only reference input**. It is neither Spine A (workbook snapshot) nor Spine B (P&L warehouse) and is never aggregated with either. The only thing it adds to the warehouse is the pull-queue log table, which is user state, not market data.
@@ -384,7 +384,7 @@ Edge ids that the resolver references are validated against the loaded dataset. 
 
 **Surfaces**
 - `src/brain/DealDrawer.tsx` gains a `CardBox title="Edge Market"` after "Deal Detail". It is UX-owned per agent-assignments (`src/brain/EntityDrawer.tsx` listed, and `DealDrawer.tsx` is its sibling and is not Architect-listed). The query fires on drawer open only.
-- `src/modules/acquisitions/RankedCandidateList.tsx` gains an **Edge** column with vacancy · rent growth compact and a tooltip carrying the full readout. **Important:** `AcqCandidateRow.market` is a `ClusterTier` (`owned-submarket`/`established`/…), **not** a metro name, so it cannot be resolved. A candidate resolves only through `candidate.notionDealId` → the snapshot `Deal` with the same `notionDealId` → the resolver. Candidates with `notionDealId === null` (parcel-screen, manual) show "No Edge market (no linked deal)".
+- `src/modules/acquisitions/RankedCandidateList.tsx` gains an **Edge** column with vacancy · rent growth compact and a tooltip carrying the full readout. **Important:** `AcqCandidateRow.market` is a `ClusterTier` (`owned-submarket`/`established`/…), **not** a metro name, so it cannot be resolved. A candidate resolves only through `candidate.notionDealId` → the snapshot `Deal` whose `id` equals it (`Deal.notionDealId` holds "DEAL-n", not the Notion page id; this is the join `DealDrawer` already uses) → the resolver. Candidates with `notionDealId === null` (parcel-screen, manual) show "No Edge market (no linked deal)".
 - **Eager-query guard.** The Sourcing panel is force-mounted, so `useEdgeMarkets` is called there with `enabled: hasVisitedSourcingOrEdge`. That is a sticky flag in `AcquisitionsModule`, set the first time either tab is selected, so loading Acquisitions on the Pipeline tab triggers no Edge request.
 
 **Confidential deals.** Existing handling is unchanged: the `Lock` badge in the drawer and Active Deals, and `RiskFlags` "Confidential — internal only". Confidential deals **do** get an Edge readout. It is internal UI, the readout is public-source market data, and no deal identity is sent to `/edge/*` (§5.4). Nothing in Phase 1 renders Edge data on a mirror, briefing, PDF, AI tool, or any external surface.
