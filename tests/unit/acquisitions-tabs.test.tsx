@@ -1,10 +1,12 @@
 // tests/unit/acquisitions-tabs.test.tsx
 //
-// IA decongestion Phase 3 — the Pipeline tab is split: Pipeline · Workbench · Sourcing · Grader.
-// KPI strip + sync toolbar stay above the strip (R2). Pipeline / Workbench / Sourcing are
-// force-mounted (state survives a tab round-trip); Grader stays lazy (fires its own warehouse query).
+// IA decongestion Phase 3 — the Pipeline tab is split: Pipeline · Workbench · Sourcing · Grader, plus
+// Oxford Edge (2026-10-02 spec §8.1) as the fifth tab. KPI strip + sync toolbar stay above the strip
+// (R2). Pipeline / Workbench / Sourcing are force-mounted (state survives a tab round-trip); Grader
+// and Edge stay lazy (each fires its own queries), and Acquisitions on ?tab=pipeline fires no /edge/
+// request (spec F11).
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
-import { render, screen, cleanup, fireEvent } from '@testing-library/react';
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router-dom';
 import type { Deal } from '../../src/contracts/deal';
@@ -46,9 +48,9 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe('AcquisitionsModule — Phase 3 tab split', () => {
-  it('renders four tabs, Pipeline selected by default, with stage bars + Active Deals visible', () => {
+  it('renders five tabs, Pipeline selected by default, with stage bars + Active Deals visible', () => {
     renderAcq();
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Pipeline', 'Workbench', 'Sourcing', 'Grader']);
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Pipeline', 'Workbench', 'Sourcing', 'Grader', 'Edge']);
     expect(tabIsSelected('Pipeline')).toBe(true);
     expect(isInInactivePanel(screen.getByText('Pipeline by Stage'))).toBe(false);
     expect(isInInactivePanel(screen.getByText('Est. Price'))).toBe(false); // Active Deals table header
@@ -86,10 +88,33 @@ describe('AcquisitionsModule — Phase 3 tab split', () => {
     expect(screen.getByText('Grade an Acquisition')).toBeTruthy();
   });
 
+  it('Edge stays lazy: its content is not rendered until the tab is selected', () => {
+    renderAcq();
+    expect(screen.queryByText('Oxford Edge')).toBeNull();
+    selectTab('Edge');
+    expect(screen.getByText('Oxford Edge')).toBeTruthy();
+  });
+
+  it.each(['pipeline', 'workbench', 'grader'])('F11: Acquisitions on ?tab=%s fires no /edge/ request', async (tab) => {
+    renderAcq(`/?tab=${tab}`);
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    const urls = vi.mocked(fetch).mock.calls.map(([u]) => String(u));
+    expect(urls.some((u) => u.includes('/edge/'))).toBe(false);
+  });
+
+  it('selecting Edge fetches the markets endpoint', async () => {
+    renderAcq();
+    selectTab('Edge');
+    await waitFor(() =>
+      expect(vi.mocked(fetch).mock.calls.some(([u]) => String(u).includes('/api/warehouse/edge/markets'))).toBe(true),
+    );
+  });
+
   it.each([
     ['workbench', 'Underwriting Inputs'],
     ['sourcing', 'Acquisition Intelligence'],
     ['grader', 'Grade an Acquisition'],
+    ['edge', 'Oxford Edge'],
   ])('?tab=%s deep-links to that tab', (key, marker) => {
     renderAcq(`/?tab=${key}`);
     expect(screen.getByRole('tab', { name: new RegExp(`^${key}$`, 'i') }).getAttribute('aria-selected')).toBe('true');

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Lock, RefreshCw } from 'lucide-react';
 import { useSnapshot } from '@/data/queries';
 import { useUi } from '@/brain/ui-context';
@@ -18,6 +18,8 @@ import { AcquisitionWorkbench } from './AcquisitionWorkbench';
 import { AcquisitionsIntel } from './AcquisitionsIntel';
 import { GraderView } from './GraderView';
 import { PipelineTierBoard } from './PipelineTierBoard';
+import { EdgeView } from './EdgeView';
+import { EDGE_BOARD_DEFAULT_STATE, type EdgeBoardState } from './edge-hooks';
 // Single source for the strip — also what the registry (`src/shell/modules.tsx`) and the command
 // palette index as "Acquisitions > Tab".
 import { ACQUISITIONS_TABS, ACQUISITIONS_TAB_KEYS, type AcqTab } from './tabs';
@@ -51,6 +53,15 @@ export function AcquisitionsModule() {
   const [hubspotSync, setHubspotSync] = useState<SyncState>({ phase: 'idle' });
   const [acqTab, setAcqTab] = useTabParam<AcqTab>(ACQUISITIONS_TAB_KEYS, 'pipeline');
   const acqTabSpecs = useTabSpecs(ACQUISITIONS_TABS);
+  // Oxford Edge (spec §8.1/§8.4). The board's sort/filter state lives here, like scoreDealId, so it
+  // survives a tab round-trip without force-mounting the Edge panel. edgeArmed is STICKY: it flips
+  // true the first time Sourcing or Edge is selected (or deep-linked) and gates the force-mounted
+  // Sourcing list's Edge column query, so loading Acquisitions on Pipeline fires no /edge/ request (F11).
+  const [edgeBoard, setEdgeBoard] = useState<EdgeBoardState>(EDGE_BOARD_DEFAULT_STATE);
+  const [edgeArmed, setEdgeArmed] = useState<boolean>(acqTab === 'sourcing' || acqTab === 'edge');
+  useEffect(() => {
+    if (acqTab === 'sourcing' || acqTab === 'edge') setEdgeArmed(true);
+  }, [acqTab]);
 
   async function handleNotionSync() {
     setSync({ phase: 'syncing' });
@@ -215,10 +226,11 @@ export function AcquisitionsModule() {
       </div>
 
       {/* keyboardActivation="manual" — the Grader tab mounts PipelineTierBoard, which fires a
-          fresh useAcqIntel() warehouse query on mount, so arrowing through the strip shouldn't
-          fan out queries (plan R9). The pipeline / workbench / sourcing panels are force-mounted
-          (they all mounted together before the split), so the Workbench form draft, the prefill
-          selection, the Sourcing filters and the Active Deals sort survive a tab round-trip. */}
+          fresh useAcqIntel() warehouse query on mount, and the Edge tab fetches markets.json + the
+          pull queue on mount, so arrowing through the strip shouldn't fan out queries (plan R9).
+          The pipeline / workbench / sourcing panels are force-mounted (they all mounted together
+          before the split), so the Workbench form draft, the prefill selection, the Sourcing filters
+          and the Active Deals sort survive a tab round-trip. Grader and Edge stay lazy. */}
       <Tabs tabs={acqTabSpecs} selectedKey={acqTab} onSelectionChange={(k) => setAcqTab(k as AcqTab)} keyboardActivation="manual" aria-label="Acquisitions views">
         <TabPanel id="pipeline" {...FORCE_MOUNT_PANEL}>
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[320px_1fr]">
@@ -258,13 +270,16 @@ export function AcquisitionsModule() {
           </Card>
         </TabPanel>
         <TabPanel id="sourcing" {...FORCE_MOUNT_PANEL}>
-          <AcquisitionsIntel />
+          <AcquisitionsIntel edgeEnabled={edgeArmed} />
         </TabPanel>
         <TabPanel id="grader">
           <div className="flex flex-col gap-4">
             <GraderView />
             <PipelineTierBoard />
           </div>
+        </TabPanel>
+        <TabPanel id="edge">
+          <EdgeView board={edgeBoard} onBoardChange={setEdgeBoard} />
         </TabPanel>
       </Tabs>
     </div>

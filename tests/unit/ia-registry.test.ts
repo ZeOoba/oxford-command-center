@@ -309,7 +309,7 @@ describe('final rail (IA decongestion Phase 4 complete)', () => {
 // or named in TABLESS.
 describe('every rail destination declares its tab strip in the registry', () => {
   const DESTINATION_TABS: Record<string, readonly string[]> = {
-    pipeline: ['pipeline', 'workbench', 'sourcing', 'grader'],
+    pipeline: ['pipeline', 'workbench', 'sourcing', 'grader', 'edge'],
     worklist: ['today', 'alerts', 'calendar', 'renewals'],
     'command-brain': ['digest', 'insights', 'track-record', 'feedback', 'memory'],
     intel: ['ownership', 'property', 'lease-run', 'benchmarks', 'managers'],

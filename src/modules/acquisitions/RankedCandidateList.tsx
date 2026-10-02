@@ -73,6 +73,9 @@ type Props = {
   items: RankedCandidate[];
   advisoryOnly: boolean;
   writesEnabled: boolean;
+  /** Gate for the Edge column's markets query: this list lives in the force-mounted Sourcing panel,
+   *  so the query fires only once AcquisitionsModule's sticky edgeArmed flag is set (spec F11). */
+  edgeEnabled?: boolean;
 };
 
 export function RankedCandidateList({ items, advisoryOnly, writesEnabled }: Props) {
