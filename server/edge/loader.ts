@@ -8,7 +8,10 @@
 // backoff: OneDrive lock / mid-sync) → JSON.parse → strict RawEdgeMeta → per-market safeParse
 // (bad markets quarantined, not fatal) → reshape to the EdgeMarket output contract. A read/parse
 // failure after a good load serves the last-good copy with readError set; `unreadable` / `invalid`
-// are returned only when no last-good exists. `missing` (ENOENT) never serves last-good.
+// are returned only when no last-good exists. `missing` (ENOENT) serves last-good too when one exists
+// (transient OneDrive replace-on-sync). A degraded load (no markets survive, or >50% rejected) is
+// treated like a failed read: last-good is served and never overwritten. All error text is sanitized
+// (errno code / fixed strings / Zod path+code only; no raw messages, paths or input values).
 import { readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -71,6 +74,8 @@ export function rawEdgeMarketSchema(yearCount: number) {
     lon: z.number(),
     type: EdgeMarketType,
     trajectory: EdgeTrajectory.nullable(),
+    // Known follow-up: EdgeSub is strict, so one bad sub quarantines its whole market (and RawEdgeMeta
+    // is strict by design); deliberately left as is for now.
     subs: z.array(EdgeSub),
     status: z.object(statusShape),
     ...seriesShape,
@@ -101,9 +106,15 @@ function errCode(e: unknown): string | null {
   return null;
 }
 
-function messageOf(e: unknown): string {
-  return e instanceof Error ? e.message : String(e);
+/** Sanitized fs failure text: errno code + fixed wording only. Never the raw message (it can embed paths). */
+function fsFailure(op: 'stat' | 'read', e: unknown): string {
+  const code = errCode(e);
+  return code !== null && /^[A-Z0-9_]{1,20}$/.test(code) ? `${op} failed (${code})` : `${op} failed`;
 }
+
+const NOT_JSON = 'markets.json is not valid JSON';
+/** A load where more than this share of markets fail the raw schema is treated as a degraded file. */
+const MAX_REJECTED_SHARE = 0.5;
 
 async function withRetry<T>(fn: () => T, deps: EdgeFsDeps): Promise<T> {
   for (let attempt = 1; ; attempt++) {
@@ -118,7 +129,8 @@ async function withRetry<T>(fn: () => T, deps: EdgeFsDeps): Promise<T> {
 }
 
 function formatIssues(issues: readonly z.ZodIssue[], max: number): string[] {
-  return issues.slice(0, max).map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`);
+  // path + issue code only: Zod messages can echo the offending input value.
+  return issues.slice(0, max).map((i) => `${i.path.join('.') || '(root)'}: ${i.code}`);
 }
 
 function idOf(raw: unknown): string | null {
@@ -198,8 +210,9 @@ export async function loadEdgeDataset(dir: string, now: Date, deps: EdgeFsDeps =
     st = await withRetry(() => deps.stat(file), deps);
   } catch (e) {
     const code = errCode(e);
-    if (code !== null && MISSING_CODES.has(code)) return emptyResult('missing', dir, []);
-    const msg = `stat failed: ${messageOf(e)}`;
+    const msg = fsFailure('stat', e);
+    // OneDrive replace-on-sync can briefly show ENOENT: serve last-good if we have one.
+    if (code !== null && MISSING_CODES.has(code)) return serveLastGoodOr(emptyResult('missing', dir, []), msg);
     return serveLastGoodOr(emptyResult('unreadable', dir, [msg]), msg);
   }
 
@@ -212,17 +225,17 @@ export async function loadEdgeDataset(dir: string, now: Date, deps: EdgeFsDeps =
     text = await withRetry(() => deps.readFile(file), deps);
   } catch (e) {
     const code = errCode(e);
-    if (code !== null && MISSING_CODES.has(code)) return emptyResult('missing', dir, []);
-    const msg = messageOf(e);
+    const msg = fsFailure('read', e);
+    if (code !== null && MISSING_CODES.has(code)) return serveLastGoodOr(emptyResult('missing', dir, []), msg);
     return serveLastGoodOr(emptyResult('unreadable', dir, [msg]), msg);
   }
 
   let json: unknown;
   try {
     json = JSON.parse(text);
-  } catch (e) {
-    const msg = `markets.json is not valid JSON (${messageOf(e)})`;
-    return serveLastGoodOr(emptyResult('unreadable', dir, [msg]), msg);
+  } catch {
+    // Fixed text only: the V8 message quotes file content.
+    return serveLastGoodOr(emptyResult('unreadable', dir, [NOT_JSON]), NOT_JSON);
   }
 
   const fileShape = RawEdgeFile.safeParse(json);
@@ -243,6 +256,17 @@ export async function loadEdgeDataset(dir: string, now: Date, deps: EdgeFsDeps =
     const parsed = schema.safeParse(rawMarket);
     if (parsed.success) markets.push(toEdgeMarket(parsed.data));
     else rejectedMarkets.push({ id: idOf(rawMarket), reason: formatIssues(parsed.error.issues, 3).join('; ') });
+  }
+
+  // Fail closed on a degraded file (empty or mostly-rejected, e.g. half-synced): never overwrite last-good.
+  const total = markets.length + rejectedMarkets.length;
+  if (rejectedMarkets.length > 0 && (markets.length === 0 || rejectedMarkets.length > MAX_REJECTED_SHARE * total)) {
+    const issues = rejectedMarkets.slice(0, 5).map((x) => `market ${x.id ?? '(no id)'}: ${x.reason}`);
+    issues.unshift(`${rejectedMarkets.length} of ${total} markets failed validation`);
+    return serveLastGoodOr(
+      emptyResult('invalid', dir, issues),
+      `markets.json degraded: ${rejectedMarkets.length} of ${total} markets failed validation`,
+    );
   }
 
   const dataset: ParsedDataset = {

@@ -161,6 +161,171 @@ describe('loadEdgeDataset — missing / unreadable / invalid (F5, F6, F7)', () =
   });
 });
 
+/** Fixture parsed fresh (clone-safe) with its markets replaced by `n` structurally broken ones. */
+function withBrokenMarkets(good: number, broken: number): string {
+  const f = JSON.parse(FIXTURE_TEXT) as { markets: unknown[] };
+  const goodOnes = f.markets.slice(0, good);
+  const bad = Array.from({ length: broken }, (_, i) => ({ id: `broken_${i}`, name: 'Broken' }));
+  return JSON.stringify({ ...f, markets: [...goodOnes, ...bad] });
+}
+
+describe('loadEdgeDataset — degraded loads fail closed', () => {
+  it('all markets quarantined, no last-good → invalid with rejected notes in issues', async () => {
+    const { deps } = fakeFs({ text: () => withBrokenMarkets(0, 3) });
+    const r = await loadEdgeDataset('mem://allbad-cold', NOW, deps);
+    expect(r.availability).toBe('invalid');
+    expect(r.markets).toEqual([]);
+    expect(r.issues.length).toBeGreaterThan(0);
+    expect(r.issues.join(' ')).toContain('broken_0');
+  });
+
+  it('all markets quarantined WITH last-good → last-good served, readError set, cache not overwritten', async () => {
+    let mtime = 1;
+    let text = FIXTURE_TEXT;
+    const { deps } = fakeFs({ text: () => text, stat: () => ({ mtimeMs: mtime, size: text.length }) });
+    await loadEdgeDataset('mem://allbad-warm', NOW, deps);
+    mtime = 2;
+    text = withBrokenMarkets(0, 3);
+    const later = new Date('2026-10-02T13:00:00Z');
+    const r = await loadEdgeDataset('mem://allbad-warm', later, deps);
+    expect(r.availability).toBe('ok');
+    expect(r.marketCount).toBe(4);
+    expect(r.readError).not.toBeNull();
+    expect(r.lastGoodLoadedAt).toBe(NOW.toISOString());
+    // cache untouched: still serves the good set on a repeat degraded read
+    const again = await loadEdgeDataset('mem://allbad-warm', later, deps);
+    expect(again.marketCount).toBe(4);
+    expect(again.lastGoodLoadedAt).toBe(NOW.toISOString());
+    // and a following good load works
+    mtime = 3;
+    text = FIXTURE_TEXT;
+    const good = await loadEdgeDataset('mem://allbad-warm', later, deps);
+    expect(good.marketCount).toBe(4);
+    expect(good.readError).toBeNull();
+    expect(good.lastGoodLoadedAt).toBe(later.toISOString());
+  });
+
+  it('more than 50% quarantined → invalid', async () => {
+    const { deps } = fakeFs({ text: () => withBrokenMarkets(4, 5) });
+    const r = await loadEdgeDataset('mem://majority-bad', NOW, deps);
+    expect(r.availability).toBe('invalid');
+    expect(r.marketCount).toBe(0);
+  });
+
+  it('exactly 50% quarantined → ok with rejectedMarkets', async () => {
+    const { deps } = fakeFs({ text: () => withBrokenMarkets(4, 4) });
+    const r = await loadEdgeDataset('mem://half-bad', NOW, deps);
+    expect(r.availability).toBe('ok');
+    expect(r.marketCount).toBe(4);
+    expect(r.rejectedMarkets).toHaveLength(4);
+  });
+});
+
+describe('loadEdgeDataset — sanitized error text', () => {
+  const PATHY = 'EBUSY: resource busy, open \'C:\\Users\\Owner\\OneDrive\\markets.json\'';
+
+  it('fs read failure emits errno code + fixed text, never the raw message', async () => {
+    const { deps } = fakeFs({ text: () => { throw Object.assign(new Error(PATHY), { code: 'EBUSY' }); } });
+    const r = await loadEdgeDataset('mem://san-read', NOW, deps);
+    expect(r.availability).toBe('unreadable');
+    expect(r.issues).toEqual(['read failed (EBUSY)']);
+  });
+
+  it('fs stat failure emits errno code + fixed text', async () => {
+    const { deps } = fakeFs({
+      text: () => FIXTURE_TEXT,
+      stat: () => { throw Object.assign(new Error(PATHY), { code: 'EIO' }); },
+    });
+    const r = await loadEdgeDataset('mem://san-stat', NOW, deps);
+    expect(r.issues).toEqual(['stat failed (EIO)']);
+    expect(r.issues.join(' ')).not.toContain('C:');
+  });
+
+  it('fs error without a code gets a generic fixed message', async () => {
+    const { deps } = fakeFs({ text: () => { throw new Error(PATHY); } });
+    const r = await loadEdgeDataset('mem://san-nocode', NOW, deps);
+    expect(r.issues.join(' ')).not.toContain('C:');
+    expect(r.issues.join(' ')).not.toContain('Owner');
+  });
+
+  it('JSON parse failure emits fixed text with no V8 message or file content', async () => {
+    const { deps } = fakeFs({ text: () => '{"secret_note":"C:\\\\Users\\\\Owner" oops}' });
+    const r = await loadEdgeDataset('mem://san-json', NOW, deps);
+    expect(r.availability).toBe('unreadable');
+    expect(r.issues).toEqual(['markets.json is not valid JSON']);
+    const all = r.issues.join(' ');
+    expect(all).not.toContain('Unexpected token');
+    expect(all).not.toContain('secret_note');
+    expect(all).not.toContain('C:');
+    expect(all).not.toContain('"');
+  });
+
+  it('JSON parse failure readError (warm) is the fixed text', async () => {
+    let mtime = 1;
+    let text = FIXTURE_TEXT;
+    const { deps } = fakeFs({ text: () => text, stat: () => ({ mtimeMs: mtime, size: text.length }) });
+    await loadEdgeDataset('mem://san-json-warm', NOW, deps);
+    mtime = 2;
+    text = '{"secret_note": oops}';
+    const r = await loadEdgeDataset('mem://san-json-warm', NOW, deps);
+    expect(r.readError).toBe('markets.json is not valid JSON');
+  });
+
+  it('zod issues never echo input values', async () => {
+    const f = JSON.parse(FIXTURE_TEXT) as { markets: Array<Record<string, unknown>> };
+    f.markets.push({ ...f.markets[0]!, id: 'enumbad', type: 'LEAKY_VALUE_XYZ' });
+    const { deps } = fakeFs({ text: () => JSON.stringify(f) });
+    const r = await loadEdgeDataset('mem://san-zod', NOW, deps);
+    expect(r.rejectedMarkets).toHaveLength(1);
+    expect(r.rejectedMarkets[0]!.reason).toContain('type');
+    expect(r.rejectedMarkets[0]!.reason).not.toContain('LEAKY_VALUE_XYZ');
+  });
+});
+
+describe('loadEdgeDataset — transient ENOENT', () => {
+  it('ENOENT on read with last-good → last-good served with readError', async () => {
+    let mtime = 1;
+    let gone = false;
+    const { deps } = fakeFs({
+      text: () => { if (gone) throw errno('ENOENT'); return FIXTURE_TEXT; },
+      stat: () => ({ mtimeMs: mtime, size: FIXTURE_TEXT.length }),
+    });
+    await loadEdgeDataset('mem://enoent-read-warm', NOW, deps);
+    mtime = 2;
+    gone = true;
+    const r = await loadEdgeDataset('mem://enoent-read-warm', new Date('2026-10-02T13:00:00Z'), deps);
+    expect(r.availability).toBe('ok');
+    expect(r.marketCount).toBe(4);
+    expect(r.readError).toBe('read failed (ENOENT)');
+  });
+
+  it('ENOENT on stat with last-good → last-good served with readError', async () => {
+    let gone = false;
+    const { deps } = fakeFs({
+      text: () => FIXTURE_TEXT,
+      stat: () => {
+        if (gone) throw errno('ENOENT');
+        return { mtimeMs: 1, size: FIXTURE_TEXT.length };
+      },
+    });
+    await loadEdgeDataset('mem://enoent-stat-warm', NOW, deps);
+    gone = true;
+    const r = await loadEdgeDataset('mem://enoent-stat-warm', NOW, deps);
+    expect(r.availability).toBe('ok');
+    expect(r.marketCount).toBe(4);
+    expect(r.readError).toBe('stat failed (ENOENT)');
+  });
+
+  it('ENOENT without last-good → missing', async () => {
+    const { deps } = fakeFs({ text: () => { throw errno('ENOENT'); } });
+    const r = await loadEdgeDataset('mem://enoent-cold-read', NOW, deps);
+    expect(r.availability).toBe('missing');
+    const { deps: d2 } = fakeFs({ text: () => FIXTURE_TEXT, stat: () => { throw errno('ENOENT'); } });
+    const r2 = await loadEdgeDataset('mem://enoent-cold-stat', NOW, d2);
+    expect(r2.availability).toBe('missing');
+  });
+});
+
 describe('loadEdgeDataset — memo', () => {
   it('re-parses only when mtime or size changes', async () => {
     let mtime = 1;
